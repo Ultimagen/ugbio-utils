@@ -35,6 +35,11 @@ def get_workflow_name(workflow_id, omics_client):
     return workflow["name"]
 
 
+def get_run_name(run_id, omics_client):
+    run = omics_client.get_run(id=run_id)
+    return run["tags"].get("run_name", run["name"])
+
+
 def summarize_run(run_id, omics_client, report_markdown, poll_until_done):
     report_path = report_markdown if report_markdown else f'/tmp/{run_id}_workflows_report.md'
     runs_res = omics_client.list_runs(name=run_id)
@@ -43,9 +48,10 @@ def summarize_run(run_id, omics_client, report_markdown, poll_until_done):
         logging.debug(omics_runs)
         tests_df = pd.DataFrame.from_records(omics_runs)
         tests_df['workflowName'] = tests_df.apply(lambda x: get_workflow_name(x['workflowId'], omics_client), axis=1)
+        tests_df['runName'] = tests_df.apply(lambda x: get_run_name(x['id'], omics_client), axis=1)
         logging.debug(tests_df)
         tests_df = tests_df.loc[:, tests_df.columns.isin(
-            ['name', 'id', 'workflowName', 'status', 'creationTime', 'startTime', 'stopTime'])]
+            ['name', 'id', 'runName', 'workflowName', 'status', 'creationTime', 'startTime', 'stopTime'])]
         with open(report_path, 'w') as fp:
             fp.write(tests_df.to_markdown())
         logging.info(f"{run_id} report was generated and saved in: {report_path}")
