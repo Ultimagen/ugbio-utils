@@ -7,7 +7,8 @@ logging.basicConfig(level=logging.INFO)
 
 OMICS_WDLS = {
     "ug_deepvariant_variant_calling.wdl": "UGDVVariantCallingPipeline",
-    "single_sample_qc.wdl": "SingleSampleQC"
+    "single_sample_qc.wdl": "SingleSampleQC",
+    "cohort_panel_cnmops_CNV_calling.wdl": "CohortCnmopsCNVCalling"
 }
 
 
