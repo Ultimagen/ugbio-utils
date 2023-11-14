@@ -24,6 +24,7 @@ def poll_omics_runs(run_id, poll_until_done, interval, report_markdown, aws_regi
         while non_completed_runs:
             logging.info(f'{len(non_completed_runs)} are still active, sleeping for {interval} minutes...')
             time.sleep(interval * 60)
+            omics_client = boto3.client('omics', region_name=aws_region)
             runs_res = omics_client.list_runs(name=run_id)['items']
             non_completed_runs = list(filter(lambda p: p['status'] in NON_COMPLETED_STATUSES, runs_res))
 
