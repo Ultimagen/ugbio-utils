@@ -58,7 +58,7 @@ def main(raw_args=None):
     parser.add_argument("params", help="Path to json parameters file")
     parser.add_argument("omics_workflows", help="Path to omics_workflows json file")
     parser.add_argument("-g", "--run_group", help="name of run group", required=False)
-    parser.add_argument("-a", "--aws_account", type=str, help="aws account id", default="968281724957")
+    parser.add_argument("-a", "--aws_account", type=str, help="aws account id", default="380827583499")
     parser.add_argument("-r", "--aws_region", type=str, help="aws region", default="us-east-1")
     args = parser.parse_args(raw_args)
     run_omics_pipeline(args.run_id, args.wdl_name, args.params, args.omics_workflows, args.run_group, args.aws_account,
