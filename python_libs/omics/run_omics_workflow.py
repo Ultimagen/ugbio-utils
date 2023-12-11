@@ -10,7 +10,8 @@ OMICS_WDLS = {
     "single_sample_qc.wdl": "SingleSampleQC",
     "cohort_panel_cnmops_CNV_calling.wdl": "CohortCnmopsCNVCalling",
     "efficient_dv.wdl": "EfficientDV",
-    "trim_align_sort.wdl": "TrimAlignSort"
+    "trim_align_sort.wdl": "TrimAlignSort",
+    "single_read_snv.wdl": "SingleReadSNV"
 }
 
 
