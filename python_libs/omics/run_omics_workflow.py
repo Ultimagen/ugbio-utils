@@ -11,7 +11,8 @@ OMICS_WDLS = {
     "cohort_panel_cnmops_CNV_calling.wdl": "CohortCnmopsCNVCalling",
     "efficient_dv.wdl": "EfficientDV",
     "trim_align_sort.wdl": "TrimAlignSort",
-    "single_read_snv.wdl": "SingleReadSNV"
+    "single_read_snv.wdl": "SingleReadSNV",
+    "balanced_strand.wdl": "BalancedStrand"
 }
 
 
