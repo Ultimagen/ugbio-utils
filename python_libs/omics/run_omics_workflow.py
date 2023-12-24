@@ -12,7 +12,8 @@ OMICS_WDLS = {
     "efficient_dv.wdl": "EfficientDV",
     "trim_align_sort.wdl": "TrimAlignSort",
     "single_read_snv.wdl": "SingleReadSNV",
-    "balanced_strand.wdl": "BalancedStrand"
+    "balanced_strand.wdl": "BalancedStrand",
+    "single_cell_general.wdl": "SingleCell"
 }
 
 
