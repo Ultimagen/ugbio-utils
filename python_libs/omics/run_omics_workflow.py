@@ -13,7 +13,8 @@ OMICS_WDLS = {
     "trim_align_sort.wdl": "TrimAlignSort",
     "single_read_snv.wdl": "SingleReadSNV",
     "balanced_strand.wdl": "BalancedStrand",
-    "single_cell_general.wdl": "SingleCell"
+    "single_cell_general.wdl": "SingleCell",
+    "single_sample_cnmops_CNV_calling.wdl": "SingleSampleCnmopsCNVCalling"
 }
 
 
