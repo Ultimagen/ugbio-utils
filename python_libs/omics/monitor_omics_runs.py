@@ -28,7 +28,7 @@ def poll_omics_runs(run_id, poll_until_done, interval, report_markdown, aws_regi
             runs_res = omics_client.list_runs(name=run_id)['items']
             non_completed_runs = list(filter(lambda p: p['status'] in NON_COMPLETED_STATUSES, runs_res))
 
-    summarize_run(run_id, omics_client, report_markdown, poll_until_done)
+    summarize_run(run_id, omics_client, report_markdown, poll_until_done, aws_region)
 
 
 def get_workflow_name(workflow_id, omics_client):
@@ -41,7 +41,11 @@ def get_run_name(run_id, omics_client):
     return run["tags"].get("run_name", run["name"])
 
 
-def summarize_run(run_id, omics_client, report_markdown, poll_until_done):
+def get_link(run_id, region):
+    return f"https://{region}.console.aws.amazon.com/omics/home#/runs/{run_id}"
+
+
+def summarize_run(run_id, omics_client, report_markdown, poll_until_done, aws_region):
     report_path = report_markdown if report_markdown else f'/tmp/{run_id}_workflows_report.md'
     runs_res = omics_client.list_runs(name=run_id)
     omics_runs = runs_res['items']
@@ -50,9 +54,10 @@ def summarize_run(run_id, omics_client, report_markdown, poll_until_done):
         tests_df = pd.DataFrame.from_records(omics_runs)
         tests_df['workflowName'] = tests_df.apply(lambda x: get_workflow_name(x['workflowId'], omics_client), axis=1)
         tests_df['runName'] = tests_df.apply(lambda x: get_run_name(x['id'], omics_client), axis=1)
+        tests_df['link'] = tests_df.apply(lambda x: get_link(x['id'], aws_region), axis=1)
         logging.debug(tests_df)
         tests_df = tests_df.loc[:, tests_df.columns.isin(
-            ['name', 'id', 'runName', 'workflowName', 'status', 'creationTime', 'startTime', 'stopTime'])]
+            ['name', 'id', 'runName', 'workflowName', 'status', 'creationTime', 'startTime', 'stopTime', 'link'])]
         with open(report_path, 'w') as fp:
             fp.write(tests_df.to_markdown())
         logging.info(f"{run_id} report was generated and saved in: {report_path}")
