@@ -14,7 +14,8 @@ OMICS_WDLS = {
     "single_read_snv.wdl": "SingleReadSNV",
     "balanced_strand.wdl": "BalancedStrand",
     "single_cell_general.wdl": "SingleCell",
-    "single_sample_cnmops_CNV_calling.wdl": "SingleSampleCnmopsCNVCalling"
+    "single_sample_cnmops_CNV_calling.wdl": "SingleSampleCnmopsCNVCalling",
+    "downsample_cram.wdl": "DownsampleCram"
 }
 
 
