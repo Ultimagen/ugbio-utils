@@ -32,9 +32,11 @@ def poll_omics_runs(run_id, poll_until_done, interval, report_markdown, aws_regi
 
 
 def get_workflow_name(workflow_id, omics_client):
-    workflow = omics_client.get_workflow(id=workflow_id)
-    return workflow["name"]
-
+    try:
+        workflow = omics_client.get_workflow(id=workflow_id)
+        return workflow["name"]
+    except Exception as ex:
+        return ""
 
 def get_run_name(run_id, omics_client):
     run = omics_client.get_run(id=run_id)
