@@ -5,6 +5,7 @@ INPUTS_MAPPINGS = {
     "gs://gcp-public-data--broad-references/hg19/v0/Homo_sapiens_assembly19.haplotype_database.txt" : "s3://genomics-pipeline-ultimagen-public-data-broad-references/references_hg19_v0_Homo_sapiens_assembly19.haplotype_database.txt",
     "gs://gcp-public-data--broad-references/": "s3://broad-references/",
     "model/germline/v1.1.1/model_dyn_1500_i.onnx.serialized.p100": "model/germline/v1.1.1/model_dyn_1500_i.onnx.serialized.a10g",
+    "model/germline/v1.2_rc2/model_dyn_1500_140923.onnx.serialized.p100": "model/germline/v1.2_rc2/model_dyn_1500_140923.onnx.serialized.a10g",
     "model/germline/v1.3/model.ckpt-890000.dyn_1500.onnx.serialized.p100": "model/germline/v1.3/model.ckpt-890000.dyn_1500.onnx.serialized.a10g",
     "/ground-truths-files/ground_truth_files_giab_4.2.1_hg38.json": "/ground-truths-files/aws/ground_truth_files_giab_4.2.1_hg38.json",
     "/hg19/ground_truth_files_giab_4.2.1_hg19.json": "/hg19/aws/ground_truth_files_giab_4.2.1_hg19.json",
