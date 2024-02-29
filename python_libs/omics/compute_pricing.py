@@ -1,0 +1,1 @@
+../../terraform/aws_ultimagen_pipelines/lambda/omics_end_run_handler/lambda/src/compute_pricing.py
