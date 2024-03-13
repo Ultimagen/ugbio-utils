@@ -1,11 +1,13 @@
-from argparse import ArgumentParser
-from datetime import timedelta, datetime
-import os
-import boto3
-import pandas as pd
-
-from compute_pricing import get_run_cost, get_run_info
 import json
+import os
+from argparse import ArgumentParser
+from datetime import timedelta
+
+import boto3
+import dateutil.parser
+import pandas as pd
+from compute_pricing import get_run_cost, get_run_info
+
 
 class MonitorLog:
     def __init__(self):
@@ -23,9 +25,8 @@ class MonitorLog:
         if "General Information" in line:
             #line=MONITORING, [Tue Feb 13 15:33:19 IST 2024], General Information, CPU: 20, Memory(GiB): 7
             split_line = line.split("MONITORING")[1].split(",")
-            time = datetime.strptime(
-                    " ".join(split_line[1].split("[")[1].split("]")[0].split()[:-2]),
-                      '%a %b %d %H:%M:%S')  # Ignore time zone and convert the string: Tue Feb 13 15:33:19
+            # Convert the date string: Tue Feb 13 15:33:19 IST 2024
+            time = dateutil.parser.parse(split_line[1].split("[")[1].split("]")[0])  
             if self.start_time is None:
                 self.start_time = time
             try:
@@ -41,9 +42,8 @@ class MonitorLog:
         else:
             #line=MONITORING, [Tue Feb 13 15:33:28 IST 2024], %CPU: 0.30, %Memory: 51.80
             split_line = line.split("MONITORING")[1].split(",")
-            time = datetime.strptime(
-                    " ".join(split_line[1].split("[")[1].split("]")[0].split()[:-2]),
-                      '%a %b %d %H:%M:%S')  # Ignore time zone and convert the string: Tue Feb 13 15:33:28
+            # Convert the date string: Tue Feb 13 15:33:28 IST 2024
+            time = dateutil.parser.parse(split_line[1].split("[")[1].split("]")[0])
             try:
                 cpu = float(split_line[2].split(":")[1] or 0)
             except ValueError:
@@ -60,13 +60,10 @@ class MonitorLog:
             self.df = pd.concat([self.df, pd.DataFrame({"CPU": [cpu], "Memory": [memory]})], ignore_index=True)
 
 def performance(run_id, session=None, output_prefix=None):
-    os.makedirs(output_prefix, exist_ok=True)
+    if output_prefix:
+        os.makedirs(output_prefix, exist_ok=True)
 
-    columns=[   "task",
-                "total_CPU", "mean_%_CPU","max_%_CPU","count_entries_CPU",
-                "total_Memory(GB)", "mean_%_Memory","max_%_Memory","count_entries_Memory",
-                "run_time (hours)"]
-    total_performance_df = pd.DataFrame(columns=columns)
+    total_performance_df = pd.DataFrame()
 
     # Get run info from omics
     omics_client = session.client('omics')
@@ -83,12 +80,11 @@ def performance(run_id, session=None, output_prefix=None):
             "total_CPU": [monitor_log.total_cpu],
             "mean_%_CPU": [monitor_log.df['CPU'].mean()],
             "max_%_CPU": [monitor_log.df['CPU'].max()],
-            "count_entries_CPU": [monitor_log.df['CPU'].count()],
             "total_Memory(GB)": [monitor_log.total_memory],
             "mean_%_Memory": [monitor_log.df['Memory'].mean()],
             "max_%_Memory": [monitor_log.df['Memory'].max()],
-            "count_entries_Memory": [monitor_log.df['Memory'].count()],
-            "run_time (hours)": [monitor_log.run_time.total_seconds()/3600]
+            "run_time (hours)": [monitor_log.run_time.total_seconds()/3600],
+            "count_entries": [monitor_log.df['CPU'].count()],
         })
         total_performance_df = pd.concat([total_performance_df, new_row], ignore_index=True)
     
@@ -119,6 +115,8 @@ def performance(run_id, session=None, output_prefix=None):
     print(f"Saving performance data to: {output}")
     total_performance_df.to_csv(output, index=False)
 
+    return total_performance_df, cost
+
 def process_monitor_log(run_id, task_id, client=None) -> MonitorLog:
     if not client:
         client = boto3.client('logs')
@@ -147,12 +145,12 @@ def process_monitor_log(run_id, task_id, client=None) -> MonitorLog:
         monitor_log.process_line(event['message'])
 
     # get next page of log events
-    while len(response.get('events')) > 0 and response.get('nextForwardToken'):
+    while len(response.get('events')) > 0 and response.get('nextToken'):
         response = client.filter_log_events(
             logGroupName=log_group_name,
             logStreamNames=[log_stream_name],
             filterPattern='MONITORING',
-            nextToken=response.get('nextForwardToken')
+            nextToken=response.get('nextToken')
         )
 
         for event in response['events']:
