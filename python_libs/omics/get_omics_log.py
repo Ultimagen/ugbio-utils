@@ -1,17 +1,52 @@
 from argparse import ArgumentParser
+import os
+
 import boto3
 
-def get_log_for_task(run_id, task_id, client=None, output=None):
-    if not client:
+from compute_pricing import get_run_info
+
+
+def get_log_for_task(run_id, task_id=None, session=None, output_path=None):
+    # Get omics client to retrieve the run and tasks information
+    if session:
+        omics_client = session.client('omics')
+    else:
+        omics_client = boto3.client('omics')
+    run = get_run_info(run_id, client=omics_client)
+
+    # If no given a specific task_id, get the logs for all tasks
+    if not task_id:
+        task_ids = [task['taskId'] for task in run['tasks']]
+        task_names = {task['taskId']: task['name'] for task in run['tasks']}
+    else:
+        task_ids = [task_id]
+        task_names = {task['taskId']: task['name'] for task in run['tasks'] if task['taskId'] == task_id}
+
+    # Get the logs for each task
+    for task_id in task_ids:
+        task_name = task_names[task_id]
+        print("------------------------------------------")
+        print(f"Getting log for task {task_name} (taskId: {task_id})")
+        log_stream_name = f'run/{run_id}/task/{task_id}'
+        log_group_name = '/aws/omics/WorkflowLog'
+        
+        output = f'run_{run_id}_task_{task_id}_{task_name}.log'
+        if output_path:
+            os.makedirs(output_path, exist_ok=True)
+            output = f"{output_path}/{output}"
+
+        fetch_save_log(log_stream_name, log_group_name, output, session)
+
+def fetch_save_log(log_stream_name, log_group_name, output, session=None):
+    # Get logs client
+    if session:
+        client = session.client('logs')
+    else:
         client = boto3.client('logs')
-    
-    log_stream_name = f'run/{run_id}/task/{task_id}'
-    log_group_name = '/aws/omics/WorkflowLog'
-    if not output:
-        output = f'run_{run_id}_task_{task_id}.log'
-    
+
     print(f"Getting log events for log group '{log_group_name}' and log stream '{log_stream_name}'")
 
+    # get first page of log events
     response = client.get_log_events( 
         logGroupName=log_group_name,
         logStreamName=log_stream_name,
@@ -47,10 +82,10 @@ if __name__ == "__main__":
     parser.add_argument('--profile', type=str, help="AWS profile name to use from local profiles listed in ~/.aws/config")
     parser.add_argument('--region', type=str, help="AWS region to use", default='us-east-1')
     parser.add_argument('--run-id', type=str, help="HealthOmics workflow run-id to analyze")
-    parser.add_argument('--task-id', type=str, help="HealthOmics workflow task-id to analyze")
-    parser.add_argument('--output', type=str, help="Output file to save log events", default=None)
+    parser.add_argument('--task-id', type=str, help="HealthOmics workflow task-id to analyze. Leave empty to get the logs for all tasks", default=None)
+    parser.add_argument('--output', type=str, help="Output dir to save log events", default=None)
 
     args = parser.parse_args()
     session = boto3.Session(region_name=args.region, profile_name=args.profile)
 
-    get_log_for_task(args.run_id, args.task_id, client=session.client('logs'), output=args.output)
+    get_log_for_task(args.run_id, args.task_id, session=session, output_path=args.output)
