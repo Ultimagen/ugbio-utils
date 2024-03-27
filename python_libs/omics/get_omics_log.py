@@ -6,7 +6,7 @@ import boto3
 from compute_pricing import get_run_info
 
 
-def get_log_for_task(run_id, task_id=None, session=None, output_path=None):
+def get_log_for_task(run_id, task_id=None, session=None, output_path=None, output_prefix=''):
     # Get omics client to retrieve the run and tasks information
     if session:
         omics_client = session.client('omics')
@@ -30,7 +30,7 @@ def get_log_for_task(run_id, task_id=None, session=None, output_path=None):
         log_stream_name = f'run/{run_id}/task/{task_id}'
         log_group_name = '/aws/omics/WorkflowLog'
         
-        output = f'run_{run_id}_task_{task_id}_{task_name}.log'
+        output = f'{output_prefix}run_{run_id}_task_{task_id}_{task_name}.log'
         if output_path:
             os.makedirs(output_path, exist_ok=True)
             output = f"{output_path}/{output}"
@@ -84,8 +84,9 @@ if __name__ == "__main__":
     parser.add_argument('--run-id', type=str, help="HealthOmics workflow run-id to analyze")
     parser.add_argument('--task-id', type=str, help="HealthOmics workflow task-id to analyze. Leave empty to get the logs for all tasks", default=None)
     parser.add_argument('--output', type=str, help="Output dir to save log events", default=None)
+    parser.add_argument('--output-prefix', type=str, help="File name prefix for the output", required=False)
 
     args = parser.parse_args()
     session = boto3.Session(region_name=args.region, profile_name=args.profile)
 
-    get_log_for_task(args.run_id, args.task_id, session=session, output_path=args.output)
+    get_log_for_task(args.run_id, args.task_id, session=session, output_path=args.output, output_prefix=args.output_prefix)
