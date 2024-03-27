@@ -80,7 +80,7 @@ def write_workflow_in_dynamodb(worklow_entry):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("terra_pipeline_version", help="Versio to transfer")
+    parser.add_argument("terra_pipeline_version", help="Version to transfer")
     args = parser.parse_args()
 
     current_account = boto3.client("sts").get_caller_identity()["Account"]
