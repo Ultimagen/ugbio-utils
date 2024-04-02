@@ -71,6 +71,8 @@ def copy_cromwell_data(workflow_name, cromwell_wid, output_path, overwrite=False
         print(f"Skipping download. Cromwell performance file already exists: {performance_file}")
     else:
         blob = bucket.get_blob(f'cromwell-execution/{workflow_name}/{cromwell_wid}/performance.csv')
+        if not blob:
+            raise Exception(f"Performance file not found for workflow: {workflow_name}/{cromwell_wid}")
         with open(performance_file, "w") as f:
             f.write(blob.download_as_text(encoding="utf-8"))
         print(f"Cromwell performance saved in: {performance_file}")
@@ -82,6 +84,8 @@ def copy_cromwell_data(workflow_name, cromwell_wid, output_path, overwrite=False
         print(f"Skipping download. Cromwell metadata file already exists: {metadata_file}")
     else:
         blob = bucket.get_blob(f'cromwell-execution/{workflow_name}/{cromwell_wid}/metadata.json')
+        if not blob:
+            raise Exception(f"Metadata file not found for workflow: {workflow_name}/{cromwell_wid}")
         with open(metadata_file, "w") as f:
             f.write(blob.download_as_text(encoding="utf-8"))
         print(f"Cromwell metadata saved in: {metadata_file}")
