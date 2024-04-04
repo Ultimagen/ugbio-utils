@@ -1,6 +1,7 @@
 INPUTS_MAPPINGS = {
     "gs://<": "s3://<",
     "gs://concordanz/": "s3://genomics-pipeline-concordanz-us-east-1/",
+    "gs://ultimagen-trimmer-dev-formats/": "s3://genomics-pipeline-trimmer-dev-formats/",
     "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.haplotype_database.txt" : "s3://genomics-pipeline-ultimagen-public-data-broad-references/references_hg38_v0_Homo_sapiens_assembly38.haplotype_database.txt",
     "gs://gcp-public-data--broad-references/hg19/v0/Homo_sapiens_assembly19.haplotype_database.txt" : "s3://genomics-pipeline-ultimagen-public-data-broad-references/references_hg19_v0_Homo_sapiens_assembly19.haplotype_database.txt",
     "gs://gcp-public-data--broad-references/": "s3://broad-references/",
