@@ -6,7 +6,7 @@ from re import match
 
 logging.basicConfig(level=logging.INFO)
 
-DEFAULT_KEEP_VERSION_PATTERN = r"^v\d+\.\d+\.\d+(\.\d+)?$"
+DEFAULT_KEEP_VERSION_PATTERN = r"^v\d+\.\d+(\.\d+)?(\.\d+)?$"
 
 # run example: python cleanup_old_omics_workflows.py 30
 def cleanup_old_workflows(days_ago, aws_region, keep_version_pattern=DEFAULT_KEEP_VERSION_PATTERN):
