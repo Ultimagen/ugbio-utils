@@ -26,12 +26,12 @@ def compare_cromwell_omics(cromwell_wid, omics_run_id, omics_session, workflow_n
     cromwell_performance_df = cromwell_performance(cromwell_performance_file)
 
     # Calculate omics performance and cost
-    omics_performance_df, omics_disk_cost = get_omics_performance_cost(omics_run_id, omics_session, output_path)
+    omics_performance_df, omics_disk_cost, omics_cost_dict = get_omics_performance_cost(omics_run_id, omics_session, output_path)
 
     # Compare cromwell and omics cost
     print(f"Comparing cromwell and omics...")
     cost_df = pd.DataFrame(omics_performance_df, columns=["task", "cost_SUM"])
-    cost_df = cost_df.merge(cromwell_cost_df[['task','compute_cost']], on="task", how="left")
+    cost_df = cost_df.merge(cromwell_cost_df[['task','compute_cost']], on="task", how="outer")
     cost_df = cost_df.rename(columns={"cost_SUM": "omics_cost", "compute_cost": "cromwell_cost"})
     # add disk cost
     cost_df = pd.concat([cost_df, pd.DataFrame({"task": ["disk"], "cromwell_cost": [cromwell_disk_cost], "omics_cost":[omics_disk_cost]})], ignore_index=True)
@@ -46,13 +46,28 @@ def compare_cromwell_omics(cromwell_wid, omics_run_id, omics_session, workflow_n
     omics_total_duration = get_omics_total_duration(omics_run_id, omics_session)
     omics_performance_df.loc[omics_performance_df['task'] == 'total', 'run_time (hours)'] = omics_total_duration
     duration_df = pd.DataFrame(omics_performance_df, columns=["task", "run_time (hours)"])
-    duration_df = duration_df.merge(cromwell_performance_df[['task','run_time (hours)']], on="task", how="left")
+    duration_df = duration_df.merge(cromwell_performance_df[['task','run_time (hours)']], on="task", how="outer")
     duration_df = duration_df.rename(columns={"run_time (hours)_x": "omics_duration", "run_time (hours)_y": "cromwell_duration"})
     # add duration difference
     duration_df["duration_diff"] = duration_df["omics_duration"] - duration_df["cromwell_duration"]
 
+    # Add resources for omics and cromwell
+    tasks_costs = omics_cost_dict['cost_detail']['task_costs']
+    resources_df = pd.DataFrame({
+        "task": [task['name'] for task in tasks_costs],
+        "omics_resources": [task['resources'] for task in tasks_costs],
+        "omics_instance": [task['instance'] for task in tasks_costs]})
+    resources_df['task'] = resources_df['task'].str.split('-').str[0]
+    resources_df = resources_df.groupby('task').first().reset_index()
+    
+    # Merge cromwell_cost_df['cpus','mem_gbs'] into one column as a dictionary
+    cromwell_resources = (cromwell_cost_df[['cpus', 'mem_gbs']].apply(lambda x: {'cpus': x['cpus'], 'mem_gbs': x['mem_gbs']}, axis=1))
+    cromwell_cost_df['cromwell_resources'] = cromwell_resources
+    resources_df = resources_df.merge(cromwell_cost_df[['task','cromwell_resources']], on="task", how="outer")
+
     # Merge cost and duration and save to file
-    compare_df = cost_df.merge(duration_df, on="task", how="left")
+    compare_df = cost_df.merge(duration_df, on="task", how="outer")
+    compare_df = compare_df.merge(resources_df, on="task", how="outer")
     compare_file = f"{output_path}/compare_omics_{omics_run_id}_cromwell_{cromwell_wid}.csv"
     compare_df.to_csv(compare_file, index=False, float_format = '%.3f')
     print(f"Comparison saved in: {compare_file}")
@@ -183,7 +198,7 @@ def get_omics_performance_cost(omics_run_id, session, output_path, overwrite=Fal
     # add total cost as an additional row
     grouped_df = pd.concat([grouped_df, pd.DataFrame({"task": ["total"], "cost_SUM": [cost['total']]})], ignore_index=True)
 
-    return grouped_df, omics_disk_cost
+    return grouped_df, omics_disk_cost, cost
 
 def get_omics_total_duration(omics_run_id, session=None):
     if session:
