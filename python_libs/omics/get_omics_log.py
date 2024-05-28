@@ -5,8 +5,11 @@ import boto3
 
 from compute_pricing import get_run_info
 
+FAILED_STATUS = "FAILED"
 
-def get_log_for_task(run_id, task_id=None, session=None, output_path=None, output_prefix=''):
+
+def get_log_for_task(run_id, task_id=None, session=None, output_path=None, output_prefix='', failed: bool = True):
+    print(failed)
     # Get omics client to retrieve the run and tasks information
     if session:
         omics_client = session.client('omics')
@@ -14,10 +17,12 @@ def get_log_for_task(run_id, task_id=None, session=None, output_path=None, outpu
         omics_client = boto3.client('omics')
     run = get_run_info(run_id, client=omics_client)
 
-    # If no given a specific task_id, get the logs for all tasks
+    # If no given a specific task_id, get the logs for all tasks or failed tasks
     if not task_id:
-        task_ids = [task['taskId'] for task in run['tasks']]
-        task_names = {task['taskId']: task['name'] for task in run['tasks']}
+        task_ids = [task['taskId'] for task in run['tasks'] if (not failed or task["status"] == FAILED_STATUS)]
+        task_names = {task['taskId']: task['name'] for task in run['tasks'] if
+                      (not failed or task["status"] == FAILED_STATUS)}
+
     else:
         task_ids = [task_id]
         task_names = {task['taskId']: task['name'] for task in run['tasks'] if task['taskId'] == task_id}
@@ -29,13 +34,14 @@ def get_log_for_task(run_id, task_id=None, session=None, output_path=None, outpu
         print(f"Getting log for task {task_name} (taskId: {task_id})")
         log_stream_name = f'run/{run_id}/task/{task_id}'
         log_group_name = '/aws/omics/WorkflowLog'
-        
+
         output = f'{output_prefix}run_{run_id}_task_{task_id}_{task_name}.log'
         if output_path:
             os.makedirs(output_path, exist_ok=True)
             output = f"{output_path}/{output}"
 
         fetch_save_log(log_stream_name, log_group_name, output, session)
+
 
 def fetch_save_log(log_stream_name, log_group_name, output, session=None):
     # Get logs client
@@ -47,7 +53,7 @@ def fetch_save_log(log_stream_name, log_group_name, output, session=None):
     print(f"Getting log events for log group '{log_group_name}' and log stream '{log_stream_name}'")
 
     # get first page of log events
-    response = client.get_log_events( 
+    response = client.get_log_events(
         logGroupName=log_group_name,
         logStreamName=log_stream_name,
         startFromHead=True
@@ -73,7 +79,7 @@ def fetch_save_log(log_stream_name, log_group_name, output, session=None):
             )
             for event in response['events']:
                 file.write(f"{event['message']}\n")
-    
+
     print(f"Log file saved to: {output}")
 
 
@@ -81,11 +87,18 @@ if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument('--region', type=str, help="AWS region to use", default='us-east-1')
     parser.add_argument('--run-id', type=str, help="HealthOmics workflow run-id to analyze")
-    parser.add_argument('--task-id', type=str, help="HealthOmics workflow task-id to analyze. Leave empty to get the logs for all tasks", default=None)
+    parser.add_argument('--task-id', type=str,
+                        help="HealthOmics workflow task-id to analyze. Leave empty to get the logs for all tasks",
+                        default=None)
+    parser.add_argument('--failed', dest='failed', action='store_true',
+                        help="Set to true to get logs for failed tasks only")
+    parser.add_argument('--no-failed', dest='failed', action='store_false')
+    parser.set_defaults(failed=True)
     parser.add_argument('--output', type=str, help="Output dir to save log events", default=None)
     parser.add_argument('--output-prefix', type=str, help="File name prefix for the output", required=False)
 
     args = parser.parse_args()
     session = boto3.Session(region_name=args.region)
 
-    get_log_for_task(args.run_id, args.task_id, session=session, output_path=args.output, output_prefix=args.output_prefix)
+    get_log_for_task(args.run_id, args.task_id, session=session, output_path=args.output,
+                     output_prefix=args.output_prefix, failed=args.failed)
