@@ -79,7 +79,6 @@ def fetch_save_log(log_stream_name, log_group_name, output, session=None):
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument('--profile', type=str, help="AWS profile name to use from local profiles listed in ~/.aws/config")
     parser.add_argument('--region', type=str, help="AWS region to use", default='us-east-1')
     parser.add_argument('--run-id', type=str, help="HealthOmics workflow run-id to analyze")
     parser.add_argument('--task-id', type=str, help="HealthOmics workflow task-id to analyze. Leave empty to get the logs for all tasks", default=None)
@@ -87,6 +86,6 @@ if __name__ == "__main__":
     parser.add_argument('--output-prefix', type=str, help="File name prefix for the output", required=False)
 
     args = parser.parse_args()
-    session = boto3.Session(region_name=args.region, profile_name=args.profile)
+    session = boto3.Session(region_name=args.region)
 
     get_log_for_task(args.run_id, args.task_id, session=session, output_path=args.output, output_prefix=args.output_prefix)

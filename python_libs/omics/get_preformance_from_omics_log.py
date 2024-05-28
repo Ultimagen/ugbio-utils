@@ -190,13 +190,12 @@ def process_monitor_log(run_id, task_id, client=None) -> MonitorLog:
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument('--profile', type=str, help="AWS profile to use")
     parser.add_argument('--region', type=str, help="AWS region to use", default='us-east-1')
     parser.add_argument('--run-id', type=str, help="HealthOmics workflow run-id to analyze")
     parser.add_argument('--output-path', type=str, help="Output dir to save performance data", required=False)
     parser.add_argument('--output-prefix', type=str, help="File name prefix for the output", required=False)
 
     args = parser.parse_args()
-    session = boto3.Session(region_name=args.region, profile_name=args.profile)
+    session = boto3.Session(region_name=args.region)
 
     performance(args.run_id, session=session, output_dir=args.output_path, output_prefix=args.output_prefix)

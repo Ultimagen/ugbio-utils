@@ -217,7 +217,6 @@ if __name__ == "__main__":
     parser.add_argument('--cromwell-wid', type=str, help="Cromwell workflow id to analyze")
 
     # omics args
-    parser.add_argument('--omics-profile', type=str, help="AWS profile to use")
     parser.add_argument('--region', type=str, help="AWS region to use", default='us-east-1')
     parser.add_argument('--omics-run-id', type=str, help="HealthOmics workflow run-id to analyze")
 
@@ -227,7 +226,7 @@ if __name__ == "__main__":
     parser.add_argument('--overwrite', type=bool, help="Overwrite downloaded files from cloud", default=False)
 
     args = parser.parse_args()
-    session = boto3.Session(region_name=args.region, profile_name=args.omics_profile)
+    session = boto3.Session(region_name=args.region)
 
     compare_cromwell_omics(args.cromwell_wid, args.omics_run_id, session, args.workflow_name, args.output_path, args.overwrite)
 
@@ -235,4 +234,3 @@ if __name__ == "__main__":
 # workflow_name = "EfficientDV"
 # cromwell_wid = "31b29c63-f7b2-4a7c-986a-64171126d9c4"
 # omics_run_id = "2068853"
-# omics_profile = "omics-dev"
