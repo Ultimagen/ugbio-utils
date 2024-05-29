@@ -9,7 +9,6 @@ FAILED_STATUS = "FAILED"
 
 
 def get_log_for_task(run_id, task_id=None, session=None, output_path=None, output_prefix='', failed: bool = True):
-    print(failed)
     # Get omics client to retrieve the run and tasks information
     if session:
         omics_client = session.client('omics')
