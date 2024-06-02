@@ -10,6 +10,8 @@ from compute_pricing import get_run_cost, get_run_info
 from get_preformance_from_omics_log import performance as omics_performance
 from google.cloud import storage
 
+from python_libs.utilities.calculate_cost import calculate_cost
+
 
 def compare_cromwell_omics(cromwell_wid, omics_run_id, omics_session, workflow_name, output_path, overwrite=False):
     # Create the output directory if it doesn't exist
@@ -110,23 +112,24 @@ def copy_cromwell_data(workflow_name, cromwell_wid, output_path, overwrite=False
 def cromwell_cost(metadata_file, output_path, workflow_name, cromwell_wid):
     # run the calculate_cost.py script from terra_pipeline
     print(f"Calculating cromwell cost for workflow: {workflow_name}/{cromwell_wid}")
+    
     cromwell_cost_file = f"{output_path}/cromwell_{cromwell_wid}.cost.csv"
-    command = f"python3 ~/workspace/terra_pipeline/python_libs/utilities/calculate_cost.py -m {metadata_file} > {cromwell_cost_file}"
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    # Print process output in realtime
-    while True:
-        output = process.stdout.readline()
-        if process.poll() is not None:
-            break
-        if output:
-            print(output.strip().decode('utf-8'))
-    if process.returncode != 0:
-        print(process.stderr.read().decode('utf-8'))
-        raise Exception(f"Error occurred while calculating cromwell cost")
+
+    with open(metadata_file) as data_file:
+        metadata = json.load(data_file)
+
+    try:
+        calculate_cost(metadata=metadata, ignore_preempted=False, only_total_cost=False, print_header=True, output_file=cromwell_cost_file)
+    except Exception as e:
+        print(f"Error occurred while calculating cromwell cost: {e}")
+        raise e
+
     print(f"Cromwell cost saved in: {cromwell_cost_file}")
 
     # load cromwell cost into a dataframe
     cromwell_cost_df = pd.read_csv(cromwell_cost_file)
+    cromwell_cost_df = cromwell_cost_df.rename(columns=lambda x: x.strip())
+
     cromwell_cost_df["compute_cost"] = cromwell_cost_df["cpu_cost"] + cromwell_cost_df["pe_cpu_cost"] + \
                                         cromwell_cost_df["mem_cost"] + cromwell_cost_df["pe_mem_cost"] + \
                                         cromwell_cost_df["gpu_cost"] + cromwell_cost_df["pe_gpu_cost"]
@@ -138,7 +141,6 @@ def cromwell_cost(metadata_file, output_path, workflow_name, cromwell_wid):
 
     cromwell_disk_cost = cromwell_cost_df["disk_cost"].sum()
 
-    cromwell_cost_df = cromwell_cost_df.rename(columns=lambda x: x.strip())
     return cromwell_cost_df, cromwell_disk_cost
 
 def cromwell_performance(cromwell_performance_file):
