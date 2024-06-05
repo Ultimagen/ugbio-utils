@@ -39,8 +39,8 @@ def compare_cromwell_omics(cromwell_wid, omics_run_id, omics_session, workflow_n
     cost_df = pd.concat([cost_df, pd.DataFrame({"task": ["disk"], "cromwell_cost": [cromwell_disk_cost], "omics_cost":[omics_disk_cost]})], ignore_index=True)
     # add cost difference
     cost_df["cost_diff"] = cost_df["omics_cost"] - cost_df["cromwell_cost"]
-    #move total cost to the end
-    cost_df = cost_df[cost_df.task != 'total'].append(cost_df[cost_df.task == 'total'])
+    # move total cost to the end
+    cost_df = pd.concat([cost_df[cost_df.task != 'total'], cost_df[cost_df.task == 'total']], ignore_index=True)
 
     # Compare cromwell and omics run duration
     cromwell_total_duration = get_cromwell_total_duration(cromwell_metadata_file)
@@ -152,7 +152,7 @@ def cromwell_performance(cromwell_performance_file):
     performance_df[numeric_columns] = performance_df[numeric_columns].apply(pd.to_numeric, errors='coerce')
 
     # Drop multiple preemtible attempts and keep the last one
-    performance_df['attempt'] = performance_df['task'].str.extract('attempt-(\d+)', expand=False).astype(float)
+    performance_df['attempt'] = performance_df['task'].str.extract(r'attempt-(\d+)', expand=False).astype(float)
     performance_df['task'] = performance_df['task'].str.split('/attempt-', expand=True)[0]
     performance_df = performance_df.sort_values('attempt', ascending=False).drop_duplicates(subset='task', keep='first')
     performance_df = performance_df.drop(columns='attempt')
@@ -194,6 +194,9 @@ def get_omics_performance_cost(omics_run_id, session, output_path, overwrite=Fal
 
     # group by task name, calculate mean of performance metrics and sum of cost
     performance_df['task'] = performance_df['task'].str.split('-').str[0]
+    # Convert all columns except 'task' to numeric
+    performance_df.loc[:, performance_df.columns != 'task'] = performance_df.loc[:, performance_df.columns != 'task'].apply(pd.to_numeric, errors='coerce')
+    # group by task name and calculate mean of performance metrics
     grouped_df = performance_df.groupby('task').mean().drop('cost', axis=1)
     grouped_df['cost_SUM'] = performance_df.groupby('task')['cost'].sum()
     grouped_df = grouped_df.reset_index()
