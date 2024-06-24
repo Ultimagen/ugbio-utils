@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "ugbio-cnv"
+version = "0.1.0"
+description = ""
+authors = ["avigailmo <avigail.moldovan@ultimagen.com>"]
+readme = "README.cnv.md"
+packages = [{ include = "src/ugbio/cnv" }]
+
+
+[tool.poetry.dependencies]
+python = "^3.12"
+ugbio_core = {path="../core", develop=true}
+
+[tool.poetry.group.test.dependencies]
+pytest = "^8.2.2"
+requests-mock = "^1.12.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
