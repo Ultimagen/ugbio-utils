@@ -1,102 +1,21 @@
 [tool.poetry]
-name = "<Repository or package name>"
-version = "1.0"
-description = "Ultima Genomics <Add the name of the repository>"
-authors = ["Your Name <you@example.com>"]
-
-packages= [
-	{ include= "<the package name>" },  # necessary for creating a wheel out of the entire repository
-]
+name = "ugbio-utils"
+version = "0.1.0"
+description = "Ultima Genomics bioinfo-utils"
+authors = ["avigailmo <avigail.moldovan@ultimagen.com>"]
+readme = "README.md"
+package-mode = false
 
 
 [tool.poetry.dependencies]
-python = ">=3.11,<4.0"
+python = "^3.12"
 
-[[tool.poetry.source]]
-name = "codeartifact"
-url = "https://ultima-525048827230.d.codeartifact.us-east-1.amazonaws.com/pypi/ultima/simple/"
-priority = "explicit"
 
-[tool.poetry.group.dev.dependencies]
-ruff = ">=0.4.9"
-ipython = ">=8.25.0"
-pre-commit = ">=3.7.1"
-pytest = ">=8.2.2"
-mypy = ">=1.10.0"
-pytest-mock = ">=3.14.0"
+[tool.poetry.group.test.dependencies]
+pytest = "^8.2.2"
+requests-mock = "^1.12.1"
 
 [build-system]
-requires = ["poetry-core>=1.0.0"]
+requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
-
-# Pre-commit hooks related config.
-[tool.mypy]
-plugins = ["pydantic.mypy"]
-ignore_missing_imports = true
-strict_optional = false
-disallow_untyped_defs = false
-disallow_incomplete_defs = false
-disallow_untyped_calls = false
-
-[tool.ruff]
-extend-exclude = [
-  ".vscode",
-  ".history",
-  "test_.*?py",
-  "tt_threshold",
-  "api",
-  "sample_validator",
-]
-include = ["*.py"]
-line-length = 120
-fix = true
-target-version = "py311"
-
-[tool.ruff.lint]
-select = [
-  "E",     # pycodestyle errors
-  "F",     # pyflakes
-  "W",     # pycodestyle warnings
-  "B",     # flake8-bugbear
-  "PD",    # pandas-vet
-  "NPY",   # NumPy-specific rules
-  "C4",    # flake8-comprehensions
-  "C90",   # mccabe complexity
-  "I",     # isort
-  "UP",    # pyupgrade
-  "ASYNC", # flake8-async
-  "S",     # flake8-bandit
-  "N",     # pep8-naming
-  "A",     # flake8-builtins
-  "COM",   # flake8-commas
-  "PIE",   # flake8-pie
-  "PTH",   # flake8-use-pathlib
-  # "ERA",   # eradicate
-  "FBT",   # flake8-boolean-trap,
-  "PL", # Pylint
-  # "BLE", # flake8-blind-except
-]
-ignore = ["B008", "PTH123", "COM812", "B027", "PLR2004"]
-
-[tool.ruff.lint.per-file-ignores]
-"sample_validator/validator/test_sample_db_validation.py" = [
-  "S101",
-  "PLR",
-  "B",
-  "ERA",
-  "S",
-]
-
-[tool.ruff.lint.isort]
-known-third-party = ["fastapi", "pydantic", "starlette"]
-
-[tool.ruff.lint.pyupgrade]
-# Preserve types, even if a file imports `from __future__ import annotations`.
-keep-runtime-typing = true
-
-[tool.ruff.lint.pylint]
-# Maximum number of arguments for function / method.
-max-args = 10
-
-[tool.poetry.scripts]
