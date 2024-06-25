@@ -2,7 +2,7 @@ import filecmp
 from os.path import join as pjoin
 from . import get_resource_dir
 
-from cnv.filter_sample_cnvs import annotate_bed
+from ugbio_cnv.filter_sample_cnvs import annotate_bed
 
 
 class TestFilterSampleCnvs:

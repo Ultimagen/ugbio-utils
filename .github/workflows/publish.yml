@@ -2,17 +2,52 @@ name: Build and publish to pypi
 
 on:
   release:
-    types: [created]
+    types: [ created ]
   workflow_dispatch:
+    inputs:
+      version:
+        type: string
+        description: "Version to publish modules with"
+        required: true
 
+env:
+  RYE_VERSION: '0.33.0'
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - name: Build and publish to pypi
-        uses: JRubics/poetry-publish@v2.0
+      - name: Install rye
+        uses: eifinger/setup-rye@v3
         with:
-          pypi_token: ${{ secrets.PYPI_TOKEN }}
-          poetry_version: "==1.8.3"
-          poetry_install_options: "--no-root"
+          version: ${{ env.RYE_VERSION }}
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Update pyproject.toml files with new version
+        id: update_version
+        run: python .github/utils/update_project_version.py ${{ github.event.release.tag_name || inputs.version }}
+
+      - name: Commit and push changes
+        if: github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git commit -am "Update pyproject.toml versions to ${{ github.event.release.tag_name || inputs.version }}"
+          git push
+
+      - name: Publish modules to PyPi
+        run: |
+          rye sync
+          rye build --all
+          cd src
+          cd ugbio-core
+          ~/.rye/self/bin/pip install twine==5.1.1 # install twine version that include [this](https://github.com/pypa/twine/pull/968) fix
+          rye publish --token ${{ secrets.PYPI_TOKEN }} --yes
+          # cd ../ugbio-cnv
+          # rye publish --token ${{ secrets.PYPI_TOKEN }} --yes
+

@@ -1,6 +1,6 @@
 name: ugbio-utils CI
 
-on: [push, pull_request]
+on: [pull_request]
 
 env:
   RYE_VERSION: '0.34.0'
@@ -10,3 +10,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
+      - name: Install bedtools
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install bedtools
+
+      - name: Set up bedops
+        run: |
+          wget https://github.com/bedops/bedops/releases/download/v2.4.41/bedops_linux_x86_64-v2.4.41.tar.bz2
+          tar -xvjf bedops_linux_x86_64-v2.4.41.tar.bz2
+          sudo mv bin/* /usr/local/bin/
+
+      - name: Install rye
+        uses: eifinger/setup-rye@v3
+        with:
+          version: ${{ env.RYE_VERSION }}
+
+      - name: Run tests
+        run: |
+          rye sync
+          rye test --all
+
