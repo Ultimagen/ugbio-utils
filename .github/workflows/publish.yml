@@ -12,6 +12,8 @@ on:
 
 env:
   RYE_VERSION: '0.34.0'
+permissions:
+  id-token: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,6 +23,8 @@ jobs:
         uses: eifinger/setup-rye@v3
         with:
           version: ${{ env.RYE_VERSION }}
+          enable-cache: true
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -40,7 +44,7 @@ jobs:
           git commit -am "Update pyproject.toml versions to ${{ github.event.release.tag_name || inputs.version }}"
           git push
 
-      - name: Publish modules to PyPi
+      - name: Rye build
         run: |
           rye sync
           rye build --all
