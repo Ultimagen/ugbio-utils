@@ -26,7 +26,7 @@ class TestConvertCnvResultsToVcf:
 
     def test_convert_cnv_results_to_vcf(self, tmpdir):
         input_bed_file = pjoin(self.inputs_dir, "EL-0059.cnvs.annotate.bed")
-        genome_file = pjoin(self.inputs_dir, "Homo_sapiens_assembly38.chr1-24.genome111")
+        genome_file = pjoin(self.inputs_dir, "Homo_sapiens_assembly38.chr1-24.genome")
         expected_out_vcf = pjoin(self.inputs_dir, 'EL-0059.cnv.vcf.gz')
 
         sample_name = 'EL-0059'
