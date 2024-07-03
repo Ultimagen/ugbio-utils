@@ -1,6 +1,6 @@
 import filecmp
 from os.path import join as pjoin
-from . import get_resource_dir
+from src.ugbio.cnv.tests import get_resource_dir
 
 from ugbio_cnv.filter_sample_cnvs import annotate_bed
 

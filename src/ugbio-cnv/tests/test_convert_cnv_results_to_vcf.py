@@ -7,7 +7,7 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-from . import get_resource_dir, test_dir
+from src.ugbio.cnv.tests import get_resource_dir, test_dir
 
 from ugbio_cnv import convert_cnv_results_to_vcf
 
