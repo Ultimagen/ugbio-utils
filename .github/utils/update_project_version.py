@@ -1,5 +1,6 @@
-import os
 import re
+import tomllib
+import tomli_w
 import glob
 import argparse
 from re import sub
@@ -15,16 +16,12 @@ def main(version):
 
     for file_path in project_files:
         print(f"updating '{file_path}' version to {version}")
-        with open(file_path, 'r+') as file:
-            content = file.read()
+        with open(file_path, 'rb') as file:
+            data = tomllib.load(file)
             # Replace the version string
-            new_version = f'version = "{version}"'
-            new_content = sub(r'version[ ]+=[ ]+".*"', new_version, content)
-
-            # Write the new content back to the file
-            file.seek(0)
-            file.write(new_content)
-            file.truncate()
+        data['project']['version'] = version
+        with open(file_path, 'wb') as file:
+            tomli_w.dump(data, file)
 
 
 if __name__ == "__main__":

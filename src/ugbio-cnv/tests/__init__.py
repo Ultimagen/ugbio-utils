@@ -4,8 +4,6 @@ from os.path import dirname
 
 test_dir = dirname(__file__)
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
-
 
 def get_resource_dir(module_file: str):
     test_path = os.path.splitext(module_file)[0].split("/tests/")[1]
