@@ -1,13 +1,10 @@
-import filecmp
-import os
 from os.path import join as pjoin
-from os.path import dirname
 import hashlib
 import warnings
 
 warnings.filterwarnings('ignore')
 
-from . import get_resource_dir, test_dir
+from . import get_resource_dir
 
 from ugbio_cnv import convert_cnv_results_to_vcf
 

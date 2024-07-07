@@ -1,13 +1,9 @@
 import pandas as pd
-# import numpy as np
 import os
 from os.path import join as pjoin
-# from matplotlib import pyplot as plt
-# from matplotlib.patches import Rectangle
 import argparse
 import logging
 import sys
-# import seaborn as sns
 import pysam
 from ugbio_core.logger import logger
 import warnings
