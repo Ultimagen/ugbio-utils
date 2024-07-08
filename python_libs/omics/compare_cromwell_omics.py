@@ -126,10 +126,16 @@ def cromwell_cost(metadata_file, output_path, workflow_name, cromwell_wid):
 
     print(f"Cromwell cost saved in: {cromwell_cost_file}")
 
-    # load cromwell cost into a dataframe
+    # load cromwell cost into a dataframe and clean up the data
     cromwell_cost_df = pd.read_csv(cromwell_cost_file)
     cromwell_cost_df = cromwell_cost_df.rename(columns=lambda x: x.strip())
+    # if there is a any row similiar to the column names- delete that row from df and re-save the file
+    cromwell_cost_df = cromwell_cost_df[~cromwell_cost_df["task_name"].str.contains("task_name")]
+    # convert all numeric columns to numeric
+    numeric_columns = ["cpu_cost", "pe_cpu_cost", "mem_cost", "pe_mem_cost", "gpu_cost", "pe_gpu_cost", "disk_cost"]
+    cromwell_cost_df[numeric_columns] = cromwell_cost_df[numeric_columns].apply(pd.to_numeric, errors='coerce')
 
+    # add compute cost as an additional column
     cromwell_cost_df["compute_cost"] = cromwell_cost_df["cpu_cost"] + cromwell_cost_df["pe_cpu_cost"] + \
                                         cromwell_cost_df["mem_cost"] + cromwell_cost_df["pe_mem_cost"] + \
                                         cromwell_cost_df["gpu_cost"] + cromwell_cost_df["pe_gpu_cost"]
