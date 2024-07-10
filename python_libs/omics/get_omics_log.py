@@ -87,6 +87,7 @@ def fetch_save_log(log_stream_name, output, output_path, session=None):
                 file.write(f"{event['message']}\n")
 
     print(f"Log file saved to: {output}")
+    return output
 
 
 if __name__ == "__main__":

@@ -6,11 +6,11 @@ import pandas as pd
 
 from get_omics_log import fetch_save_log
 
+OMICS_LOG_GROUP = '/aws/omics/WorkflowLog'
+
+
 def parse_manifest_log(run_id, output_path=None, session=None, output_prefix=''):
     manifest_json_file = f'{output_prefix}omics_{run_id}_manifest.json'
-    if output_path:
-        os.makedirs(output_path, exist_ok=True)
-        manifest_json_file = f"{output_path}/{manifest_json_file}"
 
     # Get logs client
     if session:
@@ -18,25 +18,23 @@ def parse_manifest_log(run_id, output_path=None, session=None, output_prefix='')
     else:
         client = boto3.client('logs')
 
-    log_group_name = '/aws/omics/WorkflowLog'
-
     # get manifest log stream name
     res = client.describe_log_streams(
-        logGroupName=log_group_name,
+        logGroupName=OMICS_LOG_GROUP,
         logStreamNamePrefix=f'manifest/run/{run_id}'
     )
 
     if not res.get('logStreams'):
         print(f"No manifest log stream found for run id '{run_id}'")
         return
-    
+
     log_stream_name = res['logStreams'][0]['logStreamName']
-    
-    fetch_save_log(log_stream_name, log_group_name, manifest_json_file, session)
+
+    manifest_json_file = fetch_save_log(log_stream_name, manifest_json_file, output_path, session)
 
     # parse manifest log from json into df
     df = pd.read_json(manifest_json_file, lines=True)
-    
+
     # Save general run info and print out storage info
     run_df = df.head(1).dropna(axis=1, how='all')
 
@@ -67,7 +65,7 @@ if __name__ == "__main__":
     parser.add_argument('--region', type=str, help="AWS region to use", default='us-east-1')
     parser.add_argument('--run-id', type=str, help="HealthOmics workflow run-id to analyze")
     parser.add_argument('--output', type=str, help="Output dir to save log events", default=None)
-    parser.add_argument('--output-prefix', type=str, help="File name prefix for the output", required=False)
+    parser.add_argument('--output-prefix', type=str, help="File name prefix for the output", required=False, default='')
 
     args = parser.parse_args()
     session = boto3.Session(region_name=args.region)
