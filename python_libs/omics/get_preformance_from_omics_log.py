@@ -250,7 +250,7 @@ def save_figures_to_html(monitor_logs, run_id, output_dir=None, output_prefix=''
         
         # Add caption for each subplot
         combined_fig.add_annotation(
-            text=f"total runtime (H): {monitor_log.run_time.total_seconds()/3600:.2f}", 
+            text=f"#CPU: {monitor_log.total_cpu}, Memory(Gib): {monitor_log.total_memory}, runtime(H): {monitor_log.run_time.total_seconds()/3600:.2f}", 
             xref=f"x{i if i != 1 else ''} domain",  # Reference the x-axis of the ith subplot
             yref=f"y{i if i != 1 else ''} domain",  # Reference the y-axis of the ith subplot
             x=0.5,  # Position the caption in the middle of the subplot horizontally
