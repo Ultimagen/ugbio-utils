@@ -2,21 +2,25 @@ import json
 import os
 from argparse import ArgumentParser
 from datetime import timedelta
+from typing import Tuple
 
 import boto3
 import dateutil.parser
 import pandas as pd
+import plotly.graph_objects as go
 from compute_pricing import get_run_cost, get_run_info
-from typing import Tuple
+from plotly.subplots import make_subplots
 
 
 class MonitorLog:
     def __init__(self):
-        self.df = pd.DataFrame(columns=["CPU","Memory","IO_rKb/s","IO_wKb/s","IOWait"])
+        self.df = pd.DataFrame(columns=["time","CPU","Memory","IO_rKb/s","IO_wKb/s","IOWait"])
         self.start_time = None
         self.run_time = timedelta(0)
         self.total_cpu = None
         self.total_memory = None
+        self.task_name = None
+        self.task_id = None
     
     def process_line(self, line):
         if 'MONITORING' not in line:
@@ -71,6 +75,7 @@ class MonitorLog:
 
             self.run_time = time - self.start_time
             self.df = pd.concat([self.df, pd.DataFrame({   
+                "time": [time], 
                 "CPU": [cpu], 
                 "Memory": [memory], 
                 "IO_rKb/s":[io_rkb], 
@@ -91,11 +96,14 @@ def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tupl
         omics_client = boto3.client('omics')
     run = get_run_info(run_id, client=omics_client)
 
+    monitor_logs = [] 
+
     # Process monitor log for each task
     for task in run['tasks']:
         print("------------------------------------------")
         print(f"Process monitor log for task {task['name']} (taskId: {task['taskId']})")
-        monitor_log = process_monitor_log(run_id, task['taskId'], client=session.client('logs'))
+        monitor_log = process_monitor_log(run_id, task, client=session.client('logs'))
+        monitor_logs.append(monitor_log)
 
         new_row = pd.DataFrame({
             "task": [task['name']],
@@ -143,16 +151,23 @@ def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tupl
     print(f"Saving performance data to: {output}")
     total_performance_df.to_csv(output, index=False)
 
+    # Save figures to HTML
+    save_figures_to_html(monitor_logs, run_id, output_dir, output_prefix)
+
     return total_performance_df, cost
 
-def process_monitor_log(run_id, task_id, client=None) -> MonitorLog:
+def process_monitor_log(run_id, task, client=None) -> MonitorLog:
     if not client:
         client = boto3.client('logs')
+    
+    task_id = task['taskId']
     
     log_stream_name = f'run/{run_id}/task/{task_id}'
     log_group_name = '/aws/omics/WorkflowLog'
 
     monitor_log = MonitorLog()
+    monitor_log.task_name = task['name']
+    monitor_log.task_id = task_id
 
     print(f"Get log events for log group '{log_group_name}' and log stream '{log_stream_name}'")
 
@@ -187,13 +202,93 @@ def process_monitor_log(run_id, task_id, client=None) -> MonitorLog:
     print(f"Done processing monitor log for task {task_id}")
     return monitor_log
 
+def save_figures_to_html(monitor_logs, run_id, output_dir=None, output_prefix=''):
+    print("Generate and save performance plots to HTML...")
+    # TODO: combine scttared tasks into one plot
+    # Plot only tasks that ran for more than 5 minutes.
+    dont_plot_tasks = []
+    plot_tasks = []
+    
+    for monitor_log in monitor_logs:
+
+        # Monitor log script prints every 10 seconds.
+        # If monitor_log.df has less than 30 entires it means it worked less than 5 minutes and we don't need the plot for this task.
+        if monitor_log.df.shape[0] < 30: 
+            print(f"Task: {monitor_log.task_name} (id:{monitor_log.task_id}) run less than 5 minutes and will not be plotted")
+            dont_plot_tasks.append(monitor_log)
+        else:
+            plot_tasks.append(monitor_log)
+
+    # Combine all figures into one HTML file
+    num_rows = len(plot_tasks)  # Each figure will be in its own row
+    combined_fig = make_subplots(rows=num_rows, cols=1, 
+            subplot_titles=[f"Task: {monitor_log.task_name} (id:{monitor_log.task_id})" for monitor_log in plot_tasks])
+
+    for i, monitor_log in enumerate(plot_tasks, start=1):
+        show_legend = i == 1
+        
+        # Add traces for CPU
+        combined_fig.add_trace(go.Scatter(
+            x=monitor_log.df['time'],
+            y=monitor_log.df['CPU'],
+            mode='lines',
+            name='CPU',
+            line=dict(color='blue'),
+            showlegend=show_legend), row=i, col=1)
+        
+        # Add traces for Memory
+        combined_fig.add_trace(go.Scatter(
+            x=monitor_log.df['time'], 
+            y=monitor_log.df['Memory'], 
+            mode='lines', 
+            name='Memory', 
+            line=dict(color='green'),
+            showlegend=show_legend), row=i, col=1)
+        
+        # y-axis settings
+        combined_fig.update_yaxes(title="%", range=[0, 110], row=i, col=1)
+        
+        # Add caption for each subplot
+        combined_fig.add_annotation(
+            text=f"total runtime (H): {monitor_log.run_time.total_seconds()/3600:.2f}", 
+            xref=f"x{i if i != 1 else ''} domain",  # Reference the x-axis of the ith subplot
+            yref=f"y{i if i != 1 else ''} domain",  # Reference the y-axis of the ith subplot
+            x=0.5,  # Position the caption in the middle of the subplot horizontally
+            y=-0.15,  # Position the caption just below the subplot
+            showarrow=False,
+            font=dict(size=12),
+            align="center",
+            xanchor="center",
+            yanchor="top"
+        )
+
+    # touch up the layout and add title and subtext
+    combined_fig.update_layout(height=300*num_rows+50, title_text=f"Omics {run_id} Performance Plots", title_font=dict(size=20))
+    combined_fig.add_annotation(
+        text=f"Short tasks without a plot: {[f"{monitor_log.task_name} (runtime (H): {monitor_log.run_time.total_seconds()/3600:.2f})" for monitor_log in dont_plot_tasks]}",  # Your subtitle text
+        xref="paper",  # Position relative to the entire plotting area
+        yref="paper",  # Position relative to the entire plotting area
+        x=0,  # Center the text horizontally
+        y=1,  # Adjust this value as needed to position below the title
+        showarrow=False,
+        font=dict(size=12),  # Adjust font size as needed
+        yanchor="bottom",
+        yshift=25  # Shift down by 5 pixels to add more "padding"
+    )
+
+    # Save the combined figure to an HTML file
+    combined_fig_output = f"{output_prefix}omics_{run_id}_performance_plots.html"
+    if output_dir is not None:
+        combined_fig_output = f"{output_dir}/{combined_fig_output}"
+    print(f"Saving performance plots report to: {combined_fig_output}")
+    combined_fig.write_html(combined_fig_output)
 
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument('--region', type=str, help="AWS region to use", default='us-east-1')
     parser.add_argument('--run-id', type=str, help="HealthOmics workflow run-id to analyze")
     parser.add_argument('--output-path', type=str, help="Output dir to save performance data", required=False)
-    parser.add_argument('--output-prefix', type=str, help="File name prefix for the output", required=False)
+    parser.add_argument('--output-prefix', type=str, help="File name prefix for the output", required=False, default='')
 
     args = parser.parse_args()
     session = boto3.Session(region_name=args.region)
