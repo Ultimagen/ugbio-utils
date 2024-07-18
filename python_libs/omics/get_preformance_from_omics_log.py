@@ -87,12 +87,12 @@ class MonitorLog:
 
             self.run_time = time - self.start_time
             self.df = pd.concat([self.df, pd.DataFrame({   
-                "time": [time], 
-                "CPU": [cpu], 
-                "Memory": [memory], 
-                "IO_rKb/s":[io_rkb], 
-                "IO_wKb/s": [io_wkb], 
-                "IOWait": [iowait]
+                MonitorColumns.TIME.value: [time], 
+                MonitorColumns.CPU.value: [cpu], 
+                MonitorColumns.MEMORY.value: [memory], 
+                MonitorColumns.IO_RKB.value:[io_rkb], 
+                MonitorColumns.IO_WKB.value: [io_wkb], 
+                MonitorColumns.IOWAIT.value: [iowait]
                 })], ignore_index=True)
 
 def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tuple[pd.DataFrame, dict]:
@@ -120,19 +120,19 @@ def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tupl
         new_row = pd.DataFrame({
             "task": [task['name']],
             "total_CPU": [monitor_log.total_cpu],
-            "mean_%_CPU": [monitor_log.df['CPU'].mean()],
-            "max_%_CPU": [monitor_log.df['CPU'].max()],
+            "mean_%_CPU": [monitor_log.df[MonitorColumns.CPU.value].mean()],
+            "max_%_CPU": [monitor_log.df[MonitorColumns.CPU.value].max()],
             "total_Memory(GB)": [monitor_log.total_memory],
-            "mean_%_Memory": [monitor_log.df['Memory'].mean()],
-            "max_%_Memory": [monitor_log.df['Memory'].max()],
+            "mean_%_Memory": [monitor_log.df[MonitorColumns.MEMORY.value].mean()],
+            "max_%_Memory": [monitor_log.df[MonitorColumns.MEMORY.value].max()],
             "run_time (hours)": [monitor_log.run_time.total_seconds()/3600],
-            "mean_IO_rKb/s": [monitor_log.df['IO_rKb/s'].mean()],
-            "max_IO_rKb/s": [monitor_log.df['IO_rKb/s'].max()],
-            "mean_IO_wKb/s": [monitor_log.df['IO_wKb/s'].mean()],
-            "max_IO_wKb/s": [monitor_log.df['IO_wKb/s'].max()],
-            "mean_IOWait": [monitor_log.df['IOWait'].mean()],
-            "max_IOWait": [monitor_log.df['IOWait'].max()],
-            "count_entries": [monitor_log.df['CPU'].count()],
+            "mean_IO_rKb/s": [monitor_log.df[MonitorColumns.IO_RKB.value].mean()],
+            "max_IO_rKb/s": [monitor_log.df[MonitorColumns.IO_RKB.value].max()],
+            "mean_IO_wKb/s": [monitor_log.df[MonitorColumns.IO_WKB.value].mean()],
+            "max_IO_wKb/s": [monitor_log.df[MonitorColumns.IO_WKB.value].max()],
+            "mean_IOWait": [monitor_log.df[MonitorColumns.IOWAIT.value].mean()],
+            "max_IOWait": [monitor_log.df[MonitorColumns.IOWAIT.value].max()],
+            "count_entries": [monitor_log.df[MonitorColumns.CPU.value].count()],
         })
         total_performance_df = pd.concat([total_performance_df, new_row], ignore_index=True)
     
