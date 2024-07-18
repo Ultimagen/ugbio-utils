@@ -1,8 +1,8 @@
 import filecmp
 from os.path import join as pjoin
-from test import get_resource_dir
+from . import get_resource_dir
 
-from ugvc.cnv.filter_sample_cnvs import annotate_bed
+from ugbio_cnv.filter_sample_cnvs import annotate_bed
 
 
 class TestFilterSampleCnvs:

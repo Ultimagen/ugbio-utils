@@ -2,17 +2,58 @@ name: Build and publish to pypi
 
 on:
   release:
-    types: [created]
+    types: [ created ]
   workflow_dispatch:
+    inputs:
+      version:
+        type: string
+        description: "Version to publish modules with"
+        required: true
 
+env:
+  RYE_VERSION: '0.34.0'
+permissions:
+  id-token: write
+  contents: read
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - name: Build and publish to pypi
-        uses: JRubics/poetry-publish@v2.0
+      - uses: actions/checkout@v4
+      - name: Install rye
+        uses: eifinger/setup-rye@v3
         with:
-          pypi_token: ${{ secrets.PYPI_TOKEN }}
-          poetry_version: "==1.8.3"
-          poetry_install_options: "--no-root"
+          version: ${{ env.RYE_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install tomli_w
+
+      - name: Update pyproject.toml files with new version
+        id: update_version
+        run: python .github/utils/update_project_version.py ${{ github.event.release.tag_name || inputs.version }}
+
+      - name: Commit and push changes
+        if: github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git commit -am "Update pyproject.toml versions to ${{ github.event.release.tag_name || inputs.version }}"
+          git push
+
+      - name: Rye build
+        run: |
+          rye sync
+          rye build --all
+
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
+

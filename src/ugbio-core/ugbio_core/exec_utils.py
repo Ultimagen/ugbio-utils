@@ -4,7 +4,7 @@ import subprocess
 
 from simppl.simple_pipeline import SimplePipeline
 
-from ugvc import logger
+from ugbio_core.logger import logger
 
 
 def print_and_execute(
