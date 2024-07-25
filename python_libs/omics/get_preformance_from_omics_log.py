@@ -2,6 +2,7 @@ import json
 import os
 from argparse import ArgumentParser
 from datetime import timedelta
+from enum import Enum
 from typing import Tuple
 
 import boto3
@@ -10,7 +11,6 @@ import pandas as pd
 import plotly.graph_objects as go
 from compute_pricing import get_run_cost, get_run_info
 from plotly.subplots import make_subplots
-from enum import Enum
 
 
 class MonitorColumns(Enum):
@@ -108,6 +108,7 @@ def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tupl
         omics_client = boto3.client('omics')
     run = get_run_info(run_id, client=omics_client)
 
+    scattered_tasks = set()
     monitor_logs = [] 
 
     # Process monitor log for each task
@@ -135,6 +136,10 @@ def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tupl
             "count_entries": [monitor_log.df[MonitorColumns.CPU.value].count()],
         })
         total_performance_df = pd.concat([total_performance_df, new_row], ignore_index=True)
+
+        # check if the task is a scattered task
+        if "-" in task['name']:
+            scattered_tasks.add(task['name'].split('-')[0])
     
     # Process cost and add to the performance data
     print("Add cost per task to performance data")
@@ -164,7 +169,7 @@ def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tupl
     total_performance_df.to_csv(output, index=False)
 
     # Save figures to HTML
-    save_figures_to_html(monitor_logs, run_id, output_dir, output_prefix)
+    save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir, output_prefix)
 
     return total_performance_df, cost
 
@@ -214,10 +219,8 @@ def process_monitor_log(run_id, task, client=None) -> MonitorLog:
     print(f"Done processing monitor log for task {task_id}")
     return monitor_log
 
-def save_figures_to_html(monitor_logs, run_id, output_dir=None, output_prefix=''):
+def save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir=None, output_prefix=''):
     print("Generate and save performance plots to HTML...")
-    # TODO: combine scttared tasks into one plot
-    # Plot only tasks that ran for more than 5 minutes.
     dont_plot_tasks = []
     plot_tasks = []
     
@@ -228,13 +231,32 @@ def save_figures_to_html(monitor_logs, run_id, output_dir=None, output_prefix=''
         if monitor_log.df.shape[0] < 30: 
             print(f"Task: {monitor_log.task_name} (id:{monitor_log.task_id}) run less than 5 minutes and will not be plotted")
             dont_plot_tasks.append(monitor_log)
-        else:
+        elif not any(task in monitor_log.task_name for task in scattered_tasks): # check if the task name is not a subtring of a scattered task
             plot_tasks.append(monitor_log)
 
+    # TODO: fix this logic to use 5 columns only if scattered tasks have IO metrics
+    if len(scattered_tasks) > 0:
+        if add_io_plots(plot_tasks):
+            cols = 5 # for scattered tasks plot cpu, memory, IO_read, IO_write, IO_wait 
+        else:
+            cols = 2 # for scattered tasks plot cpu and memory
+    else:
+        cols = 1 # no scattered tasks, each row will contain one plot
+
     # Combine all figures into one HTML file
-    num_rows = len(plot_tasks)  # Each figure will be in its own row
-    combined_fig = make_subplots(rows=num_rows, cols=1, 
-            subplot_titles=[f"Task: {monitor_log.task_name} (id:{monitor_log.task_id})" for monitor_log in plot_tasks])
+    rows = len(plot_tasks) + len(scattered_tasks)  # Each figure will be in its own row
+    
+    # regular tasks span over all columns, for the scattered tasks, each coulmn will have a plot
+    specs = []
+    for _ in range(len(plot_tasks)):
+        # E.g., if col=5, it will result to [{'colspan': 5}, None, None, None, None] for each row, meaning the first column will span all 5 columns
+        specs.append([{'colspan': cols}] + [None] * (cols - 1)) 
+    for _ in range(len(scattered_tasks)):
+        # E.g., if col=5, it will result to [{}, {}, {}, {}, {}] for each row, meaning each column will have a plot
+        specs.append([{} for _ in range(cols)])
+
+    subplot_titles = [f"Task: {monitor_log.task_name} (id:{monitor_log.task_id})" for monitor_log in plot_tasks] 
+    combined_fig = make_subplots(rows=rows, cols=cols, specs=specs, subplot_titles=subplot_titles)
 
     add_to_legend = set()
 
@@ -253,9 +275,6 @@ def save_figures_to_html(monitor_logs, run_id, output_dir=None, output_prefix=''
         if monitor_log.df[MonitorColumns.IOWAIT.value].notna().any() and monitor_log.df[MonitorColumns.IOWAIT.value].sum() != 0:
             add_trace(combined_fig, monitor_log, MonitorColumns.IOWAIT.value, i)
             add_to_legend.add(MonitorColumns.IOWAIT.value)
-        
-        # y-axis settings
-        combined_fig.update_yaxes(title="%", range=[0, 110], row=i, col=1)
         
         # Add caption for each subplot
         combined_fig.add_annotation(
@@ -278,8 +297,45 @@ def save_figures_to_html(monitor_logs, run_id, output_dir=None, output_prefix=''
             row=1, col=1  # Add it to the first subplot where the leggend appears
         )
 
+    # Add plots for scattered tasks
+    for i, task in enumerate(scattered_tasks, start=len(plot_tasks)+1):
+        print(f"Plotting scattered task: {task}")
+        scattered_task_monitor_logs = [log for log in monitor_logs if task in log.task_name]
+        
+        # Itereate over tasks within a single scattered task and add metrics to the plots
+        for j, monitor_log in enumerate(scattered_task_monitor_logs, start=1):
+            add_trace(combined_fig, monitor_log, MonitorColumns.CPU.value, row=i, col=1, normelize_time=True, name=monitor_log.task_name)
+            add_trace(combined_fig, monitor_log, MonitorColumns.MEMORY.value, row=i, col=2, normelize_time=True, name=monitor_log.task_name)
+
+            if monitor_log.df[MonitorColumns.IO_RKB.value].notna().any() and monitor_log.df[MonitorColumns.IO_RKB.value].sum() != 0:
+                add_trace(combined_fig, monitor_log, MonitorColumns.IO_RKB.value, row=i, col=3, normelize=True, normelize_time=True, name=monitor_log.task_name)
+
+            if monitor_log.df[MonitorColumns.IO_WKB.value].notna().any() and monitor_log.df[MonitorColumns.IO_WKB.value].sum() != 0:
+                add_trace(combined_fig, monitor_log, MonitorColumns.IO_WKB.value, row=i, col=4, normelize=True, normelize_time=True, name=monitor_log.task_name)
+
+            if monitor_log.df[MonitorColumns.IOWAIT.value].notna().any() and monitor_log.df[MonitorColumns.IOWAIT.value].sum() != 0:
+                add_trace(combined_fig, monitor_log, MonitorColumns.IOWAIT.value, row=i, col=5, normelize=False, normelize_time=True, name=monitor_log.task_name)
+        
+        # Add caption for each subplot
+        cpu = scattered_task_monitor_logs[0].total_cpu
+        memory = scattered_task_monitor_logs[0].total_memory
+        average_runtime = sum([monitor_log.run_time.total_seconds() for monitor_log in scattered_task_monitor_logs]) / len(scattered_task_monitor_logs) / 3600
+        combined_fig.add_annotation(
+            text=f"Scattered Task: {task} #CPU: {cpu}, Memory(Gib): {memory}, average runtime(H): {average_runtime:.2f}", 
+            xref="paper",
+            yref="paper",
+            x= 0.5,  # Middle of the row
+            y= (1 - (i - 0.8) / rows), # Top of the row
+            showarrow=False,
+            font=dict(size=12),
+            align="center",
+            xanchor="center",
+            yanchor="auto"
+        )
+    
     # touch up the layout and add title and subtext
-    combined_fig.update_layout(height=300*num_rows+50, title_text=f"Omics {run_id} Performance Plots", title_font=dict(size=20))
+    combined_fig.update_yaxes(title="%", range=[0, 110])
+    combined_fig.update_layout(height=300*rows+50, title_text=f"Omics {run_id} Performance Plots", title_font=dict(size=20))
     if len(dont_plot_tasks) > 0:
         combined_fig.add_annotation(
             text=f"Short tasks without a plot: {[f"{monitor_log.task_name} (runtime (H): {monitor_log.run_time.total_seconds()/3600:.2f})" for monitor_log in dont_plot_tasks]}",  # Your subtitle text
@@ -300,19 +356,34 @@ def save_figures_to_html(monitor_logs, run_id, output_dir=None, output_prefix=''
     print(f"Saving performance plots report to: {combined_fig_output}")
     combined_fig.write_html(combined_fig_output)
 
-def add_trace(combined_fig, monitor_log, col_name, row, normelize=False):
+def add_io_plots(monitor_logs) -> bool:
+    for monitor_log in monitor_logs:
+        if monitor_log.df[MonitorColumns.IO_RKB.value].notna().any() and monitor_log.df[MonitorColumns.IO_RKB.value].sum() != 0:
+            return True
+        if monitor_log.df[MonitorColumns.IO_WKB.value].notna().any() and monitor_log.df[MonitorColumns.IO_WKB.value].sum() != 0:
+            return True
+        if monitor_log.df[MonitorColumns.IOWAIT.value].notna().any() and monitor_log.df[MonitorColumns.IOWAIT.value].sum() != 0:
+            return True
+    return False
+
+def add_trace(combined_fig, monitor_log, col_name, row, col=1, normelize=False, normelize_time=False, name=None):
     show_legend = row == 1
 
     if normelize:
         monitor_log.df[col_name] = monitor_log.df[col_name] / monitor_log.df[col_name].max() * 100
+    if normelize_time:
+        monitor_log.df[MonitorColumns.TIME.value] = monitor_log.df[MonitorColumns.TIME.value] - monitor_log.df[MonitorColumns.TIME.value].min()  
+
+    if not name:
+        name = col_name
 
     combined_fig.add_trace(go.Scatter(
             x=monitor_log.df[MonitorColumns.TIME.value],
             y=monitor_log.df[col_name],
             mode='lines',
-            name=col_name,
+            name=name,
             line=dict(color=monitor_log.colors[col_name]),
-            showlegend=show_legend), row=row, col=1)
+            showlegend=show_legend), row=row, col=col)
 
 if __name__ == "__main__":
     parser = ArgumentParser()
