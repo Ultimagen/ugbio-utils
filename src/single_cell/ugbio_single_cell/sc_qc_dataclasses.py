@@ -13,6 +13,7 @@ class OutputFiles(Enum):
     QUALITY_PER_POSITION_PLOT = "quality_per_position_plot.png"
     INSERT_LENGTH_HISTOGRAM = "insert_length_histogram.png"
 
+# TODO: FIX! use the report in the folder
 base_path = Path(__file__).resolve().parent.parent.parent.parent # find the base path for VaraintCalling
 TEMPLATE_NOTEBOOK = base_path / "ugvc" / "reports" / OutputFiles.NOTEBOOK.value
 
