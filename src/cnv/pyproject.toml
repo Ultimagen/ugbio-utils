@@ -12,7 +12,6 @@ dependencies = [
     "seaborn==0.13.2"
 ]
 description = "Ultima Genomics CNV utils"
-authors = [{ name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com" }]
 authors = [{ name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" }]
 readme = "README.cnv.md"
 license = { text = "Apache-2.0" }
