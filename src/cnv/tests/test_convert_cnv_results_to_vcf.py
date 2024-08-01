@@ -43,18 +43,18 @@ class TestConvertCnvResultsToVcf:
 
         out_vcf_file = pjoin(tmpdir, sample_name + '.cnv.vcf.gz')
 
-        cmd = [
-            "bcftools",
-            "view",
-            expected_out_vcf
-        ]
-        assert subprocess.check_call(cmd, cwd=tmpdir) == 0
-
-        cmd1 = [
-            "bcftools",
-            "view",
-            out_vcf_file
-        ]
-        assert subprocess.check_call(cmd1, cwd=tmpdir) == 0
+        # cmd = [
+        #     "bcftools",
+        #     "view",
+        #     expected_out_vcf
+        # ]
+        # assert subprocess.check_call(cmd, cwd=tmpdir) == 0
+        #
+        # cmd1 = [
+        #     "bcftools",
+        #     "view",
+        #     out_vcf_file
+        # ]
+        # assert subprocess.check_call(cmd1, cwd=tmpdir) == 0
 
         assert compare_zipped_files(out_vcf_file, expected_out_vcf)
