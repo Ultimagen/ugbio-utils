@@ -18,4 +18,4 @@ virtual = true
 exclude = ["tests", "tests/*"]
 
 [tool.rye.workspace]
-members = ["src/cnv", "src/core"]
+members = ["src/*"]
