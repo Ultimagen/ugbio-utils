@@ -70,4 +70,4 @@ class TestConvertCnvResultsToVcf:
         # ]
         # assert subprocess.check_call(cmd1, cwd=tmpdir) == 0
 
-        assert compare_zipped_files(out_vcf_file, expected_out_vcf)
+        compare_zipped_files(out_vcf_file, expected_out_vcf)
