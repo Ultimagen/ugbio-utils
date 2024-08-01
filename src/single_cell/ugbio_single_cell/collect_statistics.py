@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 from Bio import SeqIO
 
-from ugvc.pipelines.single_cell_qc.sc_qc_dataclasses import H5Keys, Inputs, OutputFiles
+from sc_qc_dataclasses import H5Keys, Inputs, OutputFiles
 from ugvc.utils.metrics_utils import (
     merge_trimmer_histograms,
     read_sorter_statistics_csv,
