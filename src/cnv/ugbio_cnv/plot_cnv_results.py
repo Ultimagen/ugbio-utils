@@ -8,7 +8,7 @@ import argparse
 import logging
 import sys
 import seaborn as sns
-from ugvc import logger
+from ugbio_core.logger import logger
 import warnings
 warnings.filterwarnings('ignore')
 

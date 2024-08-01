@@ -1,14 +1,11 @@
-import filecmp
 import os
 from os.path import join as pjoin
-from os.path import dirname
-import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings('ignore')
 
-from test import get_resource_dir, test_dir
+from . import get_resource_dir
 
-from ugvc.cnv import plot_cnv_results
+from ugbio_cnv import plot_cnv_results
 
 class TestPlotCnvResults:
     inputs_dir = get_resource_dir(__file__)
