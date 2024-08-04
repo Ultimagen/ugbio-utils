@@ -1,15 +1,13 @@
 import filecmp
 import subprocess
 from os.path import join as pjoin
-from test import get_resource_dir
+from . import get_resource_dir
 
 import numpy as np
 import pandas as pd
 
-from ugvc import base_dir
-
 resources_dir = get_resource_dir(__file__)
-script_path = pjoin(base_dir, "cnv/create_reads_count_cohort_matrix.R")
+script_path = "cnmops/create_reads_count_cohort_matrix.R"
 
 
 def test_create_reads_count_cohort_matrix(tmpdir):
@@ -24,10 +22,6 @@ def test_create_reads_count_cohort_matrix(tmpdir):
     out_file = pjoin(tmpdir, "merged_cohort_reads_count.csv")
 
     cmd = [
-        "conda",
-        "run",
-        "-n",
-        "cn.mops",
         "Rscript",
         "--vanilla",
         script_path,
@@ -38,4 +32,4 @@ def test_create_reads_count_cohort_matrix(tmpdir):
     assert subprocess.check_call(cmd, cwd=tmpdir) == 0
     df = pd.read_csv(out_file)
     df_ref = pd.read_csv(expected_out_file)
-    assert np.allclose(df.iloc[:,-3:], df_ref.iloc[:,-3:])
+    assert np.allclose(df.iloc[:, -3:], df_ref.iloc[:, -3:])

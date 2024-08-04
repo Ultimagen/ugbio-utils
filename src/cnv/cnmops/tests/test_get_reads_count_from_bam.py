@@ -1,13 +1,12 @@
 import filecmp
 import subprocess
 from os.path import join as pjoin
-from test import get_resource_dir
+from . import get_resource_dir
 import pandas as pd
 import numpy as np
-from ugvc import base_dir
 
 resources_dir = get_resource_dir(__file__)
-script_path = pjoin(base_dir, "cnv/get_reads_count_from_bam.R")
+script_path = "cnmops//get_reads_count_from_bam.R"
 
 
 def test_get_reads_count_from_bam(tmpdir):
@@ -17,10 +16,6 @@ def test_get_reads_count_from_bam(tmpdir):
     out_file = pjoin(tmpdir, "out_test.ReadCounts.csv")
 
     cmd = [
-        "conda",
-        "run",
-        "-n",
-        "cn.mops",
         "Rscript",
         "--vanilla",
         script_path,

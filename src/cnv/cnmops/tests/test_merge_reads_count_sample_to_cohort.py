@@ -4,12 +4,10 @@ import subprocess
 import pandas as pd
 import numpy as np
 from os.path import join as pjoin
-from test import get_resource_dir
-
-from ugvc import base_dir
+from . import get_resource_dir
 
 resources_dir = get_resource_dir(__file__)
-script_path = pjoin(base_dir, "cnv/merge_reads_count_sample_to_cohort.R")
+script_path = "cnmops/merge_reads_count_sample_to_cohort.R"
 
 
 def test_merge_reads_count_sample_to_cohort(tmpdir):
@@ -20,10 +18,6 @@ def test_merge_reads_count_sample_to_cohort(tmpdir):
     out_file = pjoin(tmpdir, "merged_cohort_reads_count.csv")
     os.chdir(tmpdir)
     cmd = [
-        "conda",
-        "run",
-        "-n",
-        "cn.mops",
         "Rscript",
         "--vanilla",
         script_path,
