@@ -1,3 +1,3 @@
-# ugbio_cnv
+# ugbio_single_cell
 
-This module includes CNV python scripts for bioinformatics pipelines.
+This module includes Single Cell python scripts for bioinformatics pipelines.
