@@ -6,16 +6,15 @@ from pathlib import Path
 
 class OutputFiles(Enum):
     H5 = "scRNA.applicationQC.h5"
-    HTML_REPORT = "scRNA_qc_report.html"
+    HTML_REPORT = "scRNA.applicationQC.html"
     NOTEBOOK = "single_cell_qc_report.ipynb"
     CBC_UMI_PLOT = "cbc_umi_plot.png"
     MEAN_INSERT_QUALITY_PLOT = "mean_insert_quality_plot.png"
     QUALITY_PER_POSITION_PLOT = "quality_per_position_plot.png"
     INSERT_LENGTH_HISTOGRAM = "insert_length_histogram.png"
 
-# TODO: FIX! use the report in the folder
-base_path = Path(__file__).resolve().parent.parent.parent.parent # find the base path for VaraintCalling
-TEMPLATE_NOTEBOOK = base_path / "ugvc" / "reports" / OutputFiles.NOTEBOOK.value
+BASE_PATH = Path(__file__).parent # should be: src/single_cell/ugbio_single_cell
+TEMPLATE_NOTEBOOK = BASE_PATH / OutputFiles.NOTEBOOK.value
 
 
 @dataclass
