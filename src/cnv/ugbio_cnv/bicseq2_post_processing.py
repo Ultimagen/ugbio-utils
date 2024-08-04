@@ -22,7 +22,7 @@ import sys
 import pandas as pd
 import warnings
 
-from ugvc import logger
+from ugbio_core.logger import logger
 
 warnings.filterwarnings("ignore")
 

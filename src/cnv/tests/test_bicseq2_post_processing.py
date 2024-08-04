@@ -3,9 +3,9 @@ import os
 from os.path import join as pjoin
 from os.path import dirname
 
-from test import get_resource_dir, test_dir
+from . import get_resource_dir, test_dir
 
-from ugvc.somatic_cnv import bicseq2_post_processing
+from src.cnv.ugbio_cnv import bicseq2_post_processing
 
 class TestBicseq2PostProcessing:
     inputs_dir = get_resource_dir(__file__)
