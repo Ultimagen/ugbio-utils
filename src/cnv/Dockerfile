@@ -11,6 +11,8 @@ RUN python -m build --outdir $OUT_DIR --wheel
 FROM ubuntu:22.04
 
 ARG PYTHON_VERSION=3.10
+ARG DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
 
 # Install basic dependencies
 RUN apt-get update && \
@@ -39,6 +41,7 @@ RUN apt-get update && \
     libopenblas-dev \
     libstdc++-10-dev \
     libc6-dev \
+    tzdata \
     python${PYTHON_VERSION} \
     python${PYTHON_VERSION}-dev \
     python${PYTHON_VERSION}-venv \
@@ -56,9 +59,9 @@ RUN wget https://cloud.r-project.org/src/base/R-4/R-4.3.1.tar.gz && \
     cd .. && \
     rm -rf R-4.3.1 R-4.3.1.tar.gz
 
-# Create symbolic links for python and pip
-RUN ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python && \
-    ln -s /usr/bin/pip3 /usr/bin/pip
+# Create symbolic links for python
+RUN ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python
+#    ln -s /usr/bin/pip3 /usr/bin/pip
 
 # Install samtools
 ARG SAMTOOLS_VERSION=1.17
@@ -91,9 +94,9 @@ RUN git clone https://github.com/bedops/bedops.git && \
     cd .. && \
     rm -rf bedops
 
-## install ug-cn.mops (branch: ilyasoifer/test.1.40):
+## install ug-cn.mops (branch: ug.master):
 RUN cd /opt && \
-   git clone --branch ug-master https://github.com/Ultimagen/cn.mops.git cn.mops && \
+   git clone --branch ug.master https://github.com/Ultimagen/cn.mops.git cn.mops && \
    cd cn.mops
 
 # Install additional R dependencies
@@ -110,9 +113,6 @@ RUN R -e "install.packages(c('bitops', 'codetools', 'cpp11', 'crayon', 'findpyth
 
 # Remove unnecessary files
 RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
-
-#RUN mkdir -p /opt/cnmops/
-#COPY cnmops/ /opt/cnmops/
 
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
