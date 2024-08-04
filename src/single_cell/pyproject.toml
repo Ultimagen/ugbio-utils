@@ -11,7 +11,9 @@ dependencies = [
     "bio>=1.7.1",
     "seaborn>=0.13.2",
     "matplotlib>=3.9.1",
-    "numpy<2.0.0", # New versions of numpy are uncompatible, not sure why pandas doesn't have this constrain. See https://github.com/numpy/numpy/issues/26710 to get a hunch of the issue 
+    "numpy<2.0.0", # New versions of numpy are uncompatible, not sure why pandas doesn't have this constrain. See https://github.com/numpy/numpy/issues/26710 to get a hunch of the issue
+    "ipykernel>=6.29.5",
+    
 ]
 description = "Ultima Genomics CNV utils"
 authors = [{ name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com" }]
