@@ -4,7 +4,7 @@ from os.path import join as pjoin
 from . import get_resource_dir
 
 resources_dir = get_resource_dir(__file__)
-script_path = "cnmops/convert_bedGraph_to_Granges.R"
+script_path = "/src/cnv/cnmops/convert_bedGraph_to_Granges.R"
 
 
 def test_convert_bedGraph_to_Granges(tmpdir):

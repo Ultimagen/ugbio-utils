@@ -5,7 +5,7 @@ from os.path import join as pjoin
 from . import get_resource_dir
 
 resources_dir = get_resource_dir(__file__)
-script_path = "cnmops/cnv_calling_using_cnmops.R"
+script_path = "/src/cnv/cnmops/cnv_calling_using_cnmops.R"
 
 
 def test_cnv_calling_using_cnmops(tmpdir):

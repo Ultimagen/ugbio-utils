@@ -1,0 +1,48 @@
+name: "Run ugbio workspace tests"
+description: "general action to build and run test of ugbio workspace"
+
+inputs:
+  workspace-folder:
+    description: "workspace folder under src"
+    required: true
+  docker-file:
+    description: "Dockerfile path"
+    required: true
+  docker-context:
+    description: "Docker build context"
+    required: true
+    default: "."
+
+runs:
+  using: "composite"
+
+  steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+      with:
+        driver-opts: image=moby/buildkit:latest
+
+    - name: Build docker
+      uses: docker/build-push-action@v4
+      with:
+        file: ${{ inputs.docker-file }}
+        context: ${{ inputs.docker-context }}
+        provenance: false
+        load: true
+        push: false
+        tags: ${{ inputs.workspace-folder }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Run ugbio_cnv tests
+      shell: bash
+      run: |
+        docker run --rm -v ${{ github.workspace }}/src/cnv:/workdir/src/${{ inputs.workspace-folder }} ${{ inputs.workspace-folder }} pytest /workdir/src/${{ inputs.workspace-folder }}
+
+    #todo how to upload results?
+    #      - name: Upload Test Results
+    #        if: always()
+    #        uses: actions/upload-artifact@v3
+    #        with:
+    #          name: ${{ inputs.workspace-folder }}-test-results
+    #          path: src/${{ inputs.workspace-folder }}

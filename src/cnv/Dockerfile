@@ -1,13 +1,17 @@
 FROM python:3.10-bullseye as build
 
-ARG OUT_DIR=/tmp/ugbio_cnv
-
-COPY . .
-
+ARG OUT_DIR=/tmp/ugbio
+ARG MODULE_DIR=cnv
 RUN mkdir -p $OUT_DIR
-RUN python -m pip install build
-RUN python -m build --outdir $OUT_DIR --wheel
 
+COPY ./src/ ./src/
+
+#build ugbio_core + module
+RUN python -m pip install build
+RUN python -m build --outdir $OUT_DIR --wheel ./src/core
+RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
+
+##################################################################
 FROM ubuntu:22.04
 
 ARG PYTHON_VERSION=3.10
@@ -117,8 +121,13 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
-ARG OUT_DIR=/tmp/ugbio_cnv
+COPY --from=build ./src/cnv/cnmops ./src/cnv/cnmops
+
+
+ARG OUT_DIR=/tmp/ugbio
 
 COPY --from=build $OUT_DIR $OUT_DIR
+
+
 RUN pip install ${OUT_DIR}/*.whl
 

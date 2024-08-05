@@ -2,9 +2,6 @@ name: CI
 
 on: [pull_request]
 
-env:
-  RYE_VERSION: '0.34.0'
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -12,61 +9,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           lfs: true
- #      - name: Install bedtools tabix
-#        run: |
-#          sudo apt-get update
-#          sudo apt-get -y install bedtools tabix
-#
-#      - name: Set up bedops
-#        run: |
-#          wget https://github.com/bedops/bedops/releases/download/v2.4.41/bedops_linux_x86_64-v2.4.41.tar.bz2
-#          tar -xvjf bedops_linux_x86_64-v2.4.41.tar.bz2
-#          sudo mv bin/* /usr/local/bin/
 
-      - name: Install rye
-        uses: eifinger/setup-rye@v3
+      - name: Run cnv tests
+        uses: ./.github/actions/run-workspace-tests
         with:
-          version: ${{ env.RYE_VERSION }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-        with:
-          driver-opts: image=moby/buildkit:latest
-
-#        - name: Cache Docker layers
-#          uses: actions/cache@v3
-#          with:
-#            path: /tmp/.buildx-cache
-#            key: ${{ runner.os }}-buildx-${{ github.sha }}
-#            restore-keys: |
-#              ${{ runner.os }}-buildx-
-
-      - name: Build docker
-        uses: docker/build-push-action@v4
-        with:
-          context: src/cnv
-          provenance: false
-          load: true
-          push: false
-          tags: cnmops-docker
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-#      - name: Run python tests
-#        run: |
-#          rye sync
-#          rye test --package ugbio_cnv -- --ignore=cnmops
-
-      - name: Run cn.mops tests
-        run: |
-          docker run --rm -v ${{ github.workspace }}/src/cnv/:/workdir/cnv/ cnmops-docker pytest /workdir/cnv/
-
-      - name: Upload Test Results
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: test-results
-          path: src/cnv/*/tests/.pytest_cache
+          workspace-folder: cnv
+          docker-file: src/cnv/Dockerfile
 
 
 

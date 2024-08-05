@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 resources_dir = get_resource_dir(__file__)
-script_path = "cnmops/create_reads_count_cohort_matrix.R"
+script_path = "/src/cnv/cnmops/create_reads_count_cohort_matrix.R"
 
 
 def test_create_reads_count_cohort_matrix(tmpdir):

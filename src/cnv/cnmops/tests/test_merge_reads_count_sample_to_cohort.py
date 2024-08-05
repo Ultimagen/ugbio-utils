@@ -7,7 +7,7 @@ from os.path import join as pjoin
 from . import get_resource_dir
 
 resources_dir = get_resource_dir(__file__)
-script_path = "cnmops/merge_reads_count_sample_to_cohort.R"
+script_path = "/src/cnv/cnmops/merge_reads_count_sample_to_cohort.R"
 
 
 def test_merge_reads_count_sample_to_cohort(tmpdir):

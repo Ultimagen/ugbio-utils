@@ -7,7 +7,7 @@ from os.path import join as pjoin
 from . import get_resource_dir
 
 resources_dir = get_resource_dir(__file__)
-script_path = "cnmops/normalize_reads_count.R"
+script_path = "/src/cnv/cnmops/normalize_reads_count.R"
 
 
 def test_normalize_reads_count(tmpdir):
