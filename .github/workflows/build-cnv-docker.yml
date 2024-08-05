@@ -19,7 +19,7 @@ env:
   GCP_WORKLOAD_IDENTITY_PROVIDER: projects/55428976747/locations/global/workloadIdentityPools/devops-pool/providers/devops-pool-provider
   GCP_SERVICE_ACCOUNT: gcr-push-sa@ultima-data-307918.iam.gserviceaccount.com
 
-  IMAGE: ug-cnmops
+  IMAGE: ug_cnmops
 
 jobs:
   build:
