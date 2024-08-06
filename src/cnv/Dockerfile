@@ -121,13 +121,10 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
-COPY --from=build ./src/cnv/cnmops ./src/cnv/cnmops
-
-
 ARG OUT_DIR=/tmp/ugbio
 
 COPY --from=build $OUT_DIR $OUT_DIR
 
-
 RUN pip install ${OUT_DIR}/*.whl
 
+COPY --from=build ./src/cnv/cnmops ./src/cnv/cnmops

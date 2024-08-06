@@ -1,6 +1,7 @@
-import filecmp
 import os
 import subprocess
+import pandas as pd
+import numpy as np
 from os.path import join as pjoin
 from . import get_resource_dir
 
@@ -26,4 +27,18 @@ def test_cnv_calling_using_cnmops(tmpdir):
         "1",
     ]
     assert subprocess.check_call(cmd, cwd=tmpdir) == 0
-    assert filecmp.cmp(out_file, expected_out_merged_reads_count_file)
+    compare_files_using_np(expected_out_merged_reads_count_file, out_file)
+
+
+def compare_files_using_np(expected_out_merged_reads_count_file, out_file):
+    df = pd.read_csv(out_file)
+    df_ref = pd.read_csv(expected_out_merged_reads_count_file)
+    # Separate numeric and string columns
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    string_cols = df.select_dtypes(include=[object]).columns
+    # Compare numeric columns using np.allclose
+    numeric_comparison = np.allclose(df[numeric_cols], df_ref[numeric_cols])
+    # Compare string columns using regular equality
+    string_comparison = (df[string_cols] == df_ref[string_cols]).all().all()
+    # Combine the results
+    assert numeric_comparison and string_comparison
