@@ -5,14 +5,22 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import get_resource_dir
+import pytest
 
-resources_dir = get_resource_dir()
-base_path = Path(__file__).resolve().parent.parent
-script_path = base_path / "create_reads_count_cohort_matrix.R"
+SRC_FILE = "create_reads_count_cohort_matrix.R"
 
 
-def test_create_reads_count_cohort_matrix(tmpdir):
+@pytest.fixture
+def resources_dir():
+    return Path(__file__).parent / "resources"
+
+
+@pytest.fixture
+def script_path():
+    base_path = Path(__file__).resolve().parent.parent
+    return base_path / SRC_FILE
+
+def test_create_reads_count_cohort_matrix(tmpdir, resources_dir, script_path):
     in_rds_file = pjoin(resources_dir, "sample_gr_obj.rds")
     rc_files_list = pjoin(tmpdir, "samples_read_count_files_list")
     with open(rc_files_list, "w") as f:

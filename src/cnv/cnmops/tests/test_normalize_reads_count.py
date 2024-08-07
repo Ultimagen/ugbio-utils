@@ -5,15 +5,23 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
-from . import get_resource_dir
-
-resources_dir = get_resource_dir()
-base_path = Path(__file__).resolve().parent.parent
-script_path = base_path / "normalize_reads_count.R"
+SRC_FILE = "normalize_reads_count.R"
 
 
-def test_normalize_reads_count(tmpdir):
+@pytest.fixture
+def resources_dir():
+    return Path(__file__).parent / "resources"
+
+
+@pytest.fixture
+def script_path():
+    base_path = Path(__file__).resolve().parent.parent
+    return base_path / SRC_FILE
+
+
+def test_normalize_reads_count(tmpdir, resources_dir, script_path):
     in_cohort_reads_count_file = pjoin(resources_dir, "test_rc.rds")
     expected_out_norm_rc = pjoin(resources_dir, "test_rc.norm.cohort_reads_count.norm.csv")
 
@@ -33,7 +41,7 @@ def test_normalize_reads_count(tmpdir):
     assert np.allclose(df.iloc[:, -6], df_ref.iloc[:, -6])
 
 
-def test_normalize_reads_count_with_ploidy(tmpdir):
+def test_normalize_reads_count_with_ploidy(tmpdir, resources_dir, script_path):
     in_cohort_reads_count_file = pjoin(resources_dir, "test_rc.rds")
     ploidy_file = pjoin(resources_dir, "test_rc.ploidy")
     expected_out_norm_rc = pjoin(resources_dir, "test_rc.norm.cohort_reads_count.norm.csv")
@@ -56,7 +64,7 @@ def test_normalize_reads_count_with_ploidy(tmpdir):
     assert np.allclose(df.iloc[:, -6], df_ref.iloc[:, -6])
 
 
-def test_normalize_reads_count_without_chrX(tmpdir):
+def test_normalize_reads_count_without_chrX(tmpdir, resources_dir, script_path):
     in_cohort_reads_count_file = pjoin(resources_dir, "test_rc.noX.rds")
     expected_out_norm_rc = pjoin(resources_dir, "cohort_reads_count_noX.norm.csv")
 
@@ -76,7 +84,7 @@ def test_normalize_reads_count_without_chrX(tmpdir):
     assert np.allclose(df.iloc[:, -6], df_ref.iloc[:, -6])
 
 
-def test_normalize_reads_count_without_chrXchrY(tmpdir):
+def test_normalize_reads_count_without_chrXchrY(tmpdir, resources_dir, script_path):
     in_cohort_reads_count_file = pjoin(resources_dir, "test_rc.noXnoY.rds")
     expected_out_norm_rc = pjoin(resources_dir, "cohort_reads_count.norm.noXnoY.csv")
 

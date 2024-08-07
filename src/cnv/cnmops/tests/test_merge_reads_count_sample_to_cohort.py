@@ -5,15 +5,23 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
-from . import get_resource_dir
-
-resources_dir = get_resource_dir()
-base_path = Path(__file__).resolve().parent.parent
-script_path = base_path / "merge_reads_count_sample_to_cohort.R"
+SRC_FILE = "merge_reads_count_sample_to_cohort.R"
 
 
-def test_merge_reads_count_sample_to_cohort(tmpdir):
+@pytest.fixture
+def resources_dir():
+    return Path(__file__).parent / "resources"
+
+
+@pytest.fixture
+def script_path():
+    base_path = Path(__file__).resolve().parent.parent
+    return base_path / SRC_FILE
+
+
+def test_merge_reads_count_sample_to_cohort(tmpdir, resources_dir, script_path):
     in_cohort_reads_count_file = pjoin(resources_dir, "cohort_gr_obj.rds")
     in_sample_reads_count_file = pjoin(resources_dir, "sample_gr_obj.rds")
     expected_out_merged_reads_count_file = pjoin(resources_dir, "expected_merged_cohort_reads_count.csv")

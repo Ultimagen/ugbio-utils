@@ -2,12 +2,12 @@ import os
 import subprocess
 from os.path import join as pjoin
 from pathlib import Path
-import pytest
+
 import numpy as np
 import pandas as pd
+import pytest
 
-base_path = Path(__file__).resolve().parent.parent
-script_path = base_path / "cnv_calling_using_cnmops.R"
+SCRIPT_FILE = "cnv_calling_using_cnmops.R"
 
 
 @pytest.fixture
@@ -15,7 +15,13 @@ def resources_dir():
     return Path(__file__).parent / "resources"
 
 
-def test_cnv_calling_using_cnmops(tmpdir, resources_dir):
+@pytest.fixture
+def script_path():
+    base_path = Path(__file__).resolve().parent.parent
+    return base_path / SCRIPT_FILE
+
+
+def test_cnv_calling_using_cnmops(tmpdir, resources_dir, script_path):
     in_cohort_reads_count_file = pjoin(resources_dir, "merged_cohort_reads_count.rds")
     expected_out_merged_reads_count_file = pjoin(resources_dir, "expected_cohort.cnmops.cnvs.csv")
 

@@ -3,14 +3,23 @@ import subprocess
 from os.path import join as pjoin
 from pathlib import Path
 
-from . import get_resource_dir
+import pytest
 
-resources_dir = get_resource_dir()
-base_path = Path(__file__).resolve().parent.parent
-script_path = base_path / "convert_bedGraph_to_Granges.R"
+SRC_FILE = "convert_bedGraph_to_Granges.R"
 
 
-def test_convert_bedGraph_to_Granges(tmpdir):
+@pytest.fixture
+def resources_dir():
+    return Path(__file__).parent / "resources"
+
+
+@pytest.fixture
+def script_path():
+    base_path = Path(__file__).resolve().parent.parent
+    return base_path / SRC_FILE
+
+
+def test_convert_bedGraph_to_Granges(tmpdir, resources_dir, script_path):
     in_bedGraph_file = pjoin(resources_dir, "test.bedGraph")
     expected_out_file = pjoin(resources_dir, "expected_test.ReadCounts.rds")
     out_file = pjoin(tmpdir, "test.ReadCounts.rds")

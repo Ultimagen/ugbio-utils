@@ -5,14 +5,23 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import get_resource_dir
+import pytest
 
-resources_dir = get_resource_dir()
-base_path = Path(__file__).resolve().parent.parent
-script_path = base_path / "get_reads_count_from_bam.R"
+SRC_FILE = "get_reads_count_from_bam.R"
 
 
-def test_get_reads_count_from_bam(tmpdir):
+@pytest.fixture
+def resources_dir():
+    return Path(__file__).parent / "resources"
+
+
+@pytest.fixture
+def script_path():
+    base_path = Path(__file__).resolve().parent.parent
+    return base_path / SRC_FILE
+
+
+def test_get_reads_count_from_bam(tmpdir, resources_dir, script_path):
     in_bam_file = pjoin(resources_dir, "test.bam")
     expected_out_file = pjoin(resources_dir, "test.ReadCounts.csv")
     out_prefix = pjoin(tmpdir, "out_test")
