@@ -1,12 +1,15 @@
-import filecmp
 import subprocess
 from os.path import join as pjoin
-from . import get_resource_dir
-import pandas as pd
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
+
+from . import get_resource_dir
 
 resources_dir = get_resource_dir(__file__)
-script_path = "/src/cnv/cnmops/get_reads_count_from_bam.R"
+base_path = Path(__file__).resolve().parent.parent
+script_path = base_path / "get_reads_count_from_bam.R"
 
 
 def test_get_reads_count_from_bam(tmpdir):

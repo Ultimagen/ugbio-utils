@@ -11,19 +11,12 @@ permissions:
   id-token: write # Required for assuming an AWS role
   contents: read # Required for actions/checkout
 
-env:
-  AWS_REGION: us-east-1
-  AWS_ROLE_NAME: github-actions-ecr
-  AWS_ACCOUNT: 337532070941
-
-  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/55428976747/locations/global/workloadIdentityPools/devops-pool/providers/devops-pool-provider
-  GCP_SERVICE_ACCOUNT: gcr-push-sa@ultima-data-307918.iam.gserviceaccount.com
-
-  IMAGE: ug_cnmops
-
 jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
+  build-cnmops-docker:
+    uses: ./.github/workflows/build-workspace-docker.yml
+    secrets: inherit
+    with:
+      workspace-folder: cnv
+      docker-file: src/cnv/Dockerfile
+      docker-image: ug_cnmops
+      docker-tag: ${{ inputs.image-tag }}

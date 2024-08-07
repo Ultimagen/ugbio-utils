@@ -34,7 +34,7 @@ runs:
         cache-from: type=gha
         cache-to: type=gha,mode=max
 
-    - name: Run ugbio_cnv tests
+    - name: Run tests in the container
       shell: bash
       run: |
         docker run --rm -v ${{ github.workspace }}/src/cnv:/workdir/src/${{ inputs.workspace-folder }} ${{ inputs.workspace-folder }} pytest /workdir/src/${{ inputs.workspace-folder }}

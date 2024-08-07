@@ -1,13 +1,16 @@
-import filecmp
 import os
 import subprocess
-import pandas as pd
-import numpy as np
 from os.path import join as pjoin
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
 from . import get_resource_dir
 
 resources_dir = get_resource_dir(__file__)
-script_path = "/src/cnv/cnmops/merge_reads_count_sample_to_cohort.R"
+base_path = Path(__file__).resolve().parent.parent
+script_path = base_path / "merge_reads_count_sample_to_cohort.R"
 
 
 def test_merge_reads_count_sample_to_cohort(tmpdir):

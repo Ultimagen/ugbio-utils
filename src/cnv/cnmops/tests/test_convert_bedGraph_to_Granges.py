@@ -1,10 +1,13 @@
 import filecmp
 import subprocess
 from os.path import join as pjoin
+from pathlib import Path
+
 from . import get_resource_dir
 
 resources_dir = get_resource_dir(__file__)
-script_path = "/src/cnv/cnmops/convert_bedGraph_to_Granges.R"
+base_path = Path(__file__).resolve().parent.parent
+script_path = base_path / "convert_bedGraph_to_Granges.R"
 
 
 def test_convert_bedGraph_to_Granges(tmpdir):

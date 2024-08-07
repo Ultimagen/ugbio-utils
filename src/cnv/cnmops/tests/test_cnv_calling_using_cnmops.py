@@ -1,12 +1,16 @@
 import os
 import subprocess
-import pandas as pd
-import numpy as np
 from os.path import join as pjoin
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
 from . import get_resource_dir
 
 resources_dir = get_resource_dir(__file__)
-script_path = "/src/cnv/cnmops/cnv_calling_using_cnmops.R"
+base_path = Path(__file__).resolve().parent.parent
+script_path = base_path / "cnv_calling_using_cnmops.R"
 
 
 def test_cnv_calling_using_cnmops(tmpdir):

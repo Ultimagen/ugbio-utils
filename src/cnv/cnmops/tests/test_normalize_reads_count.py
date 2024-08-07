@@ -1,13 +1,16 @@
-import filecmp
 import os
 import subprocess
-import pandas as pd
-import numpy as np
 from os.path import join as pjoin
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
 from . import get_resource_dir
 
 resources_dir = get_resource_dir(__file__)
-script_path = "/src/cnv/cnmops/normalize_reads_count.R"
+base_path = Path(__file__).resolve().parent.parent
+script_path = base_path / "normalize_reads_count.R"
 
 
 def test_normalize_reads_count(tmpdir):
