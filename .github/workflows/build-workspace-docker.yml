@@ -52,16 +52,12 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: pip install toml
-
       - name: Extract project version from pyproject.toml
         run: |
+          pip install toml
           version=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
           echo "VERSION=${version}" >> $GITHUB_ENV
-
-      - name: Display version
-        run: echo "The project version is ${{ env.VERSION }}"
+          echo "The project version is ${{ env.VERSION }}"
 
       - uses: benjlevesque/short-sha@v2.2
         id: short-sha

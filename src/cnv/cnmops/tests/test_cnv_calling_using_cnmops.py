@@ -6,14 +6,16 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import get_resource_dir
-
-resources_dir = get_resource_dir(__file__)
 base_path = Path(__file__).resolve().parent.parent
 script_path = base_path / "cnv_calling_using_cnmops.R"
 
 
-def test_cnv_calling_using_cnmops(tmpdir):
+@pytest.fixture
+def resources_dir():
+    return Path(__file__).parent / "resources"
+
+
+def test_cnv_calling_using_cnmops(tmpdir, resources_dir):
     in_cohort_reads_count_file = pjoin(resources_dir, "merged_cohort_reads_count.rds")
     expected_out_merged_reads_count_file = pjoin(resources_dir, "expected_cohort.cnmops.cnvs.csv")
 

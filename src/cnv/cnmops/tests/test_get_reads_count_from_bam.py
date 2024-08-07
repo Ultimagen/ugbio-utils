@@ -7,7 +7,7 @@ import pandas as pd
 
 from . import get_resource_dir
 
-resources_dir = get_resource_dir(__file__)
+resources_dir = get_resource_dir()
 base_path = Path(__file__).resolve().parent.parent
 script_path = base_path / "get_reads_count_from_bam.R"
 

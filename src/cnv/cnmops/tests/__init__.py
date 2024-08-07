@@ -1,9 +1,5 @@
-import os
-from os.path import dirname
-
-test_dir = dirname(__file__)
+from pathlib import Path
 
 
-def get_resource_dir(module_file: str):
-    test_path = os.path.splitext(module_file)[0].split("/tests/")[1]
-    return f"{test_dir}/resources/{test_path}"
+def get_resource_dir():
+    return Path(__file__).parent / "resources"

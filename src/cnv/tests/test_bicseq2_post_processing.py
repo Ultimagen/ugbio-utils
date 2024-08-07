@@ -1,8 +1,7 @@
 import filecmp
 from os.path import join as pjoin
-from os.path import dirname
 
-from . import get_resource_dir, test_dir
+from . import get_resource_dir
 
 from ugbio_cnv import bicseq2_post_processing
 
