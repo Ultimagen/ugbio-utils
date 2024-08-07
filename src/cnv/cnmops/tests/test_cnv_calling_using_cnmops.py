@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-SCRIPT_FILE = "cnv_calling_using_cnmops.R"
+SCRIPT_SRC = "cnv_calling_using_cnmops.R"
 
 
 @pytest.fixture
@@ -18,11 +18,11 @@ def resources_dir():
 @pytest.fixture
 def script_path():
     base_path = Path(__file__).resolve().parent.parent
-    return base_path / SCRIPT_FILE
+    return base_path / SCRIPT_SRC
 
 
 def test_cnv_calling_using_cnmops(tmpdir, resources_dir, script_path):
-    in_cohort_reads_count_file = pjoin(resources_dir, "merged_cohort_reads_count.rds")
+    in_cohort_reads_count_file = pjoin(resources_dir, "cohort_reads_count.rds")
     expected_out_merged_reads_count_file = pjoin(resources_dir, "expected_cohort.cnmops.cnvs.csv")
 
     out_file = pjoin(tmpdir, "cohort.cnmops.cnvs.csv")
