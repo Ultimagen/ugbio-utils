@@ -5,8 +5,6 @@ from pathlib import Path
 import pytest
 from ugbio_cnv import bicseq2_post_processing
 
-SCRIPT_SRC = "cnv_calling_using_cnmops.R"
-
 
 @pytest.fixture
 def resources_dir():
