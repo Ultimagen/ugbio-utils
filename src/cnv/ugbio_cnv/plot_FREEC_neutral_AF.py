@@ -24,8 +24,9 @@ def run(argv):
     --out_directory: output directory
     --sample_name: sample name    
     output files:
-    AF histogram: <sample_name>.neutral_AF_hist.jpeg 
+    AF histogram: <out_directory>/<mpileup basename>.neutralAF.hist.jpeg.jpeg 
         shows histogram of AFof neutral (non-CNV) locations across the sample. 
+    AF bed file: <out_directory>/<mpileup basename>.freq.SNP.neutral.bed
     """
     parser = argparse.ArgumentParser(
         prog="plot_FREEC_neutral_AF.py", description="generate histogram of AF of neutral (non-CNV) locations across the sample"
