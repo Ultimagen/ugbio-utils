@@ -1,14 +1,20 @@
-from os.path import join as pjoin
-import warnings
+import filecmp
 import gzip
 import shutil
-import filecmp
+import warnings
+from os.path import join as pjoin
+from pathlib import Path
+
+import pytest
 
 warnings.filterwarnings('ignore')
 
-from . import get_resource_dir
-
 from ugbio_cnv import convert_cnv_results_to_vcf
+
+
+@pytest.fixture
+def resources_dir():
+    return Path(__file__).parent / "resources"
 
 
 def unzip_file(zipped_file_name):
@@ -26,12 +32,10 @@ def compare_zipped_files(a, b):
 
 
 class TestConvertCnvResultsToVcf:
-    inputs_dir = get_resource_dir(__file__)
-
-    def test_convert_cnv_results_to_vcf(self, tmpdir):
-        input_bed_file = pjoin(self.inputs_dir, "EL-0059.cnvs.annotate.bed")
-        genome_file = pjoin(self.inputs_dir, "Homo_sapiens_assembly38.chr1-24.genome")
-        expected_out_vcf = pjoin(self.inputs_dir, 'EL-0059.cnv.vcf.gz')
+    def test_convert_cnv_results_to_vcf(self, tmpdir, resources_dir):
+        input_bed_file = pjoin(resources_dir, "EL-0059.cnvs.annotate.bed")
+        genome_file = pjoin(resources_dir, "Homo_sapiens_assembly38.chr1-24.genome")
+        expected_out_vcf = pjoin(resources_dir, 'EL-0059.cnv.vcf.gz')
 
         sample_name = 'EL-0059'
         out_dir = f"{tmpdir}"
