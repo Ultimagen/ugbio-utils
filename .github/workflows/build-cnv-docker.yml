@@ -1,4 +1,4 @@
-name: Build ug-cnmops docker
+name: Build ug_cnv docker
 on:
   workflow_dispatch:
     inputs:
