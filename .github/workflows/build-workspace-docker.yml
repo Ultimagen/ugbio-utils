@@ -1,0 +1,154 @@
+name: "build ugbio workspace docker"
+on:
+  workflow_call:
+    inputs:
+      workspace-folder:
+        description: "workspace folder under src"
+        type: string
+        required: true
+      docker-image:
+        description: "docker image name"
+        type: string
+        required: true
+      docker-file:
+        description: "Dockerfile path"
+        required: true
+        type: string
+      docker-tag:
+        description: "Docker image tag, If omitted will use github short sha"
+        required: false
+        type: string
+      docker-context:
+        description: "Docker build context"
+        required: false
+        default: "."
+        type: string
+
+permissions:
+  id-token: write # Required for assuming an AWS role
+  contents: read # Required for actions/checkout
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE_NAME: github-actions-ecr
+  AWS_ACCOUNT: 337532070941
+
+  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/55428976747/locations/global/workloadIdentityPools/devops-pool/providers/devops-pool-provider
+  GCP_SERVICE_ACCOUNT: gcr-push-sa@ultima-data-307918.iam.gserviceaccount.com
+  PUBLIC_RELEASE: false
+  AWS_ROLE: arn:aws:iam::337532070941:role/github-actions-ecr
+  GAR_REPO_INTERNAL: us-central1-docker.pkg.dev/ultima-data-307918/ultimagen
+  GAR_REPO_SHARED: us-central1-docker.pkg.dev/ganymede-331016/ultimagen
+  DOCKERHUB_ACCOUNT: ultimagenomics
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Extract project version from pyproject.toml
+        run: |
+          pip install toml
+          version=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+          echo "VERSION=${version}" >> $GITHUB_ENV
+          echo "The project version is ${{ env.VERSION }}"
+
+      - uses: benjlevesque/short-sha@v2.2
+        id: short-sha
+        with:
+          length: 7
+
+      - name: Set tag based on commit sha
+        id: set-tag
+        if: ${{ inputs.image-tag == '' }}
+        run: |
+          if [ ${{ github.ref_name }} == 'main' ]; then
+            echo "imageTag=test_${{ steps.short-sha.outputs.sha }}" >>$GITHUB_OUTPUT;
+          else
+            echo "imageTag=test_${{ steps.short-sha.outputs.sha }}" >>$GITHUB_OUTPUT;
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v3
+        with:
+          role-to-assume: arn:aws:iam::${{ env.AWS_ACCOUNT }}:role/${{ env.AWS_ROLE_NAME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          token_format: access_token
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Login to GCR
+        id: gcr-login
+        uses: docker/login-action@v2
+        with:
+          registry: us-central1-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Set image tags
+        run: |
+          set -e
+
+          image_tags=(
+            ${{ env.VERSION }}
+            ${{ inputs.image-tag || steps.set-tag.outputs.imageTag }}
+          )
+          docker_registries=()
+          gar_repo=${{ env.GAR_REPO_INTERNAL }}
+          if [ ${{ env.PUBLIC_RELEASE }} == "true" ]; then
+            docker_registries+=(${{ env.DOCKERHUB_ACCOUNT }})
+            gar_repo=${{ env.GAR_REPO_SHARED }}
+          fi
+          docker_registries+=(
+            ${{ steps.ecr-login.outputs.registry }}
+            ${gar_repo}
+          )
+          
+          for registry in ${docker_registries[@]}; do
+            for tag in ${image_tags[@]}; do
+              docker_destinations+=${registry}/${{ inputs.docker-image }}:${tag},
+            done
+          done
+          
+          echo "GAR_REPO=${gar_repo}" >> ${GITHUB_ENV}
+          echo "DOCKER_DESTINATIONS=${docker_destinations%,}" >> ${GITHUB_ENV}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build and push
+        uses: docker/build-push-action@v4
+        with:
+          context: ${{ inputs.docker-context }}
+          file: ${{ inputs.docker-file }}
+          provenance: false
+          push: true
+          tags: ${{ env.DOCKER_DESTINATIONS }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Update action summary with built tags
+        run: |
+          echo "### ECR LOGIN" >> ${GITHUB_STEP_SUMMARY}
+          echo "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ steps.ecr-login.outputs.registry }}" >> ${GITHUB_STEP_SUMMARY}
+          echo "### GCR LOGIN" >> ${GITHUB_STEP_SUMMARY}
+          echo "gcloud auth configure-docker us-central1-docker.pkg.dev" >> ${GITHUB_STEP_SUMMARY}
+          echo "### IMAGE TAGS" >> ${GITHUB_STEP_SUMMARY}
+          for dest in $(echo "${{ env.DOCKER_DESTINATIONS }}" | sed 's/,/ /g'); do 
+            echo "- ${dest}" >> ${GITHUB_STEP_SUMMARY}
+          done

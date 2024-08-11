@@ -1,18 +1,23 @@
 import filecmp
 from os.path import join as pjoin
-from . import get_resource_dir
+from pathlib import Path
 
+import pytest
 from ugbio_cnv.filter_sample_cnvs import annotate_bed
 
 
-class TestFilterSampleCnvs:
-    inputs_dir = get_resource_dir(__file__)
+@pytest.fixture
+def resources_dir():
+    return Path(__file__).parent / "resources"
 
-    def test_annotate_bed(self, tmpdir):
-        input_bed_file = pjoin(self.inputs_dir, "unfiltered_cnvs.bed")
-        expected_out_filtered_bed_file = pjoin(self.inputs_dir, "filtered_cnvs.bed")
-        expected_out_annotate_bed_file = pjoin(self.inputs_dir, "annotate_cnv.bed")
-        coverage_lcr_file = pjoin(self.inputs_dir, "UG-CNV-LCR.bed")
+
+class TestFilterSampleCnvs:
+
+    def test_annotate_bed(self, tmpdir, resources_dir):
+        input_bed_file = pjoin(resources_dir, "unfiltered_cnvs.bed")
+        expected_out_filtered_bed_file = pjoin(resources_dir, "filtered_cnvs.bed")
+        expected_out_annotate_bed_file = pjoin(resources_dir, "annotate_cnv.bed")
+        coverage_lcr_file = pjoin(resources_dir, "UG-CNV-LCR.bed")
         intersection_cutoff = 0.5
         min_cnv_length = 10000
         prefix = f"{tmpdir}/"
