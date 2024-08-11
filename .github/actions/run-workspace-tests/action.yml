@@ -37,7 +37,7 @@ runs:
     - name: Run tests in the container
       shell: bash
       run: |
-        docker run --rm -v ${{ github.workspace }}/src/core:/workdir/src/core -v ${{ github.workspace }}/src/${{ inputs.workspace-folder }}:/workdir/src/${{ inputs.workspace-folder }} ${{ inputs.workspace-folder }} pytest /workdir/src/core /workdir/src/${{ inputs.workspace-folder }}
+        docker run --rm -v ${{ github.workspace }}/src:/workdir/src ${{ inputs.workspace-folder }} pytest /workdir/src/core /workdir/src/${{ inputs.workspace-folder }}
 
     #todo how to upload results?
     #      - name: Upload Test Results
