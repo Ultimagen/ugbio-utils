@@ -54,6 +54,8 @@ def read_trimmer_failure_codes(trimmer_failure_codes_csv: str, add_total: bool =
     ----------
     trimmer_failure_codes_csv : str
         path to a Trimmer failure codes file
+    add_total : bool
+        if True, add a row with total failed reads to the dataframe
 
     Returns
     -------
@@ -62,7 +64,7 @@ def read_trimmer_failure_codes(trimmer_failure_codes_csv: str, add_total: bool =
 
     Raises
     ------
-    AssertionError
+    ValueError
         If the columns are not as expected
     """
     df_trimmer_failure_codes = pd.read_csv(trimmer_failure_codes_csv)
@@ -77,21 +79,30 @@ def read_trimmer_failure_codes(trimmer_failure_codes_csv: str, add_total: bool =
     ]
     if list(df_trimmer_failure_codes.columns) != expected_columns:
         raise ValueError(
-            f"Unexpected columns in {trimmer_failure_codes_csv}, expected {expected_columns}, got {list(df_trimmer_failure_codes.columns)}"
+            f"Unexpected columns in {trimmer_failure_codes_csv},"
+            f"expected {expected_columns}, got {list(df_trimmer_failure_codes.columns)}"
         )
+
+    # refactor columns and names
+    df_trimmer_failure_codes = df_trimmer_failure_codes.rename(
+        columns={c: c.replace(" ", "_").lower() for c in df_trimmer_failure_codes.columns}
+    )
 
     df_trimmer_failure_codes = (
         df_trimmer_failure_codes.groupby(["segment", "reason"])
-        .agg({x: "sum" for x in ("failed read count", "total read count")})
-        .assign(**{"% failure": lambda x: 100 * x["failed read count"] / x["total read count"]})
+        .agg({x: "sum" for x in ("failed_read_count", "total_read_count")})
+        .assign(**{"PCT_failure": lambda x: 100 * x["failed_read_count"] / x["total_read_count"]})
     )
 
     if add_total:
-        total_row = pd.DataFrame({
-            'failed read count': df_trimmer_failure_codes['failed read count'].sum(),
-            'total read count': df_trimmer_failure_codes['total read count'].iloc[0],
-            '% failure': df_trimmer_failure_codes['% failure'].sum()
-        }, index=pd.MultiIndex.from_tuples([('total', 'total')]))
+        total_row = pd.DataFrame(
+            {
+                "failed_read_count": df_trimmer_failure_codes["failed_read_count"].sum(),
+                "total_read_count": df_trimmer_failure_codes["total_read_count"].iloc[0],
+                "PCT_failure": df_trimmer_failure_codes["PCT_failure"].sum(),
+            },
+            index=pd.MultiIndex.from_tuples([("total", "total")]),
+        )
 
         df_trimmer_failure_codes = pd.concat([df_trimmer_failure_codes, total_row])
         df_trimmer_failure_codes.index = df_trimmer_failure_codes.index.set_names(["segment", "reason"])

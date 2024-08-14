@@ -1,7 +1,6 @@
 import pandas as pd
 
-
-def read_sorter_statistics_csv(sorter_stats_csv: str, edit_metric_names: bool = True) -> pd.DataFrame:
+def read_sorter_statistics_csv(sorter_stats_csv: str, edit_metric_names: bool = True) -> pd.Series:
     """
     Collect sorter statistics from csv
 
@@ -10,11 +9,12 @@ def read_sorter_statistics_csv(sorter_stats_csv: str, edit_metric_names: bool = 
     sorter_stats_csv : str
         path to a Sorter stats file
     edit_metric_names: bool
-        if True, edit the metric names to be more human-readable
+        if True, edit the metric names to be consistent in the naming of percentages
 
     Returns
     -------
-    sorter stats as a pandas DataFrame
+    pd.Series
+        Series with sorter statistics
     """
 
     # read Sorter stats
@@ -38,5 +38,5 @@ def read_sorter_statistics_csv(sorter_stats_csv: str, edit_metric_names: bool = 
 
     if edit_metric_names:
         # rename metrics to uniform convention
-        df_sorter_stats = df_sorter_stats.rename({c: c.replace("PCT_", "% ") for c in df_sorter_stats.index})
-    return df_sorter_stats
+        df_sorter_stats = df_sorter_stats.rename({c: c.replace("% ", "PCT_") for c in df_sorter_stats.index})
+    return df_sorter_stats["value"]
