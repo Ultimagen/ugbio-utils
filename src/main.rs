@@ -2,44 +2,92 @@ use std::io;
 use std::io::Read;
 use std::io::Write;
 
+use anyhow::Result;
+
 use noodles::bed;
 use noodles::bed::record::OptionalFields;
 use noodles::core::Position;
 
+use rusqlite::Connection;
+
+fn create_schema(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS records (
+           name TEXT NOT NULL,
+           start INTEGER NOT NULL,
+           end INTEGER NOT NULL
+         )",
+        (),
+    )?;
+
+    Ok(())
+}
+
 /*
   bedtools groupby -c 3 -o count < all.bed > grouped.bed
 */
-fn groupby(input: impl Read, output: impl Write) {
-    read_records(input);
+fn groupby(input: impl Read, output: impl Write) -> Result<()> {
+    let mut conn = Connection::open("bed.db")?;
 
-    // ....
+    create_schema(&conn)?;
 
-    write_records(output);
+    read_records(input, &mut conn)?;
+
+    // todo!("perform the groupby query on the sqlite table");
+    write_records(output, &mut conn)?;
+
+    Ok(())
 }
 
-fn read_records(input: impl Read) {
+fn read_records(input: impl Read, conn: &mut Connection) -> Result<()> {
     let buf_input = io::BufReader::new(input);
     let mut bed_input = bed::Reader::new(buf_input);
 
-    for rec in bed_input.records::<3>() {
-        let record_in = rec.unwrap();
+    let tx = conn.transaction()?;
+    {
+        let mut stmt = tx.prepare("INSERT INTO records (name, start, end) VALUES (?1, ?2, ?3)")?;
 
-        eprintln!("{record_in:?}");
+        for rec in bed_input.records::<3>() {
+            let record_in = rec?;
+
+            // eprintln!("{record_in:?}");
+            stmt.execute((
+                record_in.reference_sequence_name(),
+                record_in.start_position().get(),
+                record_in.end_position().get(),
+            ))?;
+        }
     }
+    tx.commit()?;
+
+    Ok(())
 }
 
-fn write_records(output: impl Write) {
+fn write_records(output: impl Write, conn: &mut Connection) -> Result<()> {
     let buf_output = io::BufWriter::new(output);
     let mut bed_output = bed::Writer::new(buf_output);
 
-    /* loop... */
-    {
-        let count = 42;
+    let mut stmt = conn.prepare(
+        r"
+            SELECT name, start, end
+            FROM records
+            GROUP BY end
+            HAVING COUNT(*) = 1
+        ",
+    )?;
+
+    let mut rows = stmt.query([])?;
+
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(0)?;
+        let start: usize = row.get(1)?;
+        let end: usize = row.get(2)?;
+
+        let count: usize = 1; // TODO: Unnecessary since it's always 1!
         let optional_fields = OptionalFields::from(vec![count.to_string()]);
 
-        let name = "chr1";
-        let start_position = Position::try_from(10107).unwrap();
-        let end_position = Position::try_from(10108).unwrap();
+        let start_position = Position::try_from(start)?;
+        let end_position = Position::try_from(end)?;
 
         let record_out = bed::Record::<3>::builder()
             .set_reference_sequence_name(name)
@@ -51,8 +99,10 @@ fn write_records(output: impl Write) {
 
         bed_output.write_record(&record_out).unwrap();
     }
+
+    Ok(())
 }
 
-fn main() {
+fn main() -> Result<()> {
     groupby(io::stdin(), io::stdout())
 }
