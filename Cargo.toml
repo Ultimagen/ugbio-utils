@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-noodles = { version = "0.79.0", features = ["bed", "vcf"] }
+noodles = { version = "0.79.0", features = ["bed", "core", "vcf"] }
 rusqlite = "0.32.1"
