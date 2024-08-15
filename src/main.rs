@@ -1,6 +1,7 @@
 use std::io;
 use std::io::Read;
 use std::io::Write;
+use std::time::Instant;
 
 use anyhow::Result;
 
@@ -31,10 +32,14 @@ fn groupby(input: impl Read, output: impl Write) -> Result<()> {
 
     create_schema(&conn)?;
 
+    let before = Instant::now();
     read_records(input, &mut conn)?;
+    eprintln!("read_records: {:.2?}", before.elapsed());
 
     // todo!("perform the groupby query on the sqlite table");
+    let before = Instant::now();
     write_records(output, &mut conn)?;
+    eprintln!("write_records: {:.2?}", before.elapsed());
 
     Ok(())
 }
