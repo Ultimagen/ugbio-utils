@@ -5,7 +5,7 @@ import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
 
-from sc_qc_dataclasses import H5Keys, OutputFiles
+from ugbio_single_cell.sc_qc_dataclasses import H5Keys, OutputFiles
 from ugbio_core.plotting_utils import set_pyplot_defaults
 
 set_pyplot_defaults()

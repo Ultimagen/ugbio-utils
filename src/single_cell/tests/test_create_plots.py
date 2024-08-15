@@ -24,7 +24,7 @@ def output_path(tmpdir):
     return Path(tmpdir)
 
 
-@patch("ugvc.pipelines.single_cell_qc.create_plots.set_pyplot_defaults") # TODO: FIX the import and take it from the core package
+@patch("ugbio_single_cell.create_plots.set_pyplot_defaults")
 def test_cbc_umi_plot(mock_set_pyplot_defaults, h5_file, output_path):
     result = create_plots.cbc_umi_plot(h5_file, output_path)
     expected_output = output_path / OutputFiles.CBC_UMI_PLOT.value
@@ -36,7 +36,7 @@ def test_cbc_umi_plot(mock_set_pyplot_defaults, h5_file, output_path):
     assert ax.has_data()
 
 
-@patch("ugvc.pipelines.single_cell_qc.create_plots.set_pyplot_defaults")
+@patch("ugbio_single_cell.create_plots.set_pyplot_defaults")
 def test_plot_insert_length_histogram(mock_set_pyplot_defaults, h5_file, output_path):
     result = create_plots.plot_insert_length_histogram(h5_file, output_path)
     expected_output = output_path / OutputFiles.INSERT_LENGTH_HISTOGRAM.value
@@ -48,7 +48,7 @@ def test_plot_insert_length_histogram(mock_set_pyplot_defaults, h5_file, output_
     assert ax.has_data()
 
 
-@patch("ugvc.pipelines.single_cell_qc.create_plots.set_pyplot_defaults")
+@patch("ugbio_single_cell.create_plots.set_pyplot_defaults")
 def test_plot_mean_insert_quality_histogram(
     mock_set_pyplot_defaults, h5_file, output_path
 ):
@@ -62,7 +62,7 @@ def test_plot_mean_insert_quality_histogram(
     assert ax.has_data()
 
 
-@patch("ugvc.pipelines.single_cell_qc.create_plots.set_pyplot_defaults")
+@patch("ugbio_single_cell.create_plots.set_pyplot_defaults")
 def test_plot_quality_per_position(
     mock_set_pyplot_defaults,
     h5_file,

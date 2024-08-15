@@ -6,17 +6,17 @@ import pandas as pd
 import papermill
 from nbconvert import HTMLExporter
 
-from collect_statistics import (
+from ugbio_single_cell.collect_statistics import (
     collect_statistics,
     extract_statistics_table,
 )
-from create_plots import (
+from ugbio_single_cell.create_plots import (
     cbc_umi_plot,
     plot_insert_length_histogram,
     plot_mean_insert_quality_histogram,
     plot_quality_per_position,
 )
-from sc_qc_dataclasses import (
+from ugbio_single_cell.sc_qc_dataclasses import (
     TEMPLATE_NOTEBOOK,
     H5Keys,
     Inputs,
