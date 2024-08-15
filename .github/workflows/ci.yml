@@ -15,6 +15,12 @@ jobs:
         with:
           workspace-folder: cnv
           docker-file: src/cnv/Dockerfile
+      
+      - name: Run single cell tests
+        uses: ./.github/actions/run-workspace-tests
+        with:
+          workspace-folder: single_cell
+          docker-file: src/single_cell/Dockerfile
 
 
 
