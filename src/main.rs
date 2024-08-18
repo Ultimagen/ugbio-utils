@@ -25,7 +25,10 @@ fn create_schema(conn: &Connection) -> Result<()> {
 }
 
 /*
-  bedtools groupby -c 3 -o count < all.bed > grouped.bed
+    TODO: Use the vcf.gz format directly instead of converting to bed and then filtering:
+        Read the vcf data into the DB.
+
+    bedtools groupby -c 3 -o count < all.bed > grouped.bed
 */
 fn groupby(input: impl Read, output: impl Write) -> Result<()> {
     let mut conn = Connection::open("bed.db")?;
