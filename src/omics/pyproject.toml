@@ -1,0 +1,10 @@
+[project]
+name = "ugbio_omics"
+version = "0.1.0.dev9"
+description = "Ultima Genomics bioinfo utils for working iwth AWS Health-Omics"
+authors = [
+    { name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" }
+]
+dependencies = []
+readme = "README.omics.md"
+requires-python = ">= 3.11"
