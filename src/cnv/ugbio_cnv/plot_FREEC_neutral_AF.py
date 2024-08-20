@@ -8,8 +8,9 @@ import argparse
 import logging
 import sys
 import seaborn as sns
+import re
 from ugbio_core.logger import logger
-from ugbio_core.pileuptofreq import pileup_to_freq
+from ugbio_core.pileuptofreq import create_frequncies_from_pileup
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -21,12 +22,14 @@ def mpileup_to_freq(pileup_file,outfile):
     Convert mpileup file to frequencies counts
     """
     # mpileup to frequencies counts
-    df_freq = pileup_to_freq(pileup_file)
+    df_freq = create_frequncies_from_pileup(pileup_file)
+    print(df_freq.head(10))
     #consider SNPs only
-    df_freq = df_freq[~df_freq['column_name'].str.contains('Deletion|+|-', na=False)]
+    pattern = '|'.join([re.escape(sub) for sub in ['Deletion','+','-']])
+    df_freq = df_freq[~df_freq['Base'].str.contains(pattern,case=False)]
     df_freq = df_freq[df_freq['Base']!=df_freq['Ref']]
     #add Allele Frequency column
-    df_freq['AF']=df_freq['Count']/df_freq['Depth']
+    df_freq['AF']=df_freq['Count'].astype(int)/df_freq['Depth'].astype(int)
     #convert to bed
     df_freq[['Chrom','Pos','Pos','AF']].to_csv(outfile,sep='\t',header=None,index=None)    
 
@@ -81,47 +84,16 @@ def run(argv):
     outdir = args.out_directory
     logger.info(f"file will be written to {outdir}")
 
+    #convert mpileup to SNP bed file with AF
     SNP_bed_file = pjoin(outdir,f"{basename}.freq.SNP.bed")
     mpileup_to_freq(pileup_file,SNP_bed_file)
     
-    # mpileup to frequencies counts
-    # freq_file = pjoin(outdir, f"{basename}.freq")
-    # cmd = f"python -m ugbio_cnv.pileuptofreq -i {pileup_file} -o {freq_file}"
-    # os.system(cmd)
-    # logger.info(f"finished running pileuptofreq")
-
-    #consider SNPs only
-    # freq_SNP_file = pjoin(outdir, f"{basename}.freq.SNP")
-    # cmd = f"cat {freq_file} | grep -v \"\[+-\]\" | grep -v \"Deletion\" | grep -v \"Insertion\" | awk -F \";\" \'$4!=$6\' > {freq_SNP_file}"
-    # os.system(cmd)    
-
-    #convert to bed
-    # df_SNP = pd.read_csv(freq_SNP_file , sep=";")
-    # df_SNP['AF']=df_SNP['Count']/df_SNP['Depth']
-
-    # SNP_bed_file = pjoin(outdir,f"{basename}.freq.SNP.bed")
-    # df_SNP[['Chrom','Pos','Pos','AF']].to_csv(SNP_bed_file,sep='\t',header=None,index=None)
-    
+    #get neutral (non-CNV) AF
     neutral_SNP_bed_file = pjoin(outdir,f"{basename}.freq.SNP.neutral.bed")
     df_neutral_AF = get_neutral_AF(SNP_bed_file,args.cnvs_file,neutral_SNP_bed_file)
 
-    # cmd = f"bedtools intersect -v -a {SNP_bed_file} -b {args.cnvs_file} > {neutral_SNP_bed_file}"
-    # os.system(cmd)
-
-    # df_neutral_AF = pd.read_csv(neutral_SNP_bed_file,header=None,sep='\t')
-    # df_neutral_AF.columns = ['Chrom','Start','End','AF']
-    
-    neutral_SNP_hist_file = pjoin(outdir,f"{basename}.freq.SNP.neutral.hist.jpeg")
-    # plt.figure()
-    # df_neutral_AF['AF'].hist(bins=50)
-    # xlabels = np.arange(0, 1.1, 0.1)
-    # plt.xticks(xlabels)
-    # plt.xlabel('Allele Frequency')
-    # plt.ylabel('Count')   
-    # plt.title(f"{args.sample_name} : Allele Frequency distribution in neutral regions") 
-    # plt.yscale('log')
-    # plt.savefig(neutral_SNP_hist_file, dpi=300,bbox_inches="tight")
-    
+    #plot neutral AF histogram
+    neutral_SNP_hist_file = pjoin(outdir,f"{basename}.freq.SNP.neutral.hist.jpeg") 
     plot_neutral_AF(df_neutral_AF,args.sample_name,neutral_SNP_hist_file)
     logger.info(f"out hist file : {neutral_SNP_hist_file}")
 
