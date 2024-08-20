@@ -1,4 +1,3 @@
-import json
 import os
 from argparse import ArgumentParser
 from datetime import timedelta, tzinfo
@@ -11,7 +10,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from ugbio_omics.get_run_cost import get_run_cost
+from ugbio_omics.get_run_cost import ESTIMATED_USD_COLUMN, NAME_COLUMN, SIZE_RESERVED_COLUMN, RunCost
 from ugbio_omics.get_omics_log import OMICS_LOG_GROUP
 from ugbio_omics.get_run_info import get_run_info
 
@@ -159,23 +158,11 @@ def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tupl
     
     # Process cost and add to the performance data
     print("Add cost per task to performance data")
-    cost = get_run_cost(run_id, client=omics_client)
-    storage_cost = cost['cost_detail']['storage_cost']['cost']
-    tasks_costs = cost['cost_detail']['task_costs']
-    cost_df = pd.DataFrame({
-        "task": [task['name'] for task in tasks_costs],
-        "cost": [task['cost'] for task in tasks_costs],
-        "instance": [task['instance'] for task in tasks_costs],
-        "total_storage_cost": storage_cost})
+    run_cost = RunCost(run_id, output_dir=output_dir, output_prefix=output_prefix)
+    cost_df = run_cost.get_tasks_cost()
+    cost_df = cost_df.rename(columns={NAME_COLUMN: "task", ESTIMATED_USD_COLUMN: "cost", SIZE_RESERVED_COLUMN: "instance"})
+    cost_df['total_storage_cost'] = run_cost.get_storage_cost()
     total_performance_df = total_performance_df.merge(cost_df, on="task", how="left")
-
-    # Save cost information
-    cost_output = f"{output_prefix}omics_{run_id}.cost.json"
-    if output_dir is not None:
-        cost_output = f"{output_dir}/{cost_output}"
-    print(f"Saving cost data to: {cost_output}")
-    with open(cost_output, 'w') as f:
-        json.dump(cost, f, indent=4)
 
     # Save performance data
     output = f"{output_prefix}omics_{run_id}.performance.csv"
@@ -187,7 +174,7 @@ def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tupl
     # Save figures to HTML
     save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir, output_prefix)
 
-    return total_performance_df, cost
+    return total_performance_df, cost_df
 
 def process_monitor_log(run_id, task, client=None) -> MonitorLog:
     if not client:
