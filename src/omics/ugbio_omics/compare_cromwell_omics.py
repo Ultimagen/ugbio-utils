@@ -1,6 +1,7 @@
 import json
 import os
 from argparse import ArgumentParser
+from typing import Tuple
 
 import boto3
 import dateutil.parser
@@ -53,18 +54,7 @@ def compare_cromwell_omics(cromwell_wid, omics_run_id, omics_session, workflow_n
     duration_df["duration_diff"] = duration_df["omics_duration"] - duration_df["cromwell_duration"]
 
     # Add resources for omics and cromwell
-    resources_df = omics_run_cost.get_tasks_resources()
-    # Merge cpus, mem_gbs, gpus into one column as a dictionary
-    resources_df['omics_resources'] = resources_df.apply(lambda row: {
-        'cpus': row[Columns.CPU_REQUESTED.value],
-        'mem_gbs': row[Columns.MEMORY_REQUESTED.value],
-        'gpus': row[Columns.GPUS_REQUESTED.value]}, axis=1)
-    resources_df.drop(columns=[Columns.CPU_REQUESTED.value, Columns.MEMORY_REQUESTED.value, Columns.GPUS_REQUESTED.value], inplace=True)
-    resources_df.rename(columns={
-        Columns.NAME_COLUMN.value: "task",
-        Columns.SIZE_RESERVED_COLUMN: "omics_instance"}, inplace=True)
-    resources_df['task'] = resources_df['task'].str.split('-').str[0]
-    resources_df = resources_df.groupby('task').first().reset_index()
+    resources_df = extract_omics_resources(omics_run_cost)
     
     # Merge cromwell_cost_df['cpus','mem_gbs'] into one column as a dictionary
     cromwell_resources = (cromwell_cost_df[['cpus', 'mem_gbs']].apply(lambda x: {'cpus': x['cpus'], 'mem_gbs': x['mem_gbs']}, axis=1))
@@ -78,6 +68,20 @@ def compare_cromwell_omics(cromwell_wid, omics_run_id, omics_session, workflow_n
     compare_df.to_csv(compare_file, index=False, float_format = '%.3f')
     print(f"Comparison saved in: {compare_file}")
 
+def extract_omics_resources(omics_run_cost: RunCost) -> pd.DataFrame:
+    resources_df = omics_run_cost.get_tasks_resources()
+    # Merge cpus, mem_gbs, gpus into one column as a dictionary
+    resources_df['omics_resources'] = resources_df.apply(lambda row: {
+        'cpus': row[Columns.CPU_REQUESTED.value],
+        'mem_gbs': row[Columns.MEMORY_REQUESTED.value],
+        'gpus': row[Columns.GPUS_REQUESTED.value]}, axis=1)
+    resources_df.drop(columns=[Columns.CPU_REQUESTED.value, Columns.MEMORY_REQUESTED.value, Columns.GPUS_REQUESTED.value], inplace=True)
+    resources_df.rename(columns={
+        Columns.NAME_COLUMN.value: "task",
+        Columns.SIZE_RESERVED_COLUMN.value: "omics_instance"}, inplace=True)
+    resources_df['task'] = resources_df['task'].str.split('-').str[0]
+    resources_df = resources_df.groupby('task').first().reset_index()
+    return resources_df
 
 def copy_cromwell_data(workflow_name, cromwell_wid, output_path, overwrite=False):
     # Get cromwell bucket for the workflow
@@ -187,7 +191,7 @@ def get_cromwell_total_duration(cromwell_metadata_file):
     total_duration = end_time - start_time
     return total_duration.total_seconds()/3600
 
-def get_omics_performance_cost(omics_run_id, session, output_path, overwrite=False):
+def get_omics_performance_cost(omics_run_id, session, output_path, overwrite=False) -> Tuple[pd.DataFrame, float, RunCost]:
     print(f"Calculating omics performance and cost for run: {omics_run_id}")
     performance_file = f'{output_path}/omics_{omics_run_id}.performance.csv'
     if os.path.exists(performance_file) and not overwrite:
