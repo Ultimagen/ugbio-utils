@@ -11,11 +11,11 @@ from ugbio_cnv import plot_FREEC_neutral_AF
 
 class TestPlotFREECNeutralAF:
     def test_plot_FREEC_neutral_AF(self, tmpdir, resources_dir):
-        input_cnv_file = resources_dir / "COLO829.full_sample.sorter_input.test.cnvs.filter.CHR19.bed"
-        input_mpileup = resources_dir / "tumor.031865-Lb_2211-Z0048-CTGCCAGACTGTGAT.cram_minipileup.CHR19.pileup"
+        input_cnv_file = str(resources_dir / "COLO829.full_sample.sorter_input.test.cnvs.filter.CHR19.bed")
+        input_mpileup = str(resources_dir / "tumor.031865-Lb_2211-Z0048-CTGCCAGACTGTGAT.cram_minipileup.CHR19.pileup")
 
-        expected_AF_bed_file = resources_dir / 'expected_COLO829_CHR19.freq.SNP.neutral.bed'
-        expected_AF_hist_fig = resources_dir / 'expected_COLO829_CHR19.freq.SNP.neutral.hist.jpeg'
+        expected_AF_bed_file = str(resources_dir / 'expected_COLO829_CHR19.freq.SNP.neutral.bed')
+        expected_AF_hist_fig = str(resources_dir / 'expected_COLO829_CHR19.freq.SNP.neutral.hist.jpeg')
         
         sample_name = 'COLO829_CHR19'
         out_dir = f"{tmpdir}"
