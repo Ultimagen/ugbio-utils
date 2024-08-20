@@ -3,7 +3,7 @@ import numpy as np
 import os
 from os.path import join as pjoin
 from matplotlib import pyplot as plt
-from matplotlib.patches import Rectangle
+from pathlib import Path
 import argparse
 import logging
 import sys
