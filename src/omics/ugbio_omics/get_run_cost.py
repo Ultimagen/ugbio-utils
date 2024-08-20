@@ -1,12 +1,18 @@
 import os
 import subprocess
+from enum import Enum
 
 import pandas as pd
 
-ESTIMATED_USD_COLUMN = "estimatedUSD"
-TYPE_COLUMN = "type"
-NAME_COLUMN = "name"
-SIZE_RESERVED_COLUMN = "sizeReserved"
+
+class Columns(Enum):
+    ESTIMATED_USD_COLUMN = "estimatedUSD"
+    TYPE_COLUMN = "type"
+    NAME_COLUMN = "name"
+    SIZE_RESERVED_COLUMN = "sizeReserved"
+    CPU_REQUESTED = 'cpusRequested'
+    MEMORY_REQUESTED = 'memoryRequested'
+    GPUS_REQUESTED = 'gpusRequested'
 
 class RunCost:
     def __init__(self, run_id, output_dir=None, output_prefix=''):
@@ -33,19 +39,36 @@ class RunCost:
         if self.cost_df is None:
             self.calculate_run_cost()
 
-        return self.cost_df[ESTIMATED_USD_COLUMN].sum()
+        return self.cost_df[Columns.ESTIMATED_USD_COLUMN.value].sum()
     
     def get_storage_cost(self) -> float:
         if self.cost_df is None:
             self.calculate_run_cost()
 
-        return self.cost_df[self.cost_df[TYPE_COLUMN] == 'run'][ESTIMATED_USD_COLUMN].values[0]
+        return self.cost_df[self.cost_df[Columns.TYPE_COLUMN.value] == 'run'][
+            Columns.ESTIMATED_USD_COLUMN.value].values[0]
     
     def get_tasks_cost(self) -> pd.DataFrame:
         if self.cost_df is None:
             self.calculate_run_cost()
         
-        return self.cost_df[self.cost_df[TYPE_COLUMN] == 'task'][[NAME_COLUMN, ESTIMATED_USD_COLUMN, SIZE_RESERVED_COLUMN]]
+        return self.cost_df[self.cost_df[Columns.TYPE_COLUMN.value] == 'task'][[
+                Columns.NAME_COLUMN.value,
+                Columns.ESTIMATED_USD_COLUMN.value,
+                Columns.SIZE_RESERVED_COLUMN.value
+            ]]
+
+    def get_tasks_resources(self) -> pd.DataFrame:
+        if self.cost_df is None:
+            self.calculate_run_cost()
+        
+        return self.cost_df[self.cost_df[Columns.TYPE_COLUMN.value] == 'task'][[
+                Columns.NAME_COLUMN.value,
+                Columns.SIZE_RESERVED_COLUMN.value,
+                Columns.CPU_REQUESTED.value,
+                Columns.MEMORY_REQUESTED.value,
+                Columns.GPUS_REQUESTED.value
+            ]]
 
     @staticmethod
     def run_analyzer(run_id, run_csv_name):

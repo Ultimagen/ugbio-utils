@@ -10,7 +10,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from ugbio_omics.get_run_cost import ESTIMATED_USD_COLUMN, NAME_COLUMN, SIZE_RESERVED_COLUMN, RunCost
+from ugbio_omics.get_run_cost import Columns, RunCost
 from ugbio_omics.get_omics_log import OMICS_LOG_GROUP
 from ugbio_omics.get_run_info import get_run_info
 
@@ -110,7 +110,7 @@ class MonitorLog:
                 MonitorColumns.IOWAIT.value: [iowait]
                 })], ignore_index=True)
 
-def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tuple[pd.DataFrame, dict]:
+def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tuple[pd.DataFrame, RunCost]:
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
@@ -160,7 +160,10 @@ def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tupl
     print("Add cost per task to performance data")
     run_cost = RunCost(run_id, output_dir=output_dir, output_prefix=output_prefix)
     cost_df = run_cost.get_tasks_cost()
-    cost_df = cost_df.rename(columns={NAME_COLUMN: "task", ESTIMATED_USD_COLUMN: "cost", SIZE_RESERVED_COLUMN: "instance"})
+    cost_df = cost_df.rename(columns={
+        Columns.NAME_COLUMN.value: "task",
+        Columns.ESTIMATED_USD_COLUMN.value: "cost",
+        Columns.SIZE_RESERVED_COLUMN.value: "instance"})
     cost_df['total_storage_cost'] = run_cost.get_storage_cost()
     total_performance_df = total_performance_df.merge(cost_df, on="task", how="left")
 
@@ -174,7 +177,7 @@ def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tupl
     # Save figures to HTML
     save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir, output_prefix)
 
-    return total_performance_df, cost_df
+    return total_performance_df, run_cost
 
 def process_monitor_log(run_id, task, client=None) -> MonitorLog:
     if not client:
