@@ -5,10 +5,12 @@ use std::time::Instant;
 
 use anyhow::Result;
 
-use noodles::bed;
+use noodles::bgzf;
 use noodles::core::Position;
 use noodles::vcf;
-use noodles::vcf::variant::record::Ids; // trait
+use noodles::vcf::variant::io::Write as _;
+use noodles::vcf::variant::record::Ids as _;
+use noodles::vcf::variant::record_buf;
 
 use rusqlite::named_params;
 use rusqlite::Connection;
@@ -22,18 +24,23 @@ impl Variants {
     fn from_vcf(input: impl Read) -> Result<Self> {
         let mut conn = Connection::open("vcf.db")?;
 
-        conn.execute(
-            "CREATE TABLE variants (
-            chrom TEXT,
-            pos INTEGER,
-            id TEXT,
-            ref TEXT,
-            alt TEXT,
-            qual REAL,
-            filter TEXT,
-            info TEXT
-        )",
-            [],
+        conn.execute_batch(
+            "BEGIN;
+
+             CREATE TABLE variants (
+                chrom TEXT,
+                pos INTEGER,
+                id TEXT,
+                ref TEXT,
+                alt TEXT,
+                qual REAL,
+                filter TEXT,
+                info TEXT
+            );
+
+            CREATE INDEX idx_variants_chrom_pos ON variants (chrom, pos);
+
+            COMMIT; ",
         )?;
 
         // let reader = Builder::default().build_from_path("sample.vcf")?;
@@ -50,23 +57,27 @@ impl Variants {
         {
             let mut stmt = tx.prepare(
                 "INSERT INTO variants
-            (chrom, pos, id, ref, alt, qual, filter, info)
-         VALUES
-            (:chrom, :pos, :id, :ref, :alt, :qual, :filter, :info)",
+                    (chrom, pos, id, ref, alt, qual, filter, info)
+                 VALUES
+                    (:chrom, :pos, :id, :ref, :alt, :qual, :filter, :info)",
             )?;
 
             for result in reader.records() {
                 let record = result?;
 
                 // eprintln!("Records: {record:#?}");
+                let pos: Option<usize> = record.variant_start().transpose()?.map(usize::from);
+                let ids = record.ids();
+                let id: Option<&str> = ids.iter().next(); // Take only first ID (if any)
+                let qual: Option<f32> = record.quality_score().transpose()?;
 
                 stmt.execute(named_params! {
                     ":chrom": record.reference_sequence_name(),
-                    ":pos": record.variant_start().expect("pos")?.get(),
-                    ":id": record.ids().iter().next(), // Take only first ID (if any)
+                    ":pos": pos,
+                    ":id": id,
                     ":ref": record.reference_bases(),
                     ":alt": record.alternate_bases().as_ref(),
-                    ":qual": record.quality_score().transpose()?,
+                    ":qual": qual,
                     ":filter": record.filters().as_ref(),
                     ":info": record.info().as_ref(),
                 })?;
@@ -74,108 +85,89 @@ impl Variants {
         }
         tx.commit()?;
 
+        conn.execute("ANALYZE", [])?;
+
         eprintln!("vcf_read: {:.2?}", before.elapsed());
 
         Ok(Self { conn, header })
     }
-}
 
-/*
-    TODO: Use the vcf.gz format directly instead of converting to bed and then filtering:
-        Read the vcf data into the DB.
+    fn query(&self, output: impl Write) -> Result<()> {
+        // let buf_output = io::BufWriter::new(output);
+        // let mut bed_output = bed::Writer::new(buf_output);
+        let conn = &self.conn;
 
-    bedtools groupby -c 3 -o count < all.bed > grouped.bed
-*/
-fn groupby(input: impl Read, output: impl Write) -> Result<()> {
-    let mut conn = Connection::open("bed.db")?;
-
-    let before = Instant::now();
-    read_records(input, &mut conn)?;
-    eprintln!("read_records: {:.2?}", before.elapsed());
-
-    // todo!("perform the groupby query on the sqlite table");
-    let before = Instant::now();
-    write_records(output, &mut conn)?;
-    eprintln!("write_records: {:.2?}", before.elapsed());
-
-    Ok(())
-}
-
-fn read_records(input: impl Read, conn: &mut Connection) -> Result<()> {
-    let buf_input = io::BufReader::new(input);
-    let mut bed_input = bed::Reader::new(buf_input);
-
-    conn.execute(
-        "CREATE TABLE records (
-           name TEXT NOT NULL,
-           start INTEGER NOT NULL,
-           end INTEGER NOT NULL
-         )",
-        (),
-    )?;
-
-    let tx = conn.transaction()?;
-    {
-        let mut stmt = tx.prepare("INSERT INTO records (name, start, end) VALUES (?1, ?2, ?3)")?;
-
-        for rec in bed_input.records::<3>() {
-            let record_in = rec?;
-
-            // eprintln!("{record_in:?}");
-            stmt.execute((
-                record_in.reference_sequence_name(),
-                record_in.start_position().get(),
-                record_in.end_position().get(),
-            ))?;
-        }
-    }
-    tx.commit()?;
-
-    Ok(())
-}
-
-fn write_records(output: impl Write, conn: &mut Connection) -> Result<()> {
-    let buf_output = io::BufWriter::new(output);
-    let mut bed_output = bed::Writer::new(buf_output);
-
-    let mut stmt = conn.prepare(
-        r"
-            SELECT name, start, end
-            FROM records
-            GROUP BY end
+        let mut stmt = conn.prepare(
+            "
+            SELECT chrom, pos, id, ref, alt, qual, filter, info
+            FROM variants
+            GROUP BY chrom, pos
             HAVING COUNT(*) = 1
-        ",
-    )?;
+            ",
+        )?;
 
-    let mut rows = stmt.query([])?;
+        // let mut limit = 0;
+        let mut rows = stmt.query([])?;
 
-    while let Some(row) = rows.next()? {
-        let name: String = row.get(0)?;
-        let start: usize = row.get(1)?;
-        let end: usize = row.get(2)?;
+        let mut writer = vcf::io::Writer::new(bgzf::Writer::new(output));
 
-        let count: usize = 1; // TODO: Unnecessary since it's always 1!
-        let optional_fields = bed::record::OptionalFields::from(vec![count.to_string()]);
+        writer.write_header(&self.header)?;
 
-        let start_position = Position::try_from(start)?;
-        let end_position = Position::try_from(end)?;
+        while let Some(row) = rows.next()? {
+            // limit += 1;
+            // if limit > 10 {
+            //     break;
+            // };
 
-        let record_out = bed::Record::<3>::builder()
-            .set_reference_sequence_name(name)
-            .set_start_position(start_position)
-            .set_end_position(end_position)
-            .set_optional_fields(optional_fields)
-            .build()
-            .unwrap();
+            let chrom: String = row.get("chrom")?;
+            let pos: Option<usize> = row.get("pos")?;
+            let id: Option<String> = row.get("id")?;
+            let ref_: String = row.get("ref")?;
+            let alt: String = row.get("alt")?;
+            let qual: Option<f32> = row.get("qual")?;
+            let filter: String = row.get("filter")?;
+            let info: String = row.get("info")?;
 
-        bed_output.write_record(&record_out).unwrap();
+            // eprintln!("{chrom} {pos:?} {id:?} {ref_} {alt} {qual:?} {filter} {info}");
+
+            // let count: usize = 1; // TODO: Unnecessary since it's always 1!
+            // let optional_fields = bed::record::OptionalFields::from(vec![count.to_string()]);
+
+            let pos = Position::try_from(pos.unwrap_or_default())?;
+            let ids: record_buf::Ids = id.map(String::from).into_iter().collect();
+            let alternate_bases = record_buf::AlternateBases::from(vec![alt]);
+            let filters: record_buf::Filters = [filter].into_iter().collect();
+
+            // TODO: There seems to be no way to set the info from a raw string (like we kept when reading the VCF).
+            // It seems we must parse the string and reconstruct it here :shrug:
+            // let info = record_buf::Info::new(&info);
+
+            let builder = vcf::variant::RecordBuf::builder()
+                .set_reference_sequence_name(chrom)
+                .set_variant_start(pos)
+                .set_ids(ids)
+                .set_reference_bases(ref_)
+                .set_alternate_bases(alternate_bases)
+                .set_filters(filters)
+                // .set_info(info)
+                ;
+
+            let mut record = builder.build();
+
+            // The builder doesn't accept an Option<f32> for the quality score,
+            // so we have to set it afterwards.
+            *record.quality_score_mut() = qual;
+
+            writer.write_variant_record(&self.header, &record)?;
+        }
+
+        Ok(())
     }
-
-    Ok(())
 }
 
 fn main() -> Result<()> {
-    // groupby(io::stdin(), io::stdout())
-    let _variants = Variants::from_vcf(io::stdin())?;
+    let variants = Variants::from_vcf(io::stdin())?;
+    variants.query(io::stdout())?;
+
     Ok(())
 }
