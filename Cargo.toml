@@ -3,7 +3,11 @@ name = "bedtools"
 version = "0.1.0"
 edition = "2021"
 
+[dependencies.noodles]
+features = ["bed", "core", "vcf", "bgzf"]
+# version = "0.79.0"
+path = "../../third_party/noodles/noodles"
+
 [dependencies]
 anyhow = "1.0.86"
-noodles = { version = "0.79.0", features = ["bed", "core", "vcf", "bgzf"] }
 rusqlite = "0.32.1"

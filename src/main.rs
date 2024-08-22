@@ -62,7 +62,14 @@ impl Variants {
                     (:chrom, :pos, :id, :ref, :alt, :qual, :filter, :info)",
             )?;
 
+            // let mut limit = 0;
+
             for result in reader.records() {
+                // limit += 1;
+                // if limit > 10 {
+                //     break;
+                // };
+
                 let record = result?;
 
                 // eprintln!("Records: {record:#?}");
@@ -70,6 +77,14 @@ impl Variants {
                 let ids = record.ids();
                 let id: Option<&str> = ids.iter().next(); // Take only first ID (if any)
                 let qual: Option<f32> = record.quality_score().transpose()?;
+
+                // Experimental code:
+                let info = record.info();
+                let info: Vec<Result<_, _>> = info.iter(&header).collect();
+                let info: std::io::Result<Vec<_>> = info.into_iter().collect();
+                let _info = info?;
+                // eprintln!("{info:#?}");
+                // std::process::exit(0);
 
                 stmt.execute(named_params! {
                     ":chrom": record.reference_sequence_name(),
@@ -140,19 +155,46 @@ impl Variants {
 
             // TODO: There seems to be no way to set the info from a raw string (like we kept when reading the VCF).
             // It seems we must parse the string and reconstruct it here :shrug:
-            // let info = record_buf::Info::new(&info);
+            //
+            // Ideas:
+            // - Use the original string parsing from the vcf reader to parse the INFO from the DB
+            // - Store the entire record in the DB and export it here.
+            //   The INFO field is the largest in any case, so this may not be a problem.
+            // let info = record_buf::Info::new(&info)?;
 
-            let builder = vcf::variant::RecordBuf::builder()
+            use record_buf::info::field::Value;
+
+            // let ns = (String::from("FOO"), Some(Value::String("BAR".to_string())));
+            // let info: record_buf::Info = [ns].into_iter().collect();
+            let info = vcf::record::Info::new(&info);
+            let info: io::Result<Vec<_>> = info.iter(&self.header).collect();
+            let info = info?;
+            let info: Vec<(String, Option<Value>)> = info
+                .into_iter()
+                .map(|(k, v)| {
+                    let v: Option<Value> = v.map(|v| v.try_into().unwrap());
+                    (k.to_string(), v)
+                })
+                .collect();
+
+            let info: record_buf::Info = info.into_iter().collect();
+
+            // eprintln!("{info:#?}");
+            // std::process::exit(0);
+
+            // let info: std::io::Result<Vec<_>> = info.iter(&self.header).collect();
+            // let info = record_buf::Info::from(info); // = info.iter(&self.header).collect();
+
+            let mut record = vcf::variant::RecordBuf::builder()
                 .set_reference_sequence_name(chrom)
                 .set_variant_start(pos)
                 .set_ids(ids)
                 .set_reference_bases(ref_)
                 .set_alternate_bases(alternate_bases)
                 .set_filters(filters)
-                // .set_info(info)
-                ;
-
-            let mut record = builder.build();
+                // .set_info("BAR=QUUX".parse()?)
+                .set_info(info)
+                .build();
 
             // The builder doesn't accept an Option<f32> for the quality score,
             // so we have to set it afterwards.
