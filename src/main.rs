@@ -15,6 +15,9 @@ use noodles::vcf::variant::record_buf;
 use rusqlite::named_params;
 use rusqlite::Connection;
 
+// TODO: Use [sqlite_zstd](https://github.com/phiresky/sqlite-zstd?tab=readme-ov-file#usage)
+// TODO: Deconstruct the INFO field into its own table (note that Values can be Arrays)
+
 struct Variants {
     conn: Connection,
     header: vcf::Header,
