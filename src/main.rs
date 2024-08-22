@@ -1,11 +1,9 @@
 use std::io;
-use std::io::Read;
-use std::io::Write;
+use std::path::Path;
 use std::time::Instant;
 
 use anyhow::Result;
 
-use noodles::bgzf;
 use noodles::core::Position;
 use noodles::vcf;
 use noodles::vcf::variant::io::Write as _;
@@ -14,6 +12,8 @@ use noodles::vcf::variant::record_buf;
 
 use rusqlite::named_params;
 use rusqlite::Connection;
+
+use clap::Parser;
 
 // TODO: Use [sqlite_zstd](https://github.com/phiresky/sqlite-zstd?tab=readme-ov-file#usage)
 // TODO: Deconstruct the INFO field into its own table (note that Values can be Arrays)
@@ -24,8 +24,11 @@ struct Variants {
 }
 
 impl Variants {
-    fn from_vcf(input: impl Read) -> Result<Self> {
-        let mut conn = Connection::open("vcf.db")?;
+    fn from_vcf<P>(vcf_in: P, vcf_db: P) -> Result<Self>
+    where
+        P: AsRef<Path>,
+    {
+        let mut conn = Connection::open(vcf_db)?;
 
         conn.execute_batch(
             "BEGIN;
@@ -46,13 +49,9 @@ impl Variants {
             COMMIT; ",
         )?;
 
-        // let reader = Builder::default().build_from_path("sample.vcf")?;
-        let mut reader = vcf::io::reader::Builder::default()
-            .set_compression_method(vcf::io::CompressionMethod::Bgzf)
-            .build_from_reader(input)?;
+        let mut reader = vcf::io::reader::Builder::default().build_from_path(vcf_in)?;
 
         let header = reader.read_header()?;
-        // eprintln!("Header: {header:#?}");
 
         let before = Instant::now();
 
@@ -110,7 +109,10 @@ impl Variants {
         Ok(Self { conn, header })
     }
 
-    fn query(&self, output: impl Write) -> Result<()> {
+    fn query<P>(&self, vcf_out: P) -> Result<()>
+    where
+        P: AsRef<Path>,
+    {
         // let buf_output = io::BufWriter::new(output);
         // let mut bed_output = bed::Writer::new(buf_output);
         let conn = &self.conn;
@@ -127,7 +129,7 @@ impl Variants {
         // let mut limit = 0;
         let mut rows = stmt.query([])?;
 
-        let mut writer = vcf::io::Writer::new(bgzf::Writer::new(output));
+        let mut writer = vcf::io::writer::Builder::default().build_from_path(vcf_out)?;
 
         writer.write_header(&self.header)?;
 
@@ -210,9 +212,31 @@ impl Variants {
     }
 }
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Input VCF file (e.g. input.vcf.gz)
+    #[arg(long)]
+    vcf_in: String,
+
+    /// Output VCF file (e.g. output.vcf.gz)
+    #[arg(long)]
+    vcf_out: String,
+}
+// Query (TODO: Currently hardcoded to 'GROUP BY chrom, pos HAVING COUNT(*) = 1')
+// #[arg(long)]
+// query: String,
+
 fn main() -> Result<()> {
-    let variants = Variants::from_vcf(io::stdin())?;
-    variants.query(io::stdout())?;
+    let args = Args::parse();
+
+    let vcf_in = Path::new(&args.vcf_in);
+    let vcf_out = Path::new(&args.vcf_out);
+
+    let vcf_db = vcf_out.with_extension("db");
+
+    let variants = Variants::from_vcf(vcf_in, &vcf_db)?;
+    variants.query(vcf_out)?;
 
     Ok(())
 }

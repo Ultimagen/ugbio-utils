@@ -16,4 +16,4 @@ RUN apt-get update && \
 
 COPY --from=builder /usr/local/cargo/bin/vcflite /usr/local/bin/vcflite
 
-CMD ["vcflite"]
+ENTRYPOINT ["vcflite"]
