@@ -281,7 +281,6 @@ dependencies = [
 [[package]]
 name = "noodles"
 version = "0.79.0"
-source = "git+https://github.com/gavrie/noodles.git#c0a48ff665631d049831817c6ef6be36ab24cee7"
 dependencies = [
  "noodles-bgzf",
  "noodles-core",
@@ -291,7 +290,6 @@ dependencies = [
 [[package]]
 name = "noodles-bgzf"
 version = "0.32.0"
-source = "git+https://github.com/gavrie/noodles.git#c0a48ff665631d049831817c6ef6be36ab24cee7"
 dependencies = [
  "byteorder",
  "bytes",
@@ -302,7 +300,6 @@ dependencies = [
 [[package]]
 name = "noodles-core"
 version = "0.15.0"
-source = "git+https://github.com/gavrie/noodles.git#c0a48ff665631d049831817c6ef6be36ab24cee7"
 dependencies = [
  "bstr",
 ]
@@ -310,7 +307,6 @@ dependencies = [
 [[package]]
 name = "noodles-csi"
 version = "0.37.0"
-source = "git+https://github.com/gavrie/noodles.git#c0a48ff665631d049831817c6ef6be36ab24cee7"
 dependencies = [
  "bit-vec",
  "byteorder",
@@ -322,7 +318,6 @@ dependencies = [
 [[package]]
 name = "noodles-tabix"
 version = "0.43.0"
-source = "git+https://github.com/gavrie/noodles.git#c0a48ff665631d049831817c6ef6be36ab24cee7"
 dependencies = [
  "byteorder",
  "indexmap",
@@ -334,7 +329,6 @@ dependencies = [
 [[package]]
 name = "noodles-vcf"
 version = "0.62.0"
-source = "git+https://github.com/gavrie/noodles.git#c0a48ff665631d049831817c6ef6be36ab24cee7"
 dependencies = [
  "indexmap",
  "memchr",
