@@ -1,36 +1,70 @@
-use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::Result;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 mod variants;
 use variants::Variants;
 
-#[derive(Parser, Debug)]
+#[derive(Parser)]
 #[command(version, about, long_about = None)]
-struct Args {
-    /// Input VCF file (e.g. input.vcf.gz)
-    #[arg(long)]
-    vcf_in: String,
+struct Cli {
+    // /// Optional name to operate on
+    // name: Option<String>,
 
-    /// Output VCF file (e.g. output.vcf.gz)
-    #[arg(long)]
-    vcf_out: String,
+    // /// Sets a custom config file
+    // #[arg(short, long, value_name = "FILE")]
+    // config: Option<PathBuf>,
+
+    // /// Turn debugging information on
+    // #[arg(short, long, action = clap::ArgAction::Count)]
+    // debug: u8,
+    #[command(subcommand)]
+    command: Commands,
 }
-// Query (TODO: Currently hardcoded to 'GROUP BY chrom, pos HAVING COUNT(*) = 1')
-// #[arg(long)]
-// query: String,
+
+const DEFAULT_DB: &str = "variants.db";
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Import VCF (possibly compressed) into a SQLite database
+    Import {
+        /// SQLite database file to import to
+        #[arg(long, value_name = "FILE", default_value = DEFAULT_DB)]
+        db: PathBuf,
+
+        /// VCF file to read from
+        #[arg(long, value_name = "FILE")]
+        vcf_in: PathBuf,
+    },
+    /// Query SQLite database and export to VCF
+    Query {
+        /// SQLite database file to query from
+        #[arg(long, value_name = "FILE", default_value = DEFAULT_DB)]
+        db: PathBuf,
+
+        /// VCF file to write to
+        #[arg(long, value_name = "FILE")]
+        vcf_out: PathBuf,
+        // Query (TODO: Currently hardcoded to 'GROUP BY chrom, pos HAVING COUNT(*) = 1')
+        // #[arg(long)]
+        // query: String,
+    },
+}
 
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let cli = Cli::parse();
 
-    let vcf_in = Path::new(&args.vcf_in);
-    let vcf_out = Path::new(&args.vcf_out);
-
-    let vcf_db = vcf_out.with_extension("db");
-
-    let variants = Variants::from_vcf(vcf_in, &vcf_db)?;
-    variants.query(vcf_out)?;
+    match cli.command {
+        Commands::Import { vcf_in, db } => {
+            let mut variants = Variants::new(&db)?;
+            variants.import(&vcf_in)?;
+        }
+        Commands::Query { db, vcf_out } => {
+            let variants = Variants::new(&db)?;
+            variants.query(&vcf_out)?;
+        }
+    }
 
     Ok(())
 }

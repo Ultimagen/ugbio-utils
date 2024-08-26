@@ -1,7 +1,8 @@
 use std::io;
-use std::path::Path;
+use std::path::PathBuf;
 use std::time::Instant;
 
+use anyhow::Context;
 use anyhow::Result;
 
 use noodles::core::Position;
@@ -18,20 +19,29 @@ use rusqlite::Connection;
 
 pub(crate) struct Variants {
     conn: Connection,
-    header: vcf::Header,
 }
 
 impl Variants {
-    pub(crate) fn from_vcf<P>(vcf_in: P, vcf_db: P) -> Result<Self>
-    where
-        P: AsRef<Path>,
-    {
-        let mut conn = Connection::open(vcf_db)?;
+    pub(crate) fn new(db: &PathBuf) -> Result<Self> {
+        let conn = Connection::open(db)
+            .with_context(|| format!("Failed to open database: {}", db.display()))?;
+
+        eprintln!("Opened database: {}", db.display());
+        Ok(Self { conn })
+    }
+
+    pub(crate) fn import(&mut self, vcf_in: &PathBuf) -> Result<()> {
+        let conn = &mut self.conn;
+
+        eprintln!("Importing VCF: {}", vcf_in.display());
 
         conn.execute_batch(
+            /*
+                https://kerkour.com/sqlite-for-servers
+             */
             "BEGIN;
 
-             CREATE TABLE variants (
+             CREATE TABLE IF NOT EXISTS variants (
                 chrom TEXT,
                 pos INTEGER,
                 id TEXT,
@@ -42,14 +52,22 @@ impl Variants {
                 info TEXT
             );
 
-            CREATE INDEX idx_variants_chrom_pos ON variants (chrom, pos);
+            CREATE TABLE IF NOT EXISTS metadata (
+                header TEXT
+            );
 
-            COMMIT; ",
+            CREATE INDEX IF NOT EXISTS idx_variants_chrom_pos ON variants (chrom, pos);
+
+            COMMIT;",
         )?;
 
-        let mut reader = vcf::io::reader::Builder::default().build_from_path(vcf_in)?;
+        let mut reader = vcf::io::reader::Builder::default()
+            .build_from_path(vcf_in)
+            .with_context(|| format!("Failed to open VCF file: {}", vcf_in.display()))?;
 
         let header = reader.read_header()?;
+
+        store_header(&header, &conn)?;
 
         let before = Instant::now();
 
@@ -102,18 +120,22 @@ impl Variants {
 
         conn.execute("ANALYZE", [])?;
 
-        eprintln!("vcf_read: {:.2?}", before.elapsed());
+        eprintln!("Import took {:.2?}", before.elapsed());
 
-        Ok(Self { conn, header })
+        Ok(())
     }
 
-    pub(crate) fn query<P>(&self, vcf_out: P) -> Result<()>
-    where
-        P: AsRef<Path>,
-    {
+    pub(crate) fn query(&self, vcf_out: &PathBuf) -> Result<()> {
         // let buf_output = io::BufWriter::new(output);
         // let mut bed_output = bed::Writer::new(buf_output);
         let conn = &self.conn;
+
+        eprintln!(
+            "Performing query and exporting to VCF: {}",
+            vcf_out.display()
+        );
+
+        let before = Instant::now();
 
         let mut stmt = conn.prepare(
             "
@@ -129,7 +151,9 @@ impl Variants {
 
         let mut writer = vcf::io::writer::Builder::default().build_from_path(vcf_out)?;
 
-        writer.write_header(&self.header)?;
+        let header = vcf::Header::default(); // TODO: Keep the original header. Write it to the DB?
+
+        writer.write_header(&header)?;
 
         while let Some(row) = rows.next()? {
             // limit += 1;
@@ -170,7 +194,7 @@ impl Variants {
             // let ns = (String::from("FOO"), Some(Value::String("BAR".to_string())));
             // let info: record_buf::Info = [ns].into_iter().collect();
             let info = vcf::record::Info::new(&info);
-            let info: io::Result<Vec<_>> = info.iter(&self.header).collect();
+            let info: io::Result<Vec<_>> = info.iter(&header).collect();
             let info = info?;
             let info: Vec<(String, Option<Value>)> = info
                 .into_iter()
@@ -185,8 +209,8 @@ impl Variants {
             // eprintln!("{info:#?}");
             // std::process::exit(0);
 
-            // let info: std::io::Result<Vec<_>> = info.iter(&self.header).collect();
-            // let info = record_buf::Info::from(info); // = info.iter(&self.header).collect();
+            // let info: std::io::Result<Vec<_>> = info.iter(&header).collect();
+            // let info = record_buf::Info::from(info); // = info.iter(&header).collect();
 
             let mut record = vcf::variant::RecordBuf::builder()
                 .set_reference_sequence_name(chrom)
@@ -203,9 +227,26 @@ impl Variants {
             // so we have to set it afterwards.
             *record.quality_score_mut() = qual;
 
-            writer.write_variant_record(&self.header, &record)?;
+            writer.write_variant_record(&header, &record)?;
         }
+
+        eprintln!("Query/export took {:.2?}", before.elapsed());
 
         Ok(())
     }
+}
+
+fn store_header(header: &vcf::Header, conn: &Connection) -> Result<()> {
+    let header_string = {
+        let mut buf = io::Cursor::new(Vec::new());
+        {
+            let mut writer = vcf::io::writer::Builder::default().build_from_writer(&mut buf);
+            writer.write_header(header)?;
+        }
+        String::from_utf8(buf.into_inner()).context("Failed to convert header to string")?
+    };
+
+    conn.execute(sql, params)
+
+    Ok(())
 }
