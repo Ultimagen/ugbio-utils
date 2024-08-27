@@ -1,0 +1,22 @@
+name: Build ugbio_srsnv docker
+on:
+  workflow_dispatch:
+    inputs:
+      image-tag:
+        description: "Docker image tag, If omitted will use github short sha"
+        required: false
+        type: string
+
+permissions:
+  id-token: write # Required for assuming an AWS role
+  contents: read # Required for actions/checkout
+
+jobs:
+  build-cnmops-docker:
+    uses: ./.github/workflows/build-workspace-docker.yml
+    secrets: inherit
+    with:
+      workspace-folder: srsnv
+      docker-file: src/srsvn/Dockerfile
+      docker-image: ugbio_srsnv
+      docker-tag: ${{ inputs.image-tag }}
