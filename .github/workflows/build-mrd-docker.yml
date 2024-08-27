@@ -1,0 +1,22 @@
+name: Build ug_cnv docker
+on:
+  workflow_dispatch:
+    inputs:
+      image-tag:
+        description: "Docker image tag, If omitted will use github short sha"
+        required: false
+        type: string
+
+permissions:
+  id-token: write # Required for assuming an AWS role
+  contents: read # Required for actions/checkout
+
+jobs:
+  build-mrd-docker:
+    uses: ./.github/workflows/build-workspace-docker.yml
+    secrets: inherit
+    with:
+      workspace-folder: mrd
+      docker-file: src/mrd/Dockerfile
+      docker-image: ugbio_mrd
+      docker-tag: ${{ inputs.image-tag }}
