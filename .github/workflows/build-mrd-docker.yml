@@ -1,4 +1,4 @@
-name: Build ug_cnv docker
+name: Build ugbio_mrd docker
 on:
   workflow_dispatch:
     inputs:
