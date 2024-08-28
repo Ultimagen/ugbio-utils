@@ -1,0 +1,22 @@
+name: Build ugbio_featuremap docker
+on:
+  workflow_dispatch:
+    inputs:
+      image-tag:
+        description: "Docker image tag, If omitted will use github short sha"
+        required: false
+        type: string
+
+permissions:
+  id-token: write # Required for assuming an AWS role
+  contents: read # Required for actions/checkout
+
+jobs:
+  build-featuremap-docker:
+    uses: ./.github/workflows/build-workspace-docker.yml
+    secrets: inherit
+    with:
+      workspace-folder: featuremap
+      docker-file: src/featuremap/Dockerfile
+      docker-image: ugbio_featuremap
+      docker-tag: ${{ inputs.image-tag }}
