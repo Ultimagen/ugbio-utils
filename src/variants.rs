@@ -66,11 +66,9 @@ impl Variants {
             .with_context(|| format!("Failed to open VCF file: {}", vcf_in.display()))?;
 
         let header = reader.read_header()?;
-
         store_header(&header, &conn)?;
 
         let before = Instant::now();
-
         let tx = conn.transaction()?;
         {
             let mut stmt = tx.prepare(
@@ -80,29 +78,19 @@ impl Variants {
                     (:chrom, :pos, :id, :ref, :alt, :qual, :filter, :info)",
             )?;
 
-            // let mut limit = 0;
-
             for result in reader.records() {
-                // limit += 1;
-                // if limit > 10 {
-                //     break;
-                // };
-
                 let record = result?;
 
-                // eprintln!("Records: {record:#?}");
                 let pos: Option<usize> = record.variant_start().transpose()?.map(usize::from);
                 let ids = record.ids();
                 let id: Option<&str> = ids.iter().next(); // Take only first ID (if any)
                 let qual: Option<f32> = record.quality_score().transpose()?;
 
-                // Experimental code:
-                let info = record.info();
-                let info: Vec<Result<_, _>> = info.iter(&header).collect();
-                let info: std::io::Result<Vec<_>> = info.into_iter().collect();
-                let _info = info?;
-                // eprintln!("{info:#?}");
-                // std::process::exit(0);
+                // // TODO: Store INFO in a separate table
+                // let info = record.info();
+                // let info: Vec<Result<_, _>> = info.iter(&header).collect();
+                // let info: std::io::Result<Vec<_>> = info.into_iter().collect();
+                // let _info = info?;
 
                 stmt.execute(named_params! {
                     ":chrom": record.reference_sequence_name(),
@@ -126,8 +114,6 @@ impl Variants {
     }
 
     pub(crate) fn query(&self, vcf_out: &PathBuf) -> Result<()> {
-        // let buf_output = io::BufWriter::new(output);
-        // let mut bed_output = bed::Writer::new(buf_output);
         let conn = &self.conn;
 
         eprintln!(
@@ -146,21 +132,13 @@ impl Variants {
             ",
         )?;
 
-        // let mut limit = 0;
         let mut rows = stmt.query([])?;
 
         let mut writer = vcf::io::writer::Builder::default().build_from_path(vcf_out)?;
-
-        let header = vcf::Header::default(); // TODO: Keep the original header. Write it to the DB?
-
+        let header = load_header(&conn)?;
         writer.write_header(&header)?;
 
         while let Some(row) = rows.next()? {
-            // limit += 1;
-            // if limit > 10 {
-            //     break;
-            // };
-
             let chrom: String = row.get("chrom")?;
             let pos: Option<usize> = row.get("pos")?;
             let id: Option<String> = row.get("id")?;
@@ -172,7 +150,6 @@ impl Variants {
 
             // eprintln!("{chrom} {pos:?} {id:?} {ref_} {alt} {qual:?} {filter} {info}");
 
-            // let count: usize = 1; // TODO: Unnecessary since it's always 1!
             // let optional_fields = bed::record::OptionalFields::from(vec![count.to_string()]);
 
             let pos = Position::try_from(pos.unwrap_or_default())?;
@@ -180,37 +157,7 @@ impl Variants {
             let alternate_bases = record_buf::AlternateBases::from(vec![alt]);
             let filters: record_buf::Filters = [filter].into_iter().collect();
 
-            // TODO: There seems to be no way to set the info from a raw string (like we kept when reading the VCF).
-            // It seems we must parse the string and reconstruct it here :shrug:
-            //
-            // Ideas:
-            // - Use the original string parsing from the vcf reader to parse the INFO from the DB
-            // - Store the entire record in the DB and export it here.
-            //   The INFO field is the largest in any case, so this may not be a problem.
-            // let info = record_buf::Info::new(&info)?;
-
-            use record_buf::info::field::Value;
-
-            // let ns = (String::from("FOO"), Some(Value::String("BAR".to_string())));
-            // let info: record_buf::Info = [ns].into_iter().collect();
-            let info = vcf::record::Info::new(&info);
-            let info: io::Result<Vec<_>> = info.iter(&header).collect();
-            let info = info?;
-            let info: Vec<(String, Option<Value>)> = info
-                .into_iter()
-                .map(|(k, v)| {
-                    let v: Option<Value> = v.map(|v| v.try_into().unwrap());
-                    (k.to_string(), v)
-                })
-                .collect();
-
-            let info: record_buf::Info = info.into_iter().collect();
-
-            // eprintln!("{info:#?}");
-            // std::process::exit(0);
-
-            // let info: std::io::Result<Vec<_>> = info.iter(&header).collect();
-            // let info = record_buf::Info::from(info); // = info.iter(&header).collect();
+            let info = parse_info(&info, &header)?;
 
             let mut record = vcf::variant::RecordBuf::builder()
                 .set_reference_sequence_name(chrom)
@@ -236,6 +183,42 @@ impl Variants {
     }
 }
 
+fn parse_info(info: &str, header: &vcf::Header) -> Result<record_buf::Info> {
+    // TODO: There seems to be no way to set the info from a raw string
+    // (like the one we kept when reading the VCF).
+    // It seems we must parse the string and reconstruct it here :shrug:
+    //
+    // Ideas:
+    // - Use the original string parsing from the vcf reader to parse the INFO from the DB
+    // - Store the entire record in the DB and export it here.
+    //   The INFO field is the largest in any case, so this may not be a problem.
+
+    use record_buf::info::field::Value;
+
+    // let ns = (String::from("FOO"), Some(Value::String("BAR".to_string())));
+    // let info: record_buf::Info = [ns].into_iter().collect();
+
+    let info = vcf::record::Info::new(&info);
+    let info: io::Result<Vec<_>> = info.iter(header).collect();
+    let info = info?;
+    let info: Vec<(String, Option<Value>)> = info
+        .into_iter()
+        .map(|(k, v)| {
+            let v: Option<Value> = v.map(|v| v.try_into().unwrap());
+            (k.to_string(), v)
+        })
+        .collect();
+    let info: record_buf::Info = info.into_iter().collect();
+
+    // eprintln!("{info:#?}");
+    // std::process::exit(0);
+
+    // let info: std::io::Result<Vec<_>> = info.iter(&header).collect();
+    // let info = record_buf::Info::from(info); // = info.iter(&header).collect();
+
+    Ok(info)
+}
+
 fn store_header(header: &vcf::Header, conn: &Connection) -> Result<()> {
     let header_string = {
         let mut buf = io::Cursor::new(Vec::new());
@@ -249,4 +232,9 @@ fn store_header(header: &vcf::Header, conn: &Connection) -> Result<()> {
     conn.execute(sql, params)
 
     Ok(())
+}
+
+fn load_header(conn: &Connection) -> Result<vcf::Header> {
+    let header_string = conn.query_row(sql, params, |row| row.get(0))?;
+    let header = vcf::Reader::from_reader(io::Cursor::new(header_string.as_bytes()))
 }
