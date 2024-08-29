@@ -37,8 +37,8 @@ impl Variants {
 
         conn.execute_batch(
             /*
-                https://kerkour.com/sqlite-for-servers
-             */
+               https://kerkour.com/sqlite-for-servers
+            */
             "BEGIN;
 
              CREATE TABLE IF NOT EXISTS variants (
@@ -220,7 +220,7 @@ fn parse_info(info: &str, header: &vcf::Header) -> Result<record_buf::Info> {
 }
 
 fn store_header(header: &vcf::Header, conn: &Connection) -> Result<()> {
-    let header_string = {
+    let header = {
         let mut buf = io::Cursor::new(Vec::new());
         {
             let mut writer = vcf::io::writer::Builder::default().build_from_writer(&mut buf);
@@ -229,12 +229,23 @@ fn store_header(header: &vcf::Header, conn: &Connection) -> Result<()> {
         String::from_utf8(buf.into_inner()).context("Failed to convert header to string")?
     };
 
-    conn.execute(sql, params)
+    conn.execute(
+        "INSERT INTO metadata (header) VALUES (:header)",
+        named_params! {
+            ":header": header,
+        },
+    )?;
 
     Ok(())
 }
 
 fn load_header(conn: &Connection) -> Result<vcf::Header> {
-    let header_string = conn.query_row(sql, params, |row| row.get(0))?;
-    let header = vcf::Reader::from_reader(io::Cursor::new(header_string.as_bytes()))
+    let header: String = conn.query_row("SELECT header FROM metadata", [], |row| row.get(0))?;
+
+    let mut reader =
+        vcf::io::reader::Builder::default().build_from_reader(io::Cursor::new(header))?;
+
+    let header = reader.read_header()?;
+
+    Ok(header)
 }
