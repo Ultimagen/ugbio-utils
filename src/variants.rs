@@ -66,7 +66,7 @@ impl Variants {
             .with_context(|| format!("Failed to open VCF file: {}", vcf_in.display()))?;
 
         let header = reader.read_header()?;
-        store_header(&header, &conn)?;
+        store_header(&header, conn)?;
 
         let before = Instant::now();
         let tx = conn.transaction()?;
@@ -135,7 +135,7 @@ impl Variants {
         let mut rows = stmt.query([])?;
 
         let mut writer = vcf::io::writer::Builder::default().build_from_path(vcf_out)?;
-        let header = load_header(&conn)?;
+        let header = load_header(conn)?;
         writer.write_header(&header)?;
 
         while let Some(row) = rows.next()? {
@@ -198,7 +198,7 @@ fn parse_info(info: &str, header: &vcf::Header) -> Result<record_buf::Info> {
     // let ns = (String::from("FOO"), Some(Value::String("BAR".to_string())));
     // let info: record_buf::Info = [ns].into_iter().collect();
 
-    let info = vcf::record::Info::new(&info);
+    let info = vcf::record::Info::new(info);
     let info: io::Result<Vec<_>> = info.iter(header).collect();
     let info = info?;
     let info: Vec<(String, Option<Value>)> = info
