@@ -46,9 +46,22 @@ enum Commands {
         /// VCF file to write to
         #[arg(long, value_name = "FILE")]
         vcf_out: PathBuf,
-        // Query (TODO: Currently hardcoded to 'GROUP BY chrom, pos HAVING COUNT(*) = 1')
-        // #[arg(long)]
-        // query: String,
+
+        // Optional GROUP BY clause (columns: chrom, pos, id, ref, alt, qual, filter, info)
+        #[arg(long, default_value = "chrom, pos", conflicts_with = "no_group_by")]
+        group_by: Option<String>,
+
+        /// Do not provide a GROUP BY clause (override the default)
+        #[clap(long)]
+        no_group_by: bool,
+
+        // Optional HAVING clause
+        #[arg(long, default_value = "COUNT(*) = 1", conflicts_with = "no_having")]
+        having: Option<String>,
+
+        /// Do not provide a HAVING clause (override the default)
+        #[clap(long)]
+        no_having: bool,
     },
 }
 
@@ -60,9 +73,19 @@ fn main() -> Result<()> {
             let mut variants = Variants::new(&db)?;
             variants.import(&vcf_in)?;
         }
-        Commands::Query { db, vcf_out } => {
+        Commands::Query {
+            db,
+            vcf_out,
+            group_by,
+            having,
+            no_group_by,
+            no_having,
+        } => {
+            let group_by = if no_group_by { None } else { group_by };
+            let having = if no_having { None } else { having };
+
             let variants = Variants::new(&db)?;
-            variants.query(&vcf_out)?;
+            variants.query(&vcf_out, group_by.as_deref(), having.as_deref())?;
         }
     }
 

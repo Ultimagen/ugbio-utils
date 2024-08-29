@@ -113,25 +113,33 @@ impl Variants {
         Ok(())
     }
 
-    pub(crate) fn query(&self, vcf_out: &PathBuf) -> Result<()> {
+    pub(crate) fn query(
+        &self,
+        vcf_out: &PathBuf,
+        group_by: Option<&str>,
+        having: Option<&str>,
+    ) -> Result<()> {
         let conn = &self.conn;
 
-        eprintln!(
-            "Performing query and exporting to VCF: {}",
-            vcf_out.display()
-        );
+        let sql = "SELECT chrom, pos, id, ref, alt, qual, filter, info FROM variants".to_string();
+
+        let sql = if let Some(group_by) = group_by {
+            format!("{sql} GROUP BY {group_by}")
+        } else {
+            sql
+        };
+
+        let sql = if let Some(having) = having {
+            format!("{sql} HAVING {having}")
+        } else {
+            sql
+        };
+
+        eprintln!("Exporting to VCF: {}", vcf_out.display());
+        eprintln!("Query: {sql};");
 
         let before = Instant::now();
-
-        let mut stmt = conn.prepare(
-            "
-            SELECT chrom, pos, id, ref, alt, qual, filter, info
-            FROM variants
-            GROUP BY chrom, pos
-            HAVING COUNT(*) = 1
-            ",
-        )?;
-
+        let mut stmt = conn.prepare(&sql)?;
         let mut rows = stmt.query([])?;
 
         let mut writer = vcf::io::writer::Builder::default().build_from_path(vcf_out)?;
