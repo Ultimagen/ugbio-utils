@@ -62,6 +62,27 @@ If `import` is run on an existing database file, the data will be appended to th
 
 The `query` command supports two options for filtering the data: `--group-by` and `--having`. The `--group-by` option is used to group the data by one or more columns. The `--having` option is used to filter the groups based on a condition. The default is to group by `chrom` and `pos` and to filter for groups that have exactly one member. This is useful for removing duplicate variants.
 
+
+### Performance
+
+The main performance gain when querying comes from the use of SQLite indexes.
+Currently, a single index is created when importing:
+
+    CREATE INDEX idx_variants_chrom_pos ON variants (chrom, pos);
+
+Since the import and query stages are separate, it's easy to add more indexes from the command line by using the `sqlite3` command line tool after the database is created, without having to change the code. After an index is created, it will be used automatically by following queries.
+
+The SQLite [EXPLAIN QUERY PLAN](https://www.sqlite.org/eqp.html) command can be used to see how the query is executed.
+
+For example, the following query will use the index:
+
+    $ sqlite3 variants.db
+    SQLite version 3.46.1 2024-08-13 09:16:08
+    Enter ".help" for usage hints.
+    sqlite> EXPLAIN QUERY PLAN SELECT * FROM variants GROUP BY chrom, pos;
+    QUERY PLAN
+    `--SCAN variants USING INDEX idx_variants_chrom_pos
+
 ### Limitations
 
 - Only a single CPU core is used. Resolving this would make the import much faster.
