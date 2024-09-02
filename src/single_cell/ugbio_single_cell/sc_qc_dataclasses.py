@@ -14,7 +14,7 @@ class OutputFiles(Enum):
     INSERT_LENGTH_HISTOGRAM = "insert_length_histogram.png"
 
 BASE_PATH = Path(__file__).parent # should be: src/single_cell/ugbio_single_cell
-TEMPLATE_NOTEBOOK = BASE_PATH / OutputFiles.NOTEBOOK.value
+TEMPLATE_NOTEBOOK = BASE_PATH / "reports" / OutputFiles.NOTEBOOK.value
 
 
 @dataclass
