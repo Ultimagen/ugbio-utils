@@ -7,7 +7,8 @@ authors = [{ name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com
 readme = "README.core.md"
 license = { text = "Apache-2.0" }
 dependencies = [
-    "simppl==1.0.7"
+    "simppl==1.0.7",
+    "pandas>=2.2.2",
 ]
 
 [build-system]

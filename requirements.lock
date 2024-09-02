@@ -161,6 +161,7 @@ pandas==2.2.2
     # via bio
     # via seaborn
     # via ugbio-cnv
+    # via ugbio-core
     # via ugbio-single-cell
 pandocfilters==1.5.1
     # via nbconvert
