@@ -28,7 +28,7 @@ def smooth_wl (df_reads_count,wl=100000,bin_size=1000) -> pd.DataFrame:
             df=df_region[(df_region['start']>=start) & (df_region['end']<=end)]
             cov_value=df.iloc[:,3].median()
             df2 = {'chr': chrID, 'start': start, 'end': end,'cov':cov_value}
-            df_smooth_wl = df_smooth_wl.append(df2 ,ignore_index = True )
+            df_smooth_wl = pd.concat([df_smooth_wl, pd.DataFrame(df2)], ignore_index=True)
             start=end+1
             end=end+wl
     return df_smooth_wl
