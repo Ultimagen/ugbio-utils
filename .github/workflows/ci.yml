@@ -3,24 +3,25 @@ name: CI
 on: [pull_request]
 
 jobs:
-  build:
+  ugbio-utils-CI:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+        - core
+        - cnv
+        - single_cell
     steps:
-      - uses: actions/checkout@v4
-        with:
-          lfs: true
+    - uses: actions/checkout@v4
+      with:
+        lfs: true
 
-      - name: Run cnv tests
-        uses: ./.github/actions/run-workspace-tests
-        with:
-          workspace-folder: cnv
-          docker-file: src/cnv/Dockerfile
-      
-      - name: Run single cell tests
-        uses: ./.github/actions/run-workspace-tests
-        with:
-          workspace-folder: single_cell
-          docker-file: src/single_cell/Dockerfile
+    - name: Run workspace tests
+      uses: ./.github/actions/run-workspace-tests
+      with:
+        workspace-folder: ${{ matrix.module }}
+        docker-file: src/${{ matrix.module }}/Dockerfile
 
 
 
