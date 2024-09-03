@@ -79,9 +79,11 @@ def get_x_location_for_fig(df,df_germline_cov_norm_100K) -> pd.DataFrame:
         chr=row['chr']
         start=row['start']+1
         end = row['end']+1
-       
-        start_fig = df_germline_cov_norm_100K[(df_germline_cov_norm_100K['chr']==chr) & (df_germline_cov_norm_100K['start']<=start) & (df_germline_cov_norm_100K['end']>=start)]['start_fig'].values[0]
-        end_fig = df_germline_cov_norm_100K[(df_germline_cov_norm_100K['chr']==chr) & (df_germline_cov_norm_100K['start']<=end) & (df_germline_cov_norm_100K['end']>=end)]['start_fig'].values[0]
+        
+        df_region = df_germline_cov_norm_100K[(df_germline_cov_norm_100K['chr']==chr) & (df_germline_cov_norm_100K['start'] <= end) & (df_germline_cov_norm_100K['start'] >= start-100000)]
+        start_fig = df_region['start_fig'].to_list()[0]
+        end_fig = df_region['start_fig'].to_list()[-1]
+
         start_fig_list.append(start_fig)
         end_fig_list.append(end_fig)
     df['start_fig']=start_fig_list
