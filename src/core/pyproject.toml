@@ -1,13 +1,14 @@
 [project]
 name = "ugbio_core"
 version = "0.1.0.dev9"
-requires-python = ">= 3.8"
+requires-python = ">= 3.10"
 description = "Ultima Genomics core bioinfo utils"
 authors = [{ name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com" }]
 readme = "README.core.md"
 license = { text = "Apache-2.0" }
 dependencies = [
-    "simppl==1.0.7"
+    "simppl==1.0.7",
+    "pandas>=2.2.2",
 ]
 
 [build-system]
