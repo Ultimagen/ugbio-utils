@@ -100,8 +100,8 @@ def test_get_insert_properties_no_gzip(inputs):
         get_insert_properties(insert)
 
 
-def test_get_insert_properties_no_fastq(inputs_dir):
-    insert = str(inputs_dir / "trimmer_stats.csv.gz")
+def test_get_insert_properties_no_fastq(inputs):
+    insert = inputs.trimmer_stats_csv
     with pytest.raises(BadGzipFile):
         get_insert_properties(insert)
 
