@@ -24,6 +24,9 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    outputs:
+      major_version: ${{ steps.determine_next_version.outputs.MAJOR_VERSION }}
+      minor_version: ${{ steps.determine_next_version.outputs.MINOR_VERSION }}
     steps:
       - uses: actions/checkout@v4
 
@@ -36,7 +39,7 @@ jobs:
           echo "latest_tag=$latest_tag" >> $GITHUB_ENV
 
       - name: Determine next release tag
-        id: determine_next_tag
+        id: determine_next_version
         run: |
           latest_tag="${{ env.latest_tag }}"
           patch_release="${{ inputs.patch-release }}"
@@ -67,8 +70,8 @@ jobs:
 
           echo "New release tag: $new_tag"
           echo "release_version=$new_tag" >> $GITHUB_ENV
-          echo "major_version=$major" >> $GITHUB_ENV
-          echo "minor_version=$minor" >> $GITHUB_ENV
+          echo "MAJOR_VERSION=$major" >> $GITHUB_OUTPUT
+          echo "MINOR_VERSION=$minor" >> $GITHUB_OUTPUT
 
       - name: Install rye
         uses: eifinger/setup-rye@v3
@@ -165,7 +168,7 @@ jobs:
       - name: Set next dev version
         id: set_next_version
         run: |
-          dev_version="${{ env.major_version }}.${{ env.minor_version }}.0"
+          dev_version="${{ needs.publish.outputs.major_version }}.${{ needs.publish.outputs.minor_version }}.0"
           echo "New dev version: $dev_version"
           echo "dev_version=$dev_version" >> $GITHUB_ENV
 
