@@ -121,7 +121,6 @@ jobs:
       fail-fast: false
       matrix:
         module:
-          - core
           - cnv
           - single_cell
     uses: ./.github/workflows/build-workspace-docker.yml
