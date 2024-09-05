@@ -47,17 +47,29 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
+      # - name: Set up Python
+      #   uses: actions/setup-python@v4
+      #   with:
+      #     python-version: '3.11'
 
-      - name: Extract project version from pyproject.toml
+      - name: Extract project version
         run: |
-          pip install toml
-          version=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
-          echo "VERSION=${version}" >> $GITHUB_ENV
+          cd src/${{ inputs.workspace-folder }}
+          if [ -f pyproject.toml ]; then
+            VERSION=$(grep -Po '(?<=version = ")[^"]*' pyproject.toml)
+          elif [ -f Cargo.toml ]; then
+            VERSION=$(grep -Po '(?<=version = ")[^"]*' Cargo.toml)
+          else
+            echo "No version file found!"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "The project version is ${{ env.VERSION }}"
+          
+          # pip install toml
+          # version=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+          # echo "VERSION=${version}" >> $GITHUB_ENV
+          # echo "The project version is ${{ env.VERSION }}"
 
       - uses: benjlevesque/short-sha@v2.2
         id: short-sha
