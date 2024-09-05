@@ -121,8 +121,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
         with:
-          tag_name: ${{ env.new_tag }}
-          release_name: Release ${{ env.new_tag }}
+          tag_name: ${{ env.release_version }}
+          release_name: Release ${{ env.release_version }}
           draft: false
           prerelease: false
 
