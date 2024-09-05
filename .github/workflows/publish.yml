@@ -1,8 +1,6 @@
 name: Ugbio Release
 
 on:
-#  release:
-#    types: [ created ]
   workflow_dispatch:
     inputs:
       patch-release:
@@ -16,7 +14,6 @@ on:
 
 env:
   RYE_VERSION: '0.34.0'
-#  RELEASE_TAG: v${{inputs.release-version}}
 
 permissions:
   id-token: write
@@ -24,55 +21,55 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-#    outputs:
-#      major_version: ${{ steps.determine_next_version.outputs.MAJOR_VERSION }}
-#      minor_version: ${{ steps.determine_next_version.outputs.MINOR_VERSION }}
+    #    outputs:
+    #      major_version: ${{ steps.determine_next_version.outputs.MAJOR_VERSION }}
+    #      minor_version: ${{ steps.determine_next_version.outputs.MINOR_VERSION }}
     steps:
       - uses: actions/checkout@v4
 
-#      - name: Get the latest release tag
-#        id: get_latest_release
-#        run: |
-#          # Fetch the latest tag; if no tags exist, fallback to empty
-#          git fetch
-#          latest_tag=$(git describe --tags $(git rev-list --tags --max-count=1) 2>/dev/null || echo "")
-#          echo "Latest tag: $latest_tag"
-#          echo "latest_tag=$latest_tag" >> $GITHUB_ENV
+      #      - name: Get the latest release tag
+      #        id: get_latest_release
+      #        run: |
+      #          # Fetch the latest tag; if no tags exist, fallback to empty
+      #          git fetch
+      #          latest_tag=$(git describe --tags $(git rev-list --tags --max-count=1) 2>/dev/null || echo "")
+      #          echo "Latest tag: $latest_tag"
+      #          echo "latest_tag=$latest_tag" >> $GITHUB_ENV
 
-#      - name: Determine next release tag
-#        id: determine_next_version
-#        run: |
-#          latest_tag="${{ env.latest_tag }}"
-#          patch_release="${{ inputs.patch-release }}"
-#
-#          # Default to 1.0.0 if no latest tag exists
-#          if [ -z "$latest_tag" ]; then
-#            new_tag="1.0.0"
-#            major=1
-#            minor=0
-#            patch=0
-#          else
-#            # Extract major, minor, patch versions from latest tag
-#            IFS='.' read -r major minor patch <<< "${latest_tag}"
-#
-#            if [ "$patch_release" == "true" ]; then
-#              # Increment the patch version if patch-release is true
-#              patch=$((patch + 1))
-#            else
-#              # Increment the minor version and reset the patch version if minor-release is false
-#              minor=$((minor + 1))
-#              patch=0
-#            fi
-#
-#            # Form the new release tag
-#            new_tag="${major}.${minor}.${patch}"
-#
-#          fi
-#
-#          echo "New release tag: $new_tag"
-#          echo "release_version=$new_tag" >> $GITHUB_ENV
-#          echo "MAJOR_VERSION=$major" >> $GITHUB_OUTPUT
-#          echo "MINOR_VERSION=$minor" >> $GITHUB_OUTPUT
+      #      - name: Determine next release tag
+      #        id: determine_next_version
+      #        run: |
+      #          latest_tag="${{ env.latest_tag }}"
+      #          patch_release="${{ inputs.patch-release }}"
+      #
+      #          # Default to 1.0.0 if no latest tag exists
+      #          if [ -z "$latest_tag" ]; then
+      #            new_tag="1.0.0"
+      #            major=1
+      #            minor=0
+      #            patch=0
+      #          else
+      #            # Extract major, minor, patch versions from latest tag
+      #            IFS='.' read -r major minor patch <<< "${latest_tag}"
+      #
+      #            if [ "$patch_release" == "true" ]; then
+      #              # Increment the patch version if patch-release is true
+      #              patch=$((patch + 1))
+      #            else
+      #              # Increment the minor version and reset the patch version if minor-release is false
+      #              minor=$((minor + 1))
+      #              patch=0
+      #            fi
+      #
+      #            # Form the new release tag
+      #            new_tag="${major}.${minor}.${patch}"
+      #
+      #          fi
+      #
+      #          echo "New release tag: $new_tag"
+      #          echo "release_version=$new_tag" >> $GITHUB_ENV
+      #          echo "MAJOR_VERSION=$major" >> $GITHUB_OUTPUT
+      #          echo "MINOR_VERSION=$minor" >> $GITHUB_OUTPUT
 
       - name: Install rye
         uses: eifinger/setup-rye@v3
@@ -91,34 +88,22 @@ jobs:
         id: update_version
         run: python .github/utils/update_project_version.py ${{ inputs.release-version }}
 
-#      - name: Commit and push changes
-#        id: latest-commit-step
-#        if: github.event_name == 'release'
-#        env:
-#          GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
-#        run: |
-#          git config --global user.name 'github-actions[bot]'
-#          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-#          git commit -am "Update pyproject.toml versions to ${{ github.event.release.tag_name || inputs.release-version }}"
-#          git push
-
-#      - name: Commit and push changes
-##        id: latest-commit-step
-#        uses: EndBug/add-and-commit@v9
-#        with:
-#          message: Update pyproject.toml versions to ${{ env.release_version }}
-#          committer_name: GitHub Actions
-#          committer_email: actions@github.com
+      - name: Commit and push changes
+        uses: EndBug/add-and-commit@v9
+        with:
+          message: Update pyproject.toml versions to ${{ env.release_version }}
+          committer_name: GitHub Actions
+          committer_email: actions@github.com
 
       - name: Rye build
         run: |
           rye sync
           rye build --all
 
-#      - name: Publish package distributions to PyPI
-#        uses: pypa/gh-action-pypi-publish@release/v1
-#        with:
-#          password: ${{ secrets.PYPI_TOKEN }}
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
 
       - name: Create a new release
         uses: actions/create-release@v1
@@ -130,39 +115,32 @@ jobs:
           draft: false
           prerelease: false
 
-#      - name: Create release tag
-#        uses: rickstaa/action-create-tag@v1
-#        with:
-#          tag: ${{ env.RELEASE_TAG }}
-#          commit_sha: ${{ steps.latest-commit-step.outputs.commit_sha }}
-#          message: "Latest release ${{ inputs.release-version }}"
-
   build-dockers:
     runs-on: ubuntu-latest
-    needs: [publish]
+    needs: [ publish ]
     strategy:
       fail-fast: false
       matrix:
         module:
-        - core
-        - cnv
-        - single_cell
+          - core
+          - cnv
+          - single_cell
     steps:
-    - uses: actions/checkout@v4
-      with:
-        lfs: true
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
 
-#    - name: build workspaces dockers
-#      uses: ./.github/workflows/build-workspace-docker.yml
-#      with:
-#        workspace-folder: ${{ matrix.module }}
-#        docker-file: src/${{ matrix.module }}/Dockerfile
-#        docker-image: ugbio_${{ matrix.module }}
+      - name: build workspaces dockers
+        uses: ./.github/workflows/build-workspace-docker.yml
+        with:
+          workspace-folder: ${{ matrix.module }}
+          docker-file: src/${{ matrix.module }}/Dockerfile
+          docker-image: ugbio_${{ matrix.module }}
 
   set-dev-version:
     if: ${{ inputs.patch-release == 'false' }}
     runs-on: ubuntu-latest
-    needs: [publish]
+    needs: [ publish ]
     steps:
       - uses: actions/checkout@v4
 
@@ -172,7 +150,7 @@ jobs:
           # Extract major, minor, patch versions from release_version
           IFS='.' read -r major minor patch <<< "${{ inputs.release-version}}"
           minor=$((minor + 1))
-          dev_version="${major}.${minor}.0"
+          dev_version="${major}.${minor}.0.dev0"
           echo "New dev version: $dev_version"
           echo "dev_version=$dev_version" >> $GITHUB_ENV
 
@@ -187,10 +165,9 @@ jobs:
       - name: Update pyproject.toml files with new dev_version
         run: python .github/utils/update_project_version.py ${{ env.dev_version }}
 
-#      - name: Commit and push changes
-##        id: latest-commit-step
-#        uses: EndBug/add-and-commit@v9
-#        with:
-#          message: Update pyproject.toml versions to ${{ env.dev_version }}
-#          committer_name: GitHub Actions
-#          committer_email: actions@github.com
+      - name: Commit and push changes
+        uses: EndBug/add-and-commit@v9
+        with:
+          message: Update pyproject.toml versions to ${{ env.dev_version }}
+          committer_name: GitHub Actions
+          committer_email: actions@github.com
