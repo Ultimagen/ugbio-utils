@@ -69,7 +69,7 @@ jobs:
         if: ${{ inputs.image-tag == '' }}
         run: |
           if [ ${{ github.ref_name }} == 'main' ]; then
-            echo "imageTag=test_${{ steps.short-sha.outputs.sha }}" >>$GITHUB_OUTPUT;
+            echo "imageTag=main_${{ steps.short-sha.outputs.sha }}" >>$GITHUB_OUTPUT;
           else
             echo "imageTag=test_${{ steps.short-sha.outputs.sha }}" >>$GITHUB_OUTPUT;
           fi
