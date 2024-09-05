@@ -20,3 +20,4 @@ jobs:
       docker-file: src/vcflite/Dockerfile
       docker-image: ugbio_vcflite
       docker-tag: ${{ inputs.image-tag }}
+      docker-context: src/vcflite

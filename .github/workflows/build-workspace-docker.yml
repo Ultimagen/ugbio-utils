@@ -56,16 +56,15 @@ jobs:
         run: |
           cd src/${{ inputs.workspace-folder }}
           if [ -f pyproject.toml ]; then
-            VERSION=$(grep -Po '(?<=version = ")[^"]*' pyproject.toml)
+            version=$(grep -Po '(?<=version = ")[^"]*' pyproject.toml)
           elif [ -f Cargo.toml ]; then
-            VERSION=$(grep -Po '(?<=version = ")[^"]*' Cargo.toml)
+            version=$(grep -Po '(?<=version = ")[^"]*' Cargo.toml)
           else
             echo "No version file found!"
             exit 1
           fi
-          echo "version: $VERSION"
-          # echo "VERSION=${VERSION}" >> $GITHUB_ENV
-          # echo "The project version is ${{ env.VERSION }}"
+          echo "VERSION=${version}" >> $GITHUB_ENV
+          echo "The project version is ${{ env.VERSION }}"
           
         # pip install toml
         # version=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
