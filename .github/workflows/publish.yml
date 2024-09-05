@@ -171,9 +171,18 @@ jobs:
         run: |
           # Extract major, minor, patch versions from release_version
           IFS='.' read -r major minor patch <<< "${{ inputs.release-version}}"
+          minor=$((minor + 1))
           dev_version="${major}.${minor}.0"
           echo "New dev version: $dev_version"
           echo "dev_version=$dev_version" >> $GITHUB_ENV
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install tomli_w
 
       - name: Update pyproject.toml files with new dev_version
         run: python .github/utils/update_project_version.py ${{ env.dev_version }}
