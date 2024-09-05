@@ -54,6 +54,7 @@ jobs:
 
       - name: Extract project version
         run: |
+          set -e  # Exit immediately if a command exits with a non-zero status
           cd src/${{ inputs.workspace-folder }}
           if [ -f pyproject.toml ]; then
             VERSION=$(grep -Po '(?<=version = ")[^"]*' pyproject.toml)
@@ -63,7 +64,7 @@ jobs:
             echo "No version file found!"
             exit 1
           fi
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
           echo "The project version is ${{ env.VERSION }}"
           
           # pip install toml
