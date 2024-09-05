@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       patch-release:
-        description: 'Is this a patch release?'
+        description: 'Is this a minor release?'
         required: true
         default: false
 #      release-version:
@@ -118,6 +118,8 @@ jobs:
 
       - name: Create a new release
         uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
         with:
           tag_name: ${{ env.new_tag }}
           release_name: Release ${{ env.new_tag }}
