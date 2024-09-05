@@ -34,6 +34,7 @@ jobs:
         id: get_latest_release
         run: |
           # Fetch the latest tag; if no tags exist, fallback to empty
+          git fetch
           latest_tag=$(git describe --tags $(git rev-list --tags --max-count=1) 2>/dev/null || echo "")
           echo "Latest tag: $latest_tag"
           echo "latest_tag=$latest_tag" >> $GITHUB_ENV
