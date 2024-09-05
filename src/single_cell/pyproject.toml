@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_single_cell"
-version = "0.1.0.dev9"
+version = "1.0.0"
 requires-python = ">= 3.11"
 dependencies = [
     "ugbio_core",
@@ -11,16 +11,19 @@ dependencies = [
     "bio>=1.7.1",
     "seaborn>=0.13.2",
     "matplotlib>=3.9.1",
-    "numpy<2.0.0", # New versions of numpy are uncompatible, not sure why pandas doesn't have this constrain. See https://github.com/numpy/numpy/issues/26710 to get a hunch of the issue
+    "numpy<2.0.0",
     "ipykernel>=6.29.5",
-    
 ]
 description = "Ultima Genomics Single Cell utils"
-authors = [{ name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" }]
+authors = [
+    { name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" },
+]
 readme = "README.single_cell.md"
 
 [project.scripts]
-single_cell_qc = 'ugbio_single_cell.single_cell_qc_pipeline:main'
+single_cell_qc = "ugbio_single_cell.single_cell_qc_pipeline:main"
 
 [tool.setuptools.package-data]
-"*" = ["**/reports/*"]
+"*" = [
+    "**/reports/*",
+]
