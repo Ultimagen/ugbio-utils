@@ -66,11 +66,12 @@ jobs:
           fi
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
           echo "The project version is ${{ env.VERSION }}"
+          shell: bash
           
-          # pip install toml
-          # version=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
-          # echo "VERSION=${version}" >> $GITHUB_ENV
-          # echo "The project version is ${{ env.VERSION }}"
+        # pip install toml
+        # version=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+        # echo "VERSION=${version}" >> $GITHUB_ENV
+        # echo "The project version is ${{ env.VERSION }}"
 
       - uses: benjlevesque/short-sha@v2.2
         id: short-sha
