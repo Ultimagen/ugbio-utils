@@ -63,6 +63,8 @@ jobs:
             echo "No version file found!"
             exit 1
           fi
+          # Debugging: Print the extracted version
+          echo "Extracted version: $version"
           echo "VERSION=${version}" >> $GITHUB_ENV
           echo "The project version is ${{ env.VERSION }}"
           
