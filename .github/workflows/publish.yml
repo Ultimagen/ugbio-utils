@@ -8,10 +8,6 @@ on:
         type: boolean
         required: true
         default: false
-      # release-version: #todo set the next release dynamically
-      #   type: string
-      #   description: "version to release, for example: 1.0.0, 1.7.1"
-      #   required: true
 
 env:
   RYE_VERSION: '0.34.0'
