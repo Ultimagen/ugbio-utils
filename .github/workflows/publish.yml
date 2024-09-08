@@ -32,24 +32,22 @@ jobs:
     outputs:
       publish_commit_sha: ${{ steps.commit-and-push-1.outputs.commit_long_sha }}
       new_version: ${{ steps.bump-semver.outputs.new_version }}
-    #      major_version: ${{ steps.determine_next_version.outputs.MAJOR_VERSION }}
-    #      minor_version: ${{ steps.determine_next_version.outputs.MINOR_VERSION }}
     steps:
-      # - name: Verify branch conditions based on minor-release input
-      #   run: |
-      #     patch_release="${{ inputs.patch-release }}"
-      #     branch_name="${GITHUB_REF_NAME}"
-      #     main_branch="${{ env.MAIN_BRANCH }}"
+      - name: Verify branch conditions based on minor-release input
+        run: |
+          patch_release="${{ inputs.patch-release }}"
+          branch_name="${GITHUB_REF_NAME}"
+          main_branch="${{ env.MAIN_BRANCH }}"
           
-      #     if [ "$patch_release" == "true" ] && [ "$branch_name" == "$main_branch" ]; then
-      #       echo "Error: minor-release is set to true, but this action is running on the main branch."
-      #       exit 1
-      #     elif [ "$patch_release" == "false" ] && [ "$branch_name" != "$main_branch" ]; then
-      #       echo "Error: minor-release is set to false, but this action is not running on the main branch."
-      #       exit 1
-      #     fi
+          if [ "$patch_release" == "true" ] && [ "$branch_name" == "$main_branch" ]; then
+            echo "Error: minor-release is set to true, but this action is running on the main branch."
+            exit 1
+          elif [ "$patch_release" == "false" ] && [ "$branch_name" != "$main_branch" ]; then
+            echo "Error: minor-release is set to false, but this action is not running on the main branch."
+            exit 1
+          fi
           
-      #     echo "Branch verification passed."
+          echo "Branch verification passed."
 
       - uses: actions/checkout@v4
 
@@ -63,6 +61,7 @@ jobs:
         id: bump-semver
         with:
           current_version: ${{ steps.get-latest-tag.outputs.tag }}
+          level: ${{ env.VERSION_LEVEL }}
 
       - name: Install rye
         uses: eifinger/setup-rye@v3
@@ -81,49 +80,49 @@ jobs:
         id: update_version
         run: python .github/utils/update_project_version.py ${{ steps.bump-semver.outputs.new_version }}
 
-      # - name: Commit and push changes
-      #   id: commit-and-push-1
-      #   uses: EndBug/add-and-commit@v9
-      #   with:
-      #     message: Update pyproject.toml versions to ${{ steps.bump-semver.outputs.new_version }}
-      #     committer_name: GitHub Actions
-      #     committer_email: actions@github.com
+      - name: Commit and push changes
+        id: commit-and-push-1
+        uses: EndBug/add-and-commit@v9
+        with:
+          message: Update pyproject.toml versions to ${{ steps.bump-semver.outputs.new_version }}
+          committer_name: GitHub Actions
+          committer_email: actions@github.com
 
       - name: Rye build
         run: |
           rye sync
           rye build --all
 
-      # - name: Publish package distributions to PyPI
-      #   uses: pypa/gh-action-pypi-publish@release/v1
-      #   with:
-      #     password: ${{ secrets.PYPI_TOKEN }}
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
 
-      # - name: Create a new release
-      #   uses: actions/create-release@v1
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
-      #   with:
-      #     tag_name: ${{ steps.bump-semver.outputs.new_version }}
-      #     release_name: Release ${{ steps.bump-semver.outputs.new_version }}
-      #     draft: false
-      #     prerelease: false
+      - name: Create a new release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+        with:
+          tag_name: ${{ steps.bump-semver.outputs.new_version }}
+          release_name: Release ${{ steps.bump-semver.outputs.new_version }}
+          draft: false
+          prerelease: false
 
-  # build-dockers:
-  #   needs: [ publish ]
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       module:
-  #         - core
-  #         - cnv
-  #         - single_cell
-  #   uses: ./.github/workflows/build-workspace-docker.yml
-  #   with:
-  #     workspace-folder: ${{ matrix.module }}
-  #     docker-file: src/${{ matrix.module }}/Dockerfile
-  #     docker-image: ugbio_${{ matrix.module }}
-  #     commit-sha: ${{ needs.publish.outputs.publish_commit_sha }}
+  build-dockers:
+    needs: [ publish ]
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - core
+          - cnv
+          - single_cell
+    uses: ./.github/workflows/build-workspace-docker.yml
+    with:
+      workspace-folder: ${{ matrix.module }}
+      docker-file: src/${{ matrix.module }}/Dockerfile
+      docker-image: ugbio_${{ matrix.module }}
+      commit-sha: ${{ needs.publish.outputs.publish_commit_sha }}
 
   set-dev-version:
     # if: ${{ inputs.patch-release == 'false' }}
@@ -134,18 +133,8 @@ jobs:
         with:
           ref: ${{ env.GITHUB_REF_NAME }}
 
-      # - name: Set next dev version
-      #   id: set_next_version
-      #   run: |
-      #     # Extract major, minor, patch versions from release version
-      #     IFS='.' read -r major minor patch <<< "${{ inputs.release-version}}"
-      #     minor=$((minor + 1))
-      #     dev_version="${major}.${minor}.0.dev0"
-      #     echo "New dev version: $dev_version"
-      #     echo "dev_version=$dev_version" >> $GITHUB_ENV
-
       - uses: actions-ecosystem/action-bump-semver@v1
-        id: bump-semver
+        id: bump-dev-semver
         with:
           current_version: ${{ needs.publish.outputs.new_version }}
           level: ${{ env.DEV_VERSION_LEVEL }}
@@ -159,11 +148,11 @@ jobs:
         run: pip install tomli_w
 
       - name: Update pyproject.toml files with new dev_version
-        run: python .github/utils/update_project_version.py ${{ steps.bump-semver.outputs.new_version }}
+        run: python .github/utils/update_project_version.py ${{ steps.bump-dev-semver.outputs.new_version }}
 
-      # - name: Commit and push changes
-      #   uses: EndBug/add-and-commit@v9
-      #   with:
-      #     message: Update pyproject.toml versions to ${{ steps.bump-semver.outputs.new_version }}
-      #     committer_name: GitHub Actions
-      #     committer_email: actions@github.com
+      - name: Commit and push changes
+        uses: EndBug/add-and-commit@v9
+        with:
+          message: Update pyproject.toml versions to ${{ steps.bump-dev-semver.outputs.new_version }}
+          committer_name: GitHub Actions
+          committer_email: actions@github.com
