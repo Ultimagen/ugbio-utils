@@ -23,6 +23,11 @@ on:
         required: false
         default: "."
         type: string
+      commit-sha:
+        description: "commit-sha to run on"
+        type: string
+        default: ""
+        required: false
 
 permissions:
   id-token: write # Required for assuming an AWS role
@@ -47,6 +52,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit-sha }}
+          
       - name: Set up Python
         uses: actions/setup-python@v4
         with:

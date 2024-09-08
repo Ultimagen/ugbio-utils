@@ -22,7 +22,8 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    #    outputs:
+    outputs:
+      publish_commit_sha: ${{ steps.commit-and-push-1.outputs.commit_long_sha }}
     #      major_version: ${{ steps.determine_next_version.outputs.MAJOR_VERSION }}
     #      minor_version: ${{ steps.determine_next_version.outputs.MINOR_VERSION }}
     steps:
@@ -101,14 +102,15 @@ jobs:
       - name: Install dependencies
         run: pip install tomli_w
 
-      - name: Update pyproject.toml files with new release_version
+      - name: Update pyproject.toml files with new release version
         id: update_version
         run: python .github/utils/update_project_version.py ${{ inputs.release-version }}
 
       - name: Commit and push changes
+        id: commit-and-push-1
         uses: EndBug/add-and-commit@v9
         with:
-          message: Update pyproject.toml versions to ${{ inputs.release_version }}
+          message: Update pyproject.toml versions to ${{ inputs.release-version }}
           committer_name: GitHub Actions
           committer_email: actions@github.com
 
@@ -117,20 +119,20 @@ jobs:
           rye sync
           rye build --all
 
-      # - name: Publish package distributions to PyPI
-      #   uses: pypa/gh-action-pypi-publish@release/v1
-      #   with:
-      #     password: ${{ secrets.PYPI_TOKEN }}
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
 
-      # - name: Create a new release
-      #   uses: actions/create-release@v1
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
-      #   with:
-      #     tag_name: ${{ inputs.release-version }}
-      #     release_name: Release ${{ inputs.release-version }}
-      #     draft: false
-      #     prerelease: false
+      - name: Create a new release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+        with:
+          tag_name: ${{ inputs.release-version }}
+          release_name: Release ${{ inputs.release-version }}
+          draft: false
+          prerelease: false
 
   build-dockers:
     needs: [ publish ]
@@ -146,6 +148,7 @@ jobs:
       workspace-folder: ${{ matrix.module }}
       docker-file: src/${{ matrix.module }}/Dockerfile
       docker-image: ugbio_${{ matrix.module }}
+      commit-sha: ${{ needs.publish.outputs.publish_commit_sha }}
 
   set-dev-version:
     if: ${{ inputs.patch-release == 'false' }}
@@ -159,7 +162,7 @@ jobs:
       - name: Set next dev version
         id: set_next_version
         run: |
-          # Extract major, minor, patch versions from release_version
+          # Extract major, minor, patch versions from release version
           IFS='.' read -r major minor patch <<< "${{ inputs.release-version}}"
           minor=$((minor + 1))
           dev_version="${major}.${minor}.0.dev0"
