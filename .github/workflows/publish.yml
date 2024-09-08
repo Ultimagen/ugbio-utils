@@ -158,21 +158,21 @@ jobs:
       #     draft: false
       #     prerelease: false
 
-  build-dockers:
-    needs: [ publish ]
-    strategy:
-      fail-fast: false
-      matrix:
-        module:
-          - core
-          - cnv
-          - single_cell
-    uses: ./.github/workflows/build-workspace-docker.yml
-    with:
-      workspace-folder: ${{ matrix.module }}
-      docker-file: src/${{ matrix.module }}/Dockerfile
-      docker-image: ugbio_${{ matrix.module }}
-      commit-sha: ${{ needs.publish.outputs.publish_commit_sha }}
+  # build-dockers:
+  #   needs: [ publish ]
+  #   strategy:
+  #     fail-fast: false
+  #     matrix:
+  #       module:
+  #         - core
+  #         - cnv
+  #         - single_cell
+  #   uses: ./.github/workflows/build-workspace-docker.yml
+  #   with:
+  #     workspace-folder: ${{ matrix.module }}
+  #     docker-file: src/${{ matrix.module }}/Dockerfile
+  #     docker-image: ugbio_${{ matrix.module }}
+  #     commit-sha: ${{ needs.publish.outputs.publish_commit_sha }}
 
   set-dev-version:
     # if: ${{ inputs.patch-release == 'false' }}
