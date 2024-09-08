@@ -132,7 +132,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${GITHUB_REF_NAME}
+          ref: ${{ env.GITHUB_REF_NAME }}
 
       # - name: Set next dev version
       #   id: set_next_version
@@ -161,9 +161,9 @@ jobs:
       - name: Update pyproject.toml files with new dev_version
         run: python .github/utils/update_project_version.py ${{ steps.bump-semver.outputs.new_version }}
 
-      - name: Commit and push changes
-        uses: EndBug/add-and-commit@v9
-        with:
-          message: Update pyproject.toml versions to ${{ steps.bump-semver.outputs.new_version }}
-          committer_name: GitHub Actions
-          committer_email: actions@github.com
+      # - name: Commit and push changes
+      #   uses: EndBug/add-and-commit@v9
+      #   with:
+      #     message: Update pyproject.toml versions to ${{ steps.bump-semver.outputs.new_version }}
+      #     committer_name: GitHub Actions
+      #     committer_email: actions@github.com
