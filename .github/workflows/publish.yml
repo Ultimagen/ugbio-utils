@@ -5,6 +5,7 @@ on:
     inputs:
       patch-release:
         description: 'Is this a minor release?'
+        type: boolean
         required: true
         default: false
       release-version: #todo set the next release dynamically
