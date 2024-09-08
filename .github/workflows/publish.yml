@@ -24,7 +24,7 @@ env:
   DEV_VERSION_LEVEL: >
     ${{ fromJson('{
       true: "prepatch",
-      false: "prerelease"
+      false: "preminor"
     }')[github.event.inputs.patch-release] }}
 
 permissions:
@@ -181,7 +181,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.publish.outputs.publish_commit_sha }}
+          ref: ${GITHUB_REF_NAME}
 
       # - name: Set next dev version
       #   id: set_next_version
