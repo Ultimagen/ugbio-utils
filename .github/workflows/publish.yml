@@ -63,51 +63,6 @@ jobs:
         id: bump-semver
         with:
           current_version: ${{ steps.get-latest-tag.outputs.tag }}
-          level: ${{ env.VERSION_LEVEL }}
-
-      #      - name: Get the latest release tag
-      #        id: get_latest_release
-      #        run: |
-      #          # Fetch the latest tag; if no tags exist, fallback to empty
-      #          git fetch
-      #          latest_tag=$(git describe --tags $(git rev-list --tags --max-count=1) 2>/dev/null || echo "")
-      #          echo "Latest tag: $latest_tag"
-      #          echo "latest_tag=$latest_tag" >> $GITHUB_ENV
-
-      #      - name: Determine next release tag
-      #        id: determine_next_version
-      #        run: |
-      #          latest_tag="${{ env.latest_tag }}"
-      #          patch_release="${{ inputs.patch-release }}"
-      #
-      #          # Default to 1.0.0 if no latest tag exists
-      #          if [ -z "$latest_tag" ]; then
-      #            new_tag="1.0.0"
-      #            major=1
-      #            minor=0
-      #            patch=0
-      #          else
-      #            # Extract major, minor, patch versions from latest tag
-      #            IFS='.' read -r major minor patch <<< "${latest_tag}"
-      #
-      #            if [ "$patch_release" == "true" ]; then
-      #              # Increment the patch version if patch-release is true
-      #              patch=$((patch + 1))
-      #            else
-      #              # Increment the minor version and reset the patch version if minor-release is false
-      #              minor=$((minor + 1))
-      #              patch=0
-      #            fi
-      #
-      #            # Form the new release tag
-      #            new_tag="${major}.${minor}.${patch}"
-      #
-      #          fi
-      #
-      #          echo "New release tag: $new_tag"
-      #          echo "release_version=$new_tag" >> $GITHUB_ENV
-      #          echo "MAJOR_VERSION=$major" >> $GITHUB_OUTPUT
-      #          echo "MINOR_VERSION=$minor" >> $GITHUB_OUTPUT
 
       - name: Install rye
         uses: eifinger/setup-rye@v3
@@ -126,13 +81,13 @@ jobs:
         id: update_version
         run: python .github/utils/update_project_version.py ${{ steps.bump-semver.outputs.new_version }}
 
-      - name: Commit and push changes
-        id: commit-and-push-1
-        uses: EndBug/add-and-commit@v9
-        with:
-          message: Update pyproject.toml versions to ${{ steps.bump-semver.outputs.new_version }}
-          committer_name: GitHub Actions
-          committer_email: actions@github.com
+      # - name: Commit and push changes
+      #   id: commit-and-push-1
+      #   uses: EndBug/add-and-commit@v9
+      #   with:
+      #     message: Update pyproject.toml versions to ${{ steps.bump-semver.outputs.new_version }}
+      #     committer_name: GitHub Actions
+      #     committer_email: actions@github.com
 
       - name: Rye build
         run: |
