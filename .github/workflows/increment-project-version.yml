@@ -1,0 +1,6 @@
+name: "Increment project version"
+
+on:
+  push:
+    branches: [ "master" ]
+
