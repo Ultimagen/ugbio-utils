@@ -32,7 +32,7 @@ jobs:
       - uses: ./.github/actions/update-workspaces-version
         with:
           version: ${{ steps.bump-dev-semver.outputs.new_version }}dev-${{ github.event.number }}
-          ref: ${{ github.base_ref }}
+          ref: ${{ env.GITHUB_REF_NAME }}
           github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
           
 
