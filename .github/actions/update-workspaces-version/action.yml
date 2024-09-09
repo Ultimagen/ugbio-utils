@@ -6,9 +6,9 @@ inputs:
  version:
     description: "new version"
     required: true
- github-token:
-    description: "github-token"
-    required: true
+#  github-token:
+#     description: "github-token"
+#     required: true
 
 runs:
   using: "composite"
@@ -30,7 +30,7 @@ runs:
 
     - name: Commit and push changes
       env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       uses: EndBug/add-and-commit@v9
       with:
         message: Update pyproject.toml versions to ${{ inputs.version }}
