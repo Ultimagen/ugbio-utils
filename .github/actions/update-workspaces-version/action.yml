@@ -22,6 +22,7 @@ runs:
     - uses: actions/checkout@v4
       with:
         ref: ${{ inputs.ref }}
+        fetch-depth: 0
             
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -36,24 +37,24 @@ runs:
       shell: bash
       run: python .github/utils/update_project_version.py ${{ inputs.version }}
 
-    - name: Commit and push changes
-      env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
-      uses: EndBug/add-and-commit@v9
-      with:
-        message: Update pyproject.toml versions to ${{ inputs.version }}
-        committer_name: GitHub Actions
-        committer_email: actions@github.com
-
-    # - name: Commit changes
-    #   shell: bash
-    #   run: |
-    #     git config user.name "github-actions[bot]"
-    #     git config user.email "github-actions[bot]@users.noreply.github.com"
-    #     git commit -am "Update pyproject.toml versions to ${{ inputs.version }}"
-
-    # - name: Push changes
-    #   uses: ad-m/github-push-action@master
+    # - name: Commit and push changes
+    #   env:
+    #     GITHUB_TOKEN: ${{ inputs.github-token }}
+    #   uses: EndBug/add-and-commit@v9
     #   with:
-    #     branch: ${{ inputs.ref }}
-    #     github_token: ${{ inputs.github-token }}
+    #     message: Update pyproject.toml versions to ${{ inputs.version }}
+    #     committer_name: GitHub Actions
+    #     committer_email: actions@github.com
+
+    - name: Commit changes
+      shell: bash
+      run: |
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git commit -am "Update pyproject.toml versions to ${{ inputs.version }}"
+
+    - name: Push changes
+      uses: ad-m/github-push-action@master
+      with:
+        branch: ${{ inputs.ref }}
+        github_token: ${{ inputs.github-token }}
