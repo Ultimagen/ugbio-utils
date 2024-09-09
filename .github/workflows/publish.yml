@@ -71,7 +71,7 @@ jobs:
       - uses: ./.github/actions/update-workspaces-version
         with:
            version: ${{ steps.bump-semver.outputs.new_version }}
-           github-branch: ${{ env.GITHUB_REF_NAME }}
+           ref: ${{ env.GITHUB_REF_NAME }}
 
       - name: Rye build
         run: |
@@ -126,4 +126,4 @@ jobs:
       - uses: ./.github/actions/update-workspaces-version
         with:
           version: ${{ steps.bump-dev-semver.outputs.new_version }}
-          github-branch: ${{ env.GITHUB_REF_NAME }}
+          ref: ${{ env.GITHUB_REF_NAME }}
