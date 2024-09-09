@@ -1,0 +1,15 @@
+name: "Set unique dev version to workspaces"
+
+on:
+    pull_request:
+        types: [opened, reopened]
+        branches: [ "main" ]
+
+permissions:
+  id-token: write
+  contents: write
+jobs:
+  set-dev-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
