@@ -30,7 +30,7 @@ runs:
 
     - name: Commit and push changes
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }} }}
       uses: EndBug/add-and-commit@v9
       with:
         message: Update pyproject.toml versions to ${{ inputs.version }}
