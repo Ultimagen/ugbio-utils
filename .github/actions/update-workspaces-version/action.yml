@@ -29,8 +29,8 @@ runs:
       run: python .github/utils/update_project_version.py ${{ inputs.version }}
 
     - name: Commit and push changes
-      # env:
-      #   GITHUB_TOKEN: ${{ inputs.github-token }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
       uses: EndBug/add-and-commit@v9
       with:
         add: "."

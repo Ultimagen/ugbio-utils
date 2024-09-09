@@ -35,6 +35,6 @@ jobs:
     
       - uses: ./.github/actions/update-workspaces-version
         with:
-          version: ${{ steps.bump-dev-semver.outputs.new_version }}.${{ steps.short-sha.outputs.sha }}
+          version: ${{ steps.bump-dev-semver.outputs.new_version }}${{ steps.short-sha.outputs.sha }}
           github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
