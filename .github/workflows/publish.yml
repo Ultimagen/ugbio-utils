@@ -68,25 +68,9 @@ jobs:
         with:
           version: ${{ env.RYE_VERSION }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: ./.github/actions/update-workspaces-version
         with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install tomli_w
-
-      - name: Update pyproject.toml files with new release version
-        id: update_version
-        run: python .github/utils/update_project_version.py ${{ steps.bump-semver.outputs.new_version }}
-
-      - name: Commit and push changes
-        id: commit-and-push-1
-        uses: EndBug/add-and-commit@v9
-        with:
-          message: Update pyproject.toml versions to ${{ steps.bump-semver.outputs.new_version }}
-          committer_name: GitHub Actions
-          committer_email: actions@github.com
+           version: ${{ steps.bump-semver.outputs.new_version }}
 
       - name: Rye build
         run: |
@@ -125,7 +109,6 @@ jobs:
       commit-sha: ${{ needs.publish.outputs.publish_commit_sha }}
 
   set-dev-version:
-    # if: ${{ inputs.patch-release == 'false' }}
     runs-on: ubuntu-latest
     needs: [ publish ]
     steps:
@@ -139,20 +122,6 @@ jobs:
           current_version: ${{ needs.publish.outputs.new_version }}
           level: ${{ env.DEV_VERSION_LEVEL }}
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: ./.github/actions/update-workspaces-version
         with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install tomli_w
-
-      - name: Update pyproject.toml files with new dev_version
-        run: python .github/utils/update_project_version.py ${{ steps.bump-dev-semver.outputs.new_version }}
-
-      - name: Commit and push changes
-        uses: EndBug/add-and-commit@v9
-        with:
-          message: Update pyproject.toml versions to ${{ steps.bump-dev-semver.outputs.new_version }}
-          committer_name: GitHub Actions
-          committer_email: actions@github.com
+          version: ${{ steps.bump-dev-semver.outputs.new_version }}
