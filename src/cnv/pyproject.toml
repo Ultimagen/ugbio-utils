@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_cnv"
-version = "1.0.2-0"
+version = "1.0.2-0dev-23"
 requires-python = ">=3.10"
 dependencies = [
     "ugbio_core",
