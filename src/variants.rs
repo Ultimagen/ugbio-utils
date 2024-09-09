@@ -7,9 +7,9 @@ use anyhow::Result;
 
 use noodles::core::Position;
 use noodles::vcf;
-use noodles::vcf::variant::io::Write as _;
-use noodles::vcf::variant::record::Ids as _;
-use noodles::vcf::variant::record_buf;
+use vcf::variant::io::Write as _;
+use vcf::variant::record::Ids as _;
+use vcf::variant::record_buf;
 
 use rusqlite::named_params;
 use rusqlite::Connection;
@@ -38,25 +38,50 @@ impl Variants {
         conn.execute_batch(
             /*
                https://kerkour.com/sqlite-for-servers
-            */
-            "BEGIN;
 
-             CREATE TABLE IF NOT EXISTS variants (
+               Notes:
+               - There is no need for AUTOINCREMENT on the primary key (see https://www.sqlite.org/autoinc.html)
+               - Pragmas: https://www.sqlite.org/pragma.html
+            */
+            "
+            PRAGMA foreign_keys = ON;
+            -- PRAGMA journal_mode=WAL; -- Since we don't care, try setting this to OFF and see if it's faster
+            -- PRAGMA busy_timeout=2000;
+
+            BEGIN;
+
+            CREATE TABLE IF NOT EXISTS variants (
+                variant_id INTEGER PRIMARY KEY,
                 chrom TEXT,
                 pos INTEGER,
                 id TEXT,
                 ref TEXT,
                 alt TEXT,
                 qual REAL,
-                filter TEXT,
-                info TEXT
+                filter TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS info (
+                info_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                variant_id INTEGER,
+                key TEXT,
+                value NUMERIC, -- Efficiently store all data types
+                FOREIGN KEY (variant_id) REFERENCES variants(variant_id)
+            );
+
+            -- SELECT v.variant_id, v.chrom, v.pos, v.id, v.ref, v.alt, v.qual, v.filter,
+            --     i.key, i.value
+            -- FROM variants v
+            -- LEFT JOIN info i ON v.variant_id = i.variant_id
+            -- WHERE v.variant_id = ?
+            -- ORDER BY i.info_id
 
             CREATE TABLE IF NOT EXISTS metadata (
                 header TEXT
             );
 
             CREATE INDEX IF NOT EXISTS idx_variants_chrom_pos ON variants (chrom, pos);
+            CREATE INDEX IF NOT EXISTS idx_info_variant_id ON info (variant_id);
 
             COMMIT;",
         )?;
@@ -71,11 +96,18 @@ impl Variants {
         let before = Instant::now();
         let tx = conn.transaction()?;
         {
-            let mut stmt = tx.prepare(
+            let mut stmt_variants = tx.prepare(
                 "INSERT INTO variants
-                    (chrom, pos, id, ref, alt, qual, filter, info)
+                    (chrom, pos, id, ref, alt, qual, filter)
                  VALUES
-                    (:chrom, :pos, :id, :ref, :alt, :qual, :filter, :info)",
+                    (:chrom, :pos, :id, :ref, :alt, :qual, :filter)",
+            )?;
+
+            let mut stmt_info = tx.prepare(
+                "INSERT INTO info
+                    (variant_id, key, value)
+                 VALUES
+                    (:variant_id, :key, :value)",
             )?;
 
             for result in reader.records() {
@@ -85,14 +117,9 @@ impl Variants {
                 let ids = record.ids();
                 let id: Option<&str> = ids.iter().next(); // Take only first ID (if any)
                 let qual: Option<f32> = record.quality_score().transpose()?;
+                let info = record.info();
 
-                // // TODO: Store INFO in a separate table
-                // let info = record.info();
-                // let info: Vec<Result<_, _>> = info.iter(&header).collect();
-                // let info: std::io::Result<Vec<_>> = info.into_iter().collect();
-                // let _info = info?;
-
-                stmt.execute(named_params! {
+                let variant_id = stmt_variants.insert(named_params! {
                     ":chrom": record.reference_sequence_name(),
                     ":pos": pos,
                     ":id": id,
@@ -100,13 +127,51 @@ impl Variants {
                     ":alt": record.alternate_bases().as_ref(),
                     ":qual": qual,
                     ":filter": record.filters().as_ref(),
-                    ":info": record.info().as_ref(),
                 })?;
+
+                // Store INFO in separate table
+                use rusqlite::ToSql as _;
+                use vcf::variant::record::info::field::Value;
+
+                for field in info.iter(&header) {
+                    let s1: String;
+
+                    match field? {
+                        (key, Some(value)) => {
+                            let value = match value {
+                                Value::String(s) => s.to_sql(),
+                                Value::Integer(ref i) => i.to_sql(),
+                                Value::Float(ref f) => f.to_sql(),
+                                Value::Flag => 1.to_sql(),
+                                Value::Character(c) => {
+                                    s1 = c.to_string();
+                                    s1.to_sql()
+                                }
+                                Value::Array(a) => {
+                                    s1 = format!("{:?}", a);
+                                    s1.to_sql()
+                                }
+                            }?;
+
+                            stmt_info.execute(named_params! {
+                                ":variant_id": variant_id,
+                                ":key": key,
+                                ":value": value,
+                            })?;
+                        }
+                        (key, None) => {
+                            eprintln!("Key without value: {key}")
+                        }
+                    }
+                }
             }
         }
         tx.commit()?;
 
-        conn.execute("ANALYZE", [])?;
+        // Optimize database
+        // https://www.sqlite.org/lang_analyze.html
+        conn.execute("PRAGMA optimize", [])?;
+        conn.execute("VACUUM", [])?;
 
         eprintln!("Import took {:.2?}", before.elapsed());
 
