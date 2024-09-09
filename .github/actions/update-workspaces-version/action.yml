@@ -9,7 +9,7 @@ inputs:
  github-token:
     description: "github-token"
     required: true
- github-branch:
+ ref:
     description: "git branch name"
     required: false
     default: ""
@@ -21,7 +21,7 @@ runs:
   steps:
     - uses: actions/checkout@v4
       with:
-        ref: ${{ github.head_ref }}
+        ref: ${{ inputs.ref }}
             
     - name: Set up Python
       uses: actions/setup-python@v4
@@ -46,5 +46,5 @@ runs:
     - name: Push changes
       uses: ad-m/github-push-action@master
       with:
-        branch: ${{ inputs.github-branch}}
+        branch: ${{ inputs.ref }}
         github_token: ${{ inputs.github-token }}
