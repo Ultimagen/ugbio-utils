@@ -46,6 +46,6 @@ runs:
         git commit -m "Update pyproject.toml versions to ${{ inputs.version }}"
 
     - name: Push second change
-      uses: ad-m/github-push-action@v1
+      uses: ad-m/github-push-action@v0
       with:
         github_token: ${{ inputs.github-token }}
