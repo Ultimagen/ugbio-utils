@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.GITHUB_REF_NAME }}
+          ref: ${{ github.event.pull_request.head.ref }}
 
       - uses: benjlevesque/short-sha@v2.2
         id: short-sha
