@@ -9,6 +9,10 @@ inputs:
  github-token:
     description: "github-token"
     required: true
+ github-branch:
+    description: "git branch name"
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -38,5 +42,5 @@ runs:
     - name: Push changes
       uses: ad-m/github-push-action@master
       with:
-        branch: ${{ github.ref }}
+        branch: ${{ inputs.github-branch}}
         github_token: ${{ inputs.github-token }}
