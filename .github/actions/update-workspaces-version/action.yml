@@ -40,10 +40,9 @@ runs:
     - name: Commit changes
       shell: bash
       run: |
-        # Example: Make a second change
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        git commit -m "Update pyproject.toml versions to ${{ inputs.version }}"
+        git commit -am "Update pyproject.toml versions to ${{ inputs.version }}"
 
     - name: Push second change
       uses: ad-m/github-push-action@master
