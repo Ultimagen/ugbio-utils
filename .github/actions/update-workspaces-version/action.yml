@@ -28,11 +28,24 @@ runs:
       shell: bash
       run: python .github/utils/update_project_version.py ${{ inputs.version }}
 
-    - name: Commit and push changes
-      env:
-        GITHUB_TOKEN: ${{ inputs.github-token }}
-      uses: EndBug/add-and-commit@v9
+    # - name: Commit and push changes
+    #   env:
+    #     GITHUB_TOKEN: ${{ inputs.github-token }}
+    #   uses: EndBug/add-and-commit@v9
+    #   with:
+    #     message: Update pyproject.toml versions to ${{ inputs.version }}
+    #     committer_name: GitHub Actions
+    #     committer_email: actions@github.com
+
+    - name: Commit changes
+      shell: bash
+      run: |
+        # Example: Make a second change
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git commit -m "Update pyproject.toml versions to ${{ inputs.version }}"
+
+    - name: Push second change
+      uses: ad-m/github-push-action@v1
       with:
-        message: Update pyproject.toml versions to ${{ inputs.version }}
-        committer_name: GitHub Actions
-        committer_email: actions@github.com
+        github_token: ${{ inputs.github-token }}
