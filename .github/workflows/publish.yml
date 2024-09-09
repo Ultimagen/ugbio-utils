@@ -71,7 +71,6 @@ jobs:
       - uses: ./.github/actions/update-workspaces-version
         with:
            version: ${{ steps.bump-semver.outputs.new_version }}
-           github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
            github-branch: ${{ env.GITHUB_REF_NAME }}
 
       - name: Rye build
@@ -127,5 +126,4 @@ jobs:
       - uses: ./.github/actions/update-workspaces-version
         with:
           version: ${{ steps.bump-dev-semver.outputs.new_version }}
-          github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
           github-branch: ${{ env.GITHUB_REF_NAME }}

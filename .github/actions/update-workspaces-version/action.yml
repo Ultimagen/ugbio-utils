@@ -6,24 +6,15 @@ inputs:
  version:
     description: "new version"
     required: true
- github-token:
-    description: "github-token"
-    required: true
  ref:
-    description: "git branch name"
+    description: "git ref"
     required: false
     default: ""
 
 runs:
   using: "composite"
 
-
   steps:
-    # - uses: actions/checkout@v4
-    #   with:
-    #     ref: ${{ inputs.ref }}
-    #     fetch-depth: 0
-            
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
@@ -37,15 +28,6 @@ runs:
       shell: bash
       run: python .github/utils/update_project_version.py ${{ inputs.version }}
 
-    # - name: Commit and push changes
-    #   env:
-    #     GITHUB_TOKEN: ${{ inputs.github-token }}
-    #   uses: EndBug/add-and-commit@v9
-    #   with:
-    #     message: Update pyproject.toml versions to ${{ inputs.version }}
-    #     committer_name: GitHub Actions
-    #     committer_email: actions@github.com
-
     - name: Commit changes
       shell: bash
       run: |
@@ -57,4 +39,3 @@ runs:
       uses: ad-m/github-push-action@master
       with:
         branch: ${{ inputs.ref }}
-        # github_token: ${{ inputs.github-token }}
