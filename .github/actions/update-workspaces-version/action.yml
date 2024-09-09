@@ -23,11 +23,11 @@ runs:
 
     - name: Update pyproject.toml files with new dev_version
       shell: bash
-      run: python .github/utils/update_project_version.py ${{ inputs.new_version }}
+      run: python .github/utils/update_project_version.py ${{ inputs.version }}
 
     - name: Commit and push changes
       uses: EndBug/add-and-commit@v9
       with:
-        message: Update pyproject.toml versions to ${{ inputs.new_version }}
+        message: Update pyproject.toml versions to ${{ inputs.version }}
         committer_name: GitHub Actions
         committer_email: actions@github.com
