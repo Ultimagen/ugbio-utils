@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::time::Instant;
 
+use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
 
@@ -45,7 +47,7 @@ impl Variants {
             */
             "
             PRAGMA foreign_keys = ON;
-            -- PRAGMA journal_mode=WAL; -- Since we don't care, try setting this to OFF and see if it's faster
+            PRAGMA journal_mode=OFF;
             -- PRAGMA busy_timeout=2000;
 
             BEGIN;
@@ -61,20 +63,19 @@ impl Variants {
                 filter TEXT
             );
 
-            CREATE TABLE IF NOT EXISTS info (
-                info_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                variant_id INTEGER,
-                key TEXT,
-                value NUMERIC, -- Efficiently store all data types
-                FOREIGN KEY (variant_id) REFERENCES variants(variant_id)
+            CREATE TABLE IF NOT EXISTS info_keys (
+                key_id INTEGER PRIMARY KEY,
+                key TEXT UNIQUE
             );
 
-            -- SELECT v.variant_id, v.chrom, v.pos, v.id, v.ref, v.alt, v.qual, v.filter,
-            --     i.key, i.value
-            -- FROM variants v
-            -- LEFT JOIN info i ON v.variant_id = i.variant_id
-            -- WHERE v.variant_id = ?
-            -- ORDER BY i.info_id
+            CREATE TABLE IF NOT EXISTS info (
+                info_id INTEGER PRIMARY KEY,
+                variant_id INTEGER,
+                key_id INTEGER,
+                value NUMERIC, -- Use dynamic data type (unlike TEXT) to save space
+                FOREIGN KEY (variant_id) REFERENCES variants(variant_id),
+                FOREIGN KEY (key_id) REFERENCES info_keys(key_id)
+            );
 
             CREATE TABLE IF NOT EXISTS metadata (
                 header TEXT
@@ -93,6 +94,23 @@ impl Variants {
         let header = reader.read_header()?;
         store_header(&header, conn)?;
 
+        let mut key_ids: HashMap<String, i64> = HashMap::new();
+
+        // Store unique INFO keys
+        {
+            let mut stmt_info_keys = conn.prepare(
+                "INSERT INTO info_keys (key)
+                 VALUES (:key)",
+            )?;
+
+            for (key, _) in header.infos() {
+                let key_id = stmt_info_keys.insert(named_params! {
+                    ":key": key,
+                })?;
+                key_ids.insert(key.to_string(), key_id);
+            }
+        }
+
         let before = Instant::now();
         let tx = conn.transaction()?;
         {
@@ -105,9 +123,9 @@ impl Variants {
 
             let mut stmt_info = tx.prepare(
                 "INSERT INTO info
-                    (variant_id, key, value)
+                    (variant_id, key_id, value)
                  VALUES
-                    (:variant_id, :key, :value)",
+                    (:variant_id, :key_id, :value)",
             )?;
 
             for result in reader.records() {
@@ -129,7 +147,7 @@ impl Variants {
                     ":filter": record.filters().as_ref(),
                 })?;
 
-                // Store INFO in separate table
+                // Store INFO
                 use rusqlite::ToSql as _;
                 use vcf::variant::record::info::field::Value;
 
@@ -155,12 +173,12 @@ impl Variants {
 
                             stmt_info.execute(named_params! {
                                 ":variant_id": variant_id,
-                                ":key": key,
+                                ":key_id": key_ids[key],
                                 ":value": value,
                             })?;
                         }
                         (key, None) => {
-                            eprintln!("Key without value: {key}")
+                            bail!("Key without value: {key}");
                         }
                     }
                 }
