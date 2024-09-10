@@ -1,4 +1,4 @@
-FROM python:3.10-bullseye as build
+FROM python:3.10-bullseye AS build
 
 ARG OUT_DIR=/tmp/ugbio
 ARG MODULE_DIR=cnv
