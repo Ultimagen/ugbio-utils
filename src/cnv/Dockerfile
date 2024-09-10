@@ -11,7 +11,7 @@ RUN python -m pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
-FROM ugbio-base
+FROM 337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio-base
 
 ENV TZ=Etc/UTC
 
@@ -49,7 +49,7 @@ RUN wget https://cloud.r-project.org/src/base/R-4/R-4.3.1.tar.gz && \
     make install && \
     cd .. && \
     rm -rf R-4.3.1 R-4.3.1.tar.gz
-    
+
 # Install samtools
 ARG SAMTOOLS_VERSION=1.17
 
