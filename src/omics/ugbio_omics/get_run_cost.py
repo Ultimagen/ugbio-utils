@@ -11,7 +11,7 @@ class Columns(Enum):
     NAME_COLUMN = "name"
     OMICS_INSTANCE_TYPE_RESERVED = "omicsInstanceTypeReserved"
     CPU_REQUESTED = 'cpusRequested'
-    MEMORY_REQUESTED = 'memoryRequested'
+    MEMORY_REQUESTED_GIB = 'memoryRequestedGiB'
     GPUS_REQUESTED = 'gpusRequested'
 
 class RunCost:
@@ -68,7 +68,7 @@ class RunCost:
                 Columns.NAME_COLUMN.value,
                 Columns.OMICS_INSTANCE_TYPE_RESERVED.value,
                 Columns.CPU_REQUESTED.value,
-                Columns.MEMORY_REQUESTED.value,
+                Columns.MEMORY_REQUESTED_GIB.value,
                 Columns.GPUS_REQUESTED.value
             ]]
 

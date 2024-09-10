@@ -73,9 +73,9 @@ def extract_omics_resources(omics_run_cost: RunCost) -> pd.DataFrame:
     # Merge cpus, mem_gbs, gpus into one column as a dictionary
     resources_df['omics_resources'] = resources_df.apply(lambda row: {
         'cpus': row[Columns.CPU_REQUESTED.value],
-        'mem_gbs': row[Columns.MEMORY_REQUESTED.value],
+        'mem_gbs': row[Columns.MEMORY_REQUESTED_GIB.value],
         'gpus': row[Columns.GPUS_REQUESTED.value]}, axis=1)
-    resources_df.drop(columns=[Columns.CPU_REQUESTED.value, Columns.MEMORY_REQUESTED.value, Columns.GPUS_REQUESTED.value], inplace=True)
+    resources_df.drop(columns=[Columns.CPU_REQUESTED.value, Columns.MEMORY_REQUESTED_GIB.value, Columns.GPUS_REQUESTED.value], inplace=True)
     resources_df.rename(columns={
         Columns.NAME_COLUMN.value: "task",
         Columns.OMICS_INSTANCE_TYPE_RESERVED.value: "omics_instance"}, inplace=True)
