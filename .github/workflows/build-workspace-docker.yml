@@ -147,20 +147,20 @@ jobs:
       #     restore-keys: |
       #       ${{ runner.os }}-buildx-
 
-      - name: Build ugbio-base image
-        uses: docker/build-push-action@v4
-        with:
-          context: .
-          file: src/core/Dockerfile
-          tags: ugbio-base:latest
-          cache-from: type=gha
-          cache-to: mode=max,type=gha
-          outputs: type=image,name=ugbio-base
-          push: false
-          load: true  # Load the image into the local Docker environment
+      # - name: Build ugbio-base image
+      #   uses: docker/build-push-action@v4
+      #   with:
+      #     context: .
+      #     file: src/core/Dockerfile
+      #     tags: ugbio-base:latest
+      #     cache-from: type=gha
+      #     cache-to: mode=max,type=gha
+      #     outputs: type=image,name=ugbio-base
+      #     push: false
+      #     load: true  # Load the image into the local Docker environment
 
-      - name: List Docker Images
-        run: docker images  # This helps to verify that ugbio-base:latest is available locally
+      # - name: List Docker Images
+      #   run: docker images  # This helps to verify that ugbio-base:latest is available locally
       
       - name: Build and push
         uses: docker/build-push-action@v4

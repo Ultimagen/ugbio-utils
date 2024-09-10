@@ -11,7 +11,7 @@ RUN python -m pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
-FROM ugbio-base:latest
+FROM us-central1-docker.pkg.dev/ultima-data-307918/ultimagen/ugbio_core:latest
 
 ENV TZ=Etc/UTC
 
