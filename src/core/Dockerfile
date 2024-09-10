@@ -1,4 +1,4 @@
-FROM python:3.10-bullseye as build
+FROM python:3.10-bullseye as build-base
 
 ARG OUT_DIR=/tmp/ugbio
 RUN mkdir -p $OUT_DIR
@@ -9,8 +9,8 @@ COPY ./src/ ./src/
 RUN python -m pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 
-##################################################################
-FROM ubuntu:22.04
+# ##################################################################
+FROM ubuntu:22.04 as ugbio-base
 
 ARG PYTHON_VERSION=3.10
 ARG DEBIAN_FRONTEND=noninteractive
@@ -19,22 +19,18 @@ ARG BCFTOOLS_VERSION=1.20
 
 # Install basic dependencies
 RUN apt-get update && apt-get install -y \
- wget \
- ca-certificates \
- perl \
- bzip2 \
- autoconf \
- automake \
- make \
- gcc \
- git \
- zlib1g-dev \
- libbz2-dev \
- liblzma-dev \
- libcurl4-gnutls-dev \
- libssl-dev \
- libperl-dev \
- libgsl0-dev \
+wget \
+libgomp1 \
+unzip \
+`# the following packages required for pyBigWig python package used by ugbio_core` \
+zlib1g-dev \
+libbz2-dev \
+liblzma-dev \
+ s   \
+gcc \
+\
+procps `# for monitoring script memory usage` \
+sysstat `# for monitoring script IO metrics` \
 python${PYTHON_VERSION} \
 python${PYTHON_VERSION}-dev \
 python${PYTHON_VERSION}-venv \
@@ -77,6 +73,6 @@ RUN git clone https://github.com/bedops/bedops.git && \
 
 ARG OUT_DIR=/tmp/ugbio
 
-COPY --from=build $OUT_DIR $OUT_DIR
+COPY --from=build-base $OUT_DIR $OUT_DIR
 
 RUN pip install ${OUT_DIR}/*.whl 
