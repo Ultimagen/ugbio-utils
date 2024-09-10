@@ -26,7 +26,7 @@ unzip \
 zlib1g-dev \
 libbz2-dev \
 liblzma-dev \
- s   \
+libc6-dev \
 gcc \
 \
 procps `# for monitoring script memory usage` \
