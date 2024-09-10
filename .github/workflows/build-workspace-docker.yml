@@ -158,6 +158,9 @@ jobs:
           push: false
           load: true  # Load the image into the local Docker environment
 
+      - name: List Docker Images
+        run: docker images  # This helps to verify that ugbio-base:latest is available locally
+      
       - name: Build and push
         uses: docker/build-push-action@v4
         with:
@@ -166,7 +169,6 @@ jobs:
           provenance: false
           push: true
           tags: ${{ env.DOCKER_DESTINATIONS }}
-          build-args: BASE_IMAGE=ugbio-base:latest
           cache-from: type=gha, type=local,src=/tmp/.buildx-cache
           cache-to: type=gha,mode=max
 
