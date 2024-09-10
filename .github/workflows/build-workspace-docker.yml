@@ -152,10 +152,11 @@ jobs:
         with:
           context: .
           file: src/core/Dockerfile
-          tags: ${{ steps.ecr-login.outputs.registry }}/ugbio-base:latest
+          tags: ugbio-base:latest
           cache-from: type=local,src=/tmp/.buildx-cache,type=gha
           cache-to: type=local,dest=/tmp/.buildx-cache,mode=max,type=gha
           push: false
+          load: true  # Load the image into the local Docker environment
 
       - name: Build and push
         uses: docker/build-push-action@v4

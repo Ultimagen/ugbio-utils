@@ -11,7 +11,7 @@ RUN python -m pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
-FROM 337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio-base
+FROM ugbio-base
 
 ENV TZ=Etc/UTC
 
