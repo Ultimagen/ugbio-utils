@@ -1,3 +1,4 @@
+ARG BASE_IMAGE=us-central1-docker.pkg.dev/ultima-data-307918/ultimagen/ugbio_base:latest
 FROM python:3.10-bullseye AS build
 
 ARG OUT_DIR=/tmp/ugbio
@@ -12,7 +13,6 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
-ARG BASE_IMAGE=us-central1-docker.pkg.dev/ultima-data-307918/ultimagen/ugbio_base:latest
 FROM $BASE_IMAGE
 
 ARG DEBIAN_FRONTEND=noninteractive
