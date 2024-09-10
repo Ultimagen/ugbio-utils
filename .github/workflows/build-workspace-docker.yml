@@ -166,6 +166,7 @@ jobs:
           provenance: false
           push: true
           tags: ${{ env.DOCKER_DESTINATIONS }}
+          build-args: BASE_IMAGE=ugbio-base:latest
           cache-from: type=gha, type=local,src=/tmp/.buildx-cache
           cache-to: type=gha,mode=max
 
