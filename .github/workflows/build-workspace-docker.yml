@@ -171,6 +171,7 @@ jobs:
           tags: ${{ env.DOCKER_DESTINATIONS }}
           cache-from: type=gha, type=local,src=/tmp/.buildx-cache
           cache-to: type=gha,mode=max
+          build-args: BASE_IMAGE=ugbio-base:latest
 
       - name: Update action summary with built tags
         run: |
