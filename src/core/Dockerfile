@@ -22,13 +22,16 @@ RUN apt-get update && apt-get install -y \
 wget \
 libgomp1 \
 unzip \
+automake \
+make \
+libcurl4-gnutls-dev \
+git \
 `# the following packages required for pyBigWig python package used by ugbio_core` \
 zlib1g-dev \
 libbz2-dev \
 liblzma-dev \
 libc6-dev \
 gcc \
-\
 procps `# for monitoring script memory usage` \
 sysstat `# for monitoring script IO metrics` \
 python${PYTHON_VERSION} \
