@@ -155,6 +155,7 @@ jobs:
           tags: ugbio-base:latest
           cache-from: type=gha
           cache-to: mode=max,type=gha
+          outputs: type=image,name=ugbio-base
           push: false
           load: true  # Load the image into the local Docker environment
 
