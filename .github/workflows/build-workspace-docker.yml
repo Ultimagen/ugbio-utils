@@ -139,13 +139,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Cache Docker layers
-        uses: actions/cache@v3
-        with:
-          path: /tmp/.buildx-cache
-          key: ${{ runner.os }}-buildx-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-buildx-
+      # - name: Cache Docker layers
+      #   uses: actions/cache@v3
+      #   with:
+      #     path: /tmp/.buildx-cache
+      #     key: ${{ runner.os }}-buildx-${{ github.sha }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-buildx-
 
       - name: Build ugbio-base image
         uses: docker/build-push-action@v4
@@ -153,8 +153,8 @@ jobs:
           context: .
           file: src/core/Dockerfile
           tags: ugbio-base:latest
-          cache-from: type=local,src=/tmp/.buildx-cache,type=gha
-          cache-to: type=local,dest=/tmp/.buildx-cache,mode=max,type=gha
+          cache-from: type=gha
+          cache-to: mode=max,type=gha
           push: false
           load: true  # Load the image into the local Docker environment
 
@@ -169,9 +169,8 @@ jobs:
           provenance: false
           push: true
           tags: ${{ env.DOCKER_DESTINATIONS }}
-          cache-from: type=gha, type=local,src=/tmp/.buildx-cache
+          cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: BASE_IMAGE=ugbio-base:latest
 
       - name: Update action summary with built tags
         run: |
