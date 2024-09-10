@@ -16,7 +16,6 @@ jobs:
     uses: ./.github/workflows/build-workspace-docker.yml
     secrets: inherit
     with:
-      workspace-folder: vcflite
       docker-file: src/vcflite/Dockerfile
       docker-image: ugbio_vcflite
       docker-tag: ${{ inputs.image-tag }}

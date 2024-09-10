@@ -16,7 +16,6 @@ jobs:
     uses: ./.github/workflows/build-workspace-docker.yml
     secrets: inherit
     with:
-      workspace-folder: featuremap
       docker-file: src/featuremap/Dockerfile
       docker-image: ugbio_featuremap
       docker-tag: ${{ inputs.image-tag }}
