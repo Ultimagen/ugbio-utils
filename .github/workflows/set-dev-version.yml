@@ -9,13 +9,18 @@ on:
 permissions:
   id-token: write
   contents: write
+  pull-requests: write
+
+env:
+  REF: ${{ github.event.pull_request.head.ref }}
 jobs:
   set-dev-version:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ env.REF }}
+          # fetch-depth: 0
 
       - uses: actions-ecosystem/action-get-latest-tag@v1
         id: get-latest-tag
@@ -29,8 +34,9 @@ jobs:
           current_version: ${{ steps.get-latest-tag.outputs.tag }}
           level: prepatch
     
-      # - uses: ./.github/actions/update-workspaces-version
-      #   with:
-      #     version: ${{ steps.bump-dev-semver.outputs.new_version }}dev-${{ github.event.number }}
-      #     github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+      - uses: ./.github/actions/update-workspaces-version
+        with:
+          version: ${{ steps.bump-dev-semver.outputs.new_version }}dev-${{ github.event.number }}
+          ref: ${{ env.REF }}
+          
 
