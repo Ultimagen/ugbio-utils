@@ -6,12 +6,12 @@ RUN mkdir -p $OUT_DIR
 
 COPY ./src/ ./src/
 
-#build ugbio_core + module
+#build module
 RUN python -m pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
-FROM us-central1-docker.pkg.dev/ultima-data-307918/ultimagen/ugbio_core:latest
+FROM ../core/Dockerfile
 
 ENV TZ=Etc/UTC
 
