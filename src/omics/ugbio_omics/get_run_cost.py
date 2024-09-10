@@ -9,7 +9,7 @@ class Columns(Enum):
     ESTIMATED_USD_COLUMN = "estimatedUSD"
     TYPE_COLUMN = "type"
     NAME_COLUMN = "name"
-    SIZE_RESERVED_COLUMN = "sizeReserved"
+    OMICS_INSTANCE_TYPE_RESERVED = "omicsInstanceTypeReserved"
     CPU_REQUESTED = 'cpusRequested'
     MEMORY_REQUESTED = 'memoryRequested'
     GPUS_REQUESTED = 'gpusRequested'
@@ -57,7 +57,7 @@ class RunCost:
         return self.cost_df[self.cost_df[Columns.TYPE_COLUMN.value] == 'task'][[
                 Columns.NAME_COLUMN.value,
                 Columns.ESTIMATED_USD_COLUMN.value,
-                Columns.SIZE_RESERVED_COLUMN.value
+                Columns.OMICS_INSTANCE_TYPE_RESERVED.value
             ]]
 
     def get_tasks_resources(self) -> pd.DataFrame:
@@ -66,7 +66,7 @@ class RunCost:
         
         return self.cost_df[self.cost_df[Columns.TYPE_COLUMN.value] == 'task'][[
                 Columns.NAME_COLUMN.value,
-                Columns.SIZE_RESERVED_COLUMN.value,
+                Columns.OMICS_INSTANCE_TYPE_RESERVED.value,
                 Columns.CPU_REQUESTED.value,
                 Columns.MEMORY_REQUESTED.value,
                 Columns.GPUS_REQUESTED.value

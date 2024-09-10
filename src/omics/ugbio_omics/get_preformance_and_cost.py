@@ -9,10 +9,10 @@ import dateutil.parser
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
-from ugbio_omics.get_run_cost import Columns, RunCost
 from ugbio_omics.get_omics_log import OMICS_LOG_GROUP
+from ugbio_omics.get_run_cost import Columns, RunCost
 from ugbio_omics.get_run_info import get_run_info
+
 
 class EDT(tzinfo):
     def utcoffset(self, dt):
@@ -163,7 +163,7 @@ def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tupl
     cost_df = cost_df.rename(columns={
         Columns.NAME_COLUMN.value: "task",
         Columns.ESTIMATED_USD_COLUMN.value: "cost",
-        Columns.SIZE_RESERVED_COLUMN.value: "instance"})
+        Columns.OMICS_INSTANCE_TYPE_RESERVED.value: "instance"})
     cost_df['total_storage_cost'] = run_cost.get_storage_cost()
     total_performance_df = total_performance_df.merge(cost_df, on="task", how="left")
 
