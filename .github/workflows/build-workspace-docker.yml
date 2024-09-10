@@ -165,7 +165,7 @@ jobs:
           provenance: false
           push: true
           tags: ${{ env.DOCKER_DESTINATIONS }}
-          cache-from: type=gha
+          cache-from: type=gha, type=local,src=/tmp/.buildx-cache
           cache-to: type=gha,mode=max
 
       - name: Update action summary with built tags
