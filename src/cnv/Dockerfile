@@ -11,7 +11,7 @@ RUN python -m pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
-FROM ugbio-base
+FROM ugbio-base:latest
 
 ENV TZ=Etc/UTC
 
