@@ -26,11 +26,13 @@ class RunCost:
 
     def calculate_run_cost(self) -> None:
         cost_output = f"{self.output_prefix}omics_{self.run_id}.cost.csv"
+        plots_dir = f"omics_{self.run_id}_plots"
 
         if self.output_dir:
             cost_output = f"{self.output_dir}/{cost_output}"
+            plots_dir = f"{self.output_dir}/{plots_dir}"
         
-        self.run_analyzer(self.run_id, cost_output)
+        self.run_analyzer(self.run_id, cost_output, plots_dir)
         print(f"Run cost calculated and saved to {cost_output}")
         self.cost_csv = cost_output
         self.cost_df = pd.read_csv(self.cost_csv)
@@ -71,11 +73,12 @@ class RunCost:
             ]]
 
     @staticmethod
-    def run_analyzer(run_id, run_csv_name):
+    def run_analyzer(run_id, run_csv_name, plots_dir):
         analyzer_command = [
             'python', '-m', 'omics.cli.run_analyzer',
             run_id,
-            "-o", run_csv_name
+            "-o", run_csv_name,
+            "-P", plots_dir
         ]
 
         subprocess.run(
