@@ -65,7 +65,7 @@ impl Variants {
 
             CREATE TABLE IF NOT EXISTS info_keys (
                 key_id INTEGER PRIMARY KEY,
-                key TEXT UNIQUE
+                key TEXT UNIQUE -- indexed automatically
             );
 
             CREATE TABLE IF NOT EXISTS info (
@@ -83,6 +83,7 @@ impl Variants {
 
             CREATE INDEX IF NOT EXISTS idx_variants_chrom_pos ON variants (chrom, pos);
             CREATE INDEX IF NOT EXISTS idx_info_variant_id ON info (variant_id);
+            CREATE INDEX IF NOT EXISTS idx_info_key_id ON info (key_id);
 
             COMMIT;",
         )?;
@@ -199,12 +200,33 @@ impl Variants {
     pub(crate) fn query(
         &self,
         vcf_out: &PathBuf,
+        where_: Option<&str>,
         group_by: Option<&str>,
         having: Option<&str>,
+        limit: Option<&str>,
     ) -> Result<()> {
         let conn = &self.conn;
 
-        let sql = "SELECT chrom, pos, id, ref, alt, qual, filter, info FROM variants".to_string();
+        let sql = "
+            SELECT
+                variants.variant_id,
+                chrom, pos, id, ref, alt, qual, filter,
+                info_keys.key,
+                info.value
+            FROM
+                variants
+            LEFT JOIN
+                info ON variants.variant_id = info.variant_id
+            JOIN
+                info_keys ON info.key_id = info_keys.key_id
+            "
+        .to_string();
+
+        let sql = if let Some(where_) = where_ {
+            format!("{sql} WHERE {where_}")
+        } else {
+            sql
+        };
 
         let sql = if let Some(group_by) = group_by {
             format!("{sql} GROUP BY {group_by}")
@@ -218,6 +240,12 @@ impl Variants {
             sql
         };
 
+        let sql = if let Some(limit) = limit {
+            format!("{sql} LIMIT {limit}")
+        } else {
+            sql
+        };
+
         eprintln!("Exporting to VCF: {}", vcf_out.display());
         eprintln!("Query: {sql};");
 
@@ -225,11 +253,19 @@ impl Variants {
         let mut stmt = conn.prepare(&sql)?;
         let mut rows = stmt.query([])?;
 
+        let mut stmt_info = conn.prepare(
+            "SELECT key, value
+             FROM info
+             JOIN info_keys ON info.key_id = info_keys.key_id
+             WHERE variant_id = :variant_id",
+        )?;
+
         let mut writer = vcf::io::writer::Builder::default().build_from_path(vcf_out)?;
         let header = load_header(conn)?;
         writer.write_header(&header)?;
 
         while let Some(row) = rows.next()? {
+            let variant_id: usize = row.get("variant_id")?;
             let chrom: String = row.get("chrom")?;
             let pos: Option<usize> = row.get("pos")?;
             let id: Option<String> = row.get("id")?;
@@ -237,18 +273,39 @@ impl Variants {
             let alt: String = row.get("alt")?;
             let qual: Option<f32> = row.get("qual")?;
             let filter: String = row.get("filter")?;
-            let info: String = row.get("info")?;
-
-            // eprintln!("{chrom} {pos:?} {id:?} {ref_} {alt} {qual:?} {filter} {info}");
-
-            // let optional_fields = bed::record::OptionalFields::from(vec![count.to_string()]);
 
             let pos = Position::try_from(pos.unwrap_or_default())?;
             let ids: record_buf::Ids = id.map(String::from).into_iter().collect();
             let alternate_bases = record_buf::AlternateBases::from(vec![alt]);
             let filters: record_buf::Filters = [filter].into_iter().collect();
 
-            let info = parse_info(&info, &header)?;
+            let mut info = record_buf::Info::default();
+
+            // Construct INFO field
+            {
+                use record_buf::info::field::Value;
+                use rusqlite::types::ValueRef;
+
+                let mut rows = stmt_info.query(named_params! {
+                    ":variant_id": variant_id,
+                })?;
+
+                while let Some(row) = rows.next()? {
+                    let key: String = row.get("key")?;
+                    let value = row.get_ref("value")?;
+
+                    let value: Option<Value> = match value {
+                        ValueRef::Integer(i) => Some(Value::Integer(i as i32)),
+                        ValueRef::Real(f) => Some(Value::Float(f as f32)),
+                        ValueRef::Text(s) | ValueRef::Blob(s) => {
+                            Some(Value::String(String::from_utf8(s.to_vec())?))
+                        }
+                        ValueRef::Null => None,
+                    };
+
+                    info.insert(key, value);
+                }
+            }
 
             let mut record = vcf::variant::RecordBuf::builder()
                 .set_reference_sequence_name(chrom)
@@ -257,7 +314,6 @@ impl Variants {
                 .set_reference_bases(ref_)
                 .set_alternate_bases(alternate_bases)
                 .set_filters(filters)
-                // .set_info("BAR=QUUX".parse()?)
                 .set_info(info)
                 .build();
 
@@ -272,42 +328,6 @@ impl Variants {
 
         Ok(())
     }
-}
-
-fn parse_info(info: &str, header: &vcf::Header) -> Result<record_buf::Info> {
-    // TODO: There seems to be no way to set the info from a raw string
-    // (like the one we kept when reading the VCF).
-    // It seems we must parse the string and reconstruct it here :shrug:
-    //
-    // Ideas:
-    // - Use the original string parsing from the vcf reader to parse the INFO from the DB
-    // - Store the entire record in the DB and export it here.
-    //   The INFO field is the largest in any case, so this may not be a problem.
-
-    use record_buf::info::field::Value;
-
-    // let ns = (String::from("FOO"), Some(Value::String("BAR".to_string())));
-    // let info: record_buf::Info = [ns].into_iter().collect();
-
-    let info = vcf::record::Info::new(info);
-    let info: io::Result<Vec<_>> = info.iter(header).collect();
-    let info = info?;
-    let info: Vec<(String, Option<Value>)> = info
-        .into_iter()
-        .map(|(k, v)| {
-            let v: Option<Value> = v.map(|v| v.try_into().unwrap());
-            (k.to_string(), v)
-        })
-        .collect();
-    let info: record_buf::Info = info.into_iter().collect();
-
-    // eprintln!("{info:#?}");
-    // std::process::exit(0);
-
-    // let info: std::io::Result<Vec<_>> = info.iter(&header).collect();
-    // let info = record_buf::Info::from(info); // = info.iter(&header).collect();
-
-    Ok(info)
 }
 
 fn store_header(header: &vcf::Header, conn: &Connection) -> Result<()> {

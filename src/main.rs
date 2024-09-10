@@ -47,21 +47,29 @@ enum Commands {
         #[arg(long, value_name = "FILE")]
         vcf_out: PathBuf,
 
-        // Optional GROUP BY clause (columns: chrom, pos, id, ref, alt, qual, filter, info)
-        #[arg(long, default_value = "chrom, pos", conflicts_with = "no_group_by")]
+        /// Optional WHERE clause
+        /// Examples:
+        ///   key = 'rq' AND value <= 0.5
+        ///   key = 'X_FILTERED_COUNT' AND value = 4
+
+        #[arg(long, name = "where", value_name = "WHERE")]
+        where_: Option<String>,
+
+        /// Optional GROUP BY clause (columns: chrom, pos, id, ref, alt, qual, filter, info)
+        /// Examples:
+        ///   chrom, pos
+        #[arg(long)]
         group_by: Option<String>,
 
-        /// Do not provide a GROUP BY clause (override the default)
-        #[clap(long)]
-        no_group_by: bool,
-
-        // Optional HAVING clause
-        #[arg(long, default_value = "COUNT(*) = 1", conflicts_with = "no_having")]
+        /// Optional HAVING clause
+        /// Examples:
+        ///   COUNT(*) = 1
+        #[arg(long)]
         having: Option<String>,
 
-        /// Do not provide a HAVING clause (override the default)
-        #[clap(long)]
-        no_having: bool,
+        /// Optional LIMIT clause
+        #[arg(long)]
+        limit: Option<String>,
     },
 }
 
@@ -76,16 +84,20 @@ fn main() -> Result<()> {
         Commands::Query {
             db,
             vcf_out,
+            where_,
             group_by,
             having,
-            no_group_by,
-            no_having,
+            limit,
         } => {
-            let group_by = if no_group_by { None } else { group_by };
-            let having = if no_having { None } else { having };
-
             let variants = Variants::new(&db)?;
-            variants.query(&vcf_out, group_by.as_deref(), having.as_deref())?;
+
+            variants.query(
+                &vcf_out,
+                where_.as_deref(),
+                group_by.as_deref(),
+                having.as_deref(),
+                limit.as_deref(),
+            )?;
         }
     }
 
