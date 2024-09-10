@@ -6,7 +6,7 @@ authors = [
     { name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" }
 ]
 dependencies = [
-    "amazon-omics-tools>=0.4.0",
+    "amazon-omics-tools>=0.5.0",
     "plotly>=5.23.0",
     "google-cloud-storage>=2.18.2", # for compering cromwell and omics runs
 ]
