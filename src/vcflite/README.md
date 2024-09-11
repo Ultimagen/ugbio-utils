@@ -53,15 +53,29 @@ If `import` is run on an existing database file, the data will be appended to th
     Options:
         --db <FILE>            SQLite database file to query from [default: variants.db]
         --vcf-out <FILE>       VCF file to write to
-        --group-by <GROUP_BY>  [default: "chrom, pos"]
-        --no-group-by          Do not provide a GROUP BY clause (override the default)
-        --having <HAVING>      [default: "COUNT(*) = 1"]
-        --no-having            Do not provide a HAVING clause (override the default)
+        --where <WHERE>        Optional WHERE clause
+        --group-by <GROUP_BY>  Optional GROUP BY clause (columns: chrom, pos, id, ref, alt, qual, filter, info)
+        --having <HAVING>      Optional HAVING clause
+        --limit <LIMIT>        Optional LIMIT clause
     -h, --help                 Print help
-
 
 The `query` command supports two options for filtering the data: `--group-by` and `--having`. The `--group-by` option is used to group the data by one or more columns. The `--having` option is used to filter the groups based on a condition. The default is to group by `chrom` and `pos` and to filter for groups that have exactly one member. This is useful for removing duplicate variants.
 
+[TODO] Add examples
+
+    --where "key = 'rq' AND value <= 0.5"
+    --where "key = 'X_FILTERED_COUNT' AND value = 4"
+
+    --group-by "chrom, pos"
+    --having "COUNT(*) = 1"
+
+### Indexes
+
+To improve performance:
+
+[TODO] Add EXPLAIN QUERY PLAN option
+
+    sqlite3 variants.db 'CREATE INDEX foo;'
 
 ### Performance
 
