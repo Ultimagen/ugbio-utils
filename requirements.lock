@@ -12,7 +12,9 @@
 -e file:src/cnv
 -e file:src/core
     # via ugbio-cnv
+    # via ugbio-db
     # via ugbio-single-cell
+-e file:src/db
 -e file:src/single_cell
 aiohappyeyeballs==2.3.5
     # via aiohttp
@@ -60,6 +62,8 @@ decorator==5.1.1
     # via ipython
 defusedxml==0.7.1
     # via nbconvert
+dnspython==2.6.1
+    # via pymongo
 entrypoints==0.4
     # via papermill
 executing==2.0.1
@@ -194,6 +198,8 @@ py-cpuinfo==9.0.0
 pygments==2.18.0
     # via ipython
     # via nbconvert
+pymongo==4.8.0
+    # via ugbio-db
 pyparsing==3.1.2
     # via matplotlib
 pysam==0.22.1

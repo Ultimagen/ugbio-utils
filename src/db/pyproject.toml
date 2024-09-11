@@ -1,0 +1,13 @@
+[project]
+name = "ugbio_db"
+version = "1.1.0.dev0"
+requires-python = ">= 3.11"
+dependencies = [
+    "ugbio_core",
+    "pymongo>=4.8.0",
+]
+description = "Ultima Genomics Internal DB Access utils"
+authors = [
+    { name = "Ilya Soifer", email = "ilya.soifer@ultimagen.com" },
+]
+readme = "README.db.md"

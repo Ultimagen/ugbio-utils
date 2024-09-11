@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-import ugbio_core.db_access as db_access
+import ugbio_db.db_access as db_access
 
 def resources_dir():
     return Path(__file__).parent / "resources"
