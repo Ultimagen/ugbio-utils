@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=us-central1-docker.pkg.dev/ultima-data-307918/ultimagen/ugbio_base:latest
+ARG BASE_IMAGE=ugbio_base:latest
 FROM python:3.10-bullseye AS build
 
 ARG OUT_DIR=/tmp/ugbio

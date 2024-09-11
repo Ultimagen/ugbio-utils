@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=us-central1-docker.pkg.dev/ultima-data-307918/ultimagen/ugbio_base:latest
+ARG BASE_IMAGE=ugbio_base:latest
 FROM python:3.10-bullseye as build
 
 ARG OUT_DIR=/tmp/ugbio
@@ -15,6 +15,6 @@ FROM $BASE_IMAGE
 
 ARG OUT_DIR=/tmp/ugbio
 
-COPY --from=build-base $OUT_DIR $OUT_DIR
+COPY --from=build $OUT_DIR $OUT_DIR
 
 RUN pip install ${OUT_DIR}/*.whl 

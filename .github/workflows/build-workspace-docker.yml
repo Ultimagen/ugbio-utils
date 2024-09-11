@@ -41,6 +41,7 @@ env:
   GAR_REPO_INTERNAL: us-central1-docker.pkg.dev/ultima-data-307918/ultimagen
   GAR_REPO_SHARED: us-central1-docker.pkg.dev/ganymede-331016/ultimagen
   DOCKERHUB_ACCOUNT: ultimagenomics
+  UGBIO_BASE_IMAGE_NAME: ugbio_base:latest
 
 jobs:
   build:
@@ -168,6 +169,7 @@ jobs:
           tags: ${{ env.DOCKER_DESTINATIONS }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: BASE_IMAGE=${{ steps.ecr-login.outputs.registry }}/${{ env.UGBIO_BASE_IMAGE_NAME }}
 
       - name: Update action summary with built tags
         run: |
