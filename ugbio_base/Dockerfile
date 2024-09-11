@@ -1,4 +1,4 @@
-FROM ubuntu:22.04 as ugbio-base
+FROM ubuntu:22.04 AS ugbio-base
 
 ARG PYTHON_VERSION=3.10
 ARG DEBIAN_FRONTEND=noninteractive
@@ -62,3 +62,6 @@ RUN git clone https://github.com/bedops/bedops.git && \
     cd .. && \
     rm -rf bedops
     
+# Include licenses
+COPY ["licenses/star LICENSE.txt", "."]
+COPY ["licenses/Ultima UGVC - EULA.pdf", "."]
