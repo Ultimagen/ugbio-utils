@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ugbio_base:latest
+ARG BASE_IMAGE=ugbio_base
 FROM python:3.10-bullseye as build
 
 ARG OUT_DIR=/tmp/ugbio

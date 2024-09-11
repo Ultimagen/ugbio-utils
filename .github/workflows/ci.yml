@@ -5,12 +5,12 @@ on: [pull_request]
 permissions:
   id-token: write # Required for assuming an AWS role
   contents: read # Required for actions/checkout
-  
+
 env:
   AWS_REGION: us-east-1
   AWS_ROLE_NAME: github-actions-ecr
   AWS_ACCOUNT: 337532070941
-  UGBIO_BASE_IMAGE_NAME: ugbio_base:latest
+  UGBIO_BASE_IMAGE_NAME: ugbio_base:1.0
 
 jobs:
   ugbio-utils-CI:
