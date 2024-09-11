@@ -2,6 +2,12 @@ name: CI
 
 on: [pull_request]
 
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE_NAME: github-actions-ecr
+  AWS_ACCOUNT: 337532070941
+  UGBIO_BASE_IMAGE_NAME: ugbio_base:latest
+
 jobs:
   ugbio-utils-CI:
     runs-on: ubuntu-latest
