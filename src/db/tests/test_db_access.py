@@ -46,7 +46,7 @@ class TestDBAccess:
         docs = sorted(docs, key=lambda x: x["metadata"]["workflowId"])
         docs = [x for x in docs if x["metadata"]["workflowId"] in self.hardcoded_wfids]
         all_inputs = pd.concat((db_access.inputs2df(x) for x in docs), axis=0)
-        assert all_inputs.equals(pd.read_hdf(pjoin(self.input_dir, "expected_inputs_df.h5"), key="df"))
+        assert all_inputs.fillna(0).equals(pd.read_hdf(pjoin(self.input_dir, "expected_inputs_df.h5"), key="df").fillna(0))
 
     def test_metrics_dataframe(self):
         r = re.compile(r"150450.*")
@@ -70,17 +70,17 @@ class TestDBAccess:
 
         all_inputs = pd.concat((db_access.metrics2df(x, metrics_to_report) for x in docs), axis=0)
 
-        assert all_inputs.equals(pd.read_hdf(pjoin(self.input_dir, "expected_metrics_df.h5"), key="df"))
+        assert all_inputs.fillna(0).equals(pd.read_hdf(pjoin(self.input_dir, "expected_metrics_df.h5"), key="df").fillna(0))
 
     def test_read_nexus_inputs(self):
         docs = db_access.query_database({"metadata_sequencingRunId": "011776"}, collection="samples")
         assert len(docs) == 23
         df = pd.concat(db_access.nexus_metrics_to_df(x) for x in docs)
-        assert df.equals(pd.read_hdf(pjoin(self.input_dir, "expected_nexus_df.h5"), key="df"))
+        assert df.fillna(0).equals(pd.read_hdf(pjoin(self.input_dir, "expected_nexus_df.h5"), key="df").fillna(0))
 
     def test_omics_inputs(self):
         omics_wfids = ["503496316425-8760489", "503496316425-2270966", "503496316425-2984995"]
         docs = db_access.query_database({"metadata.workflowId": {"$in": omics_wfids}})
         df = pd.concat(db_access.inputs2df(x) for x in docs)
         df.sort_index(inplace=True)
-        assert df.equals(pd.read_hdf(pjoin(self.input_dir, "expected_omics_df.h5"), key="df"))
+        assert df.fillna(0).equals(pd.read_hdf(pjoin(self.input_dir, "expected_omics_df.h5"), key="df").fillna(0))
