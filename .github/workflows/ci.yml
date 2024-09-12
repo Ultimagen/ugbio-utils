@@ -12,6 +12,7 @@ jobs:
         - core
         - cnv
         - single_cell
+        - db
     steps:
     - uses: actions/checkout@v4
       with:
