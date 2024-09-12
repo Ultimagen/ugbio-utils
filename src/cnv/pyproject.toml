@@ -5,7 +5,7 @@ requires-python = ">=3.10"
 dependencies = [
     "ugbio_core",
     "pysam>=0.22.1",
-    "pandas>=2.2.2",
+    "pandas>=1.5.3",
     "matplotlib>=3.7.1",
     "numpy>=1.26.4",
     "seaborn>=0.13.2",
