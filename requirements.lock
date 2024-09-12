@@ -12,7 +12,6 @@
 -e file:src/cnv
 -e file:src/core
     # via ugbio-cnv
-    # via ugbio-db
     # via ugbio-single-cell
 -e file:src/db
 -e file:src/single_cell
@@ -166,6 +165,7 @@ pandas==2.2.2
     # via seaborn
     # via ugbio-cnv
     # via ugbio-core
+    # via ugbio-db
     # via ugbio-single-cell
 pandocfilters==1.5.1
     # via nbconvert
