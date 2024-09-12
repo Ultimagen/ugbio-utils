@@ -31,9 +31,7 @@ RUN apt-get update && \
     xz-utils \
     libreadline-dev \
     libpcre2-dev \
-    make \
     tar \
-    git \
     bzip2 \
     libncurses5-dev \
     libncursesw5-dev \
@@ -41,7 +39,7 @@ RUN apt-get update && \
     libstdc++-10-dev \
     tzdata \
     && apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
 # Download and install R
 RUN wget https://cloud.r-project.org/src/base/R-4/R-4.3.1.tar.gz && \

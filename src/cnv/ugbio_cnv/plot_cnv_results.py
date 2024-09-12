@@ -269,7 +269,7 @@ def run(argv):
     ##########################
     ##### plot CNV calls #####
     ##########################
-    # load UG calls
+    #load UG calls
     if args.duplication_cnv_calls:
         if os.path.getsize(args.duplication_cnv_calls) > 0 : 
             df_DUP = pd.read_csv(args.duplication_cnv_calls,sep='\t',header=None)
