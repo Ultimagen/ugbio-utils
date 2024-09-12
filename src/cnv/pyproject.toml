@@ -13,6 +13,7 @@ dependencies = [
 description = "Ultima Genomics CNV utils"
 authors = [
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
+    { name= "Tammy Biniashvili", email = "tammy.biniashvili@ultimagen.com" }
 ]
 readme = "README.cnv.md"
 
