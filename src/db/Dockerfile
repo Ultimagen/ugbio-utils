@@ -1,13 +1,15 @@
 FROM python:3.10-bullseye as build
 
+ARG MODULE_DIR=db
 ARG OUT_DIR=/tmp/ugbio
 RUN mkdir -p $OUT_DIR
 
 COPY ./src/ ./src/
 
-#build ugbio_core
+#build ugbio_core + module
 RUN python -m pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/core
+RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
 FROM ubuntu:22.04
