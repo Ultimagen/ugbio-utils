@@ -61,41 +61,58 @@ If `import` is run on an existing database file, the data will be appended to th
 
 The `query` command supports two options for filtering the data: `--group-by` and `--having`. The `--group-by` option is used to group the data by one or more columns. The `--having` option is used to filter the groups based on a condition. The default is to group by `chrom` and `pos` and to filter for groups that have exactly one member. This is useful for removing duplicate variants.
 
-[TODO] Add examples
+### Examples
+
+The `info` field can be filtered on by specifying `key` and `value` constraints:
+
+Get variants with an `rq` value less than 0.5:
 
     --where "key = 'rq' AND value <= 0.5"
-    --where "key = 'X_FILTERED_COUNT' AND value = 4"
 
+Get variants with an `X_READ_COUNT` value of at least 20:
+
+    --where "key = 'X_READ_COUNT' AND value >= 20"
+
+Grouping by `chrom` and `pos` and filtering for groups that have exactly one member is useful for removing duplicate variants:
+
+    --group-by "chrom, pos" --having "COUNT(*) = 1"
+
+When using `--group-by`, [aggregate functions](https://www.sqlite.org/draft/lang_aggfunc.html) such as `COUNT(*)` can be used to filter the groups.
+
+A query that makes use of grouping as well as filtering:
+
+    --where "key = 'X_READ_COUNT' AND value >= 20"
     --group-by "chrom, pos"
-    --having "COUNT(*) = 1"
+    --having "CAST(COUNT(*) AS FLOAT)/value > 0.04"
 
-### Indexes
+Note: The `WHERE` clause is applied _before_ the `GROUP BY` clause, so it's possible to filter the data before grouping it. The `HAVING` clause is applied _after_ the `GROUP BY` clause, so it's possible to filter the groups based on the results of the aggregation (such as the `COUNT(*)` function).
 
-To improve performance:
+The `CAST` function is used to convert the integer result of `COUNT(*)` to a float, so that the division by `value` will result in a float.
 
-[TODO] Add EXPLAIN QUERY PLAN option
 
-    sqlite3 variants.db 'CREATE INDEX foo;'
+### Debugging
+
+To send the VCF output to the terminal without the header:
+
+    vcflite query --vcf-out /dev/stdout --skip-header --limit 10
+
 
 ### Performance
 
 The main performance gain when querying comes from the use of SQLite indexes.
-Currently, a single index is created when importing:
-
-    CREATE INDEX idx_variants_chrom_pos ON variants (chrom, pos);
 
 Since the import and query stages are separate, it's easy to add more indexes from the command line by using the `sqlite3` command line tool after the database is created, without having to change the code. After an index is created, it will be used automatically by following queries.
 
-The SQLite [EXPLAIN QUERY PLAN](https://www.sqlite.org/eqp.html) command can be used to see how the query is executed.
+The `--explain` option can be used to see how the query is executed according to SQLite's [EXPLAIN QUERY PLAN](https://www.sqlite.org/eqp.html), and can help decide in indexes should be added.
 
-For example, the following query will use the index:
+Example output:
 
-    $ sqlite3 variants.db
-    SQLite version 3.46.1 2024-08-13 09:16:08
-    Enter ".help" for usage hints.
-    sqlite> EXPLAIN QUERY PLAN SELECT * FROM variants GROUP BY chrom, pos;
-    QUERY PLAN
-    `--SCAN variants USING INDEX idx_variants_chrom_pos
+    Query plan:
+
+    SEARCH info_keys USING COVERING INDEX sqlite_autoindex_info_keys_1 (key=?)
+    SEARCH info USING INDEX idx_info_key_id (key_id=?)
+    SEARCH variants USING INTEGER PRIMARY KEY (rowid=?)
+    USE TEMP B-TREE FOR GROUP BY
 
 ### Limitations
 
