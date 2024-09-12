@@ -5,9 +5,9 @@ edition = "2021"
 
 [dependencies.noodles]
 features = ["core", "vcf", "bgzf"]
-# version = "0.79.0"
+version = "0.79.0"
 # path = "../../third_party/noodles/noodles"
-git = "https://github.com/gavrie/noodles.git"
+# git = "https://github.com/gavrie/noodles.git"
 
 [dependencies]
 anyhow = "1.0.86"
