@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 mod variants;
-use variants::Variants;
+use variants::{QueryOpts, Variants};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -70,6 +70,14 @@ enum Commands {
         /// Optional LIMIT clause
         #[arg(long)]
         limit: Option<String>,
+
+        /// Skip header
+        #[arg(long)]
+        skip_header: bool,
+
+        /// Explain query
+        #[arg(long)]
+        explain: bool,
     },
 }
 
@@ -88,16 +96,20 @@ fn main() -> Result<()> {
             group_by,
             having,
             limit,
+            skip_header,
+            explain,
         } => {
             let variants = Variants::new(&db)?;
 
-            variants.query(
-                &vcf_out,
-                where_.as_deref(),
-                group_by.as_deref(),
-                having.as_deref(),
-                limit.as_deref(),
-            )?;
+            variants.query(QueryOpts {
+                vcf_out: &vcf_out,
+                where_: where_.as_deref(),
+                group_by: group_by.as_deref(),
+                having: having.as_deref(),
+                limit: limit.as_deref(),
+                skip_header,
+                explain,
+            })?;
         }
     }
 

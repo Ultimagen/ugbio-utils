@@ -19,6 +19,15 @@ use rusqlite::Connection;
 // TODO: Use [sqlite_zstd](https://github.com/phiresky/sqlite-zstd?tab=readme-ov-file#usage)
 // TODO: Deconstruct the INFO field into its own table (note that Values can be Arrays)
 
+pub struct QueryOpts<'a> {
+    pub vcf_out: &'a PathBuf,
+    pub where_: Option<&'a str>,
+    pub group_by: Option<&'a str>,
+    pub having: Option<&'a str>,
+    pub limit: Option<&'a str>,
+    pub skip_header: bool,
+    pub explain: bool,
+}
 pub(crate) struct Variants {
     conn: Connection,
 }
@@ -197,14 +206,7 @@ impl Variants {
         Ok(())
     }
 
-    pub(crate) fn query(
-        &self,
-        vcf_out: &PathBuf,
-        where_: Option<&str>,
-        group_by: Option<&str>,
-        having: Option<&str>,
-        limit: Option<&str>,
-    ) -> Result<()> {
+    pub(crate) fn query(&self, options: QueryOpts) -> Result<()> {
         let conn = &self.conn;
 
         let sql = "
@@ -222,31 +224,37 @@ impl Variants {
             "
         .to_string();
 
-        let sql = if let Some(where_) = where_ {
+        let sql = if let Some(where_) = options.where_ {
             format!("{sql} WHERE {where_}")
         } else {
             sql
         };
 
-        let sql = if let Some(group_by) = group_by {
+        let sql = if let Some(group_by) = options.group_by {
             format!("{sql} GROUP BY {group_by}")
         } else {
             sql
         };
 
-        let sql = if let Some(having) = having {
+        let sql = if let Some(having) = options.having {
             format!("{sql} HAVING {having}")
         } else {
             sql
         };
 
-        let sql = if let Some(limit) = limit {
+        let sql = if let Some(limit) = options.limit {
             format!("{sql} LIMIT {limit}")
         } else {
             sql
         };
 
-        eprintln!("Exporting to VCF: {}", vcf_out.display());
+        let sql = if options.explain {
+            format!("EXPLAIN QUERY PLAN {sql}")
+        } else {
+            sql
+        };
+
+        eprintln!("Exporting to VCF: {}", options.vcf_out.display());
         eprintln!("Query: {sql};");
 
         let before = Instant::now();
@@ -260,11 +268,24 @@ impl Variants {
              WHERE variant_id = :variant_id",
         )?;
 
-        let mut writer = vcf::io::writer::Builder::default().build_from_path(vcf_out)?;
+        let mut writer = vcf::io::writer::Builder::default().build_from_path(options.vcf_out)?;
         let header = load_header(conn)?;
-        writer.write_header(&header)?;
+
+        if !options.skip_header {
+            writer.write_header(&header)?;
+        }
+
+        if options.explain {
+            eprintln!("\nQuery plan:\n");
+        }
 
         while let Some(row) = rows.next()? {
+            if options.explain {
+                let detail: String = row.get("detail")?;
+                eprintln!("{detail}");
+                continue;
+            }
+
             let variant_id: usize = row.get("variant_id")?;
             let chrom: String = row.get("chrom")?;
             let pos: Option<usize> = row.get("pos")?;
@@ -322,6 +343,10 @@ impl Variants {
             *record.quality_score_mut() = qual;
 
             writer.write_variant_record(&header, &record)?;
+        }
+
+        if options.explain {
+            return Ok(());
         }
 
         eprintln!("Query/export took {:.2?}", before.elapsed());
