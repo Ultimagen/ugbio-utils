@@ -2,6 +2,16 @@ name: CI
 
 on: [pull_request]
 
+permissions:
+  id-token: write # Required for assuming an AWS role
+  contents: read # Required for actions/checkout
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE_NAME: github-actions-ecr
+  AWS_ACCOUNT: 337532070941
+  UGBIO_BASE_IMAGE_NAME: ugbio_base:1.0
+
 jobs:
   ugbio-utils-CI:
     runs-on: ubuntu-latest
@@ -22,6 +32,10 @@ jobs:
       with:
         workspace-folder: ${{ matrix.module }}
         docker-file: src/${{ matrix.module }}/Dockerfile
+        aws-account: ${{ env.AWS_ACCOUNT }}
+        aws-region: ${{ env.AWS_REGION }}
+        aws-role-name: ${{ env.AWS_ROLE_NAME }}
+        ugbio_base_image: ${{ env.UGBIO_BASE_IMAGE_NAME }}
 
 
 

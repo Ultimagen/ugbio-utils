@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_cnv"
-version = "1.0.2-0dev-24"
+version = "1.0.2-0dev-25"
 requires-python = ">=3.10"
 dependencies = [
     "ugbio_core",
@@ -13,6 +13,7 @@ dependencies = [
 description = "Ultima Genomics CNV utils"
 authors = [
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
+    { name= "Tammy Biniashvili", email = "tammy.biniashvili@ultimagen.com" }
 ]
 readme = "README.cnv.md"
 

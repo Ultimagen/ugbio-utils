@@ -104,7 +104,6 @@ jobs:
           - single_cell
     uses: ./.github/workflows/build-workspace-docker.yml
     with:
-      workspace-folder: ${{ matrix.module }}
       docker-file: src/${{ matrix.module }}/Dockerfile
       docker-image: ugbio_${{ matrix.module }}
       commit-sha: ${{ needs.publish.outputs.publish_commit_sha }}
