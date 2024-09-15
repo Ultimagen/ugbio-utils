@@ -1,0 +1,21 @@
+name: Build ugbio_base docker
+on:
+  workflow_dispatch:
+    inputs:
+      image-tag:
+        description: "Docker image tag, If omitted will use github short sha"
+        required: false
+        type: string
+
+permissions:
+  id-token: write # Required for assuming an AWS role
+  contents: read # Required for actions/checkout
+
+jobs:
+  build-docker:
+    uses: ./.github/workflows/build-workspace-docker.yml
+    secrets: inherit
+    with:
+      docker-file: ugbio_base/Dockerfile
+      docker-image: ugbio_base
+      docker-tag: ${{ inputs.image-tag }}
