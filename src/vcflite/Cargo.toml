@@ -1,0 +1,15 @@
+[package]
+name = "vcflite"
+version = "0.2.1"
+edition = "2021"
+
+[dependencies.noodles]
+features = ["core", "vcf", "bgzf"]
+# version = "0.79.0"
+# path = "../../third_party/noodles/noodles"
+git = "https://github.com/gavrie/noodles.git"
+
+[dependencies]
+anyhow = "1.0.86"
+clap = { version = "4.5.16", features = ["derive"] }
+rusqlite = "0.32.1"
