@@ -13,6 +13,8 @@ RUN apt-get update && \
         libsqlite3-0 \
         tabix `# for vcf indexing` \
         file `# for monitoring` \
+        sysstat `# for IO check in monitoring log` \
+        procps `# for memory check in monitoring log` \
     && \
     rm -rf /var/lib/apt/lists/*
 
