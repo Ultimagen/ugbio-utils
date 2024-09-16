@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_cnv"
-version = "0.1.0.dev9"
+version = "1.0.2-0dev-25"
 requires-python = ">=3.10"
 dependencies = [
     "ugbio_core",
@@ -8,16 +8,25 @@ dependencies = [
     "pandas>=1.5.3",
     "matplotlib>=3.7.1",
     "numpy>=1.26.4",
-    "seaborn>=0.13.2"
+    "seaborn>=0.13.2",
 ]
 description = "Ultima Genomics CNV utils"
-authors = [{ name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" }]
+authors = [
+    { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
+    { name= "Tammy Biniashvili", email = "tammy.biniashvili@ultimagen.com" }
+]
 readme = "README.cnv.md"
-license = { text = "Apache-2.0" }
+
+[project.license]
+text = "Apache-2.0"
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = [
+    "setuptools>=61.0",
+]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["ugbio_cnv"]
+packages = [
+    "ugbio_cnv",
+]

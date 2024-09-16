@@ -1,4 +1,4 @@
-name: Build ug_cnv docker
+name: Build ugbio_cnv docker
 on:
   workflow_dispatch:
     inputs:
@@ -12,11 +12,10 @@ permissions:
   contents: read # Required for actions/checkout
 
 jobs:
-  build-cnmops-docker:
+  build-docker:
     uses: ./.github/workflows/build-workspace-docker.yml
     secrets: inherit
     with:
-      workspace-folder: cnv
       docker-file: src/cnv/Dockerfile
-      docker-image: ug_cnv
+      docker-image: ugbio_cnv
       docker-tag: ${{ inputs.image-tag }}

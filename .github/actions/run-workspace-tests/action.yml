@@ -10,13 +10,35 @@ inputs:
     required: true
   docker-context:
     description: "Docker build context"
-    required: true
+    required: false
     default: "."
+  aws-account:
+    description: "AWS account id"
+    required: true
+  aws-region:
+    description: "AWS region"
+    required: true
+  aws-role-name:
+    description: "AWS role name"
+    required: true
+  ugbio_base_image:
+      description: "ugbio_base image"
+      required: true
 
 runs:
   using: "composite"
 
   steps:
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v3
+      with:
+        role-to-assume: arn:aws:iam::${{ inputs.aws-account }}:role/${{ inputs.aws-role-name }}
+        aws-region: ${{ inputs.aws-region }}
+
+    - name: Login to Amazon ECR
+      id: ecr-login
+      uses: aws-actions/amazon-ecr-login@v1
+        
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
       with:
@@ -33,6 +55,7 @@ runs:
         tags: ${{ inputs.workspace-folder }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        build-args: BASE_IMAGE=${{ steps.ecr-login.outputs.registry }}/${{ inputs.ugbio_base_image }}
 
     - name: Run tests in the container
       shell: bash

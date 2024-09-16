@@ -1,0 +1,46 @@
+ 
+name: "Update workspaces version"
+description: "Update version in pyproject.toml in all workspaces and commit changes"
+
+inputs:
+ version:
+    description: "new version"
+    required: true
+ ref:
+    description: "git ref"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        fetch-depth: 0
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      shell: bash
+      run: pip install tomli_w
+
+    - name: Update pyproject.toml files with new dev_version
+      shell: bash
+      run: python .github/utils/update_project_version.py ${{ inputs.version }}
+
+    - name: Commit changes
+      shell: bash
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git commit -am "Update pyproject.toml versions to ${{ inputs.version }}"
+
+    - name: Push changes
+      uses: ad-m/github-push-action@master
+      with:
+        branch: ${{ inputs.ref }}

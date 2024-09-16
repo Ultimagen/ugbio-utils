@@ -1,13 +1,19 @@
 [project]
 name = "ugbio_utils"
-version = "0.1.0.dev9"
+version = "1.0.2-0dev-24"
 description = "Ultima Genomics bioinfo utils"
-authors = [{ name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com" }]
+authors = [
+    { name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com" },
+]
 readme = "README.md"
-license = { text = "Apache-2.0" }
+
+[project.license]
+text = "Apache-2.0"
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = [
+    "setuptools>=61.0",
+]
 build-backend = "setuptools.build_meta"
 
 [tool.rye]
@@ -15,7 +21,12 @@ dev-dependencies = [
     "pytest>=8.2.2",
 ]
 virtual = true
-exclude = ["tests", "tests/*"]
+exclude = [
+    "tests",
+    "tests/*",
+]
 
 [tool.rye.workspace]
-members = ["src/*"]
+members = [
+    "src/*",
+]
