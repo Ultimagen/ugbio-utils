@@ -1,0 +1,5 @@
+.vscode
+/target
+*.db
+*.vcf.gz
+*.vcf.gz.tbi

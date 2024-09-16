@@ -57,13 +57,21 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Extract project version from pyproject.toml
+      - name: Extract project version
         run: |
           pip install toml
-          version=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+          cd src/${{ inputs.workspace-folder }}
+          if [ -f pyproject.toml ]; then
+            version=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+          elif [ -f Cargo.toml ]; then
+            version=$(python -c "import toml; print(toml.load('Cargo.toml')['package']['version'])")
+          else
+            echo "No version file found!"
+            exit 1
+          fi
           echo "VERSION=${version}" >> $GITHUB_ENV
           echo "The project version is ${{ env.VERSION }}"
-
+          
       - uses: benjlevesque/short-sha@v2.2
         id: short-sha
         with:
