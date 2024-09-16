@@ -57,7 +57,6 @@ def single_cell_qc(
         keys_to_keep = [
             H5Keys.STATISTICS_SHORTLIST.value,
             H5Keys.STAR_STATS.value,
-            H5Keys.STAR_READS_PER_GENE.value,
         ]
         for key in store.keys():
             if key.strip('/') not in keys_to_keep:
