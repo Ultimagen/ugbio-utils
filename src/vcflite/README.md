@@ -9,7 +9,7 @@ The goal is to be simple and performant: After all SQL is highly specialized in 
 
 The easiest way to install `vcflite` is to use the Docker image:
 
-    docker run -ti gavrie/vcflite:0.2.1 vcflite --help
+    docker run -ti ugbio_vcflite vcflite --help
 
 
 ## Usage
