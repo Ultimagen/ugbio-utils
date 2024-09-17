@@ -2,6 +2,10 @@ name: "build ugbio workspace docker"
 on:
   workflow_call:
     inputs:
+      workspace-folder:
+        description: "workspace folder under src"
+        type: string
+        required: true
       docker-image:
         description: "docker image name"
         type: string
