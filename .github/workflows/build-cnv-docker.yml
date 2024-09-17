@@ -16,6 +16,7 @@ jobs:
     uses: ./.github/workflows/build-workspace-docker.yml
     secrets: inherit
     with:
+      workspace-folder: cnv
       docker-file: src/cnv/Dockerfile
       docker-image: ugbio_cnv
       docker-tag: ${{ inputs.image-tag }}
