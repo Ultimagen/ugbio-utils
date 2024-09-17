@@ -16,6 +16,7 @@ jobs:
     uses: ./.github/workflows/build-workspace-docker.yml
     secrets: inherit
     with:
+      workspace-folder: src/single_cell
       docker-file: src/single_cell/Dockerfile
       docker-image: ugbio_single_cell
       docker-tag: ${{ inputs.image-tag }}
