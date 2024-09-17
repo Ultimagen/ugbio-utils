@@ -16,6 +16,7 @@ jobs:
     uses: ./.github/workflows/build-workspace-docker.yml
     secrets: inherit
     with:
+      workspace-folder: srsnv
       docker-file: src/srsvn/Dockerfile
       docker-image: ugbio_srsnv
       docker-tag: ${{ inputs.image-tag }}
