@@ -3,7 +3,7 @@ on:
   workflow_call:
     inputs:
       workspace-folder:
-        description: "workspace folder under root"
+        description: "workspace folder (from repository root)"
         type: string
         required: true
       docker-image:
