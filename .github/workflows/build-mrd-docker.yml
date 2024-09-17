@@ -16,6 +16,7 @@ jobs:
     uses: ./.github/workflows/build-workspace-docker.yml
     secrets: inherit
     with:
+      workspace-folder: mrd
       docker-file: src/mrd/Dockerfile
       docker-image: ugbio_mrd
       docker-tag: ${{ inputs.image-tag }}
