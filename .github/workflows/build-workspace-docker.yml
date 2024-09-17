@@ -61,6 +61,7 @@ jobs:
         run: |
           pip install toml
           cd src/${{ inputs.workspace-folder }}
+          ls
           if [ -f pyproject.toml ]; then
             version=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
           elif [ -f Cargo.toml ]; then
