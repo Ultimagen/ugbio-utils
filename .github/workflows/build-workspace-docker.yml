@@ -11,7 +11,7 @@ on:
         type: string
         required: true
       docker-file:
-        description: "Dockerfile path"
+        description: "Dockerfile path (from repository root)"
         required: true
         type: string
       docker-tag:
