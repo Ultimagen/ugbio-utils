@@ -12,7 +12,7 @@ version_pattern = re.compile(r'^(version\s*=\s*")[^"]*(".*)$', re.MULTILINE)
 def _update_toml_version(glob_regex, project_key_name):
     toml_files = glob.glob('**/pyproject.toml', recursive=True)
 
-    for file_path in pyproject_files:
+    for file_path in toml_files:
         print(f"updating '{file_path}' version to {version}")
         with open(file_path, 'rb') as file:
             data = tomllib.load(file)
