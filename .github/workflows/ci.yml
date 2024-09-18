@@ -16,11 +16,11 @@ jobs:
   get-workspaces:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{steps.list_dirs.outputs.matrix}}
+      matrix: ${{steps.list_dirs.outputs.workspaces}}
     steps:
-      - uses: actions/checkout@v4
-      - id: list_dirs
-        run: echo "::set-output name=matrix::$(ls src   | grep -v "__" | grep -v "/\." | sed 's|src/||' | jq -R -s -c 'split("\n")[:-1]')"
+      - uses: ./.github/actions/get-workspaces
+        id: list_dirs
+
   ugbio-utils-CI:
     runs-on: ubuntu-latest
     needs: [get-workspaces]

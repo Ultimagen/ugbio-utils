@@ -54,7 +54,7 @@ jobs:
       
       - name: Build workspaces list
         id: list_dirs
-        run: echo "::set-output name=matrix::$(ls src   | grep -v "__" | grep -v "/\." | sed 's|src/||' | jq -R -s -c 'split("\n")[:-1]')"
+        uses: ./.github/actions/get-workspaces
 
       - uses: actions-ecosystem/action-get-latest-tag@v1
         id: get-latest-tag

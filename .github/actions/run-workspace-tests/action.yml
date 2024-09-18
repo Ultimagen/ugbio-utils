@@ -57,7 +57,7 @@ runs:
         cache-to: type=gha,mode=max
         build-args: BASE_IMAGE=${{ steps.ecr-login.outputs.registry }}/${{ inputs.ugbio_base_image }}
 
-    - name: Run python (if exist) tests in the container
+    - name: Run python tests (if exist) in the container
       working-directory: src/${{ inputs.workspace-folder }}
       shell: bash
       run: |

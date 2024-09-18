@@ -5,8 +5,6 @@ import glob
 import argparse
 from re import sub
 
-# Define the version pattern
-version_pattern = re.compile(r'^(version\s*=\s*")[^"]*(".*)$', re.MULTILINE)
 
 
 def _update_toml_version(glob_regex, project_key_name, version):
