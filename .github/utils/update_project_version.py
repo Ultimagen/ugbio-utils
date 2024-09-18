@@ -9,7 +9,7 @@ from re import sub
 version_pattern = re.compile(r'^(version\s*=\s*")[^"]*(".*)$', re.MULTILINE)
 
 
-def _update_toml_version(glob_regex, project_key_name):
+def _update_toml_version(glob_regex, project_key_name, version):
     toml_files = glob.glob('**/pyproject.toml', recursive=True)
 
     for file_path in toml_files:
@@ -25,9 +25,9 @@ def _update_toml_version(glob_regex, project_key_name):
 def main(version):
     version = version.lstrip('v')
     # Find and update all pyproject.toml files
-    _update_toml_version("**/pyproject.toml", "project")
+    _update_toml_version("**/pyproject.toml", "project", version)
     # Find and update all Cargo.toml files
-    _update_toml_version("**/Cargo.toml", "package")
+    _update_toml_version("**/Cargo.toml", "package", version)
 
 
 if __name__ == "__main__":
