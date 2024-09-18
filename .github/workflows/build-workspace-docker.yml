@@ -2,6 +2,10 @@ name: "build ugbio workspace docker"
 on:
   workflow_call:
     inputs:
+      workspace-folder:
+        description: "workspace folder (from repository root)"
+        type: string
+        required: true
       docker-image:
         description: "docker image name"
         type: string
@@ -60,7 +64,7 @@ jobs:
       - name: Extract project version
         run: |
           pip install toml
-          cd src/${{ inputs.workspace-folder }}
+          cd ${{ inputs.workspace-folder }}
           if [ -f pyproject.toml ]; then
             version=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
           elif [ -f Cargo.toml ]; then
@@ -70,7 +74,7 @@ jobs:
             exit 1
           fi
           echo "VERSION=${version}" >> $GITHUB_ENV
-          echo "The project version is ${{ env.VERSION }}"
+          echo "The project version is ${version}"
           
       - uses: benjlevesque/short-sha@v2.2
         id: short-sha

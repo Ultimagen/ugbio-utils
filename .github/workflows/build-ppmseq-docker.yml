@@ -16,6 +16,7 @@ jobs:
     uses: ./.github/workflows/build-workspace-docker.yml
     secrets: inherit
     with:
+      workspace-folder: src/ppmseq
       docker-file: src/ppmseq/Dockerfile
       docker-image: ugbio_ppmseq
       docker-tag: ${{ inputs.image-tag }}
