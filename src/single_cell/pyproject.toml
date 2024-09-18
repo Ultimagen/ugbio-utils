@@ -15,9 +15,7 @@ dependencies = [
     "ipykernel>=6.29.5",
 ]
 description = "Ultima Genomics Single Cell utils"
-authors = [
-    { name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" },
-]
+authors = [{ name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" }]
 readme = "README.single_cell.md"
 
 [project.scripts]
@@ -25,15 +23,11 @@ single_cell_qc = "ugbio_single_cell.single_cell_qc_pipeline:main"
 run_tests = "pytest:main"
 
 [tool.uv.sources]
-ugbio_core = {workspace = true}
+ugbio_core = { workspace = true }
 
 [tool.setuptools.package-data]
-"*" = [
-    "**/reports/*",
-]
+"*" = ["**/reports/*"]
 
 [build-system]
-requires = [
-    "setuptools>=61.0",
-]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"

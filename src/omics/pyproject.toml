@@ -1,14 +1,14 @@
 [project]
 name = "ugbio_omics"
-version = "0.1.0.dev9"
+version = "1.1.1-0dev-31"
 description = "Ultima Genomics bioinfo utils for working iwth AWS Health-Omics"
 authors = [
-    { name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" }
+    { name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" },
 ]
 dependencies = [
     "amazon-omics-tools>=0.5.0",
     "plotly>=5.23.0",
-    "google-cloud-storage>=2.18.2", # for compering cromwell and omics runs
+    "google-cloud-storage>=2.18.2",
 ]
 readme = "README.omics.md"
 requires-python = ">= 3.10"

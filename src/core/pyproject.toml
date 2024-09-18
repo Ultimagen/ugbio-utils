@@ -32,7 +32,5 @@ intersect_bed_regions = "ugbio_core.intersect_bed_regions:main"
 sorter_stats_to_mean_coverage = "ugbio_core.sorter_stats_to_mean_coverage:main"
 
 [build-system]
-requires = [
-    "setuptools>=61.0",
-]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
