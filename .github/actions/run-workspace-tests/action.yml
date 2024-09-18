@@ -61,7 +61,6 @@ runs:
       working-directory: src/${{ inputs.workspace-folder }}
       shell: bash
       run: |
-        ls
         if [ -f pyproject.toml ]; then
           echo "pyproject.toml found, running tests"
           docker run --rm -v .:/workdir/src ${{ inputs.workspace-folder }} pytest /workdir/src

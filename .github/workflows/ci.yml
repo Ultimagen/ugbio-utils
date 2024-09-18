@@ -18,7 +18,7 @@ jobs:
     outputs:
       matrix: ${{steps.list_dirs.outputs.matrix}}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - id: list_dirs
         run: echo "::set-output name=matrix::$(ls src   | grep -v "__" | grep -v "/\." | sed 's|src/||' | jq -R -s -c 'split("\n")[:-1]')"
   ugbio-utils-CI:
