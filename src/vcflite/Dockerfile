@@ -1,10 +1,8 @@
 FROM rust:1.80.1-bookworm AS builder
 
-RUN ls 
-
-COPY ./src/vclite/ /usr/src/myapp/
-
 WORKDIR /usr/src/myapp
+
+COPY ./src/vcflite/ .
 
 RUN cargo install --path .
 
