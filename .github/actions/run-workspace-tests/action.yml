@@ -67,6 +67,7 @@ runs:
           docker run --rm -v .:/workdir/src ${{ inputs.workspace-folder }} pytest /workdir/src
         else
           echo "No pyproject.toml found, skipping pytest"
+        fi
 
 
     #todo how to upload results?
