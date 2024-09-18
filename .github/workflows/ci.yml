@@ -13,15 +13,21 @@ env:
   UGBIO_BASE_IMAGE_NAME: ugbio_base:1.0
 
 jobs:
+  get-workspaces:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{steps.list_dirs.outputs.matrix}}
+    steps:
+      - uses: actions/checkout@v2
+      - id: list_dirs
+        run: echo "::set-output name=matrix::$(ls src   | grep -v "__" | grep -v "/\." | sed 's|src/||' | jq -R -s -c 'split("\n")[:-1]')"
   ugbio-utils-CI:
     runs-on: ubuntu-latest
+    needs: [get-workspaces]
     strategy:
       fail-fast: false
       matrix:
-        module:
-        - core
-        - cnv
-        - single_cell
+        module: ${{fromJson(needs.get-workspaces.outputs.matrix)}}
     steps:
     - uses: actions/checkout@v4
       with:
