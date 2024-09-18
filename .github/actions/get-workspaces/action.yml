@@ -11,5 +11,5 @@ runs:
 
   steps:
   - id: list_dirs
-    uses: actions/checkout@v4
+    shell: bash
     run: echo "::set-output name=matrix::$(ls src   | grep -v "__" | grep -v "/\." | sed 's|src/||' | jq -R -s -c 'split("\n")[:-1]')"
