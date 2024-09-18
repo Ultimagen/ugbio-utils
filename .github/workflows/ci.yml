@@ -18,6 +18,7 @@ jobs:
     outputs:
       matrix: ${{steps.list_dirs.outputs.workspaces}}
     steps:
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/get-workspaces
         id: list_dirs
 
