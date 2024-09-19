@@ -10,3 +10,4 @@ dist/
 .idea
 .idea/
 *.DS_Store
+extensions.txt
