@@ -1,0 +1,31 @@
+[project]
+name = "ugbio_ppmseq"
+version = "0.1.0.dev9"
+requires-python = ">=3.10"
+dependencies = [
+    "ugbio_core",
+    "seaborn>=0.13.2",
+    "papermill>=2.6.0",
+    "jupyter>=1.1.1",
+    "pyarrow>=17.0.0",
+    "fastparquet>=2024.5.0",
+]
+description = "Ultima Genomics ppmSeq utils"
+authors = [
+    { name = "Itai Rusinek", email = "itai.rusinek@ultimagen.com" },
+    { name = "Gat Krieger", email = "gat.krieger@ultimagen.com" },
+    { name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" },
+    { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
+]
+readme = "README.ppmseq.md"
+license = { text = "Apache-2.0" }
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+ppmSeq_qc_analysis = 'ugbio_ppmseq.ppmSeq_qc_analysis:main'
+
+[tool.setuptools.package-data]
+"*" = ["**/reports/*"]

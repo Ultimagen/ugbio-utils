@@ -1,0 +1,42 @@
+name: "Increment project version"
+
+on:
+  workflow_dispatch:
+  pull_request:
+      types: [opened, reopened]
+      branches: [ "main" ]
+
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+
+env:
+  REF: ${{ github.event.pull_request.head.ref }}
+jobs:
+  set-dev-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.REF }}
+          # fetch-depth: 0
+
+      - uses: actions-ecosystem/action-get-latest-tag@v1
+        id: get-latest-tag
+        with:
+            semver_only: true
+            initial_version: "1.0.0"
+
+      - uses: actions-ecosystem/action-bump-semver@v1
+        id: bump-dev-semver
+        with:
+          current_version: ${{ steps.get-latest-tag.outputs.tag }}
+          level: prepatch
+    
+      - uses: ./.github/actions/update-workspaces-version
+        with:
+          version: ${{ steps.bump-dev-semver.outputs.new_version }}dev-${{ github.event.number }}
+          ref: ${{ env.REF }}
+          
+

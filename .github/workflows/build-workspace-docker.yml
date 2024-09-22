@@ -3,7 +3,7 @@ on:
   workflow_call:
     inputs:
       workspace-folder:
-        description: "workspace folder under src"
+        description: "workspace folder (from repository root)"
         type: string
         required: true
       docker-image:
@@ -23,6 +23,11 @@ on:
         required: false
         default: "."
         type: string
+      commit-sha:
+        description: "commit-sha to run on"
+        type: string
+        default: ""
+        required: false
 
 permissions:
   id-token: write # Required for assuming an AWS role
@@ -40,6 +45,7 @@ env:
   GAR_REPO_INTERNAL: us-central1-docker.pkg.dev/ultima-data-307918/ultimagen
   GAR_REPO_SHARED: us-central1-docker.pkg.dev/ganymede-331016/ultimagen
   DOCKERHUB_ACCOUNT: ultimagenomics
+  UGBIO_BASE_IMAGE_NAME: ugbio_base:1.0
 
 jobs:
   build:
@@ -47,18 +53,29 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit-sha }}
+          
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Extract project version from pyproject.toml
+      - name: Extract project version
         run: |
           pip install toml
-          version=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+          cd ${{ inputs.workspace-folder }}
+          if [ -f pyproject.toml ]; then
+            version=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+          elif [ -f Cargo.toml ]; then
+            version=$(python -c "import toml; print(toml.load('Cargo.toml')['package']['version'])")
+          else
+            echo "No version file found!"
+            exit 1
+          fi
           echo "VERSION=${version}" >> $GITHUB_ENV
-          echo "The project version is ${{ env.VERSION }}"
-
+          echo "The project version is ${version}"
+          
       - uses: benjlevesque/short-sha@v2.2
         id: short-sha
         with:
@@ -69,7 +86,7 @@ jobs:
         if: ${{ inputs.image-tag == '' }}
         run: |
           if [ ${{ github.ref_name }} == 'main' ]; then
-            echo "imageTag=test_${{ steps.short-sha.outputs.sha }}" >>$GITHUB_OUTPUT;
+            echo "imageTag=main_${{ steps.short-sha.outputs.sha }}" >>$GITHUB_OUTPUT;
           else
             echo "imageTag=test_${{ steps.short-sha.outputs.sha }}" >>$GITHUB_OUTPUT;
           fi
@@ -130,7 +147,7 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
-
+      
       - name: Build and push
         uses: docker/build-push-action@v4
         with:
@@ -141,6 +158,7 @@ jobs:
           tags: ${{ env.DOCKER_DESTINATIONS }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          build-args: BASE_IMAGE=${{ steps.ecr-login.outputs.registry }}/${{ env.UGBIO_BASE_IMAGE_NAME }}
 
       - name: Update action summary with built tags
         run: |

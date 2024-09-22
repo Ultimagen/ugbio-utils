@@ -1,0 +1,38 @@
+[project]
+name = "ugbio_srsnv"
+version = "0.1.0.dev9"
+requires-python = ">=3.10"
+dependencies = [
+    "ugbio_core",
+    "ugbio_ppmseq",
+    "ugbio_featuremap",
+    "seaborn>=0.13.2",
+    "joblib>=1.4.2",
+    "xgboost>=2.0.3",
+    "scipy>=1.14.0",
+    "scikit-learn>=1.5.1",
+    "numba>=0.60.0",
+    "shap>=0.46.0",
+]
+description = "Ultima Genomics SRSNV utils"
+authors = [
+    { name = "Itai Rusinek", email = "itai.rusinek@ultimagen.com" },
+    { name = "Gat Krieger", email = "gat.krieger@ultimagen.com" },
+    { name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" },
+    { name = "Ori Hirschberg", email = "ori.hirschberg@ultimagen.com" },
+    { name = "Rina Schwartz", email = "rina.schwartz@ultimagen.com" },
+    { name = "Doron Shem-Tov", email = "doron.shemtov@ultimagen.com" },
+    { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" }]
+readme = "README.srsnv.md"
+license = { text = "Apache-2.0" }
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+srsnv_inference = 'ugbio_srsnv.srsnv_inference:main'
+srsnv_training = 'ugbio_srsnv.srsnv_training:main'
+
+[tool.setuptools.package-data]
+"*" = ["**/reports/*"]
