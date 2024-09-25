@@ -19,6 +19,10 @@ RUN apt-get update && \
     && \
     rm -rf /var/lib/apt/lists/*
 
+    # Create a script to run tests the cargo alias
+RUN echo '#!/bin/sh\ncargo run_tests' > /usr/local/bin/run_tests && \
+chmod +x /usr/local/bin/run_tests
+
 COPY --from=builder /usr/local/cargo/bin/vcflite /usr/local/bin/vcflite
 
 CMD ["vcflite"]
