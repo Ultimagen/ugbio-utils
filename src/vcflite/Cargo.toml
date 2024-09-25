@@ -13,6 +13,3 @@ git = "https://github.com/gavrie/noodles.git"
 anyhow = "1.0.86"
 clap = { version = "4.5.16", features = ["derive"] }
 rusqlite = "0.32.1"
-
-[alias]
-run_tests = "test"
