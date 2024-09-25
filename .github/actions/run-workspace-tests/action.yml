@@ -60,7 +60,7 @@ runs:
     - name: Run python tests (if exist) in the container
       working-directory: src/${{ inputs.workspace-folder }}
       shell: bash
-      run: docker run --rm ${{ inputs.workspace-folder }} run_tests
+      run: docker run --rm -v .:/workdir/src ${{ inputs.workspace-folder }} run_tests /workdir/src
 
 
     #todo how to upload results?
