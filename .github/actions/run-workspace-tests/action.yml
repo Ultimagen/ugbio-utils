@@ -60,13 +60,7 @@ runs:
     - name: Run python tests (if exist) in the container
       working-directory: src/${{ inputs.workspace-folder }}
       shell: bash
-      run: |
-        if [ -f pyproject.toml ]; then
-          echo "pyproject.toml found, running tests"
-          docker run --rm -v .:/workdir/src ${{ inputs.workspace-folder }} pytest /workdir/src
-        else
-          echo "No pyproject.toml found, skipping pytest"
-        fi
+      run: docker run --rm -v .:/workdir/src ${{ inputs.workspace-folder }} run_tests /workdir/src
 
 
     #todo how to upload results?
