@@ -13,12 +13,12 @@ class TocPreprocessor(Preprocessor):
         # Add custom text before the TOC
         custom_text = ""  # "# Report Introduction\n\nThis report contains an analysis of the ML model training.\n\n"
         custom_css = """
-        <style>
-        .toc-ol { counter-reset: item }
-        .toc-ol > li { display: block }
-        .toc-ol > li:before { content: counters(item, ".") ". "; counter-increment: item }
-        </style>
-        """
+<style>
+.toc-ol { counter-reset: item }
+.toc-ol > li { display: block }
+.toc-ol > li:before { content: counters(item, ".") ". "; counter-increment: item }
+</style>
+"""
         toc_html = self.generate_toc_html()
         toc_content = custom_css + custom_text + toc_html
 
