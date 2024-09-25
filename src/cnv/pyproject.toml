@@ -32,5 +32,4 @@ packages = [
 ]
 
 [project.scripts]
-single_cell_qc = "ugbio_single_cell.single_cell_qc_pipeline:main"
 run_tests = "pytest:main"
