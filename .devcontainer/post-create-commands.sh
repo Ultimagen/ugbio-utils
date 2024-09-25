@@ -7,14 +7,14 @@ apt-get update && apt-get install -y curl
 echo 'export UV_LINK_MODE=copy' >> ~/.bashrc
 export UV_LINK_MODE=copy
 
-# Install Rye
-curl -sSf https://rye.astral.sh/get | RYE_INSTALL_OPTION="--yes" bash
+# Install uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Add Rye to the shell environment
-echo '. "$HOME/.rye/env"' >> ~/.bashrc && . ~/.bashrc
+# Add uv command to PATH
+source $HOME/.cargo/env
 
-# Synchronize Rye
-rye sync
+# Synchronize uv
+uv sync
 
 # Install VS Code extensions
 echo "To install VS Code extensions, please run the following command:"

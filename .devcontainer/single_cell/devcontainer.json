@@ -33,5 +33,22 @@
 
 	"mounts": [
         "source=${localWorkspaceFolder}/extensions.txt,target=/tmp/extensions.txt,type=bind,consistency=cached"
-    ]
+		// "target=${containerWorkspaceFolder}/.venv,type=volume"
+	],
+	
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"ms-python.python"
+			],
+			"settings": {
+				"python.terminal.activateEnvInCurrentTerminal": true,
+				"python.defaultInterpreterPath": ".venv/bin/python"
+			}
+		}
+	},
+
+	// // Use the same user from your local environment
+	// "remoteUser": "${localEnv:USER}",
+	// "updateRemoteUserUID": true,
 }
