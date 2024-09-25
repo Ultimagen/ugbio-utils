@@ -20,7 +20,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
     # Create a script to run tests the cargo alias
-RUN echo '#!/bin/sh\necho "No tets to run"' > /usr/local/bin/run_tests && \
+RUN echo '#!/bin/sh\necho "No tests to run :)"' > /usr/local/bin/run_tests && \
 chmod +x /usr/local/bin/run_tests
 
 COPY --from=builder /usr/local/cargo/bin/vcflite /usr/local/bin/vcflite
