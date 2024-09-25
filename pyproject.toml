@@ -6,27 +6,11 @@ authors = [
     { name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com" },
 ]
 readme = "README.md"
+requires-python = ">=3.10"
 
 [project.license]
 text = "Apache-2.0"
 
-[build-system]
-requires = [
-    "setuptools>=61.0",
-]
-build-backend = "setuptools.build_meta"
-
-[tool.rye]
-dev-dependencies = [
-    "pytest>=8.2.2",
-]
-virtual = true
-exclude = [
-    "tests",
-    "tests/*",
-]
-
-[tool.rye.workspace]
-members = [
-    "src/*",
-]
+[tool.uv.workspace]
+members = ["src/*"]
+exclude = ["src/_*", "src/vcflite"]
