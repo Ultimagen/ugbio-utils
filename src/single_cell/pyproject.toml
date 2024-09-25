@@ -20,12 +20,12 @@ authors = [
 ]
 readme = "README.single_cell.md"
 
-[tool.uv.sources]
-ugbio_core = { workspace = true }
-
 [project.scripts]
 single_cell_qc = "ugbio_single_cell.single_cell_qc_pipeline:main"
 run_tests = "pytest:main"
+
+[tool.uv.sources.ugbio_core]
+workspace = true
 
 [tool.setuptools.package-data]
 "*" = [

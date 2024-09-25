@@ -12,5 +12,10 @@ requires-python = ">=3.10"
 text = "Apache-2.0"
 
 [tool.uv.workspace]
-members = ["src/*"]
-exclude = ["src/_*", "src/vcflite"]
+members = [
+    "src/*",
+]
+exclude = [
+    "src/_*",
+    "src/vcflite",
+]
