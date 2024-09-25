@@ -24,5 +24,21 @@ The packaging management in this project is done using [Rye](https://rye.astral.
 1. Use `rye test --all` to run all workspaces' tests
 2. Use `rye test --package [package_name]` to run tests of specific workspace
 
+### Define a new ugbio workspace
+1. create a new <WORKSPACE_NAME> folder under `src` for the new workspace. this folder should contain:
+    - Dockerfile
+    - pyproject.toml 
+    - README.<WORKSPACE_NAME>.md
+    - ugbio_<WORKSPACE_NAME> folder for python src code
+    - tests folder for python tests
+
+2. Dockerfile can be based on ugbio_base image that contains common tools
+3. In pyproject.toml you declare all the workspace's dependencies and requirments. It can contain also scripts to define executables. You must declare at least the follwoing `run_tests` script to allow run tests from the CI build:
+    ```
+    [project.scripts]
+    run_tests = "pytest:main"
+    ```
+ 
+
 
 
