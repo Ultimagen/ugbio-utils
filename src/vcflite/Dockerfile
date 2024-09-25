@@ -19,7 +19,7 @@ RUN apt-get update && \
     && \
     rm -rf /var/lib/apt/lists/*
 
-    # Create a script to run tests the cargo alias
+# Create a script to run tests from dockerfrom the CI
 RUN echo '#!/bin/sh\necho "No tests to run :)"' > /usr/local/bin/run_tests && \
 chmod +x /usr/local/bin/run_tests
 
