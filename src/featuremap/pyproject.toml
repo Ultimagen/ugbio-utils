@@ -20,6 +20,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]
+run_tests = "pytest:main"
 annotate_featuremap = 'ugbio_featuremap.annotate_featuremap:main'
 create_hom_snv_featuremap = 'ugbio_featuremap.create_hom_snv_featuremap:main'
 featuremap_to_dataframe = 'ugbio_featuremap.featuremap_to_dataframe:main'

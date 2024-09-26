@@ -2,7 +2,8 @@ FROM rust:1.80.1-bookworm AS builder
 
 WORKDIR /usr/src/myapp
 
-COPY . .
+COPY ./src/vcflite/ .
+
 RUN cargo install --path .
 
 #################################
@@ -17,6 +18,10 @@ RUN apt-get update && \
         procps `# for memory check in monitoring log` \
     && \
     rm -rf /var/lib/apt/lists/*
+
+# Create a script to run tests from dockerfrom the CI
+RUN echo '#!/bin/sh\necho "No tests to run :)"' > /usr/local/bin/run_tests && \
+chmod +x /usr/local/bin/run_tests
 
 COPY --from=builder /usr/local/cargo/bin/vcflite /usr/local/bin/vcflite
 

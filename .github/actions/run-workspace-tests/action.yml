@@ -6,7 +6,7 @@ inputs:
     description: "workspace folder under src"
     required: true
   docker-file:
-    description: "Dockerfile path"
+    description: "Dockerfile path (from repository root)"
     required: true
   docker-context:
     description: "Docker build context"
@@ -57,10 +57,11 @@ runs:
         cache-to: type=gha,mode=max
         build-args: BASE_IMAGE=${{ steps.ecr-login.outputs.registry }}/${{ inputs.ugbio_base_image }}
 
-    - name: Run tests in the container
+    - name: Run python tests (if exist) in the container
+      working-directory: src/${{ inputs.workspace-folder }}
       shell: bash
-      run: |
-        docker run --rm -v ${{ github.workspace }}/src:/workdir/src ${{ inputs.workspace-folder }} pytest /workdir/src/${{ inputs.workspace-folder }}
+      run: docker run --rm -v .:/workdir/src ${{ inputs.workspace-folder }} run_tests /workdir/src
+
 
     #todo how to upload results?
     #      - name: Upload Test Results

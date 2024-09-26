@@ -31,6 +31,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]
+run_tests = "pytest:main"
 srsnv_inference = 'ugbio_srsnv.srsnv_inference:main'
 srsnv_training = 'ugbio_srsnv.srsnv_training:main'
 

@@ -26,3 +26,6 @@ build-backend = "setuptools.build_meta"
 packages = [
     "ugbio_cnv",
 ]
+
+[project.scripts]
+run_tests = "pytest:main"

@@ -21,6 +21,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project.scripts]
+run_tests = "pytest:main"
 generate_synthetic_signatures = 'ugbio_mrd.generate_synthetic_signatures:main'
 intersect_featuremap_with_signature = 'ugbio_mrd.intersect_featuremap_with_signature:main'
 prepare_data_from_mrd_pipeline = 'ugbio_mrd.prepare_data_from_mrd_pipeline:main'

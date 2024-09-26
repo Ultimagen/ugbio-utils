@@ -1,0 +1,15 @@
+name: "Get ugbio workspaces"
+description: "utilty action to dynamically get the workspaces under ugbio-utils"
+
+outputs:
+    workspaces: 
+      description: "Workspaces list"
+      value: ${{ steps.list_dirs.outputs.matrix }}
+
+runs:
+  using: "composite"
+
+  steps:
+  - id: list_dirs
+    shell: bash
+    run: echo "::set-output name=matrix::$(ls src   | grep -v "__" | grep -v "/\." | sed 's|src/||' | jq -R -s -c 'split("\n")[:-1]')"

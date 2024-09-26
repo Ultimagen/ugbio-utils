@@ -32,6 +32,7 @@ jobs:
     outputs:
       publish_commit_sha: ${{ steps.commit-and-push-1.outputs.commit_long_sha }}
       new_version: ${{ steps.bump-semver.outputs.new_version }}
+      matrix: ${{steps.list_dirs.outputs.matrix}}
     steps:
       - name: Verify branch conditions based on minor-release input
         run: |
@@ -50,6 +51,10 @@ jobs:
           echo "Branch verification passed."
 
       - uses: actions/checkout@v4
+      
+      - name: Build workspaces list
+        id: list_dirs
+        uses: ./.github/actions/get-workspaces
 
       - uses: actions-ecosystem/action-get-latest-tag@v1
         id: get-latest-tag
@@ -98,10 +103,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module:
-          - core
-          - cnv
-          - single_cell
+        module: ${{fromJson(needs.publish.outputs.matrix)}}
     uses: ./.github/workflows/build-workspace-docker.yml
     with:
       docker-file: src/${{ matrix.module }}/Dockerfile
