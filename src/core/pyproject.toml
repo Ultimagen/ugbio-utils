@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_core"
-version = "1.2.0-0dev-0"
+version = "1.2.0-0dev-14"
 requires-python = ">= 3.10"
 description = "Ultima Genomics core bioinfo utils"
 authors = [
@@ -8,8 +8,18 @@ authors = [
 ]
 readme = "README.core.md"
 dependencies = [
-    "simppl==1.0.7",
+    "simppl>=1.0.7",
     "pandas>=2.2.2",
+    "tables>=3.10.1", #todo move to optional extension
+    "numpy>=1.26.4,<2.0.0",
+    "pysam>=0.22.1",
+    "matplotlib>=3.7.1",
+    "pyfaidx>=0.8.1",
+    "h5py>=3.11.0",
+    "scipy>=1.14.0",
+    "pybigwig>=0.3.18", #todo move to optional extension
+    "tqdm>=4.66.4",
+    "bgzip>=0.5.0",
 ]
 
 [project.license]
@@ -20,3 +30,8 @@ requires = [
     "setuptools>=61.0",
 ]
 build-backend = "setuptools.build_meta"
+
+[project.scripts]
+annotate_contig = 'ugbio_core.annotate_contig:main'
+intersect_bed_regions = 'ugbio_core.intersect_bed_regions:main'
+sorter_stats_to_mean_coverage = 'ugbio_core.sorter_stats_to_mean_coverage:main'

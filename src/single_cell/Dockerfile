@@ -22,6 +22,13 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     wget \
     libgomp1 \
     unzip \
+    `# the following packages required for pyBigWig python package used by ugbio_core` \
+    zlib1g-dev \
+    libbz2-dev \
+    liblzma-dev \
+    libc6-dev \
+    gcc \
+    \
     procps `# for monitoring script memory usage` \
     sysstat `# for monitoring script IO metrics` \
     ; \
