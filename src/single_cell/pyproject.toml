@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_single_cell"
-version = "1.2.0-0dev-14"
+version = "1.1.1-0dev-33"
 requires-python = ">= 3.11"
 dependencies = [
     "ugbio_core",

@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_srsnv"
-version = "1.2.0-0dev-14"
+version = "1.1.1-0dev-33"
 requires-python = ">=3.10"
 dependencies = [
     "ugbio_core",
@@ -22,18 +22,25 @@ authors = [
     { name = "Ori Hirschberg", email = "ori.hirschberg@ultimagen.com" },
     { name = "Rina Schwartz", email = "rina.schwartz@ultimagen.com" },
     { name = "Doron Shem-Tov", email = "doron.shemtov@ultimagen.com" },
-    { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" }]
+    { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
+]
 readme = "README.srsnv.md"
-license = { text = "Apache-2.0" }
 
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+[project.license]
+text = "Apache-2.0"
 
 [project.scripts]
 run_tests = "pytest:main"
-srsnv_inference = 'ugbio_srsnv.srsnv_inference:main'
-srsnv_training = 'ugbio_srsnv.srsnv_training:main'
+srsnv_inference = "ugbio_srsnv.srsnv_inference:main"
+srsnv_training = "ugbio_srsnv.srsnv_training:main"
+
+[build-system]
+requires = [
+    "setuptools>=61.0",
+]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools.package-data]
-"*" = ["**/reports/*"]
+"*" = [
+    "**/reports/*",
+]

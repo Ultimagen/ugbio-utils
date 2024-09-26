@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_featuremap"
-version = "1.2.0-0dev-14"
+version = "1.1.1-0dev-33"
 requires-python = ">=3.10"
 dependencies = [
     "ugbio_core",
@@ -11,17 +11,22 @@ description = "Ultima Genomics FeatureMap utils"
 authors = [
     { name = "Itai Rusinek", email = "itai.rusinek@ultimagen.com" },
     { name = "Gat Krieger", email = "gat.krieger@ultimagen.com" },
-    { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" }]
+    { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
+]
 readme = "README.featuremap.md"
-license = { text = "Apache-2.0" }
 
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+[project.license]
+text = "Apache-2.0"
 
 [project.scripts]
 run_tests = "pytest:main"
-annotate_featuremap = 'ugbio_featuremap.annotate_featuremap:main'
-create_hom_snv_featuremap = 'ugbio_featuremap.create_hom_snv_featuremap:main'
-featuremap_to_dataframe = 'ugbio_featuremap.featuremap_to_dataframe:main'
-pileup_featuremap = 'ugbio_featuremap.pileup_featuremap:main'
+annotate_featuremap = "ugbio_featuremap.annotate_featuremap:main"
+create_hom_snv_featuremap = "ugbio_featuremap.create_hom_snv_featuremap:main"
+featuremap_to_dataframe = "ugbio_featuremap.featuremap_to_dataframe:main"
+pileup_featuremap = "ugbio_featuremap.pileup_featuremap:main"
+
+[build-system]
+requires = [
+    "setuptools>=61.0",
+]
+build-backend = "setuptools.build_meta"

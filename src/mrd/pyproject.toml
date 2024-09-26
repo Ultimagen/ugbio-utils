@@ -1,27 +1,31 @@
 [project]
 name = "ugbio_mrd"
-version = "1.2.0-0dev-14"
+version = "1.1.1-0dev-33"
 requires-python = ">=3.10"
 dependencies = [
     "ugbio_core",
     "ugbio_ppmseq",
     "ugbio_featuremap",
-
 ]
 description = "Ultima Genomics MRD utils"
 authors = [
     { name = "Itai Rusinek", email = "itai.rusinek@ultimagen.com" },
     { name = "Gat Krieger", email = "gat.krieger@ultimagen.com" },
-    { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" }]
+    { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
+]
 readme = "README.mrd.md"
-license = { text = "Apache-2.0" }
 
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+[project.license]
+text = "Apache-2.0"
 
 [project.scripts]
 run_tests = "pytest:main"
-generate_synthetic_signatures = 'ugbio_mrd.generate_synthetic_signatures:main'
-intersect_featuremap_with_signature = 'ugbio_mrd.intersect_featuremap_with_signature:main'
-prepare_data_from_mrd_pipeline = 'ugbio_mrd.prepare_data_from_mrd_pipeline:main'
+generate_synthetic_signatures = "ugbio_mrd.generate_synthetic_signatures:main"
+intersect_featuremap_with_signature = "ugbio_mrd.intersect_featuremap_with_signature:main"
+prepare_data_from_mrd_pipeline = "ugbio_mrd.prepare_data_from_mrd_pipeline:main"
+
+[build-system]
+requires = [
+    "setuptools>=61.0",
+]
+build-backend = "setuptools.build_meta"
