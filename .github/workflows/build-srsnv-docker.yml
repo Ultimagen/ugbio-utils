@@ -12,11 +12,11 @@ permissions:
   contents: read # Required for actions/checkout
 
 jobs:
-  build-cnmops-docker:
+  build-docker:
     uses: ./.github/workflows/build-workspace-docker.yml
     secrets: inherit
     with:
       workspace-folder: src/srsnv
-      docker-file: src/srsvn/Dockerfile
+      docker-file: src/srsnv/Dockerfile
       docker-image: ugbio_srsnv
       docker-tag: ${{ inputs.image-tag }}

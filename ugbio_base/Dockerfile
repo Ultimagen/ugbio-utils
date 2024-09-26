@@ -39,9 +39,6 @@ RUN wget https://github.com/samtools/bcftools/releases/download/${BCFTOOLS_VERSI
  make && \
  make install
 
-#install required python packages
-RUN pip install tables==3.9.2
-
 # Install bedtools
 ARG BEDTOOLS_VERSION=2.31.0
 

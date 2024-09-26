@@ -12,7 +12,7 @@ permissions:
   contents: read # Required for actions/checkout
 
 jobs:
-  build-mrd-docker:
+  build-docker:
     uses: ./.github/workflows/build-workspace-docker.yml
     secrets: inherit
     with:

@@ -9,3 +9,4 @@ dist/
 .rye/
 .idea
 .idea/
+*.DS_Store
