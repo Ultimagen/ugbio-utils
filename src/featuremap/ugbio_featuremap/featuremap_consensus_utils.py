@@ -306,7 +306,7 @@ def pileup_featuremap(  # pylint: disable=too-many-branches
                 for field in fields_to_collect["boolean_fields"]:
                     cons_dict[rec_id][field] += [rec.info.get(field, False)]
                 for field in fields_to_collect["fields_to_write_once"]:
-                    cons_dict[rec_id][field] += [rec.info.get(field, None)
+                    cons_dict[rec_id][field] += [rec.info.get(field, None)]
                 for field in fields_to_collect["boolean_fields_to_write_once"]:
                     cons_dict[rec_id][field] += [rec.info.get(field, False)]
                 prev_key = rec_id
