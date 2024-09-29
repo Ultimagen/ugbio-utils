@@ -1,13 +1,14 @@
 [project]
 name = "ugbio_cnv"
-version = "1.2.0-0dev-14"
+version = "1.1.1-0dev-33"
 requires-python = ">=3.10"
 dependencies = [
     "ugbio_core",
     "seaborn>=0.13.2",
 ]
 description = "Ultima Genomics CNV utils"
-authors = [ {name = "Tammy Biniashvili", email = "tammy.biniashvili@ultimagen.com"},
+authors = [
+    { name = "Tammy Biniashvili", email = "tammy.biniashvili@ultimagen.com" },
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
     { name = "Tammy Biniashvili", email = "tammy.biniashvili@ultimagen.com" },
 ]
@@ -15,6 +16,9 @@ readme = "README.cnv.md"
 
 [project.license]
 text = "Apache-2.0"
+
+[project.scripts]
+run_tests = "pytest:main"
 
 [build-system]
 requires = [
@@ -26,6 +30,3 @@ build-backend = "setuptools.build_meta"
 packages = [
     "ugbio_cnv",
 ]
-
-[project.scripts]
-run_tests = "pytest:main"
