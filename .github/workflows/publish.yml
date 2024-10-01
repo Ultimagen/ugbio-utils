@@ -32,7 +32,7 @@ jobs:
     outputs:
       publish_commit_sha: ${{ steps.commit-and-push-1.outputs.commit_long_sha }}
       new_version: ${{ steps.bump-semver.outputs.new_version }}
-      matrix: ${{steps.list_dirs.outputs.matrix}}
+      matrix: ${{steps.list_dirs.outputs.workspaces}}
     steps:
       - name: Verify branch conditions based on minor-release input
         run: |
@@ -109,6 +109,7 @@ jobs:
       docker-file: src/${{ matrix.module }}/Dockerfile
       docker-image: ugbio_${{ matrix.module }}
       commit-sha: ${{ needs.publish.outputs.publish_commit_sha }}
+      workspace-folder: src/${{ matrix.module }}
 
   set-dev-version:
     runs-on: ubuntu-latest
