@@ -52,3 +52,39 @@ def test_matrix_from_trimmed_read(resources_dir):
 
     np.testing.assert_array_almost_equal(flow_based_read._flow_matrix[:, 2], np.ones(21) / 21, 0.0001)
     np.testing.assert_array_almost_equal(flow_based_read._flow_matrix[:, -1], np.ones(21) / 21, 0.0001)
+
+
+@pytest.fixture
+def flow_order():
+    return "ACGT"
+
+def test_generate_key_from_sequence_standard_nucleotides(flow_order):
+    sequence = "AAGGTTCC"
+    result = fbr.generate_key_from_sequence(sequence, flow_order)
+    expected = np.array([2, 0, 2, 2, 0, 2])
+    assert np.array_equal(result, expected)
+
+def test_generate_key_from_sequence_non_standard_nucleotides(flow_order):
+    sequence = "AAGGTTCCNN"
+    result = fbr.generate_key_from_sequence(sequence, flow_order, non_standard_as_a=True)
+    expected = np.array([2, 0, 2, 2, 0, 2,0,0,2])
+    assert np.array_equal(result, expected)
+
+def test_generate_key_from_sequence_non_standard_nucleotides_exception(flow_order):
+    sequence = "AAGGTTCCNN"
+    with pytest.raises(ValueError):
+        fbr.generate_key_from_sequence(sequence, flow_order, non_standard_as_a=False)
+
+def test_generate_key_from_sequence_truncate(flow_order):
+    sequence = "AAGGTTCC"
+
+    result = fbr.generate_key_from_sequence(sequence, flow_order, truncate=1)
+    expected = np.array([1, 0, 1, 1, 0, 1])
+    
+    assert np.array_equal(result, expected)
+
+def test_generate_key_from_sequence_empty_sequence(flow_order):
+    sequence = ""
+    result = fbr.generate_key_from_sequence(sequence, flow_order)
+    expected = np.array([])
+    assert np.array_equal(result, expected)
