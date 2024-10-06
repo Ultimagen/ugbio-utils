@@ -17,8 +17,8 @@ readme = "README.cnv.md"
 [project.license]
 text = "Apache-2.0"
 
-[tool.uv.sources.ugbio_core]
-workspace = true
+[tool.uv.sources]
+ugbio_core = {workspace = true}
 
 [tool.setuptools]
 packages = [

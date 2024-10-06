@@ -59,6 +59,8 @@ For example, for cnv:
         ugbio_core = {workspace = true}
         ```
 
+4. Optional - add a devcontainer.json under `.devcontainer/<MEMBER_NAME>` folder for working with the member's conatiner.
+
 ## Working with Dev Containers
 To work in an environment with all necessary tools installed while still working on your code, it is recommended to develop inside a container, or in short - [dev container](https://containers.dev/).
 
