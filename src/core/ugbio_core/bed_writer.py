@@ -31,7 +31,7 @@ class BedWriter:
         self.fh_var.close()
 
 
-def parse_intervals_file(intervalfile: str, threshold: int = 0) -> pd.DataFrame:
+def parse_intervals_file(intervalfile: str, threshold: int = 0, sort: bool = True) -> pd.DataFrame:
     """Parses bed file
 
     Parameters
@@ -40,6 +40,8 @@ def parse_intervals_file(intervalfile: str, threshold: int = 0) -> pd.DataFrame:
         Input BED file
     threshold : int, optional
         minimal length of interval to output (default = 0)
+    sort: bool, optional
+        Sort the output dataframe by chromosome and start, optional, default=True
 
     Returns
     -------
@@ -55,6 +57,7 @@ def parse_intervals_file(intervalfile: str, threshold: int = 0) -> pd.DataFrame:
     )
     if threshold > 0:
         df = df[df["end"] - df["start"] > threshold]
-    df.sort_values(["chromosome", "start"], inplace=True)
+    if sort:
+        df.sort_values(["chromosome", "start"], inplace=True)
     df["chromosome"] = df["chromosome"].astype("string")
     return df

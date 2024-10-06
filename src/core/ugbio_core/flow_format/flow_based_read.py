@@ -51,7 +51,7 @@ def key2base(key: np.ndarray) -> np.ndarray:
     flow2base = -1 + np.cumsum(n_reps_shifted)
     return flow2base
 
-def generate_key_from_sequence(sequence: str, flow_order: str, truncate: int | None = None) -> np.ndarray:
+def generate_key_from_sequence(sequence: str, flow_order: str, truncate: int | None = None, non_standard_as_a: bool = False) -> np.ndarray:
     """Converts bases to flow order
 
     Parameters
@@ -62,6 +62,8 @@ def generate_key_from_sequence(sequence: str, flow_order: str, truncate: int | N
         Flow order
     truncate : int, optional
         maximal hmer to read
+    non_standard_as_a: bool, optional
+        Replace non-standard nucleotides with A (default: false)
 
     Returns
     -------
@@ -76,7 +78,10 @@ def generate_key_from_sequence(sequence: str, flow_order: str, truncate: int | N
     # sanitize input
     sequence = sequence.upper()
     if bool(re.compile(r"[^ACGT]").search(sequence)):
-        raise ValueError("Input contains non ACGTacgt characters" + (f":\n{sequence}" if len(sequence) <= 100 else ""))
+        if non_standard_as_a:
+            sequence = re.sub(r"[^ACGT]", "A", sequence)
+        else:
+            raise ValueError("Input contains non ACGTacgt characters" + (f":\n{sequence}" if len(sequence) <= 100 else ""))
 
     # process
     flow = flow_order * len(sequence)
