@@ -19,6 +19,9 @@ authors = [
 ]
 readme = "README.ppmseq.md"
 
+[tool.uv.sources]
+ugbio_core = {workspace = true}
+
 [project.license]
 text = "Apache-2.0"
 

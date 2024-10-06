@@ -6,7 +6,7 @@ __pycache__/
 .vscode/
 *egg-info
 dist/
-.rye/
 .idea
 .idea/
 *.DS_Store
+extensions.txt

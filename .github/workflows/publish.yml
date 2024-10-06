@@ -10,7 +10,7 @@ on:
         default: false
 
 env:
-  RYE_VERSION: '0.34.0'
+  UV_VERSION: '0.4.17'
   MAIN_BRANCH: main
   VERSION_LEVEL: >
     ${{ fromJson('{
@@ -32,7 +32,7 @@ jobs:
     outputs:
       publish_commit_sha: ${{ steps.commit-and-push-1.outputs.commit_long_sha }}
       new_version: ${{ steps.bump-semver.outputs.new_version }}
-      matrix: ${{steps.list_dirs.outputs.matrix}}
+      matrix: ${{steps.list_dirs.outputs.workspaces}}
     steps:
       - name: Verify branch conditions based on minor-release input
         run: |
@@ -68,20 +68,20 @@ jobs:
           current_version: ${{ steps.get-latest-tag.outputs.tag }}
           level: ${{ env.VERSION_LEVEL }}
 
-      - name: Install rye
-        uses: eifinger/setup-rye@v3
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
         with:
-          version: ${{ env.RYE_VERSION }}
+          version: ${{ env.UV_VERSION }}
 
       - uses: ./.github/actions/update-workspaces-version
         with:
            version: ${{ steps.bump-semver.outputs.new_version }}
            ref: ${{ env.GITHUB_REF_NAME }}
 
-      - name: Rye build
+      - name: Uv build
         run: |
-          rye sync
-          rye build --all
+          uv sync
+          uv build --all
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -109,6 +109,7 @@ jobs:
       docker-file: src/${{ matrix.module }}/Dockerfile
       docker-image: ugbio_${{ matrix.module }}
       commit-sha: ${{ needs.publish.outputs.publish_commit_sha }}
+      workspace-folder: src/${{ matrix.module }}
 
   set-dev-version:
     runs-on: ubuntu-latest

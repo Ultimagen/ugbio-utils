@@ -26,6 +26,11 @@ authors = [
 ]
 readme = "README.srsnv.md"
 
+[tool.uv.sources]
+ugbio_core = {workspace = true}
+ugbio_ppmseq = {workspace = true}
+ugbio_featuremap = {workspace = true}
+
 [project.license]
 text = "Apache-2.0"
 
