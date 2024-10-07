@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_cnv"
-version = "1.1.1-0dev-34"
+version = "1.1.1-0dev-37"
 requires-python = ">=3.10"
 dependencies = [
     "ugbio_core",
@@ -17,8 +17,11 @@ readme = "README.cnv.md"
 [project.license]
 text = "Apache-2.0"
 
-[tool.uv.sources]
-ugbio_core = {workspace = true}
+[project.scripts]
+run_tests = "pytest:main"
+
+[tool.uv.sources.ugbio_core]
+workspace = true
 
 [tool.setuptools]
 packages = [
@@ -30,6 +33,3 @@ requires = [
     "setuptools>=61.0",
 ]
 build-backend = "setuptools.build_meta"
-
-[project.scripts]
-run_tests = "pytest:main"
