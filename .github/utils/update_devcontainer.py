@@ -2,8 +2,10 @@ import os
 import argparse
 
 ECR_REPO = "337532070941.dkr.ecr.us-east-1.amazonaws.com"
+DOCKER_PREFIX = "ugbio"
+
 def update_image_in_file(file_path, workspace, new_version):
-    new_image = f"{ECR_REPO}/{workspace}:{new_version}"
+    new_image = f"{ECR_REPO}/{DOCKER_PREFIX}_{workspace}:{new_version}"
     updated_lines = []
 
     with open(file_path, 'r') as f:
