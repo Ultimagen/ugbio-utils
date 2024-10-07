@@ -4,6 +4,8 @@ from enum import Enum
 
 import pandas as pd
 
+RUN_ID_PLACEHOLDER = "<RUN_ID>"
+PLOTS_DIR = f"omics_{RUN_ID_PLACEHOLDER}_plots"
 
 class Columns(Enum):
     ESTIMATED_USD_COLUMN = "estimatedUSD"
@@ -26,7 +28,7 @@ class RunCost:
 
     def calculate_run_cost(self) -> None:
         cost_output = f"{self.output_prefix}omics_{self.run_id}.cost.csv"
-        plots_dir = f"omics_{self.run_id}_plots"
+        plots_dir = PLOTS_DIR.replace(RUN_ID_PLACEHOLDER, self.run_id)
 
         if self.output_dir:
             cost_output = f"{self.output_dir}/{cost_output}"

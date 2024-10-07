@@ -10,7 +10,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from ugbio_omics.get_omics_log import OMICS_LOG_GROUP
-from ugbio_omics.get_run_cost import Columns, RunCost
+from ugbio_omics.get_run_cost import PLOTS_DIR, RUN_ID_PLACEHOLDER, Columns, RunCost
 from ugbio_omics.get_run_info import get_run_info
 
 
@@ -101,14 +101,26 @@ class MonitorLog:
                 self.start_time = time
 
             self.run_time = time - self.start_time
-            self.df = pd.concat([self.df, pd.DataFrame({   
+
+            # Create a new DataFrame
+            new_data = pd.DataFrame({
                 MonitorColumns.TIME.value: [time], 
                 MonitorColumns.CPU.value: [cpu], 
                 MonitorColumns.MEMORY.value: [memory], 
-                MonitorColumns.IO_RKB.value:[io_rkb], 
+                MonitorColumns.IO_RKB.value: [io_rkb], 
                 MonitorColumns.IO_WKB.value: [io_wkb], 
                 MonitorColumns.IOWAIT.value: [iowait]
-                })], ignore_index=True)
+            })
+
+            # Drop empty or all-NA columns
+            new_data = new_data.dropna(axis=1, how='all')
+
+            # Ensure the DataFrame is not empty after dropping columns
+            if not new_data.empty:
+                if self.df.empty:
+                    self.df = new_data
+                else:
+                    self.df = pd.concat([self.df, new_data], ignore_index=True)
 
 def performance(run_id, session=None, output_dir=None, output_prefix='') -> Tuple[pd.DataFrame, RunCost]:
     if output_dir:
@@ -356,7 +368,8 @@ def save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir=None,
         )
 
     # Save the combined figure to an HTML file
-    combined_fig_output = f"{output_prefix}omics_{run_id}_performance_plots.html"
+    plots_dir = PLOTS_DIR.replace(RUN_ID_PLACEHOLDER, run_id)
+    combined_fig_output = f"{plots_dir}/{output_prefix}omics_{run_id}_performance_plots.html"
     if output_dir is not None:
         combined_fig_output = f"{output_dir}/{combined_fig_output}"
     print(f"Saving performance plots report to: {combined_fig_output}")
