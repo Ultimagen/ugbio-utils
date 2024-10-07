@@ -32,7 +32,7 @@ runs:
 
     - name: Update devcontainer files with new docker image
       shell: bash
-      run: python update_devcontainer.py --version ${{ needs.publish.outputs.new_version }}
+      run: python update_devcontainer.py --version ${{ inputs.version }}
 
     - name: Commit changes
       shell: bash
