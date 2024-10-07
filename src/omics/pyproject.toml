@@ -19,5 +19,10 @@ requires = [
 ]
 build-backend = "setuptools.build_meta"
 
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.3.3",
+]
+
 [project.scripts]
  run_tests = "pytest:main"
