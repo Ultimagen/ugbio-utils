@@ -1,0 +1,48 @@
+ 
+name: "Update devcontainer jsons"
+description: "Update docker image version in all worspaces' devcontainer jsons"
+
+inputs:
+ version:
+    description: "new version"
+    required: true
+ ref:
+    description: "git ref"
+    required: false
+    default: ""
+ push:
+    description: "push changes"
+    type: boolean
+    default: true
+    required: false
+
+runs:
+  using: "composite"
+
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.ref }}
+        fetch-depth: 0
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Update devcontainer files with new docker image
+      shell: bash
+      run: python update_devcontainer.py --version ${{ needs.publish.outputs.new_version }}
+
+    - name: Commit changes
+      shell: bash
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git commit -am "Update docker images in devcontainer jsons to ${{ inputs.version }}"
+
+    - name: Push changes
+      if: inputs.push
+      uses: ad-m/github-push-action@master
+      with:
+        branch: ${{ inputs.ref }}
