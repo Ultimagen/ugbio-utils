@@ -109,16 +109,16 @@ jobs:
       docker-file: src/${{ matrix.module }}/Dockerfile
       docker-image: ugbio_${{ matrix.module }}
       commit-sha: ${{ needs.publish.outputs.publish_commit_sha }}
-      workspace-folder: src/${{ matrix.module }}
+      workspace-folder: src/${{ matrix.module }}      
 
-  set-dev-version:
+  prepare-next-dev-version:
     runs-on: ubuntu-latest
-    needs: [ publish ]
+    needs: [ publish, build-dockers ]
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.GITHUB_REF_NAME }}
-
+    
       - uses: actions-ecosystem/action-bump-semver@v1
         id: bump-dev-semver
         with:
@@ -129,3 +129,11 @@ jobs:
         with:
           version: ${{ steps.bump-dev-semver.outputs.new_version }}
           ref: ${{ env.GITHUB_REF_NAME }}
+          push: false
+
+      - uses: ./.github/actions/update-devcontainer-jsons
+        with:
+          version: ${{ needs.publish.outputs.new_version }}
+          ref: ${{ env.GITHUB_REF_NAME }}
+          push: true
+    

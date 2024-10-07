@@ -10,6 +10,11 @@ inputs:
     description: "git ref"
     required: false
     default: ""
+ push:
+    description: "push changes"
+    type: boolean
+    default: true
+    required: false
 
 runs:
   using: "composite"
@@ -41,6 +46,7 @@ runs:
         git commit -am "Update pyproject.toml versions to ${{ inputs.version }}"
 
     - name: Push changes
+      if: inputs.push
       uses: ad-m/github-push-action@master
       with:
         branch: ${{ inputs.ref }}
