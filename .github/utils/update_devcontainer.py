@@ -32,9 +32,9 @@ def update_devcontainers(repo_path, new_version):
         for file in files:
             if file == "devcontainer.json":
                 file_path = os.path.join(root, file)
-                # The workspace is assumed to be the immediate subfolder name
-                workspace = os.path.basename(root)
-                update_image_in_file(file_path, workspace, new_version)
+                # The member is assumed to be the immediate subfolder name
+                member = os.path.basename(root)
+                update_image_in_file(file_path, member, new_version)
                 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Update version in devcontainer.json files.")

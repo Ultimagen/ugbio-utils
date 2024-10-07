@@ -1,6 +1,6 @@
  
 name: "Update devcontainer jsons"
-description: "Update docker image version in all worspaces' devcontainer jsons"
+description: "Update docker image version in all devcontainer jsons"
 
 inputs:
  version:
