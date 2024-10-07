@@ -1,6 +1,5 @@
-FROM ubuntu:22.04 AS ugbio-base
+FROM python:3.10-bullseye AS ugbio-base
 
-ARG PYTHON_VERSION=3.10
 ARG DEBIAN_FRONTEND=noninteractive
 ARG BCFTOOLS_INSTALL_DIR=/opt/bcftools
 ARG BCFTOOLS_VERSION=1.20
@@ -22,15 +21,9 @@ libc6-dev \
 gcc \
 procps `# for monitoring script memory usage` \
 sysstat `# for monitoring script IO metrics` \
-python${PYTHON_VERSION} \
-python${PYTHON_VERSION}-dev \
-python${PYTHON_VERSION}-venv \
-python3-pip \
 && apt-get clean && \
  rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
-# Create symbolic links for python
-RUN ln -s /usr/bin/python${PYTHON_VERSION} /usr/bin/python
 # install bcftools
 RUN wget https://github.com/samtools/bcftools/releases/download/${BCFTOOLS_VERSION}/bcftools-${BCFTOOLS_VERSION}.tar.bz2 && \
  tar -vxjf bcftools-${BCFTOOLS_VERSION}.tar.bz2 && \
