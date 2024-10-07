@@ -73,30 +73,30 @@ jobs:
         with:
           version: ${{ env.UV_VERSION }}
 
-      - uses: ./.github/actions/update-workspaces-version
-        with:
-           version: ${{ steps.bump-semver.outputs.new_version }}
-           ref: ${{ env.GITHUB_REF_NAME }}
+      # - uses: ./.github/actions/update-workspaces-version
+      #   with:
+      #      version: ${{ steps.bump-semver.outputs.new_version }}
+      #      ref: ${{ env.GITHUB_REF_NAME }}
 
       - name: Uv build
         run: |
           uv sync
           uv build --all
 
-      - name: Publish package distributions to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          password: ${{ secrets.PYPI_TOKEN }}
+      # - name: Publish package distributions to PyPI
+      #   uses: pypa/gh-action-pypi-publish@release/v1
+      #   with:
+      #     password: ${{ secrets.PYPI_TOKEN }}
 
-      - name: Create a new release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
-        with:
-          tag_name: ${{ steps.bump-semver.outputs.new_version }}
-          release_name: Release ${{ steps.bump-semver.outputs.new_version }}
-          draft: false
-          prerelease: false
+      # - name: Create a new release
+      #   uses: actions/create-release@v1
+      #   env:
+      #     GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+      #   with:
+      #     tag_name: ${{ steps.bump-semver.outputs.new_version }}
+      #     release_name: Release ${{ steps.bump-semver.outputs.new_version }}
+      #     draft: false
+      #     prerelease: false
 
   build-dockers:
     needs: [ publish ]
