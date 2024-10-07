@@ -8,8 +8,7 @@ inputs:
     required: true
  ref:
     description: "git ref"
-    required: false
-    default: ""
+    required: true
  push:
     description: "push changes"
     type: boolean
