@@ -1,9 +1,26 @@
 import os
 import argparse
+import json5
+import re
+import logging
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+log = logging.getLogger(__name__)
 ECR_REPO = "337532070941.dkr.ecr.us-east-1.amazonaws.com"
 DOCKER_PREFIX = "ugbio"
+IMAGE_REGEX = r'^337532070941\.dkr\.ecr\.us-east-1\.amazonaws\.com/ugbio_[^:]+:[^"]+$'
 
+def is_ugbio_image_used_in_file(file_path):
+    with open(file_path, 'r') as f:
+        data = json5.load(f)
+
+    # Check if the JSON has the "image" field
+    if "image" in data:
+        # Search for the image tag in the file
+        image_match = re.match(IMAGE_REGEX, data["image"])
+        return image_match
+    return False
+        
 def update_image_in_file(file_path, workspace, new_version):
     new_image = f"{ECR_REPO}/{DOCKER_PREFIX}_{workspace}:{new_version}"
     updated_lines = []
@@ -17,7 +34,7 @@ def update_image_in_file(file_path, workspace, new_version):
             # Update the line containing the image key
             updated_line = f'	"image": "{new_image}",\n'
             updated_lines.append(updated_line)
-            print(f"Updating {file_path}: {new_image}")
+            log.info(f"Updating {file_path}: {new_image}")
         else:
             # Keep the line as it is
             updated_lines.append(line)
@@ -34,7 +51,11 @@ def update_devcontainers(repo_path, new_version):
                 file_path = os.path.join(root, file)
                 # The member is assumed to be the immediate subfolder name
                 member = os.path.basename(root)
-                update_image_in_file(file_path, member, new_version)
+                if is_ugbio_image_used_in_file(file_path):
+                    update_image_in_file(file_path, member, new_version)
+                else:
+                    log.info(f"No image field/matching image found in {file_path}")
+
                 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Update version in devcontainer.json files.")
