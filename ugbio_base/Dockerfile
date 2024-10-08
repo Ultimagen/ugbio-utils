@@ -53,5 +53,4 @@ RUN git clone https://github.com/bedops/bedops.git && \
     rm -rf bedops
     
 # Include licenses
-COPY ["licenses/star LICENSE.txt", "."]
 COPY ["licenses/Ultima UGVC - EULA.pdf", "."]
