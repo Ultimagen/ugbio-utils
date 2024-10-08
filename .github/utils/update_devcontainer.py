@@ -21,8 +21,8 @@ def is_ugbio_image_used_in_file(file_path):
         return image_match
     return False
         
-def update_image_in_file(file_path, workspace, new_version):
-    new_image = f"{ECR_REPO}/{DOCKER_PREFIX}_{workspace}:{new_version}"
+def update_image_in_file(file_path, member, new_version):
+    new_image = f"{ECR_REPO}/{DOCKER_PREFIX}_{member}:{new_version}"
     updated_lines = []
 
     with open(file_path, 'r') as f:
