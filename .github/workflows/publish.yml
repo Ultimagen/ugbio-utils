@@ -55,6 +55,8 @@ jobs:
       - name: Build workspaces list
         id: list_dirs
         uses: ./.github/actions/get-workspaces
+        with: 
+          remove-internal-dockers: true
 
       - uses: actions-ecosystem/action-get-latest-tag@v1
         id: get-latest-tag
