@@ -30,6 +30,10 @@ runs:
       with:
         python-version: '3.11'
 
+    - name: Install dependencies
+      shell: bash
+      run: pip install json5
+
     - name: Update devcontainer files with new docker image
       shell: bash
       run: python .github/utils/update_devcontainer.py --version ${{ inputs.version }}
