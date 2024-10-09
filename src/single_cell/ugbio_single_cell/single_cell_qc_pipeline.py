@@ -5,7 +5,7 @@ import nbformat
 import pandas as pd
 import papermill
 from nbconvert import HTMLExporter
-
+from ugbio_core.report_utils import modify_jupyter_notebook_html
 from ugbio_single_cell.collect_statistics import (
     collect_statistics,
     extract_statistics_table,
@@ -23,7 +23,6 @@ from ugbio_single_cell.sc_qc_dataclasses import (
     OutputFiles,
     Thresholds,
 )
-from ugbio_core.report_utils import modify_jupyter_notebook_html
 
 
 def single_cell_qc(
@@ -45,29 +44,31 @@ def single_cell_qc(
     """
     if not sample_name.endswith("."):
         sample_name += "."
+    #TODO: add logs
+    output_path = Path(output_path)
+    input_files.output_path = output_path
+    input_files.sample_name = sample_name
 
-    h5_file = collect_statistics(input_files, output_path, sample_name)
-    extract_statistics_table(h5_file)
+    collect_statistics(input_files, output_path)
 
-    params, tmp_files = prepare_parameters_for_report(h5_file, thresholds, output_path)
+    # Add statistics short list to h5 file
+    h5_file = output_path / (sample_name + OutputFiles.H5.value)
+    extract_statistics_table(h5_file, input_files)
+
+    # Add STAR stats to h5 file
+    star_stats = pd.read_csv(input_files.star_stats)
+    star_stats.to_hdf(h5_file, key=H5Keys.STAR_STATS.value)
+
+    params, tmp_files = prepare_parameters_for_report(h5_file, input_files, thresholds, output_path)
     generate_report(params, output_path, tmp_files, sample_name)
 
-    # keep only STAR and short table data in h5 file
-    with pd.HDFStore(h5_file, "a") as store:
-        keys_to_keep = [
-            H5Keys.STATISTICS_SHORTLIST.value,
-            H5Keys.STAR_STATS.value,
-        ]
-        for key in store.keys():
-            if key.strip('/') not in keys_to_keep:
-                store.remove(key)
     
     # keys to convert to json to disply in pyprus
     keys_to_convert_to_json = pd.Series([H5Keys.STATISTICS_SHORTLIST.value, H5Keys.STAR_STATS.value])
     keys_to_convert_to_json.to_hdf(h5_file, key="keys_to_convert")
         
 def prepare_parameters_for_report(
-    h5_file: Path, thresholds: Thresholds, output_path: str
+    h5_file: Path, input_files: Inputs, thresholds: Thresholds, output_path: Path
 ) -> tuple[dict, list[Path]]:
     """
     Prepare parameters for report generation (h5 file, thresholds, plots)
@@ -76,6 +77,8 @@ def prepare_parameters_for_report(
     ----------
     h5_file : Path
         Path to h5 file with statistics
+    input_files : Inputs
+        Inputs object with paths to input files
     thresholds : Thresholds
         Thresholds object with thresholds for qc
     output_path : str
@@ -91,27 +94,29 @@ def prepare_parameters_for_report(
 
     # prepare parameters for report: add statistics
     parameters = dict(statistics_h5=h5_file)
+    parameters["trimmer_failure_codes_csv"] = input_files.trimmer_failure_codes_csv
 
     # add thresholds to parameters
     for threshold_name, threshold_value in vars(thresholds).items():
         parameters[threshold_name + "_threshold"] = threshold_value
 
     # add plots to parameters
-    cbc_umi_png = cbc_umi_plot(h5_file, output_path)
+    cbc_umi_png = cbc_umi_plot(input_files.trimmer_histogram_csv[0], output_path)
     parameters["cbc_umi_png"] = cbc_umi_png
     tmp_files.append(cbc_umi_png)
 
-    insert_length_png = plot_insert_length_histogram(h5_file, output_path)
+    insert_length_png, fraction_below_read_length = plot_insert_length_histogram(input_files.insert_lengths_csv, output_path, thresholds.read_length)
     parameters["insert_length_png"] = insert_length_png
+    parameters["fraction_below_read_length"] = fraction_below_read_length
     tmp_files.append(insert_length_png)
 
     mean_insert_quality_histogram_png = plot_mean_insert_quality_histogram(
-        h5_file, output_path
+        input_files.insert_quality_csv, output_path
     )
     parameters["mean_insert_quality_histogram_png"] = mean_insert_quality_histogram_png
     tmp_files.append(mean_insert_quality_histogram_png)
 
-    quality_per_position_png = plot_quality_per_position(h5_file, output_path)
+    quality_per_position_png = plot_quality_per_position(input_files.insert_quality_csv, output_path)
     parameters["quality_per_position_png"] = quality_per_position_png
     tmp_files.append(quality_per_position_png)
 
@@ -119,7 +124,7 @@ def prepare_parameters_for_report(
 
 
 def generate_report(
-    parameters, output_path, tmp_files: list[Path], sample_name: str
+    parameters: dict, output_path: Path, tmp_files: list[Path], sample_name: str
 ) -> Path:
     """
     Generate report based on jupyter notebook template.
@@ -141,10 +146,10 @@ def generate_report(
         Path to generated report
     """
     # define outputs
-    output_report_html = Path(output_path) / (
+    output_report_html = output_path / (
         sample_name + OutputFiles.HTML_REPORT.value
     )
-    output_report_ipynb = Path(output_path) / (sample_name + OutputFiles.NOTEBOOK.value)
+    output_report_ipynb = output_path / (sample_name + OutputFiles.NOTEBOOK.value)
     tmp_files.append(output_report_ipynb)
 
     # inject parameters and run notebook

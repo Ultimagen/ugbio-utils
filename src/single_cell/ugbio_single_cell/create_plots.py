@@ -5,21 +5,22 @@ import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
 
+from ugbio_core.logger import logger
 from ugbio_single_cell.sc_qc_dataclasses import H5Keys, OutputFiles
 from ugbio_core.plotting_utils import set_pyplot_defaults
 
 set_pyplot_defaults()
 
 
-def cbc_umi_plot(h5_file: str, output_path: str) -> Path:
+def cbc_umi_plot(trimmer_histogram_csv: str, output_path: Path) -> Path:
     """
     Count number of unique UMI per CBC, to get a rough estimate of the number of cells in the sample.
 
     Parameters
     ----------
-    h5_file : str
-        Path to h5 file with statistics.
-    output_path : str
+    trimmer_histogram_csv : str
+        Path to trimmer_histogram_csv file with statistics.
+    output_path : Path
         Path to output directory.
 
     Returns
@@ -27,10 +28,8 @@ def cbc_umi_plot(h5_file: str, output_path: str) -> Path:
     Path
         Path to the plot.
     """
-    print("Plotting CBC UMI plot")
-    with pd.HDFStore(h5_file, "r") as store:
-        histogram = store[H5Keys.TRIMMER_HISTOGRAM.value]
-
+    logger.info("Plotting CBC UMI plot")
+    histogram = pd.read_csv(trimmer_histogram_csv)
     umi_col = histogram.columns[histogram.columns.str.contains("UMI")]
 
     if len(umi_col) > 1:
@@ -82,30 +81,32 @@ def cbc_umi_plot(h5_file: str, output_path: str) -> Path:
         ax = sns.scatterplot(data=plot_df, x="CBC", y="Num Unique UMI", linewidth=0)
         ax.set(yscale="log", xscale="log", title="Barcode Rank")
 
-    plot_file = Path(output_path) / OutputFiles.CBC_UMI_PLOT.value
+    plot_file = output_path / OutputFiles.CBC_UMI_PLOT.value
     plt.savefig(plot_file)
     plt.close()
     return plot_file
 
 
-def plot_insert_length_histogram(h5_file: str, output_path: str) -> Path:
+def plot_insert_length_histogram(insert_lengths_csv: str, output_path: Path, read_length_threshold: int) -> tuple[Path, float]:
     """
     Plot histogram of insert lengths.
 
     Parameters
     ----------
-    h5_file : str
-        Path to h5 file with statistics.
-    output_path : str
+    insert_lengths_csv : str
+        Path to insert_lengths_csv file with statistics.
+    output_path : Path
         Path to output directory.
 
     Returns
     -------
     Path
         Path to the plot.
+    float
+        Fraction of reads below the read length threshold.
     """
-    with pd.HDFStore(h5_file, "r") as store:
-        insert_lengths = store[H5Keys.INSERT_LENGTHS.value]
+    logger.info("Plotting Insert Length Histogram")
+    insert_lengths = pd.read_csv(insert_lengths_csv).squeeze() # read as a Series
 
     # Calculate IQR
     Q1 = np.percentile(insert_lengths, 25)
@@ -119,27 +120,31 @@ def plot_insert_length_histogram(h5_file: str, output_path: str) -> Path:
     else:
         bins = int((max(insert_lengths) - min(insert_lengths)) / bin_width)
     
-    pd.Series(insert_lengths).hist(bins=bins, density=True)
+    insert_lengths.hist(bins=bins, density=True)
 
     plt.xlabel("Read Length")
     plt.ylabel("Frequency")
     plt.title("Insert Length Histogram")
 
-    plot_file = Path(output_path) / OutputFiles.INSERT_LENGTH_HISTOGRAM.value
+    plot_file = output_path / OutputFiles.INSERT_LENGTH_HISTOGRAM.value
     plt.savefig(plot_file)
     plt.close()
-    return plot_file
+
+    # Get fraction below read length
+    below_read_length_threshold = insert_lengths[insert_lengths < read_length_threshold]
+    fraction_below_read_length = below_read_length_threshold.count() / insert_lengths.count() * 100
+    return plot_file, fraction_below_read_length
 
 
-def plot_mean_insert_quality_histogram(h5_file: str, output_path: str) -> Path:
+def plot_mean_insert_quality_histogram(insert_quality_csv: str, output_path: Path) -> Path:
     """
     Plot histogram of mean insert quality.
 
     Parameters
     ----------
-    h5_file : str
-        Path to h5 file with statistics.
-    output_path : str
+    insert_quality_csv : str
+        Path to insert_quality_csv file with statistics.
+    output_path : Path
         Path to output directory.
 
     Returns
@@ -147,8 +152,8 @@ def plot_mean_insert_quality_histogram(h5_file: str, output_path: str) -> Path:
     Path
         Path to the plot.
     """
-    with pd.HDFStore(h5_file, "r") as store:
-        insert_quality = store[H5Keys.INSERT_QUALITY.value]
+    logger.info("Plotting Mean Insert Quality Histogram")
+    insert_quality = pd.read_csv(insert_quality_csv)
 
     # histogram of overall quality
     qual_hist = insert_quality.sum(axis=1)
@@ -158,21 +163,21 @@ def plot_mean_insert_quality_histogram(h5_file: str, output_path: str) -> Path:
     plt.ylabel("Frequency")
     plt.title("Mean Insert Quality Histogram")
 
-    plot_file = Path(output_path) / OutputFiles.MEAN_INSERT_QUALITY_PLOT.value
+    plot_file = output_path / OutputFiles.MEAN_INSERT_QUALITY_PLOT.value
     plt.savefig(plot_file)
     plt.close()
     return plot_file
 
 
-def plot_quality_per_position(h5_file: str, output_path: str) -> Path:
+def plot_quality_per_position(insert_quality_csv: str, output_path: Path) -> Path:
     """
     Plot quality per position for the insert, with percentiles.
 
     Parameters
     ----------
-    h5_file : str
-        Path to h5 file with statistics.
-    output_path : str
+    insert_quality_csv : str
+        Path to insert_quality_csv file with statistics.
+    output_path : Path
         Path to output directory.
 
     Returns
@@ -180,8 +185,8 @@ def plot_quality_per_position(h5_file: str, output_path: str) -> Path:
     Path
         Path to the plot.
     """
-    with pd.HDFStore(h5_file, "r") as store:
-        insert_quality = store[H5Keys.INSERT_QUALITY.value]
+    logger.info("Plotting Quality Per Position")
+    insert_quality = pd.read_csv(insert_quality_csv)
 
     # quality percentiles per position
     df_cdf = insert_quality.cumsum() / insert_quality.sum()
@@ -211,7 +216,7 @@ def plot_quality_per_position(h5_file: str, output_path: str) -> Path:
     plt.ylabel("Quality")
     plt.title("Quality Per Position")
 
-    plot_file = Path(output_path) / OutputFiles.QUALITY_PER_POSITION_PLOT.value
+    plot_file = output_path / OutputFiles.QUALITY_PER_POSITION_PLOT.value
     plt.savefig(plot_file)
     plt.close()
     return plot_file
