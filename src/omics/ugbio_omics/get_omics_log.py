@@ -90,7 +90,7 @@ def fetch_save_log(log_stream_name, output, output_path, session=None):
     return output
 
 
-if __name__ == "__main__":
+def main():
     parser = ArgumentParser()
     parser.add_argument('--region', type=str, help="AWS region to use", default='us-east-1')
     parser.add_argument('--run-id', type=str, help="HealthOmics workflow run-id to analyze")
@@ -109,3 +109,6 @@ if __name__ == "__main__":
 
     get_log_for_task(args.run_id, args.task_id, session=session, output_path=args.output,
                      output_prefix=args.output_prefix, failed=args.failed)
+
+if __name__ == "__main__":
+    main()

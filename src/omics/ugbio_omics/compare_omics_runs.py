@@ -40,7 +40,7 @@ def single_run(omics_run_id, omics_session, output_path):
     final_df = final_df.merge(resources_df, on="task", how="outer")
     return final_df
 
-def main(run_ids, session, output_path):
+def compare_omics_runs(run_ids, session, output_path):
     # Create the output directory if it doesn't exist
     if output_path:
         os.makedirs(output_path, exist_ok=True)
@@ -60,7 +60,7 @@ def main(run_ids, session, output_path):
     final_df.to_csv(compare_file, index=False, float_format = '%.3f')
     print(f"Comparison saved in: {compare_file}")
 
-if __name__ == "__main__":
+def main():
     parser = ArgumentParser()
     parser.add_argument('--region', type=str, help="AWS region to use", default='us-east-1')
     parser.add_argument('--output-path', type=str, help="Output path for all files copied and generated during the analysis", default=None)
@@ -70,4 +70,7 @@ if __name__ == "__main__":
     session = boto3.Session(region_name=args.region)
     run_ids = args.run_ids.split(',')
 
-    main(run_ids, session, args.output_path)
+    compare_omics_runs(run_ids, session, args.output_path)
+
+if __name__ == "__main__":
+    main()

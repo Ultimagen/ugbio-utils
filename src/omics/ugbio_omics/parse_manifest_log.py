@@ -56,7 +56,7 @@ def parse_manifest_log(run_id, output_path=None, session=None, output_prefix='')
     tasks_df.to_csv(tasks_manifest_csv_file, index=False)
 
 
-if __name__ == "__main__":
+def main():
     parser = ArgumentParser()
     parser.add_argument('--region', type=str, help="AWS region to use", default='us-east-1')
     parser.add_argument('--run-id', type=str, help="HealthOmics workflow run-id to analyze")
@@ -67,3 +67,6 @@ if __name__ == "__main__":
     session = boto3.Session(region_name=args.region)
 
     parse_manifest_log(args.run_id, output_path=args.output, session=session, output_prefix=args.output_prefix)
+
+if __name__ == "__main__":
+    main()

@@ -231,8 +231,8 @@ def get_omics_total_duration(omics_run_id, session=None):
     total_duration = run['duration'].total_seconds() / 3600
     return total_duration
 
-
-if __name__ == "__main__":
+def main():
+    
     parser = ArgumentParser()
     # cromwell args
     parser.add_argument('--cromwell-wid', type=str, help="Cromwell workflow id to analyze")
@@ -250,6 +250,9 @@ if __name__ == "__main__":
     session = boto3.Session(region_name=args.region)
 
     compare_cromwell_omics(args.cromwell_wid, args.omics_run_id, session, args.workflow_name, args.output_path, args.overwrite)
+    
+if __name__ == "__main__":
+    main()
 
 # output_path = "/home/inbalzelig/data/omics/somatic_efficientdv"
 # workflow_name = "EfficientDV"
