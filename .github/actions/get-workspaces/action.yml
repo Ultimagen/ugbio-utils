@@ -1,6 +1,12 @@
 name: "Get ugbio workspaces"
 description: "utilty action to dynamically get the workspaces under ugbio-utils"
 
+inputs:
+    remove-internal-dockers:
+      description: "whether to filter out internal dockers that used only for tests"
+      type: boolean
+      required: true
+
 outputs:
     workspaces: 
       description: "Workspaces list"
@@ -12,4 +18,23 @@ runs:
   steps:
   - id: list_dirs
     shell: bash
-    run: echo "::set-output name=matrix::$(ls src   | grep -v "__" | grep -v "/\." | sed 's|src/||' | jq -R -s -c 'split("\n")[:-1]')"
+    run: |
+      filter_flag="${{ inputs.remove-internal-dockers }}"
+
+      # Generate the list of directories in src/ that don't contain "__"
+      all_folders=$(ls src | grep -v "__" | grep -v "/\." | jq -R -s -c 'split("\n")[:-1]')
+
+      # Conditionally apply filtering based on the flag
+      if [ "$filter_flag" = "true" ]; then
+        # Read the folders to filter out from workspaces json
+        folders_to_filter_out=$(jq -r '.InternalMembers' .github/actions/get-workspaces/workspaces.json)
+        
+        # Use jq to filter out the folders listed in workspaces json
+        filtered_folders=$(echo "$all_folders" | jq --compact-output --argjson filter "$folders_to_filter_out" '[.[] | select(. as $item | $filter | index($item) | not)]')
+      else
+        # No filtering, just list all_folders
+        filtered_folders="$all_folders"
+      fi
+
+      # Set the output matrix (one-line array)
+      echo "::set-output name=matrix::$filtered_folders"
