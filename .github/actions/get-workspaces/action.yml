@@ -36,7 +36,7 @@ runs:
 
       # Conditionally apply filtering based on the flag
       if [ "$filter_flag" = "true" ]; then
-        ls -la
+        ls -la ./.github/actions/get-workspaces/
         # Read the folders to filter out from cfg json
         folders_to_filter_out=$(jq -r '.InternalMembers' .github/actions/get-workspaces/workspaces.json)
         
