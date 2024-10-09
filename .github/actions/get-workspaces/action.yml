@@ -37,7 +37,7 @@ runs:
       # Conditionally apply filtering based on the flag
       if [ "$filter_flag" = "true" ]; then
         # Read the folders to filter out from cfg json
-        folders_to_filter_out=$(jq -r '.InternalMembers' .github/actions/get-workspaces/workspaces.json)
+        folders_to_filter_out=$(jq -r '.InternalMembers' workspaces.json)
         
         # Use jq to filter out the folders listed in cfg json
         filtered_folders=$(echo "$all_folders" | jq --compact-output --argjson filter "$folders_to_filter_out" '[.[] | select(. as $item | $filter | index($item) | not)]')
