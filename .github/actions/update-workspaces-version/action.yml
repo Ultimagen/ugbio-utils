@@ -42,10 +42,11 @@ runs:
       run: |
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git config --local user.name "github-actions[bot]"
-        git commit -m "Update pyproject.toml versions to ${{ inputs.version }}"
+        git commit -am "Update pyproject.toml versions to ${{ inputs.version }}"
+        git push
 
-    - name: Push changes
-      if: inputs.push
-      uses: ad-m/github-push-action@master
-      with:
-        branch: ${{ inputs.ref }}
+    # - name: Push changes
+    #   if: inputs.push
+    #   uses: ad-m/github-push-action@master
+    #   with:
+    #     branch: ${{ inputs.ref }}
