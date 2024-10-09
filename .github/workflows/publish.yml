@@ -37,7 +37,7 @@ jobs:
       - name: Verify branch conditions based on minor-release input
         run: |
           patch_release="${{ inputs.patch-release }}"
-          branch_name="${GITHUB_REF_NAME}"
+          branch_name="${{ github.ref_name }}"
           main_branch="${{ env.MAIN_BRANCH }}"
           
           if [ "$patch_release" == "true" ] && [ "$branch_name" == "$main_branch" ]; then
@@ -78,7 +78,7 @@ jobs:
       - uses: ./.github/actions/update-workspaces-version
         with:
            version: ${{ steps.bump-semver.outputs.new_version }}
-           ref: ${{ env.GITHUB_REF_NAME }}
+           ref: ${{ github.ref_name }}
 
       - name: Uv build
         run: |
@@ -111,16 +111,16 @@ jobs:
       docker-file: src/${{ matrix.module }}/Dockerfile
       docker-image: ugbio_${{ matrix.module }}
       commit-sha: ${{ needs.publish.outputs.publish_commit_sha }}
-      workspace-folder: src/${{ matrix.module }}
+      workspace-folder: src/${{ matrix.module }}      
 
-  set-dev-version:
+  prepare-next-dev-version:
     runs-on: ubuntu-latest
-    needs: [ publish ]
+    needs: [ publish, build-dockers ]
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.GITHUB_REF_NAME }}
-
+          ref: ${{ github.ref_name }}
+    
       - uses: actions-ecosystem/action-bump-semver@v1
         id: bump-dev-semver
         with:
@@ -130,4 +130,12 @@ jobs:
       - uses: ./.github/actions/update-workspaces-version
         with:
           version: ${{ steps.bump-dev-semver.outputs.new_version }}
-          ref: ${{ env.GITHUB_REF_NAME }}
+          ref: ${{ github.ref_name }}
+          push: false
+
+      - uses: ./.github/actions/update-devcontainer-jsons
+        with:
+          version: ${{ needs.publish.outputs.new_version }}
+          ref: ${{ github.ref_name }}
+          push: true
+    
