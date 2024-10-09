@@ -38,14 +38,19 @@ runs:
       shell: bash
       run: python .github/utils/update_devcontainer.py --version ${{ inputs.version }}
 
-    - name: Commit changes
-      shell: bash
-      run: |
-        git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "github-actions[bot]"
-        git commit -am "Update docker images in devcontainer jsons to ${{ inputs.version }}"
-        git push
-
+    # - name: Commit changes
+    #   shell: bash
+    #   run: |
+    #     git config --local user.email "github-actions[bot]@users.noreply.github.com"
+    #     git config --local user.name "github-actions[bot]"
+    #     git commit -am "Update docker images in devcontainer jsons to ${{ inputs.version }}"
+    #     git push
+    - name: Commit  changes
+      uses: EndBug/add-and-commit@v9
+      with:
+        message: Update docker images in devcontainer jsons to ${{ inputs.version }}
+        committer_name: GitHub Actions
+        committer_email: actions@github.com
     # - name: Push changes
     #   if: inputs.push
     #   uses: ad-m/github-push-action@master
