@@ -3,7 +3,7 @@ description: "utilty action to dynamically get the workspaces under ugbio-utils"
 
 inputs:
     remove-internal-dockers:
-      description: "whether to filter out internal docker that used only for tests"
+      description: "whether to filter out internal dockers that used only for tests"
       type: boolean
       required: true
 
@@ -16,16 +16,6 @@ runs:
   using: "composite"
 
   steps:
-  # - name: Filter out internal dockers members
-  #   shell: bash
-  #   if: ${{ inputs.remove-internal-dockers == 'true' }}
-  #   run: echo "EXCLUDE_FOLDERS=("omics", "core")" >> ${GITHUB_ENV}
-
-  # - name: Do not filter out internal dockers members
-  #   shell: bash
-  #   if: ${{ inputs.remove-internal-dockers == 'false' }}
-  #   run: echo "EXCLUDE_FOLDERS=("dummy")" >> ${GITHUB_ENV} #some non exiting folder
-
   - id: list_dirs
     shell: bash
     run: |
@@ -36,14 +26,13 @@ runs:
 
       # Conditionally apply filtering based on the flag
       if [ "$filter_flag" = "true" ]; then
-        ls -la ./.github/actions/get-workspaces/
-        # Read the folders to filter out from cfg json
+        # Read the folders to filter out from workspaces json
         folders_to_filter_out=$(jq -r '.InternalMembers' .github/actions/get-workspaces/workspaces.json)
         
-        # Use jq to filter out the folders listed in cfg json
+        # Use jq to filter out the folders listed in workspaces json
         filtered_folders=$(echo "$all_folders" | jq --compact-output --argjson filter "$folders_to_filter_out" '[.[] | select(. as $item | $filter | index($item) | not)]')
       else
-        # No filtering, just use all_folders
+        # No filtering, just list all_folders
         filtered_folders="$all_folders"
       fi
 
