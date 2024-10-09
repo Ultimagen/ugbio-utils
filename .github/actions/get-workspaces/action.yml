@@ -16,20 +16,35 @@ runs:
   using: "composite"
 
   steps:
-  - name: Filter out internal dockers members
-    shell: bash
-    if: ${{ inputs.remove-internal-dockers == 'true' }}
-    run: echo "EXCLUDE_FOLDERS=("omics", "core")" >> ${GITHUB_ENV}
+  # - name: Filter out internal dockers members
+  #   shell: bash
+  #   if: ${{ inputs.remove-internal-dockers == 'true' }}
+  #   run: echo "EXCLUDE_FOLDERS=("omics", "core")" >> ${GITHUB_ENV}
 
-  - name: Do not filter out internal dockers members
-    shell: bash
-    if: ${{ inputs.remove-internal-dockers == 'false' }}
-    run: echo "EXCLUDE_FOLDERS=("dummy")" >> ${GITHUB_ENV} #some non exiting folder
+  # - name: Do not filter out internal dockers members
+  #   shell: bash
+  #   if: ${{ inputs.remove-internal-dockers == 'false' }}
+  #   run: echo "EXCLUDE_FOLDERS=("dummy")" >> ${GITHUB_ENV} #some non exiting folder
 
   - id: list_dirs
     shell: bash
     run: |
-      folders_to_filter_out=${{ env.EXCLUDE_FOLDERS }}
-      filter_pattern=$(printf "|%s" "${folders_to_filter_out[@]}")
-      filter_pattern="${filter_pattern:1}"  # Remove the leading "|"
-      echo "::set-output name=matrix::$(ls src   | grep -v "__" | grep -v "/\." | grep -Ev "$filter_pattern" | sed 's|src/||' | jq -R -s -c 'split("\n")[:-1]')"
+      filter_flag="${{ inputs.remove-internal-dockers }}"
+
+      # Generate the list of directories in src/ that don't contain "__"
+      all_folders=$(ls src | grep -v "__" | grep -v "/\." | jq -R -s -c 'split("\n")[:-1]')
+
+      # Conditionally apply filtering based on the flag
+      if [ "$filter_flag" = "true" ]; then
+        # Read the folders to filter out from cfg json
+        folders_to_filter_out=$(jq -r '.InternalMembers' .github/actions/get-workspaces/workspaces.json)
+        
+        # Use jq to filter out the folders listed in cfg json
+        filtered_folders=$(echo "$all_folders" | jq --compact-output --argjson filter "$folders_to_filter_out" '[.[] | select(. as $item | $filter | index($item) | not)]')
+      else
+        # No filtering, just use all_folders
+        filtered_folders="$all_folders"
+      fi
+
+      # Set the output matrix (one-line array)
+      echo "::set-output name=matrix::$filtered_folders"
