@@ -22,7 +22,7 @@ jobs:
       - uses: ./.github/actions/get-workspaces
         id: list_dirs
         with:
-          remove-internal-dockers: false
+          remove-internal-dockers: true
 
   ugbio-utils-CI:
     runs-on: ubuntu-latest
