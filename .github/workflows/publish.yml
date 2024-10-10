@@ -79,12 +79,11 @@ jobs:
         with:
            version: ${{ steps.bump-semver.outputs.new_version }}
            ref: ${{ github.ref_name }}
-           git-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
       - name: Uv build
         run: |
           uv sync
-          uv build --all
+          uv build --out-dir dist/ --all
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -133,13 +132,9 @@ jobs:
         with:
           version: ${{ steps.bump-dev-semver.outputs.new_version }}
           ref: ${{ github.ref_name }}
-          git-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
-          push: false
 
       - uses: ./.github/actions/update-devcontainer-jsons
         with:
           version: ${{ needs.publish.outputs.new_version }}
           ref: ${{ github.ref_name }}
-          git-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
-          push: true
     

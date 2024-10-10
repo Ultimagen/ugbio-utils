@@ -9,14 +9,6 @@ inputs:
  ref:
     description: "git ref"
     required: false
- git-token:
-    description: "github token"
-    required: true
- push:
-    description: "push changes"
-    type: boolean
-    default: true
-    required: false
 
 runs:
   using: "composite"
@@ -26,7 +18,6 @@ runs:
       with:
         ref: ${{ inputs.ref }}
         fetch-depth: 0
-        token: ${{ inputs.git-token }}
         
     - name: Set up Python
       uses: actions/setup-python@v4

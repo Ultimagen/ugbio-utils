@@ -39,6 +39,5 @@ jobs:
         with:
           version: ${{ steps.bump-dev-semver.outputs.new_version }}dev-${{ github.event.number }}
           ref: ${{ env.REF }}
-          git-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
-          
+                    
 
