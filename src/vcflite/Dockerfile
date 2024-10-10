@@ -25,4 +25,6 @@ chmod +x /usr/local/bin/run_tests
 
 COPY --from=builder /usr/local/cargo/bin/vcflite /usr/local/bin/vcflite
 
+COPY ./src/vcflite/LICENSE.txt .
+
 CMD ["vcflite"]

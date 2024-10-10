@@ -1,6 +1,6 @@
  
-name: "Update workspaces version"
-description: "Update version in pyproject.toml in all workspaces and commit changes"
+name: "Update devcontainer jsons"
+description: "Update docker image version in all devcontainer jsons"
 
 inputs:
  version:
@@ -9,6 +9,7 @@ inputs:
  ref:
     description: "git ref"
     required: false
+    default: ""
  git-token:
     description: "github token"
     required: true
@@ -30,11 +31,11 @@ runs:
 
     - name: Install dependencies
       shell: bash
-      run: pip install tomli_w
+      run: pip install json5
 
-    - name: Update pyproject.toml files with new dev_version
+    - name: Update devcontainer files with new docker image
       shell: bash
-      run: python .github/utils/update_project_version.py ${{ inputs.version }}
+      run: python .github/utils/update_devcontainer.py --version ${{ inputs.version }}
 
     - name: Fix file permissions
       shell: bash
@@ -44,7 +45,7 @@ runs:
     - name: Commit changes
       shell: bash
       run: |
-        git config --global user.name "GitHub Actions"
-        git config --global user.email "actions@github.com"
-        git commit -am "Update pyproject.toml versions to ${{ inputs.version }}"
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git commit -am "Update docker images in devcontainer jsons to ${{ inputs.version }}"
         git push
