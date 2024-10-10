@@ -41,14 +41,31 @@ runs:
       shell: bash
       run: python .github/utils/update_project_version.py ${{ inputs.version }}
 
-    - name: Commit changes
+    - name: Check Git status
+      shell: bash
+      run: git status
+
+    - name: Clear Git index
+      shell: bash
+      run: rm -f .git/index.lock
+
+    - name: Commit changes manually
       shell: bash
       run: |
-        git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "github-actions[bot]"
-        git commit -am "Update pyproject.toml versions to ${{ inputs.version }}"
-        git status
-        git push
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        git add .
+        git commit -m "Update pyproject.toml versions to ${{ inputs.version }}"
+          git push
+
+    # - name: Commit changes
+    #   shell: bash
+    #   run: |
+    #     git config --local user.email "github-actions[bot]@users.noreply.github.com"
+    #     git config --local user.name "github-actions[bot]"
+    #     git commit -am "Update pyproject.toml versions to ${{ inputs.version }}"
+    #     git status
+    #     git push
     # - name: Commit changes
     #   uses: EndBug/add-and-commit@v9
     #   with:
