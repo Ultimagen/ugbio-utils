@@ -8,7 +8,7 @@ inputs:
     required: true
  ref:
     description: "git ref"
-    required: true
+    required: false
  git-token:
     description: "github token"
     required: true

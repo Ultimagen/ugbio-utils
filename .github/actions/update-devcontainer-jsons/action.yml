@@ -49,7 +49,7 @@ runs:
     #     git config --local user.name "github-actions[bot]"
     #     git commit -am "Update docker images in devcontainer jsons to ${{ inputs.version }}"
     #     git push
-    - name: Commit  changes
+    - name: Commit changes
       uses: EndBug/add-and-commit@v9
       with:
         message: Update docker images in devcontainer jsons to ${{ inputs.version }}
