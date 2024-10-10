@@ -10,6 +10,9 @@ inputs:
     description: "git ref"
     required: false
     default: ""
+ git-token:
+    description: "github token"
+    required: true
  push:
     description: "push changes"
     type: boolean
@@ -23,6 +26,7 @@ runs:
     - uses: actions/checkout@v4
       with:
         ref: ${{ inputs.ref }}
+        token: ${{ inputs.git-token }}
         fetch-depth: 0
         
     - name: Set up Python

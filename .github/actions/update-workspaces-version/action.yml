@@ -9,6 +9,9 @@ inputs:
  ref:
     description: "git ref"
     required: true
+ git-token:
+    description: "github token"
+    required: true
  push:
     description: "push changes"
     type: boolean
@@ -23,7 +26,7 @@ runs:
       with:
         ref: ${{ inputs.ref }}
         fetch-depth: 0
-        token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+        token: ${{ inputs.git-token }}
         
     - name: Set up Python
       uses: actions/setup-python@v4

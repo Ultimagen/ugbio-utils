@@ -51,6 +51,8 @@ jobs:
           echo "Branch verification passed."
 
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
       
       - name: Build workspaces list
         id: list_dirs
@@ -79,6 +81,7 @@ jobs:
         with:
            version: ${{ steps.bump-semver.outputs.new_version }}
            ref: ${{ github.ref_name }}
+           git-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
       - name: Uv build
         run: |
@@ -120,6 +123,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.ref_name }}
+          token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
     
       - uses: actions-ecosystem/action-bump-semver@v1
         id: bump-dev-semver
@@ -131,11 +135,13 @@ jobs:
         with:
           version: ${{ steps.bump-dev-semver.outputs.new_version }}
           ref: ${{ github.ref_name }}
+          git-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
           push: false
 
       - uses: ./.github/actions/update-devcontainer-jsons
         with:
           version: ${{ needs.publish.outputs.new_version }}
           ref: ${{ github.ref_name }}
+          git-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
           push: true
     
