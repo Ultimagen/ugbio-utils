@@ -79,6 +79,7 @@ jobs:
         with:
            version: ${{ steps.bump-semver.outputs.new_version }}
            ref: ${{ github.ref_name }}
+           git-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
       - name: Uv build
         run: |
@@ -132,9 +133,11 @@ jobs:
         with:
           version: ${{ steps.bump-dev-semver.outputs.new_version }}
           ref: ${{ github.ref_name }}
+          git-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
       - uses: ./.github/actions/update-devcontainer-jsons
         with:
           version: ${{ needs.publish.outputs.new_version }}
           ref: ${{ github.ref_name }}
+          git-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
     
