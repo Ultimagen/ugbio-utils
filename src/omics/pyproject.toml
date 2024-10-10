@@ -1,0 +1,32 @@
+[project]
+name = "ugbio_omics"
+version = "1.1.1-0dev-31"
+description = "Ultima Genomics bioinfo utils for working iwth AWS Health-Omics"
+authors = [
+    { name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" },
+]
+dependencies = [
+    "amazon-omics-tools>=0.5.0",
+    "plotly>=5.23.0",
+    "google-cloud-storage>=2.18.2",
+]
+readme = "README.omics.md"
+requires-python = ">= 3.11"
+
+[build-system]
+requires = [
+    "setuptools>=61.0",
+]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.3.3",
+]
+
+[project.scripts]
+ run_tests = "pytest:main"
+compare_cromwell_omics = "ugbio_omics.compare_cromwell_omics:main"
+compare_omics_runs = "ugbio_omics.compare_omics_runs:main"
+get_omics_logs = "ugbio_omics.get_omics_logs:main"
+manifest_log = "ugbio_omics.parse_manifest_log:main"

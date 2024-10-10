@@ -8,6 +8,11 @@ authors = [
 readme = "README.md"
 requires-python = ">=3.10"
 
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.3.3",
+]
+
 [project.license]
 text = "Apache-2.0"
 
@@ -17,5 +22,6 @@ members = [
 ]
 exclude = [
     "src/_*",
+    "src/.*",
     "src/vcflite",
 ]
