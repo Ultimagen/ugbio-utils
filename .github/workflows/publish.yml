@@ -51,8 +51,6 @@ jobs:
           echo "Branch verification passed."
 
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
       
       - name: Build workspaces list
         id: list_dirs
@@ -80,7 +78,7 @@ jobs:
       - uses: ./.github/actions/update-workspaces-version
         with:
            version: ${{ steps.bump-semver.outputs.new_version }}
-          #  ref: ${{ github.ref_name }}
+           ref: ${{ github.ref_name }}
            git-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
       - name: Uv build
