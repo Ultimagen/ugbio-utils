@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_mrd"
-version = "1.1.1-0dev-37"
+version = "1.2.0"
 requires-python = ">=3.10"
 dependencies = [
     "ugbio_core",
