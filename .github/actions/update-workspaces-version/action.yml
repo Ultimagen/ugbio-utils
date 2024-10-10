@@ -42,11 +42,14 @@ runs:
       shell: bash
       run: python .github/utils/update_project_version.py ${{ inputs.version }}
 
-
+    - name: Verify file ownership
+      shell: bash
+      run: ls -l
 
     - name: Fix file permissions
       shell: bash
-      run: chmod -R u+rw .
+      run: |
+        find . -path ./.git -prune -o -exec chmod u+rw {} \;
 
     # - name: Mark repository as safe
     #   run: git config --global --add safe.directory $(pwd)
@@ -60,7 +63,7 @@ runs:
     - name: Check Git status
       shell: bash
       run: git status
-      
+
     - name: Commit changes manually
       shell: bash
       run: |
