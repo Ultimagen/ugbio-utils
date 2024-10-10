@@ -42,9 +42,9 @@ runs:
       shell: bash
       run: python .github/utils/update_project_version.py ${{ inputs.version }}
 
-    - name: Verify file ownership
-      shell: bash
-      run: ls -l
+    # - name: Verify file ownership
+    #   shell: bash
+    #   run: ls -l
 
     - name: Fix file permissions
       shell: bash
@@ -54,17 +54,17 @@ runs:
     # - name: Mark repository as safe
     #   run: git config --global --add safe.directory $(pwd)
 
-    - name: Remove Git object database locks
-      shell: bash
-      run: |
-        rm -f .git/index.lock
-        rm -f .git/refs/heads/main.lock
+    # - name: Remove Git object database locks
+    #   shell: bash
+    #   run: |
+    #     rm -f .git/index.lock
+    #     rm -f .git/refs/heads/main.lock
 
-    - name: Check Git status
-      shell: bash
-      run: git status
+    # - name: Check Git status
+    #   shell: bash
+    #   run: git status
 
-    - name: Commit changes manually
+    - name: Commit changes
       shell: bash
       run: |
         git config --global user.name "GitHub Actions"
