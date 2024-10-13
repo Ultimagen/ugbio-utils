@@ -17,4 +17,4 @@ ARG OUT_DIR=/tmp/ugbio
 
 COPY --from=build $OUT_DIR $OUT_DIR
 
-RUN pip install ${OUT_DIR}/*.whl\[variantannotation\]
+RUN sh -c 'pip install ${OUT_DIR}/*.whl[variantannotation]'
