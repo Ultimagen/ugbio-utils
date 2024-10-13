@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_core"
-version = "1.3.0-0"
+version = "1.2.1-0dev-39"
 requires-python = ">= 3.10"
 description = "Ultima Genomics core bioinfo utils"
 authors = [
@@ -32,5 +32,7 @@ intersect_bed_regions = "ugbio_core.intersect_bed_regions:main"
 sorter_stats_to_mean_coverage = "ugbio_core.sorter_stats_to_mean_coverage:main"
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = [
+    "setuptools>=61.0",
+]
 build-backend = "setuptools.build_meta"

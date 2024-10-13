@@ -14,6 +14,11 @@ inputs:
     description: "github token"
     required: true
 
+outputs:
+  commit-sha:
+      description: "Update commit (long) sha"
+      value: m${{ steps.commit-and-push.outputs.commit_long_sha }}
+
 runs:
   using: "composite"
 
@@ -42,10 +47,10 @@ runs:
       run: |
         find . -path ./.git -prune -o -exec chmod u+rw {} \;
 
-    - name: Commit changes
-      shell: bash
-      run: |
-        git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "github-actions[bot]"
-        git commit -am "Update docker images in devcontainer jsons to ${{ inputs.version }}"
-        git push
+    - name: Commit and push changes
+      id: commit-and-push
+      uses: EndBug/add-and-commit@v9
+      with:
+        message: Update docker images in devcontainer jsons to ${{ inputs.version }}
+        committer_name: GitHub Actions
+        committer_email: actions@github.com
