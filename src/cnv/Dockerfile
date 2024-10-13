@@ -1,5 +1,5 @@
 ARG BASE_IMAGE=ugbio_base
-FROM python:3.10-bullseye AS build
+FROM python:3.11-bullseye AS build
 
 ARG OUT_DIR=/tmp/ugbio
 ARG MODULE_DIR=cnv
@@ -64,8 +64,8 @@ RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSI
 
 ## install ug-cn.mops (branch: ug.master):
 RUN cd /opt && \
-   git clone --branch ug.master https://github.com/Ultimagen/cn.mops.git cn.mops && \
-   cd cn.mops
+    git clone --branch ug.master https://github.com/Ultimagen/cn.mops.git cn.mops && \
+    cd cn.mops
 
 # Install additional R dependencies
 RUN R -e "install.packages(c('argparse', 'BiocManager'), repos='https://cran.r-project.org')"
