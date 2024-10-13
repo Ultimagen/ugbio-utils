@@ -30,7 +30,7 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     outputs:
-      publish_commit_sha: ${{ steps.commit-and-push-1.outputs.commit_long_sha }}
+      publish_commit_sha: ${{ steps.publish-update-version.outputs.commit-sha }}
       new_version: ${{ steps.bump-semver.outputs.new_version }}
       matrix: ${{steps.list_dirs.outputs.workspaces}}
     steps:
@@ -76,6 +76,7 @@ jobs:
           version: ${{ env.UV_VERSION }}
 
       - uses: ./.github/actions/update-workspaces-version
+        id: publish-update-version
         with:
            version: ${{ steps.bump-semver.outputs.new_version }}
            ref: ${{ github.ref_name }}

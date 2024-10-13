@@ -13,6 +13,11 @@ inputs:
     description: "github token"
     required: true
 
+outputs:
+  commit-sha:
+      description: "Update commit (long) sha"
+      value: m${{ steps.commit-and-push.outputs.commit_long_sha }}
+
 runs:
   using: "composite"
 
@@ -41,10 +46,10 @@ runs:
       run: |
         find . -path ./.git -prune -o -exec chmod u+rw {} \;
 
-    - name: Commit changes
-      shell: bash
-      run: |
-        git config --global user.name "GitHub Actions"
-        git config --global user.email "actions@github.com"
-        git commit -am "Update pyproject.toml versions to ${{ inputs.version }}"
-        git push
+    - name: Commit and push changes
+      id: commit-and-push
+      uses: EndBug/add-and-commit@v9
+      with:
+        message: Update pyproject.toml versions to ${{ inputs.version }}
+        committer_name: GitHub Actions
+        committer_email: actions@github.com
