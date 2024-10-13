@@ -78,6 +78,9 @@ def run(argv):
     logger.info(out_annotated_file)
     logger.info(out_CNVs_file)
 
+def main():
+    run(sys.argv)
+
 
 if __name__ == "__main__":
-    run(sys.argv)
+    main()

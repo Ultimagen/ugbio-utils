@@ -94,5 +94,9 @@ def run(argv):
     logger.info("output file:")
     logger.info(out_file)
 
-if __name__ == "__main__":
+def main():
     run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()

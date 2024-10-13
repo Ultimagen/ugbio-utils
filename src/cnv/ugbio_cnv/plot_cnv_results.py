@@ -322,5 +322,9 @@ def run(argv):
     logger.info(out_dup_del_calls_figure)
     logger.info(out_cnv_calls_figure)
     
-if __name__ == "__main__":
+def main():
     run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()
