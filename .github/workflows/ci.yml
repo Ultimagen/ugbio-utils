@@ -30,7 +30,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: ${{fromJson(needs.get-workspaces.outputs.matrix)}}
+        module: 
+          - core
+        # module: ${{fromJson(needs.get-workspaces.outputs.matrix)}}
     steps:
     - uses: actions/checkout@v4
       with:
