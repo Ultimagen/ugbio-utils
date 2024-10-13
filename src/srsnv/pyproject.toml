@@ -3,7 +3,7 @@ name = "ugbio_srsnv"
 version = "1.2.1-0dev-40"
 requires-python = ">=3.10"
 dependencies = [
-    "ugbio_core",
+    "ugbio_core[variantannotation]",
     "ugbio_ppmseq",
     "ugbio_featuremap",
     "seaborn>=0.13.2",

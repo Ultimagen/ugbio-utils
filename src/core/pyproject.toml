@@ -15,11 +15,15 @@ dependencies = [
     "pysam>=0.22.1",
     "matplotlib>=3.7.1",
     "pyfaidx>=0.8.1",
-    "h5py>=3.11.0",
+    "h5py>=3.11.0"
+]
+
+[project.optional-dependencies]
+variantannotation = [
     "scipy>=1.14.0",
     "pybigwig>=0.3.18",
     "tqdm>=4.66.4",
-    "bgzip>=0.5.0",
+    "bgzip>=0.5.0"
 ]
 
 [project.license]
