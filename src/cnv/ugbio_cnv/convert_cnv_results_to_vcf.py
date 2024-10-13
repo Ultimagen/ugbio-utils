@@ -153,5 +153,9 @@ def run(argv):
         logger.info(f"output file index: {outfile}.tbi")
 
 
-if __name__ == "__main__":
+def main():
     run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()

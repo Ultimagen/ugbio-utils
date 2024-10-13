@@ -65,6 +65,10 @@ def run(argv):
     df_freec_ratio = read_ratio_file(ratio_file)
     outfile = plot_ratio_values(df_freec_ratio,sample_name,outdir)
     logger.info(f"output file: {outfile}")
+    
+def main():
+    run(sys.argv)
+
 
 if __name__ == "__main__":
-    run(sys.argv)
+    main()

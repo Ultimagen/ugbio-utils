@@ -97,5 +97,9 @@ def run(argv):
     plot_neutral_AF(df_neutral_AF,args.sample_name,neutral_SNP_hist_file)
     logger.info(f"out hist file : {neutral_SNP_hist_file}")
 
-if __name__ == "__main__":
+def main():
     run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()
