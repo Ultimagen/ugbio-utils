@@ -1,4 +1,5 @@
 # ugbio-utils
+
 This repository includes utilities for bioinformatics pipelines.
 
 The package management in this project is done using [uv](https://docs.astral.sh/uv/).
@@ -58,8 +59,12 @@ For example, for cnv:
         [tool.uv.sources]
         ugbio_core = {workspace = true}
         ```
+4. Optional - add a devcontainer.json under `.devcontainer/<MEMBER_NAME>` folder for working with the member's container.
 
-4. Optional - add a devcontainer.json under `.devcontainer/<MEMBER_NAME>` folder for working with the member's conatiner.
+### General guidelines for adding new code
+* Look into ugbio_core! Probably someone already wrote a function that answers your needs. We want to avoid writing the same code in many places.
+* Put your common functions in ugbio_core! If your code can be used in other places - it should be in the core so others can find and use it.
+
 
 ## Working with Dev Containers
 To work in an environment with all necessary tools installed while still working on your code, it is recommended to develop inside a container, or in short - [dev container](https://containers.dev/).
@@ -68,7 +73,10 @@ For each member, you can find a `devcontainer.json` file under the `.devcontaine
 
 ### Open Dev Container in VSCode
 1. Install the *Dev Containers* extension.
-2. The first time running the container, you will need to pull the Docker image from the registry. Make sure to <u>login to ecr</u> before that.
+2. The first time running the container, you will need to pull the Docker image from the registry. Make sure to <u>login to ecr</u> before that:
+
+    `aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 337532070941.dkr.ecr.us-east-1.amazonaws.com`
+
 3. Open the Command Palette (F1) and choose **Dev Containers: Open Folder in Container...**
 4. Choose the `ugbio-utils` root directory.
 5. Choose the dev container you want to work with (CNV/Single cell/etc.).
@@ -108,3 +116,6 @@ Another option is to build the image locally using `docker build . -f <dockerfil
 ## Run Tests
 It is recommended to run tests in the relevant dev container. See the section above for more details on how to open the dev container. Once you are running inside the dev container, you can run tests using VSCode or with `uv run pytest <tests path>`.
 
+Alternatively, you can take advantage of the "run_tests" entry point we are adding to each docker. Simply run:
+
+`docker run --rm -v .:/workdir/src <docker image> run_tests /workdir/src/<path>`

@@ -6,7 +6,7 @@ authors = [
     { name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com" },
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 
 [project.license]
 text = "Apache-2.0"

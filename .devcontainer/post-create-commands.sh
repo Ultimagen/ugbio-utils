@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Update package list and install curl
-apt-get update && apt-get install -y curl
+apt-get update && apt-get install -y curl clang
 
 # Set UV_LINK_MODE environment variable permanently
 echo 'export UV_LINK_MODE=copy' >> ~/.bashrc
