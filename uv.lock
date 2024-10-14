@@ -2809,12 +2809,11 @@ dependencies = [
     { name = "h5py" },
     { name = "matplotlib" },
     { name = "numpy" },
-    { name = "pandas" },
+    { name = "pandas", extra = ["hdf5"] },
     { name = "pyfaidx" },
     { name = "pysam" },
     { name = "scipy" },
     { name = "simppl" },
-    { name = "tables" },
 ]
 
 [package.optional-dependencies]
@@ -2830,13 +2829,12 @@ requires-dist = [
     { name = "h5py", specifier = ">=3.11.0" },
     { name = "matplotlib", specifier = ">=3.7.1" },
     { name = "numpy", specifier = ">=1.26.4,<2.0.0" },
-    { name = "pandas", extras = ["hdf"], specifier = ">=2.2.2" },
+    { name = "pandas", extras = ["hdf5"], specifier = ">=2.2.2" },
     { name = "pybigwig", marker = "extra == 'variantannotation'", specifier = ">=0.3.18" },
     { name = "pyfaidx", specifier = ">=0.8.1" },
     { name = "pysam", specifier = ">=0.22.1" },
     { name = "scipy", specifier = ">=1.14.0" },
     { name = "simppl", specifier = ">=1.0.7" },
-    { name = "tables", specifier = ">=3.10.1" },
     { name = "tqdm", marker = "extra == 'variantannotation'", specifier = ">=4.66.4" },
 ]
 
