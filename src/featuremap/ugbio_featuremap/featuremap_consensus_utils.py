@@ -9,11 +9,11 @@ from os.path import join as pjoin
 
 import numpy as np
 import pysam
-
-from ugbio_core.logger import logger
 from ugbio_core.consts import AD, DP, GT, VAF
-from ugbio_featuremap.featuremap_utils import FeatureMapFields, FeatureMapFilters
+from ugbio_core.logger import logger
 from ugbio_ppmseq.ppmSeq_consts import HistogramColumnNames
+
+from ugbio_featuremap.featuremap_utils import FeatureMapFields, FeatureMapFilters
 
 fields_to_collect_all_options = {
     "numeric_array_fields": [
@@ -353,7 +353,7 @@ def pileup_featuremap_on_an_interval_list(
         output_vcf (str): The output vcf file
     """
     with tempfile.TemporaryDirectory(dir=dirname(output_vcf)) as temp_dir:
-        with open(interval_list, "r", encoding="utf-8") as f:
+        with open(interval_list, encoding="utf-8") as f:
             for line in f:
                 # ignore header lines
                 if line.startswith("@"):

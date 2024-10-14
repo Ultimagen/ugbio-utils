@@ -8,7 +8,7 @@ inputs:
       required: true
 
 outputs:
-    workspaces: 
+    workspaces:
       description: "Workspaces list"
       value: ${{ steps.list_dirs.outputs.matrix }}
 
@@ -28,7 +28,7 @@ runs:
       if [ "$filter_flag" = "true" ]; then
         # Read the folders to filter out from workspaces json
         folders_to_filter_out=$(jq -r '.InternalMembers' .github/actions/get-workspaces/workspaces.json)
-        
+
         # Use jq to filter out the folders listed in workspaces json
         filtered_folders=$(echo "$all_folders" | jq --compact-output --argjson filter "$folders_to_filter_out" '[.[] | select(. as $item | $filter | index($item) | not)]')
       else

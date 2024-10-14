@@ -9,7 +9,7 @@
 		"--network=host"
 	],
 
-	// run on the host machine during initialization 
+	// run on the host machine during initialization
 	"initializeCommand" : "code --list-extensions > extensions.txt",
 
 	// Features to add to the dev container. More info: https://containers.dev/features.
@@ -35,7 +35,7 @@
         "source=${localWorkspaceFolder}/extensions.txt,target=/tmp/extensions.txt,type=bind,consistency=cached"
 		// "target=${containerWorkspaceFolder}/.venv,type=volume"
 	],
-	
+
 	"customizations": {
 		"vscode": {
 			"extensions": [

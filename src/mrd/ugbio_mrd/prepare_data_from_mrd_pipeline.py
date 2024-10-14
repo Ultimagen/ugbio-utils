@@ -102,6 +102,7 @@ def run(argv):
     )
     sys.stdout.write("DONE" + os.linesep)
 
+
 def main():
     run(sys.argv)
 

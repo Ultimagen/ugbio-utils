@@ -65,4 +65,3 @@ if(args$save_csv){
 if(args$save_hdf){
   h5write(as.data.frame(gr),"merged_cohort_reads_count.hdf5","merged_cohort_reads_count")
 }
-

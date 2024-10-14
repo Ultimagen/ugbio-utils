@@ -1,4 +1,4 @@
- 
+
 name: "Update workspaces version"
 description: "Update version in pyproject.toml in all workspaces and commit changes"
 
@@ -27,7 +27,7 @@ runs:
         ref: ${{ inputs.ref }}
         token: ${{ inputs.git-token }}
         fetch-depth: 0
-        
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:

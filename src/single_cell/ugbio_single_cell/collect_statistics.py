@@ -4,10 +4,9 @@ from pathlib import Path
 
 import pandas as pd
 from Bio import SeqIO
-
-from ugbio_single_cell.sc_qc_dataclasses import H5Keys, Inputs, OutputFiles
 from ugbio_core.sorter_utils import read_sorter_statistics_csv
 from ugbio_core.trimmer_utils import merge_trimmer_histograms, read_trimmer_failure_codes
+from ugbio_single_cell.sc_qc_dataclasses import H5Keys, Inputs, OutputFiles
 
 
 def collect_statistics(input_files: Inputs, output_path: str, sample_name: str) -> Path:
@@ -31,9 +30,7 @@ def collect_statistics(input_files: Inputs, output_path: str, sample_name: str) 
     Path(output_path).mkdir(parents=True, exist_ok=True)
 
     # Merge Trimmer histograms from two optical paths (if needed)
-    merged_histogram_csv = merge_trimmer_histograms(
-        input_files.trimmer_histogram_csv, output_path=output_path
-    )
+    merged_histogram_csv = merge_trimmer_histograms(input_files.trimmer_histogram_csv, output_path=output_path)
 
     # Read inputs into df
     trimmer_stats = pd.read_csv(input_files.trimmer_stats_csv)
@@ -44,9 +41,7 @@ def collect_statistics(input_files: Inputs, output_path: str, sample_name: str) 
     histogram = pd.read_csv(merged_histogram_csv)
     sorter_stats = read_sorter_statistics_csv(input_files.sorter_stats_csv)
     star_stats = read_star_stats(input_files.star_stats)
-    star_reads_per_gene = pd.read_csv(
-        input_files.star_reads_per_gene, header=None, sep="\t"
-    )
+    star_reads_per_gene = pd.read_csv(input_files.star_reads_per_gene, header=None, sep="\t")
 
     # Get insert subsample quality and lengths
     insert_quality, insert_lengths = get_insert_properties(input_files.insert)
@@ -56,17 +51,13 @@ def collect_statistics(input_files: Inputs, output_path: str, sample_name: str) 
 
     with pd.HDFStore(output_filename, "w") as store:
         store.put(H5Keys.TRIMMER_STATS.value, trimmer_stats, format="table")
-        store.put(
-            H5Keys.TRIMMER_FAILURE_CODES.value, df_trimmer_failure_codes, format="table"
-        )
+        store.put(H5Keys.TRIMMER_FAILURE_CODES.value, df_trimmer_failure_codes, format="table")
         store.put(H5Keys.TRIMMER_HISTOGRAM.value, histogram, format="table")
         store.put(H5Keys.SORTER_STATS.value, sorter_stats, format="table")
         store.put(H5Keys.STAR_STATS.value, star_stats)
         store.put(H5Keys.STAR_READS_PER_GENE.value, star_reads_per_gene, format="table")
         store.put(H5Keys.INSERT_QUALITY.value, insert_quality, format="table")
-        store.put(
-            H5Keys.INSERT_LENGTHS.value, pd.Series(insert_lengths), format="table"
-        )
+        store.put(H5Keys.INSERT_LENGTHS.value, pd.Series(insert_lengths), format="table")
 
     return output_filename
 
@@ -94,12 +85,7 @@ def read_star_stats(star_stats_file: str) -> pd.Series:
 
     # Add type (general, unique_reads, multi_mapping_reads, unmapped_reads, chimeric_reads)
     df.loc[:, "type"] = (
-        df["metric"]
-        .where(df["value"].isnull())
-        .ffill()
-        .fillna("general")
-        .str.lower()
-        .str.replace(":", "")
+        df["metric"].where(df["value"].isnull()).ffill().fillna("general").str.lower().str.replace(":", "")
     )
     df = df.dropna(subset=["value"])
 
@@ -112,14 +98,15 @@ def read_star_stats(star_stats_file: str) -> pd.Series:
     df["value"] = df["value"].str.replace("%", "")
 
     # Set index
-    df.set_index(['type', 'metric'], inplace=True)
+    df.set_index(["type", "metric"], inplace=True)
     # convert df to pd.series for easier access
-    s = df['value']
+    s = df["value"]
 
     # convert types
     s = s.apply(convert_value)
 
     return s
+
 
 def convert_value(value):
     """
@@ -135,6 +122,7 @@ def convert_value(value):
         except ValueError:
             # If both conversions fail, return the original value
             return value
+
 
 def get_insert_properties(insert, max_reads=None) -> tuple[pd.DataFrame, list[int]]:
     """
@@ -193,9 +181,7 @@ def extract_statistics_table(h5_file: Path):
         stats["num_input_reads"] = num_input_reads
 
         # number of Trimmed reads
-        num_trimmed_reads = store[H5Keys.TRIMMER_STATS.value][
-            "num trimmed reads"
-        ].values[0]
+        num_trimmed_reads = store[H5Keys.TRIMMER_STATS.value]["num trimmed reads"].values[0]
         stats["num_trimmed_reads"] = num_trimmed_reads
 
         # pct_pass_trimmer
@@ -207,7 +193,7 @@ def extract_statistics_table(h5_file: Path):
         stats["mean_umi_per_cell"] = mean_umi_per_cell
 
         # Mean read length
-        mean_read_length = int(store[H5Keys.STAR_STATS.value].loc[('general','Average_input_read_length')]) + 1
+        mean_read_length = int(store[H5Keys.STAR_STATS.value].loc[("general", "Average_input_read_length")]) + 1
         stats["mean_read_length"] = mean_read_length
 
         # %q >= 20 for insert
@@ -219,9 +205,11 @@ def extract_statistics_table(h5_file: Path):
         stats["pct_q30"] = q30
 
         # %Aligned to genome
-        ur_tmm = float(store[H5Keys.STAR_STATS.value].loc[('unmapped_reads','pct_of_reads_unmapped_too_many_mismatches')])
-        ur_ts = float(store[H5Keys.STAR_STATS.value].loc[('unmapped_reads','pct_of_reads_unmapped_too_short')])
-        ur_other = float(store[H5Keys.STAR_STATS.value].loc[('unmapped_reads','pct_of_reads_unmapped_other')])
+        ur_tmm = float(
+            store[H5Keys.STAR_STATS.value].loc[("unmapped_reads", "pct_of_reads_unmapped_too_many_mismatches")]
+        )
+        ur_ts = float(store[H5Keys.STAR_STATS.value].loc[("unmapped_reads", "pct_of_reads_unmapped_too_short")])
+        ur_other = float(store[H5Keys.STAR_STATS.value].loc[("unmapped_reads", "pct_of_reads_unmapped_other")])
         pct_aligned_to_genome = 100 - ur_tmm - ur_ts - ur_other
         stats["pct_aligned_to_genome"] = pct_aligned_to_genome
 
@@ -230,45 +218,39 @@ def extract_statistics_table(h5_file: Path):
             store[H5Keys.STAR_READS_PER_GENE.value][0].astype(str).str.startswith("N_")
         ]  # unmapped, multimapping, noFeature, ambiguous
         unassigned_genes_unstranded = unassigned_genes_df.iloc[:, 1].sum()
-        star_input_reads = int(store[H5Keys.STAR_STATS.value].loc[('general','Number_of_input_reads')])
+        star_input_reads = int(store[H5Keys.STAR_STATS.value].loc[("general", "Number_of_input_reads")])
 
-        pct_aligned_to_genes_unstranded = (
-            100 * (star_input_reads - unassigned_genes_unstranded) / star_input_reads
-        )
+        pct_aligned_to_genes_unstranded = 100 * (star_input_reads - unassigned_genes_unstranded) / star_input_reads
         stats["pct_aligned_to_genes_unstranded"] = pct_aligned_to_genes_unstranded
 
         # %Assigned to genes (unique; forward)
         unassigned_genes_forward = unassigned_genes_df.iloc[:, 2].sum()
-        pct_aligned_to_genes_forward = (
-            100 * (star_input_reads - unassigned_genes_forward) / star_input_reads
-        )
+        pct_aligned_to_genes_forward = 100 * (star_input_reads - unassigned_genes_forward) / star_input_reads
         stats["pct_aligned_to_genes_forward"] = pct_aligned_to_genes_forward
 
         # %Assigned to genes (unique; reverse)
         unassigned_genes_reverse = unassigned_genes_df.iloc[:, 3].sum()
-        pct_aligned_to_genes_reverse = (
-            100 * (star_input_reads - unassigned_genes_reverse) / star_input_reads
-        )
+        pct_aligned_to_genes_reverse = 100 * (star_input_reads - unassigned_genes_reverse) / star_input_reads
         stats["pct_aligned_to_genes_reverse"] = pct_aligned_to_genes_reverse
 
         # Average_mapped_length
-        average_mapped_length = store[H5Keys.STAR_STATS.value].loc[('unique_reads','Average_mapped_length')]
+        average_mapped_length = store[H5Keys.STAR_STATS.value].loc[("unique_reads", "Average_mapped_length")]
         stats["average_mapped_length"] = average_mapped_length
 
         # Uniquely_mapped_reads_%
-        pct_uniquely_mapped_reads =  store[H5Keys.STAR_STATS.value].loc[('unique_reads','pct_Uniquely_mapped_reads')]
+        pct_uniquely_mapped_reads = store[H5Keys.STAR_STATS.value].loc[("unique_reads", "pct_Uniquely_mapped_reads")]
         stats["pct_uniquely_mapped_reads"] = pct_uniquely_mapped_reads
 
         # Mismatch_rate_per_base_%
-        mismatch_rate = float(store[H5Keys.STAR_STATS.value].loc[('unique_reads','pct_Mismatch_rate_per_base')])
+        mismatch_rate = float(store[H5Keys.STAR_STATS.value].loc[("unique_reads", "pct_Mismatch_rate_per_base")])
         stats["pct_mismatch"] = mismatch_rate
 
         # pct_deletion
-        deletion_rate = float(store[H5Keys.STAR_STATS.value].loc[('unique_reads','pct_Deletion_rate_per_base')])
+        deletion_rate = float(store[H5Keys.STAR_STATS.value].loc[("unique_reads", "pct_Deletion_rate_per_base")])
         stats["pct_deletion"] = deletion_rate
 
         # pct_insertion
-        insertion_rate = float(store[H5Keys.STAR_STATS.value].loc[('unique_reads','pct_Insertion_rate_per_base')])
+        insertion_rate = float(store[H5Keys.STAR_STATS.value].loc[("unique_reads", "pct_Insertion_rate_per_base")])
         stats["pct_insertion"] = insertion_rate
 
     series = pd.Series(stats, dtype="float")

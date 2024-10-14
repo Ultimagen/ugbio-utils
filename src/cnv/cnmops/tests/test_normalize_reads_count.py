@@ -27,14 +27,7 @@ def test_normalize_reads_count(tmpdir, resources_dir, script_path):
 
     out_file = pjoin(tmpdir, "cohort_reads_count.norm.csv")
     os.chdir(tmpdir)
-    cmd = [
-        "Rscript",
-        "--vanilla",
-        script_path,
-        "-cohort_reads_count_file",
-        in_cohort_reads_count_file,
-        "--save_csv"
-    ]
+    cmd = ["Rscript", "--vanilla", script_path, "-cohort_reads_count_file", in_cohort_reads_count_file, "--save_csv"]
     assert subprocess.check_call(cmd, cwd=tmpdir) == 0
     df = pd.read_csv(out_file)
     df_ref = pd.read_csv(expected_out_norm_rc)
@@ -56,7 +49,7 @@ def test_normalize_reads_count_with_ploidy(tmpdir, resources_dir, script_path):
         in_cohort_reads_count_file,
         "-ploidy",
         ploidy_file,
-        "--save_csv"
+        "--save_csv",
     ]
     assert subprocess.check_call(cmd, cwd=tmpdir) == 0
     df = pd.read_csv(out_file)
@@ -70,14 +63,7 @@ def test_normalize_reads_count_without_chrX(tmpdir, resources_dir, script_path):
 
     out_file = pjoin(tmpdir, "cohort_reads_count.norm.csv")
     os.chdir(tmpdir)
-    cmd = [
-        "Rscript",
-        "--vanilla",
-        script_path,
-        "-cohort_reads_count_file",
-        in_cohort_reads_count_file,
-        "--save_csv"
-    ]
+    cmd = ["Rscript", "--vanilla", script_path, "-cohort_reads_count_file", in_cohort_reads_count_file, "--save_csv"]
     assert subprocess.check_call(cmd, cwd=tmpdir) == 0
     df = pd.read_csv(out_file)
     df_ref = pd.read_csv(expected_out_norm_rc)
@@ -90,14 +76,7 @@ def test_normalize_reads_count_without_chrXchrY(tmpdir, resources_dir, script_pa
 
     out_file = pjoin(tmpdir, "cohort_reads_count.norm.csv")
     os.chdir(tmpdir)
-    cmd = [
-        "Rscript",
-        "--vanilla",
-        script_path,
-        "-cohort_reads_count_file",
-        in_cohort_reads_count_file,
-        "--save_csv"
-    ]
+    cmd = ["Rscript", "--vanilla", script_path, "-cohort_reads_count_file", in_cohort_reads_count_file, "--save_csv"]
     assert subprocess.check_call(cmd, cwd=tmpdir) == 0
     df = pd.read_csv(out_file)
     df_ref = pd.read_csv(expected_out_norm_rc)

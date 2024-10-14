@@ -40,7 +40,7 @@ def modify_jupyter_notebook_html(
     """
 
     # Read the HTML file.
-    with open(input_html, "r", encoding="utf-8") as file:
+    with open(input_html, encoding="utf-8") as file:
         html = file.read()
 
     # Insert the CSS into the HTML.

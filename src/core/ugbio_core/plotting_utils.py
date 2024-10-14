@@ -14,7 +14,7 @@ def set_pyplot_defaults(
     medium_size=MEDIUM_SIZE,
     bigger_size=BIGGER_SIZE,
     grid=GRID,
-    figsize=FIGSIZE
+    figsize=FIGSIZE,
 ):
     plt.rc("font", size=small_size)  # controls default text sizes
     plt.rc("axes", titlesize=title_size)  # fontsize of the axes title

@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pysam
 import pytest
-
 from ugbio_featuremap.featuremap_utils import FeatureMapFields, annotate_featuremap
 from ugbio_ppmseq.ppmSeq_utils import HistogramColumnNames
+
 
 @pytest.fixture
 def resources_dir():

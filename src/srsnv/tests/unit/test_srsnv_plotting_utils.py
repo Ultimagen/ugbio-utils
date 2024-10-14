@@ -5,10 +5,12 @@ from pathlib import Path
 import joblib
 import pandas as pd
 import pytest
-
 from ugbio_core.logger import logger
-from ugbio_srsnv.srsnv_plotting_utils import SRSNVReport  # , default_LoD_filters, retention_noise_and_mrd_lod_simulation
+from ugbio_srsnv.srsnv_plotting_utils import (
+    SRSNVReport,  # , default_LoD_filters, retention_noise_and_mrd_lod_simulation
+)
 from ugbio_srsnv.srsnv_training_utils import SRSNVTrain
+
 
 @pytest.fixture
 def resources_dir():

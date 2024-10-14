@@ -6,6 +6,7 @@ import pandas as pd
 from pandas import DataFrame
 from ugbio_core.logger import logger
 
+
 def get_h5_keys(h5_filename: str):
     with pd.HDFStore(h5_filename, "r") as store:
         keys = store.keys()
@@ -39,10 +40,10 @@ def preprocess_columns(dataframe):
 
 
 def convert_h5_to_json(
-        input_h5_filename: str,
-        root_element: str,
-        ignored_h5_key_substring: str = None,
-        output_json: str = None,
+    input_h5_filename: str,
+    root_element: str,
+    ignored_h5_key_substring: str = None,
+    output_json: str = None,
 ):
     """Convert an .h5 metrics file to .json with control over the root element and the processing
 
@@ -88,10 +89,10 @@ def convert_h5_to_json(
 
 
 def read_hdf(
-        file_name: str,
-        key: str = "all",
-        skip_keys: list[str] | None = None,
-        columns_subset: list[str] | None = None,
+    file_name: str,
+    key: str = "all",
+    skip_keys: list[str] | None = None,
+    columns_subset: list[str] | None = None,
 ) -> DataFrame:
     """
     Read data-frame or data-frames from an h5 file

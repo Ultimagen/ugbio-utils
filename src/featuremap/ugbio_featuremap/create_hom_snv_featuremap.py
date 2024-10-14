@@ -80,6 +80,7 @@ def run(argv):
         min_af=args.min_af,
     )
 
+
 def main():
     run(sys.argv)
 

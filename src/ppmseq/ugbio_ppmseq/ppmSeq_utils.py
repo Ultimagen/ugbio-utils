@@ -11,14 +11,15 @@ import numpy as np
 import pandas as pd
 import pysam
 import seaborn as sns
-
-from ugbio_ppmseq.ppmSeq_consts import STRAND_RATIO_AXIS_LABEL
 from ugbio_core.flow_format.flow_based_read import generate_key_from_sequence
+from ugbio_core.plotting_utils import set_pyplot_defaults
 from ugbio_core.report_utils import modify_jupyter_notebook_html
 from ugbio_core.sorter_utils import plot_read_length_histogram, read_and_parse_sorter_statistics_csv
 from ugbio_core.trimmer_utils import merge_trimmer_histograms, read_trimmer_failure_codes
-from ugbio_core.plotting_utils import set_pyplot_defaults
 from ugbio_core.variant_annotation import VcfAnnotator
+
+from ugbio_ppmseq.ppmSeq_consts import STRAND_RATIO_AXIS_LABEL
+
 
 # Supported adapter versions
 class ppmSeqAdapterVersions(Enum):
@@ -104,6 +105,7 @@ DUMBBELL_LEFTOVER_START_MATCH = (
 )
 BASE_PATH = Path(__file__).parent
 REPORTS_DIR = "reports"
+
 
 class ppmSeqStrandVcfAnnotator(VcfAnnotator):
     def __init__(
@@ -232,9 +234,9 @@ class ppmSeqStrandVcfAnnotator(VcfAnnotator):
                 )
                 record.info[HistogramColumnNames.STRAND_RATIO_END.value] = np.nan
                 if not is_end_reached:
-                    record.info[
-                        HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value
-                    ] = ppmSeqCategories.END_UNREACHED.value
+                    record.info[HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value] = (
+                        ppmSeqCategories.END_UNREACHED.value
+                    )
                 else:
                     if self.min_total_hmer_lengths_in_loops <= tags_sum_end <= self.max_total_hmer_lengths_in_loops:
                         record.info[HistogramColumnNames.STRAND_RATIO_END.value] = T_hmer_end / (
@@ -408,8 +410,7 @@ def read_ppmSeq_trimmer_histogram(
                 "A_hmer_3": TrimmerSegmentLabels.A_HMER_END.value + length_suffix,
                 "T_hmer_3": TrimmerSegmentLabels.T_HMER_END.value + length_suffix,
                 TrimmerSegmentLabels.NATIVE_ADAPTER_WITH_C.value
-                + length_suffix: TrimmerSegmentLabels.NATIVE_ADAPTER.value
-                + length_suffix,
+                + length_suffix: TrimmerSegmentLabels.NATIVE_ADAPTER.value + length_suffix,
             }
         )
         .rename(
@@ -459,7 +460,6 @@ def read_ppmSeq_trimmer_histogram(
         ppmSeqAdapterVersions.LEGACY_V5_END.value,
         ppmSeqAdapterVersions.LEGACY_V5.value,
     ]:
-
         # make sure expected columns exist
         for col in (
             HistogramColumnNames.COUNT.value,
@@ -744,9 +744,7 @@ def get_strand_ratio_category_concordance(
             df_category_concordance_no_end_unreached[HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value]
             == ppmSeqCategories.UNDETERMINED.value
         )
-    ][
-        HistogramColumnNames.COUNT_NORM.value
-    ].sum()
+    ][HistogramColumnNames.COUNT_NORM.value].sum()
     #   the remainder is DISCORDANT - both not UNDETERMINED but do not match
     count = HistogramColumnNames.COUNT_NORM.value  # workaround flake8 contradicts Black and fails on line length
     df_category_consensus.loc[ppmSeqCategoriesConsensus.DISCORDANT.value, count] = (
@@ -854,9 +852,7 @@ def read_trimmer_tags_dataframe(
             }
         )
         # Calculate mixed reads of total (including end unreached) and mixed read coverage
-        mixed_tot = df_category_concordance.loc[
-            (ppmSeqCategories.MIXED.value, ppmSeqCategories.MIXED.value),
-        ]
+        mixed_tot = df_category_concordance.loc[(ppmSeqCategories.MIXED.value, ppmSeqCategories.MIXED.value),]
         df_mixed_cov = pd.DataFrame(
             {
                 "MIXED_read_mean_coverage": mixed_tot * df_sorter_stats.loc["Mean_cvg", "value"],
@@ -1054,7 +1050,9 @@ def collect_statistics(
 
     # read Trimmer failure tags
     if trimmer_failure_codes_csv:
-        df_trimmer_failure_codes, df_failure_codes_metrics = read_trimmer_failure_codes_ppmseq(trimmer_failure_codes_csv)
+        df_trimmer_failure_codes, df_failure_codes_metrics = read_trimmer_failure_codes_ppmseq(
+            trimmer_failure_codes_csv
+        )
         df_stats_shortlist = pd.concat((df_stats_shortlist, df_failure_codes_metrics["value"]))
 
     is_v7_dumbell = (
@@ -1220,6 +1218,7 @@ def plot_ppmSeq_strand_ratio(
             HistogramColumnNames.STRAND_RATIO_CATEGORY_END_NO_UNREACHED.value,
         ),
         ("Start tag", "End tag"),
+        strict=False,
     ):
         if sr in df_trimmer_histogram.columns:
             # group by strand ratio and strand ratio category for non-undetermined reads
@@ -1406,6 +1405,7 @@ def plot_strand_ratio_category_concordnace(
         axs,
         ("All reads", "Only reads where end was reached"),
         (df_category_concordance, df_category_concordance_no_end_unreached),
+        strict=False,
     ):
         df_plot = df_plot.to_frame().unstack().droplevel(0, axis=1)
         df_plot = df_plot.loc[
@@ -1559,7 +1559,7 @@ def plot_trimmer_histogram(
 
         # plot
         title_handle = plt.suptitle(title, y=1.03)
-        for ax, (xcol, ycol, zcol, subtitle) in zip(axs, plot_iter):
+        for ax, (xcol, ycol, zcol, subtitle) in zip(axs, plot_iter, strict=False):
             # group by strand ratio and strand ratio category for non-undetermined reads
             df_plot = df_trimmer_histogram.groupby([xcol, ycol]).agg({zcol: "sum"}).reset_index()
             df_hmer_sum = df_plot[[xcol, ycol]].sum(axis=1)
@@ -1582,7 +1582,6 @@ def plot_trimmer_histogram(
         ppmSeqAdapterVersions.DMBL,
         ppmSeqAdapterVersions.DMBL.value,
     ):
-
         fig, axs_all_both = plt.subplots(3, 10, figsize=(18, 5), sharex=False, sharey=True)
         fig.subplots_adjust(wspace=0.25, hspace=0.6)
         title_handle = fig.suptitle(title, y=1.25)
@@ -1609,6 +1608,7 @@ def plot_trimmer_histogram(
                     HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value,
                 ),
                 (flow_order_start, flow_order_end),
+                strict=False,
             )
         ):
             df_calls = (
@@ -1635,6 +1635,7 @@ def plot_trimmer_histogram(
                         [0, 2, 0, 2],
                         [2, 0, 2, 0],
                     ),
+                    strict=False,
                 )
             ):
                 if cat not in df_calls.index.get_level_values(loop_category):
@@ -1652,7 +1653,7 @@ def plot_trimmer_histogram(
                 )
                 axs = axs_all[k, :]
                 axs[0].set_ylabel(cat, fontsize=20)
-                for ax, (j, base) in zip(axs, enumerate(flow_order)):
+                for ax, (j, base) in zip(axs, enumerate(flow_order), strict=False):
                     x = (
                         df_calls_x.groupby(j)
                         .agg({HistogramColumnNames.COUNT_NORM.value: "sum"})
@@ -1956,12 +1957,18 @@ def ppmSeq_qc_analysis(
 
     # generate report
     if generate_report:
-        template_notebook = BASE_PATH /  REPORTS_DIR / "ppmSeq_qc_report.ipynb"
-        illustration_file = "ppmSeq_legacy_v5_illustration.png" if adapter_version in (
-                    ppmSeqAdapterVersions.LEGACY_V5_START.value,
-                    ppmSeqAdapterVersions.LEGACY_V5.value,
-                    ppmSeqAdapterVersions.LEGACY_V5_END.value) else "reports/ppmSeq_v1_illustration.png"
-        illustration_path = BASE_PATH /  REPORTS_DIR / illustration_file
+        template_notebook = BASE_PATH / REPORTS_DIR / "ppmSeq_qc_report.ipynb"
+        illustration_file = (
+            "ppmSeq_legacy_v5_illustration.png"
+            if adapter_version
+            in (
+                ppmSeqAdapterVersions.LEGACY_V5_START.value,
+                ppmSeqAdapterVersions.LEGACY_V5.value,
+                ppmSeqAdapterVersions.LEGACY_V5_END.value,
+            )
+            else "reports/ppmSeq_v1_illustration.png"
+        )
+        illustration_path = BASE_PATH / REPORTS_DIR / illustration_file
         parameters = dict(
             adapter_version=(adapter_version if isinstance(adapter_version, str) else adapter_version.value),
             statistics_h5=output_statistics_h5,

@@ -12,7 +12,6 @@ def resources_dir():
 
 
 class TestFilterSampleCnvs:
-
     def test_annotate_bed(self, tmpdir, resources_dir):
         input_bed_file = pjoin(resources_dir, "unfiltered_cnvs.bed")
         expected_out_filtered_bed_file = pjoin(resources_dir, "filtered_cnvs.bed")

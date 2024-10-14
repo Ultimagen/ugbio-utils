@@ -5,7 +5,6 @@ from pathlib import Path
 import numpy as np
 import pysam
 import pytest
-
 import ugbio_core.flow_format.flow_based_read as fbr
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
 
@@ -13,6 +12,7 @@ from ugbio_core.consts import DEFAULT_FLOW_ORDER
 @pytest.fixture
 def resources_dir():
     return Path(__file__).parent.parent.parent / "resources"
+
 
 def test_matrix_from_qual_tp(resources_dir):
     data = [x for x in pysam.AlignmentFile(pjoin(resources_dir, "chr9.sample.bam"))]
@@ -58,30 +58,35 @@ def test_matrix_from_trimmed_read(resources_dir):
 def flow_order():
     return "ACGT"
 
+
 def test_generate_key_from_sequence_standard_nucleotides(flow_order):
     sequence = "AAGGTTCC"
     result = fbr.generate_key_from_sequence(sequence, flow_order)
     expected = np.array([2, 0, 2, 2, 0, 2])
     assert np.array_equal(result, expected)
 
+
 def test_generate_key_from_sequence_non_standard_nucleotides(flow_order):
     sequence = "AAGGTTCCNN"
     result = fbr.generate_key_from_sequence(sequence, flow_order, non_standard_as_a=True)
-    expected = np.array([2, 0, 2, 2, 0, 2,0,0,2])
+    expected = np.array([2, 0, 2, 2, 0, 2, 0, 0, 2])
     assert np.array_equal(result, expected)
+
 
 def test_generate_key_from_sequence_non_standard_nucleotides_exception(flow_order):
     sequence = "AAGGTTCCNN"
     with pytest.raises(ValueError):
         fbr.generate_key_from_sequence(sequence, flow_order, non_standard_as_a=False)
 
+
 def test_generate_key_from_sequence_truncate(flow_order):
     sequence = "AAGGTTCC"
 
     result = fbr.generate_key_from_sequence(sequence, flow_order, truncate=1)
     expected = np.array([1, 0, 1, 1, 0, 1])
-    
+
     assert np.array_equal(result, expected)
+
 
 def test_generate_key_from_sequence_empty_sequence(flow_order):
     sequence = ""

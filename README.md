@@ -28,7 +28,7 @@ For example, for cnv:
 ## Adding a New ugbio Member
 1. Create a new `<MEMBER_NAME>` folder under `src` for the new member. This folder should contain:
     - Dockerfile
-    - pyproject.toml 
+    - pyproject.toml
     - README.<MEMBER_NAME>.md
     - `ugbio_<MEMBER_NAME>` folder for Python source code.
     - `tests` folder for Python tests.
@@ -37,7 +37,7 @@ For example, for cnv:
 3. In **pyproject.toml**, declare the dependencies and requirements. It can contain scripts to define executables. You **must include** these parts in your pyproject.toml:
 
     3.1 Add this section so uv understands that the current member is a published package:
-        
+
         ```toml
         [build-system]
         requires = [
@@ -45,14 +45,14 @@ For example, for cnv:
         ]
         build-backend = "setuptools.build_meta"
         ```
-    
+
     3.2 Declare the following `run_tests` script to allow running tests from the CI build:
-        
+
         ```toml
         [project.scripts]
         run_tests = "pytest:main"
         ```
-    
+
     3.3 If the current member depends on other members in the workspace (e.g., ugbio_core), add this section:
 
         ```toml

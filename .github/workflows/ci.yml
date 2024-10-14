@@ -45,6 +45,3 @@ jobs:
         aws-region: ${{ env.AWS_REGION }}
         aws-role-name: ${{ env.AWS_ROLE_NAME }}
         ugbio_base_image: ${{ env.UGBIO_BASE_IMAGE_NAME }}
-
-
-

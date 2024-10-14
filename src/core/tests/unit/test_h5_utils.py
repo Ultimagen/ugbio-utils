@@ -1,9 +1,7 @@
-from os.path import join as pjoin
 from pathlib import Path
 
 import numpy as np
 import pytest
-
 from ugbio_core import h5_utils
 
 
@@ -52,9 +50,6 @@ def test_get_h5_keys(resources_dir):
 def test_convert_h5_to_json(resources_dir):
     metrics_h5_path = str(resources_dir / "140479-BC21_aggregated_metrics.h5")
     metrics_json_path = str(resources_dir / "140479-BC21_aggregated_metrics.json")
-    with open(metrics_json_path, "r") as json_file:
+    with open(metrics_json_path) as json_file:
         data = json_file.read()
     assert f'{h5_utils.convert_h5_to_json(metrics_h5_path, "metrics", "histogram")}\n' == data
-
-
-

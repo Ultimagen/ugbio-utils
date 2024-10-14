@@ -76,6 +76,7 @@ def run(argv):
         ref_fasta=args_in.ref_fasta,
     )
 
+
 def main():
     run(sys.argv)
 

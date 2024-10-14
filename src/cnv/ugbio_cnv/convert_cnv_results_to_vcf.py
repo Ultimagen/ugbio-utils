@@ -1,14 +1,15 @@
-import pandas as pd
-import os
-from os.path import join as pjoin
 import argparse
 import logging
+import os
 import sys
+import warnings
+from os.path import join as pjoin
+
+import pandas as pd
 import pysam
 from ugbio_core.logger import logger
-import warnings
 
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
 
 def run(argv):
@@ -30,12 +31,15 @@ def run(argv):
     )
 
     parser.add_argument("--cnv_annotated_bed_file", help="input bed file holding CNV calls", required=True, type=str)
-    parser.add_argument("--fasta_index_file",
-                        help="tab delimeted file holding reference genome chr ids with their lengths. (.fai file)",
-                        required=True, type=str)
+    parser.add_argument(
+        "--fasta_index_file",
+        help="tab delimeted file holding reference genome chr ids with their lengths. (.fai file)",
+        required=True,
+        type=str,
+    )
     parser.add_argument("--out_directory", help="output directory", required=False, type=str)
     parser.add_argument("--sample_name", help="sample name", required=True, type=str)
-    parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO", )
+    parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO")
 
     args = parser.parse_args(argv[1:])
     logger.setLevel(getattr(logging, args.verbosity))
@@ -43,21 +47,21 @@ def run(argv):
     header = pysam.VariantHeader()
 
     # Add meta-information to the header
-    header.add_meta('fileformat', value='VCFv4.2')
-    header.add_meta('source', value='ULTIMA_CNV')
+    header.add_meta("fileformat", value="VCFv4.2")
+    header.add_meta("source", value="ULTIMA_CNV")
 
     # Add sample names to the header
     sample_name = args.sample_name
     header.add_sample(sample_name)
 
-    header.add_line('##GENOOX_VCF_TYPE=ULTIMA_CNV')
+    header.add_line("##GENOOX_VCF_TYPE=ULTIMA_CNV")
 
     # Add contigs info to the header
-    df_genome = pd.read_csv(args.fasta_index_file, sep='\t', header=None, usecols=[0, 1])
-    df_genome.columns = ['chr', 'length']
+    df_genome = pd.read_csv(args.fasta_index_file, sep="\t", header=None, usecols=[0, 1])
+    df_genome.columns = ["chr", "length"]
     for index, row in df_genome.iterrows():
-        chrID = row['chr']
-        length = row['length']
+        chrID = row["chr"]
+        length = row["length"]
         header.add_line(f"##contig=<ID={chrID},length={length}>")
 
     # Add ALT
@@ -72,7 +76,8 @@ def run(argv):
 
     # Add INFO
     header.add_line(
-        '##INFO=<ID=CONFIDENCE,Number=1,Type=String,Description="Confidence level for CNV call.can be one of: LOW,MEDIUM,HIGH">')
+        '##INFO=<ID=CONFIDENCE,Number=1,Type=String,Description="Confidence level for CNV call.can be one of: LOW,MEDIUM,HIGH">'
+    )
     header.add_line('##INFO=<ID=CopyNumber,Number=1,Type=Float,Description="copy number of CNV call">')
     header.add_line('##INFO=<ID=RoundedCopyNumber,Number=1,Type=Integer,Description="rounded copy number of CNV call">')
     # header.add_line('##INFO=<ID=END_POS,Description="end position of the CNV">')
@@ -87,26 +92,26 @@ def run(argv):
         out_directory = args.out_directory
     else:
         out_directory = ""
-    outfile = pjoin(out_directory, sample_name + '.cnv.vcf.gz')
+    outfile = pjoin(out_directory, sample_name + ".cnv.vcf.gz")
 
-    with pysam.VariantFile(outfile, mode='w', header=header) as vcf_out:
+    with pysam.VariantFile(outfile, mode="w", header=header) as vcf_out:
         df_cnvs = pd.read_csv(args.cnv_annotated_bed_file, sep="\t", header=None)
-        df_cnvs.columns = ['chr', 'start', 'end', 'info']
+        df_cnvs.columns = ["chr", "start", "end", "info"]
         for index, row in df_cnvs.iterrows():
             # Create a new VCF record
-            chrID = row['chr']
-            start = row['start']
-            end = row['end']
-            info = row['info']
+            chrID = row["chr"]
+            start = row["start"]
+            end = row["end"]
+            info = row["info"]
 
             CN = int(info.split("|")[0].replace("CN", ""))
-            cnv_type = '<DUP>'
+            cnv_type = "<DUP>"
             if CN < 2:
-                cnv_type = '<DEL>'
+                cnv_type = "<DEL>"
 
             filters = []
-            for item in info.split(';'):
-                arr = item.split('|')
+            for item in info.split(";"):
+                arr = item.split("|")
                 if len(arr) > 1:
                     filters.append(arr[1])
 
@@ -117,21 +122,21 @@ def run(argv):
             record.ref = "N"
             record.alts = (cnv_type,)
 
-            CONFIDENCE = 'HIGH'
+            CONFIDENCE = "HIGH"
             if len(filters) > 0:
                 for f in filters:
                     record.filter.add(f)
-                CONFIDENCE = 'FAIL'
+                CONFIDENCE = "FAIL"
                 if len(filters) > 1:
-                    CONFIDENCE = 'FAIL'
+                    CONFIDENCE = "FAIL"
             else:
-                record.filter.add('PASS')
+                record.filter.add("PASS")
 
-            record.info['CONFIDENCE'] = CONFIDENCE
-            record.info['CopyNumber'] = CN
-            record.info['RoundedCopyNumber'] = int(round(CN))
-            record.info['SVLEN'] = int(end) - int(start)
-            record.info['SVTYPE'] = cnv_type.replace("<", "").replace(">", "")
+            record.info["CONFIDENCE"] = CONFIDENCE
+            record.info["CopyNumber"] = CN
+            record.info["RoundedCopyNumber"] = int(round(CN))
+            record.info["SVLEN"] = int(end) - int(start)
+            record.info["SVTYPE"] = cnv_type.replace("<", "").replace(">", "")
             # record.info['END_POS'] = str(end)
 
             # Set genotype information for each sample
@@ -140,7 +145,7 @@ def run(argv):
                 GT = [0, 1]
             elif CN == 0:
                 GT = [1, 1]
-            record.samples[sample_name]['GT'] = (GT[0], GT[1])
+            record.samples[sample_name]["GT"] = (GT[0], GT[1])
 
             # Write the record to the VCF file
             vcf_out.write(record)

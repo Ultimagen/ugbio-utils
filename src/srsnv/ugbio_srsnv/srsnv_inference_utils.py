@@ -7,17 +7,17 @@ import numpy as np
 import pandas as pd
 import pysam
 import xgboost as xgb
-
-from ugbio_core.logger import logger
 from ugbio_core.consts import ALT, CHROM, FILTER, POS, QUAL, REF
+from ugbio_core.logger import logger
+from ugbio_core.variant_annotation import VcfAnnotator
+from ugbio_featuremap.featuremap_utils import FeatureMapFilters
+
 from ugbio_srsnv.srsnv_training_utils import (
     FOLD_ID,
     get_quality_interpolation_function,
     k_fold_predict_proba,
     set_categorical_columns,
 )
-from ugbio_featuremap.featuremap_utils import FeatureMapFilters
-from ugbio_core.variant_annotation import VcfAnnotator
 
 # TODO add tests for the inference module
 
@@ -171,7 +171,7 @@ class MLQualAnnotator(VcfAnnotator):
             {
                 k: v
                 for k, v in {
-                    **{"rq": float},
+                    "rq": float,
                 }.items()
                 if k in df.columns
             },
@@ -184,7 +184,7 @@ class MLQualAnnotator(VcfAnnotator):
         elif self.chrom_folds is None:
             df[FOLD_ID] = np.nan  # For the case where fold-splitting was done randomly
         else:
-            df[FOLD_ID] = df["chrom"].map(self.chrom_folds, na_action="ignore").astype('Int64')
+            df[FOLD_ID] = df["chrom"].map(self.chrom_folds, na_action="ignore").astype("Int64")
         predicted_probability = k_fold_predict_proba(
             self.models, df, features_for_model, self.num_folds, kfold_col=FOLD_ID
         ).values
@@ -325,7 +325,7 @@ def single_read_snv_inference(
         ), "When --model_joblib_path is not provided, must provide model_path and params_path"
         using_jl = False
     if params_path is not None:
-        with open(params_path, "r", encoding="UTF-8") as p_fh:
+        with open(params_path, encoding="UTF-8") as p_fh:
             params = json.load(p_fh)
         if using_jl:
             logger.info("Both model_jl_path and params_path provided, Loading params from the latter")

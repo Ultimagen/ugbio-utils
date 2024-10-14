@@ -20,8 +20,8 @@ import json
 import sys
 
 from simppl.simple_pipeline import SimplePipeline
-
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
+
 from ugbio_srsnv.srsnv_plotting_utils import srsnv_report
 from ugbio_srsnv.srsnv_training_utils import SRSNVTrain
 
@@ -122,7 +122,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         nargs="+",
         default=None,
         help="comma separated list of categorical features to be used for balanced sampling of the TP training set"
-             " to eliminate prior distribution bias (e.g. 'trinuc_context_with_alt,is_forward')",
+        " to eliminate prior distribution bias (e.g. 'trinuc_context_with_alt,is_forward')",
     )
     parser.add_argument(
         "--output",
@@ -301,7 +301,7 @@ def read_dataset_params(args):
         dataset_params["split_folds_by_chrom"] = False
 
     ppmseq_tags_consistent = (dataset_params["start_tag_col"] and dataset_params["end_tag_col"]) or (
-            dataset_params["start_tag_col"] is None and dataset_params["end_tag_col"] is None
+        dataset_params["start_tag_col"] is None and dataset_params["end_tag_col"] is None
     )
     assert ppmseq_tags_consistent, "Both start_tag_col and end_tag_col must be provided or neither."
 
@@ -366,9 +366,11 @@ def run(argv):
         params_file=s.params_save_path,
         simple_pipeline=None,
     )
-    
+
+
 def main():
     run(sys.argv)
+
 
 if __name__ == "__main__":
     main()

@@ -1,17 +1,19 @@
-import os
 import argparse
-import json5
-import re
 import logging
+import os
+import re
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import json5
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)
 ECR_REPO = "337532070941.dkr.ecr.us-east-1.amazonaws.com"
 DOCKER_PREFIX = "ugbio"
 IMAGE_REGEX = r'^337532070941\.dkr\.ecr\.us-east-1\.amazonaws\.com/ugbio_[^:]+:[^"]+$'
 
+
 def is_ugbio_image_used_in_file(file_path):
-    with open(file_path, 'r') as f:
+    with open(file_path) as f:
         data = json5.load(f)
 
     # Check if the JSON has the "image" field
@@ -20,12 +22,13 @@ def is_ugbio_image_used_in_file(file_path):
         image_match = re.match(IMAGE_REGEX, data["image"])
         return image_match
     return False
-        
+
+
 def update_image_in_file(file_path, member, new_version):
     new_image = f"{ECR_REPO}/{DOCKER_PREFIX}_{member}:{new_version}"
     updated_lines = []
 
-    with open(file_path, 'r') as f:
+    with open(file_path) as f:
         lines = f.readlines()
 
     for line in lines:
@@ -40,8 +43,9 @@ def update_image_in_file(file_path, member, new_version):
             updated_lines.append(line)
 
     # Write the updated lines back to the file without changing formatting or comments
-    with open(file_path, 'w') as f:
+    with open(file_path, "w") as f:
         f.writelines(updated_lines)
+
 
 def update_devcontainers(repo_path, new_version):
     # Walk through the repository to find all devcontainer.json files
@@ -56,11 +60,13 @@ def update_devcontainers(repo_path, new_version):
                 else:
                     log.info(f"No image field/matching image found in {file_path}")
 
-                
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Update version in devcontainer.json files.")
     parser.add_argument("--version", required=True, help="New version to update to (e.g., 1.2.0)")
-    parser.add_argument("--base-path", required=False, help="Path to the .devcontainer root folder", default=".devcontainer")
+    parser.add_argument(
+        "--base-path", required=False, help="Path to the .devcontainer root folder", default=".devcontainer"
+    )
 
     args = parser.parse_args()
 

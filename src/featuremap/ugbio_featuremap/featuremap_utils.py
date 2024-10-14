@@ -1,21 +1,20 @@
 import itertools
 import os
 from enum import Enum
-from os.path import join as pjoin, dirname, splitext, basename
+from os.path import basename, dirname, splitext
+from os.path import join as pjoin
 
 import numpy as np
 import pandas as pd
 import pyfaidx
 import pysam
 from simppl.simple_pipeline import SimplePipeline
-
-from ugbio_core.logger import logger
-from ugbio_core.consts import ALT, CHROM, DEFAULT_FLOW_ORDER, FILTER, IS_CYCLE_SKIP, POS, QUAL, REF
+from ugbio_core.consts import ALT, CHROM, DEFAULT_FLOW_ORDER, FILTER, IS_CYCLE_SKIP, POS, QUAL, REF, FileExtension
 from ugbio_core.dna_sequence_utils import get_max_softclip_len
 from ugbio_core.exec_utils import print_and_execute
+from ugbio_core.logger import logger
 from ugbio_core.sorter_utils import read_effective_coverage_from_sorter_json
 from ugbio_core.variant_annotation import VcfAnnotator, get_cycle_skip_dataframe, get_motif_around_snv
-from ugbio_core.consts import FileExtension
 from ugbio_ppmseq.ppmSeq_utils import ppmSeqStrandVcfAnnotator
 
 
@@ -668,7 +667,7 @@ def featuremap_to_dataframe(
     # convert types
     df = df.astype(
         {
-            **{"qual": float},
+            "qual": float,
             **{
                 info_key: type_conversion_dict[info_metadata_dict[info_key][1]]
                 for info_key in info_metadata_dict.keys()
@@ -694,6 +693,7 @@ def featuremap_to_dataframe(
     # Save and return
     df.to_parquet(output_file)
     return df
+
 
 def annotate_featuremap(
     input_featuremap: str,

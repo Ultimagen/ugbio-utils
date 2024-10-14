@@ -2,10 +2,9 @@ from os.path import join as pjoin
 from pathlib import Path
 
 import pandas as pd
-import pytest
 import pysam
+import pytest
 from pandas.testing import assert_frame_equal, assert_series_equal
-
 from ugbio_ppmseq.ppmSeq_utils import (
     add_strand_ratios_and_categories_to_featuremap,
     collect_statistics,
@@ -15,12 +14,15 @@ from ugbio_ppmseq.ppmSeq_utils import (
     plot_trimmer_histogram,
     ppmSeq_qc_analysis,
     ppmSeqAdapterVersions,
+    ppmSeqStrandVcfAnnotator,
     read_ppmSeq_trimmer_histogram,
-    ppmSeqStrandVcfAnnotator
 )
 
 inputs_dir = Path(__file__).parent.parent / "resources"
-input_histogram_legacy_v5_csv = inputs_dir / "130713_UGAv3-51.trimming.A_hmer_5.T_hmer_5.A_hmer_3.T_hmer_3.native_adapter_with_leading_C.histogram.csv"
+input_histogram_legacy_v5_csv = (
+    inputs_dir
+    / "130713_UGAv3-51.trimming.A_hmer_5.T_hmer_5.A_hmer_3.T_hmer_3.native_adapter_with_leading_C.histogram.csv"
+)
 parsed_histogram_legacy_v5_parquet = inputs_dir / "130713_UGAv3-51.parsed_histogram.parquet"
 sorter_stats_legacy_v5_csv = inputs_dir / "130713-UGAv3-51.sorter_stats.csv"
 collected_stats_legacy_v5_h5 = inputs_dir / "130713-UGAv3-51.stats.h5"
@@ -29,22 +31,39 @@ parsed_histogram_legacy_v5_start_parquet = inputs_dir / "130715_UGAv3-132.parsed
 sorter_stats_legacy_v5_start_csv = inputs_dir / "130715-UGAv3-51.sorter_stats.csv"
 collected_stats_legacy_v5_start_h5 = inputs_dir / "130715-UGAv3-51.stats.h5"
 input_featuremap_legacy_v5 = inputs_dir / "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.vcf.gz"
-expected_output_featuremap_legacy_v5 = inputs_dir / "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.with_strand_ratios.vcf.gz"
+expected_output_featuremap_legacy_v5 = (
+    inputs_dir / "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.with_strand_ratios.vcf.gz"
+)
 sorter_stats_csv_ppmSeq_v1 = inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.csv"
 sorter_stats_json_ppmSeq_v1 = inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.json"
 trimmer_failure_codes_csv_ppmSeq_v1 = inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.failure_codes.csv"
-trimmer_histogram_ppmSeq_v1_csv = inputs_dir/ "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.Start_loop.Start_loop.End_loop.End_loop.native_adapter.histogram.csv"
-parsed_histogram_parquet_ppmSeq_v1 = inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.parsed_histogram.parquet"
+trimmer_histogram_ppmSeq_v1_csv = (
+    inputs_dir
+    / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.Start_loop.Start_loop.End_loop.End_loop.native_adapter.histogram.csv"
+)
+parsed_histogram_parquet_ppmSeq_v1 = (
+    inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.parsed_histogram.parquet"
+)
 sorter_stats_csv_ppmSeq_v1_amp = inputs_dir / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.csv"
 sorter_stats_json_ppmSeq_v1_amp = inputs_dir / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.json"
 trimmer_failure_codes_csv_ppmSeq_v1_amp = inputs_dir / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.failure_codes.csv"
-trimmer_histogram_ppmSeq_v1_amp = inputs_dir / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.Start_loop_name.Start_loop_pattern_fw.End_loop_name.End_loop_pattern_fw.Stem_end_length.histogram.csv"
-trimmer_histogram_extra_ppmSeq_v1_amp =  inputs_dir / "400762-Lb_2752-Z0123-CAGATCGCCACAGAT.subsample.Dumbbell_leftover_start_match.hist.csv" # it's not the same file but the right format
-subdir = inputs_dir/ "401057001"
+trimmer_histogram_ppmSeq_v1_amp = (
+    inputs_dir
+    / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.Start_loop_name.Start_loop_pattern_fw.End_loop_name.End_loop_pattern_fw.Stem_end_length.histogram.csv"
+)
+trimmer_histogram_extra_ppmSeq_v1_amp = (
+    inputs_dir / "400762-Lb_2752-Z0123-CAGATCGCCACAGAT.subsample.Dumbbell_leftover_start_match.hist.csv"
+)  # it's not the same file but the right format
+subdir = inputs_dir / "401057001"
 sorter_stats_csv_ppmSeq_v1_401057001 = subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT.csv"
 sorter_stats_json_ppmSeq_v1_401057001 = subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT.json"
-trimmer_failure_codes_csv_ppmSeq_v1_401057001 = subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT_trimmer-failure_codes.csv"
-trimmer_histogram_ppmSeq_v1_401057001 = subdir/ "Z0016-Start_loop_name.Start_loop_pattern_fw.End_loop_name.End_loop_pattern_fw.native_adapter_length.histogram.csv"
+trimmer_failure_codes_csv_ppmSeq_v1_401057001 = (
+    subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT_trimmer-failure_codes.csv"
+)
+trimmer_histogram_ppmSeq_v1_401057001 = (
+    subdir
+    / "Z0016-Start_loop_name.Start_loop_pattern_fw.End_loop_name.End_loop_pattern_fw.native_adapter_length.histogram.csv"
+)
 
 
 def _compare_vcfs(vcf_file1, vcf_file2):
@@ -58,34 +77,34 @@ def _compare_vcfs(vcf_file1, vcf_file2):
             for record in vcf:
                 records.append(record)
         return records
-    
+
     def compare_headers(header1, header2):
-        header1_lines = str(header1).split('\n')
-        header2_lines = str(header2).split('\n')
-        
+        header1_lines = str(header1).split("\n")
+        header2_lines = str(header2).split("\n")
+
         diff = set(header1_lines).symmetric_difference(set(header2_lines))
         return diff
 
     def compare_records(records1, records2):
         records1_set = set(str(record) for record in records1)
         records2_set = set(str(record) for record in records2)
-        
+
         diff = records1_set.symmetric_difference(records2_set)
         return diff
-    
+
     header1 = extract_header(vcf_file1)
     header2 = extract_header(vcf_file2)
-    
+
     header_diff = compare_headers(header1, header2)
     assert not header_diff, "Differences found in headers"
-    
+
     records1 = extract_records(vcf_file1)
     records2 = extract_records(vcf_file2)
-    
+
     records_diff = compare_records(records1, records2)
     assert not records_diff, "Differences found in records"
 
-        
+
 def test_read_ppmSeq_v1_trimmer_histogram(tmpdir):
     tmp_out_path = pjoin(tmpdir, "tmp_out.parquet")
     df_trimmer_histogram = read_ppmSeq_trimmer_histogram(

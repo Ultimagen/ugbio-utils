@@ -1,9 +1,9 @@
-import pandas as pd
 import json
 
-from ugbio_core.plotting_utils import set_pyplot_defaults
 import matplotlib.pyplot as plt
+import pandas as pd
 from scipy.interpolate import interp1d
+from ugbio_core.plotting_utils import set_pyplot_defaults
 
 
 def read_sorter_statistics_csv(sorter_stats_csv: str, edit_metric_names: bool = True) -> pd.Series:
@@ -82,7 +82,7 @@ def read_and_parse_sorter_statistics_csv(sorter_stats_csv: str):
 
 
 def read_effective_coverage_from_sorter_json(
-        sorter_stats_json, min_coverage_for_fp=20, max_coverage_percentile=0.95, min_mapq=60
+    sorter_stats_json, min_coverage_for_fp=20, max_coverage_percentile=0.95, min_mapq=60
 ):
     """
     Read effective coverage metrics from sorter JSON file - mean coverage, ratio of reads over MAPQ, ratio of bases in
@@ -134,6 +134,7 @@ def read_effective_coverage_from_sorter_json(
         min_coverage_for_fp,
         coverage_of_max_percentile,
     )
+
 
 def plot_read_length_histogram(
     sorter_stats_json: str,
@@ -198,6 +199,7 @@ def plot_read_length_histogram(
             bbox_inches="tight",
             bbox_extra_artists=bbox_extra_artists,
         )
+
 
 def get_histogram_from_sorter(sorter_stats_json: str, histogram_key: str) -> pd.DataFrame:
     """

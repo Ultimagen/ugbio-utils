@@ -17,15 +17,17 @@
 
 import argparse
 import logging
-import sys
 import os
+import sys
+
 import numpy as np
 import pandas as pd
 from ugbio_core.logger import logger
-    
+
+
 def run(argv):
     """
-    Given a segments file outputed from controlFREEC, this script will annotate each segment as gain/loss/neutral. 
+    Given a segments file outputed from controlFREEC, this script will annotate each segment as gain/loss/neutral.
     The annotation is based on the median fold-change of the segment.
     The script requires the following inputs:
     1. segments file  2. gain cutoff  3. loss cutoff
@@ -61,22 +63,29 @@ def run(argv):
     args = parser.parse_args(argv[1:])
     logger.setLevel(getattr(logging, args.verbosity))
 
-    df_segments = pd.read_csv(args.input_segments_file,sep='\t')
-    
+    df_segments = pd.read_csv(args.input_segments_file, sep="\t")
+
     gain_cutoff = args.gain_cutoff
     loss_cutoff = args.loss_cutoff
-    df_segments['alteration'] = np.where(df_segments['median_ratio']>=gain_cutoff, 'gain',
-                   np.where(((df_segments['median_ratio']<= loss_cutoff) & (df_segments['median_ratio']>-1)), 'loss',
-                   'neutral'))
+    df_segments["alteration"] = np.where(
+        df_segments["median_ratio"] >= gain_cutoff,
+        "gain",
+        np.where(
+            ((df_segments["median_ratio"] <= loss_cutoff) & (df_segments["median_ratio"] > -1)), "loss", "neutral"
+        ),
+    )
 
-    out_annotated_file = os.path.basename(args.input_segments_file) + '_annotated.txt'
-    df_segments.to_csv(out_annotated_file, sep='\t',index=False)
-    out_CNVs_file = os.path.basename(args.input_segments_file) + '_CNVs.bed'
-    df_segments[df_segments['alteration']!='neutral'][['chr','start','end','median_ratio']].to_csv(out_CNVs_file, sep='\t',index=False,header=None)
+    out_annotated_file = os.path.basename(args.input_segments_file) + "_annotated.txt"
+    df_segments.to_csv(out_annotated_file, sep="\t", index=False)
+    out_CNVs_file = os.path.basename(args.input_segments_file) + "_CNVs.bed"
+    df_segments[df_segments["alteration"] != "neutral"][["chr", "start", "end", "median_ratio"]].to_csv(
+        out_CNVs_file, sep="\t", index=False, header=None
+    )
 
     logger.info("output files:")
     logger.info(out_annotated_file)
     logger.info(out_CNVs_file)
+
 
 def main():
     run(sys.argv)

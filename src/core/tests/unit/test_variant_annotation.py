@@ -8,8 +8,7 @@ import pyBigWig as pbw
 import pyfaidx
 import pysam
 import pytest
-
-import ugbio_core.variant_annotation as variant_annotation
+from ugbio_core import variant_annotation
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
 
 
@@ -19,7 +18,6 @@ def resources_dir():
 
 
 class TestVariantAnnotation:
-
     def test_get_coverage(self, tmpdir):
         temp_bw_name1 = self._create_temp_bw(tmpdir, "test1.bw", 20)
         temp_bw_name2 = self._create_temp_bw(tmpdir, "test2.bw", 0)
