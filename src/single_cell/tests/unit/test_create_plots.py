@@ -10,7 +10,7 @@ from ugbio_single_cell.sc_qc_dataclasses import OutputFiles
 
 @pytest.fixture
 def inputs_dir():
-    inputs_dir = Path(__file__).parent / "resources" 
+    inputs_dir = Path(__file__).parent.parent / "resources"
     return inputs_dir
 
 

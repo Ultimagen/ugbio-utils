@@ -11,7 +11,7 @@ from ugbio_featuremap.featuremap_consensus_utils import pileup_featuremap, pileu
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 @pytest.mark.parametrize(
@@ -20,7 +20,7 @@ def resources_dir():
         ("chr19:1-400000", None, 66),
         (None, None, 477),
         ("chr2:1-1000", None, 0),
-        (None, pjoin(Path(__file__).parent / "resources", "scattered.interval_list"), 477),
+        (None, pjoin(Path(__file__).parent.parent / "resources", "scattered.interval_list"), 477),
     ],
 )
 def test_pileup_featuremap(

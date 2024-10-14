@@ -13,7 +13,7 @@ from ugbio_single_cell.single_cell_qc_pipeline import (
 
 @pytest.fixture
 def inputs_dir():
-    inputs_dir = Path(__file__).parent / "resources" 
+    inputs_dir = Path(__file__).parent.parent / "resources"
     return inputs_dir
 
 

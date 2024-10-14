@@ -14,7 +14,7 @@ from ugbio_srsnv.srsnv_training_utils import prepare_featuremap_for_model
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 def __count_variants(vcf_file):

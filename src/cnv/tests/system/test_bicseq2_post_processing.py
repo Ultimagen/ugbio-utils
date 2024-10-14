@@ -8,7 +8,7 @@ from ugbio_cnv import bicseq2_post_processing
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 class TestBicseq2PostProcessing:

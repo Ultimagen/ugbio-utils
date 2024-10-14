@@ -10,7 +10,7 @@ from ugbio_cnv import plot_FREEC_fold_change
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 class TestPlotFREECFoldChange:

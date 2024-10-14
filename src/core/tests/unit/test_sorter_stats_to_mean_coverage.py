@@ -6,7 +6,7 @@ from ugbio_core.sorter_stats_to_mean_coverage import run, sorter_stats_to_mean_c
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 def test_sorter_stats_to_mean_coverage(tmpdir, resources_dir):
     input_json = pjoin(resources_dir, "Pa_394_Plasma.Lb_1597.runs_021144_021150_023049.json")

@@ -5,7 +5,7 @@ import pytest
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 from ugbio_cnv import plot_FREEC_neutral_AF
 

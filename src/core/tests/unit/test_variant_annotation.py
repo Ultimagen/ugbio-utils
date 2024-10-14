@@ -15,7 +15,7 @@ from ugbio_core.consts import DEFAULT_FLOW_ORDER
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 class TestVariantAnnotation:

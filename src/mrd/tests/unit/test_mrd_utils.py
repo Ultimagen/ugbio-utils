@@ -18,7 +18,7 @@ intersection_file_basename = "MRD_test_subsample.MRD_test_subsample_annotated_AF
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 

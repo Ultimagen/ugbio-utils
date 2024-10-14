@@ -14,7 +14,7 @@ from ugbio_cnv import convert_cnv_results_to_vcf
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 def unzip_file(zipped_file_name):

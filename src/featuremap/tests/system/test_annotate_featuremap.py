@@ -9,7 +9,7 @@ from ugbio_ppmseq.ppmSeq_utils import HistogramColumnNames
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 def test_annotate_featuremap(tmpdir, resources_dir):
