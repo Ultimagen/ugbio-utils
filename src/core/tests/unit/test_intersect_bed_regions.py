@@ -6,7 +6,7 @@ from ugbio_core import intersect_bed_regions
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 def test_intersect_bed_regions(tmpdir, resources_dir):
     intersect_bed_regions.run(

@@ -8,7 +8,7 @@ from ugbio_mrd.mrd_utils import intersect_featuremap_with_signature
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 def test_intersect_featuremap_with_signature(tmpdir, resources_dir):

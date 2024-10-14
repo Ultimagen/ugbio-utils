@@ -19,7 +19,7 @@ from ugbio_ppmseq.ppmSeq_utils import (
     ppmSeqStrandVcfAnnotator
 )
 
-inputs_dir = Path(__file__).parent / "resources"
+inputs_dir = Path(__file__).parent.parent / "resources"
 input_histogram_legacy_v5_csv = inputs_dir / "130713_UGAv3-51.trimming.A_hmer_5.T_hmer_5.A_hmer_3.T_hmer_3.native_adapter_with_leading_C.histogram.csv"
 parsed_histogram_legacy_v5_parquet = inputs_dir / "130713_UGAv3-51.parsed_histogram.parquet"
 sorter_stats_legacy_v5_csv = inputs_dir / "130713-UGAv3-51.sorter_stats.csv"

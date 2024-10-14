@@ -9,7 +9,7 @@ from ugbio_core import h5_utils
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 def test_preprocess_h5_key_with_slash():

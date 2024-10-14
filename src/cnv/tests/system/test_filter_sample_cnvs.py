@@ -8,7 +8,7 @@ from ugbio_cnv.filter_sample_cnvs import annotate_bed
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 class TestFilterSampleCnvs:

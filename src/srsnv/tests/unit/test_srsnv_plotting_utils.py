@@ -12,7 +12,7 @@ from ugbio_srsnv.srsnv_training_utils import SRSNVTrain
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 def test_create_report(tmpdir, resources_dir):

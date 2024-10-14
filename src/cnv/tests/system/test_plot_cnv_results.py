@@ -12,7 +12,7 @@ from ugbio_cnv import plot_cnv_results
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 class TestPlotCnvResults:

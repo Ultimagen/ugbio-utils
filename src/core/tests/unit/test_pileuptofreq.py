@@ -6,7 +6,7 @@ from ugbio_core.pileuptofreq import create_frequncies_from_pileup
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 def test_pileuptofreq(tmpdir, resources_dir):
     input_pileup_file = resources_dir / "tumor.031865-Lb_2211-Z0048-CTGCCAGACTGTGAT.cram_minipileup.pileup"

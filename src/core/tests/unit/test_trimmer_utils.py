@@ -8,7 +8,7 @@ from ugbio_core import trimmer_utils
 
 @pytest.fixture
 def inputs_dir():
-    inputs_dir = Path(__file__).parent / "resources" 
+    inputs_dir = Path(__file__).parent.parent / "resources"
     return inputs_dir
 
 def test_merge_trimmer_histograms(tmpdir, inputs_dir):

@@ -9,7 +9,7 @@ from ugbio_featuremap import create_hom_snv_featuremap
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 def test_create_hom_snv_featuremap(tmpdir, resources_dir):

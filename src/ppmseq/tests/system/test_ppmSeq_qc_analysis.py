@@ -6,7 +6,7 @@ from ugbio_ppmseq import ppmSeq_qc_analysis
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 def test_ppmSeq_analysis_ppmSeq_legacy_v5(tmpdir, resources_dir):
