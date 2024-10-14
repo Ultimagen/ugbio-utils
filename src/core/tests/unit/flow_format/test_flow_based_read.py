@@ -12,7 +12,7 @@ from ugbio_core.consts import DEFAULT_FLOW_ORDER
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent.parent / "resources"
+    return Path(__file__).parent.parent.parent / "resources"
 
 def test_matrix_from_qual_tp(resources_dir):
     data = [x for x in pysam.AlignmentFile(pjoin(resources_dir, "chr9.sample.bam"))]
