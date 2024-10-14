@@ -10,7 +10,7 @@ env:
   AWS_REGION: us-east-1
   AWS_ROLE_NAME: github-actions-ecr
   AWS_ACCOUNT: 337532070941
-  UGBIO_BASE_IMAGE_NAME: ugbio_base:test_ae50350
+  UGBIO_BASE_IMAGE_NAME: ugbio_base:1.2.0
 
 jobs:
   get-workspaces:
