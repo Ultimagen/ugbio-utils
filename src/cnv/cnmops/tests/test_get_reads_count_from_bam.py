@@ -4,7 +4,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
 import pytest
 
 SRC_FILE = "get_reads_count_from_bam.R"
@@ -41,7 +40,7 @@ def test_get_reads_count_from_bam(tmpdir, resources_dir, script_path):
         "1",
         "-o",
         out_prefix,
-        "--save_csv"
+        "--save_csv",
     ]
     assert subprocess.check_call(cmd, cwd=tmpdir) == 0
     df = pd.read_csv(out_file)

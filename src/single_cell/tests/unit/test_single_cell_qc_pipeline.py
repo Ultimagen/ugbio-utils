@@ -49,12 +49,13 @@ def sample_name():
 def output_path(tmpdir):
     return Path(tmpdir)
 
+
 @pytest.fixture
 def h5_file(inputs_dir):
     return inputs_dir / "single_cell_qc_stats.scRNA.applicationQC.h5"
 
 
-def test_single_cell_qc(inputs,thresholds, sample_name, output_path):
+def test_single_cell_qc(inputs, thresholds, sample_name, output_path):
     single_cell_qc(
         input_files=inputs,
         output_path=output_path,
@@ -88,18 +89,14 @@ def test_prepare_parameters_for_report_h5_not_found(inputs_dir, thresholds):
     h5_file = inputs_dir / "non_existent_file.h5"
     # assert exception is raised when h5 file is not found
     with pytest.raises(FileNotFoundError):
-        parameters, tmp_files = prepare_parameters_for_report(
-            h5_file, thresholds, "tmpdir"
-        )
+        parameters, tmp_files = prepare_parameters_for_report(h5_file, thresholds, "tmpdir")
 
 
 def test_prepare_parameters_for_report_outpath_not_exist(h5_file, thresholds):
     output_path = "non_existent_dir"
     # assert exception is raised when outpath does not exist
     with pytest.raises(FileNotFoundError):
-        parameters, tmp_files = prepare_parameters_for_report(
-            h5_file, thresholds, output_path
-        )
+        parameters, tmp_files = prepare_parameters_for_report(h5_file, thresholds, output_path)
 
 
 def test_generate_report(output_path, h5_file, thresholds, sample_name):

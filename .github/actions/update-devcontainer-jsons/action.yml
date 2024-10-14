@@ -1,4 +1,4 @@
- 
+
 name: "Update devcontainer jsons"
 description: "Update docker image version in all devcontainer jsons"
 
@@ -28,7 +28,7 @@ runs:
         ref: ${{ inputs.ref }}
         token: ${{ inputs.git-token }}
         fetch-depth: 0
-        
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:

@@ -6,8 +6,8 @@ from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
 from os.path import join as pjoin
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,15 +22,14 @@ from scipy.interpolate import interp1d
 from scipy.stats import binom
 from sklearn.metrics import confusion_matrix, precision_score, recall_score, roc_auc_score
 from tqdm import tqdm
-
+from ugbio_core.exec_utils import print_and_execute
+from ugbio_core.filter_bed import count_bases_in_bed_file
+from ugbio_core.h5_utils import convert_h5_to_json
 from ugbio_core.logger import logger
+from ugbio_core.plotting_utils import set_pyplot_defaults
+from ugbio_core.sorter_utils import read_effective_coverage_from_sorter_json
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_ppmseq.ppmSeq_utils import ppmSeqAdapterVersions
-from ugbio_core.exec_utils import print_and_execute
-from ugbio_core.h5_utils import convert_h5_to_json
-from ugbio_core.sorter_utils import read_effective_coverage_from_sorter_json
-from ugbio_core.plotting_utils import set_pyplot_defaults
-from ugbio_core.filter_bed import count_bases_in_bed_file
 
 # featuremap_df column names. TODO: make more generic?
 ML_PROB_1_TEST = "ML_prob_1_test"
@@ -65,6 +64,7 @@ FP_READ_RETENTION_RATIO = "fp_read_retention_ratio"
 RESIDUAL_SNV_RATE = "residual_snv_rate"
 BASE_PATH = Path(__file__).parent
 REPORTS_DIR = "reports"
+
 
 class ExceptionConfig:
     def __init__(self, raise_exception=False):
@@ -280,7 +280,7 @@ def srsnv_report(
     ] = _get_plot_paths(out_path=out_path, out_basename=out_basename)
     srsnv_qc_h5_filename = os.path.join(out_path, f"{out_basename}single_read_snv.applicationQC.h5")
 
-    template_notebook = BASE_PATH /  REPORTS_DIR / "srsnv_report.ipynb"
+    template_notebook = BASE_PATH / REPORTS_DIR / "srsnv_report.ipynb"
     papermill_command = f"papermill {template_notebook} {reportfile} \
 -p model_file {model_file} \
 -p params_file {params_file} \
@@ -360,7 +360,7 @@ def plot_ROC_curve(
         namestrs.append(f"{FeatureMapFields.X_SCORE.value}_mixed")
         label_dict[f"{FeatureMapFields.X_SCORE.value}_mixed"] = "FeatureMap"
 
-    for xvar, querystr, namestr in zip(xvars, querystrs, namestrs):
+    for xvar, querystr, namestr in zip(xvars, querystrs, namestrs, strict=False):
         thresholds = np.linspace(0, df[xvar].quantile(0.99), 100)
         recall[namestr] = {}
         precision[namestr] = {}
@@ -396,6 +396,7 @@ def plot_ROC_curve(
             bbox_extra_artists=[title_handle, legend_handle],
         )
 
+
 def filter_valid_queries(df_test: pd.DataFrame, queries: dict, verbose: bool = False) -> dict:
     """
     Test each filter query on the DataFrame and remove any that cause exceptions.
@@ -426,6 +427,7 @@ def filter_valid_queries(df_test: pd.DataFrame, queries: dict, verbose: bool = F
                 logger.warning(f"Filter query {filter_query} caused an exception, skipping.")
 
     return valid_filters
+
 
 # pylint: disable=too-many-arguments
 def retention_noise_and_mrd_lod_simulation(
@@ -708,7 +710,7 @@ def plot_LoD(
     ].min()  # best LoD across all plotted results
 
     for f, marker, label, edgecolor, markersize in zip(
-        filters_list, markers_list, labels_list, edgecolors_list, msize_list
+        filters_list, markers_list, labels_list, edgecolors_list, msize_list, strict=False
     ):
         df_plot = df_mrd_sim.loc[df_mrd_sim.index.isin(f)]
         plt.plot(
@@ -966,7 +968,7 @@ def plot_precision_recall_vs_qual_thresh(
             apply_log_trans=False,
         )
         cum_avg_precision_recalls.append(
-            [(precision + recall) / 2 for precision, recall in zip(cum_fprs_, cum_recalls_)]
+            [(precision + recall) / 2 for precision, recall in zip(cum_fprs_, cum_recalls_, strict=False)]
         )
 
         plot_precision_recall(
@@ -1471,6 +1473,7 @@ def calculate_lod_stats(
     for column, stat_name in zip(
         (lod_column, RESIDUAL_SNV_RATE, TP_READ_RETENTION_RATIO),
         ("LoD", RESIDUAL_SNV_RATE, TP_READ_RETENTION_RATIO),
+        strict=False,
     ):
         lod_stats_dict.update(
             {f"{stat_name}-{filter_name}": row[column] for filter_name, row in df_mrd_simulation_non_ml.iterrows()}
@@ -1662,12 +1665,14 @@ class SRSNVReport:
             ("Sample name", ""): self.base_name[:-1],
             ("Median training read length", ""): np.median(self.data_df["X_LENGTH"]),
             ("Median training coverage", ""): np.median(self.data_df["X_READ_COUNT"]),
-            ("% mixed training reads", "TP"): "{}%".format(
-                signif(100 * (self.data_df[IS_MIXED] & self.data_df[LABEL]).mean(), 3)
-            ),
-            ("% mixed training reads", "FP"): "{}%".format(
-                signif(100 * (self.data_df[IS_MIXED] & ~self.data_df[LABEL]).mean(), 3)
-            ),
+            (
+                "% mixed training reads",
+                "TP",
+            ): f"{signif(100 * (self.data_df[IS_MIXED] & self.data_df[LABEL]).mean(), 3)}%",
+            (
+                "% mixed training reads",
+                "FP",
+            ): f"{signif(100 * (self.data_df[IS_MIXED] & ~self.data_df[LABEL]).mean(), 3)}%",
         }
         # Performance info
         mixed_df = self.data_df[self.data_df[IS_MIXED]]
@@ -2606,7 +2611,7 @@ class SRSNVReport:
             ax.grid(visible=True, axis="both", alpha=0.75, linestyle=":")
 
             # Add labels for each ref>alt pair
-            for label, pos in zip(snv_labels[6 * i : 6 * i + 6], snv_positions):
+            for label, pos in zip(snv_labels[6 * i : 6 * i + 6], snv_positions, strict=False):
                 ax.annotate(
                     label,
                     xy=(pos, ylim),  # Position at the top of the plot
@@ -2731,7 +2736,9 @@ class SRSNVReport:
         step_kws = step_kws or {}
         col = stats_for_plot.columns[0]
         polys, lines = [], []
-        for is_mixed, color in zip([~stats_for_plot["is_mixed"], stats_for_plot["is_mixed"]], [c_false, c_true]):
+        for is_mixed, color in zip(
+            [~stats_for_plot["is_mixed"], stats_for_plot["is_mixed"]], [c_false, c_true], strict=False
+        ):
             qual_df = stats_for_plot.loc[is_mixed & stats_for_plot["label"] & (stats_for_plot["count"] > min_count), :]
             fb_kws["color"] = color
             step_kws["color"] = color
@@ -2864,7 +2871,7 @@ class SRSNVReport:
             col_name [str]: column name to assign to the histogram data
         """
         hist_dict = {}
-        for (poly_collection, label) in zip(ax.collections, ax.get_legend().get_texts()):
+        for poly_collection, label in zip(ax.collections, ax.get_legend().get_texts(), strict=False):
             vertices = poly_collection.get_paths()[0].vertices
             hist_dict[(col_name + " " + label.get_text(), "bin_edges")] = vertices[:, 0]
             hist_dict[(col_name + " " + label.get_text(), "density")] = vertices[:, 1]
@@ -3199,7 +3206,7 @@ def plot_precision_recall(lists, labels, max_score, log_scale=False, font_size=1
     """
     set_pyplot_defaults()
 
-    for lst, label in zip(lists, labels):
+    for lst, label in zip(lists, labels, strict=False):
         plt.plot(lst[0:max_score], ".-", label=label)
         plt.xlabel("ML qual", fontsize=font_size)
         if log_scale:

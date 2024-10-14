@@ -1,8 +1,8 @@
 # Germline cnv calling tools
 The following scripts are used for germline cnv calling for a given sample/cohort.
 
-### Assumptions: 
-cn.mops conda enviorment is installed. 
+### Assumptions:
+cn.mops conda enviorment is installed.
 
 ### UG specific Files might be required for the analysis (download locally):
 * CNV-LCR: gs://concordanz/hg38/UG-High-Confidence-Regions/v*/ug_cnv_lcr.bed
@@ -43,7 +43,7 @@ Rscript --vanilla  /VariantCalling/ugvc/cnv/get_reads_count_from_bam.R \
     -p 30 \
     -o 002494-X0033
 ```
-output is a GenomicRanges object consists of reads counts per window. 
+output is a GenomicRanges object consists of reads counts per window.
 
 ### merge_reads_count_sample_to_cohort.R
 Add reads count of a single sample to a cohort's reads count object.
@@ -118,7 +118,7 @@ Rscript --vanilla /VariantCalling/ugvc/cnv/cnv_calling_using_cnmops.R \
     -minWidth 2 \
     -p 30 \
 ```
-output is a csv file consisting of all called CNVs for all samples in the cohort. 
+output is a csv file consisting of all called CNVs for all samples in the cohort.
 
 ### filter_sample_cnvs.py
 Filter CNV calls by length and UG-CNV-LCR regions.
@@ -157,8 +157,3 @@ python /VariantCalling/ugvc filter_sample_cnvs \
         --cnv_lcr_file ug_cnv_lcr.bed \
         --min_cnv_length 10000;
 ```
-
-
-
-
-

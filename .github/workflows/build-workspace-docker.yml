@@ -55,7 +55,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit-sha }}
-          
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -75,7 +75,7 @@ jobs:
           fi
           echo "VERSION=${version}" >> $GITHUB_ENV
           echo "The project version is ${version}"
-          
+
       - uses: benjlevesque/short-sha@v2.2
         id: short-sha
         with:
@@ -135,19 +135,19 @@ jobs:
             ${{ steps.ecr-login.outputs.registry }}
             ${gar_repo}
           )
-          
+
           for registry in ${docker_registries[@]}; do
             for tag in ${image_tags[@]}; do
               docker_destinations+=${registry}/${{ inputs.docker-image }}:${tag},
             done
           done
-          
+
           echo "GAR_REPO=${gar_repo}" >> ${GITHUB_ENV}
           echo "DOCKER_DESTINATIONS=${docker_destinations%,}" >> ${GITHUB_ENV}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
-      
+
       - name: Build and push
         uses: docker/build-push-action@v4
         with:
@@ -167,6 +167,6 @@ jobs:
           echo "### GCR LOGIN" >> ${GITHUB_STEP_SUMMARY}
           echo "gcloud auth configure-docker us-central1-docker.pkg.dev" >> ${GITHUB_STEP_SUMMARY}
           echo "### IMAGE TAGS" >> ${GITHUB_STEP_SUMMARY}
-          for dest in $(echo "${{ env.DOCKER_DESTINATIONS }}" | sed 's/,/ /g'); do 
+          for dest in $(echo "${{ env.DOCKER_DESTINATIONS }}" | sed 's/,/ /g'); do
             echo "- ${dest}" >> ${GITHUB_STEP_SUMMARY}
           done

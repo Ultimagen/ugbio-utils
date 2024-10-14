@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 import pysam
-
+from ugbio_core import array_utils as utils
 from ugbio_core import dna_sequence_utils as dnautils
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
-from ugbio_core import array_utils as utils
 
 from . import read_expander
 
@@ -16,7 +15,7 @@ error_rates = np.logspace(0.001, 0.01, 10)
 # min_prob = np.min(_CONFUSION_MATRIX[_CONFUSION_MATRIX > 0])
 # CONFUSION_MATRIX = np.clip(_CONFUSION_MATRIX, min_prob, None)
 # CONFUSION_MATRIX = (CONFUSION_MATRIX.T / CONFUSION_MATRIX.sum(axis=1)).T
-CONFUSION_MATRIX = np.NaN
+CONFUSION_MATRIX = np.nan
 
 
 def generate_flow_matrix(gtr_calls: np.ndarray, confusion_matrix: np.ndarray = CONFUSION_MATRIX) -> np.ndarray:
@@ -344,7 +343,7 @@ def seq_to_record(
         assert validate_alt(seq, alt), "Weird mutation sequence"
     for ralt in ralts:
         assert validate_alt(rseq, ralt), "Weird rmutation sequence"
-    valts = [validate_rcalt_v2(*x, seq, rseq) for x in zip(alts, ralts)]
+    valts = [validate_rcalt_v2(*x, seq, rseq) for x in zip(alts, ralts, strict=False)]
     for valt in valts:
         assert valt, "Weird rvariant"
     alts = sorted(alts, key=lambda x: x[0])

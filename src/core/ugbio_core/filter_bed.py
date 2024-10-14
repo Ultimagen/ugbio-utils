@@ -7,9 +7,8 @@ import tempfile
 import warnings
 
 from simppl.simple_pipeline import SimplePipeline
-
-from ugbio_core.logger import logger
 from ugbio_core.exec_utils import print_and_execute
+from ugbio_core.logger import logger
 
 warnings.filterwarnings("ignore")
 

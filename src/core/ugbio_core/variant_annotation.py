@@ -1,23 +1,21 @@
 from __future__ import annotations
 
+import collections
 import itertools
 import multiprocessing
 import os
 import pickle
 from abc import ABC, abstractmethod
-import collections
 
 import numpy as np
 import pandas as pd
 import pyBigWig as pbw
 import pyfaidx
 import pysam
-from simppl.simple_pipeline import SimplePipeline
-from ugbio_core.exec_utils import print_and_execute
-
 import ugbio_core.dna_sequence_utils as dnautils
 import ugbio_core.flow_format.flow_based_read as flowBasedRead
-from ugbio_core.logger import logger
+from simppl.simple_pipeline import SimplePipeline
+from ugbio_core import bed_writer
 from ugbio_core.consts import (
     CYCLE_SKIP,
     CYCLE_SKIP_DTYPE,
@@ -27,7 +25,8 @@ from ugbio_core.consts import (
     POSSIBLE_CYCLE_SKIP,
     UNDETERMINED_CYCLE_SKIP,
 )
-from ugbio_core import bed_writer
+from ugbio_core.exec_utils import print_and_execute
+from ugbio_core.logger import logger
 
 UNDETERMINED = "NA"
 
@@ -60,7 +59,6 @@ class VcfAnnotator(ABC):
         pysam.VariantHeader
             Edited VCF file header.
         """
-        pass
 
     @abstractmethod
     def process_records(self, records: list[pysam.VariantRecord]) -> list[pysam.VariantRecord]:
@@ -78,10 +76,11 @@ class VcfAnnotator(ABC):
         list[pysam.VariantRecord]
             Processed VCF records.
         """
-        pass
 
     @staticmethod
-    def merge_temp_files(contig_output_vcfs: list[str], output_path: str, header: pysam.VariantHeader = None, process_number: int = 1):
+    def merge_temp_files(
+        contig_output_vcfs: list[str], output_path: str, header: pysam.VariantHeader = None, process_number: int = 1
+    ):
         """
         Static method to merge temporary output files and write to the final output file.
 
@@ -542,6 +541,7 @@ def get_coverage(
         df.loc[gdf.groups[g_var], "repetitive_read_coverage"] = np.array(values_lq) - np.array(values_hq)
     return df
 
+
 def annotate_intervals(df: pd.DataFrame, annotfile: str) -> tuple[pd.DataFrame, str]:
     """
     Adds column based on interval annotation file (T/F)
@@ -664,7 +664,7 @@ def annotate_cycle_skip(df: pd.DataFrame, flow_order: str, gt_field: str = None)
         nra = snps[gt_field].apply(get_non_ref)
         snps["nra_idx"] = nra
         snps.loc[snps.nra_idx.isnull(), "nra_idx"] = 1
-        snps["nra_idx"] = snps["nra_idx"].astype(np.int)
+        snps["nra_idx"] = snps["nra_idx"].astype(int)
         alt = np.array(snps.apply(lambda x: x["alleles"][x["nra_idx"]], axis=1)).astype(np.bytes_)
         snps.drop("nra_idx", axis=1, inplace=True)
 
@@ -791,7 +791,7 @@ expecting input of ref and alt sequences composed of 3 bases where only the 2nd 
         if len(ref_key) != len(alt_key):
             return CYCLE_SKIP
 
-        for r_val, a_val in zip(ref_key, alt_key):
+        for r_val, a_val in zip(ref_key, alt_key, strict=False):
             if (r_val != a_val) and ((r_val == 0) or (a_val == 0)):
                 return POSSIBLE_CYCLE_SKIP
         return NON_CYCLE_SKIP
@@ -902,6 +902,7 @@ def get_trinuc_substitution_dist(vcf_file, ref_fasta: str = None):
                 if trinuc_sub is not None:
                     trinuc_dict[trinuc_sub] += 1
     return trinuc_dict
+
 
 def _catch(
     func: collections.abc.Callable,

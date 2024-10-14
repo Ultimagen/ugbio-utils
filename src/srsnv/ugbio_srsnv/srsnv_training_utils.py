@@ -17,13 +17,16 @@ import xgboost as xgb
 from pandas.api.types import CategoricalDtype
 from scipy.interpolate import interp1d
 from simppl.simple_pipeline import SimplePipeline
-
+from ugbio_core.consts import DEFAULT_FLOW_ORDER, FileExtension
 from ugbio_core.logger import logger
-from ugbio_core.consts import DEFAULT_FLOW_ORDER
-from ugbio_featuremap.featuremap_utils import FeatureMapFields, filter_featuremap_with_bcftools_view, featuremap_to_dataframe
-from ugbio_srsnv.srsnv_plotting_utils import SRSNVReport, default_LoD_filters, retention_noise_and_mrd_lod_simulation
-from ugbio_core.consts import FileExtension
 from ugbio_core.sorter_utils import read_effective_coverage_from_sorter_json
+from ugbio_featuremap.featuremap_utils import (
+    FeatureMapFields,
+    featuremap_to_dataframe,
+    filter_featuremap_with_bcftools_view,
+)
+
+from ugbio_srsnv.srsnv_plotting_utils import SRSNVReport, default_LoD_filters, retention_noise_and_mrd_lod_simulation
 
 ML_QUAL = "ML_QUAL"
 FOLD_ID = "fold_id"
@@ -102,7 +105,7 @@ def get_chrom_sizes(reference_dict: str):
     assert isfile(reference_dict), f"reference_dict {reference_dict} not found"
 
     chrom_sizes = {}
-    with open(reference_dict, "r", encoding="utf-8") as file:
+    with open(reference_dict, encoding="utf-8") as file:
         for line in file:
             if line.startswith("@SQ"):
                 fields = line[3:].strip().split("\t")
@@ -428,7 +431,7 @@ def prepare_featuremap_for_model(
     # filter featuremap - intersect with bed file, require coverage in range, apply pre_filter
     # get min and max coverage from cram stats file
     if sorter_json_stats_file:
-        (_, _, _, min_coverage, max_coverage,) = read_effective_coverage_from_sorter_json(
+        (_, _, _, min_coverage, max_coverage) = read_effective_coverage_from_sorter_json(
             sorter_json_stats_file, **read_effective_coverage_from_sorter_json_kwargs
         )
     else:
@@ -519,11 +522,10 @@ def prepare_featuremap_for_model(
                 f"##datatype=test_set, subsampled approximately {test_set_size}"
                 f"variants from a total of {featuremap_entry_number}"
             )
-            with pysam.VariantFile(
-                downsampled_training_featuremap_vcf, "w", header=header_train
-            ) as vcf_out_train, pysam.VariantFile(
-                downsampled_test_featuremap_vcf, "w", header=header_train
-            ) as vcf_out_test:
+            with (
+                pysam.VariantFile(downsampled_training_featuremap_vcf, "w", header=header_train) as vcf_out_train,
+                pysam.VariantFile(downsampled_test_featuremap_vcf, "w", header=header_train) as vcf_out_test,
+            ):
                 for j, rec in enumerate(vcf_in.fetch()):
                     if (
                         rng.uniform()
@@ -558,11 +560,10 @@ def prepare_featuremap_for_model(
                 f"##datatype=test_set, subsampled approximately {test_set_size}"
                 f"variants from a total of {featuremap_entry_number}"
             )
-            with pysam.VariantFile(
-                downsampled_training_featuremap_vcf, "w", header=header_train
-            ) as vcf_out_train, pysam.VariantFile(
-                downsampled_test_featuremap_vcf, "w", header=header_train
-            ) as vcf_out_test:
+            with (
+                pysam.VariantFile(downsampled_training_featuremap_vcf, "w", header=header_train) as vcf_out_train,
+                pysam.VariantFile(downsampled_test_featuremap_vcf, "w", header=header_train) as vcf_out_test,
+            ):
                 for j, rec in enumerate(vcf_in.fetch()):
                     if sampling_array[j]:
                         # write the first training_set_size records to the training set
@@ -820,7 +821,7 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
         ), "classifier_class must be a classifier - sklearn.base.is_classifier() must return True"
         self.classifier_type = type(classifier_class).__name__
         if isinstance(model_params, str) and isfile(model_params) and model_params.endswith(".json"):
-            with open(model_params, "r", encoding="utf-8") as f:
+            with open(model_params, encoding="utf-8") as f:
                 model_params = json.load(f)
         elif model_params is None:
             model_params = default_xgboost_model_params
@@ -845,7 +846,7 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
 
         # misc
         if isinstance(lod_filters, str) and isfile(lod_filters) and lod_filters.endswith(".json"):
-            with open(lod_filters, "r", encoding="utf-8") as f:
+            with open(lod_filters, encoding="utf-8") as f:
                 self.lod_filters = json.load(f)
         elif lod_filters is None:
             self.lod_filters = None
@@ -1043,9 +1044,9 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
         self.LoD_params["specificity_at_lod"] = 0.99  # self.params.get("specificity_at_lod", 0.99)
         self.LoD_params["simulated_signature_size"] = 10_000  # self.params.get("simulated_signature_size", 10_000)
         self.LoD_params["simulated_coverage"] = 30  # self.params.get("simulated_coverage", 30)
-        self.LoD_params[
-            "minimum_number_of_read_for_detection"
-        ] = 2  # self.params.get("minimum_number_of_read_for_detection", 2)
+        self.LoD_params["minimum_number_of_read_for_detection"] = (
+            2  # self.params.get("minimum_number_of_read_for_detection", 2)
+        )
 
         # LoD Filters
         lod_basic_filters = self.lod_filters or default_LoD_filters
@@ -1056,10 +1057,8 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
         if ML_qual_col_other in self.featuremap_df.columns:
             max_score_other = int(np.ceil(self.featuremap_df[ML_qual_col_other].max()))
             max_score = max(max_score, max_score_other)  # Adapted from older report cod, not sure why this is needed
-        ML_filters = {f"ML_qual_{q}": f"{ML_qual_col} >= {q}" for q in range(0, max_score + 1)}
-        mixed_ML_filters = {
-            f"mixed_ML_qual_{q}": f"{IS_MIXED} and {ML_qual_col} >= {q}" for q in range(0, max_score + 1)
-        }
+        ML_filters = {f"ML_qual_{q}": f"{ML_qual_col} >= {q}" for q in range(max_score + 1)}
+        mixed_ML_filters = {f"mixed_ML_qual_{q}": f"{IS_MIXED} and {ML_qual_col} >= {q}" for q in range(max_score + 1)}
 
         self.lod_filters = {
             **lod_basic_filters,
@@ -1274,9 +1273,9 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
                     ~self.featuremap_df[FOLD_ID].isna(),  # Reads that are not in any fold.
                 )
                 val_cond = self.featuremap_df[FOLD_ID] == k  # Reads that are in current test fold
-                X_train = self.featuremap_df.loc[train_cond, self.columns]
+                X_train = self.featuremap_df.loc[train_cond, self.columns] # noqa: N806
                 y_train = self.featuremap_df.loc[train_cond, ["label"]]
-                X_val = self.featuremap_df.loc[val_cond, self.columns]
+                X_val = self.featuremap_df.loc[val_cond, self.columns] # noqa: N806
                 y_val = self.featuremap_df.loc[val_cond, ["label"]]
                 # fit classifier of k'th fold
                 eval_set = [(X_train, y_train), (X_val, y_val)]

@@ -6,19 +6,17 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Iterable
-from os.path import basename, dirname
+from os.path import basename, dirname, splitext
 from os.path import join as pjoin
-from os.path import splitext
 
 import numpy as np
 import pandas as pd
 import pyBigWig as bw
 import pysam
 from tqdm import tqdm
-
-from ugbio_core.logger import logger
-from ugbio_core.dna_sequence_utils import revcomp
 from ugbio_core.consts import FileExtension
+from ugbio_core.dna_sequence_utils import revcomp
+from ugbio_core.logger import logger
 from ugbio_core.variant_annotation import get_trinuc_substitution_dist, parse_trinuc_sub
 
 default_featuremap_info_fields = {
@@ -152,7 +150,10 @@ def collect_coverage_per_locus(coverage_bw_files, df_sig):
             df_list.append(
                 df_tmp.assign(
                     coverage=np.concatenate(
-                        [f_bw_chrom.values(chrom, x, y, numpy=True) for x, y in zip(chrom_start, chrom_end)]
+                        [
+                            f_bw_chrom.values(chrom, x, y, numpy=True)
+                            for x, y in zip(chrom_start, chrom_end, strict=False)
+                        ]
                     )
                 )
             )
@@ -471,14 +472,12 @@ def read_intersection_dataframes(
         intersected_featuremaps_parquet = [intersected_featuremaps_parquet]
     logger.debug(f"Reading {len(intersected_featuremaps_parquet)} intersection featuremaps")
     df_int = pd.concat(
-        (
-            pd.read_parquet(f).assign(
-                cfdna=_get_sample_name_from_file_name(f, split_position=0),
-                signature=_get_sample_name_from_file_name(f, split_position=1),
-                signature_type=_get_sample_name_from_file_name(f, split_position=2),
-            )
-            for f in intersected_featuremaps_parquet
+        pd.read_parquet(f).assign(
+            cfdna=_get_sample_name_from_file_name(f, split_position=0),
+            signature=_get_sample_name_from_file_name(f, split_position=1),
+            signature_type=_get_sample_name_from_file_name(f, split_position=2),
         )
+        for f in intersected_featuremaps_parquet
     )
     if output_parquet is not None:
         df_int.reset_index().to_parquet(output_parquet)
@@ -759,7 +758,7 @@ def generate_synthetic_signatures(
         n_subs_signature = min(n_subs_db, n_subs_signature)  # limit options to the available loci
         for i in range(n_synthetic_signatures):
             trinuc_dict[trinucsub]["index_to_sample"][i] = (
-                np.random.choice(range(0, n_subs_db), n_subs_signature, replace=False) if n_subs_signature > 0 else ()
+                np.random.choice(range(n_subs_db), n_subs_signature, replace=False) if n_subs_signature > 0 else ()
             )
             trinuc_dict[trinucsub]["trinuc_counter"][i] = 0
 
@@ -794,4 +793,3 @@ def generate_synthetic_signatures(
         pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
 
     return synthetic_signatures
-

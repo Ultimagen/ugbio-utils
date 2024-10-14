@@ -101,7 +101,7 @@ def key2base(key: np.ndarray, flow_order: str) -> str:
     str
         Sequence
     """
-    return "".join([k * n for k, n in zip(flow_order, key)])
+    return "".join([k * n for k, n in zip(flow_order, key, strict=False)])
 
 
 def _calculate_correct_prob(matrix: np.ndarray) -> np.ndarray:
@@ -148,7 +148,7 @@ def _generate_quality(seq: str, kr_tag: np.ndarray = None, correct_prob: np.ndar
     ends = np.cumsum(tmp_kr) - 1
     starts = ends + 1 - tmp_kr
     probs = probs / 2
-    output = np.zeros((tmp_kr.sum()))
+    output = np.zeros(tmp_kr.sum())
     output[ends] = output[ends] + probs
     output[starts] = output[starts] + probs
     output = np.clip(output, 0.0001, None)
@@ -275,7 +275,6 @@ def write_matrix_tags(
     probability_threshold: float = 0.003,
     probability_sf: float = 10,
 ) -> tuple[int, int]:
-
     """Writes probability tensor into the text file
 
     Parameters
@@ -529,6 +528,7 @@ def block_idx_to_block_start_end(
         min(total_number_of_reads, (block_idx + 1) * block_size_in_reads),
     )
 
+
 def read_error_probs(
     error_probs_csv: str = ERROR_PROBS,
     binned_by_quality: bool = False,
@@ -563,7 +563,7 @@ def read_error_probs(
         lambda x: x[left_motif_size + 1 : -right_motif_size - 1]
     )
     source_dataframe["hmer_letter"] = source_dataframe["middle"].apply(lambda x: x[1])
-    source_dataframe["hmer_number"] = source_dataframe["middle"].apply(lambda x: x[0]).astype(np.int)
+    source_dataframe["hmer_number"] = source_dataframe["middle"].apply(lambda x: x[0]).astype(int)
     source_dataframe.drop(["motif", "middle"], axis=1, inplace=True)
     tups = [tuple(x) for x in source_dataframe[["left", "hmer_number", "hmer_letter", "right"]].values]
     source_dataframe.index = pd.MultiIndex.from_tuples(tups, names=["left", "hmer_number", "hmer_letter", "right"])
@@ -598,7 +598,7 @@ def _convert_to_probs(source_dataframe: pd.DataFrame):
     """
     count_columns = [x for x in source_dataframe.columns if not x.startswith("P")]
     source_dataframe = source_dataframe[count_columns]
-    prob_columns = ["P({})".format(x) for x in count_columns]
+    prob_columns = [f"P({x})" for x in count_columns]
     sum_counts = source_dataframe[count_columns].sum(axis=1)
     sum_counts[sum_counts == 0] = 0.01
     probs = source_dataframe[count_columns].multiply(1 / sum_counts, axis=0)
@@ -635,7 +635,6 @@ def marginalize_error_probs(source_dataframe: pd.DataFrame, left_drop: int = 0, 
 
     groupby_left = source_dataframe.index.get_level_values("left").str[left_drop:]
     if right_drop > 0:
-
         groupby_right = source_dataframe.index.get_level_values("right").str[:-right_drop]
     else:
         groupby_right = source_dataframe.index.get_level_values("right")
@@ -684,15 +683,15 @@ def create_marginalize_dictionary(source_dataframe: pd.DataFrame) -> dict:
             if (len_left - i, len_right - j) in marginalize_dict:
                 continue
             if (len_left - i + 1, len_right - j) in marginalize_dict:
-                source_dataframe = marginalize_dict[((len_left - i + 1, len_right - j))]
+                source_dataframe = marginalize_dict[(len_left - i + 1, len_right - j)]
                 source_dataframe1 = marginalize_error_probs(source_dataframe, 1, 0)
                 marginalize_dict[(len_left - i, len_right - j)] = source_dataframe1
             elif (len_left - i, len_right - j + 1) in marginalize_dict:
-                source_dataframe = marginalize_dict[((len_left - i, len_right - j + 1))]
+                source_dataframe = marginalize_dict[(len_left - i, len_right - j + 1)]
                 source_dataframe1 = marginalize_error_probs(source_dataframe, 0, 1)
                 marginalize_dict[(len_left - i, len_right - j)] = source_dataframe1
             else:
-                raise Exception("Can't create {}".format((len_left - i, len_right - j)))
+                raise Exception(f"Can't create {(len_left - i, len_right - j)}")
     return marginalize_dict
 
 
@@ -789,25 +788,25 @@ def convert2_read_given_data(source_dataframe: pd.DataFrame) -> pd.DataFrame:
 
     dest_columns = []
     for err_idx in source_dataframe.columns[:bins_number]:
-        source_dataframe["dest({})".format(err_idx)] = (
+        source_dataframe[f"dest({err_idx})"] = (
             source_dataframe.index.get_level_values("hmer_number") - err_idx
-        ).astype(np.int)
-        dest_columns.append("dest({})".format(err_idx))
+        ).astype(int)
+        dest_columns.append(f"dest({err_idx})")
 
     # now rearranging
     for err_idx in source_dataframe.columns[:bins_number]:
-        tmp = source_dataframe[source_dataframe["dest({})".format(err_idx)] >= 0]
+        tmp = source_dataframe[source_dataframe[f"dest({err_idx})"] >= 0]
         tmp = tmp.reset_index()
-        tmp.sort_values(["left", "dest({})".format(err_idx), "hmer_letter", "right"], inplace=True)
+        tmp.sort_values(["left", f"dest({err_idx})", "hmer_letter", "right"], inplace=True)
         dest_index = pd.MultiIndex.from_frame(
-            tmp[["left", "dest({})".format(err_idx), "hmer_letter", "right"]],
+            tmp[["left", f"dest({err_idx})", "hmer_letter", "right"]],
             names=["left", "hmer_number", "hmer_letter", "right"],
         )
 
         destination_contained = dest_index.isin(result_dataframe.index)
         dest_index = dest_index[destination_contained]
         result_dataframe.loc[dest_index, err_idx] = np.array(tmp[-err_idx].values)[destination_contained]
-        result_dataframe.loc[dest_index, "P({})".format(err_idx)] = np.array(tmp["P({})".format(-err_idx)].values)[
+        result_dataframe.loc[dest_index, f"P({err_idx})"] = np.array(tmp[f"P({-err_idx})"].values)[
             destination_contained
         ]
 
@@ -848,9 +847,11 @@ class ErrorModel:
             Description
         """
         if n_bins > 0:
-            error_models = [pd.read_hdf(error_model_file, key="bin_{}".format(b)) for b in range(n_bins)]
+            error_models = [pd.read_hdf(error_model_file, key=f"bin_{b}") for b in range(n_bins)]
             hashed_idcs = [[hash(x) for x in em.index] for em in error_models]
-            self.hashed_dict = [dict(zip(hashed_idx, range(len(hashed_idx)))) for hashed_idx in hashed_idcs]
+            self.hashed_dict = [
+                dict(zip(hashed_idx, range(len(hashed_idx)), strict=False)) for hashed_idx in hashed_idcs
+            ]
             del hashed_idcs
             self.error_model = [
                 np.array(error_model[[x for x in error_model.columns if isinstance(x, str) and x.startswith("P")]])
@@ -862,7 +863,7 @@ class ErrorModel:
         else:
             error_model = pd.read_hdf(error_model_file, key="error_model_hashed")
             hashed_idx = [hash(x) for x in error_model.index]
-            self.hashed_dict = dict(zip(hashed_idx, range(len(hashed_idx))))
+            self.hashed_dict = dict(zip(hashed_idx, range(len(hashed_idx)), strict=False))
             del hashed_idx
             self.error_model = np.array(error_model[["P(-1)", "P(0)", "P(+1)"]])
             self.error_model = np.concatenate((self.error_model, np.zeros((1, self.error_model.shape[1]))))

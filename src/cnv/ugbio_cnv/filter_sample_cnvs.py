@@ -21,8 +21,8 @@ import os
 import sys
 import warnings
 
-from ugbio_core.logger import logger
 from ugbio_core import filter_bed
+from ugbio_core.logger import logger
 
 warnings.filterwarnings("ignore")
 

@@ -1,5 +1,7 @@
 from enum import Enum
+
 from pandas.api.types import CategoricalDtype
+
 
 class FileExtension(Enum):
     """File Extension enum"""
@@ -17,6 +19,7 @@ class FileExtension(Enum):
     TXT = ".txt"
     VCF = ".vcf"
     VCF_GZ = ".vcf.gz"
+
 
 DEFAULT_FLOW_ORDER = "TGCA"
 CHROM_DTYPE = CategoricalDtype(

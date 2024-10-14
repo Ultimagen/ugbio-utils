@@ -9,16 +9,16 @@ from enum import Enum
 import numpy as np
 import pandas as pd
 import pysam
-
+from ugbio_core import array_utils as utils
 from ugbio_core import dna_sequence_utils as dnautils
+from ugbio_core import math_utils as phred
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
 from ugbio_core.flow_format import error_model, simulator
-from ugbio_core import math_utils as phred
-from ugbio_core import array_utils as utils
 
 DEFAULT_ERROR_MODEL_FN = "error_model.r2d.hd5"
 MINIMAL_CALL_PROB = 0.1
 DEFAULT_FILLER = 0.0001
+
 
 def get_bam_header(rgid: str | None = None):
     if rgid is None:
@@ -51,7 +51,10 @@ def key2base(key: np.ndarray) -> np.ndarray:
     flow2base = -1 + np.cumsum(n_reps_shifted)
     return flow2base
 
-def generate_key_from_sequence(sequence: str, flow_order: str, truncate: int | None = None, non_standard_as_a: bool = False) -> np.ndarray:
+
+def generate_key_from_sequence(
+    sequence: str, flow_order: str, truncate: int | None = None, non_standard_as_a: bool = False
+) -> np.ndarray:
     """Converts bases to flow order
 
     Parameters
@@ -81,7 +84,9 @@ def generate_key_from_sequence(sequence: str, flow_order: str, truncate: int | N
         if non_standard_as_a:
             sequence = re.sub(r"[^ACGT]", "A", sequence)
         else:
-            raise ValueError("Input contains non ACGTacgt characters" + (f":\n{sequence}" if len(sequence) <= 100 else ""))
+            raise ValueError(
+                "Input contains non ACGTacgt characters" + (f":\n{sequence}" if len(sequence) <= 100 else "")
+            )
 
     # process
     flow = flow_order * len(sequence)
@@ -104,6 +109,7 @@ def generate_key_from_sequence(sequence: str, flow_order: str, truncate: int | N
     if truncate:
         return np.clip(np.array(key), 0, truncate)
     return np.array(key)
+
 
 class SupportedFormats(Enum):
     MATT = "matt"
@@ -606,7 +612,6 @@ class FlowBasedRead:
 
         """
         if not hasattr(self, "_flow_matrix"):
-
             if regressed_signal_only:
                 self._flow_matrix = self._get_single_flow_matrix_only_regressed(self._regressed_signal)
                 return self._flow_matrix
@@ -664,7 +669,7 @@ class FlowBasedRead:
             motifs_right.append(seq[right_base + 1 : right_base + self._motif_size + 1])
             assert seq[right_base + 1] != self.flow_order[i], "Something wrong with motifs"
         motifs_right.append("")
-        index = list(zip(motifs_left, key, self.flow_order[: len(key)], motifs_right))
+        index = list(zip(motifs_left, key, self.flow_order[: len(key)], motifs_right, strict=False))
         hash_idx = [hash(x) for x in index]
 
         if hasattr(self, "_regressed_signal"):
@@ -996,14 +1001,14 @@ class FlowBasedRead:
             return 1
 
         if self.key.max() >= 9:
-            return -np.Inf
+            return -np.inf
 
         clip_left, left_hmer_clip = self._left_clipped_flows(clipping)
         clip_right, right_hmer_clip = self._right_clipped_flows(clipping)
 
         assert abs(left_hmer_clip) < 11 and abs(right_hmer_clip) < 11, "Weird hmer_clip"
         if clip_left >= len(self.key) or clip_right >= len(self.key):
-            return -np.Inf
+            return -np.inf
 
         assert left_hmer_clip >= 0 and right_hmer_clip >= 0, "Some problem with hmer clips"
         key = self.key.copy()
@@ -1014,7 +1019,7 @@ class FlowBasedRead:
         flow_order = self.flow_order[clip_left:clip_right]
         starting_points = np.nonzero(flow_order == read.flow_order[0])[0]
         starting_points = starting_points[starting_points + len(read.key) <= len(key)]
-        best_alignment = -np.Inf
+        best_alignment = -np.inf
         for start_point in starting_points:
             fetch = np.log10(
                 read._flow_matrix[
@@ -1026,8 +1031,7 @@ class FlowBasedRead:
                     np.arange(len(read.key)),
                 ]
             )[1:-1].sum()
-            if fetch > best_alignment:
-                best_alignment = fetch
+            best_alignment = max(fetch, best_alignment)
         return best_alignment
 
 
@@ -1089,7 +1093,7 @@ def _parse_active_region(block: str) -> list:
     haplotypes = _parse_haplotypes(block[haplotype_start:haplotype_end])
     sample_starts = [x.start() for x in re.finditer(r">> Sample", block)]
     sample_ends = sample_starts[1:] + [len(block)]
-    sample_locs = zip(sample_starts, sample_ends)
+    sample_locs = zip(sample_starts, sample_ends, strict=False)
 
     return [_parse_sample(block[x[0] : x[1]], haplotypes) for x in sample_locs]
 
@@ -1166,4 +1170,4 @@ def parse_haplotype_matrix_file(filename: str) -> dict:
 
     locations = [_extract_location(x) for x in blocks]
     block_dfs = [_parse_active_region(x) for x in blocks]
-    return dict(zip(locations, block_dfs))
+    return dict(zip(locations, block_dfs, strict=False))

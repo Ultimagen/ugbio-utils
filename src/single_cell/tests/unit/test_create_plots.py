@@ -3,7 +3,6 @@ from unittest.mock import patch
 
 import pytest
 from matplotlib import pyplot as plt
-
 from ugbio_single_cell import create_plots
 from ugbio_single_cell.sc_qc_dataclasses import OutputFiles
 
@@ -49,9 +48,7 @@ def test_plot_insert_length_histogram(mock_set_pyplot_defaults, h5_file, output_
 
 
 @patch("ugbio_single_cell.create_plots.set_pyplot_defaults")
-def test_plot_mean_insert_quality_histogram(
-    mock_set_pyplot_defaults, h5_file, output_path
-):
+def test_plot_mean_insert_quality_histogram(mock_set_pyplot_defaults, h5_file, output_path):
     result = create_plots.plot_mean_insert_quality_histogram(h5_file, output_path)
     expected_output = output_path / OutputFiles.MEAN_INSERT_QUALITY_PLOT.value
     assert result == expected_output

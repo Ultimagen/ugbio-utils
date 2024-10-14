@@ -2,7 +2,6 @@ import argparse
 import sys
 
 from simppl.simple_pipeline import SimplePipeline
-
 from ugbio_core.filter_bed import intersect_bed_regions
 
 
@@ -52,6 +51,7 @@ def run(argv):
         max_mem=args.max_mem,
         sp=sp,
     )
+
 
 def main():
     run(sys.argv)

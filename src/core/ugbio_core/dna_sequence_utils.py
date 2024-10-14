@@ -81,7 +81,7 @@ def get_chr_sizes(sizes_file: str) -> dict:
     assert isfile(sizes_file), f"Input_file {sizes_file} not found"
     if sizes_file.endswith("dict"):
         chrom_sizes = {}
-        with open(sizes_file, "r", encoding="utf-8") as file:
+        with open(sizes_file, encoding="utf-8") as file:
             for line in file:
                 if line.startswith("@SQ"):
                     fields = line[3:].strip().split("\t")

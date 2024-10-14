@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from ugbio_ppmseq import ppmSeq_qc_analysis
 
+
 @pytest.fixture
 def resources_dir():
     return Path(__file__).parent.parent / "resources"

@@ -19,6 +19,7 @@ import argparse
 import sys
 
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
+
 from ugbio_featuremap.featuremap_utils import annotate_featuremap
 
 

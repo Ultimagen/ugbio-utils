@@ -39,7 +39,7 @@ jobs:
           patch_release="${{ inputs.patch-release }}"
           branch_name="${{ github.ref_name }}"
           main_branch="${{ env.MAIN_BRANCH }}"
-          
+
           if [ "$patch_release" == "true" ] && [ "$branch_name" == "$main_branch" ]; then
             echo "Error: minor-release is set to true, but this action is running on the main branch."
             exit 1
@@ -47,11 +47,11 @@ jobs:
             echo "Error: minor-release is set to false, but this action is not running on the main branch."
             exit 1
           fi
-          
+
           echo "Branch verification passed."
 
       - uses: actions/checkout@v4
-      
+
       - name: Build workspaces list
         uses: ./.github/actions/get-members
         id: list_members
@@ -113,7 +113,7 @@ jobs:
       docker-file: src/${{ matrix.module }}/Dockerfile
       docker-image: ugbio_${{ matrix.module }}
       commit-sha: ${{ needs.publish.outputs.publish_commit_sha }}
-      workspace-folder: src/${{ matrix.module }}      
+      workspace-folder: src/${{ matrix.module }}
 
   prepare-next-dev-version:
     runs-on: ubuntu-latest
@@ -123,7 +123,7 @@ jobs:
         with:
           ref: ${{ github.ref_name }}
           token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
-    
+
       - uses: actions-ecosystem/action-bump-semver@v1
         id: bump-dev-semver
         with:
@@ -141,4 +141,4 @@ jobs:
           version: ${{ needs.publish.outputs.new_version }}
           ref: ${{ github.ref_name }}
           git-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
-    
+

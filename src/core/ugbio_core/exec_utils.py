@@ -3,7 +3,6 @@ from __future__ import annotations
 import subprocess
 
 from simppl.simple_pipeline import SimplePipeline
-
 from ugbio_core.logger import logger
 
 

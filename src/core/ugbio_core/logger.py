@@ -13,4 +13,3 @@ ch = logging.StreamHandler(stream=sys.stderr)
 ch.setLevel(logging.INFO)
 ch.setFormatter(formatter)
 logger.addHandler(ch)
-

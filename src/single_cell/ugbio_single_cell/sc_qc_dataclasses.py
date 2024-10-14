@@ -13,7 +13,8 @@ class OutputFiles(Enum):
     QUALITY_PER_POSITION_PLOT = "quality_per_position_plot.png"
     INSERT_LENGTH_HISTOGRAM = "insert_length_histogram.png"
 
-BASE_PATH = Path(__file__).parent # should be: src/single_cell/ugbio_single_cell
+
+BASE_PATH = Path(__file__).parent  # should be: src/single_cell/ugbio_single_cell
 TEMPLATE_NOTEBOOK = BASE_PATH / "reports" / OutputFiles.NOTEBOOK.value
 
 

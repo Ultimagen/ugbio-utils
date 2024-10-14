@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pysam
 import pytest
-
 from ugbio_featuremap.featuremap_consensus_utils import pileup_featuremap, pileup_featuremap_on_an_interval_list
 
 
@@ -24,14 +23,16 @@ def resources_dir():
     ],
 )
 def test_pileup_featuremap(
-        tmpdir, resources_dir,
-        genomic_interval,
-        interval_list,
-        expected_num_variants,
+    tmpdir,
+    resources_dir,
+    genomic_interval,
+    interval_list,
+    expected_num_variants,
 ):
     # create input featuremap vcf file
-    input_featuremap_vcf = pjoin(resources_dir,
-                                 "HG001_HG002_tumor_tumor_in_normal_31977.gtr.hcr.chr19_1-1000000.vcf.gz")
+    input_featuremap_vcf = pjoin(
+        resources_dir, "HG001_HG002_tumor_tumor_in_normal_31977.gtr.hcr.chr19_1-1000000.vcf.gz"
+    )
 
     # call the function with different arguments
     pileup_featuremap_vcf = pjoin(tmpdir, "pileup_featuremap.vcf.gz")
