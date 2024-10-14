@@ -1,7 +1,7 @@
 [project]
 name = "ugbio_cnv"
 version = "1.2.1-0dev-41"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "ugbio_core",
     "seaborn>=0.13.2",

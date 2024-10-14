@@ -1,5 +1,5 @@
 
-FROM python:3.11-bullseye as build
+FROM python:3.11-bullseye AS build
 
 ARG OUT_DIR=/tmp/ugbio
 ARG MODULE_DIR=single_cell

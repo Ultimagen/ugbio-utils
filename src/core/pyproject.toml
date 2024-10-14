@@ -1,7 +1,7 @@
 [project]
 name = "ugbio_core"
 version = "1.2.1-0dev-41"
-requires-python = ">= 3.10"
+requires-python = ">=3.11"
 description = "Ultima Genomics core bioinfo utils"
 authors = [
     { name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com" },
