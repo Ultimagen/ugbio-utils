@@ -1,14 +1,7 @@
 #!/usr/bin/env python3
 import os
-# import logging
 import json
 import argparse
-
-# logging.basicConfig(
-#     level=logging.INFO,
-#     format="%(asctime)s - [%(levelname)s] %(message)s"
-# )
-# logger = logging.getLogger()
 
 INTERNAL_MEMBERS = ["core", "omics"]
 
@@ -22,7 +15,6 @@ def build_members_matrix(src_folder: str, keep_internal: bool):
     if not keep_internal:
         directories = [d for d in directories if d not in INTERNAL_MEMBERS]
 
-    # logger.info(json.dumps(directories, indent=4, sort_keys=True))
     print(json.dumps(directories, indent=4, sort_keys=True))
 
 if __name__ == "__main__":
