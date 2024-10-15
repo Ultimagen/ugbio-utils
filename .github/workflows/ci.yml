@@ -13,24 +13,24 @@ env:
   UGBIO_BASE_IMAGE_NAME: ugbio_base:1.2.0
 
 jobs:
-  get-workspaces:
+  get-members:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{steps.list_dirs.outputs.workspaces}}
+      matrix: ${{steps.list_members.outputs.members}}
     steps:
       - uses: actions/checkout@v4
-      - uses: ./.github/actions/get-workspaces
-        id: list_dirs
+      - uses: ./.github/actions/get-members
+        id: list_members
         with:
-          remove-internal-dockers: false
+          keep-internal-dockers: false
 
   ugbio-utils-CI:
     runs-on: ubuntu-latest
-    needs: [get-workspaces]
+    needs: [get-members]
     strategy:
       fail-fast: false
       matrix:
-        module: ${{fromJson(needs.get-workspaces.outputs.matrix)}}
+        module: ${{fromJson(needs.get-members.outputs.matrix)}}
     steps:
     - uses: actions/checkout@v4
       with:
