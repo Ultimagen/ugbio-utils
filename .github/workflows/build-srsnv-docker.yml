@@ -1,0 +1,35 @@
+name: Build ugbio docker
+on:
+  workflow_dispatch:
+    inputs:
+      member:
+        type: choice
+        options:
+          - "cnv"
+          - "featuremap"
+          - "mrd"
+          - "ppmseq"
+          - "singl_cell"
+          - "srsnv"
+          - "vcflite"
+        required: true
+        default: ""
+
+      image-tag:
+        description: "Docker image tag, If omitted will use github short sha"
+        required: false
+        type: string
+
+permissions:
+  id-token: write # Required for assuming an AWS role
+  contents: read # Required for actions/checkout
+
+jobs:
+  build-docker:
+    uses: ./.github/workflows/build-workspace-docker.yml
+    secrets: inherit
+    with:
+      workspace-folder: src/${{ inputs.member }}
+      docker-file: src/${{ inputs.member }}/Dockerfile
+      docker-image: ugbio_${{ inputs.member }}
+      docker-tag: ${{ inputs.image-tag }}
