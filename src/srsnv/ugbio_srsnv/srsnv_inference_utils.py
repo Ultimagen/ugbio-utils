@@ -26,19 +26,15 @@ LOW_QUAL_THRESHOLD = 40
 
 
 def _vcf_getter(variant, field):
-    if field == ALT:
-        return variant.alts[0]
-    if field == REF:
-        return variant.ref
-    if field == CHROM:
-        return variant.chrom
-    if field == POS:
-        return variant.pos
-    if field == FILTER:
-        return variant.filter
-    if field == QUAL:
-        return variant.qual
-    return variant.info.get(field, None)
+    field_map = {
+        ALT: variant.alts[0],
+        REF: variant.ref,
+        CHROM: variant.chrom,
+        POS: variant.pos,
+        FILTER: variant.filter,
+        QUAL: variant.qual,
+    }
+    return field_map.get(field, variant.info.get(field, None))
 
 
 def sanitize_for_vcf_general(input_string):
@@ -163,31 +159,33 @@ class MLQualAnnotator(VcfAnnotator):
         # Convert list of variant records to a pandas DataFrame
         columns = self.numerical_features + self.categorical_features_names + ["chrom"]
         data = [{column: _vcf_getter(variant, column) for column in columns} for variant in records]
-        df = pd.DataFrame(data)[columns]
-        df = set_categorical_columns(df, self.categorical_features_dict)  # for correct encoding of categorical features
+        variants_df = pd.DataFrame(data)[columns]
+        variants_df = set_categorical_columns(
+            variants_df, self.categorical_features_dict
+        )  # for correct encoding of categorical features
 
         # TODO remove this patch (types should be read from header as in featuremap_to_dataframe)
-        df = df.astype(
+        variants_df = variants_df.astype(
             {
                 k: v
                 for k, v in {
                     "rq": float,
                 }.items()
-                if k in df.columns
+                if k in variants_df.columns
             },
         )
 
         # Apply the provided model to assign a new quality value
         features_for_model = self.numerical_features + self.categorical_features_names
         if self.num_folds == 1:
-            df[FOLD_ID] = 0
+            variants_df[FOLD_ID] = 0
         elif self.chrom_folds is None:
-            df[FOLD_ID] = np.nan  # For the case where fold-splitting was done randomly
+            variants_df[FOLD_ID] = np.nan  # For the case where fold-splitting was done randomly
         else:
-            df[FOLD_ID] = df["chrom"].map(self.chrom_folds, na_action="ignore").astype("Int64")
+            variants_df[FOLD_ID] = variants_df["chrom"].map(self.chrom_folds, na_action="ignore").astype("Int64")
         predicted_probability = k_fold_predict_proba(
-            self.models, df, features_for_model, self.num_folds, kfold_col=FOLD_ID
-        ).values
+            self.models, variants_df, features_for_model, self.num_folds, kfold_col=FOLD_ID
+        ).to_numpy()
 
         if self.pre_filter:
             try:
@@ -197,7 +195,7 @@ class MLQualAnnotator(VcfAnnotator):
                 # We also replace && with & because the former is supported by bcftools and the latter by pandas
                 # We assign a value of 0 for true probability, meaning 1 for error probability, translating to a
                 # quality of 0
-                predicted_probability[~df.eval(self.pre_filter)] = 0
+                predicted_probability[~variants_df.eval(self.pre_filter)] = 0
             except Exception as e:
                 logger.error(f"Failed to apply pre-filter: {self.pre_filter}")
                 raise e
@@ -238,10 +236,10 @@ def extract_categories_from_parquet(parquet_path):
         Dictionary of column names and categories
 
     """
-    df = pd.read_parquet(parquet_path)
+    parquet_df = pd.read_parquet(parquet_path)
     category_mappings = {}
-    for column in df.select_dtypes(include=["category"]).columns:
-        category_mappings[column] = df[column].cat.categories.tolist()
+    for column in parquet_df.select_dtypes(include=["category"]).columns:
+        category_mappings[column] = parquet_df[column].cat.categories.tolist()
     return category_mappings
 
 
@@ -281,7 +279,7 @@ def load_models(model_path: str, num_folds: int, model_params: dict):
     return models
 
 
-def single_read_snv_inference(
+def single_read_snv_inference(  # noqa: C901 #TODO: too complex
     featuremap_path: str,
     model_joblib_path: str,
     params_path: str,
@@ -320,9 +318,8 @@ def single_read_snv_inference(
         quality_interpolation_function = model_info_dict["quality_interpolation_function"]
         using_jl = True
     else:
-        assert (model_path is not None) and (
-            params_path is not None
-        ), "When --model_joblib_path is not provided, must provide model_path and params_path"
+        if (model_path is None) or (params_path is None):
+            raise ValueError("When --model_joblib_path is not provided, must provide model_path and params_path")
         using_jl = False
     if params_path is not None:
         with open(params_path, encoding="UTF-8") as p_fh:
@@ -342,7 +339,8 @@ def single_read_snv_inference(
         chrom_folds = params["chroms_to_folds"]
     else:
         chrom_folds = None
-    assert num_folds == len(models), f"num_folds should equal number of models. Got {num_folds=}, {len(models)=}"
+    if num_folds != len(models):
+        raise AssertionError(f"num_folds should equal number of models. Got {num_folds=}, {len(models)=}")
 
     ml_qual_annotator = MLQualAnnotator(
         models,

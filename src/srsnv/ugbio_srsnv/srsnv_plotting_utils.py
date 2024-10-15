@@ -48,7 +48,7 @@ read_end_filter = (
     f"{FeatureMapFields.X_INDEX.value} < ({FeatureMapFields.X_LENGTH.value} - 12)"
 )
 mixed_read_filter = IS_MIXED  # TODO use adapter_version
-default_LoD_filters = {
+default_LoD_filters = {  # noqa: N816
     "no_filter": f"{FeatureMapFields.X_SCORE.value} >= 0",
     "HQ_SNV": f"{HQ_SNV_filter} and {edist_filter}",
     "CSKP": f"{CSKP_SNV_filter} and {edist_filter}",
@@ -108,8 +108,8 @@ def list_of_jagged_lists_to_array(list_of_lists, fill=np.nan):
     max_len = max(lens)
     num_lists = len(list_of_lists)
     arr = np.ones((num_lists, max_len)) * fill
-    for i, l in enumerate(list_of_lists):
-        arr[i, : lens[i]] = np.array(l)
+    for i, sublist in enumerate(list_of_lists):
+        arr[i, : lens[i]] = np.array(sublist)
     return arr
 
 
@@ -267,11 +267,11 @@ def srsnv_report(
     reporthtml = pjoin(out_path, f"{out_basename}{report_name}_report.html")
 
     [
-        output_LoD_plot,
+        output_LoD_plot,  # noqa: N806
         qual_vs_ppmseq_tags_table,
         training_progerss_plot,
-        SHAP_importance_plot,
-        SHAP_beeswarm_plot,
+        SHAP_importance_plot,  # noqa: N806
+        SHAP_beeswarm_plot,  # noqa: N806
         trinuc_stats_plot,
         output_qual_per_feature,
         qual_histogram,
@@ -306,97 +306,6 @@ def srsnv_report(
     print_and_execute(jupyter_nbconvert_command, simple_pipeline=simple_pipeline, module_name=__name__)
 
 
-def plot_ROC_curve(
-    df: pd.DataFrame,
-    df_tp: pd.DataFrame,
-    df_fp: pd.DataFrame,
-    ML_score: str,
-    adapter_version: str,
-    title: str = "",
-    output_filename: str = None,
-    font_size: int = 18,
-):
-    """generate and save ROC curve plot
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        data set with features, labels and quals of the model
-    df_tp : pd.DataFrame
-        subset of df: rows with label TP
-    df_fp : pd.DataFrame
-        subset of df: reads with label FP
-    ML_score : str
-        ML model score name (column in df),
-    adapter_version : str
-        adapter version, indicates if input featuremap is from balanced ePCR data
-    title : str, optional
-        title for the ROC curve plot, by default ""
-    output_filename : str, optional
-        path to which the plot will be saved, by default None
-    font_size : int, optional
-        font size for the plot, by default 18
-    """
-    set_pyplot_defaults()
-
-    label_dict = {
-        f"{FeatureMapFields.X_SCORE.value}": "FeatureMap",
-        ML_score: "ML model",
-    }
-
-    xvars = [f"{FeatureMapFields.X_SCORE.value}", ML_score]
-    querystrs = [
-        f"{FeatureMapFields.X_SCORE.value}>-1",
-        f"{FeatureMapFields.X_SCORE.value}>-1",
-    ]
-    namestrs = [f"{FeatureMapFields.X_SCORE.value}", ML_score]
-
-    recall = {}
-    precision = {}
-
-    if adapter_version in [av.value for av in ppmSeqAdapterVersions]:
-        xvars.append(f"{FeatureMapFields.X_SCORE.value}")
-        querystrs.append("is_mixed == True & X_SCORE>-1")
-        namestrs.append(f"{FeatureMapFields.X_SCORE.value}_mixed")
-        label_dict[f"{FeatureMapFields.X_SCORE.value}_mixed"] = "FeatureMap"
-
-    for xvar, querystr, namestr in zip(xvars, querystrs, namestrs, strict=False):
-        thresholds = np.linspace(0, df[xvar].quantile(0.99), 100)
-        recall[namestr] = {}
-        precision[namestr] = {}
-        for thresh in thresholds:
-            recall[namestr][thresh] = (df_tp.query(querystr)[xvar] > thresh).sum() / df_tp.shape[0]
-            total_fp = (df_fp.query(querystr)[xvar] >= thresh).sum()
-            total_tp = (df_tp.query(querystr)[xvar] >= thresh).sum()
-            precision[namestr][thresh] = total_tp / (total_tp + total_fp)
-
-    plt.figure(figsize=(12, 8))
-    for item in recall.items():
-        label = item[0]
-        auc = -np.trapz(list(precision[label].values()), list(recall[label].values()))
-        plt.plot(
-            recall[label].values(),
-            precision[label].values(),
-            "-o",
-            label=f"{label_dict[label]} ({label}) - AUC={auc:.2f}",
-        )
-        plt.xlabel("Recall (TP over TP+FN)", fontsize=font_size)
-        plt.ylabel("Precision (total TP over FP+TP)", fontsize=font_size)
-        legend_handle = plt.legend(fontsize=font_size, fancybox=True, framealpha=0.95)
-        title_handle = plt.title(title, fontsize=font_size)
-
-    if output_filename is not None:
-        if not output_filename.endswith(".png"):
-            output_filename += ".png"
-        plt.savefig(
-            output_filename,
-            facecolor="w",
-            dpi=300,
-            bbox_inches="tight",
-            bbox_extra_artists=[title_handle, legend_handle],
-        )
-
-
 def filter_valid_queries(df_test: pd.DataFrame, queries: dict, verbose: bool = False) -> dict:
     """
     Test each filter query on the DataFrame and remove any that cause exceptions.
@@ -429,8 +338,7 @@ def filter_valid_queries(df_test: pd.DataFrame, queries: dict, verbose: bool = F
     return valid_filters
 
 
-# pylint: disable=too-many-arguments
-def retention_noise_and_mrd_lod_simulation(
+def retention_noise_and_mrd_lod_simulation(  # noqa: PLR0913
     df: pd.DataFrame,
     single_sub_regions: str,
     sorter_json_stats_file: str,
@@ -484,15 +392,15 @@ def retention_noise_and_mrd_lod_simulation(
     lod_filters = filter_valid_queries(df_test=df.head(10), queries=lod_filters)
 
     # apply filters
-    df = df.assign(
+    featuremap_df = df.assign(
         **{
             filter_name: df.eval(filter_query)
             for filter_name, filter_query in tqdm(lod_filters.items())
             if filter_query is not None
         }
     )
-    df_fp = df.query("label == 0")
-    df_tp = df.query("label == 1")
+    df_fp = featuremap_df.query("label == 0")
+    df_tp = featuremap_df.query("label == 1")
 
     # count the # of bases in region
     n_bases_in_region = count_bases_in_bed_file(single_sub_regions)
@@ -572,8 +480,8 @@ def retention_noise_and_mrd_lod_simulation(
     )
 
     # remove filters with a low TP read retention ratio
-    MIN_TP_RETENTION = 0.01
-    df_mrd_simulation = df_mrd_simulation[df_mrd_simulation[TP_READ_RETENTION_RATIO] > MIN_TP_RETENTION]
+    min_tp_retention = 0.01
+    df_mrd_simulation = df_mrd_simulation[df_mrd_simulation[TP_READ_RETENTION_RATIO] > min_tp_retention]
 
     # Assign the residual SNV rate per filter
     df_mrd_simulation.loc[:, RESIDUAL_SNV_RATE] = (
@@ -630,13 +538,13 @@ def retention_noise_and_mrd_lod_simulation(
 
 
 @exception_handler
-def plot_LoD(
+def plot_LoD(  # noqa N802
     df_mrd_sim: pd.DataFrame,
     lod_label: str,
     c_lod: str,
     filters: dict,
     adapter_version: str,
-    min_LoD_filter: str,
+    min_LoD_filter: str,  # noqa: N803
     title: str = "",
     output_filename: str = None,
     font_size: int = 24,
@@ -667,13 +575,13 @@ def plot_LoD(
     set_pyplot_defaults()
 
     # TODO: a less patchy solution, perhaps accept ml_filters as a separate input
-    ML_filters = {i: filters[i] for i in filters if i[:2] == "ML" and i in df_mrd_sim.index}
-    mixed_ML_filters = {i: filters[i] for i in filters if i[:8] == "mixed_ML" and i in df_mrd_sim.index}
+    ml_filters = {i: filters[i] for i in filters if i[:2] == "ML" and i in df_mrd_sim.index}
+    mixed_ml_filters = {i: filters[i] for i in filters if i[:8] == "mixed_ML" and i in df_mrd_sim.index}
 
     fig = plt.figure(figsize=(20, 12))
 
     filters_list = [
-        list(ML_filters),
+        list(ml_filters),
         ["no_filter"],
         ["HQ_SNV"],
     ]
@@ -686,7 +594,7 @@ def plot_LoD(
     edgecolors_list = ["r", "r", "r"]
     msize_list = [150, 150, 150]
     if adapter_version in [av.value for av in ppmSeqAdapterVersions]:
-        filters_list.append(list(mixed_ML_filters))
+        filters_list.append(list(mixed_ml_filters))
         markers_list.append("P")
         labels_list.append("ML model, mixed only")
         edgecolors_list.append("r")
@@ -705,7 +613,7 @@ def plot_LoD(
         msize_list.append(150)
 
     best_lod = df_mrd_sim.loc[
-        [item for sublist in filters_list for item in sublist if item in df_mrd_sim.index.values],
+        [item for sublist in filters_list for item in sublist if item in df_mrd_sim.index.to_numpy()],
         c_lod,
     ].min()  # best LoD across all plotted results
 
@@ -790,6 +698,7 @@ def plot_confusion_matrix(
     set_pyplot_defaults()
 
     cmat = confusion_matrix(y_true=df["label"], y_pred=df[prediction_column_name])
+    magic_threshold = 0.01
     cmat_norm = cmat.astype("float") / cmat.sum(axis=1)[:, np.newaxis]  # normalize by rows - true labels
     plt.figure(figsize=(4, 3))
     plt.grid(False)
@@ -799,7 +708,7 @@ def plot_confusion_matrix(
         annot_kws={"size": 16},
         cmap="Blues",
         cbar=False,
-        fmt=".2%" if cmat_norm.min() < 0.01 else ".1%",
+        fmt=".2%" if cmat_norm.min() < magic_threshold else ".1%",
     )
     ax.set_xticks(ticks=[0.5, 1.5])
     ax.set_xticklabels(labels=["FP", "TP"])
@@ -995,7 +904,7 @@ def plot_precision_recall_vs_qual_thresh(
         )
 
 
-def plot_ML_qual_hist(
+def plot_ml_qual_hist(
     labels_dict: dict,
     df: pd.DataFrame,
     max_score: float,
@@ -1053,7 +962,7 @@ def plot_ML_qual_hist(
         )
 
 
-def plot_qual_per_feature(
+def plot_qual_per_feature(  # noqa: C901, PLR0912 #TODO: too complex and too many branches
     labels_dict: dict,
     cls_features: list,
     df: pd.DataFrame,
@@ -1114,11 +1023,11 @@ def plot_qual_per_feature(
                     label=labels_dict[label],
                 )
                 xticks = plt.gca().get_xticks()
-                if len(xticks) > 100:
+                if len(xticks) > 100:  # noqa: PLR2004
                     plt.xticks(rotation=90, fontsize=6)
-                elif len(xticks) > 30:
+                elif len(xticks) > 30:  # noqa: PLR2004
                     plt.xticks(rotation=90, fontsize=9)
-                elif len(xticks) > 3:
+                elif len(xticks) > 3:  # noqa: PLR2004
                     plt.xticks(rotation=30, fontsize=12)
             else:
                 if j == 0:
@@ -1385,11 +1294,11 @@ def _get_plot_paths(out_path, out_basename):
     outdir = out_path
     basename = out_basename
 
-    output_LoD_plot = os.path.join(outdir, f"{basename}LoD_curve")
+    output_LoD_plot = os.path.join(outdir, f"{basename}LoD_curve")  # noqa: N806
     qual_vs_ppmseq_tags_table = os.path.join(outdir, f"{basename}qual_vs_ppmSeq_tags_table")
     training_progerss_plot = os.path.join(outdir, f"{basename}training_progress")
-    SHAP_importance_plot = os.path.join(outdir, f"{basename}SHAP_importance")
-    SHAP_beeswarm_plot = os.path.join(outdir, f"{basename}SHAP_beeswarm")
+    SHAP_importance_plot = os.path.join(outdir, f"{basename}SHAP_importance")  # noqa: N806
+    SHAP_beeswarm_plot = os.path.join(outdir, f"{basename}SHAP_beeswarm")  # noqa: N806
     trinuc_stats_plot = os.path.join(outdir, f"{basename}trinuc_stats")
     qual_histogram = os.path.join(outdir, f"{basename}qual_histogram")
     logit_histogram = os.path.join(outdir, f"{basename}logit_histogram")
@@ -1452,16 +1361,16 @@ def calculate_lod_stats(
     base_stats.to_hdf(output_h5, key="bases_over_qual_threshold", mode="a")
 
     # Calculate Optimal filter and LoD result
-    best_LoD_filter = df_mrd_simulation[lod_column].idxmin()
+    best_LoD_filter = df_mrd_simulation[lod_column].idxmin()  # noqa: N806
     best_lod = df_mrd_simulation.loc[best_LoD_filter, lod_column]
-    best_ML_LoD_filter = df_mrd_simulation_ml[lod_column].idxmin()
-    best_ML_LoD = df_mrd_simulation_ml.loc[best_ML_LoD_filter, lod_column]
+    best_ML_LoD_filter = df_mrd_simulation_ml[lod_column].idxmin()  # noqa: N806
+    best_ML_LoD = df_mrd_simulation_ml.loc[best_ML_LoD_filter, lod_column]  # noqa: N806
     if df_mrd_simulation_mixed_ml.shape[0] > 0:
-        best_mixed_ML_LoD_filter = df_mrd_simulation_mixed_ml[lod_column].idxmin()
-        best_mixed_ML_LoD = df_mrd_simulation_mixed_ml.loc[best_mixed_ML_LoD_filter, lod_column]
+        best_mixed_ML_LoD_filter = df_mrd_simulation_mixed_ml[lod_column].idxmin()  # noqa: N806
+        best_mixed_ML_LoD = df_mrd_simulation_mixed_ml.loc[best_mixed_ML_LoD_filter, lod_column]  # noqa: N806
     else:
-        best_mixed_ML_LoD_filter = pd.NA
-        best_mixed_ML_LoD = pd.NA
+        best_mixed_ML_LoD_filter = pd.NA  # noqa: N806
+        best_mixed_ML_LoD = pd.NA  # noqa: N806
     lod_stats_dict = {
         "best_LoD_filter": best_LoD_filter,
         "LoD_best": best_lod,
@@ -1487,8 +1396,7 @@ def calculate_lod_stats(
 
 
 class SRSNVReport:
-    # pylint: disable=too-many-instance-attributes
-    def __init__(
+    def __init__(  # noqa: PLR0913 C901
         self,
         models: list[sklearn.base.BaseEstimator],
         data_df: pd.DataFrame,
@@ -1500,7 +1408,7 @@ class SRSNVReport:
         c_lod: str = "LoD",
         # min_LoD_filter: str = None,
         df_mrd_simulation: pd.DataFrame = None,
-        ML_qual_to_qual_fn: Callable = None,
+        ml_qual_to_qual_fn: Callable = None,
         statistics_h5_file: str = None,
         statistics_json_file: str = None,
         rng: Any = None,
@@ -1540,7 +1448,7 @@ class SRSNVReport:
         self.c_lod = c_lod
         # self.min_LoD_filter = min_LoD_filter
         self.df_mrd_simulation = df_mrd_simulation
-        self.ML_qual_to_qual_fn = ML_qual_to_qual_fn
+        self.ML_qual_to_qual_fn = ml_qual_to_qual_fn
         self.statistics_h5_file = statistics_h5_file
         self.statistics_json_file = statistics_json_file
         if rng is None:
@@ -1552,15 +1460,17 @@ class SRSNVReport:
             self.rng = rng
 
         if statistics_json_file:
-            assert statistics_h5_file, "statistics_h5_file is required when statistics_json_file is provided"
+            if not statistics_h5_file:
+                raise ValueError("statistics_h5_file is required when statistics_json_file is provided")
 
         # check model, data and params
-        assert isinstance(models, list), f"models should be a list of models, got {type(models)=}"
+        if not isinstance(models, list):
+            raise TypeError(f"models should be a list of models, got {type(models)=}")
         for k, model in enumerate(models):
-            assert sklearn.base.is_classifier(
-                model
-            ), f"model {model} (fold {k}) is not a classifier, please provide a classifier model"
-        assert isinstance(data_df, pd.DataFrame), "df is not a DataFrame, please provide a DataFrame"
+            if not sklearn.base.is_classifier(model):
+                raise ValueError(f"model {model} (fold {k}) is not a classifier, please provide a classifier model")
+        if not isinstance(data_df, pd.DataFrame):
+            raise TypeError("df is not a DataFrame, please provide a DataFrame")
         expected_keys_in_params = [
             "fp_featuremap_entry_number",
             "fp_test_set_size",
@@ -1570,7 +1480,8 @@ class SRSNVReport:
             "adapter_version",
         ]
         for key in expected_keys_in_params:
-            assert key in params, f"no {key} in params"
+            if key not in params:
+                raise ValueError(f"no {key} in params")
         self.start_tag_col = self.params.get("start_tag_col", None)
         self.end_tag_col = self.params.get("end_tag_col", None)
 
@@ -1601,11 +1512,11 @@ class SRSNVReport:
     def _get_snvq_and_recall(
         self,
         labels: np.ndarray,
-        ML_quals: np.ndarray,
+        ml_quals: np.ndarray,
         base_snvq: float,
         base_recall: float,
         condition: np.ndarray = None,
-        ML_qual_max: int = 25,
+        ml_qual_max: int = 25,
     ):
         """Get the values of snvq (residual snv rate) and recall (true positive retention rate)
         for different choices of (integer) ML_qual thresholds. ML_qual_max is the maximum value
@@ -1626,15 +1537,15 @@ class SRSNVReport:
             condition = np.ones_like(labels, dtype=bool)
         snvqs = []
         recalls = []
-        for th in range(ML_qual_max + 1):
-            tpr = ((ML_quals > th) & condition & labels).sum() / labels.sum()
-            fpr = ((ML_quals > th) & condition & ~labels).sum() / (~labels).sum()
+        for th in range(ml_qual_max + 1):
+            tpr = ((ml_quals > th) & condition & labels).sum() / labels.sum()
+            fpr = ((ml_quals > th) & condition & ~labels).sum() / (~labels).sum()
             snvqs.append(prob_to_phred(1 - base_snvq * fpr / tpr))
             recalls.append(base_recall * tpr)
         return np.array(snvqs), np.array(recalls)
 
     def _get_recall_at_snvq(
-        self, snvq: float, condition: np.ndarray = None, label_col: str = LABEL, ML_qual_col: str = ML_QUAL_1_TEST
+        self, snvq: float, condition: np.ndarray = None, label_col: str = LABEL, ml_qual_col: str = ML_QUAL_1_TEST
     ):
         """Get the recall rate at a given SNVQ value, by interpolating the recall vs SNVQ curve.
         Arguments:
@@ -1648,7 +1559,7 @@ class SRSNVReport:
         data_df = self.data_df
         snvqs, recalls = self._get_snvq_and_recall(
             data_df[label_col],
-            data_df[ML_qual_col],
+            data_df[ml_qual_col],
             base_snvq=base_snv_rate,
             base_recall=base_recall,
             condition=condition,
@@ -1676,10 +1587,10 @@ class SRSNVReport:
         }
         # Performance info
         mixed_df = self.data_df[self.data_df[IS_MIXED]]
-        TP_df = self.data_df[self.data_df[LABEL]]
-        TP_mixed_df = TP_df[TP_df[IS_MIXED]]
-        median_qual = TP_df[QUAL].median()
-        median_qual_mixed = TP_mixed_df[QUAL].median()
+        tp_df = self.data_df[self.data_df[LABEL]]
+        tp_mixed_df = tp_df[tp_df[IS_MIXED]]
+        median_qual = tp_df[QUAL].median()
+        median_qual_mixed = tp_mixed_df[QUAL].median()
         recall_at_60 = self._get_recall_at_snvq(snvq=60)
         recall_at_60_mixed = self._get_recall_at_snvq(snvq=60, condition=self.data_df[IS_MIXED])
         roc_auc_phred = prob_to_phred(
@@ -1710,7 +1621,7 @@ class SRSNVReport:
             ("Number of CV folds", ""): self.params["num_CV_folds"],
         }
         # Info about training set size
-        if self.params["num_CV_folds"] >= 2:
+        if self.params["num_CV_folds"] >= 2:  # noqa: PLR2004
             dataset_sizes = {
                 ("dataset size", f"fold {f}"): (self.data_df["fold_id"] == f).sum()
                 for f in range(self.params["num_CV_folds"])
@@ -1858,7 +1769,7 @@ class SRSNVReport:
             return np.nan
 
     @exception_handler
-    def calc_roc_auc_table(self, holdout_fold_size_thresh: int = 100):
+    def calc_roc_auc_table(self, holdout_fold_size_thresh: int = 100):  # noqa: C901, PLR0915 #TODO: Refactor
         """Calculte statistics of ROC AUC
         Arguments:
             holdout_fold_size_thresh: int: holdout set (fold_id is NaN) must be at least
@@ -1866,7 +1777,7 @@ class SRSNVReport:
         """
         logger.info("Generating ROC AUC table")
 
-        num_CV_folds = self.params["num_CV_folds"]
+        num_cv_folds = self.params["num_CV_folds"]
         auc_total = prob_to_phred(self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name="total"))
         mix_cond = self.data_df[IS_MIXED]
         auc_mixed = prob_to_phred(
@@ -1892,7 +1803,7 @@ class SRSNVReport:
             mix_holdout_fold_cond = self.data_df[FOLD_ID].isna() & (self.data_df[IS_MIXED])
             nonmix_holdout_fold_cond = self.data_df[FOLD_ID].isna() & (~self.data_df[IS_MIXED])
         all_features = self.params["numerical_features"] + self.params["categorical_features_names"]
-        for k in range(num_CV_folds):
+        for k in range(num_cv_folds):
             fold_cond = self.data_df[FOLD_ID] == k
             mix_fold_cond = (self.data_df[FOLD_ID] == k) & (self.data_df[IS_MIXED])
             nonmix_fold_cond = (self.data_df[FOLD_ID] == k) & (~self.data_df[IS_MIXED])
@@ -1927,7 +1838,7 @@ class SRSNVReport:
             if holdout_fold_cond.sum() > holdout_fold_size_thresh:
                 if "total" not in error_on_holdout:  # Checked to supress multiple error messages
                     preds = self.models[k].predict_proba(self.data_df.loc[holdout_fold_cond, all_features])
-                    preds = preds[:, 1] if preds.shape[1] == 2 else preds
+                    preds = preds[:, 1] if preds.shape[1] == 2 else preds  # noqa: PLR2004
                     auc_on_holdout.append(
                         prob_to_phred(
                             self._safe_roc_auc(
@@ -1943,7 +1854,7 @@ class SRSNVReport:
                     auc_on_holdout.append(np.nan)
                 if "mixed" not in error_on_holdout:
                     preds = self.models[k].predict_proba(self.data_df.loc[mix_holdout_fold_cond, all_features])
-                    preds = preds[:, 1] if preds.shape[1] == 2 else preds
+                    preds = preds[:, 1] if preds.shape[1] == 2 else preds  # noqa: PLR2004
                     auc_on_holdout_mixed.append(
                         prob_to_phred(
                             self._safe_roc_auc(
@@ -1959,7 +1870,7 @@ class SRSNVReport:
                     auc_on_holdout_mixed.append(np.nan)
                 if "nonmixed" not in error_on_holdout:
                     preds = self.models[k].predict_proba(self.data_df.loc[nonmix_holdout_fold_cond, all_features])
-                    preds = preds[:, 1] if preds.shape[1] == 2 else preds
+                    preds = preds[:, 1] if preds.shape[1] == 2 else preds  # noqa: PLR2004
                     auc_on_holdout_non_mixed.append(
                         prob_to_phred(
                             self._safe_roc_auc(
@@ -2074,17 +1985,17 @@ class SRSNVReport:
         if data_df_tp[start_tag_col].isna().any() or data_df_tp[end_tag_col].isna().any():
             data_df_tp = data_df_tp.astype({start_tag_col: str, end_tag_col: str})
         ppmseq_category_quality_table = (
-            data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)["qual"].median().unstack()
+            data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)["qual"].median().unstack()  # noqa PD010
         )
         if "END_UNREACHED" in ppmseq_category_quality_table.index:
             ppmseq_category_quality_table = ppmseq_category_quality_table.drop(index="END_UNREACHED")
         ppmseq_category_quantity_table = (
-            data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)["qual"].count().unstack()
+            data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)["qual"].count().unstack()  # noqa PD010
         )
         if "END_UNREACHED" in ppmseq_category_quantity_table.index:
             ppmseq_category_quantity_table = ppmseq_category_quantity_table.drop(index="END_UNREACHED")
         ppmseq_category_quantity_table = (
-            ppmseq_category_quantity_table / ppmseq_category_quantity_table.values.sum()
+            ppmseq_category_quantity_table / ppmseq_category_quantity_table.to_numpy().sum()
         ) * 100
         # Convert index and columns from categorical to string
         ppmseq_category_quality_table.index = ppmseq_category_quality_table.index.astype(str)
@@ -2093,8 +2004,8 @@ class SRSNVReport:
         ppmseq_category_quantity_table.columns = ppmseq_category_quantity_table.columns.astype(str)
 
         # Save to hdf5
-        ppmseq_category_quality_table_for_h5 = ppmseq_category_quality_table.T.unstack(level=0)
-        ppmseq_category_quantity_table_for_h5 = ppmseq_category_quantity_table.T.unstack(level=0)
+        ppmseq_category_quality_table_for_h5 = ppmseq_category_quality_table.T.unstack(level=0)  # noqa PD010
+        ppmseq_category_quantity_table_for_h5 = ppmseq_category_quantity_table.T.unstack(level=0)  # noqa PD010
         ppmseq_category_quality_table_for_h5.to_hdf(
             self.output_h5_filename, key="ppmseq_category_quality_table", mode="a"
         )
@@ -2153,12 +2064,12 @@ class SRSNVReport:
             ax.plot(result["validation_0"]["mlogloss"], c="grey", alpha=0.7, label=label)
             ax.plot(result["validation_1"]["mlogloss"], c="grey", alpha=0.7)
 
-        kfolds_label = f" (mean of {num_folds} folds)" if num_folds >= 2 else ""
+        kfolds_label = f" (mean of {num_folds} folds)" if num_folds >= 2 else ""  # noqa: PLR2004
         ax.plot(np.nanmean(train_logloss, axis=0), label="Train" + kfolds_label)
         ax.plot(np.nanmean(val_logloss, axis=0), label="Val" + kfolds_label)
         # Get handles and labels for the legend
         handles, labels = ax.get_legend_handles_labels()
-        order = [1, 2, 0] if num_folds >= 2 else [0, 1]  # The order in whichthe labels are displayed
+        order = [1, 2, 0] if num_folds >= 2 else [0, 1]  # The order in whichthe labels are displayed  # noqa: PLR2004
         ax.legend([handles[idx] for idx in order], [labels[idx] for idx in order])
 
         ax.set_ylabel("Log Loss")
@@ -2181,7 +2092,7 @@ class SRSNVReport:
         ax.plot(np.nanmean(val_auc, axis=0), label="Val" + kfolds_label)
         # Get handles and labels for the legend
         handles, labels = ax.get_legend_handles_labels()
-        order = [1, 2, 0] if num_folds >= 2 else [0, 1]  # The order in whichthe labels are displayed
+        order = [1, 2, 0] if num_folds >= 2 else [0, 1]  # The order in whichthe labels are displayed  # noqa: PLR2004
         ax.legend([handles[idx] for idx in order], [labels[idx] for idx in order])
         ax.set_ylabel("ROC AUC (phred)")
         ax.set_xlabel("Training step")
@@ -2209,11 +2120,11 @@ class SRSNVReport:
             axis=1,
         ).T.to_hdf(self.output_h5_filename, key="training_progress", mode="a")
 
-    def _X_to_display(self, X_val: pd.DataFrame, cat_features_dict: dict = None):
+    def _X_to_display(self, X_val: pd.DataFrame, cat_features_dict: dict = None):  # noqa: N802, N803
         """Rename categorical feature values as numbers, for SHAP plots."""
         if cat_features_dict is None:
             cat_features_dict = self.params["categorical_features_dict"]
-        X_val_display = X_val.copy()
+        X_val_display = X_val.copy()  # noqa: N806
         for col, cat_vals in cat_features_dict.items():
             X_val_display[col] = X_val_display[col].map({cv: i for i, cv in enumerate(cat_vals)}).astype(int)
 
@@ -2225,18 +2136,18 @@ class SRSNVReport:
             features = self.params["numerical_features"] + self.params["categorical_features_names"]
         if not hasattr(model, "best_ntree_limit"):
             model.best_ntree_limit = model.best_iteration + 1
-        X_val = data_df[features].sample(n=n_sample, random_state=self.rng)
+        X_val = data_df[features].sample(n=n_sample, random_state=self.rng)  # noqa: N806
         y_val = data_df.loc[X_val.index, label_col]
-        X_val_dm = xgb.DMatrix(data=X_val, label=y_val, enable_categorical=True)
+        X_val_dm = xgb.DMatrix(data=X_val, label=y_val, enable_categorical=True)  # noqa: N806
         shap_values = model.get_booster().predict(
             X_val_dm, pred_contribs=True, iteration_range=(0, model.best_ntree_limit)
         )
         return shap_values, X_val, y_val
 
-    def plot_SHAP_feature_importance(
+    def plot_SHAP_feature_importance(  # noqa: N802
         self,
         shap_values: np.ndarray,
-        X_val: pd.DataFrame,
+        X_val: pd.DataFrame,  # noqa: N803
         output_filename: str = None,
         n_features: int = 15,
         xlims=None,
@@ -2245,7 +2156,7 @@ class SRSNVReport:
         set_pyplot_defaults()
 
         fig, ax = plt.subplots(figsize=(20, 10))
-        X_val_plot = self._X_to_display(X_val)
+        X_val_plot = self._X_to_display(X_val)  # noqa: N806
 
         base_values_plot = shap_values[0, 1, -1] - shap_values[0, 0, -1]
         shap_values_plot = shap_values[:, 1, :-1] - shap_values[:, 0, :-1]
@@ -2266,10 +2177,10 @@ class SRSNVReport:
         # ax.grid(visible=False, axis="y")
         self._save_plt(output_filename=output_filename, fig=fig)
 
-    def plot_SHAP_beeswarm(
+    def plot_SHAP_beeswarm(  # noqa: N802
         self,
         shap_values: np.ndarray,
-        X_val: pd.DataFrame,
+        X_val: pd.DataFrame,  # noqa: N803
         output_filename: str = None,
         n_features: int = 10,
         nplot_sample: int = None,
@@ -2281,8 +2192,8 @@ class SRSNVReport:
 
         # Prepare data df
         grouped_features = self._group_categorical_features(self.params["categorical_features_dict"])
-        X_val_plot = self._X_to_display(X_val)
-        X_val_plot = X_val_plot.rename(
+        X_val_plot = self._X_to_display(X_val)  # noqa: N806
+        X_val_plot = X_val_plot.rename(  # noqa: N806
             columns={
                 feature: f"{feature} [{group_idx}]"
                 for group_idx, features in enumerate(grouped_features.values(), start=1)
@@ -2365,7 +2276,7 @@ class SRSNVReport:
             n_cat = len(cat_values)
             cbar_length = total_width  # * (n_cat / max_ncat)
             max_cat_val_length = max(len(f"{val}") for val in cat_values)
-            rotation = 0 if max_cat_val_length <= 5 else 1  # rotate the labels if they are too long
+            rotation = 0 if max_cat_val_length <= 5 else 1  # rotate the labels if they are too long  # noqa: PLR2004
             ha = "center" if rotation == 0 else "right"  # horizontal alignment for rotated labels
 
             group_label = f"[{i + 1}]"
@@ -2415,15 +2326,15 @@ class SRSNVReport:
         # Define model, data
         k = 0  # fold_id
         model = self.models[k]
-        X_val = self.data_df[self.data_df["fold_id"] == k]
+        X_val = self.data_df[self.data_df["fold_id"] == k]  # noqa: N806
         # Get SHAP values
         logger.info("Calculating SHAP values")
-        shap_values, X_val, y_val = self._shap_on_sample(  # pylint: disable=unused-variable
+        shap_values, X_val, y_val = self._shap_on_sample(  # pylint: disable=unused-variable  # noqa: N806
             model, X_val, n_sample=n_sample
         )
         logger.info("Done calculating SHAP values")
         # SHAP feature importance
-        mean_abs_SHAP_scores = pd.Series(
+        mean_abs_SHAP_scores = pd.Series(  # noqa: N806
             np.abs(shap_values[:, 1, :-1] - shap_values[:, 0, :-1]).mean(axis=0), index=X_val.columns
         ).sort_values(ascending=False)
         mean_abs_SHAP_scores.to_hdf(self.output_h5_filename, key="mean_abs_SHAP_scores", mode="a")
@@ -2455,7 +2366,8 @@ class SRSNVReport:
         has the opposite SNV in position i+96.
         E.g., in position 0 we have A[A>C]A and in posiiton 96 we have A[C>A]A
         """
-        assert order in {"symmetric", "reverse"}, f'order must be either "symmetric" or "reverse". Got {order}'
+        if order not in {"symmetric", "reverse"}:
+            raise ValueError(f'order must be either "symmetric" or "reverse". Got {order}')
         if order == "symmetric":
             trinuc_ref_alt = [
                 c1 + r + c2 + a
@@ -2489,7 +2401,7 @@ class SRSNVReport:
         return trinuc_ref_alt, trinuc_index, snv_labels
 
     @exception_handler
-    def calc_and_plot_trinuc_plot(
+    def calc_and_plot_trinuc_plot(  # noqa: PLR0915 #TODO: refactor
         self,
         output_filename: str = None,
         order: str = "symmetric",
@@ -2508,7 +2420,7 @@ class SRSNVReport:
             .mean()
             .astype(bool)
             .loc[trinuc_symmetric_ref_alt]
-            .values
+            .to_numpy()
         )
 
         # Configurable boolean column name
@@ -2598,7 +2510,7 @@ class SRSNVReport:
             )
             x_tick_labels = symmetric_index[inds]
             ax_is_cycle_skip = trinuc_is_cycle_skip[inds]
-            for j, label in enumerate(x_tick_labels):
+            for j in range(len(x_tick_labels)):
                 ax.get_xticklabels()[j].set_color("green" if ax_is_cycle_skip[j] else "red")
             ax.set_xticks(x_values)
             ax.set_xticklabels(x_tick_labels, rotation=90, fontsize=xticks_fontsize)
@@ -2624,8 +2536,8 @@ class SRSNVReport:
 
             # Second Plot (Median Qual) on the secondary y-axis
             ylims_qual = [
-                0 * np.nanmin([plot_df_true_qual.values.min(), plot_df_false_qual.values.min()]),
-                1.05 * np.nanmax([plot_df_true_qual.values.max(), plot_df_false_qual.values.max()]),
+                0 * np.nanmin([plot_df_true_qual.to_numpy().min(), plot_df_false_qual.to_numpy().min()]),
+                1.05 * np.nanmax([plot_df_true_qual.to_numpy().max(), plot_df_false_qual.to_numpy().max()]),
             ]
             (line_false,) = ax2.step(
                 x_values_ext,
@@ -2791,7 +2703,7 @@ class SRSNVReport:
     ):
         """Plot histogram and quality stats for a numerical feature."""
         logger.info(f"Plotting quality and histogram for feature {col}")
-        is_discrete = (self.data_df[col] - np.round(self.data_df[col])).abs().max() < 0.05
+        is_discrete = (self.data_df[col] - np.round(self.data_df[col])).abs().max() < 0.05  # noqa: PLR2004
         if is_discrete:
             bin_edges = None
         else:
@@ -3006,11 +2918,11 @@ class SRSNVReport:
         logger.info("Creating report")
         # Get filenames for plots
         [
-            output_LoD_plot,
+            output_LoD_plot,  # noqa: N806
             qual_vs_ppmseq_tags_table,
             training_progerss_plot,
-            SHAP_importance_plot,
-            SHAP_beeswarm_plot,
+            SHAP_importance_plot,  # noqa: N806
+            SHAP_beeswarm_plot,  # noqa: N806
             trinuc_stats_plot,
             output_qual_per_feature,
             qual_histogram,
@@ -3052,13 +2964,13 @@ class SRSNVReport:
         # TODO: Update the following to new conform with new report logic
         if self.params["fp_regions_bed_file"] is not None:
             logger.info("Calculating LoD statistics")
-            min_LoD_filter = calculate_lod_stats(
+            min_LoD_filter = calculate_lod_stats(  # noqa: N806
                 df_mrd_simulation=self.df_mrd_simulation,
                 output_h5=self.statistics_h5_file,
                 lod_column=self.c_lod,
             )
             logger.info("Creating SNVQ-recall-LoD plot")
-            self.df_mrd_simulation.unstack().to_hdf(self.output_h5_filename, key="SNV_recall_LoD", mode="a")
+            self.df_mrd_simulation.unstack().to_hdf(self.output_h5_filename, key="SNV_recall_LoD", mode="a")  # noqa PD010
             plot_LoD(
                 self.df_mrd_simulation,
                 self.lod_label,
@@ -3213,7 +3125,7 @@ def plot_precision_recall(lists, labels, max_score, log_scale=False, font_size=1
             plt.yscale("log")
 
 
-def plot_LoD_vs_qual(
+def plot_LoD_vs_qual(  # noqa: N802
     df_mrd_sim: pd.DataFrame,
     c_lod: str,
     title: str = "",

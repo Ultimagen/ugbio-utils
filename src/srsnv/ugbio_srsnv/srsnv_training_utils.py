@@ -1,11 +1,11 @@
 import json
 import os
 import re
-import subprocess
 from collections import defaultdict
 from datetime import datetime
-from os.path import basename, isfile
+from os.path import basename
 from os.path import join as pjoin
+from pathlib import Path
 from typing import Any
 
 import joblib
@@ -26,7 +26,11 @@ from ugbio_featuremap.featuremap_utils import (
     filter_featuremap_with_bcftools_view,
 )
 
-from ugbio_srsnv.srsnv_plotting_utils import SRSNVReport, default_LoD_filters, retention_noise_and_mrd_lod_simulation
+from ugbio_srsnv.srsnv_plotting_utils import (
+    SRSNVReport,
+    default_LoD_filters,
+    retention_noise_and_mrd_lod_simulation,
+)
 
 ML_QUAL = "ML_QUAL"
 FOLD_ID = "fold_id"
@@ -102,7 +106,8 @@ def get_chrom_sizes(reference_dict: str):
         - chrom_sizes [dict]: dictionary of chr, length pairs, where chr is the contig name (e.g, 'chr1')
                               and length is its length.
     """
-    assert isfile(reference_dict), f"reference_dict {reference_dict} not found"
+    if not Path(reference_dict).is_file():
+        raise FileNotFoundError(f"reference_dict {reference_dict} not found")
 
     chrom_sizes = {}
     with open(reference_dict, encoding="utf-8") as file:
@@ -127,7 +132,8 @@ def get_intervals(tp_regions_bed_file: str):
         - intervals [list]: a list of (unique) chromosome names in the bed file. If
           tp_regions_bed_file is None, return the default value: ['chr1', ..., 'chr22']
     """
-    assert isfile(tp_regions_bed_file), f"tp_regions_bed_file {tp_regions_bed_file} not found"
+    if not Path(tp_regions_bed_file).is_file():
+        raise FileNotFoundError(f"tp_regions_bed_file {tp_regions_bed_file} not found")
     bed_df = pd.read_csv(tp_regions_bed_file, sep="\t", header=None)
     return list(bed_df[0].unique())
 
@@ -145,7 +151,7 @@ def set_categorical_columns(df: pd.DataFrame, cat_dict: dict[str, list]):
             ...
         }
     """
-    df = df.copy()
+    df = df.copy()  # noqa: PD901
     for col in cat_dict.keys():
         df[col] = df[col].astype(CategoricalDtype(cat_dict[col], ordered=False))
         df[col] = df[col].cat.set_categories(cat_dict[col], ordered=False)
@@ -176,7 +182,8 @@ def partition_into_folds(series_of_sizes, k_folds, alg="greedy", n_test=0):
         - indices_to_folds [dict]: a dictionary that maps indices to the corresponding
             fold numbers.
     """
-    assert alg == "greedy", "Only greedy algorithm implemented at this time"
+    if alg != "greedy":
+        raise ValueError("Only greedy algorithm implemented at this time")
     series_of_sizes = series_of_sizes.sort_values(ascending=False)
     series_of_sizes = series_of_sizes.iloc[: series_of_sizes.shape[0] - n_test]  # Removing the n_test smallest sizes
     partitions = [[] for _ in range(k_folds)]  # an empty partition
@@ -298,16 +305,16 @@ def get_quality_interpolation_function(mrd_simulation_dataframe: str = None):
     if not mrd_simulation_dataframe:
         return None
     # read data, filter for ML_QUAL filters only
-    df = pd.read_parquet(mrd_simulation_dataframe)
-    df.index = df.index.str.upper()
-    df = df[df.index.str.startswith(ML_QUAL)]
-    df.loc[:, ML_QUAL] = df.index.str.replace(ML_QUAL + "_", "").astype(float)
+    mrd_df = pd.read_parquet(mrd_simulation_dataframe)
+    mrd_df.index = mrd_df.index.str.upper()
+    mrd_df = mrd_df[mrd_df.index.str.startswith(ML_QUAL)]
+    mrd_df.loc[:, ML_QUAL] = mrd_df.index.str.replace(ML_QUAL + "_", "").astype(float)
     # Calculate Phred scores matching the residual SNV rate
-    df = df[df["residual_snv_rate"] > 0]  # Estimate using only residual SNV rates > 0 to avoid QUAL=Inf
-    phred_residual_snv_rate = -10 * np.log10(df["residual_snv_rate"])
+    mrd_df = mrd_df[mrd_df["residual_snv_rate"] > 0]  # Estimate using only residual SNV rates > 0 to avoid QUAL=Inf
+    phred_residual_snv_rate = -10 * np.log10(mrd_df["residual_snv_rate"])
     # Create interpolation function
     quality_interpolation_function = interp1d(
-        df[ML_QUAL] + 1e-10,  # add a small number so ML_QUAL=0 is outside the interpolation range
+        mrd_df[ML_QUAL] + 1e-10,  # add a small number so ML_QUAL=0 is outside the interpolation range
         phred_residual_snv_rate,
         kind="linear",
         bounds_error=False,
@@ -319,10 +326,8 @@ def get_quality_interpolation_function(mrd_simulation_dataframe: str = None):
     return quality_interpolation_function
 
 
-# pylint:disable=too-many-arguments
-# pylint:disable=too-many-branches
-# pylint:disable=too-many-statements
-def prepare_featuremap_for_model(
+# TODO: `prepare_featuremap_for_model` is too complex and should be refactored
+def prepare_featuremap_for_model(  # noqa: C901, PLR0912, PLR0913, PLR0915
     workdir: str,
     input_featuremap_vcf: str,
     train_set_size: int,
@@ -395,20 +400,26 @@ def prepare_featuremap_for_model(
 
     # check inputs and define paths
     os.makedirs(workdir, exist_ok=True)
-    assert isfile(input_featuremap_vcf), f"input_featuremap_vcf {input_featuremap_vcf} not found"
-    assert input_featuremap_vcf.endswith(FileExtension.VCF_GZ.value)
-    assert train_set_size > 0, f"training_set_size must be > 0, got {train_set_size}"
+    if not Path(input_featuremap_vcf).is_file():
+        raise ValueError(f"input_featuremap_vcf {input_featuremap_vcf} not found")
+    if not input_featuremap_vcf.endswith(FileExtension.VCF_GZ.value):
+        raise ValueError(f"input_featuremap_vcf {input_featuremap_vcf} must end with {FileExtension.VCF_GZ.value}")
+    if train_set_size <= 0:
+        raise ValueError(f"training_set_size must be > 0, got {train_set_size}")
     if k_folds == 1:
-        assert test_set_size > 0, f"test_set_size must be > 0, got {test_set_size}"
+        if test_set_size <= 0:
+            raise ValueError(f"test_set_size must be > 0, got {test_set_size}")
     if not read_effective_coverage_from_sorter_json_kwargs:
         read_effective_coverage_from_sorter_json_kwargs = {}
     # make sure X_READ_COUNT is in the INFO fields in the header
     do_motif_balancing_in_tp = balanced_sampling_info_fields is not None
     with pysam.VariantFile(input_featuremap_vcf) as fmap:
-        assert FeatureMapFields.READ_COUNT.value in fmap.header.info
+        if FeatureMapFields.READ_COUNT.value not in fmap.header.info:
+            raise ValueError(f"{FeatureMapFields.READ_COUNT.value} not found in header info")
         if do_motif_balancing_in_tp:
             for info_field in balanced_sampling_info_fields:
-                assert info_field in fmap.header.info, f"INFO field {info_field} not found in header"
+                if info_field not in fmap.header.info:
+                    raise ValueError(f"INFO field {info_field} not found in header")
     intersect_featuremap_vcf = pjoin(
         workdir,
         basename(input_featuremap_vcf).replace(FileExtension.VCF_GZ.value, ".intersect.vcf.gz"),
@@ -421,10 +432,10 @@ def prepare_featuremap_for_model(
         workdir,
         basename(intersect_featuremap_vcf).replace(FileExtension.VCF_GZ.value, ".test.downsampled.vcf.gz"),
     )
-    assert not (isfile(intersect_featuremap_vcf)), f"intersect_featuremap_vcf {intersect_featuremap_vcf} already exists"
-    assert not (
-        isfile(downsampled_training_featuremap_vcf)
-    ), f"sample_featuremap_vcf_sorted {downsampled_training_featuremap_vcf} already exists"
+    if Path(intersect_featuremap_vcf).is_file():
+        raise FileExistsError(f"intersect_featuremap_vcf {intersect_featuremap_vcf} already exists")
+    if Path(downsampled_training_featuremap_vcf).is_file():
+        raise FileExistsError(f"sample_featuremap_vcf_sorted {downsampled_training_featuremap_vcf} already exists")
 
     logger.info(f"Running prepare_featuremap_for_model for input_featuremap_vcf={input_featuremap_vcf}")
 
@@ -526,7 +537,7 @@ def prepare_featuremap_for_model(
                 pysam.VariantFile(downsampled_training_featuremap_vcf, "w", header=header_train) as vcf_out_train,
                 pysam.VariantFile(downsampled_test_featuremap_vcf, "w", header=header_train) as vcf_out_test,
             ):
-                for j, rec in enumerate(vcf_in.fetch()):
+                for rec in vcf_in.fetch():
                     if (
                         rng.uniform()
                         < downsampling_rate[
@@ -578,19 +589,17 @@ def prepare_featuremap_for_model(
     # create tabix index
     pysam.tabix_index(downsampled_training_featuremap_vcf, preset="vcf", force=True)
     pysam.tabix_index(downsampled_test_featuremap_vcf, preset="vcf", force=True)
-    assert isfile(downsampled_training_featuremap_vcf), f"failed to create {downsampled_training_featuremap_vcf}"
-    assert isfile(
-        downsampled_training_featuremap_vcf + ".tbi"
-    ), f"failed to create {downsampled_training_featuremap_vcf}.tbi"
-    assert isfile(downsampled_test_featuremap_vcf), f"failed to create {downsampled_test_featuremap_vcf}"
-    assert isfile(downsampled_test_featuremap_vcf + ".tbi"), f"failed to create {downsampled_test_featuremap_vcf}.tbi"
+    _check_file_and_index(downsampled_training_featuremap_vcf)
+    _check_file_and_index(downsampled_test_featuremap_vcf)
 
     # remove temp files
     if not keep_temp_file:
-        if isfile(intersect_featuremap_vcf):
-            os.remove(intersect_featuremap_vcf)
-        if isfile(intersect_featuremap_vcf + ".tbi"):
-            os.remove(intersect_featuremap_vcf + ".tbi")
+        intersect_featuremap_vcf_path = Path(intersect_featuremap_vcf)
+        if intersect_featuremap_vcf_path.is_file():
+            intersect_featuremap_vcf_path.unlink()
+        intersect_featuremap_vcf_index_path = Path(str(intersect_featuremap_vcf) + ".tbi")
+        if intersect_featuremap_vcf_index_path.is_file():
+            intersect_featuremap_vcf_index_path.unlink()
 
     logger.info(
         f"Finished prepare_featuremap_for_model, outputting: "
@@ -607,12 +616,20 @@ def prepare_featuremap_for_model(
     )
 
 
+def _check_file_and_index(file_path: str):
+    file_path = Path(file_path)
+    if not file_path.is_file():
+        raise FileNotFoundError(f"failed to create {file_path}")
+    if not Path(str(file_path) + ".tbi").is_file():
+        raise FileNotFoundError(f"failed to create {file_path}.tbi")
+
+
 class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
     MIN_TEST_SIZE = 10000
     MIN_TRAIN_SIZE = 100000
 
     # pylint:disable=too-many-arguments
-    def __init__(
+    def __init__(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: `__init__` is too complex
         self,
         out_path: str,
         out_basename: str,
@@ -635,7 +652,7 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
         classifier_class=xgb.XGBClassifier,
         balanced_sampling_info_fields: list[str] = None,
         lod_filters: str = None,
-        ppmSeq_adapter_version: str = None,
+        ppmseq_adapter_version: str = None,
         start_tag_col: str = None,
         end_tag_col: str = None,
         pipeline_version: str = None,
@@ -702,14 +719,14 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
             Recommended in order to avoid the motif distribution of germline variants being learned (data leak)
         lod_filters : str, optional
             json file with a dict of format 'filter name':'query' for LoD simulation, by default None
-        ppmSeq_adapter_version : str, optional
+        ppmseq_adapter_version : str, optional
             adapter version, indicates if input featuremap is from balanced ePCR data, by default None
         start_tag_col : str, optional
             column name for ppmSeq start tag, by default None. If None, value is inferred
-            from ppmSeq_adapter_version, featuremap, and categorical features
+            from ppmseq_adapter_version, featuremap, and categorical features
         end_tag_col : str, optional
             column name for ppmSeq end tag, by default None. If None, value is inferred
-            from ppmSeq_adapter_version, featuremap, and categorical features
+            from ppmseq_adapter_version, featuremap, and categorical features
         pipeline_version : str, optional
             pipeline version, by default None
         docker_image : str, optional
@@ -737,22 +754,28 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
         numerical_features = numerical_features or default_numerical_features
 
         # save input data file paths
-        assert isfile(tp_featuremap), f"tp_featuremap {tp_featuremap} not found"
+        if not Path(tp_featuremap).is_file():
+            raise FileNotFoundError(f"tp_featuremap {tp_featuremap} not found")
         self.hom_snv_featuremap = tp_featuremap
-        assert isfile(fp_featuremap), f"fp_featuremap {fp_featuremap} not found"
+        if not Path(fp_featuremap).is_file():
+            raise FileNotFoundError(f"fp_featuremap {fp_featuremap} not found")
         self.single_substitution_featuremap = fp_featuremap
         if tp_regions_bed_file:
-            assert isfile(tp_regions_bed_file), f"tp_regions_bed_file {tp_regions_bed_file} not found"
+            if not Path(tp_regions_bed_file).ia_file():
+                raise FileNotFoundError(f"tp_regions_bed_file {tp_regions_bed_file} not found")
         self.tp_regions_bed_file = tp_regions_bed_file
         if fp_regions_bed_file:
-            assert isfile(fp_regions_bed_file), f"fp_regions_bed_file {fp_regions_bed_file} not found"
+            if not Path(fp_regions_bed_file).is_file():
+                raise FileNotFoundError(f"fp_regions_bed_file {fp_regions_bed_file} not found")
         self.fp_regions_bed_file = fp_regions_bed_file
         if sorter_json_stats_file:
-            assert isfile(sorter_json_stats_file), f"sorter_json_stats_file {sorter_json_stats_file} not found"
+            if not Path(sorter_json_stats_file).is_file():
+                raise FileNotFoundError(f"sorter_json_stats_file {sorter_json_stats_file} not found")
         self.sorter_json_stats_file = sorter_json_stats_file
 
         # Check whether using cross validation:
-        assert k_folds > 0, f"k_folds should be > 0, got {k_folds=}"
+        if k_folds <= 0:
+            raise ValueError(f"k_folds should be > 0, got {k_folds=}")
         if k_folds == 1:
             self.use_CV = False
         else:
@@ -795,7 +818,7 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
             self.num_chroms_for_test = None
 
         # determine output paths
-        os.makedirs(out_path, exist_ok=True)
+        Path(out_path).mkdir(parents=True, exist_ok=True)
         if len(out_basename) > 0 and not out_basename.endswith("."):
             out_basename += "."
         self.out_path = out_path
@@ -816,11 +839,10 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
         self.load_dataset_and_model = load_dataset_and_model
 
         # set up classifier
-        assert sklearn.base.is_classifier(
-            classifier_class()
-        ), "classifier_class must be a classifier - sklearn.base.is_classifier() must return True"
+        if not sklearn.base.is_classifier(classifier_class()):
+            raise ValueError("classifier_class must be a classifier - sklearn.base.is_classifier() must return True")
         self.classifier_type = type(classifier_class).__name__
-        if isinstance(model_params, str) and isfile(model_params) and model_params.endswith(".json"):
+        if isinstance(model_params, str) and Path(model_params).is_file() and model_params.endswith(".json"):
             with open(model_params, encoding="utf-8") as f:
                 model_params = json.load(f)
         elif model_params is None:
@@ -845,7 +867,7 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
         self.raise_exceptions_in_report = raise_exceptions_in_report
 
         # misc
-        if isinstance(lod_filters, str) and isfile(lod_filters) and lod_filters.endswith(".json"):
+        if isinstance(lod_filters, str) and Path(lod_filters).is_file() and lod_filters.endswith(".json"):
             with open(lod_filters, encoding="utf-8") as f:
                 self.lod_filters = json.load(f)
         elif lod_filters is None:
@@ -857,7 +879,7 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
         self.normalization_factors_dict = None
 
         self.flow_order = flow_order
-        self.ppmSeq_adapter_version = ppmSeq_adapter_version
+        self.ppmseq_adapter_version = ppmseq_adapter_version
         self.start_tag_col = start_tag_col
         self.end_tag_col = end_tag_col
         self.pipeline_version = pipeline_version
@@ -919,7 +941,7 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
             "tp_test_set_size": self.tp_test_set_size,
             "tp_train_set_size": self.tp_train_set_size,
             "lod_filters": self.lod_filters,
-            "adapter_version": self.ppmSeq_adapter_version,
+            "adapter_version": self.ppmseq_adapter_version,
             "start_tag_col": self.start_tag_col,
             "end_tag_col": self.end_tag_col,
             "pipeline_version": self.pipeline_version,
@@ -966,60 +988,101 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
         - If they can be unambiguously inferred from the featuremap, use this value.
           If the are absent, set them to None.
         - If both versions are in the featuremap, use the one from the categorical features dict.
-        - If categorical features dict does not disambiguate, use the ppmSeq_adapter_version.
+        - If categorical features dict does not disambiguate, use the ppmseq_adapter_version.
         Raise warnings if any of the values above are inconsistent.
         """
-        ppmSeq_adapter_version = self.ppmSeq_adapter_version
-        strand_ratio_in_featuremap = (
-            "strand_ratio_category_end" in self.featuremap_df and "strand_ratio_category_start" in self.featuremap_df
+        # TODO: check this huge change
+        self._initialize_tag_columns()
+        self._infer_tag_columns()
+        self._log_final_tag_columns()
+
+    def _initialize_tag_columns(self):
+        """Initialize tag columns based on adapter version."""
+        if self.ppmseq_adapter_version == "v1":
+            self.tag_cols_from_adapter = ["st", "et"]
+        elif self.ppmseq_adapter_version == "legacy_v5":
+            self.tag_cols_from_adapter = ["strand_ratio_category_start", "strand_ratio_category_end"]
+        else:
+            self.tag_cols_from_adapter = [None, None]
+
+    def _infer_tag_columns(self):
+        """Infer tag columns based on featuremap and categorical features."""
+        if self.start_tag_col is None and self.end_tag_col is None:
+            if self._both_tags_in_featuremap():
+                self._handle_both_tags_in_featuremap()
+            elif self._strand_ratio_in_featuremap():
+                self._set_strand_ratio_tags()
+            elif self._cram_tags_in_featuremap():
+                self._set_cram_tags()
+            else:
+                self.start_tag_col = None
+                self.end_tag_col = None
+
+    def _both_tags_in_featuremap(self):
+        return (
+            "strand_ratio_category_end" in self.featuremap_df
+            and "strand_ratio_category_start" in self.featuremap_df
+            and "st" in self.featuremap_df
+            and "et" in self.featuremap_df
         )
-        strand_ratio_in_categorical = (
+
+    def _strand_ratio_in_featuremap(self):
+        return "strand_ratio_category_end" in self.featuremap_df and "strand_ratio_category_start" in self.featuremap_df
+
+    def _cram_tags_in_featuremap(self):
+        return "st" in self.featuremap_df and "et" in self.featuremap_df
+
+    def _handle_both_tags_in_featuremap(self):
+        logger.warning("featuremap_df contains both legacy_v5 and v1 ppmSeq tags")
+        if self._both_tags_in_categorical() or self._neither_tags_in_categorical():
+            self.start_tag_col, self.end_tag_col = self.tag_cols_from_adapter
+            logger.info(f"Using {self.tag_cols_from_adapter=} (inferred from {self.ppmseq_adapter_version=})")
+        elif self._strand_ratio_in_categorical():
+            self._set_strand_ratio_tags()
+        elif self._cram_tags_in_categorical():
+            self._set_cram_tags()
+
+    def _both_tags_in_categorical(self):
+        return (
+            "strand_ratio_category_end" in self.categorical_features_names
+            and "strand_ratio_category_start" in self.categorical_features_names
+            and "st" in self.categorical_features_names
+            and "et" in self.categorical_features_names
+        )
+
+    def _neither_tags_in_categorical(self):
+        return (
+            "strand_ratio_category_end" not in self.categorical_features_names
+            and "strand_ratio_category_start" not in self.categorical_features_names
+            and "st" not in self.categorical_features_names
+            and "et" not in self.categorical_features_names
+        )
+
+    def _strand_ratio_in_categorical(self):
+        return (
             "strand_ratio_category_end" in self.categorical_features_names
             and "strand_ratio_category_start" in self.categorical_features_names
         )
-        cram_tags_in_featuremap = "st" in self.featuremap_df and "et" in self.featuremap_df
-        cram_tags_in_categorical = "st" in self.categorical_features_names and "et" in self.categorical_features_names
-        if cram_tags_in_categorical and strand_ratio_in_categorical:
-            logger.warning("categorical_features_dict contains both legacy_v5 and v1 ppmSeq tags")
-        if self.ppmSeq_adapter_version == "v1":
-            tag_cols_from_adapter = ["st", "et"]
-        elif self.ppmSeq_adapter_version == "legacy_v5":
-            tag_cols_from_adapter = ["strand_ratio_category_start", "strand_ratio_category_end"]
-        else:
-            tag_cols_from_adapter = [None, None]
 
-        if self.start_tag_col is None and self.end_tag_col is None:
-            if strand_ratio_in_featuremap and cram_tags_in_featuremap:
-                logger.warning("featuremap_df contains both legacy_v5 and v1 ppmSeq tags")
-                # Both versions in featuremap, need to check further
-                if (strand_ratio_in_categorical and cram_tags_in_categorical) or (
-                    not strand_ratio_in_categorical and not cram_tags_in_categorical
-                ):
-                    # Categorical features do not disambiguate, use ppmSeq_adapter_version
-                    self.start_tag_col, self.end_tag_col = tag_cols_from_adapter
-                    logger.info(f"Using {tag_cols_from_adapter=} (inferred from {ppmSeq_adapter_version=})")
-                elif strand_ratio_in_categorical:
-                    self.start_tag_col = "strand_ratio_category_start"
-                    self.end_tag_col = "strand_ratio_category_end"
-                elif cram_tags_in_categorical:
-                    self.start_tag_col = "st"
-                    self.end_tag_col = "et"
-            elif strand_ratio_in_featuremap:
-                self.start_tag_col = "strand_ratio_category_start"
-                self.end_tag_col = "strand_ratio_category_end"
-                if not strand_ratio_in_categorical:
-                    logger.warning("ppmSeq tags not in categorica_features_dict")
-            elif cram_tags_in_featuremap:
-                self.start_tag_col = "st"
-                self.end_tag_col = "et"
-                if not cram_tags_in_categorical:
-                    logger.warning("ppmSeq tags not in categorica_features_dict")
-            else:  # No ppmSeq tags in featuremap
-                self.start_tag_col = None
-                self.end_tag_col = None
+    def _cram_tags_in_categorical(self):
+        return "st" in self.categorical_features_names and "et" in self.categorical_features_names
+
+    def _set_strand_ratio_tags(self):
+        self.start_tag_col = "strand_ratio_category_start"
+        self.end_tag_col = "strand_ratio_category_end"
+        if not self._strand_ratio_in_categorical():
+            logger.warning("ppmSeq tags not in categorical_features_dict")
+
+    def _set_cram_tags(self):
+        self.start_tag_col = "st"
+        self.end_tag_col = "et"
+        if not self._cram_tags_in_categorical():
+            logger.warning("ppmSeq tags not in categorical_features_dict")
+
+    def _log_final_tag_columns(self):
         logger.info(f"Using [start_tag, end_tag] = {[self.start_tag_col, self.end_tag_col]}")
-        if self.start_tag_col != tag_cols_from_adapter[0] or self.end_tag_col != tag_cols_from_adapter[1]:
-            logger.warning(f"ppmSeq tags are not consistent with respect to {tag_cols_from_adapter=}")
+        if self.start_tag_col != self.tag_cols_from_adapter[0] or self.end_tag_col != self.tag_cols_from_adapter[1]:
+            logger.warning(f"ppmSeq tags are not consistent with respect to {self.tag_cols_from_adapter=}")
 
     def add_is_mixed_to_featuremap_df(self):
         """Add is_mixed column to self.featuremap_df"""
@@ -1035,7 +1098,7 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
             self.featuremap_df["is_mixed"] = False
             logger.warning("No ppmSeq tags in data, setting is_mixed to False")
 
-    def calc_qual_and_mrd_simulation(self, ML_qual_col: str = "ML_qual_1_test"):
+    def calc_qual_and_mrd_simulation(self, ml_qual_col: str = "ML_qual_1_test"):
         """Calibrate ML_qual to qual, get the interpolating function,
         then run MRD simulation."""
         # Set up LoD simulation params. TODO: Make params configurable
@@ -1050,20 +1113,20 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
 
         # LoD Filters
         lod_basic_filters = self.lod_filters or default_LoD_filters
-        max_score = int(np.ceil(self.featuremap_df[ML_qual_col].max()))
-        ML_qual_col_other = re.sub(
-            r"_(0|1)_", lambda m: f"_{1 - int(m.group(1))}_", ML_qual_col
+        max_score = int(np.ceil(self.featuremap_df[ml_qual_col].max()))
+        ml_qual_col_other = re.sub(
+            r"_(0|1)_", lambda m: f"_{1 - int(m.group(1))}_", ml_qual_col
         )  # Replace 0 with 1 and vice versa
-        if ML_qual_col_other in self.featuremap_df.columns:
-            max_score_other = int(np.ceil(self.featuremap_df[ML_qual_col_other].max()))
+        if ml_qual_col_other in self.featuremap_df.columns:
+            max_score_other = int(np.ceil(self.featuremap_df[ml_qual_col_other].max()))
             max_score = max(max_score, max_score_other)  # Adapted from older report cod, not sure why this is needed
-        ML_filters = {f"ML_qual_{q}": f"{ML_qual_col} >= {q}" for q in range(max_score + 1)}
-        mixed_ML_filters = {f"mixed_ML_qual_{q}": f"{IS_MIXED} and {ML_qual_col} >= {q}" for q in range(max_score + 1)}
+        ml_filters = {f"ML_qual_{q}": f"{ml_qual_col} >= {q}" for q in range(max_score + 1)}
+        mixed_ml_filters = {f"mixed_ML_qual_{q}": f"{IS_MIXED} and {ml_qual_col} >= {q}" for q in range(max_score + 1)}
 
         self.lod_filters = {
             **lod_basic_filters,
-            **ML_filters,
-            **mixed_ML_filters,
+            **ml_filters,
+            **mixed_ml_filters,
         }
 
         if self.fp_regions_bed_file is not None:
@@ -1103,16 +1166,17 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
             return_train=return_train,
         )
         datasets = ["test", "train"] if return_train else ["test"]
+        threshold = 0.5
         for dataset in datasets:
             self.featuremap_df[f"ML_prob_1_{dataset}"] = all_predictions[dataset]
             self.featuremap_df[f"ML_prob_0_{dataset}"] = 1 - self.featuremap_df[f"ML_prob_1_{dataset}"]
             self.featuremap_df[f"ML_qual_1_{dataset}"] = prob_to_phred(self.featuremap_df[f"ML_prob_1_{dataset}"])
             self.featuremap_df[f"ML_qual_0_{dataset}"] = prob_to_phred(self.featuremap_df[f"ML_prob_0_{dataset}"])
             self.featuremap_df[f"ML_prediction_1_{dataset}"] = (
-                self.featuremap_df[f"ML_prob_1_{dataset}"] > 0.5
+                self.featuremap_df[f"ML_prob_1_{dataset}"] > threshold
             ).astype(int)
             self.featuremap_df[f"ML_prediction_0_{dataset}"] = (
-                self.featuremap_df[f"ML_prob_0_{dataset}"] > 0.5
+                self.featuremap_df[f"ML_prob_0_{dataset}"] > threshold
             ).astype(int)
 
     def create_report(self):
@@ -1127,7 +1191,7 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
             c_lod=self.c_lod,
             # min_LoD_filter=min_LoD_filter,
             df_mrd_simulation=self.df_mrd_simulation,
-            ML_qual_to_qual_fn=self.quality_interpolation_function,
+            ml_qual_to_qual_fn=self.quality_interpolation_function,
             statistics_h5_file=self.test_statistics_h5_file,
             statistics_json_file=self.test_statistics_json_file,
             rng=self.rng,
@@ -1197,7 +1261,7 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
                 self.featuremap_df[FOLD_ID] = self.featuremap_df["chrom"].map(self.chroms_to_folds).astype("Int64")
             else:
                 # rng = np.random.default_rng(seed=14)
-                N_train = self.featuremap_df.shape[0]
+                N_train = self.featuremap_df.shape[0]  # noqa: N806
                 self.featuremap_df[FOLD_ID] = self.rng.permutation(N_train) % self.k_folds
             self.featuremap_df["label"] = (
                 pd.concat(
@@ -1220,26 +1284,18 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
             )
             test_featuremap_df[FOLD_ID] = 0
             self.featuremap_df = pd.concat((self.featuremap_df, test_featuremap_df), ignore_index=True)
-            self.featuremap_df["label"] = (
-                pd.concat(
-                    [
-                        pd.Series(np.ones(df_tp_train.shape[0])),
-                        pd.Series(np.zeros(df_fp_train.shape[0])),
-                        pd.Series(np.ones(df_tp_test.shape[0])),
-                        pd.Series(np.zeros(df_fp_test.shape[0])),
-                    ],
-                    ignore_index=True,
-                ).astype(bool)
-                # .to_frame(name="label") # TODO: Remove this line
-            )
+            self.featuremap_df["label"] = pd.concat(
+                [
+                    pd.Series(np.ones(df_tp_train.shape[0])),
+                    pd.Series(np.zeros(df_fp_train.shape[0])),
+                    pd.Series(np.ones(df_tp_test.shape[0])),
+                    pd.Series(np.zeros(df_fp_test.shape[0])),
+                ],
+                ignore_index=True,
+            ).astype(bool)
 
     def process(self):
         if self.load_dataset_and_model:
-            # Check that that environment is set up correctly
-            logger.info("Verifying papermill in environment")
-            subprocess.run(
-                "papermill --version", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True
-            )
             # load data and model
             model_data = joblib.load(self.model_joblib_save_path)
             self.classifiers = model_data["models"]
@@ -1273,9 +1329,9 @@ class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
                     ~self.featuremap_df[FOLD_ID].isna(),  # Reads that are not in any fold.
                 )
                 val_cond = self.featuremap_df[FOLD_ID] == k  # Reads that are in current test fold
-                X_train = self.featuremap_df.loc[train_cond, self.columns] # noqa: N806
+                X_train = self.featuremap_df.loc[train_cond, self.columns]  # noqa: N806
                 y_train = self.featuremap_df.loc[train_cond, ["label"]]
-                X_val = self.featuremap_df.loc[val_cond, self.columns] # noqa: N806
+                X_val = self.featuremap_df.loc[val_cond, self.columns]  # noqa: N806
                 y_val = self.featuremap_df.loc[val_cond, ["label"]]
                 # fit classifier of k'th fold
                 eval_set = [(X_train, y_train), (X_val, y_val)]

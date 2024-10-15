@@ -79,7 +79,7 @@ def test_create_report(tmpdir, resources_dir):
             self.categorical_features_names = params["categorical_features_names"]
             self.columns = self.numerical_features + self.categorical_features_names
 
-            self.ppmSeq_adapter_version = params["adapter_version"]
+            self.ppmseq_adapter_version = params["adapter_version"]
             self.start_tag_col = params["start_tag_col"]
             self.end_tag_col = params["end_tag_col"]
             # self.pipeline_version = params['pipeline_version']
@@ -115,7 +115,7 @@ def test_create_report(tmpdir, resources_dir):
         lod_label=lod_label,  # self.lod_label,
         c_lod=c_lod,  # self.c_lod,
         df_mrd_simulation=df_mrd_simulation,  # self.df_mrd_simulation,
-        ML_qual_to_qual_fn=model_joblib["quality_interpolation_function"],  # self.quality_interpolation_function,
+        ml_qual_to_qual_fn=model_joblib["quality_interpolation_function"],  # self.quality_interpolation_function,
         statistics_h5_file=statistics_h5_file,
         statistics_json_file=statistics_json_file,
         rng=None,  # self.rng,

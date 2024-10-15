@@ -303,7 +303,8 @@ def read_dataset_params(args):
     ppmseq_tags_consistent = (dataset_params["start_tag_col"] and dataset_params["end_tag_col"]) or (
         dataset_params["start_tag_col"] is None and dataset_params["end_tag_col"] is None
     )
-    assert ppmseq_tags_consistent, "Both start_tag_col and end_tag_col must be provided or neither."
+    if not ppmseq_tags_consistent:
+        raise ValueError("Both start_tag_col and end_tag_col must be provided or neither.")
 
     return dataset_params
 
@@ -346,7 +347,7 @@ def run(argv):
         lod_filters=args.lod_filters,
         save_model_jsons=args.save_model_jsons,
         load_dataset_and_model=args.load_dataset_and_model,
-        ppmSeq_adapter_version=dataset_params["ppmSeq_adapter_version"],
+        ppmseq_adapter_version=dataset_params["ppmSeq_adapter_version"],
         start_tag_col=dataset_params["start_tag_col"],
         end_tag_col=dataset_params["end_tag_col"],
         pipeline_version=dataset_params["pipeline_version"],
