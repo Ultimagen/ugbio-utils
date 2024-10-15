@@ -3,8 +3,8 @@ on:
   workflow_dispatch:
     inputs:
       image-tag:
-        description: "Docker image tag, If omitted will use github short sha"
-        required: false
+        description: "Docker image tag"
+        required: true
         type: string
 
 permissions:
