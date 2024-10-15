@@ -53,7 +53,7 @@ class TocPreprocessor(Preprocessor):
                     anchor = re.sub(r"\s+", "-", title.lower())
                     anchor = re.sub(r"[^\w\-]", "", anchor)  # Remove any characters that are not alphanumeric or dashes
                     numbered_title = f"{section_number}.  {title}"
-                    line = f'<h{level} id="{anchor}">{numbered_title}</h{level}>' # noqa: PLW2901
+                    line = f'<h{level} id="{anchor}">{numbered_title}</h{level}>'  # noqa: PLW2901
                     self.toc.append((level, title, anchor))
             new_lines.append(line)
 
