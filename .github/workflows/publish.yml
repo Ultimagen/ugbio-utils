@@ -32,7 +32,7 @@ jobs:
     outputs:
       publish_commit_sha: ${{ steps.publish-update-version.outputs.commit-sha }}
       new_version: ${{ steps.bump-semver.outputs.new_version }}
-      matrix: ${{steps.list_dirs.outputs.workspaces}}
+      matrix: ${{ steps.list_members.outputs.members }}
     steps:
       - name: Verify branch conditions based on minor-release input
         run: |
@@ -53,10 +53,10 @@ jobs:
       - uses: actions/checkout@v4
       
       - name: Build workspaces list
-        id: list_dirs
-        uses: ./.github/actions/get-workspaces
-        with: 
-          remove-internal-dockers: true
+        uses: ./.github/actions/get-members
+        id: list_members
+        with:
+          keep-internal-dockers: false
 
       - uses: actions-ecosystem/action-get-latest-tag@v1
         id: get-latest-tag
