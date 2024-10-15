@@ -22,7 +22,7 @@ jobs:
       - uses: ./.github/actions/get-members
         id: list_members
         with:
-          keep-internal-dockers: false
+          keep-internal-dockers: true
 
   ugbio-utils-CI:
     runs-on: ubuntu-latest
