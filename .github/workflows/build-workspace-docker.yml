@@ -1,3 +1,4 @@
+name: "Internal - build ugbio workspace docker"
 on:
   workflow_call:
     inputs:
