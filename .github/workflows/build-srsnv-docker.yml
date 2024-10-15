@@ -1,4 +1,6 @@
 name: Build ugbio docker
+run-name: Build ugbio_${{ inputs.member }}
+
 on:
   workflow_dispatch:
     inputs:
