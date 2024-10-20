@@ -63,7 +63,7 @@ fields_to_collect_all_options = {
 }
 
 
-def write_a_pileup_record(
+def write_a_pileup_record(  # noqa: C901, PLR0912 #TODO: refactor. too complex
     record_dict: dict,
     rec_id: tuple,
     out_fh: pysam.VariantFile,
@@ -147,7 +147,7 @@ def write_a_pileup_record(
     return rec
 
 
-def pileup_featuremap(  # pylint: disable=too-many-branches
+def pileup_featuremap(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
     featuremap: str,
     output_vcf: str,
     genomic_interval: str = None,
@@ -180,7 +180,8 @@ def pileup_featuremap(  # pylint: disable=too-many-branches
         start = None
         end = None
     else:
-        assert re.match(r"^\w+:\d+-\d+$", genomic_interval), "Input genomic_interval format should be 'chrom:start-end'"
+        if not re.match(r"^\w+:\d+-\d+$", genomic_interval):
+            raise ValueError("Input genomic_interval format should be 'chrom:start-end'")
         genomic_interval_list = genomic_interval.split(":")
         chrom = genomic_interval_list[0]
         start = int(genomic_interval_list[1].split("-")[0])
@@ -257,11 +258,11 @@ def pileup_featuremap(  # pylint: disable=too-many-branches
             sort_cmd = f"bcftools view {featuremap} {genomic_interval} |\
                   bcftools sort - -Oz -o {sorted_featuremap} && bcftools index -t {sorted_featuremap}"
         logger.debug(sort_cmd)
-        subprocess.check_call(sort_cmd, shell=True)
+        subprocess.check_call(sort_cmd, shell=True)  # noqa: S602
 
         cons_dict = defaultdict(dict)
         with pysam.VariantFile(sorted_featuremap) as f:
-            prev_key = tuple()
+            prev_key = ()
             for rec in f.fetch(chrom, start, end):
                 rec_id = (rec.chrom, rec.pos, rec.ref, rec.alts[0])
                 if "rec_counter" not in cons_dict[rec_id]:
@@ -385,5 +386,5 @@ def pileup_featuremap_on_an_interval_list(
         vcf_str = " ".join(vcfs)
         cmd = f"bcftools concat {vcf_str} -a | bcftools sort - -Oz -o {output_vcf} && bcftools index -t {output_vcf}"
         logger.debug(cmd)
-        subprocess.check_call(cmd, shell=True)
+        subprocess.check_call(cmd, shell=True)  # noqa: S602
     return output_vcf

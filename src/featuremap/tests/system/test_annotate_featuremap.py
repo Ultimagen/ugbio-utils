@@ -20,7 +20,7 @@ def test_annotate_featuremap(tmpdir, resources_dir):
         input_featuremap,
         output_featuremap,
         ref_fasta=ref_fasta,
-        ppmSeq_adapter_version="legacy_v5",
+        ppmseq_adapter_version="legacy_v5",
         flow_order="TGCA",
         motif_length_to_annotate=3,
         max_hmer_length=20,
