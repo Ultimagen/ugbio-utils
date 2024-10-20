@@ -72,7 +72,7 @@ def run(argv):
         input_featuremap=args.featuremap_path,
         output_featuremap=args.output_featuremap,
         ref_fasta=args.ref_fasta,
-        ppmSeq_adapter_version=args.ppmSeq_adapter_version,
+        ppmseq_adapter_version=args.ppmSeq_adapter_version,
         flow_order=args.flow_order,
         motif_length_to_annotate=args.motif_length_to_annotate,
         max_hmer_length=args.max_hmer_length,
