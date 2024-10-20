@@ -36,7 +36,7 @@ def _assert_read_signature(signature, expected_signature, expected_columns=None,
     for c in expected_columns:
         assert c in signature.columns
         if c not in possibly_null_columns:
-            assert not signature[c].isnull().all()
+            assert not signature[c].isna().all()
             assert (signature[c] == expected_signature[c]).all() or np.allclose(signature[c], expected_signature[c])
 
 

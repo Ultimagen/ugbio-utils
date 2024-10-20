@@ -11,7 +11,7 @@ from os.path import join as pjoin
 
 import numpy as np
 import pandas as pd
-import pyBigWig as bw
+import pyBigWig as bw  # noqa: N813
 import pysam
 from tqdm import tqdm
 from ugbio_core.consts import FileExtension
@@ -111,7 +111,7 @@ def _validate_info(x):
     it appears in the INFO field as a tuple of (hmer, hmer_length),
     then the function should return True
     """
-    MAX_HMER_LENGTH = 7
+    max_hmer_length = 7
     if isinstance(x, bool):
         return x
     if isinstance(x, str):
@@ -120,7 +120,7 @@ def _validate_info(x):
         if x.lower() == "false":
             return False
         if x.isnumeric():
-            return bool(float(x) >= MAX_HMER_LENGTH)
+            return bool(float(x) >= max_hmer_length)
         raise ValueError(f"Cannot convert {x} to bool")
     return None
 
@@ -169,13 +169,13 @@ def collect_coverage_per_locus_gatk(coverage_csv, df_sig):
     Merge coverage data from gatk "ExtractCoverageOverVcfFiles" output to signature dataframe
     """
     coverage_gatk = pd.read_csv(coverage_csv, usecols=["Chrom", "Pos", "Total_Depth"])
-    coverage_gatk.rename(columns={"Chrom": "chrom", "Pos": "pos", "Total_Depth": "coverage"}, inplace=True)
-    coverage_gatk.set_index(["chrom", "pos"], inplace=True)
+    coverage_gatk = coverage_gatk.rename(columns={"Chrom": "chrom", "Pos": "pos", "Total_Depth": "coverage"})
+    coverage_gatk = coverage_gatk.set_index(["chrom", "pos"])
     df_sig = df_sig.join(coverage_gatk, how="left")
     return df_sig
 
 
-def read_signature(  # pylint: disable=too-many-branches,too-many-arguments
+def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
     signature_vcf_files: list[str],
     output_parquet: str = None,
     coverage_csv: str = None,
@@ -280,7 +280,7 @@ def read_signature(  # pylint: disable=too-many-branches,too-many-arguments
             header = variant_file.header
             if tumor_sample is None:
                 number_of_samples = len(list(header.samples))
-                if number_of_samples >= 2:
+                if number_of_samples >= 2:  # noqa: PLR2004
                     # mutect2 vcf
                     for x in str(header).split("\n"):
                         m = re.match(r"##tumor_sample=(.+)", x)  # good for mutect2
@@ -536,7 +536,7 @@ def intersect_featuremap_with_signature(
             type_name = f".{signature_type}"
         output_intersection_file = f"{featuremap_name}.{signature_name}{type_name}.intersection.vcf.gz"
         logger.debug(f"Output file name will be: {output_intersection_file}")
-    if not (output_intersection_file.endswith(".vcf.gz") or output_intersection_file.endswith(".vcf")):
+    if not (output_intersection_file.endswith((".vcf.gz", ".vcf"))):
         raise ValueError(f"Output file must end with .vcf or .vcf.gz, got {output_intersection_file}")
     output_intersection_file_vcf = (
         output_intersection_file[:-3] if output_intersection_file.endswith(".gz") else output_intersection_file
@@ -555,7 +555,7 @@ def intersect_featuremap_with_signature(
         # Extract the header from featuremap_file and write to a new file
         cmd = f"bcftools view -h {featuremap_file} | head -n-1 - > {header_file}"
         logger.debug(cmd)
-        subprocess.check_call(cmd, shell=True)
+        subprocess.check_call(cmd, shell=True)  # noqa: S602
 
         # Add comment lines to the header
         with open(header_file, "a", encoding="utf-8") as f:
@@ -576,16 +576,16 @@ def intersect_featuremap_with_signature(
             cat {header_file} - | \
             bgzip > {featuremap_isec_by_pos} && bcftools index -t {featuremap_isec_by_pos}"
         logger.debug(cmd)
-        subprocess.check_call(cmd, shell=True)
+        subprocess.check_call(cmd, shell=True)  # noqa: S602
 
         # Use bcftools isec to intersect the two VCF files by position and compress the output
         cmd = f"bcftools isec -n=2 -w1 -Oz -o {isec_file} {signature_file} {featuremap_isec_by_pos}"
         logger.debug(cmd)
-        subprocess.check_call(cmd, shell=True)
+        subprocess.check_call(cmd, shell=True)  # noqa: S602
 
         cmd = f"bcftools view -H {featuremap_isec_by_pos} > {headerless_featuremap}"
         logger.debug(cmd)
-        subprocess.check_call(cmd, shell=True)
+        subprocess.check_call(cmd, shell=True)  # noqa: S602
 
         # Use awk to filter the intersected file for records with matching alt alleles and compress the output
         # this awk line matches the first, second, fourth and fifth columns of two files and prints the matched
@@ -597,10 +597,11 @@ def intersect_featuremap_with_signature(
             cat {header_file} - | \
             bcftools view - -Oz -o {output_intersection_file} && bcftools index -t {output_intersection_file}"
         logger.debug(cmd)
-        subprocess.check_call(cmd, shell=True)
+        subprocess.check_call(cmd, shell=True)  # noqa: S602
 
         # Assert output
-        assert os.path.isfile(output_intersection_file)
+        if not os.path.isfile(output_intersection_file):
+            raise FileNotFoundError(f"Output file {output_intersection_file} was not created successfully")
     return output_intersection_file
 
 
@@ -748,7 +749,7 @@ def generate_synthetic_signatures(
     trinuc_dict = {}
     # fix a seed for random.choice
     random_seed: int = 0
-    np.random.seed(random_seed)
+    rng = np.random.default_rng(random_seed)
     for trinucsub in trinuc_signature.keys():
         n_subs_signature = trinuc_signature[trinucsub]
         n_subs_db = trinuc_db[trinucsub]
@@ -758,7 +759,7 @@ def generate_synthetic_signatures(
         n_subs_signature = min(n_subs_db, n_subs_signature)  # limit options to the available loci
         for i in range(n_synthetic_signatures):
             trinuc_dict[trinucsub]["index_to_sample"][i] = (
-                np.random.choice(range(n_subs_db), n_subs_signature, replace=False) if n_subs_signature > 0 else ()
+                rng.choice(range(n_subs_db), n_subs_signature, replace=False) if n_subs_signature > 0 else ()
             )
             trinuc_dict[trinucsub]["trinuc_counter"][i] = 0
 
