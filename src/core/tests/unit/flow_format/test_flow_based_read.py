@@ -15,7 +15,7 @@ def resources_dir():
 
 
 def test_matrix_from_qual_tp(resources_dir):
-    data = [x for x in pysam.AlignmentFile(pjoin(resources_dir, "chr9.sample.bam"))]
+    data = list(pysam.AlignmentFile(pjoin(resources_dir, "chr9.sample.bam")))
     expected = pickle.load(open(pjoin(resources_dir, "matrices.trim.pkl"), "rb"))
     fbrs = [
         fbr.FlowBasedRead.from_sam_record(x, flow_order=DEFAULT_FLOW_ORDER, _fmt="cram", max_hmer_size=12) for x in data
@@ -27,7 +27,7 @@ def test_matrix_from_qual_tp(resources_dir):
 
 
 def test_matrix_from_qual_tp_no_trim(resources_dir):
-    data = [x for x in pysam.AlignmentFile(pjoin(resources_dir, "chr9.sample.bam"))]
+    data = list(pysam.AlignmentFile(pjoin(resources_dir, "chr9.sample.bam")))
     expected = pickle.load(open(pjoin(resources_dir, "matrices.pkl"), "rb"))
     fbrs = [
         fbr.FlowBasedRead.from_sam_record(
@@ -45,7 +45,7 @@ def test_matrix_from_qual_tp_no_trim(resources_dir):
 # test that spread probabilities on the first and last non-zero flow produces flat probabilities
 # Since we read hmers 0-20 we expect P(0)=...P(20) = 1/21
 def test_matrix_from_trimmed_read(resources_dir):
-    data = [x for x in pysam.AlignmentFile(pjoin(resources_dir, "trimmed_read.bam"))]
+    data = list(pysam.AlignmentFile(pjoin(resources_dir, "trimmed_read.bam")))
     flow_based_read = fbr.FlowBasedRead.from_sam_record(
         data[0], flow_order=DEFAULT_FLOW_ORDER, _fmt="cram", max_hmer_size=20, spread_edge_probs=True
     )

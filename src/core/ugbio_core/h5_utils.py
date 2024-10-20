@@ -36,7 +36,7 @@ def preprocess_columns(dataframe):
 
     if hasattr(dataframe, "columns"):
         if isinstance(dataframe.columns, pd.core.indexes.multi.MultiIndex):
-            dataframe.columns = [flatten_multi_index(col, "___") for col in dataframe.columns.values]
+            dataframe.columns = [flatten_multi_index(col, "___") for col in dataframe.columns.to_numpy()]
 
 
 def convert_h5_to_json(
@@ -75,10 +75,10 @@ def convert_h5_to_json(
             logger.warning("Skipping: %s", h5_key)
             continue
         logger.info("Processing: %s", h5_key)
-        df = read_hdf(input_h5_filename, h5_key)
-        preprocess_columns(df)
-        df_to_json = df.to_json(orient="table")
-        json_dict = json.loads(df_to_json)
+        data_frame = read_hdf(input_h5_filename, h5_key)
+        preprocess_columns(data_frame)
+        data_frame_to_json = data_frame.to_json(orient="table")
+        json_dict = json.loads(data_frame_to_json)
         new_json_dict[root_element][preprocess_h5_key(h5_key)] = json_dict
 
     if output_json:
@@ -88,7 +88,7 @@ def convert_h5_to_json(
     return json_string
 
 
-def read_hdf(
+def read_hdf(  # noqa: C901 #TODO: refactor. too complex
     file_name: str,
     key: str = "all",
     skip_keys: list[str] | None = None,

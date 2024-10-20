@@ -18,7 +18,7 @@ USE_STARTEND = True
 # }
 
 
-def pileup_to_freq(reference: str, pileup: str) -> int:
+def pileup_to_freq(reference: str, pileup: str) -> int:  # noqa: C901 #TODO: refactor. too complex
     """Counts A, C, G, T, In, Del occurence given a samtools pileup string"""
 
     pileup = pileup.upper()
@@ -47,9 +47,9 @@ def pileup_to_freq(reference: str, pileup: str) -> int:
             is_start = 1
             continue
         if is_start > 0:
-            if is_start < 2:
+            if is_start < 2:  # noqa: PLR2004
                 is_start += 1
-            elif is_start == 2:
+            elif is_start == 2:  # noqa: PLR2004
                 frequencies[k] += USE_STARTEND
                 is_start = 0
             continue
@@ -82,23 +82,22 @@ def create_frequncies_from_pileup(input_pileup_file) -> pd.DataFrame:
     data = []
     with fileinput.input(input_pileup_file, mode="r") as fin:
         for line in fin:
-            SAMPLE = 0
+            sample = 0
             values = line.split("\t")
-            CHR = values[0]
-            POS = values[1]
-            REF = values[2]
-            DP = values[3]
+            chr_name = values[0]
+            pos = values[1]
+            ref = values[2]
+            dp = values[3]
             # POSITION  = ';'.join([str(values[i]) for i in range(3)])
             # Go through all seq fields
             for i in range(4, len(values), 3):
-                SAMPLE += 1
+                sample += 1
                 # No reads aligned to this position
                 if values[i - 1] == "0":
                     continue
                 freq = pileup_to_freq(values[2], values[i])
-                for BASE, COUNT in freq.items():
-                    # df_frequencies = df_frequencies.append({'Depth': DP, 'Chrom': CHR, 'Pos': POS,"Ref":REF,"Sample":SAMPLE,"Base":BASE ,"Count":COUNT }, ignore_index=True)
-                    data.append([DP, CHR, POS, REF, SAMPLE, BASE, COUNT])
+                for base, count in freq.items():
+                    data.append([dp, chr_name, pos, ref, sample, base, count])
     fin.close()
     df_frequencies = pd.DataFrame(data, columns=["Depth", "Chrom", "Pos", "Ref", "Sample", "Base", "Count"])
     return df_frequencies

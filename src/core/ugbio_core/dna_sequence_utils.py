@@ -78,7 +78,8 @@ def get_chr_sizes(sizes_file: str) -> dict:
         Dictionary from name to size
     """
 
-    assert isfile(sizes_file), f"Input_file {sizes_file} not found"
+    if not isfile(sizes_file):
+        raise FileNotFoundError(f"Input_file {sizes_file} not found")
     if sizes_file.endswith("dict"):
         chrom_sizes = {}
         with open(sizes_file, encoding="utf-8") as file:
@@ -93,7 +94,7 @@ def get_chr_sizes(sizes_file: str) -> dict:
         return chrom_sizes
     with open(sizes_file, encoding="ascii") as sizes:
         tmp = [x.strip().split()[:2] for x in sizes]
-    return dict((x[0], int(x[1])) for x in tmp)
+    return {x[0]: int(x[1]) for x in tmp}
 
 
 def get_max_softclip_len(cigar):

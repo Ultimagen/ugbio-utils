@@ -114,8 +114,8 @@ def read_effective_coverage_from_sorter_json(
     cvg_cdf = cvg.cumsum() / cvg.sum()
     ratio_below_min_coverage = cvg_cdf.loc[min_coverage_for_fp]
 
-    if ratio_below_min_coverage > 0.5:
-        min_coverage_for_fp = (cvg_cdf >= 0.5).argmax()
+    if ratio_below_min_coverage > 0.5:  # noqa: PLR2004
+        min_coverage_for_fp = (cvg_cdf >= 0.5).argmax()  # noqa: PLR2004
     coverage_of_max_percentile = (cvg_cdf >= max_coverage_percentile).argmax()
 
     ratio_of_bases_in_coverage_range = cvg_cdf[coverage_of_max_percentile] - cvg_cdf[min_coverage_for_fp]
@@ -125,7 +125,7 @@ def read_effective_coverage_from_sorter_json(
     ratio_of_reads_over_mapq = reads_by_mapq[reads_by_mapq.index >= min_mapq].sum() / reads_by_mapq.sum()
 
     # Calculate mean coverage
-    mean_coverage = (cvg.index.values * cvg.values).sum() / cvg.sum()
+    mean_coverage = (cvg.index.to_numpy() * cvg.to_numpy()).sum() / cvg.sum()
 
     return (
         mean_coverage,

@@ -1,8 +1,8 @@
 import warnings
 
-warnings.filterwarnings("ignore")
-
 from ugbio_core import dna_sequence_utils
+
+warnings.filterwarnings("ignore")
 
 
 class TestDnaUtils:
