@@ -2,8 +2,6 @@ from datetime import UTC, datetime
 
 import boto3
 
-UTC = UTC
-
 
 def get_run_info(run_id, client=None):
     if not client:

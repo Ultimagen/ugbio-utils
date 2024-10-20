@@ -27,10 +27,10 @@ def parse_manifest_log(run_id, output_path=None, session=None, output_prefix="")
     manifest_json_file = fetch_save_log(log_stream_name, manifest_json_file, output_path, session)
 
     # parse manifest log from json into df
-    df = pd.read_json(manifest_json_file, lines=True)
+    manifest_df = pd.read_json(manifest_json_file, lines=True)
 
     # Save general run info and print out storage info
-    run_df = df.head(1).dropna(axis=1, how="all")
+    run_df = manifest_df.head(1).dropna(axis=1, how="all")
 
     print("---------Storage info---------")
     storage_df = run_df["metrics"].apply(pd.Series)
@@ -43,7 +43,7 @@ def parse_manifest_log(run_id, output_path=None, session=None, output_prefix="")
     run_df.to_json(general_run_info_file, orient="records", lines=True, default_handler=str, indent=4)
 
     # Save tasks info to csv
-    tasks_df = df.drop(0).dropna(axis=1, how="all")  # remove first line that contains general run info
+    tasks_df = manifest_df.drop(0).dropna(axis=1, how="all")  # remove first line that contains general run info
     metrics_df = tasks_df["metrics"].apply(pd.Series)  # expand metrics column into separate columns
     tasks_df = pd.concat([tasks_df.drop(["metrics"], axis=1), metrics_df], axis=1)
 

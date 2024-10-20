@@ -99,13 +99,11 @@ def extract_omics_resources(omics_run_cost: RunCost) -> pd.DataFrame:
         },
         axis=1,
     )
-    resources_df.drop(
+    resources_df = resources_df.drop(
         columns=[Columns.CPU_REQUESTED.value, Columns.MEMORY_REQUESTED_GIB.value, Columns.GPUS_REQUESTED.value],
-        inplace=True,
     )
-    resources_df.rename(
+    resources_df = resources_df.rename(
         columns={Columns.NAME_COLUMN.value: "task", Columns.OMICS_INSTANCE_TYPE_RESERVED.value: "omics_instance"},
-        inplace=True,
     )
     resources_df["task"] = resources_df["task"].str.split("-").str[0]
     resources_df = resources_df.groupby("task").first().reset_index()

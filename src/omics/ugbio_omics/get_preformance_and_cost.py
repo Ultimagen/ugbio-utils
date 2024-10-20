@@ -52,7 +52,7 @@ class MonitorLog:
         # create a dict where key is the column name and value is the color
         self.colors = dict(zip(self.df_columns, ["black", "blue", "green", "red", "purple", "orange"], strict=False))
 
-    def process_line(self, line):
+    def process_line(self, line):  # noqa: C901, PLR0912
         if "MONITORING" not in line:
             return
 
@@ -76,30 +76,30 @@ class MonitorLog:
 
         # Get monitoring information
         else:
-            # line=MONITORING, [Sun Mar 24 21:35:30 UTC 2024], %CPU: 52.10, %Memory: 21.00, IO_rKb/s: 41.00, IO_wKb/s: 367.00, %IOWait: 0.00
+            # line=MONITORING, [Sun Mar 24 21:35:30 UTC 2024], %CPU: 52.10, %Memory: 21.00, IO_rKb/s: 41.00, IO_wKb/s: 367.00, %IOWait: 0.00  # noqa: E501
             split_line = line.split("MONITORING")[1].split(",")
             # Convert the date string: Tue Feb 13 15:33:28 IST 2024
             date_str = split_line[1].split("[")[1].split("]")[0]
             time = dateutil.parser.parse(date_str, tzinfos=tzinfos)
             try:
                 cpu = float(split_line[2].split(":")[1] or 0)
-            except ValueError:
+            except (ValueError, IndexError):
                 cpu = 0.0
             try:
                 memory = float(split_line[3].split(":")[1] or 0)
-            except ValueError:
+            except (ValueError, IndexError):
                 memory = 0.0
             try:
                 io_rkb = float(split_line[4].split(":")[1] or 0)
-            except:
+            except (ValueError, IndexError):
                 io_rkb = 0.0
             try:
                 io_wkb = float(split_line[5].split(":")[1] or 0)
-            except:
+            except (ValueError, IndexError):
                 io_wkb = 0.0
             try:
                 iowait = float(split_line[6].split(":")[1] or 0)
-            except:
+            except (ValueError, IndexError):
                 iowait = 0.0
 
             if self.start_time is None:
@@ -250,17 +250,19 @@ def process_monitor_log(run_id, task, client=None) -> MonitorLog:
     return monitor_log
 
 
-def save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir=None, output_prefix=""):
+def save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir=None, output_prefix=""):  # noqa: C901, PLR0912, PLR0915 #TODO: refactor this function
     print("Generate and save performance plots to HTML...")
     dont_plot_tasks = []
     plot_tasks = []
 
     for monitor_log in monitor_logs:
         # Monitor log script prints every 10 seconds.
-        # If monitor_log.df has less than 30 entires it means it worked less than 5 minutes and we don't need the plot for this task.
-        if monitor_log.df.shape[0] < 30:
+        # If monitor_log.df has less than 30 entires it means it worked less than 5 minutes and we don't need
+        # the plot for this task.
+        if monitor_log.df.shape[0] < 30:  # noqa: PLR2004
             print(
-                f"Task: {monitor_log.task_name} (id:{monitor_log.task_id}) run less than 5 minutes and will not be plotted"
+                f"Task: {monitor_log.task_name} (id:{monitor_log.task_id}) run less than 5 minutes "
+                "and will not be plotted"
             )
             dont_plot_tasks.append(monitor_log)
         elif not any(
@@ -283,7 +285,8 @@ def save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir=None,
     # regular tasks span over all columns, for the scattered tasks, each coulmn will have a plot
     specs = []
     for _ in range(len(plot_tasks)):
-        # E.g., if col=5, it will result to [{'colspan': 5}, None, None, None, None] for each row, meaning the first column will span all 5 columns
+        # E.g., if col=5, it will result to [{'colspan': 5}, None, None, None, None] for each row,
+        # meaning the first column will span all 5 columns
         specs.append([{"colspan": cols}] + [None] * (cols - 1))
     for _ in range(len(scattered_tasks)):
         # E.g., if col=5, it will result to [{}, {}, {}, {}, {}] for each row, meaning each column will have a plot
@@ -321,13 +324,16 @@ def save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir=None,
 
         # Add caption for each subplot
         combined_fig.add_annotation(
-            text=f"#CPU: {monitor_log.total_cpu}, Memory(Gib): {monitor_log.total_memory}, runtime(H): {monitor_log.run_time.total_seconds()/3600:.2f}",
+            text=(
+                f"#CPU: {monitor_log.total_cpu}, Memory(Gib): {monitor_log.total_memory}, "
+                f"runtime(H): {monitor_log.run_time.total_seconds()/3600:.2f}"
+            ),
             xref=f"x{i if i != 1 else ''} domain",  # Reference the x-axis of the ith subplot
             yref=f"y{i if i != 1 else ''} domain",  # Reference the y-axis of the ith subplot
             x=0.5,  # Position the caption in the middle of the subplot horizontally
             y=-0.15,  # Position the caption just below the subplot
             showarrow=False,
-            font=dict(size=12),
+            font={"size": 12},
             align="center",
             xanchor="center",
             yanchor="top",
@@ -347,7 +353,7 @@ def save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir=None,
         scattered_task_monitor_logs = [log for log in monitor_logs if task in log.task_name]
 
         # Itereate over tasks within a single scattered task and add metrics to the plots
-        for j, monitor_log in enumerate(scattered_task_monitor_logs, start=1):
+        for _, monitor_log in enumerate(scattered_task_monitor_logs, start=1):
             add_trace(
                 combined_fig,
                 monitor_log,
@@ -421,13 +427,16 @@ def save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir=None,
             / 3600
         )
         combined_fig.add_annotation(
-            text=f"Scattered Task: {task} #CPU: {cpu}, Memory(Gib): {memory}, average runtime(H): {average_runtime:.2f}",
+            text=(
+                f"Scattered Task: {task} #CPU: {cpu}, Memory(Gib): {memory}, "
+                f"average runtime(H): {average_runtime:.2f}"
+            ),
             xref="paper",
             yref="paper",
             x=0.5,  # Middle of the row
             y=(1 - (i - 0.8) / rows),  # Top of the row
             showarrow=False,
-            font=dict(size=12),
+            font={"size": 12},
             align="center",
             xanchor="center",
             yanchor="auto",
@@ -436,17 +445,21 @@ def save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir=None,
     # touch up the layout and add title and subtext
     combined_fig.update_yaxes(title="%", range=[0, 110])
     combined_fig.update_layout(
-        height=300 * rows + 50, title_text=f"Omics {run_id} Performance Plots", title_font=dict(size=20)
+        height=300 * rows + 50, title_text=f"Omics {run_id} Performance Plots", title_font={"size": 20}
     )
     if len(dont_plot_tasks) > 0:
+        task_runtimes = [
+            f"{monitor_log.task_name} (runtime (H): {monitor_log.run_time.total_seconds()/3600:.2f})"
+            for monitor_log in dont_plot_tasks
+        ]
         combined_fig.add_annotation(
-            text=f"Short tasks without a plot: {[f'{monitor_log.task_name} (runtime (H): {monitor_log.run_time.total_seconds()/3600:.2f})' for monitor_log in dont_plot_tasks]}",  # Your subtitle text
+            text=(f"Short tasks without a plot: {task_runtimes}"),
             xref="paper",  # Position relative to the entire plotting area
             yref="paper",  # Position relative to the entire plotting area
             x=0,  # Center the text horizontally
             y=1,  # Adjust this value as needed to position below the title
             showarrow=False,
-            font=dict(size=12),
+            font={"size": 12},
             yanchor="bottom",
             yshift=25,  # Shift down by 25 pixels to add more "padding"
         )
@@ -499,7 +512,7 @@ def add_trace(combined_fig, monitor_log, col_name, row, col=1, normelize=False, 
             y=monitor_log.df[col_name],
             mode="lines",
             name=name,
-            line=dict(color=monitor_log.colors[col_name]),
+            line={"color": monitor_log.colors[col_name]},
             showlegend=show_legend,
         ),
         row=row,
