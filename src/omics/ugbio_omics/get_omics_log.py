@@ -29,13 +29,13 @@ def get_log_for_task(run_id, task_id=None, session=None, output_path=None, outpu
         task_names = {task["taskId"]: task["name"] for task in run["tasks"] if task["taskId"] == task_id}
 
     # Get the logs for each task
-    for task_id in task_ids:
-        task_name = task_names[task_id]
+    for task_id_val in task_ids:
+        task_name = task_names[task_id_val]
         print("------------------------------------------")
-        print(f"Getting log for task {task_name} (taskId: {task_id})")
-        log_stream_name = f"run/{run_id}/task/{task_id}"
+        print(f"Getting log for task {task_name} (taskId: {task_id_val})")
+        log_stream_name = f"run/{run_id}/task/{task_id_val}"
 
-        output = f"{output_prefix}run_{run_id}_task_{task_id}_{task_name}.log"
+        output = f"{output_prefix}run_{run_id}_task_{task_id_val}_{task_name}.log"
         fetch_save_log(log_stream_name, output, output_path, session)
 
     # in case that the run failed but there're no failed tasks the run's engine log should include the error
@@ -101,7 +101,7 @@ def main():
         "--failed", dest="failed", action="store_true", help="Set to true to get logs for failed tasks only"
     )
     parser.add_argument("--no-failed", dest="failed", action="store_false")
-    parser.set_defaults(failed=True)
+    parser.set_defaults(failed=False)
     parser.add_argument("--output", type=str, help="Output dir to save log events", default=None)
     parser.add_argument("--output-prefix", type=str, help="File name prefix for the output", required=False, default="")
 

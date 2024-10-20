@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# noqa
 """
 NOTE: This script is a copy of the original calculate_cost.py script from terra_pipeline.
 """
@@ -37,8 +38,8 @@ GPU_NVIDIA_TESLA = "GPU_NVIDIA_TESLA"
 
 
 # load the US pricing for both persistent disk and compute engine
-def get_gce_pricing():
-    response = urlopen(GCE_MACHINE_TYPES_URL)
+def get_gce_pricing():  # noqa: C901
+    response = urlopen(GCE_MACHINE_TYPES_URL)  # noqa: S310
     data = response.read()
 
     if response.info().get("Content-Encoding") == "gzip":
@@ -92,9 +93,9 @@ def extract_gpu_type(t):
 
 def get_disk_info(metadata):
     if "runtimeAttributes" in metadata and "disks" in metadata["runtimeAttributes"]:
-        bootDiskSizeGb = 0.0
+        bootDiskSizeGb = 0.0  # noqa: N806
         if "bootDiskSizeGb" in metadata["runtimeAttributes"]:
-            bootDiskSizeGb = float(metadata["runtimeAttributes"]["bootDiskSizeGb"])
+            bootDiskSizeGb = float(metadata["runtimeAttributes"]["bootDiskSizeGb"])  # noqa: N806
         # Note - am lumping boot disk in with requested disk.  Assuming boot disk is same type as requested.
         # i.e. is it possible that boot disk is HDD when requested is SDD.
         (name, disk_size, disk_type) = metadata["runtimeAttributes"]["disks"].split()
@@ -166,17 +167,17 @@ def was_preempted(call_info):
     return call_info["executionStatus"] in ["Preempted", "RetryableFailure"]
 
 
-def calculate_cost(metadata, ignore_preempted, only_total_cost, print_header, output_file=None):
+def calculate_cost(metadata, ignore_preempted, only_total_cost, print_header, output_file=None):  # noqa: C901, PLR0912, PLR0915
     pipe_cost = 0
     # set up pricing information
     pricing = get_gce_pricing()
     ssd_cost_per_gb_per_month = float(pricing["CP-COMPUTEENGINE-STORAGE-PD-SSD"])
     ssd_cost_per_gb_hour = ssd_cost_per_gb_per_month / (24 * 365 / 12)
 
-    local_ssd_cost_per_gb_per_month = float(pricing["CP-COMPUTEENGINE-LOCAL-SSD"])
+    local_ssd_cost_per_gb_per_month = float(pricing["CP-COMPUTEENGINE-LOCAL-SSD"])  # noqa: F841
     local_ssd_cost_per_gb_hour = ssd_cost_per_gb_per_month / (24 * 365 / 12)
 
-    pe_local_ssd_cost_per_gb_per_month = float(pricing["CP-COMPUTEENGINE-LOCAL-SSD-PREEMPTIBLE"])
+    pe_local_ssd_cost_per_gb_per_month = float(pricing["CP-COMPUTEENGINE-LOCAL-SSD-PREEMPTIBLE"])  # noqa: F841
     pe_local_ssd_cost_per_gb_hour = ssd_cost_per_gb_per_month / (24 * 365 / 12)
 
     hdd_cost_per_gb_per_month = float(pricing["CP-COMPUTEENGINE-STORAGE-PD-CAPACITY"])
@@ -342,8 +343,9 @@ def calculate_cost(metadata, ignore_preempted, only_total_cost, print_header, ou
         pe_gpu_cost = pe_total_hours * pe_gpu_cost_per_hour
 
         #
-        # NOTE -- local ssds have a different price when used in preemptible VMs.  However, to implement this all the disk calculations
-        # need to be moved from the task level (where it is now) to the call level since each call could be preemptible or not
+        # NOTE -- local ssds have a different price when used in preemptible VMs.
+        # However, to implement this all the disk calculations need to be moved from the task level (where it is now)
+        # to the call level since each call could be preemptible or not
         # Then we can decide to use PERSISTENT_LOCAL or PE_PERSISTENT_LOCAL
         #
         disk_cost_per_gb_hour = disk_costs[disk_info["type"]]
@@ -379,7 +381,7 @@ def calculate_cost(metadata, ignore_preempted, only_total_cost, print_header, ou
         )
 
         # accumalate total workflow cost
-        global TOTAL_WORKFLOW_COST
+        global TOTAL_WORKFLOW_COST  # noqa: PLW0603
         TOTAL_WORKFLOW_COST += total_cost
         pipe_cost += total_cost
 
@@ -427,11 +429,11 @@ def compare(old, new):
     """Fail when NEW total exceeds OLD total by > 5%."""
 
     def total(cost_file):
-        with open(cost_file) as input:
+        with open(cost_file) as input:  # noqa: A001
             lines = input.readlines()
         for line in lines:
             fields = line.split()
-            if len(fields) == 3 and fields[0] == "Total" and fields[1] == "Cost:":
+            if len(fields) == 3 and fields[0] == "Total" and fields[1] == "Cost:":  # noqa: PLR2004
                 return int(float(fields[2]) * 10000) / 10000.0
         return None
 

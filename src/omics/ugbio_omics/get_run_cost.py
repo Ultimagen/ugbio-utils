@@ -53,7 +53,7 @@ class RunCost:
 
         return self.cost_df[self.cost_df[Columns.TYPE_COLUMN.value] == "run"][
             Columns.ESTIMATED_USD_COLUMN.value
-        ].values[0]
+        ].to_numpy()[0]
 
     def get_tasks_cost(self) -> pd.DataFrame:
         if self.cost_df is None:
