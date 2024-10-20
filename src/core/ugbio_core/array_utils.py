@@ -19,7 +19,8 @@ def searchsorted2d(ar_a: np.ndarray, ar_b: np.ndarray) -> np.ndarray:
     """
     dim1_a, dim2_a = ar_a.shape
     ar_b = ar_b.ravel()
-    assert ar_b.shape[0] == ar_a.shape[0], "Number of values of array b equal number of rows of array a"
+    if ar_b.shape[0] != ar_a.shape[0]:
+        raise ValueError("Number of values of array b must equal number of rows of array a")
     max_num = np.maximum(ar_a.max() - ar_a.min(), ar_b.max() - ar_b.min()) + 1
     r_seq = max_num * np.arange(ar_a.shape[0])
     indices = np.searchsorted(((ar_a.T + r_seq).T).ravel(), ar_b + r_seq)

@@ -31,7 +31,7 @@ def run(argv):
     """Helper script to annotate a single contig of a VCF file"""
     args = get_args(argv[1:])
     with open(args.annotators_pickle, "rb") as f:
-        annotators = pickle.load(f)
+        annotators = pickle.load(f)  # noqa: S301
     VcfAnnotator.process_contig(
         vcf_in=args.vcf_in,
         vcf_out=args.vcf_out,

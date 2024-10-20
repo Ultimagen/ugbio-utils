@@ -40,7 +40,8 @@ def generate_flow_matrix(gtr_calls: np.ndarray, confusion_matrix: np.ndarray = C
 
     expected_reads = confusion_matrix[gtr_calls, :]
     cum_expected = np.cumsum(expected_reads, axis=1)
-    rands = np.random.uniform(0, 1, cum_expected.shape[0])
+    rng = np.random.default_rng()
+    rands = rng.uniform(0, 1, cum_expected.shape[0])
     mutation_profile = utils.searchsorted2d(cum_expected, rands)
 
     # this is the mutation profile in each nucleotide
@@ -48,7 +49,8 @@ def generate_flow_matrix(gtr_calls: np.ndarray, confusion_matrix: np.ndarray = C
 
     # something narrow around 0 and 1
     mutations = np.nonzero(diff)[0]
-    mutation_probs = np.random.beta(3, 3, size=len(mutations))
+    rng = np.random.default_rng()
+    mutation_probs = rng.beta(3, 3, size=len(mutations))
     non_mutation_probs = 1 - mutation_probs
 
     flow_matrix = confusion_matrix[gtr_calls, :].T
@@ -244,7 +246,8 @@ def get_mutation_change(
     ref_alleles = gtr_calls[mutation[0]]
     alt_alleles = mutation[1]
     diff = ref_alleles - alt_alleles
-    assert diff != 0, "No mutation in this position"
+    if diff == 0:
+        raise ValueError("No mutation in this position")
     seq_base = key2base[mutation[0]]
     if diff > 0:
         # DELETION
@@ -268,8 +271,10 @@ def get_mutation_change(
             start_pos = 0
             start_seq = base_calls[start_pos : start_pos + 1]
             end_seq = flow_order[mutation[0]] * (-diff) + base_calls[start_pos : start_pos + 1]
-    assert start_pos >= 0, "Assertion failed - start_pos < 0"
-    assert len(start_seq) != len(end_seq), "Assertion failed - no difference b/w alleles"
+    if start_pos < 0:
+        raise ValueError("Assertion failed - start_pos < 0")
+    if len(start_seq) == len(end_seq):
+        raise ValueError("Assertion failed - no difference b/w alleles")
     return start_pos, start_seq, end_seq
 
 
@@ -340,12 +345,15 @@ def seq_to_record(
     rseq = dnautils.revcomp(seq)
 
     for alt in alts:
-        assert validate_alt(seq, alt), "Weird mutation sequence"
+        if not validate_alt(seq, alt):
+            raise ValueError("Weird mutation sequence")
     for ralt in ralts:
-        assert validate_alt(rseq, ralt), "Weird rmutation sequence"
+        if not validate_alt(rseq, ralt):
+            raise ValueError("Weird rmutation sequence")
     valts = [validate_rcalt_v2(*x, seq, rseq) for x in zip(alts, ralts, strict=False)]
     for valt in valts:
-        assert valt, "Weird rvariant"
+        if not valt:
+            raise ValueError("Weird rvariant")
     alts = sorted(alts, key=lambda x: x[0])
     ralts = sorted(ralts, key=lambda x: (x[0]))
 

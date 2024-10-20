@@ -34,7 +34,8 @@ def merge_trimmer_histograms(trimmer_histograms: list[str], output_path: str):
 
     # read and merge histograms
     df_concat = pd.concat(pd.read_csv(x) for x in trimmer_histograms)
-    assert df_concat.columns[-1] == "count", f"Unexpected columns in histogram files: {df_concat.columns}"
+    if df_concat.columns[-1] != "count":
+        raise ValueError(f"Unexpected columns in histogram files: {df_concat.columns}")
     df_merged = df_concat.groupby(df_concat.columns[:-1].tolist(), dropna=False).sum().reset_index()
     # write to file
     output_filename = (

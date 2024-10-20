@@ -85,7 +85,7 @@ def generate_key_from_sequence(
             sequence = re.sub(r"[^ACGT]", "A", sequence)
         else:
             raise ValueError(
-                "Input contains non ACGTacgt characters" + (f":\n{sequence}" if len(sequence) <= 100 else "")
+                "Input contains non ACGTacgt characters" + (f":\n{sequence}" if len(sequence) <= 100 else "")  # noqa: PLR2004
             )
 
     # process
@@ -174,8 +174,10 @@ class FlowBasedRead:
 
         for k in dct:
             setattr(self, k, dct[k])
-        assert hasattr(self, "key"), "Something is broken in the constructor, key is not defined"
-        assert hasattr(self, "flow_order"), "Something is broken in the constructor, flow_order is not defined"
+        if not hasattr(self, "key"):
+            raise AttributeError("Something is broken in the constructor, key is not defined")
+        if not hasattr(self, "flow_order"):
+            raise AttributeError("Something is broken in the constructor, flow_order is not defined")
         self.flow2base = key2base(self.key).astype(int)
         self.flow_order = simulator.get_flow2_base(self.flow_order, len(self.key))
 
@@ -224,7 +226,7 @@ class FlowBasedRead:
         return cls(dct)
 
     @classmethod
-    def from_sam_record(
+    def from_sam_record(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
         cls,
         sam_record: pysam.AlignedSegment,
         this_error_model: error_model.ErrorModel | None = None,
@@ -237,7 +239,6 @@ class FlowBasedRead:
         spread_edge_probs=True,
         validate=False,
     ):
-        # pylint: disable=pointless-statement
         """Constructor from BAM record and error model. Sets `seq`, `r_seq`, `key`,
         `rkey`, `flow_order`, `r_flow_order` and `_flow_matrix` attributes
 
@@ -271,10 +272,7 @@ class FlowBasedRead:
         Returns
         -------
         Object
-        """ % (
-            DEFAULT_FILLER,
-            MINIMAL_CALL_PROB,
-        )  # type: ignore
+        """
         dct = {}
         dct["record"] = sam_record
         dct["read_name"] = sam_record.query_name
@@ -458,7 +456,8 @@ class FlowBasedRead:
             # place_to_locate[0] = np.clip(place_to_locate[0], 0, None)
             # place_to_locate[-1] = np.clip(place_to_locate[-1], 0, None)
 
-        assert np.all(place_to_locate >= 0), "Wrong position to place"
+        if not np.all(place_to_locate >= 0):
+            raise ValueError("Wrong position to place")
         flat_loc = np.ravel_multi_index((place_to_locate, base_to_flow_index), flow_matrix.shape)
         out = np.bincount(flat_loc, probs)
         flow_matrix.flat[flat_loc] = out[flat_loc]
@@ -590,8 +589,8 @@ class FlowBasedRead:
         """
         if np.sum(tp_tag == 0) == 0:
             return fallback_filler
-        maxQual: float = np.max(qual[tp_tag == 0])
-        return float(phred.unphred(maxQual))
+        max_qual: float = np.max(qual[tp_tag == 0])
+        return float(phred.unphred(max_qual))
 
     def is_valid(self) -> bool:
         """Returns if the key is valid"""
@@ -662,12 +661,14 @@ class FlowBasedRead:
                 motifs_left.append("")
             else:
                 motifs_left.append(seq[max(left_base - self._motif_size + 1, 0) : left_base + 1])
-                assert seq[left_base] != self.flow_order[i], "Something wrong with motifs"
+                if seq[left_base] == self.flow_order[i]:
+                    raise ValueError("Something wrong with motifs")
         motifs_right = []
         for i in range(key.shape[0] - 1):
             right_base = flow2base[i + 1]
             motifs_right.append(seq[right_base + 1 : right_base + self._motif_size + 1])
-            assert seq[right_base + 1] != self.flow_order[i], "Something wrong with motifs"
+            if seq[right_base + 1] == self.flow_order[i]:
+                raise ValueError("Something wrong with motifs")
         motifs_right.append("")
         index = list(zip(motifs_left, key, self.flow_order[: len(key)], motifs_right, strict=False))
         hash_idx = [hash(x) for x in index]
@@ -854,7 +855,7 @@ class FlowBasedRead:
         """
         if cigar is None:
             cigar = self.cigar
-        if cigar[0][0] != 5:
+        if cigar[0][0] != 5:  # noqa: PLR2004
             return (0, 0)
         bases_clipped = cigar[0][1]
         stop_clip = np.argmax(self.flow2base + self.key >= bases_clipped)
@@ -879,7 +880,7 @@ class FlowBasedRead:
         if cigar is None:
             cigar = self.cigar
 
-        if cigar[-1][0] != 5:
+        if cigar[-1][0] != 5:  # noqa: PLR2004
             return (0, 0)
         bases_clipped = cigar[-1][1]
         reverse_flow2base = key2base(self.key[::-1])
@@ -888,7 +889,7 @@ class FlowBasedRead:
         hmer_clipped = bases_clipped - reverse_flow2base[stop_clip] - 1
         return (stop_clip, hmer_clipped)
 
-    def apply_alignment(self) -> FlowBasedRead:
+    def apply_alignment(self) -> FlowBasedRead:  # noqa: C901, PLR0912 #TODO: refactor
         """Applies alignment (inversion / hard clipping ) to the flowBasedRead
 
         Parameters
@@ -900,9 +901,8 @@ class FlowBasedRead:
         New FlowBasedRead with
         Modifies `key`, `_flow_matrix`, `flow2base`, `flow_order` attributes
         """
-        # pylint: disable=protected-access
-        # pylint: disable=access-member-before-definition
-        assert hasattr(self, "cigar"), "Only aligned read can be modified"
+        if not hasattr(self, "cigar"):
+            raise AttributeError("Only aligned read can be modified")
         attrs_dict = vars(self)
         other = FlowBasedRead(copy.deepcopy(attrs_dict))
         if other.is_reverse and self.direction != "reference":
@@ -919,7 +919,8 @@ class FlowBasedRead:
         clip_left, left_hmer_clip = other._left_clipped_flows()
         clip_right, right_hmer_clip = other._right_clipped_flows()
 
-        assert left_hmer_clip >= 0 and right_hmer_clip >= 0, "Some problem with hmer clips"
+        if not (left_hmer_clip >= 0 and right_hmer_clip >= 0):
+            raise ValueError("Some problem with hmer clips")
         original_length = len(other.key)
         other.key[clip_left] -= left_hmer_clip
         if hasattr(other, "_regressed_signal"):
@@ -961,7 +962,7 @@ class FlowBasedRead:
     def _key2str(self):
         return "".join(np.repeat(self.flow_order, self.key))
 
-    def haplotype_matching(self, read: FlowBasedRead) -> np.float64:
+    def haplotype_matching(self, read: FlowBasedRead) -> np.float64:  # noqa: C901 #TODO: refactor. too complex
         """Returns log likelihood for the match of the read and the haplotype.
         Both the haplotype and the read flow matrices should be aligned in the reference direction.
         It is assumed that haplotype does not have probabilities.
@@ -975,11 +976,11 @@ class FlowBasedRead:
         np.float64
             Log likelihood of the match
         """
-        assert (
-            self.direction == read.direction and self.direction == "reference"
-        ), "Only reads aligned to the reference please"
+        if not (self.direction == read.direction and self.direction == "reference"):
+            raise ValueError("Only reads aligned to the reference please")
 
-        assert self.start <= read.start and self.end >= read.end, "Read alignment should be contained in the haplotype"
+        if not (self.start <= read.start and self.end >= read.end):
+            raise ValueError("Read alignment should be contained in the haplotype")
 
         hap_locs = np.array([x[0] for x in self.record.get_aligned_pairs(matches_only=True)])
         ref_locs = np.array([x[1] for x in self.record.get_aligned_pairs(matches_only=True)])
@@ -1000,17 +1001,19 @@ class FlowBasedRead:
         if left_clip < 0 or right_clip < 0 or left_clip >= len(self.seq) or right_clip >= len(self.seq):
             return 1
 
-        if self.key.max() >= 9:
+        if self.key.max() >= 9:  # noqa: PLR2004
             return -np.inf
 
         clip_left, left_hmer_clip = self._left_clipped_flows(clipping)
         clip_right, right_hmer_clip = self._right_clipped_flows(clipping)
 
-        assert abs(left_hmer_clip) < 11 and abs(right_hmer_clip) < 11, "Weird hmer_clip"
+        if abs(left_hmer_clip) >= 11 or abs(right_hmer_clip) >= 11:  # noqa: PLR2004
+            raise ValueError("Weird hmer_clip")
         if clip_left >= len(self.key) or clip_right >= len(self.key):
             return -np.inf
 
-        assert left_hmer_clip >= 0 and right_hmer_clip >= 0, "Some problem with hmer clips"
+        if not (left_hmer_clip >= 0 and right_hmer_clip >= 0):
+            raise ValueError("Some problem with hmer clips")
         key = self.key.copy()
         original_length = len(key)
         clip_left = max(clip_left - 4, 0)
