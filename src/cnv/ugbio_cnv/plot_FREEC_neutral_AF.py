@@ -1,3 +1,4 @@
+# noqa: N999
 import argparse
 import logging
 import os
@@ -36,17 +37,17 @@ def mpileup_to_freq(pileup_file, outfile):
     df_freq[["Chrom", "Pos", "Pos", "AF"]].to_csv(outfile, sep="\t", header=None, index=None)
 
 
-def get_neutral_AF(SNP_bed_file, cnvs_file, outfile) -> pd.DataFrame:
-    cmd = f"bedtools intersect -v -a {SNP_bed_file} -b {cnvs_file} > {outfile}"
-    os.system(cmd)
-    df_neutral_AF = pd.read_csv(outfile, header=None, sep="\t")
-    df_neutral_AF.columns = ["Chrom", "Start", "End", "AF"]
-    return df_neutral_AF
+def get_neutral_af(snp_bed_file, cnvs_file, outfile) -> pd.DataFrame:
+    cmd = f"bedtools intersect -v -a {snp_bed_file} -b {cnvs_file} > {outfile}"
+    os.system(cmd)  # noqa: S605
+    df_neutral_af = pd.read_csv(outfile, header=None, sep="\t")
+    df_neutral_af.columns = ["Chrom", "Start", "End", "AF"]
+    return df_neutral_af
 
 
-def plot_neutral_AF(df_neutral_AF, sample_name, outfile):
+def plot_neutral_af(df_neutral_af, sample_name, outfile):
     plt.figure()
-    df_neutral_AF["AF"].hist(bins=50)
+    df_neutral_af["AF"].hist(bins=50)
     xlabels = np.arange(0, 1.1, 0.1)
     plt.xticks(xlabels)
     plt.xlabel("Allele Frequency")
@@ -58,7 +59,8 @@ def plot_neutral_AF(df_neutral_AF, sample_name, outfile):
 
 def run(argv):
     """
-    Runs the plot_FREEC_neutral_AF.py script to generate histogram of AF of neutral (non-CNV) locations across the sample.
+    Runs the plot_FREEC_neutral_AF.py script to generate histogram of AF of neutral (non-CNV)
+    locations across the sample.
     input arguments:
     --mpileup: input mpileup file.
     --cnvs_file: input bed file holding the called CNVs.
@@ -91,17 +93,17 @@ def run(argv):
     logger.info(f"file will be written to {outdir}")
 
     # convert mpileup to SNP bed file with AF
-    SNP_bed_file = pjoin(outdir, f"{basename}.freq.SNP.bed")
-    mpileup_to_freq(pileup_file, SNP_bed_file)
+    snp_bed_file = pjoin(outdir, f"{basename}.freq.SNP.bed")
+    mpileup_to_freq(pileup_file, snp_bed_file)
 
     # get neutral (non-CNV) AF
-    neutral_SNP_bed_file = pjoin(outdir, f"{basename}.freq.SNP.neutral.bed")
-    df_neutral_AF = get_neutral_AF(SNP_bed_file, args.cnvs_file, neutral_SNP_bed_file)
+    neutral_snp_bed_file = pjoin(outdir, f"{basename}.freq.SNP.neutral.bed")
+    df_neutral_af = get_neutral_af(snp_bed_file, args.cnvs_file, neutral_snp_bed_file)
 
     # plot neutral AF histogram
-    neutral_SNP_hist_file = pjoin(outdir, f"{basename}.freq.SNP.neutral.hist.jpeg")
-    plot_neutral_AF(df_neutral_AF, args.sample_name, neutral_SNP_hist_file)
-    logger.info(f"out hist file : {neutral_SNP_hist_file}")
+    neutral_snp_hist_file = pjoin(outdir, f"{basename}.freq.SNP.neutral.hist.jpeg")
+    plot_neutral_af(df_neutral_af, args.sample_name, neutral_snp_hist_file)
+    logger.info(f"out hist file : {neutral_snp_hist_file}")
 
 
 def main():

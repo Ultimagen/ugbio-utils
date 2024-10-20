@@ -12,7 +12,7 @@ from ugbio_core.logger import logger
 warnings.filterwarnings("ignore")
 
 
-def run(argv):
+def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
     """
     converts CNV calls in bed format to vcf.
     input arguments:
@@ -59,10 +59,10 @@ def run(argv):
     # Add contigs info to the header
     df_genome = pd.read_csv(args.fasta_index_file, sep="\t", header=None, usecols=[0, 1])
     df_genome.columns = ["chr", "length"]
-    for index, row in df_genome.iterrows():
-        chrID = row["chr"]
+    for _, row in df_genome.iterrows():
+        chr_id = row["chr"]
         length = row["length"]
-        header.add_line(f"##contig=<ID={chrID},length={length}>")
+        header.add_line(f"##contig=<ID={chr_id},length={length}>")
 
     # Add ALT
     header.add_line('##ALT=<ID=<CNV>,Description="Copy number variant region">')
@@ -76,7 +76,8 @@ def run(argv):
 
     # Add INFO
     header.add_line(
-        '##INFO=<ID=CONFIDENCE,Number=1,Type=String,Description="Confidence level for CNV call.can be one of: LOW,MEDIUM,HIGH">'
+        '##INFO=<ID=CONFIDENCE,Number=1,Type=String,Description="Confidence level for CNV call.'
+        + 'can be one of: LOW,MEDIUM,HIGH">'
     )
     header.add_line('##INFO=<ID=CopyNumber,Number=1,Type=Float,Description="copy number of CNV call">')
     header.add_line('##INFO=<ID=RoundedCopyNumber,Number=1,Type=Integer,Description="rounded copy number of CNV call">')
@@ -97,16 +98,15 @@ def run(argv):
     with pysam.VariantFile(outfile, mode="w", header=header) as vcf_out:
         df_cnvs = pd.read_csv(args.cnv_annotated_bed_file, sep="\t", header=None)
         df_cnvs.columns = ["chr", "start", "end", "info"]
-        for index, row in df_cnvs.iterrows():
+        for _, row in df_cnvs.iterrows():
             # Create a new VCF record
-            chrID = row["chr"]
             start = row["start"]
             end = row["end"]
             info = row["info"]
 
-            CN = int(info.split("|")[0].replace("CN", ""))
+            cn = int(info.split("|")[0].replace("CN", ""))
             cnv_type = "<DUP>"
-            if CN < 2:
+            if cn < 2:  # noqa: PLR2004
                 cnv_type = "<DEL>"
 
             filters = []
@@ -116,36 +116,36 @@ def run(argv):
                     filters.append(arr[1])
 
             record = vcf_out.new_record()
-            record.contig = chrID
+            record.contig = chr_id
             record.start = start
             record.stop = end
             record.ref = "N"
             record.alts = (cnv_type,)
 
-            CONFIDENCE = "HIGH"
+            confidence = "HIGH"
             if len(filters) > 0:
                 for f in filters:
                     record.filter.add(f)
-                CONFIDENCE = "FAIL"
+                confidence = "FAIL"
                 if len(filters) > 1:
-                    CONFIDENCE = "FAIL"
+                    confidence = "FAIL"
             else:
                 record.filter.add("PASS")
 
-            record.info["CONFIDENCE"] = CONFIDENCE
-            record.info["CopyNumber"] = CN
-            record.info["RoundedCopyNumber"] = int(round(CN))
+            record.info["CONFIDENCE"] = confidence
+            record.info["CopyNumber"] = cn
+            record.info["RoundedCopyNumber"] = int(round(cn))
             record.info["SVLEN"] = int(end) - int(start)
             record.info["SVTYPE"] = cnv_type.replace("<", "").replace(">", "")
             # record.info['END_POS'] = str(end)
 
             # Set genotype information for each sample
-            GT = [None, 1]
-            if CN == 1:
-                GT = [0, 1]
-            elif CN == 0:
-                GT = [1, 1]
-            record.samples[sample_name]["GT"] = (GT[0], GT[1])
+            gt = [None, 1]
+            if cn == 1:
+                gt = [0, 1]
+            elif cn == 0:
+                gt = [1, 1]
+            record.samples[sample_name]["GT"] = (gt[0], gt[1])
 
             # Write the record to the VCF file
             vcf_out.write(record)
@@ -153,7 +153,7 @@ def run(argv):
         vcf_out.close()
 
         cmd = f"tabix -p vcf {outfile}"
-        os.system(cmd)
+        os.system(cmd)  # noqa: S605
         logger.info(f"output file: {outfile}")
         logger.info(f"output file index: {outfile}.tbi")
 

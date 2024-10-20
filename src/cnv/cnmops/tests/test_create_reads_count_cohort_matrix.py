@@ -33,6 +33,6 @@ def test_create_reads_count_cohort_matrix(tmpdir, resources_dir, script_path):
 
     cmd = ["Rscript", "--vanilla", script_path, "-samples_read_count_files_list", rc_files_list, "--save_csv"]
     assert subprocess.check_call(cmd, cwd=tmpdir) == 0
-    df = pd.read_csv(out_file)
+    result_df = pd.read_csv(out_file)
     df_ref = pd.read_csv(expected_out_file)
-    assert np.allclose(df.iloc[:, -3:], df_ref.iloc[:, -3:])
+    assert np.allclose(result_df.iloc[:, -3:], df_ref.iloc[:, -3:])

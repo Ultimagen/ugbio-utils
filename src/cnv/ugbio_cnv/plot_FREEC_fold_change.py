@@ -1,3 +1,4 @@
+# noqa: N999
 import argparse
 import logging
 import sys
@@ -38,7 +39,8 @@ def plot_ratio_values(df, sample_name, outdir):
 
 def run(argv):
     """
-    Runs the plot_FREEC_fold_change.py script to generate fold-change (as outputted from ControlFREEC) of tumor/normal along the genome.
+    Runs the plot_FREEC_fold_change.py script to generate fold-change (as outputted from ControlFREEC) of tumor/normal
+    along the genome.
     input arguments:
     --ratio_file: input ratio.txt file as outputted from controlFREEC pipeline.
     --out_directory: output directory
@@ -66,8 +68,6 @@ def run(argv):
     sample_name = args.sample_name
     outdir = args.out_directory
     logger.info(f"file will be written to {outdir}")
-
-    file = pjoin(ratio_file)
 
     df_freec_ratio = read_ratio_file(ratio_file)
     outfile = plot_ratio_values(df_freec_ratio, sample_name, outdir)

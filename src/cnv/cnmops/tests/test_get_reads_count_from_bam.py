@@ -43,6 +43,6 @@ def test_get_reads_count_from_bam(tmpdir, resources_dir, script_path):
         "--save_csv",
     ]
     assert subprocess.check_call(cmd, cwd=tmpdir) == 0
-    df = pd.read_csv(out_file)
-    df_ref = pd.read_csv(expected_out_file)
-    assert np.allclose(df.iloc[:, -1], df_ref.iloc[:, -1])
+    result_df = pd.read_csv(out_file)
+    expected_df = pd.read_csv(expected_out_file)
+    assert np.allclose(result_df.iloc[:, -1], expected_df.iloc[:, -1])
