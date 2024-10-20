@@ -23,14 +23,14 @@ def smooth_wl(df_reads_count, wl=100000, bin_size=1000) -> pd.DataFrame:
     multiply_factor = wl / bin_size
     df_smooth_wl = pd.DataFrame(columns=["chr", "start", "end", "cov"])
     chr_list = df_reads_count["chr"].unique()
-    for chrID in chr_list:
-        df_region = df_reads_count[df_reads_count["chr"] == chrID]
+    for chr_id in chr_list:
+        df_region = df_reads_count[df_reads_count["chr"] == chr_id]
         start = 1
         end = 1000 * multiply_factor
         while start < df_region["start"].max():
-            df = df_region[(df_region["start"] >= start) & (df_region["end"] <= end)]
-            cov_value = df.iloc[:, 3].median()
-            df2 = {"chr": chrID, "start": start, "end": end, "cov": cov_value}
+            df_window = df_region[(df_region["start"] >= start) & (df_region["end"] <= end)]
+            cov_value = df_window.iloc[:, 3].median()
+            df2 = {"chr": chr_id, "start": start, "end": end, "cov": cov_value}
             df_smooth_wl = pd.concat([df_smooth_wl, pd.DataFrame(df2, index=[0])], ignore_index=True)
             start = end + 1
             end = end + wl
@@ -38,24 +38,24 @@ def smooth_wl(df_reads_count, wl=100000, bin_size=1000) -> pd.DataFrame:
 
 
 def plot_coverage(
-    sample_name, df_chr_graphic, out_directory, df_germline_cov_norm_100K, df_tumor_cov_norm_100K=None
+    sample_name, df_chr_graphic, out_directory, df_germline_cov_norm_100k, df_tumor_cov_norm_100k=None
 ) -> str:
     """plot coverage along the genome for germline and tumor (if exists) samples"""
-    fig = plt.figure(figsize=(20, 4))
+    plt.figure(figsize=(20, 4))
     marker_size = 20
 
     plt.scatter(
-        df_germline_cov_norm_100K["start_fig"],
-        np.log2(df_germline_cov_norm_100K["cov"]),
+        df_germline_cov_norm_100k["start_fig"],
+        np.log2(df_germline_cov_norm_100k["cov"]),
         color="blue",
         alpha=0.2,
         edgecolors="none",
         s=marker_size,
     )
-    if df_tumor_cov_norm_100K is not None:
+    if df_tumor_cov_norm_100k is not None:
         plt.scatter(
-            df_tumor_cov_norm_100K["start_fig"],
-            np.log2(df_tumor_cov_norm_100K["cov"]),
+            df_tumor_cov_norm_100k["start_fig"],
+            np.log2(df_tumor_cov_norm_100k["cov"]),
             color="orange",
             alpha=0.2,
             edgecolors="none",
@@ -65,12 +65,12 @@ def plot_coverage(
     previous = 0
     xticks = []
     xticks_labels = []
-    for index, row in df_chr_graphic.iterrows():
-        chr = row["chr"]
+    for _, row in df_chr_graphic.iterrows():
+        chr_name = row["chr"]
         chr_index = row["start_fig"]
         plt.axvline(x=chr_index, color="black", alpha=0.5)
         xticks.append(previous + (chr_index - previous) / 2)
-        xticks_labels.append(chr)
+        xticks_labels.append(chr_name)
         previous = chr_index
     plt.axvline(x=0, color="black", alpha=0.5)
 
@@ -78,7 +78,7 @@ def plot_coverage(
     plt.xlabel("location on genome")
     plt.ylabel("coverage\n(normalized, log scale)")
 
-    if df_tumor_cov_norm_100K is not None:
+    if df_tumor_cov_norm_100k is not None:
         handles = [Rectangle((0, 0), 0.5, 0.5, color=c, ec="k") for c in ["blue", "orange"]]
         labels = ["germline", "tumor"]
     else:
@@ -91,19 +91,19 @@ def plot_coverage(
     return out_cov_figure
 
 
-def get_x_location_for_fig(df, df_germline_cov_norm_100K) -> pd.DataFrame:
+def get_x_location_for_fig(df, df_germline_cov_norm_100k) -> pd.DataFrame:
     """get the x location for the CNV calls in the figure based on the coverage data"""
     start_fig_list = []
     end_fig_list = []
-    for index, row in df.iterrows():
-        chr = row["chr"]
+    for _, row in df.iterrows():
+        chr_name = row["chr"]
         start = row["start"] + 1
         end = row["end"] + 1
 
-        df_region = df_germline_cov_norm_100K[
-            (df_germline_cov_norm_100K["chr"] == chr)
-            & (df_germline_cov_norm_100K["start"] <= end)
-            & (df_germline_cov_norm_100K["start"] >= start - 100000)
+        df_region = df_germline_cov_norm_100k[
+            (df_germline_cov_norm_100k["chr"] == chr_name)
+            & (df_germline_cov_norm_100k["start"] <= end)
+            & (df_germline_cov_norm_100k["start"] >= start - 100000)
         ]
         start_fig = df_region["start_fig"].to_list()[0]
         end_fig = df_region["start_fig"].to_list()[-1]
@@ -116,36 +116,35 @@ def get_x_location_for_fig(df, df_germline_cov_norm_100K) -> pd.DataFrame:
 
 
 def plot_amp_del_cnv_calls(
-    df_chr_graphic, out_directory, sample_name, df_DUP=None, df_DEL=None, df_gt_DUP=None, df_gt_DEL=None
+    df_chr_graphic, out_directory, sample_name, df_dup=None, df_del=None, df_gt_dup=None, df_gt_del=None
 ) -> str:
     """plot CNV calls showing duplication and deletions along the genome with comparison to ground truth."""
-    fig = plt.figure(figsize=(20, 2))
-    marker_size = 20
+    plt.figure(figsize=(20, 2))
 
     gt = False
-    if df_gt_DEL is not None:
-        plt.plot((df_gt_DEL["start_fig"], df_gt_DEL["end_fig"]), (0, 0), "red")
+    if df_gt_del is not None:
+        plt.plot((df_gt_del["start_fig"], df_gt_del["end_fig"]), (0, 0), "red")
         gt = True
-    if df_gt_DUP is not None:
-        plt.plot((df_gt_DUP["start_fig"], df_gt_DUP["end_fig"]), (0, 0), "green")
+    if df_gt_dup is not None:
+        plt.plot((df_gt_dup["start_fig"], df_gt_dup["end_fig"]), (0, 0), "green")
         gt = True
     germline = False
-    if df_DEL is not None:
-        plt.plot((df_DEL["start_fig"], df_DEL["end_fig"]), (0.5, 0.5), "red")
+    if df_del is not None:
+        plt.plot((df_del["start_fig"], df_del["end_fig"]), (0.5, 0.5), "red")
         germline = True
-    if df_DUP is not None:
-        plt.plot((df_DUP["start_fig"], df_DUP["end_fig"]), (0.5, 0.5), "green")
+    if df_dup is not None:
+        plt.plot((df_dup["start_fig"], df_dup["end_fig"]), (0.5, 0.5), "green")
         germline = True
 
     previous = 0
     xticks = []
     xticks_labels = []
-    for index, row in df_chr_graphic.iterrows():
-        chr = row["chr"]
+    for _, row in df_chr_graphic.iterrows():
+        chr_name = row["chr"]
         chr_index = row["start_fig"]
         plt.axvline(x=chr_index, color="black", alpha=0.5)
         xticks.append(previous + (chr_index - previous) / 2)
-        xticks_labels.append(chr)
+        xticks_labels.append(chr_name)
         previous = chr_index
     plt.axvline(x=0, color="black", alpha=0.5)
 
@@ -170,19 +169,18 @@ def plot_amp_del_cnv_calls(
 
 
 def plot_cnv_calls(
-    sample_name, out_directory, df_chr_graphic, df_germline_cov_norm_100K, df_DUP=None, df_DEL=None
+    sample_name, out_directory, df_chr_graphic, df_germline_cov_norm_100k, df_dup=None, df_del=None
 ) -> str:
     """plot the copy number along the genome"""
-    if df_DUP is None and df_DEL is None:
+    if df_dup is None and df_del is None:
         return None
     else:
-        df_calls = pd.concat([df_DUP, df_DEL])
-        get_x_location_for_fig(df_calls, df_germline_cov_norm_100K)
+        df_calls = pd.concat([df_dup, df_del])
+        get_x_location_for_fig(df_calls, df_germline_cov_norm_100k)
         df_calls["width"] = df_calls["end"] - df_calls["start"]
         df_calls["width_fig"] = df_calls["end_fig"] - df_calls["start_fig"]
 
-        fig = plt.figure(figsize=(20, 2))
-        marker_size = 20
+        plt.figure(figsize=(20, 2))
 
         plt.plot(
             (df_calls["start_fig"], df_calls["end_fig"]), (df_calls["copy-number"], df_calls["copy-number"]), "black"
@@ -191,12 +189,12 @@ def plot_cnv_calls(
         previous = 0
         xticks = []
         xticks_labels = []
-        for index, row in df_chr_graphic.iterrows():
-            chr = row["chr"]
+        for _, row in df_chr_graphic.iterrows():
+            chr_name = row["chr"]
             chr_index = row["start_fig"]
             plt.axvline(x=chr_index, color="black", alpha=0.5)
             xticks.append(previous + (chr_index - previous) / 2)
-            xticks_labels.append(chr)
+            xticks_labels.append(chr_name)
             previous = chr_index
         plt.axvline(x=0, color="black", alpha=0.5)
 
@@ -217,16 +215,18 @@ def plot_cnv_calls(
         return out_calls_figure
 
 
-def run(argv):
+def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     """
     Runs the plot_cnv_results.py script to generate CNV calling results description in figures.
     input arguments:
     --germline_coverage: input bed file holding the germline coverage along the genome.
     --tumor_coverage: input bed file holding the tumor coverage along the genome.
-    --duplication_cnv_calls: input tsv file holding DUP CNV calls in the following format: <chr><start><end><copy-number>
+    --duplication_cnv_calls: input tsv file holding DUP CNV calls in the following format:<chr><start><end><copy-number>
     --deletion_cnv_calls: input tsv file holding DEL CNV calls in the following format: <chr><start><end><copy-number>
-    --gt_duplication_cnv_calls: input tsv file holding ground truth DUP CNV calls in the following format: <chr><start><end><copy-number>
-    --gt_deletion_cnv_calls: input tsv file holding ground truth DEL CNV calls in the following format: <chr><start><end><copy-number>
+    --gt_duplication_cnv_calls: input tsv file holding ground truth DUP CNV calls in the following format:
+        <chr><start><end><copy-number>
+    --gt_deletion_cnv_calls: input tsv file holding ground truth DEL CNV calls in the following format:
+        <chr><start><end><copy-number>
     --out_directory: output directory
     --sample_name: sample name
     output files:
@@ -262,13 +262,19 @@ def run(argv):
     )
     parser.add_argument(
         "--gt_duplication_cnv_calls",
-        help="input tsv file holding ground truth DUP CNV calls in the following format: <chr><start><end><copy-number>",
+        help=(
+            "input tsv file holding ground truth DUP CNV calls in the following format: "
+            "<chr><start><end><copy-number>"
+        ),
         required=False,
         type=str,
     )
     parser.add_argument(
         "--gt_deletion_cnv_calls",
-        help="input tsv file holding ground truth DEL CNV calls in the following format: <chr><start><end><copy-number>",
+        help=(
+            "input tsv file holding ground truth DEL CNV calls in the following format: "
+            "<chr><start><end><copy-number>"
+        ),
         required=False,
         type=str,
     )
@@ -302,13 +308,13 @@ def run(argv):
     df_germline_cov.columns = ["chr", "start", "end", "cov"]
     df_germline_cov["norm_cov"] = df_germline_cov["cov"] / df_germline_cov["cov"].median()
     df_germline_cov["log_norm_cov"] = np.log2(df_germline_cov["norm_cov"])
-    df_germline_cov_norm_100K = smooth_wl(df_germline_cov[["chr", "start", "end", "norm_cov"]], 100000)
-    df_germline_cov_norm_100K["start_fig"] = list(range(len(df_germline_cov_norm_100K)))
+    df_germline_cov_norm_100k = smooth_wl(df_germline_cov[["chr", "start", "end", "norm_cov"]], 100000)
+    df_germline_cov_norm_100k["start_fig"] = list(range(len(df_germline_cov_norm_100k)))
 
     df_chr_graphic = pd.DataFrame(
         {
-            "chr": df_germline_cov_norm_100K.groupby(["chr"])["start_fig"].max().index,
-            "start_fig": df_germline_cov_norm_100K.groupby(["chr"])["start_fig"].max().values,
+            "chr": df_germline_cov_norm_100k.groupby(["chr"])["start_fig"].max().index,
+            "start_fig": df_germline_cov_norm_100k.groupby(["chr"])["start_fig"].max().to_numpy(),
         }
     )
     df_chr_graphic["chr_num"] = df_chr_graphic["chr"].str.replace("chr", "", regex=True)
@@ -322,13 +328,13 @@ def run(argv):
         df_tumor_cov.columns = ["chr", "start", "end", "cov"]
         df_tumor_cov["norm_cov"] = df_tumor_cov["cov"] / df_tumor_cov["cov"].median()
         df_tumor_cov["log_norm_cov"] = np.log2(df_tumor_cov["norm_cov"])
-        df_tumor_cov_norm_100K = smooth_wl(df_tumor_cov[["chr", "start", "end", "norm_cov"]], 100000)
-        df_tumor_cov_norm_100K["start_fig"] = list(range(len(df_tumor_cov_norm_100K)))
+        df_tumor_cov_norm_100k = smooth_wl(df_tumor_cov[["chr", "start", "end", "norm_cov"]], 100000)
+        df_tumor_cov_norm_100k["start_fig"] = list(range(len(df_tumor_cov_norm_100k)))
         out_cov_figure = plot_coverage(
-            args.sample_name, df_chr_graphic, args.out_directory, df_germline_cov_norm_100K, df_tumor_cov_norm_100K
+            args.sample_name, df_chr_graphic, args.out_directory, df_germline_cov_norm_100k, df_tumor_cov_norm_100k
         )
     else:
-        out_cov_figure = plot_coverage(args.sample_name, df_chr_graphic, args.out_directory, df_germline_cov_norm_100K)
+        out_cov_figure = plot_coverage(args.sample_name, df_chr_graphic, args.out_directory, df_germline_cov_norm_100k)
 
     ##########################
     ##### plot CNV calls #####
@@ -336,53 +342,53 @@ def run(argv):
     # load UG calls
     if args.duplication_cnv_calls:
         if os.path.getsize(args.duplication_cnv_calls) > 0:
-            df_DUP = pd.read_csv(args.duplication_cnv_calls, sep="\t", header=None)
-            df_DUP.columns = ["chr", "start", "end", "copy-number"]
-            df_DUP = get_x_location_for_fig(df_DUP, df_germline_cov_norm_100K)
+            df_dup = pd.read_csv(args.duplication_cnv_calls, sep="\t", header=None)
+            df_dup.columns = ["chr", "start", "end", "copy-number"]
+            df_dup = get_x_location_for_fig(df_dup, df_germline_cov_norm_100k)
         else:
             logger.warn("duplication_cnv_calls file is empty")
-            df_DUP = None
+            df_dup = None
     else:
-        df_DUP = None
+        df_dup = None
 
     if args.deletion_cnv_calls:
         if os.path.getsize(args.deletion_cnv_calls) > 0:
-            df_DEL = pd.read_csv(args.deletion_cnv_calls, sep="\t", header=None)
-            df_DEL.columns = ["chr", "start", "end", "copy-number"]
-            df_DEL = get_x_location_for_fig(df_DEL, df_germline_cov_norm_100K)
+            df_del = pd.read_csv(args.deletion_cnv_calls, sep="\t", header=None)
+            df_del.columns = ["chr", "start", "end", "copy-number"]
+            df_del = get_x_location_for_fig(df_del, df_germline_cov_norm_100k)
         else:
             logger.warn("deletion_cnv_calls file is empty")
-            df_DEL = None
+            df_del = None
     else:
-        df_DEL = None
+        df_del = None
 
     if args.gt_duplication_cnv_calls:
         if os.path.getsize(args.gt_duplication_cnv_calls) > 0:
-            df_gt_DUP = pd.read_csv(args.gt_duplication_cnv_calls, sep="\t", header=None)
-            df_gt_DUP.columns = ["chr", "start", "end", "copy-number"]
-            df_gt_DUP = get_x_location_for_fig(df_gt_DUP, df_germline_cov_norm_100K)
+            df_gt_dup = pd.read_csv(args.gt_duplication_cnv_calls, sep="\t", header=None)
+            df_gt_dup.columns = ["chr", "start", "end", "copy-number"]
+            df_gt_dup = get_x_location_for_fig(df_gt_dup, df_germline_cov_norm_100k)
         else:
             logger.warn("gt_duplication_cnv_calls file is empty")
-            df_gt_DUP = None
+            df_gt_dup = None
     else:
-        df_gt_DUP = None
+        df_gt_dup = None
 
     if args.gt_deletion_cnv_calls:
         if os.path.getsize(args.gt_deletion_cnv_calls) > 0:
-            df_gt_DEL = pd.read_csv(args.gt_deletion_cnv_calls, sep="\t", header=None)
-            df_gt_DEL.columns = ["chr", "start", "end", "copy-number"]
-            df_gt_DEL = get_x_location_for_fig(df_gt_DEL, df_germline_cov_norm_100K)
+            df_gt_del = pd.read_csv(args.gt_deletion_cnv_calls, sep="\t", header=None)
+            df_gt_del.columns = ["chr", "start", "end", "copy-number"]
+            df_gt_del = get_x_location_for_fig(df_gt_del, df_germline_cov_norm_100k)
         else:
             logger.warn("gt_deletion_cnv_calls file is empty")
-            df_gt_DEL = None
+            df_gt_del = None
     else:
-        df_gt_DEL = None
+        df_gt_del = None
 
     out_dup_del_calls_figure = plot_amp_del_cnv_calls(
-        df_chr_graphic, args.out_directory, args.sample_name, df_DUP, df_DEL, df_gt_DUP, df_gt_DEL
+        df_chr_graphic, args.out_directory, args.sample_name, df_dup, df_del, df_gt_dup, df_gt_del
     )
     out_cnv_calls_figure = plot_cnv_calls(
-        args.sample_name, args.out_directory, df_chr_graphic, df_germline_cov_norm_100K, df_DUP, df_DEL
+        args.sample_name, args.out_directory, df_chr_graphic, df_germline_cov_norm_100k, df_dup, df_del
     )
 
     logger.info("output files:")

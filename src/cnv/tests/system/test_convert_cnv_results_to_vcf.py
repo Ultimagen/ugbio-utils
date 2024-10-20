@@ -6,10 +6,9 @@ from os.path import join as pjoin
 from pathlib import Path
 
 import pytest
+from ugbio_cnv import convert_cnv_results_to_vcf
 
 warnings.filterwarnings("ignore")
-
-from ugbio_cnv import convert_cnv_results_to_vcf
 
 
 @pytest.fixture

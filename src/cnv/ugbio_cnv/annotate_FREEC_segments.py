@@ -1,4 +1,4 @@
-# Copyright 2022 Ultima Genomics Inc.
+# Copyright 2022 Ultima Genomics Inc.  # noqa: N999
 #
 #    Licensed under the Apache License, Version 2.0 (the "License");
 #    you may not use this file except in compliance with the License.
@@ -77,14 +77,14 @@ def run(argv):
 
     out_annotated_file = os.path.basename(args.input_segments_file) + "_annotated.txt"
     df_segments.to_csv(out_annotated_file, sep="\t", index=False)
-    out_CNVs_file = os.path.basename(args.input_segments_file) + "_CNVs.bed"
+    out_cnvs_file = os.path.basename(args.input_segments_file) + "_CNVs.bed"
     df_segments[df_segments["alteration"] != "neutral"][["chr", "start", "end", "median_ratio"]].to_csv(
-        out_CNVs_file, sep="\t", index=False, header=None
+        out_cnvs_file, sep="\t", index=False, header=None
     )
 
     logger.info("output files:")
     logger.info(out_annotated_file)
-    logger.info(out_CNVs_file)
+    logger.info(out_cnvs_file)
 
 
 def main():

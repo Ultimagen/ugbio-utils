@@ -4,10 +4,9 @@ from os.path import join as pjoin
 from pathlib import Path
 
 import pytest
+from ugbio_cnv import plot_cnv_results
 
 warnings.filterwarnings("ignore")
-
-from ugbio_cnv import plot_cnv_results
 
 
 @pytest.fixture
@@ -17,13 +16,15 @@ def resources_dir():
 
 class TestPlotCnvResults:
     def test_plot_germline_cnv_results(self, tmpdir, resources_dir):
+        """
+        Expected figures can be found under test resources:
+        - expected_NA11428_cnv_figures/NA11428.chr1_chr2.CNV.calls.jpeg
+        - expected_NA11428_cnv_figures/NA11428.chr1_chr2.CNV.coverage.jpeg
+        - expected_NA11428_cnv_figures/NA11428.chr1_chr2.dup_del.calls.jpeg
+        """
         input_germline_coverage = pjoin(resources_dir, "NA11428.chr1_chr2.ReadCounts.bed")
         input_dup_bed = pjoin(resources_dir, "NA11428.chr1_chr2.DUP.cnvs.filter.bed")
         input_del_bed = pjoin(resources_dir, "NA11428.chr1_chr2.DEL.cnvs.filter.bed")
-
-        expected_calls_fig = pjoin(resources_dir, "expected_NA11428_cnv_figures/NA11428.chr1_chr2.CNV.calls.jpeg")
-        expected_coverage_fig = pjoin(resources_dir, "expected_NA11428_cnv_figures/NA11428.chr1_chr2.CNV.coverage.jpeg")
-        expected_dup_del_fig = (resources_dir, "expected_NA11428_cnv_figures/NA11428.chr1_chr2.dup_del.calls.jpeg")
 
         sample_name = "NA11428.chr1_chr2"
         out_dir = f"{tmpdir}"
@@ -52,18 +53,18 @@ class TestPlotCnvResults:
         assert os.path.getsize(out_dup_del_fig) > 0
 
     def test_plot_somatic_cnv_results(self, tmpdir, resources_dir):
+        """
+        Expected figures can be found under test resources:
+        - somatic/expected_figures/COLO829.chr1_chr2.CNV.calls.jpeg
+        - somatic/expected_figures/COLO829.chr1_chr2.CNV.coverage.jpeg
+        - somatic/expected_figures/COLO829.chr1_chr2.dup_del.calls.jpeg
+        """
         input_germline_coverage = pjoin(resources_dir, "somatic", "germline.bedGraph")
         input_tumor_coverage = pjoin(resources_dir, "somatic", "tumor.bedGraph")
         input_dup_bed = pjoin(resources_dir, "somatic", "COLO829_run031865.cnvs.filter.chr1_chr2.DUP.bed")
         input_del_bed = pjoin(resources_dir, "somatic", "COLO829_run031865.cnvs.filter.chr1_chr2.DEL.bed")
         input_gt_dup_bed = pjoin(resources_dir, "somatic", "COLO-829.GT.chr1_chr2.DUP.bed")
         input_gt_del_bed = pjoin(resources_dir, "somatic", "COLO-829.GT.chr1_chr2.DEL.bed")
-
-        expected_calls_fig = pjoin(resources_dir, "somatic", "expected_figures", "COLO829.chr1_chr2.CNV.calls.jpeg")
-        expected_coverage_fig = pjoin(
-            resources_dir, "somatic", "expected_figures", "COLO829.chr1_chr2.CNV.coverage.jpeg"
-        )
-        expected_dup_del_fig = (resources_dir, "somatic", "expected_figures", "COLO829.chr1_chr2.dup_del.calls.jpeg")
 
         sample_name = "COLO829.chr1_chr2"
         out_dir = f"{tmpdir}"

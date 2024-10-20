@@ -39,6 +39,6 @@ def test_merge_reads_count_sample_to_cohort(tmpdir, resources_dir, script_path):
         "--save_csv",
     ]
     assert subprocess.check_call(cmd, cwd=tmpdir) == 0
-    df = pd.read_csv(out_file)
+    merged_reads_count_df = pd.read_csv(out_file)
     df_ref = pd.read_csv(expected_out_merged_reads_count_file)
-    assert np.allclose(df.iloc[:, -4], df_ref.iloc[:, -4])
+    assert np.allclose(merged_reads_count_df.iloc[:, -4], df_ref.iloc[:, -4])

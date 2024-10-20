@@ -39,16 +39,16 @@ def annotate_bed(bed_file, lcr_cutoff, lcr_file, prefix, length_cutoff=10000):
     out_filters_unsorted = prefix + "filters.annotate.unsorted.bed"
     cmd = "cat " + lcr_bed_file + " " + length_bed_file + " > " + out_filters_unsorted
 
-    os.system(cmd)
+    os.system(cmd)  # noqa: S605
     out_filters_sorted = prefix + "filters.annotate.bed"
 
     cmd = bedtools + " sort -i " + out_filters_unsorted + " > " + out_filters_sorted
 
-    os.system(cmd)
+    os.system(cmd)  # noqa: S605
     out_bed_file_sorted = prefix + os.path.basename(bed_file).rstrip(".bed") + ".sorted.bed"
     cmd = bedtools + " sort -i " + bed_file + " > " + out_bed_file_sorted
 
-    os.system(cmd)
+    os.system(cmd)  # noqa: S605
 
     # annotate bed files by filters
     out_unsorted_annotate = prefix + os.path.basename(bed_file).rstrip(".bed") + ".unsorted.annotate.bed"
@@ -61,7 +61,7 @@ def annotate_bed(bed_file, lcr_cutoff, lcr_file, prefix, length_cutoff=10000):
         + " > "
         + out_unsorted_annotate
     )
-    os.system(cmd)
+    os.system(cmd)  # noqa: S605
     # combine to 4th column
 
     out_combined_info = prefix + os.path.basename(bed_file).rstrip(".bed") + ".unsorted.annotate.combined.bed"
@@ -73,16 +73,16 @@ def annotate_bed(bed_file, lcr_cutoff, lcr_file, prefix, length_cutoff=10000):
         + 'else{print $1"\t"$2"\t"$3"\t"$5}}\' | sed \'s/\t$//\' > '
         + out_combined_info
     )
-    os.system(cmd)
+    os.system(cmd)  # noqa: S605
 
     out_annotate = prefix + os.path.basename(bed_file).rstrip(".bed") + ".annotate.bed"
     cmd = "sort -k1,1V -k2,2n -k3,3n " + out_combined_info + " > " + out_annotate
-    os.system(cmd)
+    os.system(cmd)  # noqa: S605
 
     out_filtered = prefix + os.path.basename(bed_file).rstrip(".bed") + ".filter.bed"
     cmd = "cat " + out_annotate + " | grep -v \"|\" | sed 's/\t$//' > " + out_filtered
 
-    os.system(cmd)
+    os.system(cmd)  # noqa: S605
 
     return [out_annotate, out_filtered]
 
