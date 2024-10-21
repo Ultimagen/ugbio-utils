@@ -10,6 +10,7 @@ from typing import Any
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.legend_handler import HandlerTuple
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -40,6 +41,8 @@ LABEL = "label"
 QUAL = "qual"
 IS_MIXED = "is_mixed"
 FOLD_ID = "fold_id"
+IS_FORWARD = "is_forward"
+IS_CYCLE_SKIP = "is_cycle_skip"
 
 edist_filter = f"{FeatureMapFields.X_EDIST.value} <= 5"
 HQ_SNV_filter = f"{FeatureMapFields.X_SCORE.value} >= 7.9"
@@ -197,6 +200,37 @@ def discretized_bin_edges(a, discretization_size=None, bins=10, full_range=None,
 
     return discretized_bins
 
+
+def compute_auc_by_mixed(group, pred_col=ML_PROB_1_TEST):
+    """Calculate AUC for all, mixed, and non-mixed cases in a group (to apply after groupby operation).
+    Args:
+        group: DataFrame group
+        pred_col: Column with the predicted probabilities
+    """
+    # Calculate ROC AUC for all rows
+    if group[LABEL].nunique() > 1:
+        auc_all = roc_auc_score(group[LABEL], group[pred_col])
+    else:
+        auc_all = float('nan')
+
+    # Calculate ROC AUC for rows where IS_MIXED is True
+    if not group[IS_MIXED].any():  # Ensure there's at least one True row
+        auc_mixed = float('nan')  # No valid data for True cases
+    elif group.loc[group[IS_MIXED], LABEL].nunique() <= 1:
+        auc_mixed = float('nan')  # No valid data for True cases
+    else:
+        auc_mixed = roc_auc_score(group.loc[group[IS_MIXED], LABEL], 
+                                  group.loc[group[IS_MIXED], pred_col])
+
+    # Calculate ROC AUC for rows where 'attribute' is False
+    if not (~group[IS_MIXED]).any():  # Ensure there's at least one False row
+        auc_non_mixed = float('nan')  # No valid data for False cases
+    elif group.loc[~group[IS_MIXED], LABEL].nunique() <= 1:
+        auc_non_mixed = float('nan')  # No valid data for False cases
+    else:
+        auc_non_mixed = roc_auc_score(group.loc[~group[IS_MIXED], LABEL], 
+                                      group.loc[~group[IS_MIXED], pred_col])
+    return pd.Series({'auc_all': auc_all, 'auc_mixed': auc_mixed, 'auc_non_mixed': auc_non_mixed})
 
 # ### Old functions from here
 
@@ -1707,21 +1741,21 @@ class SRSNVReport:
         # Info about training set size
         if self.params["num_CV_folds"] >= 2:
             dataset_sizes = {
-                ("dataset size", f"fold {f}"): (self.data_df["fold_id"] == f).sum()
+                ("dataset size", f"fold {f}"): (self.data_df[FOLD_ID] == f).sum()
                 for f in range(self.params["num_CV_folds"])
             }
-            dataset_sizes[("dataset size", "test only")] = (self.data_df["fold_id"].isna()).sum()
+            dataset_sizes[("dataset size", "test only")] = (self.data_df[FOLD_ID].isna()).sum()
             other_fold_ids = np.logical_and(
-                ~self.data_df["fold_id"].isin(np.arange(self.params["num_CV_folds"])), ~self.data_df["fold_id"].isna()
+                ~self.data_df[FOLD_ID].isin(np.arange(self.params["num_CV_folds"])), ~self.data_df[FOLD_ID].isna()
             ).sum()
             if other_fold_ids > 0:
                 dataset_sizes[("dataset size", "other")] = other_fold_ids
         else:  # Train/test split
             dataset_sizes = {
-                ("dataset size", "train"): (self.data_df["fold_id"] == -1).sum(),
-                ("dataset size", "test"): (self.data_df["fold_id"] == 0).sum(),
+                ("dataset size", "train"): (self.data_df[FOLD_ID] == -1).sum(),
+                ("dataset size", "test"): (self.data_df[FOLD_ID] == 0).sum(),
             }
-            other_fold_ids = ~self.data_df["fold_id"].isin([-1, 0]).sum()
+            other_fold_ids = ~self.data_df[FOLD_ID].isin([-1, 0]).sum()
             if other_fold_ids > 0:
                 dataset_sizes[("dataset size", "other")] = other_fold_ids
         run_info_table = pd.Series({**general_info, **version_info}, name="")
@@ -2028,11 +2062,11 @@ class SRSNVReport:
 
         logger.info("Generating Run Quality table")
         conds_dict = {
-            "": np.ones(self.data_df["label"].shape, dtype=bool),
-            "_TP": self.data_df["label"],
-            "_FP": ~self.data_df["label"],
-            "_TP_mixed": np.logical_and(self.data_df["is_mixed"], self.data_df["label"]),
-            "_TP_non-mixed": np.logical_and(~self.data_df["is_mixed"], self.data_df["label"]),
+            "": np.ones(self.data_df[LABEL].shape, dtype=bool),
+            "_TP": self.data_df[LABEL],
+            "_FP": ~self.data_df[LABEL],
+            "_TP_mixed": np.logical_and(self.data_df[IS_MIXED], self.data_df[LABEL]),
+            "_TP_non-mixed": np.logical_and(~self.data_df[IS_MIXED], self.data_df[LABEL]),
         }
         qual_stats_description = {
             key: self.data_df.loc[cond, list(cols_for_stats.keys())]
@@ -2060,7 +2094,7 @@ class SRSNVReport:
     @exception_handler
     def quality_per_ppmseq_tags(self, output_filename: str = None):
         """Generate tables of median quality and data quantity per start and end ppmseq tags."""
-        data_df_tp = self.data_df[self.data_df["label"]].copy()
+        data_df_tp = self.data_df[self.data_df[LABEL]].copy()
         ppmseq_tags_in_data = self.start_tag_col is not None and self.end_tag_col is not None
         start_tag_col, end_tag_col = (self.start_tag_col, self.end_tag_col) if ppmseq_tags_in_data else ("st", "et")
         if not ppmseq_tags_in_data:
@@ -2214,7 +2248,7 @@ class SRSNVReport:
 
         return X_val_display
 
-    def _shap_on_sample(self, model, data_df, features=None, label_col="label", n_sample=10_000):
+    def _shap_on_sample(self, model, data_df, features=None, label_col=LABEL, n_sample=10_000):
         """Calculate shap value on a sample of the data from data_df."""
         if features is None:
             features = self.params["numerical_features"] + self.params["categorical_features_names"]
@@ -2410,7 +2444,7 @@ class SRSNVReport:
         # Define model, data
         k = 0  # fold_id
         model = self.models[k]
-        X_val = self.data_df[self.data_df["fold_id"] == k]
+        X_val = self.data_df[self.data_df[FOLD_ID] == k]
         # Get SHAP values
         logger.info("Calculating SHAP values")
         shap_values, X_val, y_val = self._shap_on_sample(  # pylint: disable=unused-variable
@@ -2432,17 +2466,17 @@ class SRSNVReport:
 
     def _get_trinuc_stats(self, q1: float = 0.1, q2: float = 0.9):
         data_df = self.data_df.copy()
-        data_df["is_cycle_skip"] = data_df["is_cycle_skip"].astype(int)
-        trinuc_stats = data_df.groupby(["trinuc_context_with_alt", "label", "is_forward", "is_mixed"]).agg(
+        data_df[IS_CYCLE_SKIP] = data_df[IS_CYCLE_SKIP].astype(int)
+        trinuc_stats = data_df.groupby(["trinuc_context_with_alt", LABEL, IS_FORWARD, IS_MIXED]).agg(
             median_qual=("qual", "median"),
             quantile1_qual=("qual", lambda x: x.quantile(q1)),
             quantile3_qual=("qual", lambda x: x.quantile(q2)),
-            is_cycle_skip=("is_cycle_skip", "mean"),
+            is_cycle_skip=(IS_CYCLE_SKIP, "mean"),
             count=("qual", "size"),
         )
         trinuc_stats["fraction"] = trinuc_stats["count"] / self.data_df.shape[0]
         trinuc_stats = trinuc_stats.reset_index()
-        trinuc_stats["is_forward"] = trinuc_stats["is_forward"].astype(bool)
+        trinuc_stats[IS_FORWARD] = trinuc_stats[IS_FORWARD].astype(bool)
         return trinuc_stats
 
     def _get_trinuc_with_alt_in_order(self, order: str = "symmetric"):
@@ -2492,14 +2526,14 @@ class SRSNVReport:
     ):
         logger.info("Calculating trinuc context statistics")
         trinuc_stats = self._get_trinuc_stats(q1=0.1, q2=0.9)
-        trinuc_stats.set_index(["trinuc_context_with_alt", "label", "is_forward", "is_mixed"]).to_hdf(
+        trinuc_stats.set_index(["trinuc_context_with_alt", LABEL, IS_FORWARD, IS_MIXED]).to_hdf(
             self.output_h5_filename, key="trinuc_stats", mode="a"
         )
         # get trinuc_with_context in right order
         trinuc_symmetric_ref_alt, symmetric_index, snv_labels = self._get_trinuc_with_alt_in_order(order=order)
         snv_positions = [8, 24, 40, 56, 72, 88]  # Midpoint for each SNV titles in plot
         trinuc_is_cycle_skip = (
-            trinuc_stats.groupby("trinuc_context_with_alt")["is_cycle_skip"]
+            trinuc_stats.groupby("trinuc_context_with_alt")[IS_CYCLE_SKIP]
             .mean()
             .astype(bool)
             .loc[trinuc_symmetric_ref_alt]
@@ -2507,13 +2541,13 @@ class SRSNVReport:
         )
 
         # Configurable boolean column name
-        boolean_column_frac = "label"  # Change this to any other boolean column name as needed
-        boolean_column_qual = "is_mixed"  # Change this to any other boolean column name as needed
+        boolean_column_frac = LABEL  # Change this to any other boolean column name as needed
+        boolean_column_qual = IS_MIXED  # Change this to any other boolean column name as needed
         cond_for_frac_plot = True
-        cond_for_qual_plot = trinuc_stats["label"]
+        cond_for_qual_plot = trinuc_stats[LABEL]
         if filter_on_is_forward:
-            cond_for_frac_plot = trinuc_stats["is_forward"]
-            cond_for_qual_plot = cond_for_qual_plot & trinuc_stats["is_forward"]
+            cond_for_frac_plot = trinuc_stats[IS_FORWARD]
+            cond_for_qual_plot = cond_for_qual_plot & trinuc_stats[IS_FORWARD]
 
         # Plot parameters
         label_fontsize = 14
@@ -2696,7 +2730,7 @@ class SRSNVReport:
             frameon=False,
         )
         # Add explanatory text about x-tick label colors
-        is_forward_text = "(fwd only read)" if filter_on_is_forward else "(fwd and rev reads)"
+        is_forward_text = "(fwd reads only)" if filter_on_is_forward else "(fwd and rev reads)"
         fig.text(
             0.75,  # x-position (slightly to the right of the second legend)
             -0.06 + 2 * 0.025,  # y-position (adjust as necessary)
@@ -2731,8 +2765,8 @@ class SRSNVReport:
         step_kws = step_kws or {}
         col = stats_for_plot.columns[0]
         polys, lines = [], []
-        for is_mixed, color in zip([~stats_for_plot["is_mixed"], stats_for_plot["is_mixed"]], [c_false, c_true]):
-            qual_df = stats_for_plot.loc[is_mixed & stats_for_plot["label"] & (stats_for_plot["count"] > min_count), :]
+        for is_mixed, color in zip([~stats_for_plot[IS_MIXED], stats_for_plot[IS_MIXED]], [c_false, c_true]):
+            qual_df = stats_for_plot.loc[is_mixed & stats_for_plot[LABEL] & (stats_for_plot["count"] > min_count), :]
             fb_kws["color"] = color
             step_kws["color"] = color
             if qual_df.shape[0] > 0:
@@ -2751,6 +2785,307 @@ class SRSNVReport:
             polys.append(poly)
             lines.append(line)
         return polys, lines
+    
+    def _get_trinuc_roc_auc(self, data_df):
+        """Calculate ROC AUC stats for each trinucleotide context."""
+        data_df = data_df.copy()
+        data_df[IS_CYCLE_SKIP] = data_df[IS_CYCLE_SKIP].astype(int)
+        groupby_cols = ['SNV context']
+        data_df_grouped = data_df.groupby(groupby_cols)
+        trinuc_auc_stats = data_df_grouped.apply(compute_auc_by_mixed)
+        # trinuc_auc_stats = data_df.groupby(groupby_cols).apply(compute_auc_by_mixed)
+        # Add min/max values over CV folds
+        fold_data_dfs = []
+        for k in range(self.params["num_CV_folds"]):
+            now_df = data_df[data_df[FOLD_ID]==k].groupby(groupby_cols).apply(compute_auc_by_mixed).reset_index()
+            now_df[FOLD_ID] = k
+            fold_data_dfs.append(now_df)
+        fold_data_dfs = pd.concat(fold_data_dfs, axis=0, ignore_index=True).set_index([FOLD_ID]+ groupby_cols)
+        fold_data_dfs_grouped = fold_data_dfs.groupby(level=groupby_cols)
+        trinuc_auc_stats = pd.merge(
+            left=trinuc_auc_stats, right=fold_data_dfs_grouped.min(), 
+            on=groupby_cols, suffixes=('', '_min')
+        )
+        trinuc_auc_stats = pd.merge(
+            left=trinuc_auc_stats, right=fold_data_dfs_grouped.max(), 
+            on=groupby_cols, suffixes=('', '_max')
+        )
+        # Add other info
+        trinuc_auc_stats[IS_CYCLE_SKIP] = data_df_grouped[IS_CYCLE_SKIP].mean()
+        trinuc_auc_stats['count'] = data_df_grouped.size()
+        trinuc_auc_stats['fraction'] = trinuc_auc_stats['count'] / self.data_df.shape[0]
+        trinuc_auc_stats = trinuc_auc_stats.reset_index()
+        # trinuc_auc_stats[IS_FORWARD] = trinuc_auc_stats[IS_FORWARD].astype(bool)
+        return trinuc_auc_stats
+    
+    def _plot_auc_stats(
+        self, stats_for_plot, ax, cols_to_plot, colors=["tab:green", 'tab:purple', 'tab:brown'], min_count=2, fb_kws=None, step_kws=None
+    ):
+        """Generate a plot of ROC AUC values for mixed and non-mixed reads.
+        """
+        assert set(cols_to_plot).issubset({'all', 'mixed', 'non_mixed'}), f"cols_to_plot must be a subset of ['all', 'mixed', 'non_mixed']. Got {cols_to_plot=}"
+        fb_kws = fb_kws or {}
+        step_kws = step_kws or {}
+        stats_for_plot = stats_for_plot.reset_index().reset_index() # To get a column 'index' of numbers 0..191
+        col = stats_for_plot.columns[0]
+        polys, lines = [], []
+        auc_plot_df = stats_for_plot.loc[(stats_for_plot["count"] > min_count), :]
+        for i, col_to_plot in enumerate(cols_to_plot):
+            color = colors[i]
+            fb_kws["color"] = color
+            step_kws["color"] = color
+            if stats_for_plot.shape[0] > 0:
+                poly, line = plot_box_and_line(
+                    auc_plot_df, # TODO: was stats_for_plot, check this!
+                    col,
+                    f"auc_{col_to_plot}",
+                    f"auc_{col_to_plot}_min",
+                    f"auc_{col_to_plot}_max",
+                    ax=ax,
+                    fb_kws=fb_kws,
+                    step_kws=step_kws,
+                )
+            else:
+                poly, line = None, None
+            polys.append(poly)
+            lines.append(line)
+        return polys, lines
+    
+    def _add_axes_to_hist_gridspec(self, parent_gs, fig, hspace=0, height_ratios=[2,3]):
+        """Add 2 subplots to a parent gridspec, sharing the x-axis."""
+        gs = parent_gs.subgridspec(nrows=2, ncols=1, hspace=hspace, height_ratios=height_ratios)
+        # The first 2 shared axes
+        ax_top = fig.add_subplot(gs[0,0]) # Create first subplot
+        ax_bottom = fig.add_subplot(gs[1,0], sharex=ax_top)
+        axes = [ax_top, ax_bottom]
+        # Hide shared x-tick labels
+        for ax in axes[:-1]:
+            plt.setp(ax.get_xticklabels(), visible=False)
+        return axes
+    
+    def _plot_trinuc_hist(
+        self, plot_df, ax, snv_context_vals, 
+        hue=LABEL, multiple='layer', element='step', stat='count', hue_order=[False,True], palette=None
+    ):
+        """Plot a histogram of trinucleotide contexts."""        
+        # Prepare data
+        plot_df = plot_df.copy()
+        plot_df = plot_df[plot_df['SNV context'].isin(snv_context_vals)]
+        plot_df['SNV context'] = pd.Categorical(plot_df['SNV context'], categories=snv_context_vals)
+        sns.histplot(
+            plot_df, 
+            x='SNV context', 
+            hue=hue, 
+            stat=stat, 
+            element=element,
+            multiple=multiple,
+            hue_order=hue_order, 
+            palette=palette,
+            ax=ax, 
+            shrink = 0.9, 
+        )
+        legend = ax.get_legend()
+        hist_handles = legend.legend_handles
+        legend.remove()
+        return hist_handles
+        
+    def _hist_and_auc_subplot(
+        self, plot_df, trinuc_auc_stats, axes, snv_context_vals, snv_labels, trinuc_is_cycle_skip, auc_stats_cols_to_plot,
+        xticks_fontsize=10, yticks_fontsize=12, label_fontsize=14, 
+        hue=LABEL, multiple='layer', element='step', stat='count', hue_order=[False,True], palette=None
+    ):
+        """Plot a histogram of trinucleotide contexts and ROC AUC values."""
+        # Hist plot
+        ax = axes[1]
+        hist_handles = self._plot_trinuc_hist(plot_df, ax, snv_context_vals, 
+            hue=hue, multiple=multiple, element=element, stat=stat, hue_order=hue_order, palette=palette
+        )
+        _, ylim = ax.get_ylim()
+        for j in range(5):
+            ax.plot([(j + 1) * 16 - 0.5] * 2, [0, ylim], "k--")
+        
+        # y-axis appearance
+        ax.set_ylim(0, ylim)
+        ax.set_ylabel("Count", fontsize=label_fontsize)
+        ax.tick_params(axis="y", labelsize=yticks_fontsize)  # Set y-axis tick label size
+        ax.grid(visible=True, axis="both", alpha=0.75, linestyle=":")
+        
+        # x-axis appearance
+        x_tick_labels = snv_context_vals
+        ax_is_cycle_skip = trinuc_is_cycle_skip
+        for j, label in enumerate(x_tick_labels):
+            ax.get_xticklabels()[j].set_color("green" if ax_is_cycle_skip[j] else "red")
+        x_values = np.array(list(range(96)))
+        ax.set_xticks(x_values)
+        ax.set_xticklabels(x_tick_labels, rotation=90, fontsize=xticks_fontsize)
+        ax.tick_params(axis="x", pad=-2)
+        ax.set_xlim(-1, 96)
+        ax.set_xlabel(None)
+        
+        # AUC plot
+        ax = axes[0]
+        polys, lines = self._plot_auc_stats(trinuc_auc_stats, ax, auc_stats_cols_to_plot)
+        # _, ylim = ax.get_ylim()
+        ylim = 1
+        for j in range(5):
+            ax.plot([(j + 1) * 16 - 0.5] * 2, [0, ylim], "k--")
+        # y-axis appearance
+        ax.set_ylim(0.45, ylim)
+        ax.set_ylabel("ROC AUC", fontsize=label_fontsize)
+        ax.tick_params(axis="y", labelsize=yticks_fontsize)  # Set y-axis tick label size
+        ax.grid(visible=True, axis="both", alpha=0.75, linestyle=":")
+        
+        # Add labels for each ref>alt pair
+        snv_positions = [8, 24, 40, 56, 72, 88]
+        for label, pos in zip(snv_labels, snv_positions):
+            ax.annotate(
+                label,
+                xy=(pos, ylim),  # Position at the top of the plot
+                xytext=(-2, 6),  # Offset from the top of the plot
+                textcoords="offset points",
+                ha="center",
+                fontsize=12,
+                fontweight="bold",
+            )
+        
+        return polys, lines, hist_handles
+
+    @exception_handler
+    def calc_and_plot_trinuc_roc_auc(
+        self,
+        output_filename: str = None,
+        order: str = "symmetric",
+        filter_on_is_forward: bool = True,  # Filter out reverse trinucs
+        filter_on_is_mixed: bool = None, # See below
+    ):
+        """Calculate and plot ROC AUC values for the model by trinucleotide context.
+        Args:
+            output_filename: Output filename for the plot
+            order: Order of trinucleotide contexts. Either 'symmetric' or 'reverse'
+            filter_on_is_forward: If True filter out reverse trinucleotide contexts
+            filter_on_is_mixed: If True use only mixed reads. If False use only non-mixed. For all other values use all reads
+        """
+        logger.info("Calculating trinuc auc statistics")
+        # get trinuc_with_context in right order
+        trinuc_symmetric_ref_alt, symmetric_index, snv_labels = self._get_trinuc_with_alt_in_order(order=order)
+        
+        # Prepare data
+        data_df = self.data_df.copy()
+        # no_mixed_filter = False
+        if filter_on_is_forward:
+            data_df = data_df[data_df[IS_FORWARD]]
+        if filter_on_is_mixed is True:
+            data_df = data_df[data_df[IS_MIXED]]
+            auc_stats_cols_to_plot = ['mixed']
+            text_for_title = 'Mixed reads only'
+        elif filter_on_is_mixed is False:
+            data_df = data_df[~data_df[IS_MIXED]]
+            auc_stats_cols_to_plot = ['non_mixed']
+            text_for_title = 'Non-mixed reads only'
+        else:
+            # no_mixed_filter = True
+            data_df['type'] = data_df[LABEL].map({True: 'TP', False: 'FP'}) + ' ' + data_df[IS_MIXED].map({True: 'mixed', False: 'non-mixed'})
+            auc_stats_cols_to_plot = ['mixed', 'non_mixed', 'all']
+            text_for_title = 'All reads (mixed and non-mixed)'
+        data_df['SNV context'] = data_df['trinuc_context_with_alt'].map({trinuc_symmetric_ref_alt[i]: ind for i, ind in enumerate(symmetric_index)})
+        
+        # Get statistics
+        trinuc_auc_stats = self._get_trinuc_roc_auc(data_df)
+        trinuc_auc_stats = trinuc_auc_stats.set_index(['SNV context']).loc[symmetric_index,:]
+        trinuc_is_cycle_skip = (
+            trinuc_auc_stats.groupby('SNV context')[IS_CYCLE_SKIP]
+            .mean()
+            .astype(bool)
+            .loc[symmetric_index]
+            .values
+        )
+
+        # Plot parameters
+        fcolor_hist = "tab:blue"
+        tcolor_hist = "tab:orange"
+        legend_fontsize = 14
+        
+        # Plotting
+        s=0.35
+        fig = plt.figure(figsize=(16,9))
+        gs = fig.add_gridspec(nrows=2, ncols=1, hspace=s)
+        axes_top = self._add_axes_to_hist_gridspec(gs[0], fig)
+        axes_bottom = self._add_axes_to_hist_gridspec(gs[1], fig)
+        all_axes = [axes_top, axes_bottom]
+        
+        for i in [0,1]:
+            inds = np.array(list(range(96))) + 96 * i
+            snv_context_values = symmetric_index[inds]
+            polys, lines, hist_handles = self._hist_and_auc_subplot(
+                data_df, trinuc_auc_stats.loc[snv_context_values, :], all_axes[i], 
+                snv_context_vals=symmetric_index[inds], snv_labels=snv_labels[6 * i : 6 * i + 6], 
+                trinuc_is_cycle_skip = trinuc_is_cycle_skip[inds],
+                auc_stats_cols_to_plot=auc_stats_cols_to_plot,
+                palette={False: fcolor_hist, True: tcolor_hist}
+            )
+        
+        # Title
+        # fig.suptitle(f'Data and model performance by SNV trinuc context. {text_for_title}', fontsize=18)
+        axes_top[0].set_title(f'Data and model performance by SNV trinuc context. {text_for_title}\n', fontsize=18)
+        
+        # Add legends
+        fig.subplots_adjust(bottom=0.05)
+        empty_handle = mlines.Line2D([], [], color="none")
+        # Create a custom legend
+        fig.legend(
+            hist_handles,
+            ["FP", "TP"],
+            fontsize=legend_fontsize,
+            title_fontsize=legend_fontsize,
+            loc="lower center",
+            bbox_to_anchor=(0.2, -0.15), # was (0.2, -0.08)
+            ncol=1,
+            title='Histogram',
+            frameon=False,
+        )
+        # Next two lines are to display correctly the legend if there are no mixed reads
+        lines = [line if line is not None else empty_handle for line in lines]
+        polys = [poly if poly is not None else empty_handle for poly in polys]
+        fig.legend(
+            [(line,poly) for line, poly in zip(lines, polys)],
+            auc_stats_cols_to_plot,
+            fontsize=legend_fontsize,
+            title_fontsize=legend_fontsize,
+            title='ROC AUC read type',
+            loc="lower center",
+            bbox_to_anchor=(0.45, -0.15),
+            ncol=2,
+            frameon=False,
+            handler_map={tuple: HandlerTuple(ndivide=1)}
+        )
+        # Add explanatory text about x-tick label colors
+        is_forward_text = "(fwd reads only)" if filter_on_is_forward else "(fwd and rev reads)"
+        text_offset = -0.12
+        fig.text(
+            0.65,  # x-position (slightly to the right of the second legend)
+            text_offset + 2 * 0.025,  # y-position (adjust as necessary)
+            f"Trinuc-SNV colors {is_forward_text}:",
+            ha="left",  # Horizontal alignment
+            fontsize=14,  # Font size
+            color="black",  # Text color
+        )
+        fig.text(
+            0.65,  # x-position (slightly to the right of the second legend)
+            text_offset + 0.025,  # y-position (adjust as necessary)
+            "Green: Cycle skip",
+            ha="left",  # Horizontal alignment
+            fontsize=14,  # Font size
+            color="green",  # Text color
+        )
+        fig.text(
+            0.65,  # x-position (slightly to the right of the second legend)
+            text_offset,  # y-position (adjust as necessary)
+            "Red: No cycle skip",
+            ha="left",  # Horizontal alignment
+            fontsize=14,  # Font size
+            color="red",  # Text color
+        )
+        self._save_plt(output_filename=output_filename, fig=fig)
 
     def _get_stats_for_feature_plot(self, col, q1=0.1, q2=0.9, bin_edges=None):
         """Get stats (median, quantiles) for a feature, for plotting.
@@ -2766,7 +3101,7 @@ class SRSNVReport:
             data_df[col] = pd.cut(data_df[col], bin_edges, labels=(bin_edges[1:] + bin_edges[:-1]) / 2)
         stats_for_plot = (
             data_df.sample(frac=1)
-            .groupby([col, "label", "is_mixed"])
+            .groupby([col, LABEL, IS_MIXED])
             .agg(
                 median_qual=("qual", "median"),
                 quantile1_qual=("qual", lambda x: x.quantile(q1)),
@@ -2803,7 +3138,7 @@ class SRSNVReport:
         sns.histplot(
             data=self.data_df,
             x=col,
-            hue="label",
+            hue=LABEL,
             discrete=is_discrete,
             bins=bin_edges,
             element="step",
