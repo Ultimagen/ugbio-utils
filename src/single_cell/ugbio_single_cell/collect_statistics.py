@@ -76,31 +76,36 @@ def read_star_stats(star_stats_file: str) -> pd.Series:
     pd.Series
         Series with parsed STAR stats.
     """
-    df = pd.read_csv(star_stats_file, header=None, sep="\t")
-    df.columns = ["metric", "value"]
+    star_stats_df = pd.read_csv(star_stats_file, header=None, sep="\t")
+    star_stats_df.columns = ["metric", "value"]
 
     # parse metric description
-    df["metric"] = df["metric"].str.replace("|", "").str.strip().str.replace(" ", "_")
-    df.loc[:, "metric"] = df["metric"].str.replace(",", "").str.replace(":", "")
+    star_stats_df["metric"] = star_stats_df["metric"].str.replace("|", "").str.strip().str.replace(" ", "_")
+    star_stats_df.loc[:, "metric"] = star_stats_df["metric"].str.replace(",", "").str.replace(":", "")
 
     # Add type (general, unique_reads, multi_mapping_reads, unmapped_reads, chimeric_reads)
-    df.loc[:, "type"] = (
-        df["metric"].where(df["value"].isnull()).ffill().fillna("general").str.lower().str.replace(":", "")
+    star_stats_df.loc[:, "type"] = (
+        star_stats_df["metric"]
+        .where(star_stats_df["value"].isna())
+        .ffill()
+        .fillna("general")
+        .str.lower()
+        .str.replace(":", "")
     )
-    df = df.dropna(subset=["value"])
+    star_stats_df = star_stats_df.dropna(subset=["value"])
 
     # Add "pct_" to metric name if value ends with "%" (and remove "%" from the name)
-    df.loc[df["value"].str.endswith("%"), "metric"] = df.loc[df["value"].str.endswith("%"), "metric"].apply(
-        lambda x: "pct_" + x.replace("_%", "").replace("%_", "")
-    )
+    star_stats_df.loc[star_stats_df["value"].str.endswith("%"), "metric"] = star_stats_df.loc[
+        star_stats_df["value"].str.endswith("%"), "metric"
+    ].apply(lambda x: "pct_" + x.replace("_%", "").replace("%_", ""))
 
     # Remove "%" from value
-    df["value"] = df["value"].str.replace("%", "")
+    star_stats_df["value"] = star_stats_df["value"].str.replace("%", "")
 
     # Set index
-    df.set_index(["type", "metric"], inplace=True)
+    star_stats_df = star_stats_df.set_index(["type", "metric"])
     # convert df to pd.series for easier access
-    s = df["value"]
+    s = star_stats_df["value"]
 
     # convert types
     s = s.apply(convert_value)
@@ -177,11 +182,11 @@ def extract_statistics_table(h5_file: Path):
 
     with pd.HDFStore(h5_file, "r") as store:
         # number of Input Reads
-        num_input_reads = store[H5Keys.TRIMMER_STATS.value]["num input reads"].values[0]
+        num_input_reads = store[H5Keys.TRIMMER_STATS.value]["num input reads"].to_numpy()[0]
         stats["num_input_reads"] = num_input_reads
 
         # number of Trimmed reads
-        num_trimmed_reads = store[H5Keys.TRIMMER_STATS.value]["num trimmed reads"].values[0]
+        num_trimmed_reads = store[H5Keys.TRIMMER_STATS.value]["num trimmed reads"].to_numpy()[0]
         stats["num_trimmed_reads"] = num_trimmed_reads
 
         # pct_pass_trimmer

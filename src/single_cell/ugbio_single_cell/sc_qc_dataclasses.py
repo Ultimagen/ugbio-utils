@@ -32,9 +32,10 @@ class Inputs:
         for _, value in self.__dict__.items():
             if isinstance(value, list):
                 for item in value:
-                    assert os.path.isfile(item), f"{item} not found"
-            else:
-                assert os.path.isfile(value), f"{value} not found"
+                    if not os.path.isfile(item):
+                        raise FileNotFoundError(f"{item} not found")
+            elif not os.path.isfile(value):
+                raise FileNotFoundError(f"{value} not found")
 
 
 @dataclass
