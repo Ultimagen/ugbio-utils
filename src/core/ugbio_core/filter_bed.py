@@ -68,9 +68,10 @@ def intersect_bed_regions(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
     include_regions: list[str],
     exclude_regions: list[str] = None,
     output_bed: str = "output.bed",
-    assume_input_sorted: bool = False,
     max_mem: int = None,
     sp: SimplePipeline = None,
+    *,
+    assume_input_sorted: bool = False,
 ):
     """
     Intersect BED regions with the option to subtract exclude regions,

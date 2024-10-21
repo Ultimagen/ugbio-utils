@@ -53,7 +53,7 @@ def key2base(key: np.ndarray) -> np.ndarray:
 
 
 def generate_key_from_sequence(
-    sequence: str, flow_order: str, truncate: int | None = None, non_standard_as_a: bool = False
+    sequence: str, flow_order: str, truncate: int | None = None, *, non_standard_as_a: bool = False
 ) -> np.ndarray:
     """Converts bases to flow order
 
@@ -236,6 +236,7 @@ class FlowBasedRead:
         filler: float = DEFAULT_FILLER,
         min_call_prob: float = MINIMAL_CALL_PROB,
         _fmt: str = "cram",
+        *,
         spread_edge_probs=True,
         validate=False,
     ):
@@ -361,6 +362,7 @@ class FlowBasedRead:
         fallback_filler: float = DEFAULT_FILLER,
         min_call_prob: float = MINIMAL_CALL_PROB,
         max_hmer_size: int = 12,
+        *,
         spread_edge_probs: bool = True,
         validate: bool = False,
     ) -> np.ndarray:
@@ -596,7 +598,8 @@ class FlowBasedRead:
         """Returns if the key is valid"""
         return self._validate
 
-    def read2_flow_matrix(self, regressed_signal_only: bool = False) -> tuple:
+    # TODO: no imports, can be deleted?
+    def read2_flow_matrix(self, *, regressed_signal_only: bool = False) -> tuple:
         """Gets the hmerxflow probability matrix
         matrix[i,j] = P(read_hmer==read_hmer[j] | data_hmer[j]==i)
 

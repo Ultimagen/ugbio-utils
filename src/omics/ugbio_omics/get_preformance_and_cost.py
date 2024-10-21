@@ -493,7 +493,7 @@ def add_io_plots(monitor_logs) -> bool:
     return False
 
 
-def add_trace(combined_fig, monitor_log, col_name, row, col=1, normelize=False, normelize_time=False, name=None):
+def add_trace(combined_fig, monitor_log, col_name, row, col=1, name=None, *, normelize=False, normelize_time=False):
     show_legend = row == 1
 
     if normelize:

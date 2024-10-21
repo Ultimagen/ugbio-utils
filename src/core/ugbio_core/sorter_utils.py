@@ -6,7 +6,7 @@ from scipy.interpolate import interp1d
 from ugbio_core.plotting_utils import set_pyplot_defaults
 
 
-def read_sorter_statistics_csv(sorter_stats_csv: str, edit_metric_names: bool = True) -> pd.Series:
+def read_sorter_statistics_csv(sorter_stats_csv: str, *, edit_metric_names: bool = True) -> pd.Series:
     """
     Collect sorter statistics from csv
 
