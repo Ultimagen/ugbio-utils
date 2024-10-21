@@ -79,7 +79,7 @@ def exception_handler(func):
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
-        except Exception as e:  # pylint: disable=broad-except
+        except Exception as e:
             logger.error(f"Exception occurred in {func.__name__}: {e}", exc_info=True)
             if exception_config.raise_exception:
                 raise e
@@ -331,7 +331,7 @@ def filter_valid_queries(df_test: pd.DataFrame, queries: dict, verbose: bool = F
         try:
             df_test.eval(filter_query)
             valid_filters[filter_name] = filter_query
-        except Exception:  # pylint: disable=broad-except
+        except Exception:
             if verbose:
                 logger.warning(f"Filter query {filter_query} caused an exception, skipping.")
 
@@ -1508,7 +1508,6 @@ class SRSNVReport:
                 fig.tight_layout()
             fig.savefig(output_filename, facecolor="w", dpi=300, bbox_inches="tight", **kwargs)
 
-    # pylint: disable=differing-param-doc
     def _get_snvq_and_recall(
         self,
         labels: np.ndarray,
@@ -1764,7 +1763,7 @@ class SRSNVReport:
         # Calculate the ROC AUC score
         try:
             return roc_auc_score(y_true, y_pred)
-        except Exception as e:  # pylint: disable=broad-except
+        except Exception as e:
             logger.error(f"An error occurred while calculating ROC AUC{name_for_log}: {e}")
             return np.nan
 
@@ -2329,7 +2328,7 @@ class SRSNVReport:
         X_val = self.data_df[self.data_df["fold_id"] == k]  # noqa: N806
         # Get SHAP values
         logger.info("Calculating SHAP values")
-        shap_values, X_val, y_val = self._shap_on_sample(  # pylint: disable=unused-variable  # noqa: N806
+        shap_values, X_val, _ = self._shap_on_sample(  # noqa: N806
             model, X_val, n_sample=n_sample
         )
         logger.info("Done calculating SHAP values")

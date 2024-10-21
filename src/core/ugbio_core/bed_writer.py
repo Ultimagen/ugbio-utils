@@ -7,7 +7,6 @@ BED_COLUMN_CHROM_END = "chromEnd"
 
 class BedWriter:
     def __init__(self, output_file: str):
-        # pylint:disable=consider-using-with
         self.fh_var = open(output_file, "w", encoding="utf-8")
 
     def write(

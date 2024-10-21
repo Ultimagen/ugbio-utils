@@ -193,7 +193,6 @@ class FeaturemapAnnotator(VcfAnnotator):
         return records_out
 
 
-# pylint: disable=too-many-instance-attributes
 class RefContextVcfAnnotator(VcfAnnotator):
     def __init__(
         self,
