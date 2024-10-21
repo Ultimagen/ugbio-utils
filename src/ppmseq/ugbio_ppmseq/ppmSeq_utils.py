@@ -286,7 +286,6 @@ ppmseq_category_list = [v.value for v in PpmseqCategories.__members__.values()]
 supported_adapter_versions = [e.value for e in PpmseqAdapterVersions]
 
 
-# pylint: disable=missing-param-doc
 def _assert_adapter_version_supported(
     adapter_version: str | PpmseqAdapterVersions,
 ):

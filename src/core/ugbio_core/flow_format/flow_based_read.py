@@ -648,7 +648,6 @@ class FlowBasedRead:
         -------
         hmerxflow probability matrix
         """
-        # pylint: disable=no-member
         if self._error_model is None:
             flow_matrix = np.zeros((self._max_hmer + 1, len(key)))
             flow_matrix[np.clip(self.key, 0, self._max_hmer), np.arange(len(self.key))] = 1
@@ -806,7 +805,7 @@ class FlowBasedRead:
         pysam.AlignedSegment
         """
         if hasattr(self, "record"):
-            res = self.record  # pylint: disable=access-member-before-definition
+            res = self.record
         else:
             res = pysam.AlignedSegment(hdr)
             res.query_sequence = self.seq

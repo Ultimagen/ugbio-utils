@@ -624,11 +624,10 @@ def _check_file_and_index(file_path: str):
         raise FileNotFoundError(f"failed to create {file_path}.tbi")
 
 
-class SRSNVTrain:  # pylint: disable=too-many-instance-attributes
+class SRSNVTrain:
     MIN_TEST_SIZE = 10000
     MIN_TRAIN_SIZE = 100000
 
-    # pylint:disable=too-many-arguments
     def __init__(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: `__init__` is too complex
         self,
         out_path: str,

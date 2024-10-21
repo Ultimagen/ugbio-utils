@@ -27,7 +27,7 @@ class TocPreprocessor(Preprocessor):
 
         return nb, resources
 
-    def preprocess_cell(self, cell, resources, index):  # pylint: disable=unused-argument
+    def preprocess_cell(self, cell, resources, index):
         if cell.cell_type == "markdown":
             self.add_anchor_and_number_to_headings(cell)
         return cell

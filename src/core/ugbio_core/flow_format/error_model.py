@@ -385,7 +385,6 @@ def add_matrix_to_bam(
     replace_sequence_file : str, optional
         Description
     """
-    # pylint: disable=consider-using-with
 
     if replace_sequence_file is not None:
         rgbi_fname = output_bam + "rgbi.txt"

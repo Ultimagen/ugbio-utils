@@ -97,7 +97,7 @@ def _safe_tabix_index(vcf_file: str):
         pysam.tabix_index(vcf_file, preset="vcf", force=True)  # make sure vcf is indexed
         if (not os.path.isfile(vcf_file)) and os.path.isfile(vcf_file + ".gz"):  # was compressed by tabix
             vcf_file = vcf_file + ".gz"
-    except Exception as e:  # pylint: disable=broad-except
+    except Exception as e:
         # Catching a broad exception because this is optional and we never want to have a run fail because of the index
         logger.warning(f"Could not index signature file {vcf_file}\n{str(e)}")
     return vcf_file

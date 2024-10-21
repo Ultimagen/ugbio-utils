@@ -237,7 +237,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv[1:])
 
 
-# pylint:disable=missing-raises-doc
 def read_dataset_params(args):
     """Read the dataset params from json file. Any values provided in the command line
     overrides the json file.

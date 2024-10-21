@@ -941,5 +941,5 @@ def _catch(
     """
     try:
         return func(*args, **kwargs)
-    except exception_type as e:  # pylint: disable=broad-except
+    except exception_type as e:
         return handle(e)
