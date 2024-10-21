@@ -86,7 +86,7 @@ def prepare_parameters_for_report(h5_file: Path, thresholds: Thresholds, output_
     tmp_files = []
 
     # prepare parameters for report: add statistics
-    parameters = dict(statistics_h5=h5_file)
+    parameters = {"statistics_h5": h5_file}
 
     # add thresholds to parameters
     for threshold_name, threshold_value in vars(thresholds).items():
