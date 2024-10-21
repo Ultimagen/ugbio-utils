@@ -24,6 +24,12 @@ To work with the virtual environment of a specific member, run:
 For example, for cnv:
 
 `uv sync --package ugbio-cnv`
+### Pre-commit Tools
+Pre-commit tools help maintain code quality and consistency by running checks before changes are committed to Git.
+
+To install pre-commit tools, run `uv run pre-commit install`.
+Once installed, these tools will automatically run checks whenever you commit to Git.
+
 
 ## Adding a New ugbio Member
 1. Create a new `<MEMBER_NAME>` folder under `src` for the new member. This folder should contain:
@@ -118,4 +124,4 @@ It is recommended to run tests in the relevant dev container. See the section ab
 
 Alternatively, you can take advantage of the "run_tests" entry point we are adding to each docker. Simply run:
 
-`docker run --rm -v .:/workdir/src <docker image> run_tests /workdir/src/<path>`
+`docker run --rm -v .:/workdir <docker image> run_tests /workdir/src/<path>`
