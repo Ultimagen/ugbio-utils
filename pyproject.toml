@@ -60,6 +60,7 @@ select = [
     "COM",
     "PIE",
     "PL",
+    "FBT"
 ]
 ignore = [
     "B008",

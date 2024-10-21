@@ -47,7 +47,7 @@ def merge_trimmer_histograms(trimmer_histograms: list[str], output_path: str):
     return output_filename
 
 
-def read_trimmer_failure_codes(trimmer_failure_codes_csv: str, add_total: bool = False) -> pd.DataFrame:
+def read_trimmer_failure_codes(trimmer_failure_codes_csv: str, *, add_total: bool = False) -> pd.DataFrame:
     """
     Read a trimmer failure codes csv file
 

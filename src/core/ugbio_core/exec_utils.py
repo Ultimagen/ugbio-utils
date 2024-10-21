@@ -11,6 +11,7 @@ def print_and_execute(
     output_file: str | None = None,
     simple_pipeline: SimplePipeline | None = None,
     module_name: str | None = None,
+    *,
     shell: bool = False,
 ):
     """

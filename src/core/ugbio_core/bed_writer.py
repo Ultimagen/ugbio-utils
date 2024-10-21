@@ -30,7 +30,7 @@ class BedWriter:
         self.fh_var.close()
 
 
-def parse_intervals_file(intervalfile: str, threshold: int = 0, sort: bool = True) -> pd.DataFrame:
+def parse_intervals_file(intervalfile: str, threshold: int = 0, *, sort: bool = True) -> pd.DataFrame:
     """Parses bed file
 
     Parameters

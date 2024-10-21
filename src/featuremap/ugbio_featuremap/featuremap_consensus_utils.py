@@ -154,6 +154,7 @@ def pileup_featuremap(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
     min_qual: int = 0,
     sample_name: str = "SAMPLE",
     qual_agg_func: callable = np.max,
+    *,
     verbose: bool = True,
 ):
     """
@@ -337,6 +338,7 @@ def pileup_featuremap_on_an_interval_list(
     min_qual: int = 0,
     sample_name: str = "SAMPLE",
     qual_agg_func: callable = np.max,
+    *,
     verbose: bool = True,
 ):
     """
@@ -379,7 +381,7 @@ def pileup_featuremap_on_an_interval_list(
                     + ".int_list.vcf.gz",
                 )
                 pileup_featuremap(
-                    featuremap, curr_output_vcf, genomic_interval, min_qual, sample_name, qual_agg_func, verbose
+                    featuremap, curr_output_vcf, genomic_interval, min_qual, sample_name, qual_agg_func, verbose=verbose
                 )
         # merge the output vcfs
         vcfs = [pjoin(temp_dir, f) for f in os.listdir(temp_dir) if f.endswith(".vcf.gz")]

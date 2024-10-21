@@ -343,7 +343,7 @@ def get_strand_ratio_category(strand_ratio, sr_lower, sr_upper) -> str:
     return PpmseqCategories.UNDETERMINED.value
 
 
-def read_ppmseq_trimmer_histogram(  # noqa: C901 #TODO: refactor7
+def read_ppmseq_trimmer_histogram(  # noqa: C901 #TODO: refactor
     adapter_version: str | PpmseqAdapterVersions,
     trimmer_histogram_csv: str,
     sr_lower: float = STRAND_RATIO_LOWER_THRESH,
@@ -353,6 +353,7 @@ def read_ppmseq_trimmer_histogram(  # noqa: C901 #TODO: refactor7
     min_stem_end_matched_length: int = MIN_STEM_END_MATCHED_LENGTH,
     sample_name: str = "",
     output_filename: str = None,
+    *,
     legacy_histogram_column_names: bool = False,
 ) -> pd.DataFrame:
     """
@@ -933,7 +934,7 @@ def read_trimmer_failure_codes_ppmseq(trimmer_failure_codes_csv: str):
     return df_trimmer_failure_codes, df_metrics
 
 
-def read_dumbell_leftover_from_trimmer_histogram(trimmer_histogram_extra_csv, legacy_histogram_column_names=False):
+def read_dumbell_leftover_from_trimmer_histogram(trimmer_histogram_extra_csv, *, legacy_histogram_column_names=False):
     """
     Read the dumbell leftover stats (constant sequences after trimming) from the trimmer histogram
 
@@ -986,6 +987,7 @@ def collect_statistics(
     output_filename: str,
     trimmer_histogram_extra_csv: str = None,
     trimmer_failure_codes_csv: str = None,
+    *,
     legacy_histogram_column_names: bool = False,
     **trimmer_histogram_kwargs,
 ):
@@ -1437,7 +1439,7 @@ def plot_strand_ratio_category_concordnace(
             ax=ax,
             annot_kws={"size": 18},
         )
-        ax.grid(False)
+        ax.grid(visible=False)
         plt.sca(ax)
         plt.xticks(rotation=20)
         title_handle = ax.set_title(subtitle, fontsize=20)
@@ -1461,6 +1463,7 @@ def plot_trimmer_histogram(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
     output_filename: str = None,
     min_total_hmer_lengths_in_tags: int = MIN_TOTAL_HMER_LENGTHS_IN_LOOPS,
     max_total_hmer_lengths_in_tags: int = MAX_TOTAL_HMER_LENGTHS_IN_LOOPS,
+    *,
     legacy_histogram_column_names: bool = False,
 ) -> list[plt.Axes]:
     """
@@ -1591,7 +1594,7 @@ def plot_trimmer_histogram(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
         fig.subplots_adjust(wspace=0.25, hspace=0.6)
         title_handle = fig.suptitle(title, y=1.25)
         for ax in axs_all_both.flatten():
-            ax.grid(False)
+            ax.grid(visible=False)
         for ax in axs_all_both[:, 4:6].flatten():
             ax.axis("off")
         axs_all_both[0, 4].text(0.5, 1.2, "Expected\nsignal", fontsize=20)
@@ -1788,14 +1791,14 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
     trimmer_histogram_extra_csv: list[str] = None,
     trimmer_failure_codes_csv: str = None,
     collect_statistics_kwargs: dict = None,
-    generate_report: bool = True,
-    keep_temp_visualization_files: bool = False,
+    generate_report: bool = True,  # noqa: FBT001, FBT002
+    keep_temp_visualization_files: bool = False,  # noqa: FBT001, FBT002
     sr_lower: float = STRAND_RATIO_LOWER_THRESH,
     sr_upper: float = STRAND_RATIO_UPPER_THRESH,
     min_total_hmer_lengths_in_tags: int = MIN_TOTAL_HMER_LENGTHS_IN_LOOPS,
     max_total_hmer_lengths_in_tags: int = MAX_TOTAL_HMER_LENGTHS_IN_LOOPS,
     min_stem_end_matched_length: int = MIN_STEM_END_MATCHED_LENGTH,
-    legacy_histogram_column_names: bool = False,
+    legacy_histogram_column_names: bool = False,  # noqa: FBT001, FBT002
     qc_filename_suffix: str = ".ppmSeq.applicationQC",
 ):
     """

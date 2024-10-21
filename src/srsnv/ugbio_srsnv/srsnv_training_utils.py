@@ -222,6 +222,7 @@ def k_fold_predict_proba(
     columns_for_training,
     k_folds,
     kfold_col=FOLD_ID,
+    *,
     return_train=False,
     **kwargs,
 ):
@@ -257,7 +258,7 @@ def k_fold_predict_proba(
     if return_train:
         preds_train = pd.Series(0, index=df.index, name="train")
         preds_train_norm = (k_folds - 1) if k_folds > 1 else 1
-        all_train_cond = pd.Series(False, index=df.index)  # for keeping track of all "train" indices
+        all_train_cond = pd.Series(data=False, index=df.index)  # for keeping track of all "train" indices
     for k in range(k_folds):
         val_cond = df[kfold_col] == k
         all_val_cond = np.logical_or(all_val_cond, val_cond)
@@ -338,7 +339,7 @@ def prepare_featuremap_for_model(  # noqa: C901, PLR0912, PLR0913, PLR0915
     sorter_json_stats_file: str = None,
     pre_filter_bcftools_include: str = None,
     read_effective_coverage_from_sorter_json_kwargs: dict = None,
-    keep_temp_file: bool = False,
+    keep_temp_file: bool = False,  # noqa: FBT001, FBT002
     rng: Any = None,
     sp: SimplePipeline = None,
 ) -> (str, int):
@@ -632,13 +633,13 @@ class SRSNVTrain:
         self,
         out_path: str,
         out_basename: str,
-        save_model_jsons: bool,
+        save_model_jsons: bool,  # noqa: FBT001
         tp_featuremap: str,
         fp_featuremap: str,
         train_set_size: int = MIN_TRAIN_SIZE,
         test_set_size: int = MIN_TEST_SIZE,
         k_folds: int = 1,
-        split_folds_by_chrom: bool = True,
+        split_folds_by_chrom: bool = True,  # noqa: FBT001, FBT002
         num_chroms_for_test: int = None,
         reference_dict: str = None,
         numerical_features: list[str] = None,
@@ -659,8 +660,8 @@ class SRSNVTrain:
         pre_filter: str = None,
         random_seed: int = None,
         simple_pipeline: SimplePipeline = None,
-        load_dataset_and_model: bool = False,
-        raise_exceptions_in_report: bool = False,
+        load_dataset_and_model: bool = False,  # noqa: FBT001, FBT002
+        raise_exceptions_in_report: bool = False,  # noqa: FBT001, FBT002
     ):
         """
         Train a classifier on FP and TP featuremaps
@@ -1154,7 +1155,7 @@ class SRSNVTrain:
             #     lod_column=self.c_lod,
             # )
 
-    def add_predictions_to_featuremap_df(self, return_train=True):
+    def add_predictions_to_featuremap_df(self, *, return_train=True):
         """Add model predictions to self.featuremap_df. Use only if models were trained!"""
         logger.info("Adding predictions to featuremap")
         all_predictions = k_fold_predict_proba(

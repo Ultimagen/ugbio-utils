@@ -529,12 +529,14 @@ def block_idx_to_block_start_end(
     )
 
 
+# TODO: no one imports this methid. consider removing
 def read_error_probs(
     error_probs_csv: str = ERROR_PROBS,
-    binned_by_quality: bool = False,
     left_motif_size: int = 5,
     right_motif_size: int = 5,
     n_regression_bins: int = 0,
+    *,
+    binned_by_quality: bool = False,
 ) -> pd.DataFrame | list:
     """Read error probs CSV and produces data frame
 

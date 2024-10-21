@@ -67,7 +67,7 @@ REPORTS_DIR = "reports"
 
 
 class ExceptionConfig:
-    def __init__(self, raise_exception=False):
+    def __init__(self, *, raise_exception=False):
         self.raise_exception = raise_exception
 
 
@@ -306,7 +306,7 @@ def srsnv_report(
     print_and_execute(jupyter_nbconvert_command, simple_pipeline=simple_pipeline, module_name=__name__)
 
 
-def filter_valid_queries(df_test: pd.DataFrame, queries: dict, verbose: bool = False) -> dict:
+def filter_valid_queries(df_test: pd.DataFrame, queries: dict, *, verbose: bool = False) -> dict:
     """
     Test each filter query on the DataFrame and remove any that cause exceptions.
 
@@ -701,7 +701,7 @@ def plot_confusion_matrix(
     magic_threshold = 0.01
     cmat_norm = cmat.astype("float") / cmat.sum(axis=1)[:, np.newaxis]  # normalize by rows - true labels
     plt.figure(figsize=(4, 3))
-    plt.grid(False)
+    plt.grid(visible=False)
     ax = sns.heatmap(
         cmat_norm,
         annot=cmat_norm,
@@ -1056,6 +1056,7 @@ def plot_qual_per_feature(  # noqa: C901, PLR0912 #TODO: too complex and too man
 
 def get_data_subsets(
     df: pd.DataFrame,
+    *,
     is_mixed_flag: bool,
 ):
     """generates subsets of the input df by category: mixed/non mixed * cycle-skip/non cycle-skip
@@ -1412,6 +1413,7 @@ class SRSNVReport:
         statistics_h5_file: str = None,
         statistics_json_file: str = None,
         rng: Any = None,
+        *,
         raise_exceptions: bool = False,
     ):
         """loads model, data, params and generate plots for report. Saves data in hdf5 file
@@ -1498,7 +1500,7 @@ class SRSNVReport:
         self.data_df["ML_logit_test"] = prob_to_logit(self.data_df["ML_prob_1_test"])
         self.data_df["ML_logit_train"] = prob_to_logit(self.data_df["ML_prob_1_train"])
 
-    def _save_plt(self, output_filename: str = None, fig=None, tight_layout=True, **kwargs):
+    def _save_plt(self, output_filename: str = None, fig=None, *, tight_layout=True, **kwargs):
         if output_filename is not None:
             if not output_filename.endswith(".png"):
                 output_filename += ".png"
@@ -1676,7 +1678,7 @@ class SRSNVReport:
         # Joint scatterplot
         ax_joint = fig.add_subplot(gs[3:8, 0:3])
         sns.scatterplot(data=plot_df, x=QUAL, y=ML_QUAL_1_TEST, color="black", s=1, alpha=1, ax=ax_joint)
-        ax_joint.grid(True)
+        ax_joint.grid(visible=True)
         ax_joint.set_xlim(xmin, xmax)
         ax_joint.set_ylim(ymin, ymax)
         ax_joint.set_ylabel("ML_qual")
@@ -1695,7 +1697,7 @@ class SRSNVReport:
             ax=ax_marg_x,
             palette={False: "red", True: "green"},
         )
-        ax_marg_x.grid(True)
+        ax_marg_x.grid(visible=True)
         ax_marg_x.set_xlabel("")
         plt.setp(ax_marg_x.get_xticklabels(), visible=False)
         sns.move_legend(
@@ -1706,7 +1708,7 @@ class SRSNVReport:
         # Extra plot (in the middle-left position)
         ax_extra = fig.add_subplot(gs[2, 0:3], sharex=ax_joint)
         ax_extra.plot(xs, ys, "k.-")
-        ax_extra.grid(True)
+        ax_extra.grid(visible=True)
         ax_extra.set_xlabel("")
         ax_extra.set_ylabel("deriv")
         plt.setp(ax_extra.get_xticklabels(), visible=False)
@@ -1725,7 +1727,7 @@ class SRSNVReport:
             ax=ax_marg_y,
             palette={False: "red", True: "green"},
         )
-        ax_marg_y.grid(True)
+        ax_marg_y.grid(visible=True)
         ax_marg_y.set_ylabel("")
         ax_marg_y.get_legend().set_visible(False)
         plt.setp(ax_marg_y.get_yticklabels(), visible=False)
@@ -2314,10 +2316,11 @@ class SRSNVReport:
         output_filename_importance: str = None,
         output_filename_beeswarm: str = None,
         n_sample: int = 10_000,
-        plot_feature_importance: bool = True,
-        plot_beeswarm: bool = True,
         feature_importance_kws: dict = None,
         beeswarm_kws: dict = None,
+        *,
+        plot_feature_importance: bool = True,
+        plot_beeswarm: bool = True,
     ):
         """Calculate and plot SHAP values for the model."""
         feature_importance_kws = feature_importance_kws or {}
@@ -2404,6 +2407,7 @@ class SRSNVReport:
         self,
         output_filename: str = None,
         order: str = "symmetric",
+        *,
         filter_on_is_forward: bool = True,  # Filter out reverse trinucs
     ):
         logger.info("Calculating trinuc context statistics")
@@ -2789,7 +2793,7 @@ class SRSNVReport:
         return pd.DataFrame(hist_dict)
 
     @exception_handler
-    def plot_quality_histogram(self, plot_interpolating_function: bool = False, output_filename: str = None):
+    def plot_quality_histogram(self, *, plot_interpolating_function: bool = False, output_filename: str = None):
         """Plot a histogram of qual values for TP reads, both mixed and non-mixed."""
         # label_fontsize = 12
         # ticklabelsfontsize = 12
@@ -2878,7 +2882,7 @@ class SRSNVReport:
         )
 
     @exception_handler
-    def plot_logit_histograms(self, plot_by_fold: bool = True, output_filename: str = None):
+    def plot_logit_histograms(self, *, plot_by_fold: bool = True, output_filename: str = None):
         """Plot a histogram of logit values, by: FP, TP mixed, TP non-mixed.
         If plot_by_fold is True, overlay histograms for each fold.
         """
@@ -3050,7 +3054,7 @@ def recall_score_with_mask(y_pred: np.ndarray, y_true: np.ndarray, mask: np.ndar
     return recall_score(y_true[mask], y_pred[mask])
 
 
-def precision_recall_curve(score, max_score, y_true: np.ndarray, cumulative=False, apply_log_trans=True):
+def precision_recall_curve(score, max_score, y_true: np.ndarray, *, cumulative=False, apply_log_trans=True):
     """apply threshold on score and calculate precision and recall rates
 
     Parameters
@@ -3099,7 +3103,7 @@ def precision_recall_curve(score, max_score, y_true: np.ndarray, cumulative=Fals
     return fprs, recalls
 
 
-def plot_precision_recall(lists, labels, max_score, log_scale=False, font_size=18):
+def plot_precision_recall(lists, labels, max_score, *, log_scale=False, font_size=18):
     """generate a plot of precision and recall rates per threshold
 
     Parameters
@@ -3178,9 +3182,9 @@ def plot_LoD_vs_qual(  # noqa: N802
 
     ax1.invert_xaxis()
     ax1.set_yscale("log")
-    ax2.yaxis.grid(True)
-    ax1.xaxis.grid(True)
-    ax1.yaxis.grid(False)
+    ax2.yaxis.grid(visible=True)
+    ax1.xaxis.grid(visible=True)
+    ax1.yaxis.grid(visible=False)
     ax1.set_ylabel("LoD", fontsize=font_size)
     ax1.set_xlabel("ML qual", fontsize=font_size)
     ax2.set_ylabel("Base retention ratio \non HOM SNVs (TP)", fontsize=font_size)

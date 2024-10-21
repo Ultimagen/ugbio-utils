@@ -13,7 +13,7 @@ from ugbio_omics.get_run_cost import Columns, RunCost
 from ugbio_omics.get_run_info import get_run_info
 
 
-def compare_cromwell_omics(cromwell_wid, omics_run_id, omics_session, workflow_name, output_path, overwrite=False):
+def compare_cromwell_omics(cromwell_wid, omics_run_id, omics_session, workflow_name, output_path, *, overwrite=False):
     # Create the output directory if it doesn't exist
     if output_path:
         os.makedirs(output_path, exist_ok=True)
@@ -110,7 +110,7 @@ def extract_omics_resources(omics_run_cost: RunCost) -> pd.DataFrame:
     return resources_df
 
 
-def copy_cromwell_data(workflow_name, cromwell_wid, output_path, overwrite=False):
+def copy_cromwell_data(workflow_name, cromwell_wid, output_path, *, overwrite=False):
     # Get cromwell bucket for the workflow
     print(f"Get cromwell performance file for workflow: {workflow_name}/{cromwell_wid}")
     cromwell_client = storage.Client()
@@ -236,7 +236,7 @@ def get_cromwell_total_duration(cromwell_metadata_file):
 
 
 def get_omics_performance_cost(
-    omics_run_id, session, output_path, overwrite=False
+    omics_run_id, session, output_path, *, overwrite=False
 ) -> tuple[pd.DataFrame, float, RunCost]:
     print(f"Calculating omics performance and cost for run: {omics_run_id}")
     performance_file = f"{output_path}/omics_{omics_run_id}.performance.csv"
@@ -304,7 +304,7 @@ def main():
     session = boto3.Session(region_name=args.region)
 
     compare_cromwell_omics(
-        args.cromwell_wid, args.omics_run_id, session, args.workflow_name, args.output_path, args.overwrite
+        args.cromwell_wid, args.omics_run_id, session, args.workflow_name, args.output_path, overwrite=args.overwrite
     )
 
 

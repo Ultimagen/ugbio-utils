@@ -182,9 +182,10 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
     tumor_sample: str = None,
     x_columns_name_dict: dict = None,
     columns_to_drop: list = None,
+    signature_type: str = None,
+    *,
     verbose: bool = True,
     raise_exception_on_sample_not_found: bool = False,
-    signature_type: str = None,
     return_dataframes: bool = False,
     concat_to_existing_output_parquet: bool = False,
 ):
@@ -439,6 +440,7 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
 def read_intersection_dataframes(
     intersected_featuremaps_parquet,
     output_parquet=None,
+    *,
     return_dataframes=False,
 ):
     """
@@ -491,6 +493,7 @@ def intersect_featuremap_with_signature(
     signature_file: str,
     output_intersection_file: str = None,
     signature_type: str = None,
+    *,
     add_info_to_header: bool = True,
     overwrite: bool = True,
 ) -> str:
@@ -614,6 +617,7 @@ def prepare_data_from_mrd_pipeline(
     tumor_sample=None,
     output_dir=None,
     output_basename=None,
+    *,
     return_dataframes=False,
 ):
     """

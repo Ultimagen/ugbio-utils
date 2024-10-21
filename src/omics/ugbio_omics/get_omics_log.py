@@ -9,7 +9,7 @@ FAILED_STATUS = "FAILED"
 OMICS_LOG_GROUP = "/aws/omics/WorkflowLog"
 
 
-def get_log_for_task(run_id, task_id=None, session=None, output_path=None, output_prefix="", failed: bool = True):
+def get_log_for_task(run_id, task_id=None, session=None, output_path=None, output_prefix="", *, failed: bool = True):
     # Get omics client to retrieve the run and tasks information
     if session:
         omics_client = session.client("omics")

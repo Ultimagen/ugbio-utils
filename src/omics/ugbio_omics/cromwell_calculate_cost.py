@@ -167,7 +167,7 @@ def was_preempted(call_info):
     return call_info["executionStatus"] in ["Preempted", "RetryableFailure"]
 
 
-def calculate_cost(metadata, ignore_preempted, only_total_cost, print_header, output_file=None):  # noqa: C901, PLR0912, PLR0915
+def calculate_cost(metadata, ignore_preempted, only_total_cost, *, print_header, output_file=None):  # noqa: C901, PLR0912, PLR0915
     pipe_cost = 0
     # set up pricing information
     pricing = get_gce_pricing()
@@ -250,7 +250,11 @@ def calculate_cost(metadata, ignore_preempted, only_total_cost, print_header, ou
             # this is a subworkflow, recursively calculate cost on workflow metadata
             if "subWorkflowMetadata" in call_info:
                 pipe_cost += calculate_cost(
-                    call_info["subWorkflowMetadata"], ignore_preempted, only_total_cost, False, output_file
+                    call_info["subWorkflowMetadata"],
+                    ignore_preempted,
+                    only_total_cost,
+                    print_header=False,
+                    output_file=output_file,
                 )
             # only process things that are not in flight
             elif call_info["executionStatus"] in ["Running", "NotStarted", "Starting"]:
@@ -476,7 +480,7 @@ def main():
     if args.metadata:
         with open(args.metadata) as data_file:
             metadata = json.load(data_file)
-        calculate_cost(metadata, args.ignore_preempted, args.only_total_cost, True)
+        calculate_cost(metadata, args.ignore_preempted, args.only_total_cost, print_header=True)
         if args.only_total_cost:
             print("Total Cost: " + str(TOTAL_WORKFLOW_COST))
     else:
