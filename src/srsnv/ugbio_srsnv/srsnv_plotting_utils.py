@@ -29,7 +29,7 @@ from ugbio_core.logger import logger
 from ugbio_core.plotting_utils import set_pyplot_defaults
 from ugbio_core.sorter_utils import read_effective_coverage_from_sorter_json
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
-from ugbio_ppmseq.ppmSeq_utils import ppmSeqAdapterVersions
+from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions
 
 # featuremap_df column names. TODO: make more generic?
 ML_PROB_1_TEST = "ML_prob_1_test"
@@ -593,7 +593,7 @@ def plot_LoD(  # noqa N802
     ]
     edgecolors_list = ["r", "r", "r"]
     msize_list = [150, 150, 150]
-    if adapter_version in [av.value for av in ppmSeqAdapterVersions]:
+    if adapter_version in [av.value for av in PpmseqAdapterVersions]:
         filters_list.append(list(mixed_ml_filters))
         markers_list.append("P")
         labels_list.append("ML model, mixed only")

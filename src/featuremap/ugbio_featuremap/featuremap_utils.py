@@ -29,7 +29,7 @@ from ugbio_core.variant_annotation import (
     get_cycle_skip_dataframe,
     get_motif_around_snv,
 )
-from ugbio_ppmseq.ppmSeq_utils import ppmSeqStrandVcfAnnotator
+from ugbio_ppmseq.ppmSeq_utils import PpmseqStrandVcfAnnotator
 
 
 class FeatureMapFields(Enum):
@@ -758,7 +758,7 @@ def annotate_featuremap(
     )
     annotators = [featuremap_annotator, ref_context_annotator]
     if ppmseq_adapter_version:
-        ppmseq_annotator = ppmSeqStrandVcfAnnotator(adapter_version=ppmseq_adapter_version)
+        ppmseq_annotator = PpmseqStrandVcfAnnotator(adapter_version=ppmseq_adapter_version)
         annotators.append(ppmseq_annotator)
     VcfAnnotator.process_vcf(
         annotators=annotators,
