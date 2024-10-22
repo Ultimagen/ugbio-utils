@@ -100,6 +100,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
         df_cnvs.columns = ["chr", "start", "end", "info"]
         for _, row in df_cnvs.iterrows():
             # Create a new VCF record
+            chr_id = row["chr"]
             start = row["start"]
             end = row["end"]
             info = row["info"]
