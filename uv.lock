@@ -3144,11 +3144,18 @@ wheels = [
 
 [[package]]
 name = "ugbio-cnv"
-version = "1.2.1.post0.dev41"
+version = "1.2.1.post0.dev47"
 source = { editable = "src/cnv" }
 dependencies = [
     { name = "seaborn" },
     { name = "ugbio-core" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -3157,9 +3164,16 @@ requires-dist = [
     { name = "ugbio-core", editable = "src/core" },
 ]
 
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "ruff", specifier = ">=0.6.9" },
+]
+
 [[package]]
 name = "ugbio-core"
-version = "1.2.1.post0.dev41"
+version = "1.2.1.post0.dev47"
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -3179,6 +3193,13 @@ variantannotation = [
     { name = "tqdm" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "bgzip", marker = "extra == 'variantannotation'", specifier = ">=0.5.0" },
@@ -3194,14 +3215,28 @@ requires-dist = [
     { name = "tqdm", marker = "extra == 'variantannotation'", specifier = ">=4.66.4" },
 ]
 
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "ruff", specifier = ">=0.6.9" },
+]
+
 [[package]]
 name = "ugbio-featuremap"
-version = "1.2.1.post0.dev41"
+version = "1.2.1.post0.dev47"
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "seaborn" },
     { name = "ugbio-core", extra = ["variantannotation"] },
     { name = "ugbio-ppmseq" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -3211,14 +3246,28 @@ requires-dist = [
     { name = "ugbio-ppmseq", editable = "src/ppmseq" },
 ]
 
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "ruff", specifier = ">=0.6.9" },
+]
+
 [[package]]
 name = "ugbio-mrd"
-version = "1.2.1.post0.dev41"
+version = "1.2.1.post0.dev47"
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["variantannotation"] },
     { name = "ugbio-featuremap" },
     { name = "ugbio-ppmseq" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -3228,9 +3277,16 @@ requires-dist = [
     { name = "ugbio-ppmseq", editable = "src/ppmseq" },
 ]
 
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "ruff", specifier = ">=0.6.9" },
+]
+
 [[package]]
 name = "ugbio-omics"
-version = "1.2.1.post0.dev41"
+version = "1.2.1.post0.dev47"
 source = { editable = "src/omics" }
 dependencies = [
     { name = "amazon-omics-tools" },
@@ -3240,7 +3296,9 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "pre-commit" },
     { name = "pytest" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -3251,11 +3309,15 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8.3.3" }]
+dev = [
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "ruff", specifier = ">=0.6.9" },
+]
 
 [[package]]
 name = "ugbio-ppmseq"
-version = "1.2.1.post0.dev41"
+version = "1.2.1.post0.dev47"
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3264,6 +3326,13 @@ dependencies = [
     { name = "pyarrow" },
     { name = "seaborn" },
     { name = "ugbio-core", extra = ["variantannotation"] },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -3276,9 +3345,16 @@ requires-dist = [
     { name = "ugbio-core", extras = ["variantannotation"], editable = "src/core" },
 ]
 
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "ruff", specifier = ">=0.6.9" },
+]
+
 [[package]]
 name = "ugbio-single-cell"
-version = "1.2.1.post0.dev41"
+version = "1.2.1.post0.dev47"
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3291,6 +3367,13 @@ dependencies = [
     { name = "papermill" },
     { name = "seaborn" },
     { name = "ugbio-core" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -3307,9 +3390,16 @@ requires-dist = [
     { name = "ugbio-core", editable = "src/core" },
 ]
 
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "ruff", specifier = ">=0.6.9" },
+]
+
 [[package]]
 name = "ugbio-srsnv"
-version = "1.2.1.post0.dev41"
+version = "1.2.1.post0.dev47"
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3322,6 +3412,13 @@ dependencies = [
     { name = "ugbio-featuremap" },
     { name = "ugbio-ppmseq" },
     { name = "xgboost" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
 ]
 
 [package.metadata]
@@ -3338,9 +3435,16 @@ requires-dist = [
     { name = "xgboost", specifier = ">=2.0.3" },
 ]
 
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "ruff", specifier = ">=0.6.9" },
+]
+
 [[package]]
 name = "ugbio-utils"
-version = "1.2.1.post0.dev41"
+version = "1.2.1.post0.dev47"
 source = { virtual = "." }
 
 [package.dev-dependencies]
