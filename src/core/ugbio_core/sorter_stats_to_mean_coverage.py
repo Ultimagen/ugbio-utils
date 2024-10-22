@@ -4,7 +4,6 @@ import argparse
 import sys
 
 import numpy as np
-
 from ugbio_core.sorter_utils import read_effective_coverage_from_sorter_json
 
 
@@ -52,6 +51,7 @@ def run(argv):
         sorter_stats_json=args.sorter_stats_json,
         output_file=args.output_file,
     )
+
 
 def main():
     run(sys.argv)

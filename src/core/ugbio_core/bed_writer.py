@@ -7,7 +7,6 @@ BED_COLUMN_CHROM_END = "chromEnd"
 
 class BedWriter:
     def __init__(self, output_file: str):
-        # pylint:disable=consider-using-with
         self.fh_var = open(output_file, "w", encoding="utf-8")
 
     def write(
@@ -31,7 +30,7 @@ class BedWriter:
         self.fh_var.close()
 
 
-def parse_intervals_file(intervalfile: str, threshold: int = 0, sort: bool = True) -> pd.DataFrame:
+def parse_intervals_file(intervalfile: str, threshold: int = 0, *, sort: bool = True) -> pd.DataFrame:
     """Parses bed file
 
     Parameters
@@ -48,7 +47,7 @@ def parse_intervals_file(intervalfile: str, threshold: int = 0, sort: bool = Tru
     pd.DataFrame
         Output dataframe with columns chromosome, start, end
     """
-    df = pd.read_csv(
+    intervals_df = pd.read_csv(
         intervalfile,
         names=["chromosome", "start", "end"],
         usecols=[0, 1, 2],
@@ -56,8 +55,8 @@ def parse_intervals_file(intervalfile: str, threshold: int = 0, sort: bool = Tru
         sep="\t",
     )
     if threshold > 0:
-        df = df[df["end"] - df["start"] > threshold]
+        intervals_df = intervals_df[intervals_df["end"] - intervals_df["start"] > threshold]
     if sort:
-        df.sort_values(["chromosome", "start"], inplace=True)
-    df["chromosome"] = df["chromosome"].astype("string")
-    return df
+        intervals_df = intervals_df.sort_values(["chromosome", "start"])
+    intervals_df["chromosome"] = intervals_df["chromosome"].astype("string")
+    return intervals_df

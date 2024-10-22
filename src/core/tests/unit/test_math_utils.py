@@ -1,6 +1,5 @@
 import numpy as np
-
-import ugbio_core.math_utils as math_utils
+from ugbio_core import math_utils
 
 
 def test_phred():

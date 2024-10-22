@@ -7,9 +7,8 @@ import tempfile
 import warnings
 
 from simppl.simple_pipeline import SimplePipeline
-
-from ugbio_core.logger import logger
 from ugbio_core.exec_utils import print_and_execute
+from ugbio_core.logger import logger
 
 warnings.filterwarnings("ignore")
 
@@ -31,7 +30,7 @@ def filter_by_bed_file(in_bed_file, filtration_cutoff, filtering_bed_file, prefi
         + out_filtered_bed_file
     )
 
-    os.system(cmd)
+    os.system(cmd)  # noqa: S605
     filtered_out_records = prefix + out_filename.rstrip(".bed") + "." + tag + ".filtered_out.bed"
     cmd = (
         bedtools
@@ -45,10 +44,10 @@ def filter_by_bed_file(in_bed_file, filtration_cutoff, filtering_bed_file, prefi
         + filtered_out_records
     )
 
-    os.system(cmd)
+    os.system(cmd)  # noqa: S605
     out_annotate_file = prefix + out_filename.rstrip(".bed") + "." + tag + ".annotate.bed"
     cmd = "cat " + filtered_out_records + ' | awk \'{print $1"\t"$2"\t"$3"\t"$4"|' + tag + "\"}' > " + out_annotate_file
-    os.system(cmd)
+    os.system(cmd)  # noqa: S605
 
     return out_annotate_file
 
@@ -57,21 +56,22 @@ def filter_by_length(bed_file, length_cutoff, prefix):
     out_filename = os.path.basename(bed_file)
     out_len_file = prefix + out_filename.rstrip(".bed") + ".len.bed"
     cmd = "awk '$3-$2<" + str(length_cutoff) + "' " + bed_file + " > " + out_len_file
-    os.system(cmd)
+    os.system(cmd)  # noqa: S605
     out_len_annotate_file = prefix + out_filename.rstrip(".bed") + ".len.annotate.bed"
     cmd = "cat " + out_len_file + ' | awk \'{print $1"\t"$2"\t"$3"\t"$4"|LEN"}\' > ' + out_len_annotate_file
-    os.system(cmd)
+    os.system(cmd)  # noqa: S605
 
     return out_len_annotate_file
 
 
-def intersect_bed_regions(
+def intersect_bed_regions(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
     include_regions: list[str],
     exclude_regions: list[str] = None,
     output_bed: str = "output.bed",
-    assume_input_sorted: bool = False,
     max_mem: int = None,
     sp: SimplePipeline = None,
+    *,
+    assume_input_sorted: bool = False,
 ):
     """
     Intersect BED regions with the option to subtract exclude regions,
@@ -111,9 +111,8 @@ def intersect_bed_regions(
             raise FileNotFoundError(f"File '{region_file}' does not exist.")
 
     # Make sure bedops is installed
-    assert (
-        subprocess.call(["bedops", "--version"]) == 0
-    ), "bedops is not installed. Please install bedops and make sure it is in your PATH."
+    if subprocess.call(["bedops", "--version"]) != 0:  # noqa: S607
+        raise RuntimeError("bedops is not installed. Please install bedops and make sure it is in your PATH.")
 
     # If only one include region is provided and no exclude regions, just copy the file to the output
     if len(include_regions) == 1 and exclude_regions is None and assume_input_sorted:
@@ -176,7 +175,7 @@ def intersect_bed_regions(
             excludes = []
             for exclude_bed_or_vcf in exclude_regions:
                 sorted_exclude_bed = get_temp_file()
-                if exclude_bed_or_vcf.endswith(".vcf") or exclude_bed_or_vcf.endswith(".vcf.gz"):  # vcf file
+                if exclude_bed_or_vcf.endswith((".vcf", ".vcf.gz")):  # vcf file
                     if not assume_input_sorted:
                         print_and_execute(
                             f"bcftools view {exclude_bed_or_vcf} | "

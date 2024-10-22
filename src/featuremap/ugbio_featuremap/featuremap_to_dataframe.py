@@ -65,6 +65,7 @@ def run(argv):
         input_info_fields=args_in.info_fields.split(",") if args_in.info_fields else "all",
     )
 
+
 def main():
     run(sys.argv)
 

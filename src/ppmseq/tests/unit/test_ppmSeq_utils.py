@@ -2,25 +2,27 @@ from os.path import join as pjoin
 from pathlib import Path
 
 import pandas as pd
-import pytest
 import pysam
+import pytest
 from pandas.testing import assert_frame_equal, assert_series_equal
-
 from ugbio_ppmseq.ppmSeq_utils import (
+    PpmseqAdapterVersions,
+    PpmseqStrandVcfAnnotator,
     add_strand_ratios_and_categories_to_featuremap,
     collect_statistics,
-    plot_ppmSeq_strand_ratio,
+    plot_ppmseq_strand_ratio,
     plot_strand_ratio_category,
     plot_strand_ratio_category_concordnace,
     plot_trimmer_histogram,
-    ppmSeq_qc_analysis,
-    ppmSeqAdapterVersions,
-    read_ppmSeq_trimmer_histogram,
-    ppmSeqStrandVcfAnnotator
+    ppmseq_qc_analysis,
+    read_ppmseq_trimmer_histogram,
 )
 
 inputs_dir = Path(__file__).parent.parent / "resources"
-input_histogram_legacy_v5_csv = inputs_dir / "130713_UGAv3-51.trimming.A_hmer_5.T_hmer_5.A_hmer_3.T_hmer_3.native_adapter_with_leading_C.histogram.csv"
+input_histogram_legacy_v5_csv = (
+    inputs_dir
+    / "130713_UGAv3-51.trimming.A_hmer_5.T_hmer_5.A_hmer_3.T_hmer_3.native_adapter_with_leading_C.histogram.csv"
+)
 parsed_histogram_legacy_v5_parquet = inputs_dir / "130713_UGAv3-51.parsed_histogram.parquet"
 sorter_stats_legacy_v5_csv = inputs_dir / "130713-UGAv3-51.sorter_stats.csv"
 collected_stats_legacy_v5_h5 = inputs_dir / "130713-UGAv3-51.stats.h5"
@@ -29,22 +31,39 @@ parsed_histogram_legacy_v5_start_parquet = inputs_dir / "130715_UGAv3-132.parsed
 sorter_stats_legacy_v5_start_csv = inputs_dir / "130715-UGAv3-51.sorter_stats.csv"
 collected_stats_legacy_v5_start_h5 = inputs_dir / "130715-UGAv3-51.stats.h5"
 input_featuremap_legacy_v5 = inputs_dir / "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.vcf.gz"
-expected_output_featuremap_legacy_v5 = inputs_dir / "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.with_strand_ratios.vcf.gz"
-sorter_stats_csv_ppmSeq_v1 = inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.csv"
-sorter_stats_json_ppmSeq_v1 = inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.json"
-trimmer_failure_codes_csv_ppmSeq_v1 = inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.failure_codes.csv"
-trimmer_histogram_ppmSeq_v1_csv = inputs_dir/ "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.Start_loop.Start_loop.End_loop.End_loop.native_adapter.histogram.csv"
-parsed_histogram_parquet_ppmSeq_v1 = inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.parsed_histogram.parquet"
-sorter_stats_csv_ppmSeq_v1_amp = inputs_dir / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.csv"
-sorter_stats_json_ppmSeq_v1_amp = inputs_dir / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.json"
-trimmer_failure_codes_csv_ppmSeq_v1_amp = inputs_dir / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.failure_codes.csv"
-trimmer_histogram_ppmSeq_v1_amp = inputs_dir / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.Start_loop_name.Start_loop_pattern_fw.End_loop_name.End_loop_pattern_fw.Stem_end_length.histogram.csv"
-trimmer_histogram_extra_ppmSeq_v1_amp =  inputs_dir / "400762-Lb_2752-Z0123-CAGATCGCCACAGAT.subsample.Dumbbell_leftover_start_match.hist.csv" # it's not the same file but the right format
-subdir = inputs_dir/ "401057001"
-sorter_stats_csv_ppmSeq_v1_401057001 = subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT.csv"
-sorter_stats_json_ppmSeq_v1_401057001 = subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT.json"
-trimmer_failure_codes_csv_ppmSeq_v1_401057001 = subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT_trimmer-failure_codes.csv"
-trimmer_histogram_ppmSeq_v1_401057001 = subdir/ "Z0016-Start_loop_name.Start_loop_pattern_fw.End_loop_name.End_loop_pattern_fw.native_adapter_length.histogram.csv"
+expected_output_featuremap_legacy_v5 = (
+    inputs_dir / "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.with_strand_ratios.vcf.gz"
+)
+sorter_stats_csv_ppmseq_v1 = inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.csv"
+sorter_stats_json_ppmseq_v1 = inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.json"
+trimmer_failure_codes_csv_ppmseq_v1 = inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.failure_codes.csv"
+trimmer_histogram_ppmseq_v1_csv = inputs_dir / (
+    "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT."
+    "Start_loop.Start_loop.End_loop.End_loop.native_adapter.histogram.csv"
+)
+parsed_histogram_parquet_ppmseq_v1 = (
+    inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.parsed_histogram.parquet"
+)
+sorter_stats_csv_ppmseq_v1_amp = inputs_dir / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.csv"
+sorter_stats_json_ppmseq_v1_amp = inputs_dir / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.json"
+trimmer_failure_codes_csv_ppmseq_v1_amp = inputs_dir / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.failure_codes.csv"
+trimmer_histogram_ppmseq_v1_amp = inputs_dir / (
+    "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.Start_loop_name.Start_loop_pattern_fw.End_loop_name.End_loop_pattern_fw."
+    "Stem_end_length.histogram.csv"
+)
+trimmer_histogram_extra_ppmseq_v1_amp = (
+    inputs_dir / "400762-Lb_2752-Z0123-CAGATCGCCACAGAT.subsample.Dumbbell_leftover_start_match.hist.csv"
+)  # it's not the same file but the right format
+subdir = inputs_dir / "401057001"
+sorter_stats_csv_ppmseq_v1_401057001 = subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT.csv"
+sorter_stats_json_ppmseq_v1_401057001 = subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT.json"
+trimmer_failure_codes_csv_ppmseq_v1_401057001 = (
+    subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT_trimmer-failure_codes.csv"
+)
+trimmer_histogram_ppmseq_v1_401057001 = subdir / (
+    "Z0016-Start_loop_name.Start_loop_pattern_fw.End_loop_name.End_loop_pattern_fw.native_adapter_length"
+    ".histogram.csv"
+)
 
 
 def _compare_vcfs(vcf_file1, vcf_file2):
@@ -58,44 +77,44 @@ def _compare_vcfs(vcf_file1, vcf_file2):
             for record in vcf:
                 records.append(record)
         return records
-    
+
     def compare_headers(header1, header2):
-        header1_lines = str(header1).split('\n')
-        header2_lines = str(header2).split('\n')
-        
+        header1_lines = str(header1).split("\n")
+        header2_lines = str(header2).split("\n")
+
         diff = set(header1_lines).symmetric_difference(set(header2_lines))
         return diff
 
     def compare_records(records1, records2):
-        records1_set = set(str(record) for record in records1)
-        records2_set = set(str(record) for record in records2)
-        
+        records1_set = {str(record) for record in records1}
+        records2_set = {str(record) for record in records2}
+
         diff = records1_set.symmetric_difference(records2_set)
         return diff
-    
+
     header1 = extract_header(vcf_file1)
     header2 = extract_header(vcf_file2)
-    
+
     header_diff = compare_headers(header1, header2)
     assert not header_diff, "Differences found in headers"
-    
+
     records1 = extract_records(vcf_file1)
     records2 = extract_records(vcf_file2)
-    
+
     records_diff = compare_records(records1, records2)
     assert not records_diff, "Differences found in records"
 
-        
-def test_read_ppmSeq_v1_trimmer_histogram(tmpdir):
+
+def test_read_ppmseq_v1_trimmer_histogram(tmpdir):
     tmp_out_path = pjoin(tmpdir, "tmp_out.parquet")
-    df_trimmer_histogram = read_ppmSeq_trimmer_histogram(
-        ppmSeqAdapterVersions.V1,
-        trimmer_histogram_ppmSeq_v1_csv,
+    df_trimmer_histogram = read_ppmseq_trimmer_histogram(
+        PpmseqAdapterVersions.V1,
+        trimmer_histogram_ppmseq_v1_csv,
         output_filename=tmp_out_path,
         legacy_histogram_column_names=True,
     )
     df_trimmer_histogram_from_parquet = pd.read_parquet(tmp_out_path)
-    df_trimmer_histogram_expected = pd.read_parquet(parsed_histogram_parquet_ppmSeq_v1)
+    df_trimmer_histogram_expected = pd.read_parquet(parsed_histogram_parquet_ppmseq_v1)
     assert_frame_equal(
         df_trimmer_histogram,
         df_trimmer_histogram_expected,
@@ -106,10 +125,10 @@ def test_read_ppmSeq_v1_trimmer_histogram(tmpdir):
     )
 
 
-def test_read_ppmSeq_legacy_v5_trimmer_histogram(tmpdir):
+def test_read_ppmseq_legacy_v5_trimmer_histogram(tmpdir):
     tmp_out_path = pjoin(tmpdir, "tmp_out.parquet")
-    df_trimmer_histogram = read_ppmSeq_trimmer_histogram(
-        ppmSeqAdapterVersions.LEGACY_V5,
+    df_trimmer_histogram = read_ppmseq_trimmer_histogram(
+        PpmseqAdapterVersions.LEGACY_V5,
         input_histogram_legacy_v5_csv,
         output_filename=tmp_out_path,
         legacy_histogram_column_names=True,
@@ -126,11 +145,11 @@ def test_read_ppmSeq_legacy_v5_trimmer_histogram(tmpdir):
     )
 
 
-def test_read_ppmSeq_legacy_v5_start_trimmer_histogram(tmpdir):
+def test_read_ppmseq_legacy_v5_start_trimmer_histogram(tmpdir):
     tmp_out_path = pjoin(tmpdir, "tmp_out.parquet")
 
-    df_trimmer_histogram = read_ppmSeq_trimmer_histogram(
-        ppmSeqAdapterVersions.LEGACY_V5_START,
+    df_trimmer_histogram = read_ppmseq_trimmer_histogram(
+        PpmseqAdapterVersions.LEGACY_V5_START,
         input_histogram_legacy_v5_start_csv,
         output_filename=tmp_out_path,
         legacy_histogram_column_names=True,
@@ -149,26 +168,26 @@ def test_read_ppmSeq_legacy_v5_start_trimmer_histogram(tmpdir):
 
 def test_plot_trimmer_histogram(tmpdir):
     tmp_out_path = pjoin(tmpdir, "tmp_out.png")
-    df_trimmer_histogram = read_ppmSeq_trimmer_histogram(
-        ppmSeqAdapterVersions.LEGACY_V5_START,
+    df_trimmer_histogram = read_ppmseq_trimmer_histogram(
+        PpmseqAdapterVersions.LEGACY_V5_START,
         input_histogram_legacy_v5_start_csv,
         output_filename=tmp_out_path,
         legacy_histogram_column_names=True,
     )
     plot_trimmer_histogram(
-        ppmSeqAdapterVersions.LEGACY_V5_START,
+        PpmseqAdapterVersions.LEGACY_V5_START,
         df_trimmer_histogram,
         output_filename=tmp_out_path,
         legacy_histogram_column_names=True,
     )
-    df_trimmer_histogram = read_ppmSeq_trimmer_histogram(
-        ppmSeqAdapterVersions.LEGACY_V5,
+    df_trimmer_histogram = read_ppmseq_trimmer_histogram(
+        PpmseqAdapterVersions.LEGACY_V5,
         input_histogram_legacy_v5_csv,
         output_filename=tmp_out_path,
         legacy_histogram_column_names=True,
     )
     plot_trimmer_histogram(
-        ppmSeqAdapterVersions.LEGACY_V5,
+        PpmseqAdapterVersions.LEGACY_V5,
         df_trimmer_histogram,
         output_filename=tmp_out_path,
         legacy_histogram_column_names=True,
@@ -178,7 +197,7 @@ def test_plot_trimmer_histogram(tmpdir):
 def test_collect_statistics(tmpdir):
     tmp_out_path = pjoin(tmpdir, "tmp_out.h5")
     collect_statistics(
-        ppmSeqAdapterVersions.LEGACY_V5,
+        PpmseqAdapterVersions.LEGACY_V5,
         trimmer_histogram_csv=input_histogram_legacy_v5_csv,
         sorter_stats_csv=sorter_stats_legacy_v5_csv,
         output_filename=tmp_out_path,
@@ -199,7 +218,7 @@ def test_collect_statistics(tmpdir):
             assert_frame_equal(x1, x2)
 
     collect_statistics(
-        ppmSeqAdapterVersions.LEGACY_V5_START,
+        PpmseqAdapterVersions.LEGACY_V5_START,
         trimmer_histogram_csv=input_histogram_legacy_v5_start_csv,
         sorter_stats_csv=sorter_stats_legacy_v5_csv,
         output_filename=tmp_out_path,
@@ -219,18 +238,18 @@ def test_collect_statistics(tmpdir):
             assert_frame_equal(x1, x2)
 
 
-def test_plot_ppmSeq_ratio(tmpdir):
+def test_plot_ppmseq_ratio(tmpdir):
     tmp_out_path = pjoin(tmpdir, "tmp_out.png")
     df_trimmer_histogram_legacy_v5_expected = pd.read_parquet(parsed_histogram_legacy_v5_parquet)
-    plot_ppmSeq_strand_ratio(
-        ppmSeqAdapterVersions.LEGACY_V5,
+    plot_ppmseq_strand_ratio(
+        PpmseqAdapterVersions.LEGACY_V5,
         df_trimmer_histogram_legacy_v5_expected,
         output_filename=tmp_out_path,
         title="test",
     )
     df_trimmer_histogram_legacy_v5_start_expected = pd.read_parquet(parsed_histogram_legacy_v5_start_parquet)
-    plot_ppmSeq_strand_ratio(
-        ppmSeqAdapterVersions.LEGACY_V5_START,
+    plot_ppmseq_strand_ratio(
+        PpmseqAdapterVersions.LEGACY_V5_START,
         df_trimmer_histogram_legacy_v5_start_expected,
         output_filename=tmp_out_path,
         title="test",
@@ -241,7 +260,7 @@ def test_plot_strand_ratio_category(tmpdir):
     tmp_out_path = pjoin(tmpdir, "tmp_out.png")
     df_trimmer_histogram_legacy_v5_expected = pd.read_parquet(parsed_histogram_legacy_v5_parquet)
     plot_strand_ratio_category(
-        ppmSeqAdapterVersions.LEGACY_V5,
+        PpmseqAdapterVersions.LEGACY_V5,
         df_trimmer_histogram_legacy_v5_expected,
         title="test",
         output_filename=tmp_out_path,
@@ -249,7 +268,7 @@ def test_plot_strand_ratio_category(tmpdir):
     )
     df_trimmer_histogram_legacy_v5_start_expected = pd.read_parquet(parsed_histogram_legacy_v5_start_parquet)
     plot_strand_ratio_category(
-        ppmSeqAdapterVersions.LEGACY_V5_START,
+        PpmseqAdapterVersions.LEGACY_V5_START,
         df_trimmer_histogram_legacy_v5_start_expected,
         title="test",
         output_filename=tmp_out_path,
@@ -260,7 +279,7 @@ def test_plot_strand_ratio_category(tmpdir):
 def test_add_strand_ratios_and_categories_to_featuremap(tmpdir):
     tmp_out_path = pjoin(tmpdir, "tmp_out.vcf.gz")
     add_strand_ratios_and_categories_to_featuremap(
-        ppmSeqAdapterVersions.LEGACY_V5,
+        PpmseqAdapterVersions.LEGACY_V5,
         input_featuremap_vcf=input_featuremap_legacy_v5,
         output_featuremap_vcf=tmp_out_path,
     )
@@ -274,7 +293,7 @@ def test_plot_strand_ratio_category_concordnace(tmpdir):
     tmp_out_path = pjoin(tmpdir, "tmp_out.png")
     df_trimmer_histogram_legacy_v5_expected = pd.read_parquet(parsed_histogram_legacy_v5_parquet)
     plot_strand_ratio_category_concordnace(
-        ppmSeqAdapterVersions.LEGACY_V5,
+        PpmseqAdapterVersions.LEGACY_V5,
         df_trimmer_histogram_legacy_v5_expected,
         title="test",
         output_filename=tmp_out_path,
@@ -283,7 +302,7 @@ def test_plot_strand_ratio_category_concordnace(tmpdir):
     df_trimmer_histogram_legacy_v5_start_expected = pd.read_parquet(parsed_histogram_legacy_v5_start_parquet)
     with pytest.raises(ValueError):
         plot_strand_ratio_category_concordnace(
-            ppmSeqAdapterVersions.LEGACY_V5_START,
+            PpmseqAdapterVersions.LEGACY_V5_START,
             df_trimmer_histogram_legacy_v5_start_expected,
             title="test",
             output_filename=tmp_out_path,
@@ -291,9 +310,9 @@ def test_plot_strand_ratio_category_concordnace(tmpdir):
         )
 
 
-def test_ppmSeq_analysis_legacy_v5(tmpdir):
-    ppmSeq_qc_analysis(
-        ppmSeqAdapterVersions.LEGACY_V5,
+def test_ppmseq_analysis_legacy_v5(tmpdir):
+    ppmseq_qc_analysis(
+        PpmseqAdapterVersions.LEGACY_V5,
         trimmer_histogram_csv=[input_histogram_legacy_v5_csv],
         sorter_stats_csv=sorter_stats_legacy_v5_csv,
         output_path=tmpdir,
@@ -302,8 +321,8 @@ def test_ppmSeq_analysis_legacy_v5(tmpdir):
         legacy_histogram_column_names=True,
     )
 
-    ppmSeq_qc_analysis(
-        ppmSeqAdapterVersions.LEGACY_V5_START,
+    ppmseq_qc_analysis(
+        PpmseqAdapterVersions.LEGACY_V5_START,
         trimmer_histogram_csv=[input_histogram_legacy_v5_start_csv],
         sorter_stats_csv=sorter_stats_legacy_v5_start_csv,
         output_path=tmpdir,
@@ -313,24 +332,24 @@ def test_ppmSeq_analysis_legacy_v5(tmpdir):
     )
 
 
-def test_ppmSeq_analysis_dmbl(tmpdir):
-    ppmSeq_qc_analysis(
-        ppmSeqAdapterVersions.DMBL,
-        trimmer_histogram_csv=[trimmer_histogram_ppmSeq_v1_amp],
-        trimmer_histogram_extra_csv=[trimmer_histogram_extra_ppmSeq_v1_amp],
-        sorter_stats_csv=sorter_stats_csv_ppmSeq_v1_amp,
-        trimmer_failure_codes_csv=trimmer_failure_codes_csv_ppmSeq_v1_amp,
+def test_ppmseq_analysis_dmbl(tmpdir):
+    ppmseq_qc_analysis(
+        PpmseqAdapterVersions.DMBL,
+        trimmer_histogram_csv=[trimmer_histogram_ppmseq_v1_amp],
+        trimmer_histogram_extra_csv=[trimmer_histogram_extra_ppmseq_v1_amp],
+        sorter_stats_csv=sorter_stats_csv_ppmseq_v1_amp,
+        trimmer_failure_codes_csv=trimmer_failure_codes_csv_ppmseq_v1_amp,
         output_path=tmpdir,
         output_basename="TEST_DMBL",
     )
 
 
-def test_ppmSeq_analysis_v1(tmpdir):
-    ppmSeq_qc_analysis(
-        ppmSeqAdapterVersions.V1,
-        trimmer_histogram_csv=[trimmer_histogram_ppmSeq_v1_401057001],
-        sorter_stats_csv=sorter_stats_csv_ppmSeq_v1_401057001,
-        trimmer_failure_codes_csv=trimmer_failure_codes_csv_ppmSeq_v1_401057001,
+def test_ppmseq_analysis_v1(tmpdir):
+    ppmseq_qc_analysis(
+        PpmseqAdapterVersions.V1,
+        trimmer_histogram_csv=[trimmer_histogram_ppmseq_v1_401057001],
+        sorter_stats_csv=sorter_stats_csv_ppmseq_v1_401057001,
+        trimmer_failure_codes_csv=trimmer_failure_codes_csv_ppmseq_v1_401057001,
         output_path=tmpdir,
         output_basename="TEST_v1",
     )
@@ -339,6 +358,6 @@ def test_ppmSeq_analysis_v1(tmpdir):
 def test_pickle_an_annotator(tmpdir):
     import pickle
 
-    annotator = ppmSeqStrandVcfAnnotator(adapter_version="legacy_v5_start")
+    annotator = PpmseqStrandVcfAnnotator(adapter_version="legacy_v5_start")
     with open(pjoin(tmpdir, "annotators_pickle"), "wb") as f:
         pickle.dump(annotator, f)

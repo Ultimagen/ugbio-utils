@@ -1,4 +1,4 @@
-#!/env/python
+#!/env/python  # noqa: N999
 # Copyright 2022 Ultima Genomics Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +24,7 @@ from ugbio_ppmseq.ppmSeq_utils import (
     MIN_TOTAL_HMER_LENGTHS_IN_LOOPS,
     STRAND_RATIO_LOWER_THRESH,
     STRAND_RATIO_UPPER_THRESH,
-    ppmSeq_qc_analysis,
+    ppmseq_qc_analysis,
     supported_adapter_versions,
 )
 
@@ -137,7 +137,7 @@ def run(argv):
     """Convert featuremap to pandas dataframe"""
     args_in = __parse_args(argv)
 
-    ppmSeq_qc_analysis(
+    ppmseq_qc_analysis(
         adapter_version=args_in.adapter_version,
         trimmer_histogram_csv=args_in.trimmer_histogram_csv,
         trimmer_histogram_extra_csv=args_in.trimmer_histogram_extra_csv,

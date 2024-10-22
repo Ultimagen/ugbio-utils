@@ -4,12 +4,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pyBigWig as pbw
+import pyBigWig as pbw  # noqa: N813
 import pyfaidx
 import pysam
 import pytest
-
-import ugbio_core.variant_annotation as variant_annotation
+from ugbio_core import variant_annotation
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
 
 
@@ -19,15 +18,14 @@ def resources_dir():
 
 
 class TestVariantAnnotation:
-
     def test_get_coverage(self, tmpdir):
         temp_bw_name1 = self._create_temp_bw(tmpdir, "test1.bw", 20)
         temp_bw_name2 = self._create_temp_bw(tmpdir, "test2.bw", 0)
-        df = self._create_test_df_for_coverage()
+        coverage_df = self._create_test_df_for_coverage()
 
-        result = variant_annotation.get_coverage(df.copy(), [temp_bw_name1], [temp_bw_name2])
+        result = variant_annotation.get_coverage(coverage_df.copy(), [temp_bw_name1], [temp_bw_name2])
         expected_total, expected_well_mapped = self._create_expected_coverage()
-        assert result.shape == (df.shape[0], df.shape[1] + 3)
+        assert result.shape == (coverage_df.shape[0], coverage_df.shape[1] + 3)
         assert "coverage" in result.columns
         assert "well_mapped_coverage" in result.columns
         assert "repetitive_read_coverage" in result.columns
@@ -39,10 +37,10 @@ class TestVariantAnnotation:
     def test_get_coverage_empty_dataframe(self, tmpdir):
         temp_bw_name1 = self._create_temp_bw(tmpdir, "test1.bw", 20)
         temp_bw_name2 = self._create_temp_bw(tmpdir, "test2.bw", 0)
-        df = self._create_test_df_for_coverage().iloc[:0, :]
+        empty_coverage_df = self._create_test_df_for_coverage().iloc[:0, :]
 
-        result = variant_annotation.get_coverage(df.copy(), [temp_bw_name1], [temp_bw_name2])
-        assert result.shape == (df.shape[0], df.shape[1] + 3)
+        result = variant_annotation.get_coverage(empty_coverage_df.copy(), [temp_bw_name1], [temp_bw_name2])
+        assert result.shape == (empty_coverage_df.shape[0], empty_coverage_df.shape[1] + 3)
 
     # Temporary bam contains read that starts on each location, every second read is duplicate (should be discarded)
     # Every third read is of low mapping quality. _create_expected_coverage generates the expected coverage profile
@@ -80,11 +78,11 @@ class TestVariantAnnotation:
 
     # creates dataframe that would test coverage
     def _create_test_df_for_coverage(self):
-        df = pd.DataFrame(
+        coverage_df = pd.DataFrame(
             {"chrom": ["chr20"] * 2000, "pos": np.arange(90000, 92000) + 1}
         )  # note  that VCF is one-based
-        df.set_index(df.apply(lambda x: (x["chrom"], x["pos"]), axis=1), inplace=True)
-        return df
+        coverage_df = coverage_df.set_index(coverage_df.apply(lambda x: (x["chrom"], x["pos"]), axis=1))
+        return coverage_df
 
     # This creates the expected coverage from the bam simulated by _create_temp_bam
     def _create_expected_coverage(self):
@@ -97,9 +95,9 @@ class TestVariantAnnotation:
         return result, result_well_mapped
 
     def test_cycleskip_status(self):
-        df, result = self._create_cycleskip_test_dataframe()
-        df = variant_annotation.annotate_cycle_skip(df, DEFAULT_FLOW_ORDER)
-        assert np.all(np.array(df["cycleskip_status"]) == np.array(result))
+        cycle_skip_df, result = self._create_cycleskip_test_dataframe()
+        cycle_skip_df = variant_annotation.annotate_cycle_skip(cycle_skip_df, DEFAULT_FLOW_ORDER)
+        assert np.all(np.array(cycle_skip_df["cycleskip_status"]) == np.array(result))
 
     def _create_cycleskip_test_dataframe(self):
         indel_status = [True, False, False, False, False, False]
@@ -116,7 +114,7 @@ class TestVariantAnnotation:
             "cycle-skip",
             "possible-cycle-skip",
         ]
-        df = pd.DataFrame(
+        cycle_skip_df = pd.DataFrame(
             {
                 "indel": indel_status,
                 "alleles": alleles,
@@ -126,4 +124,4 @@ class TestVariantAnnotation:
             }
         )
         result = pd.Series(cycleskip_status)
-        return df, result
+        return cycle_skip_df, result

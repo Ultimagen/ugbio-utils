@@ -1,22 +1,35 @@
 import itertools
 import os
 from enum import Enum
-from os.path import join as pjoin, dirname, splitext, basename
+from os.path import basename, dirname, splitext
+from os.path import join as pjoin
 
 import numpy as np
 import pandas as pd
 import pyfaidx
 import pysam
 from simppl.simple_pipeline import SimplePipeline
-
-from ugbio_core.logger import logger
-from ugbio_core.consts import ALT, CHROM, DEFAULT_FLOW_ORDER, FILTER, IS_CYCLE_SKIP, POS, QUAL, REF
+from ugbio_core.consts import (
+    ALT,
+    CHROM,
+    DEFAULT_FLOW_ORDER,
+    FILTER,
+    IS_CYCLE_SKIP,
+    POS,
+    QUAL,
+    REF,
+    FileExtension,
+)
 from ugbio_core.dna_sequence_utils import get_max_softclip_len
 from ugbio_core.exec_utils import print_and_execute
+from ugbio_core.logger import logger
 from ugbio_core.sorter_utils import read_effective_coverage_from_sorter_json
-from ugbio_core.variant_annotation import VcfAnnotator, get_cycle_skip_dataframe, get_motif_around_snv
-from ugbio_core.consts import FileExtension
-from ugbio_ppmseq.ppmSeq_utils import ppmSeqStrandVcfAnnotator
+from ugbio_core.variant_annotation import (
+    VcfAnnotator,
+    get_cycle_skip_dataframe,
+    get_motif_around_snv,
+)
+from ugbio_ppmseq.ppmSeq_utils import PpmseqStrandVcfAnnotator
 
 
 class FeatureMapFields(Enum):
@@ -57,7 +70,7 @@ class FeatureMapFields(Enum):
 class FeatureMapFilters(Enum):
     LOW_QUAL = "LowQual"
     SINGLE_READ = "SingleRead"
-    PASS = "PASS"
+    PASS = "PASS"  # noqa: S105
     PRE_FILTERED = "PreFiltered"
 
 
@@ -80,9 +93,12 @@ def get_hmer_of_central_base(sequence: str) -> int:
     int
         The length of the homopolymer run of the central base.
     """
-    assert isinstance(sequence, str)
-    assert len(sequence) % 2 == 1
-    assert len(sequence) >= 1
+    if not isinstance(sequence, str):
+        raise TypeError("sequence must be a string")
+    if len(sequence) % 2 != 1:
+        raise ValueError("The sequence length must be odd.")
+    if len(sequence) < 1:
+        raise ValueError("The sequence length must be at least 1.")
     hmer_lengths = np.array([sum(1 for _ in x[1]) for x in itertools.groupby(sequence)])
     central_hmer = hmer_lengths[np.argmax(np.cumsum(hmer_lengths) > len(sequence) // 2)]
     return int(central_hmer)
@@ -102,7 +118,8 @@ def is_biallelic_snv(record: pysam.VariantRecord) -> bool:
     bool
         True if the record is a biallelic SNV, False otherwise.
     """
-    assert isinstance(record, pysam.VariantRecord)
+    if not isinstance(record, pysam.VariantRecord):
+        raise TypeError("record must be a pysam.VariantRecord")
     return len(record.ref) == 1 and len(record.alts) == 1 and len(record.alts[0]) == 1
 
 
@@ -176,7 +193,6 @@ class FeaturemapAnnotator(VcfAnnotator):
         return records_out
 
 
-# pylint: disable=too-many-instance-attributes
 class RefContextVcfAnnotator(VcfAnnotator):
     def __init__(
         self,
@@ -208,8 +224,10 @@ class RefContextVcfAnnotator(VcfAnnotator):
             The maximum length of the homopolymer to annotate context up to. Defaults to 20.
         """
         # check inputs
-        assert len(flow_order) == 4, f"Flow order must be of length 4, got {flow_order}"
-        assert os.path.isfile(ref_fasta), f"Reference FASTA file not found: {ref_fasta}"
+        if len(flow_order) != 4:  # noqa: PLR2004
+            raise ValueError(f"Flow order must be of length 4, got {flow_order}")
+        if not os.path.isfile(ref_fasta):
+            raise FileNotFoundError(f"Reference FASTA file not found: {ref_fasta}")
 
         # save inputs
         self.ref_fasta = ref_fasta
@@ -361,14 +379,15 @@ class RefContextVcfAnnotator(VcfAnnotator):
                     field_name = f"prev_{index}"
                     record.info[field_name] = ref_around_snv[central_base_ind - index]
 
-                is_cycle_skip = self.cycle_skip_dataframe.at[(trinuc_ref, trinuc_alt), IS_CYCLE_SKIP]
+                is_cycle_skip = self.cycle_skip_dataframe.at[(trinuc_ref, trinuc_alt), IS_CYCLE_SKIP]  # noqa: PD008
                 record.info[self.CYCLE_SKIP_FLAG] = is_cycle_skip
 
                 # make sure all the info fields are present
                 for info_field in self.info_fields_to_add:
-                    assert (
-                        info_field in record.info
-                    ), f"INFO field {info_field} was supposed to be added to VCF record but was not found"
+                    if info_field not in record.info:
+                        raise ValueError(
+                            f"INFO field {info_field} was supposed to be added to VCF record but was not found"
+                        )
             records_out[j] = record
 
         return records_out
@@ -408,9 +427,11 @@ def create_hom_snv_featuremap(
     """
 
     # check inputs
-    assert os.path.isfile(featuremap), f"featuremap {featuremap} does not exist"
+    if not os.path.isfile(featuremap):
+        raise FileNotFoundError(f"featuremap {featuremap} does not exist")
     if sorter_stats_json:
-        assert os.path.isfile(sorter_stats_json), f"sorter_stats_json {sorter_stats_json} does not exist"
+        if not os.path.isfile(sorter_stats_json):
+            raise FileNotFoundError(f"sorter_stats_json {sorter_stats_json} does not exist")
     if hom_snv_featuremap is None:
         if featuremap.endswith(".vcf.gz"):
             hom_snv_featuremap = featuremap[: -len(".vcf.gz")]
@@ -517,16 +538,17 @@ def filter_featuremap_with_bcftools_view(
         bcftools_view_command += f" -T {regions_file} "
     bcftools_index_command = f"bcftools index -t {intersect_featuremap_vcf}"
 
-    print_and_execute(bcftools_view_command, simple_pipeline=sp, module_name=__name__, shell=True)
+    print_and_execute(bcftools_view_command, simple_pipeline=sp, module_name=__name__, shell=True)  # noqa: S604
     print_and_execute(
         bcftools_index_command,
         simple_pipeline=sp,
         module_name=__name__,
     )
-    assert os.path.isfile(intersect_featuremap_vcf), f"failed to create {intersect_featuremap_vcf}"
+    if not os.path.isfile(intersect_featuremap_vcf):
+        raise FileNotFoundError(f"failed to create {intersect_featuremap_vcf}")
 
 
-def featuremap_to_dataframe(
+def featuremap_to_dataframe(  # noqa: C901, PLR0912 #TODO: refactor
     featuremap_vcf: str,
     output_file: str = None,
     input_info_fields: list[str] = "all",
@@ -641,7 +663,7 @@ def featuremap_to_dataframe(
             if field in info_metadata_dict:
                 info_metadata_dict[field] = (info_metadata_dict[field][0], datatype)
         # read vcf file to dataframe
-        df = pd.DataFrame(
+        featuremap_df = pd.DataFrame(
             vcf_row_generator(
                 vcf_handle=vcf_handle,
                 info_metadata_dict=info_metadata_dict,
@@ -651,24 +673,24 @@ def featuremap_to_dataframe(
             columns=[CHROM, POS, REF, ALT, QUAL, FILTER] + info_input_fields_to_use + format_input_fields_to_use,
         )
     # fillna in int columns before converting types, because int columns can't contain NaNs
-    df = df.fillna(
+    featuremap_df = featuremap_df.fillna(
         {
             info_key: default_int_fillna_value
             for info_key in info_metadata_dict.keys()
-            if type_conversion_dict[info_metadata_dict[info_key][1]] == int
+            if type_conversion_dict[info_metadata_dict[info_key][1]] is int
         }
     )
-    df.fillna(
+    featuremap_df.fillna(
         {
             info_key: default_string_fillna_value
             for info_key in info_metadata_dict.keys()
-            if type_conversion_dict[info_metadata_dict[info_key][1]] == object
+            if type_conversion_dict[info_metadata_dict[info_key][1]] is object
         }
     )
     # convert types
-    df = df.astype(
+    featuremap_df = featuremap_df.astype(
         {
-            **{"qual": float},
+            "qual": float,
             **{
                 info_key: type_conversion_dict[info_metadata_dict[info_key][1]]
                 for info_key in info_metadata_dict.keys()
@@ -692,8 +714,9 @@ def featuremap_to_dataframe(
         output_file = f"{output_file}{FileExtension.PARQUET.value}"
 
     # Save and return
-    df.to_parquet(output_file)
-    return df
+    featuremap_df.to_parquet(output_file)
+    return featuremap_df
+
 
 def annotate_featuremap(
     input_featuremap: str,
@@ -702,7 +725,7 @@ def annotate_featuremap(
     motif_length_to_annotate: int,
     max_hmer_length: int,
     flow_order: str = DEFAULT_FLOW_ORDER,
-    ppmSeq_adapter_version: str = None,
+    ppmseq_adapter_version: str = None,
     process_number: int = 0,
 ):
     """
@@ -733,9 +756,9 @@ def annotate_featuremap(
         max_hmer_length=max_hmer_length,
     )
     annotators = [featuremap_annotator, ref_context_annotator]
-    if ppmSeq_adapter_version:
-        ppmSeq_annotator = ppmSeqStrandVcfAnnotator(adapter_version=ppmSeq_adapter_version)
-        annotators.append(ppmSeq_annotator)
+    if ppmseq_adapter_version:
+        ppmseq_annotator = PpmseqStrandVcfAnnotator(adapter_version=ppmseq_adapter_version)
+        annotators.append(ppmseq_annotator)
     VcfAnnotator.process_vcf(
         annotators=annotators,
         input_path=input_featuremap,

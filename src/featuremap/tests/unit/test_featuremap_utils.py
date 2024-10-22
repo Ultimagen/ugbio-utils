@@ -1,15 +1,21 @@
 import os
 from os.path import join as pjoin
 from pathlib import Path
+
+import numpy as np
 import pandas as pd
 import pysam
 import pytest
+from ugbio_core import variant_annotation
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
-from ugbio_featuremap.featuremap_utils import filter_featuremap_with_bcftools_view, featuremap_to_dataframe, \
-    FeatureMapFields, FeaturemapAnnotator, RefContextVcfAnnotator
 from ugbio_core.variant_annotation import VcfAnnotator
-import ugbio_core.variant_annotation as variant_annotation
-import numpy as np
+from ugbio_featuremap.featuremap_utils import (
+    FeaturemapAnnotator,
+    FeatureMapFields,
+    RefContextVcfAnnotator,
+    featuremap_to_dataframe,
+    filter_featuremap_with_bcftools_view,
+)
 
 
 @pytest.fixture
@@ -30,13 +36,7 @@ def resources_dir():
     ],
 )
 def test_filter_featuremap_with_bcftools_view_with_params(
-        tmpdir,
-        min_coverage,
-        max_coverage,
-        bcftools_include_filter,
-        regions_string,
-        expected_num_variants,
-        resources_dir
+    tmpdir, min_coverage, max_coverage, bcftools_include_filter, regions_string, expected_num_variants, resources_dir
 ):
     # create input featuremap vcf file
     input_featuremap_vcf = pjoin(resources_dir, "333_LuNgs_08.annotated_featuremap.vcf.gz")
@@ -129,7 +129,7 @@ def _assert_read_signature(signature, expected_signature, expected_columns=None,
     for c in expected_columns:
         assert c in signature.columns
         if c not in possibly_null_columns:
-            assert not signature[c].isnull().all()
+            assert not signature[c].isna().all()
             assert (signature[c] == expected_signature[c]).all() or np.allclose(signature[c], expected_signature[c])
 
 
@@ -153,7 +153,7 @@ def test_featuremap_annotator(tmpdir, resources_dir):
         else:
             reverse_events += 1
     assert (
-            FeatureMapFields.IS_DUPLICATE.value in output_variants.header.info
+        FeatureMapFields.IS_DUPLICATE.value in output_variants.header.info
     ), f"{FeatureMapFields.IS_DUPLICATE.value} is not in info header {output_variants.header.info}"
     assert forward_events == 9
     assert reverse_events == 22
@@ -239,12 +239,12 @@ def test_ref_context_vcf_annotator_multi_processing(tmpdir, resources_dir):
 
 
 def __ref_context_annotator_assertion(
-        annotated_vcf: str,
-        motif_length: int,
-        num_cycle_skips: int,
-        num_non_cycle_skips: int,
-        hmer_context_ref_sum: int,
-        hmer_context_alt_sum: int,
+    annotated_vcf: str,
+    motif_length: int,
+    num_cycle_skips: int,
+    num_non_cycle_skips: int,
+    hmer_context_ref_sum: int,
+    hmer_context_alt_sum: int,
 ):
     annotated_variants = pysam.VariantFile(annotated_vcf, "r")
     assert FeatureMapFields.TRINUC_CONTEXT_WITH_ALT.value in annotated_variants.header.info

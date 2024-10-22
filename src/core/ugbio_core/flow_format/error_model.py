@@ -31,7 +31,7 @@ def get_matrix(testmatrices: np.ndarray, idx: int) -> np.ndarray:
     np.ndarray
         Description
     """
-    if len(testmatrices.shape) == 4:
+    if len(testmatrices.shape) == 4:  # noqa: PLR2004
         return testmatrices[idx, 0, :, :].T
     return testmatrices[idx, :, :].T
 
@@ -101,7 +101,7 @@ def key2base(key: np.ndarray, flow_order: str) -> str:
     str
         Sequence
     """
-    return "".join([k * n for k, n in zip(flow_order, key)])
+    return "".join([k * n for k, n in zip(flow_order, key, strict=False)])
 
 
 def _calculate_correct_prob(matrix: np.ndarray) -> np.ndarray:
@@ -148,7 +148,7 @@ def _generate_quality(seq: str, kr_tag: np.ndarray = None, correct_prob: np.ndar
     ends = np.cumsum(tmp_kr) - 1
     starts = ends + 1 - tmp_kr
     probs = probs / 2
-    output = np.zeros((tmp_kr.sum()))
+    output = np.zeros(tmp_kr.sum())
     output[ends] = output[ends] + probs
     output[starts] = output[starts] + probs
     output = np.clip(output, 0.0001, None)
@@ -194,7 +194,8 @@ def write_sequences(tensor_name: str, seq_file_name: str, n_flows: int, n_classe
             seq = key2base(kr_tag, flow_order)
             correct_prob = _calculate_correct_prob(matrix)
             qual = _generate_quality(seq, kr_tag, correct_prob)
-            assert len(seq) == len(qual), "Sequence of a different length with quality"
+            if len(seq) != len(qual):
+                raise ValueError("Sequence of a different length with quality")
             out.write(f"{seq}\t{qual}\n")
             count += 1
     return count
@@ -275,7 +276,6 @@ def write_matrix_tags(
     probability_threshold: float = 0.003,
     probability_sf: float = 10,
 ) -> tuple[int, int]:
-
     """Writes probability tensor into the text file
 
     Parameters
@@ -315,7 +315,7 @@ def write_matrix_tags(
         testmatrices = testmatrices.reshape(-1, 1, n_flows, n_classes)
     else:
         testmatrices = np.load(tensor_name, mmap_mode="r")
-        if len(testmatrices.shape) == 3:
+        if len(testmatrices.shape) == 3:  # noqa: PLR2004
             testmatrices = testmatrices[:, np.newaxis, ...]
 
     print(f"Read {testmatrices.shape[0]} predictions", flush=True, file=sys.stderr)
@@ -363,7 +363,7 @@ def extract_header(input_bam: str, output_sam: str) -> None:
     None
     """
     with open(output_sam, "w", encoding="latin-1") as outfile:
-        subprocess.check_call(["samtools", "view", "-H", input_bam], stdout=outfile)
+        subprocess.check_call(["samtools", "view", "-H", input_bam], stdout=outfile)  # noqa: S607
 
 
 def add_matrix_to_bam(
@@ -385,7 +385,6 @@ def add_matrix_to_bam(
     replace_sequence_file : str, optional
         Description
     """
-    # pylint: disable=consider-using-with
 
     if replace_sequence_file is not None:
         rgbi_fname = output_bam + "rgbi.txt"
@@ -393,19 +392,19 @@ def add_matrix_to_bam(
 
     re_pipe, we_pipe = os.pipe()
     extract_header(input_bam, output_bam + ".hdr")
-    process1 = subprocess.Popen(["cat", output_bam + ".hdr"], stdout=we_pipe)
+    process1 = subprocess.Popen(["cat", output_bam + ".hdr"], stdout=we_pipe)  # noqa: S607
 
-    process4 = subprocess.Popen(["samtools", "view", "-b", "-o", output_bam, "-"], stdin=re_pipe)
+    process4 = subprocess.Popen(["samtools", "view", "-b", "-o", output_bam, "-"], stdin=re_pipe)  # noqa: S607
     process1.wait()
     if replace_sequence_file is None:
-        process2 = subprocess.Popen(["samtools", "view", input_bam], stdout=subprocess.PIPE)
+        process2 = subprocess.Popen(["samtools", "view", input_bam], stdout=subprocess.PIPE)  # noqa: S607
     else:
-        process2a = subprocess.Popen(["samtools", "view", input_bam], stdout=subprocess.PIPE)
-        process2 = subprocess.Popen(["cut", "-f1-9"], stdin=process2a.stdout, stdout=subprocess.PIPE)
+        process2a = subprocess.Popen(["samtools", "view", input_bam], stdout=subprocess.PIPE)  # noqa: S607
+        process2 = subprocess.Popen(["cut", "-f1-9"], stdin=process2a.stdout, stdout=subprocess.PIPE)  # noqa: S607
         process2a.stdout.close()
 
     if replace_sequence_file is None:
-        subprocess.Popen(["paste", "-", input_matrix], stdin=process2.stdout, stdout=we_pipe)
+        subprocess.Popen(["paste", "-", input_matrix], stdin=process2.stdout, stdout=we_pipe)  # noqa: S607
     else:
         subprocess.Popen(
             ["paste", "-"] + [replace_sequence_file, rgbi_fname, input_matrix],
@@ -529,12 +528,15 @@ def block_idx_to_block_start_end(
         min(total_number_of_reads, (block_idx + 1) * block_size_in_reads),
     )
 
+
+# TODO: no one imports this methid. consider removing
 def read_error_probs(
     error_probs_csv: str = ERROR_PROBS,
-    binned_by_quality: bool = False,
     left_motif_size: int = 5,
     right_motif_size: int = 5,
     n_regression_bins: int = 0,
+    *,
+    binned_by_quality: bool = False,
 ) -> pd.DataFrame | list:
     """Read error probs CSV and produces data frame
 
@@ -563,16 +565,15 @@ def read_error_probs(
         lambda x: x[left_motif_size + 1 : -right_motif_size - 1]
     )
     source_dataframe["hmer_letter"] = source_dataframe["middle"].apply(lambda x: x[1])
-    source_dataframe["hmer_number"] = source_dataframe["middle"].apply(lambda x: x[0]).astype(np.int)
-    source_dataframe.drop(["motif", "middle"], axis=1, inplace=True)
-    tups = [tuple(x) for x in source_dataframe[["left", "hmer_number", "hmer_letter", "right"]].values]
+    source_dataframe["hmer_number"] = source_dataframe["middle"].apply(lambda x: x[0]).astype(int)
+    source_dataframe = source_dataframe.drop(["motif", "middle"], axis=1)
+    tups = [tuple(x) for x in source_dataframe[["left", "hmer_number", "hmer_letter", "right"]].to_numpy()]
     source_dataframe.index = pd.MultiIndex.from_tuples(tups, names=["left", "hmer_number", "hmer_letter", "right"])
 
-    source_dataframe.drop(["left", "right", "hmer_letter", "hmer_number"], axis=1, inplace=True)
+    source_dataframe = source_dataframe.drop(["left", "right", "hmer_letter", "hmer_number"], axis=1)
 
-    assert (n_regression_bins > 0 and binned_by_quality) or (
-        n_regression_bins == 0 and not binned_by_quality
-    ), "If not binned by quality - 0 bins"
+    if not ((n_regression_bins > 0 and binned_by_quality) or (n_regression_bins == 0 and not binned_by_quality)):
+        raise ValueError("If not binned by quality - 0 bins")
 
     if binned_by_quality:
         n_diffs = int(source_dataframe.shape[1] / n_regression_bins)
@@ -583,7 +584,7 @@ def read_error_probs(
     return source_dataframe
 
 
-def _convert_to_probs(source_dataframe: pd.DataFrame):
+def _convert_to_probs(source_dataframe: pd.DataFrame):  # TODO: can be deteled
     """Converts counts to probabilities
 
     Parameters
@@ -598,7 +599,7 @@ def _convert_to_probs(source_dataframe: pd.DataFrame):
     """
     count_columns = [x for x in source_dataframe.columns if not x.startswith("P")]
     source_dataframe = source_dataframe[count_columns]
-    prob_columns = ["P({})".format(x) for x in count_columns]
+    prob_columns = [f"P({x})" for x in count_columns]
     sum_counts = source_dataframe[count_columns].sum(axis=1)
     sum_counts[sum_counts == 0] = 0.01
     probs = source_dataframe[count_columns].multiply(1 / sum_counts, axis=0)
@@ -628,14 +629,15 @@ def marginalize_error_probs(source_dataframe: pd.DataFrame, left_drop: int = 0, 
         Description
     """
     # source_dataframe = source_dataframe.drop(0, axis=0, level='hmer_number').copy()
-    assert left_drop > 0 or right_drop > 0, "No marginalization needed for these drop values"
+    if not (left_drop > 0 or right_drop > 0):
+        raise ValueError("No marginalization needed for these drop values")
     len_left = len(source_dataframe.index.get_level_values("left")[0])
     len_right = len(source_dataframe.index.get_level_values("right")[0])
-    assert left_drop <= len_left and right_drop <= len_right, "Unable to marginalize on more nucs than exist"
+    if not (left_drop <= len_left and right_drop <= len_right):
+        raise ValueError("Unable to marginalize on more nucs than exist")
 
     groupby_left = source_dataframe.index.get_level_values("left").str[left_drop:]
     if right_drop > 0:
-
         groupby_right = source_dataframe.index.get_level_values("right").str[:-right_drop]
     else:
         groupby_right = source_dataframe.index.get_level_values("right")
@@ -651,7 +653,7 @@ def marginalize_error_probs(source_dataframe: pd.DataFrame, left_drop: int = 0, 
     source_dataframe = source_dataframe1.reorder_levels(["left", "hmer_number", "hmer_letter", "right"], axis=0)
     # No need to add zero model since
     # source_dataframe = add_zero_model(source_dataframe)
-    source_dataframe.sort_index(inplace=True)
+    source_dataframe = source_dataframe.sort_index()
     return source_dataframe
 
 
@@ -684,15 +686,15 @@ def create_marginalize_dictionary(source_dataframe: pd.DataFrame) -> dict:
             if (len_left - i, len_right - j) in marginalize_dict:
                 continue
             if (len_left - i + 1, len_right - j) in marginalize_dict:
-                source_dataframe = marginalize_dict[((len_left - i + 1, len_right - j))]
+                source_dataframe = marginalize_dict[(len_left - i + 1, len_right - j)]
                 source_dataframe1 = marginalize_error_probs(source_dataframe, 1, 0)
                 marginalize_dict[(len_left - i, len_right - j)] = source_dataframe1
             elif (len_left - i, len_right - j + 1) in marginalize_dict:
-                source_dataframe = marginalize_dict[((len_left - i, len_right - j + 1))]
+                source_dataframe = marginalize_dict[(len_left - i, len_right - j + 1)]
                 source_dataframe1 = marginalize_error_probs(source_dataframe, 0, 1)
                 marginalize_dict[(len_left - i, len_right - j)] = source_dataframe1
             else:
-                raise Exception("Can't create {}".format((len_left - i, len_right - j)))
+                raise Exception(f"Can't create {(len_left - i, len_right - j)}")
     return marginalize_dict
 
 
@@ -750,10 +752,10 @@ def split_by_signal_bins(source_dataframe: pd.DataFrame) -> pd.DataFrame:
         take_names = [x[0] + "(" * (len(x[0]) > 0) + x[1] + "_" + x[2] + ")" * (len(x[0]) > 0) for x in take]
         new_name = [x[0] + "(" * (len(x[0]) > 0) + x[1] + ")" * (len(x[0]) > 0) for x in take]
         new_name = [int(x) if x.isdigit() or x.startswith("-") else x for x in new_name]
-        df = source_dataframe[take_names]
+        split_df = source_dataframe[take_names]
 
-        df.columns = new_name
-        dfs.append(df.copy())
+        split_df.columns = new_name
+        dfs.append(split_df.copy())
     return dfs
 
 
@@ -789,30 +791,30 @@ def convert2_read_given_data(source_dataframe: pd.DataFrame) -> pd.DataFrame:
 
     dest_columns = []
     for err_idx in source_dataframe.columns[:bins_number]:
-        source_dataframe["dest({})".format(err_idx)] = (
+        source_dataframe[f"dest({err_idx})"] = (
             source_dataframe.index.get_level_values("hmer_number") - err_idx
-        ).astype(np.int)
-        dest_columns.append("dest({})".format(err_idx))
+        ).astype(int)
+        dest_columns.append(f"dest({err_idx})")
 
     # now rearranging
     for err_idx in source_dataframe.columns[:bins_number]:
-        tmp = source_dataframe[source_dataframe["dest({})".format(err_idx)] >= 0]
+        tmp = source_dataframe[source_dataframe[f"dest({err_idx})"] >= 0]
         tmp = tmp.reset_index()
-        tmp.sort_values(["left", "dest({})".format(err_idx), "hmer_letter", "right"], inplace=True)
+        tmp = tmp.sort_values(["left", f"dest({err_idx})", "hmer_letter", "right"])
         dest_index = pd.MultiIndex.from_frame(
-            tmp[["left", "dest({})".format(err_idx), "hmer_letter", "right"]],
+            tmp[["left", f"dest({err_idx})", "hmer_letter", "right"]],
             names=["left", "hmer_number", "hmer_letter", "right"],
         )
 
         destination_contained = dest_index.isin(result_dataframe.index)
         dest_index = dest_index[destination_contained]
         result_dataframe.loc[dest_index, err_idx] = np.array(tmp[-err_idx].values)[destination_contained]
-        result_dataframe.loc[dest_index, "P({})".format(err_idx)] = np.array(tmp["P({})".format(-err_idx)].values)[
+        result_dataframe.loc[dest_index, f"P({err_idx})"] = np.array(tmp[f"P({-err_idx})"].values)[
             destination_contained
         ]
 
-    source_dataframe.drop(dest_columns, axis=1, inplace=True)
-    result_dataframe.dropna(how="all", inplace=True)
+    source_dataframe = source_dataframe.drop(dest_columns, axis=1)
+    result_dataframe = result_dataframe.dropna(how="all")
 
     return result_dataframe
 
@@ -848,9 +850,11 @@ class ErrorModel:
             Description
         """
         if n_bins > 0:
-            error_models = [pd.read_hdf(error_model_file, key="bin_{}".format(b)) for b in range(n_bins)]
+            error_models = [pd.read_hdf(error_model_file, key=f"bin_{b}") for b in range(n_bins)]
             hashed_idcs = [[hash(x) for x in em.index] for em in error_models]
-            self.hashed_dict = [dict(zip(hashed_idx, range(len(hashed_idx)))) for hashed_idx in hashed_idcs]
+            self.hashed_dict = [
+                dict(zip(hashed_idx, range(len(hashed_idx)), strict=False)) for hashed_idx in hashed_idcs
+            ]
             del hashed_idcs
             self.error_model = [
                 np.array(error_model[[x for x in error_model.columns if isinstance(x, str) and x.startswith("P")]])
@@ -862,7 +866,7 @@ class ErrorModel:
         else:
             error_model = pd.read_hdf(error_model_file, key="error_model_hashed")
             hashed_idx = [hash(x) for x in error_model.index]
-            self.hashed_dict = dict(zip(hashed_idx, range(len(hashed_idx))))
+            self.hashed_dict = dict(zip(hashed_idx, range(len(hashed_idx)), strict=False))
             del hashed_idx
             self.error_model = np.array(error_model[["P(-1)", "P(0)", "P(+1)"]])
             self.error_model = np.concatenate((self.error_model, np.zeros((1, self.error_model.shape[1]))))

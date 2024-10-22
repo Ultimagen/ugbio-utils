@@ -1,3 +1,4 @@
+# noqa: N999
 from enum import Enum
 
 

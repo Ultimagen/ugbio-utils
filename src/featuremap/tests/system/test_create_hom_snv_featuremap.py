@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pysam
 import pytest
-
 from ugbio_featuremap import create_hom_snv_featuremap
+
 
 @pytest.fixture
 def resources_dir():

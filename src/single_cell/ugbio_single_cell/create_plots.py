@@ -4,9 +4,8 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
-
-from ugbio_single_cell.sc_qc_dataclasses import H5Keys, OutputFiles
 from ugbio_core.plotting_utils import set_pyplot_defaults
+from ugbio_single_cell.sc_qc_dataclasses import H5Keys, OutputFiles
 
 set_pyplot_defaults()
 
@@ -37,9 +36,9 @@ def cbc_umi_plot(h5_file: str, output_path: str) -> Path:
         raise ValueError(f"Multiple UMI columns found in histogram. Histogram columns: {histogram.columns}")
 
     elif len(umi_col) == 0:
-        print(f"No UMI column found in histogram. Plotting cell-barcode count.")
-        cbc_columns = list(set(histogram.columns) - set(["count"]))
-        
+        print("No UMI column found in histogram. Plotting cell-barcode count.")
+        cbc_columns = list(set(histogram.columns) - {"count"})
+
         plot_df = (
             histogram.groupby(cbc_columns)
             .sum()
@@ -57,14 +56,11 @@ def cbc_umi_plot(h5_file: str, output_path: str) -> Path:
 
     else:
         umi_col = histogram.columns[histogram.columns.str.contains("UMI")][0]
-        cbc_columns = list(set(histogram) - set([umi_col, "count"]))
+        cbc_columns = list(set(histogram) - {umi_col, "count"})
 
         # Counting how many distinct UMIs there are per cell barcode
         cbc_num_umi_df = (
-            histogram.drop(columns=[umi_col, "count"])
-            .groupby(cbc_columns)
-            .size()
-            .reset_index(name="Num Unique UMI")
+            histogram.drop(columns=[umi_col, "count"]).groupby(cbc_columns).size().reset_index(name="Num Unique UMI")
         )
 
         # Sorting by Num UMI and setting a column that will be the CBC index
@@ -108,17 +104,17 @@ def plot_insert_length_histogram(h5_file: str, output_path: str) -> Path:
         insert_lengths = store[H5Keys.INSERT_LENGTHS.value]
 
     # Calculate IQR
-    Q1 = np.percentile(insert_lengths, 25)
-    Q3 = np.percentile(insert_lengths, 75)
-    IQR = Q3 - Q1
+    q1 = np.percentile(insert_lengths, 25)
+    q3 = np.percentile(insert_lengths, 75)
+    iqr = q3 - q1
 
     # Calculate bin width using Freedman-Diaconis rule
-    bin_width = 2 * IQR * len(insert_lengths) ** (-1/3)
-    if bin_width == 0: # if all values are the same or if the data is extremely skewed the bin width will be 0
+    bin_width = 2 * iqr * len(insert_lengths) ** (-1 / 3)
+    if bin_width == 0:  # if all values are the same or if the data is extremely skewed the bin width will be 0
         bins = 10  # Default value to avoid division by zero
     else:
         bins = int((max(insert_lengths) - min(insert_lengths)) / bin_width)
-    
+
     pd.Series(insert_lengths).hist(bins=bins, density=True)
 
     plt.xlabel("Read Length")
@@ -203,9 +199,7 @@ def plot_quality_per_position(h5_file: str, output_path: str) -> Path:
         alpha=0.5,
         label="25-75%",
     )
-    plt.plot(
-        percentiles[0.5].index, percentiles[0.5], color="k", label="median", linewidth=2
-    )
+    plt.plot(percentiles[0.5].index, percentiles[0.5], color="k", label="median", linewidth=2)
     plt.legend()
     plt.xlabel("Position")
     plt.ylabel("Quality")

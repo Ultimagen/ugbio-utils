@@ -1,15 +1,17 @@
+# noqa: N999
 from os.path import join as pjoin
 from pathlib import Path
 
 import pytest
 from ugbio_ppmseq import ppmSeq_qc_analysis
 
+
 @pytest.fixture
 def resources_dir():
     return Path(__file__).parent.parent / "resources"
 
 
-def test_ppmSeq_analysis_ppmSeq_legacy_v5(tmpdir, resources_dir):
+def test_ppmseq_analysis_ppmseq_legacy_v5(tmpdir, resources_dir):
     trimmer_histogram = pjoin(
         resources_dir,
         "A_hmer_start.T_hmer_start.A_hmer_end.T_hmer_end.native_adapter_with_leading_C.histogram.csv",
@@ -43,7 +45,7 @@ def test_ppmSeq_analysis_ppmSeq_legacy_v5(tmpdir, resources_dir):
     )
 
 
-def test_ppmSeq_analysis_ppmSeq_v1(tmpdir, resources_dir):
+def test_ppmseq_analysis_ppmseq_v1(tmpdir, resources_dir):
     trimmer_histogram = pjoin(
         resources_dir,
         "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT."

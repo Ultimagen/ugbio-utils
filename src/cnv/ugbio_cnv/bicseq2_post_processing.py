@@ -19,17 +19,19 @@ import argparse
 import logging
 import os
 import sys
-import pandas as pd
 import warnings
 
+import pandas as pd
 from ugbio_core.logger import logger
 
 warnings.filterwarnings("ignore")
+
 
 def check_path(path):
     if not os.path.exists(os.path.dirname(path)):
         os.makedirs(os.path.dirname(path))
         logger.info("creating out directory : %s", path)
+
 
 def run(argv):
     """
@@ -75,24 +77,23 @@ def run(argv):
         prefix = args.out_directory
         prefix = prefix.rstrip("/") + "/"
 
-    df_bicseq_results = pd.read_csv(args.input_bicseq2_txt_file, sep='\t')
+    df_bicseq_results = pd.read_csv(args.input_bicseq2_txt_file, sep="\t")
 
     del_cutoff = args.ratio_DEL_cutoff
     dup_cutoff = args.ratio_DUP_cutoff
 
-    df_bicseq_results['CNV'] = 'NEU'
-    df_bicseq_results.loc[
-        (df_bicseq_results['log2.copyRatio'] < del_cutoff), 'CNV'] = 'DEL'
-    df_bicseq_results.loc[
-        (df_bicseq_results['log2.copyRatio'] > dup_cutoff), 'CNV'] = 'DUP'
+    df_bicseq_results["CNV"] = "NEU"
+    df_bicseq_results.loc[(df_bicseq_results["log2.copyRatio"] < del_cutoff), "CNV"] = "DEL"
+    df_bicseq_results.loc[(df_bicseq_results["log2.copyRatio"] > dup_cutoff), "CNV"] = "DUP"
 
     pre, ext = os.path.splitext(os.path.basename(args.input_bicseq2_txt_file))
-    out_file = prefix + pre+'.bed'
+    out_file = prefix + pre + ".bed"
 
-    df_bicseq_results[['chrom', 'start', 'end', 'CNV']].to_csv(out_file, sep='\t',header=None, index=False)
+    df_bicseq_results[["chrom", "start", "end", "CNV"]].to_csv(out_file, sep="\t", header=None, index=False)
 
     logger.info("output file:")
     logger.info(out_file)
+
 
 def main():
     run(sys.argv)
