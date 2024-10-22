@@ -29,6 +29,7 @@ Pre-commit tools help maintain code quality and consistency by running checks be
 
 To install pre-commit tools, run `uv run pre-commit install`.
 Once installed, these tools will automatically run checks whenever you commit to Git.
+> VSCode users are recommended to install the Ruff extension.
 
 
 ## Adding a New ugbio Member
