@@ -43,24 +43,27 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = [
-    "E",
-    "F",
-    "W",
-    "B",
-    "PD",
-    "NPY",
-    "C4",
-    "C90",
-    "I",
-    "UP",
-    "ASYNC",
-    "S",
-    "N",
-    "A",
-    "COM",
-    "PIE",
-    "PL",
-    "FBT"
+    "E",     # pycodestyle errors
+    "F",     # pyflakes
+    "W",     # pycodestyle warnings
+    "B",     # flake8-bugbear
+    "PD",    # pandas-vet
+    "NPY",   # NumPy-specific rules
+    "C4",    # flake8-comprehensions
+    "C90",   # mccabe complexity
+    "I",     # isort
+    "UP",    # pyupgrade
+    "ASYNC", # flake8-async
+    "S",     # flake8-bandit
+    "N",     # pep8-naming
+    "A",     # flake8-builtins
+    "COM",   # flake8-commas
+    "PIE",   # flake8-pie
+    # "PTH",   # flake8-use-pathlib
+    # "ERA",   # eradicate
+    "FBT",   # flake8-boolean-trap,
+    "PL", # Pylint
+    # "BLE", # flake8-blind-except
 ]
 ignore = [
     "B008",
