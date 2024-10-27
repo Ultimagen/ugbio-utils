@@ -141,4 +141,3 @@ jobs:
           version: ${{ needs.publish.outputs.new_version }}
           ref: ${{ github.ref_name }}
           git-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
-
