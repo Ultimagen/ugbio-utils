@@ -1,12 +1,12 @@
-import pandas as pd
 import json
 
-from ugbio_core.plotting_utils import set_pyplot_defaults
 import matplotlib.pyplot as plt
+import pandas as pd
 from scipy.interpolate import interp1d
+from ugbio_core.plotting_utils import set_pyplot_defaults
 
 
-def read_sorter_statistics_csv(sorter_stats_csv: str, edit_metric_names: bool = True) -> pd.Series:
+def read_sorter_statistics_csv(sorter_stats_csv: str, *, edit_metric_names: bool = True) -> pd.Series:
     """
     Collect sorter statistics from csv
 
@@ -82,7 +82,7 @@ def read_and_parse_sorter_statistics_csv(sorter_stats_csv: str):
 
 
 def read_effective_coverage_from_sorter_json(
-        sorter_stats_json, min_coverage_for_fp=20, max_coverage_percentile=0.95, min_mapq=60
+    sorter_stats_json, min_coverage_for_fp=20, max_coverage_percentile=0.95, min_mapq=60
 ):
     """
     Read effective coverage metrics from sorter JSON file - mean coverage, ratio of reads over MAPQ, ratio of bases in
@@ -114,8 +114,8 @@ def read_effective_coverage_from_sorter_json(
     cvg_cdf = cvg.cumsum() / cvg.sum()
     ratio_below_min_coverage = cvg_cdf.loc[min_coverage_for_fp]
 
-    if ratio_below_min_coverage > 0.5:
-        min_coverage_for_fp = (cvg_cdf >= 0.5).argmax()
+    if ratio_below_min_coverage > 0.5:  # noqa: PLR2004
+        min_coverage_for_fp = (cvg_cdf >= 0.5).argmax()  # noqa: PLR2004
     coverage_of_max_percentile = (cvg_cdf >= max_coverage_percentile).argmax()
 
     ratio_of_bases_in_coverage_range = cvg_cdf[coverage_of_max_percentile] - cvg_cdf[min_coverage_for_fp]
@@ -125,7 +125,7 @@ def read_effective_coverage_from_sorter_json(
     ratio_of_reads_over_mapq = reads_by_mapq[reads_by_mapq.index >= min_mapq].sum() / reads_by_mapq.sum()
 
     # Calculate mean coverage
-    mean_coverage = (cvg.index.values * cvg.values).sum() / cvg.sum()
+    mean_coverage = (cvg.index.to_numpy() * cvg.to_numpy()).sum() / cvg.sum()
 
     return (
         mean_coverage,
@@ -134,6 +134,7 @@ def read_effective_coverage_from_sorter_json(
         min_coverage_for_fp,
         coverage_of_max_percentile,
     )
+
 
 def plot_read_length_histogram(
     sorter_stats_json: str,
@@ -198,6 +199,7 @@ def plot_read_length_histogram(
             bbox_inches="tight",
             bbox_extra_artists=bbox_extra_artists,
         )
+
 
 def get_histogram_from_sorter(sorter_stats_json: str, histogram_key: str) -> pd.DataFrame:
     """

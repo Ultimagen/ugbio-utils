@@ -1,23 +1,20 @@
 from __future__ import annotations
 
+import collections
 import itertools
 import multiprocessing
 import os
 import pickle
 from abc import ABC, abstractmethod
-import collections
 
 import numpy as np
 import pandas as pd
-import pyBigWig as pbw
+import pyBigWig as pbw  # noqa: N813
 import pyfaidx
 import pysam
-from simppl.simple_pipeline import SimplePipeline
-from ugbio_core.exec_utils import print_and_execute
-
 import ugbio_core.dna_sequence_utils as dnautils
-import ugbio_core.flow_format.flow_based_read as flowBasedRead
-from ugbio_core.logger import logger
+from simppl.simple_pipeline import SimplePipeline
+from ugbio_core import bed_writer
 from ugbio_core.consts import (
     CYCLE_SKIP,
     CYCLE_SKIP_DTYPE,
@@ -27,7 +24,9 @@ from ugbio_core.consts import (
     POSSIBLE_CYCLE_SKIP,
     UNDETERMINED_CYCLE_SKIP,
 )
-from ugbio_core import bed_writer
+from ugbio_core.exec_utils import print_and_execute
+from ugbio_core.flow_format import flow_based_read
+from ugbio_core.logger import logger
 
 UNDETERMINED = "NA"
 
@@ -60,7 +59,6 @@ class VcfAnnotator(ABC):
         pysam.VariantHeader
             Edited VCF file header.
         """
-        pass
 
     @abstractmethod
     def process_records(self, records: list[pysam.VariantRecord]) -> list[pysam.VariantRecord]:
@@ -78,10 +76,11 @@ class VcfAnnotator(ABC):
         list[pysam.VariantRecord]
             Processed VCF records.
         """
-        pass
 
     @staticmethod
-    def merge_temp_files(contig_output_vcfs: list[str], output_path: str, header: pysam.VariantHeader = None, process_number: int = 1):
+    def merge_temp_files(
+        contig_output_vcfs: list[str], output_path: str, header: pysam.VariantHeader = None, process_number: int = 1
+    ):
         """
         Static method to merge temporary output files and write to the final output file.
 
@@ -95,17 +94,20 @@ class VcfAnnotator(ABC):
         """
         try:
             # merge using bcftools
-            command = f"bcftools concat --threads {process_number} -Oz --naive -o {output_path} {' '.join(contig_output_vcfs)}"
-            print_and_execute(command, shell=True)
+            command = (
+                f"bcftools concat --threads {process_number} -Oz --naive -o {output_path} "
+                f"{' '.join(contig_output_vcfs)}"
+            )
+            print_and_execute(command, shell=True)  # noqa: S604
 
             if header is not None:
                 # reheader using bcftools
                 command = f"bcftools reheader --threads {process_number} -h {header} {output_path} -o {output_path}"
-                print_and_execute(command, shell=True)
+                print_and_execute(command, shell=True)  # noqa: S604
 
             # index the final output file
             command = f"bcftools index --threads {process_number} -f -t {output_path}"
-            print_and_execute(command, shell=True)
+            print_and_execute(command, shell=True)  # noqa: S604
 
         finally:
             # remove the temporary files
@@ -239,8 +241,8 @@ class VcfAnnotator(ABC):
                         for annotator in annotators:
                             records = annotator.process_records(records)
 
-                        for record in records:
-                            output_variant_file.write(record)
+                        for rec in records:
+                            output_variant_file.write(rec)
 
                         records = []
 
@@ -309,26 +311,21 @@ def is_hmer_indel(concordance: pd.DataFrame, fasta_file: str) -> pd.DataFrame:
 
         if rec["indel_classify"] == "ins":
             alt = [x for x in rec["alleles"] if x != rec["ref"]][0][1:]
-            if len(set(alt)) != 1:
-                return (0, None)
-            if fasta_idx[rec["chrom"]][rec["pos"]].seq.upper() != alt[0]:
-                return (0, None)
-            return (
-                dnautils.hmer_length(fasta_idx[rec["chrom"]], rec["pos"]),
-                alt[0],
-            )
-
-        if rec["indel_classify"] == "del":
+            if len(set(alt)) == 1 and fasta_idx[rec["chrom"]][rec["pos"]].seq.upper() == alt[0]:
+                return (
+                    dnautils.hmer_length(fasta_idx[rec["chrom"]], rec["pos"]),
+                    alt[0],
+                )
+        elif rec["indel_classify"] == "del":
             del_seq = rec["ref"][1:]
-            if len(set(del_seq)) != 1:
-                return (0, None)
-            if fasta_idx[rec["chrom"]][rec["pos"] + len(rec["ref"]) - 1].seq.upper() != del_seq[0]:
-                return (0, None)
-
-            return (
-                len(del_seq) + dnautils.hmer_length(fasta_idx[rec["chrom"]], rec["pos"] + len(rec["ref"]) - 1),
-                del_seq[0],
-            )
+            if (
+                len(set(del_seq)) == 1
+                and fasta_idx[rec["chrom"]][rec["pos"] + len(rec["ref"]) - 1].seq.upper() == del_seq[0]
+            ):
+                return (
+                    len(del_seq) + dnautils.hmer_length(fasta_idx[rec["chrom"]], rec["pos"] + len(rec["ref"]) - 1),
+                    del_seq[0],
+                )
         return (0, None)
 
     results = concordance.apply(lambda x: _is_hmer(x, fasta_idx), axis=1, result_type="reduce")
@@ -353,11 +350,13 @@ def get_motif_around_snv(record: pysam.VariantRecord, size: int, faidx: pyfaidx.
     Returns
     -------
     """
-    assert isinstance(record, pysam.VariantRecord), f"record must be pysam.VariantRecord, got {type(record)}"
+    if not isinstance(record, pysam.VariantRecord):
+        raise TypeError(f"record must be pysam.VariantRecord, got {type(record)}")
     chrom = faidx[record.chrom]
     pos = record.pos
     size = int(min(size, pos - 1, len(chrom) - pos))
-    assert size > 0, f"size must be positive, got {size}"
+    if size <= 0:
+        raise ValueError(f"size must be positive, got {size}")
 
     return chrom[pos - size - 1 : pos + size].seq.upper()
 
@@ -382,13 +381,17 @@ def get_motif_around_snp(record: pysam.VariantRecord, size: int, faidx: pyfaidx.
 
     """
     # make sure the input is a vcf record of an SNV
-    assert isinstance(record, pysam.VariantRecord), f"record must be pysam.VariantRecord, got {type(record)}"
-    assert len(record.ref) == 1 and len(record.alts) >= 1 and len(record.alts[0]) == 1, "Not an SNV"
+    if not isinstance(record, pysam.VariantRecord):
+        raise TypeError(f"record must be pysam.VariantRecord, got {type(record)}")
+    if not (len(record.ref) == 1 and len(record.alts) >= 1 and len(record.alts[0]) == 1):
+        raise ValueError("Not an SNV")
     # make sure the size is positive
     size = int(size)
-    assert size > 0, f"size must be positive, got {size}"
+    if size <= 0:
+        raise ValueError(f"size must be positive, got {size}")
     # make sure the fasta index is valid
-    assert isinstance(faidx, pyfaidx.Fasta), f"faidx must be pyfaidx.Fasta, got {type(faidx)}"
+    if not isinstance(faidx, pyfaidx.Fasta):
+        raise TypeError(f"faidx must be pyfaidx.Fasta, got {type(faidx)}")
     # extract the sequence
     chrom = faidx[record.chrom]
     pos = record.pos
@@ -483,7 +486,7 @@ def get_gc_content(concordance: pd.DataFrame, window_size: int, fasta: str) -> p
 
     faidx = pyfaidx.Fasta(fasta, build_index=False, rebuild=False)
     tmp = concordance.apply(lambda x: _get_gc(x, window_size, faidx), axis=1, result_type="reduce")
-    concordance["gc_content"] = list(x for x in list(tmp))
+    concordance["gc_content"] = list(tmp)
     return concordance
 
 
@@ -541,6 +544,7 @@ def get_coverage(
         df.loc[gdf.groups[g_var], "well_mapped_coverage"] = values_hq
         df.loc[gdf.groups[g_var], "repetitive_read_coverage"] = np.array(values_lq) - np.array(values_hq)
     return df
+
 
 def annotate_intervals(df: pd.DataFrame, annotfile: str) -> tuple[pd.DataFrame, str]:
     """
@@ -603,12 +607,13 @@ def fill_filter_column(df: pd.DataFrame) -> pd.DataFrame:
     """
     if "filter" not in df.columns:
         df["filter"] = np.nan
-    fill_column_locs = (pd.isnull(df["filter"])) | (df["filter"] == "")
+    fill_column_locs = (pd.isna(df["filter"])) | (df["filter"] == "")
     df.loc[fill_column_locs, "filter"] = "PASS"
     return df
 
 
-def annotate_cycle_skip(df: pd.DataFrame, flow_order: str, gt_field: str = None) -> pd.DataFrame:
+# TODO: Refactor. too complex
+def annotate_cycle_skip(df: pd.DataFrame, flow_order: str, gt_field: str = None) -> pd.DataFrame:  # noqa: C901
     """Adds cycle skip information: non-skip, NA, cycle-skip, possible cycle-skip
 
     Parameters
@@ -631,8 +636,8 @@ def annotate_cycle_skip(df: pd.DataFrame, flow_order: str, gt_field: str = None)
     """
 
     def is_multiallelic(x, gt_field):
-        s_var = set(x[gt_field]) | set([0])
-        if len(s_var) > 2:
+        s_var = set(x[gt_field]) | {0}
+        if len(s_var) > 2:  # noqa: PLR2004
             return True
         return False
 
@@ -640,11 +645,11 @@ def annotate_cycle_skip(df: pd.DataFrame, flow_order: str, gt_field: str = None)
         return [y for y in x if y != 0][0]
 
     def is_non_polymorphic(x, gt_field):
-        s_var = set(x[gt_field]) | set([0])
+        s_var = set(x[gt_field]) | {0}
         return len(s_var) == 1
 
     if gt_field is None:
-        na_pos = df["indel"] | (df["alleles"].apply(len) > 2)
+        na_pos = df["indel"] | (df["alleles"].apply(len) > 2)  # noqa: PLR2004
     else:
         na_pos = (
             df["indel"]
@@ -663,17 +668,17 @@ def annotate_cycle_skip(df: pd.DataFrame, flow_order: str, gt_field: str = None)
     else:
         nra = snps[gt_field].apply(get_non_ref)
         snps["nra_idx"] = nra
-        snps.loc[snps.nra_idx.isnull(), "nra_idx"] = 1
-        snps["nra_idx"] = snps["nra_idx"].astype(np.int)
+        snps.loc[snps.nra_idx.isna(), "nra_idx"] = 1
+        snps["nra_idx"] = snps["nra_idx"].astype(int)
         alt = np.array(snps.apply(lambda x: x["alleles"][x["nra_idx"]], axis=1)).astype(np.bytes_)
-        snps.drop("nra_idx", axis=1, inplace=True)
+        snps = snps.drop("nra_idx", axis=1)
 
     ref_seqs = np.char.add(np.char.add(left_last, ref), right_first)
     alt_seqs = np.char.add(np.char.add(left_last, alt), right_first)
 
     ref_encs = [
         _catch(
-            flowBasedRead.generate_key_from_sequence,
+            flow_based_read.generate_key_from_sequence,
             str(np.char.decode(x)),
             flow_order,
             exception_type=ValueError,
@@ -683,7 +688,7 @@ def annotate_cycle_skip(df: pd.DataFrame, flow_order: str, gt_field: str = None)
     ]
     alt_encs = [
         _catch(
-            flowBasedRead.generate_key_from_sequence,
+            flow_based_read.generate_key_from_sequence,
             str(np.char.decode(x)),
             flow_order,
             exception_type=ValueError,
@@ -780,18 +785,18 @@ def get_cycle_skip_dataframe(flow_order: str):
 def determine_cycle_skip_status(ref: str, alt: str, flow_order: str):
     """return the cycle skip status, expects input of ref and alt sequences composed of 3 bases where only the 2nd base
     differs"""
-    if len(ref) != 3 or len(alt) != 3 or ref[0] != alt[0] or ref[2] != alt[2] or ref == alt:
+    if len(ref) != 3 or len(alt) != 3 or ref[0] != alt[0] or ref[2] != alt[2] or ref == alt:  # noqa: PLR2004
         raise ValueError(
             f"""Invalid inputs ref={ref}, alt={alt}
 expecting input of ref and alt sequences composed of 3 bases where only the 2nd base differs"""
         )
     try:
-        ref_key = np.trim_zeros(flowBasedRead.generate_key_from_sequence(ref, flow_order), "f")
-        alt_key = np.trim_zeros(flowBasedRead.generate_key_from_sequence(alt, flow_order), "f")
+        ref_key = np.trim_zeros(flow_based_read.generate_key_from_sequence(ref, flow_order), "f")
+        alt_key = np.trim_zeros(flow_based_read.generate_key_from_sequence(alt, flow_order), "f")
         if len(ref_key) != len(alt_key):
             return CYCLE_SKIP
 
-        for r_val, a_val in zip(ref_key, alt_key):
+        for r_val, a_val in zip(ref_key, alt_key, strict=False):
             if (r_val != a_val) and ((r_val == 0) or (a_val == 0)):
                 return POSSIBLE_CYCLE_SKIP
         return NON_CYCLE_SKIP
@@ -833,10 +838,13 @@ def parse_trinuc_sub(rec: pysam.VariantRecord, faidx: pyfaidx.Fasta = None):
         If faidx is None and X_LM and X_RM are not in the VCF
     """
     # check inputs
-    assert isinstance(rec, pysam.VariantRecord), f"rec must be pysam.VariantRecord, got {type(rec)}"
-    assert len(rec.ref) == 1 and len(rec.alts) == 1 and len(rec.alts[0]) == 1, "Not an SNV"
+    if not isinstance(rec, pysam.VariantRecord):
+        raise TypeError(f"rec must be pysam.VariantRecord, got {type(rec)}")
+    if not (len(rec.ref) == 1 and len(rec.alts) == 1 and len(rec.alts[0]) == 1):
+        raise ValueError("Not an SNV")
     if faidx is not None:
-        assert isinstance(faidx, pyfaidx.Fasta), f"faidx must be pyfaidx.Fasta, got {type(faidx)}"
+        if not isinstance(faidx, pyfaidx.Fasta):
+            raise TypeError(f"faidx must be pyfaidx.Fasta, got {type(faidx)}")
     # get left and right bases in the reference
     if "X_LM" in rec.info and "X_RM" in rec.info:
         # Pre-annotated mode: X_LM and X_RM are the left and right motif sequences, respectively
@@ -884,11 +892,15 @@ def get_trinuc_substitution_dist(vcf_file, ref_fasta: str = None):
         If ref_fasta is not a valid path
     """
     # check inputs
-    assert isinstance(vcf_file, str), f"vcf_file must be string, got {type(vcf_file)}"
-    assert os.path.exists(vcf_file), f"vcf_file {vcf_file} does not exist"
+    if not isinstance(vcf_file, str):
+        raise TypeError(f"vcf_file must be string, got {type(vcf_file)}")
+    if not os.path.exists(vcf_file):
+        raise FileNotFoundError(f"vcf_file {vcf_file} does not exist")
     if ref_fasta is not None:
-        assert isinstance(ref_fasta, str), f"ref_fasta must be string, got {type(ref_fasta)}"
-        assert os.path.exists(ref_fasta), f"ref_fasta {ref_fasta} does not exist"
+        if not isinstance(ref_fasta, str):
+            raise TypeError(f"ref_fasta must be string, got {type(ref_fasta)}")
+        if not os.path.exists(ref_fasta):
+            raise FileNotFoundError(f"ref_fasta {ref_fasta} does not exist")
     # initialize trinuc_sub dictionary
     trinuc_sub = get_trinuc_sub_list()
     trinuc_dict = {k: 0 for k in trinuc_sub}
@@ -902,6 +914,7 @@ def get_trinuc_substitution_dist(vcf_file, ref_fasta: str = None):
                 if trinuc_sub is not None:
                     trinuc_dict[trinuc_sub] += 1
     return trinuc_dict
+
 
 def _catch(
     func: collections.abc.Callable,
@@ -928,5 +941,5 @@ def _catch(
     """
     try:
         return func(*args, **kwargs)
-    except exception_type as e:  # pylint: disable=broad-except
+    except exception_type as e:
         return handle(e)

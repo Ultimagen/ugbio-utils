@@ -20,8 +20,8 @@ import json
 import sys
 
 from simppl.simple_pipeline import SimplePipeline
-
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
+
 from ugbio_srsnv.srsnv_plotting_utils import srsnv_report
 from ugbio_srsnv.srsnv_training_utils import SRSNVTrain
 
@@ -122,7 +122,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         nargs="+",
         default=None,
         help="comma separated list of categorical features to be used for balanced sampling of the TP training set"
-             " to eliminate prior distribution bias (e.g. 'trinuc_context_with_alt,is_forward')",
+        " to eliminate prior distribution bias (e.g. 'trinuc_context_with_alt,is_forward')",
     )
     parser.add_argument(
         "--output",
@@ -237,7 +237,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv[1:])
 
 
-# pylint:disable=missing-raises-doc
 def read_dataset_params(args):
     """Read the dataset params from json file. Any values provided in the command line
     overrides the json file.
@@ -301,9 +300,10 @@ def read_dataset_params(args):
         dataset_params["split_folds_by_chrom"] = False
 
     ppmseq_tags_consistent = (dataset_params["start_tag_col"] and dataset_params["end_tag_col"]) or (
-            dataset_params["start_tag_col"] is None and dataset_params["end_tag_col"] is None
+        dataset_params["start_tag_col"] is None and dataset_params["end_tag_col"] is None
     )
-    assert ppmseq_tags_consistent, "Both start_tag_col and end_tag_col must be provided or neither."
+    if not ppmseq_tags_consistent:
+        raise ValueError("Both start_tag_col and end_tag_col must be provided or neither.")
 
     return dataset_params
 
@@ -346,7 +346,7 @@ def run(argv):
         lod_filters=args.lod_filters,
         save_model_jsons=args.save_model_jsons,
         load_dataset_and_model=args.load_dataset_and_model,
-        ppmSeq_adapter_version=dataset_params["ppmSeq_adapter_version"],
+        ppmseq_adapter_version=dataset_params["ppmSeq_adapter_version"],
         start_tag_col=dataset_params["start_tag_col"],
         end_tag_col=dataset_params["end_tag_col"],
         pipeline_version=dataset_params["pipeline_version"],
@@ -366,9 +366,11 @@ def run(argv):
         params_file=s.params_save_path,
         simple_pipeline=None,
     )
-    
+
+
 def main():
     run(sys.argv)
+
 
 if __name__ == "__main__":
     main()

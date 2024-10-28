@@ -33,8 +33,9 @@ def merge_trimmer_histograms(trimmer_histograms: list[str], output_path: str):
         return trimmer_histograms[0]
 
     # read and merge histograms
-    df_concat = pd.concat((pd.read_csv(x) for x in trimmer_histograms))
-    assert df_concat.columns[-1] == "count", f"Unexpected columns in histogram files: {df_concat.columns}"
+    df_concat = pd.concat(pd.read_csv(x) for x in trimmer_histograms)
+    if df_concat.columns[-1] != "count":
+        raise ValueError(f"Unexpected columns in histogram files: {df_concat.columns}")
     df_merged = df_concat.groupby(df_concat.columns[:-1].tolist(), dropna=False).sum().reset_index()
     # write to file
     output_filename = (
@@ -46,7 +47,7 @@ def merge_trimmer_histograms(trimmer_histograms: list[str], output_path: str):
     return output_filename
 
 
-def read_trimmer_failure_codes(trimmer_failure_codes_csv: str, add_total: bool = False) -> pd.DataFrame:
+def read_trimmer_failure_codes(trimmer_failure_codes_csv: str, *, add_total: bool = False) -> pd.DataFrame:
     """
     Read a trimmer failure codes csv file
 
@@ -91,7 +92,7 @@ def read_trimmer_failure_codes(trimmer_failure_codes_csv: str, add_total: bool =
     df_trimmer_failure_codes = (
         df_trimmer_failure_codes.groupby(["segment", "reason"])
         .agg({x: "sum" for x in ("failed_read_count", "total_read_count")})
-        .assign(**{"PCT_failure": lambda x: 100 * x["failed_read_count"] / x["total_read_count"]})
+        .assign(PCT_failure=lambda x: 100 * x["failed_read_count"] / x["total_read_count"])
     )
 
     if add_total:

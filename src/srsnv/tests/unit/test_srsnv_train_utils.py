@@ -8,7 +8,6 @@ import numpy as np
 import pysam
 import pytest
 from scipy.stats import ttest_1samp
-
 from ugbio_srsnv.srsnv_training_utils import prepare_featuremap_for_model
 
 

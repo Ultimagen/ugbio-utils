@@ -1,6 +1,5 @@
 import pytest
 from simppl.simple_pipeline import SimplePipeline
-
 from ugbio_core.filter_bed import intersect_bed_regions
 
 
@@ -63,8 +62,7 @@ def test_intersect_bed_regions(tmpdir, include_regions, exclude_regions, expecte
         sp=SimplePipeline(0, 100),
     )
 
-    with open(output_file, "r") as f:
+    with open(output_file) as f:
         result = f.readlines()
 
     assert result == expected_output
-

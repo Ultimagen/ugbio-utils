@@ -13,7 +13,8 @@ class OutputFiles(Enum):
     QUALITY_PER_POSITION_PLOT = "quality_per_position_plot.png"
     INSERT_LENGTH_HISTOGRAM = "insert_length_histogram.png"
 
-BASE_PATH = Path(__file__).parent # should be: src/single_cell/ugbio_single_cell
+
+BASE_PATH = Path(__file__).parent  # should be: src/single_cell/ugbio_single_cell
 TEMPLATE_NOTEBOOK = BASE_PATH / "reports" / OutputFiles.NOTEBOOK.value
 
 
@@ -31,9 +32,10 @@ class Inputs:
         for _, value in self.__dict__.items():
             if isinstance(value, list):
                 for item in value:
-                    assert os.path.isfile(item), f"{item} not found"
-            else:
-                assert os.path.isfile(value), f"{value} not found"
+                    if not os.path.isfile(item):
+                        raise FileNotFoundError(f"{item} not found")
+            elif not os.path.isfile(value):
+                raise FileNotFoundError(f"{value} not found")
 
 
 @dataclass

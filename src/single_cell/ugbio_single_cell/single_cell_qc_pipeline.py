@@ -5,7 +5,7 @@ import nbformat
 import pandas as pd
 import papermill
 from nbconvert import HTMLExporter
-
+from ugbio_core.report_utils import modify_jupyter_notebook_html
 from ugbio_single_cell.collect_statistics import (
     collect_statistics,
     extract_statistics_table,
@@ -23,12 +23,9 @@ from ugbio_single_cell.sc_qc_dataclasses import (
     OutputFiles,
     Thresholds,
 )
-from ugbio_core.report_utils import modify_jupyter_notebook_html
 
 
-def single_cell_qc(
-    input_files: Inputs, output_path: str, thresholds: Thresholds, sample_name: str
-):
+def single_cell_qc(input_files: Inputs, output_path: str, thresholds: Thresholds, sample_name: str):
     """
     Run single cell qc pipeline that collects statistics, prepares parameters for report and generates report
 
@@ -59,16 +56,15 @@ def single_cell_qc(
             H5Keys.STAR_STATS.value,
         ]
         for key in store.keys():
-            if key.strip('/') not in keys_to_keep:
+            if key.strip("/") not in keys_to_keep:
                 store.remove(key)
-    
+
     # keys to convert to json to disply in pyprus
     keys_to_convert_to_json = pd.Series([H5Keys.STATISTICS_SHORTLIST.value, H5Keys.STAR_STATS.value])
     keys_to_convert_to_json.to_hdf(h5_file, key="keys_to_convert")
-        
-def prepare_parameters_for_report(
-    h5_file: Path, thresholds: Thresholds, output_path: str
-) -> tuple[dict, list[Path]]:
+
+
+def prepare_parameters_for_report(h5_file: Path, thresholds: Thresholds, output_path: str) -> tuple[dict, list[Path]]:
     """
     Prepare parameters for report generation (h5 file, thresholds, plots)
 
@@ -90,7 +86,7 @@ def prepare_parameters_for_report(
     tmp_files = []
 
     # prepare parameters for report: add statistics
-    parameters = dict(statistics_h5=h5_file)
+    parameters = {"statistics_h5": h5_file}
 
     # add thresholds to parameters
     for threshold_name, threshold_value in vars(thresholds).items():
@@ -105,9 +101,7 @@ def prepare_parameters_for_report(
     parameters["insert_length_png"] = insert_length_png
     tmp_files.append(insert_length_png)
 
-    mean_insert_quality_histogram_png = plot_mean_insert_quality_histogram(
-        h5_file, output_path
-    )
+    mean_insert_quality_histogram_png = plot_mean_insert_quality_histogram(h5_file, output_path)
     parameters["mean_insert_quality_histogram_png"] = mean_insert_quality_histogram_png
     tmp_files.append(mean_insert_quality_histogram_png)
 
@@ -118,9 +112,7 @@ def prepare_parameters_for_report(
     return parameters, tmp_files
 
 
-def generate_report(
-    parameters, output_path, tmp_files: list[Path], sample_name: str
-) -> Path:
+def generate_report(parameters, output_path, tmp_files: list[Path], sample_name: str) -> Path:
     """
     Generate report based on jupyter notebook template.
 
@@ -141,16 +133,12 @@ def generate_report(
         Path to generated report
     """
     # define outputs
-    output_report_html = Path(output_path) / (
-        sample_name + OutputFiles.HTML_REPORT.value
-    )
+    output_report_html = Path(output_path) / (sample_name + OutputFiles.HTML_REPORT.value)
     output_report_ipynb = Path(output_path) / (sample_name + OutputFiles.NOTEBOOK.value)
     tmp_files.append(output_report_ipynb)
 
     # inject parameters and run notebook
-    parameters = {
-        k: str(v) if isinstance(v, Path) else v for k, v in parameters.items()
-    }
+    parameters = {k: str(v) if isinstance(v, Path) else v for k, v in parameters.items()}
     papermill.execute_notebook(
         input_path=str(TEMPLATE_NOTEBOOK),
         output_path=str(output_report_ipynb),
@@ -212,9 +200,7 @@ def main():
         required=True,
         help="Path to Sorter stats csv file",
     )
-    parser.add_argument(
-        "--star-stats", type=str, required=True, help="Path to STAR stats file"
-    )
+    parser.add_argument("--star-stats", type=str, required=True, help="Path to STAR stats file")
     parser.add_argument(
         "--insert",
         type=str,
@@ -227,15 +213,9 @@ def main():
         required=True,
         help="Path to STAR ReadsPerGene.out.tab file",
     )
-    parser.add_argument(
-        "--output-path", type=str, required=True, help="Path to output directory"
-    )
-    parser.add_argument(
-        "--pass-trim-rate", type=float, required=True, help="Minimal %trimmed"
-    )
-    parser.add_argument(
-        "--read-length", type=int, required=True, help="Expected read length"
-    )
+    parser.add_argument("--output-path", type=str, required=True, help="Path to output directory")
+    parser.add_argument("--pass-trim-rate", type=float, required=True, help="Minimal %trimmed")
+    parser.add_argument("--read-length", type=int, required=True, help="Expected read length")
     parser.add_argument(
         "--fraction-below-read-length",
         type=float,

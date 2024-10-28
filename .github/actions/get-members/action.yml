@@ -8,7 +8,7 @@ inputs:
       required: true
 
 outputs:
-    members: 
+    members:
       description: "Members list"
       value: ${{ steps.list_members.outputs.matrix }}
 
@@ -16,7 +16,7 @@ runs:
   using: "composite"
 
   steps:
-    
+
   - id: list_members
     shell: bash
     run: |

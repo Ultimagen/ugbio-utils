@@ -11,7 +11,7 @@
 		"--init",
 		"--network=host"
 	],
-	// run on the host machine during initialization 
+	// run on the host machine during initialization
 	"initializeCommand": "code --list-extensions > extensions.txt",
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	"features": {

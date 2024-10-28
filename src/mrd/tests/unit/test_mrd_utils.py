@@ -6,22 +6,19 @@ import numpy as np
 import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
-
 from ugbio_mrd.mrd_utils import (
     generate_synthetic_signatures,
     intersect_featuremap_with_signature,
     read_intersection_dataframes,
     read_signature,
 )
+
 intersection_file_basename = "MRD_test_subsample.MRD_test_subsample_annotated_AF_vcf_gz_mrd_quality_snvs.intersection"
 
 
 @pytest.fixture
 def resources_dir():
     return Path(__file__).parent.parent / "resources"
-
-
-
 
 
 def _assert_read_signature(signature, expected_signature, expected_columns=None, possibly_null_columns=None):
@@ -39,7 +36,7 @@ def _assert_read_signature(signature, expected_signature, expected_columns=None,
     for c in expected_columns:
         assert c in signature.columns
         if c not in possibly_null_columns:
-            assert not signature[c].isnull().all()
+            assert not signature[c].isna().all()
             assert (signature[c] == expected_signature[c]).all() or np.allclose(signature[c], expected_signature[c])
 
 

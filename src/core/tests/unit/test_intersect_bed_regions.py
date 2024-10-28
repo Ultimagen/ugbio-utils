@@ -4,9 +4,11 @@ from pathlib import Path
 import pytest
 from ugbio_core import intersect_bed_regions
 
+
 @pytest.fixture
 def resources_dir():
     return Path(__file__).parent.parent / "resources"
+
 
 def test_intersect_bed_regions(tmpdir, resources_dir):
     intersect_bed_regions.run(
@@ -23,9 +25,9 @@ def test_intersect_bed_regions(tmpdir, resources_dir):
         ]
     )
 
-    with open(pjoin(tmpdir, "output.bed"), "r") as f:
+    with open(pjoin(tmpdir, "output.bed")) as f:
         result = f.readlines()
-    with open(pjoin(resources_dir, "expected_output.bed"), "r") as f:
+    with open(pjoin(resources_dir, "expected_output.bed")) as f:
         expected_result = f.readlines()
 
     assert result == expected_result

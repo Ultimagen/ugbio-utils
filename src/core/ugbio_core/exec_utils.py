@@ -3,7 +3,6 @@ from __future__ import annotations
 import subprocess
 
 from simppl.simple_pipeline import SimplePipeline
-
 from ugbio_core.logger import logger
 
 
@@ -12,6 +11,7 @@ def print_and_execute(
     output_file: str | None = None,
     simple_pipeline: SimplePipeline | None = None,
     module_name: str | None = None,
+    *,
     shell: bool = False,
 ):
     """

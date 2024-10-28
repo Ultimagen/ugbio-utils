@@ -43,18 +43,14 @@ def get_read_variant_str(reference, mutations):
                 mutated = mutated[:cur_dest_pos]
 
         mutated += mutation[2]
-        assert (
-            reference[cur_source_pos : cur_source_pos + len(mutation[1])] == mutation[1]
-        ), "Reference different from \
-                         the ref allele"
+        if reference[cur_source_pos : cur_source_pos + len(mutation[1])] != mutation[1]:
+            raise ValueError("Reference different from the ref allele")
         cur_source_pos += len(mutation[1])
         cur_dest_pos += len(mutation[2])
 
     mutated += reference[cur_source_pos:]
-    assert (
-        len(mutated) == expected_dest_length
-    ), "Resultant sequence \
-    different in length from expected"
+    if len(mutated) != expected_dest_length:
+        raise ValueError("Resultant sequence different in length from expected")
 
     return mutated
 
@@ -70,7 +66,7 @@ class ReadExpander:
 
     def get_all_read_expansions(self):
         all_variant_combinations = sum(
-            [list(itertools.combinations(self.alts, n)) for n in range(0, len(self.alts) + 1)],
+            [list(itertools.combinations(self.alts, n)) for n in range(len(self.alts) + 1)],
             [],
         )
         all_variant_combinations = [x for x in all_variant_combinations if validate_combination(x)]
