@@ -1,0 +1,12 @@
+task,total_CPU,mean_%_CPU,max_%_CPU,count_entries_CPU,total_memory(GB),mean_%_memory,max_%_memory,count_entries_memory,run_time (hours)
+call-CallingIntervalsLength,1,,,0,0.95,,,0,0.00
+call-ExtractSampleNameFlowOrder,1,98.65,100.00,4,1.93,30.94,39.90,5,0.01
+call-GenomeSize,1,,,0,0.95,,,0,0.00
+call-ScatterIntervalList,1,100.00,100.00,1,5.8,9.70,9.70,1,0.00
+call-UGCallVariants,8,63.31,100.00,1275,23.48,80.31,91.10,1275,3.56
+call-UGMakeExamples/shard-0,2,81.74,100.00,365,3.83,73.20,81.10,365,1.03
+call-UGMakeExamples/shard-0/attempt-2,2,77.93,100.00,134,3.83,69.73,76.00,134,0.38
+call-UGMakeExamples/shard-0/attempt-3,2,64.42,100.00,2308,3.83,49.28,81.00,2308,6.47
+call-UGMakeExamples/shard-13,2,90.94,100.00,710,3.83,69.67,80.10,710,2.01
+call-UGPostProcessing,2,67.34,100.00,126,7.76,7.19,9.30,126,0.35
+call-global,,,,0,,,,0,0.00
