@@ -70,7 +70,7 @@ RUN make install
 
 ## install hla-la (branch: ug-master):
 RUN cd /opt && \
-git clone --branch ug-master https://github.com/Ultimagen/HLA-LA HLA-LA
+    git clone --branch ug-master https://github.com/Ultimagen/HLA-LA HLA-LA
 
 RUN mkdir -p /usr/local/bin/HLA-LA/bin
 RUN mkdir -p /usr/local/bin/HLA-LA/src
