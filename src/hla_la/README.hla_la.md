@@ -1,3 +1,3 @@
-# ugbio_featuremap
+# ugbio_hla_la
 
-This module includes featuremap python scripts and utils for bioinformatics pipelines.
+A docker for running [HLA-LA](https://github.com/DiltheyLab/HLA-LA)
