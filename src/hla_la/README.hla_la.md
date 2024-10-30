@@ -1,3 +1,3 @@
 # ugbio_hla_la
 
-A docker for running [HLA-LA](https://github.com/DiltheyLab/HLA-LA)
+A docker for running ultimagen [HLA_LA](https://github.com/ultimagen/hla-la/tree/ug-master)
