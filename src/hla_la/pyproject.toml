@@ -1,7 +1,7 @@
 [project]
 name = "ugbio_hla_la"
 version = "1.2.1-0dev-47"
-description = "Ultima Genomics hla-la"
+description = "Ultima Genomics HLA-LA"
 authors = [
     { name = "Maya Levy", email = "maya.levy@ultimagen.com" },
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
@@ -10,9 +10,3 @@ readme = "README.hla_la.md"
 
 [project.license]
 text = "Apache-2.0"
-
-[build-system]
-requires = [
-    "setuptools>=61.0",
-]
-build-backend = "setuptools.build_meta"
