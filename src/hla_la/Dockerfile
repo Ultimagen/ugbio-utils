@@ -87,6 +87,10 @@ RUN sed -i 's@samtools_bin=@samtools_bin=/usr/local/bin/samtools@' paths.ini
 RUN sed -i 's@bwa_bin=@bwa_bin=/usr/local/bin/bwa@' paths.ini
 RUN sed -i 's@picard_sam2fastq_bin=.*@picard_sam2fastq_bin=/usr/local/bin/picard/SamToFastq.jar@' paths.ini
 
+# Create a script to run tests from dockerfrom the CI
+RUN echo '#!/bin/sh\necho "No tests to run :)"' > /usr/local/bin/run_tests && \
+chmod +x /usr/local/bin/run_tests
+
 # some final cleanup and command
 WORKDIR /usr/local/bin
 ENV PATH="/usr/local/bin/HLA-LA/bin/:${PATH}"
