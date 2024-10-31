@@ -27,7 +27,7 @@ RUN apt-get update -y && apt-get install -y \
     openjdk-8-jre \
     libboost-all-dev \
     cmake \
-    libjsoncpp-dev \ 
+    libjsoncpp-dev \
     git \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
