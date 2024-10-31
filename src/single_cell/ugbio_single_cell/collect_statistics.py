@@ -1,4 +1,5 @@
 import gzip
+import warnings
 from collections import defaultdict
 from pathlib import Path
 
@@ -74,7 +75,9 @@ def collect_statistics(
         if save_trimmer_histogram:
             store.put(H5Keys.TRIMMER_HISTOGRAM.value, histogram, format="table")
         store.put(H5Keys.SORTER_STATS.value, sorter_stats, format="table")
-        store.put(H5Keys.STAR_STATS.value, star_stats)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=pd.errors.PerformanceWarning)
+            store.put(H5Keys.STAR_STATS.value, star_stats)
         store.put(H5Keys.STAR_READS_PER_GENE.value, star_reads_per_gene, format="table")
         store.put(H5Keys.INSERT_QUALITY.value, insert_quality, format="table")
         store.put(H5Keys.INSERT_LENGTHS.value, pd.Series(insert_lengths), format="table")
