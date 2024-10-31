@@ -180,6 +180,13 @@ def performance(run_id, session=None, output_dir=None, output_prefix="") -> tupl
         if "-" in task["name"]:
             scattered_tasks.add(task["name"].split("-")[0])
 
+    # Save performance data
+    output = f"{output_prefix}omics_{run_id}.performance.csv"
+    if output_dir is not None:
+        output = f"{output_dir}/{output}"
+    print(f"Saving performance data to: {output}")
+    total_performance_df.to_csv(output, index=False)
+
     # Process cost and add to the performance data
     print("Add cost per task to performance data")
     run_cost = RunCost(run_id, output_dir=output_dir, output_prefix=output_prefix)
@@ -194,11 +201,7 @@ def performance(run_id, session=None, output_dir=None, output_prefix="") -> tupl
     cost_df["total_storage_cost"] = run_cost.get_storage_cost()
     total_performance_df = total_performance_df.merge(cost_df, on="task", how="left")
 
-    # Save performance data
-    output = f"{output_prefix}omics_{run_id}.performance.csv"
-    if output_dir is not None:
-        output = f"{output_dir}/{output}"
-    print(f"Saving performance data to: {output}")
+    print(f"Updated performance file saved to: {output}")
     total_performance_df.to_csv(output, index=False)
 
     # Save figures to HTML
