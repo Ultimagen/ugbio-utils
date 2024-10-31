@@ -69,7 +69,7 @@ RUN make
 RUN make install
 
 ## install hla-la (branch: ug-master):
-ARG HLA_LA_BRANCH=ug-master
+ARG HLA_LA_BRANCH=maya_bioin_1971_hla_genotyping
 RUN mkdir -p /usr/local/bin/HLA-LA/bin
 RUN mkdir -p /usr/local/bin/HLA-LA/src
 RUN mkdir -p /usr/local/bin/HLA-LA/obj
