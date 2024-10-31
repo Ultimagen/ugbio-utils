@@ -216,10 +216,6 @@ def extract_statistics_table(h5_file: Path):
         pass_trimmer_rate = num_trimmed_reads / num_input_reads
         stats["pct_pass_trimmer"] = pass_trimmer_rate * 100
 
-        # Mean UMI per cell
-        mean_umi_per_cell = None  # TODO: waiting for the calculation details from Gila
-        stats["mean_umi_per_cell"] = mean_umi_per_cell
-
         # Mean read length
         mean_read_length = int(store[H5Keys.STAR_STATS.value].loc[("general", "Average_input_read_length")]) + 1
         stats["mean_read_length"] = mean_read_length
