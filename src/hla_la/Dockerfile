@@ -69,6 +69,7 @@ RUN make
 RUN make install
 
 ## install hla-la (branch: ug-master):
+ARG HLA_LA_BRANCH=ug-master
 RUN mkdir -p /usr/local/bin/HLA-LA/bin
 RUN mkdir -p /usr/local/bin/HLA-LA/src
 RUN mkdir -p /usr/local/bin/HLA-LA/obj
@@ -76,7 +77,7 @@ RUN mkdir -p /usr/local/bin/HLA-LA/temp
 RUN mkdir -p /usr/local/bin/HLA-LA/working
 RUN mkdir -p /usr/local/bin/HLA-LA/graphs
 WORKDIR /usr/local/bin/HLA-LA/src
-RUN git clone --branch ug-master https://github.com/Ultimagen/HLA-LA .
+RUN git clone --branch ${HLA_LA_BRANCH} https://github.com/Ultimagen/HLA-LA .
 RUN sed -i 's@\$(BAMTOOLS_PATH)/lib64@\$(BAMTOOLS_PATH)/lib@' makefile
 RUN make all BOOST_PATH=/usr/include/boost BAMTOOLS_PATH=/usr/local/bin/bamtools-2.5.1
 
