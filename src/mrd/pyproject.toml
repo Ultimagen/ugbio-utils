@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_mrd"
-version = "1.2.1-0dev-47"
+version = "1.3.0"
 requires-python = ">=3.11"
 dependencies = [
     "ugbio_core[variantannotation]",
@@ -24,6 +24,13 @@ generate_synthetic_signatures = "ugbio_mrd.generate_synthetic_signatures:main"
 intersect_featuremap_with_signature = "ugbio_mrd.intersect_featuremap_with_signature:main"
 prepare_data_from_mrd_pipeline = "ugbio_mrd.prepare_data_from_mrd_pipeline:main"
 
+[tool.uv]
+dev-dependencies = [
+    "pre-commit>=4.0.1",
+    "pytest>=8.3.3",
+    "ruff>=0.6.9",
+]
+
 [tool.uv.sources.ugbio_core]
 workspace = true
 
@@ -38,10 +45,3 @@ requires = [
     "setuptools>=61.0",
 ]
 build-backend = "setuptools.build_meta"
-
-[tool.uv]
-dev-dependencies = [
-    "pre-commit>=4.0.1",
-    "pytest>=8.3.3",
-    "ruff>=0.6.9",
-]
