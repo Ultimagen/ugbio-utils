@@ -761,7 +761,7 @@ class SRSNVTrain:
             raise FileNotFoundError(f"fp_featuremap {fp_featuremap} not found")
         self.single_substitution_featuremap = fp_featuremap
         if tp_regions_bed_file:
-            if not Path(tp_regions_bed_file).ia_file():
+            if not Path(tp_regions_bed_file).is_file():
                 raise FileNotFoundError(f"tp_regions_bed_file {tp_regions_bed_file} not found")
         self.tp_regions_bed_file = tp_regions_bed_file
         if fp_regions_bed_file:

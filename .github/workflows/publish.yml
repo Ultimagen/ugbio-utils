@@ -40,10 +40,7 @@ jobs:
           branch_name="${{ github.ref_name }}"
           main_branch="${{ env.MAIN_BRANCH }}"
 
-          if [ "$patch_release" == "true" ] && [ "$branch_name" == "$main_branch" ]; then
-            echo "Error: minor-release is set to true, but this action is running on the main branch."
-            exit 1
-          elif [ "$patch_release" == "false" ] && [ "$branch_name" != "$main_branch" ]; then
+          if [ "$patch_release" == "false" ] && [ "$branch_name" != "$main_branch" ]; then
             echo "Error: minor-release is set to false, but this action is not running on the main branch."
             exit 1
           fi
