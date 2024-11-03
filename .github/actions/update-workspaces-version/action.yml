@@ -16,7 +16,7 @@ inputs:
 outputs:
   commit-sha:
       description: "Update commit (long) sha"
-      value: m${{ steps.commit-and-push.outputs.commit_long_sha }}
+      value: ${{ steps.commit-and-push.outputs.commit_long_sha }}
 
 runs:
   using: "composite"
