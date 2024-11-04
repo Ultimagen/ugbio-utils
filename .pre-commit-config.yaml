@@ -9,6 +9,7 @@ repos:
       - id: trailing-whitespace
         exclude: ^src/.*/tests/resources/.*$ # Exclude .devcontainer folder to keep the comments in the json files
       - id: end-of-file-fixer
+        exclude: ^src/.*/tests/resources/.*$
       - id: check-yaml
       - id: check-json
         exclude: ^\.devcontainer/|^src/.*/tests/resources/.*$ # Exclude .devcontainer folder to keep the comments in the json files

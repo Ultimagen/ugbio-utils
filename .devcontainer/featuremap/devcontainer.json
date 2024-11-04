@@ -6,7 +6,7 @@
 	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_featuremap:1.3.4",
 	"runArgs": [
 		"--init",
-		"--network=host"
+		"--network=host",
 	],
 
 	// Features to add to the dev container. More info: https://containers.dev/features.
