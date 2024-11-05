@@ -25,16 +25,20 @@ ML_QUAL = "ML_QUAL"
 LOW_QUAL_THRESHOLD = 40
 
 
-def _vcf_getter(variant, field):
-    field_map = {
-        ALT: variant.alts[0],
-        REF: variant.ref,
-        CHROM: variant.chrom,
-        POS: variant.pos,
-        FILTER: variant.filter,
-        QUAL: variant.qual,
-    }
-    return field_map.get(field, variant.info.get(field, None))
+def _vcf_getter(variant, field):  # noqa: PLR0911
+    if field == ALT:
+        return variant.alts[0]
+    if field == REF:
+        return variant.ref
+    if field == CHROM:
+        return variant.chrom
+    if field == POS:
+        return variant.pos
+    if field == FILTER:
+        return variant.filter
+    if field == QUAL:
+        return variant.qual
+    return variant.info.get(field, None)
 
 
 def sanitize_for_vcf_general(input_string):
