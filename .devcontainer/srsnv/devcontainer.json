@@ -23,7 +23,7 @@
 
 	// Use 'postCreateCommand' to run commands after the container is created.
 	// "postCreateCommand": "pip3 install --user -r requirements.txt"
-	"postCreateCommand": "/bin/bash .devcontainer/post-create-commands.sh",
+	"postCreateCommand": "/bin/bash .devcontainer/post-create-commands.sh ugbio_srsnv",
 
 	// Configure tool-specific properties.
 	// "customizations": {},

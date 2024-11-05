@@ -1,4 +1,18 @@
 #!/bin/bash
+# Get the package name from the first argument
+package=$1
+
+# Check if the package name is provided
+if [ -z "$package" ]; then
+  echo "Error: No package name provided."
+  exit 1
+fi
+
+# Check if the package name is valid
+if [ "$package" == "<PACKAGE>" ]; then
+  echo "Error: Invalid package name <PACKAGE>. Please provide a package name in the format ugbio_<name>."
+  exit 1
+fi
 
 # Update package list and install curl
 apt-get update && apt-get install -y curl clang
@@ -14,7 +28,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 source $HOME/.cargo/env
 
 # Synchronize uv
-uv sync
+uv sync --package $package
 
 # Install VS Code extensions
 echo "To install VS Code extensions, please run the following command:"
