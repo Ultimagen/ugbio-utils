@@ -39,7 +39,8 @@
 				"ms-python.isort",
 				"cameron.vscode-pytest",
 				"eamodio.gitlens",
-				"pamaron.pytest-runner"
+				"pamaron.pytest-runner",
+				"charliermarsh.ruff"
 			],
 			"settings": {
 				"python.terminal.activateEnvInCurrentTerminal": true,
