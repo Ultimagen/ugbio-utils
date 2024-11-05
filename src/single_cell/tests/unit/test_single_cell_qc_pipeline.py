@@ -82,6 +82,7 @@ def test_prepare_parameters_for_report(output_path, thresholds, h5_file):
     assert all(file.exists() for file in tmp_files)
     # assert parameters keys are equal to expected notebook_parameters keys
     notebook_parameters = papermill.inspect_notebook(str(TEMPLATE_NOTEBOOK))
+    notebook_parameters.pop("cbc_umi_png", None)  # this is an optional parameter
     assert set(parameters.keys()) == set(notebook_parameters.keys())
 
 

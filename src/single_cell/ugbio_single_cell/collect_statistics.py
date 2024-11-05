@@ -16,7 +16,7 @@ def collect_statistics(
     sample_name: str,
     star_db: str = "STAR_hg38_3_2.7.10a",
     *,
-    save_trimmer_histogram: bool,
+    save_trimmer_histogram: bool = False,
 ) -> Path:
     """
     Collect statistics from input files, parse and save them into h5 file
