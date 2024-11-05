@@ -17,6 +17,9 @@ fi
 # Update package list and install curl
 apt-get update && apt-get install -y curl clang
 
+# configure git
+git config --global --add safe.directory /workspaces/ugbio-utils
+
 # Set UV_LINK_MODE environment variable permanently
 echo 'export UV_LINK_MODE=copy' >> ~/.bashrc
 export UV_LINK_MODE=copy
@@ -29,6 +32,7 @@ source $HOME/.cargo/env
 
 # Synchronize uv
 uv sync --package $package
+uv run pre-commit install
 
 # Install VS Code extensions
 echo "To install VS Code extensions, please run the following command:"
