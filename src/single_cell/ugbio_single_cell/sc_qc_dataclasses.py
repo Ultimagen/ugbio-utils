@@ -21,7 +21,7 @@ TEMPLATE_NOTEBOOK = BASE_PATH / "reports" / OutputFiles.NOTEBOOK.value
 @dataclass
 class Inputs:
     trimmer_stats_csv: str
-    trimmer_histogram_csv: list[str]
+    trimmer_histogram_csv: list[str] | None
     trimmer_failure_codes_csv: str
     sorter_stats_csv: str
     star_stats: str
@@ -34,7 +34,7 @@ class Inputs:
                 for item in value:
                     if not os.path.isfile(item):
                         raise FileNotFoundError(f"{item} not found")
-            elif not os.path.isfile(value):
+            elif value and not os.path.isfile(value):
                 raise FileNotFoundError(f"{value} not found")
 
 

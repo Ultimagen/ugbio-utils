@@ -65,7 +65,9 @@ def test_collect_statistics(output_path, inputs, sample_name):
     assert h5_file.stat().st_size > 0
     # assert output file contains expected keys
     with pd.HDFStore(h5_file, mode="r") as store:
-        expected_keys = ["/" + key.value for key in H5Keys if key != H5Keys.STATISTICS_SHORTLIST]
+        expected_keys = [
+            "/" + key.value for key in H5Keys if key != H5Keys.STATISTICS_SHORTLIST and key != H5Keys.TRIMMER_HISTOGRAM
+        ]
         assert set(store.keys()) == set(expected_keys)
 
 
@@ -73,7 +75,7 @@ def test_read_star_stats(inputs):
     star_stats_file = inputs.star_stats
     s = read_star_stats(star_stats_file)
     assert isinstance(s, pd.Series)
-    assert len(s) == 32
+    assert len(s) == 33
     assert s.isna().sum().sum() == 0
 
 
@@ -120,6 +122,6 @@ def test_extract_statistics_table(inputs_dir, output_path):
     with pd.HDFStore(h5_file, mode="r") as store:
         s = store[H5Keys.STATISTICS_SHORTLIST.value]
         assert "/" + H5Keys.STATISTICS_SHORTLIST.value in store.keys()
-        assert len(s) == 16
+        assert len(s) == 15
         # assert that entries that start with "pct_" are between 0 to 100
         assert s[s.index.str.startswith("pct_")].astype(float).between(0, 100).all()

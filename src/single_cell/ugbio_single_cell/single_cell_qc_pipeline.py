@@ -25,7 +25,15 @@ from ugbio_single_cell.sc_qc_dataclasses import (
 )
 
 
-def single_cell_qc(input_files: Inputs, output_path: str, thresholds: Thresholds, sample_name: str):
+def single_cell_qc(
+    input_files: Inputs,
+    output_path: str,
+    thresholds: Thresholds,
+    sample_name: str,
+    star_db: str = "STAR_hg38_3_2.7.10a",
+    *,
+    plot_barcode_rank: bool = False,
+):
     """
     Run single cell qc pipeline that collects statistics, prepares parameters for report and generates report
 
@@ -39,14 +47,22 @@ def single_cell_qc(input_files: Inputs, output_path: str, thresholds: Thresholds
         Thresholds object with thresholds for qc
     sample_name : str
         Sample name to be included as a prefix in the output files
+    star_db : str
+        DB name used when running STAR
+    plot_barcode_rank : bool
+        Plot barcode rank plot
     """
     if not sample_name.endswith("."):
         sample_name += "."
 
-    h5_file = collect_statistics(input_files, output_path, sample_name)
+    h5_file = collect_statistics(
+        input_files, output_path, sample_name, star_db, save_trimmer_histogram=plot_barcode_rank
+    )
     extract_statistics_table(h5_file)
 
-    params, tmp_files = prepare_parameters_for_report(h5_file, thresholds, output_path)
+    params, tmp_files = prepare_parameters_for_report(
+        h5_file, thresholds, output_path, plot_barcode_rank=plot_barcode_rank
+    )
     generate_report(params, output_path, tmp_files, sample_name)
 
     # keep only STAR and short table data in h5 file
@@ -64,7 +80,9 @@ def single_cell_qc(input_files: Inputs, output_path: str, thresholds: Thresholds
     keys_to_convert_to_json.to_hdf(h5_file, key="keys_to_convert")
 
 
-def prepare_parameters_for_report(h5_file: Path, thresholds: Thresholds, output_path: str) -> tuple[dict, list[Path]]:
+def prepare_parameters_for_report(
+    h5_file: Path, thresholds: Thresholds, output_path: str, *, plot_barcode_rank: bool = False
+) -> tuple[dict, list[Path]]:
     """
     Prepare parameters for report generation (h5 file, thresholds, plots)
 
@@ -76,6 +94,8 @@ def prepare_parameters_for_report(h5_file: Path, thresholds: Thresholds, output_
         Thresholds object with thresholds for qc
     output_path : str
         Path to output directory
+    plot_barcode_rank : bool
+        Plot barcode rank plot
 
     Returns
     -------
@@ -93,9 +113,13 @@ def prepare_parameters_for_report(h5_file: Path, thresholds: Thresholds, output_
         parameters[threshold_name + "_threshold"] = threshold_value
 
     # add plots to parameters
-    cbc_umi_png = cbc_umi_plot(h5_file, output_path)
-    parameters["cbc_umi_png"] = cbc_umi_png
-    tmp_files.append(cbc_umi_png)
+    if plot_barcode_rank:
+        try:
+            cbc_umi_png = cbc_umi_plot(h5_file, output_path)
+            parameters["cbc_umi_png"] = cbc_umi_png
+            tmp_files.append(cbc_umi_png)
+        except Exception as e:
+            print(f"Failed to plot barcode rank plot: {e}")
 
     insert_length_png = plot_insert_length_histogram(h5_file, output_path)
     parameters["insert_length_png"] = insert_length_png
@@ -184,7 +208,7 @@ def main():
     parser.add_argument(
         "--trimmer-histogram",
         type=str,
-        required=True,
+        required=False,
         nargs="+",
         help="Path to Trimmer histogram csv files. Multiple files are supported, pass them with space separated.",
     )
@@ -229,6 +253,9 @@ def main():
         help="Minimal % of reads aligned",
     )
 
+    parser.add_argument("--plot-bracode-rank", type=bool, default=False, help="Plot barcode rank plot")
+    parser.add_argument("--star-db", type=str, default="STAR_hg38_3_2.7.10a", help="DB name used when running STAR")
+
     args = parser.parse_args()
 
     # create Inputs and Thresholds objects
@@ -253,6 +280,8 @@ def main():
         output_path=args.output_path,
         thresholds=thresholds,
         sample_name=args.sample_name,
+        star_db=args.star_db,
+        plot_barcode_rank=args.plot_bracode_rank,
     )
 
 

@@ -1,4 +1,5 @@
 import gzip
+import warnings
 from collections import defaultdict
 from pathlib import Path
 
@@ -9,7 +10,14 @@ from ugbio_core.trimmer_utils import merge_trimmer_histograms, read_trimmer_fail
 from ugbio_single_cell.sc_qc_dataclasses import H5Keys, Inputs, OutputFiles
 
 
-def collect_statistics(input_files: Inputs, output_path: str, sample_name: str) -> Path:
+def collect_statistics(
+    input_files: Inputs,
+    output_path: str,
+    sample_name: str,
+    star_db: str = "STAR_hg38_3_2.7.10a",
+    *,
+    save_trimmer_histogram: bool = False,
+) -> Path:
     """
     Collect statistics from input files, parse and save them into h5 file
 
@@ -21,6 +29,10 @@ def collect_statistics(input_files: Inputs, output_path: str, sample_name: str) 
         Path to the output directory.
     sample_name : str
         Sample name to be included as a prefix in the output files.
+    star_db : str
+        DB name used when running STAR.
+    save_trimmer_histogram : bool
+        Save Trimmer histogram.
 
     Returns
     -------
@@ -29,8 +41,17 @@ def collect_statistics(input_files: Inputs, output_path: str, sample_name: str) 
     """
     Path(output_path).mkdir(parents=True, exist_ok=True)
 
-    # Merge Trimmer histograms from two optical paths (if needed)
-    merged_histogram_csv = merge_trimmer_histograms(input_files.trimmer_histogram_csv, output_path=output_path)
+    if save_trimmer_histogram and input_files.trimmer_histogram_csv:
+        try:
+            # Merge Trimmer histograms from two optical paths (if needed)
+            merged_histogram_csv = merge_trimmer_histograms(input_files.trimmer_histogram_csv, output_path=output_path)
+            histogram = pd.read_csv(merged_histogram_csv)
+        except Exception as e:  # noqa
+            print(
+                f"Failed to process Trimmer histograms. It will be skipped and barcode rank plot won't be added "
+                f"to the report. Error details: {e}"
+            )
+            histogram = None
 
     # Read inputs into df
     trimmer_stats = pd.read_csv(input_files.trimmer_stats_csv)
@@ -38,9 +59,8 @@ def collect_statistics(input_files: Inputs, output_path: str, sample_name: str) 
         input_files.trimmer_failure_codes_csv,
         add_total=True,
     )
-    histogram = pd.read_csv(merged_histogram_csv)
     sorter_stats = read_sorter_statistics_csv(input_files.sorter_stats_csv)
-    star_stats = read_star_stats(input_files.star_stats)
+    star_stats = read_star_stats(input_files.star_stats, star_db=star_db)
     star_reads_per_gene = pd.read_csv(input_files.star_reads_per_gene, header=None, sep="\t")
 
     # Get insert subsample quality and lengths
@@ -52,9 +72,12 @@ def collect_statistics(input_files: Inputs, output_path: str, sample_name: str) 
     with pd.HDFStore(output_filename, "w") as store:
         store.put(H5Keys.TRIMMER_STATS.value, trimmer_stats, format="table")
         store.put(H5Keys.TRIMMER_FAILURE_CODES.value, df_trimmer_failure_codes, format="table")
-        store.put(H5Keys.TRIMMER_HISTOGRAM.value, histogram, format="table")
+        if save_trimmer_histogram:
+            store.put(H5Keys.TRIMMER_HISTOGRAM.value, histogram, format="table")
         store.put(H5Keys.SORTER_STATS.value, sorter_stats, format="table")
-        store.put(H5Keys.STAR_STATS.value, star_stats)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=pd.errors.PerformanceWarning)
+            store.put(H5Keys.STAR_STATS.value, star_stats)
         store.put(H5Keys.STAR_READS_PER_GENE.value, star_reads_per_gene, format="table")
         store.put(H5Keys.INSERT_QUALITY.value, insert_quality, format="table")
         store.put(H5Keys.INSERT_LENGTHS.value, pd.Series(insert_lengths), format="table")
@@ -62,7 +85,7 @@ def collect_statistics(input_files: Inputs, output_path: str, sample_name: str) 
     return output_filename
 
 
-def read_star_stats(star_stats_file: str) -> pd.Series:
+def read_star_stats(star_stats_file: str, star_db: str = "STAR_hg38_3_2.7.10a") -> pd.Series:
     """
     Read STAR stats file (Log.final.out) and return parsed pandas object
 
@@ -109,6 +132,9 @@ def read_star_stats(star_stats_file: str) -> pd.Series:
 
     # convert types
     s = s.apply(convert_value)
+
+    # Add star_db to the series
+    s["general", "star_db"] = star_db
 
     return s
 
@@ -192,10 +218,6 @@ def extract_statistics_table(h5_file: Path):
         # pct_pass_trimmer
         pass_trimmer_rate = num_trimmed_reads / num_input_reads
         stats["pct_pass_trimmer"] = pass_trimmer_rate * 100
-
-        # Mean UMI per cell
-        mean_umi_per_cell = None  # TODO: waiting for the calculation details from Gila
-        stats["mean_umi_per_cell"] = mean_umi_per_cell
 
         # Mean read length
         mean_read_length = int(store[H5Keys.STAR_STATS.value].loc[("general", "Average_input_read_length")]) + 1
