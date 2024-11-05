@@ -109,16 +109,53 @@ That's it! You are ready to use VSCode as before, but this time you can run tool
 ### Build from Local Dockerfile and Run in a Dev Container
 If you want to check your Docker image after adding changes to the Dockerfile but don't want to push it to the registry yet, you can build the image and open it as a dev container. Steps:
 
-1. Edit the file `.devcontainer/build_docker/devcontainer.json` and update the path to the Dockerfile.
+1. Edit the file `.devcontainer/build_docker/devcontainer.json` and update the path to the Dockerfile (replace all \<PACKAGE\> placholders).
 2. Follow the instructions above (Open Dev Container in VSCode: step 3 and choose "build_docker").
 
 Note that building the Docker image will take a long time (much longer than just fetching it from the registry), and the build process will occur every time you open the dev container.
 
 Another option is to build the image locally using `docker build . -f <dockerfile name> -t <image tag>` and use the image in the dev container (similar to other dev containers in this repository that are pulling the image from the registry).
 
+### Mount Local Folders to the Dev Container
+1. Open the relevant `devcontainer.json`.
+2. Under "mounts", add:
+    ```json
+    "source=/local/source/path,target=/target/path/in/container,type=bind,consistency=cached"
+    ```
+3. Rebuild the container.
+
+### Troubleshooting
+
+- If there are issues with `uv` (e.g., problems with hardlinks), delete the `.venv` folder and run `uv sync` again.
+- Ensure you are using the correct Python interpreter. It should look like this in the bottom right corner of your VSCode: ![alt text](.devcontainer/image-2.png)
+(and not like this: ![alt text](.devcontainer/image-1.png)).
+
+    - If you have the correct Python interpreter but things are still not working, close and re-open the container (no need to rebuild).
+    - If you are trying to select the correct Python interpreter but things are still stuck, close and re-open the container. Sometimes VSCode needs to reload itself.
+
+## Run Tests
+It is recommended to run tests in the relevant dev container. See the section above for more details on how to open the dev container. Once you are running inside the dev container, you can run tests using VSCode or with `uv run pytest <tests path>`.
+
+Alternatively, you can take advantage of the "run_tests" entry point we are adding to each Docker. Simply run:
+
+```sh
+docker run --rm -v .:/workdir <docker image> run_tests /workdir/src/<path>
+```
+### Mount local folders to the devcontainer
+1. Open the relevant devcontainer.json.
+2. Under "mounts" add:
+    `"source=/local/source/path,target=/target/path/in/container,type=bind,consistency=cached"`
+3. Rebuild the conatiner.
+
 ### Troubleshooting
 
 - If something is wrong with uv (e.g., issues with hardlinks), delete the `.venv` folder and run `uv sync` again.
+- Make sure you are using the correct python interpereter. It should look like this in the bottom right corner of you vscode: ![alt text](image-2.png)
+(and not like this: ![alt text](image-1.png)).
+
+    - If you have the correct python interpatre but things are still not working - just close and re-open the contrainer (no need to rebuild).
+    - If you are trying to choose the correct python interparter but things are still stuck - close and re-open the container. Sometimes vscode needs to reload itself.
+
 
 ## Run Tests
 It is recommended to run tests in the relevant dev container. See the section above for more details on how to open the dev container. Once you are running inside the dev container, you can run tests using VSCode or with `uv run pytest <tests path>`.
