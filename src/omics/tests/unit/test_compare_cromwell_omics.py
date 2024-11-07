@@ -32,47 +32,66 @@ def mock_run_cost():
     return MagicMock(spec=RunCost)
 
 
-# TODO: go over this test
-def test_compare_cromwell_omics(mock_session, tmpdir):
+@pytest.fixture
+def mock_omics_performance(mock_run_cost):
+    with patch("ugbio_omics.compare_cromwell_omics.omics_performance") as mock_omics_performance:
+        mock_value_performance_df = pd.DataFrame(
+            {
+                "task": ["task1", "task2"],
+                "total_CPU": [1, 2],
+                "mean_%_CPU": [10, 20],
+                "max_%_CPU": [20, 30],
+                "total_Memory(GB)": [2, 4],
+                "mean_%_Memory": [10, 20],
+                "max_%_Memory": [20, 30],
+                "run_time (hours)": [1, 2],
+                "count_entries": [10, 12],
+                "cost": [5, 10],
+                "instance": ["m5.large", "m5.xlarge"],
+                "total_storage_cost": [5, 5],
+            }
+        )
+
+        mock_omics_performance.return_value = (mock_value_performance_df, mock_run_cost)
+        yield mock_omics_performance
+
+
+def test_compare_cromwell_omics(resources_dir, mock_session, mock_omics_performance, mock_run_cost, tmpdir):
     cromwell_wid = "test_cromwell_wid"
     omics_run_id = "test_omics_run_id"
     workflow_name = "test_workflow"
     overwrite = False
 
     with (
-        patch("ugbio_omics.compare_cromwell_omics.copy_cromwell_data") as mock_copy_cromwell_data,
-        patch("ugbio_omics.compare_cromwell_omics.cromwell_cost") as mock_cromwell_cost,
-        patch("ugbio_omics.compare_cromwell_omics.cromwell_performance") as mock_cromwell_performance,
-        patch("ugbio_omics.compare_cromwell_omics.get_omics_performance_cost") as mock_get_omics_performance_cost,
-        patch("ugbio_omics.compare_cromwell_omics.get_cromwell_total_duration") as mock_get_cromwell_total_duration,
-        patch("ugbio_omics.compare_cromwell_omics.get_omics_total_duration") as mock_get_omics_total_duration,
-        patch("ugbio_omics.compare_cromwell_omics.extract_omics_resources") as mock_extract_omics_resources,
-        patch("pandas.DataFrame.to_csv") as mock_to_csv,
+        patch("ugbio_omics.compare_cromwell_omics.storage.Client") as mock_storage_client,
+        patch("ugbio_omics.compare_cromwell_omics.get_run_info") as mock_get_run_info,
+        patch.object(mock_run_cost, "get_tasks_resources") as mock_get_tasks_resources,
     ):
-        mock_copy_cromwell_data.return_value = ("performance_file.csv", "metadata_file.json")
-        mock_cromwell_cost.return_value = (pd.DataFrame({"task": ["task1"], "compute_cost": [10]}), 5)
-        mock_cromwell_performance.return_value = pd.DataFrame({"task": ["task1"], "run_time (hours)": [1]})
-        mock_get_omics_performance_cost.return_value = (
-            pd.DataFrame({"task": ["task1"], "cost_SUM": [15]}),
-            3,
-            mock_run_cost,
-        )
-        mock_get_cromwell_total_duration.return_value = 2
-        mock_get_omics_total_duration.return_value = 3
-        mock_extract_omics_resources.return_value = pd.DataFrame(
-            {"task": ["task1"], "omics_resources": [{"cpus": 2, "mem_gbs": 4}]}
+        mock_bucket = MagicMock()
+        mock_blob = MagicMock()
+        with (
+            open(resources_dir / "cromwell.performance.csv") as performance_file,
+            open(resources_dir / "cromwell.metadata.json") as metadata_file,
+        ):
+            mock_blob.download_as_text.side_effect = [performance_file.read(), metadata_file.read()]
+        mock_bucket.get_blob.return_value = mock_blob
+        mock_storage_client.return_value.get_bucket.return_value = mock_bucket
+
+        mock_get_run_info.return_value = {"duration": pd.Timedelta(hours=1)}
+
+        mock_get_tasks_resources.return_value = pd.DataFrame(
+            {
+                "name": ["task1"],
+                "cpusRequested": [2],
+                "memoryRequestedGiB": [4],
+                "gpusRequested": [1],
+                "omicsInstanceTypeReserved": ["instance1"],
+            }
         )
 
         compare_cromwell_omics(cromwell_wid, omics_run_id, mock_session, workflow_name, tmpdir, overwrite=overwrite)
 
-        mock_copy_cromwell_data.assert_called_once_with(workflow_name, cromwell_wid, tmpdir, overwrite=overwrite)
-        mock_cromwell_cost.assert_called_once_with("metadata_file.json", tmpdir, workflow_name, cromwell_wid)
-        mock_cromwell_performance.assert_called_once_with("performance_file.csv")
-        mock_get_omics_performance_cost.assert_called_once_with(omics_run_id, mock_session, tmpdir)
-        mock_get_cromwell_total_duration.assert_called_once_with("metadata_file.json")
-        mock_get_omics_total_duration.assert_called_once_with(omics_run_id, mock_session)
-        mock_extract_omics_resources.assert_called_once_with(mock_run_cost)
-        mock_to_csv.assert_called_once()
+        assert (tmpdir / f"compare_omics_{omics_run_id}_cromwell_{cromwell_wid}.csv").isfile()
 
 
 @patch("ugbio_omics.compare_cromwell_omics.storage.Client")
@@ -171,27 +190,9 @@ def test_get_cromwell_total_duration(resources_dir):
     assert total_duration == 19.405835
 
 
-@patch("ugbio_omics.compare_cromwell_omics.omics_performance")
 def test_get_omics_performance_cost(mock_omics_performance, mock_session, mock_run_cost, tmpdir):
     omics_run_id = "test_omics_run_id"
-    mock_value_performance_df = pd.DataFrame(
-        {
-            "task": ["task1", "task2"],
-            "total_CPU": [1, 2],
-            "mean_%_CPU": [10, 20],
-            "max_%_CPU": [20, 30],
-            "total_Memory(GB)": [2, 4],
-            "mean_%_Memory": [10, 20],
-            "max_%_Memory": [20, 30],
-            "run_time (hours)": [1, 2],
-            "count_entries": [10, 12],
-            "cost": [5, 10],
-            "instance": ["m5.large", "m5.xlarge"],
-            "total_storage_cost": [5, 5],
-        }
-    )
 
-    mock_omics_performance.return_value = (mock_value_performance_df, mock_run_cost)
     mock_run_cost.get_storage_cost.return_value = 5
     mock_run_cost.get_total_cost.return_value = 20
 
@@ -210,8 +211,34 @@ def test_get_omics_performance_cost(mock_omics_performance, mock_session, mock_r
             ), f"Column {col} contains non-numeric values"
 
 
-def test_get_omics_performance_file_exists(mock_session, mock_output_path):
-    pass  # TODO: add tests and all tests below
+@patch("ugbio_omics.compare_cromwell_omics.RunCost", autospec=True)
+def test_get_omics_performance_file_exists(mock_session, mock_run_cost, tmpdir):
+    omics_run_id = "test_omics_run_id"
+
+    mock_value_performance_df = pd.DataFrame(
+        {
+            "task": ["task1", "task2"],
+            "total_CPU": [1, 2],
+            "mean_%_CPU": [10, 20],
+            "max_%_CPU": [20, 30],
+            "total_Memory(GB)": [2, 4],
+            "mean_%_Memory": [10, 20],
+            "max_%_Memory": [20, 30],
+            "run_time (hours)": [1, 2],
+            "count_entries": [10, 12],
+            "cost": [5, 10],
+            "instance": ["m5.large", "m5.xlarge"],
+            "total_storage_cost": [5, 5],
+        }
+    )
+    with patch("pandas.read_csv") as mock_read_csv, patch("os.path.exists") as mock_path_exists:
+        mock_path_exists.return_value = True
+        mock_read_csv.return_value = mock_value_performance_df
+
+        performance_df, omics_disk_cost, run_cost = get_omics_performance_cost(omics_run_id, mock_session, tmpdir)
+
+        assert performance_df.shape == (3, 11)
+        mock_read_csv.assert_called_once()
 
 
 def test_get_omics_total_duration(mock_session):
@@ -229,11 +256,11 @@ def test_extract_omics_resources(mock_run_cost):
     with patch.object(mock_run_cost, "get_tasks_resources") as mock_get_tasks_resources:
         mock_get_tasks_resources.return_value = pd.DataFrame(
             {
-                "task_name": ["task1"],
-                "cpu_requested": [2],
-                "memory_requested_gib": [4],
-                "gpus_requested": [1],
-                "omics_instance": ["instance1"],
+                "name": ["task1"],
+                "cpusRequested": [2],
+                "memoryRequestedGiB": [4],
+                "gpusRequested": [1],
+                "omicsInstanceTypeReserved": ["instance1"],
             }
         )
 
