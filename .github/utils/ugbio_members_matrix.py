@@ -3,7 +3,7 @@ import argparse
 import json
 import os
 
-INTERNAL_MEMBERS = ["core", "omics"]
+INTERNAL_MEMBERS = ["core"]
 
 
 def build_members_matrix(src_folder: str, *, keep_internal: bool):
