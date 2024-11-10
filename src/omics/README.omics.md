@@ -24,7 +24,7 @@ List of tools:
 A fast and easy way to run the above-mentioned tools is by running a container:
 
 ```sh
-docker run -v ~/.aws:/root/.aws -e AWS_PROFILE=${AWS_PROFILE} -v <local_output>:<output> 337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_omics:1.3.4-0dev-54 <tool>
+docker run -v ~/.aws:/root/.aws -e AWS_PROFILE=${AWS_PROFILE} -v <local_output>:<output> 337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_omics:latest <tool>
 ```
 
 Breakdown:
@@ -33,7 +33,7 @@ Breakdown:
 2. `-v ~/.aws:/root/.aws -e AWS_PROFILE=${AWS_PROFILE}` - this will allow the Docker container to use the SSH profile you are logged into (customer/dev/prod).
     > Remember to use **alog** before running the container.
 3. `-v <local_output>:<output>` - add a volume mapping and use it in the output path of the tool to get the outputs available outside the container.
-4. `337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_omics:1.3.4-0dev-54` - Docker image.
+4. `337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_omics:latest` - Docker image.
 5. `<tool>` - available tools are:
     * get_omics_logs
     * manifest_log
