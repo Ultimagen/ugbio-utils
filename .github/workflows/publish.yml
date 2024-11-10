@@ -111,6 +111,7 @@ jobs:
       docker-image: ugbio_${{ matrix.module }}
       commit-sha: ${{ needs.publish.outputs.publish_commit_sha }}
       workspace-folder: src/${{ matrix.module }}
+      docker-tag: latest
 
   prepare-next-dev-version:
     runs-on: ubuntu-latest
