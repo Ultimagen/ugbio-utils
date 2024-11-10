@@ -1,0 +1,7 @@
+read group,code,format,segment,reason,failed read count,total read count
+UGAv3-377,2,ppmSeq_post_native_adapter_trimming,start,sequence was too long,779237,1685366543 
+UGAv3-377,103,ppmSeq_post_native_adapter_trimming,First_C,no match,1,1685366543 
+UGAv3-377,302,ppmSeq_post_native_adapter_trimming,Unrecognized_Start_loop,sequence was too long,3001007,1685366543 
+UGAv3-377,403,ppmSeq_post_native_adapter_trimming,Stem_start,no match,506092,1685366543 
+UGAv3-377,501,ppmSeq_post_native_adapter_trimming,insert,sequence was too short,4815560,1685366543 
+UGAv3-377,802,ppmSeq_post_native_adapter_trimming,Unrecognized_End_loop,sequence was too long,1628493,1685366543 
