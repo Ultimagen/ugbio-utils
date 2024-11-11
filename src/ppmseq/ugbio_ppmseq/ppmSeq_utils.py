@@ -1605,7 +1605,7 @@ def plot_trimmer_histogram(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
         axs_all_both[0, 6].text(0, 2, "End loop", fontsize=28)
         flow_order_start = "ATGC"
         flow_order_end = "GCAT"
-        for m, (loop, loop_category, flow_order) in enumerate(
+        for m, (loop, loop_category, flow_order, append_base) in enumerate(
             zip(
                 (
                     HistogramColumnNames.LOOP_SEQUENCE_START.value,
@@ -1616,6 +1616,7 @@ def plot_trimmer_histogram(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
                     HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value,
                 ),
                 (flow_order_start, flow_order_end),
+                ("", "C"),
                 strict=False,
             )
         ):
@@ -1649,9 +1650,14 @@ def plot_trimmer_histogram(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
                 if cat not in df_calls.index.get_level_values(loop_category):
                     continue
                 df_calls_x = df_calls.loc[cat].reset_index()
+                # generate flow signal, append a C to the end of the sequence for the case where that C was trimmed
+                # due to a wrong Trimmer format, so this code would still work when the "loop sequence" does not
+                # contain the C
                 df_calls_x = df_calls_x.assign(
                     flow_signal=df_calls_x[loop].apply(
-                        lambda x, flow_order=flow_order: generate_key_from_sequence(x, flow_order=flow_order)
+                        lambda x, flow_order=flow_order, append_base=append_base: generate_key_from_sequence(
+                            x + append_base, flow_order=flow_order
+                        )
                     )
                 )
                 df_calls_x = (
