@@ -81,17 +81,15 @@ def test_ppmseq_analysis_ppmseq_v1(tmpdir, resources_dir):
 
 
 def test_ppmseq_analysis_ppmseq_post_native_adapter_trimming(tmpdir, resources_dir):
-    this_resource_dir = pjoin(resources_dir, "409271-UGAv3-377_post_native_adapter_trimming")
-    trimmer_histogram = pjoin(
-        this_resource_dir,
-        "Start_loop_name.Start_loop_pattern_fw.End_loop_name.End_loop_pattern_fw.Stem_end_length.histogram.csv",
+    this_resource_dir = resources_dir / "409271-UGAv3-377_post_native_adapter_trimming"
+    trimmer_histogram = (
+        this_resource_dir
+        / "Start_loop_name.Start_loop_pattern_fw.End_loop_name.End_loop_pattern_fw.Stem_end_length.histogram.csv"
     )
-    trimmer_failure_codes = pjoin(
-        this_resource_dir,
-        "409271-UGAv3-377-CAGAATACATGCGAT_CR0-244.failure_codes.csv",
-    )
-    sorter_csv = pjoin(this_resource_dir, "409271-UGAv3-377-CAGAATACATGCGAT_CR0-244.csv")
-    sorter_json = pjoin(this_resource_dir, "409271-UGAv3-377-CAGAATACATGCGAT_CR0-244.json")
+
+    trimmer_failure_codes = this_resource_dir / "409271-UGAv3-377-CAGAATACATGCGAT_CR0-244.failure_codes.csv"
+    sorter_csv = this_resource_dir / "409271-UGAv3-377-CAGAATACATGCGAT_CR0-244.csv"
+    sorter_json = this_resource_dir / "409271-UGAv3-377-CAGAATACATGCGAT_CR0-244.json"
 
     ppmSeq_qc_analysis.run(
         [
