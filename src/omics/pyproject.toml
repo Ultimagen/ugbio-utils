@@ -19,6 +19,7 @@ compare_cromwell_omics = "ugbio_omics.compare_cromwell_omics:main"
 compare_omics_runs = "ugbio_omics.compare_omics_runs:main"
 get_omics_logs = "ugbio_omics.get_omics_log:main"
 manifest_log = "ugbio_omics.parse_manifest_log:main"
+report_run_completion = "ugbio_omics.report_run_completion:main"
 
 [build-system]
 requires = [
