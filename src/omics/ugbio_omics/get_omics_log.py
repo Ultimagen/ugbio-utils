@@ -97,11 +97,8 @@ def main():
         help="HealthOmics workflow task-id to analyze. Leave empty to get the logs for all tasks",
         default=None,
     )
-    parser.add_argument(
-        "--failed", dest="failed", action="store_true", help="Set to true to get logs for failed tasks only"
-    )
-    parser.add_argument("--no-failed", dest="failed", action="store_false")
-    parser.set_defaults(failed=False)
+    parser.add_argument("--all", dest="failed", action="store_false", help="get logs for all tasks in the run")
+    parser.set_defaults(failed=True)
     parser.add_argument("--output", type=str, help="Output dir to save log events", default=None)
     parser.add_argument("--output-prefix", type=str, help="File name prefix for the output", required=False, default="")
 
