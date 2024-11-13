@@ -1,7 +1,7 @@
 [project]
 name = "ugbio_omics"
-version = "1.3.4-0dev-58"
-description = "Ultima Genomics bioinfo utils for working iwth AWS Health-Omics"
+version = "1.3.4-0dev-59"
+description = "Ultima Genomics bioinfo utils for working with AWS Health-Omics"
 authors = [
     { name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" },
 ]

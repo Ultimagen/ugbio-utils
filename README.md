@@ -141,25 +141,3 @@ Alternatively, you can take advantage of the "run_tests" entry point we are addi
 ```sh
 docker run --rm -v .:/workdir <docker image> run_tests /workdir/src/<path>
 ```
-### Mount local folders to the devcontainer
-1. Open the relevant devcontainer.json.
-2. Under "mounts" add:
-    `"source=/local/source/path,target=/target/path/in/container,type=bind,consistency=cached"`
-3. Rebuild the conatiner.
-
-### Troubleshooting
-
-- If something is wrong with uv (e.g., issues with hardlinks), delete the `.venv` folder and run `uv sync` again.
-- Make sure you are using the correct python interpereter. It should look like this in the bottom right corner of you vscode: ![alt text](image-2.png)
-(and not like this: ![alt text](image-1.png)).
-
-    - If you have the correct python interpatre but things are still not working - just close and re-open the contrainer (no need to rebuild).
-    - If you are trying to choose the correct python interparter but things are still stuck - close and re-open the container. Sometimes vscode needs to reload itself.
-
-
-## Run Tests
-It is recommended to run tests in the relevant dev container. See the section above for more details on how to open the dev container. Once you are running inside the dev container, you can run tests using VSCode or with `uv run pytest <tests path>`.
-
-Alternatively, you can take advantage of the "run_tests" entry point we are adding to each docker. Simply run:
-
-`docker run --rm -v .:/workdir <docker image> run_tests /workdir/src/<path>`

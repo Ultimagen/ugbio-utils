@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_featuremap"
-version = "1.3.4-0dev-58"
+version = "1.3.4-0dev-59"
 requires-python = ">=3.11"
 dependencies = [
     "ugbio_core[variantannotation]",
