@@ -28,7 +28,7 @@ export UV_LINK_MODE=copy
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Add uv command to PATH
-source $HOME/.cargo/env
+source $HOME/.local/bin/env
 
 # Synchronize uv
 uv sync --package $package
