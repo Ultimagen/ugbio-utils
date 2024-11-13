@@ -48,7 +48,7 @@ def read_sorter_statistics_csv(sorter_stats_csv: str, *, edit_metric_names: bool
     return df_sorter_stats["value"]
 
 
-def read_and_parse_sorter_statistics_csv(sorter_stats_csv: str):
+def read_and_parse_sorter_statistics_csv(sorter_stats_csv: str, metrics_shortlist: list = None) -> pd.Series:
     """
     Read and parse a sorter statistics csv file
 
@@ -65,18 +65,17 @@ def read_and_parse_sorter_statistics_csv(sorter_stats_csv: str):
     df_sorter_stats = read_sorter_statistics_csv(sorter_stats_csv)
 
     # create statistics shortlist
-    df_stats_shortlist = df_sorter_stats.reindex(
-        [
+    if metrics_shortlist is None:
+        metrics_shortlist = [
             "Mean_cvg",
             "Indel_Rate",
             "Mean_Read_Length",
-            "PF_Barcode_reads",
             "PCT_PF_Reads_aligned",
             "PCT_Chimeras",
             "PCT_duplicates",
-            "PCT_Failed_QC_reads",
+            "PF_Barcode_reads",
         ]
-    )
+    df_stats_shortlist = df_sorter_stats.reindex(metrics_shortlist)
 
     return df_stats_shortlist
 

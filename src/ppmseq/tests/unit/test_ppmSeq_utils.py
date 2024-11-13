@@ -1,6 +1,7 @@
 from os.path import join as pjoin
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pysam
 import pytest
@@ -16,6 +17,7 @@ from ugbio_ppmseq.ppmSeq_utils import (
     plot_trimmer_histogram,
     ppmseq_qc_analysis,
     read_ppmseq_trimmer_histogram,
+    read_trimmer_failure_codes_ppmseq,
 )
 
 inputs_dir = Path(__file__).parent.parent / "resources"
@@ -65,6 +67,10 @@ trimmer_histogram_ppmseq_v1_401057001 = subdir / (
     ".histogram.csv"
 )
 
+trimmer_failure_codes_csv_ppmseq_v1_incl_failed_rsq = (
+    inputs_dir / "412884-L6860-Z0293-CATGTGAGCGGTGAT_trimmer-failure_codes.csv"
+)
+
 
 def _compare_vcfs(vcf_file1, vcf_file2):
     def extract_header(vcf_file):
@@ -103,6 +109,18 @@ def _compare_vcfs(vcf_file1, vcf_file2):
 
     records_diff = compare_records(records1, records2)
     assert not records_diff, "Differences found in records"
+
+
+def test_read_trimmer_failure_codes_ppmseq(tmpdir):
+    df_trimmer_failure_codes, df_metrics = read_trimmer_failure_codes_ppmseq(
+        trimmer_failure_codes_csv_ppmseq_v1_incl_failed_rsq
+    )
+    assert (
+        df_trimmer_failure_codes["total_read_count"].to_numpy()[0] == 1098118853
+    )  # make sure the RSQ failed reads are subtracted
+    assert np.allclose(
+        df_metrics.loc["PCT_failed_adapter_dimers", "value"], 0.06888, atol=1e-3
+    )  # make sure normalization is correct
 
 
 def test_read_ppmseq_v1_trimmer_histogram(tmpdir):

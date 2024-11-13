@@ -47,7 +47,9 @@ def merge_trimmer_histograms(trimmer_histograms: list[str], output_path: str):
     return output_filename
 
 
-def read_trimmer_failure_codes(trimmer_failure_codes_csv: str, *, add_total: bool = False) -> pd.DataFrame:
+def read_trimmer_failure_codes(
+    trimmer_failure_codes_csv: str, *, add_total: bool = False, include_failed_rsq=False
+) -> pd.DataFrame:
     """
     Read a trimmer failure codes csv file
 
@@ -57,6 +59,8 @@ def read_trimmer_failure_codes(trimmer_failure_codes_csv: str, *, add_total: boo
         path to a Trimmer failure codes file
     add_total : bool
         if True, add a row with total failed reads to the dataframe
+    include_failed_rsq : bool
+        if True, include failed RSQ reads in the dataframe and in the percentage calculation (default: False)
 
     Returns
     -------
@@ -89,12 +93,30 @@ def read_trimmer_failure_codes(trimmer_failure_codes_csv: str, *, add_total: boo
         columns={c: c.replace(" ", "_").lower() for c in df_trimmer_failure_codes.columns}
     )
 
-    df_trimmer_failure_codes = (
-        df_trimmer_failure_codes.groupby(["segment", "reason"])
-        .agg({x: "sum" for x in ("failed_read_count", "total_read_count")})
-        .assign(PCT_failure=lambda x: 100 * x["failed_read_count"] / x["total_read_count"])
+    # group by segment and reason (aggregate read groups)
+    df_trimmer_failure_codes = df_trimmer_failure_codes.groupby(["segment", "reason"]).agg(
+        {x: "sum" for x in ("failed_read_count", "total_read_count")}
     )
 
+    # remove rsq file if not include_failed_rsq
+    if not include_failed_rsq and (
+        "rsq file" in df_trimmer_failure_codes.index.get_level_values("reason")
+        or "rsq filter" in df_trimmer_failure_codes.index.get_level_values("reason")
+    ):
+        rsq_failed_read_count = df_trimmer_failure_codes[
+            df_trimmer_failure_codes.index.isin(["rsq file", "rsq filter"], level=1)
+        ]["failed_read_count"].sum()
+        df_trimmer_failure_codes = df_trimmer_failure_codes.drop(
+            index=["rsq file", "rsq filter"], level="reason", errors="ignore"
+        )
+        df_trimmer_failure_codes["total_read_count"] -= rsq_failed_read_count
+
+    # calculate percentage of failed reads
+    df_trimmer_failure_codes = df_trimmer_failure_codes.assign(
+        PCT_failure=lambda x: 100 * x["failed_read_count"] / x["total_read_count"]
+    )
+
+    # add row with total counts
     if add_total:
         total_row = pd.DataFrame(
             {
