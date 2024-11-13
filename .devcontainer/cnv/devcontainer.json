@@ -9,7 +9,7 @@
 		"--network=host"
 	],
 	// run on the host machine during initialization
-	"initializeCommand": "code --list-extensions > extensions.txt",
+	// "initializeCommand": "code --list-extensions > extensions.txt", #TODO: fix or remove
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	"features": {
 		"ghcr.io/devcontainers/features/git:1": {},
