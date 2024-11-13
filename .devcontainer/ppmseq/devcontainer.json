@@ -32,7 +32,8 @@
 	// "remoteUser": "root"
 
 	"mounts": [
-        "source=${localWorkspaceFolder}/extensions.txt,target=/tmp/extensions.txt,type=bind,consistency=cached"
+        "source=${localWorkspaceFolder}/extensions.txt,target=/tmp/extensions.txt,type=bind,consistency=cached",
+		"source=/data,target=/data,type=bind,consistency=cached"
 		// "target=${containerWorkspaceFolder}/.venv,type=volume"
 	],
 
