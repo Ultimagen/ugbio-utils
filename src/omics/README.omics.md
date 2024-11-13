@@ -12,7 +12,7 @@ List of tools:
 2. **Compare Omics Runs** - Process cost and performance and compare multiple Omics runs. Omics cost information is collected using [Omics Run Analyzer](https://github.com/awslabs/amazon-omics-tools?tab=readme-ov-file#omics-run-analyzer).
 
    Run `uv run compare_omics_runs --help` for more details.
-3. **Get Run Logs** - Download logs of an Omics run. For FAILED run by default, you'll get the logs of all failed tasks or the run's engine log if there are no failed tasks. For successful runs by default, you'll get all tasks' logs. You can use --task-id to get the log for specific task.
+3. **Get Run Logs** - Download logs of an Omics run. For FAILED run by default, you'll get the logs of all failed tasks or the run's engine log if there are no failed tasks. For successful runs by default, you'll get all tasks' logs. You can use --task-id to get the log for a specific task.
 
    Run `uv run get_omics_logs --help` for more details.
 4. **Manifest Log** - Download and parse the manifest log of an Omics run. The manifest log contains a lot of information about storage usage, CPU and memory usage per task, Docker images, inputs, and general information about the run.
