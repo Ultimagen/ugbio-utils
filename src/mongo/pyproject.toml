@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_mongo"
-version = "1.3.4-0dev-58"
+version = "1.3.4-0dev-62"
 description = "Ultima Genomics bioinfo utils for working with mongodb"
 authors = [
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
