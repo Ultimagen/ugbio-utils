@@ -93,3 +93,17 @@ def test_generate_key_from_sequence_empty_sequence(flow_order):
     result = fbr.generate_key_from_sequence(sequence, flow_order)
     expected = np.array([])
     assert np.array_equal(result, expected)
+
+
+def test_get_flow_matrix_column_for_base(resources_dir):
+    data = list(pysam.AlignmentFile(pjoin(resources_dir, "chr9.sample.bam")))
+    fbrs = [
+        fbr.FlowBasedRead.from_sam_record(x, flow_order=DEFAULT_FLOW_ORDER, _fmt="cram", max_hmer_size=12) for x in data
+    ]
+    for rec in fbrs:
+        for i in range(len(str(rec.record.query_sequence))):
+            assert rec.get_flow_matrix_column_for_base(i)[0] == str(rec.record.query_sequence)[i]
+            if i > 12 and i < len(str(rec.record.query_sequence)) - 12:
+                assert (
+                    rec.key[rec.base_to_flow_mapping[i]] == np.argmax(rec.get_flow_matrix_column_for_base(i)[1])
+                ) or np.max(rec.get_flow_matrix_column_for_base(i)[1]) < 0.9

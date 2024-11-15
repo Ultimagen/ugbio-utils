@@ -141,6 +141,8 @@ class FlowBasedRead:
         Regressed signal array **binned relative to the error model**
     _max_hmer: int
         Maximal hmer
+    base_to_flow_mapping: np.ndarray
+        Map read base to the number of flow it was read
     Methods
     -------
     apply_cigar:
@@ -159,6 +161,7 @@ class FlowBasedRead:
     flow2base: np.ndarray
     _motif_size: int
     _regressed_signal: np.ndarray
+    base_to_flow_mapping: np.ndarray
 
     def __init__(self, dct: dict):
         """Generic constructor
@@ -1038,6 +1041,39 @@ class FlowBasedRead:
             )[1:-1].sum()
             best_alignment = max(fetch, best_alignment)
         return best_alignment
+
+    def base_to_flow(self, base: int) -> int:
+        """Returns the flow at which the read base base is sequenced
+
+        Parameters
+         ----------
+         base: int
+             Number of the read base
+
+         Returns
+         -------
+         int
+             Flow of the base
+        """
+        if hasattr(self, "base_to_flow_mapping"):
+            return self.base_to_flow_mapping[base]
+        self.base_to_flow_mapping = np.repeat(np.arange(len(self.key)), self.key.astype(int))
+        return self.base_to_flow_mapping[base]
+
+    def get_flow_matrix_column_for_base(self, base: int) -> tuple[str, np.ndarray]:
+        """Returns the flow matrix column for the base
+
+        Parameters
+        ----------
+        base: int
+            Number of the read base
+
+        Returns
+        -------
+        tuple[str,np.ndarray]
+            The flow nucleotide and the flow matrix column
+        """
+        return self.flow_order[self.base_to_flow(base)], self._flow_matrix[:, self.base_to_flow(base)]
 
 
 def get_haplotype_by_read_matrix(haplotypes: list, reads: list) -> np.ndarray:
