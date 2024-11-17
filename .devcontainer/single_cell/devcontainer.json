@@ -10,7 +10,7 @@
 	],
 
 	// run on the host machine during initialization
-	// "initializeCommand": "code --list-extensions > extensions.txt", #TODO: fix or remove
+	// "initializeCommand": ""
 
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	"features": {
@@ -32,9 +32,7 @@
 	// "remoteUser": "root"
 
 	"mounts": [
-        "source=${localWorkspaceFolder}/extensions.txt,target=/tmp/extensions.txt,type=bind,consistency=cached",
 		"source=/data,target=/data,type=bind,consistency=cached"
-		// "target=${containerWorkspaceFolder}/.venv,type=volume"
 	],
 
 	"customizations": {

@@ -33,7 +33,3 @@ source $HOME/.local/bin/env
 # Synchronize uv
 uv sync --package $package
 uv run pre-commit install
-
-# Install VS Code extensions
-echo "To install VS Code extensions, please run the following command:"
-echo "cat /tmp/extensions.txt | xargs -L 1 code --install-extension"
