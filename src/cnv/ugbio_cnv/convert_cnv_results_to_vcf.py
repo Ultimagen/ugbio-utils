@@ -153,10 +153,11 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
 
         vcf_out.close()
 
-        cmd = f"bcftools index -t {outfile}"
-        exit_code = subprocess.check_call(cmd)
-        if exit_code != 0:
-            print(f"bcftools index command failed with exit code: {exit_code}")
+        try:
+            cmd = ["bcftools", "index", "-t", outfile]
+            subprocess.check_call(cmd)
+        except subprocess.CalledProcessError as e:
+            print(f"bcftools index command failed with exit code: {e.returncode}")
             sys.exit(1)  # Exit with error status
         logger.info(f"output file: {outfile}")
         logger.info(f"output file index: {outfile}.tbi")
