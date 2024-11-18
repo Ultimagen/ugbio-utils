@@ -29,10 +29,12 @@
 	// "customizations": {},
 
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-	// "remoteUser": "root"
+	"remoteUser": "app",
+	"updateRemoteUserUID": true,
 
 	"mounts": [
-		"source=/data,target=/data,type=bind,consistency=cached"
+		"source=/data,target=/data,type=bind,consistency=cached",
+		"source=/home/${localEnv:USER}/.ssh,target=/app/.ssh,type=bind,consistency=cached"
 	],
 
 	"customizations": {
@@ -51,9 +53,5 @@
 				"python.defaultInterpreterPath": ".venv/bin/python"
 			}
 		}
-	},
-
-	// // Use the same user from your local environment
-	// "remoteUser": "${localEnv:USER}",
-	// "updateRemoteUserUID": true,
+	}
 }
