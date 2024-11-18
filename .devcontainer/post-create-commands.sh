@@ -15,7 +15,7 @@ if [ "$package" == "<PACKAGE>" ]; then
 fi
 
 # Update package list and install curl
-apt-get update && apt-get install -y curl clang
+sudo apt-get update && sudo apt-get install -y curl clang
 
 # configure git
 git config --global --add safe.directory /workspaces/ugbio-utils
