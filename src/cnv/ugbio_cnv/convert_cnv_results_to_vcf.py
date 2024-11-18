@@ -1,6 +1,6 @@
 import argparse
 import logging
-import os
+import subprocess
 import sys
 import warnings
 from os.path import join as pjoin
@@ -154,7 +154,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
         vcf_out.close()
 
         cmd = f"bcftools index -t {outfile}"
-        exit_code = os.system(cmd)
+        exit_code = subprocess.check_call(cmd)
         if exit_code != 0:
             print(f"bcftools index command failed with exit code: {exit_code}")
             sys.exit(1)  # Exit with error status
