@@ -153,8 +153,11 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
 
         vcf_out.close()
 
-        cmd = f"tabix -p vcf {outfile}"
-        os.system(cmd)  # noqa: S605
+        cmd = f"bcftools index -t {outfile}"
+        exit_code = os.system(cmd)
+        if exit_code != 0:
+            print(f"bcftools index command failed with exit code: {exit_code}")
+            sys.exit(1)  # Exit with error status
         logger.info(f"output file: {outfile}")
         logger.info(f"output file index: {outfile}.tbi")
 
