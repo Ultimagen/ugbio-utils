@@ -9,9 +9,6 @@
 		"--network=host"
 	],
 
-	// run on the host machine during initialization
-	// "initializeCommand": "code --list-extensions > extensions.txt", #TODO: fix or remove
-
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	"features": {
     	"ghcr.io/devcontainers/features/git:1": {},
@@ -22,19 +19,18 @@
 	// "forwardPorts": [],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	// "postCreateCommand": "pip3 install --user -r requirements.txt"
 	"postCreateCommand": "/bin/bash .devcontainer/post-create-commands.sh ugbio_featuremap",
 
 	// Configure tool-specific properties.
 	// "customizations": {},
 
 	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
-	// "remoteUser": "root"
+	"remoteUser": "app",
+	"updateRemoteUserUID": true,
 
 	"mounts": [
-        "source=${localWorkspaceFolder}/extensions.txt,target=/tmp/extensions.txt,type=bind,consistency=cached",
-		"source=/data,target=/data,type=bind,consistency=cached"
-		// "target=${containerWorkspaceFolder}/.venv,type=volume"
+		"source=/data,target=/data,type=bind,consistency=cached",
+		"source=/home/${localEnv:USER}/.ssh,target=/app/.ssh,type=bind,consistency=cached"
 	],
 
 	"customizations": {
@@ -53,9 +49,5 @@
 				"python.defaultInterpreterPath": ".venv/bin/python"
 			}
 		}
-	},
-
-	// // Use the same user from your local environment
-	// "remoteUser": "${localEnv:USER}",
-	// "updateRemoteUserUID": true,
+	}
 }

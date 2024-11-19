@@ -15,7 +15,7 @@ if [ "$package" == "<PACKAGE>" ]; then
 fi
 
 # Update package list and install curl
-apt-get update && apt-get install -y curl clang
+sudo apt-get update && sudo apt-get install -y curl clang
 
 # configure git
 git config --global --add safe.directory /workspaces/ugbio-utils
@@ -33,7 +33,3 @@ source $HOME/.local/bin/env
 # Synchronize uv
 uv sync --package $package
 uv run pre-commit install
-
-# Install VS Code extensions
-echo "To install VS Code extensions, please run the following command:"
-echo "cat /tmp/extensions.txt | xargs -L 1 code --install-extension"

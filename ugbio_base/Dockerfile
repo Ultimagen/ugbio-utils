@@ -1,5 +1,9 @@
 FROM python:3.11-bullseye AS ugbio-base
 
+ARG USERNAME=app
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+
 ARG DEBIAN_FRONTEND=noninteractive
 ARG BCFTOOLS_INSTALL_DIR=/opt/bcftools
 ARG BCFTOOLS_VERSION=1.20
@@ -21,6 +25,7 @@ RUN apt-get update && apt-get install -y \
     gcc \
     procps `# for monitoring script memory usage` \
     sysstat `# for monitoring script IO metrics` \
+    sudo \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
@@ -54,3 +59,8 @@ RUN git clone https://github.com/bedops/bedops.git && \
 
 # Include licenses
 COPY ["licenses/Ultima UGVC - EULA.pdf", "."]
+
+# Add user and grant sudo privileges
+RUN groupadd --gid ${USER_GID} ${USERNAME} \
+    && useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} -s /bin/bash \
+    && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
