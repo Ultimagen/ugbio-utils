@@ -37,12 +37,6 @@ runs:
       shell: bash
       run: pip install tomli_w
 
-#    - name: Ensure clean repository state
-#      shell: bash
-#      run: |
-#        git reset --hard
-#        git clean -fd
-
     - name: Update pyproject.toml files with new dev_version
       shell: bash
       run: python .github/utils/update_project_version.py ${{ inputs.version }}
@@ -51,16 +45,6 @@ runs:
       shell: bash
       run: |
         sudo chmod -R ugo+rwX .
-
-#    - name: Debug permissions
-#      shell: bash
-#      run: |
-#        echo "Checking permissions and ownership:"
-#        git status
-#        ls -l src/omics/pyproject.toml
-#        ls -l src/cnv/pyproject.toml
-#        ls -l src/ppmseq/pyproject.toml
-#        ls -ld .git
 
     - name: Commit and push changes
       id: commit-and-push
