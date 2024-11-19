@@ -65,6 +65,7 @@ runs:
       shell: bash
       run: |
         echo "Checking permissions and ownership:"
+        git status
         ls -l src/omics/pyproject.toml
         ls -l src/cnv/pyproject.toml
         ls -l src/ppmseq/pyproject.toml
