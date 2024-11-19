@@ -1,6 +1,6 @@
 import argparse
 import logging
-import os
+import subprocess
 import sys
 import warnings
 from os.path import join as pjoin
@@ -153,8 +153,12 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
 
         vcf_out.close()
 
-        cmd = f"tabix -p vcf {outfile}"
-        os.system(cmd)  # noqa: S605
+        try:
+            cmd = ["bcftools", "index", "-t", outfile]
+            subprocess.check_call(cmd)
+        except subprocess.CalledProcessError as e:
+            print(f"bcftools index command failed with exit code: {e.returncode}")
+            sys.exit(1)  # Exit with error status
         logger.info(f"output file: {outfile}")
         logger.info(f"output file index: {outfile}.tbi")
 

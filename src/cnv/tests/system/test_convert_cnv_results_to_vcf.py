@@ -31,13 +31,13 @@ def compare_zipped_files(a, b):
 
 
 class TestConvertCnvResultsToVcf:
-    def test_convert_cnv_results_to_vcf(self, tmpdir, resources_dir):
+    def test_convert_cnv_results_to_vcf(self, tmp_path, resources_dir):
         input_bed_file = pjoin(resources_dir, "EL-0059.cnvs.annotate.bed")
         genome_file = pjoin(resources_dir, "Homo_sapiens_assembly38.chr1-24.genome")
         expected_out_vcf = pjoin(resources_dir, "EL-0059.cnv.vcf.gz")
 
         sample_name = "EL-0059"
-        out_dir = f"{tmpdir}"
+        out_dir = str(tmp_path)
         convert_cnv_results_to_vcf.run(
             [
                 "convert_cnv_results_to_vcf",
@@ -52,5 +52,7 @@ class TestConvertCnvResultsToVcf:
             ]
         )
 
-        out_vcf_file = pjoin(tmpdir, sample_name + ".cnv.vcf.gz")
+        out_vcf_file = pjoin(tmp_path, sample_name + ".cnv.vcf.gz")
         compare_zipped_files(out_vcf_file, expected_out_vcf)
+        out_vcf_index_file = pjoin(tmp_path, sample_name + ".cnv.vcf.gz.tbi")
+        assert Path(out_vcf_index_file).exists()
