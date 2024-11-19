@@ -61,6 +61,15 @@ runs:
           -type f -exec chmod u+rw,go+r {} + \
           -type d -exec chmod u+rwx,go+rx {} +
 
+    - name: Debug permissions
+      shell: bash
+      run: |
+        echo "Checking permissions and ownership:"
+        ls -l src/omics/pyproject.toml
+        ls -l src/cnv/pyproject.toml
+        ls -l src/ppmseq/pyproject.toml
+        ls -ld .git
+
     - name: Commit and push changes
       id: commit-and-push
       uses: EndBug/add-and-commit@v9
