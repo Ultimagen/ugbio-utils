@@ -54,3 +54,5 @@ class TestConvertCnvResultsToVcf:
 
         out_vcf_file = pjoin(tmp_path, sample_name + ".cnv.vcf.gz")
         compare_zipped_files(out_vcf_file, expected_out_vcf)
+        out_vcf_index_file = pjoin(tmp_path, sample_name + ".cnv.vcf.gz.tbi")
+        assert Path(out_vcf_index_file).exists()
