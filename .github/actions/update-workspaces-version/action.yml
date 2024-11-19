@@ -55,6 +55,12 @@ runs:
           chown -R "$(whoami):$(whoami)" .
         fi
 
+        # Fix permissions for files and directories
+        find . \
+          -path ./.git -prune -o \
+          -type f -exec chmod u+rw,go+r {} + \
+          -type d -exec chmod u+rwx,go+rx {} +
+
     - name: Commit and push changes
       id: commit-and-push
       uses: EndBug/add-and-commit@v9
