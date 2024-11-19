@@ -50,10 +50,10 @@ runs:
     - name: Fix file permissions
       shell: bash
       run: |
-        find . \
-          -path ./.git -prune -o \
-          -type f -exec chmod u+rw {} + \
-          -o -type d -exec chmod u+rwx {} +
+        # Fix ownership if needed
+        if [ "$(id -u)" = "0" ]; then
+          chown -R "$(whoami):$(whoami)" .
+        fi
 
     - name: Commit and push changes
       id: commit-and-push
