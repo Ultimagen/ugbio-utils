@@ -28,6 +28,6 @@ def main():
     process_cram_file(args.cram_file, args.output_path)
 
 if __name__ == "__main__":
-    main()
+    main()ss
 
 
