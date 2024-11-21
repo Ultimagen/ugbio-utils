@@ -902,7 +902,9 @@ def read_trimmer_failure_codes_ppmseq(trimmer_failure_codes_csv: str):
     AssertionError
         If the columns are not as expected
     """
-    df_trimmer_failure_codes = read_trimmer_failure_codes(trimmer_failure_codes_csv)
+    df_trimmer_failure_codes = read_trimmer_failure_codes(
+        trimmer_failure_codes_csv, include_failed_rsq=False, add_total=True
+    )
     adapter_dimers_index = ("insert", "sequence was too short")
     adapter_dimers = (
         df_trimmer_failure_codes.reindex([adapter_dimers_index]).fillna(0).loc[adapter_dimers_index, "PCT_failure"]
@@ -922,11 +924,14 @@ def read_trimmer_failure_codes_ppmseq(trimmer_failure_codes_csv: str):
         .loc[unrecognized_start_loop_index, "PCT_failure"]
     )
 
+    total_failed_reads_pct = df_trimmer_failure_codes.loc[("total", "total"), "PCT_failure"]
+
     df_metrics = pd.DataFrame(
         (
             ("PCT_failed_adapter_dimers", adapter_dimers),
             ("PCT_failed_unrecognized_start_stem", unrecognized_stem),
             ("PCT_failed_unrecognized_start_loop", unrecognized_start_loop),
+            ("PCT_failed_total", total_failed_reads_pct),
         ),
         columns=["metric", "value"],
     ).set_index("metric")

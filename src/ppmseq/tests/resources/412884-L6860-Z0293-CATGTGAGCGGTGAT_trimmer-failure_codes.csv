@@ -1,0 +1,9 @@
+read group,code,format,segment,reason,failed read count,total read count
+Z0293,2,ppmSeq_v2,start,sequence was too long,1175579,1267433062
+Z0293,8,ppmSeq_v2,start,rsq file,169314209,1267433062
+Z0293,101,ppmSeq_v2,First_C,sequence was too short,261,1267433062
+Z0293,103,ppmSeq_v2,First_C,no match,48,1267433062
+Z0293,402,ppmSeq_v2,Unrecognized_Start_loop,sequence was too long,1037377,1267433062
+Z0293,503,ppmSeq_v2,Stem_start,no match,1582881,1267433062
+Z0293,601,ppmSeq_v2,insert,sequence was too short,756455,1267433062
+Z0293,1002,ppmSeq_v2,Unrecognized_End_loop,sequence was too long,3113698,1267433062
