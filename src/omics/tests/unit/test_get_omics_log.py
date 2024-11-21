@@ -79,23 +79,6 @@ def test_get_log_for_task_get_engine_log(mock_boto3_client, tmpdir):
     assert any(f.basename.endswith("engine.log") for f in tmpdir.listdir())
 
 
-def test_get_log_for_task_get_engine_log(mock_boto3_client, tmpdir):
-    with patch("ugbio_omics.get_omics_log.get_run_info") as mock_get_run_info:
-        mock_get_run_info.return_value = {
-            "tasks": [
-                {"taskId": "task1", "name": "Task_1", "status": "SUCCEEDED"},
-                {"taskId": "task2", "name": "Task_2", "status": "SUCCEEDED"},
-            ],
-            "status": "FAILED",
-        }
-
-        get_log_for_task("run1", output_path=tmpdir, output_prefix="test_", exclude_failed=True)
-
-        mock_get_run_info.assert_called_once()
-    mock_boto3_client.assert_called_with("logs")
-    assert len(tmpdir.listdir()) == 3  # check that 2 log files created for all tasks + engine log
-
-
 @patch("ugbio_omics.get_omics_log.boto3")
 def test_fetch_save_log_with_events(mock_boto3, tmpdir):
     mock_boto3.client.return_value.get_log_events.side_effect = [
