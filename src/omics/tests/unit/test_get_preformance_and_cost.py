@@ -1,4 +1,6 @@
+import json
 from datetime import timedelta
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pandas as pd
@@ -12,134 +14,27 @@ from ugbio_omics.get_preformance_and_cost import (
 
 
 @pytest.fixture
+def resources_dir():
+    inputs_dir = Path(__file__).parent.parent / "resources"
+    return inputs_dir
+
+
+@pytest.fixture
 def mock_boto3_client():
     with patch("boto3.client") as mock_client:
         yield mock_client
 
 
 @pytest.fixture
-def mock_log_events():
-    return {
-        "events": [
-            {
-                "message": "MONITORING, [Sun Mar 24 21:35:30 UTC 2024], %CPU: 52.10, %Memory: 21.00, IO_rKb/s: 41.00, IO_wKb/s: 367.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:35:40 UTC 2024], %CPU: 50.00, %Memory: 20.00, IO_rKb/s: 40.00, IO_wKb/s: 360.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:35:50 UTC 2024], %CPU: 48.00, %Memory: 19.00, IO_rKb/s: 39.00, IO_wKb/s: 350.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:36:00 UTC 2024], %CPU: 47.00, %Memory: 18.00, IO_rKb/s: 38.00, IO_wKb/s: 340.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:36:10 UTC 2024], %CPU: 46.00, %Memory: 17.00, IO_rKb/s: 37.00, IO_wKb/s: 330.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:36:20 UTC 2024], %CPU: 45.00, %Memory: 16.00, IO_rKb/s: 36.00, IO_wKb/s: 320.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:36:30 UTC 2024], %CPU: 44.00, %Memory: 15.00, IO_rKb/s: 35.00, IO_wKb/s: 310.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:36:40 UTC 2024], %CPU: 43.00, %Memory: 14.00, IO_rKb/s: 34.00, IO_wKb/s: 300.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:36:50 UTC 2024], %CPU: 42.00, %Memory: 13.00, IO_rKb/s: 33.00, IO_wKb/s: 290.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:37:00 UTC 2024], %CPU: 41.00, %Memory: 12.00, IO_rKb/s: 32.00, IO_wKb/s: 280.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:37:10 UTC 2024], %CPU: 40.00, %Memory: 11.00, IO_rKb/s: 31.00, IO_wKb/s: 270.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:37:20 UTC 2024], %CPU: 39.00, %Memory: 10.00, IO_rKb/s: 30.00, IO_wKb/s: 260.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:37:30 UTC 2024], %CPU: 38.00, %Memory: 9.00, IO_rKb/s: 29.00, IO_wKb/s: 250.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:37:40 UTC 2024], %CPU: 37.00, %Memory: 8.00, IO_rKb/s: 28.00, IO_wKb/s: 240.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:37:50 UTC 2024], %CPU: 36.00, %Memory: 7.00, IO_rKb/s: 27.00, IO_wKb/s: 230.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:38:00 UTC 2024], %CPU: 35.00, %Memory: 6.00, IO_rKb/s: 26.00, IO_wKb/s: 220.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:38:10 UTC 2024], %CPU: 34.00, %Memory: 5.00, IO_rKb/s: 25.00, IO_wKb/s: 210.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:38:20 UTC 2024], %CPU: 33.00, %Memory: 4.00, IO_rKb/s: 24.00, IO_wKb/s: 200.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:38:30 UTC 2024], %CPU: 32.00, %Memory: 3.00, IO_rKb/s: 23.00, IO_wKb/s: 190.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:38:40 UTC 2024], %CPU: 31.00, %Memory: 2.00, IO_rKb/s: 22.00, IO_wKb/s: 180.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:38:50 UTC 2024], %CPU: 30.00, %Memory: 1.00, IO_rKb/s: 21.00, IO_wKb/s: 170.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:39:00 UTC 2024], %CPU: 29.00, %Memory: 0.50, IO_rKb/s: 20.00, IO_wKb/s: 160.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:39:10 UTC 2024], %CPU: 28.00, %Memory: 0.40, IO_rKb/s: 19.00, IO_wKb/s: 150.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:39:20 UTC 2024], %CPU: 27.00, %Memory: 0.30, IO_rKb/s: 18.00, IO_wKb/s: 140.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:39:30 UTC 2024], %CPU: 26.00, %Memory: 0.20, IO_rKb/s: 17.00, IO_wKb/s: 130.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:39:40 UTC 2024], %CPU: 25.00, %Memory: 0.10, IO_rKb/s: 16.00, IO_wKb/s: 120.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:39:50 UTC 2024], %CPU: 24.00, %Memory: 0.05, IO_rKb/s: 15.00, IO_wKb/s: 110.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:40:00 UTC 2024], %CPU: 23.00, %Memory: 0.04, IO_rKb/s: 14.00, IO_wKb/s: 100.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:40:10 UTC 2024], %CPU: 22.00, %Memory: 0.03, IO_rKb/s: 13.00, IO_wKb/s: 90.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:40:20 UTC 2024], %CPU: 21.00, %Memory: 0.02, IO_rKb/s: 12.00, IO_wKb/s: 80.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:40:30 UTC 2024], %CPU: 20.00, %Memory: 0.01, IO_rKb/s: 11.00, IO_wKb/s: 70.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:40:40 UTC 2024], %CPU: 19.00, %Memory: 0.00, IO_rKb/s: 10.00, IO_wKb/s: 60.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:40:50 UTC 2024], %CPU: 18.00, %Memory: 0.00, IO_rKb/s: 9.00, IO_wKb/s: 50.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:41:00 UTC 2024], %CPU: 17.00, %Memory: 0.00, IO_rKb/s: 8.00, IO_wKb/s: 40.00, %IOWait: 0.00"  # noqa: E501
-            },
-        ]
-    }
+def mock_log_events(resources_dir):
+    with open(resources_dir / "monitor_log.json") as f:
+        return json.load(f)
 
 
 @pytest.fixture
-def mock_log_events_with_next_token():
-    return {
-        "events": [
-            {
-                "message": "MONITORING, [Sun Mar 24 21:35:30 UTC 2024], %CPU: 52.10, %Memory: 21.00, IO_rKb/s: 41.00, IO_wKb/s: 367.00, %IOWait: 0.00"  # noqa: E501
-            },
-            {
-                "message": "MONITORING, [Sun Mar 24 21:35:40 UTC 2024], %CPU: 50.00, %Memory: 20.00, IO_rKb/s: 40.00, IO_wKb/s: 360.00, %IOWait: 0.00"  # noqa: E501
-            },
-        ],
-        "nextToken": "test_token",
-    }
+def mock_log_events_with_next_token(resources_dir):
+    with open(resources_dir / "monitor_log_next_token.json") as f:
+        return json.load(f)
 
 
 @pytest.fixture

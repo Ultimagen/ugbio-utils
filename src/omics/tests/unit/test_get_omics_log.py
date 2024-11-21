@@ -82,6 +82,28 @@ def test_get_log_for_task_get_engine_log(mock_boto3_client, tmpdir):
 @patch("ugbio_omics.get_omics_log.boto3")
 def test_fetch_save_log_with_events(mock_boto3, tmpdir):
     mock_boto3.client.return_value.get_log_events.side_effect = [
+        {"events": [{"message": "log message 1"}, {"message": "log message 2"}], "nextForwardToken": None},
+        {"events": [{"message": "log message 3"}], "nextForwardToken": None},
+    ]
+
+    fetch_save_log(log_stream_name="log_stream", output="output.log", output_path=tmpdir)
+
+    mock_boto3.client.assert_called_with("logs")
+    mock_boto3.client.return_value.get_log_events.assert_called_once_with(
+        logGroupName=OMICS_LOG_GROUP, logStreamName="log_stream", startFromHead=True
+    )
+    output_file = tmpdir / "output.log"
+    assert output_file.exists()
+    assert len(tmpdir.listdir()) == 1  # only one log file should be created
+    with open(output_file) as f:
+        content = f.read()
+        assert "log message 1" in content
+        assert "log message 2" in content
+
+
+@patch("ugbio_omics.get_omics_log.boto3")
+def test_fetch_save_log_with_events_and_pagination(mock_boto3, tmpdir):
+    mock_boto3.client.return_value.get_log_events.side_effect = [
         {"events": [{"message": "log message 1"}, {"message": "log message 2"}], "nextForwardToken": "token"},
         {"events": [{"message": "log message 3"}], "nextForwardToken": None},
     ]
@@ -95,7 +117,14 @@ def test_fetch_save_log_with_events(mock_boto3, tmpdir):
     mock_boto3.client.return_value.get_log_events.assert_any_call(
         logGroupName=OMICS_LOG_GROUP, logStreamName="log_stream", startFromHead=True
     )
-    assert len(tmpdir.listdir()) == 1
+    output_file = tmpdir / "output.log"
+    assert output_file.exists()
+    assert len(tmpdir.listdir()) == 1  # only one log file should be created
+    with open(output_file) as f:
+        content = f.read()
+        assert "log message 1" in content
+        assert "log message 2" in content
+        assert "log message 3" in content
 
 
 @patch("ugbio_omics.get_omics_log.boto3")

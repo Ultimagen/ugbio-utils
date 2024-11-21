@@ -1,0 +1,3 @@
+task,run_id_1_cost,run_id_1_duration,run_id_1_resources,run_id_1_instance,run_id_2_cost,run_id_2_duration,run_id_2_resources,run_id_2_instance
+task1,10,1,res1,inst1,15,1.500,res3,inst3
+total,20,2,res2,inst2,25,2.500,res4,inst4

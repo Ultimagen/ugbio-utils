@@ -1,8 +1,15 @@
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 from ugbio_omics.compare_omics_runs import compare_omics_runs, single_run
+
+
+@pytest.fixture
+def resources_dir():
+    inputs_dir = Path(__file__).parent.parent / "resources"
+    return inputs_dir
 
 
 @pytest.fixture
@@ -64,7 +71,7 @@ def test_single_run(
 
 
 @patch("ugbio_omics.compare_omics_runs.single_run")
-def test_compare_omics_runs(mock_single_run, mock_omics_session, mock_output_path, mock_run_ids):
+def test_compare_omics_runs(mock_single_run, mock_omics_session, mock_output_path, mock_run_ids, resources_dir):
     mock_single_run.side_effect = [
         pd.DataFrame(
             {
@@ -88,16 +95,8 @@ def test_compare_omics_runs(mock_single_run, mock_omics_session, mock_output_pat
 
     compare_omics_runs(mock_run_ids, mock_omics_session, mock_output_path)
 
-    compare_file = f"{mock_output_path}/compare_omics_runs.csv"
-    result_df = pd.read_csv(compare_file)
-
-    assert not result_df.empty
-    assert "task" in result_df.columns
-    assert "run_id_1_cost" in result_df.columns
-    assert "run_id_2_cost" in result_df.columns
-    assert "run_id_1_duration" in result_df.columns
-    assert "run_id_2_duration" in result_df.columns
-    assert "run_id_1_resources" in result_df.columns
-    assert "run_id_2_resources" in result_df.columns
-    assert "run_id_1_instance" in result_df.columns
-    assert "run_id_2_instance" in result_df.columns
+    output_file = Path(f"{mock_output_path}/compare_omics_runs.csv")
+    assert output_file.is_file()
+    expected_df = pd.read_csv(resources_dir / "expected_compare_omics_runs.csv")
+    result_df = pd.read_csv(output_file)
+    pd.testing.assert_frame_equal(result_df, expected_df)

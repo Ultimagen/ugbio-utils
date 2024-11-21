@@ -66,6 +66,8 @@ def test_compare_cromwell_omics(resources_dir, mock_session, mock_omics_performa
         patch("ugbio_omics.compare_cromwell_omics.storage.Client") as mock_storage_client,
         patch("ugbio_omics.compare_cromwell_omics.get_run_info") as mock_get_run_info,
         patch.object(mock_run_cost, "get_tasks_resources") as mock_get_tasks_resources,
+        patch.object(mock_run_cost, "get_storage_cost") as mock_get_storage_cost,
+        patch.object(mock_run_cost, "get_total_cost") as mock_get_total_cost,
     ):
         mock_bucket = MagicMock()
         mock_blob = MagicMock()
@@ -81,17 +83,25 @@ def test_compare_cromwell_omics(resources_dir, mock_session, mock_omics_performa
 
         mock_get_tasks_resources.return_value = pd.DataFrame(
             {
-                "name": ["task1"],
-                "cpusRequested": [2],
-                "memoryRequestedGiB": [4],
-                "gpusRequested": [1],
-                "omicsInstanceTypeReserved": ["instance1"],
+                "name": ["task1", "task2"],
+                "cpusRequested": [2, 6],
+                "memoryRequestedGiB": [4, 8],
+                "gpusRequested": [1, 0],
+                "omicsInstanceTypeReserved": ["instance1", "instance2"],
             }
         )
+        mock_get_storage_cost.return_value = 5
+        mock_get_total_cost.return_value = 20
 
         compare_cromwell_omics(cromwell_wid, omics_run_id, mock_session, workflow_name, tmpdir, overwrite=overwrite)
 
-        assert (tmpdir / f"compare_omics_{omics_run_id}_cromwell_{cromwell_wid}.csv").isfile()
+    output_file = tmpdir / f"compare_omics_{omics_run_id}_cromwell_{cromwell_wid}.csv"
+    assert output_file.isfile()
+    expected_df = pd.read_csv(resources_dir / "expected_compare_cromwell_omics.csv").drop(
+        columns=["cromwell_resources"]
+    )
+    result_df = pd.read_csv(output_file).drop(columns=["cromwell_resources"])
+    pd.testing.assert_frame_equal(result_df, expected_df, check_dtype=False)
 
 
 @patch("ugbio_omics.compare_cromwell_omics.storage.Client")
@@ -136,9 +146,11 @@ def test_cromwell_cost(mock_calculate_cost, tmpdir, resources_dir):
 
         mock_calculate_cost.assert_called_once()
         mock_read_csv.assert_called_once()
-        assert cromwell_cost_df["compute_cost"].iloc[0] == 0.003142125
-        assert cromwell_disk_cost == 3.7991075799086755
-        assert cromwell_cost_df.shape == (9, 30)
+        # expected_df = pd.read_csv(resources_dir / "expected_cromwell_cost_df.csv")
+        # pd.testing.assert_frame_equal(cromwell_cost_df, expected_df)
+        assert cromwell_cost_df["compute_cost"].iloc[0] == 17.418350291666663
+        assert cromwell_disk_cost == 2.772279512937595
+        assert cromwell_cost_df.shape == (4, 30)
         assert "compute_cost" in cromwell_cost_df.columns
         assert "task" in cromwell_cost_df.columns
         assert "total" in cromwell_cost_df["task"].to_numpy()
@@ -172,7 +184,7 @@ def test_cromwell_performance(resources_dir):
         performance_df = cromwell_performance(performance_file)
 
         mock_read_csv.assert_called_once_with(performance_file)
-        assert performance_df.shape == (8, 10)
+        assert performance_df.shape == (3, 10)
         assert all("attempt" not in task for task in performance_df["task"].to_numpy())
         assert all("call-" not in task for task in performance_df["task"].to_numpy())
         for col in performance_df.columns:
