@@ -41,8 +41,8 @@ default_custom_info_fields = [
     "tm",
     FeatureMapFields.IS_FORWARD.value,
     FeatureMapFields.IS_DUPLICATE.value,
-    FeatureMapFields.X_READ_COUNT.value,
-    FeatureMapFields.X_FILTERED_COUNT.value,
+    FeatureMapFields.READ_COUNT.value,
+    FeatureMapFields.FILTERED_COUNT.value,
     FeatureMapFields.TRINUC_CONTEXT_WITH_ALT.value,
     FeatureMapFields.HMER_CONTEXT_REF.value,
     FeatureMapFields.HMER_CONTEXT_ALT.value,
@@ -124,17 +124,17 @@ def record_manual_aggregation(rec, xgb_model=None):
     for field in non_agg_fields_for_xgb_from_rec:
         record_dict_for_xgb[field] = rec.samples[0][field]
     non_agg_fields_for_xgb_from_rec_dict = [
-        "X_READ_COUNT",
-        "X_FILTERED_COUNT",
-        "trinuc_context_with_alt",
-        "hmer_context_ref",
-        "hmer_context_alt",
-        "prev_1",
-        "prev_2",
-        "prev_3",
-        "next_1",
-        "next_2",
-        "next_3",
+        FeatureMapFields.READ_COUNT.value,
+        FeatureMapFields.FILTERED_COUNT.value,
+        FeatureMapFields.TRINUC_CONTEXT_WITH_ALT.value,
+        FeatureMapFields.HMER_CONTEXT_REF.value,
+        FeatureMapFields.HMER_CONTEXT_ALT.value,
+        FeatureMapFields.PREV_1.value,
+        FeatureMapFields.PREV_2.value,
+        FeatureMapFields.PREV_3.value,
+        FeatureMapFields.NEXT_1.value,
+        FeatureMapFields.NEXT_2.value,
+        FeatureMapFields.NEXT_3.value,
     ]  # list per record - take the first value
     for field in non_agg_fields_for_xgb_from_rec_dict:
         record_dict_for_xgb[field] = record_info_dict[field]
@@ -251,13 +251,13 @@ def pileup_featuremap_with_agg_params_and_xgb_proba(  # noqa: C901
             # adding manual aggregation fields
             # for field, field_type, field_description in zip(
             for field in added_agg_features:
-                field_type = added_agg_features[field][0]
-                field_description = added_agg_features[field][1]
+                field_type = added_agg_features[field][1]
+                field_description = added_agg_features[field][0]
                 hdr.info.add(field, 1, field_type, field_description)
             if "st" in hdr.info:
                 for field in ppm_added_agg_features:
-                    field_type = ppm_added_agg_features[field][0]
-                    field_description = ppm_added_agg_features[field][1]
+                    field_type = ppm_added_agg_features[field][1]
+                    field_description = ppm_added_agg_features[field][0]
                     hdr.info.add(field, 1, field_type, field_description)
             hdr.info.add("xgb_proba", 1, "Float", "XGBoost probability of the record to be a true variant")
             with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
