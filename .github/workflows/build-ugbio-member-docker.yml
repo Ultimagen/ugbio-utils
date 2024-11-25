@@ -16,7 +16,7 @@ on:
           - "vcflite"
           - "hla_la"
           - "omics"
-          - "olink_test"
+          - "olink"
         required: true
         default: ""
 
