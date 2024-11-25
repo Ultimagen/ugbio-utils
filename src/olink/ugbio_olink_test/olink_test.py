@@ -414,5 +414,5 @@ if __name__ == "__main__":
 
 # after change code:
 # cd ~/ugbio-utils/
-# docker build -t olink_test_docker -f src/olink_test/Dockerfile .
-# docker run -v /data:/data  olink_test_docker olink_test /data/Runs/olink/409959-Olink_HT31-Z0008.1M.bam /data/Runs/olink/ --output_name mat1
+# docker build -t olink_docker -f src/olink/Dockerfile .
+# docker run -v /data:/data  olink_docker olink_test /data/Runs/olink/409959-Olink_HT31-Z0008.1M.bam /data/Runs/olink/ --output_name mat1

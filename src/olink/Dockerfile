@@ -2,7 +2,7 @@
 FROM python:3.11-bullseye AS build
 
 ARG OUT_DIR=/tmp/ugbio
-ARG MODULE_DIR=olink_test
+ARG MODULE_DIR=olink
 RUN mkdir -p $OUT_DIR
 
 COPY ./src/ ./src/
