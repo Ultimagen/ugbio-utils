@@ -12,6 +12,7 @@ members = [
     "ugbio-featuremap",
     "ugbio-hla-la",
     "ugbio-mrd",
+    "ugbio-olink-test",
     "ugbio-omics",
     "ugbio-ppmseq",
     "ugbio-single-cell",
@@ -825,6 +826,15 @@ sdist = { url = "https://files.pythonhosted.org/packages/62/7c/12b0943011daaaa9c
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1d/a0/6aaea0c2fbea2f89bfd5db25fb1e3481896a423002ebe4e55288907a97a3/fsspec-2024.9.0-py3-none-any.whl", hash = "sha256:a0947d552d8a6efa72cc2c730b12c41d043509156966cca4fb157b0f2a0c574b", size = 179253 },
 ]
+
+[[package]]
+name = "fuzzysearch"
+version = "0.7.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "attrs" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f7/28/3e9e4e55fd35356f331a22976694e151eb0214b68d3cd471936f9c09deba/fuzzysearch-0.7.3.tar.gz", hash = "sha256:d5a1b114ceee50a5e181b2fe1ac1b4371ac8db92142770a48fed49ecbc37ca4c", size = 112677 }
 
 [[package]]
 name = "google-api-core"
@@ -2875,7 +2885,7 @@ wheels = [
 
 [[package]]
 name = "ugbio-cnv"
-version = "1.3.4.post0.dev60"
+version = "1.3.5.post0"
 source = { editable = "src/cnv" }
 dependencies = [
     { name = "seaborn" },
@@ -2904,7 +2914,7 @@ dev = [
 
 [[package]]
 name = "ugbio-core"
-version = "1.3.4.post0.dev60"
+version = "1.3.5.post0"
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -2955,7 +2965,7 @@ dev = [
 
 [[package]]
 name = "ugbio-featuremap"
-version = "1.3.4.post0.dev60"
+version = "1.3.5.post0"
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "seaborn" },
@@ -2986,12 +2996,12 @@ dev = [
 
 [[package]]
 name = "ugbio-hla-la"
-version = "1.3.4.post0.dev60"
+version = "1.3.5.post0"
 source = { virtual = "src/hla_la" }
 
 [[package]]
 name = "ugbio-mrd"
-version = "1.3.4.post0.dev60"
+version = "1.3.5.post0"
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["variantannotation"] },
@@ -3021,8 +3031,27 @@ dev = [
 ]
 
 [[package]]
+name = "ugbio-olink-test"
+version = "0.1.0"
+source = { editable = "src/olink_test" }
+dependencies = [
+    { name = "boto3" },
+    { name = "fuzzysearch" },
+    { name = "numpy" },
+    { name = "pandas" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "boto3", specifier = ">=1.35.39" },
+    { name = "fuzzysearch", specifier = ">=0.7.3" },
+    { name = "numpy", specifier = ">=1.26.4" },
+    { name = "pandas", specifier = ">=2.2.3" },
+]
+
+[[package]]
 name = "ugbio-omics"
-version = "1.3.4.post0.dev60"
+version = "1.3.5.post0"
 source = { editable = "src/omics" }
 dependencies = [
     { name = "amazon-omics-tools" },
@@ -3053,7 +3082,7 @@ dev = [
 
 [[package]]
 name = "ugbio-ppmseq"
-version = "1.3.4.post0.dev60"
+version = "1.3.5.post0"
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3090,7 +3119,7 @@ dev = [
 
 [[package]]
 name = "ugbio-single-cell"
-version = "1.3.4.post0.dev60"
+version = "1.3.5.post0"
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3135,7 +3164,7 @@ dev = [
 
 [[package]]
 name = "ugbio-srsnv"
-version = "1.3.4.post0.dev60"
+version = "1.3.5.post0"
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3180,7 +3209,7 @@ dev = [
 
 [[package]]
 name = "ugbio-utils"
-version = "1.3.4.post0.dev60"
+version = "1.3.5.post0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
