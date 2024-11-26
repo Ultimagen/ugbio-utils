@@ -10,7 +10,7 @@ from ugbio_omics.compare_cromwell_omics import (
     cromwell_performance,
     extract_omics_resources,
     get_cromwell_total_duration,
-    get_omics_performance_cost,
+    get_omics_cost_perfromance,
     get_omics_total_duration,
 )
 from ugbio_omics.get_run_cost import RunCost
@@ -208,7 +208,7 @@ def test_get_omics_performance_cost(mock_omics_performance, mock_session, mock_r
     mock_run_cost.get_storage_cost.return_value = 5
     mock_run_cost.get_total_cost.return_value = 20
 
-    performance_df, omics_disk_cost, run_cost = get_omics_performance_cost(omics_run_id, mock_session, tmpdir)
+    performance_df, omics_disk_cost, run_cost = get_omics_cost_perfromance(omics_run_id, mock_session, tmpdir)
 
     mock_omics_performance.assert_called_once_with(omics_run_id, session=mock_session, output_dir=tmpdir)
     assert omics_disk_cost == 5
@@ -247,7 +247,7 @@ def test_get_omics_performance_file_exists(mock_session, mock_run_cost, tmpdir):
         mock_path_exists.return_value = True
         mock_read_csv.return_value = mock_value_performance_df
 
-        performance_df, omics_disk_cost, run_cost = get_omics_performance_cost(omics_run_id, mock_session, tmpdir)
+        performance_df, omics_disk_cost, run_cost = get_omics_cost_perfromance(omics_run_id, mock_session, tmpdir)
 
         assert performance_df.shape == (3, 11)
         mock_read_csv.assert_called_once()

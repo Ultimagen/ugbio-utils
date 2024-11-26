@@ -8,12 +8,13 @@ import pandas as pd
 from google.cloud import storage
 
 from ugbio_omics.cromwell_calculate_cost import calculate_cost
-from ugbio_omics.get_preformance_and_cost import performance as omics_performance
+from ugbio_omics.get_preformance import performance as omics_performance
 from ugbio_omics.get_run_cost import Columns, RunCost
-from ugbio_omics.get_run_info import get_run_info
 
 
-def compare_cromwell_omics(cromwell_wid, omics_run_id, omics_session, workflow_name, output_path, *, overwrite=False):
+def compare_cromwell_omics(
+    cromwell_wid, omics_run_id, omics_session, workflow_name, output_path, *, overwrite=False, get_performance=False
+):
     # Create the output directory if it doesn't exist
     if output_path:
         os.makedirs(output_path, exist_ok=True)
@@ -25,30 +26,22 @@ def compare_cromwell_omics(cromwell_wid, omics_run_id, omics_session, workflow_n
         workflow_name, cromwell_wid, output_path, overwrite=overwrite
     )
     # Calculate cromwell cost
-    cromwell_cost_df, cromwell_disk_cost = cromwell_cost(
-        cromwell_metadata_file, output_path, workflow_name, cromwell_wid
-    )
+    cromwell_cost_df = cromwell_cost(cromwell_metadata_file, output_path, workflow_name, cromwell_wid)
+
     # Calculate cromwell performance
     cromwell_performance_df = cromwell_performance(cromwell_performance_file)
 
-    # Calculate omics performance and cost
-    omics_performance_df, omics_disk_cost, omics_run_cost = get_omics_performance_cost(
-        omics_run_id, omics_session, output_path
+    # Calculate omics cost (and performance if requested)
+    omics_cost_df, omics_run_cost = get_omics_cost_perfromance(
+        omics_run_id, omics_session, output_path, get_performance=get_performance
     )
 
     # Compare cromwell and omics cost
     print("Comparing cromwell and omics...")
-    cost_df = pd.DataFrame(omics_performance_df, columns=["task", "cost_SUM"])
+    cost_df = pd.DataFrame(omics_cost_df, columns=["task", "cost"])
     cost_df = cost_df.merge(cromwell_cost_df[["task", "compute_cost"]], on="task", how="outer")
-    cost_df = cost_df.rename(columns={"cost_SUM": "omics_cost", "compute_cost": "cromwell_cost"})
-    # add disk cost
-    cost_df = pd.concat(
-        [
-            cost_df,
-            pd.DataFrame({"task": ["disk"], "cromwell_cost": [cromwell_disk_cost], "omics_cost": [omics_disk_cost]}),
-        ],
-        ignore_index=True,
-    )
+    cost_df = cost_df.rename(columns={"cost": "omics_cost", "compute_cost": "cromwell_cost"})
+
     # add cost difference
     cost_df["cost_diff"] = cost_df["omics_cost"] - cost_df["cromwell_cost"]
     # move total cost to the end
@@ -60,9 +53,8 @@ def compare_cromwell_omics(cromwell_wid, omics_run_id, omics_session, workflow_n
         [cromwell_performance_df, pd.DataFrame({"task": ["total"], "run_time (hours)": [cromwell_total_duration]})],
         ignore_index=True,
     )
-    omics_total_duration = get_omics_total_duration(omics_run_id, omics_session)
-    omics_performance_df.loc[omics_performance_df["task"] == "total", "run_time (hours)"] = omics_total_duration
-    duration_df = pd.DataFrame(omics_performance_df, columns=["task", "run_time (hours)"])
+
+    duration_df = pd.DataFrame(omics_cost_df, columns=["task", "run_time (hours)"])
     duration_df = duration_df.merge(cromwell_performance_df[["task", "run_time (hours)"]], on="task", how="outer")
     duration_df = duration_df.rename(
         columns={"run_time (hours)_x": "omics_duration", "run_time (hours)_y": "cromwell_duration"}
@@ -80,7 +72,7 @@ def compare_cromwell_omics(cromwell_wid, omics_run_id, omics_session, workflow_n
     cromwell_cost_df["cromwell_resources"] = cromwell_resources
     resources_df = resources_df.merge(cromwell_cost_df[["task", "cromwell_resources"]], on="task", how="outer")
 
-    # Merge cost and duration and save to file
+    # Merge cost, duration and resources and save to file
     compare_df = cost_df.merge(duration_df, on="task", how="outer")
     compare_df = compare_df.merge(resources_df, on="task", how="outer")
     compare_file = f"{output_path}/compare_omics_{omics_run_id}_cromwell_{cromwell_wid}.csv"
@@ -191,15 +183,19 @@ def cromwell_cost(metadata_file, output_path, workflow_name, cromwell_wid):
     )
     cromwell_cost_df["task"] = cromwell_cost_df["task_name"].str.split(".").str[1]
 
-    # add total cost as an additional row
-    cromwell_total_cost = cromwell_cost_df["total_cost"].sum()
-    cromwell_cost_df = pd.concat(
-        [cromwell_cost_df, pd.DataFrame({"task": ["total"], "compute_cost": [cromwell_total_cost]})], ignore_index=True
-    )
-
     cromwell_disk_cost = cromwell_cost_df["disk_cost"].sum()
 
-    return cromwell_cost_df, cromwell_disk_cost
+    # add storage and total cost as an additional row
+    cromwell_total_cost = cromwell_cost_df["total_cost"].sum()
+    cromwell_cost_df = pd.concat(
+        [
+            cromwell_cost_df,
+            pd.DataFrame({"task": ["storage", "total"], "compute_cost": [cromwell_disk_cost, cromwell_total_cost]}),
+        ],
+        ignore_index=True,
+    )
+
+    return cromwell_cost_df
 
 
 def cromwell_performance(cromwell_performance_file):
@@ -235,50 +231,35 @@ def get_cromwell_total_duration(cromwell_metadata_file):
     return total_duration.total_seconds() / 3600
 
 
-def get_omics_performance_cost(
-    omics_run_id, session, output_path, *, overwrite=False
+def get_omics_cost_perfromance(
+    omics_run_id, session, output_path, *, get_performance=False
 ) -> tuple[pd.DataFrame, float, RunCost]:
-    print(f"Calculating omics performance and cost for run: {omics_run_id}")
-    performance_file = f"{output_path}/omics_{omics_run_id}.performance.csv"
-    if os.path.exists(performance_file) and not overwrite:
-        print(f"Skipping download. Omics performance file already exists: {performance_file}")
-        performance_df = pd.read_csv(performance_file)
-        run_cost = RunCost(omics_run_id, output_dir=output_path)
-    else:
-        performance_df, run_cost = omics_performance(omics_run_id, session=session, output_dir=output_path)
-    performance_df = performance_df.rename(columns=lambda x: x.strip())
-    performance_df["task"] = performance_df["task"].str.strip()
+    print(f"Calculating omics cost for run: {omics_run_id}")
 
-    omics_disk_cost = run_cost.get_storage_cost()
+    # Get run cost
+    run_cost = RunCost(omics_run_id, output_dir=output_path)
+    cost_df = run_cost.get_run_cost()
 
-    # group by task name, calculate mean of performance metrics and sum of cost
-    performance_df["task"] = performance_df["task"].str.split("-").str[0]
-    # Convert all columns except 'task' and 'instance' to numeric
-    for col in performance_df.columns:
-        if col not in ["task", "instance"]:
-            performance_df[col] = pd.to_numeric(performance_df[col], errors="coerce")
-    # group by task name and calculate mean of performance metrics
-    grouped_df = performance_df.groupby("task").mean(numeric_only=True).drop("cost", axis=1)
-    grouped_df["cost_SUM"] = performance_df.groupby("task")["cost"].sum()
-    grouped_df = grouped_df.reset_index()
-    # add total cost as an additional row
-    total_run_cost = run_cost.get_total_cost()
-    grouped_df = pd.concat(
-        [grouped_df, pd.DataFrame({"task": ["total"], "cost_SUM": [total_run_cost]})], ignore_index=True
-    )
+    # Calculate performance
+    if get_performance:
+        print(f"Calculating omics performance for run: {omics_run_id}")
+        performance_file = f"{output_path}/omics_{omics_run_id}.performance.csv"
+        if os.path.exists(performance_file):
+            print(f"Skipping download. Omics performance file already exists: {performance_file}")
+            performance_df = pd.read_csv(performance_file)
+        else:
+            # TODO: try - catch with clear error messsage in case the log files are missing/unaccessible
+            performance_df = omics_performance(omics_run_id, session=session, output_dir=output_path)
 
-    return grouped_df, omics_disk_cost, run_cost
+        # Change runtime to be the runtime from perfomance (monitor log) and not from omics calcuations.
+        # This is done to really compare between omics and cromwell, and remove the runtime overhead of omics infra
+        performance_df["task"] = performance_df["task"].str.split("-").str[0]
+        performance_df["run_time (hours)"] = pd.to_numeric(performance_df["run_time (hours)"], errors="coerce")
+        grouped_df = performance_df[["task", "run_time (hours)"]].groupby("task").mean(numeric_only=True).reset_index()
+        print(grouped_df.shape)
+        # TODO: replace cost_df["run_time (hours)"] with grouped_df["run_time (hours)"] but don't replace the total row
 
-
-def get_omics_total_duration(omics_run_id, session=None):
-    if session:
-        omics_client = session.client("omics")
-    else:
-        omics_client = boto3.client("omics")
-
-    run = get_run_info(omics_run_id, client=omics_client)
-    total_duration = run["duration"].total_seconds() / 3600
-    return total_duration
+    return cost_df, run_cost
 
 
 def main():
@@ -298,13 +279,25 @@ def main():
         help="Output path for all files copied and generated during the analysis",
         default=None,
     )
+    parser.add_argument(
+        "--performance",
+        type=bool,
+        help="Get CPU and memory performance from the monitor log (work only if task logs still accessbile)",
+        default=False,
+    )
     parser.add_argument("--overwrite", type=bool, help="Overwrite downloaded files from cloud", default=False)
 
     args = parser.parse_args()
     session = boto3.Session(region_name=args.region)
 
     compare_cromwell_omics(
-        args.cromwell_wid, args.omics_run_id, session, args.workflow_name, args.output_path, overwrite=args.overwrite
+        args.cromwell_wid,
+        args.omics_run_id,
+        session,
+        args.workflow_name,
+        args.output_path,
+        overwrite=args.overwrite,
+        get_performance=args.performance,
     )
 
 
