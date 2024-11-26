@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 import pandas as pd
 import pytest
-from ugbio_omics.get_preformance import (
+from ugbio_omics.get_performance import (
     MonitorLog,
     RunCost,
     performance,

@@ -8,7 +8,7 @@ import pandas as pd
 from google.cloud import storage
 
 from ugbio_omics.cromwell_calculate_cost import calculate_cost
-from ugbio_omics.get_preformance import performance as omics_performance
+from ugbio_omics.get_performance import performance as omics_performance
 from ugbio_omics.get_run_cost import Columns, RunCost
 
 
