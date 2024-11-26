@@ -10,6 +10,7 @@ COPY ./src/ ./src/
 #build all depended + module
 RUN python -m pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/core
+RUN python -m build --outdir $OUT_DIR --wheel ./src/vcfbed
 RUN python -m build --outdir $OUT_DIR --wheel ./src/ppmseq
 RUN python -m build --outdir $OUT_DIR --wheel ./src/featuremap
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
