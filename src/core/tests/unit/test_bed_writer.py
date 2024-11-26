@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ugbio_core.bed_writer import BedWriter
+from ugbio_core.vcfbed.bed_writer import BedWriter
 
 
 class TestBedWriter:

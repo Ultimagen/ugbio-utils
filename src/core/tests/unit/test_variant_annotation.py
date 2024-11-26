@@ -8,8 +8,8 @@ import pyBigWig as pbw  # noqa: N813
 import pyfaidx
 import pysam
 import pytest
-from ugbio_core import variant_annotation
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
+from ugbio_core.vcfbed import variant_annotation
 
 
 @pytest.fixture

@@ -6,9 +6,9 @@ import numpy as np
 import pandas as pd
 import pysam
 import pytest
-from ugbio_core import variant_annotation
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
-from ugbio_core.variant_annotation import VcfAnnotator
+from ugbio_core.vcfbed import variant_annotation
+from ugbio_core.vcfbed.variant_annotation import VcfAnnotator
 from ugbio_featuremap.featuremap_utils import (
     FeaturemapAnnotator,
     FeatureMapFields,

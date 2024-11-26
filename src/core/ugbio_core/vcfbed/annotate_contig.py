@@ -3,7 +3,7 @@ import argparse
 import pickle
 import sys
 
-from ugbio_core.variant_annotation import VcfAnnotator
+from ugbio_core.vcfbed.variant_annotation import VcfAnnotator
 
 # Helper script to annotate a single contig of a VCF file
 

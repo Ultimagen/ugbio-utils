@@ -17,7 +17,7 @@ from tqdm import tqdm
 from ugbio_core.consts import FileExtension
 from ugbio_core.dna_sequence_utils import revcomp
 from ugbio_core.logger import logger
-from ugbio_core.variant_annotation import get_trinuc_substitution_dist, parse_trinuc_sub
+from ugbio_core.vcfbed.variant_annotation import get_trinuc_substitution_dist, parse_trinuc_sub
 
 default_featuremap_info_fields = {
     "X_CIGAR": str,
