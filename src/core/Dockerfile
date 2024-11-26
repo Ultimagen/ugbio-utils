@@ -18,4 +18,4 @@ ARG OUT_DIR=/tmp/ugbio
 COPY --from=build $OUT_DIR $OUT_DIR
 
 RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
-    pip install "${WHEEL_FILE}[variantannotation]"
+    pip install "${WHEEL_FILE}"

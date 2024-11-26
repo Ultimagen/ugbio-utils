@@ -9,8 +9,8 @@ import pysam
 import xgboost as xgb
 from ugbio_core.consts import ALT, CHROM, FILTER, POS, QUAL, REF
 from ugbio_core.logger import logger
-from ugbio_core.variant_annotation import VcfAnnotator
 from ugbio_featuremap.featuremap_utils import FeatureMapFilters
+from ugbio_vcfbed.variant_annotation import VcfAnnotator
 
 from ugbio_srsnv.srsnv_training_utils import (
     FOLD_ID,

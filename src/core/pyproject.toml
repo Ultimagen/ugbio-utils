@@ -18,19 +18,11 @@ dependencies = [
     "scipy>=1.14.0",
 ]
 
-[project.optional-dependencies]
-variantannotation = [
-    "pybigwig>=0.3.18",
-    "tqdm>=4.66.4",
-    "bgzip>=0.5.0",
-]
-
 [project.license]
 text = "Apache-2.0"
 
 [project.scripts]
 run_tests = "pytest:main"
-annotate_contig = "ugbio_core.annotate_contig:main"
 intersect_bed_regions = "ugbio_core.intersect_bed_regions:main"
 sorter_stats_to_mean_coverage = "ugbio_core.sorter_stats_to_mean_coverage:main"
 

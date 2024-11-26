@@ -24,12 +24,12 @@ from ugbio_core.dna_sequence_utils import get_max_softclip_len
 from ugbio_core.exec_utils import print_and_execute
 from ugbio_core.logger import logger
 from ugbio_core.sorter_utils import read_effective_coverage_from_sorter_json
-from ugbio_core.variant_annotation import (
+from ugbio_ppmseq.ppmSeq_utils import PpmseqStrandVcfAnnotator
+from ugbio_vcfbed.variant_annotation import (
     VcfAnnotator,
     get_cycle_skip_dataframe,
     get_motif_around_snv,
 )
-from ugbio_ppmseq.ppmSeq_utils import PpmseqStrandVcfAnnotator
 
 
 class FeatureMapFields(Enum):
@@ -271,7 +271,7 @@ class RefContextVcfAnnotator(VcfAnnotator):
 
         """
         header.add_line(
-            "##ugbio_core.variant_annotation._RefContextVcfAnnotator="
+            "##ugbio_vcfbed.variant_annotation._RefContextVcfAnnotator="
             f"ref:{os.path.basename(self.ref_fasta)}"
             f"_motif_length_to_annotate:{self.motif_length_to_annotate}"
             f"_max_hmer_length:{self.max_hmer_length}"
