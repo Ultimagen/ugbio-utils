@@ -110,7 +110,7 @@ ppm_added_agg_features["et_UNDETERMINED"] = ["number of et tagged as UNDETERMINE
 ppm_added_agg_features["num_mixed_reads"] = ["number of mixed reads", "Integer"]
 
 
-def record_manual_aggregation(rec, xgb_model=None):
+def record_manual_aggregation(rec, xgb_model=None):  # noqa: C901
     record_info_dict = dict(rec.info)
     record_dict_for_xgb = {}
 
@@ -171,9 +171,18 @@ def record_manual_aggregation(rec, xgb_model=None):
             for tag in tags:
                 record_dict_for_xgb[colname + "_" + tag] = record_info_dict[colname].split("|").count(tag)
 
-    record_dict_for_xgb["xgb_proba"] = predict_record_with_xgb(record_dict_for_xgb, xgb_model)
+    if xgb_model:
+        record_dict_for_xgb["xgb_proba"] = predict_record_with_xgb(record_dict_for_xgb, xgb_model)
 
     return record_dict_for_xgb
+
+
+def set_categorial_columns(df):
+    categorical_columns = df.select_dtypes(include=["object", "category"]).columns
+    # print(categorical_columns)
+    le = LabelEncoder()
+    for col in categorical_columns:
+        df.loc[:, col] = le.fit_transform(df[col].astype(str))
 
 
 def predict_record_with_xgb(record_dict_for_xgb, xgb_model):
@@ -185,13 +194,6 @@ def predict_record_with_xgb(record_dict_for_xgb, xgb_model):
     Output:
         probability_value (float): The xgb probability of the record to be a true variant
     """
-
-    def set_categorial_columns(df):
-        categorical_columns = df.select_dtypes(include=["object", "category"]).columns
-        # print(categorical_columns)
-        le = LabelEncoder()
-        for col in categorical_columns:
-            df.loc[:, col] = le.fit_transform(df[col].astype(str))
 
     # load xgb model
     xgb_clf_es = xgboost.XGBClassifier()
