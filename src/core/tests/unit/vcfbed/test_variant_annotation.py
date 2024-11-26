@@ -14,7 +14,7 @@ from ugbio_core.vcfbed import variant_annotation
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent.parent / "resources"
+    return Path(__file__).parent.parent.parent / "resources"
 
 
 class TestVariantAnnotation:
