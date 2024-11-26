@@ -14,7 +14,6 @@ import pyfaidx
 import pysam
 import ugbio_core.dna_sequence_utils as dnautils
 from simppl.simple_pipeline import SimplePipeline
-from ugbio_core import bed_writer
 from ugbio_core.consts import (
     CYCLE_SKIP,
     CYCLE_SKIP_DTYPE,
@@ -27,6 +26,7 @@ from ugbio_core.consts import (
 from ugbio_core.exec_utils import print_and_execute
 from ugbio_core.flow_format import flow_based_read
 from ugbio_core.logger import logger
+from ugbio_core.vcfbed import bed_writer
 
 UNDETERMINED = "NA"
 

@@ -23,7 +23,7 @@ from ugbio_core.trimmer_utils import (
     merge_trimmer_histograms,
     read_trimmer_failure_codes,
 )
-from ugbio_core.variant_annotation import VcfAnnotator
+from ugbio_core.vcfbed.variant_annotation import VcfAnnotator
 
 from ugbio_ppmseq.ppmSeq_consts import STRAND_RATIO_AXIS_LABEL
 
