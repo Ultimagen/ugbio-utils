@@ -10,8 +10,19 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from ugbio_omics.get_omics_log import OMICS_LOG_GROUP
-from ugbio_omics.get_run_cost import PLOTS_DIR, RUN_ID_PLACEHOLDER, Columns, RunCost
+from ugbio_omics.get_run_cost import PLOTS_DIR, RUN_ID_PLACEHOLDER
 from ugbio_omics.get_run_info import get_run_info
+
+
+class EST(tzinfo):
+    def utcoffset(self, dt):
+        return timedelta(hours=-5)
+
+    def dst(self, dt):
+        return timedelta(0)
+
+    def tzname(self, dt):
+        return "EST"
 
 
 class EDT(tzinfo):
@@ -25,9 +36,7 @@ class EDT(tzinfo):
         return "EDT"
 
 
-tzinfos = {
-    "EDT": EDT(),
-}
+tzinfos = {"EDT": EDT(), "EST": EST()}
 
 
 class MonitorColumns(Enum):
@@ -130,7 +139,7 @@ class MonitorLog:
                     self.df = pd.concat([self.df, new_data], ignore_index=True)
 
 
-def performance(run_id, session=None, output_dir=None, output_prefix="") -> tuple[pd.DataFrame, RunCost]:
+def performance(run_id, session=None, output_dir=None, output_prefix="") -> pd.DataFrame:
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
@@ -187,27 +196,10 @@ def performance(run_id, session=None, output_dir=None, output_prefix="") -> tupl
     print(f"Saving performance data to: {output}")
     total_performance_df.to_csv(output, index=False)
 
-    # Process cost and add to the performance data
-    print("Add cost per task to performance data")
-    run_cost = RunCost(run_id, output_dir=output_dir, output_prefix=output_prefix)
-    cost_df = run_cost.get_tasks_cost()
-    cost_df = cost_df.rename(
-        columns={
-            Columns.NAME_COLUMN.value: "task",
-            Columns.ESTIMATED_USD_COLUMN.value: "cost",
-            Columns.OMICS_INSTANCE_TYPE_RESERVED.value: "instance",
-        }
-    )
-    cost_df["total_storage_cost"] = run_cost.get_storage_cost()
-    total_performance_df = total_performance_df.merge(cost_df, on="task", how="left")
-
-    print(f"Updated performance file saved to: {output}")
-    total_performance_df.to_csv(output, index=False)
-
     # Save figures to HTML
     save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir, output_prefix)
 
-    return total_performance_df, run_cost
+    return total_performance_df
 
 
 def process_monitor_log(run_id, task, client=None) -> MonitorLog:
