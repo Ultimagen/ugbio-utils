@@ -28,4 +28,5 @@ WORKDIR /usr/local/bin
 RUN wget https://github.com/broadinstitute/picard/releases/download/${picard_version}/picard.jar
 RUN chmod +x /usr/local/bin/picard.jar
 ### RUN echo 'alias picard="java -jar /usr/local/bin/picard.jar"' >> ~/.bashrc
-ENV picard="java -jar /usr/local/bin/picard.jar"'
+# ENV picard="java -jar /usr/local/bin/picard.jar"'
+RUN ln -s /usr/local/bin/picard.jar /usr/local/bin/picard
