@@ -27,4 +27,4 @@ ENV picard_version=3.2.0
 WORKDIR /usr/local/bin
 RUN wget https://github.com/broadinstitute/picard/releases/download/3.2.0/picard.jar
 RUN chmod +x /usr/local/bin/picard.jar
-RUN alias picard="java -jar /usr/local/bin/picard.jar"
+RUN echo 'alias picard="java -jar /usr/local/bin/picard.jar"' >> ~/.bashrc
