@@ -2,6 +2,12 @@
 ARG BASE_IMAGE=337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_base:1.3.0
 FROM python:3.11-bullseye AS build
 
+RUN apt-get update -y && apt-get install -y\
+ openjdk-8-jre && \
+ apt-get clean && \
+ rm -rf /var/lib/apt/lists/* && \
+ apt-get autoclean
+
 ARG OUT_DIR=/tmp/ugbio
 RUN mkdir -p $OUT_DIR
 
