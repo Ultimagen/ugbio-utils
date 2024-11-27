@@ -1,10 +1,6 @@
 ARG BASE_IMAGE=ugbio_base
 FROM python:3.11-bullseye AS build
 
-# set the environment variables
-ENV picard_version 1.123
-
-
 ARG OUT_DIR=/tmp/ugbio
 RUN mkdir -p $OUT_DIR
 
@@ -23,6 +19,9 @@ COPY --from=build $OUT_DIR $OUT_DIR
 
 RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
     pip install "${WHEEL_FILE}[vcfbed]"
+
+# set the environment variables
+ENV picard_version=1.123
 
 # install picard
 WORKDIR /usr/local/bin
