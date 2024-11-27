@@ -248,8 +248,11 @@ def get_omics_cost_perfromance(
             print(f"Skipping download. Omics performance file already exists: {performance_file}")
             performance_df = pd.read_csv(performance_file)
         else:
-            # TODO: try - catch with clear error messsage in case the log files are missing/unaccessible
-            performance_df = omics_performance(omics_run_id, session=session, output_dir=output_path)
+            try:
+                performance_df = omics_performance(omics_run_id, session=session, output_dir=output_path)
+            except Exception as e:
+                print(f"Error when trying to calculate omics perfroamnce. Details: {e}")
+                raise
 
         # Change runtime to be the runtime from perfomance (monitor log) and not from omics calcuations.
         # This is done to really compare between omics and cromwell, and remove the runtime overhead of omics infra
@@ -258,6 +261,7 @@ def get_omics_cost_perfromance(
         grouped_df = performance_df[["task", "run_time (hours)"]].groupby("task").mean(numeric_only=True).reset_index()
         print(grouped_df.shape)
         # TODO: replace cost_df["run_time (hours)"] with grouped_df["run_time (hours)"] but don't replace the total row
+    # TODO: update tests
 
     return cost_df, run_cost
 
