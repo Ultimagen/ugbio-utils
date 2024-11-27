@@ -2,7 +2,8 @@
 ARG BASE_IMAGE=337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_base:1.3.0
 FROM python:3.11-bullseye AS build
 
-RUN apt-get update -y && apt-get install -y\
+RUN add-apt-repository ppa:webupd8team/java && \
+ apt-get update -y && apt-get install -y\
  openjdk-8-jre && \
  apt-get clean && \
  rm -rf /var/lib/apt/lists/* && \
