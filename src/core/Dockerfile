@@ -1,4 +1,5 @@
-ARG BASE_IMAGE=ugbio_base
+# ARG BASE_IMAGE=ugbio_base
+ARG BASE_IMAGE=337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_base:1.3.0
 FROM python:3.11-bullseye AS build
 
 ARG OUT_DIR=/tmp/ugbio
@@ -27,6 +28,4 @@ ENV picard_version=3.2.0
 WORKDIR /usr/local/bin
 RUN wget https://github.com/broadinstitute/picard/releases/download/${picard_version}/picard.jar
 RUN chmod +x /usr/local/bin/picard.jar
-### RUN echo 'alias picard="java -jar /usr/local/bin/picard.jar"' >> ~/.bashrc
-# ENV picard="java -jar /usr/local/bin/picard.jar"'
-RUN ln -s /usr/local/bin/picard.jar /usr/local/bin/picard
+RUN echo 'alias picard="java -jar /usr/local/bin/picard.jar"' >> ~/.bashrc
