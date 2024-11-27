@@ -1,6 +1,10 @@
 ARG BASE_IMAGE=ugbio_base
 FROM python:3.11-bullseye AS build
 
+# set the environment variables
+ENV picard_version 1.123
+
+
 ARG OUT_DIR=/tmp/ugbio
 RUN mkdir -p $OUT_DIR
 
