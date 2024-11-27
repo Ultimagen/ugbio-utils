@@ -30,4 +30,5 @@ RUN unzip picard-tools-${picard_version}.zip
 RUN mkdir -p /usr/local/bin/picard
 RUN mv /usr/local/bin/picard-tools-${picard_version}/* /usr/local/bin/picard/
 RUN chmod 0644 /usr/local/bin/picard/SamToFastq.jar
+RUN chmod 0644 /usr/local/bin/picard/MergeVcfs.jar
 RUN rm -rf /usr/local/bin/picard-tools-${picard_version}/
