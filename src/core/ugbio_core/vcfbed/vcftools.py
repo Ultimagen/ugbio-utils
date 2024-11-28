@@ -63,8 +63,8 @@ def get_vcf_df(
     else:
         variant_file = pysam.VariantFile(variant_calls).fetch(chromosome)
     # pylint: disable-next=bad-builtin
-    vfi = map(  # noqa: C417
-        lambda x: defaultdict(
+    vfi = (
+        defaultdict(
             lambda: None,
             x.info.items()
             + (
@@ -81,8 +81,8 @@ def get_vcf_df(
                 ("ALLELES", x.alleles),
                 ("FILTER", ";".join([str(y) for y in x.filter.keys()])),
             ],
-        ),
-        variant_file,
+        )
+        for x in variant_file
     )
     columns = [
         "GT",
@@ -242,7 +242,7 @@ def add_info_tag_from_df(
             hdr.info.add(*info_format)
         with pysam.VariantFile(vcf_output_file, mode="w", header=hdr) as vcfout:
             for row in vcfin:
-                val = df.loc[[(row.chrom, row.start + 1)]][column].values[0]  # noqa: PD011
+                val = df.loc[[(row.chrom, row.start + 1)]][column].to_numpy()[0]
                 if val is None or val == "":
                     vcfout.write(row)
                 else:
@@ -278,11 +278,12 @@ def get_region_around_variant(vpos: int, vlocs: np.ndarray, region_size: int = 1
     # expand the region to the left
     # clip for the cases when the variant is after all the variants and need
     # to be inserted at len(vlocs)
+    range_cutoff = 10
     while (
-        vlocs[np.clip(np.searchsorted(vlocs, initial_region[0]), 0, len(vlocs)) - 1] - initial_region[0] < 10  # noqa: PLR2004
+        vlocs[np.clip(np.searchsorted(vlocs, initial_region[0]), 0, len(vlocs)) - 1] - initial_region[0] < range_cutoff
         and vlocs[np.clip(np.searchsorted(vlocs, initial_region[0]), 0, len(vlocs)) - 1] - initial_region[0] >= 0
     ):
-        initial_region = (initial_region[0] - 10, initial_region[1])
+        initial_region = (initial_region[0] - range_cutoff, initial_region[1])
 
     initial_region = (max(initial_region[0], 0), initial_region[1])
 
@@ -290,10 +291,10 @@ def get_region_around_variant(vpos: int, vlocs: np.ndarray, region_size: int = 1
     # The second conditions is for the case np.searchsorted(vlocs,
     # initial_region[1]) == 0
     while (
-        initial_region[1] - vlocs[np.clip(np.searchsorted(vlocs, initial_region[1]), 1, len(vlocs)) - 1] < 10  # noqa: PLR2004
+        initial_region[1] - vlocs[np.clip(np.searchsorted(vlocs, initial_region[1]), 1, len(vlocs)) - 1] < range_cutoff
         and initial_region[1] - vlocs[np.clip(np.searchsorted(vlocs, initial_region[1]), 1, len(vlocs)) - 1] >= 0
     ):
-        initial_region = (initial_region[0], initial_region[1] + 10)
+        initial_region = (initial_region[0], initial_region[1] + range_cutoff)
 
     return initial_region
 
@@ -499,7 +500,7 @@ class FilterWrapper:
         return self
 
 
-def bed_files_output(data: pd.DataFrame, output_file: str, mode: str = "w", create_gt_diff: bool = True) -> None:  # noqa: FBT001, FBT002
+def bed_files_output(data: pd.DataFrame, output_file: str, mode: str = "w", *, create_gt_diff: bool = True) -> None:
     """
     Create a set of bed file tracks that are often used in the
     debugging and the evaluation of the variant calling results

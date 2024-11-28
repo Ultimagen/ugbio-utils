@@ -14,7 +14,7 @@ def resources_dir():
     return Path(__file__).parent.parent.parent / "resources"
 
 
-def test_bed_files_output(resources_dir):
+def test_snp_bed_files_output(resources_dir):
     # snp_fp testing
     data = pd.read_hdf(pjoin(resources_dir, "BC10.chr1.h5"), key="concordance")
     snp_fp = vcftools.FilterWrapper(data).get_snp().get_fp().get_df()
@@ -30,6 +30,9 @@ def test_bed_files_output(resources_dir):
         for index, row in snp_fn.iterrows()
     )
 
+
+def test_hmer_bed_files_output(resources_dir):
+    data = pd.read_hdf(pjoin(resources_dir, "BC10.chr1.h5"), key="concordance")
     # hmer
     hmer_fn = vcftools.FilterWrapper(data).get_h_mer().get_df()
     assert all(hmer_fn["indel"])
@@ -44,21 +47,22 @@ def test_bed_files_output(resources_dir):
     # hmer_fp testing
     hmer_fp = vcftools.FilterWrapper(data).get_h_mer().get_fp().get_df()
     assert all(hmer_fp["indel"])
-    assert all([x > 0 for x in hmer_fp["hmer_indel_length"]])  # noqa: C419
-    assert all([x == "fp" for x in hmer_fp["classify"]])  # noqa: C419
+    assert all(x > 0 for x in hmer_fp["hmer_indel_length"])
+    assert all(x == "fp" for x in hmer_fp["classify"])
 
     # hmer_fn testing
     hmer_fn = vcftools.FilterWrapper(data).get_h_mer().get_fn().get_df()
     assert all(hmer_fn["indel"])
     assert all(x > 0 for x in hmer_fn["hmer_indel_length"])
     assert all(
-        [  # noqa: C419
-            row["classify"] == "fn"
-            or (row["classify"] == "tp" and (row["filter"] == "LOW_SCORE") and (row["filter"] != "PASS"))
-            for index, row in hmer_fn.iterrows()
-        ]
+        row["classify"] == "fn"
+        or (row["classify"] == "tp" and (row["filter"] == "LOW_SCORE") and (row["filter"] != "PASS"))
+        for index, row in hmer_fn.iterrows()
     )
 
+
+def test_non_hmer_bed_files_output(resources_dir):
+    data = pd.read_hdf(pjoin(resources_dir, "BC10.chr1.h5"), key="concordance")
     # non_hmer_fp testing
     non_hmer_fp = vcftools.FilterWrapper(data).get_non_h_mer().get_fp().get_df()
     assert all(non_hmer_fp["indel"])
@@ -82,8 +86,8 @@ def test_bed_output_when_no_tree_score(
     resources_dir,
 ):  # testing the case when there is no tree_score and there is blacklist
     data = pd.read_hdf(pjoin(resources_dir, "exome.h5"), key="concordance")
-    df = vcftools.FilterWrapper(data)  # noqa: PD901
-    result = dict(df.get_fn().bed_format(kind="fn").get_df()["itemRgb"].value_counts())
+    df_data = vcftools.FilterWrapper(data)
+    result = dict(df_data.get_fn().bed_format(kind="fn").get_df()["itemRgb"].value_counts())
     expected_result = {
         vcftools.FilteringColors.BLACKLIST.value: 169,
         vcftools.FilteringColors.CLEAR.value: 89,
@@ -92,9 +96,9 @@ def test_bed_output_when_no_tree_score(
     for k in result:
         assert result[k] == expected_result[k]
 
-    df = vcftools.FilterWrapper(data)  # noqa: PD901
+    df_data = vcftools.FilterWrapper(data)
     # since there is no tree_score all false positives should be the same color
-    result = dict(df.get_fp().bed_format(kind="fp").get_df()["itemRgb"].value_counts())
+    result = dict(df_data.get_fp().bed_format(kind="fp").get_df()["itemRgb"].value_counts())
 
     assert len(result.keys()) == 1
 
@@ -108,8 +112,8 @@ def test_get_region_around_variant():
 class TestGetVcfDf:
     def test_get_vcf_df(self, resources_dir):
         input_vcf = pjoin(resources_dir, "test_get_vcf_df.vcf.gz")
-        df = vcftools.get_vcf_df(input_vcf)  # noqa: PD901
-        non_nan_columns = list(df.dropna(axis=1, how="all").columns)
+        df_vcf = vcftools.get_vcf_df(input_vcf)
+        non_nan_columns = list(df_vcf.dropna(axis=1, how="all").columns)
         non_nan_columns.sort()
         assert non_nan_columns == [
             "ac",
@@ -157,14 +161,14 @@ class TestGetVcfDf:
 
     def test_get_vcf_df_use_qual(self, resources_dir):
         input_vcf = pjoin(resources_dir, "test_get_vcf_df.vcf.gz")
-        df = vcftools.get_vcf_df(input_vcf, scoring_field="QUAL")  # noqa: PD901
-        assert all(df["qual"] == df["tree_score"])
+        df_vcf = vcftools.get_vcf_df(input_vcf, scoring_field="QUAL")
+        assert all(df_vcf["qual"] == df_vcf["tree_score"])
 
     def test_get_vcf_df_ignore_fields(self, resources_dir):
         input_vcf = pjoin(resources_dir, "test_get_vcf_df.vcf.gz")
         ignore_fields = ["x_css", "x_gcc", "x_ic", "x_il", "x_lm", "x_rm"]
-        df = vcftools.get_vcf_df(input_vcf, ignore_fields=ignore_fields)  # noqa: PD901
-        non_nan_columns = list(df.dropna(axis=1, how="all").columns)
+        df_vcf = vcftools.get_vcf_df(input_vcf, ignore_fields=ignore_fields)
+        non_nan_columns = list(df_vcf.dropna(axis=1, how="all").columns)
         non_nan_columns.sort()
         assert non_nan_columns == [
             "ac",
@@ -204,7 +208,7 @@ class TestGetVcfDf:
             "variant_type",
         ]
         for x in ignore_fields:
-            assert x not in df.columns
+            assert x not in df_vcf.columns
 
 
 class TestReplaceDataInSpecificChromosomes:
