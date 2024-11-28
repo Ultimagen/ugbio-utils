@@ -74,11 +74,9 @@ def test_non_hmer_bed_files_output(resources_dir):
     assert all(non_hmer_fn["indel"])
     assert (non_hmer_fn["hmer_indel_length"] == 0).all()
     assert all(
-        [  # noqa: C419
-            row["classify"] == "fn"
-            or (row["classify"] == "tp" and (row["filter"] == "LOW_SCORE") and (row["filter"] != "PASS"))
-            for index, row in non_hmer_fn.iterrows()
-        ]
+        row["classify"] == "fn"
+        or (row["classify"] == "tp" and (row["filter"] == "LOW_SCORE") and (row["filter"] != "PASS"))
+        for index, row in non_hmer_fn.iterrows()
     )
 
 

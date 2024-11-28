@@ -201,17 +201,17 @@ def get_vcf_df(
     ]
     ignore_fields = [x.lower() for x in ignore_fields]
     columns = [x for x in columns if x.lower() not in ignore_fields]
-    df = pd.DataFrame([[x[y] for y in columns] for x in vfi], columns=[x.lower() for x in columns])  # noqa: PD901
+    df_vcf = pd.DataFrame([[x[y] for y in columns] for x in vfi], columns=[x.lower() for x in columns])
 
     if scoring_field is not None:
-        df["tree_score"] = df[scoring_field.lower()]
+        df_vcf["tree_score"] = df_vcf[scoring_field.lower()]
 
-    df["indel"] = df["alleles"].apply(lambda x: len({len(y) for y in x}) > 1)
+    df_vcf["indel"] = df_vcf["alleles"].apply(lambda x: len({len(y) for y in x}) > 1)
 
-    df.index = pd.Index([(x[1]["chrom"], x[1]["pos"]) for x in df.iterrows()])
-    if not df.columns.is_unique:
+    df_vcf.index = pd.Index([(x[1]["chrom"], x[1]["pos"]) for x in df_vcf.iterrows()])
+    if not df_vcf.columns.is_unique:
         raise ValueError("VCF columns are not unique")
-    return df
+    return df_vcf
 
 
 def add_info_tag_from_df(
@@ -602,9 +602,10 @@ def isin(pos, interval):
 def genotype_ordering(num_alt: int) -> np.ndarray:
     # Returns a numpy array with the order of the genotypes (based on the section Genotype Ordering in the VCF spec).
     # Each row is a genotype, and the columns are the alleles.
+    num_alt_cutoff = 2
     if num_alt == 1:
         gr_ar = np.array([[0, 0], [0, 1], [1, 1]])
-    elif num_alt == 2:  # noqa: PLR2004
+    elif num_alt == num_alt_cutoff:
         gr_ar = np.array([[0, 0], [0, 1], [1, 1], [0, 2], [1, 2], [2, 2]])
     else:
         gr_ar = np.full([int((num_alt + 2) * (num_alt + 1) / 2), 2], fill_value=-1, dtype=int)
