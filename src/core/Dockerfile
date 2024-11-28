@@ -43,7 +43,7 @@ RUN apt-get update && apt-get install -y \
     openjdk-11-jre-headless \
     && apt-get clean && rm -rf /var/lib/apt/lists/* && apt-get autoclean && \
     mkdir -p ${PICARD_INSTALL_DIR} && \
-    wget -O ${PICARD_INSTALL_DIR}/picard.jar https://github.com/broadinstitute/picard/releases/download/${PICARD_VERSION}/picard.jar \
+    wget -O ${PICARD_INSTALL_DIR}/picard.jar https://github.com/broadinstitute/picard/releases/download/${PICARD_VERSION}/picard.jar
 
 ARG OUT_DIR=/tmp/ugbio
 
