@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ugbio_base
+ARG BASE_IMAGE=337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_base:1.3.0
 FROM python:3.11-bullseye AS build
 
 # RUN add-apt-repository ppa:webupd8team/java && \
@@ -44,6 +44,7 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean && rm -rf /var/lib/apt/lists/* && apt-get autoclean && \
     mkdir -p ${PICARD_INSTALL_DIR} && \
     wget -O ${PICARD_INSTALL_DIR}/picard.jar https://github.com/broadinstitute/picard/releases/download/${PICARD_VERSION}/picard.jar && \
+    chmod +x ${PICARD_INSTALL_DIR}/picard.jar && \
     # Create a shell script to run Picard easily
     echo '#!/bin/sh\njava -jar ${PICARD_INSTALL_DIR}/picard.jar "$@"' > /usr/local/bin/picard && \
     chmod +x /usr/local/bin/picard
