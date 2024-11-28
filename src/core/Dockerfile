@@ -43,7 +43,10 @@ RUN apt-get update && apt-get install -y \
     openjdk-11-jre-headless \
     && apt-get clean && rm -rf /var/lib/apt/lists/* && apt-get autoclean && \
     mkdir -p ${PICARD_INSTALL_DIR} && \
-    wget -O ${PICARD_INSTALL_DIR}/picard.jar https://github.com/broadinstitute/picard/releases/download/${PICARD_VERSION}/picard.jar
+    wget -O ${PICARD_INSTALL_DIR}/picard.jar https://github.com/broadinstitute/picard/releases/download/${PICARD_VERSION}/picard.jar && \
+    # Create a shell script to run Picard easily
+    echo '#!/bin/sh\njava -jar ${PICARD_INSTALL_DIR}/picard.jar "$@"' > /usr/local/bin/picard && \
+    chmod +x /usr/local/bin/picard \
 
 ARG OUT_DIR=/tmp/ugbio
 
