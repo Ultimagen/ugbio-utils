@@ -39,15 +39,13 @@ FROM $BASE_IMAGE
 ARG PICARD_VERSION=3.3.0
 ARG PICARD_INSTALL_DIR=/opt/picard
 
-RUN apt-get update && apt-get install -y \
-    openjdk-11-jre-headless \
-    && apt-get clean && rm -rf /var/lib/apt/lists/* && apt-get autoclean && \
-    mkdir -p ${PICARD_INSTALL_DIR} && \
+RUN apt-get update && apt-get install -y --reinstall ca-certificates openjdk-17-jre-headless \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* && apt-get autoclean
+RUN mkdir -p ${PICARD_INSTALL_DIR} && \
     wget -O ${PICARD_INSTALL_DIR}/picard.jar https://github.com/broadinstitute/picard/releases/download/${PICARD_VERSION}/picard.jar && \
-    chmod +x ${PICARD_INSTALL_DIR}/picard.jar && \
-    # Create a shell script to run Picard easily
-    echo '#!/bin/sh\njava -jar ${PICARD_INSTALL_DIR}/picard.jar "$@"' > /usr/local/bin/picard && \
-    chmod +x /usr/local/bin/picard
+    chmod +x ${PICARD_INSTALL_DIR}/picard.jar
+    # Create an alias to run Picard easily
+RUN echo 'alias picard="java -jar/opt/picard/picard.jar"' >> ~/.bashrc
 
 ARG OUT_DIR=/tmp/ugbio
 
