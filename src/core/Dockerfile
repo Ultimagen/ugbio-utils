@@ -1,28 +1,5 @@
-ARG BASE_IMAGE=337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_base:1.3.0
+ARG BASE_IMAGE=ugbio_base
 FROM python:3.11-bullseye AS build
-
-# RUN add-apt-repository ppa:webupd8team/java && \
-#  apt-get update -y && apt-get install -y\
-#  openjdk-8-jre && \
-#  apt-get clean && \
-#  rm -rf /var/lib/apt/lists/* && \
-#  apt-get autoclean
-
-# # Install OpenJDK 8 from AdoptOpenJDK
-# RUN apt-get update --fix-missing \
-#  && apt-get install -y wget gnupg \
-#  && wget -qO - https://adoptopenjdk.jfrog.io/adoptopenjdk/api/gpg/key/public | apt-key add - \
-#  && add-apt-repository --yes https://adoptopenjdk.jfrog.io/adoptopenjdk/deb/ \
-#  && apt-get update \
-#  && apt-get install -y adoptopenjdk-8-hotspot \
-#  && rm -rf /var/lib/apt/lists/* \
-#  && apt-get clean
-
-#RUN apt-get update && apt-get install -y curl zip unzip
-#RUN curl -s 'https://get.sdkman.io' | bash
-#RUN /bin/bash -c "source $HOME/.sdkman/bin/sdkman-init.sh; sdk version; sdk install java 8.0.302-open"
-# RUN source "$HOME/.sdkman/bin/sdkman-init.sh"
-# ENV PATH=$PATH:/root/.sdkman/candidates/java/current/
 
 ARG OUT_DIR=/tmp/ugbio
 RUN mkdir -p $OUT_DIR
@@ -35,9 +12,9 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 
 # ##################################################################
 FROM $BASE_IMAGE
-# Add OpenJDK and download Picard
-ARG PICARD_VERSION=3.3.0
 
+# Download Picard
+ARG PICARD_VERSION=3.3.0
 RUN apt-get update && apt-get install -y --reinstall ca-certificates openjdk-17-jre-headless \
     && apt-get clean && rm -rf /var/lib/apt/lists/* && apt-get autoclean
 RUN mkdir -p /opt/picard && \
@@ -52,13 +29,4 @@ ARG OUT_DIR=/tmp/ugbio
 COPY --from=build $OUT_DIR $OUT_DIR
 
 RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
-    pip install "${WHEEL_FILE}[vcfbed]"
-
-## set the environment variables
-#ENV picard_version=3.2.0
-#
-## install picard
-#WORKDIR /usr/local/bin
-#RUN wget https://github.com/broadinstitute/picard/releases/download/${picard_version}/picard.jar
-#RUN chmod +x /usr/local/bin/picard.jar
-#RUN echo 'alias picard="java -jar /usr/local/bin/picard.jar"' >> ~/.bashrc
+    pip install "${WHEEL_FILE}[vcfbed]" \
