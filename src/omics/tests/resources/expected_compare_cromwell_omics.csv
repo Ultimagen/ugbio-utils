@@ -1,0 +1,6 @@
+task,omics_cost,cromwell_cost,cost_diff,omics_duration,cromwell_duration,duration_diff,omics_instance,omics_resources,cromwell_resources
+disk,5.000,0.028,4.972,,,,,,
+global,,,,,0.000,,,,
+task1,5.000,0.001,4.999,1.000,0.000,1.000,instance1,"{'cpus': 2, 'mem_gbs': 4, 'gpus': 1}","{'cpus': 1.0, 'mem_gbs': 1.0}"
+task2,10.000,0.568,9.432,2.000,4.240,-2.240,instance2,"{'cpus': 6, 'mem_gbs': 8, 'gpus': 0}","{'cpus': 2.0, 'mem_gbs': 4.0}"
+total,20.000,0.597,19.403,1.000,19.406,-18.406,,,"{'cpus': nan, 'mem_gbs': nan}"

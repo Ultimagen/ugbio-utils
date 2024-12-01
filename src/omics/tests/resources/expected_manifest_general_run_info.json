@@ -1,0 +1,324 @@
+
+    {
+        "arn":"arn:aws:omics:us-east-1:380827583499:run\/8192875",
+        "creationTime":"2024-10-20T05:26:47.157Z",
+        "digest":"sha256:8a5119a5ba251bced90c469893781ea248d371a53b4827f7a16f9fc432d1906b",
+        "metrics":{
+            "storageAverageGiB":110.415628,
+            "storageMaximumGiB":112.774537,
+            "storageReservedGiB":1200.0,
+            "runningSeconds":5095.015
+        },
+        "name":"test-revert-2_2_2",
+        "outputUri":"s3:\/\/ultimagen-pipelines-380827583499-us-east-1-outputs\/EfficientDV",
+        "parameterTemplate":{
+            "EfficientDV.filtering_blacklist_file":{
+                "description":"Database of known positions with systematic errors",
+                "optional":true
+            },
+            "EfficientDV.ug_make_examples_memory_override":{
+                "description":"Memory override for make_examples step",
+                "optional":true
+            },
+            "EfficientDV.exome_intervals":{
+                "description":"A bed file with exome intervals",
+                "optional":false
+            },
+            "EfficientDV.dbg_min_base_quality":{
+                "description":"Minimal base quality for local assembly of haplotypes",
+                "optional":true
+            },
+            "EfficientDV.cloud_provider_override":{
+                "description":"cloud_provider_override",
+                "optional":true
+            },
+            "EfficientDV.hard_qual_filter":{
+                "description":"Any variant with QUAL < hard_qual_filter will be discarded from the VCF file",
+                "optional":true
+            },
+            "EfficientDV.num_shards":{
+                "description":"Maximal number of intervals the genome is broken into when parallelizing the make_examples step",
+                "optional":false
+            },
+            "EfficientDV.show_bg_fields":{
+                "description":"Show background statistics BG_AD, BG_SB in the output VCF (relevant for somatic calling)",
+                "optional":true
+            },
+            "EfficientDV.ref_dbsnp":{
+                "description":"DbSNP vcf for the annotation of known variants",
+                "optional":false
+            },
+            "EfficientDV.preemptible_tries":{
+                "description":"Number of preemptible tries",
+                "optional":false
+            },
+            "EfficientDV.ref_dbsnp_index":{
+                "description":"DbSNP vcf index",
+                "optional":false
+            },
+            "EfficientDV.target_intervals":{
+                "description":"Limit calling to these regions. If target_intervals and intervals_string are not provided then entire genome is used.",
+                "optional":true
+            },
+            "EfficientDV.cram_index_files":{
+                "description":"Input cram index files.",
+                "optional":false
+            },
+            "EfficientDV.ug_make_examples_extra_args":{
+                "description":"Additional arguments for make-examples tool",
+                "optional":true
+            },
+            "EfficientDV.min_variant_quality_snps":{
+                "description":"Minimal snp variant quality in order to be labeled as PASS",
+                "optional":true
+            },
+            "EfficientDV.log_make_examples_progress":{
+                "description":"Cause make_examples to output detailed progress information (for debugging)",
+                "optional":true
+            },
+            "EfficientDV.optimal_coverages":{
+                "description":"Each sample is downsampled to the \"optimal coverage\" (dictated by the coverage of the training set). Downsampling method is determined by cap_at_optimal_coverage.",
+                "optional":false
+            },
+            "EfficientDV.cap_at_optimal_coverage":{
+                "description":"Defines downsampling behavior. When false, then the reads are downsampled such that the average coverage equals \"optimal coverage\". When true, each position is downsampled to \"optimal coverage\".",
+                "optional":false
+            },
+            "EfficientDV.base_file_name":{
+                "description":"Prefix for name of all output files",
+                "optional":false
+            },
+            "EfficientDV.make_gvcf":{
+                "description":"Whether to generate a gvcf. Default: False",
+                "optional":false
+            },
+            "EfficientDV.call_variants_gpu_type":{
+                "description":"GPU type for call variants",
+                "optional":true
+            },
+            "EfficientDV.sec_models":{
+                "description":"Models to annotate systematic errors",
+                "optional":true
+            },
+            "EfficientDV.min_base_quality":{
+                "description":"Minimal base quality for candidate generation",
+                "optional":true
+            },
+            "EfficientDV.min_read_count_snps":{
+                "description":"Minimal number of reads, that support a snp, required to  generate a candidate variant",
+                "optional":true
+            },
+            "EfficientDV.model_serialized":{
+                "description":"TensorRT model for calling variants, serialized for a specific platform (it is regenerated if not provided)",
+                "optional":true
+            },
+            "EfficientDV.call_variants_uncompr_buf_size_gb":{
+                "description":"Memory buffer allocated for each uncompression thread in calll_variants",
+                "optional":true
+            },
+            "EfficientDV.min_fraction_hmer_indels":{
+                "description":"Minimal fraction of reads, that support an h-mer indel, required to generate a candidate variant",
+                "optional":true
+            },
+            "EfficientDV.min_read_count_non_hmer_indels":{
+                "description":"Minimal number of reads, that support a non-h-mer indel, required to generate a candidate variant",
+                "optional":true
+            },
+            "EfficientDV.annotate_systematic_errors":{
+                "description":"Should systematic errors be annotated from a database of common systematic errors",
+                "optional":true
+            },
+            "EfficientDV.background_cram_files":{
+                "description":"Background (normal sample) cram files for somatic calling",
+                "optional":true
+            },
+            "EfficientDV.p_error":{
+                "description":"Basecalling error for reference confidence model in gvcf",
+                "optional":true
+            },
+            "EfficientDV.min_fraction_non_hmer_indels":{
+                "description":"Minimal fraction of reads, that support a non-h-mer indel, required to generate a candidate variant",
+                "optional":true
+            },
+            "EfficientDV.min_variant_quality_exome_hmer_indels":{
+                "description":"Minimal non-h-mer indel quality in order to be labeled as PASS",
+                "optional":true
+            },
+            "EfficientDV.dummy_input_for_call_caching":{
+                "description":"dummy_input_for_call_caching",
+                "optional":true
+            },
+            "EfficientDV.max_reads_per_partition":{
+                "description":"Maximal number of reads that are stored in memory when analyzing an active region",
+                "optional":true
+            },
+            "EfficientDV.min_variant_quality_non_hmer_indels":{
+                "description":"Minimal non-h-mer indel quality in order to be labeled as PASS",
+                "optional":true
+            },
+            "EfficientDV.intervals_string":{
+                "description":"Regions for variant calling, in the format chrom:start-end. Multiple regions are separated by semi-colon. hese regions. Takes precedence over target_intervals. If both are not provided then entire genome is used.",
+                "optional":true
+            },
+            "EfficientDV.ug_call_variants_extra_mem":{
+                "description":"Extra memory for call_variants",
+                "optional":true
+            },
+            "EfficientDV.call_variants_gpus":{
+                "description":"Number of GPUs for call_variants",
+                "optional":true
+            },
+            "EfficientDV.allele_frequency_ratio":{
+                "description":"Minimal ratio between the allele frequency in tumor and normal, for vcf filtering",
+                "optional":true
+            },
+            "EfficientDV.call_variants_cpus":{
+                "description":"Number of CPUs for call_variants",
+                "optional":true
+            },
+            "EfficientDV.ug_make_examples_cpus_override":{
+                "description":"CPU number override for make_examples step",
+                "optional":true
+            },
+            "EfficientDV.monitoring_script_input":{
+                "description":"monitoring_script_input",
+                "optional":true
+            },
+            "EfficientDV.min_variant_quality_hmer_indels":{
+                "description":"Minimal h-mer indel quality in order to be labeled as PASS",
+                "optional":true
+            },
+            "EfficientDV.pileup_min_mapping_quality":{
+                "description":"Minimal mapping quality to be included in image (the input to the CNN)",
+                "optional":true
+            },
+            "EfficientDV.references":{
+                "description":"Reference files: fasta, dict and fai, recommended value set in the template",
+                "optional":false
+            },
+            "EfficientDV.annotation_intervals":{
+                "description":"List of bed files for VCF annotation",
+                "optional":true
+            },
+            "EfficientDV.candidate_min_mapping_quality":{
+                "description":"Minimal mapping quality for candidate generation",
+                "optional":true
+            },
+            "EfficientDV.cram_files":{
+                "description":"Input cram files. Multiple files are merged.",
+                "optional":false
+            },
+            "EfficientDV.background_cram_index_files":{
+                "description":"Background (normal sample) cram index files for somatic calling",
+                "optional":true
+            },
+            "EfficientDV.model_onnx":{
+                "description":"TensorRT model for calling variants (onnx format)",
+                "optional":false
+            },
+            "EfficientDV.output_realignment":{
+                "description":"Output haplotypes and re-aligned reads to a bam file. Default: false.",
+                "optional":true
+            },
+            "EfficientDV.prioritize_alt_supporting_reads":{
+                "description":"Generate an image with all available alt-supporting reads, and only then add non-supporting reads",
+                "optional":true
+            },
+            "EfficientDV.min_read_count_hmer_indels":{
+                "description":"Minimal number of reads, that support an h-mer indel, required to generate a candidate variant",
+                "optional":true
+            },
+            "EfficientDV.call_variants_threads":{
+                "description":"Number of decompression threads for call_variants",
+                "optional":true
+            },
+            "EfficientDV.scatter_intervals_break":{
+                "description":"The length of the intervals for parallelization are multiples of scatter_intervals_break. This is also the maximal length of the intervals.",
+                "optional":true
+            },
+            "EfficientDV.input_flow_order":{
+                "description":"Flow order. If not provided, it will be extracted from the CRAM header",
+                "optional":true
+            },
+            "EfficientDV.min_fraction_snps":{
+                "description":"Minimal fraction of reads, that support a snp, required to  generate a candidate variant",
+                "optional":true
+            }
+        },
+        "parameters":{
+            "EfficientDV.model_serialized":"s3:\/\/genomics-pipeline-concordanz-us-east-1\/deepvariant\/model\/germline\/v1.3\/model.ckpt-890000.dyn_1500.onnx.serialized.a10g",
+            "EfficientDV.filtering_blacklist_file":"s3:\/\/genomics-pipeline-concordanz-us-east-1\/filtering_models\/hapmap2.1_wgs.v0.6.2.blacklist.bed",
+            "EfficientDV.optimal_coverages":[
+                70
+            ],
+            "EfficientDV.exome_intervals":"s3:\/\/genomics-pipeline-concordanz-us-east-1\/hg38\/annotation_intervals\/exome.twist.bed",
+            "EfficientDV.min_variant_quality_hmer_indels":5,
+            "EfficientDV.references":{
+                "ref_fasta_index":"s3:\/\/broad-references\/hg38\/v0\/Homo_sapiens_assembly38.fasta.fai",
+                "ref_dict":"s3:\/\/broad-references\/hg38\/v0\/Homo_sapiens_assembly38.dict",
+                "ref_fasta":"s3:\/\/broad-references\/hg38\/v0\/Homo_sapiens_assembly38.fasta"
+            },
+            "EfficientDV.cap_at_optimal_coverage":false,
+            "EfficientDV.annotation_intervals":[
+                "s3:\/\/genomics-pipeline-concordanz-us-east-1\/hg38\/annotation_intervals\/LCR-hs38.bed",
+                "s3:\/\/genomics-pipeline-concordanz-us-east-1\/hg38\/annotation_intervals\/mappability.0.bed",
+                "s3:\/\/genomics-pipeline-concordanz-us-east-1\/hg38\/annotation_intervals\/hmers_7_and_higher.bed",
+                "s3:\/\/genomics-pipeline-concordanz-us-east-1\/hg38\/UG-High-Confidence-Regions\/v2.1.2\/ug_hcr.bed"
+            ],
+            "EfficientDV.cloud_provider_override":"aws",
+            "EfficientDV.base_file_name":"006919-UGAv3-49-low-coverage",
+            "EfficientDV.num_shards":50,
+            "EfficientDV.ref_dbsnp":"s3:\/\/broad-references\/hg38\/v0\/Homo_sapiens_assembly38.dbsnp138.vcf",
+            "EfficientDV.preemptible_tries":2,
+            "EfficientDV.min_variant_quality_exome_hmer_indels":7,
+            "EfficientDV.ref_dbsnp_index":"s3:\/\/broad-references\/hg38\/v0\/Homo_sapiens_assembly38.dbsnp138.vcf.idx",
+            "EfficientDV.cram_files":[
+                "s3:\/\/gen-pipe-shared-337532070941-us-east-1\/tests-inputs\/006919\/006919-UGAv3-49-CAGCCTCAGCGTGAT-4x.cram"
+            ],
+            "EfficientDV.make_gvcf":false,
+            "EfficientDV.min_variant_quality_non_hmer_indels":0,
+            "EfficientDV.model_onnx":"s3:\/\/genomics-pipeline-concordanz-us-east-1\/deepvariant\/model\/germline\/v1.3\/model.ckpt-890000.dyn_1500.onnx",
+            "EfficientDV.sec_models":[
+
+            ],
+            "EfficientDV.target_intervals":"s3:\/\/broad-references\/hg38\/v0\/wgs_calling_regions.hg38.interval_list",
+            "EfficientDV.cram_index_files":[
+                "s3:\/\/gen-pipe-shared-337532070941-us-east-1\/tests-inputs\/006919\/006919-UGAv3-49-CAGCCTCAGCGTGAT-4x.cram.crai"
+            ],
+            "EfficientDV.min_variant_quality_snps":0
+        },
+        "resourceDigests":{
+            "s3:\/\/genomics-pipeline-concordanz-us-east-1\/hg38\/annotation_intervals\/LCR-hs38.bed":"etag:eaed695e12e9941987ed0bbb6aba86ed",
+            "s3:\/\/gen-pipe-shared-337532070941-us-east-1\/tests-inputs\/006919\/006919-UGAv3-49-CAGCCTCAGCGTGAT-4x.cram":"etag:a8c2b0ea60e849ac6d4e23d2470ccec7-321",
+            "337532070941.dkr.ecr.us-east-1.amazonaws.com\/amazonlinux:2023":"sha256:85711dbc4521e2fe39c28d71eff6da8946858a9d779b160e3baf1db1b07437c2",
+            "s3:\/\/broad-references\/hg38\/v0\/Homo_sapiens_assembly38.dbsnp138.vcf":"etag:4c5863c23526e4a17f12f2a337d38ead-1306",
+            "337532070941.dkr.ecr.us-east-1.amazonaws.com\/gitc:omics-latest":"sha256:d08f5286a9bc322756fa91f53ad3363ee12288fd8322c7e3eea05d24a9fc3e40",
+            "337532070941.dkr.ecr.us-east-1.amazonaws.com\/call_variants:2.2.2":"sha256:5bd78d2870e84a34f7e54b47cbec0e4ecb9823044013ba33639cabc24e79e0f3",
+            "337532070941.dkr.ecr.us-east-1.amazonaws.com\/ugvc:0.24.1_31c65bce":"sha256:5322ff5a1e7d9bbba9fed846ddb49bf61ab375fce384ae18957767e1e2051095",
+            "s3:\/\/broad-references\/hg38\/v0\/Homo_sapiens_assembly38.fasta.fai":"etag:f76371b113734a56cde236bc0372de0a",
+            "s3:\/\/broad-references\/hg38\/v0\/Homo_sapiens_assembly38.dict":"etag:3884c62eb0e53fa92459ed9bff133ae6",
+            "337532070941.dkr.ecr.us-east-1.amazonaws.com\/gatk:al-4.6.0.0":"sha256:f95486bca509126635e8f518893323805e51817175bcd2d12fbbd21731c40a2d",
+            "s3:\/\/genomics-pipeline-concordanz-us-east-1\/hg38\/annotation_intervals\/hmers_7_and_higher.bed":"etag:762476a901c297a8c5471c86619cf6e1",
+            "s3:\/\/genomics-pipeline-concordanz-us-east-1\/deepvariant\/model\/germline\/v1.3\/model.ckpt-890000.dyn_1500.onnx":"etag:9bd6e07347697f59571615ca0143d42f",
+            "s3:\/\/genomics-pipeline-concordanz-us-east-1\/deepvariant\/model\/germline\/v1.3\/model.ckpt-890000.dyn_1500.onnx.serialized.a10g":"etag:125173712f501c7cf475f671e2913aff",
+            "s3:\/\/genomics-pipeline-concordanz-us-east-1\/hg38\/annotation_intervals\/mappability.0.bed":"etag:576a81340c312e94db420b18fd8a3c26",
+            "s3:\/\/genomics-pipeline-concordanz-us-east-1\/hg38\/UG-High-Confidence-Regions\/v2.1.2\/ug_hcr.bed":"etag:8b24246bd304d0283d2746d883d75030",
+            "337532070941.dkr.ecr.us-east-1.amazonaws.com\/bcftools:1.19":"sha256:c45e6412bf2d0b1c4275117167e9400a42e0daa248e53cf9e1a3a73cba2bf7ea",
+            "s3:\/\/genomics-pipeline-concordanz-us-east-1\/filtering_models\/hapmap2.1_wgs.v0.6.2.blacklist.bed":"etag:485b5f25aac24dafa8eb96d8b97032d3-68",
+            "337532070941.dkr.ecr.us-east-1.amazonaws.com\/make_examples:2.2.3.1":"sha256:2820efded4fdbeeebea786bda400bf05f9579a3d30232aab7d1843b5969277bd",
+            "s3:\/\/gen-pipe-shared-337532070941-us-east-1\/tests-inputs\/006919\/006919-UGAv3-49-CAGCCTCAGCGTGAT-4x.cram.crai":"etag:3b22d3519853170eda4fee3bd130d3f5",
+            "s3:\/\/broad-references\/hg38\/v0\/Homo_sapiens_assembly38.dbsnp138.vcf.idx":"etag:99cd797fc31a85b852d70d25973f60e3-2",
+            "s3:\/\/broad-references\/hg38\/v0\/Homo_sapiens_assembly38.fasta":"etag:e307d81c605fb91b7720a08f00276842-388",
+            "s3:\/\/genomics-pipeline-concordanz-us-east-1\/hg38\/annotation_intervals\/exome.twist.bed":"etag:d47f56964ad286b709c459a606be2f93",
+            "s3:\/\/broad-references\/hg38\/v0\/wgs_calling_regions.hg38.interval_list":"etag:1790be6605825971526fff7cb3232764"
+        },
+        "roleArn":"arn:aws:iam::380827583499:role\/UltimagenOmics-role",
+        "startTime":"2024-10-20T05:37:57.985Z",
+        "startedBy":"arn:aws:sts::380827583499:assumed-role\/UltimagenOmicsDeploymentTest-role\/i-0f05c49b5b2792434",
+        "status":"COMPLETED",
+        "stopTime":"2024-10-20T07:02:53Z",
+        "storageType":"STATIC",
+        "uuid":"90c95432-34ac-9bbf-1e8a-3b6387044c59",
+        "workflow":"arn:aws:omics:us-east-1:380827583499:workflow\/5326885"
+    }
+
