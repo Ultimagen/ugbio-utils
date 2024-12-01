@@ -11,16 +11,10 @@ import xgboost as xgb
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.model_selection import cross_val_score
 from ugbio_core.logger import logger
+from ugbio_core.vcfbed import vcftools
 
-# import ugbio_featuremap.featuremap_xgb_prediction as featuremap_xgb_prediction
+from ugbio_featuremap import featuremap_xgb_prediction
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
-
-sys.path.append("/data/Runs/proj/VariantCalling/ugvc/vcfbed")
-import vcftools
-
-# import ugvc.vcfbed.vcftools as vcftools  #move to ugbio_core
-sys.path.append("/data/Runs/proj/ugbio-utils/src/featuremap/ugbio_featuremap")
-import featuremap_xgb_prediction
 
 added_agg_features = featuremap_xgb_prediction.added_agg_features
 ppm_added_agg_features = featuremap_xgb_prediction.ppm_added_agg_features
@@ -58,6 +52,7 @@ def XGBoost_train(X_train, y_train):  # noqa: N802, N803
         learning_rate=0.1,
         max_depth=3,
         random_state=42,
+        enable_categorical=True,
     )
     # Fit the model
     xgb_clf_es.fit(X_train, y_train, verbose=True)
@@ -104,7 +99,6 @@ def variants_classification_vs_probability(xgb_clf_es, X_test, y_test, out_figur
 
 
 def cross_validation(xgb_clf_es, X, y, cv=5, cv_training_diff_cutoff=0.1):  # noqa: N802, N803
-    # Perform 5-fold cross-validation
     cv_scores = cross_val_score(xgb_clf_es, X, y, cv=cv)
 
     logger.debug(f"Cross-validation scores: {cv_scores}")
@@ -168,8 +162,7 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "-is_ppm",
         "--is_ppmSeq",
-        type=bool,
-        required=True,
+        action="store_true",
         help="""Wether the input featuremap_pileup is ppmeSeq""",
     )
     parser.add_argument(
@@ -265,8 +258,10 @@ def run(argv):  # noqa: C901,PLR0912,PLR0915
     )
 
     featuremap_xgb_prediction.set_categorial_columns(X)
-    [X_train, X_test, y_train, y_test] = split_data_every_2nd_variant(X, y)  # noqa: N806
+    for col in X.select_dtypes(include="object").columns:
+        X[col] = X[col].astype("category")
 
+    [X_train, X_test, y_train, y_test] = split_data_every_2nd_variant(X, y)  # noqa: N806
     xgb_clf_es = XGBoost_train(X_train, y_train)
     y_pred_es = XGBoost_test(xgb_clf_es, X_test)
 
