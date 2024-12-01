@@ -213,7 +213,7 @@ def predict_record_with_xgb(record_dict_for_xgb, xgb_model):
 
     X = xgb_df[features]  # noqa: N806
     set_categorial_columns(X)
-    X = X.fillna(0)  # noqa: N806
+    X = X.fillna(0).infer_objects(copy=False)  # noqa: N806
 
     # predict record
     probabilities = xgb_clf_es.predict_proba(X)
