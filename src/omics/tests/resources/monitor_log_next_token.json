@@ -1,0 +1,11 @@
+{
+    "events": [
+        {
+            "message": "MONITORING, [Sun Mar 24 21:35:30 UTC 2024], %CPU: 52.10, %Memory: 21.00, IO_rKb/s: 41.00, IO_wKb/s: 367.00, %IOWait: 0.00"
+        },
+        {
+            "message": "MONITORING, [Sun Mar 24 21:35:40 UTC 2024], %CPU: 50.00, %Memory: 20.00, IO_rKb/s: 40.00, IO_wKb/s: 360.00, %IOWait: 0.00"
+        }
+    ],
+    "nextToken": "test_token"
+}

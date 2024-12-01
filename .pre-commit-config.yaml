@@ -7,11 +7,12 @@ repos:
     rev: v4.0.1
     hooks:
       - id: trailing-whitespace
-        exclude: ^src/.*/tests/resources/.*$ # Exclude .devcontainer folder to keep the comments in the json files
+        exclude: ^src/.*/tests/resources/.*$ # Exclude test resources so they won't change
       - id: end-of-file-fixer
+        exclude: ^src/.*/tests/resources/.*$
       - id: check-yaml
       - id: check-json
-        exclude: ^\.devcontainer/|^src/.*/tests/resources/.*$ # Exclude .devcontainer folder to keep the comments in the json files
+        exclude: ^\.devcontainer/|^src/.*/tests/resources/.*$ # Exclude .devcontainer folder to keep the comments in the json files, exclude test resources
       - id: check-added-large-files
 
   - repo: https://github.com/astral-sh/ruff-pre-commit

@@ -1,0 +1,453 @@
+{
+    "fileDeletionStatus": "Succeeded",
+    "workflowName": "EfficientDV",
+    "workflowProcessingEvents": [
+        {
+            "cromwellId": "cromid-39820d4",
+            "description": "PickedUp",
+            "timestamp": "2024-03-17T13:16:34.652Z",
+            "cromwellVersion": "85-f34251c"
+        },
+        {
+            "cromwellId": "cromid-39820d4",
+            "description": "Finished",
+            "timestamp": "2024-03-18T08:40:55.659Z",
+            "cromwellVersion": "85-f34251c"
+        }
+    ],
+    "actualWorkflowLanguageVersion": "1.0",
+    "calls": {
+        "EfficientDV.task2": [
+            {
+                "preemptible": true,
+                "stdout": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-UGMakeExamples/shard-0/stdout",
+                "commandLine": "set -xeo pipefail\n\nbash /cromwell_root/concordanz/cromwell/monitoring_script_2.0.1.sh",
+                "shardIndex": 0,
+                "jes": {
+                    "endpointUrl": "https://lifesciences.googleapis.com/",
+                    "machineType": "custom-2-4096",
+                    "googleProject": "ultima-data-307918",
+                    "executionBucket": "gs://cromwell-backend-ultima-data-307918/cromwell-execution",
+                    "zone": "us-central1-c",
+                    "instanceName": "google-pipelines-worker-304f35e455b9c9b768d4bcc494af9a92"
+                },
+                "runtimeAttributes": {
+                    "preemptible": "2",
+                    "failOnStderr": "false",
+                    "bootDiskSizeGb": "10",
+                    "disks": "local-disk 65 HDD",
+                    "continueOnReturnCode": "0",
+                    "docker": "us-central1-docker.pkg.dev/ganymede-331016/ultimagen/make_examples:edv_2.0.1_28338fe8",
+                    "maxRetries": "1",
+                    "cpu": "2",
+                    "cpuMin": "1",
+                    "memoryMin": "2 GB",
+                    "memory": "4 GB",
+                    "noAddress": "false",
+                    "zones": "us-central1-a,us-central1-b,us-central1-c,us-central1-f"
+                },
+                "callCaching": {
+                    "allowResultReuse": false,
+                    "effectiveCallCachingMode": "CallCachingOff"
+                },
+                "inputs": {
+                    "monitoring_script": "gs://concordanz/cromwell/monitoring_script_2.0.1.sh"
+                },
+                "backendLabels": {
+                    "wdl-task-name": "ugmakeexamples",
+                    "cromwell-workflow-id": "cromwell-cf25e3d3-d847-4665-a137-2815ecafd580",
+                    "run-id": "cromwell-inbal-parallel-full-1"
+                },
+                "labels": {
+                    "wdl-task-name": "UGMakeExamples",
+                    "cromwell-workflow-id": "cromwell-cf25e3d3-d847-4665-a137-2815ecafd580"
+                },
+                "backend": "PAPIv2",
+                "end": "2024-03-17T14:37:31.330Z",
+                "retryableFailure": true,
+                "executionStatus": "RetryableFailure",
+                "backendStatus": "Preempted",
+                "compressedDockerSize": 1758879130,
+                "failures": [
+                    {
+                        "message": "Task EfficientDV.UGMakeExamples:0:1 failed. The job was stopped before the command finished. PAPI error code 14. Task cf25e3d3-d847-4665-a137-2815ecafd580:UGMakeExamples was preempted for the 1st time. The call will be restarted with another preemptible VM (max preemptible attempts number is 2). Error code Status{code=UNAVAILABLE, description=null, cause=null}.Execution failed: worker was terminated",
+                        "causedBy": []
+                    }
+                ],
+                "jobId": "projects/55428976747/locations/us-central1/operations/2824206905451432604",
+                "stderr": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-UGMakeExamples/shard-0/stderr",
+                "callRoot": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-UGMakeExamples/shard-0",
+                "attempt": 1,
+                "executionEvents": [
+                    {
+                        "startTime": "2024-03-17T13:25:13.247Z",
+                        "description": "WaitingForValueStore",
+                        "endTime": "2024-03-17T13:25:13.247Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T14:37:31.322Z",
+                        "description": "UpdatingJobStore",
+                        "endTime": "2024-03-17T14:37:31.330Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T13:25:19.585Z",
+                        "description": "RunningJob",
+                        "endTime": "2024-03-17T14:37:31.322Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T13:23:33.094Z",
+                        "description": "RequestingExecutionToken",
+                        "endTime": "2024-03-17T13:25:13.247Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T13:23:33.094Z",
+                        "description": "Pending",
+                        "endTime": "2024-03-17T13:23:33.094Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T13:25:13.247Z",
+                        "description": "PreparingJob",
+                        "endTime": "2024-03-17T13:25:19.585Z"
+                    }
+                ],
+                "backendLogs": {
+                    "log": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-UGMakeExamples/shard-0/UGMakeExamples-0.log"
+                },
+                "start": "2024-03-17T13:23:33.094Z"
+            },
+            {
+                "preemptible": true,
+                "stdout": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-UGMakeExamples/shard-0/attempt-2/stdout",
+                "commandLine": "set -xeo pipefail\n\nbash /cromwell_root/concordanz/cromwell/monitoring_script_2.0.1.sh ",
+                "shardIndex": 0,
+                "jes": {
+                    "endpointUrl": "https://lifesciences.googleapis.com/",
+                    "machineType": "custom-2-4096",
+                    "googleProject": "ultima-data-307918",
+                    "executionBucket": "gs://cromwell-backend-ultima-data-307918/cromwell-execution",
+                    "zone": "us-central1-f",
+                    "instanceName": "google-pipelines-worker-1b7f2a7d97ab7b743f56468ebe222a40"
+                },
+                "runtimeAttributes": {
+                    "preemptible": "2",
+                    "failOnStderr": "false",
+                    "bootDiskSizeGb": "10",
+                    "disks": "local-disk 65 HDD",
+                    "continueOnReturnCode": "0",
+                    "docker": "us-central1-docker.pkg.dev/ganymede-331016/ultimagen/make_examples:edv_2.0.1_28338fe8",
+                    "maxRetries": "1",
+                    "cpu": "2",
+                    "cpuMin": "1",
+                    "memoryMin": "2 GB",
+                    "memory": "4 GB",
+                    "noAddress": "false",
+                    "zones": "us-central1-a,us-central1-b,us-central1-c,us-central1-f"
+                },
+                "callCaching": {
+                    "allowResultReuse": false,
+                    "effectiveCallCachingMode": "CallCachingOff"
+                },
+                "inputs": {
+                    "monitoring_script": "gs://concordanz/cromwell/monitoring_script_2.0.1.sh"
+                },
+                "backendLabels": {
+                    "wdl-task-name": "ugmakeexamples",
+                    "cromwell-workflow-id": "cromwell-cf25e3d3-d847-4665-a137-2815ecafd580",
+                    "run-id": "cromwell-inbal-parallel-full-1"
+                },
+                "labels": {
+                    "wdl-task-name": "UGMakeExamples",
+                    "cromwell-workflow-id": "cromwell-cf25e3d3-d847-4665-a137-2815ecafd580"
+                },
+                "backend": "PAPIv2",
+                "end": "2024-03-17T15:10:11.330Z",
+                "retryableFailure": true,
+                "executionStatus": "RetryableFailure",
+                "backendStatus": "Preempted",
+                "compressedDockerSize": 1758879130,
+                "failures": [
+                    {
+                        "message": "Task EfficientDV.UGMakeExamples:0:2 failed. The job was stopped before the command finished. PAPI error code 14. Task cf25e3d3-d847-4665-a137-2815ecafd580:UGMakeExamples was preempted for the 2nd time. The maximum number of preemptible attempts (2) has been reached. The call will be restarted with a non-preemptible VM. Error code Status{code=UNAVAILABLE, description=null, cause=null}.Execution failed: worker was terminated)",
+                        "causedBy": []
+                    }
+                ],
+                "jobId": "projects/55428976747/locations/us-central1/operations/12578513453957288809",
+                "stderr": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-UGMakeExamples/shard-0/attempt-2/stderr",
+                "callRoot": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-UGMakeExamples/shard-0/attempt-2",
+                "attempt": 2,
+                "executionEvents": [
+                    {
+                        "startTime": "2024-03-17T14:37:32.131Z",
+                        "description": "Pending",
+                        "endTime": "2024-03-17T14:37:32.131Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T14:37:33.246Z",
+                        "description": "WaitingForValueStore",
+                        "endTime": "2024-03-17T14:37:33.247Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T14:37:34.590Z",
+                        "description": "RunningJob",
+                        "endTime": "2024-03-17T15:10:11.322Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T14:37:32.131Z",
+                        "description": "RequestingExecutionToken",
+                        "endTime": "2024-03-17T14:37:33.246Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T15:10:11.322Z",
+                        "description": "UpdatingJobStore",
+                        "endTime": "2024-03-17T15:10:11.330Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T14:37:33.247Z",
+                        "description": "PreparingJob",
+                        "endTime": "2024-03-17T14:37:34.590Z"
+                    }
+                ],
+                "backendLogs": {
+                    "log": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-UGMakeExamples/shard-0/attempt-2/UGMakeExamples-0.log"
+                },
+                "start": "2024-03-17T14:37:32.131Z"
+            },
+            {
+                "preemptible": false,
+                "executionStatus": "Done",
+                "stdout": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-UGMakeExamples/shard-0/attempt-3/stdout",
+                "commandLine": "set -xeo pipefail\n\nbash /cromwell_root/concordanz/cromwell/monitoring_script_2.0.1.sh | tee monitoring.log >&2 &\n\nif [[ \"gcp\" != \"aws\" ]]; then\n  gatk --java-options \"-Xms2G\" PrintReads \\\n      -I gs://bioinfo-resources-ud/run-data/Hartwig/MRD/balanced_strand_crams/COLO829T_031688-CL7733_1-Z0126.cram \\\n      -O /dev/stdout \\\n      -L /cromwell_root/cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-ScatterIntervalList/glob-cb4648beeaff920acb03de7603c06f98/001scattered.interval_list \\\n      -R /cromwell_root/gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta | \\\n  samtools view -C -@ 2 --reference /cromwell_root/gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta -o input.cram\n  samtools index input.cram -@ 2\n  input=input.cram\n  input_index=input.cram.crai\n\n  background=''\n  background_index=''\n  if [[ \"true\" == \"true\" ]]; then\n    gatk --java-options \"-Xms2G\" PrintReads \\\n        -I  gs://bioinfo-resources-ud/run-data/Hartwig/MRD/balanced_strand_crams/COLO829N_031688-CL7733_2-Z0025.cram \\\n        -O /dev/stdout \\\n        -L /cromwell_root/cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-ScatterIntervalList/glob-cb4648beeaff920acb03de7603c06f98/001scattered.interval_list \\\n        -R /cromwell_root/gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta | \\\n    samtools view -C -@ 2 --reference /cromwell_root/gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta -o background.cram\n    samtools index background.cram -@ 2\n    background=background.cram\n    background_index=background.cram.crai\n  fi\n\nelse\n  input=gs://bioinfo-resources-ud/run-data/Hartwig/MRD/balanced_strand_crams/COLO829T_031688-CL7733_1-Z0126.cram\n  input_index=/cromwell_root/bioinfo-resources-ud/run-data/Hartwig/MRD/balanced_strand_crams/COLO829T_031688-CL7733_1-Z0126.cram.crai\n  background=gs://bioinfo-resources-ud/run-data/Hartwig/MRD/balanced_strand_crams/COLO829N_031688-CL7733_2-Z0025.cram\n  background_index=/cromwell_root/bioinfo-resources-ud/run-data/Hartwig/MRD/balanced_strand_crams/COLO829N_031688-CL7733_2-Z0025.cram.crai\nfi\n\necho 'Input files are:'\necho $input\necho $input_index\necho $background\necho $background_index\n\ninput_string=\"$input;$background\"\ninput_index_string=\"$input_index;$background_index\"\n\necho 'Input strings are:'\necho $input_string\necho $input_index_string\n\n# Create empty files such that outputs will still be valid even if cloud is aws\ntouch input.cram\ntouch input.cram.crai\ntouch background.cram\ntouch background.cram.crai\n\n# Process interval file\ncat /cromwell_root/cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-ScatterIntervalList/glob-cb4648beeaff920acb03de7603c06f98/001scattered.interval_list | grep -v @ | awk 'BEGIN{OFS=\"\\t\"}{print $1,$2-1,$3}' >> interval.bed\n\n# split the intreval file into parts for parallel processing (number of parts as number of cpus)\necho 'splitting interval into 2 parts'\ntotal_lines=$(wc -l < interval.bed)\nlines_per_file=$((total_lines / 2))\nremainder=$((total_lines % 2))\nif [ $remainder -ne 0 ]; then\n  ((lines_per_file++))\nfi\n\nsplit -l $lines_per_file -d --additional-suffix .bed interval.bed interval_ #should create files: intreval_00.bed, interval_01.bed, etc.\n\necho 'Splited interval.bed content:'\nfor file in interval_*.bed; do\n  echo \"$file content:\"\n  cat \"$file\"\n  echo -n \"interval size is: \"\n  awk '{sum += $3 - $2} END {print sum}' \"$file\"\ndone\n\n# parallel processing: run the tool in different process, each on a different interval part\npids=()\nfor interval_part in interval_*.bed; do\n  part_number=$(echo \"$interval_part\" | grep -o -E '[0-9]+') #extract the part number from the file name\n  tool \\\n    --input \"$input_string\" \\\n    --cram-index \"$input_index_string\" \\\n    --output \"001scattered_$part_number\" \\\n    --reference /cromwell_root/gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta \\\n    --bed \"$interval_part\" \\\n    --min-base-quality 5 \\\n    --min-mapq 5 \\\n    --cgp-min-count-snps 2 \\\n    --cgp-min-count-hmer-indels 2 \\\n    --cgp-min-count-non-hmer-indels 2 \\\n    --cgp-min-fraction-snps 0.03 \\\n    --cgp-min-fraction-hmer-indels 0.03 \\\n    --cgp-min-fraction-non-hmer-indels 0.03 \\\n    --cgp-min-mapping-quality 5 \\\n    --max-reads-per-region 1500 \\\n    --assembly-min-base-quality 0 \\\n    --gzip-output \\\n    --no-realigned-sam \\\n    --interval-nreads 10000 \\\n    --somatic \\\n     \\\n    --optimal-coverages \"100;40\" \\\n    --cap-at-optimal-coverage  \\\n     \\\n    --cycle-examples-min 100000 \\\n    --add-ins-size-channel --add-proxy-support-to-non-hmer-insertion --pragmatic &\n    #--progress for debug\n    \n  # Save the PID of the process\n  pids+=($!)\ndone\n\n# Wait for the process running the tool to finish (don't wait for the process running the monitor log)\nfor pid in ${pids[*]}; do\n  wait \"$pid\"\ndone\n\nif [ false == \"true\" ]\n# TODO: concat the output 001scattered_hap_out.sam files into one (using samtools)\nthen\n  ls -lh 001scattered_hap_out.sam\n  samtools sort -@ 2 001scattered_hap_out.sam | samtools view -C -@ 2 --reference /cromwell_root/gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta -o 001scattered_realign.cram\n  samtools index 001scattered_realign.cram -@ 2\n  ls -lh 001scattered_realign.cram\nfi\ntouch \"001scattered_realign.cram\"\ntouch \"001scattered_realign.cram.crai\"\n\ntouch \"001scattered.gvcf.tfrecord.gz\"",
+                "shardIndex": 0,
+                "runtimeAttributes": {
+                    "preemptible": "2",
+                    "failOnStderr": "false",
+                    "bootDiskSizeGb": "10",
+                    "disks": "local-disk 65 HDD",
+                    "continueOnReturnCode": "0",
+                    "docker": "us-central1-docker.pkg.dev/ganymede-331016/ultimagen/make_examples:edv_2.0.1_28338fe8",
+                    "maxRetries": "1",
+                    "cpu": "2",
+                    "cpuMin": "1",
+                    "memoryMin": "2 GB",
+                    "memory": "4 GB",
+                    "noAddress": "false",
+                    "zones": "us-central1-a,us-central1-b,us-central1-c,us-central1-f"
+                },
+                "callCaching": {
+                    "allowResultReuse": false,
+                    "effectiveCallCachingMode": "CallCachingOff"
+                },
+                "inputs": {
+                    "monitoring_script": "gs://concordanz/cromwell/monitoring_script_2.0.1.sh"
+                },
+                "labels": {
+                    "wdl-task-name": "UGMakeExamples",
+                    "cromwell-workflow-id": "cromwell-cf25e3d3-d847-4665-a137-2815ecafd580"
+                },
+                "jobId": "projects/55428976747/locations/us-central1/operations/5421909831667195963",
+                "backend": "PAPIv2",
+                "end": "2024-03-17T21:55:16.332Z",
+                "attempt": 3,
+                "backendStatus": "Success",
+                "compressedDockerSize": 1758879130,
+                "jes": {
+                    "endpointUrl": "https://lifesciences.googleapis.com/",
+                    "machineType": "custom-2-4096",
+                    "googleProject": "ultima-data-307918",
+                    "executionBucket": "gs://cromwell-backend-ultima-data-307918/cromwell-execution",
+                    "zone": "us-central1-b",
+                    "instanceName": "google-pipelines-worker-386b16b72fbb4510984fc728b44cf540"
+                },
+                "outputs": {
+                    "monitoring_log": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-UGMakeExamples/shard-0/attempt-3/monitoring.log"
+                },
+                "backendLabels": {
+                    "wdl-task-name": "ugmakeexamples",
+                    "cromwell-workflow-id": "cromwell-cf25e3d3-d847-4665-a137-2815ecafd580",
+                    "run-id": "cromwell-inbal-parallel-full-1"
+                },
+                "returnCode": 0,
+                "stderr": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-UGMakeExamples/shard-0/attempt-3/stderr",
+                "callRoot": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-UGMakeExamples/shard-0/attempt-3",
+                "backendLogs": {
+                    "log": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-UGMakeExamples/shard-0/attempt-3/UGMakeExamples-0.log"
+                },
+                "start": "2024-03-17T15:10:11.551Z"
+            }
+        ],
+        "EfficientDV.task1": [
+            {
+                "preemptible": false,
+                "executionStatus": "Done",
+                "stdout": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-CallingIntervalsLength/stdout",
+                "backendStatus": "Success",
+                "commandLine": "set -e\nbash /cromwell_root/concordanz/cromwell/monitoring_script_2.0.1.sh ",
+                "shardIndex": -1,
+                "runtimeAttributes": {
+                    "preemptible": "0",
+                    "failOnStderr": "false",
+                    "bootDiskSizeGb": "10",
+                    "disks": "local-disk 4 HDD",
+                    "continueOnReturnCode": "0",
+                    "docker": "ubuntu:focal",
+                    "maxRetries": "1",
+                    "cpu": "1",
+                    "cpuMin": "1",
+                    "memoryMin": "2 GB",
+                    "memory": "1 GB",
+                    "noAddress": "true",
+                    "zones": "us-central1-a,us-central1-b,us-central1-c,us-central1-f"
+                },
+                "callCaching": {
+                    "allowResultReuse": false,
+                    "effectiveCallCachingMode": "CallCachingOff"
+                },
+                "inputs": {
+                    "monitoring_script": "gs://concordanz/cromwell/monitoring_script_2.0.1.sh"
+                },
+                "labels": {
+                    "wdl-call-alias": "CallingIntervalsLength",
+                    "cromwell-workflow-id": "cromwell-cf25e3d3-d847-4665-a137-2815ecafd580",
+                    "wdl-task-name": "IntervalListTotalLength"
+                },
+                "jobId": "projects/55428976747/locations/us-central1/operations/888329660326385807",
+                "backend": "PAPIv2",
+                "jes": {
+                    "endpointUrl": "https://lifesciences.googleapis.com/",
+                    "machineType": "custom-1-1024",
+                    "googleProject": "ultima-data-307918",
+                    "executionBucket": "gs://cromwell-backend-ultima-data-307918/cromwell-execution",
+                    "zone": "us-central1-f",
+                    "instanceName": "google-pipelines-worker-3418f4095e684f606fb0000e8d2514d4"
+                },
+                "outputs": {
+                    "monitoring_log": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-CallingIntervalsLength/monitoring.log"
+                },
+                "backendLabels": {
+                    "wdl-task-name": "intervallisttotallength",
+                    "cromwell-workflow-id": "cromwell-cf25e3d3-d847-4665-a137-2815ecafd580",
+                    "wdl-call-alias": "callingintervalslength",
+                    "run-id": "cromwell-inbal-parallel-full-1"
+                },
+                "returnCode": 0,
+                "end": "2024-03-17T13:22:35.332Z",
+                "dockerImageUsed": "ubuntu@sha256:80ef4a44043dec4490506e6cc4289eeda2d106a70148b74b5ae91ee670e9c35d",
+                "stderr": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-CallingIntervalsLength/stderr",
+                "callRoot": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-CallingIntervalsLength",
+                "attempt": 1,
+                "executionEvents": [
+                    {
+                        "description": "CheckingForMemoryRetry",
+                        "startTime": "2024-03-17T13:21:14.704Z",
+                        "endTime": "2024-03-17T13:21:15.285Z"
+                    },
+                    {
+                        "description": "Pulling \"ubuntu@sha256:80ef4a44043dec4490506e6cc4289eeda2d106a70148b74b5ae91ee670e9c35d\"",
+                        "startTime": "2024-03-17T13:20:28.654Z",
+                        "endTime": "2024-03-17T13:20:31.584Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T13:22:34.749Z",
+                        "description": "UpdatingJobStore",
+                        "endTime": "2024-03-17T13:22:35.332Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T13:19:19.256Z",
+                        "description": "PreparingJob",
+                        "endTime": "2024-03-17T13:19:19.261Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T13:19:40.363Z",
+                        "description": "Worker \"google-pipelines-worker-3418f4095e684f606fb0000e8d2514d4\" assigned in \"us-central1-f\" on a \"custom-1-1024\" machine",
+                        "endTime": "2024-03-17T13:20:11.561Z"
+                    },
+                    {
+                        "description": "UserAction",
+                        "startTime": "2024-03-17T13:21:13.419Z",
+                        "endTime": "2024-03-17T13:21:14.639Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T13:19:28.317Z",
+                        "description": "waiting for quota",
+                        "endTime": "2024-03-17T13:19:40.363Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T13:19:18.087Z",
+                        "description": "Pending",
+                        "endTime": "2024-03-17T13:19:18.087Z"
+                    },
+                    {
+                        "description": "Delocalization",
+                        "startTime": "2024-03-17T13:21:15.285Z",
+                        "endTime": "2024-03-17T13:21:43.361Z"
+                    },
+                    {
+                        "description": "Localization",
+                        "startTime": "2024-03-17T13:20:34.671Z",
+                        "endTime": "2024-03-17T13:21:13.419Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T13:21:43.361Z",
+                        "description": "Worker released",
+                        "endTime": "2024-03-17T13:21:43.361Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T13:19:19.256Z",
+                        "description": "WaitingForValueStore",
+                        "endTime": "2024-03-17T13:19:19.256Z"
+                    },
+                    {
+                        "description": "ContainerSetup",
+                        "startTime": "2024-03-17T13:20:31.584Z",
+                        "endTime": "2024-03-17T13:20:33.393Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T13:19:18.087Z",
+                        "description": "RequestingExecutionToken",
+                        "endTime": "2024-03-17T13:19:19.256Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T13:21:43.361Z",
+                        "description": "Complete in GCE / Cromwell Poll Interval",
+                        "endTime": "2024-03-17T13:22:34.749Z"
+                    },
+                    {
+                        "description": "Background",
+                        "startTime": "2024-03-17T13:20:33.977Z",
+                        "endTime": "2024-03-17T13:20:34.388Z"
+                    },
+                    {
+                        "startTime": "2024-03-17T13:19:19.261Z",
+                        "description": "RunningJob",
+                        "endTime": "2024-03-17T13:19:28.317Z"
+                    },
+                    {
+                        "description": "Pulling \"gcr.io/google.com/cloudsdktool/cloud-sdk:354.0.0-alpine\"",
+                        "startTime": "2024-03-17T13:20:11.561Z",
+                        "endTime": "2024-03-17T13:20:28.654Z"
+                    }
+                ],
+                "backendLogs": {
+                    "log": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/call-CallingIntervalsLength/CallingIntervalsLength.log"
+                },
+                "start": "2024-03-17T13:19:18.087Z"
+            }
+        ]
+    },
+    "outputs": {
+        "EfficientDV.output_gvcf_index": null
+    },
+    "workflowRoot": "gs://cromwell-backend-ultima-data-307918/cromwell-execution/EfficientDV/cf25e3d3-d847-4665-a137-2815ecafd580/",
+    "actualWorkflowLanguage": "WDL",
+    "status": "Succeeded",
+    "end": "2024-03-18T08:40:55.659Z",
+    "start": "2024-03-17T13:16:34.653Z",
+    "id": "cf25e3d3-d847-4665-a137-2815ecafd580",
+    "inputs": {
+        "base_file_name": "031688_COLO829"
+    },
+    "labels": {
+        "cromwell-workflow-id": "cromwell-cf25e3d3-d847-4665-a137-2815ecafd580"
+    },
+    "submission": "2024-03-17T13:16:28.440Z"
+}

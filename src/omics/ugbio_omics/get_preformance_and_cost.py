@@ -139,8 +139,10 @@ def performance(run_id, session=None, output_dir=None, output_prefix="") -> tupl
     # Get run info from omics
     if session:
         omics_client = session.client("omics")
+        logs_client = session.client("logs")
     else:
         omics_client = boto3.client("omics")
+        logs_client = boto3.client("logs")
     run = get_run_info(run_id, client=omics_client)
 
     scattered_tasks = set()
@@ -150,7 +152,7 @@ def performance(run_id, session=None, output_dir=None, output_prefix="") -> tupl
     for task in run["tasks"]:
         print("------------------------------------------")
         print(f"Process monitor log for task {task['name']} (taskId: {task['taskId']})")
-        monitor_log = process_monitor_log(run_id, task, client=session.client("logs"))
+        monitor_log = process_monitor_log(run_id, task, client=logs_client)
         monitor_logs.append(monitor_log)
 
         new_row = pd.DataFrame(
@@ -178,6 +180,13 @@ def performance(run_id, session=None, output_dir=None, output_prefix="") -> tupl
         if "-" in task["name"]:
             scattered_tasks.add(task["name"].split("-")[0])
 
+    # Save performance data
+    output = f"{output_prefix}omics_{run_id}.performance.csv"
+    if output_dir is not None:
+        output = f"{output_dir}/{output}"
+    print(f"Saving performance data to: {output}")
+    total_performance_df.to_csv(output, index=False)
+
     # Process cost and add to the performance data
     print("Add cost per task to performance data")
     run_cost = RunCost(run_id, output_dir=output_dir, output_prefix=output_prefix)
@@ -192,11 +201,7 @@ def performance(run_id, session=None, output_dir=None, output_prefix="") -> tupl
     cost_df["total_storage_cost"] = run_cost.get_storage_cost()
     total_performance_df = total_performance_df.merge(cost_df, on="task", how="left")
 
-    # Save performance data
-    output = f"{output_prefix}omics_{run_id}.performance.csv"
-    if output_dir is not None:
-        output = f"{output_dir}/{output}"
-    print(f"Saving performance data to: {output}")
+    print(f"Updated performance file saved to: {output}")
     total_performance_df.to_csv(output, index=False)
 
     # Save figures to HTML
@@ -281,6 +286,9 @@ def save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir=None,
 
     # Combine all figures into one HTML file
     rows = len(plot_tasks) + len(scattered_tasks)  # Each figure will be in its own row
+    if rows == 0:
+        print("No tasks to plot")
+        return
 
     # regular tasks span over all columns, for the scattered tasks, each coulmn will have a plot
     specs = []
@@ -466,9 +474,10 @@ def save_figures_to_html(monitor_logs, run_id, scattered_tasks, output_dir=None,
 
     # Save the combined figure to an HTML file
     plots_dir = PLOTS_DIR.replace(RUN_ID_PLACEHOLDER, run_id)
-    combined_fig_output = f"{plots_dir}/{output_prefix}omics_{run_id}_performance_plots.html"
     if output_dir is not None:
-        combined_fig_output = f"{output_dir}/{combined_fig_output}"
+        plots_dir = f"{output_dir}/{plots_dir}"
+    os.makedirs(plots_dir, exist_ok=True)
+    combined_fig_output = f"{plots_dir}/{output_prefix}omics_{run_id}_performance_plots.html"
     print(f"Saving performance plots report to: {combined_fig_output}")
     combined_fig.write_html(combined_fig_output)
 
