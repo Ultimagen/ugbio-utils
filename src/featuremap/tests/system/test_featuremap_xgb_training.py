@@ -16,7 +16,7 @@ def load_json(file_path):
         return json.load(f)
 
 
-def test_create_hom_snv_featuremap(tmpdir, resources_dir):
+def test_featuremap_xgb_training(tmpdir, resources_dir):
     fp_vcf = pjoin(resources_dir, "fp.chr19.250-500.vcf.gz")
     tp_vcf = pjoin(resources_dir, "tp.chr19.250-500.vcf.gz")
     out_model = pjoin(tmpdir, "model.json")
