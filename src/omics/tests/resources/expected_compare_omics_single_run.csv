@@ -1,0 +1,4 @@
+task,run_id_1_cost,run_id_1_duration(H),run_id_1_resources,run_id_1_instance
+task1,10,1.0,"{'cpus': 1, 'memory_gib': 14, 'gpus': 0}",omics.c.large
+task2,20,3.0,"{'cpus': 2, 'memory_gib': 36, 'gpus': 0}",omics.c.xlarge
+total,35,,,
