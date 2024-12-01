@@ -117,7 +117,7 @@ def test_monitor_log_initialization():
 
 def test_monitor_log_process_line_general_info():
     monitor_log = MonitorLog()
-    line = "MONITORING, [Tue Feb 13 15:33:19 IST 2024], General Information, CPU: 20, Memory(GiB): 7"
+    line = "MONITORING, [Tue Feb 13 15:33:19 UTC 2024], General Information, CPU: 20, Memory(GiB): 7"
     monitor_log.process_line(line)
     assert monitor_log.total_cpu == 20
     assert monitor_log.total_memory == 7.0
