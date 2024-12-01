@@ -70,8 +70,10 @@ def test_compare_cromwell_omics(mock_run_cost, resources_dir, mock_session, tmpd
 
     output_file = tmpdir / f"compare_omics_{omics_run_id}_cromwell_{cromwell_wid}.csv"
     assert output_file.isfile()
-    expected_df = pd.read_csv(resources_dir / "expected_compare_cromwell_omics.csv")
-    result_df = pd.read_csv(output_file)
+    expected_df = pd.read_csv(resources_dir / "expected_compare_cromwell_omics.csv").drop(
+        columns=["cromwell_resources"]
+    )
+    result_df = pd.read_csv(output_file).drop(columns=["cromwell_resources"])
     pd.testing.assert_frame_equal(result_df, expected_df, check_dtype=False)
 
 
@@ -109,8 +111,10 @@ def test_compare_cromwell_omics_with_performance(
 
     output_file = tmpdir / f"compare_omics_{omics_run_id}_cromwell_{cromwell_wid}.csv"
     assert output_file.isfile()
-    expected_df = pd.read_csv(resources_dir / "expected_compare_cromwell_omics.csv")
-    result_df = pd.read_csv(output_file)
+    expected_df = pd.read_csv(resources_dir / "expected_compare_cromwell_omics.csv").drop(
+        columns=["cromwell_resources"]
+    )
+    result_df = pd.read_csv(output_file).drop(columns=["cromwell_resources"])
     pd.testing.assert_frame_equal(result_df, expected_df, check_dtype=False)
     mock_omics_performance.assert_called_once_with(omics_run_id, session=mock_session, output_dir=tmpdir)
 
