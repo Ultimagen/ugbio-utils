@@ -36,6 +36,7 @@ def test_featuremap_xgb_training(tmpdir, resources_dir):
             "-chr",
             "chr19",
             "-is_ppm",
+            "--split_data_every_2nd_variant",
         ]
     )
 

@@ -9,7 +9,7 @@ import pandas as pd
 import pysam
 import xgboost as xgb
 from sklearn.metrics import accuracy_score, classification_report
-from sklearn.model_selection import cross_val_score
+from sklearn.model_selection import cross_val_score, train_test_split
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed import vcftools
 
@@ -41,6 +41,12 @@ def split_data_every_2nd_variant(X, y):  # noqa: N802, N803
     X_test = X.iloc[1::2]  # Select rows with odd indices  # noqa: N806
     y_train = y.iloc[::2]
     y_test = y.iloc[1::2]
+    return [X_train, X_test, y_train, y_test]
+
+
+def split_data(X, y, test_size=0.25, random_state=42):  # noqa: N802, N803
+    # Split the data into training and testing sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state)  # noqa: N806
     return [X_train, X_test, y_train, y_test]
 
 
@@ -166,6 +172,26 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         help="""Wether the input featuremap_pileup is ppmeSeq""",
     )
     parser.add_argument(
+        "-split_data_every_2nd_variant",
+        "--split_data_every_2nd_variant",
+        action="store_true",
+        help=(
+            "Wether to split the data every 2nd variant (resulting with 50% training and 50% testing). "
+            "Overrides the default split_data function"
+        ),
+    )
+    parser.add_argument(
+        "-test_size",
+        "--test_size",
+        type=float,
+        default=0.25,
+        required=False,
+        help=(
+            "Optional test size fraction for the split_data function. "
+            "Default is 0.25 (25% for testing and 75% for training)"
+        ),
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         type=bool,
@@ -261,7 +287,10 @@ def run(argv):  # noqa: C901,PLR0912,PLR0915
     for col in X.select_dtypes(include="object").columns:
         X[col] = X[col].astype("category")
 
-    [X_train, X_test, y_train, y_test] = split_data_every_2nd_variant(X, y)  # noqa: N806
+    if args_in.split_data_every_2nd_variant:
+        [X_train, X_test, y_train, y_test] = split_data_every_2nd_variant(X, y)  # noqa: N806
+    elif args_in.test_size < 1 and args_in.test_size > 0:
+        [X_train, X_test, y_train, y_test] = split_data(X, y, test_size=args_in.test_size)  # noqa: N806
     xgb_clf_es = XGBoost_train(X_train, y_train)
     y_pred_es = XGBoost_test(xgb_clf_es, X_test)
 
