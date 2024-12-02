@@ -51,10 +51,8 @@ class RunCost:
             s3_client = boto3.client("s3")
 
         # Get bucket name and path for run outputs
-        run = get_run_info(self.run_id, client=omics_client)
-        run_output_uri = run["outputUri"]
-        bucket_name, pipeline = run_output_uri.replace("s3://", "").split("/", 1)
-        path = f"{pipeline}/{self.run_id}/logs"
+        run = get_run_info(self.run_id, client=omics_client, get_tasks=False)
+        bucket_name, path = self.get_logs_key(run)
 
         # Download cost.csv from s3 run outputs
         key = f"{path}/run-{self.run_id}.csv"
@@ -80,6 +78,12 @@ class RunCost:
         # make sure cost and duration are numeric
         for col in [Columns.ESTIMATED_USD_COLUMN.value, Columns.RUNNING_SECONDS.value]:
             self.cost_df[col] = pd.to_numeric(self.cost_df[col], errors="coerce")
+
+    def get_logs_key(self, run):
+        run_output_uri = run["outputUri"]
+        bucket_name, pipeline = run_output_uri.replace("s3://", "").split("/", 1)
+        path = f"{pipeline}/{self.run_id}/logs"
+        return bucket_name, path
 
     def get_total_cost(self) -> float:
         if self.cost_df is None:

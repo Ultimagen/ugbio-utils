@@ -59,7 +59,7 @@ def test_calculate_run_cost(run_cost, mock_get_run_info):
 
         assert "omics_test_run.cost.csv" in run_cost.cost_csv
         assert run_cost.cost_df is not None
-        mock_get_run_info.assert_called_once_with("test_run", client=mock_omics_client)
+        mock_get_run_info.assert_called_once_with("test_run", client=mock_omics_client, get_tasks=False)
         mock_s3_client.download_fileobj.assert_any_call(
             "test-bucket", "test-pipeline/test_run/logs/run-test_run.csv", mock.ANY
         )
