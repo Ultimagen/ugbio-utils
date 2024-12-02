@@ -17,6 +17,7 @@ from sklearn.preprocessing import LabelEncoder
 from ugbio_core.logger import logger
 from ugbio_ppmseq.ppmSeq_consts import HistogramColumnNames
 
+from ugbio_featuremap import featuremap_consensus_utils
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
@@ -75,28 +76,29 @@ columns_for_max_aggregation = [FeatureMapFields.X_QUAL.value, FeatureMapFields.X
 columns_for_fillna = [FeatureMapFields.IS_CYCLE_SKIP.value]
 columns_for_st_et_aggregation = ["st", "et"]
 
-added_agg_features = {}
-added_agg_features["alt_reads"] = ["number of supporting reads for the alternative allele", "Integer"]
-added_agg_features["ref_allele"] = ["reference allele", "String"]
-added_agg_features["alt_allele"] = ["alternative allele", "String"]
-added_agg_features["X_QUAL_mean"] = ["mean value of X_QUAL", "Float"]
-added_agg_features["X_SCORE_mean"] = ["mean value of X_SCORE", "Float"]
-added_agg_features["X_EDIST_mean"] = ["mean value of X_EDIST", "Float"]
-added_agg_features["X_LENGTH_mean"] = ["mean value of X_LENGTH", "Float"]
-added_agg_features["X_MAPQ_mean"] = ["mean value of X_MAPQ", "Float"]
-added_agg_features["X_FC1_mean"] = ["mean value of X_FC1", "Float"]
-added_agg_features["X_FC2_mean"] = ["mean value of X_FC2", "Float"]
-added_agg_features["MAX_SOFTCLIP_LENGTH_mean"] = ["mean value of  MAX_SOFTCLIP_LENGTH", "Float"]
-added_agg_features["X_FLAGS_mean"] = ["mean value of  X_FLAGS", "Float"]
-added_agg_features["ML_QUAL_mean"] = ["mean value of ML_QUAL", "Float"]
-added_agg_features["X_QUAL_max"] = ["max value of X_QUAL", "Float"]
-added_agg_features["X_INDEX_max"] = ["max value of X_INDEX", "Integer"]
-added_agg_features["X_QUAL_min"] = ["min value of X_QUAL", "Float"]
-added_agg_features["X_INDEX_min"] = ["min value of X_INDEX", "Integer"]
-added_agg_features["count_forward"] = ["number of forward reads", "Integer"]
-added_agg_features["count_reverse"] = ["number of reverse reads", "Integer"]
-added_agg_features["count_duplicate"] = ["number of duplicate reads", "Integer"]
-added_agg_features["count_non_duplicate"] = ["number of non-duplicate reads", "Integer"]
+added_agg_features = {
+    "alt_reads": ["number of supporting reads for the alternative allele", "Integer"],
+    "ref_allele": ["reference allele", "String"],
+    "alt_allele": ["alternative allele", "String"],
+    "X_QUAL_mean": ["mean value of X_QUAL", "Float"],
+    "X_SCORE_mean": ["mean value of X_SCORE", "Float"],
+    "X_EDIST_mean": ["mean value of X_EDIST", "Float"],
+    "X_LENGTH_mean": ["mean value of X_LENGTH", "Float"],
+    "X_MAPQ_mean": ["mean value of X_MAPQ", "Float"],
+    "X_FC1_mean": ["mean value of X_FC1", "Float"],
+    "X_FC2_mean": ["mean value of X_FC2", "Float"],
+    "MAX_SOFTCLIP_LENGTH_mean": ["mean value of MAX_SOFTCLIP_LENGTH", "Float"],
+    "X_FLAGS_mean": ["mean value of X_FLAGS", "Float"],
+    "ML_QUAL_mean": ["mean value of ML_QUAL", "Float"],
+    "X_QUAL_max": ["max value of X_QUAL", "Float"],
+    "X_INDEX_max": ["max value of X_INDEX", "Integer"],
+    "X_QUAL_min": ["min value of X_QUAL", "Float"],
+    "X_INDEX_min": ["min value of X_INDEX", "Integer"],
+    "count_forward": ["number of forward reads", "Integer"],
+    "count_reverse": ["number of reverse reads", "Integer"],
+    "count_duplicate": ["number of duplicate reads", "Integer"],
+    "count_non_duplicate": ["number of non-duplicate reads", "Integer"],
+}
 
 ppm_added_agg_features = {}
 ppm_added_agg_features["st_MINUS"] = ["number of st tagged as MINUS", "Integer"]
@@ -123,19 +125,9 @@ def record_manual_aggregation(rec, xgb_model=None):  # noqa: C901
     non_agg_fields_for_xgb_from_rec = ["DP", "VAF"]
     for field in non_agg_fields_for_xgb_from_rec:
         record_dict_for_xgb[field] = rec.samples[0][field]
-    non_agg_fields_for_xgb_from_rec_dict = [
-        FeatureMapFields.READ_COUNT.value,
-        FeatureMapFields.FILTERED_COUNT.value,
-        FeatureMapFields.TRINUC_CONTEXT_WITH_ALT.value,
-        FeatureMapFields.HMER_CONTEXT_REF.value,
-        FeatureMapFields.HMER_CONTEXT_ALT.value,
-        FeatureMapFields.PREV_1.value,
-        FeatureMapFields.PREV_2.value,
-        FeatureMapFields.PREV_3.value,
-        FeatureMapFields.NEXT_1.value,
-        FeatureMapFields.NEXT_2.value,
-        FeatureMapFields.NEXT_3.value,
-    ]  # list per record - take the first value
+    non_agg_fields_for_xgb_from_rec_dict = featuremap_consensus_utils.fields_to_collect_all_options[
+        "fields_to_write_once"
+    ]
     for field in non_agg_fields_for_xgb_from_rec_dict:
         record_dict_for_xgb[field] = record_info_dict[field]
 
