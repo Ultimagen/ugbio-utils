@@ -298,12 +298,18 @@ def run(argv):  # noqa: C901,PLR0912,PLR0915
     elif args_in.test_size < 1 and args_in.test_size > 0:
         [X_train, X_test, y_train, y_test] = split_data(X, y, test_size=args_in.test_size)  # noqa: N806
     xgb_clf_es = XGBoost_train(X_train, y_train)
-    y_pred_es = XGBoost_test(xgb_clf_es, X_test)
 
+    logger.debug("Model evaluation on TEST data:")
+    y_pred_es = XGBoost_test(xgb_clf_es, X_test)
     XGBoost_evaluate_model(xgb_clf_es, y_test, y_pred_es)
 
     out_figure_path = out_file.replace(".json", ".probability_histogram.png")
     variants_classification_vs_probability(xgb_clf_es, X_test, y_test, out_figure_path)
+
+    logger.debug("Model evaluation on TRAIN data")
+    y_pred_es = XGBoost_test(xgb_clf_es, X_train)
+    XGBoost_evaluate_model(xgb_clf_es, y_train, y_pred_es)
+
     cross_validation(xgb_clf_es, X, y)
 
     # save model
