@@ -6,6 +6,8 @@ dependencies = [
     "ugbio_core[vcfbed]",
     "ugbio_ppmseq",
     "seaborn>=0.13.2",
+    "scikit-learn>=1.5.2",
+    "xgboost==2.1.1",
 ]
 description = "Ultima Genomics FeatureMap utils"
 authors = [
@@ -24,6 +26,7 @@ annotate_featuremap = "ugbio_featuremap.annotate_featuremap:main"
 create_hom_snv_featuremap = "ugbio_featuremap.create_hom_snv_featuremap:main"
 featuremap_to_dataframe = "ugbio_featuremap.featuremap_to_dataframe:main"
 pileup_featuremap = "ugbio_featuremap.pileup_featuremap:main"
+add_aggregate_params_and_xgb_score_to_pileup_featuremap = "ugbio_featuremap.featuremap_xgb_prediction:main"
 
 [tool.uv]
 dev-dependencies = [
