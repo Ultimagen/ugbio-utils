@@ -36,7 +36,7 @@ def get_dict_from_dataframe(
     # for pat in patterns:
     idx = df_subset.metric.str.contains(pat)
     df_detail = df_subset.loc[idx, :].copy()
-    df_detail.drop("detail", inplace=True, axis=1)
+    df_detail = df_detail.drop("detail", axis=1)
     temp_dict = df_detail.to_dict("records")
     out_dict[detail_type].append(temp_dict)
 
@@ -57,10 +57,10 @@ def get_dict_from_dataframe(
         idx = df_subset.metric.str.contains(pat)
         if any(idx):
             df_detail = df_subset.loc[idx, :].copy()
-            df_detail.drop("detail", inplace=True, axis=1)
+            df_detail = df_detail.drop("detail", axis=1)
 
             temp_dict = {
-                "keys": list(["metric", "value"]),
+                "keys": ["metric", "value"],
                 "values": [list(x) for x in list(df_detail[cols][["metric", "value"]].itertuples(index=False))],
             }
             out_dict[detail_type].append(temp_dict)
@@ -125,7 +125,7 @@ def get_ctrl_genomes_data(
             if idx.any(axis=None):
                 data_frame_sub = data_frame.loc[idx, :]
                 df_control = data_frame_sub[col].copy()
-                df_control.reset_index(inplace=True, drop=True)
+                df_control = df_control.reset_index(drop=True)
                 df_control.loc[:, "metric"] = prefix + df_control.index.astype(str)
                 df_control.loc[:, "detail"] = temp_genome
                 df_control.columns = col_names
@@ -140,6 +140,7 @@ def get_ctrl_genomes_data(
 def calc_percent_methylation(
     table_type: str,
     data_frame: pd.DataFrame,
+    *,
     rel: bool,
 ):
     """
@@ -177,7 +178,7 @@ def calc_percent_methylation(
         df_pcnt = pd.concat([pd.Series(metric), pd.Series(value)], axis=1)
         df_pcnt.columns = ["metric", "value"]  # include 100 as well
 
-        df_pcnt.dropna(axis=0, inplace=True)
+        df_pcnt = df_pcnt.dropna(axis=0)
         if rel:  # get relative values
             df_pcnt.loc[:, "value"] = df_pcnt["value"] / np.sum(df_pcnt["value"])
 
@@ -193,9 +194,9 @@ def calc_percent_methylation(
             add_row = pd.DataFrame({"metric": "TotalCpGs", "value": np.array(x).size}, index=[0])
             df_pcnt = pd.concat([df_pcnt, add_row], axis=0, ignore_index=True)
         df_distrib = pd.concat((df_distrib, df_pcnt), ignore_index=True)
-        df_distrib.fillna(0, inplace=True)
+        df_distrib = df_distrib.fillna(0)
         df_distrib["detail"] = table_type
-        df_distrib.drop_duplicates(inplace=True)
+        df_distrib = df_distrib.drop_duplicates()
 
         return df_distrib
     return None
@@ -244,7 +245,7 @@ def calc_coverage_methylation(detail_type: str, data_frame: pd.DataFrame, rel: s
             metric += 10
             df_abs_cov = pd.concat([pd.Series(metric), pd.Series(value)], axis=1)
             df_abs_cov.columns = ["metric", "value"]
-            df_abs_cov.dropna(axis=0, inplace=True)
+            df_abs_cov = df_abs_cov.dropna(axis=0)
 
             # add other metrics to absolute values use x from above
             desc = x.describe()
@@ -271,16 +272,16 @@ def calc_coverage_methylation(detail_type: str, data_frame: pd.DataFrame, rel: s
                 df_abs_cov.loc[:, "metric"] = col + "_" + df_abs_cov["metric"].astype(str)
 
             df_distrib = pd.concat((df_distrib, df_abs_cov, df_rel_cov), ignore_index=True)
-            df_distrib.fillna(0, inplace=True)
+            df_distrib = df_distrib.fillna(0)
             df_distrib["detail"] = detail_type
 
-            df_distrib.drop_duplicates(inplace=True)
+            df_distrib = df_distrib.drop_duplicates()
 
         return df_distrib
     return None
 
 
-def calc_TotalCpGs(
+def calc_total_cp_gs(
     key_word: str,
     data_frame: pd.DataFrame,
 ):
@@ -315,9 +316,9 @@ def calc_TotalCpGs(
     desc.loc[:, "metric"] = col + "_" + desc["metric"].astype(str)
     # output
     df_distrib = pd.concat((df_distrib, desc), ignore_index=True)
-    df_distrib.fillna(0, inplace=True)
+    df_distrib = df_distrib.fillna(0)
     df_distrib["detail"] = key_word
-    df_distrib.drop_duplicates(inplace=True)
+    df_distrib = df_distrib.drop_duplicates()
 
     return df_distrib
 

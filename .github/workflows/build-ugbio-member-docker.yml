@@ -16,6 +16,7 @@ on:
           - "vcflite"
           - "hla_la"
           - "omics"
+          - "methylation"
         required: true
         default: ""
 
