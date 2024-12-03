@@ -1,0 +1,43 @@
+[project]
+name = "ugbio_methylation"
+version = "1.3.5-0dev-70"
+description = "Ultima Genomics methylation bioinfo utils"
+authors = [
+    { name = "Gat Krieger", email = "gat.krieger@ultimagen.com" },
+    { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
+]
+dependencies = [
+    "ugbio_core",
+    "seaborn>=0.13.2",
+    "papermill>=2.6.0",
+    "jupyter>=1.1.1",
+    "nbconvert>=7.16.4",
+    "matplotlib>=3.8.4",
+    "ipython>=8.0.0"
+]
+readme = "README.methylation.md"
+requires-python = ">=3.11"
+
+[tool.uv.sources.ugbio_core]
+workspace = true
+
+[project.scripts]
+run_tests = "pytest:main"
+concat_methyldackel_csvs = 'ugbio_methylation.concat_methyldackel_csvs:run'
+process_Mbias = 'ugbio_methylation.process_mbias:run'
+process_mergeContext = 'ugbio_methylation.process_merge_context:run'
+process_mergeContextNoCpG = 'ugbio_methylation.process_merge_context_no_cp_g:run'
+process_perRead = 'ugbio_methylation.process_per_read:run'
+
+[build-system]
+requires = [
+    "setuptools>=61.0",
+]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+dev-dependencies = [
+    "pre-commit>=4.0.1",
+    "pytest>=8.3.3",
+    "ruff>=0.6.9",
+]

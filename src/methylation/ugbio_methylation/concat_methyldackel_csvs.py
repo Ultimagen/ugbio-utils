@@ -99,14 +99,14 @@ def run(argv: list[str] | None = None):
         for table, input_file in input_dict.items():
             if table == "PerRead" and input_file is None:
                 continue
-            df = pd.read_csv(input_file)
-            df_per_position, df_hist, df_desc = split_position_hist_desc(df)
+            input_df = pd.read_csv(input_file)
+            df_per_position, df_hist, df_desc = split_position_hist_desc(input_df)
             tables_to_take = {"per_position": df_per_position, "hist": df_hist, "desc": df_desc}
-            for table_ext, df in tables_to_take.items():
-                df.set_index(["detail", "metric"], inplace=True)
-                df = df.squeeze(axis=1)
+            for table_ext, tbl_df in tables_to_take.items():
+                tbl_df = tbl_df.set_index(["detail", "metric"])  # noqa: PLW2901
+                tbl_df = tbl_df.squeeze(axis=1)  # noqa: PLW2901
                 table_name = f"{table}_{table_ext}"
-                store.put(table_name, df, format="table", data_columns=True)
+                store.put(table_name, tbl_df, format="table", data_columns=True)
 
         keys_to_convert = pd.Series(
             [

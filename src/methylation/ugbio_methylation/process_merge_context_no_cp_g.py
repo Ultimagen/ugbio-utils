@@ -46,7 +46,7 @@ import sys
 
 import pandas as pd
 
-from ugvc.methylation.methyldackel_utils import (
+from ugbio_methylation.methyldackel_utils import (
     calc_coverage_methylation,
     calc_percent_methylation,
     get_dict_from_dataframe,
@@ -81,7 +81,6 @@ def run(argv: list[str] | None = None):
     logger.info("Running..........")
 
     try:
-
         # import input files
         # ====================================================================
         # import CHG file
@@ -120,11 +119,11 @@ def run(argv: list[str] | None = None):
         # create combined dataframe from input files
         # ===================================================================
 
-        df_pcnt_meth_chg = calc_percent_methylation("CHG", df_chg, True)
-        df_pcnt_meth_chh = calc_percent_methylation("CHH", df_chh, True)
+        df_pcnt_meth_chg = calc_percent_methylation("CHG", df_chg, rel=True)
+        df_pcnt_meth_chh = calc_percent_methylation("CHH", df_chh, rel=True)
 
-        df_cov_meth_chg = calc_coverage_methylation("CHG", df_chg, True)
-        df_cov_meth_chh = calc_coverage_methylation("CHH", df_chh, True)
+        df_cov_meth_chg = calc_coverage_methylation("CHG", df_chg, rel=True)
+        df_cov_meth_chh = calc_coverage_methylation("CHH", df_chh, rel=True)
 
         df_csv_output = pd.concat(
             [df_pcnt_meth_chg, df_cov_meth_chg, df_pcnt_meth_chh, df_cov_meth_chh], axis=0, ignore_index=True
