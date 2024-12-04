@@ -39,6 +39,7 @@ RUN git clone https://github.com/dpryan79/MethylDackel.git && \
     make LIBBIGWIG="/usr/local/lib/libBigWig.a" && \
     mkdir -p /app/bin && \
     make install prefix=/app/bin/
+ENV PATH="/app/bin:$PATH"
 
 # Download and install gatk
 ARG GATK_VERSION=4.6.0.0
