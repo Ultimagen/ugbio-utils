@@ -32,6 +32,7 @@ process_perRead = 'ugbio_methylation.process_per_read:run'
 [tool.setuptools.package-data]
 "*" = [
     "**/reports/*",
+    "**/resources/*",
 ]
 
 [build-system]
