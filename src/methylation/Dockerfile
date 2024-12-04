@@ -56,5 +56,4 @@ COPY --from=build $OUT_DIR $OUT_DIR
 
 RUN pip install ${OUT_DIR}/*.whl
 
-# for runnig CI (can be removed if pytest is installed as part of the venv)
-RUN pip install pytest
+COPY --from=build ./src/methylation/ugbio_methylation/reports ./src/methylation/ugbio_methylation/reports

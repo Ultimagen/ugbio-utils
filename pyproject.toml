@@ -24,6 +24,6 @@ members = [
 ]
 exclude = [
     "src/_*",
-    "src/.*",
+    "src/o.*",
     "src/vcflite",
 ]
