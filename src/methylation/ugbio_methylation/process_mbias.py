@@ -37,15 +37,12 @@
 # SOFTWARE.
 
 # ==========================================
-from __future__ import annotations
-
 import argparse
 import json
 import logging
 import sys
 
 import pandas as pd
-
 from ugbio_methylation.methyldackel_utils import calc_distrib_per_strand, get_dict_from_dataframe
 
 
