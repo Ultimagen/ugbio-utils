@@ -1,0 +1,5 @@
+task,cost,run_time (hours),instance
+task1,10,1.0,omics.c.large
+task2,5,3.0,omics.c.xlarge
+storage,5,,
+total,20,,

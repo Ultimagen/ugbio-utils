@@ -32,25 +32,29 @@ def mock_run_ids():
     return ["run_id_1", "run_id_2"]
 
 
-@patch("ugbio_omics.compare_omics_runs.get_omics_performance_cost")
-@patch("ugbio_omics.compare_omics_runs.get_omics_total_duration")
+@patch("ugbio_omics.compare_omics_runs.get_omics_cost_perfromance")
 @patch("ugbio_omics.compare_omics_runs.extract_omics_resources")
 @patch("ugbio_omics.compare_cromwell_omics.RunCost")
 def test_single_run(
     mock_run_cost,
     mock_extract_omics_resources,
-    mock_get_omics_total_duration,
-    mock_get_omics_performance_cost,
+    mock_get_omics_cost_perfromance,
     mock_omics_session,
     mock_output_path,
+    resources_dir,
 ):
     mock_run_cost.return_value = MagicMock()
-    mock_get_omics_performance_cost.return_value = (
-        pd.DataFrame({"task": ["task1", "task2", "total"], "cost_SUM": [10, 20, 35], "run_time (hours)": [1, 3, None]}),
-        5,
+    mock_get_omics_cost_perfromance.return_value = (
+        pd.DataFrame(
+            {
+                "task": ["task1", "task2", "total"],
+                "cost": [10, 20, 35],
+                "run_time (hours)": [1, 3, None],
+                "instance": ["omics.c.large", "omics.c.xlarge", None],
+            }
+        ),
         mock_run_cost,
     )
-    mock_get_omics_total_duration.return_value = 4
     mock_extract_omics_resources.return_value = pd.DataFrame(
         {
             "task": ["task1", "task2"],
@@ -62,12 +66,8 @@ def test_single_run(
     run_id = "run_id_1"
     result_df = single_run(run_id, mock_omics_session, mock_output_path)
 
-    assert not result_df.empty
-    assert "task" in result_df.columns
-    assert f"{run_id}_cost" in result_df.columns
-    assert f"{run_id}_duration" in result_df.columns
-    assert f"{run_id}_resources" in result_df.columns
-    assert f"{run_id}_instance" in result_df.columns
+    expected_df = pd.read_csv(resources_dir / "expected_compare_omics_single_run.csv")
+    pd.testing.assert_frame_equal(result_df, expected_df)
 
 
 @patch("ugbio_omics.compare_omics_runs.single_run")
