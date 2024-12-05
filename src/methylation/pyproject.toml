@@ -7,7 +7,8 @@ authors = [
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
 ]
 dependencies = [
-    "ugbio_core",
+    "pandas[hdf5]>=2.2.2",
+    "numpy>=1.26.4,<2.0.0",
     "seaborn>=0.13.2",
     "papermill>=2.6.0",
     "jupyter>=1.1.1",
@@ -17,9 +18,6 @@ dependencies = [
 ]
 readme = "README.methylation.md"
 requires-python = ">=3.11"
-
-[tool.uv.sources.ugbio_core]
-workspace = true
 
 [project.scripts]
 run_tests = "pytest:main"

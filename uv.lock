@@ -3003,9 +3003,10 @@ dependencies = [
     { name = "jupyter" },
     { name = "matplotlib" },
     { name = "nbconvert" },
+    { name = "numpy" },
+    { name = "pandas", extra = ["hdf5"] },
     { name = "papermill" },
     { name = "seaborn" },
-    { name = "ugbio-core" },
 ]
 
 [package.dev-dependencies]
@@ -3021,9 +3022,10 @@ requires-dist = [
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "matplotlib", specifier = ">=3.8.4" },
     { name = "nbconvert", specifier = ">=7.16.4" },
+    { name = "numpy", specifier = ">=1.26.4,<2.0.0" },
+    { name = "pandas", extras = ["hdf5"], specifier = ">=2.2.2" },
     { name = "papermill", specifier = ">=2.6.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
-    { name = "ugbio-core", editable = "src/core" },
 ]
 
 [package.metadata.requires-dev]
