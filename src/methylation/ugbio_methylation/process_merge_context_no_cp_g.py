@@ -43,6 +43,7 @@ import logging
 import sys
 
 import pandas as pd
+
 from ugbio_methylation.methyldackel_utils import (
     calc_coverage_methylation,
     calc_percent_methylation,
