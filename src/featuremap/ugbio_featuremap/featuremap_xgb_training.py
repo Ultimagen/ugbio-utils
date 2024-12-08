@@ -1,6 +1,7 @@
 import argparse
 import logging
 import sys
+from os.path import join as pjoin
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -145,6 +146,32 @@ def aggregate_vcf(sorted_featuremap: str, output_vcf: str, added_agg_features: d
         vcfin.close()
     pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
     return output_vcf
+
+
+def aggreagte_vcf_from_vcfeval_dir(
+    vcfeval_dir: str,
+    added_agg_features: dict,
+    ppm_added_agg_features: dict,
+    custom_info_fields: list[str],
+    chromosome: str,
+):
+    tp_vcf = pjoin(vcfeval_dir, "tp.vcf.gz")
+    fp_vcf = pjoin(vcfeval_dir, "fp.vcf.gz")
+
+    tp_output_vcf = tp_vcf.replace(".vcf.gz", f".{chromosome}.agg_params.vcf.gz")
+    tp_output_vcf = aggregate_vcf(tp_vcf, tp_output_vcf, added_agg_features, ppm_added_agg_features)
+
+    fp_output_vcf = fp_vcf.replace(".vcf.gz", f".{chromosome}.agg_params.vcf.gz")
+    fp_output_vcf = aggregate_vcf(fp_vcf, fp_output_vcf, added_agg_features, ppm_added_agg_features)
+
+    custom_info_fields.extend(list(added_agg_features))
+    custom_info_fields.extend(list(ppm_added_agg_features))
+    df_fp = vcftools.get_vcf_df(fp_output_vcf, custom_info_fields=custom_info_fields, chromosome=chromosome)
+    df_tp = vcftools.get_vcf_df(tp_output_vcf, custom_info_fields=custom_info_fields, chromosome=chromosome)
+    df_fp["label"] = "negative"
+    df_tp["label"] = "positive"
+    df_all_variants = pd.concat([df_fp, df_tp])
+    return df_all_variants
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:

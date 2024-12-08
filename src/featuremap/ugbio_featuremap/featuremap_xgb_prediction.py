@@ -210,7 +210,7 @@ def predict_record_with_xgb(record_dict_for_xgb, xgb_model):
     # predict record
     probabilities = xgb_clf_es.predict_proba(X)
     df_probabilities = pd.DataFrame(probabilities, columns=["0", "1"])
-    return df_probabilities["1"].to_numpy()[0]
+    return df_probabilities["1"].to_numpy()
 
 
 def pileup_featuremap_with_agg_params_and_xgb_proba(  # noqa: C901
