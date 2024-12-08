@@ -43,6 +43,7 @@ import logging
 import sys
 
 import pandas as pd
+
 from ugbio_methylation.methyldackel_utils import calc_percent_methylation, calc_total_cp_gs, get_dict_from_dataframe
 
 
