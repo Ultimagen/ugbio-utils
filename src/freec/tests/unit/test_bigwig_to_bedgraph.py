@@ -2,7 +2,7 @@ import filecmp
 from pathlib import Path
 
 import pytest
-from ugbio_freec import bigwig_to_bedgraph
+from ugbio_freec.bigwig_to_bedgraph import bigwig_to_bedgraph
 
 
 @pytest.fixture
@@ -10,7 +10,7 @@ def resources_dir():
     return Path(__file__).parent.parent / "resources"
 
 
-def test_featuremap_to_dataframe(tmpdir, resources_dir):
+def test_bigwig_to_bedgraph(tmpdir, resources_dir):
     bigwig_file = resources_dir / "test_input.bigWig"
     bedgraph_expected_file = resources_dir / "texpected_output.bedGraph"
     bedgraph_actual_file = tmpdir / "output.bedGraph"
