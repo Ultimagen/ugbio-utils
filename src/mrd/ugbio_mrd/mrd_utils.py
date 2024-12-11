@@ -11,7 +11,7 @@ from os.path import join as pjoin
 
 import numpy as np
 import pandas as pd
-import pyBigWig as bw  # noqa: N813
+import pyBigWig as pBW
 import pysam
 from tqdm import tqdm
 from ugbio_core.consts import FileExtension
@@ -128,7 +128,7 @@ def _validate_info(x):
 def collect_coverage_per_locus(coverage_bw_files, df_sig):
     try:
         logger.debug("Reading input from bigwig coverage data")
-        f_bw = [bw.open(x) for x in coverage_bw_files]
+        f_bw = [pBW.open(x) for x in coverage_bw_files]
         df_list = []
 
         for chrom, df_tmp in tqdm(df_sig.groupby(level="chrom")):
