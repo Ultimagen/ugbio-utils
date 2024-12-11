@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y \
     wget \
     unzip \
     && apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && apt-get autoclean \
+    rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
 #Install libBigWig & MethylDackel
 WORKDIR /app
