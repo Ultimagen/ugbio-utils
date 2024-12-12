@@ -34,5 +34,9 @@ def bigwig_to_bedgraph(bigwig_file, bedgraph_file):
                         bedgraph.write(f"{chrom}\t{start}\t{end}\t{value}\n")
 
 
+def main():
+    run(sys.argv)
+
+
 if __name__ == "__main__":
     run(sys.argv)

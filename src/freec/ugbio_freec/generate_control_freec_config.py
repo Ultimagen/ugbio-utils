@@ -123,5 +123,9 @@ def parse_args(argv):
     return args
 
 
+def main():
+    run(sys.argv)
+
+
 if __name__ == "__main__":
     run(sys.argv)
