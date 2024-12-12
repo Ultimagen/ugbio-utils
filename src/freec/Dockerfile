@@ -45,7 +45,8 @@ ARG FREEC_BRANCH=master
 RUN mkdir -p /usr/local/bin/src
 WORKDIR /usr/local/bin/src
 RUN git clone --branch ${FREEC_BRANCH} https://github.com/Ultimagen/FREEC .
-RUN ln -s /freec /usr/local/bin/src/FREEC/src/freec
+COPY FREEC/src/freec /
+RUN ln -s /freec /usr/bin/freec
 
 ARG OUT_DIR=/tmp/ugbio
 
