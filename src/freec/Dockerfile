@@ -42,7 +42,7 @@ RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make install
 
 # Download and install bigWigToBedGraph
 RUN wget http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64.v385/bigWigToBedGraph -O /usr/local/bin/bigWigToBedGraph \
-    && chmod +x /usr/local/bin/bigWigToBedGraph \
+    && chmod +x /usr/local/bin/bigWigToBedGraph
 
 ## clone FREEC (branch: master):
 ARG FREEC_BRANCH=master
