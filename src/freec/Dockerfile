@@ -42,6 +42,7 @@ RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make install
 
 ## clone FREEC (branch: master):
 ARG FREEC_BRANCH=master
+RUN echo "hi"
 WORKDIR /usr/local/bin
 RUN git clone --branch ${FREEC_BRANCH} https://github.com/Ultimagen/FREEC
 RUN pwd
