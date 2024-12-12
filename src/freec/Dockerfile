@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ugbio_base
+ARG BASE_IMAGE=337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_base:1.3.0
 FROM python:3.11-bullseye AS build
 
 ARG OUT_DIR=/tmp/ugbio
@@ -42,12 +42,9 @@ RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make install
 
 ## clone FREEC (branch: master):
 ARG FREEC_BRANCH=master
-RUN echo "hi"
 WORKDIR /usr/local/bin
-RUN git clone --branch ${FREEC_BRANCH} https://github.com/Ultimagen/FREEC
-RUN pwd
-RUN ls /usr/local/bin/FREEC/
-COPY /usr/local/bin/FREEC/src/freec /
+RUN git clone --branch ${FREEC_BRANCH} https://github.com/Ultimagen/FREEC FREEC
+RUN cp FREEC/src/freec /freec
 RUN ln -s /freec /usr/bin/freec
 
 ARG OUT_DIR=/tmp/ugbio
