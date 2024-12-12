@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_base:1.3.0
+ARG BASE_IMAGE=ugbio_base
 FROM python:3.11-bullseye AS build
 
 ARG OUT_DIR=/tmp/ugbio
