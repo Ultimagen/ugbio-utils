@@ -20,7 +20,7 @@ text = "Apache-2.0"
 [project.scripts]
 run_tests = "pytest:main"
 generate_controlFREEC_config = "ugbio_freec.generate_control_freec_config:main"
-bigwig_to_bedGraph = "ugbio_freec.bigwig_to_bed_graph:main"
+bigwig_to_bedGraph = "ugbio_freec.bigwig_to_bedgraph:main"
 
 [tool.uv]
 dev-dependencies = [
