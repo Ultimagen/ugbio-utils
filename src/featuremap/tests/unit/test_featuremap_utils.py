@@ -76,7 +76,7 @@ def test_featuremap_to_dataframe(tmpdir, resources_dir):
         featuremap_dataframe,
         featuremap_dataframe_expected,
         expected_columns=[
-            "chrom",
+            "chrom1",
             "pos",
             "ref",
             "alt",
