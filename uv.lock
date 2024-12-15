@@ -2874,7 +2874,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "scikit-learn", specifier = ">=1.5.2" },
+    { name = "scikit-learn", specifier = ">=1.5.2,<1.6.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "ugbio-core", extras = ["vcfbed"], editable = "src/core" },
     { name = "ugbio-ppmseq", editable = "src/ppmseq" },
@@ -2894,7 +2894,6 @@ version = "1.4.1.post0.dev74"
 source = { editable = "src/freec" }
 dependencies = [
     { name = "pandas" },
-    { name = "pybigwig" },
     { name = "pyfaidx" },
 ]
 
@@ -2908,7 +2907,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pandas", specifier = ">=2.2.2" },
-    { name = "pybigwig", specifier = ">=0.3.18" },
     { name = "pyfaidx", specifier = ">=0.8.1" },
 ]
 
@@ -3139,7 +3137,7 @@ dev = [
 requires-dist = [
     { name = "joblib", specifier = ">=1.4.2" },
     { name = "numba", specifier = ">=0.60.0" },
-    { name = "scikit-learn", specifier = ">=1.5.1" },
+    { name = "scikit-learn", specifier = ">=1.5.1,<1.6.0" },
     { name = "scipy", specifier = ">=1.14.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "shap", specifier = ">=0.46.0" },

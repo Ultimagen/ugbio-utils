@@ -8,8 +8,7 @@ authors = [
 ]
 dependencies = [
     "pandas>=2.2.2",
-    "pyfaidx>=0.8.1",
-    "pybigwig>=0.3.18",
+    "pyfaidx>=0.8.1"
 ]
 requires-python = ">=3.11"
 readme = "README.freec.md"
