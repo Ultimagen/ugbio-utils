@@ -14,13 +14,13 @@ def resources_dir():
     return Path(__file__).parent.parent / "resources"
 
 
-def test_sorter_to_h5(tmp_dir, resources_dir):
+def test_sorter_to_h5(tmpdir, resources_dir):
     base_file_name = "026532-Lb_1866-Z0058-CATCTCAGTGCAATGAT"
     output_h5 = sorter_to_h5(
         input_csv_file=resources_dir / f"{base_file_name}.csv",
         input_json_file=resources_dir / f"{base_file_name}.json",
         metric_mapping_file=REPORTS_PATH / "sorter_output_to_aggregated_metrics_h5.csv",
-        output_dir=tmp_dir,
+        output_dir=tmpdir,
     )
     expected_output_file = resources_dir / f"{base_file_name}.aggregated_metrics.h5"
     with pd.HDFStore(output_h5) as hdf:
