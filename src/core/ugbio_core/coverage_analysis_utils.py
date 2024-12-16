@@ -15,7 +15,6 @@ def generate_stats_from_histogram(
     *,
     verbose=True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    logger.info(f"val_count len: {len(val_count)}")
     if isinstance(val_count, str) and os.path.isfile(val_count):
         val_count = pd.read_hdf(val_count, key="histogram")
     if val_count.shape[0] == 0:  # empty input
@@ -34,13 +33,8 @@ def generate_stats_from_histogram(
         ),
         sort=False,
     ).fillna(0)  # extrapolation below 0 yields NaN
-    logger.info(f"df_percentiles len: {len(df_percentiles)}")
     df_percentiles.index = pd.Index(data=[f"Q{int(qq * 100)}" for qq in quantiles] + ["mean"], name="statistic")
-
     genome_median = df_percentiles.loc["Q50"].filter(regex="Genome").to_numpy()[0]
-    # genome_median1 = df_percentiles.loc["Q50"].filter(regex="Genome").values  # noqa PD011
-    logger.info(f"genome_median len: {len(genome_median)}")
-    # logger.info(f"genome_median1 len: {len(genome_median1)}")
     selected_percentiles = (
         df_percentiles.loc[[f"Q{q}" for q in (5, 10, 50)]]
         .rename(index={"Q50": "median_coverage"})
