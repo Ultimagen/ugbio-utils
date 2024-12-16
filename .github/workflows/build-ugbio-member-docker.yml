@@ -17,6 +17,7 @@ on:
           - "hla_la"
           - "omics"
           - "methylation"
+          - "freec"
         required: true
         default: ""
 

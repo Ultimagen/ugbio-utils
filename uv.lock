@@ -10,6 +10,7 @@ members = [
     "ugbio-cnv",
     "ugbio-core",
     "ugbio-featuremap",
+    "ugbio-freec",
     "ugbio-hla-la",
     "ugbio-methylation",
     "ugbio-mrd",
@@ -2878,6 +2879,35 @@ requires-dist = [
     { name = "ugbio-core", extras = ["vcfbed"], editable = "src/core" },
     { name = "ugbio-ppmseq", editable = "src/ppmseq" },
     { name = "xgboost", specifier = "==2.1.2" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "ruff", specifier = ">=0.6.9" },
+]
+
+[[package]]
+name = "ugbio-freec"
+version = "1.4.1.post0.dev74"
+source = { editable = "src/freec" }
+dependencies = [
+    { name = "pandas" },
+    { name = "pyfaidx" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "pandas", specifier = ">=2.2.2" },
+    { name = "pyfaidx", specifier = ">=0.8.1" },
 ]
 
 [package.metadata.requires-dev]

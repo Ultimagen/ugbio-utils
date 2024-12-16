@@ -1,7 +1,8 @@
+ARG BASE_IMAGE=ugbio_base
 FROM python:3.11-bullseye AS build
 
 ARG OUT_DIR=/tmp/ugbio
-ARG MODULE_DIR=methylation
+ARG MODULE_DIR=freec
 RUN mkdir -p $OUT_DIR
 
 COPY ./src/ ./src/
@@ -11,35 +12,16 @@ RUN python -m pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
-FROM python:3.11-slim
+FROM $BASE_IMAGE
 
 RUN apt-get update && apt-get install -y \
     openjdk-17-jre-headless `# for gatk` \
-    build-essential `# for make`\
-    zlib1g-dev \
-    libbz2-dev \
-    liblzma-dev \
-    libhts-dev \
     git \
     wget \
     unzip \
+    tabix \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
-
-#Install libBigWig & MethylDackel
-WORKDIR /app
-RUN git clone https://github.com/dpryan79/libBigWig.git && \
-    cd libBigWig && \
-    make && \
-    make install && \
-    cp libBigWig.a /usr/local/lib/
-
-RUN git clone https://github.com/dpryan79/MethylDackel.git && \
-    cd MethylDackel && \
-    make LIBBIGWIG="/usr/local/lib/libBigWig.a" && \
-    mkdir -p /app/bin && \
-    make install prefix=/app/bin/
-ENV PATH="/app/bin:$PATH"
 
 # Download and install gatk
 ARG GATK_VERSION=4.6.0.0
@@ -49,15 +31,32 @@ RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION
     ln -s /opt/gatk/gatk /usr/local/bin/gatk && \
     rm gatk-${GATK_VERSION}.zip
 
+# install samtools
+ARG SAMTOOLS_VERSION=1.9
+WORKDIR /usr/local/bin
+RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2
+RUN tar -xjf /usr/local/bin/samtools-${SAMTOOLS_VERSION}.tar.bz2 -C /usr/local/bin/
+RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && ./configure
+RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make
+RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make install
+
+# Download and install bigWigToBedGraph
+RUN wget http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64.v385/bigWigToBedGraph -O /usr/local/bin/bigWigToBedGraph \
+    && chmod +x /usr/local/bin/bigWigToBedGraph
+
+## clone FREEC (branch: master):
+ARG FREEC_BRANCH=master
+WORKDIR /usr/local/bin
+RUN git clone --branch ${FREEC_BRANCH} https://github.com/Ultimagen/FREEC FREEC
+RUN cp FREEC/src/freec /freec
+RUN ln -s /freec /usr/bin/freec
+
 ARG OUT_DIR=/tmp/ugbio
 
 # Install module
 COPY --from=build $OUT_DIR $OUT_DIR
 
 RUN pip install ${OUT_DIR}/*.whl
-
-COPY --from=build ./src/methylation/ugbio_methylation/reports ./src/methylation/ugbio_methylation/reports
-COPY --from=build ./src/methylation/ugbio_methylation/resources/meth_hg38-chr20_Lambda_pUC19.interval_list /app/interval_list/meth_hg38-chr20_Lambda_pUC19.interval_list
 
 # for runnig CI (can be removed if pytest is installed as part of the venv)
 RUN pip install pytest
