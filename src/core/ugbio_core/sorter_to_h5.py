@@ -19,8 +19,8 @@ METRIC_MAPPING_FILE = BASE_PATH / REPORTS_DIR / "sorter_output_to_aggregated_met
 def sorter_to_h5(
     input_csv_file: str,
     input_json_file: str,
-    metric_mapping_file: str,
     output_dir: str,
+    metric_mapping_file: str = METRIC_MAPPING_FILE,
 ) -> str:
     """
     Aggregate sorter metrics into a h5 file of the format: aggregated_metrics.h5
