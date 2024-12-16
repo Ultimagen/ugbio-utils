@@ -34,6 +34,7 @@ def generate_stats_from_histogram(
         ),
         sort=False,
     ).fillna(0)  # extrapolation below 0 yields NaN
+    logger.info(f"df_percentiles len: {len(df_percentiles)}")
     df_percentiles.index = pd.Index(data=[f"Q{int(qq * 100)}" for qq in quantiles] + ["mean"], name="statistic")
 
     genome_median = df_percentiles.loc["Q50"].filter(regex="Genome").to_numpy()
