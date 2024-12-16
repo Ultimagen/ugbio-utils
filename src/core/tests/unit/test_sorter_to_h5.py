@@ -5,9 +5,6 @@ import pytest
 from pandas.testing import assert_frame_equal
 from ugbio_core.sorter_to_h5 import sorter_to_h5
 
-BASE_PATH = Path(__file__).parent.parent.parent
-REPORTS_PATH = BASE_PATH / "ugbio_core" / "reports"
-
 
 @pytest.fixture
 def resources_dir():
@@ -19,7 +16,6 @@ def test_sorter_to_h5(tmpdir, resources_dir):
     output_h5 = sorter_to_h5(
         input_csv_file=resources_dir / f"{base_file_name}.csv",
         input_json_file=resources_dir / f"{base_file_name}.json",
-        metric_mapping_file=REPORTS_PATH / "sorter_output_to_aggregated_metrics_h5.csv",
         output_dir=tmpdir,
     )
     expected_output_file = resources_dir / f"{base_file_name}.aggregated_metrics.h5"

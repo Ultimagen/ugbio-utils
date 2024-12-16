@@ -5,10 +5,15 @@ import json
 import os
 from collections import defaultdict
 from os.path import join as pjoin
+from pathlib import Path
 
 import pandas as pd
 from ugbio_core.coverage_analysis_utils import generate_stats_from_histogram
 from ugbio_core.sorter_utils import read_sorter_statistics_csv
+
+BASE_PATH = Path(__file__).parent
+REPORTS_DIR = "reports"
+METRIC_MAPPING_FILE = BASE_PATH / REPORTS_DIR / "sorter_output_to_aggregated_metrics_h5.csv"
 
 
 def sorter_to_h5(
@@ -196,7 +201,8 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         "-m",
         "--metric_mapping_file",
         type=str,
-        required=True,
+        required=False,
+        default=METRIC_MAPPING_FILE,
         help="Path to the metric mapping file",
     )
     parser.add_argument(
