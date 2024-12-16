@@ -1,0 +1,35 @@
+[project]
+name = "ugbio_freec"
+version = "1.4.1-0dev-74"
+description = "Ultima Genomics FREEC"
+authors = [
+    { name = "Tammy Biniashvili", email = "tammy.biniashvili@ultimagen.com" },
+    { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
+]
+dependencies = [
+    "pandas>=2.2.2",
+    "pyfaidx>=0.8.1"
+]
+requires-python = ">=3.11"
+readme = "README.freec.md"
+
+[project.license]
+text = "Apache-2.0"
+
+[project.scripts]
+run_tests = "pytest:main"
+generate_controlFREEC_config = "ugbio_freec.generate_control_freec_config:main"
+bigwig_to_bedGraph = "ugbio_freec.bigwig_to_bedgraph:main"
+
+[tool.uv]
+dev-dependencies = [
+    "pre-commit>=4.0.1",
+    "pytest>=8.3.3",
+    "ruff>=0.6.9",
+]
+
+[build-system]
+requires = [
+    "setuptools>=61.0",
+]
+build-backend = "setuptools.build_meta"
