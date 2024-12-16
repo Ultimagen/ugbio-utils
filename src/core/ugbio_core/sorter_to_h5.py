@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from collections import defaultdict
 from os.path import join as pjoin
 from pathlib import Path
@@ -224,3 +225,11 @@ def run(argv: list[str]):
         metric_mapping_file=args_in.metric_mapping_file,
         output_dir=args_in.output_dir,
     )
+
+
+def main():
+    run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()
