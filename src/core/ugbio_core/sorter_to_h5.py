@@ -12,9 +12,9 @@ import pandas as pd
 from ugbio_core.coverage_analysis_utils import generate_stats_from_histogram
 from ugbio_core.sorter_utils import read_sorter_statistics_csv
 
-BASE_PATH = Path(__file__).parent.parent.parent
+BASE_PATH = Path(__file__).parent
 REPORTS_DIR = "reports"
-METRIC_MAPPING_FILE = BASE_PATH / "ugbio_core" / REPORTS_DIR / "sorter_output_to_aggregated_metrics_h5.csv"
+METRIC_MAPPING_FILE = BASE_PATH / REPORTS_DIR / "sorter_output_to_aggregated_metrics_h5.csv"
 
 
 def sorter_to_h5(
