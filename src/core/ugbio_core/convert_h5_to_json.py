@@ -19,7 +19,7 @@ def run(argv):
         type=str,
     )
 
-    args = ap.parse_args(argv)
+    args = ap.parse_args(argv[1:])
     input_h5_filename = args.input_h5
     output_json_filename = args.output_json
     ignored_h5_key_substring = args.ignored_h5_key_substring

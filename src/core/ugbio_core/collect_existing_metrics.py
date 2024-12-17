@@ -25,7 +25,7 @@ def run(argv: list[str]):
     ap.add_argument("--output_h5", help="Aggregated Metrics h5 file", required=False, type=str)
     ap.add_argument("--contamination_stdout", help="Rate of Contamination", required=False, type=str)
 
-    args = ap.parse_args(argv)
+    args = ap.parse_args(argv[1:])
     if args.metric_files is not None:
         for metric_file in args.metric_files:
             if os.path.getsize(metric_file) > 0:
