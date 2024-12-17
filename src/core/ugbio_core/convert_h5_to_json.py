@@ -4,7 +4,7 @@ import sys
 from ugbio_core import h5_utils
 
 
-def run(argv):
+def run(argv: list[str]):
     ap = argparse.ArgumentParser(
         prog="convert_h5_to_json.py",
         description="Convert h5 file to json file (using pandas table serialization) optionally ready for MongoDB",
