@@ -38,7 +38,7 @@ def run(argv: list[str]):
     if args.coverage_h5 is not None:
         cvg_h5_histogram = pd.read_hdf(args.coverage_h5, key="histogram")
         cvg_df = pd.read_hdf(args.coverage_h5, key="stats")
-        cvg_df_unstacked = pd.DataFrame(cvg_df.pivot_table(index=0)).T
+        cvg_df_unstacked = pd.DataFrame(cvg_df.unstack(level=0)).T  # noqa PD010
         cvg_df_unstacked.to_hdf(args.output_h5, key="stats_coverage", mode="a")
         cvg_h5_histogram.to_hdf(args.output_h5, key="histogram_coverage", mode="a")
 
@@ -73,7 +73,7 @@ def add_h5_to_hdf(input_h5_name, output_h5_name, output_report_key_prefix):
             report_h5_pd = pd.read_hdf(input_h5_name, key=report_key)
             report_h5_pd_df = pd.DataFrame(report_h5_pd)
             report_h5_unstacked = pd.DataFrame(
-                report_h5_pd_df.pivot_table(index=list(range(report_h5_pd_df.index.nlevels)))
+                report_h5_pd_df.unstack(level=list(range(report_h5_pd_df.index.nlevels)))  # noqa PD010
             ).T
             report_h5_unstacked.to_hdf(output_h5_name, key=output_report_key_prefix + report_key, mode="a")
 
