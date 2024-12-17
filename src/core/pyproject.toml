@@ -35,6 +35,7 @@ intersect_bed_regions = "ugbio_core.intersect_bed_regions:main"
 sorter_stats_to_mean_coverage = "ugbio_core.sorter_stats_to_mean_coverage:main"
 sorter_to_h5 = "ugbio_core.sorter_to_h5:main"
 convert_h5_to_json = "ugbio_core.convert_h5_to_json:main"
+collect_existing_metrics = "ugbio_core.collect_existing_metrics:main"
 
 [tool.setuptools.package-data]
 "*" = [
