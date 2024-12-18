@@ -1,12 +1,6 @@
 name: "Get ugbio members"
 description: "utilty action to dynamically get the workspaces under ugbio-utils"
 
-#inputs:
-#    keep-internal-dockers:
-#      description: "whether to keep internal dockers that used only for tests"
-#      type: boolean
-#      required: true
-
 outputs:
     members:
       description: "Members list"
@@ -20,12 +14,6 @@ runs:
   - id: list_members
     shell: bash
     run: |
-      # if [ "${{ inputs.keep-internal-dockers }}" = "true" ]; then
-      #    keep_internal="--keep-internal"
-      #else
-      #    keep_internal=''
-      # fi
-      # matrix=$(python3 ${GITHUB_WORKSPACE}/.github/utils/ugbio_members_matrix.py ${keep_internal})
       matrix=$(python3 ${GITHUB_WORKSPACE}/.github/utils/ugbio_members_matrix.py)
       {
         echo 'matrix<<EOF'
