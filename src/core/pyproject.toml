@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_core"
-version = "1.4.1-0dev-74"
+version = "1.4.1-0dev-76"
 requires-python = ">=3.11"
 description = "Ultima Genomics core bioinfo utils"
 authors = [
@@ -33,6 +33,14 @@ run_tests = "pytest:main"
 annotate_contig = "ugbio_core.vcfbed.annotate_contig:main"
 intersect_bed_regions = "ugbio_core.intersect_bed_regions:main"
 sorter_stats_to_mean_coverage = "ugbio_core.sorter_stats_to_mean_coverage:main"
+sorter_to_h5 = "ugbio_core.sorter_to_h5:main"
+convert_h5_to_json = "ugbio_core.convert_h5_to_json:main"
+collect_existing_metrics = "ugbio_core.collect_existing_metrics:main"
+
+[tool.setuptools.package-data]
+"*" = [
+    "**/reports/*",
+]
 
 [build-system]
 requires = [

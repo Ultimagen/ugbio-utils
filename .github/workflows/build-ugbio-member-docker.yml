@@ -7,6 +7,7 @@ on:
       member:
         type: choice
         options:
+          - "core"
           - "cnv"
           - "featuremap"
           - "mrd"

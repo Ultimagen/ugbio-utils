@@ -2775,7 +2775,7 @@ wheels = [
 
 [[package]]
 name = "ugbio-cnv"
-version = "1.4.1.post0.dev74"
+version = "1.4.1.post0.dev76"
 source = { editable = "src/cnv" }
 dependencies = [
     { name = "seaborn" },
@@ -2804,7 +2804,7 @@ dev = [
 
 [[package]]
 name = "ugbio-core"
-version = "1.4.1.post0.dev74"
+version = "1.4.1.post0.dev76"
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -2855,7 +2855,7 @@ dev = [
 
 [[package]]
 name = "ugbio-featuremap"
-version = "1.4.1.post0.dev74"
+version = "1.4.1.post0.dev76"
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "scikit-learn" },
@@ -2919,12 +2919,12 @@ dev = [
 
 [[package]]
 name = "ugbio-hla-la"
-version = "1.4.1.post0.dev74"
+version = "1.4.1.post0.dev76"
 source = { virtual = "src/hla_la" }
 
 [[package]]
 name = "ugbio-methylation"
-version = "1.4.1.post0.dev74"
+version = "1.4.1.post0.dev76"
 source = { editable = "src/methylation" }
 dependencies = [
     { name = "ipython" },
@@ -2965,7 +2965,7 @@ dev = [
 
 [[package]]
 name = "ugbio-mrd"
-version = "1.4.1.post0.dev74"
+version = "1.4.1.post0.dev76"
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["vcfbed"] },
@@ -2996,7 +2996,7 @@ dev = [
 
 [[package]]
 name = "ugbio-omics"
-version = "1.4.1.post0.dev74"
+version = "1.4.1.post0.dev76"
 source = { editable = "src/omics" }
 dependencies = [
     { name = "boto3" },
@@ -3029,7 +3029,7 @@ dev = [
 
 [[package]]
 name = "ugbio-ppmseq"
-version = "1.4.1.post0.dev74"
+version = "1.4.1.post0.dev76"
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3066,7 +3066,7 @@ dev = [
 
 [[package]]
 name = "ugbio-single-cell"
-version = "1.4.1.post0.dev74"
+version = "1.4.1.post0.dev76"
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3111,7 +3111,7 @@ dev = [
 
 [[package]]
 name = "ugbio-srsnv"
-version = "1.4.1.post0.dev74"
+version = "1.4.1.post0.dev76"
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3156,7 +3156,7 @@ dev = [
 
 [[package]]
 name = "ugbio-utils"
-version = "1.4.1.post0.dev74"
+version = "1.4.1.post0.dev76"
 source = { virtual = "." }
 
 [package.dev-dependencies]
