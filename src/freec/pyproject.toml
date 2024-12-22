@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_freec"
-version = "1.4.1-0dev-74"
+version = "1.4.1"
 description = "Ultima Genomics FREEC"
 authors = [
     { name = "Tammy Biniashvili", email = "tammy.biniashvili@ultimagen.com" },
@@ -8,7 +8,7 @@ authors = [
 ]
 dependencies = [
     "pandas>=2.2.2",
-    "pyfaidx>=0.8.1"
+    "pyfaidx>=0.8.1",
 ]
 requires-python = ">=3.11"
 readme = "README.freec.md"
