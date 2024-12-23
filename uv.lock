@@ -7,6 +7,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "ugbio-cloud-utils",
     "ugbio-cnv",
     "ugbio-core",
     "ugbio-featuremap",
@@ -18,6 +19,7 @@ members = [
     "ugbio-ppmseq",
     "ugbio-single-cell",
     "ugbio-srsnv",
+    "ugbio-test",
     "ugbio-utils",
 ]
 
@@ -784,6 +786,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a1/37/c854a8b1b1020cf042db3d67577c6f84cd1e8ff6515e4f5498ae9e444ea5/google_auth-2.35.0.tar.gz", hash = "sha256:f4c64ed4e01e8e8b646ef34c018f8bf3338df0c8e37d8b3bba40e7f574a3278a", size = 267223 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/27/1f/3a72917afcb0d5cd842cbccb81bf7a8a7b45b4c66d8dc4556ccb3b016bfc/google_auth-2.35.0-py2.py3-none-any.whl", hash = "sha256:25df55f327ef021de8be50bad0dfd4a916ad0de96da86cd05661c9297723ad3f", size = 208968 },
+]
+
+[[package]]
+name = "google-cloud"
+version = "0.34.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/47/0e/8bf108fa9e3e036fe37a86598f1315e7b8de90b89012fd65704dc30ac6ad/google-cloud-0.34.0.tar.gz", hash = "sha256:01430187cf56df10a9ba775dd547393185d4b40741db0ea5889301f8e7a9d5d3", size = 2514 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ba/b1/7c54d1950e7808df06642274e677dbcedba57f75307adf2e5ad8d39e5e0e/google_cloud-0.34.0-py2.py3-none-any.whl", hash = "sha256:fb1ab7b0548fe44b3d538041f0a374505b7f990d448a935ea36649c5ccab5acf", size = 1839 },
 ]
 
 [[package]]
@@ -2774,8 +2785,37 @@ wheels = [
 ]
 
 [[package]]
+name = "ugbio-cloud-utils"
+version = "1.4.3.post0"
+source = { editable = "src/cloud_utils" }
+dependencies = [
+    { name = "boto3" },
+    { name = "google-cloud" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "boto3", specifier = ">=1.35.66" },
+    { name = "google-cloud", specifier = ">=0.34.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "ruff", specifier = ">=0.6.9" },
+]
+
+[[package]]
 name = "ugbio-cnv"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/cnv" }
 dependencies = [
     { name = "seaborn" },
@@ -2804,7 +2844,7 @@ dev = [
 
 [[package]]
 name = "ugbio-core"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -2855,7 +2895,7 @@ dev = [
 
 [[package]]
 name = "ugbio-featuremap"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "scikit-learn" },
@@ -2890,7 +2930,7 @@ dev = [
 
 [[package]]
 name = "ugbio-freec"
-version = "1.4.1.post0.dev74"
+version = "1.4.3.post0"
 source = { editable = "src/freec" }
 dependencies = [
     { name = "pandas" },
@@ -2919,12 +2959,12 @@ dev = [
 
 [[package]]
 name = "ugbio-hla-la"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { virtual = "src/hla_la" }
 
 [[package]]
 name = "ugbio-methylation"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/methylation" }
 dependencies = [
     { name = "ipython" },
@@ -2965,7 +3005,7 @@ dev = [
 
 [[package]]
 name = "ugbio-mrd"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["vcfbed"] },
@@ -2996,7 +3036,7 @@ dev = [
 
 [[package]]
 name = "ugbio-omics"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/omics" }
 dependencies = [
     { name = "boto3" },
@@ -3029,7 +3069,7 @@ dev = [
 
 [[package]]
 name = "ugbio-ppmseq"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3066,7 +3106,7 @@ dev = [
 
 [[package]]
 name = "ugbio-single-cell"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3111,7 +3151,7 @@ dev = [
 
 [[package]]
 name = "ugbio-srsnv"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3155,8 +3195,29 @@ dev = [
 ]
 
 [[package]]
-name = "ugbio-utils"
+name = "ugbio-test"
 version = "1.4.1.post0.dev76"
+source = { editable = "src/test" }
+
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "ruff", specifier = ">=0.6.9" },
+]
+
+[[package]]
+name = "ugbio-utils"
+version = "1.4.3.post0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
