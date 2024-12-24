@@ -36,8 +36,8 @@ def test_dir_path_invalid_local():
         dir_path("/invalid/local/path")
 
 
-@patch("cloud_sync.download_from_gs")
-@patch("cloud_sync.download_from_s3")
+@patch("ugbio_sync_utils.cloud_sync.download_from_gs")
+@patch("ugbio_sync_utils.cloud_sync.download_from_s3")
 def test_cloud_sync_gs(mock_download_from_s3, mock_download_from_gs, tmp_path):
     """Test cloud_sync for a Google Cloud Storage path."""
     local_dir = tmp_path / "data"
@@ -58,8 +58,8 @@ def test_cloud_sync_gs(mock_download_from_s3, mock_download_from_gs, tmp_path):
     mock_download_from_s3.assert_not_called()
 
 
-@patch("cloud_sync.download_from_gs")
-@patch("cloud_sync.download_from_s3")
+@patch("ugbio_sync_utils.cloud_sync.download_from_gs")
+@patch("ugbio_sync_utils.cloud_sync.download_from_s3")
 def test_cloud_sync_s3(mock_download_from_s3, mock_download_from_gs, tmp_path):
     """Test cloud_sync for an S3 path."""
     local_dir = tmp_path / "data"
@@ -85,11 +85,11 @@ def test_optional_cloud_sync(tmp_path):
     local_dir = tmp_path / "data"
     os.makedirs(local_dir)
 
-    with patch("cloud_sync.cloud_sync") as mock_cloud_sync:
+    with patch("ugbio_sync_utils.cloud_sync.cloud_sync") as mock_cloud_sync:
         optional_cloud_sync("gs://gs-bucket/obj1", str(local_dir))
         mock_cloud_sync.assert_called_once()
 
-    with patch("cloud_sync.cloud_sync") as mock_cloud_sync:
+    with patch("ugbio_sync_utils.cloud_sync.cloud_sync") as mock_cloud_sync:
         result = optional_cloud_sync(str(local_dir), str(local_dir))
         assert result == str(local_dir)
         mock_cloud_sync.assert_not_called()
