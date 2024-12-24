@@ -21,7 +21,7 @@ def test_dir_path_local():
 def test_dir_path_cloud():
     """Test dir_path with a valid cloud path."""
     assert dir_path("gs://gs-bucket/object", check_cloud_path=True) == "gs://gs-bucket/object"
-    assert dir_path("s3://my-bucket/object", check_cloud_path=True) == "s3://s3-bucket/object"
+    assert dir_path("s3://s3-bucket/object", check_cloud_path=True) == "s3://s3-bucket/object"
 
 
 def test_dir_path_invalid_cloud():
