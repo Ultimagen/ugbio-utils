@@ -9,7 +9,7 @@ authors = [
 readme = "README.cloud.md"
 dependencies = [
     "boto3>=1.35.66",
-    "google-cloud>=0.34.0",
+    "google-cloud-storage>=2.19.0",
 ]
 
 [project.scripts]
