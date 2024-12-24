@@ -2786,7 +2786,7 @@ wheels = [
 
 [[package]]
 name = "ugbio-cloud-utils"
-version = "1.4.3.post0"
+version = "1.4.3.post1"
 source = { editable = "src/cloud_utils" }
 dependencies = [
     { name = "boto3" },
