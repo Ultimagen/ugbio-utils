@@ -1,4 +1,4 @@
-FROM python:3.10-bullseye AS build
+FROM python:3.11-bullseye AS build
 
 ARG OUT_DIR=/tmp/ugbio
 ARG MODULE_DIR=cloud_utils
@@ -11,7 +11,7 @@ RUN python -m pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 ARG OUT_DIR=/tmp/ugbio
 

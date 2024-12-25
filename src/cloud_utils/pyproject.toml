@@ -1,7 +1,7 @@
 [project]
 name = "ugbio_cloud_utils"
-version = "1.4.3-1"
-requires-python = ">=3.10" #required by some of the consumers (e.g.: ugbir: https://github.com/Ultimagen/BioinfoResearch/blob/master/pyproject.toml#L12)
+version = "1.4.3-2"
+requires-python = ">=3.11" #required by some of the consumers (e.g.: ugbir: https://github.com/Ultimagen/BioinfoResearch/blob/master/pyproject.toml#L12)
 description = "Ultima Genomics cloud python utils"
 authors = [
     { name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com" },
