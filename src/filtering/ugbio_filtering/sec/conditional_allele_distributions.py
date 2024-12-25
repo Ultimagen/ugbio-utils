@@ -6,7 +6,6 @@ from ugvc.sec.conditional_allele_distribution import ConditionalAlleleDistributi
 
 
 class ConditionalAlleleDistributions:
-
     """
     chromosome -> position -> conditioned_genotype -> ConditionalAlleleDistribution
     """
@@ -21,7 +20,7 @@ class ConditionalAlleleDistributions:
             for pickle_file in pickle_files:
                 chr_name = pickle_file.split(".")[-2]
                 with open(pickle_file, "rb") as file_handle:
-                    self.distributions_per_chromosome[chr_name] = pickle.load(file_handle)
+                    self.distributions_per_chromosome[chr_name] = pickle.load(file_handle)  # noqa  S301
 
     def add_counts(
         self,

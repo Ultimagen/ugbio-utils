@@ -1,7 +1,6 @@
 import os
 
 import pysam
-
 from ugvc.sec.conditional_allele_distribution import ConditionalAlleleDistribution
 from ugvc.sec.read_counts import ReadCounts
 

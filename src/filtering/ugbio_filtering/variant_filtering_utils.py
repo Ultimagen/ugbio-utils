@@ -8,7 +8,6 @@ import pandas as pd
 import xgboost
 from pandas.core.groupby import DataFrameGroupBy
 from sklearn import compose
-
 from ugvc import logger
 from ugvc.filtering import multiallelics as mu
 from ugvc.filtering import transformers
@@ -56,7 +55,7 @@ def train_model(
         raise ValueError("Unknown gt_type")
     df_train = concordance.loc[select_train]
     if gt_type == GtType.APPROXIMATE:
-        labels_train = df_train["label"].values
+        labels_train = df_train["label"].to_numpy()
     elif gt_type == GtType.EXACT:
         labels_train = transformers.label_encode.transform(list(df_train["label"].values))
     else:
@@ -121,10 +120,10 @@ def _validate_data(data: np.ndarray | pd.Series | pd.DataFrame) -> None:
         test_data = pd.DataFrame(data).to_numpy()
     try:
         if len(test_data.shape) == 1 or test_data.shape[1] <= 1:
-            assert pd.isnull(test_data).sum() == 0, "data vector contains null"
+            assert pd.isna(test_data).sum() == 0, "data vector contains null"  # noqa S101
         else:
             for c_val in range(test_data.shape[1]):
-                assert pd.isnull(test_data[:, c_val]).sum() == 0, f"Data matrix contains null in column {c_val}"
+                assert pd.isna(test_data[:, c_val]).sum() == 0, f"Data matrix contains null in column {c_val}"  # noqa S101
     except AssertionError as af_val:
         logger.error(str(af_val))
         raise af_val
@@ -156,9 +155,10 @@ def add_grouping_column(df: pd.DataFrame, selection_functions: dict, column_name
 
 
 def eval_model(
-    df: pd.DataFrame,
+    df: pd.DataFrame,  # noqa PD901
     model: xgboost.XGBClassifier,
     transformer: compose.ColumnTransformer,
+    *,
     add_testing_group_column: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -186,7 +186,7 @@ def eval_model(
     RuntimeError
         If the group_testing column is not present in the dataframe
     """
-    df = df.copy()
+    df = df.copy()  # noqa PD901
     predictions, probs = apply_model(df, model, transformer)
     phred_pls = -math_utils.phred(probs)
     sorted_pls = np.sort(phred_pls, axis=1)
@@ -197,9 +197,9 @@ def eval_model(
     df["predict"] = predictions
 
     labels = df["label"]
-    if probs.shape[1] == 2:
+    if probs.shape[1] == 2:  # noqa PLR2004
         gt_type = GtType.APPROXIMATE
-    elif probs.shape[1] == 3:
+    elif probs.shape[1] == 3:  # noqa PLR2004
         gt_type = GtType.EXACT
     else:
         raise RuntimeError("Unknown gt_type")
@@ -213,7 +213,7 @@ def eval_model(
         labels = np.array(transformers.label_encode.transform(list(labels))) > 0
         df["predict"] = df["predict"] > 0
 
-    df = df.loc[select]
+    df = df.loc[select]  # noqa PD901
     result = evaluate_results(df, pd.Series(list(labels), index=df.index), add_testing_group_column)
     if isinstance(result, tuple):
         return result
@@ -221,8 +221,9 @@ def eval_model(
 
 
 def evaluate_results(
-    df: pd.DataFrame,
+    df: pd.DataFrame,  # noqa PD901
     labels: pd.Series,
+    *,
     add_testing_group_column: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Evaluate concordance results for the dataframe
@@ -242,11 +243,11 @@ def evaluate_results(
         Returns summary metrics and precision/recall curves in two dataframes
     """
     if add_testing_group_column:
-        df = add_grouping_column(df, get_selection_functions(), "group_testing")
+        df = add_grouping_column(df, get_selection_functions(), "group_testing")  # noqa PD901
         groups = list(get_selection_functions().keys())
 
     else:
-        assert "group_testing" in df.columns, "group_testing column should be given"
+        assert "group_testing" in df.columns, "group_testing column should be given"  # noqa S101
         groups = list(set(df["group_testing"]))
 
     accuracy_df = _init_metrics_df()
@@ -296,6 +297,7 @@ def get_concordance_metrics(
     scores: np.ndarray,
     truth: np.ndarray,
     fn_mask: np.ndarray,
+    *,
     return_metrics: bool = True,
     return_curves: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame] | pd.DataFrame:
@@ -333,9 +335,9 @@ def get_concordance_metrics(
 
     truth_curve = truth > 0
     truth_curve[fn_mask] = True
-    MIN_EXAMPLE_COUNT = 20
+    min_example_count = 20
     precisions_curve, recalls_curve, f1_curve, thresholds_curve = stats_utils.precision_recall_curve(
-        truth, scores, fn_mask, min_class_counts_to_output=MIN_EXAMPLE_COUNT
+        truth, scores, fn_mask, min_class_counts_to_output=min_example_count
     )
     if len(f1_curve) > 0:
         threshold_loc = np.argmax(f1_curve)
@@ -361,15 +363,14 @@ def get_concordance_metrics(
     truth = truth.copy()[~fn_mask]
 
     if len(predictions) == 0:
-
         result = (
             pd.DataFrame(get_empty_recall_precision(), index=[0]),
             pd.DataFrame(pd.Series(get_empty_recall_precision_curve())).T,
         )
     else:
         tp = ((truth > 0) & (predictions > 0) & (truth == predictions)).sum()
-        fp = ((predictions > truth)).sum()
-        fn = fn + ((predictions < truth)).sum()
+        fp = (predictions > truth).sum()
+        fn = fn + (predictions < truth).sum()
         precision = stats_utils.get_precision(fp, tp)
         recall = stats_utils.get_recall(fn, tp)
         f1 = stats_utils.get_f1(precision, recall)
@@ -397,8 +398,8 @@ def get_concordance_metrics(
             index=[0],
         )
         result = metrics_df, curve_df
-    metrics_df, curve_df = result
-    assert return_curves or return_metrics, "At least one of return_curves or return_metrics should be True"
+    metrics_df, curve_df = result  # noqa S101
+    assert return_curves or return_metrics, "At least one of return_curves or return_metrics should be True"  # noqa S101
     if return_curves and return_metrics:
         return metrics_df, curve_df
     if return_curves:
@@ -431,18 +432,18 @@ def get_selection_functions() -> OrderedDict:
     sfs["SNP"] = lambda x: np.logical_not(x.indel)
     sfs["Non-hmer INDEL"] = lambda x: x.indel & (x["x_hil"].apply(lambda y: y[0]) == 0)
     sfs["HMER indel <= 4"] = (
-        lambda x: x.indel & (x["x_hil"].apply(lambda y: y[0]) > 0) & (x["x_hil"].apply(lambda y: y[0]) < 5)
+        lambda x: x.indel & (x["x_hil"].apply(lambda y: y[0]) > 0) & (x["x_hil"].apply(lambda y: y[0]) < 5)  # noqa PLR2004
     )
     sfs["HMER indel (4,8)"] = (
-        lambda x: x.indel & (x["x_hil"].apply(lambda y: y[0]) >= 5) & (x["x_hil"].apply(lambda y: y[0]) < 8)
+        lambda x: x.indel & (x["x_hil"].apply(lambda y: y[0]) >= 5) & (x["x_hil"].apply(lambda y: y[0]) < 8)  # noqa PLR2004
     )
     sfs["HMER indel [8,10]"] = (
-        lambda x: x.indel & (x["x_hil"].apply(lambda y: y[0]) >= 8) & (x["x_hil"].apply(lambda y: y[0]) <= 10)
+        lambda x: x.indel & (x["x_hil"].apply(lambda y: y[0]) >= 8) & (x["x_hil"].apply(lambda y: y[0]) <= 10)  # noqa PLR2004
     )
     sfs["HMER indel 11,12"] = (
-        lambda x: x.indel & (x["x_hil"].apply(lambda y: y[0]) >= 11) & (x["x_hil"].apply(lambda y: y[0]) <= 12)
+        lambda x: x.indel & (x["x_hil"].apply(lambda y: y[0]) >= 11) & (x["x_hil"].apply(lambda y: y[0]) <= 12)  # noqa PLR2004
     )
-    sfs["HMER indel > 12"] = lambda x: x.indel & (x["x_hil"].apply(lambda y: y[0]) > 12)
+    sfs["HMER indel > 12"] = lambda x: x.indel & (x["x_hil"].apply(lambda y: y[0]) > 12)  # noqa PLR2004
     return sfs
 
 
@@ -450,16 +451,16 @@ class VariantSelectionFunctions(Enum):
     """Collecton of variant selection functions - all get DF as input and return boolean np.array"""
 
     @staticmethod
-    def ALL(df: pd.DataFrame) -> np.ndarray:
+    def ALL(df: pd.DataFrame) -> np.ndarray:  # noqa N802
         return np.ones(df.shape[0], dtype=bool)
 
     @staticmethod
-    def HMER_INDEL(df: pd.DataFrame) -> np.ndarray:
+    def HMER_INDEL(df: pd.DataFrame) -> np.ndarray:  # noqa N802
         return np.array(df.hmer_indel_length > 0)
 
     @staticmethod
-    def ALL_except_HMER_INDEL_greater_than_or_equal_5(df: pd.DataFrame) -> np.ndarray:
-        return np.array(~((df.hmer_indel_length >= 5)))
+    def ALL_except_HMER_INDEL_greater_than_or_equal_5(df: pd.DataFrame) -> np.ndarray:  # noqa N802
+        return np.array(~(df.hmer_indel_length >= 5))  # noqa PLR2004
 
 
 def combine_multiallelic_spandel(df: pd.DataFrame, df_unsplit: pd.DataFrame, scores: np.ndarray) -> pd.DataFrame:
@@ -486,15 +487,15 @@ def combine_multiallelic_spandel(df: pd.DataFrame, df_unsplit: pd.DataFrame, sco
         df_unsplit with ml_lik column added representing the merged likelihoods
     """
 
-    multiallelics = df[~pd.isnull(df["multiallelic_group"])].groupby("multiallelic_group")
-    multiallelic_scores = scores[~pd.isnull(df["multiallelic_group"]), :]
+    multiallelics = df[~pd.isna(df["multiallelic_group"])].groupby("multiallelic_group")
+    multiallelic_scores = scores[~pd.isna(df["multiallelic_group"]), :]
     multiallelic_scores = pd.Series(
-        [list(x) for x in multiallelic_scores], index=df[~pd.isnull(df["multiallelic_group"])].index
+        [list(x) for x in multiallelic_scores], index=df[~pd.isna(df["multiallelic_group"])].index
     )
     df_unsplit = merge_and_assign_pls(df_unsplit, multiallelics, multiallelic_scores)
-    spandels = df[~pd.isnull(df["spanning_deletion"])].groupby(["chrom", "pos"])
-    spandel_scores = scores[~pd.isnull(df["spanning_deletion"]), :]
-    spandel_scores = pd.Series([list(x) for x in spandel_scores], index=df[~pd.isnull(df["spanning_deletion"])].index)
+    spandels = df[~pd.isna(df["spanning_deletion"])].groupby(["chrom", "pos"])
+    spandel_scores = scores[~pd.isna(df["spanning_deletion"]), :]
+    spandel_scores = pd.Series([list(x) for x in spandel_scores], index=df[~pd.isna(df["spanning_deletion"])].index)
     df_unsplit = merge_and_assign_pls(df_unsplit, spandels, spandel_scores)
     return df_unsplit
 
@@ -544,7 +545,7 @@ def merge_and_assign_pls(
         if rg.shape[0] == 1:
             pls = split_scores[grouped_split_df.groups[g][0]]
         else:
-            orig_alleles = original_df.at[k, "alleles"]
+            orig_alleles = original_df.at[k, "alleles"]  # noqa PD008
             n_alleles = len(orig_alleles)
             n_pls = n_alleles * (n_alleles + 1) / 2
             pls = np.zeros(int(n_pls))

@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 from sklearn import compose, impute, preprocessing
 from sklearn.pipeline import make_pipeline
-
 from ugvc.filtering.tprep_constants import VcfType
 
 
@@ -23,14 +22,14 @@ def tuple_break_second(x):
     """Returns the second element in the tuple"""
     if isinstance(x, tuple) and len(x) > 1:
         return x[1]
-    return 0 if (x is None or (isinstance(x, tuple) and len(x) < 2) or np.isnan(x)) else x
+    return 0 if (x is None or (isinstance(x, tuple) and len(x) < 2) or np.isnan(x)) else x  # noqa PLR2004
 
 
 def tuple_break_third(x):
     """Returns the third element in the tuple"""
     if isinstance(x, tuple) and len(x) > 1:
         return x[2]
-    return 0 if (x is None or (isinstance(x, tuple) and len(x) < 2) or np.isnan(x)) else x
+    return 0 if (x is None or (isinstance(x, tuple) and len(x) < 2) or np.isnan(x)) else x  # noqa PLR2004
 
 
 def motif_encode_left(x):
@@ -109,7 +108,7 @@ def get_needed_features(vtype: VcfType = VcfType.SINGLE_SAMPLE, custom_annotatio
     return features
 
 
-def modify_features_based_on_vcf_type(
+def modify_features_based_on_vcf_type(  # noqa C901
     vtype: VcfType = VcfType.SINGLE_SAMPLE, custom_annotations: list | None = None
 ) -> tuple[list, list, str]:
     """Modify training features based on the type of the vcf

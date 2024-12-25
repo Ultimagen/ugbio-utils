@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pysam import VariantRecord
-
 from ugvc.sec.allele_counter import count_alleles_in_gvcf
 from ugvc.sec.conditional_allele_distribution import ConditionalAlleleDistribution
 from ugvc.sec.extrapolate_allele_counts import extrapolate_allele_counts

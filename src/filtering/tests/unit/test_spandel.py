@@ -1,12 +1,12 @@
 import pathlib
 import pickle
-from test import get_resource_dir
 
 import pandas as pd
 import pyfaidx
 import pysam
-
 import ugvc.filtering.spandel as spandel
+
+from test import get_resource_dir
 
 
 def test_extract_allele_subset_from_multiallelic_spanning_deletion():
@@ -44,12 +44,12 @@ def test_split_multiallelic_variants_with_spandel():
 
     results = [
         spandel.split_multiallelic_variants_with_spandel(
-            input.iloc[1],
-            input.iloc[0],
+            inp.iloc[1],
+            inp.iloc[0],
             vcf_header,
             reference["chr21"],
         )
-        for input in inputs
+        for inp in inputs
     ]
 
     assert len(results) == len(expected_results)

@@ -1,10 +1,10 @@
 import os.path
 import pathlib
-from test import get_resource_dir
 
 import pandas as pd
-
 import ugvc.filtering.training_prep as tprep
+
+from test import get_resource_dir
 
 
 class TestTrainingPrep:
@@ -69,5 +69,5 @@ class TestTrainingPrep:
         assert len(vc) == 2
         assert vc[1] == 8715
         assert vc[0] == 2003
-        df = pd.read_hdf(str(pathlib.Path(tmpdir, "output.h5")), key="chr1")
-        assert "lcr" in df.columns
+        test_df = pd.read_hdf(str(pathlib.Path(tmpdir, "output.h5")), key="chr1")
+        assert "lcr" in test_df.columns

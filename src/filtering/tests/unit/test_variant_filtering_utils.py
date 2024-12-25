@@ -1,13 +1,13 @@
 import pickle
 from os.path import join as pjoin
-from test import get_resource_dir
 
 import numpy as np
 import pandas as pd
 import pytest
-
 import ugvc.filtering.blacklist
 from ugvc.filtering import variant_filtering_utils
+
+from test import get_resource_dir
 
 inputs_dir = get_resource_dir(__file__)
 
@@ -48,9 +48,9 @@ def test_read_blacklist():
 
 
 def test_apply_blacklist():
-    df = pd.read_hdf(pjoin(inputs_dir, "test.df.h5"), key="variants")
+    test_df = pd.read_hdf(pjoin(inputs_dir, "test.df.h5"), key="variants")
     blacklist = pickle.load(open(pjoin(inputs_dir, "blacklist.test.pkl"), "rb"))
-    blacklists_applied = [x.apply(df) for x in blacklist]
+    blacklists_applied = [x.apply(test_df) for x in blacklist]
     vcs = [x.value_counts() for x in blacklists_applied]
     assert (
         vcs[0]["PASS"] == 6597 and vcs[0]["ILLUMINA_FP"] == 6 and vcs[1]["PASS"] == 6477 and vcs[1]["COHORT_FP"] == 126
@@ -60,17 +60,17 @@ def test_apply_blacklist():
 def test_validate_data():
     test1 = np.array([[0, 1], [1, 2]])
     variant_filtering_utils._validate_data(test1)
-    test2 = np.array([[0, 1], [1, np.NaN]])
+    test2 = np.array([[0, 1], [1, np.nan]])
     with pytest.raises(AssertionError):
         variant_filtering_utils._validate_data(test2)
     test1 = pd.DataFrame([[0, 1], [1, 2]])
     variant_filtering_utils._validate_data(test1)
-    test2 = pd.DataFrame([[0, 1], [1, np.NaN]])
+    test2 = pd.DataFrame([[0, 1], [1, np.nan]])
     with pytest.raises(AssertionError):
         variant_filtering_utils._validate_data(test2)
     test1 = pd.Series([0, 1])
     variant_filtering_utils._validate_data(test1)
-    test2 = pd.Series([1, np.NaN])
+    test2 = pd.Series([1, np.nan])
     with pytest.raises(AssertionError):
         variant_filtering_utils._validate_data(test2)
 

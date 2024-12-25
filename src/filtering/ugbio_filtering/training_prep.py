@@ -8,7 +8,6 @@ import pandas as pd
 import pyfaidx
 import pysam
 import tqdm.auto as tqdm
-
 import ugvc.comparison.vcf_pipeline_utils as vpu
 import ugvc.filtering.multiallelics as mu
 import ugvc.filtering.spandel as sp
@@ -64,7 +63,7 @@ def calculate_labeled_vcf(
         "Counts of 'CALL' tag of the variants that were in the vcfeval output but "
         f"did not match to call_vcf:\n {counts_call}"
     )
-    vcfeval_miss = (pd.isnull(joint_df["call"]) & (pd.isnull(joint_df["base"]))).sum()
+    vcfeval_miss = (pd.isna(joint_df["call"]) & (pd.isna(joint_df["base"]))).sum()
     logger.info(f"Number of records in call_vcf that did not exist in vcfeval_vcf: {vcfeval_miss}")
     return joint_df
 
@@ -90,7 +89,7 @@ def calculate_labels(labeled_df: pd.DataFrame) -> pd.Series:
     nans = (
         (labeled_df["call"] == "OUT")
         | (labeled_df["call"] == "IGN")
-        | (pd.isnull(labeled_df["call"]))
+        | (pd.isna(labeled_df["call"]))
         | (labeled_df["call"] == "HARD")
     )
     result_gt1[nans] = IGNORE
@@ -115,9 +114,9 @@ def calculate_labels(labeled_df: pd.DataFrame) -> pd.Series:
 
         # this is to fix the cases where gt genotype is (None,1) or (None,) or something else
         fp_ca_df["gt_vcfeval"].where(
-            fp_ca_df["gt_vcfeval"].apply(lambda x: None not in x and len(x) == 2),
+            fp_ca_df["gt_vcfeval"].apply(lambda x: None not in x and len(x) == 2),  # noqa PLR2004
             pd.Series([(0, 0)] * len(fp_ca_df["gt_vcfeval"]), index=fp_ca_df.index),
-            inplace=True,
+            inplace=True,  # noqa PD002
         )
 
         alleles_used_vcfeval = fp_ca_df.apply(
@@ -148,6 +147,7 @@ def prepare_ground_truth(
     chromosome: list | None = None,
     test_split: str | None = None,
     custom_info_fields: list[str] | None = None,
+    *,
     ignore_genotype: bool = False,
 ) -> None:
     """Generates a training set dataframe from callset and the ground truth VCF. The following steps are peformed:
@@ -217,7 +217,7 @@ def prepare_ground_truth(
             labeled_df.to_hdf(output_h5, key=chrom, mode="a")
 
 
-def process_multiallelic_spandel(df: pd.DataFrame, reference: str, chromosome: str, vcf: str) -> pd.DataFrame:
+def process_multiallelic_spandel(df: pd.DataFrame, reference: str, chromosome: str, vcf: str) -> pd.DataFrame:  # noqa PD901
     """Process multiallelic variants and spanning deletions
 
     Parameters
@@ -238,7 +238,7 @@ def process_multiallelic_spandel(df: pd.DataFrame, reference: str, chromosome: s
         Spanning deletion variants replaced
         The corresponding row of the dataframe is marked by "multiallelic_group column"
     """
-    df = df.copy()
+    df = df.copy()  # noqa PD901
     column_dtypes = df.dtypes
     overlaps = mu.select_overlapping_variants(df)
     combined_overlaps = sum(overlaps, [])
@@ -277,7 +277,7 @@ def process_multiallelic_spandel(df: pd.DataFrame, reference: str, chromosome: s
     else:
         mug = multiallelic_groups.reset_index()
     idx_multi_spandels = df.index[combined_overlaps]
-    df.drop(idx_multi_spandels, axis=0, inplace=True)
+    df = df.drop(idx_multi_spandels, axis=0)  # noqa PD901
     return pd.concat((df, mug)).astype(column_dtypes)
 
 
@@ -302,9 +302,9 @@ def _split_multiallelic_if_necessary(
     pd.DataFrame
         Dataframe of split variant
     """
-    assert multiallelic_variant.shape[0] == 1, "Should be a single row"
-    alleles = multiallelic_variant["alleles"].values[0]
-    if len(alleles) == 2:
+    assert multiallelic_variant.shape[0] == 1, "Should be a single row"  # noqa S101
+    alleles = multiallelic_variant["alleles"].to_numpy()[0]
+    if len(alleles) == 2:  # noqa PLR2004
         return multiallelic_variant
     return mu.split_multiallelic_variants(multiallelic_variant.iloc[0], call_vcf_header, ref)
 
@@ -350,23 +350,23 @@ def label_with_approximate_gt(
     for chromosome in tqdm.tqdm(chromosomes_to_read):
         if custom_info_fields is None:
             custom_info_fields = []
-        df = vcftools.get_vcf_df(vcf, chromosome=chromosome, custom_info_fields=custom_info_fields)
-        if df.shape[0] == 0:
+        vcf_df = vcftools.get_vcf_df(vcf, chromosome=chromosome, custom_info_fields=custom_info_fields)
+        if vcf_df.shape[0] == 0:
             logger.warning(f"Skipping chromosome {chromosome}: empty")
             continue
-        df = df.merge(blacklist_df, left_index=True, right_index=True, how="left")
-        df["bl"].fillna(False, inplace=True)
+        vcf_df = vcf_df.merge(blacklist_df, left_index=True, right_index=True, how="left")  # noqa FBT003
+        vcf_df = vcf_df["bl"].fillna()
         classify_clm = "label"
 
-        df[classify_clm] = -1
-        df.loc[df["bl"], classify_clm] = 0
-        df.loc[~(df["id"].isna()), classify_clm] = 1
-        df = df[df[classify_clm] != -1]
+        vcf_df[classify_clm] = -1
+        vcf_df.loc[vcf_df["bl"], classify_clm] = 0
+        vcf_df.loc[~(vcf_df["id"].isna()), classify_clm] = 1
+        vcf_df = vcf_df[vcf_df[classify_clm] != -1]
 
-        df.drop("bl", axis=1, inplace=True)
+        vcf_df = vcf_df.drop("bl", axis=1)
         if chromosome == test_split:
             dirname = Path(output_file).parent
             stemname = Path(output_file).stem
-            df.to_hdf((dirname / Path(stemname + "_test.h5")), key=chromosome, mode="a")
+            vcf_df.to_hdf((dirname / Path(stemname + "_test.h5")), key=chromosome, mode="a")
         else:
-            df.to_hdf(output_file, key=chromosome, mode="a")
+            vcf_df.to_hdf(output_file, key=chromosome, mode="a")

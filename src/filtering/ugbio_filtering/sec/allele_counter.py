@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pysam import PileupColumn, VariantRecord
-
 from ugvc.dna.strand_direction import StrandDirection, is_forward_strand
 from ugvc.sec.read_counts import ReadCounts
 from ugvc.vcfbed.pysam_utils import get_filtered_alleles_list
@@ -12,6 +11,7 @@ def count_alleles_in_pileup(pileup_column: PileupColumn) -> dict[str, ReadCounts
     for seq, quality in zip(
         pileup_column.get_query_sequences(bool_add_indels=True),
         pileup_column.get_query_qualities(),
+        strict=False,
     ):
         if seq in {">", "<", "*"}:
             continue

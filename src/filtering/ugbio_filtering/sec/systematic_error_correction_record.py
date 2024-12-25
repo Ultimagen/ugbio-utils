@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.stats import binomtest
-
 from ugvc.dna.strand_direction import StrandDirection
 from ugvc.sec.conditional_allele_distribution import ConditionalAlleleDistribution, get_allele_counts_list
 from ugvc.sec.read_counts import ReadCounts
@@ -24,7 +23,6 @@ class SECRecord:
         observed_alleles: str,
         actual_allele_counts: dict[str, ReadCounts],
     ):
-
         self.chrom = chrom
         self.pos = pos
         self.conditioned_alleles = expected_distribution.conditioned_alleles
@@ -171,13 +169,13 @@ class SECRecord:
             self.observed_alleles,
             f"actual={self.actual_distribution_list}",
             f"expected={self.scaled_expected_distribution_list}",
-            f'OAF={"%.2g" % self.observed_alleles_frequency}',
-            f'L={"%.2g" % self.likelihood}',
-            f'f_pval={"%.2g" % self.forward_enrichment_pval}',
-            f'r_pval={"%.2g" % self.reverse_enrichment_pval}',
-            f'strand_pval={"%.2g" % self.strand_enrichment_pval}',
-            f'alt_pval={"%.2g" % (self.__alt_enrichment_pval if self.__alt_enrichment_pval is not None else 1)}',
-            f'LR={"%.2g" % self.likelihood_ratio}',
+            f'OAF={"%.2g" % self.observed_alleles_frequency}',  # noqa UP031
+            f'L={"%.2g" % self.likelihood}',  # noqa UP031
+            f'f_pval={"%.2g" % self.forward_enrichment_pval}',  # noqa UP031
+            f'r_pval={"%.2g" % self.reverse_enrichment_pval}',  # noqa UP031
+            f'strand_pval={"%.2g" % self.strand_enrichment_pval}',  # noqa UP031
+            f'alt_pval={"%.2g" % (self.__alt_enrichment_pval if self.__alt_enrichment_pval is not None else 1)}',  # noqa UP031
+            f'LR={"%.2g" % self.likelihood_ratio}',  # noqa UP031
             f"actual_allele_counts={self.actual_allele_counts}",
         ]
         return "\t".join(fields)

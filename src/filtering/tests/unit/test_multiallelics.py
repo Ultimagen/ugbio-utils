@@ -1,10 +1,9 @@
-from test import get_resource_dir
-
 import numpy as np
 import pandas as pd
 import pytest
-
 import ugvc.filtering.multiallelics as tprep
+
+from test import get_resource_dir
 
 
 def test_select_overlapping_variants():
@@ -19,8 +18,8 @@ def test_select_overlapping_variants():
         ["A", "AAAT"],
     ]
     positions = [10, 20, 30, 31, 40, 41, 60, 62]
-    df = pd.DataFrame({"alleles": alleles, "pos": positions})
-    result = tprep.select_overlapping_variants(df)
+    test_df = pd.DataFrame({"alleles": alleles, "pos": positions})
+    result = tprep.select_overlapping_variants(test_df)
     assert result == [[1], [4, 5]]
 
 
@@ -159,14 +158,14 @@ def test_get_gt_from_pl_idx(idx, expected):
 def test_cleanup_multiallelics():
     inputs_dir = get_resource_dir(__file__)
 
-    input = pd.DataFrame(pd.read_hdf(f"{inputs_dir}/cleanup_multiallelics_input.h5"))
-    expected = pd.DataFrame(pd.read_hdf(f"{inputs_dir}/cleanup_multiallelics_expected.h5"))
-    result = tprep.cleanup_multiallelics(input)
-    pd.testing.assert_frame_equal(result, expected)
+    input_h5 = pd.DataFrame(pd.read_hdf(f"{inputs_dir}/cleanup_multiallelics_input.h5"))
+    expected_h5 = pd.DataFrame(pd.read_hdf(f"{inputs_dir}/cleanup_multiallelics_expected.h5"))
+    result = tprep.cleanup_multiallelics(input_h5)
+    pd.testing.assert_frame_equal(result, expected_h5)
     result = result.loc[result["label"].apply(lambda x: x in {(0, 1), (1, 1), (0, 0)})]
     assert np.all(result.loc[(result["x_hil"] != (None,)) & (result["x_hil"] != (0,)), "variant_type"] == "h-indel")
     assert np.all(result.loc[result["x_hil"] == (None,), "variant_type"] != "h-indel")
-    select = ~pd.isnull(result["str"])
+    select = ~pd.isna(result["str"])
     result = result.loc[select]
     assert np.all(
         (

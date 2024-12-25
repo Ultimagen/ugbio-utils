@@ -4,7 +4,6 @@ import math
 
 import numpy as np
 from pysam import VariantRecord
-
 from ugvc.sec.conditional_allele_distribution import ConditionalAlleleDistribution
 from ugvc.sec.conditional_allele_distribution_correlator import correlate_sec_records
 from ugvc.sec.evaluate_locus_observation import evaluate_observation
@@ -35,6 +34,7 @@ class SECCaller:
         strand_enrichment_pval_thresh: float,
         lesser_strand_enrichment_pval_thresh: float,
         min_gt_correlation: float,
+        *,
         novel_detection_only: bool,
         replace_to_known_genotype: bool,
     ):
@@ -44,12 +44,11 @@ class SECCaller:
         self.novel_detection_only = novel_detection_only
         self.replace_to_known_genotype = replace_to_known_genotype
 
-    def call(
+    def call(  # noqa C901 PLR0912
         self,
         observed_variant: VariantRecord,
         expected_distribution: ConditionalAlleleDistribution,
     ) -> SECCall:
-
         sample_info = observed_variant.samples[0]
         observed_genotype = get_genotype_indices(sample_info)
         observed_alleles = ",".join(observed_variant.alleles)
@@ -86,7 +85,6 @@ class SECCaller:
             best_sec_record.strand_enrichment_pval < self.stand_enrichment_pval_thresh
             and best_sec_record.lesser_strand_enrichment_pval < self.lesser_strand_enrichment_pval_thresh
         ):
-
             if "*" in get_genotype(sample_info) and 0 in sample_info.allele_indices:
                 return SECCall(
                     SECCallType.REFERENCE,

@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 import pyfaidx
 import pysam
-
 import ugvc.filtering.multiallelics as mu
 from ugvc.filtering.tprep_constants import SPAN_DEL
 from ugvc.vcfbed import vcftools
@@ -95,7 +94,7 @@ def extract_allele_subset_from_multiallelic_spanning_deletion(
         Updated subsetted variant
     """
     pos = multiallelic_variant["pos"]
-    SPECIAL_TREATMENT_COLUMNS = {
+    special_treatment_columns = {
         "sb": lambda x: x,
         "pl": lambda x: mu.select_pl_for_allele_subset(x, alleles),
         "gt": lambda x: mu.encode_gt_for_allele_subset(x, alleles),
@@ -121,10 +120,10 @@ def extract_allele_subset_from_multiallelic_spanning_deletion(
     }
     result = {}
     for col in multiallelic_variant.index:
-        if col in SPECIAL_TREATMENT_COLUMNS:
-            result[col] = SPECIAL_TREATMENT_COLUMNS[col](multiallelic_variant.at[col])
+        if col in special_treatment_columns:
+            result[col] = special_treatment_columns[col](multiallelic_variant.at[col])  # noqa PD008
         elif isinstance(multiallelic_variant[col], tuple) and record_to_nbr_dict[col] != 1:
-            result[col] = vcftools.subsample_to_alleles(multiallelic_variant.at[col], record_to_nbr_dict[col], alleles)
+            result[col] = vcftools.subsample_to_alleles(multiallelic_variant.at[col], record_to_nbr_dict[col], alleles)  # noqa PD008
         else:
-            result[col] = multiallelic_variant.at[col]
+            result[col] = multiallelic_variant.at[col]  # noqa PD008
     return pd.Series(result)

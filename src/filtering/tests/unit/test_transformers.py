@@ -1,6 +1,5 @@
 import pandas as pd
 import pytest
-
 from ugvc.filtering.transformers import (
     allele_encode,
     encode_labels,

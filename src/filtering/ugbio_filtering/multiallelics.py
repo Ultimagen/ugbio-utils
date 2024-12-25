@@ -4,15 +4,14 @@ import numpy as np
 import pandas as pd
 import pyfaidx
 import pysam
-
+import ugbio_core.flow_format.flow_based_read as fbr
 import ugvc.comparison.flow_based_concordance as fbc
 import ugvc.filtering.training_prep as tprep
-import ugbio_core.flow_format.flow_based_read as fbr
 from ugvc.filtering.tprep_constants import SPAN_DEL
 from ugvc.vcfbed import vcftools
 
 
-def select_overlapping_variants(df: pd.DataFrame, require_star_for_spandel: bool = True) -> list:
+def select_overlapping_variants(df: pd.DataFrame, *, require_star_for_spandel: bool = True) -> list:
     """Selects lists of overlapping variants that need to be genotyped together. This
     can be multiallelic variants or variants with spanning deletion
 
@@ -29,7 +28,7 @@ def select_overlapping_variants(df: pd.DataFrame, require_star_for_spandel: bool
         List of list of indices that generate the co-genotyped sets
     """
     # first we generate a list of multiallelic locations
-    multiallelic_locations = set(np.where(df["alleles"].apply(len) > 2)[0])
+    multiallelic_locations = set(np.where(df["alleles"].apply(len) > 2)[0])  # noqa PLR2004
     del_length = df["alleles"].apply(lambda x: max(len(x[0]) - len(y) for y in x))
     current_span = 0
     results = []
@@ -152,7 +151,7 @@ def extract_allele_subset_from_multiallelic(
         Updated subsetted variant
     """
     pos = multiallelic_variant["pos"]
-    SPECIAL_TREATMENT_COLUMNS = {
+    special_treatment_columns = {
         "sb": lambda x: x,
         "pl": lambda x: select_pl_for_allele_subset(x, alleles),
         "gt": lambda x: encode_gt_for_allele_subset(x, alleles),
@@ -170,12 +169,12 @@ def extract_allele_subset_from_multiallelic(
     }
     result = {}
     for col in multiallelic_variant.index:
-        if col in SPECIAL_TREATMENT_COLUMNS:
-            result[col] = SPECIAL_TREATMENT_COLUMNS[col](multiallelic_variant.at[col])
+        if col in special_treatment_columns:
+            result[col] = special_treatment_columns[col](multiallelic_variant.at[col])  # noqa PD008
         elif isinstance(multiallelic_variant[col], tuple) and record_to_nbr_dict[col] != 1:
-            result[col] = vcftools.subsample_to_alleles(multiallelic_variant.at[col], record_to_nbr_dict[col], alleles)
+            result[col] = vcftools.subsample_to_alleles(multiallelic_variant.at[col], record_to_nbr_dict[col], alleles)  # noqa PD008
         else:
-            result[col] = multiallelic_variant.at[col]
+            result[col] = multiallelic_variant.at[col]  # noqa PD008
     return pd.Series(result)
 
 
@@ -226,7 +225,7 @@ def encode_gt_for_allele_subset(original_gt: tuple, allele_idcs: tuple) -> tuple
     RuntimeError
         if neither allele is present in the original genotype
     """
-    assert (
+    assert (  # noqa S101
         allele_idcs[0] in original_gt or allele_idcs[1] in original_gt
     ), "One of the alleles should be present in the GT"
     if allele_idcs[0] in original_gt and allele_idcs[1] not in original_gt:
@@ -279,7 +278,7 @@ def get_gt_from_pl_idx(idx: int) -> tuple:
     return (min_allele - 1, max_allele - 1)
 
 
-def select_pl_for_allele_subset(original_pl: tuple, allele_idcs: tuple, normed: bool = True) -> tuple:
+def select_pl_for_allele_subset(original_pl: tuple, allele_idcs: tuple, *, normed: bool = True) -> tuple:
     """Selects Pl values according to the subsampled allele indices. Normalizes to the minimum
 
     Parameters
@@ -305,7 +304,7 @@ def select_pl_for_allele_subset(original_pl: tuple, allele_idcs: tuple, normed: 
     if normed:
         min_pl = min(pltake)
         return tuple(x - min_pl for x in pltake)
-    if len(pltake) > 3:
+    if len(pltake) > 3:  # noqa PLR2004
         print(original_pl, allele_idcs)
     return tuple(pltake)
 
@@ -502,7 +501,7 @@ def encode_label(original_label: tuple, allele_indices: tuple) -> tuple:
     raise RuntimeError(f"can''t encode {original_label} with {allele_indices} Bug?")
 
 
-def cleanup_multiallelics(df: pd.DataFrame) -> pd.DataFrame:
+def cleanup_multiallelics(training_df: pd.DataFrame) -> pd.DataFrame:
     """Fixes multiallelics in the training set dataframe. Converts non-h-indels that
         are hmer indels into h-indel variant type. Adjust the values of the RU/RPA/STR
     when the variant is convered to hmer indel. (I.e. A -> CCA or CA, CCA is hmer indel of CA).
@@ -510,7 +509,7 @@ def cleanup_multiallelics(df: pd.DataFrame) -> pd.DataFrame:
 
         Parameters
         ----------
-        df : pd.DataFrame
+        training_df : pd.DataFrame
            Input data frame
 
         Returns
@@ -518,20 +517,24 @@ def cleanup_multiallelics(df: pd.DataFrame) -> pd.DataFrame:
         pd.DataFrame
             Output dataframe
     """
-    df = df.copy()
-    select = (df["variant_type"] == "snp") & (df["x_il"].apply(lambda x: x[0] is not None and x[0] != 0))
-    df.loc[select, "variant_type"] = "non-h-indel"
+    training_df = training_df.copy()
+    select = (training_df["variant_type"] == "snp") & (
+        training_df["x_il"].apply(lambda x: x[0] is not None and x[0] != 0)
+    )
+    training_df.loc[select, "variant_type"] = "non-h-indel"
 
-    select = (df["variant_type"] == "non-h-indel") & (df["x_hil"].apply(lambda x: x[0] is not None and x[0] > 0))
-    df.loc[select, "variant_type"] = "h-indel"
+    select = (training_df["variant_type"] == "non-h-indel") & (
+        training_df["x_hil"].apply(lambda x: x[0] is not None and x[0] > 0)
+    )
+    training_df.loc[select, "variant_type"] = "h-indel"
 
-    fix_str = "str" in df.columns  # in some cases we do not have this annotation
+    fix_str = "str" in training_df.columns  # in some cases we do not have this annotation
 
     if fix_str:
-        df.loc[select, "str"] = True
-        df.loc[select, "ru"] = df.loc[select, "x_hin"].apply(lambda x: x[0])
-        ins_or_del = df.loc[select, "x_ic"].apply(lambda x: x[0])
-        df.loc[select, "ins_or_del"] = ins_or_del
+        training_df.loc[select, "str"] = True
+        training_df.loc[select, "ru"] = training_df.loc[select, "x_hin"].apply(lambda x: x[0])
+        ins_or_del = training_df.loc[select, "x_ic"].apply(lambda x: x[0])
+        training_df.loc[select, "ins_or_del"] = ins_or_del
 
         def _alleles_lengths(v: pd.Series) -> tuple:
             inslen = v["x_il"][0]
@@ -541,18 +544,20 @@ def cleanup_multiallelics(df: pd.DataFrame) -> pd.DataFrame:
                 return (v["x_hil"][0], v["x_hil"][0] + inslen)
             return (v["x_hil"][0] + inslen, v["x_hil"][0])
 
-        df.loc[select, "rpa"] = df.loc[select].apply(_alleles_lengths, axis=1)
-        df.drop("ins_or_del", axis=1, inplace=True)
-    select = (df["variant_type"] == "h-indel") & (df["x_hil"].apply(lambda x: x[0] is None or x[0] == 0))
-    df.loc[select, "variant_type"] = "non-h-indel"
-    pls = df["pl"].apply(sorted)
-    df["gq"] = np.clip(pls.apply(lambda x: x[1] - x[0]), 0, 99)
-    mq = df["pl"].apply(lambda x: sorted(x[1:])[0])
-    qref = df["pl"].apply(lambda x: x[0])
-    df["qual"] = np.clip(mq - qref, 0, None)
-    df["qd"] = df["qual"] / df["dp"]
+        training_df.loc[select, "rpa"] = training_df.loc[select].apply(_alleles_lengths, axis=1)
+        training_df = training_df.drop("ins_or_del", axis=1)
+    select = (training_df["variant_type"] == "h-indel") & (
+        training_df["x_hil"].apply(lambda x: x[0] is None or x[0] == 0)
+    )
+    training_df.loc[select, "variant_type"] = "non-h-indel"
+    pls = training_df["pl"].apply(sorted)
+    training_df["gq"] = np.clip(pls.apply(lambda x: x[1] - x[0]), 0, 99)
+    mq = training_df["pl"].apply(lambda x: sorted(x[1:])[0])
+    qref = training_df["pl"].apply(lambda x: x[0])
+    training_df["qual"] = np.clip(mq - qref, 0, None)
+    training_df["qd"] = training_df["qual"] / training_df["dp"]
 
-    return df
+    return training_df
 
 
 def _contain_spandel(alleles: tuple, allele_indices: tuple) -> bool:

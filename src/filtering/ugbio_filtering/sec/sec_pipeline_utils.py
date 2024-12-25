@@ -47,7 +47,7 @@ def extract_relevant_gvcfs(
     os.makedirs(f"{out_dir}/gvcf", exist_ok=True)
     gvcf_outputs = []
 
-    for sample_id, gvcf_file in zip(sample_ids, gvcf_files):
+    for sample_id, gvcf_file in zip(sample_ids, gvcf_files, strict=False):
         relevant_gvcf = f"{out_dir}/gvcf/{sample_id}.g.vcf.gz"
         gvcf_outputs.append(relevant_gvcf)
         vcf_per_chr_files = []
