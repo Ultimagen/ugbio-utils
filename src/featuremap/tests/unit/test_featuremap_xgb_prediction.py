@@ -19,11 +19,11 @@ def test_pileup_featuremap(
     tmpdir,
     resources_dir,
 ):
-    input_featuremap_vcf = pjoin(resources_dir, "featuremap_vcf_for_xgb_prediction.vcf.gz")
+    input_featuremap_vcf = pjoin(resources_dir, "five_giab.ppmSeq.dup_filtered.pileup.chr9.vcf.gz")
     interval_list_file = pjoin(resources_dir, "wgs_calling_regions.hg38.chr9_test.interval_list")
-    model_file = pjoin(resources_dir, "xgb_model.alt_reads_3.half_chr1.json")
+    model_file = pjoin(resources_dir, "ppmSeq_chr1_alt2_8.test_size_0.1.xgb_model.json")
     out_vcf = pjoin(tmpdir, "out_featuremap_with_xgb_proba.vcf.gz")
-    expected_num_variants = 342
+    expected_num_variants = 3702
 
     # call the function with different arguments
     pileup_featuremap_with_agg_params_and_xgb_proba_on_an_interval_list(

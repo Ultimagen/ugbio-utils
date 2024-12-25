@@ -21,6 +21,7 @@ from ugbio_featuremap import featuremap_consensus_utils
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 default_custom_info_fields = [
@@ -80,20 +81,20 @@ added_agg_features = {
     "alt_reads": ["number of supporting reads for the alternative allele", "Integer"],
     "ref_allele": ["reference allele", "String"],
     "alt_allele": ["alternative allele", "String"],
-    "X_QUAL_mean": ["mean value of X_QUAL", "Float"],
-    "X_SCORE_mean": ["mean value of X_SCORE", "Float"],
-    "X_EDIST_mean": ["mean value of X_EDIST", "Float"],
-    "X_LENGTH_mean": ["mean value of X_LENGTH", "Float"],
-    "X_MAPQ_mean": ["mean value of X_MAPQ", "Float"],
-    "X_FC1_mean": ["mean value of X_FC1", "Float"],
-    "X_FC2_mean": ["mean value of X_FC2", "Float"],
-    "MAX_SOFTCLIP_LENGTH_mean": ["mean value of MAX_SOFTCLIP_LENGTH", "Float"],
-    "X_FLAGS_mean": ["mean value of X_FLAGS", "Float"],
-    "ML_QUAL_mean": ["mean value of ML_QUAL", "Float"],
-    "X_QUAL_max": ["max value of X_QUAL", "Float"],
-    "X_INDEX_max": ["max value of X_INDEX", "Integer"],
-    "X_QUAL_min": ["min value of X_QUAL", "Float"],
-    "X_INDEX_min": ["min value of X_INDEX", "Integer"],
+    "x_qual_mean": ["mean value of X_QUAL", "Float"],
+    "x_score_mean": ["mean value of X_SCORE", "Float"],
+    "x_edist_mean": ["mean value of X_EDIST", "Float"],
+    "x_length_mean": ["mean value of X_LENGTH", "Float"],
+    "x_mapq_mean": ["mean value of X_MAPQ", "Float"],
+    "x_fc1_mean": ["mean value of X_FC1", "Float"],
+    "x_fc2_mean": ["mean value of X_FC2", "Float"],
+    "max_softclip_length_mean": ["mean value of MAX_SOFTCLIP_LENGTH", "Float"],
+    "x_flags_mean": ["mean value of X_FLAGS", "Float"],
+    "ml_qual_mean": ["mean value of ML_QUAL", "Float"],
+    "x_qual_max": ["max value of X_QUAL", "Float"],
+    "x_index_max": ["max value of X_INDEX", "Integer"],
+    "x_qual_min": ["min value of X_QUAL", "Float"],
+    "x_index_min": ["min value of X_INDEX", "Integer"],
     "count_forward": ["number of forward reads", "Integer"],
     "count_reverse": ["number of reverse reads", "Integer"],
     "count_duplicate": ["number of duplicate reads", "Integer"],
@@ -101,22 +102,22 @@ added_agg_features = {
 }
 
 ppm_added_agg_features = {}
-ppm_added_agg_features["st_MINUS"] = ["number of st tagged as MINUS", "Integer"]
-ppm_added_agg_features["st_MIXED"] = ["number of st tagged as MIXED", "Integer"]
-ppm_added_agg_features["st_PLUS"] = ["number of st tagged as PLUS", "Integer"]
-ppm_added_agg_features["st_UNDETERMINED"] = ["number of st tagged as UNDETERMINED", "Integer"]
-ppm_added_agg_features["et_MINUS"] = ["number of et tagged as MINUS", "Integer"]
-ppm_added_agg_features["et_MIXED"] = ["number of et tagged as MIXED", "Integer"]
-ppm_added_agg_features["et_PLUS"] = ["number of et tagged as PLUS", "Integer"]
-ppm_added_agg_features["et_UNDETERMINED"] = ["number of et tagged as UNDETERMINED", "Integer"]
+ppm_added_agg_features["st_minus"] = ["number of st tagged as MINUS", "Integer"]
+ppm_added_agg_features["st_mixed"] = ["number of st tagged as MIXED", "Integer"]
+ppm_added_agg_features["st_plus"] = ["number of st tagged as PLUS", "Integer"]
+ppm_added_agg_features["st_undetermined"] = ["number of st tagged as UNDETERMINED", "Integer"]
+ppm_added_agg_features["et_minus"] = ["number of et tagged as MINUS", "Integer"]
+ppm_added_agg_features["et_mixed"] = ["number of et tagged as MIXED", "Integer"]
+ppm_added_agg_features["et_plus"] = ["number of et tagged as PLUS", "Integer"]
+ppm_added_agg_features["et_undetermined"] = ["number of et tagged as UNDETERMINED", "Integer"]
 ppm_added_agg_features["num_mixed_reads"] = ["number of mixed reads", "Integer"]
 
 
 def record_manual_aggregation(rec, xgb_model=None):  # noqa: C901
     record_info_dict = dict(rec.info)
     record_dict_for_xgb = {}
-
     # add non aggrgate fields
+    record_dict_for_xgb["POS"] = rec.pos
     record_dict_for_xgb["alt_reads"] = rec.samples[0]["AD"][1]
     record_dict_for_xgb["ref_allele"] = rec.alleles[0]
     record_dict_for_xgb["alt_allele"] = rec.alleles[1]
@@ -133,13 +134,13 @@ def record_manual_aggregation(rec, xgb_model=None):  # noqa: C901
 
     # add aggregate fields
     for colname in columns_for_mean_aggregation:
-        agg_colname = colname.upper() + "_mean"
+        agg_colname = colname.lower() + "_mean"
         record_dict_for_xgb[agg_colname] = statistics.mean(record_info_dict[colname])
     for colname in columns_for_min_aggregation:
-        agg_colname = colname.upper() + "_min"
+        agg_colname = colname.lower() + "_min"
         record_dict_for_xgb[agg_colname] = min(record_info_dict[colname])
     for colname in columns_for_max_aggregation:
-        agg_colname = colname.upper() + "_max"
+        agg_colname = colname.lower() + "_max"
         record_dict_for_xgb[agg_colname] = max(record_info_dict[colname])
     record_dict_for_xgb["count_forward"] = record_info_dict["is_forward"].split("|").count("T")
     record_dict_for_xgb["count_reverse"] = record_info_dict["is_forward"].split("|").count("F")
@@ -161,8 +162,9 @@ def record_manual_aggregation(rec, xgb_model=None):  # noqa: C901
         for colname in columns_for_st_et_aggregation:
             tags = ["MINUS", "MIXED", "PLUS", "UNDETERMINED"]
             for tag in tags:
-                record_dict_for_xgb[colname + "_" + tag] = record_info_dict[colname].split("|").count(tag)
+                record_dict_for_xgb[colname + "_" + tag.lower()] = record_info_dict[colname].split("|").count(tag)
 
+    # print(record_dict_for_xgb)
     if xgb_model:
         record_dict_for_xgb["xgb_proba"] = predict_record_with_xgb(record_dict_for_xgb, xgb_model)
 
@@ -198,8 +200,9 @@ def predict_record_with_xgb(record_dict_for_xgb, xgb_model):
             "DP": "dp",
             "X_READ_COUNT": "x_read_count",
             "X_FILTERED_COUNT": "x_filtered_count",
-            "count_forward": "num_is_forward",
+            # "count_forward": "num_is_forward",
             "VAF": "vaf",
+            "POS": "pos",
         }
     )
 
