@@ -1,8 +1,6 @@
-from __future__ import annotations
-
 import pickle
 
-from ugvc.sec.conditional_allele_distribution import ConditionalAlleleDistribution
+from ugbio_filtering.sec.conditional_allele_distribution import ConditionalAlleleDistribution
 
 
 class ConditionalAlleleDistributions:

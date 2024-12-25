@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections import defaultdict
 from collections.abc import Iterable
 
@@ -7,7 +5,8 @@ import numpy as np
 import pandas as pd
 from sklearn import compose, impute, preprocessing
 from sklearn.pipeline import make_pipeline
-from ugvc.filtering.tprep_constants import VcfType
+
+from ugbio_filtering.tprep_constants import VcfType
 
 
 # transformers for VCF columns

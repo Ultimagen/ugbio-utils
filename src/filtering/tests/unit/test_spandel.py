@@ -4,7 +4,7 @@ import pickle
 import pandas as pd
 import pyfaidx
 import pysam
-import ugvc.filtering.spandel as spandel
+import ugbio_filtering.spandel as spandel
 
 from test import get_resource_dir
 

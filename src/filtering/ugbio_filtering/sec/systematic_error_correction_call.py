@@ -1,8 +1,6 @@
-from __future__ import annotations
-
 from enum import Enum
 
-from ugvc.sec.systematic_error_correction_record import SECRecord
+from ugbio_filtering.sec.systematic_error_correction_record import SECRecord
 
 
 class SECCallType(Enum):

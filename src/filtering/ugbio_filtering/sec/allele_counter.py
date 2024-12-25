@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from pysam import PileupColumn, VariantRecord
-from ugvc.dna.strand_direction import StrandDirection, is_forward_strand
-from ugvc.sec.read_counts import ReadCounts
-from ugvc.vcfbed.pysam_utils import get_filtered_alleles_list
+from ugvc.dna.strand_direction import StrandDirection, is_forward_strand  # todo now add
+from ugvc.vcfbed.pysam_utils import get_filtered_alleles_list  # todo now add
+
+from ugbio_filtering.sec.read_counts import ReadCounts
 
 
 def count_alleles_in_pileup(pileup_column: PileupColumn) -> dict[str, ReadCounts]:

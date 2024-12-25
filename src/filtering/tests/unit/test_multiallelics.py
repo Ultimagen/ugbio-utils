@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-import ugvc.filtering.multiallelics as tprep
+import ugbio_filtering.multiallelics as tprep
 
 from test import get_resource_dir
 

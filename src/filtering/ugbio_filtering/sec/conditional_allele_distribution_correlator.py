@@ -1,8 +1,7 @@
-from __future__ import annotations
+from ugvc.utils.stats_utils import multinomial_likelihood_ratio, scale_contingency_table  # todo now add
 
-from ugvc.sec.conditional_allele_distribution import ConditionalAlleleDistribution
-from ugvc.sec.systematic_error_correction_record import SECRecord
-from ugvc.utils.stats_utils import multinomial_likelihood_ratio, scale_contingency_table
+from ugbio_filtering.sec.conditional_allele_distribution import ConditionalAlleleDistribution
+from ugbio_filtering.sec.systematic_error_correction_record import SECRecord
 
 
 def correlate_sec_records(sec_records: list[SECRecord], min_scale: int = 50) -> float:

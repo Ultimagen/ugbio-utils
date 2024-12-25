@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections import OrderedDict
 from enum import Enum
 
@@ -8,11 +6,12 @@ import pandas as pd
 import xgboost
 from pandas.core.groupby import DataFrameGroupBy
 from sklearn import compose
-from ugvc import logger
-from ugvc.filtering import multiallelics as mu
-from ugvc.filtering import transformers
-from ugvc.filtering.tprep_constants import GtType, VcfType
-from ugvc.utils import math_utils, stats_utils
+from ugbio_core.logger import logger
+from ugvc.utils import math_utils, stats_utils  # todo now add?
+
+from ugbio_filtering import multiallelics as mu
+from ugbio_filtering import transformers
+from ugbio_filtering.tprep_constants import GtType, VcfType
 
 MAX_CHUNK_SIZE = 1000000
 

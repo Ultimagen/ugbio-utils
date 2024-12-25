@@ -1,11 +1,10 @@
-from __future__ import annotations
-
 import ast
 from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
-from ugvc.filtering.variant_filtering_utils import VariantSelectionFunctions
+
+from ugbio_filtering.variant_filtering_utils import VariantSelectionFunctions
 
 
 class Blacklist:

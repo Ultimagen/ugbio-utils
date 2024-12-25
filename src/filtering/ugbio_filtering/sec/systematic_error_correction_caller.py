@@ -1,16 +1,15 @@
-from __future__ import annotations
-
 import math
 
 import numpy as np
 from pysam import VariantRecord
-from ugvc.sec.conditional_allele_distribution import ConditionalAlleleDistribution
-from ugvc.sec.conditional_allele_distribution_correlator import correlate_sec_records
-from ugvc.sec.evaluate_locus_observation import evaluate_observation
-from ugvc.sec.systematic_error_correction_call import SECCall, SECCallType
-from ugvc.sec.systematic_error_correction_record import SECRecord
 from ugvc.vcfbed.genotype import Genotype
 from ugvc.vcfbed.pysam_utils import get_genotype, get_genotype_indices, has_candidate_alternatives
+
+from ugbio_filtering.sec.conditional_allele_distribution import ConditionalAlleleDistribution
+from ugbio_filtering.sec.conditional_allele_distribution_correlator import correlate_sec_records
+from ugbio_filtering.sec.evaluate_locus_observation import evaluate_observation
+from ugbio_filtering.sec.systematic_error_correction_call import SECCall, SECCallType
+from ugbio_filtering.sec.systematic_error_correction_record import SECRecord
 
 
 # pylint: disable=too-few-public-methods

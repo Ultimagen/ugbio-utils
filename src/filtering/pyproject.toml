@@ -9,8 +9,14 @@ authors = [
 ]
 dependencies = [
     "ugbio_core",
-    "pandas>=2.2.2",
-    "pyfaidx>=0.8.1",
+#   tqdm
+#    numpy
+#    import pyfaidx
+#import pysam
+#    ast???
+#    sklearn
+#    xgboost
+#    pickle
 ]
 requires-python = ">=3.11"
 readme = "README.filtering.md"

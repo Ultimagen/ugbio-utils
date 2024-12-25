@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import warnings
 from pathlib import Path
 
@@ -8,12 +6,13 @@ import pandas as pd
 import pyfaidx
 import pysam
 import tqdm.auto as tqdm
-import ugvc.comparison.vcf_pipeline_utils as vpu
-import ugvc.filtering.multiallelics as mu
-import ugvc.filtering.spandel as sp
-from ugvc import logger
-from ugvc.filtering.tprep_constants import IGNORE, MISS
-from ugvc.vcfbed import vcftools
+import ugvc.comparison.vcf_pipeline_utils as vpu  # todo now add
+from ugbio_core.logger import logger
+from ugbio_core.vcfbed import vcftools
+
+import ugbio_filtering.multiallelics as mu
+import ugbio_filtering.spandel as sp
+from ugbio_filtering.tprep_constants import IGNORE, MISS
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 warnings.simplefilter(action="ignore", category=pd.errors.PerformanceWarning)

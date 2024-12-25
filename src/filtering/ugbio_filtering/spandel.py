@@ -1,12 +1,11 @@
-from __future__ import annotations
-
 import numpy as np
 import pandas as pd
 import pyfaidx
 import pysam
-import ugvc.filtering.multiallelics as mu
-from ugvc.filtering.tprep_constants import SPAN_DEL
-from ugvc.vcfbed import vcftools
+from ugbio_core.vcfbed import vcftools
+
+import ugbio_filtering.multiallelics as mu
+from ugbio_filtering.tprep_constants import SPAN_DEL
 
 
 def split_multiallelic_variants_with_spandel(

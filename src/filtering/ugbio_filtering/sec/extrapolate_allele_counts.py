@@ -1,6 +1,4 @@
-from __future__ import annotations
-
-from ugvc.sec.systematic_error_correction_record import SECRecord
+from ugbio_filtering.sec.systematic_error_correction_record import SECRecord
 
 
 def extrapolate_allele_counts(sec_records: list[SECRecord]):
