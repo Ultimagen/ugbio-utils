@@ -7,6 +7,7 @@ on:
       member:
         type: choice
         options:
+          - "core"
           - "cnv"
           - "featuremap"
           - "mrd"
@@ -16,6 +17,8 @@ on:
           - "vcflite"
           - "hla_la"
           - "omics"
+          - "methylation"
+          - "freec"
         required: true
         default: ""
 

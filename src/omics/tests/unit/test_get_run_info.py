@@ -124,3 +124,14 @@ def test_get_run_info_no_stoptime(mock_get_run_return_value, mock_list_run_tasks
 
     assert run_info["duration"]
     assert run_info["tasks"][0]["duration"]
+
+
+def test_get_run_info_tasks_pagination(mock_get_run_return_value, mock_list_run_tasks_return_values):
+    mock_client_instance = MagicMock()
+    mock_client_instance.get_run.return_value = mock_get_run_return_value
+    mock_client_instance.list_run_tasks.side_effect = mock_list_run_tasks_return_values
+
+    run_info = get_run_info("test_run_id", client=mock_client_instance)
+
+    assert len(run_info["tasks"]) == 2
+    mock_client_instance.list_run_tasks.assert_called_with(id="test_run_id", startingToken="token1")

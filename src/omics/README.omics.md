@@ -6,10 +6,10 @@ This module includes Python scripts for working with AWS HealthOmics.
 
 List of tools:
 
-1. **Compare Cromwell vs. Omics** - Process cost and performance on both platforms and save results into comparable CSV files. Also saves metadata and intermediate cost and performance files. Additionally, you can find a plots folder with a variety of HTML plots. Omics cost information is collected using [Omics Run Analyzer](https://github.com/awslabs/amazon-omics-tools?tab=readme-ov-file#omics-run-analyzer).
+1. **Compare Cromwell vs. Omics** - Process cost and performance on both platforms and save results into comparable CSV files. Also saves metadata and intermediate cost and performance files. Additionally, you can find a plots folder with a variety of HTML plots. Omics cost information is fetched from cost.csv in S3 run output bucket.
 
    Run `uv run compare_cromwell_omics --help` for more details.
-2. **Compare Omics Runs** - Process cost and performance and compare multiple Omics runs. Omics cost information is collected using [Omics Run Analyzer](https://github.com/awslabs/amazon-omics-tools?tab=readme-ov-file#omics-run-analyzer).
+2. **Compare Omics Runs** - Process cost and performance and compare multiple Omics runs. Omics cost information is fetched from cost.csv in S3 run output bucket.
 
    Run `uv run compare_omics_runs --help` for more details.
 3. **Get Run Logs** - Download logs of an Omics run. For FAILED run by default, you'll get the logs of all failed tasks or the run's engine log if there are no failed tasks. For successful runs by default, you'll get all tasks' logs. You can use --task-id to get the log for a specific task.
@@ -17,7 +17,9 @@ List of tools:
    Run `uv run get_omics_logs --help` for more details.
 4. **Manifest Log** - Download and parse the manifest log of an Omics run. The manifest log contains a lot of information about storage usage, CPU and memory usage per task, Docker images, inputs, and general information about the run.
 
-   Run `uv run manifest_log --help` for more details.
+5. **Performance** - Process CPU, memory, and I/O metrics from the monitor log running in each task. Get usage plots over time for a better understanding of your code utilization. Note that task logs must be accessible for this.
+
+   Run `uv run performance --help` for more details.
 
 Admin tools (requires admin AWS permissions):
 

@@ -6,32 +6,28 @@ import pandas as pd
 
 from ugbio_omics.compare_cromwell_omics import (
     extract_omics_resources,
-    get_omics_performance_cost,
-    get_omics_total_duration,
+    get_omics_cost_perfromance,
 )
 
 
-def single_run(omics_run_id, omics_session, output_path):
+def single_run(omics_run_id, omics_session, output_path, *, get_performance=False):
     # Calculate omics performance and cost
-    omics_performance_df, omics_disk_cost, omics_run_cost = get_omics_performance_cost(
-        omics_run_id, omics_session, output_path
+    omics_cost_df, omics_run_cost = get_omics_cost_perfromance(
+        omics_run_id, omics_session, output_path, get_performance=get_performance
+    )
+    # Rename columns with run_id
+    omics_cost_df = omics_cost_df.rename(
+        columns={"cost": f"{omics_run_id}_cost", "run_time (hours)": f"{omics_run_id}_duration(H)"}
     )
 
-    # fix up cost data
-    cost_df = pd.DataFrame(omics_performance_df, columns=["task", "cost_SUM"])
-    cost_df = cost_df.rename(columns={"cost_SUM": f"{omics_run_id}_cost"})
-    # add disk cost
-    cost_df = pd.concat(
-        [cost_df, pd.DataFrame({"task": ["disk"], f"{omics_run_id}_cost": [omics_disk_cost]})], ignore_index=True
-    )
+    # Drop the 'instance' column from omics_cost_df
+    if "instance" in omics_cost_df.columns:
+        omics_cost_df = omics_cost_df.drop(columns=["instance"])
+
     # move total cost to the end
-    cost_df = pd.concat([cost_df[cost_df.task != "total"], cost_df[cost_df.task == "total"]], ignore_index=True)
-
-    # run duration
-    omics_total_duration = get_omics_total_duration(omics_run_id, omics_session)
-    omics_performance_df.loc[omics_performance_df["task"] == "total", "run_time (hours)"] = omics_total_duration
-    duration_df = pd.DataFrame(omics_performance_df, columns=["task", "run_time (hours)"])
-    duration_df = duration_df.rename(columns={"run_time (hours)": f"{omics_run_id}_duration"})
+    omics_cost_df = pd.concat(
+        [omics_cost_df[omics_cost_df.task != "total"], omics_cost_df[omics_cost_df.task == "total"]], ignore_index=True
+    )
 
     # Add resources
     resources_df = extract_omics_resources(omics_run_cost)
@@ -40,12 +36,11 @@ def single_run(omics_run_id, omics_session, output_path):
     )
 
     # Merge cost, duration and resources
-    final_df = cost_df.merge(duration_df, on="task", how="outer")
-    final_df = final_df.merge(resources_df, on="task", how="outer")
+    final_df = omics_cost_df.merge(resources_df, on="task", how="outer")
     return final_df
 
 
-def compare_omics_runs(run_ids, session, output_path):
+def compare_omics_runs(run_ids, session, output_path, *, get_performance=False):
     # Create the output directory if it doesn't exist
     if output_path:
         os.makedirs(output_path, exist_ok=True)
@@ -54,7 +49,7 @@ def compare_omics_runs(run_ids, session, output_path):
 
     all_df = []
     for run_id in run_ids:
-        single_df = single_run(run_id, session, output_path)
+        single_df = single_run(run_id, session, output_path, get_performance=get_performance)
         all_df.append(single_df)
 
     final_df = all_df[0]
@@ -76,12 +71,18 @@ def main():
         default=None,
     )
     parser.add_argument("--run-ids", type=str, help="Omics run ids to compare (seprated by comma)", required=True)
+    parser.add_argument(
+        "--performance",
+        type=bool,
+        help="Get CPU and memory performance from the monitor log (work only if task logs still accessbile)",
+        default=False,
+    )
 
     args = parser.parse_args()
     session = boto3.Session(region_name=args.region)
     run_ids = args.run_ids.split(",")
 
-    compare_omics_runs(run_ids, session, args.output_path)
+    compare_omics_runs(run_ids, session, args.output_path, get_performance=args.performance)
 
 
 if __name__ == "__main__":

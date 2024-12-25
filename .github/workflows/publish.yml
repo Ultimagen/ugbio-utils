@@ -52,8 +52,8 @@ jobs:
       - name: Build workspaces list
         uses: ./.github/actions/get-members
         id: list_members
-        with:
-          keep-internal-dockers: false
+#        with:
+#          keep-internal-dockers: false
 
       - uses: actions-ecosystem/action-get-latest-tag@v1
         id: get-latest-tag
