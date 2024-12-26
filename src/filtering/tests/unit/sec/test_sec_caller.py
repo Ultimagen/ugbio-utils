@@ -2,7 +2,8 @@ import unittest
 
 from ugbio_filtering.sec.systematic_error_correction_call import SECCallType
 from ugbio_filtering.sec.systematic_error_correction_caller import SECCaller
-from variant_test_examples import (
+
+from . import (
     HomVarWithTwoEquivalentHetGenotypes,
     KnownHetIns,
     NoReferenceGenotype,

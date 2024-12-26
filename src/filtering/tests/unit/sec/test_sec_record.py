@@ -2,7 +2,8 @@ import unittest
 
 from ugbio_filtering.sec.read_counts import ReadCounts
 from ugbio_filtering.sec.systematic_error_correction_record import SECRecord
-from variant_test_examples import KnownHetIns
+
+from . import KnownHetIns
 
 
 class TestSecRecord(unittest.TestCase):
