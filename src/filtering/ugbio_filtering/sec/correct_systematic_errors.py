@@ -33,14 +33,13 @@ from typing import TextIO
 
 import pysam
 from pysam import VariantFile, VariantRecord
-
+from ugbio_core.vcfbed.bed_writer import BedWriter
 from ugvc import base_dir, logger
 from ugvc.filtering.blacklist import Blacklist
 from ugvc.filtering.variant_filtering_utils import VariantSelectionFunctions
 from ugvc.sec.systematic_error_correction_call import SECCall, SECCallType
 from ugvc.sec.systematic_error_correction_caller import SECCaller
 from ugvc.sec.systematic_error_correction_record import SECRecord
-from ugbio_core.vcfbed.bed_writer import BedWriter
 from ugvc.vcfbed.buffered_variant_reader import BufferedVariantReader
 from ugvc.vcfbed.pysam_utils import get_filtered_alleles_list, get_filtered_alleles_str, get_genotype
 
@@ -139,7 +138,7 @@ class SystematicErrorCorrector:
     """
 
     # pylint: disable=too-many-arguments
-    def __init__(
+    def __init__(  # noqa PLR0913
         self,
         relevant_coords: TextIO,
         cad_files: list[str],
@@ -150,6 +149,7 @@ class SystematicErrorCorrector:
         noise_ratio_for_unobserved_snps: float,
         noise_ratio_for_unobserved_indels: float,
         output_file: str,
+        *,
         novel_detection_only: bool,
         replace_to_known_genotype: bool,
         filter_uncorrelated: bool,
@@ -163,9 +163,9 @@ class SystematicErrorCorrector:
         self.filter_uncorrelated = filter_uncorrelated
 
         self.output_type = None
-        if output_file.endswith(".vcf") or output_file.endswith(".vcf.gz"):
+        if output_file.endswith((".vcf", ".vcf.gz")):
             self.output_type = OutputType.VCF
-        elif output_file.endswith(".pickle") or output_file.endswith(".pkl"):
+        elif output_file.endswith((".pickle", ".pkl")):
             self.output_type = OutputType.PICKLE
         else:
             raise ValueError("output file must end with vcf/vcf.gz/pickle/pkl suffixes")
@@ -180,7 +180,7 @@ class SystematicErrorCorrector:
         SECRecord.noise_ratio_for_unobserved_snps = noise_ratio_for_unobserved_snps
         SECRecord.noise_ratio_for_unobserved_indels = noise_ratio_for_unobserved_indels
 
-    def correct_systematic_errors(self):
+    def correct_systematic_errors(self):  # noqa PLR0912 C901
         self.add_header_lines()
 
         # Initialize output writers
@@ -206,7 +206,7 @@ class SystematicErrorCorrector:
                 # IMPORTANT - relevant_coords must be sorted by chr,pos
                 if chrom != current_chr:
                     with open(self.cad_files_dict[chrom], "rb") as cad_fh:
-                        self.distributions_per_chromosome = pickle.load(cad_fh)
+                        self.distributions_per_chromosome = pickle.load(cad_fh)  # noqa S301
                         current_chr = chrom
 
                 for pos in range(int(start) + 1, int(end) + 1):
@@ -271,7 +271,7 @@ class SystematicErrorCorrector:
     @staticmethod
     def did_call_non_excluded_alleles(fields, observed_variant, sample_info):
         called_non_excluded_alleles = False
-        if len(fields) > 3:
+        if len(fields) > 3:  # noqa PLR2004
             excluded_refs = ast.literal_eval(fields[3])
             flat_excluded_refs = list(itertools.chain(*excluded_refs))
             all_excluded_alts = ast.literal_eval(fields[4])
@@ -387,7 +387,7 @@ def _are_all_called_alleles_excluded(
         if A->G is excluded, and called A->G/C return False
         if A->G, A->C are excluded, and called A->G/C return True
     """
-    for excluded_ref, excluded_alts in zip(excluded_refs, all_excluded_alts):
+    for excluded_ref, excluded_alts in zip(excluded_refs, all_excluded_alts, strict=False):
         if called_ref == excluded_ref:
             non_excluded_alts = called_alts.difference(excluded_alts)
             if len(non_excluded_alts) == 0:
@@ -415,8 +415,7 @@ def run(argv: list[str]):
         logger.error("gvcf input does not exist")
         return
 
-    with open(args.relevant_coords, "r", encoding="utf-8") as relevant_coords:
-
+    with open(args.relevant_coords, encoding="utf-8") as relevant_coords:
         pickle_files = []
         for model_file_name in args.model:
             if "*" in model_file_name:

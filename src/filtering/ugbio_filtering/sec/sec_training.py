@@ -21,10 +21,9 @@ import sys
 
 from simppl.cli import get_parser
 from simppl.simple_pipeline import SimplePipeline
-
+from ugbio_core.consts import FileExtension
 from ugvc import base_dir as ugvc_pkg
 from ugvc.sec.sec_pipeline_utils import extract_relevant_gvcfs, read_sec_pipelines_inputs_table
-from ugbio_core.consts import FileExtension
 
 
 def parse_args(argv):
@@ -88,7 +87,7 @@ def run(argv):
 
     # Generate error_correction_training commands per sample
     # These will count empirical allele distributions per training sample
-    for sample_id, relevant_gvcf in zip(sample_ids, relevant_gvcf_files):
+    for sample_id, relevant_gvcf in zip(sample_ids, relevant_gvcf_files, strict=False):
         allele_distributions = f"{out_dir}/allele_distributions/{sample_id}{FileExtension.TSV.value}"
         training_commands.append(
             f"python {ugvc_pkg}/pipelines/sec/error_correction_training.py "

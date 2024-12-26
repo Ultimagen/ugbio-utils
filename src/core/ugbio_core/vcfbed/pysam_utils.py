@@ -132,7 +132,7 @@ def is_snp(alleles: list[str]):
     True iff the alleles represent SNP locus (all are of size 1)
     """
     __alleles = [a for a in alleles if a != "<NON_REF>"]
-    return len(__alleles) >= 2 and all(len(a) == 1 for a in __alleles)
+    return len(__alleles) >= 2 and all(len(a) == 1 for a in __alleles)  # noqa PLR2004
 
 
 DNA_SYMBOLS = ["A", "T", "G", "C"]

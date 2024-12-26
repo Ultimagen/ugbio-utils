@@ -21,7 +21,6 @@ import sys
 
 from simppl.cli import get_parser
 from simppl.simple_pipeline import SimplePipeline
-
 from ugvc import base_dir as ugvc_pkg
 from ugvc.sec.sec_pipeline_utils import extract_relevant_gvcfs, read_sec_pipelines_inputs_table
 
@@ -103,7 +102,7 @@ def run(argv):
         processes=processes,
     )
 
-    for sample_id, relevant_gvcf, comparison_table in zip(sample_ids, relevant_gvcf_files, comp_h5_files):
+    for sample_id, relevant_gvcf, comparison_table in zip(sample_ids, relevant_gvcf_files, comp_h5_files, strict=False):
         sec_vcf = f"{out_dir}/correction{novel_detection_suffix}/{sample_id}.vcf.gz"
 
         if novel_detection_only:

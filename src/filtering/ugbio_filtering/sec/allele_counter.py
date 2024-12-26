@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from pysam import PileupColumn, VariantRecord
-from ugvc.dna.strand_direction import StrandDirection, is_forward_strand  # todo now add
-from ugvc.vcfbed.pysam_utils import get_filtered_alleles_list  # todo now add
+from ugbio_core.dna.strand_direction import StrandDirection, is_forward_strand
+from ugbio_core.vcfbed.pysam_utils import get_filtered_alleles_list
 
 from ugbio_filtering.sec.read_counts import ReadCounts
 

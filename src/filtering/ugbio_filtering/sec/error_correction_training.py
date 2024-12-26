@@ -20,7 +20,7 @@
 import argparse
 import os.path
 
-from ugvc import logger
+from ugbio_core.logger import logger
 from ugvc.sec.allele_counter import count_alleles_in_gvcf
 from ugvc.sec.conditional_allele_distribution import ConditionalAlleleDistribution
 from ugvc.vcfbed.buffered_variant_reader import BufferedVariantReader
@@ -70,7 +70,7 @@ def main():
         )
         return
 
-    with open(args.output_file, "wt", encoding="utf-8") as out_stream:
+    with open(args.output_file, "w", encoding="utf-8") as out_stream:
         error_correction_training(
             args.relevant_coords,
             ground_truth_reader,
@@ -87,7 +87,7 @@ def error_correction_training(
     sample_id: str,
     out_stream,
 ):
-    with open(relevant_coords_file, "rt", encoding="utf-8") as relevant_coords:
+    with open(relevant_coords_file, encoding="utf-8") as relevant_coords:
         for line in relevant_coords:
             fields = line.split("\t")
             chrom, start, end = (

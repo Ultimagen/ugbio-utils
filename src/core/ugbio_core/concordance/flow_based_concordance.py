@@ -27,6 +27,7 @@ ground truth and the calls) and tries to compare the called  SNPs and
 non-hmer indels to the variants in the ground truth to identify the differences
 that can be explained by a small number of hmer indel errors.
 """
+
 from __future__ import annotations
 
 import itertools
@@ -36,11 +37,10 @@ from typing import Any  # , List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import pyfaidx
-
 import ugbio_core.flow_format.flow_based_read as fbr
-import ugvc.utils.misc_utils as utils
+import ugvc.utils.misc_utils as utils  # todo now move
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
-from ugvc.vcfbed import vcftools
+from ugbio_core.vcfbed import vcftools
 
 
 def reinterpret_variants(concordance_df: pd.DataFrame, in_dict: dict, fasta: pyfaidx.Fasta) -> pd.DataFrame:
@@ -190,8 +190,8 @@ def compare_two_sets_of_variants(
 
     chromosome = set(set1_variants["chrom"])
     if len(chromosome) == 0:
-        return [], set()
-    assert len(chromosome) == 1, "All variants should belong to a single chromosome"
+        return [], set()  # noqa S101
+    assert len(chromosome) == 1, "All variants should belong to a single chromosome"  # noqa S101
     chromosome = chromosome.pop()
 
     interval_starts = [x[0] for x in variant_intervals]
@@ -200,7 +200,6 @@ def compare_two_sets_of_variants(
 
     # Go over all positions
     for pos in positions_to_test:
-
         # Find the interval in which the position is included
         select_region = _select_best_region(interval_starts, variant_intervals, pos)
         if select_region is None:
@@ -267,6 +266,7 @@ def apply_variants_to_reference(
     variants: pd.DataFrame,
     offset: int,
     genotype_col: str,
+    *,
     include_ref: bool,
     exclude_ref_pos: int | None = None,
 ) -> list:
@@ -300,11 +300,13 @@ def apply_variants_to_reference(
     variant_positions = list(variants.pos - offset)
 
     # Break the reference sequence on the locatoins of the variants
-    chunks = [reference[i:j] for i, j in zip([0] + variant_positions, variant_positions + [len(reference)])]
+    chunks = [
+        reference[i:j] for i, j in zip([0] + variant_positions, variant_positions + [len(reference)], strict=False)
+    ]
 
     rls = np.array(variants.ref.apply(len))
     # remove the reference allele sequence from the beginning of each chunk
-    chunks = [chunks[0]] + [x[0][x[1] :] for x in zip(chunks[1:], rls)]
+    chunks = [chunks[0]] + [x[0][x[1] :] for x in zip(chunks[1:], rls, strict=False)]
 
     # generate sets of alleles for each positions according to the genotypes
     # for each position
@@ -322,7 +324,7 @@ def apply_variants_to_reference(
 
     # never add reference allele (when testing the variant)
     if exclude_ref_pos is not None:
-        for i, (this_gt, this_pos) in enumerate(zip(gts, pos)):
+        for i, (this_gt, this_pos) in enumerate(zip(gts, pos, strict=False)):
             if this_pos == exclude_ref_pos:
                 gts[i] = tuple(x for x in this_gt if x != 0)
 
@@ -386,7 +388,6 @@ def compare_haplotypes(flows: list, flows_variant: list) -> tuple[int, Any]:
 
     for gtr_flow in flows:
         for var_flow in flows_variant:
-
             # if the haplotypes are of different length in flow - their difference
             # is for sure not a single hmer
             if len(gtr_flow) != len(var_flow):
@@ -410,7 +411,7 @@ def compare_haplotypes(flows: list, flows_variant: list) -> tuple[int, Any]:
                         # do not update the result
                         best_diff = (cur_best_n_changes, cur_best_hmer)
 
-                if best_diff[0] == 2:
+                if best_diff[0] == 2:  # noqa PLR2004
                     best_diff = (2, gtr_flow[diff_flow != 0])
     return best_diff
 
@@ -475,7 +476,7 @@ def _convert_fns_to_tps(_df: pd.DataFrame) -> pd.DataFrame:
     subdf["qual"] = 300
     subdf["sor"] = 1
     _df.loc[subdf.index, subdf.columns] = subdf
-    _df.loc[pd.isnull(_df["qual"]), "qual"] = 50
+    _df.loc[pd.isna(_df["qual"]), "qual"] = 50
     return _df
 
 
@@ -494,10 +495,10 @@ def _apply_corrections(_df: pd.DataFrame, positions: pd.Index, corrections: list
     `compare_to_gtr_hmer_indel_len`: length of the gtr indel(s) that is (are) different
     """
 
-    compare_to_gtr_result = [x[0] if x[0] < 3 else 100 for x in corrections]
-    hmer_indel_to_gtr = [x[1] if x[0] < 3 else 0 for x in corrections]
+    compare_to_gtr_result = [x[0] if x[0] < 3 else 100 for x in corrections]  # noqa PLR2004
+    hmer_indel_to_gtr = [x[1] if x[0] < 3 else 0 for x in corrections]  # noqa PLR2004
     if len(positions) == 1:  # solves a boundary case where there is a single position and hmer_indel_to_gtr is an array
-        _df.at[positions[0:1], "compare_to_gtr_hmer_indel_len"] = hmer_indel_to_gtr[0]
+        _df.at[positions[0:1], "compare_to_gtr_hmer_indel_len"] = hmer_indel_to_gtr[0]  # noqa PD008
         _df["compare_to_gtr_hmer_indel_len"] = _df["compare_to_gtr_hmer_indel_len"].astype(object)
     else:
         _df.loc[positions, "compare_to_gtr_changes"] = compare_to_gtr_result

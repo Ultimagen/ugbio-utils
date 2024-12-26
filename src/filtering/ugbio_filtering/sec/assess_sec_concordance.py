@@ -26,12 +26,11 @@ from os.path import basename, dirname, splitext
 import pandas as pd
 from pandas import DataFrame, Series
 from simppl.cli import get_parser
-
-from ugvc import logger
-from ugvc.comparison.concordance_utils import apply_filter, calc_accuracy_metrics, validate_preprocess_concordance
-from ugvc.comparison.vcf_pipeline_utils import annotate_concordance
+from ugbio_comparison.concordance_utils import apply_filter, calc_accuracy_metrics, validate_preprocess_concordance
+from ugbio_comparison.vcf_pipeline_utils import annotate_concordance
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
 from ugbio_core.h5_utils import read_hdf
+from ugbio_core.logger import logger
 from ugvc.utils.stats_utils import get_precision, get_recall
 
 
@@ -162,7 +161,7 @@ class AssessSECConcordance:
             sep="\t",
             names=["chrom", "pos-1", "pos", "sec_call_type", "spv"],
         )
-        exclude_list_df.index = zip(exclude_list_df["chrom"], exclude_list_df["pos"])
+        exclude_list_df.index = zip(exclude_list_df["chrom"], exclude_list_df["pos"], strict=False)
         relevant_exclude_list_loci = exclude_list_df.index.intersection(self.df.index)
         # correct SEC filter, since non reference annotated positions should PASS SEC filter
         filtered = exclude_list_df[exclude_list_df["sec_call_type"] == "reference"]

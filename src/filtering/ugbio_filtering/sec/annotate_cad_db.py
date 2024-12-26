@@ -46,7 +46,7 @@ def get_args():
 def main():
     args = get_args()
     with open(args.model, "rb") as file_handle:
-        cad: ConditionalAlleleDistributions = pickle.load(file_handle)
+        cad: ConditionalAlleleDistributions = pickle.load(file_handle)  # noqa S301
         annotate_cad_db(cad, args.min_gt_correlation)
 
 

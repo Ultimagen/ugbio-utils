@@ -1,12 +1,9 @@
-from __future__ import annotations
-
 import os
 from pathlib import Path
 
 from simppl.simple_pipeline import SimplePipeline
 from ugbio_core.exec_utils import print_and_execute
-
-from ugvc import logger
+from ugbio_core.logger import logger
 
 
 class IntervalFile:

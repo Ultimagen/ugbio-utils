@@ -1,25 +1,23 @@
-"""Summary
-"""
+"""Summary"""
+
 from __future__ import annotations
 
+import os
 import os.path
 import shutil
 from collections import defaultdict
-import os
 
 import numpy as np
 import pandas as pd
 import pyfaidx
 import pysam
-from simppl.simple_pipeline import SimplePipeline
-
-import ugvc.comparison.flow_based_concordance as fbc
+import ugbio_core.concordance.flow_based_concordance as fbc
 import ugbio_core.vcfbed.variant_annotation as annotation
-from ugvc import logger
+from simppl.simple_pipeline import SimplePipeline
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
 from ugbio_core.exec_utils import print_and_execute
-from ugvc.vcfbed import vcftools
-from ugbio_core.vcfbed import bed_writer
+from ugbio_core.logger import logger
+from ugbio_core.vcfbed import bed_writer, vcftools
 
 
 class VcfPipelineUtils:
@@ -117,7 +115,7 @@ class VcfPipelineUtils:
         """
         self.__execute(f"bedtools intersect -a {input_bed1} -b {input_bed2}", output_file=bed_output)
 
-    def run_vcfeval(
+    def run_vcfeval(  # noqa PLR0913
         self,
         vcf: str,
         gt: str,
@@ -127,6 +125,7 @@ class VcfPipelineUtils:
         ev_region: str | None = None,
         output_mode: str = "split",
         samples: str | None = None,
+        *,
         erase_outdir: bool = True,
         additional_args: str = "",
         score: str = "QUAL",
@@ -212,7 +211,7 @@ class VcfPipelineUtils:
         self.__execute(f"gatk SelectVariants -V {input_fn} -L {intervals_fn} -O {output_fn}")
 
     # pylint: disable=too-many-arguments
-    def run_vcfeval_concordance(
+    def run_vcfeval_concordance(  # noqa PLR0913
         self,
         input_file: str,
         truth_file: str,
@@ -222,6 +221,7 @@ class VcfPipelineUtils:
         comparison_intervals: str | None = None,
         input_sample: str | None = None,
         truth_sample: str | None = None,
+        *,
         ignore_filter: bool = False,
         mode: str = "combine",
         ignore_genotype: bool = False,
@@ -259,7 +259,7 @@ class VcfPipelineUtils:
         """
 
         output_dir = os.path.dirname(output_prefix)
-        SDF_path = ref_genome + ".sdf"
+        sdf_path = ref_genome + ".sdf"
         vcfeval_output_dir = os.path.join(output_dir, os.path.basename(output_prefix) + ".vcfeval_output")
 
         if os.path.isdir(vcfeval_output_dir):
@@ -283,7 +283,7 @@ class VcfPipelineUtils:
             filtered_truth_file,
             evaluation_regions,
             vcfeval_output_dir,
-            SDF_path,
+            sdf_path,
             output_mode=mode,
             samples=samples,
             erase_outdir=True,
@@ -487,7 +487,7 @@ def _fix_errors(df: pd.DataFrame) -> pd.DataFrame:
     df.loc[(df["call"] == "FP_CA") & ((df["base"] == "FN_CA") | (df["base"].isna())), "gt_ground_truth"] = df[
         (df["call"] == "FP_CA") & ((df["base"] == "FN_CA") | (df["base"].isna()))
     ]["gt_ultima"].apply(
-        lambda x: ((x[0], x[0]) if (len(x) < 2 or (x[1] == 0)) else ((x[1], x[1]) if (x[0] == 0) else (x[0], 0)))
+        lambda x: ((x[0], x[0]) if (len(x) < 2 or (x[1] == 0)) else ((x[1], x[1]) if (x[0] == 0) else (x[0], 0)))  # noqa PLR2004
     )
     return df
 
@@ -524,7 +524,7 @@ def __map_variant_to_dict(variant: pysam.VariantRecord) -> defaultdict:
     )
 
 
-def vcf2concordance(
+def vcf2concordance(  # noqa PLR0915 C901
     raw_calls_file: str,
     concordance_file: str,
     chromosome: str | None = None,
@@ -613,8 +613,8 @@ def vcf2concordance(
             return "fp"
 
         # If both gt_ultima and gt_ground_truth are not none:
-        set_gtr = set(x["gt_ground_truth"]) - set([0])
-        set_ultima = set(x["gt_ultima"]) - set([0])
+        set_gtr = set(x["gt_ground_truth"]) - {0}
+        set_ultima = set(x["gt_ultima"]) - {0}
 
         if len(set_gtr & set_ultima) > 0:
             return "tp"
@@ -669,10 +669,10 @@ def vcf2concordance(
     concordance_df.loc[called_fn & marked_fp, "classify"] = "fn"
     marked_fp = concordance_df["classify_gt"] == "fp"
     concordance_df.loc[called_fn & marked_fp, "classify_gt"] = "fn"
-    concordance_df.index = pd.Index(list(zip(concordance_df.chrom, concordance_df.pos)))
+    concordance_df.index = pd.Index(list(zip(concordance_df.chrom, concordance_df.pos, strict=False)))
     original = vcftools.get_vcf_df(raw_calls_file, chromosome=chromosome, scoring_field=scoring_field)
 
-    concordance_df.drop("qual", axis=1, inplace=True)
+    concordance_df = concordance_df.drop("qual", axis=1)
 
     drop_candidates = ["chrom", "pos", "alleles", "indel", "ref", "str", "ru", "rpa"]
     if original.shape[0] > 0:
@@ -724,10 +724,11 @@ def bed_file_length(input_bed: str) -> int:
         number of bases in a bed file
     """
 
-    df = pd.read_csv(input_bed, sep="\t", header=None)
-    df = df.iloc[:, [0, 1, 2]]
-    df.columns = ["chr", "pos_start", "pos_end"]
-    return np.sum(df["pos_end"] - df["pos_start"] + 1)
+    input_df = pd.read_csv(input_bed, sep="\t", header=None)
+    input_df = input_df.iloc[:, [0, 1, 2]]
+    input_df.columns = ["chr", "pos_start", "pos_end"]
+    return np.sum(input_df["pos_end"] - input_df["pos_start"] + 1)
+
 
 def close_to_hmer_run(
     df: pd.DataFrame,
@@ -758,8 +759,9 @@ def close_to_hmer_run(
         df.loc[gdf_ix, "close_to_hmer_run"] = close_dist & (~is_inside)
     return df
 
+
 def annotate_concordance(
-    df: pd.DataFrame,
+    concordance_df: pd.DataFrame,
     fasta: str,
     bw_high_quality: list[str] | None = None,
     bw_all_quality: list[str] | None = None,
@@ -772,7 +774,7 @@ def annotate_concordance(
 
     Parameters
     ----------
-    df : pd.DataFrame
+    concordance_df : pd.DataFrame
         Concordance dataframe
     fasta : str
         Indexed FASTA of the reference genome
@@ -801,38 +803,39 @@ def annotate_concordance(
         annotate_intervals = []
 
     logger.info("Marking SNP/INDEL")
-    df = annotation.classify_indel(df)
+    concordance_df = annotation.classify_indel(concordance_df)
     logger.info("Marking H-INDEL")
-    df = annotation.is_hmer_indel(df, fasta)
+    concordance_df = annotation.is_hmer_indel(concordance_df, fasta)
     logger.info("Marking motifs")
-    df = annotation.get_motif_around(df, 5, fasta)
+    concordance_df = annotation.get_motif_around(concordance_df, 5, fasta)
     logger.info("Marking GC content")
-    df = annotation.get_gc_content(df, 10, fasta)
+    concordance_df = annotation.get_gc_content(concordance_df, 10, fasta)
     if bw_all_quality is not None and bw_high_quality is not None:
         logger.info("Calculating coverage")
-        df = annotation.get_coverage(df, bw_high_quality, bw_all_quality)
+        concordance_df = annotation.get_coverage(concordance_df, bw_high_quality, bw_all_quality)
     if runfile is not None:
         length, dist = hmer_run_length_dist
         logger.info("Marking homopolymer runs")
-        df = close_to_hmer_run(df, runfile, min_hmer_run_length=length, max_distance=dist)
+        concordance_df = close_to_hmer_run(concordance_df, runfile, min_hmer_run_length=length, max_distance=dist)
     annots = []
     if annotate_intervals is not None:
         for annotation_file in annotate_intervals:
             logger.info("Annotating intervals")
-            df, annot = annotation.annotate_intervals(df, annotation_file)
+            concordance_df, annot = annotation.annotate_intervals(concordance_df, annotation_file)
             annots.append(annot)
     logger.debug("Filling filter column")  # debug since not interesting step
-    df = annotation.fill_filter_column(df)
+    concordance_df = annotation.fill_filter_column(concordance_df)
 
     logger.info("Filling filter column")
     if flow_order is not None:
-        df = annotation.annotate_cycle_skip(df, flow_order=flow_order)
-    return df, annots
+        concordance_df = annotation.annotate_cycle_skip(concordance_df, flow_order=flow_order)
+    return concordance_df, annots
 
 
 def reinterpret_variants(
     concordance_df: pd.DataFrame,
     reference_fasta: str,
+    *,
     ignore_low_quality_fps: bool = False,
 ) -> pd.DataFrame:
     """Reinterprets the variants by comparing the variant to the ground truth in flow space
@@ -866,7 +869,7 @@ def reinterpret_variants(
     return concordance_df_result
 
 
-def _get_locations_to_work_on(input_df: pd.DataFrame, ignore_low_quality_fps: bool = False) -> dict:
+def _get_locations_to_work_on(input_df: pd.DataFrame, *, ignore_low_quality_fps: bool = False) -> dict:
     """Dictionary of  in the dataframe that we care about
 
     Parameters
@@ -882,19 +885,27 @@ def _get_locations_to_work_on(input_df: pd.DataFrame, ignore_low_quality_fps: bo
         locations dictionary split between fps/fns/tps etc.
 
     """
-    df = vcftools.FilterWrapper(input_df)
-    fps = df.reset().get_fp().get_df()
+    filtered_df = vcftools.FilterWrapper(input_df)
+    fps = filtered_df.reset().get_fp().get_df()
     if "tree_score" in fps.columns and fps["tree_score"].dtype == np.float64 and ignore_low_quality_fps:
         cutoff = fps.tree_score.quantile(0.80)
         fps = fps.query(f"tree_score > {cutoff}")
-    fns = df.reset().get_df().query('classify=="fn"')
-    tps = df.reset().get_tp().get_df()
+    fns = filtered_df.reset().get_df().query('classify=="fn"')
+    tps = filtered_df.reset().get_tp().get_df()
     gtr = (
-        df.reset().get_df().loc[df.get_df()["gt_ground_truth"].apply(lambda x: x not in [(None, None), (None,)])].copy()
+        filtered_df.reset()
+        .get_df()
+        .loc[filtered_df.get_df()["gt_ground_truth"].apply(lambda x: x not in [(None, None), (None,)])]
+        .copy()
     )
-    gtr.sort_values("pos", inplace=True)
-    ugi = df.reset().get_df().loc[df.get_df()["gt_ultima"].apply(lambda x: x not in [(None, None), (None,)])].copy()
-    ugi.sort_values("pos", inplace=True)
+    gtr = gtr.sort_values("pos")
+    ugi = (
+        filtered_df.reset()
+        .get_df()
+        .loc[filtered_df.get_df()["gt_ultima"].apply(lambda x: x not in [(None, None), (None,)])]
+        .copy()
+    )
+    ugi = ugi.sort_values("pos")
 
     pos_fps = np.array(fps.pos)
     pos_gtr = np.array(gtr.pos)

@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pyfaidx
 import pysam
+import ugbio_core.concordance.flow_based_concordance as fbc
 import ugbio_core.flow_format.flow_based_read as fbr
-import ugvc.comparison.flow_based_concordance as fbc  # todo now add
 from ugbio_core.vcfbed import vcftools
 
 import ugbio_filtering.training_prep as tprep

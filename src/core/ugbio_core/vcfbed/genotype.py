@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 class Genotype:
     def __init__(self, genotype: str):
         """
@@ -28,4 +26,3 @@ def sort_gt(gt: tuple[int] | str) -> tuple[int]:
 def different_gt(gt1: tuple[int] | str, gt2: tuple[int] | str) -> bool:
     out = sort_gt(gt1) != sort_gt(gt2)
     return out
-

@@ -53,7 +53,7 @@ def run(argv: list[str]):
     conditional_allele_distributions = ConditionalAlleleDistributions()
     with open(args.conditional_allele_distribution_files, encoding="utf-8") as cad_files:
         for file_name in cad_files:
-            file_name = file_name.strip()
+            file_name = file_name.strip()  # noqa PLW2901
             if not os.path.exists(file_name):
                 continue
 
@@ -72,7 +72,7 @@ def run(argv: list[str]):
                     allele_counts = allele_counts.split()
                     alleles = allele_counts[0::2]
                     counts = [ReadCounts(*[int(sc) for sc in c.split(",")]) for c in allele_counts[1::2]]
-                    allele_counts_dict = dict(zip(alleles, counts))
+                    allele_counts_dict = dict(zip(alleles, counts, strict=False))
                     conditional_allele_distributions.add_counts(
                         chrom,
                         pos,
