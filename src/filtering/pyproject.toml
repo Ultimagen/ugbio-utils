@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_filtering"
-version = "1.4.3-0"
+version = "1.4.3-0dev-80"
 description = "Ultima Genomics filtering scripts"
 authors = [
     { name = "Ilya Soifer", email = "ilya.soifer@ultimagen.com" },
@@ -33,17 +33,17 @@ dev-dependencies = [
     "ruff>=0.6.9",
 ]
 
-[build-system]
-requires = [
-    "setuptools>=61.0",
-]
-build-backend = "setuptools.build_meta"
-
 [tool.uv.sources.ugbio_core]
 workspace = true
 
 [tool.uv.sources.ugbio_comparison]
 workspace = true
+
+[build-system]
+requires = [
+    "setuptools>=61.0",
+]
+build-backend = "setuptools.build_meta"
 
 [tool.setuptools.scripts]
 remove_vcf_duplicates = "sh:ugbio_filtering/scripts/remove_vcf_duplicates.sh"
