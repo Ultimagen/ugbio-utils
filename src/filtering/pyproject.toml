@@ -25,7 +25,6 @@ run_tests = "pytest:main"
 error_correction_training = "ugbio_filtering.sec.error_correction_training:main"
 merge_conditional_allele_distributions = "ugbio_filtering.sec.merge_conditional_allele_distributions:main"
 assess_sec_concordance = "ugbio_filtering.sec.assess_sec_concordance:main"
-remove_vcf_duplicates = "ugbio_filtering/scripts/remove_vcf_duplicates.sh"
 
 [tool.uv]
 dev-dependencies = [
@@ -45,3 +44,6 @@ workspace = true
 
 [tool.uv.sources.ugbio_comparison]
 workspace = true
+
+[tool.setuptools.scripts]
+remove_vcf_duplicates = "sh:ugbio_filtering/scripts/remove_vcf_duplicates.sh"
