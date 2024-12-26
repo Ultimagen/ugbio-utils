@@ -31,7 +31,7 @@ from ugbio_comparison.vcf_pipeline_utils import annotate_concordance
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
 from ugbio_core.h5_utils import read_hdf
 from ugbio_core.logger import logger
-from ugvc.utils.stats_utils import get_precision, get_recall
+from ugbio_core.stats_utils import get_precision, get_recall
 
 
 def parse_args(argv):

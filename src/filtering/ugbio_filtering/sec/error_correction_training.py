@@ -21,10 +21,11 @@ import argparse
 import os.path
 
 from ugbio_core.logger import logger
-from ugvc.sec.allele_counter import count_alleles_in_gvcf
-from ugvc.sec.conditional_allele_distribution import ConditionalAlleleDistribution
-from ugvc.vcfbed.buffered_variant_reader import BufferedVariantReader
-from ugvc.vcfbed.pysam_utils import get_alleles_str, get_filtered_alleles_str, get_genotype_indices
+from ugbio_core.vcfbed.buffered_variant_reader import BufferedVariantReader
+from ugbio_core.vcfbed.pysam_utils import get_alleles_str, get_filtered_alleles_str, get_genotype_indices
+
+from ugbio_filtering.sec.allele_counter import count_alleles_in_gvcf
+from ugbio_filtering.sec.conditional_allele_distribution import ConditionalAlleleDistribution
 
 
 def get_args():

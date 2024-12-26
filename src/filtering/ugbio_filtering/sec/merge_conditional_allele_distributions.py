@@ -23,9 +23,9 @@ import os.path
 import pickle
 import sys
 
-from ugvc.sec.conditional_allele_distribution import ConditionalAlleleDistribution
-from ugvc.sec.conditional_allele_distributions import ConditionalAlleleDistributions
-from ugvc.sec.read_counts import ReadCounts
+from ugbio_filtering.sec.conditional_allele_distribution import ConditionalAlleleDistribution
+from ugbio_filtering.sec.conditional_allele_distributions import ConditionalAlleleDistributions
+from ugbio_filtering.sec.read_counts import ReadCounts
 
 
 def get_args(argv: list[str]):

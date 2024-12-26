@@ -6,8 +6,8 @@ from collections.abc import Iterable
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
+from ugbio_core import stats_utils
 from ugbio_core.logger import logger
-from ugvc.filtering import variant_filtering_utils  # todo now move used functions to concordance_utils
 
 
 def calc_accuracy_metrics(
@@ -47,15 +47,13 @@ def calc_accuracy_metrics(
 
     # calc recall,precision, f1 per variant category
     if group_testing_column_name is None:
-        concordance_df = variant_filtering_utils.add_grouping_column(
-            concordance_df, get_selection_functions(), "group_testing"
-        )
+        concordance_df = add_grouping_column(concordance_df, get_selection_functions(), "group_testing")
         group_testing_column_name = "group_testing"
-    accuracy_df = variant_filtering_utils._init_metrics_df()
+    accuracy_df = init_metrics_df()
     groups = list(get_selection_functions().keys())
     for g_val in groups:
         dfselect = concordance_df[concordance_df[group_testing_column_name] == g_val]
-        acc = variant_filtering_utils.get_concordance_metrics(
+        acc = get_concordance_metrics(
             dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
             dfselect["tree_score"].to_numpy(),
             dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
@@ -73,7 +71,7 @@ def calc_accuracy_metrics(
     df_indels["group_testing"] = np.where(df_indels["indel"], "INDELS", "SNP")
     g_val = "INDELS"
     dfselect = df_indels[df_indels["group_testing"] == g_val]
-    acc = variant_filtering_utils.get_concordance_metrics(
+    acc = get_concordance_metrics(
         dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
         dfselect["tree_score"].to_numpy(),
         dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
@@ -92,7 +90,7 @@ def calc_accuracy_metrics(
 
     g_val = "H-INDELS"
     dfselect = df_indels[df_indels["group_testing"] == g_val]
-    acc = variant_filtering_utils.get_concordance_metrics(
+    acc = get_concordance_metrics(
         dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
         dfselect["tree_score"].to_numpy(),
         dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
@@ -150,9 +148,7 @@ def calc_recall_precision_curve(
 
     # calc recall,precision, f1 per variant category
     if group_testing_column_name is None:
-        concordance_df = variant_filtering_utils.add_grouping_column(
-            concordance_df, get_selection_functions(), "group_testing"
-        )
+        concordance_df = add_grouping_column(concordance_df, get_selection_functions(), "group_testing")
         group_testing_column_name = "group_testing"
 
     recall_precision_curve_df = pd.DataFrame(columns=["group", "precision", "recall", "f1", "threshold"])
@@ -160,7 +156,7 @@ def calc_recall_precision_curve(
     groups = list(get_selection_functions().keys())
     for g_val in groups:
         dfselect = concordance_df[concordance_df[group_testing_column_name] == g_val]
-        curve = variant_filtering_utils.get_concordance_metrics(
+        curve = get_concordance_metrics(
             dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
             dfselect["tree_score"].to_numpy(),
             dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
@@ -178,7 +174,7 @@ def calc_recall_precision_curve(
     df_indels["group_testing"] = np.where(df_indels["indel"], "INDELS", "SNP")
     g_val = "INDELS"
     dfselect = df_indels[df_indels["group_testing"] == g_val]
-    curve = variant_filtering_utils.get_concordance_metrics(
+    curve = get_concordance_metrics(
         dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
         dfselect["tree_score"].to_numpy(),
         dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
@@ -279,3 +275,186 @@ def get_selection_functions() -> OrderedDict:
     sfs["HMER indel 11,12"] = lambda x: x.indel & (x.hmer_indel_length >= 11) & (x.hmer_indel_length <= 12)  # noqa PLR2004
     sfs["HMER indel > 12"] = lambda x: x.indel & (x.hmer_indel_length > 12)  # noqa PLR2004
     return sfs
+
+
+def add_grouping_column(concordance_df: pd.DataFrame, selection_functions: dict, column_name: str) -> pd.DataFrame:
+    """
+    Add a column for grouping according to the values of selection functions
+
+    Parameters
+    ----------
+    concordance_df: pd.DataFrame
+        concordance dataframe
+    selection_functions: dict
+        Dictionary of selection functions to be applied on the df, keys - are the name of the group
+    column_name: str
+        Name of the column to contain grouping
+
+    Returns
+    -------
+    pd.DataFrame
+        df with column_name added to it that is filled with the group name according
+        to the selection function
+    """
+    concordance_df[column_name] = None
+    for k in selection_functions:
+        concordance_df.loc[selection_functions[k](concordance_df), column_name] = k
+    return concordance_df
+
+
+def init_metrics_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        columns=[
+            "group",
+            "tp",
+            "fp",
+            "fn",
+            "precision",
+            "recall",
+            "f1",
+            "initial_tp",
+            "initial_fp",
+            "initial_fn",
+            "initial_precision",
+            "initial_recall",
+            "initial_f1",
+        ]
+    )
+
+
+def _get_empty_recall_precision() -> dict:
+    """Return empty recall precision dictionary for category given"""
+    return {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "initial_tp": 0,
+        "initial_fp": 0,
+        "initial_fn": 0,
+        "initial_precision": 1.0,
+        "initial_recall": 1.0,
+        "initial_f1": 1.0,
+    }
+
+
+def _get_empty_recall_precision_curve() -> dict:
+    """Return empty recall precision curve dictionary for category given"""
+    return {"threshold": 0, "predictions": [], "precision": [], "recall": [], "f1": []}
+
+
+def get_concordance_metrics(
+    predictions: np.ndarray,
+    scores: np.ndarray,
+    truth: np.ndarray,
+    fn_mask: np.ndarray,
+    *,
+    return_metrics: bool = True,
+    return_curves: bool = True,
+) -> tuple[pd.DataFrame, pd.DataFrame] | pd.DataFrame:
+    """Calculate concordance metrics. The input of predictions is assumed to be numbers,
+    with zeros be negative calls. fn_mask denotes the locations that were not called in
+    predictions and that are called in the truth (false negatives).
+    The scores are the scores of the predictions.
+
+    Parameters
+    ----------
+    predictions: np.ndarray
+        Predictions (number array)
+    scores: np.ndarray
+        Scores (float array of scores for predictions)
+    truth: np.ndarray
+        Truth (number array)
+    fn_mask: np.ndarray
+        False negative mask (boolean array of the length of truth, predictions and scores that
+        contains True for false negatives and False for the rest of the values)
+    return_metrics: bool
+        Convenience, should the function return metrics (True) or only precision-recall curves (False)
+    return_curves: bool
+        Convenience, should the function return precision-recall curves (True) or only metrics (False)
+
+    Returns
+    -------
+    tuple or pd.DataFrame
+        Concordance metrics and precision recall curves or one of them dependent on the return_metrics and return_curves
+
+    Raises
+    ------
+    AssertionError
+        At least one of return_curves or return_metrics should be True
+    """
+
+    truth_curve = truth > 0
+    truth_curve[fn_mask] = True
+    min_example_count = 20
+    precisions_curve, recalls_curve, f1_curve, thresholds_curve = stats_utils.precision_recall_curve(
+        truth, scores, fn_mask, min_class_counts_to_output=min_example_count
+    )
+    if len(f1_curve) > 0:
+        threshold_loc = np.argmax(f1_curve)
+        threshold = thresholds_curve[threshold_loc]
+    else:
+        threshold = 0
+
+    curve_df = pd.DataFrame(
+        pd.Series(
+            {
+                "predictions": thresholds_curve,
+                "precision": precisions_curve,
+                "recall": recalls_curve,
+                "f1": f1_curve,
+                "threshold": threshold,
+            }
+        )
+    ).T
+
+    fn = fn_mask.sum()
+    predictions = predictions.copy()[~fn_mask]
+    scores = scores.copy()[~fn_mask]
+    truth = truth.copy()[~fn_mask]
+
+    if len(predictions) == 0:
+        result = (
+            pd.DataFrame(_get_empty_recall_precision(), index=[0]),
+            pd.DataFrame(pd.Series(_get_empty_recall_precision_curve())).T,
+        )
+    else:
+        tp = ((truth > 0) & (predictions > 0) & (truth == predictions)).sum()
+        fp = (predictions > truth).sum()
+        fn = fn + (predictions < truth).sum()
+        precision = stats_utils.get_precision(fp, tp)
+        recall = stats_utils.get_recall(fn, tp)
+        f1 = stats_utils.get_f1(precision, recall)
+        initial_tp = (truth > 0).sum()
+        initial_fp = len(truth) - initial_tp
+        initial_fn = fn_mask.sum()
+        initial_precision = stats_utils.get_precision(initial_fp, initial_tp)
+        initial_recall = stats_utils.get_recall(initial_fn, initial_tp)
+        initial_f1 = stats_utils.get_f1(initial_precision, initial_recall)
+        metrics_df = pd.DataFrame(
+            {
+                "tp": tp,
+                "fp": fp,
+                "fn": fn,
+                "precision": precision,
+                "recall": recall,
+                "f1": f1,
+                "initial_tp": initial_tp,
+                "initial_fp": initial_fp,
+                "initial_fn": initial_fn,
+                "initial_precision": initial_precision,
+                "initial_recall": initial_recall,
+                "initial_f1": initial_f1,
+            },
+            index=[0],
+        )
+        result = metrics_df, curve_df
+    metrics_df, curve_df = result
+    assert return_curves or return_metrics, "At least one of return_curves or return_metrics should be True"  # noqa S101
+    if return_curves and return_metrics:
+        return metrics_df, curve_df
+    if return_curves:
+        return curve_df
+    return metrics_df

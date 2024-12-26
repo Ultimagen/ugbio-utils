@@ -22,8 +22,8 @@ import sys
 from simppl.cli import get_parser
 from simppl.simple_pipeline import SimplePipeline
 from ugbio_core.consts import FileExtension
-from ugvc import base_dir as ugvc_pkg
-from ugvc.sec.sec_pipeline_utils import extract_relevant_gvcfs, read_sec_pipelines_inputs_table
+
+from ugbio_filtering.sec.sec_pipeline_utils import extract_relevant_gvcfs, read_sec_pipelines_inputs_table
 
 
 def parse_args(argv):
@@ -90,7 +90,7 @@ def run(argv):
     for sample_id, relevant_gvcf in zip(sample_ids, relevant_gvcf_files, strict=False):
         allele_distributions = f"{out_dir}/allele_distributions/{sample_id}{FileExtension.TSV.value}"
         training_commands.append(
-            f"python {ugvc_pkg}/pipelines/sec/error_correction_training.py "
+            f"error_correction_training "
             f"--relevant_coords {relevant_coords_file} "
             f"--ground_truth_vcf {ground_truth_vcf} "
             f"--gvcf {relevant_gvcf} "
@@ -110,7 +110,7 @@ def run(argv):
 
     # Aggregate empirical allele distributions of training-set
     simple_pipeline.print_and_run(
-        f"python {ugvc_pkg}/pipelines/sec/merge_conditional_allele_distributions.py "
+        f"merge_conditional_allele_distributions "
         f"--conditional_allele_distribution_files {training_files_file} "
         f"--output_prefix {model_prefix}"
     )

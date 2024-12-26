@@ -38,7 +38,6 @@ import numpy as np
 import pandas as pd
 import pyfaidx
 import ugbio_core.flow_format.flow_based_read as fbr
-import ugvc.utils.misc_utils as utils  # todo now move
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
 from ugbio_core.vcfbed import vcftools
 
@@ -544,7 +543,7 @@ def _select_best_region(interval_starts: list, intervals: list, pos: int) -> tup
     pos1 = np.searchsorted(interval_starts, pos).astype(int) - 1
     best_distance = None
     best_index = -1
-    while pos1 >= 0 and utils.isin(pos, intervals[pos1]):
+    while pos1 >= 0 and isin(pos, intervals[pos1]):
         dist = min(pos - intervals[pos1][0], intervals[pos1][1] - pos)
         if best_distance is None or dist < best_distance:
             best_distance = dist
@@ -556,3 +555,20 @@ def _select_best_region(interval_starts: list, intervals: list, pos: int) -> tup
 
     # if found an interval
     return intervals[best_index]
+
+
+def isin(pos: int, interval: tuple) -> bool:
+    """Is position inside the [interval)
+
+    Parameters
+    ----------
+    pos: int
+        Position
+    interval: tuple
+        [start,end)
+
+    Returns
+    -------
+    bool
+    """
+    return interval[0] <= pos < interval[1]

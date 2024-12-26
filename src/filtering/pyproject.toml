@@ -8,15 +8,11 @@ authors = [
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
 ]
 dependencies = [
-    "ugbio_core",
-#   tqdm
-#    numpy
-#    import pyfaidx
-#import pysam
-#    ast???
-#    sklearn
-#    xgboost
-#    pickle
+    "ugbio_core[vcfbed]",
+    "ugbio_comparison",
+    "xgboost==2.1.2",
+    "pickle-secure>=0.99.9",
+    "scikit-learn>=1.5.2,<1.6.0",
 ]
 requires-python = ">=3.11"
 readme = "README.filtering.md"
@@ -26,6 +22,10 @@ text = "Apache-2.0"
 
 [project.scripts]
 run_tests = "pytest:main"
+error_correction_training = "ugbio_filtering.sec.error_correction_training:main"
+merge_conditional_allele_distributions = "ugbio_filtering.sec.merge_conditional_allele_distributions:main"
+assess_sec_concordance = "ugbio_filtering.sec.assess_sec_concordance:main"
+remove_vcf_duplicates = "ugbio_filtering/scripts/remove_vcf_duplicates.sh"
 
 [tool.uv]
 dev-dependencies = [
@@ -39,3 +39,9 @@ requires = [
     "setuptools>=61.0",
 ]
 build-backend = "setuptools.build_meta"
+
+[tool.uv.sources.ugbio_core]
+workspace = true
+
+[tool.uv.sources.ugbio_comparison]
+workspace = true

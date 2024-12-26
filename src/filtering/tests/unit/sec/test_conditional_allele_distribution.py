@@ -1,8 +1,8 @@
 import unittest
 
+from ugbio_core.dna.strand_direction import StrandDirection
 from ugbio_filtering.sec.conditional_allele_distribution import ConditionalAlleleDistribution
 from ugbio_filtering.sec.read_counts import ReadCounts
-from ugvc.dna.strand_direction import StrandDirection
 
 ref_gt = "0/0"
 

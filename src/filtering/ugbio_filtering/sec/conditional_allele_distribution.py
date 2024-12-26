@@ -1,4 +1,4 @@
-from ugvc.dna.strand_direction import StrandDirection
+from ugbio_core.dna.strand_direction import StrandDirection
 
 from ugbio_filtering.sec.read_counts import ReadCounts
 

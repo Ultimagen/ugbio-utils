@@ -21,8 +21,9 @@ import sys
 
 from simppl.cli import get_parser
 from simppl.simple_pipeline import SimplePipeline
-from ugvc import base_dir as ugvc_pkg
-from ugvc.sec.sec_pipeline_utils import extract_relevant_gvcfs, read_sec_pipelines_inputs_table
+
+# from ugvc import base_dir as ugvc_pkg
+from ugbio_filtering.sec.sec_pipeline_utils import extract_relevant_gvcfs, read_sec_pipelines_inputs_table
 
 
 def parse_args(argv):
@@ -107,7 +108,7 @@ def run(argv):
 
         if novel_detection_only:
             test_commands.append(
-                f"python {ugvc_pkg} correct_systematic_errors "
+                f" correct_systematic_errors "
                 f"--relevant_coords {relevant_coords_file} "
                 f'--model "{model}" '
                 f"--gvcf {relevant_gvcf} "
@@ -116,7 +117,7 @@ def run(argv):
             )
         else:
             test_commands.append(
-                f"python {ugvc_pkg} correct_systematic_errors "
+                f"correct_systematic_errors "
                 f"--relevant_coords {relevant_coords_file} "
                 f'--model "{model}" '
                 f"--gvcf {relevant_gvcf} "
@@ -124,7 +125,7 @@ def run(argv):
             )
 
         assess_commands.append(
-            f"python {ugvc_pkg} assess_sec_concordance "
+            f"assess_sec_concordance "  # tdod now define script
             f"--concordance_h5_input {comparison_table} "
             f"--genome_fasta {genome_fasta} "
             f"--raw_exclude_list {relevant_coords_file} "

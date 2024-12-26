@@ -1,25 +1,23 @@
 [project]
-name = "ugbio_freec"
+name = "ugbio_comparison"
 version = "1.4.3-0"
-description = "Ultima Genomics FREEC"
+description = "Ultima Genomics comparison scripts"
 authors = [
-    { name = "Tammy Biniashvili", email = "tammy.biniashvili@ultimagen.com" },
+    { name = "Ilya Soifer", email = "ilya.soifer@ultimagen.com" },
+    { name = "Doron Shem-Tov", email = "doron.shemtov@ultimagen.com" },
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
 ]
 dependencies = [
-    "pandas>=2.2.2",
-    "pyfaidx>=0.8.1",
+    "ugbio_core",
 ]
 requires-python = ">=3.11"
-readme = "README.freec.md"
+readme = "README.comparison.md"
 
 [project.license]
 text = "Apache-2.0"
 
 [project.scripts]
 run_tests = "pytest:main"
-generate_controlFREEC_config = "ugbio_freec.generate_control_freec_config:main"
-bigwig_to_bedGraph = "ugbio_freec.bigwig_to_bedgraph:main"
 
 [tool.uv]
 dev-dependencies = [
@@ -33,3 +31,6 @@ requires = [
     "setuptools>=61.0",
 ]
 build-backend = "setuptools.build_meta"
+
+[tool.uv.sources.ugbio_core]
+workspace = true

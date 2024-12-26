@@ -2,8 +2,8 @@ import math
 
 import numpy as np
 from pysam import VariantRecord
-from ugvc.vcfbed.genotype import Genotype
-from ugvc.vcfbed.pysam_utils import get_genotype, get_genotype_indices, has_candidate_alternatives
+from ugbio_core.vcfbed.genotype import Genotype
+from ugbio_core.vcfbed.pysam_utils import get_genotype, get_genotype_indices, has_candidate_alternatives
 
 from ugbio_filtering.sec.conditional_allele_distribution import ConditionalAlleleDistribution
 from ugbio_filtering.sec.conditional_allele_distribution_correlator import correlate_sec_records

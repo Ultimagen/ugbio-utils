@@ -33,15 +33,16 @@ from typing import TextIO
 
 import pysam
 from pysam import VariantFile, VariantRecord
+from ugbio_core.logger import logger
 from ugbio_core.vcfbed.bed_writer import BedWriter
-from ugvc import base_dir, logger
-from ugvc.filtering.blacklist import Blacklist
-from ugvc.filtering.variant_filtering_utils import VariantSelectionFunctions
-from ugvc.sec.systematic_error_correction_call import SECCall, SECCallType
-from ugvc.sec.systematic_error_correction_caller import SECCaller
-from ugvc.sec.systematic_error_correction_record import SECRecord
-from ugvc.vcfbed.buffered_variant_reader import BufferedVariantReader
-from ugvc.vcfbed.pysam_utils import get_filtered_alleles_list, get_filtered_alleles_str, get_genotype
+from ugbio_core.vcfbed.buffered_variant_reader import BufferedVariantReader
+from ugbio_core.vcfbed.pysam_utils import get_filtered_alleles_list, get_filtered_alleles_str, get_genotype
+
+from ugbio_filtering.blacklist import Blacklist
+from ugbio_filtering.sec.systematic_error_correction_call import SECCall, SECCallType
+from ugbio_filtering.sec.systematic_error_correction_caller import SECCaller
+from ugbio_filtering.sec.systematic_error_correction_record import SECRecord
+from ugbio_filtering.variant_filtering_utils import VariantSelectionFunctions
 
 
 def get_args(argv: list[str]):
@@ -404,8 +405,7 @@ def run(argv: list[str]):
     if os.path.exists(args.gvcf):
         dedup_input_vcf = f"{out_file}.input.nodup.vcf.gz"
         cmd = [
-            "sh",
-            f"{base_dir}/bash/remove_vcf_duplicates.sh",
+            "remove_vcf_duplicates",  # tdod now define script
             args.gvcf,
             dedup_input_vcf,
         ]

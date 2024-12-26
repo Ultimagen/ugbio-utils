@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.stats import binomtest
-from ugvc.dna.strand_direction import StrandDirection
-from ugvc.utils.stats_utils import multinomial_likelihood_ratio, scale_contingency_table
-from ugvc.vcfbed.pysam_utils import is_snp
+from ugbio_core.dna.strand_direction import StrandDirection
+from ugbio_core.stats_utils import multinomial_likelihood_ratio, scale_contingency_table
+from ugbio_core.vcfbed.pysam_utils import is_snp
 
 from ugbio_filtering.sec.conditional_allele_distribution import ConditionalAlleleDistribution, get_allele_counts_list
 from ugbio_filtering.sec.read_counts import ReadCounts

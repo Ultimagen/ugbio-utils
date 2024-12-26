@@ -3,8 +3,6 @@ import pandas as pd
 import pytest
 import ugbio_filtering.multiallelics as tprep
 
-from test import get_resource_dir
-
 
 def test_select_overlapping_variants():
     alleles = [
@@ -155,11 +153,9 @@ def test_get_gt_from_pl_idx(idx, expected):
     assert tprep.get_gt_from_pl_idx(idx) == expected
 
 
-def test_cleanup_multiallelics():
-    inputs_dir = get_resource_dir(__file__)
-
-    input_h5 = pd.DataFrame(pd.read_hdf(f"{inputs_dir}/cleanup_multiallelics_input.h5"))
-    expected_h5 = pd.DataFrame(pd.read_hdf(f"{inputs_dir}/cleanup_multiallelics_expected.h5"))
+def test_cleanup_multiallelics(resources_dir):
+    input_h5 = pd.DataFrame(pd.read_hdf(f"{resources_dir}/cleanup_multiallelics_input.h5"))
+    expected_h5 = pd.DataFrame(pd.read_hdf(f"{resources_dir}/cleanup_multiallelics_expected.h5"))
     result = tprep.cleanup_multiallelics(input_h5)
     pd.testing.assert_frame_equal(result, expected_h5)
     result = result.loc[result["label"].apply(lambda x: x in {(0, 1), (1, 1), (0, 0)})]

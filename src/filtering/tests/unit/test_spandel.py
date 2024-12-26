@@ -4,16 +4,19 @@ import pickle
 import pandas as pd
 import pyfaidx
 import pysam
+import pytest
 import ugbio_filtering.spandel as spandel
 
-from test import get_resource_dir
+
+@pytest.fixture
+def resources_dir():
+    return pathlib.Path(__file__).parent.parent / "resources"
 
 
-def test_extract_allele_subset_from_multiallelic_spanning_deletion():
-    inputs_dir = get_resource_dir(__file__)
-    reference = pyfaidx.Fasta(str(pathlib.Path(inputs_dir, "ref_fragment.fa.gz")))
-    spanning_deletion_examples_file = pathlib.Path(inputs_dir, "spanning_deletions.pkl")
-    expected_results_file = pathlib.Path(inputs_dir, "expected_results_spanning_deletions.pkl")
+def test_extract_allele_subset_from_multiallelic_spanning_deletion(resources_dir):
+    reference = pyfaidx.Fasta(str(pathlib.Path(resources_dir, "ref_fragment.fa.gz")))
+    spanning_deletion_examples_file = pathlib.Path(resources_dir, "spanning_deletions.pkl")
+    expected_results_file = pathlib.Path(resources_dir, "expected_results_spanning_deletions.pkl")
     with open(expected_results_file, "rb") as f:
         expected_results = pickle.load(f)
 
@@ -30,12 +33,11 @@ def test_extract_allele_subset_from_multiallelic_spanning_deletion():
         pd.testing.assert_series_equal(results[i], expected_results[i])
 
 
-def test_split_multiallelic_variants_with_spandel():
-    inputs_dir = get_resource_dir(__file__)
-    reference = pyfaidx.Fasta(str(pathlib.Path(inputs_dir, "ref_fragment.fa.gz")))
-    inputs_file = pathlib.Path(inputs_dir, "spanning_deletions.pkl")
-    expected_result_file = pathlib.Path(inputs_dir, "expected_result_split_multiallelic.pkl")
-    vcf_header = pysam.VariantFile(str(pathlib.Path(inputs_dir, "test_header.vcf.gz"))).header
+def test_split_multiallelic_variants_with_spandel(resources_dir):
+    reference = pyfaidx.Fasta(str(pathlib.Path(resources_dir, "ref_fragment.fa.gz")))
+    inputs_file = pathlib.Path(resources_dir, "spanning_deletions.pkl")
+    expected_result_file = pathlib.Path(resources_dir, "expected_result_split_multiallelic.pkl")
+    vcf_header = pysam.VariantFile(str(pathlib.Path(resources_dir, "test_header.vcf.gz"))).header
     with open(inputs_file, "rb") as f:
         inputs, _ = pickle.load(f)
 

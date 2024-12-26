@@ -20,10 +20,11 @@ import argparse
 import itertools
 import pickle
 
-from ugvc.sec.conditional_allele_distribution import ConditionalAlleleDistribution
-from ugvc.sec.conditional_allele_distribution_correlator import correlate_distributions_per_pos
-from ugvc.sec.conditional_allele_distributions import ConditionalAlleleDistributions
-from ugvc.vcfbed.pysam_utils import is_snp
+from ugbio_core.vcfbed.pysam_utils import is_snp
+
+from ugbio_filtering.sec.conditional_allele_distribution import ConditionalAlleleDistribution
+from ugbio_filtering.sec.conditional_allele_distribution_correlator import correlate_distributions_per_pos
+from ugbio_filtering.sec.conditional_allele_distributions import ConditionalAlleleDistributions
 
 
 def get_args():

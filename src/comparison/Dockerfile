@@ -2,15 +2,14 @@ ARG BASE_IMAGE=ugbio_base
 FROM python:3.11-bullseye AS build
 
 ARG OUT_DIR=/tmp/ugbio
-ARG MODULE_DIR=filtering
+ARG MODULE_DIR=comparison
 RUN mkdir -p $OUT_DIR
 
 COPY ./src/ ./src/
 
-# build depended + module
+# build module
 RUN python -m pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/core
-RUN python -m build --outdir $OUT_DIR --wheel ./src/comparison
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################

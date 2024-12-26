@@ -1,5 +1,6 @@
 import pickle
 from os.path import join as pjoin
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -7,9 +8,10 @@ import pytest
 import ugbio_filtering.blacklist
 from ugbio_filtering import variant_filtering_utils
 
-from test import get_resource_dir
 
-inputs_dir = get_resource_dir(__file__)
+@pytest.fixture
+def resources_dir():
+    return Path(__file__).parent.parent / "resources"
 
 
 def test_blacklist_cg_insertions():
@@ -38,8 +40,8 @@ def test_merge_blacklist():
     assert merge_list == ["PASS;PASS", "FAIL;FAIL1", "FAIL;PASS"]
 
 
-def test_read_blacklist():
-    blacklist = pickle.load(open(pjoin(inputs_dir, "blacklist.test.pkl"), "rb"))
+def test_read_blacklist(resources_dir):
+    blacklist = pickle.load(open(pjoin(resources_dir, "blacklist.test.pkl"), "rb"))
     descriptions = [str(x) for x in blacklist]
     assert descriptions == [
         "ILLUMINA_FP: GTR error with 1000 elements",
@@ -47,9 +49,9 @@ def test_read_blacklist():
     ]
 
 
-def test_apply_blacklist():
-    test_df = pd.read_hdf(pjoin(inputs_dir, "test.df.h5"), key="variants")
-    blacklist = pickle.load(open(pjoin(inputs_dir, "blacklist.test.pkl"), "rb"))
+def test_apply_blacklist(resources_dir):
+    test_df = pd.read_hdf(pjoin(resources_dir, "test.df.h5"), key="variants")
+    blacklist = pickle.load(open(pjoin(resources_dir, "blacklist.test.pkl"), "rb"))
     blacklists_applied = [x.apply(test_df) for x in blacklist]
     vcs = [x.value_counts() for x in blacklists_applied]
     assert (

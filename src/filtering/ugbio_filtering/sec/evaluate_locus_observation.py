@@ -1,5 +1,5 @@
 from pysam import VariantRecord
-from ugvc.vcfbed.pysam_utils import get_filtered_alleles_str
+from ugbio_core.vcfbed.pysam_utils import get_filtered_alleles_str
 
 from ugbio_filtering.sec.allele_counter import count_alleles_in_gvcf
 from ugbio_filtering.sec.conditional_allele_distribution import ConditionalAlleleDistribution
