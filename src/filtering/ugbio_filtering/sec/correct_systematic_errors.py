@@ -29,6 +29,7 @@ import subprocess
 import sys
 from collections import defaultdict
 from enum import Enum
+from pathlib import Path
 from typing import TextIO
 
 import pysam
@@ -43,6 +44,10 @@ from ugbio_filtering.sec.systematic_error_correction_call import SECCall, SECCal
 from ugbio_filtering.sec.systematic_error_correction_caller import SECCaller
 from ugbio_filtering.sec.systematic_error_correction_record import SECRecord
 from ugbio_filtering.variant_filtering_utils import VariantSelectionFunctions
+
+BASE_PATH = Path(__file__).parent
+SCRIPTS_DIR = "scripts"
+REMOVE_VCF_DUPLICATES_SHELL_SCRIPT = BASE_PATH / SCRIPTS_DIR / "remove_vcf_duplicates.sh"
 
 
 def get_args(argv: list[str]):
@@ -405,7 +410,8 @@ def run(argv: list[str]):
     if os.path.exists(args.gvcf):
         dedup_input_vcf = f"{out_file}.input.nodup.vcf.gz"
         cmd = [
-            "remove_vcf_duplicates",  # tdod now define script
+            "sh",
+            REMOVE_VCF_DUPLICATES_SHELL_SCRIPT,
             args.gvcf,
             dedup_input_vcf,
         ]
