@@ -8,11 +8,10 @@ authors = [
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
 ]
 dependencies = [
-    "ugbio_core[vcfbed]",
+    "ugbio_core[vcfbed,concordance]",
     "ugbio_comparison",
     "xgboost==2.1.2",
     "pickle-secure>=0.99.9",
-    "scikit-learn>=1.5.2,<1.6.0",
 ]
 requires-python = ">=3.11"
 readme = "README.filtering.md"

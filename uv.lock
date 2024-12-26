@@ -2821,7 +2821,7 @@ wheels = [
 
 [[package]]
 name = "ugbio-cnv"
-version = "1.4.3.post0"
+version = "1.4.3.post0.dev80"
 source = { editable = "src/cnv" }
 dependencies = [
     { name = "seaborn" },
@@ -2850,10 +2850,10 @@ dev = [
 
 [[package]]
 name = "ugbio-comparison"
-version = "1.4.3.post0"
+version = "1.4.3.post0.dev80"
 source = { editable = "src/comparison" }
 dependencies = [
-    { name = "ugbio-core" },
+    { name = "ugbio-core", extra = ["concordance"] },
 ]
 
 [package.dev-dependencies]
@@ -2864,7 +2864,7 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "ugbio-core", editable = "src/core" }]
+requires-dist = [{ name = "ugbio-core", extras = ["concordance"], editable = "src/core" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -2875,7 +2875,7 @@ dev = [
 
 [[package]]
 name = "ugbio-core"
-version = "1.4.3.post0"
+version = "1.4.3.post0.dev80"
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -2889,6 +2889,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+concordance = [
+    { name = "scikit-learn" },
+]
 vcfbed = [
     { name = "bgzip" },
     { name = "pybigwig" },
@@ -2912,6 +2915,7 @@ requires-dist = [
     { name = "pybigwig", marker = "extra == 'vcfbed'", specifier = ">=0.3.18" },
     { name = "pyfaidx", specifier = ">=0.8.1" },
     { name = "pysam", specifier = ">=0.22.1" },
+    { name = "scikit-learn", marker = "extra == 'concordance'", specifier = ">=1.5.2,<1.6.0" },
     { name = "scipy", specifier = ">=1.14.0" },
     { name = "simppl", specifier = ">=1.0.7" },
     { name = "tqdm", marker = "extra == 'vcfbed'", specifier = ">=4.66.4" },
@@ -2926,7 +2930,7 @@ dev = [
 
 [[package]]
 name = "ugbio-featuremap"
-version = "1.4.3.post0"
+version = "1.4.3.post0.dev80"
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "scikit-learn" },
@@ -2961,13 +2965,12 @@ dev = [
 
 [[package]]
 name = "ugbio-filtering"
-version = "1.4.3.post0"
+version = "1.4.3.post0.dev80"
 source = { editable = "src/filtering" }
 dependencies = [
     { name = "pickle-secure" },
-    { name = "scikit-learn" },
     { name = "ugbio-comparison" },
-    { name = "ugbio-core", extra = ["vcfbed"] },
+    { name = "ugbio-core", extra = ["concordance", "vcfbed"] },
     { name = "xgboost" },
 ]
 
@@ -2981,9 +2984,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "pickle-secure", specifier = ">=0.99.9" },
-    { name = "scikit-learn", specifier = ">=1.5.2,<1.6.0" },
     { name = "ugbio-comparison", editable = "src/comparison" },
-    { name = "ugbio-core", extras = ["vcfbed"], editable = "src/core" },
+    { name = "ugbio-core", extras = ["vcfbed", "concordance"], editable = "src/core" },
     { name = "xgboost", specifier = "==2.1.2" },
 ]
 
@@ -2996,7 +2998,7 @@ dev = [
 
 [[package]]
 name = "ugbio-freec"
-version = "1.4.3.post0"
+version = "1.4.3.post0.dev80"
 source = { editable = "src/freec" }
 dependencies = [
     { name = "pandas" },
@@ -3025,12 +3027,12 @@ dev = [
 
 [[package]]
 name = "ugbio-hla-la"
-version = "1.4.3.post0"
+version = "1.4.3.post0.dev80"
 source = { virtual = "src/hla_la" }
 
 [[package]]
 name = "ugbio-methylation"
-version = "1.4.3.post0"
+version = "1.4.3.post0.dev80"
 source = { editable = "src/methylation" }
 dependencies = [
     { name = "ipython" },
@@ -3071,7 +3073,7 @@ dev = [
 
 [[package]]
 name = "ugbio-mrd"
-version = "1.4.3.post0"
+version = "1.4.3.post0.dev80"
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["vcfbed"] },
@@ -3102,7 +3104,7 @@ dev = [
 
 [[package]]
 name = "ugbio-omics"
-version = "1.4.3.post0"
+version = "1.4.3.post0.dev80"
 source = { editable = "src/omics" }
 dependencies = [
     { name = "boto3" },
@@ -3135,7 +3137,7 @@ dev = [
 
 [[package]]
 name = "ugbio-ppmseq"
-version = "1.4.3.post0"
+version = "1.4.3.post0.dev80"
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3172,7 +3174,7 @@ dev = [
 
 [[package]]
 name = "ugbio-single-cell"
-version = "1.4.3.post0"
+version = "1.4.3.post0.dev80"
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3217,7 +3219,7 @@ dev = [
 
 [[package]]
 name = "ugbio-srsnv"
-version = "1.4.3.post0"
+version = "1.4.3.post0.dev80"
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3283,7 +3285,7 @@ dev = [
 
 [[package]]
 name = "ugbio-utils"
-version = "1.4.3.post0"
+version = "1.4.3.post0.dev80"
 source = { virtual = "." }
 
 [package.dev-dependencies]
