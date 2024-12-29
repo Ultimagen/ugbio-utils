@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y \
     openjdk-17-jre-headless `# for gatk` \
     git \
     wget \
+    curl \
     unzip \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
@@ -41,6 +42,15 @@ RUN mkdir -p /opt/picard && \
     # Create a shell script to run Picard easily
 RUN echo '#!/bin/sh\njava -jar /opt/picard/picard.jar "$@"' > /usr/local/bin/picard && \
     chmod +x /usr/local/bin/picard
+
+# Download RTG-tools
+ARG RTG_VERSION=3.12.1
+RUN curl -SLO https://github.com/RealTimeGenomics/rtg-tools/releases/download/${RTG_VERSION}/rtg-tools-${RTG_VERSION}-linux-x64.zip && \
+    unzip -d /opt rtg-tools-${RTG_VERSION}-linux-x64.zip && \
+    rm rtg-tools-${RTG_VERSION}-linux-x64.zip && \
+    ln -s /opt/rtg-tools-${RTG_VERSION} /opt/rtg && \
+    echo "RTG_TALKBACK=true  # Crash logs\nRTG_USAGE=false # Simple usage logging\n" >/opt/rtg/rtg.cfg && \
+    ln -s /opt/rtg/rtg /usr/local/bin/rtg
 
 ARG OUT_DIR=/tmp/ugbio
 
