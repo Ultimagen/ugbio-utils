@@ -29,14 +29,14 @@ class TestTrainingPrep:
         assert "lcr" in labeled_df.columns
         assert "exome" in labeled_df.columns
 
-    def test_calculate_labels(self):
+    def test_calculate_labels(self, resources_dir):
         joint_vcf_df_file = str(pathlib.Path(resources_dir, "expected_result_calculate_labeled_vcf.h5"))
         joint_vcf_df = pd.DataFrame(pd.read_hdf(joint_vcf_df_file, key="result"))
         labeled_df = tprep.calculate_labels(joint_vcf_df)
         expected_result_file = str(pathlib.Path(resources_dir, "expected_labels.h5"))
         pd.testing.assert_series_equal(labeled_df, pd.read_hdf(expected_result_file, key="labels"))  # type: ignore
 
-    def test_label_with_approximate_gt(self, tmpdir):
+    def test_label_with_approximate_gt(self, tmpdir, resources_dir):
         inputs_file = str(pathlib.Path(resources_dir, "006919_no_frd_chr1_1_5000000.vcf.gz"))
         blacklist_file = str(pathlib.Path(resources_dir, "blacklist_chr1_1_5000000.h5"))
         tprep.label_with_approximate_gt(

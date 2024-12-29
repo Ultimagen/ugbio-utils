@@ -1,7 +1,14 @@
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
 import ugbio_filtering.multiallelics as tprep
+
+
+@pytest.fixture
+def resources_dir():
+    return Path(__file__).parent.parent / "resources"
 
 
 def test_select_overlapping_variants():

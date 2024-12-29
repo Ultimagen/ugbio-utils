@@ -11,6 +11,7 @@ dependencies = [
     "ugbio_comparison",
     "xgboost==2.1.2",
     "pickle-secure>=0.99.9",
+    "biopython>=1.73"
 ]
 requires-python = ">=3.11"
 readme = "README.filtering.md"
