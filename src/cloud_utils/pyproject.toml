@@ -1,0 +1,30 @@
+[project]
+name = "ugbio_cloud_utils"
+version = "1.4.3"
+requires-python = ">=3.11"
+description = "Ultima Genomics cloud python utils"
+authors = [
+    { name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com" },
+]
+readme = "README.cloud.md"
+dependencies = [
+    "boto3>=1.35.66",
+    "google-cloud-storage>=2.19.0",
+]
+
+[project.scripts]
+run_tests = "pytest:main"
+cloud_sync = "ugbio_cloud_utils.cloud_sync:main"
+
+[tool.uv]
+dev-dependencies = [
+    "pre-commit>=4.0.1",
+    "pytest>=8.3.3",
+    "ruff>=0.6.9",
+]
+
+[build-system]
+requires = [
+    "setuptools>=61.0",
+]
+build-backend = "setuptools.build_meta"

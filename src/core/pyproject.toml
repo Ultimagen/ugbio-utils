@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_core"
-version = "1.4.3-0dev-80"
+version = "1.4.3"
 requires-python = ">=3.11"
 description = "Ultima Genomics core bioinfo utils"
 authors = [
@@ -23,9 +23,6 @@ vcfbed = [
     "pybigwig>=0.3.18",
     "tqdm>=4.66.4",
     "bgzip>=0.5.0",
-]
-concordance = [
-    "scikit-learn>=1.5.2,<1.6.0",
 ]
 
 [project.license]

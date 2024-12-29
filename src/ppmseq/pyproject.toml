@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_ppmseq"
-version = "1.4.3-0dev-80"
+version = "1.4.3"
 requires-python = ">=3.11"
 dependencies = [
     "ugbio_core[vcfbed]",
