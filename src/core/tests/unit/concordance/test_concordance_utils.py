@@ -189,10 +189,8 @@ def test_get_concordance_metrics():
     scores = np.array([0.2, 0.8, 0.4, 0.6, 0.3])
     truth = np.array([0, 1, 1, 0, 1])
     fn_mask = np.array([False, False, True, False, False])
-    return_metrics = True
-    return_curves = False
 
-    result = get_concordance_metrics(predictions, scores, truth, fn_mask, return_metrics, return_curves)
+    result = get_concordance_metrics(predictions, scores, truth, fn_mask, return_metrics=True, return_curves=False)
 
     expected_metrics_df = pd.DataFrame(
         {
@@ -220,8 +218,6 @@ def test_get_concordance_metrics_no_return():
     scores = np.array([0.2, 0.8, 0.4, 0.6, 0.3])
     truth = np.array([0, 1, 1, 0, 1])
     fn_mask = np.array([False, False, True, False, False])
-    return_metrics = False
-    return_curves = False
 
     with pytest.raises(AssertionError):
-        get_concordance_metrics(predictions, scores, truth, fn_mask, return_metrics, return_curves)
+        get_concordance_metrics(predictions, scores, truth, fn_mask, return_metrics=False, return_curves=False)
