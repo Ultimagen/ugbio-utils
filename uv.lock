@@ -7,6 +7,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "ugbio-cloud-utils",
     "ugbio-cnv",
     "ugbio-core",
     "ugbio-featuremap",
@@ -18,6 +19,7 @@ members = [
     "ugbio-ppmseq",
     "ugbio-single-cell",
     "ugbio-srsnv",
+    "ugbio-test",
     "ugbio-utils",
 ]
 
@@ -801,7 +803,7 @@ wheels = [
 
 [[package]]
 name = "google-cloud-storage"
-version = "2.18.2"
+version = "2.19.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "google-api-core" },
@@ -811,9 +813,9 @@ dependencies = [
     { name = "google-resumable-media" },
     { name = "requests" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d6/b7/1554cdeb55d9626a4b8720746cba8119af35527b12e1780164f9ba0f659a/google_cloud_storage-2.18.2.tar.gz", hash = "sha256:aaf7acd70cdad9f274d29332673fcab98708d0e1f4dceb5a5356aaef06af4d99", size = 5532864 }
+sdist = { url = "https://files.pythonhosted.org/packages/36/76/4d965702e96bb67976e755bed9828fa50306dca003dbee08b67f41dd265e/google_cloud_storage-2.19.0.tar.gz", hash = "sha256:cd05e9e7191ba6cb68934d8eb76054d9be4562aa89dbc4236feee4d7d51342b2", size = 5535488 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fc/da/95db7bd4f0bd1644378ac1702c565c0210b004754d925a74f526a710c087/google_cloud_storage-2.18.2-py2.py3-none-any.whl", hash = "sha256:97a4d45c368b7d401ed48c4fdfe86e1e1cb96401c9e199e419d289e2c0370166", size = 130466 },
+    { url = "https://files.pythonhosted.org/packages/d5/94/6db383d8ee1adf45dc6c73477152b82731fa4c4a46d9c1932cc8757e0fd4/google_cloud_storage-2.19.0-py2.py3-none-any.whl", hash = "sha256:aeb971b5c29cf8ab98445082cbfe7b161a1f48ed275822f59ed3f1524ea54fba", size = 131787 },
 ]
 
 [[package]]
@@ -2774,8 +2776,37 @@ wheels = [
 ]
 
 [[package]]
+name = "ugbio-cloud-utils"
+version = "1.4.3.post1"
+source = { editable = "src/cloud_utils" }
+dependencies = [
+    { name = "boto3" },
+    { name = "google-cloud-storage" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "boto3", specifier = ">=1.35.66" },
+    { name = "google-cloud-storage", specifier = ">=2.19.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "ruff", specifier = ">=0.6.9" },
+]
+
+[[package]]
 name = "ugbio-cnv"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/cnv" }
 dependencies = [
     { name = "seaborn" },
@@ -2804,7 +2835,7 @@ dev = [
 
 [[package]]
 name = "ugbio-core"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -2855,7 +2886,7 @@ dev = [
 
 [[package]]
 name = "ugbio-featuremap"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "scikit-learn" },
@@ -2890,7 +2921,7 @@ dev = [
 
 [[package]]
 name = "ugbio-freec"
-version = "1.4.1.post0.dev74"
+version = "1.4.3.post0"
 source = { editable = "src/freec" }
 dependencies = [
     { name = "pandas" },
@@ -2919,12 +2950,12 @@ dev = [
 
 [[package]]
 name = "ugbio-hla-la"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { virtual = "src/hla_la" }
 
 [[package]]
 name = "ugbio-methylation"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/methylation" }
 dependencies = [
     { name = "ipython" },
@@ -2965,7 +2996,7 @@ dev = [
 
 [[package]]
 name = "ugbio-mrd"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["vcfbed"] },
@@ -2996,7 +3027,7 @@ dev = [
 
 [[package]]
 name = "ugbio-omics"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/omics" }
 dependencies = [
     { name = "boto3" },
@@ -3029,7 +3060,7 @@ dev = [
 
 [[package]]
 name = "ugbio-ppmseq"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3066,7 +3097,7 @@ dev = [
 
 [[package]]
 name = "ugbio-single-cell"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3111,7 +3142,7 @@ dev = [
 
 [[package]]
 name = "ugbio-srsnv"
-version = "1.4.1.post0.dev76"
+version = "1.4.3.post0"
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3155,8 +3186,29 @@ dev = [
 ]
 
 [[package]]
-name = "ugbio-utils"
+name = "ugbio-test"
 version = "1.4.1.post0.dev76"
+source = { editable = "src/test" }
+
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "ruff", specifier = ">=0.6.9" },
+]
+
+[[package]]
+name = "ugbio-utils"
+version = "1.4.3.post0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
