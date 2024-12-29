@@ -158,16 +158,31 @@ def aggreagte_vcf_from_vcfeval_dir(
     tp_vcf = pjoin(vcfeval_dir, "tp.vcf.gz")
     fp_vcf = pjoin(vcfeval_dir, "fp.vcf.gz")
 
-    tp_output_vcf = tp_vcf.replace(".vcf.gz", f".{chromosome}.agg_params.vcf.gz")
-    tp_output_vcf = aggregate_vcf(tp_vcf, tp_output_vcf, added_agg_features, ppm_added_agg_features)
+    # read vcf block to dataframe
+    custom_info_fields = featuremap_xgb_prediction.default_custom_info_fields
+    custom_info_fields.extend(featuremap_xgb_prediction.ppm_custom_info_fields)
 
-    fp_output_vcf = fp_vcf.replace(".vcf.gz", f".{chromosome}.agg_params.vcf.gz")
-    fp_output_vcf = aggregate_vcf(fp_vcf, fp_output_vcf, added_agg_features, ppm_added_agg_features)
+    out_vcf = {}
+    for tag, in_vcf in zip(["tp", "fp"], [tp_vcf, fp_vcf], strict=False):
+        out_vcf = in_vcf.replace(".vcf.gz", f".{chromosome}.agg_params.vcf.gz")
+        df_variants = vcftools.get_vcf_df(in_vcf, custom_info_fields=custom_info_fields)
+        df_variants = featuremap_xgb_prediction.df_vcf_manual_aggregation(df_variants)
+
+        with pysam.VariantFile(in_vcf) as vcfin:
+            hdr = vcfin.header
+            featuremap_xgb_prediction.add_agg_fields_to_header(hdr)
+            with pysam.VariantFile(out_vcf, mode="w", header=hdr) as vcfout:
+                for row in vcfin:
+                    featuremap_xgb_prediction.process_vcf_row(row, df_variants, hdr, vcfout, write_agg_params=True)
+            vcfout.close()
+            vcfin.close()
+        pysam.tabix_index(out_vcf, preset="vcf", min_shift=0, force=True)
+        out_vcf[tag] = out_vcf
 
     custom_info_fields.extend(list(added_agg_features))
     custom_info_fields.extend(list(ppm_added_agg_features))
-    df_fp = vcftools.get_vcf_df(fp_output_vcf, custom_info_fields=custom_info_fields, chromosome=chromosome)
-    df_tp = vcftools.get_vcf_df(tp_output_vcf, custom_info_fields=custom_info_fields, chromosome=chromosome)
+    df_fp = vcftools.get_vcf_df(out_vcf["fp"], custom_info_fields=custom_info_fields, chromosome=chromosome)
+    df_tp = vcftools.get_vcf_df(out_vcf["tp"], custom_info_fields=custom_info_fields, chromosome=chromosome)
     df_fp["label"] = "negative"
     df_tp["label"] = "positive"
     df_all_variants = pd.concat([df_fp, df_tp])
