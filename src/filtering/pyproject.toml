@@ -24,6 +24,8 @@ run_tests = "pytest:main"
 error_correction_training = "ugbio_filtering.sec.error_correction_training:main"
 merge_conditional_allele_distributions = "ugbio_filtering.sec.merge_conditional_allele_distributions:main"
 assess_sec_concordance = "ugbio_filtering.sec.assess_sec_concordance:main"
+correct_systematic_errors = "ugbio_filtering.sec.correct_systematic_errors:main"
+filter_variants_pipeline = "ugbio_filtering.filter_variants_pipeline:main"
 
 [tool.uv]
 dev-dependencies = [
