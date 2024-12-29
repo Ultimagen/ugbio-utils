@@ -15,6 +15,22 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 ##################################################################
 FROM $BASE_IMAGE
 
+RUN apt-get update && apt-get install -y \
+    openjdk-17-jre-headless `# for gatk` \
+    git \
+    wget \
+    unzip \
+    && apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && apt-get autoclean
+
+# Download and install gatk
+ARG GATK_VERSION=4.6.0.0
+RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION}/gatk-${GATK_VERSION}.zip && \
+    unzip gatk-${GATK_VERSION}.zip && \
+    mv gatk-${GATK_VERSION} /opt/gatk && \
+    ln -s /opt/gatk/gatk /usr/local/bin/gatk && \
+    rm gatk-${GATK_VERSION}.zip
+
 # Download Picard
 ARG PICARD_VERSION=3.3.0
 RUN apt-get update && apt-get install -y --reinstall ca-certificates openjdk-17-jre-headless \
