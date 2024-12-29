@@ -1,9 +1,10 @@
 import shutil
-import subprocess
 from collections import Counter
 from os.path import basename, exists
 from os.path import join as pjoin
 from pathlib import Path
+from unittest import mock
+from unittest.mock import patch
 
 import pandas as pd
 import pysam
@@ -162,7 +163,8 @@ class TestVCFEvalRun:
         assert calls == {"FP": 91, "TP": 1, "IGN": 8}
 
 
-def test_intersect_bed_files(mocker, tmp_path, resources_dir):
+@patch("subprocess.call")
+def test_intersect_bed_files(mock_subprocess_call, tmp_path, resources_dir):
     bed1 = pjoin(resources_dir, "bed1.bed")
     bed2 = pjoin(resources_dir, "bed2.bed")
     output_path = pjoin(tmp_path, "output.bed")
@@ -171,12 +173,9 @@ def test_intersect_bed_files(mocker, tmp_path, resources_dir):
     sp = SimplePipeline(0, 10)
     VcfPipelineUtils(sp).intersect_bed_files(bed1, bed2, output_path)
 
-    # Test without simple pipeline
-    spy_subprocess = mocker.spy(subprocess, "call")
-
     VcfPipelineUtils().intersect_bed_files(bed1, bed2, output_path)
-    spy_subprocess.assert_called_once_with(
-        ["bedtools", "intersect", "-a", bed1, "-b", bed2], stdout=mocker.ANY, shell=False
+    mock_subprocess_call.assert_called_once_with(
+        ["bedtools", "intersect", "-a", bed1, "-b", bed2], stdout=mock.ANY, shell=False
     )
     assert exists(output_path)
 
