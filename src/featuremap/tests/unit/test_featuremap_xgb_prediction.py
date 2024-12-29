@@ -15,7 +15,7 @@ def resources_dir():
     return Path(__file__).parent.parent / "resources"
 
 
-def test_pileup_featuremap(
+def test_pileup_featuremap_xgb_prediction(
     tmpdir,
     resources_dir,
 ):
@@ -23,11 +23,12 @@ def test_pileup_featuremap(
     interval_list_file = pjoin(resources_dir, "wgs_calling_regions.hg38.chr9_test.interval_list")
     model_file = pjoin(resources_dir, "ppmSeq_chr1_alt2_8.test_size_0.1.xgb_model.json")
     out_vcf = pjoin(tmpdir, "out_featuremap_with_xgb_proba.vcf.gz")
+    filter_tags = "PASS"
     expected_num_variants = 3702
 
     # call the function with different arguments
     pileup_featuremap_with_agg_params_and_xgb_proba_on_an_interval_list(
-        input_featuremap_vcf, out_vcf, interval_list_file, model_file
+        input_featuremap_vcf, out_vcf, interval_list_file, filter_tags, model_file, write_agg_params=False
     )
 
     # check that the output file exists and has the expected content
