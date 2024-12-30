@@ -17,8 +17,6 @@
 #    from how false positive calls look like
 # CHANGELOG in reverse chronological order
 
-from __future__ import annotations
-
 import argparse
 import ast
 import glob
@@ -180,8 +178,8 @@ class SystematicErrorCorrector:
             strand_enrichment_pval_thresh,
             lesser_strand_enrichment_pval_thresh,
             min_gt_correlation,
-            novel_detection_only,
-            replace_to_known_genotype,
+            novel_detection_only=novel_detection_only,
+            replace_to_known_genotype=replace_to_known_genotype,
         )
         SECRecord.noise_ratio_for_unobserved_snps = noise_ratio_for_unobserved_snps
         SECRecord.noise_ratio_for_unobserved_indels = noise_ratio_for_unobserved_indels

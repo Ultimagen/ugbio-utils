@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pysam import PileupColumn, VariantRecord
 from ugbio_core.dna.strand_direction import StrandDirection, is_forward_strand
 from ugbio_core.vcfbed.pysam_utils import get_filtered_alleles_list

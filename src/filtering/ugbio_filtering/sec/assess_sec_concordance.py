@@ -17,8 +17,6 @@
 #    Evaluate results of SEC
 # CHANGELOG in reverse chronological order
 
-from __future__ import annotations
-
 import os
 import sys
 from os.path import basename, dirname, splitext
