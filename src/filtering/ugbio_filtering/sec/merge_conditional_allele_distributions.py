@@ -97,5 +97,9 @@ def run(argv: list[str]):
                 pickle.dump(distributions_per_chrom, out_pickle_file)
 
 
-if __name__ == "__main__":
+def main():
     run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()

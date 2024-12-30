@@ -445,5 +445,9 @@ def run(argv: list[str]):
         ).correct_systematic_errors()
 
 
-if __name__ == "__main__":
+def main():
     run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()

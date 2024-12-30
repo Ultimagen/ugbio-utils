@@ -307,5 +307,9 @@ def run(argv):
     asc.assess_sec_concordance()
 
 
-if __name__ == "__main__":
+def main():
     run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()

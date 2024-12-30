@@ -200,5 +200,9 @@ def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many
         raise err
 
 
-if __name__ == "__main__":
+def main():
     run(sys.argv[1:])
+
+
+if __name__ == "__main__":
+    main()
