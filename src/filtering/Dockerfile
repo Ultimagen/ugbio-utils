@@ -64,5 +64,3 @@ RUN pip install ${OUT_DIR}/*.whl
 
 # for runnig CI (can be removed if pytest is installed as part of the venv)
 RUN pip install pytest
-
-COPY --from=build ./src/filtering/ugbio_filtering/scripts ./src/filtering/ugbio_filtering/scripts
