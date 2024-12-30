@@ -30,3 +30,5 @@ COPY --from=build $OUT_DIR $OUT_DIR
 
 RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
     pip install "${WHEEL_FILE}[vcfbed]"
+
+COPY --from=build ./src/core/ugbio_core/reports ./src/core/ugbio_core/reports
