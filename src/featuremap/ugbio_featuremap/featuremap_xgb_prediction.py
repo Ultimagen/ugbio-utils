@@ -364,7 +364,8 @@ def process_vcf_row(row, df_variants, hdr, vcfout, write_agg_params):
             if "st" in hdr.info:
                 for key in ppm_added_agg_features:
                     row.info[key] = df_record[key].to_list()[0]
-        row.info["xgb_proba"] = float(df_record["xgb_proba"].to_list()[0])
+        if "xgb_proba" in df_record.columns:
+            row.info["xgb_proba"] = float(df_record["xgb_proba"].to_list()[0])
     vcfout.write(row)
 
 
@@ -466,9 +467,16 @@ def pileup_featuremap_with_agg_params_and_xgb_proba_on_an_interval_list(
         with ThreadPoolExecutor(max_workers=num_cpus) as executor:
             results = list(executor.map(lambda p: pileup_featuremap_with_agg_params_and_xgb_proba(*p), params))
 
-        # merge the output vcfs
-        vcf_str = " ".join(results)
-        cmd = f"bcftools concat {vcf_str} -a | bcftools sort - -Oz -o {output_vcf} && bcftools index -t {output_vcf}"
+        # Write each string to the file
+        with open("interval_vcf_files.list", "w") as file:
+            for interval_vcf_file in results:
+                file.write(interval_vcf_file + "\n")
+
+        cmd = (
+            f"bcftools concat -f interval_vcf_files.list -a | "
+            f"bcftools sort - -Oz -o {output_vcf} && "
+            f"bcftools index -t {output_vcf}"
+        )
         logger.debug(cmd)
         subprocess.check_call(cmd, shell=True)  # noqa: S602
     return output_vcf
