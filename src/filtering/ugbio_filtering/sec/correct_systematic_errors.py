@@ -45,7 +45,7 @@ from ugbio_filtering.sec.systematic_error_correction_caller import SECCaller
 from ugbio_filtering.sec.systematic_error_correction_record import SECRecord
 from ugbio_filtering.variant_filtering_utils import VariantSelectionFunctions
 
-BASE_PATH = Path(__file__).parent
+BASE_PATH = Path(__file__).parent.parent
 SCRIPTS_DIR = "scripts"
 REMOVE_VCF_DUPLICATES_SHELL_SCRIPT = BASE_PATH / SCRIPTS_DIR / "remove_vcf_duplicates.sh"
 
