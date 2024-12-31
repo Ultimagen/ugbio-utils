@@ -10,7 +10,7 @@ from ugbio_filtering.sec.systematic_error_correction_call import SECCallType
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent.parent / "resources"
+    return Path(__file__).parent.parent.parent / "resources"
 
 
 class TestCorrectSystematicErrors:
