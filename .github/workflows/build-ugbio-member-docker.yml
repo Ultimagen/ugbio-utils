@@ -7,18 +7,20 @@ on:
       member:
         type: choice
         options:
-          - "core"
           - "cnv"
+          - "core"
+          - "comparison"
           - "featuremap"
+          - "filtering"
+          - "freec"
+          - "hla_la"
+          - "methylation"
           - "mrd"
+          - "omics"
           - "ppmseq"
           - "single_cell"
           - "srsnv"
           - "vcflite"
-          - "hla_la"
-          - "omics"
-          - "methylation"
-          - "freec"
         required: true
         default: ""
 

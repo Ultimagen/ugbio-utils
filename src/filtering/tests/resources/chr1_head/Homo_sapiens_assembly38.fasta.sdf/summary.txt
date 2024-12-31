@@ -1,0 +1,18 @@
+
+Input Data
+Files              : Homo_sapiens_assembly38.fasta
+Format             : FASTA
+Type               : DNA
+Number of sequences: 1
+Total residues     : 5000000
+Minimum length     : 5000000
+Mean length        : 5000000
+Maximum length     : 5000000
+
+Output Data
+SDF-ID             : 5a157477-523d-4c46-8638-c639acf2977c
+Number of sequences: 1
+Total residues     : 5000000
+Minimum length     : 5000000
+Mean length        : 5000000
+Maximum length     : 5000000
