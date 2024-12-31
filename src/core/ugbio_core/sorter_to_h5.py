@@ -171,8 +171,6 @@ def sorter_to_h5(
             val = pd.DataFrame(val, index=[0])  # noqa PLW2901
         val.to_hdf(output_h5_file, key=key, mode="a")
 
-    return output_h5_file
-
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
