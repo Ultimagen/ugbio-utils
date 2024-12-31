@@ -463,7 +463,7 @@ def pileup_featuremap_with_agg_params_and_xgb_proba_on_an_interval_list(
             )
             for genomic_interval in genomic_intervals
         ]
-        num_cpus = os.cpu_count() - 2
+        num_cpus = os.cpu_count()
         with ThreadPoolExecutor(max_workers=num_cpus) as executor:
             results = list(executor.map(lambda p: pileup_featuremap_with_agg_params_and_xgb_proba(*p), params))
 
