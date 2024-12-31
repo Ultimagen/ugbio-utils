@@ -3,7 +3,7 @@ from os.path import join as pjoin
 from pathlib import Path
 
 import pytest
-import ugbio_featuremap.featuremap_xgb_training as featuremap_xgb_training
+from ugbio_featuremap import featuremap_xgb_training
 
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def test_featuremap_xgb_training(tmpdir, resources_dir):
         ]
     )
 
-    expected_model_file = pjoin(resources_dir, "expected_model_alt_reads_2_3.v2.json")
+    expected_model_file = pjoin(resources_dir, "expected_model_alt_reads_2_3.v3.json")
 
     expected_json = load_json(expected_model_file)
     output_json = load_json(out_model)
