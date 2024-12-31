@@ -277,7 +277,6 @@ def predict_record_with_xgb(record_dict_for_xgb, xgb_model):
             "DP": "dp",
             "X_READ_COUNT": "x_read_count",
             "X_FILTERED_COUNT": "x_filtered_count",
-            # "count_forward": "num_is_forward",
             "VAF": "vaf",
             "POS": "pos",
         }
