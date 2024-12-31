@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from collections import defaultdict
-from os.path import join as pjoin
 from pathlib import Path
 
 import pandas as pd
@@ -20,7 +18,7 @@ METRIC_MAPPING_FILE = BASE_PATH / REPORTS_DIR / "sorter_output_to_aggregated_met
 def sorter_to_h5(
     input_csv_file: str,
     input_json_file: str,
-    output_dir: str,
+    output_h5_file: str,
     metric_mapping_file: str = METRIC_MAPPING_FILE,
 ) -> str:
     """
@@ -33,8 +31,8 @@ def sorter_to_h5(
         path to the sorter statistics json file
     metric_mapping_file:
         path to the metric mapping file,
-    output_dir:
-        path to the output directory
+    output_h5_file:
+        path to which the output h5 file will be written to
 
     Returns
     -------
@@ -168,10 +166,6 @@ def sorter_to_h5(
     h5_dict["RawWgsMetrics"]["PCT_EXC_DUPE"] = h5_dict["DuplicationMetrics"]["PERCENT_DUPLICATION"]
 
     # write to h5 file
-    base_file_name = os.path.splitext(os.path.basename(input_csv_file))[0]
-    if output_dir is None:
-        output_dir = os.path.dirname(input_csv_file)
-    output_h5_file = pjoin(output_dir, base_file_name + ".aggregated_metrics.h5")
     for key, val in h5_dict.items():
         if isinstance(val, dict):
             val = pd.DataFrame(val, index=[0])  # noqa PLW2901
@@ -199,19 +193,19 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         help="Path to the input json file",
     )
     parser.add_argument(
+        "-o",
+        "--output_h5_file",
+        type=str,
+        required=True,
+        help="Path to the output h5 file",
+    )
+    parser.add_argument(
         "-m",
         "--metric_mapping_file",
         type=str,
         required=False,
         default=METRIC_MAPPING_FILE,
         help="Path to the metric mapping file",
-    )
-    parser.add_argument(
-        "-o",
-        "--output_dir",
-        type=str,
-        required=False,
-        help="Path to the output directory",
     )
     return parser.parse_args(argv[1:])
 
@@ -223,7 +217,7 @@ def run(argv: list[str]):
         input_csv_file=args_in.input_csv_file,
         input_json_file=args_in.input_json_file,
         metric_mapping_file=args_in.metric_mapping_file,
-        output_dir=args_in.output_dir,
+        output_h5_file=args_in.output_h5_file,
     )
 
 
