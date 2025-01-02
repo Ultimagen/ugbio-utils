@@ -5,7 +5,7 @@ import nbformat
 import pandas as pd
 import papermill
 from nbconvert import HTMLExporter
-from ugbio_core.report_utils import modify_jupyter_notebook_html
+from ugbio_core.reports.report_utils import modify_jupyter_notebook_html
 from ugbio_single_cell.collect_statistics import (
     collect_statistics,
     extract_statistics_table,
