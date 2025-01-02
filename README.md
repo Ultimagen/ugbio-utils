@@ -66,7 +66,29 @@ Once installed, these tools will automatically run checks whenever you commit to
         [tool.uv.sources]
         ugbio_core = {workspace = true}
         ```
-4. Optional - add a devcontainer.json under `.devcontainer/<MEMBER_NAME>` folder for working with the member's container.
+4. Optional - creating a devcontainer for the member. Steps:
+
+    4.1. Create a folder with the memeber name under .devcontainer folder: `.devcontainer/<MEMBER_NAME>`
+
+    4.2. Copy devcontainer.json from another folder (e.g. CNV folder) and paste under your new folder. Make sure you change:
+
+    * The image name.
+    * At the end of "postCreateCommand", change to your member name. E.g. change `ugbio_cnv` to `ugbio_<MEMBER>`
+
+    4.3 Update Dockerfile with "app" user:
+
+    * Install `sudo` if not exists. Simply add it to the list under `RUN apt-get update && apt-get install -y ...`
+    * Add this section:
+        ```Dockerfile
+        # Add user and grant sudo privileges (for using devconatiner)
+        ARG USERNAME=app
+        ARG USER_UID=1000
+        ARG USER_GID=$USER_UID
+
+        RUN groupadd --gid ${USER_GID} ${USERNAME} \
+            && useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} -s /bin/bash \
+            && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+        ```
 
 ### General guidelines for adding new code
 * Look into ugbio_core! Probably someone already wrote a function that answers your needs. We want to avoid writing the same code in many places.
@@ -94,17 +116,13 @@ After following these steps, VSCode will open a new window. It will look the sam
 * git
 * git-lfs
 * uv
-* If you want all your local VSCode extensions installed in the dev container, run `cat /tmp/extensions.txt | xargs -L 1 code --install-extension`.
 
-*The first time you open the source control panel, you may get this message:
-
+> Note: The first time you open the source control panel, you may get this message:
 ![alt text](.devcontainer/image.png)
-
 Choose "Manage Unsafe Repositories" and select `ugbio_utils` to keep working as usual.
 
 That's it! You are ready to use VSCode as before, but this time you can run tools and tests that are installed in the Docker image.
 
-> Don't forget to run `uv sync --package <PACKAGE>` to get the relevant virtual environment!
 
 ### Build from Local Dockerfile and Run in a Dev Container
 If you want to check your Docker image after adding changes to the Dockerfile but don't want to push it to the registry yet, you can build the image and open it as a dev container. Steps:
