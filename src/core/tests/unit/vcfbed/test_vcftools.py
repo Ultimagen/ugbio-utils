@@ -91,7 +91,7 @@ def test_bed_output_when_no_tree_score(
         vcftools.FilteringColors.CLEAR.value: 89,
         vcftools.FilteringColors.BORDERLINE.value: 39,
     }
-    for k in result:
+    for k, _ in result.items():
         assert result[k] == expected_result[k]
 
     df_data = vcftools.FilterWrapper(data)

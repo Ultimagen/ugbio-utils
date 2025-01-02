@@ -1,12 +1,9 @@
 // For format details, see https://aka.ms/devcontainer.json. For config options, see the
 // README at: https://github.com/devcontainers/templates/tree/main/src/python
 {
-	"name": "Build docker",
+	"name": "Core",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	 "build": {
-	    "dockerfile": "../../src/<PACKAGE>/Dockerfile",
-	    "context": "../.."
-	},
+	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_core:1.4.3",
 	"runArgs": [
 		"--init",
 		"--network=host"
@@ -19,8 +16,10 @@
 	},
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
 	// "forwardPorts": [],
+
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "/bin/bash .devcontainer/post-create-commands.sh <PACKAGE>",
+	"postCreateCommand": "/bin/bash .devcontainer/post-create-commands.sh 'ugbio_core --all-extras'",
+
 	// Configure tool-specific properties.
 	// "customizations": {},
 

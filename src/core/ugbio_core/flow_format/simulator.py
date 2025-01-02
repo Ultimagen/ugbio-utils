@@ -337,7 +337,7 @@ def seq_to_record(
     seg.cigarstring = "*"
 
     def alt2str(allele_repr):
-        return "%d,%s,%s,%.2f" % allele_repr
+        return "{},{},{:.2f}".format(*allele_repr)
 
     alts = sorted(alts, key=lambda x: (x[3], x[0]))
     # note different sorting order for ralts so that it is the same as alts when we reverse

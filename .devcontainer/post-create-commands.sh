@@ -31,5 +31,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 source $HOME/.local/bin/env
 
 # Synchronize uv
+echo "Synchronizing uv command: uv sync --package $package"
 uv sync --package $package
+
+echo "Installing pre-commit hooks command: uv run pre-commit install"
 uv run pre-commit install

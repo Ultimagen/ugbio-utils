@@ -27,18 +27,22 @@ process_Mbias = "ugbio_methylation.process_mbias:run"
 process_mergeContext = "ugbio_methylation.process_merge_context:run"
 process_mergeContextNoCpG = "ugbio_methylation.process_merge_context_no_cp_g:run"
 process_perRead = "ugbio_methylation.process_per_read:run"
-
-[tool.setuptools.package-data]
-"*" = [
-    "**/reports/*",
-    "**/resources/*",
-]
+generate_report = "ugbio_methylation.generate_methylation_report:main"
 
 [tool.uv]
 dev-dependencies = [
     "pre-commit>=4.0.1",
     "pytest>=8.3.3",
     "ruff>=0.6.9",
+]
+
+[tool.uv.sources.ugbio_core]
+workspace = true
+
+[tool.setuptools.package-data]
+"*" = [
+    "**/reports/*",
+    "**/resources/*",
 ]
 
 [build-system]

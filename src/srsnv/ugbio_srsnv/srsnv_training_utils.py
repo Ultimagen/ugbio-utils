@@ -152,7 +152,7 @@ def set_categorical_columns(df: pd.DataFrame, cat_dict: dict[str, list]):
         }
     """
     df = df.copy()  # noqa: PD901
-    for col in cat_dict.keys():
+    for col, _ in cat_dict.items():
         df[col] = df[col].astype(CategoricalDtype(cat_dict[col], ordered=False))
         df[col] = df[col].cat.set_categories(cat_dict[col], ordered=False)
     return df

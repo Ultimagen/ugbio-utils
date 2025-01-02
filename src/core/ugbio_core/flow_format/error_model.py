@@ -438,7 +438,7 @@ def read_range_bytes(obj, start, end):
     TYPE
         Description
     """
-    range_header = "bytes=%d-%d" % (start, end - 1)
+    range_header = f"bytes={start}-{end - 1}"
     tmp = obj.get(Range=range_header)["Body"].read()
     return np.frombuffer(tmp, dtype=np.int16)
 
