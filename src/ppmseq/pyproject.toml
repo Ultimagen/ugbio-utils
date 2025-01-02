@@ -1,12 +1,13 @@
 [project]
 name = "ugbio_ppmseq"
-version = "1.4.4-0dev-83"
+version = "1.4.4-0dev-82"
 requires-python = ">=3.11"
 dependencies = [
     "ugbio_core[vcfbed]",
     "seaborn>=0.13.2",
     "papermill>=2.6.0",
     "jupyter>=1.1.1",
+    "mistune>=2.0.3,<3.1",# Can be removed when jupyter/nbconvert#2198 is fixed
     "pyarrow>=17.0.0",
     "fastparquet>=2024.5.0",
 ]
