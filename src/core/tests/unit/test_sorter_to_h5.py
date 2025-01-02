@@ -13,16 +13,17 @@ def resources_dir():
 
 def test_sorter_to_h5(tmpdir, resources_dir):
     base_file_name = "026532-Lb_1866-Z0058-CATCTCAGTGCAATGAT"
-    output_h5 = sorter_to_h5(
+    output_h5_file = Path(tmpdir) / f"{base_file_name}.aggregated_metrics.h5"
+    sorter_to_h5(
         input_csv_file=resources_dir / f"{base_file_name}.csv",
         input_json_file=resources_dir / f"{base_file_name}.json",
-        output_dir=tmpdir,
+        output_h5_file=output_h5_file,
     )
     expected_output_file = resources_dir / f"{base_file_name}.aggregated_metrics.h5"
-    with pd.HDFStore(output_h5) as hdf:
+    with pd.HDFStore(output_h5_file) as hdf:
         output_h5_keys = hdf.keys()
     with pd.HDFStore(expected_output_file) as hdf:
         expected_output_file_keys = hdf.keys()
     assert output_h5_keys == expected_output_file_keys
     for key in output_h5_keys:
-        assert_frame_equal(pd.read_hdf(output_h5, key), pd.read_hdf(expected_output_file, key))
+        assert_frame_equal(pd.read_hdf(output_h5_file, key), pd.read_hdf(expected_output_file, key))
