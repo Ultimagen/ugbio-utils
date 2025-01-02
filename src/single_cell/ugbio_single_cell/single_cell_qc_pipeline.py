@@ -1,11 +1,8 @@
 from argparse import ArgumentParser
 from pathlib import Path
 
-import nbformat
 import pandas as pd
-import papermill
-from nbconvert import HTMLExporter
-from ugbio_core.reports.report_utils import modify_jupyter_notebook_html
+from ugbio_core.reports.report_utils import generate_report
 from ugbio_single_cell.collect_statistics import (
     collect_statistics,
     extract_statistics_table,
@@ -63,7 +60,7 @@ def single_cell_qc(
     params, tmp_files = prepare_parameters_for_report(
         h5_file, thresholds, output_path, plot_barcode_rank=plot_barcode_rank
     )
-    generate_report(params, output_path, tmp_files, sample_name)
+    generate_single_cell_report(params, output_path, tmp_files, sample_name)
 
     # keep only STAR and short table data in h5 file
     with pd.HDFStore(h5_file, "a") as store:
@@ -136,7 +133,7 @@ def prepare_parameters_for_report(
     return parameters, tmp_files
 
 
-def generate_report(parameters, output_path, tmp_files: list[Path], sample_name: str) -> Path:
+def generate_single_cell_report(parameters, output_path, tmp_files: list[Path], sample_name: str) -> Path:
     """
     Generate report based on jupyter notebook template.
 
@@ -149,43 +146,21 @@ def generate_report(parameters, output_path, tmp_files: list[Path], sample_name:
     tmp_files : list[Path]
         List of temporary files to be removed after report generation
     sample_name : str
-        Sample name to be included as a prefix in the output files
+        Sample name to be included as a prefix in the output file
 
     Returns
     -------
     Path
         Path to generated report
     """
-    # define outputs
     output_report_html = Path(output_path) / (sample_name + OutputFiles.HTML_REPORT.value)
-    output_report_ipynb = Path(output_path) / (sample_name + OutputFiles.NOTEBOOK.value)
-    tmp_files.append(output_report_ipynb)
 
-    # inject parameters and run notebook
-    parameters = {k: str(v) if isinstance(v, Path) else v for k, v in parameters.items()}
-    papermill.execute_notebook(
-        input_path=str(TEMPLATE_NOTEBOOK),
-        output_path=str(output_report_ipynb),
+    generate_report(
+        template_notebook_path=TEMPLATE_NOTEBOOK,
         parameters=parameters,
-        kernel_name="python3",
+        output_report_html_path=output_report_html,
+        tmp_files=tmp_files,
     )
-
-    # convert to html
-    notebook = nbformat.read(str(output_report_ipynb), as_version=4)
-    html_exporter = HTMLExporter()
-    html_exporter.exclude_input = True
-    (body, resources) = html_exporter.from_notebook_node(notebook)
-
-    with open(output_report_html, "w") as f:
-        f.write(body)
-
-    # edit html for readability
-    modify_jupyter_notebook_html(output_report_html)
-
-    # remove temporary files - png and ipynb files
-    for temp_file in tmp_files:
-        if temp_file.is_file():
-            temp_file.unlink()
 
     return output_report_html
 

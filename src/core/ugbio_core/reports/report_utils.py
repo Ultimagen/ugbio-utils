@@ -88,7 +88,16 @@ def generate_report(
 
     # inject parameters and run notebook
     logger.info(f"Executing notebook (with papermill): {template_notebook_path}")
-    parameters = {k: str(v) if isinstance(v, Path) else v for k, v in parameters.items()}
+
+    def convert_path_to_str(value):
+        if isinstance(value, Path):
+            return str(value)
+        elif isinstance(value, list):
+            return [str(p) if isinstance(p, Path) else p for p in value]
+        else:
+            return value
+
+    parameters = {k: convert_path_to_str(v) for k, v in parameters.items()}
     papermill.execute_notebook(
         input_path=str(template_notebook_path),
         output_path=str(output_report_ipynb),
@@ -111,7 +120,7 @@ def generate_report(
     modify_jupyter_notebook_html(output_report_html_path)
 
     # remove temporary files
-    logger.info(f"Removing {tmp_files=}")
+    logger.info(f"Removing tmp_files={[str(tmp_file) for tmp_file in tmp_files]}")
     for temp_file in tmp_files:
         if temp_file.is_file():
             temp_file.unlink()
