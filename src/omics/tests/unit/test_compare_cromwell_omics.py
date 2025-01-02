@@ -54,7 +54,10 @@ def test_compare_cromwell_omics(mock_run_cost, resources_dir, mock_session, tmpd
     workflow_name = "test_workflow"
     overwrite = False
 
-    with patch("ugbio_omics.compare_cromwell_omics.storage.Client") as mock_storage_client:
+    with (
+        patch("ugbio_omics.compare_cromwell_omics.storage.Client") as mock_storage_client,
+        patch("ugbio_omics.cromwell_calculate_cost.urlopen") as mock_urlopen,
+    ):
         # cromwell mocks
         mock_bucket = MagicMock()
         mock_blob = MagicMock()
@@ -65,6 +68,10 @@ def test_compare_cromwell_omics(mock_run_cost, resources_dir, mock_session, tmpd
             mock_blob.download_as_text.side_effect = [performance_file.read(), metadata_file.read()]
         mock_bucket.get_blob.return_value = mock_blob
         mock_storage_client.return_value.get_bucket.return_value = mock_bucket
+
+        with open(resources_dir / "cromwell_pricelist.json") as cromwell_pricelist_file:
+            mock_urlopen.return_value.read.return_value = cromwell_pricelist_file.read().encode("utf-8")
+            mock_urlopen.return_value.info.return_value.get.return_value = None  # No gzip encoding
 
         compare_cromwell_omics(cromwell_wid, omics_run_id, mock_session, workflow_name, tmpdir, overwrite=overwrite)
 
@@ -87,7 +94,10 @@ def test_compare_cromwell_omics_with_performance(
     overwrite = False
     get_performance = True
 
-    with patch("ugbio_omics.compare_cromwell_omics.storage.Client") as mock_storage_client:
+    with (
+        patch("ugbio_omics.compare_cromwell_omics.storage.Client") as mock_storage_client,
+        patch("ugbio_omics.cromwell_calculate_cost.urlopen") as mock_urlopen,
+    ):
         # cromwell mocks
         mock_bucket = MagicMock()
         mock_blob = MagicMock()
@@ -98,6 +108,10 @@ def test_compare_cromwell_omics_with_performance(
             mock_blob.download_as_text.side_effect = [performance_file.read(), metadata_file.read()]
         mock_bucket.get_blob.return_value = mock_blob
         mock_storage_client.return_value.get_bucket.return_value = mock_bucket
+
+        with open(resources_dir / "cromwell_pricelist.json") as cromwell_pricelist_file:
+            mock_urlopen.return_value.read.return_value = cromwell_pricelist_file.read().encode("utf-8")
+            mock_urlopen.return_value.info.return_value.get.return_value = None  # No gzip encoding
 
         compare_cromwell_omics(
             cromwell_wid,
