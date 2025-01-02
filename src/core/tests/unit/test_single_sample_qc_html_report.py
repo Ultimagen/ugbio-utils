@@ -24,7 +24,7 @@ def test_single_sample_qc_create_html_report(tmpdir, resources_dir):
         f"-p top_metrics_file {REPORT_BASE_PATH}/top_metrics_for_tbl.csv "
         f"-p input_h5_file {input_h5_file} "
         f"-p input_base_file_name {base_file_name}"
-    )
+    ).split()
 
     assert subprocess.check_call(cmd, cwd=tmpdir) == 0
 
