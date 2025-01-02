@@ -25,6 +25,13 @@ vcfbed = [
     "bgzip>=0.5.0",
 ]
 
+reports = [
+    "papermill>=2.6.0",
+    "jupyter>=1.1.1",
+    "nbconvert>=7.16.4",
+    "mistune>=2.0.3,<3.1",# 3.1.0 breaks nbconvert. Can be removed when jupyter/nbconvert#2198 is fixed
+]
+
 [project.license]
 text = "Apache-2.0"
 
@@ -36,6 +43,7 @@ sorter_stats_to_mean_coverage = "ugbio_core.sorter_stats_to_mean_coverage:main"
 sorter_to_h5 = "ugbio_core.sorter_to_h5:main"
 convert_h5_to_json = "ugbio_core.convert_h5_to_json:main"
 collect_existing_metrics = "ugbio_core.collect_existing_metrics:main"
+generate_report = "ugbio_core.reports.report_utils:main"
 
 [tool.setuptools.package-data]
 "*" = [

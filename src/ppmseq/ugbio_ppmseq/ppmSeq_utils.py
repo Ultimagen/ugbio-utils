@@ -14,7 +14,7 @@ import pysam
 import seaborn as sns
 from ugbio_core.flow_format.flow_based_read import generate_key_from_sequence
 from ugbio_core.plotting_utils import set_pyplot_defaults
-from ugbio_core.report_utils import modify_jupyter_notebook_html
+from ugbio_core.reports.report_utils import modify_jupyter_notebook_html
 from ugbio_core.sorter_utils import (
     plot_read_length_histogram,
     read_and_parse_sorter_statistics_csv,
