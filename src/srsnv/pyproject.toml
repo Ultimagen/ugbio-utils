@@ -3,7 +3,7 @@ name = "ugbio_srsnv"
 version = "1.6.0-0"
 requires-python = ">=3.11"
 dependencies = [
-    "ugbio_core[vcfbed]",
+    "ugbio_core[vcfbed,reports]",
     "ugbio_ppmseq",
     "ugbio_featuremap",
     "seaborn>=0.13.2",
