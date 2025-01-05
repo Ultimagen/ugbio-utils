@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_srsnv"
-version = "1.4.4-0dev-82"
+version = "1.4.4-0dev-84"
 requires-python = ">=3.11"
 dependencies = [
     "ugbio_core[vcfbed]",
@@ -35,11 +35,7 @@ srsnv_inference = "ugbio_srsnv.srsnv_inference:main"
 srsnv_training = "ugbio_srsnv.srsnv_training:main"
 
 [tool.uv]
-dev-dependencies = [
-    "pre-commit>=4.0.1",
-    "pytest>=8.3.3",
-    "ruff>=0.6.9",
-]
+dev-dependencies = ["pre-commit>=4.0.1", "pytest>=8.3.3", "ruff>=0.6.9"]
 
 [tool.uv.sources.ugbio_core]
 workspace = true
@@ -51,12 +47,8 @@ workspace = true
 workspace = true
 
 [tool.setuptools.package-data]
-"*" = [
-    "**/reports/*",
-]
+"*" = ["**/reports/*"]
 
 [build-system]
-requires = [
-    "setuptools>=61.0",
-]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"

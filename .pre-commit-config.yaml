@@ -14,6 +14,7 @@ repos:
       - id: check-json
         exclude: ^\.devcontainer/|^src/.*/tests/resources/.*$ # Exclude .devcontainer folder to keep the comments in the json files, exclude test resources
       - id: check-added-large-files
+        exclude: src/omics/tests/resources/cromwell_pricelist.json
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
