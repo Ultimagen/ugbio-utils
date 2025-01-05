@@ -89,7 +89,7 @@ def process_s3_uri(s3_uri):
 
 def copy_omics_cached_indexes(cache_s3_uri):
     # Initialize S3 client
-    s3_client = boto3.client("s3")
+    s3_client = get_aws_client("s3")
 
     # Parse bucket and prefix
     bucket_name, prefix = process_s3_uri(cache_s3_uri)
