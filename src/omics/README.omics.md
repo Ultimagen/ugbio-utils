@@ -15,9 +15,12 @@ List of tools:
 3. **Get Run Logs** - Download logs of an Omics run. For FAILED run by default, you'll get the logs of all failed tasks or the run's engine log if there are no failed tasks. For successful runs by default, you'll get all tasks' logs. You can use --task-id to get the log for a specific task.
 
    Run `uv run get_omics_logs --help` for more details.
-4. **Manifest Log** - Download and parse the manifest log of an Omics run. The manifest log contains a lot of information about storage usage, CPU and memory usage per task, Docker images, inputs, and general information about the run.
+4. **Get Omics Cache Path** - Get S3 uri of the cache of an Omics run. You can choose to copy the indexes files using --copy-indexes. Use --task-id to get the cache uri / copy indexes for a specific task.
 
-5. **Performance** - Process CPU, memory, and I/O metrics from the monitor log running in each task. Get usage plots over time for a better understanding of your code utilization. Note that task logs must be accessible for this.
+   Run `uv run omics_cache_path --help` for more details.
+5. **Manifest Log** - Download and parse the manifest log of an Omics run. The manifest log contains a lot of information about storage usage, CPU and memory usage per task, Docker images, inputs, and general information about the run.
+
+6. **Performance** - Process CPU, memory, and I/O metrics from the monitor log running in each task. Get usage plots over time for a better understanding of your code utilization. Note that task logs must be accessible for this.
 
    Run `uv run performance --help` for more details.
 
@@ -44,6 +47,7 @@ Breakdown:
 4. `337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_omics:latest` - Docker image.
 5. `<tool>` - available tools are:
    * get_omics_logs
+   * omics_cache_path
    * manifest_log
    * compare_omics_runs
    * compare_cromwell_omics

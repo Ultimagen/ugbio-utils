@@ -101,7 +101,7 @@ def copy_omics_cached_indexes(cache_s3_uri):
         copy_object(s3_client, bucket_name, source_key, dest_key)
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("run_id", help="AWS HealthOmics run id")
     parser.add_argument(
@@ -114,3 +114,7 @@ if __name__ == "__main__":
     cache_s3_uri = get_run_cache_path(args.run_id, args.task_id)
     if args.copy_indexes:
         copy_omics_cached_indexes(cache_s3_uri)
+
+
+if __name__ == "__main__":
+    main()
