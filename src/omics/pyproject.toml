@@ -20,6 +20,7 @@ get_omics_logs = "ugbio_omics.get_omics_log:main"
 manifest_log = "ugbio_omics.parse_manifest_log:main"
 performance = "ugbio_omics.get_performance:main"
 report_run_completion = "ugbio_omics.report_run_completion:main"
+omics_cache_path = "ugbio_omics.omics_cache_path:main"
 
 [build-system]
 requires = ["setuptools>=61.0"]
