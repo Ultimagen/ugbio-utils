@@ -35,11 +35,11 @@ def get_run_cache_path(run_id, task_id=None):
     omics_client = get_aws_client("omics")
 
     omics_run = omics_client.get_run(id=run_id)
-    logging.debug(omics_run)
+    logging.debug(f"omics run: {omics_run}")
     cache_id = omics_run["cacheId"]
 
     omics_cache = omics_client.get_run_cache(id=cache_id)
-    logging.debug(omics_cache)
+    logging.debug(f"omics run cache: {omics_cache}")
     cache_base_uri = f"{omics_cache['cacheS3Uri']}{run_id}"
     if not task_id:
         logging.info(f"Run cache uri: {cache_base_uri}")

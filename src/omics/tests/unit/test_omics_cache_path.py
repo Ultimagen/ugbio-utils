@@ -10,26 +10,35 @@ from ugbio_omics.omics_cache_path import (
 
 @patch("ugbio_omics.omics_cache_path.get_aws_client")
 def test_get_run_cache_path(mock_get_aws_client):
-    # Mock the Omics client response
+    mock_omics_client(mock_get_aws_client)
+
+    run_id = "test-run-id"
+
+    # Test without task_id
+    result = get_run_cache_path(run_id)
+    assert result == "s3://bucket1/cache_always/test-run-id"
+
+
+@patch("ugbio_omics.omics_cache_path.get_aws_client")
+def test_get_run_cache_path_specific_task(mock_get_aws_client):
+    mock_omics_client(mock_get_aws_client)
+
+    run_id = "test-run-id"
+    task_id = "test-task-id"
+
+    # Test with task_id
+    result = get_run_cache_path(run_id, task_id)
+    assert result == "s3://bucket1/cache_always/test-run-id/test-task-id/task-uuid"
+
+
+def mock_omics_client(mock_get_aws_client):
     mock_aws_client = MagicMock()
     mock_aws_client.get_run.return_value = {"cacheId": "test-cache-id"}
     mock_aws_client.get_run_cache.return_value = {"cacheS3Uri": "s3://bucket1/cache_always/"}
     mock_aws_client.list_objects_v2.return_value = {
         "CommonPrefixes": [{"Prefix": "cache_always/test-run-id/test-task-id/task-uuid"}]
     }
-
     mock_get_aws_client.return_value = mock_aws_client
-
-    run_id = "test-run-id"
-    task_id = "test-task-id"
-
-    # Test without task_id
-    result = get_run_cache_path(run_id)
-    assert result == "s3://bucket1/cache_always/test-run-id"
-
-    # Test with task_id
-    result = get_run_cache_path(run_id, task_id)
-    assert result == "s3://bucket1/cache_always/test-run-id/test-task-id/task-uuid"
 
 
 @patch("ugbio_omics.omics_cache_path.get_aws_client")
