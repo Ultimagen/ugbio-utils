@@ -1,8 +1,12 @@
 [project]
 name = "ugbio_mrd"
-version = "1.4.4-0dev-84"
+version = "1.5.0"
 requires-python = ">=3.11"
-dependencies = ["ugbio_core[vcfbed]", "ugbio_ppmseq", "ugbio_featuremap"]
+dependencies = [
+    "ugbio_core[vcfbed]",
+    "ugbio_ppmseq",
+    "ugbio_featuremap",
+]
 description = "Ultima Genomics MRD utils"
 authors = [
     { name = "Itai Rusinek", email = "itai.rusinek@ultimagen.com" },
@@ -21,7 +25,11 @@ intersect_featuremap_with_signature = "ugbio_mrd.intersect_featuremap_with_signa
 prepare_data_from_mrd_pipeline = "ugbio_mrd.prepare_data_from_mrd_pipeline:main"
 
 [tool.uv]
-dev-dependencies = ["pre-commit>=4.0.1", "pytest>=8.3.3", "ruff>=0.6.9"]
+dev-dependencies = [
+    "pre-commit>=4.0.1",
+    "pytest>=8.3.3",
+    "ruff>=0.6.9",
+]
 
 [tool.uv.sources.ugbio_core]
 workspace = true
@@ -33,5 +41,7 @@ workspace = true
 workspace = true
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = [
+    "setuptools>=61.0",
+]
 build-backend = "setuptools.build_meta"

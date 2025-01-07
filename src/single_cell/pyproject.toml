@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_single_cell"
-version = "1.4.4-0dev-84"
+version = "1.5.0"
 requires-python = ">= 3.11"
 dependencies = [
     "ugbio_core",
@@ -8,7 +8,7 @@ dependencies = [
     "nbformat>=5.10.4",
     "papermill>=2.6.0",
     "nbconvert>=7.16.4",
-    "mistune>=2.0.3,<3.1", # 3.1.0 breaks nbconvert. Can be removed when jupyter/nbconvert#2198 is fixed
+    "mistune>=2.0.3,<3.1",
     "bio>=1.7.1",
     "seaborn>=0.13.2",
     "matplotlib>=3.9.1",
@@ -16,7 +16,9 @@ dependencies = [
     "ipykernel>=6.29.5",
 ]
 description = "Ultima Genomics Single Cell utils"
-authors = [{ name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" }]
+authors = [
+    { name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" },
+]
 readme = "README.single_cell.md"
 
 [project.scripts]
@@ -24,14 +26,22 @@ single_cell_qc = "ugbio_single_cell.single_cell_qc_pipeline:main"
 run_tests = "pytest:main"
 
 [tool.uv]
-dev-dependencies = ["pre-commit>=4.0.1", "pytest>=8.3.3", "ruff>=0.6.9"]
+dev-dependencies = [
+    "pre-commit>=4.0.1",
+    "pytest>=8.3.3",
+    "ruff>=0.6.9",
+]
 
 [tool.uv.sources.ugbio_core]
 workspace = true
 
 [tool.setuptools.package-data]
-"*" = ["**/reports/*"]
+"*" = [
+    "**/reports/*",
+]
 
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = [
+    "setuptools>=61.0",
+]
 build-backend = "setuptools.build_meta"
