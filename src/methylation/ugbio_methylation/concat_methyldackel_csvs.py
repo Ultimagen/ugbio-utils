@@ -38,13 +38,16 @@
 
 # ==========================================
 import argparse
-import logging
 import sys
+from pathlib import Path
 
 import pandas as pd
+from ugbio_core.logger import logger
+
+from ugbio_methylation.globals import H5_FILE, MethylDackelConcatenationCsvs
 
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
+def parse_args(argv: list[str]) -> tuple[MethylDackelConcatenationCsvs, str]:
     ap_var = argparse.ArgumentParser(
         prog="concat_methyldackel_csvs.py",
         description="Concatenate CSV output files of MethylDackel processing into an HDF5 file",
@@ -63,7 +66,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap_var.add_argument("--per_read", help="csv summary of MethylDackelPerRead", type=str, required=False, default=None)
     ap_var.add_argument("--output", help="Output file basename", type=str, required=True)
 
-    return ap_var.parse_args(argv[1:])
+    args = ap_var.parse_args(argv[1:])
+    methyl_dackel_concatenation_csvs = MethylDackelConcatenationCsvs(
+        mbias=args.mbias,
+        mbias_non_cpg=args.mbias_non_cpg,
+        merge_context=args.merge_context,
+        merge_context_non_cpg=args.merge_context_non_cpg,
+        per_read=args.per_read,
+    )
+    return methyl_dackel_concatenation_csvs, args.output
 
 
 def split_position_hist_desc(df):
@@ -73,29 +84,19 @@ def split_position_hist_desc(df):
     return df_per_position, df_hist, df_desc
 
 
-def run(argv: list[str] | None = None):
+def concat_methyldackel_csvs(
+    methyl_dackel_concatenation_csvs: MethylDackelConcatenationCsvs, output: str, output_prefix: Path = None
+) -> Path:
     "Combine csvs from POST-MethylDackel processing"
-    if argv is None:
-        argv: list[str] = sys.argv
+    h5_output = output + H5_FILE
+    if output_prefix:
+        h5_output = Path(output_prefix) / h5_output
 
-    args = parse_args(argv)
+    logger.info(f"Concatenating MethylDackel CSVs {methyl_dackel_concatenation_csvs=} into {h5_output=}")
 
-    logging.basicConfig(format="%(asctime)s %(message)s", level=logging.INFO)
-    logger = logging.getLogger(__name__)
-    logger.info("Running")
-
-    input_dict = {
-        "Mbias": args.mbias,
-        "MbiasNoCpG": args.mbias_non_cpg,
-        "MergeContext": args.merge_context,
-        "MergeContextNoCpG": args.merge_context_non_cpg,
-        "PerRead": args.per_read,
-    }
-
-    h5_output = args.output + ".methyl_seq.applicationQC.h5"
     with pd.HDFStore(h5_output, mode="w") as store:
-        for table, input_file in input_dict.items():
-            if table == "PerRead" and input_file is None:
+        for table, input_file in methyl_dackel_concatenation_csvs.iterate_fields():
+            if table == "per_read" and input_file is None:
                 continue
             input_df = pd.read_csv(input_file)
             df_per_position, df_hist, df_desc = split_position_hist_desc(input_df)
@@ -106,20 +107,19 @@ def run(argv: list[str] | None = None):
                 table_name = f"{table}_{table_ext}"
                 store.put(table_name, tbl_df, format="table", data_columns=True)
 
-        keys_to_convert = pd.Series(
-            [
-                "Mbias_desc",
-                "MbiasNoCpG_desc",
-                "MergeContext_desc",
-                "MergeContextNoCpG_desc",
-                "PerRead_desc",
-            ]
-        )
-        if args.per_read is None:
-            keys_to_convert.remove("PerRead_desc")
+        keys_to_convert = methyl_dackel_concatenation_csvs.get_keys_to_convert()
         store.put("keys_to_convert", pd.Series(keys_to_convert))
 
-    logger.info("Finished")
+    logger.info(f"Finished concatenating MethylDackel CSVs to {h5_output=}")
+    return Path(h5_output)
+
+
+def run(argv: list[str] | None = None):
+    if argv is None:
+        argv: list[str] = sys.argv
+
+    methyl_dackel_concatenation_csvs, output = parse_args(argv)
+    concat_methyldackel_csvs(methyl_dackel_concatenation_csvs, output)
 
 
 if __name__ == "__main__":

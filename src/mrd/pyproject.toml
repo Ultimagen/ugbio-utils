@@ -3,7 +3,7 @@ name = "ugbio_mrd"
 version = "1.6.0-0"
 requires-python = ">=3.11"
 dependencies = [
-    "ugbio_core[vcfbed]",
+    "ugbio_core[vcfbed,reports]",
     "ugbio_ppmseq",
     "ugbio_featuremap",
 ]
@@ -22,7 +22,7 @@ text = "Apache-2.0"
 run_tests = "pytest:main"
 generate_synthetic_signatures = "ugbio_mrd.generate_synthetic_signatures:main"
 intersect_featuremap_with_signature = "ugbio_mrd.intersect_featuremap_with_signature:main"
-prepare_data_from_mrd_pipeline = "ugbio_mrd.prepare_data_from_mrd_pipeline:main"
+generate_report = "ugbio_mrd.generate_mrd_report:main"
 
 [tool.uv]
 dev-dependencies = [
@@ -31,14 +31,15 @@ dev-dependencies = [
     "ruff>=0.6.9",
 ]
 
-[tool.uv.sources.ugbio_core]
-workspace = true
+[tool.uv.sources]
+ugbio_core = {workspace = true}
+ugbio_ppmseq = {workspace = true}
+ugbio_featuremap = {workspace = true}
 
-[tool.uv.sources.ugbio_ppmseq]
-workspace = true
-
-[tool.uv.sources.ugbio_featuremap]
-workspace = true
+[tool.setuptools.package-data]
+"*" = [
+    "**/reports/*",
+]
 
 [build-system]
 requires = [

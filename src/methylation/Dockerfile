@@ -8,6 +8,7 @@ COPY ./src/ ./src/
 
 # build module
 RUN python -m pip install build
+RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
@@ -23,6 +24,7 @@ RUN apt-get update && apt-get install -y \
     git \
     wget \
     unzip \
+    sudo \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
@@ -61,3 +63,12 @@ COPY --from=build ./src/methylation/ugbio_methylation/resources/meth_hg38-chr20_
 
 # for runnig CI (can be removed if pytest is installed as part of the venv)
 RUN pip install pytest
+
+# Add user and grant sudo privileges (for using devconatiner)
+ARG USERNAME=app
+ARG USER_UID=1000
+ARG USER_GID=$USER_UID
+
+RUN groupadd --gid ${USER_GID} ${USERNAME} \
+    && useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} -s /bin/bash \
+    && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers

@@ -2,7 +2,6 @@
 import itertools
 import json
 import os
-import subprocess
 from collections import defaultdict
 from enum import Enum
 from pathlib import Path
@@ -14,7 +13,7 @@ import pysam
 import seaborn as sns
 from ugbio_core.flow_format.flow_based_read import generate_key_from_sequence
 from ugbio_core.plotting_utils import set_pyplot_defaults
-from ugbio_core.report_utils import modify_jupyter_notebook_html
+from ugbio_core.reports.report_utils import generate_report as generate_report_func
 from ugbio_core.sorter_utils import (
     plot_read_length_histogram,
     read_and_parse_sorter_statistics_csv,
@@ -1876,7 +1875,7 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
     # main outputs
     output_statistics_h5 = os.path.join(output_path, f"{output_basename}{qc_filename_suffix}.h5")
     output_statistics_json = os.path.join(output_path, f"{output_basename}{qc_filename_suffix}.json")
-    output_report_html = os.path.join(output_path, f"{output_basename}{qc_filename_suffix}.html")
+    output_report_html = Path(output_path) / f"{output_basename}{qc_filename_suffix}.html"
     # Temporary image files
     output_report_ipynb = os.path.join(output_path, f"{output_basename}{qc_filename_suffix}.ipynb")
     output_trimmer_histogram_plot = os.path.join(output_path, f"{output_basename}.trimmer_histogram.png")
@@ -2024,17 +2023,17 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
             parameters["strand_ratio_category_concordance_png"] = output_strand_ratio_category_concordance_plot
         if sorter_stats_json:
             parameters["output_read_length_histogram_plot"] = output_read_length_histogram_plot
-        # inject parameters and run notebook
-        papermill_params = f"{' '.join([f'-p {k} {v}' for k, v in parameters.items()])}"
-        papermill_cmd = f"papermill {template_notebook} {output_report_ipynb} {papermill_params} -k python3"
-        subprocess.check_call(papermill_cmd.split())
-        # convert to html
-        subprocess.check_call(f"jupyter nbconvert {output_report_ipynb} --to html --no-input".split())
-        # edit html for readability
-        modify_jupyter_notebook_html(output_report_html)
 
-    # remove temporary png and ipynb files
-    if not keep_temp_visualization_files:
-        for visualization_file in output_visualization_files:
-            if os.path.isfile(visualization_file):
-                os.remove(visualization_file)
+        # collect temporary png and ipynb files
+        if not keep_temp_visualization_files:
+            tmp_files = [Path(file) for file in output_visualization_files]
+        else:
+            tmp_files = None
+
+        # create the html report
+        generate_report_func(
+            template_notebook_path=template_notebook,
+            parameters=parameters,
+            output_report_html_path=output_report_html,
+            tmp_files=tmp_files,
+        )

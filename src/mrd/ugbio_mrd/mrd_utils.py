@@ -14,7 +14,6 @@ import pandas as pd
 import pyBigWig as bw  # noqa: N813
 import pysam
 from tqdm import tqdm
-from ugbio_core.consts import FileExtension
 from ugbio_core.dna_sequence_utils import revcomp
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed.variant_annotation import get_trinuc_substitution_dist, parse_trinuc_sub
@@ -606,117 +605,6 @@ def intersect_featuremap_with_signature(
         if not os.path.isfile(output_intersection_file):
             raise FileNotFoundError(f"Output file {output_intersection_file} was not created successfully")
     return output_intersection_file
-
-
-def prepare_data_from_mrd_pipeline(
-    intersected_featuremaps_parquet,
-    matched_signatures_vcf_files=None,
-    control_signatures_vcf_files=None,
-    db_control_signatures_vcf_files=None,
-    coverage_csv=None,
-    tumor_sample=None,
-    output_dir=None,
-    output_basename=None,
-    *,
-    return_dataframes=False,
-):
-    """
-
-    intersected_featuremaps_parquet: list[str]
-        list of featuremaps intesected with various signatures
-    matched_signatures_vcf_files: list[str]
-        File name or a list of file names, signature vcf files of matched signature/s
-    control_signatures_vcf_files: list[str]
-        File name or a list of file names, signature vcf files of control signature/s
-    db_control_signatures_vcf_files: list[str]
-        File name or a list of file names, signature vcf files of db (synthetic) control signature/s
-    coverage_csv: str
-        Coverage csv file generated with gatk "ExtractCoverageOverVcfFiles", disabled (None) by default
-    tumor_sample: str
-        sample name in the vcf to take allele fraction (AF) from.
-    output_dir: str
-        path to which output will be written if not None (default None)
-    output_basename: str
-        basename of output file (if output_dir is not None must also be not None), default None
-
-    Returns
-    -------
-    dataframe: pd.DataFrame
-        merged data for MRD analysis
-
-    Raises
-    -------
-    OSError
-        in case the file already exists and function executed with no force overwrite
-    ValueError
-        may be raised
-    """
-    matched_exists = matched_signatures_vcf_files is not None and len(matched_signatures_vcf_files) > 0
-    control_exists = control_signatures_vcf_files is not None and len(control_signatures_vcf_files) > 0
-    db_control_exists = db_control_signatures_vcf_files is not None and len(db_control_signatures_vcf_files) > 0
-
-    if output_dir is not None and output_basename is None:
-        raise ValueError(f"output_dir is not None ({output_dir}) but output_basename is")
-    if output_dir is not None:
-        os.makedirs(output_dir, exist_ok=True)
-    if not matched_exists and not control_exists and not db_control_exists:
-        raise ValueError("No signatures files were provided")
-
-    intersection_dataframe_fname = (
-        pjoin(output_dir, f"{output_basename}.features{FileExtension.PARQUET.value}")
-        if output_dir is not None
-        else None
-    )
-    signatures_dataframe_fname = (
-        pjoin(output_dir, f"{output_basename}.signatures{FileExtension.PARQUET.value}")
-        if output_dir is not None
-        else None
-    )
-
-    intersection_dataframe = read_intersection_dataframes(
-        intersected_featuremaps_parquet, output_parquet=intersection_dataframe_fname, return_dataframes=True
-    )
-    if matched_exists:
-        signature_dataframe = read_signature(
-            matched_signatures_vcf_files,
-            coverage_csv=coverage_csv,
-            output_parquet=signatures_dataframe_fname,
-            tumor_sample=tumor_sample,
-            signature_type="matched",
-            return_dataframes=return_dataframes,
-            concat_to_existing_output_parquet=False,
-        )
-    if control_exists:
-        concat_to_existing_output_parquet = bool(matched_exists)
-        signature_dataframe = read_signature(
-            control_signatures_vcf_files,
-            coverage_csv=coverage_csv,
-            output_parquet=signatures_dataframe_fname,
-            tumor_sample=tumor_sample,
-            signature_type="control",
-            concat_to_existing_output_parquet=concat_to_existing_output_parquet,
-        )
-    if db_control_exists:
-        concat_to_existing_output_parquet = bool(matched_exists or control_exists)
-        signature_dataframe = read_signature(
-            db_control_signatures_vcf_files,
-            coverage_csv=coverage_csv,
-            output_parquet=signatures_dataframe_fname,
-            tumor_sample=tumor_sample,
-            signature_type="db_control",
-            return_dataframes=return_dataframes,
-            concat_to_existing_output_parquet=concat_to_existing_output_parquet,
-        )
-
-    intersection_dataframe = read_intersection_dataframes(
-        intersected_featuremaps_parquet,
-        output_parquet=intersection_dataframe_fname,
-        return_dataframes=return_dataframes,
-    )
-
-    if return_dataframes:
-        return signature_dataframe, intersection_dataframe
-    return None
 
 
 def generate_synthetic_signatures(

@@ -5,7 +5,6 @@ import os
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime
-from os.path import join as pjoin
 from pathlib import Path
 from typing import Any
 
@@ -20,13 +19,18 @@ from matplotlib import cm, colors
 from matplotlib import lines as mlines
 from scipy.interpolate import interp1d
 from scipy.stats import binom
-from sklearn.metrics import confusion_matrix, precision_score, recall_score, roc_auc_score
+from sklearn.metrics import (
+    confusion_matrix,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+)
 from tqdm import tqdm
-from ugbio_core.exec_utils import print_and_execute
 from ugbio_core.filter_bed import count_bases_in_bed_file
 from ugbio_core.h5_utils import convert_h5_to_json
 from ugbio_core.logger import logger
 from ugbio_core.plotting_utils import set_pyplot_defaults
+from ugbio_core.reports.report_utils import generate_report
 from ugbio_core.sorter_utils import read_effective_coverage_from_sorter_json
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions
@@ -263,8 +267,7 @@ def srsnv_report(
 ):
     if len(out_basename) > 0 and not out_basename.endswith("."):
         out_basename += "."
-    reportfile = pjoin(out_path, f"{out_basename}{report_name}_report.ipynb")
-    reporthtml = pjoin(out_path, f"{out_basename}{report_name}_report.html")
+    report_html = Path(out_path) / f"{out_basename}{report_name}_report.html"
 
     [
         output_LoD_plot,  # noqa: N806
@@ -281,29 +284,28 @@ def srsnv_report(
     srsnv_qc_h5_filename = os.path.join(out_path, f"{out_basename}single_read_snv.applicationQC.h5")
 
     template_notebook = BASE_PATH / REPORTS_DIR / "srsnv_report.ipynb"
-    papermill_command = f"papermill {template_notebook} {reportfile} \
--p model_file {model_file} \
--p params_file {params_file} \
--p srsnv_qc_h5_file {srsnv_qc_h5_filename} \
--p output_LoD_plot {output_LoD_plot} \
--p qual_vs_ppmseq_tags_table {qual_vs_ppmseq_tags_table} \
--p training_progerss_plot {training_progerss_plot} \
--p SHAP_importance_plot {SHAP_importance_plot} \
--p SHAP_beeswarm_plot {SHAP_beeswarm_plot} \
--p trinuc_stats_plot {trinuc_stats_plot} \
--p output_qual_per_feature {output_qual_per_feature} \
--p qual_histogram {qual_histogram} \
--p logit_histogram {logit_histogram} \
--p calibration_fn_with_hist {calibration_fn_with_hist} \
--k python3"
-    preprocessor_name = "ugbio_srsnv.toc_preprocessor.TocPreprocessor"
-    jupyter_nbconvert_command = (
-        f"jupyter nbconvert {reportfile} --output {reporthtml} --to html --no-input "
-        + f"--Exporter.preprocessors {preprocessor_name}"
-    )
 
-    print_and_execute(papermill_command, simple_pipeline=simple_pipeline, module_name=__name__)
-    print_and_execute(jupyter_nbconvert_command, simple_pipeline=simple_pipeline, module_name=__name__)
+    parameters = {
+        "model_file": model_file,
+        "params_file": params_file,
+        "srsnv_qc_h5_file": srsnv_qc_h5_filename,
+        "output_LoD_plot": output_LoD_plot,
+        "qual_vs_ppmseq_tags_table": qual_vs_ppmseq_tags_table,
+        "training_progerss_plot": training_progerss_plot,
+        "SHAP_importance_plot": SHAP_importance_plot,
+        "SHAP_beeswarm_plot": SHAP_beeswarm_plot,
+        "trinuc_stats_plot": trinuc_stats_plot,
+        "output_qual_per_feature": output_qual_per_feature,
+        "qual_histogram": qual_histogram,
+        "logit_histogram": logit_histogram,
+        "calibration_fn_with_hist": calibration_fn_with_hist,
+    }
+
+    generate_report(
+        template_notebook_path=template_notebook,
+        parameters=parameters,
+        output_report_html_path=report_html,
+    )
 
 
 def filter_valid_queries(df_test: pd.DataFrame, queries: dict, *, verbose: bool = False) -> dict:
@@ -759,10 +761,10 @@ def plot_observed_vs_measured_qual(
     set_pyplot_defaults()
 
     plt.figure(figsize=(8, 6))
-    for label in labels_dict:
+    for label, item in labels_dict.items():
         plot_precision_recall(
             fprs[label],
-            [f"measured qual {labels_dict[label]}"],
+            [f"measured qual {item}"],
             log_scale=False,
             max_score=max_score,
         )
@@ -813,10 +815,10 @@ def plot_qual_density(
 
     plt.figure(figsize=(8, 6))
 
-    for label in labels_dict:
+    for label, item in labels_dict.items():
         plot_precision_recall(
             recalls[label],
-            [f"density {labels_dict[label]}"],
+            [f"density {item}"],
             log_scale=False,
             max_score=max_score,
         )
@@ -866,7 +868,7 @@ def plot_precision_recall_vs_qual_thresh(
     set_pyplot_defaults()
 
     plt.figure(figsize=(8, 6))
-    for label in labels_dict:
+    for label, item in labels_dict.items():
         cum_avg_precision_recalls = []
         gtr = df["label"] == label
         cum_fprs_, cum_recalls_ = precision_recall_curve(
@@ -882,7 +884,7 @@ def plot_precision_recall_vs_qual_thresh(
 
         plot_precision_recall(
             cum_avg_precision_recalls,
-            [f"avg(precision,recall) {labels_dict[label]}"],
+            [f"avg(precision,recall) {item}"],
             log_scale=False,
             max_score=max_score,
         )
@@ -935,12 +937,12 @@ def plot_ml_qual_hist(
 
     plt.figure(figsize=[8, 6])
     bins = np.arange(0, max_score + 1)
-    for label in labels_dict:
+    for label, item in labels_dict.items():
         plt.hist(
             df[df["label"] == label][score].clip(upper=max_score),
             bins=bins,
             alpha=0.5,
-            label=labels_dict[label],
+            label=item,
             density=True,
         )
 
@@ -1153,12 +1155,9 @@ def plot_subsets_hists(
     score = "ML_qual_1"
     bins = np.arange(0, max_score + 1)
 
-    for item in df_dict:
-        td = df_dict[item]
-        name = item
-
+    for name, td in df_dict.items():
         plt.figure(figsize=(8, 6))
-        for label in labels_dict:
+        for label, item in labels_dict.items():
             h, bin_edges = np.histogram(
                 td[td["label"] == label][score].clip(upper=max_score),
                 bins=bins,
@@ -1168,7 +1167,7 @@ def plot_subsets_hists(
             plt.bar(
                 bin_centers,
                 h,
-                label=labels_dict[label],
+                label=item,
                 alpha=0.8,
                 width=1,
                 align="center",
