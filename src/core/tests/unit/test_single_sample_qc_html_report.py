@@ -1,8 +1,7 @@
-import subprocess
-from os.path import join as pjoin
 from pathlib import Path
 
 import pytest
+from ugbio_core.reports.report_utils import generate_report
 
 BASE_PATH = Path(__file__).parent.parent.parent
 REPORT_BASE_PATH = BASE_PATH / "ugbio_core" / "reports"
@@ -15,20 +14,18 @@ def resources_dir():
 
 
 def test_single_sample_qc_create_html_report(tmpdir, resources_dir):
-    papermill_out = pjoin(tmpdir, "single_sample_qc_create_html_report.papermill.ipynb")
-    input_h5_file = pjoin(resources_dir, "input_for_html_report.h5")
+    input_h5_file = resources_dir / "input_for_html_report.h5"
     base_file_name = "test"
 
-    cmd = (
-        f"papermill {REPORT_NOTEBOOK} {papermill_out} "
-        f"-p top_metrics_file {REPORT_BASE_PATH}/top_metrics_for_tbl.csv "
-        f"-p input_h5_file {input_h5_file} "
-        f"-p input_base_file_name {base_file_name}"
-    )
+    parameters = {
+        "top_metrics_file": f"{REPORT_BASE_PATH}/top_metrics_for_tbl.csv",
+        "input_h5_file": input_h5_file,
+        "input_base_file_name": base_file_name,
+    }
 
-    assert subprocess.check_call(cmd.split(), cwd=tmpdir) == 0
+    report_html = Path(tmpdir) / f"{base_file_name}.html"
 
-    jupyter_convert_cmd = (
-        f"jupyter nbconvert --to html {papermill_out} --template classic --no-input --output {base_file_name}.html"
-    )
-    assert subprocess.check_call(jupyter_convert_cmd.split(), cwd=tmpdir) == 0
+    generate_report(template_notebook_path=REPORT_NOTEBOOK, parameters=parameters, output_report_html_path=report_html)
+
+    assert report_html.exists()
+    assert report_html.stat().st_size > 0
