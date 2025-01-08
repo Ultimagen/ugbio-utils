@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_core"
-version = "1.5.2-0dev-88"
+version = "1.5.2"
 requires-python = ">=3.11"
 description = "Ultima Genomics core bioinfo utils"
 authors = [
