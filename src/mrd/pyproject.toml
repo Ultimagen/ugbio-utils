@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_mrd"
-version = "1.6.0-0"
+version = "1.5.1"
 requires-python = ">=3.11"
 dependencies = [
     "ugbio_core[vcfbed,reports]",
@@ -31,10 +31,14 @@ dev-dependencies = [
     "ruff>=0.6.9",
 ]
 
-[tool.uv.sources]
-ugbio_core = {workspace = true}
-ugbio_ppmseq = {workspace = true}
-ugbio_featuremap = {workspace = true}
+[tool.uv.sources.ugbio_core]
+workspace = true
+
+[tool.uv.sources.ugbio_ppmseq]
+workspace = true
+
+[tool.uv.sources.ugbio_featuremap]
+workspace = true
 
 [tool.setuptools.package-data]
 "*" = [

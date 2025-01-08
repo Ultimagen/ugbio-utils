@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_methylation"
-version = "1.6.0-0"
+version = "1.5.1"
 description = "Ultima Genomics methylation bioinfo utils"
 authors = [
     { name = "Gat Krieger", email = "gat.krieger@ultimagen.com" },
@@ -24,6 +24,13 @@ process_mergeContextNoCpG = "ugbio_methylation.process_merge_context_no_cp_g:run
 process_perRead = "ugbio_methylation.process_per_read:run"
 generate_report = "ugbio_methylation.generate_methylation_report:main"
 
+[tool.uv]
+dev-dependencies = [
+    "pre-commit>=4.0.1",
+    "pytest>=8.3.3",
+    "ruff>=0.6.9",
+]
+
 [tool.uv.sources.ugbio_core]
 workspace = true
 
@@ -31,13 +38,6 @@ workspace = true
 "*" = [
     "**/reports/*",
     "**/resources/*",
-]
-
-[tool.uv]
-dev-dependencies = [
-    "pre-commit>=4.0.1",
-    "pytest>=8.3.3",
-    "ruff>=0.6.9",
 ]
 
 [build-system]
