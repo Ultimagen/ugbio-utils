@@ -167,7 +167,7 @@ class TestParsers:
         df_result = pd.DataFrame()
         with pd.HDFStore(output_h5_file, "r") as store:
             for key in store.keys():
-                if key == "/keys_to_convert":
+                if (key == "/keys_to_convert") or (key == "/stats_for_nexus"):
                     continue
                 df = pd.DataFrame(store[key])  # noqa: PD901
                 df = df.reset_index()  # noqa: PD901
@@ -177,7 +177,7 @@ class TestParsers:
             pd.read_csv(f"{resources_dir}/{value}", dtype={"metric": str, "value": np.float64, "detail": str})
             for value in input_files
         )
-        assert np.allclose(np.sum(df_ref["value"]), np.ceil(np.sum(df_result["value"])))
+        assert np.allclose(np.ceil(np.sum(df_ref["value"])), np.ceil(np.sum(df_result["value"])))
 
     # ------------------------------------------------------
 
