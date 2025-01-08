@@ -2024,7 +2024,7 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
         if sorter_stats_json:
             parameters["output_read_length_histogram_plot"] = output_read_length_histogram_plot
 
-        # remove temporary png and ipynb files
+        # collect temporary png and ipynb files
         if not keep_temp_visualization_files:
             tmp_files = [Path(file) for file in output_visualization_files]
         else:

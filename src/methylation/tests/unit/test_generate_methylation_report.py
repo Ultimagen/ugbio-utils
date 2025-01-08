@@ -16,7 +16,6 @@ def output_path(tmpdir):
 
 
 def test_generate_methylation_report(output_path, resources_dir):
-    # input_h5_file = resources_dir / "input_for_html_report.h5"
     methyl_dackel_concatenation_csvs = MethylDackelConcatenationCsvs(
         mbias=resources_dir / "ProcessMethylDackelMbias.csv",
         mbias_non_cpg=resources_dir / "ProcessMethylDackelMbiasNoCpG.csv",

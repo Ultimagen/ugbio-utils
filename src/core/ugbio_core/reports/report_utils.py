@@ -120,7 +120,7 @@ def generate_report(
     modify_jupyter_notebook_html(output_report_html_path)
 
     # remove temporary files
-    logger.info(f"Removing tmp_files={[str(tmp_file) for tmp_file in tmp_files]}")
+    logger.debug(f"Removing tmp_files={[str(tmp_file) for tmp_file in tmp_files]}")
     for temp_file in tmp_files:
         if temp_file.is_file():
             temp_file.unlink()
