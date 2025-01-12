@@ -208,11 +208,15 @@ def extract_statistics_table(h5_file: Path):
 
     with pd.HDFStore(h5_file, "r") as store:
         # number of Input Reads
-        num_input_reads = store[H5Keys.TRIMMER_STATS.value]["num input reads"].to_numpy()[0]
+        num_input_reads_list = store[H5Keys.TRIMMER_STATS.value]["num input reads"].to_numpy()
+        num_input_reads = next((x for x in num_input_reads_list if x != 0), None)
+        if num_input_reads is None:
+            raise ValueError("Number of input reads in trimmer statistics is not available.")
         stats["num_input_reads"] = num_input_reads
 
         # number of Trimmed reads
-        num_trimmed_reads = store[H5Keys.TRIMMER_STATS.value]["num trimmed reads"].to_numpy()[0]
+        num_trimmed_reads_list = store[H5Keys.TRIMMER_STATS.value]["num trimmed reads"].to_numpy()
+        num_trimmed_reads = next((x for x in num_trimmed_reads_list if x != 0), None)
         stats["num_trimmed_reads"] = num_trimmed_reads
 
         # pct_pass_trimmer
