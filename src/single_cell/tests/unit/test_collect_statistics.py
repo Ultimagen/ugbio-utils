@@ -125,3 +125,14 @@ def test_extract_statistics_table(inputs_dir, output_path):
         assert len(s) == 15
         # assert that entries that start with "pct_" are between 0 to 100
         assert s[s.index.str.startswith("pct_")].astype(float).between(0, 100).all()
+
+
+def test_extract_statistics_table__num_input_reads_all_zero(inputs, output_path):
+    df_trimmmer_stats = pd.read_csv(inputs.trimmer_stats_csv)
+    df_trimmmer_stats["num input reads"] = 0
+    h5_file = output_path / "test.h5"
+    with pd.HDFStore(h5_file, mode="w") as store:
+        store.put(H5Keys.TRIMMER_STATS.value, df_trimmmer_stats, format="table")
+
+    with pytest.raises(ValueError):
+        extract_statistics_table(h5_file)
