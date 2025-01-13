@@ -1,0 +1,73 @@
+{
+    "extra_information": {
+        "sample": "SC3_v4_PBMC_R2",
+        "barcode": "Z0113",
+        "minor_rg": "S1_L001_R2_001",
+        "sequence": ""
+    },
+    "cell_barcode_filter": {
+        "failed_cbcs": [
+            "AACCTCAAGGGCTTCG",
+            "TAACGATTCCCTGGTC"
+        ],
+        "nr_failed_cbcs": 869,
+        "nr_good_cbcs_above_threshold": 36724,
+        "nr_failed_reads": 632931
+    },
+    "n_bytes": 254718482890,
+    "n_records": 348202003,
+    "total_reads": 348202003,
+    "total_aligned_reads": 0,
+    "total_bases": 31220638341,
+    "total_aligned_bases": 0,
+    "total_softclipped_bases": 0,
+    "bqual": [
+        0,
+        0,
+        22146620298
+    ],
+    "pf_bqual": [
+        0,
+        0,
+        22146620298
+    ],
+    "read_length": [
+        268307,
+        276830,
+        341357423
+    ],
+    "pf_read_length": [
+        268307,
+        276830,
+        341357423
+    ],
+    "aligned_read_length": [
+        0
+    ],
+    "pf_bases": 31220638341,
+    "pf_reads": 348202003,
+    "pf_aligned_bases": 0,
+    "pf_aligned_reads": 0,
+    "pf_hq_aligned_reads": 0,
+    "pf_hq_aligned_bases": 0,
+    "pf_hq_aligned_split_reads": 0,
+    "bxq": [
+        0,
+        0,
+        0
+    ],
+    "nr_very_long_reads": 0,
+    "nr_discarded_reads": 0,
+    "nr_duplicate_reads": 0,
+    "mapq": [
+        0
+    ],
+    "pf_mismatch_bases": 0,
+    "pf_indel_events": 0,
+    "nr_optical_false_detected": 0,
+    "nr_optical_ring_overlap": 0,
+    "base_coverage": {},
+    "cvg": [
+        0
+    ]
+}

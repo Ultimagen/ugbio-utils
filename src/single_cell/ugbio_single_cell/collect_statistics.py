@@ -1,4 +1,5 @@
 import gzip
+import json
 import warnings
 from collections import defaultdict
 from pathlib import Path
@@ -60,6 +61,10 @@ def collect_statistics(
         add_total=True,
     )
     sorter_stats = read_sorter_statistics_csv(input_files.sorter_stats_csv)
+    if input_files.sorter_stats_json:
+        with open(input_files.sorter_stats_json) as f:
+            sorter_stats_json = json.load(f)
+        sorter_stats_json_df = pd.DataFrame([sorter_stats_json])
     star_stats = read_star_stats(input_files.star_stats, star_db=star_db)
     star_reads_per_gene = pd.read_csv(input_files.star_reads_per_gene, header=None, sep="\t")
 
@@ -81,6 +86,8 @@ def collect_statistics(
         store.put(H5Keys.STAR_READS_PER_GENE.value, star_reads_per_gene, format="table")
         store.put(H5Keys.INSERT_QUALITY.value, insert_quality, format="table")
         store.put(H5Keys.INSERT_LENGTHS.value, pd.Series(insert_lengths), format="table")
+        if input_files.sorter_stats_json:
+            store.put(H5Keys.SORTER_STATS_JSON.value, sorter_stats_json_df)
 
     return output_filename
 
@@ -284,5 +291,25 @@ def extract_statistics_table(h5_file: Path):
         insertion_rate = float(store[H5Keys.STAR_STATS.value].loc[("unique_reads", "pct_Insertion_rate_per_base")])
         stats["pct_insertion"] = insertion_rate
 
+        # cell_barcode_filter statistics
+        if H5Keys.SORTER_STATS_JSON.value in store:
+            extract_cell_barcode_filter_data(stats, store)
+
     series = pd.Series(stats, dtype="float")
     series.to_hdf(h5_file, key=H5Keys.STATISTICS_SHORTLIST.value)
+
+
+def extract_cell_barcode_filter_data(stats, store):
+    sorter_stats_json_df = store[H5Keys.SORTER_STATS_JSON.value]
+    if "cell_barcode_filter" in sorter_stats_json_df:
+        cell_barcode_filter = sorter_stats_json_df["cell_barcode_filter"].iloc[0]  # get "cell_barcode_filter" dict
+        n_failed_cbcs = cell_barcode_filter["nr_failed_cbcs"]
+        n_good_cbcs_above_thresh = cell_barcode_filter["nr_good_cbcs_above_threshold"]
+        n_failed_cbc_reads = cell_barcode_filter["nr_failed_reads"]
+        n_total_reads = sorter_stats_json_df["total_reads"].iloc[0]
+
+        percent_failed_cbcs_above_threshold = n_failed_cbcs / (n_failed_cbcs + n_good_cbcs_above_thresh)
+        stats["pct_failed_cbcs_above_threshold"] = percent_failed_cbcs_above_threshold
+
+        percent_cbc_filter_failed_reads = n_failed_cbc_reads / n_total_reads
+        stats["pct_cbc_filter_failed_reads"] = percent_cbc_filter_failed_reads

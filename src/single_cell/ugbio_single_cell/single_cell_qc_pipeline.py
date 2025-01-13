@@ -199,6 +199,12 @@ def main():
         required=True,
         help="Path to Sorter stats csv file",
     )
+    parser.add_argument(
+        "--sorter-stats-json",
+        type=str,
+        required=False,
+        help="Path to Sorter stats json file",
+    )
     parser.add_argument("--star-stats", type=str, required=True, help="Path to STAR stats file")
     parser.add_argument(
         "--insert",
@@ -235,13 +241,14 @@ def main():
 
     # create Inputs and Thresholds objects
     inputs = Inputs(
-        args.trimmer_stats,
-        args.trimmer_histogram,
-        args.trimmer_failure_codes,
-        args.sorter_stats,
-        args.star_stats,
-        args.star_reads_per_gene,
-        args.insert,
+        trimmer_stats_csv=args.trimmer_stats,
+        trimmer_histogram_csv=args.trimmer_histogram,
+        trimmer_failure_codes_csv=args.trimmer_failure_codes,
+        sorter_stats_csv=args.sorter_stats,
+        sorter_stats_json=args.sorter_stats_json,
+        star_stats=args.star_stats,
+        star_reads_per_gene=args.star_reads_per_gene,
+        insert=args.insert,
     )
     thresholds = Thresholds(
         args.pass_trim_rate,
