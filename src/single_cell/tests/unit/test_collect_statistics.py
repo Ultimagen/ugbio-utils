@@ -66,9 +66,26 @@ def test_collect_statistics(output_path, inputs, sample_name):
     # assert output file contains expected keys
     with pd.HDFStore(h5_file, mode="r") as store:
         expected_keys = [
-            "/" + key.value for key in H5Keys if key != H5Keys.STATISTICS_SHORTLIST and key != H5Keys.TRIMMER_HISTOGRAM
+            "/" + key.value
+            for key in H5Keys
+            if key not in [H5Keys.STATISTICS_SHORTLIST, H5Keys.TRIMMER_HISTOGRAM, H5Keys.SORTER_STATS_JSON]
         ]
         assert set(store.keys()) == set(expected_keys)
+
+
+def test_collect_statistics_with_sorter_json(inputs_dir, output_path, inputs, sample_name):
+    inputs.sorter_stats_json = str(inputs_dir / "sorter_stats.json")
+    h5_file = collect_statistics(
+        input_files=inputs,
+        output_path=output_path,
+        sample_name=sample_name,
+    )
+
+    # assert output file exists
+    assert h5_file.exists()
+    # assert output file contains expected keys
+    with pd.HDFStore(h5_file, mode="r") as store:
+        assert "/" + H5Keys.SORTER_STATS_JSON.value in store.keys()
 
 
 def test_read_star_stats(inputs):
@@ -136,3 +153,20 @@ def test_extract_statistics_table__num_input_reads_all_zero(inputs, output_path)
 
     with pytest.raises(ValueError):
         extract_statistics_table(h5_file)
+
+
+def test_extract_statistics_table_with_sorter_json(inputs_dir, output_path):
+    original_h5_file = inputs_dir / "single_cell_qc_stats_with_sorter_json.scRNA.applicationQC.h5"
+    # copy the file to tmpdir to avoid modifying the original file
+    h5_file = output_path / original_h5_file.name
+    shutil.copyfile(original_h5_file, str(h5_file))
+
+    extract_statistics_table(h5_file)
+
+    # assert h5 contains the STATISTICS_SHORTLIST key
+    with pd.HDFStore(h5_file, mode="r") as store:
+        s = store[H5Keys.STATISTICS_SHORTLIST.value]
+        assert "/" + H5Keys.STATISTICS_SHORTLIST.value in store.keys()
+        assert len(s) == 17
+        assert s["pct_failed_cbcs_above_threshold"] == 0.02311600563934775
+        assert s["pct_failed_reads"] == 0.0018177121169518373
