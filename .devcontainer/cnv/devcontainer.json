@@ -3,7 +3,7 @@
 {
 	"name": "CNV",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_cnv:1.5.2",
+	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_cnv:1.5.3",
 	"runArgs": [
 		"--init",
 		"--network=host"
