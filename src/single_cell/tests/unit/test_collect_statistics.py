@@ -169,4 +169,4 @@ def test_extract_statistics_table_with_sorter_json(inputs_dir, output_path):
         assert "/" + H5Keys.STATISTICS_SHORTLIST.value in store.keys()
         assert len(s) == 17
         assert s["pct_failed_cbcs_above_threshold"] == 0.02311600563934775
-        assert s["pct_failed_reads"] == 0.0018177121169518373
+        assert s["pct_cbc_filter_failed_reads"] == 0.0018177121169518373

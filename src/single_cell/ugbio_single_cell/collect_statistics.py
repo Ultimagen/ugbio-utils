@@ -311,5 +311,5 @@ def extract_cell_barcode_filter_data(stats, store):
         percent_failed_cbcs_above_threshold = n_failed_cbcs / (n_failed_cbcs + n_good_cbcs_above_thresh)
         stats["pct_failed_cbcs_above_threshold"] = percent_failed_cbcs_above_threshold
 
-        percent_failed_reads = n_failed_cbc_reads / n_total_reads
-        stats["pct_failed_reads"] = percent_failed_reads
+        percent_cbc_filter_failed_reads = n_failed_cbc_reads / n_total_reads
+        stats["pct_cbc_filter_failed_reads"] = percent_cbc_filter_failed_reads
