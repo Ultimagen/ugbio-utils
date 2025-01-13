@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
 # Download and install gatk
-ARG GATK_VERSION=4.6.0.0
+ARG GATK_VERSION=4.6.1.0
 RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION}/gatk-${GATK_VERSION}.zip && \
     unzip gatk-${GATK_VERSION}.zip && \
     mv gatk-${GATK_VERSION} /opt/gatk && \
