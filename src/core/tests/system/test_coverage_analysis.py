@@ -10,7 +10,7 @@ from ugbio_core.coverage_analysis import run_coverage_collection, run_full_cover
 
 @pytest.fixture
 def resources_dir():
-    return Path(__file__).parent.parent.parent / "resources"
+    return Path(__file__).parent.parent / "resources"
 
 
 def test_coverage_analysis(tmpdir, resources_dir):
