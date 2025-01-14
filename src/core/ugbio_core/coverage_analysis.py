@@ -30,7 +30,6 @@ from os.path import basename, dirname, splitext
 from os.path import join as pjoin
 from tempfile import TemporaryDirectory
 
-import botocore
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
@@ -863,11 +862,11 @@ def _intervals_to_bed(input_intervals, output_bed_file=None):
     if input_intervals.endswith(".interval_list"):
         try:
             return cloud_sync(input_intervals[: -len(".interval_list")] + ".bed")
-        except botocore.exceptions.ClientError:  # bed file not found - convert automatically
-            pass
+        except Exception:  # bed file not found - convert automatically
+            logger.info("bed file not found, will be converted automatically")
     try:
         input_intervals = cloud_sync(input_intervals)
-    except botocore.exceptions.ClientError as no_input_interval:  # bed file not found - convert automatically
+    except Exception as no_input_interval:  # bed file not found - convert automatically
         raise f"Interval list file not found: {input_intervals}" from no_input_interval
     if output_bed_file is None:
         output_bed_file = input_intervals
