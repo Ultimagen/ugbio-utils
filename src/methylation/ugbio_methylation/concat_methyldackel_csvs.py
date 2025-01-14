@@ -50,7 +50,7 @@ from ugbio_methylation.globals import H5_FILE, MethylDackelConcatenationCsvs
 def parse_args(argv: list[str]) -> tuple[MethylDackelConcatenationCsvs, str]:
     ap_var = argparse.ArgumentParser(
         prog="concat_methyldackel_csvs.py",
-        description="Concatenate CSV output files of MethylDackel processing into an HDF5 file",
+        description=run.__doc__,
     )
     ap_var.add_argument("--mbias", help="csv summary of MethylDackelMbias", type=str, required=True)
     ap_var.add_argument(
@@ -115,6 +115,7 @@ def concat_methyldackel_csvs(
 
 
 def run(argv: list[str] | None = None):
+    """Concatenate CSV output files of MethylDackel processing into an HDF5 file"""
     if argv is None:
         argv: list[str] = sys.argv
 
