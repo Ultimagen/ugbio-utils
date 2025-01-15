@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
 # Download and install gatk
-ARG GATK_VERSION=4.6.0.0
+ARG GATK_VERSION=4.6.1.0
 RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION}/gatk-${GATK_VERSION}.zip && \
     unzip gatk-${GATK_VERSION}.zip && \
     mv gatk-${GATK_VERSION} /opt/gatk && \
@@ -32,7 +32,7 @@ RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION
     rm gatk-${GATK_VERSION}.zip
 
 # install samtools
-ARG SAMTOOLS_VERSION=1.9
+ARG SAMTOOLS_VERSION=1.20
 WORKDIR /usr/local/bin
 RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2
 RUN tar -xjf /usr/local/bin/samtools-${SAMTOOLS_VERSION}.tar.bz2 -C /usr/local/bin/
