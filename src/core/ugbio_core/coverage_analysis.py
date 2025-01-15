@@ -392,7 +392,7 @@ def run_coverage_collection(
         )
     )
     if zip_bg:
-        _zip_bedgraph_files(out_path, n_jobs, progress_bar)
+        _zip_bedgraph_files(out_path, n_jobs, progress_bar=progress_bar)
         assert isinstance(out_depth_files, list)  # noqa S101
         out_depth_files = [x + ".gz" for x in out_depth_files]
     assert isinstance(out_depth_files, list)  # noqa S101
@@ -593,7 +593,7 @@ def run_full_coverage_analysis(  # noqa C901 PLR0913 PLR0912 PLR0915
             # set new parameters so that the next window size is a processing of the binned file and not the original
             win0 = win
     # gzip all the bed files
-    _zip_bedgraph_files(out_path, n_jobs, progress_bar)
+    _zip_bedgraph_files(out_path, n_jobs, progress_bar=progress_bar)
 
 
 def _zip_bedgraph_files(out_path: str, n_jobs: int, *, progress_bar: bool):
