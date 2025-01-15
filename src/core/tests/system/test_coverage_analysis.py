@@ -43,6 +43,7 @@ def test_coverage_collection(tmpdir, resources_dir):
         regions=["chr9:1000000-2001000"],
         zip_bg=False,
     )
+
     assert filecmp.cmp(
         pjoin(tmpdir, "170201-BC23.chr9_1000000-2001000.q0.Q0.l0.w1.depth.bedgraph"), bg_ref, shallow=False
     )
