@@ -435,7 +435,16 @@ def run_full_coverage_analysis(  # noqa C901 PLR0913 PLR0912 PLR0915
     params_filename_suffix = f"q{min_bq}.Q{min_mapq}.l{min_read_length}"
 
     out_depth_files, out_bw_files, regions = run_coverage_collection(
-        bam_file, out_path, ref_fasta, regions, min_bq, min_mapq, min_read_length, n_jobs, progress_bar, zip_bg=False
+        bam_file,
+        out_path,
+        ref_fasta,
+        regions,
+        min_bq,
+        min_mapq,
+        min_read_length,
+        n_jobs,
+        progress_bar=progress_bar,
+        zip_bg=False,
     )
     # collect coverage in intervals
     if coverage_intervals_dict is not None:
