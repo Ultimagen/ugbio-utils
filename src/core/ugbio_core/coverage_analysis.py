@@ -625,21 +625,18 @@ def _zip_bedgraph_files(out_path: str, n_jobs: int, *, progress_bar: bool):
 def _run_shell_command(cmd, logger=logger):
     # pylint: disable=redefined-outer-name
     """Wrapper for running shell commands"""
-    try:
-        logger.info("Running command:\n%s", cmd)
+    logger.info("Running command:\n%s", cmd)
 
-        with subprocess.Popen(  # noqa S602
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=True,
-        ) as popen:
-            stdout, stderr = popen.communicate()
-            logger.info("Finished Running command:\n%s", cmd)
-            logger.info("stdout:\n%s", stdout.decode())
-            logger.info("stderr:\n%s", stderr.decode())
-    except subprocess.CalledProcessError as e:
-        raise e
+    with subprocess.Popen(  # noqa S602
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        shell=True,
+    ) as popen:
+        stdout, stderr = popen.communicate()
+        logger.debug("Finished Running command:\n%s", cmd)
+        logger.debug("stdout:\n%s", stdout.decode())
+        logger.debug("stderr:\n%s", stderr.decode())
     return stdout.decode(), stderr.decode()
 
 
