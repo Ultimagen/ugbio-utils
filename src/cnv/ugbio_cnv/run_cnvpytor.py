@@ -64,6 +64,7 @@ def run(argv):
     app = cnvpytor.Root(pjoin(args.out_directory, f"{args.sample_name}.pytor"), create=True, max_cores=os.cpu_count())
 
     chroms = args.chr_list.split(",")
+    bin_size = int(args.bin_size)
     logger.info("chromosomoes list:")
     logger.info(chroms)
 
@@ -71,13 +72,13 @@ def run(argv):
     app.rd([args.input_bam_cram_file], chroms=chroms, reference_filename=args.ref_fasta)
 
     # Calculate histograms with bin sizes=bin_size:
-    app.calculate_histograms([args.bin_size])
+    app.calculate_histograms([bin_size])
 
     # Calculate partition for the same bin sizes:
-    app.partition([500])
+    app.partition([bin_size])
 
     # Calculate and print CNV calls:
-    calls = app.call([500])
+    calls = app.call([bin_size])
     for bin_size in calls:
         out_file = pjoin(args.out_directory, f"{args.sample_name}.pytor.bin{bin_size}.CNVs.tsv")
         print(out_file)

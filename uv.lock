@@ -473,6 +473,22 @@ wheels = [
 ]
 
 [[package]]
+name = "cnvpytor"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "gnureadline" },
+    { name = "h5py" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pysam" },
+    { name = "requests" },
+    { name = "scipy" },
+    { name = "xlsxwriter" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/86/73/d5999147fc0c59e3bd24932d06a1829a31c3b9af91cf6f193608b5223c67/CNVpytor-1.3.1.tar.gz", hash = "sha256:938bd8160f10ac7f74c8036d83ca9368ea72de275f9a99e8d2f4ea48502e4e51", size = 1121582 }
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 source = { registry = "https://pypi.org/simple" }
@@ -760,6 +776,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/62/7c/12b0943011daaaa9c35c2a2e22e5eb929ac90002f08f1259d69aedad84de/fsspec-2024.9.0.tar.gz", hash = "sha256:4b0afb90c2f21832df142f292649035d80b421f60a9e1c027802e5a0da2b04e8", size = 286206 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1d/a0/6aaea0c2fbea2f89bfd5db25fb1e3481896a423002ebe4e55288907a97a3/fsspec-2024.9.0-py3-none-any.whl", hash = "sha256:a0947d552d8a6efa72cc2c730b12c41d043509156966cca4fb157b0f2a0c574b", size = 179253 },
+]
+
+[[package]]
+name = "gnureadline"
+version = "8.2.13"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/92/20723aa239b9a8024e6f8358c789df8859ab1085a1ae106e5071727ad20f/gnureadline-8.2.13.tar.gz", hash = "sha256:c9b9e1e7ba99a80bb50c12027d6ce692574f77a65bf57bc97041cf81c0f49bd1", size = 3224991 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ff/ad/a6c59fcdbc8173bc538dad042696b732d39bc8de95adb07664b124c07942/gnureadline-8.2.13-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:561a60b12f74ea7234036cc4fe558f3b46023be0dac5ed73541ece58cba2f88a", size = 160575 },
+    { url = "https://files.pythonhosted.org/packages/f7/9b/464929f1e81ba4ea4fafb033c38eefedc533b503d777e91ffa12751ad34e/gnureadline-8.2.13-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:daa405028b9fe92bfbb93624e13e0674a242a1c5434b70ef61a04294502fdb65", size = 162528 },
+    { url = "https://files.pythonhosted.org/packages/19/88/c7465657d2c4c3e30794f15568e322d65389cc00d825627cc3d0f9b92d9a/gnureadline-8.2.13-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:576dac060887adc6067ee9d23fb2f0031fb2b3e560e07a6c9e666e05f0473af7", size = 648274 },
+    { url = "https://files.pythonhosted.org/packages/bd/12/af62b7578f741f6af3120a44eb930aaa2f215c56f171068a0c8b7839245d/gnureadline-8.2.13-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:10fcaf561bc4ed6ab7075ab3ead188a18faaf4e6e92d916f81a09c0a670ce906", size = 650934 },
+    { url = "https://files.pythonhosted.org/packages/68/bd/df8fd060e43efd3dbdd3b210bf558ce3ef854843cd093f910f4115ebe2e9/gnureadline-8.2.13-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:9c152a82613fa012ab4331bb9a0ffddb415e37561d376b910bf9e7d535607faf", size = 160504 },
+    { url = "https://files.pythonhosted.org/packages/97/ee/322e5340c8cdfa40e71bd0485a82404ad4cf9aed2260cca090f3c1a3a032/gnureadline-8.2.13-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:85e362d2d0e85e45f0affae7bbfaf998b00167c55a78d31ee0f214de9ff429d2", size = 162380 },
+    { url = "https://files.pythonhosted.org/packages/92/64/ae5598fd1dbf7de863cd7066798fe882f2e9b5dcdb49f8ad859e736c2212/gnureadline-8.2.13-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:b69e6608cc94e110018b721a11718d480a6330e0b62cbab65a22880e84011205", size = 648192 },
+    { url = "https://files.pythonhosted.org/packages/08/d3/1face508173298b6d4d9f96ad4e408bcbdea704c583646e41d0aa6826385/gnureadline-8.2.13-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0cc77fc9c8a8fcf10e0a554e49ee763219683386b8f906b7e6ef07c9e40e8420", size = 651945 },
 ]
 
 [[package]]
@@ -2780,7 +2812,11 @@ wheels = [
 
 [[package]]
 name = "ugbio-cloud-utils"
+<<<<<<< HEAD
 version = "1.6.0.post0"
+=======
+version = "1.5.4.post0.dev94"
+>>>>>>> 43c8720 (cast to int)
 source = { editable = "src/cloud_utils" }
 dependencies = [
     { name = "boto3" },
@@ -2809,9 +2845,14 @@ dev = [
 
 [[package]]
 name = "ugbio-cnv"
+<<<<<<< HEAD
 version = "1.6.0.post0"
+=======
+version = "1.5.4.post0.dev94"
+>>>>>>> 43c8720 (cast to int)
 source = { editable = "src/cnv" }
 dependencies = [
+    { name = "cnvpytor" },
     { name = "seaborn" },
     { name = "ugbio-core" },
 ]
@@ -2825,6 +2866,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cnvpytor", specifier = ">=1.3.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "ugbio-core", editable = "src/core" },
 ]
@@ -2838,7 +2880,11 @@ dev = [
 
 [[package]]
 name = "ugbio-core"
+<<<<<<< HEAD
 version = "1.6.0.post0"
+=======
+version = "1.5.4.post0.dev94"
+>>>>>>> 43c8720 (cast to int)
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -2897,7 +2943,11 @@ dev = [
 
 [[package]]
 name = "ugbio-featuremap"
+<<<<<<< HEAD
 version = "1.6.0.post0"
+=======
+version = "1.5.4.post0.dev94"
+>>>>>>> 43c8720 (cast to int)
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "scikit-learn" },
@@ -2932,7 +2982,11 @@ dev = [
 
 [[package]]
 name = "ugbio-freec"
+<<<<<<< HEAD
 version = "1.6.0.post0"
+=======
+version = "1.5.4.post0.dev94"
+>>>>>>> 43c8720 (cast to int)
 source = { editable = "src/freec" }
 dependencies = [
     { name = "pandas" },
@@ -2961,12 +3015,20 @@ dev = [
 
 [[package]]
 name = "ugbio-hla-la"
+<<<<<<< HEAD
 version = "1.6.0.post0"
+=======
+version = "1.5.4.post0.dev94"
+>>>>>>> 43c8720 (cast to int)
 source = { virtual = "src/hla_la" }
 
 [[package]]
 name = "ugbio-methylation"
+<<<<<<< HEAD
 version = "1.6.0.post0"
+=======
+version = "1.5.4.post0.dev94"
+>>>>>>> 43c8720 (cast to int)
 source = { editable = "src/methylation" }
 dependencies = [
     { name = "matplotlib" },
@@ -3001,7 +3063,11 @@ dev = [
 
 [[package]]
 name = "ugbio-mrd"
+<<<<<<< HEAD
 version = "1.6.0.post0"
+=======
+version = "1.5.4.post0.dev94"
+>>>>>>> 43c8720 (cast to int)
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["reports", "vcfbed"] },
@@ -3032,7 +3098,11 @@ dev = [
 
 [[package]]
 name = "ugbio-omics"
+<<<<<<< HEAD
 version = "1.6.0.post0"
+=======
+version = "1.5.4.post0.dev94"
+>>>>>>> 43c8720 (cast to int)
 source = { editable = "src/omics" }
 dependencies = [
     { name = "boto3" },
@@ -3065,7 +3135,11 @@ dev = [
 
 [[package]]
 name = "ugbio-ppmseq"
+<<<<<<< HEAD
 version = "1.6.0.post0"
+=======
+version = "1.5.4.post0.dev94"
+>>>>>>> 43c8720 (cast to int)
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3098,7 +3172,11 @@ dev = [
 
 [[package]]
 name = "ugbio-single-cell"
+<<<<<<< HEAD
 version = "1.6.0.post0"
+=======
+version = "1.5.4.post0.dev94"
+>>>>>>> 43c8720 (cast to int)
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3135,7 +3213,11 @@ dev = [
 
 [[package]]
 name = "ugbio-srsnv"
+<<<<<<< HEAD
 version = "1.6.0.post0"
+=======
+version = "1.5.4.post0.dev94"
+>>>>>>> 43c8720 (cast to int)
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3180,7 +3262,11 @@ dev = [
 
 [[package]]
 name = "ugbio-utils"
+<<<<<<< HEAD
 version = "1.6.0.post0"
+=======
+version = "1.5.4.post0.dev94"
+>>>>>>> 43c8720 (cast to int)
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -3294,6 +3380,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a8/5d/0b526537ab07334cd0832f036cdaa5a82371f75cc26e9001c51b315f7519/xgboost-2.1.2-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:69f1e1038e594d28d6f74252685495eba9de4983e95c87d1e93706fa5f720b02", size = 4201081 },
     { url = "https://files.pythonhosted.org/packages/95/a4/16490d38b4854a1ce4995f4088bcb701b5057f711e34c95cd6e29792cdde/xgboost-2.1.2-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:a8abdcc48d68cad22812df43a16cfc8314dcf771064b63ada9d73399129c8fdc", size = 153893083 },
     { url = "https://files.pythonhosted.org/packages/fe/df/e3a1f3f008db8d2b199ded2168014c7784b8027714b74d802c892815fd72/xgboost-2.1.2-py3-none-win_amd64.whl", hash = "sha256:93782c35e8a2c2eb124eb68186c3238f270ee868c654f65b47f0d594376b25d6", size = 124909526 },
+]
+
+[[package]]
+name = "xlsxwriter"
+version = "3.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/c3/b36fa44a0610a0f65d2e65ba6a262cbe2554b819f1449731971f7c16ea3c/XlsxWriter-3.2.0.tar.gz", hash = "sha256:9977d0c661a72866a61f9f7a809e25ebbb0fb7036baa3b9fe74afcfca6b3cb8c", size = 198732 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a7/ea/53d1fe468e63e092cf16e2c18d16f50c29851242f9dd12d6a66e0d7f0d02/XlsxWriter-3.2.0-py3-none-any.whl", hash = "sha256:ecfd5405b3e0e228219bcaf24c2ca0915e012ca9464a14048021d21a995d490e", size = 159925 },
 ]
 
 [[package]]
