@@ -865,7 +865,6 @@ def _intervals_to_bed(input_intervals, output_bed_file=None):
         hen output_bed_file was not created.
 
     """
-    logger.info(f"input_intervals: {input_intervals}, output_bed_file: {output_bed_file}")
     if input_intervals.endswith(".interval_list"):
         try:
             return cloud_sync(input_intervals[: -len(".interval_list")] + ".bed")
@@ -873,8 +872,9 @@ def _intervals_to_bed(input_intervals, output_bed_file=None):
             logger.info("bed file not found, will be converted automatically")
     try:
         input_intervals = cloud_sync(input_intervals)
-    except Exception as no_input_interval:
-        raise f"Interval list file not found: {input_intervals}" from no_input_interval
+    except Exception as err:
+        logger.error(f"Interval list file not found: {input_intervals}")
+        raise err
     if output_bed_file is None:
         output_bed_file = input_intervals
         if output_bed_file.endswith(".interval"):
