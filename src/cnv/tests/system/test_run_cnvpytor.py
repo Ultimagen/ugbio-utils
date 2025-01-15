@@ -19,7 +19,7 @@ class TestRunCNVpytor:
         input_cram_file = pjoin(resources_dir, "HG002.chr19.s0.01.bam")
         ref_fasta = pjoin(resources_dir, "chr19.fasta")
         sample_name = "test_HG002"
-        bin_size = 500
+        bin_size = "500"
         out_dir = str(tmp_path)
 
         run_cnvpytor.run(
@@ -32,7 +32,7 @@ class TestRunCNVpytor:
                 "--ref_fasta",
                 ref_fasta,
                 "--bin_size",
-                "500",
+                bin_size,
                 "--chr_list",
                 "chr19",
                 "--out_directory",
@@ -41,5 +41,5 @@ class TestRunCNVpytor:
         )
 
         out_cnvs_file = pjoin(tmp_path, f"{sample_name}.pytor.bin{bin_size}.CNVs.tsv")
-        expected_out_cnvs_file = pjoin(resources_dir, f"{sample_name}.pytor.bin{bin_size}.CNVs.tsv")
+        expected_out_cnvs_file = pjoin(resources_dir, "HG002.pytor.bin500.CNVs.tsv")
         assert filecmp.cmp(out_cnvs_file, expected_out_cnvs_file)
