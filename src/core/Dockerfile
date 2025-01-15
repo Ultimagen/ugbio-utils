@@ -24,6 +24,10 @@ RUN mkdir -p /opt/picard && \
 RUN echo '#!/bin/sh\njava -jar /opt/picard/picard.jar "$@"' > /usr/local/bin/picard && \
     chmod +x /usr/local/bin/picard
 
+# Download and install bedGraphToBigWig
+RUN wget http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64.v385/bedGraphToBigWig -O /usr/local/bin/bedGraphToBigWig \
+    && chmod +x /usr/local/bin/bedGraphToBigWig
+
 ARG OUT_DIR=/tmp/ugbio
 
 COPY --from=build $OUT_DIR $OUT_DIR
