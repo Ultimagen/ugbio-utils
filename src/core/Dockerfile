@@ -37,7 +37,7 @@ RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSI
     make -j $(nproc) && \
     make install && \
     cd .. && \
-    rm -rf samtools-${SAMTOOLS_VERSION}.tar.bz2 samtools-${SAMTOOLS_VERSION} \
+    rm -rf samtools-${SAMTOOLS_VERSION}.tar.bz2 samtools-${SAMTOOLS_VERSION}
 
 ARG OUT_DIR=/tmp/ugbio
 
