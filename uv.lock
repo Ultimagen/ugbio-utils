@@ -19,6 +19,7 @@ members = [
     "ugbio-ppmseq",
     "ugbio-single-cell",
     "ugbio-srsnv",
+    "ugbio-test",
     "ugbio-utils",
 ]
 
@@ -456,7 +457,7 @@ name = "click"
 version = "8.1.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "platform_system == 'Windows'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/96/d3/f04c7bfcf5c1862a2a5b845c6b2b360488cf47af55dfa79c98f6a6bf98b5/click-8.1.7.tar.gz", hash = "sha256:ca9853ad459e787e2192211578cc907e7594e294c7ccc834310722b41b9ca6de", size = 336121 }
 wheels = [
@@ -979,7 +980,7 @@ name = "ipykernel"
 version = "6.29.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "appnope", marker = "sys_platform == 'darwin'" },
+    { name = "appnope", marker = "platform_system == 'Darwin'" },
     { name = "comm" },
     { name = "debugpy" },
     { name = "ipython" },
@@ -2735,7 +2736,7 @@ name = "tqdm"
 version = "4.66.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "platform_system == 'Windows'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/58/83/6ba9844a41128c62e810fddddd72473201f3eacde02046066142a2d96cc5/tqdm-4.66.5.tar.gz", hash = "sha256:e1020aef2e5096702d8a025ac7d16b1577279c9d63f8375b63083e9a5f0fcbad", size = 169504 }
 wheels = [
@@ -2780,7 +2781,7 @@ wheels = [
 
 [[package]]
 name = "ugbio-cloud-utils"
-version = "1.6.0.post0"
+version = "1.5.4"
 source = { editable = "src/cloud_utils" }
 dependencies = [
     { name = "boto3" },
@@ -2809,7 +2810,7 @@ dev = [
 
 [[package]]
 name = "ugbio-cnv"
-version = "1.6.0.post0"
+version = "1.5.4"
 source = { editable = "src/cnv" }
 dependencies = [
     { name = "seaborn" },
@@ -2838,7 +2839,7 @@ dev = [
 
 [[package]]
 name = "ugbio-core"
-version = "1.6.0.post0"
+version = "1.5.4"
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -2859,8 +2860,10 @@ reports = [
 ]
 vcfbed = [
     { name = "bgzip" },
+    { name = "joblib" },
     { name = "pybigwig" },
     { name = "tqdm" },
+    { name = "ugbio-cloud-utils" },
 ]
 
 [package.dev-dependencies]
@@ -2874,6 +2877,7 @@ dev = [
 requires-dist = [
     { name = "bgzip", marker = "extra == 'vcfbed'", specifier = ">=0.5.0" },
     { name = "h5py", specifier = ">=3.11.0" },
+    { name = "joblib", marker = "extra == 'vcfbed'", specifier = ">=1.4.2" },
     { name = "jupyter", marker = "extra == 'reports'", specifier = ">=1.1.1" },
     { name = "matplotlib", specifier = ">=3.7.1" },
     { name = "nbconvert", marker = "extra == 'reports'", specifier = ">=7.16.5" },
@@ -2886,6 +2890,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.14.0" },
     { name = "simppl", specifier = ">=1.0.7" },
     { name = "tqdm", marker = "extra == 'vcfbed'", specifier = ">=4.66.4" },
+    { name = "ugbio-cloud-utils", marker = "extra == 'vcfbed'", editable = "src/cloud_utils" },
 ]
 
 [package.metadata.requires-dev]
@@ -2897,7 +2902,7 @@ dev = [
 
 [[package]]
 name = "ugbio-featuremap"
-version = "1.6.0.post0"
+version = "1.5.4"
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "scikit-learn" },
@@ -2932,7 +2937,7 @@ dev = [
 
 [[package]]
 name = "ugbio-freec"
-version = "1.6.0.post0"
+version = "1.5.4"
 source = { editable = "src/freec" }
 dependencies = [
     { name = "pandas" },
@@ -2961,12 +2966,12 @@ dev = [
 
 [[package]]
 name = "ugbio-hla-la"
-version = "1.6.0.post0"
+version = "1.5.4"
 source = { virtual = "src/hla_la" }
 
 [[package]]
 name = "ugbio-methylation"
-version = "1.6.0.post0"
+version = "1.5.4"
 source = { editable = "src/methylation" }
 dependencies = [
     { name = "matplotlib" },
@@ -3001,7 +3006,7 @@ dev = [
 
 [[package]]
 name = "ugbio-mrd"
-version = "1.6.0.post0"
+version = "1.5.4"
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["reports", "vcfbed"] },
@@ -3032,7 +3037,7 @@ dev = [
 
 [[package]]
 name = "ugbio-omics"
-version = "1.6.0.post0"
+version = "1.5.4"
 source = { editable = "src/omics" }
 dependencies = [
     { name = "boto3" },
@@ -3065,7 +3070,7 @@ dev = [
 
 [[package]]
 name = "ugbio-ppmseq"
-version = "1.6.0.post0"
+version = "1.5.4"
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3098,7 +3103,7 @@ dev = [
 
 [[package]]
 name = "ugbio-single-cell"
-version = "1.6.0.post0"
+version = "1.5.4"
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3135,7 +3140,7 @@ dev = [
 
 [[package]]
 name = "ugbio-srsnv"
-version = "1.6.0.post0"
+version = "1.5.4"
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3179,8 +3184,29 @@ dev = [
 ]
 
 [[package]]
+name = "ugbio-test"
+version = "1.4.1.post0.dev76"
+source = { editable = "src/test" }
+
+[package.dev-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "ruff" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pytest", specifier = ">=8.3.3" },
+    { name = "ruff", specifier = ">=0.6.9" },
+]
+
+[[package]]
 name = "ugbio-utils"
-version = "1.6.0.post0"
+version = "1.5.4"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -3282,7 +3308,7 @@ version = "2.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
-    { name = "nvidia-nccl-cu12", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-nccl-cu12", marker = "platform_machine != 'aarch64' and platform_system == 'Linux'" },
     { name = "scipy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d2/d5/8d93a950a379b34767ac118cf5653977048e291c6695713a60863532ec08/xgboost-2.1.2.tar.gz", hash = "sha256:151071c22d0f5637739ccaf057f57d05983caaba557cc3d8191c2cb8ce8ae659", size = 1090159 }
