@@ -14,16 +14,16 @@ def resources_dir():
 
 
 def test_coverage_analysis(tmpdir, resources_dir):
-    f_in = resources_dir / "170201-BC23.chr9_1000000_2001000.aligned.unsorted.duplicates_marked.bam"
-    f_ref = resources_dir / "170201-BC23.chr9_1000000_2001000.coverage_percentiles.parquet"
-    ref_fasta = resources_dir / "sample.fasta"
+    f_in = pjoin(resources_dir, "170201-BC23.chr9_1000000_2001000.aligned.unsorted.duplicates_marked.bam")
+    f_ref = pjoin(resources_dir, "170201-BC23.chr9_1000000_2001000.coverage_percentiles.parquet")
+    ref_fasta = pjoin(resources_dir, "sample.fasta")
     run_full_coverage_analysis(
         bam_file=f_in,
         out_path=tmpdir,
         regions=["chr9:1000000-2001000"],
         windows=[100_000],
         ref_fasta=ref_fasta,
-        coverage_intervals_dict=resources_dir / "coverage_chr9_extended_intervals.tsv",
+        coverage_intervals_dict=pjoin(resources_dir, "coverage_chr9_extended_intervals.tsv"),
     )
     df = pd.read_hdf(pjoin(tmpdir, "170201-BC23.coverage_stats.q0.Q0.l0.h5"), "percentiles")  # noqa PD901
     df_ref = pd.read_parquet(f_ref)
@@ -31,10 +31,10 @@ def test_coverage_analysis(tmpdir, resources_dir):
 
 
 def test_coverage_collection(tmpdir, resources_dir):
-    f_in = resources_dir / "170201-BC23.chr9_1000000_2001000.aligned.unsorted.duplicates_marked.bam"
-    bg_ref = resources_dir / "170201-BC23.chr9_1000000_2001000.bedgraph"
-    bw_ref = resources_dir / "170201-BC23.chr9_1000000_2001000.bw"
-    ref_fasta = resources_dir / "sample.fasta"
+    f_in = pjoin(resources_dir, "170201-BC23.chr9_1000000_2001000.aligned.unsorted.duplicates_marked.bam")
+    bg_ref = pjoin(resources_dir, "170201-BC23.chr9_1000000_2001000.bedgraph")
+    bw_ref = pjoin(resources_dir, "170201-BC23.chr9_1000000_2001000.bw")
+    ref_fasta = pjoin(resources_dir, "sample.fasta")
 
     run_coverage_collection(
         bam_file=f_in,
