@@ -626,7 +626,7 @@ def _run_shell_command(cmd, logger=logger):
     # pylint: disable=redefined-outer-name
     """Wrapper for running shell commands"""
     try:
-        logger.debug("Running command:\n%s", cmd)
+        logger.info("Running command:\n%s", cmd)
 
         with subprocess.Popen(  # noqa S602
             cmd,
@@ -635,9 +635,9 @@ def _run_shell_command(cmd, logger=logger):
             shell=True,
         ) as popen:
             stdout, stderr = popen.communicate()
-            logger.debug("Finished Running command:\n%s", cmd)
-            logger.debug("stdout:\n%s", stdout.decode())
-            logger.debug("stderr:\n%s", stderr.decode())
+            logger.info("Finished Running command:\n%s", cmd)
+            logger.info("stdout:\n%s", stdout.decode())
+            logger.info("stderr:\n%s", stderr.decode())
     except subprocess.CalledProcessError as e:
         raise e
     return stdout.decode(), stderr.decode()
