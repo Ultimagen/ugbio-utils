@@ -1195,5 +1195,9 @@ def plot_coverage_profile(  # noqa C901 PLR0912
     return fig
 
 
-if __name__ == "__main__":
+def main():
     run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()
