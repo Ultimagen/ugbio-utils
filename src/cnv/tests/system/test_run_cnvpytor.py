@@ -32,7 +32,7 @@ class TestRunCNVpytor:
                 "--ref_fasta",
                 ref_fasta,
                 "--bin_size",
-                bin_size,
+                "500",
                 "--chr_list",
                 "chr19",
                 "--out_directory",
