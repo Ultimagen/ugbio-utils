@@ -13,8 +13,8 @@ def resources_dir():
 
 class TestRunCNVpytor:
     def test_run_cnvpytor(self, tmp_path, resources_dir):
-        input_cram_file = resources_dir / "HG002.chr19.s0.01.bam"
-        ref_fasta = resources_dir / "chr19.fasta"
+        input_cram_file = os.path.join(resources_dir, "HG002.chr19.s0.01.bam")
+        ref_fasta = os.path.join(resources_dir, "chr19.fasta")
         sample_name = "test_HG002"
         bin_size = "500"
         out_dir = str(tmp_path)

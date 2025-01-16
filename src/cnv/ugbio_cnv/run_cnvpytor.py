@@ -26,16 +26,10 @@ import cnvpytor
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 
-def run(argv):
-    """
-    Given a bam/cram file, this script will run cnvpytor on the sample:
-    output consists of 2 files:
-    - cnv calls in tsv format
-    """
+def __parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="run_cnvpytor.py",
-        description="Run CNVpytor on a single sample.",
-        formatter_class=argparse.RawTextHelpFormatter,
+        description=run.__doc__,
     )
     parser.add_argument("--input_bam_cram_file", help="input cram/bam file", required=True, type=str)
     parser.add_argument("--sample_name", help="sample_name", required=True, type=str)
@@ -57,8 +51,16 @@ def run(argv):
         required=False,
         type=str,
     )
+    return parser.parse_args(argv[1:])
 
-    args = parser.parse_args(argv[1:])
+
+def run(argv):
+    """
+    Given a bam/cram file, this script will run cnvpytor on the sample:
+    output consists of 2 files:
+    - cnv calls in tsv format
+    """
+    args = __parse_args(argv)
     logger = logging.getLogger("cnvpytor")
 
     app = cnvpytor.Root(pjoin(args.out_directory, f"{args.sample_name}.pytor"), create=True, max_cores=os.cpu_count())
