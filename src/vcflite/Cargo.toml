@@ -1,6 +1,6 @@
 [package]
 name = "vcflite"
-version = "1.5.4"
+version = "1.5.4-0dev-96"
 edition = "2021"
 
 [dependencies]
