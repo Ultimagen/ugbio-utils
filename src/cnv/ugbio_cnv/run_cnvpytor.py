@@ -30,7 +30,7 @@ def run(argv):
     """
     Given a bam/cram file, this script will run cnvpytor on the sample:
     output consists of 2 files:
-    - cnvs bed file
+    - cnv calls in tsv format
     """
     parser = argparse.ArgumentParser(
         prog="run_cnvpytor.py",
@@ -81,7 +81,6 @@ def run(argv):
     calls = app.call([bin_size])
     for bin_size in calls:
         out_file = pjoin(args.out_directory, f"{args.sample_name}.pytor.bin{bin_size}.CNVs.tsv")
-        print(out_file)
         with open(out_file, "w") as file:
             for call in calls[bin_size]:
                 # Use file.write instead of print

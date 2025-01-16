@@ -1,12 +1,9 @@
 import filecmp
-import warnings
-from os.path import join as pjoin
+import os
 from pathlib import Path
 
 import pytest
 from ugbio_cnv import run_cnvpytor
-
-warnings.filterwarnings("ignore")
 
 
 @pytest.fixture
@@ -16,8 +13,8 @@ def resources_dir():
 
 class TestRunCNVpytor:
     def test_run_cnvpytor(self, tmp_path, resources_dir):
-        input_cram_file = pjoin(resources_dir, "HG002.chr19.s0.01.bam")
-        ref_fasta = pjoin(resources_dir, "chr19.fasta")
+        input_cram_file = resources_dir / "HG002.chr19.s0.01.bam"
+        ref_fasta = resources_dir / "chr19.fasta"
         sample_name = "test_HG002"
         bin_size = "500"
         out_dir = str(tmp_path)
@@ -40,6 +37,6 @@ class TestRunCNVpytor:
             ]
         )
 
-        out_cnvs_file = pjoin(tmp_path, f"{sample_name}.pytor.bin{bin_size}.CNVs.tsv")
-        expected_out_cnvs_file = pjoin(resources_dir, "HG002.pytor.bin500.CNVs.tsv")
+        out_cnvs_file = os.path.join(tmp_path, f"{sample_name}.pytor.bin{bin_size}.CNVs.tsv")
+        expected_out_cnvs_file = os.path.join(resources_dir, "HG002.pytor.bin500.CNVs.tsv")
         assert filecmp.cmp(out_cnvs_file, expected_out_cnvs_file)
