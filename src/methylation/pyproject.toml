@@ -37,7 +37,6 @@ workspace = true
 [tool.setuptools.package-data]
 "*" = [
     "**/reports/*",
-    "**/resources/*",
 ]
 
 [build-system]
