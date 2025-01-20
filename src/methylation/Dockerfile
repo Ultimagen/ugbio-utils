@@ -60,7 +60,7 @@ RUN pip install ${OUT_DIR}/*.whl
 
 COPY --from=build ./src/methylation/ugbio_methylation/resources/meth_hg38-chr20_Lambda_pUC19.interval_list /app/interval_list/meth_hg38-chr20_Lambda_pUC19.interval_list
 # for avoiding matplotlib warnings
-RUN mkdir -p ~/.config/matplotlib
+RUN mkdir -p /.config/matplotlib
 
 # for runnig CI (can be removed if pytest is installed as part of the venv)
 RUN pip install pytest
