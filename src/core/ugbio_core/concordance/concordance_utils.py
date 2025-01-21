@@ -297,8 +297,8 @@ def add_grouping_column(concordance_df: pd.DataFrame, selection_functions: dict,
         to the selection function
     """
     concordance_df[column_name] = None
-    for k in selection_functions:
-        concordance_df.loc[selection_functions[k](concordance_df), column_name] = k
+    for k, v in selection_functions.items():
+        concordance_df.loc[v(concordance_df), column_name] = k
     return concordance_df
 
 
