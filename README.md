@@ -75,7 +75,7 @@ Once installed, these tools will automatically run checks whenever you commit to
     * The image name.
     * At the end of "postCreateCommand", change to your member name. E.g. change `ugbio_cnv` to `ugbio_<MEMBER>`
 
-    4.3 Update Dockerfile with "app" user:
+    4.3 Update Dockerfile with "app" user (You can skip this step if the member's DockerFile uses ugbio_base as base image):
 
     * Install `sudo` if not exists. Simply add it to the list under `RUN apt-get update && apt-get install -y ...`
     * Add this section:
