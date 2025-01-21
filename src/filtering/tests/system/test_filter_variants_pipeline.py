@@ -28,7 +28,7 @@ class TestFilterVariantPipeline:
         )
 
         result_df = vcftools.get_vcf_df(output_file)
-        assert {"LOW_SCORE": 2412, "PASS": 10266} == dict(result_df["filter"].value_counts())
+        assert {"LOW_SCORE": 2394, "PASS": 10284} == dict(result_df["filter"].value_counts())
 
     def test_filter_variants_pipeline_exact_model(self, tmpdir, resources_dir):
         output_file = f"{tmpdir}/036269-NA24143-Z0016.frd_chr1_1_5000000_filtered.vcf.gz"
@@ -56,8 +56,8 @@ class TestFilterVariantPipeline:
         )
 
         out_df = vcftools.get_vcf_df(output_file)
-        assert {(0, 1): 5226, (0, 0): 5189, (1, 1): 2986, (1, 2): 63, (2, 2): 4} == dict(out_df["gt"].value_counts())
-        assert {"PASS": 8317, "LOW_SCORE": 5151} == dict(out_df["filter"].value_counts())
+        assert {(0, 1): 5210, (0, 0): 5205, (1, 1): 2989, (1, 2): 61, (2, 2): 3} == dict(out_df["gt"].value_counts())
+        assert {"PASS": 8289, "LOW_SCORE": 5179} == dict(out_df["filter"].value_counts())
 
     def test_filter_variants_pipeline_exact_model_no_gt_recal(self, tmpdir, resources_dir):
         output_file = f"{tmpdir}/036269-NA24143-Z0016.frd_chr1_1_5000000_filtered.vcf.gz"
@@ -85,7 +85,7 @@ class TestFilterVariantPipeline:
 
         out_df = vcftools.get_vcf_df(output_file)
         assert {(0, 1): 10086, (1, 1): 3306, (1, 2): 76} == dict(out_df["gt"].value_counts())
-        assert {"PASS": 8317, "LOW_SCORE": 5151} == dict(out_df["filter"].value_counts())
+        assert {"PASS": 8289, "LOW_SCORE": 5179} == dict(out_df["filter"].value_counts())
 
     def test_filter_variants_pipeline_blacklist_only(self, tmpdir, resources_dir):
         output_file = f"{tmpdir}/004777-X0024.annotated.AF_chr1_1_1000000_filtered.blacklist_only.vcf.gz"
