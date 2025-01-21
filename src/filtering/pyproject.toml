@@ -30,6 +30,7 @@ filter_variants_pipeline = "ugbio_filtering.filter_variants_pipeline:main"
 
 [tool.uv]
 dev-dependencies = [
+    "jupyter>=1.1.1",
     "pre-commit>=4.0.1",
     "pytest>=8.3.3",
     "ruff>=0.6.9",
