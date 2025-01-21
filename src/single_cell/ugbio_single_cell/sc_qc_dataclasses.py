@@ -27,6 +27,7 @@ class Inputs:
     star_stats: str
     star_reads_per_gene: str
     insert: str
+    sorter_stats_json: str | None = None
 
     def __post_init__(self):
         for _, value in self.__dict__.items():
@@ -51,6 +52,7 @@ class H5Keys(Enum):
     TRIMMER_FAILURE_CODES = "trimmer_failure_codes"
     TRIMMER_HISTOGRAM = "trimmer_histogram"
     SORTER_STATS = "sorter_stats"
+    SORTER_STATS_JSON = "sorter_stats_json"
     STAR_STATS = "star_stats"
     STAR_READS_PER_GENE = "star_reads_per_gene"
     INSERT_QUALITY = "insert_quality"

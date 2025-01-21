@@ -238,8 +238,7 @@ def calc_coverage_methylation(detail_type: str, data_frame: pd.DataFrame, rel: s
         for col in cols:
             x = data_frame[col]
 
-            x = x.mask(x > n_cap, n_cap)  # use relative values from above
-            value, metric = np.histogram(x, bins=bins_cov)
+            value, metric = np.histogram(x.mask(x > n_cap, n_cap), bins=bins_cov)
             metric += 10
             df_abs_cov = pd.concat([pd.Series(metric), pd.Series(value)], axis=1)
             df_abs_cov.columns = ["metric", "value"]

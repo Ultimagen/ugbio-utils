@@ -6,12 +6,13 @@ import numpy as np
 import pandas as pd
 import pytest
 from ugbio_methylation import (
-    concat_methyldackel_csvs,
     process_mbias,
     process_merge_context,
     process_merge_context_no_cp_g,
     process_per_read,
 )
+from ugbio_methylation.concat_methyldackel_csvs import run as concat_methyldackestol_csvs_run
+from ugbio_methylation.globals import H5_FILE
 from ugbio_methylation.methyldackel_utils import (
     calc_coverage_methylation,
     calc_percent_methylation,
@@ -135,10 +136,10 @@ class TestParsers:
 
     def test_concat_methyldackel_csvs(self, tmpdir, resources_dir):
         output_prefix = f"{tmpdir}/concat_methyldackel_csvs"
-        output_h5_file = output_prefix + ".methyl_seq.applicationQC.h5"
+        output_h5_file = output_prefix + H5_FILE
         os.makedirs(tmpdir, exist_ok=True)
 
-        concat_methyldackel_csvs.run(
+        concat_methyldackestol_csvs_run(
             [
                 "concat_methyldackel_csvs",
                 "--mbias",
@@ -155,18 +156,18 @@ class TestParsers:
                 f"{output_prefix}",
             ]
         )
-        input_files = {
-            "Mbias": "ProcessMethylDackelMbias.csv",
-            "MbiasNoCpG": "ProcessMethylDackelMbiasNoCpG.csv",
-            "MergeContext": "ProcessConcatMethylDackelMergeContext.csv",
-            "MergeContextNoCpG": "ProcessMethylDackelMergeContextNoCpG.csv",
-            "PerRead": "ProcessMethylDackelPerRead.csv",
-        }
+        input_files = [
+            "ProcessMethylDackelMbias.csv",
+            "ProcessMethylDackelMbiasNoCpG.csv",
+            "ProcessConcatMethylDackelMergeContext.csv",
+            "ProcessMethylDackelMergeContextNoCpG.csv",
+            "ProcessMethylDackelPerRead.csv",
+        ]
 
         df_result = pd.DataFrame()
         with pd.HDFStore(output_h5_file, "r") as store:
             for key in store.keys():
-                if key == "/keys_to_convert":
+                if (key == "/keys_to_convert") or (key == "/stats_for_nexus"):
                     continue
                 df = pd.DataFrame(store[key])  # noqa: PD901
                 df = df.reset_index()  # noqa: PD901
@@ -174,9 +175,9 @@ class TestParsers:
 
         df_ref = pd.concat(
             pd.read_csv(f"{resources_dir}/{value}", dtype={"metric": str, "value": np.float64, "detail": str})
-            for value in input_files.values()
+            for value in input_files
         )
-        assert np.allclose(np.sum(df_ref["value"]), np.ceil(np.sum(df_result["value"])))
+        assert np.allclose(np.ceil(np.sum(df_ref["value"])), np.ceil(np.sum(df_result["value"])))
 
     # ------------------------------------------------------
 

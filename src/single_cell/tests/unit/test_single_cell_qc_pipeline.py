@@ -5,7 +5,7 @@ import pytest
 from papermill.exceptions import PapermillExecutionError
 from ugbio_single_cell.sc_qc_dataclasses import TEMPLATE_NOTEBOOK, Inputs, Thresholds
 from ugbio_single_cell.single_cell_qc_pipeline import (
-    generate_report,
+    generate_single_cell_report,
     prepare_parameters_for_report,
     single_cell_qc,
 )
@@ -102,7 +102,7 @@ def test_prepare_parameters_for_report_outpath_not_exist(h5_file, thresholds):
 
 def test_generate_report(output_path, h5_file, thresholds, sample_name):
     parameters, tmp_files = prepare_parameters_for_report(h5_file, thresholds, output_path)
-    report_html = generate_report(parameters, output_path, tmp_files, sample_name)
+    report_html = generate_single_cell_report(parameters, output_path, tmp_files, sample_name)
 
     # assert report_html exists
     assert report_html.exists()
@@ -117,9 +117,9 @@ def test_generate_report(output_path, h5_file, thresholds, sample_name):
 def test_generate_report_tmpfile_not_a_file(output_path, h5_file, thresholds, sample_name):
     parameters, tmp_files = prepare_parameters_for_report(h5_file, thresholds, output_path)
     tmp_files.append(output_path)
-    generate_report(parameters, output_path, tmp_files, sample_name)
+    generate_single_cell_report(parameters, output_path, tmp_files, sample_name)
 
 
 def test_generate_report_missing_parameter(output_path, sample_name):
     with pytest.raises(PapermillExecutionError):
-        generate_report({}, output_path, [], sample_name)
+        generate_single_cell_report({}, output_path, [], sample_name)

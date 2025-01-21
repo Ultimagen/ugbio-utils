@@ -175,8 +175,8 @@ class FlowBasedRead:
         None
         """
 
-        for k in dct:
-            setattr(self, k, dct[k])
+        for k, v in dct.items():
+            setattr(self, k, v)
         if not hasattr(self, "key"):
             raise AttributeError("Something is broken in the constructor, key is not defined")
         if not hasattr(self, "flow_order"):
