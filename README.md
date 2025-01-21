@@ -150,6 +150,7 @@ Another option is to build the image locally using `docker build . -f <dockerfil
 
     - If you have the correct Python interpreter but things are still not working, close and re-open the container (no need to rebuild).
     - If you are trying to select the correct Python interpreter but things are still stuck, close and re-open the container. Sometimes VSCode needs to reload itself.
+- Make sure that the `devcontainer.json`'s `mount` key does not contain directories that are missing in your setup. In my case it was `/data` that was missing.
 
 ## Run Tests
 It is recommended to run tests in the relevant dev container. See the section above for more details on how to open the dev container. Once you are running inside the dev container, you can run tests using VSCode or with `uv run pytest <tests path>`.

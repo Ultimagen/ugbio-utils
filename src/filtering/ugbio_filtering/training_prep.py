@@ -354,7 +354,7 @@ def label_with_approximate_gt(
             logger.warning(f"Skipping chromosome {chromosome}: empty")
             continue
         vcf_df = vcf_df.merge(blacklist_df, left_index=True, right_index=True, how="left")  # noqa FBT003
-        vcf_df = vcf_df["bl"].fillna()
+        vcf_df["bl"] = vcf_df["bl"].fillna(value=False)
         classify_clm = "label"
 
         vcf_df[classify_clm] = -1

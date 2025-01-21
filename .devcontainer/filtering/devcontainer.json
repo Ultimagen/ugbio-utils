@@ -1,7 +1,7 @@
 // For format details, see https://aka.ms/devcontainer.json. For config options, see the
 // README at: https://github.com/devcontainers/templates/tree/main/src/python
 {
-	"name": "CNV",
+	"name": "Filtering",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
 	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_filtering:test_e7dd123",
 	"runArgs": [
@@ -18,7 +18,7 @@
 	// "forwardPorts": [],
 
 	// Use 'postCreateCommand' to run commands after the container is created.
-	"postCreateCommand": "/bin/bash .devcontainer/post-create-commands.sh ugbio_cnv",
+	"postCreateCommand": "/bin/bash .devcontainer/post-create-commands.sh ugbio_filtering",
 
 	// Configure tool-specific properties.
 	// "customizations": {},
@@ -28,7 +28,6 @@
 	"updateRemoteUserUID": true,
 
 	"mounts": [
-		"source=/data,target=/data,type=bind,consistency=cached",
 		"source=/home/${localEnv:USER}/.ssh,target=/app/.ssh,type=bind,consistency=cached"
 	],
 
