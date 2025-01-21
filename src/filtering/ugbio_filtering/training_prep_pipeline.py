@@ -142,5 +142,9 @@ def run(argv: list[str]):
     return 0
 
 
-if __name__ == "__main__":
+def main():
     run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()

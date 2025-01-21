@@ -178,5 +178,9 @@ def save_results(output_file_prefix: str, model, transformer, train_results, tes
     results_vals.to_hdf(output_file_prefix + ".h5", key="recall_precision_curve")
 
 
-if __name__ == "__main__":
+def main():
     run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()

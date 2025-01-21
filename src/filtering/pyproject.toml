@@ -27,6 +27,8 @@ merge_conditional_allele_distributions = "ugbio_filtering.sec.merge_conditional_
 assess_sec_concordance = "ugbio_filtering.sec.assess_sec_concordance:main"
 correct_systematic_errors = "ugbio_filtering.sec.correct_systematic_errors:main"
 filter_variants_pipeline = "ugbio_filtering.filter_variants_pipeline:main"
+train_models_pipeline="ugbio_filtering.train_models_pipeline:main"
+training_prep_pipeline="ugbio_filtering.training_prep_pipeline:main"
 
 [tool.uv]
 dev-dependencies = [
