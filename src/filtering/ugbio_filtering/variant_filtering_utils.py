@@ -7,7 +7,7 @@ import xgboost
 from pandas.core.groupby import DataFrameGroupBy
 from sklearn import compose
 from ugbio_core import math_utils
-from ugbio_core.concordance.concordance_utils import get_concordance_metrics, init_metrics_df
+from ugbio_core.concordance.concordance_utils import add_grouping_column, get_concordance_metrics, init_metrics_df
 from ugbio_core.logger import logger
 
 from ugbio_filtering import multiallelics as mu
@@ -189,7 +189,9 @@ def eval_model(
         df["predict"] = df["predict"] > 0
 
     df = df.loc[select]  # noqa PD901
-    result = evaluate_results(df, pd.Series(list(labels), index=df.index), add_testing_group_column)
+    result = evaluate_results(
+        df, pd.Series(list(labels), index=df.index), add_testing_group_column=add_testing_group_column
+    )
     if isinstance(result, tuple):
         return result
     raise RuntimeError("Unexpected result")
