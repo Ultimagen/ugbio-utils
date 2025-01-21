@@ -3,7 +3,7 @@
 {
 	"name": "Ppmseq",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_ppmseq:1.5.3",
+	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_ppmseq:1.5.4",
 	"runArgs": [
 		"--init",
 		"--network=host"
