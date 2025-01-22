@@ -47,10 +47,8 @@ RUN wget http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64.v385/bigWigToBedG
 # Download and install mosdepth (https://github.com/brentp/mosdepth)
 ARG MOSDEPTH_VERSION=0.3.11
 RUN wget https://github.com/brentp/mosdepth/archive/refs/tags/v${MOSDEPTH_VERSION}.zip && \
-    unzip v${MOSDEPTH_VERSION}.zip && \
-    rm v${MOSDEPTH_VERSION}.zip && \
-    chmod +x mosdepth && \
-    mv mosdepth /usr/local/bin/
+    unzip v${MOSDEPTH_VERSION}.zip -d /usr/local/bin/ && \
+    rm v${MOSDEPTH_VERSION}.zip
 
 ## clone FREEC (branch: master):
 ARG FREEC_BRANCH=master
