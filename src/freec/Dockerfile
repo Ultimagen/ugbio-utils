@@ -44,6 +44,14 @@ RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make install
 RUN wget http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64.v385/bigWigToBedGraph -O /usr/local/bin/bigWigToBedGraph \
     && chmod +x /usr/local/bin/bigWigToBedGraph
 
+# Download and install mosdepth (https://github.com/brentp/mosdepth)
+ARG MOSDEPTH_VERSION=0.3.11
+RUN wget https://github.com/brentp/mosdepth/archive/refs/tags/v${MOSDEPTH_VERSION}.zip && \
+    unzip v${MOSDEPTH_VERSION}.zip && \
+    rm v${MOSDEPTH_VERSION}.zip && \
+    chmod +x mosdepth && \
+    mv mosdepth /usr/local/bin/
+
 ## clone FREEC (branch: master):
 ARG FREEC_BRANCH=master
 WORKDIR /usr/local/bin
