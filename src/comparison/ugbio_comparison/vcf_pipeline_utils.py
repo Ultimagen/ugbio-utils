@@ -863,7 +863,7 @@ def reinterpret_variants(
     fasta = pyfaidx.Fasta(reference_fasta, build_index=False, rebuild=False)
     for contig in concordance_df["chrom"].unique():
         concordance_df_contig = concordance_df.loc[concordance_df["chrom"] == contig]
-        input_dict = _get_locations_to_work_on(concordance_df_contig, ignore_low_quality_fps)
+        input_dict = _get_locations_to_work_on(concordance_df_contig, ignore_low_quality_fps=ignore_low_quality_fps)
         concordance_df_contig = fbc.reinterpret_variants(concordance_df_contig, input_dict, fasta)
         concordance_df_result = pd.concat([concordance_df_result, concordance_df_contig])
     return concordance_df_result
