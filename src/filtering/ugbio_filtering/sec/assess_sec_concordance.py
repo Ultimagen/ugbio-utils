@@ -24,8 +24,12 @@ from os.path import basename, dirname, splitext
 import pandas as pd
 from pandas import DataFrame, Series
 from simppl.cli import get_parser
-from ugbio_comparison.concordance_utils import apply_filter, calc_accuracy_metrics, validate_preprocess_concordance
 from ugbio_comparison.vcf_pipeline_utils import annotate_concordance
+from ugbio_core.concordance.concordance_utils import (
+    apply_filter,
+    calc_accuracy_metrics,
+    validate_preprocess_concordance,
+)
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
 from ugbio_core.h5_utils import read_hdf
 from ugbio_core.logger import logger
