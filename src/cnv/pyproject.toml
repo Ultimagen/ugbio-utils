@@ -27,6 +27,7 @@ plot_cnv_results = "ugbio_cnv.plot_cnv_results:main"
 bicseq2_post_processing = "ugbio_cnv.bicseq2_post_processing:main"
 annotate_FREEC_segments = "ugbio_cnv.annotate_FREEC_segments:main"
 plot_FREEC_neutral_AF = "ugbio_cnv.plot_FREEC_neutral_AF:main"
+run_cnvpytor = "ugbio_cnv.run_cnvpytor:main"
 
 [tool.uv]
 dev-dependencies = [
