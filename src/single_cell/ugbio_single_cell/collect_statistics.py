@@ -309,9 +309,9 @@ def extract_cell_barcode_filter_data(stats, store):
         n_total_reads = sorter_stats_json_df["total_reads"].iloc[0]
 
         if (n_failed_cbcs + n_good_cbcs_above_thresh) > 0:
-            percent_failed_cbcs_above_threshold = n_failed_cbcs / (n_failed_cbcs + n_good_cbcs_above_thresh)
+            percent_failed_cbcs_above_threshold = 100 * n_failed_cbcs / (n_failed_cbcs + n_good_cbcs_above_thresh)
             stats["pct_failed_cbcs_above_threshold"] = percent_failed_cbcs_above_threshold
 
         if n_total_reads > 0:
-            percent_cbc_filter_failed_reads = n_failed_cbc_reads / n_total_reads
+            percent_cbc_filter_failed_reads = 100 * n_failed_cbc_reads / n_total_reads
             stats["pct_cbc_filter_failed_reads"] = percent_cbc_filter_failed_reads

@@ -55,6 +55,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit-sha }}
+          lfs: true
 
       - name: Set up Python
         uses: actions/setup-python@v4

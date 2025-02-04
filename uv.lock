@@ -21,7 +21,6 @@ members = [
     "ugbio-ppmseq",
     "ugbio-single-cell",
     "ugbio-srsnv",
-    "ugbio-test",
     "ugbio-utils",
 ]
 
@@ -459,7 +458,7 @@ name = "click"
 version = "8.1.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "platform_system == 'Windows'" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/96/d3/f04c7bfcf5c1862a2a5b845c6b2b360488cf47af55dfa79c98f6a6bf98b5/click-8.1.7.tar.gz", hash = "sha256:ca9853ad459e787e2192211578cc907e7594e294c7ccc834310722b41b9ca6de", size = 336121 }
 wheels = [
@@ -474,6 +473,22 @@ sdist = { url = "https://files.pythonhosted.org/packages/97/c7/f746cadd08c4c0812
 wheels = [
     { url = "https://files.pythonhosted.org/packages/48/41/e1d85ca3cab0b674e277c8c4f678cf66a91cd2cecf93df94353a606fe0db/cloudpickle-3.1.0-py3-none-any.whl", hash = "sha256:fe11acda67f61aaaec473e3afe030feb131d78a43461b718185363384f1ba12e", size = 22021 },
 ]
+
+[[package]]
+name = "cnvpytor"
+version = "1.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "gnureadline" },
+    { name = "h5py" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pysam" },
+    { name = "requests" },
+    { name = "scipy" },
+    { name = "xlsxwriter" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/86/73/d5999147fc0c59e3bd24932d06a1829a31c3b9af91cf6f193608b5223c67/CNVpytor-1.3.1.tar.gz", hash = "sha256:938bd8160f10ac7f74c8036d83ca9368ea72de275f9a99e8d2f4ea48502e4e51", size = 1121582 }
 
 [[package]]
 name = "colorama"
@@ -806,6 +821,22 @@ wheels = [
 ]
 
 [[package]]
+name = "gnureadline"
+version = "8.2.13"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/92/20723aa239b9a8024e6f8358c789df8859ab1085a1ae106e5071727ad20f/gnureadline-8.2.13.tar.gz", hash = "sha256:c9b9e1e7ba99a80bb50c12027d6ce692574f77a65bf57bc97041cf81c0f49bd1", size = 3224991 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ff/ad/a6c59fcdbc8173bc538dad042696b732d39bc8de95adb07664b124c07942/gnureadline-8.2.13-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:561a60b12f74ea7234036cc4fe558f3b46023be0dac5ed73541ece58cba2f88a", size = 160575 },
+    { url = "https://files.pythonhosted.org/packages/f7/9b/464929f1e81ba4ea4fafb033c38eefedc533b503d777e91ffa12751ad34e/gnureadline-8.2.13-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:daa405028b9fe92bfbb93624e13e0674a242a1c5434b70ef61a04294502fdb65", size = 162528 },
+    { url = "https://files.pythonhosted.org/packages/19/88/c7465657d2c4c3e30794f15568e322d65389cc00d825627cc3d0f9b92d9a/gnureadline-8.2.13-cp311-cp311-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:576dac060887adc6067ee9d23fb2f0031fb2b3e560e07a6c9e666e05f0473af7", size = 648274 },
+    { url = "https://files.pythonhosted.org/packages/bd/12/af62b7578f741f6af3120a44eb930aaa2f215c56f171068a0c8b7839245d/gnureadline-8.2.13-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:10fcaf561bc4ed6ab7075ab3ead188a18faaf4e6e92d916f81a09c0a670ce906", size = 650934 },
+    { url = "https://files.pythonhosted.org/packages/68/bd/df8fd060e43efd3dbdd3b210bf558ce3ef854843cd093f910f4115ebe2e9/gnureadline-8.2.13-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:9c152a82613fa012ab4331bb9a0ffddb415e37561d376b910bf9e7d535607faf", size = 160504 },
+    { url = "https://files.pythonhosted.org/packages/97/ee/322e5340c8cdfa40e71bd0485a82404ad4cf9aed2260cca090f3c1a3a032/gnureadline-8.2.13-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:85e362d2d0e85e45f0affae7bbfaf998b00167c55a78d31ee0f214de9ff429d2", size = 162380 },
+    { url = "https://files.pythonhosted.org/packages/92/64/ae5598fd1dbf7de863cd7066798fe882f2e9b5dcdb49f8ad859e736c2212/gnureadline-8.2.13-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:b69e6608cc94e110018b721a11718d480a6330e0b62cbab65a22880e84011205", size = 648192 },
+    { url = "https://files.pythonhosted.org/packages/08/d3/1face508173298b6d4d9f96ad4e408bcbdea704c583646e41d0aa6826385/gnureadline-8.2.13-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0cc77fc9c8a8fcf10e0a554e49ee763219683386b8f906b7e6ef07c9e40e8420", size = 651945 },
+]
+
+[[package]]
 name = "google-api-core"
 version = "2.21.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1022,7 +1053,7 @@ name = "ipykernel"
 version = "6.29.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "appnope", marker = "platform_system == 'Darwin'" },
+    { name = "appnope", marker = "sys_platform == 'darwin'" },
     { name = "comm" },
     { name = "debugpy" },
     { name = "ipython" },
@@ -2596,11 +2627,11 @@ wheels = [
 
 [[package]]
 name = "setuptools"
-version = "75.1.0"
+version = "75.8.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/27/b8/f21073fde99492b33ca357876430822e4800cdf522011f18041351dfa74b/setuptools-75.1.0.tar.gz", hash = "sha256:d59a21b17a275fb872a9c3dae73963160ae079f1049ed956880cd7c09b120538", size = 1348057 }
+sdist = { url = "https://files.pythonhosted.org/packages/92/ec/089608b791d210aec4e7f97488e67ab0d33add3efccb83a056cbafe3a2a6/setuptools-75.8.0.tar.gz", hash = "sha256:c5afc8f407c626b8313a86e10311dd3f661c6cd9c09d4bf8c15c0e11f9f2b0e6", size = 1343222 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ff/ae/f19306b5a221f6a436d8f2238d5b80925004093fa3edea59835b514d9057/setuptools-75.1.0-py3-none-any.whl", hash = "sha256:35ab7fd3bcd95e6b7fd704e4a1539513edad446c097797f2985e0e4b960772f2", size = 1248506 },
+    { url = "https://files.pythonhosted.org/packages/69/8a/b9dc7678803429e4a3bc9ba462fa3dd9066824d3c607490235c6a796be5a/setuptools-75.8.0-py3-none-any.whl", hash = "sha256:e3982f444617239225d675215d51f6ba05f845d4eec313da4418fdbb56fb27e3", size = 1228782 },
 ]
 
 [[package]]
@@ -2790,7 +2821,7 @@ name = "tqdm"
 version = "4.66.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "platform_system == 'Windows'" },
+    { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/58/83/6ba9844a41128c62e810fddddd72473201f3eacde02046066142a2d96cc5/tqdm-4.66.5.tar.gz", hash = "sha256:e1020aef2e5096702d8a025ac7d16b1577279c9d63f8375b63083e9a5f0fcbad", size = 169504 }
 wheels = [
@@ -2835,7 +2866,7 @@ wheels = [
 
 [[package]]
 name = "ugbio-cloud-utils"
-version = "1.5.4.post0.dev98"
+version = "1.5.6.post0.dev101"
 source = { editable = "src/cloud_utils" }
 dependencies = [
     { name = "boto3" },
@@ -2864,10 +2895,12 @@ dev = [
 
 [[package]]
 name = "ugbio-cnv"
-version = "1.5.4.post0.dev98"
+version = "1.5.6.post0.dev101"
 source = { editable = "src/cnv" }
 dependencies = [
+    { name = "cnvpytor" },
     { name = "seaborn" },
+    { name = "setuptools" },
     { name = "ugbio-core" },
 ]
 
@@ -2880,7 +2913,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cnvpytor", specifier = ">=1.3.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
+    { name = "setuptools", specifier = ">=75.8.0" },
     { name = "ugbio-core", editable = "src/core" },
 ]
 
@@ -2918,7 +2953,7 @@ dev = [
 
 [[package]]
 name = "ugbio-core"
-version = "1.5.4.post0.dev98"
+version = "1.5.6.post0.dev101"
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -2981,7 +3016,7 @@ dev = [
 
 [[package]]
 name = "ugbio-featuremap"
-version = "1.5.4.post0.dev98"
+version = "1.5.6.post0.dev101"
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "scikit-learn" },
@@ -3053,7 +3088,7 @@ dev = [
 
 [[package]]
 name = "ugbio-freec"
-version = "1.5.4.post0.dev98"
+version = "1.5.6.post0.dev101"
 source = { editable = "src/freec" }
 dependencies = [
     { name = "pandas" },
@@ -3082,12 +3117,12 @@ dev = [
 
 [[package]]
 name = "ugbio-hla-la"
-version = "1.5.4.post0.dev98"
+version = "1.5.6.post0.dev101"
 source = { virtual = "src/hla_la" }
 
 [[package]]
 name = "ugbio-methylation"
-version = "1.5.4.post0.dev98"
+version = "1.5.6.post0.dev101"
 source = { editable = "src/methylation" }
 dependencies = [
     { name = "matplotlib" },
@@ -3122,7 +3157,7 @@ dev = [
 
 [[package]]
 name = "ugbio-mrd"
-version = "1.5.4.post0.dev98"
+version = "1.5.6.post0.dev101"
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["reports", "vcfbed"] },
@@ -3153,7 +3188,7 @@ dev = [
 
 [[package]]
 name = "ugbio-omics"
-version = "1.5.4.post0.dev98"
+version = "1.5.6.post0.dev101"
 source = { editable = "src/omics" }
 dependencies = [
     { name = "boto3" },
@@ -3186,7 +3221,7 @@ dev = [
 
 [[package]]
 name = "ugbio-ppmseq"
-version = "1.5.4.post0.dev98"
+version = "1.5.6.post0.dev101"
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3219,7 +3254,7 @@ dev = [
 
 [[package]]
 name = "ugbio-single-cell"
-version = "1.5.4.post0.dev98"
+version = "1.5.6.post0.dev101"
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3256,7 +3291,7 @@ dev = [
 
 [[package]]
 name = "ugbio-srsnv"
-version = "1.5.4.post0.dev98"
+version = "1.5.6.post0.dev101"
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3300,29 +3335,8 @@ dev = [
 ]
 
 [[package]]
-name = "ugbio-test"
-version = "1.4.1.post0.dev76"
-source = { editable = "src/test" }
-
-[package.dev-dependencies]
-dev = [
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "ruff" },
-]
-
-[package.metadata]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pre-commit", specifier = ">=4.0.1" },
-    { name = "pytest", specifier = ">=8.3.3" },
-    { name = "ruff", specifier = ">=0.6.9" },
-]
-
-[[package]]
 name = "ugbio-utils"
-version = "1.5.4.post0.dev98"
+version = "1.5.6.post0.dev101"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -3424,7 +3438,7 @@ version = "2.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
-    { name = "nvidia-nccl-cu12", marker = "platform_machine != 'aarch64' and platform_system == 'Linux'" },
+    { name = "nvidia-nccl-cu12", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
     { name = "scipy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d2/d5/8d93a950a379b34767ac118cf5653977048e291c6695713a60863532ec08/xgboost-2.1.2.tar.gz", hash = "sha256:151071c22d0f5637739ccaf057f57d05983caaba557cc3d8191c2cb8ce8ae659", size = 1090159 }
@@ -3436,6 +3450,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/a8/5d/0b526537ab07334cd0832f036cdaa5a82371f75cc26e9001c51b315f7519/xgboost-2.1.2-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:69f1e1038e594d28d6f74252685495eba9de4983e95c87d1e93706fa5f720b02", size = 4201081 },
     { url = "https://files.pythonhosted.org/packages/95/a4/16490d38b4854a1ce4995f4088bcb701b5057f711e34c95cd6e29792cdde/xgboost-2.1.2-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:a8abdcc48d68cad22812df43a16cfc8314dcf771064b63ada9d73399129c8fdc", size = 153893083 },
     { url = "https://files.pythonhosted.org/packages/fe/df/e3a1f3f008db8d2b199ded2168014c7784b8027714b74d802c892815fd72/xgboost-2.1.2-py3-none-win_amd64.whl", hash = "sha256:93782c35e8a2c2eb124eb68186c3238f270ee868c654f65b47f0d594376b25d6", size = 124909526 },
+]
+
+[[package]]
+name = "xlsxwriter"
+version = "3.2.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/08/26f69d1e9264e8107253018de9fc6b96f9219817d01c5f021e927384a8d1/xlsxwriter-3.2.2.tar.gz", hash = "sha256:befc7f92578a85fed261639fb6cde1fd51b79c5e854040847dde59d4317077dc", size = 205202 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9b/07/df054f7413bdfff5e98f75056e4ed0977d0c8716424011fac2587864d1d3/XlsxWriter-3.2.2-py3-none-any.whl", hash = "sha256:272ce861e7fa5e82a4a6ebc24511f2cb952fde3461f6c6e1a1e81d3272db1471", size = 165121 },
 ]
 
 [[package]]
