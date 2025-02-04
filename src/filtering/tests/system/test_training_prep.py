@@ -2,7 +2,6 @@ import pathlib
 
 import pandas as pd
 import ugbio_filtering.training_prep as tprep
-
 from test import get_resource_dir
 
 
