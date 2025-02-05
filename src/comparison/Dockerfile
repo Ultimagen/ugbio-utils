@@ -17,10 +17,7 @@ FROM $BASE_IMAGE
 
 RUN apt-get update && apt-get install -y \
     openjdk-17-jre-headless `# for gatk` \
-    git \
-    wget \
     curl \
-    unzip \
     bzip2 `# for bgzip` \
     tabix `# for bgzip` \
     && apt-get clean && \

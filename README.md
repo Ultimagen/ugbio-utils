@@ -8,7 +8,7 @@ The package management in this project is done using [uv](https://docs.astral.sh
 
 ### Install uv
 1. `curl -LsSf https://astral.sh/uv/install.sh | sh`
-2. Open a new terminal or run `source $HOME/.cargo/env` to add the uv command to PATH.
+2. Open a new terminal window.
 
 ### Install the Virtual Environment
 1. Change directory to the `ugbio_utils` repository root.
