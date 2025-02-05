@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from simppl.simple_pipeline import SimplePipeline
-from ugvc.vcfbed.interval_file import IntervalFile
+from ugbio_core.vcfbed.interval_file import IntervalFile
 
 
 @pytest.fixture

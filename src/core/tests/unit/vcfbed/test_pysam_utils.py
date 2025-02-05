@@ -7,34 +7,35 @@ import pytest
 import ugbio_core.vcfbed.pysam_utils as pysam_utils
 
 
+def _generate_indel_tests():
+    vcfh = pysam.VariantHeader()
+    vcfh.add_sample("ahstram")
+    vcfh.add_meta("FILTER", items=[("ID", "RF"), ("Description", "Variant failed filter due to low RF")])
+    vcfh.add_meta("contig", items=[("ID", 1)])
+    vcfh.add_meta("FORMAT", items=[("ID", "GT"), ("Number", 1), ("Type", "String"), ("Description", "Genotype")])
+    tmpfilename = tempfile.mktemp(suffix="vcf")
+    vcf = pysam.VariantFile(tmpfilename, "w", header=vcfh)
+
+    records = []
+    r = vcf.new_record(contig=str(1), start=999, stop=1000, alleles=("A", "T"), filter="RF")
+    records.append(r)
+    r = vcf.new_record(contig=str(1), start=999, stop=1000, alleles=("A", "AT"), filter="RF")
+    records.append(r)
+    r = vcf.new_record(contig=str(1), start=999, stop=1000, alleles=("AT", "A"), filter="RF")
+    records.append(r)
+    r = vcf.new_record(contig=str(1), start=999, stop=1000, alleles=("AT", "A", "AG", "ATC"), filter="RF")
+    records.append(r)
+    r = vcf.new_record(contig=str(1), start=999, stop=1000, alleles=("AT", "A", "<NON_REF>"), filter="RF")
+    records.append(r)
+
+    os.unlink(tmpfilename)
+    return records
+
+
 class TestPysamUtils:
     def __init__(self):
         self.vcf = pysam.VariantFile(Path(__file__).parent.parent.parent / "resources" / " single_sample_example.vcf")
         self.variant = next(self.vcf)
-
-    def _generate_indel_tests(self):
-        vcfh = pysam.VariantHeader()
-        vcfh.add_sample("ahstram")
-        vcfh.add_meta("FILTER", items=[("ID", "RF"), ("Description", "Variant failed filter due to low RF")])
-        vcfh.add_meta("contig", items=[("ID", 1)])
-        vcfh.add_meta("FORMAT", items=[("ID", "GT"), ("Number", 1), ("Type", "String"), ("Description", "Genotype")])
-        tmpfilename = tempfile.mktemp(suffix="vcf")
-        vcf = pysam.VariantFile(tmpfilename, "w", header=vcfh)
-
-        records = []
-        r = vcf.new_record(contig=str(1), start=999, stop=1000, alleles=("A", "T"), filter="RF")
-        records.append(r)
-        r = vcf.new_record(contig=str(1), start=999, stop=1000, alleles=("A", "AT"), filter="RF")
-        records.append(r)
-        r = vcf.new_record(contig=str(1), start=999, stop=1000, alleles=("AT", "A"), filter="RF")
-        records.append(r)
-        r = vcf.new_record(contig=str(1), start=999, stop=1000, alleles=("AT", "A", "AG", "ATC"), filter="RF")
-        records.append(r)
-        r = vcf.new_record(contig=str(1), start=999, stop=1000, alleles=("AT", "A", "<NON_REF>"), filter="RF")
-        records.append(r)
-
-        os.unlink(tmpfilename)
-        return records
 
     test_inputs = _generate_indel_tests()
 
