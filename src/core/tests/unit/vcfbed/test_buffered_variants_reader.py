@@ -17,7 +17,7 @@ class TestBufferedVariantReader:
         variant_2 = reader.get_variant("chr1", 1044019)
         assert ("G", "GC", "<NON_REF>") == variant_2.alleles
         variant_3 = reader.get_variant("chr1", 10)
-        assert variant_3
+        assert not variant_3
 
     def test_header(self, resources_dir):
         reader = BufferedVariantReader(f"{resources_dir}/single_sample_example.vcf.gz")
