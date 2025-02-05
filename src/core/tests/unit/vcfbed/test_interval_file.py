@@ -16,11 +16,10 @@ def resources_dir():
 def test_interval_file_init_bed_input(resources_dir):
     bed1 = pjoin(resources_dir, "bed1.bed")
     ref_genome = pjoin(resources_dir, "sample.fasta")
-    interval_list_path = pjoin(resources_dir, "interval_list1.interval_list")
 
     sp = SimplePipeline(0, 100, print_timing=False)
-    interval_file = IntervalFile(sp, bed1, ref_genome, None)
-
+    interval_file = IntervalFile(sp, interval=bed1, ref=ref_genome, ref_dict=None)
+    interval_list_path = pjoin(resources_dir, "bed1.interval_list")
     assert interval_file.as_bed_file() == bed1
     assert interval_file.as_interval_list_file() == interval_list_path
     assert exists(interval_list_path)
