@@ -7,7 +7,7 @@ dependencies = [
     "ugbio_ppmseq",
     "seaborn>=0.13.2",
     "scikit-learn>=1.5.2,<1.6.0",
-    "xgboost==2.1.2",
+    "xgboost>=2.1.2",
 ]
 description = "Ultima Genomics FeatureMap utils"
 authors = [
