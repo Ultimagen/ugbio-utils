@@ -53,13 +53,14 @@ def calc_accuracy_metrics(
     groups = list(get_selection_functions().keys())
     for g_val in groups:
         dfselect = concordance_df[concordance_df[group_testing_column_name] == g_val]
-        acc = get_concordance_metrics(
-            dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
-            dfselect["tree_score"].to_numpy(),
-            dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
-            (dfselect[classify_column_name] == "fn").to_numpy(),
-            return_curves=False,
-        )
+        with pd.option_context("future.no_silent_downcasting", True):  # noqa FBT003
+            acc = get_concordance_metrics(
+                dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
+                dfselect["tree_score"].to_numpy(),
+                dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
+                (dfselect[classify_column_name] == "fn").to_numpy(),
+                return_curves=False,
+            )
         if isinstance(acc, pd.DataFrame):
             acc["group"] = g_val
         else:
@@ -71,13 +72,14 @@ def calc_accuracy_metrics(
     df_indels["group_testing"] = np.where(df_indels["indel"], "INDELS", "SNP")
     g_val = "INDELS"
     dfselect = df_indels[df_indels["group_testing"] == g_val]
-    acc = get_concordance_metrics(
-        dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
-        dfselect["tree_score"].to_numpy(),
-        dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
-        (dfselect[classify_column_name] == "fn").to_numpy(),
-        return_curves=False,
-    )
+    with pd.option_context("future.no_silent_downcasting", True):  # noqa FBT003
+        acc = get_concordance_metrics(
+            dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
+            dfselect["tree_score"].to_numpy(),
+            dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
+            (dfselect[classify_column_name] == "fn").to_numpy(),
+            return_curves=False,
+        )
     if isinstance(acc, pd.DataFrame):
         acc["group"] = g_val
     else:
@@ -90,13 +92,14 @@ def calc_accuracy_metrics(
 
     g_val = "H-INDELS"
     dfselect = df_indels[df_indels["group_testing"] == g_val]
-    acc = get_concordance_metrics(
-        dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
-        dfselect["tree_score"].to_numpy(),
-        dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
-        (dfselect[classify_column_name] == "fn").to_numpy(),
-        return_curves=False,
-    )
+    with pd.option_context("future.no_silent_downcasting", True):  # noqa FBT003
+        acc = get_concordance_metrics(
+            dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
+            dfselect["tree_score"].to_numpy(),
+            dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
+            (dfselect[classify_column_name] == "fn").to_numpy(),
+            return_curves=False,
+        )
     if isinstance(acc, pd.DataFrame):
         acc["group"] = g_val
     else:
@@ -156,13 +159,14 @@ def calc_recall_precision_curve(
     groups = list(get_selection_functions().keys())
     for g_val in groups:
         dfselect = concordance_df[concordance_df[group_testing_column_name] == g_val]
-        curve = get_concordance_metrics(
-            dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
-            dfselect["tree_score"].to_numpy(),
-            dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
-            (dfselect[classify_column_name] == "fn").to_numpy(),
-            return_metrics=False,
-        )
+        with pd.option_context("future.no_silent_downcasting", True):  # noqa FBT003
+            curve = get_concordance_metrics(
+                dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
+                dfselect["tree_score"].to_numpy(),
+                dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
+                (dfselect[classify_column_name] == "fn").to_numpy(),
+                return_metrics=False,
+            )
         if isinstance(curve, pd.DataFrame):
             curve["group"] = g_val
         else:
@@ -174,13 +178,14 @@ def calc_recall_precision_curve(
     df_indels["group_testing"] = np.where(df_indels["indel"], "INDELS", "SNP")
     g_val = "INDELS"
     dfselect = df_indels[df_indels["group_testing"] == g_val]
-    curve = get_concordance_metrics(
-        dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
-        dfselect["tree_score"].to_numpy(),
-        dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
-        (dfselect[classify_column_name] == "fn").to_numpy(),
-        return_metrics=False,
-    )
+    with pd.option_context("future.no_silent_downcasting", True):  # noqa FBT003
+        curve = get_concordance_metrics(
+            dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
+            dfselect["tree_score"].to_numpy(),
+            dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
+            (dfselect[classify_column_name] == "fn").to_numpy(),
+            return_metrics=False,
+        )
     if isinstance(curve, pd.DataFrame):
         curve["group"] = g_val
     else:
