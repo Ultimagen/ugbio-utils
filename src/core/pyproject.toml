@@ -29,6 +29,9 @@ reports = [
     "jupyter>=1.1.1",
     "nbconvert>=7.16.5",
 ]
+concordance = [
+    "scikit-learn>=1.5.2,<1.6.0",
+]
 
 [project.license]
 text = "Apache-2.0"

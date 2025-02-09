@@ -1,0 +1,56 @@
+[project]
+name = "ugbio_filtering"
+version = "1.4.3-0dev-80"
+description = "Ultima Genomics filtering scripts"
+authors = [
+    { name = "Ilya Soifer", email = "ilya.soifer@ultimagen.com" },
+    { name = "Doron Shem-Tov", email = "doron.shemtov@ultimagen.com" },
+    { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
+]
+dependencies = [
+    "ugbio_comparison",
+    "xgboost==2.1.2",
+    "pickle-secure>=0.99.9",
+    "biopython>=1.73",
+    "dill>=0.3.9"
+]
+requires-python = ">=3.11"
+readme = "README.filtering.md"
+
+[project.license]
+text = "Apache-2.0"
+
+[project.scripts]
+run_tests = "pytest:main"
+error_correction_training = "ugbio_filtering.sec.error_correction_training:main"
+merge_conditional_allele_distributions = "ugbio_filtering.sec.merge_conditional_allele_distributions:main"
+assess_sec_concordance = "ugbio_filtering.sec.assess_sec_concordance:main"
+correct_systematic_errors = "ugbio_filtering.sec.correct_systematic_errors:main"
+filter_variants_pipeline = "ugbio_filtering.filter_variants_pipeline:main"
+train_models_pipeline="ugbio_filtering.train_models_pipeline:main"
+training_prep_pipeline="ugbio_filtering.training_prep_pipeline:main"
+
+[tool.uv]
+dev-dependencies = [
+    "jupyter>=1.1.1",
+    "pre-commit>=4.0.1",
+    "pytest>=8.3.3",
+    "ruff>=0.6.9",
+]
+
+[tool.uv.sources.ugbio_core]
+workspace = true
+
+[tool.uv.sources.ugbio_comparison]
+workspace = true
+
+[build-system]
+requires = [
+    "setuptools>=61.0",
+]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.package-data]
+"*" = [
+    "**/scripts/*",
+]

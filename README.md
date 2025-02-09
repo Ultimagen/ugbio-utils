@@ -8,7 +8,7 @@ The package management in this project is done using [uv](https://docs.astral.sh
 
 ### Install uv
 1. `curl -LsSf https://astral.sh/uv/install.sh | sh`
-2. Open a new terminal or run `source $HOME/.cargo/env` to add the uv command to PATH.
+2. Open a new terminal window.
 
 ### Install the Virtual Environment
 1. Change directory to the `ugbio_utils` repository root.
@@ -75,7 +75,7 @@ Once installed, these tools will automatically run checks whenever you commit to
     * The image name.
     * At the end of "postCreateCommand", change to your member name. E.g. change `ugbio_cnv` to `ugbio_<MEMBER>`
 
-    4.3 Update Dockerfile with "app" user:
+    4.3 Update Dockerfile with "app" user (You can skip this step if the member's DockerFile uses ugbio_base as base image):
 
     * Install `sudo` if not exists. Simply add it to the list under `RUN apt-get update && apt-get install -y ...`
     * Add this section:
@@ -150,6 +150,7 @@ Another option is to build the image locally using `docker build . -f <dockerfil
 
     - If you have the correct Python interpreter but things are still not working, close and re-open the container (no need to rebuild).
     - If you are trying to select the correct Python interpreter but things are still stuck, close and re-open the container. Sometimes VSCode needs to reload itself.
+- Make sure that the `devcontainer.json`'s `mount` key does not contain directories that are missing in your setup. In my case it was `/data` that was missing.
 
 ## Run Tests
 It is recommended to run tests in the relevant dev container. See the section above for more details on how to open the dev container. Once you are running inside the dev container, you can run tests using VSCode or with `uv run pytest <tests path>`.
