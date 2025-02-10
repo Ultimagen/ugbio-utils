@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_methylation"
-version = "1.5.6-0dev-101"
+version = "1.5.6-0dev-102"
 description = "Ultima Genomics methylation bioinfo utils"
 authors = [
     { name = "Gat Krieger", email = "gat.krieger@ultimagen.com" },

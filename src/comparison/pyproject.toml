@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_comparison"
-version = "1.4.3-0dev-80"
+version = "1.5.6-0dev-102"
 description = "Ultima Genomics comparison scripts"
 authors = [
     { name = "Ilya Soifer", email = "ilya.soifer@ultimagen.com" },

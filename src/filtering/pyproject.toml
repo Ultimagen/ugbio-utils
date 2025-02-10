@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_filtering"
-version = "1.4.3-0dev-80"
+version = "1.5.6-0dev-102"
 description = "Ultima Genomics filtering scripts"
 authors = [
     { name = "Ilya Soifer", email = "ilya.soifer@ultimagen.com" },
@@ -12,7 +12,7 @@ dependencies = [
     "xgboost==2.1.2",
     "pickle-secure>=0.99.9",
     "biopython>=1.73",
-    "dill>=0.3.9"
+    "dill>=0.3.9",
 ]
 requires-python = ">=3.11"
 readme = "README.filtering.md"
@@ -27,8 +27,8 @@ merge_conditional_allele_distributions = "ugbio_filtering.sec.merge_conditional_
 assess_sec_concordance = "ugbio_filtering.sec.assess_sec_concordance:main"
 correct_systematic_errors = "ugbio_filtering.sec.correct_systematic_errors:main"
 filter_variants_pipeline = "ugbio_filtering.filter_variants_pipeline:main"
-train_models_pipeline="ugbio_filtering.train_models_pipeline:main"
-training_prep_pipeline="ugbio_filtering.training_prep_pipeline:main"
+train_models_pipeline = "ugbio_filtering.train_models_pipeline:main"
+training_prep_pipeline = "ugbio_filtering.training_prep_pipeline:main"
 
 [tool.uv]
 dev-dependencies = [
@@ -44,13 +44,13 @@ workspace = true
 [tool.uv.sources.ugbio_comparison]
 workspace = true
 
+[tool.setuptools.package-data]
+"*" = [
+    "**/scripts/*",
+]
+
 [build-system]
 requires = [
     "setuptools>=61.0",
 ]
 build-backend = "setuptools.build_meta"
-
-[tool.setuptools.package-data]
-"*" = [
-    "**/scripts/*",
-]
