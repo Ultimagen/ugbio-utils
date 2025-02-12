@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_utils"
-version = "1.5.6-0dev-101"
+version = "1.5.6-0dev-102"
 description = "Ultima Genomics bioinfo utils"
 authors = [
     { name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com" },
@@ -13,9 +13,17 @@ text = "Apache-2.0"
 
 [tool.uv]
 dev-dependencies = [
+    "dnspython>=2.7.0",
+    "matplotlib-venn>=1.1.1",
+    "mock>=5.1.0",
     "pre-commit>=4.0.1",
+    "pybedtools>=0.11.0",
+    "pymongo>=4.11.1",
     "pytest>=8.3.3",
     "ruff>=0.6.9",
+    "sigprofilerassignment>=0.0.29",
+    "sigprofilermatrixgenerator>=1.2.14",
+    "sigprofilerplotting>=1.3.12",
 ]
 
 [tool.uv.workspace]
