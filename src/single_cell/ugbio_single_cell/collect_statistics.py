@@ -57,8 +57,7 @@ def collect_statistics(
     # Read inputs into df
     trimmer_stats = pd.read_csv(input_files.trimmer_stats_csv)
     df_trimmer_failure_codes = read_trimmer_failure_codes(
-        input_files.trimmer_failure_codes_csv,
-        add_total=True,
+        input_files.trimmer_failure_codes_csv, add_total=True, include_pretrim_filters=False
     )
     sorter_stats = read_sorter_statistics_csv(input_files.sorter_stats_csv)
     if input_files.sorter_stats_json:
@@ -202,7 +201,7 @@ def get_insert_properties(insert, max_reads=None) -> tuple[pd.DataFrame, list[in
     return df_insert_quality, insert_lengths
 
 
-def extract_statistics_table(h5_file: Path):
+def extract_statistics_table(h5_file: Path):  # noqa: PLR0915
     """
     Create shortlist of statistics from h5 file and append it to h5 file.
 
@@ -221,13 +220,22 @@ def extract_statistics_table(h5_file: Path):
             raise ValueError("Number of input reads in trimmer statistics is not available.")
         stats["num_input_reads"] = num_input_reads
 
+        # number of Failed reads due to rsq or other prefilters (e.g., subsampling)
+        num_trimmed_reads_df = store[H5Keys.TRIMMER_STATS.value]
+        num_trimmed_reads_failstart_df = num_trimmed_reads_df[num_trimmed_reads_df["segment label"] == "start"]
+        num_failed_reads = 0
+        if len(num_trimmed_reads_failstart_df) > 0:
+            num_failed_reads = num_trimmed_reads_failstart_df["num failures"].sum()
+            stats["num_PF_reads"] = num_input_reads - num_failed_reads
+            stats["pct_PF"] = (num_input_reads - num_failed_reads) / num_input_reads
+
         # number of Trimmed reads
         num_trimmed_reads_list = store[H5Keys.TRIMMER_STATS.value]["num trimmed reads"].to_numpy()
         num_trimmed_reads = next((x for x in num_trimmed_reads_list if x != 0), None)
         stats["num_trimmed_reads"] = num_trimmed_reads
 
         # pct_pass_trimmer
-        pass_trimmer_rate = num_trimmed_reads / num_input_reads
+        pass_trimmer_rate = num_trimmed_reads / (num_input_reads - num_failed_reads)
         stats["pct_pass_trimmer"] = pass_trimmer_rate * 100
 
         # Mean read length
