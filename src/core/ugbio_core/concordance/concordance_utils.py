@@ -157,14 +157,13 @@ def calc_recall_precision_curve(
     groups = list(get_selection_functions().keys())
     for g_val in groups:
         dfselect = concordance_df[concordance_df[group_testing_column_name] == g_val]
-        with pd.option_context("future.no_silent_downcasting", True):  # noqa FBT003
-            curve = get_concordance_metrics(
-                dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
-                dfselect["tree_score"].to_numpy(),
-                dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
-                (dfselect[classify_column_name] == "fn").to_numpy(),
-                return_metrics=False,
-            )
+        curve = get_concordance_metrics(
+            dfselect["vc_call"].replace({"tp": 1, "fp": 0}).to_numpy(),
+            dfselect["tree_score"].to_numpy(),
+            dfselect[classify_column_name].replace({"tp": 1, "fn": 1, "fp": 0, "tn": 0}).to_numpy(),
+            (dfselect[classify_column_name] == "fn").to_numpy(),
+            return_metrics=False,
+        )
         if isinstance(curve, pd.DataFrame):
             curve["group"] = g_val
         else:
