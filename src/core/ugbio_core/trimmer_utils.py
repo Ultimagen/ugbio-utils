@@ -48,7 +48,7 @@ def merge_trimmer_histograms(trimmer_histograms: list[str], output_path: str):
 
 
 def read_trimmer_failure_codes(
-    trimmer_failure_codes_csv: str, *, add_total: bool = False, include_failed_rsq=False
+    trimmer_failure_codes_csv: str, *, add_total: bool = False, include_failed_rsq=False, include_pretrim_filters=True
 ) -> pd.DataFrame:
     """
     Read a trimmer failure codes csv file
@@ -61,6 +61,8 @@ def read_trimmer_failure_codes(
         if True, add a row with total failed reads to the dataframe
     include_failed_rsq : bool
         if True, include failed RSQ reads in the dataframe and in the percentage calculation (default: False)
+    include_pretrim_filters: bool
+        if True, include pre-trimming failure reasons encoded in start segment (default: True)
 
     Returns
     -------
@@ -99,7 +101,14 @@ def read_trimmer_failure_codes(
     )
 
     # remove rsq file if not include_failed_rsq
-    if not include_failed_rsq and (
+    if not include_pretrim_filters and ("start" in df_trimmer_failure_codes.index.get_level_values("segment")):
+        pretrim_failed_read_count = df_trimmer_failure_codes[df_trimmer_failure_codes.index.isin(["start"], level=0)][
+            "failed_read_count"
+        ].sum()
+        df_trimmer_failure_codes = df_trimmer_failure_codes.drop(index=["start"], level="segment", errors="ignore")
+        df_trimmer_failure_codes["total_read_count"] -= pretrim_failed_read_count
+    # remove rsq file if not include_failed_rsq
+    elif not include_failed_rsq and (
         "rsq file" in df_trimmer_failure_codes.index.get_level_values("reason")
         or "rsq filter" in df_trimmer_failure_codes.index.get_level_values("reason")
     ):
