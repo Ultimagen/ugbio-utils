@@ -100,7 +100,7 @@ def read_trimmer_failure_codes(
         {x: "sum" for x in ("failed_read_count", "total_read_count")}
     )
 
-    # remove rsq file if not include_failed_rsq
+    # remove segment start if not include_pretrim_filters
     if not include_pretrim_filters and ("start" in df_trimmer_failure_codes.index.get_level_values("segment")):
         pretrim_failed_read_count = df_trimmer_failure_codes[df_trimmer_failure_codes.index.isin(["start"], level=0)][
             "failed_read_count"
