@@ -221,11 +221,11 @@ def extract_statistics_table(h5_file: Path):  # noqa: PLR0915
         stats["num_input_reads"] = num_input_reads
 
         # number of Failed reads due to rsq or other prefilters (e.g., subsampling)
-        num_trimmed_reads_df = store[H5Keys.TRIMMER_STATS.value]
-        num_trimmed_reads_failstart_df = num_trimmed_reads_df[num_trimmed_reads_df["segment label"] == "start"]
+        trimmer_stats_df = store[H5Keys.TRIMMER_STATS.value]
+        trimmer_start_segment_stats_df = trimmer_stats_df[trimmer_stats_df["segment label"] == "start"]
         num_failed_reads = 0
-        if len(num_trimmed_reads_failstart_df) > 0:
-            num_failed_reads = num_trimmed_reads_failstart_df["num failures"].sum()
+        if len(trimmer_start_segment_stats_df) > 0:
+            num_failed_reads = trimmer_start_segment_stats_df["num failures"].sum()
             stats["num_PF_reads"] = num_input_reads - num_failed_reads
             stats["pct_PF"] = (num_input_reads - num_failed_reads) / num_input_reads
 
