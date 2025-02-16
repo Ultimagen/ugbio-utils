@@ -18,7 +18,6 @@ dev-dependencies = [
     "mock>=5.1.0",
     "pre-commit>=4.0.1",
     "pybedtools>=0.11.0",
-    "pymongo>=4.11.1",
     "pytest>=8.3.3",
     "ruff>=0.6.9",
     "sigprofilerassignment>=0.0.29",
