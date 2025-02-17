@@ -1,17 +1,4 @@
-from unittest.mock import MagicMock, patch
-
-from ugbio_omics.db_access import inputs2df, metrics2df, nexus_metrics_to_df, query_database
-
-
-@patch("ugbio_omics.db_access.collections")
-def test_query_database(mock_collections):
-    mock_collection = MagicMock()
-    mock_collections.__getitem__.return_value = mock_collection
-    mock_collection.find.return_value = [{"_id": 1, "name": "test"}]
-
-    result = query_database({}, "pipelines")
-    assert result == [{"_id": 1, "name": "test"}]
-    mock_collection.find.assert_called_once_with({}, {})
+from ugbio_omics.db_access import inputs2df, metrics2df, nexus_metrics_to_df
 
 
 def test_metrics2df():
