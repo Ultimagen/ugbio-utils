@@ -3,7 +3,11 @@ from ugbio_omics.db_access import inputs2df, metrics2df, nexus_metrics_to_df
 
 def test_metrics2df():
     doc = {
-        "metadata": {"workflowId": "test123", "workflowEntity": "sample"},
+        "metadata": {
+            "workflowId": "test123",
+            "workflowEntity": "sample",
+            "entityType": "someEntity",  # Added entityType
+        },
         "metrics": {"AlignmentSummaryMetrics": [{"metric1": 0.5, "metric2": 0.8}]},
     }
     metrics_df = metrics2df(doc, ["AlignmentSummaryMetrics"])
@@ -12,7 +16,7 @@ def test_metrics2df():
 
 def test_inputs2df():
     doc = {
-        "metadata": {"workflowId": "test123", "workflowEntity": "sample"},
+        "metadata": {"workflowId": "test123", "workflowEntity": "sample", "entityType": "someEntity"},
         "inputs": {"input1": "value1"},
         "outputs": {"output1": "value2"},
     }
