@@ -1,0 +1,602 @@
+{
+  "_id": "60c0cab1bf889641d0e2f2e9",
+  "metadata": {
+    "environment": "Cromwell",
+    "runId": "150450",
+    "runName": "150450-BC21",
+    "workflowName": "JukeboxVC",
+    "workflowId": "0440f417-be57-4887-b668-39c47cbd55aa",
+    "workflowEntity": {
+      "entityType": "sample",
+      "entityName": "sm1"
+    }
+  },
+  "metrics": {
+    "AlignmentSummaryMetrics": {
+      "schema": {
+        "fields": [
+          {
+            "name": "index",
+            "type": "integer"
+          },
+          {
+            "name": "CATEGORY",
+            "type": "string"
+          },
+          {
+            "name": "TOTAL_READS",
+            "type": "integer"
+          },
+          {
+            "name": "PF_READS",
+            "type": "integer"
+          },
+          {
+            "name": "PCT_PF_READS",
+            "type": "integer"
+          },
+          {
+            "name": "PF_NOISE_READS",
+            "type": "integer"
+          },
+          {
+            "name": "PF_READS_ALIGNED",
+            "type": "integer"
+          },
+          {
+            "name": "PCT_PF_READS_ALIGNED",
+            "type": "number"
+          },
+          {
+            "name": "PF_ALIGNED_BASES",
+            "type": "integer"
+          },
+          {
+            "name": "PF_HQ_ALIGNED_READS",
+            "type": "integer"
+          },
+          {
+            "name": "PF_HQ_ALIGNED_BASES",
+            "type": "integer"
+          },
+          {
+            "name": "PF_HQ_ALIGNED_Q20_BASES",
+            "type": "integer"
+          },
+          {
+            "name": "PF_HQ_MEDIAN_MISMATCHES",
+            "type": "integer"
+          },
+          {
+            "name": "PF_MISMATCH_RATE",
+            "type": "number"
+          },
+          {
+            "name": "PF_HQ_ERROR_RATE",
+            "type": "number"
+          },
+          {
+            "name": "PF_INDEL_RATE",
+            "type": "number"
+          },
+          {
+            "name": "MEAN_READ_LENGTH",
+            "type": "number"
+          },
+          {
+            "name": "READS_ALIGNED_IN_PAIRS",
+            "type": "integer"
+          },
+          {
+            "name": "PCT_READS_ALIGNED_IN_PAIRS",
+            "type": "integer"
+          },
+          {
+            "name": "PF_READS_IMPROPER_PAIRS",
+            "type": "integer"
+          },
+          {
+            "name": "PCT_PF_READS_IMPROPER_PAIRS",
+            "type": "integer"
+          },
+          {
+            "name": "BAD_CYCLES",
+            "type": "integer"
+          },
+          {
+            "name": "STRAND_BALANCE",
+            "type": "number"
+          },
+          {
+            "name": "PCT_CHIMERAS",
+            "type": "number"
+          },
+          {
+            "name": "PCT_ADAPTER",
+            "type": "integer"
+          },
+          {
+            "name": "PCT_SOFTCLIP",
+            "type": "number"
+          },
+          {
+            "name": "PCT_HARDCLIP",
+            "type": "integer"
+          },
+          {
+            "name": "SAMPLE",
+            "type": "number"
+          },
+          {
+            "name": "LIBRARY",
+            "type": "number"
+          },
+          {
+            "name": "READ_GROUP",
+            "type": "number"
+          }
+        ],
+        "primaryKey": [
+          "index"
+        ],
+        "pandas_version": "0.20.0"
+      },
+      "data": [
+        {
+          "index": 0,
+          "CATEGORY": "UNPAIRED",
+          "TOTAL_READS": 594460125,
+          "PF_READS": 594460125,
+          "PCT_PF_READS": 1,
+          "PF_NOISE_READS": 0,
+          "PF_READS_ALIGNED": 593900668,
+          "PCT_PF_READS_ALIGNED": 0.999059,
+          "PF_ALIGNED_BASES": 135203632235,
+          "PF_HQ_ALIGNED_READS": 554186073,
+          "PF_HQ_ALIGNED_BASES": 127006939446,
+          "PF_HQ_ALIGNED_Q20_BASES": 121366709929,
+          "PF_HQ_MEDIAN_MISMATCHES": 1,
+          "PF_MISMATCH_RATE": 0.005966,
+          "PF_HQ_ERROR_RATE": 0.005617,
+          "PF_INDEL_RATE": 0.003996,
+          "MEAN_READ_LENGTH": 233.916344,
+          "READS_ALIGNED_IN_PAIRS": 0,
+          "PCT_READS_ALIGNED_IN_PAIRS": 0,
+          "PF_READS_IMPROPER_PAIRS": 0,
+          "PCT_PF_READS_IMPROPER_PAIRS": 0,
+          "BAD_CYCLES": 0,
+          "STRAND_BALANCE": 0.498914,
+          "PCT_CHIMERAS": 0.007334,
+          "PCT_ADAPTER": 0,
+          "PCT_SOFTCLIP": 0.025876,
+          "PCT_HARDCLIP": 0
+        }
+      ]
+    },
+    "Contamination": {
+      "schema": {
+        "fields": [
+          {
+            "name": "index",
+            "type": "integer"
+          },
+          {
+            "name": "Contamination",
+            "type": "number"
+          }
+        ],
+        "primaryKey": [
+          "index"
+        ],
+        "pandas_version": "0.20.0"
+      },
+      "data": [
+        {
+          "index": 0,
+          "Contamination": 0.0185056
+        }
+      ]
+    },
+    "DuplicationMetrics": {
+      "schema": {
+        "fields": [
+          {
+            "name": "index",
+            "type": "integer"
+          },
+          {
+            "name": "LIBRARY",
+            "type": "string"
+          },
+          {
+            "name": "UNPAIRED_READS_EXAMINED",
+            "type": "integer"
+          },
+          {
+            "name": "READ_PAIRS_EXAMINED",
+            "type": "integer"
+          },
+          {
+            "name": "SECONDARY_OR_SUPPLEMENTARY_RDS",
+            "type": "integer"
+          },
+          {
+            "name": "UNMAPPED_READS",
+            "type": "integer"
+          },
+          {
+            "name": "UNPAIRED_READ_DUPLICATES",
+            "type": "integer"
+          },
+          {
+            "name": "READ_PAIR_DUPLICATES",
+            "type": "integer"
+          },
+          {
+            "name": "READ_PAIR_OPTICAL_DUPLICATES",
+            "type": "integer"
+          },
+          {
+            "name": "PERCENT_DUPLICATION",
+            "type": "number"
+          },
+          {
+            "name": "ESTIMATED_LIBRARY_SIZE",
+            "type": "number"
+          },
+          {
+            "name": "UNPAIRED_READS_KNOWN_FRAGMENT_EXAMINED",
+            "type": "integer"
+          },
+          {
+            "name": "UNPAIRED_READS_DUPLICATES_SINGLE_END",
+            "type": "integer"
+          },
+          {
+            "name": "UNPAIRED_READS_DUPLICATES_KNOWN_FRAGMENT",
+            "type": "integer"
+          },
+          {
+            "name": "PERCENT_DUPLICATION_SINGLE_END",
+            "type": "number"
+          },
+          {
+            "name": "PERCENT_DUPLICATION_KNOWN_FRAGMENT",
+            "type": "number"
+          }
+        ],
+        "primaryKey": [
+          "index"
+        ],
+        "pandas_version": "0.20.0"
+      },
+      "data": [
+        {
+          "index": 0,
+          "LIBRARY": "Unknown Library",
+          "UNPAIRED_READS_EXAMINED": 593900668,
+          "READ_PAIRS_EXAMINED": 0,
+          "SECONDARY_OR_SUPPLEMENTARY_RDS": 6361372,
+          "UNMAPPED_READS": 559457,
+          "UNPAIRED_READ_DUPLICATES": 64151997,
+          "READ_PAIR_DUPLICATES": 0,
+          "READ_PAIR_OPTICAL_DUPLICATES": 0,
+          "PERCENT_DUPLICATION": 0.108018,
+          "UNPAIRED_READS_KNOWN_FRAGMENT_EXAMINED": 260568103,
+          "UNPAIRED_READS_DUPLICATES_SINGLE_END": 39479631,
+          "UNPAIRED_READS_DUPLICATES_KNOWN_FRAGMENT": 24672366,
+          "PERCENT_DUPLICATION_SINGLE_END": 0.118439,
+          "PERCENT_DUPLICATION_KNOWN_FRAGMENT": 0.094687
+        }
+      ]
+    },
+    "GcBiasDetailMetrics": {
+      "schema": {
+        "fields": [
+          {
+            "name": "index",
+            "type": "integer"
+          },
+          {
+            "name": "ACCUMULATION_LEVEL",
+            "type": "string"
+          },
+          {
+            "name": "READS_USED",
+            "type": "string"
+          },
+          {
+            "name": "GC",
+            "type": "integer"
+          },
+          {
+            "name": "WINDOWS",
+            "type": "integer"
+          },
+          {
+            "name": "READ_STARTS",
+            "type": "integer"
+          },
+          {
+            "name": "MEAN_BASE_QUALITY",
+            "type": "integer"
+          },
+          {
+            "name": "NORMALIZED_COVERAGE",
+            "type": "number"
+          },
+          {
+            "name": "ERROR_BAR_WIDTH",
+            "type": "number"
+          },
+          {
+            "name": "SAMPLE",
+            "type": "number"
+          },
+          {
+            "name": "LIBRARY",
+            "type": "number"
+          },
+          {
+            "name": "READ_GROUP",
+            "type": "number"
+          }
+        ],
+        "primaryKey": [
+          "index"
+        ],
+        "pandas_version": "0.20.0"
+      },
+      "data": [
+        {
+          "index": 0,
+          "ACCUMULATION_LEVEL": "All Reads",
+          "READS_USED": "ALL",
+          "GC": 0,
+          "WINDOWS": 139942,
+          "READ_STARTS": 99614,
+          "MEAN_BASE_QUALITY": 15,
+          "NORMALIZED_COVERAGE": 3.609089
+        }
+      ]
+    },
+    "GcBiasSummaryMetrics": {
+      "schema": {
+        "fields": [
+          {
+            "name": "index",
+            "type": "integer"
+          },
+          {
+            "name": "ACCUMULATION_LEVEL",
+            "type": "string"
+          },
+          {
+            "name": "READS_USED",
+            "type": "string"
+          },
+          {
+            "name": "AT_DROPOUT",
+            "type": "number"
+          },
+          {
+            "name": "GC_DROPOUT",
+            "type": "number"
+          },
+          {
+            "name": "GC_NC_0_19",
+            "type": "number"
+          },
+          {
+            "name": "GC_NC_20_39",
+            "type": "number"
+          }
+        ]
+      },
+      "primaryKey": [
+        "index"
+      ],
+      "pandas_version": "0.20.0",
+      "data": [
+        {
+          "index": 0,
+          "ACCUMULATION_LEVEL": "All Reads",
+          "READS_USED": "ALL",
+          "GC": 0,
+          "WINDOWS": 139942,
+          "READ_STARTS": 99614,
+          "MEAN_BASE_QUALITY": 15,
+          "NORMALIZED_COVERAGE": 3.609089,
+          "ERROR_BAR_WIDTH": 0.011435
+        }
+      ]
+    }
+  },
+  "inputs": {
+    "ref_dbsnp_index": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.dbsnp138.vcf.idx",
+    "delly_memory_override": 32,
+    "ref_fasta_sdf": "gs://concordance/hg38/reference_sdf.tar",
+    "hc_extra_args": "-mbq 0 --flow-filter-alleles --flow-filter-alleles-sor-threshold 3 --flow-assembly-collapse-hmer-size 12 --flow-matrix-mods 10,12,11,12 --bam-output haps.bam --bam-writer-type CALLED_HAPLOTYPES_NO_READS --minimum-mapping-quality 1 --mapping-quality-threshold-for-genotyping 1 --override-fragment-softclip-check --flow-assembler-parallel-threads 2 --flow-likelihood-parallel-threads 2 --flow-likelihood-optimized-comp",
+    "break_bands_at_multiples_of": 100000,
+    "ref_fasta": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta",
+    "picard_jar_override": "gs://jukebox-broad-data-share/farjoun/picard/picard-2.23.3-4-g91713ce-SNAPSHOT-all.jar",
+    "ref_dict": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.dict",
+    "ref_alt": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.64.alt",
+    "pipeline_version": "2.4.2",
+    "ref_ann": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.64.ann",
+    "jukebox_vc_docker": "gcr.io/terra-project-249020/jukebox_vc:1.17_86a8de",
+    "mark_duplicates_extra_args": "--FLOW_END_LOCATION_SIGNIFICANT true --FLOW_USE_CLIPPED_LOCATIONS true --ENDS_READ_UNCERTAINTY 1 --FLOW_SKIP_START_HOMOPOLYMERS 4",
+    "coverage_intervals": "gs://concordance/coverage_intervals/coverage_chr9_extended_intervals.tsv",
+    "collect_statistics": true,
+    "input_cram_bam_list": [
+      "gs://ultimagen-peleg/ua_2021-06-08/150450-BC21.bam"
+    ],
+    "cache_populate_script": "gs://jukebox-broad-data-share/farjoun/scripts/seq_cache_populate.pl",
+    "ref_dbsnp": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.dbsnp138.vcf",
+    "filtering_model": "gs://concordance/filtering_models/531267-UGAv3-8.frd.model.pkl",
+    "af_only_gnomad_index": "gs://gatk-best-practices/somatic-hg38/af-only-gnomad.hg38.vcf.gz.tbi",
+    "reference_version": "hg38",
+    "haplotype_database_gt": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.haplotype_database.txt",
+    "ref_sa": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.64.sa",
+    "haplotype_scatter_count": 200,
+    "illumina_adapter_5p": "CTACACGACGCTCTTCCGATCT",
+    "blacklist_file": "gs://concordance/filtering_models/blacklist_0.5.1.pkl",
+    "ref_fastas_cram": [
+      "gs://concordance/ref_cram/HS+ecoli+templates.fa",
+      "gs://concordance/ref_cram/hg38+ecoli+template.fa",
+      "gs://concordance/ref_cram/hg38+ecoli+template+reference.fa"
+    ],
+    "ref_amb": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.64.amb",
+    "gatk_markduplicates_docker": "gcr.io/terra-project-249020/gatk_ultima_md:0.5.2",
+    "contamination_sites_ud": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.contam.UD",
+    "ground_truth_files": [
+      "gs://concordance/ground-truths-files/HG001_GRCh38_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_PGandRTGphasetransfer.broad-header.vcf.gz",
+      "gs://concordance/ground-truths-files/HG002_GRCh38_GIAB_1_22_v4.2.1_benchmark.broad-header.vcf.gz",
+      "gs://concordance/ground-truths-files/HG003_GRCh38_GIAB_1_22_v4.2.1_benchmark.broad-header.vcf.gz",
+      "gs://concordance/ground-truths-files/HG004_GRCh38_GIAB_1_22_v4.2.1_benchmark.broad-header.vcf.gz",
+      "gs://concordance/ground-truths-files/HG005_GRCh38_GIAB_highconf_CG-Illfb-IllsentieonHC-Ion-10XsentieonHC-SOLIDgatkHC_CHROM1-22_v.3.3.2_highconf.broad-header.vcf.gz",
+      "gs://concordance/ground-truths-files/HG006_GIAB_GRCh38_highconf_CG-IllFB-IllSNT-10X_CHROM1-22_v.3.3.2_highconf.broad-header.vcf.gz",
+      "gs://concordance/ground-truths-files/HG007_GIAB_GRCh38_highconf_CG-IllFB-IllSNT-10X_CHROM1-22_v.3.3.2_highconf.broad-header.vcf.gz",
+      "gs://concordance/ground-truths-files/HG001_GRCh38_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_PGandRTGphasetransfer.broad-header.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG001_GRCh38_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_nosomaticdel_noCENorHET7.bed",
+      "gs://concordance/ground-truths-files/HG002_GRCh38_GIAB_1_22_v4.2.1_benchmark_noinconsistent.bed",
+      "gs://concordance/ground-truths-files/HG002_GRCh38_GIAB_1_22_v4.2.1_benchmark.broad-header.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG003_GRCh38_GIAB_1_22_v4.2.1_benchmark.broad-header.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG003_GRCh38_GIAB_1_22_v4.2.1_benchmark_noinconsistent.bed",
+      "gs://concordance/ground-truths-files/HG004_GRCh38_GIAB_1_22_v4.2.1_benchmark.broad-header.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG004_GRCh38_GIAB_1_22_v4.2.1_benchmark_noinconsistent.bed",
+      "gs://concordance/ground-truths-files/HG005_GRCh38_GIAB_highconf_CG-Illfb-IllsentieonHC-Ion-10XsentieonHC-SOLIDgatkHC_CHROM1-22_v.3.3.2_highconf.bed",
+      "gs://concordance/ground-truths-files/HG005_GRCh38_GIAB_highconf_CG-Illfb-IllsentieonHC-Ion-10XsentieonHC-SOLIDgatkHC_CHROM1-22_v.3.3.2_highconf.broad-header.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG006_GIAB_GRCh38_highconf_CG-IllFB-IllSNT-10X_CHROM1-22_v.3.3.2_highconf.broad-header.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG006_GIAB_GRCh38_highconf_CG-IllFB-IllSNT-10X_CHROM1-22_v.3.3.2_highconf_noinconsistent.bed",
+      "gs://concordance/ground-truths-files/HG007_GIAB_GRCh38_highconf_CG-IllFB-IllSNT-10X_CHROM1-22_v.3.3.2_highconf.broad-header.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG007_GIAB_GRCh38_highconf_CG-IllFB-IllSNT-10X_CHROM1-22_v.3.3.2_highconf_noinconsistent.bed",
+      "gs://concordance/ground-truths-files/HG03943.haplotypeCalls.vcf.gz",
+      "gs://concordance/ground-truths-files/HG03943.haplotypeCalls.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG03943.haplotypeCalls_GRCh38_highconf.bed"
+    ],
+    "wgs_calling_interval_list": "gs://gcp-public-data--broad-references/hg38/v0/wgs_calling_regions.hg38.interval_list",
+    "gitc_docker": "us.gcr.io/broad-gotc-prod/genomes-in-the-cloud:2.4.6-1599252698",
+    "JukeboxVC__HC1__native_sw": false,
+    "annotation_intervals": [
+      "gs://concordance/hg38/LCR-hs38.bed",
+      "gs://concordance/hg38/mappability.0.bed",
+      "gs://concordance/hg38/exome.twist.bed"
+    ],
+    "additional_metrics_disk": 200,
+    "max_chimerism_in_reasonable_sample": 0.05,
+    "contamination_sites_bed": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.contam.bed",
+    "ref_bwt": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.64.bwt",
+    "ref_fasta_index": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.fai",
+    "funcotator_germline_data_sources_tar_gz": "gs://broad-public-datasets/funcotator/funcotator_dataSources.v1.6.20190124g.tar.gz",
+    "delly_docker": "gcr.io/terra-project-249020/delly2:0.8.7-ultima-v0.1",
+    "jb_gatk_docker": "gcr.io/terra-project-249020/gatk_ultima:0.5.4",
+    "max_duplication_in_reasonable_sample": 0.3,
+    "crammer_docker": "gcr.io/terra-project-249020/crammer:1.3_0c527b2e",
+    "sv_calls_excl_regions": "gs://concordance/hg38/human.hg38.excl.tsv",
+    "contamination_sites_mu": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.contam.mu",
+    "illumina_adapter_3p": "AGATCGGAAGAGCACACGTCTGCTG",
+    "base_file_name": "150450-BC21",
+    "converted_library": false,
+    "monitoring_script": "gs://broad-dsde-methods-monitoring/cromwell_monitoring_script.sh",
+    "af_only_gnomad": "gs://gatk-best-practices/somatic-hg38/af-only-gnomad.hg38.vcf.gz",
+    "broad_gatk_docker": "broadinstitute/gatk:4.1.4.1",
+    "wgs_coverage_interval_list": "gs://gcp-public-data--broad-references/hg38/v0/wgs_coverage_regions.hg38.interval_list",
+    "ref_pac": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.64.pac"
+  },
+  "outputs": {
+    "ref_dbsnp_index": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.dbsnp138.vcf.idx",
+    "delly_memory_override": 32,
+    "ref_fasta_sdf": "gs://concordance/hg38/reference_sdf.tar",
+    "hc_extra_args": "-mbq 0 --flow-filter-alleles --flow-filter-alleles-sor-threshold 3 --flow-assembly-collapse-hmer-size 12 --flow-matrix-mods 10,12,11,12 --bam-output haps.bam --bam-writer-type CALLED_HAPLOTYPES_NO_READS --minimum-mapping-quality 1 --mapping-quality-threshold-for-genotyping 1 --override-fragment-softclip-check --flow-assembler-parallel-threads 2 --flow-likelihood-parallel-threads 2 --flow-likelihood-optimized-comp",
+    "break_bands_at_multiples_of": 100000,
+    "ref_fasta": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta",
+    "picard_jar_override": "gs://jukebox-broad-data-share/farjoun/picard/picard-2.23.3-4-g91713ce-SNAPSHOT-all.jar",
+    "ref_dict": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.dict",
+    "ref_alt": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.64.alt",
+    "pipeline_version": "2.4.2",
+    "filter_cg_insertions": true,
+    "skip_alignment": true,
+    "make_gvcf_override": true,
+    "ref_ann": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.64.ann",
+    "jukebox_vc_docker": "gcr.io/terra-project-249020/jukebox_vc:1.17_86a8de",
+    "mark_duplicates_extra_args": "--FLOW_END_LOCATION_SIGNIFICANT true --FLOW_USE_CLIPPED_LOCATIONS true --ENDS_READ_UNCERTAINTY 1 --FLOW_SKIP_START_HOMOPOLYMERS 4",
+    "coverage_intervals": "gs://concordance/coverage_intervals/coverage_chr9_extended_intervals.tsv",
+    "collect_statistics": true,
+    "input_cram_bam_list": [
+      "gs://ultimagen-peleg/ua_2021-06-08/150450-BC21.bam"
+    ],
+    "cache_populate_script": "gs://jukebox-broad-data-share/farjoun/scripts/seq_cache_populate.pl",
+    "ref_dbsnp": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.dbsnp138.vcf",
+    "filtering_model": "gs://concordance/filtering_models/531267-UGAv3-8.frd.model.pkl",
+    "af_only_gnomad_index": "gs://gatk-best-practices/somatic-hg38/af-only-gnomad.hg38.vcf.gz.tbi",
+    "reference_version": "hg38",
+    "haplotype_database_gt": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.haplotype_database.txt",
+    "ref_sa": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.64.sa",
+    "haplotype_scatter_count": 200,
+    "illumina_adapter_5p": "CTACACGACGCTCTTCCGATCT",
+    "blacklist_file": "gs://concordance/filtering_models/blacklist_0.5.1.pkl",
+    "ref_fastas_cram": [
+      "gs://concordance/ref_cram/HS+ecoli+templates.fa",
+      "gs://concordance/ref_cram/hg38+ecoli+template.fa",
+      "gs://concordance/ref_cram/hg38+ecoli+template+reference.fa"
+    ],
+    "ref_amb": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.64.amb",
+    "gatk_markduplicates_docker": "gcr.io/terra-project-249020/gatk_ultima_md:0.5.2",
+    "contamination_sites_ud": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.contam.UD",
+    "ground_truth_files": [
+      "gs://concordance/ground-truths-files/HG001_GRCh38_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_PGandRTGphasetransfer.broad-header.vcf.gz",
+      "gs://concordance/ground-truths-files/HG002_GRCh38_GIAB_1_22_v4.2.1_benchmark.broad-header.vcf.gz",
+      "gs://concordance/ground-truths-files/HG003_GRCh38_GIAB_1_22_v4.2.1_benchmark.broad-header.vcf.gz",
+      "gs://concordance/ground-truths-files/HG004_GRCh38_GIAB_1_22_v4.2.1_benchmark.broad-header.vcf.gz",
+      "gs://concordance/ground-truths-files/HG005_GRCh38_GIAB_highconf_CG-Illfb-IllsentieonHC-Ion-10XsentieonHC-SOLIDgatkHC_CHROM1-22_v.3.3.2_highconf.broad-header.vcf.gz",
+      "gs://concordance/ground-truths-files/HG006_GIAB_GRCh38_highconf_CG-IllFB-IllSNT-10X_CHROM1-22_v.3.3.2_highconf.broad-header.vcf.gz",
+      "gs://concordance/ground-truths-files/HG007_GIAB_GRCh38_highconf_CG-IllFB-IllSNT-10X_CHROM1-22_v.3.3.2_highconf.broad-header.vcf.gz",
+      "gs://concordance/ground-truths-files/HG001_GRCh38_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_PGandRTGphasetransfer.broad-header.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG001_GRCh38_GIAB_highconf_CG-IllFB-IllGATKHC-Ion-10X-SOLID_CHROM1-X_v.3.3.2_highconf_nosomaticdel_noCENorHET7.bed",
+      "gs://concordance/ground-truths-files/HG002_GRCh38_GIAB_1_22_v4.2.1_benchmark_noinconsistent.bed",
+      "gs://concordance/ground-truths-files/HG002_GRCh38_GIAB_1_22_v4.2.1_benchmark.broad-header.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG003_GRCh38_GIAB_1_22_v4.2.1_benchmark.broad-header.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG003_GRCh38_GIAB_1_22_v4.2.1_benchmark_noinconsistent.bed",
+      "gs://concordance/ground-truths-files/HG004_GRCh38_GIAB_1_22_v4.2.1_benchmark.broad-header.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG004_GRCh38_GIAB_1_22_v4.2.1_benchmark_noinconsistent.bed",
+      "gs://concordance/ground-truths-files/HG005_GRCh38_GIAB_highconf_CG-Illfb-IllsentieonHC-Ion-10XsentieonHC-SOLIDgatkHC_CHROM1-22_v.3.3.2_highconf.bed",
+      "gs://concordance/ground-truths-files/HG005_GRCh38_GIAB_highconf_CG-Illfb-IllsentieonHC-Ion-10XsentieonHC-SOLIDgatkHC_CHROM1-22_v.3.3.2_highconf.broad-header.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG006_GIAB_GRCh38_highconf_CG-IllFB-IllSNT-10X_CHROM1-22_v.3.3.2_highconf.broad-header.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG006_GIAB_GRCh38_highconf_CG-IllFB-IllSNT-10X_CHROM1-22_v.3.3.2_highconf_noinconsistent.bed",
+      "gs://concordance/ground-truths-files/HG007_GIAB_GRCh38_highconf_CG-IllFB-IllSNT-10X_CHROM1-22_v.3.3.2_highconf.broad-header.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG007_GIAB_GRCh38_highconf_CG-IllFB-IllSNT-10X_CHROM1-22_v.3.3.2_highconf_noinconsistent.bed",
+      "gs://concordance/ground-truths-files/HG03943.haplotypeCalls.vcf.gz",
+      "gs://concordance/ground-truths-files/HG03943.haplotypeCalls.vcf.gz.tbi",
+      "gs://concordance/ground-truths-files/HG03943.haplotypeCalls_GRCh38_highconf.bed"
+    ],
+    "wgs_calling_interval_list": "gs://gcp-public-data--broad-references/hg38/v0/wgs_calling_regions.hg38.interval_list",
+    "gitc_docker": "us.gcr.io/broad-gotc-prod/genomes-in-the-cloud:2.4.6-1599252698",
+    "JukeboxVC__HC1__native_sw": false,
+    "annotation_intervals": [
+      "gs://concordance/hg38/LCR-hs38.bed",
+      "gs://concordance/hg38/mappability.0.bed",
+      "gs://concordance/hg38/exome.twist.bed"
+    ],
+    "additional_metrics_disk": 200,
+    "max_chimerism_in_reasonable_sample": 0.05,
+    "contamination_sites_bed": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.contam.bed",
+    "ref_bwt": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.64.bwt",
+    "ref_fasta_index": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.fai",
+    "funcotator_germline_data_sources_tar_gz": "gs://broad-public-datasets/funcotator/funcotator_dataSources.v1.6.20190124g.tar.gz",
+    "delly_docker": "gcr.io/terra-project-249020/delly2:0.8.7-ultima-v0.1",
+    "jb_gatk_docker": "gcr.io/terra-project-249020/gatk_ultima:0.5.4",
+    "max_duplication_in_reasonable_sample": 0.3,
+    "crammer_docker": "gcr.io/terra-project-249020/crammer:1.3_0c527b2e",
+    "sv_calls_excl_regions": "gs://concordance/hg38/human.hg38.excl.tsv",
+    "contamination_sites_mu": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.contam.mu",
+    "illumina_adapter_3p": "AGATCGGAAGAGCACACGTCTGCTG",
+    "base_file_name": "150450-BC21",
+    "converted_library": false,
+    "monitoring_script": "gs://broad-dsde-methods-monitoring/cromwell_monitoring_script.sh",
+    "af_only_gnomad": "gs://gatk-best-practices/somatic-hg38/af-only-gnomad.hg38.vcf.gz",
+    "broad_gatk_docker": "broadinstitute/gatk:4.1.4.1",
+    "wgs_coverage_interval_list": "gs://gcp-public-data--broad-references/hg38/v0/wgs_coverage_regions.hg38.interval_list",
+    "ref_pac": "gs://gcp-public-data--broad-references/hg38/v0/Homo_sapiens_assembly38.fasta.64.pac"
+  }
+}

@@ -15,6 +15,11 @@ dependencies = [
 readme = "README.omics.md"
 requires-python = ">= 3.11"
 
+[project.optional-dependencies]
+db = [
+    "pandas[hdf5]>=2.2.2"
+]
+
 [project.scripts]
 run_tests = "pytest:main"
 compare_cromwell_omics = "ugbio_omics.compare_cromwell_omics:main"

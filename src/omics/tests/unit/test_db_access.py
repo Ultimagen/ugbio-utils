@@ -1,36 +1,51 @@
-from ugbio_omics.db_access import inputs2df, metrics2df, nexus_metrics_to_df
+import json
+from pathlib import Path
+
+import pandas as pd
+import pytest
+from ugbio_omics.db_access import metrics2df
 
 
-def test_metrics2df():
-    doc = {
-        "metadata": {
-            "workflowId": "test123",
-            "workflowEntity": "sample",
-            "entityType": "someEntity",  # Added entityType
-        },
-        "metrics": {"AlignmentSummaryMetrics": [{"metric1": 0.5, "metric2": 0.8}]},
-    }
-    metrics_df = metrics2df(doc, ["AlignmentSummaryMetrics"])
-    assert "AlignmentSummaryMetrics" in metrics_df.columns.levels[0]
+@pytest.fixture
+def resources_dir():
+    inputs_dir = Path(__file__).parent.parent / "resources"
+    return inputs_dir
 
 
-def test_inputs2df():
-    doc = {
-        "metadata": {"workflowId": "test123", "workflowEntity": "sample", "entityType": "someEntity"},
-        "inputs": {"input1": "value1"},
-        "outputs": {"output1": "value2"},
-    }
-    input_df = inputs2df(doc)
-    assert "input1" in input_df.columns
-    assert "output1" in input_df.columns
+def test_metrics2df(resources_dir):
+    with open(resources_dir / "db_doc.json") as f:
+        doc = json.load(f)
+    metrics_to_report = [
+        "AlignmentSummaryMetrics",
+        "Contamination",
+        "DuplicationMetrics",
+        "GcBiasDetailMetrics",
+        "GcBiasSummaryMetrics",
+        "QualityYieldMetrics",
+        "RawWgsMetrics",
+        "WgsMetrics",
+        "stats_coverage",
+        "short_report_/all_data",
+        "short_report_/all_data_gt",
+    ]
+
+    metrics_df = metrics2df(doc, metrics_to_report)
+    assert metrics_df.equals(pd.read_hdf(resources_dir / "expected_metrics_df.h5", key="df"))
 
 
-def test_nexus_metrics_to_df():
-    input_dict = {
-        "_id": "some_id",
-        "metadata_sequencingRunId": "run123",
-        "metric_x_1": 10,
-        "metric_y_2": 20,
-    }
-    metrics_df = nexus_metrics_to_df(input_dict)
-    assert metrics_df.index.name == "run123"
+# def test_inputs2df(resources_dir):
+#     with open(resources_dir / "db_doc.json") as f:
+#         doc = json.load(f)
+#     inputs_outputs_df = (inputs2df(doc))
+#     assert inputs_outputs_df[""]
+#
+#
+# def test_nexus_metrics_to_df():
+#     input_dict = {
+#         "_id": "some_id",
+#         "metadata_sequencingRunId": "run123",
+#         "metric_x_1": 10,
+#         "metric_y_2": 20,
+#     }
+#     metrics_df = nexus_metrics_to_df(input_dict)
+#     assert metrics_df.index.name == "run123"

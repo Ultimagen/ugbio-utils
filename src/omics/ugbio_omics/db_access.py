@@ -197,9 +197,7 @@ def _cleanup_metadata(input_dict: dict) -> dict:
     dict
         Same dictionary without values of type lists (confuses dataframe conversion)
     """
-    for k, v in list(input_dict.items()):
-        if isinstance(v, list):
+    for k in list(input_dict.keys()):
+        if isinstance(input_dict[k], list):
             del input_dict[k]
-        else:
-            input_dict[k] = [v]  # Wrap scalar values in a list
     return input_dict
