@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 from ugbio_omics.db_access import inputs2df, metrics2df, nexus_metrics_to_df
 
+
 HARDCODED_WFIDS = [
     "de06922f-07f8-4b51-843e-972308c81c6f",
     "ea5e54d8-3db1-47b2-bc0e-68f38e3e89f3",
@@ -44,9 +45,9 @@ def test_metrics2df(resources_dir):
     ]
 
     all_metrics = pd.concat((metrics2df(x, metrics_to_report) for x in docs), axis=0)
-    expected_df = pd.read_hdf(resources_dir / "expected_metrics_df.h5", key="df").astype(all_metrics.dtypes)
+    expected_df = pd.read_hdf(resources_dir / "expected_metrics_df.h5", key="df")
     print(all_metrics.compare(expected_df, keep_equal=False))
-    assert all_metrics.equals(expected_df)
+    pd.testing.assert_frame_equal(all_metrics, expected_df, check_dtype=False)
 
 
 def test_inputs_outputs_dataframe(resources_dir):
@@ -54,16 +55,16 @@ def test_inputs_outputs_dataframe(resources_dir):
     docs = sorted(docs, key=lambda x: x["metadata"]["workflowId"])
     docs = [x for x in docs if x["metadata"]["workflowId"] in HARDCODED_WFIDS]
     all_inputs = pd.concat((inputs2df(x) for x in docs), axis=0)
-    expected_df = pd.read_hdf(resources_dir / "expected_inputs_df.h5", key="df").astype(all_inputs.dtypes)
-    assert all_inputs.equals(expected_df)
+    expected_df = pd.read_hdf(resources_dir / "expected_inputs_df.h5", key="df")
+    pd.testing.assert_frame_equal(all_inputs, expected_df, check_dtype=False)
 
 
 def test_nexus_metrics_to_df(resources_dir):
     docs = pickle.load(open(resources_dir / "test_fetch_from_database_query_nexus_inputs.pkl", "rb"))
     assert len(docs) == 23
     nexus_metrics = pd.concat(nexus_metrics_to_df(x) for x in docs)
-    expected_df = pd.read_hdf(resources_dir / "expected_nexus_df.h5", key="df").astype(nexus_metrics.dtypes)
-    assert nexus_metrics.equals(expected_df)
+    expected_df = pd.read_hdf(resources_dir / "expected_nexus_df.h5", key="df")
+    pd.testing.assert_frame_equal(nexus_metrics, expected_df, check_dtype=False)
 
 
 def test_omics_inputs(resources_dir):
@@ -71,4 +72,5 @@ def test_omics_inputs(resources_dir):
     omics_inputs = pd.concat(inputs2df(x) for x in docs)
     omics_inputs = omics_inputs.sort_index()
     hdf = pd.read_hdf(resources_dir / "expected_omics_df.h5").astype(omics_inputs.dtypes)
-    assert omics_inputs.equals(hdf)
+    pd.testing.assert_frame_equal(omics_inputs, hdf, check_dtype=False)
+
