@@ -5,7 +5,6 @@ import pandas as pd
 import pytest
 from ugbio_omics.db_access import inputs2df, metrics2df, nexus_metrics_to_df
 
-
 HARDCODED_WFIDS = [
     "de06922f-07f8-4b51-843e-972308c81c6f",
     "ea5e54d8-3db1-47b2-bc0e-68f38e3e89f3",
@@ -72,4 +71,3 @@ def test_omics_inputs(resources_dir):
     omics_inputs = omics_inputs.sort_index()
     hdf = pd.read_hdf(resources_dir / "expected_omics_df.h5").astype(omics_inputs.dtypes)
     pd.testing.assert_frame_equal(omics_inputs, hdf, check_dtype=False)
-
