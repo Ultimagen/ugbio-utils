@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_omics"
-version = "1.6.1-0dev-105"
+version = "1.6.2-0"
 description = "Ultima Genomics bioinfo utils for working with AWS Health-Omics"
 authors = [
     { name = "Inbal Zelig", email = "inbal.zelig@ultimagen.com" },
@@ -10,15 +10,9 @@ dependencies = [
     "google-cloud-storage>=2.18.2",
     "boto3>=1.35.69",
     "pandas>=2.2.3",
-    "pymongo>=4.11.1",
 ]
 readme = "README.omics.md"
 requires-python = ">= 3.11"
-
-[project.optional-dependencies]
-db = [
-    "pandas[hdf5]>=2.2.2"
-]
 
 [project.scripts]
 run_tests = "pytest:main"

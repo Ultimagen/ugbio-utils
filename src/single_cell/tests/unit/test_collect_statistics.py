@@ -139,7 +139,7 @@ def test_extract_statistics_table(inputs_dir, output_path):
     with pd.HDFStore(h5_file, mode="r") as store:
         s = store[H5Keys.STATISTICS_SHORTLIST.value]
         assert "/" + H5Keys.STATISTICS_SHORTLIST.value in store.keys()
-        assert len(s) == 15
+        assert len(s) == 17
         # assert that entries that start with "pct_" are between 0 to 100
         assert s[s.index.str.startswith("pct_")].astype(float).between(0, 100).all()
 
@@ -167,6 +167,6 @@ def test_extract_statistics_table_with_sorter_json(inputs_dir, output_path):
     with pd.HDFStore(h5_file, mode="r") as store:
         s = store[H5Keys.STATISTICS_SHORTLIST.value]
         assert "/" + H5Keys.STATISTICS_SHORTLIST.value in store.keys()
-        assert len(s) == 17
+        assert len(s) == 19
         assert s["pct_failed_cbcs_above_threshold"] == 100 * 0.02311600563934775
         assert s["pct_cbc_filter_failed_reads"] == 100 * 0.0018177121169518373

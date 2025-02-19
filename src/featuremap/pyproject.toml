@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_featuremap"
-version = "1.6.1-0dev-105"
+version = "1.6.2-0"
 requires-python = ">=3.11"
 dependencies = [
     "ugbio_core[vcfbed]",
