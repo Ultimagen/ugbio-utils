@@ -46,7 +46,6 @@ def test_metrics2df(resources_dir):
 
     all_metrics = pd.concat((metrics2df(x, metrics_to_report) for x in docs), axis=0)
     expected_df = pd.read_hdf(resources_dir / "expected_metrics_df.h5", key="df")
-    print(all_metrics.compare(expected_df, keep_equal=False))
     pd.testing.assert_frame_equal(all_metrics, expected_df, check_dtype=False)
 
 
