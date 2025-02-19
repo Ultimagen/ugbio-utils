@@ -3113,7 +3113,7 @@ wheels = [
 
 [[package]]
 name = "ugbio-cloud-utils"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { editable = "src/cloud_utils" }
 dependencies = [
     { name = "boto3" },
@@ -3142,7 +3142,7 @@ dev = [
 
 [[package]]
 name = "ugbio-cnv"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { editable = "src/cnv" }
 dependencies = [
     { name = "cnvpytor" },
@@ -3175,7 +3175,7 @@ dev = [
 
 [[package]]
 name = "ugbio-comparison"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { editable = "src/comparison" }
 dependencies = [
     { name = "ugbio-core", extra = ["concordance", "vcfbed"] },
@@ -3200,7 +3200,7 @@ dev = [
 
 [[package]]
 name = "ugbio-core"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -3263,7 +3263,7 @@ dev = [
 
 [[package]]
 name = "ugbio-featuremap"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "scikit-learn" },
@@ -3298,7 +3298,7 @@ dev = [
 
 [[package]]
 name = "ugbio-filtering"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { editable = "src/filtering" }
 dependencies = [
     { name = "biopython" },
@@ -3335,7 +3335,7 @@ dev = [
 
 [[package]]
 name = "ugbio-freec"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { editable = "src/freec" }
 dependencies = [
     { name = "pandas" },
@@ -3364,12 +3364,12 @@ dev = [
 
 [[package]]
 name = "ugbio-hla-la"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { virtual = "src/hla_la" }
 
 [[package]]
 name = "ugbio-methylation"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { editable = "src/methylation" }
 dependencies = [
     { name = "matplotlib" },
@@ -3404,7 +3404,7 @@ dev = [
 
 [[package]]
 name = "ugbio-mrd"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["reports", "vcfbed"] },
@@ -3435,19 +3435,19 @@ dev = [
 
 [[package]]
 name = "ugbio-omics"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { editable = "src/omics" }
 dependencies = [
     { name = "boto3" },
     { name = "google-cloud-storage" },
     { name = "pandas" },
     { name = "plotly" },
-    { name = "pymongo" },
 ]
 
 [package.optional-dependencies]
 db = [
     { name = "pandas", extra = ["hdf5"] },
+    { name = "pymongo" },
 ]
 
 [package.dev-dependencies]
@@ -3464,7 +3464,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "pandas", extras = ["hdf5"], marker = "extra == 'db'", specifier = ">=2.2.2" },
     { name = "plotly", specifier = ">=5.23.0" },
-    { name = "pymongo", specifier = ">=4.11.1" },
+    { name = "pymongo", marker = "extra == 'db'", specifier = ">=4.11.1" },
 ]
 
 [package.metadata.requires-dev]
@@ -3476,7 +3476,7 @@ dev = [
 
 [[package]]
 name = "ugbio-ppmseq"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3509,7 +3509,7 @@ dev = [
 
 [[package]]
 name = "ugbio-single-cell"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3546,7 +3546,7 @@ dev = [
 
 [[package]]
 name = "ugbio-srsnv"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3591,7 +3591,7 @@ dev = [
 
 [[package]]
 name = "ugbio-utils"
-version = "1.6.1.post0.dev105"
+version = "1.6.2.post0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -3601,6 +3601,7 @@ dev = [
     { name = "mock" },
     { name = "pre-commit" },
     { name = "pybedtools" },
+    { name = "pymongo" },
     { name = "pytest" },
     { name = "ruff" },
     { name = "sigprofilerassignment" },
@@ -3617,6 +3618,7 @@ dev = [
     { name = "mock", specifier = ">=5.1.0" },
     { name = "pre-commit", specifier = ">=4.0.1" },
     { name = "pybedtools", specifier = ">=0.11.0" },
+    { name = "pymongo", specifier = ">=4.11.1" },
     { name = "pytest", specifier = ">=8.3.3" },
     { name = "ruff", specifier = ">=0.6.9" },
     { name = "sigprofilerassignment", specifier = ">=0.0.29" },
