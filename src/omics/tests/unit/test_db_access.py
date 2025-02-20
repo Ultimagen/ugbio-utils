@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-from ugbio_omics.db_access import inputs2df, metrics2df, nexus_metrics_to_df
+from ugbio_omics.db_access import DEFAULT_METRICS_TO_REPORT, inputs2df, metrics2df, nexus_metrics_to_df
 
 HARDCODED_WFIDS = [
     "de06922f-07f8-4b51-843e-972308c81c6f",
@@ -29,21 +29,8 @@ def test_metrics2df(resources_dir):
     docs = pickle.load(open(resources_dir / "test_fetch_from_database_query1.pkl", "rb"))
     docs = sorted(docs, key=lambda x: x["metadata"]["workflowId"])
     docs = [x for x in docs if x["metadata"]["workflowId"] in HARDCODED_WFIDS]
-    metrics_to_report = [
-        "AlignmentSummaryMetrics",
-        "Contamination",
-        "DuplicationMetrics",
-        "GcBiasDetailMetrics",
-        "GcBiasSummaryMetrics",
-        "QualityYieldMetrics",
-        "RawWgsMetrics",
-        "WgsMetrics",
-        "stats_coverage",
-        "short_report_/all_data",
-        "short_report_/all_data_gt",
-    ]
 
-    all_metrics = pd.concat((metrics2df(x, metrics_to_report) for x in docs), axis=0)
+    all_metrics = pd.concat((metrics2df(x, DEFAULT_METRICS_TO_REPORT) for x in docs), axis=0)
     expected_df = pd.read_hdf(resources_dir / "expected_metrics_df.h5", key="df")
     pd.testing.assert_frame_equal(all_metrics, expected_df, check_dtype=False)
 

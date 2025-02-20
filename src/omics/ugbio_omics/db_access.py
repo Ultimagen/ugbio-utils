@@ -22,6 +22,28 @@ class Collections(Enum):
     PPMSEQ = "ppmseq"
 
 
+def set_papyrus_access():
+    """Disables/Enables papyrus access depends on PAPYRUS_ACCESS_STRING env"""
+    disable_papyrus_access = False
+    collections = {}
+    if "PAPYRUS_ACCESS_STRING" in os.environ:
+        my_client = initialize_client()
+        my_db = my_client["pipelines"]
+        collections[Collections.CROMWELL] = my_db["pipelines"]
+        collections[Collections.RUNS] = my_db["runs"]
+        collections[Collections.EXECUTIONS] = my_db["runs.executions"]
+        collections[Collections.SAMPLES] = my_db["runs.executions.samples"]
+        collections[Collections.PPMSEQ] = my_db["ppmseq_workflows_view"]
+    else:
+        warnings.warn("Define PAPYRUS_ACCESS_STRING environmental variable to enable access to Papyrus", stacklevel=2)
+        warnings.warn(
+            "Example: export PAPYRUS_ACCESS_STRING=mongodb+srv://[user]:[passwd]@testcluster.jm2x3.mongodb.net/test",
+            stacklevel=2,
+        )
+        disable_papyrus_access = True
+    return disable_papyrus_access, collections
+
+
 def initialize_client() -> pymongo.MongoClient:
     """Initializes pymongo client with the access string that is read from PAPYRUS_ACCESS_STRING
     environmental variable.
@@ -37,25 +59,6 @@ def initialize_client() -> pymongo.MongoClient:
 
     myclient = pymongo.MongoClient(os.environ["PAPYRUS_ACCESS_STRING"])
     return myclient
-
-
-DISABLE_PAPYRUS_ACCESS = False
-if "PAPYRUS_ACCESS_STRING" in os.environ:
-    my_client = initialize_client()
-    my_db = my_client["pipelines"]
-    collections = {}
-    collections[Collections.CROMWELL] = my_db["pipelines"]
-    collections[Collections.RUNS] = my_db["runs"]
-    collections[Collections.EXECUTIONS] = my_db["runs.executions"]
-    collections[Collections.SAMPLES] = my_db["runs.executions.samples"]
-    collections[Collections.PPMSEQ] = my_db["ppmseq_workflows_view"]
-else:
-    warnings.warn("Define PAPYRUS_ACCESS_STRING environmental variable to enable access to Papyrus", stacklevel=2)
-    warnings.warn(
-        "Example: export PAPYRUS_ACCESS_STRING=mongodb+srv://[user]:[passwd]@testcluster.jm2x3.mongodb.net/test",
-        stacklevel=2,
-    )
-    DISABLE_PAPYRUS_ACCESS = True
 
 
 def query_database(query: dict, collection: str = "pipelines", **kwargs: Any) -> list:
@@ -77,7 +80,7 @@ def query_database(query: dict, collection: str = "pipelines", **kwargs: Any) ->
     list
         List of documents
     """
-
+    disable_papyrus_access, collections = set_papyrus_access()
     assert not DISABLE_PAPYRUS_ACCESS, "Database access not available through PAPYRUS_ACCESS_STRING"  # noqa s101
     return list(collections[Collections(collection)].find(query, **kwargs))
 
