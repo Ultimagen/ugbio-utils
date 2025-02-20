@@ -81,7 +81,7 @@ def query_database(query: dict, collection: str = "pipelines", **kwargs: Any) ->
         List of documents
     """
     disable_papyrus_access, collections = set_papyrus_access()
-    assert not DISABLE_PAPYRUS_ACCESS, "Database access not available through PAPYRUS_ACCESS_STRING"  # noqa s101
+    assert not disable_papyrus_access, "Database access not available through PAPYRUS_ACCESS_STRING"  # noqa s101
     return list(collections[Collections(collection)].find(query, **kwargs))
 
 
