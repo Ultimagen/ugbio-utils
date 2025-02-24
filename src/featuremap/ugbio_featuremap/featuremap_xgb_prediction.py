@@ -356,8 +356,8 @@ def process_vcf_row(row, df_variants, hdr, vcfout, write_agg_params):
     chrom = row.chrom
     alt_allele = row.alleles[1]
     df_record = df_variants[(df_variants["chrom"] == chrom) & 
-                            (df_variants["pos"] == pos) & 
-                            (df_variants["alt_allele"] == alt_allele)]
+        (df_variants["pos"] == pos) & 
+        (df_variants["alt_allele"] == alt_allele)]
 
     if len(df_record) > 0:
         if write_agg_params:
