@@ -1,10 +1,6 @@
 [project]
 name = "ugbio_featuremap"
-<<<<<<< HEAD
 version = "1.6.2-0dev-106"
-=======
-version = "1.4.3-0dev-79"
->>>>>>> fdfc93d (Update pyproject.toml versions to 1.4.3-0dev-79)
 requires-python = ">=3.11"
 dependencies = [
     "ugbio_core[vcfbed]",
