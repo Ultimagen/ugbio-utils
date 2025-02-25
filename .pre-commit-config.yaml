@@ -14,7 +14,12 @@ repos:
       - id: check-json
         exclude: ^\.devcontainer/|^src/.*/tests/resources/.*$ # Exclude .devcontainer folder to keep the comments in the json files, exclude test resources
       - id: check-added-large-files
-        exclude: src/omics/tests/resources/cromwell_pricelist.json
+        exclude_patterns:
+          - src/omics/tests/resources/cromwell_pricelist.json
+          - ^src/featuremap/tests/resources/.*_chr1_alt2_8.test_size_0.1.xgb_model.json$ # Exclude model files
+        # exclude: src/omics/tests/resources/cromwell_pricelist.json
+        # exclude: ^src/featuremap/tests/resources/.*_chr1_alt2_8.test_size_0.1.xgb_model.json$ # Exclude model files
+
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.

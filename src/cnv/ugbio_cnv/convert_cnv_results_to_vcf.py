@@ -105,7 +105,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
             end = row["end"]
             info = row["info"]
 
-            cn = int(info.split("|")[0].replace("CN", ""))
+            cn = float(info.split("|")[0].replace("CN", ""))
             cnv_type = "<DUP>"
             if cn < 2:  # noqa: PLR2004
                 cnv_type = "<DEL>"

@@ -15,12 +15,14 @@ import pysam
 import xgboost
 from sklearn.preprocessing import LabelEncoder
 from ugbio_core.logger import logger
+from ugbio_core.vcfbed import vcftools
 from ugbio_ppmseq.ppmSeq_consts import HistogramColumnNames
 
 from ugbio_featuremap import featuremap_consensus_utils
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 default_custom_info_fields = [
@@ -71,8 +73,8 @@ columns_for_mean_aggregation = [
     FeatureMapFields.X_FLAGS.value,
     "ML_QUAL",
 ]
-columns_for_min_aggregation = [FeatureMapFields.X_QUAL.value, FeatureMapFields.X_INDEX.value]
-columns_for_max_aggregation = [FeatureMapFields.X_QUAL.value, FeatureMapFields.X_INDEX.value]
+columns_for_min_aggregation = [FeatureMapFields.X_QUAL.value.lower(), FeatureMapFields.X_INDEX.value.lower()]
+columns_for_max_aggregation = [FeatureMapFields.X_QUAL.value.lower(), FeatureMapFields.X_INDEX.value.lower()]
 columns_for_fillna = [FeatureMapFields.IS_CYCLE_SKIP.value]
 columns_for_st_et_aggregation = ["st", "et"]
 
@@ -80,43 +82,44 @@ added_agg_features = {
     "alt_reads": ["number of supporting reads for the alternative allele", "Integer"],
     "ref_allele": ["reference allele", "String"],
     "alt_allele": ["alternative allele", "String"],
-    "X_QUAL_mean": ["mean value of X_QUAL", "Float"],
-    "X_SCORE_mean": ["mean value of X_SCORE", "Float"],
-    "X_EDIST_mean": ["mean value of X_EDIST", "Float"],
-    "X_LENGTH_mean": ["mean value of X_LENGTH", "Float"],
-    "X_MAPQ_mean": ["mean value of X_MAPQ", "Float"],
-    "X_FC1_mean": ["mean value of X_FC1", "Float"],
-    "X_FC2_mean": ["mean value of X_FC2", "Float"],
-    "MAX_SOFTCLIP_LENGTH_mean": ["mean value of MAX_SOFTCLIP_LENGTH", "Float"],
-    "X_FLAGS_mean": ["mean value of X_FLAGS", "Float"],
-    "ML_QUAL_mean": ["mean value of ML_QUAL", "Float"],
-    "X_QUAL_max": ["max value of X_QUAL", "Float"],
-    "X_INDEX_max": ["max value of X_INDEX", "Integer"],
-    "X_QUAL_min": ["min value of X_QUAL", "Float"],
-    "X_INDEX_min": ["min value of X_INDEX", "Integer"],
+    "x_qual_mean": ["mean value of X_QUAL", "Float"],
+    "x_score_mean": ["mean value of X_SCORE", "Float"],
+    "x_edist_mean": ["mean value of X_EDIST", "Float"],
+    "x_length_mean": ["mean value of X_LENGTH", "Float"],
+    "x_mapq_mean": ["mean value of X_MAPQ", "Float"],
+    "x_fc1_mean": ["mean value of X_FC1", "Float"],
+    "x_fc2_mean": ["mean value of X_FC2", "Float"],
+    "max_softclip_length_mean": ["mean value of MAX_SOFTCLIP_LENGTH", "Float"],
+    "x_flags_mean": ["mean value of X_FLAGS", "Float"],
+    "ml_qual_mean": ["mean value of ML_QUAL", "Float"],
+    "x_qual_max": ["max value of X_QUAL", "Float"],
+    "x_index_max": ["max value of X_INDEX", "Integer"],
+    "x_qual_min": ["min value of X_QUAL", "Float"],
+    "x_index_min": ["min value of X_INDEX", "Integer"],
     "count_forward": ["number of forward reads", "Integer"],
     "count_reverse": ["number of reverse reads", "Integer"],
     "count_duplicate": ["number of duplicate reads", "Integer"],
     "count_non_duplicate": ["number of non-duplicate reads", "Integer"],
 }
 
-ppm_added_agg_features = {}
-ppm_added_agg_features["st_MINUS"] = ["number of st tagged as MINUS", "Integer"]
-ppm_added_agg_features["st_MIXED"] = ["number of st tagged as MIXED", "Integer"]
-ppm_added_agg_features["st_PLUS"] = ["number of st tagged as PLUS", "Integer"]
-ppm_added_agg_features["st_UNDETERMINED"] = ["number of st tagged as UNDETERMINED", "Integer"]
-ppm_added_agg_features["et_MINUS"] = ["number of et tagged as MINUS", "Integer"]
-ppm_added_agg_features["et_MIXED"] = ["number of et tagged as MIXED", "Integer"]
-ppm_added_agg_features["et_PLUS"] = ["number of et tagged as PLUS", "Integer"]
-ppm_added_agg_features["et_UNDETERMINED"] = ["number of et tagged as UNDETERMINED", "Integer"]
-ppm_added_agg_features["num_mixed_reads"] = ["number of mixed reads", "Integer"]
+ppm_added_agg_features = {
+    "st_minus": ["number of st tagged as MINUS", "Integer"],
+    "st_mixed": ["number of st tagged as MIXED", "Integer"],
+    "st_plus": ["number of st tagged as PLUS", "Integer"],
+    "st_undetermined": ["number of st tagged as UNDETERMINED", "Integer"],
+    "et_minus": ["number of et tagged as MINUS", "Integer"],
+    "et_mixed": ["number of et tagged as MIXED", "Integer"],
+    "et_plus": ["number of et tagged as PLUS", "Integer"],
+    "et_undetermined": ["number of et tagged as UNDETERMINED", "Integer"],
+    "num_mixed_reads": ["number of mixed reads", "Integer"],
+}
 
 
 def record_manual_aggregation(rec, xgb_model=None):  # noqa: C901
     record_info_dict = dict(rec.info)
     record_dict_for_xgb = {}
-
     # add non aggrgate fields
+    record_dict_for_xgb["POS"] = rec.pos
     record_dict_for_xgb["alt_reads"] = rec.samples[0]["AD"][1]
     record_dict_for_xgb["ref_allele"] = rec.alleles[0]
     record_dict_for_xgb["alt_allele"] = rec.alleles[1]
@@ -133,13 +136,13 @@ def record_manual_aggregation(rec, xgb_model=None):  # noqa: C901
 
     # add aggregate fields
     for colname in columns_for_mean_aggregation:
-        agg_colname = colname.upper() + "_mean"
+        agg_colname = colname.lower() + "_mean"
         record_dict_for_xgb[agg_colname] = statistics.mean(record_info_dict[colname])
     for colname in columns_for_min_aggregation:
-        agg_colname = colname.upper() + "_min"
+        agg_colname = colname.lower() + "_min"
         record_dict_for_xgb[agg_colname] = min(record_info_dict[colname])
     for colname in columns_for_max_aggregation:
-        agg_colname = colname.upper() + "_max"
+        agg_colname = colname.lower() + "_max"
         record_dict_for_xgb[agg_colname] = max(record_info_dict[colname])
     record_dict_for_xgb["count_forward"] = record_info_dict["is_forward"].split("|").count("T")
     record_dict_for_xgb["count_reverse"] = record_info_dict["is_forward"].split("|").count("F")
@@ -161,17 +164,93 @@ def record_manual_aggregation(rec, xgb_model=None):  # noqa: C901
         for colname in columns_for_st_et_aggregation:
             tags = ["MINUS", "MIXED", "PLUS", "UNDETERMINED"]
             for tag in tags:
-                record_dict_for_xgb[colname + "_" + tag] = record_info_dict[colname].split("|").count(tag)
+                record_dict_for_xgb[colname + "_" + tag.lower()] = record_info_dict[colname].split("|").count(tag)
 
+    # print(record_dict_for_xgb)
     if xgb_model:
         record_dict_for_xgb["xgb_proba"] = predict_record_with_xgb(record_dict_for_xgb, xgb_model)
 
     return record_dict_for_xgb
 
 
+def df_vcf_manual_aggregation(df_variants, xgb_model=None):  # noqa: C901
+    def aggregate_mean(df, colname):
+        values = []
+        for tup in df[colname]:
+            cleaned_list = list(tup)
+            values.append(statistics.mean(cleaned_list))
+        return values
+
+    def aggregate_min(df, colname):
+        values = []
+        for tup in df[colname]:
+            cleaned_list = list(tup)
+            values.append(min(cleaned_list))
+        return values
+
+    def aggregate_max(df, colname):
+        values = []
+        for tup in df[colname]:
+            cleaned_list = list(tup)
+            values.append(max(cleaned_list))
+        return values
+
+    def parse_st_et_fields(df, colname):
+        tags = ["MINUS", "MIXED", "PLUS", "UNDETERMINED"]
+        for tag in tags:
+            df[colname + "_" + tag.lower()] = df[colname].apply(lambda x, tag=tag: x.split("|").count(tag))
+        return df
+
+    def calculate_num_mixed(df):
+        num_mixed = []
+        for _index, row in df.iterrows():
+            st, et = row["st"], row["et"]
+            st_list = st.split("|")
+            et_list = et.split("|")
+            sum_value = sum(1 for i, j in zip(st_list, et_list, strict=False) if (i == j) & (i == "MIXED"))
+            num_mixed.append(sum_value)
+        df["num_mixed_reads"] = num_mixed
+        return df
+
+    def parse_is_forward(df):
+        df["count_forward"] = df["is_forward"].apply(lambda x: x.split("|").count("T"))
+        df["count_reverse"] = df["is_forward"].apply(lambda x: x.split("|").count("F"))
+        return df
+
+    def parse_is_duplicate(df):
+        df["count_duplicate"] = df["is_duplicate"].apply(lambda x: x.split("|").count("T"))
+        df["count_non_duplicate"] = df["is_duplicate"].apply(lambda x: x.split("|").count("F"))
+        return df
+
+    df_variants["alt_reads"] = [tup[1] for tup in df_variants["ad"]]
+    df_variants["ref_allele"] = [tup[0] for tup in df_variants["alleles"]]
+    df_variants["alt_allele"] = [tup[1] for tup in df_variants["alleles"]]
+    for colname in columns_for_mean_aggregation:
+        agg_colname = colname.lower() + "_mean"
+        df_variants[agg_colname] = aggregate_mean(df_variants, colname.lower())
+    for colname in columns_for_max_aggregation:
+        agg_colname = colname.lower() + "_max"
+        df_variants[agg_colname] = aggregate_max(df_variants, colname.lower())
+    for colname in columns_for_min_aggregation:
+        agg_colname = colname.lower() + "_min"
+        df_variants[agg_colname] = aggregate_min(df_variants, colname.lower())
+    df_variants = parse_is_forward(df_variants)
+    df_variants = parse_is_duplicate(df_variants)
+    df_variants["is_cycle_skip"] = df_variants["is_cycle_skip"].fillna(value=False)
+
+    if "st" in df_variants.columns:
+        for colname in columns_for_st_et_aggregation:
+            df_variants = parse_st_et_fields(df_variants, colname.lower())
+        df_variants = calculate_num_mixed(df_variants)
+
+    if (xgb_model is not None) & (len(df_variants) > 0):
+        df_variants["xgb_proba"] = predict_record_with_xgb(df_variants, xgb_model)
+
+    return df_variants
+
+
 def set_categorial_columns(df):
     categorical_columns = df.select_dtypes(include=["object", "category"]).columns
-    # print(categorical_columns)
     le = LabelEncoder()
     for col in categorical_columns:
         df.loc[:, col] = le.fit_transform(df[col].astype(str))
@@ -198,8 +277,8 @@ def predict_record_with_xgb(record_dict_for_xgb, xgb_model):
             "DP": "dp",
             "X_READ_COUNT": "x_read_count",
             "X_FILTERED_COUNT": "x_filtered_count",
-            "count_forward": "num_is_forward",
             "VAF": "vaf",
+            "POS": "pos",
         }
     )
 
@@ -210,14 +289,95 @@ def predict_record_with_xgb(record_dict_for_xgb, xgb_model):
     # predict record
     probabilities = xgb_clf_es.predict_proba(X)
     df_probabilities = pd.DataFrame(probabilities, columns=["0", "1"])
-    return df_probabilities["1"].to_numpy()[0]
+    return df_probabilities["1"].to_numpy()
+
+
+def predict_record_with_xgb(df_variants, xgb_model):  # noqa: F811
+    """
+    Predict the record with the xgb model
+    Inputs:
+        variants dataframe (pd.DataFrame): A dataframe containing variants information
+        xgb_model (xgboost.XGBClassifier): The xgboost model
+    Output:
+        probability_value (float): The xgb probability of the record to be a true variant
+    """
+
+    # load xgb model
+    xgb_clf_es = xgboost.XGBClassifier()
+    xgb_clf_es.load_model(xgb_model)
+    features = xgb_clf_es.get_booster().feature_names
+
+    X = df_variants[features]  # noqa: N806
+    set_categorial_columns(X)
+    X = X.fillna(0).infer_objects(copy=False)  # noqa: N806
+
+    # predict record
+    probabilities = xgb_clf_es.predict_proba(X)
+    df_probabilities = pd.DataFrame(probabilities, columns=["0", "1"])
+    return df_probabilities["1"].to_numpy()
+
+
+def sort_and_filter_vcf(featuremap_vcf_file, temp_dir, filter_string, interval_srting):
+    sorted_featuremap = pjoin(temp_dir, basename(featuremap_vcf_file).replace(".vcf.gz", ".sorted.vcf.gz"))
+    sorted_filtered_featuremap = pjoin(
+        temp_dir, basename(featuremap_vcf_file).replace(".vcf.gz", ".sorted.filtered.vcf.gz")
+    )
+    sort_cmd = f"bcftools view {featuremap_vcf_file} {interval_srting} |\
+                bcftools sort - -Oz -o {sorted_featuremap} && \
+                bcftools index -t {sorted_featuremap}"
+    logger.debug(sort_cmd)
+    subprocess.check_call(sort_cmd, shell=True)  # noqa: S602
+    if filter_string != "":
+        sort_cmd = f"bcftools view {filter_string} {featuremap_vcf_file} {interval_srting} |\
+                    bcftools sort - -Oz -o {sorted_filtered_featuremap} && \
+                    bcftools index -t {sorted_filtered_featuremap}"
+        logger.debug(sort_cmd)
+        subprocess.check_call(sort_cmd, shell=True)  # noqa: S602
+    else:
+        sorted_filtered_featuremap = sorted_featuremap
+    return sorted_featuremap, sorted_filtered_featuremap
+
+
+def add_agg_fields_to_header(hdr):
+    for field in added_agg_features:
+        field_type = added_agg_features[field][1]
+        field_description = added_agg_features[field][0]
+        hdr.info.add(field, 1, field_type, field_description)
+    if "st" in hdr.info:
+        for field in ppm_added_agg_features:
+            field_type = ppm_added_agg_features[field][1]
+            field_description = ppm_added_agg_features[field][0]
+            hdr.info.add(field, 1, field_type, field_description)
+    hdr.info.add("xgb_proba", 1, "Float", "XGBoost probability of the record to be a true variant")
+
+
+def process_vcf_row(row, df_variants, hdr, vcfout, write_agg_params):
+    pos = row.pos
+    chrom = row.chrom
+    alt_allele = row.alleles[1]
+    df_record = df_variants[
+        (df_variants["chrom"] == chrom) & (df_variants["pos"] == pos) & (df_variants["alt_allele"] == alt_allele)
+    ]
+
+    if len(df_record) > 0:
+        if write_agg_params:
+            for key in added_agg_features:
+                row.info[key] = df_record[key].to_list()[0]
+            if "st" in hdr.info:
+                for key in ppm_added_agg_features:
+                    row.info[key] = df_record[key].to_list()[0]
+        if "xgb_proba" in df_record.columns:
+            row.info["xgb_proba"] = float(df_record["xgb_proba"].to_list()[0])
+    vcfout.write(row)
 
 
 def pileup_featuremap_with_agg_params_and_xgb_proba(  # noqa: C901
     featuremap_vcf_file: str,
     output_vcf: str,
+    filter_tags=None,
     genomic_interval: str = None,
     xgb_model: xgboost.XGBClassifier = None,
+    write_agg_params: bool = True,  # noqa: FBT001, FBT002
     verbose: bool = True,  # noqa: FBT001, FBT002
 ) -> str:
     """
@@ -228,42 +388,25 @@ def pileup_featuremap_with_agg_params_and_xgb_proba(  # noqa: C901
         for handler in logger.handlers:
             handler.setLevel(logging.DEBUG)
 
+    filter_string = f"-f {filter_tags}" if filter_tags else ""
+    interval_srting = genomic_interval if genomic_interval else ""
     with tempfile.TemporaryDirectory(dir=dirname(output_vcf)) as temp_dir:
-        sorted_featuremap = pjoin(temp_dir, basename(featuremap_vcf_file).replace(".vcf.gz", ".sorted.vcf.gz"))
-        if genomic_interval is None:
-            # sort all featuremap
-            sort_cmd = f"bcftools sort {featuremap_vcf_file} -Oz -o {sorted_featuremap} && bcftools index -t {sorted_featuremap}"  # noqa: E501
-        else:
-            # sort only the genomic interval of interest
-            sort_cmd = f"bcftools view {featuremap_vcf_file} {genomic_interval} |\
-                    bcftools sort - -Oz -o {sorted_featuremap} && bcftools index -t {sorted_featuremap}"
-        logger.debug(sort_cmd)
-        subprocess.check_call(sort_cmd, shell=True)  # noqa: S602
+        sorted_featuremap, sorted_filtered_featuremap = sort_and_filter_vcf(
+            featuremap_vcf_file, temp_dir, filter_string, interval_srting
+        )
+
+        # read vcf block to dataframe
+        custom_info_fields = default_custom_info_fields
+        custom_info_fields.extend(ppm_custom_info_fields)
+        df_variants = vcftools.get_vcf_df(sorted_filtered_featuremap, custom_info_fields=custom_info_fields)
+        df_variants = df_vcf_manual_aggregation(df_variants, xgb_model)
 
         with pysam.VariantFile(sorted_featuremap) as vcfin:
             hdr = vcfin.header
-            # adding manual aggregation fields
-            # for field, field_type, field_description in zip(
-            for field in added_agg_features:
-                field_type = added_agg_features[field][1]
-                field_description = added_agg_features[field][0]
-                hdr.info.add(field, 1, field_type, field_description)
-            if "st" in hdr.info:
-                for field in ppm_added_agg_features:
-                    field_type = ppm_added_agg_features[field][1]
-                    field_description = ppm_added_agg_features[field][0]
-                    hdr.info.add(field, 1, field_type, field_description)
-            hdr.info.add("xgb_proba", 1, "Float", "XGBoost probability of the record to be a true variant")
+            add_agg_fields_to_header(hdr)
             with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
                 for row in vcfin:
-                    record_dict_for_xgb = record_manual_aggregation(row, xgb_model)
-                    for key in added_agg_features:
-                        row.info[key] = record_dict_for_xgb[key]
-                    if "st" in hdr.info:
-                        for key in ppm_added_agg_features:
-                            row.info[key] = record_dict_for_xgb[key]
-                    row.info["xgb_proba"] = float(record_dict_for_xgb["xgb_proba"])
-                    vcfout.write(row)
+                    process_vcf_row(row, df_variants, hdr, vcfout, write_agg_params)
             vcfout.close()
             vcfin.close()
     pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
@@ -274,7 +417,9 @@ def pileup_featuremap_with_agg_params_and_xgb_proba_on_an_interval_list(
     featuremap_vcf_file: str,
     output_vcf: str,
     interval_list: str,
+    filter_tags=None,
     xgb_model: str = None,
+    write_agg_params: bool = True,  # noqa: FBT001, FBT002
     verbose: bool = True,  # noqa: FBT001, FBT002
 ) -> None:
     """
@@ -312,8 +457,10 @@ def pileup_featuremap_with_agg_params_and_xgb_proba_on_an_interval_list(
             (
                 featuremap_vcf_file,
                 f"{output_vcf}.{genomic_interval}.int_list.vcf.gz",
+                filter_tags,
                 genomic_interval,
                 xgb_model,
+                write_agg_params,
                 verbose,
             )
             for genomic_interval in genomic_intervals
@@ -322,9 +469,16 @@ def pileup_featuremap_with_agg_params_and_xgb_proba_on_an_interval_list(
         with ThreadPoolExecutor(max_workers=num_cpus) as executor:
             results = list(executor.map(lambda p: pileup_featuremap_with_agg_params_and_xgb_proba(*p), params))
 
-        # merge the output vcfs
-        vcf_str = " ".join(results)
-        cmd = f"bcftools concat {vcf_str} -a | bcftools sort - -Oz -o {output_vcf} && bcftools index -t {output_vcf}"
+        # Write each string to the file
+        with open("interval_vcf_files.list", "w") as file:
+            for interval_vcf_file in results:
+                file.write(interval_vcf_file + "\n")
+
+        cmd = (
+            f"bcftools concat -f interval_vcf_files.list -a | "
+            f"bcftools sort - -Oz -o {output_vcf} && "
+            f"bcftools index -t {output_vcf}"
+        )
         logger.debug(cmd)
         subprocess.check_call(cmd, shell=True)  # noqa: S602
     return output_vcf
@@ -341,6 +495,14 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         type=str,
         required=True,
         help="""Featuremap pileup vcf file""",
+    )
+    parser.add_argument(
+        "-filter_string",
+        "--filter_string",
+        type=str,
+        required=False,
+        default="PASS",
+        help="""filter tags to apply on the featuremap pileup vcf file""",
     )
     parser.add_argument(
         "-o",
@@ -364,6 +526,14 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         help="""XGBoost model file""",
     )
     parser.add_argument(
+        "-write_agg_params",
+        "--write_agg_params",
+        type=bool,
+        required=False,
+        default=True,
+        help="""Whether to write the aggregated parameters (default: True)""",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         type=bool,
@@ -381,7 +551,9 @@ def run(argv):
         args_in.featuremap_pileup,
         args_in.output_vcf,
         args_in.interval_list_file,
+        args_in.filter_string,
         args_in.xgb_model_file,
+        args_in.write_agg_params,
         args_in.verbose,
     )
 
