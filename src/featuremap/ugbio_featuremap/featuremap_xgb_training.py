@@ -119,35 +119,6 @@ def cross_validation(xgb_clf_es, X, y, cv=5, cv_training_diff_cutoff=0.1):  # no
         logger.debug("No clear sign of overfitting.")
 
 
-# def aggregate_vcf(sorted_featuremap: str, output_vcf: str, added_agg_features: dict, ppm_added_agg_features: dict):
-#     with pysam.VariantFile(sorted_featuremap) as vcfin:
-#         ### add new aggregation fields to header
-#         hdr = vcfin.header
-#         for field in added_agg_features:
-#             field_type = added_agg_features[field][1]
-#             field_description = added_agg_features[field][0]
-#             hdr.info.add(field, 1, field_type, field_description)
-#         if "st" in hdr.info:  # for ppmSeq
-#             for field in ppm_added_agg_features:
-#                 field_type = ppm_added_agg_features[field][1]
-#                 field_description = ppm_added_agg_features[field][0]
-#                 hdr.info.add(field, 1, field_type, field_description)
-#         ### calculate aggregation fields per record and write to new out vcf
-#         with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
-#             for row in vcfin:
-#                 record_dict_for_xgb = featuremap_xgb_prediction.record_manual_aggregation(row)
-#                 for key in added_agg_features:
-#                     row.info[key] = record_dict_for_xgb[key]
-#                 if "st" in hdr.info:
-#                     for key in ppm_added_agg_features:
-#                         row.info[key] = record_dict_for_xgb[key]
-#                 vcfout.write(row)
-#         vcfout.close()
-#         vcfin.close()
-#     pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
-#     return output_vcf
-
-
 def aggreagte_vcf_from_vcfeval_dir(
     vcfeval_dir: str,
     added_agg_features: dict,
