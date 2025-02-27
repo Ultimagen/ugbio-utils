@@ -1,6 +1,7 @@
 import argparse
 import logging
 import sys
+from os.path import join as pjoin
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -118,33 +119,45 @@ def cross_validation(xgb_clf_es, X, y, cv=5, cv_training_diff_cutoff=0.1):  # no
         logger.debug("No clear sign of overfitting.")
 
 
-def aggregate_vcf(sorted_featuremap: str, output_vcf: str, added_agg_features: dict, ppm_added_agg_features: dict):
-    with pysam.VariantFile(sorted_featuremap) as vcfin:
-        ### add new aggregation fields to header
-        hdr = vcfin.header
-        for field in added_agg_features:
-            field_type = added_agg_features[field][1]
-            field_description = added_agg_features[field][0]
-            hdr.info.add(field, 1, field_type, field_description)
-        if "st" in hdr.info:  # for ppmSeq
-            for field in ppm_added_agg_features:
-                field_type = ppm_added_agg_features[field][1]
-                field_description = ppm_added_agg_features[field][0]
-                hdr.info.add(field, 1, field_type, field_description)
-        ### calculate aggregation fields per record and write to new out vcf
-        with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
-            for row in vcfin:
-                record_dict_for_xgb = featuremap_xgb_prediction.record_manual_aggregation(row)
-                for key in added_agg_features:
-                    row.info[key] = record_dict_for_xgb[key]
-                if "st" in hdr.info:
-                    for key in ppm_added_agg_features:
-                        row.info[key] = record_dict_for_xgb[key]
-                vcfout.write(row)
-        vcfout.close()
-        vcfin.close()
-    pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
-    return output_vcf
+def aggreagte_vcf_from_vcfeval_dir(
+    vcfeval_dir: str,
+    added_agg_features: dict,
+    ppm_added_agg_features: dict,
+    custom_info_fields: list[str],
+    chromosome: str,
+):
+    tp_vcf = pjoin(vcfeval_dir, "tp.vcf.gz")
+    fp_vcf = pjoin(vcfeval_dir, "fp.vcf.gz")
+
+    # read vcf block to dataframe
+    custom_info_fields = featuremap_xgb_prediction.default_custom_info_fields
+    custom_info_fields.extend(featuremap_xgb_prediction.ppm_custom_info_fields)
+
+    out_vcf = {}
+    for tag, in_vcf in zip(["tp", "fp"], [tp_vcf, fp_vcf], strict=False):
+        out_vcf_file = in_vcf.replace(".vcf.gz", f".{chromosome}.agg_params.vcf.gz")
+        df_variants = vcftools.get_vcf_df(in_vcf, custom_info_fields=custom_info_fields)
+        df_variants = featuremap_xgb_prediction.df_vcf_manual_aggregation(df_variants)
+
+        with pysam.VariantFile(in_vcf) as vcfin:
+            hdr = vcfin.header
+            featuremap_xgb_prediction.add_agg_fields_to_header(hdr)
+            with pysam.VariantFile(out_vcf_file, mode="w", header=hdr) as vcfout:
+                for row in vcfin:
+                    featuremap_xgb_prediction.process_vcf_row(row, df_variants, hdr, vcfout, write_agg_params=True)
+            vcfout.close()
+            vcfin.close()
+        pysam.tabix_index(out_vcf_file, preset="vcf", min_shift=0, force=True)
+        out_vcf[tag] = out_vcf_file
+
+    custom_info_fields.extend(list(added_agg_features))
+    custom_info_fields.extend(list(ppm_added_agg_features))
+    df_fp = vcftools.get_vcf_df(out_vcf["fp"], custom_info_fields=custom_info_fields, chromosome=chromosome)
+    df_tp = vcftools.get_vcf_df(out_vcf["tp"], custom_info_fields=custom_info_fields, chromosome=chromosome)
+    df_fp["label"] = "negative"
+    df_tp["label"] = "positive"
+    df_all_variants = pd.concat([df_fp, df_tp])
+    return df_all_variants
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
@@ -250,12 +263,8 @@ def run(argv):  # noqa: C901,PLR0912,PLR0915
         logger.debug("adding .json suffix to the output vcf file")
         out_file = out_file + ".json"
 
-    if args_in.is_ppmSeq:
-        custom_info_fields.extend(list(ppm_added_agg_features))
-
-    training_features = ["dp", "vaf", "chrom", "pos", "qual", "ref"]
-    training_features.extend(custom_info_fields)
-    training_features = [f.lower() for f in training_features]
+    custom_info_fields = featuremap_xgb_prediction.default_custom_info_fields
+    custom_info_fields.extend(featuremap_xgb_prediction.ppm_custom_info_fields)
 
     # aggregate vcf
     vcf_agg_file = {}
@@ -263,13 +272,26 @@ def run(argv):  # noqa: C901,PLR0912,PLR0915
         ["tp", "fp"], [args_in.featuremap_pileup_tp, args_in.featuremap_pileup_fp], strict=False
     ):
         output_vcf = sorted_featuremap.replace(".vcf.gz", ".agg_params.vcf.gz")
-        output_vcf = aggregate_vcf(sorted_featuremap, output_vcf, added_agg_features, ppm_added_agg_features)
+
+        df_variants = vcftools.get_vcf_df(sorted_featuremap, custom_info_fields=custom_info_fields)
+        df_variants = featuremap_xgb_prediction.df_vcf_manual_aggregation(df_variants)
+        with pysam.VariantFile(sorted_featuremap) as vcfin:
+            hdr = vcfin.header
+            featuremap_xgb_prediction.add_agg_fields_to_header(hdr)
+            with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
+                for row in vcfin:
+                    featuremap_xgb_prediction.process_vcf_row(row, df_variants, hdr, vcfout, write_agg_params=True)
+            vcfout.close()
+            vcfin.close()
+        pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
         vcf_agg_file[tag] = output_vcf
 
     logger.debug("finished writing aggregate params vcf files:")
     logger.debug(vcf_agg_file["fp"])
     logger.debug(vcf_agg_file["tp"])
 
+    custom_info_fields.extend(list(added_agg_features))
+    custom_info_fields.extend(list(ppm_added_agg_features))
     df_fp = vcftools.get_vcf_df(
         vcf_agg_file["fp"], custom_info_fields=custom_info_fields, chromosome=args_in.chromosome
     )
@@ -280,6 +302,12 @@ def run(argv):  # noqa: C901,PLR0912,PLR0915
     df_tp["label"] = "positive"
     df_all_variants = pd.concat([df_fp, df_tp])
     logger.debug("finished reading pileup featurepmap vcf files")
+
+    training_features = ["dp", "vaf", "chrom", "pos", "qual", "ref"]
+    training_features.extend(list(added_agg_features))
+    if args_in.is_ppmSeq:
+        training_features.extend(list(ppm_added_agg_features))
+    training_features = [f.lower() for f in training_features]
 
     lower_cutoff = int(args_in.min_supporting_reads_cutoff)  # noqa: F841
     upper_cutoff = int(args_in.max_supporting_reads_cutoff)  # noqa: F841
