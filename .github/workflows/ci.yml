@@ -15,7 +15,7 @@ env:
   AWS_ROLE_NAME: github-actions-ecr
   AWS_ACCOUNT: 337532070941
   UGBIO_BASE_IMAGE_NAME: ugbio_base:1.3.0
-  UGBIO_UTILS_REPO_PATH: ./install-bio
+  UGBIO_UTILS_REPO_PATH: ./ugbio-utils
   INSTALL_BIO_PATH: ./install-bio
   INSTALL_BIO_REF: main
   INSTALL_BIO_SCRIPT: install-bio.sh
@@ -75,6 +75,8 @@ jobs:
 
   ugbio-utils-bioinfo-CI:
     runs-on: ubuntu-22.04-8core
+    strategy:
+      max-parallel: 5
 
     steps:
       - uses: actions/checkout@v4
@@ -94,11 +96,8 @@ jobs:
       - name: run install-bio.sh
         run: bash ${{ env.INSTALL_BIO_PATH }}/${{ env.INSTALL_BIO_SCRIPT }}
 
-      - name: build python venv
-        working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
-        run: uv sync --all-extras --all-packages
-
       - name: run tests
         working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
         run: |
-          uv run pytest src/ --ignore src/cnv/cnmops
+          ls
+          uv run pytest --durations=0 src/ --ignore src/cnv/cnmops
