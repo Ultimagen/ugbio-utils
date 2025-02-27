@@ -263,9 +263,6 @@ def run(argv):  # noqa: C901,PLR0912,PLR0915
         logger.debug("adding .json suffix to the output vcf file")
         out_file = out_file + ".json"
 
-    # if args_in.is_ppmSeq:
-    #     custom_info_fields.extend(list(ppm_added_agg_features))
-
     custom_info_fields = featuremap_xgb_prediction.default_custom_info_fields
     custom_info_fields.extend(featuremap_xgb_prediction.ppm_custom_info_fields)
 
