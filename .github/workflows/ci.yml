@@ -94,7 +94,9 @@ jobs:
           path: ${{ env.INSTALL_BIO_PATH }}
 
       - name: run install-bio.sh
-        run: bash ${{ env.INSTALL_BIO_PATH }}/${{ env.INSTALL_BIO_SCRIPT }}
+        run: |
+          bash ${{ env.INSTALL_BIO_PATH }}/${{ env.INSTALL_BIO_SCRIPT }}
+          bcftools view -h || echo null
 
       - name: install ugbio-utils venv
         working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
@@ -103,4 +105,5 @@ jobs:
       - name: run tests
         working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
         run: |
+          bcftools view -h || echo null
           uv run pytest --durations=0 src/ --ignore src/cnv/cnmops
