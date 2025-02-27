@@ -74,7 +74,7 @@ jobs:
         ugbio_base_image: ${{ env.UGBIO_BASE_IMAGE_NAME }}
 
   ugbio-utils-bioinfo-CI:
-    runs-on: ubuntu-22.04-8core
+    runs-on: build-docker-4
     strategy:
       max-parallel: 5
 
