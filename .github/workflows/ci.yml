@@ -15,6 +15,10 @@ env:
   AWS_ROLE_NAME: github-actions-ecr
   AWS_ACCOUNT: 337532070941
   UGBIO_BASE_IMAGE_NAME: ugbio_base:1.3.0
+  UGBIO_UTILS_REPO_PATH: ./install-bio
+  INSTALL_BIO_PATH: ./install-bio
+  INSTALL_BIO_REF: master
+  INSTALL_BIO_SCRIPT: install-bio.sh
 
 jobs:
   get-members:
@@ -67,3 +71,32 @@ jobs:
         aws-region: ${{ env.AWS_REGION }}
         aws-role-name: ${{ env.AWS_ROLE_NAME }}
         ugbio_base_image: ${{ env.UGBIO_BASE_IMAGE_NAME }}
+
+  ugbio-utils-bioinfo-CI:
+    runs-on: ubuntu-22.04-8core
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          path: ${{ env.UGBIO_UTILS_REPO_PATH }}
+
+      - name: Checkout install-bio repo
+        uses: actions/checkout@v4
+        with:
+          repository: Ultimagen/install-bio
+          ref: ${{ env.INSTALL_BIO_REF }}
+          token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          fetch-depth: 0
+          path: ${{ env.INSTALL_BIO_PATH }}
+
+      - name: run install-bio.sh
+        run: bash ${{ env.INSTALL_BIO_PATH }}/${{ env.INSTALL_BIO_SCRIPT }}
+
+      - name: build python venv
+        run: uv_env
+
+      - name: run tests
+        run: |
+          cd ${{ env.UGBIO_UTILS_REPO_PATH }}
+          uv run pytest src/ --ignore src/cnv/cnmops
