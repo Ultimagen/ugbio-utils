@@ -96,8 +96,12 @@ jobs:
       - name: run install-bio.sh
         run: bash ${{ env.INSTALL_BIO_PATH }}/${{ env.INSTALL_BIO_SCRIPT }}
 
+      - name: install ugbio-utils venv
+        working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
+        run: uv sync --all-extras --all-packages
+
       - name: run tests
         working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
         run: |
-          ls
+          cnvpytor -download
           uv run pytest --durations=0 src/ --ignore src/cnv/cnmops
