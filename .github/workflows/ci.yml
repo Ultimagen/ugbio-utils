@@ -103,5 +103,4 @@ jobs:
       - name: run tests
         working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
         run: |
-          cnvpytor -download
           uv run pytest --durations=0 src/ --ignore src/cnv/cnmops
