@@ -1,4 +1,5 @@
 import gzip
+import json
 import warnings
 from collections import defaultdict
 from pathlib import Path
@@ -56,10 +57,13 @@ def collect_statistics(
     # Read inputs into df
     trimmer_stats = pd.read_csv(input_files.trimmer_stats_csv)
     df_trimmer_failure_codes = read_trimmer_failure_codes(
-        input_files.trimmer_failure_codes_csv,
-        add_total=True,
+        input_files.trimmer_failure_codes_csv, add_total=True, include_pretrim_filters=False
     )
     sorter_stats = read_sorter_statistics_csv(input_files.sorter_stats_csv)
+    if input_files.sorter_stats_json:
+        with open(input_files.sorter_stats_json) as f:
+            sorter_stats_json = json.load(f)
+        sorter_stats_json_df = pd.DataFrame([sorter_stats_json])
     star_stats = read_star_stats(input_files.star_stats, star_db=star_db)
     star_reads_per_gene = pd.read_csv(input_files.star_reads_per_gene, header=None, sep="\t")
 
@@ -81,6 +85,8 @@ def collect_statistics(
         store.put(H5Keys.STAR_READS_PER_GENE.value, star_reads_per_gene, format="table")
         store.put(H5Keys.INSERT_QUALITY.value, insert_quality, format="table")
         store.put(H5Keys.INSERT_LENGTHS.value, pd.Series(insert_lengths), format="table")
+        if input_files.sorter_stats_json:
+            store.put(H5Keys.SORTER_STATS_JSON.value, sorter_stats_json_df)
 
     return output_filename
 
@@ -195,7 +201,7 @@ def get_insert_properties(insert, max_reads=None) -> tuple[pd.DataFrame, list[in
     return df_insert_quality, insert_lengths
 
 
-def extract_statistics_table(h5_file: Path):
+def extract_statistics_table(h5_file: Path):  # noqa: PLR0915
     """
     Create shortlist of statistics from h5 file and append it to h5 file.
 
@@ -214,13 +220,22 @@ def extract_statistics_table(h5_file: Path):
             raise ValueError("Number of input reads in trimmer statistics is not available.")
         stats["num_input_reads"] = num_input_reads
 
+        # number of Failed reads due to rsq or other prefilters (e.g., subsampling)
+        trimmer_stats_df = store[H5Keys.TRIMMER_STATS.value]
+        trimmer_start_segment_stats_df = trimmer_stats_df[trimmer_stats_df["segment label"] == "start"]
+        num_failed_reads = 0
+        if len(trimmer_start_segment_stats_df) > 0:
+            num_failed_reads = trimmer_start_segment_stats_df["num failures"].sum()
+            stats["num_PF_reads"] = num_input_reads - num_failed_reads
+            stats["pct_PF"] = 100 * (num_input_reads - num_failed_reads) / num_input_reads
+
         # number of Trimmed reads
         num_trimmed_reads_list = store[H5Keys.TRIMMER_STATS.value]["num trimmed reads"].to_numpy()
         num_trimmed_reads = next((x for x in num_trimmed_reads_list if x != 0), None)
         stats["num_trimmed_reads"] = num_trimmed_reads
 
         # pct_pass_trimmer
-        pass_trimmer_rate = num_trimmed_reads / num_input_reads
+        pass_trimmer_rate = num_trimmed_reads / (num_input_reads - num_failed_reads)
         stats["pct_pass_trimmer"] = pass_trimmer_rate * 100
 
         # Mean read length
@@ -284,5 +299,27 @@ def extract_statistics_table(h5_file: Path):
         insertion_rate = float(store[H5Keys.STAR_STATS.value].loc[("unique_reads", "pct_Insertion_rate_per_base")])
         stats["pct_insertion"] = insertion_rate
 
+        # cell_barcode_filter statistics
+        if H5Keys.SORTER_STATS_JSON.value in store:
+            extract_cell_barcode_filter_data(stats, store)
+
     series = pd.Series(stats, dtype="float")
     series.to_hdf(h5_file, key=H5Keys.STATISTICS_SHORTLIST.value)
+
+
+def extract_cell_barcode_filter_data(stats, store):
+    sorter_stats_json_df = store[H5Keys.SORTER_STATS_JSON.value]
+    if "cell_barcode_filter" in sorter_stats_json_df:
+        cell_barcode_filter = sorter_stats_json_df["cell_barcode_filter"].iloc[0]  # get "cell_barcode_filter" dict
+        n_failed_cbcs = cell_barcode_filter["nr_failed_cbcs"]
+        n_good_cbcs_above_thresh = cell_barcode_filter["nr_good_cbcs_above_threshold"]
+        n_failed_cbc_reads = cell_barcode_filter["nr_failed_reads"]
+        n_total_reads = sorter_stats_json_df["total_reads"].iloc[0]
+
+        if (n_failed_cbcs + n_good_cbcs_above_thresh) > 0:
+            percent_failed_cbcs_above_threshold = 100 * n_failed_cbcs / (n_failed_cbcs + n_good_cbcs_above_thresh)
+            stats["pct_failed_cbcs_above_threshold"] = percent_failed_cbcs_above_threshold
+
+        if n_total_reads > 0:
+            percent_cbc_filter_failed_reads = 100 * n_failed_cbc_reads / n_total_reads
+            stats["pct_cbc_filter_failed_reads"] = percent_cbc_filter_failed_reads

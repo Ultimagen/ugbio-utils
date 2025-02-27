@@ -19,7 +19,7 @@ def report_run_completion(run_ids: list, aws_region):
             "source": "ugbio_omics.report_run_completion",
             "account": account_id,
             "region": aws_region,
-            "resources": [f"arn:aws:omics:{aws_region}:{account_id}:run/{run_id}"],
+            "runAnalyzerResult": {"Payload": {"run_id": run_id}},
         }
         response = lambda_client.invoke(
             FunctionName=LAMBDA_FUNCTION_NAME, InvocationType="RequestResponse", Payload=json.dumps(lambda_input)

@@ -1,0 +1,36 @@
+[project]
+name = "ugbio_comparison"
+version = "1.6.2-0dev-106"
+description = "Ultima Genomics comparison scripts"
+authors = [
+    { name = "Ilya Soifer", email = "ilya.soifer@ultimagen.com" },
+    { name = "Doron Shem-Tov", email = "doron.shemtov@ultimagen.com" },
+    { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
+]
+dependencies = [
+    "ugbio_core[concordance,vcfbed]",
+]
+requires-python = ">=3.11"
+readme = "README.comparison.md"
+
+[project.license]
+text = "Apache-2.0"
+
+[project.scripts]
+run_tests = "pytest:main"
+
+[tool.uv]
+dev-dependencies = [
+    "pre-commit>=4.0.1",
+    "pytest>=8.3.3",
+    "ruff>=0.6.9",
+]
+
+[tool.uv.sources.ugbio_core]
+workspace = true
+
+[build-system]
+requires = [
+    "setuptools>=61.0",
+]
+build-backend = "setuptools.build_meta"

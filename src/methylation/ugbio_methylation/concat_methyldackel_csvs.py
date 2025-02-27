@@ -50,7 +50,7 @@ from ugbio_methylation.globals import H5_FILE, MethylDackelConcatenationCsvs
 def parse_args(argv: list[str]) -> tuple[MethylDackelConcatenationCsvs, str]:
     ap_var = argparse.ArgumentParser(
         prog="concat_methyldackel_csvs.py",
-        description="Concatenate CSV output files of MethylDackel processing into an HDF5 file",
+        description=run.__doc__,
     )
     ap_var.add_argument("--mbias", help="csv summary of MethylDackelMbias", type=str, required=True)
     ap_var.add_argument(
@@ -110,11 +110,29 @@ def concat_methyldackel_csvs(
         keys_to_convert = methyl_dackel_concatenation_csvs.get_keys_to_convert()
         store.put("keys_to_convert", pd.Series(keys_to_convert))
 
+        # stats for nexus
+        df_merge_context = pd.read_csv(methyl_dackel_concatenation_csvs.merge_context)
+        df_merge_context_non_cpg = pd.read_csv(methyl_dackel_concatenation_csvs.merge_context_non_cpg)
+        tbl_df = pd.concat(
+            [
+                df_merge_context.query('metric == "PercentMethylation_mean"'),
+                df_merge_context_non_cpg.query('metric == "PercentMethylation_mean"'),
+            ]
+        )
+        tbl_df["key"] = (
+            tbl_df["metric"].str.replace("PercentMethylation_mean", "PCT_methylation_mean") + "_" + tbl_df["detail"]
+        )
+        tbl_df = tbl_df.drop(columns=["detail", "metric"])
+        tbl_df = tbl_df.set_index("key")
+        tbl_df = tbl_df.squeeze(axis=1)
+        store.put("stats_for_nexus", tbl_df)
+
     logger.info(f"Finished concatenating MethylDackel CSVs to {h5_output=}")
     return Path(h5_output)
 
 
 def run(argv: list[str] | None = None):
+    """Concatenate CSV output files of MethylDackel processing into an HDF5 file"""
     if argv is None:
         argv: list[str] = sys.argv
 

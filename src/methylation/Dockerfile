@@ -58,8 +58,11 @@ COPY --from=build $OUT_DIR $OUT_DIR
 
 RUN pip install ${OUT_DIR}/*.whl
 
-COPY --from=build ./src/methylation/ugbio_methylation/reports /src/methylation/ugbio_methylation/reports
 COPY --from=build ./src/methylation/ugbio_methylation/resources/meth_hg38-chr20_Lambda_pUC19.interval_list /app/interval_list/meth_hg38-chr20_Lambda_pUC19.interval_list
+# for avoiding matplotlib warnings
+RUN mkdir -p /app/matplotlib_config && \
+    chmod 777 /app/matplotlib_config
+ENV MPLCONFIGDIR=/app/matplotlib_config
 
 # for runnig CI (can be removed if pytest is installed as part of the venv)
 RUN pip install pytest

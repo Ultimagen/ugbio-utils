@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_methylation"
-version = "1.5.3-0dev-90"
+version = "1.6.2-0dev-106"
 description = "Ultima Genomics methylation bioinfo utils"
 authors = [
     { name = "Gat Krieger", email = "gat.krieger@ultimagen.com" },
@@ -37,7 +37,6 @@ workspace = true
 [tool.setuptools.package-data]
 "*" = [
     "**/reports/*",
-    "**/resources/*",
 ]
 
 [build-system]
