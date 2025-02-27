@@ -95,9 +95,10 @@ jobs:
         run: bash ${{ env.INSTALL_BIO_PATH }}/${{ env.INSTALL_BIO_SCRIPT }}
 
       - name: build python venv
-        run: uv_env
+        working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
+        run: uv sync --all-extras --all-packages
 
       - name: run tests
+        working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
         run: |
-          cd ${{ env.UGBIO_UTILS_REPO_PATH }}
           uv run pytest src/ --ignore src/cnv/cnmops
