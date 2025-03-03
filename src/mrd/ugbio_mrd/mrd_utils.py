@@ -342,7 +342,11 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
                                 rec.samples[tumor_sample][af_field][0]
                                 if tumor_sample
                                 and af_field in rec.samples[tumor_sample]
-                                and len(rec.samples[tumor_sample][af_field]) > 0
+                                and type(rec.samples[tumor_sample][af_field]) is list
+                                else rec.samples[tumor_sample][af_field]
+                                if tumor_sample
+                                and af_field in rec.samples[tumor_sample]
+                                and type(rec.samples[tumor_sample][af_field]) is float
                                 else rec.info[af_field]
                                 if af_field in rec.info
                                 else np.nan
