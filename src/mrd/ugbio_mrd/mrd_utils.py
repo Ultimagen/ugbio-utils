@@ -342,7 +342,10 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
                                 rec.samples[tumor_sample][af_field][0]
                                 if tumor_sample
                                 and af_field in rec.samples[tumor_sample]
-                                and type(rec.samples[tumor_sample][af_field]) is list
+                                and (
+                                    type(rec.samples[tumor_sample][af_field]) is list
+                                    or type(rec.samples[tumor_sample][af_field]) is tuple
+                                )
                                 else rec.samples[tumor_sample][af_field]
                                 if tumor_sample
                                 and af_field in rec.samples[tumor_sample]
