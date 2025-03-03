@@ -113,6 +113,15 @@ def test_read_signature_external(resources_dir):
     _assert_read_signature(signature, expected_signature)
 
 
+def test_read_signature_pileup_featuremap(resources_dir):
+    signature = read_signature(
+        pjoin(resources_dir, "featuremap_pileup_mrd_signature_test.vcf.gz"), return_dataframes=True
+    )
+    expected_signature = pd.read_hdf(pjoin(resources_dir, "featuremap_pileup_mrd_signature_test.expected_output.h5"))
+
+    _assert_read_signature(signature, expected_signature)
+
+
 def test_intersect_featuremap_with_signature(tmpdir, resources_dir):
     signature_file = pjoin(resources_dir, "Pa_46.FreshFrozen.chr20.70039_70995.vcf.gz")
     featuremap_file = pjoin(resources_dir, "Pa_46.bsDNA.chr20_sample.vcf.gz")
