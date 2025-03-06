@@ -174,6 +174,45 @@ def collect_coverage_per_locus_gatk(coverage_csv, df_sig):
     return df_sig
 
 
+def match_vaf_field(header):
+    """ "
+    Match the variant allele frequency (VAF) field, as it is variable between signature-generating programs
+    """
+    format_fields = [x.name for x in header.formats.values()]
+    info_keys = list(header.info.keys())
+    if "AF" in format_fields:
+        if header.formats["AF"].number == "A":
+            # mutect
+            af_field_type = "AF,A"
+    elif "VAF" in format_fields:
+        if header.formats["VAF"].number == "A":
+            # DV
+            af_field_type = "VAF,A"
+        elif header.formats["VAF"].number == 1:
+            # pileup_featuremap
+            af_field_type = "VAF,1"
+    elif "DNA_VAF" in info_keys:
+        # synthetic signature
+        af_field_type = "DNA_VAF,1"
+    else:
+        af_field_type = "no_AF_field_found"
+    return af_field_type
+
+
+def extract_vaf_val(rec, tumor_sample, af_field_type):
+    match af_field_type:
+        case "AF,A":
+            return rec.samples[tumor_sample]["AF"][0]
+        case "VAF,A":
+            return rec.samples[tumor_sample]["VAF"][0]
+        case "VAF,1":
+            return rec.samples[tumor_sample]["VAF"]
+        case "DNA_VAF,1":
+            return rec.info["DNA_VAF"]
+        case "no_AF_field_found":
+            return np.nan
+
+
 def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
     signature_vcf_files: list[str],
     output_parquet: str = None,
@@ -310,18 +349,9 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
             ]
             x_columns = [k for k in info_keys if k.startswith("X_") and k not in columns_to_drop]
             x_columns_name_dict = {k: x_columns_name_dict.get(k, k) for k in x_columns}
-            format_fields = [x.name for x in header.formats.values()]
-            if "AF" in format_fields:
-                # mutect2 vcf
-                af_field = "AF"
-            elif "VAF" in format_fields:
-                # DV vcf
-                af_field = "VAF"
-            elif "DNA_VAF" in info_keys:
-                # synthetic signature
-                af_field = "DNA_VAF"
-            else:
-                af_field = "no_AF_field_found"
+
+            af_field_type = match_vaf_field(header)
+
             logger.debug(f"Reading x_columns: {x_columns}")
 
             for j, rec in enumerate(variant_file):
@@ -338,15 +368,7 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
                             rec.alts[0],
                             rec.id,
                             rec.qual,
-                            (
-                                rec.samples[tumor_sample][af_field][0]
-                                if tumor_sample
-                                and af_field in rec.samples[tumor_sample]
-                                and len(rec.samples[tumor_sample][af_field]) > 0
-                                else rec.info[af_field]
-                                if af_field in rec.info
-                                else np.nan
-                            ),
+                            extract_vaf_val(rec, tumor_sample, af_field_type),
                             (
                                 rec.samples[tumor_sample]["DP"]
                                 if tumor_sample and "DP" in rec.samples[tumor_sample]
