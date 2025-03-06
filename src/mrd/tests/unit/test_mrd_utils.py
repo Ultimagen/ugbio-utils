@@ -45,6 +45,7 @@ def test_read_signature_ug_mutect(tmpdir, resources_dir):
     signature_no_sample_name = read_signature(
         pjoin(resources_dir, "mutect_mrd_signature_test.no_sample_name.vcf.gz"),
         return_dataframes=True,
+        tumor_sample="_10_FFPE",
     )  # make sure we can read the dataframe even if the sample name could not be deduced from the header
     expected_signature = pd.read_hdf(pjoin(resources_dir, "mutect_mrd_signature_test.expected_output.h5"))
     _assert_read_signature(
