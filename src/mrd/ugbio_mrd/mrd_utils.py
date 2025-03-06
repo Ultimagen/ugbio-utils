@@ -200,7 +200,6 @@ def match_vaf_field(header):
 
 
 def extract_vaf_val(rec, tumor_sample, af_field_type):
-    print(rec, tumor_sample, af_field_type)
     match af_field_type:
         case "AF,A":
             return rec.samples[tumor_sample]["AF"][0]
