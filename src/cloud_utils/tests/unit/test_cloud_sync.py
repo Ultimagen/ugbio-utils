@@ -86,8 +86,22 @@ def test_optional_cloud_sync(tmp_path):
     os.makedirs(local_dir)
 
     with patch("ugbio_cloud_utils.cloud_sync.cloud_sync") as mock_cloud_sync:
-        optional_cloud_sync("gs://gs-bucket/obj1", str(local_dir))
-        mock_cloud_sync.assert_called_once()
+        optional_cloud_sync(
+            "gs://gs-bucket/obj1",
+            str(local_dir),
+            print_output=False,
+            force_download=False,
+            raise_error_is_file_exists=False,
+            dry_run=False,
+        )
+        mock_cloud_sync.assert_called_once_with(
+            "gs://gs-bucket/obj1",
+            str(local_dir),
+            print_output=False,
+            force_download=False,
+            raise_error_is_file_exists=False,
+            dry_run=False,
+        )
 
     with patch("ugbio_cloud_utils.cloud_sync.cloud_sync") as mock_cloud_sync:
         result = optional_cloud_sync(str(local_dir), str(local_dir))
