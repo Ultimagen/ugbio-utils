@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_freec"
-version = "1.6.2-0dev-106"
+version = "1.6.2-0dev-109"
 description = "Ultima Genomics FREEC"
 authors = [
     { name = "Tammy Biniashvili", email = "tammy.biniashvili@ultimagen.com" },
