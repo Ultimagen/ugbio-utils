@@ -29,11 +29,11 @@ fields_to_collect_all_options = {
         HistogramColumnNames.STRAND_RATIO_START.value,
         HistogramColumnNames.STRAND_RATIO_END.value,
         "ML_QUAL",
+        "rq",
     ],
     "string_list_fields": [
         FeatureMapFields.X_RN.value,
         FeatureMapFields.X_CIGAR.value,
-        "rq",
         "tm",
         HistogramColumnNames.STRAND_RATIO_CATEGORY_START.value,
         HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value,
