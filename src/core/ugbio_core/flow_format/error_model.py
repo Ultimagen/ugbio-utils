@@ -86,22 +86,59 @@ def get_kr(key_matrix: np.ndarray, idx: int, scale_factor: int = 100) -> np.ndar
     return (key_matrix[idx, :] + scale_factor // 2) // scale_factor
 
 
-def key2base(key: np.ndarray, flow_order: str) -> str:
-    """Convert key to base sequence
-
+def key2base(key, flow_order=None, start=0, return_flow_indices=False):
+    """
+    Convert a list of counts (key) into a sequence of characters based on the specified flow order.
+    
     Parameters
     ----------
-    key : np.ndarray
-        Flow key
-    flow_order : str
-        Flow order
+    key : list of int
+        A list of integers, each indicating how many times a character from the flow order is repeated.
+    
+    flow_order : list of str, optional
+    
+    start : int, optional
+        The starting offset within the flow order. Default is 0.
+    
+    return_flow_indices : bool, optional
+        If True, the function will return a tuple containing:
+          1) The generated sequence (str).
+          2) A list of integers (same length as the sequence) where each integer indicates 
+             the source flow index of the corresponding character in the sequence.
+        Default is False.
 
     Returns
     -------
-    str
-        Sequence
+    str or tuple
+        If return_flow_indices is False (default), returns only the generated sequence (str).
+        If return_flow_indices is True, returns a tuple of:
+          (generated_sequence_str, list_of_flow_indices).
     """
-    return "".join([k * n for k, n in zip(flow_order, key, strict=False)])
+    if flow_order is None:
+        flow_order = ['T', 'G', 'C', 'A']
+
+
+    seq_chars = []
+    flow_indices = []
+
+    for i, count in enumerate(key):
+        # Determine the character for this flow position, factoring in the 'start' offset
+        current_char = flow_order[(start + i) % len(flow_order)]
+        
+        # Extend the sequence by 'count' copies of this character
+        seq_chars.extend([current_char] * count)
+        
+        # If needed, track the flow index for each character
+        if return_flow_indices:
+            flow_index = (start + i) # % len(flow_order)
+            flow_indices.extend([flow_index] * count)
+
+    sequence = ''.join(seq_chars)
+
+    if return_flow_indices:
+        return sequence, np.array(flow_indices)
+
+    return sequence
 
 
 def _calculate_correct_prob(matrix: np.ndarray) -> np.ndarray:
