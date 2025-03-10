@@ -100,18 +100,11 @@ def get_x_location_for_fig(df, df_germline_cov_norm_100k) -> pd.DataFrame:
         start = row["start"] + 1
         end = row["end"] + 1
 
-        print([chr_name, start, end])
-        print(
-            df_germline_cov_norm_100k[
-                (df_germline_cov_norm_100k["chr"] == chr_name) & (df_germline_cov_norm_100k["start"] >= start - 100000)
-            ].head
-        )
         df_region = df_germline_cov_norm_100k[
             (df_germline_cov_norm_100k["chr"] == chr_name)
             & (df_germline_cov_norm_100k["start"] <= end)
             & (df_germline_cov_norm_100k["start"] >= start - 100000)
         ]
-
         start_fig = df_region["start_fig"].to_list()[0]
         end_fig = df_region["start_fig"].to_list()[-1]
 
@@ -324,16 +317,11 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
             "start_fig": df_germline_cov_norm_100k.groupby(["chr"])["start_fig"].max().to_numpy(),
         }
     )
-    if df_chr_graphic["chr"].str.contains("chr").any():
-        df_chr_graphic["chr_num"] = df_chr_graphic["chr"].str.replace("chr", "", regex=True)
-    else:
-        df_chr_graphic["chr_num"] = df_chr_graphic["chr"]
-    df_chr_graphic["chr_num"] = df_chr_graphic["chr_num"].astype(str)  # Convert to string first
+    df_chr_graphic["chr_num"] = df_chr_graphic["chr"].str.replace("chr", "", regex=True)
     df_chr_graphic["chr_num"] = df_chr_graphic["chr_num"].str.replace("X", "23", regex=True)
     df_chr_graphic["chr_num"] = df_chr_graphic["chr_num"].str.replace("Y", "24", regex=True)
     df_chr_graphic["chr_num"] = df_chr_graphic["chr_num"].astype(int)
     df_chr_graphic = df_chr_graphic.sort_values(by=["chr_num"])
-    print(df_chr_graphic)
 
     if is_somatic:
         df_tumor_cov = pd.read_csv(args.tumor_coverage, header=None, sep="\t")
