@@ -28,7 +28,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
         vcf corresponding index file.
     """
     parser = argparse.ArgumentParser(
-        prog="cnv_results_to_vcf.py", description="converts CNV calls in bed format to vcf."
+        prog="convert_combined_cnv_results_to_vcf.py", description="converts CNV calls in bed format to vcf."
     )
 
     parser.add_argument("--cnv_annotated_bed_file", help="input bed file holding CNV calls", required=True, type=str)
@@ -140,6 +140,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
             record.info["SVLEN"] = int(end) - int(start)
             record.info["SVTYPE"] = cnv_type
             record.info["CNV_SOURCE"] = cnv_call_source
+            # record.info["END_POS"] = int(end)
             # record.info['END_POS'] = str(end)
 
             # Set genotype information for each sample
@@ -164,6 +165,8 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
             sys.exit(1)  # Exit with error status
         logger.info(f"output file: {outfile}")
         logger.info(f"output file index: {outfile}.tbi")
+
+        return outfile
 
 
 def main():
