@@ -40,15 +40,17 @@ def annotate_bed(bed_file, lcr_cutoff, lcr_file, prefix, length_cutoff=10000):
     cmd = "cat " + lcr_bed_file + " " + length_bed_file + " > " + out_filters_unsorted
 
     os.system(cmd)  # noqa: S605
+    logger.info(cmd)
+
     out_filters_sorted = prefix + "filters.annotate.bed"
-
     cmd = bedtools + " sort -i " + out_filters_unsorted + " > " + out_filters_sorted
-
     os.system(cmd)  # noqa: S605
+    logger.info(cmd)
+
     out_bed_file_sorted = prefix + os.path.basename(bed_file).rstrip(".bed") + ".sorted.bed"
     cmd = bedtools + " sort -i " + bed_file + " > " + out_bed_file_sorted
-
     os.system(cmd)  # noqa: S605
+    logger.info(cmd)
 
     # annotate bed files by filters
     out_unsorted_annotate = prefix + os.path.basename(bed_file).rstrip(".bed") + ".unsorted.annotate.bed"
@@ -62,6 +64,7 @@ def annotate_bed(bed_file, lcr_cutoff, lcr_file, prefix, length_cutoff=10000):
         + out_unsorted_annotate
     )
     os.system(cmd)  # noqa: S605
+    logger.info(cmd)
     # combine to 4th column
 
     out_combined_info = prefix + os.path.basename(bed_file).rstrip(".bed") + ".unsorted.annotate.combined.bed"
@@ -74,15 +77,17 @@ def annotate_bed(bed_file, lcr_cutoff, lcr_file, prefix, length_cutoff=10000):
         + out_combined_info
     )
     os.system(cmd)  # noqa: S605
+    logger.info(cmd)
 
     out_annotate = prefix + os.path.basename(bed_file).rstrip(".bed") + ".annotate.bed"
     cmd = "sort -k1,1V -k2,2n -k3,3n " + out_combined_info + " > " + out_annotate
     os.system(cmd)  # noqa: S605
+    logger.info(cmd)
 
     out_filtered = prefix + os.path.basename(bed_file).rstrip(".bed") + ".filter.bed"
     cmd = "cat " + out_annotate + " | grep -v \"|\" | sed 's/\t$//' > " + out_filtered
-
     os.system(cmd)  # noqa: S605
+    logger.info(cmd)
 
     return [out_annotate, out_filtered]
 
@@ -136,9 +141,23 @@ def run(argv):
     if args.out_directory:
         prefix = args.out_directory
         prefix = prefix.rstrip("/") + "/"
+    if "--" in args.input_bed_file:
+        cmd = f"cp {args.input_bed_file} {args.input_bed_file.replace('--','-TMP-')}"
+        os.system(cmd)  # noqa: S605
+        args.input_bed_file = args.input_bed_file.replace("--", "-TMP-")
     [out_annotate_bed_file, out_filtered_bed_file] = annotate_bed(
         args.input_bed_file, args.intersection_cutoff, args.cnv_lcr_file, prefix, args.min_cnv_length
     )
+
+    target_file = out_annotate_bed_file.replace("-TMP-", "--")
+    cmd = f"mv {out_annotate_bed_file} {target_file}"
+    os.system(cmd)  # noqa: S605
+    out_annotate_bed_file = target_file
+
+    target_file = out_filtered_bed_file.replace("-TMP-", "--")
+    cmd = f"mv {out_filtered_bed_file} {target_file}"
+    os.system(cmd)  # noqa: S605
+    out_filtered_bed_file = target_file
 
     logger.info("output files:")
     logger.info(out_annotate_bed_file)

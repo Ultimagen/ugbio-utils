@@ -15,6 +15,10 @@ env:
   AWS_ROLE_NAME: github-actions-ecr
   AWS_ACCOUNT: 337532070941
   UGBIO_BASE_IMAGE_NAME: ugbio_base:1.3.0
+  UGBIO_UTILS_REPO_PATH: ./ugbio-utils
+  INSTALL_BIO_PATH: ./install-bio
+  INSTALL_BIO_REF: main
+  INSTALL_BIO_SCRIPT: install-bio.sh
 
 jobs:
   get-members:
@@ -67,3 +71,38 @@ jobs:
         aws-region: ${{ env.AWS_REGION }}
         aws-role-name: ${{ env.AWS_ROLE_NAME }}
         ugbio_base_image: ${{ env.UGBIO_BASE_IMAGE_NAME }}
+
+  ugbio-utils-bioinfo-CI:
+    runs-on: build-docker-4
+    strategy:
+      max-parallel: 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          path: ${{ env.UGBIO_UTILS_REPO_PATH }}
+
+      - name: Checkout install-bio repo
+        uses: actions/checkout@v4
+        with:
+          repository: Ultimagen/install-bio
+          ref: ${{ env.INSTALL_BIO_REF }}
+          token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          fetch-depth: 0
+          path: ${{ env.INSTALL_BIO_PATH }}
+
+      - name: run install-bio.sh
+        run: |
+          bash ${{ env.INSTALL_BIO_PATH }}/${{ env.INSTALL_BIO_SCRIPT }}
+
+      - name: install ugbio-utils venv
+        working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
+        run: uv sync --all-extras --all-packages
+
+      - name: run tests
+        working-directory: ${{ env.UGBIO_UTILS_REPO_PATH }}
+        run: |
+          export PATH=/home/linuxbrew/.linuxbrew/bin/:$PATH
+          uv run cnvpytor -download #needed for test_run_cnvpytor
+          uv run pytest --durations=0 src/ --ignore src/cnv/cnmops
