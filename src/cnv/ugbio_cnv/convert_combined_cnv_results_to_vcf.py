@@ -13,38 +13,7 @@ from ugbio_core.logger import logger
 warnings.filterwarnings("ignore")
 
 
-def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
-    """
-    converts combined CNV calls (from cnmops, cnvpytor, gridss) in bed format to vcf.
-    input arguments:
-    --cnv_annotated_bed_file: input bed file holding CNV calls.
-    --fasta_index_file: (.fai file) tab delimeted file holding reference genome chr ids with their lengths.
-    --out_directory: output directory
-    --sample_name: sample name
-    output files:
-    vcf file: <sample_name>.cnv.vcf.gz
-        shows called CNVs in zipped vcf format.
-    vcf index file: <sample_name>.cnv.vcf.gz.tbi
-        vcf corresponding index file.
-    """
-    parser = argparse.ArgumentParser(
-        prog="convert_combined_cnv_results_to_vcf.py", description="converts CNV calls in bed format to vcf."
-    )
-
-    parser.add_argument("--cnv_annotated_bed_file", help="input bed file holding CNV calls", required=True, type=str)
-    parser.add_argument(
-        "--fasta_index_file",
-        help="tab delimeted file holding reference genome chr ids with their lengths. (.fai file)",
-        required=True,
-        type=str,
-    )
-    parser.add_argument("--out_directory", help="output directory", required=False, type=str)
-    parser.add_argument("--sample_name", help="sample name", required=True, type=str)
-    parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO")
-
-    args = parser.parse_args(argv[1:])
-    logger.setLevel(getattr(logging, args.verbosity))
-
+def add_vcf_header(sample_name, fasta_index_file):
     header = pysam.VariantHeader()
 
     # Add meta-information to the header
@@ -52,13 +21,12 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
     header.add_meta("source", value="ULTIMA_CNV")
 
     # Add sample names to the header
-    sample_name = args.sample_name
     header.add_sample(sample_name)
 
     header.add_line("##VCF_TYPE=ULTIMA_CNV")
 
     # Add contigs info to the header
-    df_genome = pd.read_csv(args.fasta_index_file, sep="\t", header=None, usecols=[0, 1])
+    df_genome = pd.read_csv(fasta_index_file, sep="\t", header=None, usecols=[0, 1])
     df_genome.columns = ["chr", "length"]
     for _, row in df_genome.iterrows():
         chr_id = row["chr"]
@@ -91,15 +59,12 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
     # Add FORMAT
     header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
 
-    # Open a VCF file for writing
-    if args.out_directory:
-        out_directory = args.out_directory
-    else:
-        out_directory = ""
-    outfile = pjoin(out_directory, sample_name + ".cnv.vcf.gz")
+    return header
 
+
+def write_vcf(outfile, header, cnv_annotated_bed_file, sample_name):
     with pysam.VariantFile(outfile, mode="w", header=header) as vcf_out:
-        df_cnvs = pd.read_csv(args.cnv_annotated_bed_file, sep="\t", header=None)
+        df_cnvs = pd.read_csv(cnv_annotated_bed_file, sep="\t", header=None)
         df_cnvs.columns = ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "UG-CNV-LCR"]
 
         for _, row in df_cnvs.iterrows():
@@ -140,8 +105,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
             record.info["SVLEN"] = int(end) - int(start)
             record.info["SVTYPE"] = cnv_type
             record.info["CNV_SOURCE"] = cnv_call_source
-            # record.info["END_POS"] = int(end)
-            # record.info['END_POS'] = str(end)
+            # END position is automatically generated for multi-base variants
 
             # Set genotype information for each sample
             gt = [None, 1]
@@ -155,16 +119,60 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
             # Write the record to the VCF file
             vcf_out.write(record)
 
-        try:
-            cmd = ["bcftools", "index", "-t", outfile]
-            subprocess.check_call(cmd)
-        except subprocess.CalledProcessError as e:
-            logging.error(f"bcftools index command failed with exit code: {e.returncode}")
-            sys.exit(1)  # Exit with error status
-        logger.info(f"output file: {outfile}")
-        logger.info(f"output file index: {outfile}.tbi")
 
-        return outfile
+def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
+    """
+    converts combined CNV calls (from cnmops, cnvpytor, gridss) in bed format to vcf.
+    input arguments:
+    --cnv_annotated_bed_file: input bed file holding CNV calls.
+    --fasta_index_file: (.fai file) tab delimeted file holding reference genome chr ids with their lengths.
+    --out_directory: output directory
+    --sample_name: sample name
+    output files:
+    vcf file: <sample_name>.cnv.vcf.gz
+        shows called CNVs in zipped vcf format.
+    vcf index file: <sample_name>.cnv.vcf.gz.tbi
+        vcf corresponding index file.
+    """
+    parser = argparse.ArgumentParser(
+        prog="convert_combined_cnv_results_to_vcf.py", description="converts CNV calls in bed format to vcf."
+    )
+
+    parser.add_argument("--cnv_annotated_bed_file", help="input bed file holding CNV calls", required=True, type=str)
+    parser.add_argument(
+        "--fasta_index_file",
+        help="tab delimeted file holding reference genome chr ids with their lengths. (.fai file)",
+        required=True,
+        type=str,
+    )
+    parser.add_argument("--out_directory", help="output directory", required=False, type=str)
+    parser.add_argument("--sample_name", help="sample name", required=True, type=str)
+    parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO")
+
+    args = parser.parse_args(argv[1:])
+    logger.setLevel(getattr(logging, args.verbosity))
+
+    header = add_vcf_header(args.sample_name, args.fasta_index_file)
+
+    # Open a VCF file for writing
+    if args.out_directory:
+        out_directory = args.out_directory
+    else:
+        out_directory = ""
+    outfile = pjoin(out_directory, args.sample_name + ".cnv.vcf.gz")
+    write_vcf(outfile, header, args.cnv_annotated_bed_file, args.sample_name)
+
+    # index outfile
+    try:
+        cmd = ["bcftools", "index", "-t", outfile]
+        subprocess.check_call(cmd)
+    except subprocess.CalledProcessError as e:
+        logging.error(f"bcftools index command failed with exit code: {e.returncode}")
+        sys.exit(1)  # Exit with error status
+
+    logger.info(f"output file: {outfile}")
+    logger.info(f"output file index: {outfile}.tbi")
+    return outfile
 
 
 def main():
