@@ -120,7 +120,7 @@ def write_vcf(outfile, header, cnv_annotated_bed_file, sample_name):
             vcf_out.write(record)
 
 
-def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
+def run(argv):
     """
     converts combined CNV calls (from cnmops, cnvpytor, gridss) in bed format to vcf.
     input arguments:
