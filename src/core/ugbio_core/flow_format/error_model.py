@@ -86,24 +86,24 @@ def get_kr(key_matrix: np.ndarray, idx: int, scale_factor: int = 100) -> np.ndar
     return (key_matrix[idx, :] + scale_factor // 2) // scale_factor
 
 
-def key2base(key, flow_order=None, start=0, * ,return_flow_indices=False):
+def key2base(key, flow_order=None, start=0, *, return_flow_indices=False):
     """
     Convert a list of counts (key) into a sequence of characters based on the specified flow order.
-    
+
     Parameters
     ----------
     key : list of int
         A list of integers, each indicating how many times a character from the flow order is repeated.
-    
+
     flow_order : list of str, optional
-    
+
     start : int, optional
         The starting offset within the flow order. Default is 0.
-    
+
     return_flow_indices : bool, optional
         If True, the function will return a tuple containing:
           1) The generated sequence (str).
-          2) A list of integers (same length as the sequence) where each integer indicates 
+          2) A list of integers (same length as the sequence) where each integer indicates
              the source flow index of the corresponding character in the sequence.
         Default is False.
 
@@ -115,8 +115,7 @@ def key2base(key, flow_order=None, start=0, * ,return_flow_indices=False):
           (generated_sequence_str, list_of_flow_indices).
     """
     if flow_order is None:
-        flow_order = ['T', 'G', 'C', 'A']
-
+        flow_order = ["T", "G", "C", "A"]
 
     seq_chars = []
     flow_indices = []
@@ -124,16 +123,16 @@ def key2base(key, flow_order=None, start=0, * ,return_flow_indices=False):
     for i, count in enumerate(key):
         # Determine the character for this flow position, factoring in the 'start' offset
         current_char = flow_order[(start + i) % len(flow_order)]
-        
+
         # Extend the sequence by 'count' copies of this character
         seq_chars.extend([current_char] * count)
-        
+
         # If needed, track the flow index for each character
         if return_flow_indices:
-            flow_index = (start + i) # % len(flow_order)
+            flow_index = start + i  # % len(flow_order)
             flow_indices.extend([flow_index] * count)
 
-    sequence = ''.join(seq_chars)
+    sequence = "".join(seq_chars)
 
     if return_flow_indices:
         return sequence, np.array(flow_indices)
