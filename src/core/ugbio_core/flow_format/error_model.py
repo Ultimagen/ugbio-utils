@@ -86,7 +86,7 @@ def get_kr(key_matrix: np.ndarray, idx: int, scale_factor: int = 100) -> np.ndar
     return (key_matrix[idx, :] + scale_factor // 2) // scale_factor
 
 
-def key2base(key, flow_order=None, start=0, return_flow_indices=False):
+def key2base(key, flow_order=None, start=0, * ,return_flow_indices=False):
     """
     Convert a list of counts (key) into a sequence of characters based on the specified flow order.
     
