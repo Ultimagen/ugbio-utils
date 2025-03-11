@@ -30,7 +30,7 @@ class TestCombineCnmopsCnvpytorCnvCalls:
                 input_cnmops_file,
                 "--cnvpytor_cnv_calls",
                 input_cnvpytor_file,
-                "--DEL_jalign_merged_results",
+                "--del_jalign_merged_results",
                 input_jalign_file,
                 "--ug_cnv_lcr",
                 input_ug_cnv_lcr_file,

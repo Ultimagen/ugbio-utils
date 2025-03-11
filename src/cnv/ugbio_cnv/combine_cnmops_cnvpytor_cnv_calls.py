@@ -24,7 +24,7 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         "--cnvpytor_cnv_calls", help="input bed file holding cnvpytor CNV calls", required=True, type=str
     )
     parser.add_argument(
-        "--DEL_jalign_merged_results", help="jaign results for Deletions in tsv format", required=True, type=str
+        "--del_jalign_merged_results", help="jaign results for Deletions in tsv format", required=True, type=str
     )
     parser.add_argument(
         "--deletions_length_cutoff", help="deletions length cutoff", required=False, type=int, default=3000
@@ -61,52 +61,52 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def get_cnmops_cnv_calls(cnmops_cnv_calls, sample_name, out_directory):
-    cnmops_cnvs_DUP = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.bed")  # noqa: N806
+    cnmops_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.bed")
     run_cmd(
         f"cat {cnmops_cnv_calls} | awk -F \"N\" '$NF>2' | \
             bedtools merge -d 1500 -c 4 -o distinct -i - | \
             awk '$3-$2>=10000' | \
             sed 's/$/\\tDUP\\tcn.mops/' | \
-            cut -f1,2,3,5,6,4 > {cnmops_cnvs_DUP}"
+            cut -f1,2,3,5,6,4 > {cnmops_cnvs_dup}"
     )
 
-    df_cnmops_cnvs_DUP = pd.read_csv(cnmops_cnvs_DUP, sep="\t", header=None)  # noqa: N806
-    df_cnmops_cnvs_DUP.columns = ["chrom", "start", "end", "CN", "CNV_type", "source"]
-    df_cnmops_cnvs_DUP["copy_number"] = df_cnmops_cnvs_DUP["CN"].apply(lambda x: x.replace("CN", ""))
+    df_cnmops_cnvs_dup = pd.read_csv(cnmops_cnvs_dup, sep="\t", header=None)
+    df_cnmops_cnvs_dup.columns = ["chrom", "start", "end", "CN", "CNV_type", "source"]
+    df_cnmops_cnvs_dup["copy_number"] = df_cnmops_cnvs_dup["CN"].apply(lambda x: x.replace("CN", ""))
 
-    out_cnmops_cnvs_DUP = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.all_fields.bed")  # noqa: N806
-    df_cnmops_cnvs_DUP[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
-        out_cnmops_cnvs_DUP, sep="\t", header=None, index=False
+    out_cnmops_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.all_fields.bed")
+    df_cnmops_cnvs_dup[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
+        out_cnmops_cnvs_dup, sep="\t", header=None, index=False
     )
 
-    return out_cnmops_cnvs_DUP
+    return out_cnmops_cnvs_dup
 
 
 def get_cnvpytor_cnv_calls(cnvpytor_cnv_calls, sample_name, out_directory):
-    cnvpytor_cnvs_DUP = pjoin(out_directory, f"{sample_name}.cnvpytor_cnvs.DUP.bed")  # noqa: N806
-    run_cmd(f"cat {cnvpytor_cnv_calls} |  grep \"duplication\" | sed 's/$/\\tDUP\\tcnvpytor/'  > {cnvpytor_cnvs_DUP}")
+    cnvpytor_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnvpytor_cnvs.DUP.bed")
+    run_cmd(f"cat {cnvpytor_cnv_calls} |  grep \"duplication\" | sed 's/$/\\tDUP\\tcnvpytor/'  > {cnvpytor_cnvs_dup}")
 
-    df_cnvpytor_cnvs_DUP = pd.read_csv(cnvpytor_cnvs_DUP, sep="\t", header=None)  # noqa: N806
-    df_cnvpytor_cnvs_DUP.columns = ["chrom", "start", "end", "CN", "CNV_type", "source"]
-    df_cnvpytor_cnvs_DUP["copy_number"] = "DUP"
-    out_cnvpytor_cnvs_DUP = pjoin(out_directory, f"{sample_name}.cnvpytor_cnvs.DUP.all_fields.bed")  # noqa: N806
-    df_cnvpytor_cnvs_DUP[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
-        out_cnvpytor_cnvs_DUP, sep="\t", header=None, index=False
+    df_cnvpytor_cnvs_dup = pd.read_csv(cnvpytor_cnvs_dup, sep="\t", header=None)
+    df_cnvpytor_cnvs_dup.columns = ["chrom", "start", "end", "CN", "CNV_type", "source"]
+    df_cnvpytor_cnvs_dup["copy_number"] = "DUP"
+    out_cnvpytor_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnvpytor_cnvs.DUP.all_fields.bed")
+    df_cnvpytor_cnvs_dup[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
+        out_cnvpytor_cnvs_dup, sep="\t", header=None, index=False
     )
 
-    return out_cnvpytor_cnvs_DUP
+    return out_cnvpytor_cnvs_dup
 
 
-def process_DEL_jalign_results(  # noqa: N802
-    DEL_jalign_results,  # noqa: N803
+def process_del_jalign_results(
+    del_jalign_results,
     sample_name,
     out_directory,
     deletions_length_cutoff=3000,
     jalign_written_cutoff=1,
 ):
     # reads jalign results
-    df_cnmops_cnvpytor_DEL = pd.read_csv(DEL_jalign_results, sep="\t", header=None)  # noqa: N806
-    df_cnmops_cnvpytor_DEL.columns = [
+    df_cnmops_cnvpytor_del = pd.read_csv(del_jalign_results, sep="\t", header=None)
+    df_cnmops_cnvpytor_del.columns = [
         "chrom",
         "start",
         "end",
@@ -121,41 +121,41 @@ def process_DEL_jalign_results(  # noqa: N802
         "jumpland_max",
         "jumpland_avg",
     ]
-    df_cnmops_cnvpytor_DEL["len"] = df_cnmops_cnvpytor_DEL["end"] - df_cnmops_cnvpytor_DEL["start"]
-    df_cnmops_cnvpytor_DEL["source"] = df_cnmops_cnvpytor_DEL["CN"].apply(
+    df_cnmops_cnvpytor_del["len"] = df_cnmops_cnvpytor_del["end"] - df_cnmops_cnvpytor_del["start"]
+    df_cnmops_cnvpytor_del["source"] = df_cnmops_cnvpytor_del["CN"].apply(
         lambda x: "cn.mops" if pd.Series(x).str.contains("CN").any() else "cnvpytor"
     )
-    df_cnmops_cnvpytor_DEL["CNV_type"] = "DEL"
-    df_cnmops_cnvpytor_DEL["copy_number"] = df_cnmops_cnvpytor_DEL["CN"].apply(lambda x: x.replace("CN", ""))
-    df_cnmops_cnvpytor_DEL["copy_number"] = df_cnmops_cnvpytor_DEL["copy_number"].apply(
+    df_cnmops_cnvpytor_del["CNV_type"] = "DEL"
+    df_cnmops_cnvpytor_del["copy_number"] = df_cnmops_cnvpytor_del["CN"].apply(lambda x: x.replace("CN", ""))
+    df_cnmops_cnvpytor_del["copy_number"] = df_cnmops_cnvpytor_del["copy_number"].apply(
         lambda x: "DEL" if pd.Series(x).str.contains("deletion").any() else x
     )
-    df_cnmops_cnvpytor_DEL_filtered = df_cnmops_cnvpytor_DEL[  # noqa: N806
-        (df_cnmops_cnvpytor_DEL["jalign_written"] >= jalign_written_cutoff)
-        | (df_cnmops_cnvpytor_DEL["len"] > deletions_length_cutoff)
+    df_cnmops_cnvpytor_del_filtered = df_cnmops_cnvpytor_del[
+        (df_cnmops_cnvpytor_del["jalign_written"] >= jalign_written_cutoff)
+        | (df_cnmops_cnvpytor_del["len"] > deletions_length_cutoff)
     ]
 
-    out_DEL_jalign = pjoin(  # noqa: N806
+    out_del_jalign = pjoin(
         out_directory,
         f"{sample_name}.cnmops_cnvpytor.DEL.jalign_lt{str(jalign_written_cutoff)}_or_len_lt{str(deletions_length_cutoff)}.bed",
     )
-    df_cnmops_cnvpytor_DEL_filtered[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
-        out_DEL_jalign, sep="\t", header=None, index=False
+    df_cnmops_cnvpytor_del_filtered[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
+        out_del_jalign, sep="\t", header=None, index=False
     )
 
-    out_DEL_jalign_merged = pjoin(  # noqa: N806
+    out_del_jalign_merged = pjoin(
         out_directory,
         f"{sample_name}.cnmops_cnvpytor.DEL.jalign_lt{str(jalign_written_cutoff)}_or_len_lt{str(deletions_length_cutoff)}.merged.bed",
     )
     run_cmd(
-        f"cat {out_DEL_jalign} | bedtools sort -i - | \
-            bedtools merge -d 1500 -c 4,5,6 -o distinct  -i -  > {out_DEL_jalign_merged}"
+        f"cat {out_del_jalign} | bedtools sort -i - | \
+            bedtools merge -d 1500 -c 4,5,6 -o distinct  -i -  > {out_del_jalign_merged}"
     )
 
-    return out_DEL_jalign_merged
+    return out_del_jalign_merged
 
 
-def get_cnmops_cnvpytor_common_DEL(del_candidates, sample_name, out_directory):  # noqa: N802
+def get_cnmops_cnvpytor_common_del(del_candidates, sample_name, out_directory):
     del_candidates_called_by_both_cnmops_cnvpytor = pjoin(
         out_directory, "{sample_name}.del_candidates_called_by_both_cnmops_cnvpytor.bed"
     )
@@ -173,10 +173,10 @@ def get_cnmops_cnvpytor_common_DEL(del_candidates, sample_name, out_directory): 
 
     copy_number_list = []
     for __index, row in df_del_candidates_called_by_both_cnmops_cnvpytor.iterrows():
-        CN = row["CN"]  # noqa: N806
-        CN_list = CN.split(",")  # noqa: N806
+        cn = row["cn"]
+        cn_list = cn.split(",")
         copy_number_value = ""
-        for val in CN_list:
+        for val in cn_list:
             if "CN" in val:
                 copy_number_value = copy_number_value + f"{val.split('CN')[1]},"
         copy_number_value = copy_number_value + "DEL"
@@ -199,7 +199,7 @@ def run(argv):
     input arguments:
     --cnmops_cnv_calls: input bed file holding cn.mops CNV calls
     --cnvpytor_cnv_calls: input bed file holding cnvpytor CNV calls
-    --DEL_jalign_merged_results: jalign results for Deletions in tsv format.
+    --del_jalign_merged_results: jalign results for Deletions in tsv format.
 
     output files:
     bed file: <sample_name>.cnmops_cnvpytor.cnvs.combined.bed
@@ -215,28 +215,28 @@ def run(argv):
     ############################
     ### process DUPlications ###
     ############################
-    out_cnmops_cnvs_DUP = get_cnmops_cnv_calls(args.cnmops_cnv_calls, sample_name, out_directory)  # noqa: N806
-    out_cnvpytor_cnvs_DUP = get_cnvpytor_cnv_calls(args.cnvpytor_cnv_calls, sample_name, out_directory)  # noqa: N806
+    out_cnmops_cnvs_dup = get_cnmops_cnv_calls(args.cnmops_cnv_calls, sample_name, out_directory)
+    out_cnvpytor_cnvs_dup = get_cnvpytor_cnv_calls(args.cnvpytor_cnv_calls, sample_name, out_directory)
     # merge duplications
-    cnmops_cnvpytor_merged_DUP = pjoin(out_directory, f"{sample_name}.cnmops_cnvpytor.DUP.merged.bed")  # noqa: N806
+    cnmops_cnvpytor_merged_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvpytor.DUP.merged.bed")
     run_cmd(
-        f"cat {out_cnmops_cnvs_DUP} {out_cnvpytor_cnvs_DUP} | bedtools sort -i - | \
-        bedtools merge -d 1500 -c 4,5,6 -o distinct -i - > {cnmops_cnvpytor_merged_DUP}"
+        f"cat {out_cnmops_cnvs_dup} {out_cnvpytor_cnvs_dup} | bedtools sort -i - | \
+        bedtools merge -d 1500 -c 4,5,6 -o distinct -i - > {cnmops_cnvpytor_merged_dup}"
     )
 
     ############################
     ###  process DELetions   ###
     ############################
 
-    out_DEL_jalign_merged = process_DEL_jalign_results(  # noqa: N806
-        args.DEL_jalign_merged_results,  # noqa: N806
+    out_del_jalign_merged = process_del_jalign_results(
+        args.del_jalign_merged_results,
         sample_name,
         out_directory,
         args.deletions_length_cutoff,
         args.jalign_written_cutoff,
     )
-    out_del_candidates_called_by_both_cnmops_cnvpytor = get_cnmops_cnvpytor_common_DEL(
-        args.DEL_jalign_merged_results, sample_name, out_directory
+    out_del_candidates_called_by_both_cnmops_cnvpytor = get_cnmops_cnvpytor_common_del(
+        args.del_jalign_merged_results, sample_name, out_directory
     )
     # merge deletions
     out_del_calls = pjoin(
@@ -244,13 +244,13 @@ def run(argv):
         f"{sample_name}.cnmops_cnvpytor.DEL.jalign_lt{str(args.jalign_written_cutoff)}_or_len_lt{str(args.deletions_length_cutoff)}.called_by_both_cnmops_cnvpytor.bedtools_merge.bed",
     )
     run_cmd(
-        f"cat {out_DEL_jalign_merged} {out_del_candidates_called_by_both_cnmops_cnvpytor} | \
+        f"cat {out_del_jalign_merged} {out_del_candidates_called_by_both_cnmops_cnvpytor} | \
             bedtools sort -i - | bedtools merge -d 1500 -c 4,5,6 -o distinct  -i - > {out_del_calls}"
     )
 
     # combine results
     out_cnvs_combined = pjoin(out_directory, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.bed")
-    run_cmd(f"cat {cnmops_cnvpytor_merged_DUP} {out_del_calls} | bedtools sort -i - > {out_cnvs_combined}")
+    run_cmd(f"cat {cnmops_cnvpytor_merged_dup} {out_del_calls} | bedtools sort -i - > {out_cnvs_combined}")
     logger.info(f"out_cnvs_combined: {out_cnvs_combined}")
 
     # annotate with ug-cnv-lcr
