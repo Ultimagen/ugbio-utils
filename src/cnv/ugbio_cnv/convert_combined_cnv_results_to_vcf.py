@@ -155,13 +155,11 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 #TODO: Refactor this function
             # Write the record to the VCF file
             vcf_out.write(record)
 
-        vcf_out.close()
-
         try:
             cmd = ["bcftools", "index", "-t", outfile]
             subprocess.check_call(cmd)
         except subprocess.CalledProcessError as e:
-            print(f"bcftools index command failed with exit code: {e.returncode}")
+            logging.error(f"bcftools index command failed with exit code: {e.returncode}")
             sys.exit(1)  # Exit with error status
         logger.info(f"output file: {outfile}")
         logger.info(f"output file index: {outfile}.tbi")
