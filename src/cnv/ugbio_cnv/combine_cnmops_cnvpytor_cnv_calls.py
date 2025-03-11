@@ -173,7 +173,7 @@ def get_cnmops_cnvpytor_common_del(del_candidates, sample_name, out_directory):
 
     copy_number_list = []
     for __index, row in df_del_candidates_called_by_both_cnmops_cnvpytor.iterrows():
-        cn = row["cn"]
+        cn = row["CN"]
         cn_list = cn.split(",")
         copy_number_value = ""
         for val in cn_list:
