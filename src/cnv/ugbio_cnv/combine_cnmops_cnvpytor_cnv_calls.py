@@ -60,7 +60,16 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv[1:])
 
 
-def get_cnmops_cnv_calls(cnmops_cnv_calls, sample_name, out_directory):
+def get_dup_cnmops_cnv_calls(cnmops_cnv_calls: str, sample_name: str, out_directory: str) -> str:
+    """
+    Args:
+        cnmops_cnv_calls (str): Input bed file holding cn.mops CNV calls.
+        sample_name (str): Sample name.
+        out_directory (str): Out folder to store results.
+
+    Returns:
+        str: duplications called by cn.mops bed file.
+    """
     cnmops_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.bed")
     run_cmd(
         f"cat {cnmops_cnv_calls} | awk -F \"N\" '$NF>2' | \
@@ -82,7 +91,15 @@ def get_cnmops_cnv_calls(cnmops_cnv_calls, sample_name, out_directory):
     return out_cnmops_cnvs_dup
 
 
-def get_cnvpytor_cnv_calls(cnvpytor_cnv_calls, sample_name, out_directory):
+def get_dup_cnvpytor_cnv_calls(cnvpytor_cnv_calls: str, sample_name: str, out_directory: str) -> str:
+    """
+    Args:
+        cnvpytor_cnv_calls (str): Input bed file holding cnvpytor CNV calls.
+        sample_name (str): Sample name.
+        out_directory (str): Out folder to store results.
+    Returns:
+        str: duplications called by cnvpytor bed file.
+    """
     cnvpytor_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnvpytor_cnvs.DUP.bed")
     run_cmd(f"cat {cnvpytor_cnv_calls} |  grep \"duplication\" | sed 's/$/\\tDUP\\tcnvpytor/'  > {cnvpytor_cnvs_dup}")
 
@@ -98,12 +115,22 @@ def get_cnvpytor_cnv_calls(cnvpytor_cnv_calls, sample_name, out_directory):
 
 
 def process_del_jalign_results(
-    del_jalign_results,
-    sample_name,
-    out_directory,
-    deletions_length_cutoff=3000,
-    jalign_written_cutoff=1,
-):
+    del_jalign_results: str,
+    sample_name: str,
+    out_directory: str,
+    deletions_length_cutoff: int = 3000,
+    jalign_written_cutoff: int = 1,
+) -> str:
+    """
+    Args:
+        del_jalign_results (str): jalign results for Deletions in tsv format.
+        sample_name (str): Sample name.
+        out_directory (str): Out folder to store results.
+        deletions_length_cutoff (int): Deletions length cutoff.
+        jalign_written_cutoff (int): Minimal number of supporting jaligned reads for DEL.
+    Returns:
+        str: deletions called by cn.mops and cnvpytor bed file.
+    """
     # reads jalign results
     df_cnmops_cnvpytor_del = pd.read_csv(del_jalign_results, sep="\t", header=None)
     df_cnmops_cnvpytor_del.columns = [
@@ -155,7 +182,15 @@ def process_del_jalign_results(
     return out_del_jalign_merged
 
 
-def get_cnmops_cnvpytor_common_del(del_candidates, sample_name, out_directory):
+def get_cnmops_cnvpytor_common_del(del_candidates: str, sample_name: str, out_directory: str) -> str:
+    """
+    Args:
+        del_candidates (str): All deletions candidates (jalign results for Deletions in tsv format).
+        sample_name (str): Sample name.
+        out_directory (str): Out folder to store results.
+    Returns:
+        str: deletions called by cn.mops and cnvpytor bed file (regardless of jalign results).
+    """
     del_candidates_called_by_both_cnmops_cnvpytor = pjoin(
         out_directory, "{sample_name}.del_candidates_called_by_both_cnmops_cnvpytor.bed"
     )
@@ -215,8 +250,8 @@ def run(argv):
     ############################
     ### process DUPlications ###
     ############################
-    out_cnmops_cnvs_dup = get_cnmops_cnv_calls(args.cnmops_cnv_calls, sample_name, out_directory)
-    out_cnvpytor_cnvs_dup = get_cnvpytor_cnv_calls(args.cnvpytor_cnv_calls, sample_name, out_directory)
+    out_cnmops_cnvs_dup = get_dup_cnmops_cnv_calls(args.cnmops_cnv_calls, sample_name, out_directory)
+    out_cnvpytor_cnvs_dup = get_dup_cnvpytor_cnv_calls(args.cnvpytor_cnv_calls, sample_name, out_directory)
     # merge duplications
     cnmops_cnvpytor_merged_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvpytor.DUP.merged.bed")
     run_cmd(
