@@ -13,7 +13,15 @@ from ugbio_core.logger import logger
 warnings.filterwarnings("ignore")
 
 
-def add_vcf_header(sample_name, fasta_index_file):
+def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHeader:
+    """
+    Create a VCF header, for CNV calls, with the given sample name and reference genome information.
+    Args:
+        sample_name (str): The name of the sample.
+        fasta_index_file (str): Path to the reference genome index file (.fai).
+    Returns:
+        pysam.VariantHeader: The VCF header with the specified sample name and reference genome information.
+    """
     header = pysam.VariantHeader()
 
     # Add meta-information to the header
@@ -62,7 +70,18 @@ def add_vcf_header(sample_name, fasta_index_file):
     return header
 
 
-def write_vcf(outfile, header, cnv_annotated_bed_file, sample_name):
+def write_combined_vcf(
+    outfile: str, header: pysam.VariantHeader, cnv_annotated_bed_file: str, sample_name: str
+) -> None:
+    """
+    Write CNV calls from a BED file to a VCF file.
+    Args:
+        outfile (str): Path to the output VCF file.
+        header (pysam.VariantHeader): The VCF header.
+        cnv_annotated_bed_file (str): Path to the input BED file containing combined (cn.mops+cnvpytor) CNV calls
+            and annotated with UG-CNV-LCR.
+        sample_name (str): The name of the sample.
+    """
     with pysam.VariantFile(outfile, mode="w", header=header) as vcf_out:
         df_cnvs = pd.read_csv(cnv_annotated_bed_file, sep="\t", header=None)
         df_cnvs.columns = ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "UG-CNV-LCR"]
@@ -160,7 +179,7 @@ def run(argv):
     else:
         out_directory = ""
     outfile = pjoin(out_directory, args.sample_name + ".cnv.vcf.gz")
-    write_vcf(outfile, header, args.cnv_annotated_bed_file, args.sample_name)
+    write_combined_vcf(outfile, header, args.cnv_annotated_bed_file, args.sample_name)
 
     # index outfile
     try:
