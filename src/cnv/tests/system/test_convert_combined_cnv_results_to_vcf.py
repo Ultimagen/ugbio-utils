@@ -44,7 +44,7 @@ class TestConvertCombinedCnvResultsToVcf:
         header = convert_combined_cnv_results_to_vcf.add_vcf_header(sample_name, fasta_index_file)
 
         outfile = pjoin(tmpdir, f"{sample_name}.cnv.vcf.gz")
-        convert_combined_cnv_results_to_vcf.write_vcf(outfile, header, cnv_annotated_bed_file, sample_name)
+        convert_combined_cnv_results_to_vcf.write_combined_vcf(outfile, header, cnv_annotated_bed_file, sample_name)
 
         expected_vcf_file = pjoin(resources_dir, "test_HG002.cnv.vcf.gz")
         compare_vcfs(expected_vcf_file, outfile)
