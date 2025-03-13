@@ -60,12 +60,15 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv[1:])
 
 
-def get_dup_cnmops_cnv_calls(cnmops_cnv_calls: str, sample_name: str, out_directory: str) -> str:
+def get_dup_cnmops_cnv_calls(
+    cnmops_cnv_calls: str, sample_name: str, out_directory: str, distance_threshold: int
+) -> str:
     """
     Args:
         cnmops_cnv_calls (str): Input bed file holding cn.mops CNV calls.
         sample_name (str): Sample name.
         out_directory (str): Out folder to store results.
+        distance_threshold (int): Distance threshold for merging CNV segments.
 
     Returns:
         str: duplications called by cn.mops bed file.
@@ -73,7 +76,7 @@ def get_dup_cnmops_cnv_calls(cnmops_cnv_calls: str, sample_name: str, out_direct
     cnmops_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.bed")
     run_cmd(
         f"cat {cnmops_cnv_calls} | awk -F \"N\" '$NF>2' | \
-            bedtools merge -d 1500 -c 4 -o distinct -i - | \
+            bedtools merge -d {distance_threshold} -c 4 -o distinct -i - | \
             awk '$3-$2>=10000' | \
             sed 's/$/\\tDUP\\tcn.mops/' | \
             cut -f1,2,3,5,6,4 > {cnmops_cnvs_dup}"
@@ -176,7 +179,7 @@ def process_del_jalign_results(
     )
     run_cmd(
         f"cat {out_del_jalign} | bedtools sort -i - | \
-            bedtools merge -d 1500 -c 4,5,6 -o distinct  -i -  > {out_del_jalign_merged}"
+            bedtools merge -c 4,5,6 -o distinct  -i -  > {out_del_jalign_merged}"
     )
 
     return out_del_jalign_merged
@@ -250,13 +253,15 @@ def run(argv):
     ############################
     ### process DUPlications ###
     ############################
-    out_cnmops_cnvs_dup = get_dup_cnmops_cnv_calls(args.cnmops_cnv_calls, sample_name, out_directory)
+    out_cnmops_cnvs_dup = get_dup_cnmops_cnv_calls(
+        args.cnmops_cnv_calls, sample_name, out_directory, args.distance_threshold
+    )
     out_cnvpytor_cnvs_dup = get_dup_cnvpytor_cnv_calls(args.cnvpytor_cnv_calls, sample_name, out_directory)
     # merge duplications
     cnmops_cnvpytor_merged_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvpytor.DUP.merged.bed")
     run_cmd(
         f"cat {out_cnmops_cnvs_dup} {out_cnvpytor_cnvs_dup} | bedtools sort -i - | \
-        bedtools merge -d 1500 -c 4,5,6 -o distinct -i - > {cnmops_cnvpytor_merged_dup}"
+        bedtools merge -c 4,5,6 -o distinct -i - > {cnmops_cnvpytor_merged_dup}"
     )
 
     ############################
@@ -280,7 +285,7 @@ def run(argv):
     )
     run_cmd(
         f"cat {out_del_jalign_merged} {out_del_candidates_called_by_both_cnmops_cnvpytor} | \
-            bedtools sort -i - | bedtools merge -d 1500 -c 4,5,6 -o distinct  -i - > {out_del_calls}"
+            bedtools sort -i - | bedtools merge -c 4,5,6 -o distinct  -i - > {out_del_calls}"
     )
 
     # combine results
