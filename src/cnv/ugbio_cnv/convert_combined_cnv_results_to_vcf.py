@@ -96,12 +96,15 @@ def write_combined_vcf(
             copy_number = row["copy_number"]
             ug_cnv_lcr = row["UG-CNV-LCR"]
 
-            cn_list = copy_number.split(",")
-            cn_list_filtered = [float(item) for item in cn_list if item not in (["DUP", "DEL"])]
+            if isinstance(copy_number, str):
+                cn_list = copy_number.split(",")
+                cn_list_filtered = [float(item) for item in cn_list if item not in (["DUP", "DEL"])]
 
-            copy_number_value = cn_list[0]
-            if len(cn_list_filtered) > 0:
-                copy_number_value = statistics.mean(cn_list_filtered)
+                copy_number_value = cn_list[0]
+                if len(cn_list_filtered) > 0:
+                    copy_number_value = statistics.mean(cn_list_filtered)
+            else:
+                copy_number_value = copy_number
 
             cnv_type_value = f"<{cnv_type}>"
 
@@ -117,10 +120,9 @@ def write_combined_vcf(
                 record.filter.add("UG-CNV-LCR")
             else:
                 record.filter.add("PASS")
-            if isinstance(copy_number_value, float):
-                record.info["CopyNumber"] = copy_number_value
-            if isinstance(copy_number_value, float):
-                record.info["RoundedCopyNumber"] = int(round(copy_number_value))
+            if not isinstance(copy_number_value, str):
+                record.info["CopyNumber"] = float(copy_number_value)
+                record.info["RoundedCopyNumber"] = int(round(float(copy_number_value)))
             record.info["SVLEN"] = int(end) - int(start)
             record.info["SVTYPE"] = cnv_type
             record.info["CNV_SOURCE"] = cnv_call_source
