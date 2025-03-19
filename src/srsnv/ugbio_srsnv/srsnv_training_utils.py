@@ -1089,14 +1089,22 @@ class SRSNVTrain:
         logger.info("Adding is_mixed column to featuremap")
         # TODO: use the information from adapter_version instead of this patch
         self._get_ppmseq_tags_column_names()
-        if self.start_tag_col is not None and self.end_tag_col is not None:
-            self.featuremap_df["is_mixed"] = np.logical_and(
-                (self.featuremap_df[self.start_tag_col] == "MIXED"),
-                (self.featuremap_df[self.end_tag_col] == "MIXED"),
-            )
+        # Get start tag
+        if self.start_tag_col is not None:
+            self.featuremap_df["is_mixed_start"] = self.featuremap_df[self.start_tag_col] == "MIXED"
         else:  # If no strand ratio information is available, set is_mixed to False
-            self.featuremap_df["is_mixed"] = False
-            logger.warning("No ppmSeq tags in data, setting is_mixed to False")
+            self.featuremap_df["is_mixed_start"] = False
+            logger.warning("No start ppmSeq tags in data, setting is_mixed_start to False")
+        # Get end tag
+        if self.end_tag_col is not None:
+            self.featuremap_df["is_mixed_end"] = self.featuremap_df[self.end_tag_col] == "MIXED"
+        else:  # If no strand ratio information is available, set is_mixed to False
+            self.featuremap_df["is_mixed_end"] = False
+            logger.warning("No end ppmSeq tags in data, setting is_mixed_end to False")
+        # Combine start and end tags
+        self.featuremap_df["is_mixed"] = np.logical_and(
+            self.featuremap_df["is_mixed_start"], self.featuremap_df["is_mixed_end"]
+        )
 
     def calc_qual_and_mrd_simulation(self, ml_qual_col: str = "ML_qual_1_test"):
         """Calibrate ML_qual to qual, get the interpolating function,
