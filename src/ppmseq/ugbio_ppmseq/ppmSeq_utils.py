@@ -261,19 +261,9 @@ class PpmseqStrandVcfAnnotator(VcfAnnotator):
                 record.info[HistogramColumnNames.ST.value] = record.info.get(
                     HistogramColumnNames.ST.value, PpmseqCategories.UNDETERMINED.value
                 )
-                is_end_reached = (
-                    ppmseq_tags[TrimmerSegmentTags.NATIVE_ADAPTER.value] >= 1
-                    or ppmseq_tags[TrimmerSegmentTags.STEM_END.value] >= self.min_stem_end_matched_length
-                )
                 record.info[HistogramColumnNames.ET.value] = record.info.get(
-                    HistogramColumnNames.ET.value, PpmseqCategories.UNDETERMINED.value
+                    HistogramColumnNames.ET.value, PpmseqCategories.END_UNREACHED.value
                 )
-                #  TODO: Check cases where not is_end_reached and et==UNDETERMINED. Make v5 logic conform with this
-                if (
-                    not is_end_reached
-                    and record.info[HistogramColumnNames.ET.value] == PpmseqCategories.UNDETERMINED.value
-                ):
-                    record.info[HistogramColumnNames.ET.value] = PpmseqCategories.END_UNREACHED.value
 
             records_out[j] = record
 
