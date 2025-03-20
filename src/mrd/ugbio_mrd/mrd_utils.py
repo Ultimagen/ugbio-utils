@@ -9,14 +9,19 @@ from collections.abc import Iterable
 from os.path import basename, dirname, splitext
 from os.path import join as pjoin
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pyBigWig as bw  # noqa: N813
 import pysam
+import seaborn as sns
+from IPython.display import display
 from tqdm import tqdm
 from ugbio_core.dna_sequence_utils import revcomp
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed.variant_annotation import get_trinuc_substitution_dist, parse_trinuc_sub
+
+pd.set_option("future.no_silent_downcasting", True)  # noqa: FBT003
 
 default_featuremap_info_fields = {
     "X_CIGAR": str,
@@ -708,3 +713,408 @@ def generate_synthetic_signatures(
         pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
 
     return synthetic_signatures
+
+
+def read_and_filter_features_parquet(
+    features_file_parquet: str,
+    read_filter_query: str,
+):
+    """
+    Read featuremap parquet file and filter by query
+
+    Parameters
+    ----------
+    features_file_parquet: str
+        featuremap parquet file
+    read_filter_query: str
+        query to filter the dataframe
+
+    Returns
+    -------
+    df_features: pd.DataFrame
+        original dataframe
+    df_features_filt: pd.DataFrame
+        filtered dataframe
+    filtering_ratio: pd.DataFrame
+        A dataframe that includes the ratio of filtered to total reads per variant
+    """
+    df_features = pd.read_parquet(features_file_parquet).astype({"rq": float}).set_index(["chrom", "pos"])
+    df_features = df_features.assign(filtering_ratio=df_features["X_FILTERED_COUNT"] / df_features["X_READ_COUNT"])
+    df_features_filt = df_features.query(read_filter_query)
+    filtering_ratio = (
+        df_features.query("signature_type=='matched'").groupby(level=["chrom", "pos"]).agg({"filtering_ratio": "first"})
+    )
+    return df_features, df_features_filt, filtering_ratio
+
+
+def read_and_filter_signatures_parquet(
+    signatures_file_parquet: str,
+    signature_filter_query: str,
+    filtering_ratio: pd.DataFrame,
+):
+    """
+    Read signature parquet file and filter by query
+
+    Parameters
+    ----------
+    signatures_file_parquet: str
+        signature parquet file
+    signature_filter_query: str
+        query to filter the dataframe
+    filtering_ratio: pd.DataFrame
+        A dataframe that includes the ratio of filtered to total reads per variant
+    """
+    df_signatures = pd.read_parquet(signatures_file_parquet).set_index(["chrom", "pos"])
+
+    nunique = (
+        df_signatures.groupby(level=["chrom", "pos"])
+        .agg({"signature": "nunique"})
+        .rename(columns={"signature": "nunique"})
+    )
+    nunique.value_counts().rename("count").to_frame().join(nunique.value_counts(normalize=True).rename("norm"))
+
+    x = df_signatures.filter(regex="coverage").sum(axis=1)
+    norm_coverage = (x / x.median()).rename("norm_coverage").reset_index().drop_duplicates().set_index(["chrom", "pos"])
+    df_signatures = (
+        df_signatures.join(nunique)
+        .join(
+            filtering_ratio,
+            how="left",
+        )
+        .join(norm_coverage, how="left")
+        .fillna({"filtering_ratio": 1})
+    )
+
+    df_signatures_filt = df_signatures.query(signature_filter_query)
+    return df_signatures, df_signatures_filt
+
+
+def plot_signature_mutation_types(df_signatures_in: pd.DataFrame, signature_filter_query_in: pd.DataFrame):
+    """ "
+    Plot mutation types for a signature dataframe
+    """
+    fig, axs = plt.subplots(1, 2, figsize=(18, 4))
+    fig.suptitle(",".join(df_signatures_in["signature"].unique()), y=1.13)
+    for ax, column, df_plot in zip(
+        axs.flatten(),
+        [
+            "Unfiltered",
+            "Filtered",
+        ],
+        [
+            df_signatures_in,
+            df_signatures_in.query(signature_filter_query_in),
+        ],
+        strict=False,
+    ):
+        x = df_plot["mutation_type"].value_counts(normalize=True).sort_index()
+        all_muts = [
+            "C->A",
+            "C->G",
+            "C->T",
+            "T->A",
+            "T->C",
+            "T->G",
+        ]
+        x = x.reindex(index=all_muts, method="bfill", fill_value=0)
+        tot_mutations = df_plot.shape[0]
+        plt.sca(ax)
+        plt.bar(range(6), x, color=["b", "g", "r", "y", "m", "c"])
+        for px, py in zip(range(6), x, strict=False):
+            plt.text(px, py + 0.01, f"{py:.1%}", ha="center", fontsize=16)
+        plt.ylim(0, ax.get_ylim()[1] + 0.03)
+        plt.yticks([])
+        plt.xticks(range(6), x.index.values, fontsize=20, rotation=90)
+        plt.title(f"{column}, total={tot_mutations:,}", fontsize=28)
+    plt.show()
+
+
+def plot_signature_allele_fractions(df_signatures_in: pd.DataFrame, signature_filter_query_in: pd.DataFrame):
+    """ "
+    Plot allele fraction histograms for a signature dataframe
+    """
+    bins = np.linspace(0, 1, 100)
+    fig, axs = plt.subplots(1, 2, figsize=(18, 4), sharey=True)
+    fig.suptitle(",".join(df_signatures_in["signature"].unique()), y=1.13)
+    for ax, column, df_plot in zip(
+        axs.flatten(),
+        [
+            "Unfiltered",
+            "Filtered",
+        ],
+        [
+            df_signatures_in,
+            df_signatures_in.query(signature_filter_query_in),
+        ],
+        strict=False,
+    ):
+        plt.sca(ax)
+        x = df_plot["af"].to_numpy()
+        tot_mutations = df_plot.shape[0]
+        h, bin_edges = np.histogram(x, bins=bins)
+        bin_centers = (bin_edges[1:] + bin_edges[:-1]) / 2
+        plt.fill_between(
+            bin_centers,
+            -10,
+            h,
+            label=f"Median = {np.median(x):.1%}\nMean = {np.mean(x):.1%}",
+        )
+        plt.legend()
+        plt.xlim(0, 1)
+        plt.ylim(-1, ax.get_ylim()[1])
+        plt.xlabel("AF")
+        plt.title(f"{column}, total={tot_mutations:,}", fontsize=28)
+    plt.show()
+
+
+ZERO_TF_FILL = 1e-7
+
+
+def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None):  # noqa: C901, PLR0912, PLR0915
+    """
+    Plot tumor fraction dataframes
+    """
+    df_tf_in = df_tf_in.assign(tf=df_tf_in["tf"].clip(lower=zero_tf_fill))
+    any_nonzero_tf = (df_tf_in["tf"] > 0).any()
+    try:
+        df_tf_matched = df_tf_in.loc[("matched", slice(None)), "tf"]
+    except KeyError:
+        df_tf_matched = pd.DataFrame({"signature_type": [np.nan], "signature": [np.nan], "tf": [np.nan]}).set_index(
+            ["signature_type", "signature"]
+        )["tf"]
+    try:
+        df_tf_control = df_tf_in.loc[("control", slice(None)), "tf"]
+    except KeyError:
+        df_tf_control = pd.DataFrame({"signature_type": [np.nan], "signature": [np.nan], "tf": [np.nan]}).set_index(
+            ["signature_type", "signature"]
+        )["tf"]
+    try:
+        df_tf_db_control = df_tf_in.loc[("db_control", slice(None)), "tf"]
+    except KeyError:
+        df_tf_db_control = pd.DataFrame({"signature_type": [np.nan], "signature": [np.nan], "tf": [np.nan]}).set_index(
+            ["signature_type", "signature"]
+        )["tf"]
+
+    plt.figure(figsize=(8, 12))
+    if title:
+        plt.title(title, y=1.02, fontsize=28)
+
+    if df_tf_matched.notna().any():
+        x = 0.2 * np.ones(df_tf_matched.shape[0])
+        y = df_tf_matched.to_numpy()
+        labels = (
+            df_tf_matched.index.get_level_values("signature")
+            + df_tf_matched.apply(lambda x: f" (TF={x:.1e})").to_numpy()
+        )
+        hscat1 = plt.scatter(x, y, s=100, c="#D03020")
+        for i, label in enumerate(labels):
+            if not np.isnan(y[i]):
+                plt.text(
+                    x[i] + 0.015,
+                    y[i],
+                    label,
+                    ha="left",
+                    va="center",
+                    fontsize=10,
+                    alpha=0.3,
+                )
+    else:
+        hscat1 = None
+
+    hbp1 = plt.boxplot(
+        df_tf_control,
+        positions=[0],
+        showfliers=False,
+        patch_artist=True,
+        boxprops={"facecolor": "b"},
+        whiskerprops={"color": "b"},
+        capprops={"color": "b"},
+    )
+    hbp2 = plt.boxplot(
+        df_tf_db_control,
+        positions=[0],
+        showfliers=False,
+        patch_artist=True,
+        boxprops={"facecolor": "g"},
+        whiskerprops={"color": "g"},
+        capprops={"color": "g"},
+    )
+    rng = np.random.default_rng(3456)
+    x = 0.2 + rng.uniform(-0.1, 0.1, size=df_tf_control.shape[0])
+    y = df_tf_control.to_numpy()
+    labels = df_tf_control.index.get_level_values("signature")
+    hscat2 = plt.scatter(x, y, s=100, c="#3390DD")
+    for i, label in enumerate(labels):
+        if not np.isnan(y[i]):
+            plt.text(
+                x[i] + 0.015,
+                y[i],
+                label,
+                ha="left",
+                va="center",
+                fontsize=10,
+                alpha=0.3,
+            )
+    x = 0.2 + rng.uniform(-0.1, 0.1, size=df_tf_db_control.shape[0])
+    y = df_tf_db_control.to_numpy()
+    labels = df_tf_db_control.index.get_level_values("signature")
+    hscat3 = plt.scatter(x, y, s=100, c="g")
+    for i, label in enumerate(labels):
+        if not np.isnan(y[i]):
+            plt.text(
+                x[i] + 0.015,
+                y[i],
+                label,
+                ha="left",
+                va="center",
+                fontsize=10,
+                alpha=0.3,
+            )
+    if any_nonzero_tf:  # if all values are nan or 0, we cannot set log scale
+        plt.yscale("log")
+    else:
+        print("WARNING: Could not set plot to log scale")
+    plt.xticks([])
+    plt.xlim(-0.2, 0.5)
+    plt.ylabel("Measured tumor fraction")
+    plt.legend(
+        [hscat1, hscat2, hbp1["boxes"][0], hscat3, hbp2["boxes"][0]],
+        [
+            "Matched",
+            "Individual controls",
+            "Control distribution",
+            "db_controls",
+            "db_control distribution",
+        ],
+        bbox_to_anchor=[1.01, 1],
+    )
+    for line in hbp1["medians"]:
+        # get position data for median line
+        x, y = line.get_xydata()[0]  # top of median line
+        # overlay median value
+        if not np.isnan(x) and not np.isnan(y):
+            plt.text(
+                x,
+                y,
+                f"{y:.1e}" if y > zero_tf_fill else "0",
+                ha="right",
+                va="center",
+                color="b",
+                fontsize=16,
+            )  # draw above, centered
+    for line in hbp2["medians"]:
+        # get position data for median line
+        x, y = line.get_xydata()[0]  # top of median line
+        # overlay median value
+        if not np.isnan(x) and not np.isnan(y):
+            plt.text(
+                x,
+                y,
+                f"{y:.1e}" if y > zero_tf_fill else "0",
+                ha="right",
+                va="center",
+                color="g",
+                fontsize=16,
+            )  # draw above, centered
+
+
+def get_tf_from_filtered_data(
+    df_features_in: pd.DataFrame,
+    df_signatures_in: pd.DataFrame,
+    title=None,
+    denom_ratio=None,
+    *,
+    display_results=False,
+    plot_results=False,
+):
+    """
+    Calculate tumor fraction from filtered dataframes
+    Optionally display and plot the results
+    """
+    df_features_in_intersected = (
+        df_features_in.join(
+            df_signatures_in.groupby(level=["chrom", "pos"]).size().astype(bool).rename("locus_in_signature"),
+            how="inner",
+        )
+        .dropna(subset=["locus_in_signature"])
+        .query("locus_in_signature")
+        .drop(columns=["locus_in_signature"])
+    )  # retaun only loci that are in the signature df - they might have been filtered out
+    df_supporting_reads_per_locus = (
+        df_features_in_intersected.reset_index()
+        .groupby(["chrom", "pos", "signature", "signature_type"])
+        .size()
+        .rename("supporting_reads")
+        .reset_index(level=["signature", "signature_type"])
+    )
+    df_supporting_reads = (
+        (df_supporting_reads_per_locus.groupby(["signature_type", "signature"]).sum()).fillna(0).astype(int)
+    )
+    # fill in coverage for singatures with zero supporting reads
+    df_supporting_reads = (
+        pd.concat(
+            (
+                df_supporting_reads,
+                df_signatures_in.groupby(["signature_type", "signature"])["id"].sum().rename("supporting_reads"),
+            )
+        )
+        .fillna(0)
+        .astype(int)
+        .groupby(["signature_type", "signature"])
+        .sum()
+    )
+
+    df_coverage = (df_signatures_in.groupby("signature").agg({"coverage": "sum"})).fillna(0).astype(int)
+    df_tf = df_supporting_reads.join(df_coverage).fillna(0)
+    df_tf["corrected_coverage"] = df_tf["coverage"] * denom_ratio
+    df_tf["corrected_coverage"] = np.ceil(df_tf["corrected_coverage"])
+    df_tf = df_tf.assign(tf=df_tf["supporting_reads"] / df_tf["corrected_coverage"]).sort_index(ascending=False)
+
+    if plot_results:
+        plot_tf(df_tf, title=title)
+        plt.show()
+
+    if display_results:
+        display(
+            df_tf.sort_index(ascending=False).style.format(
+                {
+                    "coverage": int,
+                    "corrected_coverage": int,
+                    "supporting_reads": int,
+                    "tf": "{:.1e}",
+                }
+            )
+        )
+
+    return (df_tf, df_supporting_reads_per_locus)
+
+
+def plot_vaf_matched_unmatched(
+    df_supporting_reads_per_locus: pd.DataFrame,
+    df_signatures: pd.DataFrame,
+):
+    """
+    Plot histogram of allele frequencies of all, plasma-matched and unmatched variants
+    """
+    fig, ax = plt.subplots(3, 1, figsize=(10, 8))
+    queries = {
+        "all variants": df_supporting_reads_per_locus.index,
+        "matched variants": df_supporting_reads_per_locus.query("signature_type == 'matched'").index,
+        "control vairants": df_supporting_reads_per_locus.query("signature_type != 'matched'").index,
+    }
+
+    colors = ["blue", "red", "green"]
+
+    bins = np.linspace(0, 1, 50)
+    sns.set_style("whitegrid")
+    for i, (quary_name, index_flt) in enumerate(queries.items()):
+        sns.histplot(
+            data=df_signatures.loc[index_flt]["af"],
+            bins=bins,
+            color=colors[i],
+            ax=ax[i],
+        )
+        ax[i].set_title(quary_name)
+
+    plt.tight_layout()
+    plt.show()
