@@ -25,6 +25,7 @@ from ugbio_featuremap.featuremap_utils import (
     featuremap_to_dataframe,
     filter_featuremap_with_bcftools_view,
 )
+from ugbio_ppmseq.ppmseq_utils import PpmseqCategories
 
 from ugbio_srsnv.srsnv_plotting_utils import (
     SRSNVReport,
@@ -1090,12 +1091,12 @@ class SRSNVTrain:
         # TODO: use the information from adapter_version instead of this patch
         self._get_ppmseq_tags_column_names()
         if self.start_tag_col is not None and self.end_tag_col is not None:
-            self.featuremap_df["is_mixed"] = np.logical_and(
-                (self.featuremap_df[self.start_tag_col] == "MIXED"),
-                (self.featuremap_df[self.end_tag_col] == "MIXED"),
+            self.featuremap_df[IS_MIXED] = np.logical_and(
+                (self.featuremap_df[self.start_tag_col] == PpmseqCategories.MIXED.value),
+                (self.featuremap_df[self.end_tag_col] == PpmseqCategories.MIXED.value),
             )
         else:  # If no strand ratio information is available, set is_mixed to False
-            self.featuremap_df["is_mixed"] = False
+            self.featuremap_df[IS_MIXED] = False
             logger.warning("No ppmSeq tags in data, setting is_mixed to False")
 
     def calc_qual_and_mrd_simulation(self, ml_qual_col: str = "ML_qual_1_test"):

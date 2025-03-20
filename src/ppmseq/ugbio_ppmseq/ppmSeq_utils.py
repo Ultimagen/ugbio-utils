@@ -156,19 +156,19 @@ class PpmseqStrandVcfAnnotator(VcfAnnotator):
             id=HistogramColumnNames.STRAND_RATIO_START.value,
             type="Float",
             number=1,
-            description="Ratio of MINUS and PLUS strands measured from the tag in the start of the read",
+            description="Ratio of Minus and Plus strands measured from the tag in the start of the read",
         )
         header.info.add(
             id=HistogramColumnNames.STRAND_RATIO_END.value,
             type="Float",
             number=1,
-            description="Ratio of MINUS and PLUS strands measured from the tag in the end of the read",
+            description="Ratio of Minus and Plus strands measured from the tag in the end of the read",
         )
         header.info.add(
             id=HistogramColumnNames.STRAND_RATIO_CATEGORY_START.value,
             type="String",
             number=1,
-            description="ppmSeq read category derived from the ratio of MINUS and PLUS strands "
+            description="ppmSeq read category derived from the ratio of Minus and Plus strands "
             "measured from the tag in the start of the read, options: "
             f'{", ".join(ppmseq_category_list)}',
         )
@@ -176,7 +176,7 @@ class PpmseqStrandVcfAnnotator(VcfAnnotator):
             id=HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value,
             type="String",
             number=1,
-            description="ppmSeq read category derived from the ratio of MINUS and PLUS strands "
+            description="ppmSeq read category derived from the ratio of Minus and Plus strands "
             "measured from the tag in the end of the read, options: "
             f'{", ".join(ppmseq_category_list)}',
         )
@@ -261,19 +261,9 @@ class PpmseqStrandVcfAnnotator(VcfAnnotator):
                 record.info[HistogramColumnNames.ST.value] = record.info.get(
                     HistogramColumnNames.ST.value, PpmseqCategories.UNDETERMINED.value
                 )
-                is_end_reached = (
-                    ppmseq_tags[TrimmerSegmentTags.NATIVE_ADAPTER.value] >= 1
-                    or ppmseq_tags[TrimmerSegmentTags.STEM_END.value] >= self.min_stem_end_matched_length
-                )
                 record.info[HistogramColumnNames.ET.value] = record.info.get(
-                    HistogramColumnNames.ET.value, PpmseqCategories.UNDETERMINED.value
+                    HistogramColumnNames.ET.value, PpmseqCategories.END_UNREACHED.value
                 )
-                #  TODO: Check cases where not is_end_reached and et==UNDETERMINED. Make v5 logic conform with this
-                if (
-                    not is_end_reached
-                    and record.info[HistogramColumnNames.ET.value] == PpmseqCategories.UNDETERMINED.value
-                ):
-                    record.info[HistogramColumnNames.ET.value] = PpmseqCategories.END_UNREACHED.value
 
             records_out[j] = record
 
@@ -864,8 +854,8 @@ def read_trimmer_tags_dataframe(
         mixed_tot = df_category_concordance.loc[(PpmseqCategories.MIXED.value, PpmseqCategories.MIXED.value),]
         df_mixed_cov = pd.DataFrame(
             {
-                "MIXED_read_mean_coverage": mixed_tot * df_sorter_stats.loc["Mean_cvg", "value"],
-                "PCT_MIXED_both_tags": mixed_tot * 100,
+                "Mixed_read_mean_coverage": mixed_tot * df_sorter_stats.loc["Mean_cvg", "value"],
+                "PCT_Mixed_both_tags": mixed_tot * 100,
             },
             index=["value"],
         ).T["value"]
