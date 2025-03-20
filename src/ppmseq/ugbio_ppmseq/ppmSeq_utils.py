@@ -67,20 +67,20 @@ class TrimmerHistogramSuffixes(Enum):
 
 class PpmseqCategories(Enum):
     # Category names
-    MIXED = "Mixed"
-    MINUS = "Minus"
-    PLUS = "Plus"
-    END_UNREACHED = "End_Unreached"
-    UNDETERMINED = "Undetermined"
+    MIXED = "MIXED"
+    MINUS = "MINUS"
+    PLUS = "PLUS"
+    END_UNREACHED = "END_UNREACHED"
+    UNDETERMINED = "UNDETERMINED"
 
 
 class PpmseqCategoriesConsensus(Enum):
     # Category names
-    MIXED = "Mixed"
-    MINUS = "Minus"
-    PLUS = "Plus"
-    DISCORDANT = "Discordant"
-    UNDETERMINED = "Undetermined"
+    MIXED = "MIXED"
+    MINUS = "MINUS"
+    PLUS = "PLUS"
+    DISCORDANT = "DISCORDANT"
+    UNDETERMINED = "UNDETERMINED"
 
 
 class HistogramColumnNames(Enum):
