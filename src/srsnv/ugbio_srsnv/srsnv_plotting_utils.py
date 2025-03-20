@@ -47,7 +47,7 @@ IS_MIXED_END = "is_mixed_end"
 FOLD_ID = "fold_id"
 TRINUC_CONTEXT_WITH_ALT = "trinuc_context_with_alt"
 IS_FORWARD = "is_forward"
-IS_CYCLE_SKIP  = "is_cycle_skip"
+IS_CYCLE_SKIP = "is_cycle_skip"
 
 edist_filter = f"{FeatureMapFields.X_EDIST.value} <= 5"
 HQ_SNV_filter = f"{FeatureMapFields.X_SCORE.value} >= 7"
