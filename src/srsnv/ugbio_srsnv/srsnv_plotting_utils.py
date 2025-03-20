@@ -46,7 +46,7 @@ IS_MIXED = "is_mixed"
 FOLD_ID = "fold_id"
 TRINUC_CONTEXT_WITH_ALT = "trinuc_context_with_alt"
 IS_FORWARD = "is_forward"
-IS_CYCLE_SKIP  = "is_cycle_skip"
+IS_CYCLE_SKIP = "is_cycle_skip"
 
 edist_filter = f"{FeatureMapFields.X_EDIST.value} <= 5"
 HQ_SNV_filter = f"{FeatureMapFields.X_SCORE.value} >= 7"
@@ -1992,12 +1992,16 @@ class SRSNVReport:
             data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)[QUAL].median().unstack()  # noqa PD010
         )
         if PpmseqCategories.END_UNREACHED.value in ppmseq_category_quality_table.index:
-            ppmseq_category_quality_table = ppmseq_category_quality_table.drop(index=PpmseqCategories.END_UNREACHED.value)
+            ppmseq_category_quality_table = ppmseq_category_quality_table.drop(
+                index=PpmseqCategories.END_UNREACHED.value
+            )
         ppmseq_category_quantity_table = (
             data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)[QUAL].count().unstack()  # noqa PD010
         )
         if PpmseqCategories.END_UNREACHED.value in ppmseq_category_quantity_table.index:
-            ppmseq_category_quantity_table = ppmseq_category_quantity_table.drop(index=PpmseqCategories.END_UNREACHED.value)
+            ppmseq_category_quantity_table = ppmseq_category_quantity_table.drop(
+                index=PpmseqCategories.END_UNREACHED.value
+            )
         ppmseq_category_quantity_table = (
             ppmseq_category_quantity_table / ppmseq_category_quantity_table.to_numpy().sum()
         ) * 100
