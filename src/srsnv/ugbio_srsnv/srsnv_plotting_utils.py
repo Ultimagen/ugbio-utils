@@ -648,7 +648,7 @@ def plot_LoD(  # noqa N802
             cmap="inferno_r",
         )
     plt.xlabel("Recall (Base retention ratio on HOM SNVs)", fontsize=font_size)
-    plt.ylabel("SNVQ", fontsize=font_size)
+    plt.ylabel("FQ  [ phred( FPR/TPR ) ]", fontsize=font_size)
     title_handle = plt.title(title, fontsize=font_size)
     legend_handle = plt.legend(fontsize=18, fancybox=True, framealpha=0.95)
 
