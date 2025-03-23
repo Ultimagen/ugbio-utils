@@ -15,13 +15,10 @@ import pandas as pd
 import pyBigWig as bw  # noqa: N813
 import pysam
 import seaborn as sns
-from IPython.display import display
 from tqdm import tqdm
 from ugbio_core.dna_sequence_utils import revcomp
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed.variant_annotation import get_trinuc_substitution_dist, parse_trinuc_sub
-
-pd.set_option("future.no_silent_downcasting", True)  # noqa: FBT003
 
 default_featuremap_info_fields = {
     "X_CIGAR": str,
@@ -790,8 +787,15 @@ def read_and_filter_signatures_parquet(
 
 
 def plot_signature_mutation_types(df_signatures_in: pd.DataFrame, signature_filter_query_in: pd.DataFrame):
-    """ "
-    Plot mutation types for a signature dataframe
+    """
+    Plot a histogram of substitution types for a signature dataframe
+
+    Parameters
+    ----------
+    df_signatures_in: pd.DataFrame
+        signature dataframe
+    signature_filter_query_in: pd.DataFrame
+        query to filter the dataframe
     """
     fig, axs = plt.subplots(1, 2, figsize=(18, 4))
     fig.suptitle(",".join(df_signatures_in["signature"].unique()), y=1.13)
@@ -830,8 +834,15 @@ def plot_signature_mutation_types(df_signatures_in: pd.DataFrame, signature_filt
 
 
 def plot_signature_allele_fractions(df_signatures_in: pd.DataFrame, signature_filter_query_in: pd.DataFrame):
-    """ "
+    """
     Plot allele fraction histograms for a signature dataframe
+
+    Parameters
+    ----------
+    df_signatures_in: pd.DataFrame
+        signature dataframe
+    signature_filter_query_in: pd.DataFrame
+        query to filter the dataframe
     """
     bins = np.linspace(0, 1, 100)
     fig, axs = plt.subplots(1, 2, figsize=(18, 4), sharey=True)
@@ -867,12 +878,20 @@ def plot_signature_allele_fractions(df_signatures_in: pd.DataFrame, signature_fi
     plt.show()
 
 
-ZERO_TF_FILL = 1e-7
-
-
-def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None):  # noqa: C901, PLR0912, PLR0915
+def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3456):  # noqa: C901, PLR0912, PLR0915
     """
-    Plot tumor fraction dataframes
+    Plot tumor fraction boxplot
+
+    Parameters
+    ----------
+    df_tf_in: pd.DataFrame
+        tumor fraction dataframe
+    zero_tf_fill: float, optional
+        fill zero values with this value, default 1e-7
+    title: str, optional
+        title of chioce, default None
+    random_seed: int, optional
+        random seed for plotting, default 3456
     """
     df_tf_in = df_tf_in.assign(tf=df_tf_in["tf"].clip(lower=zero_tf_fill))
     any_nonzero_tf = (df_tf_in["tf"] > 0).any()
@@ -939,7 +958,7 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None):  # noqa: C90
         whiskerprops={"color": "g"},
         capprops={"color": "g"},
     )
-    rng = np.random.default_rng(3456)
+    rng = np.random.default_rng(random_seed)
     x = 0.2 + rng.uniform(-0.1, 0.1, size=df_tf_control.shape[0])
     y = df_tf_control.to_numpy()
     labels = df_tf_control.index.get_level_values("signature")
@@ -1024,12 +1043,10 @@ def get_tf_from_filtered_data(
     title=None,
     denom_ratio=None,
     *,
-    display_results=False,
     plot_results=False,
 ):
     """
     Calculate tumor fraction from filtered dataframes
-    Optionally display and plot the results
     """
     df_features_in_intersected = (
         df_features_in.join(
@@ -1073,18 +1090,6 @@ def get_tf_from_filtered_data(
     if plot_results:
         plot_tf(df_tf, title=title)
         plt.show()
-
-    if display_results:
-        display(
-            df_tf.sort_index(ascending=False).style.format(
-                {
-                    "coverage": int,
-                    "corrected_coverage": int,
-                    "supporting_reads": int,
-                    "tf": "{:.1e}",
-                }
-            )
-        )
 
     return (df_tf, df_supporting_reads_per_locus)
 
