@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from ugbio_mrd.generate_mrd_report import MrdReportInputs, generate_mrd_report
 
@@ -39,3 +40,11 @@ def test_generate_mrd_report(output_path, resources_dir):
 
     # assert report_html is not empty
     assert output_report_html.stat().st_size > 0
+
+    # assert h5 output values are as expected
+    h5_output = str(output_path / "test_report.tumor_fraction.h5")
+    h5_expected = str(resources_dir / "test_report.tumor_fraction.expected_output.h5")
+    with pd.HDFStore(h5_expected) as store:
+        h5_keys = store.keys()
+    for key in h5_keys:
+        pd.testing.assert_frame_equal(pd.read_hdf(h5_output, key), pd.read_hdf(h5_expected, key))
