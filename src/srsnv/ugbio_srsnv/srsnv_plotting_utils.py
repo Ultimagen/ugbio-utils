@@ -33,8 +33,7 @@ from ugbio_core.plotting_utils import set_pyplot_defaults
 from ugbio_core.reports.report_utils import generate_report
 from ugbio_core.sorter_utils import read_effective_coverage_from_sorter_json
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
-from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions
-from ugbio_ppmseq.ppmseq_utils import PpmseqCategories
+from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions, PpmseqCategories
 
 # featuremap_df column names. TODO: make more generic?
 ML_PROB_1_TEST = "ML_prob_1_test"

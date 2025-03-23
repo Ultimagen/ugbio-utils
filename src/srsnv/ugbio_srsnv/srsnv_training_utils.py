@@ -25,7 +25,7 @@ from ugbio_featuremap.featuremap_utils import (
     featuremap_to_dataframe,
     filter_featuremap_with_bcftools_view,
 )
-from ugbio_ppmseq.ppmseq_utils import PpmseqCategories
+from ugbio_ppmseq.ppmSeq_utils import PpmseqCategories
 
 from ugbio_srsnv.srsnv_plotting_utils import (
     SRSNVReport,
