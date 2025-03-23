@@ -761,7 +761,11 @@ def read_and_filter_signatures_parquet(
     filtering_ratio: pd.DataFrame
         A dataframe that includes the ratio of filtered to total reads per variant
     """
-    df_signatures = pd.read_parquet(signatures_file_parquet).set_index(["chrom", "pos"])
+    df_signatures = (
+        pd.read_parquet(signatures_file_parquet)
+        .astype({"ug_hcr": bool, "id": bool, "ug_mrd_blacklist": bool})
+        .set_index(["chrom", "pos"])
+    )
 
     nunique = (
         df_signatures.groupby(level=["chrom", "pos"])
