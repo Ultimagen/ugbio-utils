@@ -1053,6 +1053,19 @@ def get_tf_from_filtered_data(
 ):
     """
     Calculate tumor fraction from filtered dataframes
+
+    Parameters
+    ----------
+    df_features_in: pd.DataFrame
+        featuremap dataframe
+    df_signatures_in: pd.DataFrame
+        signature dataframe
+    title: str, optional
+        title of choice, default None
+    denom_ratio: float, optional
+        The fraction of reads preserved from the SRSNV training set with current read filtering query, default None
+    plot_results: bool, optional
+        plot results, default False
     """
     df_features_in_intersected = (
         df_features_in.join(
