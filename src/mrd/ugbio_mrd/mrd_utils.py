@@ -1049,6 +1049,7 @@ def get_tf_from_filtered_data(
     title=None,
     denom_ratio=None,
     *,
+    only_single_read_loci=False,
     plot_results=False,
 ):
     """
@@ -1064,6 +1065,8 @@ def get_tf_from_filtered_data(
         title of choice, default None
     denom_ratio: float, optional
         The fraction of reads preserved from the SRSNV training set with current read filtering query, default None
+    only_single_read_loci: bool, optional
+        Output loci with covered by a single read, default False
     plot_results: bool, optional
         plot results, default False
     """
@@ -1083,6 +1086,12 @@ def get_tf_from_filtered_data(
         .rename("supporting_reads")
         .reset_index(level=["signature", "signature_type"])
     )
+    if only_single_read_loci:
+        df_signatures_in = df_signatures_in.drop(
+            index=df_supporting_reads_per_locus.query("supporting_reads > 1").index
+        )
+        df_supporting_reads_per_locus = df_supporting_reads_per_locus.query("supporting_reads == 1")
+
     df_supporting_reads = (
         (df_supporting_reads_per_locus.groupby(["signature_type", "signature"]).sum()).fillna(0).astype(int)
     )
