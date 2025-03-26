@@ -2839,14 +2839,14 @@ class SRSNVReport:
 
         plot_df = self.data_df[self.data_df[LABEL]]
         plot_df["ppmSeq tags"] = "non-mixed"
-        plot_df.loc[plot_df[IS_MIXED_START] ^ plot_df[IS_MIXED_END], "ppmSeq tags"] = "mixed, one end"
+        plot_df.loc[plot_df[IS_MIXED_START] ^ plot_df[IS_MIXED_END], "ppmSeq tags"] = "mixed, exactly one end"
         plot_df.loc[plot_df[IS_MIXED_START] & plot_df[IS_MIXED_END], "ppmSeq tags"] = "mixed, both ends"
         g = sns.histplot(
             data=plot_df,
             x=QUAL,
             # bins=50,
             hue="ppmSeq tags",
-            hue_order=["non-mixed", "mixed, one end", "mixed, both ends"],
+            hue_order=["non-mixed", "mixed, exactly one end", "mixed, both ends"],
             element="step",
             stat="density",
             common_norm=False,
@@ -2854,7 +2854,7 @@ class SRSNVReport:
             kde_kws={"bw_adjust": 3},
             linewidth=1,
             ax=ax,
-            palette={"non-mixed": "red", "mixed, one end": "blue", "mixed, both ends": "green"},
+            palette={"non-mixed": "red", "mixed, exactly one end": "blue", "mixed, both ends": "green"},
         )
         sns.move_legend(
             ax,
