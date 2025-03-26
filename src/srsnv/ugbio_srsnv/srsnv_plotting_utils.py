@@ -33,7 +33,7 @@ from ugbio_core.plotting_utils import set_pyplot_defaults
 from ugbio_core.reports.report_utils import generate_report
 from ugbio_core.sorter_utils import read_effective_coverage_from_sorter_json
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
-from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions
+from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions, PpmseqCategories
 
 # featuremap_df column names. TODO: make more generic?
 ML_PROB_1_TEST = "ML_prob_1_test"
@@ -2014,13 +2014,17 @@ class SRSNVReport:
         ppmseq_category_quality_table = (
             data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)["qual"].median().unstack()  # noqa PD010
         )
-        if "END_UNREACHED" in ppmseq_category_quality_table.index:
-            ppmseq_category_quality_table = ppmseq_category_quality_table.drop(index="END_UNREACHED")
+        if PpmseqCategories.END_UNREACHED.value in ppmseq_category_quality_table.index:
+            ppmseq_category_quality_table = ppmseq_category_quality_table.drop(
+                index=PpmseqCategories.END_UNREACHED.value
+            )
         ppmseq_category_quantity_table = (
             data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)["qual"].count().unstack()  # noqa PD010
         )
-        if "END_UNREACHED" in ppmseq_category_quantity_table.index:
-            ppmseq_category_quantity_table = ppmseq_category_quantity_table.drop(index="END_UNREACHED")
+        if PpmseqCategories.END_UNREACHED.value in ppmseq_category_quantity_table.index:
+            ppmseq_category_quantity_table = ppmseq_category_quantity_table.drop(
+                index=PpmseqCategories.END_UNREACHED.value
+            )
         ppmseq_category_quantity_table = (
             ppmseq_category_quantity_table / ppmseq_category_quantity_table.to_numpy().sum()
         ) * 100
