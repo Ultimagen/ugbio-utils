@@ -31,8 +31,8 @@ def download_from_gs(bucket_name, source_blob_name, destination_file_name):
     blob.download_to_filename(destination_file_name)
 
 
-def download_from_s3(bucket_name, object_name, destination_file_name):
-    client = boto3.Session(profile_name="default").client("s3")
+def download_from_s3(bucket_name, object_name, destination_file_name, s3_profile):
+    client = boto3.Session(profile_name=s3_profile).client("s3")
     client.download_file(bucket_name, object_name, destination_file_name)
 
 
@@ -60,6 +60,7 @@ def optional_cloud_sync(
 def cloud_sync(  # noqa C901,PLR0912
     cloud_path_in,
     local_dir_in="/data",
+    s3_profile="default",
     *,
     print_output=False,
     force_download=False,
@@ -121,7 +122,7 @@ def cloud_sync(  # noqa C901,PLR0912
             if cloud_service == "gs":
                 download_from_gs(bucket, blob, local_path)
             elif cloud_service == "s3":
-                download_from_s3(bucket, blob, local_path)
+                download_from_s3(bucket, blob, local_path, s3_profile)
             else:
                 raise NotImplementedError()
         except KeyboardInterrupt:
