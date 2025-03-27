@@ -19,7 +19,7 @@ class Collections(Enum):
     RUNS = "runs"
     SAMPLES = "samples"
     EXECUTIONS = "executions"
-    PPMSEQ = "ppmseq"
+    APPLICATION_QC = "application_qc"
 
 
 def set_papyrus_access():
@@ -33,9 +33,12 @@ def set_papyrus_access():
         collections[Collections.RUNS] = my_db["runs"]
         collections[Collections.EXECUTIONS] = my_db["runs.executions"]
         collections[Collections.SAMPLES] = my_db["runs.executions.samples"]
-        collections[Collections.PPMSEQ] = my_db["ppmseq_workflows_view"]
+        collections[Collections.APPLICATION_QC] = my_db["runs.executions.samples.applicationQc"]
     else:
-        warnings.warn("Define PAPYRUS_ACCESS_STRING environmental variable to enable access to Papyrus", stacklevel=2)
+        warnings.warn(
+            "Define PAPYRUS_ACCESS_STRING environmental variable to enable access to Papyrus",
+            stacklevel=2,
+        )
         warnings.warn(
             "Example: export PAPYRUS_ACCESS_STRING=mongodb+srv://[user]:[passwd]@testcluster.jm2x3.mongodb.net/test",
             stacklevel=2,
@@ -81,7 +84,13 @@ def query_database(query: dict, collection: str = "pipelines", **kwargs: Any) ->
         List of documents
     """
     disable_papyrus_access, collections = set_papyrus_access()
-    assert not disable_papyrus_access, "Database access not available through PAPYRUS_ACCESS_STRING"  # noqa s101
+    if disable_papyrus_access:
+        raise ValueError("Database access not available through PAPYRUS_ACCESS_STRING")
+    collection_values = [x.value for x in Collections]
+    if collection not in collection_values:
+        raise ValueError(
+            f"Collection \"{collection}\" not supported, supported collections are:\n{', '.join(collection_values)}"
+        )
     return list(collections[Collections(collection)].find(query, **kwargs))
 
 
