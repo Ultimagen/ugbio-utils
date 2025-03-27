@@ -33,9 +33,7 @@ def set_papyrus_access():
         collections[Collections.RUNS] = my_db["runs"]
         collections[Collections.EXECUTIONS] = my_db["runs.executions"]
         collections[Collections.SAMPLES] = my_db["runs.executions.samples"]
-        collections[Collections.APPLICATION_QC] = my_db[
-            "runs.executions.samples.applicationQc"
-        ]
+        collections[Collections.APPLICATION_QC] = my_db["runs.executions.samples.applicationQc"]
     else:
         warnings.warn(
             "Define PAPYRUS_ACCESS_STRING environmental variable to enable access to Papyrus",
@@ -131,16 +129,12 @@ def metrics2df(doc: dict, metrics_to_report: list | None = None) -> pd.DataFrame
         metrics_to_report = DEFAULT_METRICS_TO_REPORT
 
     if "workflowEntity" not in doc["metadata"]:  # omics documents
-        metadata = pd.DataFrame(
-            (pd.DataFrame(_cleanup_metadata(doc["metadata"]))).loc["submission"]
-        ).T
+        metadata = pd.DataFrame((pd.DataFrame(_cleanup_metadata(doc["metadata"]))).loc["submission"]).T
 
     else:
         metadata = pd.DataFrame(
             (pd.DataFrame(_cleanup_metadata(doc["metadata"])))
-            .query(
-                '(workflowEntity=="sample") | (workflowEntity=="Sample") | (workflowEntity=="Unknown")'
-            )
+            .query('(workflowEntity=="sample") | (workflowEntity=="Sample") | (workflowEntity=="Unknown")')
             .loc["entityType"]
         ).T
     metadata.index = pd.Index([0])
@@ -151,9 +145,7 @@ def metrics2df(doc: dict, metrics_to_report: list | None = None) -> pd.DataFrame
         if x in metrics_to_report
     ]
     result = [x for x in result if x[1].shape[0] == 1]
-    result_df = pd.concat(
-        (metadata, pd.concat(dict(result), axis=1)), axis=1
-    ).set_index(("metadata", "workflowId"))
+    result_df = pd.concat((metadata, pd.concat(dict(result), axis=1)), axis=1).set_index(("metadata", "workflowId"))
     result_df.index = result_df.index.rename("workflowId")
     return result_df
 
@@ -176,18 +168,12 @@ def inputs2df(doc: dict) -> pd.DataFrame:
     else:
         metadata = (
             pd.DataFrame(_cleanup_metadata(doc["metadata"]))
-            .query(
-                '(workflowEntity=="sample") | '
-                + '(workflowEntity=="Sample") | '
-                + '(workflowEntity=="Unknown")'
-            )
+            .query('(workflowEntity=="sample") | ' + '(workflowEntity=="Sample") | ' + '(workflowEntity=="Unknown")')
             .loc["entityType"]
         )
     inputs = pd.Series(doc["inputs"])
     outputs = pd.Series(doc["outputs"])
-    return pd.DataFrame(pd.concat((metadata, inputs, outputs))).T.set_index(
-        "workflowId"
-    )
+    return pd.DataFrame(pd.concat((metadata, inputs, outputs))).T.set_index("workflowId")
 
 
 def nexus_metrics_to_df(input_dict: dict) -> pd.DataFrame:
