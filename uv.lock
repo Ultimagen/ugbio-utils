@@ -722,6 +722,15 @@ wheels = [
 ]
 
 [[package]]
+name = "et-xmlfile"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/38/af70d7ab1ae9d4da450eeec1fa3918940a5fafb9055e934af8d6eb0c2313/et_xmlfile-2.0.0.tar.gz", hash = "sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54", size = 17234 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl", hash = "sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa", size = 18059 },
+]
+
+[[package]]
 name = "executing"
 version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1908,6 +1917,18 @@ source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/3a/0112397396dec37ffc8edd7836d48261b4d14ca60ec8ed7bc857cce1d916/nvidia_nccl_cu12-2.23.4-py3-none-manylinux2014_aarch64.whl", hash = "sha256:aa946c8327e22ced28e7cef508a334673abc42064ec85f02d005ba1785ea4cec", size = 198953892 },
     { url = "https://files.pythonhosted.org/packages/ed/1f/6482380ec8dcec4894e7503490fc536d846b0d59694acad9cf99f27d0e7d/nvidia_nccl_cu12-2.23.4-py3-none-manylinux2014_x86_64.whl", hash = "sha256:b097258d9aab2fa9f686e33c6fe40ae57b27df60cedbd15d139701bb5509e0c1", size = 198954603 },
+]
+
+[[package]]
+name = "openpyxl"
+version = "3.1.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "et-xmlfile" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3d/f9/88d94a75de065ea32619465d2f77b29a0469500e99012523b91cc4141cd1/openpyxl-3.1.5.tar.gz", hash = "sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050", size = 186464 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl", hash = "sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2", size = 250910 },
 ]
 
 [[package]]
@@ -3115,7 +3136,7 @@ wheels = [
 
 [[package]]
 name = "ugbio-cloud-utils"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { editable = "src/cloud_utils" }
 dependencies = [
     { name = "boto3" },
@@ -3144,7 +3165,7 @@ dev = [
 
 [[package]]
 name = "ugbio-cnv"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { editable = "src/cnv" }
 dependencies = [
     { name = "cnvpytor" },
@@ -3162,7 +3183,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cnvpytor", specifier = ">=1.3.1" },
+    { name = "cnvpytor", specifier = "==1.3.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "setuptools", specifier = ">=75.8.0" },
     { name = "ugbio-core", editable = "src/core" },
@@ -3177,7 +3198,7 @@ dev = [
 
 [[package]]
 name = "ugbio-comparison"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { editable = "src/comparison" }
 dependencies = [
     { name = "ugbio-core", extra = ["concordance", "vcfbed"] },
@@ -3202,7 +3223,7 @@ dev = [
 
 [[package]]
 name = "ugbio-core"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -3266,7 +3287,7 @@ dev = [
 
 [[package]]
 name = "ugbio-featuremap"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "scikit-learn" },
@@ -3301,7 +3322,7 @@ dev = [
 
 [[package]]
 name = "ugbio-filtering"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { editable = "src/filtering" }
 dependencies = [
     { name = "biopython" },
@@ -3338,7 +3359,7 @@ dev = [
 
 [[package]]
 name = "ugbio-freec"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { editable = "src/freec" }
 dependencies = [
     { name = "pandas" },
@@ -3367,12 +3388,12 @@ dev = [
 
 [[package]]
 name = "ugbio-hla-la"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { virtual = "src/hla_la" }
 
 [[package]]
 name = "ugbio-methylation"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { editable = "src/methylation" }
 dependencies = [
     { name = "matplotlib" },
@@ -3407,7 +3428,7 @@ dev = [
 
 [[package]]
 name = "ugbio-mrd"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["reports", "vcfbed"] },
@@ -3438,7 +3459,7 @@ dev = [
 
 [[package]]
 name = "ugbio-omics"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { editable = "src/omics" }
 dependencies = [
     { name = "boto3" },
@@ -3480,7 +3501,7 @@ dev = [
 
 [[package]]
 name = "ugbio-ppmseq"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3513,7 +3534,7 @@ dev = [
 
 [[package]]
 name = "ugbio-single-cell"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3550,7 +3571,7 @@ dev = [
 
 [[package]]
 name = "ugbio-srsnv"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3595,7 +3616,7 @@ dev = [
 
 [[package]]
 name = "ugbio-utils"
-version = "1.6.2.post0.dev112"
+version = "1.9.0.post0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -3603,6 +3624,7 @@ dev = [
     { name = "dnspython" },
     { name = "matplotlib-venn" },
     { name = "mock" },
+    { name = "openpyxl" },
     { name = "pre-commit" },
     { name = "pybedtools" },
     { name = "pymongo" },
@@ -3620,6 +3642,7 @@ dev = [
     { name = "dnspython", specifier = ">=2.7.0" },
     { name = "matplotlib-venn", specifier = ">=1.1.1" },
     { name = "mock", specifier = ">=5.1.0" },
+    { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "pre-commit", specifier = ">=4.0.1" },
     { name = "pybedtools", specifier = ">=0.11.0" },
     { name = "pymongo", specifier = ">=4.11.1" },
