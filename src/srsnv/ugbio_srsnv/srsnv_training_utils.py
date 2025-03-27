@@ -25,6 +25,7 @@ from ugbio_featuremap.featuremap_utils import (
     featuremap_to_dataframe,
     filter_featuremap_with_bcftools_view,
 )
+from ugbio_ppmseq.ppmSeq_utils import PpmseqCategories
 
 from ugbio_srsnv.srsnv_plotting_utils import (
     SRSNVReport,
@@ -35,6 +36,8 @@ from ugbio_srsnv.srsnv_plotting_utils import (
 ML_QUAL = "ML_QUAL"
 FOLD_ID = "fold_id"
 IS_MIXED = "is_mixed"
+IS_MIXED_START = "is_mixed_start"
+IS_MIXED_END = "is_mixed_end"
 
 NUM_CHROMS_FOR_TEST = 1
 
@@ -1089,14 +1092,22 @@ class SRSNVTrain:
         logger.info("Adding is_mixed column to featuremap")
         # TODO: use the information from adapter_version instead of this patch
         self._get_ppmseq_tags_column_names()
-        if self.start_tag_col is not None and self.end_tag_col is not None:
-            self.featuremap_df["is_mixed"] = np.logical_and(
-                (self.featuremap_df[self.start_tag_col] == "MIXED"),
-                (self.featuremap_df[self.end_tag_col] == "MIXED"),
-            )
+        # Get start tag
+        if self.start_tag_col is not None:
+            self.featuremap_df[IS_MIXED_START] = self.featuremap_df[self.start_tag_col] == PpmseqCategories.MIXED.value
         else:  # If no strand ratio information is available, set is_mixed to False
-            self.featuremap_df["is_mixed"] = False
-            logger.warning("No ppmSeq tags in data, setting is_mixed to False")
+            self.featuremap_df[IS_MIXED_START] = False
+            logger.warning("No start ppmSeq tags in data, setting is_mixed_start to False")
+        # Get end tag
+        if self.end_tag_col is not None:
+            self.featuremap_df[IS_MIXED_END] = self.featuremap_df[self.end_tag_col] == PpmseqCategories.MIXED.value
+        else:  # If no strand ratio information is available, set is_mixed to False
+            self.featuremap_df[IS_MIXED_END] = False
+            logger.warning("No end ppmSeq tags in data, setting is_mixed_end to False")
+        # Combine start and end tags
+        self.featuremap_df[IS_MIXED] = np.logical_and(
+            self.featuremap_df[IS_MIXED_START], self.featuremap_df[IS_MIXED_END]
+        )
 
     def calc_qual_and_mrd_simulation(self, ml_qual_col: str = "ML_qual_1_test"):
         """Calibrate ML_qual to qual, get the interpolating function,

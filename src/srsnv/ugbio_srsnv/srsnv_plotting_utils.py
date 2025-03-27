@@ -33,7 +33,7 @@ from ugbio_core.plotting_utils import set_pyplot_defaults
 from ugbio_core.reports.report_utils import generate_report
 from ugbio_core.sorter_utils import read_effective_coverage_from_sorter_json
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
-from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions
+from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions, PpmseqCategories
 
 # featuremap_df column names. TODO: make more generic?
 ML_PROB_1_TEST = "ML_prob_1_test"
@@ -42,6 +42,8 @@ ML_LOGIT_TEST = "ML_logit_test"
 LABEL = "label"
 QUAL = "qual"
 IS_MIXED = "is_mixed"
+IS_MIXED_START = "is_mixed_start"
+IS_MIXED_END = "is_mixed_end"
 FOLD_ID = "fold_id"
 
 edist_filter = f"{FeatureMapFields.X_EDIST.value} <= 5"
@@ -646,7 +648,7 @@ def plot_LoD(  # noqa N802
             cmap="inferno_r",
         )
     plt.xlabel("Recall (Base retention ratio on HOM SNVs)", fontsize=font_size)
-    plt.ylabel("SNVQ", fontsize=font_size)
+    plt.ylabel("FQ  [ phred( FPR/TPR ) ]", fontsize=font_size)
     title_handle = plt.title(title, fontsize=font_size)
     legend_handle = plt.legend(fontsize=18, fancybox=True, framealpha=0.95)
 
@@ -1572,40 +1574,65 @@ class SRSNVReport:
         """Calculate run_info_table, a table with general run information."""
         # Generate Run Info table
         logger.info("Generating Run Info table")
+        TP_mixed_percent = (self.data_df[IS_MIXED] & self.data_df[LABEL]).sum() / (self.data_df[LABEL].sum())  # noqa: N806
+        FP_mixed_percent = (self.data_df[IS_MIXED] & ~self.data_df[LABEL]).sum() / ((~self.data_df[LABEL]).sum())  # noqa: N806
         general_info = {
             ("Sample name", ""): self.base_name[:-1],
             ("Median training read length", ""): np.median(self.data_df["X_LENGTH"]),
             ("Median training coverage", ""): np.median(self.data_df["X_READ_COUNT"]),
+            ("Training set, % TP reads", ""): signif(self.data_df[LABEL].mean() * 100, 3),
             (
-                "% mixed training reads",
-                "TP",
-            ): f"{signif(100 * (self.data_df[IS_MIXED] & self.data_df[LABEL]).mean(), 3)}%",
+                "Mixed training reads",
+                "% of TP",
+            ): f"{signif(100*TP_mixed_percent, 3)}%",
             (
-                "% mixed training reads",
-                "FP",
-            ): f"{signif(100 * (self.data_df[IS_MIXED] & ~self.data_df[LABEL]).mean(), 3)}%",
+                "Mixed training reads",
+                "% of FP",
+            ): f"{signif(100*FP_mixed_percent, 3)}%",
         }
         # Performance info
         mixed_df = self.data_df[self.data_df[IS_MIXED]]
+        mixed_start_df = self.data_df[self.data_df[IS_MIXED_START]]
         tp_df = self.data_df[self.data_df[LABEL]]
         tp_mixed_df = tp_df[tp_df[IS_MIXED]]
+        tp_mixed_start_df = tp_df[tp_df[IS_MIXED_START]]
         median_qual = tp_df[QUAL].median()
         median_qual_mixed = tp_mixed_df[QUAL].median()
+        median_qual_mixed_start = tp_mixed_start_df[QUAL].median()
+        recall_at_0 = self._get_recall_at_snvq(snvq=0)
+        recall_at_0_mixed = self._get_recall_at_snvq(snvq=0, condition=self.data_df[IS_MIXED])
+        recall_at_0_mixed_start = self._get_recall_at_snvq(snvq=0, condition=self.data_df[IS_MIXED_START])
+        recall_at_50 = self._get_recall_at_snvq(snvq=50)
+        recall_at_50_mixed = self._get_recall_at_snvq(snvq=50, condition=self.data_df[IS_MIXED])
+        recall_at_50_mixed_start = self._get_recall_at_snvq(snvq=50, condition=self.data_df[IS_MIXED_START])
         recall_at_60 = self._get_recall_at_snvq(snvq=60)
         recall_at_60_mixed = self._get_recall_at_snvq(snvq=60, condition=self.data_df[IS_MIXED])
+        recall_at_60_mixed_start = self._get_recall_at_snvq(snvq=60, condition=self.data_df[IS_MIXED_START])
         roc_auc_phred = prob_to_phred(
             self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name="run info total")
         )
         roc_auc_phred_mixed = prob_to_phred(
             self._safe_roc_auc(mixed_df[LABEL], mixed_df[ML_PROB_1_TEST], name="run info mixed")
         )
+        roc_auc_phred_mixed_start = prob_to_phred(
+            self._safe_roc_auc(mixed_start_df[LABEL], mixed_start_df[ML_PROB_1_TEST], name="run info mixed")
+        )
         performance_info = {
-            ("Median SNVQ", "All reads"): median_qual,
-            ("Median SNVQ", "Mixed only"): median_qual_mixed,
-            ("Recall at SNVQ=60", "All reads"): recall_at_60,
-            ("Recall at SNVQ=60", "Mixed only"): recall_at_60_mixed,
-            ("ROC AUC (Phred)", "All reads"): roc_auc_phred,
-            ("ROC AUC (Phred)", "Mixed only"): roc_auc_phred_mixed,
+            ("Median SNVQ", "All reads"): signif(median_qual, 3),
+            ("Median SNVQ", "Mixed, start"): signif(median_qual_mixed_start, 3),
+            ("Median SNVQ", "Mixed, both ends"): signif(median_qual_mixed, 3),
+            ("Recall at SNVQ=50", "All reads"): signif(recall_at_50 / recall_at_0, 3),
+            ("Recall at SNVQ=50", "Mixed, start"): signif(recall_at_50_mixed_start / recall_at_0_mixed_start, 3),
+            ("Recall at SNVQ=50", "Mixed, both ends"): signif(recall_at_50_mixed / recall_at_0_mixed, 3),
+            ("Recall at SNVQ=60", "All reads"): signif(recall_at_60 / recall_at_0, 3),
+            ("Recall at SNVQ=60", "Mixed, start"): signif(recall_at_60_mixed_start / recall_at_0_mixed_start, 3),
+            ("Recall at SNVQ=60", "Mixed, both ends"): signif(recall_at_60_mixed / recall_at_0_mixed, 3),
+            ("Pre-filter Recall", "All reads"): signif(recall_at_0, 3),
+            ("Pre-filter Recall", "Mixed, start"): signif(recall_at_0_mixed_start, 3),
+            ("Pre-filter Recall", "Mixed, both ends"): signif(recall_at_0_mixed, 3),
+            ("ROC AUC (Phred)", "All reads"): signif(roc_auc_phred, 3),
+            ("ROC AUC (Phred)", "Mixed, start"): signif(roc_auc_phred_mixed_start, 3),
+            ("ROC AUC (Phred)", "Mixed, both ends"): signif(roc_auc_phred_mixed, 3),
         }
         # Info about versions
         version_info = {
@@ -1987,13 +2014,17 @@ class SRSNVReport:
         ppmseq_category_quality_table = (
             data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)["qual"].median().unstack()  # noqa PD010
         )
-        if "END_UNREACHED" in ppmseq_category_quality_table.index:
-            ppmseq_category_quality_table = ppmseq_category_quality_table.drop(index="END_UNREACHED")
+        if PpmseqCategories.END_UNREACHED.value in ppmseq_category_quality_table.index:
+            ppmseq_category_quality_table = ppmseq_category_quality_table.drop(
+                index=PpmseqCategories.END_UNREACHED.value
+            )
         ppmseq_category_quantity_table = (
             data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)["qual"].count().unstack()  # noqa PD010
         )
-        if "END_UNREACHED" in ppmseq_category_quantity_table.index:
-            ppmseq_category_quantity_table = ppmseq_category_quantity_table.drop(index="END_UNREACHED")
+        if PpmseqCategories.END_UNREACHED.value in ppmseq_category_quantity_table.index:
+            ppmseq_category_quantity_table = ppmseq_category_quantity_table.drop(
+                index=PpmseqCategories.END_UNREACHED.value
+            )
         ppmseq_category_quantity_table = (
             ppmseq_category_quantity_table / ppmseq_category_quantity_table.to_numpy().sum()
         ) * 100
@@ -2807,12 +2838,15 @@ class SRSNVReport:
             axes = [ax]
 
         plot_df = self.data_df[self.data_df[LABEL]]
+        plot_df["ppmSeq tags"] = "non-mixed"
+        plot_df.loc[plot_df[IS_MIXED_START] ^ plot_df[IS_MIXED_END], "ppmSeq tags"] = "mixed, exactly one end"
+        plot_df.loc[plot_df[IS_MIXED_START] & plot_df[IS_MIXED_END], "ppmSeq tags"] = "mixed, both ends"
         g = sns.histplot(
             data=plot_df,
             x=QUAL,
             # bins=50,
-            hue=IS_MIXED,
-            hue_order=[False, True],
+            hue="ppmSeq tags",
+            hue_order=["non-mixed", "mixed, exactly one end", "mixed, both ends"],
             element="step",
             stat="density",
             common_norm=False,
@@ -2820,7 +2854,7 @@ class SRSNVReport:
             kde_kws={"bw_adjust": 3},
             linewidth=1,
             ax=ax,
-            palette={False: "red", True: "green"},  # Map False to red and True to green
+            palette={"non-mixed": "red", "mixed, exactly one end": "blue", "mixed, both ends": "green"},
         )
         sns.move_legend(
             ax,
