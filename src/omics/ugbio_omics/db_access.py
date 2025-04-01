@@ -4,6 +4,7 @@ See documentation in
 https://ultimagen.atlassian.net/wiki/spaces/AG/pages/1428914739/Papyrus+Metrics+Infrastructure+Proof+of+Concept#Command-Line-Access
 """
 
+import io
 import json
 import os
 import warnings
@@ -140,7 +141,7 @@ def metrics2df(doc: dict, metrics_to_report: list | None = None) -> pd.DataFrame
     metadata.index = pd.Index([0])
     metadata = pd.concat({"metadata": metadata}, axis=1)
     result = [
-        (x, pd.read_json(json.dumps(doc["metrics"][x]), orient="table"))
+        (x, pd.read_json(io.StringIO(json.dumps(doc["metrics"][x])), orient="table"))
         for x in doc["metrics"]
         if x in metrics_to_report
     ]
