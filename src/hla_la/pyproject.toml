@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_hla_la"
-version = "1.9.0-0dev-115"
+version = "1.8.1-0dev-117"
 description = "Ultima Genomics HLA-LA"
 authors = [
     { name = "Maya Levy", email = "maya.levy@ultimagen.com" },
