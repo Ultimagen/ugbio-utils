@@ -37,7 +37,7 @@ def motif_encode_left(x):
     The closes to the variant is the most significant bit
     """
     bases = {"A": 1, "T": 2, "G": 3, "C": 4, "N": 5}
-    x_list = list(x)
+    x_list = list(x[0])
     x_list.reverse()
     num = 0
     for c_val in x_list:
@@ -51,7 +51,7 @@ def motif_encode_right(x):
     The closes to the variant is the most significant bit
     """
     bases = {"A": 1, "T": 2, "G": 3, "C": 4, "N": 5}
-    x_list = list(x)
+    x_list = list(x[0])
     num = 0
     for c_val in x_list:
         num = 10 * num + bases.get(c_val, 0)
@@ -185,6 +185,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
         ("x_rm", right_motif_filter, "x_rm"),
         ("x_css", make_pipeline(tuple_filter, preprocessing.OrdinalEncoder()), "x_css"),
         ("x_gcc", default_filler, ["x_gcc"]),
+        ("sb", tuple_uniform_encode_df_transformer, "sb"),
     ]
     features = [x[0] for x in transform_list]
     if vtype == VcfType.DEEP_VARIANT:
