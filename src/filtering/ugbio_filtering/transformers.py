@@ -144,10 +144,10 @@ def modify_features_based_on_vcf_type(  # noqa C901
         return pd.DataFrame(np.array([motif_encode_right(y) for y in s]).reshape((-1, 1)), index=s.index)
 
     def allele_encode_df(s):
-        return pd.DataFrame(np.array([x[:2] for x in s]), index=s.index).applymap(allele_encode)
+        return pd.DataFrame(np.array([x[:2] for x in s]), index=s.index).map(allele_encode)
 
     def allele_encode_single(df):
-        return df.applymap(allele_encode)
+        return df.map(allele_encode)
 
     def gt_encode_df(s):
         return pd.DataFrame(np.array([gt_encode(y) for y in s]).reshape((-1, 1)), index=s.index)
@@ -185,7 +185,6 @@ def modify_features_based_on_vcf_type(  # noqa C901
         ("x_rm", right_motif_filter, "x_rm"),
         ("x_css", make_pipeline(tuple_filter, preprocessing.OrdinalEncoder()), "x_css"),
         ("x_gcc", default_filler, ["x_gcc"]),
-        ("sb", tuple_uniform_encode_df_transformer, "sb"),
     ]
     features = [x[0] for x in transform_list]
     if vtype == VcfType.DEEP_VARIANT:
@@ -233,6 +232,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
                 ("mq0c", tuple_encode_doublet_df_transformer, "mq0c"),
                 ("scl", tuple_encode_doublet_df_transformer, "scl"),
                 ("scr", tuple_encode_doublet_df_transformer, "scr"),
+                ("sb", tuple_uniform_encode_df_transformer, "sb"),
             ]
         )
         features = [x[0] for x in transform_list]
