@@ -1151,3 +1151,152 @@ def plot_vaf_matched_unmatched(
 
     plt.tight_layout()
     plt.show()
+
+
+def aggregate_mrd_results(read_filter_dict: str, *, only_single_read_loci=False, zero_tf_fill=1e-7):
+    """
+    Aggregate MRD results from multiple read filter queries into a single dataframe.
+    Parameters
+    ----------
+    read_filter_dict: dict
+        A dictionary where keys are read filter query names and values are dictionaries containing:
+        - "df_features": original featuremap dataframe
+        - "df_features_filt": filtered featuremap dataframe
+        - "df_signatures": original signature dataframe
+        - "df_signatures_filt": filtered signature dataframe
+        - "denom_ratio": ratio of reads preserved from the SRSNV training set for the current filter query
+    only_single_read_loci: bool, optional
+        If True, only include loci that are covered by a single read in the MRD calculation. Default is False.
+    zero_tf_fill: float, optional
+        Value to fill in for tumor fraction when it is zero or negative. Default is 1e-7.
+    Returns
+    -------
+    df_mrd: pd.DataFrame
+        A DataFrame containing tumor fractions (tf) for each read filter query and signature type.
+        The index is a MultiIndex of (read_filter_query, signature_type, signature).
+    df_supporting_reads: pd.DataFrame
+        A DataFrame containing the number of supporting reads per locus for each read filter query and signature type.
+        The index is a MultiIndex of (read_filter_query, signature_type, signature).
+    """
+    df_mrd = pd.DataFrame()
+    df_supporting_reads = pd.DataFrame()
+    for read_filter_query, c in read_filter_dict.items():
+        df_tf_filt, df_supporting_reads_per_locus_filt = get_tf_from_filtered_data(
+            df_features_in=c["df_features_filt"],
+            df_signatures_in=c["df_signatures_filt"],
+            plot_results=False,
+            denom_ratio=c["denom_ratio"],
+            only_single_read_loci=only_single_read_loci,
+        )
+        df_supporting_reads = pd.concat(
+            (
+                df_supporting_reads,
+                pd.concat({read_filter_query: df_supporting_reads_per_locus_filt}, names=["read_filter_query"]),
+            )
+        )
+        df_mrd = pd.concat((df_mrd, pd.concat({read_filter_query: df_tf_filt}, names=["read_filter_query"])))
+
+    ## add unfiltered results
+    ## unfiltered reads, filtered signatures
+    query_to_use = list(read_filter_dict.keys())[1]
+    df_tf, df_supporting_reads_per_locus = get_tf_from_filtered_data(
+        df_features_in=read_filter_dict[query_to_use]["df_features"],
+        df_signatures_in=read_filter_dict[query_to_use]["df_signatures_filt"],
+        plot_results=False,
+        denom_ratio=1,
+        only_single_read_loci=only_single_read_loci,
+    )
+    col_name = "unfiltered_reads_filtered_signatures"
+    df_supporting_reads = pd.concat(
+        (df_supporting_reads, pd.concat({col_name: df_supporting_reads_per_locus}, names=["read_filter_query"]))
+    )
+    df_mrd = pd.concat((df_mrd, pd.concat({col_name: df_tf}, names=["read_filter_query"])))
+
+    ## filtered reads, unfiltered signatures
+    df_tf, df_supporting_reads_per_locus = get_tf_from_filtered_data(
+        df_features_in=read_filter_dict[query_to_use]["df_features_filt"],
+        df_signatures_in=read_filter_dict[query_to_use]["df_signatures"],
+        plot_results=False,
+        denom_ratio=read_filter_dict[query_to_use]["denom_ratio"],
+        only_single_read_loci=only_single_read_loci,
+    )
+    col_name = "filtered_reads_unfiltered_signatures"
+    df_mrd = pd.concat((df_mrd, pd.concat({col_name: df_tf}, names=["read_filter_query"])))
+    df_supporting_reads = pd.concat(
+        (df_supporting_reads, pd.concat({col_name: df_supporting_reads_per_locus}, names=["read_filter_query"]))
+    )
+    df_mrd["tf"] = df_mrd["tf"].clip(zero_tf_fill)
+    return df_mrd, df_supporting_reads
+
+
+def plot_mrd_stripplot(
+    df_mrd,
+    hue_order=(
+        "matched, pass",
+        "matched, fail",
+        "control, pass",
+        "control, fail",
+        "db_control, pass",
+        "db_control, fail",
+    ),
+    zero_tf_fill=1e-7,
+):
+    """
+    Plot MRD results as a stripplot with different colors for matched, control, and db_control signatures,
+    and whether they pass or fail the read threshold filter. The plot shows tumor fractions for each read filter query.
+    Parameters
+    ----------
+    df_mrd: pd.DataFrame
+        A DataFrame containing tumor fractions (tf) for each read filter query and signature type.
+    hue_order: tuple of str, optional
+        The order of hue categories for the stripplot. Default is:
+        ("matched, pass", "matched, fail", "control, pass", "control, fail", "db_control, pass", "db_control, fail").
+    zero_tf_fill: float, optional
+        Value to fill in for tumor fraction when it is zero or negative. Default is 1e-7.
+    """
+    colors = sns.color_palette(["#ff0000", "#ffb3b3", "#00cc00", "#99ff99", "#0066ff", "#b3d1ff"])
+    df_mrd.loc[df_mrd.eval('signature_type=="matched" and above_read_th'), "label"] = hue_order[0]
+    df_mrd.loc[df_mrd.eval('signature_type=="matched" and ~above_read_th'), "label"] = hue_order[1]
+    df_mrd.loc[df_mrd.eval('signature_type=="control" and above_read_th'), "label"] = hue_order[2]
+    df_mrd.loc[df_mrd.eval('signature_type=="control" and ~above_read_th'), "label"] = hue_order[3]
+    df_mrd.loc[df_mrd.eval('signature_type=="db_control" and above_read_th'), "label"] = hue_order[4]
+    df_mrd.loc[df_mrd.eval('signature_type=="db_control" and ~above_read_th'), "label"] = hue_order[5]
+
+    sns.set_style("whitegrid", {"axes.grid": True})
+    plt.figure(figsize=(10, 7))
+    sns.stripplot(
+        data=df_mrd,
+        x="read_filter_query",
+        y="tf",
+        hue="label",
+        palette=colors[0 : len(hue_order) * 2],
+        size=5,
+        hue_order=hue_order,
+    )
+    plt.gca().set_yscale("log")
+    plt.gca().xaxis.set_tick_params(rotation=90)
+    # legend outside the plot
+    plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.0)
+    # add an horizontal grid to the plot, but make it very light in color
+    # so we can use it for reading data values but not be distracting
+    plt.grid(which="major", color="#333333", linestyle=":")
+    # set xlim
+    plt.ylim(zero_tf_fill, 1)
+    plt.ylabel("Tumor fraction")
+    # annotate the 'matched' points
+    samples = df_mrd["read_filter_query"].unique()
+    for sample in samples:
+        rows = df_mrd.query('signature_type == "matched" and read_filter_query == @sample')
+        if rows.empty:
+            continue
+        for signature in rows["signature"]:  # noqa B007
+            tf = rows.query("signature == @signature")["tf"].to_numpy()[0]
+            supporting_reads = rows.query("signature == @signature")["supporting_reads"].to_numpy()[0]
+            plt.annotate(
+                f"({supporting_reads}, {tf:.2e})",
+                xy=(sample, tf),
+                fontsize=12,
+                color="black",
+                ha="left",
+                va="center",
+            )

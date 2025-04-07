@@ -30,7 +30,7 @@ class MrdReportInputs:
     db_control_signatures_vcf_files: list[str] = None
     tumor_sample: str = None
     signature_filter_query: str = None
-    read_filter_query: str = None
+    srsnv_h5_file: str = None
 
 
 def generate_mrd_report(mrd_report_inputs: MrdReportInputs):
@@ -41,7 +41,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs):
         "signatures_file_parquet": signatures_path,
         "featuremap_df_file": mrd_report_inputs.featuremap_file,
         "signature_filter_query": mrd_report_inputs.signature_filter_query,
-        "read_filter_query": mrd_report_inputs.read_filter_query,
+        "srsnv_h5_file": mrd_report_inputs.srsnv_h5_file,
         "output_dir": mrd_report_inputs.output_dir,
         "basename": mrd_report_inputs.output_basename,
     }
@@ -233,8 +233,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
 
     parser.add_argument("--signature-filter-query", type=str, default=None, help="Filter query for signatures")
-    parser.add_argument("--read-filter-query", type=str, default=None, help="Filter query for reads")
     parser.add_argument("--featuremap-file", type=str, default=None, help="Path to Featuremap file")
+    parser.add_argument(
+        "--srsnv-h5-file",
+        type=str,
+        default=None,
+        help="Path to the h5 file, output of single read SNV application QC",
+    )
     return parser.parse_args(argv[1:])
 
 
@@ -253,8 +258,8 @@ def main(argv: list[str] | None = None):
         output_dir=args_in.output_dir,
         output_basename=args_in.output_basename,
         featuremap_file=args_in.featuremap_file,
+        srsnv_h5_file=args_in.srsnv_h5_file,
         signature_filter_query=args_in.signature_filter_query,
-        read_filter_query=args_in.read_filter_query,
     )
 
     generate_mrd_report(mrd_report_inputs)
