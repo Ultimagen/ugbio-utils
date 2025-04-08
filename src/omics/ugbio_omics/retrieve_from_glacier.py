@@ -1,4 +1,6 @@
 #!/bin/env python
+# This script is used to parse a WDL and JSON file and check if any files are in GLACIER.
+# If any files are in GLACIER, it will start the retrieval process.
 import argparse
 
 import boto3
@@ -47,3 +49,7 @@ def main():
             print("Retrieval started.")
         else:
             print("Use --retrieve to start retrieval of the files from GLACIER.")
+
+
+if __name__ == "__main__":
+    main()
