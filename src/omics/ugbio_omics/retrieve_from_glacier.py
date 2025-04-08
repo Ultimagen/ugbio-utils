@@ -9,7 +9,9 @@ import winval.cloud_files_validator as cfv
 
 # parse input arguments
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Parse JSON and WDL and (if necessary) start recovery from GLACIER.")
+    parser = argparse.ArgumentParser(
+        description="Parse JSON and WDL, check if any file in glacier, start retrieval if asked."
+    )
     parser.add_argument("--wdl", type=str, required=True, help="The WDL to parse.")
     parser.add_argument("--param_json", type=str, required=True, help="The parameter file.")
     parser.add_argument("--retrieve", action="store_true", help="Retrieve the missing files from GLACIER.")
