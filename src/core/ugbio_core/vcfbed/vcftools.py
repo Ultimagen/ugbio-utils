@@ -474,7 +474,7 @@ class FilterWrapper:
 
         # decide the color by filter column
         if do_filtering:
-            fill_rgb = rgb_color.to_numpy()
+            fill_rgb = rgb_color.to_numpy().astype(str)
             rgb_color[fill_rgb] = FilteringColors.CLEAR.value
             rgb_color[blacklist_color] = FilteringColors.BLACKLIST.value
             rgb_color[~fill_rgb] = FilteringColors.BORDERLINE.value
