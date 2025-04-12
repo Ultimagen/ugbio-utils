@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_srsnv"
-version = "1.8.1-0dev-117"
+version = "1.8.1-0dev-119"
 requires-python = ">=3.11"
 dependencies = [
     "ugbio_core[vcfbed,reports]",
