@@ -356,5 +356,9 @@ def run(argv: list[str]):
             write_mode = "a"
 
 
-if __name__ == "__main__":
+def main():
     run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()
