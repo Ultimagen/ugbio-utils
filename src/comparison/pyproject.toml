@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_comparison"
-version = "1.8.1-0dev-117"
+version = "1.8.1-0dev-119"
 description = "Ultima Genomics comparison scripts"
 authors = [
     { name = "Ilya Soifer", email = "ilya.soifer@ultimagen.com" },
@@ -18,6 +18,7 @@ text = "Apache-2.0"
 
 [project.scripts]
 run_tests = "pytest:main"
+run_comparison_pipeline = "ugbio_comparison.run_comparison_pipeline:main"
 
 [tool.uv]
 dev-dependencies = [
