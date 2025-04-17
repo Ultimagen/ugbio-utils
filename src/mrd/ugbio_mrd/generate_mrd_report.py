@@ -23,7 +23,7 @@ class MrdReportInputs:
     intersected_featuremaps_parquet: list[str]
     matched_signatures_vcf_files: list[str]
     control_signatures_vcf_files: list[str]
-    coverage_csv: str
+    coverage_bed: str
     output_dir: str
     output_basename: str
     featuremap_file: str
@@ -131,7 +131,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
     if matched_exists:
         signature_dataframe = read_signature(
             mrd_report_inputs.matched_signatures_vcf_files,
-            coverage_csv=mrd_report_inputs.coverage_csv,
+            coverage_bed=mrd_report_inputs.coverage_bed,
             output_parquet=signatures_dataframe_fname,
             tumor_sample=mrd_report_inputs.tumor_sample,
             signature_type="matched",
@@ -142,7 +142,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
         concat_to_existing_output_parquet = bool(matched_exists)
         signature_dataframe = read_signature(
             mrd_report_inputs.control_signatures_vcf_files,
-            coverage_csv=mrd_report_inputs.coverage_csv,
+            coverage_bed=mrd_report_inputs.coverage_bed,
             output_parquet=signatures_dataframe_fname,
             tumor_sample=mrd_report_inputs.tumor_sample,
             signature_type="control",
@@ -152,7 +152,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
         concat_to_existing_output_parquet = bool(matched_exists or control_exists)
         signature_dataframe = read_signature(
             mrd_report_inputs.db_control_signatures_vcf_files,
-            coverage_csv=mrd_report_inputs.coverage_csv,
+            coverage_bed=mrd_report_inputs.coverage_bed,
             output_parquet=signatures_dataframe_fname,
             tumor_sample=mrd_report_inputs.tumor_sample,
             signature_type="db_control",
@@ -203,11 +203,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Input signature vcf file/s (db control)",
     )
     parser.add_argument(
-        "--coverage-csv",
+        "--coverage-bed",
         type=str,
         default=None,
         required=False,
-        help="Coverage csv file generated with gatk ExtractCoverageOverVcfFiles",
+        help="Coverage bed file generated with mosdepth",
     )
     parser.add_argument(
         "--tumor-sample",
@@ -248,7 +248,7 @@ def main(argv: list[str] | None = None):
         matched_signatures_vcf_files=args_in.matched_signatures_vcf,
         control_signatures_vcf_files=args_in.control_signatures_vcf,
         db_control_signatures_vcf_files=args_in.db_control_signatures_vcf,
-        coverage_csv=args_in.coverage_csv,
+        coverage_bed=args_in.coverage_bed,
         tumor_sample=args_in.tumor_sample,
         output_dir=args_in.output_dir,
         output_basename=args_in.output_basename,
