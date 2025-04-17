@@ -165,14 +165,16 @@ def collect_coverage_per_locus(coverage_bw_files, df_sig):
     return df_list
 
 
-def collect_coverage_per_locus_gatk(coverage_csv, df_sig):
+def collect_coverage_per_locus_mosdepth(coverage_bed, df_sig):
     """
-    Merge coverage data from gatk "ExtractCoverageOverVcfFiles" output to signature dataframe
+    Merge coverage data from mosdepth output to signature dataframe
     """
-    coverage_gatk = pd.read_csv(coverage_csv, usecols=["Chrom", "Pos", "Total_Depth"])
-    coverage_gatk = coverage_gatk.rename(columns={"Chrom": "chrom", "Pos": "pos", "Total_Depth": "coverage"})
-    coverage_gatk = coverage_gatk.set_index(["chrom", "pos"])
-    df_sig = df_sig.join(coverage_gatk, how="left")
+    coverage_mosdepth = pd.read_csv(
+        coverage_bed, compression="gzip", sep="\t", names=["chrom", "start", "pos", "coverage"]
+    )
+    coverage_mosdepth["coverage"] = coverage_mosdepth["coverage"].astype(int)
+    coverage_mosdepth = coverage_mosdepth.set_index(["chrom", "pos"])
+    df_sig = df_sig.join(coverage_mosdepth, how="left")
     return df_sig
 
 
@@ -218,7 +220,7 @@ def extract_vaf_val(rec, tumor_sample, af_field_type):
 def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
     signature_vcf_files: list[str],
     output_parquet: str = None,
-    coverage_csv: str = None,
+    coverage_bed: str = None,
     tumor_sample: str = None,
     x_columns_name_dict: dict = None,
     columns_to_drop: list = None,
@@ -414,8 +416,8 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
 
     df_sig = df_sig.sort_index()
 
-    if coverage_csv:
-        df_sig = collect_coverage_per_locus_gatk(coverage_csv, df_sig)
+    if coverage_bed:
+        df_sig = collect_coverage_per_locus_mosdepth(coverage_bed, df_sig)
 
     logger.debug("Calculating reference hmer")
     try:
