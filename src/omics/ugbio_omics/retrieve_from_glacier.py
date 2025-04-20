@@ -27,7 +27,7 @@ def main():
 
     # parse the WDL and JSON files
     cloud_validator = cfv.CloudFilesValidator(wdl, param_json)
-    validation = cloud_validator.validate_file()
+    validation = cloud_validator.validate()
     if validation:
         print("The WDL and JSON files are valid, no GLACIER  files found.")
     elif len(cloud_validator.non_validated_files) > len(cloud_validator.glacier_files):
