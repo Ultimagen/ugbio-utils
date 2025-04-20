@@ -1,5 +1,4 @@
 version = 1
-revision = 1
 requires-python = ">=3.11, <3.13"
 resolution-markers = [
     "python_full_version < '3.12'",
@@ -490,7 +489,7 @@ name = "click"
 version = "8.1.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "platform_system == 'Windows'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/96/d3/f04c7bfcf5c1862a2a5b845c6b2b360488cf47af55dfa79c98f6a6bf98b5/click-8.1.7.tar.gz", hash = "sha256:ca9853ad459e787e2192211578cc907e7594e294c7ccc834310722b41b9ca6de", size = 336121 }
 wheels = [
@@ -1100,7 +1099,7 @@ name = "ipykernel"
 version = "6.29.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "appnope", marker = "sys_platform == 'darwin'" },
+    { name = "appnope", marker = "platform_system == 'Darwin'" },
     { name = "comm" },
     { name = "debugpy" },
     { name = "ipython" },
@@ -3070,7 +3069,7 @@ name = "tqdm"
 version = "4.66.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "platform_system == 'Windows'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/58/83/6ba9844a41128c62e810fddddd72473201f3eacde02046066142a2d96cc5/tqdm-4.66.5.tar.gz", hash = "sha256:e1020aef2e5096702d8a025ac7d16b1577279c9d63f8375b63083e9a5f0fcbad", size = 169504 }
 wheels = [
@@ -3115,7 +3114,7 @@ wheels = [
 
 [[package]]
 name = "ugbio-cloud-utils"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { editable = "src/cloud_utils" }
 dependencies = [
     { name = "boto3" },
@@ -3144,7 +3143,7 @@ dev = [
 
 [[package]]
 name = "ugbio-cnv"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { editable = "src/cnv" }
 dependencies = [
     { name = "cnvpytor" },
@@ -3162,7 +3161,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cnvpytor", specifier = ">=1.3.1" },
+    { name = "cnvpytor", specifier = "==1.3.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "setuptools", specifier = ">=75.8.0" },
     { name = "ugbio-core", editable = "src/core" },
@@ -3177,7 +3176,7 @@ dev = [
 
 [[package]]
 name = "ugbio-comparison"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { editable = "src/comparison" }
 dependencies = [
     { name = "ugbio-core", extra = ["concordance", "vcfbed"] },
@@ -3202,7 +3201,7 @@ dev = [
 
 [[package]]
 name = "ugbio-core"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -3255,7 +3254,6 @@ requires-dist = [
     { name = "simppl", specifier = ">=1.0.7" },
     { name = "tqdm", marker = "extra == 'vcfbed'", specifier = ">=4.66.4" },
 ]
-provides-extras = ["vcfbed", "reports", "concordance"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3266,7 +3264,7 @@ dev = [
 
 [[package]]
 name = "ugbio-featuremap"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "scikit-learn" },
@@ -3301,7 +3299,7 @@ dev = [
 
 [[package]]
 name = "ugbio-filtering"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { editable = "src/filtering" }
 dependencies = [
     { name = "biopython" },
@@ -3338,7 +3336,7 @@ dev = [
 
 [[package]]
 name = "ugbio-freec"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { editable = "src/freec" }
 dependencies = [
     { name = "pandas" },
@@ -3367,12 +3365,12 @@ dev = [
 
 [[package]]
 name = "ugbio-hla-la"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { virtual = "src/hla_la" }
 
 [[package]]
 name = "ugbio-methylation"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { editable = "src/methylation" }
 dependencies = [
     { name = "matplotlib" },
@@ -3407,7 +3405,7 @@ dev = [
 
 [[package]]
 name = "ugbio-mrd"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["reports", "vcfbed"] },
@@ -3438,7 +3436,7 @@ dev = [
 
 [[package]]
 name = "ugbio-omics"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { editable = "src/omics" }
 dependencies = [
     { name = "boto3" },
@@ -3469,7 +3467,6 @@ requires-dist = [
     { name = "plotly", specifier = ">=5.23.0" },
     { name = "pymongo", marker = "extra == 'db'", specifier = ">=4.11.1" },
 ]
-provides-extras = ["db"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3480,7 +3477,7 @@ dev = [
 
 [[package]]
 name = "ugbio-ppmseq"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3513,7 +3510,7 @@ dev = [
 
 [[package]]
 name = "ugbio-single-cell"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3550,7 +3547,7 @@ dev = [
 
 [[package]]
 name = "ugbio-srsnv"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3595,7 +3592,7 @@ dev = [
 
 [[package]]
 name = "ugbio-utils"
-version = "1.6.2.post0.dev112"
+version = "1.8.1.post0.dev117"
 source = { virtual = "." }
 
 [package.dev-dependencies]
@@ -3713,7 +3710,7 @@ version = "2.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
-    { name = "nvidia-nccl-cu12", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-nccl-cu12", marker = "platform_machine != 'aarch64' and platform_system == 'Linux'" },
     { name = "scipy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d2/d5/8d93a950a379b34767ac118cf5653977048e291c6695713a60863532ec08/xgboost-2.1.2.tar.gz", hash = "sha256:151071c22d0f5637739ccaf057f57d05983caaba557cc3d8191c2cb8ce8ae659", size = 1090159 }
