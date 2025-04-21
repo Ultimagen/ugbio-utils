@@ -65,7 +65,12 @@ RUN wget https://github.com/pezmaster31/bamtools/archive/v${bamtools_version}.zi
 
 # install hla-la (ug-master branch)
 ARG HLA_LA_BRANCH=ug-master
-RUN mkdir -p /usr/local/bin/HLA-LA/{bin,src,obj,temp,working,graphs} \
+RUN mkdir -p /usr/local/bin/HLA-LA/bin \
+    /usr/local/bin/HLA-LA/src \
+    /usr/local/bin/HLA-LA/obj \
+    /usr/local/bin/HLA-LA/temp \
+    /usr/local/bin/HLA-LA/working \
+    /usr/local/bin/HLA-LA/graphs \
  && cd /usr/local/bin/HLA-LA/src \
  && git clone --branch ${HLA_LA_BRANCH} https://github.com/Ultimagen/HLA-LA . \
  && sed -i 's@\$(BAMTOOLS_PATH)/lib64@\$(BAMTOOLS_PATH)/lib@' makefile \
