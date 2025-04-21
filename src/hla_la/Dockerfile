@@ -1,12 +1,12 @@
 # work from latest LTS ubuntu release
-FROM ubuntu:18.04
+FROM ubuntu:22.04
 
 # set the environment variables
 ENV hla_la_version 1.0.4
-ENV samtools_version 1.9
-ENV bwa_version 0.7.17
-ENV picard_version 1.123
-ENV bamtools_version 2.5.1
+ENV samtools_version 1.21
+ENV bwa_version 0.7.19
+ENV picard_version 3.4.0
+ENV bamtools_version 2.5.2
 
 # run update and install necessary tools ubuntu tools
 RUN apt-get update -y && apt-get install -y \
