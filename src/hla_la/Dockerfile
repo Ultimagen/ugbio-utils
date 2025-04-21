@@ -71,15 +71,14 @@ RUN mkdir -p /usr/local/bin/HLA-LA/bin \
     /usr/local/bin/HLA-LA/temp \
     /usr/local/bin/HLA-LA/working \
     /usr/local/bin/HLA-LA/graphs \
- && cd /usr/local/bin/HLA-LA/src \
- && git clone --branch ${HLA_LA_BRANCH} https://github.com/Ultimagen/HLA-LA . \
- && sed -i 's@\$(BAMTOOLS_PATH)/lib64@\$(BAMTOOLS_PATH)/lib@' makefile \
- && make all BOOST_PATH=/usr/include/boost BAMTOOLS_PATH=/usr/local/bin/bamtools-${bamtools_version}
+ && git clone --branch ${HLA_LA_BRANCH} https://github.com/Ultimagen/HLA-LA /usr/local/bin/HLA-LA/src \
+ && sed -i 's@\$(BAMTOOLS_PATH)/lib64@\$(BAMTOOLS_PATH)/lib@' /usr/local/bin/HLA-LA/src/makefile \
+ && make -C /usr/local/bin/HLA-LA/src all BOOST_PATH=/usr/include/boost BAMTOOLS_PATH=/usr/local/bin/bamtools-${bamtools_version}
 
 # modify paths.ini for hla-la
-RUN sed -i 's@samtools_bin=@samtools_bin=/usr/local/bin/samtools@' paths.ini \
- && sed -i 's@bwa_bin=@bwa_bin=/usr/local/bin/bwa@' paths.ini \
- && sed -i 's@picard_sam2fastq_bin=.*@picard_sam2fastq_bin=/usr/local/bin/picard/picard.jar@' paths.ini
+RUN sed -i 's@samtools_bin=@samtools_bin=/usr/local/bin/samtools@' /usr/local/bin/HLA-LA/src/paths.ini \
+ && sed -i 's@bwa_bin=@bwa_bin=/usr/local/bin/bwa@' /usr/local/bin/HLA-LA/src/paths.ini \
+ && sed -i 's@picard_sam2fastq_bin=.*@picard_sam2fastq_bin=/usr/local/bin/picard/picard.jar@' /usr/local/bin/HLA-LA/src/paths.ini
 
 # Create a script to run tests from docker CI
 RUN echo '#!/bin/sh\necho "No tests to run :)"' > /usr/local/bin/run_tests \
