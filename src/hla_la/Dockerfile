@@ -41,12 +41,11 @@ RUN wget https://github.com/samtools/samtools/releases/download/${samtools_versi
  && make install
 
 # install picard
-RUN wget https://github.com/broadinstitute/picard/releases/download/${picard_version}/picard.jar \
- && mkdir -p /usr/local/bin/picard \
- && mv picard.jar /usr/local/bin/picard/picard.jar \
- && chmod 0644 /usr/local/bin/picard/picard.jar \
- && echo -e '#!/bin/bash\njava -jar /usr/local/bin/picard/picard.jar "$@"' > /usr/local/bin/picard \
- && chmod +x /usr/local/bin/picard
+RUN mkdir -p /usr/local/bin/picard && \
+    wget -O /usr/local/bin/picard/picard.jar https://github.com/broadinstitute/picard/releases/download/${picard_version}/picard.jar && \
+    chmod 0644 /usr/local/bin/picard/picard.jar && \
+    echo '#!/bin/bash\nexec java -jar /usr/local/bin/picard/picard.jar "$@"' > /usr/local/bin/run-picard && \
+    chmod +x /usr/local/bin/run-picard
 
 # install bwa
 RUN curl -SL https://github.com/lh3/bwa/archive/v${bwa_version}.zip -o v${bwa_version}.zip \
