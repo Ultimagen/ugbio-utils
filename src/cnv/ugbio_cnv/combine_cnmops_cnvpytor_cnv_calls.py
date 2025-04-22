@@ -110,7 +110,62 @@ def get_dup_cnmops_cnv_calls(
         return ""
 
 
-def get_dup_cnvpytor_cnv_calls(cnvpytor_cnv_calls: str, sample_name: str, out_directory: str) -> str:
+def parse_cnvpytor_cnv_calls(cnvpytor_cnv_calls: str, pN: float = 0.9) -> pd.DataFrame:  # noqa: N803
+    """
+    Parses cnvpytor CNV calls from a tsv file.
+
+    Args:
+        cnvpytor_cnv_calls (str): path to the cnvpytor CNV calls bed file.
+        pN (float): threshold for filtering CNV calls based on the fraction of reference genome
+            gaps (Ns) in call region.
+
+    Returns:
+        pd.DataFrame: DataFrame containing parsed CNV calls.
+    """
+    # Result is stored in tab separated files with following columns:
+    # CNV type: "deletion" or "duplication",
+    # CNV region (chr:start-end),
+    # CNV size,
+    # CNV level - read depth normalized to 1,
+    # e-val1 -- e-value (p-value multiplied by genome size divided by bin size) calculated
+    #           using t-test statistics between RD statistics in the region and global,
+    # e-val2 -- e-value (p-value multiplied by genome size divided by bin size) from the probability of RD values within
+    #           the region to be in the tails of a gaussian distribution of binned RD,
+    # e-val3 -- same as e-val1 but for the middle of CNV,
+    # e-val4 -- same as e-val2 but for the middle of CNV,
+    # q0 -- fraction of reads mapped with q0 quality in call region,
+    # pN -- fraction of reference genome gaps (Ns) in call region,
+    # dG -- distance from closest large (>100bp) gap in reference genome.
+
+    df_cnvpytor_cnvs = pd.read_csv(cnvpytor_cnv_calls, sep="\t", header=None)
+    df_cnvpytor_cnvs.columns = [
+        "cnv_type",
+        "cnv_region",
+        "len",
+        "cnv_level",
+        "e-val1",
+        "e-val2",
+        "e-val3",
+        "e-val4",
+        "q0",
+        "pN",
+        "dG",
+    ]
+
+    # Split cnv_region into 'chr', 'start', 'end'
+    df_cnvpytor_cnvs[["chrom", "pos"]] = df_cnvpytor_cnvs["cnv_region"].str.split(":", expand=True)
+    df_cnvpytor_cnvs[["start", "end"]] = df_cnvpytor_cnvs["pos"].str.split("-", expand=True)
+    df_cnvpytor_cnvs = df_cnvpytor_cnvs.drop(columns="pos")
+    df_cnvpytor_cnvs["start"] = df_cnvpytor_cnvs["start"].astype(int)
+    df_cnvpytor_cnvs["end"] = df_cnvpytor_cnvs["end"].astype(int)
+
+    # Filter by pN value
+    df_cnvpytor_cnvs = df_cnvpytor_cnvs[df_cnvpytor_cnvs["pN"] < pN]
+
+    return df_cnvpytor_cnvs
+
+
+def get_dup_cnvpytor_cnv_calls(df_cnvpytor_cnv_calls: pd.DataFrame, sample_name: str, out_directory: str) -> str:  # noqa: N803
     """
     Args:
         cnvpytor_cnv_calls (str): Input bed file holding cnvpytor CNV calls.
@@ -120,18 +175,16 @@ def get_dup_cnvpytor_cnv_calls(cnvpytor_cnv_calls: str, sample_name: str, out_di
         str: duplications called by cnvpytor bed file.
     """
     cnvpytor_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnvpytor_cnvs.DUP.bed")
-    run_cmd(f"cat {cnvpytor_cnv_calls} |  grep \"duplication\" | sed 's/$/\\tDUP\\tcnvpytor/'  > {cnvpytor_cnvs_dup}")
+    df_cnvpytor_cnv_calls_duplications = df_cnvpytor_cnv_calls[df_cnvpytor_cnv_calls["cnv_type"] == "duplication"]
+    df_cnvpytor_cnv_calls_duplications["cnv_type"] = "DUP"
+    df_cnvpytor_cnv_calls_duplications["copy_number"] = "DUP"
+    df_cnvpytor_cnv_calls_duplications["source"] = "cnvpytor"
 
-    if os.path.getsize(cnvpytor_cnvs_dup) > 0:
-        df_cnvpytor_cnvs_dup = pd.read_csv(cnvpytor_cnvs_dup, sep="\t", header=None)
-        df_cnvpytor_cnvs_dup.columns = ["chrom", "start", "end", "CN", "CNV_type", "source"]
-        df_cnvpytor_cnvs_dup["copy_number"] = "DUP"
-        out_cnvpytor_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnvpytor_cnvs.DUP.all_fields.bed")
-        df_cnvpytor_cnvs_dup[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
-            out_cnvpytor_cnvs_dup, sep="\t", header=None, index=False
+    if len(df_cnvpytor_cnv_calls_duplications) > 0:
+        df_cnvpytor_cnv_calls_duplications[["chrom", "start", "end", "cnv_type", "source", "copy_number"]].to_csv(
+            cnvpytor_cnvs_dup, sep="\t", header=None, index=False
         )
-
-        return out_cnvpytor_cnvs_dup
+        return cnvpytor_cnvs_dup
     else:
         logger.info("No duplications found in cnvpytor CNV calls.")
         return ""
@@ -285,13 +338,7 @@ def run(argv):
     )
     args.cnmops_cnv_calls = cnmops_cnv_calls_tmp_file
     # format cnvpytor cnv calls :
-    df_pytor_calls = pd.read_csv(args.cnvpytor_cnv_calls, delim_whitespace=True, header=None)
-    df_pytor_calls.columns = ["cnv_type", "chrom", "start", "end", "len", 5, 6, 7]
-    df_pytor_calls["CN"] = df_pytor_calls["cnv_type"].map(str) + "," + df_pytor_calls["len"].map(str)
-    df_pytor_calls[["chrom", "start", "end", "CN"]].to_csv(
-        cnvpytor_cnv_calls_tmp_file, sep="\t", header=None, index=False
-    )
-    args.cnvpytor_cnv_calls = cnvpytor_cnv_calls_tmp_file
+    df_cnvpytor_cnv_calls = parse_cnvpytor_cnv_calls(args.cnvpytor_cnv_calls)
 
     ############################
     ### process DUPlications ###
@@ -299,7 +346,7 @@ def run(argv):
     out_cnmops_cnvs_dup = get_dup_cnmops_cnv_calls(
         args.cnmops_cnv_calls, sample_name, out_directory, args.distance_threshold
     )
-    out_cnvpytor_cnvs_dup = get_dup_cnvpytor_cnv_calls(args.cnvpytor_cnv_calls, sample_name, out_directory)
+    out_cnvpytor_cnvs_dup = get_dup_cnvpytor_cnv_calls(df_cnvpytor_cnv_calls, sample_name, out_directory)
     # merge duplications
     if not out_cnmops_cnvs_dup and not out_cnvpytor_cnvs_dup:
         logger.info("No duplications found in cn.mops and cnvpytor CNV calls.")
