@@ -40,7 +40,7 @@ def main():
             print("Starting retrieval of the files from GLACIER.")
             s3 = boto3.client("s3")
             for file in cloud_validator.glacier_files:
-                bucket, key = cfv.split_uri(file)
+                proto, bucket, key = cfv.split_uri(file)
                 _ = s3.restore_object(
                     Bucket=bucket,
                     Key=key,
