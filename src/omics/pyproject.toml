@@ -11,6 +11,7 @@ dependencies = [
     "boto3>=1.35.69",
     "pandas>=2.2.3",
     "winval>=0.7.4",
+    "ugbio_core"
 ]
 readme = "README.omics.md"
 requires-python = ">= 3.11"
