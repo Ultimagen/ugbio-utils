@@ -2,7 +2,7 @@
 
 export SPARK_HOME=/usr/lib/spark
 export PYSPARK_PYTHON=python3
-export HAIL_HOME=/opt/hail-on-AWS-spot-instances
+export HAIL_HOME=/opt/ugbio-utils/src/hail
 
 export PYTHONPATH="/home/hadoop/hail-python.zip:$SPARK_HOME/python:${SPARK_HOME}/python/lib/py4j-src.zip"
 echo "PYTHONPATH: ${PYTHONPATH}"
@@ -17,7 +17,7 @@ echo "PYSPARK_SUBMIT_ARGS: ${PYSPARK_SUBMIT_ARGS}"
 
 # Configure Jupyter Lab
 mkdir -p $HOME/.jupyter
-cp /opt/hail-on-AWS-spot-instances/src/jupyter_notebook_config.py $HOME/.jupyter/
+cp $HAIL_HOME/jupyter_notebook_config.py $HOME/.jupyter/
 
 mkdir -p $HAIL_HOME/notebook/
 chmod -R 777 $HAIL_HOME/notebook
