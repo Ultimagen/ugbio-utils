@@ -2,10 +2,13 @@
 # This script is used to parse a WDL and JSON file and check if any files are in GLACIER.
 # If any files are in GLACIER, it will start the retrieval process.
 import argparse
+import logging
 
 import boto3
 import winval.cloud_files_validator as cfv
-from ugbio_core.logger import logger
+
+log_format = "[%(levelname)s] %(message)s"
+logging.basicConfig(level=logging.INFO, format=log_format)
 
 
 # parse input arguments
@@ -30,15 +33,15 @@ def main():
     cloud_validator = cfv.CloudFilesValidator(wdl, param_json)
     validation = cloud_validator.validate()
     if validation:
-        logger.info("The WDL and JSON files are valid, no GLACIER  files found.")
+        logging.info("The WDL and JSON files are valid, no GLACIER  files found.")
     elif len(cloud_validator.non_validated_files) > len(cloud_validator.glacier_files):
-        logger.info("Missing files found, correct first")
+        logging.info("Missing files found, correct first")
     elif len(cloud_validator.glacier_files) > 0:
-        logger.info("The WDL and JSON files are valid, but the following files are in GLACIER:")
+        logging.info("The WDL and JSON files are valid, but the following files are in GLACIER:")
         for file in cloud_validator.glacier_files:
-            logger.info(file)
+            logging.info(file)
         if retrieve:
-            logger.info("Starting retrieval of the files from GLACIER.")
+            logging.info("Starting retrieval of the files from GLACIER.")
             s3 = boto3.client("s3")
             for file in cloud_validator.glacier_files:
                 proto, bucket, key = cfv.split_uri(file)
@@ -49,9 +52,9 @@ def main():
                         "Days": args.n_days,
                     },
                 )
-            logger.info("Retrieval started.")
+            logging.info("Retrieval started.")
         else:
-            logger.info("Use --retrieve to start retrieval of the files from GLACIER.")
+            logging.info("Use --retrieve to start retrieval of the files from GLACIER.")
 
 
 if __name__ == "__main__":

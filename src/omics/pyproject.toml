@@ -10,8 +10,7 @@ dependencies = [
     "google-cloud-storage>=2.18.2",
     "boto3>=1.35.69",
     "pandas>=2.2.3",
-    "winval>=0.7.5",
-    "ugbio_core"
+    "winval>=0.7.5"
 ]
 readme = "README.omics.md"
 requires-python = ">= 3.11"
