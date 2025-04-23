@@ -43,7 +43,7 @@ done
 
 OUTPUT_PATH=""
 HAIL_VERSION="master"
-SPARK_VERSION="2.4.0"
+SPARK_VERSION="3.5.4"
 COMPILE=true
 IS_MASTER=false
 GRADLE_DEPRECATION=1566593776
@@ -88,11 +88,10 @@ if [ "$IS_MASTER" = true ]; then
 #    sudo yum install git cmake lz4 lz4-devel python3 -y
 #    python3 -m ensurepip --upgrade
 #    sudo yum install java-1.8.0-amazon-corretto-devel -y
-    sudo amazon-linux-extras enable corretto11
     sudo yum install -y git htop unzip bzip2 zip tar rsync emacs-nox xsltproc java-11-amazon-corretto-devel cmake gcc gcc-c++ lapack-devel lz4-devel
 
 
-    export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+    export JAVA_HOME=/usr/lib/jvm/java-11-openjdk
     export PATH=$JAVA_HOME/bin:$PATH
     # Clone Hail repository
     git clone https://github.com/broadinstitute/hail.git
