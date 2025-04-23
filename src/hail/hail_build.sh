@@ -99,18 +99,44 @@ if [ "$IS_MASTER" = true ]; then
     GIT_HASH="$(git log --pretty=format:"%H" | grep $HASH | cut -f 1 -d ' ')"
 
     if [ ${#HASH} -lt 7 ]; then
-        if [ $HASH = "current" ]; then
-            echo "Hail will be compiled using the latest repository version available"
-        else
-            echo "The git hash provided has less than 7 characters. The latest version of Hail will be compiled!"
-        fi
+    	if [ $HASH = "current" ]; then
+    		echo "Hail will be compiled using the latest repository version available"
+    	else
+    		echo "The git hash provided has less than 7 characters. The latest version of Hail will be compiled!"
+    		# exit 1
+    	fi
     else
-        export TEST="$(aws s3 ls s3://hms-dbmi-docs/hail-versions/ | grep $HASH | sed -e 's/^[ \t]*//' | cut -d " " -f 2)"
-        if [ -z "$TEST" ] || [ -z "$GIT_HASH" ]; then
-            echo "Hail pre-compiled version not found!"
+    	export TEST="$(aws s3 ls s3://hms-dbmi-docs/hail-versions/ | grep $HASH | sed -e 's/^[ \t]*//' | cut -d " " -f 2)"
+    	if [ -z "$TEST" ] || [-z "$GIT_HASH" ]; then
+    		echo "Hail pre-compiled version not found!"
             echo "Compiling Hail with git hash: $GIT_HASH"
             git reset --hard $GIT_HASH
             SELECTED_VERSION=`git show -s --format=%ct $GIT_HASH`
-        else
-            echo "Hail pre-compiled version found: $TEST
-::contentReference[oaicite:22]{index=22}
+    	else
+    		echo "Hail pre-compiled version found: $TEST"
+            aws s3 cp s3://hms-dbmi-docs/hail-versions/$TEST $HOME/ --recursive
+            GIT_HASH="$(echo $TEST | cut -d "-" -f 1)"
+            git reset --hard $GIT_HASH
+            COMPILE=false
+    	fi
+    fi
+
+    LATEST_JDK=`ls  /usr/lib/jvm/ | grep "jre-11-openjdk"`
+    sudo  ln -s /usr/lib/jvm/$LATEST_JDK/include /etc/alternatives/jre/include
+
+
+    if [ "$COMPILE" = true ]; then
+        # Compile with Spark 2.4.0
+        if [ $SELECTED_VERSION -ge $GRADLE_DEPRECATION ];then
+          echo "Compiling with Wheel..."
+          make clean
+          make wheel
+          HAIL_WHEEL=`ls /opt/hail-on-AWS-spot-instances/src/hail/hail/build/deploy/dist | grep "whl"`
+          sudo python3 -m pip install --no-deps /opt/hail-on-AWS-spot-instances/src/hail/hail/build/deploy/dist/$HAIL_WHEEL
+
+      else  ./gradlew -Dspark.version=$SPARK_VERSION -Dbreeze.version=0.13.2 -Dpy4j.version=0.10.6 shadowJar archiveZip
+            cp $PWD/build/distributions/hail-python.zip $HOME
+            cp $PWD/build/libs/hail-all-spark.jar $HOME
+        fi
+    fi
+fi
