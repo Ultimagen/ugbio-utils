@@ -88,7 +88,9 @@ if [ "$IS_MASTER" = true ]; then
 #    sudo yum install git cmake lz4 lz4-devel python3 -y
 #    python3 -m ensurepip --upgrade
 #    sudo yum install java-1.8.0-amazon-corretto-devel -y
-    sudo yum install -y git htop unzip bzip2 zip tar rsync emacs-nox xsltproc java-11-openjdk-devel cmake gcc gcc-c++ lapack-devel lz4-devel
+    sudo amazon-linux-extras enable corretto11
+    sudo yum install -y git htop unzip bzip2 zip tar rsync emacs-nox xsltproc java-11-amazon-corretto-devel cmake gcc gcc-c++ lapack-devel lz4-devel
+
 
     export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
     export PATH=$JAVA_HOME/bin:$PATH
@@ -134,7 +136,7 @@ if [ "$IS_MASTER" = true ]; then
           HAIL_WHEEL=`ls /opt/ugbio-utils/src/hail/hail/hail/build/deploy/dist | grep "whl"`
           sudo python3 -m pip install --no-deps /opt/ugbio-utils/src/hail/hail/hail/build/deploy/dist/$HAIL_WHEEL
 
-      else  ./gradlew -Dspark.version=$SPARK_VERSION -Dbreeze.version=0.13.2 -Dpy4j.version=0.10.6 shadowJar archiveZip
+      else  ./gradlew -Dspark.version=$SPARK_VERSION -Dbreeze.version=0.13.2 -Dpy4j.version=z0.10.6 shadowJar archiveZip
             cp $PWD/build/distributions/hail-python.zip $HOME
             cp $PWD/build/libs/hail-all-spark.jar $HOME
         fi
