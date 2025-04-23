@@ -131,8 +131,8 @@ if [ "$IS_MASTER" = true ]; then
           echo "Compiling with Wheel..."
           make clean
           make wheel
-          HAIL_WHEEL=`ls /opt/hail-on-AWS-spot-instances/src/hail/hail/build/deploy/dist | grep "whl"`
-          sudo python3 -m pip install --no-deps /opt/hail-on-AWS-spot-instances/src/hail/hail/build/deploy/dist/$HAIL_WHEEL
+          HAIL_WHEEL=`ls /opt/ugbio-utils/src/hail/hail/hail/build/deploy/dist | grep "whl"`
+          sudo python3 -m pip install --no-deps /opt/ugbio-utils/src/hail/hail/hail/build/deploy/dist/$HAIL_WHEEL
 
       else  ./gradlew -Dspark.version=$SPARK_VERSION -Dbreeze.version=0.13.2 -Dpy4j.version=0.10.6 shadowJar archiveZip
             cp $PWD/build/distributions/hail-python.zip $HOME
