@@ -10,7 +10,7 @@ dependencies = [
     "google-cloud-storage>=2.18.2",
     "boto3>=1.35.69",
     "pandas>=2.2.3",
-    "winval>=0.7.4",
+    "winval>=0.7.5",
     "ugbio_core"
 ]
 readme = "README.omics.md"
