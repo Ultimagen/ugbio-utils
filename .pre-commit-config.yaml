@@ -20,7 +20,6 @@ repos:
         # exclude: src/omics/tests/resources/cromwell_pricelist.json
         # exclude: ^src/featuremap/tests/resources/.*_chr1_alt2_8.test_size_0.1.xgb_model.json$ # Exclude model files
 
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
     rev: v0.8.4
@@ -30,3 +29,16 @@ repos:
         args: [--fix]
       # Run the formatter.
       - id: ruff-format
+
+
+  - repo: https://github.com/jendrikseipp/vulture
+    rev: "v2.14" # or any later Vulture version
+    hooks:
+      - id: vulture
+        args:
+          [
+            "src/featuremap",
+            "src/featuremap/tests/",
+            "--min-confidence=80",
+            "--sort-by-size",
+          ]
