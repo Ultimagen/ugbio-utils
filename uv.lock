@@ -1,4 +1,5 @@
 version = 1
+revision = 1
 requires-python = ">=3.11, <3.13"
 resolution-markers = [
     "python_full_version < '3.12'",
@@ -1039,6 +1040,25 @@ name = "grapheme"
 version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ce/e7/bbaab0d2a33e07c8278910c1d0d8d4f3781293dfbc70b5c38197159046bf/grapheme-0.6.0.tar.gz", hash = "sha256:44c2b9f21bbe77cfb05835fec230bd435954275267fea1858013b102f8603cca", size = 207306 }
+
+[[package]]
+name = "gwplot"
+version = "0.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pysam" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0a/1c/7a543e6127bcd207459da9898f6d10eb06a4937154924dd134b4f8ec7eeb/gwplot-0.4.1-cp311-cp311-macosx_13_0_x86_64.whl", hash = "sha256:151208e9b4cf6d82a4dc7cc122dfb05b3cc58009a52c09dfdb4fe0ca9255b888", size = 31113066 },
+    { url = "https://files.pythonhosted.org/packages/a7/19/9ac7ff174acfc4abbd9e1d6c2706af0957fc166eadefaf2fc9c08b23a50f/gwplot-0.4.1-cp311-cp311-macosx_15_0_arm64.whl", hash = "sha256:d21b3490de81ef03238de9bf23afe6152ceaa5c41da23e64660a94159ad95350", size = 27030067 },
+    { url = "https://files.pythonhosted.org/packages/7d/d2/a57a84338ac871110fbc82fd9d9eade4ba4aab3a9eac22da5e53d6ac9f25/gwplot-0.4.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c6d2a4fb16ba38d1c0e9c90c08305f384ad50353eacedae6b68a66fdc37cff00", size = 71550622 },
+    { url = "https://files.pythonhosted.org/packages/bb/d9/671733674e61f9660e69811f0c53be5cb3d5a6637ca22f3dfd2e62b9910a/gwplot-0.4.1-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:79374ef51ed14a127d79af6d215377af993346257d3e0335328cc644f6baeb27", size = 66419235 },
+    { url = "https://files.pythonhosted.org/packages/98/bf/26a8a4ad9c5315fc009214e8cf2621d9fa814a21524cac9e633b3a11f048/gwplot-0.4.1-cp312-cp312-macosx_13_0_x86_64.whl", hash = "sha256:c34d0e4425705ca2a53706297a980b511155993440e2d0a474c92c81e1a0cb31", size = 31112669 },
+    { url = "https://files.pythonhosted.org/packages/45/17/49e9ebcacdbee485b5fff509647d068d96254650d43402a04cd8b751063e/gwplot-0.4.1-cp312-cp312-macosx_15_0_arm64.whl", hash = "sha256:04048fec64a21a0cff027a9d4e57add75bf9040b2bbe29c3548d5ba9f2539fe9", size = 27027810 },
+    { url = "https://files.pythonhosted.org/packages/e6/56/01b0ba563d660443509136f488a8a24480d56018a3037d3515c05acba7d5/gwplot-0.4.1-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:84cdf10372a091c8fb80e04f8fd27c850ae7884956193c2b97b365dead923c66", size = 71542371 },
+    { url = "https://files.pythonhosted.org/packages/29/a4/734d31842bbfd906fd1672c130ef06b4c06596ef6251d8349cc97a552e1d/gwplot-0.4.1-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:a5f10b0e2b01c121f07dd9c29ce32fc75141382b7a9a75be7aa9c36a7c9560c5", size = 66413574 },
+]
 
 [[package]]
 name = "h11"
@@ -2535,18 +2555,22 @@ wheels = [
 
 [[package]]
 name = "pysam"
-version = "0.22.1"
+version = "0.23.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a6/bc/e0a79d74137643940f5406121039d1272f29f55c5330e7b43484b2259da5/pysam-0.22.1.tar.gz", hash = "sha256:18a0b97be95bd71e584de698441c46651cdff378db1c9a4fb3f541e560253b22", size = 4643640 }
+sdist = { url = "https://files.pythonhosted.org/packages/7c/2b/1cf19890a0e4c73ad2672ce7eb485606c4bd2846eef2d892c078ab193c92/pysam-0.23.3.tar.gz", hash = "sha256:9ebcb1f004b296fd139b103ec6fd7e415e80f89f194eb7d0d972ac6d11bbaf24", size = 4974405 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3a/95/bc250550d6212bd0c0718264e74fa9f11bf4fc9710f58c7a32ce716df1b4/pysam-0.22.1-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:503c833e6cf348d87aec9113b1386d5c85c031d64deb914c29f5ad1792d103e6", size = 8354803 },
-    { url = "https://files.pythonhosted.org/packages/87/d7/5084e5488aebf3a89039e95c8133e588aea588b6cc9e32c71becff6e3dcf/pysam-0.22.1-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:4447fdc2630519a00b6bf598995f1440e6f398eb0c084a7c141db026990ae07a", size = 7993033 },
-    { url = "https://files.pythonhosted.org/packages/49/d3/6939d89144414460af84d67f571469a3759bc7539aa7088b51389d0d5ebf/pysam-0.22.1-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:1be663a73cf56ddd1d309b91d314a0c94c9bf352eaa3c6eda30cef12699843f0", size = 24535100 },
-    { url = "https://files.pythonhosted.org/packages/3e/36/0d478e81f4687e87be1b1cdb3451d41c088669687f28c03ac60ffefb2f71/pysam-0.22.1-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:aeb31472365014fd8b37da4a88af758094b5872a8a16a25635a52cf8ceff5a9f", size = 25126405 },
-    { url = "https://files.pythonhosted.org/packages/43/2a/de24972a7fde545aec7d3e59230f51b004e407d327087f4a90b7912cb679/pysam-0.22.1-cp312-cp312-macosx_10_9_x86_64.whl", hash = "sha256:e72e129d245574801125029a5892c9e18d2956b13c4203ea585cbd64ccde9351", size = 8373896 },
-    { url = "https://files.pythonhosted.org/packages/f6/2c/d226f2db96fda51f7ab70c5256691def40af4879b6b5ffadda2c676ac5e5/pysam-0.22.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:f8f00bb1fb977fc33c87cf5fe9023eefc2ba3d43d30ab4875a1765827018c949", size = 8005195 },
-    { url = "https://files.pythonhosted.org/packages/f5/6b/27106562f2477d38c0d8efa452839505877e335da12ace6bf993b7bee4dd/pysam-0.22.1-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:c0e051fda433c1c7ff94532f60477bb83b97f4bb183567a0ae23f340e1c200b4", size = 24493675 },
-    { url = "https://files.pythonhosted.org/packages/0c/fe/ce252dce8e5dd7ae06fd2036b5a146c1200598346ee70cbeb0a44740aa6b/pysam-0.22.1-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:860c7c78ddb1539b83d5476502ba14c8b4e8435810dc7a5b715196da3dfb86b6", size = 25164276 },
+    { url = "https://files.pythonhosted.org/packages/71/59/74eccdbb18a26a49d99b9cef50e3630b76b1c430756e6f04891d12f4d43f/pysam-0.23.3-cp311-cp311-macosx_10_9_x86_64.whl", hash = "sha256:cb4c9c4eb245d643b60c7ec750d5554ebf17c6c9646f4f54439f94a3b3de15de", size = 8667888 },
+    { url = "https://files.pythonhosted.org/packages/de/12/ae4e639c9187bfd60f3110d9166bf079044e091011f400173bebf2740eae/pysam-0.23.3-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:3449070e0bbe716f9eccd3911d2482476478fbad63f739378d0203f470a446d6", size = 8415426 },
+    { url = "https://files.pythonhosted.org/packages/a7/f3/e8cd509f5250e0656076cd0f4a6c9e7d2c520e5599272a8519a3d50ca6ba/pysam-0.23.3-cp311-cp311-manylinux_2_28_aarch64.whl", hash = "sha256:c6cb7069dcecca3d40bbe4a6d5adea5cafe483c11854892dbabd6e10e5776049", size = 25904314 },
+    { url = "https://files.pythonhosted.org/packages/7b/98/936efaa190ad843c71ca397addc02e676ea4fb389437e2ca0471ad39efb0/pysam-0.23.3-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:a7e9c835126f94ff57199e2f58e61436e12e84d47077e70aac8aa03531c4cc71", size = 26452466 },
+    { url = "https://files.pythonhosted.org/packages/ac/dd/432569a859c5820b882fb692628b0df7cc9de1fe61c5eb5b979df31a7720/pysam-0.23.3-cp311-cp311-musllinux_1_2_aarch64.whl", hash = "sha256:9b249367a4ad100e61afac9156bde6183c6119f2612bbd5d97ebe3153c643aed", size = 25547736 },
+    { url = "https://files.pythonhosted.org/packages/8e/6b/2a8060a279373eb64c5c77e7a0ef2e5bd0d3adc85623aa228d877038f2a2/pysam-0.23.3-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:a720cc0818aa84aca5ee4ef884fda82367598e77ec0c95d2050f670fb1fd0db5", size = 25865391 },
+    { url = "https://files.pythonhosted.org/packages/a2/6b/dd9f94da44463ecfddb7075f1048c044155c725d7d79fde2e7957561a3b0/pysam-0.23.3-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:69f90c0867fe43f04004bcea963f6b2e68b39180afab54bf551f61f43856638b", size = 6177042 },
+    { url = "https://files.pythonhosted.org/packages/f3/e9/686e711a559a02e4c3ba0bc78cf031d9ddb525e9f0b2984d1b66536ba94a/pysam-0.23.3-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:2310d72bfae7a0980d414156267e25b57aa221a768c11c087f3f7d00ceb9fed4", size = 8398187 },
+    { url = "https://files.pythonhosted.org/packages/8a/82/fca396e13969d1020956b02e567e0d357be0af0f3aebc2b4d97bed780a6d/pysam-0.23.3-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:b2e45983efea190d374fcda0b6e0c835d6e9e474e02694729f3b3a14d680fa62", size = 23343831 },
+    { url = "https://files.pythonhosted.org/packages/df/a6/c100df6c8118b4ce1f9c086bb9cf5bccd4f71d05ceb2ecf474f3b0ea87b8/pysam-0.23.3-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:4099393fc5097b5081c7efaf46b0109e4f0a8ed18f86d497219a8bf739c73992", size = 24021198 },
+    { url = "https://files.pythonhosted.org/packages/f1/92/32e1b13f30f16fe2c948f9b9e04c6e7698beaa539ea1a2bcddc51ed6c9b7/pysam-0.23.3-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:4f04b9aa9b23d767fe36652eacb8370791e3b56816a7e50553d52c65ccdce77f", size = 22925815 },
+    { url = "https://files.pythonhosted.org/packages/fa/7d/ccfaa2d6f9f07b357696b07883d5c5471f980938c2293324631425d95523/pysam-0.23.3-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:701843e5dc67c8eb217c3265039c699a5f83cce64fbc4225268141796e972353", size = 23351352 },
 ]
 
 [[package]]
@@ -3435,6 +3459,7 @@ requires-dist = [
     { name = "simppl", specifier = ">=1.0.7" },
     { name = "tqdm", marker = "extra == 'vcfbed'", specifier = ">=4.66.4" },
 ]
+provides-extras = ["vcfbed", "reports", "concordance"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3448,6 +3473,7 @@ name = "ugbio-featuremap"
 version = "1.13.0.post0"
 source = { editable = "src/featuremap" }
 dependencies = [
+    { name = "polars" },
     { name = "scikit-learn" },
     { name = "seaborn" },
     { name = "ugbio-core", extra = ["vcfbed"] },
@@ -3464,6 +3490,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "polars", specifier = ">=1.27.1" },
     { name = "scikit-learn", specifier = ">=1.5.2,<1.6.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "ugbio-core", extras = ["vcfbed"], editable = "src/core" },
@@ -3650,6 +3677,7 @@ requires-dist = [
     { name = "pymongo", marker = "extra == 'db'", specifier = ">=4.11.1" },
     { name = "winval", specifier = ">=0.7.5" },
 ]
+provides-extras = ["db"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3777,6 +3805,9 @@ dev = [
 name = "ugbio-utils"
 version = "1.13.0.post0"
 source = { virtual = "." }
+dependencies = [
+    { name = "gwplot" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -3787,6 +3818,7 @@ dev = [
     { name = "openpyxl" },
     { name = "polars" },
     { name = "pre-commit" },
+    { name = "pyarrow" },
     { name = "pybedtools" },
     { name = "pymongo" },
     { name = "pytest" },
@@ -3798,6 +3830,7 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "gwplot", specifier = ">=0.4.1" }]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3808,6 +3841,7 @@ dev = [
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "polars", specifier = ">=1.29.0" },
     { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pyarrow", specifier = ">=17.0.0" },
     { name = "pybedtools", specifier = ">=0.11.0" },
     { name = "pymongo", specifier = ">=4.11.1" },
     { name = "pytest", specifier = ">=8.3.3" },

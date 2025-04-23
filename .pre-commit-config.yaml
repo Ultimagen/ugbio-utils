@@ -1,7 +1,7 @@
 # See https://pre-commit.com for more information
 # See https://pre-commit.com/hooks.html for more hooks
 default_language_version:
-  python: python3.11
+  python: python3
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -24,7 +24,6 @@ repos:
 
 
 
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
     rev: v0.8.4
@@ -34,3 +33,16 @@ repos:
         args: [--fix]
       # Run the formatter.
       - id: ruff-format
+
+
+  - repo: https://github.com/jendrikseipp/vulture
+    rev: "v2.14" # or any later Vulture version
+    hooks:
+      - id: vulture
+        args:
+          [
+            "src/featuremap",
+            "src/featuremap/tests/",
+            "--min-confidence=80",
+            "--sort-by-size",
+          ]
