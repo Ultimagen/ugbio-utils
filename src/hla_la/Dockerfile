@@ -5,7 +5,7 @@ FROM ubuntu:22.04
 ENV hla_la_version=1.0.4 \
     samtools_version=1.21 \
     bwa_version=0.7.19 \
-    picard_version=3.4.0 \
+    picard_version=2.25.7 \
     bamtools_version=2.5.2
 
 # install required system packages
@@ -24,7 +24,7 @@ RUN apt-get update -y && apt-get install -y \
     libcurl4-openssl-dev \
     wget \
     libz-dev \
-    openjdk-16-jre \
+    openjdk-11-jre \
     libboost-all-dev \
     cmake \
     libjsoncpp-dev \
