@@ -24,7 +24,7 @@ RUN apt-get update -y && apt-get install -y \
     libcurl4-openssl-dev \
     wget \
     libz-dev \
-    openjdk-11-jre \
+    openjdk-16-jre \
     libboost-all-dev \
     cmake \
     libjsoncpp-dev \
