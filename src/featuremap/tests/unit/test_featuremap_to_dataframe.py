@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 from pathlib import Path
 
 import polars as pl
@@ -57,3 +58,20 @@ def test_enum_column_is_categorical(tmp_path: Path, input_featuremap: Path) -> N
 
     cats = set(col.cat.get_categories())
     assert cats == {"A", "C", "G", "T"}
+
+
+def test_roundtrip(tmp_path: Path, input_featuremap: Path):
+    """Parquet row count == total RN elements in source VCF."""
+    out = tmp_path / "out.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(str(input_featuremap), str(out))
+
+    featuremap_dataframe = pl.read_parquet(out)
+
+    # count RN elements straight from bcftools (no header confusion)
+    rn_bytes = subprocess.check_output(
+        ["bcftools", "query", "-f", "[%RN\n]", str(input_featuremap)],
+        text=False,
+    )
+    rn_len = sum(len(line.strip().split(b",")) for line in rn_bytes.splitlines())
+
+    assert featuremap_dataframe.height == rn_len
