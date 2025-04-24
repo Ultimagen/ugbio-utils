@@ -2,9 +2,7 @@
 
 export SPARK_HOME=/usr/lib/spark
 export PYSPARK_PYTHON=python3
-export HAIL_HOME=/opt/ugbio-utils/src/hail
-
-export PATH=$PATH:$HOME/.local/bin
+export HAIL_HOME=/opt/ugbio_utils/src/hail
 
 export PYTHONPATH="/home/hadoop/hail-python.zip:$SPARK_HOME/python:${SPARK_HOME}/python/lib/py4j-src.zip"
 echo "PYTHONPATH: ${PYTHONPATH}"
@@ -25,7 +23,7 @@ mkdir -p $HAIL_HOME/notebook/
 chmod -R 777 $HAIL_HOME/notebook
 cd $HAIL_HOME/notebook/
 
-JUPYTERPID=`cat /tmp/jupyter_notebook.pid` # Kill an existing Jupyter Lab if any running
+JUPYTERPID=`cat /tmp/jupyter_notebook.pid` # Kill an existing Jupyter Lab if any running 
 kill $JUPYTERPID
 nohup jupyter lab >/tmp/jupyter_notebook.log 2>&1 &
 echo $! > /tmp/jupyter_notebook.pid

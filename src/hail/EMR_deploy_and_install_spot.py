@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+
+import boto3 #sudo python3 -m pip install boto3
+import time
+import sys
+import botocore
+import paramiko
+import re
+import os
+import yaml
+import json
+
+PATH=os.path.dirname(os.path.abspath(__file__))
+
+with open(PATH + "/config_EMR_spot.yaml") as f:
+    c = yaml.safe_load(f)
+
+# # stage 1
+# Spot instances and different CORE/MASTER instances
+def create():
+	command='aws emr create-cluster --applications Name=Hadoop Name=Spark --tags \'project='+c['config']['PROJECT_TAG']+'\' \'Owner='+c['config']['OWNER_TAG']+'\' \'Name='+c['config']['EC2_NAME_TAG']+'\' --ec2-attributes \'{"KeyName":"'+c['config']['KEY_NAME']+'","InstanceProfile":"EMR_EC2_DefaultRole","SubnetId":"'+c['config']['SUBNET_ID']+'","EmrManagedSlaveSecurityGroup":"'+c['config']['WORKER_SECURITY_GROUP']+'","EmrManagedMasterSecurityGroup":"'+c['config']['MASTER_SECURITY_GROUP']+'"}\' --service-role EMR_DefaultRole --release-label emr-7.8.0 --log-uri \''+c['config']['S3_BUCKET']+'\' --name \''+c['config']['EMR_CLUSTER_NAME']+'\' --instance-groups \'[{"InstanceCount":1,"EbsConfiguration":{"EbsBlockDeviceConfigs":[{"VolumeSpecification":{"SizeInGB":'+c['config']['MASTER_HD_SIZE']+',"VolumeType":"gp2"},"VolumesPerInstance":1}]},"InstanceGroupType":"MASTER","InstanceType":"'+c['config']['MASTER_INSTANCE_TYPE']+'","Name":"Master-Instance"},{"InstanceCount":'+c['config']['WORKER_COUNT']+',"BidPrice":"'+c['config']['WORKER_BID_PRICE']+'","EbsConfiguration":{"EbsBlockDeviceConfigs":[{"VolumeSpecification":{"SizeInGB":'+c['config']['WORKER_HD_SIZE']+',"VolumeType":"gp2"},"VolumesPerInstance":1}]},"InstanceGroupType":"CORE","InstanceType":"'+c['config']['WORKER_INSTANCE_TYPE']+'","Name":"Core-Group"}]\' --configurations \'[{"Classification":"spark","Properties":{"maximizeResourceAllocation":"true"}},{"Classification":"yarn-site","Properties":{"yarn.nodemanager.vmem-check-enabled":"false"},"Configurations":[]}]\' --auto-scaling-role EMR_AutoScaling_DefaultRole --ebs-root-volume-size 32 --scale-down-behavior TERMINATE_AT_TASK_COMPLETION --region '+c['config']['REGION']+' --bootstrap-actions Path="s3://ultimagen-gil-hornung/hail_on_emr/bootstrap_python3.sh"'
+
+	print("\n\nYour AWS CLI export command:\n")
+	print(command)
+
+	cluster_id_resp = os.popen(command).read()
+	print(cluster_id_resp)
+	cluster_id_json = json.loads(cluster_id_resp)
+	# cluster_id=cluster_id_json.split(": \"",1)[1].split("\"\n")[0]
+	cluster_id = cluster_id_json["ClusterId"]
+	return cluster_id
+
+	# Gives EMR cluster information
+
+#stage 2
+def init(cluster_id):
+	client_EMR = boto3.client('emr', region_name=c['config']['REGION'])
+	# cluster_id = "j-ZGTETOL36JB1"
+	# Cluster state update
+	status_EMR='STARTING'
+	tic = time.time()
+	# Wait until the cluster is created
+	while (status_EMR!='EMPTY'):
+		print('Creating EMR...')
+		details_EMR=client_EMR.describe_cluster(ClusterId=cluster_id)
+		status_EMR=details_EMR.get('Cluster').get('Status').get('State')
+		print('Cluster status: '+status_EMR)
+		time.sleep(5)
+		if (status_EMR=='WAITING'):
+			print('Cluster successfully created!')
+			toc=time.time()-tic
+			print("\n Total time to provision your cluster: %.2f "%(toc/60)+" minutes")
+			break
+		if (status_EMR=='TERMINATED_WITH_ERRORS'):
+			sys.exit("Cluster un-successfully created. Ending installation...")
+
+
+	# Get public DNS from master node
+	master_dns=details_EMR.get('Cluster').get('MasterPublicDnsName')
+	master_IP=re.sub("-",".",master_dns.split(".")[0].split("ec2-")[1])
+	print('\nMaster DNS: '+ master_dns)
+
+	# print('Master IP: '+ master_IP+'\n')
+	print('\nClusterId: '+cluster_id+'\n')
+
+	# Copy the key into the master
+	command='scp -o \'StrictHostKeyChecking no\' -i '+c['config']['PATH_TO_KEY']+c['config']['KEY_NAME']+'.pem '+c['config']['PATH_TO_KEY']+c['config']['KEY_NAME']+'.pem hadoop@'+master_dns+':/home/hadoop/.ssh/id_rsa'
+	os.system(command)
+	print('Copying keys...')
+
+	# Copy the installation script into the master
+	command='scp -o \'StrictHostKeyChecking no\' -i '+c['config']['PATH_TO_KEY']+c['config']['KEY_NAME']+'.pem '+PATH+'/setup.sh hadoop@'+master_dns+':/home/hadoop'
+	os.system(command)
+
+	print('Installing software...')
+	print('Allow 4-8 minutes for full installation')
+	key = paramiko.RSAKey.from_private_key_file(c['config']['PATH_TO_KEY'] + c['config']['KEY_NAME'] + '.pem')
+	client = paramiko.SSHClient()
+	client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+	client.connect(hostname=master_IP, username="hadoop", pkey=key)
+
+	# Execute a command(cmd) after connecting/ssh to an instance
+	VERSION=c['config']['HAIL_VERSION']
+	command='./setup.sh -v '+ VERSION
+	stdin, stdout, stderr = client.exec_command('cd /home/hadoop/')
+	stdin, stdout, stderr = client.exec_command(command)
+
+	print('This is your Jupyter Lab link: ' + master_IP + ':8888')
+	print(f'ssh using command:\n ssh -i "~/.ssh/aultima.pem" -L 8888:localhost:8888 hadoop@{master_dns}')
+	print(f'then run:\ncd /opt/ugbio-utils/src/hail && sh hail_install.sh')
+	print(f'in your instance browse link that appears in /tmp/jupyter_notebook.log in the cluster')
+
+	# close the client connection
+	client.close()
+
+cluster_id = create()
+# cluster_id="j-191NU7PTI8GIE"
+print(f"cluster: {cluster_id}")
+init(cluster_id)
+
+#ssh ssh -i "~/.ssh/aultima.pem" -L 8888:localhost:8888 hadoop@ec2-XXX.compute-1.amazonaws.com
+# cd /opt/ugbio-utils/src/hail
+# sh hail_install.sh
+# browse link that appears in /tmp/jupyter_notebook.log in the cluster
