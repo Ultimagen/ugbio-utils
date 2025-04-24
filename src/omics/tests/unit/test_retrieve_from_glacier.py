@@ -21,7 +21,7 @@ def mock_boto3_client():
 
 @pytest.fixture
 def mock_logger():
-    with patch("ugbio_omics.retrieve_from_glacier.logger") as mock_logger:
+    with patch("ugbio_omics.retrieve_from_glacier.logging") as mock_logger:
         yield mock_logger
 
 
