@@ -10,6 +10,7 @@ dependencies = [
     "google-cloud-storage>=2.18.2",
     "boto3>=1.35.69",
     "pandas>=2.2.3",
+    "winval>=0.7.5"
 ]
 readme = "README.omics.md"
 requires-python = ">= 3.11"
@@ -29,6 +30,7 @@ manifest_log = "ugbio_omics.parse_manifest_log:main"
 performance = "ugbio_omics.get_performance:main"
 report_run_completion = "ugbio_omics.report_run_completion:main"
 omics_cache_path = "ugbio_omics.omics_cache_path:main"
+retrieve_from_glacier = "ugbio_omics.retrieve_from_glacier:main"
 
 [build-system]
 requires = [
