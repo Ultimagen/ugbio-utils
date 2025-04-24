@@ -2,7 +2,8 @@
 
 export SPARK_HOME=/usr/lib/spark
 export PYSPARK_PYTHON=python3
-export HAIL_HOME=/opt/ugbio_utils/src/hail
+export HAIL_HOME=/opt/ugbio-utils/src/hail
+export PATH=$PATH:$HOME/.local/bin
 
 export PYTHONPATH="/home/hadoop/hail-python.zip:$SPARK_HOME/python:${SPARK_HOME}/python/lib/py4j-src.zip"
 echo "PYTHONPATH: ${PYTHONPATH}"
