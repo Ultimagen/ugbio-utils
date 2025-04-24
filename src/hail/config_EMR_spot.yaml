@@ -1,8 +1,8 @@
 config:
-  EMR_CLUSTER_NAME: "avigail-hail-cluster" # Give a name to your EMR cluster
-  EC2_NAME_TAG: "avigail-hail-EMR" # Adds a tag to the individual EC2 instances
-  OWNER_TAG: "avigailmo" # EC2 owner tag
-  PROJECT_TAG: "gil_hail_test" # Project tag
+  EMR_CLUSTER_NAME: "hail-cluster" # Give a name to your EMR cluster
+  EC2_NAME_TAG: "hail-EMR" # Adds a tag to the individual EC2 instances
+  OWNER_TAG: "gil" # EC2 owner tag
+  PROJECT_TAG: "BIOIN-2151" # Project tag
   REGION: "us-east-1"
   MASTER_INSTANCE_TYPE: "m4.large"
   WORKER_INSTANCE_TYPE: "r4.4xlarge"
@@ -14,7 +14,7 @@ config:
   SUBNET_ID: "" # This field can be either left blank or for further security you can specify your private subnet ID in the form: subnet-1a2b3c4d
   S3_BUCKET: "s3n://ultima-bucket-logs-all/" # Specify your S3 bucket for EMR log storage
   KEY_NAME: "aultima" # Input your key name ONLY! DO NOT include the .pem extension
-  PATH_TO_KEY: "/Users/avigailmoldovan/.ssh/" # Full path to the FOLDER where the .pem file resides
+  PATH_TO_KEY: "~/.ssh/" # Full path to the FOLDER where the .pem file resides
   WORKER_SECURITY_GROUP: "" # If empty creates a new group by default. You can also add a specific SG. See the SG link in the FAQs section
   MASTER_SECURITY_GROUP: "" # If empty creates a new group by default. You can also add a specific SG. See the SG link in the FAQs section
   HAIL_VERSION: "" # Specify a git hash version (the first 7-12 characters will suffice) to install a specific commit/version. When left empty or "current" will install the latest version of Hail available in the repo
