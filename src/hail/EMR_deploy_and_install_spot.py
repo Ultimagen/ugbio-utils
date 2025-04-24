@@ -139,10 +139,9 @@ def init(cluster_id):
     stdin, stdout, stderr = client.exec_command("cd /home/hadoop/")
     stdin, stdout, stderr = client.exec_command(command)
 
-    print("This is your Jupyter Lab link: " + master_IP + ":8888")
+    # print("This is your Jupyter Lab link: " + master_IP + ":8888")
     print(f'ssh using command:\n ssh -i "~/.ssh/aultima.pem" -L 8888:localhost:8888 hadoop@{master_dns}')
-    print("then run:\ncd /opt/ugbio-utils/src/hail && sh hail_install.sh")
-    print("in your instance browse link that appears in /tmp/jupyter_notebook.log in the cluster")
+    print("in the cluster run `cat /tmp/jupyter_notebook.log` to browse the jupyter url starting with localhost")
 
     # close the client connection
     client.close()
@@ -152,8 +151,3 @@ cluster_id = create()
 # cluster_id="j-191NU7PTI8GIE"
 print(f"cluster: {cluster_id}")
 init(cluster_id)
-
-# ssh ssh -i "~/.ssh/aultima.pem" -L 8888:localhost:8888 hadoop@ec2-XXX.compute-1.amazonaws.com
-# cd /opt/ugbio-utils/src/hail
-# sh hail_install.sh
-# browse link that appears in /tmp/jupyter_notebook.log in the cluster
