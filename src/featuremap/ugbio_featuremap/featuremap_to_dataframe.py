@@ -46,20 +46,28 @@
 from __future__ import annotations
 
 import argparse
+import json
+import logging
 import re
 import shutil
 import subprocess
 import tempfile
+from collections import OrderedDict
 from pathlib import Path
 
 import polars as pl
+
+log = logging.getLogger(__name__)
 
 # ───────────────── header helpers ────────────────────────────────────────────
 INFO_RE = re.compile(r'##INFO=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description="([^"]*)')
 FORMAT_RE = re.compile(r'##FORMAT=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description="([^"]*)')
 
 _POLARS_DTYPE = {"Integer": pl.Int64, "Float": pl.Float64, "Flag": pl.Boolean}
-CHROM, POS, REF, ALT = "CHROM", "POS", "REF", "ALT"
+CHROM, POS, REF, ALT, QUAL, FILTER = "CHROM", "POS", "REF", "ALT", "QUAL", "FILTER"
+# Reserved/fixed VCF columns (cannot be overridden)
+RESERVED = {CHROM, POS, REF, ALT, QUAL, FILTER}
+ALLELE_CATS = ["A", "C", "G", "T"]  # for REF / ALT
 
 
 def _enum(desc: str) -> list[str] | None:
@@ -142,6 +150,9 @@ def _ensure_scalar_categories(df: pl.DataFrame, col: str, cats: list[str]) -> pl
         whose *col* now recognises **all** values in *cats*.
     """
     # build a DataFrame that matches the full schema
+    # ensure the empty-string category is present
+    if "" not in cats:
+        cats = cats + [""]
     rows = len(cats)
     stub_dict = {c: [None] * rows for c in df.columns}
     stub_dict[col] = cats  # each category once
@@ -179,10 +190,12 @@ def _cast_scalar(featuremap_dataframe: pl.DataFrame, col: str, meta: dict) -> pl
 
     if meta["cat"]:
         featuremap_dataframe = featuremap_dataframe.with_columns(utf_null.cast(pl.Categorical).alias(col))
+        log.debug(f"Scalar column {col} cast to Categorical with {len(meta['cat'])} categories")
         return _ensure_scalar_categories(featuremap_dataframe, col, meta["cat"])
     if meta["type"] in _POLARS_DTYPE:
         return featuremap_dataframe.with_columns(utf_null.cast(_POLARS_DTYPE[meta["type"]], strict=False).alias(col))
 
+    log.debug("List column %s processed (type=%s)", col, meta["type"])
     return featuremap_dataframe.with_columns(utf_null.alias(col))
 
 
@@ -239,12 +252,61 @@ def _resolve_bcftools_command() -> str:
     return path
 
 
+def _get_override_categories(
+    categories_json: str | None,
+):
+    """
+    Read a JSON file with user-specified categorical features.
+    The JSON file should contain a dictionary with the key
+    "categorical_features" and a dictionary of feature names
+    as keys and their corresponding categories as values.
+    The function returns a dictionary with the feature names
+    as keys and their corresponding categories as values.
+    If the JSON file is not provided, an empty dictionary is returned.
+
+    Parameters
+    ----------
+    categories_json
+        Path to the JSON file containing user-specified categorical features.
+    Returns
+    -------
+    dict
+        A dictionary with the feature names as keys and their corresponding
+        categories as values. If the JSON file is not provided, an empty
+        dictionary is returned.
+    Notes
+    -----
+    * The JSON file should contain a dictionary with the key
+      "categorical_features" and a dictionary of feature names
+      as keys and their corresponding categories as values.
+    * The function will log a warning if any of the feature names
+      in the JSON file are reserved columns (CHROM, POS, REF, ALT,
+      QUAL, FILTER).
+    * The function will log a warning if the JSON file is not
+      provided or if the "categorical_features" key is not found
+      in the JSON file.
+    """
+    overrides = {}
+    if categories_json:
+        with open(categories_json) as jh:
+            user_map = json.load(jh).get("categorical_features", {})
+            if not user_map:
+                log.warning("No categorical_features found in JSON file")
+            for k, v in user_map.items():
+                if k in RESERVED:
+                    log.warning("Ignoring JSON category override for reserved column %s", k)
+                else:
+                    overrides[k] = v
+    return overrides
+
+
 # ───────────────── core converter ────────────────────────────────────────────
 def vcf_to_parquet(
     vcf: str,
     out: str,
     drop_info: set[str] | None = None,
     drop_format: set[str] | None = None,
+    categories_json: str | None = None,
 ) -> None:
     """
     Convert a single-sample feature-map VCF into a per-read Parquet file.
@@ -268,30 +330,52 @@ def vcf_to_parquet(
       limitations; after ``explode`` they become scalars and are cast
       like INFO fields.
     """
+    overrides = _get_override_categories(categories_json)
+
+    # resolve info and format tags from header
     drop_info = drop_info or set()
     drop_format = drop_format or {"GT"}
+    if "GT" not in drop_format:
+        log.warning(
+            "GT is not in FORMAT tags to drop; it will be included in the output. If any featuremap entry "
+            "contains multiple entries it will likely break the pipeline. Include 'GT' in --drop-format to "
+            "address the issue."
+        )
 
     bcftools = _resolve_bcftools_command()
     info_meta, fmt_meta = header_meta(vcf, bcftools)
 
+    # merge defaults with auto-detected meta
+    for k, v in overrides.items():
+        target_meta = fmt_meta if k in fmt_meta else info_meta
+        if k in target_meta:
+            target_meta[k]["cat"] = v
+            log.debug("Overriding categories for %s → %s", k, v)
+        else:
+            target_meta[k] = {"num": "1", "type": "String", "cat": v}
+            log.debug("Injecting new categorical column %s", k)
+
     info_ids = [k for k in info_meta if k not in drop_info]
     format_ids = [k for k in fmt_meta if k not in drop_format]
-
+    query_info = [k for k in info_meta if k not in RESERVED and k not in drop_info]
     bracket = "[" + "\t".join(f"%{t}" for t in format_ids) + "]"
-    fmt_str = "\t".join(["%CHROM", "%POS", "%REF", "%ALT", *[f"%INFO/{t}" for t in info_ids], bracket]) + "\n"
+    fmt_str = "\t".join(["%CHROM", "%POS", "%REF", "%ALT", *[f"%INFO/{t}" for t in query_info], bracket]) + "\n"
 
-    csv_path: str
+    csv_path = None
     try:
         with tempfile.NamedTemporaryFile("w+b", delete=False) as tmp:
-            subprocess.run([bcftools, "query", "-f", fmt_str, vcf], stdout=tmp, check=True)
+            bcftools_command = [bcftools, "query", "-f", fmt_str, vcf]
+            log.warning("Running %s", " ".join(bcftools_command))
+            subprocess.run(bcftools_command, stdout=tmp, check=True)
             csv_path = tmp.name
 
-        cols = [CHROM, POS, REF, ALT, *info_ids, *format_ids]
+        cols = list(OrderedDict.fromkeys([CHROM, POS, REF, ALT, *info_ids, *format_ids]))
         featuremap_dataframe = pl.read_csv(
             csv_path, separator="\t", has_header=False, new_columns=cols, low_memory=True
         )
     finally:
-        Path(csv_path).unlink(missing_ok=True)
+        if csv_path:
+            Path(csv_path).unlink(missing_ok=True)
 
     featuremap_dataframe = featuremap_dataframe.with_columns(pl.col(POS).cast(pl.Int64))
 
@@ -303,10 +387,22 @@ def vcf_to_parquet(
             featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, info_meta[tag])
         for tag in format_ids:
             featuremap_dataframe = _cast_list(featuremap_dataframe, tag, fmt_meta[tag])
+        # --- force REF / ALT to categorical with fixed vocabulary -------------
+        for allele in (REF, ALT):
+            featuremap_dataframe = _cast_scalar(
+                featuremap_dataframe,
+                allele,
+                {"type": "String", "cat": ALLELE_CATS},
+            )
 
-    featuremap_dataframe = featuremap_dataframe.explode(format_ids)
+        featuremap_dataframe = featuremap_dataframe.explode(format_ids)
+        # explode done → list cols are now scalars; cast those with enums
+        for tag in format_ids:
+            if fmt_meta[tag].get("cat"):
+                featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
+
     featuremap_dataframe.write_parquet(out)
-    print(f"✅  {out}: {featuremap_dataframe.shape[0]:,} rows × {featuremap_dataframe.shape[1]} cols")
+    log.info(f"✅  {out}: {featuremap_dataframe.shape[0]:,} rows × {featuremap_dataframe.shape[1]} cols")
 
 
 # ─────────────────────────── CLI wrapper ─────────────────────────────────────
@@ -325,13 +421,30 @@ def main() -> None:
     ap.add_argument("--out-parquet", required=True, help="output .parquet")
     ap.add_argument("--drop-info", default="", help="comma-separated INFO tags to drop")
     ap.add_argument("--drop-format", default="", help="comma-separated FORMAT tags to drop")
+    ap.add_argument(
+        "--categories-json",
+        help="JSON file whose `categorical_features` map overrides/extends " "automatically-inferred enumerations.",
+    )
+    ap.add_argument("-v", "--verbose", action="store_true", help="emit DEBUG‐level logs")
     args = ap.parse_args()
 
+    if args.verbose:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+        )
+    else:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(levelname)s - %(message)s",
+        )
+
     vcf_to_parquet(
-        args.vcf,
-        args.out_parquet,
-        set(filter(None, args.drop_info.split(","))),
-        set(filter(None, args.drop_format.split(","))),
+        vcf=args.vcf,
+        out=args.out_parquet,
+        drop_info=set(filter(None, args.drop_info.split(","))),
+        drop_format=set(filter(None, args.drop_format.split(","))),
+        categories_json=args.categories_json,
     )
 
 
