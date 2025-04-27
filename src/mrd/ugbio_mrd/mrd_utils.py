@@ -1073,7 +1073,7 @@ def get_tf_from_filtered_data(
     df_supporting_reads = (
         (df_supporting_reads_per_locus.groupby(["signature_type", "signature"]).sum()).fillna(0).astype(int)
     )
-    # fill in coverage for singatures with zero supporting reads
+    # fill in coverage for signatures with zero supporting reads
     wanted_index = df_signatures_in.groupby(["signature_type", "signature"])["id"].first().index
     df_supporting_reads = df_supporting_reads.reindex(wanted_index, fill_value=0)
 
