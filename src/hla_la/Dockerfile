@@ -1,14 +1,14 @@
 # work from latest LTS ubuntu release
-FROM ubuntu:18.04
+FROM ubuntu:22.04
 
 # set the environment variables
-ENV hla_la_version 1.0.4
-ENV samtools_version 1.9
-ENV bwa_version 0.7.17
-ENV picard_version 1.123
-ENV bamtools_version 2.5.1
+ENV hla_la_version=1.0.4 \
+    samtools_version=1.21 \
+    bwa_version=0.7.19 \
+    picard_version=2.25.7 \
+    bamtools_version=2.5.2
 
-# run update and install necessary tools ubuntu tools
+# install required system packages
 RUN apt-get update -y && apt-get install -y \
     build-essential \
     curl \
@@ -24,73 +24,66 @@ RUN apt-get update -y && apt-get install -y \
     libcurl4-openssl-dev \
     wget \
     libz-dev \
-    openjdk-8-jre \
+    openjdk-11-jre \
     libboost-all-dev \
     cmake \
     libjsoncpp-dev \
     git \
-    && apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && apt-get autoclean
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # install samtools
 WORKDIR /usr/local/bin
-RUN wget https://github.com/samtools/samtools/releases/download/${samtools_version}/samtools-${samtools_version}.tar.bz2
-RUN tar -xjf /usr/local/bin/samtools-${samtools_version}.tar.bz2 -C /usr/local/bin/
-RUN cd /usr/local/bin/samtools-${samtools_version}/ && ./configure
-RUN cd /usr/local/bin/samtools-${samtools_version}/ && make
-RUN cd /usr/local/bin/samtools-${samtools_version}/ && make install
+RUN wget https://github.com/samtools/samtools/releases/download/${samtools_version}/samtools-${samtools_version}.tar.bz2 \
+ && tar -xjf samtools-${samtools_version}.tar.bz2 \
+ && cd samtools-${samtools_version} \
+ && ./configure \
+ && make \
+ && make install
 
 # install picard
-WORKDIR /usr/local/bin
-RUN wget https://github.com/broadinstitute/picard/releases/download/${picard_version}/picard-tools-${picard_version}.zip
-RUN unzip picard-tools-${picard_version}.zip
-RUN mkdir -p /usr/local/bin/picard
-RUN mv /usr/local/bin/picard-tools-${picard_version}/* /usr/local/bin/picard/
-RUN chmod 0644 /usr/local/bin/picard/SamToFastq.jar
-RUN rm -rf /usr/local/bin/picard-tools-${picard_version}/
+RUN mkdir -p /usr/local/bin/picard && \
+    wget -O /usr/local/bin/picard/picard.jar https://github.com/broadinstitute/picard/releases/download/${picard_version}/picard.jar && \
+    chmod 0644 /usr/local/bin/picard/picard.jar && \
+    echo '#!/bin/bash\nexec java -jar /usr/local/bin/picard/picard.jar "$@"' > /usr/local/bin/run-picard && \
+    chmod +x /usr/local/bin/run-picard
 
 # install bwa
-WORKDIR /usr/local/bin/
-RUN mkdir -p /usr/local/bin/ \
-  && curl -SL https://github.com/lh3/bwa/archive/v${bwa_version}.zip \
-  >  v${bwa_version}.zip
-RUN unzip v${bwa_version}.zip && rm -f v${bwa_version}.zip
-RUN cd /usr/local/bin/bwa-${bwa_version} && make
-RUN ln -s /usr/local/bin/bwa-${bwa_version}/bwa /usr/local/bin
+RUN curl -SL https://github.com/lh3/bwa/archive/v${bwa_version}.zip -o v${bwa_version}.zip \
+ && unzip v${bwa_version}.zip \
+ && cd bwa-${bwa_version} \
+ && make \
+ && ln -s /usr/local/bin/bwa-${bwa_version}/bwa /usr/local/bin/bwa
 
 # install bamtools
-WORKDIR /usr/local/bin
-RUN wget https://github.com/pezmaster31/bamtools/archive/v${bamtools_version}.zip
-RUN unzip v${bamtools_version}.zip
-RUN mkdir -p /usr/local/bin/bamtools-${bamtools_version}/build
-WORKDIR /usr/local/bin/bamtools-${bamtools_version}/build
-RUN cmake -DCMAKE_INSTALL_PREFIX=/usr/local/bin/bamtools-${bamtools_version} ..
-RUN make
-RUN make install
+RUN wget https://github.com/pezmaster31/bamtools/archive/v${bamtools_version}.zip \
+ && unzip v${bamtools_version}.zip \
+ && mkdir -p bamtools-${bamtools_version}/build \
+ && cd bamtools-${bamtools_version}/build \
+ && cmake -DCMAKE_INSTALL_PREFIX=/usr/local/bin/bamtools-${bamtools_version} .. \
+ && make \
+ && make install
 
-## install hla-la (branch: ug-master):
+# install hla-la (ug-master branch)
 ARG HLA_LA_BRANCH=ug-master
-RUN mkdir -p /usr/local/bin/HLA-LA/bin
-RUN mkdir -p /usr/local/bin/HLA-LA/src
-RUN mkdir -p /usr/local/bin/HLA-LA/obj
-RUN mkdir -p /usr/local/bin/HLA-LA/temp
-RUN mkdir -p /usr/local/bin/HLA-LA/working
-RUN mkdir -p /usr/local/bin/HLA-LA/graphs
-WORKDIR /usr/local/bin/HLA-LA/src
-RUN git clone --branch ${HLA_LA_BRANCH} https://github.com/Ultimagen/HLA-LA .
-RUN sed -i 's@\$(BAMTOOLS_PATH)/lib64@\$(BAMTOOLS_PATH)/lib@' makefile
-RUN make all BOOST_PATH=/usr/include/boost BAMTOOLS_PATH=/usr/local/bin/bamtools-2.5.1
+RUN mkdir -p /usr/local/bin/HLA-LA/bin \
+    /usr/local/bin/HLA-LA/src \
+    /usr/local/bin/HLA-LA/obj \
+    /usr/local/bin/HLA-LA/temp \
+    /usr/local/bin/HLA-LA/working \
+    /usr/local/bin/HLA-LA/graphs \
+ && git clone --branch ${HLA_LA_BRANCH} https://github.com/Ultimagen/HLA-LA /usr/local/bin/HLA-LA/src \
+ && sed -i 's@\$(BAMTOOLS_PATH)/lib64@\$(BAMTOOLS_PATH)/lib@' /usr/local/bin/HLA-LA/src/makefile \
+ && make -C /usr/local/bin/HLA-LA/src all BOOST_PATH=/usr/include/boost BAMTOOLS_PATH=/usr/local/bin/bamtools-${bamtools_version}
 
-# modify paths.ini for hla*la
-RUN sed -i 's@samtools_bin=@samtools_bin=/usr/local/bin/samtools@' paths.ini
-RUN sed -i 's@bwa_bin=@bwa_bin=/usr/local/bin/bwa@' paths.ini
-RUN sed -i 's@picard_sam2fastq_bin=.*@picard_sam2fastq_bin=/usr/local/bin/picard/SamToFastq.jar@' paths.ini
+# modify paths.ini for hla-la
+RUN sed -i 's@samtools_bin=@samtools_bin=/usr/local/bin/samtools@' /usr/local/bin/HLA-LA/src/paths.ini \
+ && sed -i 's@bwa_bin=@bwa_bin=/usr/local/bin/bwa@' /usr/local/bin/HLA-LA/src/paths.ini \
+ && sed -i 's@picard_sam2fastq_bin=.*@picard_sam2fastq_bin=/usr/local/bin/picard/picard.jar@' /usr/local/bin/HLA-LA/src/paths.ini
 
-# Create a script to run tests from dockerfrom the CI
-RUN echo '#!/bin/sh\necho "No tests to run :)"' > /usr/local/bin/run_tests && \
-chmod +x /usr/local/bin/run_tests
+# Create a script to run tests from docker CI
+RUN echo '#!/bin/sh\necho "No tests to run :)"' > /usr/local/bin/run_tests \
+ && chmod +x /usr/local/bin/run_tests
 
-# some final cleanup and command
+# set PATH
+ENV PATH="/usr/local/bin/HLA-LA/bin:/usr/local/bin/HLA-LA/src:$PATH"
 WORKDIR /usr/local/bin
-ENV PATH="/usr/local/bin/HLA-LA/bin/:${PATH}"
-ENV PATH="/usr/local/bin/HLA-LA/src/:${PATH}"
