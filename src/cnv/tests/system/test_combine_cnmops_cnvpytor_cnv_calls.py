@@ -43,5 +43,5 @@ class TestCombineCnmopsCnvpytorCnvCalls:
             ]
         )
 
-        out_combined_bed = pjoin(tmpdir, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.UG-CNV-LCR_annotate.bed")
+        out_combined_bed = pjoin(tmpdir, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.bed.annotate.bed")
         assert filecmp.cmp(out_combined_bed, expected_out_combined_bed)

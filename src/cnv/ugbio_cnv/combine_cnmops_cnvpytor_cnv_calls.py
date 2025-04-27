@@ -10,6 +10,8 @@ import pandas as pd
 import ugbio_cnv.convert_combined_cnv_results_to_vcf
 from ugbio_core.logger import logger
 
+bedmap = "bedmap"
+
 
 def run_cmd(cmd):
     logger.info(cmd)
@@ -388,17 +390,35 @@ def run(argv):
     logger.info(f"out_cnvs_combined: {out_cnvs_combined}")
 
     # annotate with ug-cnv-lcr
-    out_cnvs_combined_annotated = pjoin(
-        out_directory, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.UG-CNV-LCR_annotate.bed"
+    # result file should be in the following format:
+    # ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "UG-CNV-LCR"]
+    out_cnvs_combined_annotated = f"{out_cnvs_combined}.annotate.bed"
+    run_cmd(
+        f"bedmap --echo --echo-map-id-uniq --delim '\\t' --bases-uniq-f \
+        {out_cnvs_combined} {args.ug_cnv_lcr} > {out_cnvs_combined_annotated}"
     )
-    if args.ug_cnv_lcr:
-        run_cmd(
-            f"bedtools intersect -f 0.5 -loj -wa -wb -a {out_cnvs_combined} -b {args.ug_cnv_lcr} | \
-                cut -f 1-6,10 > {out_cnvs_combined_annotated}"
-        )
-        logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
-    else:
-        out_cnvs_combined_annotated = out_cnvs_combined
+    logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
+
+    overlap_filtration_cutoff = 0.5  # 50% overlap with LCR regions
+    df_annotate_calls = pd.read_csv(out_cnvs_combined_annotated, sep="\t", header=None)
+    df_annotate_calls.columns = [
+        "chr",
+        "start",
+        "end",
+        "CNV_type",
+        "CNV_calls_source",
+        "copy_number",
+        "UG-CNV-LCR",
+        "pUG-CNV-LCR_overlap",
+    ]
+    df_annotate_calls["LCR_label_value"] = df_annotate_calls.apply(
+        lambda row: row["UG-CNV-LCR"] if row["pUG-CNV-LCR_overlap"] >= overlap_filtration_cutoff else ".", axis=1
+    )
+
+    df_annotate_calls[["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "LCR_label_value"]].to_csv(
+        out_cnvs_combined_annotated, sep="\t", header=None, index=False
+    )
+    logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
 
     # convert to vcf
     vcf_args = [
