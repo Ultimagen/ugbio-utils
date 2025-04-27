@@ -24,7 +24,7 @@ def test_generate_mrd_report(output_path, resources_dir):
         matched_signatures_vcf_files=[str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf")],
         control_signatures_vcf_files=[str(resources_dir / "Pa_67_FFPE.ann.chr20.filtered.vcf")],
         # db_control_signatures_vcf_files=args_in.db_control_signatures_vcf,
-        coverage_csv=str(resources_dir / "Pa_46_matched_no_db.coverage.csv"),
+        coverage_bed=str(resources_dir / "Pa_46.333_LuNgs_08.Lb_744.chr20.regions.bed.gz"),
         # tumor_sample=args_in.tumor_sample,
         output_dir=output_path,
         output_basename="test_report",
