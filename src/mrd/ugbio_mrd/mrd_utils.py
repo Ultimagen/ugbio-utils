@@ -1073,19 +1073,9 @@ def get_tf_from_filtered_data(
     df_supporting_reads = (
         (df_supporting_reads_per_locus.groupby(["signature_type", "signature"]).sum()).fillna(0).astype(int)
     )
-    # fill in coverage for singatures with zero supporting reads
-    df_supporting_reads = (
-        pd.concat(
-            (
-                df_supporting_reads,
-                df_signatures_in.groupby(["signature_type", "signature"])["id"].sum().rename("supporting_reads"),
-            )
-        )
-        .fillna(0)
-        .astype(int)
-        .groupby(["signature_type", "signature"])
-        .sum()
-    )
+    # fill in coverage for signatures with zero supporting reads
+    wanted_index = df_signatures_in.groupby(["signature_type", "signature"])["id"].first().index
+    df_supporting_reads = df_supporting_reads.reindex(wanted_index, fill_value=0)
 
     df_coverage = (df_signatures_in.groupby("signature").agg({"coverage": "sum"})).fillna(0).astype(int)
     df_tf = df_supporting_reads.join(df_coverage).fillna(0)
