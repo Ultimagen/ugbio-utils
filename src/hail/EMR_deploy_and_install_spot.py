@@ -50,7 +50,7 @@ def create():
         + c["config"]["WORKER_HD_SIZE"]
         + ',"VolumeType":"gp2"},"VolumesPerInstance":1}]},"InstanceGroupType":"CORE","InstanceType":"'
         + c["config"]["WORKER_INSTANCE_TYPE"]
-        + '","Name":"Core-Group"}]\' --configurations \'[{"Classification":"spark","Properties":{"maximizeResourceAllocation":"true"}},{"Classification":"yarn-site","Properties":{"yarn.nodemanager.vmem-check-enabled":"false"},"Configurations":[]}]\' --auto-scaling-role EMR_AutoScaling_DefaultRole --ebs-root-volume-size 32 --scale-down-behavior TERMINATE_AT_TASK_COMPLETION --region '
+        + '","Name":"Core-Group"}]\' --configurations \'[{"Classification":"spark","Properties":{"maximizeResourceAllocation":"true"}},{"Classification":"emrfs-site","Properties":{"fs.s3.maxConnections":"2000"}},{"Classification":"yarn-site","Properties":{"yarn.nodemanager.vmem-check-enabled":"false"},"Configurations":[]}]\' --auto-scaling-role EMR_AutoScaling_DefaultRole --ebs-root-volume-size 32 --scale-down-behavior TERMINATE_AT_TASK_COMPLETION --region '
         + c["config"]["REGION"]
         + ' --bootstrap-actions Path="s3://ultimagen-gil-hornung/hail_on_emr/bootstrap_python3.sh"'
     )
