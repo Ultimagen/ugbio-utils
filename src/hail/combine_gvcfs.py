@@ -11,9 +11,9 @@ s3 = boto3.client('s3')
 bucket_name = 'ultimagen-gil-hornung'
 prefix = 'gvcfs-for-hail/'
 response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-gvcfs = [f"s3://{bucket_name}/{x['Key']}" for x in response['Contents'] if x['Key'].endswith('g.vcf.gz')]
+gvcfs = [f"s3a://{bucket_name}/{x['Key']}" for x in response['Contents'] if x['Key'].endswith('g.vcf.gz')]
 
-combiner = hl.vds.new_combiner(output_path="s3://ultimagen-gil-hornung/combine_196.vds",
+combiner = hl.vds.new_combiner(output_path="s3://ultimagen-gil-hornung/combine_196.vds.final",
                                temp_path="s3://ultimagen-gil-hornung/hail/tmp/",
                                gvcf_paths=gvcfs,
                                use_genome_default_intervals=True,
