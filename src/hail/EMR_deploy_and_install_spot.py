@@ -22,7 +22,7 @@ def create():
     command = (
         "aws emr create-cluster --applications Name=Hadoop Name=Spark --tags 'project="
         + c["config"]["PROJECT_TAG"]
-        + "' 'Owner="
+        + "' 'USER="
         + c["config"]["OWNER_TAG"]
         + "' 'Name="
         + c["config"]["EC2_NAME_TAG"]
