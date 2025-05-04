@@ -1,10 +1,12 @@
 import hail as hl
 import boto3
+from uuid import uuid4
+
+
+temp_path=f"s3://ultimagen-gil-hornung/hail/tmp/{str(uuid4())[:6]}"
 
 # Hail initialization
-hl.init(
-tmp_dir="s3://ultimagen-gil-hornung/hail/tmp/"
-)
+hl.init(tmp_dir=temp_path)
 
 # List all UG gvcfs in my bucket,
 s3 = boto3.client('s3')
@@ -14,7 +16,7 @@ response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
 gvcfs = [f"s3a://{bucket_name}/{x['Key']}" for x in response['Contents'] if x['Key'].endswith('g.vcf.gz')]
 
 combiner = hl.vds.new_combiner(output_path="s3://ultimagen-gil-hornung/combine_196.vds.final",
-                               temp_path="s3://ultimagen-gil-hornung/hail/tmp/",
+                               temp_path=temp_path,
                                gvcf_paths=gvcfs,
                                use_genome_default_intervals=True,
                                gvcf_reference_entry_fields_to_keep=['GQ', 'MIN_DP'],
