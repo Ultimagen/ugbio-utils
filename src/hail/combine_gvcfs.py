@@ -1,9 +1,18 @@
 import hail as hl
 import boto3
-from uuid import uuid4
+import uuid
+from datetime import datetime
 
+# Get today's date
+today_date = datetime.today().strftime('%Y-%m-%d')
 
-temp_path=f"s3://ultimagen-gil-hornung/hail/tmp/{str(uuid4())[:6]}"
+# Generate a UUID
+unique_id = uuid.uuid4()
+
+# Create the directory name
+dir_name = f"{today_date}_{unique_id}"
+
+temp_path=f"s3://ultimagen-gil-hornung/hail/tmp/"
 
 # Hail initialization
 hl.init(tmp_dir=temp_path)
@@ -15,7 +24,7 @@ prefix = 'gvcfs-for-hail/'
 response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
 gvcfs = [f"s3a://{bucket_name}/{x['Key']}" for x in response['Contents'] if x['Key'].endswith('g.vcf.gz')]
 
-combiner = hl.vds.new_combiner(output_path="s3://ultimagen-gil-hornung/combine_196.vds.final",
+combiner = hl.vds.new_combiner(output_path=f"s3://ultimagen-gil-hornung/hail/{dir_name}/combine_196.vds",
                                temp_path=temp_path,
                                gvcf_paths=gvcfs,
                                use_genome_default_intervals=True,

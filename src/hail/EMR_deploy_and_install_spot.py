@@ -42,15 +42,25 @@ def create():
         + c["config"]["MASTER_HD_SIZE"]
         + ',"VolumeType":"gp2"},"VolumesPerInstance":1}]},"InstanceGroupType":"MASTER","InstanceType":"'
         + c["config"]["MASTER_INSTANCE_TYPE"]
-        + '","Name":"Master-Instance"},{"InstanceCount":'
-        + c["config"]["WORKER_COUNT"]
+        + '","Name":"Master-Instance"},'
+          '{"InstanceCount":'
+        + c["config"]["WORKER_SPOT_COUNT"]
         + ',"BidPrice":"'
         + c["config"]["WORKER_BID_PRICE"]
         + '","EbsConfiguration":{"EbsBlockDeviceConfigs":[{"VolumeSpecification":{"SizeInGB":'
         + c["config"]["WORKER_HD_SIZE"]
+        + ',"VolumeType":"gp2"},"VolumesPerInstance":1}]},"InstanceGroupType":"TASK","InstanceType":"'
+        + c["config"]["WORKER_INSTANCE_TYPE"]
+        + '","Name":"Task-Spot-Group"},'
+        '{"InstanceCount":'
+        + c["config"]["WORKER_ON_DEMAND_COUNT"]
+        + ',"EbsConfiguration":{"EbsBlockDeviceConfigs":[{"VolumeSpecification":{"SizeInGB":'
+        + c["config"]["WORKER_HD_SIZE"]
         + ',"VolumeType":"gp2"},"VolumesPerInstance":1}]},"InstanceGroupType":"CORE","InstanceType":"'
         + c["config"]["WORKER_INSTANCE_TYPE"]
-        + '","Name":"Core-Group"}]\' --configurations \'[{"Classification":"spark","Properties":{"maximizeResourceAllocation":"true"}},{"Classification":"emrfs-site","Properties":{"fs.s3.maxConnections":"2000"}},{"Classification":"yarn-site","Properties":{"yarn.nodemanager.vmem-check-enabled":"false"},"Configurations":[]}]\' --auto-scaling-role EMR_AutoScaling_DefaultRole --ebs-root-volume-size 32 --scale-down-behavior TERMINATE_AT_TASK_COMPLETION --region '
+        + '","Name":"Core-On-Demand-Group"}'
+          ']\' '
+          '--configurations \'[{"Classification":"spark","Properties":{"maximizeResourceAllocation":"true"}},{"Classification":"emrfs-site","Properties":{"fs.s3.maxConnections":"2000"}},{"Classification":"yarn-site","Properties":{"yarn.nodemanager.vmem-check-enabled":"false"},"Configurations":[]}]\' --auto-scaling-role EMR_AutoScaling_DefaultRole --ebs-root-volume-size 32 --scale-down-behavior TERMINATE_AT_TASK_COMPLETION --region '
         + c["config"]["REGION"]
         + ' --bootstrap-actions Path="s3://ultimagen-gil-hornung/hail_on_emr/bootstrap_python3.sh"'
     )
