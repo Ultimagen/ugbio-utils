@@ -53,6 +53,15 @@ def create():
         + c["config"]["WORKER_INSTANCE_TYPE"]
         + '","Name":"Task-Spot-Group"},'
         '{"InstanceCount":'
+        + c["config"]["WORKER_SPOT_COUNT_2"]
+        + ',"BidPrice":"'
+        + c["config"]["WORKER_BID_PRICE"]
+        + '","EbsConfiguration":{"EbsBlockDeviceConfigs":[{"VolumeSpecification":{"SizeInGB":'
+        + c["config"]["WORKER_HD_SIZE"]
+        + ',"VolumeType":"gp2"},"VolumesPerInstance":1}]},"InstanceGroupType":"TASK","InstanceType":"'
+        + c["config"]["WORKER_INSTANCE_TYPE_2"]
+        + '","Name":"Task-Spot2-Group"},'
+        '{"InstanceCount":'
         + c["config"]["WORKER_ON_DEMAND_COUNT"]
         + ',"EbsConfiguration":{"EbsBlockDeviceConfigs":[{"VolumeSpecification":{"SizeInGB":'
         + c["config"]["WORKER_HD_SIZE"]

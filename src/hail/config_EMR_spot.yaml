@@ -1,13 +1,15 @@
 config:
   EMR_CLUSTER_NAME: "hail-cluster-6-nodes-combined" # Give a name to your EMR cluster
   EC2_NAME_TAG: "hail-EMR" # Adds a tag to the individual EC2 instances
-  OWNER_TAG: "gilAndAvigail" # EC2 owner tag
+  OWNER_TAG: "gilAndAvigailm5.4xlargem5.8xlarge" # EC2 owner tag
   PROJECT_TAG: "BIOIN-2151" # Project tag
   REGION: "us-east-1"
   MASTER_INSTANCE_TYPE: "m5.xlarge"
   WORKER_INSTANCE_TYPE: "m5.4xlarge"
+  WORKER_INSTANCE_TYPE_2: "r5.4xlarge"
   WORKER_ON_DEMAND_COUNT: "2" # Number of worker on demand nodes
-  WORKER_SPOT_COUNT: "2" # Number of worker nodes
+  WORKER_SPOT_COUNT: "15" # Number of worker nodes
+  WORKER_SPOT_COUNT_2: "15" # Number of worker nodes
 #  WORKER_BID_PRICE: "0.44" # Required for spot instances
   WORKER_BID_PRICE: "1" # todo for tests use large number
   MASTER_HD_SIZE: "1000" # Size in GB - For large data sets, more HD space may be required
