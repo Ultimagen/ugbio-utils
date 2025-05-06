@@ -1,7 +1,7 @@
 config:
   EMR_CLUSTER_NAME: "hail-cluster-6-nodes-combined" # Give a name to your EMR cluster
   EC2_NAME_TAG: "hail-EMR" # Adds a tag to the individual EC2 instances
-  OWNER_TAG: "gilAndAvigailm5.4xlargem5.8xlarge" # EC2 owner tag
+  OWNER_TAG: "gilAndAvigailm5.4xlarger5.4xlarge" # EC2 owner tag
   PROJECT_TAG: "BIOIN-2151" # Project tag
   REGION: "us-east-1"
   MASTER_INSTANCE_TYPE: "m5.xlarge"
