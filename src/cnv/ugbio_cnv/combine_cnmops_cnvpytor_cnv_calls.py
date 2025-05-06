@@ -52,7 +52,7 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         type=int,
         default=10000,
     )
-    parser.add_argument("--ug_cnv_lcr", help="UG-CNV-LCR bed file", required=True, type=str)
+    parser.add_argument("--ug_cnv_lcr", help="UG-CNV-LCR bed file", required=False, type=str)
     parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
 
     parser.add_argument("--out_directory", help="output directory", required=False, type=str)
@@ -342,11 +342,14 @@ def run(argv):
     out_cnvs_combined_annotated = pjoin(
         out_directory, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.UG-CNV-LCR_annotate.bed"
     )
-    run_cmd(
-        f"bedtools intersect -f 0.5 -loj -wa -wb -a {out_cnvs_combined} -b {args.ug_cnv_lcr} | \
-            cut -f 1-6,10 > {out_cnvs_combined_annotated}"
-    )
-    logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
+    if args.ug_cnv_lcr:
+        run_cmd(
+            f"bedtools intersect -f 0.5 -loj -wa -wb -a {out_cnvs_combined} -b {args.ug_cnv_lcr} | \
+                cut -f 1-6,10 > {out_cnvs_combined_annotated}"
+        )
+        logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
+    else:
+        out_cnvs_combined_annotated = out_cnvs_combined
 
     # convert to vcf
     vcf_args = [
