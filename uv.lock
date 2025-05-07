@@ -3644,6 +3644,7 @@ source = { virtual = "." }
 [package.dev-dependencies]
 dev = [
     { name = "dnspython" },
+    { name = "ipykernel" },
     { name = "matplotlib-venn" },
     { name = "mock" },
     { name = "openpyxl" },
@@ -3663,6 +3664,7 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "dnspython", specifier = ">=2.7.0" },
+    { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "matplotlib-venn", specifier = ">=1.1.1" },
     { name = "mock", specifier = ">=5.1.0" },
     { name = "openpyxl", specifier = ">=3.1.5" },
