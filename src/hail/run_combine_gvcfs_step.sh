@@ -18,6 +18,8 @@ aws emr add-steps \
         \"--conf\", \"spark.network.timeout=300000\",
         \"--conf\", \"spark.serializer=org.apache.spark.serializer.KryoSerializer\",
         \"--conf\", \"spark.kryo.registrator=is.hail.kryo.HailKryoRegistrator\",
+        \"--conf\", \"spark.executor.memoryOverheadFactor=0.2\",
+        \"--conf\", \"spark.executor.memory=100g\",
         \"--deploy-mode\", \"client\",
         \"--master\", \"yarn\",
         \"--jars\", \"s3://ultimagen-gil-hornung/hail/hail-all-spark.jar\",

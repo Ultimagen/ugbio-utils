@@ -12,10 +12,13 @@ unique_id = uuid.uuid4()
 # Create the directory name
 dir_name = f"{today_date}_{unique_id}"
 
-temp_path=f"s3://ultimagen-gil-hornung/hail/tmp/"
+temp_path = f"s3://ultimagen-gil-hornung/hail/tmp/"
 
 # Hail initialization
 hl.init(tmp_dir=temp_path)
+
+hl._set_flags(spark_max_stage_parallelism='20000')
+
 
 # List all UG gvcfs in my bucket,
 s3 = boto3.client('s3')
@@ -29,6 +32,8 @@ combiner = hl.vds.new_combiner(output_path=f"s3://ultimagen-gil-hornung/hail/{di
                                gvcf_paths=gvcfs,
                                use_genome_default_intervals=True,
                                gvcf_reference_entry_fields_to_keep=['GQ', 'MIN_DP'],
-                               reference_genome='GRCh38'
+                               reference_genome='GRCh38',
+                               branch_factor=50,  # number of inputs combined in one VDS
+                               target_records=100000  # number of rows per partition
                                )
 combiner.run()
