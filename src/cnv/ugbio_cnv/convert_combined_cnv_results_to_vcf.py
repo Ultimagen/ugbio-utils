@@ -84,7 +84,7 @@ def read_bed_file(cnv_annotated_bed_file: str) -> pd.DataFrame:
         df_cnvs.columns = base_columns + ["UG-CNV-LCR"]
     elif df_cnvs.shape[1] == len(base_columns):
         df_cnvs.columns = base_columns
-        df_cnvs["UG-CNV-LCR"] = ""
+        df_cnvs["UG-CNV-LCR"] = "."
     else:
         raise ValueError("Unexpected number of columns in the TSV file.")
     return df_cnvs
