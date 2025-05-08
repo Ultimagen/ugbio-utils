@@ -130,7 +130,7 @@ def write_combined_vcf(
             ug_cnv_lcr_value = "UG-CNV-LCR" if ug_cnv_lcr != "." else ""
 
             record = vcf_out.new_record()
-            record.contig = chr_id
+            record.contig = str(chr_id)
             record.start = start
             record.stop = end
             record.ref = "N"
