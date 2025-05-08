@@ -70,6 +70,26 @@ def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHead
     return header
 
 
+def read_bed_file(cnv_annotated_bed_file: str) -> pd.DataFrame:
+    """
+    Read a BED file and return a DataFrame.
+    Args:
+        cnv_annotated_bed_file (str): Path to the input BED file.
+    Returns:
+        pd.DataFrame: DataFrame containing the CNV data from the BED file.
+    """
+    df_cnvs = pd.read_csv(cnv_annotated_bed_file, sep="\t", header=None)
+    base_columns = ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number"]
+    if df_cnvs.shape[1] == len(base_columns) + 1:
+        df_cnvs.columns = base_columns + ["UG-CNV-LCR"]
+    elif df_cnvs.shape[1] == len(base_columns):
+        df_cnvs.columns = base_columns
+        df_cnvs["UG-CNV-LCR"] = ""
+    else:
+        raise ValueError("Unexpected number of columns in the TSV file.")
+    return df_cnvs
+
+
 def write_combined_vcf(
     outfile: str, header: pysam.VariantHeader, cnv_annotated_bed_file: str, sample_name: str
 ) -> None:
@@ -83,8 +103,7 @@ def write_combined_vcf(
         sample_name (str): The name of the sample.
     """
     with pysam.VariantFile(outfile, mode="w", header=header) as vcf_out:
-        df_cnvs = pd.read_csv(cnv_annotated_bed_file, sep="\t", header=None)
-        df_cnvs.columns = ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "UG-CNV-LCR"]
+        df_cnvs = read_bed_file(cnv_annotated_bed_file)
 
         for _, row in df_cnvs.iterrows():
             # Create a new VCF record
