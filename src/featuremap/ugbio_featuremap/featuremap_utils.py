@@ -1,5 +1,6 @@
 import itertools
 import os
+import sys
 from enum import Enum
 from os.path import basename, dirname, splitext
 from os.path import join as pjoin
@@ -8,6 +9,7 @@ import numpy as np
 import pandas as pd
 import pyfaidx
 import pysam
+import tqdm.auto as tqdm
 from simppl.simple_pipeline import SimplePipeline
 from ugbio_core.consts import (
     ALT,
@@ -622,7 +624,7 @@ def featuremap_to_dataframe(  # noqa: C901, PLR0912 #TODO: refactor
             sample_index = 0
         if sample_index is None and sample_name is not None:
             sample_index = list(pysam.VariantFile(featuremap_vcf).header.samples).index(sample_name)
-
+    # tuple_fields = get_tuple_fields(featuremap_vcf)
     # define type conversion dictionary, String is converted to object to support np.nan
     type_conversion_dict = {
         "String": object,
@@ -790,7 +792,7 @@ def vcf_row_generator(
         The index of the sample to read from the vcf file.
 
     """
-    for record in vcf_handle.fetch():
+    for record in tqdm.tqdm(vcf_handle.fetch()):
         # read basic fields
         entry = [
             record.chrom,
@@ -804,7 +806,7 @@ def vcf_row_generator(
         if info_metadata_dict is not None and len(info_metadata_dict) > 0:
             entry += [
                 record.info.get(info_key)[0]
-                if info_value[0] == "A"
+                if (info_value[0] == "A" or info_value[0] == "R")
                 and record.info.get(info_key, None) is not None
                 and len(record.info.get(info_key)) >= 1
                 else record.info.get(info_key, np.nan)
@@ -816,3 +818,7 @@ def vcf_row_generator(
                 record.samples[sample_index].get(formats_key, np.nan) for formats_key in formats_metadata_dict.keys()
             ]
         yield entry
+
+
+if __name__ == "__main__":  # ← add this once
+    result = featuremap_to_dataframe(sys.argv[1])  # set test‑inputs here
