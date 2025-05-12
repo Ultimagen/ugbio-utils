@@ -73,13 +73,7 @@ class SVComparison:
         None
         """
 
-        truvari_cmd = [
-            "truvari",
-            "collapse",
-            "-i",
-            vcf,
-            "--passonly",
-        ]
+        truvari_cmd = ["truvari", "collapse", "-i", vcf, "--passonly", "-t"]
 
         if bed:
             truvari_cmd.extend(["--includebed", bed])
@@ -181,8 +175,9 @@ class SVComparison:
         df_fn = vcftools.get_vcf_df(pjoin(truvari_dir, "fn.vcf.gz"), custom_info_fields=["SVTYPE", "SVLEN"])
         df_fn["label"] = "FN"
         df_base = pd.concat((df_tp_base, df_fn))
+
         df_tp_calls = vcftools.get_vcf_df(pjoin(truvari_dir, "tp-comp.vcf.gz"), custom_info_fields=["SVTYPE", "SVLEN"])
-        df_tp_base["label"] = "TP"
+        df_tp_calls["label"] = "TP"
         df_fp = vcftools.get_vcf_df(pjoin(truvari_dir, "fp.vcf.gz"), custom_info_fields=["SVTYPE", "SVLEN"])
         df_fp["label"] = "FP"
         df_calls = pd.concat((df_tp_calls, df_fp))
@@ -192,7 +187,8 @@ class SVComparison:
         self,
         calls: str,
         gt: str,
-        base_name: str,
+        output_file_name: str,
+        outdir: str,
         hcr_bed: str = None,
         pctseq: float = 0.0,
         pctsize: float = 0.0,
@@ -208,8 +204,10 @@ class SVComparison:
             Calls file
         gt : str
             Ground truth file
-        base_file_name : str
-            Filename / output directory prefix
+        output_file_name : str
+            Name of the output H5 concordance file
+        outdir : str
+            Output directory
         hcr_bed : str, optional
             High confidence region bed file, by default None
         pctseq : float, optional
@@ -253,12 +251,16 @@ class SVComparison:
         self.run_truvari(
             calls=calls_fn,
             gt=gt_fn,
-            outdir=base_name,
+            outdir=outdir,
             bed=hcr_bed,
             pctseq=pctseq,
             pctsize=pctsize,
             erase_outdir=erase_outdir,
         )
+        df_base, df_calls = self.truvari_to_dataframes(outdir)
+        df_base.to_hdf(output_file_name, key="base", mode="w")
+        df_calls.to_hdf(output_file_name, key="calls", mode="a")
+
         self.logger.info(f"truvari pipeline finished with calls: {calls_fn} and gt: {gt_fn}")
 
 
@@ -276,7 +278,8 @@ def get_parser():
     parser = argparse.ArgumentParser(description="SV Comparison Pipeline")
     parser.add_argument("--calls", required=True, help="Input calls VCF file")
     parser.add_argument("--gt", required=True, help="Input ground truth VCF file")
-    parser.add_argument("--base_name", required=True, help="Base name for output files")
+    parser.add_argument("--output_filename", required=True, help="output h5 with concordance file")
+    parser.add_argument("--outdir", required=True, help="Full path to output dir to TRUVARI results")
     parser.add_argument("--hcr_bed", help="High confidence region bed file")
     parser.add_argument("--pctseq", type=float, default=0.0, help="Percentage of sequence identity")
     parser.add_argument("--pctsize", type=float, default=0.0, help="Percentage of size identity")
@@ -294,10 +297,11 @@ def run(argv):
     pipeline.run_pipeline(
         calls=args.calls,
         gt=args.gt,
-        base_name=args.base_name,
         hcr_bed=args.hcr_bed,
         pctseq=args.pctseq,
         pctsize=args.pctsize,
+        outdir=args.outdir,
+        output_file_name=args.output_filename,
     )
 
 
@@ -306,5 +310,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # Example usage
     main()
