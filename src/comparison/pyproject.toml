@@ -8,6 +8,7 @@ authors = [
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
 ]
 dependencies = [
+    "pytest-mock>=3.14.0",
     "truvari>=5.3.0",
     "ugbio_core[concordance,vcfbed]",
 ]
