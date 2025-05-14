@@ -1,4 +1,5 @@
 version = 1
+revision = 1
 requires-python = ">=3.11, <3.13"
 resolution-markers = [
     "python_full_version < '3.12'",
@@ -724,6 +725,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ea/8d/a7121ffe5f402dc015277d2d31eb82d2187334503a011c18f2e78ecbb9b2/entrypoints-0.4.tar.gz", hash = "sha256:b706eddaa9218a19ebcd67b56818f05bb27589b1ca9e8d797b74affad4ccacd4", size = 13974 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/35/a8/365059bbcd4572cbc41de17fd5b682be5868b218c3c5479071865cab9078/entrypoints-0.4-py3-none-any.whl", hash = "sha256:f174b5ff827504fd3cd97cc3f8649f3693f51538c7e4bdf3ef002c8429d42f9f", size = 5294 },
+]
+
+[[package]]
+name = "et-xmlfile"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/38/af70d7ab1ae9d4da450eeec1fa3918940a5fafb9055e934af8d6eb0c2313/et_xmlfile-2.0.0.tar.gz", hash = "sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54", size = 17234 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl", hash = "sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa", size = 18059 },
 ]
 
 [[package]]
@@ -1916,6 +1926,18 @@ wheels = [
 ]
 
 [[package]]
+name = "openpyxl"
+version = "3.1.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "et-xmlfile" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3d/f9/88d94a75de065ea32619465d2f77b29a0469500e99012523b91cc4141cd1/openpyxl-3.1.5.tar.gz", hash = "sha256:cf0e3cf56142039133628b5acffe8ef0c12bc902d2aadd3e0fe5878dc08d1050", size = 186464 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c0/da/977ded879c29cbd04de313843e76868e6e13408a94ed6b987245dc7c8506/openpyxl-3.1.5-py2.py3-none-any.whl", hash = "sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2", size = 250910 },
+]
+
+[[package]]
 name = "overrides"
 version = "7.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2112,6 +2134,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/96/2d/02d4312c973c6050a18b314a5ad0b3210edb65a906f868e31c111dede4a6/pluggy-1.5.0.tar.gz", hash = "sha256:2cffa88e94fdc978c4c574f15f9e59b7f4201d439195c3715ca9e2486f1d0cf1", size = 67955 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/88/5f/e351af9a41f866ac3f1fac4ca0613908d9a41741cfcf2228f4ad853b697d/pluggy-1.5.0-py3-none-any.whl", hash = "sha256:44e1ad92c8ca002de6377e165f3e0f1be63266ab4d554740532335b9d75ea669", size = 20556 },
+]
+
+[[package]]
+name = "polars"
+version = "1.29.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/0b/92/8d0e80fef779a392b1a736b554ffba62403026bad7df8a9de8b61dce018f/polars-1.29.0.tar.gz", hash = "sha256:d2acb71fce1ff0ea76db5f648abd91a7a6c460fafabce9a2e8175184efa00d02", size = 4582973 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e7/5f/b277179cfce1258fecf4ad73cf627f670be41fdf088727090f68ca9c96ff/polars-1.29.0-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:d053ee3217df31468caf2f5ddb9fd0f3a94fd42afdf7d9abe23d9d424adca02b", size = 34206809 },
+    { url = "https://files.pythonhosted.org/packages/34/e7/634e5cb55ce8bef23ac8ad8e3834c9045f4b3cbdff1fb9e7826d864436e6/polars-1.29.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:14131078e365eae5ccda3e67383cd43c0c0598d7f760bdf1cb4082566c5494ce", size = 31100055 },
+    { url = "https://files.pythonhosted.org/packages/50/15/0e9072e410731980ebc567c60a0a5f02bc2183310e48704ef83682cdd54c/polars-1.29.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:54f6902da333f99208b8d27765d580ba0299b412787c0564275912122c228e40", size = 34828438 },
+    { url = "https://files.pythonhosted.org/packages/69/c0/90fcaac5c95aa225b3899698289c0424d429ef72248b593f15294f95a35e/polars-1.29.0-cp39-abi3-manylinux_2_24_aarch64.whl", hash = "sha256:7a0ac6a11088279af4d715f4b58068835f551fa5368504a53401743006115e78", size = 32073830 },
+    { url = "https://files.pythonhosted.org/packages/17/ed/e5e570e22a03549a3c5397035a006b2c6343856a9fd15cccb5db39bdfa0a/polars-1.29.0-cp39-abi3-win_amd64.whl", hash = "sha256:f5aac4656e58b1e12f9481950981ef68b5b0e53dd4903bd72472efd2d09a74c8", size = 34971841 },
+    { url = "https://files.pythonhosted.org/packages/45/fd/9039f609d76b3ebb13777f289502a00b52709aea5c35aed01d1090ac142f/polars-1.29.0-cp39-abi3-win_arm64.whl", hash = "sha256:0c105b07b980b77fe88c3200b015bf4695e53185385f0f244c13e2d1027c7bbf", size = 31298689 },
 ]
 
 [[package]]
@@ -3120,7 +3156,7 @@ wheels = [
 
 [[package]]
 name = "ugbio-cloud-utils"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { editable = "src/cloud_utils" }
 dependencies = [
     { name = "boto3" },
@@ -3149,7 +3185,7 @@ dev = [
 
 [[package]]
 name = "ugbio-cnv"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { editable = "src/cnv" }
 dependencies = [
     { name = "cnvpytor" },
@@ -3182,7 +3218,7 @@ dev = [
 
 [[package]]
 name = "ugbio-comparison"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { editable = "src/comparison" }
 dependencies = [
     { name = "ugbio-core", extra = ["concordance", "vcfbed"] },
@@ -3207,7 +3243,7 @@ dev = [
 
 [[package]]
 name = "ugbio-core"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -3260,6 +3296,7 @@ requires-dist = [
     { name = "simppl", specifier = ">=1.0.7" },
     { name = "tqdm", marker = "extra == 'vcfbed'", specifier = ">=4.66.4" },
 ]
+provides-extras = ["vcfbed", "reports", "concordance"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3270,7 +3307,7 @@ dev = [
 
 [[package]]
 name = "ugbio-featuremap"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "scikit-learn" },
@@ -3305,7 +3342,7 @@ dev = [
 
 [[package]]
 name = "ugbio-filtering"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { editable = "src/filtering" }
 dependencies = [
     { name = "biopython" },
@@ -3342,7 +3379,7 @@ dev = [
 
 [[package]]
 name = "ugbio-freec"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { editable = "src/freec" }
 dependencies = [
     { name = "pandas" },
@@ -3371,12 +3408,12 @@ dev = [
 
 [[package]]
 name = "ugbio-hla-la"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { virtual = "src/hla_la" }
 
 [[package]]
 name = "ugbio-methylation"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { editable = "src/methylation" }
 dependencies = [
     { name = "matplotlib" },
@@ -3411,7 +3448,7 @@ dev = [
 
 [[package]]
 name = "ugbio-mrd"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["reports", "vcfbed"] },
@@ -3442,7 +3479,7 @@ dev = [
 
 [[package]]
 name = "ugbio-omics"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { editable = "src/omics" }
 dependencies = [
     { name = "boto3" },
@@ -3473,8 +3510,9 @@ requires-dist = [
     { name = "pandas", extras = ["hdf5"], marker = "extra == 'db'", specifier = ">=2.2.2" },
     { name = "plotly", specifier = ">=5.23.0" },
     { name = "pymongo", marker = "extra == 'db'", specifier = ">=4.11.1" },
-    { name = "winval", specifier = ">=0.7.2" },
+    { name = "winval", specifier = ">=0.7.5" },
 ]
+provides-extras = ["db"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3485,7 +3523,7 @@ dev = [
 
 [[package]]
 name = "ugbio-ppmseq"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3518,7 +3556,7 @@ dev = [
 
 [[package]]
 name = "ugbio-single-cell"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3555,7 +3593,7 @@ dev = [
 
 [[package]]
 name = "ugbio-srsnv"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3600,14 +3638,17 @@ dev = [
 
 [[package]]
 name = "ugbio-utils"
-version = "1.8.1.post0.dev119"
+version = "1.8.1.post0.dev121"
 source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [
     { name = "dnspython" },
+    { name = "ipykernel" },
     { name = "matplotlib-venn" },
     { name = "mock" },
+    { name = "openpyxl" },
+    { name = "polars" },
     { name = "pre-commit" },
     { name = "pybedtools" },
     { name = "pymongo" },
@@ -3623,8 +3664,11 @@ dev = [
 [package.metadata.requires-dev]
 dev = [
     { name = "dnspython", specifier = ">=2.7.0" },
+    { name = "ipykernel", specifier = ">=6.29.5" },
     { name = "matplotlib-venn", specifier = ">=1.1.1" },
     { name = "mock", specifier = ">=5.1.0" },
+    { name = "openpyxl", specifier = ">=3.1.5" },
+    { name = "polars", specifier = ">=1.29.0" },
     { name = "pre-commit", specifier = ">=4.0.1" },
     { name = "pybedtools", specifier = ">=0.11.0" },
     { name = "pymongo", specifier = ">=4.11.1" },
@@ -3714,16 +3758,16 @@ wheels = [
 
 [[package]]
 name = "winval"
-version = "0.7.2"
+version = "0.8.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "antlr4-python3-runtime" },
     { name = "boto3" },
     { name = "google-cloud-storage" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b8/2c/53385cf153d77e027533194104c8f5eb7a6b24a676af1d1b12cb6949eff4/winval-0.7.2.tar.gz", hash = "sha256:ef976e72fc49988af3e524543b552d2e91fbb0a7c86dc2ccc1ed025d2ea4d227", size = 27829 }
+sdist = { url = "https://files.pythonhosted.org/packages/d0/20/0abcc34f988cdaed3a1146123808fdc0ec54a8c7ce3a4a8a80c2726d6e53/winval-0.8.0.tar.gz", hash = "sha256:9c8d957c8f370d95834e11302db11acad84b1cbe4ee303967a9aedd3afb68702", size = 28143 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/cf/63af1cd2934af8b0b65fcf76934b8d9b93c15c15223a9353562b9fec4d35/winval-0.7.2-py3-none-any.whl", hash = "sha256:a3296d912f30b28b7ed95dc403b66209fb1a7cbb4d2968d54302ad94e32acc8c", size = 33067 },
+    { url = "https://files.pythonhosted.org/packages/58/64/6038e2877b2546662efda2c377df9661d1275ca0d129c3fa86ab72550081/winval-0.8.0-py3-none-any.whl", hash = "sha256:d6f4fd668fcbcf6218d908a6014a66ba419a92d5fe0a375fc523fd95eebf4ad2", size = 33391 },
 ]
 
 [[package]]
