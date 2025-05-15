@@ -14,7 +14,7 @@ def resources_dir():
 class TestCombineCnmopsCnvpytorCnvCalls:
     def test_combine_cnmops_cnvpytor_cnv_calls(self, tmpdir, resources_dir):
         input_cnmops_file = pjoin(resources_dir, "NA24385.cnmops.cnvs.chr1-2.bed")
-        input_cnvpytor_file = pjoin(resources_dir, "HG002.pytor.bin500.CNVs.chr1-2.tsv")
+        input_cnvpytor_file = pjoin(resources_dir, "HG002_full_sample.pytor.bin500.CNVs.chr1-2.tsv")
         input_jalign_file = pjoin(resources_dir, "NA24385.cnmops500mod_cnvpytor500.DEL.jalign.chr1-2.bed")
         input_ug_cnv_lcr_file = pjoin(resources_dir, "ug_cnv_lcr.chr1-2.bed")
         input_fasta_index_file = pjoin(resources_dir, "Homo_sapiens_assembly38.chr1-2.fasta.fai")
@@ -43,5 +43,5 @@ class TestCombineCnmopsCnvpytorCnvCalls:
             ]
         )
 
-        out_combined_bed = pjoin(tmpdir, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.UG-CNV-LCR_annotate.bed")
+        out_combined_bed = pjoin(tmpdir, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.bed.annotate.bed")
         assert filecmp.cmp(out_combined_bed, expected_out_combined_bed)
