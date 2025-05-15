@@ -70,7 +70,7 @@ def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHead
     return header
 
 
-def read_bed_file(cnv_annotated_bed_file: str) -> pd.DataFrame:
+def read_cnv_annotated_file_to_df(cnv_annotated_bed_file: str) -> pd.DataFrame:
     """
     Read a BED file and return a DataFrame.
     Args:
@@ -81,10 +81,10 @@ def read_bed_file(cnv_annotated_bed_file: str) -> pd.DataFrame:
     df_cnvs = pd.read_csv(cnv_annotated_bed_file, sep="\t", header=None)
     base_columns = ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number"]
     if df_cnvs.shape[1] == len(base_columns) + 1:
-        df_cnvs.columns = base_columns + ["UG-CNV-LCR"]
+        df_cnvs.columns = base_columns + ["filter"]
     elif df_cnvs.shape[1] == len(base_columns):
         df_cnvs.columns = base_columns
-        df_cnvs["UG-CNV-LCR"] = "."
+        df_cnvs["filter"] = "."
     else:
         raise ValueError("Unexpected number of columns in the TSV file.")
     return df_cnvs
@@ -103,7 +103,7 @@ def write_combined_vcf(
         sample_name (str): The name of the sample.
     """
     with pysam.VariantFile(outfile, mode="w", header=header) as vcf_out:
-        df_cnvs = read_bed_file(cnv_annotated_bed_file)
+        df_cnvs = read_cnv_annotated_file_to_df(cnv_annotated_bed_file)
 
         for _, row in df_cnvs.iterrows():
             # Create a new VCF record
@@ -113,7 +113,7 @@ def write_combined_vcf(
             cnv_type = row["CNV_type"]
             cnv_call_source = row["CNV_calls_source"]
             copy_number = row["copy_number"]
-            ug_cnv_lcr = row["UG-CNV-LCR"]
+            filter_val = row["filter"]
 
             if isinstance(copy_number, str):
                 cn_list = copy_number.split(",")
@@ -127,7 +127,7 @@ def write_combined_vcf(
 
             cnv_type_value = f"<{cnv_type}>"
 
-            ug_cnv_lcr_value = "UG-CNV-LCR" if ug_cnv_lcr != "." else ""
+            filter_value_to_write = filter_val if filter_val != "." else ""
 
             record = vcf_out.new_record()
             record.contig = str(chr_id)
@@ -135,8 +135,8 @@ def write_combined_vcf(
             record.stop = end
             record.ref = "N"
             record.alts = (cnv_type_value,)
-            if ug_cnv_lcr_value == "UG-CNV-LCR":
-                record.filter.add("UG-CNV-LCR")
+            if filter_value_to_write != "":
+                record.filter.add(filter_value_to_write)
             else:
                 record.filter.add("PASS")
             if not isinstance(copy_number_value, str):
