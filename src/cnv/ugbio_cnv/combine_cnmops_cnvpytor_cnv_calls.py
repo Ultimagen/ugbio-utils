@@ -275,21 +275,23 @@ def run(argv):
 
     out_directory = args.out_directory
     sample_name = args.sample_name
+    cnmops_cnv_calls_tmp_file = f"{pjoin(out_directory,os.path.basename(args.cnmops_cnv_calls))}.tmp"
+    cnvpytor_cnv_calls_tmp_file = f"{pjoin(out_directory,os.path.basename(args.cnvpytor_cnv_calls))}.tmp"
 
     # format cnmops cnv calls :
     run_cmd(
         f"cat {args.cnmops_cnv_calls} | sed 's/UG-CNV-LCR//g' | sed 's/LEN//g' | sed 's/|//g' \
-            > {args.cnmops_cnv_calls}.tmp"
+            > {cnmops_cnv_calls_tmp_file}"
     )
-    args.cnmops_cnv_calls = f"{args.cnmops_cnv_calls}.tmp"
+    args.cnmops_cnv_calls = cnmops_cnv_calls_tmp_file
     # format cnvpytor cnv calls :
     df_pytor_calls = pd.read_csv(args.cnvpytor_cnv_calls, delim_whitespace=True, header=None)
     df_pytor_calls.columns = ["cnv_type", "chrom", "start", "end", "len", 5, 6, 7]
     df_pytor_calls["CN"] = df_pytor_calls["cnv_type"].map(str) + "," + df_pytor_calls["len"].map(str)
     df_pytor_calls[["chrom", "start", "end", "CN"]].to_csv(
-        f"{args.cnvpytor_cnv_calls}.tmp", sep="\t", header=None, index=False
+        cnvpytor_cnv_calls_tmp_file, sep="\t", header=None, index=False
     )
-    args.cnvpytor_cnv_calls = f"{args.cnvpytor_cnv_calls}.tmp"
+    args.cnvpytor_cnv_calls = cnvpytor_cnv_calls_tmp_file
 
     ############################
     ### process DUPlications ###

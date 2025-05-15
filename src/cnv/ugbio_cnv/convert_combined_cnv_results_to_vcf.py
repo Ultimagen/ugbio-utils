@@ -13,7 +13,7 @@ from ugbio_core.logger import logger
 warnings.filterwarnings("ignore")
 
 
-def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHeader:
+def add_vcf_header(sample_name: str, fasta_index_file: str, filter_tags: list[str]) -> pysam.VariantHeader:
     """
     Create a VCF header, for CNV calls, with the given sample name and reference genome information.
     Args:
@@ -48,7 +48,8 @@ def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHead
 
     # Add FILTER
     header.add_line('##FILTER=<ID=PASS,Description="high confidence CNV call">')
-    header.add_line('##FILTER=<ID=UG-CNV-LCR,Description="CNV calls overlpping (>50% overlap) with UG-CNV-LCR">')
+    for filter_tag in filter_tags:
+        header.add_line(f'##FILTER=<ID={filter_tag},Description="CNV calls filtered by {filter_tag}">')
 
     # Add INFO
     header.add_line(
@@ -90,9 +91,7 @@ def read_cnv_annotated_file_to_df(cnv_annotated_bed_file: str) -> pd.DataFrame:
     return df_cnvs
 
 
-def write_combined_vcf(
-    outfile: str, header: pysam.VariantHeader, cnv_annotated_bed_file: str, sample_name: str
-) -> None:
+def write_combined_vcf(outfile: str, cnv_annotated_bed_file: str, sample_name: str, fasta_index_file: str) -> None:
     """
     Write CNV calls from a BED file to a VCF file.
     Args:
@@ -102,9 +101,12 @@ def write_combined_vcf(
             and annotated with UG-CNV-LCR.
         sample_name (str): The name of the sample.
     """
-    with pysam.VariantFile(outfile, mode="w", header=header) as vcf_out:
-        df_cnvs = read_cnv_annotated_file_to_df(cnv_annotated_bed_file)
+    df_cnvs = read_cnv_annotated_file_to_df(cnv_annotated_bed_file)
+    filter_tags = df_cnvs["filter"].unique().tolist()
+    filter_tags = [tag for tag in filter_tags if tag != "."]
+    header = add_vcf_header(sample_name, fasta_index_file, filter_tags)
 
+    with pysam.VariantFile(outfile, mode="w", header=header) as vcf_out:
         for _, row in df_cnvs.iterrows():
             # Create a new VCF record
             chr_id = row["chr"]
@@ -192,7 +194,7 @@ def run(argv):
     args = parser.parse_args(argv[1:])
     logger.setLevel(getattr(logging, args.verbosity))
 
-    header = add_vcf_header(args.sample_name, args.fasta_index_file)
+    # header = add_vcf_header(args.sample_name, args.fasta_index_file)
 
     # Open a VCF file for writing
     if args.out_directory:
@@ -200,7 +202,7 @@ def run(argv):
     else:
         out_directory = ""
     outfile = pjoin(out_directory, args.sample_name + ".cnv.vcf.gz")
-    write_combined_vcf(outfile, header, args.cnv_annotated_bed_file, args.sample_name)
+    write_combined_vcf(outfile, args.cnv_annotated_bed_file, args.sample_name, args.fasta_index_file)
 
     # index outfile
     try:
