@@ -52,7 +52,7 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         type=int,
         default=10000,
     )
-    parser.add_argument("--ug_cnv_lcr", help="UG-CNV-LCR bed file", required=True, type=str)
+    parser.add_argument("--ug_cnv_lcr", help="UG-CNV-LCR bed file", required=False, type=str)
     parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
 
     parser.add_argument("--out_directory", help="output directory", required=False, type=str)
@@ -275,21 +275,23 @@ def run(argv):
 
     out_directory = args.out_directory
     sample_name = args.sample_name
+    cnmops_cnv_calls_tmp_file = f"{pjoin(out_directory,os.path.basename(args.cnmops_cnv_calls))}.tmp"
+    cnvpytor_cnv_calls_tmp_file = f"{pjoin(out_directory,os.path.basename(args.cnvpytor_cnv_calls))}.tmp"
 
     # format cnmops cnv calls :
     run_cmd(
         f"cat {args.cnmops_cnv_calls} | sed 's/UG-CNV-LCR//g' | sed 's/LEN//g' | sed 's/|//g' \
-            > {args.cnmops_cnv_calls}.tmp"
+            > {cnmops_cnv_calls_tmp_file}"
     )
-    args.cnmops_cnv_calls = f"{args.cnmops_cnv_calls}.tmp"
+    args.cnmops_cnv_calls = cnmops_cnv_calls_tmp_file
     # format cnvpytor cnv calls :
     df_pytor_calls = pd.read_csv(args.cnvpytor_cnv_calls, delim_whitespace=True, header=None)
     df_pytor_calls.columns = ["cnv_type", "chrom", "start", "end", "len", 5, 6, 7]
     df_pytor_calls["CN"] = df_pytor_calls["cnv_type"].map(str) + "," + df_pytor_calls["len"].map(str)
     df_pytor_calls[["chrom", "start", "end", "CN"]].to_csv(
-        f"{args.cnvpytor_cnv_calls}.tmp", sep="\t", header=None, index=False
+        cnvpytor_cnv_calls_tmp_file, sep="\t", header=None, index=False
     )
-    args.cnvpytor_cnv_calls = f"{args.cnvpytor_cnv_calls}.tmp"
+    args.cnvpytor_cnv_calls = cnvpytor_cnv_calls_tmp_file
 
     ############################
     ### process DUPlications ###
@@ -342,11 +344,14 @@ def run(argv):
     out_cnvs_combined_annotated = pjoin(
         out_directory, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.UG-CNV-LCR_annotate.bed"
     )
-    run_cmd(
-        f"bedtools intersect -f 0.5 -loj -wa -wb -a {out_cnvs_combined} -b {args.ug_cnv_lcr} | \
-            cut -f 1-6,10 > {out_cnvs_combined_annotated}"
-    )
-    logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
+    if args.ug_cnv_lcr:
+        run_cmd(
+            f"bedtools intersect -f 0.5 -loj -wa -wb -a {out_cnvs_combined} -b {args.ug_cnv_lcr} | \
+                cut -f 1-6,10 > {out_cnvs_combined_annotated}"
+        )
+        logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
+    else:
+        out_cnvs_combined_annotated = out_cnvs_combined
 
     # convert to vcf
     vcf_args = [

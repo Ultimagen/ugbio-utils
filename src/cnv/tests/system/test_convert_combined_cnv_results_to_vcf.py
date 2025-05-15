@@ -41,10 +41,10 @@ class TestConvertCombinedCnvResultsToVcf:
             resources_dir, "HG002.cnmops_cnvpytor.cnvs.combined.UG-CNV-LCR_annotate.chr1-2.bed"
         )
         fasta_index_file = pjoin(resources_dir, "Homo_sapiens_assembly38.chr1-2.fasta.fai")
-        header = convert_combined_cnv_results_to_vcf.add_vcf_header(sample_name, fasta_index_file)
-
         outfile = pjoin(tmpdir, f"{sample_name}.cnv.vcf.gz")
-        convert_combined_cnv_results_to_vcf.write_combined_vcf(outfile, header, cnv_annotated_bed_file, sample_name)
+        convert_combined_cnv_results_to_vcf.write_combined_vcf(
+            outfile, cnv_annotated_bed_file, sample_name, fasta_index_file
+        )
 
         expected_vcf_file = pjoin(resources_dir, "test_HG002.cnv.vcf.gz")
         compare_vcfs(expected_vcf_file, outfile)
