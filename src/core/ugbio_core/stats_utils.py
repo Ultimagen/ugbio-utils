@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 from scipy.stats import multinomial
 from sklearn import metrics
 from ugbio_core.math_utils import safe_divide
@@ -138,9 +139,9 @@ def get_f1(precision: float, recall, null_value=np.nan) -> float:
 
 
 def precision_recall_curve(
-    gtr: np.ndarray,
-    predictions: np.ndarray,
-    fn_mask: np.ndarray,
+    gtr: np.ndarray | pd.Series,
+    predictions: np.ndarray | pd.Series,
+    fn_mask: np.ndarray | pd.Series,
     pos_label: str | int | None = 1,
     min_class_counts_to_output: int = 20,
 ) -> tuple:

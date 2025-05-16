@@ -69,6 +69,22 @@ class VcfPipelineUtils:
         """
         self.__execute(f"bcftools index -tf {vcf}")
 
+    def sort_vcf(self, input_file: str, output_file: str):
+        """Sort VCF file
+
+        Parameters
+        ----------
+        input_file : str
+            Input file name
+        output_file : str
+            Output file name
+
+        No Longer Returned
+        ------------------
+        None, generates `output_file`
+        """
+        self.__execute(f"bcftools sort -o {output_file} -O z {input_file}")
+
     def reheader_vcf(self, input_file: str, new_header: str, output_file: str):
         """Run bcftools reheader and index
 
