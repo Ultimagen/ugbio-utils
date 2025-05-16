@@ -32,6 +32,8 @@ class SVComparison:
         self.vpu = VcfPipelineUtils(self.sp)
         if logger is None:
             self.logger = logging.getLogger(__name__)
+        else:
+            self.logger = logger
 
     def __execute(self, command: str, output_file: str | None = None):
         """Summary
