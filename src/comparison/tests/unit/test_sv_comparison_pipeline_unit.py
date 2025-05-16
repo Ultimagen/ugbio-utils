@@ -14,12 +14,11 @@ def test_collapse_vcf(mocker):
     mock_p1.stdout = mocker.Mock()
     mock_p1.returncode = 0
     mock_p2.returncode = 0
-
+    open("removed.vcf", "w").close()  # Create the file to be removed
     sv_comparison.collapse_vcf("input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8)
 
     mock_logger.info.assert_called_with(
-        "truvari command: truvari collapse -i input.vcf --passonly -t --includebed regions.bed"
-        " --pctseq 0.9 --pctsize 0.8"
+        "truvari command: truvari collapse -i input.vcf --passonly -t --bed regions.bed" " --pctseq 0.9 --pctsize 0.8"
     )
     mock_subprocess_popen.assert_any_call(
         [

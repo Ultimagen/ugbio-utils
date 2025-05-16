@@ -93,6 +93,7 @@ class SVComparison:
             raise RuntimeError(f"truvari collapse failed with error code {p1.returncode}")
         if p2.returncode != 0:
             raise RuntimeError(f"bcftools view failed with error code {p2.returncode}")
+
         os.unlink("removed.vcf")
 
     def run_truvari(
