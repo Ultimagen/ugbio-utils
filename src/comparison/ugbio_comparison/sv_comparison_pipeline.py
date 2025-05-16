@@ -30,7 +30,8 @@ class SVComparison:
         """
         self.sp = simple_pipeline
         self.vpu = VcfPipelineUtils(self.sp)
-        self.logger = logger
+        if logger is None:
+            self.logger = logging.getLogger(__name__)
 
     def __execute(self, command: str, output_file: str | None = None):
         """Summary
@@ -48,7 +49,7 @@ class SVComparison:
         self,
         vcf: str,
         output_vcf: str,
-        bed: str = None,
+        bed: str | None = None,
         pctseq: float = 0.0,
         pctsize: float = 0.0,
     ):
@@ -100,7 +101,7 @@ class SVComparison:
         calls: str,
         gt: str,
         outdir: str,
-        bed: str = None,
+        bed: str | None = None,
         pctseq: float = 0.0,
         pctsize: float = 0.0,
         *,
@@ -189,7 +190,7 @@ class SVComparison:
         gt: str,
         output_file_name: str,
         outdir: str,
-        hcr_bed: str = None,
+        hcr_bed: str | None = None,
         pctseq: float = 0.0,
         pctsize: float = 0.0,
         *,
