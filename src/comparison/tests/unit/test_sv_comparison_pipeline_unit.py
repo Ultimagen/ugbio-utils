@@ -29,7 +29,7 @@ def test_collapse_vcf(mocker):
             "input.vcf",
             "--passonly",
             "-t",
-            "--includebed",
+            "--bed",
             "regions.bed",
             "--pctseq",
             "0.9",
@@ -37,7 +37,6 @@ def test_collapse_vcf(mocker):
             "0.8",
         ],
         stdout=mocker.ANY,
-        stderr=mocker.ANY,
     )
     mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
 

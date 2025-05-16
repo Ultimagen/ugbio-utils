@@ -79,16 +79,12 @@ class SVComparison:
         truvari_cmd = ["truvari", "collapse", "-i", vcf, "--passonly", "-t"]
 
         if bed:
-            truvari_cmd.extend(["--includebed", bed])
+            truvari_cmd.extend(["--bed", bed])
         truvari_cmd.extend(["--pctseq", str(pctseq)])
         truvari_cmd.extend(["--pctsize", str(pctsize)])
 
         self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
-        p1 = subprocess.Popen(
-            truvari_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
+        p1 = subprocess.Popen(truvari_cmd, stdout=subprocess.PIPE)
         p2 = subprocess.Popen(["bcftools", "view", "-Oz", "-o", output_vcf], stdin=p1.stdout)  # noqa: S607
         p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
         p2.communicate()  # Wait for p2 to finish
@@ -97,6 +93,7 @@ class SVComparison:
             raise RuntimeError(f"truvari collapse failed with error code {p1.returncode}")
         if p2.returncode != 0:
             raise RuntimeError(f"bcftools view failed with error code {p2.returncode}")
+        os.unlink("removed.vcf")
 
     def run_truvari(
         self,
@@ -226,6 +223,7 @@ class SVComparison:
         """
         self.logger.info(f"Running truvari pipeline with calls: {calls} and gt: {gt}")
         calls_fn = calls
+        tmpfiles_to_move = []
         self.collapse_vcf(
             calls,
             calls.replace(".vcf", "_collapsed.vcf.gz"),
@@ -234,8 +232,12 @@ class SVComparison:
             pctsize=pctsize,
         )
         calls_fn = calls_fn.replace(".vcf", "_collapsed.vcf.gz")
+        tmpfiles_to_move.append(calls_fn)
+
         self.vpu.sort_vcf(calls_fn, calls_fn.replace("_collapsed.vcf.gz", "_sort.vcf.gz"))
         calls_fn = calls_fn.replace("_collapsed.vcf.gz", "_sort.vcf.gz")
+        tmpfiles_to_move.append(calls_fn)
+        tmpfiles_to_move.append(calls_fn + ".tbi")
         self.vpu.index_vcf(calls_fn)
 
         gt_fn = gt
@@ -247,8 +249,11 @@ class SVComparison:
             pctsize=pctsize,
         )
         gt_fn = gt_fn.replace(".vcf", "_collapsed.vcf.gz")
+        tmpfiles_to_move.append(gt_fn)
         self.vpu.sort_vcf(gt_fn, gt_fn.replace("_collapsed.vcf.gz", "_sort.vcf.gz"))
         gt_fn = gt_fn.replace("_collapsed.vcf.gz", "_sort.vcf.gz")
+        tmpfiles_to_move.append(gt_fn)
+        tmpfiles_to_move.append(gt_fn + ".tbi")
         self.vpu.index_vcf(gt_fn)
 
         self.run_truvari(
@@ -263,7 +268,9 @@ class SVComparison:
         df_base, df_calls = self.truvari_to_dataframes(outdir)
         df_base.to_hdf(output_file_name, key="base", mode="w")
         df_calls.to_hdf(output_file_name, key="calls", mode="a")
-
+        for tmpfile in tmpfiles_to_move:
+            if os.path.exists(tmpfile):
+                shutil.move(tmpfile, outdir)
         self.logger.info(f"truvari pipeline finished with calls: {calls_fn} and gt: {gt_fn}")
 
 
