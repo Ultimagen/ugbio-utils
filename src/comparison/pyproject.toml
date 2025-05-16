@@ -21,6 +21,7 @@ text = "Apache-2.0"
 [project.scripts]
 run_tests = "pytest:main"
 run_comparison_pipeline = "ugbio_comparison.run_comparison_pipeline:main"
+sv_comparison_pipeline = "sv_comparison_pipeline:main"
 
 [tool.uv]
 dev-dependencies = [
