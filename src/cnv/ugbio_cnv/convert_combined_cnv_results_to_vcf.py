@@ -13,7 +13,7 @@ from ugbio_core.logger import logger
 warnings.filterwarnings("ignore")
 
 
-def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHeader:
+def add_vcf_header(sample_name: str, fasta_index_file: str, filter_tags: list[str]) -> pysam.VariantHeader:
     """
     Create a VCF header, for CNV calls, with the given sample name and reference genome information.
     Args:
@@ -48,7 +48,8 @@ def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHead
 
     # Add FILTER
     header.add_line('##FILTER=<ID=PASS,Description="high confidence CNV call">')
-    header.add_line('##FILTER=<ID=UG-CNV-LCR,Description="CNV calls overlpping (>50% overlap) with UG-CNV-LCR">')
+    for filter_tag in filter_tags:
+        header.add_line(f'##FILTER=<ID={filter_tag},Description="CNV calls filtered by {filter_tag}">')
 
     # Add INFO
     header.add_line(
@@ -70,9 +71,27 @@ def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHead
     return header
 
 
-def write_combined_vcf(
-    outfile: str, header: pysam.VariantHeader, cnv_annotated_bed_file: str, sample_name: str
-) -> None:
+def read_cnv_annotated_file_to_df(cnv_annotated_bed_file: str) -> pd.DataFrame:
+    """
+    Read a BED file and return a DataFrame.
+    Args:
+        cnv_annotated_bed_file (str): Path to the input BED file.
+    Returns:
+        pd.DataFrame: DataFrame containing the CNV data from the BED file.
+    """
+    df_cnvs = pd.read_csv(cnv_annotated_bed_file, sep="\t", header=None)
+    base_columns = ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number"]
+    if df_cnvs.shape[1] == len(base_columns) + 1:
+        df_cnvs.columns = base_columns + ["filter"]
+    elif df_cnvs.shape[1] == len(base_columns):
+        df_cnvs.columns = base_columns
+        df_cnvs["filter"] = "."
+    else:
+        raise ValueError("Unexpected number of columns in the TSV file.")
+    return df_cnvs
+
+
+def write_combined_vcf(outfile: str, cnv_annotated_bed_file: str, sample_name: str, fasta_index_file: str) -> None:
     """
     Write CNV calls from a BED file to a VCF file.
     Args:
@@ -82,10 +101,12 @@ def write_combined_vcf(
             and annotated with UG-CNV-LCR.
         sample_name (str): The name of the sample.
     """
-    with pysam.VariantFile(outfile, mode="w", header=header) as vcf_out:
-        df_cnvs = pd.read_csv(cnv_annotated_bed_file, sep="\t", header=None)
-        df_cnvs.columns = ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "UG-CNV-LCR"]
+    df_cnvs = read_cnv_annotated_file_to_df(cnv_annotated_bed_file)
+    filter_tags = df_cnvs["filter"].unique().tolist()
+    filter_tags = [tag for tag in filter_tags if tag != "."]
+    header = add_vcf_header(sample_name, fasta_index_file, filter_tags)
 
+    with pysam.VariantFile(outfile, mode="w", header=header) as vcf_out:
         for _, row in df_cnvs.iterrows():
             # Create a new VCF record
             chr_id = row["chr"]
@@ -94,7 +115,7 @@ def write_combined_vcf(
             cnv_type = row["CNV_type"]
             cnv_call_source = row["CNV_calls_source"]
             copy_number = row["copy_number"]
-            ug_cnv_lcr = row["UG-CNV-LCR"]
+            filter_val = row["filter"]
 
             if isinstance(copy_number, str):
                 cn_list = copy_number.split(",")
@@ -108,16 +129,16 @@ def write_combined_vcf(
 
             cnv_type_value = f"<{cnv_type}>"
 
-            ug_cnv_lcr_value = "UG-CNV-LCR" if ug_cnv_lcr != "." else ""
+            filter_value_to_write = filter_val if filter_val != "." else ""
 
             record = vcf_out.new_record()
-            record.contig = chr_id
+            record.contig = str(chr_id)
             record.start = start
             record.stop = end
             record.ref = "N"
             record.alts = (cnv_type_value,)
-            if ug_cnv_lcr_value == "UG-CNV-LCR":
-                record.filter.add("UG-CNV-LCR")
+            if filter_value_to_write != "":
+                record.filter.add(filter_value_to_write)
             else:
                 record.filter.add("PASS")
             if not isinstance(copy_number_value, str):
@@ -173,7 +194,7 @@ def run(argv):
     args = parser.parse_args(argv[1:])
     logger.setLevel(getattr(logging, args.verbosity))
 
-    header = add_vcf_header(args.sample_name, args.fasta_index_file)
+    # header = add_vcf_header(args.sample_name, args.fasta_index_file)
 
     # Open a VCF file for writing
     if args.out_directory:
@@ -181,7 +202,7 @@ def run(argv):
     else:
         out_directory = ""
     outfile = pjoin(out_directory, args.sample_name + ".cnv.vcf.gz")
-    write_combined_vcf(outfile, header, args.cnv_annotated_bed_file, args.sample_name)
+    write_combined_vcf(outfile, args.cnv_annotated_bed_file, args.sample_name, args.fasta_index_file)
 
     # index outfile
     try:
