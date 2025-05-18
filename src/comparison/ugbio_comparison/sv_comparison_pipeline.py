@@ -47,6 +47,37 @@ class SVComparison:
         """
         print_and_execute(command, output_file=output_file, simple_pipeline=self.sp, module_name=__name__)
 
+    def annotate_with_svinfo(
+        self,
+        vcf: str,
+        output_vcf: str,
+    ) -> None:
+        """
+        Annotate VCF with SVINFO
+
+        Parameters
+        ----------
+        vcf : str
+            Input VCF file
+        output_vcf : str
+            Output VCF file
+
+        Returns
+        -------
+        None
+        """
+        truvari_cmd = ["truvari", "anno", "svinfo", "-m", str(30), vcf]
+        self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
+        p1 = subprocess.Popen(truvari_cmd, stdout=subprocess.PIPE)
+        p2 = subprocess.Popen(["bcftools", "view", "-Oz", "-o", output_vcf], stdin=p1.stdout)  # noqa: S607
+        p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
+        p2.communicate()  # Wait for p2 to finish
+        p1.wait()  # Wait for p1 to finish
+        if p1.returncode != 0:
+            raise RuntimeError(f"truvari anno failed with error code {p1.returncode}")
+        if p2.returncode != 0:
+            raise RuntimeError(f"bcftools view failed with error code {p2.returncode}")
+
     def collapse_vcf(
         self,
         vcf: str,
@@ -225,31 +256,43 @@ class SVComparison:
         self.logger.info(f"Running truvari pipeline with calls: {calls} and gt: {gt}")
         calls_fn = calls
         tmpfiles_to_move = []
+        self.annotate_with_svinfo(calls, calls.replace(".vcf.gz", "_svinfo.vcf.gz"))
+        calls_fn = calls_fn.replace(".vcf.gz", "_svinfo.vcf.gz")
+        tmpfiles_to_move.append(calls_fn)
+        tmpfiles_to_move.append(calls_fn + ".tbi")
+        self.vpu.index_vcf(calls_fn)
         self.collapse_vcf(
-            calls,
-            calls.replace(".vcf", "_collapsed.vcf.gz"),
+            calls_fn,
+            calls_fn.replace("_svinfo.vcf.gz", "_collapsed.vcf.gz"),
             bed=hcr_bed,
             pctseq=pctseq,
             pctsize=pctsize,
         )
-        calls_fn = calls_fn.replace(".vcf", "_collapsed.vcf.gz")
+        calls_fn = calls_fn.replace("_svinfo.vcf.gz", "_collapsed.vcf.gz")
         tmpfiles_to_move.append(calls_fn)
 
         self.vpu.sort_vcf(calls_fn, calls_fn.replace("_collapsed.vcf.gz", "_sort.vcf.gz"))
         calls_fn = calls_fn.replace("_collapsed.vcf.gz", "_sort.vcf.gz")
         tmpfiles_to_move.append(calls_fn)
         tmpfiles_to_move.append(calls_fn + ".tbi")
+
         self.vpu.index_vcf(calls_fn)
 
         gt_fn = gt
+        self.annotate_with_svinfo(gt_fn, gt_fn.replace(".vcf.gz", "_svinfo.vcf.gz"))
+        gt_fn = gt_fn.replace(".vcf.gz", "_svinfo.vcf.gz")
+        tmpfiles_to_move.append(gt_fn)
+        tmpfiles_to_move.append(gt_fn + ".tbi")
+        self.vpu.index_vcf(gt_fn)
+
         self.collapse_vcf(
-            gt,
-            gt.replace(".vcf", "_collapsed.vcf.gz"),
+            gt_fn,
+            gt_fn.replace("_svinfo.vcf.gz", "_collapsed.vcf.gz"),
             bed=hcr_bed,
             pctseq=pctseq,
             pctsize=pctsize,
         )
-        gt_fn = gt_fn.replace(".vcf", "_collapsed.vcf.gz")
+        gt_fn = gt_fn.replace("_svinfo.vcf.gz", "_collapsed.vcf.gz")
         tmpfiles_to_move.append(gt_fn)
         self.vpu.sort_vcf(gt_fn, gt_fn.replace("_collapsed.vcf.gz", "_sort.vcf.gz"))
         gt_fn = gt_fn.replace("_collapsed.vcf.gz", "_sort.vcf.gz")

@@ -2,6 +2,34 @@ import pandas as pd
 from ugbio_comparison.sv_comparison_pipeline import SVComparison  # Adjust the import path as needed
 
 
+def test_annotate_with_svinfo(mocker):
+    mock_logger = mocker.Mock()
+    mock_sp = mocker.Mock()
+    sv_comparison = SVComparison(simple_pipeline=mock_sp, logger=mock_logger)
+
+    mock_subprocess_popen = mocker.patch("subprocess.Popen")
+    mock_p1 = mocker.Mock()
+    mock_p2 = mocker.Mock()
+    mock_subprocess_popen.side_effect = [mock_p1, mock_p2]
+    mock_p1.stdout = mocker.Mock()
+    mock_p1.returncode = 0
+    mock_p2.returncode = 0
+    sv_comparison.annotate_with_svinfo("input.vcf", "output.vcf.gz")
+    mock_logger.info.assert_called_with("truvari command: truvari anno svinfo -m 30 input.vcf")
+    mock_subprocess_popen.assert_any_call(
+        [
+            "truvari",
+            "anno",
+            "svinfo",
+            "-m",
+            "30",
+            "input.vcf",
+        ],
+        stdout=mocker.ANY,
+    )
+    mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
+
+
 def test_collapse_vcf(mocker):
     mock_logger = mocker.Mock()
     mock_sp = mocker.Mock()
@@ -91,7 +119,7 @@ def test_run_pipeline(mocker):
     mock_logger = mocker.Mock()
     mock_sp = mocker.Mock()
     sv_comparison = SVComparison(simple_pipeline=mock_sp, logger=mock_logger)
-
+    mock_annotate_with_svinfo = mocker.patch.object(sv_comparison, "annotate_with_svinfo")
     mock_collapse_vcf = mocker.patch.object(sv_comparison, "collapse_vcf")
     mock_sort_vcf = mocker.patch.object(sv_comparison.vpu, "sort_vcf")
     mock_index_vcf = mocker.patch.object(sv_comparison.vpu, "index_vcf")
@@ -101,8 +129,8 @@ def test_run_pipeline(mocker):
     mock_to_hdf = mocker.patch("pandas.DataFrame.to_hdf")
 
     sv_comparison.run_pipeline(
-        calls="calls.vcf",
-        gt="ground_truth.vcf",
+        calls="calls.vcf.gz",
+        gt="ground_truth.vcf.gz",
         output_file_name="output.h5",
         outdir="output_dir",
         hcr_bed="regions.bed",
@@ -110,8 +138,10 @@ def test_run_pipeline(mocker):
         pctsize=0.8,
         erase_outdir=True,
     )
-
-    mock_collapse_vcf.assert_any_call("calls.vcf", "calls_collapsed.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8)
+    mock_annotate_with_svinfo.assert_any_call("calls.vcf.gz", "calls_svinfo.vcf.gz")
+    mock_collapse_vcf.assert_any_call(
+        "calls_svinfo.vcf.gz", "calls_collapsed.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8
+    )
     mock_sort_vcf.assert_called()
     mock_index_vcf.assert_called()
     mock_run_truvari.assert_called_once_with(
