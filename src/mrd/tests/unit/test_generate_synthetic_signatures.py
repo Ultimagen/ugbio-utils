@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pysam
 import pytest
-from ugbio_mrd.mrd_utils import generate_synthetic_signatures
+from ugbio_mrd.mrd_utils import generate_synthetic_signatures, read_signature
 
 
 @pytest.fixture
@@ -124,3 +124,37 @@ def test_synthetic_signatures_deterministic(resources_dir):
             # Check that the variants are the same
             assert len(variants_1) == len(variants_2)
             assert set(variants_1) == set(variants_2)
+
+
+def test_generate_synthetic_signatures(tmpdir, resources_dir):
+    """
+    Test that the synthetic signatures generated from a database
+    have the same trinucleotide substitution context as the input signature.
+    """
+    # Create temporary directories for outputs
+    with tempfile.TemporaryDirectory() as output_dir:
+        # Generate synthetic signatures
+        n_synthetic_signatures = 1
+        synthetic_signature_list = generate_synthetic_signatures(
+            signature_vcf=str(resources_dir / "mutect_mrd_signature_test.vcf.gz"),
+            db_vcf=str(
+                resources_dir
+                / "pancan_pcawg_2020.mutations_hg38_GNOMAD_dbsnp_beds.sorted.Annotated.HMER_LEN.edited.chr19.vcf.gz"
+            ),
+            n_synthetic_signatures=n_synthetic_signatures,
+            output_dir=output_dir,
+        )
+        expected_signature_vcf = str(resources_dir / "synthetic_signature_test.vcf.gz")
+        # Read the generated synthetic signature
+        signature = read_signature(synthetic_signature_list[0], return_dataframes=True)
+        # Read the expected synthetic signature
+        expected_signature = read_signature(expected_signature_vcf, return_dataframes=True)
+        # Test that motif distribution is the same (0th order)
+        assert (
+            signature.groupby(["ref", "alt"]).value_counts()
+            == expected_signature.groupby(["ref", "alt"]).value_counts()
+        ).all()
+        # Delete the expected signature index file
+        expected_signature_index = expected_signature_vcf + ".csi"
+        if Path(expected_signature_index).exists():
+            Path(expected_signature_index).unlink()
