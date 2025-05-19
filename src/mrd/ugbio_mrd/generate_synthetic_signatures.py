@@ -61,6 +61,14 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         required=False,
         help="""Output directory for synthetic signatures""",
     )
+    parser.add_argument(
+        "-p",
+        "--n_processes",
+        type=int,
+        default=None,
+        required=False,
+        help="""Number of processes to use for parallelization. If not specified, uses all available CPU cores.""",
+    )
     return parser.parse_args(argv[1:])
 
 
@@ -74,6 +82,7 @@ def run(argv):
         n_synthetic_signatures=args_in.n_synthetic_signatures,
         output_dir=args_in.output_dir,
         ref_fasta=args_in.ref_fasta,
+        n_processes=args_in.n_processes,
     )
 
 
