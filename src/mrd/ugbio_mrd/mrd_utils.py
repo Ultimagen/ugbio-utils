@@ -633,8 +633,72 @@ def intersect_featuremap_with_signature(
     return output_intersection_file
 
 
+def _generate_single_synthetic_signature(
+    signature_vcf: str,
+    db_vcf: str,
+    output_dir: str,
+    signature_index: int,
+    trinuc_dict: dict,
+    db_basename: str,
+    signature_basename: str,
+) -> str:
+    """
+    Generate a single synthetic signature from a signature vcf file and a db vcf file
+
+    Parameters
+    ----------
+    signature_vcf: str
+        signature vcf file
+    db_vcf: str
+        db vcf file
+    output_dir: str
+        output directory
+    signature_index: int
+        index of the synthetic signature to generate
+    trinuc_dict: dict
+        dictionary containing trinucleotide substitution information
+    db_basename: str
+        basename of the db vcf file
+    signature_basename: str
+        basename of the signature vcf file
+
+    Returns
+    -------
+    str
+        path to the generated synthetic signature vcf file
+    """
+    output_vcf = pjoin(output_dir, f"syn{signature_index}_{signature_basename}_{db_basename}.vcf.gz")
+
+    # Create a copy of the trinuc_counter for this process
+    trinuc_counter = {trinucsub: 0 for trinucsub in trinuc_dict.keys()}
+
+    # Open the database VCF file to get the header and process records
+    with pysam.VariantFile(db_vcf, "rb") as db_fh:
+        # Open output file with the header from the database file
+        with pysam.VariantFile(output_vcf, "w", header=db_fh.header) as outfh:
+            # Process each record in the database file
+            for rec in db_fh.fetch():
+                db_trinucsub = parse_trinuc_sub(rec)
+                if db_trinucsub is None:
+                    continue
+
+                if trinuc_counter[db_trinucsub] in trinuc_dict[db_trinucsub]["index_to_sample"][signature_index]:
+                    outfh.write(rec)
+                trinuc_counter[db_trinucsub] += 1
+
+    # Index the output file
+    pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
+
+    return output_vcf
+
+
 def generate_synthetic_signatures(
-    signature_vcf: str, db_vcf: str, n_synthetic_signatures: int, output_dir: str, ref_fasta: str = None
+    signature_vcf: str,
+    db_vcf: str,
+    n_synthetic_signatures: int,
+    output_dir: str,
+    ref_fasta: str = None,
+    n_processes: int = None,
 ) -> list[str]:
     """
     Generate synthetic signatures from a signature vcf file and a db vcf file
@@ -652,6 +716,8 @@ def generate_synthetic_signatures(
     ref_fasta: str, optional
         reference fasta file, default None. Required if input vcf is not annotated with left and right motifs
         X_LM and X_RM
+    n_processes: int, optional
+        number of processes to use for parallelization. If None, uses the number of CPU cores.
 
     Returns
     -------
@@ -659,6 +725,16 @@ def generate_synthetic_signatures(
         list of synthetic control vcf files
 
     """
+    import multiprocessing
+
+    # Determine the number of processes to use
+    if n_processes is None:
+        n_processes = min(multiprocessing.cpu_count(), n_synthetic_signatures)
+    else:
+        n_processes = min(n_processes, n_synthetic_signatures)
+
+    logger.info(f"Generating {n_synthetic_signatures} synthetic signatures using {n_processes} processes")
+
     # parse trinuc substitution distribution from signature vcf and db vcf
     trinuc_signature = get_trinuc_substitution_dist(signature_vcf, ref_fasta)
     trinuc_db = get_trinuc_substitution_dist(db_vcf, ref_fasta)
@@ -683,33 +759,20 @@ def generate_synthetic_signatures(
 
     # make output directory
     os.makedirs(output_dir, exist_ok=True)
-    # db and signautre basename for output files
+
+    # db and signature basename for output files
     db_basename = splitext(splitext(basename(db_vcf))[0])[0]
     signature_basename = splitext(splitext(basename(signature_vcf))[0])[0]
-    # read db vcf file and allocate output files and file handles
-    db_fh = pysam.VariantFile(db_vcf, "rb")
-    synthetic_signatures = []
-    file_handle_list = []
-    for i in range(n_synthetic_signatures):
-        output_vcf = pjoin(output_dir, f"syn{i}_{signature_basename}_{db_basename}.vcf.gz")
-        synthetic_signatures.append(output_vcf)
-        outfh = pysam.VariantFile(output_vcf, "w", header=db_fh.header)
-        file_handle_list.append(outfh)
 
-    # read db file, parse trinuc substiution and write to output files
-    for rec in db_fh.fetch():
-        db_trinucsub = parse_trinuc_sub(rec)
-        for i in range(n_synthetic_signatures):
-            if trinuc_dict[db_trinucsub]["trinuc_counter"][i] in trinuc_dict[db_trinucsub]["index_to_sample"][i]:
-                file_handle_list[i].write(rec)
-            trinuc_dict[db_trinucsub]["trinuc_counter"][i] += 1
+    # Generate synthetic signatures in parallel
+    with multiprocessing.Pool(processes=n_processes) as pool:
+        tasks = [
+            (signature_vcf, db_vcf, output_dir, i, trinuc_dict, db_basename, signature_basename)
+            for i in range(n_synthetic_signatures)
+        ]
 
-    db_fh.close()
-
-    for i in range(n_synthetic_signatures):
-        file_handle_list[i].close()
-        output_vcf = synthetic_signatures[i]
-        pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
+        # Use starmap to pass multiple arguments to the function
+        synthetic_signatures = pool.starmap(_generate_single_synthetic_signature, tasks)
 
     return synthetic_signatures
 
