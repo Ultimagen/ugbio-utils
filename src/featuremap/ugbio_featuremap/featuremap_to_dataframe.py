@@ -56,6 +56,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 import polars as pl
+from polars.exceptions import ShapeError
 
 log = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ def header_meta(vcf: str, bcftools_path: str) -> tuple[dict, dict]:
 
 
 # ───────────────── enum helpers ──────────────────────────────
-def _ensure_scalar_categories(df: pl.DataFrame, col: str, cats: list[str]) -> pl.DataFrame:
+def _ensure_scalar_categories(featuremap_dataframe: pl.DataFrame, col: str, cats: list[str]) -> pl.DataFrame:
     """
     Ensure a categorical *scalar* column registers every category value.
 
@@ -134,7 +135,7 @@ def _ensure_scalar_categories(df: pl.DataFrame, col: str, cats: list[str]) -> pl
 
     Parameters
     ----------
-    df :
+    featuremap_dataframe :
         The DataFrame containing the column.
     col :
         Name of the categorical scalar column that was already
@@ -146,7 +147,7 @@ def _ensure_scalar_categories(df: pl.DataFrame, col: str, cats: list[str]) -> pl
     Returns
     -------
     pl.DataFrame
-        A DataFrame of identical shape to *df* (same rows/columns) but
+        A DataFrame of identical shape to *featuremap_dataframe* (same rows/columns) but
         whose *col* now recognises **all** values in *cats*.
     """
     # build a DataFrame that matches the full schema
@@ -154,16 +155,16 @@ def _ensure_scalar_categories(df: pl.DataFrame, col: str, cats: list[str]) -> pl
     if "" not in cats:
         cats = cats + [""]
     rows = len(cats)
-    stub_dict = {c: [None] * rows for c in df.columns}
+    stub_dict = {c: [None] * rows for c in featuremap_dataframe.columns}
     stub_dict[col] = cats  # each category once
 
     stub = (
         pl.DataFrame(stub_dict)
-        .cast(df.schema, strict=False)  # keep dtypes identical
+        .cast(featuremap_dataframe.schema, strict=False)  # keep dtypes identical
         .with_columns(pl.col(col).cast(pl.Categorical))
     )
 
-    return pl.concat([df, stub], how="vertical").head(df.height)
+    return pl.concat([featuremap_dataframe, stub], how="vertical").head(featuremap_dataframe.height)
 
 
 # ───────────────── casting helpers ──────────────────────────────────────────
@@ -173,7 +174,7 @@ def _cast_scalar(featuremap_dataframe: pl.DataFrame, col: str, meta: dict) -> pl
 
     Parameters
     ----------
-    df
+    featuremap_dataframe
         Current DataFrame.
     col
         Column name.
@@ -300,6 +301,102 @@ def _get_override_categories(
     return overrides
 
 
+def _find_bad_list_columns(featuremap_dataframe: pl.DataFrame, cols: list[str]) -> list[str]:
+    """
+    Return list columns whose element count differs from the row-wise maximum
+    in the first row that shows a mismatch.
+    """
+    for row in featuremap_dataframe.select(cols).iter_rows(named=True):
+        lens = {k: (len(v) if v is not None else 0) for k, v in row.items()}
+        if len(set(lens.values())) > 1:
+            max_len = max(lens.values())
+            return [k for k, v in lens.items() if v != max_len]
+    return []  # fallback – should not happen
+
+
+# ───────────────── misc helpers ─────────────────────────────────────────────
+def _sanity_check_format_numbers(format_ids: list[str], fmt_meta: dict) -> None:
+    """Raise if any FORMAT tag has a Number we do not support."""
+    for tag in format_ids:
+        num = fmt_meta[tag]["num"]
+        if num not in {"1", "."}:
+            raise ValueError(
+                f"Unsupported FORMAT field {tag}: Number={num}. "
+                "Only '1' (scalar) or '.' (variable list) are supported. "
+                "Use --drop-format to exclude this tag."
+            )
+
+
+def _split_format_ids(format_ids: list[str], fmt_meta: dict) -> tuple[list[str], list[str]]:
+    """Return (scalar_ids, list_ids) according to Number=."""
+    scalar = [k for k in format_ids if fmt_meta[k]["num"] == "1"]
+    return scalar, [k for k in format_ids if k not in scalar]
+
+
+def _make_query_string(format_ids: list[str], query_info: list[str]) -> str:
+    """Build the bcftools query format string."""
+    bracket = "[" + "\t".join(f"%{t}" for t in format_ids) + "]"
+    return "\t".join(["%CHROM", "%POS", "%REF", "%ALT", *[f"%INFO/{t}" for t in query_info], bracket]) + "\n"
+
+
+def _load_vcf_as_dataframe(
+    bcftools: str,
+    vcf: str,
+    fmt_str: str,
+    cols: list[str],
+) -> pl.DataFrame:
+    """Run bcftools query and load the TSV into a DataFrame."""
+    with tempfile.NamedTemporaryFile("w+b", delete=False) as tmp:
+        subprocess.run([bcftools, "query", "-f", fmt_str, vcf], stdout=tmp, check=True)
+        path = tmp.name
+    try:
+        return pl.read_csv(path, separator="\t", has_header=False, new_columns=cols, low_memory=True)
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def _cast_all_columns(
+    featuremap_dataframe: pl.DataFrame,
+    info_ids: list[str],
+    scalar_fmt_ids: list[str],
+    list_fmt_ids: list[str],
+    info_meta: dict,
+    fmt_meta: dict,
+) -> pl.DataFrame:
+    """Apply casting helpers to every INFO / FORMAT column."""
+    for tag in info_ids:
+        featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, info_meta[tag])
+    for tag in scalar_fmt_ids:
+        featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
+    for tag in list_fmt_ids:
+        featuremap_dataframe = _cast_list(featuremap_dataframe, tag, fmt_meta[tag])
+    # REF / ALT
+    for allele in (REF, ALT):
+        featuremap_dataframe = _cast_scalar(featuremap_dataframe, allele, {"type": "String", "cat": ALLELE_CATS})
+    return featuremap_dataframe
+
+
+def _explode_with_retry(
+    featuremap_dataframe: pl.DataFrame,
+    list_fmt_ids: list[str],
+) -> tuple[pl.DataFrame, list[str]]:
+    """
+    Try to explode *list_fmt_ids*; if mismatched lengths are detected, drop
+    the offending columns and retry until success.
+    """
+    while list_fmt_ids:
+        try:
+            return featuremap_dataframe.explode(list_fmt_ids), list_fmt_ids  # success
+        except ShapeError:
+            bad_cols = _find_bad_list_columns(featuremap_dataframe, list_fmt_ids)
+            if not bad_cols:
+                raise
+            log.warning("Dropping list columns with inconsistent length: %s", ", ".join(bad_cols))
+            featuremap_dataframe = featuremap_dataframe.drop(bad_cols)
+            list_fmt_ids = [c for c in list_fmt_ids if c not in bad_cols]
+    return featuremap_dataframe, []  # nothing exploded
+
+
 # ───────────────── core converter ────────────────────────────────────────────
 def vcf_to_parquet(
     vcf: str,
@@ -337,72 +434,40 @@ def vcf_to_parquet(
     drop_format = drop_format or {"GT"}
     if "GT" not in drop_format:
         log.warning(
-            "GT is not in FORMAT tags to drop; it will be included in the output. If any featuremap entry "
-            "contains multiple entries it will likely break the pipeline. Include 'GT' in --drop-format to "
-            "address the issue."
+            "GT not dropped; this may break downstream logic. Include 'GT' in --drop-format to "
+            "drop if an error occurs."
         )
 
     bcftools = _resolve_bcftools_command()
     info_meta, fmt_meta = header_meta(vcf, bcftools)
 
-    # merge defaults with auto-detected meta
+    # Merge JSON overrides ---------------------------------------------------
     for k, v in overrides.items():
-        target_meta = fmt_meta if k in fmt_meta else info_meta
-        if k in target_meta:
-            target_meta[k]["cat"] = v
-            log.debug("Overriding categories for %s → %s", k, v)
-        else:
-            target_meta[k] = {"num": "1", "type": "String", "cat": v}
-            log.debug("Injecting new categorical column %s", k)
+        target = fmt_meta if k in fmt_meta else info_meta
+        target.setdefault(k, {"num": "1", "type": "String", "cat": None})["cat"] = v
 
     info_ids = [k for k in info_meta if k not in drop_info]
     format_ids = [k for k in fmt_meta if k not in drop_format]
+
+    _sanity_check_format_numbers(format_ids, fmt_meta)
+    scalar_fmt_ids, list_fmt_ids = _split_format_ids(format_ids, fmt_meta)
+
     query_info = [k for k in info_meta if k not in RESERVED and k not in drop_info]
-    bracket = "[" + "\t".join(f"%{t}" for t in format_ids) + "]"
-    fmt_str = "\t".join(["%CHROM", "%POS", "%REF", "%ALT", *[f"%INFO/{t}" for t in query_info], bracket]) + "\n"
-
-    csv_path = None
-    try:
-        with tempfile.NamedTemporaryFile("w+b", delete=False) as tmp:
-            bcftools_command = [bcftools, "query", "-f", fmt_str, vcf]
-            log.warning("Running %s", " ".join(bcftools_command))
-            subprocess.run(bcftools_command, stdout=tmp, check=True)
-            csv_path = tmp.name
-
-        cols = list(OrderedDict.fromkeys([CHROM, POS, REF, ALT, *info_ids, *format_ids]))
-        featuremap_dataframe = pl.read_csv(
-            csv_path, separator="\t", has_header=False, new_columns=cols, low_memory=True
-        )
-    finally:
-        if csv_path:
-            Path(csv_path).unlink(missing_ok=True)
-
-    featuremap_dataframe = featuremap_dataframe.with_columns(pl.col(POS).cast(pl.Int64))
+    fmt_str = _make_query_string(format_ids, query_info)
+    cols = list(OrderedDict.fromkeys([CHROM, POS, REF, ALT, *info_ids, *format_ids]))
+    featuremap_dataframe = _load_vcf_as_dataframe(bcftools, vcf, fmt_str, cols).with_columns(pl.col(POS).cast(pl.Int64))
 
     with pl.StringCache():
-        # Without this cache, Polars keeps a private dictionary per categorical column per DataFrame → a wide pipeline
-        # can have dozens of duplicated lookup tables.
-        # With the cache all those columns share a single mapping table, so large workflows typically use less RAM.
-        for tag in info_ids:
-            featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, info_meta[tag])
-        for tag in format_ids:
-            featuremap_dataframe = _cast_list(featuremap_dataframe, tag, fmt_meta[tag])
-        # --- force REF / ALT to categorical with fixed vocabulary -------------
-        for allele in (REF, ALT):
-            featuremap_dataframe = _cast_scalar(
-                featuremap_dataframe,
-                allele,
-                {"type": "String", "cat": ALLELE_CATS},
-            )
-
-        featuremap_dataframe = featuremap_dataframe.explode(format_ids)
-        # explode done → list cols are now scalars; cast those with enums
-        for tag in format_ids:
-            if fmt_meta[tag].get("cat"):
-                featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
+        featuremap_dataframe = _cast_all_columns(
+            featuremap_dataframe, info_ids, scalar_fmt_ids, list_fmt_ids, info_meta, fmt_meta
+        )
+        featuremap_dataframe, list_fmt_ids = _explode_with_retry(featuremap_dataframe, list_fmt_ids)
+        # after explode, list columns became scalars
+        for tag in list_fmt_ids:
+            featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
 
     featuremap_dataframe.write_parquet(out)
-    log.info(f"✅  {out}: {featuremap_dataframe.shape[0]:,} rows × {featuremap_dataframe.shape[1]} cols")
+    log.info("✅  %s: %,d rows × %d cols", out, *featuremap_dataframe.shape)
 
 
 # ─────────────────────────── CLI wrapper ─────────────────────────────────────

@@ -13,9 +13,16 @@ from ugbio_featuremap import featuremap_to_dataframe
 bcftools_missing = shutil.which("bcftools") is None
 
 
-@pytest.fixture
-def input_featuremap():
-    return Path(__file__).parent.parent / "resources" / "416119-L7402-Z0296-CATCTATCAGGCGAT.few_examples.vcf.gz"
+# --- fixtures --------------------------------------------------------------
+@pytest.fixture(
+    params=[
+        "416119-L7402-Z0296-CATCTATCAGGCGAT.snvfind_out_test_sample.vcf.gz",
+        "416119-L7402-Z0296-CATCTATCAGGCGAT.snvfind_out_f2_test_sample.vcf.gz",
+    ]
+)
+def input_featuremap(request):
+    """Return each sample VCF in turn."""
+    return Path(__file__).parent.parent / "resources" / request.param
 
 
 @pytest.fixture
@@ -24,8 +31,8 @@ def input_categorical_features():
 
 
 def test_vcf_to_parquet_end_to_end(tmp_path: Path, input_featuremap: Path) -> None:
-    """Full pipeline should yield 5 per-read rows and include key columns."""
-    out_path = str(tmp_path / "416119-L7402-Z0296-CATCTATCAGGCGAT.few_examples.parquet")
+    """Full pipeline should yield the correct per-read row count and include key columns."""
+    out_path = str(tmp_path / input_featuremap.name.replace(".vcf.gz", ".parquet"))
 
     # run conversion (drop GT by default)
     featuremap_to_dataframe.vcf_to_parquet(
@@ -36,8 +43,14 @@ def test_vcf_to_parquet_end_to_end(tmp_path: Path, input_featuremap: Path) -> No
     )
 
     featuremap_dataframe = pl.read_parquet(out_path)
-    # vcf has 5 variants, one has 2 reads -> 6 exploded rows
-    assert featuremap_dataframe.shape == (6, len(featuremap_dataframe.columns))
+
+    # hard-coded expected row counts per sample
+    expected_rows = {
+        "416119-L7402-Z0296-CATCTATCAGGCGAT.snvfind_out_test_sample.vcf.gz": 6,
+        "416119-L7402-Z0296-CATCTATCAGGCGAT.snvfind_out_f2_test_sample.vcf.gz": 6,
+    }[input_featuremap.name]
+    assert featuremap_dataframe.shape[0] == expected_rows
+
     # sanity-check a few expected columns and types
     assert {"RN", "RL", "X_PREV1"}.issubset(featuremap_dataframe.columns)
     assert featuremap_dataframe["RN"].dtype == pl.Utf8
@@ -49,7 +62,7 @@ def test_enum_column_is_categorical(tmp_path: Path, input_featuremap: Path) -> N
     Columns whose description lists {A,C,G,T} should be stored as categorical
     with exactly those four categories.
     """
-    out_path = str(tmp_path / "416119-L7402-Z0296-CATCTATCAGGCGAT.few_examples.parquet")
+    out_path = str(tmp_path / input_featuremap.name.replace(".vcf.gz", ".parquet"))
     featuremap_to_dataframe.vcf_to_parquet(
         vcf=str(input_featuremap),
         out=out_path,
