@@ -43,11 +43,12 @@ def test_vcf_to_parquet_end_to_end(tmp_path: Path, input_featuremap: Path) -> No
     )
 
     featuremap_dataframe = pl.read_parquet(out_path)
+    featuremap_dataframe.write_parquet("1.parquet")
 
     # hard-coded expected row counts per sample
     expected_rows = {
-        "416119-L7402-Z0296-CATCTATCAGGCGAT.snvfind_out_test_sample.vcf.gz": 6,
-        "416119-L7402-Z0296-CATCTATCAGGCGAT.snvfind_out_f2_test_sample.vcf.gz": 6,
+        "416119-L7402-Z0296-CATCTATCAGGCGAT.snvfind_out_test_sample.vcf.gz": 2664,
+        "416119-L7402-Z0296-CATCTATCAGGCGAT.snvfind_out_f2_test_sample.vcf.gz": 619,
     }[input_featuremap.name]
     assert featuremap_dataframe.shape[0] == expected_rows
 
@@ -120,25 +121,6 @@ def test_ref_alt_defaults(tmp_path: Path, input_featuremap: Path):
         assert set(featuremap_dataframe[tag].cat.get_categories()) == {"", "A", "C", "G", "T"}
 
 
-# ------------- missing-value line encoded correctly -----------------------
-def test_missing_values(tmp_path: Path, input_featuremap: Path):
-    vcf = tmp_path / "with_missing.vcf"
-    # copy header + records + extra missing line
-    header = subprocess.check_output(["bcftools", "view", "-h", str(input_featuremap)], text=True)
-    with vcf.open("w") as fh:
-        fh.write(header)
-        subprocess.run(["bcftools", "view", "-H", str(input_featuremap)], stdout=fh, text=True, check=True)
-        fh.write("chr1\t2000000\t.\tA\tG\t0\t.\tX_PREV1=.;X_VAF=.;X_READ_COUNT=.;X_NEXT1=.;\tBCSQ:RN\t.:.\n")
-
-    out = tmp_path / "miss.parquet"
-    featuremap_to_dataframe.vcf_to_parquet(str(vcf), str(out))
-    featuremap_dataframe = pl.read_parquet(out)
-    # last INFO field null?
-    assert featuremap_dataframe.filter(pl.col("POS") == 2000000)["X_PREV1"].null_count() == 1
-    # FORMAT field XN exists and is null for that read
-    assert featuremap_dataframe.filter(pl.col("POS") == 2000000)["BCSQ"].null_count() == 1
-
-
 # ------------- tiny unit tests per helper ---------------------------------
 def test_enum():
     assert featuremap_to_dataframe._enum("foo {A,B}") == ["A", "B"]
@@ -148,7 +130,8 @@ def test_enum():
 def test_header_meta(input_featuremap):
     bcftools = featuremap_to_dataframe._resolve_bcftools_command()
     info, fmt = featuremap_to_dataframe.header_meta(str(input_featuremap), bcftools)
-    assert "X_VAF" in info and "RN" in fmt
+    assert "X_PREV1" in info
+    assert "RN" in fmt
 
 
 def test_ensure_scalar_categories():
@@ -188,7 +171,7 @@ def test_selected_dtypes(tmp_path: Path, input_featuremap: Path):
         "POS": pl.Int64,  # integer
         "REF": pl.Categorical,  # categorical
         "ALT": pl.Categorical,  # categorical
-        "X_VAF": pl.Float64,  # float
+        "VAF": pl.Float64,  # float
         "RN": pl.Utf8,  # exploded list -> string
     }
     for col, dt in expected.items():

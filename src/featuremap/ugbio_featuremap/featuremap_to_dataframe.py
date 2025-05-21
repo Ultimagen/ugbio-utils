@@ -350,14 +350,7 @@ def _load_vcf_as_dataframe(
         subprocess.run([bcftools, "query", "-f", fmt_str, vcf], stdout=tmp, check=True)
         path = tmp.name
     try:
-        return pl.read_csv(
-            path,
-            separator="\t",
-            has_header=False,
-            new_columns=cols,
-            low_memory=True,
-            null_values=["."],  # ← treat “.” as NA so numeric columns parse
-        )
+        return pl.read_csv(path, separator="\t", has_header=False, new_columns=cols, low_memory=True)
     finally:
         Path(path).unlink(missing_ok=True)
 
