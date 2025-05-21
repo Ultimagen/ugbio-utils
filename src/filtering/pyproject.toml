@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_filtering"
-version = "1.8.1-0dev-125"
+version = "1.10.0"
 description = "Ultima Genomics filtering scripts"
 authors = [
     { name = "Ilya Soifer", email = "ilya.soifer@ultimagen.com" },
