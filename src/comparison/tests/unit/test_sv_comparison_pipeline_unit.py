@@ -17,9 +17,7 @@ def test_collapse_vcf(mocker):
     open("removed.vcf", "w").close()  # Create the file to be removed
     sv_comparison.collapse_vcf("input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8)
 
-    mock_logger.info.assert_called_with(
-        "truvari command: truvari collapse -i input.vcf --passonly -t --bed regions.bed" " --pctseq 0.9 --pctsize 0.8"
-    )
+    mock_logger.info.assert_called_with("Deleted temporary file: removed.vcf")
     mock_subprocess_popen.assert_any_call(
         [
             "truvari",
