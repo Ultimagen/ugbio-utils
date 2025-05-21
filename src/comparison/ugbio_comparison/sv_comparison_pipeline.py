@@ -94,7 +94,12 @@ class SVComparison:
         if p2.returncode != 0:
             raise RuntimeError(f"bcftools view failed with error code {p2.returncode}")
 
-        os.unlink("removed.vcf")
+        removed_vcf_path = "removed.vcf"  # Parameterize the file path
+        if os.path.exists(removed_vcf_path):
+            os.unlink(removed_vcf_path)
+            self.logger.info(f"Deleted temporary file: {removed_vcf_path}")
+        else:
+            self.logger.warning(f"Temporary file not found: {removed_vcf_path}")
 
     def run_truvari(
         self,
@@ -113,7 +118,7 @@ class SVComparison:
         ----------
         calls : str
             Calls file
-        gt : st
+        gt : str
             Ground truth file
         outdir : str
             Output directory

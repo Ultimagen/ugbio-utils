@@ -79,9 +79,10 @@ class VcfPipelineUtils:
         output_file : str
             Output file name
 
-        No Longer Returned
-        ------------------
-        None, generates `output_file`
+        Returns
+        -------
+        None
+            Generates `output_file`.
         """
         self.__execute(f"bcftools sort -o {output_file} -O z {input_file}")
 
