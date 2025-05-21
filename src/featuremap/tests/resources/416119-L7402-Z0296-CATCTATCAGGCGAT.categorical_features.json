@@ -17,10 +17,11 @@
       "A",
       "AQ",
       "AQZ",
-      "AQZ",
+      "AZ",
       "Q",
       "QZ",
-      "Z"
+      "Z",
+      "TEST_ADDITIONAL_CAT"
     ]
   }
 }

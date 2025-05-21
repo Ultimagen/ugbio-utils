@@ -71,6 +71,7 @@ def test_enum_column_is_categorical(tmp_path: Path, input_featuremap: Path) -> N
     )
 
     featuremap_dataframe = pl.read_parquet(out_path)
+    print(featuremap_dataframe.schema)
     col = featuremap_dataframe["X_PREV1"]
     assert col.dtype == pl.Categorical
 
