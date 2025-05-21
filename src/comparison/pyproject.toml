@@ -8,6 +8,8 @@ authors = [
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
 ]
 dependencies = [
+    "pytest-mock>=3.14.0",
+    "truvari>=5.3.0",
     "ugbio_core[concordance,vcfbed]",
 ]
 requires-python = ">=3.11"
@@ -19,6 +21,7 @@ text = "Apache-2.0"
 [project.scripts]
 run_tests = "pytest:main"
 run_comparison_pipeline = "ugbio_comparison.run_comparison_pipeline:main"
+sv_comparison_pipeline = "ugbio_comparison.sv_comparison_pipeline:main"
 
 [tool.uv]
 dev-dependencies = [
