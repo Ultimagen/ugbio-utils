@@ -7,6 +7,7 @@ ARG USER_GID=$USER_UID
 ARG DEBIAN_FRONTEND=noninteractive
 ARG BCFTOOLS_INSTALL_DIR=/opt/bcftools
 ARG BCFTOOLS_VERSION=1.20
+ARG SAMTOOLS_VERSION=1.20
 
 # Install basic dependencies
 RUN apt-get update && apt-get install -y \
@@ -35,7 +36,19 @@ RUN wget https://github.com/samtools/bcftools/releases/download/${BCFTOOLS_VERSI
     rm bcftools-${BCFTOOLS_VERSION}.tar.bz2 && \
     cd bcftools-${BCFTOOLS_VERSION} && \
     make && \
-    make install
+    make install && \
+    cd .. && \
+    rm -rf bcftools-${BCFTOOLS_VERSION}
+
+# install samtools
+RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
+    tar -vxjf samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
+    rm samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
+    cd samtools-${SAMTOOLS_VERSION} && \
+    make && \
+    make install && \
+    cd .. && \
+    rm -rf samtools-${SAMTOOLS_VERSION}
 
 # Install bedtools
 ARG BEDTOOLS_VERSION=2.31.0
