@@ -71,10 +71,10 @@ def test_truvari_to_dataframes(mocker):
     mock_vcftools = mocker.patch("ugbio_core.vcfbed.vcftools.get_vcf_df")  # Adjusted import path
 
     mock_vcftools.side_effect = [
-        pd.DataFrame([{"SVTYPE": "DEL", "SVLEN": 100}]),  # tp-base.vcf.gz
-        pd.DataFrame([{"SVTYPE": "INS", "SVLEN": 200}]),  # fn.vcf.gz
-        pd.DataFrame([{"SVTYPE": "DEL", "SVLEN": 150}]),  # tp-comp.vcf.gz
-        pd.DataFrame([{"SVTYPE": "INS", "SVLEN": 250}]),  # fp.vcf.gz
+        pd.DataFrame([{"svtype": "DEL", "svlen": 100}]),  # tp-base.vcf.gz
+        pd.DataFrame([{"svtype": "INS", "svlen": 200}]),  # fn.vcf.gz
+        pd.DataFrame([{"svtype": "DEL", "svlen": 150}]),  # tp-comp.vcf.gz
+        pd.DataFrame([{"svtype": "INS", "svlen": 250}]),  # fp.vcf.gz
     ]
 
     sv_comparison = SVComparison()
@@ -115,8 +115,8 @@ def test_run_pipeline(mocker):
     mock_sort_vcf.assert_called()
     mock_index_vcf.assert_called()
     mock_run_truvari.assert_called_once_with(
-        calls="calls_sort.vcf.gz",
-        gt="ground_truth_sort.vcf.gz",
+        calls="calls_collapsed.sort.vcf.gz",
+        gt="ground_truth_collapsed.sort.vcf.gz",
         outdir="output_dir",
         bed="regions.bed",
         pctseq=0.9,

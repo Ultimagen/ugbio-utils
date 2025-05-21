@@ -157,6 +157,7 @@ class SVComparison:
     def truvari_to_dataframes(
         self,
         truvari_dir: str,
+        custom_info_fields: tuple = (),
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """
         Convert truvari report to dataframes
@@ -165,25 +166,28 @@ class SVComparison:
         ----------
         truvari_dir : str
             Truvari directory
+        custom_info_fields : tuple, optional
+            Custom info fields to read from the VCFs, in addition SVTYPE and SVLEN
 
         Returns
         -------
         tuple[pd.DataFrame, pd.DataFrame]
             Tuple of truvari base and calls concordance dataframes
         """
-        df_tp_base = vcftools.get_vcf_df(pjoin(truvari_dir, "tp-base.vcf.gz"), custom_info_fields=["SVTYPE", "SVLEN"])
+        info_fields_to_read: list[str] = list(("SVTYPE", "SVLEN") + custom_info_fields)
+        df_tp_base = vcftools.get_vcf_df(pjoin(truvari_dir, "tp-base.vcf.gz"), custom_info_fields=info_fields_to_read)
         df_tp_base["svlen"] = df_tp_base["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
         df_tp_base["label"] = "TP"
-        df_fn = vcftools.get_vcf_df(pjoin(truvari_dir, "fn.vcf.gz"), custom_info_fields=["SVTYPE", "SVLEN"])
+        df_fn = vcftools.get_vcf_df(pjoin(truvari_dir, "fn.vcf.gz"), custom_info_fields=info_fields_to_read)
         df_fn["svlen"] = df_fn["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
         df_fn["label"] = "FN"
         df_base = pd.concat((df_tp_base, df_fn))
 
-        df_tp_calls = vcftools.get_vcf_df(pjoin(truvari_dir, "tp-comp.vcf.gz"), custom_info_fields=["SVTYPE", "SVLEN"])
+        df_tp_calls = vcftools.get_vcf_df(pjoin(truvari_dir, "tp-comp.vcf.gz"), custom_info_fields=info_fields_to_read)
         df_tp_calls["label"] = "TP"
         df_tp_calls["svlen"] = df_tp_calls["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
 
-        df_fp = vcftools.get_vcf_df(pjoin(truvari_dir, "fp.vcf.gz"), custom_info_fields=["SVTYPE", "SVLEN"])
+        df_fp = vcftools.get_vcf_df(pjoin(truvari_dir, "fp.vcf.gz"), custom_info_fields=info_fields_to_read)
         df_fp["label"] = "FP"
         df_fp["svlen"] = df_fp["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
 
@@ -199,6 +203,7 @@ class SVComparison:
         hcr_bed: str | None = None,
         pctseq: float = 0.0,
         pctsize: float = 0.0,
+        custom_info_fields: tuple = (),
         *,
         erase_outdir: bool = True,
     ):
@@ -223,6 +228,8 @@ class SVComparison:
             Percentage of size identity, by default 0.0
         erase_outdir : bool, optional
             Erase output directory if it exists, by default True
+        custom_info_fields : list[str], optional
+            Custom info fields to read from the VCFs, in addition SVTYPE and SVLEN
 
         Returns
         -------
@@ -241,8 +248,8 @@ class SVComparison:
         calls_fn = calls_fn.replace(".vcf.gz", "_collapsed.vcf.gz")
         tmpfiles_to_move.append(calls_fn)
 
-        self.vpu.sort_vcf(calls_fn, calls_fn.replace("_collapsed.vcf.gz", "_sort.vcf.gz"))
-        calls_fn = calls_fn.replace("_collapsed.vcf.gz", "_sort.vcf.gz")
+        self.vpu.sort_vcf(calls_fn, calls_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz"))
+        calls_fn = calls_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz")
         tmpfiles_to_move.append(calls_fn)
         tmpfiles_to_move.append(calls_fn + ".tbi")
 
@@ -259,8 +266,8 @@ class SVComparison:
         )
         gt_fn = gt_fn.replace(".vcf.gz", "_collapsed.vcf.gz")
         tmpfiles_to_move.append(gt_fn)
-        self.vpu.sort_vcf(gt_fn, gt_fn.replace("_collapsed.vcf.gz", "_sort.vcf.gz"))
-        gt_fn = gt_fn.replace("_collapsed.vcf.gz", "_sort.vcf.gz")
+        self.vpu.sort_vcf(gt_fn, gt_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz"))
+        gt_fn = gt_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz")
         tmpfiles_to_move.append(gt_fn)
         tmpfiles_to_move.append(gt_fn + ".tbi")
         self.vpu.index_vcf(gt_fn)
@@ -274,7 +281,7 @@ class SVComparison:
             pctsize=pctsize,
             erase_outdir=erase_outdir,
         )
-        df_base, df_calls = self.truvari_to_dataframes(outdir)
+        df_base, df_calls = self.truvari_to_dataframes(outdir, custom_info_fields=custom_info_fields)
         df_base.to_hdf(output_file_name, key="base", mode="w")
         df_calls.to_hdf(output_file_name, key="calls", mode="a")
         for tmpfile in tmpfiles_to_move:
@@ -302,6 +309,7 @@ def get_parser():
     parser.add_argument("--hcr_bed", help="High confidence region bed file")
     parser.add_argument("--pctseq", type=float, default=0.0, help="Percentage of sequence identity")
     parser.add_argument("--pctsize", type=float, default=0.0, help="Percentage of size identity")
+    parser.add_argument("--custom_info_fields", nargs="+", default=[], help="Custom info fields to read from the VCFs")
     parser.add_argument("--verbosity", default="INFO", help="Logging verbosity level")
     return parser
 
@@ -321,6 +329,7 @@ def run(argv):
         pctsize=args.pctsize,
         outdir=args.outdir,
         output_file_name=args.output_filename,
+        custom_info_fields=tuple(args.custom_info_fields),
     )
 
 
