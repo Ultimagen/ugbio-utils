@@ -3,7 +3,7 @@
 {
 	"name": "Methylation",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_methylation:1.10.0",
+	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_methylation:1.10.1",
 	"runArgs": [
 		"--init",
 		"--network=host"
