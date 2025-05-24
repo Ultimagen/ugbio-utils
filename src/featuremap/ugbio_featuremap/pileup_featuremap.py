@@ -25,6 +25,13 @@ from ugbio_featuremap.featuremap_consensus_utils import pileup_featuremap, pileu
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
+    fnc_registry = {
+        "np.max": np.max,
+        "np.mean": np.mean,
+        "np.median": np.median,
+        "constant0": lambda x: 0,
+    }
+
     parser = argparse.ArgumentParser(prog="pileup_featuremap", description=run.__doc__)
     parser.add_argument(
         "-f",
@@ -78,9 +85,10 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "-qf",
         "--qual_agg_func",
-        type=callable,
+        type=str,
+        choices=fnc_registry.keys(),
         required=False,
-        default=np.max,
+        default="np.max",
         help="""Function to aggregate quality scores (default: np.max)""",
     )
     parser.add_argument(
@@ -91,7 +99,9 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         default=True,
         help="""Whether to print debug messages (default: True)""",
     )
-    return parser.parse_args(argv[1:])
+    args = parser.parse_args(argv[1:])
+    args.qual_agg_func = fnc_registry[args.qual_agg_func]
+    return args
 
 
 def run(argv):
