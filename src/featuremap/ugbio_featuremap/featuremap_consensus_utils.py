@@ -4,6 +4,7 @@ import re
 import subprocess
 import tempfile
 from collections import defaultdict
+from collections.abc import Callable
 from os.path import basename, dirname
 from os.path import join as pjoin
 
@@ -71,7 +72,7 @@ def write_a_pileup_record(  # noqa: C901, PLR0912 #TODO: refactor. too complex
     fields_to_collect: dict,
     min_qual: int,
     sample_name: str = "SAMPLE",
-    qual_agg_func: callable = np.max,
+    qual_agg_func: Callable = np.max,
 ):
     """
     Write a pileup record to a vcf file
@@ -94,7 +95,7 @@ def write_a_pileup_record(  # noqa: C901, PLR0912 #TODO: refactor. too complex
     rec.chrom = rec_id[0]
     rec.pos = rec_id[1]
     rec.ref = rec_id[2]
-    rec.alts = rec_id[3]
+    rec.alts = (rec_id[3],)
     rec.id = "."
     rec.qual = qual_agg_func(record_dict[FeatureMapFields.X_QUAL.value])
     # INFO fields to aggregate
@@ -147,13 +148,13 @@ def write_a_pileup_record(  # noqa: C901, PLR0912 #TODO: refactor. too complex
     return rec
 
 
-def pileup_featuremap(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
+def pileup_featuremap(  # noqa: PLR0915, PLR0912, C901 #TODO: refactor. too complex
     featuremap: str,
     output_vcf: str,
-    genomic_interval: str = None,
+    genomic_interval: str | None = None,
     min_qual: int = 0,
     sample_name: str = "SAMPLE",
-    qual_agg_func: callable = np.max,
+    qual_agg_func: Callable = np.max,
     *,
     verbose: bool = True,
 ):
@@ -201,35 +202,35 @@ def pileup_featuremap(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
 
     for field in fields_to_collect_all_options["numeric_array_fields"]:
         if field in orig_header.info:
-            header.info.add(field, ".", orig_header.info[field].type, orig_header.info[field].description)
+            header.info.add(field, ".", orig_header.info[field].type, str(orig_header.info[field].description))
             fields_to_collect["numeric_array_fields"] += [field]
         else:
             logger.debug(f"Field {field} not found in the input featuremap vcf")
 
     for field in fields_to_collect_all_options["string_list_fields"]:
         if field in orig_header.info:
-            header.info.add(field, "1", orig_header.info[field].type, orig_header.info[field].description)
+            header.info.add(field, "1", orig_header.info[field].type, str(orig_header.info[field].description))
             fields_to_collect["string_list_fields"] += [field]
         else:
             logger.debug(f"Field {field} not found in the input featuremap vcf")
 
     for field in fields_to_collect_all_options["boolean_fields"]:
         if field in orig_header.info:
-            header.info.add(field, "1", "String", orig_header.info[field].description)
+            header.info.add(field, "1", "String", str(orig_header.info[field].description))
             fields_to_collect["boolean_fields"] += [field]
         else:
             logger.debug(f"Field {field} not found in the input featuremap vcf")
 
     for field in fields_to_collect_all_options["fields_to_write_once"]:
         if field in orig_header.info:
-            header.info.add(field, "1", orig_header.info[field].type, orig_header.info[field].description)
+            header.info.add(field, "1", orig_header.info[field].type, str(orig_header.info[field].description))
             fields_to_collect["fields_to_write_once"] += [field]
         else:
             logger.debug(f"Field {field} not found in the input featuremap vcf")
 
     for field in fields_to_collect_all_options["boolean_fields_to_write_once"]:
         if field in orig_header.info:
-            header.info.add(field, "0", "Flag", orig_header.info[field].description)
+            header.info.add(field, "0", "Flag", str(orig_header.info[field].description))
             fields_to_collect["boolean_fields_to_write_once"] += [field]
         else:
             logger.debug(f"Field {field} not found in the input featuremap vcf")
@@ -242,7 +243,7 @@ def pileup_featuremap(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
     header.formats.add(VAF, 1, "Float", "Allele frequency")
     # copy contigs from original header
     for contig in orig_header.contigs:
-        header.contigs.add(contig)
+        header.contigs.add(str(contig))
     header.add_sample(sample_name)
 
     # open an output file
@@ -337,7 +338,7 @@ def pileup_featuremap_on_an_interval_list(
     interval_list: str,
     min_qual: int = 0,
     sample_name: str = "SAMPLE",
-    qual_agg_func: callable = np.max,
+    qual_agg_func: Callable = np.max,
     *,
     verbose: bool = True,
 ):
