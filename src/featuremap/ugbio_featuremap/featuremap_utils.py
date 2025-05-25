@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import pyfaidx
 import pysam
+import tqdm.auto as tqdm
 from simppl.simple_pipeline import SimplePipeline
 from ugbio_core.consts import (
     ALT,
@@ -395,9 +396,9 @@ class RefContextVcfAnnotator(VcfAnnotator):
 
 def create_hom_snv_featuremap(
     featuremap: str,
-    sorter_stats_json: str = None,
-    hom_snv_featuremap: str = None,
-    sp: SimplePipeline = None,
+    sorter_stats_json: str | None = None,
+    hom_snv_featuremap: str | None = None,
+    sp: SimplePipeline | None = None,
     requested_min_coverage: int = 20,
     min_af: float = 0.7,
 ):
@@ -455,42 +456,60 @@ def create_hom_snv_featuremap(
     )
 
     # Create commands to filter the featuremap for homozygous SNVs.
+
     cmd_get_hom_snv_loci_bed_file = (
         # Use bcftools to query specific fields in the vcf file. This includes the chromosome (CHROM),
-        # the 0-based start position (POS0), the 1-based start position (POS), and the number of reads
-        # in the locus (X_READ_COUNT) for the specified feature map.
-        f"bcftools query -f '%CHROM\t%POS0\t%POS\t%INFO/{FeatureMapFields.READ_COUNT.value}\n' {featuremap} |"
+        # the 0-based start position (POS0), the 1-based start position (POS), the REF and ALT alleles
+        # and the number of reads in the locus (X_READ_COUNT) for the specified feature map.
+        f"bcftools query -f '%CHROM\t%POS0\t%POS\t%REF\t%ALT\t%INFO/{FeatureMapFields.READ_COUNT.value}\n' {featuremap} |"  # noqa: E501
         # Pipe the output to bedtools groupby command.
-        # Here, -c 3 means we are specifying the third column as the key to groupby.
+        # Here, -c 1-5 means we are specifying the chrom/pos/ref/alt as the key to groupby.
         # The '-full' option includes all columns from the input in the output.
         # The '-o count' option is specifying to count the number of lines for each group.
-        f"bedtools groupby -c 3 -full -o count | "
+        f"bedtools groupby -g 1,2,3,4,5 -full -o count -c 6 | "
         # Pipe the result to an awk command, which filters the result based on minimum coverage and allele frequency.
-        # The '$4>=~{min_coverage}' part checks if the fourth column (which should be read count) is greater than or
-        # equal to the minimum coverage. The '$5/$4>=~{min_af}' part checks if the allele frequency (calculated as
-        # column 5 divided by column 4) is greater than or equal to the minimum allele frequency.
-        f"awk '($4>={min_coverage})&&($5/$4>={min_af})' | "
+        # The '$6>=~{min_coverage}' part checks if the fourth column (which should be read count) is greater than or
+        # equal to the minimum coverage. The '$7/$6>=~{min_af}' part checks if the allele frequency (calculated as
+        # column 7 divided by column 6) is greater than or equal to the minimum allele frequency.
+        f"awk '($6>={min_coverage})&&($7/$6>={min_af})' | "
         # The final output is then compressed and saved to the specified location in .bed.gz format.
         f"gzip > {hom_snv_bed}"
     )
-    cmd_intersect_bed_file_with_original_featuremap = (
-        f"bedtools intersect -a {featuremap} -b {hom_snv_bed} -u -header | bcftools view - -Oz -o {hom_snv_featuremap}"
-    )
-    cmd_index_hom_snv_featuremap = f"bcftools index -ft {hom_snv_featuremap}"
 
     # Run the commands
     try:
-        for command in (
-            cmd_get_hom_snv_loci_bed_file,
-            cmd_intersect_bed_file_with_original_featuremap,
-            cmd_index_hom_snv_featuremap,
-        ):
+        for command in (cmd_get_hom_snv_loci_bed_file,):
             print_and_execute(command, simple_pipeline=sp, module_name=__name__)
-
+        select_variants_from_featuremap(featuremap, hom_snv_bed, hom_snv_featuremap)
+        print_and_execute(f"bcftools index -t {hom_snv_featuremap}", simple_pipeline=sp, module_name=__name__)
     finally:
         # remove temp file
         if os.path.isfile(hom_snv_bed):
             os.remove(hom_snv_bed)
+
+
+def select_variants_from_featuremap(featuremap: str, bed_file: str, output_featuremap: str):
+    """
+    Select variants from featuremap based on a bed file
+
+    Parameters
+    ----------
+    featuremap : str
+        Path to input featuremap vcf
+    bed_file : str
+        Path to bed file with regions to select
+    output_featuremap : str
+        Path to output featuremap vcf
+    """
+    df_hom_var = pd.read_csv(
+        bed_file, sep="\t", header=None, names=["CHROM", "POS0", "POS", "REF", "ALT", "READ_COUNT", "ALT_SUPPORT"]
+    )
+    keys = set(df_hom_var.apply(lambda x: (x["CHROM"], x["POS0"], x["REF"], x["ALT"]), axis=1))
+    with pysam.VariantFile(featuremap) as vcf_handle:
+        with pysam.VariantFile(output_featuremap, "w", header=vcf_handle.header) as out_vcf:
+            for record in tqdm.tqdm(vcf_handle.fetch()):
+                if (record.chrom, record.pos - 1, record.ref, record.alts[0]) in keys:
+                    out_vcf.write(record)
 
 
 def filter_featuremap_with_bcftools_view(
