@@ -78,7 +78,7 @@ CLUSTERID="$(jq -r .jobFlowId /mnt/var/lib/info/job-flow.json)"
 aws emr list-instances --cluster-id ${CLUSTERID} | jq -r .Instances[].Ec2InstanceId > /tmp/ec2list1.txt
 
 # Setup crontab to check dropped instances every minute and install SW as needed in new instances 
-sudo echo "* * * * * /opt/hail-on-AWS-spot-instances/src/run_when_new_instance_added.sh >> /tmp/cloudcreation_log.out 2>&1 # min hr dom month dow" | crontab -
+sudo echo "* * * * * /opt/ugbio-utils/src/hail/run_when_new_instance_added.sh >> /tmp/cloudcreation_log.out 2>&1 # min hr dom month dow" | crontab -
 
 ./jupyter_run.sh
 
