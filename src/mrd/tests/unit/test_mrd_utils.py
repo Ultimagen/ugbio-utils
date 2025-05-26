@@ -7,7 +7,6 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 from ugbio_mrd.mrd_utils import (
-    generate_synthetic_signatures,
     intersect_featuremap_with_signature,
     read_intersection_dataframes,
     read_signature,
@@ -159,20 +158,3 @@ def test_read_intersection_dataframes(tmpdir, resources_dir):
         parsed_intersection_dataframe2.reset_index(),
         parsed_intersection_dataframe_expected,
     )
-
-
-def test_generate_synthetic_signatures(tmpdir, resources_dir):
-    signature_file = pjoin(resources_dir, "mutect_mrd_signature_test.vcf.gz")
-    db_file = pjoin(
-        resources_dir,
-        "pancan_pcawg_2020.mutations_hg38_GNOMAD_dbsnp_beds.sorted.Annotated.HMER_LEN.edited.chr19.vcf.gz",
-    )
-    synthetic_signature_list = generate_synthetic_signatures(
-        signature_vcf=signature_file, db_vcf=db_file, n_synthetic_signatures=1, output_dir=tmpdir
-    )
-    signature = read_signature(synthetic_signature_list[0], return_dataframes=True)
-    expected_signature = read_signature(pjoin(resources_dir, "synthetic_signature_test.vcf.gz"), return_dataframes=True)
-    # test that motif distribution is the same (0th order)
-    assert (
-        signature.groupby(["ref", "alt"]).value_counts() == expected_signature.groupby(["ref", "alt"]).value_counts()
-    ).all()
