@@ -33,8 +33,8 @@ parser$add_argument("--save_hdf", action='store_true',
                     help="whether to save additional data-frames in hdf5 format")
 parser$add_argument("--save_csv", action='store_true',
                     help="whether to save additional data-frames in csv format")
-parser$add_argument("--moderate_amplificiations", action='store_true',
-                    help="whether to call moderate amplifications (Fold-Change>1.5 & < 2 will be tagged as CN2.5)")
+parser$add_argument("--mod_cnv", action='store_true',
+                    help="whether to call moderate cnvs (Fold-Change~1.5 will be tagged as CN2.5 and Fold-Change~0.7 will be tagged as CN1.5)")
 args <- parser$parse_args()
 
 cohort_reads_count_file <- args$cohort_reads_count_file
@@ -43,9 +43,9 @@ cores <- args$parallel
 
 merged_cohort_reads_count <- readRDS(file = cohort_reads_count_file) #variable name : merged_cohort_reads_count
 
-if(args$moderate_amplificiations)
+if(args$mod_cnv)
 {
-    resCNMOPS <- cn.mops(merged_cohort_reads_count,parallel=cores,minWidth = as.integer(min_width_val),norm=0,I = c(0.025,0.5,1,1.2,1.5,2,2.5,3,3.5,4),classes=c("CN0","CN1","CN2","CN2.5","CN3","CN4","CN5","CN6","CN7","CN8"),upperThreshold=0.2,lowerThreshold=-0.5,moderate_amplifications=TRUE)
+    resCNMOPS <- cn.mops(merged_cohort_reads_count,parallel=cores,minWidth = as.integer(min_width_val),norm=0,I = c(0.025,0.5,0.7,1,1.2,1.5,2,2.5,3,3.5,4),classes=c("CN0","CN1","CN1.5","CN2","CN2.5","CN3","CN4","CN5","CN6","CN7","CN8"),upperThreshold=0.2,lowerThreshold=-0.3,mod_cnv=TRUE)
     resCNMOPS_Int <-calcIntegerCopyNumbers(resCNMOPS)
     saveRDS(resCNMOPS_Int,file="cohort.cnmops.resCNMOPS_Int.rds")
 }else {
