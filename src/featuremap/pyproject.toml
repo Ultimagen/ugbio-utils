@@ -8,6 +8,7 @@ dependencies = [
     "seaborn>=0.13.2",
     "scikit-learn>=1.5.2,<1.6.0",
     "xgboost==2.1.2",
+    "polars>=1.27.1",
 ]
 description = "Ultima Genomics FeatureMap utils"
 authors = [
