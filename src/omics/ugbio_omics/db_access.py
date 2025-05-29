@@ -109,6 +109,16 @@ DEFAULT_METRICS_TO_REPORT = [
     "short_report_/all_data_gt",
 ]
 
+SV_METRICS_TO_REPORT = [
+    "short_report_/fp_counts_per_length_and_type",
+    "short_report_/length_by_type_counts",
+    "short_report_/length_counts",
+    "short_report_/parameters",
+    "short_report_/recall_per_length_and_type",
+    "short_report_/recall_per_type",
+    "short_report_/type_counts",
+]
+
 
 def metrics2df(doc: dict, metrics_to_report: list | None = None) -> pd.DataFrame:
     """Converts metrics document to pandas dataframe
