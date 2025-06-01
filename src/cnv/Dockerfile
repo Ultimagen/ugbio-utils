@@ -64,8 +64,12 @@ RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSI
 
 ## install ug-cn.mops (branch: ug.master):
 RUN cd /opt && \
-    git clone --branch ug.master https://github.com/Ultimagen/cn.mops.git cn.mops && \
-    cd cn.mops
+    if [ -d "cn.mops/.git" ]; then \
+        cd cn.mops && git pull; \
+    else \
+        git clone --branch ug.master https://github.com/Ultimagen/cn.mops.git cn.mops; \
+    fi
+
 
 # Install additional R dependencies
 RUN R -e "install.packages(c('argparse', 'BiocManager'), repos='https://cran.r-project.org')"
