@@ -1,0 +1,249 @@
+import argparse
+import logging
+import os
+import subprocess
+import sys
+from os.path import join as pjoin
+
+from ugbio_core.logger import logger
+
+from ugbio_featuremap import featuremap_xgb_prediction
+
+
+def get_combined_vcf_features():
+    """
+    Returns the features used in the featuremap_xgb_prediction module.
+    This includes both the default custom info fields and any additional features
+    added by the featuremap_xgb_prediction module.
+    Returns:
+        dict: A dictionary where keys are the feature tags and values are lists containing
+        the description and type of the feature.
+    """
+    default_custom_info_fields_single_value = {
+        "X_READ_COUNT": ["Number of reads containing this location", "Integer"],
+        "X_FILTERED_COUNT": ["Number of reads containing this location that pass the adjacent base filter", "Integer"],
+        "trinuc_context_with_alt": ["reference trinucleotide context and alt base", "String"],
+        "hmer_context_ref": ["reference homopolymer context up to length 20", "Integer"],
+        "hmer_context_alt": [
+            "homopolymer context in the ref allele assuming the variant considered only up to length 20",
+            "Integer",
+        ],
+        "prev_1": ["1 bases in the reference before variant", "String"],
+        "prev_2": ["2 bases in the reference before variant", "String"],
+        "prev_3": ["3 bases in the reference before variant", "String"],
+        "next_1": ["1 bases in the reference after variant", "String"],
+        "next_2": ["2 bases in the reference after variant", "String"],
+        "next_3": ["3 bases in the reference after variant", "String"],
+        "is_cycle_skip": ["True if the SNV is a cycle skip", "Integer"],
+    }
+    added_agg_features = featuremap_xgb_prediction.added_agg_features
+    info_field_tags = {**default_custom_info_fields_single_value, **added_agg_features}
+    return info_field_tags
+
+
+def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags):  # noqa: N802
+    """
+    Move the values from INFO to FORMAT in a VCF file.
+    This is necessary for the XGB model to work correctly.
+    Args:
+        input_vcf (str): Path to the input VCF file.
+        output_vcf (str): Path to the output VCF file.
+        info_field_tags (dict): Dictionary of INFO field tags to be moved to FORMAT.
+    """
+    out_dir_name = os.path.dirname(output_vcf)
+
+    # add filter status to info fiels
+    logger.debug("add filter status to info fiels")
+    out_vcf_with_info_filter = f"{output_vcf}.tmp"
+    cmd = [
+        "bcftools",
+        "annotate",
+        "--threads",
+        "30",
+        "-c",
+        "INFO/filter_status:=FILTER",
+        "-O",
+        "z",
+        "-o",
+        out_vcf_with_info_filter,
+        input_vcf,
+    ]
+    logger.debug(" ".join(cmd))
+    subprocess.check_call(cmd)
+    info_field_tags["filter_status"] = ["filter status", "String"]
+
+    # remove old annotation files if they exist
+    annotation_file = pjoin(out_dir_name, "annot.txt.gz")
+    if os.path.exists(annotation_file):
+        logger.debug(f"Removing existing annotation file: {annotation_file}")
+        os.remove(annotation_file)
+    annotation_index_file = pjoin(out_dir_name, "annot.txt.gz.tbi")
+    if os.path.exists(annotation_index_file):
+        logger.debug(f"Removing existing annotation index file: {annotation_index_file}")
+        os.remove(annotation_index_file)
+    hdr_file = pjoin(out_dir_name, "hdr.txt")
+    if os.path.exists(hdr_file):
+        logger.debug(f"Removing existing header file: {hdr_file}")
+        os.remove(hdr_file)
+
+    # create query string and columns string
+    logger.debug("create query string and columns string ")
+    query_string = ""
+    c_string = ""
+    for info_tag in info_field_tags:
+        query_string = f"{query_string}\t%{info_tag}"
+        c_string = f"{c_string},FORMAT/{info_tag}"
+
+    # Extract all INFO/{tag} into a tab-delimited annotation file
+    logger.debug(r"Extract all INFO/\{tag\} into a tab-delimited annotation file")
+    cmd = [
+        "bash",
+        "-c",
+        (
+            f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT{query_string}\\n' "
+            f"{out_vcf_with_info_filter} | bgzip -c > {annotation_file}"
+        ),
+    ]
+    logger.debug(" ".join(cmd))
+    subprocess.check_call(cmd)
+
+    # Index the file with tabix
+    logger.debug("Index the file with tabix")
+    cmd = ["tabix", "-s1", "-b2", "-e2", annotation_file]
+    logger.debug(" ".join(cmd))
+    subprocess.check_call(cmd)
+
+    # Create a header lines for the new annotation tags
+    logger.debug("Create a header lines for the new annotation tags")
+    for info_tag in info_field_tags:
+        cmd = [
+            "bash",
+            "-c",
+            f"echo '##FORMAT=<ID={info_tag},Number=1,Type={info_field_tags[info_tag][1]},"
+            f"Description={info_field_tags[info_tag][0]}>' >> {hdr_file}",
+        ]
+        subprocess.check_call(cmd)
+
+    # Transfer the annotation to sample 'SAMPLE'
+    logger.debug("Transfer the annotation to sample SAMPLE")
+    max_threads = os.cpu_count()
+    cmd = [
+        "bcftools",
+        "annotate",
+        "--threads",
+        str(max_threads),
+        "-x",
+        "INFO",
+        "-s",
+        "SAMPLE",
+        "-a",
+        annotation_file,
+        "-h",
+        hdr_file,
+        "-c",
+        f"CHROM,POS,REF,ALT{c_string}",
+        "-O",
+        "z",
+        "-o",
+        output_vcf,
+        out_vcf_with_info_filter,
+    ]
+    logger.debug(" ".join(cmd))
+    subprocess.check_call(cmd)
+    # Index the output VCF with tabix
+    subprocess.check_call(["tabix", "-p", "vcf", output_vcf])  # noqa: S607
+
+
+def merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_merged_vcf):
+    """
+    Merge tumor and normal VCF files into a single VCF file.
+    Args:
+        tumor_vcf (str): Path to the tumor VCF file.
+        normal_vcf (str): Path to the normal VCF file.
+        workdir (str): Working directory where the merged VCF will be saved.
+    """
+    max_threads = os.cpu_count()
+    cmd_merge = [
+        "bcftools",
+        "merge",
+        "--threads",
+        str(max_threads),
+        "-m",
+        "none",
+        "--force-samples",
+        "-Oz",
+        "-o",
+        out_merged_vcf,
+        tumor_vcf_info_to_format,
+        normal_vcf_info_to_format,
+    ]
+    logger.debug(" ".join(cmd_merge))
+    subprocess.check_call(cmd_merge)
+    cmd_index = ["bcftools", "index", "-t", out_merged_vcf]
+    logger.debug(" ".join(cmd_index))
+    subprocess.check_call(cmd_index)
+
+
+def __parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="create_merged_tumor_normal_pileup_featuremap.py",
+        description=run.__doc__,
+    )
+    parser.add_argument("--tumor_vcf", help="tumor vcf file", required=True, type=str)
+    parser.add_argument("--normal_vcf", help="normal vcf file", required=True, type=str)
+    parser.add_argument("--sample_name", help="sample_name", required=True, type=str)
+    parser.add_argument(
+        "--out_directory",
+        help="out directory where intermediate and output files will be saved."
+        " if not supplied all files will be written to current directory",
+        required=False,
+        type=str,
+    )
+    return parser.parse_args(argv[1:])
+
+
+def run(argv):
+    """
+    Given 2 VCF files (tumor and normal), this script will merge them into a single VCF file.
+    The output VCF file will have all tumor records merged with corresponding normal records,
+    with INFO fields moved to FORMAT.
+    Args:
+        argv (list[str]): Command line arguments.
+    Returns:
+        None
+    """
+    args = __parse_args(argv)
+    logger.setLevel(logging.DEBUG)
+    for handler in logger.handlers:
+        handler.setLevel(logging.DEBUG)
+
+    logger.info(f"Output directory: {args.out_directory}")
+
+    # Create output directory if it doesn't exist
+    if not os.path.exists(args.out_directory):
+        os.makedirs(args.out_directory)
+        logger.info(f"Created output directory: {args.out_directory}")
+
+    # Set up the output VCF file path
+    out_merged_vcf = pjoin(args.out_directory, f"{args.sample_name}.tumor_normal.merged.vcf.gz")
+    logger.info(f"Output merged VCF file: {out_merged_vcf}")
+
+    # Get the features used in the featuremap_xgb_prediction module
+    info_field_tags = get_combined_vcf_features()
+
+    # Move INFO fields to FORMAT in the tumor and normal VCF files
+    tumor_vcf_info_to_format = pjoin(args.out_directory, f"{args.sample_name}.tumor.info_to_format.vcf.gz")
+    normal_vcf_info_to_format = pjoin(args.out_directory, f"{args.sample_name}.normal.info_to_format.vcf.gz")
+    move_vcf_value_from_INFO_to_FORMAT(args.tumor_vcf, tumor_vcf_info_to_format, info_field_tags)
+    move_vcf_value_from_INFO_to_FORMAT(args.normal_vcf, normal_vcf_info_to_format, info_field_tags)
+    # Merge the tumor and normal VCF files into a single VCF file
+    merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_merged_vcf)
+    logger.info(f"Merged VCF file created: {out_merged_vcf}")
+
+
+def main():
+    run(sys.argv)
+
+
+if __name__ == "__main__":
+    main()
