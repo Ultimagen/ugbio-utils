@@ -12,10 +12,6 @@ RUN python -m pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 RUN python -m build --outdir $OUT_DIR --wheel ./src/ppmseq
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
-#install htslib
-RUN apt-get update && \
-    apt-get install -y htslib && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
 
 ##################################################################
 FROM $BASE_IMAGE
