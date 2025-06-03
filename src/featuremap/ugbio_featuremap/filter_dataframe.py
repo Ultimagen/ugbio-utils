@@ -13,6 +13,43 @@ except ImportError:
     # Fallback to standard logging if ugbio_core is not available
     logger = logging.getLogger(__name__)
 
+# ───────────────────────────── constants ──────────────────────────────────
+# Configuration keys
+KEY_FIELD = "field"
+KEY_OP = "op"
+KEY_TYPE = "type"
+KEY_VALUE = "value"
+KEY_VALUES = "values"
+KEY_VALUE_FIELD = "value_field"
+KEY_NAME = "name"
+KEY_FILTERS = "filters"
+KEY_DOWNSAMPLE = "downsample"
+KEY_SIZE = "size"
+KEY_METHOD = "method"
+KEY_SEED = "seed"
+
+# Filter types
+TYPE_QUALITY = "quality"
+TYPE_REGION = "region"
+TYPE_LABEL = "label"
+
+# Downsample methods
+METHOD_HEAD = "head"
+METHOD_RANDOM = "random"
+
+# Column prefixes
+COL_PREFIX_FILTER = "__filter_"
+COL_FILTER_FINAL = "__filter_final"
+COL_ROW_NUM_FILTERED = "__row_num_filtered"
+COL_FILTER_DOWNSAMPLE = "__filter_downsample"
+
+# Statistics keys
+STAT_RAW = "raw"
+STAT_DOWNSAMPLE = "downsample"
+STAT_PATTERN = "pattern"
+STAT_COUNT = "count"
+STAT_ROWS = "rows"
+
 # ───────────────────────────── utilities ──────────────────────────────────
 _OPS = {
     "eq": lambda c, v: c == v,
@@ -34,39 +71,39 @@ def _validate_filter(rule: dict[str, Any], index: int) -> None:
         raise ValueError(f"Filter {index} must be a dictionary")
 
     # Check required fields
-    if "field" not in rule:
-        raise ValueError(f"Filter {index} missing required 'field' key")
-    if "op" not in rule:
-        raise ValueError(f"Filter {index} missing required 'op' key")
-    if "type" not in rule:
-        raise ValueError(f"Filter {index} missing required 'type' key")
+    if KEY_FIELD not in rule:
+        raise ValueError(f"Filter {index} missing required '{KEY_FIELD}' key")
+    if KEY_OP not in rule:
+        raise ValueError(f"Filter {index} missing required '{KEY_OP}' key")
+    if KEY_TYPE not in rule:
+        raise ValueError(f"Filter {index} missing required '{KEY_TYPE}' key")
 
     # Check operator
-    if rule["op"] not in _OPS:
-        raise ValueError(f"Filter {index} has unsupported operator: {rule['op']}")
+    if rule[KEY_OP] not in _OPS:
+        raise ValueError(f"Filter {index} has unsupported operator: {rule[KEY_OP]}")
 
     # Check type
-    valid_types = {"quality", "region", "label"}
-    if rule["type"] not in valid_types:
-        raise ValueError(f"Filter {index} has invalid type '{rule['type']}'. Must be one of: {valid_types}")
+    valid_types = {TYPE_QUALITY, TYPE_REGION, TYPE_LABEL}
+    if rule[KEY_TYPE] not in valid_types:
+        raise ValueError(f"Filter {index} has invalid type '{rule[KEY_TYPE]}'. Must be one of: {valid_types}")
 
     # Check value/value_field
-    if "value" not in rule and "values" not in rule and "value_field" not in rule:
-        raise ValueError(f"Filter {index} must have either 'value', 'values', or 'value_field'")
+    if KEY_VALUE not in rule and KEY_VALUES not in rule and KEY_VALUE_FIELD not in rule:
+        raise ValueError(f"Filter {index} must have either '{KEY_VALUE}', '{KEY_VALUES}', or '{KEY_VALUE_FIELD}'")
 
 
 def _validate_downsample(ds: dict[str, Any]) -> None:
     """Validate downsample configuration."""
     if not isinstance(ds, dict):
-        raise ValueError("'downsample' must be a dictionary")
-    if "size" not in ds:
-        raise ValueError("'downsample' must have 'size' key")
-    if not isinstance(ds["size"], int) or ds["size"] <= 0:
-        raise ValueError("'downsample.size' must be a positive integer")
+        raise ValueError(f"'{KEY_DOWNSAMPLE}' must be a dictionary")
+    if KEY_SIZE not in ds:
+        raise ValueError(f"'{KEY_DOWNSAMPLE}' must have '{KEY_SIZE}' key")
+    if not isinstance(ds[KEY_SIZE], int) or ds[KEY_SIZE] <= 0:
+        raise ValueError(f"'{KEY_DOWNSAMPLE}.{KEY_SIZE}' must be a positive integer")
 
-    method = ds.get("method", "random")
-    if method not in {"head", "random"}:
-        raise ValueError(f"Invalid downsample method: {method}. Must be 'head' or 'random'")
+    method = ds.get(KEY_METHOD, METHOD_RANDOM)
+    if method not in {METHOD_HEAD, METHOD_RANDOM}:
+        raise ValueError(f"Invalid downsample method: {method}. Must be '{METHOD_HEAD}' or '{METHOD_RANDOM}'")
 
 
 def validate_filter_config(cfg: dict[str, Any]) -> None:
@@ -83,30 +120,30 @@ def validate_filter_config(cfg: dict[str, Any]) -> None:
     ValueError
         If the configuration is invalid
     """
-    if "filters" not in cfg:
-        raise ValueError("Configuration must contain 'filters' key")
+    if KEY_FILTERS not in cfg:
+        raise ValueError(f"Configuration must contain '{KEY_FILTERS}' key")
 
-    if not isinstance(cfg["filters"], list):
-        raise ValueError("'filters' must be a list")
+    if not isinstance(cfg[KEY_FILTERS], list):
+        raise ValueError(f"'{KEY_FILTERS}' must be a list")
 
-    for i, rule in enumerate(cfg["filters"]):
+    for i, rule in enumerate(cfg[KEY_FILTERS]):
         _validate_filter(rule, i)
 
     # Validate downsample if present
-    if "downsample" in cfg:
-        _validate_downsample(cfg["downsample"])
+    if KEY_DOWNSAMPLE in cfg:
+        _validate_downsample(cfg[KEY_DOWNSAMPLE])
 
 
 def _mask_for_rule(featuremap_dataframe: pl.LazyFrame, rule: dict[str, Any]) -> pl.Expr:
     """Return a boolean expression for a single rule."""
-    field = rule["field"]
-    op = rule["op"]
+    field = rule[KEY_FIELD]
+    op = rule[KEY_OP]
     if op not in _OPS:
         raise ValueError(f"Unsupported op: {op}")
-    if "value_field" in rule:
-        rhs = pl.col(rule["value_field"])
+    if KEY_VALUE_FIELD in rule:
+        rhs = pl.col(rule[KEY_VALUE_FIELD])
     else:
-        rhs = rule.get("value") or rule.get("values")
+        rhs = rule.get(KEY_VALUE) or rule.get(KEY_VALUES)
     return _OPS[op](pl.col(field), rhs)
 
 
@@ -120,14 +157,14 @@ def _create_filter_columns(
     logger.info(f"Creating binary columns for {len(filters)} filters")
 
     for rule in filters:
-        name = rule.get("name") or f"{rule['field']}_{rule['op']}"
-        col_name = f"__filter_{name}"
+        name = rule.get(KEY_NAME) or f"{rule[KEY_FIELD]}_{rule[KEY_OP]}"
+        col_name = f"{COL_PREFIX_FILTER}{name}"
         filter_cols.append(col_name)
 
         mask_expr = _mask_for_rule(featuremap_dataframe, rule)
         featuremap_dataframe = featuremap_dataframe.with_columns(mask_expr.alias(col_name))
 
-        logger.debug(f"Created filter column: {col_name} (type: {rule.get('type', 'unknown')})")
+        logger.debug(f"Created filter column: {col_name} (type: {rule.get(KEY_TYPE, 'unknown')})")
 
     return featuremap_dataframe, filter_cols
 
@@ -138,7 +175,7 @@ def _create_downsample_column(
     cfg: dict[str, Any],
 ) -> tuple[pl.LazyFrame, str | None]:
     """Create downsample column for rows passing all filters."""
-    if "downsample" not in cfg:
+    if KEY_DOWNSAMPLE not in cfg:
         return featuremap_dataframe, None
 
     logger.info("Creating downsample column")
@@ -151,24 +188,24 @@ def _create_downsample_column(
         pl.when(all_filters_mask)
         .then(pl.int_range(pl.len()).over(all_filters_mask))
         .otherwise(None)
-        .alias("__row_num_filtered")
+        .alias(COL_ROW_NUM_FILTERED)
     )
 
     # Create downsample mask
-    size = cfg["downsample"]["size"]
-    method = cfg["downsample"].get("method", "random")
+    size = cfg[KEY_DOWNSAMPLE][KEY_SIZE]
+    method = cfg[KEY_DOWNSAMPLE].get(KEY_METHOD, METHOD_RANDOM)
 
-    if method == "head":
-        downsample_expr = pl.col("__row_num_filtered") < size
-    else:  # method == "random"
+    if method == METHOD_HEAD:
+        downsample_expr = pl.col(COL_ROW_NUM_FILTERED) < size
+    else:  # method == METHOD_RANDOM
         # For random sampling, we need to sample from the filtered rows
         # We'll mark rows for sampling based on their position after filtering
-        downsample_expr = pl.col("__row_num_filtered").is_not_null()
+        downsample_expr = pl.col(COL_ROW_NUM_FILTERED).is_not_null()
 
-    downsample_col = "__filter_downsample"
+    downsample_col = COL_FILTER_DOWNSAMPLE
     featuremap_dataframe = featuremap_dataframe.with_columns(
         pl.when(all_filters_mask).then(downsample_expr).otherwise(None).alias(downsample_col)
-    ).drop("__row_num_filtered")
+    ).drop(COL_ROW_NUM_FILTERED)
 
     logger.debug(f"Created downsample column: {downsample_col}")
 
@@ -189,7 +226,7 @@ def _create_final_filter_column(
     else:
         final_expr = pl.all_horizontal(filter_cols)
 
-    return featuremap_dataframe.with_columns(final_expr.alias("__filter_final"))
+    return featuremap_dataframe.with_columns(final_expr.alias(COL_FILTER_FINAL))
 
 
 def _calculate_statistics(
@@ -204,28 +241,28 @@ def _calculate_statistics(
     logger.info("Calculating filter statistics")
 
     # Funnel statistics
-    funnel = [("raw", total_rows)]
+    funnel = [(STAT_RAW, total_rows)]
 
     # Calculate cumulative filter effects
     cumulative_mask = pl.lit(value=True)
     for _i, (col, rule) in enumerate(zip(filter_cols, filters, strict=False)):
-        name = rule.get("name") or f"{rule['field']}_{rule['op']}"
+        name = rule.get(KEY_NAME) or f"{rule[KEY_FIELD]}_{rule[KEY_OP]}"
         cumulative_mask = cumulative_mask & pl.col(col)
         count = featuremap_dataframe.select(cumulative_mask.sum()).collect().item()
         funnel.append((name, count))
 
     # Add downsample to funnel if present
-    if "downsample" in cfg:
+    if KEY_DOWNSAMPLE in cfg:
         # Get the count after all filters
         filtered_count = funnel[-1][1]
-        downsample_size = cfg["downsample"]["size"]
+        downsample_size = cfg[KEY_DOWNSAMPLE][KEY_SIZE]
         final_count = min(filtered_count, downsample_size)
-        funnel.append(("downsample", final_count))
+        funnel.append((STAT_DOWNSAMPLE, final_count))
 
     # Single effect statistics
     single_effect = {}
     for col, rule in zip(filter_cols, filters, strict=False):
-        name = rule.get("name") or f"{rule['field']}_{rule['op']}"
+        name = rule.get(KEY_NAME) or f"{rule[KEY_FIELD]}_{rule[KEY_OP]}"
         count = featuremap_dataframe.select(pl.col(col).sum()).collect().item()
         single_effect[name] = count
 
@@ -242,7 +279,9 @@ def _calculate_statistics(
             [pl.when(pl.col(col)).then(pl.lit("1")).otherwise(pl.lit("0")) for col in filter_cols]
         )
 
-        combos_df = featuremap_dataframe.group_by(combo_expr.alias("pattern")).agg(pl.len().alias("count")).collect()
+        combos_df = (
+            featuremap_dataframe.group_by(combo_expr.alias(STAT_PATTERN)).agg(pl.len().alias(STAT_COUNT)).collect()
+        )
 
         # The combinations will naturally include all patterns that exist in the data
         # Including "00...00" if there are rows that fail all filters
@@ -253,17 +292,17 @@ def _calculate_statistics(
     filters_with_types = []
     for name, rows in funnel:
         filter_type = None
-        if name not in {"raw", "downsample"}:
+        if name not in {STAT_RAW, STAT_DOWNSAMPLE}:
             # Find the corresponding filter to get its type
             for rule in filters:
-                rule_name = rule.get("name") or f"{rule['field']}_{rule['op']}"
+                rule_name = rule.get(KEY_NAME) or f"{rule[KEY_FIELD]}_{rule[KEY_OP]}"
                 if rule_name == name:
-                    filter_type = rule.get("type")
+                    filter_type = rule.get(KEY_TYPE)
                     break
-        filters_with_types.append({"name": name, "rows": rows, "type": filter_type})
+        filters_with_types.append({KEY_NAME: name, STAT_ROWS: rows, KEY_TYPE: filter_type})
 
     return {
-        "filters": filters_with_types,
+        KEY_FILTERS: filters_with_types,
         "single_effect": single_effect,
         "combinations": combos,
     }
@@ -299,7 +338,7 @@ def filter_parquet(
         cfg = json.load(f)
 
     validate_filter_config(cfg)
-    logger.info(f"Loaded configuration {cfg_path} with {len(cfg['filters'])} filters")
+    logger.info(f"Loaded configuration {cfg_path} with {len(cfg[KEY_FILTERS])} filters")
 
     # Create lazy frame for efficient processing
     featuremap_dataframe = pl.scan_parquet(in_path)
@@ -309,7 +348,7 @@ def filter_parquet(
     logger.info(f"Total rows in input: {total_rows:,}")
 
     # Create filter columns
-    featuremap_dataframe, filter_cols = _create_filter_columns(featuremap_dataframe, cfg["filters"])
+    featuremap_dataframe, filter_cols = _create_filter_columns(featuremap_dataframe, cfg[KEY_FILTERS])
 
     # Create downsample column if needed
     featuremap_dataframe, downsample_col = _create_downsample_column(featuremap_dataframe, filter_cols, cfg)
@@ -318,7 +357,7 @@ def filter_parquet(
     featuremap_dataframe = _create_final_filter_column(featuremap_dataframe, filter_cols, downsample_col)
 
     # Calculate statistics
-    stats = _calculate_statistics(featuremap_dataframe, filter_cols, downsample_col, cfg["filters"], total_rows, cfg)
+    stats = _calculate_statistics(featuremap_dataframe, filter_cols, downsample_col, cfg[KEY_FILTERS], total_rows, cfg)
 
     # Write outputs
     if out_path:
@@ -326,18 +365,20 @@ def filter_parquet(
 
         # First get all rows passing filters
         filtered_df = (
-            featuremap_dataframe.filter(pl.all_horizontal(filter_cols)).select(pl.exclude("^__filter_.*$")).collect()
+            featuremap_dataframe.filter(pl.all_horizontal(filter_cols))
+            .select(pl.exclude(f"^{COL_PREFIX_FILTER}.*$"))
+            .collect()
         )
 
         # Apply downsampling if configured
-        if "downsample" in cfg:
-            size = cfg["downsample"]["size"]
+        if KEY_DOWNSAMPLE in cfg:
+            size = cfg[KEY_DOWNSAMPLE][KEY_SIZE]
             if filtered_df.height > size:
-                method = cfg["downsample"].get("method", "random")
-                if method == "head":
+                method = cfg[KEY_DOWNSAMPLE].get(KEY_METHOD, METHOD_RANDOM)
+                if method == METHOD_HEAD:
                     filtered_df = filtered_df.head(size)
                 else:  # random
-                    seed = cfg["downsample"].get("seed", 0)
+                    seed = cfg[KEY_DOWNSAMPLE].get(KEY_SEED, 0)
                     filtered_df = filtered_df.sample(n=size, shuffle=True, seed=seed)
                 logger.info(f"Downsampled from {filtered_df.height} to {size} rows")
 
