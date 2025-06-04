@@ -30,6 +30,8 @@ RUN apt-get update && apt-get install -y \
     procps `# for monitoring script memory usage` \
     sysstat `# for monitoring script IO metrics` \
     sudo \
+    bzip2 `# for bgzip` \
+    tabix `# for bgzip` \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
@@ -55,13 +57,13 @@ RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSI
 
 # install htslib
 # htslib is a dependency of both samtools and bcftools, so we install it separately
-RUN wget https://github.com/samtools/htslib/releases/download/1.17/htslib-1.17.tar.bz2 && \
-    tar -xjf htslib-1.17.tar.bz2 && \
-    cd htslib-1.17 && \
-    autoheader && autoconf && \
-    ./configure && \
-    make && \
-    make install
+# RUN wget https://github.com/samtools/htslib/releases/download/1.17/htslib-1.17.tar.bz2 && \
+#     tar -xjf htslib-1.17.tar.bz2 && \
+#     cd htslib-1.17 && \
+#     autoheader && autoconf && \
+#     ./configure && \
+#     make && \
+#     make install
 
 # Install bedtools
 ARG BEDTOOLS_VERSION=2.31.0
