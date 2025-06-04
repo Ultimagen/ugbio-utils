@@ -10,13 +10,13 @@ ARG BCFTOOLS_VERSION=1.20
 ARG SAMTOOLS_VERSION=1.20
 
 # Install basic dependencies
-# libcurl4-gnutls-dev \ removing beacause it has conflicts with libcurl4-openssl-dev
 RUN apt-get update && apt-get install -y \
     wget \
     libgomp1 \
     unzip \
     automake \
     make \
+    libcurl4-gnutls-dev \
     git \
     `# the following packages required for pyBigWig python package used by ugbio_core` \
     zlib1g-dev \
@@ -24,9 +24,6 @@ RUN apt-get update && apt-get install -y \
     liblzma-dev \
     libc6-dev \
     gcc \
-    autoconf \
-    libcurl4-openssl-dev \
-    libssl-dev \
     procps `# for monitoring script memory usage` \
     sysstat `# for monitoring script IO metrics` \
     sudo \
@@ -54,16 +51,6 @@ RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSI
     make install && \
     cd .. && \
     rm -rf samtools-${SAMTOOLS_VERSION}
-
-# install htslib
-# htslib is a dependency of both samtools and bcftools, so we install it separately
-# RUN wget https://github.com/samtools/htslib/releases/download/1.17/htslib-1.17.tar.bz2 && \
-#     tar -xjf htslib-1.17.tar.bz2 && \
-#     cd htslib-1.17 && \
-#     autoheader && autoconf && \
-#     ./configure && \
-#     make && \
-#     make install
 
 # Install bedtools
 ARG BEDTOOLS_VERSION=2.31.0
