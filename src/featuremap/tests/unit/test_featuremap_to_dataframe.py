@@ -16,8 +16,9 @@ bcftools_missing = shutil.which("bcftools") is None
 # --- fixtures --------------------------------------------------------------
 @pytest.fixture(
     params=[
-        "416119-L7402-Z0296-CATCTATCAGGCGAT.snvfind_out_test_sample.vcf.gz",
-        "416119-L7402-Z0296-CATCTATCAGGCGAT.snvfind_out_f2_test_sample.vcf.gz",
+        # "416119_L7402.raw.featuremap.vcf.gz",
+        # "416119_L7402.random_sample.featuremap.vcf.gz",
+        "416119_L7402.random_sample.featuremap.manually_cleaned.vcf"
     ]
 )
 def input_featuremap(request):
@@ -48,8 +49,9 @@ def test_vcf_to_parquet_end_to_end(tmp_path: Path, input_featuremap: Path) -> No
 
     # hard-coded expected row counts per sample
     expected_rows = {
-        "416119-L7402-Z0296-CATCTATCAGGCGAT.snvfind_out_test_sample.vcf.gz": 2664,
-        "416119-L7402-Z0296-CATCTATCAGGCGAT.snvfind_out_f2_test_sample.vcf.gz": 619,
+        "416119_L7402.raw.featuremap.vcf.gz": 2664,
+        "416119_L7402.random_sample.featuremap.vcf.gz": 619,
+        "416119_L7402.random_sample.featuremap.manually_cleaned.vcf": 6577,
     }[input_featuremap.name]
     assert featuremap_dataframe.shape[0] == expected_rows
 

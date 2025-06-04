@@ -216,10 +216,15 @@ def _cast_list(featuremap_dataframe: pl.DataFrame, col: str, meta: dict) -> pl.D
 
     Returns the DataFrame with *col* recast.
     """
+    # Handle null values first - replace null with "." so we can split it consistently
+    featuremap_dataframe = featuremap_dataframe.with_columns(
+        pl.when(pl.col(col).is_null()).then(pl.lit(".")).otherwise(pl.col(col)).alias(col)
+    )
+
     # split to list<str>
     featuremap_dataframe = featuremap_dataframe.with_columns(pl.col(col).str.split(",").alias(col))
 
-    # null-replace on each element
+    # null-replace on each element, and handle the case where split results in [null]
     featuremap_dataframe = featuremap_dataframe.with_columns(
         pl.col(col)
         .list.eval(
@@ -350,7 +355,16 @@ def _load_vcf_as_dataframe(
         subprocess.run([bcftools, "query", "-f", fmt_str, vcf], stdout=tmp, check=True)
         path = tmp.name
     try:
-        return pl.read_csv(path, separator="\t", has_header=False, new_columns=cols, low_memory=True)
+        return pl.read_csv(
+            path,
+            separator="\t",
+            has_header=False,
+            new_columns=cols,
+            low_memory=True,
+            decimal_comma=True,
+            null_values=["."],
+            infer_schema_length=0,
+        )
     finally:
         Path(path).unlink(missing_ok=True)
 
@@ -391,6 +405,7 @@ def _explode_with_retry(
             bad_cols = _find_bad_list_columns(featuremap_dataframe, list_fmt_ids)
             if not bad_cols:
                 raise
+
             log.warning("Dropping list columns with inconsistent length: %s", ", ".join(bad_cols))
             featuremap_dataframe = featuremap_dataframe.drop(bad_cols)
             list_fmt_ids = [c for c in list_fmt_ids if c not in bad_cols]
