@@ -33,6 +33,7 @@ def input_categorical_features():
 def test_vcf_to_parquet_end_to_end(tmp_path: Path, input_featuremap: Path) -> None:
     """Full pipeline should yield the correct per-read row count and include key columns."""
     out_path = str(tmp_path / input_featuremap.name.replace(".vcf.gz", ".parquet"))
+    out_path_2 = str(tmp_path / input_featuremap.name.replace(".2.vcf.gz", ".parquet"))
 
     # run conversion (drop GT by default)
     featuremap_to_dataframe.vcf_to_parquet(
@@ -43,7 +44,7 @@ def test_vcf_to_parquet_end_to_end(tmp_path: Path, input_featuremap: Path) -> No
     )
 
     featuremap_dataframe = pl.read_parquet(out_path)
-    featuremap_dataframe.write_parquet("1.parquet")
+    featuremap_dataframe.write_parquet(out_path_2)
 
     # hard-coded expected row counts per sample
     expected_rows = {
