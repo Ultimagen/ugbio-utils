@@ -134,7 +134,7 @@ def validate_filter_config(cfg: dict[str, Any]) -> None:
         _validate_downsample(cfg[KEY_DOWNSAMPLE])
 
 
-def _mask_for_rule(featuremap_dataframe: pl.LazyFrame, rule: dict[str, Any]) -> pl.Expr:
+def _mask_for_rule(rule: dict[str, Any]) -> pl.Expr:
     """Return a boolean expression for a single rule."""
     field = rule[KEY_FIELD]
     op = rule[KEY_OP]
@@ -161,7 +161,7 @@ def _create_filter_columns(
         col_name = f"{COL_PREFIX_FILTER}{name}"
         filter_cols.append(col_name)
 
-        mask_expr = _mask_for_rule(featuremap_dataframe, rule)
+        mask_expr = _mask_for_rule(rule)
         featuremap_dataframe = featuremap_dataframe.with_columns(mask_expr.alias(col_name))
 
         logger.debug(f"Created filter column: {col_name} (type: {rule.get(KEY_TYPE, 'unknown')})")
@@ -316,20 +316,70 @@ def filter_parquet(
     stats_path: str,
 ) -> None:
     """
-    Filter a parquet file based on configuration.
+    Filter a parquet file based on configuration and generate statistics.
+
+    This function applies a series of filters to a parquet file according to a JSON
+    configuration, optionally downsamples the results, and generates comprehensive
+    statistics about the filtering process.
 
     Parameters
     ----------
     in_path : str
-        Input parquet file path
+        Path to the input parquet file containing the data to be filtered.
+
     out_path : str | None
-        Output path for filtered data (optional)
+        Path for the output parquet file containing only the rows that pass all filters.
+        If downsampling is configured, the output will be downsampled to the specified size.
+        If None, no filtered output file is created.
+
     out_path_full : str | None
-        Output path for full data with filter columns (optional)
+        Path for the output parquet file containing all original rows plus additional
+        binary columns indicating which filters each row passes/fails.
+        If None, no full output file is created.
+
     cfg_path : str
-        Configuration JSON file path
+        Path to the JSON configuration file that defines the filters and optional
+        downsampling. The configuration should have the following structure:
+        {
+            "filters": [
+                {
+                    "field": "column_name",
+                    "op": "operator",  # eq, ne, lt, le, gt, ge, in, not_in, between, regex
+                    "type": "filter_type",  # quality, region, or label
+                    "value": "value_to_compare",  # or "values" for list, or "value_field" for column
+                    "name": "optional_filter_name"  # optional custom name
+                }
+            ],
+            "downsample": {  # optional
+                "size": 1000,  # number of rows to keep
+                "method": "head" or "random",  # default: "random"
+                "seed": 42  # optional, for reproducible random sampling
+            }
+        }
+
     stats_path : str
-        Output statistics JSON file path
+        Path for the output JSON file containing detailed statistics about the filtering
+        process, including:
+        - Funnel statistics showing cumulative effect of filters
+        - Single effect statistics for each filter independently
+        - Combination statistics showing all unique filter pass/fail patterns
+
+    Raises
+    ------
+    ValueError
+        If the configuration is invalid or if neither out_path nor out_path_full is specified.
+
+    Notes
+    -----
+    - At least one of out_path or out_path_full must be specified.
+    - All filters are applied with AND logic - a row must pass ALL filters to be included
+      in the output. The order of filters in the configuration only affects the funnel
+      statistics reporting, not the filtering results.
+    - The statistics file provides insights into how each filter affects the data:
+      * Funnel statistics show the cumulative effect of filters in the order specified
+      * Single effect statistics show each filter's impact independently
+      * Combination statistics show all unique pass/fail patterns across filters
+    - Binary filter columns in out_path_full are prefixed with "__filter_".
     """
     logger.info(f"Starting filter_parquet: input={in_path}")
 
@@ -343,8 +393,8 @@ def filter_parquet(
     # Create lazy frame for efficient processing
     featuremap_dataframe = pl.scan_parquet(in_path)
 
-    # Get total row count
-    total_rows = pl.read_parquet(in_path).height
+    # Get total row count from lazy frame
+    total_rows = featuremap_dataframe.select(pl.len()).collect().item()
     logger.info(f"Total rows in input: {total_rows:,}")
 
     # Create filter columns
@@ -362,34 +412,24 @@ def filter_parquet(
     # Write outputs
     if out_path:
         logger.info(f"Writing filtered output to {out_path}")
-
-        # First get all rows passing filters
-        filtered_df = (
-            featuremap_dataframe.filter(pl.all_horizontal(filter_cols))
+        (
+            featuremap_dataframe.filter(pl.col(COL_FILTER_FINAL))
             .select(pl.exclude(f"^{COL_PREFIX_FILTER}.*$"))
-            .collect()
+            .sink_parquet(out_path)
         )
 
-        # Apply downsampling if configured
-        if KEY_DOWNSAMPLE in cfg:
-            size = cfg[KEY_DOWNSAMPLE][KEY_SIZE]
-            if filtered_df.height > size:
-                method = cfg[KEY_DOWNSAMPLE].get(KEY_METHOD, METHOD_RANDOM)
-                if method == METHOD_HEAD:
-                    filtered_df = filtered_df.head(size)
-                else:  # random
-                    seed = cfg[KEY_DOWNSAMPLE].get(KEY_SEED, 0)
-                    filtered_df = filtered_df.sample(n=size, shuffle=True, seed=seed)
-                logger.info(f"Downsampled from {filtered_df.height} to {size} rows")
-
-        filtered_df.write_parquet(out_path)
-        logger.info(f"Wrote filtered data: {filtered_df.height:,} rows")
+        # Get row count for logging
+        written_rows = pl.scan_parquet(out_path).select(pl.len()).collect().item()
+        logger.info(f"Wrote filtered data: {written_rows:,} rows ({out_path})")
 
     if out_path_full:
         logger.info(f"Writing full output with filter columns to {out_path_full}")
-        full_df = featuremap_dataframe.collect()
-        full_df.write_parquet(out_path_full)
-        logger.info(f"Wrote full data with filters: {full_df.height:,} rows")
+        featuremap_dataframe.sink_parquet(out_path_full)
+
+        # Get row count for logging
+        full_rows = pl.scan_parquet(out_path_full).select(pl.len()).collect().item()
+        logger.info(f"Wrote full data with filters: {full_rows:,} rows ({out_path_full})")
+        logger.info(pl.read_parquet(out_path_full).select(f"^{COL_PREFIX_FILTER}.*$").sum())
 
     # Write statistics
     with open(stats_path, "w") as f:
