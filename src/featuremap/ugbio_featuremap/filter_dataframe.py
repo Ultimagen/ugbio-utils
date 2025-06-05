@@ -32,6 +32,7 @@ KEY_SEED = "seed"
 TYPE_QUALITY = "quality"
 TYPE_REGION = "region"
 TYPE_LABEL = "label"
+TYPE_DOWNSAMPLE = "downsample"
 
 # Downsample methods
 METHOD_HEAD = "head"
@@ -292,11 +293,8 @@ def _calculate_statistics(
     logger.info("Calculating combination statistics")
 
     if len(filter_cols) == 0:
-        # No filters, so no combinations
-        combos = []
+        combos: dict[str, int] = {}
     else:
-        # Create binary string representation for combinations
-        # Cast boolean to int (0/1) then to string
         combo_expr = pl.concat_str(
             [pl.when(pl.col(col)).then(pl.lit("1")).otherwise(pl.lit("0")) for col in filter_cols]
         )
@@ -305,22 +303,29 @@ def _calculate_statistics(
             featuremap_dataframe.group_by(combo_expr.alias(STAT_PATTERN)).agg(pl.len().alias(STAT_COUNT)).collect()
         )
 
-        # The combinations will naturally include all patterns that exist in the data
-        # Including "00...00" if there are rows that fail all filters
+        # Map existing patterns to counts
+        combos = {row[STAT_PATTERN]: row[STAT_COUNT] for row in combos_df.to_dicts()}
 
-        combos = combos_df.to_dicts()
+        # Ensure every possible pattern appears (even if count == 0)
+        num_patterns = 1 << len(filter_cols)  # 2 ** n
+        width = len(filter_cols)
+        for i in range(num_patterns):
+            pattern = format(i, f"0{width}b")
+            combos.setdefault(pattern, 0)
 
     # Add filter types to the statistics
     filters_with_types = []
     for name, rows in funnel:
-        filter_type = None
-        if name not in {STAT_RAW, STAT_DOWNSAMPLE}:
-            # Find the corresponding filter to get its type
-            for rule in filters:
-                rule_name = rule.get(KEY_NAME) or f"{rule[KEY_FIELD]}_{rule[KEY_OP]}"
-                if rule_name == name:
-                    filter_type = rule.get(KEY_TYPE)
-                    break
+        if name == STAT_RAW:
+            filter_type = None
+        elif name == STAT_DOWNSAMPLE:
+            filter_type = TYPE_DOWNSAMPLE
+        else:
+            # look up original filter type
+            filter_type = next(
+                (r.get(KEY_TYPE) for r in filters if (r.get(KEY_NAME) or f"{r[KEY_FIELD]}_{r[KEY_OP]}") == name),
+                None,
+            )
         filters_with_types.append({KEY_NAME: name, STAT_ROWS: rows, KEY_TYPE: filter_type})
 
     return {
