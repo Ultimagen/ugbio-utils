@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 
@@ -8,9 +9,9 @@ import pytest
 from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
 from ugbio_featuremap.filter_dataframe import filter_parquet, validate_filter_config
 
-SAMPLE = (
-    Path(__file__).parent.parent / "resources" / "416119-L7402-Z0296-CATCTATCAGGCGAT.snvfind_out_f2_test_sample.vcf.gz"
-)
+pl.enable_string_cache()
+
+SAMPLE = Path(__file__).parent.parent / "resources" / "416119_L7402.random_sample.featuremap.manually_cleaned.vcf"
 
 
 def _parquet_from_sample(tmpdir: Path) -> Path:
@@ -22,10 +23,12 @@ def _parquet_from_sample(tmpdir: Path) -> Path:
 def test_filter_pipeline(tmp_path: Path) -> None:
     parquet_in = _parquet_from_sample(tmp_path)
 
+    bcsq_filt = 0
     cfg = {
         "filters": [
-            {"name": "bcsq_ge_40", "field": "BCSQ", "op": "gt", "value": 40, "type": "quality"},
             {"name": "ref_eq_alt", "field": "REF", "op": "eq", "value_field": "ALT", "type": "label"},
+            {"field": "READ_COUNT", "op": "gt", "value": 20, "type": "label"},
+            {"name": f"bcsq_ge_{bcsq_filt}", "field": "BCSQ", "op": "gt", "value": bcsq_filt, "type": "quality"},
         ],
         "downsample": {"method": "random", "size": 100, "seed": 42},
     }
@@ -34,8 +37,8 @@ def test_filter_pipeline(tmp_path: Path) -> None:
         json.dump(cfg, f)
 
     out_pq = tmp_path / "f.parquet"
-    out_pq_full = tmp_path / "f_full.parquet"
-    stats_json = tmp_path / "stats.json"
+    out_pq_full = Path("/home/itai/downloads/f_full.parquet")
+    stats_json = Path("/home/itai/downloads/stats.json")
 
     filter_parquet(str(parquet_in), str(out_pq), str(out_pq_full), str(cfg_path), str(stats_json))
 
@@ -47,21 +50,22 @@ def test_filter_pipeline(tmp_path: Path) -> None:
     assert stats["filters"][0]["type"] is None
 
     # Check filter types are preserved
-    assert stats["filters"][1]["type"] == "quality"
+    assert stats["filters"][3]["type"] == "quality"
     assert stats["filters"][2]["type"] == "label"
+    assert stats["filters"][1]["type"] == "label"
 
     # downsample size honoured?
-    assert stats["filters"][-1]["rows"] <= cfg["downsample"]["size"]
+    assert stats["filters"][-1]["rows"] == cfg["downsample"]["size"]
 
     # Check filtered output
     featuremap_dataframe = pl.read_parquet(out_pq)
-    # BCSQ > 40 and REF == ALT should both hold
-    assert (featuremap_dataframe["BCSQ"] > 40).all()
+    # BCSQ > BCSQ_filt and REF == ALT should both hold
+    assert (featuremap_dataframe["BCSQ"] > bcsq_filt).all()
     assert (featuremap_dataframe["REF"] == featuremap_dataframe["ALT"]).all()
 
     # Check full output with filter columns
     full_df = pl.read_parquet(out_pq_full)
-    assert "__filter_bcsq_ge_40" in full_df.columns
+    assert f"__filter_bcsq_ge_{bcsq_filt}" in full_df.columns
     assert "__filter_ref_eq_alt" in full_df.columns
     assert "__filter_final" in full_df.columns
 
@@ -191,3 +195,37 @@ def test_only_full_output(tmp_path: Path) -> None:
     # All original columns should be present
     assert "BCSQ" in full_df.columns
     assert "CHROM" in full_df.columns
+
+
+def test_skip_combinations_when_many_filters() -> None:
+    """Combinations should be skipped once the filter count exceeds MAX_COMBINATION_FILTERS."""
+    fd = importlib.import_module("ugbio_featuremap.filter_dataframe")
+    n_filters = fd.MAX_COMBINATION_FILTERS + 1  # 21
+    n_rows = 3
+
+    # Dummy lazy frame with boolean columns c0 … c20
+    lf = pl.DataFrame({f"c{i}": [True] * n_rows for i in range(n_filters)}).lazy()
+
+    # Corresponding filter specs (c<i> == True)
+    filters = [
+        {
+            fd.KEY_FIELD: f"c{i}",
+            fd.KEY_OP: "eq",
+            fd.KEY_TYPE: fd.TYPE_LABEL,
+            fd.KEY_VALUE: True,
+        }
+        for i in range(n_filters)
+    ]
+
+    lf, filter_cols = fd._create_filter_columns(lf, filters)
+
+    stats = fd._calculate_statistics(
+        featuremap_dataframe=lf,
+        filter_cols=filter_cols,
+        downsample_col=None,
+        filters=filters,
+        total_rows=n_rows,
+        cfg={fd.KEY_FILTERS: filters},
+    )
+
+    assert stats["combinations"] == {}, "Combinations dict should be empty when too many filters are present"

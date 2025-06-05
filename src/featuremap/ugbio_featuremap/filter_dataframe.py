@@ -51,6 +51,9 @@ STAT_PATTERN = "pattern"
 STAT_COUNT = "count"
 STAT_ROWS = "rows"
 
+# Skip combination stats when there are “too many” filters
+MAX_COMBINATION_FILTERS = 20  # default threshold
+
 # ───────────────────────────── utilities ──────────────────────────────────
 _OPS = {
     "eq": lambda c, v: c == v,
@@ -294,6 +297,13 @@ def _calculate_statistics(
 
     if len(filter_cols) == 0:
         combos: dict[str, int] = {}
+    elif len(filter_cols) > MAX_COMBINATION_FILTERS:
+        logger.info(
+            "Skipping combination statistics: %d filters > %d",
+            len(filter_cols),
+            MAX_COMBINATION_FILTERS,
+        )
+        combos = {}
     else:
         combo_expr = pl.concat_str(
             [pl.when(pl.col(col)).then(pl.lit("1")).otherwise(pl.lit("0")) for col in filter_cols]
