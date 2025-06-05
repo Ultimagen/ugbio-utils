@@ -4,6 +4,7 @@ import json
 import logging
 import shutil
 import subprocess
+import warnings  # NEW
 from pathlib import Path
 
 import polars as pl
@@ -36,13 +37,20 @@ def test_vcf_to_parquet_end_to_end(tmp_path: Path, input_featuremap: Path) -> No
     out_path = str(tmp_path / input_featuremap.name.replace(".vcf.gz", ".parquet"))
     out_path_2 = str(tmp_path / input_featuremap.name.replace(".2.vcf.gz", ".parquet"))
 
-    # run conversion (drop GT by default)
-    featuremap_to_dataframe.vcf_to_parquet(
-        vcf=str(input_featuremap),
-        out=out_path,
-        drop_info=set(),
-        drop_format={"GT"},
-    )
+    # Capture warnings to ensure no "Dropping list columns with inconsistent length" warning is raised
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        # run conversion (drop GT by default)
+        featuremap_to_dataframe.vcf_to_parquet(
+            vcf=str(input_featuremap),
+            out=out_path,
+            drop_info=set(),
+            drop_format={"GT"},
+        )
+    # Assert the specific warning was NOT raised
+    assert not any(
+        "Dropping list columns with inconsistent length" in str(w.message) for w in caught
+    ), "Unexpected warning: 'Dropping list columns with inconsistent length'"
 
     featuremap_dataframe = pl.read_parquet(out_path)
     featuremap_dataframe.write_parquet(out_path_2)
