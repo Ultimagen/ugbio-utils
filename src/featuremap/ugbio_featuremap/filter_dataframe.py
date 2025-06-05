@@ -140,10 +140,20 @@ def _mask_for_rule(rule: dict[str, Any]) -> pl.Expr:
     op = rule[KEY_OP]
     if op not in _OPS:
         raise ValueError(f"Unsupported op: {op}")
+
+    # Extract RHS without relying on truthiness (0, "", [] must be accepted)
     if KEY_VALUE_FIELD in rule:
         rhs = pl.col(rule[KEY_VALUE_FIELD])
-    else:
-        rhs = rule.get(KEY_VALUE) or rule.get(KEY_VALUES)
+    elif KEY_VALUE in rule:
+        rhs = rule[KEY_VALUE]
+    elif KEY_VALUES in rule:
+        rhs = rule[KEY_VALUES]
+    else:  # Should never happen – config is already validated
+        raise ValueError(
+            f"Filter rule for field '{field}' is missing a comparison target "
+            f"(expected one of '{KEY_VALUE}', '{KEY_VALUES}', or '{KEY_VALUE_FIELD}')."
+        )
+
     return _OPS[op](pl.col(field), rhs)
 
 
@@ -183,12 +193,11 @@ def _create_downsample_column(
     # Create combined filter mask
     all_filters_mask = pl.all_horizontal(filter_cols)
 
-    # Add row number for rows passing all filters
+    # Build cumulative index for rows that pass all filters
+    row_idx_expr = (pl.when(all_filters_mask).then(1).otherwise(0)).cum_sum() - 1
+
     featuremap_dataframe = featuremap_dataframe.with_columns(
-        pl.when(all_filters_mask)
-        .then(pl.int_range(pl.len()).over(all_filters_mask))
-        .otherwise(None)
-        .alias(COL_ROW_NUM_FILTERED)
+        pl.when(all_filters_mask).then(row_idx_expr).otherwise(None).alias(COL_ROW_NUM_FILTERED)
     )
 
     # Create downsample mask
@@ -197,15 +206,28 @@ def _create_downsample_column(
 
     if method == METHOD_HEAD:
         downsample_expr = pl.col(COL_ROW_NUM_FILTERED) < size
-    else:  # method == METHOD_RANDOM
-        # For random sampling, we need to sample from the filtered rows
-        # We'll mark rows for sampling based on their position after filtering
-        downsample_expr = pl.col(COL_ROW_NUM_FILTERED).is_not_null()
+        tmp_cols = [COL_ROW_NUM_FILTERED]
+    else:  # METHOD_RANDOM
+        seed = cfg[KEY_DOWNSAMPLE].get(KEY_SEED, 0)
+        col_rand = "__rand_val"
+        col_rank = "__rand_rank"
+
+        # Assign a deterministic pseudo-random value to each row that passed all filters
+        featuremap_dataframe = featuremap_dataframe.with_columns(
+            pl.when(pl.col(COL_ROW_NUM_FILTERED).is_not_null())
+            .then(pl.col(COL_ROW_NUM_FILTERED).hash(seed=seed))
+            .otherwise(None)
+            .alias(col_rand)
+        ).with_columns(pl.col(col_rand).rank(method="dense").alias(col_rank))
+
+        # Keep the first `size` rows in that random order
+        downsample_expr = (pl.col(col_rank) - 1) < size
+        tmp_cols = [COL_ROW_NUM_FILTERED, col_rand, col_rank]
 
     downsample_col = COL_FILTER_DOWNSAMPLE
     featuremap_dataframe = featuremap_dataframe.with_columns(
         pl.when(all_filters_mask).then(downsample_expr).otherwise(None).alias(downsample_col)
-    ).drop(COL_ROW_NUM_FILTERED)
+    ).drop(tmp_cols)
 
     logger.debug(f"Created downsample column: {downsample_col}")
 
@@ -429,7 +451,7 @@ def filter_parquet(
         # Get row count for logging
         full_rows = pl.scan_parquet(out_path_full).select(pl.len()).collect().item()
         logger.info(f"Wrote full data with filters: {full_rows:,} rows ({out_path_full})")
-        logger.info(pl.read_parquet(out_path_full).select(f"^{COL_PREFIX_FILTER}.*$").sum())
+        logger.info(pl.read_parquet(out_path_full).select(f"^{COL_PREFIX_FILTER}.*$").sum())  # TODO remove this line
 
     # Write statistics
     with open(stats_path, "w") as f:
@@ -467,6 +489,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # Minimal logging configuration so that messages appear when executed directly
     import logging
 
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
     main()
