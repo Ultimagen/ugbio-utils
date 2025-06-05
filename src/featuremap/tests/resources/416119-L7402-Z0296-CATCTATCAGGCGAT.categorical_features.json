@@ -1,0 +1,27 @@
+{
+  "categorical_features": {
+    "REF": [
+      "A",
+      "C",
+      "G",
+      "T",
+      "N"
+    ],
+    "ALT": [
+      "A",
+      "C",
+      "G",
+      "T"
+    ],
+    "tm": [
+      "A",
+      "AQ",
+      "AQZ",
+      "AZ",
+      "Q",
+      "QZ",
+      "Z",
+      "TEST_ADDITIONAL_CAT"
+    ]
+  }
+}
