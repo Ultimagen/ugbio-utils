@@ -482,7 +482,7 @@ def vcf_to_parquet(
             featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
 
     featuremap_dataframe.write_parquet(out)
-    log.info("✅  %s: %,d rows × %d cols", out, *featuremap_dataframe.shape)
+    log.info("✅  %s: %d rows × %d cols", out, *featuremap_dataframe.shape)
 
 
 # ─────────────────────────── CLI wrapper ─────────────────────────────────────
