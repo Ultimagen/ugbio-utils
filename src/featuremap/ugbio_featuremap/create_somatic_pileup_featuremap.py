@@ -52,8 +52,8 @@ def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags): 
     """
     out_dir_name = os.path.dirname(output_vcf)
 
-    # add filter status to info fiels
-    logger.debug("add filter status to info fiels")
+    # add filter status to info fields
+    logger.debug("add filter status to info fields")
     out_vcf_with_info_filter = f"{output_vcf}.tmp"
     cmd = [
         "bcftools",
@@ -163,6 +163,8 @@ def merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_mer
         workdir (str): Working directory where the merged VCF will be saved.
     """
     max_threads = os.cpu_count()
+
+    # merging T-N VCF files - this results with records from both tumor and normal VCF files
     cmd_merge = [
         "bcftools",
         "merge",
@@ -182,6 +184,26 @@ def merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_mer
     cmd_index = ["bcftools", "index", "-t", out_merged_vcf]
     logger.debug(" ".join(cmd_index))
     subprocess.check_call(cmd_index)
+
+    # Filtering for tumor-PASS variants only
+    cmd_filter = [
+        "bcftools",
+        "view",
+        "-i",
+        'FORMAT/filter_status[0] == "PASS"',
+        out_merged_vcf,
+        "-Oz",
+        "-o",
+        out_merged_vcf.replace(".vcf.gz", ".tumor_only.PASS.vcf.gz"),
+    ]
+    logger.debug(" ".join(cmd_filter))
+    subprocess.check_call(cmd_filter)
+    # Index the filtered VCF
+    cmd_index = ["bcftools", "index", "-t", out_merged_vcf.replace(".vcf.gz", ".tumor_only.PASS.vcf.gz")]
+    logger.debug(" ".join(cmd_index))
+    subprocess.check_call(cmd_index)
+
+    return out_merged_vcf.replace(".vcf.gz", ".tumor_only.PASS.vcf.gz")
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
@@ -237,8 +259,9 @@ def run(argv):
     move_vcf_value_from_INFO_to_FORMAT(args.tumor_vcf, tumor_vcf_info_to_format, info_field_tags)
     move_vcf_value_from_INFO_to_FORMAT(args.normal_vcf, normal_vcf_info_to_format, info_field_tags)
     # Merge the tumor and normal VCF files into a single VCF file
-    merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_merged_vcf)
+    out_merged_vcf_tumor_pass = merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_merged_vcf)
     logger.info(f"Merged VCF file created: {out_merged_vcf}")
+    logger.info(f"Merged VCF tumor-PASS file created: {out_merged_vcf_tumor_pass}")
 
 
 def main():
