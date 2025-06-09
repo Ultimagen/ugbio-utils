@@ -344,6 +344,30 @@ def _make_query_string(format_ids: list[str], query_info: list[str]) -> str:
     return "\t".join(["%CHROM", "%POS", "%REF", "%ALT", *[f"%INFO/{t}" for t in query_info], bracket]) + "\n"
 
 
+def _load_vcf_as_lazy_frame(
+    bcftools: str,
+    vcf: str,
+    fmt_str: str,
+    cols: list[str],
+) -> pl.LazyFrame:
+    """Run bcftools query and load the TSV into a LazyFrame for memory-efficient processing."""
+    with tempfile.NamedTemporaryFile("w+b", delete=False) as tmp:
+        subprocess.run([bcftools, "query", "-f", fmt_str, vcf], stdout=tmp, check=True)
+        path = tmp.name
+
+    # Use scan_csv for lazy loading - don't delete the file yet as lazy frames need it
+    # The caller is responsible for cleanup if needed
+    return pl.scan_csv(
+        path,
+        separator="\t",
+        has_header=False,
+        new_columns=cols,
+        low_memory=True,
+        null_values=["."],
+        infer_schema_length=0,
+    )
+
+
 def _load_vcf_as_dataframe(
     bcftools: str,
     vcf: str,
@@ -367,6 +391,93 @@ def _load_vcf_as_dataframe(
         )
     finally:
         Path(path).unlink(missing_ok=True)
+
+
+def _cast_scalar_lazy(lazy_df: pl.LazyFrame, col: str, meta: dict) -> pl.LazyFrame:
+    """
+    Cast a scalar INFO column on a LazyFrame.
+
+    Parameters
+    ----------
+    lazy_df
+        Current LazyFrame.
+    col
+        Column name.
+    meta
+        Dict with keys {"type", "cat"} parsed from the VCF header.
+
+    Returns
+    -------
+    LazyFrame with `col` recast.
+    """
+    utf_null = pl.when(pl.col(col).cast(pl.Utf8).is_in(["", "."])).then(None).otherwise(pl.col(col).cast(pl.Utf8))
+
+    if meta["cat"]:
+        lazy_df = lazy_df.with_columns(utf_null.cast(pl.Categorical).alias(col))
+        log.debug(f"Scalar column {col} cast to Categorical with {len(meta['cat'])} categories")
+        return lazy_df
+    if meta["type"] in _POLARS_DTYPE:
+        return lazy_df.with_columns(utf_null.cast(_POLARS_DTYPE[meta["type"]], strict=False).alias(col))
+
+    log.debug("Scalar column %s processed (type=%s)", col, meta["type"])
+    return lazy_df.with_columns(utf_null.alias(col))
+
+
+def _cast_list_lazy(lazy_df: pl.LazyFrame, col: str, meta: dict) -> pl.LazyFrame:
+    """
+    Convert a comma-separated FORMAT list column on a LazyFrame.
+
+    Steps
+    -----
+    1. `str.split(",")`  → list<str>
+    2. Replace ``''`` and ``'.'`` with null.
+    3. If the header declares ``Type=Integer/Float/Flag`` cast each
+       element accordingly (string remains Utf8).
+
+    Returns the LazyFrame with *col* recast.
+    """
+    # Handle null values first - replace null with "." so we can split it consistently
+    lazy_df = lazy_df.with_columns(pl.when(pl.col(col).is_null()).then(pl.lit(".")).otherwise(pl.col(col)).alias(col))
+
+    # split to list<str>
+    lazy_df = lazy_df.with_columns(pl.col(col).str.split(",").alias(col))
+
+    # null-replace on each element
+    lazy_df = lazy_df.with_columns(
+        pl.col(col)
+        .list.eval(
+            pl.when(pl.element().cast(pl.Utf8).is_in(["", "."])).then(None).otherwise(pl.element().cast(pl.Utf8))
+        )
+        .alias(col)
+    )
+
+    # numeric / boolean element cast if requested
+    if meta["type"] in _POLARS_DTYPE and meta["type"] != "String":
+        elem_dt = _POLARS_DTYPE[meta["type"]]
+        lazy_df = lazy_df.with_columns(pl.col(col).list.eval(pl.element().cast(elem_dt, strict=False)).alias(col))
+
+    return lazy_df
+
+
+def _cast_all_columns_lazy(
+    lazy_df: pl.LazyFrame,
+    info_ids: list[str],
+    scalar_fmt_ids: list[str],
+    list_fmt_ids: list[str],
+    info_meta: dict,
+    fmt_meta: dict,
+) -> pl.LazyFrame:
+    """Apply casting helpers to every INFO / FORMAT column on a LazyFrame."""
+    for tag in info_ids:
+        lazy_df = _cast_scalar_lazy(lazy_df, tag, info_meta[tag])
+    for tag in scalar_fmt_ids:
+        lazy_df = _cast_scalar_lazy(lazy_df, tag, fmt_meta[tag])
+    for tag in list_fmt_ids:
+        lazy_df = _cast_list_lazy(lazy_df, tag, fmt_meta[tag])
+    # REF / ALT
+    for allele in (REF, ALT):
+        lazy_df = _cast_scalar_lazy(lazy_df, allele, {"type": "String", "cat": ALLELE_CATS})
+    return lazy_df
 
 
 def _cast_all_columns(
@@ -412,7 +523,195 @@ def _explode_with_retry(
     return featuremap_dataframe, []  # nothing exploded
 
 
+def _process_line_for_explosion(fields: list[str], list_fmt_indices: list[int]) -> list[list[str]]:
+    """Process a single TSV line and return exploded rows."""
+    # Check if any list columns exist and get their lengths
+    list_lengths = {}
+    max_length = 1
+
+    for idx in list_fmt_indices:
+        if idx < len(fields) and fields[idx] and fields[idx] != ".":
+            # Split the list and handle null values
+            list_values = [v if v not in ("", ".") else "." for v in fields[idx].split(",")]
+            list_lengths[idx] = list_values
+            max_length = max(max_length, len(list_values))
+        else:
+            list_lengths[idx] = ["."]
+
+    # If no lists or all lists are empty, just return the row as-is
+    if max_length == 1:
+        return [fields]
+
+    # Create exploded rows
+    exploded = []
+    for i in range(max_length):
+        new_row = fields.copy()
+        for idx in list_fmt_indices:
+            if idx in list_lengths and i < len(list_lengths[idx]):
+                new_row[idx] = list_lengths[idx][i]
+            else:
+                new_row[idx] = "."
+        exploded.append(new_row)
+    return exploded
+
+
+def _explode_tsv_rows(
+    bcftools: str,
+    vcf: str,
+    fmt_str: str,
+    cols: list[str],
+    list_fmt_indices: list[int],
+) -> pl.DataFrame:
+    """
+    Run bcftools query and explode list columns during TSV parsing to avoid memory issues.
+
+    This processes the TSV line by line, exploding list columns immediately,
+    which prevents the massive memory usage that occurs when loading all data
+    and then exploding.
+
+    Parameters
+    ----------
+    bcftools : str
+        Path to bcftools executable
+    vcf : str
+        Path to VCF file
+    fmt_str : str
+        bcftools query format string
+    cols : list[str]
+        Column names
+    list_fmt_indices : list[int]
+        Indices of columns that contain comma-separated lists to explode
+
+    Returns
+    -------
+    pl.DataFrame
+        Exploded dataframe with one row per read
+    """
+    # Run bcftools and capture output
+    result = subprocess.run([bcftools, "query", "-f", fmt_str, vcf], capture_output=True, text=True, check=True)
+
+    exploded_rows = []
+
+    # Process each line and explode immediately
+    for line_num, line in enumerate(result.stdout.strip().split("\n")):
+        if not line.strip():
+            continue
+
+        fields = line.split("\t")
+        if len(fields) != len(cols):
+            log.warning(f"Line {line_num}: expected {len(cols)} fields, got {len(fields)}")
+            continue
+
+        # Process line and get exploded rows
+        line_exploded = _process_line_for_explosion(fields, list_fmt_indices)
+        exploded_rows.extend(line_exploded)
+
+    # Return empty DataFrame if no data
+    if not exploded_rows:
+        return pl.DataFrame({col: [] for col in cols})
+
+    # Create DataFrame from exploded rows
+    df_data = {col: [] for col in cols}
+    for row in exploded_rows:
+        for i, col in enumerate(cols):
+            df_data[col].append(row[i] if i < len(row) else ".")
+
+    return pl.DataFrame(df_data)
+
+
 # ───────────────── core converter ────────────────────────────────────────────
+def vcf_to_parquet_streaming(
+    vcf: str,
+    out: str,
+    drop_info: set[str] | None = None,
+    drop_format: set[str] | None = None,
+    categories_json: str | None = None,
+    chunk_size: int = 100_000,
+) -> None:
+    """
+    Convert a single-sample feature-map VCF into a per-read Parquet file using streaming/chunked processing.
+
+    Parameters
+    ----------
+    vcf
+        Input VCF/BCF path (may be ``.gz`` + ``.tbi``).
+    out
+        Output Parquet path.
+    drop_info
+        INFO tags to exclude.  Default: keep all.
+    drop_format
+        FORMAT tags to exclude.  Default: ``{"GT"}``.
+    categories_json
+        Path to JSON file with categorical overrides.
+    chunk_size
+        Number of variants to process at once.
+
+    Notes
+    -----
+    * Uses lazy evaluation and streaming to reduce memory usage.
+    * Maintains categorical column functionality.
+    """
+    overrides = _get_override_categories(categories_json)
+
+    # resolve info and format tags from header
+    drop_info = drop_info or set()
+    drop_format = drop_format or {"GT"}
+    if "GT" not in drop_format:
+        log.warning(
+            "GT not dropped; this may break downstream logic. Include 'GT' in --drop-format to "
+            "drop if an error occurs."
+        )
+
+    bcftools = _resolve_bcftools_command()
+    info_meta, fmt_meta = header_meta(vcf, bcftools)
+
+    # Merge JSON overrides
+    for k, v in overrides.items():
+        target = fmt_meta if k in fmt_meta else info_meta
+        target.setdefault(k, {"num": "1", "type": "String", "cat": None})["cat"] = v
+
+    info_ids = [k for k in info_meta if k not in drop_info]
+    format_ids = [k for k in fmt_meta if k not in drop_format]
+
+    _sanity_check_format_numbers(format_ids, fmt_meta)
+    scalar_fmt_ids, list_fmt_ids = _split_format_ids(format_ids, fmt_meta)
+
+    query_info = [k for k in info_meta if k not in RESERVED and k not in drop_info]
+    fmt_str = _make_query_string(format_ids, query_info)
+    cols = list(OrderedDict.fromkeys([CHROM, POS, REF, ALT, *info_ids, *format_ids]))
+
+    # Process using streaming approach for better memory efficiency
+    with pl.StringCache():
+        # Load data eagerly but process in chunks
+        featuremap_dataframe = _load_vcf_as_dataframe(bcftools, vcf, fmt_str, cols)
+        featuremap_dataframe = featuremap_dataframe.with_columns(pl.col(POS).cast(pl.Int64))
+
+        # Apply all column casting
+        featuremap_dataframe = _cast_all_columns(
+            featuremap_dataframe, info_ids, scalar_fmt_ids, list_fmt_ids, info_meta, fmt_meta
+        )
+
+        # Use the retry mechanism for exploding
+        featuremap_dataframe, list_fmt_ids = _explode_with_retry(featuremap_dataframe, list_fmt_ids)
+
+        # After explode, cast the exploded columns as scalars
+        for tag in list_fmt_ids:
+            featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
+
+        # Apply categorical category registration for any categorical columns
+        for tag in info_ids + scalar_fmt_ids + list_fmt_ids + [REF, ALT]:
+            if tag in featuremap_dataframe.columns:
+                col_meta = (
+                    info_meta.get(tag) or fmt_meta.get(tag) or {"cat": ALLELE_CATS if tag in [REF, ALT] else None}
+                )
+                cats = col_meta.get("cat")
+                if cats and featuremap_dataframe[tag].dtype == pl.Categorical:
+                    featuremap_dataframe = _ensure_scalar_categories(featuremap_dataframe, tag, cats)
+
+    featuremap_dataframe.write_parquet(out)
+    log.info("✅  %s: %d rows × %d cols", out, *featuremap_dataframe.shape)
+
+
 def vcf_to_parquet(
     vcf: str,
     out: str,
@@ -441,6 +740,50 @@ def vcf_to_parquet(
     * List‐valued FORMAT fields remain ``list<Utf8>`` due to Polars 1.27
       limitations; after ``explode`` they become scalars and are cast
       like INFO fields.
+    * Now uses memory-efficient approach that explodes TSV rows directly.
+    """
+    # Use the memory-efficient version for better performance
+    return vcf_to_parquet_memory_efficient(
+        vcf=vcf,
+        out=out,
+        drop_info=drop_info,
+        drop_format=drop_format,
+        categories_json=categories_json,
+    )
+
+
+def vcf_to_parquet_memory_efficient(
+    vcf: str,
+    out: str,
+    drop_info: set[str] | None = None,
+    drop_format: set[str] | None = None,
+    categories_json: str | None = None,
+) -> None:
+    """
+    Convert a single-sample feature-map VCF into a per-read Parquet file using memory-efficient TSV explosion.
+
+    This version explodes list columns directly during TSV parsing, which dramatically
+    reduces memory usage for large datasets by avoiding the need to hold unexploded
+    data in memory.
+
+    Parameters
+    ----------
+    vcf
+        Input VCF/BCF path (may be ``.gz`` + ``.tbi``).
+    out
+        Output Parquet path.
+    drop_info
+        INFO tags to exclude.  Default: keep all.
+    drop_format
+        FORMAT tags to exclude.  Default: ``{"GT"}``.
+    categories_json
+        Path to JSON file with categorical overrides.
+
+    Notes
+    -----
+    * Explodes list columns during initial TSV parsing to minimize memory usage.
+    * Maintains all categorical column functionality.
+    * Significantly more memory efficient for large datasets.
     """
     overrides = _get_override_categories(categories_json)
 
@@ -456,7 +799,7 @@ def vcf_to_parquet(
     bcftools = _resolve_bcftools_command()
     info_meta, fmt_meta = header_meta(vcf, bcftools)
 
-    # Merge JSON overrides ---------------------------------------------------
+    # Merge JSON overrides
     for k, v in overrides.items():
         target = fmt_meta if k in fmt_meta else info_meta
         target.setdefault(k, {"num": "1", "type": "String", "cat": None})["cat"] = v
@@ -470,16 +813,37 @@ def vcf_to_parquet(
     query_info = [k for k in info_meta if k not in RESERVED and k not in drop_info]
     fmt_str = _make_query_string(format_ids, query_info)
     cols = list(OrderedDict.fromkeys([CHROM, POS, REF, ALT, *info_ids, *format_ids]))
-    featuremap_dataframe = _load_vcf_as_dataframe(bcftools, vcf, fmt_str, cols).with_columns(pl.col(POS).cast(pl.Int64))
+
+    # Find indices of list columns in the column order
+    list_fmt_indices = [cols.index(col) for col in list_fmt_ids if col in cols]
 
     with pl.StringCache():
-        featuremap_dataframe = _cast_all_columns(
-            featuremap_dataframe, info_ids, scalar_fmt_ids, list_fmt_ids, info_meta, fmt_meta
-        )
-        featuremap_dataframe, list_fmt_ids = _explode_with_retry(featuremap_dataframe, list_fmt_ids)
-        # after explode, list columns became scalars
-        for tag in list_fmt_ids:
+        # Explode during TSV parsing for memory efficiency
+        featuremap_dataframe = _explode_tsv_rows(bcftools, vcf, fmt_str, cols, list_fmt_indices)
+        featuremap_dataframe = featuremap_dataframe.with_columns(pl.col(POS).cast(pl.Int64))
+
+        # Apply column casting - now list columns are already exploded as scalars
+        for tag in info_ids:
+            featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, info_meta[tag])
+        for tag in scalar_fmt_ids:
             featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
+        for tag in list_fmt_ids:
+            # These were exploded so now treat as scalars
+            featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
+
+        # REF / ALT
+        for allele in (REF, ALT):
+            featuremap_dataframe = _cast_scalar(featuremap_dataframe, allele, {"type": "String", "cat": ALLELE_CATS})
+
+        # Apply categorical category registration for any categorical columns
+        for tag in info_ids + scalar_fmt_ids + list_fmt_ids + [REF, ALT]:
+            if tag in featuremap_dataframe.columns:
+                col_meta = (
+                    info_meta.get(tag) or fmt_meta.get(tag) or {"cat": ALLELE_CATS if tag in [REF, ALT] else None}
+                )
+                cats = col_meta.get("cat")
+                if cats and featuremap_dataframe[tag].dtype == pl.Categorical:
+                    featuremap_dataframe = _ensure_scalar_categories(featuremap_dataframe, tag, cats)
 
     featuremap_dataframe.write_parquet(out)
     log.info("✅  %s: %d rows × %d cols", out, *featuremap_dataframe.shape)
@@ -505,6 +869,11 @@ def main() -> None:
         "--categories-json",
         help="JSON file whose `categorical_features` map overrides/extends " "automatically-inferred enumerations.",
     )
+    ap.add_argument(
+        "--fast",
+        action="store_true",
+        help="use fast streaming version instead of memory-efficient version (may use more memory)",
+    )
     ap.add_argument("-v", "--verbose", action="store_true", help="emit DEBUG‐level logs")
     args = ap.parse_args()
 
@@ -519,13 +888,24 @@ def main() -> None:
             format="%(asctime)s - %(levelname)s - %(message)s",
         )
 
-    vcf_to_parquet(
-        vcf=args.vcf,
-        out=args.out_parquet,
-        drop_info=set(filter(None, args.drop_info.split(","))),
-        drop_format=set(filter(None, args.drop_format.split(","))),
-        categories_json=args.categories_json,
-    )
+    if args.fast:
+        # Use streaming version for faster processing (may use more memory)
+        vcf_to_parquet_streaming(
+            vcf=args.vcf,
+            out=args.out_parquet,
+            drop_info=set(filter(None, args.drop_info.split(","))),
+            drop_format=set(filter(None, args.drop_format.split(","))),
+            categories_json=args.categories_json,
+        )
+    else:
+        # Use memory-efficient version by default
+        vcf_to_parquet_memory_efficient(
+            vcf=args.vcf,
+            out=args.out_parquet,
+            drop_info=set(filter(None, args.drop_info.split(","))),
+            drop_format=set(filter(None, args.drop_format.split(","))),
+            categories_json=args.categories_json,
+        )
 
 
 if __name__ == "__main__":

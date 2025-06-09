@@ -187,3 +187,68 @@ def test_selected_dtypes(tmp_path: Path, input_featuremap: Path):
     }
     for col, dt in expected.items():
         assert featuremap_dataframe[col].dtype == dt, f"{col} dtype {featuremap_dataframe[col].dtype} ≠ {dt}"
+
+
+def test_streaming_vs_memory_efficient_identical_results(tmp_path: Path, input_featuremap: Path) -> None:
+    """Test that streaming and memory-efficient implementations produce identical results."""
+    streaming_out = tmp_path / "streaming.parquet"
+    memory_efficient_out = tmp_path / "memory_efficient.parquet"
+
+    # Run both implementations
+    featuremap_to_dataframe.vcf_to_parquet_streaming(
+        vcf=str(input_featuremap),
+        out=str(streaming_out),
+        drop_info=set(),
+        drop_format={"GT"},
+    )
+
+    featuremap_to_dataframe.vcf_to_parquet_memory_efficient(
+        vcf=str(input_featuremap),
+        out=str(memory_efficient_out),
+        drop_info=set(),
+        drop_format={"GT"},
+    )
+
+    # Load both results
+    streaming_df = pl.read_parquet(streaming_out)
+    memory_efficient_df = pl.read_parquet(memory_efficient_out)
+
+    # Verify they have identical shapes
+    assert (
+        streaming_df.shape == memory_efficient_df.shape
+    ), f"Shape mismatch: streaming {streaming_df.shape} vs memory-efficient {memory_efficient_df.shape}"
+
+    # Verify they have identical column names and order
+    assert (
+        streaming_df.columns == memory_efficient_df.columns
+    ), f"Column mismatch: streaming {streaming_df.columns} vs memory-efficient {memory_efficient_df.columns}"
+
+    # Sort both dataframes by a stable key for comparison
+    sort_cols = ["CHROM", "POS", "REF", "ALT", "RN"]  # RN is the read name, unique identifier
+    streaming_sorted = streaming_df.sort(sort_cols)
+    memory_efficient_sorted = memory_efficient_df.sort(sort_cols)
+
+    # Verify content is identical
+    try:
+        # Use equals for exact comparison
+        assert streaming_sorted.equals(memory_efficient_sorted), "DataFrames are not identical"
+    except AssertionError:
+        # If not equal, provide more detailed comparison
+        for col in streaming_sorted.columns:
+            streaming_col = streaming_sorted[col]
+            memory_efficient_col = memory_efficient_sorted[col]
+
+            if not streaming_col.series_equal(memory_efficient_col):
+                # Find differences
+                diff_mask = streaming_col != memory_efficient_col
+                if diff_mask.any():
+                    diff_indices = diff_mask.arg_true()
+                    sample_diffs = diff_indices[:5] if len(diff_indices) > 5 else diff_indices
+                    print(f"Column '{col}' differs at {len(diff_indices)} positions")
+                    for idx in sample_diffs:
+                        print(
+                            f"  Row {idx}: streaming='{streaming_col[idx]}' vs "
+                            f"memory_efficient='{memory_efficient_col[idx]}'"
+                        )
+
+        raise AssertionError("DataFrames have content differences")
