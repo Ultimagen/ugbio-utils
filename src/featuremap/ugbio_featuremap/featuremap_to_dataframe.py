@@ -53,12 +53,25 @@ import shutil
 import subprocess
 import tempfile
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
 from polars.exceptions import ShapeError
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class ColumnConfig:
+    """Configuration for column processing."""
+
+    info_ids: list[str]
+    scalar_fmt_ids: list[str]
+    list_fmt_ids: list[str]
+    info_meta: dict
+    fmt_meta: dict
+
 
 # ───────────────── header helpers ────────────────────────────────────────────
 INFO_RE = re.compile(r'##INFO=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description="([^"]*)')
@@ -762,9 +775,8 @@ def vcf_to_parquet_memory_efficient(
     """
     Convert a single-sample feature-map VCF into a per-read Parquet file using memory-efficient TSV explosion.
 
-    This version explodes list columns directly during TSV parsing, which dramatically
-    reduces memory usage for large datasets by avoiding the need to hold unexploded
-    data in memory.
+    This version uses true streaming: processes chunks one at a time and writes them
+    to separate parquet files, then concatenates them. This minimizes memory usage.
 
     Parameters
     ----------
@@ -818,35 +830,212 @@ def vcf_to_parquet_memory_efficient(
     list_fmt_indices = [cols.index(col) for col in list_fmt_ids if col in cols]
 
     with pl.StringCache():
-        # Explode during TSV parsing for memory efficiency
-        featuremap_dataframe = _explode_tsv_rows(bcftools, vcf, fmt_str, cols, list_fmt_indices)
-        featuremap_dataframe = featuremap_dataframe.with_columns(pl.col(POS).cast(pl.Int64))
+        # Process data in truly streaming fashion - chunk by chunk without accumulating
+        temp_parquet_files = []
 
-        # Apply column casting - now list columns are already exploded as scalars
-        for tag in info_ids:
-            featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, info_meta[tag])
-        for tag in scalar_fmt_ids:
-            featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
-        for tag in list_fmt_ids:
-            # These were exploded so now treat as scalars
-            featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
+        try:
+            column_config = ColumnConfig(
+                info_ids=info_ids,
+                scalar_fmt_ids=scalar_fmt_ids,
+                list_fmt_ids=list_fmt_ids,
+                info_meta=info_meta,
+                fmt_meta=fmt_meta,
+            )
+            temp_parquet_files = _stream_and_process_chunks(
+                bcftools,
+                vcf,
+                fmt_str,
+                cols,
+                list_fmt_indices,
+                column_config,
+                out,
+            )
 
-        # REF / ALT
-        for allele in (REF, ALT):
-            featuremap_dataframe = _cast_scalar(featuremap_dataframe, allele, {"type": "String", "cat": ALLELE_CATS})
+            # Concatenate all temporary parquet files using lazy frames to avoid loading all into memory
+            if temp_parquet_files:
+                log.info(f"Concatenating {len(temp_parquet_files)} temporary parquet files")
+                lazy_frames = [pl.scan_parquet(f) for f in temp_parquet_files]
+                final_df = pl.concat(lazy_frames, how="vertical").collect()
+                final_df.write_parquet(out)
+                log.info("✅  %s: %d rows × %d cols", out, *final_df.shape)
+            else:
+                # Create empty parquet file
+                empty_df = pl.DataFrame({col: [] for col in cols})
+                empty_df.write_parquet(out)
+                log.info("✅  %s: 0 rows × %d cols (empty)", out, len(cols))
 
-        # Apply categorical category registration for any categorical columns
-        for tag in info_ids + scalar_fmt_ids + list_fmt_ids + [REF, ALT]:
-            if tag in featuremap_dataframe.columns:
-                col_meta = (
-                    info_meta.get(tag) or fmt_meta.get(tag) or {"cat": ALLELE_CATS if tag in [REF, ALT] else None}
+        finally:
+            # Clean up temporary files
+            for temp_file in temp_parquet_files:
+                try:
+                    Path(temp_file).unlink(missing_ok=True)
+                except Exception as e:
+                    log.warning(f"Failed to delete temporary file {temp_file}: {e}")
+
+
+def _stream_and_process_chunks(
+    bcftools: str,
+    vcf: str,
+    fmt_str: str,
+    cols: list[str],
+    list_fmt_indices: list[int],
+    column_config: ColumnConfig,
+    out: str,
+) -> list[str]:
+    """Stream and process chunks, writing them to temporary parquet files."""
+    temp_parquet_files = []
+    chunk_size = 10_000  # Smaller chunks for memory efficiency
+
+    with subprocess.Popen(
+        [bcftools, "query", "-f", fmt_str, vcf], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
+    ) as process:
+        chunk_rows = []
+        line_num = 0
+        chunk_num = 0
+
+        for raw_line in process.stdout:
+            line_content = raw_line.strip()
+            if not line_content:
+                continue
+
+            fields = line_content.split("\t")
+            if len(fields) != len(cols):
+                log.warning(f"Line {line_num}: expected {len(cols)} fields, got {len(fields)}")
+                continue
+
+            # Process line and get exploded rows
+            line_exploded = _process_line_for_explosion(fields, list_fmt_indices)
+            chunk_rows.extend(line_exploded)
+            line_num += 1
+
+            # Process chunk when it reaches chunk_size variants
+            if line_num % chunk_size == 0 and chunk_rows:
+                temp_file = _process_and_write_chunk(
+                    chunk_rows,
+                    cols,
+                    column_config.info_ids,
+                    column_config.scalar_fmt_ids,
+                    column_config.list_fmt_ids,
+                    column_config.info_meta,
+                    column_config.fmt_meta,
+                    out,
+                    chunk_num,
                 )
-                cats = col_meta.get("cat")
-                if cats and featuremap_dataframe[tag].dtype == pl.Categorical:
-                    featuremap_dataframe = _ensure_scalar_categories(featuremap_dataframe, tag, cats)
+                if temp_file:
+                    temp_parquet_files.append(temp_file)
+                    chunk_num += 1
+                chunk_rows = []
+                log.debug(f"Processed chunk {chunk_num} ending at variant {line_num}")
 
-    featuremap_dataframe.write_parquet(out)
-    log.info("✅  %s: %d rows × %d cols", out, *featuremap_dataframe.shape)
+        # Process remaining rows
+        if chunk_rows:
+            temp_file = _process_and_write_chunk(
+                chunk_rows,
+                cols,
+                column_config.info_ids,
+                column_config.scalar_fmt_ids,
+                column_config.list_fmt_ids,
+                column_config.info_meta,
+                column_config.fmt_meta,
+                out,
+                chunk_num,
+            )
+            if temp_file:
+                temp_parquet_files.append(temp_file)
+
+        # Check for errors
+        if process.returncode and process.returncode != 0:
+            stderr_output = process.stderr.read() if process.stderr else "Unknown error"
+            raise subprocess.CalledProcessError(process.returncode, [bcftools, "query"], stderr_output)
+
+    return temp_parquet_files
+
+
+def _create_chunk_dataframe(chunk_rows: list[list[str]], cols: list[str]) -> pl.DataFrame | None:
+    """Create DataFrame from chunk rows."""
+    if not chunk_rows:
+        return None
+
+    df_data = {col: [] for col in cols}
+    for row in chunk_rows:
+        for i, col in enumerate(cols):
+            df_data[col].append(row[i] if i < len(row) else ".")
+
+    chunk_df = pl.DataFrame(df_data)
+    return chunk_df if chunk_df.height > 0 else None
+
+
+def _apply_chunk_casting(
+    chunk_df: pl.DataFrame,
+    info_ids: list[str],
+    scalar_fmt_ids: list[str],
+    list_fmt_ids: list[str],
+    info_meta: dict,
+    fmt_meta: dict,
+) -> pl.DataFrame:
+    """Apply column casting to chunk DataFrame."""
+    # Cast POS to Int64
+    chunk_df = chunk_df.with_columns(pl.col(POS).cast(pl.Int64))
+
+    # Apply column casting - list columns are already exploded as scalars
+    for tag in info_ids:
+        chunk_df = _cast_scalar(chunk_df, tag, info_meta[tag])
+    for tag in scalar_fmt_ids:
+        chunk_df = _cast_scalar(chunk_df, tag, fmt_meta[tag])
+    for tag in list_fmt_ids:
+        # These were exploded so now treat as scalars
+        chunk_df = _cast_scalar(chunk_df, tag, fmt_meta[tag])
+
+    # REF / ALT
+    for allele in (REF, ALT):
+        chunk_df = _cast_scalar(chunk_df, allele, {"type": "String", "cat": ALLELE_CATS})
+
+    return chunk_df
+
+
+def _apply_chunk_categories(
+    chunk_df: pl.DataFrame,
+    info_ids: list[str],
+    scalar_fmt_ids: list[str],
+    list_fmt_ids: list[str],
+    info_meta: dict,
+    fmt_meta: dict,
+) -> pl.DataFrame:
+    """Apply categorical category registration for chunk DataFrame."""
+    for tag in info_ids + scalar_fmt_ids + list_fmt_ids + [REF, ALT]:
+        if tag in chunk_df.columns:
+            col_meta = info_meta.get(tag) or fmt_meta.get(tag) or {"cat": ALLELE_CATS if tag in [REF, ALT] else None}
+            cats = col_meta.get("cat")
+            if cats and chunk_df[tag].dtype == pl.Categorical:
+                chunk_df = _ensure_scalar_categories(chunk_df, tag, cats)
+    return chunk_df
+
+
+def _process_and_write_chunk(
+    chunk_rows: list[list[str]],
+    cols: list[str],
+    info_ids: list[str],
+    scalar_fmt_ids: list[str],
+    list_fmt_ids: list[str],
+    info_meta: dict,
+    fmt_meta: dict,
+    out: str,
+    chunk_num: int,
+) -> str | None:
+    """Process a chunk and write it to a temporary parquet file."""
+    # Create DataFrame from exploded rows
+    chunk_df = _create_chunk_dataframe(chunk_rows, cols)
+    if chunk_df is None:
+        return None
+
+    # Apply column casting and categories
+    chunk_df = _apply_chunk_casting(chunk_df, info_ids, scalar_fmt_ids, list_fmt_ids, info_meta, fmt_meta)
+    chunk_df = _apply_chunk_categories(chunk_df, info_ids, scalar_fmt_ids, list_fmt_ids, info_meta, fmt_meta)
+
+    # Write to temporary parquet file
+    temp_file = f"{out}.temp_{chunk_num}.parquet"
+    chunk_df.write_parquet(temp_file)
+    return temp_file
 
 
 # ─────────────────────────── CLI wrapper ─────────────────────────────────────
