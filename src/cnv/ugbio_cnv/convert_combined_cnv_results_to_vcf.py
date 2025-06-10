@@ -48,6 +48,7 @@ def add_vcf_header(sample_name: str, fasta_index_file: str, filter_tags: list[st
 
     # Add FILTER
     header.add_line('##FILTER=<ID=PASS,Description="high confidence CNV call">')
+    header.add_line('##FILTER=<ID=JALIGN,Description="CNV calls filtered by JALIGN: no support with split alignments">')
     for filter_tag in filter_tags:
         header.add_line(f'##FILTER=<ID={filter_tag},Description="CNV calls filtered by {filter_tag}">')
 
@@ -80,7 +81,7 @@ def read_cnv_annotated_file_to_df(cnv_annotated_bed_file: str) -> pd.DataFrame:
         pd.DataFrame: DataFrame containing the CNV data from the BED file.
     """
     df_cnvs = pd.read_csv(cnv_annotated_bed_file, sep="\t", header=None)
-    base_columns = ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number"]
+    base_columns = ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "filter_jalign"]
     if df_cnvs.shape[1] == len(base_columns) + 1:
         df_cnvs.columns = base_columns + ["filter"]
     elif df_cnvs.shape[1] == len(base_columns):
@@ -91,7 +92,7 @@ def read_cnv_annotated_file_to_df(cnv_annotated_bed_file: str) -> pd.DataFrame:
     return df_cnvs
 
 
-def write_combined_vcf(outfile: str, cnv_annotated_bed_file: str, sample_name: str, fasta_index_file: str) -> None:
+def write_combined_vcf(outfile: str, cnv_annotated_bed_file: str, sample_name: str, fasta_index_file: str) -> None:  # noqa: C901, PLR0915
     """
     Write CNV calls from a BED file to a VCF file.
     Args:
@@ -115,6 +116,7 @@ def write_combined_vcf(outfile: str, cnv_annotated_bed_file: str, sample_name: s
             cnv_type = row["CNV_type"]
             cnv_call_source = row["CNV_calls_source"]
             copy_number = row["copy_number"]
+            filter_jalign_val = row["filter_jalign"]
             filter_val = row["filter"]
 
             if isinstance(copy_number, str):
@@ -129,6 +131,7 @@ def write_combined_vcf(outfile: str, cnv_annotated_bed_file: str, sample_name: s
 
             cnv_type_value = f"<{cnv_type}>"
 
+            filter_jalign_value_to_write = filter_jalign_val if filter_jalign_val != "." else ""
             filter_value_to_write = filter_val if filter_val != "." else ""
 
             record = vcf_out.new_record()
@@ -137,8 +140,11 @@ def write_combined_vcf(outfile: str, cnv_annotated_bed_file: str, sample_name: s
             record.stop = end
             record.ref = "N"
             record.alts = (cnv_type_value,)
-            if filter_value_to_write != "":
-                record.filter.add(filter_value_to_write)
+            if (filter_value_to_write != "") | (filter_jalign_value_to_write != ""):
+                if filter_value_to_write != "":
+                    record.filter.add(filter_value_to_write)
+                if filter_jalign_value_to_write != "":
+                    record.filter.add(filter_jalign_value_to_write)
             else:
                 record.filter.add("PASS")
             if not isinstance(copy_number_value, str):
