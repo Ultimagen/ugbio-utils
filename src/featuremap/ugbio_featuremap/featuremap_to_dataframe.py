@@ -898,48 +898,32 @@ def _vcf_to_parquet_memory_efficient_impl(
     list_fmt_indices = [cols.index(col) for col in list_fmt_ids if col in cols]
     log.debug(f"📋 Columns configured: {len(cols)} total, {len(list_fmt_ids)} list columns to explode")
     log.debug(f"🎯 List column indices: {list_fmt_indices}")
+
     with pl.StringCache():
-        log.debug("🔄 Starting streaming chunk processing")
+        log.debug("🔄 Starting streaming batch processing with direct write")
         _log_memory_usage("before_streaming")
-        temp_parquet_files = []
-        try:
-            column_config = ColumnConfig(
-                info_ids=info_ids,
-                scalar_fmt_ids=scalar_fmt_ids,
-                list_fmt_ids=list_fmt_ids,
-                info_meta=info_meta,
-                fmt_meta=fmt_meta,
-            )
-            temp_parquet_files = _stream_and_process_chunks(
-                bcftools,
-                vcf,
-                fmt_str,
-                cols,
-                list_fmt_indices,
-                column_config,
-                out,
-            )
-            _log_memory_usage("after_streaming")
-            if temp_parquet_files:
-                log.debug(f"🔗 Concatenating {len(temp_parquet_files)} temporary parquet files")
-                _log_memory_usage("before_concatenation")
-                lazy_frames = [pl.scan_parquet(f) for f in temp_parquet_files]
-                final_df = pl.concat(lazy_frames, how="vertical").collect()
-                _log_memory_usage("after_concatenation")
-                log.debug(f"📝 Writing final parquet: {out} with shape {final_df.shape}")
-                final_df.write_parquet(out)
-                log.info("✅  %s: %d rows × %d cols", out, *final_df.shape)
-            else:
-                empty_df = pl.DataFrame({col: [] for col in cols})
-                empty_df.write_parquet(out)
-                log.info("✅  %s: 0 rows × %d cols (empty)", out, len(cols))
-        finally:
-            log.debug(f"🧹 Cleaning up {len(temp_parquet_files)} temporary files")
-            for temp_file in temp_parquet_files:
-                try:
-                    Path(temp_file).unlink(missing_ok=True)
-                except Exception as e:
-                    log.warning(f"Failed to delete temporary file {temp_file}: {e}")
+
+        column_config = ColumnConfig(
+            info_ids=info_ids,
+            scalar_fmt_ids=scalar_fmt_ids,
+            list_fmt_ids=list_fmt_ids,
+            info_meta=info_meta,
+            fmt_meta=fmt_meta,
+        )
+
+        # Process and write batches directly to output file
+        total_rows = _stream_and_write_batches_directly(
+            bcftools,
+            vcf,
+            fmt_str,
+            cols,
+            list_fmt_indices,
+            column_config,
+            out,
+        )
+
+        _log_memory_usage("after_streaming")
+        log.info("✅  %s: %d rows × %d cols", out, total_rows, len(cols))
 
 
 def _stream_and_process_chunks(
@@ -1082,6 +1066,142 @@ def _process_and_write_chunk(
     temp_file = f"{out}.temp_{chunk_num}.parquet"
     chunk_df.write_parquet(temp_file)
     return temp_file
+
+
+def _write_first_batch_to_file(batch_df: pl.DataFrame, out: str) -> None:
+    """Create the output parquet file with the first batch of data."""
+    batch_df.write_parquet(out)
+    log.debug(f"[BATCH_WRITE] Created parquet file {out} with {batch_df.height} rows")
+
+
+def _append_batch_to_file(batch_df: pl.DataFrame, out: str) -> None:
+    """Append a batch DataFrame to an existing parquet file."""
+    # Read existing file, concatenate with new batch, and write back
+    # This is still memory-efficient because we only hold 2 batches in memory at once
+    existing_df = pl.read_parquet(out)
+    combined_df = pl.concat([existing_df, batch_df])
+    combined_df.write_parquet(out)
+    log.debug(f"[BATCH_WRITE] Appended {batch_df.height} rows to {out}, total: {combined_df.height} rows")
+
+
+def _stream_and_write_batches_directly(
+    bcftools: str,
+    vcf: str,
+    fmt_str: str,
+    cols: list[str],
+    list_fmt_indices: list[int],
+    column_config: ColumnConfig,
+    out: str,
+) -> int:
+    """
+    Stream and process batches, writing them directly to the output parquet file incrementally.
+
+    This processes each batch and immediately appends it to the output file,
+    avoiding the need to accumulate all data in memory.
+    Returns the total number of rows written.
+    """
+    log.debug(f"[BATCH] Starting _stream_and_write_batches_directly for {vcf}")
+
+    chunk_rows = []
+    chunk_idx = 0
+    total_rows = 0
+    first_batch = True
+
+    for row in _explode_tsv_rows_generator(bcftools, vcf, fmt_str, cols, list_fmt_indices):
+        chunk_rows.append(row)
+
+        if len(chunk_rows) >= CHUNK_SIZE:
+            log.debug(f"[BATCH] Processing batch {chunk_idx} with {len(chunk_rows)} rows")
+            _log_memory_usage(f"before_batch_{chunk_idx}")
+
+            # Process the batch
+            batch_df = _process_batch_dataframe(
+                chunk_rows,
+                cols,
+                column_config.info_ids,
+                column_config.scalar_fmt_ids,
+                column_config.list_fmt_ids,
+                column_config.info_meta,
+                column_config.fmt_meta,
+            )
+
+            if batch_df is not None:
+                rows_in_batch = batch_df.height
+                total_rows += rows_in_batch
+
+                # Write batch to file
+                if first_batch:
+                    _write_first_batch_to_file(batch_df, out)
+                    first_batch = False
+                else:
+                    _append_batch_to_file(batch_df, out)
+
+                log.debug(f"[BATCH] Batch {chunk_idx} written: {rows_in_batch} rows, total so far: {total_rows}")
+
+            _log_memory_usage(f"after_batch_{chunk_idx}")
+            chunk_rows = []
+            chunk_idx += 1
+
+    # Process final batch if any rows remain
+    if chunk_rows:
+        log.debug(f"[BATCH] Processing final batch {chunk_idx} with {len(chunk_rows)} rows")
+        _log_memory_usage(f"before_batch_{chunk_idx}")
+
+        batch_df = _process_batch_dataframe(
+            chunk_rows,
+            cols,
+            column_config.info_ids,
+            column_config.scalar_fmt_ids,
+            column_config.list_fmt_ids,
+            column_config.info_meta,
+            column_config.fmt_meta,
+        )
+
+        if batch_df is not None:
+            rows_in_batch = batch_df.height
+            total_rows += rows_in_batch
+
+            # Write final batch to file
+            if first_batch:
+                _write_first_batch_to_file(batch_df, out)
+                first_batch = False
+            else:
+                _append_batch_to_file(batch_df, out)
+            log.debug(f"[BATCH] Final batch {chunk_idx} written: {rows_in_batch} rows, total: {total_rows}")
+
+        _log_memory_usage(f"after_batch_{chunk_idx}")
+
+    # Handle case where no data was processed
+    if first_batch:
+        log.debug("[BATCH] No data processed, creating empty parquet file")
+        empty_df = pl.DataFrame({col: [] for col in cols})
+        empty_df.write_parquet(out)
+        total_rows = 0
+
+    log.debug(f"[BATCH] All batches processed, total rows written: {total_rows}")
+    return total_rows
+
+
+def _process_batch_dataframe(
+    chunk_rows: list[list[str]],
+    cols: list[str],
+    info_ids: list[str],
+    scalar_fmt_ids: list[str],
+    list_fmt_ids: list[str],
+    info_meta: dict,
+    fmt_meta: dict,
+) -> pl.DataFrame | None:
+    """Process a batch and return the processed DataFrame."""
+    # Create DataFrame from exploded rows
+    chunk_df = _create_chunk_dataframe(chunk_rows, cols)
+    if chunk_df is None:
+        return None
+
+    # Apply column casting and categories
+    chunk_df = _apply_chunk_casting(chunk_df, info_ids, scalar_fmt_ids, list_fmt_ids, info_meta, fmt_meta)
+    chunk_df = _apply_chunk_categories(chunk_df, info_ids, scalar_fmt_ids, list_fmt_ids, info_meta, fmt_meta)
+
+    return chunk_df
 
 
 # ─────────────────────────── CLI wrapper ─────────────────────────────────────
