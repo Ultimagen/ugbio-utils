@@ -230,7 +230,7 @@ def test_streaming_vs_memory_efficient_identical_results(tmp_path: Path, input_f
 
     # Verify content is identical
     try:
-        # Use equals for exact comparison
+        # Use equals for exact comparison (frame_equal doesn't exist in this Polars version)
         assert streaming_sorted.equals(memory_efficient_sorted), "DataFrames are not identical"
     except AssertionError:
         # If not equal, provide more detailed comparison

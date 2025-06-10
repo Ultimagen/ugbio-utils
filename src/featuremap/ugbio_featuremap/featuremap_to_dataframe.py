@@ -62,6 +62,18 @@ from polars.exceptions import ShapeError
 log = logging.getLogger(__name__)
 
 
+def _log_memory_usage(stage: str) -> None:
+    """Log current stage for debugging."""
+    log.debug(f"[{stage}] Processing stage completed")
+
+
+def _log_dataframe_info(df: pl.DataFrame, stage: str) -> None:
+    """Log DataFrame info for debugging."""
+    log.debug(f"[{stage}] DataFrame shape: {df.shape}")
+    log.debug(f"[{stage}] DataFrame columns: {df.columns}")
+    log.debug(f"[{stage}] DataFrame dtypes: {dict(zip(df.columns, df.dtypes, strict=True))}")
+
+
 @dataclass
 class ColumnConfig:
     """Configuration for column processing."""
@@ -550,7 +562,7 @@ def _process_line_for_explosion(fields: list[str], list_fmt_indices: list[int]) 
             max_length = max(max_length, len(list_values))
         else:
             list_lengths[idx] = ["."]
-
+    log.debug(f"max_length: {max_length}, list_lengths: {list_lengths}")
     # If no lists or all lists are empty, just return the row as-is
     if max_length == 1:
         return [fields]
@@ -632,7 +644,60 @@ def _explode_tsv_rows(
     return pl.DataFrame(df_data)
 
 
+def _explode_tsv_rows_generator(
+    bcftools: str,
+    vcf: str,
+    fmt_str: str,
+    cols: list[str],
+    list_fmt_indices: list[int],
+):
+    """
+    Generator version of _explode_tsv_rows that yields individual exploded rows.
+
+    This processes the TSV line by line, exploding list columns immediately,
+    and yields each exploded row one at a time for memory efficiency.
+    """
+    log.debug(f"[EXPLODE] Starting bcftools query for {vcf}")
+
+    # Run bcftools query with streaming output
+    process = subprocess.Popen(
+        [bcftools, "query", "-f", fmt_str, vcf], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+
+    if process.stdout is None:
+        raise RuntimeError("Failed to get stdout from bcftools process")
+
+    line_num = 0
+    try:
+        for raw_line in process.stdout:
+            line_content = raw_line.strip()
+            if not line_content:
+                continue
+
+            line_num += 1
+            fields = line_content.split("\t")
+            if len(fields) != len(cols):
+                log.warning(f"Line {line_num}: expected {len(cols)} fields, got {len(fields)}")
+                continue
+
+            # Process line and get exploded rows
+            line_exploded = _process_line_for_explosion(fields, list_fmt_indices)
+            yield from line_exploded
+
+    finally:
+        # Ensure process cleanup
+        if process.stdout:
+            process.stdout.close()
+        exit_code = process.wait()
+        if exit_code != 0:
+            stderr_output = process.stderr.read() if process.stderr else "No stderr"
+            raise subprocess.CalledProcessError(exit_code, [bcftools, "query"], stderr_output)
+
+
 # ───────────────── core converter ────────────────────────────────────────────
+CHUNK_SIZE = 10000
+
+
 def vcf_to_parquet_streaming(
     vcf: str,
     out: str,
@@ -664,6 +729,9 @@ def vcf_to_parquet_streaming(
     * Uses lazy evaluation and streaming to reduce memory usage.
     * Maintains categorical column functionality.
     """
+    log.debug("🚀 Starting vcf_to_parquet_streaming")
+    _log_memory_usage("streaming_start")
+
     overrides = _get_override_categories(categories_json)
 
     # resolve info and format tags from header
@@ -693,19 +761,35 @@ def vcf_to_parquet_streaming(
     fmt_str = _make_query_string(format_ids, query_info)
     cols = list(OrderedDict.fromkeys([CHROM, POS, REF, ALT, *info_ids, *format_ids]))
 
+    log.debug(f"📋 Columns configured: {len(cols)} total, {len(list_fmt_ids)} list columns")
+
     # Process using streaming approach for better memory efficiency
     with pl.StringCache():
-        # Load data eagerly but process in chunks
+        log.debug("⚠️  Loading entire VCF into memory - THIS IS THE MEMORY-INTENSIVE STEP")
+        _log_memory_usage("before_loading_vcf")
+
+        # Load data eagerly but process in chunks - THIS IS THE MEMORY BOTTLENECK!
         featuremap_dataframe = _load_vcf_as_dataframe(bcftools, vcf, fmt_str, cols)
+
+        _log_memory_usage("after_loading_vcf")
+        log.debug(f"📊 Loaded dataframe: {featuremap_dataframe.shape[0]} rows × {featuremap_dataframe.shape[1]} cols")
+
         featuremap_dataframe = featuremap_dataframe.with_columns(pl.col(POS).cast(pl.Int64))
 
         # Apply all column casting
+        log.debug("🎭 Applying column casting")
+        _log_memory_usage("before_casting")
         featuremap_dataframe = _cast_all_columns(
             featuremap_dataframe, info_ids, scalar_fmt_ids, list_fmt_ids, info_meta, fmt_meta
         )
+        _log_memory_usage("after_casting")
 
-        # Use the retry mechanism for exploding
+        # Use the retry mechanism for exploding - THIS IS ANOTHER MEMORY BOTTLENECK!
+        log.debug("💥 Starting explode operation - MEMORY INTENSIVE")
+        _log_memory_usage("before_explode")
         featuremap_dataframe, list_fmt_ids = _explode_with_retry(featuremap_dataframe, list_fmt_ids)
+        _log_memory_usage("after_explode")
+        log.debug(f"📊 After explode: {featuremap_dataframe.shape[0]} rows × {featuremap_dataframe.shape[1]} cols")
 
         # After explode, cast the exploded columns as scalars
         for tag in list_fmt_ids:
@@ -721,7 +805,10 @@ def vcf_to_parquet_streaming(
                 if cats and featuremap_dataframe[tag].dtype == pl.Categorical:
                     featuremap_dataframe = _ensure_scalar_categories(featuremap_dataframe, tag, cats)
 
+    log.debug("💾 Writing final parquet file")
+    _log_memory_usage("before_writing")
     featuremap_dataframe.write_parquet(out)
+    _log_memory_usage("after_writing")
     log.info("✅  %s: %d rows × %d cols", out, *featuremap_dataframe.shape)
 
 
@@ -774,32 +861,20 @@ def vcf_to_parquet_memory_efficient(
 ) -> None:
     """
     Convert a single-sample feature-map VCF into a per-read Parquet file using memory-efficient TSV explosion.
-
-    This version uses true streaming: processes chunks one at a time and writes them
-    to separate parquet files, then concatenates them. This minimizes memory usage.
-
-    Parameters
-    ----------
-    vcf
-        Input VCF/BCF path (may be ``.gz`` + ``.tbi``).
-    out
-        Output Parquet path.
-    drop_info
-        INFO tags to exclude.  Default: keep all.
-    drop_format
-        FORMAT tags to exclude.  Default: ``{"GT"}``.
-    categories_json
-        Path to JSON file with categorical overrides.
-
-    Notes
-    -----
-    * Explodes list columns during initial TSV parsing to minimize memory usage.
-    * Maintains all categorical column functionality.
-    * Significantly more memory efficient for large datasets.
     """
-    overrides = _get_override_categories(categories_json)
+    _vcf_to_parquet_memory_efficient_impl(vcf, out, drop_info, drop_format, categories_json)
 
-    # resolve info and format tags from header
+
+def _vcf_to_parquet_memory_efficient_impl(
+    vcf: str,
+    out: str,
+    drop_info: set[str] | None,
+    drop_format: set[str] | None,
+    categories_json: str | None,
+) -> None:
+    log.debug("🚀 Starting vcf_to_parquet_memory_efficient")
+    _log_memory_usage("memory_efficient_start")
+    overrides = _get_override_categories(categories_json)
     drop_info = drop_info or set()
     drop_format = drop_format or {"GT"}
     if "GT" not in drop_format:
@@ -807,32 +882,26 @@ def vcf_to_parquet_memory_efficient(
             "GT not dropped; this may break downstream logic. Include 'GT' in --drop-format to "
             "drop if an error occurs."
         )
-
+    log.debug("📋 Parsing VCF header metadata")
     bcftools = _resolve_bcftools_command()
     info_meta, fmt_meta = header_meta(vcf, bcftools)
-
-    # Merge JSON overrides
     for k, v in overrides.items():
         target = fmt_meta if k in fmt_meta else info_meta
         target.setdefault(k, {"num": "1", "type": "String", "cat": None})["cat"] = v
-
     info_ids = [k for k in info_meta if k not in drop_info]
     format_ids = [k for k in fmt_meta if k not in drop_format]
-
     _sanity_check_format_numbers(format_ids, fmt_meta)
     scalar_fmt_ids, list_fmt_ids = _split_format_ids(format_ids, fmt_meta)
-
     query_info = [k for k in info_meta if k not in RESERVED and k not in drop_info]
     fmt_str = _make_query_string(format_ids, query_info)
     cols = list(OrderedDict.fromkeys([CHROM, POS, REF, ALT, *info_ids, *format_ids]))
-
-    # Find indices of list columns in the column order
     list_fmt_indices = [cols.index(col) for col in list_fmt_ids if col in cols]
-
+    log.debug(f"📋 Columns configured: {len(cols)} total, {len(list_fmt_ids)} list columns to explode")
+    log.debug(f"🎯 List column indices: {list_fmt_indices}")
     with pl.StringCache():
-        # Process data in truly streaming fashion - chunk by chunk without accumulating
+        log.debug("🔄 Starting streaming chunk processing")
+        _log_memory_usage("before_streaming")
         temp_parquet_files = []
-
         try:
             column_config = ColumnConfig(
                 info_ids=info_ids,
@@ -850,22 +919,22 @@ def vcf_to_parquet_memory_efficient(
                 column_config,
                 out,
             )
-
-            # Concatenate all temporary parquet files using lazy frames to avoid loading all into memory
+            _log_memory_usage("after_streaming")
             if temp_parquet_files:
-                log.info(f"Concatenating {len(temp_parquet_files)} temporary parquet files")
+                log.debug(f"🔗 Concatenating {len(temp_parquet_files)} temporary parquet files")
+                _log_memory_usage("before_concatenation")
                 lazy_frames = [pl.scan_parquet(f) for f in temp_parquet_files]
                 final_df = pl.concat(lazy_frames, how="vertical").collect()
+                _log_memory_usage("after_concatenation")
+                log.debug(f"📝 Writing final parquet: {out} with shape {final_df.shape}")
                 final_df.write_parquet(out)
                 log.info("✅  %s: %d rows × %d cols", out, *final_df.shape)
             else:
-                # Create empty parquet file
                 empty_df = pl.DataFrame({col: [] for col in cols})
                 empty_df.write_parquet(out)
                 log.info("✅  %s: 0 rows × %d cols (empty)", out, len(cols))
-
         finally:
-            # Clean up temporary files
+            log.debug(f"🧹 Cleaning up {len(temp_parquet_files)} temporary files")
             for temp_file in temp_parquet_files:
                 try:
                     Path(temp_file).unlink(missing_ok=True)
@@ -882,53 +951,15 @@ def _stream_and_process_chunks(
     column_config: ColumnConfig,
     out: str,
 ) -> list[str]:
-    """Stream and process chunks, writing them to temporary parquet files."""
+    log.debug(f"[CHUNK] Starting _stream_and_process_chunks for {vcf}")
     temp_parquet_files = []
-    chunk_size = 10_000  # Smaller chunks for memory efficiency
-
-    with subprocess.Popen(
-        [bcftools, "query", "-f", fmt_str, vcf], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
-    ) as process:
-        chunk_rows = []
-        line_num = 0
-        chunk_num = 0
-
-        for raw_line in process.stdout:
-            line_content = raw_line.strip()
-            if not line_content:
-                continue
-
-            fields = line_content.split("\t")
-            if len(fields) != len(cols):
-                log.warning(f"Line {line_num}: expected {len(cols)} fields, got {len(fields)}")
-                continue
-
-            # Process line and get exploded rows
-            line_exploded = _process_line_for_explosion(fields, list_fmt_indices)
-            chunk_rows.extend(line_exploded)
-            line_num += 1
-
-            # Process chunk when it reaches chunk_size variants
-            if line_num % chunk_size == 0 and chunk_rows:
-                temp_file = _process_and_write_chunk(
-                    chunk_rows,
-                    cols,
-                    column_config.info_ids,
-                    column_config.scalar_fmt_ids,
-                    column_config.list_fmt_ids,
-                    column_config.info_meta,
-                    column_config.fmt_meta,
-                    out,
-                    chunk_num,
-                )
-                if temp_file:
-                    temp_parquet_files.append(temp_file)
-                    chunk_num += 1
-                chunk_rows = []
-                log.debug(f"Processed chunk {chunk_num} ending at variant {line_num}")
-
-        # Process remaining rows
-        if chunk_rows:
+    chunk_rows = []
+    chunk_idx = 0
+    for row in _explode_tsv_rows_generator(bcftools, vcf, fmt_str, cols, list_fmt_indices):
+        chunk_rows.append(row)
+        if len(chunk_rows) >= CHUNK_SIZE:
+            log.debug(f"[CHUNK] Processing chunk {chunk_idx} with {len(chunk_rows)} rows")
+            _log_memory_usage(f"before_chunk_{chunk_idx}")
             temp_file = _process_and_write_chunk(
                 chunk_rows,
                 cols,
@@ -938,16 +969,31 @@ def _stream_and_process_chunks(
                 column_config.info_meta,
                 column_config.fmt_meta,
                 out,
-                chunk_num,
+                chunk_idx,
             )
-            if temp_file:
-                temp_parquet_files.append(temp_file)
-
-        # Check for errors
-        if process.returncode and process.returncode != 0:
-            stderr_output = process.stderr.read() if process.stderr else "Unknown error"
-            raise subprocess.CalledProcessError(process.returncode, [bcftools, "query"], stderr_output)
-
+            temp_parquet_files.append(temp_file)
+            log.debug(f"[CHUNK] Finished chunk {chunk_idx}, temp file: {temp_file}")
+            _log_memory_usage(f"after_chunk_{chunk_idx}")
+            chunk_rows = []
+            chunk_idx += 1
+    if chunk_rows:
+        log.debug(f"[CHUNK] Processing final chunk {chunk_idx} with {len(chunk_rows)} rows")
+        _log_memory_usage(f"before_chunk_{chunk_idx}")
+        temp_file = _process_and_write_chunk(
+            chunk_rows,
+            cols,
+            column_config.info_ids,
+            column_config.scalar_fmt_ids,
+            column_config.list_fmt_ids,
+            column_config.info_meta,
+            column_config.fmt_meta,
+            out,
+            chunk_idx,
+        )
+        temp_parquet_files.append(temp_file)
+        log.debug(f"[CHUNK] Finished final chunk {chunk_idx}, temp file: {temp_file}")
+        _log_memory_usage(f"after_chunk_{chunk_idx}")
+    log.debug(f"[CHUNK] All chunks processed, {len(temp_parquet_files)} temp files created")
     return temp_parquet_files
 
 
