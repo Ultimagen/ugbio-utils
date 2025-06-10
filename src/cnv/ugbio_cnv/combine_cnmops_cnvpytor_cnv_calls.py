@@ -181,28 +181,45 @@ def process_del_jalign_results(
         lambda x: "DEL" if pd.Series(x).str.contains("deletion").any() else x
     )
     df_cnmops_cnvpytor_del_filtered = df_cnmops_cnvpytor_del[
-        (df_cnmops_cnvpytor_del["jalign_written"] >= jalign_written_cutoff)
-        | (df_cnmops_cnvpytor_del["len"] > deletions_length_cutoff)
-    ]
+        (df_cnmops_cnvpytor_del["jalign_written"] < jalign_written_cutoff)
+        & (df_cnmops_cnvpytor_del["len"] <= deletions_length_cutoff)
+    ].copy()
+    df_cnmops_cnvpytor_del_filtered["jalign_tag"] = "JALIGN"
 
-    out_del_jalign = pjoin(
-        out_directory,
-        f"{sample_name}.cnmops_cnvpytor.DEL.jalign_lt{str(jalign_written_cutoff)}_or_len_lt{str(deletions_length_cutoff)}.bed",
-    )
-    df_cnmops_cnvpytor_del_filtered[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
+    # merge all deletions
+    out_del_jalign = pjoin(out_directory, f"{sample_name}.cnmops_cnvpytor.DEL.jalign.bed")
+    df_cnmops_cnvpytor_del[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
         out_del_jalign, sep="\t", header=None, index=False
     )
-
     out_del_jalign_merged = pjoin(
         out_directory,
-        f"{sample_name}.cnmops_cnvpytor.DEL.jalign_lt{str(jalign_written_cutoff)}_or_len_lt{str(deletions_length_cutoff)}.merged.bed",
+        f"{sample_name}.cnmops_cnvpytor.DEL.jalign.merged.bed",
     )
     run_cmd(
         f"cat {out_del_jalign} | bedtools sort -i - | \
             bedtools merge -c 4,5,6 -o distinct  -i -  > {out_del_jalign_merged}"
     )
 
-    return out_del_jalign_merged
+    # create deletions jalign tag list - deletions that are filteref by jalign cutoff
+    out_del_jalign_filtered = pjoin(
+        out_directory,
+        f"{sample_name}.cnmops_cnvpytor.DEL.jalign_lt{str(jalign_written_cutoff)}_or_len_lt{str(deletions_length_cutoff)}.bed",
+    )
+    df_cnmops_cnvpytor_del_filtered[
+        ["chrom", "start", "end", "CNV_type", "source", "copy_number", "jalign_tag"]
+    ].to_csv(out_del_jalign_filtered, sep="\t", header=None, index=False)
+
+    out_del_jalign_filtered_merged = pjoin(
+        out_directory,
+        f"{sample_name}.cnmops_cnvpytor.DEL.jalign_st{str(jalign_written_cutoff)}_or_len_st{str(deletions_length_cutoff)}.merged.bed",
+    )
+    # run_cmd(
+    #     f"cat {out_del_jalign_filtered} | bedtools sort -i - | \
+    #         bedtools merge -c 4,5,6,7 -o distinct  -i - | grep -v cn.mops,cnvpytor > {out_del_jalign_filtered_merged}"
+    # )
+    run_cmd(f"cat {out_del_jalign_filtered} | bedtools sort -i - > {out_del_jalign_filtered_merged}")
+
+    return out_del_jalign_merged, out_del_jalign_filtered_merged
 
 
 def get_cnmops_cnvpytor_common_del(del_candidates: str, sample_name: str, out_directory: str) -> str:
@@ -315,7 +332,7 @@ def run(argv):
     ###  process DELetions   ###
     ############################
 
-    out_del_jalign_merged = process_del_jalign_results(
+    out_del_jalign_merged, out_del_jalign_filtered_merged = process_del_jalign_results(
         args.del_jalign_merged_results,
         sample_name,
         out_directory,
@@ -328,30 +345,42 @@ def run(argv):
     # merge deletions
     out_del_calls = pjoin(
         out_directory,
-        f"{sample_name}.cnmops_cnvpytor.DEL.jalign_lt{str(args.jalign_written_cutoff)}_or_len_lt{str(args.deletions_length_cutoff)}.called_by_both_cnmops_cnvpytor.bedtools_merge.bed",
+        f"{sample_name}.cnmops_cnvpytor.DEL.bedtools_merge.bed",
     )
     run_cmd(
         f"cat {out_del_jalign_merged} {out_del_candidates_called_by_both_cnmops_cnvpytor} | \
             bedtools sort -i - | bedtools merge -c 4,5,6 -o distinct  -i - > {out_del_calls}"
     )
 
-    # combine results
+    # combine dup and del calls
     out_cnvs_combined = pjoin(out_directory, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.bed")
     run_cmd(f"cat {cnmops_cnvpytor_merged_dup} {out_del_calls} | bedtools sort -i - > {out_cnvs_combined}")
     logger.info(f"out_cnvs_combined: {out_cnvs_combined}")
 
+    # annotate with jalign results
+    out_cnvs_combined_jalign_annotated = pjoin(
+        out_directory, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.jalign_annotate.bed"
+    )
+    run_cmd(
+        f"bedtools intersect -f 0.9 -loj -wa -wb -a {out_cnvs_combined} -b {out_del_jalign_filtered_merged} | \
+            cut -f 1-6,13 > {out_cnvs_combined_jalign_annotated}"
+    )
+    logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_jalign_annotated}")
+
     # annotate with ug-cnv-lcr
-    out_cnvs_combined_annotated = pjoin(
-        out_directory, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.UG-CNV-LCR_annotate.bed"
+    out_cnvs_combined_annotated = ""
+    out_cnvs_combined_ug_cnv_lcr_annotated = pjoin(
+        out_directory, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.jalign_annotate.UG-CNV-LCR_annotate.bed"
     )
     if args.ug_cnv_lcr:
         run_cmd(
-            f"bedtools intersect -f 0.5 -loj -wa -wb -a {out_cnvs_combined} -b {args.ug_cnv_lcr} | \
-                cut -f 1-6,10 > {out_cnvs_combined_annotated}"
+            f"bedtools intersect -f 0.5 -loj -wa -wb -a {out_cnvs_combined_jalign_annotated} -b {args.ug_cnv_lcr} | \
+                cut -f 1-7,11 > {out_cnvs_combined_ug_cnv_lcr_annotated}"
         )
-        logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
+        logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_ug_cnv_lcr_annotated}")
+        out_cnvs_combined_annotated = out_cnvs_combined_ug_cnv_lcr_annotated
     else:
-        out_cnvs_combined_annotated = out_cnvs_combined
+        out_cnvs_combined_annotated = out_cnvs_combined_jalign_annotated
 
     # convert to vcf
     vcf_args = [
