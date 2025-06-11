@@ -67,13 +67,6 @@ def _log_memory_usage(stage: str) -> None:
     log.debug(f"[{stage}] Processing stage completed")
 
 
-def _log_dataframe_info(df: pl.DataFrame, stage: str) -> None:
-    """Log DataFrame info for debugging."""
-    log.debug(f"[{stage}] DataFrame shape: {df.shape}")
-    log.debug(f"[{stage}] DataFrame columns: {df.columns}")
-    log.debug(f"[{stage}] DataFrame dtypes: {dict(zip(df.columns, df.dtypes, strict=True))}")
-
-
 @dataclass
 class ColumnConfig:
     """Configuration for column processing."""
@@ -562,7 +555,6 @@ def _process_line_for_explosion(fields: list[str], list_fmt_indices: list[int]) 
             max_length = max(max_length, len(list_values))
         else:
             list_lengths[idx] = ["."]
-    log.debug(f"max_length: {max_length}, list_lengths: {list_lengths}")
     # If no lists or all lists are empty, just return the row as-is
     if max_length == 1:
         return [fields]
@@ -935,14 +927,12 @@ def _stream_and_process_chunks(
     column_config: ColumnConfig,
     out: str,
 ) -> list[str]:
-    log.debug(f"[CHUNK] Starting _stream_and_process_chunks for {vcf}")
     temp_parquet_files = []
     chunk_rows = []
     chunk_idx = 0
     for row in _explode_tsv_rows_generator(bcftools, vcf, fmt_str, cols, list_fmt_indices):
         chunk_rows.append(row)
         if len(chunk_rows) >= CHUNK_SIZE:
-            log.debug(f"[CHUNK] Processing chunk {chunk_idx} with {len(chunk_rows)} rows")
             _log_memory_usage(f"before_chunk_{chunk_idx}")
             temp_file = _process_and_write_chunk(
                 chunk_rows,
@@ -956,12 +946,10 @@ def _stream_and_process_chunks(
                 chunk_idx,
             )
             temp_parquet_files.append(temp_file)
-            log.debug(f"[CHUNK] Finished chunk {chunk_idx}, temp file: {temp_file}")
             _log_memory_usage(f"after_chunk_{chunk_idx}")
             chunk_rows = []
             chunk_idx += 1
     if chunk_rows:
-        log.debug(f"[CHUNK] Processing final chunk {chunk_idx} with {len(chunk_rows)} rows")
         _log_memory_usage(f"before_chunk_{chunk_idx}")
         temp_file = _process_and_write_chunk(
             chunk_rows,
@@ -975,7 +963,6 @@ def _stream_and_process_chunks(
             chunk_idx,
         )
         temp_parquet_files.append(temp_file)
-        log.debug(f"[CHUNK] Finished final chunk {chunk_idx}, temp file: {temp_file}")
         _log_memory_usage(f"after_chunk_{chunk_idx}")
     log.debug(f"[CHUNK] All chunks processed, {len(temp_parquet_files)} temp files created")
     return temp_parquet_files
@@ -1111,7 +1098,6 @@ def _stream_and_write_batches_directly(
         chunk_rows.append(row)
 
         if len(chunk_rows) >= CHUNK_SIZE:
-            log.debug(f"[BATCH] Processing batch {chunk_idx} with {len(chunk_rows)} rows")
             _log_memory_usage(f"before_batch_{chunk_idx}")
 
             # Process the batch
@@ -1136,15 +1122,12 @@ def _stream_and_write_batches_directly(
                 else:
                     _append_batch_to_file(batch_df, out)
 
-                log.debug(f"[BATCH] Batch {chunk_idx} written: {rows_in_batch} rows, total so far: {total_rows}")
-
             _log_memory_usage(f"after_batch_{chunk_idx}")
             chunk_rows = []
             chunk_idx += 1
 
     # Process final batch if any rows remain
     if chunk_rows:
-        log.debug(f"[BATCH] Processing final batch {chunk_idx} with {len(chunk_rows)} rows")
         _log_memory_usage(f"before_batch_{chunk_idx}")
 
         batch_df = _process_batch_dataframe(
@@ -1167,13 +1150,11 @@ def _stream_and_write_batches_directly(
                 first_batch = False
             else:
                 _append_batch_to_file(batch_df, out)
-            log.debug(f"[BATCH] Final batch {chunk_idx} written: {rows_in_batch} rows, total: {total_rows}")
 
         _log_memory_usage(f"after_batch_{chunk_idx}")
 
     # Handle case where no data was processed
     if first_batch:
-        log.debug("[BATCH] No data processed, creating empty parquet file")
         empty_df = pl.DataFrame({col: [] for col in cols})
         empty_df.write_parquet(out)
         total_rows = 0
