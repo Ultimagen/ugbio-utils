@@ -229,3 +229,194 @@ def test_skip_combinations_when_many_filters() -> None:
     )
 
     assert stats["combinations"] == {}, "Combinations dict should be empty when too many filters are present"
+
+
+def test_cli_filters_only(tmp_path: Path) -> None:
+    """Test filtering using only CLI arguments, no config file."""
+    parquet_in = _parquet_from_sample(tmp_path)
+
+    cli_filters = ["high_bcsq:BCSQ:ge:20:quality", "high_read_count:READ_COUNT:gt:10:region"]
+
+    out_pq = tmp_path / "f.parquet"
+    stats_json = tmp_path / "stats.json"
+
+    filter_parquet(
+        str(parquet_in),
+        str(out_pq),
+        None,
+        None,  # No config file
+        str(stats_json),
+        cli_filters=cli_filters,
+    )
+
+    assert out_pq.exists() and stats_json.exists()
+
+    stats = json.load(stats_json.open())
+    assert len(stats["filters"]) == 3  # raw + 2 CLI filters
+    assert stats["filters"][1]["name"] == "high_bcsq"
+    assert stats["filters"][1]["type"] == "quality"
+    assert stats["filters"][2]["name"] == "high_read_count"
+    assert stats["filters"][2]["type"] == "region"
+
+    # Check filtered output
+    filtered_df = pl.read_parquet(out_pq)
+    assert (filtered_df["BCSQ"] >= 20).all()
+    assert (filtered_df["READ_COUNT"] > 10).all()
+
+
+def test_cli_downsample_override(tmp_path: Path) -> None:
+    """Test that CLI downsample overrides config file downsample."""
+    parquet_in = _parquet_from_sample(tmp_path)
+
+    # Config with one downsample setting
+    cfg = {
+        "filters": [
+            {"field": "BCSQ", "op": "ge", "value": 10, "type": "quality"},
+        ],
+        "downsample": {"method": "random", "size": 1000, "seed": 1},
+    }
+    cfg_path = tmp_path / "cfg.json"
+    with open(cfg_path, "w") as f:
+        json.dump(cfg, f)
+
+    # CLI with different downsample
+    cli_downsample = "head:50"
+
+    out_pq = tmp_path / "f.parquet"
+    stats_json = tmp_path / "stats.json"
+
+    filter_parquet(str(parquet_in), str(out_pq), None, str(cfg_path), str(stats_json), cli_downsample=cli_downsample)
+
+    assert out_pq.exists() and stats_json.exists()
+
+    stats = json.load(stats_json.open())
+    # Should have CLI downsample, not config downsample
+    assert stats["filters"][-1]["name"] == "downsample"
+    assert stats["filters"][-1]["rows"] == 50
+
+
+def test_config_and_cli_filters_combined(tmp_path: Path) -> None:
+    """Test that CLI filters are appended to config filters."""
+    parquet_in = _parquet_from_sample(tmp_path)
+
+    # Config with some filters
+    cfg = {
+        "filters": [
+            {"name": "config_filter", "field": "BCSQ", "op": "ge", "value": 10, "type": "quality"},
+        ]
+    }
+    cfg_path = tmp_path / "cfg.json"
+    with open(cfg_path, "w") as f:
+        json.dump(cfg, f)
+
+    # CLI with additional filters
+    cli_filters = ["cli_filter:READ_COUNT:gt:5:region"]
+
+    out_pq = tmp_path / "f.parquet"
+    stats_json = tmp_path / "stats.json"
+
+    filter_parquet(str(parquet_in), str(out_pq), None, str(cfg_path), str(stats_json), cli_filters=cli_filters)
+
+    assert out_pq.exists() and stats_json.exists()
+
+    stats = json.load(stats_json.open())
+    # Should have raw + config filter + CLI filter
+    assert len(stats["filters"]) == 3
+    assert stats["filters"][1]["name"] == "config_filter"
+    assert stats["filters"][1]["type"] == "quality"
+    assert stats["filters"][2]["name"] == "cli_filter"
+    assert stats["filters"][2]["type"] == "region"
+
+    # Check filtered output
+    filtered_df = pl.read_parquet(out_pq)
+    assert (filtered_df["BCSQ"] >= 10).all()
+    assert (filtered_df["READ_COUNT"] > 5).all()
+
+
+def test_cli_filter_with_list_values(tmp_path: Path) -> None:
+    """Test CLI filters with list values (in/not_in operations)."""
+    parquet_in = _parquet_from_sample(tmp_path)
+
+    # Create test data with known CHROM values
+    orig_df = pl.read_parquet(parquet_in)
+    # Ensure we have some chr1 and chr2 values for testing
+    test_df = orig_df.with_columns(
+        pl.when(pl.int_range(len(orig_df)) % 2 == 0).then(pl.lit("chr1")).otherwise(pl.lit("chr2")).alias("CHROM")
+    )
+    test_parquet = tmp_path / "test.parquet"
+    test_df.write_parquet(test_parquet)
+
+    cli_filters = ["chrom_filter:CHROM:in:chr1,chr2:region"]
+
+    out_pq = tmp_path / "f.parquet"
+    stats_json = tmp_path / "stats.json"
+
+    filter_parquet(str(test_parquet), str(out_pq), None, None, str(stats_json), cli_filters=cli_filters)
+
+    assert out_pq.exists() and stats_json.exists()
+
+    # Check filtered output
+    filtered_df = pl.read_parquet(out_pq)
+    assert filtered_df["CHROM"].is_in(["chr1", "chr2"]).all()
+
+
+def test_cli_filter_with_between_operation(tmp_path: Path) -> None:
+    """Test CLI filters with between operation."""
+    parquet_in = _parquet_from_sample(tmp_path)
+
+    cli_filters = ["bcsq_between:BCSQ:between:10,50:quality"]
+
+    out_pq = tmp_path / "f.parquet"
+    stats_json = tmp_path / "stats.json"
+
+    filter_parquet(str(parquet_in), str(out_pq), None, None, str(stats_json), cli_filters=cli_filters)
+
+    assert out_pq.exists() and stats_json.exists()
+
+    # Check filtered output
+    filtered_df = pl.read_parquet(out_pq)
+    assert ((filtered_df["BCSQ"] >= 10) & (filtered_df["BCSQ"] <= 50)).all()
+
+
+def test_parse_cli_filter_functions() -> None:
+    """Test the CLI parsing utility functions."""
+    from ugbio_featuremap.filter_dataframe import _parse_cli_downsample, _parse_cli_filter
+
+    # Test basic filter parsing
+    filter_dict = _parse_cli_filter("my_filter:FIELD:gt:10:quality")
+    expected = {"name": "my_filter", "field": "FIELD", "op": "gt", "value": 10, "type": "quality"}
+    assert filter_dict == expected
+
+    # Test float value
+    filter_dict = _parse_cli_filter("float_filter:VAF:le:0.05:label")
+    assert filter_dict["value"] == 0.05
+
+    # Test string value
+    filter_dict = _parse_cli_filter("str_filter:CHROM:eq:chr1:region")
+    assert filter_dict["value"] == "chr1"
+
+    # Test list value
+    filter_dict = _parse_cli_filter("list_filter:CHROM:in:chr1,chr2,chr3:region")
+    assert filter_dict["value"] == ["chr1", "chr2", "chr3"]
+
+    # Test between value
+    filter_dict = _parse_cli_filter("between_filter:QUAL:between:10,50:quality")
+    assert filter_dict["value"] == [10.0, 50.0]
+
+    # Test downsample parsing
+    ds_dict = _parse_cli_downsample("random:1000:42")
+    expected = {"method": "random", "size": 1000, "seed": 42}
+    assert ds_dict == expected
+
+    # Test downsample without seed
+    ds_dict = _parse_cli_downsample("head:500")
+    expected = {"method": "head", "size": 500}
+    assert ds_dict == expected
+
+    # Test invalid filter format
+    with pytest.raises(ValueError, match="must have 5 parts"):
+        _parse_cli_filter("invalid:format")
+
+    # Test invalid downsample format
+    with pytest.raises(ValueError, match="must have 2-3 parts"):
+        _parse_cli_downsample("invalid")

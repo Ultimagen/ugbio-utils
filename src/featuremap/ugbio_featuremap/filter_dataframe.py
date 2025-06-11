@@ -51,8 +51,14 @@ STAT_PATTERN = "pattern"
 STAT_COUNT = "count"
 STAT_ROWS = "rows"
 
-# Skip combination stats when there are “too many” filters
+# Skip combination stats when there are "too many" filters
 MAX_COMBINATION_FILTERS = 20  # default threshold
+
+# CLI parsing constants
+CLI_FILTER_PARTS = 5  # name:field:op:value:type
+CLI_DOWNSAMPLE_MIN_PARTS = 2  # method:size
+CLI_DOWNSAMPLE_MAX_PARTS = 3  # method:size:seed
+BETWEEN_VALUE_PARTS = 2  # min,max
 
 # ───────────────────────────── utilities ──────────────────────────────────
 _OPS = {
@@ -108,6 +114,114 @@ def _validate_downsample(ds: dict[str, Any]) -> None:
     method = ds.get(KEY_METHOD, METHOD_RANDOM)
     if method not in {METHOD_HEAD, METHOD_RANDOM}:
         raise ValueError(f"Invalid downsample method: {method}. Must be '{METHOD_HEAD}' or '{METHOD_RANDOM}'")
+
+
+def _parse_cli_filter(filter_spec: str) -> dict[str, Any]:
+    """Parse a CLI filter specification into a filter dictionary.
+
+    Format: name:field:op:value:type
+    """
+    parts = filter_spec.split(":")
+    if len(parts) != CLI_FILTER_PARTS:
+        raise ValueError(
+            f"Filter specification must have {CLI_FILTER_PARTS} parts separated by ':'. Got: {filter_spec}"
+        )
+
+    name, field, op, value_str, filter_type = parts
+
+    # Convert value to appropriate type
+    value: Any
+    if op in ["in", "not_in"]:
+        # For list operations, split on comma
+        value = value_str.split(",")
+    elif op == "between":
+        # For between, expect two values separated by comma
+        value_parts = value_str.split(",")
+        if len(value_parts) != BETWEEN_VALUE_PARTS:
+            raise ValueError(f"Between operation requires exactly {BETWEEN_VALUE_PARTS} values. Got: {value_str}")
+        try:
+            value = [float(v) for v in value_parts]
+        except ValueError:
+            value = value_parts  # Keep as strings if not numeric
+    else:
+        # Try to convert to number, otherwise keep as string
+        try:
+            if "." in value_str:
+                value = float(value_str)
+            else:
+                value = int(value_str)
+        except ValueError:
+            value = value_str
+
+    return {
+        KEY_NAME: name,
+        KEY_FIELD: field,
+        KEY_OP: op,
+        KEY_VALUE: value,
+        KEY_TYPE: filter_type,
+    }
+
+
+def _parse_cli_downsample(downsample_spec: str) -> dict[str, Any]:
+    """Parse a CLI downsample specification into a downsample dictionary.
+
+    Format: method:size:seed (seed is optional for random method)
+    """
+    parts = downsample_spec.split(":")
+    if len(parts) < CLI_DOWNSAMPLE_MIN_PARTS or len(parts) > CLI_DOWNSAMPLE_MAX_PARTS:
+        raise ValueError(
+            f"Downsample specification must have {CLI_DOWNSAMPLE_MIN_PARTS}-{CLI_DOWNSAMPLE_MAX_PARTS} "
+            f"parts separated by ':'. Got: {downsample_spec}"
+        )
+
+    method, size_str = parts[0], parts[1]
+
+    try:
+        size = int(size_str)
+    except ValueError as err:
+        raise ValueError(f"Downsample size must be an integer. Got: {size_str}") from err
+
+    downsample_config = {
+        KEY_METHOD: method,
+        KEY_SIZE: size,
+    }
+
+    # Add seed if provided
+    if len(parts) == CLI_DOWNSAMPLE_MAX_PARTS:
+        try:
+            seed = int(parts[2])
+            downsample_config[KEY_SEED] = seed
+        except ValueError as err:
+            raise ValueError(f"Downsample seed must be an integer. Got: {parts[2]}") from err
+
+    return downsample_config
+
+
+def _merge_config_and_cli(
+    config_path: str | None, cli_filters: list[str] | None, cli_downsample: str | None
+) -> dict[str, Any]:
+    """Merge JSON config with CLI arguments to create final configuration."""
+    # Start with config from file if provided
+    cfg = {}
+    if config_path:
+        with open(config_path) as f:
+            cfg = json.load(f)
+
+    # Initialize filters list if not present
+    if KEY_FILTERS not in cfg:
+        cfg[KEY_FILTERS] = []
+
+    # Add CLI filters
+    if cli_filters:
+        for filter_spec in cli_filters:
+            filter_dict = _parse_cli_filter(filter_spec)
+            cfg[KEY_FILTERS].append(filter_dict)
+
+    # Override downsample if provided via CLI
+    if cli_downsample:
+        cfg[KEY_DOWNSAMPLE] = _parse_cli_downsample(cli_downsample)
+
+    return cfg
 
 
 def validate_filter_config(cfg: dict[str, Any]) -> None:
@@ -349,8 +463,10 @@ def filter_parquet(
     in_path: str,
     out_path: str | None,
     out_path_full: str | None,
-    cfg_path: str,
+    cfg_path: str | None,
     stats_path: str,
+    cli_filters: list[str] | None = None,
+    cli_downsample: str | None = None,
 ) -> None:
     """
     Filter a parquet file based on configuration and generate statistics.
@@ -374,9 +490,9 @@ def filter_parquet(
         binary columns indicating which filters each row passes/fails.
         If None, no full output file is created.
 
-    cfg_path : str
+    cfg_path : str | None
         Path to the JSON configuration file that defines the filters and optional
-        downsampling. The configuration should have the following structure:
+        downsampling. If None, only CLI filters will be used. The configuration should have the following structure:
         {
             "filters": [
                 {
@@ -401,6 +517,14 @@ def filter_parquet(
         - Single effect statistics for each filter independently
         - Combination statistics showing all unique filter pass/fail patterns
 
+    cli_filters : list[str] | None, optional
+        List of CLI filter specifications in the format "name:field:op:value:type".
+        These filters are appended to any filters specified in the config file.
+
+    cli_downsample : str | None, optional
+        CLI downsample specification in the format "method:size:seed" (seed optional).
+        This overrides any downsampling specified in the config file.
+
     Raises
     ------
     ValueError
@@ -420,12 +544,11 @@ def filter_parquet(
     """
     logger.info(f"Starting filter_parquet: input={in_path}")
 
-    # Load and validate configuration
-    with open(cfg_path) as f:
-        cfg = json.load(f)
+    # Merge config from file and CLI arguments
+    cfg = _merge_config_and_cli(cfg_path, cli_filters, cli_downsample)
 
     validate_filter_config(cfg)
-    logger.info(f"Loaded configuration {cfg_path} with {len(cfg[KEY_FILTERS])} filters")
+    logger.info(f"Configuration has {len(cfg[KEY_FILTERS])} filters")
 
     # Create lazy frame for efficient processing
     featuremap_dataframe = pl.scan_parquet(in_path)
@@ -479,8 +602,15 @@ def _build_cli() -> argparse.ArgumentParser:
     ap.add_argument("--in", dest="inp", required=True, help="input parquet")
     ap.add_argument("--out", help="output parquet with filtered rows (optional)")
     ap.add_argument("--out-full", help="output parquet with all rows and filter columns (optional)")
-    ap.add_argument("--config", required=True, help="JSON with filters + downsample")
+    ap.add_argument("--config", help="JSON with filters + downsample (optional)")
     ap.add_argument("--stats", required=True, help="output JSON with statistics")
+    ap.add_argument(
+        "--filter",
+        action="append",
+        dest="filters",
+        help="Filter specification: name:field:op:value:type (can be used multiple times)",
+    )
+    ap.add_argument("--downsample", help="Downsample specification: method:size:seed (optional seed for random method)")
     ap.add_argument("-v", "--verbose", action="store_true")
     return ap
 
@@ -500,7 +630,12 @@ def main() -> None:
         logger.error("At least one of --out or --out-full must be specified")
         raise ValueError("No output file specified")
 
-    filter_parquet(args.inp, args.out, args.out_full, args.config, args.stats)
+    # Validate that either config file or CLI filters are provided
+    if not args.config and not args.filters:
+        logger.error("Either --config or --filter must be specified")
+        raise ValueError("No filters specified")
+
+    filter_parquet(args.inp, args.out, args.out_full, args.config, args.stats, args.filters, args.downsample)
 
 
 if __name__ == "__main__":
