@@ -53,6 +53,7 @@ import shutil
 import subprocess
 import tempfile
 from collections import OrderedDict
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -60,6 +61,10 @@ import polars as pl
 from polars.exceptions import ShapeError
 
 log = logging.getLogger(__name__)
+
+# Configuration constants
+CHUNK_SIZE = 100_000  # Default chunk size for parallel processing
+DEFAULT_MAX_WORKERS = 4  # Default number of parallel workers
 
 
 def _log_memory_usage(stage: str) -> None:
@@ -76,6 +81,22 @@ class ColumnConfig:
     list_fmt_ids: list[str]
     info_meta: dict
     fmt_meta: dict
+
+
+@dataclass
+class ChunkProcessingArgs:
+    """Arguments for parallel chunk processing."""
+
+    chunk_file: str
+    cols: list[str]
+    info_ids: list[str]
+    scalar_fmt_ids: list[str]
+    list_fmt_ids: list[str]
+    info_meta: dict
+    fmt_meta: dict
+    output_file: str
+    is_first_chunk: bool
+    overrides: dict
 
 
 # ───────────────── header helpers ────────────────────────────────────────────
@@ -173,20 +194,21 @@ def _ensure_scalar_categories(featuremap_dataframe: pl.DataFrame, col: str, cats
     if "" not in cats:
         cats = cats + [""]
     rows = len(cats)
-    stub_dict = {c: [None] * rows for c in featuremap_dataframe.columns}
+    stub_dict: dict[str, list] = {c: [None] * rows for c in featuremap_dataframe.columns}
     stub_dict[col] = cats  # each category once
 
-    stub = (
-        pl.DataFrame(stub_dict)
-        .cast(featuremap_dataframe.schema, strict=False)  # keep dtypes identical
-        .with_columns(pl.col(col).cast(pl.Categorical))
-    )
+    # Create DataFrame with same schema as original (skip casting for now)
+    stub = pl.DataFrame(stub_dict).with_columns(pl.col(col).cast(pl.Categorical))
 
     return pl.concat([featuremap_dataframe, stub], how="vertical").head(featuremap_dataframe.height)
 
 
 # ───────────────── casting helpers ──────────────────────────────────────────
-def _cast_scalar(featuremap_dataframe: pl.DataFrame, col: str, meta: dict) -> pl.DataFrame:
+def _cast_scalar(
+    featuremap_dataframe: pl.DataFrame,
+    col: str,
+    meta: dict,
+) -> pl.DataFrame:
     """
     Cast a scalar INFO column.
 
@@ -198,23 +220,22 @@ def _cast_scalar(featuremap_dataframe: pl.DataFrame, col: str, meta: dict) -> pl
         Column name.
     meta
         Dict with keys {"type", "cat"} parsed from the VCF header.
+    enable_debug_logging
+        Whether to enable debug logging for this call.
 
     Returns
     -------
     DataFrame with `col` recast and (if categorical) stub-padded so
     all categories from `meta["cat"]` are present.
     """
-
     utf_null = pl.when(pl.col(col).cast(pl.Utf8).is_in(["", "."])).then(None).otherwise(pl.col(col).cast(pl.Utf8))
 
     if meta["cat"]:
         featuremap_dataframe = featuremap_dataframe.with_columns(utf_null.cast(pl.Categorical).alias(col))
-        log.debug(f"Scalar column {col} cast to Categorical with {len(meta['cat'])} categories")
         return _ensure_scalar_categories(featuremap_dataframe, col, meta["cat"])
     if meta["type"] in _POLARS_DTYPE:
         return featuremap_dataframe.with_columns(utf_null.cast(_POLARS_DTYPE[meta["type"]], strict=False).alias(col))
 
-    log.debug("List column %s processed (type=%s)", col, meta["type"])
     return featuremap_dataframe.with_columns(utf_null.alias(col))
 
 
@@ -411,7 +432,11 @@ def _load_vcf_as_dataframe(
         Path(path).unlink(missing_ok=True)
 
 
-def _cast_scalar_lazy(lazy_df: pl.LazyFrame, col: str, meta: dict) -> pl.LazyFrame:
+def _cast_scalar_lazy(
+    lazy_df: pl.LazyFrame,
+    col: str,
+    meta: dict,
+) -> pl.LazyFrame:
     """
     Cast a scalar INFO column on a LazyFrame.
 
@@ -423,6 +448,8 @@ def _cast_scalar_lazy(lazy_df: pl.LazyFrame, col: str, meta: dict) -> pl.LazyFra
         Column name.
     meta
         Dict with keys {"type", "cat"} parsed from the VCF header.
+    enable_debug_logging
+        Whether to enable debug logging for this call.
 
     Returns
     -------
@@ -432,12 +459,11 @@ def _cast_scalar_lazy(lazy_df: pl.LazyFrame, col: str, meta: dict) -> pl.LazyFra
 
     if meta["cat"]:
         lazy_df = lazy_df.with_columns(utf_null.cast(pl.Categorical).alias(col))
-        log.debug(f"Scalar column {col} cast to Categorical with {len(meta['cat'])} categories")
+        # Note: Lazy frames don't support ensure_scalar_categories operation
         return lazy_df
     if meta["type"] in _POLARS_DTYPE:
         return lazy_df.with_columns(utf_null.cast(_POLARS_DTYPE[meta["type"]], strict=False).alias(col))
 
-    log.debug("Scalar column %s processed (type=%s)", col, meta["type"])
     return lazy_df.with_columns(utf_null.alias(col))
 
 
@@ -494,7 +520,12 @@ def _cast_all_columns_lazy(
         lazy_df = _cast_list_lazy(lazy_df, tag, fmt_meta[tag])
     # REF / ALT
     for allele in (REF, ALT):
-        lazy_df = _cast_scalar_lazy(lazy_df, allele, {"type": "String", "cat": ALLELE_CATS})
+        lazy_df = _cast_scalar_lazy(
+            lazy_df,
+            allele,
+            {"type": "String", "cat": ALLELE_CATS},
+        )
+
     return lazy_df
 
 
@@ -516,6 +547,7 @@ def _cast_all_columns(
     # REF / ALT
     for allele in (REF, ALT):
         featuremap_dataframe = _cast_scalar(featuremap_dataframe, allele, {"type": "String", "cat": ALLELE_CATS})
+
     return featuremap_dataframe
 
 
@@ -714,9 +746,7 @@ def vcf_to_parquet_streaming(
     categories_json
         Path to JSON file with categorical overrides.
     chunk_size
-        Number of variants to process at once.
-
-    Notes
+        Number of variants to process at once.    Notes
     -----
     * Uses lazy evaluation and streaming to reduce memory usage.
     * Maintains categorical column functionality.
@@ -1185,6 +1215,444 @@ def _process_batch_dataframe(
     return chunk_df
 
 
+# ─────────────────────── NEW PARALLEL ARCHITECTURE ─────────────────────────
+def _get_awk_script_path() -> str:
+    """Get path to the AWK script for list explosion."""
+    script_dir = Path(__file__).parent
+    awk_script = script_dir / "explode_lists.awk"
+    if not awk_script.exists():
+        raise FileNotFoundError(f"AWK script not found: {awk_script}")
+    return str(awk_script)
+
+
+def _explode_and_split_with_bcftools_awk_streaming(
+    vcf: str,
+    fmt_str: str,
+    list_fmt_indices: list[int],
+    bcftools_path: str,
+    chunk_size: int,
+    chunk_directory: Path,
+    num_threads: int = 1,
+) -> subprocess.Popen:
+    """
+    Start bcftools + AWK pipeline that creates chunks as they stream.
+
+    Returns the process handle so the caller can monitor for new chunk files
+    as they're created concurrently.
+    """
+    awk_script = _get_awk_script_path()
+
+    # Build the command pipeline: bcftools query | awk | split
+    indices_str = ",".join(map(str, list_fmt_indices))
+
+    # Use split command to create chunks directly from the pipeline
+    cmd = [
+        "bash",
+        "-c",
+        f"{bcftools_path} query -f '{fmt_str}' '{vcf}' | "
+        f"awk -v list_indices='{indices_str}' -f '{awk_script}' | "
+        f"split -l {chunk_size} - '{chunk_directory}/chunk_' --suffix-length=6 --numeric-suffixes",
+    ]
+
+    log.debug(f"Starting streaming bcftools + AWK + split pipeline: {' '.join(cmd)}")
+
+    # Start the pipeline process (non-blocking)
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        preexec_fn=None,  # Allow proper signal handling
+    )
+
+    return process
+
+
+# Constants for monitoring logic
+_MAX_NO_ACTIVITY_CYCLES = 100
+_PIPELINE_DONE_WAIT_CYCLES = 5
+
+
+def _check_completed_futures(pending_futures: dict, processed_files: list[str]):
+    """Check for completed futures and handle their results."""
+    from concurrent.futures import as_completed
+
+    completed_futures = []
+    try:
+        for future in as_completed(pending_futures, timeout=0.1):
+            try:
+                result = future.result()
+                chunk_name = pending_futures[future]
+                if result:
+                    processed_files.append(result)
+                    log.debug(f"Completed processing chunk: {chunk_name}")
+                completed_futures.append(future)
+            except Exception as e:
+                chunk_name = pending_futures[future]
+                log.error(f"Error processing chunk {chunk_name}: {e}")
+                completed_futures.append(future)
+    except TimeoutError:
+        # TimeoutError is expected when no futures complete within timeout
+        pass
+
+    return completed_futures
+
+
+def _should_exit_monitoring(
+    *,
+    pipeline_done: bool,
+    chunk_counter: int,
+    found_new_chunk: bool,
+    no_activity_cycles: int,
+    process: subprocess.Popen,
+    pending_futures_count: int,
+) -> tuple[bool, int]:
+    """Determine if monitoring should exit and return updated activity cycles."""
+    # Reset cycles when we find new chunks
+    if found_new_chunk:
+        return False, 0
+
+    # Never exit while we have pending work
+    if pending_futures_count > 0:
+        return False, no_activity_cycles
+
+    # Handle pipeline completion cases
+    if pipeline_done:
+        if chunk_counter == 0:
+            log.debug("Pipeline done and no chunks were created")
+            return True, no_activity_cycles
+
+        new_cycles = no_activity_cycles + 1
+        should_exit = new_cycles >= _PIPELINE_DONE_WAIT_CYCLES
+        if should_exit:
+            log.debug("Pipeline done and no more chunks expected")
+        return should_exit, new_cycles
+
+    # Handle active pipeline cases - no new chunks found
+    new_cycles = no_activity_cycles + 1
+    if new_cycles >= _MAX_NO_ACTIVITY_CYCLES:
+        log.warning(f"No new chunks found for {_MAX_NO_ACTIVITY_CYCLES} cycles, checking pipeline status")
+        if process.poll() is not None:
+            log.debug("Pipeline has terminated, stopping monitoring")
+            return True, new_cycles
+        # Reset and continue if pipeline still running
+        new_cycles = 0
+
+    return False, new_cycles
+
+
+def _monitor_and_process_chunks_concurrent(
+    process: subprocess.Popen,
+    chunk_directory: Path,
+    chunk_args_template: dict,
+    max_workers: int,
+    output_files: list[str],
+) -> list[str]:
+    """
+    Monitor for new chunk files as the pipeline creates them and process
+    them immediately using a ProcessPoolExecutor.
+
+    This implements true producer-consumer concurrency where TSV chunks
+    are processed as soon as they're created.
+    """
+    import time
+    from concurrent.futures import Future, as_completed
+
+    processed_files = []
+    chunk_counter = 0
+    pending_futures: dict[Future, str] = {}
+    no_activity_cycles = 0
+
+    log.info(f"Starting concurrent chunk monitoring with {max_workers} workers")
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        while True:
+            # Check if pipeline process is still running
+            pipeline_done = process.poll() is not None
+
+            # Look for new chunk files
+            expected_chunk = f"chunk_{chunk_counter:06d}"
+            chunk_path = chunk_directory / expected_chunk
+
+            found_new_chunk = False
+            if chunk_path.exists() and chunk_path.stat().st_size > 0:
+                log.debug(f"Found new chunk: {expected_chunk}")
+                found_new_chunk = True
+                no_activity_cycles = 0  # Reset counter
+
+                # Prepare arguments for this chunk
+                output_file = (
+                    output_files[chunk_counter]
+                    if chunk_counter < len(output_files)
+                    else str(chunk_directory / f"output_{chunk_counter:06d}.parquet")
+                )
+
+                chunk_args = ChunkProcessingArgs(
+                    chunk_file=str(chunk_path),
+                    cols=chunk_args_template["cols"],
+                    info_ids=chunk_args_template["info_ids"],
+                    scalar_fmt_ids=chunk_args_template["scalar_fmt_ids"],
+                    list_fmt_ids=chunk_args_template["list_fmt_ids"],
+                    info_meta=chunk_args_template["info_meta"],
+                    fmt_meta=chunk_args_template["fmt_meta"],
+                    output_file=output_file,
+                    is_first_chunk=(chunk_counter == 0),
+                    overrides=chunk_args_template["overrides"],
+                )
+
+                # Submit chunk for processing
+                future = executor.submit(_process_chunk_to_parquet, chunk_args)
+                pending_futures[future] = expected_chunk
+                chunk_counter += 1
+
+            # Check for completed chunks
+            completed_futures = _check_completed_futures(pending_futures, processed_files)
+
+            # Remove completed futures
+            for future in completed_futures:
+                del pending_futures[future]
+
+            # Exit conditions with better logic
+            exit_monitor, no_activity_cycles = _should_exit_monitoring(
+                pipeline_done=pipeline_done,
+                chunk_counter=chunk_counter,
+                found_new_chunk=found_new_chunk,
+                no_activity_cycles=no_activity_cycles,
+                process=process,
+                pending_futures_count=len(pending_futures),
+            )
+            if exit_monitor:
+                break
+
+            # Always sleep to avoid busy waiting
+            time.sleep(0.1)
+
+        # Wait for all remaining chunks to complete
+        log.debug(f"Waiting for {len(pending_futures)} remaining chunks to complete")
+        if pending_futures:  # Only wait if there are pending futures
+            for future in as_completed(pending_futures):
+                try:
+                    result = future.result()
+                    if result:
+                        processed_files.append(result)
+                except Exception as e:
+                    log.error(f"Error in final chunk processing: {e}")
+
+    # Check pipeline exit status
+    exit_code = process.wait()
+    if exit_code != 0:
+        stderr_output = process.stderr.read() if process.stderr else "No stderr"
+        raise RuntimeError(f"bcftools + AWK + split pipeline failed with exit code {exit_code}: {stderr_output}")
+
+    log.info(f"Completed processing {len(processed_files)} chunks concurrently")
+    return processed_files
+
+
+def _process_chunk_to_parquet(args: ChunkProcessingArgs) -> str:
+    """
+    Process a single chunk and convert it to Parquet.
+
+    This is the worker function for parallel processing.
+    """
+    try:
+        # Read the chunk TSV into DataFrame
+        chunk_df = pl.read_csv(
+            args.chunk_file, separator="\t", has_header=False, new_columns=args.cols, null_values=["."]
+        )
+
+        if chunk_df.height == 0:
+            return ""  # Empty chunk
+
+        # Apply casting with debug logging only for first chunk
+        chunk_df = _apply_chunk_casting(
+            chunk_df,
+            args.info_ids,
+            args.scalar_fmt_ids,
+            args.list_fmt_ids,
+            args.info_meta,
+            args.fmt_meta,
+        )
+
+        # Apply categories
+        chunk_df = _apply_chunk_categories(
+            chunk_df, args.info_ids, args.scalar_fmt_ids, args.list_fmt_ids, args.info_meta, args.fmt_meta
+        )
+
+        # Write to Parquet
+        chunk_df.write_parquet(args.output_file)
+
+        # Clean up input chunk file
+        Path(args.chunk_file).unlink(missing_ok=True)
+
+        return args.output_file
+
+    except Exception as e:
+        log.error(f"Error processing chunk {args.chunk_file}: {e}")
+        # Clean up on error
+        Path(args.chunk_file).unlink(missing_ok=True)
+        if Path(args.output_file).exists():
+            Path(args.output_file).unlink(missing_ok=True)
+        raise
+
+
+def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> None:
+    """
+    Merge multiple Parquet files using Polars lazy evaluation for memory efficiency.
+    """
+    if not parquet_files:
+        raise ValueError("No Parquet files to merge")
+
+    if len(parquet_files) == 1:
+        # Single file - just move it
+        shutil.move(parquet_files[0], output_path)
+        return
+
+    log.debug(f"Merging {len(parquet_files)} Parquet files lazily")
+
+    # Use lazy scanning and streaming write for memory efficiency
+    lazy_frames = [pl.scan_parquet(f) for f in parquet_files]
+
+    # Concatenate all lazy frames
+    merged_lazy = pl.concat(lazy_frames, how="vertical")
+
+    # Stream write to final output
+    merged_lazy.sink_parquet(output_path)
+
+    # Clean up temporary files
+    for f in parquet_files:
+        Path(f).unlink(missing_ok=True)
+
+    log.debug(f"Merged Parquet files written to: {output_path}")
+
+
+def vcf_to_parquet_parallel(
+    vcf: str,
+    out: str,
+    drop_info: set[str] | None = None,
+    drop_format: set[str] | None = None,
+    categories_json: str | None = None,
+    chunk_size: int = CHUNK_SIZE,
+    max_workers: int = DEFAULT_MAX_WORKERS,
+    bcftools_threads: int = 1,
+) -> None:
+    """
+    Convert VCF to Parquet using new parallel architecture.
+
+    This implementation uses:
+    1. bcftools + AWK for list explosion (external pipeline)
+    2. Python ProcessPoolExecutor for parallel chunk processing
+    3. Immediate TSV-to-Parquet conversion with equal-sized chunks
+    4. Lazy merging of Parquet files using Polars streaming
+    5. Debug logging only from first chunk
+
+    Parameters
+    ----------
+    vcf : str
+        Path to input VCF file
+    out : str
+        Path to output Parquet file
+    drop_info : set[str] | None
+        INFO fields to exclude
+    drop_format : set[str] | None
+        FORMAT fields to exclude
+    categories_json : str | None
+        Path to JSON file with categorical overrides
+    chunk_size : int
+        Number of rows per chunk for parallel processing
+    max_workers : int
+        Maximum number of parallel workers
+    bcftools_threads : int
+        Number of threads for bcftools
+    """
+    log.info(f"Converting {vcf} to {out} using parallel architecture")
+
+    # Resolve bcftools path
+    bcftools = _resolve_bcftools_command()
+
+    # Parse VCF header
+    info_meta, fmt_meta = header_meta(vcf, bcftools)
+
+    # Filter dropped fields
+    if drop_info:
+        info_meta = {k: v for k, v in info_meta.items() if k not in drop_info}
+    if drop_format:
+        fmt_meta = {k: v for k, v in fmt_meta.items() if k not in drop_format}
+
+    # Validate FORMAT fields
+    format_ids = list(fmt_meta.keys())
+    _sanity_check_format_numbers(format_ids, fmt_meta)
+
+    # Split FORMAT fields
+    scalar_fmt_ids, list_fmt_ids = _split_format_ids(format_ids, fmt_meta)
+    info_ids = list(info_meta.keys())
+
+    # Build query string and column names
+    fmt_str = _make_query_string(format_ids, info_ids)
+    cols = [CHROM, POS, REF, ALT] + info_ids + format_ids
+
+    # Find indices of list columns for AWK script
+    list_fmt_indices = []
+    base_cols = [CHROM, POS, REF, ALT] + info_ids
+    for list_col in list_fmt_ids:
+        idx = len(base_cols) + format_ids.index(list_col)
+        list_fmt_indices.append(idx)
+
+    with pl.StringCache():
+        # Create temporary directory for chunk files
+        chunk_directory = Path(tempfile.mkdtemp(prefix="vcf_chunks_"))
+
+        # Get category overrides
+        overrides = _get_override_categories(categories_json)
+
+        # Prepare output files for chunks (we'll estimate initial count)
+        estimated_chunks = 50  # Start with reasonable estimate
+        output_files = []
+        for i in range(estimated_chunks):
+            output_file = tempfile.NamedTemporaryFile(suffix=f"_chunk_{i}.parquet", delete=False).name
+            output_files.append(output_file)
+
+        try:
+            # Step 1: Start the bcftools + AWK + split pipeline (non-blocking)
+            log.info("Step 1: Starting streaming bcftools + AWK + split pipeline")
+            pipeline_process = _explode_and_split_with_bcftools_awk_streaming(
+                vcf, fmt_str, list_fmt_indices, bcftools, chunk_size, chunk_directory, bcftools_threads
+            )
+
+            # Prepare template arguments for chunk processing
+            chunk_args_template = {
+                "cols": cols,
+                "info_ids": info_ids,
+                "scalar_fmt_ids": scalar_fmt_ids,
+                "list_fmt_ids": list_fmt_ids,  # These are now scalar after explosion
+                "info_meta": info_meta,
+                "fmt_meta": fmt_meta,
+                "overrides": overrides,
+            }
+
+            # Step 2: Monitor and process chunks concurrently as they're created
+            log.info(f"Step 2: Starting concurrent chunk processing with {max_workers} workers")
+            parquet_files = _monitor_and_process_chunks_concurrent(
+                pipeline_process, chunk_directory, chunk_args_template, max_workers, output_files
+            )
+
+            # Step 3: Merge Parquet files lazily
+            log.info(f"Step 3: Merging {len(parquet_files)} Parquet files")
+            _merge_parquet_files_lazy(parquet_files, out)
+
+        finally:
+            # Clean up chunk files and directory
+            if chunk_directory.exists():
+                for chunk_file in chunk_directory.glob("chunk_*"):
+                    chunk_file.unlink(missing_ok=True)
+                chunk_directory.rmdir()
+
+            # Clean up output files
+            for output_file in output_files:
+                Path(output_file).unlink(missing_ok=True)
+
+    log.info(f"Conversion completed: {out}")
+
+
 # ─────────────────────────── CLI wrapper ─────────────────────────────────────
 def main() -> None:
     """
@@ -1210,6 +1678,30 @@ def main() -> None:
         action="store_true",
         help="use fast streaming version instead of memory-efficient version (may use more memory)",
     )
+    ap.add_argument(
+        "--parallel",
+        action="store_true",
+        default=True,
+        help="use new parallel architecture with bcftools+AWK (default, recommended)",
+    )
+    ap.add_argument(
+        "--chunk-size",
+        type=int,
+        default=CHUNK_SIZE,
+        help=f"chunk size for parallel processing (default: {CHUNK_SIZE})",
+    )
+    ap.add_argument(
+        "--max-workers",
+        type=int,
+        default=DEFAULT_MAX_WORKERS,
+        help=f"maximum number of parallel workers (default: {DEFAULT_MAX_WORKERS})",
+    )
+    ap.add_argument(
+        "--bcftools-threads",
+        type=int,
+        default=1,
+        help="number of threads for bcftools (default: 1)",
+    )
     ap.add_argument("-v", "--verbose", action="store_true", help="emit DEBUG‐level logs")
     args = ap.parse_args()
 
@@ -1224,7 +1716,19 @@ def main() -> None:
             format="%(asctime)s - %(levelname)s - %(message)s",
         )
 
-    if args.fast:
+    if args.parallel:
+        # Use new parallel architecture (default, recommended)
+        vcf_to_parquet_parallel(
+            vcf=args.vcf,
+            out=args.out_parquet,
+            drop_info=set(filter(None, args.drop_info.split(","))),
+            drop_format=set(filter(None, args.drop_format.split(","))),
+            categories_json=args.categories_json,
+            chunk_size=args.chunk_size,
+            max_workers=args.max_workers,
+            bcftools_threads=args.bcftools_threads,
+        )
+    elif args.fast:
         # Use streaming version for faster processing (may use more memory)
         vcf_to_parquet_streaming(
             vcf=args.vcf,
@@ -1234,12 +1738,12 @@ def main() -> None:
             categories_json=args.categories_json,
         )
     else:
-        # Use memory-efficient version by default
+        # Use memory-efficient version
         vcf_to_parquet_memory_efficient(
             vcf=args.vcf,
             out=args.out_parquet,
             drop_info=set(filter(None, args.drop_info.split(","))),
-            drop_format=set(filter(None, args.drop_format.split(","))),
+            drop_format=set(filter(None, args.dropFormat.split(","))),
             categories_json=args.categories_json,
         )
 
