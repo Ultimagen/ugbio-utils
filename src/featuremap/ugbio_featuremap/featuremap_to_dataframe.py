@@ -48,6 +48,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -64,7 +65,7 @@ log = logging.getLogger(__name__)
 
 # Configuration constants
 CHUNK_SIZE = 100_000  # Default chunk size for parallel processing
-DEFAULT_MAX_WORKERS = 4  # Default number of parallel workers
+DEFAULT_MAX_WORKERS = min(8, (os.cpu_count() or 4))  # Use up to 8 cores or available CPUs
 
 
 def _log_memory_usage(stage: str) -> None:
@@ -1291,7 +1292,9 @@ _MAX_NO_ACTIVITY_CYCLES = 100
 _PIPELINE_DONE_WAIT_CYCLES = 5
 
 
-def _check_completed_futures(pending_futures: dict, processed_files: list[str]):
+def _check_completed_futures(
+    pending_futures: dict, processed_files: list[str], max_log_groups: int, last_logged_group: int
+):
     """Check for completed futures and handle their results."""
     from concurrent.futures import as_completed
 
@@ -1303,7 +1306,16 @@ def _check_completed_futures(pending_futures: dict, processed_files: list[str]):
                 chunk_name = pending_futures[future]
                 if result:
                     processed_files.append(result)
-                    log.debug(f"Completed processing chunk: {chunk_name}")
+
+                    # Group-based logging - only log at intervals
+                    current_count = len(processed_files)
+                    if max_log_groups > 0:
+                        group_size = max(1, current_count // max_log_groups)
+                        current_group = current_count // group_size
+                        if current_group > last_logged_group and current_count % group_size == 0:
+                            log.info(f"Processed {current_count} chunks so far...")
+                            last_logged_group = current_group
+
                 completed_futures.append(future)
             except Exception as e:
                 chunk_name = pending_futures[future]
@@ -1313,7 +1325,7 @@ def _check_completed_futures(pending_futures: dict, processed_files: list[str]):
         # TimeoutError is expected when no futures complete within timeout
         pass
 
-    return completed_futures
+    return completed_futures, last_logged_group
 
 
 def _should_exit_monitoring(
@@ -1381,7 +1393,12 @@ def _monitor_and_process_chunks_concurrent(
     pending_futures: dict[Future, str] = {}
     no_activity_cycles = 0
 
+    # Progress tracking - limit to 30 log messages max
+    max_log_groups = 30
+    last_logged_group = -1
+
     log.info(f"Starting concurrent chunk monitoring with {max_workers} workers")
+    log.info(f"System has {os.cpu_count()} CPU cores available")
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         while True:
@@ -1394,7 +1411,6 @@ def _monitor_and_process_chunks_concurrent(
 
             found_new_chunk = False
             if chunk_path.exists() and chunk_path.stat().st_size > 0:
-                log.debug(f"Found new chunk: {expected_chunk}")
                 found_new_chunk = True
                 no_activity_cycles = 0  # Reset counter
 
@@ -1424,7 +1440,9 @@ def _monitor_and_process_chunks_concurrent(
                 chunk_counter += 1
 
             # Check for completed chunks
-            completed_futures = _check_completed_futures(pending_futures, processed_files)
+            completed_futures, last_logged_group = _check_completed_futures(
+                pending_futures, processed_files, max_log_groups, last_logged_group
+            )
 
             # Remove completed futures
             for future in completed_futures:
@@ -1471,6 +1489,7 @@ def _process_chunk_to_parquet(args: ChunkProcessingArgs) -> str:
     Process a single chunk and convert it to Parquet.
 
     This is the worker function for parallel processing.
+    Note: Parquet writing is often I/O bound, which may limit CPU utilization.
     """
     try:
         # Read the chunk TSV into DataFrame
