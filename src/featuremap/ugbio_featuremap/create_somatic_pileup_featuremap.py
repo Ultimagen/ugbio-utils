@@ -208,7 +208,7 @@ def merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_mer
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="create_merged_tumor_normal_pileup_featuremap.py",
+        prog="create_somatic_pileup_featuremap.py",
         description=run.__doc__,
     )
     parser.add_argument("--tumor_vcf", help="tumor vcf file", required=True, type=str)
