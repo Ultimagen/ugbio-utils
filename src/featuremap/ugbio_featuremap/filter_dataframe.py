@@ -7,6 +7,8 @@ from typing import Any
 
 import polars as pl
 
+pl.enable_string_cache()
+
 try:
     from ugbio_core.logger import logger
 except ImportError:
