@@ -235,7 +235,10 @@ def test_cli_filters_only(tmp_path: Path) -> None:
     """Test filtering using only CLI arguments, no config file."""
     parquet_in = _parquet_from_sample(tmp_path)
 
-    cli_filters = ["high_bcsq:BCSQ:ge:20:quality", "high_read_count:READ_COUNT:gt:10:region"]
+    cli_filters = [
+        "name=high_bcsq:field=BCSQ:op=ge:value=20:type=quality",
+        "name=high_read_count:field=READ_COUNT:op=gt:value=10:type=region",
+    ]
 
     out_pq = tmp_path / "f.parquet"
     stats_json = tmp_path / "stats.json"
@@ -310,7 +313,7 @@ def test_config_and_cli_filters_combined(tmp_path: Path) -> None:
         json.dump(cfg, f)
 
     # CLI with additional filters
-    cli_filters = ["cli_filter:READ_COUNT:gt:5:region"]
+    cli_filters = ["name=cli_filter:field=READ_COUNT:op=gt:value=5:type=region"]
 
     out_pq = tmp_path / "f.parquet"
     stats_json = tmp_path / "stats.json"
@@ -346,7 +349,7 @@ def test_cli_filter_with_list_values(tmp_path: Path) -> None:
     test_parquet = tmp_path / "test.parquet"
     test_df.write_parquet(test_parquet)
 
-    cli_filters = ["chrom_filter:CHROM:in:chr1,chr2:region"]
+    cli_filters = ["name=chrom_filter:field=CHROM:op=in:value=chr1,chr2:type=region"]
 
     out_pq = tmp_path / "f.parquet"
     stats_json = tmp_path / "stats.json"
@@ -364,7 +367,7 @@ def test_cli_filter_with_between_operation(tmp_path: Path) -> None:
     """Test CLI filters with between operation."""
     parquet_in = _parquet_from_sample(tmp_path)
 
-    cli_filters = ["bcsq_between:BCSQ:between:10,50:quality"]
+    cli_filters = ["name=bcsq_between:field=BCSQ:op=between:value=10,50:type=quality"]
 
     out_pq = tmp_path / "f.parquet"
     stats_json = tmp_path / "stats.json"
@@ -383,25 +386,30 @@ def test_parse_cli_filter_functions() -> None:
     from ugbio_featuremap.filter_dataframe import _parse_cli_downsample, _parse_cli_filter
 
     # Test basic filter parsing
-    filter_dict = _parse_cli_filter("my_filter:FIELD:gt:10:quality")
+    filter_dict = _parse_cli_filter("name=my_filter:field=FIELD:op=gt:value=10:type=quality")
     expected = {"name": "my_filter", "field": "FIELD", "op": "gt", "value": 10, "type": "quality"}
     assert filter_dict == expected
 
     # Test float value
-    filter_dict = _parse_cli_filter("float_filter:VAF:le:0.05:label")
+    filter_dict = _parse_cli_filter("name=float_filter:field=VAF:op=le:value=0.05:type=label")
     assert filter_dict["value"] == 0.05
 
     # Test string value
-    filter_dict = _parse_cli_filter("str_filter:CHROM:eq:chr1:region")
+    filter_dict = _parse_cli_filter("name=str_filter:field=CHROM:op=eq:value=chr1:type=region")
     assert filter_dict["value"] == "chr1"
 
     # Test list value
-    filter_dict = _parse_cli_filter("list_filter:CHROM:in:chr1,chr2,chr3:region")
+    filter_dict = _parse_cli_filter("name=list_filter:field=CHROM:op=in:value=chr1,chr2,chr3:type=region")
     assert filter_dict["value"] == ["chr1", "chr2", "chr3"]
 
     # Test between value
-    filter_dict = _parse_cli_filter("between_filter:QUAL:between:10,50:quality")
+    filter_dict = _parse_cli_filter("name=between_filter:field=QUAL:op=between:value=10,50:type=quality")
     assert filter_dict["value"] == [10.0, 50.0]
+
+    # Test value_field instead of value
+    filter_dict = _parse_cli_filter("name=field_comparison:field=REF:op=eq:value_field=ALT:type=label")
+    assert filter_dict["value_field"] == "ALT"
+    assert "value" not in filter_dict
 
     # Test downsample parsing
     ds_dict = _parse_cli_downsample("random:1000:42")
@@ -414,7 +422,7 @@ def test_parse_cli_filter_functions() -> None:
     assert ds_dict == expected
 
     # Test invalid filter format
-    with pytest.raises(ValueError, match="must have 5 parts"):
+    with pytest.raises(ValueError, match="must have at least 4 parts"):
         _parse_cli_filter("invalid:format")
 
     # Test invalid downsample format

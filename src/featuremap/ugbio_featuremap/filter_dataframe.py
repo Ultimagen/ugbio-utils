@@ -55,7 +55,7 @@ STAT_ROWS = "rows"
 MAX_COMBINATION_FILTERS = 20  # default threshold
 
 # CLI parsing constants
-CLI_FILTER_PARTS = 5  # name:field:op:value:type
+CLI_FILTER_MIN_PARTS = 4  # minimum required parts for CLI filter
 CLI_DOWNSAMPLE_MIN_PARTS = 2  # method:size
 CLI_DOWNSAMPLE_MAX_PARTS = 3  # method:size:seed
 BETWEEN_VALUE_PARTS = 2  # min,max
@@ -116,50 +116,77 @@ def _validate_downsample(ds: dict[str, Any]) -> None:
         raise ValueError(f"Invalid downsample method: {method}. Must be '{METHOD_HEAD}' or '{METHOD_RANDOM}'")
 
 
-def _parse_cli_filter(filter_spec: str) -> dict[str, Any]:
-    """Parse a CLI filter specification into a filter dictionary.
-
-    Format: name:field:op:value:type
-    """
-    parts = filter_spec.split(":")
-    if len(parts) != CLI_FILTER_PARTS:
-        raise ValueError(
-            f"Filter specification must have {CLI_FILTER_PARTS} parts separated by ':'. Got: {filter_spec}"
-        )
-
-    name, field, op, value_str, filter_type = parts
-
-    # Convert value to appropriate type
-    value: Any
+def _parse_value_based_on_operation(value_str: str, op: str) -> Any:
+    """Parse value string based on the operation type."""
     if op in ["in", "not_in"]:
         # For list operations, split on comma
-        value = value_str.split(",")
+        return value_str.split(",")
     elif op == "between":
         # For between, expect two values separated by comma
         value_parts = value_str.split(",")
         if len(value_parts) != BETWEEN_VALUE_PARTS:
             raise ValueError(f"Between operation requires exactly {BETWEEN_VALUE_PARTS} values. Got: {value_str}")
         try:
-            value = [float(v) for v in value_parts]
+            return [float(v) for v in value_parts]
         except ValueError:
-            value = value_parts  # Keep as strings if not numeric
+            return value_parts  # Keep as strings if not numeric
     else:
         # Try to convert to number, otherwise keep as string
         try:
             if "." in value_str:
-                value = float(value_str)
+                return float(value_str)
             else:
-                value = int(value_str)
+                return int(value_str)
         except ValueError:
-            value = value_str
+            return value_str
 
-    return {
-        KEY_NAME: name,
-        KEY_FIELD: field,
-        KEY_OP: op,
-        KEY_VALUE: value,
-        KEY_TYPE: filter_type,
+
+def _parse_cli_filter(filter_spec: str) -> dict[str, Any]:
+    """Parse a CLI filter specification into a filter dictionary.
+
+    Format: name=value:field=value:op=value:value=value:type=value
+    or:     name=value:field=value:op=value:value_field=value:type=value
+    """
+    parts = filter_spec.split(":")
+    if len(parts) < CLI_FILTER_MIN_PARTS:
+        raise ValueError(
+            f"Filter specification must have at least {CLI_FILTER_MIN_PARTS} parts separated by ':'. "
+            f"Got: {filter_spec}"
+        )
+
+    # Parse key=value pairs
+    parsed = {}
+    for part in parts:
+        if "=" not in part:
+            raise ValueError(f"Each part must be in key=value format. Invalid part: '{part}'")
+        key, value = part.split("=", 1)
+        parsed[key] = value
+
+    # Validate required keys
+    required_keys = {KEY_NAME, KEY_FIELD, KEY_OP, KEY_TYPE}
+    missing_keys = required_keys - parsed.keys()
+    if missing_keys:
+        raise ValueError(f"Missing required keys: {missing_keys}")
+
+    # Validate that we have either 'value' or 'value_field'
+    if KEY_VALUE not in parsed and KEY_VALUE_FIELD not in parsed:
+        raise ValueError(f"Must specify either '{KEY_VALUE}' or '{KEY_VALUE_FIELD}'")
+
+    # Build the filter dictionary
+    filter_dict = {
+        KEY_NAME: parsed[KEY_NAME],
+        KEY_FIELD: parsed[KEY_FIELD],
+        KEY_OP: parsed[KEY_OP],
+        KEY_TYPE: parsed[KEY_TYPE],
     }
+
+    # Handle value or value_field
+    if KEY_VALUE_FIELD in parsed:
+        filter_dict[KEY_VALUE_FIELD] = parsed[KEY_VALUE_FIELD]
+    else:
+        filter_dict[KEY_VALUE] = _parse_value_based_on_operation(parsed[KEY_VALUE], parsed[KEY_OP])
+
+    return filter_dict
 
 
 def _parse_cli_downsample(downsample_spec: str) -> dict[str, Any]:
@@ -518,7 +545,7 @@ def filter_parquet(
         - Combination statistics showing all unique filter pass/fail patterns
 
     cli_filters : list[str] | None, optional
-        List of CLI filter specifications in the format "name:field:op:value:type".
+        List of CLI filter specifications in the format "name=value:field=value:op=value:value=value:type=value".
         These filters are appended to any filters specified in the config file.
 
     cli_downsample : str | None, optional
@@ -608,7 +635,10 @@ def _build_cli() -> argparse.ArgumentParser:
         "--filter",
         action="append",
         dest="filters",
-        help="Filter specification: name:field:op:value:type (can be used multiple times)",
+        help=(
+            "Filter specification: name=value:field=value:op=value:value=value:type=value "
+            "(can be used multiple times)"
+        ),
     )
     ap.add_argument("--downsample", help="Downsample specification: method:size:seed (optional seed for random method)")
     ap.add_argument("-v", "--verbose", action="store_true")
