@@ -1218,11 +1218,29 @@ def _process_batch_dataframe(
 # ─────────────────────── NEW PARALLEL ARCHITECTURE ─────────────────────────
 def _get_awk_script_path() -> str:
     """Get path to the AWK script for list explosion."""
+    # First try the standard approach (should work in development and installed package)
     script_dir = Path(__file__).parent
     awk_script = script_dir / "explode_lists.awk"
-    if not awk_script.exists():
-        raise FileNotFoundError(f"AWK script not found: {awk_script}")
-    return str(awk_script)
+    if awk_script.exists():
+        return str(awk_script)
+
+    # Fallback using importlib.resources for robust package resource access
+    try:
+        import importlib.resources as pkg_resources
+
+        try:
+            # Python 3.9+
+            ref = pkg_resources.files("ugbio_featuremap") / "explode_lists.awk"
+            with pkg_resources.as_file(ref) as awk_path:
+                return str(awk_path)
+        except AttributeError:
+            # Python 3.8 fallback
+            with pkg_resources.path("ugbio_featuremap", "explode_lists.awk") as awk_path:
+                return str(awk_path)
+    except ImportError:
+        pass
+
+    raise FileNotFoundError(f"AWK script not found: {awk_script}")
 
 
 def _explode_and_split_with_bcftools_awk_streaming(

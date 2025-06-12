@@ -420,3 +420,17 @@ def test_chunk_processing_basic_functionality(tmp_path: Path) -> None:
     verification_df = pl.read_parquet(str(output_file))
     assert verification_df.shape == chunk_df.shape, "Round-trip should preserve shape"
     assert verification_df.columns == chunk_df.columns, "Round-trip should preserve columns"
+
+
+def test_awk_script_path() -> None:
+    """Test that the AWK script can be found in both development and installed environments."""
+    from pathlib import Path
+
+    from ugbio_featuremap.featuremap_to_dataframe import _get_awk_script_path
+
+    # Test that the function returns a valid path
+    awk_path_str = _get_awk_script_path()
+    awk_path = Path(awk_path_str)
+    assert awk_path.exists(), f"AWK script not found at: {awk_path_str}"
+    assert awk_path.name == "explode_lists.awk", f"Wrong filename: {awk_path.name}"
+    assert awk_path.is_file(), f"AWK script path is not a file: {awk_path_str}"
