@@ -389,6 +389,7 @@ def _load_vcf_as_lazy_frame(
     vcf: str,
     fmt_str: str,
     cols: list[str],
+    infer_schema_length: int = 10000,
 ) -> pl.LazyFrame:
     """Run bcftools query and load the TSV into a LazyFrame for memory-efficient processing."""
     with tempfile.NamedTemporaryFile("w+b", delete=False) as tmp:
@@ -404,7 +405,7 @@ def _load_vcf_as_lazy_frame(
         new_columns=cols,
         low_memory=True,
         null_values=["."],
-        infer_schema_length=0,
+        infer_schema_length=infer_schema_length,
     )
 
 
@@ -413,6 +414,7 @@ def _load_vcf_as_dataframe(
     vcf: str,
     fmt_str: str,
     cols: list[str],
+    infer_schema_length: int = 10000,
 ) -> pl.DataFrame:
     """Run bcftools query and load the TSV into a DataFrame."""
     with tempfile.NamedTemporaryFile("w+b", delete=False) as tmp:
@@ -427,7 +429,7 @@ def _load_vcf_as_dataframe(
             low_memory=True,
             decimal_comma=True,
             null_values=["."],
-            infer_schema_length=0,
+            infer_schema_length=infer_schema_length,
         )
     finally:
         Path(path).unlink(missing_ok=True)
@@ -792,7 +794,7 @@ def vcf_to_parquet_streaming(
         _log_memory_usage("before_loading_vcf")
 
         # Load data eagerly but process in chunks - THIS IS THE MEMORY BOTTLENECK!
-        featuremap_dataframe = _load_vcf_as_dataframe(bcftools, vcf, fmt_str, cols)
+        featuremap_dataframe = _load_vcf_as_dataframe(bcftools, vcf, fmt_str, cols, chunk_size)
 
         _log_memory_usage("after_loading_vcf")
         log.debug(f"📊 Loaded dataframe: {featuremap_dataframe.shape[0]} rows × {featuremap_dataframe.shape[1]} cols")
