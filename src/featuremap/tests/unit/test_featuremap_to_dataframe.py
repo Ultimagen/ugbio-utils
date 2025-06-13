@@ -14,6 +14,20 @@ from ugbio_featuremap import featuremap_to_dataframe
 bcftools_missing = shutil.which("bcftools") is None
 
 
+# --- Module-level functions for ProcessPoolExecutor pickling --------------
+def _failing_task():
+    """A task that always fails - defined at module level for pickling."""
+    raise ValueError("Test error - this should propagate")
+
+
+def _succeeding_task():
+    """A task that succeeds - defined at module level for pickling."""
+    import time
+
+    time.sleep(0.1)
+    return "success"
+
+
 # --- fixtures --------------------------------------------------------------
 @pytest.fixture(
     params=[
@@ -238,7 +252,7 @@ def test_streaming_vs_memory_efficient_identical_results(tmp_path: Path, input_f
             streaming_col = streaming_sorted[col]
             memory_efficient_col = memory_efficient_sorted[col]
 
-            if not streaming_col.series_equal(memory_efficient_col):
+            if not streaming_col.equals(memory_efficient_col):
                 # Find differences
                 diff_mask = streaming_col != memory_efficient_col
                 if diff_mask.any():
@@ -434,3 +448,252 @@ def test_awk_script_path() -> None:
     assert awk_path.exists(), f"AWK script not found at: {awk_path_str}"
     assert awk_path.name == "explode_lists.awk", f"Wrong filename: {awk_path.name}"
     assert awk_path.is_file(), f"AWK script path is not a file: {awk_path_str}"
+
+
+def test_explicit_schema_type_inference_with_floats(tmp_path: Path) -> None:
+    """
+    Test that explicit schema correctly handles float values instead of incorrectly parsing them as integers.
+
+    This test addresses the critical issue where decimal values like 0.0227273 were being parsed as
+    integers (i64) instead of floats, causing VCF chunk processing to fail.
+    """
+
+    # Create a test VCF with problematic float values that caused the original issue
+    vcf_content = """##fileformat=VCFv4.2
+##INFO=<ID=AF,Number=1,Type=Float,Description="Allele Frequency">
+##INFO=<ID=DP,Number=1,Type=Integer,Description="Total Depth">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=VAF,Number=1,Type=Float,Description="Variant Allele Frequency">
+##FORMAT=<ID=AD,Number=.,Type=Integer,Description="Allele Depths">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	SAMPLE1
+chr1	100	.	A	G	30.0	PASS	AF=0.0227273;DP=44	GT:VAF:AD	0/1:0.0227273:43,1
+chr1	200	.	C	T	25.5	PASS	AF=0.5454545;DP=22	GT:VAF:AD	0/1:0.5454545:10,12
+chr1	300	.	G	A	40.1	PASS	AF=0.3333333;DP=33	GT:VAF:AD	0/1:0.3333333:22,11
+"""
+
+    # Create temporary VCF file
+    vcf_path = tmp_path / "test_float_types.vcf"
+    vcf_path.write_text(vcf_content)
+    parquet_path = tmp_path / "test_float_types.parquet"
+
+    # Test 1: Verify explicit schema generation works correctly
+    from ugbio_featuremap.featuremap_to_dataframe import (
+        ALT,
+        CHROM,
+        POS,
+        REF,
+        _build_explicit_schema,
+        _resolve_bcftools_command,
+        header_meta,
+    )
+
+    # Parse header metadata
+    bcftools = _resolve_bcftools_command()
+    info_meta, fmt_meta = header_meta(str(vcf_path), bcftools)
+
+    # Verify that float types are correctly identified in header metadata
+    assert info_meta["AF"]["type"] == "Float", f"Expected AF to be Float, got {info_meta['AF']['type']}"
+    assert fmt_meta["VAF"]["type"] == "Float", f"Expected VAF to be Float, got {fmt_meta['VAF']['type']}"
+    assert info_meta["DP"]["type"] == "Integer", f"Expected DP to be Integer, got {info_meta['DP']['type']}"
+
+    # Build explicit schema
+    cols = [CHROM, POS, REF, ALT, "AF", "DP", "VAF", "AD"]
+    schema = _build_explicit_schema(cols, info_meta, fmt_meta)
+
+    # Verify schema types are correctly mapped
+    assert schema["AF"] == pl.Float64, f"Expected AF schema to be Float64, got {schema['AF']}"
+    assert schema["VAF"] == pl.Float64, f"Expected VAF schema to be Float64, got {schema['VAF']}"
+    assert schema["DP"] == pl.Int64, f"Expected DP schema to be Int64, got {schema['DP']}"
+    assert schema[POS] == pl.Int64, f"Expected POS schema to be Int64, got {schema[POS]}"
+
+    # Test 2: Verify end-to-end float parsing works correctly
+    featuremap_to_dataframe.vcf_to_parquet(
+        vcf=str(vcf_path),
+        out=str(parquet_path),
+        drop_info=set(),
+        drop_format={"GT"},  # Drop GT to avoid warnings
+    )
+
+    # Read the result and verify data types
+    result_df = pl.read_parquet(parquet_path)
+
+    # Verify float columns have correct types
+    assert result_df["AF"].dtype == pl.Float64, f"Expected AF to be Float64, got {result_df['AF'].dtype}"
+    assert result_df["VAF"].dtype == pl.Float64, f"Expected VAF to be Float64, got {result_df['VAF'].dtype}"
+    assert result_df["DP"].dtype == pl.Int64, f"Expected DP to be Int64, got {result_df['DP'].dtype}"
+
+    # Verify specific problematic values are preserved correctly
+    af_values = result_df["AF"].to_list()
+    vaf_values = result_df["VAF"].to_list()
+
+    # Check that the problematic decimal values are correctly parsed
+    expected_first_af = 0.0227273
+    expected_first_vaf = 0.0227273
+
+    assert (
+        abs(af_values[0] - expected_first_af) < 1e-6
+    ), f"Expected first AF to be ~{expected_first_af}, got {af_values[0]}"
+    assert (
+        abs(vaf_values[0] - expected_first_vaf) < 1e-6
+    ), f"Expected first VAF to be ~{expected_first_vaf}, got {vaf_values[0]}"
+
+    # Verify that all expected float values are present and correct
+    expected_af_values = [0.0227273, 0.0227273, 0.5454545, 0.5454545, 0.3333333, 0.3333333]
+    for i, expected in enumerate(expected_af_values):
+        actual = af_values[i]
+        assert abs(actual - expected) < 1e-6, f"AF value {i}: expected ~{expected}, got {actual}"
+
+
+def test_error_propagation_in_chunk_processing() -> None:
+    """
+    Test that chunk processing errors are properly propagated instead of being silently ignored.
+
+    This test addresses the critical issue where chunk processing failures were logged but not
+    re-raised, causing the overall process to appear successful despite data corruption.
+    """
+    import time
+    from concurrent.futures import ProcessPoolExecutor
+
+    from ugbio_featuremap.featuremap_to_dataframe import _check_completed_futures
+
+    def failing_task():
+        """A task that always fails - defined at module level for pickling."""
+        raise ValueError("Test error - this should propagate")
+
+    def succeeding_task():
+        """A task that succeeds - defined at module level for pickling."""
+        time.sleep(0.1)
+        return "success"
+
+    with ProcessPoolExecutor(max_workers=2) as executor:
+        # Submit one failing and one succeeding task
+        future1 = executor.submit(failing_task)
+        future2 = executor.submit(succeeding_task)
+
+        pending_futures = {future1: "failing_chunk", future2: "succeeding_chunk"}
+        processed_files = []
+
+        # Wait for tasks to complete
+        time.sleep(0.5)
+
+        # This should raise an exception due to the failing task
+        with pytest.raises(RuntimeError) as exc_info:
+            _check_completed_futures(pending_futures, processed_files, 10, 0)
+
+        # Verify the error message contains information about chunk processing failure
+        assert "Chunk processing failed" in str(exc_info.value)
+
+
+def test_decimal_value_float_type_inference_fix(tmp_path: Path) -> None:
+    """
+    Test the complete fix for decimal values being incorrectly parsed as integers.
+
+    This test verifies:
+    1. Explicit schema correctly maps VCF types to Polars types
+    2. Decimal values like 0.0227273 are parsed as Float64, not i64
+    3. Error propagation works correctly for chunk processing failures
+    4. The complete pipeline from VCF to Parquet preserves float precision
+
+    This is a comprehensive test for the main issues that were fixed:
+    - Schema inference problems causing type mismatches
+    - Silent failures in chunk processing
+    """
+    import time
+    from concurrent.futures import ProcessPoolExecutor
+
+    # Test VCF with the exact problematic float values from the original issue
+    test_vcf_content = """##fileformat=VCFv4.2
+##INFO=<ID=AF,Number=1,Type=Float,Description="Allele Frequency">
+##INFO=<ID=DP,Number=1,Type=Integer,Description="Total Depth">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=VAF,Number=1,Type=Float,Description="Variant Allele Frequency">
+##FORMAT=<ID=RN,Number=.,Type=String,Description="Read Names">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	SAMPLE1
+chr1	100	.	A	G	30.0	PASS	AF=0.0227273;DP=44	GT:VAF:RN	0/1:0.0227273:read1,read2
+chr1	200	.	C	T	25.5	PASS	AF=0.5454545;DP=22	GT:VAF:RN	0/1:0.5454545:read3,read4,read5
+"""
+
+    vcf_file = tmp_path / "test_decimal_fix.vcf"
+    vcf_file.write_text(test_vcf_content)
+    parquet_file = tmp_path / "test_decimal_fix.parquet"
+
+    # Part 1: Test explicit schema generation
+    from ugbio_featuremap.featuremap_to_dataframe import (
+        ALT,
+        CHROM,
+        POS,
+        REF,
+        _build_explicit_schema,
+        _resolve_bcftools_command,
+        header_meta,
+    )
+
+    bcftools = _resolve_bcftools_command()
+    info_meta, fmt_meta = header_meta(str(vcf_file), bcftools)
+
+    # Verify header metadata parsing
+    assert info_meta["AF"]["type"] == "Float"
+    assert info_meta["DP"]["type"] == "Integer"
+    assert fmt_meta["VAF"]["type"] == "Float"
+    assert fmt_meta["RN"]["type"] == "String"
+
+    # Test explicit schema generation
+    test_cols = [CHROM, POS, REF, ALT, "AF", "DP", "VAF", "RN"]
+    schema = _build_explicit_schema(test_cols, info_meta, fmt_meta)
+
+    # Verify correct type mapping
+    assert schema["AF"] == pl.Float64
+    assert schema["VAF"] == pl.Float64
+    assert schema["DP"] == pl.Int64
+    assert schema["RN"] == pl.Utf8
+    assert schema[POS] == pl.Int64
+    assert schema[CHROM] == pl.Utf8
+
+    # Part 2: Test end-to-end VCF to Parquet conversion
+    featuremap_to_dataframe.vcf_to_parquet(
+        vcf=str(vcf_file), out=str(parquet_file), drop_info=set(), drop_format={"GT"}
+    )
+
+    # Verify successful conversion and correct types
+    result_df = pl.read_parquet(parquet_file)
+
+    # Check data types are correct
+    assert result_df["AF"].dtype == pl.Float64
+    assert result_df["VAF"].dtype == pl.Float64
+    assert result_df["DP"].dtype == pl.Int64
+    assert result_df["RN"].dtype == pl.Utf8
+
+    # Check that the problematic decimal values are correctly preserved
+    af_values = result_df["AF"].to_list()
+    vaf_values = result_df["VAF"].to_list()
+
+    # Original problematic value that was causing failures
+    problematic_decimal = 0.0227273
+
+    # Verify the decimal values are parsed correctly (not as integers)
+    assert abs(af_values[0] - problematic_decimal) < 1e-6
+    assert abs(vaf_values[0] - problematic_decimal) < 1e-6
+
+    # Part 3: Test error propagation in chunk processing
+    from ugbio_featuremap.featuremap_to_dataframe import _check_completed_futures
+
+    with ProcessPoolExecutor(max_workers=2) as executor:
+        failing_future = executor.submit(_failing_task)
+        succeeding_future = executor.submit(_succeeding_task)
+
+        pending_futures = {failing_future: "test_failing_chunk", succeeding_future: "test_succeeding_chunk"}
+        processed_files = []
+
+        # Wait for completion
+        time.sleep(0.5)
+
+        # Should raise RuntimeError due to chunk processing failure
+        with pytest.raises(RuntimeError) as exc_info:
+            _check_completed_futures(pending_futures, processed_files, 10, 0)
+
+        # Verify error contains chunk information
+        error_msg = str(exc_info.value)
+        assert "Chunk processing failed" in error_msg
+        assert "test_failing_chunk" in error_msg
+
+    print("✅ All decimal value float type inference fixes verified successfully")

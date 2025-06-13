@@ -105,7 +105,7 @@ INFO_RE = re.compile(r'##INFO=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Descriptio
 FORMAT_RE = re.compile(r'##FORMAT=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description="([^"]*)')
 
 _POLARS_DTYPE = {"Integer": pl.Int64, "Float": pl.Float64, "Flag": pl.Boolean}
-CHROM, POS, REF, ALT, QUAL, FILTER = "CHROM", "POS", "REF", "ALT", "QUAL", "FILTER"
+CHROM, POS, REF, ALT, QUAL, FILTER, ID, SAMPLE = "CHROM", "POS", "REF", "ALT", "QUAL", "FILTER", "ID", "SAMPLE"
 # Reserved/fixed VCF columns (cannot be overridden)
 RESERVED = {CHROM, POS, REF, ALT, QUAL, FILTER}
 ALLELE_CATS = ["A", "C", "G", "T"]  # for REF / ALT
@@ -389,14 +389,19 @@ def _load_vcf_as_lazy_frame(
     vcf: str,
     fmt_str: str,
     cols: list[str],
-    infer_schema_length: int = 10000,
+    info_meta: dict,
+    fmt_meta: dict,
+    infer_schema_length: int = 10000,  # Keep as fallback but prefer explicit schema
 ) -> pl.LazyFrame:
     """Run bcftools query and load the TSV into a LazyFrame for memory-efficient processing."""
     with tempfile.NamedTemporaryFile("w+b", delete=False) as tmp:
         subprocess.run([bcftools, "query", "-f", fmt_str, vcf], stdout=tmp, check=True)
         path = tmp.name
 
-    # Use scan_csv for lazy loading - don't delete the file yet as lazy frames need it
+    # Build explicit schema from VCF metadata to avoid parsing issues
+    schema = _build_explicit_schema(cols, info_meta, fmt_meta)
+
+    # Use scan_csv with explicit schema - don't delete the file yet as lazy frames need it
     # The caller is responsible for cleanup if needed
     return pl.scan_csv(
         path,
@@ -405,7 +410,7 @@ def _load_vcf_as_lazy_frame(
         new_columns=cols,
         low_memory=True,
         null_values=["."],
-        infer_schema_length=infer_schema_length,
+        schema=schema,  # Use explicit schema instead of inference
     )
 
 
@@ -414,13 +419,18 @@ def _load_vcf_as_dataframe(
     vcf: str,
     fmt_str: str,
     cols: list[str],
-    infer_schema_length: int = 10000,
+    info_meta: dict,
+    fmt_meta: dict,
+    infer_schema_length: int = 10000,  # Keep as fallback but prefer explicit schema
 ) -> pl.DataFrame:
     """Run bcftools query and load the TSV into a DataFrame."""
     with tempfile.NamedTemporaryFile("w+b", delete=False) as tmp:
         subprocess.run([bcftools, "query", "-f", fmt_str, vcf], stdout=tmp, check=True)
         path = tmp.name
     try:
+        # Build explicit schema from VCF metadata to avoid parsing issues
+        schema = _build_explicit_schema(cols, info_meta, fmt_meta)
+
         return pl.read_csv(
             path,
             separator="\t",
@@ -429,7 +439,7 @@ def _load_vcf_as_dataframe(
             low_memory=True,
             decimal_comma=True,
             null_values=["."],
-            infer_schema_length=infer_schema_length,
+            schema=schema,  # Use explicit schema instead of inference
         )
     finally:
         Path(path).unlink(missing_ok=True)
@@ -790,11 +800,11 @@ def vcf_to_parquet_streaming(
 
     # Process using streaming approach for better memory efficiency
     with pl.StringCache():
-        log.debug("⚠️  Loading entire VCF into memory - THIS IS THE MEMORY-INTENSIVE STEP")
+        log.debug("⚠️ Loading entire VCF into memory - THIS IS A MEMORY-INTENSIVE STEP")
         _log_memory_usage("before_loading_vcf")
 
-        # Load data eagerly but process in chunks - THIS IS THE MEMORY BOTTLENECK!
-        featuremap_dataframe = _load_vcf_as_dataframe(bcftools, vcf, fmt_str, cols, chunk_size)
+        # Load data eagerly but process in chunks
+        featuremap_dataframe = _load_vcf_as_dataframe(bcftools, vcf, fmt_str, cols, info_meta, fmt_meta, chunk_size)
 
         _log_memory_usage("after_loading_vcf")
         log.debug(f"📊 Loaded dataframe: {featuremap_dataframe.shape[0]} rows × {featuremap_dataframe.shape[1]} cols")
@@ -1323,6 +1333,8 @@ def _check_completed_futures(
                 chunk_name = pending_futures[future]
                 log.error(f"Error processing chunk {chunk_name}: {e}")
                 completed_futures.append(future)
+                # Re-raise the exception to ensure failure propagates
+                raise RuntimeError(f"Chunk processing failed for {chunk_name}") from e
     except TimeoutError:
         # TimeoutError is expected when no futures complete within timeout
         pass
@@ -1690,6 +1702,68 @@ def vcf_to_parquet_parallel(
                 Path(output_file).unlink(missing_ok=True)
 
     log.info(f"Conversion completed: {out}")
+
+
+def _build_explicit_schema(cols: list[str], info_meta: dict, fmt_meta: dict) -> dict[str, pl.DataType]:
+    """
+    Build explicit Polars schema from VCF metadata to avoid schema inference issues.
+
+    This function maps VCF type information to appropriate Polars data types,
+    ensuring decimal values are correctly parsed as floats instead of integers.
+
+    Parameters
+    ----------
+    cols : list[str]
+        Column names from the featuremap
+    info_meta : dict
+        INFO field metadata from VCF header
+    fmt_meta : dict
+        FORMAT field metadata from VCF header
+
+    Returns
+    -------
+    dict[str, pl.DataType]
+        Schema mapping column names to Polars data types
+    """
+    schema = {}
+
+    # Standard VCF columns - these are always strings or ints
+    standard_vcf_cols = {
+        CHROM: pl.Utf8,
+        POS: pl.Int64,
+        ID: pl.Utf8,
+        REF: pl.Utf8,
+        ALT: pl.Utf8,
+        QUAL: pl.Float64,  # QUAL can be float
+        FILTER: pl.Utf8,
+        SAMPLE: pl.Utf8,
+    }
+
+    for col in cols:
+        if col in standard_vcf_cols:
+            schema[col] = standard_vcf_cols[col]
+        else:
+            # Look up type information from VCF metadata
+            meta = info_meta.get(col) or fmt_meta.get(col)
+            if meta:
+                vcf_type = meta.get("type", "String")
+                # Map VCF types to Polars types
+                if vcf_type == "Integer":
+                    schema[col] = pl.Int64
+                elif vcf_type == "Float":
+                    schema[col] = pl.Float64
+                elif vcf_type == "Flag":
+                    schema[col] = pl.Boolean
+                elif vcf_type == "String":
+                    schema[col] = pl.Utf8
+                else:
+                    # Default to string for unknown types
+                    schema[col] = pl.Utf8
+            else:
+                # Default to string if no metadata found
+                schema[col] = pl.Utf8
+
+    return schema
 
 
 # ─────────────────────────── CLI wrapper ─────────────────────────────────────
