@@ -53,8 +53,9 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 from collections import OrderedDict
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -64,8 +65,8 @@ from polars.exceptions import ShapeError
 log = logging.getLogger(__name__)
 
 # Configuration constants
-CHUNK_SIZE = 100_000  # Default chunk size for parallel processing
-DEFAULT_MAX_WORKERS = min(8, (os.cpu_count() or 4))  # Use up to 8 cores or available CPUs
+CHUNK_SIZE = 200_000  # Increased for better CPU utilization with bcftools/AWK
+DEFAULT_MAX_WORKERS = 0  # Use all available CPU cores by default
 
 
 def _log_memory_usage(stage: str) -> None:
@@ -847,7 +848,7 @@ def vcf_to_parquet_streaming(
     log.info("✅  %s: %d rows × %d cols", out, *featuremap_dataframe.shape)
 
 
-def vcf_to_parquet(
+def vcf_to_parquet_memory_efficient(
     vcf: str,
     out: str,
     drop_info: set[str] | None = None,
@@ -855,7 +856,7 @@ def vcf_to_parquet(
     categories_json: str | None = None,
 ) -> None:
     """
-    Convert a single-sample feature-map VCF into a per-read Parquet file.
+    Convert a single-sample feature-map VCF into a per-read Parquet file using memory-efficient processing.
 
     Parameters
     ----------
@@ -867,35 +868,16 @@ def vcf_to_parquet(
         INFO tags to exclude.  Default: keep all.
     drop_format
         FORMAT tags to exclude.  Default: ``{"GT"}``.
+    categories_json
+        JSON file with categorical feature overrides.
 
     Notes
     -----
     * Runs inside a ``pl.StringCache()`` context so all categorical
       columns share one global dictionary.
-    * List‐valued FORMAT fields remain ``list<Utf8>`` due to Polars 1.27
-      limitations; after ``explode`` they become scalars and are cast
-      like INFO fields.
-    * Now uses memory-efficient approach that explodes TSV rows directly.
-    """
-    # Use the memory-efficient version for better performance
-    return vcf_to_parquet_memory_efficient(
-        vcf=vcf,
-        out=out,
-        drop_info=drop_info,
-        drop_format=drop_format,
-        categories_json=categories_json,
-    )
-
-
-def vcf_to_parquet_memory_efficient(
-    vcf: str,
-    out: str,
-    drop_info: set[str] | None = None,
-    drop_format: set[str] | None = None,
-    categories_json: str | None = None,
-) -> None:
-    """
-    Convert a single-sample feature-map VCF into a per-read Parquet file using memory-efficient TSV explosion.
+    * List‐valued FORMAT fields remain ``list<Utf8>`` due to Polars limitations;
+      after ``explode`` they become scalars and are cast like INFO fields.
+    * Uses streaming processing with direct writes for memory efficiency.
     """
     _vcf_to_parquet_memory_efficient_impl(vcf, out, drop_info, drop_format, categories_json)
 
@@ -959,56 +941,6 @@ def _vcf_to_parquet_memory_efficient_impl(
 
         _log_memory_usage("after_streaming")
         log.info("✅  %s: %d rows × %d cols", out, total_rows, len(cols))
-
-
-def _stream_and_process_chunks(
-    bcftools: str,
-    vcf: str,
-    fmt_str: str,
-    cols: list[str],
-    list_fmt_indices: list[int],
-    column_config: ColumnConfig,
-    out: str,
-) -> list[str]:
-    temp_parquet_files = []
-    chunk_rows = []
-    chunk_idx = 0
-    for row in _explode_tsv_rows_generator(bcftools, vcf, fmt_str, cols, list_fmt_indices):
-        chunk_rows.append(row)
-        if len(chunk_rows) >= CHUNK_SIZE:
-            _log_memory_usage(f"before_chunk_{chunk_idx}")
-            temp_file = _process_and_write_chunk(
-                chunk_rows,
-                cols,
-                column_config.info_ids,
-                column_config.scalar_fmt_ids,
-                column_config.list_fmt_ids,
-                column_config.info_meta,
-                column_config.fmt_meta,
-                out,
-                chunk_idx,
-            )
-            temp_parquet_files.append(temp_file)
-            _log_memory_usage(f"after_chunk_{chunk_idx}")
-            chunk_rows = []
-            chunk_idx += 1
-    if chunk_rows:
-        _log_memory_usage(f"before_chunk_{chunk_idx}")
-        temp_file = _process_and_write_chunk(
-            chunk_rows,
-            cols,
-            column_config.info_ids,
-            column_config.scalar_fmt_ids,
-            column_config.list_fmt_ids,
-            column_config.info_meta,
-            column_config.fmt_meta,
-            out,
-            chunk_idx,
-        )
-        temp_parquet_files.append(temp_file)
-        _log_memory_usage(f"after_chunk_{chunk_idx}")
-    log.debug(f"[CHUNK] All chunks processed, {len(temp_parquet_files)} temp files created")
-    return temp_parquet_files
 
 
 def _create_chunk_dataframe(chunk_rows: list[list[str]], cols: list[str]) -> pl.DataFrame | None:
@@ -1263,7 +1195,6 @@ def _explode_and_split_with_bcftools_awk_streaming(
     bcftools_path: str,
     chunk_size: int,
     chunk_directory: Path,
-    num_threads: int = 1,
 ) -> subprocess.Popen:
     """
     Start bcftools + AWK pipeline that creates chunks as they stream.
@@ -1399,8 +1330,6 @@ def _monitor_and_process_chunks_concurrent(
     This implements true producer-consumer concurrency where TSV chunks
     are processed as soon as they're created.
     """
-    import time
-    from concurrent.futures import Future, as_completed
 
     processed_files = []
     chunk_counter = 0
@@ -1506,9 +1435,17 @@ def _process_chunk_to_parquet(args: ChunkProcessingArgs) -> str:
     Note: Parquet writing is often I/O bound, which may limit CPU utilization.
     """
     try:
-        # Read the chunk TSV into DataFrame
+        # Build explicit schema for consistent type inference
+        schema = _build_explicit_schema(args.cols, args.info_meta, args.fmt_meta)
+
+        # Read the chunk TSV into DataFrame with explicit schema
         chunk_df = pl.read_csv(
-            args.chunk_file, separator="\t", has_header=False, new_columns=args.cols, null_values=["."]
+            args.chunk_file,
+            separator="\t",
+            has_header=False,
+            new_columns=args.cols,
+            null_values=["."],
+            schema=schema,
         )
 
         if chunk_df.height == 0:
@@ -1584,7 +1521,6 @@ def vcf_to_parquet_parallel(
     categories_json: str | None = None,
     chunk_size: int = CHUNK_SIZE,
     max_workers: int = DEFAULT_MAX_WORKERS,
-    bcftools_threads: int = 1,
 ) -> None:
     """
     Convert VCF to Parquet using new parallel architecture.
@@ -1612,8 +1548,6 @@ def vcf_to_parquet_parallel(
         Number of rows per chunk for parallel processing
     max_workers : int
         Maximum number of parallel workers
-    bcftools_threads : int
-        Number of threads for bcftools
     """
     log.info(f"Converting {vcf} to {out} using parallel architecture")
 
@@ -1666,7 +1600,7 @@ def vcf_to_parquet_parallel(
             # Step 1: Start the bcftools + AWK + split pipeline (non-blocking)
             log.info("Step 1: Starting streaming bcftools + AWK + split pipeline")
             pipeline_process = _explode_and_split_with_bcftools_awk_streaming(
-                vcf, fmt_str, list_fmt_indices, bcftools, chunk_size, chunk_directory, bcftools_threads
+                vcf, fmt_str, list_fmt_indices, bcftools, chunk_size, chunk_directory
             )
 
             # Prepare template arguments for chunk processing
@@ -1787,15 +1721,10 @@ def main() -> None:
         help="JSON file whose `categorical_features` map overrides/extends " "automatically-inferred enumerations.",
     )
     ap.add_argument(
-        "--fast",
-        action="store_true",
-        help="use fast streaming version instead of memory-efficient version (may use more memory)",
-    )
-    ap.add_argument(
-        "--parallel",
-        action="store_true",
-        default=True,
-        help="use new parallel architecture with bcftools+AWK (default, recommended)",
+        "--method",
+        choices=["parallel", "streaming", "memory_efficient"],
+        default="parallel",
+        help="processing method: parallel (default), streaming (fast), or memory_efficient (low memory)",
     )
     ap.add_argument(
         "--chunk-size",
@@ -1807,13 +1736,7 @@ def main() -> None:
         "--max-workers",
         type=int,
         default=DEFAULT_MAX_WORKERS,
-        help=f"maximum number of parallel workers (default: {DEFAULT_MAX_WORKERS})",
-    )
-    ap.add_argument(
-        "--bcftools-threads",
-        type=int,
-        default=1,
-        help="number of threads for bcftools (default: 1)",
+        help=f"maximum number of parallel workers (0 = use all CPU cores, default: {DEFAULT_MAX_WORKERS})",
     )
     ap.add_argument("-v", "--verbose", action="store_true", help="emit DEBUG‐level logs")
     args = ap.parse_args()
@@ -1829,36 +1752,36 @@ def main() -> None:
             format="%(asctime)s - %(levelname)s - %(message)s",
         )
 
-    if args.parallel:
-        # Use new parallel architecture (default, recommended)
+    # Determine processing method
+    method = args.method
+
+    # Handle max_workers: 0 means use all CPU cores
+    max_workers = args.max_workers
+    if max_workers == 0:
+        max_workers = os.cpu_count() or 4
+
+    # Common parameters
+    common_params = {
+        "vcf": args.vcf,
+        "out": args.out_parquet,
+        "drop_info": set(filter(None, args.drop_info.split(","))),
+        "drop_format": set(filter(None, args.drop_format.split(","))),
+        "categories_json": args.categories_json,
+    }
+
+    if method == "parallel":
+        # Use parallel architecture (default and recommended)
         vcf_to_parquet_parallel(
-            vcf=args.vcf,
-            out=args.out_parquet,
-            drop_info=set(filter(None, args.drop_info.split(","))),
-            drop_format=set(filter(None, args.drop_format.split(","))),
-            categories_json=args.categories_json,
+            **common_params,
             chunk_size=args.chunk_size,
-            max_workers=args.max_workers,
-            bcftools_threads=args.bcftools_threads,
+            max_workers=max_workers,
         )
-    elif args.fast:
+    elif method == "streaming":
         # Use streaming version for faster processing (may use more memory)
-        vcf_to_parquet_streaming(
-            vcf=args.vcf,
-            out=args.out_parquet,
-            drop_info=set(filter(None, args.drop_info.split(","))),
-            drop_format=set(filter(None, args.drop_format.split(","))),
-            categories_json=args.categories_json,
-        )
-    else:
+        vcf_to_parquet_streaming(**common_params)
+    else:  # memory_efficient
         # Use memory-efficient version
-        vcf_to_parquet_memory_efficient(
-            vcf=args.vcf,
-            out=args.out_parquet,
-            drop_info=set(filter(None, args.drop_info.split(","))),
-            drop_format=set(filter(None, args.dropFormat.split(","))),
-            categories_json=args.categories_json,
-        )
+        vcf_to_parquet_memory_efficient(**common_params)
 
 
 if __name__ == "__main__":
