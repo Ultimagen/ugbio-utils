@@ -3,11 +3,52 @@ import logging
 import os
 import subprocess
 import sys
+from enum import Enum
 from os.path import join as pjoin
 
 from ugbio_core.logger import logger
 
 from ugbio_featuremap import featuremap_xgb_prediction
+
+
+class DefaultCustomInfoFieldsWithSingleValue(Enum):
+    READ_COUNT = ("X_READ_COUNT", "Number of reads containing this location", "Integer")
+    FILTERED_COUNT = (
+        "X_FILTERED_COUNT",
+        "Number of reads containing this location that pass the adjacent base filter",
+        "Integer",
+    )
+    TRINUC_CONTEXT_WITH_ALT = ("trinuc_context_with_alt", "reference trinucleotide context and alt base", "String")
+    HMER_CONTEXT_ALT = (
+        "hmer_context_alt",
+        "homopolymer context in the ref allele assuming the variant considered only up to length 20",
+        "Integer",
+    )
+
+    def __init__(self, label, description, type_):
+        self.label = label
+        self.description = description
+        self.type = type_
+
+
+class LocusFeaturesWithSingleValue(Enum):
+    HMER_CONTEXT_REF = ("hmer_context_ref", "reference homopolymer context up to length 20", "Integer")
+    PREV_1 = ("prev_1", "1 bases in the reference before variant", "String")
+    PREV_2 = ("prev_2", "2 bases in the reference before variant", "String")
+    PREV_3 = ("prev_3", "3 bases in the reference before variant", "String")
+    NEXT_1 = ("next_1", "1 bases in the reference after variant", "String")
+    NEXT_2 = ("next_2", "2 bases in the reference after variant", "String")
+    NEXT_3 = ("next_3", "3 bases in the reference after variant", "String")
+    IS_CYCLE_SKIP = ("is_cycle_skip", "True if the SNV is a cycle skip", "Integer")
+
+    def __init__(self, label, description, type_):
+        self.label = label
+        self.description = description
+        self.type = type_
+
+
+def enum_to_dict(class_name):
+    return {member.label: [member.description, member.type] for member in class_name}
 
 
 def get_combined_vcf_features():
@@ -16,26 +57,10 @@ def get_combined_vcf_features():
     This includes both the default custom info fields and any additional features
     added by the featuremap_xgb_prediction module.
     Returns:
-        dict: A dictionary where keys are the feature tags and values are lists containing
+        info_field_tags: A dictionary where keys are the feature tags and values are lists containing
         the description and type of the feature.
     """
-    default_custom_info_fields_single_value = {
-        "X_READ_COUNT": ["Number of reads containing this location", "Integer"],
-        "X_FILTERED_COUNT": ["Number of reads containing this location that pass the adjacent base filter", "Integer"],
-        "trinuc_context_with_alt": ["reference trinucleotide context and alt base", "String"],
-        "hmer_context_ref": ["reference homopolymer context up to length 20", "Integer"],
-        "hmer_context_alt": [
-            "homopolymer context in the ref allele assuming the variant considered only up to length 20",
-            "Integer",
-        ],
-        "prev_1": ["1 bases in the reference before variant", "String"],
-        "prev_2": ["2 bases in the reference before variant", "String"],
-        "prev_3": ["3 bases in the reference before variant", "String"],
-        "next_1": ["1 bases in the reference after variant", "String"],
-        "next_2": ["2 bases in the reference after variant", "String"],
-        "next_3": ["3 bases in the reference after variant", "String"],
-        "is_cycle_skip": ["True if the SNV is a cycle skip", "Integer"],
-    }
+    default_custom_info_fields_single_value = enum_to_dict(DefaultCustomInfoFieldsWithSingleValue)
     added_agg_features = featuremap_xgb_prediction.added_agg_features
     info_field_tags = {**default_custom_info_fields_single_value, **added_agg_features}
     return info_field_tags
@@ -45,30 +70,24 @@ def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags): 
     """
     Move the values from INFO to FORMAT in a VCF file.
     This is necessary for the XGB model to work correctly.
-    Args:
+    Inputs:
         input_vcf (str): Path to the input VCF file.
         output_vcf (str): Path to the output VCF file.
         info_field_tags (dict): Dictionary of INFO field tags to be moved to FORMAT.
+    Outputs:
+        output_vcf (str): the output_vcf filename supplied in Inputs.
     """
     out_dir_name = os.path.dirname(output_vcf)
 
     # add filter status to info fields
     logger.debug("add filter status to info fields")
     out_vcf_with_info_filter = f"{output_vcf}.tmp"
-    cmd = [
-        "bcftools",
-        "annotate",
-        "--threads",
-        "30",
-        "-c",
-        "INFO/filter_status:=FILTER",
-        "-O",
-        "z",
-        "-o",
-        out_vcf_with_info_filter,
-        input_vcf,
-    ]
-    logger.debug(" ".join(cmd))
+    cmd = f"bcftools annotate --threads 30 \
+            -c INFO/filter_status:=FILTER \
+            -O z \
+            -o {out_vcf_with_info_filter} \
+            {input_vcf}"
+    logger.debug(cmd)
     subprocess.check_call(cmd)
     info_field_tags["filter_status"] = ["filter status", "String"]
 
@@ -127,28 +146,16 @@ def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags): 
     # Transfer the annotation to sample 'SAMPLE'
     logger.debug("Transfer the annotation to sample SAMPLE")
     max_threads = os.cpu_count()
-    cmd = [
-        "bcftools",
-        "annotate",
-        "--threads",
-        str(max_threads),
-        "-x",
-        "INFO",
-        "-s",
-        "SAMPLE",
-        "-a",
-        annotation_file,
-        "-h",
-        hdr_file,
-        "-c",
-        f"CHROM,POS,REF,ALT{c_string}",
-        "-O",
-        "z",
-        "-o",
-        output_vcf,
-        out_vcf_with_info_filter,
-    ]
-    logger.debug(" ".join(cmd))
+    cmd = f"bcftools annotate --threads {str(max_threads)} \
+        -x INFO \
+        -s SAMPLE \
+        -a {annotation_file} \
+        -h {hdr_file} \
+        -c CHROM,POS,REF,ALT{c_string} \
+        -O z \
+        -o {output_vcf} \
+        {out_vcf_with_info_filter}"
+    logger.debug(cmd)
     subprocess.check_call(cmd)
     # Index the output VCF with tabix
     subprocess.check_call(["tabix", "-p", "vcf", output_vcf])  # noqa: S607
@@ -157,10 +164,13 @@ def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags): 
 def merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_merged_vcf):
     """
     Merge tumor and normal VCF files into a single VCF file.
-    Args:
-        tumor_vcf (str): Path to the tumor VCF file.
-        normal_vcf (str): Path to the normal VCF file.
-        workdir (str): Working directory where the merged VCF will be saved.
+    Inputs:
+        tumor_vcf_info_to_format (str): Path to the tumor VCF file with INFO fields moved to FORMAT.
+        normal_vcf_info_to_format (str): Path to the normal VCF file with INFO fields moved to FORMAT.
+        out_merged_vcf (str): Path to the output merged VCF file.
+    Outputs:
+        out_merged_vcf (str): Path to the output merged VCF file as supplied in Inputs:gitout_merged_vcf.
+        out_merged_vcf_tumor_pass (str): Path to the output merged VCF file with tumor-PASS variants only.
     """
     max_threads = os.cpu_count()
 
