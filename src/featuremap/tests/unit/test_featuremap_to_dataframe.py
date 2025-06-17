@@ -55,7 +55,7 @@ def test_comprehensive_vcf_to_parquet_conversion(tmp_path: Path, input_featurema
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         # run conversion (drop GT by default)
-        featuremap_to_dataframe.vcf_to_parquet_memory_efficient(
+        featuremap_to_dataframe.vcf_to_parquet(
             vcf=str(input_featuremap),
             out=out_path,
             drop_info=set(),
@@ -89,7 +89,7 @@ def test_enum_column_is_categorical(tmp_path: Path, input_featuremap: Path) -> N
     with exactly those four categories.
     """
     out_path = str(tmp_path / input_featuremap.name.replace(".vcf.gz", ".parquet"))
-    featuremap_to_dataframe.vcf_to_parquet_memory_efficient(
+    featuremap_to_dataframe.vcf_to_parquet(
         vcf=str(input_featuremap),
         out=out_path,
         drop_info=set(),
@@ -108,7 +108,7 @@ def test_enum_column_is_categorical(tmp_path: Path, input_featuremap: Path) -> N
 def test_roundtrip(tmp_path: Path, input_featuremap: Path):
     """Parquet row count == total RN elements in source VCF."""
     out = tmp_path / "out.parquet"
-    featuremap_to_dataframe.vcf_to_parquet_memory_efficient(str(input_featuremap), str(out))
+    featuremap_to_dataframe.vcf_to_parquet(str(input_featuremap), str(out))
 
     featuremap_dataframe = pl.read_parquet(out)
 
@@ -125,7 +125,7 @@ def test_roundtrip(tmp_path: Path, input_featuremap: Path):
 # ------------- categorical-override test ----------------------------------
 def test_json_override(tmp_path: Path, input_featuremap: Path, input_categorical_features: Path):
     out = tmp_path / "override.parquet"
-    featuremap_to_dataframe.vcf_to_parquet_memory_efficient(
+    featuremap_to_dataframe.vcf_to_parquet(
         str(input_featuremap), str(out), categories_json=str(input_categorical_features)
     )
     featuremap_dataframe = pl.read_parquet(out)
@@ -140,7 +140,7 @@ def test_json_override(tmp_path: Path, input_featuremap: Path, input_categorical
 # ------------- REF/ALT default categories ---------------------------------
 def test_ref_alt_defaults(tmp_path: Path, input_featuremap: Path):
     out = tmp_path / "def.parquet"
-    featuremap_to_dataframe.vcf_to_parquet_memory_efficient(str(input_featuremap), str(out))
+    featuremap_to_dataframe.vcf_to_parquet(str(input_featuremap), str(out))
     featuremap_dataframe = pl.read_parquet(out)
     for tag in ("REF", "ALT"):
         assert set(featuremap_dataframe[tag].cat.get_categories()) == {"", "A", "C", "G", "T"}
@@ -169,7 +169,7 @@ def test_json_override_and_reserved_warning(tmp_path, input_featuremap: Path, in
     out = tmp_path / "out.parquet"
 
     caplog.set_level(logging.WARNING)
-    featuremap_to_dataframe.vcf_to_parquet_memory_efficient(
+    featuremap_to_dataframe.vcf_to_parquet(
         str(input_featuremap), str(out), categories_json=str(input_categorical_features)
     )
 
@@ -187,7 +187,7 @@ def test_json_override_and_reserved_warning(tmp_path, input_featuremap: Path, in
 
 def test_selected_dtypes(tmp_path: Path, input_featuremap: Path):
     out = tmp_path / "full.parquet"
-    featuremap_to_dataframe.vcf_to_parquet_memory_efficient(str(input_featuremap), str(out))
+    featuremap_to_dataframe.vcf_to_parquet(str(input_featuremap), str(out))
 
     featuremap_dataframe = pl.read_parquet(out)
 
@@ -203,80 +203,9 @@ def test_selected_dtypes(tmp_path: Path, input_featuremap: Path):
         assert featuremap_dataframe[col].dtype == dt, f"{col} dtype {featuremap_dataframe[col].dtype} ≠ {dt}"
 
 
+@pytest.mark.skip(reason="Test removed - only parallel method exists now")
 def test_streaming_vs_memory_efficient_vs_parallel_identical_results(tmp_path: Path, input_featuremap: Path) -> None:
-    """Test that all three implementations produce identical results."""
-    streaming_out = tmp_path / "streaming.parquet"
-    memory_efficient_out = tmp_path / "memory_efficient.parquet"
-    parallel_out = tmp_path / "parallel.parquet"
-
-    # Run all three implementations
-    featuremap_to_dataframe.vcf_to_parquet_streaming(
-        vcf=str(input_featuremap),
-        out=str(streaming_out),
-        drop_info=set(),
-        drop_format={"GT"},
-    )
-
-    featuremap_to_dataframe.vcf_to_parquet_memory_efficient(
-        vcf=str(input_featuremap),
-        out=str(memory_efficient_out),
-        drop_info=set(),
-        drop_format={"GT"},
-    )
-
-    # Use smaller chunk size and limited workers for testing
-    featuremap_to_dataframe.vcf_to_parquet_parallel(
-        vcf=str(input_featuremap),
-        out=str(parallel_out),
-        drop_info=set(),
-        drop_format={"GT"},
-        chunk_size=1000,
-        max_workers=2,
-    )
-
-    # Load all results
-    streaming_df = pl.read_parquet(streaming_out)
-    memory_efficient_df = pl.read_parquet(memory_efficient_out)
-    parallel_df = pl.read_parquet(parallel_out)
-
-    # Verify they have identical shapes
-    assert streaming_df.shape == memory_efficient_df.shape == parallel_df.shape, (
-        f"Shape mismatch: streaming {streaming_df.shape}, "
-        f"memory-efficient {memory_efficient_df.shape}, parallel {parallel_df.shape}"
-    )
-
-    # Verify they have identical column names and order
-    assert streaming_df.columns == memory_efficient_df.columns == parallel_df.columns, "Column mismatch"
-
-    # Sort all dataframes by a stable key for comparison
-    sort_cols = ["CHROM", "POS", "REF", "ALT", "RN"]  # RN is the read name, unique identifier
-    streaming_sorted = streaming_df.sort(sort_cols)
-    memory_efficient_sorted = memory_efficient_df.sort(sort_cols)
-    parallel_sorted = parallel_df.sort(sort_cols)
-
-    # Verify content is identical
-    try:
-        # Use equals for exact comparison
-        assert streaming_sorted.equals(
-            memory_efficient_sorted
-        ), "Streaming vs Memory-efficient: DataFrames are not identical"
-        assert streaming_sorted.equals(parallel_sorted), "Streaming vs Parallel: DataFrames are not identical"
-        assert memory_efficient_sorted.equals(
-            parallel_sorted
-        ), "Memory-efficient vs Parallel: DataFrames are not identical"
-    except AssertionError:
-        # If not equal, provide more detailed comparison
-        for df_name, df in [
-            ("streaming", streaming_sorted),
-            ("memory_efficient", memory_efficient_sorted),
-            ("parallel", parallel_sorted),
-        ]:
-            print(f"{df_name} shape: {df.shape}")
-            for col in streaming_sorted.columns:
-                col_data = df[col]
-                print(f"  {col}: dtype={col_data.dtype}, null_count={col_data.null_count()}")
-
-        raise AssertionError("DataFrames have content differences")
+    """Test removed since we only have parallel processing now."""
 
 
 @pytest.mark.skip(reason="Parallel test hangs in pytest environment - functionality verified manually")
@@ -286,7 +215,7 @@ def test_parallel_vcf_conversion_comprehensive(tmp_path: Path, input_featuremap:
     sequential_out = str(tmp_path / "sequential_output.parquet")
 
     # Run parallel conversion
-    featuremap_to_dataframe.vcf_to_parquet_parallel(
+    featuremap_to_dataframe.vcf_to_parquet(
         vcf=str(input_featuremap),
         out=parallel_out,
         drop_info=set(),
@@ -295,8 +224,8 @@ def test_parallel_vcf_conversion_comprehensive(tmp_path: Path, input_featuremap:
         max_workers=2,  # Limited workers for testing
     )
 
-    # Run sequential conversion for comparison
-    featuremap_to_dataframe.vcf_to_parquet_memory_efficient(
+    # Run another parallel conversion for comparison
+    featuremap_to_dataframe.vcf_to_parquet(
         vcf=str(input_featuremap),
         out=sequential_out,
         drop_info=set(),
@@ -518,7 +447,7 @@ chr1	300	.	G	A	40.1	PASS	AF=0.3333333;DP=33	GT:VAF:AD	0/1:0.3333333:22,11
     assert schema[POS] == pl.Int64, f"Expected POS schema to be Int64, got {schema[POS]}"
 
     # Test 2: Verify end-to-end float parsing works correctly
-    featuremap_to_dataframe.vcf_to_parquet_memory_efficient(
+    featuremap_to_dataframe.vcf_to_parquet(
         vcf=str(vcf_path),
         out=str(parquet_path),
         drop_info=set(),
@@ -652,7 +581,7 @@ chr1	200	.	C	T	25.5	PASS	AF=0.5454545;DP=22	GT:VAF:RN	0/1:0.5454545:read3,read4,
     assert schema[CHROM] == pl.Utf8
 
     # Part 2: Test end-to-end VCF to Parquet conversion
-    featuremap_to_dataframe.vcf_to_parquet_memory_efficient(
+    featuremap_to_dataframe.vcf_to_parquet(
         vcf=str(vcf_file), out=str(parquet_file), drop_info=set(), drop_format={"GT"}
     )
 

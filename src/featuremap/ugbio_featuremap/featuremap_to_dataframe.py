@@ -54,7 +54,6 @@ import shutil
 import subprocess
 import tempfile
 import time
-from collections import OrderedDict
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -131,7 +130,7 @@ def _enum(desc: str) -> list[str] | None:
     return m.group(1).split(",") if m else None
 
 
-def header_meta(vcf: str, bcftools_path: str) -> tuple[dict, dict]:
+def header_meta(vcf: str, bcftools_path: str, threads: int = 0) -> tuple[dict, dict]:
     """
     Parse the VCF header and build dictionaries with tag metadata.
 
@@ -141,6 +140,8 @@ def header_meta(vcf: str, bcftools_path: str) -> tuple[dict, dict]:
         Path to input VCF/BCF (bgzipped ok).
     bcftools_path
         Absolute path to the ``bcftools`` executable.
+    threads
+        Number of threads for bcftools (0 = auto-detect).
 
     Returns
     -------
@@ -153,7 +154,12 @@ def header_meta(vcf: str, bcftools_path: str) -> tuple[dict, dict]:
                 "cat":   list[str] | None   # enumeration from {_,..._}
             }
     """
-    txt = subprocess.check_output([bcftools_path, "view", "-h", vcf], text=True)
+    cmd = [bcftools_path, "view", "-h"]
+    if threads > 0:
+        cmd.extend(["--threads", str(threads)])
+    cmd.append(vcf)
+
+    txt = subprocess.check_output(cmd, text=True)
     info, fmt = {}, {}
     for m in INFO_RE.finditer(txt):
         k, n, t, d = m.groups()
@@ -733,214 +739,7 @@ def _explode_tsv_rows_generator(
 
 
 # ───────────────── core converter ────────────────────────────────────────────
-CHUNK_SIZE = 10000
-
-
-def vcf_to_parquet_streaming(
-    vcf: str,
-    out: str,
-    drop_info: set[str] | None = None,
-    drop_format: set[str] | None = None,
-    categories_json: str | None = None,
-    chunk_size: int = 100_000,
-) -> None:
-    """
-    Convert a single-sample feature-map VCF into a per-read Parquet file using streaming/chunked processing.
-
-    Parameters
-    ----------
-    vcf
-        Input VCF/BCF path (may be ``.gz`` + ``.tbi``).
-    out
-        Output Parquet path.
-    drop_info
-        INFO tags to exclude.  Default: keep all.
-    drop_format
-        FORMAT tags to exclude.  Default: ``{"GT"}``.
-    categories_json
-        Path to JSON file with categorical overrides.
-    chunk_size
-        Number of variants to process at once.    Notes
-    -----
-    * Uses lazy evaluation and streaming to reduce memory usage.
-    * Maintains categorical column functionality.
-    """
-    log.debug("🚀 Starting vcf_to_parquet_streaming")
-    _log_memory_usage("streaming_start")
-
-    overrides = _get_override_categories(categories_json)
-
-    # resolve info and format tags from header
-    drop_info = drop_info or set()
-    drop_format = drop_format or {"GT"}
-    if "GT" not in drop_format:
-        log.warning(
-            "GT not dropped; this may break downstream logic. Include 'GT' in --drop-format to "
-            "drop if an error occurs."
-        )
-
-    bcftools = _resolve_bcftools_command()
-    info_meta, fmt_meta = header_meta(vcf, bcftools)
-
-    # Merge JSON overrides
-    for k, v in overrides.items():
-        target = fmt_meta if k in fmt_meta else info_meta
-        target.setdefault(k, {"num": "1", "type": "String", "cat": None})["cat"] = v
-
-    info_ids = [k for k in info_meta if k not in drop_info]
-    format_ids = [k for k in fmt_meta if k not in drop_format]
-
-    _sanity_check_format_numbers(format_ids, fmt_meta)
-    scalar_fmt_ids, list_fmt_ids = _split_format_ids(format_ids, fmt_meta)
-
-    query_info = [k for k in info_meta if k not in RESERVED and k not in drop_info]
-    fmt_str = _make_query_string(format_ids, query_info)
-    cols = list(OrderedDict.fromkeys([CHROM, POS, REF, ALT, *info_ids, *format_ids]))
-
-    log.debug(f"📋 Columns configured: {len(cols)} total, {len(list_fmt_ids)} list columns")
-
-    # Process using streaming approach for better memory efficiency
-    with pl.StringCache():
-        log.debug("⚠️ Loading entire VCF into memory - THIS IS A MEMORY-INTENSIVE STEP")
-        _log_memory_usage("before_loading_vcf")
-
-        # Load data eagerly but process in chunks
-        featuremap_dataframe = _load_vcf_as_dataframe(bcftools, vcf, fmt_str, cols, info_meta, fmt_meta, chunk_size)
-
-        _log_memory_usage("after_loading_vcf")
-        log.debug(f"📊 Loaded dataframe: {featuremap_dataframe.shape[0]} rows × {featuremap_dataframe.shape[1]} cols")
-
-        featuremap_dataframe = featuremap_dataframe.with_columns(pl.col(POS).cast(pl.Int64))
-
-        # Apply all column casting
-        log.debug("🎭 Applying column casting")
-        _log_memory_usage("before_casting")
-        featuremap_dataframe = _cast_all_columns(
-            featuremap_dataframe, info_ids, scalar_fmt_ids, list_fmt_ids, info_meta, fmt_meta
-        )
-        _log_memory_usage("after_casting")
-
-        # Use the retry mechanism for exploding - THIS IS ANOTHER MEMORY BOTTLENECK!
-        log.debug("💥 Starting explode operation - MEMORY INTENSIVE")
-        _log_memory_usage("before_explode")
-        featuremap_dataframe, list_fmt_ids = _explode_with_retry(featuremap_dataframe, list_fmt_ids)
-        _log_memory_usage("after_explode")
-        log.debug(f"📊 After explode: {featuremap_dataframe.shape[0]} rows × {featuremap_dataframe.shape[1]} cols")
-
-        # After explode, cast the exploded columns as scalars
-        for tag in list_fmt_ids:
-            featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
-
-        # Apply categorical category registration for any categorical columns
-        for tag in info_ids + scalar_fmt_ids + list_fmt_ids + [REF, ALT]:
-            if tag in featuremap_dataframe.columns:
-                col_meta = (
-                    info_meta.get(tag) or fmt_meta.get(tag) or {"cat": ALLELE_CATS if tag in [REF, ALT] else None}
-                )
-                cats = col_meta.get("cat")
-                if cats and featuremap_dataframe[tag].dtype == pl.Categorical:
-                    featuremap_dataframe = _ensure_scalar_categories(featuremap_dataframe, tag, cats)
-
-    log.debug("💾 Writing final parquet file")
-    _log_memory_usage("before_writing")
-    featuremap_dataframe.write_parquet(out)
-    _log_memory_usage("after_writing")
-    log.info("✅  %s: %d rows × %d cols", out, *featuremap_dataframe.shape)
-
-
-def vcf_to_parquet_memory_efficient(
-    vcf: str,
-    out: str,
-    drop_info: set[str] | None = None,
-    drop_format: set[str] | None = None,
-    categories_json: str | None = None,
-) -> None:
-    """
-    Convert a single-sample feature-map VCF into a per-read Parquet file using memory-efficient processing.
-
-    Parameters
-    ----------
-    vcf
-        Input VCF/BCF path (may be ``.gz`` + ``.tbi``).
-    out
-        Output Parquet path.
-    drop_info
-        INFO tags to exclude.  Default: keep all.
-    drop_format
-        FORMAT tags to exclude.  Default: ``{"GT"}``.
-    categories_json
-        JSON file with categorical feature overrides.
-
-    Notes
-    -----
-    * Runs inside a ``pl.StringCache()`` context so all categorical
-      columns share one global dictionary.
-    * List‐valued FORMAT fields remain ``list<Utf8>`` due to Polars limitations;
-      after ``explode`` they become scalars and are cast like INFO fields.
-    * Uses streaming processing with direct writes for memory efficiency.
-    """
-    _vcf_to_parquet_memory_efficient_impl(vcf, out, drop_info, drop_format, categories_json)
-
-
-def _vcf_to_parquet_memory_efficient_impl(
-    vcf: str,
-    out: str,
-    drop_info: set[str] | None,
-    drop_format: set[str] | None,
-    categories_json: str | None,
-) -> None:
-    log.debug("🚀 Starting vcf_to_parquet_memory_efficient")
-    _log_memory_usage("memory_efficient_start")
-    overrides = _get_override_categories(categories_json)
-    drop_info = drop_info or set()
-    drop_format = drop_format or {"GT"}
-    if "GT" not in drop_format:
-        log.warning(
-            "GT not dropped; this may break downstream logic. Include 'GT' in --drop-format to "
-            "drop if an error occurs."
-        )
-    log.debug("📋 Parsing VCF header metadata")
-    bcftools = _resolve_bcftools_command()
-    info_meta, fmt_meta = header_meta(vcf, bcftools)
-    for k, v in overrides.items():
-        target = fmt_meta if k in fmt_meta else info_meta
-        target.setdefault(k, {"num": "1", "type": "String", "cat": None})["cat"] = v
-    info_ids = [k for k in info_meta if k not in drop_info]
-    format_ids = [k for k in fmt_meta if k not in drop_format]
-    _sanity_check_format_numbers(format_ids, fmt_meta)
-    scalar_fmt_ids, list_fmt_ids = _split_format_ids(format_ids, fmt_meta)
-    query_info = [k for k in info_meta if k not in RESERVED and k not in drop_info]
-    fmt_str = _make_query_string(format_ids, query_info)
-    cols = list(OrderedDict.fromkeys([CHROM, POS, REF, ALT, *info_ids, *format_ids]))
-    list_fmt_indices = [cols.index(col) for col in list_fmt_ids if col in cols]
-    log.debug(f"📋 Columns configured: {len(cols)} total, {len(list_fmt_ids)} list columns to explode")
-    log.debug(f"🎯 List column indices: {list_fmt_indices}")
-
-    with pl.StringCache():
-        log.debug("🔄 Starting streaming batch processing with direct write")
-        _log_memory_usage("before_streaming")
-
-        column_config = ColumnConfig(
-            info_ids=info_ids,
-            scalar_fmt_ids=scalar_fmt_ids,
-            list_fmt_ids=list_fmt_ids,
-            info_meta=info_meta,
-            fmt_meta=fmt_meta,
-        )
-
-        # Process and write batches directly to output file
-        total_rows = _stream_and_write_batches_directly(
-            bcftools,
-            vcf,
-            fmt_str,
-            cols,
-            list_fmt_indices,
-            column_config,
-            out,
-        )
-
-        _log_memory_usage("after_streaming")
-        log.info("✅  %s: %d rows × %d cols", out, total_rows, len(cols))
+# Only parallel processing is supported for optimal performance and CPU utilization
 
 
 def _create_chunk_dataframe(chunk_rows: list[list[str]], cols: list[str]) -> pl.DataFrame | None:
@@ -1195,6 +994,7 @@ def _explode_and_split_with_bcftools_awk_streaming(
     bcftools_path: str,
     chunk_size: int,
     chunk_directory: Path,
+    threads: int = 0,
 ) -> subprocess.Popen:
     """
     Start bcftools + AWK pipeline that creates chunks as they stream.
@@ -1207,16 +1007,19 @@ def _explode_and_split_with_bcftools_awk_streaming(
     # Build the command pipeline: bcftools query | awk | split
     indices_str = ",".join(map(str, list_fmt_indices))
 
+    # Build bcftools command - query command doesn't support --threads
+    bcftools_cmd = f"{bcftools_path} query -f '{fmt_str}' '{vcf}'"
+
     # Use split command to create chunks directly from the pipeline
     cmd = [
         "bash",
         "-c",
-        f"{bcftools_path} query -f '{fmt_str}' '{vcf}' | "
+        f"{bcftools_cmd} | "
         f"awk -v list_indices='{indices_str}' -f '{awk_script}' | "
         f"split -l {chunk_size} - '{chunk_directory}/chunk_' --suffix-length=6 --numeric-suffixes",
     ]
 
-    log.debug(f"Starting streaming bcftools + AWK + split pipeline: {' '.join(cmd)}")
+    log.debug(f"Starting streaming bcftools + AWK + split pipeline with {threads} threads: {' '.join(cmd)}")
 
     # Start the pipeline process (non-blocking)
     process = subprocess.Popen(
@@ -1230,9 +1033,9 @@ def _explode_and_split_with_bcftools_awk_streaming(
     return process
 
 
-# Constants for monitoring logic
-_MAX_NO_ACTIVITY_CYCLES = 100
-_PIPELINE_DONE_WAIT_CYCLES = 5
+# Constants for monitoring logic - be very conservative to ensure all chunks are processed
+_MAX_NO_ACTIVITY_CYCLES = 300  # Much longer wait to avoid premature exit during processing
+_PIPELINE_DONE_WAIT_CYCLES = 100  # Much longer wait after pipeline completion to catch stragglers
 
 
 def _check_completed_futures(
@@ -1287,33 +1090,25 @@ def _should_exit_monitoring(
     if found_new_chunk:
         return False, 0
 
-    # Never exit while we have pending work
+    # NEVER exit while we have pending work
     if pending_futures_count > 0:
         return False, no_activity_cycles
 
-    # Handle pipeline completion cases
-    if pipeline_done:
-        if chunk_counter == 0:
-            log.debug("Pipeline done and no chunks were created")
-            return True, no_activity_cycles
+    # If pipeline is still running, never exit regardless of cycles
+    if not pipeline_done:
+        return False, 0
 
-        new_cycles = no_activity_cycles + 1
-        should_exit = new_cycles >= _PIPELINE_DONE_WAIT_CYCLES
-        if should_exit:
-            log.debug("Pipeline done and no more chunks expected")
-        return should_exit, new_cycles
+    # Pipeline is done, but be very conservative about exiting
+    if chunk_counter == 0:
+        log.warning("Pipeline completed but no chunks were found - this might indicate an issue")
+        return True, no_activity_cycles
 
-    # Handle active pipeline cases - no new chunks found
+    # Wait a very long time after pipeline completion to ensure all chunks are processed
     new_cycles = no_activity_cycles + 1
-    if new_cycles >= _MAX_NO_ACTIVITY_CYCLES:
-        log.warning(f"No new chunks found for {_MAX_NO_ACTIVITY_CYCLES} cycles, checking pipeline status")
-        if process.poll() is not None:
-            log.debug("Pipeline has terminated, stopping monitoring")
-            return True, new_cycles
-        # Reset and continue if pipeline still running
-        new_cycles = 0
-
-    return False, new_cycles
+    should_exit = new_cycles >= _PIPELINE_DONE_WAIT_CYCLES
+    if should_exit:
+        log.info(f"Pipeline done and waited {_PIPELINE_DONE_WAIT_CYCLES} cycles - exiting monitoring")
+    return should_exit, new_cycles
 
 
 def _monitor_and_process_chunks_concurrent(
@@ -1488,7 +1283,11 @@ def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> Non
     Merge multiple Parquet files using Polars lazy evaluation for memory efficiency.
     """
     if not parquet_files:
-        raise ValueError("No Parquet files to merge")
+        log.warning("No Parquet files to merge - creating empty output file")
+        # Create an empty Parquet file with minimal structure
+        empty_df = pl.DataFrame({"CHROM": [], "POS": [], "REF": [], "ALT": []})
+        empty_df.write_parquet(output_path)
+        return
 
     if len(parquet_files) == 1:
         # Single file - just move it
@@ -1513,7 +1312,7 @@ def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> Non
     log.debug(f"Merged Parquet files written to: {output_path}")
 
 
-def vcf_to_parquet_parallel(
+def vcf_to_parquet(
     vcf: str,
     out: str,
     drop_info: set[str] | None = None,
@@ -1521,12 +1320,13 @@ def vcf_to_parquet_parallel(
     categories_json: str | None = None,
     chunk_size: int = CHUNK_SIZE,
     max_workers: int = DEFAULT_MAX_WORKERS,
+    threads: int = DEFAULT_MAX_WORKERS,
 ) -> None:
     """
-    Convert VCF to Parquet using new parallel architecture.
+    Convert VCF to Parquet using parallel processing architecture.
 
     This implementation uses:
-    1. bcftools + AWK for list explosion (external pipeline)
+    1. bcftools + AWK for list explosion (external pipeline with multiple threads)
     2. Python ProcessPoolExecutor for parallel chunk processing
     3. Immediate TSV-to-Parquet conversion with equal-sized chunks
     4. Lazy merging of Parquet files using Polars streaming
@@ -1548,14 +1348,24 @@ def vcf_to_parquet_parallel(
         Number of rows per chunk for parallel processing
     max_workers : int
         Maximum number of parallel workers
+    threads : int
+        Number of threads for bcftools (0 = auto-detect)
     """
     log.info(f"Converting {vcf} to {out} using parallel architecture")
+
+    # Auto-detect optimal thread count if not specified
+    if threads == 0:
+        threads = os.cpu_count() or 4
+    if max_workers == 0:
+        max_workers = os.cpu_count() or 4
+
+    log.info(f"Using {threads} threads for bcftools and {max_workers} workers for parallel processing")
 
     # Resolve bcftools path
     bcftools = _resolve_bcftools_command()
 
     # Parse VCF header
-    info_meta, fmt_meta = header_meta(vcf, bcftools)
+    info_meta, fmt_meta = header_meta(vcf, bcftools, threads)
 
     # Filter dropped fields
     if drop_info:
@@ -1600,7 +1410,7 @@ def vcf_to_parquet_parallel(
             # Step 1: Start the bcftools + AWK + split pipeline (non-blocking)
             log.info("Step 1: Starting streaming bcftools + AWK + split pipeline")
             pipeline_process = _explode_and_split_with_bcftools_awk_streaming(
-                vcf, fmt_str, list_fmt_indices, bcftools, chunk_size, chunk_directory
+                vcf, fmt_str, list_fmt_indices, bcftools, chunk_size, chunk_directory, threads
             )
 
             # Prepare template arguments for chunk processing
@@ -1636,6 +1446,10 @@ def vcf_to_parquet_parallel(
                 Path(output_file).unlink(missing_ok=True)
 
     log.info(f"Conversion completed: {out}")
+
+
+# Legacy alias for backward compatibility
+vcf_to_parquet_parallel = vcf_to_parquet
 
 
 def _build_explicit_schema(cols: list[str], info_meta: dict, fmt_meta: dict) -> dict[str, pl.DataType]:
@@ -1721,12 +1535,6 @@ def main() -> None:
         help="JSON file whose `categorical_features` map overrides/extends " "automatically-inferred enumerations.",
     )
     ap.add_argument(
-        "--method",
-        choices=["parallel", "streaming", "memory_efficient"],
-        default="parallel",
-        help="processing method: parallel (default), streaming (fast), or memory_efficient (low memory)",
-    )
-    ap.add_argument(
         "--chunk-size",
         type=int,
         default=CHUNK_SIZE,
@@ -1737,6 +1545,12 @@ def main() -> None:
         type=int,
         default=DEFAULT_MAX_WORKERS,
         help=f"maximum number of parallel workers (0 = use all CPU cores, default: {DEFAULT_MAX_WORKERS})",
+    )
+    ap.add_argument(
+        "--threads",
+        type=int,
+        default=DEFAULT_MAX_WORKERS,
+        help=f"number of threads for bcftools (0 = auto-detect, default: {DEFAULT_MAX_WORKERS})",
     )
     ap.add_argument("-v", "--verbose", action="store_true", help="emit DEBUG‐level logs")
     args = ap.parse_args()
@@ -1752,36 +1566,27 @@ def main() -> None:
             format="%(asctime)s - %(levelname)s - %(message)s",
         )
 
-    # Determine processing method
-    method = args.method
-
     # Handle max_workers: 0 means use all CPU cores
     max_workers = args.max_workers
     if max_workers == 0:
         max_workers = os.cpu_count() or 4
 
-    # Common parameters
-    common_params = {
-        "vcf": args.vcf,
-        "out": args.out_parquet,
-        "drop_info": set(filter(None, args.drop_info.split(","))),
-        "drop_format": set(filter(None, args.drop_format.split(","))),
-        "categories_json": args.categories_json,
-    }
+    # Handle threads: 0 means auto-detect
+    threads = args.threads
+    if threads == 0:
+        threads = os.cpu_count() or 4
 
-    if method == "parallel":
-        # Use parallel architecture (default and recommended)
-        vcf_to_parquet_parallel(
-            **common_params,
-            chunk_size=args.chunk_size,
-            max_workers=max_workers,
-        )
-    elif method == "streaming":
-        # Use streaming version for faster processing (may use more memory)
-        vcf_to_parquet_streaming(**common_params)
-    else:  # memory_efficient
-        # Use memory-efficient version
-        vcf_to_parquet_memory_efficient(**common_params)
+    # Run the parallel conversion (the only method available)
+    vcf_to_parquet(
+        vcf=args.vcf,
+        out=args.out_parquet,
+        drop_info=set(filter(None, args.drop_info.split(","))),
+        drop_format=set(filter(None, args.drop_format.split(","))),
+        categories_json=args.categories_json,
+        chunk_size=args.chunk_size,
+        max_workers=max_workers,
+        threads=threads,
+    )
 
 
 if __name__ == "__main__":
