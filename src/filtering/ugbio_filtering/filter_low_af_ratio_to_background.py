@@ -16,7 +16,7 @@ def filter_low_af_ratio_to_background(input_vcf, output_vcf, af_ratio_threshold=
     for record in vcf_in.fetch():
         
         # Skip if variant is marked RefCall
-        if (record.filter.keys() == {"RefCall"}) | (record.info.get("VARIANT_TYPE")=='h-indel'):
+        if (record.filter.keys() == ["RefCall"]) | (record.info.get("VARIANT_TYPE")=='h-indel'):
             vcf_out.write(record)
             continue
         else:

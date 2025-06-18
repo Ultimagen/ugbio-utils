@@ -14,6 +14,7 @@ def example_vcf(tmp_path):
 ##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read depth">
 ##FORMAT=<ID=BG_AD,Number=R,Type=Integer,Description="Background allelic depths">
 ##FORMAT=<ID=BG_DP,Number=1,Type=Integer,Description="Background read depth">
+##contig=<ID=chr1,length=248956422>
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1
 chr1\t100\t.\tA\tT\t.\tPASS\tVARIANT_TYPE=snp\tGT:AD:DP:BG_AD:BG_DP\t0/1:5,10:15:1,1:2
 chr1\t200\t.\tG\tC\t.\tPASS\tVARIANT_TYPE=snp\tGT:AD:DP:BG_AD:BG_DP\t0/1:2,2:4:1,1:2
