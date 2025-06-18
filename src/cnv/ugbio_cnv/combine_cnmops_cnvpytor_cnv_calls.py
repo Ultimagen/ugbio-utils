@@ -331,7 +331,7 @@ def run(argv):
     out_directory = args.out_directory
     sample_name = args.sample_name
     cnmops_cnv_calls_tmp_file = f"{pjoin(out_directory,os.path.basename(args.cnmops_cnv_calls))}.tmp"
-    cnvpytor_cnv_calls_tmp_file = f"{pjoin(out_directory,os.path.basename(args.cnvpytor_cnv_calls))}.tmp"
+    # cnvpytor_cnv_calls_tmp_file = f"{pjoin(out_directory,os.path.basename(args.cnvpytor_cnv_calls))}.tmp"
 
     # format cnmops cnv calls :
     run_cmd(
