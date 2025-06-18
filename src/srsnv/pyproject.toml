@@ -1,10 +1,6 @@
 [project]
 name = "ugbio_srsnv"
-<<<<<<< HEAD
 version = "1.10.3-0"
-=======
-version = "1.8.1-0dev-122"
->>>>>>> d97bb39 (Update pyproject.toml versions to 1.8.1-0dev-122)
 requires-python = ">=3.11"
 dependencies = [
     "ugbio_core[vcfbed,reports]",
