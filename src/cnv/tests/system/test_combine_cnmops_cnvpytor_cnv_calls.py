@@ -17,6 +17,7 @@ class TestCombineCnmopsCnvpytorCnvCalls:
         input_cnvpytor_file = pjoin(resources_dir, "HG002_full_sample.pytor.bin500.CNVs.chr1-2.tsv")
         input_jalign_file = pjoin(resources_dir, "NA24385.cnmops500mod_cnvpytor500.DEL.jalign.chr1-2.bed")
         input_ug_cnv_lcr_file = pjoin(resources_dir, "ug_cnv_lcr.chr1-2.bed")
+        input_ref_fasta_file = pjoin(resources_dir, "Homo_sapiens_assembly38.chr1-2.fasta")
         input_fasta_index_file = pjoin(resources_dir, "Homo_sapiens_assembly38.chr1-2.fasta.fai")
         sample_name = "test_HG002"
         expected_out_combined_bed = pjoin(
@@ -34,6 +35,8 @@ class TestCombineCnmopsCnvpytorCnvCalls:
                 input_jalign_file,
                 "--ug_cnv_lcr",
                 input_ug_cnv_lcr_file,
+                "--ref_fasta",
+                input_ref_fasta_file,
                 "--fasta_index",
                 input_fasta_index_file,
                 "--out_directory",
