@@ -399,14 +399,6 @@ def run(argv):
 
     out_directory = args.out_directory
     sample_name = args.sample_name
-    cnmops_cnv_calls_tmp_file = f"{pjoin(out_directory,os.path.basename(args.cnmops_cnv_calls))}.tmp"
-
-    # format cnmops cnv calls :
-    run_cmd(
-        f"cat {args.cnmops_cnv_calls} | sed 's/UG-CNV-LCR//g' | sed 's/LEN//g' | sed 's/|//g' \
-            > {cnmops_cnv_calls_tmp_file}"
-    )
-    args.cnmops_cnv_calls = cnmops_cnv_calls_tmp_file
     # format cnvpytor cnv calls :
     df_cnmops_cnv_calls = parse_cnmops_cnv_calls(args.cnmops_cnv_calls, out_directory, args.ref_fasta)
     df_cnvpytor_cnv_calls = parse_cnvpytor_cnv_calls(args.cnvpytor_cnv_calls)
