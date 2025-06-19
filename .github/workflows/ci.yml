@@ -82,6 +82,7 @@ jobs:
         with:
           lfs: true
           path: ${{ env.UGBIO_UTILS_REPO_PATH }}
+          ref: git-dir
 
       - name: Checkout install-bio repo
         uses: actions/checkout@v4
