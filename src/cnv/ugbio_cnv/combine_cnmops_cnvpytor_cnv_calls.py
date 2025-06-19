@@ -241,7 +241,9 @@ def get_dup_cnvpytor_cnv_calls(df_cnvpytor_cnv_calls: pd.DataFrame, sample_name:
         str: duplications called by cnvpytor bed file.
     """
     cnvpytor_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnvpytor_cnvs.DUP.bed")
-    df_cnvpytor_cnv_calls_duplications = df_cnvpytor_cnv_calls[df_cnvpytor_cnv_calls["cnv_type"] == "duplication"].copy()
+    df_cnvpytor_cnv_calls_duplications = df_cnvpytor_cnv_calls[
+        df_cnvpytor_cnv_calls["cnv_type"] == "duplication"
+    ].copy()
     df_cnvpytor_cnv_calls_duplications["cnv_type"] = "DUP"
     df_cnvpytor_cnv_calls_duplications["copy_number"] = "DUP"
     df_cnvpytor_cnv_calls_duplications["source"] = "cnvpytor"
