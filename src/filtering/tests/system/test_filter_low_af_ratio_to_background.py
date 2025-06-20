@@ -23,13 +23,13 @@ chr1\t400\t.\tC\tA\t.\tPASS\tVARIANT_TYPE=h-indel\tGT:AD:DP:BG_AD:BG_DP\t0/1:10,
 chr1\t400\t.\tC\tA,T\t.\tPASS\tVARIANT_TYPE=non-h-indel\tGT:AD:DP:BG_AD:BG_DP\t0/2:10,30,10:50:10,10,1:21
 chr1\t400\t.\tC\tA,T\t.\tPASS\tVARIANT_TYPE=non-h-indel\tGT:AD:DP:BG_AD:BG_DP\t0/2:10,30,100:140:10,10,1:21
 """
-    vcf_path = tmp_path / "input.vcf"
+    vcf_path = tmp_path / "input.vcf.gz"
     with open(vcf_path, "w") as f:
         f.write(vcf_content)
     return str(vcf_path)
 
 def test_filter_low_af_ratio_to_background_basic(example_vcf, tmp_path):
-    output_vcf = tmp_path / "output.vcf"
+    output_vcf = tmp_path / "output.vcf.gz"
     filter_low_af_ratio_to_background(
         input_vcf=example_vcf,
         output_vcf=str(output_vcf),
@@ -53,7 +53,7 @@ def test_filter_low_af_ratio_to_background_basic(example_vcf, tmp_path):
         assert "LowAFRatioToBackground" not in records[5].filter.keys()
 
 def test_filter_low_af_ratio_to_background_no_fail(example_vcf, tmp_path):
-    output_vcf = tmp_path / "output2.vcf"
+    output_vcf = tmp_path / "output2.vcf.gz"
     # Use a low threshold so nothing is filtered
     filter_low_af_ratio_to_background(
         input_vcf=example_vcf,
@@ -66,7 +66,7 @@ def test_filter_low_af_ratio_to_background_no_fail(example_vcf, tmp_path):
             assert "LowAFRatioToBackground" not in rec.filter.keys()
 
 def test_filter_low_af_ratio_to_background_custom_filter(example_vcf, tmp_path):
-    output_vcf = tmp_path / "output3.vcf"
+    output_vcf = tmp_path / "output3.vcf.gz"
     filter_low_af_ratio_to_background(
         input_vcf=example_vcf,
         output_vcf=str(output_vcf),

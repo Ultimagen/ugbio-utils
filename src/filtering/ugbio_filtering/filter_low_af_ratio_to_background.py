@@ -36,11 +36,9 @@ def filter_low_af_ratio_to_background(input_vcf, output_vcf, af_ratio_threshold=
                 for allele in gt:
                     if allele is None or allele == 0:
                         continue  # skip REF or missing
-                    elif dp==0:
-                        #print(f"depth of {record.chrom}:{record.pos} sample {sample} allele {record.alts[allele-1]} is zero")
+                    elif dp==0:                        
                         continue
-                    elif bg_dp==0:
-                        #print(f"background depth of {record.chrom}:{record.pos} sample {sample} allele {record.alts[allele-1]} is zero")
+                    elif bg_dp==0:                        
                         continue
                     else: 
                         if bg_ad[allele]>0:                        
@@ -59,6 +57,9 @@ def filter_low_af_ratio_to_background(input_vcf, output_vcf, af_ratio_threshold=
 
     vcf_in.close()
     vcf_out.close()
+
+    pysam.tabix_index(output_vcf, preset="vcf", force=True)
+
     print(f"Annotated VCF written to: {output_vcf}")
 
 
