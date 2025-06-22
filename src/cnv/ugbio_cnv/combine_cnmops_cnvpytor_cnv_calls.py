@@ -67,14 +67,19 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
 
 def calculate_gaps_count_per_cnv(df_cnmops_calls: pd.DataFrame, ref_fasta: str) -> pd.DataFrame:
     """
-    Calculate the number of 'N' bases in each CNV call region from the hg38 genome fasta file.
+    Calculate the number of 'N' bases in each CNV call region from the reference genome FASTA file.
 
-    Inputs:
-        df_cnmops_calls (pd.DataFrame): DataFrame containing CNV calls with columns ['chrom', 'start', 'end'].
-        ref_fasta (str): Path to the hg38 genome fasta file.
+     Parameters
+     ----------
+     df_cnmops_calls : pandas.DataFrame
+         DataFrame containing CNV calls with columns ['chrom', 'start', 'end'].
+     ref_fasta : str
+         Path to the hg38 reference genome FASTA file.
 
-    Returns:
-        pd.DataFrame: Updated DataFrame with an additional columns 'N_count','len','pN'.
+     Returns
+     -------
+     pandas.DataFrame
+         Updated DataFrame with additional columns: 'N_count', 'len', and 'pN'.
     """
     if not os.path.exists(ref_fasta):
         raise FileNotFoundError(f"Fasta file {ref_fasta} does not exist.")
@@ -100,16 +105,23 @@ def calculate_gaps_count_per_cnv(df_cnmops_calls: pd.DataFrame, ref_fasta: str) 
 
 def parse_cnmops_cnv_calls(cnmops_cnv_calls: str, out_directory: str, ref_fasta: str, pN: float = 0) -> str:  # noqa: N803
     """
-    Parses cn.mops CNV calls from input bed file.
+    Parses cn.mops CNV calls from an input BED file.
 
-    Inputs:
-        cnmops_cnv_calls (str): path to the cn.mops CNV calls bed file.
-        out_directory (str): output directory to store results.
-        pN (float): threshold for filtering CNV calls based on the fraction of reference genome
-            gaps (Ns) in call region.
+    Parameters
+    ----------
+    cnmops_cnv_calls : str
+        Path to the cn.mops CNV calls BED file.
+    out_directory : str
+        Output directory to store results.
+    pN : float
+        Threshold for filtering CNV calls based on the fraction of reference genome
+        gaps (Ns) in the call region.
 
-    Outputs:
-        out_cnmops_cnvs (str): path to the output bed file with parsed CNV calls.
+    Returns
+    -------
+    out_cnmops_cnvs : str
+        Path to the output BED file with parsed CNV calls.
+
     """
     cnmops_cnv_calls_tmp_file = f"{pjoin(out_directory,os.path.basename(cnmops_cnv_calls))}.tmp"
 
