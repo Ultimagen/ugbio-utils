@@ -53,8 +53,7 @@ import re
 import shutil
 import subprocess
 import tempfile
-import time
-from concurrent.futures import Future, ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -64,8 +63,7 @@ from polars.exceptions import ShapeError
 log = logging.getLogger(__name__)
 
 # Configuration constants
-CHUNK_SIZE = 200_000  # Increased for better CPU utilization with bcftools/AWK
-DEFAULT_MAX_WORKERS = 0  # Use all available CPU cores by default
+DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
 
 
 def _log_memory_usage(stage: str) -> None:
@@ -84,20 +82,7 @@ class ColumnConfig:
     fmt_meta: dict
 
 
-@dataclass
-class ChunkProcessingArgs:
-    """Arguments for parallel chunk processing."""
-
-    chunk_file: str
-    cols: list[str]
-    info_ids: list[str]
-    scalar_fmt_ids: list[str]
-    list_fmt_ids: list[str]
-    info_meta: dict
-    fmt_meta: dict
-    output_file: str
-    is_first_chunk: bool
-    overrides: dict
+# ChunkProcessingArgs dataclass removed - no longer needed with region-based architecture
 
 
 # ───────────────── header helpers ────────────────────────────────────────────
@@ -389,6 +374,439 @@ def _make_query_string(format_ids: list[str], query_info: list[str]) -> str:
     """Build the bcftools query format string."""
     bracket = "[" + "\t".join(f"%{t}" for t in format_ids) + "]"
     return "\t".join(["%CHROM", "%POS", "%REF", "%ALT", *[f"%INFO/{t}" for t in query_info], bracket]) + "\n"
+
+
+# ─────────────────────── REGION-BASED PARALLELISM ─────────────────────────
+def _extract_chromosome_sizes_from_vcf(vcf_path: str, bcftools_path: str) -> dict[str, int]:
+    """
+    Extract chromosome names and sizes from VCF header.
+
+    Parameters
+    ----------
+    vcf_path : str
+        Path to VCF file
+    bcftools_path : str
+        Path to bcftools executable
+
+    Returns
+    -------
+    dict[str, int]
+        Dictionary mapping chromosome names to their lengths
+    """
+    # Get header with contig information
+    result = subprocess.run([bcftools_path, "view", "-h", vcf_path], capture_output=True, text=True, check=True)
+
+    chrom_sizes = {}
+    contig_pattern = re.compile(r"##contig=<ID=([^,>]+)(?:,length=(\d+))?")
+
+    for line in result.stdout.split("\n"):
+        match = contig_pattern.match(line)
+        if match:
+            chrom_id = match.group(1)
+            length = int(match.group(2)) if match.group(2) else 1000000  # Default 1MB if no length
+            chrom_sizes[chrom_id] = length
+
+    # If no contigs found in header, extract from data
+    if not chrom_sizes:
+        result = subprocess.run(
+            [bcftools_path, "query", "-f", "%CHROM\n", vcf_path], capture_output=True, text=True, check=True
+        )
+        unique_chroms = set(result.stdout.strip().split("\n"))
+        chrom_sizes = {chrom: 1000000 for chrom in unique_chroms if chrom}  # Default 1MB
+
+    return chrom_sizes
+
+
+def _generate_genomic_regions(vcf_path: str, num_regions: int, bcftools_path: str) -> list[str]:
+    """
+    Generate exactly num_regions regions that collectively cover all chromosomes.
+
+    Distributes chromosomes across regions based on cumulative genomic size to
+    ensure roughly equal workload per region.
+
+    Parameters
+    ----------
+    vcf_path : str
+        Path to VCF file
+    num_regions : int
+        Number of regions to create
+    bcftools_path : str
+        Path to bcftools executable
+
+    Returns
+    -------
+    list[str]
+        List of region strings - either "" for entire file, or comma-separated chromosome lists
+    """
+    # Special case: single region processes entire file
+    if num_regions == 1:
+        return [""]  # Empty string means entire file
+
+    # Extract chromosome sizes from VCF header
+    chrom_sizes = _extract_chromosome_sizes_from_vcf(vcf_path, bcftools_path)
+
+    if not chrom_sizes:
+        raise RuntimeError("Could not extract chromosome information from VCF")
+
+    # Filter to only chromosomes that have data in the VCF
+    result = subprocess.run(
+        [bcftools_path, "query", "-f", "%CHROM\n", vcf_path], capture_output=True, text=True, check=True
+    )
+
+    data_chroms = []
+    seen = set()
+    for line in result.stdout.strip().split("\n"):
+        chrom = line.strip()
+        if chrom and chrom not in seen:
+            data_chroms.append(chrom)
+            seen.add(chrom)
+
+    # Keep only chromosomes with data, preserving order
+    filtered_chrom_sizes = [(chrom, chrom_sizes[chrom]) for chrom in data_chroms if chrom in chrom_sizes]
+
+    if not filtered_chrom_sizes:
+        raise RuntimeError("No chromosomes with data found in VCF")
+
+    log.info(f"Found {len(filtered_chrom_sizes)} chromosomes with data")
+
+    # Calculate total genome size and target size per region
+    total_genome_size = sum(size for _, size in filtered_chrom_sizes)
+    target_size_per_region = total_genome_size / num_regions
+
+    log.info(f"Total genome size: {total_genome_size:,} bp")
+    log.info(f"Target size per region: {target_size_per_region:,.0f} bp")
+
+    # Distribute chromosomes across regions by cumulative size
+    regions = []
+    current_region_chroms = []
+    current_region_size = 0
+
+    for chrom, size in filtered_chrom_sizes:
+        # Add chromosome to current region
+        current_region_chroms.append(chrom)
+        current_region_size += size
+
+        # Check if we should close current region
+        should_close_region = False
+
+        if len(regions) == num_regions - 1:
+            # Last region - include all remaining chromosomes
+            should_close_region = chrom == filtered_chrom_sizes[-1][0]  # Last chromosome
+        # Close region if it's large enough
+        elif current_region_size >= target_size_per_region * 0.8:
+            should_close_region = True
+
+        if should_close_region:
+            # Close current region
+            if len(current_region_chroms) == 1:
+                regions.append(current_region_chroms[0])
+            else:
+                regions.append(",".join(current_region_chroms))
+
+            # Reset for next region
+            current_region_chroms = []
+            current_region_size = 0
+
+    # Handle any remaining chromosomes (shouldn't happen with correct logic)
+    if current_region_chroms:
+        if len(current_region_chroms) == 1:
+            regions.append(current_region_chroms[0])
+        else:
+            regions.append(",".join(current_region_chroms))
+
+    # Ensure we have exactly num_regions
+    while len(regions) < num_regions:
+        regions.append("")  # Empty regions for unused workers
+
+    if len(regions) > num_regions:
+        # Too many regions - merge last ones
+        merged_chroms = []
+        for region in regions[num_regions - 1 :]:
+            if region:
+                merged_chroms.extend(region.split(","))
+        regions = regions[: num_regions - 1]
+        if merged_chroms:
+            regions.append(",".join(merged_chroms))
+
+    log.info(f"Generated {len(regions)} regions:")
+    for i, region in enumerate(regions):
+        if region:
+            chroms = region.split(",")
+            log.info(f"  Region {i+1}: {len(chroms)} chromosome(s) - {region}")
+        else:
+            log.info(f"  Region {i+1}: empty")
+
+    return regions
+
+
+def _process_region_to_parquet(
+    region: str,
+    vcf_path: str,
+    fmt_str: str,
+    list_fmt_indices: list[int],
+    cols: list[str],
+    info_ids: list[str],
+    scalar_fmt_ids: list[str],
+    list_fmt_ids: list[str],
+    info_meta: dict,
+    fmt_meta: dict,
+    bcftools_path: str,
+    awk_script: str,
+    output_file: str,
+) -> str:
+    """
+    Process a single genomic region and return parquet file path.
+
+    This function is designed to be pickle-safe for multiprocessing.
+    All arguments are simple types that can be safely pickled.
+
+    Parameters
+    ----------
+    region : str
+        Genomic region in format "chr:start-end" or "chr"
+    vcf_path : str
+        Path to VCF file
+    fmt_str : str
+        bcftools query format string
+    list_fmt_indices : list[int]
+        Indices of list columns for AWK processing
+    cols : list[str]
+        Column names
+    info_ids : list[str]
+        INFO field IDs
+    scalar_fmt_ids : list[str]
+        Scalar FORMAT field IDs
+    list_fmt_ids : list[str]
+        List FORMAT field IDs
+    info_meta : dict
+        INFO metadata
+    fmt_meta : dict
+        FORMAT metadata
+    bcftools_path : str
+        Path to bcftools executable
+    awk_script : str
+        Path to AWK script
+    output_file : str
+        Path for output parquet file
+
+    Returns
+    -------
+    str
+        Path to created parquet file, empty string if no data
+    """
+    import polars as pl
+
+    try:
+        # Recreate schema and processing args inside the worker process
+        schema = _build_explicit_schema(cols, info_meta, fmt_meta)
+
+        processing_args = {
+            "bcftools_path": bcftools_path,
+            "awk_script": awk_script,
+            "cols": cols,
+            "schema": schema,
+            "info_ids": info_ids,
+            "scalar_fmt_ids": scalar_fmt_ids,
+            "list_fmt_ids": list_fmt_ids,
+            "info_meta": info_meta,
+            "fmt_meta": fmt_meta,
+        }
+
+        # Enable StringCache in worker process
+        with pl.StringCache():
+            # Stream region data directly to Polars DataFrame
+            df = _stream_region_to_polars(
+                region=region,
+                vcf_path=vcf_path,
+                fmt_str=fmt_str,
+                list_fmt_indices=list_fmt_indices,
+                processing_args=processing_args,
+            )
+
+            if df.height == 0:
+                return ""  # No data in this region
+
+            # Apply processing
+            df = _apply_region_processing(df, processing_args)
+
+            # Write to parquet
+            df.write_parquet(output_file)
+            return output_file
+
+    except Exception as e:
+        log.error(f"Error processing region {region}: {e}")
+        # Clean up on error
+        if Path(output_file).exists():
+            Path(output_file).unlink(missing_ok=True)
+        raise
+
+
+def _stream_region_to_polars(
+    region: str,
+    vcf_path: str,
+    fmt_str: str,
+    list_fmt_indices: list[int],
+    processing_args: dict,
+) -> pl.DataFrame:
+    """
+    Stream bcftools output directly to Polars DataFrame for a specific region.
+
+    Parameters
+    ----------
+    region : str
+        Genomic region to process
+    vcf_path : str
+        Path to VCF file
+    fmt_str : str
+        bcftools query format string
+    list_fmt_indices : list[int]
+        Indices of list columns for explosion
+    processing_args : dict
+        Processing arguments containing metadata and config
+
+    Returns
+    -------
+    pl.DataFrame
+        Processed DataFrame for the region
+    """
+    bcftools_path = processing_args["bcftools_path"]
+    awk_script = processing_args["awk_script"]
+    cols = processing_args["cols"]
+    schema = processing_args["schema"]
+
+    # Build bcftools command with or without region
+    if region:
+        bcftools_cmd = [bcftools_path, "query", "-r", region, "-f", fmt_str, vcf_path]
+    else:
+        # Empty region means process entire file
+        bcftools_cmd = [bcftools_path, "query", "-f", fmt_str, vcf_path]
+
+    # Build AWK command
+    indices_str = ",".join(map(str, list_fmt_indices))
+    awk_cmd = ["awk", "-v", f"list_indices={indices_str}", "-f", awk_script]
+
+    # Create pipeline: bcftools | awk
+    log.debug(f"Processing region {region}")
+
+    bcftools_process = subprocess.Popen(bcftools_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    awk_process = subprocess.Popen(
+        awk_cmd, stdin=bcftools_process.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+
+    # Close bcftools stdout in parent to allow proper pipeline behavior
+    if bcftools_process.stdout:
+        bcftools_process.stdout.close()
+
+    try:
+        # Read AWK output and create DataFrame
+        awk_output, awk_stderr = awk_process.communicate()
+
+        # Check for errors
+        bcftools_exit = bcftools_process.wait()
+        awk_exit = awk_process.wait()
+
+        if bcftools_exit != 0:
+            bcftools_stderr = bcftools_process.stderr.read() if bcftools_process.stderr else ""
+            raise subprocess.CalledProcessError(bcftools_exit, bcftools_cmd, bcftools_stderr)
+
+        if awk_exit != 0:
+            raise subprocess.CalledProcessError(awk_exit, awk_cmd, awk_stderr)
+
+        # Process AWK output
+        if not awk_output.strip():
+            return pl.DataFrame({col: [] for col in cols})
+
+        # Convert to DataFrame using StringIO-like approach
+        lines = awk_output.strip().split("\n")
+        if not lines:
+            return pl.DataFrame({col: [] for col in cols})
+
+        # Parse lines into data
+        data = {col: [] for col in cols}
+        for line in lines:
+            fields = line.split("\t")
+            for i, col in enumerate(cols):
+                if i < len(fields):
+                    value = fields[i] if fields[i] != "." else None
+                else:
+                    value = None
+                data[col].append(value)
+
+        # Create DataFrame with explicit schema, allowing mixed types initially
+        try:
+            df = pl.DataFrame(data, schema=schema, strict=False)
+        except Exception as e:
+            log.warning(f"Failed to create DataFrame with strict schema, falling back to loose typing: {e}")
+            # Create without schema first, then cast
+            df = pl.DataFrame(data)
+            # Apply type conversions
+            for col, dtype in schema.items():
+                if col in df.columns:
+                    try:
+                        if dtype == pl.Int64:
+                            # Handle integer conversion with null values
+                            df = df.with_columns(pl.col(col).str.replace("^\\.$", "").cast(dtype, strict=False))
+                        elif dtype == pl.Float64:
+                            # Handle float conversion with null values
+                            df = df.with_columns(pl.col(col).str.replace("^\\.$", "").cast(dtype, strict=False))
+                        else:
+                            df = df.with_columns(pl.col(col).cast(dtype, strict=False))
+                    except Exception as cast_error:
+                        log.warning(f"Failed to cast column {col} to {dtype}: {cast_error}")
+                        # Keep as string if casting fails
+
+        if df.height == 0:
+            return df
+
+        # Apply processing
+        df = _apply_region_processing(df, processing_args)
+
+        return df
+
+    finally:
+        # Cleanup processes
+        if bcftools_process.stdout and not bcftools_process.stdout.closed:
+            bcftools_process.stdout.close()
+        if bcftools_process.stderr:
+            bcftools_process.stderr.close()
+        if awk_process.stderr:
+            awk_process.stderr.close()
+
+
+def _apply_region_processing(df: pl.DataFrame, processing_args: dict) -> pl.DataFrame:
+    """Apply column casting and categorical processing to a region DataFrame."""
+    info_ids = processing_args["info_ids"]
+    scalar_fmt_ids = processing_args["scalar_fmt_ids"]
+    list_fmt_ids = processing_args["list_fmt_ids"]
+    info_meta = processing_args["info_meta"]
+    fmt_meta = processing_args["fmt_meta"]
+
+    # Cast POS to Int64
+    df = df.with_columns(pl.col(POS).cast(pl.Int64))
+
+    # Apply column casting - list columns are already exploded as scalars
+    for tag in info_ids:
+        df = _cast_scalar(df, tag, info_meta[tag])
+    for tag in scalar_fmt_ids:
+        df = _cast_scalar(df, tag, fmt_meta[tag])
+    for tag in list_fmt_ids:
+        # These were exploded by AWK so now treat as scalars
+        df = _cast_scalar(df, tag, fmt_meta[tag])
+
+    # REF / ALT
+    for allele in (REF, ALT):
+        df = _cast_scalar(df, allele, {"type": "String", "cat": ALLELE_CATS})
+
+    # Apply categories
+    for tag in info_ids + scalar_fmt_ids + list_fmt_ids + [REF, ALT]:
+        if tag in df.columns:
+            col_meta = info_meta.get(tag) or fmt_meta.get(tag) or {"cat": ALLELE_CATS if tag in [REF, ALT] else None}
+            cats = col_meta.get("cat")
+            if cats and df[tag].dtype == pl.Categorical:
+                df = _ensure_scalar_categories(df, tag, cats)
+
+    return df
 
 
 def _load_vcf_as_lazy_frame(
@@ -845,118 +1263,7 @@ def _append_batch_to_file(batch_df: pl.DataFrame, out: str) -> None:
     log.debug(f"[BATCH_WRITE] Appended {batch_df.height} rows to {out}, total: {combined_df.height} rows")
 
 
-def _stream_and_write_batches_directly(
-    bcftools: str,
-    vcf: str,
-    fmt_str: str,
-    cols: list[str],
-    list_fmt_indices: list[int],
-    column_config: ColumnConfig,
-    out: str,
-) -> int:
-    """
-    Stream and process batches, writing them directly to the output parquet file incrementally.
-
-    This processes each batch and immediately appends it to the output file,
-    avoiding the need to accumulate all data in memory.
-    Returns the total number of rows written.
-    """
-    log.debug(f"[BATCH] Starting _stream_and_write_batches_directly for {vcf}")
-
-    chunk_rows = []
-    chunk_idx = 0
-    total_rows = 0
-    first_batch = True
-
-    for row in _explode_tsv_rows_generator(bcftools, vcf, fmt_str, cols, list_fmt_indices):
-        chunk_rows.append(row)
-
-        if len(chunk_rows) >= CHUNK_SIZE:
-            _log_memory_usage(f"before_batch_{chunk_idx}")
-
-            # Process the batch
-            batch_df = _process_batch_dataframe(
-                chunk_rows,
-                cols,
-                column_config.info_ids,
-                column_config.scalar_fmt_ids,
-                column_config.list_fmt_ids,
-                column_config.info_meta,
-                column_config.fmt_meta,
-            )
-
-            if batch_df is not None:
-                rows_in_batch = batch_df.height
-                total_rows += rows_in_batch
-
-                # Write batch to file
-                if first_batch:
-                    _write_first_batch_to_file(batch_df, out)
-                    first_batch = False
-                else:
-                    _append_batch_to_file(batch_df, out)
-
-            _log_memory_usage(f"after_batch_{chunk_idx}")
-            chunk_rows = []
-            chunk_idx += 1
-
-    # Process final batch if any rows remain
-    if chunk_rows:
-        _log_memory_usage(f"before_batch_{chunk_idx}")
-
-        batch_df = _process_batch_dataframe(
-            chunk_rows,
-            cols,
-            column_config.info_ids,
-            column_config.scalar_fmt_ids,
-            column_config.list_fmt_ids,
-            column_config.info_meta,
-            column_config.fmt_meta,
-        )
-
-        if batch_df is not None:
-            rows_in_batch = batch_df.height
-            total_rows += rows_in_batch
-
-            # Write final batch to file
-            if first_batch:
-                _write_first_batch_to_file(batch_df, out)
-                first_batch = False
-            else:
-                _append_batch_to_file(batch_df, out)
-
-        _log_memory_usage(f"after_batch_{chunk_idx}")
-
-    # Handle case where no data was processed
-    if first_batch:
-        empty_df = pl.DataFrame({col: [] for col in cols})
-        empty_df.write_parquet(out)
-        total_rows = 0
-
-    log.debug(f"[BATCH] All batches processed, total rows written: {total_rows}")
-    return total_rows
-
-
-def _process_batch_dataframe(
-    chunk_rows: list[list[str]],
-    cols: list[str],
-    info_ids: list[str],
-    scalar_fmt_ids: list[str],
-    list_fmt_ids: list[str],
-    info_meta: dict,
-    fmt_meta: dict,
-) -> pl.DataFrame | None:
-    """Process a batch and return the processed DataFrame."""
-    # Create DataFrame from exploded rows
-    chunk_df = _create_chunk_dataframe(chunk_rows, cols)
-    if chunk_df is None:
-        return None
-
-    # Apply column casting and categories
-    chunk_df = _apply_chunk_casting(chunk_df, info_ids, scalar_fmt_ids, list_fmt_ids, info_meta, fmt_meta)
-    chunk_df = _apply_chunk_categories(chunk_df, info_ids, scalar_fmt_ids, list_fmt_ids, info_meta, fmt_meta)
-
-    return chunk_df
+# Old batch processing functions removed - replaced by region-based parallel processing
 
 
 # ─────────────────────── NEW PARALLEL ARCHITECTURE ─────────────────────────
@@ -987,295 +1294,16 @@ def _get_awk_script_path() -> str:
     raise FileNotFoundError(f"AWK script not found: {awk_script}")
 
 
-def _explode_and_split_with_bcftools_awk_streaming(
-    vcf: str,
-    fmt_str: str,
-    list_fmt_indices: list[int],
-    bcftools_path: str,
-    chunk_size: int,
-    chunk_directory: Path,
-    threads: int = 0,
-) -> subprocess.Popen:
-    """
-    Start bcftools + AWK pipeline that creates chunks as they stream.
-
-    Returns the process handle so the caller can monitor for new chunk files
-    as they're created concurrently.
-    """
-    awk_script = _get_awk_script_path()
-
-    # Build the command pipeline: bcftools query | awk | split
-    indices_str = ",".join(map(str, list_fmt_indices))
-
-    # Build bcftools command - query command doesn't support --threads
-    bcftools_cmd = f"{bcftools_path} query -f '{fmt_str}' '{vcf}'"
-
-    # Use split command to create chunks directly from the pipeline
-    cmd = [
-        "bash",
-        "-c",
-        f"{bcftools_cmd} | "
-        f"awk -v list_indices='{indices_str}' -f '{awk_script}' | "
-        f"split -l {chunk_size} - '{chunk_directory}/chunk_' --suffix-length=6 --numeric-suffixes",
-    ]
-
-    log.debug(f"Starting streaming bcftools + AWK + split pipeline with {threads} threads: {' '.join(cmd)}")
-
-    # Start the pipeline process (non-blocking)
-    process = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        preexec_fn=None,  # Allow proper signal handling
-    )
-
-    return process
+# Old streaming chunk functions removed - replaced by region-based parallel processing
 
 
-# Constants for monitoring logic - be very conservative to ensure all chunks are processed
-_MAX_NO_ACTIVITY_CYCLES = 300  # Much longer wait to avoid premature exit during processing
-_PIPELINE_DONE_WAIT_CYCLES = 100  # Much longer wait after pipeline completion to catch stragglers
+# Old chunk processing monitoring functions removed - replaced by region-based parallel processing
 
 
-def _check_completed_futures(
-    pending_futures: dict, processed_files: list[str], max_log_groups: int, last_logged_group: int
-):
-    """Check for completed futures and handle their results."""
-    from concurrent.futures import as_completed
-
-    completed_futures = []
-    try:
-        for future in as_completed(pending_futures, timeout=0.1):
-            try:
-                result = future.result()
-                chunk_name = pending_futures[future]
-                if result:
-                    processed_files.append(result)
-
-                    # Group-based logging - only log at intervals
-                    current_count = len(processed_files)
-                    if max_log_groups > 0:
-                        group_size = max(1, current_count // max_log_groups)
-                        current_group = current_count // group_size
-                        if current_group > last_logged_group and current_count % group_size == 0:
-                            log.info(f"Processed {current_count} chunks so far...")
-                            last_logged_group = current_group
-
-                completed_futures.append(future)
-            except Exception as e:
-                chunk_name = pending_futures[future]
-                log.error(f"Error processing chunk {chunk_name}: {e}")
-                completed_futures.append(future)
-                # Re-raise the exception to ensure failure propagates
-                raise RuntimeError(f"Chunk processing failed for {chunk_name}") from e
-    except TimeoutError:
-        # TimeoutError is expected when no futures complete within timeout
-        pass
-
-    return completed_futures, last_logged_group
+# Old chunk monitoring function removed - replaced by region-based parallel processing
 
 
-def _should_exit_monitoring(
-    *,
-    pipeline_done: bool,
-    chunk_counter: int,
-    found_new_chunk: bool,
-    no_activity_cycles: int,
-    process: subprocess.Popen,
-    pending_futures_count: int,
-) -> tuple[bool, int]:
-    """Determine if monitoring should exit and return updated activity cycles."""
-    # Reset cycles when we find new chunks
-    if found_new_chunk:
-        return False, 0
-
-    # NEVER exit while we have pending work
-    if pending_futures_count > 0:
-        return False, no_activity_cycles
-
-    # If pipeline is still running, never exit regardless of cycles
-    if not pipeline_done:
-        return False, 0
-
-    # Pipeline is done, but be very conservative about exiting
-    if chunk_counter == 0:
-        log.warning("Pipeline completed but no chunks were found - this might indicate an issue")
-        return True, no_activity_cycles
-
-    # Wait a very long time after pipeline completion to ensure all chunks are processed
-    new_cycles = no_activity_cycles + 1
-    should_exit = new_cycles >= _PIPELINE_DONE_WAIT_CYCLES
-    if should_exit:
-        log.info(f"Pipeline done and waited {_PIPELINE_DONE_WAIT_CYCLES} cycles - exiting monitoring")
-    return should_exit, new_cycles
-
-
-def _monitor_and_process_chunks_concurrent(
-    process: subprocess.Popen,
-    chunk_directory: Path,
-    chunk_args_template: dict,
-    max_workers: int,
-    output_files: list[str],
-) -> list[str]:
-    """
-    Monitor for new chunk files as the pipeline creates them and process
-    them immediately using a ProcessPoolExecutor.
-
-    This implements true producer-consumer concurrency where TSV chunks
-    are processed as soon as they're created.
-    """
-
-    processed_files = []
-    chunk_counter = 0
-    pending_futures: dict[Future, str] = {}
-    no_activity_cycles = 0
-
-    # Progress tracking - limit to 30 log messages max
-    max_log_groups = 30
-    last_logged_group = -1
-
-    log.info(f"Starting concurrent chunk monitoring with {max_workers} workers")
-    log.info(f"System has {os.cpu_count()} CPU cores available")
-
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        while True:
-            # Check if pipeline process is still running
-            pipeline_done = process.poll() is not None
-
-            # Look for new chunk files
-            expected_chunk = f"chunk_{chunk_counter:06d}"
-            chunk_path = chunk_directory / expected_chunk
-
-            found_new_chunk = False
-            if chunk_path.exists() and chunk_path.stat().st_size > 0:
-                found_new_chunk = True
-                no_activity_cycles = 0  # Reset counter
-
-                # Prepare arguments for this chunk
-                output_file = (
-                    output_files[chunk_counter]
-                    if chunk_counter < len(output_files)
-                    else str(chunk_directory / f"output_{chunk_counter:06d}.parquet")
-                )
-
-                chunk_args = ChunkProcessingArgs(
-                    chunk_file=str(chunk_path),
-                    cols=chunk_args_template["cols"],
-                    info_ids=chunk_args_template["info_ids"],
-                    scalar_fmt_ids=chunk_args_template["scalar_fmt_ids"],
-                    list_fmt_ids=chunk_args_template["list_fmt_ids"],
-                    info_meta=chunk_args_template["info_meta"],
-                    fmt_meta=chunk_args_template["fmt_meta"],
-                    output_file=output_file,
-                    is_first_chunk=(chunk_counter == 0),
-                    overrides=chunk_args_template["overrides"],
-                )
-
-                # Submit chunk for processing
-                future = executor.submit(_process_chunk_to_parquet, chunk_args)
-                pending_futures[future] = expected_chunk
-                chunk_counter += 1
-
-            # Check for completed chunks
-            completed_futures, last_logged_group = _check_completed_futures(
-                pending_futures, processed_files, max_log_groups, last_logged_group
-            )
-
-            # Remove completed futures
-            for future in completed_futures:
-                del pending_futures[future]
-
-            # Exit conditions with better logic
-            exit_monitor, no_activity_cycles = _should_exit_monitoring(
-                pipeline_done=pipeline_done,
-                chunk_counter=chunk_counter,
-                found_new_chunk=found_new_chunk,
-                no_activity_cycles=no_activity_cycles,
-                process=process,
-                pending_futures_count=len(pending_futures),
-            )
-            if exit_monitor:
-                break
-
-            # Always sleep to avoid busy waiting
-            time.sleep(0.1)
-
-        # Wait for all remaining chunks to complete
-        log.debug(f"Waiting for {len(pending_futures)} remaining chunks to complete")
-        if pending_futures:  # Only wait if there are pending futures
-            for future in as_completed(pending_futures):
-                try:
-                    result = future.result()
-                    if result:
-                        processed_files.append(result)
-                except Exception as e:
-                    log.error(f"Error in final chunk processing: {e}")
-
-    # Check pipeline exit status
-    exit_code = process.wait()
-    if exit_code != 0:
-        stderr_output = process.stderr.read() if process.stderr else "No stderr"
-        raise RuntimeError(f"bcftools + AWK + split pipeline failed with exit code {exit_code}: {stderr_output}")
-
-    log.info(f"Completed processing {len(processed_files)} chunks concurrently")
-    return processed_files
-
-
-def _process_chunk_to_parquet(args: ChunkProcessingArgs) -> str:
-    """
-    Process a single chunk and convert it to Parquet.
-
-    This is the worker function for parallel processing.
-    Note: Parquet writing is often I/O bound, which may limit CPU utilization.
-    """
-    try:
-        # Build explicit schema for consistent type inference
-        schema = _build_explicit_schema(args.cols, args.info_meta, args.fmt_meta)
-
-        # Read the chunk TSV into DataFrame with explicit schema
-        chunk_df = pl.read_csv(
-            args.chunk_file,
-            separator="\t",
-            has_header=False,
-            new_columns=args.cols,
-            null_values=["."],
-            schema=schema,
-        )
-
-        if chunk_df.height == 0:
-            return ""  # Empty chunk
-
-        # Apply casting with debug logging only for first chunk
-        chunk_df = _apply_chunk_casting(
-            chunk_df,
-            args.info_ids,
-            args.scalar_fmt_ids,
-            args.list_fmt_ids,
-            args.info_meta,
-            args.fmt_meta,
-        )
-
-        # Apply categories
-        chunk_df = _apply_chunk_categories(
-            chunk_df, args.info_ids, args.scalar_fmt_ids, args.list_fmt_ids, args.info_meta, args.fmt_meta
-        )
-
-        # Write to Parquet
-        chunk_df.write_parquet(args.output_file)
-
-        # Clean up input chunk file
-        Path(args.chunk_file).unlink(missing_ok=True)
-
-        return args.output_file
-
-    except Exception as e:
-        log.error(f"Error processing chunk {args.chunk_file}: {e}")
-        # Clean up on error
-        Path(args.chunk_file).unlink(missing_ok=True)
-        if Path(args.output_file).exists():
-            Path(args.output_file).unlink(missing_ok=True)
-        raise
+# Old chunk processing function removed - replaced by region-based parallel processing
 
 
 def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> None:
@@ -1318,19 +1346,16 @@ def vcf_to_parquet(
     drop_info: set[str] | None = None,
     drop_format: set[str] | None = None,
     categories_json: str | None = None,
-    chunk_size: int = CHUNK_SIZE,
-    max_workers: int = DEFAULT_MAX_WORKERS,
-    threads: int = DEFAULT_MAX_WORKERS,
+    jobs: int = DEFAULT_JOBS,
 ) -> None:
     """
-    Convert VCF to Parquet using parallel processing architecture.
+    Convert VCF to Parquet using region-based parallel processing.
 
     This implementation uses:
-    1. bcftools + AWK for list explosion (external pipeline with multiple threads)
-    2. Python ProcessPoolExecutor for parallel chunk processing
-    3. Immediate TSV-to-Parquet conversion with equal-sized chunks
+    1. bedtools to split genome into equal-sized regions
+    2. bcftools + AWK pipeline per region in parallel
+    3. ProcessPoolExecutor for parallel region processing
     4. Lazy merging of Parquet files using Polars streaming
-    5. Debug logging only from first chunk
 
     Parameters
     ----------
@@ -1344,28 +1369,22 @@ def vcf_to_parquet(
         FORMAT fields to exclude
     categories_json : str | None
         Path to JSON file with categorical overrides
-    chunk_size : int
-        Number of rows per chunk for parallel processing
-    max_workers : int
-        Maximum number of parallel workers
-    threads : int
-        Number of threads for bcftools (0 = auto-detect)
+    jobs : int
+        Number of parallel jobs (0 = auto-detect CPU cores)
     """
-    log.info(f"Converting {vcf} to {out} using parallel architecture")
+    log.info(f"Converting {vcf} to {out} using region-based parallel processing")
 
-    # Auto-detect optimal thread count if not specified
-    if threads == 0:
-        threads = os.cpu_count() or 4
-    if max_workers == 0:
-        max_workers = os.cpu_count() or 4
+    # Auto-detect optimal job count if not specified
+    if jobs == 0:
+        jobs = os.cpu_count() or 4
 
-    log.info(f"Using {threads} threads for bcftools and {max_workers} workers for parallel processing")
+    log.info(f"Using {jobs} parallel jobs for region processing")
 
     # Resolve bcftools path
     bcftools = _resolve_bcftools_command()
 
     # Parse VCF header
-    info_meta, fmt_meta = header_meta(vcf, bcftools, threads)
+    info_meta, fmt_meta = header_meta(vcf, bcftools, threads=1)
 
     # Filter dropped fields
     if drop_info:
@@ -1393,57 +1412,125 @@ def vcf_to_parquet(
         list_fmt_indices.append(idx)
 
     with pl.StringCache():
-        # Create temporary directory for chunk files
-        chunk_directory = Path(tempfile.mkdtemp(prefix="vcf_chunks_"))
+        # Special case: if jobs=1, process entire file without region splitting
+        if jobs == 1:
+            log.info("Processing entire VCF file without region splitting (jobs=1)")
 
-        # Get category overrides
-        overrides = _get_override_categories(categories_json)
+            # Get AWK script path
+            awk_script = _get_awk_script_path()
 
-        # Prepare output files for chunks (we'll estimate initial count)
-        estimated_chunks = 50  # Start with reasonable estimate
-        output_files = []
-        for i in range(estimated_chunks):
-            output_file = tempfile.NamedTemporaryFile(suffix=f"_chunk_{i}.parquet", delete=False).name
-            output_files.append(output_file)
+            # Build explicit schema for consistent processing
+            schema = _build_explicit_schema(cols, info_meta, fmt_meta)
 
-        try:
-            # Step 1: Start the bcftools + AWK + split pipeline (non-blocking)
-            log.info("Step 1: Starting streaming bcftools + AWK + split pipeline")
-            pipeline_process = _explode_and_split_with_bcftools_awk_streaming(
-                vcf, fmt_str, list_fmt_indices, bcftools, chunk_size, chunk_directory, threads
-            )
-
-            # Prepare template arguments for chunk processing
-            chunk_args_template = {
+            # Prepare processing arguments
+            processing_args = {
+                "bcftools_path": bcftools,
+                "awk_script": awk_script,
                 "cols": cols,
+                "schema": schema,
                 "info_ids": info_ids,
                 "scalar_fmt_ids": scalar_fmt_ids,
-                "list_fmt_ids": list_fmt_ids,  # These are now scalar after explosion
+                "list_fmt_ids": list_fmt_ids,
                 "info_meta": info_meta,
                 "fmt_meta": fmt_meta,
-                "overrides": overrides,
             }
 
-            # Step 2: Monitor and process chunks concurrently as they're created
-            log.info(f"Step 2: Starting concurrent chunk processing with {max_workers} workers")
-            parquet_files = _monitor_and_process_chunks_concurrent(
-                pipeline_process, chunk_directory, chunk_args_template, max_workers, output_files
+            # Process entire file as single region (no region parameter)
+            df = _stream_region_to_polars(
+                region="",  # Empty region means process entire file
+                vcf_path=vcf,
+                fmt_str=fmt_str,
+                list_fmt_indices=list_fmt_indices,
+                processing_args=processing_args,
             )
 
-            # Step 3: Merge Parquet files lazily
-            log.info(f"Step 3: Merging {len(parquet_files)} Parquet files")
-            _merge_parquet_files_lazy(parquet_files, out)
+            if df.height == 0:
+                log.warning("No data processed from VCF file")
+                return
 
-        finally:
-            # Clean up chunk files and directory
-            if chunk_directory.exists():
-                for chunk_file in chunk_directory.glob("chunk_*"):
-                    chunk_file.unlink(missing_ok=True)
-                chunk_directory.rmdir()
+            # Apply processing and write directly to output
+            df = _apply_region_processing(df, processing_args)
+            df.write_parquet(out)
 
-            # Clean up output files
-            for output_file in output_files:
-                Path(output_file).unlink(missing_ok=True)
+            log.info(f"Conversion completed: {out}")
+            return
+
+        # Generate genomic regions for parallel processing
+        log.info(f"Generating {jobs} genomic regions for parallel processing")
+        regions = _generate_genomic_regions(vcf, jobs, bcftools)
+        log.info(f"Created {len(regions)} regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")
+
+        # Get AWK script path
+        awk_script = _get_awk_script_path()
+
+        # Build explicit schema for consistent processing
+        schema = _build_explicit_schema(cols, info_meta, fmt_meta)
+
+        # Prepare processing arguments
+        processing_args = {
+            "bcftools_path": bcftools,
+            "awk_script": awk_script,
+            "cols": cols,
+            "schema": schema,
+            "info_ids": info_ids,
+            "scalar_fmt_ids": scalar_fmt_ids,
+            "list_fmt_ids": list_fmt_ids,
+            "info_meta": info_meta,
+            "fmt_meta": fmt_meta,
+        }
+
+        # Process regions in parallel
+        parquet_files = []
+        with ProcessPoolExecutor(max_workers=jobs) as executor:
+            # Submit all region processing tasks
+            future_to_region = {}
+            for i, region in enumerate(regions):
+                output_file = tempfile.NamedTemporaryFile(suffix=f"_region_{i}.parquet", delete=False).name
+                future = executor.submit(
+                    _process_region_to_parquet,
+                    region,
+                    vcf,
+                    fmt_str,
+                    list_fmt_indices,
+                    cols,
+                    info_ids,
+                    scalar_fmt_ids,
+                    list_fmt_ids,
+                    info_meta,
+                    fmt_meta,
+                    bcftools,
+                    awk_script,
+                    output_file,
+                )
+                future_to_region[future] = (region, output_file)
+
+            # Collect results in order
+            log.info("Processing regions in parallel...")
+            for i, future in enumerate(as_completed(future_to_region)):
+                region, output_file = future_to_region[future]
+                try:
+                    result = future.result()
+                    if result:  # Non-empty result
+                        parquet_files.append(result)
+                    if (i + 1) % max(1, len(regions) // 10) == 0:
+                        log.info(f"Completed {i + 1}/{len(regions)} regions")
+                except Exception as e:
+                    log.error(f"Error processing region {region}: {e}")
+                    # Clean up failed output file
+                    Path(output_file).unlink(missing_ok=True)
+                    raise
+
+        # Sort parquet files to ensure consistent order
+        # Extract region info for sorting
+        region_order = {}
+        for i, region in enumerate(regions):
+            region_order[f"_region_{i}.parquet"] = i
+
+        parquet_files.sort(key=lambda f: next((order for suffix, order in region_order.items() if suffix in f), 999))
+
+        # Merge Parquet files in order
+        log.info(f"Merging {len(parquet_files)} Parquet files in order")
+        _merge_parquet_files_lazy(parquet_files, out)
 
     log.info(f"Conversion completed: {out}")
 
@@ -1532,25 +1619,13 @@ def main() -> None:
     ap.add_argument("--drop-format", default="", help="comma-separated FORMAT tags to drop")
     ap.add_argument(
         "--categories-json",
-        help="JSON file whose `categorical_features` map overrides/extends " "automatically-inferred enumerations.",
+        help="JSON file whose `categorical_features` map overrides/extends automatically-inferred enumerations.",
     )
     ap.add_argument(
-        "--chunk-size",
+        "--jobs",
         type=int,
-        default=CHUNK_SIZE,
-        help=f"chunk size for parallel processing (default: {CHUNK_SIZE})",
-    )
-    ap.add_argument(
-        "--max-workers",
-        type=int,
-        default=DEFAULT_MAX_WORKERS,
-        help=f"maximum number of parallel workers (0 = use all CPU cores, default: {DEFAULT_MAX_WORKERS})",
-    )
-    ap.add_argument(
-        "--threads",
-        type=int,
-        default=DEFAULT_MAX_WORKERS,
-        help=f"number of threads for bcftools (0 = auto-detect, default: {DEFAULT_MAX_WORKERS})",
+        default=DEFAULT_JOBS,
+        help=f"number of parallel jobs (0 = auto-detect CPU cores, default: {DEFAULT_JOBS})",
     )
     ap.add_argument("-v", "--verbose", action="store_true", help="emit DEBUG‐level logs")
     args = ap.parse_args()
@@ -1566,26 +1641,14 @@ def main() -> None:
             format="%(asctime)s - %(levelname)s - %(message)s",
         )
 
-    # Handle max_workers: 0 means use all CPU cores
-    max_workers = args.max_workers
-    if max_workers == 0:
-        max_workers = os.cpu_count() or 4
-
-    # Handle threads: 0 means auto-detect
-    threads = args.threads
-    if threads == 0:
-        threads = os.cpu_count() or 4
-
-    # Run the parallel conversion (the only method available)
+    # Run the region-based parallel conversion
     vcf_to_parquet(
         vcf=args.vcf,
         out=args.out_parquet,
         drop_info=set(filter(None, args.drop_info.split(","))),
         drop_format=set(filter(None, args.drop_format.split(","))),
         categories_json=args.categories_json,
-        chunk_size=args.chunk_size,
-        max_workers=max_workers,
-        threads=threads,
+        jobs=args.jobs,
     )
 
 
