@@ -36,15 +36,17 @@ def compare_vcfs(vcf1_file, vcf2_file):
 
 class TestConvertCombinedCnvResultsToVcf:
     def test_write_vcf(self, tmpdir, resources_dir):
-        sample_name = "TEST_HG002"
+        sample_name = "TEST_HG002_chr19"
         cnv_annotated_bed_file = pjoin(
-            resources_dir, "HG002.cnmops_cnvpytor.cnvs.combined.UG-CNV-LCR_annotate.chr1-2.bed"
+            resources_dir,
+            "/home/ubuntu/ugbio-utils/src/cnv/tests/resources/"
+            "expected_TEST_HG002_chr19.cnmops_cnvpytor.cnvs.combined.bed.annotate.bed",
         )
-        fasta_index_file = pjoin(resources_dir, "Homo_sapiens_assembly38.chr1-2.fasta.fai")
+        fasta_index_file = pjoin(resources_dir, "chr19.fasta.fai")
         outfile = pjoin(tmpdir, f"{sample_name}.cnv.vcf.gz")
         convert_combined_cnv_results_to_vcf.write_combined_vcf(
             outfile, cnv_annotated_bed_file, sample_name, fasta_index_file
         )
 
-        expected_vcf_file = pjoin(resources_dir, "test_HG002.cnv.vcf.gz")
+        expected_vcf_file = pjoin(resources_dir, "TEST_HG002_chr19.cnv.vcf.gz")
         compare_vcfs(expected_vcf_file, outfile)
