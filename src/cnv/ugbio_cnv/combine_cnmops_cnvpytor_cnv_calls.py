@@ -520,36 +520,40 @@ def run(argv):
     run_cmd(f"cat {cnmops_cnvpytor_merged_dup} {out_del_calls} | bedtools sort -i - > {out_cnvs_combined}")
     logger.info(f"out_cnvs_combined: {out_cnvs_combined}")
 
-    # annotate with ug-cnv-lcr
-    # result file should be in the following format:
-    # ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "UG-CNV-LCR"]
-    out_cnvs_combined_annotated = f"{out_cnvs_combined}.annotate.bed"
-    run_cmd(
-        f"bedmap --echo --echo-map-id-uniq --delim '\\t' --bases-uniq-f \
-        {out_cnvs_combined} {args.ug_cnv_lcr} > {out_cnvs_combined_annotated}"
-    )
-    logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
+    if args.ug_cnv_lcr:
+        # annotate with ug-cnv-lcr if provided
+        # result file should be in the following format:
+        # ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "UG-CNV-LCR"]
+        out_cnvs_combined_annotated = f"{out_cnvs_combined}.annotate.bed"
+        run_cmd(
+            f"bedmap --echo --echo-map-id-uniq --delim '\\t' --bases-uniq-f \
+            {out_cnvs_combined} {args.ug_cnv_lcr} > {out_cnvs_combined_annotated}"
+        )
+        logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
 
-    overlap_filtration_cutoff = 0.5  # 50% overlap with LCR regions
-    df_annotate_calls = pd.read_csv(out_cnvs_combined_annotated, sep="\t", header=None)
-    df_annotate_calls.columns = [
-        "chr",
-        "start",
-        "end",
-        "CNV_type",
-        "CNV_calls_source",
-        "copy_number",
-        "UG-CNV-LCR",
-        "pUG-CNV-LCR_overlap",
-    ]
-    df_annotate_calls["LCR_label_value"] = df_annotate_calls.apply(
-        lambda row: row["UG-CNV-LCR"] if row["pUG-CNV-LCR_overlap"] >= overlap_filtration_cutoff else ".", axis=1
-    )
+        overlap_filtration_cutoff = 0.5  # 50% overlap with LCR regions
+        df_annotate_calls = pd.read_csv(out_cnvs_combined_annotated, sep="\t", header=None)
+        df_annotate_calls.columns = [
+            "chr",
+            "start",
+            "end",
+            "CNV_type",
+            "CNV_calls_source",
+            "copy_number",
+            "UG-CNV-LCR",
+            "pUG-CNV-LCR_overlap",
+        ]
+        df_annotate_calls["LCR_label_value"] = df_annotate_calls.apply(
+            lambda row: row["UG-CNV-LCR"] if row["pUG-CNV-LCR_overlap"] >= overlap_filtration_cutoff else ".", axis=1
+        )
 
-    df_annotate_calls[["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "LCR_label_value"]].to_csv(
-        out_cnvs_combined_annotated, sep="\t", header=None, index=False
-    )
-    logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
+        df_annotate_calls[
+            ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "LCR_label_value"]
+        ].to_csv(out_cnvs_combined_annotated, sep="\t", header=None, index=False)
+        logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
+
+    else:
+        out_cnvs_combined_annotated = out_cnvs_combined
 
     # convert to vcf
     vcf_args = [
