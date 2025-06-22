@@ -144,14 +144,21 @@ def get_dup_cnmops_cnv_calls(
     df_cnmops: pd.DataFrame, sample_name: str, out_directory: str, distance_threshold: int
 ) -> str:
     """
-    Inputs:
-        df_cnmops_cnv_calls (str): dataframe holding cn.mops CNV calls.
-        sample_name (str): Sample name.
-        out_directory (str): Out folder to store results.
-        distance_threshold (int): Distance threshold for merging CNV segments.
+    Parameters
+    ----------
+    df_cnmops : pandas.DataFrame
+        DataFrame holding cn.mops CNV calls.
+    sample_name : str
+        Sample name.
+    out_directory : str
+        Output folder to store results.
+    distance_threshold : int
+        Distance threshold for merging CNV segments.
 
-    Returns:
-        str: duplications called by cn.mops bed file.
+    Returns
+    -------
+    str
+        Path to the duplications called by cn.mops bed file.
     """
     # get duplications from cn.mops calls
     cnmops_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.bed")
@@ -192,13 +199,18 @@ def parse_cnvpytor_cnv_calls(cnvpytor_cnv_calls: str, pN: float = 0) -> pd.DataF
     """
     Parses cnvpytor CNV calls from a tsv file.
 
-    Args:
-        cnvpytor_cnv_calls (str): path to the cnvpytor CNV calls bed file.
-        pN (float): threshold for filtering CNV calls based on the fraction of reference genome
-            gaps (Ns) in call region.
+    Parameters
+    ----------
+    cnvpytor_cnv_calls : str
+        Path to the cnvpytor CNV calls bed file.
+    pN : float
+        Threshold for filtering CNV calls based on the fraction of reference genome
+        gaps (Ns) in call region.
 
-    Returns:
-        pd.DataFrame: DataFrame containing parsed CNV calls.
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame containing parsed CNV calls.
     """
     # Result is stored in tab separated files with following columns:
     # CNV type: "deletion" or "duplication",
@@ -245,12 +257,19 @@ def parse_cnvpytor_cnv_calls(cnvpytor_cnv_calls: str, pN: float = 0) -> pd.DataF
 
 def get_dup_cnvpytor_cnv_calls(df_cnvpytor_cnv_calls: pd.DataFrame, sample_name: str, out_directory: str) -> str:  # noqa: N803
     """
-    Args:
-        cnvpytor_cnv_calls (str): Input bed file holding cnvpytor CNV calls.
-        sample_name (str): Sample name.
-        out_directory (str): Out folder to store results.
-    Returns:
-        str: duplications called by cnvpytor bed file.
+    Parameters
+    ----------
+    df_cnvpytor_cnv_calls : pandas.DataFrame
+        DataFrame holding cnvpytor CNV calls.
+    sample_name : str
+        Sample name.
+    out_directory : str
+        Output folder to store results.
+
+    Returns
+    -------
+    str
+        Path to the duplications called by cnvpytor bed file.
     """
     cnvpytor_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnvpytor_cnvs.DUP.bed")
     df_cnvpytor_cnv_calls_duplications = df_cnvpytor_cnv_calls[
@@ -280,14 +299,29 @@ def process_del_jalign_results(
     jalign_written_cutoff: int = 1,
 ) -> str:
     """
-    Args:
-        del_jalign_results (str): jalign results for Deletions in tsv format.
-        sample_name (str): Sample name.
-        out_directory (str): Out folder to store results.
-        deletions_length_cutoff (int): Deletions length cutoff.
-        jalign_written_cutoff (int): Minimal number of supporting jaligned reads for DEL.
-    Returns:
-        str: deletions called by cn.mops and cnvpytor bed file.
+    Processes jalign results for deletions and filters them.
+
+    Parameters
+    ----------
+    del_jalign_results : str
+        Jalign results for Deletions in tsv format.
+    sample_name : str
+        Sample name.
+    out_directory : str
+        Output folder to store results.
+    ref_fasta : str
+        Reference genome fasta file.
+    pN : float, optional
+        Threshold for filtering CNV calls based on the fraction of reference genome gaps (Ns) in the call region.
+    deletions_length_cutoff : int, optional
+        Deletions length cutoff.
+    jalign_written_cutoff : int, optional
+        Minimal number of supporting jaligned reads for DEL.
+
+    Returns
+    -------
+    str
+        Path to deletions called by cn.mops and cnvpytor bed file.
     """
     # reads jalign results
     df_cnmops_cnvpytor_del = pd.read_csv(del_jalign_results, sep="\t", header=None)
@@ -345,12 +379,21 @@ def process_del_jalign_results(
 
 def get_cnmops_cnvpytor_common_del(del_candidates: str, sample_name: str, out_directory: str) -> str:
     """
-    Args:
-        del_candidates (str): All deletions candidates (jalign results for Deletions in tsv format).
-        sample_name (str): Sample name.
-        out_directory (str): Out folder to store results.
-    Returns:
-        str: deletions called by cn.mops and cnvpytor bed file (regardless of jalign results).
+    Get deletions called by both cn.mops and cnvpytor, regardless of jalign results.
+
+    Parameters
+    ----------
+    del_candidates : str
+        All deletions candidates (jalign results for Deletions in tsv format).
+    sample_name : str
+        Sample name.
+    out_directory : str
+        Output folder to store results.
+
+    Returns
+    -------
+    str
+        Path to deletions called by both cn.mops and cnvpytor bed file.
     """
     del_candidates_called_by_both_cnmops_cnvpytor = pjoin(
         out_directory, f"{sample_name}.del_candidates_called_by_both_cnmops_cnvpytor.bed"
@@ -396,17 +439,28 @@ def get_cnmops_cnvpytor_common_del(del_candidates: str, sample_name: str, out_di
 
 def run(argv):
     """
-    combines cnvs from cnmops and cnvpytor using jalign results and converts them to vcf.
-    input arguments:
-    --cnmops_cnv_calls: input bed file holding cn.mops CNV calls
-    --cnvpytor_cnv_calls: input bed file holding cnvpytor CNV calls
-    --del_jalign_merged_results: jalign results for Deletions in tsv format.
+    Combine CNVs from cn.mops and cnvpytor using jalign results and convert them to VCF.
 
-    output files:
-    bed file: <sample_name>.cnmops_cnvpytor.cnvs.combined.bed
-        shows combined CNV calls called by cn.mops and cnvpytor.
-    annotated bed file: <sample_name>.cnmops_cnvpytor.cnvs.combined.UG-CNV-LCR_annotate.bed
-        shows combined CNV calls with UG-CNV-LCR annotation.
+    Parameters
+    ----------
+    argv : list of str
+        Command-line arguments.
+
+    Input Arguments
+    ---------------
+    --cnmops_cnv_calls : str
+        Input BED file holding cn.mops CNV calls.
+    --cnvpytor_cnv_calls : str
+        Input BED file holding cnvpytor CNV calls.
+    --del_jalign_merged_results : str
+        Jalign results for deletions in TSV format.
+
+    Output Files
+    ------------
+    <sample_name>.cnmops_cnvpytor.cnvs.combined.bed : str
+        Combined CNV calls called by cn.mops and cnvpytor.
+    <sample_name>.cnmops_cnvpytor.cnvs.combined.UG-CNV-LCR_annotate.bed : str
+        Combined CNV calls with UG-CNV-LCR annotation.
     """
     args = __parse_args(argv)
     logger.setLevel(getattr(logging, args.verbosity))
