@@ -45,6 +45,7 @@
 
 from __future__ import annotations
 
+import argparse
 import logging
 import math
 import multiprocessing as _mp  # NEW
@@ -53,7 +54,6 @@ import re
 import shutil
 import subprocess
 import tempfile
-import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -448,7 +448,7 @@ def vcf_to_parquet(
 
     # Resolve tool paths
     bcftools = _resolve_bcftools_command()
-    bedtools = _resolve_bedtools_command()  # ← now used
+    bedtools = _resolve_bedtools_command()
 
     # Parse VCF header
     info_meta, fmt_meta = header_meta(vcf, bcftools, threads=1)
@@ -479,49 +479,6 @@ def vcf_to_parquet(
         list_fmt_indices.append(idx)
 
     with pl.StringCache():
-        # Special case: if jobs=1, process entire file without region splitting
-        if jobs == 1:
-            log.info("Processing entire VCF file without region splitting (jobs=1)")
-
-            # Get AWK script path
-            awk_script = _get_awk_script_path()
-
-            # Build explicit schema for consistent processing
-            schema = _build_explicit_schema(cols, info_meta, fmt_meta)
-
-            # Prepare processing arguments
-            processing_args = {
-                "bcftools_path": bcftools,
-                "awk_script": awk_script,
-                "cols": cols,
-                "schema": schema,
-                "info_ids": info_ids,
-                "scalar_fmt_ids": scalar_fmt_ids,
-                "list_fmt_ids": list_fmt_ids,
-                "info_meta": info_meta,
-                "fmt_meta": fmt_meta,
-            }
-
-            # Process entire file as single region (no region parameter)
-            featuremap_dataframe = _stream_region_to_polars(
-                region="",  # Empty region means process entire file
-                vcf_path=vcf,
-                fmt_str=fmt_str,
-                list_fmt_indices=list_fmt_indices,
-                processing_args=processing_args,
-            )
-
-            if featuremap_dataframe.height == 0:
-                log.warning("No data processed from VCF file")
-                return
-
-            # Apply processing and write directly to output
-            featuremap_dataframe = _apply_region_processing(featuremap_dataframe, processing_args)
-            featuremap_dataframe.write_parquet(out)
-
-            log.info(f"Conversion completed: {out}")
-            return
-
         # Generate genomic regions (fixed windows via bedtools)
         regions = _generate_genomic_regions(vcf, jobs, bcftools, bedtools)
         log.info(f"Created {len(regions)} regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")
@@ -883,9 +840,7 @@ def main(argv: list[str] | None = None) -> None:
     $ python -m ugbio_featuremap.featuremap_to_dataframe  \
          --in sample.vcf.gz --out sample.parquet --jobs 4
     """
-    parser = argparse.ArgumentParser(
-        description="Convert feature-map VCF → Parquet", allow_abbrev=True
-    )
+    parser = argparse.ArgumentParser(description="Convert feature-map VCF → Parquet", allow_abbrev=True)
     parser.add_argument("--input", required=True, help="Input VCF/BCF (bgzipped ok)")
     parser.add_argument("--output", required=True, help="Output Parquet file")
     parser.add_argument("--jobs", type=int, default=DEFAULT_JOBS, help="Parallel jobs (0 = auto)")
