@@ -700,6 +700,7 @@ def _stream_region_to_polars(
     try:
         # Read AWK output and create DataFrame
         awk_output, awk_stderr = awk_process.communicate()
+        awk_output = awk_output.strip()
 
         # Check for errors
         bcftools_exit = bcftools_process.wait()
@@ -713,11 +714,11 @@ def _stream_region_to_polars(
             raise subprocess.CalledProcessError(awk_exit, awk_cmd, awk_stderr)
 
         # Process AWK output
-        if not awk_output.strip():
+        if not awk_output:
             return pl.DataFrame({col: [] for col in cols})
 
         # Convert to DataFrame using StringIO-like approach
-        lines = awk_output.strip().split("\n")
+        lines = awk_output.split("\n")
         if not lines:
             return pl.DataFrame({col: [] for col in cols})
 
@@ -733,33 +734,7 @@ def _stream_region_to_polars(
                 data[col].append(value)
 
         # Create DataFrame with explicit schema, allowing mixed types initially
-        try:
-            featuremap_dataframe = pl.DataFrame(data, schema=schema, strict=False)
-        except Exception as e:
-            log.warning(f"Failed to create DataFrame with strict schema, falling back to loose typing: {e}")
-            # Create without schema first, then cast
-            featuremap_dataframe = pl.DataFrame(data)
-            # Apply type conversions
-            for col, dtype in schema.items():
-                if col in featuremap_dataframe.columns:
-                    try:
-                        if dtype == pl.Int64:
-                            # Handle integer conversion with null values
-                            featuremap_dataframe = featuremap_dataframe.with_columns(
-                                pl.col(col).str.replace("^\\.$", "").cast(dtype, strict=False)
-                            )
-                        elif dtype == pl.Float64:
-                            # Handle float conversion with null values
-                            featuremap_dataframe = featuremap_dataframe.with_columns(
-                                pl.col(col).str.replace("^\\.$", "").cast(dtype, strict=False)
-                            )
-                        else:
-                            featuremap_dataframe = featuremap_dataframe.with_columns(
-                                pl.col(col).cast(dtype, strict=False)
-                            )
-                    except Exception as cast_error:
-                        log.warning(f"Failed to cast column {col} to {dtype}: {cast_error}")
-                        # Keep as string if casting fails
+        featuremap_dataframe = pl.DataFrame(data, schema=schema, strict=False)
 
         if featuremap_dataframe.height == 0:
             return featuremap_dataframe
