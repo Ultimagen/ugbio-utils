@@ -9,6 +9,16 @@ import pandas as pd
 import polars as pl
 import pytest
 from ugbio_featuremap import featuremap_to_dataframe
+from ugbio_featuremap.featuremap_to_dataframe import (
+    ALT,
+    CHROM,
+    POS,
+    REF,
+    _build_explicit_schema,
+    _get_awk_script_path,
+    _resolve_bcftools_command,
+    header_meta,
+)
 
 
 # --- fixtures --------------------------------------------------------------
@@ -204,8 +214,6 @@ def test_parallel_vcf_conversion_comprehensive(tmp_path: Path, input_featuremap:
 
 def test_bcftools_awk_pipeline_chunk_creation(tmp_path: Path, input_featuremap: Path) -> None:
     """Test that the bcftools + AWK + split pipeline creates chunk files correctly."""
-    import subprocess
-    from pathlib import Path
 
     chunk_dir = tmp_path / "chunks"
     chunk_dir.mkdir()
@@ -253,7 +261,6 @@ def test_bcftools_awk_pipeline_chunk_creation(tmp_path: Path, input_featuremap: 
 
 def test_chunk_processing_tsv_to_parquet_conversion(tmp_path: Path) -> None:
     """Test basic chunk processing functionality with minimal data."""
-    import polars as pl
 
     # Create a simple test chunk file
     chunk_file = tmp_path / "test_chunk.tsv"
@@ -284,10 +291,6 @@ def test_chunk_processing_tsv_to_parquet_conversion(tmp_path: Path) -> None:
 
 def test_awk_script_path_resolution() -> None:
     """Test that the AWK script can be found in both development and installed environments."""
-    from pathlib import Path
-
-    from ugbio_featuremap.featuremap_to_dataframe import _get_awk_script_path
-
     # Test that the function returns a valid path
     awk_path_str = _get_awk_script_path()
     awk_path = Path(awk_path_str)
@@ -306,6 +309,7 @@ def test_explicit_schema_type_inference_with_floats(tmp_path: Path) -> None:
 
     # Create a test VCF with problematic float values that caused the original issue
     vcf_content = """##fileformat=VCFv4.2
+##contig=<ID=chr1,length=1000000>
 ##INFO=<ID=AF,Number=1,Type=Float,Description="Allele Frequency">
 ##INFO=<ID=DP,Number=1,Type=Integer,Description="Total Depth">
 ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
@@ -317,21 +321,15 @@ chr1	200	.	C	T	25.5	PASS	AF=0.5454545;DP=22	GT:VAF:AD	0/1:0.5454545:10,12
 chr1	300	.	G	A	40.1	PASS	AF=0.3333333;DP=33	GT:VAF:AD	0/1:0.3333333:22,11
 """
 
-    # Create temporary VCF file
-    vcf_path = tmp_path / "test_float_types.vcf"
-    vcf_path.write_text(vcf_content)
-    parquet_path = tmp_path / "test_float_types.parquet"
-
-    # Test 1: Verify explicit schema generation works correctly
-    from ugbio_featuremap.featuremap_to_dataframe import (
-        ALT,
-        CHROM,
-        POS,
-        REF,
-        _build_explicit_schema,
-        _resolve_bcftools_command,
-        header_meta,
+    # --- create bgzipped + indexed VCF ------------------------------------
+    plain_vcf = tmp_path / "test_float_types.vcf"
+    plain_vcf.write_text(vcf_content)
+    vcf_path = tmp_path / "test_float_types.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", str(plain_vcf), "-Oz", "-o", str(vcf_path), "--write-index=tbi"],
+        check=True,
     )
+    parquet_path = tmp_path / "test_float_types.parquet"
 
     # Parse header metadata
     bcftools = _resolve_bcftools_command()
@@ -405,6 +403,7 @@ def test_decimal_type_inference_and_error_propagation_comprehensive(tmp_path: Pa
     """
     # Test VCF with the exact problematic float values from the original issue
     test_vcf_content = """##fileformat=VCFv4.2
+##contig=<ID=chr1,length=1000000>
 ##INFO=<ID=AF,Number=1,Type=Float,Description="Allele Frequency">
 ##INFO=<ID=DP,Number=1,Type=Integer,Description="Total Depth">
 ##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
@@ -415,20 +414,14 @@ chr1	100	.	A	G	30.0	PASS	AF=0.0227273;DP=44	GT:VAF:RN	0/1:0.0227273:read1,read2
 chr1	200	.	C	T	25.5	PASS	AF=0.5454545;DP=22	GT:VAF:RN	0/1:0.5454545:read3,read4,read5
 """
 
-    vcf_file = tmp_path / "test_decimal_fix.vcf"
-    vcf_file.write_text(test_vcf_content)
-    parquet_file = tmp_path / "test_decimal_fix.parquet"
-
-    # Part 1: Test explicit schema generation
-    from ugbio_featuremap.featuremap_to_dataframe import (
-        ALT,
-        CHROM,
-        POS,
-        REF,
-        _build_explicit_schema,
-        _resolve_bcftools_command,
-        header_meta,
+    plain = tmp_path / "test_decimal_fix.vcf"
+    plain.write_text(test_vcf_content)
+    vcf_file = tmp_path / "test_decimal_fix.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_file), "--write-index=tbi"],
+        check=True,
     )
+    parquet_file = tmp_path / "test_decimal_fix.parquet"
 
     bcftools = _resolve_bcftools_command()
     info_meta, fmt_meta = header_meta(str(vcf_file), bcftools)
