@@ -47,7 +47,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-import math
 import multiprocessing as _mp  # NEW
 import os
 import re
@@ -64,6 +63,7 @@ log = logging.getLogger(__name__)
 
 # Configuration constants
 DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
+CHUNK_BP_DEFAULT = 300_000_000  # 300 Mbp per processing chunk
 
 
 @dataclass
@@ -253,7 +253,7 @@ def _generate_genomic_regions(
     jobs: int,
     bcftools_path: str,
     bedtools_path: str,
-    window_size: int | None = None,
+    window_size: int,
 ) -> list[str]:
     """
     Return a *large* list of fixed-size windows (chr:start-end).
@@ -273,12 +273,7 @@ def _generate_genomic_regions(
 
     if not contigs:
         raise RuntimeError("No suitable ##contig lines found in VCF header")
-
-    total_bp = sum(length for _, length in contigs)
-    if window_size is None:
-        target_windows = jobs * 10
-        window_size = max(1, math.ceil(total_bp / target_windows))
-    log.info("Using window size %d bp (~%dx jobs)", window_size, (total_bp / window_size) / jobs)
+    log.debug(f"Found {len(contigs)} contigs: {contigs[:5]}{'...' if len(contigs) > 5 else ''}")  # noqa PLR2004
 
     # Write genome.sizes tmp file
     with tempfile.NamedTemporaryFile("w", delete=False) as fh:
@@ -414,6 +409,7 @@ def vcf_to_parquet(
     out: str,
     drop_info: set[str] | None = None,
     drop_format: set[str] | None = None,
+    chunk_bp: int = CHUNK_BP_DEFAULT,
     jobs: int = DEFAULT_JOBS,
 ) -> None:
     """
@@ -435,6 +431,8 @@ def vcf_to_parquet(
         INFO fields to exclude
     drop_format : set[str] | None
         FORMAT fields to exclude
+    chunk_bp : int
+        Maximum number of base-pairs per chunk (default 300 Mbp).
     jobs : int
         Number of parallel jobs (0 = auto-detect CPU cores)
     """
@@ -480,7 +478,13 @@ def vcf_to_parquet(
 
     with pl.StringCache():
         # Generate genomic regions (fixed windows via bedtools)
-        regions = _generate_genomic_regions(vcf, jobs, bcftools, bedtools)
+        regions = _generate_genomic_regions(
+            vcf,
+            jobs,
+            bcftools,
+            bedtools,
+            window_size=chunk_bp,
+        )
         log.info(f"Created {len(regions)} regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")  # noqa PLR2004
 
         # Get AWK script path
@@ -803,6 +807,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--jobs", type=int, default=DEFAULT_JOBS, help="Parallel jobs (0 = auto)")
     parser.add_argument("--drop-info", nargs="*", default=[], help="INFO tags to drop")
     parser.add_argument("--drop-format", nargs="*", default=["GT"], help="FORMAT tags to drop")
+    parser.add_argument(
+        "--chunk-bp",
+        type=int,
+        default=CHUNK_BP_DEFAULT,
+        help="Base-pairs per processing chunk (default 300 Mbp)",
+    )
     args = parser.parse_args(argv)
 
     vcf_to_parquet(
@@ -810,6 +820,7 @@ def main(argv: list[str] | None = None) -> None:
         out=args.out,
         drop_info=set(args.drop_info),
         drop_format=set(args.drop_format),
+        chunk_bp=args.chunk_bp,
         jobs=args.jobs,
     )
 
