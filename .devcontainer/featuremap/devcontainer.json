@@ -3,7 +3,7 @@
 {
 	"name": "Featuremap",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_featuremap:1.10.2",
+	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_featuremap:1.11.0",
 	"runArgs": [
 		"--init",
 		"--network=host",
