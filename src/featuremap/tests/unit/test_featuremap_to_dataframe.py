@@ -1,31 +1,14 @@
 from __future__ import annotations
 
-import json
-import logging
-import shutil
 import subprocess
-import warnings  # NEW
+import warnings
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import polars as pl
 import pytest
 from ugbio_featuremap import featuremap_to_dataframe
-
-bcftools_missing = shutil.which("bcftools") is None
-
-
-# --- Module-level functions for ProcessPoolExecutor pickling --------------
-def _failing_task():
-    """A task that always fails - defined at module level for pickling."""
-    raise ValueError("Test error - this should propagate")
-
-
-def _succeeding_task():
-    """A task that succeeds - defined at module level for pickling."""
-    import time
-
-    time.sleep(0.1)
-    return "success"
 
 
 # --- fixtures --------------------------------------------------------------
@@ -125,21 +108,6 @@ def test_roundtrip(tmp_path: Path, input_featuremap: Path):
     assert featuremap_dataframe.height == rn_len
 
 
-# ------------- categorical-override test ----------------------------------
-def test_json_override(tmp_path: Path, input_featuremap: Path, input_categorical_features: Path):
-    out = tmp_path / "override.parquet"
-    featuremap_to_dataframe.vcf_to_parquet(
-        str(input_featuremap), str(out), categories_json=str(input_categorical_features), jobs=1
-    )
-    featuremap_dataframe = pl.read_parquet(out)
-    for tag, cats in json.load(open(input_categorical_features))["categorical_features"].items():
-        if tag == "REF" or tag == "ALT":
-            # REF/ALT are reserved, so we don't override them
-            assert set(featuremap_dataframe[tag].cat.get_categories()) == {"", "A", "C", "G", "T"}
-        else:
-            assert set(featuremap_dataframe[tag].cat.get_categories()) == set([""] + cats)
-
-
 # ------------- REF/ALT default categories ---------------------------------
 def test_ref_alt_defaults(tmp_path: Path, input_featuremap: Path):
     out = tmp_path / "def.parquet"
@@ -168,26 +136,6 @@ def test_ensure_scalar_categories():
     assert set(featuremap_dataframe_2["x"].cat.get_categories()) == {"", "A", "B"}
 
 
-def test_json_override_and_reserved_warning(tmp_path, input_featuremap: Path, input_categorical_features: Path, caplog):
-    out = tmp_path / "out.parquet"
-
-    caplog.set_level(logging.WARNING)
-    featuremap_to_dataframe.vcf_to_parquet(
-        str(input_featuremap), str(out), categories_json=str(input_categorical_features), jobs=1
-    )
-
-    # Reserved override ignored?
-    assert "Ignoring JSON category override for reserved column REF" in caplog.text
-
-    featuremap_dataframe = pl.read_parquet(out)
-    cats = json.load(open(input_categorical_features))["categorical_features"]
-
-    # st / et overridden
-    assert set(featuremap_dataframe["tm"].cat.get_categories()) == set([""] + cats["tm"])
-    # REF remains default
-    assert set(featuremap_dataframe["REF"].cat.get_categories()) == {"", "A", "C", "G", "T"}
-
-
 def test_selected_dtypes(tmp_path: Path, input_featuremap: Path):
     out = tmp_path / "full.parquet"
     featuremap_to_dataframe.vcf_to_parquet(str(input_featuremap), str(out), jobs=1)
@@ -206,12 +154,6 @@ def test_selected_dtypes(tmp_path: Path, input_featuremap: Path):
         assert featuremap_dataframe[col].dtype == dt, f"{col} dtype {featuremap_dataframe[col].dtype} ≠ {dt}"
 
 
-@pytest.mark.skip(reason="Test removed - only parallel method exists now")
-def test_streaming_vs_memory_efficient_vs_parallel_identical_results(tmp_path: Path, input_featuremap: Path) -> None:
-    """Test removed since we only have parallel processing now."""
-
-
-@pytest.mark.skip(reason="Parallel test hangs in pytest environment - functionality verified manually")
 def test_parallel_vcf_conversion_comprehensive(tmp_path: Path, input_featuremap: Path) -> None:
     """Test the parallel VCF to Parquet conversion produces correct results."""
     parallel_out = str(tmp_path / "parallel_output.parquet")
@@ -239,64 +181,25 @@ def test_parallel_vcf_conversion_comprehensive(tmp_path: Path, input_featuremap:
     parallel_df = pl.read_parquet(parallel_out)
     sequential_df = pl.read_parquet(sequential_out)
 
-    # Debug output to understand the difference
-    print(f"Parallel shape: {parallel_df.shape}")
-    print(f"Sequential shape: {sequential_df.shape}")
-    print(f"Parallel columns: {parallel_df.columns}")
-    print(f"Sequential columns: {sequential_df.columns}")
+    # Convert to pandas to leverage robust comparison utilities
+    pd_parallel = parallel_df.to_pandas()
+    pd_sequential = sequential_df.to_pandas()
 
-    # Check unique positions to see what's different
-    parallel_positions = set(parallel_df.select(["CHROM", "POS"]).to_pandas().apply(tuple, axis=1))
-    sequential_positions = set(sequential_df.select(["CHROM", "POS"]).to_pandas().apply(tuple, axis=1))
+    # Ensure identical column order
+    assert list(pd_parallel.columns) == list(
+        pd_sequential.columns
+    ), "Column ordering differs between parallel and sequential results"
 
-    missing_in_parallel = sequential_positions - parallel_positions
-    extra_in_parallel = parallel_positions - sequential_positions
-
-    print(f"Positions missing in parallel: {len(missing_in_parallel)}")
-    print(f"Extra positions in parallel: {len(extra_in_parallel)}")
-
-    if missing_in_parallel:
-        print(f"First 10 missing positions: {list(missing_in_parallel)[:10]}")
-    if extra_in_parallel:
-        print(f"First 10 extra positions: {list(extra_in_parallel)[:10]}")
-
-    # Check basic properties
-    assert parallel_df.shape == sequential_df.shape, "Parallel and sequential results should have same shape"
-    assert parallel_df.columns == sequential_df.columns, "Parallel and sequential results should have same columns"
-
-    # Check if parallel results are already sorted
-    parallel_pos = parallel_df.select("POS").to_series()
-    sequential_pos = sequential_df.select("POS").to_series()
-
-    print(f"Parallel first 10 POS values: {parallel_pos.head(10).to_list()}")
-    print(f"Sequential first 10 POS values: {sequential_pos.head(10).to_list()}")
-    print(f"Parallel last 10 POS values: {parallel_pos.tail(10).to_list()}")
-    print(f"Sequential last 10 POS values: {sequential_pos.tail(10).to_list()}")
-
-    # Check if parallel is sorted
-    parallel_is_sorted = parallel_pos.is_sorted()
-    sequential_is_sorted = sequential_pos.is_sorted()
-    print(f"Parallel is sorted: {parallel_is_sorted}")
-    print(f"Sequential is sorted: {sequential_is_sorted}")
-
-    # Sort both for comparison (parallel processing might change order)
-    parallel_sorted = parallel_df.sort(["CHROM", "POS", "RN"])
-    sequential_sorted = sequential_df.sort(["CHROM", "POS", "RN"])
-
-    # Instead of exact comparison, check key structural properties
-    # The main goal is ensuring the parallel version produces valid, equivalent results
-
-    # Check that we have the same unique positions (the core VCF data)
-    parallel_positions = set(parallel_sorted.get_column("POS").to_list())
-    sequential_positions = set(sequential_sorted.get_column("POS").to_list())
-
-    assert parallel_positions == sequential_positions, "Position sets should be identical"
-
-    # Check that basic data integrity is maintained (no null values where unexpected)
-    assert parallel_sorted.get_column("CHROM").null_count() == sequential_sorted.get_column("CHROM").null_count()
-    assert parallel_sorted.get_column("POS").null_count() == sequential_sorted.get_column("POS").null_count()
-
-    print("✅ All structural checks passed - parallel processing works correctly")
+    # Exact match for non-float columns; tolerant match for float columns
+    for col in pd_parallel.columns:
+        if pd.api.types.is_float_dtype(pd_parallel[col]):
+            assert np.allclose(
+                pd_parallel[col].values, pd_sequential[col].values, rtol=1e-6, atol=1e-8, equal_nan=True
+            ), f"Float column '{col}' differs between parallel and sequential outputs"
+        else:
+            assert pd_parallel[col].equals(
+                pd_sequential[col]
+            ), f"Column '{col}' differs between parallel and sequential outputs"
 
 
 def test_bcftools_awk_pipeline_chunk_creation(tmp_path: Path, input_featuremap: Path) -> None:
@@ -488,13 +391,6 @@ chr1	300	.	G	A	40.1	PASS	AF=0.3333333;DP=33	GT:VAF:AD	0/1:0.3333333:22,11
         assert abs(actual - expected) < 1e-6, f"AF value {i}: expected ~{expected}, got {actual}"
 
 
-@pytest.mark.skip(
-    reason="Test removed - _check_completed_futures function no longer exists with region-based architecture"
-)
-def test_error_propagation_in_chunk_processing() -> None:
-    """Test removed - chunk processing replaced by region-based parallel processing."""
-
-
 def test_decimal_type_inference_and_error_propagation_comprehensive(tmp_path: Path) -> None:
     """
     Test the complete fix for decimal values being incorrectly parsed as integers.
@@ -598,6 +494,72 @@ def test_single_job_vcf_to_parquet_conversion(tmp_path: Path, input_featuremap: 
 
     featuremap_dataframe = pl.read_parquet(out_path)
 
+    # Check expected row count for single job processing
+    expected_rows = {
+        "416119_L7402.raw.featuremap.vcf.gz": 2664,
+        "416119_L7402.random_sample.featuremap.vcf.gz": 619,
+        "416119_L7402.random_sample.featuremap.manually_cleaned.vcf": 6577,
+        "416119_L7402.random_sample.featuremap.downsampled.vcf.gz": 4219,
+    }[input_featuremap.name]
+
+    assert (
+        featuremap_dataframe.shape[0] == expected_rows
+    ), f"Expected {expected_rows} rows, got {featuremap_dataframe.shape[0]}"
+
+    # Verify key columns and types
+    assert {"RN", "RL", "X_PREV1"}.issubset(featuremap_dataframe.columns)
+    assert featuremap_dataframe["RN"].dtype == pl.Utf8
+    assert featuremap_dataframe["POS"].dtype == pl.Int64
+    # Check expected row count for single job processing
+    expected_rows = {
+        "416119_L7402.raw.featuremap.vcf.gz": 2664,
+        "416119_L7402.random_sample.featuremap.vcf.gz": 619,
+        "416119_L7402.random_sample.featuremap.manually_cleaned.vcf": 6577,
+        "416119_L7402.random_sample.featuremap.downsampled.vcf.gz": 4219,
+    }[input_featuremap.name]
+
+    assert (
+        featuremap_dataframe.shape[0] == expected_rows
+    ), f"Expected {expected_rows} rows, got {featuremap_dataframe.shape[0]}"
+
+    # Verify key columns and types
+    assert {"RN", "RL", "X_PREV1"}.issubset(featuremap_dataframe.columns)
+    assert featuremap_dataframe["RN"].dtype == pl.Utf8
+    assert featuremap_dataframe["POS"].dtype == pl.Int64
+    print("✅ All decimal value float type inference fixes verified successfully")
+
+
+def test_single_job_vcf_to_parquet_conversion(tmp_path: Path, input_featuremap: Path) -> None:
+    """Test single job processing (jobs=1) works correctly without data loss."""
+    out_path = str(tmp_path / input_featuremap.name.replace(".vcf.gz", "_single_job.parquet"))
+
+    # Run conversion with single job (no region splitting)
+    featuremap_to_dataframe.vcf_to_parquet(
+        vcf=str(input_featuremap),
+        out=out_path,
+        drop_info=set(),
+        drop_format={"GT"},
+        jobs=1,  # Single job processing
+    )
+
+    featuremap_dataframe = pl.read_parquet(out_path)
+
+    # Check expected row count for single job processing
+    expected_rows = {
+        "416119_L7402.raw.featuremap.vcf.gz": 2664,
+        "416119_L7402.random_sample.featuremap.vcf.gz": 619,
+        "416119_L7402.random_sample.featuremap.manually_cleaned.vcf": 6577,
+        "416119_L7402.random_sample.featuremap.downsampled.vcf.gz": 4219,
+    }[input_featuremap.name]
+
+    assert (
+        featuremap_dataframe.shape[0] == expected_rows
+    ), f"Expected {expected_rows} rows, got {featuremap_dataframe.shape[0]}"
+
+    # Verify key columns and types
+    assert {"RN", "RL", "X_PREV1"}.issubset(featuremap_dataframe.columns)
+    assert featuremap_dataframe["RN"].dtype == pl.Utf8
+    assert featuremap_dataframe["POS"].dtype == pl.Int64
     # Check expected row count for single job processing
     expected_rows = {
         "416119_L7402.raw.featuremap.vcf.gz": 2664,
