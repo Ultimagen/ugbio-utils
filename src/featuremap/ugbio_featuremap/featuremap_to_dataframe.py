@@ -55,6 +55,7 @@ import subprocess
 import tempfile
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
 
 import polars as pl
@@ -77,7 +78,20 @@ class ColumnConfig:
     fmt_meta: dict
 
 
-# ChunkProcessingArgs dataclass removed - no longer needed with region-based architecture
+@dataclass
+class VCFJobConfig:  # NEW
+    """Static metadata shared by all workers."""
+
+    bcftools_path: str
+    awk_script: str
+    columns: list[str]
+    list_indices: list[int]
+    schema: dict[str, pl.PolarsDataType]
+    info_meta: dict
+    fmt_meta: dict
+    info_ids: list[str]
+    scalar_fmt_ids: list[str]
+    list_fmt_ids: list[str]
 
 
 # ───────────────── header helpers ────────────────────────────────────────────
@@ -487,59 +501,51 @@ def vcf_to_parquet(
         )
         log.info(f"Created {len(regions)} regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")  # noqa PLR2004
 
-        # Get AWK script path
-        awk_script = _get_awk_script_path()
+        # Build immutable job configuration (shared by every worker)  ▼ NEW
+        job_cfg = VCFJobConfig(
+            bcftools_path=bcftools,
+            awk_script=_get_awk_script_path(),
+            columns=cols,
+            list_indices=list_fmt_indices,
+            schema=_build_explicit_schema(cols, info_meta, fmt_meta),
+            info_meta=info_meta,
+            fmt_meta=fmt_meta,
+            info_ids=info_ids,
+            scalar_fmt_ids=scalar_fmt_ids,
+            list_fmt_ids=list_fmt_ids,
+        )
 
-        # Parallel region processing
-        # Use “spawn” context to avoid forking after heavy native libs are loaded
-        spawn_ctx = _mp.get_context("spawn")
-        with ProcessPoolExecutor(max_workers=jobs, mp_context=spawn_ctx) as executor:
-            futures = {}
-            for i, region in enumerate(regions):
-                # Output file for this region
-                output_file = f"{out}.part_{i+1}.parquet"
+        # Temporary directory for ordered part-files
+        with tempfile.TemporaryDirectory() as tmpdir:
+            spawn_ctx = _mp.get_context("spawn")
+            part_files: list[str] = []
 
-                # Submit region processing task
-                futures[
-                    executor.submit(
-                        _process_region_to_parquet,
-                        region,
-                        vcf,
-                        fmt_str,
-                        list_fmt_indices,
-                        cols,
-                        info_ids,
-                        scalar_fmt_ids,
-                        list_fmt_ids,
-                        info_meta,
-                        fmt_meta,
-                        bcftools,
-                        awk_script,
-                        output_file,
-                    )
-                ] = output_file
+            with ProcessPoolExecutor(max_workers=jobs, mp_context=spawn_ctx) as executor:
+                futures = {}
+                for i, region in enumerate(regions):
+                    part_path = Path(tmpdir) / f"part_{i:06d}.parquet"
+                    part_files.append(str(part_path))
+                    futures[
+                        executor.submit(
+                            _process_region_to_parquet,
+                            region,
+                            vcf,
+                            fmt_str,
+                            job_cfg,
+                            str(part_path),
+                        )
+                    ] = str(part_path)
 
-            # Monitor progress and log completed tasks
-            for future in as_completed(futures):
-                output_file = futures[future]
-                try:
-                    result = future.result()
-                    if result:
-                        log.debug(f"Region processed: {output_file}")
-                    else:
-                        log.warning(f"Empty output for region: {output_file}")
-                except Exception as e:
-                    log.error(f"Error processing region: {e}")
+                for fut in as_completed(futures):
+                    if fut.exception():
+                        log.error("Region %s failed: %s", futures[fut], fut.exception())
 
-        # Collect only successfully created part-files
-        parquet_files = [
-            f"{out}.part_{i+1}.parquet" for i in range(len(regions)) if Path(f"{out}.part_{i+1}.parquet").is_file()
-        ]
-        if not parquet_files:
-            raise RuntimeError("No Parquet part-files were produced – all regions empty or failed")
+            # keep only those parts that were actually created
+            part_files = [p for p in part_files if Path(p).is_file()]
+            if not part_files:
+                raise RuntimeError("No Parquet part-files were produced – all regions empty or failed")
 
-        # Merge Parquet files lazily
-        _merge_parquet_files_lazy(parquet_files, out)
+            _merge_parquet_files_lazy(part_files, out)
 
         log.info(f"Conversion completed: {out}")
 
@@ -548,19 +554,11 @@ def _process_region_to_parquet(
     region: str,
     vcf_path: str,
     fmt_str: str,
-    list_fmt_indices: list[int],
-    cols: list[str],
-    info_ids: list[str],
-    scalar_fmt_ids: list[str],
-    list_fmt_ids: list[str],
-    info_meta: dict,
-    fmt_meta: dict,
-    bcftools_path: str,
-    awk_script: str,
+    job_cfg: VCFJobConfig,
     output_file: str,
 ) -> str:
     """
-    Process a single genomic region and return parquet file path.
+    Process a single genomic region and write a Parquet part-file.
 
     This function is designed to be pickle-safe for multiprocessing.
     All arguments are simple types that can be safely pickled.
@@ -573,24 +571,8 @@ def _process_region_to_parquet(
         Path to VCF file
     fmt_str : str
         bcftools query format string
-    list_fmt_indices : list[int]
-        Indices of list columns for AWK processing
-    cols : list[str]
-        Column names
-    info_ids : list[str]
-        INFO field IDs
-    scalar_fmt_ids : list[str]
-        Scalar FORMAT field IDs
-    list_fmt_ids : list[str]
-        List FORMAT field IDs
-    info_meta : dict
-        INFO metadata
-    fmt_meta : dict
-        FORMAT metadata
-    bcftools_path : str
-        Path to bcftools executable
-    awk_script : str
-        Path to AWK script
+    job_cfg : VCFJobConfig
+        Job configuration object with processing metadata
     output_file : str
         Path for output parquet file
 
@@ -600,40 +582,17 @@ def _process_region_to_parquet(
         Path to created parquet file, empty string if no data
     """
     try:
-        # Recreate schema and processing args inside the worker process
-        schema = _build_explicit_schema(cols, info_meta, fmt_meta)
-
-        processing_args = {
-            "bcftools_path": bcftools_path,
-            "awk_script": awk_script,
-            "cols": cols,
-            "schema": schema,
-            "info_ids": info_ids,
-            "scalar_fmt_ids": scalar_fmt_ids,
-            "list_fmt_ids": list_fmt_ids,
-            "info_meta": info_meta,
-            "fmt_meta": fmt_meta,
-        }
-
-        # Enable StringCache in worker process
         with pl.StringCache():
-            # Stream region data directly to Polars DataFrame
-            featuremap_dataframe = _stream_region_to_polars(
+            frame = _stream_region_to_polars(
                 region=region,
                 vcf_path=vcf_path,
                 fmt_str=fmt_str,
-                list_fmt_indices=list_fmt_indices,
-                processing_args=processing_args,
+                job_cfg=job_cfg,
             )
-
-            if featuremap_dataframe.height == 0:
-                return ""  # No data in this region
-
-            # Apply processing
-            featuremap_dataframe = _cast_column_data_types(featuremap_dataframe, processing_args)
-
-            # Write to parquet
-            featuremap_dataframe.write_parquet(output_file)
+            if frame.is_empty():
+                return ""
+            frame = _cast_column_data_types(frame, job_cfg)
+            frame.write_parquet(output_file)
             return output_file
 
     except Exception as e:
@@ -644,127 +603,81 @@ def _process_region_to_parquet(
         raise
 
 
+# ──────────────────────── new tiny helpers ────────────────────────────────
+def _bcftools_awk_stdout(
+    *,
+    region: str,
+    vcf_path: str,
+    fmt_str: str,
+    bcftools: str,
+    awk_script: str,
+    list_indices: list[int],
+) -> str:
+    """Return TSV (string) produced by `bcftools | awk` for a region."""
+    bcftools_cmd = [bcftools, "query", "-f", fmt_str, vcf_path]
+    if region:
+        bcftools_cmd.insert(2, "-r")
+        bcftools_cmd.insert(3, region)
+
+    awk_cmd = ["awk", "-v", f"list_indices={','.join(map(str, list_indices))}", "-f", awk_script]
+
+    bcftool = subprocess.Popen(bcftools_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    awk = subprocess.Popen(awk_cmd, stdin=bcftool.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if bcftool.stdout:  # close in parent
+        bcftool.stdout.close()
+
+    out, awk_err = awk.communicate()
+    bcftool.wait()
+
+    if bcftool.returncode:  # pragma: no cover
+        raise subprocess.CalledProcessError(bcftool.returncode, bcftools_cmd, bcftool.stderr.read())
+    if awk.returncode:  # pragma: no cover
+        raise subprocess.CalledProcessError(awk.returncode, awk_cmd, awk_err)
+    return out.strip()
+
+
+def _frame_from_tsv(tsv: str, *, cols: list[str], schema: dict[str, pl.PolarsDataType]) -> pl.DataFrame:
+    """String TSV → Polars DataFrame (empty frame if no rows)."""
+    if not tsv:
+        return pl.DataFrame({c: [] for c in cols})
+    return pl.read_csv(
+        StringIO(tsv),
+        separator="\t",
+        has_header=False,
+        new_columns=cols,
+        null_values=["."],
+        dtypes=schema,
+    )
+
+
 def _stream_region_to_polars(
     region: str,
     vcf_path: str,
     fmt_str: str,
-    list_fmt_indices: list[int],
-    processing_args: dict,
+    job_cfg: VCFJobConfig,
 ) -> pl.DataFrame:
-    """
-    Stream bcftools output directly to Polars DataFrame for a specific region.
-
-    Parameters
-    ----------
-    region : str
-        Genomic region to process
-    vcf_path : str
-        Path to VCF file
-    fmt_str : str
-        bcftools query format string
-    list_fmt_indices : list[int]
-        Indices of list columns for explosion
-    processing_args : dict
-        Processing arguments containing metadata and config
-
-    Returns
-    -------
-    pl.DataFrame
-        Processed DataFrame for the region
-    """
-    bcftools_path = processing_args["bcftools_path"]
-    awk_script = processing_args["awk_script"]
-    cols = processing_args["cols"]
-    schema = processing_args["schema"]
-
-    # Build bcftools command with or without region
-    if region:
-        bcftools_cmd = [bcftools_path, "query", "-r", region, "-f", fmt_str, vcf_path]
-    else:
-        # Empty region means process entire file
-        bcftools_cmd = [bcftools_path, "query", "-f", fmt_str, vcf_path]
-
-    # Build AWK command
-    indices_str = ",".join(map(str, list_fmt_indices))
-    awk_cmd = ["awk", "-v", f"list_indices={indices_str}", "-f", awk_script]
-
-    # Create pipeline: bcftools | awk
-    log.debug(f"Processing region {region}")
-
-    bcftools_process = subprocess.Popen(bcftools_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-    awk_process = subprocess.Popen(
-        awk_cmd, stdin=bcftools_process.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    """Run bcftools→awk and return a typed Polars DataFrame for *region*."""
+    tsv = _bcftools_awk_stdout(
+        region=region,
+        vcf_path=vcf_path,
+        fmt_str=fmt_str,
+        bcftools=job_cfg.bcftools_path,
+        awk_script=job_cfg.awk_script,
+        list_indices=job_cfg.list_indices,
     )
-
-    # Close bcftools stdout in parent to allow proper pipeline behavior
-    if bcftools_process.stdout:
-        bcftools_process.stdout.close()
-
-    try:
-        # Read AWK output and create DataFrame
-        awk_output, awk_stderr = awk_process.communicate()
-        awk_output = awk_output.strip()
-
-        # Check for errors
-        bcftools_exit = bcftools_process.wait()
-        awk_exit = awk_process.wait()
-
-        if bcftools_exit != 0:
-            bcftools_stderr = bcftools_process.stderr.read() if bcftools_process.stderr else ""
-            raise subprocess.CalledProcessError(bcftools_exit, bcftools_cmd, bcftools_stderr)
-
-        if awk_exit != 0:
-            raise subprocess.CalledProcessError(awk_exit, awk_cmd, awk_stderr)
-
-        # Process AWK output
-        if not awk_output:
-            return pl.DataFrame({col: [] for col in cols})
-
-        # Convert to DataFrame using StringIO-like approach
-        lines = awk_output.split("\n")
-        if not lines:
-            return pl.DataFrame({col: [] for col in cols})
-
-        # Parse lines into data
-        data = {col: [] for col in cols}
-        for line in lines:
-            fields = line.split("\t")
-            for i, col in enumerate(cols):
-                if i < len(fields):
-                    value = fields[i] if fields[i] != "." else None
-                else:
-                    value = None
-                data[col].append(value)
-
-        # Create DataFrame with explicit schema, allowing mixed types initially
-        featuremap_dataframe = pl.DataFrame(data, schema=schema, strict=False)
-
-        if featuremap_dataframe.height == 0:
-            return featuremap_dataframe
-
-        # Apply processing
-        featuremap_dataframe = _cast_column_data_types(featuremap_dataframe, processing_args)
-
-        return featuremap_dataframe
-
-    finally:
-        # Cleanup processes
-        if bcftools_process.stdout and not bcftools_process.stdout.closed:
-            bcftools_process.stdout.close()
-        if bcftools_process.stderr:
-            bcftools_process.stderr.close()
-        if awk_process.stderr:
-            awk_process.stderr.close()
+    frame = _frame_from_tsv(tsv, cols=job_cfg.columns, schema=job_cfg.schema)
+    if frame.is_empty():
+        return frame
+    return _cast_column_data_types(frame, job_cfg)
 
 
-def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, processing_args: dict) -> pl.DataFrame:
+def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, job_cfg: VCFJobConfig) -> pl.DataFrame:
     """Apply column casting and categorical processing to a region DataFrame."""
-    info_ids = processing_args["info_ids"]
-    scalar_fmt_ids = processing_args["scalar_fmt_ids"]
-    list_fmt_ids = processing_args["list_fmt_ids"]
-    info_meta = processing_args["info_meta"]
-    fmt_meta = processing_args["fmt_meta"]
+    info_ids = job_cfg.info_ids
+    scalar_fmt_ids = job_cfg.scalar_fmt_ids
+    list_fmt_ids = job_cfg.list_fmt_ids
+    info_meta = job_cfg.info_meta
+    fmt_meta = job_cfg.fmt_meta
 
     # Cast POS to Int64
     featuremap_dataframe = featuremap_dataframe.with_columns(pl.col(POS).cast(pl.Int64))
