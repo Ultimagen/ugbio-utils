@@ -481,26 +481,10 @@ def vcf_to_parquet(
     with pl.StringCache():
         # Generate genomic regions (fixed windows via bedtools)
         regions = _generate_genomic_regions(vcf, jobs, bcftools, bedtools)
-        log.info(f"Created {len(regions)} regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")
+        log.info(f"Created {len(regions)} regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")  # noqa PLR2004
 
         # Get AWK script path
         awk_script = _get_awk_script_path()
-
-        # Build explicit schema for consistent processing
-        schema = _build_explicit_schema(cols, info_meta, fmt_meta)
-
-        # Prepare processing arguments
-        processing_args = {
-            "bcftools_path": bcftools,
-            "awk_script": awk_script,
-            "cols": cols,
-            "schema": schema,
-            "info_ids": info_ids,
-            "scalar_fmt_ids": scalar_fmt_ids,
-            "list_fmt_ids": list_fmt_ids,
-            "info_meta": info_meta,
-            "fmt_meta": fmt_meta,
-        }
 
         # Parallel region processing
         # Use “spawn” context to avoid forking after heavy native libs are loaded
@@ -537,7 +521,7 @@ def vcf_to_parquet(
                 try:
                     result = future.result()
                     if result:
-                        log.info(f"Region processed: {output_file}")
+                        log.debug(f"Region processed: {output_file}")
                     else:
                         log.warning(f"Empty output for region: {output_file}")
                 except Exception as e:
@@ -611,8 +595,6 @@ def _process_region_to_parquet(
     str
         Path to created parquet file, empty string if no data
     """
-    import polars as pl
-
     try:
         # Recreate schema and processing args inside the worker process
         schema = _build_explicit_schema(cols, info_meta, fmt_meta)
@@ -644,7 +626,7 @@ def _process_region_to_parquet(
                 return ""  # No data in this region
 
             # Apply processing
-            featuremap_dataframe = _apply_region_processing(featuremap_dataframe, processing_args)
+            featuremap_dataframe = _cast_column_data_types(featuremap_dataframe, processing_args)
 
             # Write to parquet
             featuremap_dataframe.write_parquet(output_file)
@@ -783,7 +765,7 @@ def _stream_region_to_polars(
             return featuremap_dataframe
 
         # Apply processing
-        featuremap_dataframe = _apply_region_processing(featuremap_dataframe, processing_args)
+        featuremap_dataframe = _cast_column_data_types(featuremap_dataframe, processing_args)
 
         return featuremap_dataframe
 
@@ -797,7 +779,7 @@ def _stream_region_to_polars(
             awk_process.stderr.close()
 
 
-def _apply_region_processing(featuremap_dataframe: pl.DataFrame, processing_args: dict) -> pl.DataFrame:
+def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, processing_args: dict) -> pl.DataFrame:
     """Apply column casting and categorical processing to a region DataFrame."""
     info_ids = processing_args["info_ids"]
     scalar_fmt_ids = processing_args["scalar_fmt_ids"]
