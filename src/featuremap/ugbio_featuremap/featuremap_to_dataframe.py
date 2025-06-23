@@ -630,7 +630,8 @@ def _bcftools_awk_stdout(
     bcftool.wait()
 
     if bcftool.returncode:  # pragma: no cover
-        raise subprocess.CalledProcessError(bcftool.returncode, bcftools_cmd, bcftool.stderr.read())
+        err_msg = bcftool.stderr.read() if bcftool.stderr else ""
+        raise subprocess.CalledProcessError(bcftool.returncode, bcftools_cmd, err_msg)
     if awk.returncode:  # pragma: no cover
         raise subprocess.CalledProcessError(awk.returncode, awk_cmd, awk_err)
     return out.strip()
@@ -646,7 +647,7 @@ def _frame_from_tsv(tsv: str, *, cols: list[str], schema: dict[str, pl.PolarsDat
         has_header=False,
         new_columns=cols,
         null_values=["."],
-        dtypes=schema,
+        schema=schema,
     )
 
 
