@@ -53,6 +53,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,11 +64,6 @@ log = logging.getLogger(__name__)
 
 # Configuration constants
 DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
-
-
-def _log_memory_usage(stage: str) -> None:
-    """Log current stage for debugging."""
-    log.debug(f"[{stage}] Processing stage completed")
 
 
 @dataclass
@@ -418,7 +414,6 @@ def vcf_to_parquet(
     out: str,
     drop_info: set[str] | None = None,
     drop_format: set[str] | None = None,
-    categories_json: str | None = None,
     jobs: int = DEFAULT_JOBS,
 ) -> None:
     """
@@ -440,8 +435,6 @@ def vcf_to_parquet(
         INFO fields to exclude
     drop_format : set[str] | None
         FORMAT fields to exclude
-    categories_json : str | None
-        Path to JSON file with categorical overrides
     jobs : int
         Number of parallel jobs (0 = auto-detect CPU cores)
     """
@@ -880,3 +873,34 @@ def _apply_region_processing(featuremap_dataframe: pl.DataFrame, processing_args
                 featuremap_dataframe = _ensure_scalar_categories(featuremap_dataframe, tag, cats)
 
     return featuremap_dataframe
+
+
+# ────────────────────────────── CLI entry point ─────────────────────────────
+def main(argv: list[str] | None = None) -> None:
+    """
+    Minimal command-line interface, e.g.:
+
+    $ python -m ugbio_featuremap.featuremap_to_dataframe  \
+         --in sample.vcf.gz --out sample.parquet --jobs 4
+    """
+    parser = argparse.ArgumentParser(
+        description="Convert feature-map VCF → Parquet", allow_abbrev=True
+    )
+    parser.add_argument("--input", required=True, help="Input VCF/BCF (bgzipped ok)")
+    parser.add_argument("--output", required=True, help="Output Parquet file")
+    parser.add_argument("--jobs", type=int, default=DEFAULT_JOBS, help="Parallel jobs (0 = auto)")
+    parser.add_argument("--drop-info", nargs="*", default=[], help="INFO tags to drop")
+    parser.add_argument("--drop-format", nargs="*", default=["GT"], help="FORMAT tags to drop")
+    args = parser.parse_args(argv)
+
+    vcf_to_parquet(
+        vcf=args.input,
+        out=args.out,
+        drop_info=set(args.drop_info),
+        drop_format=set(args.drop_format),
+        jobs=args.jobs,
+    )
+
+
+if __name__ == "__main__":  # pragma: no cover
+    main()
