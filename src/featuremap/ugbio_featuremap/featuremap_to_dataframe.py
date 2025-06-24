@@ -731,7 +731,7 @@ def main(argv: list[str] | None = None) -> None:
 
     vcf_to_parquet(
         vcf=args.input,
-        out=args.out,
+        out=args.output,
         drop_info=set(args.drop_info),
         drop_format=set(args.drop_format),
         chunk_bp=args.chunk_bp,
