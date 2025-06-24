@@ -30,9 +30,12 @@ def add_cnmops_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.Vari
         length = row["length"]
         header.add_line(f"##contig=<ID={chr_id},length={length}>")
 
+    header.filters.add("LowQual", None, None, "Variant with QUAL < 0.1")
+
     # Add INFO
     header.add_line('##INFO=<ID=probability,Number=1,Type=Float,Description="CNN probability">')
     header.add_line('##INFO=<ID=SVLEN,Number=.,Type=Integer,Description="CNV length">')
+    header.add_line('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="CNV type. can be DUP or DEL">')
 
     return header
 
@@ -55,17 +58,26 @@ def write_cnmops_vcf(outfile: str, header: pysam.VariantHeader, cnv_annotated_be
             chr_id = row["chr"]
             start = row["start"]
             end = row["end"]
-            info = row["info"]
+            probability = row["info"]
 
             record = vcf_out.new_record()
             record.contig = chr_id
             record.start = start
             record.stop = end
             record.ref = "N"
+            record.qual = probability
 
             record.info["SVLEN"] = int(end) - int(start)
-            record.info["probability"] = info
+            record.info["SVTYPE"] = "DEL"
+            record.info["probability"] = probability
             # END position is automatically generated for multi-base variants
+
+            qual_cutoff = 0.2510235
+            if record.qual is not None and record.qual > qual_cutoff:
+                record.filter.clear()  # this means "PASS" in VCF
+                record.filter.add("PASS")
+            else:
+                record.filter.add("LowQual")
 
             # Write the record to the VCF file
             vcf_out.write(record)
