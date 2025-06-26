@@ -15,361 +15,250 @@
 # DESCRIPTION
 #    Run single read SNV quality recalibration training
 # CHANGELOG in reverse chronological order
+
+
+from __future__ import annotations
+
 import argparse
 import json
-import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-from simppl.simple_pipeline import SimplePipeline
-from ugbio_core.consts import DEFAULT_FLOW_ORDER
+import numpy as np
+import pandas as pd  # only needed to build a Series for partition_into_folds
+import polars as pl
+import xgboost as xgb
+from ugbio_core.logger import logger
 
-from ugbio_srsnv.srsnv_plotting_utils import srsnv_report
-from ugbio_srsnv.srsnv_training_utils import SRSNVTrain
+# ─── Re-use tiny helpers from the legacy utils ─────────────────────────────
+from ugbio_srsnv.srsnv_training_utils import (  # type: ignore
+    partition_into_folds,
+    prob_to_phred,
+)
 
+# ──────────────────────────── NEW CONSTANTS ───────────────────────────────
+FOLD_COL = "fold_id"
+LABEL_COL = "label"
+CHROM_COL = "chrom"
+POS_COL = "POS"
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="srsnv_training.py", description=run.__doc__)
-    parser.add_argument(
-        "--hom_snv_featuremap",
-        type=str,
-        required=True,
-        help="""input featuremap with homozygote SNVs (True Positive)""",
-    )
-    parser.add_argument(
-        "--single_substitution_featuremap",
-        type=str,
-        required=True,
-        help="""single substitution featuremap (False Positive)""",
-    )
-    parser.add_argument(
-        "--hom_snv_regions",
-        type=str,
-        required=False,
-        help="""Path to bed file containint regions for hom snv (TP) featuremap""",
-    )
-    parser.add_argument(
-        "--single_sub_regions",
-        type=str,
-        required=True,
-        help="""Path to bed file containint regions for single substitution featuremap (FP)""",
-    )
-    parser.add_argument(
-        "--cram_stats_file",
-        type=str,
-        required=True,
-        help="""Path to cram stats file (for LoD estimation)""",
-    )
-    parser.add_argument(
-        "--model_params",
-        type=str,
-        required=False,
-        help="""Path to json file with input parameters for the classification model""",
-    )
-    parser.add_argument(
-        "--train_set_size",
-        type=int,
-        help="""Size of the train set for the classification model""",
-    )
-    parser.add_argument(
-        "--test_set_size",
-        type=int,
-        default=None,
-        help="""Size of the test set for the classification model""",
-    )
-    parser.add_argument(
-        "--num_CV_folds",
-        type=int,
-        default=None,
-        help="""Number of cross-validation folds to use. Default=1 (no CV)""",
-    )
-    parser.add_argument(
-        "--num_chroms_for_test",
-        type=int,
-        required=False,
-        default=None,
-        help="""Number chromosomes to exclude from training and use exclusively for test set""",
-    )
-    parser.add_argument(
-        "--split_folds_randomly",
-        action="store_true",
-        help="""by default the training data is split into folds by chromosomes,
-        if the flag is provided it is split randomly.""",
-    )
-    parser.add_argument(
-        "--numerical_features",
-        type=str,
-        nargs="+",
-        help="""comma separated list of numerical features for ML classifier """,
-    )
-    parser.add_argument(
-        "--categorical_features",
-        type=str,
-        nargs="+",
-        help="""comma separated list of categorical features for ML classifier.
-        Each item is a dictionary, e.g.: '{"ref": ["T", "G", "C", "A"]}' """,
-    )
-    parser.add_argument(
-        "--dataset_params_json_path",
-        type=str,
-        required=False,
-        default=None,
-        help="""Path to JSON file that contains dataset parameters, i.e.
-        train_set_size, test_set_size, numerical_features, categorical_features,
-        balanced_sampling_info_fields, pre_filter""",
-    )
-    parser.add_argument(
-        "--balanced_sampling_info_fields",
-        type=str,
-        nargs="+",
-        default=None,
-        help="comma separated list of categorical features to be used for balanced sampling of the TP training set"
-        " to eliminate prior distribution bias (e.g. 'trinuc_context_with_alt,is_forward')",
-    )
-    parser.add_argument(
-        "--output",
-        type=str,
-        required=True,
-        help="""Path to which output files will be written to""",
-    )
-    parser.add_argument(
-        "--basename",
-        type=str,
-        default="",
-        required=False,
-        help="""basename of output files""",
-    )
-    parser.add_argument(
-        "--save_model_jsons",
-        action="store_true",
-        help="""Save model(s) in json files. By default models are saved only
-        as a single joblib file.""",
-    )
-    parser.add_argument(
-        "-r",
-        "--reference_fasta",
-        type=str,
-        help="""reference fasta, only required for motif annotation""",
-    )
-    parser.add_argument(
-        "--reference_dict",
-        type=str,
-        help="""reference dict, required to know chromosome sizes""",
-    )
-    parser.add_argument(
-        "--flow_order",
-        type=str,
-        required=False,
-        default=DEFAULT_FLOW_ORDER,
-        help="""flow order - required for cycle skip annotation """,
-    )
-    parser.add_argument(
-        "--lod_filters",
-        type=str,
-        required=False,
-        default=None,
-        help="""json file with a dict of format 'filter name':'query' for LoD simulation """,
-    )
-    parser.add_argument(
-        "--ppmSeq_adapter_version",
-        type=str,
-        required=False,
-        default=None,
-        help="""adapter version, indicates if input featuremap is from balanced ePCR data """,
-    )
-    parser.add_argument(
-        "--start_tag_col",
-        type=str,
-        required=False,
-        default=None,
-        help="""Name of column in featuremap that contains ppmSeq start tag.
-        When not provided, value is inferred from the featuremap and categorial features""",
-    )
-    parser.add_argument(
-        "--end_tag_col",
-        type=str,
-        required=False,
-        default=None,
-        help="""Name of column in featuremap that contains ppmSeq end tag.
-        When not provided, value is inferred from the featuremap and categorial features""",
-    )
-    parser.add_argument(
-        "--pipeline_version",
-        type=str,
-        required=False,
-        default=None,
-        help="""Pipeline version""",
-    )
-    parser.add_argument(
-        "--docker",
-        type=str,
-        required=False,
-        default=None,
-        help="""docker used to run the pipeline""",
-    )
-    parser.add_argument(
-        "--pre_filter",
-        type=str,
-        required=False,
-        default=None,
-        help="""bcftools include filter to apply as part of a "bcftools view <vcf> -i 'pre_filter' command""",
-    )
-    parser.add_argument(
-        "--random_seed",
-        type=int,
-        required=False,
-        default=None,
-        help="""random seed for reproducibility""",
-    )
-    parser.add_argument(
-        "--load_dataset_and_model",
-        action="store_true",
-        help="""If flag is provided, skip dataset genenration and model training.
-        Output folder should contain featuremap_df.parquet and model.joblib,
-        and all other relevant files.""",
-    )
-    parser.add_argument(
-        "--raise_exceptions_in_report",
-        action="store_true",
-        help="""If flag is provided, raise exceptions when creating report.
-        Otherwise, suprress the exceptions (exceptions are logged, and correspoding
-        error messages appear in the report).
-        """,
-    )
-    return parser.parse_args(argv[1:])
+RAW_QUAL_VAL = "raw_qual_val"
+RAW_QUAL_TRAIN_TMPL = "raw_qual_train_{idx}"  # idx = 1 … k-1
 
 
-def read_dataset_params(args):
-    """Read the dataset params from json file. Any values provided in the command line
-    overrides the json file.
-    Arguments:
-        - args: the command line arguments.
-    Returns:
-        - dataset_params [dict]: dictionary with dataset params.
-
-    Raises:
-        - ValueError, if split_folds_by has value other than 'random' or 'chrom'
+# ───────────────────── interval-list helpers (NEW) ────────────────────────
+def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
     """
-    dataset_params = {
-        "train_set_size": args.train_set_size,
-        "test_set_size": args.test_set_size,
-        "num_chroms_for_test": args.num_chroms_for_test,
-        "numerical_features": args.numerical_features,
-        "categorical_features": args.categorical_features,
-        "balanced_sampling_info_fields": args.balanced_sampling_info_fields,
-        "pre_filter": args.pre_filter,
-        "ppmSeq_adapter_version": args.ppmSeq_adapter_version,
-        "start_tag_col": args.start_tag_col,
-        "end_tag_col": args.end_tag_col,
-        "pipeline_version": args.pipeline_version,
-        "docker": args.docker,
-        "random_seed": args.random_seed,
-        "num_CV_folds": args.num_CV_folds,
-    }
-    if args.categorical_features:
-        # convert string to dictionary:
-        dataset_params["categorical_features"] = {
-            k: v for feat in args.categorical_features for k, v in json.loads(feat).items()
-        }
-    if args.dataset_params_json_path is not None:
-        # log that loading params from json
-        with open(args.dataset_params_json_path, encoding="utf-8") as f:
-            params = json.load(f)
-    else:
-        params = {}
+    Picard/Broad interval-list:
+    header lines: '@SQ\tSN:chr1\tLN:248956422'
+    data  lines:  'chr1   100  200  +  region1'
 
-    dataset_params = {p: v or params.get(p, None) for p, v in dataset_params.items()}
-    # Add boolean features to categorical
-    if params.get("boolean_features", None) is not None:
-        for feat in params["boolean_features"]:
-            dataset_params["categorical_features"][feat] = [False, True]
-    # default value of num_CV_folds
-    dataset_params["num_CV_folds"] = dataset_params["num_CV_folds"] or 1
-    # default value of random_seed
-    dataset_params["random_seed"] = dataset_params["random_seed"] or 42
-    # check split_folds_by_chrom
-    dataset_params["split_folds_by_chrom"] = True
-    if params.get("split_folds_by", None) is not None:
-        if params["split_folds_by"] == "chrom":
-            dataset_params["split_folds_by_chrom"] = True
-        elif params["split_folds_by"] == "random":
-            dataset_params["split_folds_by_chrom"] = False
-        else:
-            raise ValueError(
-                f"split_folds_by can only have values 'chrome' and 'random'. Got {params['split_folds_by']}"
+    Returns
+    -------
+    chrom_sizes : dict[str, int]
+    chroms_in_data : list[str]  # preserve original order of appearance
+    """
+    chrom_sizes: dict[str, int] = {}
+    chroms_in_data: list[str] = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            if line.startswith("@SQ"):
+                for field in line.strip().split("\t")[1:]:
+                    key, val = field.split(":", 1)
+                    if key == "SN":
+                        chrom_name = val
+                    elif key == "LN":
+                        chrom_sizes[chrom_name] = int(val)
+            elif not line.startswith("@"):
+                chrom = line.split("\t", 1)[0]
+                if chrom not in chroms_in_data:
+                    chroms_in_data.append(chrom)
+    missing = [c for c in chroms_in_data if c not in chrom_sizes]
+    if missing:
+        raise ValueError(f"Missing @SQ header for contigs: {missing}")
+    return chrom_sizes, chroms_in_data
+
+
+# ───────────────────────── CLI helpers ────────────────────────────────────
+def _cli() -> argparse.Namespace:
+    ap = argparse.ArgumentParser(description="Train SR-SNV classifier (refactored)")
+    ap.add_argument("--positive", required=True, help="Parquet with label=1 rows")
+    ap.add_argument("--negative", required=True, help="Parquet with label=0 rows")
+    ap.add_argument("--training-regions", required=True, help="Picard interval_list file")
+    ap.add_argument("--k-folds", type=int, default=1, help="Number of CV folds (≥1)")
+    ap.add_argument(
+        "--model-params",
+        help="XGBoost params as key=value tokens separated by ':' "
+        "(e.g. 'eta=0.1:max_depth=8') or a path to a JSON file",
+    )
+    ap.add_argument("--output", required=True, help="Output directory")
+    ap.add_argument("--basename", default="", help="Basename prefix for outputs")
+    ap.add_argument("--random-seed", type=int, default=None)
+    return ap.parse_args()
+
+
+# ───────────────────────── model-param parser ─────────────────────────────
+def _parse_model_params(mp: str | None) -> dict[str, Any]:
+    """
+    Accept either a JSON file or a ':'-separated list of key=value tokens.
+
+    Examples
+    --------
+    --model-params eta=0.1:max_depth=8
+    --model-params /path/to/params.json
+    """
+    if mp is None:
+        return {}
+    p = Path(mp)
+    if p.is_file() and mp.endswith(".json"):
+        with p.open(encoding="utf-8") as fh:
+            return json.load(fh)
+
+    params: dict[str, Any] = {}
+    for token in filter(None, mp.split(":")):  # skip empty segments
+        if "=" not in token:
+            raise ValueError(f"Invalid model param token '{token}'. Expected key=value.")
+        key, val = token.split("=", 1)
+        try:
+            params[key] = json.loads(val)  # try numeric / bool / null
+        except json.JSONDecodeError:
+            params[key] = val
+    return params
+
+
+# ───────────────────────── core logic ─────────────────────────────────────
+class SRSNVTrainer:  # renamed from SRTrainer
+    def __init__(self, args: argparse.Namespace):
+        self.args = args
+        self.out_dir = Path(args.output)
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+
+        # RNG
+        self.seed = args.random_seed or int(datetime.now().timestamp())
+        self.rng = np.random.default_rng(self.seed)
+
+        # Data
+        self.data_frame = self._load_data(args.positive, args.negative)
+        self.k_folds = max(1, args.k_folds)
+
+        # Folds
+        chrom_sizes, chrom_list = _parse_interval_list(args.training_regions)
+        # partition_into_folds expects a pandas Series
+        self.chrom_to_fold = partition_into_folds(
+            pd.Series({c: chrom_sizes[c] for c in chrom_list}),
+            self.k_folds,
+            n_test=0,
+        )
+        self.data_frame = self.data_frame.with_columns(
+            pl.col(CHROM_COL).map_elements(lambda c: self.chrom_to_fold.get(c, float("nan"))).alias(FOLD_COL)
+        )
+
+        # Models
+        model_params = _parse_model_params(args.model_params)
+        self.models = [xgb.XGBClassifier(**model_params) for _ in range(self.k_folds)]
+
+    # ─────────────────────── data & features ────────────────────────────
+    def _load_data(self, pos_path: str, neg_path: str) -> pl.DataFrame:
+        """Read parquet ⇒ polars, add label column and concatenate."""
+        pos_df = pl.read_parquet(pos_path).with_columns(pl.lit(value=True).alias(LABEL_COL))
+        neg_df = pl.read_parquet(neg_path).with_columns(pl.lit(value=False).alias(LABEL_COL))
+        combined_df = pl.concat([pos_df, neg_df])
+        if "CHROM" in combined_df.columns and CHROM_COL not in combined_df.columns:
+            combined_df = combined_df.rename({"CHROM": CHROM_COL})
+        return combined_df
+
+    def _feature_columns(self) -> list[str]:
+        exclude = {LABEL_COL, FOLD_COL, CHROM_COL, "CHROM", POS_COL.lower(), POS_COL}
+        return [c for c in self.data_frame.columns if c not in exclude]
+
+    # ─────────────────────── training / prediction ──────────────────────
+    def train(self) -> None:
+        feat_cols = self._feature_columns()
+        logger.info(f"Training with {len(feat_cols)} features")
+
+        # Pre-compute numpy matrices once
+        x_all = self.data_frame.select(feat_cols).to_numpy()
+        y_all = self.data_frame.select(LABEL_COL).to_numpy().ravel()
+        fold_arr = self.data_frame.select(FOLD_COL).to_numpy().ravel()
+
+        for fold_idx in range(self.k_folds):
+            val_mask = fold_arr == fold_idx
+            train_mask = (~val_mask) & ~np.isnan(fold_arr)
+
+            self.models[fold_idx].fit(
+                x_all[train_mask],
+                y_all[train_mask],
+                eval_set=[
+                    (x_all[train_mask], y_all[train_mask]),
+                    (x_all[val_mask], y_all[val_mask]),
+                ],
             )
-    if args.split_folds_randomly:  # override json file
-        dataset_params["split_folds_by_chrom"] = False
 
-    ppmseq_tags_consistent = (dataset_params["start_tag_col"] and dataset_params["end_tag_col"]) or (
-        dataset_params["start_tag_col"] is None and dataset_params["end_tag_col"] is None
-    )
-    if not ppmseq_tags_consistent:
-        raise ValueError("Both start_tag_col and end_tag_col must be provided or neither.")
+        self._add_quality_columns(x_all, fold_arr)
 
-    return dataset_params
+    def _add_quality_columns(self, x_all: np.ndarray, fold_arr: np.ndarray) -> None:
+        n_rows = x_all.shape[0]
+        preds_phred = np.empty((self.k_folds, n_rows), dtype=float)
 
+        for k, model in enumerate(self.models):
+            prob = model.predict_proba(x_all)[:, 1]
+            preds_phred[k] = prob_to_phred(prob)
 
-def run(argv):
-    """Train a model for single read SNV quality recalibration"""
-    args = parse_args(argv)
-    simple_pipeline_args = (0, 10000, False)
-    sp = SimplePipeline(
-        simple_pipeline_args[0],
-        simple_pipeline_args[1],
-        debug=simple_pipeline_args[2],
-        print_timing=True,
-    )
+        # validation qual
+        fold_idx_int = np.where(np.isnan(fold_arr), 0, fold_arr.astype(int))
+        raw_qual_val = preds_phred[fold_idx_int, np.arange(n_rows)]
 
-    # TODO add the option to read from a json file         model_parameters: dict | str = None,
-    # TODO add to args         classifier_class=xgb.XGBClassifier,
+        # training quals
+        train_quals = np.full((n_rows, self.k_folds - 1), np.nan, dtype=float)
+        for row in range(n_rows):
+            col = 0
+            for k in range(self.k_folds):
+                if k == fold_idx_int[row]:
+                    continue
+                train_quals[row, col] = preds_phred[k, row]
+                col += 1
 
-    dataset_params = read_dataset_params(args)
-    s = SRSNVTrain(
-        tp_featuremap=args.hom_snv_featuremap,
-        fp_featuremap=args.single_substitution_featuremap,
-        tp_regions_bed_file=args.hom_snv_regions,
-        fp_regions_bed_file=args.single_sub_regions,
-        numerical_features=dataset_params["numerical_features"],
-        categorical_features=dataset_params["categorical_features"],
-        balanced_sampling_info_fields=dataset_params["balanced_sampling_info_fields"]
-        if dataset_params["balanced_sampling_info_fields"]
-        else None,
-        sorter_json_stats_file=args.cram_stats_file,
-        train_set_size=dataset_params["train_set_size"],
-        test_set_size=dataset_params["test_set_size"],
-        k_folds=dataset_params["num_CV_folds"],
-        split_folds_by_chrom=dataset_params["split_folds_by_chrom"],
-        num_chroms_for_test=dataset_params["num_chroms_for_test"],
-        model_params=args.model_params,
-        reference_dict=args.reference_dict,
-        out_path=args.output,
-        out_basename=args.basename,
-        lod_filters=args.lod_filters,
-        save_model_jsons=args.save_model_jsons,
-        load_dataset_and_model=args.load_dataset_and_model,
-        ppmseq_adapter_version=dataset_params["ppmSeq_adapter_version"],
-        start_tag_col=dataset_params["start_tag_col"],
-        end_tag_col=dataset_params["end_tag_col"],
-        pipeline_version=dataset_params["pipeline_version"],
-        docker_image=dataset_params["docker"],
-        pre_filter=dataset_params["pre_filter"],
-        random_seed=dataset_params["random_seed"],
-        raise_exceptions_in_report=args.raise_exceptions_in_report,
-        simple_pipeline=sp,
-    ).process()
+        # attach new columns
+        new_cols = [pl.Series(RAW_QUAL_VAL, raw_qual_val)]
+        for idx in range(self.k_folds - 1):
+            new_cols.append(pl.Series(RAW_QUAL_TRAIN_TMPL.format(idx=idx + 1), train_quals[:, idx]))
+        self.data_frame = self.data_frame.with_columns(new_cols)
 
-    # TODO: merge the two reports so train and test set results are presented together
-    srsnv_report(
-        out_path=args.output,
-        out_basename=args.basename,
-        report_name="test",
-        model_file=s.model_joblib_save_path,
-        params_file=s.params_save_path,
-        simple_pipeline=None,
-    )
+    # ───────────────────────── save outputs ─────────────────────────────
+    def save(self) -> None:
+        base = (
+            (self.args.basename + ".")
+            if self.args.basename and not self.args.basename.endswith(".")
+            else self.args.basename
+        )
+        df_path = self.out_dir / f"{base}featuremap_df.parquet"
+        self.data_frame.write_parquet(df_path)
+        logger.info(f"Saved dataframe → {df_path}")
+
+        # models – JSON, one file per fold
+        model_paths: dict[int, str] = {}
+        for fold_idx, model in enumerate(self.models):
+            path = self.out_dir / f"{base}model_fold_{fold_idx}.json"
+            model.save_model(path)
+            model_paths[fold_idx] = str(path)
+        logger.info("Saved %d model JSONs", self.k_folds)
+
+        # chromosome → fold map
+        chrom_map_path = self.out_dir / f"{base}chrom_to_model.json"
+        with chrom_map_path.open("w") as fh:
+            json.dump(self.chrom_to_fold, fh, indent=2)
+        logger.info(f"Saved chromosome→model map → {chrom_map_path}")
+
+    # ───────────────────────── entry point ──────────────────────────────
+    def run(self) -> None:
+        self.train()
+        self.save()
 
 
-def main():
-    run(sys.argv)
+def main() -> None:
+    trainer = SRSNVTrainer(_cli())
+    trainer.run()
 
 
 if __name__ == "__main__":
