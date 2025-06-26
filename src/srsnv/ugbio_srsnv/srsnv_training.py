@@ -39,9 +39,9 @@ POS = FeatureMapFields.POS.value
 REF = FeatureMapFields.REF.value
 X_ALT = FeatureMapFields.X_ALT.value
 
-
 RAW_QUAL_VAL = "raw_qual_val"
 RAW_QUAL_TRAIN_TMPL = "raw_qual_train_{idx}"  # idx = 1 … k-1
+pl.enable_string_cache()
 
 
 # ───────────────────────── parsers ────────────────────────────
@@ -178,13 +178,13 @@ class SRSNVTrainer:  # renamed from SRTrainer
         # Folds
         chrom_sizes, chrom_list = _parse_interval_list(args.training_regions)
         # partition_into_folds expects a pandas Series
-        self.chrom_to_fold = partition_into_folds(
+        self.chrom_to_fold: dict[str, int] = partition_into_folds(
             pd.Series({c: chrom_sizes[c] for c in chrom_list}),
             self.k_folds,
             n_test=0,
         )
         self.data_frame = self.data_frame.with_columns(
-            pl.col(CHROM).map_elements(lambda c: self.chrom_to_fold.get(c, float("nan"))).alias(FOLD_COL)
+            pl.col(CHROM).map_elements(lambda c: self.chrom_to_fold.get(c), return_dtype=pl.Int64).alias(FOLD_COL)
         )
 
         # Models
@@ -234,7 +234,6 @@ class SRSNVTrainer:  # renamed from SRTrainer
 
         # ---------- convert Polars → Pandas with categories -------------
         pd_df = self.data_frame.to_pandas()
-        print(pd_df.columns)
         for col in feat_cols:
             if pd_df[col].dtype == object:
                 pd_df[col] = pd_df[col].astype("category")
@@ -325,7 +324,7 @@ class SRSNVTrainer:  # renamed from SRTrainer
 
 # ───────────────────────── CLI helpers ────────────────────────────────────
 def _cli() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Train SR-SNV classifier (refactored)")
+    ap = argparse.ArgumentParser(description="Train SingleReadSNV classifier", allow_abbrev=True)
     ap.add_argument("--positive", required=True, help="Parquet with label=1 rows")
     ap.add_argument("--negative", required=True, help="Parquet with label=0 rows")
     ap.add_argument("--training-regions", required=True, help="Picard interval_list file")
