@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -163,42 +164,55 @@ def prob_to_phred(prob, max_value=None):
 # ───────────────────────── core logic ─────────────────────────────────────
 class SRSNVTrainer:  # renamed from SRTrainer
     def __init__(self, args: argparse.Namespace):
+        logger.debug("Initializing SRSNVTrainer")
         self.args = args
         self.out_dir = Path(args.output)
         self.out_dir.mkdir(parents=True, exist_ok=True)
 
         # RNG
         self.seed = args.random_seed or int(datetime.now().timestamp())
+        logger.debug("Using random seed: %d", self.seed)
         self.rng = np.random.default_rng(self.seed)
 
         # Data
+        logger.debug("Loading data from positive=%s and negative=%s", args.positive, args.negative)
         self.data_frame = self._load_data(args.positive, args.negative)
+        logger.debug("Data loaded. Shape: %s", self.data_frame.shape)
         self.k_folds = max(1, args.k_folds)
 
         # Folds
+        logger.debug("Parsing interval list from %s", args.training_regions)
         chrom_sizes, chrom_list = _parse_interval_list(args.training_regions)
         # partition_into_folds expects a pandas Series
+        logger.debug("Partitioning %d chromosomes into %d folds", len(chrom_list), self.k_folds)
         self.chrom_to_fold: dict[str, int] = partition_into_folds(
             pd.Series({c: chrom_sizes[c] for c in chrom_list}),
             self.k_folds,
             n_test=0,
         )
+        logger.debug("Assigning folds to data")
         self.data_frame = self.data_frame.with_columns(
             pl.col(CHROM).map_elements(lambda c: self.chrom_to_fold.get(c), return_dtype=pl.Int64).alias(FOLD_COL)
         )
+        logger.debug("Fold assignment complete")
 
         # Models
+        logger.debug("Parsing model parameters from: %s", args.model_params)
         model_params = _parse_model_params(args.model_params)
+        logger.debug("Initializing %d XGBClassifier models with params: %s", self.k_folds, model_params)
         self.models = [xgb.XGBClassifier(**model_params) for _ in range(self.k_folds)]
 
         # optional user-supplied feature subset
         self.feature_list: list[str] | None = args.features.split(":") if args.features else None
+        logger.debug("Feature list from user: %s", self.feature_list)
 
     # ─────────────────────── data & features ────────────────────────────
     def _load_data(self, pos_path: str, neg_path: str) -> pl.DataFrame:
         """Read parquet ⇒ polars, massage positive/negative frames and concatenate."""
         # --- positive -------------------------------------------------------
+        logger.debug("Reading positive examples from %s", pos_path)
         pos_df = pl.read_parquet(pos_path)
+        logger.debug("Positive examples shape: %s", pos_df.shape)
 
         if X_ALT not in pos_df.columns:
             raise ValueError(f"{pos_path} is missing required column 'X_ALT'")
@@ -208,34 +222,46 @@ class SRSNVTrainer:  # renamed from SRTrainer
         pos_df = pos_df.with_columns(pl.lit(value=True).alias(LABEL_COL))
 
         # --- negative -------------------------------------------------------
+        logger.debug("Reading negative examples from %s", neg_path)
         neg_df = pl.read_parquet(neg_path)
+        logger.debug("Negative examples shape: %s", neg_df.shape)
         neg_df = neg_df.with_columns(pl.lit(value=False).alias(LABEL_COL))
 
+        logger.debug("Concatenating positive and negative dataframes")
         combined_df = pl.concat([pos_df, neg_df])
+        logger.debug("Combined dataframe shape: %s", combined_df.shape)
         return combined_df
 
     def _feature_columns(self) -> list[str]:
         exclude = {LABEL_COL, FOLD_COL, CHROM, POS}
         all_feats = [c for c in self.data_frame.columns if c not in exclude]
+        logger.debug("Found %d features in dataframe (before filtering)", len(all_feats))
 
         # if user specified a subset → keep intersection (and sanity-check)
         if self.feature_list:
             missing = [f for f in self.feature_list if f not in all_feats]
             if missing:
                 raise ValueError(f"Requested feature(s) absent from data: {missing}")
-            return [f for f in self.feature_list if f in all_feats]
+            features_to_use = [f for f in self.feature_list if f in all_feats]
+            logger.debug("Using %d user-specified features", len(features_to_use))
+            return features_to_use
 
+        logger.debug("Using all %d features", len(all_feats))
         return all_feats
 
     # ─────────────────────── training / prediction ──────────────────────
     def train(self) -> None:
         feat_cols = self._feature_columns()
         logger.info(f"Training with {len(feat_cols)} features")
+        logger.debug("Feature columns: %s", feat_cols)
 
         # ---------- convert Polars → Pandas with categories -------------
+        logger.debug("Converting Polars DataFrame to Pandas for training")
         pd_df = self.data_frame.to_pandas()
+        logger.debug("Pandas DataFrame shape: %s", pd_df.shape)
         for col in feat_cols:
             if pd_df[col].dtype == object:
+                logger.debug("Converting column '%s' to category type", col)
                 pd_df[col] = pd_df[col].astype("category")
 
         fold_arr = pd_df[FOLD_COL].to_numpy()
@@ -243,6 +269,7 @@ class SRSNVTrainer:  # renamed from SRTrainer
 
         # ----------------------------------------------------------------
         for fold_idx in range(self.k_folds):
+            logger.debug("Starting training for fold %d/%d", fold_idx, self.k_folds)
             val_mask = fold_arr == fold_idx
             train_mask = (~val_mask) & ~np.isnan(fold_arr)
 
@@ -250,6 +277,7 @@ class SRSNVTrainer:  # renamed from SRTrainer
             y_train = y_all[train_mask]
             x_val = pd_df.loc[val_mask, feat_cols]
             y_val = y_all[val_mask]
+            logger.debug("Train size: %d, Validation size: %d", len(x_train), len(x_val))
 
             self.models[fold_idx].fit(
                 x_train,
@@ -259,23 +287,30 @@ class SRSNVTrainer:  # renamed from SRTrainer
                     (x_val, y_val),
                 ],
             )
+            logger.debug("Finished training for fold %d", fold_idx)
 
+        logger.debug("Adding quality columns post-training")
         self._add_quality_columns(pd_df[feat_cols], fold_arr)  # pass DataFrame, not ndarray
+        logger.debug("Finished adding quality columns")
 
     def _add_quality_columns(self, x_all, fold_arr: np.ndarray) -> None:
         """x_all is a pandas DataFrame with feature columns."""
+        logger.debug("Adding quality columns for %d rows", len(x_all))
         n_rows = len(x_all)
         preds_phred = np.empty((self.k_folds, n_rows), dtype=float)
 
         for k, model in enumerate(self.models):
+            logger.debug("Predicting probabilities using model from fold %d", k)
             prob = model.predict_proba(x_all)[:, 1]
             preds_phred[k] = prob_to_phred(prob)
 
         # validation qual
+        logger.debug("Calculating validation quality scores")
         fold_idx_int = np.where(np.isnan(fold_arr), 0, fold_arr.astype(int))
         raw_qual_val = preds_phred[fold_idx_int, np.arange(n_rows)]
 
         # training quals
+        logger.debug("Calculating training quality scores")
         train_quals = np.full((n_rows, self.k_folds - 1), np.nan, dtype=float)
         for row in range(n_rows):
             col = 0
@@ -286,6 +321,7 @@ class SRSNVTrainer:  # renamed from SRTrainer
                 col += 1
 
         # attach new columns
+        logger.debug("Attaching new quality columns to Polars DataFrame")
         new_cols = [pl.Series(RAW_QUAL_VAL, raw_qual_val)]
         for idx in range(self.k_folds - 1):
             new_cols.append(pl.Series(RAW_QUAL_TRAIN_TMPL.format(idx=idx + 1), train_quals[:, idx]))
@@ -293,12 +329,14 @@ class SRSNVTrainer:  # renamed from SRTrainer
 
     # ───────────────────────── save outputs ─────────────────────────────
     def save(self) -> None:
+        logger.debug("Saving outputs to %s", self.out_dir)
         base = (
             (self.args.basename + ".")
             if self.args.basename and not self.args.basename.endswith(".")
             else self.args.basename
         )
         df_path = self.out_dir / f"{base}featuremap_df.parquet"
+        logger.debug("Saving dataframe to %s", df_path)
         self.data_frame.write_parquet(df_path)
         logger.info(f"Saved dataframe → {df_path}")
 
@@ -306,20 +344,24 @@ class SRSNVTrainer:  # renamed from SRTrainer
         model_paths: dict[int, str] = {}
         for fold_idx, model in enumerate(self.models):
             path = self.out_dir / f"{base}model_fold_{fold_idx}.json"
+            logger.debug("Saving model for fold %d to %s", fold_idx, path)
             model.save_model(path)
             model_paths[fold_idx] = str(path)
         logger.info("Saved %d model JSONs", self.k_folds)
 
         # chromosome → fold map
         chrom_map_path = self.out_dir / f"{base}chrom_to_model.json"
+        logger.debug("Saving chromosome->model map to %s", chrom_map_path)
         with chrom_map_path.open("w") as fh:
             json.dump(self.chrom_to_fold, fh, indent=2)
         logger.info(f"Saved chromosome→model map → {chrom_map_path}")
 
     # ───────────────────────── entry point ──────────────────────────────
     def run(self) -> None:
+        logger.debug("Starting SRSNVTrainer.run()")
         self.train()
         self.save()
+        logger.debug("Finished SRSNVTrainer.run()")
 
 
 # ───────────────────────── CLI helpers ────────────────────────────────────
@@ -342,12 +384,16 @@ def _cli() -> argparse.Namespace:
         "(e.g. 'X_HMER_REF:X_HMER_ALT:RAW_VAF') – if omitted, use all",
     )
     ap.add_argument("--random-seed", type=int, default=None)
+    ap.add_argument("--verbose", action="store_true", help="Enable debug logging")
     return ap.parse_args()
 
 
 # ───────────────────────── main entry point ──────────────────────────────
 def main() -> None:
-    trainer = SRSNVTrainer(_cli())
+    args = _cli()
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+    trainer = SRSNVTrainer(args)
     trainer.run()
 
 

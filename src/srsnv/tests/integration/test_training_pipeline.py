@@ -37,6 +37,7 @@ def test_end_to_end_training(tmp_path: Path) -> None:
         output=str(tmp_path),
         basename="unit_test",
         random_seed=0,
+        verbose=True,
     )
 
     # ---------------------------------------------------------------- train
