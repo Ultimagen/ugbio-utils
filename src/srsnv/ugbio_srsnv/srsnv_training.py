@@ -30,24 +30,21 @@ import pandas as pd  # only needed to build a Series for partition_into_folds
 import polars as pl
 import xgboost as xgb
 from ugbio_core.logger import logger
+from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
-# ─── Re-use tiny helpers from the legacy utils ─────────────────────────────
-from ugbio_srsnv.srsnv_training_utils import (  # type: ignore
-    partition_into_folds,
-    prob_to_phred,
-)
-
-# ──────────────────────────── NEW CONSTANTS ───────────────────────────────
 FOLD_COL = "fold_id"
 LABEL_COL = "label"
-CHROM_COL = "chrom"
-POS_COL = "POS"
+CHROM = FeatureMapFields.CHROM.value
+POS = FeatureMapFields.POS.value
+REF = FeatureMapFields.REF.value
+X_ALT = FeatureMapFields.X_ALT.value
+
 
 RAW_QUAL_VAL = "raw_qual_val"
 RAW_QUAL_TRAIN_TMPL = "raw_qual_train_{idx}"  # idx = 1 … k-1
 
 
-# ───────────────────── interval-list helpers (NEW) ────────────────────────
+# ───────────────────────── parsers ────────────────────────────
 def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
     """
     Picard/Broad interval-list:
@@ -80,25 +77,6 @@ def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
     return chrom_sizes, chroms_in_data
 
 
-# ───────────────────────── CLI helpers ────────────────────────────────────
-def _cli() -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Train SR-SNV classifier (refactored)")
-    ap.add_argument("--positive", required=True, help="Parquet with label=1 rows")
-    ap.add_argument("--negative", required=True, help="Parquet with label=0 rows")
-    ap.add_argument("--training-regions", required=True, help="Picard interval_list file")
-    ap.add_argument("--k-folds", type=int, default=1, help="Number of CV folds (≥1)")
-    ap.add_argument(
-        "--model-params",
-        help="XGBoost params as key=value tokens separated by ':' "
-        "(e.g. 'eta=0.1:max_depth=8') or a path to a JSON file",
-    )
-    ap.add_argument("--output", required=True, help="Output directory")
-    ap.add_argument("--basename", default="", help="Basename prefix for outputs")
-    ap.add_argument("--random-seed", type=int, default=None)
-    return ap.parse_args()
-
-
-# ───────────────────────── model-param parser ─────────────────────────────
 def _parse_model_params(mp: str | None) -> dict[str, Any]:
     """
     Accept either a JSON file or a ':'-separated list of key=value tokens.
@@ -127,6 +105,61 @@ def _parse_model_params(mp: str | None) -> dict[str, Any]:
     return params
 
 
+# ───────────────────────── auxiliary functions ──────────────────────────────
+
+
+def partition_into_folds(series_of_sizes, k_folds, alg="greedy", n_test=0):
+    """Returns a partition of the indices of the series series_of_sizes
+    into k_fold groups whose total size is approximately the same.
+    Returns a dictionary that maps the indices (keys) of series_of_sizes into
+    the corresponding fold number (partition).
+
+    If series_of_sizes is a series, then the list-of-lists partitions below satisfies that:
+    [series_of_sizes.loc[partitions[k]].sum() for k in range(k_folds)]
+    are approximately equal. Conversely,
+    series_of_sizes.groupby(indices_to_folds).sum()
+    are approximately equal.
+
+    Arguments:
+        - series_of_sizes [pd.Series]: a series of indices and their corresponding sizes.
+        - k_folds [int]: the number of folds into which series_of_sizes should be partitioned.
+        - alg ['greedy']: the algorithm used. For the time being only the greedy algorithm
+            is implemented.
+        - n_test [int]: The n_test smallest chroms are not assigned to any fold (they are excluded
+            from the indices_to_folds dict). These are excluded from training all together, and
+            are used for test only.
+    Returns:
+        - indices_to_folds [dict]: a dictionary that maps indices to the corresponding
+            fold numbers.
+    """
+    if alg != "greedy":
+        raise ValueError("Only greedy algorithm implemented at this time")
+    series_of_sizes = series_of_sizes.sort_values(ascending=False)
+    series_of_sizes = series_of_sizes.iloc[: series_of_sizes.shape[0] - n_test]  # Removing the n_test smallest sizes
+    partitions = [[] for _ in range(k_folds)]  # an empty partition
+    partition_sums = np.zeros(k_folds)  # The running sum of partitions
+    for idx, s in series_of_sizes.items():
+        min_fold = partition_sums.argmin()
+        partitions[min_fold].append(idx)
+        partition_sums[min_fold] += s
+
+    # return partitions
+    indices_to_folds = [[i for i, prtn in enumerate(partitions) if idx in prtn][0] for idx in series_of_sizes.index]
+    return pd.Series(indices_to_folds, index=series_of_sizes.index).to_dict()
+
+
+def prob_to_phred(prob, max_value=None):
+    """Transform probabilities to phred scores.
+    Arguments:
+    - prob [np.ndarray]: array of probabilities
+    - eps [float]: cutoff value (phred values can have maximum value of -10*np.log10(eps)
+                   which for the default value 1e-8 means phred of 80)
+    """
+    if max_value is None:
+        return min(-10 * np.log10(1 - prob), max_value)
+    return -10 * np.log10(1 - prob)
+
+
 # ───────────────────────── core logic ─────────────────────────────────────
 class SRSNVTrainer:  # renamed from SRTrainer
     def __init__(self, args: argparse.Namespace):
@@ -151,7 +184,7 @@ class SRSNVTrainer:  # renamed from SRTrainer
             n_test=0,
         )
         self.data_frame = self.data_frame.with_columns(
-            pl.col(CHROM_COL).map_elements(lambda c: self.chrom_to_fold.get(c, float("nan"))).alias(FOLD_COL)
+            pl.col(CHROM).map_elements(lambda c: self.chrom_to_fold.get(c, float("nan"))).alias(FOLD_COL)
         )
 
         # Models
@@ -160,16 +193,26 @@ class SRSNVTrainer:  # renamed from SRTrainer
 
     # ─────────────────────── data & features ────────────────────────────
     def _load_data(self, pos_path: str, neg_path: str) -> pl.DataFrame:
-        """Read parquet ⇒ polars, add label column and concatenate."""
-        pos_df = pl.read_parquet(pos_path).with_columns(pl.lit(value=True).alias(LABEL_COL))
-        neg_df = pl.read_parquet(neg_path).with_columns(pl.lit(value=False).alias(LABEL_COL))
+        """Read parquet ⇒ polars, massage positive/negative frames and concatenate."""
+        # --- positive -------------------------------------------------------
+        pos_df = pl.read_parquet(pos_path)
+
+        if X_ALT not in pos_df.columns:
+            raise ValueError(f"{pos_path} is missing required column 'X_ALT'")
+
+        # Override REF with X_ALT and drop X_ALT
+        pos_df = pos_df.with_columns(pl.col(X_ALT).alias(REF)).drop(X_ALT)
+        pos_df = pos_df.with_columns(pl.lit(value=True).alias(LABEL_COL))
+
+        # --- negative -------------------------------------------------------
+        neg_df = pl.read_parquet(neg_path)
+        neg_df = neg_df.with_columns(pl.lit(value=False).alias(LABEL_COL))
+
         combined_df = pl.concat([pos_df, neg_df])
-        if "CHROM" in combined_df.columns and CHROM_COL not in combined_df.columns:
-            combined_df = combined_df.rename({"CHROM": CHROM_COL})
         return combined_df
 
     def _feature_columns(self) -> list[str]:
-        exclude = {LABEL_COL, FOLD_COL, CHROM_COL, "CHROM", POS_COL.lower(), POS_COL}
+        exclude = {LABEL_COL, FOLD_COL, CHROM, POS}
         return [c for c in self.data_frame.columns if c not in exclude]
 
     # ─────────────────────── training / prediction ──────────────────────
@@ -256,6 +299,25 @@ class SRSNVTrainer:  # renamed from SRTrainer
         self.save()
 
 
+# ───────────────────────── CLI helpers ────────────────────────────────────
+def _cli() -> argparse.Namespace:
+    ap = argparse.ArgumentParser(description="Train SR-SNV classifier (refactored)")
+    ap.add_argument("--positive", required=True, help="Parquet with label=1 rows")
+    ap.add_argument("--negative", required=True, help="Parquet with label=0 rows")
+    ap.add_argument("--training-regions", required=True, help="Picard interval_list file")
+    ap.add_argument("--k-folds", type=int, default=1, help="Number of CV folds (≥1)")
+    ap.add_argument(
+        "--model-params",
+        help="XGBoost params as key=value tokens separated by ':' "
+        "(e.g. 'eta=0.1:max_depth=8') or a path to a JSON file",
+    )
+    ap.add_argument("--output", required=True, help="Output directory")
+    ap.add_argument("--basename", default="", help="Basename prefix for outputs")
+    ap.add_argument("--random-seed", type=int, default=None)
+    return ap.parse_args()
+
+
+# ───────────────────────── main entry point ──────────────────────────────
 def main() -> None:
     trainer = SRSNVTrainer(_cli())
     trainer.run()

@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
 from ugbio_srsnv.srsnv_training import _parse_model_params
 
 
