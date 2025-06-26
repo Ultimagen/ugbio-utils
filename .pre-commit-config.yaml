@@ -20,6 +20,11 @@ repos:
         # exclude: src/omics/tests/resources/cromwell_pricelist.json
         # exclude: ^src/featuremap/tests/resources/.*_chr1_alt2_8.test_size_0.1.xgb_model.json$ # Exclude model files
 
+  - repo: https://github.com/timothycrosley/isort
+    rev: 6.0.1
+    hooks:
+      - id: isort
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
     rev: v0.8.4
