@@ -1,8 +1,7 @@
-import os
-import tempfile
-import pytest
 import pysam
+import pytest
 from ugbio_filtering.filter_low_af_ratio_to_background import filter_low_af_ratio_to_background
+
 
 @pytest.fixture
 def example_vcf(tmp_path):
@@ -28,13 +27,11 @@ chr1\t400\t.\tC\tA,T\t.\tPASS\tVARIANT_TYPE=non-h-indel\tGT:AD:DP:BG_AD:BG_DP\t0
         f.write(vcf_content)
     return str(vcf_path)
 
+
 def test_filter_low_af_ratio_to_background_basic(example_vcf, tmp_path):
     output_vcf = tmp_path / "output.vcf.gz"
     filter_low_af_ratio_to_background(
-        input_vcf=example_vcf,
-        output_vcf=str(output_vcf),
-        af_ratio_threshold=10,
-        new_filter="LowAFRatioToBackground"
+        input_vcf=example_vcf, output_vcf=str(output_vcf), af_ratio_threshold=10, new_filter="LowAFRatioToBackground"
     )
     with pysam.VariantFile(str(output_vcf)) as vcf:
         records = list(vcf.fetch())
@@ -52,26 +49,22 @@ def test_filter_low_af_ratio_to_background_basic(example_vcf, tmp_path):
         # Sixth record: AF ratio in alt allele 2 = (100/140)/(1/21) = 15 > 10, should not be filtered
         assert "LowAFRatioToBackground" not in records[5].filter.keys()
 
+
 def test_filter_low_af_ratio_to_background_no_fail(example_vcf, tmp_path):
     output_vcf = tmp_path / "output2.vcf.gz"
     # Use a low threshold so nothing is filtered
     filter_low_af_ratio_to_background(
-        input_vcf=example_vcf,
-        output_vcf=str(output_vcf),
-        af_ratio_threshold=0.05,
-        new_filter="LowAFRatioToBackground"
+        input_vcf=example_vcf, output_vcf=str(output_vcf), af_ratio_threshold=0.05, new_filter="LowAFRatioToBackground"
     )
     with pysam.VariantFile(str(output_vcf)) as vcf:
         for rec in vcf.fetch():
             assert "LowAFRatioToBackground" not in rec.filter.keys()
 
+
 def test_filter_low_af_ratio_to_background_custom_filter(example_vcf, tmp_path):
     output_vcf = tmp_path / "output3.vcf.gz"
     filter_low_af_ratio_to_background(
-        input_vcf=example_vcf,
-        output_vcf=str(output_vcf),
-        af_ratio_threshold=10,
-        new_filter="MyCustomFilter"
+        input_vcf=example_vcf, output_vcf=str(output_vcf), af_ratio_threshold=10, new_filter="MyCustomFilter"
     )
     with pysam.VariantFile(str(output_vcf)) as vcf:
         records = list(vcf.fetch())
