@@ -90,7 +90,8 @@ def read_cram_from_s3(
         _export_sso_env(profile)
 
     os.environ.setdefault("AWS_DEFAULT_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
-
+    if not cram_file.endswith(".cram"):
+        raise ValueError(f"CRAM file {cram_file} must end with .cram")
     try:
         sam = pysam.AlignmentFile(cram_file, "rc", reference_filename=ref_fasta)
     except OSError as e:
@@ -100,3 +101,79 @@ def read_cram_from_s3(
             ) from e
         raise
     return sam
+
+
+def read_bam_from_s3(
+    bam_file: str,
+    profile: str | None = None,
+) -> pysam.AlignmentFile:
+    """
+    Read a CRAM file from S3 using the AWS CLI and pysam.
+    This function attempts to deduce the AWS CLI profile from the S3 URI
+    if not provided, using the ~/.aws/config file.
+    It requires the AWS CLI to be installed and configured with SSO credentials.
+
+    :param bam_file: S3 URI, e.g. "s3://…/file.bam"
+    :param profile: AWS CLI profile; if None, attempt to deduce from ~/.aws/config
+    :returns: an open pysam.AlignmentFile (caller must close it)
+    """
+    if profile is None:
+        try:
+            acct2prof = _parse_aws_config()
+            profile = _deduce_profile(bam_file, acct2prof)
+        except Exception as e:
+            logger.debug(f"Profile deduction failed ({e}); proceeding without exporting SSO credentials.")
+
+    if profile:
+        _export_sso_env(profile)
+
+    os.environ.setdefault("AWS_DEFAULT_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
+    if not bam_file.endswith(".bam"):
+        raise ValueError(f"BAM file {bam_file} must end with .bam")
+    try:
+        sam = pysam.AlignmentFile(bam_file, "r")
+    except OSError as e:
+        if "Permission denied" in str(e):
+            raise RuntimeError(
+                f"Permission denied reading {bam_file}. " f"Did you run `aws sso login --profile {profile}`?"
+            ) from e
+        raise
+    return sam
+
+
+def read_vcf_from_s3(
+    vcf_file: str,
+    profile: str | None = None,
+) -> pysam.VariantFile:
+    """
+    Read a VCF file from S3 using the AWS CLI and pysam.
+    This function attempts to deduce the AWS CLI profile from the S3 URI
+    if not provided, using the ~/.aws/config file.
+    It requires the AWS CLI to be installed and configured with SSO credentials.
+
+    :param vcf_file: S3 URI, e.g. "s3://…/file.vcf.gz or .vcf"
+    :param profile: AWS CLI profile; if None, attempt to deduce from ~/.aws/config
+    :returns: an open pysam.AlignmentFile (caller must close it)
+    """
+    if profile is None:
+        try:
+            acct2prof = _parse_aws_config()
+            profile = _deduce_profile(vcf_file, acct2prof)
+        except Exception as e:
+            logger.debug(f"Profile deduction failed ({e}); proceeding without exporting SSO credentials.")
+
+    if profile:
+        _export_sso_env(profile)
+
+    os.environ.setdefault("AWS_DEFAULT_REGION", os.environ.get("AWS_DEFAULT_REGION", "us-east-1"))
+    if not vcf_file.endswith((".vcf", ".vcf.gz")):
+        raise ValueError(f"VCF file {vcf_file} must end with .vcf or .vcf.gz")
+    try:
+        vcf = pysam.VariantFile(vcf_file, "r")
+    except OSError as e:
+        if "Permission denied" in str(e):
+            raise RuntimeError(
+                f"Permission denied reading {vcf_file}. " f"Did you run `aws sso login --profile {profile}`?"
+            ) from e
+        raise
+    return vcf
