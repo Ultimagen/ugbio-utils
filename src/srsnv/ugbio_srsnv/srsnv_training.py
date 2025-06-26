@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd  # only needed to build a Series for partition_into_folds
+import pandas as pd
 import polars as pl
 import xgboost as xgb
 from ugbio_core.logger import logger
@@ -155,7 +155,7 @@ def prob_to_phred(prob, max_value=None):
     - eps [float]: cutoff value (phred values can have maximum value of -10*np.log10(eps)
                    which for the default value 1e-8 means phred of 80)
     """
-    if max_value is None:
+    if max_value is not None:
         return min(-10 * np.log10(1 - prob), max_value)
     return -10 * np.log10(1 - prob)
 
@@ -191,6 +191,9 @@ class SRSNVTrainer:  # renamed from SRTrainer
         model_params = _parse_model_params(args.model_params)
         self.models = [xgb.XGBClassifier(**model_params) for _ in range(self.k_folds)]
 
+        # optional user-supplied feature subset
+        self.feature_list: list[str] | None = args.features.split(":") if args.features else None
+
     # ─────────────────────── data & features ────────────────────────────
     def _load_data(self, pos_path: str, neg_path: str) -> pl.DataFrame:
         """Read parquet ⇒ polars, massage positive/negative frames and concatenate."""
@@ -213,35 +216,56 @@ class SRSNVTrainer:  # renamed from SRTrainer
 
     def _feature_columns(self) -> list[str]:
         exclude = {LABEL_COL, FOLD_COL, CHROM, POS}
-        return [c for c in self.data_frame.columns if c not in exclude]
+        all_feats = [c for c in self.data_frame.columns if c not in exclude]
+
+        # if user specified a subset → keep intersection (and sanity-check)
+        if self.feature_list:
+            missing = [f for f in self.feature_list if f not in all_feats]
+            if missing:
+                raise ValueError(f"Requested feature(s) absent from data: {missing}")
+            return [f for f in self.feature_list if f in all_feats]
+
+        return all_feats
 
     # ─────────────────────── training / prediction ──────────────────────
     def train(self) -> None:
         feat_cols = self._feature_columns()
         logger.info(f"Training with {len(feat_cols)} features")
 
-        # Pre-compute numpy matrices once
-        x_all = self.data_frame.select(feat_cols).to_numpy()
-        y_all = self.data_frame.select(LABEL_COL).to_numpy().ravel()
-        fold_arr = self.data_frame.select(FOLD_COL).to_numpy().ravel()
+        # ---------- convert Polars → Pandas with categories -------------
+        pd_df = self.data_frame.to_pandas()
+        print(pd_df.columns)
+        for col in feat_cols:
+            if pd_df[col].dtype == object:
+                pd_df[col] = pd_df[col].astype("category")
 
+        fold_arr = pd_df[FOLD_COL].to_numpy()
+        y_all = pd_df[LABEL_COL].to_numpy()
+
+        # ----------------------------------------------------------------
         for fold_idx in range(self.k_folds):
             val_mask = fold_arr == fold_idx
             train_mask = (~val_mask) & ~np.isnan(fold_arr)
 
+            x_train = pd_df.loc[train_mask, feat_cols]
+            y_train = y_all[train_mask]
+            x_val = pd_df.loc[val_mask, feat_cols]
+            y_val = y_all[val_mask]
+
             self.models[fold_idx].fit(
-                x_all[train_mask],
-                y_all[train_mask],
+                x_train,
+                y_train,
                 eval_set=[
-                    (x_all[train_mask], y_all[train_mask]),
-                    (x_all[val_mask], y_all[val_mask]),
+                    (x_train, y_train),
+                    (x_val, y_val),
                 ],
             )
 
-        self._add_quality_columns(x_all, fold_arr)
+        self._add_quality_columns(pd_df[feat_cols], fold_arr)  # pass DataFrame, not ndarray
 
-    def _add_quality_columns(self, x_all: np.ndarray, fold_arr: np.ndarray) -> None:
-        n_rows = x_all.shape[0]
+    def _add_quality_columns(self, x_all, fold_arr: np.ndarray) -> None:
+        """x_all is a pandas DataFrame with feature columns."""
+        n_rows = len(x_all)
         preds_phred = np.empty((self.k_folds, n_rows), dtype=float)
 
         for k, model in enumerate(self.models):
@@ -313,6 +337,11 @@ def _cli() -> argparse.Namespace:
     )
     ap.add_argument("--output", required=True, help="Output directory")
     ap.add_argument("--basename", default="", help="Basename prefix for outputs")
+    ap.add_argument(
+        "--features",
+        help="Colon-separated list of feature columns to use "
+        "(e.g. 'X_HMER_REF:X_HMER_ALT:RAW_VAF') – if omitted, use all",
+    )
     ap.add_argument("--random-seed", type=int, default=None)
     return ap.parse_args()
 
