@@ -11,12 +11,12 @@ from ugbio_core.consts import (
 
 
 class FeatureMapFields(Enum):
-    CHROM = CHROM
-    POS = POS
-    REF = REF
-    ALT = ALT
-    QUAL = QUAL
-    FILTER = FILTER
+    CHROM = CHROM.upper()
+    POS = POS.upper()
+    REF = REF.upper()
+    ALT = ALT.upper()
+    QUAL = QUAL.upper()
+    FILTER = FILTER.upper()
     X_ALT = "X_ALT"
 
 
