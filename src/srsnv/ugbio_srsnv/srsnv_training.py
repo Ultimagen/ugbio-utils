@@ -302,7 +302,7 @@ class SRSNVTrainer:  # renamed from SRTrainer
         for k, model in enumerate(self.models):
             logger.debug("Predicting probabilities using model from fold %d", k)
             prob = model.predict_proba(x_all)[:, 1]
-            preds_phred[k] = prob_to_phred(prob)
+            preds_phred[k] = prob_to_phred(prob, max_value=self.args.max_qual)
 
         # validation qual
         logger.debug("Calculating validation quality scores")
@@ -385,6 +385,7 @@ def _cli() -> argparse.Namespace:
     )
     ap.add_argument("--random-seed", type=int, default=None)
     ap.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    ap.add_argument("--max-qual", type=float, default=100.0, help="Maximum Phred score for model quality")
     return ap.parse_args()
 
 

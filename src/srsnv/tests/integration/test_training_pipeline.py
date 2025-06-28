@@ -32,12 +32,13 @@ def test_end_to_end_training(tmp_path: Path) -> None:
         training_regions=str(interval_list),
         k_folds=2,
         model_params="n_estimators=2:max_depth=2:enable_categorical=true",  # keep test fast
-        features="X_HMER_REF:X_HMER_ALT:X_PREV1:X_NEXT1:X_PREV2:X_NEXT2:X_PREV3:X_NEXT3:READ_COUNT_MAPQ:RAW_VAF:VAF:"
-        "BCSQ:BCSQCSS:RL:INDEX:RN:DUP:REV:SCST:SCED:MAPQ:EDIST:MQUAL:SMQ_BEFORE:SMQ_AFTER:tm:a3:rq:st:et",
+        features="X_HMER_REF:X_HMER_ALT:X_PREV1:X_NEXT1:X_PREV2:X_NEXT2:X_PREV3:X_NEXT3:BCSQ:BCSQCSS:RL:INDEX:DUP:REV:"
+        "SCST:SCED:MAPQ:EDIST:SMQ_BEFORE:SMQ_AFTER:tm:rq:st:et",
         output=str(tmp_path),
         basename="unit_test",
         random_seed=0,
         verbose=True,
+        max_qual=100.0,
     )
 
     # ---------------------------------------------------------------- train
