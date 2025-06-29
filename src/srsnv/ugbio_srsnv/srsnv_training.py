@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import logging
 from datetime import datetime
@@ -52,6 +53,8 @@ def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
     header lines: '@SQ\tSN:chr1\tLN:248956422'
     data  lines:  'chr1   100  200  +  region1'
 
+    Supports both plain text and gzipped files (detected by .gz extension).
+
     Returns
     -------
     chrom_sizes : dict[str, int]
@@ -59,19 +62,32 @@ def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
     """
     chrom_sizes: dict[str, int] = {}
     chroms_in_data: list[str] = []
-    with open(path, encoding="utf-8") as fh:
+
+    # Determine if file is gzipped based on extension
+    is_gzipped = path.endswith(".gz")
+
+    if is_gzipped:
+        fh = gzip.open(path, "rt", encoding="utf-8")
+    else:
+        fh = open(path, encoding="utf-8")
+
+    try:
         for line in fh:
             if line.startswith("@SQ"):
+                chrom_name = None
                 for field in line.strip().split("\t")[1:]:
                     key, val = field.split(":", 1)
                     if key == "SN":
                         chrom_name = val
-                    elif key == "LN":
+                    elif key == "LN" and chrom_name is not None:
                         chrom_sizes[chrom_name] = int(val)
             elif not line.startswith("@"):
                 chrom = line.split("\t", 1)[0]
                 if chrom not in chroms_in_data:
                     chroms_in_data.append(chrom)
+    finally:
+        fh.close()
+
     missing = [c for c in chroms_in_data if c not in chrom_sizes]
     if missing:
         raise ValueError(f"Missing @SQ header for contigs: {missing}")
@@ -369,7 +385,7 @@ def _cli() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Train SingleReadSNV classifier", allow_abbrev=True)
     ap.add_argument("--positive", required=True, help="Parquet with label=1 rows")
     ap.add_argument("--negative", required=True, help="Parquet with label=0 rows")
-    ap.add_argument("--training-regions", required=True, help="Picard interval_list file")
+    ap.add_argument("--training-regions", required=True, help="Picard interval_list file (supports .gz files)")
     ap.add_argument("--k-folds", type=int, default=1, help="Number of CV folds (≥1)")
     ap.add_argument(
         "--model-params",
