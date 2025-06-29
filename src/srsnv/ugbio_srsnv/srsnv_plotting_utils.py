@@ -353,7 +353,7 @@ def retention_noise_and_mrd_lod_simulation(  # noqa: PLR0913
     simulated_signature_size: int = 10_000,
     simulated_coverage: int = 30,
     minimum_number_of_read_for_detection: int = 2,
-    output_dataframe_file: str = None,
+    output_dataframe_file: str | None = None,
 ):
     """Estimate the MRD LoD based on the FeatureMap dataframe and the LoD simulation params
 
@@ -1425,7 +1425,7 @@ class SRSNVReport:
             A list of SKlearn models (for all folds)
         df : pd.DataFrame
             Dataframe of all fold data, including labels
-        params : str
+        params : dict
             params dict
         out_path : str
             path to output directory
@@ -1454,6 +1454,7 @@ class SRSNVReport:
         self.ML_qual_to_qual_fn = ml_qual_to_qual_fn
         self.statistics_h5_file = statistics_h5_file
         self.statistics_json_file = statistics_json_file
+
         if rng is None:
             random_seed = int(datetime.now().timestamp())
             rng = np.random.default_rng(seed=random_seed)
@@ -2151,15 +2152,17 @@ class SRSNVReport:
             axis=1,
         ).T.to_hdf(self.output_h5_filename, key="training_progress", mode="a")
 
-    def _X_to_display(self, X_val: pd.DataFrame, cat_features_dict: dict = None):  # noqa: N802, N803
+    def _X_to_display(self, x_val: pd.DataFrame, cat_features_dict: dict | None = None):  # noqa: N802
         """Rename categorical feature values as numbers, for SHAP plots."""
         if cat_features_dict is None:
-            cat_features_dict = self.params["categorical_features_dict"]
-        X_val_display = X_val.copy()  # noqa: N806
+            cat_features_dict = dict(self.params["categorical_features_dict"])
+        x_val_display = x_val.copy()
         for col, cat_vals in cat_features_dict.items():
-            X_val_display[col] = X_val_display[col].map({cv: i for i, cv in enumerate(cat_vals)}).astype(int)
+            mapping = {cv: i for i, cv in enumerate(cat_vals)}
+            mapping[np.nan] = -1  # Map NaN to -1
+            x_val_display[col] = x_val_display[col].map(mapping).astype(int)
 
-        return X_val_display
+        return x_val_display
 
     def _shap_on_sample(self, model, data_df, features=None, label_col="label", n_sample=10_000):
         """Calculate shap value on a sample of the data from data_df."""
@@ -2343,40 +2346,43 @@ class SRSNVReport:
     @exception_handler
     def calc_and_plot_shap_values(
         self,
-        output_filename_importance: str = None,
-        output_filename_beeswarm: str = None,
+        output_filename_importance: str | None = None,
+        output_filename_beeswarm: str | None = None,
         n_sample: int = 10_000,
-        feature_importance_kws: dict = None,
-        beeswarm_kws: dict = None,
+        feature_importance_kws: dict | None = None,
+        beeswarm_kws: dict | None = None,
         *,
         plot_feature_importance: bool = True,
         plot_beeswarm: bool = True,
     ):
         """Calculate and plot SHAP values for the model."""
+        if output_filename_beeswarm is None and output_filename_beeswarm is None:
+            raise ValueError(
+                "At least one of output_filename_importance " "or output_filename_beeswarm must be provided."
+            )
         feature_importance_kws = feature_importance_kws or {}
         beeswarm_kws = beeswarm_kws or {}
         # Define model, data
         k = 0  # fold_id
         model = self.models[k]
-        X_val = self.data_df[self.data_df["fold_id"] == k]  # noqa: N806
+        x_val = self.data_df[self.data_df["fold_id"] == k]
         # Get SHAP values
         logger.info("Calculating SHAP values")
-        shap_values, X_val, _ = self._shap_on_sample(  # noqa: N806
-            model, X_val, n_sample=n_sample
-        )
+        shap_values, x_val, _ = self._shap_on_sample(model, x_val, n_sample=n_sample)
         logger.info("Done calculating SHAP values")
         # SHAP feature importance
-        mean_abs_SHAP_scores = pd.Series(  # noqa: N806
-            np.abs(shap_values[:, 1, :-1] - shap_values[:, 0, :-1]).mean(axis=0), index=X_val.columns
+        mean_abs_shap_scores = pd.Series(
+            np.abs(shap_values[:, 1, :-1] - shap_values[:, 0, :-1]).mean(axis=0), index=x_val.columns
         ).sort_values(ascending=False)
-        mean_abs_SHAP_scores.to_hdf(self.output_h5_filename, key="mean_abs_SHAP_scores", mode="a")
+        mean_abs_shap_scores.to_hdf(self.output_h5_filename, key="mean_abs_SHAP_scores", mode="a")
+
         # Plot shap scores
         if plot_feature_importance:
             self.plot_SHAP_feature_importance(
-                shap_values, X_val, output_filename=output_filename_importance, **feature_importance_kws
+                shap_values, x_val, output_filename=output_filename_importance, **feature_importance_kws
             )
         if plot_beeswarm:
-            self.plot_SHAP_beeswarm(shap_values, X_val, output_filename=output_filename_beeswarm, **beeswarm_kws)
+            self.plot_SHAP_beeswarm(shap_values, x_val, output_filename=output_filename_beeswarm, **beeswarm_kws)
 
     def _get_trinuc_stats(self, q1: float = 0.1, q2: float = 0.9):
         data_df = self.data_df.copy()
@@ -2414,7 +2420,7 @@ class SRSNVReport:
                 for c2 in ("A", "C", "G", "T")
                 if r != a
             ]
-        elif order == "reverse":
+        else:  # order == "reverse"
             trinuc_ref_alt = [
                 c1 + r + c2 + a
                 for r, a in (("A", "C"), ("A", "G"), ("A", "T"), ("C", "G"), ("C", "T"), ("G", "T"))
@@ -2435,7 +2441,7 @@ class SRSNVReport:
     @exception_handler
     def calc_and_plot_trinuc_plot(  # noqa: PLR0915 #TODO: refactor
         self,
-        output_filename: str = None,
+        output_filename: str | None = None,
         order: str = "symmetric",
         *,
         filter_on_is_forward: bool = True,  # Filter out reverse trinucs
@@ -2452,7 +2458,7 @@ class SRSNVReport:
             trinuc_stats.groupby("trinuc_context_with_alt")["is_cycle_skip"]
             .mean()
             .astype(bool)
-            .loc[trinuc_symmetric_ref_alt]
+            .reindex(trinuc_symmetric_ref_alt)
             .to_numpy()
         )
 
@@ -2533,6 +2539,8 @@ class SRSNVReport:
 
             # First Plot (Fractions) on the primary y-axis
             ylim = 1.05 * max(plot_df_true_frac.max(), plot_df_false_frac.max())
+            if np.isnan(ylim):  # when no trinucleotide statistics present
+                ylim = 1.0
             for j in range(5):
                 ax.plot([(j + 1) * 16 - 0.5] * 2, [0, ylim], "k--")
             bars_false = plot_df_false_frac.iloc[inds].plot.bar(
@@ -2572,6 +2580,8 @@ class SRSNVReport:
                 0 * np.nanmin([plot_df_true_qual.to_numpy().min(), plot_df_false_qual.to_numpy().min()]),
                 1.05 * np.nanmax([plot_df_true_qual.to_numpy().max(), plot_df_false_qual.to_numpy().max()]),
             ]
+            if np.any(np.isnan(ylims_qual)):
+                ylims_qual = [0, 1.0]
             (line_false,) = ax2.step(
                 x_values_ext,
                 plot_df_false_qual.iloc[inds_ext, 0],

@@ -868,7 +868,6 @@ class SRSNVTrain:
         self.random_seed = random_seed
         self.rng = np.random.default_rng(seed=self.random_seed)
         self.raise_exceptions_in_report = raise_exceptions_in_report
-
         # misc
         if isinstance(lod_filters, str) and Path(lod_filters).is_file() and lod_filters.endswith(".json"):
             with open(lod_filters, encoding="utf-8") as f:
@@ -1340,13 +1339,13 @@ class SRSNVTrain:
                     ~self.featuremap_df[FOLD_ID].isna(),  # Reads that are not in any fold.
                 )
                 val_cond = self.featuremap_df[FOLD_ID] == k  # Reads that are in current test fold
-                X_train = self.featuremap_df.loc[train_cond, self.columns]  # noqa: N806
+                x_train = self.featuremap_df.loc[train_cond, self.columns]
                 y_train = self.featuremap_df.loc[train_cond, ["label"]]
-                X_val = self.featuremap_df.loc[val_cond, self.columns]  # noqa: N806
+                x_val = self.featuremap_df.loc[val_cond, self.columns]
                 y_val = self.featuremap_df.loc[val_cond, ["label"]]
                 # fit classifier of k'th fold
-                eval_set = [(X_train, y_train), (X_val, y_val)]
-                self.classifiers[k].fit(X_train, y_train, eval_set=eval_set)
+                eval_set = [(x_train, y_train), (x_val, y_val)]
+                self.classifiers[k].fit(x_train, y_train, eval_set=eval_set)
 
         # add is_mixed and predictions to dataframe
         self.add_is_mixed_to_featuremap_df()
