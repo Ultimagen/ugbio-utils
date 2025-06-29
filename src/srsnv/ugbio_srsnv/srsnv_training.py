@@ -169,12 +169,12 @@ def prob_to_phred(prob, max_value=None):
     """Transform probabilities to phred scores.
     Arguments:
     - prob [np.ndarray]: array of probabilities
-    - eps [float]: cutoff value (phred values can have maximum value of -10*np.log10(eps)
-                   which for the default value 1e-8 means phred of 80)
+    - max_value [float]: maximum phred score (clips values above this threshold)
     """
+    phred_scores = -10 * np.log10(1 - prob)
     if max_value is not None:
-        return min(-10 * np.log10(1 - prob), max_value)
-    return -10 * np.log10(1 - prob)
+        return np.minimum(phred_scores, max_value)
+    return phred_scores
 
 
 # ───────────────────────── core logic ─────────────────────────────────────
