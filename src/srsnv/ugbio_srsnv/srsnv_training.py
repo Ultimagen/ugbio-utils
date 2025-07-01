@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import xgboost as xgb
+from sklearn.isotonic import IsotonicRegression
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
@@ -43,6 +44,9 @@ X_ALT = FeatureMapFields.X_ALT.value
 
 RAW_QUAL_VAL = "raw_qual_val"
 RAW_QUAL_TRAIN_TMPL = "raw_qual_train_{idx}"  # idx = 1 … k-1
+PROB_ORIG = "prob_orig"
+PROB_RECAL = "prob_recal"
+MQUAL_COL = "MQUAL"
 pl.enable_string_cache()
 
 
@@ -313,7 +317,6 @@ class SRSNVTrainer:  # renamed from SRTrainer
 
         fold_arr = pd_df[FOLD_COL].to_numpy()
         y_all = pd_df[LABEL_COL].to_numpy()
-
         # ----------------------------------------------------------------
         for fold_idx in range(self.k_folds):
             logger.debug("Starting training for fold %d/%d", fold_idx, self.k_folds)
@@ -337,27 +340,37 @@ class SRSNVTrainer:  # renamed from SRTrainer
             logger.debug("Finished training for fold %d", fold_idx)
 
         logger.debug("Adding quality columns post-training")
-        self._add_quality_columns(pd_df[feat_cols], fold_arr)  # pass DataFrame, not ndarray
-        logger.debug("Finished adding quality columns")
+        # ---------- add calibrated quality columns ----------------------
+        self._add_quality_columns(pd_df[feat_cols], fold_arr, y_all)
 
-    def _add_quality_columns(self, x_all, fold_arr: np.ndarray) -> None:
-        """x_all is a pandas DataFrame with feature columns."""
-        logger.debug("Adding quality columns for %d rows", len(x_all))
+    def _add_quality_columns(self, x_all, fold_arr: np.ndarray, y_all: np.ndarray) -> None:
+        """Attach raw / recalibrated probabilities and quality columns."""
         n_rows = len(x_all)
-        preds_phred = np.empty((self.k_folds, n_rows), dtype=float)
+        preds_prob = np.empty((self.k_folds, n_rows), dtype=float)
+        preds_phred = np.empty_like(preds_prob)
 
         for k, model in enumerate(self.models):
-            logger.debug("Predicting probabilities using model from fold %d", k)
             prob = model.predict_proba(x_all)[:, 1]
+            preds_prob[k] = prob
             preds_phred[k] = prob_to_phred(prob, max_value=self.args.max_qual)
 
-        # validation qual
-        logger.debug("Calculating validation quality scores")
+        # validation picks (per-row) --------------------------------------------------
         fold_idx_int = np.where(np.isnan(fold_arr), 0, fold_arr.astype(int))
+        prob_orig = preds_prob[fold_idx_int, np.arange(n_rows)]
         raw_qual_val = preds_phred[fold_idx_int, np.arange(n_rows)]
 
-        # training quals
-        logger.debug("Calculating training quality scores")
+        # isotonic recalibration ------------------------------------------------------
+        prob_recal = np.empty(n_rows, dtype=float)
+        for k in range(self.k_folds):
+            val_mask = fold_idx_int == k
+            train_mask = ~val_mask
+            iso = IsotonicRegression(out_of_bounds="clip")
+            iso.fit(prob_orig[train_mask], y_all[train_mask])
+            prob_recal[val_mask] = iso.predict(prob_orig[val_mask])
+
+        mqual = prob_to_phred(prob_recal, max_value=self.args.max_qual)
+
+        # training quality columns (unchanged) ---------------------------
         train_quals = np.full((n_rows, self.k_folds - 1), np.nan, dtype=float)
         for row in range(n_rows):
             col = 0
@@ -367,9 +380,13 @@ class SRSNVTrainer:  # renamed from SRTrainer
                 train_quals[row, col] = preds_phred[k, row]
                 col += 1
 
-        # attach new columns
-        logger.debug("Attaching new quality columns to Polars DataFrame")
-        new_cols = [pl.Series(RAW_QUAL_VAL, raw_qual_val)]
+        # attach new columns ---------------------------------------------
+        new_cols = [
+            pl.Series(RAW_QUAL_VAL, raw_qual_val),
+            pl.Series(PROB_ORIG, prob_orig),
+            pl.Series(PROB_RECAL, prob_recal),
+            pl.Series(MQUAL_COL, mqual),
+        ]
         for idx in range(self.k_folds - 1):
             new_cols.append(pl.Series(RAW_QUAL_TRAIN_TMPL.format(idx=idx + 1), train_quals[:, idx]))
         self.data_frame = self.data_frame.with_columns(new_cols)
