@@ -54,10 +54,11 @@ def enum_to_dict(class_name):
 def get_combined_vcf_features():
     """
     Returns the features used in the featuremap_xgb_prediction module.
-    This includes both the default custom info fields and any additional features
-    added by the featuremap_xgb_prediction module.
-    Returns:
-        info_field_tags: A dictionary where keys are the feature tags and values are lists containing
+
+    Returns
+    -------
+    dict
+        Dictionary where keys are the feature tags and values are lists containing
         the description and type of the feature.
     """
     default_custom_info_fields_single_value = enum_to_dict(DefaultCustomInfoFieldsWithSingleValue)
@@ -69,13 +70,22 @@ def get_combined_vcf_features():
 def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags):  # noqa: N802
     """
     Move the values from INFO to FORMAT in a VCF file.
+
     This is necessary for the XGB model to work correctly.
-    Inputs:
-        input_vcf (str): Path to the input VCF file.
-        output_vcf (str): Path to the output VCF file.
-        info_field_tags (dict): Dictionary of INFO field tags to be moved to FORMAT.
-    Outputs:
-        output_vcf (str): the output_vcf filename supplied in Inputs.
+
+    Parameters
+    ----------
+    input_vcf : str
+        Path to the input VCF file.
+    output_vcf : str
+        Path to the output VCF file.
+    info_field_tags : dict
+        Dictionary of INFO field tags to be moved to FORMAT.
+
+    Returns
+    -------
+    str
+        The output_vcf filename supplied in Inputs.
     """
     out_dir_name = os.path.dirname(output_vcf)
 
@@ -164,13 +174,20 @@ def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags): 
 def merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_merged_vcf):
     """
     Merge tumor and normal VCF files into a single VCF file.
-    Inputs:
-        tumor_vcf_info_to_format (str): Path to the tumor VCF file with INFO fields moved to FORMAT.
-        normal_vcf_info_to_format (str): Path to the normal VCF file with INFO fields moved to FORMAT.
-        out_merged_vcf (str): Path to the output merged VCF file.
-    Outputs:
-        out_merged_vcf (str): Path to the output merged VCF file as supplied in Inputs:gitout_merged_vcf.
-        out_merged_vcf_tumor_pass (str): Path to the output merged VCF file with tumor-PASS variants only.
+
+    Parameters
+    ----------
+    tumor_vcf_info_to_format : str
+        Path to the tumor VCF file with INFO fields moved to FORMAT.
+    normal_vcf_info_to_format : str
+        Path to the normal VCF file with INFO fields moved to FORMAT.
+    out_merged_vcf : str
+        Path to the output merged VCF file.
+
+    Returns
+    -------
+    str
+        Path to the output merged VCF file with tumor-PASS variants only.
     """
     max_threads = os.cpu_count()
 
@@ -217,6 +234,19 @@ def merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_mer
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
+    """
+    Parse command line arguments.
+
+    Parameters
+    ----------
+    argv : list of str
+        Command line arguments.
+
+    Returns
+    -------
+    argparse.Namespace
+        Parsed arguments.
+    """
     parser = argparse.ArgumentParser(
         prog="create_somatic_pileup_featuremap.py",
         description=run.__doc__,
@@ -236,13 +266,19 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
 
 def run(argv):
     """
-    Given 2 VCF files (tumor and normal), this script will merge them into a single VCF file.
+    Merge two VCF files (tumor and normal) into a single VCF file.
+
     The output VCF file will have all tumor records merged with corresponding normal records,
     with INFO fields moved to FORMAT.
-    Args:
-        argv (list[str]): Command line arguments.
-    Returns:
-        None
+
+    Parameters
+    ----------
+    argv : list of str
+        Command line arguments.
+
+    Returns
+    -------
+    None
     """
     args = __parse_args(argv)
     logger.setLevel(logging.DEBUG)
