@@ -222,6 +222,10 @@ class SRSNVTrainer:  # renamed from SRTrainer
         self.feature_list: list[str] | None = args.features.split(":") if args.features else None
         logger.debug("Feature list from user: %s", self.feature_list)
 
+        # Initialize containers for metadata
+        self.categorical_encodings: dict[str, dict[str, int]] = {}
+        self.feature_dtypes: dict[str, str] = {}
+
     # ─────────────────────── data & features ────────────────────────────
     def _load_data(self, pos_path: str, neg_path: str) -> pl.DataFrame:
         """Read parquet ⇒ polars, massage positive/negative frames and concatenate."""
@@ -265,6 +269,29 @@ class SRSNVTrainer:  # renamed from SRTrainer
         logger.debug("Using all %d features", len(all_feats))
         return all_feats
 
+    def _extract_categorical_encodings(self, pd_df: pd.DataFrame, feat_cols: list[str]) -> None:
+        """Extract categorical encodings from pandas DataFrame after conversion to categories."""
+        logger.debug("Extracting categorical encodings")
+        self.categorical_encodings = {}
+
+        for col in feat_cols:
+            if pd_df[col].dtype.name == "category":
+                categories = pd_df[col].cat.categories
+                # map category string → integer code (code is the index in the categories list)
+                encoding = {str(cat): idx for idx, cat in enumerate(categories)}
+                self.categorical_encodings[col] = encoding
+                logger.debug("Column '%s' has %d categories: %s", col, len(encoding), list(encoding.keys()))
+
+    def _extract_feature_dtypes(self, pd_df: pd.DataFrame, feat_cols: list[str]) -> None:
+        """Extract feature data types from pandas DataFrame."""
+        logger.debug("Extracting feature data types")
+        self.feature_dtypes = {}
+
+        for col in feat_cols:
+            dtype_str = str(pd_df[col].dtype)
+            self.feature_dtypes[col] = dtype_str
+            logger.debug("Column '%s' has dtype: %s", col, dtype_str)
+
     # ─────────────────────── training / prediction ──────────────────────
     def train(self) -> None:
         feat_cols = self._feature_columns()
@@ -279,6 +306,10 @@ class SRSNVTrainer:  # renamed from SRTrainer
             if pd_df[col].dtype == object:
                 logger.debug("Converting column '%s' to category type", col)
                 pd_df[col] = pd_df[col].astype("category")
+
+        # Extract metadata after categorical conversion
+        self._extract_categorical_encodings(pd_df, feat_cols)
+        self._extract_feature_dtypes(pd_df, feat_cols)
 
         fold_arr = pd_df[FOLD_COL].to_numpy()
         y_all = pd_df[LABEL_COL].to_numpy()
@@ -360,17 +391,42 @@ class SRSNVTrainer:  # renamed from SRTrainer
         model_paths: dict[int, str] = {}
         for fold_idx, model in enumerate(self.models):
             path = self.out_dir / f"{base}model_fold_{fold_idx}.json"
-            logger.debug("Saving model for fold %d to %s", fold_idx, path)
             model.save_model(path)
             model_paths[fold_idx] = str(path)
-        logger.info("Saved %d model JSONs", self.k_folds)
 
-        # chromosome → fold map
-        chrom_map_path = self.out_dir / f"{base}chrom_to_model.json"
-        logger.debug("Saving chromosome->model map to %s", chrom_map_path)
-        with chrom_map_path.open("w") as fh:
-            json.dump(self.chrom_to_fold, fh, indent=2)
-        logger.info(f"Saved chromosome→model map → {chrom_map_path}")
+        # map every chromosome to the model-file basename instead of the fold index
+        chrom_to_model_file = {chrom: Path(model_paths[fold]).name for chrom, fold in self.chrom_to_fold.items()}
+
+        metadata_path = self.out_dir / f"{base}srsnv_metadata.json"
+        logger.debug("Saving comprehensive metadata to %s", metadata_path)
+
+        # merge dtype + categorical encoding into one list
+        features_meta = []
+        for feat, dtype in self.feature_dtypes.items():
+            if feat in self.categorical_encodings:
+                entry_type = "c"
+            else:
+                dt = dtype.lower()
+                if dt.startswith("int"):
+                    entry_type = "int"
+                elif dt.startswith("float"):
+                    entry_type = "float"
+                else:
+                    entry_type = dt  # keep as-is for other dtypes
+
+            entry = {"name": feat, "type": entry_type}
+            if feat in self.categorical_encodings:
+                entry["values"] = self.categorical_encodings[feat]
+            features_meta.append(entry)
+
+        metadata = {"chrom_to_model": chrom_to_model_file, "features": features_meta}
+
+        with metadata_path.open("w") as fh:
+            json.dump(metadata, fh, indent=2)
+        logger.info(f"Saved comprehensive metadata → {metadata_path}")
+        logger.info(
+            "Metadata includes %d chromosome mappings and %d features", len(self.chrom_to_fold), len(features_meta)
+        )
 
     # ───────────────────────── entry point ──────────────────────────────
     def run(self) -> None:
