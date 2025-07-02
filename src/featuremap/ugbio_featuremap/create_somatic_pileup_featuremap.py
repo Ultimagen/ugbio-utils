@@ -92,11 +92,19 @@ def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags): 
     # add filter status to info fields
     logger.debug("add filter status to info fields")
     out_vcf_with_info_filter = f"{output_vcf}.tmp"
-    cmd = f"bcftools annotate --threads 30 \
-            -c INFO/filter_status:=FILTER \
-            -O z \
-            -o {out_vcf_with_info_filter} \
-            {input_vcf}"
+    cmd = [
+        "bcftools",
+        "annotate",
+        "--threads",
+        "30",
+        "-c",
+        "INFO/filter_status:=FILTER",
+        "-O",
+        "z",
+        "-o",
+        out_vcf_with_info_filter,
+        input_vcf,
+    ]
     logger.debug(cmd)
     subprocess.check_call(cmd)
     info_field_tags["filter_status"] = ["filter status", "String"]
@@ -125,14 +133,18 @@ def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags): 
 
     # Extract all INFO/{tag} into a tab-delimited annotation file
     logger.debug(r"Extract all INFO/\{tag\} into a tab-delimited annotation file")
-    cmd = [
-        "bash",
-        "-c",
-        (
-            f"bcftools query -f '%CHROM\t%POS\t%REF\t%ALT{query_string}\\n' "
-            f"{out_vcf_with_info_filter} | bgzip -c > {annotation_file}"
-        ),
-    ]
+    cmd = ["bcftools", "query", "-f", f"%CHROM\t%POS\t%REF\t%ALT{query_string}\\n", out_vcf_with_info_filter]
+    # Pipe to bgzip
+    with open(annotation_file, "wb") as annot_out:
+        bgzip_proc = subprocess.Popen(
+            ["bgzip", "-c"],  # noqa: S607
+            stdin=subprocess.PIPE,
+            stdout=annot_out,
+        )
+        query_proc = subprocess.Popen(cmd, stdout=bgzip_proc.stdin)
+        query_proc.communicate()
+        bgzip_proc.stdin.close()
+        bgzip_proc.communicate()
     logger.debug(" ".join(cmd))
     subprocess.check_call(cmd)
 
@@ -145,26 +157,37 @@ def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags): 
     # Create a header lines for the new annotation tags
     logger.debug("Create a header lines for the new annotation tags")
     for info_tag in info_field_tags:
-        cmd = [
-            "bash",
-            "-c",
-            f"echo '##FORMAT=<ID={info_tag},Number=1,Type={info_field_tags[info_tag][1]},"
-            f"Description={info_field_tags[info_tag][0]}>' >> {hdr_file}",
-        ]
-        subprocess.check_call(cmd)
+        header_line = (
+            f"##FORMAT=<ID={info_tag},Number=1,Type={info_field_tags[info_tag][1]},"
+            f"Description={info_field_tags[info_tag][0]}>"
+        )
+        with open(hdr_file, "a") as hdr_out:
+            hdr_out.write(header_line + "\n")
 
     # Transfer the annotation to sample 'SAMPLE'
     logger.debug("Transfer the annotation to sample SAMPLE")
     max_threads = os.cpu_count()
-    cmd = f"bcftools annotate --threads {str(max_threads)} \
-        -x INFO \
-        -s SAMPLE \
-        -a {annotation_file} \
-        -h {hdr_file} \
-        -c CHROM,POS,REF,ALT{c_string} \
-        -O z \
-        -o {output_vcf} \
-        {out_vcf_with_info_filter}"
+    cmd = [
+        "bcftools",
+        "annotate",
+        "--threads",
+        str(max_threads),
+        "-x",
+        "INFO",
+        "-s",
+        "SAMPLE",
+        "-a",
+        annotation_file,
+        "-h",
+        hdr_file,
+        "-c",
+        f"CHROM,POS,REF,ALT{c_string}",
+        "-O",
+        "z",
+        "-o",
+        output_vcf,
+        out_vcf_with_info_filter,
+    ]
     logger.debug(cmd)
     subprocess.check_call(cmd)
     # Index the output VCF with tabix
