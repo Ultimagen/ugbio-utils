@@ -60,6 +60,7 @@ def XGBoost_train(X_train, y_train):  # noqa: N802, N803
         max_depth=3,
         random_state=42,
         enable_categorical=True,
+        missing=np.nan,
     )
     # Fit the model
     xgb_clf_es.fit(X_train, y_train, verbose=True)
