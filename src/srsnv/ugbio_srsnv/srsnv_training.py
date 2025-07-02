@@ -129,7 +129,7 @@ def _parse_model_params(mp: str | None) -> dict[str, Any]:
 # ───────────────────────── auxiliary functions ──────────────────────────────
 
 
-def partition_into_folds(series_of_sizes, k_folds, alg="greedy", n_test=0):
+def partition_into_folds(series_of_sizes, k_folds, alg="greedy", n_chroms_leave_out=1):
     """Returns a partition of the indices of the series series_of_sizes
     into k_fold groups whose total size is approximately the same.
     Returns a dictionary that maps the indices (keys) of series_of_sizes into
@@ -156,7 +156,9 @@ def partition_into_folds(series_of_sizes, k_folds, alg="greedy", n_test=0):
     if alg != "greedy":
         raise ValueError("Only greedy algorithm implemented at this time")
     series_of_sizes = series_of_sizes.sort_values(ascending=False)
-    series_of_sizes = series_of_sizes.iloc[: series_of_sizes.shape[0] - n_test]  # Removing the n_test smallest sizes
+    series_of_sizes = series_of_sizes.iloc[
+        : series_of_sizes.shape[0] - n_chroms_leave_out
+    ]  # Removing the n_test smallest sizes
     partitions = [[] for _ in range(k_folds)]  # an empty partition
     partition_sums = np.zeros(k_folds)  # The running sum of partitions
     for idx, s in series_of_sizes.items():
@@ -208,7 +210,7 @@ class SRSNVTrainer:  # renamed from SRTrainer
         self.chrom_to_fold: dict[str, int] = partition_into_folds(
             pd.Series({c: chrom_sizes[c] for c in chrom_list}),
             self.k_folds,
-            n_test=0,
+            n_chroms_leave_out=1,
         )
         logger.debug("Assigning folds to data")
         self.data_frame = self.data_frame.with_columns(
@@ -308,6 +310,7 @@ class SRSNVTrainer:  # renamed from SRTrainer
         logger.debug("Pandas DataFrame shape: %s", pd_df.shape)
         for col in feat_cols:
             if pd_df[col].dtype == object:
+                raise ValueError(f"Feature column '{col}' has dtype 'object', expected categorical or numeric.")
                 logger.debug("Converting column '%s' to category type", col)
                 pd_df[col] = pd_df[col].astype("category")
 
