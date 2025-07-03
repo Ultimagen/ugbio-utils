@@ -17,7 +17,7 @@ def filter_low_af_ratio_to_background(
     vcf_out = pysam.VariantFile(output_vcf, "w", header=vcf_in.header)
 
     for record in vcf_in.fetch():
-        # Skip if variant is marked RefCall
+        # Skip if variant is marked RefCall or if it is an h-indel
         if (record.filter.keys() == ["RefCall"]) | (record.info.get("VARIANT_TYPE") == "h-indel"):
             vcf_out.write(record)
             continue
@@ -51,12 +51,24 @@ def process_record(record, af_ratio_threshold):
         for allele in gt:
             if (allele is None) or (allele == 0) or (dp == 0) or (bg_dp == 0):
                 continue  # skip REF or missing
+            elif ad[allele] == 0:
+                # allele is not present in the sample, so filter this allele
+                failed = True
+                continue
+            elif bg_ad[allele] == 0:
+                # the allele is present in the sample but not in the background,
+                # so do not filter the variant
+                failed = False
+                break
             elif bg_ad[allele] > 0:
                 af_ratio = (ad[allele] / dp) / (bg_ad[allele] / bg_dp)
                 if af_ratio >= af_ratio_threshold:
+                    # there is an allele with AF ratio >= threshold,
+                    # so do not filter the variant
                     failed = False
                     break
                 else:
+                    # this allele has AF ratio < threshold, so filter this allele
                     failed = True
 
     return failed
