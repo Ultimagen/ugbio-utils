@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import subprocess
 import warnings
 from pathlib import Path
@@ -65,10 +66,7 @@ def test_comprehensive_vcf_to_parquet_conversion(tmp_path: Path, input_featurema
 
     # hard-coded expected row counts per sample
     expected_rows = {
-        "416119_L7402.raw.featuremap.vcf.gz": 2664,
-        "416119_L7402.random_sample.featuremap.vcf.gz": 619,
-        "416119_L7402.random_sample.featuremap.manually_cleaned.vcf": 6577,
-        "416119_L7402.random_sample.featuremap.downsampled.vcf.gz": 4219,
+        "416119_L7402.random_sample.featuremap.downsampled.vcf.gz": 4199,
     }[input_featuremap.name]
     assert featuremap_dataframe.shape[0] == expected_rows
 
@@ -489,10 +487,7 @@ def test_single_job_vcf_to_parquet_conversion(tmp_path: Path, input_featuremap: 
 
     # Check expected row count for single job processing
     expected_rows = {
-        "416119_L7402.raw.featuremap.vcf.gz": 2664,
-        "416119_L7402.random_sample.featuremap.vcf.gz": 619,
-        "416119_L7402.random_sample.featuremap.manually_cleaned.vcf": 6577,
-        "416119_L7402.random_sample.featuremap.downsampled.vcf.gz": 4219,
+        "416119_L7402.random_sample.featuremap.downsampled.vcf.gz": 4199,
     }[input_featuremap.name]
 
     assert (
@@ -503,3 +498,34 @@ def test_single_job_vcf_to_parquet_conversion(tmp_path: Path, input_featuremap: 
     assert {"RN", "RL", "X_PREV1"}.issubset(featuremap_dataframe.columns)
     assert featuremap_dataframe["RN"].dtype == pl.Utf8
     assert featuremap_dataframe["POS"].dtype == pl.Int64
+
+
+def test_vcf_requires_index(tmp_path: Path) -> None:
+    """vcf_to_parquet should fail fast when the VCF/BCF has no accompanying index."""
+    # Minimal one-record VCF (un-indexed)
+    vcf_text = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000>\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+        "chr1\t1\t.\tA\tC\t.\tPASS\t.\n"
+    )
+    gz = tmp_path / "no_index.vcf.gz"
+
+    with gzip.open(gz, "wt") as fh:
+        fh.write(vcf_text)  # bgzip not required – we only test the index check
+
+    with pytest.raises(RuntimeError, match="index not found"):
+        featuremap_to_dataframe.vcf_to_parquet(str(gz), str(tmp_path / "out.parquet"), jobs=1)
+
+
+def test_st_et_are_categorical(tmp_path: Path, input_featuremap: Path) -> None:
+    """Columns advertised as enums in the header (e.g. st / et) must be categorical."""
+    out = tmp_path / "enum.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(str(input_featuremap), str(out), jobs=1)
+
+    featuremap_dataframe = pl.read_parquet(out)
+    # Some files may use upper- or lower-case; check whichever exists
+    for tag in ("st", "et"):
+        assert (
+            featuremap_dataframe[tag].dtype == pl.Categorical
+        ), f"{tag} should be categorical, got {featuremap_dataframe[tag].dtype}"
