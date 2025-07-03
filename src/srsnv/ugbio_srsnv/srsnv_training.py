@@ -184,8 +184,34 @@ def prob_to_phred(prob, max_value=None):
     return phred_scores
 
 
+def _aggregate_probabilities_from_folds(prob_matrix: np.ndarray) -> np.ndarray:
+    """
+    Aggregate probabilities coming from all folds for each data-point.
+
+    Parameters
+    ----------
+    prob_matrix : np.ndarray
+        Shape = (n_folds, n_rows). Each row contains the predicted
+        probabilities of one fold for all data-points.
+
+    Returns
+    -------
+    np.ndarray
+        Aggregated probability per data-point.
+    """
+    eps = 1e-10
+    probs = np.clip(prob_matrix, eps, 1 - eps)
+
+    # logit base-10
+    logits = np.log10(probs / (1.0 - probs))
+
+    # Average logits and convert back to probability
+    logits_mean = logits.mean(axis=0)
+    return 1.0 / (1.0 + 10 ** (-logits_mean))
+
+
 # ───────────────────────── core logic ─────────────────────────────────────
-class SRSNVTrainer:  # renamed from SRTrainer
+class SRSNVTrainer:
     def __init__(self, args: argparse.Namespace):
         logger.debug("Initializing SRSNVTrainer")
         self.args = args
@@ -353,28 +379,32 @@ class SRSNVTrainer:  # renamed from SRTrainer
         preds_prob = np.empty((self.k_folds, n_rows), dtype=float)
         preds_phred = np.empty_like(preds_prob)
 
-        # Get predictions from all models for all data points
+        # predictions from all models
         for k, model in enumerate(self.models):
             prob = model.predict_proba(x_all)[:, 1]
             preds_prob[k] = prob
             preds_phred[k] = prob_to_phred(prob, max_value=self.args.max_qual)
 
-        # Calculate prob_orig and raw_qual_val using array operations
+        # ---------- Vectorised prob_orig / raw_qual_val -------------------
         prob_orig = np.empty(n_rows, dtype=float)
         raw_qual_val = np.empty(n_rows, dtype=float)
 
-        for i in range(n_rows):
-            if np.isnan(fold_arr[i]):
-                # For points with fold_id=nan, use median of all models
-                prob_orig[i] = np.median(preds_prob[:, i])
-                raw_qual_val[i] = prob_to_phred(prob_orig[i], max_value=self.args.max_qual)
-            else:
-                # For points with valid fold_id, use the respective fold's prediction
-                fold_idx = int(fold_arr[i])
-                prob_orig[i] = preds_prob[fold_idx, i]
-                raw_qual_val[i] = preds_phred[fold_idx, i]
+        valid_fold_mask = ~np.isnan(fold_arr)
+        idx_valid = np.where(valid_fold_mask)[0]
+        idx_nan = np.where(~valid_fold_mask)[0]
 
-        # isotonic recalibration ------------------------------------------------------
+        # Per-row probability coming from its own fold
+        prob_orig[idx_valid] = preds_prob[fold_arr[idx_valid].astype(int), idx_valid]
+        raw_qual_val[idx_valid] = preds_phred[fold_arr[idx_valid].astype(int), idx_valid]
+
+        # Aggregated probability for rows without a fold
+        if idx_nan.size:
+            agg_prob = _aggregate_probabilities_from_folds(preds_prob[:, idx_nan])
+            prob_orig[idx_nan] = agg_prob
+            raw_qual_val[idx_nan] = prob_to_phred(agg_prob, max_value=self.args.max_qual)
+
+        # ------------------------------------------------------------------
+        # isotonic recalibration (unchanged)
         prob_recal = np.empty(n_rows, dtype=float)
         # Create a mask for points with valid fold_id
         valid_fold_mask = ~np.isnan(fold_arr)
