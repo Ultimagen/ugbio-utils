@@ -95,8 +95,11 @@ class VCFJobConfig:
 
 
 # ───────────────── header helpers ────────────────────────────────────────────
-INFO_RE = re.compile(r'##INFO=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description="([^"]*)')
-FORMAT_RE = re.compile(r'##FORMAT=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description="([^"]*)')
+# Allow escaped quotes (\") within the Description text
+_QUOTED_VALUE = r'"((?:[^"\\]|\\.)*)'
+
+INFO_RE = re.compile(rf"##INFO=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description={_QUOTED_VALUE}")
+FORMAT_RE = re.compile(rf"##FORMAT=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description={_QUOTED_VALUE}")
 
 _POLARS_DTYPE = {"Integer": pl.Int64, "Float": pl.Float64, "Flag": pl.Boolean}
 CHROM, POS, REF, ALT, QUAL, FILTER, ID, SAMPLE = "CHROM", "POS", "REF", "ALT", "QUAL", "FILTER", "ID", "SAMPLE"
