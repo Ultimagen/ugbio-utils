@@ -79,7 +79,7 @@ class ColumnConfig:
 
 
 @dataclass
-class VCFJobConfig:  # NEW
+class VCFJobConfig:
     """Static metadata shared by all workers."""
 
     bcftools_path: str
@@ -418,6 +418,22 @@ def _build_explicit_schema(cols: list[str], info_meta: dict, fmt_meta: dict) -> 
     return schema
 
 
+def _assert_vcf_index_exists(vcf: str) -> None:
+    """
+    Ensure the VCF file has an index (.tbi or .csi) present.
+
+    Raises
+    ------
+    RuntimeError
+        If no index is found.
+    """
+    index_path = f"{vcf}.tbi"
+    if not Path(index_path).is_file():
+        index_path = f"{vcf}.csi"
+        if not Path(index_path).is_file():
+            raise RuntimeError(f"VCF index not found: {index_path}")
+
+
 def vcf_to_parquet(
     vcf: str,
     out: str,
@@ -451,6 +467,7 @@ def vcf_to_parquet(
         Number of parallel jobs (0 = auto-detect CPU cores)
     """
     log.info(f"Converting {vcf} to {out} using region-based parallel processing")
+    _assert_vcf_index_exists(vcf)
 
     # Auto-detect optimal job count if not specified
     if jobs == 0:
