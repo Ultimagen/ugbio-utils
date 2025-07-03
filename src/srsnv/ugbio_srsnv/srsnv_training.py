@@ -43,7 +43,8 @@ REF = FeatureMapFields.REF.value
 X_ALT = FeatureMapFields.X_ALT.value
 
 RAW_QUAL_VAL = "raw_qual_val"
-RAW_QUAL_TRAIN_TMPL = "raw_qual_train_{idx}"  # idx = 1 … k-1
+RAW_QUAL_TRAIN_TMPL = "raw_qual_train_{idx}"
+PROB_TRAIN_FOLD_TMPL = "prob_train_fold_{k}"
 PROB_ORIG = "prob_orig"
 PROB_RECAL = "prob_recal"
 MQUAL_COL = "MQUAL"
@@ -352,36 +353,49 @@ class SRSNVTrainer:  # renamed from SRTrainer
         preds_prob = np.empty((self.k_folds, n_rows), dtype=float)
         preds_phred = np.empty_like(preds_prob)
 
+        # Get predictions from all models for all data points
         for k, model in enumerate(self.models):
             prob = model.predict_proba(x_all)[:, 1]
             preds_prob[k] = prob
             preds_phred[k] = prob_to_phred(prob, max_value=self.args.max_qual)
 
-        # validation picks (per-row) --------------------------------------------------
-        fold_idx_int = np.where(np.isnan(fold_arr), 0, fold_arr.astype(int))
-        prob_orig = preds_prob[fold_idx_int, np.arange(n_rows)]
-        raw_qual_val = preds_phred[fold_idx_int, np.arange(n_rows)]
+        # Calculate prob_orig and raw_qual_val using array operations
+        prob_orig = np.empty(n_rows, dtype=float)
+        raw_qual_val = np.empty(n_rows, dtype=float)
+
+        for i in range(n_rows):
+            if np.isnan(fold_arr[i]):
+                # For points with fold_id=nan, use median of all models
+                prob_orig[i] = np.median(preds_prob[:, i])
+                raw_qual_val[i] = prob_to_phred(prob_orig[i], max_value=self.args.max_qual)
+            else:
+                # For points with valid fold_id, use the respective fold's prediction
+                fold_idx = int(fold_arr[i])
+                prob_orig[i] = preds_prob[fold_idx, i]
+                raw_qual_val[i] = preds_phred[fold_idx, i]
 
         # isotonic recalibration ------------------------------------------------------
         prob_recal = np.empty(n_rows, dtype=float)
+        # Create a mask for points with valid fold_id
+        valid_fold_mask = ~np.isnan(fold_arr)
+
         for k in range(self.k_folds):
-            val_mask = fold_idx_int == k
-            train_mask = ~val_mask
+            val_mask = valid_fold_mask & (fold_arr == k)
+            train_mask = valid_fold_mask & (fold_arr != k)
+
+            if np.any(train_mask) and np.any(val_mask):
+                iso = IsotonicRegression(out_of_bounds="clip")
+                iso.fit(prob_orig[train_mask], y_all[train_mask])
+                prob_recal[val_mask] = iso.predict(prob_orig[val_mask])
+
+        # For points with fold_id=nan, use isotonic regression trained on all valid points
+        nan_fold_mask = np.isnan(fold_arr)
+        if np.any(nan_fold_mask) and np.any(valid_fold_mask):
             iso = IsotonicRegression(out_of_bounds="clip")
-            iso.fit(prob_orig[train_mask], y_all[train_mask])
-            prob_recal[val_mask] = iso.predict(prob_orig[val_mask])
+            iso.fit(prob_orig[valid_fold_mask], y_all[valid_fold_mask])
+            prob_recal[nan_fold_mask] = iso.predict(prob_orig[nan_fold_mask])
 
         mqual = prob_to_phred(prob_recal, max_value=self.args.max_qual)
-
-        # training quality columns (unchanged) ---------------------------
-        train_quals = np.full((n_rows, self.k_folds - 1), np.nan, dtype=float)
-        for row in range(n_rows):
-            col = 0
-            for k in range(self.k_folds):
-                if k == fold_idx_int[row]:
-                    continue
-                train_quals[row, col] = preds_phred[k, row]
-                col += 1
 
         # attach new columns ---------------------------------------------
         new_cols = [
@@ -390,8 +404,11 @@ class SRSNVTrainer:  # renamed from SRTrainer
             pl.Series(PROB_RECAL, prob_recal),
             pl.Series(MQUAL_COL, mqual),
         ]
-        for idx in range(self.k_folds - 1):
-            new_cols.append(pl.Series(RAW_QUAL_TRAIN_TMPL.format(idx=idx + 1), train_quals[:, idx]))
+
+        # Add prob_train_fold_{k} columns for all models
+        for k in range(self.k_folds):
+            new_cols.append(pl.Series(PROB_TRAIN_FOLD_TMPL.format(k=k), preds_prob[k]))
+
         self.data_frame = self.data_frame.with_columns(new_cols)
 
     # ───────────────────────── save outputs ─────────────────────────────
