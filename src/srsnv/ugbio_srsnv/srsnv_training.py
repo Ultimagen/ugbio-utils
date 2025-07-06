@@ -446,11 +446,11 @@ class SRSNVTrainer:
             agg_prob = _aggregate_probabilities_from_folds(preds_prob[:, idx_nan])
             prob_orig[idx_nan] = agg_prob
             raw_qual_val[idx_nan] = prob_to_phred(agg_prob, max_value=self.args.max_qual)
+        mqual = prob_to_phred(prob_orig, max_value=self.args.max_qual)
 
         # ------------------------------------------------------------------
         # quality recalibration
         prob_recal = _quality_recalibration(prob_orig, y_all, fold_arr, self.k_folds)
-        mqual = prob_to_phred(prob_recal, max_value=self.args.max_qual)
 
         # attach new columns ------------------------------------------------
         new_cols = [
