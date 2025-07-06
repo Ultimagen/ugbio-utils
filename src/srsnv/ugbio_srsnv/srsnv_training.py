@@ -184,7 +184,7 @@ def prob_to_phred(prob, max_value=None):
     return phred_scores
 
 
-def _aggregate_probabilities_from_folds(prob_matrix: np.ndarray) -> np.ndarray:
+def _aggregate_probabilities_from_folds(prob_matrix: np.ndarray, prob_epsilon=1e-10) -> np.ndarray:
     """
     Aggregate probabilities coming from all folds for each data-point.
 
@@ -193,14 +193,15 @@ def _aggregate_probabilities_from_folds(prob_matrix: np.ndarray) -> np.ndarray:
     prob_matrix : np.ndarray
         Shape = (n_folds, n_rows). Each row contains the predicted
         probabilities of one fold for all data-points.
+    prob_epsilon : float, optional
+        Small value to avoid log(0) issues, by default 1e-10
 
     Returns
     -------
     np.ndarray
         Aggregated probability per data-point.
     """
-    eps = 1e-10
-    probs = np.clip(prob_matrix, eps, 1 - eps)
+    probs = np.clip(prob_matrix, prob_epsilon, 1 - prob_epsilon)
 
     # logit base-10
     logits = np.log10(probs / (1.0 - probs))
@@ -208,6 +209,36 @@ def _aggregate_probabilities_from_folds(prob_matrix: np.ndarray) -> np.ndarray:
     # Average logits and convert back to probability
     logits_mean = logits.mean(axis=0)
     return 1.0 / (1.0 + 10 ** (-logits_mean))
+
+
+# ────────────────────── NEW: quality recalibration helper ──────────────────
+def _quality_recalibration(prob_orig: np.ndarray, y_all: np.ndarray, fold_arr: np.ndarray, k_folds: int) -> np.ndarray:
+    """
+    Perform per-fold isotonic calibration.
+    Rows with fold_id = k are calibrated using a model trained on all
+    other folds. Rows with NaN fold_id are calibrated using a model
+    trained on all rows that have a valid fold id.
+    """
+    n_rows = prob_orig.shape[0]
+    prob_recal = np.empty(n_rows, dtype=float)
+
+    valid_mask = ~np.isnan(fold_arr)
+    for k in range(k_folds):
+        val_mask = valid_mask & (fold_arr == k)
+        train_mask = valid_mask & (fold_arr != k)
+        if np.any(train_mask) and np.any(val_mask):
+            iso = IsotonicRegression(out_of_bounds="clip")
+            iso.fit(prob_orig[train_mask], y_all[train_mask])
+            prob_recal[val_mask] = iso.predict(prob_orig[val_mask])
+
+    # rows lacking a fold_id
+    nan_mask = ~valid_mask
+    if np.any(nan_mask) and np.any(valid_mask):
+        iso = IsotonicRegression(out_of_bounds="clip")
+        iso.fit(prob_orig[valid_mask], y_all[valid_mask])
+        prob_recal[nan_mask] = iso.predict(prob_orig[nan_mask])
+
+    return prob_recal
 
 
 # ───────────────────────── core logic ─────────────────────────────────────
@@ -417,30 +448,11 @@ class SRSNVTrainer:
             raw_qual_val[idx_nan] = prob_to_phred(agg_prob, max_value=self.args.max_qual)
 
         # ------------------------------------------------------------------
-        # isotonic recalibration (unchanged)
-        prob_recal = np.empty(n_rows, dtype=float)
-        # Create a mask for points with valid fold_id
-        valid_fold_mask = ~np.isnan(fold_arr)
-
-        for k in range(self.k_folds):
-            val_mask = valid_fold_mask & (fold_arr == k)
-            train_mask = valid_fold_mask & (fold_arr != k)
-
-            if np.any(train_mask) and np.any(val_mask):
-                iso = IsotonicRegression(out_of_bounds="clip")
-                iso.fit(prob_orig[train_mask], y_all[train_mask])
-                prob_recal[val_mask] = iso.predict(prob_orig[val_mask])
-
-        # For points with fold_id=nan, use isotonic regression trained on all valid points
-        nan_fold_mask = np.isnan(fold_arr)
-        if np.any(nan_fold_mask) and np.any(valid_fold_mask):
-            iso = IsotonicRegression(out_of_bounds="clip")
-            iso.fit(prob_orig[valid_fold_mask], y_all[valid_fold_mask])
-            prob_recal[nan_fold_mask] = iso.predict(prob_orig[nan_fold_mask])
-
+        # quality recalibration
+        prob_recal = _quality_recalibration(prob_orig, y_all, fold_arr, self.k_folds)
         mqual = prob_to_phred(prob_recal, max_value=self.args.max_qual)
 
-        # attach new columns ---------------------------------------------
+        # attach new columns ------------------------------------------------
         new_cols = [
             pl.Series(RAW_QUAL_VAL, raw_qual_val),
             pl.Series(PROB_ORIG, prob_orig),
