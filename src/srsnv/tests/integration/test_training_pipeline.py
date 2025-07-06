@@ -49,6 +49,7 @@ def test_end_to_end_training(tmp_path: Path) -> None:
         random_seed=0,
         verbose=True,
         max_qual=100.0,
+        quality_lut_size=1000,
     )
 
     # ---------------------------------------------------------------- train

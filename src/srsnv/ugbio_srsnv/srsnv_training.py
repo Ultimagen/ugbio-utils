@@ -41,9 +41,10 @@ LABEL_COL = "label"
 CHROM = FeatureMapFields.CHROM.value
 POS = FeatureMapFields.POS.value
 REF = FeatureMapFields.REF.value
-SNVQ = FeatureMapFields.SNVQ.value
-MQUAL = FeatureMapFields.MQUAL.value
 X_ALT = FeatureMapFields.X_ALT.value
+MQUAL = FeatureMapFields.MQUAL.value
+SNVQ = FeatureMapFields.SNVQ.value
+SNVQ_RAW = SNVQ + "_RAW"
 
 PROB_TRAIN_FOLD_TMPL = "prob_train_fold_{k}"
 PROB_ORIG = "prob_orig"
@@ -271,6 +272,33 @@ def _probability_recalibration(
         prob_recal[nan_mask] = iso.predict(prob_orig[nan_mask])
 
     return prob_recal
+
+
+def _create_quality_lookup_table(
+    mqual: np.ndarray,
+    snvq: np.ndarray,
+    n_pts: int = 1000,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Build an interpolation table that maps MQUAL → SNVQ.
+
+    Returns (x, y):
+        x – equidistant MQUAL grid (length n_pts)
+        y – interpolated SNVQ on that grid
+    """
+    mask = np.isfinite(mqual) & np.isfinite(snvq)
+    if mask.sum() == 0:
+        raise ValueError("no finite data to build quality-lookup table")
+
+    m = mqual[mask]
+    s = snvq[mask]
+
+    order = np.argsort(m)
+    m, s = m[order], s[order]
+
+    x = np.linspace(0.0, m.max(), n_pts)
+    y = np.interp(x, m, s)
+    return x, y
 
 
 # ───────────────────────── core logic ─────────────────────────────────────
@@ -511,7 +539,9 @@ class SRSNVTrainer:
         )
 
         # final quality (Phred)
-        qual = prob_to_phred(prob_rescaled, max_value=self.args.max_qual)
+        snvq_raw = prob_to_phred(prob_rescaled, max_value=self.args.max_qual)
+        self.x_lut, self.y_lut = _create_quality_lookup_table(mqual, snvq_raw, self.args.quality_lut_size)
+        snvq = np.interp(mqual, self.x_lut, self.y_lut)
         # ------------------------------------------------------------------
 
         # attach new columns ------------------------------------------------
@@ -520,7 +550,8 @@ class SRSNVTrainer:
             pl.Series(PROB_RECAL, prob_recal),
             pl.Series(PROB_RESCALED, prob_rescaled),
             pl.Series(MQUAL, mqual),
-            pl.Series(SNVQ, qual),
+            pl.Series(SNVQ_RAW, snvq_raw),
+            pl.Series(SNVQ, snvq),
         ]
 
         self.data_frame = self.data_frame.with_columns(new_cols)
@@ -570,7 +601,31 @@ class SRSNVTrainer:
                 entry["values"] = self.categorical_encodings[feat]
             features_meta.append(entry)
 
-        metadata = {"chrom_to_model": chrom_to_model_file, "features": features_meta}
+        # quality recalibration table
+        quality_recalibration_table = {
+            "mqual": self.x_lut.tolist(),
+            "snvq": self.y_lut.tolist(),
+        }
+
+        # stats and priors
+        stats = {
+            "positive": self.pos_stats,
+            "negative": self.neg_stats,
+            "r_true_calls": self.r_true_calls,
+            "n_error_calls": self.n_error_calls,
+            "n_aligned_bases": self.n_aligned_bases,
+            "prior_train_error": self.prior_train_error,
+            "prior_real_error": self.prior_real_error,
+        }
+
+        # Save comprehensive metadata
+        metadata = {
+            "chrom_to_model": chrom_to_model_file,
+            "features": features_meta,
+            "quality_recalibration_table": quality_recalibration_table,
+            "filtering_stats": stats,
+            "model_params": self.models[0].get_xgb_params(),
+        }
 
         with metadata_path.open("w") as fh:
             json.dump(metadata, fh, indent=2)
@@ -612,6 +667,12 @@ def _cli() -> argparse.Namespace:
     ap.add_argument("--stats-positive", required=True, help="JSON file with filtering stats for positive set")
     ap.add_argument("--stats-negative", required=True, help="JSON file with filtering stats for negative set")
     ap.add_argument("--aligned-bases", type=int, required=True, help="Number of aligned bases for prior calculation")
+    ap.add_argument(
+        "--quality-lut-size",
+        type=int,
+        default=1000,
+        help="Number of points in the MQUAL→SNVQ lookup table " "(default 1000)",
+    )
     return ap.parse_args()
 
 
