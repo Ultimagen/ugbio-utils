@@ -318,10 +318,18 @@ class SRSNVTrainer:
         self.pos_stats = read_filtering_stats_json(args.stats_positive)
         self.neg_stats = read_filtering_stats_json(args.stats_negative)
 
+        # helper: last entry that is *not* a down-sample operation
+        def _last_non_downsample_rows(stats: dict) -> int:
+            for f in reversed(stats["filters"]):
+                if f.get("type") != "downsample":
+                    return f["rows"]
+            raise ValueError("stats JSON has no non-downsample filter entry")
+
         n_random_sample = self.pos_stats["filters"][0]["rows"]
-        n_after_all_filter = self.pos_stats["filters"][-1]["rows"]
+        n_after_all_filter = _last_non_downsample_rows(self.pos_stats)
         self.r_true_calls = n_after_all_filter / n_random_sample
-        self.n_error_calls = self.neg_stats["filters"][-1]["rows"]
+
+        self.n_error_calls = _last_non_downsample_rows(self.neg_stats)
         self.n_aligned_bases = args.aligned_bases
 
         # Data
@@ -359,9 +367,9 @@ class SRSNVTrainer:
 
         # Models
         logger.debug("Parsing model parameters from: %s", args.model_params)
-        model_params = _parse_model_params(args.model_params)
-        logger.debug("Initializing %d XGBClassifier models with params: %s", self.k_folds, model_params)
-        self.models = [xgb.XGBClassifier(**model_params) for _ in range(self.k_folds)]
+        self.model_params = _parse_model_params(args.model_params)
+        logger.debug("Initializing %d XGBClassifier models with params: %s", self.k_folds, self.model_params)
+        self.models = [xgb.XGBClassifier(**self.model_params) for _ in range(self.k_folds)]
 
         # optional user-supplied feature subset
         self.feature_list: list[str] | None = args.features.split(":") if args.features else None
@@ -624,7 +632,7 @@ class SRSNVTrainer:
             "features": features_meta,
             "quality_recalibration_table": quality_recalibration_table,
             "filtering_stats": stats,
-            "model_params": self.models[0].get_xgb_params(),
+            "model_params": self.model_params,
         }
 
         with metadata_path.open("w") as fh:
