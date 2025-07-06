@@ -280,6 +280,21 @@ class SRSNVTrainer:
         logger.debug("Negative examples shape: %s", neg_df.shape)
         neg_df = neg_df.with_columns(pl.lit(value=False).alias(LABEL_COL))
 
+        # assert that both dataframes have the same columns
+        if set(pos_df.columns) != set(neg_df.columns):
+            raise ValueError(
+                f"Positive and negative dataframes have different columns: {pos_df.columns} vs {neg_df.columns}"
+            )
+        # assert datatypes are compatible
+        if pos_df.dtypes != neg_df.dtypes:
+            # raise error on the specific incompatible columns
+            incompatible = [c for c in pos_df.columns if pos_df[c].dtype != neg_df[c].dtype]
+            dtype_strs = [str(pos_df[c].dtype) for c in incompatible]
+            raise ValueError(
+                f"Incompatible dtypes between Positive and Negative dataframes for columns: {incompatible}\n"
+                f"Dtypes: {dtype_strs}"
+            )
+        # Concatenate the two dataframes
         logger.debug("Concatenating positive and negative dataframes")
         combined_df = pl.concat([pos_df, neg_df])
         logger.debug("Combined dataframe shape: %s", combined_df.shape)
@@ -338,8 +353,6 @@ class SRSNVTrainer:
         for col in feat_cols:
             if pd_df[col].dtype == object:
                 raise ValueError(f"Feature column '{col}' has dtype 'object', expected categorical or numeric.")
-                logger.debug("Converting column '%s' to category type", col)
-                pd_df[col] = pd_df[col].astype("category")
 
         # Extract metadata after categorical conversion
         self._extract_categorical_encodings(pd_df, feat_cols)
