@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from pathlib import Path
 from typing import Any
 
 import polars as pl
@@ -676,3 +677,59 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
     main()
+
+
+# -------------- internal helper -------------------------------------------
+def _validate_stats_dict(data: dict, where: str) -> None:  # noqa C901
+    """Raise ValueError if *data* is not a well-formed filtering-stats dict."""
+    # ---------- basic keys -------------------------------------------------
+    required_keys = {"filters", "single_effect", "combinations"}
+    if missing := required_keys - data.keys():
+        raise ValueError(f"stats JSON{where}: missing key(s): {sorted(missing)}")
+
+    # ---------- filters ----------------------------------------------------
+    filters = data["filters"]
+    if not isinstance(filters, list) or not filters:
+        raise ValueError(f"stats JSON{where}: 'filters' must be a non-empty list")
+
+    for idx, f in enumerate(filters):
+        if not isinstance(f, dict):
+            raise ValueError(f"stats JSON{where}: filters[{idx}] is not an object")
+        if {"name", "rows"} - f.keys():
+            raise ValueError(f"stats JSON{where}: filters[{idx}] missing 'name' or 'rows'")
+        if not isinstance(f["rows"], int) or f["rows"] < 0:
+            raise ValueError(f"stats JSON{where}: filters[{idx}]['rows'] must be a non-negative integer")
+
+    if filters[0]["name"] != "raw":
+        raise ValueError(f"stats JSON{where}: first filter must have name 'raw'")
+
+    # ---------- single_effect ---------------------------------------------
+    se = data["single_effect"]
+    if not isinstance(se, dict):
+        raise ValueError(f"stats JSON{where}: 'single_effect' must be an object")
+    if not all(isinstance(v, int) and v >= 0 for v in se.values()):
+        raise ValueError(f"stats JSON{where}: all 'single_effect' values must be non-negative integers")
+
+    # ---------- combinations ----------------------------------------------
+    if (
+        "combinations" in data
+        and isinstance(combos := data["combinations"], dict)
+        and not all(isinstance(v, int) and v >= 0 for v in combos.values())
+    ):
+        raise ValueError(f"stats JSON{where}: all 'combinations' values must be non-negative integers")
+
+
+# -------------- public loader ---------------------------------------------
+def read_filtering_stats_json(path: str | Path) -> dict:
+    """
+    Read a statistics JSON written by `filter_parquet --stats`.
+
+    The file is validated; any structural problem raises ValueError.
+    On success the parsed dictionary is returned.
+    """
+    p = Path(path)
+    with p.open(encoding="utf-8") as fh:
+        data = json.load(fh)
+
+    _validate_stats_dict(data, where=f" ({p})")
+    return data

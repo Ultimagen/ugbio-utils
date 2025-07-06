@@ -7,11 +7,11 @@ from pathlib import Path
 import polars as pl
 import pytest
 from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
-from ugbio_featuremap.filter_dataframe import filter_parquet, validate_filter_config
+from ugbio_featuremap.filter_dataframe import filter_parquet, read_filtering_stats_json, validate_filter_config
 
 pl.enable_string_cache()
 
-SAMPLE = Path(__file__).parent.parent / "resources" / "416119_L7402.random_sample.featuremap.manually_cleaned.vcf"
+SAMPLE = Path(__file__).parent.parent / "resources" / "416119_L7402.random_sample.featuremap.downsampled.vcf.gz"
 
 
 def _parquet_from_sample(tmpdir: Path) -> Path:
@@ -428,3 +428,24 @@ def test_parse_cli_filter_functions() -> None:
     # Test invalid downsample format
     with pytest.raises(ValueError, match="must have 2-3 parts"):
         _parse_cli_downsample("invalid")
+
+
+def test_stats_json_roundtrip(tmp_path: Path) -> None:
+    """filter_parquet stats JSON must be readable with read_filtering_stats_json()."""
+    parquet_in = _parquet_from_sample(tmp_path)
+
+    cfg = {
+        "filters": [{"field": "BCSQ", "op": "ge", "value": 10, "type": "quality"}],
+        "downsample": {"method": "head", "size": 50},
+    }
+    cfg_path = tmp_path / "cfg.json"
+    cfg_path.write_text(json.dumps(cfg))
+
+    out_pq = tmp_path / "f.parquet"
+    stats_json = tmp_path / "stats.json"
+
+    filter_parquet(str(parquet_in), str(out_pq), None, str(cfg_path), str(stats_json))
+
+    # Must load without raising
+    stats = read_filtering_stats_json(stats_json)
+    assert stats["filters"][0]["name"] == "raw"
