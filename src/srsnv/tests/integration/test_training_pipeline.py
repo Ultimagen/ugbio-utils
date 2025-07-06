@@ -18,6 +18,8 @@ def test_end_to_end_training(tmp_path: Path) -> None:
     resources = Path(__file__).parent.parent / "resources"
     pos_file = resources / "416119_L7402.random_sample.featuremap.filtered.sample.parquet"
     neg_file = resources / "416119_L7402.raw.featuremap.filtered.sample.parquet"
+    pos_stats = resources / "416119_L7402.random_sample.featuremap.stats.json"
+    neg_stats = resources / "416119_L7402.raw.featuremap.stats.json"
 
     assert pos_file.is_file(), "positive parquet missing"
     assert neg_file.is_file(), "negative parquet missing"
@@ -34,10 +36,13 @@ def test_end_to_end_training(tmp_path: Path) -> None:
     args = argparse.Namespace(
         positive=str(pos_file),
         negative=str(neg_file),
+        stats_positive=str(pos_stats),
+        stats_negative=str(neg_stats),
+        aligned_bases=134329535408,
         training_regions=str(interval_list),
         k_folds=2,
         model_params="n_estimators=2:max_depth=2:enable_categorical=true",  # keep test fast
-        features="X_HMER_REF:X_HMER_ALT:X_PREV1:X_NEXT1:X_PREV2:X_NEXT2:X_PREV3:X_NEXT3:BCSQ:BCSQCSS:RL:INDEX:DUP:REV:"
+        features="REF:ALT:X_HMER_REF:X_HMER_ALT:X_PREV1:X_NEXT1:X_PREV2:X_NEXT2:X_PREV3:X_NEXT3:BCSQ:BCSQCSS:RL:INDEX:DUP:REV:"
         "SCST:SCED:MAPQ:EDIST:SMQ_BEFORE:SMQ_AFTER:tm:rq:st:et",
         output=str(out_dir),  # override tmp_path when env var is set
         basename="unit_test",
@@ -61,7 +66,7 @@ def test_end_to_end_training(tmp_path: Path) -> None:
 
     # quick sanity: dataframe has required prediction columns
     cols = pl.read_parquet(df_out).columns
-    assert "raw_qual_val" in cols, "prediction column missing"
+    assert "MQUAL" in cols, "prediction column missing"
 
     # quick sanity: unified metadata format ------------------------------------------------------
     with metadata_out.open() as fh:

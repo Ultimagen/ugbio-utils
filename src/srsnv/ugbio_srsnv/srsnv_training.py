@@ -34,20 +34,22 @@ import xgboost as xgb
 from sklearn.isotonic import IsotonicRegression
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
+from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
 
 FOLD_COL = "fold_id"
 LABEL_COL = "label"
 CHROM = FeatureMapFields.CHROM.value
 POS = FeatureMapFields.POS.value
 REF = FeatureMapFields.REF.value
+SNVQ = FeatureMapFields.SNVQ.value
+MQUAL = FeatureMapFields.MQUAL.value
 X_ALT = FeatureMapFields.X_ALT.value
 
-RAW_QUAL_VAL = "raw_qual_val"
-RAW_QUAL_TRAIN_TMPL = "raw_qual_train_{idx}"
 PROB_TRAIN_FOLD_TMPL = "prob_train_fold_{k}"
 PROB_ORIG = "prob_orig"
 PROB_RECAL = "prob_recal"
-MQUAL_COL = "MQUAL"
+PROB_RESCALED = "prob_rescaled"
+EPS = 1e-10  # small value to avoid division by zero
 pl.enable_string_cache()
 
 
@@ -128,6 +130,35 @@ def _parse_model_params(mp: str | None) -> dict[str, Any]:
 
 
 # ───────────────────────── auxiliary functions ──────────────────────────────
+
+
+def _probability_rescaling(
+    prob: np.ndarray,
+    sample_prior: float,
+    target_prior: float,
+    eps: float = 1e-10,
+) -> np.ndarray:
+    """
+    Rescale probabilities from the training prior to the real-data prior.
+
+    Formula (odds space, no logs):
+        odds_row       =  p / (1-p)
+        odds_sample    =  π_s / (1-π_s)
+        odds_target    =  π_t / (1-π_t)
+        odds_rescaled  =  odds_row * (odds_target / odds_sample)
+        p_rescaled     =  odds_rescaled / (1 + odds_rescaled)
+    """
+    sample_prior = np.clip(sample_prior, eps, 1 - eps)
+    target_prior = np.clip(target_prior, eps, 1 - eps)
+
+    odds_sample = sample_prior / (1.0 - sample_prior)
+    odds_target = target_prior / (1.0 - target_prior)
+
+    p = np.clip(prob, eps, 1 - eps)
+    odds_row = p / (1.0 - p)
+
+    odds_rescaled = odds_row * (odds_target / odds_sample)
+    return odds_rescaled / (1.0 + odds_rescaled)
 
 
 def partition_into_folds(series_of_sizes, k_folds, alg="greedy", n_chroms_leave_out=1):
@@ -255,10 +286,31 @@ class SRSNVTrainer:
         logger.debug("Using random seed: %d", self.seed)
         self.rng = np.random.default_rng(self.seed)
 
+        # ─────────── read filtering-stats JSONs & compute priors ───────────
+        self.pos_stats = read_filtering_stats_json(args.stats_positive)
+        self.neg_stats = read_filtering_stats_json(args.stats_negative)
+
+        n_random_sample = self.pos_stats["filters"][0]["rows"]
+        n_after_all_filter = self.pos_stats["filters"][-1]["rows"]
+        self.r_true_calls = n_after_all_filter / n_random_sample
+        self.n_error_calls = self.neg_stats["filters"][-1]["rows"]
+        self.n_aligned_bases = args.aligned_bases
+
         # Data
         logger.debug("Loading data from positive=%s and negative=%s", args.positive, args.negative)
         self.data_frame = self._load_data(args.positive, args.negative)
         logger.debug("Data loaded. Shape: %s", self.data_frame.shape)
+
+        # training-set prior
+        self.n_neg = self.data_frame.filter(~pl.col(LABEL_COL)).height
+        self.prior_train_error = self.n_neg / self.data_frame.height
+
+        # real-data prior
+        self.prior_real_error = max(
+            EPS,
+            min(1.0 - EPS, self.n_error_calls / (self.n_aligned_bases * self.r_true_calls)),
+        )
+
         self.k_folds = max(1, args.k_folds)
 
         # Folds
@@ -430,9 +482,8 @@ class SRSNVTrainer:
             preds_prob[k] = prob
             preds_phred[k] = prob_to_phred(prob, max_value=self.args.max_qual)
 
-        # ---------- Vectorised prob_orig / raw_qual_val -------------------
+        # ---------- Vectorised prob_orig -------------------
         prob_orig = np.empty(n_rows, dtype=float)
-        raw_qual_val = np.empty(n_rows, dtype=float)
 
         valid_fold_mask = ~np.isnan(fold_arr)
         idx_valid = np.where(valid_fold_mask)[0]
@@ -440,30 +491,37 @@ class SRSNVTrainer:
 
         # Per-row probability coming from its own fold
         prob_orig[idx_valid] = preds_prob[fold_arr[idx_valid].astype(int), idx_valid]
-        raw_qual_val[idx_valid] = preds_phred[fold_arr[idx_valid].astype(int), idx_valid]
 
         # Aggregated probability for rows without a fold
         if idx_nan.size:
             agg_prob = _aggregate_probabilities_from_folds(preds_prob[:, idx_nan])
             prob_orig[idx_nan] = agg_prob
-            raw_qual_val[idx_nan] = prob_to_phred(agg_prob, max_value=self.args.max_qual)
         mqual = prob_to_phred(prob_orig, max_value=self.args.max_qual)
 
         # ------------------------------------------------------------------
         # quality recalibration
         prob_recal = _probability_recalibration(prob_orig, y_all, fold_arr, self.k_folds)
 
+        # ------------------------------------------------------------------
+        # global rescaling to the real-data prior
+        prob_rescaled = _probability_rescaling(
+            prob_recal,
+            sample_prior=self.prior_train_error,
+            target_prior=self.prior_real_error,
+        )
+
+        # final quality (Phred)
+        qual = prob_to_phred(prob_rescaled, max_value=self.args.max_qual)
+        # ------------------------------------------------------------------
+
         # attach new columns ------------------------------------------------
         new_cols = [
-            pl.Series(RAW_QUAL_VAL, raw_qual_val),
             pl.Series(PROB_ORIG, prob_orig),
             pl.Series(PROB_RECAL, prob_recal),
-            pl.Series(MQUAL_COL, mqual),
+            pl.Series(PROB_RESCALED, prob_rescaled),
+            pl.Series(MQUAL, mqual),
+            pl.Series(SNVQ, qual),
         ]
-
-        # Add prob_train_fold_{k} columns for all models
-        for k in range(self.k_folds):
-            new_cols.append(pl.Series(PROB_TRAIN_FOLD_TMPL.format(k=k), preds_prob[k]))
 
         self.data_frame = self.data_frame.with_columns(new_cols)
 
@@ -551,6 +609,9 @@ def _cli() -> argparse.Namespace:
     ap.add_argument("--random-seed", type=int, default=None)
     ap.add_argument("--verbose", action="store_true", help="Enable debug logging")
     ap.add_argument("--max-qual", type=float, default=100.0, help="Maximum Phred score for model quality")
+    ap.add_argument("--stats-positive", required=True, help="JSON file with filtering stats for positive set")
+    ap.add_argument("--stats-negative", required=True, help="JSON file with filtering stats for negative set")
+    ap.add_argument("--aligned-bases", type=int, required=True, help="Number of aligned bases for prior calculation")
     return ap.parse_args()
 
 

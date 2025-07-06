@@ -18,6 +18,8 @@ class FeatureMapFields(Enum):
     QUAL = QUAL.upper()
     FILTER = FILTER.upper()
     X_ALT = "X_ALT"
+    MQUAL = "MQUAL"
+    SNVQ = "SNVQ"
 
 
 class FeatureMapFilters(Enum):

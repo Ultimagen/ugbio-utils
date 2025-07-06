@@ -23,13 +23,7 @@ from ugbio_featuremap.featuremap_to_dataframe import (
 
 
 # --- fixtures --------------------------------------------------------------
-@pytest.fixture(
-    params=[
-        # "416119_L7402.raw.featuremap.vcf.gz",
-        # "416119_L7402.random_sample.featuremap.vcf.gz",
-        "416119_L7402.random_sample.featuremap.downsampled.vcf.gz"
-    ]
-)
+@pytest.fixture(params=["416119_L7402.random_sample.featuremap.downsampled.vcf.gz"])
 def input_featuremap(request):
     """Return each sample VCF in turn."""
     return Path(__file__).parent.parent / "resources" / request.param

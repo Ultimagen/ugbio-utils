@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import numpy as np
 import polars as pl
 from ugbio_srsnv.srsnv_training import (
-    MQUAL_COL,
+    MQUAL,
     PROB_ORIG,
     PROB_RECAL,
     SRSNVTrainer,
@@ -65,4 +65,4 @@ def test_recalibration_columns(tmp_path):
     trainer.train()  # will call _add_quality_columns internally
 
     cols = set(trainer.data_frame.columns)
-    assert {PROB_ORIG, PROB_RECAL, MQUAL_COL}.issubset(cols), "Recalibration columns missing"
+    assert {PROB_ORIG, PROB_RECAL, MQUAL}.issubset(cols), "Recalibration columns missing"
