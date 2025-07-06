@@ -529,3 +529,25 @@ def test_st_et_are_categorical(tmp_path: Path, input_featuremap: Path) -> None:
         assert (
             featuremap_dataframe[tag].dtype == pl.Categorical
         ), f"{tag} should be categorical, got {featuremap_dataframe[tag].dtype}"
+
+
+def test_qual_dtype_float_even_if_empty(tmp_path: Path) -> None:
+    """QUAL column should be Float64 even when every value is '.'."""
+    vcf_txt = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000>\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+        "chr1\t10\t.\tA\tT\t.\tPASS\t.\n"
+    )
+    plain = tmp_path / "qual_missing.vcf"
+    plain.write_text(vcf_txt)
+    vcf_gz = tmp_path / "qual_missing.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"],
+        check=True,
+    )
+    out = tmp_path / "out.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(str(vcf_gz), str(out), jobs=1)
+
+    featuremap_dataframe = pl.read_parquet(out)
+    assert featuremap_dataframe["QUAL"].dtype == pl.Float64, "QUAL should be Float64 even if all values are missing"

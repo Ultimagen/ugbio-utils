@@ -712,6 +712,10 @@ def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, job_cfg: VCFJobC
         # These were exploded by AWK so now treat as scalars
         featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
 
+    # QUAL ─ force Float64 even if all values are missing
+    if QUAL in featuremap_dataframe.columns:
+        featuremap_dataframe = _cast_scalar(featuremap_dataframe, QUAL, {"type": "Float", "cat": None})
+
     # REF / ALT
     for allele in (REF, ALT):
         featuremap_dataframe = _cast_scalar(featuremap_dataframe, allele, {"type": "String", "cat": ALLELE_CATS})
