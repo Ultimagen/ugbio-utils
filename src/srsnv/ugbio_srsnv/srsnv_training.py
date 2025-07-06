@@ -211,8 +211,9 @@ def _aggregate_probabilities_from_folds(prob_matrix: np.ndarray, prob_epsilon=1e
     return 1.0 / (1.0 + 10 ** (-logits_mean))
 
 
-# ────────────────────── NEW: quality recalibration helper ──────────────────
-def _quality_recalibration(prob_orig: np.ndarray, y_all: np.ndarray, fold_arr: np.ndarray, k_folds: int) -> np.ndarray:
+def _probability_recalibration(
+    prob_orig: np.ndarray, y_all: np.ndarray, fold_arr: np.ndarray, k_folds: int
+) -> np.ndarray:
     """
     Perform per-fold isotonic calibration.
     Rows with fold_id = k are calibrated using a model trained on all
@@ -450,7 +451,7 @@ class SRSNVTrainer:
 
         # ------------------------------------------------------------------
         # quality recalibration
-        prob_recal = _quality_recalibration(prob_orig, y_all, fold_arr, self.k_folds)
+        prob_recal = _probability_recalibration(prob_orig, y_all, fold_arr, self.k_folds)
 
         # attach new columns ------------------------------------------------
         new_cols = [
