@@ -8,14 +8,12 @@ from typing import Any
 
 import polars as pl
 
-pl.enable_string_cache()
-
 try:
     from ugbio_core.logger import logger
 except ImportError:
     # Fallback to standard logging if ugbio_core is not available
     logger = logging.getLogger(__name__)
-
+pl.enable_string_cache()
 # ───────────────────────────── constants ──────────────────────────────────
 # Configuration keys
 KEY_FIELD = "field"
@@ -36,6 +34,7 @@ TYPE_QUALITY = "quality"
 TYPE_REGION = "region"
 TYPE_LABEL = "label"
 TYPE_DOWNSAMPLE = "downsample"
+TYPE_RAW = "raw"
 
 # Downsample methods
 METHOD_HEAD = "head"
@@ -471,16 +470,36 @@ def _calculate_statistics(
     filters_with_types = []
     for name, rows in funnel:
         if name == STAT_RAW:
-            filter_type = None
+            filters_with_types.append({KEY_NAME: name, STAT_ROWS: rows, KEY_TYPE: TYPE_RAW})
         elif name == STAT_DOWNSAMPLE:
-            filter_type = TYPE_DOWNSAMPLE
+            # include method / seed from the downsample section
+            ds_cfg = cfg.get(KEY_DOWNSAMPLE, {})
+            entry = {
+                KEY_NAME: name,
+                STAT_ROWS: rows,
+                KEY_TYPE: TYPE_DOWNSAMPLE,
+                KEY_METHOD: ds_cfg.get(KEY_METHOD),
+                KEY_SEED: ds_cfg.get(KEY_SEED),
+            }
+            entry = {k: v for k, v in entry.items() if v is not None}
+            filters_with_types.append(entry)
         else:
-            # look up original filter type
-            filter_type = next(
-                (r.get(KEY_TYPE) for r in filters if (r.get(KEY_NAME) or f"{r[KEY_FIELD]}_{r[KEY_OP]}") == name),
-                None,
+            rule = next(
+                (r for r in filters if (r.get(KEY_NAME) or f"{r[KEY_FIELD]}_{r[KEY_OP]}") == name),
+                {},
             )
-        filters_with_types.append({KEY_NAME: name, STAT_ROWS: rows, KEY_TYPE: filter_type})
+            entry = {
+                KEY_NAME: name,
+                STAT_ROWS: rows,
+                KEY_TYPE: rule.get(KEY_TYPE),
+                KEY_FIELD: rule.get(KEY_FIELD),
+                KEY_OP: rule.get(KEY_OP),
+                KEY_VALUE: rule.get(KEY_VALUE, rule.get(KEY_VALUES)),
+                KEY_VALUE_FIELD: rule.get(KEY_VALUE_FIELD),
+            }
+            # drop keys whose value is None
+            entry = {k: v for k, v in entry.items() if v is not None}
+            filters_with_types.append(entry)
 
     return {
         KEY_FILTERS: filters_with_types,

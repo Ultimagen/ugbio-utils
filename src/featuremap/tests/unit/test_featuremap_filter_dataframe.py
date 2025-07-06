@@ -47,7 +47,7 @@ def test_filter_pipeline(tmp_path: Path) -> None:
 
     stats = json.load(stats_json.open())
     assert stats["filters"][0]["name"] == "raw"
-    assert stats["filters"][0]["type"] is None
+    assert stats["filters"][0]["type"] == "raw"
 
     # Check filter types are preserved
     assert stats["filters"][3]["type"] == "quality"
@@ -72,6 +72,19 @@ def test_filter_pipeline(tmp_path: Path) -> None:
     # Check combinations exist
     assert len(stats["combinations"]) > 0
     # The "00" pattern should only exist if there are rows that fail all filters
+
+    # verify expression details are stored
+    ref_eq_alt = next(f for f in stats["filters"] if f["name"] == "ref_eq_alt")
+    assert ref_eq_alt["field"] == "REF"
+    assert ref_eq_alt["op"] == "eq"
+    assert ref_eq_alt["value_field"] == "ALT"
+    assert "value" not in ref_eq_alt
+
+    # down-sample entry records method + seed
+    ds = next(f for f in stats["filters"] if f["name"] == "downsample")
+    assert ds["type"] == "downsample"
+    assert ds["method"] == "random"
+    assert ds["seed"] == 42
 
 
 def test_filter_without_downsample(tmp_path: Path) -> None:
