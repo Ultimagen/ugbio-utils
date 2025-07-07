@@ -304,6 +304,7 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         " if not supplied all files will be written to current directory",
         required=False,
         type=str,
+        default=".",
     )
     return parser.parse_args(argv[1:])
 
