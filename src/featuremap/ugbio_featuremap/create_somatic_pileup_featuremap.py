@@ -137,20 +137,30 @@ def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags, l
 
     # Extract all INFO/{tag} into a tab-delimited annotation file
     logger.debug(r"Extract all INFO/\{tag\} into a tab-delimited annotation file")
-    cmd = ["bcftools", "query", "-f", f"%CHROM\t%POS\t%REF\t%ALT{query_string}\\n", out_vcf_with_info_filter]
-    # Pipe to bgzip
+
+    cmd = [
+        "bcftools",
+        "query",
+        "-f",
+        f"%CHROM\t%POS\t%REF\t%ALT{query_string}\\n",
+        out_vcf_with_info_filter,  # <-- your input VCF here
+    ]
+
     with open(annotation_file, "wb") as annot_out:
-        bgzip_proc = subprocess.Popen(
-            ["bgzip", "-c"],  # noqa: S607
-            stdin=subprocess.PIPE,
-            stdout=annot_out,
-        )
-        query_proc = subprocess.Popen(cmd, stdout=bgzip_proc.stdin)
-        query_proc.communicate()
-        bgzip_proc.stdin.close()
-        bgzip_proc.communicate()
+        # 1. Launch bcftools query, capturing its stdout
+        p1 = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+
+        # 2. Launch bgzip, reading from p1.stdout and writing to your file
+        p2 = subprocess.Popen(["bgzip", "-c"], stdin=p1.stdout, stdout=annot_out)  # noqa: S607
+
+        # 3. Close the write end in the parent so that bgzip sees EOF
+        p1.stdout.close()
+
+        # 4. Wait for both to finish
+        p1.wait()
+        p2.wait()
+
     logger.debug(" ".join(cmd))
-    subprocess.check_call(cmd)
 
     # Index the file with tabix
     logger.debug("Index the file with tabix")
