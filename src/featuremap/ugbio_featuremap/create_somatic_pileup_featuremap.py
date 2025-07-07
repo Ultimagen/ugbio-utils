@@ -64,10 +64,11 @@ def get_combined_vcf_features():
     default_custom_info_fields_single_value = enum_to_dict(DefaultCustomInfoFieldsWithSingleValue)
     added_agg_features = featuremap_xgb_prediction.added_agg_features
     info_field_tags = {**default_custom_info_fields_single_value, **added_agg_features}
-    return info_field_tags
+    lucos_info_fields = enum_to_dict(LocusFeaturesWithSingleValue)
+    return info_field_tags, lucos_info_fields
 
 
-def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags):  # noqa: N802
+def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags, lucos_info_fields):  # noqa: N802, PLR0915
     """
     Move the values from INFO to FORMAT in a VCF file.
 
@@ -130,6 +131,9 @@ def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags): 
     for info_tag in info_field_tags:
         query_string = f"{query_string}\t%{info_tag}"
         c_string = f"{c_string},FORMAT/{info_tag}"
+    for info_tag in lucos_info_fields:
+        query_string = f"{query_string}\t%{info_tag}"
+        c_string = f"{c_string},INFO/{info_tag}"
 
     # Extract all INFO/{tag} into a tab-delimited annotation file
     logger.debug(r"Extract all INFO/\{tag\} into a tab-delimited annotation file")
@@ -160,6 +164,13 @@ def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags): 
         header_line = (
             f"##FORMAT=<ID={info_tag},Number=1,Type={info_field_tags[info_tag][1]},"
             f"Description={info_field_tags[info_tag][0]}>"
+        )
+        with open(hdr_file, "a") as hdr_out:
+            hdr_out.write(header_line + "\n")
+    for info_tag in lucos_info_fields:
+        header_line = (
+            f"##INFO=<ID={info_tag},Number=1,Type={lucos_info_fields[info_tag][1]},"
+            f"Description={lucos_info_fields[info_tag][0]}>"
         )
         with open(hdr_file, "a") as hdr_out:
             hdr_out.write(header_line + "\n")
@@ -320,13 +331,13 @@ def run(argv):
     logger.info(f"Output merged VCF file: {out_merged_vcf}")
 
     # Get the features used in the featuremap_xgb_prediction module
-    info_field_tags = get_combined_vcf_features()
+    info_field_tags, lucos_info_fields = get_combined_vcf_features()
 
     # Move INFO fields to FORMAT in the tumor and normal VCF files
     tumor_vcf_info_to_format = pjoin(args.out_directory, f"{args.sample_name}.tumor.info_to_format.vcf.gz")
     normal_vcf_info_to_format = pjoin(args.out_directory, f"{args.sample_name}.normal.info_to_format.vcf.gz")
-    move_vcf_value_from_INFO_to_FORMAT(args.tumor_vcf, tumor_vcf_info_to_format, info_field_tags)
-    move_vcf_value_from_INFO_to_FORMAT(args.normal_vcf, normal_vcf_info_to_format, info_field_tags)
+    move_vcf_value_from_INFO_to_FORMAT(args.tumor_vcf, tumor_vcf_info_to_format, info_field_tags, lucos_info_fields)
+    move_vcf_value_from_INFO_to_FORMAT(args.normal_vcf, normal_vcf_info_to_format, info_field_tags, lucos_info_fields)
     # Merge the tumor and normal VCF files into a single VCF file
     out_merged_vcf_tumor_pass = merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_merged_vcf)
     logger.info(f"Merged VCF file created: {out_merged_vcf}")
