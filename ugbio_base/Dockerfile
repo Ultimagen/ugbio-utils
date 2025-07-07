@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     libcurl4-gnutls-dev \
     git \
     gawk \
+    jq \
     `# the following packages required for pyBigWig python package used by ugbio_core` \
     zlib1g-dev \
     libbz2-dev \
