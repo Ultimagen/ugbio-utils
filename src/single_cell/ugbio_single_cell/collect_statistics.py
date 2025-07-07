@@ -239,7 +239,7 @@ def extract_statistics_table(h5_file: Path):  # noqa: PLR0915
         stats["pct_pass_trimmer"] = pass_trimmer_rate * 100
 
         # Mean read length
-        mean_read_length = store[H5Keys.SORTER_STATS.value].loc["Mean_Read_Length"]
+        mean_read_length = int(store[H5Keys.SORTER_STATS.value].loc["Mean_Read_Length"])
         stats["mean_read_length"] = mean_read_length
 
         # %q >= 20 for insert
