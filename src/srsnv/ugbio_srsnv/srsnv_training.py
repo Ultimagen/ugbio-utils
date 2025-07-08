@@ -204,13 +204,15 @@ def partition_into_folds(series_of_sizes, k_folds, alg="greedy", n_chroms_leave_
     return pd.Series(indices_to_folds, index=series_of_sizes.index).to_dict()
 
 
-def prob_to_phred(prob, max_value=None):
-    """Transform probabilities to phred scores.
+def prob_to_phred(prob_error, max_value=None):
+    """Transform probabilities to phred scores. The probability input an error is translated to a Phred quality
+    score using the formula:
+        Q = -10 * log10(1 - p)
     Arguments:
     - prob [np.ndarray]: array of probabilities
     - max_value [float]: maximum phred score (clips values above this threshold)
     """
-    phred_scores = -10 * np.log10(1 - prob)
+    phred_scores = -10 * np.log10(1 - prob_error)
     if max_value is not None:
         return np.minimum(phred_scores, max_value)
     return phred_scores
@@ -542,8 +544,8 @@ class SRSNVTrainer:
         # global rescaling to the real-data prior
         prob_rescaled = _probability_rescaling(
             prob_recal,
-            sample_prior=self.prior_train_error,
-            target_prior=self.prior_real_error,
+            sample_prior=1 - self.prior_train_error,  # prior of a true call from training data
+            target_prior=1 - self.prior_real_error,  # prior of a true call from real data
         )
 
         # final quality (Phred)
