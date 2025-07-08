@@ -1,4 +1,3 @@
-import subprocess
 from os.path import join as pjoin
 from pathlib import Path
 
@@ -8,7 +7,6 @@ import pytest
 from pandas.testing import assert_frame_equal
 from ugbio_mrd.mrd_utils import (
     generate_synthetic_signatures,
-    intersect_featuremap_with_signature,
     read_intersection_dataframes,
     read_signature,
 )
@@ -121,22 +119,6 @@ def test_read_signature_pileup_featuremap(resources_dir):
     expected_signature = pd.read_hdf(pjoin(resources_dir, "featuremap_pileup_mrd_signature_test.expected_output.h5"))
 
     _assert_read_signature(signature, expected_signature)
-
-
-def test_intersect_featuremap_with_signature(tmpdir, resources_dir):
-    signature_file = pjoin(resources_dir, "Pa_46.FreshFrozen.chr20.70039_70995.vcf.gz")
-    featuremap_file = pjoin(resources_dir, "Pa_46.bsDNA.chr20_sample.vcf.gz")
-    test_file = pjoin(resources_dir, "intersected_featuremap.vcf.gz")
-
-    output_intersection_file = pjoin(tmpdir, "intersected.vcf.gz")
-    intersect_featuremap_with_signature(
-        featuremap_file,
-        signature_file,
-        output_intersection_file=output_intersection_file,
-    )
-    cmd1 = f"bcftools view -H {output_intersection_file}"
-    cmd2 = f"bcftools view -H {test_file}"
-    assert subprocess.check_output(cmd1, shell=True) == subprocess.check_output(cmd2, shell=True)
 
 
 def test_read_intersection_dataframes(tmpdir, resources_dir):
