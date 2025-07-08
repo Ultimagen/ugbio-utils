@@ -29,6 +29,7 @@ correct_systematic_errors = "ugbio_filtering.sec.correct_systematic_errors:main"
 filter_variants_pipeline = "ugbio_filtering.filter_variants_pipeline:main"
 train_models_pipeline = "ugbio_filtering.train_models_pipeline:main"
 training_prep_pipeline = "ugbio_filtering.training_prep_pipeline:main"
+filter_low_af_ratio_to_background = "ugbio_filtering.filter_low_af_ratio_to_background:main"
 
 [tool.uv]
 dev-dependencies = [
