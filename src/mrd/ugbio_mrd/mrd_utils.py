@@ -737,8 +737,12 @@ def read_and_filter_features_parquet(
     filtering_ratio: pd.DataFrame
         A dataframe that includes the ratio of filtered to total reads per variant
     """
-    df_features = pd.read_parquet(features_file_parquet).astype({"rq": float}).set_index(["chrom", "pos"])
-    df_features = df_features.assign(filtering_ratio=df_features["X_FILTERED_COUNT"] / df_features["X_READ_COUNT"])
+    df_features = pd.read_parquet(features_file_parquet)
+    df_features = df_features.drop(columns="index")
+    # rename columns to lowercase
+    df_features = df_features.rename(columns=lambda x: x.lower())
+    df_features = df_features.astype({"rq": float}).set_index(["chrom", "pos"])
+    df_features = df_features.assign(filtering_ratio=df_features["filtered_count"] / df_features["read_count"])
     df_features_filt = df_features.query(read_filter_query)
     filtering_ratio = (
         df_features.query("signature_type=='matched'").groupby(level=["chrom", "pos"]).agg({"filtering_ratio": "first"})
