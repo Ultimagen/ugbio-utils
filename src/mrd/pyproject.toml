@@ -21,7 +21,6 @@ text = "Apache-2.0"
 [project.scripts]
 run_tests = "pytest:main"
 generate_synthetic_signatures = "ugbio_mrd.generate_synthetic_signatures:main"
-intersect_featuremap_with_signature = "ugbio_mrd.intersect_featuremap_with_signature:main"
 generate_report = "ugbio_mrd.generate_mrd_report:main"
 
 [tool.uv]
