@@ -610,10 +610,10 @@ class SRSNVTrainer:
             features_meta.append(entry)
 
         # quality recalibration table
-        quality_recalibration_table = {
-            "mqual": self.x_lut.tolist(),
-            "snvq": self.y_lut.tolist(),
-        }
+        quality_recalibration_table = [
+            self.x_lut.tolist(),
+            self.y_lut.tolist(),
+        ]
 
         # stats and priors
         stats = {
