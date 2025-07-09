@@ -18,8 +18,6 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 FROM ${BASE_IMAGE}
 
 RUN apt-get update && apt-get install -y \
-    bzip2 `# for bgzip` \
-    tabix `# for bgzip` \
     openjdk-17-jre-headless `# for gatk` \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean

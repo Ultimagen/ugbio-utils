@@ -27,6 +27,7 @@ create_hom_snv_featuremap = "ugbio_featuremap.create_hom_snv_featuremap:main"
 featuremap_to_dataframe = "ugbio_featuremap.featuremap_to_dataframe:main"
 pileup_featuremap = "ugbio_featuremap.pileup_featuremap:main"
 add_aggregate_params_and_xgb_score_to_pileup_featuremap = "ugbio_featuremap.featuremap_xgb_prediction:main"
+create_somatic_pileup_featuremap = "ugbio_featuremap.create_somatic_pileup_featuremap:main"
 
 [tool.uv]
 dev-dependencies = [

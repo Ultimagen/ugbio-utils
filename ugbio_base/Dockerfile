@@ -27,6 +27,8 @@ RUN apt-get update && apt-get install -y \
     procps `# for monitoring script memory usage` \
     sysstat `# for monitoring script IO metrics` \
     sudo \
+    bzip2 `# instead of full htslib installation`\
+    tabix `#instead of full htslib installation`\
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
