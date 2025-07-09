@@ -18,8 +18,8 @@ def test_end_to_end_training(tmp_path: Path) -> None:
     resources = Path(__file__).parent.parent / "resources"
     pos_file = resources / "416119_L7402.random_sample.featuremap.filtered.sample.parquet"
     neg_file = resources / "416119_L7402.raw.featuremap.filtered.sample.parquet"
-    pos_stats = resources / "416119_L7402.random_sample.featuremap.stats.json"
-    neg_stats = resources / "416119_L7402.raw.featuremap.stats.json"
+    pos_stats = resources / "416119_L7402.random_sample.positive_label.featuremap.stats.json"
+    neg_stats = resources / "416119_L7402.random_sample.negative_label.featuremap.stats.json"
 
     assert pos_file.is_file(), "positive parquet missing"
     assert neg_file.is_file(), "negative parquet missing"
