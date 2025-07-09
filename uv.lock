@@ -1,5 +1,4 @@
 version = 1
-revision = 1
 requires-python = ">=3.11, <3.13"
 resolution-markers = [
     "python_full_version < '3.12'",
@@ -507,7 +506,7 @@ name = "click"
 version = "8.1.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "platform_system == 'Windows'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/96/d3/f04c7bfcf5c1862a2a5b845c6b2b360488cf47af55dfa79c98f6a6bf98b5/click-8.1.7.tar.gz", hash = "sha256:ca9853ad459e787e2192211578cc907e7594e294c7ccc834310722b41b9ca6de", size = 336121 }
 wheels = [
@@ -1153,7 +1152,7 @@ name = "ipykernel"
 version = "6.29.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "appnope", marker = "sys_platform == 'darwin'" },
+    { name = "appnope", marker = "platform_system == 'Darwin'" },
     { name = "comm" },
     { name = "debugpy" },
     { name = "ipython" },
@@ -3222,7 +3221,7 @@ name = "tqdm"
 version = "4.66.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "platform_system == 'Windows'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/58/83/6ba9844a41128c62e810fddddd72473201f3eacde02046066142a2d96cc5/tqdm-4.66.5.tar.gz", hash = "sha256:e1020aef2e5096702d8a025ac7d16b1577279c9d63f8375b63083e9a5f0fcbad", size = 169504 }
 wheels = [
@@ -3436,7 +3435,6 @@ requires-dist = [
     { name = "simppl", specifier = ">=1.0.7" },
     { name = "tqdm", marker = "extra == 'vcfbed'", specifier = ">=4.66.4" },
 ]
-provides-extras = ["vcfbed", "reports", "concordance"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3450,6 +3448,7 @@ name = "ugbio-featuremap"
 version = "1.10.3.post0"
 source = { editable = "src/featuremap" }
 dependencies = [
+    { name = "polars" },
     { name = "scikit-learn" },
     { name = "seaborn" },
     { name = "ugbio-core", extra = ["vcfbed"] },
@@ -3466,6 +3465,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "polars", specifier = ">=1.27.1" },
     { name = "scikit-learn", specifier = ">=1.5.2,<1.6.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "ugbio-core", extras = ["vcfbed"], editable = "src/core" },
@@ -3652,7 +3652,6 @@ requires-dist = [
     { name = "pymongo", marker = "extra == 'db'", specifier = ">=4.11.1" },
     { name = "winval", specifier = ">=0.7.5" },
 ]
-provides-extras = ["db"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3790,6 +3789,7 @@ dev = [
     { name = "openpyxl" },
     { name = "polars" },
     { name = "pre-commit" },
+    { name = "pyarrow" },
     { name = "pybedtools" },
     { name = "pymongo" },
     { name = "pytest" },
@@ -3811,6 +3811,7 @@ dev = [
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "polars", specifier = ">=1.29.0" },
     { name = "pre-commit", specifier = ">=4.0.1" },
+    { name = "pyarrow", specifier = ">=17.0.0" },
     { name = "pybedtools", specifier = ">=0.11.0" },
     { name = "pymongo", specifier = ">=4.11.1" },
     { name = "pytest", specifier = ">=8.3.3" },
@@ -3937,7 +3938,7 @@ version = "2.1.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
-    { name = "nvidia-nccl-cu12", marker = "platform_machine != 'aarch64' and sys_platform == 'linux'" },
+    { name = "nvidia-nccl-cu12", marker = "platform_machine != 'aarch64' and platform_system == 'Linux'" },
     { name = "scipy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d2/d5/8d93a950a379b34767ac118cf5653977048e291c6695713a60863532ec08/xgboost-2.1.2.tar.gz", hash = "sha256:151071c22d0f5637739ccaf057f57d05983caaba557cc3d8191c2cb8ce8ae659", size = 1090159 }
