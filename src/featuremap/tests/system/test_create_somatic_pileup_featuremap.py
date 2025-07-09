@@ -24,9 +24,9 @@ def test_create_somatic_pileup_featuremap(tmp_path, resources_dir):
     sample_name = "Pa_46_FF_vs_BC"
     out_dir = tmp_path
 
-    expected_tumor_pass_vcf = pjoin(resources_dir, "Pa_46_FF_vs_BC.tumor_normal.merged.tumor_only.PASS.vcf.gz")  # noqa: F841
+    expected_tumor_pass_vcf = pjoin(resources_dir, "Pa_46_FF_vs_BC.tumor_normal.merged.tumor_PASS.vcf.gz")  # noqa: F841
     expected_num_variants = 11649
-    out_tumor_pass_vcf = pjoin(out_dir, f"{sample_name}.tumor_normal.merged.tumor_only.PASS.vcf.gz")
+    out_tumor_pass_vcf = pjoin(out_dir, f"{sample_name}.tumor_normal.merged.tumor_PASS.vcf.gz")
 
     # Run the script's main function
     create_somatic_pileup_featuremap.run(
@@ -40,6 +40,7 @@ def test_create_somatic_pileup_featuremap(tmp_path, resources_dir):
             sample_name,
             "--out_directory",
             str(out_dir),
+            "--filter_for_tumor_pass_variants",
         ]
     )
 
