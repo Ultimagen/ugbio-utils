@@ -16,6 +16,12 @@ The package management in this project is done using [uv](https://docs.astral.sh
 
 The virtual environment is called a **"workspace"** and each package in it is called a **"member"**.
 
+Run the following command:
+
+`uv sync --all-extras --all-packages`
+
+To creates a single virtual env containing all members under ugbio-utils/.venv/
+
 ### Update the Virtual Environment for a Specific Member
 To work with the virtual environment of a specific member, run:
 
