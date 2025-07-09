@@ -320,6 +320,19 @@ class SRSNVTrainer:
         self.pos_stats = read_filtering_stats_json(args.stats_positive)
         self.neg_stats = read_filtering_stats_json(args.stats_negative)
 
+        # sanity-check: identical “quality/region” filters in the two random-sample stats files
+        def _quality_region_filters(st):
+            return [f for f in st["filters"] if f.get("type") in {"quality", "region"}]
+
+        pos_qr = _quality_region_filters(self.pos_stats)
+        neg_qr = _quality_region_filters(self.neg_stats)
+        if pos_qr != neg_qr:
+            raise ValueError(
+                "Mismatch between quality/region filters of "
+                "--stats-positive and --stats-negative:\n"
+                f" positive={pos_qr}\n negative={neg_qr}"
+            )
+
         # helper: last entry that is *not* a down-sample operation
         def _last_non_downsample_rows(stats: dict) -> int:
             for f in reversed(stats["filters"]):
@@ -327,12 +340,10 @@ class SRSNVTrainer:
                     return f["rows"]
             raise ValueError("stats JSON has no non-downsample filter entry")
 
-        n_random_sample = self.pos_stats["filters"][0]["rows"]
-        n_after_all_filter = _last_non_downsample_rows(self.pos_stats)
-        self.r_true_calls = n_after_all_filter / n_random_sample
-
-        self.n_error_calls = _last_non_downsample_rows(self.neg_stats)
-        self.n_aligned_bases = args.aligned_bases
+        # new prior_real_error calculation
+        pos_after_filter = _last_non_downsample_rows(self.pos_stats)
+        neg_after_filter = _last_non_downsample_rows(self.neg_stats)
+        self.prior_real_error = max(EPS, min(1.0 - EPS, neg_after_filter / (neg_after_filter + pos_after_filter)))
 
         # Data
         logger.debug("Loading data from positive=%s and negative=%s", args.positive, args.negative)
@@ -342,12 +353,6 @@ class SRSNVTrainer:
         # training-set prior
         self.n_neg = self.data_frame.filter(~pl.col(LABEL_COL)).height
         self.prior_train_error = self.n_neg / self.data_frame.height
-
-        # real-data prior
-        self.prior_real_error = max(
-            EPS,
-            min(1.0 - EPS, self.n_error_calls / (self.n_aligned_bases * self.r_true_calls)),
-        )
 
         self.k_folds = max(1, args.k_folds)
 
@@ -621,9 +626,6 @@ class SRSNVTrainer:
         stats = {
             "positive": self.pos_stats,
             "negative": self.neg_stats,
-            "r_true_calls": self.r_true_calls,
-            "n_error_calls": self.n_error_calls,
-            "n_aligned_bases": self.n_aligned_bases,
             "prior_train_error": self.prior_train_error,
             "prior_real_error": self.prior_real_error,
         }
@@ -674,9 +676,16 @@ def _cli() -> argparse.Namespace:
     ap.add_argument("--random-seed", type=int, default=None)
     ap.add_argument("--verbose", action="store_true", help="Enable debug logging")
     ap.add_argument("--max-qual", type=float, default=100.0, help="Maximum Phred score for model quality")
-    ap.add_argument("--stats-positive", required=True, help="JSON file with filtering stats for positive set")
-    ap.add_argument("--stats-negative", required=True, help="JSON file with filtering stats for negative set")
-    ap.add_argument("--aligned-bases", type=int, required=True, help="Number of aligned bases for prior calculation")
+    ap.add_argument(
+        "--stats-positive",
+        required=True,
+        help="JSON file with filtering stats for positive random-sample set",
+    )
+    ap.add_argument(
+        "--stats-negative",
+        required=True,
+        help="JSON file with filtering stats for negative random-sample set",
+    )
     ap.add_argument(
         "--quality-lut-size",
         type=int,
