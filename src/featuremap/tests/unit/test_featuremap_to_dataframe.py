@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import os
 import subprocess
 import warnings
 from pathlib import Path
@@ -36,8 +37,17 @@ def input_categorical_features():
 
 def test_comprehensive_vcf_to_parquet_conversion(tmp_path: Path, input_featuremap: Path) -> None:
     """Full pipeline should yield the correct per-read row count and include key columns."""
-    out_path = str(tmp_path / input_featuremap.name.replace(".vcf.gz", ".parquet"))
-    out_path_2 = str(tmp_path / input_featuremap.name.replace(".2.vcf.gz", ".parquet"))
+    # Allow overriding output directory via environment variable
+
+    output_dir = Path(os.environ.get("TEST_FEATUREMAP_TO_DATAFRAME_DIR", tmp_path))
+    if output_dir:
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+    else:
+        output_path = tmp_path
+
+    out_path = str(output_path / input_featuremap.name.replace(".vcf.gz", ".parquet"))
+    out_path_2 = str(output_path / input_featuremap.name.replace(".2.vcf.gz", ".parquet"))
 
     # Capture warnings to ensure no "Dropping list columns with inconsistent length" warning is raised
     with warnings.catch_warnings(record=True) as caught:
@@ -72,8 +82,8 @@ def test_comprehensive_vcf_to_parquet_conversion(tmp_path: Path, input_featurema
 
 def test_enum_column_is_categorical(tmp_path: Path, input_featuremap: Path) -> None:
     """
-    Columns whose description lists {A,C,G,T} should be stored as categorical
-    with exactly those four categories.
+    Columns whose description lists {A,C,G,T} should be stored as Enum
+    with exactly those four categories plus empty string.
     """
     out_path = str(tmp_path / input_featuremap.name.replace(".vcf.gz", ".parquet"))
     featuremap_to_dataframe.vcf_to_parquet(
@@ -87,7 +97,8 @@ def test_enum_column_is_categorical(tmp_path: Path, input_featuremap: Path) -> N
     featuremap_dataframe = pl.read_parquet(out_path)
     print(featuremap_dataframe.schema)
     col = featuremap_dataframe["X_PREV1"]
-    assert col.dtype == pl.Categorical
+    # Check that it's an Enum type
+    assert isinstance(col.dtype, pl.Enum)
 
     cats = set(col.cat.get_categories())
     assert cats == {"", "A", "C", "G", "T"}
@@ -115,8 +126,29 @@ def test_ref_alt_defaults(tmp_path: Path, input_featuremap: Path):
     out = tmp_path / "def.parquet"
     featuremap_to_dataframe.vcf_to_parquet(str(input_featuremap), str(out), jobs=1)
     featuremap_dataframe = pl.read_parquet(out)
-    for tag in ("REF", "ALT"):
-        assert set(featuremap_dataframe[tag].cat.get_categories()) == {"", "A", "C", "G", "T"}
+
+    # REF includes IUPAC ambiguity codes
+    assert set(featuremap_dataframe["REF"].cat.get_categories()) == {
+        "",
+        "A",
+        "C",
+        "G",
+        "T",
+        "R",
+        "Y",
+        "K",
+        "M",
+        "S",
+        "W",
+        "B",
+        "D",
+        "H",
+        "V",
+        "N",
+    }
+
+    # ALT includes just the four bases
+    assert set(featuremap_dataframe["ALT"].cat.get_categories()) == {"", "A", "C", "G", "T"}
 
 
 # ------------- tiny unit tests per helper ---------------------------------
@@ -144,16 +176,14 @@ def test_selected_dtypes(tmp_path: Path, input_featuremap: Path):
 
     featuremap_dataframe = pl.read_parquet(out)
 
-    expected = {
-        "CHROM": pl.Utf8,  # string
-        "POS": pl.Int64,  # integer
-        "REF": pl.Categorical,  # categorical
-        "ALT": pl.Categorical,  # categorical
-        "VAF": pl.Float64,  # float
-        "RN": pl.Utf8,  # exploded list -> string
-    }
-    for col, dt in expected.items():
-        assert featuremap_dataframe[col].dtype == dt, f"{col} dtype {featuremap_dataframe[col].dtype} ≠ {dt}"
+    # Check specific column types
+    assert featuremap_dataframe["CHROM"].dtype == pl.Utf8
+    assert featuremap_dataframe["POS"].dtype == pl.Int64
+    # REF and ALT are Enum types
+    assert isinstance(featuremap_dataframe["REF"].dtype, pl.Enum)
+    assert isinstance(featuremap_dataframe["ALT"].dtype, pl.Enum)
+    assert featuremap_dataframe["VAF"].dtype == pl.Float64
+    assert featuremap_dataframe["RN"].dtype == pl.Utf8
 
 
 def test_parallel_vcf_conversion_comprehensive(tmp_path: Path, input_featuremap: Path) -> None:
@@ -513,16 +543,16 @@ def test_vcf_requires_index(tmp_path: Path) -> None:
 
 
 def test_st_et_are_categorical(tmp_path: Path, input_featuremap: Path) -> None:
-    """Columns advertised as enums in the header (e.g. st / et) must be categorical."""
+    """Columns advertised as enums in the header (e.g. st / et) must be Enum types."""
     out = tmp_path / "enum.parquet"
     featuremap_to_dataframe.vcf_to_parquet(str(input_featuremap), str(out), jobs=1)
 
     featuremap_dataframe = pl.read_parquet(out)
     # Some files may use upper- or lower-case; check whichever exists
     for tag in ("st", "et"):
-        assert (
-            featuremap_dataframe[tag].dtype == pl.Categorical
-        ), f"{tag} should be categorical, got {featuremap_dataframe[tag].dtype}"
+        assert isinstance(
+            featuremap_dataframe[tag].dtype, pl.Enum
+        ), f"{tag} should be Enum type, got {featuremap_dataframe[tag].dtype}"
 
 
 def test_qual_dtype_float_even_if_empty(tmp_path: Path) -> None:
