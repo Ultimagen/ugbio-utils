@@ -268,7 +268,7 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
                 " - cannot continue"
             )
         logger.debug(f"Reading existing data from {output_parquet}")
-        df_existing = pd.read_parquet(output_parquet)
+        df_existing = pd.read_parquet(output_parquet, engine="fastparquet")
     else:
         df_existing = None
 
@@ -497,7 +497,7 @@ def read_intersection_dataframes(
         intersected_featuremaps_parquet = [intersected_featuremaps_parquet]
     logger.debug(f"Reading {len(intersected_featuremaps_parquet)} intersection featuremaps")
     df_int = pd.concat(
-        pd.read_parquet(f).assign(
+        pd.read_parquet(f, engine="fastparquet").assign(
             cfdna=_get_sample_name_from_file_name(f, split_position=0),
             signature=_get_sample_name_from_file_name(f, split_position=1),
             signature_type=_get_sample_name_from_file_name(f, split_position=2),
@@ -615,7 +615,7 @@ def read_and_filter_features_parquet(
     filtering_ratio: pd.DataFrame
         A dataframe that includes the ratio of filtered to total reads per variant
     """
-    df_features = pd.read_parquet(features_file_parquet)
+    df_features = pd.read_parquet(features_file_parquet, engine="fastparquet")
     df_features = df_features.drop(columns="index")
     # rename columns to lowercase
     df_features = df_features.rename(columns=lambda x: x.lower())
@@ -646,7 +646,7 @@ def read_and_filter_signatures_parquet(
         A dataframe that includes the ratio of filtered to total reads per variant
     """
     df_signatures = (
-        pd.read_parquet(signatures_file_parquet)
+        pd.read_parquet(signatures_file_parquet, engine="fastparquet")
         .astype({"ug_hcr": bool, "id": bool, "ug_mrd_blacklist": bool})
         .set_index(["chrom", "pos"])
     )
