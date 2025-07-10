@@ -290,10 +290,15 @@ def _mask_for_rule(rule: dict[str, Any]) -> pl.Expr:
 
     # Extract RHS without relying on truthiness (0, "", [] must be accepted)
     if KEY_VALUE_FIELD in rule:
-        rhs = pl.col(rule[KEY_VALUE_FIELD])
+        # When we compare two *columns* (value_field) and either side may be
+        # Categorical/Enum, cast both to Utf8 first to avoid StringCacheMismatchError.
+        lhs = pl.col(field).cast(pl.Utf8)
+        rhs = pl.col(rule[KEY_VALUE_FIELD]).cast(pl.Utf8)
     elif KEY_VALUE in rule:
+        lhs = pl.col(field)
         rhs = rule[KEY_VALUE]
     elif KEY_VALUES in rule:
+        lhs = pl.col(field)
         rhs = rule[KEY_VALUES]
     else:  # Should never happen – config is already validated
         raise ValueError(
@@ -301,7 +306,7 @@ def _mask_for_rule(rule: dict[str, Any]) -> pl.Expr:
             f"(expected one of '{KEY_VALUE}', '{KEY_VALUES}', or '{KEY_VALUE_FIELD}')."
         )
 
-    return _OPS[op](pl.col(field), rhs)
+    return _OPS[op](lhs, rhs)
 
 
 def _create_filter_columns(
