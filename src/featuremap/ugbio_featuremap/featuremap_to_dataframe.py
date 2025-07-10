@@ -105,7 +105,10 @@ _POLARS_DTYPE = {"Integer": pl.Int64, "Float": pl.Float64, "Flag": pl.Boolean}
 CHROM, POS, REF, ALT, QUAL, FILTER, ID, SAMPLE = "CHROM", "POS", "REF", "ALT", "QUAL", "FILTER", "ID", "SAMPLE"
 # Reserved/fixed VCF columns (cannot be overridden)
 RESERVED = {CHROM, POS, REF, ALT, QUAL, FILTER}
-ALLELE_CATS = ["A", "C", "G", "T"]  # for REF / ALT
+
+# Category dictionaries
+ALT_ALLELE_CATS = ["A", "C", "G", "T"]
+REF_ALLELE_CATS = ALT_ALLELE_CATS + ["R", "Y", "K", "M", "S", "W", "B", "D", "H", "V", "N"]
 
 
 def _enum(desc: str) -> list[str] | None:
@@ -124,7 +127,10 @@ def _enum(desc: str) -> list[str] | None:
         otherwise ``None``.
     """
     m = re.search(r"\{([^}]*)}", desc)
-    return m.group(1).split(",") if m else None
+    if not m:
+        return None
+    # Return deterministically-ordered categories
+    return sorted(m.group(1).split(","))
 
 
 def header_meta(vcf: str, bcftools_path: str, threads: int = 0) -> tuple[dict, dict]:
@@ -167,44 +173,29 @@ def header_meta(vcf: str, bcftools_path: str, threads: int = 0) -> tuple[dict, d
     return info, fmt
 
 
-def _ensure_scalar_categories(featuremap_dataframe: pl.DataFrame, col: str, cats: list[str]) -> pl.DataFrame:
+# ───────────────── category helper ────────────────────────────────────────
+def _ensure_scalar_categories(
+    featuremap_dataframe: pl.DataFrame,
+    col: str,
+    cats: list[str],
+) -> pl.DataFrame:
     """
-    Ensure a categorical *scalar* column registers every category value.
+    Cast *col* to a Polars Enum whose category dictionary is **exactly**
+    `cats` plus an empty-string entry (""), ensuring round-trip fidelity.
 
-    Polars ≥ 1.27 no longer provides ``set_categories``/``set_order``.
-    Instead we append a one-row *stub block* that contains each category
-    exactly once, concatenate it to the original frame so Polars merges
-    the dictionaries, then trim the extra row(s) away.
-
-    Parameters
-    ----------
-    featuremap_dataframe :
-        The DataFrame containing the column.
-    col :
-        Name of the categorical scalar column that was already
-        ``cast(pl.Categorical)``.
-    cats :
-        Ordered list of category strings extracted from the VCF header
-        (e.g. ``["A", "C", "G", "T"]``).
-
-    Returns
-    -------
-    pl.DataFrame
-        A DataFrame of identical shape to *featuremap_dataframe* (same rows/columns) but
-        whose *col* now recognises **all** values in *cats*.
+    Any literal “.” is treated as missing (null); the empty string stays a
+    valid category so downstream code can faithfully round-trip values.
     """
-    # build a DataFrame that matches the full schema
-    # ensure the empty-string category is present
     if "" not in cats:
         cats = cats + [""]
-    rows = len(cats)
-    stub_dict: dict[str, list] = {c: [None] * rows for c in featuremap_dataframe.columns}
-    stub_dict[col] = cats  # each category once
+    enum_dtype = pl.Enum(cats)
 
-    # Create DataFrame with same schema as original (skip casting for now)
-    stub = pl.DataFrame(stub_dict).with_columns(pl.col(col).cast(pl.Categorical))
-
-    return pl.concat([featuremap_dataframe, stub], how="vertical").head(featuremap_dataframe.height)
+    cleaned = (
+        pl.when(pl.col(col).cast(pl.Utf8) == ".")
+        .then(None)  # “.”  →  null
+        .otherwise(pl.col(col).cast(pl.Utf8))
+    )
+    return featuremap_dataframe.with_columns(cleaned.cast(enum_dtype, strict=False).alias(col))
 
 
 def _cast_scalar(
@@ -234,8 +225,10 @@ def _cast_scalar(
     utf_null = pl.when(pl.col(col).cast(pl.Utf8).is_in(["", "."])).then(None).otherwise(pl.col(col).cast(pl.Utf8))
 
     if meta["cat"]:
-        featuremap_dataframe = featuremap_dataframe.with_columns(utf_null.cast(pl.Categorical).alias(col))
+        # Use Enum with fixed dictionary
+        featuremap_dataframe = featuremap_dataframe.with_columns(utf_null.alias(col))
         return _ensure_scalar_categories(featuremap_dataframe, col, meta["cat"])
+
     if meta["type"] in _POLARS_DTYPE:
         return featuremap_dataframe.with_columns(utf_null.cast(_POLARS_DTYPE[meta["type"]], strict=False).alias(col))
 
@@ -716,16 +709,28 @@ def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, job_cfg: VCFJobC
     if QUAL in featuremap_dataframe.columns:
         featuremap_dataframe = _cast_scalar(featuremap_dataframe, QUAL, {"type": "Float", "cat": None})
 
-    # REF / ALT
-    for allele in (REF, ALT):
-        featuremap_dataframe = _cast_scalar(featuremap_dataframe, allele, {"type": "String", "cat": ALLELE_CATS})
+    # ----- REF / ALT with separate category lists -------------------------
+    featuremap_dataframe = _cast_scalar(
+        featuremap_dataframe,
+        REF,
+        {"type": "String", "cat": REF_ALLELE_CATS},
+    )
+    featuremap_dataframe = _cast_scalar(
+        featuremap_dataframe,
+        ALT,
+        {"type": "String", "cat": ALT_ALLELE_CATS},
+    )
 
-    # Apply categories
+    # Apply categories for every scalar we touched (including REF/ALT)
     for tag in info_ids + scalar_fmt_ids + list_fmt_ids + [REF, ALT]:
         if tag in featuremap_dataframe.columns:
-            col_meta = info_meta.get(tag) or fmt_meta.get(tag) or {"cat": ALLELE_CATS if tag in [REF, ALT] else None}
+            col_meta = (
+                info_meta.get(tag)
+                or fmt_meta.get(tag)
+                or {"cat": REF_ALLELE_CATS if tag == REF else ALT_ALLELE_CATS if tag == ALT else None}
+            )
             cats = col_meta.get("cat")
-            if cats and featuremap_dataframe[tag].dtype == pl.Categorical:
+            if cats:
                 featuremap_dataframe = _ensure_scalar_categories(featuremap_dataframe, tag, cats)
 
     return featuremap_dataframe
