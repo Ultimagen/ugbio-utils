@@ -60,6 +60,8 @@ from pathlib import Path
 
 import polars as pl
 
+from ugbio_featuremap.featuremap_utils import FeatureMapFields
+
 log = logging.getLogger(__name__)
 
 # Configuration constants
@@ -103,6 +105,7 @@ FORMAT_RE = re.compile(rf"##FORMAT=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Descr
 
 _POLARS_DTYPE = {"Integer": pl.Int64, "Float": pl.Float64, "Flag": pl.Boolean}
 CHROM, POS, REF, ALT, QUAL, FILTER, ID, SAMPLE = "CHROM", "POS", "REF", "ALT", "QUAL", "FILTER", "ID", "SAMPLE"
+X_ALT = FeatureMapFields.X_ALT.value
 # Reserved/fixed VCF columns (cannot be overridden)
 RESERVED = {CHROM, POS, REF, ALT, QUAL, FILTER}
 
@@ -721,13 +724,21 @@ def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, job_cfg: VCFJobC
         {"type": "String", "cat": ALT_ALLELE_CATS},
     )
 
-    # Apply categories for every scalar we touched (including REF/ALT)
-    for tag in info_ids + scalar_fmt_ids + list_fmt_ids + [REF, ALT]:
+    # -------- X_ALT (same dictionary as REF) -----------------------------  NEW
+    if X_ALT in featuremap_dataframe.columns:
+        featuremap_dataframe = _cast_scalar(
+            featuremap_dataframe,
+            X_ALT,
+            {"type": "String", "cat": REF_ALLELE_CATS},
+        )
+
+    # Apply categories for every scalar we touched (including REF/ALT/X_ALT)
+    for tag in info_ids + scalar_fmt_ids + list_fmt_ids + [REF, ALT, X_ALT]:
         if tag in featuremap_dataframe.columns:
             col_meta = (
                 info_meta.get(tag)
                 or fmt_meta.get(tag)
-                or {"cat": REF_ALLELE_CATS if tag == REF else ALT_ALLELE_CATS if tag == ALT else None}
+                or {"cat": REF_ALLELE_CATS if tag in (REF, X_ALT) else ALT_ALLELE_CATS if tag == ALT else None}
             )
             cats = col_meta.get("cat")
             if cats:
