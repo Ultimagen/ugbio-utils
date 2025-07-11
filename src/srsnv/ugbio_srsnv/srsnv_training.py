@@ -396,9 +396,9 @@ class SRSNVTrainer:
 
         if X_ALT not in pos_df.columns:
             raise ValueError(f"{pos_path} is missing required column 'X_ALT'")
-
-        # Override REF with X_ALT and drop X_ALT
-        pos_df = pos_df.with_columns(pl.col(X_ALT).alias(REF)).drop(X_ALT)
+        ref_enum_dtype = pos_df[REF].dtype
+        # Override REF with X_ALT, preserving the original enum dtype
+        pos_df = pos_df.with_columns(pl.col(X_ALT).cast(ref_enum_dtype).alias(REF)).drop(X_ALT)
         pos_df = pos_df.with_columns(pl.lit(value=True).alias(LABEL_COL))
 
         # --- negative -------------------------------------------------------
