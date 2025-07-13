@@ -480,7 +480,7 @@ class SRSNVTrainer:
         y_all = pd_df[LABEL_COL].to_numpy()
         # ----------------------------------------------------------------
         for fold_idx in range(self.k_folds):
-            logger.debug("Starting training for fold %d/%d", fold_idx, self.k_folds)
+            logger.debug("Starting training for fold %d/%d", fold_idx + 1, self.k_folds)
             val_mask = fold_arr == fold_idx
             train_mask = (~val_mask) & ~np.isnan(fold_arr)
 
