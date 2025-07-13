@@ -31,7 +31,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import xgboost as xgb
-from sklearn.isotonic import IsotonicRegression
+from sklearn.linear_model import LogisticRegression
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
@@ -50,6 +50,7 @@ PROB_TRAIN_FOLD_TMPL = "prob_train_fold_{k}"
 PROB_ORIG = "prob_orig"
 PROB_RECAL = "prob_recal"
 PROB_RESCALED = "prob_rescaled"
+PROB_FOLD_TMPL = "prob_fold_{k}"
 EPS = 1e-10  # small value to avoid division by zero
 pl.enable_string_cache()
 
@@ -245,34 +246,24 @@ def _aggregate_probabilities_from_folds(prob_matrix: np.ndarray, prob_epsilon=1e
     return 1.0 / (1.0 + 10 ** (-logits_mean))
 
 
-def _probability_recalibration(
-    prob_orig: np.ndarray, y_all: np.ndarray, fold_arr: np.ndarray, k_folds: int
-) -> np.ndarray:
+def _probability_recalibration(prob_orig: np.ndarray, y_all: np.ndarray) -> np.ndarray:
     """
-    Perform per-fold isotonic calibration.
-    Rows with fold_id = k are calibrated using a model trained on all
-    other folds. Rows with NaN fold_id are calibrated using a model
-    trained on all rows that have a valid fold id.
+    Calibrate raw probabilities using Platt scaling (logistic regression).
+    The mapping must be strictly monotonic increasing; if the fitted slope
+    is negative we abort with an explicit error.
     """
-    n_rows = prob_orig.shape[0]
-    prob_recal = np.empty(n_rows, dtype=float)
+    x_matrix = prob_orig.reshape(-1, 1)
+    lr = LogisticRegression(penalty=None, solver="lbfgs")
+    lr.fit(x_matrix, y_all)
 
-    valid_mask = ~np.isnan(fold_arr)
-    for k in range(k_folds):
-        val_mask = valid_mask & (fold_arr == k)
-        train_mask = valid_mask & (fold_arr != k)
-        if np.any(train_mask) and np.any(val_mask):
-            iso = IsotonicRegression(out_of_bounds="clip")
-            iso.fit(prob_orig[train_mask], y_all[train_mask])
-            prob_recal[val_mask] = iso.predict(prob_orig[val_mask])
+    # Validate monotonicity
+    if lr.coef_[0, 0] < 0:
+        raise ValueError(
+            f"Logistic-regression calibration produced a negative slope ({lr.coef_[0, 0]:.3e}); "
+            "the mapping would be decreasing."
+        )
 
-    # rows lacking a fold_id
-    nan_mask = ~valid_mask
-    if np.any(nan_mask) and np.any(valid_mask):
-        iso = IsotonicRegression(out_of_bounds="clip")
-        iso.fit(prob_orig[valid_mask], y_all[valid_mask])
-        prob_recal[nan_mask] = iso.predict(prob_orig[nan_mask])
-
+    prob_recal = lr.predict_proba(x_matrix)[:, 1]
     return prob_recal
 
 
@@ -543,7 +534,7 @@ class SRSNVTrainer:
 
         # ------------------------------------------------------------------
         # quality recalibration
-        prob_recal = _probability_recalibration(prob_orig, y_all, fold_arr, self.k_folds)
+        prob_recal = _probability_recalibration(prob_orig, y_all)
 
         # ------------------------------------------------------------------
         # global rescaling to the real-data prior
@@ -560,7 +551,7 @@ class SRSNVTrainer:
         # ------------------------------------------------------------------
 
         # attach new columns ------------------------------------------------
-        new_cols = [
+        new_cols = [pl.Series(PROB_FOLD_TMPL.format(k=k), preds_prob[k]) for k in range(self.k_folds)] + [
             pl.Series(PROB_ORIG, prob_orig),
             pl.Series(PROB_RECAL, prob_recal),
             pl.Series(PROB_RESCALED, prob_rescaled),
