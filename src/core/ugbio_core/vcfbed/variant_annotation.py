@@ -62,7 +62,7 @@ class VcfAnnotator(ABC):
 
     @abstractmethod
     def process_records(
-        self, records: list[pysam.VariantRecord], info: pysam.VariantHeaderRecords
+        self, records: list[pysam.VariantRecord], info: pysam.VariantHeaderMetadata | None
     ) -> list[pysam.VariantRecord]:
         """
         Method to process VCF records. Accepts a list of pysam VariantRecords, modifies each and returns the list
@@ -72,7 +72,7 @@ class VcfAnnotator(ABC):
         ----------
         records : list[pysam.VariantRecord]
             List of VCF records to be processed.
-        info: pysam.VariantHeaderRecords
+        info: pysam.VariantHeaderMetadata, optional
             Header records of info fields, useful for checking types of INFO fields
 
         Returns
@@ -258,7 +258,7 @@ class VcfAnnotator(ABC):
                 # Process the remaining records
                 if records:
                     for annotator in annotators:
-                        records = annotator.process_records(records)
+                        records = annotator.process_records(records, new_header.info)
 
                     for record in records:
                         output_variant_file.write(record)

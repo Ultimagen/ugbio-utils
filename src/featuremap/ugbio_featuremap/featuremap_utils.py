@@ -168,7 +168,7 @@ class FeaturemapAnnotator(VcfAnnotator):
         return header
 
     def process_records(
-        self, records: list[pysam.VariantRecord], info: pysam.VariantHeaderRecord | None = None
+        self, records: list[pysam.VariantRecord], info: pysam.VariantHeaderMetadata | None = None
     ) -> list[pysam.VariantRecord]:
         """
 
@@ -176,7 +176,7 @@ class FeaturemapAnnotator(VcfAnnotator):
         ----------
         records : list[pysam.VariantRecord]
             list of VCF records
-        info: pysam.VariantHeaderRecords, optional
+        info: pysam.VariantHeaderMetadata, optional
             Header records of info fields, useful for checking types of INFO fields.
             Not used currently, but may be useful in the future if we want to validate
             that the tags exist and are of the correct type before processing.
@@ -357,14 +357,14 @@ class RefContextVcfAnnotator(VcfAnnotator):
         return header
 
     def process_records(
-        self, records: list[pysam.VariantRecord], info: pysam.VariantHeaderRecords | None = None
+        self, records: list[pysam.VariantRecord], info: pysam.VariantHeaderMetadata | None = None
     ) -> list[pysam.VariantRecord]:
         """
         Parameters
         ----------
         records : list[pysam.VariantRecord]
             list of VCF records
-        info: pysam.VariantHeaderRecords, optional
+        info: pysam.VariantHeaderMetadata, optional
             Header records of info fields, useful for checking types of INFO fields.
             Not used currently, but may be useful in the future if we want to validate
             that the tags exist and are of the correct type before processing.

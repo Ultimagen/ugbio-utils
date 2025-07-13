@@ -206,7 +206,7 @@ class MLQualAnnotator(VcfAnnotator):
         return header
 
     def process_records(
-        self, records: list[pysam.VariantRecord], info: pysam.VariantHeaderRecords = None
+        self, records: list[pysam.VariantRecord], info: pysam.VariantHeaderMetadata | None = None
     ) -> list[pysam.VariantRecord]:
         """
         Apply trained model and annotate a list of VCF records with ML_QUAL scores
@@ -215,7 +215,7 @@ class MLQualAnnotator(VcfAnnotator):
         ----------
         records : list[pysam.VariantRecord]
             list of VCF records
-        info : pysam.VariantHeaderRecords
+        info : pysam.VariantHeaderMetadata, optional
             Header records of info fields, useful for checking types of INFO fields.
 
 
@@ -247,11 +247,7 @@ class MLQualAnnotator(VcfAnnotator):
         variants_df = variants_df.astype(
             {
                 k: v
-                for k, v in {
-                    "rq": float,
-                    "hmer_context_ref": float,
-                    "hmer_context_alt": float,
-                }.items()
+                for k, v in {"rq": float, "hmer_context_ref": float, "hmer_context_alt": float, "RPA": float}.items()
                 if k in variants_df.columns
             },
         )
