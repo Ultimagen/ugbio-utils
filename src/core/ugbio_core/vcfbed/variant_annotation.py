@@ -61,7 +61,9 @@ class VcfAnnotator(ABC):
         """
 
     @abstractmethod
-    def process_records(self, records: list[pysam.VariantRecord]) -> list[pysam.VariantRecord]:
+    def process_records(
+        self, records: list[pysam.VariantRecord], info: pysam.VariantHeaderRecords
+    ) -> list[pysam.VariantRecord]:
         """
         Method to process VCF records. Accepts a list of pysam VariantRecords, modifies each and returns the list
         Derived classes should override this method to provide specific functionality.
@@ -70,6 +72,8 @@ class VcfAnnotator(ABC):
         ----------
         records : list[pysam.VariantRecord]
             List of VCF records to be processed.
+        info: pysam.VariantHeaderRecords
+            Header records of info fields, useful for checking types of INFO fields
 
         Returns
         -------
@@ -79,18 +83,23 @@ class VcfAnnotator(ABC):
 
     @staticmethod
     def merge_temp_files(
-        contig_output_vcfs: list[str], output_path: str, header: pysam.VariantHeader = None, process_number: int = 1
+        contig_output_vcfs: list[str],
+        output_path: str,
+        header: pysam.VariantHeader | None = None,
+        process_number: int = 1,
     ):
         """
         Static method to merge temporary output files and write to the final output file.
 
-        Args:
+        Parameters:
+        -----------
         contigs : list[str]
             List of contig names.
         output_path : str
             Path to the final output file.
         header : pysam.VariantHeader
             VCF file header.
+        process_number : int
         """
         try:
             # merge using bcftools
@@ -239,7 +248,7 @@ class VcfAnnotator(ABC):
 
                     if len(records) == chunk_size:
                         for annotator in annotators:
-                            records = annotator.process_records(records)
+                            records = annotator.process_records(records, new_header.info)
 
                         for rec in records:
                             output_variant_file.write(rec)
