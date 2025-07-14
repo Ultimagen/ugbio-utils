@@ -9,7 +9,7 @@ ENV hla_la_version=1.0.4 \
     bamtools_version=2.5.2
 
 # install required system packages
-RUN apt-get update -y && apt-get install -y \
+RUN apt-get update -y && apt-get install --no-install-recommends -y \
     build-essential \
     curl \
     unzip \
