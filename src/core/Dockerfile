@@ -15,7 +15,7 @@ FROM $BASE_IMAGE
 
 # Download Picard
 ARG PICARD_VERSION=3.3.0
-RUN apt-get update && apt-get install -y --reinstall ca-certificates openjdk-17-jre-headless \
+RUN apt-get update && apt-get install -y --no-install-recommends --reinstall ca-certificates openjdk-17-jre-headless \
     && apt-get clean && rm -rf /var/lib/apt/lists/* && apt-get autoclean
 RUN mkdir -p /opt/picard && \
     wget -O /opt/picard/picard.jar https://github.com/broadinstitute/picard/releases/download/${PICARD_VERSION}/picard.jar && \

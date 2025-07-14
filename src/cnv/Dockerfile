@@ -20,7 +20,7 @@ ENV TZ=Etc/UTC
 
 # Install basic dependencies
 RUN apt-get update && \
-    apt-get install -y \
+    apt-get install -y --no-install-recommends \
     g++ \
     gfortran \
     procps \

@@ -15,7 +15,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 ##################################################################
 FROM $BASE_IMAGE
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install --no-install-recommends -y \
     openjdk-17-jre-headless `# for gatk` \
     curl \
     && apt-get clean && \
@@ -31,7 +31,7 @@ RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION
 
 # Download Picard
 ARG PICARD_VERSION=3.3.0
-RUN apt-get update && apt-get install -y --reinstall ca-certificates openjdk-17-jre-headless \
+RUN apt-get update && apt-get install -y --no-install-recommends --reinstall ca-certificates openjdk-17-jre-headless \
     && apt-get clean && rm -rf /var/lib/apt/lists/* && apt-get autoclean
 RUN mkdir -p /opt/picard && \
     wget -O /opt/picard/picard.jar https://github.com/broadinstitute/picard/releases/download/${PICARD_VERSION}/picard.jar && \

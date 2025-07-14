@@ -10,7 +10,7 @@ ARG BCFTOOLS_VERSION=1.20
 ARG SAMTOOLS_VERSION=1.20
 
 # Install basic dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install --no-install-recommends -y \
     wget \
     libgomp1 \
     unzip \
