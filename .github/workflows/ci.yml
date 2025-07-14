@@ -50,13 +50,18 @@ jobs:
         uv run pre-commit install
         uv run pre-commit run --all-files
 
-    - name: Run Trivy to scan Dockerfile
-      uses: aquasecurity/trivy-action@v0.14.0
-      with:
-        scan-type: 'config'
-        scan-ref: './'
-        format: 'table'
-        exit-code: '1'
+  dockers-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy to scan Dockerfile
+        uses: aquasecurity/trivy-action@v0.32.0
+        with:
+          scan-type: 'config'
+          scan-ref: './'
+          format: 'table'
+          exit-code: '1'
 
   ugbio-utils-CI:
     runs-on: ubuntu-latest
