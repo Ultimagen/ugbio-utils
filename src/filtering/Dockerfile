@@ -57,3 +57,11 @@ RUN pip install ${OUT_DIR}/*.whl
 
 # for runnig CI (can be removed if pytest is installed as part of the venv)
 RUN pip install pytest
+
+# Create a non-root user and group
+RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
+
+# Set ownership for relevant directories
+RUN chown -R ugbio:ugbio /tmp/ugbio /opt /usr/local/bin
+
+USER ugbio
