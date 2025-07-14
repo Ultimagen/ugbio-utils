@@ -29,8 +29,8 @@ class TestSet:
                 ("Description", "Strand bias vector"),
             ],
         )
-
-        self.vcf = pysam.VariantFile("empty.vcf", "w", header=self.vcf_header)
+        tmp_vcf_path = os.path.join("/tmp", "empty.vcf")
+        self.vcf = pysam.VariantFile(tmp_vcf_path, "w", header=self.vcf_header)
         # cleanup file, which is not needed, it's just a side effect of initializing VariantFile
         os.remove("empty.vcf")
 
