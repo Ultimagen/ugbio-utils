@@ -13,7 +13,8 @@ def _generate_indel_tests():
     vcfh.add_meta("FILTER", items=[("ID", "RF"), ("Description", "Variant failed filter due to low RF")])
     vcfh.add_meta("contig", items=[("ID", 1)])
     vcfh.add_meta("FORMAT", items=[("ID", "GT"), ("Number", 1), ("Type", "String"), ("Description", "Genotype")])
-    tmpfilename = tempfile.mktemp(suffix="vcf")
+    with tempfile.NamedTemporaryFile(suffix="vcf", delete=False) as tmpfile:
+        tmpfilename = tmpfile.name
     vcf = pysam.VariantFile(tmpfilename, "w", header=vcfh)
 
     records = []
