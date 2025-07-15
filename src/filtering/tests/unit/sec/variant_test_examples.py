@@ -32,7 +32,7 @@ class TestSet:
         tmp_vcf_path = os.path.join("/tmp", "empty.vcf")
         self.vcf = pysam.VariantFile(tmp_vcf_path, "w", header=self.vcf_header)
         # cleanup file, which is not needed, it's just a side effect of initializing VariantFile
-        os.remove("empty.vcf")
+        os.remove(tmp_vcf_path)
 
 
 class NoVariantWithNoise(TestSet):
