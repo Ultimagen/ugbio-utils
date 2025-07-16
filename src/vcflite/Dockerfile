@@ -23,15 +23,15 @@ RUN apt-get update && \
 RUN echo '#!/bin/sh\necho "No tests to run :)"' > /usr/local/bin/run_tests && \
 chmod +x /usr/local/bin/run_tests
 
+COPY --from=builder /usr/local/cargo/bin/vcflite /usr/local/bin/vcflite
+
 # Create a non-root user and group
 RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
 
 # Set ownership for writable directories
-RUN chown -R ugbio:ugbio /usr/local/bin /tmp /usr/src/myapp
+RUN chown -R ugbio:ugbio /usr/local/bin /tmp
 
 USER ugbio
-
-COPY --from=builder /usr/local/cargo/bin/vcflite /usr/local/bin/vcflite
 
 COPY ./src/vcflite/LICENSE.txt .
 
