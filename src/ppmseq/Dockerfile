@@ -29,8 +29,11 @@ COPY --from=build $OUT_DIR $OUT_DIR
 COPY ./src/ /workdir/src/
 
 # Set ownership for writable directories
-RUN chown -R ugbio:ugbio /usr/local/bin /workdir/src/ \
-    && chmod -R u+rw /workdir/src/
+RUN chown -R ugbio:ugbio /usr/local/bin /workdir/src/
+
+RUN chmod -R ug+rw /workdir/src/
+
+Add RUN ls -l /workdir/src/tests/resources
 
 USER ugbio
 
