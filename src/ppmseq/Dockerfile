@@ -28,5 +28,3 @@ RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
 RUN chown -R ugbio:ugbio /usr/local/bin
 
 USER ugbio
-
-ENV PATH="/home/.local/bin:${PATH}"

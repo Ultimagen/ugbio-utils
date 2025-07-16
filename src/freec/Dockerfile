@@ -65,9 +65,9 @@ ARG OUT_DIR=/tmp/ugbio
 # Copy whl and install module
 COPY --from=build $OUT_DIR $OUT_DIR
 
+ENV PATH="/home/.local/bin:${PATH}"
+
 RUN pip install ${OUT_DIR}/*.whl
 
 # for runnig CI (can be removed if pytest is installed as part of the venv)
 RUN pip install pytest
-
-ENV PATH="/home/.local/bin:${PATH}"

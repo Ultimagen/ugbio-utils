@@ -28,10 +28,10 @@ ARG OUT_DIR=/tmp/ugbio
 # Copy whl and install module
 COPY --from=build $OUT_DIR $OUT_DIR
 
+ENV PATH="/home/.local/bin:${PATH}"
+
 RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
     pip install "${WHEEL_FILE}[db]"
 
 # for runnig CI (can be removed if pytest is installed as part of the venv)
 RUN pip install pytest
-
-ENV PATH="/home/.local/bin:${PATH}"
