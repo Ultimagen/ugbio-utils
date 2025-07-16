@@ -101,6 +101,8 @@ ARG OUT_DIR=/tmp/ugbio
 
 COPY --from=build $OUT_DIR $OUT_DIR
 
+ENV PATH="/home/ugbio/.local/bin:${PATH}"
+
 RUN pip install --user ${OUT_DIR}/*.whl
 
 COPY --from=build ./src/cnv/cnmops ./src/cnv/cnmops
