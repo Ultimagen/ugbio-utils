@@ -50,7 +50,7 @@ jobs:
         uv run pre-commit install
         uv run pre-commit run --all-files
 
-  dockers-scan:
+  Trivy-scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,6 +63,16 @@ jobs:
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
+
+      - name: Run Trivy to scan fs
+        uses: aquasecurity/trivy-action@0.32.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
+
 
   ugbio-utils-CI:
     runs-on: ubuntu-latest
