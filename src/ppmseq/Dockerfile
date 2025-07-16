@@ -25,6 +25,8 @@ RUN chown -R ugbio:ugbio /usr/local/bin
 
 USER ugbio
 
+ENV PATH="/home/ugbio/.local/bin:${PATH}"
+
 COPY --from=build $OUT_DIR $OUT_DIR
 
 RUN pip install ${OUT_DIR}/*.whl
