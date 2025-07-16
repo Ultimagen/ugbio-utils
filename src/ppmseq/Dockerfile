@@ -31,12 +31,10 @@ COPY ./src/ /workdir/src/
 # Set ownership for writable directories
 RUN chown -R ugbio:ugbio /usr/local/bin /workdir/src/
 
-RUN chmod -R ug+rw /workdir/src/
-
-RUN ls -l /workdir/src/
-
 USER ugbio
 
 ENV PATH="/home/ugbio/.local/bin:${PATH}"
 
 RUN pip install ${OUT_DIR}/*.whl
+
+RUN echo "umask 002" >> /etc/profile
