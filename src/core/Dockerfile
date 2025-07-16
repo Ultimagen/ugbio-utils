@@ -39,7 +39,7 @@ ARG OUT_DIR=/tmp/ugbio
 # Copy whl and install module
 COPY --from=build $OUT_DIR $OUT_DIR
 
-ENV PATH="/home/.local/bin:${PATH}"
+ENV PATH="/home/ugbio/.local/bin:${PATH}"
 
 RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
     pip install "${WHEEL_FILE}[vcfbed,reports,concordance]"
