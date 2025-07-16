@@ -22,8 +22,17 @@ COPY --from=build $OUT_DIR $OUT_DIR
 # Create a non-root user and group
 RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
 
+# Copy files before changing ownership
+COPY --from=build $OUT_DIR $OUT_DIR
+
+# If you need /workdir/src, create it or copy it first
+ Example: COPY ./src/ /workdir/src/
+
 # Set ownership for writable directories
-RUN chown -R ugbio:ugbio /usr/local/bin /src/
+RUN chown -R ugbio:ugbio /usr/local/bin $OUT_DIR
+
+# Set ownership for writable directories
+RUN chown -R ugbio:ugbio /usr/local/bin
 
 USER ugbio
 
