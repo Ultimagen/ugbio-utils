@@ -17,24 +17,16 @@ FROM ${BASE_IMAGE}
 
 ARG OUT_DIR=/tmp/ugbio
 
-COPY --from=build $OUT_DIR $OUT_DIR
-
 # Create a non-root user and group
 RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
 
-# Copy files before changing ownership
-COPY --from=build $OUT_DIR $OUT_DIR
-
-# If you need /workdir/src, create it or copy it first
-COPY ./src/ /workdir/src/
-
 # Set ownership for writable directories
-RUN chown -R ugbio:ugbio /usr/local/bin /workdir/src/
-
-RUN echo "umask 002" >> /etc/profile
+RUN chown -R ugbio:ugbio /usr/local/bin
 
 USER ugbio
 
+COPY --from=build $OUT_DIR $OUT_DIR
+
 ENV PATH="/home/ugbio/.local/bin:${PATH}"
 
-RUN pip install ${OUT_DIR}/*.whl
+RUN pip install --user ${OUT_DIR}/*.whl
