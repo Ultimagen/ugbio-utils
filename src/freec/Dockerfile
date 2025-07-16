@@ -52,6 +52,14 @@ RUN ln -s /freec /usr/bin/freec
 
 ARG OUT_DIR=/tmp/ugbio
 
+# Create a non-root user and group
+RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
+
+# Set ownership for relevant directories
+RUN chown -R ugbio:ugbio /tmp/ugbio /opt /usr/local/bin
+
+USER ugbio
+
 # Install module
 COPY --from=build $OUT_DIR $OUT_DIR
 

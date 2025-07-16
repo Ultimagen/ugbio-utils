@@ -16,6 +16,11 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 ##################################################################
 FROM $BASE_IMAGE
 
+# Create a non-root user and group
+RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
+
+USER ugbio
+
 ARG OUT_DIR=/tmp/ugbio
 
 COPY --from=build $OUT_DIR $OUT_DIR

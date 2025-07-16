@@ -50,14 +50,6 @@ RUN curl -SLO https://github.com/RealTimeGenomics/rtg-tools/releases/download/${
 
 ARG OUT_DIR=/tmp/ugbio
 
-# Install module
-COPY --from=build $OUT_DIR $OUT_DIR
-
-RUN pip install ${OUT_DIR}/*.whl
-
-# for runnig CI (can be removed if pytest is installed as part of the venv)
-RUN pip install pytest
-
 # Create a non-root user and group
 RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
 
@@ -65,3 +57,8 @@ RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
 RUN chown -R ugbio:ugbio /tmp/ugbio /opt /usr/local/bin
 
 USER ugbio
+
+# Install module
+COPY --from=build $OUT_DIR $OUT_DIR
+
+RUN pip install ${OUT_DIR}/*.whl
