@@ -17,16 +17,16 @@ FROM ${BASE_IMAGE}
 
 ARG OUT_DIR=/tmp/ugbio
 
+COPY --from=build $OUT_DIR $OUT_DIR
+
 # Create a non-root user and group
 RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
 
 # Set ownership for writable directories
-RUN chown -R ugbio:ugbio /usr/local/bin /workdir/src
+RUN chown -R ugbio:ugbio /usr/local/bin /src/
 
 USER ugbio
 
 ENV PATH="/home/ugbio/.local/bin:${PATH}"
-
-COPY --from=build $OUT_DIR $OUT_DIR
 
 RUN pip install ${OUT_DIR}/*.whl
