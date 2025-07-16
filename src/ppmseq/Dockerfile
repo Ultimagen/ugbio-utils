@@ -32,7 +32,7 @@ COPY ./src/ /workdir/src/
 RUN chown -R ugbio:ugbio /usr/local/bin $OUT_DIR
 
 # Set ownership for writable directories
-RUN chown -R ugbio:ugbio /usr/local/bin
+RUN chown -R ugbio:ugbio /usr/local/bin /workdir/src/
 
 USER ugbio
 
