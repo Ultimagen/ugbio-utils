@@ -620,7 +620,7 @@ def read_and_filter_features_parquet(
     # rename columns to lowercase
     df_features = df_features.rename(columns=lambda x: x.lower())
     df_features = df_features.astype({"rq": float}).set_index(["chrom", "pos"])
-    df_features = df_features.assign(filtering_ratio=df_features["db_filt"] / df_features["dp"])
+    df_features = df_features.assign(filtering_ratio=df_features["dp_filt"] / df_features["dp"])
     df_features_filt = df_features.query(read_filter_query)
     filtering_ratio = (
         df_features.query("signature_type=='matched'").groupby(level=["chrom", "pos"]).agg({"filtering_ratio": "first"})
