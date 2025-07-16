@@ -15,7 +15,16 @@ FROM python:3.11-slim
 
 ARG OUT_DIR=/tmp/ugbio
 
-# Install module
+# Create a non-root user and group
+RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
+
+# Set ownership for writable directories
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
+
+USER ugbio
+
+ARG OUT_DIR=/tmp/ugbio
+
 COPY --from=build $OUT_DIR $OUT_DIR
 
 RUN pip install ${OUT_DIR}/*.whl
