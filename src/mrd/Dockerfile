@@ -41,7 +41,7 @@ ARG OUT_DIR=/tmp/ugbio
 RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
 
 # Set ownership for writable directories
-RUN chown -R ugbio:ugbio /app /usr/local/bin
+RUN chown -R ugbio:ugbio /usr/local/bin
 
 USER ugbio
 
