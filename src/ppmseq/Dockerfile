@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ugbio_base
+ARG BASE_IMAGE=337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_base:1.5.0
 FROM python:3.11-bullseye AS build
 
 ARG OUT_DIR=/tmp/ugbio
@@ -25,7 +25,7 @@ RUN pip install ${OUT_DIR}/*.whl
 RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
 
 # Set ownership for writable directories
-RUN chown -R ugbio:ugbio /usr/local/bin
+RUN chown -R ugbio:ugbio /usr/local/bin /workdir/src
 
 USER ugbio
 
