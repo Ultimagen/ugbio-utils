@@ -24,6 +24,7 @@ RUN pip install ${OUT_DIR}/*.whl
 # Create a non-root user and group
 RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
 
+RUN mkdir -p "/workdir/src"
 # Set ownership for writable directories
 RUN chown -R ugbio:ugbio /usr/local/bin /workdir/src
 
