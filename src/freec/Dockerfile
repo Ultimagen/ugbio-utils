@@ -70,4 +70,4 @@ ENV PATH="/home/ugbio/.local/bin:${PATH}"
 RUN pip install --user ${OUT_DIR}/*.whl
 
 # for runnig CI (can be removed if pytest is installed as part of the venv)
-RUN pip install pytest
+RUN pip install --user pytest

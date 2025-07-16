@@ -52,6 +52,6 @@ COPY --from=build $OUT_DIR $OUT_DIR
 
 ENV PATH="/home/ugbio/.local/bin:${PATH}"
 
-RUN pip install ${OUT_DIR}/*.whl
+RUN pip install --user ${OUT_DIR}/*.whl
 
 COPY --from=build ./src/mrd/ugbio_mrd/reports ./src/mrd/ugbio_mrd/reports
