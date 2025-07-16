@@ -64,3 +64,5 @@ ARG OUT_DIR=/tmp/ugbio
 COPY --from=build $OUT_DIR $OUT_DIR
 
 RUN pip install ${OUT_DIR}/*.whl
+
+ENV PATH="/home/.local/bin:${PATH}"

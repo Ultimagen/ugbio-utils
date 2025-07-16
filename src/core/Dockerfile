@@ -43,3 +43,5 @@ RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
     pip install "${WHEEL_FILE}[vcfbed,reports,concordance]"
 
 COPY --from=build ./src/core/ugbio_core/reports ./src/core/ugbio_core/reports
+
+ENV PATH="/home/.local/bin:${PATH}"

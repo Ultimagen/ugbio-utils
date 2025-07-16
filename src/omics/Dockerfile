@@ -33,3 +33,5 @@ RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
 
 # for runnig CI (can be removed if pytest is installed as part of the venv)
 RUN pip install pytest
+
+ENV PATH="/home/.local/bin:${PATH}"
