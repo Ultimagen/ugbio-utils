@@ -26,7 +26,7 @@ RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio
 COPY --from=build $OUT_DIR $OUT_DIR
 
 # If you need /workdir/src, create it or copy it first
- Example: COPY ./src/ /workdir/src/
+COPY ./src/ /workdir/src/
 
 # Set ownership for writable directories
 RUN chown -R ugbio:ugbio /usr/local/bin $OUT_DIR
