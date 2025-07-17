@@ -45,7 +45,7 @@ env:
   GAR_REPO_INTERNAL: us-central1-docker.pkg.dev/ultima-data-307918/ultimagen
   GAR_REPO_SHARED: us-central1-docker.pkg.dev/ganymede-331016/ultimagen
   DOCKERHUB_ACCOUNT: ultimagenomics
-  UGBIO_BASE_IMAGE_NAME: ugbio_base:1.5.0
+  UGBIO_BASE_IMAGE_NAME: ugbio_base:1.6.0
 
 jobs:
   build:
