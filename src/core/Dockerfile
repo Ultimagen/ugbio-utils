@@ -27,7 +27,7 @@ RUN echo '#!/bin/sh\njava -jar /opt/picard/picard.jar "$@"' > /usr/local/bin/pic
 ARG OUT_DIR=/tmp/ugbio
 
 # Create a non-root user and group
-RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio -d /home/ugbio
+RUN groupadd ugbio && useradd -m -u 1000 ugbio -d /home/ugbio
 
 # Set ownership for writable directories
 RUN chown -R ugbio:ugbio /opt /usr/local/bin
