@@ -4,25 +4,32 @@ import pysam
 
 
 def filter_low_af_ratio_to_background(
-    input_vcf, output_vcf, af_ratio_threshold=10, new_filter="LowAFRatioToBackground"
+    input_vcf, output_vcf, af_ratio_threshold=10, af_ratio_threshold_h_indels=2, new_filter="LowAFRatioToBackground"
 ):
     vcf_in = pysam.VariantFile(input_vcf)
 
     # Add a new FILTER definition to the header
     if new_filter not in vcf_in.header.filters:
-        filter_desc = f"For snps and non-h-indels: \
-            filter if AF ratio to background in GT ALT alleles < {af_ratio_threshold}"
+        filter_desc = (
+            f"Filter variants if AF ratio to background in GT ALT alleles < threshold. "
+            f"For snps and non-h-indels: {af_ratio_threshold}, and "
+            f"for h-indels: {af_ratio_threshold_h_indels}"
+        )
         vcf_in.header.filters.add(new_filter, None, None, filter_desc)
 
     vcf_out = pysam.VariantFile(output_vcf, "w", header=vcf_in.header)
 
     for record in vcf_in.fetch():
-        # Skip if variant is marked RefCall or if it is an h-indel
-        if (record.filter.keys() == ["RefCall"]) | (record.info.get("VARIANT_TYPE") == "h-indel"):
+        # Skip if variant is marked RefCall
+        if record.filter.keys() == ["RefCall"]:
             vcf_out.write(record)
             continue
         else:
-            failed = process_record(record, af_ratio_threshold)
+            threshold_to_use = (
+                af_ratio_threshold_h_indels if (record.info.get("VARIANT_TYPE") == "h-indel") else af_ratio_threshold
+            )
+            failed = process_record(record, threshold_to_use)
+
             if failed:
                 record.filter.add(new_filter)
 
@@ -78,7 +85,15 @@ def main():
     parser = argparse.ArgumentParser(description="Annotate variants with low AF ratio")
     parser.add_argument("input_vcf", help="Input VCF file")
     parser.add_argument("output_vcf", help="Output VCF file")
-    parser.add_argument("--af_ratio_threshold", type=float, default=10, help="AF ratio threshold (default: 10)")
+    parser.add_argument(
+        "--af_ratio_threshold",
+        type=float,
+        default=10,
+        help="AF ratio threshold for snps and non-h-indels (default: 10)",
+    )
+    parser.add_argument(
+        "--af_ratio_threshold_h_indels", type=float, default=2, help="AF ratio threshold for h-indels (default: 2)"
+    )
     parser.add_argument(
         "--new_filter",
         default="LowAFRatioToBackground",
