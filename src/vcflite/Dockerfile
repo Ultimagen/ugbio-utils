@@ -26,7 +26,7 @@ chmod +x /usr/local/bin/run_tests
 COPY --from=builder /usr/local/cargo/bin/vcflite /usr/local/bin/vcflite
 
 # Create a non-root user and group
-RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio -d /home/ugbio
+RRUN groupadd ugbio && useradd -m ugbio -d /home/ugbio -g ugbio
 
 # Set ownership for writable directories
 RUN chown -R ugbio:ugbio /usr/local/bin /tmp

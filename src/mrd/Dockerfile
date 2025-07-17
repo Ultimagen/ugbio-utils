@@ -38,7 +38,7 @@ RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION
 ARG OUT_DIR=/tmp/ugbio
 
 # Create a non-root user and group
-RUN groupadd --system ugbio && useradd --system --create-home --gid ugbio ugbio -d /home/ugbio
+RRUN groupadd ugbio && useradd -m ugbio -d /home/ugbio -g ugbio
 
 # Set ownership for writable directories
 RUN chown -R ugbio:ugbio /opt /usr/local/bin
