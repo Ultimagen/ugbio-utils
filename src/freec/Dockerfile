@@ -56,7 +56,8 @@ ARG OUT_DIR=/tmp/ugbio
 RUN groupadd ugbio && useradd -m ugbio -d /home/ugbio -g ugbio
 
 # Set ownership for writable directories
-RUN chown -R ugbio:ugbio /opt /usr/local/bin /mnt/workflow/
+RUN chown -R ugbio:ugbio /opt /usr/local/bin && \
+    [ ! -d /mnt/workflow/ ] || chown -R ugbio:ugbio /mnt/workflow/
 
 USER ugbio
 
