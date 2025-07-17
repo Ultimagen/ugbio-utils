@@ -180,7 +180,7 @@ def partition_into_folds(series_of_sizes, k_folds, alg="greedy", n_chroms_leave_
         - k_folds [int]: the number of folds into which series_of_sizes should be partitioned.
         - alg ['greedy']: the algorithm used. For the time being only the greedy algorithm
             is implemented.
-        - n_test [int]: The n_test smallest chroms are not assigned to any fold (they are excluded
+        - n_chroms_leave_out [int]: The n_chroms_leave_out smallest chroms are not assigned to any fold (they are excluded
             from the indices_to_folds dict). These are excluded from training all together, and
             are used for test only.
     Returns:
