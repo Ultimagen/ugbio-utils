@@ -10,7 +10,7 @@ ARG BCFTOOLS_VERSION=1.20
 ARG SAMTOOLS_VERSION=1.20
 
 # Install basic dependencies
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install --no-install-recommends -y \
     wget \
     libgomp1 \
     unzip \
@@ -79,3 +79,5 @@ COPY ["licenses/Ultima UGVC - EULA.pdf", "."]
 RUN groupadd --gid ${USER_GID} ${USERNAME} \
     && useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} -s /bin/bash \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+USER ${USERNAME}

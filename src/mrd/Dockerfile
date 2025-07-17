@@ -17,7 +17,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 ##################################################################
 FROM ${BASE_IMAGE}
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install --no-install-recommends -y \
     openjdk-17-jre-headless `# for gatk` \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
@@ -37,8 +37,23 @@ RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION
 
 ARG OUT_DIR=/tmp/ugbio
 
+# Create a non-root user and group
+RUN groupadd ugbio && useradd -m ugbio -d /home/ugbio -g ugbio
+
+# Set ownership for writable directories
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
+
+USER ugbio
+
+WORKDIR /home/ugbio
+
+ARG OUT_DIR=/tmp/ugbio
+
+# Copy whl and install module
 COPY --from=build $OUT_DIR $OUT_DIR
 
-RUN pip install ${OUT_DIR}/*.whl
+ENV PATH="/home/ugbio/.local/bin:${PATH}"
+
+RUN pip install --user ${OUT_DIR}/*.whl
 
 COPY --from=build ./src/mrd/ugbio_mrd/reports ./src/mrd/ugbio_mrd/reports

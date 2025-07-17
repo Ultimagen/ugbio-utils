@@ -9,7 +9,7 @@ ENV hla_la_version=1.0.4 \
     bamtools_version=2.5.2
 
 # install required system packages
-RUN apt-get update -y && apt-get install -y \
+RUN apt-get update -y && apt-get install --no-install-recommends -y \
     build-essential \
     curl \
     unzip \
@@ -86,4 +86,15 @@ RUN echo '#!/bin/sh\necho "No tests to run :)"' > /usr/local/bin/run_tests \
 
 # set PATH
 ENV PATH="/usr/local/bin/HLA-LA/bin:/usr/local/bin/HLA-LA/src:$PATH"
+
+# Create a non-root user and group
+RUN groupadd ugbio && useradd -m ugbio -d /home/ugbio -g ugbio
+
+# Set ownership for writable directories
+RUN chown -R ugbio:ugbio /usr/local/bin /tmp
+
+USER ugbio
+
+WORKDIR /home/ugbio
+
 WORKDIR /usr/local/bin

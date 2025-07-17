@@ -10,7 +10,7 @@ RUN cargo install --path .
 FROM debian:bookworm-slim
 
 RUN apt-get update && \
-    apt-get install -y \
+    apt-get install --no-install-recommends -y \
         libsqlite3-0 \
         tabix `# for vcf indexing` \
         file `# for monitoring` \
@@ -24,6 +24,16 @@ RUN echo '#!/bin/sh\necho "No tests to run :)"' > /usr/local/bin/run_tests && \
 chmod +x /usr/local/bin/run_tests
 
 COPY --from=builder /usr/local/cargo/bin/vcflite /usr/local/bin/vcflite
+
+# Create a non-root user and group
+RUN groupadd ugbio && useradd -m ugbio -d /home/ugbio -g ugbio
+
+# Set ownership for writable directories
+RUN chown -R ugbio:ugbio /usr/local/bin /tmp
+
+USER ugbio
+
+WORKDIR /home/ugbio
 
 COPY ./src/vcflite/LICENSE.txt .
 
