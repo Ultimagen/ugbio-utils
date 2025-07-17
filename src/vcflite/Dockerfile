@@ -10,7 +10,7 @@ RUN cargo install --path .
 FROM debian:bookworm-slim
 
 RUN apt-get update && \
-    apt-get install -y \
+    apt-get install --no-install-recommends -y \
         libsqlite3-0 \
         tabix `# for vcf indexing` \
         file `# for monitoring` \
