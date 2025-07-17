@@ -44,13 +44,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--hom_snv_regions",
         type=str,
         required=False,
-        help="""Path to bed file containint regions for hom snv (TP) featuremap""",
+        help="""Path to bed file containing regions for hom snv (TP) featuremap""",
     )
     parser.add_argument(
         "--single_sub_regions",
         type=str,
         required=True,
-        help="""Path to bed file containint regions for single substitution featuremap (FP)""",
+        help="""Path to bed file containing regions for single substitution featuremap (FP)""",
     )
     parser.add_argument(
         "--cram_stats_file",
