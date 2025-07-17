@@ -58,7 +58,7 @@ runs:
     - name: Run python tests (if exist) in the container
       working-directory: src/${{ inputs.workspace-folder }}
       shell: bash
-      run: docker run --rm -v .:/tmp/ugbio/src ${{ inputs.workspace-folder }} run_tests /tmp/ugbio/src || [ $? -eq 5 ]
+      run: docker run --rm -v .:/home/ugbio/src ${{ inputs.workspace-folder }} run_tests /home/ugbio/src || [ $? -eq 5 ]
 
 
     #todo how to upload results?
