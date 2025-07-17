@@ -46,7 +46,6 @@ MQUAL = FeatureMapFields.MQUAL.value
 SNVQ = FeatureMapFields.SNVQ.value
 SNVQ_RAW = SNVQ + "_RAW"
 
-PROB_TRAIN_FOLD_TMPL = "prob_train_fold_{k}"
 PROB_ORIG = "prob_orig"
 PROB_RECAL = "prob_recal"
 PROB_RESCALED = "prob_rescaled"
