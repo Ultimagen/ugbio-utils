@@ -16,7 +16,7 @@ FROM python:3.11-slim
 ARG OUT_DIR=/tmp/ugbio
 
 # Create a non-root user and group
-RRUN groupadd ugbio && useradd -m ugbio -d /home/ugbio -g ugbio
+RUN groupadd ugbio && useradd -m ugbio -d /home/ugbio -g ugbio
 
 # Set ownership for writable directories
 RUN chown -R ugbio:ugbio /opt /usr/local/bin
