@@ -643,7 +643,8 @@ def filter_parquet(
         # Get row count for logging
         full_rows = pl.scan_parquet(out_path_full).select(pl.len()).collect().item()
         logger.info(f"Wrote full data with filters: {full_rows:,} rows ({out_path_full})")
-        logger.info(pl.read_parquet(out_path_full).select(f"^{COL_PREFIX_FILTER}.*$").sum())  # TODO remove this line
+        filter_sums = pl.read_parquet(out_path_full).select(f"^{COL_PREFIX_FILTER}.*$").sum()
+        logger.info(f"Sum of filter columns: {filter_sums}")
 
     # Write statistics
     with open(stats_path, "w") as f:
