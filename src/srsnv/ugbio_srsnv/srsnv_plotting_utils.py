@@ -1636,15 +1636,15 @@ class SRSNVReport:
         }
         # Info about versions
         version_info = {
-            ("Pipeline version", ""): (self.params["pipeline_version"]),
-            ("Docker image", ""): self.params["docker_image"],
-            ("Adapter version", ""): self.params["adapter_version"],
+            ("Pipeline version", ""): (self.params.get("pipeline_version", None)),
+            ("Docker image", ""): self.params.get("docker_image", None),
+            ("Adapter version", ""): self.params.get("adapter_version", None),
             ("Report created on", ""): datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         # Training info
         training_info = {
-            ("Pre-filter", ""): self.params["pre_filter"],
-            ("Columns for balancing", ""): self.params["balanced_sampling_info_fields"],
+            ("Pre-filter", ""): self.params.get("pre_filter", None),
+            ("Columns for balancing", ""): self.params.get("balanced_sampling_info_fields", None),
             ("Number of CV folds", ""): self.params["num_CV_folds"],
         }
         # Info about training set size
@@ -2998,7 +2998,7 @@ class SRSNVReport:
 
         # Create LoD plot
         # TODO: Update the following to new conform with new report logic
-        if self.params["fp_regions_bed_file"] is not None:
+        if self.params.get("fp_regions_bed_file", None) is not None:  # TODO: Check why this if statement?
             logger.info("Calculating LoD statistics")
             min_LoD_filter = calculate_lod_stats(  # noqa: N806
                 df_mrd_simulation=self.df_mrd_simulation,

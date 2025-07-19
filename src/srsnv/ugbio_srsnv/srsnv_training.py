@@ -23,13 +23,16 @@ import argparse
 import gzip
 import json
 import logging
+import os
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import polars as pl
+import pysam
 import xgboost as xgb
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
@@ -50,6 +53,7 @@ SNVQ_RAW = SNVQ + "_RAW"
 PROB_ORIG = "prob_orig"
 PROB_RECAL = "prob_recal"
 PROB_RESCALED = "prob_rescaled"
+PROB_TRAIN = "prob_train"
 PROB_FOLD_TMPL = "prob_fold_{k}"
 EPS = 1e-10  # small value to avoid division by zero
 
@@ -59,7 +63,28 @@ pl.enable_string_cache()
 
 
 # ───────────────────────── parsers ────────────────────────────
-def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
+def _parse_interval_list_tabix(path: str) -> tuple[dict[str, int], list[str]]:
+    # Parse headers for chrom_sizes (must still scan file start)
+    chrom_sizes = {}
+    with pysam.TabixFile(path) as tbx:
+        for line in tbx.header:
+            if line.startswith("@SQ"):
+                chrom_name = None
+                for field in line.strip().split("\t")[1:]:
+                    key, val = field.split(":", 1)
+                    if key == "SN":
+                        chrom_name = val
+                    elif key == "LN" and chrom_name is not None:
+                        chrom_sizes[chrom_name] = int(val)
+        # chroms_in_data: use tabix index for fast chromosome listing
+        chroms_in_data = list(tbx.contigs)
+    missing = [c for c in chroms_in_data if c not in chrom_sizes]
+    if missing:
+        raise ValueError(f"Missing @SQ header for contigs: {missing}")
+    return chrom_sizes, chroms_in_data
+
+
+def _parse_interval_list_manual(path: str) -> tuple[dict[str, int], list[str]]:
     """
     Picard/Broad interval-list:
     header lines: '@SQ\tSN:chr1\tLN:248956422'
@@ -104,6 +129,28 @@ def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
     if missing:
         raise ValueError(f"Missing @SQ header for contigs: {missing}")
     return chrom_sizes, chroms_in_data
+
+
+def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
+    """
+    Parse a Picard/Broad interval-list file to extract chromosome sizes and order.
+
+    Parameters
+    ----------
+    path : str
+        Path to the interval-list file (supports .gz files).
+
+    Returns
+    -------
+    tuple[dict[str, int], list[str]]
+        chrom_sizes: Dictionary mapping chromosome names to their lengths.
+        chroms_in_data: List of chromosomes in the order they appear in the file.
+    """
+    candidate_tbi = path + ".tbi"
+    if os.path.exists(candidate_tbi):
+        return _parse_interval_list_tabix(path)
+    else:
+        return _parse_interval_list_manual(path)
 
 
 def _parse_model_params(mp: str | None) -> dict[str, Any]:
@@ -208,7 +255,7 @@ def partition_into_folds(series_of_sizes, k_folds, alg="greedy", n_chroms_leave_
     return pd.Series(indices_to_folds, index=series_of_sizes.index).to_dict()
 
 
-def prob_to_phred(prob_error, max_value=None):
+def prob_to_phred(prob_correct, max_value=100):
     """Transform probabilities to phred scores. The probability input an error is translated to a Phred quality
     score using the formula:
         Q = -10 * log10(1 - p)
@@ -216,13 +263,42 @@ def prob_to_phred(prob_error, max_value=None):
     - prob [np.ndarray]: array of probabilities
     - max_value [float]: maximum phred score (clips values above this threshold)
     """
-    phred_scores = -10 * np.log10(1 - prob_error)
+    prob_error = 1 - prob_correct
     if max_value is not None:
-        return np.minimum(phred_scores, max_value)
+        prob_error = np.maximum(prob_error, 10 ** (-max_value / 10))
+    phred_scores = -10 * np.log10(prob_error)
     return phred_scores
 
 
-def _aggregate_probabilities_from_folds(prob_matrix: np.ndarray, prob_epsilon=1e-10) -> np.ndarray:
+def prob_to_logit(prob: np.ndarray, *, max_value: float = 100, phred: bool = True) -> np.ndarray:
+    """
+    Convert probabilities to logit space (base 10).
+    """
+    logit = prob_to_phred(prob, max_value=max_value) - prob_to_phred(1 - prob, max_value=max_value)
+    if not phred:
+        logit = logit / 10.0  # convert to logit space
+    return logit
+
+
+def phred_to_prob(phred: np.ndarray) -> np.ndarray:
+    """
+    Convert Phred scores to probabilities.
+    """
+    return 1.0 - 10.0 ** (-phred / 10)
+
+
+def logit_to_prob(logit: np.ndarray, *, phred: bool = True) -> np.ndarray:
+    """
+    Convert logit scores (base 10) to probabilities.
+    """
+    if phred:
+        logit = logit / 10.0  # convert from Phred to logit space
+    return 1.0 / (1.0 + 10 ** (-logit))
+
+
+def _aggregate_probabilities_from_folds(
+    prob_matrix: np.ndarray, transform: str = "logit", max_phred: float = 100
+) -> np.ndarray:
     """
     Aggregate probabilities coming from all folds for each data-point.
 
@@ -231,22 +307,147 @@ def _aggregate_probabilities_from_folds(prob_matrix: np.ndarray, prob_epsilon=1e
     prob_matrix : np.ndarray
         Shape = (n_folds, n_rows). Each row contains the predicted
         probabilities of one fold for all data-points.
-    prob_epsilon : float, optional
-        Small value to avoid log(0) issues, by default 1e-10
+    transform : str, optional
+        The transformation to apply to the probabilities. Can have 3 values: 'phred', 'logit', 'prob'.
+        By default 'phred'.
+    max_phred : float, optional
+        The largest Phred score to clip the probabilities to, by default 100.
 
     Returns
     -------
     np.ndarray
         Aggregated probability per data-point.
     """
-    probs = np.clip(prob_matrix, prob_epsilon, 1 - prob_epsilon)
+    if transform not in {"phred", "logit", "prob"}:
+        raise ValueError(f"Invalid transform '{transform}'. Expected one of: 'phred', 'logit', 'prob'.")
 
-    # logit base-10
-    logits = np.log10(probs / (1.0 - probs))
+    if transform == "phred":
+        transform_fn = partial(prob_to_phred, max_value=max_phred)
+        inverse_transform_fn = phred_to_prob
+    elif transform == "logit":
+        transform_fn = partial(prob_to_logit, max_value=max_phred)
+        inverse_transform_fn = logit_to_prob
+    else:  # transform == 'prob'
 
-    # Average logits and convert back to probability
-    logits_mean = logits.mean(axis=0)
-    return 1.0 / (1.0 + 10 ** (-logits_mean))
+        def transform_fn(x):
+            return x
+
+        def inverse_transform_fn(x):
+            return x
+
+    transformed_probs = transform_fn(prob_matrix)
+    # Average transformed probabilities and convert back to probability
+    # Use nanmean to allow for NaNs (e.g., for in-fold exclusion)
+    transformed_mean = np.nanmean(transformed_probs, axis=0)
+    return inverse_transform_fn(transformed_mean)
+
+
+def k_fold_predict_proba(
+    models: list[xgb.XGBClassifier],
+    x_all: pd.DataFrame,
+    fold_arr: np.ndarray,
+    max_phred: float = 100,
+    **kwargs,
+):
+    """
+    Predict probability using k-folds CV.
+
+    Returns a 1-d numpy array of out-of-fold "validation" predictions for rows with valid fold assignment,
+    and "test" predictions (aggregated across all models) for rows with fold_arr == nan.
+    For rows with invalid fold assignment (not nan, but <0 or >=num_folds), returns np.nan.
+
+    Clarification about train/val/test:
+        - "validation": all SNVs where fold_arr is in [0, 1, ..., k_folds-1] and fold_arr == k (the current fold).
+          These are the held-out data for each fold, predicted only by the model not trained on them.
+        - "test": all SNVs where fold_arr is np.nan. These are not assigned to any fold and are predicted by aggregating
+          the predictions from all k models.
+        - "train": all SNVs where fold_arr is in [0, 1, ..., k_folds-1] and fold_arr != k (i.e., used for training
+          each model). If fold_arr is not np.nan and also not in [0, 1, ..., k_folds-1] (e.g., it is -1), then the
+          read is considered "train".
+        This function does not return "train" predictions; see k_fold_predict_proba_train for those.
+    """
+    num_folds = len(models)
+    n_rows = x_all.shape[0]
+    fold_arr = np.asarray(fold_arr)
+    preds = np.full(n_rows, np.nan, dtype=float)
+
+    # Validation: for rows with valid fold assignment (0 <= fold < num_folds)
+    is_valid_fold = (fold_arr >= 0) & (fold_arr < num_folds)
+    valid_idx = np.where(is_valid_fold)[0]
+    if valid_idx.size > 0:
+        # For each fold, predict only for its own validation rows
+        for k in range(num_folds):
+            idx_k = valid_idx[fold_arr[valid_idx] == k]
+            if idx_k.size > 0:
+                preds[idx_k] = models[k].predict_proba(x_all.iloc[idx_k], **kwargs)[:, 1]
+
+    # Test: for rows with fold_arr nan
+    is_test = np.isnan(fold_arr)
+    test_idx = np.where(is_test)[0]
+    if test_idx.size > 0:
+        # For test rows, need predictions from all models
+        all_model_probs = np.empty((num_folds, test_idx.size), dtype=float)
+        for k, model in enumerate(models):
+            all_model_probs[k] = model.predict_proba(x_all.iloc[test_idx], **kwargs)[:, 1]
+        preds[test_idx] = _aggregate_probabilities_from_folds(all_model_probs, max_phred=max_phred)
+
+    # For rows with invalid fold assignment (not nan, but <0 or >=num_folds), leave as np.nan
+    return preds
+
+
+def all_models_predict_proba(
+    models: list[xgb.XGBClassifier],
+    x_all: pd.DataFrame,
+    fold_arr: np.ndarray,
+    max_phred: float = 100,
+    *,
+    return_val_and_train_preds: bool = False,
+    **kwargs,
+):
+    """
+    Return a np.ndarray of shape (n_rows, k_folds) with predictions from all models for each row.
+
+    If return_val_and_train_preds is True, returns "validation" and "test" predictions for each row, as well as
+    aggregated "train" predictions for each row (for each row, aggregates predictions from all models except the
+    out-of-fold model).
+
+    Clarification about train/val/test:
+        - "train": all SNVs where fold_arr is in [0, 1, ..., k_folds-1] and fold_arr != k (i.e., used for training
+          each model). If fold_arr is not np.nan and also not in [0, 1, ..., k_folds-1] (e.g., it is -1), then the
+          read is considered "train".
+        - "validation": all SNVs where fold_arr is in [0, 1, ..., k_folds-1] and fold_arr == k (the current fold).
+          These are the held-out data for each fold, predicted only by the model not trained on them.
+        - "test": all SNVs where fold_arr is np.nan. These are not assigned to any fold and are predicted by aggregating
+          the predictions from all k models.
+        This function only returns "train" predictions; see k_fold_predict_proba for "validation" and "test"
+        predictions.
+    """
+    num_folds = len(models)
+    n_rows = x_all.shape[0]
+    fold_arr = np.asarray(fold_arr)
+    all_model_probs = np.empty((num_folds, n_rows), dtype=float)
+    for k, model in enumerate(models):
+        all_model_probs[k] = model.predict_proba(x_all, **kwargs)[:, 1]
+
+    if not return_val_and_train_preds:
+        return all_model_probs
+    else:
+        preds_val = np.full(n_rows, np.nan, dtype=float)
+        preds_train = np.full(n_rows, np.nan, dtype=float)
+        is_val_fold = (fold_arr >= 0) & (fold_arr < num_folds)
+        idx_val = np.where(is_val_fold)[0]
+        idx_nan = np.where(np.isnan(fold_arr))[0]
+        idx_train = np.where(~np.isnan(fold_arr))[0]
+        if idx_val.size > 0:
+            preds_val[idx_val] = all_model_probs[fold_arr[idx_val].astype(int), idx_val]
+        if idx_nan.size > 0:
+            preds_val[idx_nan] = _aggregate_probabilities_from_folds(all_model_probs[:, idx_nan], max_phred=max_phred)
+        if idx_train.size > 0:
+            train_probs = all_model_probs[:, idx_val].copy()
+            train_probs[fold_arr[idx_val].astype(int), np.arange(len(idx_val))] = np.nan
+            preds_train[idx_val] = _aggregate_probabilities_from_folds(train_probs, max_phred=max_phred)
+        # For other rows, leave as np.nan
+        return preds_val, preds_train, all_model_probs
 
 
 def _probability_recalibration(prob_orig: np.ndarray, y_all: np.ndarray) -> np.ndarray:
@@ -340,7 +541,7 @@ class SRSNVTrainer:
 
         # Folds
         logger.debug("Parsing interval list from %s", args.training_regions)
-        chrom_sizes, chrom_list = _parse_interval_list(args.training_regions)
+        chrom_sizes, chrom_list = _parse_interval_list_tabix(args.training_regions)
         # partition_into_folds expects a pandas Series
         logger.debug("Partitioning %d chromosomes into %d folds", len(chrom_list), self.k_folds)
         self.chrom_to_fold: dict[str, int] = partition_into_folds(
@@ -520,7 +721,7 @@ class SRSNVTrainer:
                     (x_val, y_val),
                 ],
             )
-            logger.debug("Finished training for fold %d", fold_idx)
+            logger.debug("Finished training for fold %d", fold_idx + 1)
 
         logger.debug("Adding quality columns post-training")
         # ---------- add calibrated quality columns ----------------------
@@ -528,30 +729,9 @@ class SRSNVTrainer:
 
     def _add_quality_columns(self, x_all, fold_arr: np.ndarray, y_all: np.ndarray) -> None:
         """Attach raw / recalibrated probabilities and quality columns."""
-        n_rows = len(x_all)
-        preds_prob = np.empty((self.k_folds, n_rows), dtype=float)
-        preds_phred = np.empty_like(preds_prob)
-
-        # predictions from all models
-        for k, model in enumerate(self.models):
-            prob = model.predict_proba(x_all)[:, 1]
-            preds_prob[k] = prob
-            preds_phred[k] = prob_to_phred(prob, max_value=self.args.max_qual)
-
-        # ---------- Vectorised prob_orig -------------------
-        prob_orig = np.empty(n_rows, dtype=float)
-
-        valid_fold_mask = ~np.isnan(fold_arr)
-        idx_valid = np.where(valid_fold_mask)[0]
-        idx_nan = np.where(~valid_fold_mask)[0]
-
-        # Per-row probability coming from its own fold
-        prob_orig[idx_valid] = preds_prob[fold_arr[idx_valid].astype(int), idx_valid]
-
-        # Aggregated probability for rows without a fold
-        if idx_nan.size:
-            agg_prob = _aggregate_probabilities_from_folds(preds_prob[:, idx_nan])
-            prob_orig[idx_nan] = agg_prob
+        prob_orig, _, preds_prob = all_models_predict_proba(
+            self.models, x_all, fold_arr, return_val_and_train_preds=True
+        )
         mqual = prob_to_phred(prob_orig, max_value=self.args.max_qual)
 
         # ------------------------------------------------------------------
@@ -599,10 +779,13 @@ class SRSNVTrainer:
 
         # models – JSON, one file per fold
         model_paths: dict[int, str] = {}
+        model_path_template = self.out_dir / f"{base}model_fold_{{fold_idx}}.json"
+        logger.debug("Saving models to %s", model_path_template)
         for fold_idx, model in enumerate(self.models):
-            path = self.out_dir / f"{base}model_fold_{fold_idx}.json"
+            path = Path(str(model_path_template).format(fold_idx=fold_idx))
             model.save_model(path)
             model_paths[fold_idx] = str(path)
+            logger.info(f"Saved model for fold {fold_idx} → {path}")
 
         # map every chromosome to the model-file basename instead of the fold index
         chrom_to_model_file = {chrom: Path(model_paths[fold]).name for chrom, fold in self.chrom_to_fold.items()}
@@ -645,6 +828,7 @@ class SRSNVTrainer:
 
         # Save comprehensive metadata
         metadata = {
+            "model_paths": model_paths,
             "chrom_to_model": chrom_to_model_file,
             "features": features_meta,
             "quality_recalibration_table": quality_recalibration_table,
@@ -713,6 +897,8 @@ def main() -> None:
     args = _cli()
     if args.verbose:
         logger.setLevel(logging.DEBUG)
+        for handler in logger.handlers:
+            handler.setLevel(logging.DEBUG)
     trainer = SRSNVTrainer(args)
     trainer.run()
 
