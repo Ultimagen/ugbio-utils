@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import json
 import os
 from collections import defaultdict
 from collections.abc import Callable
@@ -23,11 +24,9 @@ from sklearn.metrics import (
     confusion_matrix,
     precision_score,
     recall_score,
-    roc_auc_score,
 )
 from tqdm import tqdm
 from ugbio_core.filter_bed import count_bases_in_bed_file
-from ugbio_core.h5_utils import convert_h5_to_json
 from ugbio_core.logger import logger
 from ugbio_core.plotting_utils import set_pyplot_defaults
 from ugbio_core.reports.report_utils import generate_report
@@ -35,27 +34,42 @@ from ugbio_core.sorter_utils import read_effective_coverage_from_sorter_json
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions, PpmseqCategories
 
+from ugbio_srsnv.srsnv_utils import (
+    MAX_PHRED,
+    construct_trinuc_context_with_alt,
+    prob_to_logit,
+    prob_to_phred,
+    safe_roc_auc,
+    split_validation_training_preds,
+)
+
 # featuremap_df column names. TODO: make more generic?
-ML_PROB_1_TEST = "ML_prob_1_test"
-ML_QUAL_1_TEST = "ML_qual_1_test"
+ML_PROB_1_TEST = "prob_orig"  # TODO: Maybe prob_recal?
+ML_QUAL_1_TEST = "MQUAL"
 ML_LOGIT_TEST = "ML_logit_test"
 LABEL = "label"
-QUAL = "qual"
+QUAL = "SNVQ"
 IS_MIXED = "is_mixed"
 IS_MIXED_START = "is_mixed_start"
 IS_MIXED_END = "is_mixed_end"
 FOLD_ID = "fold_id"
+EDIST = "EDIST"
+SCORE = "BCSQ"
+INDEX = "INDEX"
+LENGTH = "RL"
+READ_COUNT = "DP"  # TODO: check whether do or DP_FILT
+IS_CYCLE_SKIP = "is_cycle_skip"
+REV = "REV"
+IS_FORWARD = "is_forward"
+TRINUC_CONTEXT_WITH_ALT = "trinuc_context_with_alt"
 
-edist_filter = f"{FeatureMapFields.X_EDIST.value} <= 5"
-HQ_SNV_filter = f"{FeatureMapFields.X_SCORE.value} >= 7.9"
-CSKP_SNV_filter = f"{FeatureMapFields.X_SCORE.value} >= 10"
-read_end_filter = (
-    f"{FeatureMapFields.X_INDEX.value} > 12 and "
-    f"{FeatureMapFields.X_INDEX.value} < ({FeatureMapFields.X_LENGTH.value} - 12)"
-)
+edist_filter = f"{EDIST} <= 5"
+HQ_SNV_filter = f"{SCORE} >= 7.9"
+CSKP_SNV_filter = f"{SCORE} >= 10"
+read_end_filter = f"{INDEX} > 12 and " f"{INDEX} < ({LENGTH} - 12)"
 mixed_read_filter = IS_MIXED  # TODO use adapter_version
 default_LoD_filters = {  # noqa: N816
-    "no_filter": f"{FeatureMapFields.X_SCORE.value} >= 0",
+    "no_filter": f"{SCORE} >= 0",
     "HQ_SNV": f"{HQ_SNV_filter} and {edist_filter}",
     "CSKP": f"{CSKP_SNV_filter} and {edist_filter}",
     "HQ_SNV_trim_ends": f"{HQ_SNV_filter} and {edist_filter} and {read_end_filter}",
@@ -94,14 +108,6 @@ def exception_handler(func):
     return wrapper
 
 
-def prob_to_phred(arr, eps=1e-10):
-    return -10 * np.log(1 - arr + eps) / np.log(10)
-
-
-def prob_to_logit(arr, eps=1e-10):
-    return 10 * np.log((arr + eps) / (1 - arr + eps)) / np.log(10)
-
-
 def signif(x, p):
     x = np.asarray(x)
     x_positive = np.where(np.isfinite(x) & (x != 0), np.abs(x), 10 ** (p - 1))
@@ -119,8 +125,8 @@ def list_of_jagged_lists_to_array(list_of_lists, fill=np.nan):
     return arr
 
 
-def list_auc_to_qual(auc_list, eps=1e-10):
-    return list(prob_to_phred(np.array(auc_list), eps=eps))
+def list_auc_to_qual(auc_list, max_value=MAX_PHRED):
+    return list(prob_to_phred(np.array(auc_list), max_value=max_value))
 
 
 def plot_extended_step(x, y, ax, **kwargs):
@@ -238,10 +244,10 @@ def create_data_for_report(
 
     cls_features = list(classifiers[0].feature_names_in_)
 
-    labels = np.unique(df["label"].astype(int))
+    labels = np.unique(df[LABEL].astype(int))
 
-    df_tp = df.query("label == True")
-    df_fp = df.query("label == False")
+    df_tp = df.query(f"{LABEL} == True")
+    df_fp = df.query(f"{LABEL} == False")
 
     fprs = {}
     recalls = {}
@@ -251,7 +257,7 @@ def create_data_for_report(
         recalls[label] = []
         score = f"ML_qual_{label}"
         max_score = np.max((int(np.ceil(df[score].max())), max_score))
-        gtr = df["label"] == label
+        gtr = df[LABEL] == label
         fprs_, recalls_ = precision_recall_curve(df[score], max_score=max_score, y_true=gtr)
         fprs[label].append(fprs_)
         recalls[label].append(recalls_)
@@ -259,17 +265,15 @@ def create_data_for_report(
     return df, df_tp, df_fp, max_score, cls_features, fprs, recalls
 
 
-def srsnv_report(
+def create_srsnv_report_html(
     out_path,
     out_basename,
-    report_name,
-    model_file,
-    params_file,
+    srsnv_metadata_file,
     simple_pipeline=None,
 ):
     if len(out_basename) > 0 and not out_basename.endswith("."):
         out_basename += "."
-    report_html = Path(out_path) / f"{out_basename}{report_name}_report.html"
+    report_html = Path(out_path) / f"{out_basename}report.html"
 
     [
         output_LoD_plot,  # noqa: N806
@@ -288,8 +292,9 @@ def srsnv_report(
     template_notebook = BASE_PATH / REPORTS_DIR / "srsnv_report.ipynb"
 
     parameters = {
-        "model_file": model_file,
-        "params_file": params_file,
+        "srsnv_metadata_file": srsnv_metadata_file,
+        # "model_file": model_file,
+        # "params_file": params_file,
         "srsnv_qc_h5_file": srsnv_qc_h5_filename,
         "output_LoD_plot": output_LoD_plot,
         "qual_vs_ppmseq_tags_table": qual_vs_ppmseq_tags_table,
@@ -701,7 +706,7 @@ def plot_confusion_matrix(
     """
     set_pyplot_defaults()
 
-    cmat = confusion_matrix(y_true=df["label"], y_pred=df[prediction_column_name])
+    cmat = confusion_matrix(y_true=df[LABEL], y_pred=df[prediction_column_name])
     magic_threshold = 0.01
     cmat_norm = cmat.astype("float") / cmat.sum(axis=1)[:, np.newaxis]  # normalize by rows - true labels
     plt.figure(figsize=(4, 3))
@@ -872,7 +877,7 @@ def plot_precision_recall_vs_qual_thresh(
     plt.figure(figsize=(8, 6))
     for label, item in labels_dict.items():
         cum_avg_precision_recalls = []
-        gtr = df["label"] == label
+        gtr = df[LABEL] == label
         cum_fprs_, cum_recalls_ = precision_recall_curve(
             df[f"ML_qual_{label}"],
             max_score=max_score,
@@ -941,7 +946,7 @@ def plot_ml_qual_hist(
     bins = np.arange(0, max_score + 1)
     for label, item in labels_dict.items():
         plt.hist(
-            df[df["label"] == label][score].clip(upper=max_score),
+            df[df[LABEL] == label][score].clip(upper=max_score),
             bins=bins,
             alpha=0.5,
             label=item,
@@ -1001,7 +1006,7 @@ def plot_qual_per_feature(  # noqa: C901, PLR0912 #TODO: too complex and too man
                 if j == 0:
                     plt.figure(figsize=(8, 6))
                 _ = (
-                    df[df["label"] == label][feature]
+                    df[df[LABEL] == label][feature]
                     .astype(int)
                     .hist(
                         bins=[-0.5, 0.5, 1.5],
@@ -1019,7 +1024,7 @@ def plot_qual_per_feature(  # noqa: C901, PLR0912 #TODO: too complex and too man
             }:
                 if j == 0:
                     plt.figure(figsize=(8, 6))
-                category_counts = df[df["label"] == label][feature].value_counts().sort_index()
+                category_counts = df[df[LABEL] == label][feature].value_counts().sort_index()
                 plt.bar(
                     category_counts.index,
                     category_counts,
@@ -1036,7 +1041,7 @@ def plot_qual_per_feature(  # noqa: C901, PLR0912 #TODO: too complex and too man
             else:
                 if j == 0:
                     plt.figure(figsize=(8, 6))
-                s_plot = df[df["label"] == label][feature]
+                s_plot = df[df[LABEL] == label][feature]
                 if s_plot.dtype.name in {"bool", "category"}:  # category bar plot
                     s_plot.value_counts(normalize=True).plot(kind="bar", label=labels_dict[label])
                 else:  # numerical histogram
@@ -1080,16 +1085,16 @@ def get_data_subsets(
 
     df_dict = {}
 
-    df["is_cycle_skip"] = df["is_cycle_skip"].astype(bool)
+    df[IS_CYCLE_SKIP] = df[IS_CYCLE_SKIP].astype(bool)
     if is_mixed_flag:
-        df["is_mixed"] = df["is_mixed"].astype(bool)
-        df_dict["mixed cycle skip"] = df[(df["is_mixed"] & df["is_cycle_skip"])]
-        df_dict["mixed non cycle skip"] = df[(df["is_mixed"] & ~df["is_cycle_skip"])]
-        df_dict["non mixed non cycle skip"] = df[(~df["is_mixed"] & ~df["is_cycle_skip"])]
-        df_dict["non mixed cycle skip"] = df[(~df["is_mixed"] & df["is_cycle_skip"])]
+        df[IS_MIXED] = df[IS_MIXED].astype(bool)
+        df_dict["mixed cycle skip"] = df[(df[IS_MIXED] & df[IS_CYCLE_SKIP])]
+        df_dict["mixed non cycle skip"] = df[(df[IS_MIXED] & ~df[IS_CYCLE_SKIP])]
+        df_dict["non mixed non cycle skip"] = df[(~df[IS_MIXED] & ~df[IS_CYCLE_SKIP])]
+        df_dict["non mixed cycle skip"] = df[(~df[IS_MIXED] & df[IS_CYCLE_SKIP])]
     else:
-        df_dict["cycle skip"] = df[df["is_cycle_skip"]]
-        df_dict["non cycle skip"] = df[~df["is_cycle_skip"]]
+        df_dict["cycle skip"] = df[df[IS_CYCLE_SKIP]]
+        df_dict["non cycle skip"] = df[~df[IS_CYCLE_SKIP]]
 
     return df_dict
 
@@ -1121,7 +1126,7 @@ def get_fpr_recalls_subsets(
     recall_dict = {}
 
     for key in df_dict:
-        gtr = df_dict[key]["label"] == label
+        gtr = df_dict[key][LABEL] == label
         fpr_dict[key], recall_dict[key] = precision_recall_curve(df_dict[key][score], max_score=max_score, y_true=gtr)
 
     return fpr_dict, recall_dict
@@ -1161,7 +1166,7 @@ def plot_subsets_hists(
         plt.figure(figsize=(8, 6))
         for label, item in labels_dict.items():
             h, bin_edges = np.histogram(
-                td[td["label"] == label][score].clip(upper=max_score),
+                td[td[LABEL] == label][score].clip(upper=max_score),
                 bins=bins,
                 density=True,
             )
@@ -1398,7 +1403,7 @@ def calculate_lod_stats(
 
 
 class SRSNVReport:
-    def __init__(  # noqa: PLR0913 C901
+    def __init__(  # noqa: PLR0913 C901 PLR0915 PLR0912
         self,
         models: list[sklearn.base.BaseEstimator],
         data_df: pd.DataFrame,
@@ -1413,6 +1418,7 @@ class SRSNVReport:
         ml_qual_to_qual_fn: Callable = None,
         statistics_h5_file: str = None,
         statistics_json_file: str = None,
+        srsnv_metadata: dict = None,
         rng: Any = None,
         *,
         raise_exceptions: bool = False,
@@ -1442,6 +1448,7 @@ class SRSNVReport:
         """
         exception_config.raise_exception = raise_exceptions
         self.models = models
+        self.num_cv_folds = len(models)
         self.data_df = data_df
         self.params = params
         self.out_path = out_path
@@ -1454,6 +1461,10 @@ class SRSNVReport:
         self.ML_qual_to_qual_fn = ml_qual_to_qual_fn
         self.statistics_h5_file = statistics_h5_file
         self.statistics_json_file = statistics_json_file
+        with open(srsnv_metadata) as f:
+            self.srsnv_metadata = json.load(f)
+        self.max_qual = self.srsnv_metadata["training_parameters"].get("max_qual", MAX_PHRED)
+        self.eps = 10 ** (-self.max_qual / 10)
         if rng is None:
             random_seed = int(datetime.now().timestamp())
             rng = np.random.default_rng(seed=random_seed)
@@ -1462,7 +1473,9 @@ class SRSNVReport:
         else:
             self.rng = rng
 
-        if statistics_json_file:
+        self.all_features = [f["name"] for f in self.srsnv_metadata["features"]]
+
+        if statistics_json_file:  # TODO: Is this needed? Clean this up!
             if not statistics_h5_file:
                 raise ValueError("statistics_h5_file is required when statistics_json_file is provided")
 
@@ -1474,13 +1487,13 @@ class SRSNVReport:
                 raise ValueError(f"model {model} (fold {k}) is not a classifier, please provide a classifier model")
         if not isinstance(data_df, pd.DataFrame):
             raise TypeError("df is not a DataFrame, please provide a DataFrame")
-        expected_keys_in_params = [
-            "fp_featuremap_entry_number",
-            "fp_test_set_size",
-            "fp_train_set_size",  # Do I really need this?
-            "fp_regions_bed_file",
-            "sorter_json_stats_file",
-            "adapter_version",
+        expected_keys_in_params = [  # TODO: Clean up!
+            #     "fp_featuremap_entry_number",
+            #     "fp_test_set_size",
+            #     "fp_train_set_size",  # Do I really need this?
+            #     "fp_regions_bed_file",
+            #     "sorter_json_stats_file",
+            #     "adapter_version",
         ]
         for key in expected_keys_in_params:
             if key not in params:
@@ -1497,9 +1510,28 @@ class SRSNVReport:
             self.params["data_name"] = ""
 
         self.output_h5_filename = os.path.join(out_path, f"{base_name}single_read_snv.applicationQC.h5")
+
+        # Add trinuc_context_with_alt column if it doesn't exist
+        if TRINUC_CONTEXT_WITH_ALT not in self.data_df.columns:
+            logger.info(f"Adding {TRINUC_CONTEXT_WITH_ALT} column to data_df")
+            self.data_df[TRINUC_CONTEXT_WITH_ALT] = construct_trinuc_context_with_alt(self.data_df)
+
+        # Add is_forward column as negation of REV column
+        if IS_FORWARD not in self.data_df.columns and REV in self.data_df.columns:
+            logger.info(f"Adding {IS_FORWARD} column to data_df as negation of {REV}")
+            self.data_df[IS_FORWARD] = ~self.data_df[REV]
+
         # add logits to data_df
-        self.data_df["ML_logit_test"] = prob_to_logit(self.data_df["ML_prob_1_test"])
-        self.data_df["ML_logit_train"] = prob_to_logit(self.data_df["ML_prob_1_train"])
+        self.data_df[ML_LOGIT_TEST] = prob_to_logit(
+            self.data_df[ML_PROB_1_TEST], max_value=self.max_qual
+        )  # TODO: Should this be prob_recal ??
+        # Find training probabilities and logits
+        all_model_probs = (
+            self.data_df[[f"prob_fold_{i}" for i in range(self.num_cv_folds)]].to_numpy().T
+        )  # TODO: change hard coded prob_fold_{i}
+        _, preds_train = split_validation_training_preds(all_model_probs, fold_arr=self.data_df[FOLD_ID].to_numpy())
+        self.data_df["ML_prob_train"] = preds_train
+        self.data_df["ML_logit_train"] = prob_to_logit(preds_train, max_value=self.max_qual)
 
     def _save_plt(self, output_filename: str = None, fig=None, *, tight_layout=True, **kwargs):
         if output_filename is not None:
@@ -1542,7 +1574,7 @@ class SRSNVReport:
         for th in range(ml_qual_max + 1):
             tpr = ((ml_quals > th) & condition & labels).sum() / labels.sum()
             fpr = ((ml_quals > th) & condition & ~labels).sum() / (~labels).sum()
-            snvqs.append(prob_to_phred(1 - base_snvq * fpr / tpr))
+            snvqs.append(prob_to_phred(1 - base_snvq * fpr / tpr, max_value=self.max_qual))
             recalls.append(base_recall * tpr)
         return np.array(snvqs), np.array(recalls)
 
@@ -1556,18 +1588,163 @@ class SRSNVReport:
             label_col: str: column name with the labels
             ML_qual_col: str: column name with the ML_qual values
         """
-        base_snv_rate = self.df_mrd_simulation.loc["no_filter", RESIDUAL_SNV_RATE]
-        base_recall = self.df_mrd_simulation.loc["no_filter", TP_READ_RETENTION_RATIO]
+        # base_snv_rate = self.df_mrd_simulation.loc["no_filter", RESIDUAL_SNV_RATE]
+        # base_recall = self.df_mrd_simulation.loc["no_filter", TP_READ_RETENTION_RATIO]
         data_df = self.data_df
         snvqs, recalls = self._get_snvq_and_recall(
             data_df[label_col],
             data_df[ml_qual_col],
-            base_snvq=base_snv_rate,
-            base_recall=base_recall,
+            base_snvq=self.base_error_rate,
+            base_recall=self.base_recall,
             condition=condition,
         )
         recall_at_snvq = np.interp(snvq, snvqs, recalls)
         return recall_at_snvq
+
+    def _get_base_recall_from_filters(self, filters):
+        """Calculate base recall from filtering statistics.
+
+        Returns:
+            float: Base recall (rows before ref_eq_alt / total raw rows)
+        """
+        ref_eq_alt_index = None
+        for i, filter_info in enumerate(filters):
+            if filter_info["name"] == "ref_eq_alt":
+                ref_eq_alt_index = i
+                break
+
+        if ref_eq_alt_index is None or ref_eq_alt_index == 0:
+            raise ValueError("ref_eq_alt filter not found or is the first filter")
+
+        # Calculate recall0 (base recall)
+        # recall0 = rows at filter before ref_eq_alt / rows at first filter (raw)
+        last_filter_before_ref_eq_alt = filters[ref_eq_alt_index - 1]
+        first_filter = filters[0]
+        return last_filter_before_ref_eq_alt["rows"] / first_filter["rows"]
+
+    def _get_base_error_rate(self, filters):
+        """Calculate base error rate (b_f) from negative filtering statistics.
+
+        This represents the base rate of low VAF (False) SNVs, calculated as the ratio
+        of rows at the last filter before downsample to the total raw rows in the
+        negative filtering statistics.
+
+        Returns:
+            float: Base error rate of low VAF SNVs (rows before downsample / total raw rows)
+        """
+        downsample_index = None
+        for i, filter_info in enumerate(filters):
+            if filter_info["name"] == "downsample":
+                downsample_index = i
+                break
+
+        # b_f = rows at last filter before downsample / rows at first filter (raw)
+        if downsample_index is not None:
+            last_filter_before_downsample = filters[downsample_index - 1]
+        else:
+            # If no downsample filter, use the last filter
+            last_filter_before_downsample = filters[-1]
+
+        first_filter = filters[0]  # TODO: Should this be the first filter, or the last filter before 'ref_ne_alt'?
+        return last_filter_before_downsample["rows"] / first_filter["rows"]
+
+    def _calculate_tpr_fpr_for_thresholds(self, mqual_thresholds, recall0):
+        """Calculate TPR and FPR for given MQUAL thresholds.
+
+        Args:
+            mqual_thresholds: Array of MQUAL threshold values
+            recall0: Base recall value
+
+        Returns:
+            tuple: (tprs, fprs) - lists of TPR and FPR values
+        """
+        tprs = []
+        fprs = []
+
+        total_positive = self.data_df[LABEL].sum()
+        total_negative = (~self.data_df[LABEL]).sum()
+
+        for mqual_threshold in mqual_thresholds:
+            # Count positive cases with MQUAL > threshold (TPR calculation)
+            positive_above_threshold = (self.data_df[LABEL] & (self.data_df[ML_QUAL_1_TEST] > mqual_threshold)).sum()
+
+            # Calculate fraction of positive cases above threshold
+            fraction_above_threshold = positive_above_threshold / total_positive if total_positive > 0 else 0
+
+            # TPR = recall0 * fraction_above_threshold
+            tpr = recall0 * fraction_above_threshold
+            tprs.append(tpr)
+
+            # Calculate FPR: fraction of negative cases with MQUAL > threshold
+            negative_above_threshold = ((~self.data_df[LABEL]) & (self.data_df[ML_QUAL_1_TEST] > mqual_threshold)).sum()
+            fpr = negative_above_threshold / total_negative if total_negative > 0 else 0
+            fprs.append(fpr)
+
+        return tprs, fprs
+
+    def _calculate_filter_quality(self, tprs, fprs, base_error_rate):
+        """Calculate Filter Quality (FQ) from TPR, FPR, and base error rate.
+
+        Args:
+            tprs: List of True Positive Rates
+            fprs: List of False Positive Rates
+            base_error_rate: Base error rate of low VAF (False) SNVs
+
+        Returns:
+            list: Filter Quality values in Phred scale
+        """
+        fqs = []
+
+        for tpr, fpr in zip(tprs, fprs, strict=True):
+            # Calculate precision using: 1 - precision = FPR/TPR * base_error_rate
+            if tpr > 0:
+                one_minus_precision = (fpr / tpr) * base_error_rate
+                precision = 1 - one_minus_precision
+                # Ensure precision is between 0 and 1
+                precision = max(0, min(1, precision))
+            else:
+                precision = 0
+
+            # Calculate Filter Quality (FQ) in Phred scale: FQ = -10 * log10(1-precision)
+            fq = prob_to_phred(precision, max_value=self.max_qual)
+            fqs.append(fq)
+
+        return fqs
+
+    def calc_precision_and_recall(self):
+        """Calculate precision and recall metrics for SRSNV quality thresholds.
+
+        Returns:
+            pd.DataFrame: DataFrame with MQUAL, SNVQ, recall, FPR, and FQ columns
+        """
+        # Create dataframe from quality recalibration table
+        pr_df = pd.DataFrame(
+            np.array(self.srsnv_metadata["quality_recalibration_table"]).T, columns=[ML_QUAL_1_TEST, QUAL]
+        )
+
+        # Get filtering statistics
+        positive_filters = self.srsnv_metadata["filtering_stats"]["positive"]["filters"]
+        negative_filters = self.srsnv_metadata["filtering_stats"]["negative"]["filters"]
+
+        # Calculate base values
+        recall0 = self._get_base_recall_from_filters(positive_filters)
+        base_error_rate = self._get_base_error_rate(negative_filters)
+
+        self.base_recall = recall0
+        self.base_error_rate = base_error_rate
+
+        # Calculate TPR and FPR for each MQUAL threshold
+        tprs, fprs = self._calculate_tpr_fpr_for_thresholds(pr_df[ML_QUAL_1_TEST], recall0)
+
+        # Calculate Filter Quality
+        fqs = self._calculate_filter_quality(tprs, fprs, base_error_rate)
+
+        # Add columns to the dataframe
+        pr_df["recall"] = tprs
+        pr_df["FPR"] = fprs
+        pr_df["FQ"] = fqs
+
+        return pr_df
 
     @exception_handler
     def calc_run_info_table(self):
@@ -1578,8 +1755,8 @@ class SRSNVReport:
         FP_mixed_percent = (self.data_df[IS_MIXED] & ~self.data_df[LABEL]).sum() / ((~self.data_df[LABEL]).sum())  # noqa: N806
         general_info = {
             ("Sample name", ""): self.base_name[:-1],
-            ("Median training read length", ""): np.median(self.data_df["X_LENGTH"]),
-            ("Median training coverage", ""): np.median(self.data_df["X_READ_COUNT"]),
+            ("Median training read length", ""): np.median(self.data_df[LENGTH]),
+            ("Median training coverage", ""): np.median(self.data_df[READ_COUNT]),
             ("Training set, % TP reads", ""): signif(self.data_df[LABEL].mean() * 100, 3),
             (
                 "Mixed training reads",
@@ -1609,13 +1786,16 @@ class SRSNVReport:
         recall_at_60_mixed = self._get_recall_at_snvq(snvq=60, condition=self.data_df[IS_MIXED])
         recall_at_60_mixed_start = self._get_recall_at_snvq(snvq=60, condition=self.data_df[IS_MIXED_START])
         roc_auc_phred = prob_to_phred(
-            self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name="run info total")
+            self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name="run info total"),
+            max_value=self.max_qual,
         )
         roc_auc_phred_mixed = prob_to_phred(
-            self._safe_roc_auc(mixed_df[LABEL], mixed_df[ML_PROB_1_TEST], name="run info mixed")
+            self._safe_roc_auc(mixed_df[LABEL], mixed_df[ML_PROB_1_TEST], name="run info mixed"),
+            max_value=self.max_qual,
         )
         roc_auc_phred_mixed_start = prob_to_phred(
-            self._safe_roc_auc(mixed_start_df[LABEL], mixed_start_df[ML_PROB_1_TEST], name="run info mixed")
+            self._safe_roc_auc(mixed_start_df[LABEL], mixed_start_df[ML_PROB_1_TEST], name="run info mixed"),
+            max_value=self.max_qual,
         )
         performance_info = {
             ("Median SNVQ", "All reads"): signif(median_qual, 3),
@@ -1636,35 +1816,35 @@ class SRSNVReport:
         }
         # Info about versions
         version_info = {
-            ("Pipeline version", ""): (self.params["pipeline_version"]),
-            ("Docker image", ""): self.params["docker_image"],
-            ("Adapter version", ""): self.params["adapter_version"],
+            ("Pipeline version", ""): (self.params.get("pipeline_version", None)),
+            ("Docker image", ""): self.params.get("docker_image", None),
+            ("Adapter version", ""): self.params.get("adapter_version", None),
             ("Report created on", ""): datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
         # Training info
         training_info = {
-            ("Pre-filter", ""): self.params["pre_filter"],
-            ("Columns for balancing", ""): self.params["balanced_sampling_info_fields"],
+            ("Pre-filter", ""): self.params.get("pre_filter", None),
+            ("Columns for balancing", ""): self.params.get("balanced_sampling_info_fields", None),
             ("Number of CV folds", ""): self.params["num_CV_folds"],
         }
         # Info about training set size
         if self.params["num_CV_folds"] >= 2:  # noqa: PLR2004
             dataset_sizes = {
-                ("dataset size", f"fold {f}"): (self.data_df["fold_id"] == f).sum()
+                ("dataset size", f"fold {f}"): (self.data_df[FOLD_ID] == f).sum()
                 for f in range(self.params["num_CV_folds"])
             }
-            dataset_sizes[("dataset size", "test only")] = (self.data_df["fold_id"].isna()).sum()
+            dataset_sizes[("dataset size", "test only")] = (self.data_df[FOLD_ID].isna()).sum()
             other_fold_ids = np.logical_and(
-                ~self.data_df["fold_id"].isin(np.arange(self.params["num_CV_folds"])), ~self.data_df["fold_id"].isna()
+                ~self.data_df[FOLD_ID].isin(np.arange(self.params["num_CV_folds"])), ~self.data_df[FOLD_ID].isna()
             ).sum()
             if other_fold_ids > 0:
                 dataset_sizes[("dataset size", "other")] = other_fold_ids
         else:  # Train/test split
             dataset_sizes = {
-                ("dataset size", "train"): (self.data_df["fold_id"] == -1).sum(),
-                ("dataset size", "test"): (self.data_df["fold_id"] == 0).sum(),
+                ("dataset size", "train"): (self.data_df[FOLD_ID] == -1).sum(),
+                ("dataset size", "test"): (self.data_df[FOLD_ID] == 0).sum(),
             }
-            other_fold_ids = ~self.data_df["fold_id"].isin([-1, 0]).sum()
+            other_fold_ids = ~self.data_df[FOLD_ID].isin([-1, 0]).sum()
             if other_fold_ids > 0:
                 dataset_sizes[("dataset size", "other")] = other_fold_ids
         run_info_table = pd.Series({**general_info, **version_info}, name="")
@@ -1682,7 +1862,7 @@ class SRSNVReport:
         """
         logger.info("Generating plot of ML_qual -> SNVQ link function (with histograms)")
         ml_qual_max_int = np.floor(self.data_df[ML_QUAL_1_TEST].max())
-        x_ml_qual = np.arange(1e-10, ml_qual_max_int, 0.1)
+        x_ml_qual = np.arange(self.eps, ml_qual_max_int, 0.1)
 
         xs = self.ML_qual_to_qual_fn((x_ml_qual[1:] + x_ml_qual[:-1]) / 2).reshape(
             -1,
@@ -1771,29 +1951,12 @@ class SRSNVReport:
         Parameters:
         y_true: array-like, true labels
         y_pred: array-like, predicted probabilities
-        name: str, name of dataset (for logging). If None, ignore datset name.
+        name: str, name of dataset (for logging). If None, ignore dataset name.
 
         Returns:
         ROC AUC score if calculable, otherwise np.nan
         """
-        y_true = np.array(y_true)  # Convert to numpy array
-        name_for_log = f" ({name=})" if name is not None else ""
-        # Check if the array is empty
-        if y_true.size == 0:
-            logger.warning(f"ROC AUC cannot be calculated: dataset is empty {name_for_log}")
-            return np.nan
-
-        # Check if all labels are the same
-        if len(np.unique(y_true)) == 1:
-            logger.warning(f"ROC AUC cannot be calculated: dataset has only one class {name_for_log}")
-            return np.nan
-
-        # Calculate the ROC AUC score
-        try:
-            return roc_auc_score(y_true, y_pred)
-        except Exception as e:
-            logger.error(f"An error occurred while calculating ROC AUC{name_for_log}: {e}")
-            return np.nan
+        return safe_roc_auc(y_true, y_pred, name=name, logger=logger)
 
     @exception_handler
     def calc_roc_auc_table(self, holdout_fold_size_thresh: int = 100):  # noqa: C901, PLR0915 #TODO: Refactor
@@ -1805,17 +1968,21 @@ class SRSNVReport:
         logger.info("Generating ROC AUC table")
 
         num_cv_folds = self.params["num_CV_folds"]
-        auc_total = prob_to_phred(self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name="total"))
+        auc_total = prob_to_phred(
+            self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name="total"), max_value=self.max_qual
+        )
         mix_cond = self.data_df[IS_MIXED]
         auc_mixed = prob_to_phred(
             self._safe_roc_auc(
                 self.data_df.loc[mix_cond, LABEL], self.data_df.loc[mix_cond, ML_PROB_1_TEST], name="mixed"
-            )
+            ),
+            max_value=self.max_qual,
         )
         auc_non_mixed = prob_to_phred(
             self._safe_roc_auc(
                 self.data_df.loc[~mix_cond, LABEL], self.data_df.loc[~mix_cond, ML_PROB_1_TEST], name="non-mixed"
-            )
+            ),
+            max_value=self.max_qual,
         )
 
         auc_per_fold = []
@@ -1829,7 +1996,9 @@ class SRSNVReport:
         if holdout_fold_cond.sum() > holdout_fold_size_thresh:
             mix_holdout_fold_cond = self.data_df[FOLD_ID].isna() & (self.data_df[IS_MIXED])
             nonmix_holdout_fold_cond = self.data_df[FOLD_ID].isna() & (~self.data_df[IS_MIXED])
-        all_features = self.params["numerical_features"] + self.params["categorical_features_names"]
+        all_features = (
+            self.all_features
+        )  # self.params["categorical_features_names"] + self.params["numerical_features"]
         for k in range(num_cv_folds):
             fold_cond = self.data_df[FOLD_ID] == k
             mix_fold_cond = (self.data_df[FOLD_ID] == k) & (self.data_df[IS_MIXED])
@@ -1838,7 +2007,7 @@ class SRSNVReport:
                 prob_to_phred(
                     self._safe_roc_auc(
                         self.data_df.loc[fold_cond, LABEL],
-                        self.data_df.loc[fold_cond, "ML_prob_1_test"],
+                        self.data_df.loc[fold_cond, ML_PROB_1_TEST],
                         name=f"fold {k} total",
                     )
                 )
@@ -1847,18 +2016,20 @@ class SRSNVReport:
                 prob_to_phred(
                     self._safe_roc_auc(
                         self.data_df.loc[mix_fold_cond, LABEL],
-                        self.data_df.loc[mix_fold_cond, "ML_prob_1_test"],
+                        self.data_df.loc[mix_fold_cond, ML_PROB_1_TEST],
                         name=f"fold {k} mixed",
-                    )
+                    ),
+                    max_value=self.max_qual,
                 )
             )
             auc_per_fold_non_mixed.append(
                 prob_to_phred(
                     self._safe_roc_auc(
                         self.data_df.loc[nonmix_fold_cond, LABEL],
-                        self.data_df.loc[nonmix_fold_cond, "ML_prob_1_test"],
+                        self.data_df.loc[nonmix_fold_cond, ML_PROB_1_TEST],
                         name=f"fold {k} non-mixed",
-                    )
+                    ),
+                    max_value=self.max_qual,
                 )
             )
             # Calculate ROC AUC on holdout set
@@ -1888,7 +2059,8 @@ class SRSNVReport:
                                 self.data_df.loc[mix_holdout_fold_cond, LABEL],
                                 preds,
                                 name="holdout mixed",
-                            )
+                            ),
+                            max_value=self.max_qual,
                         )
                     )
                     if np.isnan(auc_on_holdout_mixed[-1]):
@@ -1904,7 +2076,8 @@ class SRSNVReport:
                                 self.data_df.loc[nonmix_holdout_fold_cond, LABEL],
                                 preds,
                                 name="holdout non-mixed",
-                            )
+                            ),
+                            max_value=self.max_qual,
                         )
                     )
                     if np.isnan(auc_on_holdout_non_mixed[-1]):
@@ -1956,13 +2129,13 @@ class SRSNVReport:
         if qual_stat_ps is None:
             qual_stat_ps = [0.05, 0.1, 0.25, 0.5, 0.75, 0.90, 0.95]
         if cols_for_stats is None:
-            cols_for_stats = {"qual": "qual", "ML_qual_1_test": "ML_qual", "ML_logit_test": "ML_logit"}
+            cols_for_stats = {QUAL: QUAL, ML_QUAL_1_TEST: "ML_qual", ML_LOGIT_TEST: "ML_logit"}
         if display_columns is None:
             display_columns = [
-                ("qual", "FP", ""),
-                ("qual", "TP", "overall"),
-                ("qual", "TP", "mixed"),
-                ("qual", "TP", "non-mixed"),
+                (QUAL, "FP", ""),
+                (QUAL, "TP", "overall"),
+                (QUAL, "TP", "mixed"),
+                (QUAL, "TP", "non-mixed"),
                 ("ML_qual", "FP", ""),
                 ("ML_qual", "TP", "overall"),
                 ("ML_qual", "TP", "mixed"),
@@ -1971,11 +2144,11 @@ class SRSNVReport:
 
         logger.info("Generating Run Quality table")
         conds_dict = {
-            "": np.ones(self.data_df["label"].shape, dtype=bool),
-            "_TP": self.data_df["label"],
-            "_FP": ~self.data_df["label"],
-            "_TP_mixed": np.logical_and(self.data_df["is_mixed"], self.data_df["label"]),
-            "_TP_non-mixed": np.logical_and(~self.data_df["is_mixed"], self.data_df["label"]),
+            "": np.ones(self.data_df[LABEL].shape, dtype=bool),
+            "_TP": self.data_df[LABEL],
+            "_FP": ~self.data_df[LABEL],
+            "_TP_mixed": np.logical_and(self.data_df[IS_MIXED], self.data_df[LABEL]),
+            "_TP_non-mixed": np.logical_and(~self.data_df[IS_MIXED], self.data_df[LABEL]),
         }
         qual_stats_description = {
             key: self.data_df.loc[cond, list(cols_for_stats.keys())]
@@ -2003,7 +2176,7 @@ class SRSNVReport:
     @exception_handler
     def quality_per_ppmseq_tags(self, output_filename: str = None):
         """Generate tables of median quality and data quantity per start and end ppmseq tags."""
-        data_df_tp = self.data_df[self.data_df["label"]].copy()
+        data_df_tp = self.data_df[self.data_df[LABEL]].copy()
         ppmseq_tags_in_data = self.start_tag_col is not None and self.end_tag_col is not None
         start_tag_col, end_tag_col = (self.start_tag_col, self.end_tag_col) if ppmseq_tags_in_data else ("st", "et")
         if not ppmseq_tags_in_data:
@@ -2012,14 +2185,14 @@ class SRSNVReport:
         if data_df_tp[start_tag_col].isna().any() or data_df_tp[end_tag_col].isna().any():
             data_df_tp = data_df_tp.astype({start_tag_col: str, end_tag_col: str})
         ppmseq_category_quality_table = (
-            data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)["qual"].median().unstack()  # noqa PD010
+            data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)[QUAL].median().unstack()  # noqa PD010
         )
         if PpmseqCategories.END_UNREACHED.value in ppmseq_category_quality_table.index:
             ppmseq_category_quality_table = ppmseq_category_quality_table.drop(
                 index=PpmseqCategories.END_UNREACHED.value
             )
         ppmseq_category_quantity_table = (
-            data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)["qual"].count().unstack()  # noqa PD010
+            data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)[QUAL].count().unstack()  # noqa PD010
         )
         if PpmseqCategories.END_UNREACHED.value in ppmseq_category_quantity_table.index:
             ppmseq_category_quantity_table = ppmseq_category_quantity_table.drop(
@@ -2157,14 +2330,20 @@ class SRSNVReport:
             cat_features_dict = self.params["categorical_features_dict"]
         X_val_display = X_val.copy()  # noqa: N806
         for col, cat_vals in cat_features_dict.items():
-            X_val_display[col] = X_val_display[col].map({cv: i for i, cv in enumerate(cat_vals)}).astype(int)
+            # Map categorical values to integers, with NaN mapped to -1 (consistent with XGBoost)
+            # Convert to object first to allow fillna with new value
+            X_val_display[col] = (
+                X_val_display[col].astype(object).map({cv: i for i, cv in enumerate(cat_vals)}).fillna(-1).astype(int)
+            )
 
         return X_val_display
 
-    def _shap_on_sample(self, model, data_df, features=None, label_col="label", n_sample=10_000):
+    def _shap_on_sample(self, model, data_df, features=None, label_col=LABEL, n_sample=10_000):
         """Calculate shap value on a sample of the data from data_df."""
         if features is None:
-            features = self.params["numerical_features"] + self.params["categorical_features_names"]
+            features = (
+                self.all_features
+            )  # self.params["numerical_features"] + self.params["categorical_features_names"]
         if not hasattr(model, "best_ntree_limit"):
             model.best_ntree_limit = model.best_iteration + 1
         X_val = data_df[features].sample(n=n_sample, random_state=self.rng)  # noqa: N806
@@ -2358,7 +2537,7 @@ class SRSNVReport:
         # Define model, data
         k = 0  # fold_id
         model = self.models[k]
-        X_val = self.data_df[self.data_df["fold_id"] == k]  # noqa: N806
+        X_val = self.data_df[self.data_df[FOLD_ID] == k]  # noqa: N806
         # Get SHAP values
         logger.info("Calculating SHAP values")
         shap_values, X_val, _ = self._shap_on_sample(  # noqa: N806
@@ -2380,17 +2559,17 @@ class SRSNVReport:
 
     def _get_trinuc_stats(self, q1: float = 0.1, q2: float = 0.9):
         data_df = self.data_df.copy()
-        data_df["is_cycle_skip"] = data_df["is_cycle_skip"].astype(int)
-        trinuc_stats = data_df.groupby(["trinuc_context_with_alt", "label", "is_forward", "is_mixed"]).agg(
-            median_qual=("qual", "median"),
-            quantile1_qual=("qual", lambda x: x.quantile(q1)),
-            quantile3_qual=("qual", lambda x: x.quantile(q2)),
-            is_cycle_skip=("is_cycle_skip", "mean"),
-            count=("qual", "size"),
+        data_df[IS_CYCLE_SKIP] = data_df[IS_CYCLE_SKIP].astype(int)
+        trinuc_stats = data_df.groupby([TRINUC_CONTEXT_WITH_ALT, LABEL, IS_FORWARD, IS_MIXED]).agg(
+            median_qual=(QUAL, "median"),
+            quantile1_qual=(QUAL, lambda x: x.quantile(q1)),
+            quantile3_qual=(QUAL, lambda x: x.quantile(q2)),
+            is_cycle_skip=(IS_CYCLE_SKIP, "mean"),
+            count=(QUAL, "size"),
         )
         trinuc_stats["fraction"] = trinuc_stats["count"] / self.data_df.shape[0]
         trinuc_stats = trinuc_stats.reset_index()
-        trinuc_stats["is_forward"] = trinuc_stats["is_forward"].astype(bool)
+        trinuc_stats[IS_FORWARD] = trinuc_stats[IS_FORWARD].astype(bool)
         return trinuc_stats
 
     def _get_trinuc_with_alt_in_order(self, order: str = "symmetric"):
@@ -2442,14 +2621,14 @@ class SRSNVReport:
     ):
         logger.info("Calculating trinuc context statistics")
         trinuc_stats = self._get_trinuc_stats(q1=0.1, q2=0.9)
-        trinuc_stats.set_index(["trinuc_context_with_alt", "label", "is_forward", "is_mixed"]).to_hdf(
+        trinuc_stats.set_index([TRINUC_CONTEXT_WITH_ALT, LABEL, IS_FORWARD, IS_MIXED]).to_hdf(
             self.output_h5_filename, key="trinuc_stats", mode="a"
         )
         # get trinuc_with_context in right order
         trinuc_symmetric_ref_alt, symmetric_index, snv_labels = self._get_trinuc_with_alt_in_order(order=order)
         snv_positions = [8, 24, 40, 56, 72, 88]  # Midpoint for each SNV titles in plot
         trinuc_is_cycle_skip = (
-            trinuc_stats.groupby("trinuc_context_with_alt")["is_cycle_skip"]
+            trinuc_stats.groupby(TRINUC_CONTEXT_WITH_ALT)[IS_CYCLE_SKIP]
             .mean()
             .astype(bool)
             .loc[trinuc_symmetric_ref_alt]
@@ -2457,13 +2636,13 @@ class SRSNVReport:
         )
 
         # Configurable boolean column name
-        boolean_column_frac = "label"  # Change this to any other boolean column name as needed
-        boolean_column_qual = "is_mixed"  # Change this to any other boolean column name as needed
+        boolean_column_frac = LABEL  # Change this to any other boolean column name as needed
+        boolean_column_qual = IS_MIXED  # Change this to any other boolean column name as needed
         cond_for_frac_plot = True
-        cond_for_qual_plot = trinuc_stats["label"]
+        cond_for_qual_plot = trinuc_stats[LABEL]
         if filter_on_is_forward:
-            cond_for_frac_plot = trinuc_stats["is_forward"]
-            cond_for_qual_plot = cond_for_qual_plot & trinuc_stats["is_forward"]
+            cond_for_frac_plot = trinuc_stats[IS_FORWARD]
+            cond_for_qual_plot = cond_for_qual_plot & trinuc_stats[IS_FORWARD]
 
         # Plot parameters
         label_fontsize = 14
@@ -2476,13 +2655,13 @@ class SRSNVReport:
         # First Plot: Fractions
         plot_df_true_frac = (
             trinuc_stats[trinuc_stats[boolean_column_frac] & cond_for_frac_plot]
-            .groupby("trinuc_context_with_alt")["fraction"]
+            .groupby(TRINUC_CONTEXT_WITH_ALT)["fraction"]
             .sum()
             .reindex(trinuc_symmetric_ref_alt)
         )
         plot_df_false_frac = (
             trinuc_stats[~trinuc_stats[boolean_column_frac] & cond_for_frac_plot]
-            .groupby("trinuc_context_with_alt")["fraction"]
+            .groupby(TRINUC_CONTEXT_WITH_ALT)["fraction"]
             .sum()
             .reindex(trinuc_symmetric_ref_alt)
         )
@@ -2492,7 +2671,7 @@ class SRSNVReport:
         # Second Plot: Median Qual
         plot_df_true_qual = (
             trinuc_stats[(trinuc_stats[boolean_column_qual]) & (cond_for_qual_plot)]
-            .groupby("trinuc_context_with_alt")
+            .groupby(TRINUC_CONTEXT_WITH_ALT)
             .agg(
                 median_qual=("median_qual", "mean"),
                 quantile1_qual=("quantile1_qual", "mean"),
@@ -2502,7 +2681,7 @@ class SRSNVReport:
         )
         plot_df_false_qual = (
             trinuc_stats[(~trinuc_stats[boolean_column_qual]) & (cond_for_qual_plot)]
-            .groupby("trinuc_context_with_alt")
+            .groupby(TRINUC_CONTEXT_WITH_ALT)
             .agg(
                 median_qual=("median_qual", "mean"),
                 quantile1_qual=("quantile1_qual", "mean"),
@@ -2682,9 +2861,9 @@ class SRSNVReport:
         col = stats_for_plot.columns[0]
         polys, lines = [], []
         for is_mixed, color in zip(
-            [~stats_for_plot["is_mixed"], stats_for_plot["is_mixed"]], [c_false, c_true], strict=False
+            [~stats_for_plot[IS_MIXED], stats_for_plot[IS_MIXED]], [c_false, c_true], strict=False
         ):
-            qual_df = stats_for_plot.loc[is_mixed & stats_for_plot["label"] & (stats_for_plot["count"] > min_count), :]
+            qual_df = stats_for_plot.loc[is_mixed & stats_for_plot[LABEL] & (stats_for_plot["count"] > min_count), :]
             fb_kws["color"] = color
             step_kws["color"] = color
             if qual_df.shape[0] > 0:
@@ -2718,12 +2897,12 @@ class SRSNVReport:
             data_df[col] = pd.cut(data_df[col], bin_edges, labels=(bin_edges[1:] + bin_edges[:-1]) / 2)
         stats_for_plot = (
             data_df.sample(frac=1)
-            .groupby([col, "label", "is_mixed"])
+            .groupby([col, LABEL, IS_MIXED])
             .agg(
-                median_qual=("qual", "median"),
-                quantile1_qual=("qual", lambda x: x.quantile(q1)),
-                quantile3_qual=("qual", lambda x: x.quantile(q2)),
-                count=("qual", "size"),
+                median_qual=(QUAL, "median"),
+                quantile1_qual=(QUAL, lambda x: x.quantile(q1)),
+                quantile3_qual=(QUAL, lambda x: x.quantile(q2)),
+                count=(QUAL, "size"),
             )
         )
         stats_for_plot["fraction"] = stats_for_plot["count"] / data_df.shape[0]
@@ -2755,7 +2934,7 @@ class SRSNVReport:
         sns.histplot(
             data=self.data_df,
             x=col,
-            hue="label",
+            hue=LABEL,
             discrete=is_discrete,
             bins=bin_edges,
             element="step",
@@ -2866,7 +3045,7 @@ class SRSNVReport:
         hist_data_df = self._get_histogram_data(g, col_name=IS_MIXED)
         hist_data_df.to_hdf(self.output_h5_filename, key="quality_histogram", mode="a")
         if plot_interpolating_function:
-            xs = np.arange(1e-10, np.floor(self.data_df[ML_QUAL_1_TEST].max()), 0.1)
+            xs = np.arange(self.eps, np.floor(self.data_df[ML_QUAL_1_TEST].max()), 0.1)
             ax = axes[1]
             ax.plot(
                 self.ML_qual_to_qual_fn((xs[1:] + xs[:-1]) / 2),
@@ -2893,7 +3072,7 @@ class SRSNVReport:
 
         fig.tight_layout()
         plt.show()
-        self._save_plt(output_filename, fig=fig)
+        self._save_plt(output_filename=output_filename, fig=fig)
 
     def _plot_logit_histogram(self, plot_df, ax, alpha=0.4):
         """Plot a single histogram of logit values, by: FP, TP mixed, TP non-mixed."""
@@ -2947,7 +3126,7 @@ class SRSNVReport:
         ax.set_xlim([xmin, xmax])
         fig.tight_layout()
         plt.show()
-        self._save_plt(output_filename, fig=fig)
+        self._save_plt(output_filename=output_filename, fig=fig)
 
     def create_report(self):
         """Generate plots for report and save data in hdf5 file."""
@@ -2966,6 +3145,7 @@ class SRSNVReport:
             calibration_fn_with_hist,
         ] = _get_plot_paths(out_path=self.params["workdir"], out_basename=self.params["data_name"])
         # General info
+        self.pr_df = self.calc_precision_and_recall()
         self.calc_run_info_table()
         # Quality stats
         self.calc_run_quality_table()
@@ -2996,26 +3176,26 @@ class SRSNVReport:
         for col in self.params["numerical_features"]:
             self.plot_numerical_feature_hist_and_qual(col, output_filename=output_qual_per_feature + col)
 
-        # Create LoD plot
-        # TODO: Update the following to new conform with new report logic
-        if self.params["fp_regions_bed_file"] is not None:
-            logger.info("Calculating LoD statistics")
-            min_LoD_filter = calculate_lod_stats(  # noqa: N806
-                df_mrd_simulation=self.df_mrd_simulation,
-                output_h5=self.statistics_h5_file,
-                lod_column=self.c_lod,
-            )
-            logger.info("Creating SNVQ-recall-LoD plot")
-            self.df_mrd_simulation.unstack().to_hdf(self.output_h5_filename, key="SNV_recall_LoD", mode="a")  # noqa PD010
-            plot_LoD(
-                self.df_mrd_simulation,
-                self.lod_label,
-                self.c_lod,
-                self.lod_filters,
-                self.params["adapter_version"],
-                min_LoD_filter,
-                output_filename=output_LoD_plot,
-            )
+        # # Create LoD plot
+        # # TODO: Update the following to new conform with new report logic
+        # if self.params.get("fp_regions_bed_file", None) is not None:  # TODO: Check why this if statement?
+        #     logger.info("Calculating LoD statistics")
+        #     min_LoD_filter = calculate_lod_stats(  # noqa: N806
+        #         df_mrd_simulation=self.df_mrd_simulation,
+        #         output_h5=self.statistics_h5_file,
+        #         lod_column=self.c_lod,
+        #     )
+        #     logger.info("Creating SNVQ-recall-LoD plot")
+        #     self.df_mrd_simulation.unstack().to_hdf(self.output_h5_filename, key="SNV_recall_LoD", mode="a")  # noqa PD010
+        #     plot_LoD(
+        #         self.df_mrd_simulation,
+        #         self.lod_label,
+        #         self.c_lod,
+        #         self.lod_filters,
+        #         self.params["adapter_version"],
+        #         min_LoD_filter,
+        #         output_filename=output_LoD_plot,
+        #     )
 
         # Adding keys_to_convert to h5
         keys_to_convert = pd.Series(
@@ -3029,18 +3209,19 @@ class SRSNVReport:
                 "training_info_table",
                 "training_progress",
                 "trinuc_stats",
-                "SNV_recall_LoD",
+                # "SNV_recall_LoD",
             ]
         )
         keys_to_convert.to_hdf(self.output_h5_filename, key="keys_to_convert", mode="a")
 
-        # convert statistics to json
-        convert_h5_to_json(
-            input_h5_filename=self.statistics_h5_file,
-            root_element="metrics",
-            ignored_h5_key_substring=None,
-            output_json=self.statistics_json_file,
-        )
+        # TODO: Check what following lines do and uncomment if needed
+        # # convert statistics to json
+        # convert_h5_to_json(
+        #     input_h5_filename=self.statistics_h5_file,
+        #     root_element="metrics",
+        #     ignored_h5_key_substring=None,
+        #     output_json=self.statistics_json_file,
+        # )
 
 
 def precision_score_with_mask(y_pred: np.ndarray, y_true: np.ndarray, mask: np.ndarray):
