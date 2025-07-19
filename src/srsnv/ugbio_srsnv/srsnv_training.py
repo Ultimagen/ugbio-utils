@@ -31,7 +31,6 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import xgboost as xgb
-from sklearn.linear_model import LogisticRegression
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
@@ -42,6 +41,8 @@ CHROM = FeatureMapFields.CHROM.value
 POS = FeatureMapFields.POS.value
 REF = FeatureMapFields.REF.value
 X_ALT = FeatureMapFields.X_ALT.value
+X_HMER_REF = FeatureMapFields.X_HMER_REF.value
+X_HMER_ALT = FeatureMapFields.X_HMER_ALT.value
 MQUAL = FeatureMapFields.MQUAL.value
 SNVQ = FeatureMapFields.SNVQ.value
 SNVQ_RAW = SNVQ + "_RAW"
@@ -51,6 +52,9 @@ PROB_RECAL = "prob_recal"
 PROB_RESCALED = "prob_rescaled"
 PROB_FOLD_TMPL = "prob_fold_{k}"
 EPS = 1e-10  # small value to avoid division by zero
+
+EDIT_DIST_FEATURES = ["EDIST"]
+
 pl.enable_string_cache()
 
 
@@ -178,13 +182,13 @@ def partition_into_folds(series_of_sizes, k_folds, alg="greedy", n_chroms_leave_
         - series_of_sizes [pd.Series]: a series of indices and their corresponding sizes.
         - k_folds [int]: the number of folds into which series_of_sizes should be partitioned.
         - alg ['greedy']: the algorithm used. For the time being only the greedy algorithm
-            is implemented.
-        - n_chroms_leave_out [int]: The n_chroms_leave_out smallest chroms are not assigned to any fold (they are excluded
-            from the indices_to_folds dict). These are excluded from training all together, and
-            are used for test only.
+          is implemented.
+        - n_chroms_leave_out [int]: The n_chroms_leave_out smallest chroms are not assigned to any fold (they are
+          excluded from the indices_to_folds dict). These are excluded from training all together, and
+          are used for test only.
     Returns:
         - indices_to_folds [dict]: a dictionary that maps indices to the corresponding
-            fold numbers.
+          fold numbers.
     """
     if alg != "greedy":
         raise ValueError("Only greedy algorithm implemented at this time")
@@ -247,23 +251,11 @@ def _aggregate_probabilities_from_folds(prob_matrix: np.ndarray, prob_epsilon=1e
 
 def _probability_recalibration(prob_orig: np.ndarray, y_all: np.ndarray) -> np.ndarray:
     """
-    Calibrate raw probabilities using Platt scaling (logistic regression).
-    The mapping must be strictly monotonic increasing; if the fitted slope
-    is negative we abort with an explicit error.
+    Dummy calibration: identity mapping (y = x).
+    Keeps the original probabilities unchanged.
     """
-    x_matrix = prob_orig.reshape(-1, 1)
-    lr = LogisticRegression(penalty=None, solver="lbfgs")
-    lr.fit(x_matrix, y_all)
-
-    # Validate monotonicity
-    if lr.coef_[0, 0] < 0:
-        raise ValueError(
-            f"Logistic-regression calibration produced a negative slope ({lr.coef_[0, 0]:.3e}); "
-            "the mapping would be decreasing."
-        )
-
-    prob_recal = lr.predict_proba(x_matrix)[:, 1]
-    return prob_recal
+    # Simply return the input probabilities unchanged
+    return prob_orig.copy()
 
 
 def _create_quality_lookup_table(
@@ -376,26 +368,57 @@ class SRSNVTrainer:
         self.categorical_encodings: dict[str, dict[str, int]] = {}
         self.feature_dtypes: dict[str, str] = {}
 
-    # ─────────────────────── data & features ────────────────────────────
-    def _load_data(self, pos_path: str, neg_path: str) -> pl.DataFrame:
-        """Read parquet ⇒ polars, massage positive/negative frames and concatenate."""
-        # --- positive -------------------------------------------------------
+    # ─────────────────────── data-loading helpers ───────────────────────
+    def _read_positive_df(self, pos_path: str) -> pl.DataFrame:
+        """Load and massage the positive parquet."""
         logger.debug("Reading positive examples from %s", pos_path)
         pos_df = pl.read_parquet(pos_path)
         logger.debug("Positive examples shape: %s", pos_df.shape)
 
         if X_ALT not in pos_df.columns:
             raise ValueError(f"{pos_path} is missing required column 'X_ALT'")
-        ref_enum_dtype = pos_df[REF].dtype
-        # Override REF with X_ALT, preserving the original enum dtype
-        pos_df = pos_df.with_columns(pl.col(X_ALT).cast(ref_enum_dtype).alias(REF)).drop(X_ALT)
-        pos_df = pos_df.with_columns(pl.lit(value=True).alias(LABEL_COL))
 
-        # --- negative -------------------------------------------------------
+        # Replace REF with ALT allele
+        ref_enum_dtype = pos_df[REF].dtype
+        pos_df = pos_df.with_columns(pl.col(X_ALT).cast(ref_enum_dtype).alias(REF)).drop(X_ALT)
+
+        # Swap homopolymer length features (positive set only)
+        if {X_HMER_REF, X_HMER_ALT} <= set(pos_df.columns):
+            pos_df = (
+                pos_df.with_columns(pl.col(X_HMER_REF).alias("__tmp_hmer_ref__"))
+                .with_columns(
+                    [
+                        pl.col(X_HMER_ALT).alias(X_HMER_REF),
+                        pl.col("__tmp_hmer_ref__").alias(X_HMER_ALT),
+                    ]
+                )
+                .drop("__tmp_hmer_ref__")
+            )
+            logger.debug("Swapped X_HMER_REF and X_HMER_ALT in positive dataframe")
+
+        # Increment edit-distance features
+        for feat in EDIT_DIST_FEATURES:
+            if feat in pos_df.columns:
+                pos_df = pos_df.with_columns((pl.col(feat) + 1).alias(feat))
+                logger.debug("Incremented feature '%s' by 1 in positive dataframe", feat)
+
+        # Assign label
+        pos_df = pos_df.with_columns(pl.lit(value=True).alias(LABEL_COL))
+        return pos_df
+
+    def _read_negative_df(self, neg_path: str) -> pl.DataFrame:
+        """Load the negative parquet and attach label column."""
         logger.debug("Reading negative examples from %s", neg_path)
         neg_df = pl.read_parquet(neg_path)
         logger.debug("Negative examples shape: %s", neg_df.shape)
         neg_df = neg_df.with_columns(pl.lit(value=False).alias(LABEL_COL))
+        return neg_df
+
+    # ─────────────────────── data & features ────────────────────────────
+    def _load_data(self, pos_path: str, neg_path: str) -> pl.DataFrame:
+        """Read, validate and concatenate positive/negative dataframes."""
+        pos_df = self._read_positive_df(pos_path)
+        neg_df = self._read_negative_df(neg_path)
 
         # assert that both dataframes have the same columns
         if set(pos_df.columns) != set(neg_df.columns):
@@ -411,7 +434,7 @@ class SRSNVTrainer:
                 f"Incompatible dtypes between Positive and Negative dataframes for columns: {incompatible}\n"
                 f"Dtypes: {dtype_strs}"
             )
-        # Concatenate the two dataframes
+
         logger.debug("Concatenating positive and negative dataframes")
         combined_df = pl.concat([pos_df, neg_df])
         logger.debug("Combined dataframe shape: %s", combined_df.shape)
