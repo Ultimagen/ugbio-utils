@@ -23,6 +23,7 @@ import argparse
 import gzip
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -30,11 +31,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import polars as pl
+import pysam
 import xgboost as xgb
-from sklearn.metrics import roc_auc_score
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
+
+from ugbio_srsnv.srsnv_utils import EPS, MAX_PHRED, all_models_predict_proba, prob_to_phred, safe_roc_auc
 
 FOLD_COL = "fold_id"
 LABEL_COL = "label"
@@ -51,8 +54,8 @@ SNVQ_RAW = SNVQ + "_RAW"
 PROB_ORIG = "prob_orig"
 PROB_RECAL = "prob_recal"
 PROB_RESCALED = "prob_rescaled"
+PROB_TRAIN = "prob_train"
 PROB_FOLD_TMPL = "prob_fold_{k}"
-EPS = 1e-10  # small value to avoid division by zero
 
 EDIT_DIST_FEATURES = [
     FeatureMapFields.EDIST.value,
@@ -64,7 +67,28 @@ pl.enable_string_cache()
 
 
 # ───────────────────────── parsers ────────────────────────────
-def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
+def _parse_interval_list_tabix(path: str) -> tuple[dict[str, int], list[str]]:
+    # Parse headers for chrom_sizes (must still scan file start)
+    chrom_sizes = {}
+    with pysam.TabixFile(path) as tbx:
+        for line in tbx.header:
+            if line.startswith("@SQ"):
+                chrom_name = None
+                for field in line.strip().split("\t")[1:]:
+                    key, val = field.split(":", 1)
+                    if key == "SN":
+                        chrom_name = val
+                    elif key == "LN" and chrom_name is not None:
+                        chrom_sizes[chrom_name] = int(val)
+        # chroms_in_data: use tabix index for fast chromosome listing
+        chroms_in_data = list(tbx.contigs)
+    missing = [c for c in chroms_in_data if c not in chrom_sizes]
+    if missing:
+        raise ValueError(f"Missing @SQ header for contigs: {missing}")
+    return chrom_sizes, chroms_in_data
+
+
+def _parse_interval_list_manual(path: str) -> tuple[dict[str, int], list[str]]:
     """
     Picard/Broad interval-list:
     header lines: '@SQ\tSN:chr1\tLN:248956422'
@@ -109,6 +133,28 @@ def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
     if missing:
         raise ValueError(f"Missing @SQ header for contigs: {missing}")
     return chrom_sizes, chroms_in_data
+
+
+def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
+    """
+    Parse a Picard/Broad interval-list file to extract chromosome sizes and order.
+
+    Parameters
+    ----------
+    path : str
+        Path to the interval-list file (supports .gz files).
+
+    Returns
+    -------
+    tuple[dict[str, int], list[str]]
+        chrom_sizes: Dictionary mapping chromosome names to their lengths.
+        chroms_in_data: List of chromosomes in the order they appear in the file.
+    """
+    candidate_tbi = path + ".tbi"
+    if os.path.exists(candidate_tbi):
+        return _parse_interval_list_tabix(path)
+    else:
+        return _parse_interval_list_manual(path)
 
 
 def _parse_model_params(mp: str | None) -> dict[str, Any]:
@@ -218,47 +264,6 @@ def partition_into_folds(series_of_sizes, k_folds, alg="greedy", n_chroms_leave_
     return pd.Series(indices_to_folds, index=series_of_sizes.index).to_dict()
 
 
-def prob_to_phred(prob_error, max_value=None):
-    """Transform probabilities to phred scores. The probability input an error is translated to a Phred quality
-    score using the formula:
-        Q = -10 * log10(1 - p)
-    Arguments:
-    - prob [np.ndarray]: array of probabilities
-    - max_value [float]: maximum phred score (clips values above this threshold)
-    """
-    phred_scores = -10 * np.log10(1 - prob_error)
-    if max_value is not None:
-        return np.minimum(phred_scores, max_value)
-    return phred_scores
-
-
-def _aggregate_probabilities_from_folds(prob_matrix: np.ndarray, prob_epsilon=EPS) -> np.ndarray:
-    """
-    Aggregate probabilities coming from all folds for each data-point.
-
-    Parameters
-    ----------
-    prob_matrix : np.ndarray
-        Shape = (n_folds, n_rows). Each row contains the predicted
-        probabilities of one fold for all data-points.
-    prob_epsilon : float, optional
-        Small value to avoid log(0) issues, by default 1e-10
-
-    Returns
-    -------
-    np.ndarray
-        Aggregated probability per data-point.
-    """
-    probs = np.clip(prob_matrix, prob_epsilon, 1 - prob_epsilon)
-
-    # logit base-10
-    logits = np.log10(probs / (1.0 - probs))
-
-    # Average logits and convert back to probability
-    logits_mean = logits.mean(axis=0)
-    return 1.0 / (1.0 + 10 ** (-logits_mean))
-
-
 def _probability_recalibration(prob_orig: np.ndarray, y_all: np.ndarray) -> np.ndarray:
     """
     Dummy calibration: identity mapping (y = x).
@@ -275,6 +280,8 @@ class SRSNVTrainer:
         self.args = args
         self.out_dir = Path(args.output)
         self.out_dir.mkdir(parents=True, exist_ok=True)
+        self.max_qual = self.args.max_qual if self.args.max_qual is not None else MAX_PHRED
+        self.eps = 10 ** (-self.max_qual / 10)  # small value to avoid division by zero
 
         # RNG
         self.seed = args.random_seed or int(datetime.now().timestamp())
@@ -309,8 +316,8 @@ class SRSNVTrainer:
         pos_after_filter = _last_non_downsample_rows(self.pos_stats)
         neg_after_filter = _last_non_downsample_rows(self.neg_stats)
         self.prior_real_error = max(
-            EPS,
-            min(1.0 - EPS, neg_after_filter / (neg_after_filter + pos_after_filter)),
+            self.eps,
+            min(1.0 - self.eps, neg_after_filter / (neg_after_filter + pos_after_filter)),
         )
 
         # Data
@@ -493,11 +500,12 @@ class SRSNVTrainer:
             self.feature_dtypes[col] = dtype_str
             logger.debug("Column '%s' has dtype: %s", col, dtype_str)
 
-    def _create_quality_lookup_table(self, eps=EPS) -> None:
+    def _create_quality_lookup_table(self, eps=None) -> None:
         """
         Build an interpolation table that maps MQUAL → SNVQ.
         """
-
+        if eps is None:
+            eps = self.eps
         pd_df = self.data_frame.to_pandas()
         mqual = pd_df[MQUAL]
         prior_real_error = self.prior_real_error
@@ -551,8 +559,8 @@ class SRSNVTrainer:
                 ],
                 verbose=10 if self.args.verbose else False,
             )
-            auc_val = roc_auc_score(y_val, self.models[fold_idx].predict_proba(x_val)[:, 1])
-            auc_train = roc_auc_score(y_train, self.models[fold_idx].predict_proba(x_train)[:, 1])
+            auc_val = safe_roc_auc(y_val, self.models[fold_idx].predict_proba(x_val)[:, 1], logger=logger)
+            auc_train = safe_roc_auc(y_train, self.models[fold_idx].predict_proba(x_train)[:, 1], logger=logger)
             logger.debug(
                 "Finished training for fold %d, AUC: %.4f (validation) / %.4f (training)", fold_idx, auc_val, auc_train
             )
@@ -561,33 +569,16 @@ class SRSNVTrainer:
         # ---------- add calibrated quality columns ----------------------
         self._add_quality_columns(pd_df[feat_cols], fold_arr, y_all)
 
+        # ---------- save training evaluation results ----------------------
+        logger.debug("Saving training evaluation results")
+        self._save_training_results()
+
     def _add_quality_columns(self, x_all, fold_arr: np.ndarray, y_all: np.ndarray) -> None:
         """Attach raw / recalibrated probabilities and quality columns."""
-        n_rows = len(x_all)
-        preds_prob = np.empty((self.k_folds, n_rows), dtype=float)
-        preds_phred = np.empty_like(preds_prob)
-
-        # predictions from all models
-        for k, model in enumerate(self.models):
-            prob = model.predict_proba(x_all)[:, 1]
-            preds_prob[k] = prob
-            preds_phred[k] = prob_to_phred(prob, max_value=self.args.max_qual)
-
-        # ---------- Vectorised prob_orig -------------------
-        prob_orig = np.empty(n_rows, dtype=float)
-
-        valid_fold_mask = ~np.isnan(fold_arr)
-        idx_valid = np.where(valid_fold_mask)[0]
-        idx_nan = np.where(~valid_fold_mask)[0]
-
-        # Per-row probability coming from its own fold
-        prob_orig[idx_valid] = preds_prob[fold_arr[idx_valid].astype(int), idx_valid]
-
-        # Aggregated probability for rows without a fold
-        if idx_nan.size:
-            agg_prob = _aggregate_probabilities_from_folds(preds_prob[:, idx_nan])
-            prob_orig[idx_nan] = agg_prob
-        mqual = prob_to_phred(prob_orig, max_value=self.args.max_qual)
+        prob_orig, _, preds_prob = all_models_predict_proba(
+            self.models, x_all, fold_arr, max_phred=self.max_qual, return_val_and_train_preds=True
+        )
+        mqual = prob_to_phred(prob_orig, max_value=self.max_qual)
 
         # ------------------------------------------------------------------
         # quality recalibration
@@ -599,6 +590,7 @@ class SRSNVTrainer:
             prob_recal,
             sample_prior=1 - self.prior_train_error,  # prior of a true call from training data
             target_prior=1 - self.prior_real_error,  # prior of a true call from real data
+            eps=self.eps,
         )
 
         # attach new columns ------------------------------------------------
@@ -612,7 +604,7 @@ class SRSNVTrainer:
         self.data_frame = self.data_frame.with_columns(new_cols)
 
         # final quality (Phred)
-        # snvq_raw = prob_to_phred(prob_rescaled, max_value=self.args.max_qual)
+        # snvq_raw = prob_to_phred(prob_rescaled, max_value=self.max_qual)
         self._create_quality_lookup_table()
         snvq = np.interp(mqual, self.x_lut, self.y_lut)
         # ------------------------------------------------------------------
@@ -621,6 +613,14 @@ class SRSNVTrainer:
         new_cols = [pl.Series(SNVQ, snvq)]
 
         self.data_frame = self.data_frame.with_columns(new_cols)
+
+    def _save_training_results(self) -> None:
+        """Save training evaluation results for later use in reporting."""
+        self.training_results = []
+        for fold_idx, model in enumerate(self.models):
+            eval_result = model.evals_result()
+            self.training_results.append(eval_result)
+            logger.debug("Saved training results for fold %d", fold_idx)
 
     # ───────────────────────── save outputs ─────────────────────────────
     def save(self) -> None:
@@ -641,6 +641,7 @@ class SRSNVTrainer:
             path = self.out_dir / f"{base}model_fold_{fold_idx}.json"
             model.save_model(path)
             model_paths[fold_idx] = str(path)
+            logger.info("Saved model for fold %d → %s", fold_idx, path)
 
         # map every chromosome to the model-file basename instead of the fold index
         chrom_to_model_file = {chrom: Path(model_paths[fold]).name for chrom, fold in self.chrom_to_fold.items()}
@@ -673,6 +674,13 @@ class SRSNVTrainer:
             self.y_lut.tolist(),
         ]
 
+        # save training evaluation results to separate file
+        training_results_path = self.out_dir / f"{base}training_results.json"
+        logger.debug("Saving training evaluation results to %s", training_results_path)
+        with training_results_path.open("w") as fh:
+            json.dump(self.training_results, fh, indent=2)
+        logger.info(f"Saved training evaluation results → {training_results_path}")
+
         # stats and priors
         stats = {
             "positive": self.pos_stats,
@@ -683,11 +691,14 @@ class SRSNVTrainer:
 
         # Save comprehensive metadata
         metadata = {
+            "model_paths": model_paths,
+            "training_results_path": str(training_results_path),
             "chrom_to_model": chrom_to_model_file,
             "features": features_meta,
             "quality_recalibration_table": quality_recalibration_table,
             "filtering_stats": stats,
             "model_params": self.model_params,
+            "training_parameters": {"max_qual": self.max_qual},
         }
 
         with metadata_path.open("w") as fh:
@@ -761,11 +772,9 @@ def _cli() -> argparse.Namespace:
 def main() -> None:
     args = _cli()
     if args.verbose:
-        logging.basicConfig(  # new: configure root logger
-            level=logging.DEBUG,
-            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        )
         logger.setLevel(logging.DEBUG)
+        for handler in logger.handlers:
+            handler.setLevel(logging.DEBUG)
     trainer = SRSNVTrainer(args)
     trainer.run()
 
