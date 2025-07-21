@@ -53,7 +53,7 @@ PROB_RESCALED = "prob_rescaled"
 PROB_FOLD_TMPL = "prob_fold_{k}"
 EPS = 1e-10  # small value to avoid division by zero
 
-EDIT_DIST_FEATURES = ["EDIST"]
+EDIT_DIST_FEATURES = ["EDIST", "HAMDIST", "HAMDIST_FILT"]
 
 pl.enable_string_cache()
 
