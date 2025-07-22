@@ -270,7 +270,7 @@ def prob_to_phred(prob_correct, max_value=100):
     return phred_scores
 
 
-def prob_to_logit(prob: np.ndarray, *, max_value: float = 100, phred: bool = True) -> np.ndarray:
+def prob_to_logit(prob: np.ndarray, max_value: float = 100, *, phred: bool = True) -> np.ndarray:
     """
     Convert probabilities to logit space (base 10).
     """
@@ -325,8 +325,8 @@ def _aggregate_probabilities_from_folds(
         transform_fn = partial(prob_to_phred, max_value=max_phred)
         inverse_transform_fn = phred_to_prob
     elif transform == "logit":
-        transform_fn = partial(prob_to_logit, max_value=max_phred)
-        inverse_transform_fn = logit_to_prob
+        transform_fn = partial(prob_to_logit, max_value=max_phred, phred=True)
+        inverse_transform_fn = partial(logit_to_prob, phred=True)
     else:  # transform == 'prob'
 
         def transform_fn(x):
@@ -437,15 +437,18 @@ def all_models_predict_proba(
         is_val_fold = (fold_arr >= 0) & (fold_arr < num_folds)
         idx_val = np.where(is_val_fold)[0]
         idx_nan = np.where(np.isnan(fold_arr))[0]
-        idx_train = np.where(~np.isnan(fold_arr))[0]
+        idx_train_only = np.where((~np.isnan(fold_arr)) & (~is_val_fold))[0]
         if idx_val.size > 0:
             preds_val[idx_val] = all_model_probs[fold_arr[idx_val].astype(int), idx_val]
-        if idx_nan.size > 0:
-            preds_val[idx_nan] = _aggregate_probabilities_from_folds(all_model_probs[:, idx_nan], max_phred=max_phred)
-        if idx_train.size > 0:
             train_probs = all_model_probs[:, idx_val].copy()
             train_probs[fold_arr[idx_val].astype(int), np.arange(len(idx_val))] = np.nan
             preds_train[idx_val] = _aggregate_probabilities_from_folds(train_probs, max_phred=max_phred)
+        if idx_nan.size > 0:
+            preds_val[idx_nan] = _aggregate_probabilities_from_folds(all_model_probs[:, idx_nan], max_phred=max_phred)
+        if idx_train_only.size > 0:
+            preds_train[idx_train_only] = _aggregate_probabilities_from_folds(
+                all_model_probs[:, idx_train_only], max_phred=max_phred
+            )
         # For other rows, leave as np.nan
         return preds_val, preds_train, all_model_probs
 
@@ -541,7 +544,7 @@ class SRSNVTrainer:
 
         # Folds
         logger.debug("Parsing interval list from %s", args.training_regions)
-        chrom_sizes, chrom_list = _parse_interval_list_tabix(args.training_regions)
+        chrom_sizes, chrom_list = _parse_interval_list(args.training_regions)
         # partition_into_folds expects a pandas Series
         logger.debug("Partitioning %d chromosomes into %d folds", len(chrom_list), self.k_folds)
         self.chrom_to_fold: dict[str, int] = partition_into_folds(
@@ -785,7 +788,7 @@ class SRSNVTrainer:
             path = Path(str(model_path_template).format(fold_idx=fold_idx))
             model.save_model(path)
             model_paths[fold_idx] = str(path)
-            logger.info(f"Saved model for fold {fold_idx} → {path}")
+            logger.info("Saved model for fold %d → %s", fold_idx, path)
 
         # map every chromosome to the model-file basename instead of the fold index
         chrom_to_model_file = {chrom: Path(model_paths[fold]).name for chrom, fold in self.chrom_to_fold.items()}
