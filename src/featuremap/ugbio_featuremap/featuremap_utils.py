@@ -22,6 +22,8 @@ class FeatureMapFields(Enum):
     SNVQ = "SNVQ"
     X_HMER_REF = "X_HMER_REF"
     X_HMER_ALT = "X_HMER_ALT"
+    ST = "st"
+    ET = "et"
 
 
 class FeatureMapFilters(Enum):
