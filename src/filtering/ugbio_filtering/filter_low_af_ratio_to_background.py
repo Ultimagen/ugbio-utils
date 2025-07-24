@@ -81,7 +81,7 @@ def process_record(record, af_ratio_threshold, t_vaf_threshold):
                     # so do not filter the variant
                     failed = False
                     break
-                elif t_vaf is not None and t_vaf[allele] is not None and t_vaf[allele] >= t_vaf_threshold:
+                elif t_vaf is not None and t_vaf[allele - 1] is not None and t_vaf[allele - 1] >= t_vaf_threshold:
                     # this allele has AF ratio < threshold, but t_vaf is above threshold,
                     # so do not filter this allele
                     failed = False
@@ -107,11 +107,11 @@ def main():
         "--tumor_vaf_threshold_h_indels",
         type=float,
         default=0.1,
-        help="Tumor VAF threshold for filtering (default: 0.1) - \
+        help="Tumor VAF threshold for filtering (default: 0) - \
             any hmer indel with VAF above this threshold will not be filtered",
     )
     parser.add_argument(
-        "--af_ratio_threshold_h_indels", type=float, default=2, help="AF ratio threshold for h-indels (default: 2)"
+        "--af_ratio_threshold_h_indels", type=float, default=0, help="AF ratio threshold for h-indels (default: 2)"
     )
 
     parser.add_argument(
