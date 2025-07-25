@@ -163,7 +163,11 @@ def _probability_rescaling(
     odds_row = p / (1.0 - p)
 
     odds_rescaled = odds_row * (odds_target / odds_sample)
-    return odds_rescaled / (1.0 + odds_rescaled)
+    # dividing by 3 to get SNVQ score - we are counting all 3 possible errors per base but we want an SNVQ score
+    # per specific substitution error
+    p_rescaled = (odds_rescaled / (1.0 + odds_rescaled)) / 3
+
+    return p_rescaled
 
 
 def partition_into_folds(series_of_sizes, k_folds, alg="greedy", n_chroms_leave_out=1):
