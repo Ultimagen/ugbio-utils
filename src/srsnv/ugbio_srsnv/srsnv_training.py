@@ -163,11 +163,12 @@ def _probability_rescaling(
     odds_row = p / (1.0 - p)
 
     odds_rescaled = odds_row * (odds_target / odds_sample)
+    p_rescaled = odds_rescaled / (1.0 + odds_rescaled)
     # dividing by 3 to get SNVQ score - we are counting all 3 possible errors per base but we want an SNVQ score
     # per specific substitution error
-    p_rescaled = (odds_rescaled / (1.0 + odds_rescaled)) / 3
+    p_rescaled_snvq = 1 - ((1 - p_rescaled) / 3)
 
-    return p_rescaled
+    return p_rescaled_snvq
 
 
 def partition_into_folds(series_of_sizes, k_folds, alg="greedy", n_chroms_leave_out=1):
@@ -329,10 +330,17 @@ class SRSNVTrainer:
         # new prior_real_error calculation
         pos_after_filter = _last_non_downsample_rows(self.pos_stats)
         neg_after_filter = _last_non_downsample_rows(self.neg_stats)
-        self.prior_real_error = max(EPS, min(1.0 - EPS, neg_after_filter / (neg_after_filter + pos_after_filter)))
+        self.prior_real_error = max(
+            EPS,
+            min(1.0 - EPS, neg_after_filter / (neg_after_filter + pos_after_filter)),
+        )
 
         # Data
-        logger.debug("Loading data from positive=%s and negative=%s", args.positive, args.negative)
+        logger.debug(
+            "Loading data from positive=%s and negative=%s",
+            args.positive,
+            args.negative,
+        )
         self.data_frame = self._load_data(args.positive, args.negative)
         logger.debug("Data loaded. Shape: %s", self.data_frame.shape)
 
@@ -361,7 +369,11 @@ class SRSNVTrainer:
         # Models
         logger.debug("Parsing model parameters from: %s", args.model_params)
         self.model_params = _parse_model_params(args.model_params)
-        logger.debug("Initializing %d XGBClassifier models with params: %s", self.k_folds, self.model_params)
+        logger.debug(
+            "Initializing %d XGBClassifier models with params: %s",
+            self.k_folds,
+            self.model_params,
+        )
         self.models = [xgb.XGBClassifier(**self.model_params) for _ in range(self.k_folds)]
 
         # optional user-supplied feature subset
@@ -472,7 +484,12 @@ class SRSNVTrainer:
                 # map category string → integer code (code is the index in the categories list)
                 encoding = {str(cat): idx for idx, cat in enumerate(categories)}
                 self.categorical_encodings[col] = encoding
-                logger.debug("Column '%s' has %d categories: %s", col, len(encoding), list(encoding.keys()))
+                logger.debug(
+                    "Column '%s' has %d categories: %s",
+                    col,
+                    len(encoding),
+                    list(encoding.keys()),
+                )
 
     def _extract_feature_dtypes(self, pd_df: pd.DataFrame, feat_cols: list[str]) -> None:
         """Extract feature data types from pandas DataFrame."""
@@ -660,7 +677,9 @@ class SRSNVTrainer:
             json.dump(metadata, fh, indent=2)
         logger.info(f"Saved comprehensive metadata → {metadata_path}")
         logger.info(
-            "Metadata includes %d chromosome mappings and %d features", len(self.chrom_to_fold), len(features_meta)
+            "Metadata includes %d chromosome mappings and %d features",
+            len(self.chrom_to_fold),
+            len(features_meta),
         )
 
     # ───────────────────────── entry point ──────────────────────────────
@@ -676,7 +695,11 @@ def _cli() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Train SingleReadSNV classifier", allow_abbrev=True)
     ap.add_argument("--positive", required=True, help="Parquet with label=1 rows")
     ap.add_argument("--negative", required=True, help="Parquet with label=0 rows")
-    ap.add_argument("--training-regions", required=True, help="Picard interval_list file (supports .gz files)")
+    ap.add_argument(
+        "--training-regions",
+        required=True,
+        help="Picard interval_list file (supports .gz files)",
+    )
     ap.add_argument("--k-folds", type=int, default=1, help="Number of CV folds (≥1)")
     ap.add_argument(
         "--model-params",
@@ -692,7 +715,12 @@ def _cli() -> argparse.Namespace:
     )
     ap.add_argument("--random-seed", type=int, default=None)
     ap.add_argument("--verbose", action="store_true", help="Enable debug logging")
-    ap.add_argument("--max-qual", type=float, default=100.0, help="Maximum Phred score for model quality")
+    ap.add_argument(
+        "--max-qual",
+        type=float,
+        default=100.0,
+        help="Maximum Phred score for model quality",
+    )
     ap.add_argument(
         "--stats-positive",
         required=True,
