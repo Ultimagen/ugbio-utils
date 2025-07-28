@@ -111,7 +111,7 @@ def main():
             any hmer indel with VAF above this threshold will not be filtered",
     )
     parser.add_argument(
-        "--af_ratio_threshold_h_indels", type=float, default=0, help="AF ratio threshold for h-indels (default: 2)"
+        "--af_ratio_threshold_h_indels", type=float, default=0, help="AF ratio threshold for h-indels (default: 0)"
     )
 
     parser.add_argument(
