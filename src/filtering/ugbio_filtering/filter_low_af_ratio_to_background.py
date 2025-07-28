@@ -1,4 +1,5 @@
 import argparse
+import warnings
 
 import pysam
 
@@ -13,12 +14,18 @@ def filter_low_af_ratio_to_background(
 ):
     vcf_in = pysam.VariantFile(input_vcf)
 
-    # Add a new FILTER definition to the header
-    if new_filter not in vcf_in.header.filters:
+    # Check if the new filter already exists in the header
+    if new_filter in vcf_in.header.filters:
+        warnings.warn(
+            f"Existing {new_filter} filter found in header. It will be replaced.", category=UserWarning, stacklevel=2
+        )
+        # vcf_in.header.filters.pop(new_filter)
+    else:
+        # Add a new FILTER definition to the header
         filter_desc = (
             f"Filter variants if AF ratio to background in GT ALT alleles < threshold. "
             f"For snps and non-h-indels: {af_ratio_threshold}, and "
-            f"for h-indels: {af_ratio_threshold_h_indels}"
+            f"for h-indels (applied only if tumor VAF<{t_vaf_threshold}: {af_ratio_threshold_h_indels}"
         )
         vcf_in.header.filters.add(new_filter, None, None, filter_desc)
 
@@ -30,10 +37,26 @@ def filter_low_af_ratio_to_background(
             vcf_out.write(record)
             continue
         else:
+            # Remove the AF ratio filter if it exists in the record
+            if new_filter in record.filter.keys():
+                # record.filter.remove(new_filter)
+                # Get current filters
+                current_filters = list(record.filter.keys())
+
+                # Reassign without the one we want to remove
+                record.filter.clear()
+                for f in current_filters:
+                    if f != new_filter:
+                        record.filter.add(f)
+
+            if len(record.filter) == 0:
+                record.filter.clear()  # ensures FILTER=PASS in output
+
             threshold_to_use = (
-                af_ratio_threshold_h_indels if (record.info.get("VARIANT_TYPE") == "h-indel") else af_ratio_threshold
+                af_ratio_threshold_h_indels if record.info.get("VARIANT_TYPE") == "h-indel" else af_ratio_threshold
             )
-            vaf_threshold_to_use = t_vaf_threshold if record.info.get("VARIANT_TYPE") == "h-indel" else 0
+            vaf_threshold_to_use = t_vaf_threshold if record.info.get("VARIANT_TYPE") == "h-indel" else 1
+
             failed = process_record(record, threshold_to_use, vaf_threshold_to_use)
 
             if failed:
@@ -74,20 +97,19 @@ def process_record(record, af_ratio_threshold, t_vaf_threshold):
                 # so do not filter the variant
                 failed = False
                 break
-            elif bg_ad[allele] > 0:
+            else:  # bg_ad[allele] > 0
                 af_ratio = (ad[allele] / dp) / (bg_ad[allele] / bg_dp)
-                if af_ratio >= af_ratio_threshold:
+                if t_vaf is None or t_vaf[allele - 1] is None:
+                    warnings.warn("Tumor VAF is None for a GT allele!", category=UserWarning, stacklevel=2)
+                elif (af_ratio >= af_ratio_threshold) or (t_vaf[allele - 1] >= t_vaf_threshold):
                     # there is an allele with AF ratio >= threshold,
+                    # or there is an allele where t_vaf is above threshold
                     # so do not filter the variant
                     failed = False
                     break
-                elif t_vaf is not None and t_vaf[allele - 1] is not None and t_vaf[allele - 1] >= t_vaf_threshold:
-                    # this allele has AF ratio < threshold, but t_vaf is above threshold,
-                    # so do not filter this allele
-                    failed = False
-                    break
                 else:
-                    # this allele has AF ratio < threshold, so filter this allele
+                    # this allele has AF ratio < threshold (and tumor vaf < vaf_threshold for h-indels),
+                    # so filter this allele
                     failed = True
 
     return failed
@@ -106,12 +128,12 @@ def main():
     parser.add_argument(
         "--tumor_vaf_threshold_h_indels",
         type=float,
-        default=0.1,
+        default=0,
         help="Tumor VAF threshold for filtering (default: 0) - \
             any hmer indel with VAF above this threshold will not be filtered",
     )
     parser.add_argument(
-        "--af_ratio_threshold_h_indels", type=float, default=0, help="AF ratio threshold for h-indels (default: 2)"
+        "--af_ratio_threshold_h_indels", type=float, default=0, help="AF ratio threshold for h-indels (default: 0)"
     )
 
     parser.add_argument(

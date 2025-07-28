@@ -1,10 +1,12 @@
+from pathlib import Path
+
 import pysam
 import pytest
 from ugbio_filtering.filter_low_af_ratio_to_background import filter_low_af_ratio_to_background
 
 
 @pytest.fixture
-def example_vcf(tmp_path):
+def example_vcf(tmp_path: Path):
     vcf_content = """##fileformat=VCFv4.2
 ##FILTER=<ID=RefCall,Description="Reference call">
 ##INFO=<ID=VARIANT_TYPE,Number=1,Type=String,Description="Type of variant">
@@ -13,15 +15,17 @@ def example_vcf(tmp_path):
 ##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read depth">
 ##FORMAT=<ID=BG_AD,Number=R,Type=Integer,Description="Background allelic depths">
 ##FORMAT=<ID=BG_DP,Number=1,Type=Integer,Description="Background read depth">
+##FORMAT=<ID=VAF,Number=A,Type=Float,Description="Variant allele fractions">
 ##contig=<ID=chr1,length=248956422>
 #CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tsample1
-chr1\t100\t.\tA\tT\t.\tPASS\tVARIANT_TYPE=snp\tGT:AD:DP:BG_AD:BG_DP\t0/1:5,10:15:1,1:2
-chr1\t200\t.\tG\tC\t.\tPASS\tVARIANT_TYPE=snp\tGT:AD:DP:BG_AD:BG_DP\t0/1:2,2:4:1,1:2
-chr1\t300\t.\tT\tG\t.\tRefCall\tVARIANT_TYPE=snp\tGT:AD:DP:BG_AD:BG_DP\t0/1:10,10:20:1,1:2
-chr1\t400\t.\tC\tA\t.\tPASS\tVARIANT_TYPE=h-indel\tGT:AD:DP:BG_AD:BG_DP\t0/1:10,10:20:2,1:3
-chr1\t400\t.\tC\tA\t.\tPASS\tVARIANT_TYPE=h-indel\tGT:AD:DP:BG_AD:BG_DP\t0/1:10,90:100:9,1:10
-chr1\t400\t.\tC\tA,T\t.\tPASS\tVARIANT_TYPE=non-h-indel\tGT:AD:DP:BG_AD:BG_DP\t0/2:10,30,10:50:10,10,1:21
-chr1\t400\t.\tC\tA,T\t.\tPASS\tVARIANT_TYPE=non-h-indel\tGT:AD:DP:BG_AD:BG_DP\t0/2:10,30,100:140:10,10,1:21
+chr1\t100\t.\tA\tT\t.\tPASS\tVARIANT_TYPE=snp\tGT:AD:DP:BG_AD:BG_DP:VAF\t0/1:5,10:15:1,1:2:0.6667
+chr1\t200\t.\tG\tC\t.\tPASS\tVARIANT_TYPE=snp\tGT:AD:DP:BG_AD:BG_DP:VAF\t0/1:2,2:4:1,1:2:0.5
+chr1\t300\t.\tT\tG\t.\tRefCall\tVARIANT_TYPE=snp\tGT:AD:DP:BG_AD:BG_DP:VAF\t0/1:10,10:20:1,1:2:0.5
+chr1\t400\t.\tC\tA\t.\tPASS\tVARIANT_TYPE=h-indel\tGT:AD:DP:BG_AD:BG_DP:VAF\t0/1:10,10:20:2,1:3:0.5
+chr1\t500\t.\tC\tA\t.\tPASS\tVARIANT_TYPE=h-indel\tGT:AD:DP:BG_AD:BG_DP:VAF\t0/1:10,90:100:9,1:10:0.9
+chr1\t600\t.\tC\tA,T\t.\tPASS\tVARIANT_TYPE=non-h-indel\tGT:AD:DP:BG_AD:BG_DP:VAF\t0/2:10,30,10:50:10,10,1:21:0.6,0.2
+chr1\t700\t.\tC\tA,T\t.\tPASS\tVARIANT_TYPE=non-h-indel\tGT:AD:DP:BG_AD:BG_DP:VAF\t0/2:10,30,100:140:10,10,1:21:0.21428,0.71428
+chr1\t700\t.\tC\tA,T\t.\tPASS\tVARIANT_TYPE=non-h-indel\tGT:AD:DP:BG_AD:BG_DP:VAF\t0/1:10,30,100:140:10,10,1:21:0.21428,0.71428
 """
     vcf_path = tmp_path / "input.vcf.gz"
     with open(vcf_path, "w") as f:
@@ -29,13 +33,14 @@ chr1\t400\t.\tC\tA,T\t.\tPASS\tVARIANT_TYPE=non-h-indel\tGT:AD:DP:BG_AD:BG_DP\t0
     return str(vcf_path)
 
 
-def test_filter_low_af_ratio_to_background_basic(example_vcf, tmp_path):
+def test_filter_low_af_ratio_to_background_basic(example_vcf: str, tmp_path: Path):
     output_vcf = tmp_path / "output.vcf.gz"
     filter_low_af_ratio_to_background(
         input_vcf=example_vcf,
         output_vcf=str(output_vcf),
         af_ratio_threshold=10,
         af_ratio_threshold_h_indels=2,
+        t_vaf_threshold=1,
         new_filter="LowAFRatioToBackground",
     )
     with pysam.VariantFile(str(output_vcf)) as vcf:
@@ -55,9 +60,11 @@ def test_filter_low_af_ratio_to_background_basic(example_vcf, tmp_path):
         assert "LowAFRatioToBackground" in records[5].filter.keys()
         # Seventh record: AF ratio in alt allele 2 = (100/140)/(1/21) = 15 > 10, should not be filtered
         assert "LowAFRatioToBackground" not in records[6].filter.keys()
+        # Eigth record: AF ratio in alt allele 1 = (30/140)/(10/21) = 0.45 < 10, should be filtered
+        assert "LowAFRatioToBackground" not in records[6].filter.keys()
 
 
-def test_filter_low_af_ratio_to_background_no_fail(example_vcf, tmp_path):
+def test_filter_low_af_ratio_to_background_no_fail(example_vcf: str, tmp_path: Path):
     output_vcf = tmp_path / "output2.vcf.gz"
     # Use a low threshold so nothing is filtered
     filter_low_af_ratio_to_background(
@@ -65,6 +72,7 @@ def test_filter_low_af_ratio_to_background_no_fail(example_vcf, tmp_path):
         output_vcf=str(output_vcf),
         af_ratio_threshold=0.05,
         af_ratio_threshold_h_indels=0.05,
+        t_vaf_threshold=1,
         new_filter="LowAFRatioToBackground",
     )
     with pysam.VariantFile(str(output_vcf)) as vcf:
@@ -72,13 +80,14 @@ def test_filter_low_af_ratio_to_background_no_fail(example_vcf, tmp_path):
             assert "LowAFRatioToBackground" not in rec.filter.keys()
 
 
-def test_filter_low_af_ratio_to_background_custom_filter(example_vcf, tmp_path):
+def test_filter_low_af_ratio_to_background_custom_filter(example_vcf: str, tmp_path: Path):
     output_vcf = tmp_path / "output3.vcf.gz"
     filter_low_af_ratio_to_background(
         input_vcf=example_vcf,
         output_vcf=str(output_vcf),
         af_ratio_threshold=10,
         af_ratio_threshold_h_indels=2,
+        t_vaf_threshold=0.5,
         new_filter="MyCustomFilter",
     )
     with pysam.VariantFile(str(output_vcf)) as vcf:
