@@ -8,8 +8,8 @@ def filter_low_af_ratio_to_background(
     input_vcf,
     output_vcf,
     af_ratio_threshold=10,
-    af_ratio_threshold_h_indels=2,
-    t_vaf_threshold=0.1,
+    af_ratio_threshold_h_indels=0,
+    t_vaf_threshold=0,
     new_filter="LowAFRatioToBackground",
 ):
     vcf_in = pysam.VariantFile(input_vcf)
