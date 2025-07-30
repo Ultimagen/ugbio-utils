@@ -268,9 +268,11 @@ def _probability_recalibration(prob_orig: np.ndarray, y_all: np.ndarray) -> np.n
 
 
 def _create_quality_lookup_table(
+    pd_df: pd.DataFrame,
+    prior_real_error: float,
     mqual: np.ndarray,
-    snvq: np.ndarray,
     n_pts: int = 1000,
+    eps: float = 1e-10,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Build an interpolation table that maps MQUAL → SNVQ.
@@ -279,18 +281,21 @@ def _create_quality_lookup_table(
         x – equidistant MQUAL grid (length n_pts)
         y – interpolated SNVQ on that grid
     """
-    mask = np.isfinite(mqual) & np.isfinite(snvq)
+    mask = np.isfinite(mqual)
     if mask.sum() == 0:
         raise ValueError("no finite data to build quality-lookup table")
 
     m = mqual[mask]
-    s = snvq[mask]
 
     order = np.argsort(m)
-    m, s = m[order], s[order]
+    m = m[order]
 
     x = np.linspace(0.0, m.max(), n_pts)
-    y = np.interp(x, m, s)
+    mqual_t = pd_df.query(LABEL_COL)["MQUAL"].to_numpy()
+    mqual_f = pd_df.query(f"not {LABEL_COL}")["MQUAL"].to_numpy()
+    tpr = np.array([(mqual_t >= m_).mean() for m_ in x])
+    fpr = np.array([(mqual_f >= m_).mean() for m_ in x])
+    y = -10 * np.log10(np.clip((prior_real_error / 3) * (fpr / tpr), eps, 1))
     return x, y
 
 
@@ -420,7 +425,11 @@ class SRSNVTrainer:
         if FeatureMapFields.EDIST.value in pos_df.columns:
             max_edist = pos_df.select(pl.max(FeatureMapFields.EDIST.value)).item()
             pos_df = pos_df.filter(pl.col(FeatureMapFields.EDIST.value) != max_edist)
-            logger.debug("Discarded rows with EDIST == max(EDIST)=%s; new shape: %s", max_edist, pos_df.shape)
+            logger.debug(
+                "Discarded rows with EDIST == max(EDIST)=%s; new shape: %s",
+                max_edist,
+                pos_df.shape,
+            )
 
         # Increment edit-distance features
         for feat in EDIT_DIST_FEATURES:
@@ -438,6 +447,10 @@ class SRSNVTrainer:
         neg_df = pl.read_parquet(neg_path)
         logger.debug("Negative examples shape: %s", neg_df.shape)
         neg_df = neg_df.with_columns(pl.lit(value=False).alias(LABEL_COL))
+        if X_ALT in neg_df.columns:
+            # drop X_ALT if it exists in negative set
+            neg_df = neg_df.drop(X_ALT)
+            logger.debug("Dropped X_ALT column from negative dataframe")
         return neg_df
 
     # ─────────────────────── data & features ────────────────────────────
@@ -598,8 +611,13 @@ class SRSNVTrainer:
         )
 
         # final quality (Phred)
-        snvq_raw = prob_to_phred(prob_rescaled, max_value=self.args.max_qual)
-        self.x_lut, self.y_lut = _create_quality_lookup_table(mqual, snvq_raw, self.args.quality_lut_size)
+        # snvq_raw = prob_to_phred(prob_rescaled, max_value=self.args.max_qual)
+        self.x_lut, self.y_lut = _create_quality_lookup_table(
+            self.data_frame.to_pandas(),
+            self.prior_real_error,
+            mqual,
+            self.args.quality_lut_size,
+        )
         snvq = np.interp(mqual, self.x_lut, self.y_lut)
         # ------------------------------------------------------------------
 
@@ -609,7 +627,7 @@ class SRSNVTrainer:
             pl.Series(PROB_RECAL, prob_recal),
             pl.Series(PROB_RESCALED, prob_rescaled),
             pl.Series(MQUAL, mqual),
-            pl.Series(SNVQ_RAW, snvq_raw),
+            # pl.Series(SNVQ_RAW, snvq_raw),
             pl.Series(SNVQ, snvq),
         ]
 
