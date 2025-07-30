@@ -24,6 +24,9 @@ class FeatureMapFields(Enum):
     X_HMER_ALT = "X_HMER_ALT"
     ST = "st"
     ET = "et"
+    EDIST = "EDIST"
+    HAMDIST = "HAMDIST"
+    HAMDIST_FILT = "HAMDIST_FILT"
 
 
 class FeatureMapFilters(Enum):

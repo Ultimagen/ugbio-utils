@@ -53,7 +53,11 @@ PROB_RESCALED = "prob_rescaled"
 PROB_FOLD_TMPL = "prob_fold_{k}"
 EPS = 1e-10  # small value to avoid division by zero
 
-EDIT_DIST_FEATURES = ["EDIST", "HAMDIST", "HAMDIST_FILT"]
+EDIT_DIST_FEATURES = [
+    FeatureMapFields.EDIST.value,
+    FeatureMapFields.HAMDIST.value,
+    FeatureMapFields.HAMDIST_FILT.value,
+]
 
 pl.enable_string_cache()
 
