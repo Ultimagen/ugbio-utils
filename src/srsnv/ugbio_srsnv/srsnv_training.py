@@ -155,7 +155,7 @@ def _probability_rescaling(
         odds_sample    =  π_s / (1-π_s)
         odds_target    =  π_t / (1-π_t)
         odds_rescaled  =  odds_row * (odds_target / odds_sample)
-        p_rescaled     =  odds_rescaled / (1 + odds_rescaled)
+        p_rescaled     =  odds_rescaled / (1.0 + odds_rescaled)
     """
     sample_prior = np.clip(sample_prior, eps, 1 - eps)
     target_prior = np.clip(target_prior, eps, 1 - eps)
@@ -415,6 +415,12 @@ class SRSNVTrainer:
                 .drop("__tmp_hmer_ref__")
             )
             logger.debug("Swapped X_HMER_REF and X_HMER_ALT in positive dataframe")
+
+        # Remove rows where EDIST == max(EDIST)
+        if FeatureMapFields.EDIST.value in pos_df.columns:
+            max_edist = pos_df.select(pl.max(FeatureMapFields.EDIST.value)).item()
+            pos_df = pos_df.filter(pl.col(FeatureMapFields.EDIST.value) != max_edist)
+            logger.debug("Discarded rows with EDIST == max(EDIST)=%s; new shape: %s", max_edist, pos_df.shape)
 
         # Increment edit-distance features
         for feat in EDIT_DIST_FEATURES:
