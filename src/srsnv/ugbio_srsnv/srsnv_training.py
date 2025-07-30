@@ -267,38 +267,6 @@ def _probability_recalibration(prob_orig: np.ndarray, y_all: np.ndarray) -> np.n
     return prob_orig.copy()
 
 
-def _create_quality_lookup_table(
-    pd_df: pd.DataFrame,
-    prior_real_error: float,
-    mqual: np.ndarray,
-    n_pts: int = 1000,
-    eps: float = 1e-10,
-) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Build an interpolation table that maps MQUAL → SNVQ.
-
-    Returns (x, y):
-        x – equidistant MQUAL grid (length n_pts)
-        y – interpolated SNVQ on that grid
-    """
-    mask = np.isfinite(mqual)
-    if mask.sum() == 0:
-        raise ValueError("no finite data to build quality-lookup table")
-
-    m = mqual[mask]
-
-    order = np.argsort(m)
-    m = m[order]
-
-    x = np.linspace(0.0, m.max(), n_pts)
-    mqual_t = pd_df.query(LABEL_COL)["MQUAL"].to_numpy()
-    mqual_f = pd_df.query(f"not {LABEL_COL}")["MQUAL"].to_numpy()
-    tpr = np.array([(mqual_t >= m_).mean() for m_ in x])
-    fpr = np.array([(mqual_f >= m_).mean() for m_ in x])
-    y = -10 * np.log10(np.clip((prior_real_error / 3) * (fpr / tpr), eps, 1))
-    return x, y
-
-
 # ───────────────────────── core logic ─────────────────────────────────────
 class SRSNVTrainer:
     def __init__(self, args: argparse.Namespace):
@@ -524,6 +492,23 @@ class SRSNVTrainer:
             self.feature_dtypes[col] = dtype_str
             logger.debug("Column '%s' has dtype: %s", col, dtype_str)
 
+    def _create_quality_lookup_table(self, eps=1e-10) -> None:
+        """
+        Build an interpolation table that maps MQUAL → SNVQ.
+        """
+
+        pd_df = self.data_frame.to_pandas().sort_values(by=MQUAL)
+        mqual = pd_df[MQUAL].to_numpy()
+        prior_real_error = self.prior_real_error
+        n_pts = self.args.quality_lut_size
+
+        self.x_lut = np.linspace(0.0, mqual.max(), n_pts)
+        mqual_t = pd_df.query(LABEL_COL)["MQUAL"].to_numpy()
+        mqual_f = pd_df.query(f"not {LABEL_COL}")["MQUAL"].to_numpy()
+        tpr = np.array([(mqual_t >= m_).mean() for m_ in self.x_lut])
+        fpr = np.array([(mqual_f >= m_).mean() for m_ in self.x_lut])
+        self.y_lut = -10 * np.log10(np.clip((prior_real_error / 3) * (fpr / tpr), eps, 1))
+
     # ─────────────────────── training / prediction ──────────────────────
     def train(self) -> None:
         feat_cols = self._feature_columns()
@@ -612,12 +597,7 @@ class SRSNVTrainer:
 
         # final quality (Phred)
         # snvq_raw = prob_to_phred(prob_rescaled, max_value=self.args.max_qual)
-        self.x_lut, self.y_lut = _create_quality_lookup_table(
-            self.data_frame.to_pandas(),
-            self.prior_real_error,
-            mqual,
-            self.args.quality_lut_size,
-        )
+        self._create_quality_lookup_table()
         snvq = np.interp(mqual, self.x_lut, self.y_lut)
         # ------------------------------------------------------------------
 
