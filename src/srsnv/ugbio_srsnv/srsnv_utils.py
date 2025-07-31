@@ -33,16 +33,21 @@ NEXT1 = "X_NEXT1"
 ALT = "ALT"
 
 MAX_PHRED = 100  # Default maximum Phred score for clipping
-EPS = 1 / (MAX_PHRED / 10)  # Small epsilon value for numerical stability in log calculations
+EPS = 10 ** (-MAX_PHRED / 10)  # Small epsilon value for numerical stability in log calculations
 
 
 def prob_to_phred(prob_correct, max_value=MAX_PHRED):
-    """Transform probabilities to phred scores. The probability input an error is translated to a Phred quality
-    score using the formula:
+    """Transform probabilities to Phred scores.
+
+    The probability of being correct is translated to a Phred quality score using the formula:
         Q = -10 * log10(1 - p)
+
     Arguments:
-    - prob [np.ndarray]: array of probabilities
-    - max_value [float]: maximum phred score (clips values above this threshold)
+    - prob_correct [np.ndarray]: array of probabilities (probability of being correct)
+    - max_value [float]: maximum Phred score (clips values above this threshold)
+
+    Returns:
+    - np.ndarray: Phred scores corresponding to the input probabilities
     """
     prob_error = 1 - prob_correct
     if max_value is not None:

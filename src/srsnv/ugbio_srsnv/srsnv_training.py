@@ -280,8 +280,8 @@ class SRSNVTrainer:
         self.args = args
         self.out_dir = Path(args.output)
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.max_qual = self.args.max_qual or MAX_PHRED
-        self.eps = 1 / (self.max_qual / 10)  # small value to avoid division by zero
+        self.max_qual = self.args.max_qual if self.args.max_qual is not None else MAX_PHRED
+        self.eps = 10 ** (-self.max_qual / 10)  # small value to avoid division by zero
 
         # RNG
         self.seed = args.random_seed or int(datetime.now().timestamp())

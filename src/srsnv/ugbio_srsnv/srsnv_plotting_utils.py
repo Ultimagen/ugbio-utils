@@ -1464,7 +1464,7 @@ class SRSNVReport:
         with open(srsnv_metadata) as f:
             self.srsnv_metadata = json.load(f)
         self.max_qual = self.srsnv_metadata["training_parameters"].get("max_qual", MAX_PHRED)
-        self.eps = 1 / (self.max_qual / 100)
+        self.eps = 10 ** (-self.max_qual / 10)
         if rng is None:
             random_seed = int(datetime.now().timestamp())
             rng = np.random.default_rng(seed=random_seed)
