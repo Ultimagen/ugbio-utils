@@ -752,6 +752,10 @@ def _cli() -> argparse.Namespace:
 def main() -> None:
     args = _cli()
     if args.verbose:
+        logging.basicConfig(  # new: configure root logger
+            level=logging.DEBUG,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
         logger.setLevel(logging.DEBUG)
     trainer = SRSNVTrainer(args)
     trainer.run()
