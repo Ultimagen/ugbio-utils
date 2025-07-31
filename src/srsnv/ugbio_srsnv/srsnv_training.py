@@ -497,14 +497,14 @@ class SRSNVTrainer:
         Build an interpolation table that maps MQUAL → SNVQ.
         """
 
-        pd_df = self.data_frame.to_pandas().sort_values(by=MQUAL)
-        mqual = pd_df[MQUAL].to_numpy()
+        pd_df = self.data_frame.to_pandas()
+        mqual = pd_df[MQUAL]
         prior_real_error = self.prior_real_error
         n_pts = self.args.quality_lut_size
 
         self.x_lut = np.linspace(0.0, mqual.max(), n_pts)
-        mqual_t = pd_df.query(LABEL_COL)["MQUAL"].to_numpy()
-        mqual_f = pd_df.query(f"not {LABEL_COL}")["MQUAL"].to_numpy()
+        mqual_t = pd_df[pd_df[LABEL_COL]][MQUAL]
+        mqual_f = pd_df[~pd_df[LABEL_COL]][MQUAL]
         tpr = np.array([(mqual_t >= m_).mean() for m_ in self.x_lut])
         fpr = np.array([(mqual_f >= m_).mean() for m_ in self.x_lut])
         self.y_lut = -10 * np.log10(np.clip((prior_real_error / 3) * (fpr / tpr), eps, 1))
@@ -637,7 +637,7 @@ class SRSNVTrainer:
         chrom_to_model_file = {chrom: Path(model_paths[fold]).name for chrom, fold in self.chrom_to_fold.items()}
 
         metadata_path = self.out_dir / f"{base}srsnv_metadata.json"
-        logger.debug("Saving comprehensive metadata to %s", metadata_path)
+        logger.debug("Saving metadata to %s", metadata_path)
 
         # merge dtype + categorical encoding into one list
         features_meta = []
@@ -683,9 +683,9 @@ class SRSNVTrainer:
 
         with metadata_path.open("w") as fh:
             json.dump(metadata, fh, indent=2)
-        logger.info(f"Saved comprehensive metadata → {metadata_path}")
+        logger.info(f"Saved metadata → {metadata_path}")
         logger.info(
-            "Metadata includes %d chromosome mappings and %d features",
+            "Metadata includes %d chromosome to model mappings and %d features",
             len(self.chrom_to_fold),
             len(features_meta),
         )
