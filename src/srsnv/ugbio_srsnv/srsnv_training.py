@@ -145,7 +145,7 @@ def _probability_rescaling(
     prob: np.ndarray,
     sample_prior: float,
     target_prior: float,
-    eps: float = 1e-10,
+    eps: float = EPS,
 ) -> np.ndarray:
     """
     Rescale probabilities from the training prior to the real-data prior.
@@ -231,7 +231,7 @@ def prob_to_phred(prob_error, max_value=None):
     return phred_scores
 
 
-def _aggregate_probabilities_from_folds(prob_matrix: np.ndarray, prob_epsilon=1e-10) -> np.ndarray:
+def _aggregate_probabilities_from_folds(prob_matrix: np.ndarray, prob_epsilon=EPS) -> np.ndarray:
     """
     Aggregate probabilities coming from all folds for each data-point.
 
@@ -492,7 +492,7 @@ class SRSNVTrainer:
             self.feature_dtypes[col] = dtype_str
             logger.debug("Column '%s' has dtype: %s", col, dtype_str)
 
-    def _create_quality_lookup_table(self, eps=1e-10) -> None:
+    def _create_quality_lookup_table(self, eps=EPS) -> None:
         """
         Build an interpolation table that maps MQUAL → SNVQ.
         """
@@ -548,6 +548,7 @@ class SRSNVTrainer:
                     (x_train, y_train),
                     (x_val, y_val),
                 ],
+                verbose=10 if self.args.verbose else False,
             )
             logger.debug("Finished training for fold %d", fold_idx)
 
@@ -595,21 +596,24 @@ class SRSNVTrainer:
             target_prior=1 - self.prior_real_error,  # prior of a true call from real data
         )
 
-        # final quality (Phred)
-        # snvq_raw = prob_to_phred(prob_rescaled, max_value=self.args.max_qual)
-        self._create_quality_lookup_table()
-        snvq = np.interp(mqual, self.x_lut, self.y_lut)
-        # ------------------------------------------------------------------
-
         # attach new columns ------------------------------------------------
         new_cols = [pl.Series(PROB_FOLD_TMPL.format(k=k), preds_prob[k]) for k in range(self.k_folds)] + [
             pl.Series(PROB_ORIG, prob_orig),
             pl.Series(PROB_RECAL, prob_recal),
             pl.Series(PROB_RESCALED, prob_rescaled),
             pl.Series(MQUAL, mqual),
-            # pl.Series(SNVQ_RAW, snvq_raw),
-            pl.Series(SNVQ, snvq),
         ]
+
+        self.data_frame = self.data_frame.with_columns(new_cols)
+
+        # final quality (Phred)
+        # snvq_raw = prob_to_phred(prob_rescaled, max_value=self.args.max_qual)
+        self._create_quality_lookup_table()
+        snvq = np.interp(mqual, self.x_lut, self.y_lut)
+        # ------------------------------------------------------------------
+
+        # attach new column ------------------------------------------------
+        new_cols = [pl.Series(SNVQ, snvq)]
 
         self.data_frame = self.data_frame.with_columns(new_cols)
 
