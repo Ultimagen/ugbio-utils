@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import xgboost as xgb
+from sklearn.metrics import roc_auc_score
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
@@ -550,7 +551,11 @@ class SRSNVTrainer:
                 ],
                 verbose=10 if self.args.verbose else False,
             )
-            logger.debug("Finished training for fold %d", fold_idx)
+            auc_val = roc_auc_score(y_val, self.models[fold_idx].predict_proba(x_val)[:, 1])
+            auc_train = roc_auc_score(y_train, self.models[fold_idx].predict_proba(x_train)[:, 1])
+            logger.debug(
+                "Finished training for fold %d, AUC: %.4f (validation) / %.4f (training)", fold_idx, auc_val, auc_train
+            )
 
         logger.debug("Adding quality columns post-training")
         # ---------- add calibrated quality columns ----------------------
