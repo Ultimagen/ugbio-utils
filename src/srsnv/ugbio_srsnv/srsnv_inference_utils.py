@@ -244,6 +244,7 @@ class MLQualAnnotator(VcfAnnotator):
         )  # for correct encoding of categorical features
 
         # TODO remove this patch (types should be read from header as in featuremap_to_dataframe)
+
         variants_df = variants_df.astype(
             {
                 k: v
@@ -251,6 +252,8 @@ class MLQualAnnotator(VcfAnnotator):
                 if k in variants_df.columns
             },
         )
+
+        variants_df = variants_df.fillna({"RPA": 0, "hmer_context_ref": 0, "hmer_context_alt": 0})
 
         # Apply the provided model to assign a new quality value
         features_for_model = self.numerical_features + self.categorical_features_names
