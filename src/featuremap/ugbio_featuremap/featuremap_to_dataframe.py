@@ -66,7 +66,7 @@ log = logging.getLogger(__name__)
 
 # Configuration constants
 DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
-CHUNK_BP_DEFAULT = 300_000_000  # 300 Mbp per processing chunk
+CHUNK_BP_DEFAULT = 100_000_000  # 100 Mbp per processing chunk
 
 
 @dataclass
