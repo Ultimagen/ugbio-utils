@@ -25,20 +25,84 @@ ML_QUAL = "ML_QUAL"
 LOW_QUAL_THRESHOLD = 40
 
 
-def _vcf_getter(variant, field):  # noqa: PLR0911
-    if field == ALT:
-        return variant.alts[0]
-    if field == REF:
-        return variant.ref
-    if field == CHROM:
-        return variant.chrom
-    if field == POS:
-        return variant.pos
-    if field == FILTER:
-        return variant.filter
-    if field == QUAL:
-        return variant.qual
-    return variant.info.get(field, None)
+# Standard VCF field getters - using dictionary for O(1) lookup
+_STANDARD_FIELD_GETTERS = {
+    ALT: lambda variant: variant.alts[0] if variant.alts else None,
+    REF: lambda variant: variant.ref,
+    CHROM: lambda variant: variant.chrom,
+    POS: lambda variant: variant.pos,
+    FILTER: lambda variant: variant.filter,
+    QUAL: lambda variant: variant.qual,
+}
+
+# VCF number specifications that require special handling
+_ALT_ALLELE_NUMBERS = {"A", "R"}
+
+
+def _safe_get_first_alt_value(info_value, default=None):
+    """
+    Safely get the first value from INFO field for alt alleles.
+
+    Args:
+        info_value: Value from INFO field (could be list, tuple, or single value)
+        default: Default value to return if extraction fails
+
+    Returns:
+        First value from info_value if it's a sequence, otherwise default
+    """
+    if isinstance(info_value, list | tuple) and len(info_value) > 0:
+        return info_value[0]
+    return default
+
+
+def _get_info_field(variant, field, number=None):
+    """
+    Get INFO field value from variant record.
+
+    Args:
+        variant: pysam.VariantRecord
+        field: INFO field name
+        number: VCF number specification
+
+    Returns:
+        INFO field value, with special handling for alt allele fields
+    """
+    info_value = variant.info.get(field, None)
+
+    if number in _ALT_ALLELE_NUMBERS:
+        # For fields with one value per alt allele, return first alt
+        return _safe_get_first_alt_value(info_value)
+
+    return info_value
+
+
+def _vcf_getter(variant, field, number=None):
+    """
+    Get field value from VCF variant record.
+
+    Args:
+        variant: pysam.VariantRecord - VCF variant record
+        field: str - Field name to retrieve
+        number: str, optional - VCF number specification for INFO fields
+
+    Returns:
+        Field value or None if not found
+
+    Raises:
+        ValueError: If variant is None or field is invalid
+    """
+    if variant is None:
+        raise ValueError("Variant cannot be None")
+
+    if not isinstance(field, str):
+        raise ValueError("Field must be a string")
+
+    # Handle standard VCF fields with O(1) lookup
+    if field in _STANDARD_FIELD_GETTERS:
+        return _STANDARD_FIELD_GETTERS[field](variant)
+
+    # Handle INFO fields
+    return _get_info_field(variant, field, number)
 
 
 def sanitize_for_vcf_general(input_string):
@@ -141,7 +205,9 @@ class MLQualAnnotator(VcfAnnotator):
 
         return header
 
-    def process_records(self, records: list[pysam.VariantRecord]) -> list[pysam.VariantRecord]:
+    def process_records(
+        self, records: list[pysam.VariantRecord], info: pysam.VariantHeaderMetadata | None = None
+    ) -> list[pysam.VariantRecord]:
         """
         Apply trained model and annotate a list of VCF records with ML_QUAL scores
 
@@ -149,6 +215,9 @@ class MLQualAnnotator(VcfAnnotator):
         ----------
         records : list[pysam.VariantRecord]
             list of VCF records
+        info : pysam.VariantHeaderMetadata, optional
+            Header records of info fields, useful for checking types of INFO fields.
+
 
         Returns
         -------
@@ -162,22 +231,29 @@ class MLQualAnnotator(VcfAnnotator):
         """
         # Convert list of variant records to a pandas DataFrame
         columns = self.numerical_features + self.categorical_features_names + ["chrom"]
-        data = [{column: _vcf_getter(variant, column) for column in columns} for variant in records]
+        data = [
+            {
+                column: _vcf_getter(variant, column, info[column].number if info and column in info else None)
+                for column in columns
+            }
+            for variant in records
+        ]
         variants_df = pd.DataFrame(data)[columns]
         variants_df = set_categorical_columns(
             variants_df, self.categorical_features_dict
         )  # for correct encoding of categorical features
 
         # TODO remove this patch (types should be read from header as in featuremap_to_dataframe)
+
         variants_df = variants_df.astype(
             {
                 k: v
-                for k, v in {
-                    "rq": float,
-                }.items()
+                for k, v in {"rq": float, "hmer_context_ref": float, "hmer_context_alt": float, "RPA": float}.items()
                 if k in variants_df.columns
             },
         )
+
+        variants_df = variants_df.fillna({"RPA": 0, "hmer_context_ref": 0, "hmer_context_alt": 0})
 
         # Apply the provided model to assign a new quality value
         features_for_model = self.numerical_features + self.categorical_features_names
