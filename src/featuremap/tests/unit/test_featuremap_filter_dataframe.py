@@ -63,7 +63,8 @@ def test_filter_pipeline(tmp_path: Path) -> None:
     featuremap_dataframe = pl.read_parquet(out_pq)
     # BCSQ > BCSQ_filt and REF == ALT should both hold
     assert (featuremap_dataframe["BCSQ"] > bcsq_filt).all()
-    assert (featuremap_dataframe["REF"] == featuremap_dataframe["ALT"]).all()
+    # Cast to string to ensure reliable comparison even when columns are Enum-encoded
+    assert (featuremap_dataframe["REF"].cast(pl.Utf8) == featuremap_dataframe["ALT"].cast(pl.Utf8)).all()
 
     # Check full output with filter columns
     full_df = pl.read_parquet(out_pq_full)
