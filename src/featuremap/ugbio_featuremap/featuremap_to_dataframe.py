@@ -104,8 +104,7 @@ INFO_RE = re.compile(rf"##INFO=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Descripti
 FORMAT_RE = re.compile(rf"##FORMAT=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description={_QUOTED_VALUE}")
 
 _POLARS_DTYPE = {"Integer": pl.Int64, "Float": pl.Float64, "Flag": pl.Boolean}
-# ------------------------------------------------------------------
-# Core VCF column names – imported from FeatureMapFields for consistency
+# VCF column names – imported from FeatureMapFields for consistency
 CHROM = FeatureMapFields.CHROM.value
 POS = FeatureMapFields.POS.value
 REF = FeatureMapFields.REF.value
@@ -117,9 +116,6 @@ SAMPLE = FeatureMapFields.SAMPLE.value
 X_ALT = FeatureMapFields.X_ALT.value
 MQUAL = FeatureMapFields.MQUAL.value
 SNVQ = FeatureMapFields.SNVQ.value
-# ----------------------------------------------------
-# Allow these numeric columns to contain nulls
-_NULL_TOLERANT_NUMERIC = {QUAL, MQUAL, SNVQ}
 # Reserved/fixed VCF columns (cannot be overridden)
 RESERVED = {CHROM, POS, REF, ALT, QUAL, FILTER}
 
@@ -734,17 +730,21 @@ def _apply_scalar_categories(
 
 
 def _handle_nulls_values(frame: pl.DataFrame) -> pl.DataFrame:
-    """Fill categorical nulls with '' and log remaining numeric nulls."""
+    """Fill categorical nulls with '' and numeric nulls with 0, logging actions."""
     for col, dtype in frame.schema.items():
+        # ----- categorical (Enum) -----
         if isinstance(dtype, pl.Enum):
             n_null = frame[col].null_count()
             if n_null:
                 log.debug(f'Filling {n_null} missing values in categorical column "{col}" with ""')
                 frame = frame.with_columns(pl.col(col).fill_null("").alias(col))
-        if dtype in pl.NUMERIC_DTYPES and col not in _NULL_TOLERANT_NUMERIC:
+
+        # ----- numeric -----
+        if dtype in pl.NUMERIC_DTYPES:
             n_null = frame[col].null_count()
             if n_null:
-                log.debug(f"Numeric column '{col}' contains {n_null} missing values (leaving as null)")
+                log.debug(f"Filling {n_null} missing values in numeric column '{col}' with 0")
+                frame = frame.with_columns(pl.col(col).fill_null(0).alias(col))
     return frame
 
 
