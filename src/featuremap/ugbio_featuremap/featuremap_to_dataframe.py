@@ -104,8 +104,22 @@ INFO_RE = re.compile(rf"##INFO=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Descripti
 FORMAT_RE = re.compile(rf"##FORMAT=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description={_QUOTED_VALUE}")
 
 _POLARS_DTYPE = {"Integer": pl.Int64, "Float": pl.Float64, "Flag": pl.Boolean}
-CHROM, POS, REF, ALT, QUAL, FILTER, ID, SAMPLE = "CHROM", "POS", "REF", "ALT", "QUAL", "FILTER", "ID", "SAMPLE"
+# ------------------------------------------------------------------
+# Core VCF column names – imported from FeatureMapFields for consistency
+CHROM = FeatureMapFields.CHROM.value
+POS = FeatureMapFields.POS.value
+REF = FeatureMapFields.REF.value
+ALT = FeatureMapFields.ALT.value
+QUAL = FeatureMapFields.QUAL.value
+FILTER = FeatureMapFields.FILTER.value
+ID = FeatureMapFields.ID.value
+SAMPLE = FeatureMapFields.SAMPLE.value
 X_ALT = FeatureMapFields.X_ALT.value
+MQUAL = FeatureMapFields.MQUAL.value
+SNVQ = FeatureMapFields.SNVQ.value
+# ----------------------------------------------------
+# Allow these numeric columns to contain nulls
+_NULL_TOLERANT_NUMERIC = {QUAL, MQUAL, SNVQ}
 # Reserved/fixed VCF columns (cannot be overridden)
 RESERVED = {CHROM, POS, REF, ALT, QUAL, FILTER}
 
@@ -688,6 +702,52 @@ def _stream_region_to_polars(
     return _cast_column_data_types(frame, job_cfg)
 
 
+# ────────────────────────── new small helpers ───────────────────────────
+def _cast_ref_alt_columns(frame: pl.DataFrame) -> pl.DataFrame:
+    """Cast REF/ALT/X_ALT using their dedicated category dictionaries."""
+    frame = _cast_scalar(frame, REF, {"type": "String", "cat": REF_ALLELE_CATS})
+    frame = _cast_scalar(frame, ALT, {"type": "String", "cat": ALT_ALLELE_CATS})
+    if X_ALT in frame.columns:
+        frame = _cast_scalar(frame, X_ALT, {"type": "String", "cat": REF_ALLELE_CATS})
+    return frame
+
+
+def _apply_scalar_categories(
+    frame: pl.DataFrame,
+    touched_tags: list[str],
+    info_meta: dict,
+    fmt_meta: dict,
+) -> pl.DataFrame:
+    """Ensure all categories from header metadata are present."""
+    for tag in touched_tags:
+        if tag not in frame.columns:
+            continue
+        col_meta = (
+            info_meta.get(tag)
+            or fmt_meta.get(tag)
+            or {"cat": REF_ALLELE_CATS if tag in (REF, X_ALT) else ALT_ALLELE_CATS if tag == ALT else None}
+        )
+        cats = col_meta.get("cat")
+        if cats:
+            frame = _ensure_scalar_categories(frame, tag, cats)
+    return frame
+
+
+def _handle_nulls_values(frame: pl.DataFrame) -> pl.DataFrame:
+    """Fill categorical nulls with '' and log remaining numeric nulls."""
+    for col, dtype in frame.schema.items():
+        if isinstance(dtype, pl.Enum):
+            n_null = frame[col].null_count()
+            if n_null:
+                log.debug(f'Filling {n_null} missing values in categorical column "{col}" with ""')
+                frame = frame.with_columns(pl.col(col).fill_null("").alias(col))
+        if dtype in pl.NUMERIC_DTYPES and col not in _NULL_TOLERANT_NUMERIC:
+            n_null = frame[col].null_count()
+            if n_null:
+                log.debug(f"Numeric column '{col}' contains {n_null} missing values (leaving as null)")
+    return frame
+
+
 def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, job_cfg: VCFJobConfig) -> pl.DataFrame:
     """Apply column casting and categorical processing to a region DataFrame."""
     info_ids = job_cfg.info_ids
@@ -705,44 +765,21 @@ def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, job_cfg: VCFJobC
     for tag in scalar_fmt_ids:
         featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
     for tag in list_fmt_ids:
-        # These were exploded by AWK so now treat as scalars
         featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
 
     # QUAL ─ force Float64 even if all values are missing
     if QUAL in featuremap_dataframe.columns:
         featuremap_dataframe = _cast_scalar(featuremap_dataframe, QUAL, {"type": "Float", "cat": None})
 
-    # ----- REF / ALT with separate category lists -------------------------
-    featuremap_dataframe = _cast_scalar(
-        featuremap_dataframe,
-        REF,
-        {"type": "String", "cat": REF_ALLELE_CATS},
-    )
-    featuremap_dataframe = _cast_scalar(
-        featuremap_dataframe,
-        ALT,
-        {"type": "String", "cat": ALT_ALLELE_CATS},
-    )
+    # ----- REF / ALT / X_ALT -------------------------------------------
+    featuremap_dataframe = _cast_ref_alt_columns(featuremap_dataframe)
 
-    # -------- X_ALT (same dictionary as REF) -----------------------------  NEW
-    if X_ALT in featuremap_dataframe.columns:
-        featuremap_dataframe = _cast_scalar(
-            featuremap_dataframe,
-            X_ALT,
-            {"type": "String", "cat": REF_ALLELE_CATS},
-        )
+    # Apply categories for every scalar we touched
+    touched = info_ids + scalar_fmt_ids + list_fmt_ids + [REF, ALT, X_ALT]
+    featuremap_dataframe = _apply_scalar_categories(featuremap_dataframe, touched, info_meta, fmt_meta)
 
-    # Apply categories for every scalar we touched (including REF/ALT/X_ALT)
-    for tag in info_ids + scalar_fmt_ids + list_fmt_ids + [REF, ALT, X_ALT]:
-        if tag in featuremap_dataframe.columns:
-            col_meta = (
-                info_meta.get(tag)
-                or fmt_meta.get(tag)
-                or {"cat": REF_ALLELE_CATS if tag in (REF, X_ALT) else ALT_ALLELE_CATS if tag == ALT else None}
-            )
-            cats = col_meta.get("cat")
-            if cats:
-                featuremap_dataframe = _ensure_scalar_categories(featuremap_dataframe, tag, cats)
+    # Handle nulls in categorical & numeric columns
+    featuremap_dataframe = _handle_nulls_values(featuremap_dataframe)
 
     return featuremap_dataframe
 
@@ -767,7 +804,19 @@ def main(argv: list[str] | None = None) -> None:
         default=CHUNK_BP_DEFAULT,
         help="Base-pairs per processing chunk (default 300 Mbp)",
     )
+    # ───────────── new verbose flag ─────────────
+    parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    # -------------------------------------------
     args = parser.parse_args(argv)
+
+    # ───────────── logging setup ───────────────
+    if args.verbose:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+        log.setLevel(logging.DEBUG)
+    # -------------------------------------------
 
     vcf_to_parquet(
         vcf=args.input,

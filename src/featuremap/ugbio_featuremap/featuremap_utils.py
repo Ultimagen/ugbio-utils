@@ -17,6 +17,8 @@ class FeatureMapFields(Enum):
     ALT = ALT.upper()
     QUAL = QUAL.upper()
     FILTER = FILTER.upper()
+    ID = "ID"
+    SAMPLE = "SAMPLE"
     X_ALT = "X_ALT"
     MQUAL = "MQUAL"
     SNVQ = "SNVQ"
