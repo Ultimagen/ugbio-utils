@@ -575,14 +575,17 @@ class SRSNVTrainer:
 
     def _add_quality_columns(self, x_all, fold_arr: np.ndarray, y_all: np.ndarray) -> None:
         """Attach raw / recalibrated probabilities and quality columns."""
+        logger.debug("Adding quality columns")
         prob_orig, _, preds_prob = all_models_predict_proba(
             self.models, x_all, fold_arr, max_phred=self.max_qual, return_val_and_train_preds=True
         )
         mqual = prob_to_phred(prob_orig, max_value=self.max_qual)
+        logger.debug("Computed original probabilities and MQUAL scores")
 
         # ------------------------------------------------------------------
         # quality recalibration
         prob_recal = _probability_recalibration(prob_orig, y_all)
+        logger.debug("Applied probability recalibration")
 
         # ------------------------------------------------------------------
         # global rescaling to the real-data prior
@@ -592,8 +595,10 @@ class SRSNVTrainer:
             target_prior=1 - self.prior_real_error,  # prior of a true call from real data
             eps=self.eps,
         )
+        logger.debug("Completed probability rescaling to real-data prior")
 
         # attach new columns ------------------------------------------------
+        logger.debug("Attaching per-fold probabilities and intermediate columns")
         new_cols = [pl.Series(PROB_FOLD_TMPL.format(k=k), preds_prob[k]) for k in range(self.k_folds)] + [
             pl.Series(PROB_ORIG, prob_orig),
             pl.Series(PROB_RECAL, prob_recal),
@@ -606,13 +611,16 @@ class SRSNVTrainer:
         # final quality (Phred)
         # snvq_raw = prob_to_phred(prob_rescaled, max_value=self.max_qual)
         self._create_quality_lookup_table()
+        logger.debug("Created MQUAL→SNVQ lookup table")
         snvq = np.interp(mqual, self.x_lut, self.y_lut)
+        logger.debug("Interpolated SNVQ values from lookup table")
         # ------------------------------------------------------------------
 
         # attach new column ------------------------------------------------
         new_cols = [pl.Series(SNVQ, snvq)]
 
         self.data_frame = self.data_frame.with_columns(new_cols)
+        logger.debug("Finished adding quality columns")
 
     def _save_training_results(self) -> None:
         """Save training evaluation results for later use in reporting."""
