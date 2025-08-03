@@ -125,17 +125,8 @@ def prepare_report(  # noqa: C901 PLR0915
             model.load_model(model_path)
             models.append(model)
 
-    # Load training evaluation results if available
-    training_results = None
-    if "training_results_path" in metadata:
-        training_results_path = metadata["training_results_path"]
-        if os.path.exists(training_results_path):
-            logger.debug("Loading training evaluation results from %s", training_results_path)
-            with open(training_results_path) as f:
-                training_results = json.load(f)
-            logger.info("Loaded training evaluation results")
-        else:
-            logger.warning("Training results file not found: %s", training_results_path)
+    # Load training evaluation results
+    training_results = metadata["training_results"]
 
     # Create a wrapper class for models that includes training results
     class ModelWithTrainingResults:

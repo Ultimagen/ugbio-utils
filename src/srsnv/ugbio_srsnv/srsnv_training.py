@@ -569,8 +569,8 @@ class SRSNVTrainer:
         # ---------- add calibrated quality columns ----------------------
         self._add_quality_columns(pd_df[feat_cols], fold_arr, y_all)
 
-        # ---------- save training evaluation results ----------------------
-        logger.debug("Saving training evaluation results")
+        # ---------- collect training evaluation results -------------------
+        logger.debug("Collecting training evaluation results")
         self._save_training_results()
 
     def _add_quality_columns(self, x_all, fold_arr: np.ndarray, y_all: np.ndarray) -> None:
@@ -682,13 +682,6 @@ class SRSNVTrainer:
             self.y_lut.tolist(),
         ]
 
-        # save training evaluation results to separate file
-        training_results_path = self.out_dir / f"{base}training_results.json"
-        logger.debug("Saving training evaluation results to %s", training_results_path)
-        with training_results_path.open("w") as fh:
-            json.dump(self.training_results, fh, indent=2)
-        logger.info(f"Saved training evaluation results → {training_results_path}")
-
         # stats and priors
         stats = {
             "positive": self.pos_stats,
@@ -700,7 +693,7 @@ class SRSNVTrainer:
         # Save comprehensive metadata
         metadata = {
             "model_paths": model_paths,
-            "training_results_path": str(training_results_path),
+            "training_results": self.training_results,
             "chrom_to_model": chrom_to_model_file,
             "features": features_meta,
             "quality_recalibration_table": quality_recalibration_table,
