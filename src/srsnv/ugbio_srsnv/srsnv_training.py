@@ -369,6 +369,16 @@ class SRSNVTrainer:
         self.categorical_encodings: dict[str, dict[str, int]] = {}
         self.feature_dtypes: dict[str, str] = {}
 
+        # ─────────── user-supplied metadata ───────────
+        self.user_metadata: dict[str, str] = {}
+        for token in args.metadata or []:
+            # Require exactly one ':' so that key and value are unambiguous
+            if token.count(":") != 1:
+                raise ValueError(f"--metadata token '{token}' must contain exactly one ':' (key:value)")
+            k, v = token.split(":", 1)
+            self.user_metadata[k] = v
+        logger.debug("Parsed user metadata: %s", self.user_metadata)
+
     # ─────────────────────── data-loading helpers ───────────────────────
     def _read_positive_df(self, pos_path: str) -> pl.DataFrame:
         """Load and massage the positive parquet."""
@@ -700,6 +710,7 @@ class SRSNVTrainer:
             "filtering_stats": stats,
             "model_params": self.model_params,
             "training_parameters": {"max_qual": self.max_qual},
+            "metadata": self.user_metadata,
         }
 
         with metadata_path.open("w") as fh:
@@ -765,6 +776,12 @@ def _cli() -> argparse.Namespace:
         type=int,
         default=1000,
         help="Number of points in the MQUAL→SNVQ lookup table " "(default 1000)",
+    )
+    ap.add_argument(
+        "--metadata",
+        action="append",
+        default=[],
+        help="Additional metadata key:value pairs (can be given multiple times)",
     )
     return ap.parse_args()
 

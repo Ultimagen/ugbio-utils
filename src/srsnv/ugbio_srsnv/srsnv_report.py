@@ -103,6 +103,7 @@ def prepare_report(  # noqa: C901 PLR0915
     # Load srsnv_metadata into a dictionary
     with open(srsnv_metadata) as f:
         metadata = json.load(f)
+    user_meta = metadata.get("metadata", {})
 
     # Load models
     models = []
@@ -169,9 +170,10 @@ def prepare_report(  # noqa: C901 PLR0915
     params["num_CV_folds"] = len(models)
 
     # Placeholder for params that will be fixed later TODO: fix these later
-    params["adapter_version"] = metadata.get("adapter_version", None)
-    params["docker_image"] = metadata.get("docker_image", None)
-    params["pipeline_version"] = metadata.get("pipeline_version", None)
+    # prefer nested metadata values, fall back to legacy root-level keys
+    params["adapter_version"] = user_meta.get("adapter_version", None)
+    params["docker_image"] = user_meta.get("docker_image", None)
+    params["pipeline_version"] = user_meta.get("pipeline_version", None)
     params["pre-filter"] = None
     params["start_tag_col"] = "st"
     params["end_tag_col"] = "et"
