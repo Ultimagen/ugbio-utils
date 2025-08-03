@@ -48,24 +48,24 @@ ML_PROB_1_TEST = "prob_orig"  # TODO: Maybe prob_recal?
 ML_QUAL_1_TEST = "MQUAL"
 ML_LOGIT_TEST = "ML_logit_test"
 LABEL = "label"
-QUAL = "SNVQ"
+QUAL = FeatureMapFields.SNVQ.value
 IS_MIXED = "is_mixed"
 IS_MIXED_START = "is_mixed_start"
 IS_MIXED_END = "is_mixed_end"
 FOLD_ID = "fold_id"
-EDIST = "EDIST"
-SCORE = "BCSQ"
-INDEX = "INDEX"
-LENGTH = "RL"
-READ_COUNT = "DP"  # TODO: check whether do or DP_FILT
+EDIST = FeatureMapFields.EDIST.value
+SCORE = FeatureMapFields.BCSQ.value
+INDEX = FeatureMapFields.INDEX.value
+LENGTH = FeatureMapFields.RL.value
+READ_COUNT = FeatureMapFields.DP.value
 IS_CYCLE_SKIP = "is_cycle_skip"
-REV = "REV"
+REV = FeatureMapFields.REV.value
 IS_FORWARD = "is_forward"
 TRINUC_CONTEXT_WITH_ALT = "trinuc_context_with_alt"
 
 edist_filter = f"{EDIST} <= 5"
-HQ_SNV_filter = f"{SCORE} >= 7.9"
-CSKP_SNV_filter = f"{SCORE} >= 10"
+HQ_SNV_filter = f"{SCORE} >= 79"
+CSKP_SNV_filter = f"{SCORE} >= 100"
 read_end_filter = f"{INDEX} > 12 and " f"{INDEX} < ({LENGTH} - 12)"
 mixed_read_filter = IS_MIXED  # TODO use adapter_version
 default_LoD_filters = {  # noqa: N816
@@ -1519,7 +1519,7 @@ class SRSNVReport:
         # Add is_forward column as negation of REV column
         if IS_FORWARD not in self.data_df.columns and REV in self.data_df.columns:
             logger.info(f"Adding {IS_FORWARD} column to data_df as negation of {REV}")
-            self.data_df[IS_FORWARD] = ~self.data_df[REV]
+            self.data_df.loc[IS_FORWARD, :] = ~self.data_df[REV]
 
         # add logits to data_df
         self.data_df[ML_LOGIT_TEST] = prob_to_logit(
