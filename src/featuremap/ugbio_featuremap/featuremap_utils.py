@@ -29,6 +29,11 @@ class FeatureMapFields(Enum):
     EDIST = "EDIST"
     HAMDIST = "HAMDIST"
     HAMDIST_FILT = "HAMDIST_FILT"
+    INDEX = "INDEX"  # position in read
+    RL = "RL"  # read length
+    DP = "DP"  # depth
+    BCSQ = "BCSQ"  # base calling quality
+    REV = "REV"  # is reverse strand
 
 
 class FeatureMapFilters(Enum):
