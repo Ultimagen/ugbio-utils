@@ -1514,12 +1514,12 @@ class SRSNVReport:
         # Add trinuc_context_with_alt column if it doesn't exist
         if TRINUC_CONTEXT_WITH_ALT not in self.data_df.columns:
             logger.info(f"Adding {TRINUC_CONTEXT_WITH_ALT} column to data_df")
-            self.data_df[TRINUC_CONTEXT_WITH_ALT] = construct_trinuc_context_with_alt(self.data_df)
+            self.data_df.loc[:, TRINUC_CONTEXT_WITH_ALT] = construct_trinuc_context_with_alt(self.data_df)
 
         # Add is_forward column as negation of REV column
         if IS_FORWARD not in self.data_df.columns and REV in self.data_df.columns:
             logger.info(f"Adding {IS_FORWARD} column to data_df as negation of {REV}")
-            self.data_df.loc[IS_FORWARD, :] = ~self.data_df[REV]
+            self.data_df.loc[:, IS_FORWARD] = ~self.data_df[REV]
 
         # add logits to data_df
         self.data_df[ML_LOGIT_TEST] = prob_to_logit(
@@ -1660,7 +1660,6 @@ class SRSNVReport:
         """
         tprs = []
         fprs = []
-
         total_positive = self.data_df[LABEL].sum()
         total_negative = (~self.data_df[LABEL]).sum()
 

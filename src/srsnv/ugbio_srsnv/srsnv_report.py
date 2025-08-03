@@ -62,7 +62,7 @@ EDIT_DIST_FEATURES = ["EDIST", "HAMDIST", "HAMDIST_FILT"]
 pl.enable_string_cache()
 
 
-def add_is_mixed_to_featuremap_df(data_df: pd.DataFrame, adapter_version: str) -> pd.DataFrame:
+def add_is_mixed_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
     """Add is_mixed columns to featuremap_df
     NOTE: THIS FUNCTION IS A PATCH AND SHOULD BE REPLACED
     """
@@ -98,7 +98,7 @@ def prepare_report(  # noqa: C901 PLR0915
     logger.info("Preparing SNV report...")
 
     # Read featuremap dataframe
-    data_df = pd.read_parquet(featuremap_df)
+    data_df = pd.read_parquet(featuremap_df, engine="fastparquet")
 
     # Load srsnv_metadata into a dictionary
     with open(srsnv_metadata) as f:
@@ -186,8 +186,8 @@ def prepare_report(  # noqa: C901 PLR0915
     params["end_tag_col"] = "et"
 
     # Add is_mixed columns to featuremap_df
-    data_df = add_is_mixed_to_featuremap_df(data_df, params.get("adapter_version", None))
-    data_df[IS_CYCLE_SKIP] = data_df[SCORE] == 10  # noqa: PLR2004
+    data_df = add_is_mixed_to_featuremap_df(data_df)
+    data_df.loc[:, IS_CYCLE_SKIP] = data_df["BCSQCSS"] != 0
 
     # Handle random seed
     rng = None
