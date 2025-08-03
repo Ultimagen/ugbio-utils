@@ -17,6 +17,7 @@ from ugbio_featuremap.featuremap_to_dataframe import (
     POS,
     REF,
     _build_explicit_schema,
+    _cast_column,  # NEW import
     _get_awk_script_path,
     _resolve_bcftools_command,
     header_meta,
@@ -147,7 +148,7 @@ def test_ref_alt_defaults(tmp_path: Path, input_featuremap: Path):
         "N",
     }
 
-    # ALT includes just the four bases
+    # ALT includes just the four bases (+"")
     assert set(featuremap_dataframe["ALT"].cat.get_categories()) == {"", "A", "C", "G", "T"}
 
 
@@ -164,10 +165,13 @@ def test_header_meta(input_featuremap):
     assert "RN" in fmt
 
 
-def test_ensure_scalar_categories():
-    featuremap_dataframe = pl.DataFrame({"x": pl.Series(["A"], dtype=pl.Categorical)})
-    featuremap_dataframe_2 = featuremap_to_dataframe._ensure_scalar_categories(featuremap_dataframe, "x", ["A", "B"])
+def test_cast_column_categorical():
+    featuremap_dataframe = pl.DataFrame({"x": ["A", None]})
+    meta = {"type": "String", "cat": ["A", "B"]}
+    featuremap_dataframe_2 = _cast_column(featuremap_dataframe, "x", meta)
+    assert isinstance(featuremap_dataframe_2["x"].dtype, pl.Enum)
     assert set(featuremap_dataframe_2["x"].cat.get_categories()) == {"", "A", "B"}
+    assert featuremap_dataframe_2["x"].null_count() == 0
 
 
 def test_selected_dtypes(tmp_path: Path, input_featuremap: Path):
@@ -184,6 +188,15 @@ def test_selected_dtypes(tmp_path: Path, input_featuremap: Path):
     assert isinstance(featuremap_dataframe["ALT"].dtype, pl.Enum)
     assert featuremap_dataframe["VAF"].dtype == pl.Float64
     assert featuremap_dataframe["RN"].dtype == pl.Utf8
+
+    # -------- ensure no nulls remain in numeric or Enum columns ----------
+    cols_to_check = [
+        c for c, dt in featuremap_dataframe.schema.items() if (dt in pl.NUMERIC_DTYPES) or isinstance(dt, pl.Enum)
+    ]
+    if cols_to_check:  # defensive – some tiny frames may lack numeric/Enum cols
+        assert (
+            featuremap_dataframe.select(pl.col(cols_to_check).null_count()).sum().row(0)[0] == 0
+        ), "Unexpected null values in numeric / Enum columns"
 
 
 def test_parallel_vcf_conversion_comprehensive(tmp_path: Path, input_featuremap: Path) -> None:

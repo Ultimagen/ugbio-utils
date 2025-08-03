@@ -53,6 +53,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from io import StringIO
@@ -187,37 +188,13 @@ def header_meta(vcf: str, bcftools_path: str, threads: int = 0) -> tuple[dict, d
 
 
 # ───────────────── category helper ────────────────────────────────────────
-def _ensure_scalar_categories(
-    featuremap_dataframe: pl.DataFrame,
-    col: str,
-    cats: list[str],
-) -> pl.DataFrame:
-    """
-    Cast *col* to a Polars Enum whose category dictionary is **exactly**
-    `cats` plus an empty-string entry (""), ensuring round-trip fidelity.
-
-    Any literal “.” is treated as missing (null); the empty string stays a
-    valid category so downstream code can faithfully round-trip values.
-    """
-    if "" not in cats:
-        cats = cats + [""]
-    enum_dtype = pl.Enum(cats)
-
-    cleaned = (
-        pl.when(pl.col(col).cast(pl.Utf8) == ".")
-        .then(None)  # “.”  →  null
-        .otherwise(pl.col(col).cast(pl.Utf8))
-    )
-    return featuremap_dataframe.with_columns(cleaned.cast(enum_dtype, strict=False).alias(col))
-
-
-def _cast_scalar(
+def _cast_column(
     featuremap_dataframe: pl.DataFrame,
     col: str,
     meta: dict,
 ) -> pl.DataFrame:
     """
-    Cast a scalar INFO column.
+    Cast a column to required data type and categories.
 
     Parameters
     ----------
@@ -235,17 +212,35 @@ def _cast_scalar(
     DataFrame with `col` recast and (if categorical) stub-padded so
     all categories from `meta["cat"]` are present.
     """
+    # ---- convert placeholder strings to null & log count -----------------
     utf_null = pl.when(pl.col(col).cast(pl.Utf8).is_in(["", "."])).then(None).otherwise(pl.col(col).cast(pl.Utf8))
+    n_null = featuremap_dataframe.with_columns(utf_null.alias(col))[col].null_count()
+    if n_null:
+        log.debug("Column '%s' – %d values normalised to null", col, int(n_null))
 
+    featuremap_dataframe = featuremap_dataframe.with_columns(utf_null.alias(col))
+
+    # ---- categorical handling -------------------------------------------
     if meta["cat"]:
-        # Use Enum with fixed dictionary
-        featuremap_dataframe = featuremap_dataframe.with_columns(utf_null.alias(col))
-        return _ensure_scalar_categories(featuremap_dataframe, col, meta["cat"])
+        cats = meta["cat"]
+        if "" not in cats:
+            cats = cats + [""]
+        enum_dtype = pl.Enum(cats)
 
+        featuremap_dataframe = featuremap_dataframe.with_columns(
+            pl.col(col).fill_null("").cast(enum_dtype, strict=True).alias(col)
+        )
+        return featuremap_dataframe
+
+    # ---- numeric handling ------------------------------------------------
     if meta["type"] in _POLARS_DTYPE:
-        return featuremap_dataframe.with_columns(utf_null.cast(_POLARS_DTYPE[meta["type"]], strict=False).alias(col))
+        featuremap_dataframe = featuremap_dataframe.with_columns(
+            pl.col(col).fill_null(0).cast(_POLARS_DTYPE[meta["type"]], strict=True).alias(col)
+        )
+        return featuremap_dataframe
 
-    return featuremap_dataframe.with_columns(utf_null.alias(col))
+    # ---- default (Utf8) --------------------------------------------------
+    return featuremap_dataframe
 
 
 def _resolve_bcftools_command() -> str:
@@ -564,7 +559,12 @@ def vcf_to_parquet(
 
                 for fut in as_completed(futures):
                     if fut.exception():
-                        log.error("Region %s failed: %s", futures[fut], fut.exception())
+                        # Forward the traceback from the worker so the root cause is visible.
+                        log.error(
+                            "Region %s raised an exception\n%s",
+                            futures[fut],
+                            "".join(traceback.format_exception(fut.exception())),
+                        )
 
             # keep only those parts that were actually created
             part_files = [p for p in part_files if Path(p).is_file()]
@@ -621,8 +621,9 @@ def _process_region_to_parquet(
             frame.write_parquet(output_file)
             return output_file
 
-    except Exception as e:
-        log.error(f"Error processing region {region}: {e}")
+    except Exception:
+        # Emit full traceback inside the worker
+        log.exception("Error processing region %s", region)
         # Clean up on error
         if Path(output_file).exists():
             Path(output_file).unlink(missing_ok=True)
@@ -701,50 +702,10 @@ def _stream_region_to_polars(
 # ────────────────────────── new small helpers ───────────────────────────
 def _cast_ref_alt_columns(frame: pl.DataFrame) -> pl.DataFrame:
     """Cast REF/ALT/X_ALT using their dedicated category dictionaries."""
-    frame = _cast_scalar(frame, REF, {"type": "String", "cat": REF_ALLELE_CATS})
-    frame = _cast_scalar(frame, ALT, {"type": "String", "cat": ALT_ALLELE_CATS})
+    frame = _cast_column(frame, REF, {"type": "String", "cat": REF_ALLELE_CATS})
+    frame = _cast_column(frame, ALT, {"type": "String", "cat": ALT_ALLELE_CATS})
     if X_ALT in frame.columns:
-        frame = _cast_scalar(frame, X_ALT, {"type": "String", "cat": REF_ALLELE_CATS})
-    return frame
-
-
-def _apply_scalar_categories(
-    frame: pl.DataFrame,
-    touched_tags: list[str],
-    info_meta: dict,
-    fmt_meta: dict,
-) -> pl.DataFrame:
-    """Ensure all categories from header metadata are present."""
-    for tag in touched_tags:
-        if tag not in frame.columns:
-            continue
-        col_meta = (
-            info_meta.get(tag)
-            or fmt_meta.get(tag)
-            or {"cat": REF_ALLELE_CATS if tag in (REF, X_ALT) else ALT_ALLELE_CATS if tag == ALT else None}
-        )
-        cats = col_meta.get("cat")
-        if cats:
-            frame = _ensure_scalar_categories(frame, tag, cats)
-    return frame
-
-
-def _handle_nulls_values(frame: pl.DataFrame) -> pl.DataFrame:
-    """Fill categorical nulls with '' and numeric nulls with 0, logging actions."""
-    for col, dtype in frame.schema.items():
-        # ----- categorical (Enum) -----
-        if isinstance(dtype, pl.Enum):
-            n_null = frame[col].null_count()
-            if n_null:
-                log.debug(f'Filling {n_null} missing values in categorical column "{col}" with ""')
-                frame = frame.with_columns(pl.col(col).fill_null("").alias(col))
-
-        # ----- numeric -----
-        if dtype in pl.NUMERIC_DTYPES:
-            n_null = frame[col].null_count()
-            if n_null:
-                log.debug(f"Filling {n_null} missing values in numeric column '{col}' with 0")
-                frame = frame.with_columns(pl.col(col).fill_null(0).alias(col))
+        frame = _cast_column(frame, X_ALT, {"type": "String", "cat": REF_ALLELE_CATS})
     return frame
 
 
@@ -761,25 +722,18 @@ def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, job_cfg: VCFJobC
 
     # Apply column casting - list columns are already exploded as scalars
     for tag in info_ids:
-        featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, info_meta[tag])
+        featuremap_dataframe = _cast_column(featuremap_dataframe, tag, info_meta[tag])
     for tag in scalar_fmt_ids:
-        featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
+        featuremap_dataframe = _cast_column(featuremap_dataframe, tag, fmt_meta[tag])
     for tag in list_fmt_ids:
-        featuremap_dataframe = _cast_scalar(featuremap_dataframe, tag, fmt_meta[tag])
+        featuremap_dataframe = _cast_column(featuremap_dataframe, tag, fmt_meta[tag])
 
     # QUAL ─ force Float64 even if all values are missing
     if QUAL in featuremap_dataframe.columns:
-        featuremap_dataframe = _cast_scalar(featuremap_dataframe, QUAL, {"type": "Float", "cat": None})
+        featuremap_dataframe = _cast_column(featuremap_dataframe, QUAL, {"type": "Float", "cat": None})
 
     # ----- REF / ALT / X_ALT -------------------------------------------
     featuremap_dataframe = _cast_ref_alt_columns(featuremap_dataframe)
-
-    # Apply categories for every scalar we touched
-    touched = info_ids + scalar_fmt_ids + list_fmt_ids + [REF, ALT, X_ALT]
-    featuremap_dataframe = _apply_scalar_categories(featuremap_dataframe, touched, info_meta, fmt_meta)
-
-    # Handle nulls in categorical & numeric columns
-    featuremap_dataframe = _handle_nulls_values(featuremap_dataframe)
 
     return featuremap_dataframe
 
