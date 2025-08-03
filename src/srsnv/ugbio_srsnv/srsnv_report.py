@@ -268,32 +268,24 @@ def _cli() -> argparse.Namespace:
     ap.add_argument("--verbose", action="store_true", help="Enable debug logging")
 
     args = ap.parse_args()
-    params = {
-        "featuremap_df": args.featuremap_df,
-        "srsnv_metadata": args.srsnv_metadata,
-        "report_path": args.report_path,
-        "basename": args.basename,
-        "models_prefix": args.models_prefix,
-        "random_seed": args.random_seed,
-        "verbose": args.verbose,
-    }
-    return params
+    return args
 
 
 # ───────────────────────── main entry point ──────────────────────────────
 def main() -> None:
-    params = _cli()
-    if params["verbose"]:
+    args = _cli()
+    if args.verbose:
         logger.setLevel(logging.DEBUG)
         for handler in logger.handlers:
             handler.setLevel(logging.DEBUG)
+
     prepare_report(
-        featuremap_df=params["featuremap_df"],
-        srsnv_metadata=params["srsnv_metadata"],
-        report_path=params["report_path"],
-        basename=params["basename"],
-        models_prefix=params["models_prefix"],
-        random_seed=params["random_seed"],
+        featuremap_df=args.featuremap_df,
+        srsnv_metadata=args.srsnv_metadata,
+        report_path=args.report_path,
+        basename=args.basename,
+        models_prefix=args.models_prefix,
+        random_seed=args.random_seed,
     )
 
 
