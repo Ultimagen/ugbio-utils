@@ -1992,12 +1992,7 @@ class SRSNVReport:
         auc_on_holdout_non_mixed = []
         error_on_holdout = []  # log cases of ROC AUC error on holdout,. Values in ["total", "mixed", "nonmixed"]
         holdout_fold_cond = self.data_df[FOLD_ID].isna()
-        if holdout_fold_cond.sum() > holdout_fold_size_thresh:
-            mix_holdout_fold_cond = self.data_df[FOLD_ID].isna() & (self.data_df[IS_MIXED])
-            nonmix_holdout_fold_cond = self.data_df[FOLD_ID].isna() & (~self.data_df[IS_MIXED])
-        all_features = (
-            self.all_features
-        )  # self.params["categorical_features_names"] + self.params["numerical_features"]
+
         for k in range(num_cv_folds):
             fold_cond = self.data_df[FOLD_ID] == k
             mix_fold_cond = (self.data_df[FOLD_ID] == k) & (self.data_df[IS_MIXED])
@@ -2034,7 +2029,7 @@ class SRSNVReport:
             # Calculate ROC AUC on holdout set
             if holdout_fold_cond.sum() > holdout_fold_size_thresh:
                 if "total" not in error_on_holdout:  # Checked to supress multiple error messages
-                    preds = self.models[k].predict_proba(self.data_df.loc[holdout_fold_cond, all_features])
+                    preds = self.data_df.loc[holdout_fold_cond, f"prob_fold_{k}"]
                     preds = preds[:, 1] if preds.shape[1] == 2 else preds  # noqa: PLR2004
                     auc_on_holdout.append(
                         prob_to_phred(
@@ -2049,8 +2044,11 @@ class SRSNVReport:
                         error_on_holdout.append("total")
                 else:
                     auc_on_holdout.append(np.nan)
+
+                mix_holdout_fold_cond = self.data_df[FOLD_ID].isna() & (self.data_df[IS_MIXED])
+                nonmix_holdout_fold_cond = self.data_df[FOLD_ID].isna() & (~self.data_df[IS_MIXED])
                 if "mixed" not in error_on_holdout:
-                    preds = self.models[k].predict_proba(self.data_df.loc[mix_holdout_fold_cond, all_features])
+                    preds = self.data_df.loc[mix_holdout_fold_cond, f"prob_fold_{k}"]
                     preds = preds[:, 1] if preds.shape[1] == 2 else preds  # noqa: PLR2004
                     auc_on_holdout_mixed.append(
                         prob_to_phred(
@@ -2067,7 +2065,7 @@ class SRSNVReport:
                 else:
                     auc_on_holdout_mixed.append(np.nan)
                 if "nonmixed" not in error_on_holdout:
-                    preds = self.models[k].predict_proba(self.data_df.loc[nonmix_holdout_fold_cond, all_features])
+                    preds = self.data_df.loc[nonmix_holdout_fold_cond, f"prob_fold_{k}"]
                     preds = preds[:, 1] if preds.shape[1] == 2 else preds  # noqa: PLR2004
                     auc_on_holdout_non_mixed.append(
                         prob_to_phred(

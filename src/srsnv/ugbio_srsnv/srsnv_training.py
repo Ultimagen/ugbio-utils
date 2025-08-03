@@ -575,7 +575,6 @@ class SRSNVTrainer:
                 "Finished training for fold %d, AUC: %.4f (validation) / %.4f (training)", fold_idx, auc_val, auc_train
             )
 
-        logger.debug("Adding quality columns post-training")
         # ---------- add calibrated quality columns ----------------------
         self._add_quality_columns(pd_df[feat_cols], fold_arr, y_all)
 
