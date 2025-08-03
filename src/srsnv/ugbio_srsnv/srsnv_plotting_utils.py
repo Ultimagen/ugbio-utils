@@ -2030,7 +2030,6 @@ class SRSNVReport:
             if holdout_fold_cond.sum() > holdout_fold_size_thresh:
                 if "total" not in error_on_holdout:  # Checked to supress multiple error messages
                     preds = self.data_df.loc[holdout_fold_cond, f"prob_fold_{k}"]
-                    preds = preds[:, 1] if preds.shape[1] == 2 else preds  # noqa: PLR2004
                     auc_on_holdout.append(
                         prob_to_phred(
                             self._safe_roc_auc(
@@ -2049,7 +2048,6 @@ class SRSNVReport:
                 nonmix_holdout_fold_cond = self.data_df[FOLD_ID].isna() & (~self.data_df[IS_MIXED])
                 if "mixed" not in error_on_holdout:
                     preds = self.data_df.loc[mix_holdout_fold_cond, f"prob_fold_{k}"]
-                    preds = preds[:, 1] if preds.shape[1] == 2 else preds  # noqa: PLR2004
                     auc_on_holdout_mixed.append(
                         prob_to_phred(
                             self._safe_roc_auc(
@@ -2066,7 +2064,6 @@ class SRSNVReport:
                     auc_on_holdout_mixed.append(np.nan)
                 if "nonmixed" not in error_on_holdout:
                     preds = self.data_df.loc[nonmix_holdout_fold_cond, f"prob_fold_{k}"]
-                    preds = preds[:, 1] if preds.shape[1] == 2 else preds  # noqa: PLR2004
                     auc_on_holdout_non_mixed.append(
                         prob_to_phred(
                             self._safe_roc_auc(

@@ -29,6 +29,7 @@ import pandas as pd
 import polars as pl
 import xgboost as xgb
 from ugbio_core.logger import logger
+from ugbio_core.vcfbed.variant_annotation import get_cycle_skip_dataframe
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
 from ugbio_srsnv.srsnv_plotting_utils import SRSNVReport, create_srsnv_report_html
@@ -38,9 +39,12 @@ LABEL_COL = "label"
 CHROM = FeatureMapFields.CHROM.value
 POS = FeatureMapFields.POS.value
 REF = FeatureMapFields.REF.value
+ALT = FeatureMapFields.ALT.value
 X_ALT = FeatureMapFields.X_ALT.value
 X_HMER_REF = FeatureMapFields.X_HMER_REF.value
 X_HMER_ALT = FeatureMapFields.X_HMER_ALT.value
+X_PREV1 = FeatureMapFields.X_PREV1.value
+X_NEXT1 = FeatureMapFields.X_NEXT1.value
 MQUAL = FeatureMapFields.MQUAL.value
 SNVQ = FeatureMapFields.SNVQ.value
 SNVQ_RAW = SNVQ + "_RAW"
@@ -54,7 +58,7 @@ PROB_RESCALED = "prob_rescaled"
 PROB_TRAIN = "prob_train"
 PROB_FOLD_TMPL = "prob_fold_{k}"
 
-SCORE = "BCSQ"
+SCORE = FeatureMapFields.BCSQ.value
 IS_CYCLE_SKIP = "is_cycle_skip"
 
 EDIT_DIST_FEATURES = ["EDIST", "HAMDIST", "HAMDIST_FILT"]
@@ -73,6 +77,24 @@ def add_is_mixed_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
     data_df[IS_MIXED_END] = data_df["et"] == "MIXED"
     data_df[IS_MIXED] = data_df[IS_MIXED_START] & data_df[IS_MIXED_END]
 
+    return data_df
+
+
+def add_is_cycle_skip_to_featuremap_df(data_df: pd.DataFrame, flow_order: str = "TGCA") -> pd.DataFrame:
+    """Add is_cycle_skip column to featuremap_df"""
+    logger.info("Adding is_cycle_skip column to featuremap")
+    data_df = (
+        data_df.assign(
+            ref_motif=data_df[X_PREV1].astype(str) + data_df[REF].astype(str) + data_df[X_NEXT1].astype(str),
+            alt_motif=data_df[X_PREV1].astype(str) + data_df[ALT].astype(str) + data_df[X_NEXT1].astype(str),
+        )
+        .merge(
+            get_cycle_skip_dataframe(flow_order)[[IS_CYCLE_SKIP]],
+            left_on=["ref_motif", "alt_motif"],
+            right_index=True,
+        )
+        .drop(columns=["ref_motif", "alt_motif"])
+    )
     return data_df
 
 
@@ -98,7 +120,7 @@ def prepare_report(  # noqa: C901 PLR0915
     logger.info("Preparing SNV report...")
 
     # Read featuremap dataframe
-    data_df = pd.read_parquet(featuremap_df, engine="fastparquet")
+    data_df = pd.read_parquet(featuremap_df)
 
     # Load srsnv_metadata into a dictionary
     with open(srsnv_metadata) as f:
@@ -178,9 +200,9 @@ def prepare_report(  # noqa: C901 PLR0915
     params["start_tag_col"] = "st"
     params["end_tag_col"] = "et"
 
-    # Add is_mixed columns to featuremap_df
+    # Add columns to featuremap_df
     data_df = add_is_mixed_to_featuremap_df(data_df)
-    data_df.loc[:, IS_CYCLE_SKIP] = data_df["BCSQCSS"] != 0
+    data_df = add_is_cycle_skip_to_featuremap_df(data_df)
 
     # Handle random seed
     rng = None
