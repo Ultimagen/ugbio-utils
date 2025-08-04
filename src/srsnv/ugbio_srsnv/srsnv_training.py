@@ -372,10 +372,10 @@ class SRSNVTrainer:
         # ─────────── user-supplied metadata ───────────
         self.user_metadata: dict[str, str] = {}
         for token in args.metadata or []:
-            # Require exactly one ':' so that key and value are unambiguous
-            if token.count(":") != 1:
-                raise ValueError(f"--metadata token '{token}' must contain exactly one ':' (key:value)")
-            k, v = token.split(":", 1)
+            # Require exactly one '=' so that key and value are unambiguous
+            if token.count("=") != 1:
+                raise ValueError(f"--metadata token '{token}' must contain exactly one '=' (key=value)")
+            k, v = token.split("=", 1)
             self.user_metadata[k] = v
         logger.debug("Parsed user metadata: %s", self.user_metadata)
 
@@ -780,7 +780,7 @@ def _cli() -> argparse.Namespace:
         "--metadata",
         action="append",
         default=[],
-        help="Additional metadata key:value pairs (can be given multiple times)",
+        help="Additional metadata key=value pairs (can be given multiple times)",
     )
     return ap.parse_args()
 
