@@ -536,7 +536,6 @@ def run(argv):
     run_cmd(f"cat {cnmops_cnvpytor_merged_dup} {out_del_calls} | bedtools sort -i - > {out_cnvs_combined}")
     logger.info(f"out_cnvs_combined: {out_cnvs_combined}")
 
-
     # annotate with jalign results
     out_cnvs_combined_jalign_annotated = pjoin(
         out_directory, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.jalign_annotate.bed"
@@ -547,15 +546,14 @@ def run(argv):
     )
     logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_jalign_annotated}")
 
-
     if args.ug_cnv_lcr:
         # annotate with ug-cnv-lcr if provided
         # result file should be in the following format:
         # ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "UG-CNV-LCR"]
-        out_cnvs_combined_annotated = f"{out_cnvs_combined}.annotate.bed"
+        out_cnvs_combined_annotated = out_cnvs_combined_jalign_annotated.replace(".bed", ".lcr_annotate.bed")
         run_cmd(
             f"bedmap --echo --echo-map-id-uniq --delim '\\t' --bases-uniq-f \
-            {out_cnvs_combined} {args.ug_cnv_lcr} > {out_cnvs_combined_annotated}"
+            {out_cnvs_combined_jalign_annotated} {args.ug_cnv_lcr} > {out_cnvs_combined_annotated}"
         )
         logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
 
@@ -568,6 +566,7 @@ def run(argv):
             "CNV_type",
             "CNV_calls_source",
             "copy_number",
+            "JALIGN",
             "UG-CNV-LCR",
             "pUG-CNV-LCR_overlap",
         ]
@@ -575,13 +574,29 @@ def run(argv):
             lambda row: row["UG-CNV-LCR"] if row["pUG-CNV-LCR_overlap"] >= overlap_filtration_cutoff else ".", axis=1
         )
 
+        # create unique list of LCR labels per record:
+        df_annotate_calls["LCR_label_value"] = df_annotate_calls["LCR_label_value"].apply(
+            lambda x: ",".join(set(re.split(r"[;,|]", x))) if x != "." else "."
+        )
+
         df_annotate_calls[
-            ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "LCR_label_value"]
+            [
+                "chr",
+                "start",
+                "end",
+                "CNV_type",
+                "CNV_calls_source",
+                "copy_number",
+                "JALIGN",
+                "LCR_label_value",
+                "pUG-CNV-LCR_overlap",
+            ]
         ].to_csv(out_cnvs_combined_annotated, sep="\t", header=None, index=False)
         logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
 
     else:
         out_cnvs_combined_annotated = out_cnvs_combined_jalign_annotated
+    logger.info(f"out_cnvs_combined_annotated_bed: {out_cnvs_combined_annotated}")
 
     # convert to vcf
     vcf_args = [

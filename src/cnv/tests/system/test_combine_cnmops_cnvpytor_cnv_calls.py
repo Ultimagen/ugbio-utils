@@ -21,7 +21,7 @@ class TestCombineCnmopsCnvpytorCnvCalls:
         input_fasta_index_file = pjoin(resources_dir, "chr19.fasta.fai")
         sample_name = "test_HG002"
         expected_out_combined_bed = pjoin(
-            resources_dir, "expected_TEST_HG002_chr19.cnmops_cnvpytor.cnvs.combined.bed.annotate.bed"
+            resources_dir, "expected_test_HG002.cnmops_cnvpytor.cnvs.combined.jalign_annotate.lcr_annotate.bed"
         )
 
         combine_cnmops_cnvpytor_cnv_calls.run(
@@ -47,6 +47,6 @@ class TestCombineCnmopsCnvpytorCnvCalls:
         )
 
         out_combined_bed = pjoin(
-            tmpdir, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.jalign_annotate.UG-CNV-LCR_annotate.bed"
+            tmpdir, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.jalign_annotate.lcr_annotate.bed"
         )
         assert filecmp.cmp(out_combined_bed, expected_out_combined_bed)

@@ -38,7 +38,7 @@ class TestConvertCombinedCnvResultsToVcf:
     def test_write_vcf(self, tmpdir, resources_dir):
         sample_name = "TEST_HG002_chr19"
         cnv_annotated_bed_file = pjoin(
-            resources_dir, "expected_TEST_HG002_chr19.cnmops_cnvpytor.cnvs.combined.bed.annotate.bed"
+            resources_dir, "expected_test_HG002.cnmops_cnvpytor.cnvs.combined.jalign_annotate.lcr_annotate.bed"
         )
         fasta_index_file = pjoin(resources_dir, "chr19.fasta.fai")
         outfile = pjoin(tmpdir, f"{sample_name}.cnv.vcf.gz")
