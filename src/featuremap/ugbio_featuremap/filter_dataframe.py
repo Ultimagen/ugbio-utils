@@ -233,6 +233,7 @@ def _merge_config_and_cli(
     # Start with config from file if provided
     cfg = {}
     if config_path:
+        logger.debug("Reading JSON config from %s", config_path)
         with open(config_path) as f:
             cfg = json.load(f)
 
@@ -242,12 +243,14 @@ def _merge_config_and_cli(
 
     # Add CLI filters
     if cli_filters:
+        logger.debug("Appending %d CLI filter(s)", len(cli_filters))
         for filter_spec in cli_filters:
             filter_dict = _parse_cli_filter(filter_spec)
             cfg[KEY_FILTERS].append(filter_dict)
 
     # Override downsample if provided via CLI
     if cli_downsample:
+        logger.debug("CLI downsample overrides config: %s", cli_downsample)
         cfg[KEY_DOWNSAMPLE] = _parse_cli_downsample(cli_downsample)
 
     return cfg
@@ -596,7 +599,8 @@ def filter_parquet(
       * Combination statistics show all unique pass/fail patterns across filters
     - Binary filter columns in out_path_full are prefixed with "__filter_".
     """
-    logger.info(f"Starting filter_parquet: input={in_path}")
+    logger.info("Starting filter_parquet: input=%s", in_path)
+    logger.debug("Parameters: out=%s, out_full=%s, cfg=%s, stats=%s", out_path, out_path_full, cfg_path, stats_path)
 
     # Merge config from file and CLI arguments
     cfg = _merge_config_and_cli(cfg_path, cli_filters, cli_downsample)
@@ -606,10 +610,11 @@ def filter_parquet(
 
     # Create lazy frame for efficient processing
     featuremap_dataframe = pl.scan_parquet(in_path)
+    logger.debug("Loaded parquet lazily")
 
     # Get total row count from lazy frame
     total_rows = featuremap_dataframe.select(pl.len()).collect().item()
-    logger.info(f"Total rows in input: {total_rows:,}")
+    logger.info("Total rows in input: %,d", total_rows)
 
     # Create filter columns
     featuremap_dataframe, filter_cols = _create_filter_columns(featuremap_dataframe, cfg[KEY_FILTERS])
@@ -628,11 +633,12 @@ def filter_parquet(
         logger.info(f"Writing filtered output to {out_path}")
         (
             featuremap_dataframe.filter(pl.col(COL_FILTER_FINAL))
-            .select(pl.exclude(f"^{COL_PREFIX_FILTER}.*$"))
-            .sink_parquet(out_path)
+            .drop(filter_cols)
+            .sink_parquet(out_path, row_group_size=100_000)
         )
 
         # Get row count for logging
+        logger.debug("Counting rows in filtered output")
         written_rows = pl.scan_parquet(out_path).select(pl.len()).collect().item()
         logger.info(f"Wrote filtered data: {written_rows:,} rows ({out_path})")
 
@@ -678,10 +684,11 @@ def main() -> None:
 
     # Configure logging
     if args.verbose:
+        logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
         logger.setLevel(logging.DEBUG)
-        # Also set the handler level
-        for handler in logger.handlers:
-            handler.setLevel(logging.DEBUG)
+        for h in logger.handlers:
+            h.setLevel(logging.DEBUG)
+        logger.debug("Verbose logging enabled")
 
     # Validate that at least one output is specified
     if not args.out and not args.out_full:
