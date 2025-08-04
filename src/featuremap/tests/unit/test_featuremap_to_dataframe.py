@@ -191,9 +191,10 @@ def test_selected_dtypes(tmp_path: Path, input_featuremap: Path):
     assert featuremap_dataframe["RN"].dtype == pl.Utf8
 
     # -------- ensure no nulls remain in numeric or Enum columns ----------
-    cols_to_check = [
-        c for c, dt in featuremap_dataframe.schema.items() if (dt in pl.NUMERIC_DTYPES) or isinstance(dt, pl.Enum)
-    ]
+    # polars.NUMERIC_DTYPES is deprecated – use selectors.numeric()
+    numeric_cols = set(featuremap_dataframe.select(pl.selectors.numeric()).columns)
+    enum_cols = {c for c, dt in featuremap_dataframe.schema.items() if isinstance(dt, pl.Enum)}
+    cols_to_check = list(numeric_cols | enum_cols)
     if cols_to_check:  # defensive – some tiny frames may lack numeric/Enum cols
         assert (
             featuremap_dataframe.select(pl.col(cols_to_check).null_count()).sum().row(0)[0] == 0
