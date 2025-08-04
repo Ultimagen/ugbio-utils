@@ -19,13 +19,14 @@ def filter_low_af_ratio_to_background(
         warnings.warn(
             f"Existing {new_filter} filter found in header. It will be replaced.", category=UserWarning, stacklevel=2
         )
-        # vcf_in.header.filters.pop(new_filter)
+        # NOTE: if there is an existing filter with the same name, the description will NOT be updated,
+        # but the records will be updated with the new filter logic
     else:
         # Add a new FILTER definition to the header
         filter_desc = (
             f"Filter variants if AF ratio to background in GT ALT alleles < threshold. "
             f"For snps and non-h-indels: {af_ratio_threshold}, and "
-            f"for h-indels (applied only if tumor VAF<{t_vaf_threshold}: {af_ratio_threshold_h_indels}"
+            f"for h-indels (applied only if tumor VAF<{t_vaf_threshold}: {af_ratio_threshold_h_indels})"
         )
         vcf_in.header.filters.add(new_filter, None, None, filter_desc)
 
@@ -39,11 +40,10 @@ def filter_low_af_ratio_to_background(
         else:
             # Remove the AF ratio filter if it exists in the record
             if new_filter in record.filter.keys():
-                # record.filter.remove(new_filter)
                 # Get current filters
                 current_filters = list(record.filter.keys())
 
-                # Reassign without the one we want to remove
+                # Reassign without the AF ratio filter
                 record.filter.clear()
                 for f in current_filters:
                     if f != new_filter:
@@ -130,7 +130,7 @@ def main():
         type=float,
         default=0,
         help="Tumor VAF threshold for filtering (default: 0) - \
-            any hmer indel with VAF above this threshold will not be filtered",
+            any h-indel with VAF above this threshold will not be filtered",
     )
     parser.add_argument(
         "--af_ratio_threshold_h_indels", type=float, default=0, help="AF ratio threshold for h-indels (default: 0)"
