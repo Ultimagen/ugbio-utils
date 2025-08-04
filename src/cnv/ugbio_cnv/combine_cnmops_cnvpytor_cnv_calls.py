@@ -572,7 +572,7 @@ def run(argv):
 
         # create unique list of LCR labels per record:
         df_annotate_calls["LCR_label_value"] = df_annotate_calls["LCR_label_value"].apply(
-            lambda x: ",".join(set(re.split(r"[;,|]", x))) if x != "." else "."
+            lambda x: ",".join(sorted(set(re.split(r"[;,|]", x)))) if x != "." else "."
         )
 
         df_annotate_calls[
