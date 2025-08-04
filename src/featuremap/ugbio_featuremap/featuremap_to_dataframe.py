@@ -188,59 +188,26 @@ def header_meta(vcf: str, bcftools_path: str, threads: int = 0) -> tuple[dict, d
 
 
 # ───────────────── category helper ────────────────────────────────────────
-def _cast_column(
-    featuremap_dataframe: pl.DataFrame,
-    col: str,
-    meta: dict,
-) -> pl.DataFrame:
+def _cast_expr(col: str, meta: dict) -> pl.Expr:
     """
-    Cast a column to required data type and categories.
-
-    Parameters
-    ----------
-    featuremap_dataframe
-        Current DataFrame.
-    col
-        Column name.
-    meta
-        Dict with keys {"type", "cat"} parsed from the VCF header.
-    enable_debug_logging
-        Whether to enable debug logging for this call.
-
-    Returns
-    -------
-    DataFrame with `col` recast and (if categorical) stub-padded so
-    all categories from `meta["cat"]` are present.
+    Build a Polars expression that
+    1. normalises "" / "." → null
+    2. fills remaining nulls
+    3. casts to the final dtype
     """
-    # ---- convert placeholder strings to null & log count -----------------
-    utf_null = pl.when(pl.col(col).cast(pl.Utf8).is_in(["", "."])).then(None).otherwise(pl.col(col).cast(pl.Utf8))
-    n_null = featuremap_dataframe.with_columns(utf_null.alias(col))[col].null_count()
-    if n_null:
-        log.debug("Column '%s' – %d values normalised to null", col, int(n_null))
-
-    featuremap_dataframe = featuremap_dataframe.with_columns(utf_null.alias(col))
+    base = pl.when(pl.col(col).cast(pl.Utf8).is_in(["", "."])).then(None).otherwise(pl.col(col))
 
     # ---- categorical handling -------------------------------------------
     if meta["cat"]:
-        cats = meta["cat"]
-        if "" not in cats:
-            cats = cats + [""]
-        enum_dtype = pl.Enum(cats)
-
-        featuremap_dataframe = featuremap_dataframe.with_columns(
-            pl.col(col).fill_null("").cast(enum_dtype, strict=True).alias(col)
-        )
-        return featuremap_dataframe
+        cats = meta["cat"] + ([] if "" in meta["cat"] else [""])
+        return base.fill_null("").cast(pl.Enum(cats), strict=True).alias(col)
 
     # ---- numeric handling ------------------------------------------------
     if meta["type"] in _POLARS_DTYPE:
-        featuremap_dataframe = featuremap_dataframe.with_columns(
-            pl.col(col).fill_null(0).cast(_POLARS_DTYPE[meta["type"]], strict=True).alias(col)
-        )
-        return featuremap_dataframe
+        return base.fill_null(0).cast(_POLARS_DTYPE[meta["type"]], strict=True).alias(col)
 
     # ---- default (Utf8) --------------------------------------------------
-    return featuremap_dataframe
+    return base.alias(col)
 
 
 def _resolve_bcftools_command() -> str:
@@ -700,42 +667,36 @@ def _stream_region_to_polars(
 
 
 # ────────────────────────── new small helpers ───────────────────────────
-def _cast_ref_alt_columns(frame: pl.DataFrame) -> pl.DataFrame:
-    """Cast REF/ALT/X_ALT using their dedicated category dictionaries."""
-    frame = _cast_column(frame, REF, {"type": "String", "cat": REF_ALLELE_CATS})
-    frame = _cast_column(frame, ALT, {"type": "String", "cat": ALT_ALLELE_CATS})
-    if X_ALT in frame.columns:
-        frame = _cast_column(frame, X_ALT, {"type": "String", "cat": REF_ALLELE_CATS})
-    return frame
+def _cast_ref_alt_columns() -> list[pl.Expr]:
+    """
+    Return casting expressions for the fixed REF / ALT columns.
+    X_ALT is *not* included here because it is already processed via the
+    INFO/FORMAT loops; adding it again would create duplicate aliases.
+    """
+    return [
+        _cast_expr(REF, {"type": "String", "cat": REF_ALLELE_CATS}),
+        _cast_expr(ALT, {"type": "String", "cat": ALT_ALLELE_CATS}),
+    ]
 
 
 def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, job_cfg: VCFJobConfig) -> pl.DataFrame:
     """Apply column casting and categorical processing to a region DataFrame."""
-    info_ids = job_cfg.info_ids
-    scalar_fmt_ids = job_cfg.scalar_fmt_ids
-    list_fmt_ids = job_cfg.list_fmt_ids
-    info_meta = job_cfg.info_meta
-    fmt_meta = job_cfg.fmt_meta
+    exprs: list[pl.Expr] = [pl.col(POS).cast(pl.Int64)]
 
-    # Cast POS to Int64
-    featuremap_dataframe = featuremap_dataframe.with_columns(pl.col(POS).cast(pl.Int64))
-
-    # Apply column casting - list columns are already exploded as scalars
-    for tag in info_ids:
-        featuremap_dataframe = _cast_column(featuremap_dataframe, tag, info_meta[tag])
-    for tag in scalar_fmt_ids:
-        featuremap_dataframe = _cast_column(featuremap_dataframe, tag, fmt_meta[tag])
-    for tag in list_fmt_ids:
-        featuremap_dataframe = _cast_column(featuremap_dataframe, tag, fmt_meta[tag])
+    # build expressions for INFO / FORMAT
+    exprs.extend(_cast_expr(tag, job_cfg.info_meta[tag]) for tag in job_cfg.info_ids)
+    exprs.extend(_cast_expr(tag, job_cfg.fmt_meta[tag]) for tag in job_cfg.scalar_fmt_ids)
+    exprs.extend(_cast_expr(tag, job_cfg.fmt_meta[tag]) for tag in job_cfg.list_fmt_ids)
 
     # QUAL ─ force Float64 even if all values are missing
     if QUAL in featuremap_dataframe.columns:
-        featuremap_dataframe = _cast_column(featuremap_dataframe, QUAL, {"type": "Float", "cat": None})
+        exprs.append(_cast_expr(QUAL, {"type": "Float", "cat": None}))
 
-    # ----- REF / ALT / X_ALT -------------------------------------------
-    featuremap_dataframe = _cast_ref_alt_columns(featuremap_dataframe)
+    # REF / ALT
+    exprs.extend(_cast_ref_alt_columns())
 
-    return featuremap_dataframe
+    # Single materialisation
+    return featuremap_dataframe.with_columns(exprs)
 
 
 # ────────────────────────────── CLI entry point ─────────────────────────────
@@ -744,7 +705,7 @@ def main(argv: list[str] | None = None) -> None:
     Minimal command-line interface, e.g.:
 
     $ python -m ugbio_featuremap.featuremap_to_dataframe  \
-         --in sample.vcf.gz --out sample.parquet --jobs 4
+         --in sample.vcf.gz --out sample.parquet --jobs 4 --drop-format GT AD
     """
     parser = argparse.ArgumentParser(description="Convert feature-map VCF → Parquet", allow_abbrev=True)
     parser.add_argument("--input", required=True, help="Input VCF/BCF (bgzipped ok)")

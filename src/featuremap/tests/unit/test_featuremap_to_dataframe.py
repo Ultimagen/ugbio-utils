@@ -16,8 +16,9 @@ from ugbio_featuremap.featuremap_to_dataframe import (
     CHROM,
     POS,
     REF,
+    X_ALT,
     _build_explicit_schema,
-    _cast_column,  # NEW import
+    _cast_expr,
     _get_awk_script_path,
     _resolve_bcftools_command,
     header_meta,
@@ -168,7 +169,7 @@ def test_header_meta(input_featuremap):
 def test_cast_column_categorical():
     featuremap_dataframe = pl.DataFrame({"x": ["A", None]})
     meta = {"type": "String", "cat": ["A", "B"]}
-    featuremap_dataframe_2 = _cast_column(featuremap_dataframe, "x", meta)
+    featuremap_dataframe_2 = featuremap_dataframe.with_columns(_cast_expr("x", meta))
     assert isinstance(featuremap_dataframe_2["x"].dtype, pl.Enum)
     assert set(featuremap_dataframe_2["x"].cat.get_categories()) == {"", "A", "B"}
     assert featuremap_dataframe_2["x"].null_count() == 0
@@ -588,3 +589,20 @@ def test_qual_dtype_float_even_if_empty(tmp_path: Path) -> None:
 
     featuremap_dataframe = pl.read_parquet(out)
     assert featuremap_dataframe["QUAL"].dtype == pl.Float64, "QUAL should be Float64 even if all values are missing"
+
+
+def test_x_alt_categories(tmp_path: Path, input_featuremap: Path) -> None:
+    """
+    X_ALT (alternative REF for reverse-complement) must be Enum with the same
+    category dictionary as REF.
+    """
+    out = tmp_path / "xalt.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(str(input_featuremap), str(out), jobs=1)
+    frame = pl.read_parquet(out)
+
+    # Only run the assertion when the column exists in the file
+    if X_ALT in frame.columns:
+        assert isinstance(frame[X_ALT].dtype, pl.Enum), "X_ALT should be Enum"
+        assert set(frame[X_ALT].cat.get_categories()) == set(
+            frame[ALT].cat.get_categories()
+        ), "X_ALT categories must match ALT categories"

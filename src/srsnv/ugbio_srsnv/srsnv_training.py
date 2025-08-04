@@ -389,7 +389,7 @@ class SRSNVTrainer:
         if X_ALT not in pos_df.columns:
             raise ValueError(f"{pos_path} is missing required column 'X_ALT'")
 
-        # Replace REF with ALT allele
+        # Replace REF with X_ALT allele
         ref_enum_dtype = pos_df[REF].dtype
         pos_df = pos_df.with_columns(pl.col(X_ALT).cast(ref_enum_dtype).alias(REF)).drop(X_ALT)
 
