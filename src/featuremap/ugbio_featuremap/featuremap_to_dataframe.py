@@ -187,7 +187,6 @@ def header_meta(vcf: str, bcftools_path: str, threads: int = 0) -> tuple[dict, d
     return info, fmt
 
 
-# ───────────────── category helper ────────────────────────────────────────
 def _cast_expr(col: str, meta: dict) -> pl.Expr:
     """
     Build a Polars expression that
@@ -369,7 +368,6 @@ def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> Non
     log.debug(f"Merged Parquet files written to: {output_path}")
 
 
-# ───────────────── schema helper ────────────────────────────────────────────
 def _build_explicit_schema(cols: list[str], info_meta: dict, fmt_meta: dict) -> dict[str, pl.PolarsDataType]:
     """
     Build an explicit Polars schema for the bcftools TSV based on VCF metadata.
@@ -597,7 +595,6 @@ def _process_region_to_parquet(
         raise
 
 
-# ──────────────────────── new tiny helpers ────────────────────────────────
 def _bcftools_awk_stdout(
     *,
     region: str,
@@ -666,7 +663,6 @@ def _stream_region_to_polars(
     return _cast_column_data_types(frame, job_cfg)
 
 
-# ────────────────────────── new small helpers ───────────────────────────
 def _cast_ref_alt_columns() -> list[pl.Expr]:
     """
     Return casting expressions for the fixed REF / ALT columns.
@@ -743,5 +739,5 @@ def main(argv: list[str] | None = None) -> None:
     )
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()

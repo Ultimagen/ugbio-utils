@@ -649,7 +649,7 @@ class SRSNVTrainer:
         )
         df_path = self.out_dir / f"{base}featuremap_df.parquet"
         logger.debug("Saving dataframe to %s", df_path)
-        self.data_frame.write_parquet(df_path)
+        self.data_frame.to_pandas().to_parquet(df_path)
         logger.info(f"Saved dataframe → {df_path}")
 
         # models – JSON, one file per fold
