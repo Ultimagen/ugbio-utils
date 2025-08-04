@@ -81,7 +81,6 @@ def read_cnv_annotated_file_to_df(cnv_annotated_bed_file: str) -> pd.DataFrame:
         pd.DataFrame: DataFrame containing the CNV data from the BED file.
     """
     df_cnvs = pd.read_csv(cnv_annotated_bed_file, sep="\t", header=None)
-    print(df_cnvs)
     base_columns = ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "filter_jalign"]
     if df_cnvs.shape[1] == len(base_columns) + 2:
         df_cnvs.columns = base_columns + ["filter", "p_filter"]

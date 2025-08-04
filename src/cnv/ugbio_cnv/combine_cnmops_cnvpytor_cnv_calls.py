@@ -371,7 +371,7 @@ def process_del_jalign_results(
             bedtools merge -c 4,5,6 -o distinct  -i -  > {out_del_jalign_merged}"
     )
 
-    # create deletions jalign tag list - deletions that are filteref by jalign cutoff
+    # create deletions jalign tag list - deletions that are filtered by jalign cutoff
     out_del_jalign_filtered = pjoin(
         out_directory,
         f"{sample_name}.cnmops_cnvpytor.DEL.jalign_lt{str(jalign_written_cutoff)}_or_len_lt{str(deletions_length_cutoff)}.bed",
@@ -384,10 +384,6 @@ def process_del_jalign_results(
         out_directory,
         f"{sample_name}.cnmops_cnvpytor.DEL.jalign_st{str(jalign_written_cutoff)}_or_len_st{str(deletions_length_cutoff)}.merged.bed",
     )
-    # run_cmd(
-    #     f"cat {out_del_jalign_filtered} | bedtools sort -i - | \
-    #         bedtools merge -c 4,5,6,7 -o distinct  -i - | grep -v cn.mops,cnvpytor > {out_del_jalign_filtered_merged}"
-    # )
     run_cmd(f"cat {out_del_jalign_filtered} | bedtools sort -i - > {out_del_jalign_filtered_merged}")
 
     return out_del_jalign_merged, out_del_jalign_filtered_merged
