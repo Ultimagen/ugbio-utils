@@ -54,6 +54,16 @@ RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSI
     rm -rf samtools-${SAMTOOLS_VERSION}
 
 
+# install bcftools
+RUN wget https://github.com/samtools/bcftools/releases/download/${BCFTOOLS_VERSION}/bcftools-${BCFTOOLS_VERSION}.tar.bz2 && \
+    tar -vxjf bcftools-${BCFTOOLS_VERSION}.tar.bz2 && \
+    rm bcftools-${BCFTOOLS_VERSION}.tar.bz2 && \
+    cd bcftools-${BCFTOOLS_VERSION} && \
+    make && \
+    make install && \
+    cd .. && \
+    rm -rf bcftools-${BCFTOOLS_VERSION} \
+
 # Create a non-root user
 RUN groupadd -r ugbio && useradd -r -g ugbio -m -d /home/ugbio ugbio
 
