@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM python:3.11-bullseye
 
 # Install required packages
 RUN apt-get update && apt-get install --no-install-recommends -y \
@@ -43,6 +43,16 @@ RUN tar -xjf /usr/local/bin/samtools-${SAMTOOLS_VERSION}.tar.bz2 -C /usr/local/b
 RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && ./configure
 RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make
 RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make install
+
+RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
+    tar -vxjf samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
+    rm samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
+    cd samtools-${SAMTOOLS_VERSION} && \
+    make && \
+    make install && \
+    cd .. && \
+    rm -rf samtools-${SAMTOOLS_VERSION}
+
 
 # Create a non-root user
 RUN groupadd -r ugbio && useradd -r -g ugbio -m -d /home/ugbio ugbio
