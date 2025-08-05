@@ -55,6 +55,7 @@ RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSI
 
 
 # install bcftools
+ARG BCFTOOLS_VERSION=1.20
 RUN wget https://github.com/samtools/bcftools/releases/download/${BCFTOOLS_VERSION}/bcftools-${BCFTOOLS_VERSION}.tar.bz2 && \
     tar -vxjf bcftools-${BCFTOOLS_VERSION}.tar.bz2 && \
     rm bcftools-${BCFTOOLS_VERSION}.tar.bz2 && \
