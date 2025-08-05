@@ -62,7 +62,7 @@ RUN wget https://github.com/samtools/bcftools/releases/download/${BCFTOOLS_VERSI
     make && \
     make install && \
     cd .. && \
-    rm -rf bcftools-${BCFTOOLS_VERSION} \
+    rm -rf bcftools-${BCFTOOLS_VERSION}
 
 # Create a non-root user
 RUN groupadd -r ugbio && useradd -r -g ugbio -m -d /home/ugbio ugbio
