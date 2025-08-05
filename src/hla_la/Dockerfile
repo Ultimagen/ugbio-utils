@@ -86,4 +86,15 @@ RUN echo '#!/bin/sh\necho "No tests to run :)"' > /usr/local/bin/run_tests \
 
 # set PATH
 ENV PATH="/usr/local/bin/HLA-LA/bin:/usr/local/bin/HLA-LA/src:$PATH"
+
+# Create a non-root user and group
+RUN groupadd ugbio && useradd -m ugbio -d /home/ugbio -g ugbio
+
+# Set ownership for writable directories
+RUN chown -R ugbio:ugbio /usr/local/bin /tmp
+
+USER ugbio
+
+WORKDIR /home/ugbio
+
 WORKDIR /usr/local/bin

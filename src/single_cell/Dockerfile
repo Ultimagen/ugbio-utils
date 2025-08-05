@@ -50,3 +50,5 @@ COPY ["licenses/Ultima UGVC - EULA.pdf", "."]
 RUN groupadd --gid ${USER_GID} ${USERNAME} \
     && useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} -s /bin/bash \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+USER ${USERNAME}

@@ -25,6 +25,16 @@ chmod +x /usr/local/bin/run_tests
 
 COPY --from=builder /usr/local/cargo/bin/vcflite /usr/local/bin/vcflite
 
+# Create a non-root user and group
+RUN groupadd ugbio && useradd -m ugbio -d /home/ugbio -g ugbio
+
+# Set ownership for writable directories
+RUN chown -R ugbio:ugbio /usr/local/bin /tmp
+
+USER ugbio
+
+WORKDIR /home/ugbio
+
 COPY ./src/vcflite/LICENSE.txt .
 
 CMD ["vcflite"]

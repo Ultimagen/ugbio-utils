@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=ugbio_base
+ARG BASE_IMAGE=337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_base:1.5.0
 FROM python:3.11-bullseye AS build
 
 ARG OUT_DIR=/tmp/ugbio
@@ -17,6 +17,21 @@ FROM ${BASE_IMAGE}
 
 ARG OUT_DIR=/tmp/ugbio
 
+# Create a non-root user and group
+RUN groupadd ugbio && useradd -m ugbio -d /home/ugbio -g ugbio
+
+# Set ownership for writable directories
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
+
+USER ugbio
+
+WORKDIR /home/ugbio
+
+ARG OUT_DIR=/tmp/ugbio
+
+# Copy whl and install module
 COPY --from=build $OUT_DIR $OUT_DIR
 
-RUN pip install ${OUT_DIR}/*.whl
+ENV PATH="/home/ugbio/.local/bin:${PATH}"
+
+RUN pip install --user ${OUT_DIR}/*.whl
