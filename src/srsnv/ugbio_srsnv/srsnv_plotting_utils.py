@@ -1574,7 +1574,7 @@ class SRSNVReport:
         for th in range(ml_qual_max + 1):
             tpr = ((ml_quals > th) & condition & labels).sum() / labels.sum()
             fpr = ((ml_quals > th) & condition & ~labels).sum() / (~labels).sum()
-            snvqs.append(prob_to_phred(1 - base_snvq * fpr / tpr, max_value=self.max_qual))
+            snvqs.append(prob_to_phred(1 - base_snvq * fpr / tpr / 3, max_value=self.max_qual))
             recalls.append(base_recall * tpr)
         return np.array(snvqs), np.array(recalls)
 
