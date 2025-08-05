@@ -233,7 +233,6 @@ def _merge_config_and_cli(
     # Start with config from file if provided
     cfg = {}
     if config_path:
-        logger.debug("Reading JSON config from %s", config_path)
         with open(config_path) as f:
             cfg = json.load(f)
 
@@ -243,14 +242,12 @@ def _merge_config_and_cli(
 
     # Add CLI filters
     if cli_filters:
-        logger.debug("Appending %d CLI filter(s)", len(cli_filters))
         for filter_spec in cli_filters:
             filter_dict = _parse_cli_filter(filter_spec)
             cfg[KEY_FILTERS].append(filter_dict)
 
     # Override downsample if provided via CLI
     if cli_downsample:
-        logger.debug("CLI downsample overrides config: %s", cli_downsample)
         cfg[KEY_DOWNSAMPLE] = _parse_cli_downsample(cli_downsample)
 
     return cfg
@@ -599,8 +596,7 @@ def filter_parquet(
       * Combination statistics show all unique pass/fail patterns across filters
     - Binary filter columns in out_path_full are prefixed with "__filter_".
     """
-    logger.info("Starting filter_parquet: input=%s", in_path)
-    logger.debug("Parameters: out=%s, out_full=%s, cfg=%s, stats=%s", out_path, out_path_full, cfg_path, stats_path)
+    logger.info(f"Starting filter_parquet: input={in_path}")
 
     # Merge config from file and CLI arguments
     cfg = _merge_config_and_cli(cfg_path, cli_filters, cli_downsample)
@@ -610,11 +606,10 @@ def filter_parquet(
 
     # Create lazy frame for efficient processing
     featuremap_dataframe = pl.scan_parquet(in_path)
-    logger.debug("Loaded parquet lazily")
 
     # Get total row count from lazy frame
     total_rows = featuremap_dataframe.select(pl.len()).collect().item()
-    logger.info("Total rows in input: %,d", total_rows)
+    logger.info(f"Total rows in input: {total_rows:,}")
 
     # Create filter columns
     featuremap_dataframe, filter_cols = _create_filter_columns(featuremap_dataframe, cfg[KEY_FILTERS])
@@ -625,17 +620,19 @@ def filter_parquet(
     # Create final filter column
     featuremap_dataframe = _create_final_filter_column(featuremap_dataframe, filter_cols, downsample_col)
 
+    # Calculate statistics
+    stats = _calculate_statistics(featuremap_dataframe, filter_cols, downsample_col, cfg[KEY_FILTERS], total_rows, cfg)
+
     # Write outputs
     if out_path:
         logger.info(f"Writing filtered output to {out_path}")
         (
             featuremap_dataframe.filter(pl.col(COL_FILTER_FINAL))
-            .drop(filter_cols)
-            .sink_parquet(out_path, row_group_size=100_000)
+            .select(pl.exclude(f"^{COL_PREFIX_FILTER}.*$"))
+            .sink_parquet(out_path)
         )
 
         # Get row count for logging
-        logger.debug("Counting rows in filtered output")
         written_rows = pl.scan_parquet(out_path).select(pl.len()).collect().item()
         logger.info(f"Wrote filtered data: {written_rows:,} rows ({out_path})")
 
@@ -646,15 +643,64 @@ def filter_parquet(
         # Get row count for logging
         full_rows = pl.scan_parquet(out_path_full).select(pl.len()).collect().item()
         logger.info(f"Wrote full data with filters: {full_rows:,} rows ({out_path_full})")
-        filter_sums = pl.read_parquet(out_path_full).select(f"^{COL_PREFIX_FILTER}.*$").sum()
-        logger.info(f"Sum of filter columns: {filter_sums}")
+        logger.info(pl.read_parquet(out_path_full).select(f"^{COL_PREFIX_FILTER}.*$").sum())  # TODO remove this line
 
-    # Calculate and write statistics
-    stats = _calculate_statistics(featuremap_dataframe, filter_cols, downsample_col, cfg[KEY_FILTERS], total_rows, cfg)
-
+    # Write statistics
     with open(stats_path, "w") as f:
         json.dump(stats, f, indent=2)
     logger.info(f"Wrote statistics to {stats_path}")
+
+
+def _build_cli() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description="Filter / down-sample featuremap Parquet")
+    ap.add_argument("--in", dest="inp", required=True, help="input parquet")
+    ap.add_argument("--out", help="output parquet with filtered rows (optional)")
+    ap.add_argument("--out-full", help="output parquet with all rows and filter columns (optional)")
+    ap.add_argument("--config", help="JSON with filters + downsample (optional)")
+    ap.add_argument("--stats", required=True, help="output JSON with statistics")
+    ap.add_argument(
+        "--filter",
+        action="append",
+        dest="filters",
+        help=(
+            "Filter specification: name=value:field=value:op=value:value=value:type=value "
+            "(can be used multiple times)"
+        ),
+    )
+    ap.add_argument("--downsample", help="Downsample specification: method:size:seed (optional seed for random method)")
+    ap.add_argument("-v", "--verbose", action="store_true")
+    return ap
+
+
+def main() -> None:
+    args = _build_cli().parse_args()
+
+    # Configure logging
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+        # Also set the handler level
+        for handler in logger.handlers:
+            handler.setLevel(logging.DEBUG)
+
+    # Validate that at least one output is specified
+    if not args.out and not args.out_full:
+        logger.error("At least one of --out or --out-full must be specified")
+        raise ValueError("No output file specified")
+
+    # Validate that either config file or CLI filters are provided
+    if not args.config and not args.filters:
+        logger.error("Either --config or --filter must be specified")
+        raise ValueError("No filters specified")
+
+    filter_parquet(args.inp, args.out, args.out_full, args.config, args.stats, args.filters, args.downsample)
+
+
+if __name__ == "__main__":
+    # Minimal logging configuration so that messages appear when executed directly
+    import logging
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
+    main()
 
 
 # -------------- internal helper -------------------------------------------
@@ -711,52 +757,3 @@ def read_filtering_stats_json(path: str | Path) -> dict:
 
     _validate_stats_dict(data, where=f" ({p})")
     return data
-
-
-def _build_cli() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(description="Filter / down-sample featuremap Parquet")
-    ap.add_argument("--in", dest="inp", required=True, help="input parquet")
-    ap.add_argument("--out", help="output parquet with filtered rows (optional)")
-    ap.add_argument("--out-full", help="output parquet with all rows and filter columns (optional)")
-    ap.add_argument("--config", help="JSON with filters + downsample (optional)")
-    ap.add_argument("--stats", required=True, help="output JSON with statistics")
-    ap.add_argument(
-        "--filter",
-        action="append",
-        dest="filters",
-        help=(
-            "Filter specification: name=value:field=value:op=value:value=value:type=value "
-            "(can be used multiple times)"
-        ),
-    )
-    ap.add_argument("--downsample", help="Downsample specification: method:size:seed (optional seed for random method)")
-    ap.add_argument("-v", "--verbose", action="store_true")
-    return ap
-
-
-def main() -> None:
-    args = _build_cli().parse_args()
-
-    # Configure logging
-    if args.verbose:
-        logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-        logger.setLevel(logging.DEBUG)
-        for h in logger.handlers:
-            h.setLevel(logging.DEBUG)
-        logger.debug("Verbose logging enabled")
-
-    # Validate that at least one output is specified
-    if not args.out and not args.out_full:
-        logger.error("At least one of --out or --out-full must be specified")
-        raise ValueError("No output file specified")
-
-    # Validate that either config file or CLI filters are provided
-    if not args.config and not args.filters:
-        logger.error("Either --config or --filter must be specified")
-        raise ValueError("No filters specified")
-
-    filter_parquet(args.inp, args.out, args.out_full, args.config, args.stats, args.filters, args.downsample)
-
-
-if __name__ == "__main__":
-    main()
