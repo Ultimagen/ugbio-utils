@@ -625,11 +625,12 @@ def filter_parquet(
 
     # Write outputs
     if out_path:
+        pl.Config.set_streaming_chunk_size(100_000)
         logger.info(f"Writing filtered output to {out_path}")
         (
             featuremap_dataframe.filter(pl.col(COL_FILTER_FINAL))
             .select(pl.exclude(f"^{COL_PREFIX_FILTER}.*$"))
-            .sink_parquet(out_path)
+            .sink_parquet(out_path, row_group_size=100_000)
         )
 
         # Get row count for logging
