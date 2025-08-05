@@ -658,59 +658,6 @@ def filter_parquet(
     logger.info(f"Wrote statistics to {stats_path}")
 
 
-def _build_cli() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(description="Filter / down-sample featuremap Parquet")
-    ap.add_argument("--in", dest="inp", required=True, help="input parquet")
-    ap.add_argument("--out", help="output parquet with filtered rows (optional)")
-    ap.add_argument("--out-full", help="output parquet with all rows and filter columns (optional)")
-    ap.add_argument("--config", help="JSON with filters + downsample (optional)")
-    ap.add_argument("--stats", required=True, help="output JSON with statistics")
-    ap.add_argument(
-        "--filter",
-        action="append",
-        dest="filters",
-        help=(
-            "Filter specification: name=value:field=value:op=value:value=value:type=value "
-            "(can be used multiple times)"
-        ),
-    )
-    ap.add_argument("--downsample", help="Downsample specification: method:size:seed (optional seed for random method)")
-    ap.add_argument("-v", "--verbose", action="store_true")
-    return ap
-
-
-def main() -> None:
-    args = _build_cli().parse_args()
-
-    # Configure logging
-    if args.verbose:
-        logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-        logger.setLevel(logging.DEBUG)
-        for h in logger.handlers:
-            h.setLevel(logging.DEBUG)
-        logger.debug("Verbose logging enabled")
-
-    # Validate that at least one output is specified
-    if not args.out and not args.out_full:
-        logger.error("At least one of --out or --out-full must be specified")
-        raise ValueError("No output file specified")
-
-    # Validate that either config file or CLI filters are provided
-    if not args.config and not args.filters:
-        logger.error("Either --config or --filter must be specified")
-        raise ValueError("No filters specified")
-
-    filter_parquet(args.inp, args.out, args.out_full, args.config, args.stats, args.filters, args.downsample)
-
-
-if __name__ == "__main__":
-    # Minimal logging configuration so that messages appear when executed directly
-    import logging
-
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
-    main()
-
-
 # -------------- internal helper -------------------------------------------
 def _validate_stats_dict(data: dict, where: str) -> None:  # noqa C901
     """Raise ValueError if *data* is not a well-formed filtering-stats dict."""
@@ -765,3 +712,52 @@ def read_filtering_stats_json(path: str | Path) -> dict:
 
     _validate_stats_dict(data, where=f" ({p})")
     return data
+
+
+def _build_cli() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description="Filter / down-sample featuremap Parquet")
+    ap.add_argument("--in", dest="inp", required=True, help="input parquet")
+    ap.add_argument("--out", help="output parquet with filtered rows (optional)")
+    ap.add_argument("--out-full", help="output parquet with all rows and filter columns (optional)")
+    ap.add_argument("--config", help="JSON with filters + downsample (optional)")
+    ap.add_argument("--stats", required=True, help="output JSON with statistics")
+    ap.add_argument(
+        "--filter",
+        action="append",
+        dest="filters",
+        help=(
+            "Filter specification: name=value:field=value:op=value:value=value:type=value "
+            "(can be used multiple times)"
+        ),
+    )
+    ap.add_argument("--downsample", help="Downsample specification: method:size:seed (optional seed for random method)")
+    ap.add_argument("-v", "--verbose", action="store_true")
+    return ap
+
+
+def main() -> None:
+    args = _build_cli().parse_args()
+
+    # Configure logging
+    if args.verbose:
+        logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+        logger.setLevel(logging.DEBUG)
+        for h in logger.handlers:
+            h.setLevel(logging.DEBUG)
+        logger.debug("Verbose logging enabled")
+
+    # Validate that at least one output is specified
+    if not args.out and not args.out_full:
+        logger.error("At least one of --out or --out-full must be specified")
+        raise ValueError("No output file specified")
+
+    # Validate that either config file or CLI filters are provided
+    if not args.config and not args.filters:
+        logger.error("Either --config or --filter must be specified")
+        raise ValueError("No filters specified")
+
+    filter_parquet(args.inp, args.out, args.out_full, args.config, args.stats, args.filters, args.downsample)
+
+
+if __name__ == "__main__":
+    main()
