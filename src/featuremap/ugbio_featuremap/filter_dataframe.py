@@ -625,9 +625,6 @@ def filter_parquet(
     # Create final filter column
     featuremap_dataframe = _create_final_filter_column(featuremap_dataframe, filter_cols, downsample_col)
 
-    # Calculate statistics
-    stats = _calculate_statistics(featuremap_dataframe, filter_cols, downsample_col, cfg[KEY_FILTERS], total_rows, cfg)
-
     # Write outputs
     if out_path:
         logger.info(f"Writing filtered output to {out_path}")
@@ -652,7 +649,9 @@ def filter_parquet(
         filter_sums = pl.read_parquet(out_path_full).select(f"^{COL_PREFIX_FILTER}.*$").sum()
         logger.info(f"Sum of filter columns: {filter_sums}")
 
-    # Write statistics
+    # Calculate and write statistics
+    stats = _calculate_statistics(featuremap_dataframe, filter_cols, downsample_col, cfg[KEY_FILTERS], total_rows, cfg)
+
     with open(stats_path, "w") as f:
         json.dump(stats, f, indent=2)
     logger.info(f"Wrote statistics to {stats_path}")
