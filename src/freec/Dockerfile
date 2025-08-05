@@ -1,19 +1,6 @@
-ARG BASE_IMAGE=ugbio_base
-FROM python:3.11-bullseye AS build
+FROM ubuntu:22.04
 
-ARG OUT_DIR=/tmp/ugbio
-ARG MODULE_DIR=freec
-RUN mkdir -p $OUT_DIR
-
-COPY ./src/ ./src/
-
-# build module
-RUN python -m pip install build
-RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
-
-##################################################################
-FROM $BASE_IMAGE
-
+# Install required packages
 RUN apt-get update && apt-get install --no-install-recommends -y \
     openjdk-17-jre-headless `# for gatk` \
     git \
@@ -39,39 +26,17 @@ RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && ./configure
 RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make
 RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make install
 
-# Download and install bigWigToBedGraph
-RUN wget http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64.v385/bigWigToBedGraph -O /usr/local/bin/bigWigToBedGraph \
-    && chmod +x /usr/local/bin/bigWigToBedGraph
-
-## clone FREEC (branch: master):
-ARG FREEC_BRANCH=master
-WORKDIR /usr/local/bin
-RUN git clone --branch ${FREEC_BRANCH} https://github.com/Ultimagen/FREEC FREEC
-RUN cp FREEC/src/freec /freec
-RUN ln -s /freec /usr/bin/freec
-
-ARG OUT_DIR=/tmp/ugbio
-#ARG USER_ID=2000
-#ARG GROUP_ID=$USER_ID
-# Create a non-root user and group
-RUN groupadd -r ugbio && useradd -r -m -g ugbio -d /home/ugbio ugbio
+# Create a non-root user
+RUN groupadd -r ugbio && useradd -r -g ugbio -m -d /home/ugbio ugbio
 
 # Set ownership for writable directories
-RUN chown -R ugbio:ugbio /opt /usr/local/bin && \
-    [ ! -d /mnt/workflow/ ] || chown -R ugbio:ugbio /mnt/workflow/
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
 
-USER ugbio
-
+# Set the working directory
 WORKDIR /home/ugbio
 
-ARG OUT_DIR=/tmp/ugbio
+# Switch to non-root user
+USER ugbio
 
-# Copy whl and install module
-COPY --from=build $OUT_DIR $OUT_DIR
-
-ENV PATH="/home/ugbio/.local/bin:${PATH}"
-
-RUN pip install --user ${OUT_DIR}/*.whl
-
-# for runnig CI (can be removed if pytest is installed as part of the venv)
-RUN pip install --user pytest
+# Set default command
+CMD ["/bin/bash"]
