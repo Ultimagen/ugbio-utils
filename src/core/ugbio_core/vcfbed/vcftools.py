@@ -17,8 +17,8 @@ def index_vcf(sp, vcf_file):
     sp.print_and_run(f"bcftools index -t {vcf_file}")
 
 
-def get_vcf_df(
-    variant_calls: str,
+def get_vcf_df(  # noqa: PLR0912, C901
+    variant_calls: str | pysam.VariantFile,
     sample_id: int = 0,
     sample_name: str | None = None,
     chromosome: str | None = None,
@@ -30,7 +30,7 @@ def get_vcf_df(
 
     Parameters
     ----------
-    variant_calls: str
+    variant_calls: str | pysam.VariantFile
         VCF file
     sample_id: int
         Index of sample to fetch (default: 0)
@@ -55,13 +55,20 @@ def get_vcf_df(
         ignore_fields = []
     if custom_info_fields is None:
         custom_info_fields = []
-
-    header = pysam.VariantFile(variant_calls).header
-    if chromosome is None:
-        variant_file = pysam.VariantFile(variant_calls)
-
+    if isinstance(variant_calls, pysam.VariantFile):
+        # If the input is already a pysam.VariantFile object, use it directly
+        variant_file = variant_calls
+        header = variant_calls.header
+        if chromosome is None:
+            pass
+        else:
+            variant_file = variant_calls.fetch(chromosome)
     else:
-        variant_file = pysam.VariantFile(variant_calls).fetch(chromosome)
+        header = pysam.VariantFile(variant_calls).header
+        if chromosome is None:
+            variant_file = pysam.VariantFile(variant_calls)
+        else:
+            variant_file = pysam.VariantFile(variant_calls).fetch(chromosome)
     # pylint: disable-next=bad-builtin
     vfi = (
         defaultdict(
