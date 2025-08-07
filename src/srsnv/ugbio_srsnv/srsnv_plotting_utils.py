@@ -35,7 +35,11 @@ from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions, PpmseqCategories
 
 from ugbio_srsnv.srsnv_utils import (
+    ET,
+    ET_FILLNA,
     MAX_PHRED,
+    ST,
+    ST_FILLNA,
     construct_trinuc_context_with_alt,
     prob_to_logit,
     prob_to_phred,
@@ -1579,26 +1583,40 @@ class SRSNVReport:
         return np.array(snvqs), np.array(recalls)
 
     def _get_recall_at_snvq(
-        self, snvq: float, condition: np.ndarray = None, label_col: str = LABEL, ml_qual_col: str = ML_QUAL_1_TEST
+        self,
+        snvq: float,
+        condition: np.ndarray = None,
+        label_col: str = LABEL,
+        snvq_col: str = QUAL,
+        # ml_qual_col: str = ML_QUAL_1_TEST
     ):
         """Get the recall rate at a given SNVQ value, by interpolating the recall vs SNVQ curve.
         Arguments:
             snvq: float: SNVQ value at which to calculate the recall
             condition: np.ndarray: condition to filter the data frame. Default is no condition
             label_col: str: column name with the labels
-            ML_qual_col: str: column name with the ML_qual values
+            snvq_col: str: column name with the SNVQ values
         """
         # base_snv_rate = self.df_mrd_simulation.loc["no_filter", RESIDUAL_SNV_RATE]
         # base_recall = self.df_mrd_simulation.loc["no_filter", TP_READ_RETENTION_RATIO]
         data_df = self.data_df
-        snvqs, recalls = self._get_snvq_and_recall(
-            data_df[label_col],
-            data_df[ml_qual_col],
-            base_snvq=self.base_error_rate,
-            base_recall=self.base_recall,
-            condition=condition,
+        # snvqs, recalls = self._get_snvq_and_recall(
+        #     data_df[label_col],
+        #     data_df[ml_qual_col],
+        #     base_snvq=self.base_error_rate,
+        #     base_recall=self.base_recall,
+        #     condition=condition,
+        # )
+        # recall_at_snvq = np.interp(snvq, snvqs, recalls)
+        if condition is None:
+            condition = np.ones_like(data_df[label_col], dtype=bool)
+        # data_df = data_df.loc[condition,:]
+        # data_df = data_df.loc[data_df[label_col] == 1, :]
+        recall_at_snvq = (
+            self.base_recall
+            * ((data_df[snvq_col] >= snvq) & (data_df[label_col] == 1) & condition).sum()
+            / data_df[label_col].sum()
         )
-        recall_at_snvq = np.interp(snvq, snvqs, recalls)
         return recall_at_snvq
 
     def _get_base_recall_from_filters(self, filters):
@@ -1822,8 +1840,8 @@ class SRSNVReport:
         }
         # Training info
         training_info = {
-            ("Pre-filter", ""): self.params.get("pre_filter", None),
-            ("Columns for balancing", ""): self.params.get("balanced_sampling_info_fields", None),
+            # ("Pre-filter", ""): self.params.get("pre_filter", None),
+            # ("Columns for balancing", ""): self.params.get("balanced_sampling_info_fields", None),
             ("Number of CV folds", ""): self.params["num_CV_folds"],
         }
         # Info about training set size
@@ -2172,7 +2190,13 @@ class SRSNVReport:
         """Generate tables of median quality and data quantity per start and end ppmseq tags."""
         data_df_tp = self.data_df[self.data_df[LABEL]].copy()
         ppmseq_tags_in_data = self.start_tag_col is not None and self.end_tag_col is not None
-        start_tag_col, end_tag_col = (self.start_tag_col, self.end_tag_col) if ppmseq_tags_in_data else ("st", "et")
+        ppmseq_fillna_tags_in_data = ST_FILLNA in data_df_tp.columns and ET_FILLNA in data_df_tp.columns
+        if ppmseq_fillna_tags_in_data:
+            start_tag_col, end_tag_col = (ST_FILLNA, ET_FILLNA)
+        elif ppmseq_tags_in_data:
+            start_tag_col, end_tag_col = (self.start_tag_col, self.end_tag_col)
+        else:
+            start_tag_col, end_tag_col = (ST, ET)
         if not ppmseq_tags_in_data:
             data_df_tp[start_tag_col] = np.nan
             data_df_tp[end_tag_col] = np.nan

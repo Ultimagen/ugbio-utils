@@ -33,6 +33,7 @@ from ugbio_core.vcfbed.variant_annotation import get_cycle_skip_dataframe
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
 from ugbio_srsnv.srsnv_plotting_utils import SRSNVReport, create_srsnv_report_html
+from ugbio_srsnv.srsnv_utils import HandlePPMSeqTagsInFeatureMapDataFrame
 
 FOLD_COL = "fold_id"
 LABEL_COL = "label"
@@ -66,18 +67,24 @@ EDIT_DIST_FEATURES = ["EDIST", "HAMDIST", "HAMDIST_FILT"]
 pl.enable_string_cache()
 
 
-def add_is_mixed_to_featuremap_df(data_df: pd.DataFrame) -> pd.DataFrame:
+def add_is_mixed_to_featuremap_df(
+    data_df: pd.DataFrame,
+    adapter_version: str = None,  # Default to v1, can be overridden
+    categorical_features_names: list[str] | None = None,
+) -> pd.DataFrame:
     """Add is_mixed columns to featuremap_df
     NOTE: THIS FUNCTION IS A PATCH AND SHOULD BE REPLACED
     """
     logger.info("Adding is_mixed columns to featuremap")
     # TODO: use the information from adapter_version instead of this patch
-
-    data_df[IS_MIXED_START] = data_df["st"] == "MIXED"
-    data_df[IS_MIXED_END] = data_df["et"] == "MIXED"
-    data_df[IS_MIXED] = data_df[IS_MIXED_START] & data_df[IS_MIXED_END]
-
-    return data_df
+    tags_handler = HandlePPMSeqTagsInFeatureMapDataFrame(
+        featuremap_df=data_df,
+        categorical_features_names=categorical_features_names or [],
+        ppmseq_adapter_version=adapter_version,  # This should be set based on the actual adapter version used
+    )
+    tags_handler.fill_nan_tags()
+    tags_handler.add_is_mixed_to_featuremap_df()
+    return tags_handler.featuremap_df
 
 
 def add_is_cycle_skip_to_featuremap_df(data_df: pd.DataFrame, flow_order: str = "TGCA") -> pd.DataFrame:
@@ -201,7 +208,11 @@ def prepare_report(  # noqa: C901 PLR0915
     params["end_tag_col"] = "et"
 
     # Add columns to featuremap_df
-    data_df = add_is_mixed_to_featuremap_df(data_df)
+    data_df = add_is_mixed_to_featuremap_df(
+        data_df,
+        params["adapter_version"],
+        params["categorical_features_names"],
+    )
     data_df = add_is_cycle_skip_to_featuremap_df(data_df)
 
     # Handle random seed
