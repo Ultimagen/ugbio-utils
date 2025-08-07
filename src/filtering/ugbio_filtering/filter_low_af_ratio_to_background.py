@@ -1,24 +1,23 @@
 import argparse
-import warnings
 
 import pysam
+import tqdm.auto as tqdm
+from ugbio_core.logger import logger
 
 
 def filter_low_af_ratio_to_background(
-    input_vcf,
-    output_vcf,
-    af_ratio_threshold=10,
-    af_ratio_threshold_h_indels=0,
-    t_vaf_threshold=0,
-    new_filter="LowAFRatioToBackground",
+    input_vcf: str,
+    output_vcf: str,
+    af_ratio_threshold: float = 10,
+    af_ratio_threshold_h_indels: float = 0,
+    t_vaf_threshold: float = 0,
+    new_filter: str = "LowAFRatioToBackground",
 ):
     vcf_in = pysam.VariantFile(input_vcf)
 
     # Check if the new filter already exists in the header
     if new_filter in vcf_in.header.filters:
-        warnings.warn(
-            f"Existing {new_filter} filter found in header. It will be replaced.", category=UserWarning, stacklevel=2
-        )
+        logger.warning(f"Existing {new_filter} filter found in header. It will be replaced.")
         # NOTE: if there is an existing filter with the same name, the description will NOT be updated,
         # but the records will be updated with the new filter logic
     else:
@@ -31,18 +30,18 @@ def filter_low_af_ratio_to_background(
         vcf_in.header.filters.add(new_filter, None, None, filter_desc)
 
     vcf_out = pysam.VariantFile(output_vcf, "w", header=vcf_in.header)
-
-    for record in vcf_in.fetch():
+    logger.info(f"Processing {input_vcf} and writing to {output_vcf}")
+    filtered_count = 0
+    for record in tqdm.tqdm(vcf_in.fetch()):
         # Skip if variant is marked RefCall
-        if list(record.filter.keys()) == ["RefCall"]:
+        if "RefCall" in list(record.filter.keys()):
             vcf_out.write(record)
             continue
         else:
             # Remove the AF ratio filter if it exists in the record
             if new_filter in record.filter.keys():
                 # Get current filters
-                current_filters = list(record.filter.keys())
-
+                current_filters = [str(x) for x in list(record.filter.keys())]
                 # Reassign without the AF ratio filter
                 record.filter.clear()
                 for f in current_filters:
@@ -61,15 +60,16 @@ def filter_low_af_ratio_to_background(
 
             if failed:
                 record.filter.add(new_filter)
+                filtered_count += 1
 
         vcf_out.write(record)
-
+    logger.info(f"Filtered {filtered_count} variants with {new_filter} filter.")
     vcf_in.close()
     vcf_out.close()
 
     pysam.tabix_index(output_vcf, preset="vcf", force=True)
 
-    print(f"Annotated VCF written to: {output_vcf}")
+    logger.info(f"Annotated VCF written to: {output_vcf}")
 
 
 def process_record(record, af_ratio_threshold, t_vaf_threshold):
@@ -100,7 +100,7 @@ def process_record(record, af_ratio_threshold, t_vaf_threshold):
             else:  # bg_ad[allele] > 0
                 af_ratio = (ad[allele] / dp) / (bg_ad[allele] / bg_dp)
                 if t_vaf is None or t_vaf[allele - 1] is None:
-                    warnings.warn("Tumor VAF is None for a GT allele!", category=UserWarning, stacklevel=2)
+                    logger.warning("Tumor VAF is None for a GT allele!")
                 elif (af_ratio >= af_ratio_threshold) or (t_vaf[allele - 1] >= t_vaf_threshold):
                     # there is an allele with AF ratio >= threshold,
                     # or there is an allele where t_vaf is above threshold

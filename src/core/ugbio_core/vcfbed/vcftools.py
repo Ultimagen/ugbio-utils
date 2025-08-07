@@ -17,7 +17,7 @@ def index_vcf(sp, vcf_file):
     sp.print_and_run(f"bcftools index -t {vcf_file}")
 
 
-def get_vcf_df(
+def get_vcf_df(  # noqa: PLR0912, C901
     variant_calls: str | pysam.VariantFile,
     sample_id: int = 0,
     sample_name: str | None = None,
@@ -59,6 +59,10 @@ def get_vcf_df(
         # If the input is already a pysam.VariantFile object, use it directly
         variant_file = variant_calls
         header = variant_calls.header
+        if chromosome is None:
+            pass
+        else:
+            variant_file = variant_calls.fetch(chromosome)
     else:
         header = pysam.VariantFile(variant_calls).header
         if chromosome is None:
