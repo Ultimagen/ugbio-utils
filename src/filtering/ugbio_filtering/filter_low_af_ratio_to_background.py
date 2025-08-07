@@ -76,29 +76,28 @@ def process_record(record, af_ratio_threshold, t_vaf_threshold):
     failed = False
     for sample in record.samples:
         gt = record.samples[sample].get("GT")
-        ad = record.samples[sample].get("AD")
-        dp = record.samples[sample].get("DP")
-        bg_ad = record.samples[sample].get("BG_AD")
-        bg_dp = record.samples[sample].get("BG_DP")
+        vaf = record.samples[sample].get("VAF")
+        bg_vaf = record.samples[sample].get("BG_VAF")
         t_vaf = record.samples[sample].get("VAF")
-
-        if gt is None or ad is None:
+        if gt is None or vaf is None or bg_vaf is None:
             continue
 
         for allele in gt:
-            if (allele is None) or (allele == 0) or (dp == 0) or (bg_dp == 0):
+            if (allele is None) or (allele == 0):
                 continue  # skip REF or missing
-            elif ad[allele] == 0:
+            elif (allele - 1 >= len(vaf)) or (allele - 1 >= len(bg_vaf)):
+                continue  # skip if allele index is out of bounds
+            elif vaf[allele - 1] is None or vaf[allele - 1] == 0:
                 # allele is not present in the sample, so filter this allele
                 failed = True
                 continue
-            elif bg_ad[allele] == 0:
+            elif bg_vaf[allele - 1] is None or bg_vaf[allele - 1] == 0:
                 # the allele is present in the sample but not in the background,
                 # so do not filter the variant
                 failed = False
                 break
-            else:  # bg_ad[allele] > 0
-                af_ratio = (ad[allele] / dp) / (bg_ad[allele] / bg_dp)
+            else:  # bg_vaf[allele - 1] > 0
+                af_ratio = vaf[allele - 1] / bg_vaf[allele - 1]
                 if t_vaf is None or t_vaf[allele - 1] is None:
                     logger.warning("Tumor VAF is None for a GT allele!")
                 elif (af_ratio >= af_ratio_threshold) or (t_vaf[allele - 1] >= t_vaf_threshold):
