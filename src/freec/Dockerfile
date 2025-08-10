@@ -24,6 +24,8 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     git \
     wget \
     unzip \
+    coreutils \
+    samtools \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
@@ -36,22 +38,22 @@ RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION
     rm gatk-${GATK_VERSION}.zip
 
 # install samtools
-ARG SAMTOOLS_VERSION=1.20
-WORKDIR /usr/local/bin
-RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2
-RUN tar -xjf /usr/local/bin/samtools-${SAMTOOLS_VERSION}.tar.bz2 -C /usr/local/bin/
-RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && ./configure
-RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make
-RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make install
-
-RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
-    tar -vxjf samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
-    rm samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
-    cd samtools-${SAMTOOLS_VERSION} && \
-    make && \
-    make install && \
-    cd .. && \
-    rm -rf samtools-${SAMTOOLS_VERSION}
+#ARG SAMTOOLS_VERSION=1.20
+#WORKDIR /usr/local/bin
+#RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2
+#RUN tar -xjf /usr/local/bin/samtools-${SAMTOOLS_VERSION}.tar.bz2 -C /usr/local/bin/
+#RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && ./configure
+#RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make
+#RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make install
+#
+#RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
+#    tar -vxjf samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
+#    rm samtools-${SAMTOOLS_VERSION}.tar.bz2 && \
+#    cd samtools-${SAMTOOLS_VERSION} && \
+#    make && \
+#    make install && \
+#    cd .. && \
+#    rm -rf samtools-${SAMTOOLS_VERSION}
 
 
 # install bcftools
