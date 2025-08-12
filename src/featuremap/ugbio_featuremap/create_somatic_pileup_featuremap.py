@@ -6,7 +6,9 @@ import sys
 from enum import Enum
 from os.path import join as pjoin
 
+import pandas as pd
 from ugbio_core.logger import logger
+from ugbio_core.vcfbed import vcftools
 
 from ugbio_featuremap import featuremap_xgb_prediction
 
@@ -277,6 +279,66 @@ def merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_mer
     return out_merged_vcf.replace(".vcf.gz", ".tumor_PASS.vcf.gz")
 
 
+def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
+    # generate tandem repeat info
+    df_merged_vcf = vcftools.get_vcf_df(merged_vcf, sample_id=0)
+    df_merged_vcf.insert(2, "end", df_merged_vcf["pos"] + 1)
+    bed1 = pjoin(out_dir, "merged_vcf.tmp.bed")
+    df_merged_vcf[["chrom", "pos", "end"]].to_csv(bed1, sep="\t", header=None, index=False)
+    bed2 = ref_tr_file
+    bed1_with_closest_tr = pjoin(out_dir, "merged_vcf.tmp.TRdata.bed")
+    cmd = ["bedtools", "closest", "-D", "ref", "-a", bed1, "-b", bed2]
+    with open(bed1_with_closest_tr, "w") as out_file:
+        subprocess.check_call(cmd, stdout=out_file)
+    cmd = ["cut", "-f1-2,5-8", bed1_with_closest_tr]
+    with open(f"{bed1_with_closest_tr}.tsv", "w") as out_file:
+        subprocess.check_call(cmd, stdout=out_file)
+
+    df_tr_info = pd.read_csv(f"{bed1_with_closest_tr}.tsv", sep="\t", header=None)
+    df_tr_info.columns = ["chrom", "pos", "TR_start", "TR_end", "TR_seq", "TR_distance"]
+    df_tr_info["TR_length"] = df_tr_info["TR_end"] - df_tr_info["TR_start"]
+    df_tr_info["TR_seq_unit_length"] = df_tr_info["TR_seq"].str.extract(r"\((\w+)\)")[0].str.len()
+    df_tr_info.to_csv(f"{bed1_with_closest_tr}.tsv", sep="\t", header=None, index=False)
+
+    cmd = ["sort", "-k1,1", "-k2,2n", f"{bed1_with_closest_tr}.tsv"]
+    with open(f"{bed1_with_closest_tr}.tmp.tsv", "w") as out_file:
+        subprocess.check_call(cmd, stdout=out_file)
+    cmd = ["bgzip", f"{bed1_with_closest_tr}.tmp.tsv"]
+    subprocess.check_call(cmd)
+    cmd = ["tabix", "-s", "1", "-b", "2", "-e", "2", f"{bed1_with_closest_tr}.tmp.tsv.gz"]
+    subprocess.check_call(cmd)
+
+    # integrate tandem repeat info into the merged vcf file
+    hdr_txt = [
+        '##INFO=<ID=TR_start,Number=1,Type=String,Description="Closest tandem Repeat Start">',
+        '##INFO=<ID=TR_end,Number=1,Type=String,Description="Closest Tandem Repeat End">',
+        '##INFO=<ID=TR_seq,Number=1,Type=String,Description="Closest Tandem Repeat Sequence">',
+        '##INFO=<ID=TR_distance,Number=1,Type=String,Description="Closest Closest Tandem Repeat Distance">',
+        '##INFO=<ID=TR_length,Number=1,Type=String,Description="Closest Tandem Repeat total length">',
+        '##INFO=<ID=TR_seq_unit_length,Number=1,Type=String,Description="Closest Tandem Repeat unit length">',
+    ]
+    hdr_file = pjoin(out_dir, "tr_hdr.txt")
+    with open(hdr_file, "w") as f:
+        f.writelines(line + "\n" for line in hdr_txt)
+    merged_vcf_with_tr_info = merged_vcf.replace(".vcf.gz", ".tr_info.vcf.gz")
+    cmd = [
+        "bcftools",
+        "annotate",
+        "-Oz",
+        "-o",
+        merged_vcf_with_tr_info,
+        "-a",
+        f"{bed1_with_closest_tr}.tmp.tsv.gz",
+        "-h",
+        hdr_file,
+        "-c",
+        "CHROM,POS,INFO/TR_start,INFO/TR_end,INFO/TR_seq,INFO/TR_distance,INFO/TR_length,INFO/TR_seq_unit_length",
+        merged_vcf,
+    ]
+    subprocess.check_call(cmd)
+    return merged_vcf_with_tr_info
+
+
 def __parse_args(argv: list[str]) -> argparse.Namespace:
     """
     Parse command line arguments.
@@ -298,6 +360,7 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--tumor_vcf", help="tumor vcf file", required=True, type=str)
     parser.add_argument("--normal_vcf", help="normal vcf file", required=True, type=str)
     parser.add_argument("--sample_name", help="sample_name", required=True, type=str)
+    parser.add_argument("--ref_tr_file", help="reference tandem repeat file", required=True, type=str)
     parser.add_argument(
         "--out_directory",
         help="out directory where intermediate and output files will be saved."
@@ -359,6 +422,9 @@ def run(argv):
     if args.filter_for_tumor_pass_variants:
         logger.info("Filtering for tumor-PASS variants only.")
         out_merged_vcf_tumor_pass = merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_merged_vcf)
+        out_merged_vcf_tumor_pass = integrate_tandem_repeat_features(
+            out_merged_vcf_tumor_pass, args.ref_tr_file, args.out_directory
+        )
         logger.info(f"Merged VCF file created: {out_merged_vcf}")
         logger.info(f"Merged VCF tumor-PASS file created: {out_merged_vcf_tumor_pass}")
     else:
