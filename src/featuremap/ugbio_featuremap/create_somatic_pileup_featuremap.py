@@ -313,7 +313,7 @@ def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
         '##INFO=<ID=TR_start,Number=1,Type=String,Description="Closest tandem Repeat Start">',
         '##INFO=<ID=TR_end,Number=1,Type=String,Description="Closest Tandem Repeat End">',
         '##INFO=<ID=TR_seq,Number=1,Type=String,Description="Closest Tandem Repeat Sequence">',
-        '##INFO=<ID=TR_distance,Number=1,Type=String,Description="Closest Closest Tandem Repeat Distance">',
+        '##INFO=<ID=TR_distance,Number=1,Type=String,Description="Closest Tandem Repeat Distance">',
         '##INFO=<ID=TR_length,Number=1,Type=String,Description="Closest Tandem Repeat total length">',
         '##INFO=<ID=TR_seq_unit_length,Number=1,Type=String,Description="Closest Tandem Repeat unit length">',
     ]
