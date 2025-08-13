@@ -285,7 +285,13 @@ def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
     df_merged_vcf.insert(2, "end", df_merged_vcf["pos"] + 1)
     bed1 = pjoin(out_dir, "merged_vcf.tmp.bed")
     df_merged_vcf[["chrom", "pos", "end"]].to_csv(bed1, sep="\t", header=None, index=False)
-    bed2 = ref_tr_file
+    # sort the reference tandem repeat file
+    ref_tr_file_sorted = pjoin(out_dir, f"{ref_tr_file}.sorted.bed")
+    cmd = ["bedtools", "sort", "-i", ref_tr_file]
+    with open(ref_tr_file_sorted, "w") as sorted_file:
+        subprocess.check_call(cmd, stdout=sorted_file)
+    # find closest tandem-repeat for each variant
+    bed2 = ref_tr_file_sorted
     bed1_with_closest_tr = pjoin(out_dir, "merged_vcf.tmp.TRdata.bed")
     cmd = ["bedtools", "closest", "-D", "ref", "-a", bed1, "-b", bed2]
     with open(bed1_with_closest_tr, "w") as out_file:
