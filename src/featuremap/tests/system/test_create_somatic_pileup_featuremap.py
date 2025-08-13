@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pysam
 import pytest
-from ugbio_featuremap import create_somatic_pileup_featuremap
+from ugbio_featuremap import create_somatic_pileup_featuremap, ref_nonref_per_base_window
 
 
 @pytest.fixture
@@ -61,3 +61,41 @@ def test_create_somatic_pileup_featuremap(tmp_path, resources_dir):
     assert num_variants == expected_num_variants
     # assert a single entry per variant
     assert all(cons["count"] == 1 for cons in cons_dict.values())
+
+
+def test_parse_samtools_mpileup(tmp_path, resources_dir):
+    samtools_mpileup_file = pjoin(
+        resources_dir,
+        "Pa_46_FreshFrozen.Lb_705.runs_021146_021152_cov60.chr19_chr20.Pa_46_FreshFrozen.Lb_705.runs_021146_021152_cov60.xgb.pileup.xgb.chr19_chr20.m3_p2.bed.ver2.100.samtools.mpileup",
+    )
+    regions_bed_file = pjoin(
+        resources_dir, "Pa_46_FreshFrozen.Lb_705.runs_021146_021152_cov60.xgb.pileup.xgb.chr19_chr20.m3_p2.bed"
+    )
+    base_file_name = "create_somatic_pileup_featuremap_test_output"
+    out_dir = tmp_path
+    output_vcf = ref_nonref_per_base_window.run(
+        [
+            "ref_nonref_per_base_window",
+            "--input",
+            samtools_mpileup_file,
+            "--bed",
+            regions_bed_file,
+            "--distance_start_to_center",
+            "2",
+            "--output_dir",
+            str(out_dir),
+            "--base_file_name",
+            base_file_name,
+        ]
+    )
+    # output_vcf = pjoin(out_dir, f"{base_file_name}.vcf.gz")
+    expected_vcf_output = pjoin(
+        resources_dir,
+        "Pa_46_FreshFrozen.Lb_705.runs_021146_021152_cov60.chr19_chr20.Pa_46_FreshFrozen.Lb_705.runs_021146_021152_cov60.xgb.pileup.xgb.chr19_chr20.m3_p2.bed.ver2.100.samtools.mpileup.vcf.gz",
+    )
+    # assert output file was generated
+    assert os.path.isfile(output_vcf)
+    # check that the output VCF matches the expected output
+    with pysam.VariantFile(output_vcf) as out_vcf, pysam.VariantFile(expected_vcf_output) as exp_vcf:
+        for out_rec, exp_rec in zip(out_vcf, exp_vcf):
+            assert out_rec == exp_rec
