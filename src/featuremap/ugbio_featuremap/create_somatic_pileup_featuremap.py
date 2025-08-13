@@ -303,7 +303,16 @@ def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
     df_tr_info = pd.read_csv(f"{bed1_with_closest_tr}.tsv", sep="\t", header=None)
     df_tr_info.columns = ["chrom", "pos", "TR_start", "TR_end", "TR_seq", "TR_distance"]
     df_tr_info["TR_length"] = df_tr_info["TR_end"] - df_tr_info["TR_start"]
-    df_tr_info["TR_seq_unit_length"] = df_tr_info["TR_seq"].str.extract(r"\((\w+)\)")[0].str.len()
+    # Extract repeat unit length, handle cases where pattern does not match
+    extracted = df_tr_info["TR_seq"].str.extract(r"\((\w+)\)")
+    df_tr_info["TR_seq_unit_length"] = extracted[0].str.len()
+    # Fill NaN values with 0 and log a warning if any were found
+    if df_tr_info["TR_seq_unit_length"].isna().any():
+        logger.warning(
+            "Some TR_seq values did not match the expected pattern '(unit)'. "
+            "Setting TR_seq_unit_length to 0 for these rows."
+        )
+        df_tr_info["TR_seq_unit_length"] = df_tr_info["TR_seq_unit_length"].fillna(0).astype(int)
     df_tr_info.to_csv(f"{bed1_with_closest_tr}.tsv", sep="\t", header=None, index=False)
 
     cmd = ["sort", "-k1,1", "-k2,2n", f"{bed1_with_closest_tr}.tsv"]
