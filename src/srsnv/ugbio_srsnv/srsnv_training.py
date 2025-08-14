@@ -384,7 +384,9 @@ class SRSNVTrainer:
     def _read_positive_df(self, pos_path: str) -> pl.DataFrame:
         """Load and massage the positive parquet."""
         logger.debug("Reading positive examples from %s", pos_path)
-        pos_df = pl.from_pandas(pd.read_parquet(pos_path))  # HACK to read correct categories. NEED TO INVESTIGATE
+        pos_df = pl.read_parquet(
+            pos_path
+        )  # pl.from_pandas(pd.read_parquet(pos_path))  # HACK to read correct categories. NEED TO INVESTIGATE
         logger.debug("Positive examples shape: %s", pos_df.shape)
 
         if X_ALT not in pos_df.columns:
@@ -431,7 +433,9 @@ class SRSNVTrainer:
     def _read_negative_df(self, neg_path: str) -> pl.DataFrame:
         """Load the negative parquet and attach label column."""
         logger.debug("Reading negative examples from %s", neg_path)
-        neg_df = pl.from_pandas(pd.read_parquet(neg_path))  # HACK to read correct categories. NEED TO INVESTIGATE
+        neg_df = pl.read_parquet(
+            neg_path
+        )  # pl.from_pandas(pd.read_parquet(neg_path))  # HACK to read correct categories. NEED TO INVESTIGATE
         logger.debug("Negative examples shape: %s", neg_df.shape)
         neg_df = neg_df.with_columns(pl.lit(value=False).alias(LABEL_COL))
         if X_ALT in neg_df.columns:
