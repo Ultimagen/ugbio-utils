@@ -24,7 +24,7 @@ HIST_COLORS = {
 def _get_trinuc_with_alt_in_order(order: str = "symmetric"):
     """Get trinuc_with_context in right order, so that each SNV in position i
     has the opposite SNV in position i+96.
-    E.g., in position 0 we have A[A>C]A and in posiiton 96 we have A[C>A]A
+    E.g., in position 0 we have A[A>C]A and in position 96 we have A[C>A]A
     """
     if order not in {"symmetric", "reverse"}:
         raise ValueError(f'order must be either "symmetric" or "reverse". Got {order}')
@@ -888,8 +888,8 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913
     if collapsed and (order != "reverse"):
         # raise warning that collapsing not by motif and its reverse complement
         warnings.warn(
-            "Collapsing trinuc motifs with their symmetricly reversed partners W[X>Y]Z with W[Y>Z]X "
-            "rather than with their reversed complements. Results may not be as expected. "
+            "Collapsing trinuc motifs with their symmetrically reversed partners W[X>Y]Z with W[Y>Z]X "
+            "rather than with their reverse complements. Results may not be as expected. "
             "Consider using 'reverse' order.",
             stacklevel=2,
         )
