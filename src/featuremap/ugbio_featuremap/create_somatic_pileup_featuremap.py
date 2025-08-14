@@ -297,14 +297,15 @@ def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
             subprocess.check_call(cmd, stdout=sorted_file)
         # find closest tandem-repeat for each variant
         bed2 = ref_tr_file_sorted
-        bed1_with_closest_tr = pjoin(tmpdir, "merged_vcf.tmp.TRdata.bed")
-        cmd = ["bedtools", "closest", "-D", "ref", "-a", bed1, "-b", bed2]
-        with open(bed1_with_closest_tr, "w") as out_file:
-            subprocess.check_call(cmd, stdout=out_file)
         bed1_with_closest_tr_tsv = pjoin(tmpdir, "merged_vcf.tmp.TRdata.tsv")
-        cmd = ["cut", "-f1-2,5-8", bed1_with_closest_tr]
+        cmd_bedtools = ["bedtools", "closest", "-D", "ref", "-a", bed1, "-b", bed2]
+        cmd_cut = ["cut", "-f1-2,5-8"]
         with open(bed1_with_closest_tr_tsv, "w") as out_file:
-            subprocess.check_call(cmd, stdout=out_file)
+            p1 = subprocess.Popen(cmd_bedtools, stdout=subprocess.PIPE)
+            p2 = subprocess.Popen(cmd_cut, stdin=p1.stdout, stdout=out_file)
+            p1.stdout.close()
+            p2.communicate()
+            p1.wait()
 
         df_tr_info = pd.read_csv(bed1_with_closest_tr_tsv, sep="\t", header=None)
         df_tr_info.columns = ["chrom", "pos", "TR_start", "TR_end", "TR_seq", "TR_distance"]
