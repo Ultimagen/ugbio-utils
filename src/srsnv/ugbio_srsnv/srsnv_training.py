@@ -33,6 +33,7 @@ import pandas as pd
 import polars as pl
 import pysam
 import xgboost as xgb
+from scipy.stats import gaussian_kde
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
@@ -383,7 +384,7 @@ class SRSNVTrainer:
     def _read_positive_df(self, pos_path: str) -> pl.DataFrame:
         """Load and massage the positive parquet."""
         logger.debug("Reading positive examples from %s", pos_path)
-        pos_df = pl.read_parquet(pos_path)
+        pos_df = pl.from_pandas(pd.read_parquet(pos_path))  # HACK to read correct categories. NEED TO INVESTIGATE
         logger.debug("Positive examples shape: %s", pos_df.shape)
 
         if X_ALT not in pos_df.columns:
@@ -430,7 +431,7 @@ class SRSNVTrainer:
     def _read_negative_df(self, neg_path: str) -> pl.DataFrame:
         """Load the negative parquet and attach label column."""
         logger.debug("Reading negative examples from %s", neg_path)
-        neg_df = pl.read_parquet(neg_path)
+        neg_df = pl.from_pandas(pd.read_parquet(neg_path))  # HACK to read correct categories. NEED TO INVESTIGATE
         logger.debug("Negative examples shape: %s", neg_df.shape)
         neg_df = neg_df.with_columns(pl.lit(value=False).alias(LABEL_COL))
         if X_ALT in neg_df.columns:
@@ -510,23 +511,146 @@ class SRSNVTrainer:
             self.feature_dtypes[col] = dtype_str
             logger.debug("Column '%s' has dtype: %s", col, dtype_str)
 
-    def _create_quality_lookup_table(self, eps=None) -> None:
+    def _prepare_kde_data(
+        self, mqual_t: np.ndarray, mqual_f: np.ndarray, mqual_max: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Prepare data for KDE by adding jitter and subsampling if necessary."""
+        # Add small jitter to avoid issues with identical values
+        jitter_scale = mqual_max * 1e-6
+        mqual_t_jittered = mqual_t + self.rng.normal(0, jitter_scale, len(mqual_t))
+        mqual_f_jittered = mqual_f + self.rng.normal(0, jitter_scale, len(mqual_f))
+
+        # For efficiency with large datasets, subsample if necessary
+        max_kde_samples = 50000  # Limit for KDE efficiency
+        if len(mqual_t_jittered) > max_kde_samples:
+            idx_t = self.rng.choice(len(mqual_t_jittered), max_kde_samples, replace=False)
+            mqual_t_kde = mqual_t_jittered[idx_t]
+        else:
+            mqual_t_kde = mqual_t_jittered
+
+        if len(mqual_f_jittered) > max_kde_samples:
+            idx_f = self.rng.choice(len(mqual_f_jittered), max_kde_samples, replace=False)
+            mqual_f_kde = mqual_f_jittered[idx_f]
+        else:
+            mqual_f_kde = mqual_f_jittered
+
+        return mqual_t_kde, mqual_f_kde
+
+    def _compute_kde_rates(
+        self, kde_t, kde_f, x_lut: np.ndarray, mqual_max: float, eps: float
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Compute TPR and FPR using KDE integration."""
+        tpr = np.zeros(len(x_lut))
+        fpr = np.zeros(len(x_lut))
+
+        for i, threshold in enumerate(x_lut):
+            # Estimate P(MQUAL >= threshold) using numerical integration
+            x_range = np.linspace(threshold, mqual_max, 500)
+            if len(x_range) > 1:
+                dx = x_range[1] - x_range[0]
+                try:
+                    tpr[i] = np.trapezoid(kde_t(x_range), dx=dx)
+                    fpr[i] = np.trapezoid(kde_f(x_range), dx=dx)
+                except AttributeError:
+                    # Fallback for older numpy versions
+                    tpr[i] = np.trapz(kde_t(x_range), dx=dx)
+                    fpr[i] = np.trapz(kde_f(x_range), dx=dx)
+            else:
+                # Handle edge case where threshold equals max
+                tpr[i] = eps
+                fpr[i] = eps
+
+        return tpr, fpr
+
+    def _create_quality_lookup_table_kde(self, fp_mqual_cutoff_quantile=0.999, eps=None) -> None:
+        """
+        Build an interpolation table that maps MQUAL → SNVQ using KDE for smoothing.
+        Uses kernel density estimation to better estimate precision at high MQUAL values
+        where there are fewer datapoints.
+        """
+        if eps is None:
+            eps = self.eps
+        pd_df = self.data_frame.to_pandas()
+        mqual_fp_max = pd_df.loc[pd_df[LABEL_COL].astype(int) == 0, MQUAL].quantile(fp_mqual_cutoff_quantile)
+        prior_real_error = self.prior_real_error
+
+        # Determine x_lut points based on whether quality_lut_size is provided
+        if self.args.quality_lut_size is not None:
+            n_pts = self.args.quality_lut_size
+            self.x_lut = np.linspace(0.0, mqual_fp_max, n_pts)
+        else:
+            # Use integer points from 0 to floor(mqual_fp_max)
+            max_int = int(np.floor(mqual_fp_max))
+            self.x_lut = np.arange(0, max_int + 1, dtype=float)
+
+        # Extract MQUAL values for true positives and false positives
+        mqual_t = pd_df[pd_df[LABEL_COL]][MQUAL].to_numpy()
+        mqual_f = pd_df[~pd_df[LABEL_COL]][MQUAL].to_numpy()
+
+        # Prepare data for KDE
+        mqual_t_kde, mqual_f_kde = self._prepare_kde_data(mqual_t, mqual_f, pd_df[MQUAL].max())
+
+        # Ensure we have data for KDE
+        if len(mqual_t_kde) == 0 or len(mqual_f_kde) == 0:
+            logger.warning("Insufficient data for KDE, falling back to threshold-based method")
+            # Fallback to original method
+            tpr = np.array([(mqual_t >= m_).mean() for m_ in self.x_lut])
+            fpr = np.array([(mqual_f >= m_).mean() for m_ in self.x_lut])
+        else:
+            # Create KDE estimators with controlled bandwidth
+            kde_t = gaussian_kde(mqual_t_kde)
+            kde_f = gaussian_kde(mqual_f_kde)
+
+            kde_t.covariance_factor = lambda: 0.1
+            kde_t._compute_covariance()
+            kde_f.covariance_factor = lambda: 0.1
+            kde_f._compute_covariance()
+
+            # Calculate smoothed TPR and FPR
+            tpr, fpr = self._compute_kde_rates(kde_t, kde_f, self.x_lut, pd_df[MQUAL].max(), eps)
+
+        # Ensure TPR and FPR are bounded and calculate SNVQ
+        tpr = np.clip(tpr, eps, 1.0)
+        fpr = np.clip(fpr, eps, 1.0)
+
+        precision = tpr / (tpr + fpr * (len(mqual_f) / len(mqual_t)))
+        self.y_lut = -10 * np.log10(np.clip((prior_real_error / 3) * ((1 - precision) / precision), eps, 1))
+
+        logger.debug("Created KDE-smoothed MQUAL→SNVQ lookup table with %d points", len(self.x_lut))
+
+    def _create_quality_lookup_table_count(self, fp_mqual_cutoff_quantile=1 - 1e-5, eps=None) -> None:
         """
         Build an interpolation table that maps MQUAL → SNVQ.
         """
         if eps is None:
             eps = self.eps
         pd_df = self.data_frame.to_pandas()
-        mqual = pd_df[MQUAL]
+        mqual_fp_max = pd_df.loc[pd_df[LABEL_COL].astype(int) == 0, MQUAL].quantile(fp_mqual_cutoff_quantile)
         prior_real_error = self.prior_real_error
-        n_pts = self.args.quality_lut_size
 
-        self.x_lut = np.linspace(0.0, mqual.max(), n_pts)
+        # Determine x_lut points based on whether quality_lut_size is provided
+        if self.args.quality_lut_size is not None:
+            n_pts = self.args.quality_lut_size
+            self.x_lut = np.linspace(0.0, mqual_fp_max, n_pts)
+        else:
+            # Use integer points from 0 to floor(mqual_fp_max)
+            max_int = int(np.floor(mqual_fp_max))
+            self.x_lut = np.arange(0, max_int + 1, dtype=float)
+
         mqual_t = pd_df[pd_df[LABEL_COL]][MQUAL]
         mqual_f = pd_df[~pd_df[LABEL_COL]][MQUAL]
         tpr = np.array([(mqual_t >= m_).mean() for m_ in self.x_lut])
         fpr = np.array([(mqual_f >= m_).mean() for m_ in self.x_lut])
         self.y_lut = -10 * np.log10(np.clip((prior_real_error / 3) * (fpr / tpr), eps, 1))
+
+    def _create_quality_lookup_table(self, eps=None, *, use_kde=False) -> None:
+        """
+        Build an interpolation table that maps MQUAL → SNVQ.
+        """
+        if use_kde:
+            self._create_quality_lookup_table_kde(eps=eps)
+        else:
+            self._create_quality_lookup_table_count(eps=eps)
 
     # ─────────────────────── training / prediction ──────────────────────
     def train(self) -> None:
@@ -550,7 +674,7 @@ class SRSNVTrainer:
         y_all = pd_df[LABEL_COL].to_numpy()
         # ----------------------------------------------------------------
         for fold_idx in range(self.k_folds):
-            logger.debug("Starting training for fold %d/%d", fold_idx + 1, self.k_folds)
+            logger.debug("Starting training for fold %d (fold #%d of %d)", fold_idx, fold_idx + 1, self.k_folds)
             val_mask = fold_arr == fold_idx
             train_mask = (~val_mask) & ~np.isnan(fold_arr)
 
@@ -572,7 +696,12 @@ class SRSNVTrainer:
             auc_val = safe_roc_auc(y_val, self.models[fold_idx].predict_proba(x_val)[:, 1], logger=logger)
             auc_train = safe_roc_auc(y_train, self.models[fold_idx].predict_proba(x_train)[:, 1], logger=logger)
             logger.debug(
-                "Finished training for fold %d, AUC: %.4f (validation) / %.4f (training)", fold_idx, auc_val, auc_train
+                "Finished training for fold %d (fold #%d of %d), AUC: %.4f (validation) / %.4f (training)",
+                fold_idx,
+                fold_idx + 1,
+                self.k_folds,
+                auc_val,
+                auc_train,
             )
 
         # ---------- add calibrated quality columns ----------------------

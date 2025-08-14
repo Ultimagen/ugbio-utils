@@ -20,20 +20,109 @@ from __future__ import annotations
 
 import warnings
 from functools import partial
+from itertools import cycle
 
 import numpy as np
 import pandas as pd
 import xgboost as xgb
 from sklearn.metrics import roc_auc_score
+from ugbio_ppmseq.ppmSeq_utils import (
+    MAX_TOTAL_HMER_LENGTHS_IN_LOOPS,
+    MIN_TOTAL_HMER_LENGTHS_IN_LOOPS,
+    STRAND_RATIO_LOWER_THRESH,
+    STRAND_RATIO_UPPER_THRESH,
+    PpmseqCategories,
+)
 
 # Column name constants
 PREV1 = "X_PREV1"
 REF = "REF"
 NEXT1 = "X_NEXT1"
 ALT = "ALT"
+REV = "REV"
+
+IS_MIXED = "is_mixed"
+IS_MIXED_START = "is_mixed_start"
+IS_MIXED_END = "is_mixed_end"
+ST = "st"
+ET = "et"
+AS = "as"
+AE = "ae"
+TS = "ts"
+TE = "te"
+TM = "tm"  # Trimmer tags column
+ST_FILLNA = "st_fillna"  # start tag with NAs filled in
+ET_FILLNA = "et_fillna"  # end tag with NAs filled in
+
+FLOW_ORDER = ["T", "G", "C", "A"]
 
 MAX_PHRED = 100  # Default maximum Phred score for clipping
 EPS = 10 ** (-MAX_PHRED / 10)  # Small epsilon value for numerical stability in log calculations
+
+
+def seq2key_common(Seq, start=0, *, flowOrder=FLOW_ORDER, iterative=True):  # noqa: N803
+    if iterative:
+        flow_iter = cycle(flowOrder)
+    else:
+        flow_iter = flowOrder
+        m = 0
+    for _ in range(start):
+        next(flow_iter)
+    key = []
+    j = 0
+    while j < len(Seq):
+        if iterative:
+            current_flow = next(flow_iter)
+        else:
+            if m >= len(flow_iter):
+                break
+            current_flow = flow_iter[m]
+            m += 1
+        if np.any(Seq[j] in current_flow):
+            h = 0
+            while np.any(Seq[j] in current_flow):
+                j += 1
+                h += 1
+                if j == len(Seq):
+                    break
+            key.append(h)
+        else:
+            key.append(0)
+    return np.array(key)
+
+
+def seq2key(seq, start=0, flow_order=FLOW_ORDER, *, iterative=True, pad_zeros=False):
+    """Given a base-space sequence seq (string), return the corresponding keys in flow space.
+    If pad_zeros is True, append zeros at end to return an integer number of cycles."""
+    key = seq2key_common(seq, start=start, flowOrder=flow_order, iterative=iterative)
+    if pad_zeros:
+        key = np.array(key.tolist() + [0] * (4 - key.shape[0] % 4))
+    return key
+
+
+def key2seq(key, flow_order=FLOW_ORDER):
+    """Translate the flow-space sequence key (a numpy array) to a base-space sequence (string)"""
+    seq = ""
+    for i, f in enumerate(key):
+        seq += flow_order[i % 4] * f
+    return seq
+
+
+def is_possible_cycle_skip(tcwa):
+    W, X, Z, Y = (tcwa[i] for i in range(4))  # noqa: N806
+    pcsk = True
+    if W == Z:
+        if X != W and Y != W:  # noqa: PLR1714
+            pcsk = False
+    elif (X == W and Y == Z) or (X == Z and Y == W):
+        pcsk = False
+    return pcsk
+
+
+def is_cycle_skip(tcwa, flow_order=FLOW_ORDER):
+    W, X, Z, Y = (tcwa[i] for i in range(4))  # noqa: N806
+    csk = len(seq2key(f"{W}{X}{Z}", flow_order=flow_order)) != len(seq2key(f"{W}{Y}{Z}", flow_order=flow_order))
+    return csk
 
 
 def prob_to_phred(prob_correct, max_value=MAX_PHRED):
@@ -310,20 +399,20 @@ def construct_trinuc_context_with_alt(
     return df[prev1].astype(str) + df[ref].astype(str) + df[next1].astype(str) + df[alt].astype(str)
 
 
-def get_trinuc_context_with_alt_fwd_vectorized(df, is_forward_col="is_forward", tcwa_col="trinuc_context_with_alt"):
+def get_trinuc_context_with_alt_fwd_vectorized(tcwa, is_forward):
     """
     Vectorized function to compute forward-oriented trinuc context + alt base.
 
     Parameters:
-        df (pd.DataFrame): Input DataFrame.
-        is_forward_col (str): Name of the column indicating strand direction.
-        tcwa_col (str): Name of the column with trinuc context + alt base (4 letters).
+        is_forward (pd.Series): Series indicating strand direction.
+        tcwa (pd.Series): Series with trinuc context + alt base (4 letters).
 
     Returns:
-        pd.Series: A Series with the computed forward-oriented trinuc context + alt.
+        pd.Series: A Series with the computed forward-oriented (i.e., in sequence direction)
+        trinuc context + alt.
     """
     # Extract individual bases
-    split_chars = df[tcwa_col].str.extract(r"(.)(.)(.)(.)")
+    split_chars = tcwa.str.extract(r"(.)(.)(.)(.)")
     split_chars.columns = ["prv", "ref", "nxt", "alt"]
 
     # Define complement map and apply it
@@ -334,7 +423,7 @@ def get_trinuc_context_with_alt_fwd_vectorized(df, is_forward_col="is_forward", 
     rev_comp = split_chars_comp["nxt"] + split_chars_comp["ref"] + split_chars_comp["prv"] + split_chars_comp["alt"]
 
     # Choose original or reverse-complement depending on is_forward
-    return np.where(df[is_forward_col], df[tcwa_col], rev_comp)
+    return np.where(is_forward, tcwa, rev_comp)
 
 
 def safe_roc_auc(y_true, y_pred, name=None, logger=None):
@@ -380,3 +469,323 @@ def safe_roc_auc(y_true, y_pred, name=None, logger=None):
         else:
             warnings.warn(msg, UserWarning, stacklevel=2)
         return np.nan
+
+
+class HandlePPMSeqTagsInFeatureMapDataFrame:
+    """Class to handle ppmSeq tags in the featuremap dataframe.
+
+    This class is responsible for determining the correct column names for the ppmSeq start and end tags
+    based on the provided featuremap dataframe and categorical features.
+    It handles different versions of the ppmSeq adapter and ensures that the tags are consistent.
+
+    TODO: This whole chunk of code is a mix of legacy and new logic, needs to be cleaned up.
+    """
+
+    def __init__(
+        self,
+        featuremap_df: pd.DataFrame,
+        categorical_features_names: list[str],
+        ppmseq_adapter_version: str,
+        start_tag_col: str | None = None,
+        end_tag_col: str | None = None,
+        logger=None,
+    ):
+        self.featuremap_df = featuremap_df.copy()
+        self.categorical_features_names = categorical_features_names
+        self.ppmseq_adapter_version = ppmseq_adapter_version
+        self.start_tag_col = start_tag_col
+        self.end_tag_col = end_tag_col
+        self.start_tag_fillna_col = None
+        self.end_tag_fillna_col = None
+        self.logger = logger
+        self.setup_ppmseq_tags()  # This adds ST and ET columns if they are not already present
+
+    def log(self, msg, level="info"):
+        if self.logger:
+            self.logger.log(level, msg)
+        elif level == "warning":
+            warnings.warn(msg, UserWarning, stacklevel=2)
+        elif level == "error":
+            raise RuntimeError(msg)
+        else:
+            print(msg)
+
+    def setup_ppmseq_tags(self):
+        """Set up ppmSeq start and end tag columns in the featuremap dataframe.
+
+        This method handles the complete workflow for ppmSeq tag setup:
+        - If tag columns are provided as arguments/parameters, use them.
+        - Otherwise, infer and potentially create them using the following logic:
+          - If ST/ET columns exist in featuremap, use them directly
+          - If AS/AE/TS/TE columns exist but ST/ET don't, calculate and add ST/ET columns
+          - If neither set exists, set tag columns to None
+        - Use categorical features dict and ppmseq_adapter_version for disambiguation
+        - Raise warnings if any values are inconsistent
+
+        Note: This method may modify self.featuremap_df by adding ST/ET columns.
+        """
+        # TODO: check this huge change
+        self._initialize_tag_columns()
+        self._infer_tag_columns()
+        self._log_final_tag_columns()
+
+    def _initialize_tag_columns(self):
+        """Initialize tag columns based on adapter version.
+        This function is a placeholder in case more complicated logic is needed in the future.
+        """
+        if self.ppmseq_adapter_version is None:
+            self.tag_cols_from_adapter = [None, None]
+        else:
+            self.tag_cols_from_adapter = [ST, ET]
+
+    def _infer_tag_columns(self):
+        """Infer and set tag columns based on featuremap content and categorical features.
+
+        This method:
+        1. Checks if ST/ET columns already exist in featuremap (CRAM tags)
+        2. If not, checks if AS/AE/TS/TE exist (v5 tags) and calculates ST/ET
+        3. Sets start_tag_col and end_tag_col accordingly, or None if no data available
+        """
+        if self.start_tag_col is None and self.end_tag_col is None:
+            if self._cram_tags_in_featuremap():
+                # Check if ST, ET in featuremap_df, applies to both v1 and v5_legacy
+                self._set_cram_tags()
+            elif self._v5_tags_in_featuremap():
+                # ST, ET no in featermap_df, AS, AE, TS, TE are. Adds ST, ET to featuremap_df
+                self._add_ppmseq_tags_to_featuremap()
+                self._set_cram_tags()
+            else:
+                self.start_tag_col = None
+                self.end_tag_col = None
+
+    def _v5_tags_in_featuremap(self):
+        return (
+            AS in self.featuremap_df
+            and AE in self.featuremap_df
+            and TS in self.featuremap_df
+            and TE in self.featuremap_df
+        )
+
+    def _cram_tags_in_featuremap(self):
+        return ST in self.featuremap_df and ET in self.featuremap_df
+
+    def _both_tags_in_categorical(self):
+        return (
+            "strand_ratio_category_end" in self.categorical_features_names
+            and "strand_ratio_category_start" in self.categorical_features_names
+            and ST in self.categorical_features_names
+            and ET in self.categorical_features_names
+        )
+
+    def _neither_tags_in_categorical(self):
+        return (
+            "strand_ratio_category_end" not in self.categorical_features_names
+            and "strand_ratio_category_start" not in self.categorical_features_names
+            and ST not in self.categorical_features_names
+            and ET not in self.categorical_features_names
+        )
+
+    def _strand_ratio_in_categorical(self):
+        return (
+            "strand_ratio_category_end" in self.categorical_features_names
+            and "strand_ratio_category_start" in self.categorical_features_names
+        )
+
+    def _cram_tags_in_categorical(self):
+        return ST in self.categorical_features_names and ET in self.categorical_features_names
+
+    def _add_ppmseq_tags_to_featuremap(
+        self,
+        sr_lower: float = STRAND_RATIO_LOWER_THRESH,
+        sr_upper: float = STRAND_RATIO_UPPER_THRESH,
+        min_total_hmer: int = MIN_TOTAL_HMER_LENGTHS_IN_LOOPS,
+        max_total_hmer: int = MAX_TOTAL_HMER_LENGTHS_IN_LOOPS,
+    ):
+        """Calculate and add ppmSeq tags to featuremap_df from the start and end annotations.
+
+        Parameters
+        ----------
+        sr_lower : float, optional
+            Lower strand ratio threshold for determining MIXED category, by default 0.27
+        sr_upper : float, optional
+            Upper strand ratio threshold for determining MIXED category, by default 0.73
+        min_total_hmer : int, optional
+            Minimum total hmer lengths for valid range, by default 4
+        max_total_hmer : int, optional
+            Maximum total hmer lengths for valid range, by default 8
+        """
+
+        # Helper function to compute strand ratio category vectorized
+        def compute_strand_ratio_category(as_col, ts_col, sr_lower, sr_upper, min_total, max_total):
+            """
+            Vectorized computation of strand ratio category.
+
+            Parameters
+            ----------
+            as_col : pd.Series
+                A's count column (AS or AE)
+            ts_col : pd.Series
+                T's count column (TS or TE)
+            sr_lower : float
+                Lower threshold for MIXED category
+            sr_upper : float
+                Upper threshold for MIXED category
+            min_total : int
+                Minimum total count for valid range
+            max_total : int
+                Maximum total count for valid range
+
+            Returns
+            -------
+            pd.Series
+                Series with strand ratio categories
+            """
+            # Initialize result with UNDETERMINED as default
+            result = pd.Series([PpmseqCategories.UNDETERMINED.value] * len(as_col), index=as_col.index)
+
+            # Where either AS/AE or TS/TE is NaN, set result to NaN
+            nan_mask = as_col.isna() | ts_col.isna()
+            result[nan_mask] = np.nan
+
+            # Valid data mask (not NaN)
+            valid_mask = ~nan_mask
+
+            # Sum of T's and A's for valid data
+            total_count = as_col + ts_col
+
+            # Filter for valid range among valid data
+            valid_range_mask = valid_mask & (total_count >= min_total) & (total_count <= max_total)
+
+            if valid_range_mask.any():
+                # TS==0 -> PLUS
+                plus_indices = valid_range_mask & (ts_col == 0)
+                result[plus_indices] = PpmseqCategories.PLUS.value
+
+                # AS==0 -> MINUS
+                minus_indices = valid_range_mask & (as_col == 0)
+                result[minus_indices] = PpmseqCategories.MINUS.value
+
+                # Calculate strand ratio for remaining cases (neither AS nor TS is 0)
+                remaining_indices = valid_range_mask & (as_col != 0) & (ts_col != 0)
+                if remaining_indices.any():
+                    strand_ratio = ts_col[remaining_indices] / total_count[remaining_indices]
+
+                    # sr_lower <= ratio <= sr_upper -> MIXED
+                    mixed_indices = remaining_indices & (strand_ratio >= sr_lower) & (strand_ratio <= sr_upper)
+                    result[mixed_indices] = PpmseqCategories.MIXED.value
+
+                    # All other ratios remain UNDETERMINED (already set as default)
+
+            return result
+
+        # Calculate ST (start tag) from AS and TS
+        self.featuremap_df[ST] = compute_strand_ratio_category(
+            self.featuremap_df[AS],
+            self.featuremap_df[TS],
+            sr_lower,
+            sr_upper,
+            min_total_hmer,
+            max_total_hmer,
+        )
+
+        # Calculate ET (end tag) from AE and TE
+        self.featuremap_df[ET] = compute_strand_ratio_category(
+            self.featuremap_df[AE],
+            self.featuremap_df[TE],
+            sr_lower,
+            sr_upper,
+            min_total_hmer,
+            max_total_hmer,
+        )
+
+    def _set_cram_tags(self):
+        self.start_tag_col = ST
+        self.end_tag_col = ET
+        if not self._cram_tags_in_categorical():
+            self.log("ppmSeq tags not in categorical_features_dict", level="warning")
+
+    def _log_final_tag_columns(self):
+        self.log(f"Using [start_tag, end_tag] = {[self.start_tag_col, self.end_tag_col]}")
+        if self.start_tag_col != self.tag_cols_from_adapter[0] or self.end_tag_col != self.tag_cols_from_adapter[1]:
+            self.log(f"ppmSeq tags are not consistent with respect to {self.tag_cols_from_adapter=}", level="warning")
+
+    def fill_nan_tags(self, st_fillna: str = ST_FILLNA, et_fillna: str = ET_FILLNA):
+        """Fill NaN values in start and end tag columns.
+
+        For ST (start tag): all NaN values are replaced with UNDETERMINED.
+        For ET (end tag):
+            - If TM column exists and contains 'A', replace NaN with UNDETERMINED
+            - If TM column exists and doesn't contain 'A', replace NaN with END_UNREACHED
+            - If TM column doesn't exist, log warning and replace all NaN with UNDETERMINED
+
+        NOTE: The categorical values of the ST and ET columns cannot be changed because they are
+        used in inference and must keep the same categories. Their values are duplicated in the
+        columns ST_FILLNA and ET_FILLNA. The categories of the latter are taken from PpmseqCategories.
+
+        Parameters
+        ----------
+        st_fillna : str, optional
+            Name of the column to fill NaN values in start tag, by default 'st_fillna'
+        et_fillna : str, optional
+            Name of the column to fill NaN values in end tag, by default 'et_fillna'
+        """
+        # Ensure we have tag columns set up
+        if self.start_tag_col is None or self.end_tag_col is None:
+            self.log("Tag columns not set up, cannot fill NaN values", level="warning")
+            return
+
+        self.start_tag_fillna_col = st_fillna
+        self.end_tag_fillna_col = et_fillna
+
+        # Convert to string first, then to categorical with PpmseqCategories
+        ppmseq_categories = [category.value for category in PpmseqCategories]
+
+        # Fill NaN values in start tag column with UNDETERMINED
+        if self.start_tag_col in self.featuremap_df.columns:
+            self.featuremap_df[st_fillna] = pd.Categorical(
+                self.featuremap_df[self.start_tag_col].astype(str), categories=ppmseq_categories
+            )
+            self.featuremap_df[st_fillna] = self.featuremap_df[st_fillna].fillna(PpmseqCategories.UNDETERMINED.value)
+
+        # Fill NaN values in end tag column based on TM column
+        if self.end_tag_col in self.featuremap_df.columns:
+            self.featuremap_df[et_fillna] = pd.Categorical(
+                self.featuremap_df[self.end_tag_col].astype(str), categories=ppmseq_categories
+            )
+            if TM in self.featuremap_df.columns:
+                # Check if adapter was reached (TM column contains 'A')
+                adapter_reached = self.featuremap_df[TM].str.contains("A", na=False).to_numpy()
+
+                # Use pandas operations to preserve categorical dtype
+                nan_mask = self.featuremap_df[et_fillna].isna()
+                self.featuremap_df.loc[nan_mask & adapter_reached, et_fillna] = PpmseqCategories.UNDETERMINED.value
+                self.featuremap_df.loc[nan_mask & ~adapter_reached, et_fillna] = PpmseqCategories.END_UNREACHED.value
+            else:
+                # TM column doesn't exist, log warning and set all NaN to UNDETERMINED
+                self.log(
+                    f"TM column '{TM}' not found in featuremap. Setting all NaN end tag values to UNDETERMINED",
+                    level="warning",
+                )
+                self.featuremap_df[et_fillna] = self.featuremap_df[et_fillna].fillna(
+                    PpmseqCategories.UNDETERMINED.value
+                )
+
+    def add_is_mixed_to_featuremap_df(self):
+        """Add is_mixed column to self.featuremap_df"""
+        # TODO: use the information from adapter_version instead of this patch
+        # Get start tag
+        if self.start_tag_col is not None:
+            self.featuremap_df[IS_MIXED_START] = self.featuremap_df[self.start_tag_col] == PpmseqCategories.MIXED.value
+        else:  # If no strand ratio information is available, set is_mixed to False
+            self.featuremap_df[IS_MIXED_START] = False
+            self.log("No start ppmSeq tags in data, setting is_mixed_start to False", level="warning")
+        # Get end tag
+        if self.end_tag_col is not None:
+            self.featuremap_df[IS_MIXED_END] = self.featuremap_df[self.end_tag_col] == PpmseqCategories.MIXED.value
+        else:  # If no strand ratio information is available, set is_mixed to False
+            self.featuremap_df[IS_MIXED_END] = False
+            self.log("No end ppmSeq tags in data, setting is_mixed_end to False", level="warning")
+        # Combine start and end tags
+        self.featuremap_df[IS_MIXED] = np.logical_and(
+            self.featuremap_df[IS_MIXED_START], self.featuremap_df[IS_MIXED_END]
+        )
