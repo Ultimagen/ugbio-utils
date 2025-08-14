@@ -285,7 +285,9 @@ def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
     with tempfile.TemporaryDirectory(dir=out_dir) as tmpdir:
         # generate tandem repeat info
         df_merged_vcf = vcftools.get_vcf_df(merged_vcf)
-        df_merged_vcf.insert(2, "end", df_merged_vcf["pos"] + 1)
+        df_merged_vcf.insert(
+            2, "end", df_merged_vcf["pos"] + 1
+        )  # TBD: get the actual end coordinate when the variant is not SNV (Insertion).
         bed1 = pjoin(tmpdir, "merged_vcf.tmp.bed")
         df_merged_vcf[["chrom", "pos", "end"]].to_csv(bed1, sep="\t", header=None, index=False)
         # sort the reference tandem repeat file
