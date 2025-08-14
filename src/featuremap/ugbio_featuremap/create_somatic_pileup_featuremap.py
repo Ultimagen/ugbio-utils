@@ -284,7 +284,7 @@ def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
     # Use a temporary directory for all intermediate files
     with tempfile.TemporaryDirectory(dir=out_dir) as tmpdir:
         # generate tandem repeat info
-        df_merged_vcf = vcftools.get_vcf_df(merged_vcf, sample_id=0)
+        df_merged_vcf = vcftools.get_vcf_df(merged_vcf)
         df_merged_vcf.insert(2, "end", df_merged_vcf["pos"] + 1)
         bed1 = pjoin(tmpdir, "merged_vcf.tmp.bed")
         df_merged_vcf[["chrom", "pos", "end"]].to_csv(bed1, sep="\t", header=None, index=False)
