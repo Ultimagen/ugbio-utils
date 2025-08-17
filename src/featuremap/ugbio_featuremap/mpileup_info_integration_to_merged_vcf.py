@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 from os.path import join as pjoin
+from typing import Any
 
 import pysam
 from ugbio_core.logger import logger
@@ -45,72 +46,20 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv[1:])
 
 
-def check_vcfs_sample_names(sfmp_vcf: str, tumor_mpileup_vcf: str, normal_mpileup_vcf: str):
+def build_lookup(vcf: pysam.VariantFile) -> dict:
     """
-    Validates that the sample names in the provided VCF files are consistent and meet expected requirements.
+    Builds a lookup dictionary from a VCF file.
+
     Parameters
     ----------
-    sfmp_vcf : str
-        Path to the merged VCF file (sfmp.vcf) containing both tumor and normal samples.
-    tumor_mpileup_vcf : str
-        Path to the tumor mpileup VCF file, expected to contain exactly one sample.
-    normal_mpileup_vcf : str
-        Path to the normal mpileup VCF file, expected to contain exactly one sample.
-    Raises
-    ------
-    SystemExit
-        If any of the following conditions are not met:
-            - The tumor mpileup VCF contains exactly one sample.
-            - The normal mpileup VCF contains exactly one sample.
-            - The tumor mpileup sample name matches the first sample in the merged VCF.
-            - The normal mpileup sample name matches the second sample in the merged VCF.
-    Logs
-    ----
-    Logs error messages for each validation failure and exits the program if any check fails.
-    Logs an info message if all checks pass.
+    vcf : pysam.VariantFile
+        A VariantFile object from which to fetch VCF records.
+
+    Returns
+    -------
+    dict
+        A dictionary mapping (chrom, pos, ref) tuples to their corresponding VCF record objects.
     """
-    # Read sample names from the VCF files
-    sfmp_samples = list(pysam.VariantFile(sfmp_vcf).header.samples)
-    tumor_mpileup_samples = list(pysam.VariantFile(tumor_mpileup_vcf).header.samples)
-    normal_mpileup_samples = list(pysam.VariantFile(normal_mpileup_vcf).header.samples)
-
-    # Checks
-    errors = []
-
-    if len(tumor_mpileup_samples) != 1:
-        errors.append(
-            f"tumor mpileup vcf should have exactly 1 sample, found {len(tumor_mpileup_samples)}: "
-            f"{tumor_mpileup_samples}"
-        )
-    if len(normal_mpileup_samples) != 1:
-        errors.append(
-            f"normal mpileup vcf should have exactly 1 sample, found {len(normal_mpileup_samples)}: "
-            f"{normal_mpileup_samples}"
-        )
-
-    if tumor_mpileup_samples and tumor_mpileup_samples[0] != sfmp_samples[0]:
-        errors.append(
-            f"tumor mpileup sample '{tumor_mpileup_samples[0]}' does not match first sample "
-            f"in sfmp.vcf '{sfmp_samples[0]}'"
-        )
-
-    if normal_mpileup_samples and normal_mpileup_samples[0] != sfmp_samples[1]:
-        errors.append(
-            f"normal mpileup sample '{normal_mpileup_samples[0]}' does not match second sample "
-            f"in sfmp.vcf '{sfmp_samples[1]}'"
-        )
-
-    # Output results
-    if errors:
-        logger.error("Validation failed:")
-        for err in errors:
-            logger.error(" - %s", err)
-        sys.exit(1)
-    else:
-        logger.info("All sample names checks passed.")
-
-
-def build_lookup(vcf):
     d = {}
     for rec in vcf.fetch():
         key = (rec.chrom, rec.pos, rec.ref)
@@ -118,7 +67,69 @@ def build_lookup(vcf):
     return d
 
 
+def create_new_header(
+    main_vcf: pysam.VariantFile,
+    vcf1: pysam.VariantFile,
+    vcf2: pysam.VariantFile,
+) -> pysam.VariantHeader:
+    """
+    Create a new VCF header by merging FORMAT fields from two additional VCF files into the main VCF header.
+
+    Parameters
+    ----------
+    main_vcf : pysam.VariantFile
+        The primary VCF file whose header will be copied and extended.
+    vcf1 : pysam.VariantFile
+        The first VCF file from which FORMAT fields will be merged if not already present.
+    vcf2 : pysam.VariantFile
+        The second VCF file from which FORMAT fields will be merged if not already present.
+
+    Returns
+    -------
+    pysam.VariantHeader
+        A new VCF header containing all FORMAT fields from the main VCF and any additional ones from vcf1 and vcf2.
+    """
+    header = main_vcf.header.copy()
+    for src in (vcf1, vcf2):
+        for fmt in src.header.formats:
+            if fmt not in header.formats:
+                header.formats.add(
+                    fmt,
+                    src.header.formats[fmt].number,
+                    src.header.formats[fmt].type,
+                    src.header.formats[fmt].description,
+                )
+    return header
+
+
 def _n_genotypes(n_alleles: int, ploidy: int) -> int:
+    """
+    Calculate the number of possible genotypes given the number of alleles and ploidy.
+
+    For diploid organisms (ploidy=2), uses a shortcut formula. For other ploidy levels,
+    computes the number of combinations with repetition (multichoose).
+
+    Parameters
+    ----------
+    n_alleles : int
+        The number of distinct alleles at the locus.
+    ploidy : int
+        The ploidy level (number of sets of chromosomes).
+
+    Returns
+    -------
+    int
+        The number of possible genotypes.
+
+    Examples
+    --------
+    >>> _n_genotypes(2, 2)
+    3
+    >>> _n_genotypes(3, 2)
+    6
+    >>> _n_genotypes(2, 3)
+    4
+    """
     # combinations with repetition: C(n_alleles + ploidy - 1, ploidy)
     # diploid shortcut: n*(n+1)//2
     diploid_ploidy = 2
@@ -135,14 +146,54 @@ def _n_genotypes(n_alleles: int, ploidy: int) -> int:
     return num // den
 
 
-def _as_tuple(x):
+def _as_tuple(x: list | tuple | Any) -> tuple:
+    """
+    Convert input to a tuple.
+
+    Parameters
+    ----------
+    x : list, tuple, or any type
+        The input to be converted to a tuple. If `x` is a list or tuple, it is converted to a tuple.
+        Otherwise, `x` is wrapped in a single-element tuple.
+
+    Returns
+    -------
+    tuple
+        The input as a tuple.
+    """
     return tuple(x) if isinstance(x, list | tuple) else (x,)
 
 
-def copy_format_fields_between_pysam_records(record, new_record, header):  # noqa: C901, PLR0912, PLR0915
+def copy_format_fields_between_pysam_records(  # noqa: C901, PLR0912, PLR0915
+    record: pysam.VariantRecord,
+    new_record: pysam.VariantRecord,
+    header: pysam.VariantHeader,
+):
     """
-    Copy all FORMAT fields for all overlapping samples from `record` to `new_record`.
-    Assumes all needed FORMAT tags are declared in `header` (the header of `new_record`).
+    Copy all FORMAT fields for overlapping samples from a source pysam VariantRecord to a target VariantRecord.
+
+    This function transfers all FORMAT fields (sample-level data) from `record` (source) to `new_record` (target)
+    for samples present in both records. It ensures that the FORMAT fields are compatible with the target record's
+    header and allele structure, handling allele-dependent fields (Number=A/R/G) and ploidy appropriately.
+
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        The source VariantRecord from which to copy FORMAT fields.
+    new_record : pysam.VariantRecord
+        The target VariantRecord to which FORMAT fields will be copied.
+    header : pysam.VariantHeader
+        The header of the target VCF, used to check FORMAT field definitions.
+
+    Notes
+    -----
+    - Only samples present in both `record` and `new_record` are processed.
+    - FORMAT fields not declared in the target header are skipped.
+    - For allele-dependent fields (Number=A/R/G), the function checks that the value lengths
+      match the target record's alleles.
+    - Fields with variable or fixed length >1 are passed as tuples; scalars are wrapped as needed.
+    - If a FORMAT field's value is incompatible with the target record (e.g., wrong length),
+      it is skipped for that sample.
     """
     nalt_tgt = len(new_record.alts or ())
 
@@ -221,20 +272,6 @@ def copy_format_fields_between_pysam_records(record, new_record, header):  # noq
             else:
                 # Fallback: try best-effort without re-shaping
                 new_record.samples[sample][fmt_field] = val
-
-
-def create_new_header(main_vcf, vcf1, vcf2):
-    header = main_vcf.header.copy()
-    for src in (vcf1, vcf2):
-        for fmt in src.header.formats:
-            if fmt not in header.formats:
-                header.formats.add(
-                    fmt,
-                    src.header.formats[fmt].number,
-                    src.header.formats[fmt].type,
-                    src.header.formats[fmt].description,
-                )
-    return header
 
 
 def run(argv):
