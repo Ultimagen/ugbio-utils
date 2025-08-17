@@ -322,8 +322,6 @@ def run(argv):
     # Open output VCF
     with pysam.VariantFile(out_sfmp_vcf, "wz", header=header) as vcf_out:
         for record in main_vcf.fetch():
-            key = (record.chrom, record.pos, record.ref)
-
             # Create a new record using the updated header
             new_record = vcf_out.new_record(
                 contig=record.chrom,
