@@ -361,7 +361,6 @@ def run(argv):
     main_vcf.close()
     vcf1.close()
     vcf2.close()
-    vcf_out.close()
     logger.info(f"Merged VCF file with mpileup info created: {out_sfmp_vcf}")
 
 
