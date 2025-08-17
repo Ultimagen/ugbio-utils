@@ -12,7 +12,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
-FROM python:3.11-slim
+FROM python:3.11-slim-bullseye
 
 RUN apt-get update && apt-get install --no-install-recommends -y \
     openjdk-17-jre-headless `# for gatk` \
