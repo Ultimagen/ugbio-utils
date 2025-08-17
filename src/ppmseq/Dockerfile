@@ -14,7 +14,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
 FROM ${BASE_IMAGE}
-
+USER root
 ARG USER_ID=1000
 ARG GROUP_ID=$USER_ID
 # Create a non-root user and group
