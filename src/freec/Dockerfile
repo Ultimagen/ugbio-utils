@@ -16,9 +16,6 @@ FROM $BASE_IMAGE
 USER root
 RUN apt-get update && apt-get install --no-install-recommends -y \
     openjdk-17-jre-headless `# for gatk` \
-    git \
-    wget \
-    unzip \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
@@ -51,7 +48,7 @@ RUN cp FREEC/src/freec /freec
 RUN ln -s /freec /usr/bin/freec
 
 ARG OUT_DIR=/tmp/ugbio
-ARG USER_ID=2000
+ARG USER_ID=1000
 ARG GROUP_ID=$USER_ID
 # Create a non-root user and group
 RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} ugbio -d /home/ugbio
