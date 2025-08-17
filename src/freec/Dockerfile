@@ -47,7 +47,6 @@ RUN git clone --branch ${FREEC_BRANCH} https://github.com/Ultimagen/FREEC FREEC
 RUN cp FREEC/src/freec /freec
 RUN ln -s /freec /usr/bin/freec
 
-ARG OUT_DIR=/tmp/ugbio
 ARG USER_ID=1000
 ARG GROUP_ID=$USER_ID
 # Create a non-root user and group
