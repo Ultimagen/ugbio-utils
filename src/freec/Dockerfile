@@ -13,7 +13,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
 FROM $BASE_IMAGE
-
+USER root
 RUN apt-get update && apt-get install --no-install-recommends -y \
     openjdk-17-jre-headless `# for gatk` \
     git \
