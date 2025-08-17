@@ -348,7 +348,9 @@ def run(argv):
                 rec1 = lookup1[key]
             # Copy FORMAT values from vcf1 into first sample
             for field in rec1.format.keys():
-                new_record.samples[0][field] = rec1.samples[0].get(field, None)
+                # Copy FORMAT values from vcf1 into first sample
+                for field in rec1.format.keys():
+                    new_record.samples[0][field] = rec1.samples[0].get(field, None)
 
             if key in lookup2:
                 rec2 = lookup2[key]
