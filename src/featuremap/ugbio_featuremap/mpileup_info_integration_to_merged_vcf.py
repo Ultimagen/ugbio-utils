@@ -341,18 +341,17 @@ def run(argv):
             copy_format_fields_between_pysam_records(record, new_record, header)
 
             # Add new format fields
+
+            # Copy FORMAT values from vcf1 into first sample
             key = (record.chrom, record.pos, record.ref)
             if key in lookup1:
                 rec1 = lookup1[key]
-            # Copy FORMAT values from vcf1 into first sample
-            for field in rec1.format.keys():
-                # Copy FORMAT values from vcf1 into first sample
                 for field in rec1.format.keys():
                     new_record.samples[0][field] = rec1.samples[0].get(field, None)
 
+            # Copy FORMAT values from vcf2 into second sample
             if key in lookup2:
                 rec2 = lookup2[key]
-                # Copy FORMAT values from vcf2 into second sample
                 for field in rec2.format.keys():
                     new_record.samples[1][field] = rec2.samples[0].get(field, None)
 
