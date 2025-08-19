@@ -23,7 +23,8 @@ ARG GROUP_ID=$USER_ID
 RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} ugbio -d /home/ugbio
 
 # Set ownership for writable directories
-RUN chown -R ugbio:ugbio /opt /usr/local/bin
+RUN chown -R ugbio:ugbio /opt /usr/local/bin && \
+    [ ! -d /mnt/workflow ] || chown -R ugbio:ugbio /mnt/workflow
 
 USER ugbio
 
