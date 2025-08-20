@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import subprocess
 import sys
 from os.path import join as pjoin
 from typing import Any
@@ -361,6 +362,11 @@ def run(argv):
     vcf1.close()
     vcf2.close()
     logger.info(f"Merged VCF file with mpileup info created: {out_sfmp_vcf}")
+
+    # Index the filtered VCF
+    cmd_index = ["bcftools", "index", "-t", out_sfmp_vcf]
+    logger.debug(" ".join(cmd_index))
+    subprocess.check_call(cmd_index)
 
 
 def main():
