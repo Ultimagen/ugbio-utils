@@ -12,7 +12,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 
 # ##################################################################
 FROM $BASE_IMAGE
-#USER root
+
 # Download Picard
 ARG PICARD_VERSION=3.3.0
 RUN apt-get update && apt-get install -y --no-install-recommends --reinstall ca-certificates openjdk-17-jre-headless \

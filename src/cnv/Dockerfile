@@ -17,7 +17,7 @@ FROM $BASE_IMAGE
 
 ARG DEBIAN_FRONTEND=noninteractive
 ENV TZ=Etc/UTC
-USER root
+
 # Install basic dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
