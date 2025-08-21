@@ -27,15 +27,13 @@ RUN echo '#!/bin/sh\njava -jar /opt/picard/picard.jar "$@"' > /usr/local/bin/pic
 ARG USER_ID=1000
 ARG GROUP_ID=$USER_ID
 # Create a non-root user and group
-RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ugbio
+RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ugbio -d /home/ugbio
 
-RUN mkdir -p /app && \
-    chown -R ugbio:ugbio /app /opt /usr/local/bin  && \
-    chmod 755 /app
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
 
 USER ugbio
 
-WORKDIR /app
+WORKDIR /home/ugbio
 
 ARG OUT_DIR=/tmp/ugbio
 
@@ -47,4 +45,4 @@ ENV PATH="/home/ugbio/.local/bin:${PATH}"
 RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
     pip install --user "${WHEEL_FILE}[vcfbed,reports,concordance]"
 
-COPY --from=build ./src/core/ugbio_core/reports ./src/core/ugbio_core/reports
+COPY --from=build ./src/core/ugbio_core/reports home/ugbio/src/core/ugbio_core/reports
