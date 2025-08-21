@@ -12,7 +12,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 
 # ##################################################################
 FROM $BASE_IMAGE
-USER root
+#USER root
 # Download Picard
 ARG PICARD_VERSION=3.3.0
 RUN apt-get update && apt-get install -y --no-install-recommends --reinstall ca-certificates openjdk-17-jre-headless \
@@ -24,10 +24,11 @@ RUN mkdir -p /opt/picard && \
 RUN echo '#!/bin/sh\njava -jar /opt/picard/picard.jar "$@"' > /usr/local/bin/picard && \
     chmod +x /usr/local/bin/picard
 
-ARG USER_ID=1000
-ARG GROUP_ID=$USER_ID
+#ARG USER_ID=1000
+#ARG GROUP_ID=$USER_ID
 # Create a non-root user and group
 #RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ugbio -d /home/ugbio
+# Create a non-root user and group
 # Create a non-root user and group
 RUN groupadd ugbio && useradd -m ugbio -d /home/ugbio -g ugbio
 
