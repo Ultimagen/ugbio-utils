@@ -109,7 +109,7 @@ ENV PATH="/home/ugbio/.local/bin:${PATH}"
 
 RUN pip install --user ${OUT_DIR}/*.whl
 
-COPY --from=build ./src/cnv/cnmops /app/src/cnv/cnmops
+COPY --from=build ./src/cnv/cnmops /home/ugnio/src/cnv/cnmops
 
 #download cnvpytor additional necessary files (described here: https://github.com/abyzovlab/CNVpytor?tab=readme-ov-file#install-using-pip)
 RUN cnvpytor -download
