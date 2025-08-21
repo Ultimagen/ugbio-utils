@@ -25,18 +25,16 @@ chmod +x /usr/local/bin/run_tests
 
 COPY --from=builder /usr/local/cargo/bin/vcflite /usr/local/bin/vcflite
 
-ARG USER_ID=1000
-ARG GROUP_ID=$USER_ID
+#ARG USER_ID=2000
+#ARG GROUP_ID=$USER_ID
 # Create a non-root user and group
-RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ugbio
-
-RUN mkdir -p /app && \
-    chown -R ugbio:ugbio /app /opt /usr/local/bin  && \
-    chmod 755 /app
+#RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ugbio
+RUN groupadd ugbio && useradd -m ugbio -g ugbio
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
 
 USER ugbio
 
-WORKDIR /app
+WORKDIR /home/ugbio
 
 COPY ./src/vcflite/LICENSE.txt .
 

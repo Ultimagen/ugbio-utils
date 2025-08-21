@@ -13,7 +13,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
 FROM $BASE_IMAGE
-USER root
+
 RUN apt-get update && apt-get install --no-install-recommends -y \
     openjdk-17-jre-headless `# for gatk` \
     && apt-get clean && \
@@ -47,18 +47,16 @@ RUN git clone --branch ${FREEC_BRANCH} https://github.com/Ultimagen/FREEC FREEC
 RUN cp FREEC/src/freec /freec
 RUN ln -s /freec /usr/bin/freec
 
-ARG USER_ID=1000
-ARG GROUP_ID=$USER_ID
+#ARG USER_ID=2000
+#ARG GROUP_ID=$USER_ID
 # Create a non-root user and group
-RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ugbio
-
-RUN mkdir -p /app && \
-    chown -R ugbio:ugbio /app /opt /usr/local/bin  && \
-    chmod 755 /app
+#RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ugbio
+RUN groupadd ugbio && useradd -m ugbio -g ugbio
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
 
 USER ugbio
 
-WORKDIR /app
+WORKDIR /home/ugbio
 
 ARG OUT_DIR=/tmp/ugbio
 

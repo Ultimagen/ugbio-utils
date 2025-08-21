@@ -1,7 +1,7 @@
 FROM python:3.11-bullseye AS ugbio-base
 
 ARG USERNAME=app
-ARG USER_UID=2000
+ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 
 ARG DEBIAN_FRONTEND=noninteractive

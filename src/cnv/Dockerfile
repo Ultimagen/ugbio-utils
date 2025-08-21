@@ -89,29 +89,25 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
-#ARG USER_ID=1000
+#ARG USER_ID=2000
 #ARG GROUP_ID=$USER_ID
 # Create a non-root user and group
-# RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ugbio
+#RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ugbio
+RUN groupadd ugbio && useradd -m ugbio -g ugbio
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
 
-#RUN mkdir -p /app && \
-#    chown -R ugbio:ugbio /app /opt /usr/local/bin  && \
-#    chmod 755 /app
-#
-#USER ugbio
+USER ugbio
 
-WORKDIR /app
+WORKDIR /home/ugbio
 
 ARG OUT_DIR=/tmp/ugbio
-
-#ENV PATH="/home/ugbio/.local/bin:${PATH}"
 
 # Copy whl and install module
 COPY --from=build $OUT_DIR $OUT_DIR
 
-RUN pip install ${OUT_DIR}/*.whl
+ENV PATH="/home/ugbio/.local/bin:${PATH}"
 
-RUN #pip install --user ${OUT_DIR}/*.whl
+RUN pip install --user ${OUT_DIR}/*.whl
 
 COPY --from=build ./src/cnv/cnmops /app/src/cnv/cnmops
 
