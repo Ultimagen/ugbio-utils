@@ -22,14 +22,13 @@ ARG GROUP_ID=$USER_ID
 # Create a non-root user and group
 RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ugbio
 
-# Create shared working directory accessible by ugbio
-RUN mkdir -p /shared && \
-    chown -R ugbio:ugbio /shared /opt /usr/local/bin  && \
-    chmod 755 /shared
+RUN mkdir -p /app && \
+    chown -R ugbio:ugbio /app /opt /usr/local/bin  && \
+    chmod 755 /app
 
 USER ugbio
 
-WORKDIR /shared
+WORKDIR /app
 
 ARG OUT_DIR=/tmp/ugbio
 

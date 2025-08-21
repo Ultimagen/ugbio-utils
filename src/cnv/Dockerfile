@@ -89,27 +89,31 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
-ARG USER_ID=1000
-ARG GROUP_ID=$USER_ID
+#ARG USER_ID=1000
+#ARG GROUP_ID=$USER_ID
 # Create a non-root user and group
-RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} ugbio -d /home/ugbio
+# RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ugbio
 
-# Set ownership for writable directories
-RUN chown -R ugbio:ugbio /opt /usr/local/bin
+#RUN mkdir -p /app && \
+#    chown -R ugbio:ugbio /app /opt /usr/local/bin  && \
+#    chmod 755 /app
+#
+#USER ugbio
 
-USER ugbio
-
-WORKDIR /home/ugbio
+WORKDIR /app
 
 ARG OUT_DIR=/tmp/ugbio
 
+#ENV PATH="/home/ugbio/.local/bin:${PATH}"
+
+# Copy whl and install module
 COPY --from=build $OUT_DIR $OUT_DIR
 
-ENV PATH="/home/ugbio/.local/bin:${PATH}"
+RUN pip install ${OUT_DIR}/*.whl
 
-RUN pip install --user ${OUT_DIR}/*.whl
+RUN #pip install --user ${OUT_DIR}/*.whl
 
-COPY --from=build ./src/cnv/cnmops /home/ugbio/src/cnv/cnmops
+COPY --from=build ./src/cnv/cnmops /app/src/cnv/cnmops
 
 #download cnvpytor additional necessary files (described here: https://github.com/abyzovlab/CNVpytor?tab=readme-ov-file#install-using-pip)
 RUN cnvpytor -download
