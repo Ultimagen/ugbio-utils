@@ -30,7 +30,7 @@ RUN echo '#!/bin/sh\njava -jar /opt/picard/picard.jar "$@"' > /usr/local/bin/pic
 #RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ugbio -d /home/ugbio
 # Create a non-root user and group
 # Create a non-root user and group
-RUN groupadd ugbio && useradd -m ugbio -d /home/ugbio -g ugbio
+RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
 # Set ownership for writable directories
 RUN chown -R ugbio:ugbio /opt /usr/local/bin

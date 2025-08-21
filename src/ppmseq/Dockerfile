@@ -14,19 +14,17 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
 FROM ${BASE_IMAGE}
-USER root
+
 ARG USER_ID=1000
 ARG GROUP_ID=$USER_ID
 # Create a non-root user and group
 RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ugbio
 
-RUN mkdir -p /app && \
-    chown -R ugbio:ugbio /app /opt /usr/local/bin  && \
-    chmod 755 /app
+RUN chown -R ugbio:ugbio /app /opt /usr/local/bin
 
 USER ugbio
 
-WORKDIR /app
+WORKDIR /home/ugbio
 
 ARG OUT_DIR=/tmp/ugbio
 
