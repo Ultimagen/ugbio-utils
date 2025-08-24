@@ -911,7 +911,7 @@ def get_trinuc_substitution_dist(vcf_file, ref_fasta: str = None):
             # check if rec is a biallelic SNV
             if len(rec.ref) == 1 and len(rec.alts) == 1 and len(rec.alts[0]) == 1:
                 trinuc_sub = parse_trinuc_sub(rec, faidx)
-                if trinuc_sub is not None:
+                if trinuc_sub is not None and trinuc_sub in trinuc_dict.keys():
                     trinuc_dict[trinuc_sub] += 1
     return trinuc_dict
 
