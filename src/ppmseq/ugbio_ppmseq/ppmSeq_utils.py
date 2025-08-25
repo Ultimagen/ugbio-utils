@@ -183,7 +183,9 @@ class PpmseqStrandVcfAnnotator(VcfAnnotator):
         return header
 
     # TODO: refactor
-    def process_records(self, records: list[pysam.VariantRecord]) -> list[pysam.VariantRecord]:  # noqa: C901
+    def process_records(  # noqa: C901
+        self, records: list[pysam.VariantRecord], info: pysam.VariantHeaderMetadata | None = None
+    ) -> list[pysam.VariantRecord]:
         """
         Add strand ratio and strand ratio category INFO fields to the VCF records
 
@@ -191,6 +193,10 @@ class PpmseqStrandVcfAnnotator(VcfAnnotator):
         ----------
         records : list[pysam.VariantRecord]
             list of VCF records
+        info: pysam.VariantHeaderMetadata
+            header records of info fields, useful for checking types of INFO fields.
+            Not used currently, but may be useful in the future if we want to validate
+            that the tags exist and are of the correct type before processing
 
         Returns
         -------
