@@ -199,8 +199,8 @@ def load_bed_regions(
     expanded_data["position"] = expanded_data["center"] + rel_pos_array
 
     # Initialize count and status columns with appropriate dtypes
-    expanded_data["ref_count"] = np.full(total_rows, pd.NA, dtype=int)
-    expanded_data["nonref_count"] = np.full(total_rows, pd.NA, dtype=int)
+    expanded_data["ref_count"] = np.full(total_rows, np.nan, dtype=float)
+    expanded_data["nonref_count"] = np.full(total_rows, np.nan, dtype=float)
     expanded_data["seen"] = np.full(total_rows, fill_value=False, dtype=bool)
 
     # Initialize ref_base with categorical type for memory efficiency
