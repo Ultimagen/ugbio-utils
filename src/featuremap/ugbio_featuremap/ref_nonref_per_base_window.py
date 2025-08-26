@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import tqdm.auto as tqdm
 from ugbio_core.logger import logger
 
 VERY_WIDE_PADDING = 10
@@ -225,6 +226,22 @@ def load_bed_regions(
     return regions_df, set(contigs), distance_start_to_center
 
 
+def _parse_mpileup_lines(file_handle, region_df_index):
+    """Generator that yields parsed mpileup data for valid positions."""
+    n_fields_mpileup = 5
+    for line in file_handle:
+        fields = line.strip().split("\t")
+        if len(fields) < n_fields_mpileup:
+            continue
+        chrom, pos, ref, _, bases = fields[:n_fields_mpileup]
+        pos = int(pos) - 1  # mpileup is 1-based
+        key = (chrom, pos)
+        if key not in region_df_index:
+            continue
+        ref_ct, nonref_ct = parse_bases(bases)
+        yield key, ref, ref_ct, nonref_ct
+
+
 def process_mpileup(mpileup_file, region_df):
     """Processes a samtools mpileup file and updates the region DataFrame with reference and non-reference counts.
     Parameters
@@ -237,25 +254,32 @@ def process_mpileup(mpileup_file, region_df):
 
     Returns
     -------
-    None
+    None, updates region_df in place.
     """
-    n_fields_mpileup = 5
+    logger.info(f"Processing mpileup file: {mpileup_file}")
+
     with open(mpileup_file) as f:
-        for line in f:
-            fields = line.strip().split("\t")
-            if len(fields) < n_fields_mpileup:
-                continue
-            chrom, pos, ref, _, bases = fields[:n_fields_mpileup]
-            pos = int(pos) - 1  # mpileup is 1-based
-            key = (chrom, pos)
-            if key not in region_df.index:
-                continue
-            ref_ct, nonref_ct = parse_bases(bases)
-            region_df.loc[key, "ref_count"] = ref_ct
-            region_df.loc[key, "nonref_count"] = nonref_ct
-            region_df.loc[key, "seen"] = True
-            mask = region_df.loc[key, "relative_position"] == 0
-            region_df.loc[key, "ref_base"] = region_df.loc[key, "ref_base"].where(~mask, ref.upper())
+        # Use generator to parse lines and avoid append operations
+        parsed_data = _parse_mpileup_lines(tqdm.tqdm(f), region_df.index)
+
+        # Convert to lists only when needed for pandas indexing
+        list_krc = list(parsed_data)
+        key_list = [x[0] for x in list_krc]
+        refs = [x[1] for x in list_krc]
+        ref_count_list = [x[2] for x in list_krc]
+        nonref_count_list = [x[3] for x in list_krc]
+        # Update DataFrame efficiently
+        if key_list:  # Only update if we have data
+            update_df = pd.DataFrame(
+                {
+                    "ref_count": pd.Series(ref_count_list, index=key_list),
+                    "nonref_count": pd.Series(nonref_count_list, index=key_list),
+                    "seen": pd.Series(data=True, index=key_list, dtype="boolean"),
+                    "ref_base": pd.Series(refs, index=key_list),
+                }
+            )
+
+            region_df.update(update_df)
 
 
 def rearrange_pileup_df(region_df) -> pd.DataFrame:
@@ -271,6 +295,7 @@ def rearrange_pileup_df(region_df) -> pd.DataFrame:
     pd.DataFrame
         Rearranged DataFrame with one row per region and counts in columns.
     """
+    logger.info("Rearranging pileup DataFrame")
     # Reset index to work with regular columns
     df_reset = region_df.reset_index(drop=True)
 
@@ -301,7 +326,7 @@ def rearrange_pileup_df(region_df) -> pd.DataFrame:
 
 def write_vcf(
     output_dir: str, base_file_name: str, regions: pd.DataFrame, contigs: set[str], distance_start_to_center: int
-) -> None:
+) -> str:
     """Writes the processed regions to a VCF file.
     Parameters
     ----------
@@ -318,8 +343,9 @@ def write_vcf(
 
     Returns
     -------
-        None, outputs an indexed VCF file under {output_dir}/{base_file_name}.vcf.gz
+        str, indexed VCF file under {output_dir}/{base_file_name}.vcf.gz
     """
+    logger.info(f"Writing VCF to directory: {output_dir}")
     format_range = range(-distance_start_to_center, distance_start_to_center + 1)
     format_range_str = [str(i) for i in format_range]
     format_range_str = [n.replace("-", "M") for n in format_range_str]  # replace negative with M for VCF format
@@ -342,7 +368,7 @@ def write_vcf(
         ref_count_columns = [f"ref_count_{'m' + str(abs(i)) if i < 0 else str(i)}" for i in format_range]
         nonref_count_columns = [f"nonref_count_{'m' + str(abs(i)) if i < 0 else str(i)}" for i in format_range]
         seen_columns = [f"seen_{'m' + str(abs(i)) if i < 0 else str(i)}" for i in format_range]
-        for _, r in regions.iterrows():
+        for _, r in tqdm.tqdm(regions.iterrows()):
             chrom = r["chrom"]
             pos = r["center"] + 1  # VCF is 1-based
             ref = r["ref_base"]
@@ -472,9 +498,9 @@ def run(argv: list[str]) -> str:
         Command line arguments.
     """
     args = __parse_args(argv)
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(logging.INFO)
     for handler in logger.handlers:
-        handler.setLevel(logging.DEBUG)
+        handler.setLevel(logging.INFO)
 
     output_vcf_path = process_mpileup_to_vcf(
         mpileup_file=args.input,
