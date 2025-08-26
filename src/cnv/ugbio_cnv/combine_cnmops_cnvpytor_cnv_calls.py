@@ -84,7 +84,7 @@ def calculate_gaps_count_per_cnv(df_cnmops_calls: pd.DataFrame, ref_fasta: str) 
     if not os.path.exists(ref_fasta):
         raise FileNotFoundError(f"Fasta file {ref_fasta} does not exist.")
 
-    genome = Fasta(ref_fasta)
+    genome = Fasta(ref_fasta, rebuild=False)
 
     n_count = []
     for index, row in df_cnmops_calls.iterrows():  # noqa: B007
