@@ -1,7 +1,10 @@
 import argparse
 import logging
+import multiprocessing as mp
 import os
+import subprocess
 import sys
+import tempfile
 import time
 import warnings
 from os.path import join as pjoin
@@ -227,56 +230,85 @@ def load_bed_regions(
     return regions_df, set(contigs), distance_start_to_center
 
 
-def _parse_mpileup_lines(file_handle, region_df_index):
-    """Generator that yields parsed mpileup data for valid positions."""
-    n_fields_mpileup = 5
-    for line in file_handle:
-        fields = line.strip().split("\t")
-        if len(fields) < n_fields_mpileup:
-            continue
-        chrom, pos, ref, _, bases = fields[:n_fields_mpileup]
-        pos = int(pos) - 1  # mpileup is 1-based
-        key = (chrom, pos)
-        if key not in region_df_index:
-            continue
-        ref_ct, nonref_ct = parse_bases(bases)
-        yield key, ref, ref_ct, nonref_ct
+def split_mpileup_file(mpileup_file: str, num_chunks: int, output_dir: str) -> list[str]:
+    """Split mpileup file into chunks using system split command."""
+    output_dir_p = Path(output_dir)
+    output_dir_p.mkdir(exist_ok=True)
+
+    # Count total lines
+    result = subprocess.run(["/usr/bin/wc", "-l", mpileup_file], capture_output=True, text=True, check=False)
+    total_lines = int(result.stdout.split()[0])
+    lines_per_chunk = total_lines // num_chunks + 1
+
+    # Split file
+    chunk_prefix = output_dir_p / "chunk_"
+    subprocess.run(["/usr/bin/split", "-l", str(lines_per_chunk), "-d", mpileup_file, str(chunk_prefix)], check=False)
+
+    # Return list of chunk files
+    chunk_files = sorted(output_dir_p.glob("chunk_*"))
+    logger.info(f"Split {mpileup_file} into {len(chunk_files)} chunks")
+    return [str(f) for f in chunk_files]
 
 
-def process_mpileup(mpileup_file, region_df):
-    """Processes a samtools mpileup file and updates the region DataFrame with reference and non-reference counts.
-    Parameters
-    ----------
-    mpileup_file : str
-        Path to the input samtools mpileup output file.
-    region_df : pd.DataFrame
-        DataFrame with MultiIndex (chrom, position) containing regions to be updated.
-        Must include columns: ref_counts, nonref_counts, seen, ref_base.
+def process_chunk(args):
+    """Process a single chunk of mpileup data."""
+    chunk_file, region_df_index = args
+    chunk_data = []
+    n_required_fields = 5  # chrom, pos, ref, depth, bases
+    with open(chunk_file) as f:
+        for line in f:
+            fields = line.strip().split("\t")
+            if len(fields) < n_required_fields:
+                continue
+            chrom, pos, ref, _, bases = fields[:n_required_fields]
+            pos = int(pos) - 1
+            key = (chrom, pos)
+            if key not in region_df_index:
+                continue
+            ref_ct, nonref_ct = parse_bases(bases)
+            chunk_data.append((key, ref, ref_ct, nonref_ct))
 
-    Returns
-    -------
-    None, updates region_df in place.
-    """
-    logger.info(f"Processing mpileup file: {mpileup_file}")
+    return chunk_data
 
-    with open(mpileup_file) as f:
-        # Use generator to parse lines and avoid append operations
-        parsed_data = _parse_mpileup_lines(tqdm.tqdm(f), region_df.index)
 
-        # Convert to lists only when needed for pandas indexing
-        list_krc = list(parsed_data)
-        key_list = [x[0] for x in list_krc]
-        refs = [x[1] for x in list_krc]
-        ref_count_list = [x[2] for x in list_krc]
-        nonref_count_list = [x[3] for x in list_krc]
-        # Update DataFrame efficiently
-        if key_list:
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=FutureWarning)
-                region_df["ref_count"].update(pd.Series(ref_count_list, index=key_list))
-                region_df["nonref_count"].update(pd.Series(nonref_count_list, index=key_list))
-                region_df["seen"].update(pd.Series(data=True, index=key_list, dtype="boolean"))
-                region_df["ref_base"].update(pd.Series(refs, index=key_list))
+def process_mpileup(
+    mpileup_file: str, region_df: pd.DataFrame, num_processes: int = 4, tmpdir_loc: str | None = None
+) -> None:
+    """Process mpileup file using pre-splitting and multiprocessing."""
+
+    with tempfile.TemporaryDirectory(dir=tmpdir_loc) as temp_dir:
+        # Split file into chunks
+        chunk_files = split_mpileup_file(mpileup_file, num_processes, temp_dir)
+
+        # Prepare arguments for each process
+        process_args = [(chunk_file, region_df.index) for chunk_file in chunk_files]
+
+        # Process chunks in parallel
+        with mp.Pool(num_processes) as pool:
+            chunk_results = list(
+                tqdm.tqdm(pool.imap(process_chunk, process_args), total=len(chunk_files), desc="Processing chunks")
+            )
+
+        # Combine results
+        all_parsed_data = []
+        for chunk_data in chunk_results:
+            all_parsed_data.extend(chunk_data)
+
+    # Update DataFrame
+    if all_parsed_data:
+        key_list = [x[0] for x in all_parsed_data]
+        refs = [x[1] for x in all_parsed_data]
+        ref_count_list = [x[2] for x in all_parsed_data]
+        nonref_count_list = [x[3] for x in all_parsed_data]
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=FutureWarning)
+            region_df["ref_count"].update(pd.Series(ref_count_list, index=key_list))
+            region_df["nonref_count"].update(pd.Series(nonref_count_list, index=key_list))
+            region_df["seen"].update(pd.Series(data=True, index=key_list, dtype="boolean"))
+            region_df["ref_base"].update(pd.Series(refs, index=key_list))
+
+    logger.info(f"Processed {len(all_parsed_data)} valid positions")
 
 
 def rearrange_pileup_df(region_df) -> pd.DataFrame:
@@ -417,11 +449,19 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--output_dir", required=True, help="Output directory")
     parser.add_argument("--base_file_name", required=True, help="Base file name for output files")
+    parser.add_argument("--temp_dir", required=False, help="Directory for temporary files")
+    parser.add_argument("--num_processes", type=int, default=4, help="Number of processes to use", required=False)
     return parser.parse_args(argv[1:])
 
 
 def process_mpileup_to_vcf(
-    mpileup_file: str, bed_file: str, output_dir: str, base_file_name: str, distance_start_to_center: int = 1
+    mpileup_file: str,
+    bed_file: str,
+    output_dir: str,
+    base_file_name: str,
+    distance_start_to_center: int = 1,
+    temp_dir: str | None = None,
+    num_processes: int = 2,
 ) -> str:
     """
     Python interface to process mpileup file and generate VCF output.
@@ -441,6 +481,10 @@ def process_mpileup_to_vcf(
         Base file name for output files (without extension).
     distance_start_to_center : int, optional
         Distance from start to center position for window analysis, by default 1.
+    temp_dir : str or None, optional
+        Directory for temporary files, by default None (system temp directory).
+    num_processes : int, optional
+        Number of processes to use for parallel processing, by default 2.
 
     Returns
     -------
@@ -472,7 +516,7 @@ def process_mpileup_to_vcf(
     logger.info(f"Loaded {len(regions)} regions from BED file")
 
     # Process mpileup file
-    process_mpileup(mpileup_file, regions)
+    process_mpileup(mpileup_file, regions, num_processes=num_processes, tmpdir_loc=temp_dir)
     logger.info("Processed mpileup file")
 
     regions = rearrange_pileup_df(regions)
@@ -505,6 +549,8 @@ def run(argv: list[str]) -> str:
         output_dir=args.output_dir,
         base_file_name=args.base_file_name,
         distance_start_to_center=args.distance_start_to_center,
+        temp_dir=args.temp_dir,
+        num_processes=args.num_processes,
     )
 
     logger.info(f"Processing complete. Output VCF: {output_vcf_path}")

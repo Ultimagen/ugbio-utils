@@ -86,6 +86,10 @@ def test_parse_samtools_mpileup(tmp_path, resources_dir):
             str(out_dir),
             "--base_file_name",
             base_file_name,
+            "--num_processes",
+            "4",
+            "--temp_dir",
+            str(out_dir),
         ]
     )
     # output_vcf = pjoin(out_dir, f"{base_file_name}.vcf.gz")
