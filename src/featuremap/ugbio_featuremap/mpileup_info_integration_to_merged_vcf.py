@@ -316,13 +316,9 @@ def run(argv):
     # Copy header and extend with missing FORMAT definitions from vcf1/vcf2
     header = create_new_header(main_vcf, vcf1, vcf2)
 
-    # Create lookup dicts for vcf1/vcf2 records
-    lookup1 = build_lookup(vcf1)
-    lookup2 = build_lookup(vcf2)
-
     # Open output VCF
     with pysam.VariantFile(out_sfmp_vcf, "wz", header=header) as vcf_out:
-        for record in main_vcf.fetch():
+        for record, rec1, rec2 in zip(main_vcf.fetch(), vcf1.fetch(), vcf2.fetch(), strict=True):
             # Create a new record using the updated header
             new_record = vcf_out.new_record(
                 contig=record.chrom,
@@ -344,17 +340,14 @@ def run(argv):
             # Add new format fields
 
             # Copy FORMAT values from vcf1 into first sample
-            key = (record.chrom, record.pos, record.ref)
-            if key in lookup1:
-                rec1 = lookup1[key]
-                for field in rec1.format.keys():
-                    new_record.samples[0][field] = rec1.samples[0].get(field, None)
-
-            # Copy FORMAT values from vcf2 into second sample
-            if key in lookup2:
-                rec2 = lookup2[key]
-                for field in rec2.format.keys():
-                    new_record.samples[1][field] = rec2.samples[0].get(field, None)
+            for fmt_field in rec1.format.keys():
+                for sample in rec1.samples.keys():
+                    value = rec1.samples[sample].get(fmt_field)
+                new_record.samples[0][fmt_field] = value
+            for fmt_field in rec2.format.keys():
+                for sample in rec2.samples.keys():
+                    value = rec2.samples[sample].get(fmt_field)
+                    new_record.samples[1][fmt_field] = value
 
             vcf_out.write(new_record)
 
