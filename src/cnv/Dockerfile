@@ -89,10 +89,6 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
-#ARG USER_ID=2000
-#ARG GROUP_ID=$USER_ID
-# Create a non-root user and group
-#RUN groupadd -g ${GROUP_ID} ugbio && useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ugbio
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 RUN chown -R ugbio:ugbio /opt /usr/local/bin
 
