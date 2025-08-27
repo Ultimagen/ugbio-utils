@@ -275,7 +275,7 @@ def copy_format_fields_between_pysam_records(  # noqa: C901, PLR0912, PLR0915
                 new_record.samples[sample][fmt_field] = val
 
 
-def run(argv):
+def run(argv):  # noqa: C901, PLR0912
     """
     Merge mpileup information (for tumor and normal samples) into somatic featuremap pileup vcf.
 
@@ -312,13 +312,16 @@ def run(argv):
     main_vcf = pysam.VariantFile(sfmp_vcf)
     vcf1 = pysam.VariantFile(tumor_mpileup_vcf)
     vcf2 = pysam.VariantFile(normal_mpileup_vcf)
-
+    records1 = vcf1.fetch()
+    records2 = vcf2.fetch()
+    rec1 = next(records1)
+    rec2 = next(records2)
     # Copy header and extend with missing FORMAT definitions from vcf1/vcf2
     header = create_new_header(main_vcf, vcf1, vcf2)
 
     # Open output VCF
     with pysam.VariantFile(out_sfmp_vcf, "wz", header=header) as vcf_out:
-        for record, rec1, rec2 in zip(main_vcf.fetch(), vcf1.fetch(), vcf2.fetch(), strict=True):
+        for record in main_vcf.fetch():
             # Create a new record using the updated header
             new_record = vcf_out.new_record(
                 contig=record.chrom,
@@ -340,14 +343,24 @@ def run(argv):
             # Add new format fields
 
             # Copy FORMAT values from vcf1 into first sample
-            for fmt_field in rec1.format.keys():
-                for sample in rec1.samples.keys():
-                    value = rec1.samples[sample].get(fmt_field)
-                new_record.samples[0][fmt_field] = value
-            for fmt_field in rec2.format.keys():
-                for sample in rec2.samples.keys():
-                    value = rec2.samples[sample].get(fmt_field)
-                    new_record.samples[1][fmt_field] = value
+            if rec1.chrom == record.chrom and rec1.pos == record.pos and rec1.ref == record.ref:
+                for fmt_field in rec1.format.keys():
+                    for sample in rec1.samples.keys():
+                        value = rec1.samples[sample].get(fmt_field)
+                    new_record.samples[0][fmt_field] = value
+                try:
+                    rec1 = next(records1)
+                except StopIteration:
+                    pass
+            if rec2.chrom == record.chrom and rec2.pos == record.pos and rec2.ref == record.ref:
+                for fmt_field in rec2.format.keys():
+                    for sample in rec2.samples.keys():
+                        value = rec2.samples[sample].get(fmt_field)
+                        new_record.samples[1][fmt_field] = value
+                try:
+                    rec2 = next(records2)
+                except StopIteration:
+                    pass
 
             vcf_out.write(new_record)
 
