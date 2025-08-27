@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import time
+import warnings
 from os.path import join as pjoin
 from pathlib import Path
 
@@ -269,17 +270,13 @@ def process_mpileup(mpileup_file, region_df):
         ref_count_list = [x[2] for x in list_krc]
         nonref_count_list = [x[3] for x in list_krc]
         # Update DataFrame efficiently
-        if key_list:  # Only update if we have data
-            update_df = pd.DataFrame(
-                {
-                    "ref_count": pd.Series(ref_count_list, index=key_list),
-                    "nonref_count": pd.Series(nonref_count_list, index=key_list),
-                    "seen": pd.Series(data=True, index=key_list, dtype="boolean"),
-                    "ref_base": pd.Series(refs, index=key_list),
-                }
-            )
-
-            region_df.update(update_df)
+        if key_list:
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=FutureWarning)
+                region_df["ref_count"].update(pd.Series(ref_count_list, index=key_list))
+                region_df["nonref_count"].update(pd.Series(nonref_count_list, index=key_list))
+                region_df["seen"].update(pd.Series(data=True, index=key_list, dtype="boolean"))
+                region_df["ref_base"].update(pd.Series(refs, index=key_list))
 
 
 def rearrange_pileup_df(region_df) -> pd.DataFrame:
