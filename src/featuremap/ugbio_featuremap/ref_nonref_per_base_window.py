@@ -16,6 +16,7 @@ import tqdm.auto as tqdm
 from ugbio_core.logger import logger
 
 VERY_WIDE_PADDING = 10
+NUC_BASES = ["A", "C", "G", "T", "N"]
 
 
 def parse_bases(bases):
@@ -209,7 +210,10 @@ def load_bed_regions(
     expanded_data["seen"] = np.full(total_rows, fill_value=False, dtype=bool)
 
     # Initialize ref_base with categorical type for memory efficiency
-    expanded_data["ref_base"] = np.full(total_rows, "N", dtype=str)
+    ref_base_categories = NUC_BASES  # Define possible base categories
+    expanded_data["ref_base"] = pd.Categorical(
+        np.full(total_rows, "N", dtype=str), categories=ref_base_categories, ordered=False
+    )
 
     # Create MultiIndex DataFrame
     multi_index = pd.MultiIndex.from_arrays(
@@ -250,9 +254,8 @@ def split_mpileup_file(mpileup_file: str, num_chunks: int, output_dir: str) -> l
     return [str(f) for f in chunk_files]
 
 
-def process_chunk(args):
+def process_chunk(chunk_file):
     """Process a single chunk of mpileup data."""
-    chunk_file, region_df_index = args
     chunk_data = []
     n_required_fields = 5  # chrom, pos, ref, depth, bases
     with open(chunk_file) as f:
@@ -263,8 +266,6 @@ def process_chunk(args):
             chrom, pos, ref, _, bases = fields[:n_required_fields]
             pos = int(pos) - 1
             key = (chrom, pos)
-            if key not in region_df_index:
-                continue
             ref_ct, nonref_ct = parse_bases(bases)
             chunk_data.append((key, ref, ref_ct, nonref_ct))
 
@@ -280,33 +281,49 @@ def process_mpileup(
         # Split file into chunks
         chunk_files = split_mpileup_file(mpileup_file, num_processes, temp_dir)
 
-        # Prepare arguments for each process
-        process_args = [(chunk_file, region_df.index) for chunk_file in chunk_files]
-
         # Process chunks in parallel
-        with mp.Pool(num_processes) as pool:
+        ctx = mp.get_context("spawn")  # use ChatGPT suggestion to make this more stable in Jupyter
+        with ctx.Pool(num_processes) as pool:
             chunk_results = list(
-                tqdm.tqdm(pool.imap(process_chunk, process_args), total=len(chunk_files), desc="Processing chunks")
+                tqdm.tqdm(pool.imap(process_chunk, chunk_files), total=len(chunk_files), desc="Processing chunks")
             )
 
         # Combine results
+        logger.info("Combining mpileup processing results")
         all_parsed_data = []
         for chunk_data in chunk_results:
             all_parsed_data.extend(chunk_data)
+        logger.info("Selecting useful results")
+        ri = set(region_df.index)
+        all_parsed_data = [x for x in all_parsed_data if x[0] in ri]
+        del ri
 
     # Update DataFrame
     if all_parsed_data:
+        logger.info("Split the mpileup data into keys, refs, counts")
         key_list = [x[0] for x in all_parsed_data]
         refs = [x[1] for x in all_parsed_data]
         ref_count_list = [x[2] for x in all_parsed_data]
         nonref_count_list = [x[3] for x in all_parsed_data]
 
         with warnings.catch_warnings():
+            chunk_size = 10_000_000
             warnings.filterwarnings("ignore", category=FutureWarning)
-            region_df["ref_count"].update(pd.Series(ref_count_list, index=key_list))
-            region_df["nonref_count"].update(pd.Series(nonref_count_list, index=key_list))
-            region_df["seen"].update(pd.Series(data=True, index=key_list, dtype="boolean"))
-            region_df["ref_base"].update(pd.Series(refs, index=key_list))
+            # adding counts in chunks to avoid memory spike
+            for i in tqdm.tqdm(range(0, len(key_list), chunk_size)):
+                logger.info("Add ref_count to bed")
+                region_df["ref_count"].update(
+                    pd.Series(ref_count_list[i : i + chunk_size], index=key_list[i : i + chunk_size])
+                )
+                logger.info("Add non_ref_count to bed")
+                region_df["nonref_count"].update(
+                    pd.Series(nonref_count_list[i : i + chunk_size], index=key_list[i : i + chunk_size])
+                )
+                logger.info("Add seen indicator to bed")
+                region_df["seen"].update(pd.Series(data=True, index=key_list[i : i + chunk_size], dtype="boolean"))
+                logger.info("Add ref bases to bed")
+                refs_categorical = pd.Categorical(refs[i : i + chunk_size], categories=NUC_BASES)
+                region_df["ref_base"].update(pd.Series(refs_categorical, index=key_list[i : i + chunk_size]))
 
     logger.info(f"Processed {len(all_parsed_data)} valid positions")
 
