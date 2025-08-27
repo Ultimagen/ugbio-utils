@@ -27,15 +27,6 @@ RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION
     ln -s /opt/gatk/gatk /usr/local/bin/gatk && \
     rm gatk-${GATK_VERSION}.zip
 
-# install samtools
-#ARG SAMTOOLS_VERSION=1.20
-#WORKDIR /usr/local/bin
-#RUN wget https://github.com/samtools/samtools/releases/download/${SAMTOOLS_VERSION}/samtools-${SAMTOOLS_VERSION}.tar.bz2
-#RUN tar -xjf /usr/local/bin/samtools-${SAMTOOLS_VERSION}.tar.bz2 -C /usr/local/bin/
-#RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && ./configure
-#RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make
-#RUN cd /usr/local/bin/samtools-${SAMTOOLS_VERSION}/ && make install
-
 # Download and install bigWigToBedGraph
 RUN wget http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64.v385/bigWigToBedGraph -O /usr/local/bin/bigWigToBedGraph \
     && chmod +x /usr/local/bin/bigWigToBedGraph
