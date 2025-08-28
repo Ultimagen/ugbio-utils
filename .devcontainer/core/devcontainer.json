@@ -3,7 +3,7 @@
 {
 	"name": "Core",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_core:1.13.2",
+	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_core:1.14.0",
 	"runArgs": [
 		"--init",
 		"--network=host"
