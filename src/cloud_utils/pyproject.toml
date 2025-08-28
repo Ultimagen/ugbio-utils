@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_cloud_utils"
-version = "1.14.0-0"
+version = "1.13.3-0"
 requires-python = ">=3.11"
 description = "Ultima Genomics cloud python utils"
 authors = [

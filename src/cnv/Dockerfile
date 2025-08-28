@@ -89,13 +89,23 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
+RUN groupadd ugbio && useradd -m ugbio -g ugbio
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
+
+USER ugbio
+
+WORKDIR /home/ugbio
+
 ARG OUT_DIR=/tmp/ugbio
 
+# Copy whl and install module
 COPY --from=build $OUT_DIR $OUT_DIR
 
-RUN pip install ${OUT_DIR}/*.whl
+ENV PATH="/home/ugbio/.local/bin:${PATH}"
 
-COPY --from=build ./src/cnv/cnmops ./src/cnv/cnmops
+RUN pip install --user ${OUT_DIR}/*.whl
+
+COPY --from=build ./src/cnv/cnmops /home/ugbio/src/cnv/cnmops
 
 #download cnvpytor additional necessary files (described here: https://github.com/abyzovlab/CNVpytor?tab=readme-ov-file#install-using-pip)
 RUN cnvpytor -download

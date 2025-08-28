@@ -24,11 +24,21 @@ RUN mkdir -p /opt/picard && \
 RUN echo '#!/bin/sh\njava -jar /opt/picard/picard.jar "$@"' > /usr/local/bin/picard && \
     chmod +x /usr/local/bin/picard
 
+RUN groupadd ugbio && useradd -m ugbio -g ugbio
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
+
+USER ugbio
+
+WORKDIR /home/ugbio
+
 ARG OUT_DIR=/tmp/ugbio
 
+# Copy whl and install module
 COPY --from=build $OUT_DIR $OUT_DIR
 
+ENV PATH="/home/ugbio/.local/bin:${PATH}"
+
 RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
-    pip install "${WHEEL_FILE}[vcfbed,reports,concordance]"
+    pip install --user "${WHEEL_FILE}[vcfbed,reports,concordance]"
 
 COPY --from=build ./src/core/ugbio_core/reports ./src/core/ugbio_core/reports
