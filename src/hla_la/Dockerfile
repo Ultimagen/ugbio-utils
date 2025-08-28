@@ -86,4 +86,11 @@ RUN echo '#!/bin/sh\necho "No tests to run :)"' > /usr/local/bin/run_tests \
 
 # set PATH
 ENV PATH="/usr/local/bin/HLA-LA/bin:/usr/local/bin/HLA-LA/src:$PATH"
-WORKDIR /usr/local/bin
+
+
+RUN groupadd ugbio && useradd -m ugbio -g ugbio
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
+
+USER ugbio
+
+WORKDIR /home/ugbio

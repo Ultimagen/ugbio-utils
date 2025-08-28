@@ -1,5 +1,4 @@
 version = 1
-revision = 1
 requires-python = ">=3.11, <3.13"
 resolution-markers = [
     "python_full_version < '3.12'",
@@ -3290,7 +3289,7 @@ wheels = [
 
 [[package]]
 name = "ugbio-cloud-utils"
-version = "1.10.3.post0"
+version = "1.13.0.post0"
 source = { editable = "src/cloud_utils" }
 dependencies = [
     { name = "boto3" },
@@ -3319,7 +3318,7 @@ dev = [
 
 [[package]]
 name = "ugbio-cnv"
-version = "1.10.3.post0"
+version = "1.13.0.post0"
 source = { editable = "src/cnv" }
 dependencies = [
     { name = "cnvpytor" },
@@ -3352,7 +3351,7 @@ dev = [
 
 [[package]]
 name = "ugbio-comparison"
-version = "1.10.3.post0"
+version = "1.13.0.post0"
 source = { editable = "src/comparison" }
 dependencies = [
     { name = "pytest-mock" },
@@ -3383,7 +3382,7 @@ dev = [
 
 [[package]]
 name = "ugbio-core"
-version = "1.10.3.post0"
+version = "1.13.0.post0"
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -3436,7 +3435,6 @@ requires-dist = [
     { name = "simppl", specifier = ">=1.0.7" },
     { name = "tqdm", marker = "extra == 'vcfbed'", specifier = ">=4.66.4" },
 ]
-provides-extras = ["vcfbed", "reports", "concordance"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3447,7 +3445,7 @@ dev = [
 
 [[package]]
 name = "ugbio-featuremap"
-version = "1.10.3.post0"
+version = "1.13.0.post0"
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "scikit-learn" },
@@ -3482,7 +3480,7 @@ dev = [
 
 [[package]]
 name = "ugbio-filtering"
-version = "1.10.3.post0"
+version = "1.13.0.post0"
 source = { editable = "src/filtering" }
 dependencies = [
     { name = "biopython" },
@@ -3519,7 +3517,7 @@ dev = [
 
 [[package]]
 name = "ugbio-freec"
-version = "1.10.3.post0"
+version = "1.13.0.post0.dev11"
 source = { editable = "src/freec" }
 dependencies = [
     { name = "pandas" },
@@ -3548,12 +3546,12 @@ dev = [
 
 [[package]]
 name = "ugbio-hla-la"
-version = "1.10.3.post0"
+version = "1.13.0.post0"
 source = { virtual = "src/hla_la" }
 
 [[package]]
 name = "ugbio-methylation"
-version = "1.10.3.post0"
+version = "1.13.0.post0"
 source = { editable = "src/methylation" }
 dependencies = [
     { name = "matplotlib" },
@@ -3588,7 +3586,7 @@ dev = [
 
 [[package]]
 name = "ugbio-mrd"
-version = "1.10.3.post0"
+version = "1.13.0.post0"
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["reports", "vcfbed"] },
@@ -3619,7 +3617,7 @@ dev = [
 
 [[package]]
 name = "ugbio-omics"
-version = "1.10.3.post0"
+version = "1.13.0.post0"
 source = { editable = "src/omics" }
 dependencies = [
     { name = "boto3" },
@@ -3652,7 +3650,6 @@ requires-dist = [
     { name = "pymongo", marker = "extra == 'db'", specifier = ">=4.11.1" },
     { name = "winval", specifier = ">=0.7.5" },
 ]
-provides-extras = ["db"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -3663,7 +3660,7 @@ dev = [
 
 [[package]]
 name = "ugbio-ppmseq"
-version = "1.10.3.post0"
+version = "1.13.0.post0"
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3696,7 +3693,7 @@ dev = [
 
 [[package]]
 name = "ugbio-single-cell"
-version = "1.10.3.post0"
+version = "1.13.0.post0"
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3733,7 +3730,7 @@ dev = [
 
 [[package]]
 name = "ugbio-srsnv"
-version = "1.10.3.post0"
+version = "1.13.0.post0"
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3778,7 +3775,7 @@ dev = [
 
 [[package]]
 name = "ugbio-utils"
-version = "1.10.3.post0"
+version = "1.13.0.post0"
 source = { virtual = "." }
 
 [package.dev-dependencies]

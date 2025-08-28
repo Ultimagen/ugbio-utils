@@ -58,13 +58,4 @@ runs:
     - name: Run python tests (if exist) in the container
       working-directory: src/${{ inputs.workspace-folder }}
       shell: bash
-      run: docker run --rm -v .:/workdir/src ${{ inputs.workspace-folder }} run_tests /workdir/src || [ $? -eq 5 ]
-
-
-    #todo how to upload results?
-    #      - name: Upload Test Results
-    #        if: always()
-    #        uses: actions/upload-artifact@v3
-    #        with:
-    #          name: ${{ inputs.workspace-folder }}-test-results
-    #          path: src/${{ inputs.workspace-folder }}
+      run: docker run --rm -v .:/home/ugbio/src ${{ inputs.workspace-folder }} run_tests /home/ugbio/src || [ $? -eq 5 ]

@@ -243,7 +243,7 @@ def process_multiallelic_spandel(df: pd.DataFrame, reference: str, chromosome: s
     combined_overlaps = sum(overlaps, [])
     multiallelics = [x for x in overlaps if len(x) == 1]
     spandels = [x for x in overlaps if len(x) > 1]
-    fasta = pyfaidx.Fasta(reference)
+    fasta = pyfaidx.Fasta(reference, build_index=False, rebuild=False)
     multiallelic_groups = [
         mu.split_multiallelic_variants(df.iloc[olp[0]], vcf, fasta[chromosome]) for olp in tqdm.tqdm(multiallelics)
     ]

@@ -25,6 +25,14 @@ chmod +x /usr/local/bin/run_tests
 
 COPY --from=builder /usr/local/cargo/bin/vcflite /usr/local/bin/vcflite
 
+
+RUN groupadd ugbio && useradd -m ugbio -g ugbio
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
+
+USER ugbio
+
+WORKDIR /home/ugbio
+
 COPY ./src/vcflite/LICENSE.txt .
 
 CMD ["vcflite"]

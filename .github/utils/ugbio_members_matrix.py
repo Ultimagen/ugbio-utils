@@ -9,6 +9,7 @@ def build_members_matrix(src_folder: str):
     directories = [d for d in os.listdir(src_folder) if os.path.isdir(os.path.join(src_folder, d)) and "__" not in d]
 
     print(json.dumps(directories, indent=4, sort_keys=True))
+    # print(["freec"])
 
 
 if __name__ == "__main__":
