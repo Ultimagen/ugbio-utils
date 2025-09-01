@@ -45,6 +45,7 @@ sorter_to_h5 = "ugbio_core.sorter_to_h5:main"
 convert_h5_to_json = "ugbio_core.convert_h5_to_json:main"
 collect_existing_metrics = "ugbio_core.collect_existing_metrics:main"
 generate_report = "ugbio_core.reports.report_utils:main"
+gather_statistics = "ugbio_core.gather_statisticss:main"
 
 [tool.setuptools.package-data]
 "*" = [
