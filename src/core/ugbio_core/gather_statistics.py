@@ -67,9 +67,9 @@ def run(argv):
     )
 
 
-def _read_stats_file(path, columns=("Measure", "Value"), sep=r"\s+", header=None, stat_type=None):
+def _read_stats_file(path, columns=("Measure", "Value"), sep=r"\s+", header=None, stat_type=None, skiprows=None):
     """Read a generic stats file into a standardized DataFrame."""
-    stat_df = pd.read_csv(path, sep=sep, header=header)
+    stat_df = pd.read_csv(path, sep=sep, header=header, skiprows=skiprows)
     stat_df.columns = columns
     if stat_type:
         stat_df["Stat_Type"] = stat_type
@@ -174,7 +174,7 @@ def stats_to_csv(
 
     logger.info("Loading stats files...")
 
-    param_df = _read_stats_file(stats_txt, stat_type="Params")
+    param_df = _read_stats_file(stats_txt, stat_type="Params", skiprows=1)
     param_df["Measure"] = param_df["Measure"].str.replace(":$", "", regex=True)
 
     barcode_df = _read_stats_file(barcode, stat_type="Barcode")
