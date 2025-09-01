@@ -38,7 +38,7 @@ RUN git clone --branch ${FREEC_BRANCH} https://github.com/Ultimagen/FREEC FREEC
 RUN cp FREEC/src/freec /freec
 RUN ln -s /freec /usr/bin/freec
 
-
+#add ugbio user for wdl runs
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 RUN chown -R ugbio:ugbio /opt /usr/local/bin
 

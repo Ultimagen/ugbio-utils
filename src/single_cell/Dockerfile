@@ -37,11 +37,6 @@ RUN wget -O- https://github.com/alexdobin/STAR/archive/2.7.10a.tar.gz \
     && mv STAR-2.7.10a/bin/Linux_x86_64/STAR /usr/local/bin \
     && rm -rf STAR-2.7.10a
 
-# Install module and dependencies (like core)
-COPY --from=build $OUT_DIR $OUT_DIR
-
-RUN pip install ${OUT_DIR}/*.whl
-
 # Include licenses
 COPY ["licenses/star LICENSE.txt", "."]
 COPY ["licenses/Ultima UGVC - EULA.pdf", "."]
@@ -51,4 +46,19 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} \
     && useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} -s /bin/bash \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 
-USER ${USERNAME}
+#add ugbio user for wdl runs
+RUN groupadd ugbio && useradd -m ugbio -g ugbio
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
+
+USER ugbio
+
+WORKDIR /home/ugbio
+
+ARG OUT_DIR=/tmp/ugbio
+
+# Copy whl and install module
+COPY --from=build $OUT_DIR $OUT_DIR
+
+ENV PATH="/home/ugbio/.local/bin:${PATH}"
+
+RUN pip install --user ${OUT_DIR}/*.whl
