@@ -343,6 +343,9 @@ def run(argv):  # noqa: C901, PLR0912
             # Add new format fields
 
             # Copy FORMAT values from vcf1 into first sample
+            # if rec2.chrom == 'chr1' and rec2.pos==3546785:
+            #     print('stop here')
+
             if rec1.chrom == record.chrom and rec1.pos == record.pos and rec1.ref == record.ref:
                 for fmt_field in rec1.format.keys():
                     for sample in rec1.samples.keys():
