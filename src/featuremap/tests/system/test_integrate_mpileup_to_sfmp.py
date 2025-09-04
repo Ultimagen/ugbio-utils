@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pysam
 import pytest
-from ugbio_featuremap import mpileup_info_integration_to_merged_vcf
+from ugbio_featuremap import integrate_mpileup_to_sfmp
 
 
 @pytest.fixture
@@ -68,27 +68,30 @@ def validate_vcf_format_fields(vcf_path, expected_fields):
 
 
 def test_mpileup_info_integration_to_merged_vcf(tmp_path, resources_dir):
-    sfmp_vcf = pjoin(resources_dir, "Pa_47_fresh_frozen_vs_buffycoat.tumor_normal.merged.PASS.chr19.new.tr_info.vcf.gz")
-    tumor_mpileup_vcf = pjoin(resources_dir, "Pa_47_FreshFrozen.m2_p2.mpileup.chr19.vcf.gz")
-    normal_mpileup_vcf = pjoin(resources_dir, "Pa_47_Buffycoat.m2_p2.mpileup.chr19.vcf.gz")
+    sfmp_vcf = pjoin(resources_dir, "Pa_46.tumor_normal.merged.tumor_PASS.tr_info.chr1_3425000-4016800.vcf.gz")
+    tumor_mpileup_vcf = pjoin(resources_dir, "Pa_46_FreshFrozen.cov60.cram_minipileup.chr1_3425000-4016800.pileup")
+    normal_mpileup_vcf = pjoin(resources_dir, "Pa_46_Buffycoat.cov30.cram_minipileup.chr1_3425000-4016800.pileup")
+    distance_start_to_center = "2"
     out_dir = tmp_path
 
     expected_out_vcf = pjoin(
-        resources_dir, "Pa_47_fresh_frozen_vs_buffycoat.tumor_normal.merged.PASS.chr19.new.tr_info.mpileup.vcf.gz"
+        resources_dir, "expected_Pa_46.tumor_normal.merged.tumor_PASS.tr_info.chr1_3425000-4016800.mpileup.vcf.gz"
     )
 
     out_sfmp_vcf = pjoin(out_dir, os.path.basename(sfmp_vcf).replace(".vcf.gz", ".mpileup.vcf.gz"))
 
     # Run the script's main function
-    mpileup_info_integration_to_merged_vcf.run(
+    integrate_mpileup_to_sfmp.run(
         [
-            "mpileup_info_integration_to_merged_vcf",
+            "integrate_mpileup_to_sfmp",
             "--sfmp_vcf",
             sfmp_vcf,
-            "--tumor_mpileup_vcf",
+            "--tumor_mpileup",
             tumor_mpileup_vcf,
-            "--normal_mpileup_vcf",
+            "--normal_mpileup",
             normal_mpileup_vcf,
+            "--distance_start_to_center",
+            distance_start_to_center,
             "--out_directory",
             str(out_dir),
         ]
@@ -103,15 +106,15 @@ def test_mpileup_info_integration_to_merged_vcf(tmp_path, resources_dir):
     assert expected_num_variants == out_num_variants
 
     mpileup_format_fields = [
-        "REF_M2",
-        "REF_M1",
-        "REF_0",
-        "REF_1",
-        "REF_2",
-        "NONREF_M2",
-        "NONREF_M1",
-        "NONREF_0",
-        "NONREF_1",
-        "NONREF_2",
+        "ref_m2",
+        "ref_m1",
+        "ref_0",
+        "ref_1",
+        "ref_2",
+        "nonref_m2",
+        "nonref_m1",
+        "nonref_0",
+        "nonref_1",
+        "nonref_2",
     ]
     validate_vcf_format_fields(out_sfmp_vcf, mpileup_format_fields)
