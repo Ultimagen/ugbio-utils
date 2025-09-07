@@ -27,6 +27,7 @@ class MrdReportInputs:
     output_dir: str
     output_basename: str
     featuremap_file: str
+    srsnv_metadata_json: str
     db_control_signatures_vcf_files: list[str] = None
     tumor_sample: str = None
     signature_filter_query: str = None
@@ -40,6 +41,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs):
         "features_file_parquet": intersection_path,
         "signatures_file_parquet": signatures_path,
         "featuremap_df_file": mrd_report_inputs.featuremap_file,
+        "srsnv_metadata_json": mrd_report_inputs.srsnv_metadata_json,
         "signature_filter_query": mrd_report_inputs.signature_filter_query,
         "read_filter_query": mrd_report_inputs.read_filter_query,
         "output_dir": mrd_report_inputs.output_dir,
@@ -234,7 +236,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     parser.add_argument("--signature-filter-query", type=str, default=None, help="Filter query for signatures")
     parser.add_argument("--read-filter-query", type=str, default=None, help="Filter query for reads")
-    parser.add_argument("--featuremap-file", type=str, default=None, help="Path to Featuremap file")
+    parser.add_argument("--featuremap-file", type=str, default=None, help="Path to featuremap_df_file")
+    parser.add_argument("--srsnv-metadata-json", type=str, default=None, help="Path to srsnv metadata json file")
     return parser.parse_args(argv[1:])
 
 
@@ -253,6 +256,7 @@ def main(argv: list[str] | None = None):
         output_dir=args_in.output_dir,
         output_basename=args_in.output_basename,
         featuremap_file=args_in.featuremap_file,
+        srsnv_metadata_json=args_in.srsnv_metadata_json,
         signature_filter_query=args_in.signature_filter_query,
         read_filter_query=args_in.read_filter_query,
     )
