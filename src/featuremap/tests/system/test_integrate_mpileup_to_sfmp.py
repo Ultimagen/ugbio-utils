@@ -16,12 +16,18 @@ def resources_dir():
 def count_num_variants(vcf):
     # count the number of variants (excluding the header)
     cons_dict = defaultdict(dict)
+    pass_count = 0
     for rec in pysam.VariantFile(vcf):
         rec_id = (rec.chrom, rec.pos, rec.ref, rec.alts[0])
         if rec_id not in cons_dict:
             cons_dict[rec_id]["count"] = 0
         cons_dict[rec_id]["count"] += 1
-    return len(cons_dict)
+
+        # Count records with PASS filter
+        if rec.filter.keys() == ["PASS"]:
+            pass_count += 1
+
+    return len(cons_dict), pass_count
 
 
 def validate_vcf_format_fields(vcf_path, expected_fields):
@@ -101,9 +107,10 @@ def test_mpileup_info_integration_to_merged_vcf(tmp_path, resources_dir):
     assert os.path.isfile(out_sfmp_vcf)
 
     # count the number of variants (excluding the header)
-    out_num_variants = count_num_variants(out_sfmp_vcf)
-    expected_num_variants = count_num_variants(expected_out_vcf)
+    out_num_variants, out_pass_count = count_num_variants(out_sfmp_vcf)
+    expected_num_variants, expected_pass_count = count_num_variants(expected_out_vcf)
     assert expected_num_variants == out_num_variants
+    assert expected_pass_count == out_pass_count
 
     mpileup_format_fields = [
         "ref_m2",

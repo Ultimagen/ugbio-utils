@@ -90,6 +90,14 @@ def create_new_header(main_vcf: pysam.VariantFile, distance_start_to_center: int
     """
     header = main_vcf.header.copy()
 
+    # add new filter for insufficient mpileup data
+    header.filters.add(
+        "MpileupData",  # ID
+        None,  # Number (None for FILTER)
+        None,  # Type (None for FILTER)
+        "Variants with partial/no mpileup information",  # Description
+    )
+
     for loc in np.arange(0, distance_start_to_center + 1, 1):
         if loc == 0:
             fmt_fields = [f"ref_{loc}", f"nonref_{loc}"]
@@ -205,14 +213,18 @@ def parse_mpileup_line(mpileup_line: str) -> tuple[str, int, int, int]:
 
 
 def process_padded_positions(
-    new_record: pysam.VariantRecord, distance_start_to_center: int, tumor_chunk_info: dict, normal_chunk_info: dict
+    new_record: pysam.VariantRecord,
+    distance_start_to_center: int,
+    center_position: int,
+    tumor_chunk_info: dict,
+    normal_chunk_info: dict,
 ):
     """
-    Process padded positions and update variant record with reference and non-reference counts.
-
-    This function iterates through positions at specified distances from a center point,
-    extracting reference and non-reference read counts from tumor and normal chunk
-    information, and updates the variant record samples accordingly.
+    This function iterates through positions in tumor and normal chunk information,
+    calculating distances from a center position and updating the variant record
+    samples with reference and non-reference read counts at each position.
+    Only positions within [-distance_start_to_center, +distance_start_to_center]
+    will be processed.
 
     Parameters
     ----------
@@ -222,8 +234,12 @@ def process_padded_positions(
         The maximum distance from the center position to process in both directions.
         Positions will range from -distance_start_to_center to +distance_start_to_center.
     tumor_chunk_info : dict
-        Dictionary containing tumor sample information where keys are indices and values
-        are tuples/lists with reference counts at index 2 and non-reference counts at index 3.
+        Dictionary containing tumor sample information where keys are indices and
+        values are tuples/lists with:
+        - index 0: chromosome (str)
+        - index 1: actual genomic position (int)
+        - index 2: reference read count (int)
+        - index 3: non-reference read count (int)
     normal_chunk_info : dict
         Dictionary containing normal sample information with the same structure as tumor_chunk_info.
 
@@ -241,21 +257,38 @@ def process_padded_positions(
     integer keys starting from 0, with each entry containing at least 4 elements where
     index 2 is the reference count and index 3 is the non-reference count.
     """
+    # Get the actual positions from the chunk info to calculate distances
+    for pileup_info in tumor_chunk_info:
+        # Calculate distance from center position
+        actual_position = int(pileup_info[1])
+        dist = actual_position - center_position
 
-    key = 0
-    distances = np.arange(-distance_start_to_center, distance_start_to_center + 1, 1)
-    for dist in distances:
-        if dist < 0:
+        # Format the key based on distance
+        if (dist < 0) and (dist >= -distance_start_to_center):
             new_key = f"m{abs(dist)}"
-        elif dist >= 0:
+        elif (dist >= 0) and (dist <= distance_start_to_center):
             new_key = f"{dist}"
 
-        new_record.samples[0][f"ref_{new_key}"] = tumor_chunk_info[key][2]
-        new_record.samples[0][f"nonref_{new_key}"] = tumor_chunk_info[key][3]
-        new_record.samples[1][f"ref_{new_key}"] = normal_chunk_info[key][2]
-        new_record.samples[1][f"nonref_{new_key}"] = normal_chunk_info[key][3]
+        # Only update if within the expected distance range
+        if abs(dist) <= distance_start_to_center:
+            new_record.samples[0][f"ref_{new_key}"] = pileup_info[2]
+            new_record.samples[0][f"nonref_{new_key}"] = pileup_info[3]
 
-        key = key + 1
+    for pileup_info in normal_chunk_info:
+        # Calculate distance from center position
+        actual_position = int(pileup_info[1])
+        dist = actual_position - center_position
+
+        # Format the key based on distance
+        if (dist < 0) and (dist >= -distance_start_to_center):
+            new_key = f"m{abs(dist)}"
+        elif (dist >= 0) and (dist <= distance_start_to_center):
+            new_key = f"{dist}"
+
+        # Only update if within the expected distance range
+        if abs(dist) <= distance_start_to_center:
+            new_record.samples[1][f"ref_{new_key}"] = pileup_info[2]
+            new_record.samples[1][f"nonref_{new_key}"] = pileup_info[3]
 
     return new_record
 
@@ -513,31 +546,31 @@ def run(argv):  # noqa: C901, PLR0912
                 buf2.append(p2)
                 p2 = next(it2, None)
 
-            # keep only full window
-            if len(buf1) == (2 * args.distance_start_to_center + 1) and len(buf2) == (
-                2 * args.distance_start_to_center + 1
+            # Create a new record using the updated header
+            new_record = vcf_out.new_record(
+                contig=record.chrom,
+                start=record.start,
+                stop=record.stop,
+                id=record.id,
+                qual=record.qual,
+                alleles=record.alleles,
+                filter=record.filter.keys(),
+            )
+
+            # Copy all original INFO/FORMAT fields
+            for k, v in record.info.items():
+                if k in header.info:
+                    new_record.info[k] = v
+            copy_format_fields_between_pysam_records(record, new_record, header)
+
+            new_record = process_padded_positions(new_record, args.distance_start_to_center, record.pos, buf1, buf2)
+
+            if not (
+                len(buf1) == (2 * args.distance_start_to_center + 1)
+                and len(buf2) == (2 * args.distance_start_to_center + 1)
             ):
-                # Create a new record using the updated header
-                new_record = vcf_out.new_record(
-                    contig=record.chrom,
-                    start=record.start,
-                    stop=record.stop,
-                    id=record.id,
-                    qual=record.qual,
-                    alleles=record.alleles,
-                    filter=record.filter.keys(),
-                )
-
-                # Copy all original INFO fields
-                for k, v in record.info.items():
-                    if k in header.info:
-                        new_record.info[k] = v
-
-                copy_format_fields_between_pysam_records(record, new_record, header)
-                new_record = process_padded_positions(new_record, args.distance_start_to_center, buf1, buf2)
-                vcf_out.write(new_record)
-            else:
-                logger.warning(f"Skipping record {record.chrom}:{record.pos} due to incomplete mpileup data.")
+                new_record.filter.add("MpileupData")
+            vcf_out.write(new_record)
 
     main_vcf.close()
     logger.info(f"Merged VCF file with mpileup info created: {out_sfmp_vcf}")
