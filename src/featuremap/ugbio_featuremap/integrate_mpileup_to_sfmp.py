@@ -465,7 +465,7 @@ def copy_format_fields_between_pysam_records(  # noqa: C901, PLR0912, PLR0915
                 new_record.samples[sample][fmt_field] = val
 
 
-def run(argv):  # noqa: C901, PLR0912
+def run(argv):  # noqa: C901, PLR0912, PLR0915
     """
     Integrate mpileup data into SFMP VCF file.
 
@@ -523,30 +523,43 @@ def run(argv):  # noqa: C901, PLR0912
 
     # Open output VCF
     with pysam.VariantFile(out_sfmp_vcf, "wz", header=header) as vcf_out:
+        current_chrom = None
+
         for record in main_vcf.fetch():
+            chrom = record.chrom
             start, end = record.pos - args.distance_start_to_center, record.pos + args.distance_start_to_center
 
-            # --- pileup1 ---
-            # remove old records
+            # --- handle chromosome change ---
+            if chrom != current_chrom:
+                current_chrom = chrom
+                buf1.clear()
+                buf2.clear()
 
+                # advance pileup1 until correct chromosome
+                while p1 and p1[0] != chrom:
+                    p1 = next(it1, None)
+
+                # advance pileup2 until correct chromosome
+                while p2 and p2[0] != chrom:
+                    p2 = next(it2, None)
+
+            # --- pileup1 ---
             buf1 = deque([x for x in buf1 if int(x[1]) >= start])
-            # advance until >= start
-            while p1 and int(p1[1]) < start:
+            while p1 and p1[0] == chrom and int(p1[1]) < start:
                 p1 = next(it1, None)
-            # collect [start..end]
-            while p1 and start <= int(p1[1]) <= end:
+            while p1 and p1[0] == chrom and start <= int(p1[1]) <= end:
                 buf1.append(p1)
                 p1 = next(it1, None)
 
             # --- pileup2 ---
             buf2 = deque([x for x in buf2 if int(x[1]) >= start])
-            while p2 and int(p2[1]) < start:
+            while p2 and p2[0] == chrom and int(p2[1]) < start:
                 p2 = next(it2, None)
-            while p2 and start <= int(p2[1]) <= end:
+            while p2 and p2[0] == chrom and start <= int(p2[1]) <= end:
                 buf2.append(p2)
                 p2 = next(it2, None)
 
-            # Create a new record using the updated header
+            # --- create new VCF record ---
             new_record = vcf_out.new_record(
                 contig=record.chrom,
                 start=record.start,
@@ -557,19 +570,24 @@ def run(argv):  # noqa: C901, PLR0912
                 filter=record.filter.keys(),
             )
 
-            # Copy all original INFO/FORMAT fields
+            # copy INFO
             for k, v in record.info.items():
                 if k in header.info:
                     new_record.info[k] = v
+
+            # copy FORMAT
             copy_format_fields_between_pysam_records(record, new_record, header)
 
+            # process mpileup buffers
             new_record = process_padded_positions(new_record, args.distance_start_to_center, record.pos, buf1, buf2)
 
+            # filter flag if missing positions
             if not (
                 len(buf1) == (2 * args.distance_start_to_center + 1)
                 and len(buf2) == (2 * args.distance_start_to_center + 1)
             ):
                 new_record.filter.add("MpileupData")
+
             vcf_out.write(new_record)
 
     main_vcf.close()
