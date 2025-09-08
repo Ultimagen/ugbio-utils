@@ -582,10 +582,12 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
             new_record = process_padded_positions(new_record, args.distance_start_to_center, record.pos, buf1, buf2)
 
             # filter flag if missing positions
-            if not (
-                len(buf1) == (2 * args.distance_start_to_center + 1)
-                and len(buf2) == (2 * args.distance_start_to_center + 1)
+            if len(buf1) == (2 * args.distance_start_to_center + 1) and len(buf2) == (
+                2 * args.distance_start_to_center + 1
             ):
+                new_record.filter.clear()
+                new_record.filter.add("PASS")
+            else:
                 new_record.filter.add("MpileupData")
 
             vcf_out.write(new_record)
