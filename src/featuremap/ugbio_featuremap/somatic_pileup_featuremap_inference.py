@@ -18,16 +18,16 @@ from ugbio_core.vcfbed import vcftools
 from ugbio_featuremap import featuremap_xgb_prediction
 
 MPILEUP_CUSTOM_INFO_FIELDS = [
-    "REF_M2",
-    "REF_M1",
-    "REF_0",
-    "REF_1",
-    "REF_2",
-    "NONREF_M2",
-    "NONREF_M1",
-    "NONREF_0",
-    "NONREF_1",
-    "NONREF_2",
+    "ref_m2",
+    "ref_m1",
+    "ref_0",
+    "ref_1",
+    "ref_2",
+    "nonref_m2",
+    "nonref_m1",
+    "nonref_0",
+    "nonref_1",
+    "nonref_2",
 ]
 TR_CUSTOM_INFO_FIELDS = ["TR_distance", "TR_length", "TR_seq_unit_length"]
 
