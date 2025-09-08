@@ -1,4 +1,5 @@
 import itertools
+import json
 import logging
 import os
 import re
@@ -1001,3 +1002,41 @@ def plot_vaf_matched_unmatched(
 
     plt.tight_layout()
     plt.show()
+
+
+def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadata_json: str, read_filter_query: str):
+    """
+    Calculate the ratio of filtered to total reads from the single_read_snv training dataframe
+    Parameters
+    ----------
+    featuremap_df_file: str
+        featuremap df file (parquet file), training dataframe for single_read_snv
+    srsnv_metadata_json: str
+        single_read_snv metadata json file, includes true-positive filtering funnel
+    read_filter_query: str
+        query to filter the dataframe
+    Returns
+    -------
+    denom_ratio: float
+        ratio of filtered to total reads
+    """
+    df_model_data = pd.read_parquet(featuremap_df_file, engine="fastparquet")
+    df_model_data = df_model_data.rename(columns=lambda x: x.lower())
+    df_model_data["filt"] = 1  # by definition, all reads in the featuremap training dataset pass filter
+
+    # read srsnv metadata filtering funnel
+    with open(srsnv_metadata_json) as f:
+        srsnv_metadata = json.load(f)
+    tp_filtering = pd.DataFrame(srsnv_metadata["filtering_stats"]["positive"]["filters"])
+    tp_filtering = tp_filtering.drop(
+        index=tp_filtering[tp_filtering["type"] == "downsample"].index
+    )  # remove downsampling step
+    filt_denom = tp_filtering.loc[tp_filtering.query('type == "region"').index[-1], "rows"]  # last region step
+    filt_numer = tp_filtering.loc[
+        tp_filtering.index[-1], "rows"
+    ]  # final number of true positives (before downsampling)
+    filt_ratio = filt_numer / filt_denom
+
+    read_filter_non_filt = df_model_data.query("label").eval(read_filter_query).mean()
+    denom_ratio = filt_ratio * read_filter_non_filt
+    return denom_ratio, filt_ratio, read_filter_non_filt
