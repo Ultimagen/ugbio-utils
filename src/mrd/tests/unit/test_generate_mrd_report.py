@@ -41,7 +41,8 @@ def test_generate_mrd_report(output_path, resources_dir):
         output_basename="test_report",
         featuremap_file=str(resources_dir / "Pa_46_333_LuNgs_08.featuremap_df.parquet"),
         signature_filter_query="(norm_coverage <= 2.5) and (norm_coverage >= 0.6)",
-        read_filter_query="snvq>40",  # only for testing this non-matching files, otherwise take "qual > 60"
+        read_filter_query="filt>0 and snvq>40",  # snvq>40 for this test set
+        srsnv_metadata_json=str(resources_dir / "Pa_46_333_LuNgs_08.srsnv_metadata.json"),
     )
 
     output_report_html = generate_mrd_report(mrd_report_inputs)
