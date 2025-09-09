@@ -38,7 +38,14 @@ from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
 
-from ugbio_srsnv.srsnv_utils import EPS, MAX_PHRED, all_models_predict_proba, prob_to_phred, safe_roc_auc
+from ugbio_srsnv.srsnv_utils import (
+    EPS,
+    MAX_PHRED,
+    all_models_predict_proba,
+    get_base_recall_from_filters,
+    prob_to_phred,
+    safe_roc_auc,
+)
 
 FOLD_COL = "fold_id"
 LABEL_COL = "label"
@@ -156,6 +163,91 @@ def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
         return _parse_interval_list_tabix(path)
     else:
         return _parse_interval_list_manual(path)
+
+
+def count_bases_in_interval_list(path: str) -> int:
+    """
+    Count the number of bases covered by intervals in a Picard/Broad interval list.
+
+    Parameters
+    ----------
+    path : str
+        Path to the interval-list file (supports .gz files).
+
+    Returns
+    -------
+    Total number of bases covered by the intervals [int]
+    """
+    candidate_tbi = path + ".tbi"
+    if os.path.exists(candidate_tbi):
+        return count_bases_in_interval_list_tabix(path)
+    else:
+        return count_bases_in_interval_list_manual(path)
+
+
+def count_bases_in_interval_list_manual(interval_list_path: str) -> int:
+    """
+    Count the number of bases covered by intervals in a bgzipped Picard-style
+    interval list (.interval_list.gz). Does not use pysam.
+
+    Parameters
+    ----------
+    interval_list_path : str
+        Path to the bgzipped interval list.
+
+    Returns
+    -------
+    int
+        Total number of bases covered by the intervals.
+    """
+    total_bases = 0
+
+    with gzip.open(interval_list_path, "rt") as f:  # text mode
+        for line in f:
+            if line.startswith("@"):  # skip header lines
+                continue
+
+            fields = line.strip().split("\t")
+            if len(fields) < 3:  # noqa: PLR2004
+                continue  # malformed line
+
+            start, end = int(fields[1]), int(fields[2])
+            total_bases += end - start + 1  # Picard intervals are inclusive
+
+    return total_bases
+
+
+def count_bases_in_interval_list_tabix(interval_list_path: str) -> int:
+    """
+    Count the number of bases covered by intervals in a bgzipped, tabix-indexed
+    Picard-style interval list (.interval_list.gz with .tbi index).
+
+    Parameters
+    ----------
+    interval_list_path : str
+        Path to the bgzipped interval list (must have a .tbi index).
+
+    Returns
+    -------
+    int
+        Total number of bases covered by the intervals.
+    """
+    total_bases = 0
+
+    with pysam.TabixFile(interval_list_path) as tbx:
+        for record in tbx.fetch():
+            # Skip header lines starting with '@'
+            if record.startswith("@"):
+                continue
+
+            fields = record.strip().split("\t")
+            if len(fields) < 3:  # noqa: PLR2004
+                continue  # malformed line
+
+            _, start, end = fields[0], int(fields[1]), int(fields[2])
+            total_bases += end - start + 1  # Picard intervals are inclusive
+
+    return total_bases
 
 
 def _parse_model_params(mp: str | None) -> dict[str, Any]:
@@ -276,7 +368,7 @@ def _probability_recalibration(prob_orig: np.ndarray, y_all: np.ndarray) -> np.n
 
 # ───────────────────────── core logic ─────────────────────────────────────
 class SRSNVTrainer:
-    def __init__(self, args: argparse.Namespace):
+    def __init__(self, args: argparse.Namespace):  # noqa: PLR0915
         logger.debug("Initializing SRSNVTrainer")
         self.args = args
         self.out_dir = Path(args.output)
@@ -292,6 +384,11 @@ class SRSNVTrainer:
         # ─────────── read filtering-stats JSONs & compute priors ───────────
         self.pos_stats = read_filtering_stats_json(args.stats_positive)
         self.neg_stats = read_filtering_stats_json(args.stats_negative)
+        self.raw_stats = read_filtering_stats_json(args.stats_featuremap)
+        self.mean_coverage = args.mean_coverage
+        if self.mean_coverage is None:
+            raise ValueError("--mean-coverage is required if not present in stats-featuremap JSON")
+        self.n_bases_in_region = count_bases_in_interval_list(args.training_regions)
 
         # sanity-check: identical “quality/region” filters in the two random-sample stats files
         def _quality_region_filters(st):
@@ -316,10 +413,12 @@ class SRSNVTrainer:
         # new prior_real_error calculation
         pos_after_filter = _last_non_downsample_rows(self.pos_stats)
         neg_after_filter = _last_non_downsample_rows(self.neg_stats)
+        raw_after_filter = _last_non_downsample_rows(self.raw_stats)
         self.prior_real_error = max(
             self.eps,
             min(1.0 - self.eps, neg_after_filter / (neg_after_filter + pos_after_filter)),
         )
+        self.raw_featuremap_size_filtered = raw_after_filter
 
         # Data
         logger.debug(
@@ -630,7 +729,7 @@ class SRSNVTrainer:
             eps = self.eps
         pd_df = self.data_frame.to_pandas()
         mqual_fp_max = pd_df.loc[pd_df[LABEL_COL].astype(int) == 0, MQUAL].quantile(fp_mqual_cutoff_quantile)
-        prior_real_error = self.prior_real_error
+        # prior_real_error = self.prior_real_error
 
         # Determine x_lut points based on whether quality_lut_size is provided
         if self.args.quality_lut_size is not None:
@@ -645,7 +744,8 @@ class SRSNVTrainer:
         mqual_f = pd_df[~pd_df[LABEL_COL]][MQUAL]
         tpr = np.array([(mqual_t >= m_).mean() for m_ in self.x_lut])
         fpr = np.array([(mqual_f >= m_).mean() for m_ in self.x_lut])
-        self.y_lut = -10 * np.log10(np.clip((prior_real_error / 3) * (fpr / tpr), eps, 1))
+        snvq_prefactor = self._calculate_snvq_prefactor()  # old value was: (prior_real_error / 3)
+        self.y_lut = -10 * np.log10(np.clip(snvq_prefactor * (fpr / tpr), eps, 1))
 
     def _create_quality_lookup_table(self, eps=None, *, use_kde=False) -> None:
         """
@@ -655,6 +755,20 @@ class SRSNVTrainer:
             self._create_quality_lookup_table_kde(eps=eps)
         else:
             self._create_quality_lookup_table_count(eps=eps)
+
+    def _calculate_snvq_prefactor(self) -> float:
+        base_recall = get_base_recall_from_filters(self.pos_stats["filters"])
+        effective_bases_covered = self.mean_coverage * self.n_bases_in_region * base_recall
+        logger.info(
+            f"mean_coverage: {self.mean_coverage}, "
+            f"n_bases_in_region: {self.n_bases_in_region}, "
+            f"base_recall: {base_recall}"
+        )
+        logger.info(
+            f"raw_featuremap_size_filtered: {self.raw_featuremap_size_filtered}, "
+            f"effective bases covered: {effective_bases_covered}"
+        )
+        return self.raw_featuremap_size_filtered / effective_bases_covered
 
     # ─────────────────────── training / prediction ──────────────────────
     def train(self) -> None:
@@ -902,6 +1016,16 @@ def _cli() -> argparse.Namespace:
         "--stats-negative",
         required=True,
         help="JSON file with filtering stats for negative random-sample set",
+    )
+    ap.add_argument(
+        "--stats-featuremap",
+        required=True,
+        help="JSON file with filtering stats for raw featuremap",
+    )
+    ap.add_argument(
+        "--mean-coverage",
+        type=float,
+        help="Mean coverage of the sample",
     )
     ap.add_argument(
         "--quality-lut-size",
