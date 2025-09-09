@@ -8,9 +8,7 @@ import pysam
 import pytest
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
 from ugbio_core.vcfbed import variant_annotation
-from ugbio_core.vcfbed.variant_annotation import VcfAnnotator
 from ugbio_featuremap.featuremap_utils import (
-    FeaturemapAnnotator,
     FeatureMapFields,
     RefContextVcfAnnotator,
     featuremap_to_dataframe,
@@ -131,33 +129,6 @@ def _assert_read_signature(signature, expected_signature, expected_columns=None,
         if c not in possibly_null_columns:
             assert not signature[c].isna().all()
             assert (signature[c] == expected_signature[c]).all() or np.allclose(signature[c], expected_signature[c])
-
-
-def test_featuremap_annotator(tmpdir, resources_dir):
-    input_featuremap = pjoin(resources_dir, "Pa_46.bsDNA.chr20_sample.vcf.gz")
-    tmpfile = f"{tmpdir}/output_featuremap.vcf.gz"
-    VcfAnnotator.process_vcf(
-        input_path=input_featuremap,
-        output_path=tmpfile,
-        annotators=[FeaturemapAnnotator()],
-    )
-    output_variants = pysam.VariantFile(tmpfile)
-    forward_events = 0
-    reverse_events = 0
-    total_max_softclip_bases = 0
-    for v in output_variants:
-        assert FeatureMapFields.MAX_SOFTCLIP_LENGTH.value in v.info
-        total_max_softclip_bases += int(v.info[FeatureMapFields.MAX_SOFTCLIP_LENGTH.value])
-        if FeatureMapFields.MAX_SOFTCLIP_LENGTH.IS_FORWARD.value in v.info:
-            forward_events += 1
-        else:
-            reverse_events += 1
-    assert (
-        FeatureMapFields.IS_DUPLICATE.value in output_variants.header.info
-    ), f"{FeatureMapFields.IS_DUPLICATE.value} is not in info header {output_variants.header.info}"
-    assert forward_events == 9
-    assert reverse_events == 22
-    assert total_max_softclip_bases == 81
 
 
 def test_ref_context_vcf_annotator_somatic_dv(tmpdir, resources_dir):

@@ -16,17 +16,19 @@ def test_end_to_end_training(tmp_path: Path) -> None:
     """
     # ------------------------------------------------------------------ paths
     resources = Path(__file__).parent.parent / "resources"
-    pos_file = resources / "416119_L7402.random_sample.featuremap.filtered.sample.parquet"
-    neg_file = resources / "416119_L7402.raw.featuremap.filtered.sample.parquet"
-    pos_stats = resources / "416119_L7402.random_sample.positive_label.featuremap.stats.json"
-    neg_stats = resources / "416119_L7402.random_sample.negative_label.featuremap.stats.json"
+    pos_file = resources / "416119_L7402.test.random_sample.featuremap.filtered.sample.parquet"
+    neg_file = resources / "416119_L7402.test.raw.featuremap.filtered.sample.parquet"
+    pos_stats = resources / "416119_L7402.test.random_sample.featuremap.stats_positive.json"
+    neg_stats = resources / "416119_L7402.test.random_sample.featuremap.stats_negative.json"
+    raw_stats = resources / "416119_L7402.test.raw.featuremap.stats.json"
 
     assert pos_file.is_file(), "positive parquet missing"
     assert neg_file.is_file(), "negative parquet missing"
+    assert raw_stats.is_file(), "raw featuremap stats missing"
 
     # ---------------------------------------------------------------- regions
     # Use the real hg38 calling regions shipped with the repository
-    interval_list = resources.parent / "resources" / "wgs_calling_regions.without_encode_blacklist.hg38.interval_list"
+    interval_list = resources / "wgs_calling_regions.without_encode_blacklist.hg38.interval_list.gz"
     assert interval_list.is_file(), "interval_list fixture missing"
 
     # ---------------------------------------------------------------- args
@@ -38,7 +40,9 @@ def test_end_to_end_training(tmp_path: Path) -> None:
         negative=str(neg_file),
         stats_positive=str(pos_stats),
         stats_negative=str(neg_stats),
+        stats_featuremap=str(raw_stats),
         aligned_bases=134329535408,
+        mean_coverage=30.0,
         training_regions=str(interval_list),
         k_folds=2,
         model_params="n_estimators=2:max_depth=2:enable_categorical=true",  # keep test fast
@@ -50,6 +54,7 @@ def test_end_to_end_training(tmp_path: Path) -> None:
         verbose=True,
         max_qual=100.0,
         quality_lut_size=1000,
+        metadata=None,  # Add missing metadata attribute
     )
 
     # ---------------------------------------------------------------- train

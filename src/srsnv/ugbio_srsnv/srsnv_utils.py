@@ -373,6 +373,77 @@ def split_validation_training_preds(
     return preds_val, preds_train
 
 
+def get_base_recall_from_filters(filters):
+    """Calculate base recall from filtering statistics.
+
+    Base recall is calculated as the number of 'rows' in the last filter before 'ref_eq_alt'
+    divided by the number of 'rows' in the last filter before the first 'quality' filter.
+
+    Returns:
+        float: Base recall value
+    """
+    # Find last filter before ref_eq_alt
+    ref_eq_alt_index = None
+    for i, filter_info in enumerate(filters):
+        if filter_info["name"] == "ref_eq_alt":
+            ref_eq_alt_index = i
+            break
+
+    if ref_eq_alt_index is None or ref_eq_alt_index == 0:
+        raise ValueError("ref_eq_alt filter not found or is the first filter")
+
+    last_filter_before_ref_eq_alt = filters[ref_eq_alt_index - 1]
+
+    # Find the first filter with type "quality"
+    first_quality_filter_index = None
+    for i, filter_info in enumerate(filters):
+        if filter_info.get("type") == "quality":
+            first_quality_filter_index = i
+            break
+
+    # Find the last filter before the first quality filter
+    if first_quality_filter_index is not None and first_quality_filter_index > 0:
+        last_filter_before_quality = filters[first_quality_filter_index - 1]
+    elif first_quality_filter_index is None:
+        # If no quality filter found, use the last filter in the list
+        last_filter_before_quality = filters[-1] if filters else None
+    else:
+        # If quality filter is the first filter, use first filter
+        last_filter_before_quality = filters[0]
+
+    if last_filter_before_quality is None:
+        raise ValueError("Could not find appropriate filter for denominator")
+
+    return last_filter_before_ref_eq_alt["rows"] / last_filter_before_quality["rows"]
+
+
+def get_base_error_rate_from_filters(filters):
+    """Calculate base error rate (b_f) from negative filtering statistics.
+
+    This represents the base rate of low VAF (False) SNVs, calculated as the ratio
+    of rows at the last filter before downsample to the total raw rows in the
+    negative filtering statistics.
+
+    Returns:
+        float: Base error rate of low VAF SNVs (rows before downsample / total raw rows)
+    """
+    downsample_index = None
+    for i, filter_info in enumerate(filters):
+        if filter_info["name"] == "downsample":
+            downsample_index = i
+            break
+
+    # b_f = rows at last filter before downsample / rows at first filter (raw)
+    if downsample_index is not None:
+        last_filter_before_downsample = filters[downsample_index - 1]
+    else:
+        # If no downsample filter, use the last filter
+        last_filter_before_downsample = filters[-1]
+
+    first_filter = filters[0]  # TODO: Should this be the first filter, or the last filter before 'ref_ne_alt'?
+    return last_filter_before_downsample["rows"] / first_filter["rows"]
+
+
 def construct_trinuc_context_with_alt(
     df: pd.DataFrame, *, prev1: str = PREV1, ref: str = REF, next1: str = NEXT1, alt: str = ALT
 ) -> pd.Series:

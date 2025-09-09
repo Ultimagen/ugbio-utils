@@ -259,7 +259,12 @@ class TestTrinucHistogramPlotting:
     def test_calc_and_plot_trinuc_hist_with_quality(self, sample_data):
         """Test the main calc_and_plot function with quality."""
         fig, stats_df = calc_and_plot_trinuc_hist(
-            sample_data, labels=[False, True], collapsed=True, include_quality=True, suptitle="Test Integration"
+            sample_data,
+            trinuc_col="tcwa_fwd",
+            labels=[False, True],
+            collapsed=True,
+            include_quality=True,
+            suptitle="Test Integration",
         )
 
         assert isinstance(fig, plt.Figure)
@@ -271,7 +276,12 @@ class TestTrinucHistogramPlotting:
     def test_calc_and_plot_trinuc_hist_histogram_only(self, sample_data):
         """Test the main calc_and_plot function without quality."""
         fig, stats_df = calc_and_plot_trinuc_hist(
-            sample_data, labels=[False, True], collapsed=True, include_quality=False, suptitle="Test Histogram Only"
+            sample_data,
+            trinuc_col="tcwa_fwd",
+            labels=[False, True],
+            collapsed=True,
+            include_quality=False,
+            suptitle="Test Histogram Only",
         )
 
         assert isinstance(fig, plt.Figure)
@@ -283,7 +293,12 @@ class TestTrinucHistogramPlotting:
     def test_height_ratio_in_calc_and_plot(self, sample_data):
         """Test height ratio parameter in main function."""
         fig, _ = calc_and_plot_trinuc_hist(
-            sample_data, labels=[False, True], collapsed=True, include_quality=True, hist_to_qual_height_ratio=3.0
+            sample_data,
+            trinuc_col="tcwa_fwd",
+            labels=[False, True],
+            collapsed=True,
+            include_quality=True,
+            hist_to_qual_height_ratio=3.0,
         )
 
         assert len(fig.axes) == 2
@@ -389,7 +404,12 @@ class TestTrinucHistogramPlotting:
     def test_calc_and_plot_with_motif_orientation(self, sample_data):
         """Test the main function with motif_orientation parameter."""
         fig, stats_df = calc_and_plot_trinuc_hist(
-            sample_data, labels=[False, True], collapsed=True, include_quality=True, motif_orientation="fwd_only"
+            sample_data,
+            trinuc_col="tcwa_fwd",
+            labels=[False, True],
+            collapsed=True,
+            include_quality=True,
+            motif_orientation="fwd_only",
         )
 
         assert isinstance(fig, plt.Figure)
