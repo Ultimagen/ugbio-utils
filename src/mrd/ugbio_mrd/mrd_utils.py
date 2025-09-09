@@ -16,7 +16,10 @@ import seaborn as sns
 from tqdm import tqdm
 from ugbio_core.dna_sequence_utils import revcomp
 from ugbio_core.logger import logger
-from ugbio_core.vcfbed.variant_annotation import get_trinuc_substitution_dist, parse_trinuc_sub
+from ugbio_core.vcfbed.variant_annotation import (
+    get_trinuc_substitution_dist,
+    parse_trinuc_sub,
+)
 
 default_featuremap_info_fields = {
     "X_CIGAR": str,
@@ -168,7 +171,10 @@ def collect_coverage_per_locus_mosdepth(coverage_bed, df_sig):
     Merge coverage data from mosdepth output to signature dataframe
     """
     coverage_mosdepth = pd.read_csv(
-        coverage_bed, compression="gzip", sep="\t", names=["chrom", "start", "pos", "coverage"]
+        coverage_bed,
+        compression="gzip",
+        sep="\t",
+        names=["chrom", "start", "pos", "coverage"],
     )
     coverage_mosdepth["coverage"] = coverage_mosdepth["coverage"].astype(int)
     coverage_mosdepth = coverage_mosdepth.set_index(["chrom", "pos"])
@@ -376,14 +382,16 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
                                 if tumor_sample and "DP" in rec.samples[tumor_sample]
                                 else np.nan
                             ),
-                            rec.info["LONG_HMER"] if "LONG_HMER" in rec.info else np.nan,
-                            rec.info["TLOD"][0]
-                            if "TLOD" in rec.info and isinstance(rec.info["TLOD"], Iterable)
-                            else np.nan,
+                            (rec.info["LONG_HMER"] if "LONG_HMER" in rec.info else np.nan),
+                            (
+                                rec.info["TLOD"][0]
+                                if "TLOD" in rec.info and isinstance(rec.info["TLOD"], Iterable)
+                                else np.nan
+                            ),
                             rec.info["SOR"] if "SOR" in rec.info else np.nan,
                         ]
                         + [_validate_info(rec.info.get(c, "False")) for c in genomic_region_annotations]
-                        + [rec.info[c][0] if isinstance(rec.info[c], tuple) else rec.info[c] for c in x_columns]
+                        + [(rec.info[c][0] if isinstance(rec.info[c], tuple) else rec.info[c]) for c in x_columns]
                     )
                 )
         logger.debug(f"Done reading vcf file {signature_vcf_files}" "Converting to dataframe")
@@ -513,7 +521,11 @@ def read_intersection_dataframes(
 
 
 def generate_synthetic_signatures(
-    signature_vcf: str, db_vcf: str, n_synthetic_signatures: int, output_dir: str, ref_fasta: str = None
+    signature_vcf: str,
+    db_vcf: str,
+    n_synthetic_signatures: int,
+    output_dir: str,
+    ref_fasta: str = None,
 ) -> list[str]:
     """
     Generate synthetic signatures from a signature vcf file and a db vcf file
@@ -596,6 +608,11 @@ def generate_synthetic_signatures(
 def read_and_filter_features_parquet(
     features_file_parquet: str,
     read_filter_query: str,
+    thresh_locus_filter_high_ratio_of_low_mapq_reads: float = 0.95,
+    thresh_locus_filter_high_ratio_of_filtered_reads: float = 0.8,
+    thresh_locus_filter_many_alt_reads: int = 2,
+    thresh_locus_filter_many_non_ref_alt_reads: int = 2,
+    thresh_locus_filter_many_indels: int = 4,
 ):
     """
     Read featuremap parquet file and filter by query
@@ -617,15 +634,62 @@ def read_and_filter_features_parquet(
         A dataframe that includes the ratio of filtered to total reads per variant
     """
     df_features = pd.read_parquet(features_file_parquet, engine="fastparquet")
-    df_features = df_features.drop(columns="index")
+    if "index" in df_features.columns:
+        df_features = df_features.drop(columns="index")
     # rename columns to lowercase
-    df_features = df_features.rename(columns=lambda x: x.lower())
-    df_features = df_features.astype({"rq": float}).set_index(["chrom", "pos"])
-    df_features = df_features.assign(filtering_ratio=df_features["dp_filt"] / df_features["dp"])
-    df_features_filt = df_features.query(read_filter_query)
+    df_features = df_features.rename(columns=lambda x: x.lower()).set_index(["chrom", "pos"]).sort_index()
+    # refine ad columns
+    ad_cols = ["ad_a", "ad_c", "ad_g", "ad_t"]
+    if ad_cols[0] in df_features.columns:
+        df_features = df_features.assign(
+            filtering_ratio=df_features["dp_filt"] / df_features["dp"],
+            dp_mapq60_ratio=(df_features["dp_mapq60"]) / df_features["dp"],
+            ad_ref=np.choose(
+                df_features["ref"].str.lower().map({"a": 0, "c": 1, "g": 2, "t": 3}).to_numpy(),
+                df_features[ad_cols].to_numpy().T,
+            ),
+            ad_alt=np.choose(
+                df_features["alt"].str.lower().map({"a": 0, "c": 1, "g": 2, "t": 3}).to_numpy(),
+                df_features[ad_cols].to_numpy().T,
+            ),
+        )
+        df_features = df_features.assign(
+            ad_non_ref_alt=df_features["dp"] - df_features["ad_ref"] - df_features["ad_alt"],
+        )
+    # assign mi_primary - the primary alignment's MI (read name)
+    if "mi" in df_features.columns and "rn" in df_features.columns:
+        df_features = df_features.assign(
+            mi_primary=df_features["mi"].fillna(df_features["rn"]),
+        )
+
+    # assign locus filter
+    df_features = (
+        df_features.reset_index()
+        .set_index(["chrom", "pos", "signature"])
+        .join(
+            df_features.groupby(["chrom", "pos", "signature"])
+            .agg({"mi_primary": "nunique"})
+            .rename(columns={"mi_primary": "unique_hq_supporting_reads"})["unique_hq_supporting_reads"],
+            how="left",
+        )
+    ).reset_index(level="signature")
+    df_features = df_features.assign(
+        locus_filter_low_ratio_of_low_mapq_reads=df_features["dp_mapq60_ratio"]
+        > thresh_locus_filter_high_ratio_of_low_mapq_reads,
+        locus_filter_low_ratio_of_filtered_reads=df_features["filtering_ratio"]
+        > thresh_locus_filter_high_ratio_of_filtered_reads,
+        locus_filter_low_alt_reads=df_features["ad_alt"] <= thresh_locus_filter_many_alt_reads,
+        locus_filter_only_one_hq_supporting_read=df_features["unique_hq_supporting_reads"] <= 1,
+        locus_filter_low_non_ref_alt_reads=df_features["ad_non_ref_alt"] <= thresh_locus_filter_many_non_ref_alt_reads,
+        locus_filter_few_indels=(df_features["ad_del"] + df_features["ad_ins"] <= thresh_locus_filter_many_indels),
+    )
+    df_features = df_features.assign(locus_filter=df_features.filter(regex="locus_filter_.*").all(axis=1))
+
+    # kept for backwards compatibility - filtering ratio per locus
     filtering_ratio = (
         df_features.query("signature_type=='matched'").groupby(level=["chrom", "pos"]).agg({"filtering_ratio": "first"})
     )
+    df_features_filt = df_features.query(read_filter_query)
     return df_features, df_features_filt, filtering_ratio
 
 
