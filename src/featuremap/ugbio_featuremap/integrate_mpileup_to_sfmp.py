@@ -516,89 +516,88 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
     header = create_new_header(main_vcf, args.distance_start_to_center)
 
     # Iterators
-    f1, f2 = open(args.tumor_mpileup), open(args.normal_mpileup)
-    it1, it2 = map(parse_mpileup_line, f1), map(parse_mpileup_line, f2)
-    buf1, buf2 = deque(), deque()  # buffers for sliding window
-    p1, p2 = next(it1, None), next(it2, None)
+    with open(args.tumor_mpileup) as f1, open(args.normal_mpileup) as f2:
+        it1, it2 = map(parse_mpileup_line, f1), map(parse_mpileup_line, f2)
+        buf1, buf2 = deque(), deque()  # buffers for sliding window
+        p1, p2 = next(it1, None), next(it2, None)
 
-    # Open output VCF
-    with pysam.VariantFile(out_sfmp_vcf, "wz", header=header) as vcf_out:
-        current_chrom = None
+        # Open output VCF
+        with pysam.VariantFile(out_sfmp_vcf, "wz", header=header) as vcf_out:
+            current_chrom = None
 
-        for record in main_vcf.fetch():
-            chrom = record.chrom
-            start, end = record.pos - args.distance_start_to_center, record.pos + args.distance_start_to_center
+            for record in main_vcf.fetch():
+                chrom = record.chrom
+                start, end = record.pos - args.distance_start_to_center, record.pos + args.distance_start_to_center
 
-            # --- handle chromosome change ---
-            if chrom != current_chrom:
-                current_chrom = chrom
-                buf1.clear()
-                buf2.clear()
+                # --- handle chromosome change ---
+                if chrom != current_chrom:
+                    current_chrom = chrom
+                    buf1.clear()
+                    buf2.clear()
 
-                # advance pileup1 until correct chromosome
-                while p1 and p1[0] != chrom:
+                    # advance pileup1 until correct chromosome
+                    while p1 and p1[0] != chrom:
+                        p1 = next(it1, None)
+
+                    # advance pileup2 until correct chromosome
+                    while p2 and p2[0] != chrom:
+                        p2 = next(it2, None)
+
+                # --- pileup1 ---
+                buf1 = deque([x for x in buf1 if int(x[1]) >= start])
+                while p1 and p1[0] == chrom and int(p1[1]) < start:
+                    p1 = next(it1, None)
+                while p1 and p1[0] == chrom and start <= int(p1[1]) <= end:
+                    buf1.append(p1)
                     p1 = next(it1, None)
 
-                # advance pileup2 until correct chromosome
-                while p2 and p2[0] != chrom:
+                # --- pileup2 ---
+                buf2 = deque([x for x in buf2 if int(x[1]) >= start])
+                while p2 and p2[0] == chrom and int(p2[1]) < start:
+                    p2 = next(it2, None)
+                while p2 and p2[0] == chrom and start <= int(p2[1]) <= end:
+                    buf2.append(p2)
                     p2 = next(it2, None)
 
-            # --- pileup1 ---
-            buf1 = deque([x for x in buf1 if int(x[1]) >= start])
-            while p1 and p1[0] == chrom and int(p1[1]) < start:
-                p1 = next(it1, None)
-            while p1 and p1[0] == chrom and start <= int(p1[1]) <= end:
-                buf1.append(p1)
-                p1 = next(it1, None)
+                # --- create new VCF record ---
+                new_record = vcf_out.new_record(
+                    contig=record.chrom,
+                    start=record.start,
+                    stop=record.stop,
+                    id=record.id,
+                    qual=record.qual,
+                    alleles=record.alleles,
+                    filter=record.filter.keys(),
+                )
 
-            # --- pileup2 ---
-            buf2 = deque([x for x in buf2 if int(x[1]) >= start])
-            while p2 and p2[0] == chrom and int(p2[1]) < start:
-                p2 = next(it2, None)
-            while p2 and p2[0] == chrom and start <= int(p2[1]) <= end:
-                buf2.append(p2)
-                p2 = next(it2, None)
+                # copy INFO fields
+                for k, v in record.info.items():
+                    if k in header.info:
+                        new_record.info[k] = v
 
-            # --- create new VCF record ---
-            new_record = vcf_out.new_record(
-                contig=record.chrom,
-                start=record.start,
-                stop=record.stop,
-                id=record.id,
-                qual=record.qual,
-                alleles=record.alleles,
-                filter=record.filter.keys(),
-            )
+                # copy FORMAT fields
+                copy_format_fields_between_pysam_records(record, new_record, header)
 
-            # copy INFO fields
-            for k, v in record.info.items():
-                if k in header.info:
-                    new_record.info[k] = v
+                # process mpileup buffers
+                new_record = process_padded_positions(new_record, args.distance_start_to_center, record.pos, buf1, buf2)
 
-            # copy FORMAT fields
-            copy_format_fields_between_pysam_records(record, new_record, header)
+                # filter flag if missing positions
+                if len(buf1) == (2 * args.distance_start_to_center + 1) and len(buf2) == (
+                    2 * args.distance_start_to_center + 1
+                ):
+                    new_record.filter.clear()
+                    new_record.filter.add("PASS")
+                else:
+                    new_record.filter.add("MpileupData")
 
-            # process mpileup buffers
-            new_record = process_padded_positions(new_record, args.distance_start_to_center, record.pos, buf1, buf2)
+                vcf_out.write(new_record)
 
-            # filter flag if missing positions
-            if len(buf1) == (2 * args.distance_start_to_center + 1) and len(buf2) == (
-                2 * args.distance_start_to_center + 1
-            ):
-                new_record.filter.clear()
-                new_record.filter.add("PASS")
-            else:
-                new_record.filter.add("MpileupData")
-
-            vcf_out.write(new_record)
-
-    main_vcf.close()
     logger.info(f"Merged VCF file with mpileup info created: {out_sfmp_vcf}")
 
     # Index the filtered VCF
     cmd_index = ["bcftools", "index", "-t", out_sfmp_vcf]
     logger.debug(" ".join(cmd_index))
-    subprocess.check_call(cmd_index)
+    subprocess.run(cmd_index, check=True)
 
 
 def main():
