@@ -25,9 +25,6 @@ def count_num_variants(vcf):
 
 
 def test_somatic_pileup_featuremap_inference(tmp_path, resources_dir):
-    # in_sfmp = pjoin(
-    #     resources_dir, "Pa_47_fresh_frozen_vs_buffycoat.tumor_normal.merged.PASS.chr19.new.tr_info.mpileup.vcf.gz"
-    # )
     in_sfmp = pjoin(
         resources_dir, "expected_Pa_46.tumor_normal.merged.tumor_PASS.tr_info.chr1_3425000-4016800.mpileup.vcf.gz"
     )

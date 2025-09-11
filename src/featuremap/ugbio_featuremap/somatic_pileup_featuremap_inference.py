@@ -17,18 +17,6 @@ from ugbio_core.vcfbed import vcftools
 
 from ugbio_featuremap import featuremap_xgb_prediction
 
-MPILEUP_CUSTOM_INFO_FIELDS = [
-    "ref_m2",
-    "ref_m1",
-    "ref_0",
-    "ref_1",
-    "ref_2",
-    "nonref_m2",
-    "nonref_m1",
-    "nonref_0",
-    "nonref_1",
-    "nonref_2",
-]
 TR_CUSTOM_INFO_FIELDS = ["TR_distance", "TR_length", "TR_seq_unit_length"]
 
 
@@ -274,8 +262,8 @@ def run(argv):
     - Parses command-line arguments.
     - Sets up logging.
     - Loads an XGBoost model.
-    - Maps model features to VCF fields.
-    - Reads and processes a merged tumor-normal VCF file.
+    - Maps model-features to VCF-fields.
+    - Reads and processes a merged tumor-normal VCF file to a dataframe.
     - Predicts probabilities using the loaded model.
     - Saves the results as a Parquet file.
     - Annotates the original VCF with the predicted probabilities.
@@ -301,16 +289,23 @@ def run(argv):
         os.makedirs(args.out_directory)
         logger.info(f"Created output directory: {args.out_directory}")
 
+    # Load model
     xgb_clf_es = load_model(args.xgb_model)
     model_features = xgb_clf_es.get_booster().feature_names
     logger.info(f"loaded model. model features: {model_features}")
     __fields_mapping, custom_info_fields = map_fields_to_vcf(args.in_sfmp, model_features)
     logger.debug(f"model features fields mapping: {__fields_mapping}")
 
+    # Read somatic-featuremap-pileup-vcf into dataframe
     df_sfmp = read_merged_tumor_normal_vcf(args.in_sfmp, custom_info_fields=custom_info_fields)
+
+    # Inference
     df_sfmp["xgb_proba"] = predict(xgb_clf_es, df_sfmp)
+
+    #  Write outputs
     df_sfmp.to_parquet(pjoin(args.out_directory, "df_sfmp.new.parquet"))
     logger.debug(f"dataframe with xgb_proba is saved in: {pjoin(args.out_directory,'df_sfmp.new.parquet')}")
+
     out_sfmp_with_xgb_proba = os.path.basename(args.in_sfmp).replace("vcf.gz", "xgb_proba.vcf.gz")
     annotate_xgb_proba_to_vcf(df_sfmp, args.in_sfmp, pjoin(args.out_directory, out_sfmp_with_xgb_proba))
     logger.info(f"Annotated VCF with XGBoost probabilities saved to: {out_sfmp_with_xgb_proba}")

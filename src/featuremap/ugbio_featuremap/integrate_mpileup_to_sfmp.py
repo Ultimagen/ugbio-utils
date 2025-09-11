@@ -570,12 +570,12 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
                 filter=record.filter.keys(),
             )
 
-            # copy INFO
+            # copy INFO fields
             for k, v in record.info.items():
                 if k in header.info:
                     new_record.info[k] = v
 
-            # copy FORMAT
+            # copy FORMAT fields
             copy_format_fields_between_pysam_records(record, new_record, header)
 
             # process mpileup buffers
