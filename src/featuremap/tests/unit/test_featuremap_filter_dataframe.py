@@ -39,8 +39,8 @@ def test_filter_pipeline(tmp_path: Path) -> None:
         json.dump(cfg, f)
 
     out_pq = tmp_path / "f.parquet"
-    out_pq_full = Path("/home/itai/downloads/f_full.parquet")
-    stats_json = Path("/home/itai/downloads/stats.json")
+    out_pq_full = tmp_path / "f_full.parquet"
+    stats_json = tmp_path / "stats.json"
 
     filter_parquet(str(parquet_in), str(out_pq), str(out_pq_full), str(cfg_path), str(stats_json))
 

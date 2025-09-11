@@ -19,63 +19,69 @@ from ugbio_core.vcfbed import vcftools
 from ugbio_ppmseq.ppmSeq_consts import HistogramColumnNames
 
 from ugbio_featuremap import featuremap_consensus_utils
-from ugbio_featuremap.featuremap_utils import FeatureMapFields
+from ugbio_featuremap.featuremap_consensus_utils import PileupFeatureMapFields
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 
 default_custom_info_fields = [
-    FeatureMapFields.X_SCORE.value,
-    FeatureMapFields.X_EDIST.value,
-    FeatureMapFields.X_LENGTH.value,
-    FeatureMapFields.X_MAPQ.value,
-    FeatureMapFields.X_INDEX.value,
-    FeatureMapFields.X_FC1.value,
-    FeatureMapFields.X_FC2.value,
-    FeatureMapFields.MAX_SOFTCLIP_LENGTH.value,
-    FeatureMapFields.X_FLAGS.value,
+    PileupFeatureMapFields.X_SCORE.value,
+    PileupFeatureMapFields.X_EDIST.value,
+    PileupFeatureMapFields.X_LENGTH.value,
+    PileupFeatureMapFields.X_MAPQ.value,
+    PileupFeatureMapFields.X_INDEX.value,
+    PileupFeatureMapFields.X_FC1.value,
+    PileupFeatureMapFields.X_FC2.value,
+    PileupFeatureMapFields.MAX_SOFTCLIP_LENGTH.value,
+    PileupFeatureMapFields.X_FLAGS.value,
     HistogramColumnNames.STRAND_RATIO_CATEGORY_START.value,
     HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value,
     "ML_QUAL",
-    FeatureMapFields.X_RN.value,
-    FeatureMapFields.X_CIGAR.value,
+    PileupFeatureMapFields.X_RN.value,
+    PileupFeatureMapFields.X_CIGAR.value,
     "rq",
     "tm",
-    FeatureMapFields.IS_FORWARD.value,
-    FeatureMapFields.IS_DUPLICATE.value,
-    FeatureMapFields.READ_COUNT.value,
-    FeatureMapFields.FILTERED_COUNT.value,
-    FeatureMapFields.TRINUC_CONTEXT_WITH_ALT.value,
-    FeatureMapFields.HMER_CONTEXT_REF.value,
-    FeatureMapFields.HMER_CONTEXT_ALT.value,
-    FeatureMapFields.PREV_1.value,
-    FeatureMapFields.PREV_2.value,
-    FeatureMapFields.PREV_3.value,
-    FeatureMapFields.NEXT_1.value,
-    FeatureMapFields.NEXT_2.value,
-    FeatureMapFields.NEXT_3.value,
-    FeatureMapFields.IS_CYCLE_SKIP.value,
-    FeatureMapFields.X_QUAL.value,
+    PileupFeatureMapFields.IS_FORWARD.value,
+    PileupFeatureMapFields.IS_DUPLICATE.value,
+    PileupFeatureMapFields.READ_COUNT.value,
+    PileupFeatureMapFields.FILTERED_COUNT.value,
+    PileupFeatureMapFields.TRINUC_CONTEXT_WITH_ALT.value,
+    PileupFeatureMapFields.HMER_CONTEXT_REF.value,
+    PileupFeatureMapFields.HMER_CONTEXT_ALT.value,
+    PileupFeatureMapFields.PREV_1.value,
+    PileupFeatureMapFields.PREV_2.value,
+    PileupFeatureMapFields.PREV_3.value,
+    PileupFeatureMapFields.NEXT_1.value,
+    PileupFeatureMapFields.NEXT_2.value,
+    PileupFeatureMapFields.NEXT_3.value,
+    PileupFeatureMapFields.IS_CYCLE_SKIP.value,
+    PileupFeatureMapFields.X_QUAL.value,
 ]
 
 ppm_custom_info_fields = ["st", "et"]
 
 columns_for_mean_aggregation = [
-    FeatureMapFields.X_QUAL.value,
-    FeatureMapFields.X_SCORE.value,
-    FeatureMapFields.X_EDIST.value,
-    FeatureMapFields.X_LENGTH.value,
-    FeatureMapFields.X_MAPQ.value,
-    FeatureMapFields.X_FC1.value,
-    FeatureMapFields.X_FC2.value,
-    FeatureMapFields.MAX_SOFTCLIP_LENGTH.value,
-    FeatureMapFields.X_FLAGS.value,
+    PileupFeatureMapFields.X_QUAL.value,
+    PileupFeatureMapFields.X_SCORE.value,
+    PileupFeatureMapFields.X_EDIST.value,
+    PileupFeatureMapFields.X_LENGTH.value,
+    PileupFeatureMapFields.X_MAPQ.value,
+    PileupFeatureMapFields.X_FC1.value,
+    PileupFeatureMapFields.X_FC2.value,
+    PileupFeatureMapFields.MAX_SOFTCLIP_LENGTH.value,
+    PileupFeatureMapFields.X_FLAGS.value,
     "ML_QUAL",
 ]
-columns_for_min_aggregation = [FeatureMapFields.X_QUAL.value.lower(), FeatureMapFields.X_INDEX.value.lower()]
-columns_for_max_aggregation = [FeatureMapFields.X_QUAL.value.lower(), FeatureMapFields.X_INDEX.value.lower()]
-columns_for_fillna = [FeatureMapFields.IS_CYCLE_SKIP.value]
+columns_for_min_aggregation = [
+    PileupFeatureMapFields.X_QUAL.value.lower(),
+    PileupFeatureMapFields.X_INDEX.value.lower(),
+]
+columns_for_max_aggregation = [
+    PileupFeatureMapFields.X_QUAL.value.lower(),
+    PileupFeatureMapFields.X_INDEX.value.lower(),
+]
+columns_for_fillna = [PileupFeatureMapFields.IS_CYCLE_SKIP.value]
 columns_for_st_et_aggregation = ["st", "et"]
 
 added_agg_features = {

@@ -4,35 +4,84 @@ import re
 import subprocess
 import tempfile
 from collections import defaultdict
+from enum import Enum
 from os.path import basename, dirname
 from os.path import join as pjoin
 
 import numpy as np
 import pysam
-from ugbio_core.consts import AD, DP, GT, VAF
+from ugbio_core.consts import (
+    AD,
+    ALT,
+    CHROM,
+    DP,
+    FILTER,
+    GT,
+    IS_CYCLE_SKIP,
+    POS,
+    QUAL,
+    REF,
+    VAF,
+)
 from ugbio_core.logger import logger
 from ugbio_ppmseq.ppmSeq_consts import HistogramColumnNames
 
-from ugbio_featuremap.featuremap_utils import FeatureMapFields, FeatureMapFilters
+from ugbio_featuremap.featuremap_utils import FeatureMapFilters
+
+
+class PileupFeatureMapFields(Enum):
+    CHROM = CHROM
+    POS = POS
+    REF = REF
+    ALT = ALT
+    QUAL = QUAL
+    FILTER = FILTER
+    READ_COUNT = "X_READ_COUNT"
+    FILTERED_COUNT = "X_FILTERED_COUNT"
+    X_SCORE = "X_SCORE"
+    X_EDIST = "X_EDIST"
+    X_LENGTH = "X_LENGTH"
+    X_MAPQ = "X_MAPQ"
+    X_INDEX = "X_INDEX"
+    X_FC1 = "X_FC1"
+    X_FC2 = "X_FC2"
+    X_QUAL = "X_QUAL"
+    X_RN = "X_RN"
+    TRINUC_CONTEXT_WITH_ALT = "trinuc_context_with_alt"
+    HMER_CONTEXT_REF = "hmer_context_ref"
+    HMER_CONTEXT_ALT = "hmer_context_alt"
+    IS_CYCLE_SKIP = IS_CYCLE_SKIP
+    IS_FORWARD = "is_forward"
+    IS_DUPLICATE = "is_duplicate"
+    MAX_SOFTCLIP_LENGTH = "max_softclip_length"
+    X_FLAGS = "X_FLAGS"
+    X_CIGAR = "X_CIGAR"
+    PREV_1 = "prev_1"
+    PREV_2 = "prev_2"
+    PREV_3 = "prev_3"
+    NEXT_1 = "next_1"
+    NEXT_2 = "next_2"
+    NEXT_3 = "next_3"
+
 
 fields_to_collect_all_options = {
     "numeric_array_fields": [
-        FeatureMapFields.X_SCORE.value,
-        FeatureMapFields.X_EDIST.value,
-        FeatureMapFields.X_LENGTH.value,
-        FeatureMapFields.X_MAPQ.value,
-        FeatureMapFields.X_INDEX.value,
-        FeatureMapFields.X_FC1.value,
-        FeatureMapFields.X_FC2.value,
-        FeatureMapFields.MAX_SOFTCLIP_LENGTH.value,
-        FeatureMapFields.X_FLAGS.value,
+        PileupFeatureMapFields.X_SCORE.value,
+        PileupFeatureMapFields.X_EDIST.value,
+        PileupFeatureMapFields.X_LENGTH.value,
+        PileupFeatureMapFields.X_MAPQ.value,
+        PileupFeatureMapFields.X_INDEX.value,
+        PileupFeatureMapFields.X_FC1.value,
+        PileupFeatureMapFields.X_FC2.value,
+        PileupFeatureMapFields.MAX_SOFTCLIP_LENGTH.value,
+        PileupFeatureMapFields.X_FLAGS.value,
         HistogramColumnNames.STRAND_RATIO_START.value,
         HistogramColumnNames.STRAND_RATIO_END.value,
         "ML_QUAL",
     ],
     "string_list_fields": [
-        FeatureMapFields.X_RN.value,
-        FeatureMapFields.X_CIGAR.value,
+        PileupFeatureMapFields.X_RN.value,
+        PileupFeatureMapFields.X_CIGAR.value,
         "rq",
         "tm",
         HistogramColumnNames.STRAND_RATIO_CATEGORY_START.value,
@@ -41,24 +90,24 @@ fields_to_collect_all_options = {
         "et",
     ],
     "boolean_fields": [
-        FeatureMapFields.IS_FORWARD.value,
-        FeatureMapFields.IS_DUPLICATE.value,
+        PileupFeatureMapFields.IS_FORWARD.value,
+        PileupFeatureMapFields.IS_DUPLICATE.value,
     ],
     "fields_to_write_once": [
-        FeatureMapFields.READ_COUNT.value,
-        FeatureMapFields.FILTERED_COUNT.value,
-        FeatureMapFields.TRINUC_CONTEXT_WITH_ALT.value,
-        FeatureMapFields.HMER_CONTEXT_REF.value,
-        FeatureMapFields.HMER_CONTEXT_ALT.value,
-        FeatureMapFields.PREV_1.value,
-        FeatureMapFields.PREV_2.value,
-        FeatureMapFields.PREV_3.value,
-        FeatureMapFields.NEXT_1.value,
-        FeatureMapFields.NEXT_2.value,
-        FeatureMapFields.NEXT_3.value,
+        PileupFeatureMapFields.READ_COUNT.value,
+        PileupFeatureMapFields.FILTERED_COUNT.value,
+        PileupFeatureMapFields.TRINUC_CONTEXT_WITH_ALT.value,
+        PileupFeatureMapFields.HMER_CONTEXT_REF.value,
+        PileupFeatureMapFields.HMER_CONTEXT_ALT.value,
+        PileupFeatureMapFields.PREV_1.value,
+        PileupFeatureMapFields.PREV_2.value,
+        PileupFeatureMapFields.PREV_3.value,
+        PileupFeatureMapFields.NEXT_1.value,
+        PileupFeatureMapFields.NEXT_2.value,
+        PileupFeatureMapFields.NEXT_3.value,
     ],
     "boolean_fields_to_write_once": [
-        FeatureMapFields.IS_CYCLE_SKIP.value,
+        PileupFeatureMapFields.IS_CYCLE_SKIP.value,
     ],
 }
 
@@ -96,10 +145,10 @@ def write_a_pileup_record(  # noqa: C901, PLR0912 #TODO: refactor. too complex
     rec.ref = rec_id[2]
     rec.alts = rec_id[3]
     rec.id = "."
-    rec.qual = qual_agg_func(record_dict[FeatureMapFields.X_QUAL.value])
+    rec.qual = qual_agg_func(record_dict[PileupFeatureMapFields.X_QUAL.value])
     # INFO fields to aggregate
     # exceptions: X_QUAL
-    rec.info[FeatureMapFields.X_QUAL.value] = list(record_dict[FeatureMapFields.X_QUAL.value])
+    rec.info[PileupFeatureMapFields.X_QUAL.value] = list(record_dict[PileupFeatureMapFields.X_QUAL.value])
     for field in fields_to_collect["numeric_array_fields"]:
         if field in record_dict:
             rec.info[field] = list(record_dict[field])
@@ -125,7 +174,7 @@ def write_a_pileup_record(  # noqa: C901, PLR0912 #TODO: refactor. too complex
                 )
 
     # FORMAT fields to aggregate
-    record_dict[DP] = rec.info[FeatureMapFields.FILTERED_COUNT.value]
+    record_dict[DP] = rec.info[PileupFeatureMapFields.FILTERED_COUNT.value]
     record_dict[VAF] = record_dict["rec_counter"] / record_dict[DP]
     record_dict[GT] = (0, 1)
     record_dict[AD] = [
@@ -235,7 +284,7 @@ def pileup_featuremap(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
             logger.debug(f"Field {field} not found in the input featuremap vcf")
 
     # exceptions: X_QUAL
-    header.info.add(FeatureMapFields.X_QUAL.value, ".", "Float", "Quality of reads containing this location")
+    header.info.add(PileupFeatureMapFields.X_QUAL.value, ".", "Float", "Quality of reads containing this location")
     header.formats.add(GT, 1, "String", "Genotype")
     header.formats.add(DP, 1, "Integer", "Read depth")
     header.formats.add(AD, "R", "Integer", "Allelic depths")
@@ -283,7 +332,7 @@ def pileup_featuremap(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
                     # initialize rec_counter
                     cons_dict[rec_id]["rec_counter"] = 0
                     # exceptions: X_QUAL
-                    cons_dict[rec_id][FeatureMapFields.X_QUAL.value] = np.array([])
+                    cons_dict[rec_id][PileupFeatureMapFields.X_QUAL.value] = np.array([])
                     for field in fields_to_collect["numeric_array_fields"]:
                         cons_dict[rec_id][field] = np.array([])
                     for field in fields_to_collect["string_list_fields"]:
@@ -298,8 +347,8 @@ def pileup_featuremap(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
                 # update the record
                 cons_dict[rec_id]["rec_counter"] += 1
                 # exceptions: X_QUAL
-                cons_dict[rec_id][FeatureMapFields.X_QUAL.value] = np.append(
-                    cons_dict[rec_id][FeatureMapFields.X_QUAL.value], rec.qual
+                cons_dict[rec_id][PileupFeatureMapFields.X_QUAL.value] = np.append(
+                    cons_dict[rec_id][PileupFeatureMapFields.X_QUAL.value], rec.qual
                 )
                 for field in fields_to_collect["numeric_array_fields"]:
                     cons_dict[rec_id][field] = np.append(cons_dict[rec_id][field], rec.info.get(field, np.nan))
