@@ -14,7 +14,7 @@ env:
   AWS_REGION: us-east-1
   AWS_ROLE_NAME: github-actions-ecr
   AWS_ACCOUNT: 337532070941
-  UGBIO_BASE_IMAGE_NAME: ugbio_base:test_c7604cd
+  UGBIO_BASE_IMAGE_NAME: ugbio_base:test-bgzip
   UGBIO_UTILS_REPO_PATH: ./ugbio-utils
   INSTALL_BIO_PATH: ./install-bio
   INSTALL_BIO_REF: main
