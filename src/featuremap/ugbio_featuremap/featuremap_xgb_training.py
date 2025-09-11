@@ -15,23 +15,23 @@ from ugbio_core.logger import logger
 from ugbio_core.vcfbed import vcftools
 
 from ugbio_featuremap import featuremap_xgb_prediction
-from ugbio_featuremap.featuremap_utils import FeatureMapFields
+from ugbio_featuremap.featuremap_consensus_utils import PileupFeatureMapFields
 
 added_agg_features = featuremap_xgb_prediction.added_agg_features
 ppm_added_agg_features = featuremap_xgb_prediction.ppm_added_agg_features
 custom_info_fields = [
-    FeatureMapFields.READ_COUNT.value,
-    FeatureMapFields.FILTERED_COUNT.value,
-    FeatureMapFields.TRINUC_CONTEXT_WITH_ALT.value,
-    FeatureMapFields.HMER_CONTEXT_REF.value,
-    FeatureMapFields.HMER_CONTEXT_ALT.value,
-    FeatureMapFields.PREV_1.value,
-    FeatureMapFields.PREV_2.value,
-    FeatureMapFields.PREV_3.value,
-    FeatureMapFields.NEXT_1.value,
-    FeatureMapFields.NEXT_2.value,
-    FeatureMapFields.NEXT_3.value,
-    FeatureMapFields.IS_CYCLE_SKIP.value,
+    PileupFeatureMapFields.READ_COUNT.value,
+    PileupFeatureMapFields.FILTERED_COUNT.value,
+    PileupFeatureMapFields.TRINUC_CONTEXT_WITH_ALT.value,
+    PileupFeatureMapFields.HMER_CONTEXT_REF.value,
+    PileupFeatureMapFields.HMER_CONTEXT_ALT.value,
+    PileupFeatureMapFields.PREV_1.value,
+    PileupFeatureMapFields.PREV_2.value,
+    PileupFeatureMapFields.PREV_3.value,
+    PileupFeatureMapFields.NEXT_1.value,
+    PileupFeatureMapFields.NEXT_2.value,
+    PileupFeatureMapFields.NEXT_3.value,
+    PileupFeatureMapFields.IS_CYCLE_SKIP.value,
 ]
 custom_info_fields.extend(list(added_agg_features))
 
