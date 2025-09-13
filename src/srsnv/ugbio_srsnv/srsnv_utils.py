@@ -573,7 +573,14 @@ class HandlePPMSeqTagsInFeatureMapDataFrame:
 
     def log(self, msg, level="info"):
         if self.logger:
-            self.logger.log(level, msg)
+            if level == "warning":
+                self.logger.warning(msg)
+            elif level == "error":
+                self.logger.error(msg)
+            elif level == "debug":
+                self.logger.debug(msg)
+            else:
+                self.logger.info(msg)
         elif level == "warning":
             warnings.warn(msg, UserWarning, stacklevel=2)
         elif level == "error":
@@ -828,7 +835,10 @@ class HandlePPMSeqTagsInFeatureMapDataFrame:
                 adapter_reached = self.featuremap_df[TM].str.contains("A", na=False).to_numpy()
 
                 # Use pandas operations to preserve categorical dtype
-                nan_mask = self.featuremap_df[et_fillna].isna()
+                nan_mask = (
+                    self.featuremap_df[et_fillna].isna()
+                    | (self.featuremap_df[et_fillna] == PpmseqCategories.UNDETERMINED.value)  # for legacy_v5 adapters
+                )
                 self.featuremap_df.loc[nan_mask & adapter_reached, et_fillna] = PpmseqCategories.UNDETERMINED.value
                 self.featuremap_df.loc[nan_mask & ~adapter_reached, et_fillna] = PpmseqCategories.END_UNREACHED.value
             else:

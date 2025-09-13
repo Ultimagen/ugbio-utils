@@ -1855,7 +1855,7 @@ class SRSNVReport:
             -1,
         )
 
-        plot_df = self.data_df[self.data_df[LABEL]]
+        plot_df = self.data_df  # [self.data_df[LABEL]]
 
         # Set the axis limits
         xmin, xmax = 0.99 * xs.min(), xs.max() * 1.01
@@ -1878,16 +1878,17 @@ class SRSNVReport:
         sns.histplot(
             data=plot_df,
             x=QUAL,
-            hue=IS_MIXED,
+            hue=LABEL,  # IS_MIXED,
             hue_order=[False, True],
             element="step",
             stat="density",
-            common_norm=False,
+            common_norm=True,  # False,
             linewidth=1,
             ax=ax_marg_x,
-            palette={False: "red", True: "green"},
+            # palette={False: "red", True: "green"},
         )
         ax_marg_x.grid(visible=True)
+        ax_marg_x.set_yscale("log")
         ax_marg_x.set_xlabel("")
         plt.setp(ax_marg_x.get_xticklabels(), visible=False)
         sns.move_legend(
@@ -1908,17 +1909,18 @@ class SRSNVReport:
         sns.histplot(
             data=plot_df,
             y=ML_QUAL_1_TEST,
-            hue=IS_MIXED,
+            hue=LABEL,  # IS_MIXED,
             hue_order=[False, True],
             element="step",
             stat="density",
-            common_norm=False,
+            common_norm=True,  # False,
             linewidth=1,
             ax=ax_marg_y,
-            palette={False: "red", True: "green"},
+            # palette={False: "red", True: "green"},
         )
         ax_marg_y.grid(visible=True)
         ax_marg_y.set_ylabel("")
+        ax_marg_y.set_xscale("log")
         ax_marg_y.get_legend().set_visible(False)
         plt.setp(ax_marg_y.get_yticklabels(), visible=False)
 
@@ -1926,7 +1928,6 @@ class SRSNVReport:
         plt.tight_layout()
         gs.update(hspace=0.0, wspace=0.0)
         self._save_plt(output_filename, fig)
-        plt.show()
 
     def _safe_roc_auc(self, y_true, y_pred, name=None):
         """
@@ -2640,7 +2641,6 @@ class SRSNVReport:
         #     ax.set_yticklabels(ticklabels, fontsize=ticklabelsfontsize)
 
         fig.tight_layout()
-        plt.show()
         self._save_plt(output_filename=output_filename, fig=fig)
 
     def _plot_logit_histogram(self, plot_df, ax, alpha=0.4):
@@ -2694,7 +2694,7 @@ class SRSNVReport:
         ax.set_xlabel("ML logit")  # , fontsize=label_fontsize)
         ax.set_xlim([xmin, xmax])
         fig.tight_layout()
-        plt.show()
+        # plt.show()
         self._save_plt(output_filename=output_filename, fig=fig)
 
     def create_report(self):

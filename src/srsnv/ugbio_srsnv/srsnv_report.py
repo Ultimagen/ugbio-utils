@@ -81,6 +81,7 @@ def add_is_mixed_to_featuremap_df(
         featuremap_df=data_df,
         categorical_features_names=categorical_features_names or [],
         ppmseq_adapter_version=adapter_version,  # This should be set based on the actual adapter version used
+        logger=logger,
     )
     tags_handler.fill_nan_tags()
     tags_handler.add_is_mixed_to_featuremap_df()
