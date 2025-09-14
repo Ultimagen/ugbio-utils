@@ -151,9 +151,25 @@ def prepare_report(  # noqa: C901 PLR0915
             fold_idx += 1
     else:
         # Use model paths from metadata
-        for model_path in metadata["model_paths"].values():
+        for orig_model_path in metadata["model_paths"].values():
             model = xgb.XGBClassifier()
-            model.load_model(model_path)
+            # File existence + fallback check (refactored for lint compliance)
+            path_to_load = orig_model_path
+            if not os.path.exists(path_to_load):
+                _alt_model_path = os.path.join(os.getcwd(), os.path.basename(path_to_load))
+                logger.debug(
+                    "Model file not found at '%s'. Trying CWD path '%s'.",
+                    path_to_load,
+                    _alt_model_path,
+                )
+                if os.path.exists(_alt_model_path):
+                    path_to_load = _alt_model_path
+                else:
+                    raise FileNotFoundError(
+                        "Expected model file not found. Looked for: "
+                        f"'{path_to_load}' and '{_alt_model_path}'. Neither location contains the model file."
+                    )
+            model.load_model(path_to_load)
             models.append(model)
 
     # Load training evaluation results
