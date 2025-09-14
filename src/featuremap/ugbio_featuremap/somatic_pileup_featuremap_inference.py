@@ -31,8 +31,8 @@ import numpy as np
 import pandas as pd
 import pysam
 import xgboost
-from ugbio_comparison.vcf_pipeline_utils import VcfPipelineUtils
 from ugbio_core.logger import logger
+from ugbio_core.vcf_pipeline_utils import VcfPipelineUtils
 from ugbio_core.vcfbed import vcftools
 
 from ugbio_featuremap import featuremap_xgb_prediction

@@ -10,9 +10,8 @@ import pandas as pd
 from simppl.simple_pipeline import SimplePipeline
 from ugbio_core.exec_utils import print_and_execute
 from ugbio_core.logger import logger
+from ugbio_core.vcf_pipeline_utils import VcfPipelineUtils
 from ugbio_core.vcfbed import vcftools
-
-from ugbio_comparison.vcf_pipeline_utils import VcfPipelineUtils
 
 
 class SVComparison:
