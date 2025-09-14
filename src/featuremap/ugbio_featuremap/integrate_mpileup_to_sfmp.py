@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 #!/env/python
 # Copyright 2023 Ultima Genomics Inc.
 #
@@ -16,6 +17,8 @@
 #    integrate mpileup information into a somatic featuremap pileup VCF file
 # CHANGELOG in reverse chronological order
 
+=======
+>>>>>>> 4b5bffb (BIOIN-2329 add samtools mpileup step to somatic rare variants (#152))
 import argparse
 import logging
 import os
@@ -138,6 +141,101 @@ def create_new_header(main_vcf: pysam.VariantFile, distance_start_to_center: int
     return header
 
 
+<<<<<<< HEAD
+=======
+def parse_bases(bases: str) -> tuple[int, int]:
+    """
+    Parse base calls from mpileup format and count reference and non-reference bases.
+
+    Parameters
+    ----------
+    bases : str
+        String containing base calls from mpileup format. Can include:
+        - '.' or ',' for reference bases
+        - 'ACGTNacgtn*' for non-reference bases
+        - '^' followed by mapping quality for read start
+        - '$' for read end
+        - '+' or '-' followed by length digits and inserted/deleted sequence
+
+    Returns
+    -------
+    ref_count : int
+        Number of reference base calls (. or ,)
+    nonref_count : int
+        Number of non-reference base calls (substitutions and indels)
+
+    Notes
+    -----
+    The function handles mpileup format special characters:
+    - Skips mapping quality after '^'
+    - Ignores '$' markers
+    - Properly parses indel notation (+/-) with length specification
+    """
+    ref_count = 0
+    nonref_count = 0
+    i = 0
+    while i < len(bases):
+        c = bases[i]
+        if c in ".,":
+            ref_count += 1
+        elif c in "ACGTNacgtn*":
+            nonref_count += 1
+        elif c == "^":
+            i += 1
+        elif c == "$":
+            pass
+        elif c in "+-":
+            i += 1
+            length = ""
+            nonref_count += 1  # count the indel itself
+            while i < len(bases) and bases[i].isdigit():
+                length += bases[i]
+                i += 1
+            i += int(length) - 1
+        i += 1
+    return ref_count, nonref_count
+
+
+def parse_mpileup_line(mpileup_line: str) -> tuple[str, int, int, int]:
+    """
+    Parse a single mpileup line and extract base count information.
+
+    Parameters
+    ----------
+    mpileup_line : str
+        A single line from an mpileup file containing chromosome, position,
+        reference base, depth, and base string information.
+
+    Returns
+    -------
+    tuple[str, int, int, int]
+        A tuple containing:
+        - chrom : str
+            Chromosome identifier
+        - pos : int
+            Genomic position
+        - ref_count : int
+            Count of bases matching the reference
+        - nonref_count : int
+            Count of bases not matching the reference
+
+    Notes
+    -----
+    The function expects mpileup lines with at least 5 tab-delimited fields:
+    chromosome, position, reference base, depth, and bases string.
+    """
+    fields = mpileup_line.strip().split("\t")
+    minimal_num_fields = 5
+    if len(fields) < minimal_num_fields:
+        raise ValueError(
+            f"Invalid mpileup line: expected at least {minimal_num_fields} fields, got {len(fields)} : {mpileup_line}"
+        )
+    chrom, pos, bases = fields[0], fields[1], fields[4]
+    ref_count, nonref_count = parse_bases(bases)
+    return chrom, pos, ref_count, nonref_count
+
+
+>>>>>>> 4b5bffb (BIOIN-2329 add samtools mpileup step to somatic rare variants (#152))
 def process_padded_positions(
     new_record: pysam.VariantRecord,
     distance_start_to_center: int,
@@ -219,6 +317,181 @@ def process_padded_positions(
     return new_record
 
 
+<<<<<<< HEAD
+=======
+def _n_genotypes(n_alleles: int, ploidy: int) -> int:
+    """
+    Calculate the number of possible genotypes given the number of alleles and ploidy.
+
+    For diploid organisms (ploidy=2), uses a shortcut formula. For other ploidy levels,
+    computes the number of combinations with repetition (multichoose).
+
+    Parameters
+    ----------
+    n_alleles : int
+        The number of distinct alleles at the locus.
+    ploidy : int
+        The ploidy level (number of sets of chromosomes).
+
+    Returns
+    -------
+    int
+        The number of possible genotypes.
+
+    Examples
+    --------
+    >>> _n_genotypes(2, 2)
+    3
+    >>> _n_genotypes(3, 2)
+    6
+    >>> _n_genotypes(2, 3)
+    4
+    """
+    # combinations with repetition: C(n_alleles + ploidy - 1, ploidy)
+    # diploid shortcut: n*(n+1)//2
+    diploid_ploidy = 2
+    if ploidy == diploid_ploidy:
+        return n_alleles * (n_alleles + 1) // 2
+    # generic
+    num = 1
+    den = 1
+    k = ploidy
+    n = n_alleles + ploidy - 1
+    for i in range(1, k + 1):
+        num *= n - (i - 1)
+        den *= i
+    return num // den
+
+
+def _as_tuple(x: list | tuple | Any) -> tuple:
+    """
+    Convert input to a tuple.
+
+    Parameters
+    ----------
+    x : list, tuple, or any type
+        The input to be converted to a tuple. If `x` is a list or tuple, it is converted to a tuple.
+        Otherwise, `x` is wrapped in a single-element tuple.
+
+    Returns
+    -------
+    tuple
+        The input as a tuple.
+    """
+    return tuple(x) if isinstance(x, list | tuple) else (x,)
+
+
+def copy_format_fields_between_pysam_records(  # noqa: C901, PLR0912, PLR0915
+    record: pysam.VariantRecord,
+    new_record: pysam.VariantRecord,
+    header: pysam.VariantHeader,
+):
+    """
+    Copy all FORMAT fields for overlapping samples from a source pysam VariantRecord to a target VariantRecord.
+
+    This function transfers all FORMAT fields (sample-level data) from `record` (source) to `new_record` (target)
+    for samples present in both records. It ensures that the FORMAT fields are compatible with the target record's
+    header and allele structure, handling allele-dependent fields (Number=A/R/G) and ploidy appropriately.
+
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        The source VariantRecord from which to copy FORMAT fields.
+    new_record : pysam.VariantRecord
+        The target VariantRecord to which FORMAT fields will be copied.
+    header : pysam.VariantHeader
+        The header of the target VCF, used to check FORMAT field definitions.
+
+    Notes
+    -----
+    - Only samples present in both `record` and `new_record` are processed.
+    - FORMAT fields not declared in the target header are skipped.
+    - For allele-dependent fields (Number=A/R/G), the function checks that the value lengths
+      match the target record's alleles.
+    - Fields with variable or fixed length >1 are passed as tuples; scalars are wrapped as needed.
+    - If a FORMAT field's value is incompatible with the target record (e.g., wrong length),
+      it is skipped for that sample.
+    """
+    nalt_tgt = len(new_record.alts or ())
+
+    for sample in new_record.samples:
+        if sample not in record.samples:
+            continue
+
+        # Determine ploidy from GT in the *source* (fallback to target if missing)
+        gt_src = record.samples[sample].get("GT", None)
+        gt_tgt = new_record.samples[sample].get("GT", None)
+        ploidy = (
+            len(gt_src)
+            if isinstance(gt_src, list | tuple) and gt_src is not None
+            else (len(gt_tgt) if isinstance(gt_tgt, list | tuple) and gt_tgt is not None else 2)
+        )
+
+        for fmt_field in record.format.keys():
+            # Skip if not declared in target header
+            fmt_def = header.formats.get(fmt_field)
+            if fmt_def is None:
+                continue
+
+            # Do not try to write GT unless you really want to overwrite it.
+            if fmt_field == "GT":
+                val = record.samples[sample].get("GT", None)
+                if val is None:
+                    continue
+                # pysam expects a tuple of ints/None, e.g. (0,1) or (None, None)
+                if not isinstance(val, list | tuple):
+                    # Single allele -> make tuple
+                    val = (val,)
+                new_record.samples[sample]["GT"] = tuple(val)
+                continue
+
+            # Get value from source; skip if unset
+            if fmt_field not in record.samples[sample]:
+                continue
+            val = record.samples[sample][fmt_field]
+            if val is None:
+                continue
+
+            number = fmt_def.number  # could be int, or one of 'A','R','G','.'
+            # For Number=A/R/G we must ensure allele-dependent lengths match the *target* record
+            if number == "A":
+                expected = nalt_tgt
+                seq = _as_tuple(val)
+                if len(seq) != expected:
+                    # If allele counts differ, safest is to skip to avoid invalid lengths
+                    continue
+                new_record.samples[sample][fmt_field] = tuple(seq)
+            elif number == "R":
+                expected = 1 + nalt_tgt
+                seq = _as_tuple(val)
+                if len(seq) != expected:
+                    continue
+                new_record.samples[sample][fmt_field] = tuple(seq)
+            elif number == "G":
+                n_alleles_tgt = 1 + nalt_tgt
+                expected = _n_genotypes(n_alleles_tgt, ploidy)
+                seq = _as_tuple(val)
+                if len(seq) != expected:
+                    continue
+                new_record.samples[sample][fmt_field] = tuple(seq)
+            elif number == 1:
+                # Single value expected: if a tuple/list was provided, take first element
+                if isinstance(val, list | tuple):
+                    new_record.samples[sample][fmt_field] = val[0]
+                else:
+                    new_record.samples[sample][fmt_field] = val
+            elif number == "." or (isinstance(number, int) and number > 1):
+                # Variable or fixed-length >1: pass tuples as-is, scalars get wrapped once
+                if isinstance(val, list | tuple):
+                    new_record.samples[sample][fmt_field] = tuple(val)
+                else:
+                    new_record.samples[sample][fmt_field] = (val,)
+            else:
+                # Fallback: try best-effort without re-shaping
+                new_record.samples[sample][fmt_field] = val
+
+
+>>>>>>> 4b5bffb (BIOIN-2329 add samtools mpileup step to somatic rare variants (#152))
 def run(argv):  # noqa: C901, PLR0912, PLR0915
     """
     Integrate mpileup data into SFMP VCF file.
@@ -271,7 +544,11 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
 
     # Iterators
     with open(args.tumor_mpileup) as f1, open(args.normal_mpileup) as f2:
+<<<<<<< HEAD
         it1, it2 = map(pileup_utils.parse_mpileup_line, f1), map(pileup_utils.parse_mpileup_line, f2)
+=======
+        it1, it2 = map(parse_mpileup_line, f1), map(parse_mpileup_line, f2)
+>>>>>>> 4b5bffb (BIOIN-2329 add samtools mpileup step to somatic rare variants (#152))
         buf1, buf2 = deque(), deque()  # buffers for sliding window
         p1, p2 = next(it1, None), next(it2, None)
 
@@ -330,6 +607,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
                         new_record.info[k] = v
 
                 # copy FORMAT fields
+<<<<<<< HEAD
                 # copy_format_fields_between_pysam_records(record, new_record, header)
                 for sample in record.samples:
                     src = record.samples[sample]
@@ -338,6 +616,9 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
                         if v in (None, (None,)):
                             continue  # no need to assign missing values
                         tgt[k] = v
+=======
+                copy_format_fields_between_pysam_records(record, new_record, header)
+>>>>>>> 4b5bffb (BIOIN-2329 add samtools mpileup step to somatic rare variants (#152))
 
                 # process mpileup buffers
                 new_record = process_padded_positions(new_record, args.distance_start_to_center, record.pos, buf1, buf2)

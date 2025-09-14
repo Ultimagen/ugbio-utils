@@ -31,7 +31,6 @@ import numpy as np
 import pandas as pd
 import pysam
 import xgboost
-from ugbio_comparison.vcf_pipeline_utils import VcfPipelineUtils
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed import vcftools
 
@@ -109,6 +108,14 @@ def read_merged_tumor_normal_vcf(
         df_tumor = vcftools.get_vcf_df(vcf_file, sample_id=0, custom_info_fields=custom_info_fields)
         df_normal = vcftools.get_vcf_df(vcf_file, sample_id=1, custom_info_fields=custom_info_fields)
 
+<<<<<<< HEAD
+=======
+    # fillna
+    if fillna_dict:
+        df_tumor = df_tumor.fillna(fillna_dict)
+        df_normal = df_normal.fillna(fillna_dict)
+
+>>>>>>> 4b5bffb (BIOIN-2329 add samtools mpileup step to somatic rare variants (#152))
     # merge dataframes
     df_tumor_normal = pd.concat([df_tumor.add_prefix("t_"), df_normal.add_prefix("n_")], axis=1)
 
@@ -268,9 +275,14 @@ def annotate_xgb_proba_to_vcf(df_sfmp: pd.DataFrame, in_sfmp_vcf: str, out_vcf: 
     ]
     logger.debug(f"Running command: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
+<<<<<<< HEAD
 
     # Index the output VCF
     vpu.index_vcf(out_vcf)
+=======
+    # Index the output VCF
+    subprocess.run(["bcftools", "index", "-t", out_vcf], check=True)  # noqa: S607
+>>>>>>> 4b5bffb (BIOIN-2329 add samtools mpileup step to somatic rare variants (#152))
 
 
 def run(argv):
