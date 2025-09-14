@@ -32,10 +32,11 @@ from tqdm import tqdm
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
 from ugbio_core.h5_utils import read_hdf
 from ugbio_core.logger import logger
+from ugbio_core.vcf_pipeline_utils import VcfPipelineUtils
 from ugbio_core.vcfbed import vcftools
 from ugbio_core.vcfbed.interval_file import IntervalFile
 
-from ugbio_comparison import comparison_utils, vcf_pipeline_utils
+from ugbio_comparison import comparison_utils
 from ugbio_comparison.comparison_pipeline import ComparisonPipeline
 
 MIN_CONTIG_LENGTH = 100000
@@ -225,7 +226,7 @@ def run(argv: list[str]):
     args = parser.parse_args(argv[1:])
     logger.setLevel(getattr(logging, args.verbosity))
     sp = SimplePipeline(args.fc, args.lc, debug=args.d, print_timing=True)
-    vpu = vcf_pipeline_utils.VcfPipelineUtils(sp)
+    vpu = VcfPipelineUtils(sp)
 
     cmp_intervals = IntervalFile(sp, args.cmp_intervals, args.reference, args.reference_dict)
     highconf_intervals = IntervalFile(sp, args.highconf_intervals, args.reference, args.reference_dict)
