@@ -4,9 +4,8 @@ import shutil
 from os.path import basename, dirname, splitext
 from os.path import join as pjoin
 
+from ugbio_core.vcf_pipeline_utils import VcfPipelineUtils
 from ugbio_core.vcfbed.interval_file import IntervalFile
-
-from ugbio_comparison.vcf_pipeline_utils import VcfPipelineUtils
 
 
 class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
