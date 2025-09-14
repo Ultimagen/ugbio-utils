@@ -1,3 +1,22 @@
+#!/env/python
+# Copyright 2023 Ultima Genomics Inc.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#        http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+# DESCRIPTION
+#    Run somatic pileup featuremap inference using an input somatic featuremap pileup VCF file
+#    and a pre-trained XGBoost model.
+# CHANGELOG in reverse chronological order
+
 import argparse
 import logging
 import os
@@ -12,12 +31,14 @@ import numpy as np
 import pandas as pd
 import pysam
 import xgboost
+from ugbio_comparison.vcf_pipeline_utils import VcfPipelineUtils
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed import vcftools
 
 from ugbio_featuremap import featuremap_xgb_prediction
 
 TR_CUSTOM_INFO_FIELDS = ["TR_distance", "TR_length", "TR_seq_unit_length"]
+vpu = VcfPipelineUtils()
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
@@ -38,7 +59,7 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         prog="somatic_pileup_featuremap_inference.py",
         description=(
             "Run somatic pileup featuremap inference using an input somatic featuremap pileup "
-            "vcf file and XGBoost model."
+            "VCF file and a pre-trained XGBoost model."
         ),
     )
     parser.add_argument(
@@ -87,11 +108,6 @@ def read_merged_tumor_normal_vcf(
     else:
         df_tumor = vcftools.get_vcf_df(vcf_file, sample_id=0, custom_info_fields=custom_info_fields)
         df_normal = vcftools.get_vcf_df(vcf_file, sample_id=1, custom_info_fields=custom_info_fields)
-
-    # fillna
-    if fillna_dict:
-        df_tumor = df_tumor.fillna(fillna_dict)
-        df_normal = df_normal.fillna(fillna_dict)
 
     # merge dataframes
     df_tumor_normal = pd.concat([df_tumor.add_prefix("t_"), df_normal.add_prefix("n_")], axis=1)
@@ -252,8 +268,9 @@ def annotate_xgb_proba_to_vcf(df_sfmp: pd.DataFrame, in_sfmp_vcf: str, out_vcf: 
     ]
     logger.debug(f"Running command: {' '.join(cmd)}")
     subprocess.run(cmd, check=True)
+
     # Index the output VCF
-    subprocess.run(["bcftools", "index", "-t", out_vcf], check=True)  # noqa: S607
+    vpu.index_vcf(out_vcf)
 
 
 def run(argv):
