@@ -8,10 +8,13 @@ from enum import Enum
 from os.path import join as pjoin
 
 import pandas as pd
+from ugbio_comparison.vcf_pipeline_utils import VcfPipelineUtils
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed import vcftools
 
 from ugbio_featuremap import featuremap_xgb_prediction
+
+vpu = VcfPipelineUtils()
 
 
 class DefaultCustomInfoFieldsWithSingleValue(Enum):
@@ -215,7 +218,7 @@ def move_vcf_value_from_INFO_to_FORMAT(input_vcf, output_vcf, info_field_tags, l
     logger.debug(cmd)
     subprocess.check_call(cmd)
     # Index the output VCF with tabix
-    subprocess.check_call(["tabix", "-p", "vcf", output_vcf])  # noqa: S607
+    vpu.index_vcf(output_vcf)
 
 
 def merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_merged_vcf):
@@ -255,9 +258,7 @@ def merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_mer
     ]
     logger.debug(" ".join(cmd_merge))
     subprocess.check_call(cmd_merge)
-    cmd_index = ["bcftools", "index", "-t", out_merged_vcf]
-    logger.debug(" ".join(cmd_index))
-    subprocess.check_call(cmd_index)
+    vpu.index_vcf(out_merged_vcf)
 
     # Filtering for tumor-PASS variants only
     cmd_filter = [
@@ -273,9 +274,7 @@ def merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_mer
     logger.debug(" ".join(cmd_filter))
     subprocess.check_call(cmd_filter)
     # Index the filtered VCF
-    cmd_index = ["bcftools", "index", "-t", out_merged_vcf.replace(".vcf.gz", ".tumor_PASS.vcf.gz")]
-    logger.debug(" ".join(cmd_index))
-    subprocess.check_call(cmd_index)
+    vpu.index_vcf(out_merged_vcf.replace(".vcf.gz", ".tumor_PASS.vcf.gz"))
 
     return out_merged_vcf.replace(".vcf.gz", ".tumor_PASS.vcf.gz")
 
