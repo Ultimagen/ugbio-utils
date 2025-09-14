@@ -20,7 +20,6 @@ on:
           - "ppmseq"
           - "single_cell"
           - "srsnv"
-          - "vcflite"
         required: true
         default: ""
 
