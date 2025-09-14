@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pysam
 import pytest
 from simppl.simple_pipeline import SimplePipeline
-from ugbio_comparison.vcf_pipeline_utils import VcfPipelineUtils
+from ugbio_core.vcf_pipeline_utils import VcfPipelineUtils
 from ugbio_core.vcfbed import vcftools
 from ugbio_core.vcfbed.interval_file import IntervalFile
 
