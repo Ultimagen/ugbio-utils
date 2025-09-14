@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_featuremap"
-version = "1.15.0-0"
+version = "1.15.0"
 requires-python = ">=3.11"
 dependencies = [
     "ugbio_core[vcfbed]",
@@ -43,11 +43,13 @@ workspace = true
 [tool.uv.sources.ugbio_ppmseq]
 workspace = true
 
+[tool.setuptools.package-data]
+ugbio_featuremap = [
+    "*.awk",
+]
+
 [build-system]
 requires = [
     "setuptools>=61.0",
 ]
 build-backend = "setuptools.build_meta"
-
-[tool.setuptools.package-data]
-ugbio_featuremap = ["*.awk"]
