@@ -17,12 +17,8 @@ repos:
         exclude_patterns:
           - src/omics/tests/resources/cromwell_pricelist.json
           - ^src/featuremap/tests/resources/.*_chr1_alt2_8.test_size_0.1.xgb_model.json$ # Exclude model files
-          - ^src/featuremap/tests/resources/.*\.chr1_3425000-4016800\.pileup$ # Exclude pileup files
         # exclude: src/omics/tests/resources/cromwell_pricelist.json
         # exclude: ^src/featuremap/tests/resources/.*_chr1_alt2_8.test_size_0.1.xgb_model.json$ # Exclude model files
-        exclude: src/featuremap/tests/resources/model_no_overfitting.HCR_AD_TRdata_5PosAD_noEDV.json
-
-
 
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
