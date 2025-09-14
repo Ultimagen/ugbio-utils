@@ -41,8 +41,6 @@
 # The whole conversion runs inside a `pl.StringCache()` context so any
 # categorical columns created later share the same global dictionary.
 
-# CHANGELOG in reverse chronological order
-
 from __future__ import annotations
 
 import argparse
@@ -589,9 +587,6 @@ def _process_region_to_parquet(
     except Exception:
         # Emit full traceback inside the worker
         log.exception("Error processing region %s", region)
-        # Clean up on error
-        if Path(output_file).exists():
-            Path(output_file).unlink(missing_ok=True)
         raise
 
 
