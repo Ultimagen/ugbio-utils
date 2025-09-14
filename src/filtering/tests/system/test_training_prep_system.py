@@ -16,7 +16,7 @@ def test_prepare_ground_truth(tmpdir, resources_dir):
     vcfeval_output_file = Path(resources_dir, "vcfeval_output.vcf.gz")
     # bypass well-tested run_vcfeval_concordance
     with patch(
-        "ugbio_comparison.vcf_pipeline_utils.VcfPipelineUtils.run_vcfeval_concordance"
+        "ugbio_core.vcf_pipeline_utils.VcfPipelineUtils.run_vcfeval_concordance"
     ) as mock_run_vcfeval_concordance:
         mock_run_vcfeval_concordance.return_value = vcfeval_output_file
         joint_df = pd.read_hdf(str(Path(resources_dir, "labeled_df.h5")), key="df")

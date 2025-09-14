@@ -6,7 +6,7 @@ import pandas as pd
 import pyfaidx
 import pysam
 import tqdm.auto as tqdm
-import ugbio_comparison.vcf_pipeline_utils as vpu
+import ugbio_core.vcf_pipeline_utils as vpu
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed import vcftools
 
