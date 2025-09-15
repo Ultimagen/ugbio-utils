@@ -24,7 +24,6 @@ import sys
 from collections import deque
 from os.path import join as pjoin
 
-import numpy as np
 import pysam
 from ugbio_core import pileup_utils
 from ugbio_core.logger import logger
@@ -115,26 +114,19 @@ def create_new_header(main_vcf: pysam.VariantFile, distance_start_to_center: int
         None,  # Type (None for FILTER)
         "Variants with partial/no mpileup information",  # Description
     )
+    header.formats.add(
+        f"ref_counts_pm_{distance_start_to_center}",
+        ".",
+        "Integer",
+        f"Reference counts at positions ±0..{distance_start_to_center}",
+    )
+    header.formats.add(
+        f"nonref_counts_pm_{distance_start_to_center}",
+        ".",
+        "Integer",
+        f"Non-reference counts at positions ±0..{distance_start_to_center}",
+    )
 
-    for loc in np.arange(0, distance_start_to_center + 1, 1):
-        if loc == 0:
-            fmt_fields = [f"ref_{loc}", f"nonref_{loc}"]
-            fmt_description = [f"Reference count at {loc}", f"Non-reference count at {loc}"]
-        else:
-            fmt_fields = [f"ref_{loc}", f"nonref_{loc}", f"ref_m{loc}", f"nonref_m{loc}"]
-            fmt_description = [
-                f"Reference count at {loc}",
-                f"Non-reference count at {loc}",
-                f"Reference count at -{loc}",
-                f"Non-reference count at -{loc}",
-            ]
-        for fmt, desc in zip(fmt_fields, fmt_description, strict=False):
-            header.formats.add(
-                fmt,
-                1,
-                "Integer",
-                desc,
-            )
     return header
 
 
@@ -159,8 +151,6 @@ def process_padded_positions(
     distance_start_to_center : int
         The maximum distance from the center position to process in both directions.
         Positions will range from -distance_start_to_center to +distance_start_to_center.
-    center_position : int
-        The center genomic position around which to calculate distances.
     tumor_chunk_info : dict
         Dictionary containing tumor sample information where keys are indices and
         values are tuples/lists with:
@@ -185,38 +175,50 @@ def process_padded_positions(
     integer keys starting from 0, with each entry containing at least 4 elements where
     index 2 is the reference count and index 3 is the non-reference count.
     """
-    # Get the actual positions from the chunk info to calculate distances
+    # Create lists to store ref and nonref counts ordered by position
+    tumor_ref_counts = []
+    tumor_nonref_counts = []
+    normal_ref_counts = []
+    normal_nonref_counts = []
+
+    # Create a mapping for both samples
+    tumor_pos_map = {}
+    normal_pos_map = {}
+
+    # Build position maps
     for pileup_info in tumor_chunk_info:
-        # Calculate distance from center position
         actual_position = int(pileup_info[1])
         dist = actual_position - center_position
-
-        # Format the key based on distance
-        if (dist < 0) and (dist >= -distance_start_to_center):
-            new_key = f"m{abs(dist)}"
-        elif (dist >= 0) and (dist <= distance_start_to_center):
-            new_key = f"{dist}"
-
-        # Only update if within the expected distance range
         if abs(dist) <= distance_start_to_center:
-            new_record.samples[0][f"ref_{new_key}"] = pileup_info[2]
-            new_record.samples[0][f"nonref_{new_key}"] = pileup_info[3]
+            tumor_pos_map[dist] = (pileup_info[2], pileup_info[3])
 
     for pileup_info in normal_chunk_info:
-        # Calculate distance from center position
         actual_position = int(pileup_info[1])
         dist = actual_position - center_position
-
-        # Format the key based on distance
-        if (dist < 0) and (dist >= -distance_start_to_center):
-            new_key = f"m{abs(dist)}"
-        elif (dist >= 0) and (dist <= distance_start_to_center):
-            new_key = f"{dist}"
-
-        # Only update if within the expected distance range
         if abs(dist) <= distance_start_to_center:
-            new_record.samples[1][f"ref_{new_key}"] = pileup_info[2]
-            new_record.samples[1][f"nonref_{new_key}"] = pileup_info[3]
+            normal_pos_map[dist] = (pileup_info[2], pileup_info[3])
+
+    # Build ordered lists from -distance_start_to_center to +distance_start_to_center
+    for dist in range(-distance_start_to_center, distance_start_to_center + 1):
+        if dist in tumor_pos_map:
+            tumor_ref_counts.append(tumor_pos_map[dist][0])
+            tumor_nonref_counts.append(tumor_pos_map[dist][1])
+        else:
+            tumor_ref_counts.append(None)
+            tumor_nonref_counts.append(None)
+
+        if dist in normal_pos_map:
+            normal_ref_counts.append(normal_pos_map[dist][0])
+            normal_nonref_counts.append(normal_pos_map[dist][1])
+        else:
+            normal_ref_counts.append(None)
+            normal_nonref_counts.append(None)
+
+    # Assign lists to the new fields
+    new_record.samples[0][f"ref_counts_pm_{distance_start_to_center}"] = tumor_ref_counts
+    new_record.samples[0][f"nonref_counts_pm_{distance_start_to_center}"] = tumor_nonref_counts
+    new_record.samples[1][f"ref_counts_pm_{distance_start_to_center}"] = normal_ref_counts
+    new_record.samples[1][f"nonref_counts_pm_{distance_start_to_center}"] = normal_nonref_counts
 
     return new_record
 
@@ -278,7 +280,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
         p1, p2 = next(it1, None), next(it2, None)
 
         # Open output VCF
-        with pysam.VariantFile(out_sfmp_vcf, "w", header=header) as vcf_out:
+        with pysam.VariantFile(out_sfmp_vcf, "wz", header=header) as vcf_out:
             current_chrom = None
 
             for record in main_vcf.fetch():
