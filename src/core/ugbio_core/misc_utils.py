@@ -2,11 +2,97 @@ from __future__ import annotations
 
 import itertools
 import pkgutil
+from collections import deque
+from collections.abc import Callable
 from os.path import dirname
 from os.path import join as pjoin
+from typing import Any
 
 import numpy as np
 import pysam
+
+
+class BufferedFileIterator:
+    """
+    Iterator that reads lines from a file and maintains a buffer of the last window_size elements.
+
+    This iterator wraps a file object and optionally applies a parsing function to each line,
+    while maintaining a circular buffer of the most recent parsed elements.
+    """
+
+    def __init__(self, file_obj, window_size: int, parse_func: Callable[[str], Any] | None = None):
+        """
+        Initialize the buffered iterator.
+
+        Parameters
+        ----------
+        file_obj : file-like object
+            File object to read lines from
+        window_size : int
+            Size of the buffer to maintain (number of last elements to keep)
+        parse_func : callable, optional
+            Function to apply to each line. If None, returns the raw line (stripped).
+            Function should take a string (line) and return the parsed result.
+        """
+        self.file_obj = file_obj
+        self.window_size = window_size
+        self.parse_func = parse_func
+        self.buffer = deque(maxlen=window_size)
+        self._current = None
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        """
+        Get the next line (optionally parsed) and update the buffer.
+
+        Returns
+        -------
+        Any
+            Parsed line if parse_func is provided, otherwise stripped raw line
+
+        Raises
+        ------
+        StopIteration
+            When no more lines are available
+        """
+        line = next(self.file_obj, None)
+        if line is None:
+            raise StopIteration
+
+        if self.parse_func is not None:
+            parsed = self.parse_func(line)
+        else:
+            parsed = line.strip()
+
+        self.buffer.append(parsed)
+        self._current = parsed
+        return parsed
+
+    def get_buffer(self) -> deque:
+        """
+        Get the current buffer.
+
+        Returns
+        -------
+        deque
+            Copy of the current buffer containing the last window_size elements
+        """
+        return self.buffer
+
+    def clear_buffer(self):
+        """Clear the internal buffer."""
+        self.buffer.clear()
+
+    @property
+    def current(self):
+        """Get the current (most recent) parsed element."""
+        return self._current
+
+    def __len__(self):
+        """Get the current buffer size."""
+        return len(self.buffer)
 
 
 def runs_of_one(array, axis=None):
