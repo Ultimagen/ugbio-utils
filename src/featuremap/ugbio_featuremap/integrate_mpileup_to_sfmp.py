@@ -25,7 +25,7 @@ from collections import deque
 from os.path import join as pjoin
 
 import pysam
-from ugbio_core import pileup_utils
+from ugbio_core import misc_utils, pileup_utils
 from ugbio_core.logger import logger
 from ugbio_core.vcf_pipeline_utils import VcfPipelineUtils
 
@@ -135,9 +135,9 @@ def process_padded_positions(
     new_record: pysam.VariantRecord,
     distance_start_to_center: int,
     center_position: int,
-    tumor_chunk_info: dict,
-    normal_chunk_info: dict,
-):
+    tumor_chunk_info: deque,
+    normal_chunk_info: deque,
+) -> tuple[pysam.VariantRecord, bool]:
     """
     This function iterates through positions in tumor and normal chunk information,
     calculating distances from a center position and updating the variant record
@@ -152,14 +152,14 @@ def process_padded_positions(
     distance_start_to_center : int
         The maximum distance from the center position to process in both directions.
         Positions will range from -distance_start_to_center to +distance_start_to_center.
-    tumor_chunk_info : dict
+    tumor_chunk_info : deque
         Dictionary containing tumor sample information where keys are indices and
         values are tuples/lists with:
         - index 0: chromosome (str)
         - index 1: actual genomic position (int)
         - index 2: reference read count (int)
         - index 3: non-reference read count (int)
-    normal_chunk_info : dict
+    normal_chunk_info : deque
         Dictionary containing normal sample information with the same structure as tumor_chunk_info.
 
     Returns
@@ -169,6 +169,8 @@ def process_padded_positions(
         added to both tumor (sample 0) and normal (sample 1) samples. Field names follow
         the pattern 'ref_m{N}' or 'nonref_m{N}' for negative distances and 'ref_{N}' or
         'nonref_{N}' for non-negative distances.
+    bool
+        A boolean flag indicating whether any position missing within the specified range
 
     Notes
     -----
@@ -176,52 +178,38 @@ def process_padded_positions(
     integer keys starting from 0, with each entry containing at least 4 elements where
     index 2 is the reference count and index 3 is the non-reference count.
     """
-    # Create lists to store ref and nonref counts ordered by position
-    tumor_ref_counts = []
-    tumor_nonref_counts = []
-    normal_ref_counts = []
-    normal_nonref_counts = []
 
-    # Create a mapping for both samples
-    tumor_pos_map = {}
-    normal_pos_map = {}
+    window_size = 2 * distance_start_to_center + 1
+    # Create lists to store ref and nonref counts ordered by position
+    tumor_ref_counts = [None] * window_size
+    tumor_nonref_counts = [None] * window_size
+    normal_ref_counts = [None] * window_size
+    normal_nonref_counts = [None] * window_size
 
     # Build position maps
     for pileup_info in tumor_chunk_info:
         actual_position = int(pileup_info[1])
         dist = actual_position - center_position
         if abs(dist) <= distance_start_to_center:
-            tumor_pos_map[dist] = (pileup_info[2], pileup_info[3])
+            tumor_ref_counts[dist + distance_start_to_center] = pileup_info[2]
+            tumor_nonref_counts[dist + distance_start_to_center] = pileup_info[3]
 
     for pileup_info in normal_chunk_info:
         actual_position = int(pileup_info[1])
         dist = actual_position - center_position
         if abs(dist) <= distance_start_to_center:
-            normal_pos_map[dist] = (pileup_info[2], pileup_info[3])
-
-    # Build ordered lists from -distance_start_to_center to +distance_start_to_center
-    for dist in range(-distance_start_to_center, distance_start_to_center + 1):
-        if dist in tumor_pos_map:
-            tumor_ref_counts.append(tumor_pos_map[dist][0])
-            tumor_nonref_counts.append(tumor_pos_map[dist][1])
-        else:
-            tumor_ref_counts.append(None)
-            tumor_nonref_counts.append(None)
-
-        if dist in normal_pos_map:
-            normal_ref_counts.append(normal_pos_map[dist][0])
-            normal_nonref_counts.append(normal_pos_map[dist][1])
-        else:
-            normal_ref_counts.append(None)
-            normal_nonref_counts.append(None)
+            normal_ref_counts[dist + distance_start_to_center] = pileup_info[2]
+            normal_nonref_counts[dist + distance_start_to_center] = pileup_info[3]
 
     # Assign lists to the new fields
     new_record.samples[0][f"ref_counts_pm_{distance_start_to_center}"] = tumor_ref_counts
     new_record.samples[0][f"nonref_counts_pm_{distance_start_to_center}"] = tumor_nonref_counts
     new_record.samples[1][f"ref_counts_pm_{distance_start_to_center}"] = normal_ref_counts
     new_record.samples[1][f"nonref_counts_pm_{distance_start_to_center}"] = normal_nonref_counts
-
-    return new_record
+    has_missing = False
+    if None in sum([tumor_ref_counts, tumor_nonref_counts, normal_ref_counts, normal_nonref_counts], []):
+        has_missing = True
+    return new_record, has_missing
 
 
 def run(argv):  # noqa: C901, PLR0912, PLR0915
@@ -273,61 +261,49 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
     # Open input VCFs
     main_vcf = pysam.VariantFile(sfmp_vcf)
     header = create_new_header(main_vcf, args.distance_start_to_center)
-
+    window_size = 2 * args.distance_start_to_center + 1
     # Iterators
     with open(args.tumor_mpileup) as f1, open(args.normal_mpileup) as f2:
-        it1, it2 = map(pileup_utils.parse_mpileup_line, f1), map(pileup_utils.parse_mpileup_line, f2)
-        buf1, buf2 = deque(), deque()  # buffers for sliding window
+        it1 = misc_utils.BufferedFileIterator(f1, window_size, pileup_utils.parse_mpileup_line)
+        it2 = misc_utils.BufferedFileIterator(f2, window_size, pileup_utils.parse_mpileup_line)
         p1, p2 = next(it1, None), next(it2, None)
 
         # Open output VCF
-        with pysam.VariantFile(out_sfmp_vcf, "wz", header=header) as vcf_out:
+        with pysam.VariantFile(out_sfmp_vcf, "w", header=header) as vcf_out:
             current_chrom = None
 
             for record in main_vcf.fetch():
                 chrom = record.chrom
-                start, end = record.pos - args.distance_start_to_center, record.pos + args.distance_start_to_center
+                start = record.pos - args.distance_start_to_center
 
                 # --- handle chromosome change ---
                 if chrom != current_chrom:
                     current_chrom = chrom
-                    buf1.clear()
-                    buf2.clear()
 
                     # advance pileup1 until correct chromosome
-                    while p1 and p1[0] != chrom:
+                    while p1 and it1.buffer[0] != chrom:
                         p1 = next(it1, None)
 
                     # advance pileup2 until correct chromosome
-                    while p2 and p2[0] != chrom:
+                    while p2 and it2.buffer[0] != chrom:
                         p2 = next(it2, None)
 
                 # --- pileup1 ---
-                buf1 = deque([x for x in buf1 if int(x[1]) >= start])
-                while p1 and p1[0] == chrom and int(p1[1]) < start:
+                while p1 and it1.buffer[0] == chrom and it1.buffer[0] < start:
                     p1 = next(it1, None)
-                while p1 and p1[0] == chrom and start <= int(p1[1]) <= end:
-                    buf1.append(p1)
-                    p1 = next(it1, None)
-
-                # --- pileup2 ---
-                buf2 = deque([x for x in buf2 if int(x[1]) >= start])
-                while p2 and p2[0] == chrom and int(p2[1]) < start:
-                    p2 = next(it2, None)
-                while p2 and p2[0] == chrom and start <= int(p2[1]) <= end:
-                    buf2.append(p2)
+                while p1 and it2.buffer[0] == chrom and it2.buffer[0] < start:
                     p2 = next(it2, None)
 
                 # --- create new VCF record ---
                 new_record = VcfPipelineUtils.copy_vcf_record(record, header)
 
                 # process mpileup buffers
-                new_record = process_padded_positions(new_record, args.distance_start_to_center, record.pos, buf1, buf2)
+                new_record, is_missing = process_padded_positions(
+                    new_record, args.distance_start_to_center, record.pos, it1.buffer, it2.buffer
+                )
 
                 # filter flag if missing positions
-                if len(buf1) == (2 * args.distance_start_to_center + 1) and len(buf2) == (
-                    2 * args.distance_start_to_center + 1
-                ):
+                if not is_missing:
                     new_record.filter.clear()
                     new_record.filter.add("PASS")
                 else:
