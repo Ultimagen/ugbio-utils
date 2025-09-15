@@ -56,7 +56,7 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         prog="somatic_pileup_featuremap_inference.py",
         description=(
             "Run somatic pileup featuremap inference using an input somatic featuremap pileup "
-            "VCF file and a pre-trained XGBoost model."
+            "VCF file and a pretrained XGBoost model."
         ),
     )
     parser.add_argument(
@@ -314,9 +314,8 @@ def annotate_xgb_proba_to_vcf(df_sfmp: pd.DataFrame, in_sfmp_vcf: str, out_vcf: 
         with pysam.VariantFile(out_vcf, "wz", header=new_header) as outvcf:
             for rec in invcf:
                 # Advance df_row until it matches or passes the VCF record
+                new_record = VcfPipelineUtils.copy_vcf_record(rec, new_header)
                 while df_row is not None:
-                    new_record = VcfPipelineUtils.copy_vcf_record(rec, new_header)
-
                     df_key = (str(df_row.t_chrom), int(df_row.t_pos), str(df_row.t_ref), str(df_row.t_alt_allele))
                     vcf_key = (str(rec.chrom), int(rec.pos), str(rec.ref), str(rec.alts[0]) if rec.alts else None)
                     if df_key < vcf_key:
