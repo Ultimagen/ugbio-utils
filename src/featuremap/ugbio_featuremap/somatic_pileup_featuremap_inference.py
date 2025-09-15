@@ -21,10 +21,7 @@ import argparse
 import logging
 import os
 import re
-import subprocess
 import sys
-import tempfile
-from os.path import basename, dirname
 from os.path import join as pjoin
 
 import numpy as np
@@ -286,7 +283,7 @@ def map_fields_to_vcf(vcf_path, lowercase_fields):
 
 def annotate_xgb_proba_to_vcf(df_sfmp: pd.DataFrame, in_sfmp_vcf: str, out_vcf: str) -> None:
     """
-    Annotate the VCF file with XGBoost probabilities.
+    Annotate the VCF file with XGBoost probabilities using pysam only, memory-efficiently.
 
     Parameters
     ----------
@@ -301,49 +298,42 @@ def annotate_xgb_proba_to_vcf(df_sfmp: pd.DataFrame, in_sfmp_vcf: str, out_vcf: 
     -------
     None
     """
-    # Prepare the DataFrame for annotation
-    tsv_df = df_sfmp[["t_chrom", "t_pos", "t_ref", "t_alt_allele", "xgb_proba"]].copy()
-    tsv_df.columns = ["#CHROM", "POS", "REF", "ALT", "xgb_proba"]
+    # Serially walk both VCF and DataFrame, adding INFO only when variant matches
+    # Build an iterator over the DataFrame, sorted by chrom, pos, ref, alt
+    df_sorted = df_sfmp.sort_values(["t_chrom", "t_pos", "t_ref", "t_alt_allele"]).reset_index(drop=True)
+    df_iter = df_sorted.itertuples(index=False)
+    try:
+        df_row = next(df_iter)
+    except StopIteration:
+        df_row = None
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".tsv", delete=False) as tmp_tsv:
-        tsv_path = tmp_tsv.name
-        tsv_df.to_csv(tmp_tsv, sep="\t", index=False, float_format="%.15f")
-        cmd = ["sort", "-k1,1", "-k2,2n", tsv_path]
-        sorted_tsv = pjoin(dirname(tsv_path), "sorted_" + basename(tsv_path))
-        with open(sorted_tsv, "w") as out_file:
-            subprocess.check_call(cmd, stdout=out_file)
-        gz_tsv = sorted_tsv + ".gz"
-        cmd = ["bgzip", "-c", sorted_tsv]
-        with open(gz_tsv, "wb") as out_file:
-            subprocess.check_call(cmd, stdout=out_file)
-        cmd = ["tabix", "-s", "1", "-b", "2", "-e", "2", gz_tsv]
-        subprocess.check_call(cmd)
+    with pysam.VariantFile(in_sfmp_vcf) as invcf:
+        new_header = invcf.header.copy()
+        if "xgb_proba" not in new_header.info:
+            new_header.add_line('##INFO=<ID=xgb_proba,Number=1,Type=Float,Description="XGBoost probability">')
+        with pysam.VariantFile(out_vcf, "wz", header=new_header) as outvcf:
+            for rec in invcf:
+                # Advance df_row until it matches or passes the VCF record
+                while df_row is not None:
+                    new_record = VcfPipelineUtils.copy_vcf_record(rec, new_header)
 
-    # Create a temporary header file for the new INFO field
-    header_line = '##INFO=<ID=xgb_proba,Number=1,Type=Float,Description="XGBoost probability">\n'
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".hdr", delete=False) as tmp_hdr:
-        hdr_path = tmp_hdr.name
-        tmp_hdr.write(header_line)
-
-    # Annotate using bcftools
-    cmd = [
-        "bcftools",
-        "annotate",
-        "-a",
-        gz_tsv,
-        "-c",
-        "CHROM,POS,REF,ALT,xgb_proba",
-        "-h",
-        hdr_path,
-        "-o",
-        out_vcf,
-        "-O",
-        "z",
-        in_sfmp_vcf,
-    ]
-    logger.debug(f"Running command: {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
-    # Index the output VCF
+                    df_key = (str(df_row.t_chrom), int(df_row.t_pos), str(df_row.t_ref), str(df_row.t_alt_allele))
+                    vcf_key = (str(rec.chrom), int(rec.pos), str(rec.ref), str(rec.alts[0]) if rec.alts else None)
+                    if df_key < vcf_key:
+                        try:
+                            df_row = next(df_iter)
+                        except StopIteration:
+                            df_row = None
+                    elif df_key == vcf_key:
+                        new_record.info["xgb_proba"] = round(float(df_row.xgb_proba), 10)
+                        try:
+                            df_row = next(df_iter)
+                        except StopIteration:
+                            df_row = None
+                        break
+                    else:
+                        break
+                outvcf.write(new_record)
     vpu.index_vcf(out_vcf)
 
 

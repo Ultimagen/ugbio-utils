@@ -457,3 +457,46 @@ class VcfPipelineUtils:
                         rec.samples[0]["GT"] = (0, 1)
                     output_file.write(rec)
         self.index_vcf(output_file_calls)
+
+    @staticmethod
+    def copy_vcf_record(rec: "pysam.VariantRecord", new_header: "pysam.VariantHeader") -> "pysam.VariantRecord":
+        """
+        Create a new VCF record with the same data as the input record, but using a new header.
+
+        Parameters
+        ----------
+        rec : pysam.VariantRecord
+            The original VCF record to copy.
+        new_header : pysam.VariantHeader
+            The new VCF header to use for the copied record.
+
+        Returns
+        -------
+        pysam.VariantRecord
+            A new VCF record with the same data as `rec`, but using `new_header`.
+        """
+        new_record = new_header.new_record(
+            contig=rec.chrom,
+            start=rec.start,
+            stop=rec.stop,
+            id=rec.id,
+            qual=rec.qual,
+            alleles=rec.alleles,
+            filter=rec.filter.keys(),
+        )
+
+        # copy INFO fields
+        for k, v in rec.info.items():
+            if k in new_header.info:
+                new_record.info[k] = v
+
+        # copy FORMAT fields
+        for sample in rec.samples:
+            src = rec.samples[sample]
+            tgt = new_record.samples[sample]
+            for k, v in src.items():
+                if v in (None, (None,)):
+                    continue  # no need to assign missing values
+                tgt[k] = v
+
+        return new_record
