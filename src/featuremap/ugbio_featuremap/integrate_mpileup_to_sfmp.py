@@ -281,17 +281,17 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
                     current_chrom = chrom
 
                     # advance pileup1 until correct chromosome
-                    while p1 and it1.buffer[0] != chrom:
+                    while p1 and (it1.buffer[0][0] != chrom or len(it1.buffer) < window_size):
                         p1 = next(it1, None)
 
                     # advance pileup2 until correct chromosome
-                    while p2 and it2.buffer[0] != chrom:
+                    while p2 and (it2.buffer[0][0] != chrom or len(it1.buffer) < window_size):
                         p2 = next(it2, None)
 
                 # --- pileup1 ---
-                while p1 and it1.buffer[0] == chrom and it1.buffer[0] < start:
+                while p1 and it1.buffer[0][0] == chrom and it1.buffer[0][1] < start:
                     p1 = next(it1, None)
-                while p1 and it2.buffer[0] == chrom and it2.buffer[0] < start:
+                while p2 and it2.buffer[0][0] == chrom and it2.buffer[0][1] < start:
                     p2 = next(it2, None)
 
                 # --- create new VCF record ---

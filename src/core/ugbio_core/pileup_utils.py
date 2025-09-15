@@ -173,6 +173,6 @@ def parse_mpileup_line(mpileup_line: str) -> tuple[str, int, int, int]:
         raise ValueError(
             f"Invalid mpileup line: expected at least {minimal_num_fields} fields, got {len(fields)} : {mpileup_line}"
         )
-    chrom, pos, bases = fields[0], fields[1], fields[4]
+    chrom, pos, bases = fields[0], int(fields[1]), fields[4]
     ref_count, nonref_count = parse_bases(bases)
     return chrom, pos, ref_count, nonref_count
