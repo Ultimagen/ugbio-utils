@@ -269,14 +269,16 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
     main_vcf = pysam.VariantFile(sfmp_vcf)
     header = create_new_header(main_vcf, args.distance_start_to_center)
 
+    # window_size = 2 * args.distance_start_to_center + 1
     # Iterators
     with open(args.tumor_mpileup) as f1, open(args.normal_mpileup) as f2:
         it1, it2 = map(pileup_utils.parse_mpileup_line, f1), map(pileup_utils.parse_mpileup_line, f2)
+
         buf1, buf2 = deque(), deque()  # buffers for sliding window
         p1, p2 = next(it1, None), next(it2, None)
 
         # Open output VCF
-        with pysam.VariantFile(out_sfmp_vcf, "wz", header=header) as vcf_out:
+        with pysam.VariantFile(out_sfmp_vcf, "w", header=header) as vcf_out:
             current_chrom = None
 
             for record in main_vcf.fetch():
