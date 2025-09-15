@@ -1,16 +1,11 @@
 from io import StringIO
-from os.path import exists
-from os.path import join as pjoin
 
 import numpy as np
 import pytest
-from ugbio_core.misc_utils import BufferedFileIterator, find_scripts_path, idx_last_nz, idx_next_nz
+from ugbio_core.misc_utils import BufferedFileIterator, idx_last_nz, idx_next_nz
 
 
 class TestMiscUtils:
-    def test_find_scripts_path(self):
-        assert exists(pjoin(find_scripts_path(), "run_ucsc_command.sh"))
-
     inputs = [[1, 0, 1, 0, 1], [1, 0, 0, 2, 0, 5], [1, 0, 0, 0, 0, 2, 5], [0, 0, 0, 1, 2, 3, 0, 5], [2, 0, 1, 0, 0]]
 
     @pytest.mark.parametrize(

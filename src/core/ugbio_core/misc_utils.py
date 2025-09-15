@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import itertools
-import pkgutil
 from collections import deque
 from collections.abc import Callable
-from os.path import dirname
-from os.path import join as pjoin
 from typing import Any
 
 import numpy as np
@@ -239,22 +236,6 @@ def isin(pos: int, interval: tuple) -> bool:
     bool
     """
     return interval[0] <= pos < interval[1]
-
-
-def find_scripts_path() -> str:
-    """Locates the absolute path of the scripts installation
-
-    Parameters
-    ----------
-    None
-
-    Returns
-    -------
-    str
-        The path
-    """
-    package = pkgutil.get_loader("ugvc")
-    return pjoin(dirname(package.get_filename()), "bash")
 
 
 def idx_last_nz(inp: np.ndarray | list) -> np.ndarray:
