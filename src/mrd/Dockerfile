@@ -35,10 +35,19 @@ RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION
     ln -s /opt/gatk/gatk /usr/local/bin/gatk && \
     rm gatk-${GATK_VERSION}.zip
 
+RUN groupadd ugbio && useradd -m ugbio -g ugbio
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
+
+USER ugbio
+
+WORKDIR /home/ugbio
+
 ARG OUT_DIR=/tmp/ugbio
 
 COPY --from=build $OUT_DIR $OUT_DIR
 
-RUN pip install ${OUT_DIR}/*.whl
+ENV PATH="/home/ugbio/.local/bin:${PATH}"
+
+RUN pip install --user ${OUT_DIR}/*.whl
 
 COPY --from=build ./src/mrd/ugbio_mrd/reports ./src/mrd/ugbio_mrd/reports

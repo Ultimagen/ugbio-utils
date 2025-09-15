@@ -49,12 +49,21 @@ RUN curl -SLO https://github.com/RealTimeGenomics/rtg-tools/releases/download/${
     echo "RTG_TALKBACK=true  # Crash logs\nRTG_USAGE=false # Simple usage logging\n" >/opt/rtg/rtg.cfg && \
     ln -s /opt/rtg/rtg /usr/local/bin/rtg
 
+RUN groupadd ugbio && useradd -m ugbio -g ugbio
+RUN chown -R ugbio:ugbio /opt /usr/local/bin
+
+USER ugbio
+
+WORKDIR /home/ugbio
+
 ARG OUT_DIR=/tmp/ugbio
 
 # Install module
 COPY --from=build $OUT_DIR $OUT_DIR
 
-RUN pip install ${OUT_DIR}/*.whl
+ENV PATH="/home/ugbio/.local/bin:${PATH}"
+
+RUN pip install --user ${OUT_DIR}/*.whl
 
 # for runnig CI (can be removed if pytest is installed as part of the venv)
 RUN pip install pytest
