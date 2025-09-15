@@ -27,6 +27,7 @@ from os.path import join as pjoin
 import pysam
 from ugbio_core import pileup_utils
 from ugbio_core.logger import logger
+from ugbio_core.vcf_pipeline_utils import VcfPipelineUtils
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
@@ -318,29 +319,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
                     p2 = next(it2, None)
 
                 # --- create new VCF record ---
-                new_record = vcf_out.new_record(
-                    contig=record.chrom,
-                    start=record.start,
-                    stop=record.stop,
-                    id=record.id,
-                    qual=record.qual,
-                    alleles=record.alleles,
-                    filter=record.filter.keys(),
-                )
-
-                # copy INFO fields
-                for k, v in record.info.items():
-                    if k in header.info:
-                        new_record.info[k] = v
-
-                # copy FORMAT fields
-                for sample in record.samples:
-                    src = record.samples[sample]
-                    tgt = new_record.samples[sample]
-                    for k, v in src.items():
-                        if v in (None, (None,)):
-                            continue  # no need to assign missing values
-                        tgt[k] = v
+                new_record = VcfPipelineUtils.copy_vcf_record(record, header)
 
                 # process mpileup buffers
                 new_record = process_padded_positions(new_record, args.distance_start_to_center, record.pos, buf1, buf2)
