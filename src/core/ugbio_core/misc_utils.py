@@ -221,7 +221,7 @@ def max_merits(specificity, recall):
     return ind[ind_sort_recall]
 
 
-def isin(pos: int, interval: tuple) -> bool:
+def is_pos_in_interval(pos: int, interval: tuple) -> bool:
     """Is position inside the [interval)
 
     Parameters
