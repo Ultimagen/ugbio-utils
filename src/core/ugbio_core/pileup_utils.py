@@ -7,7 +7,7 @@ PILEUP_IGNORE = {",", ".", "*", "#", ">", "<"}
 USE_STARTEND = True
 
 
-def pileup_to_freq(reference: str, pileup: str) -> dict[str, int]:  # noqa: C901 #TODO: refactor. too complex
+def pileup_to_base_counts(reference: str, pileup: str) -> dict[str, int]:  # noqa: C901 #TODO: refactor. too complex
     """Counts A, C, G, T, In, Del occurence given a samtools pileup string"""
 
     pileup = pileup.upper()
@@ -84,7 +84,7 @@ def create_frequencies_from_pileup(input_pileup_file) -> pd.DataFrame:
                 # No reads aligned to this position
                 if values[i - 1] == "0":
                     continue
-                freq = pileup_to_freq(values[2], values[i])
+                freq = pileup_to_base_counts(values[2], values[i])
                 for base, count in freq.items():
                     data.append([dp, chr_name, pos, ref, sample, base, count])
     fin.close()
