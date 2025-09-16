@@ -3,7 +3,7 @@ import tempfile
 
 import pysam
 import pytest
-from ugbio_core.vcf_pipeline_utils import VcfPipelineUtils
+from ugbio_core.vcf_utils import VcfUtils
 
 
 def create_test_vcf(path):
@@ -28,7 +28,7 @@ def test_copy_vcf_record():
             header = vcf.header.copy()
             rec = next(iter(vcf))
             # Use the static method to copy the record
-            new_rec = VcfPipelineUtils.copy_vcf_record(rec, header)
+            new_rec = VcfUtils.copy_vcf_record(rec, header)
             # Check that the new record matches the original
             assert new_rec.chrom == rec.chrom
             assert new_rec.pos == rec.pos
