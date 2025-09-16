@@ -27,7 +27,7 @@ from os.path import join as pjoin
 import pysam
 from ugbio_core import misc_utils, pileup_utils
 from ugbio_core.logger import logger
-from ugbio_core.vcf_pipeline_utils import VcfPipelineUtils
+from ugbio_core.vcf_utils import VcfUtils
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
@@ -295,7 +295,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
                     p2 = next(it2, None)
 
                 # --- create new VCF record ---
-                new_record = VcfPipelineUtils.copy_vcf_record(record, header)
+                new_record = VcfUtils.copy_vcf_record(record, header)
 
                 # process mpileup buffers
                 new_record, is_missing = process_padded_positions(

@@ -29,13 +29,13 @@ import pandas as pd
 import pysam
 import xgboost
 from ugbio_core.logger import logger
-from ugbio_core.vcf_pipeline_utils import VcfPipelineUtils
+from ugbio_core.vcf_utils import VcfUtils
 from ugbio_core.vcfbed import vcftools
 
 from ugbio_featuremap import featuremap_xgb_prediction
 
 TR_CUSTOM_INFO_FIELDS = ["TR_distance", "TR_length", "TR_seq_unit_length"]
-vpu = VcfPipelineUtils()
+vu = VcfUtils()
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
@@ -314,7 +314,7 @@ def annotate_xgb_proba_to_vcf(df_sfmp: pd.DataFrame, in_sfmp_vcf: str, out_vcf: 
         with pysam.VariantFile(out_vcf, "wz", header=new_header) as outvcf:
             for rec in invcf:
                 # Advance df_row until it matches or passes the VCF record
-                new_record = VcfPipelineUtils.copy_vcf_record(rec, new_header)
+                new_record = VcfUtils.copy_vcf_record(rec, new_header)
                 while df_row is not None:
                     df_key = (str(df_row.t_chrom), int(df_row.t_pos), str(df_row.t_ref), str(df_row.t_alt_allele))
                     vcf_key = (str(rec.chrom), int(rec.pos), str(rec.ref), str(rec.alts[0]) if rec.alts else None)
@@ -333,7 +333,7 @@ def annotate_xgb_proba_to_vcf(df_sfmp: pd.DataFrame, in_sfmp_vcf: str, out_vcf: 
                     else:
                         break
                 outvcf.write(new_record)
-    vpu.index_vcf(out_vcf)
+    vu.index_vcf(out_vcf)
 
 
 def run(argv):

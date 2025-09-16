@@ -6,7 +6,7 @@ import pandas as pd
 import pyfaidx
 import pysam
 import tqdm.auto as tqdm
-import ugbio_core.vcf_pipeline_utils as vpu
+import ugbio_comparison.vcf_comparison_utils as vcu
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed import vcftools
 
@@ -186,7 +186,7 @@ def prepare_ground_truth(
         Don't compare genotype information, only compare if allele is present in ground-truth
 
     """
-    pipeline = vpu.VcfPipelineUtils()
+    pipeline = vcu.VcfComparisonUtils()
     vcfeval_output = pipeline.run_vcfeval_concordance(
         input_file=input_vcf,
         truth_file=base_vcf,
