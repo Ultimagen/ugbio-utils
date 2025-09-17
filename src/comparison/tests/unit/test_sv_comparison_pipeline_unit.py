@@ -85,7 +85,7 @@ def test_truvari_to_dataframes(mocker):
     assert "label" in df_calls.columns
 
 
-def testgit_run_pipeline(mocker):
+def test_run_pipeline(mocker):
     mock_logger = mocker.Mock()
     mock_sp = mocker.Mock()
     sv_comparison = SVComparison(simple_pipeline=mock_sp, logger=mock_logger)
