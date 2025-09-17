@@ -28,7 +28,7 @@ from scipy.signal import savgol_filter
 from statsmodels.nonparametric import smoothers_lowess
 from ugbio_core.logger import logger
 
-from ugbio_srsnv.srsnv_utils import EPS
+from ugbio_srsnv.srsnv_utils import EPS, prob_to_logit
 
 # Constants
 MIN_FOLDS_FOR_STD = 2
@@ -824,12 +824,13 @@ def create_uncertainty_function_pipeline(  # noqa: PLR0913
 FFT_THRESHOLD = 1000  # Use FFT for convolutions larger than this
 
 
-def make_grid_and_transform(
+def make_grid_and_transform(  # noqa: C901, PLR0912, PLR0915
     data_values: np.ndarray,
     grid_size: int = 8192,
     mqual_max_lut: float | None = None,
     transform_mode: str = "mqual",
     padding_factor: float = 0.1,
+    input_type: str = "auto",
 ) -> tuple[np.ndarray, float, Callable[[np.ndarray], np.ndarray], Callable[[np.ndarray], np.ndarray], dict[str, Any]]:
     """
     Step 2.1: Grid definition and coordinate transforms.
@@ -839,7 +840,7 @@ def make_grid_and_transform(
     Parameters
     ----------
     data_values : np.ndarray
-        Input data values to determine domain (either mqual scores or probabilities)
+        Input data values to determine domain (format depends on input_type)
     grid_size : int, optional
         Number of grid points, by default 8192
     mqual_max_lut : float, optional
@@ -848,6 +849,12 @@ def make_grid_and_transform(
         Coordinate system: "mqual" (default) or "logit", by default "mqual"
     padding_factor : float, optional
         Fraction of range to add as padding on each side, by default 0.1
+    input_type : str, optional
+        Type of input data: "auto" (detect), "probabilities", "logits", or "mqual", by default "auto"
+        - "auto": Auto-detect based on transform_mode and data characteristics
+        - "probabilities": Input values are probabilities in [0,1], convert to target coordinate system
+        - "logits": Input values are already logit scores (phred-scaled)
+        - "mqual": Input values are already MQUAL/Phred scores
 
     Returns
     -------
@@ -861,7 +868,7 @@ def make_grid_and_transform(
     Raises
     ------
     ValueError
-        If transform_mode is not supported or data is invalid
+        If transform_mode is not supported, input_type is invalid, or data is invalid
     """
     if len(data_values) == 0:
         raise ValueError("Cannot create grid from empty data")
@@ -872,10 +879,43 @@ def make_grid_and_transform(
     if len(data_values) == 0:
         raise ValueError("No finite values in data")
 
+    # Validate input_type parameter
+    valid_input_types = {"auto", "probabilities", "logits", "mqual"}
+    if input_type not in valid_input_types:
+        raise ValueError(f"input_type must be one of {valid_input_types}, got '{input_type}'")
+
+    # Validate transform_mode parameter
+    if transform_mode not in {"mqual", "logit"}:
+        raise ValueError(f"transform_mode must be 'mqual' or 'logit', got '{transform_mode}'")
+
     if transform_mode == "mqual":
         # mqual-mode: grid over [0, mqual_max_lut], reflection at 0, no upper boundary
+
+        # Auto-detect input type for MQUAL mode
+        if input_type == "auto":
+            # For MQUAL mode, assume input is already MQUAL unless clearly probabilities
+            if np.all((data_values >= 0) & (data_values <= 1)):
+                input_detected = "probabilities"
+            else:
+                input_detected = "mqual"
+        else:
+            input_detected = input_type
+
+        # Convert input to MQUAL scores if needed
+        if input_detected == "probabilities":
+            from ugbio_srsnv.srsnv_utils import prob_to_phred
+
+            mqual_values = prob_to_phred(data_values)
+        elif input_detected == "logits":
+            from ugbio_srsnv.srsnv_utils import logit_to_prob, prob_to_phred
+
+            prob_values = logit_to_prob(data_values, phred=True)
+            mqual_values = prob_to_phred(prob_values)
+        else:  # input_detected == "mqual"
+            mqual_values = data_values
+
         data_min = 0.0  # mqual >= 0 always
-        data_max = mqual_max_lut if mqual_max_lut is not None else np.max(data_values)
+        data_max = mqual_max_lut if mqual_max_lut is not None else np.max(mqual_values)
 
         # Add padding only on the upper side
         range_size = data_max - data_min
@@ -896,13 +936,33 @@ def make_grid_and_transform(
 
     elif transform_mode == "logit":
         # logit-mode: unbounded both sides, symmetric padding
-        # Convert probabilities to logits for domain estimation
-        eps = 1e-12
-        probs_clipped = np.clip(data_values, eps, 1 - eps)
-        logits = np.log(probs_clipped / (1 - probs_clipped))
 
-        data_min = np.min(logits)
-        data_max = np.max(logits)
+        # Auto-detect input type for logit mode
+        if input_type == "auto":
+            # For logit mode, detect if input looks like probabilities or logits
+            if np.all((data_values >= 0) & (data_values <= 1)):
+                input_detected = "probabilities"
+            else:
+                input_detected = "logits"
+        else:
+            input_detected = input_type
+
+        # Convert input to logit scores if needed
+        if input_detected == "probabilities":
+            # Convert probabilities to logits using the standard function
+            logit_values = prob_to_logit(data_values, phred=True)
+        elif input_detected == "mqual":
+            # Convert MQUAL to probabilities, then to logits
+            from ugbio_srsnv.srsnv_utils import phred_to_prob
+
+            prob_values = phred_to_prob(data_values)
+            logit_values = prob_to_logit(prob_values, phred=True)
+        else:  # input_detected == "logits"
+            # Data is already in logit space - use directly
+            logit_values = data_values
+
+        data_min = np.min(logit_values)
+        data_max = np.max(logit_values)
         range_size = data_max - data_min
 
         # Symmetric padding
@@ -937,6 +997,8 @@ def make_grid_and_transform(
         "transform_mode": transform_mode,
         "boundary_policy": boundary_policy,
         "padding_factor": padding_factor,
+        "input_type": input_type,
+        "input_type_detected": input_detected if input_type == "auto" else input_type,
     }
 
     logger.debug(
@@ -959,6 +1021,9 @@ def bin_data_to_grid(
     Convert large datasets to grid counts efficiently; cornerstone for all subsequent convolutions.
     Generalizes relplot.kernels.smooth_round_to_grid logic.
 
+    ⚠️  IMPORTANT: grid_size must match the grid size used in make_grid_and_transform()
+    to avoid broadcasting errors in downstream KDE functions!
+
     Parameters
     ----------
     values : np.ndarray
@@ -967,6 +1032,7 @@ def bin_data_to_grid(
         Weights for each value. If None, uniform weights of 1.0 are used
     grid_size : int, optional
         Number of grid bins, by default 8192
+        ⚠️  This MUST match the grid_size used in make_grid_and_transform()!
     to_grid_space : Callable, optional
         Function to convert values to grid coordinates. If None, assumes values are already in [0, 1]
     boundary_policy : str, optional
