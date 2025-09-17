@@ -170,7 +170,7 @@ class VcfComparisonUtils:
         """
 
         output_dir = os.path.dirname(output_prefix)
-        sdf_path = ref_genome + ".sdf"
+        sdf_path = os.path.basename(ref_genome) + ".sdf"
         vcfeval_output_dir = os.path.join(output_dir, os.path.basename(output_prefix) + ".vcfeval_output")
 
         if os.path.isdir(vcfeval_output_dir):
