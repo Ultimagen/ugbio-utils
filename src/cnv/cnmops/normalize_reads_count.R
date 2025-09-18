@@ -231,7 +231,7 @@ normalizeChromosomesGenomewize <- function(X, chr, normType="poisson", sizeFacto
 			chrX_matrix_nonZero <- chrX_matrix[which(rowSums(chrX_matrix) > 0),]
 			chrX_means <- colMeans(chrX_matrix_nonZero,na.rm=TRUE)
 
-			png(paste(out_prefix,"chrX_mean_coverage_distribution.png"))
+			png(paste(out_prefix,"chrX_mean_coverage_distribution.png"), type = "cairo")
 			hist(chrX_means)
 			dev.off()
 
