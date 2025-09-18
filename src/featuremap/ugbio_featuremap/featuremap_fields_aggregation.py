@@ -190,6 +190,7 @@ def sort_and_filter_vcf(featuremap_vcf_file, temp_dir, filter_string, interval_s
     return sorted_featuremap, sorted_filtered_featuremap
 
 
+# TBD: change from info to format!
 def add_agg_fields_to_header(hdr):
     for field in added_agg_features:
         field_type = added_agg_features[field][1]
@@ -236,7 +237,7 @@ def featuremap_fields_aggregation(  # noqa: C901
         )
 
         # read vcf block to dataframe
-        info_fields, format_fields, custom_info_fields = vcftools.get_vcf_fields_name(sorted_filtered_featuremap)
+        _info_fields, _format_fields, custom_info_fields = vcftools.get_vcf_fields_name(sorted_filtered_featuremap)
         custom_info_fields = list(custom_info_fields)
         df_variants = vcftools.get_vcf_df(sorted_filtered_featuremap, custom_info_fields=custom_info_fields)
         df_variants = df_vcf_manual_aggregation(df_variants)
