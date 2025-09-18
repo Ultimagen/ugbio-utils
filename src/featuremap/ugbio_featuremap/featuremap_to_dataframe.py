@@ -120,7 +120,19 @@ RESERVED = {CHROM, POS, REF, ALT, QUAL, FILTER}
 
 # Category dictionaries
 ALT_ALLELE_CATS = ["A", "C", "G", "T"]
-REF_ALLELE_CATS = ALT_ALLELE_CATS + ["R", "Y", "K", "M", "S", "W", "B", "D", "H", "V", "N"]
+REF_ALLELE_CATS = ALT_ALLELE_CATS + [
+    "R",
+    "Y",
+    "K",
+    "M",
+    "S",
+    "W",
+    "B",
+    "D",
+    "H",
+    "V",
+    "N",
+]
 
 
 def _enum(desc: str) -> list[str] | None:
@@ -197,11 +209,11 @@ def _cast_expr(col: str, meta: dict) -> pl.Expr:
     # ---- categorical handling -------------------------------------------
     if meta["cat"]:
         cats = meta["cat"] + ([] if "" in meta["cat"] else [""])
-        return base.fill_null("").cast(pl.Enum(cats), strict=True).alias(col)
-
-    # ---- numeric handling ------------------------------------------------
-    if meta["type"] in _POLARS_DTYPE:
-        return base.fill_null(0).cast(_POLARS_DTYPE[meta["type"]], strict=True).alias(col)
+        return base.fill_null(value="").cast(pl.Enum(cats), strict=True).alias(col)
+    elif meta["type"] in (_POLARS_DTYPE["Integer"], _POLARS_DTYPE["Float"]):
+        return base.fill_null(value=0).cast(_POLARS_DTYPE[meta["type"]], strict=True).alias(col)
+    elif meta["type"] == _POLARS_DTYPE["Flag"]:
+        return base.fill_null(value=False).cast(pl.Boolean, strict=True).alias(col)
 
     # ---- default (Utf8) --------------------------------------------------
     return base.alias(col)
@@ -266,7 +278,14 @@ def _generate_genomic_regions(
     try:
         # bedtools makewindows
         proc = subprocess.run(
-            [bedtools_path, "makewindows", "-g", genome_sizes_path, "-w", str(window_size)],
+            [
+                bedtools_path,
+                "makewindows",
+                "-g",
+                genome_sizes_path,
+                "-w",
+                str(window_size),
+            ],
             check=True,
             text=True,
             capture_output=True,
@@ -302,7 +321,20 @@ def _split_format_ids(format_ids: list[str], fmt_meta: dict) -> tuple[list[str],
 def _make_query_string(format_ids: list[str], query_info: list[str]) -> str:
     """Build the bcftools query format string (now includes %QUAL)."""
     bracket = "[" + "\t".join(f"%{t}" for t in format_ids) + "]"
-    return "\t".join(["%CHROM", "%POS", "%QUAL", "%REF", "%ALT", *[f"%INFO/{t}" for t in query_info], bracket]) + "\n"
+    return (
+        "\t".join(
+            [
+                "%CHROM",
+                "%POS",
+                "%QUAL",
+                "%REF",
+                "%ALT",
+                *[f"%INFO/{t}" for t in query_info],
+                bracket,
+            ]
+        )
+        + "\n"
+    )
 
 
 def _get_awk_script_path() -> str:
@@ -374,10 +406,12 @@ def _build_explicit_schema(cols: list[str], info_meta: dict, fmt_meta: dict) -> 
     schema: dict[str, pl.PolarsDataType] = {}
     meta_lookup = {**info_meta, **fmt_meta}
     for col in cols:
-        if col in (CHROM, REF, ALT, QUAL, FILTER, ID):
+        if col in (CHROM, REF, ALT, FILTER, ID):
             schema[col] = pl.Utf8
         elif col == POS:
             schema[col] = pl.Int64
+        elif col == QUAL:
+            schema[col] = pl.Float64
         elif col in meta_lookup and meta_lookup[col]["type"] in _POLARS_DTYPE:
             schema[col] = _POLARS_DTYPE[meta_lookup[col]["type"]]
         else:
@@ -605,10 +639,22 @@ def _bcftools_awk_stdout(
         bcftools_cmd.insert(2, "-r")
         bcftools_cmd.insert(3, region)
 
-    awk_cmd = ["awk", "-v", f"list_indices={','.join(map(str, list_indices))}", "-f", awk_script]
+    awk_cmd = [
+        "awk",
+        "-v",
+        f"list_indices={','.join(map(str, list_indices))}",
+        "-f",
+        awk_script,
+    ]
 
     bcftool = subprocess.Popen(bcftools_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    awk = subprocess.Popen(awk_cmd, stdin=bcftool.stdout, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    awk = subprocess.Popen(
+        awk_cmd,
+        stdin=bcftool.stdout,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     if bcftool.stdout:  # close in parent
         bcftool.stdout.close()
 
