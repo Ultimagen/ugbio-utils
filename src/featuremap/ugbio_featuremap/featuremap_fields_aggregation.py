@@ -10,79 +10,69 @@ from concurrent.futures import ThreadPoolExecutor
 from os.path import basename, dirname
 from os.path import join as pjoin
 
-import pandas as pd
 import pysam
-import xgboost
-from sklearn.preprocessing import LabelEncoder
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed import vcftools
-from ugbio_ppmseq.ppmSeq_consts import HistogramColumnNames
 
-from ugbio_featuremap import featuremap_consensus_utils
-from ugbio_featuremap.featuremap_consensus_utils import PileupFeatureMapFields
+from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-
-default_custom_info_fields = [
-    PileupFeatureMapFields.X_SCORE.value,
-    PileupFeatureMapFields.X_EDIST.value,
-    PileupFeatureMapFields.X_LENGTH.value,
-    PileupFeatureMapFields.X_MAPQ.value,
-    PileupFeatureMapFields.X_INDEX.value,
-    PileupFeatureMapFields.X_FC1.value,
-    PileupFeatureMapFields.X_FC2.value,
-    PileupFeatureMapFields.MAX_SOFTCLIP_LENGTH.value,
-    PileupFeatureMapFields.X_FLAGS.value,
-    HistogramColumnNames.STRAND_RATIO_CATEGORY_START.value,
-    HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value,
-    "ML_QUAL",
-    PileupFeatureMapFields.X_RN.value,
-    PileupFeatureMapFields.X_CIGAR.value,
-    "rq",
-    "tm",
-    PileupFeatureMapFields.IS_FORWARD.value,
-    PileupFeatureMapFields.IS_DUPLICATE.value,
-    PileupFeatureMapFields.READ_COUNT.value,
-    PileupFeatureMapFields.FILTERED_COUNT.value,
-    PileupFeatureMapFields.TRINUC_CONTEXT_WITH_ALT.value,
-    PileupFeatureMapFields.HMER_CONTEXT_REF.value,
-    PileupFeatureMapFields.HMER_CONTEXT_ALT.value,
-    PileupFeatureMapFields.PREV_1.value,
-    PileupFeatureMapFields.PREV_2.value,
-    PileupFeatureMapFields.PREV_3.value,
-    PileupFeatureMapFields.NEXT_1.value,
-    PileupFeatureMapFields.NEXT_2.value,
-    PileupFeatureMapFields.NEXT_3.value,
-    PileupFeatureMapFields.IS_CYCLE_SKIP.value,
-    PileupFeatureMapFields.X_QUAL.value,
-]
-
-ppm_custom_info_fields = ["st", "et"]
-
-columns_for_mean_aggregation = [
-    PileupFeatureMapFields.X_QUAL.value,
-    PileupFeatureMapFields.X_SCORE.value,
-    PileupFeatureMapFields.X_EDIST.value,
-    PileupFeatureMapFields.X_LENGTH.value,
-    PileupFeatureMapFields.X_MAPQ.value,
-    PileupFeatureMapFields.X_FC1.value,
-    PileupFeatureMapFields.X_FC2.value,
-    PileupFeatureMapFields.MAX_SOFTCLIP_LENGTH.value,
-    PileupFeatureMapFields.X_FLAGS.value,
-    "ML_QUAL",
-]
+# to make it more robust , maybe we can do the following:
+# given a vcf,
+# get all info/format fields
+# go over the records - if fields is integer/float mark the field name for aggregation
+columns_for_mean_aggregation = {
+    [FeatureMapFields.BCSQ.value, "Base calling error likelihood in calling the SNV, in Phred scale"],
+    [FeatureMapFields.BCSQCSS.value, "Cycle Skip Size when computing base calling error likelihood"],
+    [FeatureMapFields.RL.value, "Read length (post adapter trimming)"][
+        FeatureMapFields.INDEX.value,
+        "Position in the read of the SNV relative to read start, in the synthesis direction",
+    ],
+    [FeatureMapFields.DUP.value, "Is the read a duplicate, interpreted from CRAM flag"],
+    [FeatureMapFields.REV.value, "Is the read mapped to the reverse strand, interpreted from CRAM flag"],
+    [
+        FeatureMapFields.SCST.value,
+        "Softclip length in the start of the read (synthesis direction), interpreted from the CIGAR string",
+    ],
+    [
+        FeatureMapFields.SCED.value,
+        "Softclip length in the end of the read (synthesis direction), interpreted from the CIGAR string",
+    ],
+    [FeatureMapFields.MAPQ.value, "Read mapping quality"],
+    [FeatureMapFields.EDIST.value, "Read Levenshtein edit distance from reference"],
+    [
+        FeatureMapFields.HAMDIST.value,
+        "Hamming distance: number of M bases different on read from references, disregarding indels",
+    ],
+    [
+        FeatureMapFields.HAMDIST_FILT.value,
+        "Filtered Hamming distance: number of m<=M bases passing the adjacent base filter different on read from "
+        "references, disregarding indels",
+    ],
+    [FeatureMapFields.MQUAL.value, "SingleReadSNV model inferred raw Phred scaled quality"],
+    [FeatureMapFields.SNVQ.value, "SingleReadSNV model inferred Phred scaled quality, recalibrated to the SNVQ value"],
+    [
+        FeatureMapFields.FILT.value,
+        "Pre-filter status for SNVs reads, 1 means an SNVs read passed all the filters defined in the SRSNV model,"
+        "0 means it failed at least one filter",
+    ],
+    [FeatureMapFields.SMQ_BEFORE.value, "Mean quality of 20 bases before the locus in the synthesis direction"],
+    [FeatureMapFields.SMQ_AFTER.value, "Mean quality of 20 bases after the locus in the synthesis direction"],
+    [FeatureMapFields.ADJ_REF_DIFF.value, "The 3 adjacent bases to the locus do not fully match the reference genome"],
+}
 columns_for_min_aggregation = [
-    PileupFeatureMapFields.X_QUAL.value.lower(),
-    PileupFeatureMapFields.X_INDEX.value.lower(),
+    FeatureMapFields.SNVQ.value.lower(),
+    FeatureMapFields.X_INDEX.value.lower(),
 ]
 columns_for_max_aggregation = [
-    PileupFeatureMapFields.X_QUAL.value.lower(),
-    PileupFeatureMapFields.X_INDEX.value.lower(),
+    FeatureMapFields.SNVQ.value.lower(),
+    FeatureMapFields.X_INDEX.value.lower(),
 ]
-columns_for_fillna = [PileupFeatureMapFields.IS_CYCLE_SKIP.value]
-columns_for_st_et_aggregation = ["st", "et"]
+columns_for_fillna = [
+    FeatureMapFields.IS_CYCLE_SKIP.value
+]  # check if IS_CYCLE_SKIP is really removed from Featuremap v1.23
 
 added_agg_features = {
     "alt_reads": ["number of supporting reads for the alternative allele", "Integer"],
@@ -108,78 +98,8 @@ added_agg_features = {
     "count_non_duplicate": ["number of non-duplicate reads", "Integer"],
 }
 
-ppm_added_agg_features = {
-    "st_minus": ["number of st tagged as MINUS", "Integer"],
-    "st_mixed": ["number of st tagged as MIXED", "Integer"],
-    "st_plus": ["number of st tagged as PLUS", "Integer"],
-    "st_undetermined": ["number of st tagged as UNDETERMINED", "Integer"],
-    "et_minus": ["number of et tagged as MINUS", "Integer"],
-    "et_mixed": ["number of et tagged as MIXED", "Integer"],
-    "et_plus": ["number of et tagged as PLUS", "Integer"],
-    "et_undetermined": ["number of et tagged as UNDETERMINED", "Integer"],
-    "num_mixed_reads": ["number of mixed reads", "Integer"],
-}
 
-
-def record_manual_aggregation(rec, xgb_model=None):  # noqa: C901
-    record_info_dict = dict(rec.info)
-    record_dict_for_xgb = {}
-    # add non aggrgate fields
-    record_dict_for_xgb["POS"] = rec.pos
-    record_dict_for_xgb["alt_reads"] = rec.samples[0]["AD"][1]
-    record_dict_for_xgb["ref_allele"] = rec.alleles[0]
-    record_dict_for_xgb["alt_allele"] = rec.alleles[1]
-    record_dict_for_xgb["ref"] = rec.ref
-    record_dict_for_xgb["qual"] = rec.qual
-    non_agg_fields_for_xgb_from_rec = ["DP", "VAF"]
-    for field in non_agg_fields_for_xgb_from_rec:
-        record_dict_for_xgb[field] = rec.samples[0][field]
-    non_agg_fields_for_xgb_from_rec_dict = featuremap_consensus_utils.fields_to_collect_all_options[
-        "fields_to_write_once"
-    ]
-    for field in non_agg_fields_for_xgb_from_rec_dict:
-        record_dict_for_xgb[field] = record_info_dict[field]
-
-    # add aggregate fields
-    for colname in columns_for_mean_aggregation:
-        agg_colname = colname.lower() + "_mean"
-        record_dict_for_xgb[agg_colname] = statistics.mean(record_info_dict[colname])
-    for colname in columns_for_min_aggregation:
-        agg_colname = colname.lower() + "_min"
-        record_dict_for_xgb[agg_colname] = min(record_info_dict[colname])
-    for colname in columns_for_max_aggregation:
-        agg_colname = colname.lower() + "_max"
-        record_dict_for_xgb[agg_colname] = max(record_info_dict[colname])
-    record_dict_for_xgb["count_forward"] = record_info_dict["is_forward"].split("|").count("T")
-    record_dict_for_xgb["count_reverse"] = record_info_dict["is_forward"].split("|").count("F")
-    record_dict_for_xgb["count_duplicate"] = record_info_dict["is_duplicate"].split("|").count(True)
-    record_dict_for_xgb["count_non_duplicate"] = record_info_dict["is_duplicate"].split("|").count(False)
-    if "is_cycle_skip" in record_info_dict:
-        record_dict_for_xgb["is_cycle_skip"] = record_info_dict["is_cycle_skip"]
-    else:
-        record_dict_for_xgb["is_cycle_skip"] = False
-
-    if "st" in record_info_dict:  # ppmseq columns
-        record_dict_for_xgb["num_mixed_reads"] = sum(
-            [
-                1
-                for i, j in zip(record_info_dict["st"], record_info_dict["et"], strict=False)
-                if (i == j) & (i == "MIXED")
-            ]
-        )
-        for colname in columns_for_st_et_aggregation:
-            tags = ["MINUS", "MIXED", "PLUS", "UNDETERMINED"]
-            for tag in tags:
-                record_dict_for_xgb[colname + "_" + tag.lower()] = record_info_dict[colname].split("|").count(tag)
-
-    # print(record_dict_for_xgb)
-    if xgb_model:
-        record_dict_for_xgb["xgb_proba"] = predict_record_with_xgb(record_dict_for_xgb, xgb_model)
-
-    return record_dict_for_xgb
-
-
-def df_vcf_manual_aggregation(df_variants, xgb_model=None):  # noqa: C901
+def df_vcf_manual_aggregation(df_variants):  # noqa: C901
     def aggregate_mean(df, colname):
         values = []
         for tup in df[colname]:
@@ -244,83 +164,9 @@ def df_vcf_manual_aggregation(df_variants, xgb_model=None):  # noqa: C901
     df_variants = parse_is_duplicate(df_variants)
     df_variants["is_cycle_skip"] = df_variants["is_cycle_skip"].fillna(value=False)
 
-    if "st" in df_variants.columns:
-        for colname in columns_for_st_et_aggregation:
-            df_variants = parse_st_et_fields(df_variants, colname.lower())
-        df_variants = calculate_num_mixed(df_variants)
-
-    if (xgb_model is not None) & (len(df_variants) > 0):
-        df_variants["xgb_proba"] = predict_record_with_xgb(df_variants, xgb_model)
+    df_variants = calculate_num_mixed(df_variants)
 
     return df_variants
-
-
-def set_categorial_columns(df):
-    categorical_columns = df.select_dtypes(include=["object", "category"]).columns
-    le = LabelEncoder()
-    for col in categorical_columns:
-        df.loc[:, col] = le.fit_transform(df[col].astype(str))
-
-
-def predict_record_with_xgb(record_dict_for_xgb, xgb_model):
-    """
-    Predict the record with the xgb model
-    Inputs:
-        record_dict_for_xgb (dict): A dictionary containing the record information
-        xgb_model (xgboost.XGBClassifier): The xgboost model
-    Output:
-        probability_value (float): The xgb probability of the record to be a true variant
-    """
-
-    # load xgb model
-    xgb_clf_es = xgboost.XGBClassifier()
-    xgb_clf_es.load_model(xgb_model)
-    features = xgb_clf_es.get_booster().feature_names
-    # prepare dataframe
-    xgb_df = pd.DataFrame(record_dict_for_xgb, index=[0])
-    xgb_df = xgb_df.rename(
-        columns={
-            "DP": "dp",
-            "X_READ_COUNT": "x_read_count",
-            "X_FILTERED_COUNT": "x_filtered_count",
-            "VAF": "vaf",
-            "POS": "pos",
-        }
-    )
-
-    X = xgb_df[features]  # noqa: N806
-    set_categorial_columns(X)
-    X = X.fillna(0)  # noqa: N806
-
-    # predict record
-    probabilities = xgb_clf_es.predict_proba(X)
-    df_probabilities = pd.DataFrame(probabilities, columns=["0", "1"])
-    return df_probabilities["1"].to_numpy()
-
-
-def predict_record_with_xgb(df_variants, xgb_model):  # noqa: F811
-    """
-    Predict the record with the xgb model
-    Inputs:
-        variants dataframe (pd.DataFrame): A dataframe containing variants information
-        xgb_model (xgboost.XGBClassifier): The xgboost model
-    Output:
-        probability_value (float): The xgb probability of the record to be a true variant
-    """
-
-    # load xgb model
-    xgb_clf_es = xgboost.XGBClassifier()
-    xgb_clf_es.load_model(xgb_model)
-    features = xgb_clf_es.get_booster().feature_names
-
-    X = df_variants[features]  # noqa: N806
-    set_categorial_columns(X)
-    X = X.fillna(0).infer_objects(copy=False)  # noqa: N806
-
-    # predict record
-    probabilities = xgb_clf_es.predict_proba(X)
-    df_probabilities = pd.DataFrame(probabilities, columns=["0", "1"])
-    return df_probabilities["1"].to_numpy()
 
 
 def sort_and_filter_vcf(featuremap_vcf_file, temp_dir, filter_string, interval_srting):
@@ -349,12 +195,6 @@ def add_agg_fields_to_header(hdr):
         field_type = added_agg_features[field][1]
         field_description = added_agg_features[field][0]
         hdr.info.add(field, 1, field_type, field_description)
-    if "st" in hdr.info:
-        for field in ppm_added_agg_features:
-            field_type = ppm_added_agg_features[field][1]
-            field_description = ppm_added_agg_features[field][0]
-            hdr.info.add(field, 1, field_type, field_description)
-    hdr.info.add("xgb_proba", 1, "Float", "XGBoost probability of the record to be a true variant")
 
 
 def process_vcf_row(row, df_variants, hdr, vcfout, write_agg_params):
@@ -369,20 +209,14 @@ def process_vcf_row(row, df_variants, hdr, vcfout, write_agg_params):
         if write_agg_params:
             for key in added_agg_features:
                 row.info[key] = df_record[key].to_list()[0]
-            if "st" in hdr.info:
-                for key in ppm_added_agg_features:
-                    row.info[key] = df_record[key].to_list()[0]
-        if "xgb_proba" in df_record.columns:
-            row.info["xgb_proba"] = float(df_record["xgb_proba"].to_list()[0])
     vcfout.write(row)
 
 
-def pileup_featuremap_with_agg_params_and_xgb_proba(  # noqa: C901
+def featuremap_fields_aggregation(  # noqa: C901
     featuremap_vcf_file: str,
     output_vcf: str,
     filter_tags=None,
     genomic_interval: str = None,
-    xgb_model: xgboost.XGBClassifier = None,
     write_agg_params: bool = True,  # noqa: FBT001, FBT002
     verbose: bool = True,  # noqa: FBT001, FBT002
 ) -> str:
@@ -402,10 +236,10 @@ def pileup_featuremap_with_agg_params_and_xgb_proba(  # noqa: C901
         )
 
         # read vcf block to dataframe
-        custom_info_fields = default_custom_info_fields
-        custom_info_fields.extend(ppm_custom_info_fields)
+        info_fields, format_fields, custom_info_fields = vcftools.get_vcf_fields_name(sorted_filtered_featuremap)
+        custom_info_fields = list(custom_info_fields)
         df_variants = vcftools.get_vcf_df(sorted_filtered_featuremap, custom_info_fields=custom_info_fields)
-        df_variants = df_vcf_manual_aggregation(df_variants, xgb_model)
+        df_variants = df_vcf_manual_aggregation(df_variants)
 
         with pysam.VariantFile(sorted_featuremap) as vcfin:
             hdr = vcfin.header
@@ -419,22 +253,19 @@ def pileup_featuremap_with_agg_params_and_xgb_proba(  # noqa: C901
     return output_vcf
 
 
-def pileup_featuremap_with_agg_params_and_xgb_proba_on_an_interval_list(
+def featuremap_fields_aggregation_on_an_interval_list(
     featuremap_vcf_file: str,
     output_vcf: str,
     interval_list: str,
     filter_tags=None,
-    xgb_model: str = None,
-    write_agg_params: bool = True,  # noqa: FBT001, FBT002
     verbose: bool = True,  # noqa: FBT001, FBT002
 ) -> None:
     """
-    Apply pileup featuremap on an interval list
+    Apply featuremap fields aggregation on an interval list
     Inputs:
         featuremap (str): The input featuremap vcf file
         output_vcf (str): The output pileup vcf file
         interval_list (str): The interval list file
-        xgb_model (str): The xgboost model file
         verbose (bool): The verbosity level (default: True)
     Output:
         output_vcf (str): The output vcf file including the aggregated fields and the xgb probability
@@ -465,15 +296,13 @@ def pileup_featuremap_with_agg_params_and_xgb_proba_on_an_interval_list(
                 f"{output_vcf}.{genomic_interval}.int_list.vcf.gz",
                 filter_tags,
                 genomic_interval,
-                xgb_model,
-                write_agg_params,
                 verbose,
             )
             for genomic_interval in genomic_intervals
         ]
         num_cpus = os.cpu_count()
         with ThreadPoolExecutor(max_workers=num_cpus) as executor:
-            results = list(executor.map(lambda p: pileup_featuremap_with_agg_params_and_xgb_proba(*p), params))
+            results = list(executor.map(lambda p: featuremap_fields_aggregation(*p), params))
 
         # Write each string to the file
         with open("interval_vcf_files.list", "w") as file:
@@ -492,12 +321,12 @@ def pileup_featuremap_with_agg_params_and_xgb_proba_on_an_interval_list(
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="add_aggregate_parameters_and_xgb_score_to_pileup_featuremap",
+        prog="Featuremap fields aggregation",
         description=run.__doc__,
     )
     parser.add_argument(
         "-f",
-        "--featuremap_pileup",
+        "--featuremap",
         type=str,
         required=True,
         help="""Featuremap pileup vcf file""",
@@ -525,21 +354,6 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         help="""Interval list file""",
     )
     parser.add_argument(
-        "-m",
-        "--xgb_model_file",
-        type=str,
-        required=True,
-        help="""XGBoost model file""",
-    )
-    parser.add_argument(
-        "-write_agg_params",
-        "--write_agg_params",
-        type=bool,
-        required=False,
-        default=True,
-        help="""Whether to write the aggregated parameters (default: True)""",
-    )
-    parser.add_argument(
         "-v",
         "--verbose",
         type=bool,
@@ -553,13 +367,11 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
 def run(argv):
     """Add aggregated parameters and xgb probability to the featuremap pileup vcf file"""
     args_in = __parse_args(argv)
-    pileup_featuremap_with_agg_params_and_xgb_proba_on_an_interval_list(
+    featuremap_fields_aggregation_on_an_interval_list(
         args_in.featuremap_pileup,
         args_in.output_vcf,
         args_in.interval_list_file,
         args_in.filter_string,
-        args_in.xgb_model_file,
-        args_in.write_agg_params,
         args_in.verbose,
     )
 
