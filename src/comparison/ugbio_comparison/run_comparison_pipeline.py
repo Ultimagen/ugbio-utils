@@ -32,11 +32,13 @@ from tqdm import tqdm
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
 from ugbio_core.h5_utils import read_hdf
 from ugbio_core.logger import logger
+from ugbio_core.vcf_utils import VcfUtils
 from ugbio_core.vcfbed import vcftools
 from ugbio_core.vcfbed.interval_file import IntervalFile
 
-from ugbio_comparison import comparison_utils, vcf_pipeline_utils
+from ugbio_comparison import comparison_utils
 from ugbio_comparison.comparison_pipeline import ComparisonPipeline
+from ugbio_comparison.vcf_comparison_utils import VcfComparisonUtils
 
 MIN_CONTIG_LENGTH = 100000
 
@@ -225,7 +227,8 @@ def run(argv: list[str]):
     args = parser.parse_args(argv[1:])
     logger.setLevel(getattr(logging, args.verbosity))
     sp = SimplePipeline(args.fc, args.lc, debug=args.d, print_timing=True)
-    vpu = vcf_pipeline_utils.VcfPipelineUtils(sp)
+    vcu = VcfComparisonUtils(sp)
+    vu = VcfUtils(sp)
 
     cmp_intervals = IntervalFile(sp, args.cmp_intervals, args.reference, args.reference_dict)
     highconf_intervals = IntervalFile(sp, args.highconf_intervals, args.reference, args.reference_dict)
@@ -236,13 +239,14 @@ def run(argv: list[str]):
         logger.info(f"copy {args.highconf_intervals} to {args.output_interval}")
         copyfile(highconf_intervals.as_bed_file(), args.output_interval)
     else:
-        vpu.intersect_bed_files(cmp_intervals.as_bed_file(), highconf_intervals.as_bed_file(), args.output_interval)
+        vu.intersect_bed_files(cmp_intervals.as_bed_file(), highconf_intervals.as_bed_file(), args.output_interval)
 
     args_dict = {k: str(vars(args)[k]) for k in vars(args)}
     pd.DataFrame(args_dict, index=[0]).to_hdf(args.output_file, key="input_args")
 
     comparison_pipeline = ComparisonPipeline(
-        vpu=vpu,
+        vcu=vcu,
+        vu=vu,
         n_parts=args.n_parts,
         input_prefix=args.input_prefix,
         truth_file=args.gtr_vcf,

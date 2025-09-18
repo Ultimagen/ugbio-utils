@@ -112,16 +112,5 @@ def test_mpileup_info_integration_to_merged_vcf(tmp_path, resources_dir):
     assert expected_num_variants == out_num_variants
     assert expected_pass_count == out_pass_count
 
-    mpileup_format_fields = [
-        "ref_m2",
-        "ref_m1",
-        "ref_0",
-        "ref_1",
-        "ref_2",
-        "nonref_m2",
-        "nonref_m1",
-        "nonref_0",
-        "nonref_1",
-        "nonref_2",
-    ]
-    validate_vcf_format_fields(out_sfmp_vcf, mpileup_format_fields)
+    mpileup_format_fields = ["ref_counts_pm_2", "nonref_counts_pm_2"]
+    assert validate_vcf_format_fields(out_sfmp_vcf, mpileup_format_fields)

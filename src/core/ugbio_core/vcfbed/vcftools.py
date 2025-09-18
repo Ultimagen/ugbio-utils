@@ -13,10 +13,6 @@ import pandas as pd
 import pysam
 
 
-def index_vcf(sp, vcf_file):
-    sp.print_and_run(f"bcftools index -t {vcf_file}")
-
-
 def get_vcf_df(  # noqa: PLR0912, C901
     variant_calls: str | pysam.VariantFile,
     sample_id: int = 0,

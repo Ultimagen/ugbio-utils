@@ -37,7 +37,6 @@ def test_somatic_pileup_featuremap_inference(tmp_path, resources_dir):
     )
 
     out_sfmp_vcf = pjoin(out_dir, os.path.basename(in_sfmp).replace(".vcf.gz", ".xgb_proba.vcf.gz"))
-
     # Run the script's main function
     somatic_pileup_featuremap_inference.run(
         [
