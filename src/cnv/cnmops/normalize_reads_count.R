@@ -251,7 +251,7 @@ normalizeChromosomesGenomewize <- function(X, chr, normType="poisson", sizeFacto
 			ploidy[chrX_means<=cutoff]<-1
 			write.table(ploidy,paste(out_prefix,".estimate_gender",sep=""),row.names = FALSE,quote=FALSE,col.names = FALSE)
 
-			png(paste(out_prefix,"chrX_mean_coverage_distribution.png"), type = "cairo")
+			png(paste(out_prefix,"chrX_mean_coverage_distribution.png"), type =git  "cairo")
 			hist(chrX_means)
 			abline(v=cutoff, col='red', lwd=3, lty='dashed')
 			dev.off()
