@@ -107,6 +107,7 @@ class VcfUtils:
         input_vcf: str,
         output_vcf: str,
         filter_name: str,
+        n_threads: int = 1,
         include_expression: str | None = None,
         exclude_expression: str | None = None,
     ) -> None:
@@ -120,6 +121,8 @@ class VcfUtils:
             Output VCF file path
         filter_name : str
             Name of the filter to add to variants that don't pass the criteria
+        n_threads : int, optional
+            Number of threads to use (default is 1)
         include_expression : str, optional
             bcftools include expression (variants NOT matching this will be filtered)
         exclude_expression : str, optional
@@ -147,6 +150,7 @@ class VcfUtils:
         else:  # exclude_expression is not None
             cmd_parts.extend(["-e", f"'{exclude_expression}'"])
 
+        cmd_parts.extend(["-t", str(n_threads)])
         # Add filter name and output format
         cmd_parts.extend(["-s", filter_name, "-m", "+", "-O", "z", "-o", output_vcf, input_vcf])
 
@@ -184,6 +188,42 @@ class VcfUtils:
         Writes output_fn file
         """
         self.__execute(f"gatk SelectVariants -V {input_fn} -L {intervals_fn} -O {output_fn}")
+
+    def view_vcf(
+        self,
+        input_vcf: str,
+        output_vcf: str,
+        n_threads: int = 1,
+        extra_args: str = "",
+    ) -> None:
+        """View/subset VCF file using bcftools view
+
+        Parameters
+        ----------
+        input_vcf : str
+            Input VCF file path
+        output_vcf : str
+            Output VCF file path
+        n_threads : int, optional
+            Number of threads to use (default is 1)
+        extra_args : str, optional
+            Additional arguments to pass to bcftools view (default is empty string)
+        """
+        # Build the bcftools view command
+        cmd_parts = ["bcftools", "view"]
+
+        # Add threads
+        cmd_parts.extend(["--threads", str(n_threads)])
+
+        # Add extra arguments if provided
+        if extra_args:
+            cmd_parts.extend(extra_args.split())
+
+        # Add output format and files
+        cmd_parts.extend(["-O", "z", "-o", output_vcf, input_vcf])
+
+        # Execute the view command
+        self.__execute(" ".join(cmd_parts))
 
     def annotate_tandem_repeats(self, input_file: str, reference_fasta: str) -> str:
         """Runs VariantAnnotator on the input file to add tandem repeat annotations (maybe others)
