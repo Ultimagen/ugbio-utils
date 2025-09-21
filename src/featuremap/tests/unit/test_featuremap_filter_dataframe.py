@@ -11,12 +11,12 @@ from ugbio_featuremap.filter_dataframe import filter_parquet, read_filtering_sta
 
 pl.enable_string_cache()
 
-SAMPLE = Path(__file__).parent.parent / "resources" / "416119_L7402.random_sample.featuremap.downsampled.vcf.gz"
+SAMPLE = Path(__file__).parent.parent / "resources" / "416119-L7402.raw.featuremap.head.vcf.gz"
 
 
 def _parquet_from_sample(tmpdir: Path) -> Path:
     out = tmpdir / "sample.parquet"
-    vcf_to_parquet(str(SAMPLE), str(out), drop_format={"GT"})
+    vcf_to_parquet(str(SAMPLE), str(out), drop_format={"GT", "AD"})
     return out
 
 
@@ -26,8 +26,8 @@ def test_filter_pipeline(tmp_path: Path) -> None:
     bcsq_filt = 0
     cfg = {
         "filters": [
-            {"name": "ref_eq_alt", "field": "REF", "op": "eq", "value_field": "ALT", "type": "label"},
-            {"field": "READ_COUNT", "op": "gt", "value": 20, "type": "label"},
+            {"name": "ref_ne_alt", "field": "REF", "op": "ne", "value_field": "ALT", "type": "label"},
+            {"field": "DP", "op": "gt", "value": 20, "type": "label"},
             {"field": "ADJ_REF_DIFF", "op": "eq", "value": 0, "type": "quality"},
             {"field": "MAPQ", "op": "ge", "value": 60, "type": "quality"},
             {"name": f"bcsq_ge_{bcsq_filt}", "field": "BCSQ", "op": "gt", "value": bcsq_filt, "type": "quality"},
@@ -64,12 +64,12 @@ def test_filter_pipeline(tmp_path: Path) -> None:
     # BCSQ > BCSQ_filt and REF == ALT should both hold
     assert (featuremap_dataframe["BCSQ"] > bcsq_filt).all()
     # Cast to string to ensure reliable comparison even when columns are Enum-encoded
-    assert (featuremap_dataframe["REF"].cast(pl.Utf8) == featuremap_dataframe["ALT"].cast(pl.Utf8)).all()
+    assert (featuremap_dataframe["REF"].cast(pl.Utf8) != featuremap_dataframe["ALT"].cast(pl.Utf8)).all()
 
     # Check full output with filter columns
     full_df = pl.read_parquet(out_pq_full)
     assert f"__filter_bcsq_ge_{bcsq_filt}" in full_df.columns
-    assert "__filter_ref_eq_alt" in full_df.columns
+    assert "__filter_ref_ne_alt" in full_df.columns
     assert "__filter_final" in full_df.columns
 
     # Check combinations exist
@@ -77,9 +77,9 @@ def test_filter_pipeline(tmp_path: Path) -> None:
     # The "00" pattern should only exist if there are rows that fail all filters
 
     # verify expression details are stored
-    ref_eq_alt = next(f for f in stats["filters"] if f["name"] == "ref_eq_alt")
+    ref_eq_alt = next(f for f in stats["filters"] if f["name"] == "ref_ne_alt")
     assert ref_eq_alt["field"] == "REF"
-    assert ref_eq_alt["op"] == "eq"
+    assert ref_eq_alt["op"] == "ne"
     assert ref_eq_alt["value_field"] == "ALT"
     assert "value" not in ref_eq_alt
 
@@ -253,7 +253,7 @@ def test_cli_filters_only(tmp_path: Path) -> None:
 
     cli_filters = [
         "name=high_bcsq:field=BCSQ:op=ge:value=20:type=quality",
-        "name=high_read_count:field=READ_COUNT:op=gt:value=10:type=region",
+        "name=high_read_count:field=DP:op=gt:value=10:type=region",
     ]
 
     out_pq = tmp_path / "f.parquet"
@@ -280,7 +280,7 @@ def test_cli_filters_only(tmp_path: Path) -> None:
     # Check filtered output
     filtered_df = pl.read_parquet(out_pq)
     assert (filtered_df["BCSQ"] >= 20).all()
-    assert (filtered_df["READ_COUNT"] > 10).all()
+    assert (filtered_df["DP"] > 10).all()
 
 
 def test_cli_downsample_override(tmp_path: Path) -> None:
@@ -329,7 +329,7 @@ def test_config_and_cli_filters_combined(tmp_path: Path) -> None:
         json.dump(cfg, f)
 
     # CLI with additional filters
-    cli_filters = ["name=cli_filter:field=READ_COUNT:op=gt:value=5:type=region"]
+    cli_filters = ["name=cli_filter:field=DP:op=gt:value=5:type=region"]
 
     out_pq = tmp_path / "f.parquet"
     stats_json = tmp_path / "stats.json"
@@ -349,7 +349,7 @@ def test_config_and_cli_filters_combined(tmp_path: Path) -> None:
     # Check filtered output
     filtered_df = pl.read_parquet(out_pq)
     assert (filtered_df["BCSQ"] >= 10).all()
-    assert (filtered_df["READ_COUNT"] > 5).all()
+    assert (filtered_df["DP"] > 5).all()
 
 
 def test_cli_filter_with_list_values(tmp_path: Path) -> None:
