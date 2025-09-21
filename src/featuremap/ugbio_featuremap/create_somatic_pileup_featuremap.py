@@ -374,7 +374,6 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--tumor_vcf", help="tumor vcf file", required=True, type=str)
     parser.add_argument("--normal_vcf", help="normal vcf file", required=True, type=str)
     parser.add_argument("--sample_name", help="sample_name", required=True, type=str)
-    parser.add_argument("--ref_tr_file", help="reference tandem repeat file", required=True, type=str)
     parser.add_argument("--cpu", help="number of CPU to use", required=False, type=int, default=8)
     parser.add_argument(
         "--out_directory",
