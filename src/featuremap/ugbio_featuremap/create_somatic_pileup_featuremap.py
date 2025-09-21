@@ -216,15 +216,15 @@ vu = VcfUtils()
 #     vu.index_vcf(output_vcf)
 
 
-def merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_merged_vcf, n_cpu: int | None = None):
+def merge_vcf_files(tumor_vcf, normal_vcf, out_merged_vcf, n_cpu: int | None = None):
     """
     Merge tumor and normal VCF files into a single VCF file.
 
     Parameters
     ----------
-    tumor_vcf_info_to_format : str
+    tumor_vcf : str
         Path to the tumor VCF file with INFO fields moved to FORMAT.
-    normal_vcf_info_to_format : str
+    normal_vcf : str
         Path to the normal VCF file with INFO fields moved to FORMAT.
     out_merged_vcf : str
         Path to the output merged VCF file.
@@ -246,12 +246,14 @@ def merge_vcf_files(tumor_vcf_info_to_format, normal_vcf_info_to_format, out_mer
         str(n_cpu),
         "-m",
         "none",
+        "--filter-logic",
+        "x",
         "--force-samples",
         "-Oz",
         "-o",
         out_merged_vcf,
-        tumor_vcf_info_to_format,
-        normal_vcf_info_to_format,
+        tumor_vcf,
+        normal_vcf,
     ]
     logger.debug(" ".join(cmd_merge))
     subprocess.check_call(cmd_merge)
@@ -417,7 +419,7 @@ def run(argv):
     if not os.path.exists(args.out_directory):
         os.makedirs(args.out_directory)
         logger.info(f"Created output directory: {args.out_directory}")
-
+    created_files = []
     # Set up the output VCF file path
     out_merged_vcf = pjoin(args.out_directory, f"{args.sample_name}.tumor_normal.merged.vcf.gz")
     logger.info(f"Output merged VCF file: {out_merged_vcf}")
@@ -434,7 +436,7 @@ def run(argv):
             n_threads=args.cpu,
         )
         logger.info("Adding SingleRead filter to the tumor file: done")
-
+        created_files.append(out_add_filter_vcf)
         logger.info("Filtering for tumor-PASS variants only.")
         tumor_vcf = out_add_filter_vcf.replace(".vcf.gz", ".tumor_PASS.vcf.gz")
         vu.view_vcf(
@@ -445,6 +447,8 @@ def run(argv):
         )
         vu.index_vcf(tumor_vcf)
         logger.info("Filtering for tumor-PASS variants only: done")
+        created_files.append(tumor_vcf)
+        created_files.append(tumor_vcf + ".tbi")
     else:
         tumor_vcf = args.tumor_vcf
         logger.info("No filtering for tumor-PASS variants. Merging all records from both VCF files.")
@@ -452,6 +456,9 @@ def run(argv):
     out_merged_vcf_tumor_pass = merge_vcf_files(tumor_vcf, args.normal_vcf, out_merged_vcf)
     logger.info(f"Merged VCF file created: {out_merged_vcf}")
     logger.info(f"Merged VCF tumor-PASS file created: {out_merged_vcf_tumor_pass}")
+
+    for f in created_files:
+        os.remove(f)
 
 
 def main():
