@@ -102,6 +102,57 @@ class VcfUtils:
         self.__execute(f"bcftools reheader -h {new_header} {input_file}")
         self.index_vcf(output_file)
 
+    def filter_vcf(
+        self,
+        input_vcf: str,
+        output_vcf: str,
+        filter_name: str,
+        include_expression: str | None = None,
+        exclude_expression: str | None = None,
+    ) -> None:
+        """Filter VCF file using bcftools filter and add a filter with a given name
+
+        Parameters
+        ----------
+        input_vcf : str
+            Input VCF file path
+        output_vcf : str
+            Output VCF file path
+        filter_name : str
+            Name of the filter to add to variants that don't pass the criteria
+        include_expression : str, optional
+            bcftools include expression (variants NOT matching this will be filtered)
+        exclude_expression : str, optional
+            bcftools exclude expression (variants matching this will be filtered)
+
+        Raises
+        ------
+        ValueError
+            If neither include_expression nor exclude_expression is provided, or if both are provided
+        """
+        if include_expression is None and exclude_expression is None:
+            msg = "At least one of include_expression or exclude_expression must be provided"
+            raise ValueError(msg)
+
+        if include_expression is not None and exclude_expression is not None:
+            msg = "Only one of include_expression or exclude_expression can be provided at a time"
+            raise ValueError(msg)
+
+        # Build the bcftools filter command
+        cmd_parts = ["bcftools", "filter"]
+
+        # Add include or exclude expression
+        if include_expression is not None:
+            cmd_parts.extend(["-i", f"'{include_expression}'"])
+        else:  # exclude_expression is not None
+            cmd_parts.extend(["-e", f"'{exclude_expression}'"])
+
+        # Add filter name and output format
+        cmd_parts.extend(["-s", filter_name, "-m", "+", "-O", "z", "-o", output_vcf, input_vcf])
+
+        # Execute the filtering command
+        self.__execute(" ".join(cmd_parts))
+
     def intersect_bed_files(self, input_bed1: str, input_bed2: str, bed_output: str) -> None:
         """Intersects bed files
 
