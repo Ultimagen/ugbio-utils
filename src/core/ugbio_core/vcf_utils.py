@@ -225,6 +225,46 @@ class VcfUtils:
         # Execute the view command
         self.__execute(" ".join(cmd_parts))
 
+    def remove_filter_annotations(self, input_vcf: str, output_vcf: str, n_threads: int = 1) -> None:
+        """
+        Remove all filter annotations from a VCF file using bcftools.
+
+        This function removes:
+        1. All ##FILTER header lines from the VCF header
+        2. Sets all FILTER column values to '.' (missing) in variant records
+
+        Parameters
+        ----------
+        input_vcf : str
+            Path to the input VCF file (can be .vcf or .vcf.gz)
+        output_vcf : str
+            Path to the output VCF file where filtered result will be written
+        n_threads : int, optional
+            Number of threads to use for bcftools operations (default: 1)
+
+        Returns
+        -------
+        None
+            Writes the filtered VCF to output_vcf and creates an index
+        """
+        # Build the bcftools annotate command
+        cmd_parts = ["bcftools", "annotate"]
+
+        # Remove FILTER column data and FILTER header lines
+        cmd_parts.extend(["-x", "FILTER", "-h", "'^##FILTER'"])
+
+        # Add threading
+        cmd_parts.extend(["--threads", str(n_threads)])
+
+        # Add output format and files
+        cmd_parts.extend(["-o", output_vcf, "-O", "z", input_vcf])
+
+        # Execute the command
+        self.__execute(" ".join(cmd_parts))
+
+        # Index the output VCF
+        self.index_vcf(output_vcf)
+
     def annotate_tandem_repeats(self, input_file: str, reference_fasta: str) -> str:
         """Runs VariantAnnotator on the input file to add tandem repeat annotations (maybe others)
 
