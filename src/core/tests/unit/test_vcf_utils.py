@@ -162,7 +162,7 @@ class TestVcfUtils:
         vcf_utils.remove_filter_annotations(input_vcf=input_vcf, output_vcf=output_vcf)
 
         # Verify the correct bcftools commands were called
-        expected_annotate_cmd = f"bcftools annotate -x FILTER -h --threads 1 -o {output_vcf} -O z {input_vcf}"
+        expected_annotate_cmd = f"bcftools annotate -x FILTER --threads 1 -o {output_vcf} -O z {input_vcf}"
         expected_index_cmd = f"bcftools index -tf {output_vcf}"
 
         expected_calls = [mock.call(expected_annotate_cmd), mock.call(expected_index_cmd)]
