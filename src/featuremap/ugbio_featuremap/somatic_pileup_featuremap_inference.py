@@ -32,7 +32,7 @@ from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
 from ugbio_core.vcfbed import vcftools
 
-from ugbio_featuremap import featuremap_xgb_prediction
+from ugbio_featuremap import featuremap_xgb_prediction, somatic_featuremap_fields_aggregation
 
 TR_CUSTOM_INFO_FIELDS = ["TR_distance", "TR_length", "TR_seq_unit_length"]
 vu = VcfUtils()
@@ -79,110 +79,6 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         default=".",
     )
     return parser.parse_args(argv[1:])
-
-
-def parse_padding_ref_counts(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Parse the padding ref counts from the DataFrame and create new columns for each padding position.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input DataFrame containing the 't_ref_counts_pm_*' and 'n_ref_counts_pm_*' columns.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with new columns for each padding position added.
-    """
-    # Identify the padding ref count columns
-    # Find columns matching the padding ref count pattern
-    ref_count_pattern = re.compile(r"^(ref|nonref)_counts_pm_(\d+)$")
-    padding_columns = [col for col in df.columns if ref_count_pattern.match(col)]
-
-    if not padding_columns:
-        raise ValueError("No padding ref count columns found in DataFrame")
-
-    # Extract the distance from center (should be the same for all columns)
-    match = ref_count_pattern.match(padding_columns[0])
-    distance_from_center = int(match.group(2))
-
-    # Verify all columns have the same padding distance
-    for col in padding_columns:
-        match = ref_count_pattern.match(col)
-        if match and int(match.group(2)) != distance_from_center:
-            raise ValueError(f"Inconsistent padding distances found: {distance_from_center} vs {match.group(2)}")
-    # Create new column-name for each padding position
-    ref_colnames = []
-    nonref_colnames = []
-    for loc in np.arange(-distance_from_center, distance_from_center + 1, 1):
-        if loc < 0:
-            ref_colnames.append(f"ref_m{abs(loc)}")
-            nonref_colnames.append(f"nonref_m{abs(loc)}")
-        else:
-            ref_colnames.append(f"ref_{loc}")
-            nonref_colnames.append(f"nonref_{loc}")
-
-    # Split the lists in the original columns into separate columns
-    ref_colname = f"ref_counts_pm_{distance_from_center}"
-    split_df = pd.DataFrame(df[ref_colname].tolist(), columns=ref_colnames)
-    for new_col in split_df.columns:
-        df[new_col] = split_df[new_col].values  # noqa: PD011
-
-    nonref_colname = f"nonref_counts_pm_{distance_from_center}"
-    split_df = pd.DataFrame(df[nonref_colname].tolist(), columns=nonref_colnames)
-    for new_col in split_df.columns:
-        df[new_col] = split_df[new_col].values  # noqa: PD011
-
-    return df
-
-
-def read_merged_tumor_normal_vcf(
-    vcf_file: str, custom_info_fields: list[str], fillna_dict: dict[str, object] = None, chrom: str = None
-) -> "pd.DataFrame":
-    """
-    Reads a merged tumor-normal VCF file and returns a concatenated DataFrame with prefixed columns
-    for tumor and normal samples.
-    Args:
-        vcf_file (str): Path to the VCF file containing both tumor and normal samples.
-        custom_info_fields (list[str]): List of custom INFO fields to extract from the VCF.
-        fillna_dict (dict[str, object], optional): Dictionary specifying values to fill missing data
-            for each field. Defaults to None.
-        chrom (str, optional): Chromosome to filter the VCF records. If None, all chromosomes are
-            included. Defaults to None.
-    Returns:
-        pd.DataFrame: A DataFrame with tumor columns prefixed by 't_' and normal columns
-            prefixed by 'n_'. Missing values are filled according to `fillna_dict` if provided.
-    """
-    # Read to df
-    if chrom is not None:
-        df_tumor = vcftools.get_vcf_df(vcf_file, sample_id=0, custom_info_fields=custom_info_fields, chromosome=chrom)
-        df_normal = vcftools.get_vcf_df(vcf_file, sample_id=1, custom_info_fields=custom_info_fields, chromosome=chrom)
-    else:
-        df_tumor = vcftools.get_vcf_df(vcf_file, sample_id=0, custom_info_fields=custom_info_fields)
-        df_normal = vcftools.get_vcf_df(vcf_file, sample_id=1, custom_info_fields=custom_info_fields)
-
-    # parse padding ref counts into separate columns
-    df_tumor = parse_padding_ref_counts(df_tumor)
-    df_normal = parse_padding_ref_counts(df_normal)
-
-    # merge dataframes
-    df_tumor_normal = pd.concat([df_tumor.add_prefix("t_"), df_normal.add_prefix("n_")], axis=1)
-
-    # create merged fillna dict
-    if fillna_dict:
-        fillna_dict_merged = {}
-        for key in fillna_dict:  # noqa: PLC0206
-            fillna_dict_merged[f"t_{key}"] = fillna_dict[key]
-            fillna_dict_merged[f"n_{key}"] = fillna_dict[key]
-        df_tumor_normal = df_tumor_normal.fillna(fillna_dict_merged)
-
-    # TR info fields are stored as model features in their original naming.
-    for tr_field in TR_CUSTOM_INFO_FIELDS:
-        key = f"t_{tr_field.lower()}"
-        df_tumor_normal[tr_field] = df_tumor_normal[key]
-
-    return df_tumor_normal
 
 
 def load_model(xgb_model_file: str) -> "xgboost.XGBClassifier":
@@ -377,7 +273,9 @@ def run(argv):
     logger.debug(f"model features fields mapping: {__fields_mapping}")
 
     # Read somatic-featuremap-pileup-vcf into dataframe
-    df_sfmp = read_merged_tumor_normal_vcf(args.in_sfmp, custom_info_fields=custom_info_fields)
+    df_sfmp = somatic_featuremap_fields_aggregation.read_merged_tumor_normal_vcf(
+        args.in_sfmp, custom_info_fields=custom_info_fields
+    )
 
     # Inference
     df_sfmp["xgb_proba"] = predict(xgb_clf_es, df_sfmp)
