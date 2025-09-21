@@ -68,13 +68,13 @@ class TestFilterVcf:
 
         # Test error when neither expression is provided
         with pytest.raises(
-            ValueError, match="At least one of include_expression or exclude_expression must be provided"
+            ValueError, match="At least one of include_expression or exclude_expression must" " be provided"
         ):
             vcf_utils.filter_vcf("input.vcf", "output.vcf", "TestFilter")
 
         # Test error when both expressions are provided
         with pytest.raises(
-            ValueError, match="Only one of include_expression or exclude_expression can be provided at a time"
+            ValueError, match="Only one of include_expression or exclude_expression " "can be provided at a time"
         ):
             vcf_utils.filter_vcf(
                 "input.vcf", "output.vcf", "TestFilter", include_expression="QUAL>=30", exclude_expression="QUAL<30"
