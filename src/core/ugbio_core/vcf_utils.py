@@ -251,7 +251,7 @@ class VcfUtils:
         cmd_parts = ["bcftools", "annotate"]
 
         # Remove FILTER column data and FILTER header lines
-        cmd_parts.extend(["-x", "FILTER", "-h", "'^##FILTER'"])
+        cmd_parts.extend(["-x", "FILTER"])
 
         # Add threading
         cmd_parts.extend(["--threads", str(n_threads)])
