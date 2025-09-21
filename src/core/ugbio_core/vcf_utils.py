@@ -150,7 +150,7 @@ class VcfUtils:
         else:  # exclude_expression is not None
             cmd_parts.extend(["-e", f"'{exclude_expression}'"])
 
-        cmd_parts.extend(["-t", str(n_threads)])
+        cmd_parts.extend(["--threads", str(n_threads)])
         # Add filter name and output format
         cmd_parts.extend(["-s", filter_name, "-m", "+", "-O", "z", "-o", output_vcf, input_vcf])
 
