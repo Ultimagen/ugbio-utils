@@ -40,6 +40,8 @@ class FeatureMapFields(Enum):
     DP = "DP"  # depth
     BCSQ = "BCSQ"  # base calling quality
     REV = "REV"  # is reverse strand
+    FILT = "FILT"  # is reads in this position pass filters
+    DUP = "DUP"  # is duplicate read
 
 
 class FeatureMapFilters(Enum):
