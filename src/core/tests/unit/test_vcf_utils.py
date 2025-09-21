@@ -162,9 +162,7 @@ class TestVcfUtils:
         vcf_utils.remove_filter_annotations(input_vcf=input_vcf, output_vcf=output_vcf)
 
         # Verify the correct bcftools commands were called
-        expected_annotate_cmd = (
-            f"bcftools annotate -x FILTER -h '^##FILTER' --threads 1 -o {output_vcf} -O z {input_vcf}"
-        )
+        expected_annotate_cmd = f"bcftools annotate -x FILTER -h --threads 1 -o {output_vcf} -O z {input_vcf}"
         expected_index_cmd = f"bcftools index -tf {output_vcf}"
 
         expected_calls = [mock.call(expected_annotate_cmd), mock.call(expected_index_cmd)]
@@ -181,9 +179,7 @@ class TestVcfUtils:
         vcf_utils.remove_filter_annotations(input_vcf=input_vcf, output_vcf=output_vcf, n_threads=n_threads)
 
         # Verify the correct bcftools commands were called with custom threads
-        expected_annotate_cmd = (
-            f"bcftools annotate -x FILTER -h '^##FILTER' --threads {n_threads} -o {output_vcf} -O z {input_vcf}"
-        )
+        expected_annotate_cmd = f"bcftools annotate -x FILTER --threads {n_threads} -o {output_vcf} -O z {input_vcf}"
         expected_index_cmd = f"bcftools index -tf {output_vcf}"
 
         expected_calls = [mock.call(expected_annotate_cmd), mock.call(expected_index_cmd)]
@@ -200,9 +196,7 @@ class TestVcfUtils:
         vcf_utils.remove_filter_annotations(input_vcf=input_vcf, output_vcf=output_vcf, n_threads=2)
 
         # Verify the correct bcftools commands were called with SimplePipeline
-        expected_annotate_cmd = (
-            f"bcftools annotate -x FILTER -h '^##FILTER' --threads 2 -o {output_vcf} -O z {input_vcf}"
-        )
+        expected_annotate_cmd = f"bcftools annotate -x FILTER --threads 2 -o {output_vcf} -O z {input_vcf}"
         expected_index_cmd = f"bcftools index -tf {output_vcf}"
 
         expected_calls = [mock.call(expected_annotate_cmd), mock.call(expected_index_cmd)]

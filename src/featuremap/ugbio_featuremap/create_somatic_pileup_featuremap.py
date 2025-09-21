@@ -246,8 +246,6 @@ def merge_vcf_files(tumor_vcf, normal_vcf, out_merged_vcf, n_cpu: int | None = N
         str(n_cpu),
         "-m",
         "none",
-        "--filter-logic",
-        "x",
         "--force-samples",
         "-Oz",
         "-o",
@@ -452,8 +450,12 @@ def run(argv):
     else:
         tumor_vcf = args.tumor_vcf
         logger.info("No filtering for tumor-PASS variants. Merging all records from both VCF files.")
-
-    out_merged_vcf_tumor_pass = merge_vcf_files(tumor_vcf, args.normal_vcf, out_merged_vcf)
+    unfiltered_normal_vcf = args.normal_vcf.replace(".vcf.gz", ".unfiltered.vcf.gz")
+    vu.remove_filter_annotations(args.normal_vcf, unfiltered_normal_vcf, args.cpu)
+    vu.index_vcf(unfiltered_normal_vcf)
+    created_files.append(unfiltered_normal_vcf)
+    created_files.append(unfiltered_normal_vcf + ".tbi")
+    out_merged_vcf_tumor_pass = merge_vcf_files(tumor_vcf, unfiltered_normal_vcf, out_merged_vcf)
     logger.info(f"Merged VCF file created: {out_merged_vcf}")
     logger.info(f"Merged VCF tumor-PASS file created: {out_merged_vcf_tumor_pass}")
 
