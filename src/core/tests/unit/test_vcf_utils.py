@@ -44,7 +44,7 @@ class TestVcfUtils:
         )
 
         # Verify the correct bcftools command was called
-        expected_cmd = f"bcftools filter -i 'QUAL>=30' -t 1 -s LowQual -m + -O z -o {output_vcf} {input_vcf}"
+        expected_cmd = f"bcftools filter -i 'QUAL>=30' --threads 1 -s LowQual -m + -O z -o {output_vcf} {input_vcf}"
         mock_execute.assert_called_once_with(expected_cmd)
 
     @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
@@ -59,7 +59,7 @@ class TestVcfUtils:
         )
 
         # Verify the correct bcftools command was called
-        expected_cmd = f"bcftools filter -e 'DP<10' -t 1 -s LowDepth -m + -O z -o {output_vcf} {input_vcf}"
+        expected_cmd = f"bcftools filter -e 'DP<10' --threads 1 -s LowDepth -m + -O z -o {output_vcf} {input_vcf}"
         mock_execute.assert_called_once_with(expected_cmd)
 
     def test_filter_vcf_validation_errors(self):
@@ -96,9 +96,7 @@ class TestVcfUtils:
         )
 
         # Verify the correct bcftools command was called
-        expected_cmd = (
-            f"bcftools filter -e 'TYPE!='snp' | QUAL<20' -t 1 -s ComplexFilter -m + -O z -o {output_vcf} {input_vcf}"
-        )
+        expected_cmd = f"bcftools filter -e 'TYPE!='snp' | QUAL<20' --threads 1 -s ComplexFilter -m + -O z -o {output_vcf} {input_vcf}"  # noqa: E501
         mock_execute.assert_called_once_with(expected_cmd)
 
     @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
@@ -153,3 +151,59 @@ class TestVcfUtils:
         # Verify the correct bcftools command was called
         expected_cmd = f"bcftools view --threads 8 -r chr1:1000-2000 -O z -o {output_vcf} {input_vcf}"
         mock_execute.assert_called_once_with(expected_cmd)
+
+    @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
+    def test_remove_filter_annotations_default_threads(self, mock_execute, tmp_path):
+        """Test remove_filter_annotations with default thread count"""
+        input_vcf = str(tmp_path / "input.vcf.gz")
+        output_vcf = str(tmp_path / "output.vcf.gz")
+
+        vcf_utils = VcfUtils()
+        vcf_utils.remove_filter_annotations(input_vcf=input_vcf, output_vcf=output_vcf)
+
+        # Verify the correct bcftools commands were called
+        expected_annotate_cmd = (
+            f"bcftools annotate -x FILTER -h '^##FILTER' --threads 1 -o {output_vcf} -O z {input_vcf}"
+        )
+        expected_index_cmd = f"bcftools index -tf {output_vcf}"
+
+        expected_calls = [mock.call(expected_annotate_cmd), mock.call(expected_index_cmd)]
+        mock_execute.assert_has_calls(expected_calls)
+
+    @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
+    def test_remove_filter_annotations_custom_threads(self, mock_execute, tmp_path):
+        """Test remove_filter_annotations with custom thread count"""
+        input_vcf = str(tmp_path / "input.vcf.gz")
+        output_vcf = str(tmp_path / "output.vcf.gz")
+        n_threads = 4
+
+        vcf_utils = VcfUtils()
+        vcf_utils.remove_filter_annotations(input_vcf=input_vcf, output_vcf=output_vcf, n_threads=n_threads)
+
+        # Verify the correct bcftools commands were called with custom threads
+        expected_annotate_cmd = (
+            f"bcftools annotate -x FILTER -h '^##FILTER' --threads {n_threads} -o {output_vcf} -O z {input_vcf}"
+        )
+        expected_index_cmd = f"bcftools index -tf {output_vcf}"
+
+        expected_calls = [mock.call(expected_annotate_cmd), mock.call(expected_index_cmd)]
+        mock_execute.assert_has_calls(expected_calls)
+
+    @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
+    def test_remove_filter_annotations_with_simple_pipeline(self, mock_execute, tmp_path):
+        """Test remove_filter_annotations works with SimplePipeline"""
+        input_vcf = str(tmp_path / "input.vcf.gz")
+        output_vcf = str(tmp_path / "output.vcf.gz")
+
+        sp = SimplePipeline(0, 10)
+        vcf_utils = VcfUtils(sp)
+        vcf_utils.remove_filter_annotations(input_vcf=input_vcf, output_vcf=output_vcf, n_threads=2)
+
+        # Verify the correct bcftools commands were called with SimplePipeline
+        expected_annotate_cmd = (
+            f"bcftools annotate -x FILTER -h '^##FILTER' --threads 2 -o {output_vcf} -O z {input_vcf}"
+        )
+        expected_index_cmd = f"bcftools index -tf {output_vcf}"
+
+        expected_calls = [mock.call(expected_annotate_cmd), mock.call(expected_index_cmd)]
+        mock_execute.assert_has_calls(expected_calls)
