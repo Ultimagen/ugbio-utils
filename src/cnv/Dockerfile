@@ -108,7 +108,4 @@ RUN pip install --user ${OUT_DIR}/*.whl
 COPY --from=build ./src/cnv/cnmops /home/ugbio/src/cnv/cnmops
 
 #download cnvpytor additional necessary files (described here: https://github.com/abyzovlab/CNVpytor?tab=readme-ov-file#install-using-pip)
-ENV PYTOR_DIR=${OUT_DIR}/cnvpytor
-RUN mkdir -p $PYTOR_DIR && cnvpytor -download
-
-# RUN cnvpytor -download
+RUN cnvpytor -download
