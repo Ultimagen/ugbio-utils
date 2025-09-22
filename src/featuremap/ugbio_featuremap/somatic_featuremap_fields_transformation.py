@@ -52,8 +52,20 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # go over the records - if fields is integer/float mark the field name for aggregation
 
 
-info_fields_for_training = ["TR_distance", "TR_length", "TR_seq_unit_length"]
-format_fields_for_training = ["DP_FILT", "RAW_VAF", "VAF", "DP_MAPQ60", "ADJ_REF_DIFF", "ref_count", "non_ref_count"]
+# TBD add TR info in this script
+# info_fields_for_training = ["TR_distance", "TR_length", "TR_seq_unit_length"]
+
+format_fields_for_training = [
+    FeatureMapFields.VAF.value,
+    FeatureMapFields.RAW_VAF.value,
+    FeatureMapFields.FILT.value,
+    FeatureMapFields.DP_FILT.value,
+    FeatureMapFields.ADJ_REF_DIFF.value,
+    FeatureMapFields.DP_MAPQ60.value,
+    FeatureMapFields.DUP.value,
+]
+format_mpileup_fields_for_training = ["ref_counts_pm_2", "nonref_counts_pm_2"]
+
 added_format_features = {
     "alt_reads": ["number of supporting reads for the alternative allele", "Integer"],
     "pass_alt_reads": ["number of passed supporting reads for the alternative allele", "Integer"],
@@ -73,7 +85,7 @@ added_info_features = {
 columns_for_aggregation = [FeatureMapFields.MQUAL.value, FeatureMapFields.SNVQ.value]
 
 
-def process_sample_columns(df_variants, prefix):
+def process_sample_columns(df_variants, prefix):  # noqa: C901
     def aggregate_mean(df, colname):
         values = []
         for tup in df[colname]:
@@ -96,8 +108,14 @@ def process_sample_columns(df_variants, prefix):
         return values
 
     def parse_is_duplicate(df, dup_colname):
-        df["count_duplicate"] = df[dup_colname].apply(lambda x: sum(x))
-        df["count_non_duplicate"] = df[dup_colname].apply(lambda x: sum(1 for val in x if val == 0))
+        df["count_duplicate"] = df[dup_colname].apply(
+            lambda x: sum(x) if x is not None and len(x) > 0 and None not in x else float("nan")
+        )
+        df["count_non_duplicate"] = df[dup_colname].apply(
+            lambda x: sum(1 for val in x if val == 0)
+            if x is not None and len(x) > 0 and None not in x
+            else float("nan")
+        )
         return df
 
     def parse_padding_ref_counts(df_variants, ref_counts_colname, non_ref_counts_colname):
@@ -106,13 +124,16 @@ def process_sample_columns(df_variants, prefix):
         ref_df = pd.DataFrame(
             df_variants[ref_counts_colname].tolist(), columns=[f"{prefix}ref{i}" for i in range(padding_counts_length)]
         )
-        df_variants = pd.concat([df_variants, ref_df], axis=1)
+        for col in ref_df.columns:
+            df_variants[col] = ref_df[col]
         # Handle nonref_count
         nonref_df = pd.DataFrame(
             df_variants[non_ref_counts_colname].tolist(),
             columns=[f"{prefix}nonref{i}" for i in range(padding_counts_length)],
         )
-        df_variants = pd.concat([df_variants, nonref_df], axis=1)
+        for col in nonref_df.columns:
+            df_variants[col] = nonref_df[col]
+
         return df_variants
 
     """Process columns for a sample with given prefix (t_ or n_)"""
@@ -120,7 +141,7 @@ def process_sample_columns(df_variants, prefix):
     df_variants[f"{prefix}alt_reads"] = [tup[1] for tup in df_variants[f"{prefix}ad"]]
     # Process pass_alt_reads
     df_variants[f"{prefix}pass_alt_reads"] = df_variants[f"{prefix}{FeatureMapFields.FILT.value.lower()}"].apply(
-        lambda x: sum(x)
+        lambda x: sum(x) if x is not None and len(x) > 0 and None not in x else float("nan")
     )
     # Process aggregations for each column
     for colname in columns_for_aggregation:
@@ -131,7 +152,11 @@ def process_sample_columns(df_variants, prefix):
 
     # Process duplicates
     df_variants = parse_is_duplicate(df_variants, f"{prefix}{FeatureMapFields.DUP.value.lower()}")
-    df_variants = parse_padding_ref_counts(df_variants, f"{prefix}ref_counts", f"{prefix}nonref_counts")
+    df_variants = parse_padding_ref_counts(
+        df_variants,
+        f"{prefix}{format_mpileup_fields_for_training[0]}",
+        f"{prefix}{format_mpileup_fields_for_training[1]}",
+    )
 
     return df_variants
 
@@ -140,8 +165,8 @@ def df_sfm_fields_transformation(df_variants):  # noqa: C901
     # Process both tumor and normal samples
     for prefix in ["t_", "n_"]:
         df_variants = process_sample_columns(df_variants, prefix)
-    df_variants["ref_allele"] = [tup[0] for tup in df_variants["alleles"]]
-    df_variants["alt_allele"] = [tup[1] for tup in df_variants["alleles"]]
+    df_variants["ref_allele"] = [tup[0] for tup in df_variants["t_alleles"]]
+    df_variants["alt_allele"] = [tup[1] for tup in df_variants["t_alleles"]]
 
     return df_variants
 
@@ -272,7 +297,8 @@ def featuremap_fields_aggregation(  # noqa: C901
         )
 
         # get custom-info-fields and read vcf block to dataframe
-        custom_info_fields = info_fields_for_training + format_fields_for_training + columns_for_aggregation
+        # custom_info_fields = info_fields_for_training + format_fields_for_training + columns_for_aggregation
+        custom_info_fields = format_fields_for_training + format_mpileup_fields_for_training + columns_for_aggregation
         df_variants = read_merged_tumor_normal_vcf(sorted_filtered_featuremap, custom_info_fields=custom_info_fields)
 
         df_variants = df_sfm_fields_transformation(df_variants)
@@ -368,8 +394,8 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         description=run.__doc__,
     )
     parser.add_argument(
-        "-f",
-        "--somatic featuremap",
+        "-sfm",
+        "--somatic_featuremap",
         type=str,
         required=True,
         help="""somatic featuremap vcf file""",
