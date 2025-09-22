@@ -42,6 +42,12 @@ class FeatureMapFields(Enum):
     REV = "REV"  # is reverse strand
     FILT = "FILT"  # is reads in this position pass filters
     DUP = "DUP"  # is duplicate read
+    ADJ_REF_DIFF = "ADJ_REF_DIFF"  # difference to reference base
+    DP_FILT = "DP_FILT"  # depth of reads that pass filters
+    RADJ_REF_D = "RADJ_REF_D"  # mean ADJ_REF_DIFF of reads that pass filters
+    RAW_VAF = "RAW_VAF"  # raw variant allele frequency
+    VAF = "VAF"  # variant allele frequency after filtering
+    DP_MAPQ60 = "DP_MAPQ60"  # depth of reads with mapq>=60
 
 
 class FeatureMapFilters(Enum):
