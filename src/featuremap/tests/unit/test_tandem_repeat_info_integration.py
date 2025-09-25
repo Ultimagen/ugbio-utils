@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pysam
 import pytest
-from ugbio_featuremap.create_somatic_pileup_featuremap import integrate_tandem_repeat_features
+from ugbio_featuremap.somatic_featuremap_fields_transformation import integrate_tandem_repeat_features
 
 
 @pytest.fixture
@@ -58,5 +58,5 @@ def test_integrate_tandem_repeat_features(
 
     # check that header has the TR info fields
     # Example usage
-    expected_info_fields = ["TR_start", "TR_end", "TR_seq", "TR_distance", "TR_length", "TR_seq_unit_length"]
+    expected_info_fields = ["TR_START", "TR_END", "TR_SEQ", "TR_DISTANCE", "TR_LENGTH", "TR_SEQ_UNIT_LENGTH"]
     assert_vcf_info_fields(out_vcf_with_tr_data, expected_info_fields)

@@ -51,9 +51,7 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # given a vcf,get all info/format fields
 # go over the records - if fields is integer/float mark the field name for aggregation
 
-
-# TBD add TR info in this script
-# info_fields_for_training = ["TR_distance", "TR_length", "TR_seq_unit_length"]
+info_fields_for_training = ["TR_DISTANCE", "TR_LENGTH", "TR_SEQ_UNIT_LENGTH"]
 
 format_fields_for_training = [
     FeatureMapFields.VAF.value,
@@ -67,22 +65,108 @@ format_fields_for_training = [
 format_mpileup_fields_for_training = ["ref_counts_pm_2", "nonref_counts_pm_2"]
 
 added_format_features = {
-    "alt_reads": ["number of supporting reads for the alternative allele", "Integer"],
-    "pass_alt_reads": ["number of passed supporting reads for the alternative allele", "Integer"],
-    "mqual_mean": ["mean value of MQUAL", "Float"],
-    "snvq_mean": ["mean value of SNVQ", "Float"],
-    "mqual_max": ["mean value of MQUAL", "Float"],
-    "snvq_max": ["mean value of SNVQ", "Float"],
-    "mqual_min": ["mean value of MQUAL", "Float"],
-    "snvq_min": ["mean value of SNVQ", "Float"],
-    "count_duplicate": ["number of duplicate reads", "Integer"],
-    "count_non_duplicate": ["number of non-duplicate reads", "Integer"],
+    "ALT_READS": ["number of supporting reads for the alternative allele", "Integer"],
+    "PASS_ALT_READS": ["number of passed supporting reads for the alternative allele", "Integer"],
+    "MQUAL_MEAN": ["mean value of MQUAL", "Float"],
+    "SNVQ_MEAN": ["mean value of SNVQ", "Float"],
+    "MQUAL_MAX": ["mean value of MQUAL", "Float"],
+    "SNVQ_MAX": ["mean value of SNVQ", "Float"],
+    "MQUAL_MIN": ["mean value of MQUAL", "Float"],
+    "SNVQ_MIN": ["mean value of SNVQ", "Float"],
+    "COUNT_DUPLICATE": ["number of duplicate reads", "Integer"],
+    "COUNT_NON_DUPLICATE": ["number of non-duplicate reads", "Integer"],
 }
 added_info_features = {
-    "ref_allele": ["reference allele", "String"],
-    "alt_allele": ["alternative allele", "String"],
+    "REF_ALLELE": ["reference allele", "String"],
+    "ALT_ALLELE": ["alternative allele", "String"],
 }
 columns_for_aggregation = [FeatureMapFields.MQUAL.value, FeatureMapFields.SNVQ.value]
+
+
+def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
+    # Use a temporary directory for all intermediate files
+    with tempfile.TemporaryDirectory(dir=out_dir) as tmpdir:
+        # generate tandem repeat info
+        df_merged_vcf = vcftools.get_vcf_df(merged_vcf)
+        df_merged_vcf.insert(
+            2, "end", df_merged_vcf["pos"] + 1
+        )  # TBD: get the actual end coordinate when the variant is not SNV (Insertion).
+        bed1 = pjoin(tmpdir, "merged_vcf.tmp.bed")
+        df_merged_vcf[["chrom", "pos", "end"]].to_csv(bed1, sep="\t", header=None, index=False)
+        # sort the reference tandem repeat file
+        ref_tr_file_sorted = pjoin(tmpdir, "ref_tr_file.sorted.bed")
+        cmd = ["bedtools", "sort", "-i", ref_tr_file]
+        with open(ref_tr_file_sorted, "w") as sorted_file:
+            subprocess.check_call(cmd, stdout=sorted_file)
+        # find closest tandem-repeat for each variant
+        bed2 = ref_tr_file_sorted
+        bed1_with_closest_tr_tsv = pjoin(tmpdir, "merged_vcf.tmp.TRdata.tsv")
+        cmd_bedtools = ["bedtools", "closest", "-D", "ref", "-a", bed1, "-b", bed2]
+        cmd_cut = ["cut", "-f1-2,5-8"]
+        with open(bed1_with_closest_tr_tsv, "w") as out_file:
+            p1 = subprocess.Popen(cmd_bedtools, stdout=subprocess.PIPE)
+            p2 = subprocess.Popen(cmd_cut, stdin=p1.stdout, stdout=out_file)
+            p1.stdout.close()
+            p2.communicate()
+            p1.wait()
+
+        df_tr_info = pd.read_csv(bed1_with_closest_tr_tsv, sep="\t", header=None)
+        df_tr_info.columns = ["chrom", "pos", "TR_START", "TR_END", "TR_SEQ", "TR_DISTANCE"]
+        df_tr_info["TR_LENGTH"] = df_tr_info["TR_END"] - df_tr_info["TR_START"]
+        # Extract repeat unit length, handle cases where pattern does not match
+        extracted = df_tr_info["TR_SEQ"].str.extract(r"\((\w+)\)")
+        df_tr_info["TR_SEQ_UNIT_LENGTH"] = extracted[0].str.len()
+        # Fill NaN values with 0 and log a warning if any were found
+        if df_tr_info["TR_SEQ_UNIT_LENGTH"].isna().any():
+            logger.warning(
+                "Some TR_SEQ values did not match the expected pattern '(unit)'. "
+                "Setting TR_SEQ_UNIT_LENGTH to 0 for these rows."
+            )
+            df_tr_info["TR_SEQ_UNIT_LENGTH"] = df_tr_info["TR_SEQ_UNIT_LENGTH"].fillna(0).astype(int)
+        df_tr_info.to_csv(bed1_with_closest_tr_tsv, sep="\t", header=None, index=False)
+
+        sorted_tsv = pjoin(tmpdir, "merged_vcf.tmp.TRdata.sorted.tsv")
+        cmd = ["sort", "-k1,1", "-k2,2n", bed1_with_closest_tr_tsv]
+        with open(sorted_tsv, "w") as out_file:
+            subprocess.check_call(cmd, stdout=out_file)
+        gz_tsv = sorted_tsv + ".gz"
+        cmd = ["bgzip", "-c", sorted_tsv]
+        with open(gz_tsv, "wb") as out_file:
+            subprocess.check_call(cmd, stdout=out_file)
+        cmd = ["tabix", "-s", "1", "-b", "2", "-e", "2", gz_tsv]
+        subprocess.check_call(cmd)
+
+        # integrate tandem repeat info into the merged vcf file
+        hdr_txt = [
+            '##INFO=<ID=TR_START,Number=1,Type=String,Description="Closest tandem Repeat Start">',
+            '##INFO=<ID=TR_END,Number=1,Type=String,Description="Closest Tandem Repeat End">',
+            '##INFO=<ID=TR_SEQ,Number=1,Type=String,Description="Closest Tandem Repeat Sequence">',
+            '##INFO=<ID=TR_DISTANCE,Number=1,Type=String,Description="Closest Tandem Repeat Distance">',
+            '##INFO=<ID=TR_LENGTH,Number=1,Type=String,Description="Closest Tandem Repeat total length">',
+            '##INFO=<ID=TR_SEQ_UNIT_LENGTH,Number=1,Type=String,Description="Closest Tandem Repeat unit length">',
+        ]
+        hdr_file = pjoin(tmpdir, "tr_hdr.txt")
+        with open(hdr_file, "w") as f:
+            f.writelines(line + "\n" for line in hdr_txt)
+        merged_vcf_with_tr_info = merged_vcf.replace(".vcf.gz", ".tr_info.vcf.gz")
+        cmd = [
+            "bcftools",
+            "annotate",
+            "-Oz",
+            "-o",
+            merged_vcf_with_tr_info,
+            "-a",
+            gz_tsv,
+            "-h",
+            hdr_file,
+            "-c",
+            "CHROM,POS,INFO/TR_START,INFO/TR_END,INFO/TR_SEQ,INFO/TR_DISTANCE,INFO/TR_LENGTH,INFO/TR_SEQ_UNIT_LENGTH",
+            merged_vcf,
+        ]
+        subprocess.check_call(cmd)
+
+    pysam.tabix_index(merged_vcf_with_tr_info, preset="vcf", min_shift=0, force=True)
+    return merged_vcf_with_tr_info
 
 
 def process_sample_columns(df_variants, prefix):  # noqa: C901
@@ -107,11 +191,11 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
             values.append(max(cleaned_list))
         return values
 
-    def parse_is_duplicate(df, dup_colname):
-        df["count_duplicate"] = df[dup_colname].apply(
+    def parse_is_duplicate(df, dup_colname, prefix):
+        df[f"{prefix}count_duplicate"] = df[dup_colname].apply(
             lambda x: sum(x) if x is not None and len(x) > 0 and None not in x else float("nan")
         )
-        df["count_non_duplicate"] = df[dup_colname].apply(
+        df[f"{prefix}count_non_duplicate"] = df[dup_colname].apply(
             lambda x: sum(1 for val in x if val == 0)
             if x is not None and len(x) > 0 and None not in x
             else float("nan")
@@ -139,7 +223,7 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
     """Process columns for a sample with given prefix (t_ or n_)"""
     # Process alt_reads
     df_variants[f"{prefix}alt_reads"] = [tup[1] for tup in df_variants[f"{prefix}ad"]]
-    # Process pass_alt_reads
+    # Process pass_alt_reads;
     df_variants[f"{prefix}pass_alt_reads"] = df_variants[f"{prefix}{FeatureMapFields.FILT.value.lower()}"].apply(
         lambda x: sum(x) if x is not None and len(x) > 0 and None not in x else float("nan")
     )
@@ -151,7 +235,7 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
         df_variants[f"{prefix}{colname_lower}_min"] = aggregate_min(df_variants, f"{prefix}{colname_lower}")
 
     # Process duplicates
-    df_variants = parse_is_duplicate(df_variants, f"{prefix}{FeatureMapFields.DUP.value.lower()}")
+    df_variants = parse_is_duplicate(df_variants, f"{prefix}{FeatureMapFields.DUP.value.lower()}", prefix)
     df_variants = parse_padding_ref_counts(
         df_variants,
         f"{prefix}{format_mpileup_fields_for_training[0]}",
@@ -208,18 +292,26 @@ def process_vcf_row(row, df_variants, hdr, vcfout, write_agg_params):
     chrom = row.chrom
     alt_allele = row.alleles[1]
     df_record = df_variants[
-        (df_variants["chrom"] == chrom) & (df_variants["pos"] == pos) & (df_variants["alt_allele"] == alt_allele)
+        (df_variants["t_chrom"] == chrom) & (df_variants["t_pos"] == pos) & (df_variants["alt_allele"] == alt_allele)
     ]
 
     if len(df_record) > 0:
         if write_agg_params:
             for key in added_info_features:
-                row.info[key] = df_record[key].to_list()[0]
+                row.info[key.upper()] = df_record[key.lower()].to_list()[0]
             for key in added_format_features:
-                row.samples[0][key] = df_record[f"t_{key}"].to_list()[0]
-                row.samples[1][key] = df_record[f"n_{key}"].to_list()[0]
-            if "xgb_proba" in hdr.info:
-                row.info["xgb_proba"] = df_record["xgb_proba"].to_list()[0]
+                tumor_value = df_record[f"t_{key.lower()}"].to_list()[0]
+                normal_value = df_record[f"n_{key.lower()}"].to_list()[0]
+                if pd.notna(tumor_value):
+                    row.samples[0][key.upper()] = tumor_value
+                else:
+                    row.samples[0][key.upper()] = None
+                if pd.notna(normal_value):
+                    row.samples[1][key.upper()] = normal_value
+                else:
+                    row.samples[1][key.upper()] = None
+            if "XGB_PROBA" in hdr.info:
+                row.info["XGB_PROBA"] = df_record["xgb_proba"].to_list()[0]
 
     vcfout.write(row)
 
@@ -296,23 +388,31 @@ def featuremap_fields_aggregation(  # noqa: C901
             somatic_featuremap_vcf_file, temp_dir, filter_string, interval_srting
         )
 
-        # get custom-info-fields and read vcf block to dataframe
-        # custom_info_fields = info_fields_for_training + format_fields_for_training + columns_for_aggregation
-        custom_info_fields = format_fields_for_training + format_mpileup_fields_for_training + columns_for_aggregation
+        custom_info_fields = (
+            format_fields_for_training
+            + format_mpileup_fields_for_training
+            + info_fields_for_training
+            + columns_for_aggregation
+        )
         df_variants = read_merged_tumor_normal_vcf(sorted_filtered_featuremap, custom_info_fields=custom_info_fields)
-
         df_variants = df_sfm_fields_transformation(df_variants)
-        if xgb_model_file:
+
+        if xgb_model_file is not None:
             xgb_clf_es = somatic_pileup_featuremap_inference.load_model(xgb_model_file)
             model_features = xgb_clf_es.get_booster().feature_names
             logger.info(f"loaded model. model features: {model_features}")
             df_variants["xgb_proba"] = somatic_pileup_featuremap_inference.predict(xgb_clf_es, df_variants)
+        # Write df_variants to parquet file
+        parquet_output = output_vcf.replace(".vcf.gz", "_featuremap.parquet")
+        df_variants.to_parquet(parquet_output, index=False)
+        logger.info(f"Written feature map dataframe to {parquet_output}")
 
+        # TBD: vcf writing takes long time - guess its beacauee of the lookup for each record
         with pysam.VariantFile(sorted_featuremap) as vcfin:
             hdr = vcfin.header
-            add_fields_to_header(hdr)
-            if xgb_model_file:
-                hdr.info.add("xgb_proba", 1, "Float", "XGBoost model predicted probability")
+            add_fields_to_header(hdr, added_format_features, added_info_features)
+            if xgb_model_file is not None:
+                hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
             with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
                 for row in vcfin:
                     process_vcf_row(row, df_variants, hdr, vcfout, write_agg_params)
@@ -327,6 +427,7 @@ def featuremap_fields_aggregation_on_an_interval_list(
     output_vcf: str,
     interval_list: str,
     filter_tags=None,
+    xgb_model_file: str = None,
     verbose: bool = True,  # noqa: FBT001, FBT002
 ) -> None:
     """
@@ -365,6 +466,7 @@ def featuremap_fields_aggregation_on_an_interval_list(
                 f"{output_vcf}.{genomic_interval}.int_list.vcf.gz",
                 filter_tags,
                 genomic_interval,
+                xgb_model_file,
                 verbose,
             )
             for genomic_interval in genomic_intervals
@@ -423,6 +525,21 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         help="""Interval list file""",
     )
     parser.add_argument(
+        "-ref_tr",
+        "--ref_tr_file",
+        type=str,
+        required=True,
+        help="""Reference tandem repeat file in BED format""",
+    )
+    parser.add_argument(
+        "-xgb_model",
+        "--xgb_model_file",
+        type=str,
+        required=False,
+        default=None,
+        help="""XGBoost model file for inference (optional)""",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         type=bool,
@@ -436,11 +553,17 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
 def run(argv):
     """Add aggregated parameters and xgb probability to the featuremap pileup vcf file"""
     args_in = __parse_args(argv)
+
+    # add tandem repeat features
+    out_dir = dirname(args_in.output_vcf)
+    sfmp_with_tr = integrate_tandem_repeat_features(args_in.somatic_featuremap, args_in.ref_tr_file, out_dir)
+
     featuremap_fields_aggregation_on_an_interval_list(
-        args_in.somatic_featuremap,
+        sfmp_with_tr,
         args_in.output_vcf,
         args_in.interval_list_file,
         args_in.filter_string,
+        args_in.xgb_model_file,
         args_in.verbose,
     )
 
