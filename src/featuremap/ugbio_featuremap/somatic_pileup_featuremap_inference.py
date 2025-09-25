@@ -35,9 +35,6 @@ from ugbio_core.vcfbed import vcftools
 
 from ugbio_featuremap import somatic_featuremap_fields_transformation
 
-TR_CUSTOM_INFO_FIELDS = ["TR_distance", "TR_length", "TR_seq_unit_length"]
-vu = VcfUtils()
-
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
     """
