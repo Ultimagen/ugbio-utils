@@ -7,9 +7,10 @@ import pysam
 from simppl.simple_pipeline import SimplePipeline
 from ugbio_core.exec_utils import print_and_execute
 from ugbio_core.logger import logger
+from ugbio_core.vcf_utils import VcfUtils
 
 
-class VcfPipelineUtils:
+class VcfComparisonUtils:
     """Utilities of vcf pipeline, mostly wrappers around shell scripts
 
     Attributes
@@ -27,6 +28,7 @@ class VcfPipelineUtils:
             Optional SimplePipeline object for executing shell commands
         """
         self.sp = simple_pipeline
+        self.vu = VcfUtils()
 
     def __execute(self, command: str, output_file: str | None = None):
         """Summary
@@ -39,87 +41,6 @@ class VcfPipelineUtils:
             Description
         """
         print_and_execute(command, output_file=output_file, simple_pipeline=self.sp, module_name=__name__)
-
-    def combine_vcf(self, n_parts: int, input_prefix: str, output_fname: str):
-        """Combines VCF in parts from GATK and indices the result
-
-        Parameters
-        ----------
-        n_parts : int
-            Number of VCF parts (names will be 1-based)
-        input_prefix : str
-            Prefix of the VCF files (including directory) 1.vcf.gz ... will be added
-        output_fname : str
-            Name of the output VCF
-        """
-        input_files = [f"{input_prefix}.{x}.vcf" for x in range(1, n_parts + 1)] + [
-            f"{input_prefix}.{x}.vcf.gz" for x in range(1, n_parts + 1)
-        ]
-        input_files = [x for x in input_files if os.path.exists(x)]
-        self.__execute(f"bcftools concat -o {output_fname} -O z {input_files}")
-        self.index_vcf(output_fname)
-
-    def index_vcf(self, vcf: str):
-        """Tabix index on VCF
-
-        Parameters
-        ----------
-        vcf : str
-            Input vcf.gz file
-        """
-        self.__execute(f"bcftools index -tf {vcf}")
-
-    def sort_vcf(self, input_file: str, output_file: str):
-        """Sort VCF file
-
-        Parameters
-        ----------
-        input_file : str
-            Input file name
-        output_file : str
-            Output file name
-
-        Returns
-        -------
-        None
-            Generates `output_file`.
-        """
-        self.__execute(f"bcftools sort -o {output_file} -O z {input_file}")
-
-    def reheader_vcf(self, input_file: str, new_header: str, output_file: str):
-        """Run bcftools reheader and index
-
-        Parameters
-        ----------
-        input_file : str
-            Input file name
-        new_header : str
-            Name of the new header
-        output_file : str
-            Name of the output file
-
-        No Longer Returned
-        ------------------
-        None, generates `output_file`
-        """
-        self.__execute(f"bcftools reheader -h {new_header} {input_file}")
-        self.index_vcf(output_file)
-
-    def intersect_bed_files(self, input_bed1: str, input_bed2: str, bed_output: str) -> None:
-        """Intersects bed files
-
-        Parameters
-        ----------
-        input_bed1 : str
-            Input Bed file
-        input_bed2 : str
-            Input Bed file
-        bed_output : str
-            Output bed intersected file
-
-        Writes output_fn file
-        """
-        self.__execute(f"bedtools intersect -a {input_bed1} -b {input_bed2}", output_file=bed_output)
 
     def run_vcfeval(  # noqa PLR0913
         self,
@@ -200,22 +121,6 @@ class VcfPipelineUtils:
         logger.info(" ".join(cmd))
         return self.__execute(" ".join(cmd))
 
-    def intersect_with_intervals(self, input_fn: str, intervals_fn: str, output_fn: str) -> None:
-        """Intersects VCF with intervalList. Writes output_fn file
-
-        Parameters
-        ----------
-        input_fn : str
-            Input file
-        intervals_fn : str
-            Interval_list file
-        output_fn : str
-            Output file
-
-        Writes output_fn file
-        """
-        self.__execute(f"gatk SelectVariants -V {input_fn} -L {intervals_fn} -O {output_fn}")
-
     # pylint: disable=too-many-arguments
     def run_vcfeval_concordance(  # noqa PLR0913
         self,
@@ -274,10 +179,10 @@ class VcfPipelineUtils:
         # filter the vcf to be only in the comparison_intervals.
         filtered_truth_file = os.path.join(output_dir, ".".join((os.path.basename(truth_file), "filtered", "vcf.gz")))
         if comparison_intervals is not None:
-            self.intersect_with_intervals(truth_file, comparison_intervals, filtered_truth_file)
+            self.vu.intersect_with_intervals(truth_file, comparison_intervals, filtered_truth_file)
         else:
             shutil.copy(truth_file, filtered_truth_file)
-            self.index_vcf(filtered_truth_file)
+            self.vu.index_vcf(filtered_truth_file)
 
         if truth_sample is not None and input_sample is not None:
             samples = f"{truth_sample},{input_sample}"
@@ -314,7 +219,7 @@ class VcfPipelineUtils:
             self.__execute(f'mv {os.path.join(vcfeval_output_dir, "output.norm.vcf.gz")} {vcf_concordance_file}')
 
             # generate index file for the vcf.gz file
-            self.index_vcf(vcf_concordance_file)
+            self.vu.index_vcf(vcf_concordance_file)
             return vcf_concordance_file
         return vcfeval_output_dir
 
@@ -345,12 +250,12 @@ class VcfPipelineUtils:
         # Step1 - bcftools norm
 
         self.__execute(f"bcftools norm -f {ref} -m+any -o {tempdir}/step1.vcf.gz -O z {input_vcf}")
-        self.index_vcf(f"{tempdir}/step1.vcf.gz")
+        self.vu.index_vcf(f"{tempdir}/step1.vcf.gz")
         self.__execute(
             f"bcftools annotate -a {input_vcf} -c CHROM,POS,CALL,BASE -Oz \
                 -o {tempdir}/step2.vcf.gz {tempdir}/step1.vcf.gz"
         )
-        self.index_vcf(f"{tempdir}/step2.vcf.gz")
+        self.vu.index_vcf(f"{tempdir}/step2.vcf.gz")
 
         # Step2 - write out the annotation table. We use VariantsToTable from gatk, but remove
         # the mandatory header and replace NA by "."
@@ -386,12 +291,12 @@ class VcfPipelineUtils:
             f"bcftools annotate -c CHROM,POS,CALL -a {tempdir}/step3.call.tsv.gz \
                 -Oz -o {tempdir}/step4.vcf.gz {tempdir}/step2.vcf.gz"
         )
-        self.index_vcf(f"{tempdir}/step4.vcf.gz")
+        self.vu.index_vcf(f"{tempdir}/step4.vcf.gz")
         self.__execute(
             f"bcftools annotate -c CHROM,POS,CALL -a {tempdir}/step3.base.tsv.gz \
                 -Oz -o {output_vcf} {tempdir}/step4.vcf.gz"
         )
-        self.index_vcf(output_vcf)
+        self.vu.index_vcf(output_vcf)
         # shutil.rmtree(tempdir)
 
     def fix_vcf_format(self, output_prefix: str):
@@ -412,27 +317,7 @@ class VcfPipelineUtils:
                         output_file_handle.write(line)
         self.__execute(f"mv {output_file_handle.name} {input_file_handle.name}")
         self.__execute(f"bgzip {input_file_handle.name}")
-        self.index_vcf(f"{input_file_handle.name}.gz")
-
-    def annotate_tandem_repeats(self, input_file: str, reference_fasta: str) -> str:
-        """Runs VariantAnnotator on the input file to add tandem repeat annotations (maybe others)
-
-        Parameters
-        ----------
-        input_file : str
-            vcf.gz file
-        reference_fasta : str
-            Reference file (should have .dict file nearby)
-
-        Creates a copy of the input_file with .annotated.vcf.gz and the index
-        Returns
-        -------
-        path to output file: str
-        """
-
-        output_file = input_file.replace("vcf.gz", "annotated.vcf.gz")
-        self.__execute(f"gatk VariantAnnotator -V {input_file} -O {output_file} -R {reference_fasta} -A TandemRepeat")
-        return output_file
+        self.vu.index_vcf(f"{input_file_handle.name}.gz")
 
     def transform_hom_calls_to_het_calls(self, input_file_calls: str, output_file_calls: str) -> None:
         """Reverse homozygous reference calls in deepVariant to filtered heterozygous so that max recall can be
@@ -456,4 +341,4 @@ class VcfPipelineUtils:
                     ):
                         rec.samples[0]["GT"] = (0, 1)
                     output_file.write(rec)
-        self.index_vcf(output_file_calls)
+        self.vu.index_vcf(output_file_calls)
