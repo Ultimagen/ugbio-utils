@@ -584,37 +584,6 @@ class FlowBasedRead:
         """Returns if the key is valid"""
         return self._validate
 
-    # TODO: no imports, can be deleted?
-    def read2_flow_matrix(self, *, regressed_signal_only: bool = False) -> tuple:
-        """Gets the hmerxflow probability matrix
-        matrix[i,j] = P(read_hmer==read_hmer[j] | data_hmer[j]==i)
-
-        Paramters
-        ---------
-        regressed_signal_only: bool
-            Use only regressed_signal without motifs
-        Returns
-        -------
-        np.ndarray
-            Flow matrix of (max_hmer_size+1) x n_flow
-
-        """
-        if not hasattr(self, "_flow_matrix"):
-            if regressed_signal_only:
-                self._flow_matrix = self._get_single_flow_matrix_only_regressed(self._regressed_signal)
-                return self._flow_matrix
-            self._flow_matrix = self._get_single_flow_matrix(self.key, self.flow2base, self.forward_seq)
-        return self._flow_matrix
-
-    def _get_single_flow_matrix_only_regressed(self, regressed_signal: np.ndarray, threshold=0.01):
-        probs1 = 1 / np.add.outer(regressed_signal, -np.arange(self._max_hmer + 1)) ** 2
-        probs1 /= probs1.sum(axis=-1, keepdims=True)
-
-        if threshold is not None:
-            probs1[probs1 < threshold] = 0
-        probs1 = self._fix_nan(probs1)
-        return probs1.T
-
     def _fix_nan(self, flow_matrix: np.ndarray) -> np.ndarray:
         """Fixes cases when there is nan in the flow matrix.
         This is an ugly hack - we assume that nan come from cases when
