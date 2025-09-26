@@ -13,9 +13,7 @@ from ugbio_core import array_utils as utils
 from ugbio_core import dna_sequence_utils as dnautils
 from ugbio_core import math_utils as phred
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
-from ugbio_core.flow_format import error_model, simulator
 
-DEFAULT_ERROR_MODEL_FN = "error_model.r2d.hd5"
 MINIMAL_CALL_PROB = 0.1
 DEFAULT_FILLER = 0.0001
 
@@ -50,6 +48,26 @@ def key2base(key: np.ndarray) -> np.ndarray:
     n_reps_shifted = utils.shiftarray(key, 1, 0)
     flow2base = -1 + np.cumsum(n_reps_shifted)
     return flow2base
+
+
+def get_flow_base(flow_order: str, desired_length: int) -> np.ndarray:
+    """
+    Given order of flows - what base corresponds to each flow
+
+    Parameters
+    ----------
+    flow_order: str
+            String of flow orders
+    desired_length: int
+            Needed length of flows
+    Returns
+    -------
+    np.ndarray
+            Array of bases
+    """
+    flow_order_array = np.tile(np.array(list(flow_order)), int(desired_length / len(flow_order)) + 1)
+    flow_order_array = flow_order_array[:desired_length]
+    return flow_order_array
 
 
 def generate_key_from_sequence(
@@ -109,6 +127,60 @@ def generate_key_from_sequence(
     if truncate:
         return np.clip(np.array(key), 0, truncate)
     return np.array(key)
+
+
+def generate_sequence_from_key(key, flow_order=None, start=0, *, return_flow_indices=False):
+    """
+    Convert a list of counts (key) into a sequence of characters based on the specified flow order.
+
+    Parameters
+    ----------
+    key : list of int
+        A list of integers, each indicating how many times a character from the flow order is repeated.
+
+    flow_order : list of str, optional
+
+    start : int, optional
+        The starting offset within the flow order. Default is 0.
+
+    return_flow_indices : bool, optional
+        If True, the function will return a tuple containing:
+          1) The generated sequence (str).
+          2) A list of integers (same length as the sequence) where each integer indicates
+             the source flow index of the corresponding character in the sequence.
+        Default is False.
+
+    Returns
+    -------
+    str or tuple
+        If return_flow_indices is False (default), returns only the generated sequence (str).
+        If return_flow_indices is True, returns a tuple of:
+          (generated_sequence_str, list_of_flow_indices).
+    """
+    if flow_order is None:
+        flow_order = ["T", "G", "C", "A"]
+
+    seq_chars = []
+    flow_indices = []
+
+    for i, count in enumerate(key):
+        # Determine the character for this flow position, factoring in the 'start' offset
+        current_char = flow_order[(start + i) % len(flow_order)]
+
+        # Extend the sequence by 'count' copies of this character
+        seq_chars.extend([current_char] * count)
+
+        # If needed, track the flow index for each character
+        if return_flow_indices:
+            flow_index = start + i  # % len(flow_order)
+            flow_indices.extend([flow_index] * count)
+
+    sequence = "".join(seq_chars)
+
+    if return_flow_indices:
+        return sequence, np.array(flow_indices)
+
+    return sequence
 
 
 class SupportedFormats(Enum):
@@ -182,59 +254,15 @@ class FlowBasedRead:
         if not hasattr(self, "flow_order"):
             raise AttributeError("Something is broken in the constructor, flow_order is not defined")
         self.flow2base = key2base(self.key).astype(int)
-        self.flow_order = simulator.get_flow2_base(self.flow_order, len(self.key))
+        self.flow_order = "".join(get_flow_base(self.flow_order, len(self.key)))
 
         self._validate_seq()
-
-    @classmethod
-    def from_tuple(
-        cls,
-        read_name: str,
-        read: str,
-        this_error_model: error_model.ErrorModel = None,
-        flow_order: str = DEFAULT_FLOW_ORDER,
-        motif_size: int = 5,
-        max_hmer_size: int = 9,
-    ):
-        """Constructor from FASTA record and error model. Sets `seq`, `r_seq`, `key`,
-        `rkey`, `flow_order`, `r_flow_order` attributes.
-
-        Parameters
-        ----------
-        read_name: str
-            Name of the read
-        read: str
-            String of bases
-        this_error_model: pd.DataFrame
-            Error model from motif, hmer to probability that data with +1,-1,0 of that hmer
-            generated this motif.
-            Error model could be None, in this case it will be assumed that there are no errors
-        flow_order: str
-            The flow cycle
-        motif_size: int
-            Size of the motif
-        max_hmer_size: int
-            Maximal size of the called hmer
-        """
-        dct = {}
-        dct["read_name"] = read_name
-        dct["seq"] = read
-        dct["forward_seq"] = read
-        dct["key"] = generate_key_from_sequence(dct["forward_seq"], flow_order=flow_order)
-        dct["flow_order"] = flow_order
-        dct["_error_model"] = this_error_model
-        dct["_max_hmer"] = max_hmer_size
-        dct["_motif_size"] = motif_size
-        dct["direction"] = "synthesis"
-        return cls(dct)
 
     @classmethod
     def from_sam_record(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
         cls,
         sam_record: pysam.AlignedSegment,
-        this_error_model: error_model.ErrorModel | None = None,
         flow_order: str = DEFAULT_FLOW_ORDER,
-        motif_size: int = 5,
         max_hmer_size: int = 12,
         filler: float = DEFAULT_FILLER,
         min_call_prob: float = MINIMAL_CALL_PROB,
@@ -254,11 +282,6 @@ class FlowBasedRead:
             DNA sequence of the read (basecalling output)
         flow_order: np.ndarray
             Array of chars - base for each flow
-        this_error_model: pd.DataFrame
-            Error model from motif, hmer to probability that data with +1,-1,0 of that hmer generated this motif
-            Can be optional if the read has ks, kq, kd fields
-        motif_size: int
-            Size of the motif
         max_hmer_size: int
             Maximal reported hmer size
         filler: float
@@ -286,7 +309,6 @@ class FlowBasedRead:
             dct["forward_seq"] = dnautils.revcomp(dct["seq"])
         else:
             dct["forward_seq"] = dct["seq"]
-        dct["_error_model"] = this_error_model
 
         try:
             fmt: SupportedFormats = SupportedFormats[_fmt.upper()]
@@ -306,7 +328,6 @@ class FlowBasedRead:
             dct["key"] = generate_key_from_sequence(dct["seq"], flow_order=flow_order)
 
         dct["_max_hmer"] = max_hmer_size
-        dct["_motif_size"] = motif_size
         dct["flow_order"] = flow_order
         if fmt == SupportedFormats.ILYA:
             if sam_record.has_tag("kf"):
@@ -491,49 +512,11 @@ class FlowBasedRead:
         return flow_matrix
 
     @classmethod
-    def from_sam_record_rsig(
-        cls,
-        sam_record: pysam.AlignedSegment,
-        regressed_signal=np.ndarray,
-        this_error_model: error_model.ErrorModel | None = None,
-        flow_order: str = DEFAULT_FLOW_ORDER,
-        motif_size: int = 5,
-        max_hmer_size: int = 9,
-    ):
-        """Constructor from BAM record and error model. Sets `seq`, `r_seq`, `key`,
-        `rkey`, `flow_order`, `r_flow_order` and `_flow_matrix` attributes
-
-        Parameters
-        ----------
-        sam_record: pysam.AlignedSegment
-            `The Sam record
-        regressed_signal: np.ndarray
-            `Array of regressed signal
-        this_error_model: error_model.ErrorModel, optional
-            The error model
-        flow_order: str
-            Flow order - array of chars - base for each flow
-        motif_size: int
-            Size of the motif
-        max_hmer_size: int
-            Maximal reported hmer size
-
-        Returns
-        -------
-        Object
-        """
-        dct = vars(cls.from_sam_record(sam_record, this_error_model, flow_order, motif_size, max_hmer_size))
-
-        dct["_regressed_signal"] = regressed_signal[: len(dct["key"])]
-        return cls(dct)
-
-    @classmethod
     def from_sam_record_flow_matrix(
         cls,
         sam_record: pysam.AlignedSegment,
         flow_matrix=np.ndarray,
         flow_order: str = DEFAULT_FLOW_ORDER,
-        motif_size: int = 5,
         max_hmer_size: int = 9,
     ):
         """Constructor from BAM record and error model. Sets `seq`, `r_seq`, `key`,
@@ -556,7 +539,7 @@ class FlowBasedRead:
         -------
         Object
         """
-        dct = vars(cls.from_sam_record(sam_record, None, flow_order, motif_size, max_hmer_size))
+        dct = vars(cls.from_sam_record(sam_record, None, flow_order, max_hmer_size))
 
         dct["_flow_matrix"] = flow_matrix[:, : len(dct["key"])]
         return cls(dct)
@@ -631,74 +614,6 @@ class FlowBasedRead:
             probs1[probs1 < threshold] = 0
         probs1 = self._fix_nan(probs1)
         return probs1.T
-
-    def _get_single_flow_matrix(
-        self,
-        key: np.ndarray,
-        flow2base: np.ndarray,
-        seq: str,
-    ) -> np.ndarray:
-        """Returns flow matrix column for a given flow key. Note that if the error model is None
-        it is assumed that there are no errors (useful for getting flow matrix of a haplotype)
-
-        Parameters
-        ----------
-        key: np.ndarray
-            Hmer for each flow
-        flow2base : np.ndarray
-            For each flow - what was the last base output **before** the flow
-        seq: str
-            Sequence of the read
-
-        Returns
-        -------
-        hmerxflow probability matrix
-        """
-        if self._error_model is None:
-            flow_matrix = np.zeros((self._max_hmer + 1, len(key)))
-            flow_matrix[np.clip(self.key, 0, self._max_hmer), np.arange(len(self.key))] = 1
-            return flow_matrix
-
-        motifs_left = []
-        for i in range(key.shape[0]):
-            left_base = flow2base[i]
-            if left_base < 0:
-                motifs_left.append("")
-            else:
-                motifs_left.append(seq[max(left_base - self._motif_size + 1, 0) : left_base + 1])
-                if seq[left_base] == self.flow_order[i]:
-                    raise ValueError("Something wrong with motifs")
-        motifs_right = []
-        for i in range(key.shape[0] - 1):
-            right_base = flow2base[i + 1]
-            motifs_right.append(seq[right_base + 1 : right_base + self._motif_size + 1])
-            if seq[right_base + 1] == self.flow_order[i]:
-                raise ValueError("Something wrong with motifs")
-        motifs_right.append("")
-        index = list(zip(motifs_left, key, self.flow_order[: len(key)], motifs_right, strict=False))
-        hash_idx = [hash(x) for x in index]
-
-        if hasattr(self, "_regressed_signal"):
-            bins = self._regressed_signal[: len(hash_idx)]
-        else:
-            bins = None
-        idx_list = np.array(self._error_model.hash2idx(hash_idx, bins))
-        tmp = self._error_model.get_index(idx_list, bins)
-
-        # index
-        pos = np.arange(len(key))
-        diffs = [key + x for x in np.arange(-(tmp.shape[1] - 1) / 2, (tmp.shape[1] - 1) / 2 + 1)]
-
-        flow_matrix = np.zeros((self._max_hmer + 1, len(key)))
-
-        conc_diffs = np.concatenate(diffs).astype(int)
-        position_matrix = np.tile(pos, tmp.shape[1])
-        flat_position_matrix = tmp.T.ravel()
-        take = (conc_diffs >= 0) & (conc_diffs <= self._max_hmer)
-
-        flow_matrix[conc_diffs[take], position_matrix[take]] = flat_position_matrix[take]
-        flow_matrix = self._fix_nan(flow_matrix)
-        return flow_matrix
 
     def _fix_nan(self, flow_matrix: np.ndarray) -> np.ndarray:
         """Fixes cases when there is nan in the flow matrix.
