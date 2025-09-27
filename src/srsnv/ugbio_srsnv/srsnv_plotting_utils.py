@@ -1720,12 +1720,23 @@ class SRSNVReport:
         return recall, fq
 
     @exception_handler
-    def plot_fq_recall(self):
+    def plot_fq_recall(self, output_filename: str = None, *, only_calculate: bool = False, font_size: int = 24):
         """Calculate precision and recall metrics for SRSNV quality thresholds.
+
+        Parameters
+        ----------
+        output_filename : str, optional
+            path to which the plot will be saved, by default None
+        only_calculate : bool, optional
+            if True, only calculate values without plotting, by default False
+        font_size : int, optional
+            font size for the plot, by default 24
 
         Returns:
             pd.DataFrame: DataFrame with MQUAL, SNVQ, recall, FPR, and FQ columns
         """
+        set_pyplot_defaults()
+
         # Create dataframe from quality recalibration table
         pr_df = pd.DataFrame(np.array(self.srsnv_metadata["quality_recalibration_table"]).T, columns=["MQUAL", "SNVQ"])
 
@@ -1744,19 +1755,26 @@ class SRSNVReport:
             "mixed both ends": self.data_df[IS_MIXED],
             "mixed start": self.data_df[IS_MIXED_START],
         }
-        fig, ax = plt.subplots(figsize=(8, 6))
-        for label, condition in conditions.items():
-            recall, fq = self._calc_threshold_based_fq_recall(pr_df["MQUAL"].to_numpy(), condition=condition)
-            pr_df[f"recall_{label}"] = recall
-            pr_df[f"FQ_{label}"] = fq
-            ax.plot(recall, fq, label=label)
-        ax.set_xlabel("Recall")
-        ax.set_ylabel("Filter Quality (FQ)")
-        ax.legend()
-        ax.grid(visible=True)
-        self._save_plt(os.path.join(self.out_path, f"{self.base_name}FQ_vs_recall"), fig=fig)
-        self.pr_df = pr_df
-        self.pr_df.to_hdf(self.output_h5_filename, key="FQ_recall_LoD", mode="a")
+        if only_calculate:
+            for label, condition in conditions.items():
+                recall, fq = self._calc_threshold_based_fq_recall(pr_df["MQUAL"].to_numpy(), condition=condition)
+                pr_df[f"recall_{label}"] = recall
+                pr_df[f"FQ_{label}"] = fq
+            self.pr_df = pr_df
+        else:
+            fig, ax = plt.subplots(figsize=(10, 6))
+            for label, condition in conditions.items():
+                recall, fq = self._calc_threshold_based_fq_recall(pr_df["MQUAL"].to_numpy(), condition=condition)
+                pr_df[f"recall_{label}"] = recall
+                pr_df[f"FQ_{label}"] = fq
+                ax.plot(recall, fq, label=label, linewidth=2)
+            ax.set_xlabel("Recall", fontsize=font_size)
+            ax.set_ylabel("Filter Quality (FQ)", fontsize=font_size)
+            ax.legend(fontsize=18, fancybox=True, framealpha=0.95)
+            ax.grid(visible=True)
+            self._save_plt(output_filename, fig)
+            self.pr_df = pr_df
+            self.pr_df.to_hdf(self.output_h5_filename, key="FQ_recall_LoD", mode="a")
 
     def get_dataset_sizes(self):
         """Calculate dataset sizes for different folds and overall."""
@@ -2794,7 +2812,7 @@ class SRSNVReport:
         logger.info("Creating report")
         # Get filenames for plots
         [
-            output_LoD_plot,  # noqa: N806
+            FQ_vs_recall_plot,  # noqa: N806
             qual_vs_ppmseq_tags_table,
             training_progerss_plot,
             SHAP_importance_plot,  # noqa: N806
@@ -2806,7 +2824,7 @@ class SRSNVReport:
             calibration_fn_with_hist,
         ] = _get_plot_paths(out_path=self.params["workdir"], out_basename=self.params["data_name"])
         # General info
-        self.plot_fq_recall()
+        self.plot_fq_recall(output_filename=FQ_vs_recall_plot)
         self.calc_run_info_table()
         # Quality stats
         self.calc_run_quality_table()
