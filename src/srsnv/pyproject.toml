@@ -8,6 +8,7 @@ dependencies = [
     "ugbio_featuremap",
     "numba>=0.60.0",
     "shap>=0.46.0",
+    "statsmodels>=0.14.4",
 ]
 description = "Ultima Genomics SRSNV utils"
 authors = [
