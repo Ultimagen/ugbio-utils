@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 import numpy as np
@@ -27,8 +28,24 @@ from scipy import interpolate
 from scipy.signal import savgol_filter
 from statsmodels.nonparametric import smoothers_lowess
 from ugbio_core.logger import logger
+from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
-from ugbio_srsnv.srsnv_utils import EPS, prob_to_logit
+from ugbio_srsnv.srsnv_utils import EPS, prob_to_logit, prob_to_phred
+
+# Dataframe column names
+FOLD_COL = "fold_id"
+LABEL_COL = "label"
+PROB_ORIG = "prob_orig"
+PROB_FOLD_TMPL = "prob_fold_{k}"
+MQUAL = FeatureMapFields.MQUAL.value
+
+# KDE smoothing default parameters
+DEFAULT_KDE_GRID_SIZE = 8192
+DEFAULT_KDE_NUM_BANDWIDTH_LEVELS = 1  # For mqual mode, 5 might be good
+DEFAULT_KDE_LOWESS_FRAC = 0.3
+DEFAULT_KDE_ENFORCE_MONOTONIC = False
+DEFAULT_KDE_TRUNCATION_MODE = "auto_detect"
+DEFAULT_KDE_TRANSFORM_MODE = "logit"  # "mqual" or "logit"
 
 # Constants
 MIN_FOLDS_FOR_STD = 2
@@ -135,8 +152,8 @@ def extract_validation_subset(
 def compute_per_fold_scores(  # noqa: C901
     val_df: pd.DataFrame,
     num_cv_folds: int,
-    prob_to_phred_fn: Callable,
-    prob_to_logit_fn: Callable,
+    prob_to_phred_fn: Callable = prob_to_phred,
+    prob_to_logit_fn: Callable = prob_to_logit,
     transform_mode: str = "mqual",
     p_min: float = 1e-12,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
@@ -588,8 +605,8 @@ def create_uncertainty_function_pipeline_fast(  # noqa: PLR0913
     fold_col: str,
     label_col: str,
     num_cv_folds: int,
-    prob_to_phred_fn: Callable,
-    prob_to_logit_fn: Callable,
+    prob_to_phred_fn: Callable = prob_to_phred,
+    prob_to_logit_fn: Callable = prob_to_logit,
     transform_mode: str = "mqual",
     lowess_frac: float = 0.3,
     sigma_min: float = 1e-6,
@@ -735,8 +752,8 @@ def create_uncertainty_function_pipeline(  # noqa: PLR0913
     fold_col: str,
     label_col: str,
     num_cv_folds: int,
-    prob_to_phred_fn: Callable,
-    prob_to_logit_fn: Callable,
+    prob_to_phred_fn: Callable = prob_to_phred,
+    prob_to_logit_fn: Callable = prob_to_logit,
     transform_mode: str = "mqual",
     lowess_frac: float = 0.3,
     sigma_min: float = 1e-6,
@@ -821,16 +838,14 @@ def create_uncertainty_function_pipeline(  # noqa: PLR0913
 
 
 # Constants for Step 2
-FFT_THRESHOLD = 1000  # Use FFT for convolutions larger than this
+FFT_THRESHOLD = 1000  # Use FFT for convolutions larger than this. TODO: move to beginning
 
 
 def make_grid_and_transform(  # noqa: C901, PLR0912, PLR0915
     data_values: np.ndarray,
     grid_size: int = 8192,
-    mqual_max_lut: float | None = None,
     transform_mode: str = "mqual",
     padding_factor: float = 0.1,
-    input_type: str = "auto",
 ) -> tuple[np.ndarray, float, Callable[[np.ndarray], np.ndarray], Callable[[np.ndarray], np.ndarray], dict[str, Any]]:
     """
     Step 2.1: Grid definition and coordinate transforms.
@@ -840,7 +855,7 @@ def make_grid_and_transform(  # noqa: C901, PLR0912, PLR0915
     Parameters
     ----------
     data_values : np.ndarray
-        Input data values to determine domain (format depends on input_type)
+        Input data values to determine domain. Assumed to be in the correct scale (phred for mqual, logits for logit).
     grid_size : int, optional
         Number of grid points, by default 8192
     mqual_max_lut : float, optional
@@ -849,12 +864,6 @@ def make_grid_and_transform(  # noqa: C901, PLR0912, PLR0915
         Coordinate system: "mqual" (default) or "logit", by default "mqual"
     padding_factor : float, optional
         Fraction of range to add as padding on each side, by default 0.1
-    input_type : str, optional
-        Type of input data: "auto" (detect), "probabilities", "logits", or "mqual", by default "auto"
-        - "auto": Auto-detect based on transform_mode and data characteristics
-        - "probabilities": Input values are probabilities in [0,1], convert to target coordinate system
-        - "logits": Input values are already logit scores (phred-scaled)
-        - "mqual": Input values are already MQUAL/Phred scores
 
     Returns
     -------
@@ -879,115 +888,49 @@ def make_grid_and_transform(  # noqa: C901, PLR0912, PLR0915
     if len(data_values) == 0:
         raise ValueError("No finite values in data")
 
-    # Validate input_type parameter
-    valid_input_types = {"auto", "probabilities", "logits", "mqual"}
-    if input_type not in valid_input_types:
-        raise ValueError(f"input_type must be one of {valid_input_types}, got '{input_type}'")
-
     # Validate transform_mode parameter
     if transform_mode not in {"mqual", "logit"}:
         raise ValueError(f"transform_mode must be 'mqual' or 'logit', got '{transform_mode}'")
 
+    # Validate data type
+    if np.all((data_values >= -EPS) & (data_values <= 1 + EPS)):
+        # Data looks like probabilities
+        logger.warning(f"Data values look like probabilities in [0,1]; while {transform_mode=}")
+    elif np.all(data_values >= -EPS) and (transform_mode != "mqual"):
+        # Data looks like MQUAL/Phred scores
+        logger.warning(f"Data values look like MQUAL/Phred scores >= 0; while {transform_mode=}")
+    elif np.any(data_values < -EPS) and (transform_mode != "logit"):
+        # Data looks like logits
+        logger.warning(f"Data values look like logit scores (can be negative); while {transform_mode=}")
+
+    # Determine data range and add padding
+    data_min = 0.0 if transform_mode == "mqual" else np.min(data_values)  # mqual >= 0 always
+    data_max = np.max(data_values)
+    range_size = data_max - data_min
+    grid_min = data_min
+    grid_max = data_max + padding_factor * range_size
+
     if transform_mode == "mqual":
-        # mqual-mode: grid over [0, mqual_max_lut], reflection at 0, no upper boundary
-
-        # Auto-detect input type for MQUAL mode
-        if input_type == "auto":
-            # For MQUAL mode, assume input is already MQUAL unless clearly probabilities
-            if np.all((data_values >= 0) & (data_values <= 1)):
-                input_detected = "probabilities"
-            else:
-                input_detected = "mqual"
-        else:
-            input_detected = input_type
-
-        # Convert input to MQUAL scores if needed
-        if input_detected == "probabilities":
-            from ugbio_srsnv.srsnv_utils import prob_to_phred
-
-            mqual_values = prob_to_phred(data_values)
-        elif input_detected == "logits":
-            from ugbio_srsnv.srsnv_utils import logit_to_prob, prob_to_phred
-
-            prob_values = logit_to_prob(data_values, phred=True)
-            mqual_values = prob_to_phred(prob_values)
-        else:  # input_detected == "mqual"
-            mqual_values = data_values
-
-        data_min = 0.0  # mqual >= 0 always
-        data_max = mqual_max_lut if mqual_max_lut is not None else np.max(mqual_values)
-
-        # Add padding only on the upper side
-        range_size = data_max - data_min
-        grid_min = data_min
-        grid_max = data_max + padding_factor * range_size
-
-        def to_grid_space(x):
-            """Convert mqual values to grid coordinates [0, grid_size-1]"""
-            x = np.asarray(x)
-            return (x - grid_min) / (grid_max - grid_min) * (grid_size - 1)
-
-        def from_grid_space(u):
-            """Convert grid coordinates back to mqual values"""
-            u = np.asarray(u)
-            return u / (grid_size - 1) * (grid_max - grid_min) + grid_min
-
+        # mqual-mode: grid over [0, mqual_max_lut], reflection at 0, no upper boundary. Padding only on the upper side
         boundary_policy = "reflect_at_zero"
-
-    elif transform_mode == "logit":
+    else:  # logit
         # logit-mode: unbounded both sides, symmetric padding
-
-        # Auto-detect input type for logit mode
-        if input_type == "auto":
-            # For logit mode, detect if input looks like probabilities or logits
-            if np.all((data_values >= 0) & (data_values <= 1)):
-                input_detected = "probabilities"
-            else:
-                input_detected = "logits"
-        else:
-            input_detected = input_type
-
-        # Convert input to logit scores if needed
-        if input_detected == "probabilities":
-            # Convert probabilities to logits using the standard function
-            logit_values = prob_to_logit(data_values, phred=True)
-        elif input_detected == "mqual":
-            # Convert MQUAL to probabilities, then to logits
-            from ugbio_srsnv.srsnv_utils import phred_to_prob
-
-            prob_values = phred_to_prob(data_values)
-            logit_values = prob_to_logit(prob_values, phred=True)
-        else:  # input_detected == "logits"
-            # Data is already in logit space - use directly
-            logit_values = data_values
-
-        data_min = np.min(logit_values)
-        data_max = np.max(logit_values)
-        range_size = data_max - data_min
-
-        # Symmetric padding
-        padding = padding_factor * range_size
-        grid_min = data_min - padding
-        grid_max = data_max + padding
-
-        def to_grid_space(x):
-            """Convert logit values to grid coordinates [0, grid_size-1]"""
-            x = np.asarray(x)
-            return (x - grid_min) / (grid_max - grid_min) * (grid_size - 1)
-
-        def from_grid_space(u):
-            """Convert grid coordinates back to logit values"""
-            u = np.asarray(u)
-            return u / (grid_size - 1) * (grid_max - grid_min) + grid_min
-
+        grid_min = grid_min - padding_factor * range_size
         boundary_policy = "none"
-
-    else:
-        raise ValueError(f"Unsupported transform_mode: {transform_mode}")
 
     # Create the grid
     grid = np.arange(grid_size, dtype=float)
     dx = (grid_max - grid_min) / (grid_size - 1)
+
+    def to_grid_space(x):
+        """Convert mqual values to grid coordinates [0, grid_size-1]"""
+        x = np.asarray(x)
+        return (x - grid_min) / dx
+
+    def from_grid_space(u):
+        """Convert grid coordinates back to mqual values"""
+        u = np.asarray(u)
+        return u * dx + grid_min
 
     metadata = {
         "grid_size": grid_size,
@@ -997,8 +940,6 @@ def make_grid_and_transform(  # noqa: C901, PLR0912, PLR0915
         "transform_mode": transform_mode,
         "boundary_policy": boundary_policy,
         "padding_factor": padding_factor,
-        "input_type": input_type,
-        "input_type_detected": input_detected if input_type == "auto" else input_type,
     }
 
     logger.debug(
@@ -1178,6 +1119,103 @@ def create_gaussian_kernel(
     }
 
     logger.debug(f"Created Gaussian kernel: sigma={sigma:.3f}, length={len(kernel)}, sum={np.sum(kernel):.6f}")
+
+    return kernel, metadata
+
+
+def create_exponential_kernel(
+    sigma: float,
+    dx: float,
+    radius_k: float = 8.0,
+    gcos: float = 1.0,
+    *,
+    normalize: bool = True,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """
+    Build a truncated exponential (Laplace) kernel for convolution operations.
+
+    The exponential kernel has heavier tails than Gaussian and is useful for data with
+    outliers or when less aggressive smoothing in the tails is desired. The kernel
+    follows the form: K(x) = exp( -x**2 / (sigma(gcos*sigma + np.abs(x))) ).
+
+    Parameters
+    ----------
+    sigma : float
+        Scale parameter of the exponential distribution in data units.
+        For a Laplace distribution, this is the scale parameter b where the
+        standard deviation is sqrt(2) * b.
+    dx : float
+        Grid spacing in data units
+    radius_k : float, optional
+        Truncation radius in units of scale, by default 6.0.
+        Note: exponential tails decay slower than Gaussian, so a larger
+        radius is typically needed for good approximation.
+    gcos : float, optional
+        Gaussian crossover scale, measured in units of sigma. For x << gcos*sigma
+        the kernel behaves like a Gaussian, while for x >> gcos it behaves like an exponential.
+    normalize : bool, optional
+        Whether to normalize kernel to unit sum, by default True
+
+    Returns
+    -------
+    tuple
+        - kernel: 1D array with exponential samples centered at middle index
+        - metadata: dict with kernel information
+
+    Notes
+    -----
+    When gcos=0, the exponential kernel has the form K(x) = exp(-|x| / scale) and corresponds
+    to a Laplace distribution. The relationship to standard deviation is:
+    std_dev = sqrt(2) * scale, so scale = std_dev / sqrt(2).
+
+    Compared to Gaussian kernels, exponential kernels:
+    - Have heavier tails (slower decay)
+    - Are less smooth (not infinitely differentiable)
+    - Preserve sharp features better
+    - Are more robust to outliers
+    """
+    if sigma <= 0:
+        raise ValueError("Scale must be positive")
+    if dx <= 0:
+        raise ValueError("dx must be positive")
+    if gcos < 0:
+        raise ValueError("gcos must be non-negative")
+
+    # Convert scale to grid units
+    scale_grid = sigma / dx
+
+    # Determine kernel support
+    radius_grid = radius_k * scale_grid
+    half_support = int(np.ceil(radius_grid))
+
+    # Build kernel centered at zero
+    kernel_indices = np.arange(-half_support, half_support + 1)
+    kernel = np.exp(-(kernel_indices**2) / (scale_grid * (gcos * scale_grid + np.abs(kernel_indices))))
+
+    # Normalize to unit sum if requested
+    if normalize:
+        kernel = kernel / np.sum(kernel)
+
+    # Calculate equivalent standard deviation for comparison with Gaussian kernels
+    equivalent_sigma = sigma * np.sqrt(2)
+
+    metadata = {
+        "sigma": sigma,
+        "scale_grid": scale_grid,
+        "equivalent_sigma": equivalent_sigma,
+        "dx": dx,
+        "radius_k": radius_k,
+        "gcos": gcos,
+        "half_support": half_support,
+        "kernel_length": len(kernel),
+        "kernel_sum": np.sum(kernel),
+        "kernel_type": "exponential",
+    }
+
+    logger.debug(
+        f"Created exponential kernel: scale={sigma:.3f}, equiv_sigma={equivalent_sigma:.3f}, "
+        f"length={len(kernel)}, sum={np.sum(kernel):.6f}"
+    )
 
     return kernel, metadata
 
@@ -1756,7 +1794,7 @@ def calculate_smoothed_precision_kde(  # noqa: PLR0913
         "monotonic": mono_metadata,
     }
 
-    return tpr, fpr, precision_grid, metadata
+    return tpr, fpr, density_true, density_false, precision_grid, metadata
 
 
 def _variable_bandwidth_kernel_mixing(
@@ -1813,7 +1851,8 @@ def _variable_bandwidth_kernel_mixing(
     # Convert to grid units
     sigma_grid = sigma_data / dx
 
-    # Quantize sigma_grid into K levels
+    # Quantize sigma_grid into K levels.
+    # TODO: check, is this necessary? When sigma goes down to zero this wouldn't I want this to go down to zero?
     sigma_min = np.percentile(sigma_grid, 5)  # Avoid extreme outliers
     sigma_max = np.percentile(sigma_grid, 95)
 
@@ -1825,12 +1864,13 @@ def _variable_bandwidth_kernel_mixing(
         sigma_levels = np.linspace(sigma_min, sigma_max, num_bandwidth_levels)
 
     # Build kernel bank for each level
+    create_kernel_fn = create_exponential_kernel  # Can substitute create_gaussian_kernel or create_exponential_kernel
     kernels = []
     for sigma_k in sigma_levels:
-        kernel, _ = create_gaussian_kernel(
+        kernel, _ = create_kernel_fn(
             sigma=sigma_k,
             dx=1.0,
-            radius_k=4,  # dx=1 since sigma already in grid units
+            # radius_k=4,  # dx=1 since sigma already in grid units
         )
         kernels.append(kernel)
 
@@ -2046,3 +2086,292 @@ def _enforce_monotonic_precision(
         logger.warning("sklearn not available, skipping monotonic enforcement")
         metadata = {"monotonic_enforcement": False, "reason": "sklearn_not_available"}
         return precision_grid, metadata
+
+
+# ─────────────────────────────── Precision Estimation Class ───────────────────────────────
+
+
+class AdaptiveKDEPrecisionEstimator:
+    """
+    A class that encapsulates the adaptive KDE precision estimation pipeline.
+
+    This class performs steps 1-4 from the _create_quality_lookup_table_kde method:
+    1. Creates uncertainty function from cross-validation data
+    2. Extracts scores and sets up computational grid
+    3. Bins data to grid
+    4. Calculates smoothed precision using adaptive KDE
+
+    Attributes after fitting:
+    - to_grid: Function to transform from original to grid space
+    - from_grid: Function to transform from grid to original space
+    - counts_true: Binned true positive counts on grid
+    - counts_false: Binned false positive counts on grid
+    - grid: Computational grid points
+    - dx: Grid spacing
+    - tpr: True positive rate as function of threshold
+    - fpr: False positive rate as function of threshold
+    - precision_grid: Precision values on grid
+    - metadata: Dictionary containing processing metadata
+    """
+
+    def __init__(
+        self,
+        grid_size: int = DEFAULT_KDE_GRID_SIZE,
+        num_bandwidth_levels: int = DEFAULT_KDE_NUM_BANDWIDTH_LEVELS,
+        lowess_frac: float = DEFAULT_KDE_LOWESS_FRAC,
+        truncation_mode: str = DEFAULT_KDE_TRUNCATION_MODE,
+        transform_mode: str = DEFAULT_KDE_TRANSFORM_MODE,
+        *,
+        enforce_monotonic: bool = DEFAULT_KDE_ENFORCE_MONOTONIC,
+    ):
+        """Initialize the estimator.
+
+        Parameters
+        ----------
+        grid_size : int, optional
+            Fine grid for high resolution, by default 8192
+        num_bandwidth_levels : int, optional
+            Number of adaptive bandwidth levels, by default 5
+        lowess_frac : float, optional
+            LOWESS smoothing fraction for uncertainty, by default 0.3
+        enforce_monotonic : bool, optional
+            Whether to enforce monotonicity, by default True
+        truncation_mode : str, optional
+            Tail truncation mode, by default "auto_detect"
+        transform_mode : str, optional
+            Transform scale "mqual" or "logit", by default "mqual"
+        """
+        # Configuration
+        self.config = {
+            "grid_size": grid_size,
+            "num_bandwidth_levels": num_bandwidth_levels,
+            "lowess_frac": lowess_frac,
+            "enforce_monotonic": enforce_monotonic,
+            "truncation_mode": truncation_mode,
+            "transform_mode": transform_mode,
+        }
+
+        # Grid and transforms
+        self.grid = None
+        self.dx = None
+        self.to_grid = None
+        self.from_grid = None
+        self.grid_metadata = None
+
+        # Binned data
+        self.counts_true = None
+        self.counts_false = None
+        self.bin_metadata_true = None
+        self.bin_metadata_false = None
+
+        # Results
+        self.tpr = None
+        self.fpr = None
+        self.precision_grid = None
+        self.kde_metadata = None
+
+        # Uncertainty function
+        self.uncertainty_fn = None
+        self.uncertainty_metadata = None
+
+        # Store data for later steps
+        self.scores_t = None
+        self.scores_f = None
+
+    def create_uncertainty_function(
+        self,
+        pd_df: pd.DataFrame,
+        num_cv_folds: int,
+        fold_col: str = FOLD_COL,
+        label_col: str = LABEL_COL,
+    ) -> None:
+        """
+        Step 1a: Create uncertainty function from cross-validation data.
+
+        Parameters
+        ----------
+        pd_df : pd.DataFrame
+            DataFrame with validation data including fold assignments and per-fold predictions
+        fold_col : str, optional
+            Column name for fold assignments (NaN indicates validation set), by default "fold_id"
+        label_col : str, optional
+            Column name for true labels, by default "label"
+        num_cv_folds : int, optional
+            Number of cross-validation folds, by default 5
+        """
+        self.uncertainty_fn, self.uncertainty_metadata = create_uncertainty_function_pipeline_fast(
+            pd_df=pd_df,
+            fold_col=fold_col,
+            label_col=label_col,
+            num_cv_folds=num_cv_folds,
+            transform_mode=self.config["transform_mode"],
+            lowess_frac=self.config["lowess_frac"],
+        )
+
+        logger.debug(
+            "Uncertainty function created from %d validation points",
+            self.uncertainty_metadata.get("validation_size", 0),
+        )
+
+    def extract_scores(
+        self,
+        pd_df: pd.DataFrame,
+        label_col: str = LABEL_COL,
+        mqual_col: str = MQUAL,
+        prob_orig_col: str = PROB_ORIG,
+    ) -> None:
+        """
+        Step 1b: Extract scores for true positives and false positives.
+
+        Parameters
+        ----------
+        pd_df : pd.DataFrame
+            DataFrame with labels and scores
+        label_col : str, optional
+            Column name for true labels, by default "label"
+        mqual_col : str, optional
+            Column name for model quality scores, by default "mqual"
+        prob_orig_col : str, optional
+            Column name for original probabilities, by default "prob_orig"
+        """
+        # Extract scores (MQUAL or logit) for true positives and false positives
+        if self.config["transform_mode"] == "mqual":
+            self.scores_t = pd_df[pd_df[label_col]][mqual_col].to_numpy()
+            self.scores_f = pd_df[~pd_df[label_col]][mqual_col].to_numpy()
+        elif self.config["transform_mode"] == "logit":
+            self.scores_t = prob_to_logit(pd_df.loc[pd_df[label_col], prob_orig_col].to_numpy(), phred=True)
+            self.scores_f = prob_to_logit(pd_df.loc[~pd_df[label_col], prob_orig_col].to_numpy(), phred=True)
+        else:
+            raise ValueError(f"Invalid transform_mode: {self.config['transform_mode']}")
+
+        if len(self.scores_t) == 0 or len(self.scores_f) == 0:
+            raise ValueError("Insufficient data: empty true or false positive sets")
+
+        logger.debug("Data: %d true positives, %d false positives", len(self.scores_t), len(self.scores_f))
+
+    def create_grid(self) -> None:
+        """
+        Step 2: Set up computational grid.
+
+        Requires that extract_scores() has been called first.
+        """
+        if self.scores_t is None or self.scores_f is None:
+            raise ValueError("Must call extract_scores() before create_grid()")
+
+        all_scores = np.concatenate([self.scores_t, self.scores_f])
+        (self.grid, self.dx, self.to_grid, self.from_grid, self.grid_metadata) = make_grid_and_transform(
+            all_scores, grid_size=self.config["grid_size"], transform_mode=self.config["transform_mode"]
+        )
+
+        logger.debug(
+            "Grid: %d points, dx=%.6f, range=[%.1f, %.1f]",
+            len(self.grid),
+            self.dx,
+            self.from_grid(self.grid[0]),
+            self.from_grid(self.grid[-1]),
+        )
+
+    def bin_data_to_grid(self) -> None:
+        """
+        Step 3: Bin data to grid.
+
+        Requires that extract_scores() and create_grid() have been called first.
+        """
+        if self.scores_t is None or self.scores_f is None:
+            raise ValueError("Must call extract_scores() before bin_data_to_grid()")
+        if self.grid is None or self.to_grid is None:
+            raise ValueError("Must call create_grid() before bin_data_to_grid()")
+
+        self.counts_true, self.bin_metadata_true = bin_data_to_grid(
+            self.scores_t, to_grid_space=self.to_grid, grid_size=self.config["grid_size"]
+        )
+        self.counts_false, self.bin_metadata_false = bin_data_to_grid(
+            self.scores_f, to_grid_space=self.to_grid, grid_size=self.config["grid_size"]
+        )
+
+        logger.debug(
+            "Binning weight conservation error: true=%.0f, false=%.0f",
+            self.bin_metadata_true.get("weight_conservation_error", 0),
+            self.bin_metadata_false.get("weight_conservation_error", 0),
+        )
+
+    def calculate_smoothed_precision(self) -> None:
+        """
+        Step 4: Calculate smoothed precision using adaptive KDE.
+
+        Requires that all previous steps have been completed.
+        """
+        if self.uncertainty_fn is None:
+            raise ValueError("Must call create_uncertainty_function() before calculate_smoothed_precision()")
+        if self.scores_t is None or self.scores_f is None:
+            raise ValueError("Must call extract_scores() before calculate_smoothed_precision()")
+        if self.grid is None or self.from_grid is None:
+            raise ValueError("Must call create_grid() before calculate_smoothed_precision()")
+        if self.counts_true is None or self.counts_false is None:
+            raise ValueError("Must call bin_data_to_grid() before calculate_smoothed_precision()")
+
+        (self.tpr, self.fpr, self.density_true, self.density_false, self.precision_grid, self.kde_metadata) = (
+            calculate_smoothed_precision_kde(
+                self.counts_true,
+                self.counts_false,
+                self.grid,
+                self.dx,
+                self.uncertainty_fn,
+                self.from_grid,
+                len(self.scores_t),
+                len(self.scores_f),
+                num_bandwidth_levels=self.config["num_bandwidth_levels"],
+                enforce_monotonic=self.config["enforce_monotonic"],
+                truncation_mode=self.config["truncation_mode"],
+            )
+        )
+
+        logger.debug("Adaptive KDE completed successfully!")
+        logger.debug("Conservation error: %.2e", self.kde_metadata.get("mixing", {}).get("conservation_error_total", 0))
+        logger.debug("Precision range: [%.6f, %.6f]", np.nanmin(self.precision_grid), np.nanmax(self.precision_grid))
+
+    def fit(
+        self,
+        pd_df: pd.DataFrame,
+        num_cv_folds: int,
+        label_col: str = LABEL_COL,
+        fold_col: str = FOLD_COL,
+        mqual_col: str = MQUAL,
+        prob_orig_col: str = PROB_ORIG,
+    ) -> None:
+        """
+        Fit the adaptive KDE precision estimator by orchestrating all steps.
+
+        Parameters
+        ----------
+        pd_df : pd.DataFrame
+            DataFrame with validation data including fold assignments and per-fold predictions
+        label_col : str, optional
+            Column name for true labels, by default "label"
+        fold_col : str, optional
+            Column name for fold assignments (NaN indicates validation set), by default "fold_id"
+        num_cv_folds : int, optional
+            Number of cross-validation folds, by default 5
+        mqual_col : str, optional
+            Column name for model quality scores, by default "mqual"
+        prob_orig_col : str, optional
+            Column name for original probabilities, by default "prob_orig"
+        """
+        logger.debug(
+            "Fitting adaptive KDE precision estimator with grid_size=%d, bandwidth_levels=%d",
+            self.config["grid_size"],
+            self.config["num_bandwidth_levels"],
+        )
+
+        # Execute all steps in sequence
+        self.create_uncertainty_function(pd_df, num_cv_folds, fold_col=fold_col, label_col=label_col)
+        self.extract_scores(pd_df, label_col=label_col, mqual_col=mqual_col, prob_orig_col=prob_orig_col)
+        self.create_grid()
+        self.bin_data_to_grid()
+        self.calculate_smoothed_precision()
+
+        # Define convenience methods for TPR, FPR, and precision lookup
+        grid_coords = self.from_grid(self.grid)
+        self.get_fpr = partial(np.interp, xp=grid_coords, fp=self.fpr)
+        self.get_tpr = partial(np.interp, xp=grid_coords, fp=self.tpr)
+        self.get_precision = partial(np.interp, xp=grid_coords, fp=self.precision_grid)
