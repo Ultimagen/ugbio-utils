@@ -234,6 +234,9 @@ class FlowBasedRead:
     _motif_size: int
     _regressed_signal: np.ndarray
     base_to_flow_mapping: np.ndarray
+    forward_seq: str
+    direction: str
+    _flow_matrix: np.ndarray
 
     def __init__(self, dct: dict):
         """Generic constructor
@@ -542,6 +545,49 @@ class FlowBasedRead:
         dct = vars(cls.from_sam_record(sam_record, None, flow_order, max_hmer_size))
 
         dct["_flow_matrix"] = flow_matrix[:, : len(dct["key"])]
+        return cls(dct)
+
+    @classmethod
+    def from_tuple(
+        cls,
+        read_name: str,
+        read: str,
+        flow_order: str = DEFAULT_FLOW_ORDER,
+        max_hmer_size: int = 12,
+    ):
+        """Constructor from basic read parameters for simulation purposes.
+
+        Creates an unaligned FlowBasedRead object from basic parameters.
+
+        Parameters
+        ----------
+        read_name : str
+            Name of the read
+        read : str
+            DNA sequence of the read
+        flow_order : str, optional
+            Flow order sequence, by default DEFAULT_FLOW_ORDER
+        max_hmer_size : int, optional
+            Maximum hmer size, by default 12
+
+        Returns
+        -------
+        FlowBasedRead
+            FlowBasedRead object constructed from the provided parameters
+        """
+        dct = {}
+        dct["read_name"] = read_name
+        dct["seq"] = read.upper()
+        dct["is_reverse"] = False
+        dct["forward_seq"] = dct["seq"]
+
+        # Generate key from sequence
+        dct["key"] = generate_key_from_sequence(dct["forward_seq"], flow_order=flow_order)
+
+        dct["_max_hmer"] = max_hmer_size
+        dct["flow_order"] = flow_order
+        dct["direction"] = "synthesis"
+
         return cls(dct)
 
     def _validate_seq(self) -> None:

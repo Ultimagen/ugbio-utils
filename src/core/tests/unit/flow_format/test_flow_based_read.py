@@ -107,3 +107,52 @@ def test_get_flow_matrix_column_for_base(resources_dir):
                 assert (
                     rec.key[rec.base_to_flow_mapping[i]] == np.argmax(rec.get_flow_matrix_column_for_base(i)[1])
                 ) or np.max(rec.get_flow_matrix_column_for_base(i)[1]) < 0.9
+
+
+def test_from_tuple_basic_functionality():
+    """Test basic functionality of FlowBasedRead.from_tuple method."""
+    # Test data
+    read_name = "test_read_001"
+    sequence = "ATCGATCGATCG"
+    flow_order = DEFAULT_FLOW_ORDER
+    max_hmer_size = 12
+
+    # Create FlowBasedRead using from_tuple
+    flow_read = fbr.FlowBasedRead.from_tuple(
+        read_name=read_name, read=sequence, flow_order=flow_order, max_hmer_size=max_hmer_size
+    )
+
+    # Test basic attributes
+    assert flow_read.read_name == read_name
+    assert flow_read.seq == sequence.upper()
+    assert flow_read.is_reverse is False
+    assert flow_read.forward_seq == sequence.upper()
+    assert flow_read._max_hmer == max_hmer_size
+    assert flow_read.flow_order.startswith(flow_order)  # flow_order gets expanded to match key length
+    assert flow_read.direction == "synthesis"
+
+    # Test that key is generated correctly
+    expected_key = fbr.generate_key_from_sequence(sequence.upper(), flow_order=flow_order)
+    assert np.array_equal(flow_read.key, expected_key)
+
+    # Test that flow2base is computed
+    assert hasattr(flow_read, "flow2base")
+    assert len(flow_read.flow2base) == len(flow_read.key)
+
+    # Test that the read is valid
+    assert flow_read.is_valid()
+
+    # Test with different parameters
+    custom_flow_order = "ACGT"
+    custom_max_hmer = 8
+
+    flow_read_custom = fbr.FlowBasedRead.from_tuple(
+        read_name="custom_read",
+        read="aaggttcc",  # lowercase to test uppercasing
+        flow_order=custom_flow_order,
+        max_hmer_size=custom_max_hmer,
+    )
+
+    assert flow_read_custom.seq == "AAGGTTCC"
+    assert flow_read_custom._max_hmer == custom_max_hmer
+    assert flow_read_custom.flow_order.startswith(custom_flow_order)  # flow_order gets expanded to match key length
