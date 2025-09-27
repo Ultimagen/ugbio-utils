@@ -193,6 +193,184 @@ required_columns = [
 - **Data quality**: Probabilities in [0,1], minimal missing values
 - **Label distribution**: Adequate representation of both positive and negative cases
 
+## High-Level API: AdaptiveKDEPrecisionEstimator
+
+### Overview
+
+The `AdaptiveKDEPrecisionEstimator` class provides a simplified, object-oriented interface to the adaptive KDE precision estimation pipeline. It encapsulates the entire workflow (steps 1-4) into a single reusable class with modular methods and convenient interpolation functions.
+
+### Basic Usage
+
+```python
+from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
+
+# Create estimator with default configuration
+estimator = AdaptiveKDEPrecisionEstimator()
+
+# Fit to your cross-validation data
+estimator.fit(pd_df, num_cv_folds=3)
+
+# Use convenient interpolation methods
+query_scores = np.array([10, 20, 30, 40, 50])  # MQUAL values to query
+fpr_values = estimator.get_fpr(query_scores)
+tpr_values = estimator.get_tpr(query_scores)
+precision_values = estimator.get_precision(query_scores)
+
+print(f"At MQUAL 30: FPR={fpr_values[2]:.4f}, TPR={tpr_values[2]:.4f}, Precision={precision_values[2]:.4f}")
+```
+
+### Advanced Configuration
+
+```python
+# Custom configuration for high-precision applications
+estimator = AdaptiveKDEPrecisionEstimator(
+    grid_size=4096,                    # Higher resolution grid
+    num_bandwidth_levels=7,            # More adaptive smoothing
+    lowess_frac=0.2,                   # Tighter uncertainty smoothing
+    enforce_monotonic=True,            # Apply isotonic regression
+    truncation_mode="data_max",        # Conservative truncation
+    transform_mode="logit"             # Use logit coordinate system
+)
+
+# Fit with custom column names
+estimator.fit(
+    pd_df,
+    num_cv_folds=5,
+    label_col="is_variant",
+    fold_col="cv_fold",
+    mqual_col="model_quality",
+    prob_orig_col="original_probability"
+)
+```
+
+### Class Reference
+
+#### Constructor
+
+```python
+AdaptiveKDEPrecisionEstimator(
+    grid_size: int = 8192,                    # Fine grid for high resolution
+    num_bandwidth_levels: int = 1,            # Number of adaptive bandwidth levels
+    lowess_frac: float = 0.3,                 # LOWESS smoothing fraction for uncertainty
+    enforce_monotonic: bool = False,           # Whether to enforce monotonicity
+    truncation_mode: str = "auto_detect",     # Tail truncation mode
+    transform_mode: str = "logit"             # Transform scale ("mqual", "logit")
+)
+```
+
+**Parameters**:
+- **grid_size**: Number of grid points for computation. Powers of 2 are optimal for FFT performance.
+- **num_bandwidth_levels**: Controls adaptive smoothing. Higher values provide more adaptation to local density variations.
+- **lowess_frac**: Smoothing fraction for uncertainty function estimation. Lower values preserve more local variation.
+- **enforce_monotonic**: If True, applies isotonic regression to ensure precision decreases monotonically with score.
+- **truncation_mode**: Strategy for handling density tails ("auto_detect", "data_max", "none").
+- **transform_mode**: Coordinate system for computation ("mqual" for bounded [0,∞), "logit" for unbounded domain).
+
+#### Main Methods
+
+##### `fit(pd_df, num_cv_folds, **kwargs)`
+
+Executes the complete adaptive KDE pipeline on cross-validation data.
+
+```python
+estimator.fit(
+    pd_df: pd.DataFrame,               # DataFrame with CV predictions
+    num_cv_folds: int,                 # Number of cross-validation folds
+    label_col: str = "label",          # Column with true labels
+    fold_col: str = "fold_id",         # Column with fold assignments
+    mqual_col: str = "mqual",          # Column with model quality scores
+    prob_orig_col: str = "prob_orig"   # Column with original probabilities
+)
+```
+
+**Returns**: None (results stored in class attributes)
+
+**After fitting, the following attributes become available**:
+- `tpr`, `fpr`, `precision_grid`: Arrays of rate and precision values on the computational grid
+- `grid`, `dx`, `to_grid`, `from_grid`: Grid coordinates and transformation functions
+- `kde_metadata`: Processing metadata and diagnostics
+- `get_fpr`, `get_tpr`, `get_precision`: Convenience interpolation functions
+
+##### Convenience Interpolation Methods
+
+After calling `fit()`, three interpolation functions are automatically created:
+
+```python
+# Query rates and precision at arbitrary score values
+scores = np.array([15.5, 23.7, 42.1])
+
+fpr_at_scores = estimator.get_fpr(scores)        # False positive rates
+tpr_at_scores = estimator.get_tpr(scores)        # True positive rates
+precision_at_scores = estimator.get_precision(scores)  # Precision values
+```
+
+These functions use linear interpolation on the computational grid and support extrapolation beyond the original data range.
+
+#### Modular Step Methods
+
+For advanced users, individual pipeline steps can be executed separately:
+
+```python
+# Step-by-step execution (equivalent to fit())
+estimator.create_uncertainty_function(pd_df, num_cv_folds)
+estimator.extract_scores(pd_df)
+estimator.create_grid()
+estimator.bin_data_to_grid()
+estimator.calculate_smoothed_precision()
+
+# Access intermediate results
+uncertainty_function = estimator.uncertainty_fn
+grid_metadata = estimator.grid_metadata
+binning_metadata = estimator.bin_metadata_true
+```
+
+### Integration Example
+
+Using the class in a quality score mapping pipeline:
+
+```python
+def create_quality_lookup_table(pd_df, num_cv_folds=3, **kde_config):
+    """Create MQUAL -> SNVQ lookup table using adaptive KDE."""
+
+    # Configure and fit estimator
+    estimator = AdaptiveKDEPrecisionEstimator(**kde_config)
+    estimator.fit(pd_df, num_cv_folds)
+
+    # Define lookup table points
+    mqual_max = pd_df.loc[pd_df["label"] == 0, "mqual"].quantile(0.999999)
+    x_lut = np.arange(0, int(mqual_max) + 1, dtype=float)
+
+    # Interpolate FPR/TPR ratios
+    fpr_interp = estimator.get_fpr(x_lut)
+    tpr_interp = estimator.get_tpr(x_lut)
+    fp_ratio = fpr_interp / tpr_interp
+
+    # Convert to SNVQ using standard formula
+    snvq_prefactor = calculate_snvq_prefactor()
+    y_lut = -10 * np.log10(np.clip(snvq_prefactor * fp_ratio, 1e-10, 1))
+
+    return x_lut, y_lut, estimator.kde_metadata
+
+# Usage
+x_lut, y_lut, metadata = create_quality_lookup_table(
+    pd_df,
+    num_cv_folds=3,
+    grid_size=2048,
+    num_bandwidth_levels=5,
+    transform_mode="logit"
+)
+```
+
+### Performance Characteristics
+
+| **Configuration** | **Grid Size** | **Bandwidth Levels** | **Typical Runtime** | **Memory Usage** |
+|-------------------|---------------|---------------------|---------------------|------------------|
+| Fast              | 1024          | 3                   | ~2-4 seconds        | ~32MB            |
+| Standard          | 2048          | 5                   | ~4-8 seconds        | ~64MB            |
+| High-precision    | 4096          | 7                   | ~8-16 seconds       | ~128MB           |
+
+**Note**: Runtimes are for datasets with ~1-3M validation points. Performance scales primarily with grid size and bandwidth levels, not dataset size.
+
 ## Detailed Function Documentation
 
 ### Core Pipeline Functions

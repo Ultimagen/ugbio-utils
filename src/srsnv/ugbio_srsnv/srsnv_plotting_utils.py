@@ -33,6 +33,7 @@ from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions, PpmseqCategories
 
 from ugbio_srsnv.shap_plotting import SHAPPlotter
+from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
 from ugbio_srsnv.srsnv_utils import (
     ET,
     ET_FILLNA,
@@ -40,8 +41,8 @@ from ugbio_srsnv.srsnv_utils import (
     ST,
     ST_FILLNA,
     construct_trinuc_context_with_alt,
-    get_base_error_rate_from_filters,
     get_base_recall_from_filters,
+    phred_to_prob,
     prob_to_logit,
     prob_to_phred,
     safe_roc_auc,
@@ -287,9 +288,9 @@ def create_srsnv_report_html(
     report_html = Path(out_path) / f"{out_basename}report.html"
 
     [
-        output_LoD_plot,  # noqa: N806
+        FQ_vs_recall_plot,  # noqa: N806
         qual_vs_ppmseq_tags_table,
-        training_progerss_plot,
+        training_progress_plot,
         SHAP_importance_plot,  # noqa: N806
         SHAP_beeswarm_plot,  # noqa: N806
         trinuc_stats_plot,
@@ -307,9 +308,9 @@ def create_srsnv_report_html(
         # "model_file": model_file,
         # "params_file": params_file,
         "srsnv_qc_h5_file": srsnv_qc_h5_filename,
-        "output_LoD_plot": output_LoD_plot,
+        "FQ_vs_recall_plot": FQ_vs_recall_plot,  # noqa: N806
         "qual_vs_ppmseq_tags_table": qual_vs_ppmseq_tags_table,
-        "training_progerss_plot": training_progerss_plot,
+        "training_progress_plot": training_progress_plot,
         "SHAP_importance_plot": SHAP_importance_plot,
         "SHAP_beeswarm_plot": SHAP_beeswarm_plot,
         "trinuc_stats_plot": trinuc_stats_plot,
@@ -1320,7 +1321,7 @@ def _get_plot_paths(out_path, out_basename):
     outdir = out_path
     basename = out_basename
 
-    output_LoD_plot = os.path.join(outdir, f"{basename}LoD_curve")  # noqa: N806
+    FQ_vs_recall_plot = os.path.join(outdir, f"{basename}FQ_vs_recall")  # noqa: N806
     qual_vs_ppmseq_tags_table = os.path.join(outdir, f"{basename}qual_vs_ppmSeq_tags_table")
     training_progerss_plot = os.path.join(outdir, f"{basename}training_progress")
     SHAP_importance_plot = os.path.join(outdir, f"{basename}SHAP_importance")  # noqa: N806
@@ -1332,7 +1333,7 @@ def _get_plot_paths(out_path, out_basename):
     output_qual_per_feature = os.path.join(outdir, f"{basename}qual_per_")
 
     return [
-        output_LoD_plot,
+        FQ_vs_recall_plot,
         qual_vs_ppmseq_tags_table,
         training_progerss_plot,
         SHAP_importance_plot,
@@ -1696,40 +1697,66 @@ class SRSNVReport:
 
         return fqs
 
-    def calc_precision_and_recall(self):
+    def _calc_threshold_based_fq_recall(self, mquals, condition=None):
+        data_df = self.data_df.copy()
+        if condition is None:
+            condition = np.ones_like(self.data_df[LABEL], dtype=bool)
+        data_df["condition"] = condition
+        condition_rates_by_label = data_df.groupby(LABEL)["condition"].mean().sort_index()
+        cond_true_rate = condition_rates_by_label[1]
+        cond_snvq_shift = np.diff(10 * np.log10(condition_rates_by_label.to_numpy()))
+
+        kde_estimator = AdaptiveKDEPrecisionEstimator()
+        kde_estimator.fit(data_df.loc[data_df["condition"], :], num_cv_folds=self.num_cv_folds)
+        if kde_estimator.config["transform_mode"] == "logit":
+            scores = prob_to_logit(phred_to_prob(mquals), max_value=self.max_qual, phred=True)
+        else:
+            scores = mquals
+
+        tprs = kde_estimator.get_tpr(scores)
+        fprs = kde_estimator.get_fpr(scores)
+        recall = tprs * self.base_recall * cond_true_rate
+        fq = self.base_fq + cond_snvq_shift + 10 * np.log10(tprs / fprs)
+        return recall, fq
+
+    @exception_handler
+    def plot_fq_recall(self):
         """Calculate precision and recall metrics for SRSNV quality thresholds.
 
         Returns:
             pd.DataFrame: DataFrame with MQUAL, SNVQ, recall, FPR, and FQ columns
         """
         # Create dataframe from quality recalibration table
-        pr_df = pd.DataFrame(
-            np.array(self.srsnv_metadata["quality_recalibration_table"]).T, columns=[ML_QUAL_1_TEST, QUAL]
-        )
+        pr_df = pd.DataFrame(np.array(self.srsnv_metadata["quality_recalibration_table"]).T, columns=["MQUAL", "SNVQ"])
 
         # Get filtering statistics
         positive_filters = self.srsnv_metadata["filtering_stats"]["positive"]["filters"]
-        negative_filters = self.srsnv_metadata["filtering_stats"]["negative"]["filters"]
 
         # Calculate base values
-        recall0 = get_base_recall_from_filters(positive_filters)
-        base_error_rate = get_base_error_rate_from_filters(negative_filters)
+        base_recall = get_base_recall_from_filters(positive_filters)
+        base_fq = pr_df.loc[0, "SNVQ"]
 
-        self.base_recall = recall0
-        self.base_error_rate = base_error_rate
+        self.base_recall = base_recall
+        self.base_fq = base_fq
 
-        # Calculate TPR and FPR for each MQUAL threshold
-        tprs, fprs = self._calculate_tpr_fpr_for_thresholds(pr_df[ML_QUAL_1_TEST], recall0)
-
-        # Calculate Filter Quality
-        fqs = self._calculate_filter_quality(tprs, fprs, base_error_rate)
-
-        # Add columns to the dataframe
-        pr_df["recall"] = tprs
-        pr_df["FPR"] = fprs
-        pr_df["FQ"] = fqs
-
-        return pr_df
+        conditions = {
+            "all": None,
+            "mixed both ends": self.data_df[IS_MIXED],
+            "mixed start": self.data_df[IS_MIXED_START],
+        }
+        fig, ax = plt.subplots(figsize=(8, 6))
+        for label, condition in conditions.items():
+            recall, fq = self._calc_threshold_based_fq_recall(pr_df["MQUAL"].to_numpy(), condition=condition)
+            pr_df[f"recall_{label}"] = recall
+            pr_df[f"FQ_{label}"] = fq
+            ax.plot(recall, fq, label=label)
+        ax.set_xlabel("Recall")
+        ax.set_ylabel("Filter Quality (FQ)")
+        ax.legend()
+        ax.grid(visible=True)
+        self._save_plt(os.path.join(self.out_path, f"{self.base_name}FQ_vs_recall"), fig=fig)
+        self.pr_df = pr_df
+        self.pr_df.to_hdf(self.output_h5_filename, key="FQ_recall_LoD", mode="a")
 
     def get_dataset_sizes(self):
         """Calculate dataset sizes for different folds and overall."""
@@ -2779,7 +2806,7 @@ class SRSNVReport:
             calibration_fn_with_hist,
         ] = _get_plot_paths(out_path=self.params["workdir"], out_basename=self.params["data_name"])
         # General info
-        self.pr_df = self.calc_precision_and_recall()
+        self.plot_fq_recall()
         self.calc_run_info_table()
         # Quality stats
         self.calc_run_quality_table()
@@ -2843,7 +2870,7 @@ class SRSNVReport:
                 "training_info_table",
                 "training_progress",
                 "trinuc_stats",
-                # "SNV_recall_LoD",
+                "FQ_recall_LoD",
             ]
         )
         keys_to_convert.to_hdf(self.output_h5_filename, key="keys_to_convert", mode="a")
