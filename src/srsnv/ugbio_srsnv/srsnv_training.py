@@ -37,17 +37,13 @@ from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
 
-from ugbio_srsnv.smoothing_utils import (
-    bin_data_to_grid,
-    calculate_smoothed_precision_kde,
-    create_uncertainty_function_pipeline_fast,
-    make_grid_and_transform,
-)
+from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
 from ugbio_srsnv.srsnv_utils import (
     EPS,
     MAX_PHRED,
     all_models_predict_proba,
     get_filter_ratio,
+    phred_to_prob,
     prob_to_logit,
     prob_to_phred,
     safe_roc_auc,
@@ -616,152 +612,123 @@ class SRSNVTrainer:
             self.feature_dtypes[col] = dtype_str
             logger.debug("Column '%s' has dtype: %s", col, dtype_str)
 
-    def _get_kde_smoothing_config(self) -> dict[str, Any]:
-        """Get configuration parameters for adaptive KDE smoothing."""
-        return {
-            "grid_size": 8192,  # Fine grid for high resolution
-            "num_bandwidth_levels": 5,  # Number of adaptive bandwidth levels
-            "lowess_frac": 0.3,  # LOWESS smoothing fraction for uncertainty
-            "enforce_monotonic": False,  # Don't enforce monotonicity
-            "truncation_mode": "auto_detect",  # Automatic tail truncation
-            "transform_mode": "mqual",  # Use MQUAL scale
-            # "transform_mode": "logit",            # Use logit scale
-        }
+    # ─────────────────────── quality lookup table ────────────────────────
+    def _validate_kde_args(self, transform_mode, mqual_cutoff_type):
+        if transform_mode not in {"mqual", "logit"}:
+            raise ValueError(f"transform_mode must be one of 'mqual' or 'logit'. Got: {transform_mode}")
+        if mqual_cutoff_type not in {"fp", "tp", "mp"}:
+            raise ValueError(f"mqual_cutoff_type must be one of 'fp', 'tp', or 'mp'. Got: {mqual_cutoff_type}")
 
-    def _create_uncertainty_function(self, pd_df: pd.DataFrame, config: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
-        """Create uncertainty function from cross-validation data."""
-        return create_uncertainty_function_pipeline_fast(
-            pd_df=pd_df,
-            fold_col=FOLD_COL,
-            label_col=LABEL_COL,
-            num_cv_folds=self.k_folds,
-            prob_to_phred_fn=prob_to_phred,
-            prob_to_logit_fn=prob_to_logit,
-            transform_mode=config["transform_mode"],
-            lowess_frac=config["lowess_frac"],
-        )
+    def _determine_x_lut_max(self, estimator, pd_df, mqual_cutoff_type, mqual_cutoff_quantile):
+        if mqual_cutoff_type == "mp":
+            kde_metadata = getattr(estimator, "kde_metadata", None)
+            false_trunc_idx = kde_metadata["rates"].get("false_truncation_idx", 0) if kde_metadata else 0
+            if kde_metadata and false_trunc_idx > 0:
+                x_lut_max = estimator.from_grid(false_trunc_idx - 1)
+                logger.debug("Using KDE-detected false positive truncation at MQUAL=%.2f", x_lut_max)
+            else:
+                x_lut_max = pd_df.loc[pd_df[LABEL_COL].astype(int) == 0, MQUAL].quantile(mqual_cutoff_quantile)
+                logger.debug(
+                    "KDE did not detect false positive truncation, using quantile-based cutoff at MQUAL=%.2f", x_lut_max
+                )
+        elif mqual_cutoff_type == "tp":
+            x_lut_max = pd_df.loc[pd_df[LABEL_COL].astype(int) == 1, MQUAL].quantile(mqual_cutoff_quantile)
+            logger.debug("Using original data quantile-based true positive cutoff at MQUAL=%.2f", x_lut_max)
+        else:
+            x_lut_max = pd_df.loc[pd_df[LABEL_COL].astype(int) == 0, MQUAL].quantile(mqual_cutoff_quantile)
+            logger.debug("Using original data quantile-based false positive cutoff at MQUAL=%.2f", x_lut_max)
+        return x_lut_max
 
-    def _setup_kde_grid(self, mqual_t: np.ndarray, mqual_f: np.ndarray, config: dict[str, Any]) -> tuple:
-        """Set up computational grid for KDE."""
-        all_mqual = np.concatenate([mqual_t, mqual_f])
-        return make_grid_and_transform(
-            all_mqual, grid_size=config["grid_size"], transform_mode=config["transform_mode"]
-        )
-
-    def _perform_adaptive_kde(
-        self, counts_true, counts_false, grid, dx, uncertainty_fn, from_grid, n_true, n_false, config: dict[str, Any]
-    ) -> tuple:
-        """Perform adaptive KDE calculation."""
-        return calculate_smoothed_precision_kde(
-            counts_true,
-            counts_false,
-            grid,
-            dx,
-            uncertainty_fn,
-            from_grid,
-            n_true,
-            n_false,
-            num_bandwidth_levels=config["num_bandwidth_levels"],
-            enforce_monotonic=config["enforce_monotonic"],
-            truncation_mode=config["truncation_mode"],
-        )
-
-    def _create_quality_lookup_table_kde(self, fp_mqual_cutoff_quantile=0.999, eps=None) -> None:
+    def _create_quality_lookup_table_kde(
+        self,
+        transform_mode: str = "logit",  # "mqual" or "logit"
+        mqual_cutoff_quantile=1 - 1e-6,
+        mqual_cutoff_type: str = "fp",  # 'fp', 'tp', or 'mp'
+        eps=None,
+        kde_config_overrides: dict[str, Any] | None = None,
+    ) -> None:
         """
         Build an interpolation table that maps MQUAL → SNVQ using adaptive KDE for smoothing.
         Uses the new smoothing_utils implementation with variable bandwidth kernel density estimation
         to better estimate precision at high MQUAL values where there are fewer datapoints.
+
+        Parameters
+        ----------
+        mqual_cutoff_quantile : float, optional
+            Quantile for determining MQUAL cutoff if mqual_cutoff_type is 'fp' or 'tp'. By default 1 - 1e-6
+        mqual_cutoff_type : str, optional
+            Type of cutoff to use for determining maximum MQUAL for x_lut.
+            Options are 'fp' (false positive), 'tp' (true positive), or 'mp' (machine precision).
+        eps : float | None, optional
+            Small epsilon value for numerical stability, by default None (uses self.eps)
+        kde_config_overrides : dict[str, Any] | None, optional
+            Dictionary of parameter overrides for KDE configuration. Any parameters
+            provided will override the default values. Valid keys include:
+            - grid_size: int - Fine grid for high resolution
+            - num_bandwidth_levels: int - Number of adaptive bandwidth levels
+            - lowess_frac: float - LOWESS smoothing fraction for uncertainty
+            - enforce_monotonic: bool - Whether to enforce monotonicity
+            - truncation_mode: str - Tail truncation mode
         """
         if eps is None:
             eps = self.eps
+        if kde_config_overrides is None:
+            kde_config_overrides = {}
+        self._validate_kde_args(transform_mode, mqual_cutoff_type)
 
         pd_df = self.data_frame.to_pandas()
-        config = self._get_kde_smoothing_config()
 
-        logger.debug(
-            "Creating adaptive KDE precision estimation with grid_size=%d, bandwidth_levels=%d",
-            config["grid_size"],
-            config["num_bandwidth_levels"],
-        )
-
-        # Step 1: Create uncertainty function from cross-validation data
-        try:
-            uncertainty_fn, uncertainty_metadata = self._create_uncertainty_function(pd_df, config)
-            logger.debug(
-                "Uncertainty function created from %d validation points", uncertainty_metadata.get("validation_size", 0)
-            )
-        except Exception as e:
-            logger.warning("Failed to create uncertainty function: %s. Falling back to counting method.", e)
-            self._create_quality_lookup_table_count(fp_mqual_cutoff_quantile, eps)
-            return
-
-        # Extract MQUAL values for true positives and false positives
-        mqual_t = pd_df[pd_df[LABEL_COL]][MQUAL].to_numpy()
-        mqual_f = pd_df[~pd_df[LABEL_COL]][MQUAL].to_numpy()
-
-        if len(mqual_t) == 0 or len(mqual_f) == 0:
+        if pd_df[LABEL_COL].sum() == 0 or (~pd_df[LABEL_COL]).sum() == 0:
             logger.warning("Insufficient data for KDE, falling back to counting method")
-            self._create_quality_lookup_table_count(fp_mqual_cutoff_quantile, eps)
+            self._create_quality_lookup_table_count(mqual_cutoff_quantile, eps)
             return
 
-        logger.debug("Data: %d true positives, %d false positives", len(mqual_t), len(mqual_f))
-
-        # Step 2: Set up computational grid
-        grid, dx, to_grid, from_grid, grid_metadata = self._setup_kde_grid(mqual_t, mqual_f, config)
-        logger.debug(
-            "Grid: %d points, dx=%.6f, range=[%.1f, %.1f]", len(grid), dx, from_grid(grid[0]), from_grid(grid[-1])
-        )
-
-        # Step 3: Bin data to grid
-        counts_true, bin_meta_t = bin_data_to_grid(mqual_t, to_grid_space=to_grid, grid_size=config["grid_size"])
-        counts_false, bin_meta_f = bin_data_to_grid(mqual_f, to_grid_space=to_grid, grid_size=config["grid_size"])
-
-        logger.debug(
-            "Binning conservation: true=%.0f, false=%.0f",
-            bin_meta_t.get("total_weight", 0),
-            bin_meta_f.get("total_weight", 0),
-        )
-
-        # Step 4: Calculate smoothed precision using adaptive KDE
+        # Use AdaptiveKDEPrecisionEstimator for precision estimation
         try:
-            tpr, fpr, precision_grid, kde_metadata = self._perform_adaptive_kde(
-                counts_true, counts_false, grid, dx, uncertainty_fn, from_grid, len(mqual_t), len(mqual_f), config
-            )
+            estimator = AdaptiveKDEPrecisionEstimator(transform_mode=transform_mode, **kde_config_overrides)
 
-            logger.debug("Adaptive KDE completed successfully!")
-            logger.debug("Conservation error: %.2e", kde_metadata.get("mixing", {}).get("conservation_error_total", 0))
-            logger.debug("Precision range: [%.6f, %.6f]", precision_grid.min(), precision_grid.max())
+            # Fit the estimator to the data
+            estimator.fit(pd_df, num_cv_folds=self.k_folds)
 
         except Exception as e:
             logger.warning("Adaptive KDE failed: %s. Falling back to counting method.", e)
-            self._create_quality_lookup_table_count(fp_mqual_cutoff_quantile, eps)
+            self._create_quality_lookup_table_count(mqual_cutoff_quantile, eps)
             return
 
-        # Step 5: Create lookup table
-        mqual_coords = from_grid(grid)
-        mqual_fp_max = pd_df.loc[pd_df[LABEL_COL].astype(int) == 0, MQUAL].quantile(fp_mqual_cutoff_quantile)
+        # Create lookup table
+        # Find maximum MQUAL for x_lut based on either KDE-detected truncation or quantile cutoff
+        x_lut_max = self._determine_x_lut_max(estimator, pd_df, mqual_cutoff_type, mqual_cutoff_quantile)
 
+        # Define x_lut
         if self.args.quality_lut_size is not None:
             n_pts = self.args.quality_lut_size
-            self.x_lut = np.linspace(0.0, mqual_fp_max, n_pts)
-        else:
-            max_int = int(np.floor(mqual_fp_max))
+            self.x_lut = np.linspace(0.0, x_lut_max, n_pts)
+        else:  # if not provided, use integer points from 0 to floor(x_lut_max)
+            max_int = int(np.floor(x_lut_max))
             self.x_lut = np.arange(0, max_int + 1, dtype=float)
 
-        # Interpolate precision to lookup table points
-        # precision_interp = np.interp(self.x_lut, mqual_coords, precision_grid)
-        fp_interp = np.interp(self.x_lut, mqual_coords, fpr / tpr)
+        # If needed, transform x_lut to grid space (for logit mode)
+        if transform_mode == "logit":
+            scores_lut = prob_to_logit(phred_to_prob(self.x_lut), phred=True)
+        else:
+            scores_lut = self.x_lut
+
+        # Interpolate FPR/TPR ratios to lookup table points using convenience methods
+        fpr_interp = estimator.get_fpr(scores_lut)
+        tpr_interp = estimator.get_tpr(scores_lut)
+        fp_interp = fpr_interp / tpr_interp
 
         # Convert precision to SNVQ using the same formula as the original
         snvq_prefactor = self._calculate_snvq_prefactor()
         # error_rate = 1 - precision_interp
         # self.y_lut = -10 * np.log10(np.clip(snvq_prefactor * error_rate / precision_interp, eps, 1))
         self.y_lut = -10 * np.log10(np.clip(snvq_prefactor * fp_interp, eps, 1))
+        self.kde_estimator = estimator  # store for later inspection if needed
 
         logger.debug("Created adaptive KDE MQUAL→SNVQ lookup table with %d points", len(self.x_lut))
         logger.debug("SNVQ range: [%.2f, %.2f]", self.y_lut.min(), self.y_lut.max())
 
-    def _create_quality_lookup_table_count(self, fp_mqual_cutoff_quantile=1 - 1e-5, eps=None) -> None:
+    def _create_quality_lookup_table_count(self, fp_mqual_cutoff_quantile=1 - 1e-6, eps=None) -> None:
         """
         Build an interpolation table that maps MQUAL → SNVQ.
         """
@@ -787,14 +754,45 @@ class SRSNVTrainer:
         snvq_prefactor = self._calculate_snvq_prefactor()  # old value was: (prior_real_error / 3)
         self.y_lut = -10 * np.log10(np.clip(snvq_prefactor * (fpr / tpr), eps, 1))
 
-    def _create_quality_lookup_table(self, eps=None, *, use_kde=False) -> None:
+    def _create_quality_lookup_table(
+        self,
+        eps=None,
+        transform_mode: str = "logit",  # "mqual" or "logit"
+        mqual_cutoff_quantile=1 - 1e-6,
+        *,
+        use_kde=True,
+        kde_config_overrides: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> None:
         """
         Build an interpolation table that maps MQUAL → SNVQ.
+
+        Parameters
+        ----------
+        eps : float | None, optional
+            Small epsilon value for numerical stability, by default None
+        use_kde : bool, optional
+            Whether to use KDE-based smoothing, by default False
+        kde_config_overrides : dict[str, Any] | None, optional
+            Dictionary of parameter overrides for KDE configuration (only used if use_kde=True).
+            Valid keys include:
+            - grid_size: int - Fine grid for high resolution
+            - num_bandwidth_levels: int - Number of adaptive bandwidth levels
+            - lowess_frac: float - LOWESS smoothing fraction for uncertainty
+            - enforce_monotonic: bool - Whether to enforce monotonicity
+            - truncation_mode: str - Tail truncation mode
+            - transform_mode: str - Transform scale ("mqual", "logit")
         """
         if use_kde:
-            self._create_quality_lookup_table_kde(eps=eps)
+            self._create_quality_lookup_table_kde(
+                eps=eps,
+                transform_mode=transform_mode,
+                kde_config_overrides=kde_config_overrides,
+                mqual_cutoff_quantile=mqual_cutoff_quantile,
+                **kwargs,
+            )
         else:
-            self._create_quality_lookup_table_count(eps=eps)
+            self._create_quality_lookup_table_count(eps=eps, fp_mqual_cutoff_quantile=mqual_cutoff_quantile)
 
     def _calculate_snvq_prefactor(self) -> float:
         filtering_ratio = get_filter_ratio(self.pos_stats["filters"], numerator_type="label", denominator_type="raw")
