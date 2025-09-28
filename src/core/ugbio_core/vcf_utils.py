@@ -102,6 +102,61 @@ class VcfUtils:
         self.__execute(f"bcftools reheader -h {new_header} {input_file}")
         self.index_vcf(output_file)
 
+    def filter_vcf(
+        self,
+        input_vcf: str,
+        output_vcf: str,
+        filter_name: str,
+        n_threads: int = 1,
+        include_expression: str | None = None,
+        exclude_expression: str | None = None,
+    ) -> None:
+        """Filter VCF file using bcftools filter and add a filter with a given name
+
+        Parameters
+        ----------
+        input_vcf : str
+            Input VCF file path
+        output_vcf : str
+            Output VCF file path
+        filter_name : str
+            Name of the filter to add to variants that don't pass the criteria
+        n_threads : int, optional
+            Number of threads to use (default is 1)
+        include_expression : str, optional
+            bcftools include expression (variants NOT matching this will be filtered)
+        exclude_expression : str, optional
+            bcftools exclude expression (variants matching this will be filtered)
+
+        Raises
+        ------
+        ValueError
+            If neither include_expression nor exclude_expression is provided, or if both are provided
+        """
+        if include_expression is None and exclude_expression is None:
+            msg = "At least one of include_expression or exclude_expression must be provided"
+            raise ValueError(msg)
+
+        if include_expression is not None and exclude_expression is not None:
+            msg = "Only one of include_expression or exclude_expression can be provided at a time"
+            raise ValueError(msg)
+
+        # Build the bcftools filter command
+        cmd_parts = ["bcftools", "filter"]
+
+        # Add include or exclude expression
+        if include_expression is not None:
+            cmd_parts.extend(["-i", f"'{include_expression}'"])
+        else:  # exclude_expression is not None
+            cmd_parts.extend(["-e", f"'{exclude_expression}'"])
+
+        cmd_parts.extend(["--threads", str(n_threads)])
+        # Add filter name and output format
+        cmd_parts.extend(["-s", filter_name, "-m", "+", "-O", "z", "-o", output_vcf, input_vcf])
+
+        # Execute the filtering command
+        self.__execute(" ".join(cmd_parts))
+
     def intersect_bed_files(self, input_bed1: str, input_bed2: str, bed_output: str) -> None:
         """Intersects bed files
 
@@ -133,6 +188,82 @@ class VcfUtils:
         Writes output_fn file
         """
         self.__execute(f"gatk SelectVariants -V {input_fn} -L {intervals_fn} -O {output_fn}")
+
+    def view_vcf(
+        self,
+        input_vcf: str,
+        output_vcf: str,
+        n_threads: int = 1,
+        extra_args: str = "",
+    ) -> None:
+        """View/subset VCF file using bcftools view
+
+        Parameters
+        ----------
+        input_vcf : str
+            Input VCF file path
+        output_vcf : str
+            Output VCF file path
+        n_threads : int, optional
+            Number of threads to use (default is 1)
+        extra_args : str, optional
+            Additional arguments to pass to bcftools view (default is empty string)
+        """
+        # Build the bcftools view command
+        cmd_parts = ["bcftools", "view"]
+
+        # Add threads
+        cmd_parts.extend(["--threads", str(n_threads)])
+
+        # Add extra arguments if provided
+        if extra_args:
+            cmd_parts.extend(extra_args.split())
+
+        # Add output format and files
+        cmd_parts.extend(["-O", "z", "-o", output_vcf, input_vcf])
+
+        # Execute the view command
+        self.__execute(" ".join(cmd_parts))
+
+    def remove_filter_annotations(self, input_vcf: str, output_vcf: str, n_threads: int = 1) -> None:
+        """
+        Remove all filter annotations from a VCF file using bcftools.
+
+        This function removes:
+        1. All ##FILTER header lines from the VCF header
+        2. Sets all FILTER column values to '.' (missing) in variant records
+
+        Parameters
+        ----------
+        input_vcf : str
+            Path to the input VCF file (can be .vcf or .vcf.gz)
+        output_vcf : str
+            Path to the output VCF file where filtered result will be written
+        n_threads : int, optional
+            Number of threads to use for bcftools operations (default: 1)
+
+        Returns
+        -------
+        None
+            Writes the filtered VCF to output_vcf and creates an index
+        """
+        # Build the bcftools annotate command
+        cmd_parts = ["bcftools", "annotate"]
+
+        # Remove FILTER column data and FILTER header lines
+        cmd_parts.extend(["-x", "FILTER"])
+
+        # Add threading
+        cmd_parts.extend(["--threads", str(n_threads)])
+
+        # Add output format and files
+        cmd_parts.extend(["-o", output_vcf, "-O", "z", input_vcf])
+
+        # Execute the command
+        self.__execute(" ".join(cmd_parts))
+
+        # Index the output VCF
+        self.index_vcf(output_vcf)
 
     def annotate_tandem_repeats(self, input_file: str, reference_fasta: str) -> str:
         """Runs VariantAnnotator on the input file to add tandem repeat annotations (maybe others)
