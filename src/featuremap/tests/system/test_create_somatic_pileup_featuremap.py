@@ -22,7 +22,6 @@ def test_create_somatic_pileup_featuremap(tmp_path, resources_dir):
         "Pa_46_Buffycoat.Lb_744.runs_021145_021151_cov30.xgb.pileup.xgb.chr19.chr19_27240875_32924245.vcf.gz",
     )
     sample_name = "Pa_46_FF_vs_BC"
-    ref_tr_file = pjoin(resources_dir, "tr_hg38.chr19.bed")
     out_dir = tmp_path
 
     expected_tumor_pass_vcf = pjoin(resources_dir, "Pa_46_FF_vs_BC.tumor_normal.merged.tumor_PASS.vcf.gz")  # noqa: F841
@@ -39,8 +38,6 @@ def test_create_somatic_pileup_featuremap(tmp_path, resources_dir):
             normal_vcf,
             "--sample_name",
             sample_name,
-            "--ref_tr_file",
-            ref_tr_file,
             "--out_directory",
             str(out_dir),
             "--filter_for_tumor_pass_variants",
