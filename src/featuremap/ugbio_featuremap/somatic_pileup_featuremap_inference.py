@@ -28,11 +28,10 @@ import numpy as np
 import pandas as pd
 import pysam
 import xgboost
+from sklearn.preprocessing import LabelEncoder
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
 from ugbio_core.vcfbed import vcftools
-
-from ugbio_featuremap import featuremap_xgb_prediction
 
 TR_CUSTOM_INFO_FIELDS = ["TR_distance", "TR_length", "TR_seq_unit_length"]
 vu = VcfUtils()
@@ -201,6 +200,13 @@ def load_model(xgb_model_file: str) -> "xgboost.XGBClassifier":
     return xgb_clf_es
 
 
+def set_categorial_columns(df):
+    categorical_columns = df.select_dtypes(include=["object", "category"]).columns
+    le = LabelEncoder()
+    for col in categorical_columns:
+        df.loc[:, col] = le.fit_transform(df[col].astype(str))
+
+
 def predict(xgb_model: "xgboost.XGBClassifier", df_calls: "pd.DataFrame") -> "np.ndarray":
     """
     Generate prediction probabilities for the positive class using a trained XGBoost model.
@@ -215,7 +221,7 @@ def predict(xgb_model: "xgboost.XGBClassifier", df_calls: "pd.DataFrame") -> "np
     model_features = xgb_model.get_booster().feature_names
     X = df_calls[model_features]  # noqa: N806
 
-    featuremap_xgb_prediction.set_categorial_columns(X)
+    set_categorial_columns(X)
     for col in X.select_dtypes(include="object").columns:
         X[col] = X[col].astype("category")
 
