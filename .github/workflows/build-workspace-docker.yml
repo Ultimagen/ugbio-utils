@@ -38,19 +38,12 @@ env:
   AWS_ROLE_NAME: github-actions-ecr
   AWS_ACCOUNT: 337532070941
 
-  GCP_WORKLOAD_IDENTITY_PROVIDER: projects/55428976747/locations/global/workloadIdentityPools/devops-pool/providers/devops-pool-provider
-  GCP_SERVICE_ACCOUNT: gcr-push-sa@ultima-data-307918.iam.gserviceaccount.com
-  PUBLIC_RELEASE: false
-  AWS_ROLE: arn:aws:iam::337532070941:role/github-actions-ecr
-  GAR_REPO_INTERNAL: us-central1-docker.pkg.dev/ultima-data-307918/ultimagen
-  GAR_REPO_SHARED: us-central1-docker.pkg.dev/ganymede-331016/ultimagen
-  DOCKERHUB_ACCOUNT: ultimagenomics
-  UGBIO_BASE_IMAGE_NAME: ugbio_base:1.7.0
-
 jobs:
-  build:
+  pre-build:
     runs-on: ubuntu-latest
-
+    outputs:
+      ecr-registry: ${{ steps.ecr-login.outputs.registry }}
+      project-version: ${{ steps.extract-version.outputs.project_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -63,6 +56,7 @@ jobs:
           python-version: '3.11'
 
       - name: Extract project version
+        id: extract-version
         run: |
           pip install toml
           cd ${{ inputs.workspace-folder }}
@@ -74,23 +68,8 @@ jobs:
             echo "No version file found!"
             exit 1
           fi
-          echo "VERSION=${version}" >> $GITHUB_ENV
+          echo "project_version=${version}" >> ${GITHUB_OUTPUT}
           echo "The project version is ${version}"
-
-      - uses: benjlevesque/short-sha@v2.2
-        id: short-sha
-        with:
-          length: 7
-
-      - name: Set tag based on commit sha
-        id: set-tag
-        if: ${{ inputs.image-tag == '' }}
-        run: |
-          if [ ${{ github.ref_name }} == 'main' ]; then
-            echo "imageTag=main_${{ steps.short-sha.outputs.sha }}" >>$GITHUB_OUTPUT;
-          else
-            echo "imageTag=test_${{ steps.short-sha.outputs.sha }}" >>$GITHUB_OUTPUT;
-          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v3
@@ -102,72 +81,16 @@ jobs:
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Authenticate to Google Cloud
-        id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          token_format: access_token
-          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
-
-      - name: Login to GCR
-        id: gcr-login
-        uses: docker/login-action@v2
-        with:
-          registry: us-central1-docker.pkg.dev
-          username: oauth2accesstoken
-          password: ${{ steps.auth.outputs.access_token }}
-
-      - name: Set image tags
-        run: |
-          set -e
-
-          image_tags=(
-            ${{ env.VERSION }}
-            ${{ inputs.image-tag || steps.set-tag.outputs.imageTag }}
-          )
-          docker_registries=()
-          gar_repo=${{ env.GAR_REPO_INTERNAL }}
-          if [ ${{ env.PUBLIC_RELEASE }} == "true" ]; then
-            docker_registries+=(${{ env.DOCKERHUB_ACCOUNT }})
-            gar_repo=${{ env.GAR_REPO_SHARED }}
-          fi
-          docker_registries+=(
-            ${{ steps.ecr-login.outputs.registry }}
-            ${gar_repo}
-          )
-
-          for registry in ${docker_registries[@]}; do
-            for tag in ${image_tags[@]}; do
-              docker_destinations+=${registry}/${{ inputs.docker-image }}:${tag},
-            done
-          done
-
-          echo "GAR_REPO=${gar_repo}" >> ${GITHUB_ENV}
-          echo "DOCKER_DESTINATIONS=${docker_destinations%,}" >> ${GITHUB_ENV}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Build and push
-        uses: docker/build-push-action@v4
-        with:
-          context: ${{ inputs.docker-context }}
-          file: ${{ inputs.docker-file }}
-          provenance: false
-          push: true
-          tags: ${{ env.DOCKER_DESTINATIONS }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: BASE_IMAGE=${{ steps.ecr-login.outputs.registry }}/${{ env.UGBIO_BASE_IMAGE_NAME }}
-
-      - name: Update action summary with built tags
-        run: |
-          echo "### ECR LOGIN" >> ${GITHUB_STEP_SUMMARY}
-          echo "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${{ steps.ecr-login.outputs.registry }}" >> ${GITHUB_STEP_SUMMARY}
-          echo "### GCR LOGIN" >> ${GITHUB_STEP_SUMMARY}
-          echo "gcloud auth configure-docker us-central1-docker.pkg.dev" >> ${GITHUB_STEP_SUMMARY}
-          echo "### IMAGE TAGS" >> ${GITHUB_STEP_SUMMARY}
-          for dest in $(echo "${{ env.DOCKER_DESTINATIONS }}" | sed 's/,/ /g'); do
-            echo "- ${dest}" >> ${GITHUB_STEP_SUMMARY}
-          done
+  build:
+      uses: ./.github/workflows/docker-build-push.yml
+      needs: [pre-build]
+      secrets: inherit
+      with:
+         git-repo: ${{ github.repository }}
+         git-ref: ${{ inputs.commit-sha || github.ref_name }}
+         docker-image: ${{  inputs.docker-image }}
+         docker-file: ${{ inputs.docker-file }}
+         docker-tag: ${{ inputs.docker-tag }}
+         docker-context: ${{ inputs.docker-context }}
+         project-version: ${{ needs.pre-build.outputs.project-version }}
+         docker-build-args: BASE_IMAGE=${{ needs.pre-build.outputs.ecr-registry }}/ugbio_base:1.7.0
