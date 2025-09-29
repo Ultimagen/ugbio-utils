@@ -178,7 +178,6 @@ jobs:
           build-args: |
             VERSION_DOCKER=${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
             ${{ inputs.docker-build-args }}
-          
 
       - name: Update action summary with built tags
         run: |
