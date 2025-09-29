@@ -75,6 +75,7 @@ jobs:
           ref: ${{ inputs.git-ref }}
           lfs: true
           submodules: recursive
+          token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
       - name: Run Trivy to scan Dockerfiles
         uses: aquasecurity/trivy-action@0.32.0
