@@ -74,6 +74,7 @@ jobs:
           repository: ${{ inputs.git-repo }}
           ref: ${{ inputs.git-ref }}
           lfs: true
+          submodules: recursive
 
       - name: Run Trivy to scan Dockerfiles
         uses: aquasecurity/trivy-action@0.32.0
