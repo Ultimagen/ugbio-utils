@@ -117,7 +117,7 @@ def _validate_downsample(ds: dict[str, Any]) -> None:
 
 
 def _try_to_convert_to_number_or_boolean(value: str) -> Any:
-    """Try to convert a string to an int or float, otherwise return the original string."""
+    """Try to convert a string to a boolean, int, or float, otherwise return the original string."""
     # Handle boolean literals
     if value in {"true", "True", "TRUE"}:
         return True
