@@ -140,7 +140,7 @@ jobs:
 
           image_tags=(
             ${{ inputs.project-version }}
-            ${{ inputs.image-tag || steps.set-tag.outputs.imageTag }}
+            ${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
           )
           docker_registries=()
           gar_repo=${{ env.GAR_REPO_INTERNAL }}
@@ -175,7 +175,10 @@ jobs:
           tags: ${{ env.DOCKER_DESTINATIONS }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          build-args: ${{ inputs.docker-build-args }}
+          build-args: |
+            VERSION_DOCKER=${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
+            ${{ inputs.docker-build-args }}
+          
 
       - name: Update action summary with built tags
         run: |
