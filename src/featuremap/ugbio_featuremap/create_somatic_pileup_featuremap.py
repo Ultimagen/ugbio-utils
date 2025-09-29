@@ -10,6 +10,7 @@ from ugbio_core.vcf_utils import VcfUtils
 
 vu = VcfUtils()
 
+
 def merge_vcf_files(tumor_vcf, normal_vcf, out_merged_vcf, n_cpu: int | None = None):
     """
     Merge tumor and normal VCF files into a single VCF file.
@@ -50,7 +51,6 @@ def merge_vcf_files(tumor_vcf, normal_vcf, out_merged_vcf, n_cpu: int | None = N
     logger.debug(" ".join(cmd_merge))
     subprocess.check_call(cmd_merge)
     vu.index_vcf(out_merged_vcf)
-
 
     vu.view_vcf(
         out_merged_vcf, out_merged_vcf.replace(".vcf.gz", ".tumor_PASS.vcf.gz"), extra_args="-f PASS", n_threads=n_cpu
