@@ -17,9 +17,7 @@ def resources_dir():
 def test_matrix_from_qual_tp(resources_dir):
     data = list(pysam.AlignmentFile(pjoin(resources_dir, "chr9.sample.bam")))
     expected = pickle.load(open(pjoin(resources_dir, "matrices.trim.pkl"), "rb"))
-    fbrs = [
-        fbr.FlowBasedRead.from_sam_record(x, flow_order=DEFAULT_FLOW_ORDER, _fmt="cram", max_hmer_size=12) for x in data
-    ]
+    fbrs = [fbr.FlowBasedRead.from_sam_record(x, flow_order=DEFAULT_FLOW_ORDER, max_hmer_size=12) for x in data]
     for i, rec in enumerate(fbrs):
         assert rec.key.sum() == len(rec.record.query_sequence)
         if i < len(expected):
@@ -30,9 +28,7 @@ def test_matrix_from_qual_tp_no_trim(resources_dir):
     data = list(pysam.AlignmentFile(pjoin(resources_dir, "chr9.sample.bam")))
     expected = pickle.load(open(pjoin(resources_dir, "matrices.pkl"), "rb"))
     fbrs = [
-        fbr.FlowBasedRead.from_sam_record(
-            x, flow_order=DEFAULT_FLOW_ORDER, _fmt="cram", max_hmer_size=12, spread_edge_probs=False
-        )
+        fbr.FlowBasedRead.from_sam_record(x, flow_order=DEFAULT_FLOW_ORDER, max_hmer_size=12, spread_edge_probs=False)
         for x in data
     ]
 
@@ -47,7 +43,7 @@ def test_matrix_from_qual_tp_no_trim(resources_dir):
 def test_matrix_from_trimmed_read(resources_dir):
     data = list(pysam.AlignmentFile(pjoin(resources_dir, "trimmed_read.bam")))
     flow_based_read = fbr.FlowBasedRead.from_sam_record(
-        data[0], flow_order=DEFAULT_FLOW_ORDER, _fmt="cram", max_hmer_size=20, spread_edge_probs=True
+        data[0], flow_order=DEFAULT_FLOW_ORDER, max_hmer_size=20, spread_edge_probs=True
     )
 
     np.testing.assert_array_almost_equal(flow_based_read._flow_matrix[:, 2], np.ones(21) / 21, 0.0001)
@@ -97,9 +93,7 @@ def test_generate_key_from_sequence_empty_sequence(flow_order):
 
 def test_get_flow_matrix_column_for_base(resources_dir):
     data = list(pysam.AlignmentFile(pjoin(resources_dir, "chr9.sample.bam")))
-    fbrs = [
-        fbr.FlowBasedRead.from_sam_record(x, flow_order=DEFAULT_FLOW_ORDER, _fmt="cram", max_hmer_size=12) for x in data
-    ]
+    fbrs = [fbr.FlowBasedRead.from_sam_record(x, flow_order=DEFAULT_FLOW_ORDER, max_hmer_size=12) for x in data]
     for rec in fbrs:
         for i in range(len(str(rec.record.query_sequence))):
             assert rec.get_flow_matrix_column_for_base(i)[0] == str(rec.record.query_sequence)[i]

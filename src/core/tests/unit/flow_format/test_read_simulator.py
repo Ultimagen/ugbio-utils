@@ -108,43 +108,6 @@ class TestFlowBasedReadSimulator:
         read_custom = simulator.simulate_read(read_name=custom_name)
         assert read_custom.read_name == custom_name
 
-    def test_add_sequencing_errors(self):
-        """Test addition of sequencing errors."""
-        simulator = FlowBasedReadSimulator(
-            reference_genome=self.reference_genome,
-            start_position=self.start_position,
-            length=self.length,
-            noise_std=0.001,  # Start with very low noise
-        )
-
-        # Store original matrix
-        original_matrix = simulator.flow_matrix.copy()
-
-        # Add errors
-        error_rate = 0.1
-        simulator.add_sequencing_errors(error_rate=error_rate)
-
-        # Check that probabilities still sum to 1
-        column_sums = np.sum(simulator.flow_matrix, axis=0)
-        np.testing.assert_allclose(column_sums, 1.0, rtol=1e-10)
-
-        # Check that matrix has changed (unless all calls are at boundaries)
-        # At least some flows should have different probabilities
-        differences = np.abs(simulator.flow_matrix - original_matrix)
-        assert np.any(differences > 1e-10)
-
-    def test_invalid_error_rate(self):
-        """Test error handling for invalid error rates."""
-        simulator = FlowBasedReadSimulator(
-            reference_genome=self.reference_genome, start_position=self.start_position, length=self.length
-        )
-
-        with pytest.raises(ValueError, match="Error rate must be between 0 and 1"):
-            simulator.add_sequencing_errors(error_rate=-0.1)
-
-        with pytest.raises(ValueError, match="Error rate must be between 0 and 1"):
-            simulator.add_sequencing_errors(error_rate=1.5)
-
     def test_flow_statistics(self):
         """Test flow statistics generation."""
         simulator = FlowBasedReadSimulator(
@@ -307,4 +270,4 @@ class TestSimulateReadsFromRegion:
 
         assert sam_record.query_name == "test_sam_read"
         assert sam_record.query_sequence == read.seq
-        assert sam_record.has_tag("kr")  # Should have flow key tag
+        assert sam_record.has_tag("tp")  # Should have tp tag (modern format)

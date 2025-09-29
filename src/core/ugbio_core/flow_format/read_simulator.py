@@ -124,13 +124,15 @@ class FlowBasedReadSimulator:
             # Clip true_hmer to max_hmer_size to avoid index errors
             true_hmer_clipped = min(true_hmer, self.max_hmer_size)
 
-            # Create probability distribution for all possible hmer values
-            hmer_values = np.arange(self.max_hmer_size + 1)
+            rng = np.random.default_rng()
+            randomized_hmer_value = rng.normal(loc=true_hmer_clipped, scale=self.noise_std)
 
             # Generate probabilities using normal distribution
             # Center on true hmer call with specified standard deviation
-            probabilities = stats.norm.pdf(hmer_values, loc=true_hmer_clipped, scale=self.noise_std)
-
+            probabilities = [
+                stats.norm.pdf(randomized_hmer_value, loc=x, scale=self.noise_std)
+                for x in range(self.max_hmer_size + 1)
+            ]
             # Ensure minimum probability for numerical stability
             min_prob = 1e-6
             probabilities = np.maximum(probabilities, min_prob)
@@ -169,52 +171,6 @@ class FlowBasedReadSimulator:
         flow_read._flow_matrix = self.flow_matrix
 
         return flow_read
-
-    def add_sequencing_errors(self, error_rate: float = 0.01) -> None:
-        """
-        Add realistic sequencing errors to the flow matrix.
-
-        This method modifies the existing flow matrix to simulate sequencing
-        errors by redistributing some probability mass to neighboring hmer calls.
-
-        Parameters
-        ----------
-        error_rate : float, optional
-            Rate of sequencing errors to introduce, by default 0.01
-        """
-        if not (0 <= error_rate <= 1):
-            raise ValueError("Error rate must be between 0 and 1")
-
-        # For each flow, redistribute some probability to neighboring hmers
-        for flow_idx in range(self.flow_matrix.shape[1]):
-            true_hmer = min(self.flow_key[flow_idx], self.max_hmer_size)
-
-            # Current probabilities
-            probs = self.flow_matrix[:, flow_idx].copy()
-
-            # Amount of probability to redistribute
-            error_prob = probs[true_hmer] * error_rate
-
-            # Reduce probability of true call
-            probs[true_hmer] -= error_prob
-
-            # Redistribute to neighboring positions
-            neighbors = []
-            if true_hmer > 0:
-                neighbors.append(true_hmer - 1)
-            if true_hmer < self.max_hmer_size:
-                neighbors.append(true_hmer + 1)
-
-            if neighbors:
-                error_per_neighbor = error_prob / len(neighbors)
-                for neighbor in neighbors:
-                    probs[neighbor] += error_per_neighbor
-
-            # Ensure probabilities sum to 1 (handle numerical precision)
-            probs = probs / np.sum(probs)
-
-            # Update flow matrix
-            self.flow_matrix[:, flow_idx] = probs
 
     def get_flow_statistics(self) -> dict:
         """
@@ -301,7 +257,6 @@ def simulate_reads_from_region(
 
     current_pos = start_position
     read_idx = 0
-
     while current_pos + read_length <= end_position:
         simulator = FlowBasedReadSimulator(
             reference_genome=reference_genome,
@@ -318,5 +273,5 @@ def simulate_reads_from_region(
 
         current_pos += step_size
         read_idx += 1
-
+        print(current_pos)
     return reads
