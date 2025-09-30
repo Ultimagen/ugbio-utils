@@ -55,6 +55,11 @@ on:
         required: false
         type: string
         default: ""
+      runner:
+        description: "Runner type (default: ubuntu-latest)"
+        required: false
+        type: string
+        default: ubuntu-latest
 
 permissions:
   id-token: write # Required for assuming an AWS role
@@ -75,7 +80,7 @@ env:
 
 jobs:
   build:
-    runs-on: build-docker-16
+    runs-on: ${{ inputs.runner }}
 
     steps:
       - uses: actions/checkout@v4 # lazy check out for trivy scanning
