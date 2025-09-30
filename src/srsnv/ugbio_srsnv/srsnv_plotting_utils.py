@@ -1751,10 +1751,15 @@ class SRSNVReport:
         self.base_fq = base_fq
 
         conditions = {
-            "all": None,
-            "mixed both ends": self.data_df[IS_MIXED],
-            "mixed start": self.data_df[IS_MIXED_START],
+            "all reads": None,
         }
+        if IS_MIXED in self.data_df.columns:
+            if self.data_df[IS_MIXED].any():
+                conditions["mixed both ends"] = self.data_df[IS_MIXED]
+        if IS_MIXED_START in self.data_df.columns:
+            if self.data_df[IS_MIXED_START].any():
+                conditions["mixed start"] = self.data_df[IS_MIXED_START]
+
         if only_calculate:
             for label, condition in conditions.items():
                 recall, fq = self._calc_threshold_based_fq_recall(pr_df["MQUAL"].to_numpy(), condition=condition)
@@ -2258,17 +2263,23 @@ class SRSNVReport:
     def quality_per_ppmseq_tags(self, output_filename: str = None):
         """Generate tables of median quality and data quantity per start and end ppmseq tags."""
         data_df_tp = self.data_df[self.data_df[LABEL]].copy()
-        ppmseq_tags_in_data = self.start_tag_col is not None and self.end_tag_col is not None
+        # By default, use ST_FILLNA and ET_FILLNA if they are in the data
         ppmseq_fillna_tags_in_data = ST_FILLNA in data_df_tp.columns and ET_FILLNA in data_df_tp.columns
         if ppmseq_fillna_tags_in_data:
             start_tag_col, end_tag_col = (ST_FILLNA, ET_FILLNA)
-        elif ppmseq_tags_in_data:
-            start_tag_col, end_tag_col = (self.start_tag_col, self.end_tag_col)
         else:
-            start_tag_col, end_tag_col = (ST, ET)
-        if not ppmseq_tags_in_data:
-            data_df_tp[start_tag_col] = np.nan
-            data_df_tp[end_tag_col] = np.nan
+            # Otherwise, use user-specified columns or ST and ET if not specified
+            if self.start_tag_col is None or self.end_tag_col is None:
+                logger.warning("ppmSeq tag columns not specified.")
+                start_tag_col, end_tag_col = (ST, ET)
+            else:
+                start_tag_col, end_tag_col = (self.start_tag_col, self.end_tag_col)
+            # Check if the specified columns are in the data, otherwise create them with NaNs
+            ppmseq_tags_in_data = start_tag_col in data_df_tp.columns and end_tag_col in data_df_tp.columns
+            if not ppmseq_tags_in_data:
+                data_df_tp[start_tag_col] = np.nan
+                data_df_tp[end_tag_col] = np.nan
+        # If there are NaNs in the tags, convert to string to avoid issues with groupby
         if data_df_tp[start_tag_col].isna().any() or data_df_tp[end_tag_col].isna().any():
             data_df_tp = data_df_tp.astype({start_tag_col: str, end_tag_col: str})
         ppmseq_category_quality_table = (
