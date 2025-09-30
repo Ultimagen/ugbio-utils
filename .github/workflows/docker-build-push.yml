@@ -75,14 +75,13 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: build-docker-16
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4 # lazy check out for trivy scanning
         with:
           repository: ${{ inputs.git-repo }}
           ref: ${{ inputs.git-ref }}
-          lfs: true
 
       - name: Run Trivy to scan Dockerfiles
         uses: aquasecurity/trivy-action@0.32.0
@@ -101,6 +100,14 @@ jobs:
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
+
+      - uses: actions/checkout@v4 # deep check out for docker build
+        with:
+          repository: ${{ inputs.git-repo }}
+          ref: ${{ inputs.git-ref }}
+          lfs: true
+          submodules: recursive
+          token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
 
       - uses: benjlevesque/short-sha@v2.2
         id: short-sha
