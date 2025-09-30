@@ -46,6 +46,11 @@ on:
         required: false
         type: string
         default: "latest"
+      artifact-name:
+        description: "Artifact name to download before building (from previous job). If omitted, no artifact is downloaded"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   id-token: write # Required for assuming an AWS role
@@ -163,13 +168,11 @@ jobs:
           echo "DOCKER_DESTINATIONS=${docker_destinations%,}" >> ${GITHUB_ENV}
 
       - name: Download resources
+        if: ${{ inputs.artifact-name != '' }}
         uses: actions/download-artifact@v4
         with:
-          name: docker-resources
+          name: ${{ inputs.artifact-name }}
           path: .
-
-      - name: Display structure of downloaded files
-        run: ls -R
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
