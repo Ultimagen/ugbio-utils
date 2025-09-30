@@ -203,7 +203,6 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
         return df
 
     def parse_padding_ref_counts(df_variants, ref_counts_colname, non_ref_counts_colname):
-        # Handle ref_count
         if ref_counts_colname not in df_variants.columns:
             raise ValueError(f"Column {ref_counts_colname} not found in df_variants")
 
@@ -214,11 +213,13 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
             raise ValueError(f"Column {ref_counts_colname} is empty")
 
         padding_counts_length = len(df_variants[ref_counts_colname].iloc[0])
+        # Handle ref_count
         ref_df = pd.DataFrame(
             df_variants[ref_counts_colname].tolist(), columns=[f"{prefix}ref{i}" for i in range(padding_counts_length)]
         )
         for col in ref_df.columns:
-            df_variants[col] = ref_df[col]
+            df_variants[col] = ref_df[col].to_numpy()
+
         # Handle nonref_count
         nonref_df = pd.DataFrame(
             df_variants[non_ref_counts_colname].tolist(),
