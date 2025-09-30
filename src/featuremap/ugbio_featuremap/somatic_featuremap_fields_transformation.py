@@ -225,7 +225,7 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
             columns=[f"{prefix}nonref{i}" for i in range(padding_counts_length)],
         )
         for col in nonref_df.columns:
-            df_variants[col] = nonref_df[col]
+            df_variants[col] = nonref_df[col].to_numpy()
 
         return df_variants
 
