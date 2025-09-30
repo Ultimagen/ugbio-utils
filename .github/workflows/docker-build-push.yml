@@ -168,6 +168,9 @@ jobs:
           name: docker-resources
           path: .
 
+      - name: Display structure of downloaded files
+        run: ls -R
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
