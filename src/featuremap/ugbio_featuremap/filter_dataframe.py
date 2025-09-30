@@ -33,6 +33,7 @@ KEY_SEED = "seed"
 TYPE_QUALITY = "quality"
 TYPE_REGION = "region"
 TYPE_LABEL = "label"
+TYPE_MAPPING = "mapping"
 TYPE_DOWNSAMPLE = "downsample"
 TYPE_RAW = "raw"
 
@@ -93,7 +94,7 @@ def _validate_filter(rule: dict[str, Any], index: int) -> None:
         raise ValueError(f"Filter {index} has unsupported operator: {rule[KEY_OP]}")
 
     # Check type
-    valid_types = {TYPE_QUALITY, TYPE_REGION, TYPE_LABEL}
+    valid_types = {TYPE_QUALITY, TYPE_REGION, TYPE_MAPPING, TYPE_LABEL}
     if rule[KEY_TYPE] not in valid_types:
         raise ValueError(f"Filter {index} has invalid type '{rule[KEY_TYPE]}'. Must be one of: {valid_types}")
 
