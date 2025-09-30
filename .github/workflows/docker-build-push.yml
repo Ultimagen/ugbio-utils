@@ -31,6 +31,10 @@ on:
         required: false
         default: "."
         type: string
+      docker-target:
+        description: "Docker target stage"
+        required: false
+        type: string
       docker-build-args:
         description: "Additional docker build args"
         required: false
@@ -46,6 +50,16 @@ on:
         required: false
         type: string
         default: "latest"
+      artifact-name:
+        description: "Artifact name to download before building (from previous job). If omitted, no artifact is downloaded"
+        required: false
+        type: string
+        default: ""
+      runner:
+        description: "Runner type (default: ubuntu-latest)"
+        required: false
+        type: string
+        default: ubuntu-latest
 
 permissions:
   id-token: write # Required for assuming an AWS role
@@ -66,7 +80,7 @@ env:
 
 jobs:
   build:
-    runs-on: build-docker-16
+    runs-on: ${{ inputs.runner }}
 
     steps:
       - uses: actions/checkout@v4 # lazy check out for trivy scanning
@@ -169,6 +183,12 @@ jobs:
           echo "GAR_REPO=${gar_repo}" >> ${GITHUB_ENV}
           echo "DOCKER_DESTINATIONS=${docker_destinations%,}" >> ${GITHUB_ENV}
 
+      - name: Download resources
+        if: ${{ inputs.artifact-name != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name }}
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
@@ -177,6 +197,7 @@ jobs:
         with:
           context: ${{ inputs.docker-context }}
           file: ${{ inputs.docker-file }}
+          target: ${{ inputs.docker-target }}
           provenance: false
           push: true
           tags: ${{ env.DOCKER_DESTINATIONS }}
