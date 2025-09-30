@@ -204,6 +204,15 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
 
     def parse_padding_ref_counts(df_variants, ref_counts_colname, non_ref_counts_colname):
         # Handle ref_count
+        if ref_counts_colname not in df_variants.columns:
+            raise ValueError(f"Column {ref_counts_colname} not found in df_variants")
+
+        if df_variants.empty:
+            raise ValueError("df_variants is empty, cannot parse padding ref counts")
+
+        if df_variants[ref_counts_colname].isna().all():
+            raise ValueError(f"Column {ref_counts_colname} is empty")
+
         padding_counts_length = len(df_variants[ref_counts_colname].iloc[0])
         ref_df = pd.DataFrame(
             df_variants[ref_counts_colname].tolist(), columns=[f"{prefix}ref{i}" for i in range(padding_counts_length)]
@@ -287,33 +296,91 @@ def add_fields_to_header(hdr, added_format_features, added_info_features):
         hdr.info.add(field, 1, field_type, field_description)
 
 
-def process_vcf_row(row, df_variants, hdr, vcfout, write_agg_params):
-    pos = row.pos
-    chrom = row.chrom
-    alt_allele = row.alleles[1]
-    df_record = df_variants[
-        (df_variants["t_chrom"] == chrom) & (df_variants["t_pos"] == pos) & (df_variants["alt_allele"] == alt_allele)
-    ]
+def get_chrom_order_from_vcf_header(vcf_header):
+    """Extract chromosome ordering from VCF header contigs."""
+    chrom_order = {}
+    for i, contig in enumerate(vcf_header.contigs):
+        chrom_order[contig] = i
+    return chrom_order
 
-    if len(df_record) > 0:
-        if write_agg_params:
-            for key in added_info_features:
-                row.info[key.upper()] = df_record[key.lower()].to_list()[0]
-            for key in added_format_features:
-                tumor_value = df_record[f"t_{key.lower()}"].to_list()[0]
-                normal_value = df_record[f"n_{key.lower()}"].to_list()[0]
-                if pd.notna(tumor_value):
-                    row.samples[0][key.upper()] = tumor_value
-                else:
-                    row.samples[0][key.upper()] = None
-                if pd.notna(normal_value):
-                    row.samples[1][key.upper()] = normal_value
-                else:
-                    row.samples[1][key.upper()] = None
-            if "XGB_PROBA" in hdr.info:
-                row.info["XGB_PROBA"] = df_record["xgb_proba"].to_list()[0]
 
-    vcfout.write(row)
+def chrom_sort_key(chrom, chrom_order):
+    """Generate sort key based on VCF header contig order."""
+    if chrom in chrom_order:
+        return chrom_order[chrom]  # Use VCF header order
+    else:
+        raise ValueError(f"Chromosome '{chrom}' not found in VCF header contigs")
+
+
+def process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_params):
+    """Process VCF records serially by iterating through both VCF and DataFrame simultaneously."""
+
+    # Get chromosome ordering from VCF header
+    chrom_order = get_chrom_order_from_vcf_header(vcfin.header)
+
+    # Sort df_variants to match VCF sort order (chrom, pos, alt_allele)
+    # Use VCF header contig order when available
+    df_variants_sorted = df_variants.copy()
+    df_variants_sorted["_chrom_sort_key"] = df_variants_sorted["t_chrom"].apply(
+        lambda x: chrom_sort_key(x, chrom_order)
+    )
+    df_variants_sorted = df_variants_sorted.sort_values(["_chrom_sort_key", "t_pos", "alt_allele"]).reset_index(
+        drop=True
+    )
+    df_variants_sorted = df_variants_sorted.drop(columns=["_chrom_sort_key"])
+
+    df_iter = iter(df_variants_sorted.itertuples(index=False))
+    current_df_record = next(df_iter, None)
+
+    for vcf_row in vcfin:
+        vcf_chrom = vcf_row.chrom
+        vcf_pos = vcf_row.pos
+        vcf_alt = vcf_row.alleles[1] if len(vcf_row.alleles) > 1 else None
+
+        # Skip to matching DataFrame record or process without match
+        while current_df_record is not None and (
+            current_df_record.t_chrom < vcf_chrom
+            or (current_df_record.t_chrom == vcf_chrom and current_df_record.t_pos < vcf_pos)
+            or (
+                current_df_record.t_chrom == vcf_chrom
+                and current_df_record.t_pos == vcf_pos
+                and current_df_record.alt_allele < vcf_alt
+            )
+        ):
+            current_df_record = next(df_iter, None)
+
+        # Check if we have a matching record
+        if (
+            current_df_record is not None
+            and current_df_record.t_chrom == vcf_chrom
+            and current_df_record.t_pos == vcf_pos
+            and current_df_record.alt_allele == vcf_alt
+        ):
+            if write_agg_params:
+                # Add INFO fields
+                for key in added_info_features:
+                    vcf_row.info[key.upper()] = getattr(current_df_record, key.lower())
+
+                # Add FORMAT fields
+                for key in added_format_features:
+                    tumor_value = getattr(current_df_record, f"t_{key.lower()}")
+                    normal_value = getattr(current_df_record, f"n_{key.lower()}")
+
+                    if pd.notna(tumor_value):
+                        vcf_row.samples[0][key.upper()] = tumor_value
+                    else:
+                        vcf_row.samples[0][key.upper()] = None
+
+                    if pd.notna(normal_value):
+                        vcf_row.samples[1][key.upper()] = normal_value
+                    else:
+                        vcf_row.samples[1][key.upper()] = None
+
+                # Add XGBoost probability if available
+                if "XGB_PROBA" in hdr.info and hasattr(current_df_record, "xgb_proba"):
+                    vcf_row.info["XGB_PROBA"] = current_df_record.xgb_proba
+
+        vcfout.write(vcf_row)
 
 
 def read_merged_tumor_normal_vcf(
@@ -395,31 +462,45 @@ def featuremap_fields_aggregation(  # noqa: C901
             + columns_for_aggregation
         )
         df_variants = read_merged_tumor_normal_vcf(sorted_filtered_featuremap, custom_info_fields=custom_info_fields)
-        df_variants = df_sfm_fields_transformation(df_variants)
+        if len(df_variants) > 0:
+            df_variants = df_sfm_fields_transformation(df_variants)
 
-        if xgb_model_file is not None:
-            xgb_clf_es = somatic_pileup_featuremap_inference.load_model(xgb_model_file)
-            model_features = xgb_clf_es.get_booster().feature_names
-            logger.info(f"loaded model. model features: {model_features}")
-            df_variants["xgb_proba"] = somatic_pileup_featuremap_inference.predict(xgb_clf_es, df_variants)
-        # Write df_variants to parquet file
-        parquet_output = output_vcf.replace(".vcf.gz", "_featuremap.parquet")
-        df_variants.to_parquet(parquet_output, index=False)
-        logger.info(f"Written feature map dataframe to {parquet_output}")
-
-        # TBD: vcf writing takes long time - guess its beacauee of the lookup for each record
-        with pysam.VariantFile(sorted_featuremap) as vcfin:
-            hdr = vcfin.header
-            add_fields_to_header(hdr, added_format_features, added_info_features)
             if xgb_model_file is not None:
-                hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
-            with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
-                for row in vcfin:
-                    process_vcf_row(row, df_variants, hdr, vcfout, write_agg_params)
-            vcfout.close()
-            vcfin.close()
-    pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
-    return output_vcf
+                xgb_clf_es = somatic_pileup_featuremap_inference.load_model(xgb_model_file)
+                model_features = xgb_clf_es.get_booster().feature_names
+                logger.info(f"loaded model. model features: {model_features}")
+                df_variants["xgb_proba"] = somatic_pileup_featuremap_inference.predict(xgb_clf_es, df_variants)
+            # Write df_variants to parquet file
+            parquet_output = output_vcf.replace(".vcf.gz", "_featuremap.parquet")
+            df_variants.to_parquet(parquet_output, index=False)
+            logger.info(f"Written feature map dataframe to {parquet_output}")
+
+            # Serial processing to avoid expensive lookups for each record
+            with pysam.VariantFile(sorted_featuremap) as vcfin:
+                hdr = vcfin.header
+                add_fields_to_header(hdr, added_format_features, added_info_features)
+                if xgb_model_file is not None:
+                    hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
+                with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
+                    process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_params)
+                vcfout.close()
+                vcfin.close()
+            pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
+            return output_vcf
+        else:
+            logger.warning(f"No variants found in the filtered VCF: {sorted_filtered_featuremap}")
+            # Create an empty VCF with the updated header
+            with pysam.VariantFile(sorted_featuremap) as vcfin:
+                hdr = vcfin.header
+                add_fields_to_header(hdr, added_format_features, added_info_features)
+                if xgb_model_file is not None:
+                    hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
+                with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
+                    pass  # Just create the file with header
+                vcfout.close()
+                vcfin.close()
+            pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
+            return output_vcf
 
 
 def featuremap_fields_aggregation_on_an_interval_list(
