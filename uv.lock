@@ -3313,7 +3313,7 @@ wheels = [
 
 [[package]]
 name = "ugbio-cloud-utils"
-version = "1.13.0.post0"
+version = "1.15.0.post0"
 source = { editable = "src/cloud_utils" }
 dependencies = [
     { name = "boto3" },
@@ -3342,7 +3342,7 @@ dev = [
 
 [[package]]
 name = "ugbio-cnv"
-version = "1.13.0.post0"
+version = "1.15.0.post0"
 source = { editable = "src/cnv" }
 dependencies = [
     { name = "cnvpytor" },
@@ -3375,7 +3375,7 @@ dev = [
 
 [[package]]
 name = "ugbio-comparison"
-version = "1.13.0.post0"
+version = "1.15.0.post0"
 source = { editable = "src/comparison" }
 dependencies = [
     { name = "pytest-mock" },
@@ -3406,7 +3406,7 @@ dev = [
 
 [[package]]
 name = "ugbio-core"
-version = "1.13.0.post0"
+version = "1.15.0.post0"
 source = { editable = "src/core" }
 dependencies = [
     { name = "h5py" },
@@ -3470,7 +3470,7 @@ dev = [
 
 [[package]]
 name = "ugbio-featuremap"
-version = "1.13.0.post0"
+version = "1.15.0.post0"
 source = { editable = "src/featuremap" }
 dependencies = [
     { name = "polars" },
@@ -3507,7 +3507,7 @@ dev = [
 
 [[package]]
 name = "ugbio-filtering"
-version = "1.13.0.post0"
+version = "1.15.0.post0"
 source = { editable = "src/filtering" }
 dependencies = [
     { name = "biopython" },
@@ -3544,7 +3544,7 @@ dev = [
 
 [[package]]
 name = "ugbio-freec"
-version = "1.13.0.post0.dev11"
+version = "1.15.0.post0"
 source = { editable = "src/freec" }
 dependencies = [
     { name = "pandas" },
@@ -3573,12 +3573,12 @@ dev = [
 
 [[package]]
 name = "ugbio-hla-la"
-version = "1.13.0.post0"
+version = "1.15.0.post0"
 source = { virtual = "src/hla_la" }
 
 [[package]]
 name = "ugbio-methylation"
-version = "1.13.0.post0"
+version = "1.15.0.post0"
 source = { editable = "src/methylation" }
 dependencies = [
     { name = "matplotlib" },
@@ -3613,7 +3613,7 @@ dev = [
 
 [[package]]
 name = "ugbio-mrd"
-version = "1.13.0.post0"
+version = "1.15.0.post0"
 source = { editable = "src/mrd" }
 dependencies = [
     { name = "ugbio-core", extra = ["reports", "vcfbed"] },
@@ -3644,7 +3644,7 @@ dev = [
 
 [[package]]
 name = "ugbio-omics"
-version = "1.13.0.post0"
+version = "1.15.0.post0"
 source = { editable = "src/omics" }
 dependencies = [
     { name = "boto3" },
@@ -3688,7 +3688,7 @@ dev = [
 
 [[package]]
 name = "ugbio-ppmseq"
-version = "1.13.0.post0"
+version = "1.15.0.post0"
 source = { editable = "src/ppmseq" }
 dependencies = [
     { name = "fastparquet" },
@@ -3721,7 +3721,7 @@ dev = [
 
 [[package]]
 name = "ugbio-single-cell"
-version = "1.13.0.post0"
+version = "1.15.0.post0"
 source = { editable = "src/single_cell" }
 dependencies = [
     { name = "bio" },
@@ -3758,7 +3758,7 @@ dev = [
 
 [[package]]
 name = "ugbio-srsnv"
-version = "1.13.0.post0"
+version = "1.15.0.post0"
 source = { editable = "src/srsnv" }
 dependencies = [
     { name = "joblib" },
@@ -3767,6 +3767,7 @@ dependencies = [
     { name = "scipy" },
     { name = "seaborn" },
     { name = "shap" },
+    { name = "statsmodels" },
     { name = "ugbio-core", extra = ["reports", "vcfbed"] },
     { name = "ugbio-featuremap" },
     { name = "ugbio-ppmseq" },
@@ -3788,6 +3789,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.14.0" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "shap", specifier = ">=0.46.0" },
+    { name = "statsmodels", specifier = ">=0.14.4" },
     { name = "ugbio-core", extras = ["vcfbed", "reports"], editable = "src/core" },
     { name = "ugbio-featuremap", editable = "src/featuremap" },
     { name = "ugbio-ppmseq", editable = "src/ppmseq" },
@@ -3803,7 +3805,7 @@ dev = [
 
 [[package]]
 name = "ugbio-utils"
-version = "1.13.0.post0"
+version = "1.15.0.post0"
 source = { virtual = "." }
 dependencies = [
     { name = "gwplot" },
