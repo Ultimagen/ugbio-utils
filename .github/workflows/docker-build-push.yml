@@ -162,6 +162,12 @@ jobs:
           echo "GAR_REPO=${gar_repo}" >> ${GITHUB_ENV}
           echo "DOCKER_DESTINATIONS=${docker_destinations%,}" >> ${GITHUB_ENV}
 
+      - name: Download resources
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-resources
+          path: .
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
