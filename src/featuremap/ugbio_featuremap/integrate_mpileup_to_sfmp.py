@@ -285,7 +285,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
                         p1 = next(it1, None)
 
                     # advance pileup2 until correct chromosome
-                    while p2 and (it2.buffer[0][0] != chrom or len(it1.buffer) < window_size):
+                    while p2 and (it2.buffer[0][0] != chrom or len(it2.buffer) < window_size):
                         p2 = next(it2, None)
 
                 # --- pileup1 ---
