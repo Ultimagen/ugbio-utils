@@ -43,8 +43,8 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     -------
     argparse.Namespace
         Parsed command line arguments containing:
-        - sfmp_vcf : str
-            Path to somatic featuremap pileup VCF file with tumor as sample[0] and normal as sample[1]
+        - sfm_vcf : str
+            Path to somatic featuremap VCF file with tumor as sample[0] and normal as sample[1]
         - tumor_mpileup : str
             Path to tumor mpileup file
         - normal_mpileup : str
@@ -55,11 +55,11 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
             Output directory for intermediate and final files (default: '.')
     """
     parser = argparse.ArgumentParser(
-        prog="integrate_mpileup_to_sfmp.py",
+        prog="integrate_mpileup_to_sfm.py",
         description=run.__doc__,
     )
     parser.add_argument(
-        "--sfmp_vcf",
+        "--sfm_vcf",
         help="somatic featuremap pileup vcf with tumor as sample[0] and normal as sample[1]",
         required=True,
         type=str,
@@ -214,9 +214,9 @@ def process_padded_positions(
 
 def run(argv):  # noqa: C901, PLR0912, PLR0915
     """
-    Integrate mpileup data into SFMP VCF file.
+    Integrate mpileup data into sfm VCF file.
 
-    This function reads a SFMP VCF file and two mpileup files (tumor and normal),
+    This function reads a sfm VCF file and two mpileup files (tumor and normal),
     then creates a new VCF file with integrated mpileup information for positions
     within a specified window around each variant.
 
@@ -224,7 +224,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
     ----------
     argv : list of str
         Command line arguments containing:
-        - sfmp_vcf : Path to input SFMP VCF file
+        - sfm_vcf : Path to input sfm VCF file
         - tumor_mpileup : Path to tumor mpileup file
         - normal_mpileup : Path to normal mpileup file
         - out_directory : Output directory path
@@ -255,11 +255,11 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
         os.makedirs(args.out_directory)
         logger.info(f"Created output directory: {args.out_directory}")
 
-    sfmp_vcf = args.sfmp_vcf
-    out_sfmp_vcf = pjoin(args.out_directory, os.path.basename(sfmp_vcf).replace(".vcf.gz", ".mpileup.vcf.gz"))
+    sfm_vcf = args.sfm_vcf
+    out_sfm_vcf = pjoin(args.out_directory, os.path.basename(sfm_vcf).replace(".vcf.gz", ".mpileup.vcf.gz"))
 
     # Open input VCFs
-    main_vcf = pysam.VariantFile(sfmp_vcf)
+    main_vcf = pysam.VariantFile(sfm_vcf)
     header = create_new_header(main_vcf, args.distance_start_to_center)
     window_size = 2 * args.distance_start_to_center + 1
     # Iterators
@@ -269,7 +269,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
         p1, p2 = next(it1, None), next(it2, None)
 
         # Open output VCF
-        with pysam.VariantFile(out_sfmp_vcf, "w", header=header) as vcf_out:
+        with pysam.VariantFile(out_sfm_vcf, "w", header=header) as vcf_out:
             current_chrom = None
 
             for record in main_vcf.fetch():
@@ -311,10 +311,10 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915
 
                 vcf_out.write(new_record)
 
-    logger.info(f"Merged VCF file with mpileup info created: {out_sfmp_vcf}")
+    logger.info(f"Merged VCF file with mpileup info created: {out_sfm_vcf}")
 
     # Index the filtered VCF
-    cmd_index = ["bcftools", "index", "-t", out_sfmp_vcf]
+    cmd_index = ["bcftools", "index", "-t", out_sfm_vcf]
     logger.debug(" ".join(cmd_index))
     subprocess.run(cmd_index, check=True)
 

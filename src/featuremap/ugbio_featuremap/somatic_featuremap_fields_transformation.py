@@ -638,10 +638,10 @@ def run(argv):
 
     # add tandem repeat features
     out_dir = dirname(args_in.output_vcf)
-    sfmp_with_tr = integrate_tandem_repeat_features(args_in.somatic_featuremap, args_in.ref_tr_file, out_dir)
+    sfm_with_tr = integrate_tandem_repeat_features(args_in.somatic_featuremap, args_in.ref_tr_file, out_dir)
 
     featuremap_fields_aggregation_on_an_interval_list(
-        sfmp_with_tr,
+        sfm_with_tr,
         args_in.output_vcf,
         args_in.interval_list_file,
         args_in.filter_string,

@@ -26,7 +26,7 @@ run_tests = "pytest:main"
 featuremap_to_dataframe = "ugbio_featuremap.featuremap_to_dataframe:main"
 filter_featuremap = "ugbio_featuremap.filter_dataframe:main"
 create_somatic_pileup_featuremap = "ugbio_featuremap.create_somatic_pileup_featuremap:main"
-integrate_mpileup_to_sfmp = "ugbio_featuremap.integrate_mpileup_to_sfmp:main"
+integrate_mpileup_to_sfm = "ugbio_featuremap.integrate_mpileup_to_sfm:main"
 somatic_featuremap_fields_transformation = "ugbio_featuremap.somatic_featuremap_fields_transformation:main"
 somatic_pileup_featuremap_inference = "ugbio_featuremap.somatic_pileup_featuremap_inference:main"
 
