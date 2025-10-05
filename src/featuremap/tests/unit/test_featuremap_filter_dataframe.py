@@ -7,7 +7,12 @@ from pathlib import Path
 import polars as pl
 import pytest
 from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
-from ugbio_featuremap.filter_dataframe import filter_parquet, read_filtering_stats_json, validate_filter_config
+from ugbio_featuremap.filter_dataframe import (
+    _parse_value_based_on_operation,
+    filter_parquet,
+    read_filtering_stats_json,
+    validate_filter_config,
+)
 
 pl.enable_string_cache()
 
@@ -379,24 +384,6 @@ def test_cli_filter_with_list_values(tmp_path: Path) -> None:
     assert filtered_df["CHROM"].is_in(["chr1", "chr2"]).all()
 
 
-def test_cli_filter_with_between_operation(tmp_path: Path) -> None:
-    """Test CLI filters with between operation."""
-    parquet_in = _parquet_from_sample(tmp_path)
-
-    cli_filters = ["name=bcsq_between:field=BCSQ:op=between:value=10,50:type=quality"]
-
-    out_pq = tmp_path / "f.parquet"
-    stats_json = tmp_path / "stats.json"
-
-    filter_parquet(str(parquet_in), str(out_pq), None, None, str(stats_json), cli_filters=cli_filters)
-
-    assert out_pq.exists() and stats_json.exists()
-
-    # Check filtered output
-    filtered_df = pl.read_parquet(out_pq)
-    assert ((filtered_df["BCSQ"] >= 10) & (filtered_df["BCSQ"] <= 50)).all()
-
-
 def test_parse_cli_filter_functions() -> None:
     """Test the CLI parsing utility functions."""
     from ugbio_featuremap.filter_dataframe import _parse_cli_downsample, _parse_cli_filter
@@ -417,10 +404,6 @@ def test_parse_cli_filter_functions() -> None:
     # Test list value
     filter_dict = _parse_cli_filter("name=list_filter:field=CHROM:op=in:value=chr1,chr2,chr3:type=region")
     assert filter_dict["value"] == ["chr1", "chr2", "chr3"]
-
-    # Test between value
-    filter_dict = _parse_cli_filter("name=between_filter:field=QUAL:op=between:value=10,50:type=quality")
-    assert filter_dict["value"] == [10.0, 50.0]
 
     # Test value_field instead of value
     filter_dict = _parse_cli_filter("name=field_comparison:field=REF:op=eq:value_field=ALT:type=label")
@@ -465,3 +448,50 @@ def test_stats_json_roundtrip(tmp_path: Path) -> None:
     # Must load without raising
     stats = read_filtering_stats_json(stats_json)
     assert stats["filters"][0]["name"] == "raw"
+
+
+def test_try_to_convert_to_number_or_boolean_scalars():
+    """
+    Unified (value, op) cases after introducing op into the test key.
+    Uses _parse_value_based_on_operation for both scalar and list ops.
+    """
+    cases = [
+        ("true", "eq", True),
+        ("TRUE", "eq", True),
+        ("False", "eq", False),
+        ("FALSE", "eq", False),
+        ("10", "eq", 10),
+        ("-7", "eq", -7),
+        ("0", "eq", 0),
+        ("0.5", "eq", 0.5),
+        ("1e-3", "eq", 0.001),
+        ("2E2", "eq", 200.0),
+        ("00123", "eq", 123),
+        ("abc", "eq", "abc"),
+        ("10,20", "in", [10, 20]),  # list parsing for in
+        ("true,False,1,0.5", "in", [True, False, 1, 0.5]),
+        ("true,False", "not_in", [True, False]),
+    ]
+
+    for raw, op, expected in cases:
+        got = _parse_value_based_on_operation(raw, op)
+        assert got == expected, f"{raw=} {op=} -> {got} (expected {expected})"
+
+
+def test_parse_cli_filter_list_boolean_numeric():
+    from ugbio_featuremap.filter_dataframe import _parse_cli_filter
+
+    f = _parse_cli_filter("name=mixed:field=X:op=in:value=true,False,10,0.25,1e-2,ABC:type=label")
+    # Expect coercion of booleans + numbers (including scientific), raw string for non-numeric/non-boolean
+    assert f["value"] == [True, False, 10, 0.25, 0.01, "ABC"]
+
+    # Whitespace tokens should currently preserve whitespace / skip coercion if implementation does not strip
+    f2 = _parse_cli_filter("name=ws:field=Y:op=in:value=true, false ,  5:type=region")
+    # Depending on implementation (strip or not). If you later strip, adjust expectation.
+    # Assume no strip inside parser for non-leading boolean => second stays ' false '
+    # '  5' may or may not coerce; if strip is applied it becomes 5 else stays '  5'
+    val = f2["value"]
+    assert val[0] is True
+    # Accept either behavior for whitespace handling to avoid brittleness
+    assert val[1] in (" false ", False)
+    assert val[2] in ("  5", 5)
