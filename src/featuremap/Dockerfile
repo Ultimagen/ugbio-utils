@@ -31,5 +31,4 @@ COPY --from=build $OUT_DIR $OUT_DIR
 # ENV PATH="/home/ugbio/.local/bin:${PATH}"
 
 # RUN pip install --user ${OUT_DIR}/*.whl
-RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
-    pip install "${WHEEL_FILE}"
+RUN pip install ${OUT_DIR}/*.whl
