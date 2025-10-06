@@ -22,7 +22,6 @@ RUN chown -R ugbio:ugbio /opt /usr/local/bin
 USER ugbio
 
 WORKDIR /home/ugbio
-WORKDIR /mnt/disks/cromwell_root/
 
 ARG OUT_DIR=/tmp/ugbio
 
