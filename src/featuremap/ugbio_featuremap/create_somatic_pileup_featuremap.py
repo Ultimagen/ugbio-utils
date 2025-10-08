@@ -163,7 +163,9 @@ def run(argv):
     else:
         tumor_vcf = args.tumor_vcf
         logger.info("No filtering for tumor-PASS variants. Merging all records from both VCF files.")
-    unfiltered_normal_vcf = args.normal_vcf.replace(".vcf.gz", ".unfiltered.vcf.gz")
+    unfiltered_normal_vcf = pjoin(
+        args.out_directory, os.path.basename(args.normal_vcf).replace(".vcf.gz", ".unfiltered.vcf.gz")
+    )
     vu.remove_filter_annotations(args.normal_vcf, unfiltered_normal_vcf, args.cpu)
     vu.index_vcf(unfiltered_normal_vcf)
     created_files.append(unfiltered_normal_vcf)
