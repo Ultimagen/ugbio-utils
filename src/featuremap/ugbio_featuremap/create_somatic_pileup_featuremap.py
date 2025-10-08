@@ -136,7 +136,9 @@ def run(argv):
     # Merge the tumor and normal VCF files into a single VCF file
     if args.filter_for_tumor_pass_variants:
         logger.info("Adding SingleRead filter to the tumor file")
-        out_add_filter_vcf = args.tumor_vcf.replace(".vcf.gz", ".with_sr_filter.vcf.gz")
+        out_add_filter_vcf = pjoin(
+            args.out_directory, os.path.basename(args.tumor_vcf).replace(".vcf.gz", ".with_sr_filter.vcf.gz")
+        )
         vu.filter_vcf(
             input_vcf=args.tumor_vcf,
             output_vcf=out_add_filter_vcf,
