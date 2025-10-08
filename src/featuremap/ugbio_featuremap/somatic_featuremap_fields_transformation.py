@@ -148,7 +148,7 @@ def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
         hdr_file = pjoin(tmpdir, "tr_hdr.txt")
         with open(hdr_file, "w") as f:
             f.writelines(line + "\n" for line in hdr_txt)
-        merged_vcf_with_tr_info = merged_vcf.replace(".vcf.gz", ".tr_info.vcf.gz")
+        merged_vcf_with_tr_info = pjoin(out_dir, os.path.basename(merged_vcf).replace(".vcf.gz", ".tr_info.vcf.gz"))
         cmd = [
             "bcftools",
             "annotate",
