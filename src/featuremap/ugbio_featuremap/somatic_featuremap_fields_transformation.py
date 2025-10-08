@@ -431,7 +431,7 @@ def read_merged_tumor_normal_vcf(
     return df_tumor_normal
 
 
-def featuremap_fields_aggregation(  # noqa: C901
+def featuremap_fields_aggregation(  # noqa: C901, PLR0915
     somatic_featuremap_vcf_file: str,
     output_vcf: str,
     filter_tags=None,
@@ -451,7 +451,8 @@ def featuremap_fields_aggregation(  # noqa: C901
     # filter vcf file for the given filter tags and genomic interval
     filter_string = f"-f {filter_tags}" if filter_tags else ""
     interval_srting = genomic_interval if genomic_interval else ""
-    with tempfile.TemporaryDirectory(dir=dirname(output_vcf)) as temp_dir:
+    temp_dir = tempfile.mkdtemp(dir=os.path.dirname(output_vcf))
+    try:
         sorted_featuremap, sorted_filtered_featuremap = sort_and_filter_vcf(
             somatic_featuremap_vcf_file, temp_dir, filter_string, interval_srting
         )
@@ -502,6 +503,16 @@ def featuremap_fields_aggregation(  # noqa: C901
                 vcfin.close()
             pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
             return output_vcf
+    finally:
+        # Clean up temporary directory
+        if os.path.exists(temp_dir):
+            for filename in os.listdir(temp_dir):
+                file_path = os.path.join(temp_dir, filename)
+                try:
+                    if os.path.isfile(file_path) or os.path.islink(file_path):
+                        os.unlink(file_path)
+                except Exception as e:
+                    logger.error(f"Error removing temporary file {file_path}: {e}")
 
 
 def featuremap_fields_aggregation_on_an_interval_list(
