@@ -1,0 +1,4 @@
+read group,code,format,segment,reason,failed read count,total read count
+Z0345,2,ppmSeq,start_insertion_buffer,sequence was too long,4650,83339455 
+Z0345,203,ppmSeq,Stem_start,no match,41350,83339455 
+Z0345,301,ppmSeq,insert,sequence was too short,32525,83339455 
