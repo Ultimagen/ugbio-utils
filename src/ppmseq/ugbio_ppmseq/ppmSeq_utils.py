@@ -852,9 +852,10 @@ def read_trimmer_tags_dataframe(
         )
         # Calculate mixed reads of total (including end unreached) and mixed read coverage
         mixed_tot = df_category_concordance.loc[(PpmseqCategories.MIXED.value, PpmseqCategories.MIXED.value),]
+        mixed_start = df_category_concordance.loc[(PpmseqCategories.MIXED.value, slice(None)),].sum()
         df_mixed_cov = pd.DataFrame(
             {
-                "MIXED_read_mean_coverage": mixed_tot * df_sorter_stats.loc["Mean_cvg", "value"],
+                "PCT_MIXED_start_tag": mixed_start * 100,
                 "PCT_MIXED_both_tags": mixed_tot * 100,
             },
             index=["value"],
