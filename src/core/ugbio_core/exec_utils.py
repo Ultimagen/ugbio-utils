@@ -12,7 +12,7 @@ def print_and_execute(
     simple_pipeline: SimplePipeline | None = None,
     module_name: str | None = None,
     *,
-    shell: bool = False,
+    shell: bool = True,
 ):
     """
     Print and execute command through simple_pipeline or subprocess
