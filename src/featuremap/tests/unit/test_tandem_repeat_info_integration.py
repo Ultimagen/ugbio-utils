@@ -39,11 +39,9 @@ def test_integrate_tandem_repeat_features(
     tmpdir,
     resources_dir,
 ):
-    input_merged_vcf = pjoin(resources_dir, "Pa_47_fresh_frozen_vs_buffycoat.tumor_normal.merged.PASS.chr19.new.vcf.gz")
-    ref_tr_file = pjoin(resources_dir, "tr_hg38.chr19.bed")
-    expected_out_vcf = pjoin(
-        resources_dir, "Pa_47_fresh_frozen_vs_buffycoat.tumor_normal.merged.PASS.chr19.new.tr_info.vcf.gz"
-    )
+    input_merged_vcf = pjoin(resources_dir, "TP_HG006_HG003.tumor_normal.merged.chr9.vcf.gz")
+    ref_tr_file = pjoin(resources_dir, "tr.chr9.bed")
+    expected_out_vcf = pjoin(resources_dir, "TP_HG006_HG003.tumor_normal.merged.chr9.tr_info.vcf.gz")
 
     # call the function with different arguments
     out_vcf_with_tr_data = integrate_tandem_repeat_features(input_merged_vcf, ref_tr_file, tmpdir)
