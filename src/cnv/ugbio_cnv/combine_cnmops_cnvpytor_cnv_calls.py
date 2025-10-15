@@ -92,8 +92,17 @@ def calculate_gaps_count_per_cnv(df_cnmops_calls: pd.DataFrame, ref_fasta: str) 
         start = row["start"]
         end = row["end"]
         # pyfaidx uses 0-based start, end-exclusive indexing
-        seq = genome[chrom][start - 1 : end].seq  # Convert to 0-based
-        cnv_n_count = seq.upper().count("N")
+        try:
+            seq_obj = genome[chrom][start - 1 : end]  # Convert to 0-based
+            if seq_obj is not None:
+                seq = seq_obj.seq
+                cnv_n_count = seq.upper().count("N")
+            else:
+                logger.warning(f"Could not retrieve sequence for {chrom}:{start}-{end}")
+                cnv_n_count = 0
+        except (KeyError, IndexError) as e:
+            logger.warning(f"Error retrieving sequence for {chrom}:{start}-{end}: {e}")
+            cnv_n_count = 0
         n_count.append(cnv_n_count)
 
     df_cnmops_calls["N_count"] = n_count
@@ -103,7 +112,7 @@ def calculate_gaps_count_per_cnv(df_cnmops_calls: pd.DataFrame, ref_fasta: str) 
     return df_cnmops_calls
 
 
-def parse_cnmops_cnv_calls(cnmops_cnv_calls: str, out_directory: str, ref_fasta: str, pN: float = 0) -> str:  # noqa: N803
+def parse_cnmops_cnv_calls(cnmops_cnv_calls: str, out_directory: str, ref_fasta: str, pN: float = 0) -> pd.DataFrame:  # noqa: N803
     """
     Parses cn.mops CNV calls from an input BED file.
 
@@ -119,11 +128,11 @@ def parse_cnmops_cnv_calls(cnmops_cnv_calls: str, out_directory: str, ref_fasta:
 
     Returns
     -------
-    out_cnmops_cnvs : str
-        Path to the output BED file with parsed CNV calls.
+    pd.DataFrame
+        DataFrame containing parsed and filtered CNV calls.
 
     """
-    cnmops_cnv_calls_tmp_file = f"{pjoin(out_directory,os.path.basename(cnmops_cnv_calls))}.tmp"
+    cnmops_cnv_calls_tmp_file = f"{pjoin(out_directory, os.path.basename(cnmops_cnv_calls))}.tmp"
 
     # remove all tags from cnmops cnv calls file:
     run_cmd(
@@ -162,13 +171,18 @@ def get_dup_cnmops_cnv_calls(
     """
     # get duplications from cn.mops calls
     cnmops_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.bed")
+
     # df_cnmops = pd.read_csv(cnmops_cnv_calls, sep="\t", header=None)
     # df_cnmops.columns = ["chrom", "start", "end", "CN"]
-    df_cnmops["cn_numbers"] = [re.search(r"CN([\d\.]+)", item).group(1) for item in df_cnmops["CN"]]
+    def extract_cn_number(item):
+        match = re.search(r"CN([\d\.]+)", item)
+        return match.group(1) if match else "0"
+
+    df_cnmops["cn_numbers"] = [extract_cn_number(item) for item in df_cnmops["CN"]]
     out_cnmops_cnvs_dup_calls = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.calls.bed")
     neutral_cn = 2
     df_cnmops[df_cnmops["cn_numbers"].astype(float) > neutral_cn][["chrom", "start", "end", "CN"]].to_csv(
-        out_cnmops_cnvs_dup_calls, sep="\t", header=None, index=False
+        out_cnmops_cnvs_dup_calls, sep="\t", header=False, index=False
     )
 
     if os.path.getsize(out_cnmops_cnvs_dup_calls) > 0:
@@ -186,7 +200,7 @@ def get_dup_cnmops_cnv_calls(
 
         out_cnmops_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.all_fields.bed")
         df_cnmops_cnvs_dup[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
-            out_cnmops_cnvs_dup, sep="\t", header=None, index=False
+            out_cnmops_cnvs_dup, sep="\t", header=False, index=False
         )
 
         return out_cnmops_cnvs_dup
@@ -281,7 +295,7 @@ def get_dup_cnvpytor_cnv_calls(df_cnvpytor_cnv_calls: pd.DataFrame, sample_name:
 
     if len(df_cnvpytor_cnv_calls_duplications) > 0:
         df_cnvpytor_cnv_calls_duplications[["chrom", "start", "end", "cnv_type", "source", "copy_number"]].to_csv(
-            cnvpytor_cnvs_dup, sep="\t", header=None, index=False
+            cnvpytor_cnvs_dup, sep="\t", header=False, index=False
         )
         return cnvpytor_cnvs_dup
     else:
@@ -362,7 +376,7 @@ def process_del_jalign_results(
         f"{sample_name}.cnmops_cnvpytor.DEL.jalign_lt{str(jalign_written_cutoff)}_or_len_lt{str(deletions_length_cutoff)}.bed",
     )
     df_cnmops_cnvpytor_del_filtered[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
-        out_del_jalign, sep="\t", header=None, index=False
+        out_del_jalign, sep="\t", header=False, index=False
     )
 
     out_del_jalign_merged = pjoin(
@@ -413,7 +427,7 @@ def get_cnmops_cnvpytor_common_del(del_candidates: str, sample_name: str, out_di
         df_del_candidates_called_by_both_cnmops_cnvpytor["source"] = "cn.mops,cnvpytor"
 
         copy_number_list = []
-        for __index, row in df_del_candidates_called_by_both_cnmops_cnvpytor.iterrows():
+        for _, row in df_del_candidates_called_by_both_cnmops_cnvpytor.iterrows():
             cn = row["CN"]
             cn_list = cn.split(",")
             copy_number_value = ""
@@ -429,7 +443,7 @@ def get_cnmops_cnvpytor_common_del(del_candidates: str, sample_name: str, out_di
         )
         df_del_candidates_called_by_both_cnmops_cnvpytor[
             ["chrom", "start", "end", "CNV_type", "source", "copy_number"]
-        ].to_csv(out_del_candidates_called_by_both_cnmops_cnvpytor, sep="\t", header=None, index=False)
+        ].to_csv(out_del_candidates_called_by_both_cnmops_cnvpytor, sep="\t", header=False, index=False)
 
         return out_del_candidates_called_by_both_cnmops_cnvpytor
     else:
@@ -549,7 +563,7 @@ def run(argv):
 
         df_annotate_calls[
             ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "LCR_label_value"]
-        ].to_csv(out_cnvs_combined_annotated, sep="\t", header=None, index=False)
+        ].to_csv(out_cnvs_combined_annotated, sep="\t", header=False, index=False)
         logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
 
     else:
