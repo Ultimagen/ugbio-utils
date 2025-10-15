@@ -134,7 +134,7 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def run(argv):
-    """Convert featuremap to pandas dataframe"""
+    """Create ppmSeq QC report"""
     args_in = __parse_args(argv)
 
     ppmseq_qc_analysis(
