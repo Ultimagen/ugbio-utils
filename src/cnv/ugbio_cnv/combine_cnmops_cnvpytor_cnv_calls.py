@@ -360,7 +360,7 @@ def process_del_jalign_results(
 
     out_del_jalign = pjoin(out_directory, f"{sample_name}.cnmops_cnvpytor.DEL.jalign.bed")
     df_cnmops_cnvpytor_del_filtered[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
-        out_del_jalign, sep="\t", header=None, index=False
+        out_del_jalign, sep="\t", header=False, index=False
     )
     out_del_jalign_merged = pjoin(
         out_directory,
@@ -378,7 +378,7 @@ def process_del_jalign_results(
     )
     df_cnmops_cnvpytor_del_filtered[
         ["chrom", "start", "end", "CNV_type", "source", "copy_number", "jalign_tag"]
-    ].to_csv(out_del_jalign_filtered, sep="\t", header=None, index=False)
+    ].to_csv(out_del_jalign_filtered, sep="\t", header=False, index=False)
 
     out_del_jalign_filtered_merged = pjoin(
         out_directory,
