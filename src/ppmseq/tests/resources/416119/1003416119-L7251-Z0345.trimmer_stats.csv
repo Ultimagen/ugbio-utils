@@ -1,0 +1,9 @@
+read group,format,segment index,segment label,is required,is trimmed,num input reads,num prefiltered reads,num failed reads,num discarded reads,num filtered reads,num trimmed reads,num failures,num matches,num matched bases
+Z0345,ppmSeq,0,start_insertion_buffer,false,true,83339455,0,78525,0,0,83260930,4650,25294766,28216359
+Z0345,ppmSeq,1,Start_loop,false,true,83339455,0,78525,0,0,83260930,0,83258695,369667308
+Z0345,ppmSeq,2,Stem_start,true,true,83339455,0,78525,0,0,83260930,41350,83260930,1082418629
+Z0345,ppmSeq,3,insert,true,false,83339455,0,78525,0,0,83260930,32525,83260930,16909064530
+Z0345,ppmSeq,4,Stem_end,false,true,83339455,0,78525,0,0,83260930,0,69006731,966075259
+Z0345,ppmSeq,5,End_loop,false,true,83339455,0,78525,0,0,83260930,0,67100092,263371125
+Z0345,ppmSeq,6,native_adapter,false,true,83339455,0,78525,0,0,83260930,0,65621839,3094999980
+Z0345,ppmSeq,7,end,false,true,83339455,0,78525,0,0,83260930,0,15499876,175646608

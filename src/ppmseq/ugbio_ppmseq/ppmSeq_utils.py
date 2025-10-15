@@ -261,19 +261,9 @@ class PpmseqStrandVcfAnnotator(VcfAnnotator):
                 record.info[HistogramColumnNames.ST.value] = record.info.get(
                     HistogramColumnNames.ST.value, PpmseqCategories.UNDETERMINED.value
                 )
-                is_end_reached = (
-                    ppmseq_tags[TrimmerSegmentTags.NATIVE_ADAPTER.value] >= 1
-                    or ppmseq_tags[TrimmerSegmentTags.STEM_END.value] >= self.min_stem_end_matched_length
-                )
                 record.info[HistogramColumnNames.ET.value] = record.info.get(
-                    HistogramColumnNames.ET.value, PpmseqCategories.UNDETERMINED.value
+                    HistogramColumnNames.ET.value, PpmseqCategories.END_UNREACHED.value
                 )
-                #  TODO: Check cases where not is_end_reached and et==UNDETERMINED. Make v5 logic conform with this
-                if (
-                    not is_end_reached
-                    and record.info[HistogramColumnNames.ET.value] == PpmseqCategories.UNDETERMINED.value
-                ):
-                    record.info[HistogramColumnNames.ET.value] = PpmseqCategories.END_UNREACHED.value
 
             records_out[j] = record
 
@@ -342,7 +332,7 @@ def get_strand_ratio_category(strand_ratio, sr_lower, sr_upper) -> str:
     return PpmseqCategories.UNDETERMINED.value
 
 
-def read_ppmseq_trimmer_histogram(  # noqa: C901 #TODO: refactor
+def read_ppmseq_trimmer_histogram(  # noqa: C901,PLR0912 #TODO: refactor
     adapter_version: str | PpmseqAdapterVersions,
     trimmer_histogram_csv: str,
     sr_lower: float = STRAND_RATIO_LOWER_THRESH,
@@ -453,12 +443,12 @@ def read_ppmseq_trimmer_histogram(  # noqa: C901 #TODO: refactor
         PpmseqAdapterVersions.DMBL,
         PpmseqAdapterVersions.DMBL.value,
     ]:
-        is_end_reached = (
-            df_trimmer_histogram[TrimmerSegmentLabels.NATIVE_ADAPTER.value + length_suffix] >= 1
-            if TrimmerSegmentLabels.NATIVE_ADAPTER.value + length_suffix in df_trimmer_histogram.columns
-            else df_trimmer_histogram[TrimmerSegmentLabels.STEM_END.value + length_suffix]
-            >= min_stem_end_matched_length
-        )
+        if TrimmerSegmentLabels.NATIVE_ADAPTER.value + length_suffix in df_trimmer_histogram.columns:
+            is_end_reached = df_trimmer_histogram[TrimmerSegmentLabels.NATIVE_ADAPTER.value + length_suffix] >= 1
+        elif TrimmerSegmentLabels.STEM_END.value + length_suffix in df_trimmer_histogram.columns:
+            is_end_reached = df_trimmer_histogram[TrimmerSegmentLabels.STEM_END.value + length_suffix]
+        else:
+            is_end_reached = df_trimmer_histogram[HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value].notna()
 
     # Handle v5 and v6 loops
     if adapter_version in [
@@ -862,9 +852,10 @@ def read_trimmer_tags_dataframe(
         )
         # Calculate mixed reads of total (including end unreached) and mixed read coverage
         mixed_tot = df_category_concordance.loc[(PpmseqCategories.MIXED.value, PpmseqCategories.MIXED.value),]
+        mixed_start = df_category_concordance.loc[(PpmseqCategories.MIXED.value, slice(None)),].sum()
         df_mixed_cov = pd.DataFrame(
             {
-                "MIXED_read_mean_coverage": mixed_tot * df_sorter_stats.loc["Mean_cvg", "value"],
+                "PCT_MIXED_start_tag": mixed_start * 100,
                 "PCT_MIXED_both_tags": mixed_tot * 100,
             },
             index=["value"],
@@ -1819,7 +1810,7 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
     adapter_version : str | PpmseqAdapterVersions
         adapter version to check
     trimmer_histogram_csv : list[str]
-        path to a ppmSeq Trimmer histogram file
+        path to a ppmSeq Trimmer histogram file/s
     sorter_stats_csv : str
         path to a Sorter stats file
     output_path : str
@@ -1829,7 +1820,7 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
     sorter_stats_json : str, optional
         path to a Sorter stats JSON file, by default None
     trimmer_histogram_extra_csv : str, optional
-        path to a ppmSeq Trimmer histogram extra file, by default None
+        path to a ppmSeq Trimmer histogram extra file, by default None (legacy)
     trimmer_failure_codes_csv : str, optional
         path to a ppmSeq Trimmer failure codes file, by default None
     collect_statistics_kwargs : dict, optional
