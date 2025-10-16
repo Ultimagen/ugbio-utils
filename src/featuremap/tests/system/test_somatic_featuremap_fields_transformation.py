@@ -17,7 +17,7 @@ class TestSomaticFeaturemapFieldsTransformation:
     def test_somatic_featuremap_fields_transformation(self, tmpdir, resources_dir):
         somatic_featuremap_vcf = pjoin(resources_dir, "Pa_46.tumor_normal.merged.tumor_PASS.mpileup_PASS.chr19.vcf.gz")
         ref_tr_file = pjoin(resources_dir, "tr_hg38.chr19.bed")
-        interval_list = pjoin(resources_dir, "wgs_calling_regions.hg38.chr19_test.interval_list")
+        interval_list_bed_file = pjoin(resources_dir, "wgs_calling_regions.hg38.chr19_test.interval_list.bed")
         filter_string = "PASS"
         out_dir = tmpdir
         out_file = pjoin(out_dir, "Pa_46.tumor_normal.merged.tumor_PASS.mpileup_PASS.chr19.xgb_proba.vcf.gz")
@@ -33,7 +33,7 @@ class TestSomaticFeaturemapFieldsTransformation:
                 "-o",
                 out_file,
                 "-i",
-                interval_list,
+                interval_list_bed_file,
                 "-filter_string",
                 filter_string,
                 "-ref_tr",

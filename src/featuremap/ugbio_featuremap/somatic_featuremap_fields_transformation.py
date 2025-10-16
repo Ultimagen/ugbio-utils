@@ -1,5 +1,6 @@
 import argparse
 import logging
+import math
 import os
 import statistics
 import subprocess
@@ -516,10 +517,70 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
                     logger.error(f"Error removing temporary file {file_path}: {e}")
 
 
+def collapse_bed_by_chunks(bed_file: str, num_chunks: int) -> list[str]:
+    """
+    Collapse a sorted BED file into equal-sized chunks by number of rows.
+
+    This function reads a BED file and divides it into approximately equal-sized chunks
+    based on the number of rows. Each chunk is represented by a single genomic interval
+    spanning from the first to the last position within that chunk.
+
+    Parameters
+    ----------
+    bed_file : str
+        Path to input sorted BED file containing columns (chrom, start, end).
+    num_chunks : int
+        Number of chunks to create. If the number of rows in the BED file
+        is less than num_chunks, the actual number of chunks will be
+        adjusted accordingly.
+
+    Returns
+    -------
+    list of str
+        List of genomic intervals in the format "chrom:start-end",
+        where each interval represents a collapsed chunk.
+
+    Notes
+    -----
+    - The function assumes the input BED file has no header and contains
+      exactly 3 columns: chromosome, start position, and end position.
+    - Chunks are created based on equal distribution of rows, not equal
+      genomic distance.
+    - Each chunk preserves the chromosome of its first row; this assumes
+      chunks don't span multiple chromosomes.
+
+    Examples
+    --------
+    >>> intervals = collapse_bed_by_chunks("input.bed", num_chunks=4)
+    >>> print(intervals)
+    ['chr1:1000-5000', 'chr1:5001-10000', 'chr2:1000-8000', 'chr2:8001-15000']
+    """
+    df_bed_regions = pd.read_csv(bed_file, sep="\t", header=None, names=["chrom", "start", "end"], usecols=[0, 1, 2])
+    n = len(df_bed_regions)
+    # Handle case where rows < chunks: adjust num_chunks
+    num_chunks = min(num_chunks, n)
+    # Compute chunk size (number of rows per chunk, roughly equal)
+    chunk_size = math.ceil(n / num_chunks)
+    # Collapse into chunks
+    collapsed = []
+    for i in range(0, n, chunk_size):
+        chunk_df_bed_regions = df_bed_regions.iloc[i : i + chunk_size]
+        chrom = chunk_df_bed_regions.iloc[0]["chrom"]
+        start = chunk_df_bed_regions.iloc[0]["start"]
+        end = chunk_df_bed_regions.iloc[-1]["end"]
+        collapsed.append((chrom, start, end))
+
+    # Write output
+    genomic_intervals = []
+    for chrom, start, end in collapsed:
+        genomic_intervals.append(f"{chrom}:{start}-{end}")
+    return genomic_intervals
+
+
 def featuremap_fields_aggregation_on_an_interval_list(
     featuremap_vcf_file: str,
     output_vcf: str,
-    interval_list: str,
+    interval_list_bed_file: str,
     filter_tags=None,
     xgb_model_file: str = None,
     verbose: bool = True,  # noqa: FBT001, FBT002
@@ -539,20 +600,8 @@ def featuremap_fields_aggregation_on_an_interval_list(
         output_vcf = output_vcf + ".vcf.gz"
 
     with tempfile.TemporaryDirectory(dir=dirname(output_vcf)):
-        genomic_intervals = []
-        with open(interval_list, encoding="utf-8") as f:
-            for line in f:
-                # ignore header lines
-                if line.startswith("@"):
-                    continue
-                # read genomic ineterval
-                genomic_interval = line.strip()
-                genomic_interval_list = genomic_interval.split("\t")
-                chrom = genomic_interval_list[0]
-                start = genomic_interval_list[1]
-                end = genomic_interval_list[2]
-                genomic_interval = chrom + ":" + str(start) + "-" + str(end)
-                genomic_intervals.append(genomic_interval)
+        num_cpus = os.cpu_count()
+        genomic_intervals = collapse_bed_by_chunks(interval_list_bed_file, num_chunks=num_cpus)
 
         params = [
             (
@@ -613,10 +662,10 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "-i",
-        "--interval_list_file",
+        "--interval_list_bed_file",
         type=str,
         required=True,
-        help="""Interval list file""",
+        help="""Interval list BED file""",
     )
     parser.add_argument(
         "-ref_tr",
@@ -655,7 +704,7 @@ def run(argv):
     featuremap_fields_aggregation_on_an_interval_list(
         sfm_with_tr,
         args_in.output_vcf,
-        args_in.interval_list_file,
+        args_in.interval_list_bed_file,
         args_in.filter_string,
         args_in.xgb_model_file,
         args_in.verbose,
