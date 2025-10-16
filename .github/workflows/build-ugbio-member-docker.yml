@@ -13,7 +13,6 @@ on:
           - "featuremap"
           - "filtering"
           - "freec"
-          - "hla_la"
           - "methylation"
           - "mrd"
           - "omics"
