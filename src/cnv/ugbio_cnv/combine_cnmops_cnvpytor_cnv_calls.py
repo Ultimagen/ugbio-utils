@@ -479,8 +479,9 @@ def run(argv):
     columns = "\t".join(
         ["#chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "jalign_filter", "jalign_written"]
     )
+    with open(out_cnvs_combined, "w") as out_fh:
+        out_fh.write(f"{columns}\n")
 
-    run_cmd(f"echo {columns} > {out_cnvs_combined}")
     run_cmd(f"cat {cnmops_cnvpytor_merged_dup} {out_del_jalign_merged} | bedtools sort -i - >> {out_cnvs_combined}")
     logger.info(f"out_cnvs_combined: {out_cnvs_combined}")
 
@@ -488,11 +489,16 @@ def run(argv):
         # annotate with ug-cnv-lcr if provided
         # result file should be in the following format:
         # ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "UG-CNV-LCR"]
+
+        sorted_ug_cnv_lcr = f"{out_cnvs_combined}.lcr.bed"
+        run_cmd(f"bedtools sort -i {args.ug_cnv_lcr} > {sorted_ug_cnv_lcr}")
+
         out_cnvs_combined_annotated = f"{out_cnvs_combined}.annotate.bed"
         run_cmd(
             f"bedmap --header --echo --echo-map-id-uniq --delim '\\t' --bases-uniq-f \
-            {out_cnvs_combined} {args.ug_cnv_lcr} > {out_cnvs_combined_annotated}"
+            {out_cnvs_combined} {sorted_ug_cnv_lcr} > {out_cnvs_combined_annotated}"
         )
+
         logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
 
         overlap_filtration_cutoff = 0.5  # 50% overlap with LCR regions
