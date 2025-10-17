@@ -73,9 +73,9 @@ def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHead
         header.add_line(f"##contig=<ID={chr_id},length={length}>")
 
     # Add ALT
-    header.add_line('##ALT=<ID=<CNV>,Description="Copy number variant region">')
-    header.add_line('##ALT=<ID=<DEL>,Description="Deletion relative to the reference">')
-    header.add_line('##ALT=<ID=<DUP>,Description="Region of elevated copy number relative to the reference">')
+    header.add_line('##ALT=<ID=CNV,Description="Copy number variant region">')
+    header.add_line('##ALT=<ID=DEL,Description="Deletion relative to the reference">')
+    header.add_line('##ALT=<ID=DUP,Description="Region of elevated copy number relative to the reference">')
 
     # Add FILTER
     header.add_line('##FILTER=<ID=PASS,Description="High confidence CNV call">')
@@ -210,7 +210,7 @@ def write_combined_bed(outfile: str, cnv_annotated_bed_file: str) -> pd.DataFram
     )
     df_cnvs["RoundedCopyNumber"] = df_cnvs["RoundedCopyNumber"].astype("Int64")
     df_cnvs["SVLEN"] = df_cnvs["end"] - df_cnvs["start"]
-    df_cnvs["SVTYPE"] = df_cnvs["CNV_type"].apply(lambda x: f"<{x}>")
+    df_cnvs["SVTYPE"] = df_cnvs["CNV_type"]
     df_cnvs["name"] = df_cnvs.apply(to_bed_name, axis=1)
     df_cnvs[["chr", "start", "end", "name"]].to_csv(outfile, sep="\t", index=False, header=False)
     return df_cnvs
@@ -245,7 +245,7 @@ def _create_base_vcf_record(vcf_out: pysam.VariantFile, row: pd.Series) -> pysam
     record.start = row["start"]
     record.stop = row["end"]
     record.ref = "N"
-    record.alts = (row["SVTYPE"],)
+    record.alts = (f'<{row["SVTYPE"]}>',)
     return record
 
 
