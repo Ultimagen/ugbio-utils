@@ -7,7 +7,7 @@ import sys
 from os.path import join as pjoin
 
 import pandas as pd
-import ugbio_cnv.convert_combined_cnv_results_to_vcf
+import ugbio_cnv.convert_combined_cnv_results_to_output_formats as output_results
 from pyfaidx import Fasta
 from ugbio_core.logger import logger
 
@@ -21,7 +21,8 @@ def run_cmd(cmd):
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="cnv_results_to_vcf.py", description="converts CNV calls in bed format to vcf."
+        prog="combine_cnmops_cnvpytor_cnv_calls.py",
+        description="Combines CNV calls from various sources, filters, converts into final bed/VCF formats.",
     )
 
     parser.add_argument("--cnmops_cnv_calls", help="input bed file holding cn.mops CNV calls", required=True, type=str)
@@ -32,11 +33,15 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         "--del_jalign_merged_results", help="jaign results for Deletions in tsv format", required=True, type=str
     )
     parser.add_argument(
-        "--deletions_length_cutoff", help="deletions length cutoff", required=False, type=int, default=3000
+        "--deletions_length_cutoff",
+        help="deletions length cutoff, deletions below this length generally require jump alignment support",
+        required=False,
+        type=int,
+        default=3000,
     )
     parser.add_argument(
         "--jalign_written_cutoff",
-        help="minimal number of supporting jaligned reads for DEL",
+        help="minimal number of supporting jaligned reads for DEL below deletions_length_cutoff",
         required=False,
         type=int,
         default=1,
@@ -50,7 +55,7 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--duplication_length_cutoff_for_cnmops_filter",
-        help="duplication_length_cutoff_for_cnmops_filter",
+        help="duplication_length_cutoff_for_cnmops_filter, we filter short duplications that cn.mops calls",
         required=False,
         type=int,
         default=10000,
@@ -74,7 +79,7 @@ def calculate_gaps_count_per_cnv(df_cnmops_calls: pd.DataFrame, ref_fasta: str) 
      df_cnmops_calls : pandas.DataFrame
          DataFrame containing CNV calls with columns ['chrom', 'start', 'end'].
      ref_fasta : str
-         Path to the hg38 reference genome FASTA file.
+         Path to the reference genome FASTA file.
 
      Returns
      -------
@@ -363,92 +368,43 @@ def process_del_jalign_results(
     df_cnmops_cnvpytor_del["copy_number"] = df_cnmops_cnvpytor_del["copy_number"].apply(
         lambda x: "DEL" if pd.Series(x).str.contains("deletion").any() else x
     )
-    df_cnmops_cnvpytor_del_filtered = df_cnmops_cnvpytor_del[
-        (df_cnmops_cnvpytor_del["jalign_written"] >= jalign_written_cutoff)
-        | (df_cnmops_cnvpytor_del["len"] > deletions_length_cutoff)
-    ]
 
-    df_cnmops_cnvpytor_del_filtered = calculate_gaps_count_per_cnv(df_cnmops_cnvpytor_del_filtered, ref_fasta)
-    df_cnmops_cnvpytor_del_filtered = df_cnmops_cnvpytor_del_filtered[df_cnmops_cnvpytor_del_filtered["pN"] <= pN]
+    df_cnmops_cnvpytor_del["jalign_filter"] = output_results.JALIGN_FILTER_VALUE
+
+    df_cnmops_cnvpytor_del.loc[
+        (df_cnmops_cnvpytor_del["jalign_written"] >= jalign_written_cutoff)
+        | (df_cnmops_cnvpytor_del["len"] > deletions_length_cutoff),
+        "jalign_filter",
+    ] = "PASS"
+
+    df_cnmops_cnvpytor_del = calculate_gaps_count_per_cnv(df_cnmops_cnvpytor_del, ref_fasta)
+    df_cnmops_cnvpytor_del_filtered = df_cnmops_cnvpytor_del[df_cnmops_cnvpytor_del["pN"] <= pN]
 
     out_del_jalign = pjoin(
         out_directory,
         f"{sample_name}.cnmops_cnvpytor.DEL.jalign_lt{str(jalign_written_cutoff)}_or_len_lt{str(deletions_length_cutoff)}.bed",
     )
-    df_cnmops_cnvpytor_del_filtered[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
-        out_del_jalign, sep="\t", header=False, index=False
-    )
+    df_cnmops_cnvpytor_del_filtered[
+        ["chrom", "start", "end", "CNV_type", "source", "copy_number", "jalign_filter", "jalign_written"]
+    ].to_csv(out_del_jalign, sep="\t", header=False, index=False)
 
     out_del_jalign_merged = pjoin(
         out_directory,
         f"{sample_name}.cnmops_cnvpytor.DEL.jalign_lt{str(jalign_written_cutoff)}_or_len_lt{str(deletions_length_cutoff)}.merged.bed",
     )
+
     run_cmd(
         f"cat {out_del_jalign} | bedtools sort -i - | \
-            bedtools merge -c 4,5,6 -o distinct  -i -  > {out_del_jalign_merged}"
+            bedtools merge -c 4,5,6,7,8 -o distinct,distinct,distinct,distinct,max  -i -  > {out_del_jalign_merged}"
     )
+
+    # when merging some deletions with PASS and some with NO_JUMP_ALIGNMENT, we set the filter to PASS
+    merged_df = pd.read_csv(out_del_jalign_merged, sep="\t", header=None)
+    filter_column = 6
+    merged_df[filter_column].loc[merged_df[filter_column].str.contains("PASS")] = "PASS"
+    merged_df.to_csv(out_del_jalign_merged, sep="\t", header=False, index=False)
 
     return out_del_jalign_merged
-
-
-def get_cnmops_cnvpytor_common_del(del_candidates: str, sample_name: str, out_directory: str) -> str:
-    """
-    Get deletions called by both cn.mops and cnvpytor, regardless of jalign results.
-
-    Parameters
-    ----------
-    del_candidates : str
-        All deletions candidates (jalign results for Deletions in tsv format).
-    sample_name : str
-        Sample name.
-    out_directory : str
-        Output folder to store results.
-
-    Returns
-    -------
-    str
-        Path to deletions called by both cn.mops and cnvpytor bed file.
-    """
-    del_candidates_called_by_both_cnmops_cnvpytor = pjoin(
-        out_directory, f"{sample_name}.del_candidates_called_by_both_cnmops_cnvpytor.bed"
-    )
-    run_cmd(
-        f'cat {del_candidates} | cut -f1-4  | bedtools merge -c 4 -o distinct -i - | \
-        grep -E "CN.*deletion|deletion.*CN" > {del_candidates_called_by_both_cnmops_cnvpytor} \
-            || touch {del_candidates_called_by_both_cnmops_cnvpytor}'
-    )
-
-    if os.path.getsize(del_candidates_called_by_both_cnmops_cnvpytor) > 0:
-        df_del_candidates_called_by_both_cnmops_cnvpytor = pd.read_csv(
-            del_candidates_called_by_both_cnmops_cnvpytor, sep="\t", header=None
-        )
-        df_del_candidates_called_by_both_cnmops_cnvpytor.columns = ["chrom", "start", "end", "CN"]
-        df_del_candidates_called_by_both_cnmops_cnvpytor["CNV_type"] = "DEL"
-        df_del_candidates_called_by_both_cnmops_cnvpytor["source"] = "cn.mops,cnvpytor"
-
-        copy_number_list = []
-        for _, row in df_del_candidates_called_by_both_cnmops_cnvpytor.iterrows():
-            cn = row["CN"]
-            cn_list = cn.split(",")
-            copy_number_value = ""
-            for val in cn_list:
-                if "CN" in val:
-                    copy_number_value = copy_number_value + f"{val.split('CN')[1]},"
-            copy_number_value = copy_number_value + "DEL"
-            copy_number_list.append(copy_number_value)
-        df_del_candidates_called_by_both_cnmops_cnvpytor["copy_number"] = copy_number_list
-
-        out_del_candidates_called_by_both_cnmops_cnvpytor = pjoin(
-            out_directory, f"{sample_name}.del_candidates_called_by_both_cnmops_cnvpytor.all_fields.bed"
-        )
-        df_del_candidates_called_by_both_cnmops_cnvpytor[
-            ["chrom", "start", "end", "CNV_type", "source", "copy_number"]
-        ].to_csv(out_del_candidates_called_by_both_cnmops_cnvpytor, sep="\t", header=False, index=False)
-
-        return out_del_candidates_called_by_both_cnmops_cnvpytor
-    else:
-        logger.info("No deletions found by both cn.mops and cnvpytor.")
-        return ""
 
 
 def run(argv):
@@ -499,8 +455,9 @@ def run(argv):
     else:
         cnmops_cnvpytor_merged_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvpytor.DUP.merged.bed")
         run_cmd(
-            f"cat {out_cnmops_cnvs_dup} {out_cnvpytor_cnvs_dup} | bedtools sort -i - | \
-            bedtools merge -c 4,5,6 -o distinct -i - > {cnmops_cnvpytor_merged_dup}"
+            f'cat {out_cnmops_cnvs_dup} {out_cnvpytor_cnvs_dup} | bedtools sort -i - | \
+            bedtools merge -c 4,5,6 -o distinct -i - | \
+                awk \'{{print $0 "\t" "PASS" "\t" "0" }}\' > {cnmops_cnvpytor_merged_dup}'
         )
 
     ############################
@@ -516,22 +473,15 @@ def run(argv):
         deletions_length_cutoff=args.deletions_length_cutoff,
         jalign_written_cutoff=args.jalign_written_cutoff,
     )
-    out_del_candidates_called_by_both_cnmops_cnvpytor = get_cnmops_cnvpytor_common_del(
-        args.del_jalign_merged_results, sample_name, out_directory
-    )
-    # merge deletions
-    out_del_calls = pjoin(
-        out_directory,
-        f"{sample_name}.cnmops_cnvpytor.DEL.jalign_lt{str(args.jalign_written_cutoff)}_or_len_lt{str(args.deletions_length_cutoff)}.called_by_both_cnmops_cnvpytor.bedtools_merge.bed",
-    )
-    run_cmd(
-        f"cat {out_del_jalign_merged} {out_del_candidates_called_by_both_cnmops_cnvpytor} | \
-            bedtools sort -i - | bedtools merge -c 4,5,6 -o distinct  -i - > {out_del_calls}"
-    )
 
     # combine results
     out_cnvs_combined = pjoin(out_directory, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.bed")
-    run_cmd(f"cat {cnmops_cnvpytor_merged_dup} {out_del_calls} | bedtools sort -i - > {out_cnvs_combined}")
+    columns = "\t".join(
+        ["#chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "jalign_filter", "jalign_written"]
+    )
+
+    run_cmd(f"echo {columns} > {out_cnvs_combined}")
+    run_cmd(f"cat {cnmops_cnvpytor_merged_dup} {out_del_jalign_merged} | bedtools sort -i - >> {out_cnvs_combined}")
     logger.info(f"out_cnvs_combined: {out_cnvs_combined}")
 
     if args.ug_cnv_lcr:
@@ -540,7 +490,7 @@ def run(argv):
         # ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "UG-CNV-LCR"]
         out_cnvs_combined_annotated = f"{out_cnvs_combined}.annotate.bed"
         run_cmd(
-            f"bedmap --echo --echo-map-id-uniq --delim '\\t' --bases-uniq-f \
+            f"bedmap --header --echo --echo-map-id-uniq --delim '\\t' --bases-uniq-f \
             {out_cnvs_combined} {args.ug_cnv_lcr} > {out_cnvs_combined_annotated}"
         )
         logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
@@ -548,12 +498,14 @@ def run(argv):
         overlap_filtration_cutoff = 0.5  # 50% overlap with LCR regions
         df_annotate_calls = pd.read_csv(out_cnvs_combined_annotated, sep="\t", header=None)
         df_annotate_calls.columns = [
-            "chr",
+            "#chr",
             "start",
             "end",
             "CNV_type",
             "CNV_calls_source",
             "copy_number",
+            "jalign_filter",
+            "jalign_written",
             "UG-CNV-LCR",
             "pUG-CNV-LCR_overlap",
         ]
@@ -562,8 +514,18 @@ def run(argv):
         )
 
         df_annotate_calls[
-            ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "LCR_label_value"]
-        ].to_csv(out_cnvs_combined_annotated, sep="\t", header=False, index=False)
+            [
+                "#chr",
+                "start",
+                "end",
+                "CNV_type",
+                "CNV_calls_source",
+                "copy_number",
+                "LCR_label_value",
+                "jalign_filter",
+                "jalign_written",
+            ]
+        ].to_csv(out_cnvs_combined_annotated, sep="\t", index=False)
         logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
 
     else:
@@ -581,9 +543,10 @@ def run(argv):
         "--sample_name",
         sample_name,
     ]
-    print(vcf_args)
-    out_cnvs_combined_annotated_vcf = ugbio_cnv.convert_combined_cnv_results_to_vcf.run(vcf_args)
+    logger.info(vcf_args)
+    out_cnvs_combined_annotated_vcf, out_cnvs_combined_annotated_bed = output_results.run(vcf_args)
     logger.info(f"out_cnvs_combined_annotated_vcf: {out_cnvs_combined_annotated_vcf}")
+    logger.info(f"out_cnvs_combined_annotated_vcf: {out_cnvs_combined_annotated_bed}")
 
 
 def main():
