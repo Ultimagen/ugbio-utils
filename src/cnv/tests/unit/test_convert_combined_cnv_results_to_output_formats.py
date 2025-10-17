@@ -128,12 +128,12 @@ class TestConvertCombinedCnvResultsToOutputFormats:
     def test_write_combined_bed(self, tmpdir, resources_dir):
         sample_name = "TEST_HG002_chr19"
         cnv_annotated_bed_file = pjoin(
-            resources_dir, "expected_TEST_HG002_chr19.cnmops_cnvpytor.cnvs.combined.bed.annotate.bed"
+            resources_dir, "expected_test_HG002.cnmops_cnvpytor.cnvs.combined.bed.annotate.bed"
         )
         outfile = pjoin(tmpdir, f"{sample_name}.cnv.bed")
-        convert_combined_cnv_results_to_output_formats.write_combined_bed(outfile, cnv_annotated_bed_file)
+        _ = convert_combined_cnv_results_to_output_formats.write_combined_bed(outfile, cnv_annotated_bed_file)
 
-        expected_bed_file = pjoin(resources_dir, "TEST_HG002_chr19.cnv.bed")
+        expected_bed_file = pjoin(resources_dir, "expected_test_HG002.cnv.bed")
         with open(expected_bed_file) as f:
             expected_lines = f.readlines()
         with open(outfile) as f:
@@ -143,14 +143,16 @@ class TestConvertCombinedCnvResultsToOutputFormats:
 
     def test_write_combined_vcf(self, tmpdir, resources_dir):
         sample_name = "TEST_HG002_chr19"
-        cnv_annotated_bed_file = pjoin(
-            resources_dir, "expected_TEST_HG002_chr19.cnmops_cnvpytor.cnvs.combined.bed.annotate.bed"
-        )
-        fasta_index_file = pjoin(resources_dir, "chr19.fasta.fai")
-        outfile = pjoin(tmpdir, f"{sample_name}.cnv.vcf.gz")
-        convert_combined_cnv_results_to_output_formats.write_combined_vcf(
-            outfile, cnv_annotated_bed_file, sample_name, fasta_index_file
+        cnv_annotated_df = pjoin(
+            resources_dir, "expected_test_HG002.cnmops_cnvpytor.cnvs.combined.bed.annotate.parquet"
         )
 
-        expected_vcf_file = pjoin(resources_dir, "TEST_HG002_chr19.cnv.vcf.gz")
+        fasta_index_file = pjoin(resources_dir, "chr19.fasta.fai")
+        outfile = pjoin(tmpdir, f"{sample_name}.cnv.vcf.gz")
+        combined_df = pd.DataFrame(pd.read_parquet(cnv_annotated_df))
+        convert_combined_cnv_results_to_output_formats.write_combined_vcf(
+            outfile, combined_df, sample_name, fasta_index_file
+        )
+
+        expected_vcf_file = pjoin(resources_dir, "expected_test_HG002.cnv.vcf.gz")
         compare_vcfs(expected_vcf_file, outfile)
