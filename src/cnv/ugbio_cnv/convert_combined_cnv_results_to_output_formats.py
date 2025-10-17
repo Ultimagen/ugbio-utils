@@ -12,6 +12,9 @@ import pysam
 from ugbio_core.logger import logger
 
 warnings.filterwarnings("ignore")
+
+# NOTE: both the id and the column name should appear in the registry
+# (after converting table to BED the names are as in the VCF)
 INFO_TAG_REGISTRY = {
     "CNV_calls_source": (
         "CNV_SOURCE",
@@ -20,8 +23,17 @@ INFO_TAG_REGISTRY = {
         "the tool called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
         "INFO",
     ),
+    "CNV_SOURCE": (
+        "CNV_SOURCE",
+        1,
+        "String",
+        "the tool called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
+        "INFO",
+    ),
     "jalign_written": ("JUMP_ALIGNMENTS", 1, "Float", "Number of jump alignments supporting this CNV", "INFO"),
+    "JUMP_ALIGNMENTS": ("JUMP_ALIGNMENTS", 1, "Float", "Number of jump alignments supporting this CNV", "INFO"),
 }
+
 FILTER_COLUMNS_REGISTRY = ["jalign_filter", "LCR_label_value"]
 JALIGN_FILTER_VALUE = "NO_JUMP_ALIGNMENT"
 FILTER_TAG_REGISTRY = {
@@ -292,6 +304,12 @@ def _add_info_fields_to_record(record: pysam.VariantRecord, fields: dict[str, st
                     record.info[info_field] = float(fields[info_field])
                 elif info_field in ["RoundedCopyNumber"]:
                     record.info[info_field] = int(fields[info_field])
+                elif info_field in ["SVTYPE"]:
+                    record.info[info_field] = fields[info_field]
+                elif INFO_TAG_REGISTRY[info_field][2] == "Integer":
+                    record.info[info_field] = int(fields[info_field])
+                elif INFO_TAG_REGISTRY[info_field][2] == "Float":
+                    record.info[info_field] = float(fields[info_field])
                 else:
                     record.info[info_field] = fields[info_field]
 
