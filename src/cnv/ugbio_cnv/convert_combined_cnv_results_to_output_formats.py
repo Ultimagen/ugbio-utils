@@ -191,13 +191,14 @@ def process_filter_columns(row: pd.Series, filter_tags_registry: dict = FILTER_T
     return "PASS" if len(unique_filters) == 0 else ",".join(sorted(unique_filters))
 
 
-def write_combined_bed(outfile: str, cnv_annotated_bed_file: str) -> pd.DataFrame:
+def write_combined_bed(outfile: str, cnv_annotated_bed_file: str, fasta_index: str) -> pd.DataFrame:
     """
     Write CNV calls from a BED file to another BED file.
     Args:
         outfile (str): Path to the output BED file.
         cnv_annotated_bed_file (str): Path to the input BED file containing combined (cn.mops+cnvpytor) CNV calls
             and annotated with UG-CNV-LCR.
+        fasta_index (str): Path to the reference genome index file (.fai).
     Returns:
         pd.DataFrame: DataFrame containing the CNV data written to the BED file.
     """
@@ -212,7 +213,11 @@ def write_combined_bed(outfile: str, cnv_annotated_bed_file: str) -> pd.DataFram
     df_cnvs["SVLEN"] = df_cnvs["end"] - df_cnvs["start"]
     df_cnvs["SVTYPE"] = df_cnvs["CNV_type"]
     df_cnvs["name"] = df_cnvs.apply(to_bed_name, axis=1)
-    df_cnvs[["chr", "start", "end", "name"]].to_csv(outfile, sep="\t", index=False, header=False)
+    df_cnvs[["chr", "start", "end", "name"]].to_csv(outfile + ".tmp", sep="\t", index=False, header=False)
+    # sort bed file
+    cmd = ["bedtools", "sort", "-faidx", fasta_index, "-i", outfile + ".tmp"]
+    with open(outfile, "w") as bed_out:
+        subprocess.run(cmd, stdout=bed_out, check=True)
     return df_cnvs
 
 
@@ -405,7 +410,7 @@ def run(argv):
         out_directory = ""
     out_vcf_file = pjoin(out_directory, args.sample_name + ".cnv.vcf.gz")
     out_bed_file = pjoin(out_directory, args.sample_name + ".cnv.bed")
-    vcf_ready_df = write_combined_bed(out_bed_file, args.cnv_annotated_bed_file)
+    vcf_ready_df = write_combined_bed(out_bed_file, args.cnv_annotated_bed_file, args.fasta_index_file)
     write_combined_vcf(out_vcf_file, vcf_ready_df, args.sample_name, args.fasta_index_file)
 
     # index outfile

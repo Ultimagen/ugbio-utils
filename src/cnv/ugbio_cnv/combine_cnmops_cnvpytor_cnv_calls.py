@@ -499,6 +499,8 @@ def run(argv):
             {out_cnvs_combined} {sorted_ug_cnv_lcr} > {out_cnvs_combined_annotated}"
         )
 
+        os.unlink(sorted_ug_cnv_lcr)
+
         logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
 
         overlap_filtration_cutoff = 0.5  # 50% overlap with LCR regions
