@@ -130,8 +130,11 @@ class TestConvertCombinedCnvResultsToOutputFormats:
         cnv_annotated_bed_file = pjoin(
             resources_dir, "expected_test_HG002.cnmops_cnvpytor.cnvs.combined.bed.annotate.bed"
         )
+        fasta_index_file = pjoin(resources_dir, "chr19.fasta.fai")
         outfile = pjoin(tmpdir, f"{sample_name}.cnv.bed")
-        _ = convert_combined_cnv_results_to_output_formats.write_combined_bed(outfile, cnv_annotated_bed_file)
+        _ = convert_combined_cnv_results_to_output_formats.write_combined_bed(
+            outfile, cnv_annotated_bed_file, fasta_index_file
+        )
 
         expected_bed_file = pjoin(resources_dir, "expected_test_HG002.cnv.bed")
         with open(expected_bed_file) as f:
