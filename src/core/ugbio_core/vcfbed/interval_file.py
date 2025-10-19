@@ -235,7 +235,7 @@ class IntervalFile:
             Temporary directory settings (True, False, or path string). Default is False.
         """
         self.sp = sp
-        self.temp_manager = TempFileManager(scratchdir)
+        self.temp_manager = TempFileManager(scratchdir=scratchdir)
         self.converter = IntervalFileConverter(sp)
 
         # Initialize state
