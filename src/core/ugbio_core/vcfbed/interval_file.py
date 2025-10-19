@@ -97,20 +97,17 @@ class TempFileManager:
     def cleanup(self):
         """Clean up all temporary files and directories."""
         for file_path in self.files_to_clean:
-            logger.info(f"Cleaning up temporary file/directory: {file_path}")
             path = Path(file_path)
             try:
                 if path.is_file():
                     os.remove(file_path)
             except OSError as e:
                 logger.warning(f"Failed to cleanup {file_path}: {e}")
-                raise RuntimeError(f"Failed to cleanup {file_path}: {e}") from e
             try:
                 if path.is_dir():
                     shutil.rmtree(file_path)
             except OSError as e:
                 logger.warning(f"Failed to cleanup {file_path}: {e}")
-                raise RuntimeError(f"Failed to cleanup {file_path}: {e}") from e
 
 
 class IntervalFileConverter:
