@@ -96,6 +96,7 @@ class TempFileManager:
     def cleanup(self):
         """Clean up all temporary files and directories."""
         for file_path in self.files_to_clean:
+            logger.info(f"Cleaning up temporary file/directory: {file_path}")
             path = Path(file_path)
             try:
                 if path.is_file():
