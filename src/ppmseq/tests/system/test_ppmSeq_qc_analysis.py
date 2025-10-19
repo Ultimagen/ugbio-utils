@@ -115,12 +115,47 @@ def test_ppmseq_analysis_ppmseq_v1_401057001(tmpdir, resources_dir):
     )
 
 
+def test_ppmseq_analysis_ppmseq_v1_new_401057001(tmpdir, resources_dir):
+    trimmer_histogram = [
+        pjoin(
+            resources_dir,
+            "401057001_2025-10",
+            f"op{op}.Z0016-Start_loop_name.Start_loop_sequence_fw.End_loop_name.End_loop_sequence_fw.histogram.csv",
+        )
+        for op in (1, 2)
+    ]
+    print(trimmer_histogram)
+    trimmer_failure_codes = pjoin(
+        resources_dir,
+        "401057001_2025-10",
+        "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT_trimmer-failure_codes.csv",
+    )
+    sorter_csv = pjoin(resources_dir, "401057001_2025-10", "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT.csv")
+    sorter_json = pjoin(resources_dir, "401057001_2025-10", "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT.json")
+
+    ppmSeq_qc_analysis.run(
+        [
+            "ppmSeq_qc_analysis",
+            "--adapter-version",
+            "v1",
+            "--trimmer-histogram-csv",
+            trimmer_histogram[0],
+            trimmer_histogram[1],
+            "--trimmer-failure-codes-csv",
+            trimmer_failure_codes,
+            "--sorter-stats-csv",
+            sorter_csv,
+            "--sorter-stats-json",
+            sorter_json,
+            "--output-path",
+            tmpdir.dirname,
+            "--output-basename",
+            "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT",
+        ]
+    )
+
+
 def test_ppmseq_analysis_ppmseq_v1_new(tmpdir, resources_dir):
-    tmpdir = "/data/tmp/251009/"
-    import os
-
-    os.makedirs(tmpdir, exist_ok=True)
-
     trimmer_histograms = [
         pjoin(
             resources_dir,
@@ -158,11 +193,10 @@ def test_ppmseq_analysis_ppmseq_v1_new(tmpdir, resources_dir):
         "--sorter-stats-json",
         sorter_json,
         "--output-path",
-        tmpdir,
+        tmpdir.dirname,
         "--output-basename",
         "1003416119-L7251-Z0345",
     ]
-    print(" ".join(cmd))
     ppmSeq_qc_analysis.run(cmd)
 
 
