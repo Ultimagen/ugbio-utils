@@ -218,8 +218,9 @@ def test_collect_statistics(tmpdir):
         assert sorted(fh1.keys()) == sorted(fh2.keys())
         keys = fh1.keys()
     for k in keys:
-        x1 = pd.read_hdf(f1, k)
-        x2 = pd.read_hdf(f2, k)
+        # below - removing one changed stat in the output shortlist to keep backward compatibility in the test
+        x1 = pd.read_hdf(f1, k).drop("MIXED_read_mean_coverage", errors="ignore")
+        x2 = pd.read_hdf(f2, k).drop("PCT_MIXED_start_tag", errors="ignore")
         if isinstance(x1, pd.Series):
             assert_series_equal(x1, x2)
         else:
