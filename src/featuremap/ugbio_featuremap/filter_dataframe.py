@@ -33,6 +33,7 @@ KEY_SEED = "seed"
 TYPE_QUALITY = "quality"
 TYPE_REGION = "region"
 TYPE_LABEL = "label"
+TYPE_MAPPING = "mapping"
 TYPE_DOWNSAMPLE = "downsample"
 TYPE_RAW = "raw"
 
@@ -72,8 +73,6 @@ _OPS = {
     "ge": lambda c, v: c >= v,
     "in": lambda c, v: c.is_in(v),
     "not_in": lambda c, v: ~c.is_in(v),
-    "between": lambda c, v: (c >= v[0]) & (c <= v[1]),
-    "regex": lambda c, v: c.str.contains(v),
 }
 
 
@@ -95,7 +94,7 @@ def _validate_filter(rule: dict[str, Any], index: int) -> None:
         raise ValueError(f"Filter {index} has unsupported operator: {rule[KEY_OP]}")
 
     # Check type
-    valid_types = {TYPE_QUALITY, TYPE_REGION, TYPE_LABEL}
+    valid_types = {TYPE_QUALITY, TYPE_REGION, TYPE_MAPPING, TYPE_LABEL}
     if rule[KEY_TYPE] not in valid_types:
         raise ValueError(f"Filter {index} has invalid type '{rule[KEY_TYPE]}'. Must be one of: {valid_types}")
 
@@ -118,29 +117,32 @@ def _validate_downsample(ds: dict[str, Any]) -> None:
         raise ValueError(f"Invalid downsample method: {method}. Must be '{METHOD_HEAD}' or '{METHOD_RANDOM}'")
 
 
+def _try_to_convert_to_number_or_boolean(value: str) -> Any:
+    """Try to convert a string to a boolean, int, or float, otherwise return the original string."""
+    # Handle boolean literals
+    if value in {"true", "True", "TRUE"}:
+        return True
+    if value in {"false", "False", "FALSE"}:
+        return False
+    try:
+        return int(value)
+    except ValueError:
+        try:
+            return float(value)
+        except ValueError:
+            return value
+
+
 def _parse_value_based_on_operation(value_str: str, op: str) -> Any:
     """Parse value string based on the operation type."""
+    # Handle in/not_in
     if op in ["in", "not_in"]:
         # For list operations, split on comma
-        return value_str.split(",")
-    elif op == "between":
-        # For between, expect two values separated by comma
-        value_parts = value_str.split(",")
-        if len(value_parts) != BETWEEN_VALUE_PARTS:
-            raise ValueError(f"Between operation requires exactly {BETWEEN_VALUE_PARTS} values. Got: {value_str}")
-        try:
-            return [float(v) for v in value_parts]
-        except ValueError:
-            return value_parts  # Keep as strings if not numeric
+        return [_try_to_convert_to_number_or_boolean(value) for value in value_str.split(",")]
+    # Handle single values
     else:
         # Try to convert to number, otherwise keep as string
-        try:
-            if "." in value_str:
-                return float(value_str)
-            else:
-                return int(value_str)
-        except ValueError:
-            return value_str
+        return _try_to_convert_to_number_or_boolean(value_str)
 
 
 def _parse_cli_filter(filter_spec: str) -> dict[str, Any]:
@@ -551,7 +553,7 @@ def filter_parquet(
             "filters": [
                 {
                     "field": "column_name",
-                    "op": "operator",  # eq, ne, lt, le, gt, ge, in, not_in, between, regex
+                    "op": "operator",  # eq, ne, lt, le, gt, ge, in, not_in
                     "type": "filter_type",  # quality, region, or label
                     "value": "value_to_compare",  # or "values" for list, or "value_field" for column
                     "name": "optional_filter_name"  # optional custom name
