@@ -80,6 +80,41 @@ def test_ppmseq_analysis_ppmseq_v1(tmpdir, resources_dir):
     )
 
 
+def test_ppmseq_analysis_ppmseq_v1_401057001(tmpdir, resources_dir):
+    trimmer_histogram = pjoin(
+        resources_dir,
+        "401057001",
+        "Z0016-Start_loop_name.Start_loop_pattern_fw.End_loop_name.End_loop_pattern_fw.native_adapter_length.histogram.csv",
+    )
+    trimmer_failure_codes = pjoin(
+        resources_dir,
+        "401057001",
+        "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT_trimmer-failure_codes.csv",
+    )
+    sorter_csv = pjoin(resources_dir, "401057001", "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT.csv")
+    sorter_json = pjoin(resources_dir, "401057001", "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT.json")
+
+    ppmSeq_qc_analysis.run(
+        [
+            "ppmSeq_qc_analysis",
+            "--adapter-version",
+            "v1",
+            "--trimmer-histogram-csv",
+            trimmer_histogram,
+            "--trimmer-failure-codes-csv",
+            trimmer_failure_codes,
+            "--sorter-stats-csv",
+            sorter_csv,
+            "--sorter-stats-json",
+            sorter_json,
+            "--output-path",
+            tmpdir.dirname,
+            "--output-basename",
+            "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT",
+        ]
+    )
+
+
 def test_ppmseq_analysis_ppmseq_v1_new(tmpdir, resources_dir):
     tmpdir = "/data/tmp/251009/"
     import os
