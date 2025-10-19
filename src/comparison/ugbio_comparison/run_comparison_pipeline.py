@@ -219,6 +219,9 @@ def get_parser() -> argparse.ArgumentParser:
     ap_var.add_argument("--is_mutect", help="Are the VCFs output of Mutect (false)", action="store_true")
     ap_var.add_argument("--n_jobs", help="n_jobs of parallel on contigs", type=int, default=-1)
     ap_var.add_argument(
+        "--use_tmpdir", help="Should temporary files be stored in temporary directory", action="store_true"
+    )
+    ap_var.add_argument(
         "--verbosity",
         help="Verbosity: ERROR, WARNING, INFO, DEBUG",
         required=False,
@@ -237,9 +240,15 @@ def run(argv: list[str]):
     vcu = VcfComparisonUtils(sp)
     vu = VcfUtils(sp)
 
-    cmp_intervals = IntervalFile(sp, args.cmp_intervals, args.reference, args.reference_dict)
-    highconf_intervals = IntervalFile(sp, args.highconf_intervals, args.reference, args.reference_dict)
-    runs_intervals = IntervalFile(sp, args.runs_intervals, args.reference, args.reference_dict)
+    cmp_intervals = IntervalFile(
+        sp, args.cmp_intervals, args.reference, args.reference_dict, scratchdir=args.use_tmpdir
+    )
+    highconf_intervals = IntervalFile(
+        sp, args.highconf_intervals, args.reference, args.reference_dict, scratchdir=args.use_tmpdir
+    )
+    runs_intervals = IntervalFile(
+        sp, args.runs_intervals, args.reference, args.reference_dict, scratchdir=args.use_tmpdir
+    )
 
     # intersect intervals and output as a bed file
     if cmp_intervals.is_none():  # interval of highconf_intervals
@@ -343,24 +352,24 @@ def run(argv: list[str]):
         # find columns and set the same header for empty dataframes
         df_columns = None
         for contig in contigs:
-            h5_temp = read_hdf(f"{base_name_outputfile}{contig}.h5", key=contig)
+            h5_temp = read_hdf(f"{base_name_outputfile}{contig}.h5", key=str(contig))
             if h5_temp.shape == (0, 0):  # empty dataframes are dropped to save space
                 continue
             df_columns = pd.DataFrame(columns=h5_temp.columns)
             break
 
         for contig in contigs:
-            h5_temp = read_hdf(f"{base_name_outputfile}{contig}.h5", key=contig)
+            h5_temp = read_hdf(f"{base_name_outputfile}{contig}.h5", key=str(contig))
             if h5_temp.shape == (0, 0):  # empty dataframes get default columns
                 h5_temp = pd.concat((h5_temp, df_columns), axis=1)
-            h5_temp.to_hdf(args.output_file, mode="a", key=contig)
+            h5_temp.to_hdf(args.output_file, mode="a", key=str(contig))
             if contig == args.special_chromosome:
                 h5_temp.to_hdf(args.output_file, mode="a", key="concordance")
             os.remove(f"{base_name_outputfile}{contig}.h5")
 
         write_mode = "w"
         for contig in contigs:
-            annotated_concordance_df = read_hdf(args.output_file, key=contig)
+            annotated_concordance_df = read_hdf(args.output_file, key=str(contig))
             vcftools.bed_files_output(
                 annotated_concordance_df,
                 args.output_file,
