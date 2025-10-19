@@ -33,7 +33,6 @@ class PpmseqAdapterVersions(Enum):
     LEGACY_V5 = "legacy_v5"
     LEGACY_V5_END = "legacy_v5_end"
     V1 = "v1"
-    DMBL = "dmbl"
 
 
 # Trimmer segment labels and tags
@@ -933,52 +932,6 @@ def read_trimmer_failure_codes_ppmseq(trimmer_failure_codes_csv: str):
     return df_trimmer_failure_codes, df_metrics
 
 
-def read_dumbell_leftover_from_trimmer_histogram(trimmer_histogram_extra_csv, *, legacy_histogram_column_names=False):
-    """
-    Read the dumbell leftover stats (constant sequences after trimming) from the trimmer histogram
-
-    Parameters
-    ----------
-    trimmer_histogram_extra_csv : str
-        path to a Trimmer histogram extra file
-    legacy_histogram_column_names : bool, optional
-        use legacy column names without suffixes, by default False
-
-    Returns
-    -------
-    pd.DataFrame
-        dataframe with dumbell leftover stats
-    """
-    df_dumbbell_leftover = pd.read_csv(trimmer_histogram_extra_csv)
-    expected_columns = [DUMBBELL_LEFTOVER_START_MATCH, HistogramColumnNames.COUNT.value]
-    if not legacy_histogram_column_names:
-        df_dumbbell_leftover = df_dumbbell_leftover.rename(
-            columns={c + TrimmerHistogramSuffixes.MATCH.value: c for c in expected_columns}
-        )
-    if df_dumbbell_leftover.columns.tolist() != expected_columns:
-        raise ValueError(f"Unexpected columns {df_dumbbell_leftover.columns.tolist()}, expected {expected_columns}")
-    dumbbell_leftover_start_found = "dumbbell_leftover_start_found"
-    df_dumbbell_leftover = df_dumbbell_leftover.assign(
-        **{dumbbell_leftover_start_found: df_dumbbell_leftover[DUMBBELL_LEFTOVER_START_MATCH].notna()},
-    )
-    df_dumbbell_leftover = (
-        100
-        * df_dumbbell_leftover.groupby([dumbbell_leftover_start_found]).agg({HistogramColumnNames.COUNT.value: "sum"})
-        / df_dumbbell_leftover[HistogramColumnNames.COUNT.value].sum()
-    ).rename(columns={HistogramColumnNames.COUNT.value: "value"})
-    df_dumbbell_leftover = (
-        df_dumbbell_leftover.reindex([True])
-        .fillna(0)
-        .assign(
-            metric=[
-                "PCT_Dumbbell_leftover_in_read_start",
-            ]
-        )
-        .set_index("metric")
-    )
-    return df_dumbbell_leftover
-
-
 def collect_statistics(
     adapter_version: str | PpmseqAdapterVersions,
     trimmer_histogram_csv: str,
@@ -1064,21 +1017,6 @@ def collect_statistics(
         )
         df_stats_shortlist = pd.concat((df_stats_shortlist, df_failure_codes_metrics["value"]))
 
-    is_v7_dumbell = (
-        adapter_version
-        in (
-            PpmseqAdapterVersions.DMBL,
-            PpmseqAdapterVersions.DMBL.value,
-        )
-        and trimmer_histogram_extra_csv
-    )
-    if is_v7_dumbell:
-        df_dumbell_leftover = read_dumbell_leftover_from_trimmer_histogram(
-            trimmer_histogram_extra_csv,
-            legacy_histogram_column_names=legacy_histogram_column_names,
-        )
-        df_stats_shortlist = pd.concat((df_stats_shortlist, df_dumbell_leftover))
-
     # save
     if not output_filename.endswith(".h5"):
         output_filename += ".h5"
@@ -1104,9 +1042,6 @@ def collect_statistics(
         if trimmer_failure_codes_csv:
             store["trimmer_failure_codes"] = df_trimmer_failure_codes
             keys_to_convert += ["trimmer_failure_codes"]
-        if is_v7_dumbell and trimmer_failure_codes_csv:
-            store["failure_codes_metrics"] = df_failure_codes_metrics
-            keys_to_convert += ["failure_codes_metrics"]
         store["keys_to_convert"] = pd.Series(keys_to_convert)
 
 
