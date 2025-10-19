@@ -135,7 +135,7 @@ def get_parser() -> argparse.ArgumentParser:
     ap_var.add_argument("--reference", help="Reference genome", required=True, type=str)
     ap_var.add_argument("--reference_dict", help="Reference genome dictionary", required=False, type=str)
     ap_var.add_argument(
-        "--sdf_index",
+        "--reference_sdf",
         help="VCFEVAL SDF index for the reference genome, in case difference from reference.sdf",
         required=False,
         type=str,
@@ -271,7 +271,7 @@ def run(argv: list[str]):
         cmp_intervals=cmp_intervals,
         highconf_intervals=highconf_intervals,
         ref_genome=args.reference,
-        sdf_index=args.sdf_index,
+        sdf_index=args.reference_sdf,
         call_sample=args.call_sample_name,
         truth_sample=args.truth_sample_name,
         output_file_name=args.output_file,
