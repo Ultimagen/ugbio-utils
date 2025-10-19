@@ -136,7 +136,7 @@ def get_parser() -> argparse.ArgumentParser:
     ap_var.add_argument("--reference_dict", help="Reference genome dictionary", required=False, type=str)
     ap_var.add_argument(
         "--sdf_index",
-        "VCFEVAL SDF index for the reference genome, in case difference from reference.sdf",
+        help="VCFEVAL SDF index for the reference genome, in case difference from reference.sdf",
         required=False,
         type=str,
         default=None,
