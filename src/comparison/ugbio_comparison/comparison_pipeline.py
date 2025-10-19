@@ -30,6 +30,7 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
         call_sample: str,
         truth_sample: str,
         output_file_name: str,
+        sdf_index: str | None = None,
         header: str | None = None,
         output_suffix: str | None = None,
         *,
@@ -56,8 +57,10 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
             interval_list file over which to do comparison (e.g. chr9)
         highconf_intervals : IntervalFile
             high confidence intervals for the ground truth
-        ref_genome : str, optional
+        ref_genome : str
             Reference genome FASTA
+        sdf_index : str, optional
+            VCFEVAL SDF index for the reference genome. If None, will use ref_genome + ".sdf"
         call_sample : str, optional
             Name of the calls sample
         truth_sample : str, optional
@@ -84,6 +87,7 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
         self.truth_file = truth_file
         self.cmp_intervals = cmp_intervals
         self.ref_genome = ref_genome
+        self.sdf_index = sdf_index
         self.highconf_intervals = highconf_intervals
         self.call_sample = call_sample
         self.truth_sample = truth_sample
@@ -115,8 +119,9 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
             truth_file=self.truth_file,
             output_prefix=self.output_prefix,
             ref_genome=self.ref_genome,
-            evaluation_regions=self.highconf_intervals.as_bed_file(),
-            comparison_intervals=self.cmp_intervals.as_bed_file(),
+            sdf_index=self.sdf_index,
+            evaluation_regions=str(self.highconf_intervals.as_bed_file()),
+            comparison_intervals=str(self.cmp_intervals.as_bed_file()),
             input_sample=self.call_sample,
             truth_sample=self.truth_sample,
             ignore_filter=self.ignore_filter,
@@ -126,13 +131,13 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
 
         high_conf_calls_vcf = select_intervals_fn.replace("vcf.gz", "highconf.vcf.gz")
         self.vu.intersect_with_intervals(
-            select_intervals_fn, self.highconf_intervals.as_interval_list_file(), high_conf_calls_vcf
+            select_intervals_fn, str(self.highconf_intervals.as_interval_list_file()), high_conf_calls_vcf
         )
 
         high_conf_concordance_vcf = annotated_concordance_vcf.replace("vcf.gz", "highconf.vcf.gz")
 
         self.vu.intersect_with_intervals(
-            annotated_concordance_vcf, self.highconf_intervals.as_interval_list_file(), high_conf_concordance_vcf
+            annotated_concordance_vcf, str(self.highconf_intervals.as_interval_list_file()), high_conf_concordance_vcf
         )
         return high_conf_calls_vcf, high_conf_concordance_vcf
 
@@ -165,7 +170,9 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
     def __select_comparison_intervals(self, revert_fn):
         select_intervals_fn = pjoin(self.output_dir, self.input_prefix_basename + f"{self.output_suffix}.intsct.vcf.gz")
         if not self.cmp_intervals.is_none():
-            self.vu.intersect_with_intervals(revert_fn, self.cmp_intervals.as_interval_list_file(), select_intervals_fn)
+            self.vu.intersect_with_intervals(
+                revert_fn, str(self.cmp_intervals.as_interval_list_file()), select_intervals_fn
+            )
         else:
             shutil.copy(revert_fn, select_intervals_fn)
             self.vu.index_vcf(select_intervals_fn)

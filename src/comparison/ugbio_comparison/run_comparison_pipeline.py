@@ -135,6 +135,13 @@ def get_parser() -> argparse.ArgumentParser:
     ap_var.add_argument("--reference", help="Reference genome", required=True, type=str)
     ap_var.add_argument("--reference_dict", help="Reference genome dictionary", required=False, type=str)
     ap_var.add_argument(
+        "--sdf_index",
+        "VCFEVAL SDF index for the reference genome, in case difference from reference.sdf",
+        required=False,
+        type=str,
+        default=None,
+    )
+    ap_var.add_argument(
         "--coverage_bw_high_quality",
         help="BigWig file with coverage only on high mapq reads",
         required=False,
@@ -237,9 +244,11 @@ def run(argv: list[str]):
     # intersect intervals and output as a bed file
     if cmp_intervals.is_none():  # interval of highconf_intervals
         logger.info(f"copy {args.highconf_intervals} to {args.output_interval}")
-        copyfile(highconf_intervals.as_bed_file(), args.output_interval)
+        copyfile(str(highconf_intervals.as_bed_file()), args.output_interval)
     else:
-        vu.intersect_bed_files(cmp_intervals.as_bed_file(), highconf_intervals.as_bed_file(), args.output_interval)
+        vu.intersect_bed_files(
+            str(cmp_intervals.as_bed_file()), str(highconf_intervals.as_bed_file()), args.output_interval
+        )
 
     args_dict = {k: str(vars(args)[k]) for k in vars(args)}
     pd.DataFrame(args_dict, index=[0]).to_hdf(args.output_file, key="input_args")
@@ -253,6 +262,7 @@ def run(argv: list[str]):
         cmp_intervals=cmp_intervals,
         highconf_intervals=highconf_intervals,
         ref_genome=args.reference,
+        sdf_index=args.sdf_index,
         call_sample=args.call_sample_name,
         truth_sample=args.truth_sample_name,
         output_file_name=args.output_file,
