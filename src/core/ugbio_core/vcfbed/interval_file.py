@@ -56,7 +56,6 @@ class TempFileManager:
             self.files_to_clean.append(tmpdir)
             return tmpdir
         elif isinstance(scratchdir, str):
-            self.files_to_clean.append(scratchdir)
             return scratchdir
         return None
 
@@ -78,8 +77,9 @@ class TempFileManager:
             return source_path
 
         dest_path = os.path.join(self.tmpdir, os.path.basename(source_path))
-        shutil.copyfile(source_path, dest_path)
-        self.files_to_clean.append(dest_path)
+        if not os.path.exists(dest_path):
+            shutil.copyfile(source_path, dest_path)
+            self.add_file_to_clean(dest_path)
         return dest_path
 
     def add_file_to_clean(self, file_path: str):
@@ -91,7 +91,8 @@ class TempFileManager:
         file_path : str
             Path to file that should be cleaned up later.
         """
-        self.files_to_clean.append(file_path)
+        if file_path not in self.files_to_clean:
+            self.files_to_clean.append(file_path)
 
     def cleanup(self):
         """Clean up all temporary files and directories."""
@@ -101,10 +102,15 @@ class TempFileManager:
             try:
                 if path.is_file():
                     os.remove(file_path)
-                elif path.is_dir():
+            except OSError as e:
+                logger.warning(f"Failed to cleanup {file_path}: {e}")
+                raise RuntimeError(f"Failed to cleanup {file_path}: {e}") from e
+            try:
+                if path.is_dir():
                     shutil.rmtree(file_path)
             except OSError as e:
                 logger.warning(f"Failed to cleanup {file_path}: {e}")
+                raise RuntimeError(f"Failed to cleanup {file_path}: {e}") from e
 
 
 class IntervalFileConverter:
