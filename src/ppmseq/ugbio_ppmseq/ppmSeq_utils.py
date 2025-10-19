@@ -95,6 +95,8 @@ class HistogramColumnNames(Enum):
     STRAND_RATIO_CATEGORY_CONSENSUS = "strand_ratio_category_consensus"
     LOOP_SEQUENCE_START = "loop_sequence_start"
     LOOP_SEQUENCE_END = "loop_sequence_end"
+    START_LOOP_SEQUENCE_FW = "Start_loop_sequence_fw"
+    END_LOOP_SEQUENCE_FW = "End_loop_sequence_fw"
     DUMBBELL_LEFTOVER_START = "Dumbbell_leftover_start"
     ST = "st"  # STRAND_RATIO_CATEGORY_START in ppmSeq V1
     ET = "et"  # STRAND_RATIO_CATEGORY_END in ppmSeq V1
@@ -446,7 +448,9 @@ def read_ppmseq_trimmer_histogram(  # noqa: C901,PLR0912 #TODO: refactor
         if TrimmerSegmentLabels.NATIVE_ADAPTER.value + length_suffix in df_trimmer_histogram.columns:
             is_end_reached = df_trimmer_histogram[TrimmerSegmentLabels.NATIVE_ADAPTER.value + length_suffix] >= 1
         elif TrimmerSegmentLabels.STEM_END.value + length_suffix in df_trimmer_histogram.columns:
-            is_end_reached = df_trimmer_histogram[TrimmerSegmentLabels.STEM_END.value + length_suffix]
+            is_end_reached = (
+                df_trimmer_histogram[TrimmerSegmentLabels.STEM_END.value + length_suffix] >= min_stem_end_matched_length
+            )
         else:
             is_end_reached = df_trimmer_histogram[HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value].notna()
 
@@ -1603,8 +1607,12 @@ def plot_trimmer_histogram(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
         for m, (loop, loop_category, flow_order, append_base) in enumerate(
             zip(
                 (
-                    HistogramColumnNames.LOOP_SEQUENCE_START.value,
-                    HistogramColumnNames.LOOP_SEQUENCE_END.value,
+                    HistogramColumnNames.LOOP_SEQUENCE_START.value
+                    if HistogramColumnNames.LOOP_SEQUENCE_START.value in df_trimmer_histogram
+                    else HistogramColumnNames.START_LOOP_SEQUENCE_FW.value,
+                    HistogramColumnNames.LOOP_SEQUENCE_END.value
+                    if HistogramColumnNames.LOOP_SEQUENCE_END.value in df_trimmer_histogram
+                    else HistogramColumnNames.END_LOOP_SEQUENCE_FW.value,
                 ),
                 (
                     HistogramColumnNames.STRAND_RATIO_CATEGORY_START.value,

@@ -1,0 +1,7 @@
+read group,code,format,segment,reason,failed read count,total read count
+Z0016,2,ppmSeq,leading_C_and_buffer,sequence was too long,184576,909992252
+Z0016,8,ppmSeq,leading_C_and_buffer,rsq file,121738042,909992252
+Z0016,101,ppmSeq,Start_loop,sequence was too short,36919,909992252
+Z0016,203,ppmSeq,Stem_start,no match,761651,909992252
+Z0016,301,ppmSeq,insert,sequence was too short,7542420,909992252
+Z0016,502,ppmSeq,End_loop,sequence was too long,1170792,909992252
