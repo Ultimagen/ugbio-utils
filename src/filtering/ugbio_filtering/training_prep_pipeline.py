@@ -43,6 +43,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap_var.add_argument(
         "--reference", help="Reference file prefix. Requires .fai,and .sdf folder", type=str, required=False
     )
+    ap_var.add_argument(
+        "--reference_sdf",
+        help="Reference SDF folder. If not provided, will use <reference>.sdf",
+        type=str,
+        required=False,
+    )
     ap_var.add_argument("--hcr", help="High confidence regions BED file", type=str, required=False)
     ap_var.add_argument(
         "--custom_annotations",
@@ -100,6 +106,7 @@ def handle_exact_gt(args: argparse.Namespace):
         args.base_vcf,
         args.hcr,
         args.reference,
+        args.reference_sdf,
         args.output_prefix + ".h5",
         args.contigs_to_read,
         args.contig_for_test,

@@ -12,7 +12,7 @@ import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
 from ugbio_core.logger import logger
-from ugbio_core.pileuptofreq import create_frequncies_from_pileup
+from ugbio_core.pileup_utils import create_frequencies_from_pileup
 
 warnings.filterwarnings("ignore")
 
@@ -25,7 +25,7 @@ def mpileup_to_freq(pileup_file, outfile):
     Convert mpileup file to frequencies counts
     """
     # mpileup to frequencies counts
-    df_freq = create_frequncies_from_pileup(pileup_file)
+    df_freq = create_frequencies_from_pileup(pileup_file)
     print(df_freq.head(10))
     # consider SNPs only
     pattern = "|".join([re.escape(sub) for sub in ["Deletion", "+", "-"]])

@@ -4,9 +4,10 @@ import shutil
 from os.path import basename, dirname, splitext
 from os.path import join as pjoin
 
+from ugbio_core.vcf_utils import VcfUtils
 from ugbio_core.vcfbed.interval_file import IntervalFile
 
-from ugbio_comparison.vcf_pipeline_utils import VcfPipelineUtils
+from ugbio_comparison.vcf_comparison_utils import VcfComparisonUtils
 
 
 class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
@@ -18,7 +19,8 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
     # pylint: disable=too-many-arguments
     def __init__(  # noqa: PLR0913
         self,
-        vpu: VcfPipelineUtils,
+        vcu: VcfComparisonUtils,
+        vu: VcfUtils,
         n_parts: int,
         input_prefix: str,
         truth_file: str,
@@ -28,6 +30,7 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
         call_sample: str,
         truth_sample: str,
         output_file_name: str,
+        sdf_index: str | None = None,
         header: str | None = None,
         output_suffix: str | None = None,
         *,
@@ -37,8 +40,10 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
         """
         Parameters
         ----------
-        vpu: VcfPipelineUtils
-            VcfPipelineUtils object for executing common functions via unix shell
+        vcu: VcfComparisonUtils
+            VcfComparisonUtils object for executing common functions via unix shell
+        vu: VcfUtils
+            VcfUtils object for VCF utility functions
         n_parts : int
             For input VCF split into number of parts - specifiy the number of parts. Specify
             zero for complete VCF
@@ -52,8 +57,10 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
             interval_list file over which to do comparison (e.g. chr9)
         highconf_intervals : IntervalFile
             high confidence intervals for the ground truth
-        ref_genome : str, optional
+        ref_genome : str
             Reference genome FASTA
+        sdf_index : str, optional
+            VCFEVAL SDF index for the reference genome. If None, will use ref_genome + ".sdf"
         call_sample : str, optional
             Name of the calls sample
         truth_sample : str, optional
@@ -73,12 +80,14 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
         revert_hom_ref : bool, optional
             Should the hom ref calls filtered out be reverted (deepVariant only)
         """
-        self.vpu = vpu
+        self.vcu = vcu
+        self.vu = vu
         self.n_parts = n_parts
         self.input_prefix = input_prefix
         self.truth_file = truth_file
         self.cmp_intervals = cmp_intervals
         self.ref_genome = ref_genome
+        self.sdf_index = sdf_index
         self.highconf_intervals = highconf_intervals
         self.call_sample = call_sample
         self.truth_sample = truth_sample
@@ -105,36 +114,37 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
         revert_fn = self.__revert_hom_ref(reheader_fn)
         select_intervals_fn = self.__select_comparison_intervals(revert_fn)
 
-        concordance_vcf = self.vpu.run_vcfeval_concordance(
+        concordance_vcf = self.vcu.run_vcfeval_concordance(
             input_file=select_intervals_fn,
             truth_file=self.truth_file,
             output_prefix=self.output_prefix,
             ref_genome=self.ref_genome,
-            evaluation_regions=self.highconf_intervals.as_bed_file(),
+            sdf_index=self.sdf_index,
+            evaluation_regions=str(self.highconf_intervals.as_bed_file()),
             comparison_intervals=self.cmp_intervals.as_bed_file(),
             input_sample=self.call_sample,
             truth_sample=self.truth_sample,
             ignore_filter=self.ignore_filter,
             mode="combine",
         )
-        annotated_concordance_vcf = self.vpu.annotate_tandem_repeats(concordance_vcf, self.ref_genome)
+        annotated_concordance_vcf = self.vu.annotate_tandem_repeats(concordance_vcf, self.ref_genome)
 
         high_conf_calls_vcf = select_intervals_fn.replace("vcf.gz", "highconf.vcf.gz")
-        self.vpu.intersect_with_intervals(
-            select_intervals_fn, self.highconf_intervals.as_interval_list_file(), high_conf_calls_vcf
+        self.vu.intersect_with_intervals(
+            select_intervals_fn, str(self.highconf_intervals.as_interval_list_file()), high_conf_calls_vcf
         )
 
         high_conf_concordance_vcf = annotated_concordance_vcf.replace("vcf.gz", "highconf.vcf.gz")
 
-        self.vpu.intersect_with_intervals(
-            annotated_concordance_vcf, self.highconf_intervals.as_interval_list_file(), high_conf_concordance_vcf
+        self.vu.intersect_with_intervals(
+            annotated_concordance_vcf, str(self.highconf_intervals.as_interval_list_file()), high_conf_concordance_vcf
         )
         return high_conf_calls_vcf, high_conf_concordance_vcf
 
     def __combine_vcf(self):
         output_fn = pjoin(self.output_dir, self.input_prefix_basename + f"{self.output_suffix}.vcf.gz")
         if self.n_parts > 0:
-            self.vpu.combine_vcf(self.n_parts, self.input_prefix, output_fn)
+            self.vu.combine_vcf(self.n_parts, self.input_prefix, output_fn)
         else:
             output_fn = self.input_prefix + ".vcf.gz"
         return output_fn
@@ -142,7 +152,7 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
     def __reheader_vcf(self, output_fn):
         reheader_fn = pjoin(self.output_dir, self.input_prefix_basename + f"{self.output_suffix}.rhdr.vcf.gz")
         if self.header is not None:
-            self.vpu.reheader_vcf(output_fn, self.header, reheader_fn)
+            self.vu.reheader_vcf(output_fn, self.header, reheader_fn)
         else:
             shutil.copy(output_fn, reheader_fn)
             shutil.copy(".".join((output_fn, "tbi")), ".".join((reheader_fn, "tbi")))
@@ -151,7 +161,7 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
     def __revert_hom_ref(self, reheader_fn):
         revert_fn = pjoin(self.output_dir, self.input_prefix_basename + f"{self.output_suffix}.rev.hom.ref.vcf.gz")
         if self.revert_hom_ref:
-            self.vpu.transform_hom_calls_to_het_calls(reheader_fn, revert_fn)
+            self.vcu.transform_hom_calls_to_het_calls(reheader_fn, revert_fn)
         else:
             shutil.copy(reheader_fn, revert_fn)
             shutil.copy(".".join((reheader_fn, "tbi")), ".".join((revert_fn, "tbi")))
@@ -160,10 +170,10 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
     def __select_comparison_intervals(self, revert_fn):
         select_intervals_fn = pjoin(self.output_dir, self.input_prefix_basename + f"{self.output_suffix}.intsct.vcf.gz")
         if not self.cmp_intervals.is_none():
-            self.vpu.intersect_with_intervals(
-                revert_fn, self.cmp_intervals.as_interval_list_file(), select_intervals_fn
+            self.vu.intersect_with_intervals(
+                revert_fn, str(self.cmp_intervals.as_interval_list_file()), select_intervals_fn
             )
         else:
             shutil.copy(revert_fn, select_intervals_fn)
-            self.vpu.index_vcf(select_intervals_fn)
+            self.vu.index_vcf(select_intervals_fn)
         return select_intervals_fn

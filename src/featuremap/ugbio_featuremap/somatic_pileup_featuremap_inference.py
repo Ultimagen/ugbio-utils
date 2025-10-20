@@ -1,11 +1,27 @@
+#!/env/python
+# Copyright 2023 Ultima Genomics Inc.
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#        http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.
+# DESCRIPTION
+#    Run somatic pileup featuremap inference using an input somatic featuremap pileup VCF file
+#    and a pre-trained XGBoost model.
+# CHANGELOG in reverse chronological order
+
 import argparse
 import logging
 import os
 import re
-import subprocess
 import sys
-import tempfile
-from os.path import basename, dirname
 from os.path import join as pjoin
 
 import numpy as np
@@ -13,11 +29,13 @@ import pandas as pd
 import pysam
 import xgboost
 from ugbio_core.logger import logger
+from ugbio_core.vcf_utils import VcfUtils
 from ugbio_core.vcfbed import vcftools
 
 from ugbio_featuremap import featuremap_xgb_prediction
 
 TR_CUSTOM_INFO_FIELDS = ["TR_distance", "TR_length", "TR_seq_unit_length"]
+vu = VcfUtils()
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
@@ -38,7 +56,7 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         prog="somatic_pileup_featuremap_inference.py",
         description=(
             "Run somatic pileup featuremap inference using an input somatic featuremap pileup "
-            "vcf file and XGBoost model."
+            "VCF file and a pretrained XGBoost model."
         ),
     )
     parser.add_argument(
@@ -61,6 +79,62 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         default=".",
     )
     return parser.parse_args(argv[1:])
+
+
+def parse_padding_ref_counts(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Parse the padding ref counts from the DataFrame and create new columns for each padding position.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame containing the 't_ref_counts_pm_*' and 'n_ref_counts_pm_*' columns.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with new columns for each padding position added.
+    """
+    # Identify the padding ref count columns
+    # Find columns matching the padding ref count pattern
+    ref_count_pattern = re.compile(r"^(ref|nonref)_counts_pm_(\d+)$")
+    padding_columns = [col for col in df.columns if ref_count_pattern.match(col)]
+
+    if not padding_columns:
+        raise ValueError("No padding ref count columns found in DataFrame")
+
+    # Extract the distance from center (should be the same for all columns)
+    match = ref_count_pattern.match(padding_columns[0])
+    distance_from_center = int(match.group(2))
+
+    # Verify all columns have the same padding distance
+    for col in padding_columns:
+        match = ref_count_pattern.match(col)
+        if match and int(match.group(2)) != distance_from_center:
+            raise ValueError(f"Inconsistent padding distances found: {distance_from_center} vs {match.group(2)}")
+    # Create new column-name for each padding position
+    ref_colnames = []
+    nonref_colnames = []
+    for loc in np.arange(-distance_from_center, distance_from_center + 1, 1):
+        if loc < 0:
+            ref_colnames.append(f"ref_m{abs(loc)}")
+            nonref_colnames.append(f"nonref_m{abs(loc)}")
+        else:
+            ref_colnames.append(f"ref_{loc}")
+            nonref_colnames.append(f"nonref_{loc}")
+
+    # Split the lists in the original columns into separate columns
+    ref_colname = f"ref_counts_pm_{distance_from_center}"
+    split_df = pd.DataFrame(df[ref_colname].tolist(), columns=ref_colnames)
+    for new_col in split_df.columns:
+        df[new_col] = split_df[new_col].values  # noqa: PD011
+
+    nonref_colname = f"nonref_counts_pm_{distance_from_center}"
+    split_df = pd.DataFrame(df[nonref_colname].tolist(), columns=nonref_colnames)
+    for new_col in split_df.columns:
+        df[new_col] = split_df[new_col].values  # noqa: PD011
+
+    return df
 
 
 def read_merged_tumor_normal_vcf(
@@ -88,10 +162,9 @@ def read_merged_tumor_normal_vcf(
         df_tumor = vcftools.get_vcf_df(vcf_file, sample_id=0, custom_info_fields=custom_info_fields)
         df_normal = vcftools.get_vcf_df(vcf_file, sample_id=1, custom_info_fields=custom_info_fields)
 
-    # fillna
-    if fillna_dict:
-        df_tumor = df_tumor.fillna(fillna_dict)
-        df_normal = df_normal.fillna(fillna_dict)
+    # parse padding ref counts into separate columns
+    df_tumor = parse_padding_ref_counts(df_tumor)
+    df_normal = parse_padding_ref_counts(df_normal)
 
     # merge dataframes
     df_tumor_normal = pd.concat([df_tumor.add_prefix("t_"), df_normal.add_prefix("n_")], axis=1)
@@ -190,12 +263,27 @@ def map_fields_to_vcf(vcf_path, lowercase_fields):
         result[lf_sub] = lookup.get(lf_sub, None)  # None if not found
         custom_info_fields.append(result[lf_sub])
 
+    ### Add padding ref counts fields if a distance was found
+    # find padding value
+    distance_from_center = None
+    for field in format_fields:
+        match = re.match(r"^(ref|nonref)_counts_pm_(\d+)$", field)
+        if match:
+            distance_from_center = match.group(2)
+            break
+    # Add padding ref counts fields if a distance was found
+    if distance_from_center is not None:
+        for prefix in ("ref", "nonref"):
+            field_name = f"{prefix}_counts_pm_{distance_from_center}"
+            if field_name not in custom_info_fields:
+                custom_info_fields.append(field_name)
+
     return result, custom_info_fields
 
 
 def annotate_xgb_proba_to_vcf(df_sfmp: pd.DataFrame, in_sfmp_vcf: str, out_vcf: str) -> None:
     """
-    Annotate the VCF file with XGBoost probabilities.
+    Annotate the VCF file with XGBoost probabilities using pysam only, memory-efficiently.
 
     Parameters
     ----------
@@ -210,50 +298,42 @@ def annotate_xgb_proba_to_vcf(df_sfmp: pd.DataFrame, in_sfmp_vcf: str, out_vcf: 
     -------
     None
     """
-    # Prepare the DataFrame for annotation
-    tsv_df = df_sfmp[["t_chrom", "t_pos", "t_ref", "t_alt_allele", "xgb_proba"]].copy()
-    tsv_df.columns = ["#CHROM", "POS", "REF", "ALT", "xgb_proba"]
+    # Serially walk both VCF and DataFrame, adding INFO only when variant matches
+    # Build an iterator over the DataFrame, sorted by chrom, pos, ref, alt
+    df_sorted = df_sfmp.sort_values(["t_chrom", "t_pos", "t_ref", "t_alt_allele"]).reset_index(drop=True)
+    df_iter = df_sorted.itertuples(index=False)
+    try:
+        df_row = next(df_iter)
+    except StopIteration:
+        df_row = None
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".tsv", delete=False) as tmp_tsv:
-        tsv_path = tmp_tsv.name
-        tsv_df.to_csv(tmp_tsv, sep="\t", index=False, float_format="%.15f")
-        cmd = ["sort", "-k1,1", "-k2,2n", tsv_path]
-        sorted_tsv = pjoin(dirname(tsv_path), "sorted_" + basename(tsv_path))
-        with open(sorted_tsv, "w") as out_file:
-            subprocess.check_call(cmd, stdout=out_file)
-        gz_tsv = sorted_tsv + ".gz"
-        cmd = ["bgzip", "-c", sorted_tsv]
-        with open(gz_tsv, "wb") as out_file:
-            subprocess.check_call(cmd, stdout=out_file)
-        cmd = ["tabix", "-s", "1", "-b", "2", "-e", "2", gz_tsv]
-        subprocess.check_call(cmd)
-
-    # Create a temporary header file for the new INFO field
-    header_line = '##INFO=<ID=xgb_proba,Number=1,Type=Float,Description="XGBoost probability">\n'
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".hdr", delete=False) as tmp_hdr:
-        hdr_path = tmp_hdr.name
-        tmp_hdr.write(header_line)
-
-    # Annotate using bcftools
-    cmd = [
-        "bcftools",
-        "annotate",
-        "-a",
-        gz_tsv,
-        "-c",
-        "CHROM,POS,REF,ALT,xgb_proba",
-        "-h",
-        hdr_path,
-        "-o",
-        out_vcf,
-        "-O",
-        "z",
-        in_sfmp_vcf,
-    ]
-    logger.debug(f"Running command: {' '.join(cmd)}")
-    subprocess.run(cmd, check=True)
-    # Index the output VCF
-    subprocess.run(["bcftools", "index", "-t", out_vcf], check=True)  # noqa: S607
+    with pysam.VariantFile(in_sfmp_vcf) as invcf:
+        new_header = invcf.header.copy()
+        if "xgb_proba" not in new_header.info:
+            new_header.add_line('##INFO=<ID=xgb_proba,Number=1,Type=Float,Description="XGBoost probability">')
+        with pysam.VariantFile(out_vcf, "wz", header=new_header) as outvcf:
+            for rec in invcf:
+                # Advance df_row until it matches or passes the VCF record
+                new_record = VcfUtils.copy_vcf_record(rec, new_header)
+                while df_row is not None:
+                    df_key = (str(df_row.t_chrom), int(df_row.t_pos), str(df_row.t_ref), str(df_row.t_alt_allele))
+                    vcf_key = (str(rec.chrom), int(rec.pos), str(rec.ref), str(rec.alts[0]) if rec.alts else None)
+                    if df_key < vcf_key:
+                        try:
+                            df_row = next(df_iter)
+                        except StopIteration:
+                            df_row = None
+                    elif df_key == vcf_key:
+                        new_record.info["xgb_proba"] = round(float(df_row.xgb_proba), 10)
+                        try:
+                            df_row = next(df_iter)
+                        except StopIteration:
+                            df_row = None
+                        break
+                    else:
+                        break
+                outvcf.write(new_record)
+    vu.index_vcf(out_vcf)
 
 
 def run(argv):

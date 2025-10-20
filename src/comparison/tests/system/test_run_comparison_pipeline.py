@@ -36,6 +36,7 @@ class TestRunComparisonPipeline:
                 f"{resources_dir}/HG004_GRCh38_GIAB_1_22_v4.2.1_benchmark.broad-header.chr1_1_1000000.vcf.gz",
                 "--highconf_intervals",
                 f"{resources_dir}/HG004_GRCh38_GIAB_1_22_v4.2.1_benchmark_noinconsistent.chr1_1_1000000.bed",
+                "--use_tmpdir",
                 "--runs_intervals",
                 f"{general_inputs_dir}/hg38_runs.conservative.bed",
                 "--reference",

@@ -10,9 +10,8 @@ import pandas as pd
 from simppl.simple_pipeline import SimplePipeline
 from ugbio_core.exec_utils import print_and_execute
 from ugbio_core.logger import logger
+from ugbio_core.vcf_utils import VcfUtils
 from ugbio_core.vcfbed import vcftools
-
-from ugbio_comparison.vcf_pipeline_utils import VcfPipelineUtils
 
 
 class SVComparison:
@@ -29,7 +28,7 @@ class SVComparison:
             Optional SimplePipeline object for executing shell commands
         """
         self.sp = simple_pipeline
-        self.vpu = VcfPipelineUtils(self.sp)
+        self.vu = VcfUtils(self.sp)
         if logger is None:
             self.logger = logging.getLogger(__name__)
         else:
@@ -253,12 +252,12 @@ class SVComparison:
         calls_fn = calls_fn.replace(".vcf.gz", "_collapsed.vcf.gz")
         tmpfiles_to_move.append(calls_fn)
 
-        self.vpu.sort_vcf(calls_fn, calls_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz"))
+        self.vu.sort_vcf(calls_fn, calls_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz"))
         calls_fn = calls_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz")
         tmpfiles_to_move.append(calls_fn)
         tmpfiles_to_move.append(calls_fn + ".tbi")
 
-        self.vpu.index_vcf(calls_fn)
+        self.vu.index_vcf(calls_fn)
 
         gt_fn = gt
 
@@ -271,11 +270,11 @@ class SVComparison:
         )
         gt_fn = gt_fn.replace(".vcf.gz", "_collapsed.vcf.gz")
         tmpfiles_to_move.append(gt_fn)
-        self.vpu.sort_vcf(gt_fn, gt_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz"))
+        self.vu.sort_vcf(gt_fn, gt_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz"))
         gt_fn = gt_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz")
         tmpfiles_to_move.append(gt_fn)
         tmpfiles_to_move.append(gt_fn + ".tbi")
-        self.vpu.index_vcf(gt_fn)
+        self.vu.index_vcf(gt_fn)
 
         self.run_truvari(
             calls=calls_fn,
