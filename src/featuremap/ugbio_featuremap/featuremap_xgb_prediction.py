@@ -164,7 +164,7 @@ def record_manual_aggregation(rec, xgb_model=None):  # noqa: C901
             [
                 1
                 for i, j in zip(record_info_dict["st"], record_info_dict["et"], strict=False)
-                if (i == j) & (i == "MIXED")
+                if (i == j) & (i.upper() == "MIXED")
             ]
         )
         for colname in columns_for_st_et_aggregation:
@@ -213,7 +213,7 @@ def df_vcf_manual_aggregation(df_variants, xgb_model=None):  # noqa: C901
             st, et = row["st"], row["et"]
             st_list = st.split("|")
             et_list = et.split("|")
-            sum_value = sum(1 for i, j in zip(st_list, et_list, strict=False) if (i == j) & (i == "MIXED"))
+            sum_value = sum(1 for i, j in zip(st_list, et_list, strict=False) if (i == j) & (i.upper() == "MIXED"))
             num_mixed.append(sum_value)
         df["num_mixed_reads"] = num_mixed
         return df
