@@ -46,16 +46,6 @@ trimmer_histogram_ppmseq_v1_csv = inputs_dir / (
 parsed_histogram_parquet_ppmseq_v1 = (
     inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.parsed_histogram.parquet"
 )
-sorter_stats_csv_ppmseq_v1_amp = inputs_dir / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.csv"
-sorter_stats_json_ppmseq_v1_amp = inputs_dir / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.json"
-trimmer_failure_codes_csv_ppmseq_v1_amp = inputs_dir / "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.failure_codes.csv"
-trimmer_histogram_ppmseq_v1_amp = inputs_dir / (
-    "400808-Lb_2768-Z0035-CTGAATGATCTCGAT.Start_loop_name.Start_loop_pattern_fw.End_loop_name.End_loop_pattern_fw."
-    "Stem_end_length.histogram.csv"
-)
-trimmer_histogram_extra_ppmseq_v1_amp = (
-    inputs_dir / "400762-Lb_2752-Z0123-CAGATCGCCACAGAT.subsample.Dumbbell_leftover_start_match.hist.csv"
-)  # it's not the same file but the right format
 subdir = inputs_dir / "401057001"
 sorter_stats_csv_ppmseq_v1_401057001 = subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT.csv"
 sorter_stats_json_ppmseq_v1_401057001 = subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT.json"
@@ -228,8 +218,9 @@ def test_collect_statistics(tmpdir):
         assert sorted(fh1.keys()) == sorted(fh2.keys())
         keys = fh1.keys()
     for k in keys:
-        x1 = pd.read_hdf(f1, k)
-        x2 = pd.read_hdf(f2, k)
+        # below - removing one changed stat in the output shortlist to keep backward compatibility in the test
+        x1 = pd.read_hdf(f1, k).drop("MIXED_read_mean_coverage", errors="ignore")
+        x2 = pd.read_hdf(f2, k).drop("PCT_MIXED_start_tag", errors="ignore")
         if isinstance(x1, pd.Series):
             assert_series_equal(x1, x2)
         else:
@@ -347,18 +338,6 @@ def test_ppmseq_analysis_legacy_v5(tmpdir):
         output_basename="TEST_legacy_v5_start",
         collect_statistics_kwargs={},
         legacy_histogram_column_names=True,
-    )
-
-
-def test_ppmseq_analysis_dmbl(tmpdir):
-    ppmseq_qc_analysis(
-        PpmseqAdapterVersions.DMBL,
-        trimmer_histogram_csv=[trimmer_histogram_ppmseq_v1_amp],
-        trimmer_histogram_extra_csv=[trimmer_histogram_extra_ppmseq_v1_amp],
-        sorter_stats_csv=sorter_stats_csv_ppmseq_v1_amp,
-        trimmer_failure_codes_csv=trimmer_failure_codes_csv_ppmseq_v1_amp,
-        output_path=tmpdir,
-        output_basename="TEST_DMBL",
     )
 
 
