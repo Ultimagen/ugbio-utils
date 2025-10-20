@@ -1,7 +1,8 @@
 ARG BASE_IMAGE=ugbio_base
+ARG OUT_DIR=/tmp/ugbio
 FROM python:3.11-bullseye AS build
 
-ARG OUT_DIR=/tmp/ugbio
+ARG OUT_DIR
 ARG MODULE_DIR=freec
 RUN mkdir -p $OUT_DIR
 
@@ -38,22 +39,16 @@ RUN git clone --branch ${FREEC_BRANCH} https://github.com/Ultimagen/FREEC FREEC
 RUN cp FREEC/src/freec /freec
 RUN ln -s /freec /usr/bin/freec
 
+ARG OUT_DIR
 
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
-RUN chown -R ugbio:ugbio /opt /usr/local/bin
+
+COPY --from=build ${OUT_DIR} ${OUT_DIR}
+RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
 
 USER ugbio
 
 WORKDIR /home/ugbio
-
-ARG OUT_DIR=/tmp/ugbio
-
-# Copy whl and install module
-COPY --from=build $OUT_DIR $OUT_DIR
-
-ENV PATH="/home/ugbio/.local/bin:${PATH}"
-
-RUN pip install --user ${OUT_DIR}/*.whl
 
 # for runnig CI (can be removed if pytest is installed as part of the venv)
 RUN pip install --user pytest
