@@ -25,6 +25,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from scipy import interpolate
+from scipy.integrate import cumulative_trapezoid
 from scipy.signal import savgol_filter
 from statsmodels.nonparametric import smoothers_lowess
 from ugbio_core.logger import logger
@@ -2151,6 +2152,7 @@ class AdaptiveKDEPrecisionEstimator:
         lowess_frac: float = DEFAULT_KDE_LOWESS_FRAC,
         truncation_mode: str = DEFAULT_KDE_TRUNCATION_MODE,
         transform_mode: str = DEFAULT_KDE_TRANSFORM_MODE,
+        random_seed: int | None = None,
         *,
         enforce_monotonic: bool = DEFAULT_KDE_ENFORCE_MONOTONIC,
     ):
@@ -2180,6 +2182,14 @@ class AdaptiveKDEPrecisionEstimator:
             "truncation_mode": truncation_mode,
             "transform_mode": transform_mode,
         }
+
+        # RNG
+        if random_seed is None:
+            # pick seed from clock state
+            self.random_seed = np.random.SeedSequence().entropy
+        else:
+            self.random_seed = random_seed
+        self.rng = np.random.default_rng(self.random_seed)
 
         # Grid and transforms
         self.grid = None
@@ -2393,6 +2403,10 @@ class AdaptiveKDEPrecisionEstimator:
             self.config["num_bandwidth_levels"],
         )
 
+        self.n_true = pd_df[label_col].sum()
+        self.n_false = pd_df.shape[0] - self.n_true
+        self.base_rate = self.n_true / (self.n_true + self.n_false) if (self.n_true + self.n_false) > 0 else 0.0
+
         # Execute all steps in sequence
         self.create_uncertainty_function(pd_df, num_cv_folds, fold_col=fold_col, label_col=label_col)
         self.extract_scores(pd_df, label_col=label_col, mqual_col=mqual_col, prob_orig_col=prob_orig_col)
@@ -2402,6 +2416,95 @@ class AdaptiveKDEPrecisionEstimator:
 
         # Define convenience methods for TPR, FPR, and precision lookup
         grid_coords = self.from_grid(self.grid)
+        self.get_tp_density = partial(np.interp, xp=grid_coords, fp=self.density_true)
+        self.get_fp_density = partial(np.interp, xp=grid_coords, fp=self.density_false)
         self.get_fpr = partial(np.interp, xp=grid_coords, fp=self.fpr)
         self.get_tpr = partial(np.interp, xp=grid_coords, fp=self.tpr)
         self.get_precision = partial(np.interp, xp=grid_coords, fp=self.precision_grid)
+
+    def sample_from_density_interp(self, n_bootstrap: int) -> dict[str, np.ndarray]:
+        """
+        Sample N points from density_fn using precomputed CDF + interpolation.
+
+        Parameters
+        ----------
+        n_bootstrap : int
+            Number of samples to draw.
+        x_min, x_max : float
+            Domain bounds.
+        n_discrete : int, optional
+            Number of discretization points for precomputing the CDF (default: 10,000).
+
+        Returns
+        -------
+        samples : np.ndarray
+            Array of N samples distributed according to density_fn.
+        """
+        # Inverse probability transform
+        self.n_bootstrap = n_bootstrap
+        grid_coords = self.from_grid(self.grid)
+        self.samples = {}
+        for density, n, label in zip(
+            [self.density_true, self.density_false], [self.n_true, self.n_false], ["tp", "fp"], strict=True
+        ):
+            if density is None:
+                raise ValueError("Must run fit() before sampling")
+            cdf = cumulative_trapezoid(density, grid_coords, initial=0)
+            cdf /= cdf[-1]  # normalize
+
+            u = self.rng.random(n * n_bootstrap)
+
+            # Invert CDF using interpolation
+            sample = np.interp(u, cdf, grid_coords)
+            sample = sample.reshape(n_bootstrap, n)
+            self.samples[label] = sample
+
+    def get_bootstrap_kde_densities(self):
+        """
+        Get bootstrap densities for true positives and false positives.
+        Has to be run after self.sample_from_density_interp().
+
+        Returns
+        -------
+        dict
+            Dictionary with keys 'tp' and 'fp' containing bootstrap density arrays.
+        """
+        if not hasattr(self, "samples"):
+            raise ValueError("Must run sample_from_density_interp() before getting bootstrap densities")
+
+        # counts_bootstrap = {}
+        self.bootstrap_stats = {
+            "fpr": [],
+            "tpr": [],
+            "precision": [],
+            "density_true": [],
+            "density_false": [],
+            "precision_grid": [],
+        }
+        for i in range(self.samples["tp"].shape[0]):
+            counts = {}
+            for label in ["tp", "fp"]:
+                counts[label], _ = bin_data_to_grid(
+                    self.samples[label][i], to_grid_space=self.to_grid, grid_size=self.config["grid_size"]
+                )
+
+            (tpr, fpr, density_true, density_false, precision_grid, _) = calculate_smoothed_precision_kde(
+                counts["tp"],
+                counts["fp"],
+                self.grid,
+                self.dx,
+                self.uncertainty_fn,
+                self.from_grid,
+                len(self.scores_t),
+                len(self.scores_f),
+                num_bandwidth_levels=self.config["num_bandwidth_levels"],
+                enforce_monotonic=self.config["enforce_monotonic"],
+                truncation_mode=self.config["truncation_mode"],
+            )
+            self.bootstrap_stats["tpr"].append(tpr)
+            self.bootstrap_stats["fpr"].append(fpr)
+            self.bootstrap_stats["density_true"].append(density_true)
+            self.bootstrap_stats["density_false"].append(density_false)
+            self.bootstrap_stats["precision_grid"].append(precision_grid)
+        for key in self.bootstrap_stats:
+            self.bootstrap_stats[key] = np.array(self.bootstrap_stats[key])
