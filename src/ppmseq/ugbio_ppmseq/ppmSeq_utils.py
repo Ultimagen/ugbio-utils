@@ -255,10 +255,7 @@ class PpmseqStrandVcfAnnotator(VcfAnnotator):
                         self.sr_lower,
                         self.sr_upper,
                     )  # this works for nan values as well - returns UNDETERMINED
-            if self.adapter_version in (
-                PpmseqAdapterVersions.V1.value,
-                PpmseqAdapterVersions.DMBL.value,
-            ):  # legacy_v5_start has start tags only
+            if self.adapter_version in (PpmseqAdapterVersions.V1.value,):  # legacy_v5_start has start tags only
                 record.info[HistogramColumnNames.ST.value] = record.info.get(
                     HistogramColumnNames.ST.value, PpmseqCategories.UNDETERMINED.value
                 )
@@ -441,8 +438,6 @@ def read_ppmseq_trimmer_histogram(  # noqa: C901,PLR0912 #TODO: refactor
         PpmseqAdapterVersions.LEGACY_V5.value,
         PpmseqAdapterVersions.V1,
         PpmseqAdapterVersions.V1.value,
-        PpmseqAdapterVersions.DMBL,
-        PpmseqAdapterVersions.DMBL.value,
     ]:
         if TrimmerSegmentLabels.NATIVE_ADAPTER.value + length_suffix in df_trimmer_histogram.columns:
             is_end_reached = df_trimmer_histogram[TrimmerSegmentLabels.NATIVE_ADAPTER.value + length_suffix] >= 1
@@ -546,8 +541,6 @@ def read_ppmseq_trimmer_histogram(  # noqa: C901,PLR0912 #TODO: refactor
     elif adapter_version in [
         PpmseqAdapterVersions.V1,
         PpmseqAdapterVersions.V1.value,
-        PpmseqAdapterVersions.DMBL,
-        PpmseqAdapterVersions.DMBL.value,
     ]:
         # In LA-v7 the tags are explicitly detected from the loop sequences
         # an unmatched start tag indicates an undetermined call
@@ -818,8 +811,6 @@ def read_trimmer_tags_dataframe(
         PpmseqAdapterVersions.LEGACY_V5.value,
         PpmseqAdapterVersions.V1,
         PpmseqAdapterVersions.V1.value,
-        PpmseqAdapterVersions.DMBL,
-        PpmseqAdapterVersions.DMBL.value,
     ):
         df_tags = df_category_consensus * 100
         undetermined = PpmseqCategoriesConsensus.UNDETERMINED.value
@@ -984,8 +975,6 @@ def collect_statistics(
         PpmseqAdapterVersions.LEGACY_V5.value,
         PpmseqAdapterVersions.V1,
         PpmseqAdapterVersions.V1.value,
-        PpmseqAdapterVersions.DMBL,
-        PpmseqAdapterVersions.DMBL.value,
     )
     if adapter_in_both_ends:
         df_category_concordance, _, df_category_consensus = get_strand_ratio_category_concordance(
@@ -1521,8 +1510,6 @@ def plot_trimmer_histogram(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
     elif adapter_version in (
         PpmseqAdapterVersions.V1,
         PpmseqAdapterVersions.V1.value,
-        PpmseqAdapterVersions.DMBL,
-        PpmseqAdapterVersions.DMBL.value,
     ):
         fig, axs_all_both = plt.subplots(3, 10, figsize=(18, 5), sharex=False, sharey=True)
         fig.subplots_adjust(wspace=0.25, hspace=0.6)
@@ -1893,8 +1880,6 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
         PpmseqAdapterVersions.LEGACY_V5.value,
         PpmseqAdapterVersions.V1,
         PpmseqAdapterVersions.V1.value,
-        PpmseqAdapterVersions.DMBL,
-        PpmseqAdapterVersions.DMBL.value,
     ):
         plot_strand_ratio_category_concordnace(
             adapter_version,
@@ -1951,8 +1936,6 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
             PpmseqAdapterVersions.LEGACY_V5.value,
             PpmseqAdapterVersions.V1,
             PpmseqAdapterVersions.V1.value,
-            PpmseqAdapterVersions.DMBL,
-            PpmseqAdapterVersions.DMBL.value,
         ):
             parameters["strand_ratio_category_concordance_png"] = output_strand_ratio_category_concordance_plot
         if sorter_stats_json:
