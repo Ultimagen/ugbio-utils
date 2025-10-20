@@ -42,7 +42,7 @@ from ugbio_srsnv.srsnv_utils import (
     EPS,
     MAX_PHRED,
     all_models_predict_proba,
-    get_base_recall_from_filters,
+    get_filter_ratio,
     prob_to_phred,
     safe_roc_auc,
 )
@@ -757,12 +757,12 @@ class SRSNVTrainer:
             self._create_quality_lookup_table_count(eps=eps)
 
     def _calculate_snvq_prefactor(self) -> float:
-        base_recall = get_base_recall_from_filters(self.pos_stats["filters"])
-        effective_bases_covered = self.mean_coverage * self.n_bases_in_region * base_recall
+        filtering_ratio = get_filter_ratio(self.pos_stats["filters"], numerator_type="label", denominator_type="raw")
+        effective_bases_covered = self.mean_coverage * self.n_bases_in_region * filtering_ratio
         logger.info(
             f"mean_coverage: {self.mean_coverage}, "
             f"n_bases_in_region: {self.n_bases_in_region}, "
-            f"base_recall: {base_recall}"
+            f"filtering_ratio: {filtering_ratio}"
         )
         logger.info(
             f"raw_featuremap_size_filtered: {self.raw_featuremap_size_filtered}, "

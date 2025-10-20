@@ -491,3 +491,143 @@ class TestHandlePPMSeqTagsInFeatureMapDataFrame:
         # The fillna columns should not be created since start_tag_col and end_tag_col are None
         assert ST_FILLNA not in handler.featuremap_df.columns
         assert ET_FILLNA not in handler.featuremap_df.columns
+
+
+class TestGetFilterRatio:
+    """Test class for get_filter_ratio function."""
+
+    @pytest.fixture
+    def sample_filters(self):
+        """Create sample filter list for testing."""
+        return [
+            {"name": "raw", "type": "raw", "rows": 1000},
+            {"name": "coverage_ge_min", "type": "region", "rows": 950},
+            {"name": "coverage_le_max", "type": "region", "rows": 900},
+            {"name": "mapq_ge_60", "type": "quality", "rows": 800},
+            {"name": "no_adj_ref_diff", "type": "quality", "rows": 700},
+            {"name": "bcsq_gt_40", "type": "quality", "rows": 600},
+            {"name": "ref_eq_alt", "type": "label", "rows": 500},
+            {"name": "downsample", "type": "downsample", "rows": 100},
+        ]
+
+    def test_default_behavior(self, sample_filters):
+        """Test default behavior: before 'label' / 'raw'."""
+        from ugbio_srsnv.srsnv_utils import get_filter_ratio
+
+        ratio = get_filter_ratio(sample_filters)
+        # Default: last before first 'label' (index 6) / raw (index 0)
+        # = filters[5]['rows'] / filters[0]['rows'] = 600 / 1000 = 0.6
+        assert ratio == 0.6
+
+    def test_by_name_numerator_and_denominator(self, sample_filters):
+        """Test specifying both filters by name."""
+        from ugbio_srsnv.srsnv_utils import get_filter_ratio
+
+        # Last before 'ref_eq_alt' (index 6) / last before 'mapq_ge_60' (index 3)
+        # = filters[5]['rows'] / filters[2]['rows'] = 600 / 900
+        ratio = get_filter_ratio(sample_filters, numerator_filter="ref_eq_alt", denominator_filter="mapq_ge_60")
+        assert ratio == pytest.approx(600 / 900)
+
+    def test_by_type_numerator_and_denominator(self, sample_filters):
+        """Test specifying both filters by type."""
+        from ugbio_srsnv.srsnv_utils import get_filter_ratio
+
+        # Last before first 'quality' (index 3) / 'raw' (index 0)
+        # = filters[2]['rows'] / filters[0]['rows'] = 900 / 1000
+        ratio = get_filter_ratio(sample_filters, numerator_type="quality", denominator_type="raw")
+        assert ratio == 0.9
+
+    def test_mixed_name_and_type(self, sample_filters):
+        """Test mixing name and type specifications."""
+        from ugbio_srsnv.srsnv_utils import get_filter_ratio
+
+        # By name for numerator, by type for denominator
+        ratio = get_filter_ratio(sample_filters, numerator_filter="ref_eq_alt", denominator_type="quality")
+        # = filters[5]['rows'] / filters[2]['rows'] = 600 / 900
+        assert ratio == pytest.approx(600 / 900)
+
+    def test_raw_special_case_numerator(self, sample_filters):
+        """Test 'raw' as numerator uses raw filter itself."""
+        from ugbio_srsnv.srsnv_utils import get_filter_ratio
+
+        ratio = get_filter_ratio(sample_filters, numerator_filter="raw", denominator_filter="raw")
+        # Both use filters[0]['rows'] / filters[0]['rows'] = 1.0
+        assert ratio == 1.0
+
+    def test_raw_special_case_type(self, sample_filters):
+        """Test 'raw' type behaves like 'raw' name."""
+        from ugbio_srsnv.srsnv_utils import get_filter_ratio
+
+        ratio = get_filter_ratio(sample_filters, numerator_type="raw", denominator_type="raw")
+        assert ratio == 1.0
+
+    def test_reproduce_base_recall_behavior(self, sample_filters):
+        """Test that it can reproduce get_base_recall_from_filters behavior."""
+        from ugbio_srsnv.srsnv_utils import get_base_recall_from_filters, get_filter_ratio
+
+        # get_base_recall_from_filters: last before 'ref_eq_alt' / last before first 'quality'
+        ratio_new = get_filter_ratio(sample_filters, numerator_filter="ref_eq_alt", denominator_type="quality")
+        ratio_old = get_base_recall_from_filters(sample_filters)
+        assert ratio_new == pytest.approx(ratio_old)
+
+    def test_error_filter_not_found_by_name(self, sample_filters):
+        """Test error when filter name is not found."""
+        from ugbio_srsnv.srsnv_utils import get_filter_ratio
+
+        with pytest.raises(ValueError, match="Filter with name 'nonexistent' not found"):
+            get_filter_ratio(sample_filters, numerator_filter="nonexistent")
+
+    def test_error_filter_not_found_by_type(self, sample_filters):
+        """Test error when filter type is not found."""
+        from ugbio_srsnv.srsnv_utils import get_filter_ratio
+
+        with pytest.raises(ValueError, match="Filter with type 'nonexistent_type' not found"):
+            get_filter_ratio(sample_filters, numerator_type="nonexistent_type")
+
+    def test_error_empty_filter_list(self):
+        """Test error with empty filter list."""
+        from ugbio_srsnv.srsnv_utils import get_filter_ratio
+
+        with pytest.raises(ValueError, match="Filter list is empty"):
+            get_filter_ratio([])
+
+    def test_error_denominator_zero_rows(self):
+        """Test error when denominator has zero rows."""
+        from ugbio_srsnv.srsnv_utils import get_filter_ratio
+
+        filters = [
+            {"name": "raw", "type": "raw", "rows": 0},  # Raw has 0 rows
+            {"name": "filter2", "type": "quality", "rows": 100},
+            {"name": "filter3", "type": "label", "rows": 50},
+        ]
+        with pytest.raises(ValueError, match="Denominator filter has 0 rows"):
+            # Denominator uses 'raw' which has 0 rows
+            get_filter_ratio(filters, numerator_filter="filter3", denominator_type="raw")
+
+    def test_single_filter_raw(self):
+        """Test with a single 'raw' filter."""
+        from ugbio_srsnv.srsnv_utils import get_filter_ratio
+
+        filters = [{"name": "raw", "type": "raw", "rows": 500}]
+        ratio = get_filter_ratio(filters, numerator_type="raw", denominator_type="raw")
+        assert ratio == 1.0
+
+    def test_multiple_filters_same_type(self, sample_filters):
+        """Test behavior when multiple filters have the same type."""
+        from ugbio_srsnv.srsnv_utils import get_filter_ratio
+
+        # There are multiple 'quality' filters. Should use first one.
+        # First quality is at index 3 (mapq_ge_60)
+        # Last before it is index 2 (coverage_le_max) with rows=900
+        ratio = get_filter_ratio(sample_filters, numerator_type="quality", denominator_type="raw")
+        assert ratio == 0.9  # 900 / 1000
+
+    def test_downsample_ratio(self, sample_filters):
+        """Test calculating downsample ratio."""
+        from ugbio_srsnv.srsnv_utils import get_filter_ratio
+
+        # Last before 'downsample' (index 7) / last before first 'label' (index 6)
+        # When numerator_filter is specified, it takes precedence over numerator_type
+        # = filters[6]['rows'] / filters[5]['rows'] = 500 / 600
+        ratio = get_filter_ratio(sample_filters, numerator_filter="downsample", denominator_type="label")
+        assert ratio == pytest.approx(500 / 600)
