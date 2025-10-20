@@ -97,11 +97,11 @@ RUN groupadd ugbio && useradd -m ugbio -g ugbio
 COPY --from=build ${OUT_DIR} ${OUT_DIR}
 RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
 
+#download cnvpytor additional necessary files (described here: https://github.com/abyzovlab/CNVpytor?tab=readme-ov-file#install-using-pip)
+RUN cnvpytor -download
+
 USER ugbio
 
 WORKDIR /home/ugbio
 
 COPY --from=build ./src/cnv/cnmops ./src/cnv/cnmops
-
-#download cnvpytor additional necessary files (described here: https://github.com/abyzovlab/CNVpytor?tab=readme-ov-file#install-using-pip)
-RUN cnvpytor -download
