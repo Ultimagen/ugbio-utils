@@ -382,39 +382,7 @@ def get_base_recall_from_filters(filters):
     Returns:
         float: Base recall value
     """
-    # Find last filter before ref_eq_alt
-    ref_eq_alt_index = None
-    for i, filter_info in enumerate(filters):
-        if filter_info["name"] == "ref_eq_alt":
-            ref_eq_alt_index = i
-            break
-
-    if ref_eq_alt_index is None or ref_eq_alt_index == 0:
-        raise ValueError("ref_eq_alt filter not found or is the first filter")
-
-    last_filter_before_ref_eq_alt = filters[ref_eq_alt_index - 1]
-
-    # Find the first filter with type "quality"
-    first_quality_filter_index = None
-    for i, filter_info in enumerate(filters):
-        if filter_info.get("type") == "quality":
-            first_quality_filter_index = i
-            break
-
-    # Find the last filter before the first quality filter
-    if first_quality_filter_index is not None and first_quality_filter_index > 0:
-        last_filter_before_quality = filters[first_quality_filter_index - 1]
-    elif first_quality_filter_index is None:
-        # If no quality filter found, use the last filter in the list
-        last_filter_before_quality = filters[-1] if filters else None
-    else:
-        # If quality filter is the first filter, use first filter
-        last_filter_before_quality = filters[0]
-
-    if last_filter_before_quality is None:
-        raise ValueError("Could not find appropriate filter for denominator")
-
-    return last_filter_before_ref_eq_alt["rows"] / last_filter_before_quality["rows"]
+    return get_filter_ratio(filters, denominator_type="quality", numerator_type="label")
 
 
 def get_base_error_rate_from_filters(filters):
@@ -427,21 +395,132 @@ def get_base_error_rate_from_filters(filters):
     Returns:
         float: Base error rate of low VAF SNVs (rows before downsample / total raw rows)
     """
-    downsample_index = None
+    return get_filter_ratio(filters, numerator_filter="downsample", denominator_type="raw")
+
+
+def _find_filter_rows(filters, filter_spec, spec_type, filter_label="numerator"):
+    """Helper function to find the number of rows for a filter specification.
+
+    Parameters
+    ----------
+    filter_spec : str or None
+        The filter name (if spec_type is 'name') or filter type (if spec_type is 'type').
+    spec_type : str
+        Either 'name' or 'type' to indicate how to interpret filter_spec.
+    filter_label : str
+        Label for the filter (used for error messages).
+
+    Returns
+    -------
+    int
+        Number of rows at the appropriate filter.
+    """
+    # Special case: "raw" means the first filter itself
+    if filter_spec == "raw":
+        if filters[0].get("type") == "raw" or filters[0].get("name") == "raw":
+            return filters[0]["rows"]
+        raise ValueError(f"First filter is not 'raw' (for {filter_label})")
+
+    # Find the target filter
+    target_index = None
     for i, filter_info in enumerate(filters):
-        if filter_info["name"] == "downsample":
-            downsample_index = i
+        if filter_info.get(spec_type) == filter_spec:
+            target_index = i
             break
+    if target_index is None:
+        raise ValueError(f"Filter with {spec_type} '{filter_spec}' not found (for {filter_label})")
 
-    # b_f = rows at last filter before downsample / rows at first filter (raw)
-    if downsample_index is not None:
-        last_filter_before_downsample = filters[downsample_index - 1]
+    # Return rows from the last filter before the target
+    if target_index == 0:
+        raise ValueError(f"Cannot get filter before '{filter_spec}' as it is the first filter (for {filter_label})")
+
+    return filters[target_index - 1]["rows"]
+
+
+def get_filter_ratio(
+    filters,
+    numerator_filter=None,
+    denominator_filter=None,
+    numerator_type="label",
+    denominator_type="raw",
+):
+    """Calculate the ratio of rows between two filters in a filtering pipeline.
+
+    This function provides filter ratio calculation by allowing specification of
+    numerator and denominator filters either by name or by type. It can be used to compute
+    various filtering statistics such as base recall, error rates, etc.
+
+    Parameters
+    ----------
+    filters : list[dict]
+        List of filter dictionaries, each containing at least 'name', 'type', and 'rows' keys.
+    numerator_filter : str, optional
+        Name of the filter to use for the numerator. If provided, takes precedence over numerator_type.
+        The function uses the rows from the last filter BEFORE the one with this name.
+        Exception: if numerator_filter=="raw", uses rows at the "raw" filter itself.
+    denominator_filter : str, optional
+        Name of the filter to use for the denominator. If provided, takes precedence over denominator_type.
+        The function uses the rows from the last filter BEFORE the one with this name.
+        Exception: if denominator_filter=="raw", uses rows at the "raw" filter itself.
+    numerator_type : str, optional
+        Type of filter to use for the numerator (default: "label").
+        The function finds the rows from the last filter BEFORE the first filter with this type.
+        Exception: if numerator_type=="raw", uses rows at the "raw" filter itself.
+        Only used if numerator_filter is None.
+    denominator_type : str, optional
+        Type of filter to use for the denominator (default: "raw").
+        The function finds the rows from the last filter BEFORE the first filter with this type.
+        Exception: if denominator_type=="raw", uses rows at the "raw" filter itself.
+        Only used if denominator_filter is None.
+
+    Returns
+    -------
+    float
+        The ratio of numerator rows to denominator rows.
+
+    Raises
+    ------
+    ValueError
+        If the specified filters are not found or if the filter list is invalid.
+
+    Examples
+    --------
+    >>> # Default behavior: ratio before first "label" filter to "raw" rows
+    >>> get_filter_ratio(filters)
+
+    >>> # Ratio before "ref_eq_alt" to before first "quality" filter
+    >>> get_filter_ratio(filters, numerator_filter="ref_eq_alt", numerator_type="quality")
+
+    >>> # Ratio before first "quality" filter to "raw" rows
+    >>> get_filter_ratio(filters, numerator_type="quality")
+
+    Notes
+    -----
+    - The special value "raw" (for name or type) refers to the first filter itself,
+      not the filter before it.
+    - When specifying by name, the function uses the last filter BEFORE the named filter.
+    - When specifying by type, the function uses the last filter BEFORE the FIRST filter
+      with that type.
+    """
+    if not filters:
+        raise ValueError("Filter list is empty")
+
+    # Determine numerator rows
+    if numerator_filter is not None:
+        numerator_rows = _find_filter_rows(filters, numerator_filter, "name", filter_label="numerator")
     else:
-        # If no downsample filter, use the last filter
-        last_filter_before_downsample = filters[-1]
+        numerator_rows = _find_filter_rows(filters, numerator_type, "type", filter_label="numerator")
 
-    first_filter = filters[0]  # TODO: Should this be the first filter, or the last filter before 'ref_ne_alt'?
-    return last_filter_before_downsample["rows"] / first_filter["rows"]
+    # Determine denominator rows
+    if denominator_filter is not None:
+        denominator_rows = _find_filter_rows(filters, denominator_filter, "name", filter_label="denominator")
+    else:
+        denominator_rows = _find_filter_rows(filters, denominator_type, "type", filter_label="denominator")
+
+    if denominator_rows == 0:
+        raise ValueError("Denominator filter has 0 rows, cannot calculate ratio")
+
+    return numerator_rows / denominator_rows
 
 
 def construct_trinuc_context_with_alt(
