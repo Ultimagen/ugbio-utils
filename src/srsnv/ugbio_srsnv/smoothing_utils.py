@@ -47,6 +47,7 @@ DEFAULT_KDE_LOWESS_FRAC = 0.3
 DEFAULT_KDE_ENFORCE_MONOTONIC = False
 DEFAULT_KDE_TRUNCATION_MODE = "auto_detect"
 DEFAULT_KDE_TRANSFORM_MODE = "logit"  # "mqual" or "logit"
+FFT_THRESHOLD = 1000  # Use FFT for convolutions larger than this.
 
 # Constants
 MIN_FOLDS_FOR_STD = 2
@@ -866,10 +867,6 @@ def create_uncertainty_function_pipeline(  # noqa: PLR0913
     logger.info("Uncertainty function pipeline completed successfully")
 
     return get_score_std, full_metadata
-
-
-# Constants for Step 2
-FFT_THRESHOLD = 1000  # Use FFT for convolutions larger than this. TODO: move to beginning
 
 
 def make_grid_and_transform(  # noqa: C901, PLR0912, PLR0915
