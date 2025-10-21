@@ -1,4 +1,4 @@
-import os
+src/core/ugbio_core/vcfbed/vcftools.pyimport os
 from collections import defaultdict
 from os.path import join as pjoin
 from pathlib import Path
