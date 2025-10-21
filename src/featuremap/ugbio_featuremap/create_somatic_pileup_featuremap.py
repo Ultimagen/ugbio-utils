@@ -222,7 +222,9 @@ def run(argv):
     # Merge the tumor and normal VCF files into a single VCF file
     if args.filter_for_tumor_pass_variants:
         logger.info("Adding SingleRead filter to the tumor file")
-        out_add_filter_vcf = args.tumor_vcf.replace(".vcf.gz", ".with_sr_filter.vcf.gz")
+        out_add_filter_vcf = pjoin(
+            args.out_directory, os.path.basename(args.tumor_vcf).replace(".vcf.gz", ".with_sr_filter.vcf.gz")
+        )
         vu.filter_vcf(
             input_vcf=args.tumor_vcf,
             output_vcf=out_add_filter_vcf,
@@ -232,7 +234,7 @@ def run(argv):
         )
         logger.info("Adding SingleRead filter to the tumor file: done")
         created_files.append(out_add_filter_vcf)
-        logger.info("Filtering for tumor-PASS variants only.")
+        logger.info("Filtering for tumor-PASS variants only")
         tumor_vcf = out_add_filter_vcf.replace(".vcf.gz", ".tumor_PASS.vcf.gz")
         vu.view_vcf(
             input_vcf=out_add_filter_vcf,
@@ -246,8 +248,10 @@ def run(argv):
         created_files.append(tumor_vcf + ".tbi")
     else:
         tumor_vcf = args.tumor_vcf
-        logger.info("No filtering for tumor-PASS variants. Merging all records from both VCF files.")
-    unfiltered_normal_vcf = args.normal_vcf.replace(".vcf.gz", ".unfiltered.vcf.gz")
+        logger.info("No filtering for tumor-PASS variants. Merging all records from both VCF files")
+    unfiltered_normal_vcf = pjoin(
+        args.out_directory, os.path.basename(args.normal_vcf).replace(".vcf.gz", ".unfiltered.vcf.gz")
+    )
     vu.remove_filter_annotations(args.normal_vcf, unfiltered_normal_vcf, args.cpu)
     vu.index_vcf(unfiltered_normal_vcf)
     created_files.append(unfiltered_normal_vcf)
