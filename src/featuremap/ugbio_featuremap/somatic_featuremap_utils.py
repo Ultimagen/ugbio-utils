@@ -82,6 +82,37 @@ def _prepare_annotation_files(tmpdir, tr_tsv_file):
 
 
 def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
+    """
+    Integrate tandem repeat features into a VCF file.
+
+    This function annotates variants in a VCF file with information about nearby tandem repeats,
+    including their start/end positions, sequences, distances, and lengths.
+
+    Parameters
+    ----------
+    merged_vcf : str
+        Path to the input VCF file (gzipped) containing variants to be annotated.
+    ref_tr_file : str
+        Path to the reference tandem repeat BED file containing tandem repeat regions.
+    out_dir : str
+        Output directory where the annotated VCF file and temporary files will be written.
+
+    Returns
+    -------
+    str
+        Path to the output VCF file with tandem repeat annotations. The output file will be
+        gzipped and indexed, with '.tr_info.vcf.gz' suffix replacing the original '.vcf.gz'.
+
+    Notes
+    -----
+    The function adds the following INFO fields to the VCF:
+    - TR_START: Start position of the closest tandem repeat
+    - TR_END: End position of the closest tandem repeat
+    - TR_SEQ: Sequence of the tandem repeat unit
+    - TR_DISTANCE: Distance from variant to the closest tandem repeat
+    - TR_LENGTH: Total length of the tandem repeat region
+    - TR_SEQ_UNIT_LENGTH: Length of the tandem repeat unit
+    """
     with tempfile.TemporaryDirectory(dir=out_dir) as tmpdir:
         # Create variant BED file
         bed1 = pjoin(tmpdir, "merged_vcf.tmp.bed")
@@ -120,6 +151,5 @@ def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
             merged_vcf,
         ]
         subprocess.check_call(cmd)
-
     pysam.tabix_index(merged_vcf_with_tr_info, preset="vcf", min_shift=0, force=True)
     return merged_vcf_with_tr_info
