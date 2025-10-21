@@ -107,6 +107,7 @@ jobs:
           severity: 'CRITICAL,HIGH'
 
       - uses: actions/checkout@v4 # deep check out for docker build
+        if: ${{ inputs.git-repo != "Ultimagen/ugbio-utils" }}
         with:
           repository: ${{ inputs.git-repo }}
           ref: ${{ inputs.git-ref }}
