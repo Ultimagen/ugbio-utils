@@ -1778,8 +1778,8 @@ class SRSNVReport:
             ax.legend(fontsize=18, fancybox=True, framealpha=0.95)
             ax.grid(visible=True)
             self._save_plt(output_filename, fig)
-            self.pr_df = pr_df
-            self.pr_df.to_hdf(self.output_h5_filename, key="FQ_recall_LoD", mode="a")
+        self.pr_df = pr_df
+        self.pr_df.to_hdf(self.output_h5_filename, key="FQ_recall_LoD", mode="a")
 
     def get_dataset_sizes(self):
         """Calculate dataset sizes for different folds and overall."""
