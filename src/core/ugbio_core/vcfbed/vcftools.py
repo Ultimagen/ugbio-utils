@@ -787,8 +787,8 @@ def get_vcf_fields_name(vcf_file: str) -> set[str]:
         Path to the VCF file.
     Returns
     -------
-    tuple[set[str], set[str], set[str]]
-        A tuple containing three sets:
+    set[str], set[str], set[str]
+       three sets:
         - info_fields: Set of INFO field names from the VCF header
         - format_fields: Set of FORMAT field names from the VCF header
         - custom_info_fields: Union of INFO and FORMAT field names
