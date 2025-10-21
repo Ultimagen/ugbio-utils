@@ -13,12 +13,15 @@ def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
     with tempfile.TemporaryDirectory(dir=out_dir) as tmpdir:
         # generate tandem repeat info
         bed1 = pjoin(tmpdir, "merged_vcf.tmp.bed")
-        cmd = (
-            f"bcftools query -f '%CHROM\t%POS\t%END\n' {merged_vcf} | "
-            f"awk 'BEGIN{{OFS=\"\t\"}} {{print $1, $2, $3+1}}' > {bed1}"
-        )
-        subprocess.check_call(cmd, shell=True)  # noqa: S602
-
+        # Run bcftools query and pipe to awk, writing output to bed1
+        cmd_bcftools = ["bcftools", "query", "-f", "%CHROM\t%POS\t%END\n", merged_vcf]
+        cmd_awk = ["awk", 'BEGIN{OFS="\t"} {print $1, $2, $3+1}']
+        with open(bed1, "w") as bed1_file:
+            p1 = subprocess.Popen(cmd_bcftools, stdout=subprocess.PIPE)
+            p2 = subprocess.Popen(cmd_awk, stdin=p1.stdout, stdout=bed1_file)
+            p1.stdout.close()
+            p2.communicate()
+            p1.wait()
         # sort the reference tandem repeat file
         ref_tr_file_sorted = pjoin(tmpdir, "ref_tr_file.sorted.bed")
         cmd = ["bedtools", "sort", "-i", ref_tr_file]
