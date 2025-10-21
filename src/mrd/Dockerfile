@@ -1,7 +1,8 @@
 ARG BASE_IMAGE=ugbio_base
+ARG OUT_DIR=/tmp/ugbio
 FROM python:3.11-bullseye AS build
 
-ARG OUT_DIR=/tmp/ugbio
+ARG OUT_DIR
 ARG MODULE_DIR=mrd
 RUN mkdir -p $OUT_DIR
 
@@ -35,10 +36,15 @@ RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION
     ln -s /opt/gatk/gatk /usr/local/bin/gatk && \
     rm gatk-${GATK_VERSION}.zip
 
-ARG OUT_DIR=/tmp/ugbio
+ARG OUT_DIR
 
-COPY --from=build $OUT_DIR $OUT_DIR
+RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
-RUN pip install ${OUT_DIR}/*.whl
+COPY --from=build ${OUT_DIR} ${OUT_DIR}
+RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
+
+USER ugbio
+
+WORKDIR /home/ugbio
 
 COPY --from=build ./src/mrd/ugbio_mrd/reports ./src/mrd/ugbio_mrd/reports

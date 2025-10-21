@@ -41,7 +41,7 @@ class TestVCFEvalRun:
         sample_calls = pjoin(resources_dir, "sample.sd.vcf.gz")
         truth_calls = pjoin(resources_dir, "gtr.sample.sd.vcf.gz")
         sp = SimplePipeline(0, 100)
-        high_conf = IntervalFile(None, pjoin(resources_dir, "highconf.interval_list"))
+        high_conf = IntervalFile(None, pjoin(resources_dir, "highconf.interval_list"), scratchdir=True)
         VcfComparisonUtils(sp).run_vcfeval_concordance(
             input_file=sample_calls,
             truth_file=truth_calls,
@@ -65,7 +65,7 @@ class TestVCFEvalRun:
         sample_calls = pjoin(resources_dir, "sample.sd.vcf.gz")
         truth_calls = pjoin(resources_dir, "gtr.sample.sd.vcf.gz")
         sp = SimplePipeline(0, 100)
-        high_conf = IntervalFile(None, pjoin(resources_dir, "highconf.interval_list"))
+        high_conf = IntervalFile(None, pjoin(resources_dir, "highconf.interval_list"), scratchdir=True)
         VcfComparisonUtils(sp).run_vcfeval_concordance(
             input_file=sample_calls,
             truth_file=truth_calls,

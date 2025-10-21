@@ -1,7 +1,8 @@
 ARG BASE_IMAGE=ugbio_base
+ARG OUT_DIR=/tmp/ugbio
 FROM python:3.11-bullseye AS build
 
-ARG OUT_DIR=/tmp/ugbio
+ARG OUT_DIR
 ARG MODULE_DIR=filtering
 RUN mkdir -p $OUT_DIR
 
@@ -48,19 +49,13 @@ RUN curl -SLO https://github.com/RealTimeGenomics/rtg-tools/releases/download/${
     echo "RTG_TALKBACK=true  # Crash logs\nRTG_USAGE=false # Simple usage logging\n" >/opt/rtg/rtg.cfg && \
     ln -s /opt/rtg/rtg /usr/local/bin/rtg
 
+ARG OUT_DIR
 
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
-RUN chown -R ugbio:ugbio /opt /usr/local/bin
+
+COPY --from=build ${OUT_DIR} ${OUT_DIR}
+RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
 
 USER ugbio
 
 WORKDIR /home/ugbio
-
-ARG OUT_DIR=/tmp/ugbio
-
-# Copy whl and install module
-COPY --from=build $OUT_DIR $OUT_DIR
-
-ENV PATH="/home/ugbio/.local/bin:${PATH}"
-
-RUN pip install --user ${OUT_DIR}/*.whl

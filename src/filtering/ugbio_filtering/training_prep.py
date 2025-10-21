@@ -143,6 +143,7 @@ def prepare_ground_truth(
     hcr: str,
     reference: str,
     output_h5: str,
+    reference_sdf: str | None = None,
     chromosome: list | None = None,
     test_split: str | None = None,
     custom_info_fields: list[str] | None = None,
@@ -177,6 +178,8 @@ def prepare_ground_truth(
         Output file
     chromosome : list, optional
         List of chromosomes to operate on, by default None
+    reference_sdf: str, optional
+        SDF file in case not equal to <reference>.sdf
     test_split : str, optional
         The test set will be either single chromosome (str, will be saved in a separate file)
         or None (in which case no test set is produced)
@@ -192,6 +195,7 @@ def prepare_ground_truth(
         truth_file=base_vcf,
         output_prefix=input_vcf.replace(".vcf.gz", ""),
         ref_genome=reference,
+        sdf_index=reference_sdf,
         evaluation_regions=hcr,
         ignore_filter=True,
         ignore_genotype=ignore_genotype,

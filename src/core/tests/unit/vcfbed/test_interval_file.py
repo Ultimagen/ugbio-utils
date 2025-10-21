@@ -1,5 +1,5 @@
 import os
-from os.path import exists
+from os.path import basename, dirname, exists
 from os.path import join as pjoin
 from pathlib import Path
 
@@ -11,6 +11,33 @@ from ugbio_core.vcfbed.interval_file import IntervalFile
 @pytest.fixture
 def resources_dir():
     return Path(__file__).parent.parent.parent / "resources"
+
+
+def test_interval_file_init_bed_input_tmpdir(resources_dir, tmpdir):
+    bed1 = pjoin(resources_dir, "bed1.bed")
+    ref_genome = pjoin(resources_dir, "sample.fasta")
+
+    sp = SimplePipeline(0, 100, print_timing=False)
+    interval_file = IntervalFile(sp, interval=bed1, ref=ref_genome, ref_dict=None, scratchdir=str(tmpdir))
+    interval_list_path = str(tmpdir / "bed1.interval_list")
+    assert basename(str(interval_file.as_bed_file())) == basename(bed1)
+    assert dirname(str(interval_file.as_bed_file())) == str(tmpdir)
+    assert interval_file.as_interval_list_file() == interval_list_path
+    assert exists(interval_list_path)
+    assert not interval_file.is_none()
+
+
+def test_interval_file_init_bed_input_tmpdir_create(resources_dir, tmpdir):
+    bed1 = pjoin(resources_dir, "bed1.bed")
+    ref_genome = pjoin(resources_dir, "sample.fasta")
+
+    sp = SimplePipeline(0, 100, print_timing=False)
+    interval_file = IntervalFile(sp, interval=bed1, ref=ref_genome, ref_dict=None, scratchdir=True)
+    interval_list_path = str(tmpdir / "bed1.interval_list")
+    assert basename(str(interval_file.as_bed_file())) == basename(bed1)
+    assert dirname(str(interval_file.as_bed_file())) != dirname(bed1)
+    assert interval_file.as_interval_list_file() != interval_list_path
+    assert not interval_file.is_none()
 
 
 def test_interval_file_init_bed_input(resources_dir):

@@ -129,6 +129,7 @@ class VcfComparisonUtils:
         output_prefix: str,
         ref_genome: str,
         evaluation_regions: str,
+        sdf_index: str | None = None,
         comparison_intervals: str | None = None,
         input_sample: str | None = None,
         truth_sample: str | None = None,
@@ -149,6 +150,8 @@ class VcfComparisonUtils:
             Output prefix
         ref_genome : str
             Fasta reference file
+        sdf_index : str, optional
+            SDF index path for the reference genome. If None, will use ref_genome + ".sdf"
         evaluation_regions: str
             Bed file of regions to evaluate (HCR)
         comparison_intervals: Optional[str]
@@ -170,7 +173,13 @@ class VcfComparisonUtils:
         """
 
         output_dir = os.path.dirname(output_prefix)
-        sdf_path = ref_genome + ".sdf"
+        if sdf_index is not None:
+            sdf_path = sdf_index
+        else:
+            sdf_path = ref_genome + ".sdf"
+
+        if not os.path.exists(sdf_path):
+            raise RuntimeError(f"Reference SDF path {sdf_path} does not exist")
         vcfeval_output_dir = os.path.join(output_dir, os.path.basename(output_prefix) + ".vcfeval_output")
 
         if os.path.isdir(vcfeval_output_dir):

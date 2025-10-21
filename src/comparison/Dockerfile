@@ -1,7 +1,8 @@
 ARG BASE_IMAGE=ugbio_base
+ARG OUT_DIR=/tmp/ugbio
 FROM python:3.11-bullseye AS build
 
-ARG OUT_DIR=/tmp/ugbio
+ARG OUT_DIR
 ARG MODULE_DIR=comparison
 RUN mkdir -p $OUT_DIR
 
@@ -49,12 +50,16 @@ RUN curl -SLO https://github.com/RealTimeGenomics/rtg-tools/releases/download/${
     echo "RTG_TALKBACK=true  # Crash logs\nRTG_USAGE=false # Simple usage logging\n" >/opt/rtg/rtg.cfg && \
     ln -s /opt/rtg/rtg /usr/local/bin/rtg
 
-ARG OUT_DIR=/tmp/ugbio
+ARG OUT_DIR
 
-# Install module
-COPY --from=build $OUT_DIR $OUT_DIR
+RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
-RUN pip install ${OUT_DIR}/*.whl
+COPY --from=build ${OUT_DIR} ${OUT_DIR}
+RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
+
+USER ugbio
+
+WORKDIR /home/ugbio
 
 # for runnig CI (can be removed if pytest is installed as part of the venv)
 RUN pip install pytest

@@ -1,7 +1,8 @@
 ARG BASE_IMAGE=ugbio_base
+ARG OUT_DIR=/tmp/ugbio
 FROM python:3.11-bullseye AS build
 
-ARG OUT_DIR=/tmp/ugbio
+ARG OUT_DIR
 RUN mkdir -p $OUT_DIR
 
 COPY ./src/ ./src/
@@ -24,11 +25,17 @@ RUN mkdir -p /opt/picard && \
 RUN echo '#!/bin/sh\njava -jar /opt/picard/picard.jar "$@"' > /usr/local/bin/picard && \
     chmod +x /usr/local/bin/picard
 
-ARG OUT_DIR=/tmp/ugbio
+ARG OUT_DIR
 
-COPY --from=build $OUT_DIR $OUT_DIR
+RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
+COPY --from=build ${OUT_DIR} ${OUT_DIR}
 RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
-    pip install "${WHEEL_FILE}[vcfbed,reports,concordance]"
+    pip install "${WHEEL_FILE}[vcfbed,reports,concordance]" && \
+    rm -rf ${OUT_DIR}
+
+USER ugbio
+
+WORKDIR /home/ugbio
 
 COPY --from=build ./src/core/ugbio_core/reports ./src/core/ugbio_core/reports
