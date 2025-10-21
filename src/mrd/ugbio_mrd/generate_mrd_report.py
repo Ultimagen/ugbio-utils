@@ -29,7 +29,7 @@ class MrdReportInputs:
     featuremap_file: str
     srsnv_metadata_json: str
     db_control_signatures_vcf_files: list[str] = None
-    tumor_sample: str = None
+    tumor_sample: dict = None
     signature_filter_query: str = None
     read_filter_query: str = None
 
@@ -135,7 +135,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
             mrd_report_inputs.matched_signatures_vcf_files,
             coverage_bed=mrd_report_inputs.coverage_bed,
             output_parquet=signatures_dataframe_fname,
-            tumor_sample=mrd_report_inputs.tumor_sample,
+            tumor_sample=mrd_report_inputs.tumor_sample["matched"],
             signature_type="matched",
             return_dataframes=return_dataframes,
             concat_to_existing_output_parquet=False,
@@ -146,7 +146,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
             mrd_report_inputs.control_signatures_vcf_files,
             coverage_bed=mrd_report_inputs.coverage_bed,
             output_parquet=signatures_dataframe_fname,
-            tumor_sample=mrd_report_inputs.tumor_sample,
+            tumor_sample=mrd_report_inputs.tumor_sample["control"],
             signature_type="control",
             concat_to_existing_output_parquet=concat_to_existing_output_parquet,
         )
@@ -156,7 +156,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
             mrd_report_inputs.db_control_signatures_vcf_files,
             coverage_bed=mrd_report_inputs.coverage_bed,
             output_parquet=signatures_dataframe_fname,
-            tumor_sample=mrd_report_inputs.tumor_sample,
+            tumor_sample=mrd_report_inputs.tumor_sample["db_control"],
             signature_type="db_control",
             return_dataframes=return_dataframes,
             concat_to_existing_output_parquet=concat_to_existing_output_parquet,

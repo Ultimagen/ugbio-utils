@@ -225,7 +225,7 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
     signature_vcf_files: list[str],
     output_parquet: str = None,
     coverage_bed: str = None,
-    tumor_sample: str = None,
+    tumor_sample: list[str] = None,
     x_columns_name_dict: dict = None,
     columns_to_drop: list = None,
     signature_type: str = None,
@@ -297,7 +297,7 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
                     file_name,
                     output_parquet=None,
                     return_dataframes=True,
-                    tumor_sample=tumor_sample,
+                    tumor_sample=tumor_sample[j],
                     x_columns_name_dict=x_columns_name_dict,
                     columns_to_drop=columns_to_drop,
                     verbose=j == 0,  # only verbose in first iteration
