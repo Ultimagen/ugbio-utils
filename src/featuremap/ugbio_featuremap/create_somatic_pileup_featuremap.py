@@ -189,13 +189,15 @@ def run(argv):
     merge_vcf_files(tumor_vcf, unfiltered_normal_vcf, out_merged_vcf)
     logger.info(f"Output merged VCF file: {out_merged_vcf}")
 
-    # Clean up temporary files
+    # Clean up intermediate files
     for f in created_files:
         try:
             os.remove(f)
             logger.debug(f"Removed temporary file: {f}")
         except Exception as e:
             logger.warning(f"Could not remove temporary file {f}: {e}")
+
+
 def main():
     run(sys.argv)
 
