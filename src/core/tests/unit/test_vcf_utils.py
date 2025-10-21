@@ -23,10 +23,14 @@ def test_intersect_bed_files(mock_subprocess_call, tmp_path, resources_dir):
     # Test with simple pipeline
     sp = SimplePipeline(0, 10)
     VcfUtils(sp).intersect_bed_files(bed1, bed2, output_path)
+    # TBD also add test for sp
+    # mock_subprocess_call.assert_called_once_with(
+    #     " ".join(["bedtools", "intersect", "-a", bed1, "-b", bed2]), stdout=mock.ANY, shell=True
+    # )
 
     VcfUtils().intersect_bed_files(bed1, bed2, output_path)
     mock_subprocess_call.assert_called_once_with(
-        ["bedtools", "intersect", "-a", bed1, "-b", bed2], stdout=mock.ANY, shell=False
+        " ".join(["bedtools", "intersect", "-a", bed1, "-b", bed2]), stdout=mock.ANY, shell=True
     )
     assert exists(output_path)
 
