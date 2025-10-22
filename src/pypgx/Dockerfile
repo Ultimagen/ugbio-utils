@@ -2,7 +2,7 @@ FROM ubuntu:24.04
 
 # Install dependencies
 RUN apt-get update && \
-    apt-get install -y python3.12 python3.12-venv python3.12-dev python3-pip openjdk-17-jdk git build-essential && \
+    apt-get install --no-install-recommends -y python3.12 python3.12-venv python3.12-dev python3-pip openjdk-17-jdk git build-essential && \
     ln -sf /usr/bin/python3.12 /usr/bin/python3 && \
     python3 -m venv /opt/venv && \
     apt-get purge -y python3-pip && \
@@ -29,4 +29,3 @@ ENV PYPGX_BUNDLE=/opt/pypgx-bundle
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 USER ugbio
 WORKDIR /home/ugbio
- 
