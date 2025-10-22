@@ -96,6 +96,11 @@ def test_run_pipeline(mocker):
     mock_truvari_to_dataframes = mocker.patch.object(sv_comparison, "truvari_to_dataframes")
     mock_truvari_to_dataframes.return_value = (pd.DataFrame(), pd.DataFrame())
     mock_to_hdf = mocker.patch("pandas.DataFrame.to_hdf")
+    mock_mkdtemp = mocker.patch("tempfile.mkdtemp")
+    mock_mkdtemp.return_value = "/tmp/test_dir"
+    mock_move = mocker.patch("shutil.move")
+    mock_exists = mocker.patch("os.path.exists")
+    mock_exists.return_value = True
 
     sv_comparison.run_pipeline(
         calls="calls.vcf.gz",
@@ -107,14 +112,23 @@ def test_run_pipeline(mocker):
         pctsize=0.8,
         erase_outdir=True,
     )
+
+    # Verify collapse_vcf calls with temporary directory paths
     mock_collapse_vcf.assert_any_call(
-        "calls.vcf.gz", "calls_collapsed.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8
+        "calls.vcf.gz", "/tmp/test_dir/calls_collapsed.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8
     )
+    mock_collapse_vcf.assert_any_call(
+        "ground_truth.vcf.gz", "/tmp/test_dir/ground_truth_collapsed.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8
+    )
+
+    # Verify sort and index operations are called
     mock_sort_vcf.assert_called()
     mock_index_vcf.assert_called()
+
+    # Verify truvari is called with the correct temporary file paths
     mock_run_truvari.assert_called_once_with(
-        calls="calls_collapsed.sort.vcf.gz",
-        gt="ground_truth_collapsed.sort.vcf.gz",
+        calls="/tmp/test_dir/calls_collapsed.sort.vcf.gz",
+        gt="/tmp/test_dir/ground_truth_collapsed.sort.vcf.gz",
         outdir="output_dir",
         bed="regions.bed",
         pctseq=0.9,
@@ -122,3 +136,6 @@ def test_run_pipeline(mocker):
         erase_outdir=True,
     )
     mock_to_hdf.assert_called()
+
+    # Verify temporary files are moved to output directory
+    mock_move.assert_called()
