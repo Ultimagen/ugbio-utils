@@ -295,6 +295,8 @@ class SVComparison:
         for tmpfile in tmpfiles_to_move:
             if os.path.exists(tmpfile):
                 shutil.move(tmpfile, outdir)
+        shutil.rmtree(workdir)
+
         self.logger.info(f"truvari pipeline finished with calls: {calls_fn} and gt: {gt_fn}")
 
 
