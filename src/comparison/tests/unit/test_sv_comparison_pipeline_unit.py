@@ -99,6 +99,7 @@ def test_run_pipeline(mocker):
     mock_mkdtemp = mocker.patch("tempfile.mkdtemp")
     mock_mkdtemp.return_value = "/tmp/test_dir"
     mock_move = mocker.patch("shutil.move")
+    mock_rmtree = mocker.patch("shutil.rmtree")
     mock_exists = mocker.patch("os.path.exists")
     mock_exists.return_value = True
 
@@ -139,3 +140,6 @@ def test_run_pipeline(mocker):
 
     # Verify temporary files are moved to output directory
     mock_move.assert_called()
+
+    # Verify temporary directory is cleaned up
+    mock_rmtree.assert_called_once_with("/tmp/test_dir")
