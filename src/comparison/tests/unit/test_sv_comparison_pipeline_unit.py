@@ -36,6 +36,9 @@ def test_collapse_vcf(mocker):
         stdout=mocker.ANY,
     )
     mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
+    # Verify both processes were set up correctly
+    assert mock_p1.returncode == 0
+    assert mock_p2.returncode == 0
 
 
 def test_run_truvari(mocker):
@@ -96,10 +99,13 @@ def test_run_pipeline(mocker):
     mock_truvari_to_dataframes = mocker.patch.object(sv_comparison, "truvari_to_dataframes")
     mock_truvari_to_dataframes.return_value = (pd.DataFrame(), pd.DataFrame())
     mock_to_hdf = mocker.patch("pandas.DataFrame.to_hdf")
-    mock_mkdtemp = mocker.patch("tempfile.mkdtemp")
-    mock_mkdtemp.return_value = "/tmp/test_dir"
+
+    # Mock TemporaryDirectory as a context manager
+    mock_temp_dir = mocker.patch("tempfile.TemporaryDirectory")
+    mock_temp_dir.return_value.__enter__.return_value = "/tmp/test_dir"
+    mock_temp_dir.return_value.__exit__.return_value = None
+
     mock_move = mocker.patch("shutil.move")
-    mock_rmtree = mocker.patch("shutil.rmtree")
     mock_exists = mocker.patch("os.path.exists")
     mock_exists.return_value = True
 
@@ -141,5 +147,7 @@ def test_run_pipeline(mocker):
     # Verify temporary files are moved to output directory
     mock_move.assert_called()
 
-    # Verify temporary directory is cleaned up
-    mock_rmtree.assert_called_once_with("/tmp/test_dir")
+    # Verify TemporaryDirectory context manager was used
+    mock_temp_dir.assert_called_once()
+    mock_temp_dir.return_value.__enter__.assert_called_once()
+    mock_temp_dir.return_value.__exit__.assert_called_once()
