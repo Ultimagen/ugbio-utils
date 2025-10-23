@@ -5,6 +5,7 @@ RUN apt-get update && \
     apt-get install --no-install-recommends -y python3.12 python3.12-venv python3.12-dev python3.12-ensurepip python3-pip openjdk-17-jdk git build-essential && \
     ln -sf /usr/bin/python3.12 /usr/bin/python3 && \
     python3 -m venv /opt/venv && \
+    /opt/venv/bin/python -m ensurepip && \
     apt-get purge -y python3-pip && \
     apt-get autoremove -y && \
     apt-get clean && \
