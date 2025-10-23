@@ -241,61 +241,60 @@ class SVComparison:
         -------
         None
         """
-        workdir = tempfile.mkdtemp()
-        self.logger.info(f"Running truvari pipeline with calls: {calls} and gt: {gt}")
-        calls_fn = calls
-        collapsed_fn = pjoin(workdir, basename(calls).replace(".vcf.gz", "_collapsed.vcf.gz"))
-        tmpfiles_to_move = []
-        self.collapse_vcf(
-            calls_fn,
-            collapsed_fn,
-            bed=hcr_bed,
-            pctseq=pctseq,
-            pctsize=pctsize,
-        )
-        calls_fn = collapsed_fn
-        tmpfiles_to_move.append(calls_fn)
+        with tempfile.TemporaryDirectory() as workdir:
+            self.logger.info(f"Running truvari pipeline with calls: {calls} and gt: {gt}")
+            calls_fn = calls
+            collapsed_fn = pjoin(workdir, basename(calls).replace(".vcf.gz", "_collapsed.vcf.gz"))
+            tmpfiles_to_move = []
+            self.collapse_vcf(
+                calls_fn,
+                collapsed_fn,
+                bed=hcr_bed,
+                pctseq=pctseq,
+                pctsize=pctsize,
+            )
+            calls_fn = collapsed_fn
+            tmpfiles_to_move.append(calls_fn)
 
-        self.vu.sort_vcf(calls_fn, calls_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz"))
-        calls_fn = calls_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz")
-        tmpfiles_to_move.append(calls_fn)
-        tmpfiles_to_move.append(calls_fn + ".tbi")
+            self.vu.sort_vcf(calls_fn, calls_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz"))
+            calls_fn = calls_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz")
+            tmpfiles_to_move.append(calls_fn)
+            tmpfiles_to_move.append(calls_fn + ".tbi")
 
-        self.vu.index_vcf(calls_fn)
+            self.vu.index_vcf(calls_fn)
 
-        gt_fn = gt
-        gt_collapsed_fn = pjoin(workdir, basename(gt).replace(".vcf.gz", "_collapsed.vcf.gz"))
-        self.collapse_vcf(
-            gt_fn,
-            gt_collapsed_fn,
-            bed=hcr_bed,
-            pctseq=pctseq,
-            pctsize=pctsize,
-        )
-        gt_fn = gt_collapsed_fn
-        tmpfiles_to_move.append(gt_fn)
-        self.vu.sort_vcf(gt_fn, gt_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz"))
-        gt_fn = gt_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz")
-        tmpfiles_to_move.append(gt_fn)
-        tmpfiles_to_move.append(gt_fn + ".tbi")
-        self.vu.index_vcf(gt_fn)
+            gt_fn = gt
+            gt_collapsed_fn = pjoin(workdir, basename(gt).replace(".vcf.gz", "_collapsed.vcf.gz"))
+            self.collapse_vcf(
+                gt_fn,
+                gt_collapsed_fn,
+                bed=hcr_bed,
+                pctseq=pctseq,
+                pctsize=pctsize,
+            )
+            gt_fn = gt_collapsed_fn
+            tmpfiles_to_move.append(gt_fn)
+            self.vu.sort_vcf(gt_fn, gt_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz"))
+            gt_fn = gt_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz")
+            tmpfiles_to_move.append(gt_fn)
+            tmpfiles_to_move.append(gt_fn + ".tbi")
+            self.vu.index_vcf(gt_fn)
 
-        self.run_truvari(
-            calls=calls_fn,
-            gt=gt_fn,
-            outdir=outdir,
-            bed=hcr_bed,
-            pctseq=pctseq,
-            pctsize=pctsize,
-            erase_outdir=erase_outdir,
-        )
-        df_base, df_calls = self.truvari_to_dataframes(outdir, custom_info_fields=custom_info_fields)
-        df_base.to_hdf(output_file_name, key="base", mode="w")
-        df_calls.to_hdf(output_file_name, key="calls", mode="a")
-        for tmpfile in tmpfiles_to_move:
-            if os.path.exists(tmpfile):
-                shutil.move(tmpfile, outdir)
-        shutil.rmtree(workdir)
+            self.run_truvari(
+                calls=calls_fn,
+                gt=gt_fn,
+                outdir=outdir,
+                bed=hcr_bed,
+                pctseq=pctseq,
+                pctsize=pctsize,
+                erase_outdir=erase_outdir,
+            )
+            df_base, df_calls = self.truvari_to_dataframes(outdir, custom_info_fields=custom_info_fields)
+            df_base.to_hdf(output_file_name, key="base", mode="w")
+            df_calls.to_hdf(output_file_name, key="calls", mode="a")
+            for tmpfile in tmpfiles_to_move:
+                if os.path.exists(tmpfile):
+                    shutil.move(tmpfile, outdir)
 
         self.logger.info(f"truvari pipeline finished with calls: {calls_fn} and gt: {gt_fn}")
 
