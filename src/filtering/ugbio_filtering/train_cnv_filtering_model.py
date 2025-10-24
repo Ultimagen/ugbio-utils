@@ -25,7 +25,7 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
@@ -45,7 +45,7 @@ from sklearn.preprocessing import FunctionTransformer, LabelEncoder
 warnings.filterwarnings("ignore")
 
 
-class SafeLabelEncoder(BaseEstimator, TransformerMixin):
+class SafeLabelEncoder(BaseEstimator):
     """Label encoder that handles unseen categories gracefully."""
 
     def __init__(self):
