@@ -404,7 +404,7 @@ def run(argv):
         vcf corresponding index file.
     """
     parser = argparse.ArgumentParser(
-        prog="convert_combined_cnv_results_to_output_formatis.py", description="converts CNV calls to bed and vcf."
+        prog="convert_combined_cnv_results_to_output_formats.py", description="converts CNV calls to bed and vcf."
     )
 
     parser.add_argument("--cnv_annotated_bed_file", help="input bed file holding CNV calls", required=True, type=str)
