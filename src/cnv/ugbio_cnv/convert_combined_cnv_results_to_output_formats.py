@@ -171,7 +171,7 @@ def to_bed_name(row: pd.Series) -> str:
 
 def process_filter_columns(row: pd.Series, filter_tags_registry: dict = FILTER_TAG_REGISTRY) -> str:
     """
-    Process filter columns for a single row, handling multiple filter values separated by | or ,.
+    Process filter columns for a single row, handling multiple filter values separated by | or ;.
 
     Args:
         row (pd.Series): A row from the DataFrame containing filter columns.
@@ -391,13 +391,15 @@ def write_combined_vcf(outfile: str, bed_df: pd.DataFrame, sample_name: str, fas
 
 def run(argv):
     """
-    converts combined CNV calls (from cnmops, cnvpytor, gridss) in bed format to vcf.
+    converts combined CNV calls (from cnmops, cnvpytor, gridss) and outputs bed and VCF files.
     input arguments:
     --cnv_annotated_bed_file: input bed file holding CNV calls.
     --fasta_index_file: (.fai file) tab delimeted file holding reference genome chr ids with their lengths.
     --out_directory: output directory
     --sample_name: sample name
     output files:
+    bed file: <sample_name>.cnv.bed
+        Contains processed CNV calls with JALIGN-derived filter fields.
     vcf file: <sample_name>.cnv.vcf.gz
         shows called CNVs in zipped vcf format.
     vcf index file: <sample_name>.cnv.vcf.gz.tbi

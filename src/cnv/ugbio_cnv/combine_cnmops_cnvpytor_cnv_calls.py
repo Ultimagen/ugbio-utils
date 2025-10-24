@@ -401,7 +401,7 @@ def process_del_jalign_results(
     # when merging some deletions with PASS and some with NO_JUMP_ALIGNMENT, we set the filter to PASS
     merged_df = pd.read_csv(out_del_jalign_merged, sep="\t", header=None)
     filter_column = 6
-    merged_df[filter_column].loc[merged_df[filter_column].str.contains("PASS")] = "PASS"
+    merged_df.loc[merged_df[filter_column].str.contains("PASS"), filter_column] = "PASS"
     merged_df.to_csv(out_del_jalign_merged, sep="\t", header=False, index=False)
 
     return out_del_jalign_merged
@@ -554,7 +554,7 @@ def run(argv):
     logger.info(vcf_args)
     out_cnvs_combined_annotated_vcf, out_cnvs_combined_annotated_bed = output_results.run(vcf_args)
     logger.info(f"out_cnvs_combined_annotated_vcf: {out_cnvs_combined_annotated_vcf}")
-    logger.info(f"out_cnvs_combined_annotated_vcf: {out_cnvs_combined_annotated_bed}")
+    logger.info(f"out_cnvs_combined_annotated_bed: {out_cnvs_combined_annotated_bed}")
 
 
 def main():
