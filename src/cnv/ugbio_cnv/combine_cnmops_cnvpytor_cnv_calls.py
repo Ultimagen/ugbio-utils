@@ -482,7 +482,10 @@ def run(argv):
     with open(out_cnvs_combined, "w") as out_fh:
         out_fh.write(f"{columns}\n")
 
-    run_cmd(f"cat {cnmops_cnvpytor_merged_dup} {out_del_jalign_merged} | bedtools sort -i - >> {out_cnvs_combined}")
+    # Use unix sort instead of bedtools sort for proper end coordinate sorting when starts are identical
+    run_cmd(
+        f"cat {cnmops_cnvpytor_merged_dup} {out_del_jalign_merged} | sort -k1,1 -k2,2n -k3,3n >> {out_cnvs_combined}"
+    )
     logger.info(f"out_cnvs_combined: {out_cnvs_combined}")
 
     if args.ug_cnv_lcr:
@@ -491,7 +494,7 @@ def run(argv):
         # ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "UG-CNV-LCR"]
 
         sorted_ug_cnv_lcr = f"{out_cnvs_combined}.lcr.bed"
-        run_cmd(f"bedtools sort -i {args.ug_cnv_lcr} > {sorted_ug_cnv_lcr}")
+        run_cmd(f"sort -k1,1 -k2,2n -k3,3n {args.ug_cnv_lcr} > {sorted_ug_cnv_lcr}")
 
         out_cnvs_combined_annotated = f"{out_cnvs_combined}.annotate.bed"
         run_cmd(
@@ -541,7 +544,7 @@ def run(argv):
 
     # convert to vcf
     vcf_args = [
-        "convert_combined_cnv_results_to_vcf",
+        "combine_cnmops_cnvpytor_cnv_calls",
         "--cnv_annotated_bed_file",
         out_cnvs_combined_annotated,
         "--fasta_index_file",
