@@ -84,6 +84,12 @@ class SafeLabelEncoder(BaseEstimator):
         return self
 
 
+# Feature columns used throughout the CNV filtering model
+NUMERIC_FEATURES = ["svlen", "jump_alignments", "roundedcopynumber"]
+CATEGORICAL_FEATURES = ["cnv_source", "region_annotations"]
+FEATURE_COLS = NUMERIC_FEATURES + CATEGORICAL_FEATURES
+
+
 def scale_jump_alignments(x):
     """Scale jump alignments by dividing by 40"""
     x = x.copy()
@@ -99,9 +105,9 @@ def create_preprocessing_pipeline():
     Returns:
         ColumnTransformer: Preprocessing pipeline
     """
-    # Define feature groups
-    numeric_features = ["svlen", "jump_alignments", "roundedcopynumber"]
-    categorical_features = ["cnv_source", "flt"]
+    # Use shared feature group constants
+    numeric_features = NUMERIC_FEATURES
+    categorical_features = CATEGORICAL_FEATURES
 
     # Create numeric transformer with NaN filling and jump alignment scaling
     # Tree-based models don't require scaling, so we only handle NaN values and scale jump alignments
@@ -174,8 +180,7 @@ def load_and_prepare_data(h5_file: str):
     print(f"Loaded {len(data)} samples")
 
     # Check required columns
-    required_features = ["svlen", "jump_alignments", "cnv_source", "roundedcopynumber", "flt"]
-    missing_features = [col for col in required_features if col not in data.columns]
+    missing_features = [col for col in FEATURE_COLS if col not in data.columns]
 
     if missing_features:
         print(f"Error: Missing required features: {missing_features}")
@@ -188,7 +193,7 @@ def load_and_prepare_data(h5_file: str):
         sys.exit(1)
 
     # Prepare features and labels
-    x = data[required_features].copy()
+    x = data[FEATURE_COLS].copy()
     y = data["label"].copy()
 
     # Print label distribution
@@ -215,8 +220,7 @@ def evaluate_model(df: pd.DataFrame, model, preprocessor, data_type: str):
     print("=" * (len(data_type) + 12))
 
     # Extract features and labels
-    feature_cols = ["svlen", "jump_alignments", "cnv_source", "roundedcopynumber", "flt"]
-    x = df[feature_cols].copy()
+    x = df[FEATURE_COLS].copy()
     y = df["label"].copy()
 
     # Transform features
@@ -277,7 +281,8 @@ def evaluate_model(df: pd.DataFrame, model, preprocessor, data_type: str):
     # Feature importance if available
     if hasattr(model, "feature_importances_"):
         print("\nFeature Importance:")
-        feature_names = ["svlen", "jump_alignments", "roundedcopynumber", "cnv_source", "flt"]
+        # If model has more features than expected, print all
+        feature_names = FEATURE_COLS + ["flt"] if len(model.feature_importances_) > len(FEATURE_COLS) else FEATURE_COLS
         for name, importance in zip(feature_names, model.feature_importances_, strict=False):
             print(f"{name}: {importance:.4f}")
 
