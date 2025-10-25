@@ -24,8 +24,18 @@ INFO_TAG_REGISTRY = {
     "JUMP_ALIGNMENTS": ("JUMP_ALIGNMENTS", 1, "Float", "Number of jump alignments supporting this CNV", "INFO"),
 }
 
-FILTER_COLUMNS_REGISTRY = ["jalign_filter", "LCR_label_value"]
-JALIGN_FILTER_VALUE = "NO_JUMP_ALIGNMENT"
+# the reason filters require special treatment is that they need to be
+# unique and should be PASS if none present
+FILTER_COLUMNS_REGISTRY = ["LCR_label_value"]
+FILTER_ANNOTATION_NAME = "REGION_ANNOTATIONS"
+INFO_TAG_REGISTRY[FILTER_ANNOTATION_NAME] = (
+    "REGION_ANNOTATIONS",
+    ".",
+    "String",
+    "LCR intersection status of the CNV",
+    "INFO",
+)
+
 FILTER_TAG_REGISTRY = {
     "Clusters": ("Clusters", None, None, "Overlaps with locations with frequent clusters of CNV", "FILTER"),
     "Coverage-Mappability": (
@@ -42,7 +52,6 @@ FILTER_TAG_REGISTRY = {
         "Overlaps with telomere or centromere regions",
         "FILTER",
     ),
-    JALIGN_FILTER_VALUE: ("NO_JUMP_ALIGNMENT", None, None, "No jump alignment support (dels only)", "FILTER"),
 }
 
 
@@ -64,7 +73,8 @@ def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHead
     # Add sample names to the header
     header.add_sample(sample_name)
 
-    header.add_line("##VCF_TYPE=ULTIMA_CNV")
+    # Add custom meta information
+    header.add_meta("VCF_TYPE", value="ULTIMA_CNV")
 
     # Add contigs info to the header
     df_genome = pd.read_csv(fasta_index_file, sep="\t", header=None, usecols=[0, 1])
@@ -72,39 +82,33 @@ def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHead
     for _, row in df_genome.iterrows():
         chr_id = row["chr"]
         length = row["length"]
-        header.add_line(f"##contig=<ID={chr_id},length={length}>")
+        header.contigs.add(chr_id, length=length)
 
-    # Add ALT
+    # Add ALT (using add_line as ALT records don't have a direct add method)
     header.add_line('##ALT=<ID=CNV,Description="Copy number variant region">')
     header.add_line('##ALT=<ID=DEL,Description="Deletion relative to the reference">')
     header.add_line('##ALT=<ID=DUP,Description="Region of elevated copy number relative to the reference">')
 
-    # Add FILTER
-    header.add_line('##FILTER=<ID=PASS,Description="High confidence CNV call">')
+    # Add FILTER (PASS is automatically included by pysam)
     for filter_tag in FILTER_TAG_REGISTRY.values():
         if filter_tag[-1] == "FILTER":
-            header.add_line(f'##FILTER=<ID={filter_tag[0]},Description="{filter_tag[-2]}">')
+            header.filters.add(filter_tag[0], None, None, filter_tag[-2])
 
     # Add INFO
-    header.add_line(
-        '##INFO=<ID=CopyNumber,Number=1,Type=Float,Description="average copy number detected from cn.mops">'
-    )
-    header.add_line(
-        '##INFO=<ID=RoundedCopyNumber,Number=1,Type=Integer,Description="rounded copy number detected from cn.mops">'
-    )
-    header.add_line('##INFO=<ID=SVLEN,Number=.,Type=Integer,Description="CNV length">')
-    header.add_line('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="CNV type. can be DUP or DEL">')
-    for info_tag in INFO_TAG_REGISTRY.values():
-        if info_tag[-1] == "INFO":
-            header.add_line(
-                f'##INFO=<ID={info_tag[0]},Number={info_tag[1]},Type={info_tag[2]},Description="{info_tag[3]}">'
-            )
+    header.info.add("CopyNumber", 1, "Float", "average copy number detected from cn.mops")
+    header.info.add("RoundedCopyNumber", 1, "Integer", "rounded copy number detected from cn.mops")
+    header.info.add("SVLEN", 1, "Integer", "CNV length")
+    header.info.add("SVTYPE", 1, "String", "CNV type. can be DUP or DEL")
 
-    # Add END field for structural variants
-    header.add_line('##INFO=<ID=END,Number=1,Type=Integer,Description="Stop position of the interval">')
+    # Add INFO tags from registry, avoiding duplicates
+    added_info_ids = set()
+    for info_tag in INFO_TAG_REGISTRY.values():
+        if info_tag[-1] == "INFO" and info_tag[0] not in added_info_ids:
+            header.info.add(info_tag[0], info_tag[1], info_tag[2], info_tag[3])
+            added_info_ids.add(info_tag[0])
 
     # Add FORMAT
-    header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
+    header.formats.add("GT", 1, "String", "Genotype")
 
     return header
 
@@ -142,13 +146,17 @@ def calculate_copy_number(copy_number: str | int) -> float | str | None:
         copy_number_value = float(copy_number)
     return copy_number_value
 
-
-def process_filter_columns(row: pd.Series, filter_tags_registry: dict = FILTER_TAG_REGISTRY) -> str:
+def process_filter_columns(
+    row: pd.Series,
+    filter_columns_registry: list = FILTER_COLUMNS_REGISTRY,
+    filter_tags_registry: dict = FILTER_TAG_REGISTRY,
+) -> str:
     """
     Process filter columns for a single row, handling multiple filter values separated by | or ;.
 
     Args:
         row (pd.Series): A row from the DataFrame containing filter columns.
+        filter_columns_registry (list): A list of column names to process for filters.
         filter_tags_registry (dict): A dictionary of valid filter tags.
 
     Returns:
@@ -156,7 +164,7 @@ def process_filter_columns(row: pd.Series, filter_tags_registry: dict = FILTER_T
     """
     filter_values = []
 
-    for col in FILTER_COLUMNS_REGISTRY:
+    for col in filter_columns_registry:
         if col in row and pd.notna(row[col]):
             value = str(row[col])
             # Handle multiple values separated by | or ;
@@ -187,8 +195,8 @@ def prepare_cnv_dataframe(cnv_annotated_bed_file: str) -> pd.DataFrame:
         pd.DataFrame: DataFrame containing the processed CNV data ready for VCF conversion.
     """
     df_cnvs = read_cnv_annotated_file_to_df(cnv_annotated_bed_file)
-    df_cnvs["filter"] = df_cnvs.apply(process_filter_columns, axis=1)
-
+    df_cnvs[FILTER_ANNOTATION_NAME] = df_cnvs.apply(process_filter_columns, axis=1)
+    df_cnvs["filter"] = "PASS"
     df_cnvs["CopyNumber"] = df_cnvs["copy_number"].apply(calculate_copy_number).replace(np.nan, None)
     df_cnvs["RoundedCopyNumber"] = df_cnvs["CopyNumber"].apply(
         lambda x: int(round(x)) if isinstance(x, float) else pd.NA
