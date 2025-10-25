@@ -107,7 +107,7 @@ def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHead
     # Add INFO
     header.info.add("CopyNumber", 1, "Float", "average copy number detected from cn.mops")
     header.info.add("RoundedCopyNumber", 1, "Integer", "rounded copy number detected from cn.mops")
-    header.info.add("SVLEN", 1, "Integer", "CNV length")
+    header.info.add("SVLEN", ".", "Integer", "CNV length")
     header.info.add("SVTYPE", 1, "String", "CNV type. can be DUP or DEL")
 
     # Add INFO tags from registry, avoiding duplicates
