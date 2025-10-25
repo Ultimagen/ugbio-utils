@@ -15,7 +15,7 @@ warnings.filterwarnings("ignore")
 
 # NOTE: both the id and the column name should appear in the registry
 # (after converting table to BED the names are as in the VCF)
-INFO_TAG_REGISTRY = {
+INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
     "CNV_calls_source": (
         "CNV_SOURCE",
         1,
@@ -35,7 +35,8 @@ INFO_TAG_REGISTRY = {
 }
 
 # the reason filters require special treatment is that they need to be
-# unique and should be PASS if none present
+# unique and should be PASS if none present. In the end filter tags are added to info
+# All columns from FILTER_COLUMNS_REGISTRY are aggregated into a single INFO field FILTER_ANNOTATION_NAME
 FILTER_COLUMNS_REGISTRY = ["LCR_label_value"]
 FILTER_ANNOTATION_NAME = "REGION_ANNOTATIONS"
 INFO_TAG_REGISTRY[FILTER_ANNOTATION_NAME] = (
