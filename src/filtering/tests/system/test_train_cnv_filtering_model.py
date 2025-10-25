@@ -49,7 +49,7 @@ def test_train_cnv_filtering_model_complete_pipeline(cnv_test_data, tmpdir):
     print(f"Columns: {list(data.columns)}")
 
     # Ensure we have the minimum required columns for the model
-    required_features = ["svlen", "jump_alignments", "cnv_source", "roundedcopynumber", "flt"]
+    required_features = train_cnv_filtering_model.FEATURE_COLS
     missing_features = [col for col in required_features if col not in data.columns]
 
     if missing_features:
@@ -148,7 +148,7 @@ def test_load_and_prepare_data_function(cnv_test_data):
     assert len(x) > 0, "Should have some data"
 
     # Check feature columns
-    expected_features = ["svlen", "jump_alignments", "cnv_source", "roundedcopynumber", "flt"]
+    expected_features = train_cnv_filtering_model.FEATURE_COLS
     for feature in expected_features:
         assert feature in x.columns, f"Feature {feature} should be in X"
 
