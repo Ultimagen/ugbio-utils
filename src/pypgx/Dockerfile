@@ -5,7 +5,7 @@ RUN apt-get update && \
     apt-get install --no-install-recommends -y python3.12 python3.12-venv python3.12-dev python3-pip openjdk-17-jdk git build-essential && \
     ln -sf /usr/bin/python3.12 /usr/bin/python3
 
-# Create venv and install pip properly
+# Create venv, install pip and pypgx
 RUN python3 -m venv --without-pip /opt/venv && \
     python3 -m pip install --target=/opt/venv/lib/python3.12/site-packages pip setuptools wheel && \
     echo '#!/bin/bash\n/opt/venv/bin/python -m pip "$@"' > /opt/venv/bin/pip && \
