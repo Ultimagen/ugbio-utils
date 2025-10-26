@@ -1,5 +1,5 @@
 import pandas as pd
-from ugbio_comparison.sv_comparison_pipeline import SVComparison  # Adjust the import path as needed
+from ugbio_comparison.sv_comparison_pipeline import SVComparison, get_parser  # Adjust the import path as needed
 
 
 def test_collapse_vcf(mocker):
@@ -24,7 +24,51 @@ def test_collapse_vcf(mocker):
             "collapse",
             "-i",
             "input.vcf",
+            "-t",
             "--passonly",
+            "--bed",
+            "regions.bed",
+            "--pctseq",
+            "0.9",
+            "--pctsize",
+            "0.8",
+        ],
+        stdout=mocker.ANY,
+    )
+    mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
+    # Verify both processes were set up correctly
+    assert mock_p1.returncode == 0
+    assert mock_p2.returncode == 0
+
+
+def test_collapse_vcf_ignore_filter(mocker):
+    """Test collapse_vcf with ignore_filter=True removes --passonly flag"""
+    mock_logger = mocker.Mock()
+    mock_sp = mocker.Mock()
+    sv_comparison = SVComparison(simple_pipeline=mock_sp, logger=mock_logger)
+
+    mock_subprocess_popen = mocker.patch("subprocess.Popen")
+    mock_p1 = mocker.Mock()
+    mock_p2 = mocker.Mock()
+    mock_subprocess_popen.side_effect = [mock_p1, mock_p2]
+    mock_p1.stdout = mocker.Mock()
+    mock_p1.returncode = 0
+    mock_p2.returncode = 0
+    with open("removed.vcf", "w"):
+        pass  # Create the file to be removed
+
+    sv_comparison.collapse_vcf(
+        "input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, ignore_filter=True
+    )
+
+    mock_logger.info.assert_called_with("Deleted temporary file: removed.vcf")
+    # Verify --passonly is NOT included when ignore_filter=True
+    mock_subprocess_popen.assert_any_call(
+        [
+            "truvari",
+            "collapse",
+            "-i",
+            "input.vcf",
             "-t",
             "--bed",
             "regions.bed",
@@ -65,6 +109,35 @@ def test_run_truvari(mocker):
     mock_execute.assert_called_once_with(
         "truvari bench -b ground_truth.vcf -c calls.vcf -o output_dir -t"
         " --passonly --includebed regions.bed --pctseq 0.9 --pctsize 0.8"
+    )
+
+
+def test_run_truvari_ignore_filter(mocker):
+    """Test run_truvari with ignore_filter=True removes --passonly flag"""
+    mock_logger = mocker.Mock()
+    mock_sp = mocker.Mock()
+    sv_comparison = SVComparison(simple_pipeline=mock_sp, logger=mock_logger)
+
+    mock_execute = mocker.patch.object(sv_comparison, "_SVComparison__execute")
+
+    sv_comparison.run_truvari(
+        calls="calls.vcf",
+        gt="ground_truth.vcf",
+        outdir="output_dir",
+        bed="regions.bed",
+        pctseq=0.9,
+        pctsize=0.8,
+        erase_outdir=True,
+        ignore_filter=True,
+    )
+
+    mock_logger.info.assert_called_with(
+        "truvari command: truvari bench -b ground_truth.vcf -c calls.vcf -o output_dir"
+        " -t --includebed regions.bed --pctseq 0.9 --pctsize 0.8"
+    )
+    mock_execute.assert_called_once_with(
+        "truvari bench -b ground_truth.vcf -c calls.vcf -o output_dir -t"
+        " --includebed regions.bed --pctseq 0.9 --pctsize 0.8"
     )
 
 
@@ -122,10 +195,20 @@ def test_run_pipeline(mocker):
 
     # Verify collapse_vcf calls with temporary directory paths
     mock_collapse_vcf.assert_any_call(
-        "calls.vcf.gz", "/tmp/test_dir/calls_collapsed.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8
+        "calls.vcf.gz",
+        "/tmp/test_dir/calls_collapsed.vcf.gz",
+        bed="regions.bed",
+        pctseq=0.9,
+        pctsize=0.8,
+        ignore_filter=False,
     )
     mock_collapse_vcf.assert_any_call(
-        "ground_truth.vcf.gz", "/tmp/test_dir/ground_truth_collapsed.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8
+        "ground_truth.vcf.gz",
+        "/tmp/test_dir/ground_truth_collapsed.vcf.gz",
+        bed="regions.bed",
+        pctseq=0.9,
+        pctsize=0.8,
+        ignore_filter=False,
     )
 
     # Verify sort and index operations are called
@@ -141,6 +224,7 @@ def test_run_pipeline(mocker):
         pctseq=0.9,
         pctsize=0.8,
         erase_outdir=True,
+        ignore_filter=False,
     )
     mock_to_hdf.assert_called()
 
@@ -151,3 +235,104 @@ def test_run_pipeline(mocker):
     mock_temp_dir.assert_called_once()
     mock_temp_dir.return_value.__enter__.assert_called_once()
     mock_temp_dir.return_value.__exit__.assert_called_once()
+
+
+def test_run_pipeline_ignore_filter(mocker):
+    """Test run_pipeline with ignore_filter=True passes the flag correctly to sub-methods"""
+    mock_logger = mocker.Mock()
+    mock_sp = mocker.Mock()
+    sv_comparison = SVComparison(simple_pipeline=mock_sp, logger=mock_logger)
+    mock_collapse_vcf = mocker.patch.object(sv_comparison, "collapse_vcf")
+    _ = mocker.patch.object(sv_comparison.vu, "sort_vcf")
+    _ = mocker.patch.object(sv_comparison.vu, "index_vcf")
+    mock_run_truvari = mocker.patch.object(sv_comparison, "run_truvari")
+    mock_truvari_to_dataframes = mocker.patch.object(sv_comparison, "truvari_to_dataframes")
+    mock_truvari_to_dataframes.return_value = (pd.DataFrame(), pd.DataFrame())
+    _ = mocker.patch("pandas.DataFrame.to_hdf")
+
+    # Mock TemporaryDirectory as a context manager
+    mock_temp_dir = mocker.patch("tempfile.TemporaryDirectory")
+    mock_temp_dir.return_value.__enter__.return_value = "/tmp/test_dir"
+    mock_temp_dir.return_value.__exit__.return_value = None
+
+    _ = mocker.patch("shutil.move")
+    mock_exists = mocker.patch("os.path.exists")
+    mock_exists.return_value = True
+
+    sv_comparison.run_pipeline(
+        calls="calls.vcf.gz",
+        gt="ground_truth.vcf.gz",
+        output_file_name="output.h5",
+        outdir="output_dir",
+        hcr_bed="regions.bed",
+        pctseq=0.9,
+        pctsize=0.8,
+        erase_outdir=True,
+        ignore_filter=True,
+    )
+
+    # Verify collapse_vcf calls with ignore_filter=True
+    mock_collapse_vcf.assert_any_call(
+        "calls.vcf.gz",
+        "/tmp/test_dir/calls_collapsed.vcf.gz",
+        bed="regions.bed",
+        pctseq=0.9,
+        pctsize=0.8,
+        ignore_filter=True,
+    )
+    mock_collapse_vcf.assert_any_call(
+        "ground_truth.vcf.gz",
+        "/tmp/test_dir/ground_truth_collapsed.vcf.gz",
+        bed="regions.bed",
+        pctseq=0.9,
+        pctsize=0.8,
+        ignore_filter=True,
+    )
+
+    # Verify truvari is called with ignore_filter=True
+    mock_run_truvari.assert_called_once_with(
+        calls="/tmp/test_dir/calls_collapsed.sort.vcf.gz",
+        gt="/tmp/test_dir/ground_truth_collapsed.sort.vcf.gz",
+        outdir="output_dir",
+        bed="regions.bed",
+        pctseq=0.9,
+        pctsize=0.8,
+        erase_outdir=True,
+        ignore_filter=True,
+    )
+
+
+def test_argument_parser_ignore_filter():
+    """Test that the argument parser correctly handles the --ignore_filter flag"""
+    parser = get_parser()
+
+    # Test with --ignore_filter flag
+    args = parser.parse_args(
+        [
+            "--calls",
+            "calls.vcf.gz",
+            "--gt",
+            "ground_truth.vcf.gz",
+            "--output_filename",
+            "output.h5",
+            "--outdir",
+            "output_dir",
+            "--ignore_filter",
+        ]
+    )
+    assert args.ignore_filter is True
+
+    # Test without --ignore_filter flag (should default to False)
+    args = parser.parse_args(
+        [
+            "--calls",
+            "calls.vcf.gz",
+            "--gt",
+            "ground_truth.vcf.gz",
+            "--output_filename",
+            "output.h5",
+            "--outdir",
+            "output_dir",
+        ]
+    )
+    assert args.ignore_filter is False
