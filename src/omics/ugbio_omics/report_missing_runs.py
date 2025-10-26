@@ -4,7 +4,8 @@ import time
 from argparse import ArgumentParser
 
 import boto3
-from report_run_completion import report_run_completion
+
+from ugbio_omics.report_run_completion import report_run_completion
 
 logging.basicConfig(level=logging.INFO)
 
