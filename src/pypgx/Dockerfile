@@ -23,6 +23,10 @@ RUN git clone --branch 0.25.0 --depth 1 https://github.com/sbslee/pypgx-bundle /
 ENV PATH="/opt/venv/bin:$PATH"
 ENV PYPGX_BUNDLE=/opt/pypgx-bundle
 
+# Create a script to run tests from docker CI
+RUN echo '#!/bin/sh\necho "No tests to run :)"' > /usr/local/bin/run_tests \
+&& chmod +x /usr/local/bin/run_tests
+
 # Don't use root user
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 USER ugbio
