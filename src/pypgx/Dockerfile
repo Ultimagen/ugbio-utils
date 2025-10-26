@@ -15,11 +15,12 @@ RUN python3 -m venv --without-pip /opt/venv && \
 # Clone the pypgx-bundle repository at version 0.25.0
 RUN git clone --branch 0.25.0 --depth 1 https://github.com/sbslee/pypgx-bundle /opt/pypgx-bundle
 
-# Remove unnecessary packages
+# Remove unnecessary packages and recreate python3 symlink (it gets removed with python3.12-dev)
 RUN apt-get purge -y git && \
     apt-get autoremove -y && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    ln -sf /usr/bin/python3.12 /usr/bin/python3
 
 # Set environment variables for venv and pypgx bundle
 ENV PATH="/opt/venv/bin:$PATH"
