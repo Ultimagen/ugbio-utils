@@ -54,7 +54,8 @@ def test_collapse_vcf_ignore_filter(mocker):
     mock_p1.stdout = mocker.Mock()
     mock_p1.returncode = 0
     mock_p2.returncode = 0
-    open("removed.vcf", "w").close()  # Create the file to be removed
+    with open("removed.vcf", "w"):
+        pass  # Create the file to be removed
 
     sv_comparison.collapse_vcf(
         "input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, ignore_filter=True

@@ -163,7 +163,7 @@ class SVComparison:
         ]
 
         if not ignore_filter:
-            truvari_cmd.append("--passonly")
+            truvari_cmd.insert(len(truvari_cmd), "--passonly")
 
         if bed:
             truvari_cmd.extend(["--includebed", bed])
