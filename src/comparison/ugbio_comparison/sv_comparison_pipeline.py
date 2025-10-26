@@ -94,8 +94,7 @@ class SVComparison:
         self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
         p1 = subprocess.Popen(truvari_cmd, stdout=subprocess.PIPE)
         p2 = subprocess.Popen(["bcftools", "view", "-Oz", "-o", output_vcf], stdin=p1.stdout)  # noqa: S607
-        if p1.stdout:
-            p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
+        p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
         p2.communicate()  # Wait for p2 to finish
         p1.wait()  # Wait for p1 to finish
         if p1.returncode != 0:
@@ -262,6 +261,7 @@ class SVComparison:
             calls_fn = calls
             collapsed_fn = pjoin(workdir, basename(calls).replace(".vcf.gz", "_collapsed.vcf.gz"))
             tmpfiles_to_move = []
+
             self.collapse_vcf(
                 calls_fn,
                 collapsed_fn,
