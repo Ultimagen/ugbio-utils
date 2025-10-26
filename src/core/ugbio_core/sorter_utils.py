@@ -161,13 +161,13 @@ def plot_read_length_histogram(
     read_length = get_histogram_from_sorter(sorter_stats_json, "read_length")
     aligned_read_length = get_histogram_from_sorter(sorter_stats_json, "aligned_read_length")
     # calculate pdf, cdf and limits
-    pdf_aligned = aligned_read_length / read_length.sum()
+    pdf_aligned = aligned_read_length / aligned_read_length.sum()
     cdf_aligned = pdf_aligned.cumsum()
     pdf_aligned_to_all_reads = aligned_read_length / read_length.sum()
     pdf = read_length / read_length.sum()
     cdf = pdf.cumsum()
     f_interp = interp1d(cdf.values, cdf.index, kind="linear", fill_value=(0, 1))
-    f_interp_aligned = interp1d(cdf_aligned.values, cdf_aligned.index, kind="linear", fill_value=(0, 1))
+    f_interp_aligned = interp1d(cdf_aligned.values, cdf_aligned.index, kind="linear", bounds_error=False)
     xlim = f_interp(plot_range_percentiles)
     # plot
     plt.figure(figsize=(10, 5))
