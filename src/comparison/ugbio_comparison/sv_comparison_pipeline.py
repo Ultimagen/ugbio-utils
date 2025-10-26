@@ -55,6 +55,8 @@ class SVComparison:
         bed: str | None = None,
         pctseq: float = 0.0,
         pctsize: float = 0.0,
+        *,
+        ignore_filter: bool = False,
     ):
         """
         Collapse VCF using truvari collapse
@@ -71,13 +73,18 @@ class SVComparison:
             Percentage of sequence identity, by default 0.0
         pctsize : float, optional
             Percentage of size identity, by default 0.0
+        ignore_filter : bool, optional
+            If True, ignore FILTER field (remove --passonly flag), by default False
 
         Returns
         -------
         None
         """
 
-        truvari_cmd = ["truvari", "collapse", "-i", vcf, "--passonly", "-t"]
+        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-t"]
+
+        if not ignore_filter:
+            truvari_cmd.append("--passonly")
 
         if bed:
             truvari_cmd.extend(["--bed", bed])
@@ -87,7 +94,8 @@ class SVComparison:
         self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
         p1 = subprocess.Popen(truvari_cmd, stdout=subprocess.PIPE)
         p2 = subprocess.Popen(["bcftools", "view", "-Oz", "-o", output_vcf], stdin=p1.stdout)  # noqa: S607
-        p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
+        if p1.stdout:
+            p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
         p2.communicate()  # Wait for p2 to finish
         p1.wait()  # Wait for p1 to finish
         if p1.returncode != 0:
@@ -112,6 +120,7 @@ class SVComparison:
         pctsize: float = 0.0,
         *,
         erase_outdir: bool = True,
+        ignore_filter: bool = False,
     ):
         """
         Run truvari, generate truvari report and concordance VCF
@@ -131,6 +140,8 @@ class SVComparison:
             Percentage of size identity, by default 0.0
         erase_outdir : bool, optional
             Erase output directory if it exists, by default True
+        ignore_filter : bool, optional
+            If True, ignore FILTER field (remove --passonly flag), by default False
 
         Returns
         -------
@@ -149,8 +160,10 @@ class SVComparison:
             "-o",
             outdir,
             "-t",
-            "--passonly",
         ]
+
+        if not ignore_filter:
+            truvari_cmd.append("--passonly")
 
         if bed:
             truvari_cmd.extend(["--includebed", bed])
@@ -212,6 +225,7 @@ class SVComparison:
         custom_info_fields: tuple = (),
         *,
         erase_outdir: bool = True,
+        ignore_filter: bool = False,
     ):
         """
         Run truvari pipeline
@@ -234,6 +248,8 @@ class SVComparison:
             Percentage of size identity, by default 0.0
         erase_outdir : bool, optional
             Erase output directory if it exists, by default True
+        ignore_filter : bool, optional
+            If True, ignore FILTER field (remove --passonly flag), by default False
         custom_info_fields : list[str], optional
             Custom info fields to read from the VCFs, in addition SVTYPE and SVLEN
 
@@ -252,6 +268,7 @@ class SVComparison:
                 bed=hcr_bed,
                 pctseq=pctseq,
                 pctsize=pctsize,
+                ignore_filter=ignore_filter,
             )
             calls_fn = collapsed_fn
             tmpfiles_to_move.append(calls_fn)
@@ -271,6 +288,7 @@ class SVComparison:
                 bed=hcr_bed,
                 pctseq=pctseq,
                 pctsize=pctsize,
+                ignore_filter=ignore_filter,
             )
             gt_fn = gt_collapsed_fn
             tmpfiles_to_move.append(gt_fn)
@@ -288,6 +306,7 @@ class SVComparison:
                 pctseq=pctseq,
                 pctsize=pctsize,
                 erase_outdir=erase_outdir,
+                ignore_filter=ignore_filter,
             )
             df_base, df_calls = self.truvari_to_dataframes(outdir, custom_info_fields=custom_info_fields)
             df_base.to_hdf(output_file_name, key="base", mode="w")
@@ -319,6 +338,11 @@ def get_parser():
     parser.add_argument("--pctseq", type=float, default=0.0, help="Percentage of sequence identity")
     parser.add_argument("--pctsize", type=float, default=0.0, help="Percentage of size identity")
     parser.add_argument("--custom_info_fields", nargs="+", default=[], help="Custom info fields to read from the VCFs")
+    parser.add_argument(
+        "--ignore_filter",
+        action="store_true",
+        help="Ignore FILTER field in VCF (remove --passonly flag from truvari commands)",
+    )
     parser.add_argument("--verbosity", default="INFO", help="Logging verbosity level")
     return parser
 
@@ -339,6 +363,7 @@ def run(argv):
         outdir=args.outdir,
         output_file_name=args.output_filename,
         custom_info_fields=tuple(args.custom_info_fields),
+        ignore_filter=args.ignore_filter,
     )
 
 
