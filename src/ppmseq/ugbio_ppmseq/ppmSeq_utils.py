@@ -33,7 +33,6 @@ class PpmseqAdapterVersions(Enum):
     LEGACY_V5 = "legacy_v5"
     LEGACY_V5_END = "legacy_v5_end"
     V1 = "v1"
-    DMBL = "dmbl"
 
 
 # Trimmer segment labels and tags
@@ -95,6 +94,8 @@ class HistogramColumnNames(Enum):
     STRAND_RATIO_CATEGORY_CONSENSUS = "strand_ratio_category_consensus"
     LOOP_SEQUENCE_START = "loop_sequence_start"
     LOOP_SEQUENCE_END = "loop_sequence_end"
+    START_LOOP_SEQUENCE_FW = "Start_loop_sequence_fw"
+    END_LOOP_SEQUENCE_FW = "End_loop_sequence_fw"
     DUMBBELL_LEFTOVER_START = "Dumbbell_leftover_start"
     ST = "st"  # STRAND_RATIO_CATEGORY_START in ppmSeq V1
     ET = "et"  # STRAND_RATIO_CATEGORY_END in ppmSeq V1
@@ -254,26 +255,13 @@ class PpmseqStrandVcfAnnotator(VcfAnnotator):
                         self.sr_lower,
                         self.sr_upper,
                     )  # this works for nan values as well - returns UNDETERMINED
-            if self.adapter_version in (
-                PpmseqAdapterVersions.V1.value,
-                PpmseqAdapterVersions.DMBL.value,
-            ):  # legacy_v5_start has start tags only
+            if self.adapter_version in (PpmseqAdapterVersions.V1.value,):  # legacy_v5_start has start tags only
                 record.info[HistogramColumnNames.ST.value] = record.info.get(
                     HistogramColumnNames.ST.value, PpmseqCategories.UNDETERMINED.value
                 )
-                is_end_reached = (
-                    ppmseq_tags[TrimmerSegmentTags.NATIVE_ADAPTER.value] >= 1
-                    or ppmseq_tags[TrimmerSegmentTags.STEM_END.value] >= self.min_stem_end_matched_length
-                )
                 record.info[HistogramColumnNames.ET.value] = record.info.get(
-                    HistogramColumnNames.ET.value, PpmseqCategories.UNDETERMINED.value
+                    HistogramColumnNames.ET.value, PpmseqCategories.END_UNREACHED.value
                 )
-                #  TODO: Check cases where not is_end_reached and et==UNDETERMINED. Make v5 logic conform with this
-                if (
-                    not is_end_reached
-                    and record.info[HistogramColumnNames.ET.value] == PpmseqCategories.UNDETERMINED.value
-                ):
-                    record.info[HistogramColumnNames.ET.value] = PpmseqCategories.END_UNREACHED.value
 
             records_out[j] = record
 
@@ -342,7 +330,7 @@ def get_strand_ratio_category(strand_ratio, sr_lower, sr_upper) -> str:
     return PpmseqCategories.UNDETERMINED.value
 
 
-def read_ppmseq_trimmer_histogram(  # noqa: C901 #TODO: refactor
+def read_ppmseq_trimmer_histogram(  # noqa: C901,PLR0912 #TODO: refactor
     adapter_version: str | PpmseqAdapterVersions,
     trimmer_histogram_csv: str,
     sr_lower: float = STRAND_RATIO_LOWER_THRESH,
@@ -450,15 +438,15 @@ def read_ppmseq_trimmer_histogram(  # noqa: C901 #TODO: refactor
         PpmseqAdapterVersions.LEGACY_V5.value,
         PpmseqAdapterVersions.V1,
         PpmseqAdapterVersions.V1.value,
-        PpmseqAdapterVersions.DMBL,
-        PpmseqAdapterVersions.DMBL.value,
     ]:
-        is_end_reached = (
-            df_trimmer_histogram[TrimmerSegmentLabels.NATIVE_ADAPTER.value + length_suffix] >= 1
-            if TrimmerSegmentLabels.NATIVE_ADAPTER.value + length_suffix in df_trimmer_histogram.columns
-            else df_trimmer_histogram[TrimmerSegmentLabels.STEM_END.value + length_suffix]
-            >= min_stem_end_matched_length
-        )
+        if TrimmerSegmentLabels.NATIVE_ADAPTER.value + length_suffix in df_trimmer_histogram.columns:
+            is_end_reached = df_trimmer_histogram[TrimmerSegmentLabels.NATIVE_ADAPTER.value + length_suffix] >= 1
+        elif TrimmerSegmentLabels.STEM_END.value + length_suffix in df_trimmer_histogram.columns:
+            is_end_reached = (
+                df_trimmer_histogram[TrimmerSegmentLabels.STEM_END.value + length_suffix] >= min_stem_end_matched_length
+            )
+        else:
+            is_end_reached = df_trimmer_histogram[HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value].notna()
 
     # Handle v5 and v6 loops
     if adapter_version in [
@@ -553,8 +541,6 @@ def read_ppmseq_trimmer_histogram(  # noqa: C901 #TODO: refactor
     elif adapter_version in [
         PpmseqAdapterVersions.V1,
         PpmseqAdapterVersions.V1.value,
-        PpmseqAdapterVersions.DMBL,
-        PpmseqAdapterVersions.DMBL.value,
     ]:
         # In LA-v7 the tags are explicitly detected from the loop sequences
         # an unmatched start tag indicates an undetermined call
@@ -825,8 +811,6 @@ def read_trimmer_tags_dataframe(
         PpmseqAdapterVersions.LEGACY_V5.value,
         PpmseqAdapterVersions.V1,
         PpmseqAdapterVersions.V1.value,
-        PpmseqAdapterVersions.DMBL,
-        PpmseqAdapterVersions.DMBL.value,
     ):
         df_tags = df_category_consensus * 100
         undetermined = PpmseqCategoriesConsensus.UNDETERMINED.value
@@ -862,9 +846,10 @@ def read_trimmer_tags_dataframe(
         )
         # Calculate mixed reads of total (including end unreached) and mixed read coverage
         mixed_tot = df_category_concordance.loc[(PpmseqCategories.MIXED.value, PpmseqCategories.MIXED.value),]
+        mixed_start = df_category_concordance.loc[(PpmseqCategories.MIXED.value, slice(None)),].sum()
         df_mixed_cov = pd.DataFrame(
             {
-                "MIXED_read_mean_coverage": mixed_tot * df_sorter_stats.loc["Mean_cvg", "value"],
+                "PCT_MIXED_start_tag": mixed_start * 100,
                 "PCT_MIXED_both_tags": mixed_tot * 100,
             },
             index=["value"],
@@ -938,52 +923,6 @@ def read_trimmer_failure_codes_ppmseq(trimmer_failure_codes_csv: str):
     return df_trimmer_failure_codes, df_metrics
 
 
-def read_dumbell_leftover_from_trimmer_histogram(trimmer_histogram_extra_csv, *, legacy_histogram_column_names=False):
-    """
-    Read the dumbell leftover stats (constant sequences after trimming) from the trimmer histogram
-
-    Parameters
-    ----------
-    trimmer_histogram_extra_csv : str
-        path to a Trimmer histogram extra file
-    legacy_histogram_column_names : bool, optional
-        use legacy column names without suffixes, by default False
-
-    Returns
-    -------
-    pd.DataFrame
-        dataframe with dumbell leftover stats
-    """
-    df_dumbbell_leftover = pd.read_csv(trimmer_histogram_extra_csv)
-    expected_columns = [DUMBBELL_LEFTOVER_START_MATCH, HistogramColumnNames.COUNT.value]
-    if not legacy_histogram_column_names:
-        df_dumbbell_leftover = df_dumbbell_leftover.rename(
-            columns={c + TrimmerHistogramSuffixes.MATCH.value: c for c in expected_columns}
-        )
-    if df_dumbbell_leftover.columns.tolist() != expected_columns:
-        raise ValueError(f"Unexpected columns {df_dumbbell_leftover.columns.tolist()}, expected {expected_columns}")
-    dumbbell_leftover_start_found = "dumbbell_leftover_start_found"
-    df_dumbbell_leftover = df_dumbbell_leftover.assign(
-        **{dumbbell_leftover_start_found: df_dumbbell_leftover[DUMBBELL_LEFTOVER_START_MATCH].notna()},
-    )
-    df_dumbbell_leftover = (
-        100
-        * df_dumbbell_leftover.groupby([dumbbell_leftover_start_found]).agg({HistogramColumnNames.COUNT.value: "sum"})
-        / df_dumbbell_leftover[HistogramColumnNames.COUNT.value].sum()
-    ).rename(columns={HistogramColumnNames.COUNT.value: "value"})
-    df_dumbbell_leftover = (
-        df_dumbbell_leftover.reindex([True])
-        .fillna(0)
-        .assign(
-            metric=[
-                "PCT_Dumbbell_leftover_in_read_start",
-            ]
-        )
-        .set_index("metric")
-    )
-    return df_dumbbell_leftover
-
-
 def collect_statistics(
     adapter_version: str | PpmseqAdapterVersions,
     trimmer_histogram_csv: str,
@@ -1036,8 +975,6 @@ def collect_statistics(
         PpmseqAdapterVersions.LEGACY_V5.value,
         PpmseqAdapterVersions.V1,
         PpmseqAdapterVersions.V1.value,
-        PpmseqAdapterVersions.DMBL,
-        PpmseqAdapterVersions.DMBL.value,
     )
     if adapter_in_both_ends:
         df_category_concordance, _, df_category_consensus = get_strand_ratio_category_concordance(
@@ -1069,21 +1006,6 @@ def collect_statistics(
         )
         df_stats_shortlist = pd.concat((df_stats_shortlist, df_failure_codes_metrics["value"]))
 
-    is_v7_dumbell = (
-        adapter_version
-        in (
-            PpmseqAdapterVersions.DMBL,
-            PpmseqAdapterVersions.DMBL.value,
-        )
-        and trimmer_histogram_extra_csv
-    )
-    if is_v7_dumbell:
-        df_dumbell_leftover = read_dumbell_leftover_from_trimmer_histogram(
-            trimmer_histogram_extra_csv,
-            legacy_histogram_column_names=legacy_histogram_column_names,
-        )
-        df_stats_shortlist = pd.concat((df_stats_shortlist, df_dumbell_leftover))
-
     # save
     if not output_filename.endswith(".h5"):
         output_filename += ".h5"
@@ -1109,9 +1031,6 @@ def collect_statistics(
         if trimmer_failure_codes_csv:
             store["trimmer_failure_codes"] = df_trimmer_failure_codes
             keys_to_convert += ["trimmer_failure_codes"]
-        if is_v7_dumbell and trimmer_failure_codes_csv:
-            store["failure_codes_metrics"] = df_failure_codes_metrics
-            keys_to_convert += ["failure_codes_metrics"]
         store["keys_to_convert"] = pd.Series(keys_to_convert)
 
 
@@ -1591,8 +1510,6 @@ def plot_trimmer_histogram(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
     elif adapter_version in (
         PpmseqAdapterVersions.V1,
         PpmseqAdapterVersions.V1.value,
-        PpmseqAdapterVersions.DMBL,
-        PpmseqAdapterVersions.DMBL.value,
     ):
         fig, axs_all_both = plt.subplots(3, 10, figsize=(18, 5), sharex=False, sharey=True)
         fig.subplots_adjust(wspace=0.25, hspace=0.6)
@@ -1612,8 +1529,12 @@ def plot_trimmer_histogram(  # noqa: C901, PLR0912, PLR0915 #TODO: refactor
         for m, (loop, loop_category, flow_order, append_base) in enumerate(
             zip(
                 (
-                    HistogramColumnNames.LOOP_SEQUENCE_START.value,
-                    HistogramColumnNames.LOOP_SEQUENCE_END.value,
+                    HistogramColumnNames.LOOP_SEQUENCE_START.value
+                    if HistogramColumnNames.LOOP_SEQUENCE_START.value in df_trimmer_histogram
+                    else HistogramColumnNames.START_LOOP_SEQUENCE_FW.value,
+                    HistogramColumnNames.LOOP_SEQUENCE_END.value
+                    if HistogramColumnNames.LOOP_SEQUENCE_END.value in df_trimmer_histogram
+                    else HistogramColumnNames.END_LOOP_SEQUENCE_FW.value,
                 ),
                 (
                     HistogramColumnNames.STRAND_RATIO_CATEGORY_START.value,
@@ -1819,7 +1740,7 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
     adapter_version : str | PpmseqAdapterVersions
         adapter version to check
     trimmer_histogram_csv : list[str]
-        path to a ppmSeq Trimmer histogram file
+        path to a ppmSeq Trimmer histogram file/s
     sorter_stats_csv : str
         path to a Sorter stats file
     output_path : str
@@ -1829,7 +1750,7 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
     sorter_stats_json : str, optional
         path to a Sorter stats JSON file, by default None
     trimmer_histogram_extra_csv : str, optional
-        path to a ppmSeq Trimmer histogram extra file, by default None
+        path to a ppmSeq Trimmer histogram extra file, by default None (legacy)
     trimmer_failure_codes_csv : str, optional
         path to a ppmSeq Trimmer failure codes file, by default None
     collect_statistics_kwargs : dict, optional
@@ -1959,8 +1880,6 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
         PpmseqAdapterVersions.LEGACY_V5.value,
         PpmseqAdapterVersions.V1,
         PpmseqAdapterVersions.V1.value,
-        PpmseqAdapterVersions.DMBL,
-        PpmseqAdapterVersions.DMBL.value,
     ):
         plot_strand_ratio_category_concordnace(
             adapter_version,
@@ -2017,8 +1936,6 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
             PpmseqAdapterVersions.LEGACY_V5.value,
             PpmseqAdapterVersions.V1,
             PpmseqAdapterVersions.V1.value,
-            PpmseqAdapterVersions.DMBL,
-            PpmseqAdapterVersions.DMBL.value,
         ):
             parameters["strand_ratio_category_concordance_png"] = output_strand_ratio_category_concordance_plot
         if sorter_stats_json:
