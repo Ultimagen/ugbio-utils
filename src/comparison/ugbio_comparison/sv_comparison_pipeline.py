@@ -259,7 +259,7 @@ class SVComparison:
         """
         with tempfile.TemporaryDirectory() as workdir:
             self.logger.info(f"Running truvari pipeline with calls: {calls} and gt: {gt}")
-            calls_fn = calls
+            original_calls_fn = calls_fn = calls
             collapsed_fn = pjoin(workdir, basename(calls).replace(".vcf.gz", "_collapsed.vcf.gz"))
             tmpfiles_to_move = []
             self.collapse_vcf(
@@ -280,7 +280,7 @@ class SVComparison:
 
             self.vu.index_vcf(calls_fn)
 
-            gt_fn = gt
+            original_gt_fn = gt_fn = gt
             gt_collapsed_fn = pjoin(workdir, basename(gt).replace(".vcf.gz", "_collapsed.vcf.gz"))
             self.collapse_vcf(
                 gt_fn,
@@ -315,7 +315,7 @@ class SVComparison:
                 if os.path.exists(tmpfile):
                     shutil.move(tmpfile, outdir)
 
-        self.logger.info(f"truvari pipeline finished with calls: {calls_fn} and gt: {gt_fn}")
+        self.logger.info(f"truvari pipeline finished with calls: {original_calls_fn} and gt: {original_gt_fn}")
 
 
 def get_parser():
@@ -337,7 +337,9 @@ def get_parser():
     parser.add_argument("--hcr_bed", help="High confidence region bed file")
     parser.add_argument("--pctseq", type=float, default=0.0, help="Percentage of sequence identity")
     parser.add_argument("--pctsize", type=float, default=0.0, help="Percentage of size identity")
-    parser.add_argument("--custom_info_fields", nargs="+", default=[], help="Custom info fields to read from the VCFs")
+    parser.add_argument(
+        "--custom_info_fields", type=str, action="append", default=[], help="Custom info fields to read from the VCFs"
+    )
     parser.add_argument(
         "--ignore_filter",
         action="store_true",
