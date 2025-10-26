@@ -259,7 +259,7 @@ class SVComparison:
         """
         with tempfile.TemporaryDirectory() as workdir:
             self.logger.info(f"Running truvari pipeline with calls: {calls} and gt: {gt}")
-            original_calls_fn = calls_fn = calls
+            calls_fn = calls
             collapsed_fn = pjoin(workdir, basename(calls).replace(".vcf.gz", "_collapsed.vcf.gz"))
             tmpfiles_to_move = []
             self.collapse_vcf(
@@ -280,7 +280,7 @@ class SVComparison:
 
             self.vu.index_vcf(calls_fn)
 
-            original_gt_fn = gt_fn = gt
+            gt_fn = gt
             gt_collapsed_fn = pjoin(workdir, basename(gt).replace(".vcf.gz", "_collapsed.vcf.gz"))
             self.collapse_vcf(
                 gt_fn,
@@ -315,7 +315,7 @@ class SVComparison:
                 if os.path.exists(tmpfile):
                     shutil.move(tmpfile, outdir)
 
-        self.logger.info(f"truvari pipeline finished with calls: {original_calls_fn} and gt: {original_gt_fn}")
+        self.logger.info(f"truvari pipeline finished with calls: {calls} and gt: {gt}")
 
 
 def get_parser():
