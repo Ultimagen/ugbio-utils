@@ -12,9 +12,11 @@ RUN python3 -m venv --without-pip /opt/venv && \
     chmod +x /opt/venv/bin/pip && \
     /opt/venv/bin/pip install pypgx==0.25.0
 
-# Clone the pypgx-bundle repository at version 0.25.0, then remove unnecessary packages
-RUN git clone --branch 0.25.0 --depth 1 https://github.com/sbslee/pypgx-bundle /opt/pypgx-bundle && \
-    apt-get purge -y git build-essential python3.12-dev python3-pip && \
+# Clone the pypgx-bundle repository at version 0.25.0
+RUN git clone --branch 0.25.0 --depth 1 https://github.com/sbslee/pypgx-bundle /opt/pypgx-bundle
+
+# Remove unnecessary packages
+RUN RUN apt-get purge -y git && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
