@@ -16,7 +16,7 @@ RUN python3 -m venv --without-pip /opt/venv && \
 RUN git clone --branch 0.25.0 --depth 1 https://github.com/sbslee/pypgx-bundle /opt/pypgx-bundle
 
 # Remove unnecessary packages
-RUN RUN apt-get purge -y git && \
+RUN apt-get purge -y git && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
