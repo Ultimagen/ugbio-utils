@@ -196,6 +196,11 @@ def load_and_prepare_data(h5_file: str):
     x = data[FEATURE_COLS].copy()
     y = data["label"].copy()
 
+    # Handle svlen column if it contains tuples (extract first element)
+    if "svlen" in x.columns:
+        x["svlen"] = x["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
+        print("Processed svlen column: converted tuples to integers")
+
     # Print label distribution
     print("\nLabel distribution:")
     print(y.value_counts())
