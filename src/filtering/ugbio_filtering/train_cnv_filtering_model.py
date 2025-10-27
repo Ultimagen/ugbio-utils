@@ -90,9 +90,13 @@ CATEGORICAL_FEATURES = ["cnv_source", "region_annotations"]
 FEATURE_COLS = NUMERIC_FEATURES + CATEGORICAL_FEATURES
 
 
-def scale_jump_alignments(x):
-    """Scale jump alignments by dividing by 40"""
+def process_numeric_features(x):
+    """Process all numeric features: convert svlen tuples and scale jump alignments"""
     x = x.copy()
+    # Convert svlen tuples to integers by extracting first element
+    if "svlen" in x.columns:
+        x["svlen"] = x["svlen"].apply(lambda val: val[0] if isinstance(val, tuple) else val).fillna(0)
+    # Scale jump alignments
     if "jump_alignments" in x.columns:
         x["jump_alignments"] = x["jump_alignments"] / 40.0
     return x
@@ -109,12 +113,12 @@ def create_preprocessing_pipeline():
     numeric_features = NUMERIC_FEATURES
     categorical_features = CATEGORICAL_FEATURES
 
-    # Create numeric transformer with NaN filling and jump alignment scaling
-    # Tree-based models don't require scaling, so we only handle NaN values and scale jump alignments
+    # Create numeric transformer with svlen conversion, NaN filling and jump alignment scaling
+    # Tree-based models don't require scaling, so we only handle NaN values and process features
     numeric_transformer = Pipeline(
         [
+            ("process_features", FunctionTransformer(process_numeric_features, validate=False)),
             ("impute", SimpleImputer(strategy="constant", fill_value=0)),  # Fill NaN values with zeros
-            ("scale_jump", FunctionTransformer(scale_jump_alignments, validate=False)),
         ]
     )
 
@@ -195,11 +199,6 @@ def load_and_prepare_data(h5_file: str):
     # Prepare features and labels
     x = data[FEATURE_COLS].copy()
     y = data["label"].copy()
-
-    # Handle svlen column if it contains tuples (extract first element)
-    if "svlen" in x.columns:
-        x["svlen"] = x["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
-        print("Processed svlen column: converted tuples to integers")
 
     # Print label distribution
     print("\nLabel distribution:")
