@@ -90,6 +90,32 @@ CATEGORICAL_FEATURES = ["cnv_source", "region_annotations"]
 FEATURE_COLS = NUMERIC_FEATURES + CATEGORICAL_FEATURES
 
 
+def get_active_features(disabled_features=None):
+    """
+    Get active feature lists based on disabled features
+
+    Args:
+        disabled_features: List of features to disable
+
+    Returns:
+        Tuple of (active_numeric_features, active_categorical_features, active_feature_cols)
+    """
+    if disabled_features is None:
+        disabled_features = []
+
+    # Validate disabled features
+    invalid_features = [f for f in disabled_features if f not in FEATURE_COLS]
+    if invalid_features:
+        raise ValueError(f"Invalid features to disable: {invalid_features}. Available features: {FEATURE_COLS}")
+
+    # Filter out disabled features
+    active_numeric_features = [f for f in NUMERIC_FEATURES if f not in disabled_features]
+    active_categorical_features = [f for f in CATEGORICAL_FEATURES if f not in disabled_features]
+    active_feature_cols = active_numeric_features + active_categorical_features
+
+    return active_numeric_features, active_categorical_features, active_feature_cols
+
+
 def process_numeric_features(x):
     """Process all numeric features: convert svlen tuples and scale jump alignments"""
     x = x.copy()
@@ -102,16 +128,22 @@ def process_numeric_features(x):
     return x
 
 
-def create_preprocessing_pipeline():
+def create_preprocessing_pipeline(numeric_features=None, categorical_features=None):
     """
     Create preprocessing pipeline for CNV features
+
+    Args:
+        numeric_features: List of numeric features to use (default: NUMERIC_FEATURES)
+        categorical_features: List of categorical features to use (default: CATEGORICAL_FEATURES)
 
     Returns:
         ColumnTransformer: Preprocessing pipeline
     """
-    # Use shared feature group constants
-    numeric_features = NUMERIC_FEATURES
-    categorical_features = CATEGORICAL_FEATURES
+    # Use shared feature group constants or provided custom lists
+    if numeric_features is None:
+        numeric_features = NUMERIC_FEATURES
+    if categorical_features is None:
+        categorical_features = CATEGORICAL_FEATURES
 
     # Create numeric transformer with svlen conversion, NaN filling and jump alignment scaling
     # Tree-based models don't require scaling, so we only handle NaN values and process features
@@ -140,9 +172,9 @@ def create_preprocessing_pipeline():
     return preprocessor
 
 
-def create_model_pipeline():
+def create_model_pipeline(numeric_features=None, categorical_features=None):
     """Create complete model pipeline with preprocessing and classification"""
-    preprocessor = create_preprocessing_pipeline()
+    preprocessor = create_preprocessing_pipeline(numeric_features, categorical_features)
 
     # Best parameters found from hyperparameter optimization
     classifier = RandomForestClassifier(
@@ -162,12 +194,13 @@ def create_model_pipeline():
     return pipeline
 
 
-def load_and_prepare_data(h5_file: str):
+def load_and_prepare_data(h5_file: str, feature_cols=None):
     """
     Load data from H5 file and prepare features and labels
 
     Args:
         h5_file: Path to H5 file with CNV data
+        feature_cols: List of feature columns to use (default: FEATURE_COLS)
 
     Returns:
         Tuple of (features_df, labels_series)
@@ -183,8 +216,12 @@ def load_and_prepare_data(h5_file: str):
 
     print(f"Loaded {len(data)} samples")
 
+    # Use provided feature columns or default
+    if feature_cols is None:
+        feature_cols = FEATURE_COLS
+
     # Check required columns
-    missing_features = [col for col in FEATURE_COLS if col not in data.columns]
+    missing_features = [col for col in feature_cols if col not in data.columns]
 
     if missing_features:
         print(f"Error: Missing required features: {missing_features}")
@@ -197,7 +234,7 @@ def load_and_prepare_data(h5_file: str):
         sys.exit(1)
 
     # Prepare features and labels
-    x = data[FEATURE_COLS].copy()
+    x = data[feature_cols].copy()
     y = data["label"].copy()
 
     # Print label distribution
@@ -207,7 +244,7 @@ def load_and_prepare_data(h5_file: str):
     return x, y
 
 
-def evaluate_model(df: pd.DataFrame, model, preprocessor, data_type: str):
+def evaluate_model(df: pd.DataFrame, model, preprocessor, data_type: str, feature_cols=None):
     """
     Evaluate model performance on data similar to train_models_pipeline
 
@@ -216,6 +253,7 @@ def evaluate_model(df: pd.DataFrame, model, preprocessor, data_type: str):
         model: Trained model (classifier part only)
         preprocessor: Preprocessing pipeline (transformer part)
         data_type: String describing data type for logging
+        feature_cols: List of feature columns to use (default: FEATURE_COLS)
 
     Returns:
         Tuple of (accuracy_df, curve_df) similar to variant_filtering_utils.eval_model
@@ -223,8 +261,12 @@ def evaluate_model(df: pd.DataFrame, model, preprocessor, data_type: str):
     print(f"\n{data_type} Evaluation:")
     print("=" * (len(data_type) + 12))
 
+    # Use provided feature columns or default
+    if feature_cols is None:
+        feature_cols = FEATURE_COLS
+
     # Extract features and labels
-    x = df[FEATURE_COLS].copy()
+    x = df[feature_cols].copy()
     y = df["label"].copy()
 
     # Transform features
@@ -286,7 +328,7 @@ def evaluate_model(df: pd.DataFrame, model, preprocessor, data_type: str):
     if hasattr(model, "feature_importances_"):
         print("\nFeature Importance:")
         # If model has more features than expected, print all
-        feature_names = FEATURE_COLS + ["flt"] if len(model.feature_importances_) > len(FEATURE_COLS) else FEATURE_COLS
+        feature_names = feature_cols + ["flt"] if len(model.feature_importances_) > len(feature_cols) else feature_cols
         for name, importance in zip(feature_names, model.feature_importances_, strict=False):
             print(f"{name}: {importance:.4f}")
 
@@ -394,6 +436,13 @@ def main():
 
     parser.add_argument("--random-state", type=int, default=42, help="Random state for reproducibility (default: 42)")
 
+    parser.add_argument(
+        "--disable",
+        action="append",
+        default=[],
+        help="Disable specific features (can be used multiple times). Available features: " + ", ".join(FEATURE_COLS),
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -406,6 +455,13 @@ def main():
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
+    # Process disabled features
+    try:
+        active_numeric_features, active_categorical_features, active_feature_cols = get_active_features(args.disable)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
     print("CNV Filtering Model Training")
     print("=" * 40)
     print(f"Input H5 file: {args.input_h5}")
@@ -413,8 +469,12 @@ def main():
     print(f"Test size: {args.test_size}")
     print(f"Random state: {args.random_state}")
 
+    if args.disable:
+        print(f"Disabled features: {args.disable}")
+    print(f"Active features: {active_feature_cols}")
+
     # Load and prepare data
-    x, y = load_and_prepare_data(args.input_h5)
+    x, y = load_and_prepare_data(args.input_h5, active_feature_cols)
 
     # Split data
     print(f"\nSplitting data (test_size={args.test_size})...")
@@ -427,7 +487,7 @@ def main():
 
     # Train model
     print("\nTraining model...")
-    model = create_model_pipeline()
+    model = create_model_pipeline(active_numeric_features, active_categorical_features)
     model.fit(x_train, y_train)
 
     # Prepare data for evaluation (similar to train_models_pipeline)
@@ -439,8 +499,8 @@ def main():
     preprocessor = model.named_steps["preprocessor"]
 
     # Evaluate model on both train and test sets
-    train_results = evaluate_model(train_data, classifier, preprocessor, "training")
-    test_results = evaluate_model(test_data, classifier, preprocessor, "test")
+    train_results = evaluate_model(train_data, classifier, preprocessor, "training", active_feature_cols)
+    test_results = evaluate_model(test_data, classifier, preprocessor, "test", active_feature_cols)
 
     # Save results (both .pkl and .h5 files)
     output_prefix = args.output_model.replace(".pkl", "")
