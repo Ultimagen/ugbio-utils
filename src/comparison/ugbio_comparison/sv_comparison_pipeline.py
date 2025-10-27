@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from os.path import basename
+from os.path import basename, dirname
 from os.path import join as pjoin
 
 import pandas as pd
@@ -80,8 +80,8 @@ class SVComparison:
         -------
         None
         """
-
-        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-t"]
+        removed_vcf_path = pjoin(dirname(output_vcf), "removed.vcf")
+        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-t", "-c", removed_vcf_path]
 
         if not ignore_filter:
             truvari_cmd.append("--passonly")
@@ -103,7 +103,7 @@ class SVComparison:
         if p2.returncode != 0:
             raise RuntimeError(f"bcftools view failed with error code {p2.returncode}")
 
-        removed_vcf_path = "removed.vcf"  # Parameterize the file path
+        # Parameterize the file path
         if os.path.exists(removed_vcf_path):
             os.unlink(removed_vcf_path)
             self.logger.info(f"Deleted temporary file: {removed_vcf_path}")
@@ -257,7 +257,12 @@ class SVComparison:
         -------
         None
         """
-        with tempfile.TemporaryDirectory() as workdir:
+
+        if dirname(output_file_name) == outdir:
+            raise ValueError(
+                "output_file_name must not be under outdr to avoid conflicts (with running truvari bench)."
+            )
+        with tempfile.TemporaryDirectory(dir=dirname(output_file_name)) as workdir:
             self.logger.info(f"Running truvari pipeline with calls: {calls} and gt: {gt}")
             calls_fn = calls
             collapsed_fn = pjoin(workdir, basename(calls).replace(".vcf.gz", "_collapsed.vcf.gz"))

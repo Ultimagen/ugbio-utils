@@ -27,7 +27,7 @@ class TestSVComparisonPipeline:
                 "--output_filename",
                 output_file,
                 "--outdir",
-                str(tmpdir),
+                str(tmpdir) + "truvari",
             ]
         )
         assert os.path.exists(output_file)
