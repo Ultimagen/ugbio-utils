@@ -14,10 +14,10 @@ def test_collapse_vcf(mocker):
     mock_p1.stdout = mocker.Mock()
     mock_p1.returncode = 0
     mock_p2.returncode = 0
-    open("removed.vcf", "w").close()  # Create the file to be removed
+    open("tmp.vcf", "w").close()  # Create the file to be removed
     sv_comparison.collapse_vcf("input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8)
 
-    mock_logger.info.assert_called_with("Deleted temporary file: removed.vcf")
+    mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
     mock_subprocess_popen.assert_any_call(
         [
             "truvari",
@@ -25,6 +25,8 @@ def test_collapse_vcf(mocker):
             "-i",
             "input.vcf",
             "-t",
+            "-c",
+            "tmp.vcf",
             "--passonly",
             "--bed",
             "regions.bed",
@@ -54,14 +56,14 @@ def test_collapse_vcf_ignore_filter(mocker):
     mock_p1.stdout = mocker.Mock()
     mock_p1.returncode = 0
     mock_p2.returncode = 0
-    with open("removed.vcf", "w"):
+    with open("tmp.vcf", "w"):
         pass  # Create the file to be removed
 
     sv_comparison.collapse_vcf(
         "input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, ignore_filter=True
     )
 
-    mock_logger.info.assert_called_with("Deleted temporary file: removed.vcf")
+    mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
     # Verify --passonly is NOT included when ignore_filter=True
     mock_subprocess_popen.assert_any_call(
         [
@@ -70,6 +72,8 @@ def test_collapse_vcf_ignore_filter(mocker):
             "-i",
             "input.vcf",
             "-t",
+            "-c",
+            "tmp.vcf",
             "--bed",
             "regions.bed",
             "--pctseq",
@@ -159,6 +163,38 @@ def test_truvari_to_dataframes(mocker):
     assert not df_calls.empty
     assert "label" in df_base.columns
     assert "label" in df_calls.columns
+
+
+def test_truvari_to_dataframes_svlen_processing(mocker):
+    """Test that svlen column is preserved and svlen_int column is created correctly"""
+    mock_vcftools = mocker.patch("ugbio_core.vcfbed.vcftools.get_vcf_df")
+
+    # Mock dataframes with various svlen formats including tuples and single values
+    mock_vcftools.side_effect = [
+        pd.DataFrame([{"svtype": "DEL", "svlen": (100,)}]),  # tp-base.vcf.gz with tuple
+        pd.DataFrame([{"svtype": "INS", "svlen": 200}]),  # fn.vcf.gz with single value
+        pd.DataFrame([{"svtype": "DEL", "svlen": (150, 75)}]),  # tp-comp.vcf.gz with tuple
+        pd.DataFrame([{"svtype": "INS", "svlen": None}]),  # fp.vcf.gz with None value
+    ]
+
+    sv_comparison = SVComparison()
+    df_base, df_calls = sv_comparison.truvari_to_dataframes("truvari_dir")
+
+    # Check that both dataframes have the required columns
+    assert "svlen" in df_base.columns, "Original svlen column should be preserved"
+    assert "svlen_int" in df_base.columns, "svlen_int column should be created"
+    assert "svlen" in df_calls.columns, "Original svlen column should be preserved"
+    assert "svlen_int" in df_calls.columns, "svlen_int column should be created"
+
+    # Check that original svlen values are preserved
+    assert df_base.iloc[0]["svlen"] == (100,), "Original tuple svlen should be preserved"
+    assert df_base.iloc[1]["svlen"] == 200, "Original single svlen should be preserved"
+
+    # Check that svlen_int contains correct integer values
+    assert df_base.iloc[0]["svlen_int"] == 100, "Tuple svlen should be converted to first element"
+    assert df_base.iloc[1]["svlen_int"] == 200, "Single svlen should be preserved as integer"
+    assert df_calls.iloc[0]["svlen_int"] == 150, "Tuple svlen should be converted to first element"
+    assert df_calls.iloc[1]["svlen_int"] == 0, "None svlen should be filled with 0"
 
 
 def test_run_pipeline(mocker):

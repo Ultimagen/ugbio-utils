@@ -5,7 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from os.path import basename
+from os.path import basename, dirname
 from os.path import join as pjoin
 
 import pandas as pd
@@ -80,8 +80,8 @@ class SVComparison:
         -------
         None
         """
-
-        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-t"]
+        removed_vcf_path = pjoin(dirname(output_vcf), "tmp.vcf")
+        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-t", "-c", removed_vcf_path]
 
         if not ignore_filter:
             truvari_cmd.append("--passonly")
@@ -103,7 +103,7 @@ class SVComparison:
         if p2.returncode != 0:
             raise RuntimeError(f"bcftools view failed with error code {p2.returncode}")
 
-        removed_vcf_path = "removed.vcf"  # Parameterize the file path
+        # Parameterize the file path
         if os.path.exists(removed_vcf_path):
             os.unlink(removed_vcf_path)
             self.logger.info(f"Deleted temporary file: {removed_vcf_path}")
@@ -195,20 +195,20 @@ class SVComparison:
         """
         info_fields_to_read: list[str] = list(("SVTYPE", "SVLEN") + custom_info_fields)
         df_tp_base = vcftools.get_vcf_df(pjoin(truvari_dir, "tp-base.vcf.gz"), custom_info_fields=info_fields_to_read)
-        df_tp_base["svlen"] = df_tp_base["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
+        df_tp_base["svlen_int"] = df_tp_base["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
         df_tp_base["label"] = "TP"
         df_fn = vcftools.get_vcf_df(pjoin(truvari_dir, "fn.vcf.gz"), custom_info_fields=info_fields_to_read)
-        df_fn["svlen"] = df_fn["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
+        df_fn["svlen_int"] = df_fn["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
         df_fn["label"] = "FN"
         df_base = pd.concat((df_tp_base, df_fn))
 
         df_tp_calls = vcftools.get_vcf_df(pjoin(truvari_dir, "tp-comp.vcf.gz"), custom_info_fields=info_fields_to_read)
         df_tp_calls["label"] = "TP"
-        df_tp_calls["svlen"] = df_tp_calls["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
+        df_tp_calls["svlen_int"] = df_tp_calls["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
 
         df_fp = vcftools.get_vcf_df(pjoin(truvari_dir, "fp.vcf.gz"), custom_info_fields=info_fields_to_read)
         df_fp["label"] = "FP"
-        df_fp["svlen"] = df_fp["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
+        df_fp["svlen_int"] = df_fp["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
 
         df_calls = pd.concat((df_tp_calls, df_fp))
         return df_base, df_calls
@@ -257,7 +257,12 @@ class SVComparison:
         -------
         None
         """
-        with tempfile.TemporaryDirectory() as workdir:
+
+        if dirname(output_file_name) == outdir:
+            raise ValueError(
+                "output_file_name must not be under outdir to avoid conflicts (with running truvari bench)."
+            )
+        with tempfile.TemporaryDirectory(dir=dirname(output_file_name)) as workdir:
             self.logger.info(f"Running truvari pipeline with calls: {calls} and gt: {gt}")
             calls_fn = calls
             collapsed_fn = pjoin(workdir, basename(calls).replace(".vcf.gz", "_collapsed.vcf.gz"))
