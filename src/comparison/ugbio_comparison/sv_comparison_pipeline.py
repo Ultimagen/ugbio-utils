@@ -80,7 +80,7 @@ class SVComparison:
         -------
         None
         """
-        removed_vcf_path = pjoin(dirname(output_vcf), "removed.vcf")
+        removed_vcf_path = pjoin(dirname(output_vcf), "tmp.vcf")
         truvari_cmd = ["truvari", "collapse", "-i", vcf, "-t", "-c", removed_vcf_path]
 
         if not ignore_filter:
@@ -260,7 +260,7 @@ class SVComparison:
 
         if dirname(output_file_name) == outdir:
             raise ValueError(
-                "output_file_name must not be under outdr to avoid conflicts (with running truvari bench)."
+                "output_file_name must not be under outdir to avoid conflicts (with running truvari bench)."
             )
         with tempfile.TemporaryDirectory(dir=dirname(output_file_name)) as workdir:
             self.logger.info(f"Running truvari pipeline with calls: {calls} and gt: {gt}")

@@ -63,11 +63,6 @@ docker run --rm -v .:/workdir <image> run_tests /workdir/src/<module>
 
 ```
 
-### Docker Integration Points
-- **Base Image**: `ugbio_base` provides bcftools, samtools, tabix, common tools
-- **AWS ECR**: `337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_<module>`
-- **Multi-stage Builds**: Build wheels in Python 3.11, deploy in tool-specific base
-
 ### AWS/Cloud Patterns
 ```python
 # HealthOmics workflow analysis
