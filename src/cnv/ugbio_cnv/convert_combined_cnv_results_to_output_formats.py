@@ -13,16 +13,7 @@ from ugbio_core.logger import logger
 
 warnings.filterwarnings("ignore")
 
-# NOTE: both the id and the column name should appear in the registry
-# (after converting table to BED the names are as in the VCF)
 INFO_TAG_REGISTRY = {
-    "CNV_calls_source": (
-        "CNV_SOURCE",
-        1,
-        "String",
-        "the tool called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
-        "INFO",
-    ),
     "CNV_SOURCE": (
         "CNV_SOURCE",
         1,
@@ -30,7 +21,6 @@ INFO_TAG_REGISTRY = {
         "the tool called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
         "INFO",
     ),
-    "jalign_written": ("JUMP_ALIGNMENTS", 1, "Float", "Number of jump alignments supporting this CNV", "INFO"),
     "JUMP_ALIGNMENTS": ("JUMP_ALIGNMENTS", 1, "Float", "Number of jump alignments supporting this CNV", "INFO"),
 }
 
@@ -110,6 +100,9 @@ def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHead
                 f'##INFO=<ID={info_tag[0]},Number={info_tag[1]},Type={info_tag[2]},Description="{info_tag[3]}">'
             )
 
+    # Add END field for structural variants
+    header.add_line('##INFO=<ID=END,Number=1,Type=Integer,Description="Stop position of the interval">')
+
     # Add FORMAT
     header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
 
@@ -118,11 +111,11 @@ def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHead
 
 def read_cnv_annotated_file_to_df(cnv_annotated_bed_file: str) -> pd.DataFrame:
     """
-    Read a BED file and return a DataFrame.
+    Read an annotated CNV file and return a DataFrame.
     Args:
-        cnv_annotated_bed_file (str): Path to the input BED file.
+        cnv_annotated_bed_file (str): Path to the input annotated CNV file.
     Returns:
-        pd.DataFrame: DataFrame containing the CNV data from the BED file.
+        pd.DataFrame: DataFrame containing the CNV data from the file.
     """
     df_cnvs = pd.read_csv(cnv_annotated_bed_file, sep="\t")
     df_cnvs = df_cnvs.rename(columns={"#chr": "chr"})
@@ -150,25 +143,6 @@ def calculate_copy_number(copy_number: str | int) -> float | str | None:
     return copy_number_value
 
 
-def to_bed_name(row: pd.Series) -> str:
-    """
-    Convert a DataFrame row to a BED name string.
-    Args:
-        row (pd.Series): A row from the DataFrame.
-    Returns:
-        str: A string representing the BED name column.
-    """
-    filter_str = f"FILTER={row['filter']}"
-    info_str = ""
-    for info_tag in list(INFO_TAG_REGISTRY.keys()):
-        if info_tag in row and pd.notna(row[info_tag]):
-            info_str += f"{INFO_TAG_REGISTRY[info_tag][0]}={row[info_tag]};"
-    for info_tag in ["CopyNumber", "RoundedCopyNumber", "SVLEN", "SVTYPE"]:
-        if info_tag in row and pd.notna(row[info_tag]):
-            info_str += f"{info_tag}={row[info_tag]};"
-    return ";".join((info_str.strip(";"), filter_str.strip(";"))).strip(";")
-
-
 def process_filter_columns(row: pd.Series, filter_tags_registry: dict = FILTER_TAG_REGISTRY) -> str:
     """
     Process filter columns for a single row, handling multiple filter values separated by | or ;.
@@ -192,9 +166,9 @@ def process_filter_columns(row: pd.Series, filter_tags_registry: dict = FILTER_T
 
     # Remove duplicates while preserving order
     unique_filters = list(set(filter_values))
-    if len([x for x in unique_filters if x not in filter_tags_registry.keys()]):
+    if [x for x in unique_filters if x not in filter_tags_registry.keys()]:
         raise ValueError(
-            f"Unknown filter values found: {[ x for x in unique_filters if x not in filter_tags_registry.keys() ]}"
+            f"Unknown filter values found: {[x for x in unique_filters if x not in filter_tags_registry.keys()]}"
         )
 
     unique_filters = [x for x in unique_filters if x in filter_tags_registry.keys()]
@@ -203,16 +177,14 @@ def process_filter_columns(row: pd.Series, filter_tags_registry: dict = FILTER_T
     return "PASS" if len(unique_filters) == 0 else ",".join(sorted(unique_filters))
 
 
-def write_combined_bed(outfile: str, cnv_annotated_bed_file: str, fasta_index: str) -> pd.DataFrame:
+def prepare_cnv_dataframe(cnv_annotated_bed_file: str) -> pd.DataFrame:
     """
-    Write CNV calls from a BED file to another BED file.
+    Prepare CNV dataframe for VCF output by processing filters and calculating derived fields.
     Args:
-        outfile (str): Path to the output BED file.
-        cnv_annotated_bed_file (str): Path to the input BED file containing combined (cn.mops+cnvpytor) CNV calls
+        cnv_annotated_bed_file (str): Path to the input file containing combined CNV calls
             and annotated with UG-CNV-LCR.
-        fasta_index (str): Path to the reference genome index file (.fai).
     Returns:
-        pd.DataFrame: DataFrame containing the CNV data written to the BED file.
+        pd.DataFrame: DataFrame containing the processed CNV data ready for VCF conversion.
     """
     df_cnvs = read_cnv_annotated_file_to_df(cnv_annotated_bed_file)
     df_cnvs["filter"] = df_cnvs.apply(process_filter_columns, axis=1)
@@ -224,26 +196,7 @@ def write_combined_bed(outfile: str, cnv_annotated_bed_file: str, fasta_index: s
     df_cnvs["RoundedCopyNumber"] = df_cnvs["RoundedCopyNumber"].astype("Int64")
     df_cnvs["SVLEN"] = df_cnvs["end"] - df_cnvs["start"]
     df_cnvs["SVTYPE"] = df_cnvs["CNV_type"]
-    df_cnvs["name"] = df_cnvs.apply(to_bed_name, axis=1)
-    df_cnvs[["chr", "start", "end", "name"]].to_csv(outfile + ".tmp", sep="\t", index=False, header=False)
-    # sort bed file
-    cmd = ["bedtools", "sort", "-faidx", fasta_index, "-i", outfile + ".tmp"]
-    with open(outfile, "w") as bed_out:
-        subprocess.run(cmd, stdout=bed_out, check=True)
     return df_cnvs
-
-
-def _parse_bed_name_fields(name: str) -> dict[str, str]:
-    """
-    Parse the BED name field into a dictionary of key-value pairs.
-
-    Args:
-        name (str): The name field from BED format containing semicolon-separated key=value pairs.
-
-    Returns:
-        dict[str, str]: Dictionary of parsed field names and values.
-    """
-    return dict([x.split("=") for x in name.split(";")])
 
 
 def _create_base_vcf_record(vcf_out: pysam.VariantFile, row: pd.Series) -> pysam.VariantRecord:
@@ -262,56 +215,78 @@ def _create_base_vcf_record(vcf_out: pysam.VariantFile, row: pd.Series) -> pysam
     record.start = row["start"]
     record.stop = row["end"]
     record.ref = "N"
-    record.alts = (f'<{row["SVTYPE"]}>',)
+    record.alts = (f"<{row['SVTYPE']}>",)
     return record
 
 
-def _add_filters_to_record(record: pysam.VariantRecord, fields: dict[str, str]) -> None:
+def _add_filters_to_record(record: pysam.VariantRecord, filter_value: str) -> None:
     """
     Add filter information to a VCF record.
 
     Args:
         record (pysam.VariantRecord): VCF record to modify.
-        fields (dict[str, str]): Parsed fields containing filter information.
+        filter_value (str): Filter value from the dataframe.
     """
-    filters = fields["FILTER"].split(",")
-    for f in filters:
-        record.filter.add(f)
+    if filter_value == "PASS":
+        record.filter.add("PASS")
+    else:
+        filters = filter_value.split(",")
+        for f in filters:
+            record.filter.add(f)
 
 
-def _add_info_fields_to_record(record: pysam.VariantRecord, fields: dict[str, str]) -> None:
+def _get_possible_column_names(original_col: str) -> list[str]:
+    """Get possible column names for backward compatibility."""
+    possible_cols = [original_col]
+    if original_col == "CNV_SOURCE":
+        possible_cols.append("CNV_calls_source")
+    elif original_col == "JUMP_ALIGNMENTS":
+        possible_cols.append("jalign_written")
+    return possible_cols
+
+
+def _add_registry_info_field(
+    record: pysam.VariantRecord, row: pd.Series, vcf_tag: str, possible_cols: list[str], data_type: str
+) -> None:
+    """Add a single INFO field from the registry to the VCF record."""
+    for col in possible_cols:
+        if col in row and pd.notna(row[col]):
+            if data_type == "Integer":
+                record.info[vcf_tag] = int(row[col])
+            elif data_type == "Float":
+                record.info[vcf_tag] = float(row[col])
+            else:
+                record.info[vcf_tag] = str(row[col])
+            break  # Only use the first available column
+
+
+def _add_standard_info_fields(record: pysam.VariantRecord, row: pd.Series) -> None:
+    """Add standard INFO fields to the VCF record."""
+    if pd.notna(row.get("CopyNumber")):
+        record.info["CopyNumber"] = float(row["CopyNumber"])
+    if pd.notna(row.get("RoundedCopyNumber")):
+        record.info["RoundedCopyNumber"] = int(row["RoundedCopyNumber"])
+    if pd.notna(row.get("SVLEN")):
+        record.info["SVLEN"] = int(row["SVLEN"])
+    if pd.notna(row.get("SVTYPE")):
+        record.info["SVTYPE"] = str(row["SVTYPE"])
+
+
+def _add_info_fields_to_record(record: pysam.VariantRecord, row: pd.Series) -> None:
     """
-    Add INFO field information to a VCF record.
+    Add INFO field information to a VCF record directly from dataframe row.
 
     Args:
         record (pysam.VariantRecord): VCF record to modify.
-        fields (dict[str, str]): Parsed fields containing INFO information.
+        row (pd.Series): DataFrame row containing CNV information.
     """
-    for info_field, _ in fields.items():
-        if info_field in INFO_TAG_REGISTRY or info_field in [
-            "CopyNumber",
-            "RoundedCopyNumber",
-            "SVLEN",
-            "SVTYPE",
-        ]:
-            if INFO_TAG_REGISTRY.get(info_field, (None, None, None, None, None))[-1] == "INFO" or info_field in [
-                "CopyNumber",
-                "RoundedCopyNumber",
-                "SVLEN",
-                "SVTYPE",
-            ]:
-                if info_field in ["CopyNumber", "SVLEN"]:
-                    record.info[info_field] = float(fields[info_field])
-                elif info_field in ["RoundedCopyNumber"]:
-                    record.info[info_field] = int(fields[info_field])
-                elif info_field in ["SVTYPE"]:
-                    record.info[info_field] = fields[info_field]
-                elif INFO_TAG_REGISTRY[info_field][2] == "Integer":
-                    record.info[info_field] = int(fields[info_field])
-                elif INFO_TAG_REGISTRY[info_field][2] == "Float":
-                    record.info[info_field] = float(fields[info_field])
-                else:
-                    record.info[info_field] = fields[info_field]
+    # Add INFO fields from registry first, handling both possible column names
+    for original_col, (vcf_tag, _, data_type, _, _) in INFO_TAG_REGISTRY.items():
+        possible_cols = _get_possible_column_names(original_col)
+        _add_registry_info_field(record, row, vcf_tag, possible_cols, data_type)
+
+    # Add standard INFO fields after registry fields
+    _add_standard_info_fields(record, row)
 
 
 def _determine_genotype(copy_number_value: str | None) -> tuple[int | None, int]:
@@ -338,26 +313,30 @@ def _determine_genotype(copy_number_value: str | None) -> tuple[int | None, int]
     return (gt[0], gt[1])
 
 
-def _add_genotype_to_record(record: pysam.VariantRecord, sample_name: str, fields: dict[str, str]) -> None:
+def _add_genotype_to_record(record: pysam.VariantRecord, sample_name: str, row: pd.Series) -> None:
     """
     Add genotype information to a VCF record.
 
     Args:
         record (pysam.VariantRecord): VCF record to modify.
         sample_name (str): Name of the sample.
-        fields (dict[str, str]): Parsed fields containing copy number information.
+        row (pd.Series): DataFrame row containing copy number information.
     """
-    copy_number_value = fields.get("CopyNumber", None)
+    copy_number_value = row.get("CopyNumber", None)
+    if pd.notna(copy_number_value):
+        copy_number_value = str(copy_number_value)
+    else:
+        copy_number_value = None
     gt = _determine_genotype(copy_number_value)
     record.samples[sample_name]["GT"] = gt
 
 
-def write_combined_vcf(outfile: str, bed_df: pd.DataFrame, sample_name: str, fasta_index_file: str) -> None:
+def write_combined_vcf(outfile: str, cnv_df: pd.DataFrame, sample_name: str, fasta_index_file: str) -> None:
     """
-    Write CNV calls from a BED file to a VCF file.
+    Write CNV calls directly from dataframe to a VCF file.
     Args:
         outfile (str): Path to the output VCF file.
-        bed_df (pd.DataFrame): Dataframe ready to be converted to the VCF format (prepared when writing BED).
+        cnv_df (pd.DataFrame): Dataframe containing processed CNV data.
         sample_name (str): The name of the sample.
         fasta_index_file (str): Path to the reference genome index file (.fai).
     Returns:
@@ -366,24 +345,18 @@ def write_combined_vcf(outfile: str, bed_df: pd.DataFrame, sample_name: str, fas
     header = add_vcf_header(sample_name, fasta_index_file)
 
     with pysam.VariantFile(outfile, mode="w", header=header) as vcf_out:
-        for _, row in bed_df.iterrows():
-            # Parse BED name field into structured data
-            fields = _parse_bed_name_fields(row["name"])
-
+        for _, row in cnv_df.iterrows():
             # Create base VCF record with basic information
             record = _create_base_vcf_record(vcf_out, row)
 
             # Add filter information to the record
-            _add_filters_to_record(record, fields)
-
-            # Remove FILTER from fields to avoid duplication in INFO section
-            del fields["FILTER"]
+            _add_filters_to_record(record, row["filter"])
 
             # Add INFO field information to the record
-            _add_info_fields_to_record(record, fields)
+            _add_info_fields_to_record(record, row)
 
             # Add genotype information to the record
-            _add_genotype_to_record(record, sample_name, fields)
+            _add_genotype_to_record(record, sample_name, row)
 
             # Write the completed record to the VCF file
             vcf_out.write(record)
@@ -391,25 +364,23 @@ def write_combined_vcf(outfile: str, bed_df: pd.DataFrame, sample_name: str, fas
 
 def run(argv):
     """
-    converts combined CNV calls (from cnmops, cnvpytor, gridss) and outputs bed and VCF files.
+    converts combined CNV calls (from cnmops, cnvpytor, gridss) and outputs VCF file.
     input arguments:
-    --cnv_annotated_bed_file: input bed file holding CNV calls.
+    --cnv_annotated_bed_file: input file holding CNV calls.
     --fasta_index_file: (.fai file) tab delimeted file holding reference genome chr ids with their lengths.
     --out_directory: output directory
     --sample_name: sample name
     output files:
-    bed file: <sample_name>.cnv.bed
-        Contains processed CNV calls with JALIGN-derived filter fields.
     vcf file: <sample_name>.cnv.vcf.gz
         shows called CNVs in zipped vcf format.
     vcf index file: <sample_name>.cnv.vcf.gz.tbi
         vcf corresponding index file.
     """
     parser = argparse.ArgumentParser(
-        prog="convert_combined_cnv_results_to_output_formats.py", description="converts CNV calls to bed and vcf."
+        prog="convert_combined_cnv_results_to_output_formats.py", description="converts CNV calls to VCF."
     )
 
-    parser.add_argument("--cnv_annotated_bed_file", help="input bed file holding CNV calls", required=True, type=str)
+    parser.add_argument("--cnv_annotated_bed_file", help="input file holding CNV calls", required=True, type=str)
     parser.add_argument(
         "--fasta_index_file",
         help="tab delimeted file holding reference genome chr ids with their lengths. (.fai file)",
@@ -423,15 +394,16 @@ def run(argv):
     args = parser.parse_args(argv[1:])
     logger.setLevel(getattr(logging, args.verbosity))
 
-    # Open a VCF file for writing
+    # Prepare output file path
     if args.out_directory:
         out_directory = args.out_directory
     else:
         out_directory = ""
     out_vcf_file = pjoin(out_directory, args.sample_name + ".cnv.vcf.gz")
-    out_bed_file = pjoin(out_directory, args.sample_name + ".cnv.bed")
-    vcf_ready_df = write_combined_bed(out_bed_file, args.cnv_annotated_bed_file, args.fasta_index_file)
-    write_combined_vcf(out_vcf_file, vcf_ready_df, args.sample_name, args.fasta_index_file)
+
+    # Process CNV data and write VCF
+    cnv_df = prepare_cnv_dataframe(args.cnv_annotated_bed_file)
+    write_combined_vcf(out_vcf_file, cnv_df, args.sample_name, args.fasta_index_file)
 
     # index outfile
     try:
@@ -443,9 +415,8 @@ def run(argv):
 
     logger.info(f"output file: {out_vcf_file}")
     logger.info(f"output file index: {out_vcf_file}.tbi")
-    logger.info(f"output file: {out_bed_file}")
 
-    return out_vcf_file, out_bed_file
+    return out_vcf_file
 
 
 def main():

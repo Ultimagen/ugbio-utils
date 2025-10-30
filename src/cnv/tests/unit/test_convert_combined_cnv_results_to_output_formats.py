@@ -125,36 +125,19 @@ class TestConvertCombinedCnvResultsToOutputFormats:
         result = process_filter_columns(row, filter_tags_registry=self.test_filter_tag_registry)
         assert compare_strings_ignoring_order(result, "NO_JUMP_ALIGNMENT,Coverage-Mappability,Clusters")
 
-    def test_write_combined_bed(self, tmpdir, resources_dir):
+    def test_write_combined_vcf(self, tmpdir, resources_dir):
         sample_name = "TEST_HG002_chr19"
         cnv_annotated_bed_file = pjoin(
             resources_dir, "expected_test_HG002.cnmops_cnvpytor.cnvs.combined.bed.annotate.bed"
         )
-        fasta_index_file = pjoin(resources_dir, "chr19.fasta.fai")
-        outfile = pjoin(tmpdir, f"{sample_name}.cnv.bed")
-        _ = convert_combined_cnv_results_to_output_formats.write_combined_bed(
-            outfile, cnv_annotated_bed_file, fasta_index_file
-        )
-
-        expected_bed_file = pjoin(resources_dir, "expected_test_HG002.cnv.bed")
-        with open(expected_bed_file) as f:
-            expected_lines = f.readlines()
-        with open(outfile) as f:
-            output_lines = f.readlines()
-
-        assert expected_lines == output_lines
-
-    def test_write_combined_vcf(self, tmpdir, resources_dir):
-        sample_name = "TEST_HG002_chr19"
-        cnv_annotated_df = pjoin(
-            resources_dir, "expected_test_HG002.cnmops_cnvpytor.cnvs.combined.bed.annotate.parquet"
-        )
 
         fasta_index_file = pjoin(resources_dir, "chr19.fasta.fai")
         outfile = pjoin(tmpdir, f"{sample_name}.cnv.vcf.gz")
-        combined_df = pd.DataFrame(pd.read_parquet(cnv_annotated_df))
+
+        # Use the new workflow - prepare dataframe and write VCF
+        cnv_df = convert_combined_cnv_results_to_output_formats.prepare_cnv_dataframe(cnv_annotated_bed_file)
         convert_combined_cnv_results_to_output_formats.write_combined_vcf(
-            outfile, combined_df, sample_name, fasta_index_file
+            outfile, cnv_df, sample_name, fasta_index_file
         )
 
         expected_vcf_file = pjoin(resources_dir, "expected_test_HG002.cnv.vcf.gz")

@@ -555,9 +555,8 @@ def run(argv):
         sample_name,
     ]
     logger.info(vcf_args)
-    out_cnvs_combined_annotated_vcf, out_cnvs_combined_annotated_bed = output_results.run(vcf_args)
+    out_cnvs_combined_annotated_vcf = output_results.run(vcf_args)
     logger.info(f"out_cnvs_combined_annotated_vcf: {out_cnvs_combined_annotated_vcf}")
-    logger.info(f"out_cnvs_combined_annotated_bed: {out_cnvs_combined_annotated_bed}")
 
 
 def main():

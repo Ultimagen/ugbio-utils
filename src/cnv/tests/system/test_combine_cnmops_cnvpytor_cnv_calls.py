@@ -1,4 +1,3 @@
-import filecmp
 import os
 from os.path import join as pjoin
 from pathlib import Path
@@ -45,7 +44,6 @@ class TestCombineCnmopsCnvpytorCnvCalls:
         input_ref_fasta_file = pjoin(resources_dir, "chr19.fasta")
         input_fasta_index_file = pjoin(resources_dir, "chr19.fasta.fai")
         sample_name = "test_HG002"
-        expected_out_combined_bed = pjoin(resources_dir, "expected_test_HG002.cnv.bed")
         expected_out_combined_vcf = pjoin(resources_dir, "expected_test_HG002.cnv.vcf.gz")
 
         combine_cnmops_cnvpytor_cnv_calls.run(
@@ -70,11 +68,8 @@ class TestCombineCnmopsCnvpytorCnvCalls:
             ]
         )
 
-        out_combined_bed = pjoin(tmpdir, f"{sample_name}.cnv.bed")
-        assert os.path.exists(out_combined_bed)
         out_combined_vcf = pjoin(tmpdir, f"{sample_name}.cnv.vcf.gz")
         assert os.path.exists(out_combined_vcf)
         out_combined_vcf_idx = pjoin(tmpdir, f"{sample_name}.cnv.vcf.gz.tbi")
         assert os.path.exists(out_combined_vcf_idx)
-        assert filecmp.cmp(out_combined_bed, expected_out_combined_bed, shallow=False)
         compare_vcfs(out_combined_vcf, expected_out_combined_vcf)
