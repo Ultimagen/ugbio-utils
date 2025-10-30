@@ -643,7 +643,6 @@ def read_and_filter_features_parquet(
     if ad_cols[0] in df_features.columns:
         df_features = df_features.assign(
             filtering_ratio=df_features["dp_filt"] / df_features["dp"],
-            dp_mapq60_ratio=(df_features["dp_mapq60"]) / df_features["dp"],
             ad_ref=np.choose(
                 df_features["ref"].str.lower().map({"a": 0, "c": 1, "g": 2, "t": 3}).to_numpy(),
                 df_features[ad_cols].to_numpy().T,
@@ -656,6 +655,9 @@ def read_and_filter_features_parquet(
         df_features = df_features.assign(
             ad_non_ref_alt=df_features["dp"] - df_features["ad_ref"] - df_features["ad_alt"],
         )
+        for col in ["dp_mapq1", "dp_mapq60"]:
+            if col in df_features.columns:
+                df_features = df_features.assign(**{f"{col}_ratio": (df_features[col]) / df_features["dp"]})
     # assign mi_primary - the primary alignment's MI (read name)
     if "mi" in df_features.columns and "rn" in df_features.columns:
         df_features = df_features.assign(
@@ -673,9 +675,12 @@ def read_and_filter_features_parquet(
             how="left",
         )
     ).reset_index(level="signature")
+    if "dp_mapq60_ratio" in df_features.columns:
+        df_features = df_features.assign(
+            locus_filter_low_ratio_of_low_mapq_reads=df_features["dp_mapq60_ratio"]
+            > thresh_locus_filter_high_ratio_of_low_mapq_reads
+        )
     df_features = df_features.assign(
-        locus_filter_low_ratio_of_low_mapq_reads=df_features["dp_mapq60_ratio"]
-        > thresh_locus_filter_high_ratio_of_low_mapq_reads,
         locus_filter_low_ratio_of_filtered_reads=df_features["filtering_ratio"]
         > thresh_locus_filter_high_ratio_of_filtered_reads,
         locus_filter_low_alt_reads=df_features["ad_alt"] <= thresh_locus_filter_many_alt_reads,
