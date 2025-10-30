@@ -28,7 +28,7 @@ def compare_vcfs(vcf1_file, vcf2_file):
         assert rec1.ref == rec2.ref, f"Reference mismatch: {rec1.ref} != {rec2.ref}"
         assert rec1.alts == rec2.alts, f"Alternate mismatch: {rec1.alts} != {rec2.alts}"
         assert rec1.qual == rec2.qual, f"Quality mismatch: {rec1.qual} != {rec2.qual}"
-        assert rec1.filter.keys() == rec2.filter.keys(), "Filter field mismatch"
+        assert set(rec1.filter.keys()) == set(rec2.filter.keys()), "Filter field mismatch"
 
         # Compare INFO fields
         assert rec1.info.keys() == rec2.info.keys(), "INFO fields mismatch"

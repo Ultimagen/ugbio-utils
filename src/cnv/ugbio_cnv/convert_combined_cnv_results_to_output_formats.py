@@ -42,7 +42,7 @@ FILTER_TAG_REGISTRY = {
         "Overlaps with telomere or centromere regions",
         "FILTER",
     ),
-    JALIGN_FILTER_VALUE: ("NO_JUMP_ALIGNMENT", None, None, "No jump alignment support", "FILTER"),
+    JALIGN_FILTER_VALUE: ("NO_JUMP_ALIGNMENT", None, None, "No jump alignment support (dels only)", "FILTER"),
 }
 
 

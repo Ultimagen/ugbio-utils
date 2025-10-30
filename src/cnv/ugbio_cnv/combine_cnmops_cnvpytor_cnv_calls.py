@@ -55,7 +55,7 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--duplication_length_cutoff_for_cnmops_filter",
-        help="duplication_length_cutoff_for_cnmops_filter, we filter short duplications that cn.mops calls",
+        help="Defines the minimum duplication length considered valid during cn.mops CNV filtering",
         required=False,
         type=int,
         default=10000,
@@ -181,7 +181,7 @@ def get_dup_cnmops_cnv_calls(
     # df_cnmops.columns = ["chrom", "start", "end", "CN"]
     def extract_cn_number(item):
         match = re.search(r"CN([\d\.]+)", item)
-        return match.group(1) if match else "0"
+        return match.group(1) if match else 0
 
     df_cnmops["cn_numbers"] = [extract_cn_number(item) for item in df_cnmops["CN"]]
     out_cnmops_cnvs_dup_calls = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.calls.bed")
@@ -496,7 +496,7 @@ def run(argv):
         sorted_ug_cnv_lcr = f"{out_cnvs_combined}.lcr.bed"
         run_cmd(f"sort -k1,1 -k2,2n -k3,3n {args.ug_cnv_lcr} > {sorted_ug_cnv_lcr}")
 
-        out_cnvs_combined_annotated = f"{out_cnvs_combined}.annotate.bed"
+        out_cnvs_combined_annotated = f"{out_cnvs_combined}.annotate.tsv"
         run_cmd(
             f"bedmap --header --echo --echo-map-id-uniq --delim '\\t' --bases-uniq-f \
             {out_cnvs_combined} {sorted_ug_cnv_lcr} > {out_cnvs_combined_annotated}"
@@ -507,6 +507,7 @@ def run(argv):
         logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
 
         overlap_filtration_cutoff = 0.5  # 50% overlap with LCR regions
+        # note: despite what it sounds, bedmap --header skips the header in the output
         df_annotate_calls = pd.read_csv(out_cnvs_combined_annotated, sep="\t", header=None)
         df_annotate_calls.columns = [
             "#chr",
