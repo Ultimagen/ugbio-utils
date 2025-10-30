@@ -49,7 +49,7 @@ def add_cnmops_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.Vari
     )
     header.add_line('##INFO=<ID=CopyNumber,Number=1,Type=Float,Description="copy number of CNV call">')
     header.add_line('##INFO=<ID=RoundedCopyNumber,Number=1,Type=Integer,Description="rounded copy number of CNV call">')
-    header.add_line('##INFO=<ID=SVLEN,Number=.,Type=Integer,Description="CNV length">')
+    header.add_line('##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="CNV length">')
     header.add_line('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="CNV type. can be DUP or DEL">')
 
     # Add FORMAT
