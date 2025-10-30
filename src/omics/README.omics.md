@@ -24,10 +24,12 @@ List of tools:
 
    Run `uv run performance --help` for more details.
 
-Admin tools (requires admin AWS permissions):
+Admin tools:
 
 1. Report Run Completion - Manually triggers the OmicsEndRunHandler AWS Lambda to report mongodb on end of omics run/s.
    Run `uv run report_run_completion --help` for more details.
+2. Report Missing runs - Manually triggers the start and end AWS Lambda handlers to report mongodb on omics run/s that are missing from the db.
+   Run `uv run report_missing_runs --help` for more details.
 
 ## Run with Docker
 

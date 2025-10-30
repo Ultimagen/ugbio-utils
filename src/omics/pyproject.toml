@@ -29,6 +29,7 @@ get_omics_logs = "ugbio_omics.get_omics_log:main"
 manifest_log = "ugbio_omics.parse_manifest_log:main"
 performance = "ugbio_omics.get_performance:main"
 report_run_completion = "ugbio_omics.report_run_completion:main"
+report_missing_runs = "ugbio_omics.report_missing_runs:main"
 omics_cache_path = "ugbio_omics.omics_cache_path:main"
 retrieve_from_glacier = "ugbio_omics.retrieve_from_glacier:main"
 
