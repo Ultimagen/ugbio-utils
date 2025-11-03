@@ -1,9 +1,133 @@
 import json
+import logging
+from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import pandas as pd
 from scipy.interpolate import interp1d
 from ugbio_core.plotting_utils import set_pyplot_defaults
+
+logger = logging.getLogger(__name__)
+
+
+def _warn_or_raise(*, should_raise: bool, err: Exception):
+    if should_raise:
+        raise err
+    logger.warning(str(err))
+
+
+def _values_equal_across_all(values: list[Any]) -> bool:
+    first = None
+    for v in values:
+        if v is None:
+            continue
+        first = v
+        break
+    if first is None:
+        return True
+    return all((v == first) for v in values if v is not None)
+
+
+def _sum_ints(values: list[Any], path: str, *, stringent_mode: bool) -> int:
+    total = 0
+    for v in values:
+        if v is None:
+            continue
+        if not isinstance(v, int):
+            _warn_or_raise(should_raise=stringent_mode, err=TypeError(f"Type mismatch at {path}; expected int"))
+            continue
+        total += v
+    return total
+
+
+def _sum_lists(list_values: list[list[Any] | None], path: str, *, stringent_mode: bool) -> list[Any]:
+    max_len = max((len(v) for v in list_values if v is not None), default=0)
+    result: list[Any] = []
+    for i in range(max_len):
+        ith_values: list[Any] = []
+        for v in list_values:
+            if v is None or i >= len(v):
+                ith_values.append(None)
+            else:
+                ith_values.append(v[i])
+        result.append(_sum_recursive(ith_values, f"{path}[{i}]", stringent_mode=stringent_mode))
+    return result
+
+
+def _sum_dicts(dict_values: list[dict[str, Any] | None], path: str, *, stringent_mode: bool) -> dict[str, Any]:
+    all_keys = set()
+    for d in dict_values:
+        if d is not None:
+            all_keys.update(d.keys())
+
+    for key in sorted(all_keys):
+        for idx, d in enumerate(dict_values):
+            if d is None or key not in d:
+                _warn_or_raise(
+                    should_raise=stringent_mode,
+                    err=KeyError(f"Key '{path}.{key}' missing in input file index {idx}"),
+                )
+
+    merged: dict[str, Any] = {}
+    for key in sorted(all_keys):
+        sub_values = [(d.get(key) if d is not None else None) for d in dict_values]
+        if key == "extra_information":
+            if not _values_equal_across_all(sub_values):
+                _warn_or_raise(
+                    should_raise=stringent_mode,
+                    err=ValueError("Metadata 'extra_information' differs across inputs"),
+                )
+            merged[key] = next((v for v in sub_values if v is not None), None)
+        else:
+            merged[key] = _sum_recursive(sub_values, f"{path}.{key}", stringent_mode=stringent_mode)
+    return merged
+
+
+def _prepare_list_values(values: list[Any], path: str, *, stringent_mode: bool) -> list[list[Any] | None]:
+    prepared: list[list[Any] | None] = []
+    for v in values:
+        if v is None:
+            prepared.append(None)
+        elif isinstance(v, list):
+            prepared.append(v)
+        else:
+            _warn_or_raise(should_raise=stringent_mode, err=TypeError(f"Type mismatch at {path}; expected list"))
+            prepared.append(None)
+    return prepared
+
+
+def _prepare_dict_values(values: list[Any], path: str, *, stringent_mode: bool) -> list[dict[str, Any] | None]:
+    prepared: list[dict[str, Any] | None] = []
+    for v in values:
+        if v is None:
+            prepared.append(None)
+        elif isinstance(v, dict):
+            prepared.append(v)
+        else:
+            _warn_or_raise(should_raise=stringent_mode, err=TypeError(f"Type mismatch at {path}; expected dict"))
+            prepared.append(None)
+    return prepared
+
+
+def _sum_recursive(values: list[Any], path: str, *, stringent_mode: bool) -> Any:
+    exemplar = next((v for v in values if v is not None), None)
+    if exemplar is None:
+        return 0
+    if isinstance(exemplar, int):
+        return _sum_ints(values, path, stringent_mode=stringent_mode)
+    if isinstance(exemplar, list):
+        return _sum_lists(
+            _prepare_list_values(values, path, stringent_mode=stringent_mode), path, stringent_mode=stringent_mode
+        )
+    if isinstance(exemplar, dict):
+        return _sum_dicts(
+            _prepare_dict_values(values, path, stringent_mode=stringent_mode), path, stringent_mode=stringent_mode
+        )
+
+    if not _values_equal_across_all(values):
+        _warn_or_raise(should_raise=stringent_mode, err=ValueError(f"Non-numeric field mismatch at {path}"))
+    return exemplar
 
 
 def read_sorter_statistics_csv(sorter_stats_csv: str, *, edit_metric_names: bool = True) -> pd.Series:
@@ -240,3 +364,31 @@ def get_histogram_from_sorter(sorter_stats_json: str, histogram_key: str) -> pd.
     histogram.index.name = histogram_key
 
     return histogram
+
+
+def merge_sorter_json_files(sorter_json_stats_files: list, output_json_file: str, *, stringent_mode: bool = False):
+    """
+    Merge multiple sorter JSON statistics files into a single file.
+
+    Parameters
+    ----------
+    sorter_json_stats_files : list
+        List of paths to sorter JSON statistics files.
+    output_json_file : str
+        Path to output merged JSON file.
+    """
+
+    # Load all JSON files
+    inputs: list[dict[str, Any]] = []
+    for p in sorter_json_stats_files:
+        with open(p, encoding="utf-8") as fh:
+            inputs.append(json.load(fh))
+
+    # Merge dictionaries
+    merged_obj = _sum_dicts(inputs, path="root", stringent_mode=stringent_mode)
+
+    # Write output
+    output_path = Path(output_json_file)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as out_f:
+        json.dump(merged_obj, out_f)
