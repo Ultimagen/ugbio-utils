@@ -159,7 +159,7 @@ def process_filter_columns(row: pd.Series, filter_tags_registry: dict = FILTER_T
     for col in FILTER_COLUMNS_REGISTRY:
         if col in row and pd.notna(row[col]):
             value = str(row[col])
-            # Handle multiple values separated by | or ,
+            # Handle multiple values separated by | or ;
             value = value.replace("|", ";")
             parts = [part for part in value.split(";") if part and part not in ("PASS", ".")]
             filter_values.extend(parts)
