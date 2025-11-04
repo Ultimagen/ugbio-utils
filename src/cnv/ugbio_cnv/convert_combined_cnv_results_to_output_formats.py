@@ -67,12 +67,19 @@ FILTER_TAG_REGISTRY = {
 
 def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHeader:
     """
-    Create a VCF header, for CNV calls, with the given sample name and reference genome information.
-    Args:
-        sample_name (str): The name of the sample.
-        fasta_index_file (str): Path to the reference genome index file (.fai).
-    Returns:
-        pysam.VariantHeader: The VCF header with the specified sample name and reference genome information.
+    Create a VCF header for CNV calls with the given sample name and reference genome information.
+
+    Parameters
+    ----------
+    sample_name : str
+        The name of the sample.
+    fasta_index_file : str
+        Path to the reference genome index file (.fai).
+
+    Returns
+    -------
+    pysam.VariantHeader
+        The VCF header with the specified sample name and reference genome information.
     """
     header = pysam.VariantHeader()
 
@@ -126,10 +133,16 @@ def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHead
 def read_cnv_annotated_file_to_df(cnv_annotated_bed_file: str) -> pd.DataFrame:
     """
     Read an annotated CNV file and return a DataFrame.
-    Args:
-        cnv_annotated_bed_file (str): Path to the input annotated CNV file.
-    Returns:
-        pd.DataFrame: DataFrame containing the CNV data from the file.
+
+    Parameters
+    ----------
+    cnv_annotated_bed_file : str
+        Path to the input annotated CNV file.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing the CNV data from the file.
     """
     df_cnvs = pd.read_csv(cnv_annotated_bed_file, sep="\t")
     df_cnvs = df_cnvs.rename(columns={"#chr": "chr"})
@@ -139,10 +152,16 @@ def read_cnv_annotated_file_to_df(cnv_annotated_bed_file: str) -> pd.DataFrame:
 def calculate_copy_number(copy_number: str | int) -> float | str | None:
     """
     Calculate the average copy number from a string of copy number values.
-    Args:
-        copy_number (str | int): A string containing copy number values separated by commas.
-    Returns:
-        float | str | None: The average copy number as a float, or the original string if it is a float or symbolic
+
+    Parameters
+    ----------
+    copy_number : str or int
+        A string containing copy number values separated by commas, or an integer value.
+
+    Returns
+    -------
+    float or str or None
+        The average copy number as a float, or the original string if it is a float or symbolic.
     """
     if isinstance(copy_number, str):
         cn_list = copy_number.split(",")
@@ -156,6 +175,7 @@ def calculate_copy_number(copy_number: str | int) -> float | str | None:
         copy_number_value = float(copy_number)
     return copy_number_value
 
+
 def process_filter_columns(
     row: pd.Series,
     filter_columns_registry: list = FILTER_COLUMNS_REGISTRY,
@@ -164,13 +184,19 @@ def process_filter_columns(
     """
     Process filter columns for a single row, handling multiple filter values separated by | or ;.
 
-    Args:
-        row (pd.Series): A row from the DataFrame containing filter columns.
-        filter_columns_registry (list): A list of column names to process for filters.
-        filter_tags_registry (dict): A dictionary of valid filter tags.
+    Parameters
+    ----------
+    row : pd.Series
+        A row from the DataFrame containing filter columns.
+    filter_columns_registry : list, optional
+        A list of column names to process for filters. Default is FILTER_COLUMNS_REGISTRY.
+    filter_tags_registry : dict, optional
+        A dictionary of valid filter tags. Default is FILTER_TAG_REGISTRY.
 
-    Returns:
-        str: Comma-separated string of unique filter values, or 'PASS' if no filters apply.
+    Returns
+    -------
+    str
+        Comma-separated string of unique filter values, or 'PASS' if no filters apply.
     """
     filter_values = []
 
@@ -198,11 +224,16 @@ def process_filter_columns(
 def prepare_cnv_dataframe(cnv_annotated_bed_file: str) -> pd.DataFrame:
     """
     Prepare CNV dataframe for VCF output by processing filters and calculating derived fields.
-    Args:
-        cnv_annotated_bed_file (str): Path to the input file containing combined CNV calls
-            and annotated with UG-CNV-LCR.
-    Returns:
-        pd.DataFrame: DataFrame containing the processed CNV data ready for VCF conversion.
+
+    Parameters
+    ----------
+    cnv_annotated_bed_file : str
+        Path to the input file containing combined CNV calls and annotated with UG-CNV-LCR.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing the processed CNV data ready for VCF conversion.
     """
     df_cnvs = read_cnv_annotated_file_to_df(cnv_annotated_bed_file)
     df_cnvs[FILTER_ANNOTATION_NAME] = df_cnvs.apply(process_filter_columns, axis=1)
@@ -221,12 +252,17 @@ def _create_base_vcf_record(vcf_out: pysam.VariantFile, row: pd.Series) -> pysam
     """
     Create a base VCF record with chromosome, position, and variant type information.
 
-    Args:
-        vcf_out (pysam.VariantFile): VCF file handle for creating new records.
-        row (pd.Series): DataFrame row containing CNV information.
+    Parameters
+    ----------
+    vcf_out : pysam.VariantFile
+        VCF file handle for creating new records.
+    row : pd.Series
+        DataFrame row containing CNV information.
 
-    Returns:
-        pysam.VariantRecord: Base VCF record with basic information set.
+    Returns
+    -------
+    pysam.VariantRecord
+        Base VCF record with basic information set.
     """
     record = vcf_out.new_record()
     record.contig = str(row["chr"])
@@ -241,9 +277,12 @@ def _add_filters_to_record(record: pysam.VariantRecord, filter_value: str) -> No
     """
     Add filter information to a VCF record.
 
-    Args:
-        record (pysam.VariantRecord): VCF record to modify.
-        filter_value (str): Filter value from the dataframe.
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        VCF record to modify.
+    filter_value : str
+        Filter value from the dataframe.
     """
     if filter_value == "PASS":
         record.filter.add("PASS")
@@ -254,7 +293,19 @@ def _add_filters_to_record(record: pysam.VariantRecord, filter_value: str) -> No
 
 
 def _get_possible_column_names(original_col: str) -> list[str]:
-    """Get possible column names for backward compatibility."""
+    """
+    Get possible column names for backward compatibility.
+
+    Parameters
+    ----------
+    original_col : str
+        The original column name.
+
+    Returns
+    -------
+    list[str]
+        List of possible column names including backward compatibility aliases.
+    """
     possible_cols = [original_col]
     if original_col == "CNV_SOURCE":
         possible_cols.append("CNV_calls_source")
@@ -266,7 +317,22 @@ def _get_possible_column_names(original_col: str) -> list[str]:
 def _add_registry_info_field(
     record: pysam.VariantRecord, row: pd.Series, vcf_tag: str, possible_cols: list[str], data_type: str
 ) -> None:
-    """Add a single INFO field from the registry to the VCF record."""
+    """
+    Add a single INFO field from the registry to the VCF record.
+
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        VCF record to modify.
+    row : pd.Series
+        DataFrame row containing CNV information.
+    vcf_tag : str
+        VCF INFO tag name.
+    possible_cols : list[str]
+        List of possible column names to check in the dataframe.
+    data_type : str
+        Data type for the INFO field (e.g., 'Integer', 'Float', 'String').
+    """
     for col in possible_cols:
         if col in row and pd.notna(row[col]):
             if data_type == "Integer":
@@ -279,7 +345,16 @@ def _add_registry_info_field(
 
 
 def _add_standard_info_fields(record: pysam.VariantRecord, row: pd.Series) -> None:
-    """Add standard INFO fields to the VCF record."""
+    """
+    Add standard INFO fields to the VCF record.
+
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        VCF record to modify.
+    row : pd.Series
+        DataFrame row containing CNV information.
+    """
     if pd.notna(row.get("CopyNumber")):
         record.info["CopyNumber"] = float(row["CopyNumber"])
     if pd.notna(row.get("RoundedCopyNumber")):
@@ -294,9 +369,12 @@ def _add_info_fields_to_record(record: pysam.VariantRecord, row: pd.Series) -> N
     """
     Add INFO field information to a VCF record directly from dataframe row.
 
-    Args:
-        record (pysam.VariantRecord): VCF record to modify.
-        row (pd.Series): DataFrame row containing CNV information.
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        VCF record to modify.
+    row : pd.Series
+        DataFrame row containing CNV information.
     """
     # Add INFO fields from registry first, handling both possible column names
     for original_col, (vcf_tag, _, data_type, _, _) in INFO_TAG_REGISTRY.items():
@@ -311,11 +389,15 @@ def _determine_genotype(copy_number_value: str | None) -> tuple[int | None, int]
     """
     Determine the genotype based on copy number value.
 
-    Args:
-        copy_number_value (str | None): String representation of copy number.
+    Parameters
+    ----------
+    copy_number_value : str | None
+        String representation of copy number.
 
-    Returns:
-        tuple[int | None, int]: Genotype tuple for VCF format.
+    Returns
+    -------
+    tuple[int | None, int]
+        Genotype tuple for VCF format.
     """
     gt = [None, 1]
     if copy_number_value is not None:
@@ -335,10 +417,14 @@ def _add_genotype_to_record(record: pysam.VariantRecord, sample_name: str, row: 
     """
     Add genotype information to a VCF record.
 
-    Args:
-        record (pysam.VariantRecord): VCF record to modify.
-        sample_name (str): Name of the sample.
-        row (pd.Series): DataFrame row containing copy number information.
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        VCF record to modify.
+    sample_name : str
+        Name of the sample.
+    row : pd.Series
+        DataFrame row containing copy number information.
     """
     copy_number_value = row.get("CopyNumber", None)
     if pd.notna(copy_number_value):
@@ -352,13 +438,17 @@ def _add_genotype_to_record(record: pysam.VariantRecord, sample_name: str, row: 
 def write_combined_vcf(outfile: str, cnv_df: pd.DataFrame, sample_name: str, fasta_index_file: str) -> None:
     """
     Write CNV calls directly from dataframe to a VCF file.
-    Args:
-        outfile (str): Path to the output VCF file.
-        cnv_df (pd.DataFrame): Dataframe containing processed CNV data.
-        sample_name (str): The name of the sample.
-        fasta_index_file (str): Path to the reference genome index file (.fai).
-    Returns:
-        None
+
+    Parameters
+    ----------
+    outfile : str
+        Path to the output VCF file.
+    cnv_df : pd.DataFrame
+        Dataframe containing processed CNV data.
+    sample_name : str
+        The name of the sample.
+    fasta_index_file : str
+        Path to the reference genome index file (.fai).
     """
     header = add_vcf_header(sample_name, fasta_index_file)
 
@@ -382,13 +472,22 @@ def write_combined_vcf(outfile: str, cnv_df: pd.DataFrame, sample_name: str, fas
 
 def run(argv):
     """
-    converts combined CNV calls (from cnmops, cnvpytor, gridss) and outputs VCF file.
-    input arguments:
+    Converts combined CNV calls (from cnmops, cnvpytor, gridss) and outputs VCF file.
+
+    Parameters
+    ----------
+    argv : list
+        Command line arguments.
+
+    Notes
+    -----
+    Input arguments:
     --cnv_annotated_bed_file: input file holding CNV calls.
     --fasta_index_file: (.fai file) tab delimeted file holding reference genome chr ids with their lengths.
     --out_directory: output directory
     --sample_name: sample name
-    output files:
+
+    Output files:
     vcf file: <sample_name>.cnv.vcf.gz
         shows called CNVs in zipped vcf format.
     vcf index file: <sample_name>.cnv.vcf.gz.tbi
