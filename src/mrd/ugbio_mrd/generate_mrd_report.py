@@ -29,7 +29,8 @@ class MrdReportInputs:
     featuremap_file: str
     srsnv_metadata_json: str
     db_control_signatures_vcf_files: list[str] = None
-    tumor_sample: dict = None
+    matched_tumor_sample_names: list[str] = None
+    control_tumor_sample_names: list[str] = None
     signature_filter_query: str = None
     read_filter_query: str = None
 
@@ -68,10 +69,14 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
             File name or a list of file names, signature vcf files of control signature/s
         db_control_signatures_vcf_files: list[str]
             File name or a list of file names, signature vcf files of db (synthetic) control signature/s
-        coverage_csv: str
-            Coverage csv file generated with gatk "ExtractCoverageOverVcfFiles", disabled (None) by default
-        tumor_sample: str
-            sample name in the vcf to take allele fraction (AF) from.
+        coverage_bed: str
+            Coverage bed file generated with mosdepth, disabled (None) by default
+        matched_tumor_sample_names: list[str]
+            list of tumor sample names in the matched signatures vcf files, must be same length as
+            matched_signatures_vcf_files, if None (default) sample name will be auto-discovered
+        control_tumor_sample_names: list[str]
+            list of tumor sample names in the control signatures vcf files, must be same length as
+            control_signatures_vcf_files, if None (default) sample name will be auto-discovered
         output_dir: str
             path to which output will be written if not None (default None)
         output_basename: str
@@ -135,7 +140,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
             mrd_report_inputs.matched_signatures_vcf_files,
             coverage_bed=mrd_report_inputs.coverage_bed,
             output_parquet=signatures_dataframe_fname,
-            tumor_sample=mrd_report_inputs.tumor_sample["matched"],
+            tumor_sample=mrd_report_inputs.matched_tumor_sample_names,
             signature_type="matched",
             return_dataframes=return_dataframes,
             concat_to_existing_output_parquet=False,
@@ -146,7 +151,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
             mrd_report_inputs.control_signatures_vcf_files,
             coverage_bed=mrd_report_inputs.coverage_bed,
             output_parquet=signatures_dataframe_fname,
-            tumor_sample=mrd_report_inputs.tumor_sample["control"],
+            tumor_sample=mrd_report_inputs.control_tumor_sample_names,
             signature_type="control",
             concat_to_existing_output_parquet=concat_to_existing_output_parquet,
         )
@@ -173,7 +178,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
     return signatures_dataframe_fname, intersection_dataframe_fname
 
 
-def parse_args(argv: list[str]) -> argparse.Namespace:
+def parse_args(argv: list[str]) -> argparse.Namespace:  # noqa: E501
     parser = argparse.ArgumentParser(prog="prepare_data", description="Prepare data for MRD report generation")
     parser.add_argument(
         "-f",
@@ -212,12 +217,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Coverage bed file generated with mosdepth",
     )
     parser.add_argument(
-        "--tumor-sample",
+        "--matched-tumor-sample-names",
+        nargs="+",
         type=str,
-        required=False,
         default=None,
-        help=""" sample name in the vcf to take allele fraction (AF) from. Checked with "a in b" so it doesn't have to
-    be the full sample name, but does have to return a unique result. Default: None (auto-discovered) """,
+        help="List of tumor sample names in the matched signatures vcf files",
+    )
+    parser.add_argument(
+        "--control-tumor-sample-names",
+        nargs="+",
+        type=str,
+        default=None,
+        help="List of tumor sample names in the control signatures vcf files",
     )
     parser.add_argument(
         "-o",
