@@ -243,7 +243,7 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
     output_parquet: str, optional
         File name to save result to, unless None (default).
         If this file exists and concat_to_existing_output_parquet is True data is appended
-    tumor_sample: str, optional
+    tumor_sample: list[str], optional
         tumor sample name in the vcf to take allele fraction (AF) from. If not given then a line starting with
         '##tumor_sample=' is looked for in the header, and if it's not found sample data is not read.
     x_columns_name_dict: dict, optional
@@ -290,6 +290,8 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
         for handler in logger.handlers:
             handler.setLevel(logging.DEBUG)
     if not isinstance(signature_vcf_files, str) and isinstance(signature_vcf_files, Iterable):
+        if tumor_sample is None:
+            tumor_sample = [None] * len(signature_vcf_files)
         logger.debug(f"Reading and merging signature files:\n {signature_vcf_files}")
         df_sig = pd.concat(
             (
@@ -297,7 +299,7 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
                     file_name,
                     output_parquet=None,
                     return_dataframes=True,
-                    tumor_sample=tumor_sample[j],
+                    tumor_sample=tumor_sample,
                     x_columns_name_dict=x_columns_name_dict,
                     columns_to_drop=columns_to_drop,
                     verbose=j == 0,  # only verbose in first iteration
@@ -305,7 +307,7 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
                 .assign(signature=_get_sample_name_from_file_name(file_name, split_position=0))
                 .reset_index()
                 .set_index(["signature", "chrom", "pos"])
-                for j, file_name in enumerate(np.unique(signature_vcf_files))
+                for j, (file_name, tumor_sample) in enumerate(zip(signature_vcf_files, tumor_sample, strict=False))
             )
         )
 
