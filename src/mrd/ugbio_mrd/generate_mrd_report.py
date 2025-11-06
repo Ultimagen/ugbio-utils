@@ -156,7 +156,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
             mrd_report_inputs.db_control_signatures_vcf_files,
             coverage_bed=mrd_report_inputs.coverage_bed,
             output_parquet=signatures_dataframe_fname,
-            tumor_sample=mrd_report_inputs.tumor_sample["db_control"],
+            tumor_sample=[None] * len(mrd_report_inputs.db_control_signatures_vcf_files),
             signature_type="db_control",
             return_dataframes=return_dataframes,
             concat_to_existing_output_parquet=concat_to_existing_output_parquet,
