@@ -42,7 +42,7 @@ INFO_TAG_REGISTRY[FILTER_ANNOTATION_NAME] = (
     "REGION_ANNOTATIONS",
     ".",
     "String",
-    "LCR intersection status of the CNV",
+    "Aggregated region-based annotations for the CNV (e.g., LCR status and other region filters)",
     "INFO",
 )
 

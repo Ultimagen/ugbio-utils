@@ -56,7 +56,9 @@ class SafeLabelEncoder(BaseEstimator):
         for col in x.select_dtypes(include=["object"]).columns:
             encoder = LabelEncoder()
             # Add 'unknown' to handle unseen categories
-            unique_vals = list(x[col].astype(str).fillna("unknown").unique()) + ["unknown"]
+            unique_vals = list(x[col].astype(str).unique())
+            if "unknown" not in unique_vals:
+                unique_vals.append("unknown")
             encoder.fit(unique_vals)
             self.encoders[col] = encoder
         return self
@@ -66,7 +68,7 @@ class SafeLabelEncoder(BaseEstimator):
         result = x.copy()
         for col in self.encoders:
             # Handle unseen categories by mapping them to 'unknown'
-            col_values = x[col].astype(str).fillna("unknown")
+            col_values = x[col].astype(str)
             # Map unseen values to 'unknown'
             known_classes = set(self.encoders[col].classes_)
             col_values = col_values.apply(lambda x, kc=known_classes: x if x in kc else "unknown")
@@ -121,14 +123,14 @@ def process_numeric_features(x):
     x = x.copy()
     # Convert svlen tuples to integers by extracting first element
     if "svlen" in x.columns:
-        x["svlen"] = x["svlen"].apply(lambda val: val[0] if isinstance(val, tuple) else val).fillna(0)
+        x["svlen"] = x["svlen"].apply(lambda val: val[0])
     # Scale jump alignments
     if "jump_alignments" in x.columns:
-        x["jump_alignments"] = x["jump_alignments"] / 40.0
+        x["jump_alignments"] = x["jump_alignments"]
     return x
 
 
-def create_preprocessing_pipeline(numeric_features=None, categorical_features=None):
+def create_preprocessing_pipeline(numeric_features=NUMERIC_FEATURES, categorical_features=CATEGORICAL_FEATURES):
     """
     Create preprocessing pipeline for CNV features
 
@@ -139,12 +141,6 @@ def create_preprocessing_pipeline(numeric_features=None, categorical_features=No
     Returns:
         ColumnTransformer: Preprocessing pipeline
     """
-    # Use shared feature group constants or provided custom lists
-    if numeric_features is None:
-        numeric_features = NUMERIC_FEATURES
-    if categorical_features is None:
-        categorical_features = CATEGORICAL_FEATURES
-
     # Create numeric transformer with svlen conversion, NaN filling and jump alignment scaling
     # Tree-based models don't require scaling, so we only handle NaN values and process features
     numeric_transformer = Pipeline(
@@ -194,7 +190,7 @@ def create_model_pipeline(numeric_features=None, categorical_features=None):
     return pipeline
 
 
-def load_and_prepare_data(h5_file: str, feature_cols=None):
+def load_and_prepare_data(h5_file: str, feature_cols=FEATURE_COLS):
     """
     Load data from H5 file and prepare features and labels
 
@@ -214,11 +210,7 @@ def load_and_prepare_data(h5_file: str, feature_cols=None):
         print(f"Error loading H5 file: {e}")
         sys.exit(1)
 
-    print(f"Loaded {len(data)} samples")
-
-    # Use provided feature columns or default
-    if feature_cols is None:
-        feature_cols = FEATURE_COLS
+    print(f"Loaded {len(data)} records")
 
     # Check required columns
     missing_features = [col for col in feature_cols if col not in data.columns]
@@ -244,7 +236,7 @@ def load_and_prepare_data(h5_file: str, feature_cols=None):
     return x, y
 
 
-def evaluate_model(df: pd.DataFrame, model, preprocessor, data_type: str, feature_cols=None):
+def evaluate_model(df: pd.DataFrame, model, preprocessor, data_type: str, feature_cols=FEATURE_COLS) -> tuple:
     """
     Evaluate model performance on data similar to train_models_pipeline
 
@@ -252,7 +244,7 @@ def evaluate_model(df: pd.DataFrame, model, preprocessor, data_type: str, featur
         df: DataFrame with features and labels
         model: Trained model (classifier part only)
         preprocessor: Preprocessing pipeline (transformer part)
-        data_type: String describing data type for logging
+        data_type: String describing data type for logging (i.e. training or testing data)
         feature_cols: List of feature columns to use (default: FEATURE_COLS)
 
     Returns:
@@ -260,10 +252,6 @@ def evaluate_model(df: pd.DataFrame, model, preprocessor, data_type: str, featur
     """
     print(f"\n{data_type} Evaluation:")
     print("=" * (len(data_type) + 12))
-
-    # Use provided feature columns or default
-    if feature_cols is None:
-        feature_cols = FEATURE_COLS
 
     # Extract features and labels
     x = df[feature_cols].copy()
@@ -328,8 +316,7 @@ def evaluate_model(df: pd.DataFrame, model, preprocessor, data_type: str, featur
     if hasattr(model, "feature_importances_"):
         print("\nFeature Importance:")
         # If model has more features than expected, print all
-        feature_names = feature_cols + ["flt"] if len(model.feature_importances_) > len(feature_cols) else feature_cols
-        for name, importance in zip(feature_names, model.feature_importances_, strict=False):
+        for name, importance in zip(feature_cols, model.feature_importances_, strict=True):
             print(f"{name}: {importance:.4f}")
 
     return accuracy_df, curve_df
@@ -411,22 +398,15 @@ def save_model(model, output_file: str):
 
     print("Model saved successfully!")
 
-    # Test loading
-    try:
-        with open(output_file, "rb") as f:
-            test_load = pickle.load(f)  # noqa: S301
-        print("✓ Model can be loaded successfully")
-        print(f"Model components: {list(test_load.keys())}")
-    except Exception as e:
-        print(f"✗ Error loading saved model: {e}")
-
 
 def main():
     parser = argparse.ArgumentParser(
         description="Train CNV filtering model", formatter_class=argparse.RawDescriptionHelpFormatter, epilog=__doc__
     )
 
-    parser.add_argument("input_h5", help="Input H5 file with CNV data and labels")
+    parser.add_argument(
+        "input_h5", help="Input H5 file with CNV data and labels, should have a key 'calls' with 'label' column"
+    )
 
     parser.add_argument("output_model", help="Output pickle file for trained model")
 
