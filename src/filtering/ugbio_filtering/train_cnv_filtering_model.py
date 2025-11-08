@@ -1,20 +1,32 @@
 #!/usr/bin/env python3
 """
-CNV Filtering Model Training Script
+CNV Filtering Model Training Script.
 
 This script trains a machine learning model to filter CNV (Copy Number Variant) calls
 based on features extracted from VCF files. The model distinguishes between true
 positives (TP) and false positives (FP) CNV calls.
 
-Usage:
-    python train_cnv_filtering_model.py <input_h5_file> <output_model_file> [options]
+Parameters
+----------
+input_h5_file : str
+    H5 file with 'calls' key containing CNV data with a 'label' column.
+    The 'label' column should classify variants as 'TP' (true) or 'FP' (false).
+output_model_file : str
+    Output PKL file path for the trained model and transformer.
 
-Required Input:
-    - H5 file with 'calls' key containing CNV data with a 'label' column
-    - The 'label' column should classify variants as 'TP' (true) or 'FP' (false)
+Examples
+--------
+Basic usage:
+    $ python train_cnv_filtering_model.py input_data.h5 output_model.pkl
 
-Output:
-    - PKL file containing trained model and transformer for inference
+With options:
+    $ python train_cnv_filtering_model.py input_data.h5 output_model.pkl --test-size 0.3 --disable svlen
+
+Notes
+-----
+The script outputs:
+- PKL file containing trained model and transformer for inference
+- H5 file with evaluation results and performance metrics
 """
 
 import argparse
@@ -46,13 +58,32 @@ warnings.filterwarnings("ignore")
 
 
 class SafeLabelEncoder(BaseEstimator):
-    """Label encoder that handles unseen categories gracefully."""
+    """
+    Label encoder that handles unseen categories gracefully.
+
+    Extends BaseEstimator to provide label encoding with graceful handling
+    of unseen categories by mapping them to 'unknown'.
+    """
 
     def __init__(self):
         self.encoders = {}
 
     def fit(self, x, y=None):
-        """Fit the encoder on the data."""
+        """
+        Fit the encoder on the data.
+
+        Parameters
+        ----------
+        x : pandas.DataFrame
+            Input data to fit the encoder on.
+        y : array-like, optional
+            Target values (ignored, present for sklearn compatibility).
+
+        Returns
+        -------
+        self : SafeLabelEncoder
+            Fitted encoder instance.
+        """
         for col in x.select_dtypes(include=["object"]).columns:
             encoder = LabelEncoder()
             # Add 'unknown' to handle unseen categories
@@ -64,7 +95,19 @@ class SafeLabelEncoder(BaseEstimator):
         return self
 
     def transform(self, x):
-        """Transform the data using fitted encoders."""
+        """
+        Transform the data using fitted encoders.
+
+        Parameters
+        ----------
+        x : pandas.DataFrame
+            Input data to transform.
+
+        Returns
+        -------
+        pandas.DataFrame
+            Transformed data with encoded categorical columns.
+        """
         result = x.copy()
         for col in self.encoders:
             # Handle unseen categories by mapping them to 'unknown'
@@ -76,11 +119,45 @@ class SafeLabelEncoder(BaseEstimator):
         return result
 
     def fit_transform(self, x, y=None, **fit_params):
-        """Fit and transform the data."""
+        """
+        Fit and transform the data.
+
+        Parameters
+        ----------
+        x : pandas.DataFrame
+            Input data to fit and transform.
+        y : array-like, optional
+            Target values (ignored, present for sklearn compatibility).
+        **fit_params : dict
+            Additional fitting parameters (ignored).
+
+        Returns
+        -------
+        pandas.DataFrame
+            Fitted and transformed data.
+        """
         return self.fit(x, y).transform(x)
 
     def set_output(self, *, transform=None):
-        """Set the output container format."""
+        """
+        Set the output container format.
+
+        Parameters
+        ----------
+        transform : str, optional
+            The output format for transform operations.
+
+        Returns
+        -------
+        self : SafeLabelEncoder
+            The encoder instance.
+
+        Notes
+        -----
+        This method is required for sklearn compatibility.
+        Since we're already working with pandas DataFrames,
+        we don't need to do anything special.
+        """
         # This method is required for sklearn compatibility
         # Since we're already working with pandas DataFrames, we don't need to do anything special
         return self
@@ -94,13 +171,18 @@ FEATURE_COLS = NUMERIC_FEATURES + CATEGORICAL_FEATURES
 
 def get_active_features(disabled_features=None):
     """
-    Get active feature lists based on disabled features
+    Get active feature lists based on disabled features.
 
-    Args:
-        disabled_features: List of features to disable
+    Parameters
+    ----------
+    disabled_features : list, optional
+        List of features to disable.
 
-    Returns:
-        Tuple of (active_numeric_features, active_categorical_features, active_feature_cols)
+    Returns
+    -------
+    tuple of (list, list, list)
+        A tuple containing (active_numeric_features,
+        active_categorical_features, active_feature_cols).
     """
     if disabled_features is None:
         disabled_features = []
@@ -119,7 +201,19 @@ def get_active_features(disabled_features=None):
 
 
 def process_numeric_features(x):
-    """Process all numeric features: convert svlen tuples and scale jump alignments"""
+    """
+    Process all numeric features: convert svlen tuples and scale jump alignments.
+
+    Parameters
+    ----------
+    x : pandas.DataFrame
+        Input DataFrame with numeric features.
+
+    Returns
+    -------
+    pandas.DataFrame
+        Processed DataFrame with converted features.
+    """
     x = x.copy()
     # Convert svlen tuples to integers by extracting first element
     if "svlen" in x.columns:
@@ -132,14 +226,19 @@ def process_numeric_features(x):
 
 def create_preprocessing_pipeline(numeric_features=NUMERIC_FEATURES, categorical_features=CATEGORICAL_FEATURES):
     """
-    Create preprocessing pipeline for CNV features
+    Create preprocessing pipeline for CNV features.
 
-    Args:
-        numeric_features: List of numeric features to use (default: NUMERIC_FEATURES)
-        categorical_features: List of categorical features to use (default: CATEGORICAL_FEATURES)
+    Parameters
+    ----------
+    numeric_features : list, default NUMERIC_FEATURES
+        List of numeric features to use.
+    categorical_features : list, default CATEGORICAL_FEATURES
+        List of categorical features to use.
 
-    Returns:
-        ColumnTransformer: Preprocessing pipeline
+    Returns
+    -------
+    sklearn.compose.ColumnTransformer
+        Preprocessing pipeline.
     """
     # Create numeric transformer with svlen conversion, NaN filling and jump alignment scaling
     # Tree-based models don't require scaling, so we only handle NaN values and process features
@@ -169,7 +268,21 @@ def create_preprocessing_pipeline(numeric_features=NUMERIC_FEATURES, categorical
 
 
 def create_model_pipeline(numeric_features=None, categorical_features=None):
-    """Create complete model pipeline with preprocessing and classification"""
+    """
+    Create complete model pipeline with preprocessing and classification.
+
+    Parameters
+    ----------
+    numeric_features : list, optional
+        List of numeric features to use.
+    categorical_features : list, optional
+        List of categorical features to use.
+
+    Returns
+    -------
+    sklearn.pipeline.Pipeline
+        Complete model pipeline with preprocessing and classification.
+    """
     preprocessor = create_preprocessing_pipeline(numeric_features, categorical_features)
 
     # Best parameters found from hyperparameter optimization
@@ -192,14 +305,19 @@ def create_model_pipeline(numeric_features=None, categorical_features=None):
 
 def load_and_prepare_data(h5_file: str, feature_cols=FEATURE_COLS):
     """
-    Load data from H5 file and prepare features and labels
+    Load data from H5 file and prepare features and labels.
 
-    Args:
-        h5_file: Path to H5 file with CNV data
-        feature_cols: List of feature columns to use (default: FEATURE_COLS)
+    Parameters
+    ----------
+    h5_file : str
+        Path to H5 file with CNV data.
+    feature_cols : list, default FEATURE_COLS
+        List of feature columns to use.
 
-    Returns:
-        Tuple of (features_df, labels_series)
+    Returns
+    -------
+    tuple of (pandas.DataFrame, pandas.Series)
+        A tuple containing (features_df, labels_series).
     """
     print(f"Loading data from {h5_file}...")
 
@@ -238,17 +356,25 @@ def load_and_prepare_data(h5_file: str, feature_cols=FEATURE_COLS):
 
 def evaluate_model(df: pd.DataFrame, model, preprocessor, data_type: str, feature_cols=FEATURE_COLS) -> tuple:
     """
-    Evaluate model performance on data similar to train_models_pipeline
+    Evaluate model performance on data similar to train_models_pipeline.
 
-    Args:
-        df: DataFrame with features and labels
-        model: Trained model (classifier part only)
-        preprocessor: Preprocessing pipeline (transformer part)
-        data_type: String describing data type for logging (i.e. training or testing data)
-        feature_cols: List of feature columns to use (default: FEATURE_COLS)
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame with features and labels.
+    model : sklearn estimator
+        Trained model (classifier part only).
+    preprocessor : sklearn.compose.ColumnTransformer
+        Preprocessing pipeline (transformer part).
+    data_type : str
+        String describing data type for logging (i.e. training or testing data).
+    feature_cols : list, default FEATURE_COLS
+        List of feature columns to use.
 
-    Returns:
-        Tuple of (accuracy_df, curve_df) similar to variant_filtering_utils.eval_model
+    Returns
+    -------
+    tuple of (pandas.DataFrame, pandas.DataFrame)
+        A tuple of (accuracy_df, curve_df) similar to variant_filtering_utils.eval_model.
     """
     print(f"\n{data_type} Evaluation:")
     print("=" * (len(data_type) + 12))
@@ -324,14 +450,20 @@ def evaluate_model(df: pd.DataFrame, model, preprocessor, data_type: str, featur
 
 def save_results(output_file_prefix: str, model, preprocessor, train_results, test_results):
     """
-    Save results similar to train_models_pipeline
+    Save results similar to train_models_pipeline.
 
-    Args:
-        output_file_prefix: Output file prefix for .pkl and .h5 files
-        model: Trained model (classifier)
-        preprocessor: Preprocessing pipeline (transformer)
-        train_results: Training evaluation results (accuracy_df, curve_df)
-        test_results: Test evaluation results (accuracy_df, curve_df)
+    Parameters
+    ----------
+    output_file_prefix : str
+        Output file prefix for .pkl and .h5 files.
+    model : sklearn estimator
+        Trained model (classifier).
+    preprocessor : sklearn.compose.ColumnTransformer
+        Preprocessing pipeline (transformer).
+    train_results : tuple
+        Training evaluation results (accuracy_df, curve_df).
+    test_results : tuple
+        Test evaluation results (accuracy_df, curve_df).
     """
     print(f"\nSaving results to {output_file_prefix}...")
 
@@ -374,11 +506,14 @@ def save_results(output_file_prefix: str, model, preprocessor, train_results, te
 
 def save_model(model, output_file: str):
     """
-    Save trained model to pickle file
+    Save trained model to pickle file.
 
-    Args:
-        model: Trained model pipeline
-        output_file: Output pickle file path
+    Parameters
+    ----------
+    model : sklearn.pipeline.Pipeline
+        Trained model pipeline.
+    output_file : str
+        Output pickle file path.
     """
     print(f"\nSaving model to {output_file}...")
 
