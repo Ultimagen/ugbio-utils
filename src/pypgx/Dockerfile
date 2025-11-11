@@ -14,7 +14,7 @@ RUN python3 -m venv --without-pip /opt/venv && \
 # Install pypgx
 RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
     cd /opt/pypgx && \
-    git switch add-mt-rnr1-general && \
+    git switch add-mt-rnr1-gene && \
     /opt/venv/bin/pip install .
 
 # Clone the pypgx-bundle repository at version 0.25.0
