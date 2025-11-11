@@ -5,12 +5,17 @@ RUN apt-get update && \
     apt-get install --no-install-recommends -y python3.12 python3.12-venv python3.12-dev python3-pip openjdk-17-jdk git build-essential && \
     ln -sf /usr/bin/python3.12 /usr/bin/python3
 
-# Create venv, install pip and pypgx
+# Create venv and install pip
 RUN python3 -m venv --without-pip /opt/venv && \
     python3 -m pip install --target=/opt/venv/lib/python3.12/site-packages pip setuptools wheel && \
     echo '#!/bin/bash\n/opt/venv/bin/python -m pip "$@"' > /opt/venv/bin/pip && \
-    chmod +x /opt/venv/bin/pip && \
-    /opt/venv/bin/pip install pypgx==0.25.0
+    chmod +x /opt/venv/bin/pip
+
+# Install pypgx
+RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
+    cd /opt/pypgx && \
+    git switch add-mt-rnr1-general && \
+    /opt/venv/bin/pip install .
 
 # Clone the pypgx-bundle repository at version 0.25.0
 RUN git clone --branch 0.25.0 --depth 1 https://github.com/sbslee/pypgx-bundle /opt/pypgx-bundle
