@@ -3,6 +3,7 @@
 ## Architecture Overview
 
 This is a bioinformatics pipeline toolkit organized as a UV workspace with modular components. Each module in `src/` is a separate Python package with its own Docker container for cloud deployment.
+The GitHub repository is publicly shared. All members' Docker images are published internally to UG private AWS ECR, and also to public Docker Hub.
 
 ### Core Components
 
@@ -56,6 +57,7 @@ docker run --rm -v .:/workdir <image> run_tests /workdir/src/<module>
 - **Parallel Processing**: Region-based chunking for large genomics files (300Mbp default)
 
 ### Testing Requirements
+- Tests use `pytest` framework.
 ```python
 # Mock external tools (bcftools, truvari, etc.)
 @patch("subprocess.run")
@@ -85,3 +87,13 @@ from ugbio_omics import compare_cromwell_omics, get_omics_log
 - **Container Login**: `aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 337532070941.dkr.ecr.us-east-1.amazonaws.com`
 
 When adding new modules, follow the established pattern: create pyproject.toml with `run_tests = "pytest:main"` script, add workspace dependency declarations, and ensure Dockerfile builds from appropriate base image.
+
+## GitHub Actions Review
+- **ci.yml**: Runs continuous integration checks, likely including linting, testing, and static analysis for all modules.
+- **build-ugbio-base-docker.yml**: Builds the `ugbio_base` Docker image, which serves as the foundation for all module containers.
+- **build-ugbio-member-docker.yml**: Builds Docker images for each member/module in the workspace, supporting modular deployment.
+- **docker-build-push.yml**: Common inherited workflow that automates scanning, building and pushing Docker images to a container registry (e.g., AWS ECR). Cn be called by other internal/external workflows.
+- **publish.yml**: Handles publishing of packages or images, possibly to PyPI or a Docker registry.
+- **set-dev-version.yml**: Automates version bumping or tagging for development releases.
+
+These workflows ensure code quality, automate builds, and streamline deployment for both Python and Docker-based components. For details or customization, review the YAML files in `.github/workflows/`.
