@@ -218,9 +218,6 @@ def process_numeric_features(x):
     # Convert svlen tuples to integers by extracting first element
     if "svlen" in x.columns:
         x["svlen"] = x["svlen"].apply(lambda val: val[0])
-    # Scale jump alignments
-    if "jump_alignments" in x.columns:
-        x["jump_alignments"] = x["jump_alignments"]
     return x
 
 
