@@ -10,14 +10,9 @@ from ugbio_core.logger import logger
 
 def _create_variant_bed(merged_vcf, bed_file):
     """Create a BED file from VCF variants."""
-    cmd_bcftools = ["bcftools", "query", "-f", "%CHROM\t%POS\t%END\n", merged_vcf]
-    cmd_awk = ["awk", 'BEGIN{OFS="\t"} {print $1, $2, $3+1}']
+    cmd_bcftools = ["bcftools", "query", "-f", "%CHROM\t%POS0\t%END\n", merged_vcf]
     with open(bed_file, "w") as out_file:
-        p1 = subprocess.Popen(cmd_bcftools, stdout=subprocess.PIPE)
-        p2 = subprocess.Popen(cmd_awk, stdin=p1.stdout, stdout=out_file)
-        p1.stdout.close()
-        p2.communicate()
-        p1.wait()
+        subprocess.check_call(cmd_bcftools, stdout=out_file)
 
 
 def _find_closest_tandem_repeats(bed1, bed2, output_file):
