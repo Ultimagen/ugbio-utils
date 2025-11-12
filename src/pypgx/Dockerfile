@@ -14,13 +14,14 @@ RUN python3 -m venv --without-pip /opt/venv && \
 # Install pypgx
 RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
     cd /opt/pypgx && \
-    git switch add-mt-rnr1-gene && \
-    /opt/venv/bin/pip install .
+    git switch 0.26.0-dev && \
+    /opt/venv/bin/pip install . && \
+    rm -rf /opt/pypgx
 
-# Clone the pypgx-bundle repository at version 0.25.0
+# Clone the pypgx-bundle repository at the corresponding version
 RUN git clone --branch 0.25.0 --depth 1 https://github.com/sbslee/pypgx-bundle /opt/pypgx-bundle
 
-# Remove unnecessary packages and recreate python3 symlink (it gets removed with python3.12-dev)
+# Remove unnecessary packages and recreate python3 symlink
 RUN apt-get purge -y git && \
     apt-get autoremove -y && \
     apt-get clean && \
@@ -32,7 +33,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 ENV PYPGX_BUNDLE=/opt/pypgx-bundle
 
 # Create a script to run tests from docker CI
-RUN echo '#!/bin/sh\necho "No tests to run :)"' > /usr/local/bin/run_tests \
+RUN echo '#!/bin/sh\necho "No tests to run"' > /usr/local/bin/run_tests \
 && chmod +x /usr/local/bin/run_tests
 
 # Don't use root user
