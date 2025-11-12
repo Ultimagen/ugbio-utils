@@ -34,7 +34,7 @@ def merge_vcf_files(tumor_vcf, normal_vcf, out_merged_vcf, n_cpu: int | None = N
     if n_cpu is None:
         n_cpu = os.cpu_count()
     # merging T-N VCF files - this results with records from both tumor and normal VCF files
-    out_merged_full_vcf = out_merged_vcf.replace(".vcf.gz", ".full.vcf.gz")
+    out_merged_full_vcf = out_merged_vcf.replace(".vcf.gz", "") + ".full.vcf.gz"
     cmd_merge = [
         "bcftools",
         "merge",
@@ -42,7 +42,6 @@ def merge_vcf_files(tumor_vcf, normal_vcf, out_merged_vcf, n_cpu: int | None = N
         str(n_cpu),
         "-m",
         "none",
-        "--force-samples",
         "-Oz",
         "-o",
         out_merged_full_vcf,
@@ -58,7 +57,7 @@ def merge_vcf_files(tumor_vcf, normal_vcf, out_merged_vcf, n_cpu: int | None = N
         input_vcf=out_merged_full_vcf,
         output_vcf=out_merged_vcf,
         n_threads=n_cpu,
-        extra_args="-i 'FORMAT/RL[0:0]!=\".\"'",
+        extra_args="-i 'sum(FORMAT/AD[0:1])>0'",
     )
     vu.index_vcf(out_merged_vcf)
 
@@ -94,8 +93,8 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         default=".",
     )
     parser.add_argument(
-        "--filter_for_tumor_pass_variants",
-        help="If set, the output VCF will only contain tumor-PASS variants.",
+        "--keep-non-pass-tumor-candidates",
+        help="If set, the output VCF will also contain non-PASS variants.",
         action="store_true",
         default=False,
     )
@@ -108,7 +107,7 @@ def run(argv):
 
     The output VCF file will have tumor records (filtered for SingleRead variants)
     merged with corresponding normal records.
-    If the `--filter_for_tumor_pass_variants` flag is set, only tumor-PASS variants will be included in the output.
+    If the `--keep-non-pass-tumor-candidates` flag is set, non-PASS variants will also be included in the output.
 
     Parameters
     ----------
@@ -135,7 +134,7 @@ def run(argv):
     # Add SingleRead filter to the tumor VCF file
     logger.info("Adding SingleRead filter to the tumor file")
     out_add_filter_vcf = pjoin(
-        args.out_directory, os.path.basename(args.tumor_vcf).replace(".vcf.gz", ".with_sr_filter.vcf.gz")
+        args.out_directory, os.path.basename(args.tumor_vcf).replace(".vcf.gz", "") + ".with_sr_filter.vcf.gz"
     )
     # Somehow this ends up without adding the SingleRead filter into the vcf file
     vu.filter_vcf(
@@ -177,6 +176,7 @@ def run(argv):
         created_files.append(tumor_vcf)
         created_files.append(tumor_vcf + ".tbi")
     else:
+        logger.info("including non-PASS tumor variants.")
         tumor_vcf = out_add_filter_vcf.replace(".with_sr_filter.vcf.gz", ".no_sr.vcf.gz")
         vu.view_vcf(
             input_vcf=out_add_filter_vcf,
