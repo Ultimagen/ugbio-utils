@@ -56,5 +56,5 @@ def test_integrate_tandem_repeat_features(
 
     # check that header has the TR info fields
     # Example usage
-    expected_info_fields = ["TR_START", "TR_END", "TR_SEQ", "TR_DISTANCE", "TR_LENGTH", "TR_SEQ_UNIT_LENGTH"]
+    expected_info_fields = ["TR_START", "TR_END", "TR_SEQ", "TR_LENGTH", "TR_SEQ_UNIT_LENGTH", "TR_DISTANCE"]
     assert_vcf_info_fields(out_vcf_with_tr_data, expected_info_fields)
