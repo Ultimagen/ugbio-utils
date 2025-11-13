@@ -1,10 +1,10 @@
 import os
-import subprocess
 import tempfile
 from os.path import join as pjoin
 
 import pysam
 from simppl.simple_pipeline import SimplePipeline
+from ugbio_core.vcf_utils import VcfUtils
 
 
 def _create_variant_bed(merged_vcf, bed_file):
@@ -23,18 +23,17 @@ def _find_closest_tandem_repeats(bed1, bed2, output_file):
 
 def _prepare_annotation_files(tmpdir, tr_tsv_file):
     """Prepare files for VCF annotation."""
+    sp = SimplePipeline(0, 3)
     sorted_tsv = pjoin(tmpdir, "merged_vcf.tmp.TRdata.sorted.tsv")
-    cmd = ["sort", "-k1,1", "-k2,2n", tr_tsv_file]
-    with open(sorted_tsv, "w") as out_file:
-        subprocess.check_call(cmd, stdout=out_file)
+    cmd = f"sort -k1,1 -k2,2n {tr_tsv_file}"
+    sp.print_and_run(cmd, out=sorted_tsv)
 
     gz_tsv = sorted_tsv + ".gz"
-    cmd = ["bgzip", "-c", sorted_tsv]
-    with open(gz_tsv, "wb") as out_file:
-        subprocess.check_call(cmd, stdout=out_file)
+    cmd = f"bgzip -c {sorted_tsv}"
+    sp.print_and_run(cmd, out=gz_tsv)
 
-    cmd = ["tabix", "-s", "1", "-b", "2", "-e", "2", gz_tsv]
-    subprocess.check_call(cmd)
+    cmd = f"tabix -s 1 -b 2 -e 2 {gz_tsv}"
+    sp.print_and_run(cmd)
 
     header = pysam.VariantHeader()
     info_fields = [
@@ -106,21 +105,15 @@ def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
 
         # Annotate VCF
         merged_vcf_with_tr_info = pjoin(out_dir, os.path.basename(merged_vcf).replace(".vcf.gz", ".tr_info.vcf.gz"))
-        cmd = [
-            "bcftools",
-            "annotate",
-            "-Oz",
-            "-o",
-            merged_vcf_with_tr_info,
-            "-a",
-            gz_tsv,
-            "-h",
-            hdr_file,
-            "-c",
-            "CHROM,POS,INFO/TR_START,INFO/TR_END,INFO/TR_SEQ,INFO/TR_LENGTH,INFO/TR_SEQ_UNIT_LENGTH,INFO/TR_DISTANCE",
-            merged_vcf,
-        ]
-        subprocess.check_call(cmd)
 
-    pysam.tabix_index(merged_vcf_with_tr_info, preset="vcf", min_shift=0, force=True)
+        # Use VcfUtils to annotate the VCF
+        vcf_utils = VcfUtils()
+        vcf_utils.annotate_vcf(
+            input_vcf=merged_vcf,
+            output_vcf=merged_vcf_with_tr_info,
+            annotation_file=gz_tsv,
+            header_file=hdr_file,
+            columns="CHROM,POS,INFO/TR_START,INFO/TR_END,INFO/TR_SEQ,INFO/TR_LENGTH,INFO/TR_SEQ_UNIT_LENGTH,INFO/TR_DISTANCE",
+        )
+
     return merged_vcf_with_tr_info
