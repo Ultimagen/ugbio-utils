@@ -267,8 +267,8 @@ def test_calc_run_info_table_basic_functionality(test_resources_calc_run_info, r
             raise_exceptions=True,
         )
 
-        # Calculate precision/recall first (required for calc_run_info_table)
-        report.calc_precision_and_recall()
+        # Calculate recall values first (required for calc_run_info_table)
+        report.plot_fq_recall(only_calculate=True)
 
         # Call the method under test
         report.calc_run_info_table()
@@ -318,8 +318,8 @@ def test_calc_run_info_table_content_validation(test_resources_calc_run_info, re
             raise_exceptions=True,
         )
 
-        # Calculate precision/recall first
-        report.calc_precision_and_recall()
+        # Calculate recall values first
+        report.plot_fq_recall(only_calculate=True)
 
         # Call the method
         report.calc_run_info_table()
@@ -399,7 +399,7 @@ def test_calc_run_info_table_numerical_validation(test_resources_calc_run_info, 
         )
 
         # Calculate precision/recall first
-        report.calc_precision_and_recall()
+        report.plot_fq_recall(only_calculate=True)
 
         # Call the method
         report.calc_run_info_table()

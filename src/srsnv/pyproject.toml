@@ -13,6 +13,7 @@ dependencies = [
     "scikit-learn>=1.5.1,<1.6.0",
     "numba>=0.60.0",
     "shap>=0.46.0",
+    "statsmodels>=0.14.4",
 ]
 description = "Ultima Genomics SRSNV utils"
 authors = [
