@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pysam
 import pytest
-from ugbio_featuremap import create_somatic_pileup_featuremap
+from ugbio_featuremap import create_somatic_featuremap
 
 
 @pytest.fixture
@@ -13,7 +13,7 @@ def resources_dir():
     return Path(__file__).parent.parent / "resources"
 
 
-def test_create_somatic_pileup_featuremap(tmp_path, resources_dir):
+def test_create_somatic_featuremap(tmp_path, resources_dir):
     tumor_vcf = pjoin(resources_dir, "HG006_HG003.featuremap.chr9.vcf.gz")
     normal_vcf = pjoin(
         resources_dir,
@@ -23,13 +23,13 @@ def test_create_somatic_pileup_featuremap(tmp_path, resources_dir):
     out_dir = tmp_path
 
     expected_tumor_pass_vcf = pjoin(resources_dir, "TP_HG006_HG003.tumor_normal.merged.chr9.vcf.gz")  # noqa: F841
-    expected_num_variants = 5334
+    expected_num_variants = 1333
     out_tumor_vcf = pjoin(out_dir, f"{sample_name}.tumor_normal.merged.vcf.gz")
 
     # Run the script's main function
-    create_somatic_pileup_featuremap.run(
+    create_somatic_featuremap.run(
         [
-            "create_somatic_pileup_featuremap",
+            "create_somatic_featuremap",
             "--tumor_vcf",
             tumor_vcf,
             "--normal_vcf",
