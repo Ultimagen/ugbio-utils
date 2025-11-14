@@ -265,6 +265,81 @@ class VcfUtils:
         # Index the output VCF
         self.index_vcf(output_vcf)
 
+    def annotate_vcf(
+        self,
+        input_vcf: str,
+        output_vcf: str,
+        annotation_file: str,
+        header_file: str = None,
+        columns: str = None,
+        n_threads: int = 1,
+        extra_args: str = "",
+    ) -> None:
+        """
+        Annotate VCF file using bcftools annotate
+
+        Parameters
+        ----------
+        input_vcf : str
+            Input VCF file path
+        output_vcf : str
+            Output VCF file path
+        annotation_file : str
+            Path to the annotation file (e.g., tabix-indexed TSV file)
+        header_file : str, optional
+            Path to header (txt) file containing (only) new INFO/FORMAT field definitions
+        columns : str, optional
+            Comma-separated list of columns to annotate (e.g., CHROM,POS,INFO/DP)
+        n_threads : int, optional
+            Number of threads to use (default is 1)
+        extra_args : str, optional
+            Additional arguments to pass to bcftools annotate (default is empty string)
+
+        Usage example:
+        >>> vcf_utils = VcfUtils()
+        >>> vcf_utils.annotate_vcf(
+        ...     input_vcf="input.vcf.gz",
+        ...     output_vcf="output.vcf.gz",
+        ...     annotation_file="annotations.tsv.gz",
+        ...     header_file="new_info_header.txt",
+        ...     columns="CHROM,POS,INFO/NEW_FIELD",
+        ...     n_threads=4,
+        ...     extra_args="--some-extra-arg"
+        ... )
+        """
+        # Build the bcftools annotate command
+        cmd_parts = ["bcftools", "annotate"]
+
+        # Add output format
+        cmd_parts.extend(["-O", "z", "-o", output_vcf])
+
+        # Add annotation file
+        cmd_parts.extend(["-a", annotation_file])
+
+        # Add header file if provided
+        if header_file:
+            cmd_parts.extend(["-h", header_file])
+
+        # Add columns if provided
+        if columns:
+            cmd_parts.extend(["-c", columns])
+
+        # Add threading
+        cmd_parts.extend(["--threads", str(n_threads)])
+
+        # Add extra arguments if provided
+        if extra_args:
+            cmd_parts.extend(extra_args.split())
+
+        # Add input file
+        cmd_parts.append(input_vcf)
+
+        # Execute the command
+        self.__execute(" ".join(cmd_parts))
+
+        # Index the output VCF
+        self.index_vcf(output_vcf)
+
     def annotate_tandem_repeats(self, input_file: str, reference_fasta: str) -> str:
         """Runs VariantAnnotator on the input file to add tandem repeat annotations (maybe others)
 
