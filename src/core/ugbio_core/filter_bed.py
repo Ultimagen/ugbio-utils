@@ -244,3 +244,33 @@ def count_bases_in_bed_file(file_path: str) -> int:
                 n_bases_in_region += int(spl[2]) - int(spl[1])
 
     return n_bases_in_region
+
+
+def parse_bed_file(bed_file: str) -> list[tuple[str, int, int]]:
+    """
+    Parse BED file and return list of intervals.
+
+    Parameters
+    ----------
+    bed_file : str
+        Path to BED file
+
+    Returns
+    -------
+    list of tuples
+        List of (chrom, start, end) tuples
+    """
+    intervals = []
+    with open(bed_file, encoding="utf-8") as fh:
+        for line in fh:
+            if line.startswith(("#", "@")) or line.strip() == "":
+                continue
+            fields = line.strip().split("\t")
+            try:
+                chrom = fields[0]
+                start = int(fields[1])
+                end = int(fields[2])
+            except IndexError as e:
+                raise ValueError(f"Invalid BED line: {line.strip()}") from e
+            intervals.append((chrom, start, end))
+    return intervals
