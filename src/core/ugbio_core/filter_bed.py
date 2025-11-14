@@ -263,8 +263,6 @@ def count_bases_in_bed_file(file_path: str) -> int:
                 n_bases_in_region += int(spl[2]) - int(spl[1])
 
     return n_bases_in_region
-
-
 def bedtools_map(
     a_bed: str,
     b_bed: str,
