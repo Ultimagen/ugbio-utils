@@ -118,6 +118,7 @@ class SVComparison:
         bed: str | None = None,
         pctseq: float = 0.0,
         pctsize: float = 0.0,
+        sizemax: int = 50000,
         *,
         erase_outdir: bool = True,
         ignore_filter: bool = False,
@@ -138,6 +139,8 @@ class SVComparison:
             Percentage of sequence identity, by default 0.0
         pctsize : float, optional
             Percentage of size identity, by default 0.0
+        sizemax : int, optional
+            Maximum size of SVs to consider, by default 50000
         erase_outdir : bool, optional
             Erase output directory if it exists, by default True
         ignore_filter : bool, optional
@@ -169,6 +172,7 @@ class SVComparison:
             truvari_cmd.extend(["--includebed", bed])
         truvari_cmd.extend(["--pctseq", str(pctseq)])
         truvari_cmd.extend(["--pctsize", str(pctsize)])
+        truvari_cmd.extend(["--sizemax", str(sizemax)])
 
         self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
         self.__execute(" ".join(truvari_cmd))
@@ -222,6 +226,7 @@ class SVComparison:
         hcr_bed: str | None = None,
         pctseq: float = 0.0,
         pctsize: float = 0.0,
+        sizemax: int = 50000,
         custom_info_fields: tuple = (),
         *,
         erase_outdir: bool = True,
@@ -246,6 +251,8 @@ class SVComparison:
             Percentage of sequence identity, by default 0.0
         pctsize : float, optional
             Percentage of size identity, by default 0.0
+        sizemax : int, optional
+            Maximum size of SVs to consider, by default 50000
         erase_outdir : bool, optional
             Erase output directory if it exists, by default True
         ignore_filter : bool, optional
@@ -310,6 +317,7 @@ class SVComparison:
                 bed=hcr_bed,
                 pctseq=pctseq,
                 pctsize=pctsize,
+                sizemax=sizemax,
                 erase_outdir=erase_outdir,
                 ignore_filter=ignore_filter,
             )
@@ -342,6 +350,7 @@ def get_parser():
     parser.add_argument("--hcr_bed", help="High confidence region bed file")
     parser.add_argument("--pctseq", type=float, default=0.0, help="Percentage of sequence identity")
     parser.add_argument("--pctsize", type=float, default=0.0, help="Percentage of size identity")
+    parser.add_argument("--sizemax", type=int, default=50000, help="Maximum size of SVs to consider")
     parser.add_argument(
         "--custom_info_fields", type=str, action="append", default=[], help="Custom info fields to read from the VCFs"
     )
@@ -367,6 +376,7 @@ def run(argv):
         hcr_bed=args.hcr_bed,
         pctseq=args.pctseq,
         pctsize=args.pctsize,
+        sizemax=args.sizemax,
         outdir=args.outdir,
         output_file_name=args.output_filename,
         custom_info_fields=tuple(args.custom_info_fields),
