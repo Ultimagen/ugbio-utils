@@ -46,6 +46,7 @@ convert_h5_to_json = "ugbio_core.convert_h5_to_json:main"
 collect_existing_metrics = "ugbio_core.collect_existing_metrics:main"
 generate_report = "ugbio_core.reports.report_utils:main"
 merge_sorter_json_files = "ugbio_core.merge_sorter_json_files:main"
+check_cram_samples = "ugbio_core.cram_utils:main"
 
 [tool.setuptools.package-data]
 "*" = [
