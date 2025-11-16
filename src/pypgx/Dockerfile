@@ -2,7 +2,7 @@ FROM ubuntu:24.04
 
 # Install dependencies and create venv
 RUN apt-get update && \
-    apt-get install --no-install-recommends -y python3.12 python3.12-venv python3.12-dev python3-pip openjdk-17-jdk git build-essential && \
+    apt-get install --no-install-recommends -y python3.12 python3.12-venv python3.12-dev python3-pip openjdk-17-jdk git build-essential wget unzip && \
     ln -sf /usr/bin/python3.12 /usr/bin/python3
 
 # Create venv and install pip
@@ -21,8 +21,16 @@ RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
 # Clone the pypgx-bundle repository at the corresponding version
 RUN git clone --branch 0.25.0 --depth 1 https://github.com/sbslee/pypgx-bundle /opt/pypgx-bundle
 
+# Install GATK
+ENV GATK_VERSION=4.5.0.0
+RUN wget -q https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION}/gatk-${GATK_VERSION}.zip -O /tmp/gatk.zip && \
+    unzip -q /tmp/gatk.zip -d /opt && \
+    mv /opt/gatk-${GATK_VERSION} /opt/gatk && \
+    ln -s /opt/gatk/gatk /usr/local/bin/gatk && \
+    rm /tmp/gatk.zip
+
 # Remove unnecessary packages and recreate python3 symlink
-RUN apt-get purge -y git && \
+RUN apt-get purge -y git python3.12-dev python3-pip wget unzip && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/* && \
