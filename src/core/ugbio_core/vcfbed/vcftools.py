@@ -776,3 +776,26 @@ def subsample_to_alleles(field: tuple, number: str, alleles: tuple) -> tuple:
     else:
         raise RuntimeError(f"Number {number} is not supported")
     return result
+
+
+def get_vcf_fields_name(vcf_file: str) -> set[str]:
+    """
+    Extract field names from VCF file header.
+    Parameters
+    ----------
+    vcf_file : str
+        Path to the VCF file.
+    Returns
+    -------
+    set[str], set[str], set[str]
+       three sets:
+        - info_fields: Set of INFO field names from the VCF header
+        - format_fields: Set of FORMAT field names from the VCF header
+        - custom_info_fields: Union of INFO and FORMAT field names
+    """
+    vcf = pysam.VariantFile(vcf_file)
+    # Extract all INFO and FORMAT fields
+    info_fields = set(vcf.header.info.keys())
+    format_fields = set(vcf.header.formats.keys())
+    custom_info_fields = info_fields | format_fields
+    return info_fields, format_fields, custom_info_fields

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pysam
 import pytest
-from ugbio_featuremap.create_somatic_pileup_featuremap import integrate_tandem_repeat_features
+from ugbio_featuremap.somatic_featuremap_utils import integrate_tandem_repeat_features
 
 
 @pytest.fixture
@@ -39,11 +39,9 @@ def test_integrate_tandem_repeat_features(
     tmpdir,
     resources_dir,
 ):
-    input_merged_vcf = pjoin(resources_dir, "Pa_47_fresh_frozen_vs_buffycoat.tumor_normal.merged.PASS.chr19.new.vcf.gz")
-    ref_tr_file = pjoin(resources_dir, "tr_hg38.chr19.bed")
-    expected_out_vcf = pjoin(
-        resources_dir, "Pa_47_fresh_frozen_vs_buffycoat.tumor_normal.merged.PASS.chr19.new.tr_info.vcf.gz"
-    )
+    input_merged_vcf = pjoin(resources_dir, "TP_HG006_HG003.tumor_normal.merged.chr9.vcf.gz")
+    ref_tr_file = pjoin(resources_dir, "tr.chr9.bed")
+    expected_out_vcf = pjoin(resources_dir, "TP_HG006_HG003.tumor_normal.merged.chr9.tr_info.vcf.gz")
 
     # call the function with different arguments
     out_vcf_with_tr_data = integrate_tandem_repeat_features(input_merged_vcf, ref_tr_file, tmpdir)
@@ -58,5 +56,5 @@ def test_integrate_tandem_repeat_features(
 
     # check that header has the TR info fields
     # Example usage
-    expected_info_fields = ["TR_start", "TR_end", "TR_seq", "TR_distance", "TR_length", "TR_seq_unit_length"]
+    expected_info_fields = ["TR_START", "TR_END", "TR_SEQ", "TR_LENGTH", "TR_SEQ_UNIT_LENGTH", "TR_DISTANCE"]
     assert_vcf_info_fields(out_vcf_with_tr_data, expected_info_fields)
