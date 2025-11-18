@@ -23,35 +23,6 @@ from ugbio_featuremap.somatic_featuremap_utils import integrate_tandem_repeat_fe
 warnings.simplefilter(action="ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-############################################################
-############################################################
-# columns_for_SRV_training (not used in SRSNV model v1.23)
-# GT	1	String	Genotype
-# DP_FILT	1	Integer	Number of reads containing this location that pass the adjacent base filter
-# RAW_VAF	1	Float	Raw VAF := N_alt_reads/N_total_reads
-# VAF	1	Float	VAF := N_alt_reads/(N_ref_reads+N_alt_reads)
-# AD	A	Integer	Number of reads supporting the reference allele in locus
-# AD_A	1	Integer	Number of reads supporting the base A in locus
-# AD_C	1	Integer	Number of reads supporting the base C in locus
-# AD_G	1	Integer	Number of reads supporting the base G in locus
-# AD_T	1	Integer	Number of reads supporting the base T in locus
-# AD_DEL	1	Integer	Number of reads supporting a deletion in locus
-# AD_INS	1	Integer	Number of reads supporting an adjacent insertion in locus
-# DUP	.	Integer	Is the read a duplicate, interpreted from CRAM flag
-# MAPQ	.	Integer	Read mapping quality
-# MQUAL	.	Float	SingleReadSNV model inferred raw Phred scaled quality
-# SNVQ	.	Float	SingleReadSNV model inferred Phred scaled quality, recalibrated to the SNVQ value
-# FILT	.	Integer	Pre-filter status for SNVs reads,
-#           1 means an SNVs read passed all the filters defined in the SRSNV model,
-#           0 means it failed at least one filter
-# DP_MAPQ60	1	Integer	Number of reads with mapping of at least 60 containing this locus
-# ADJ_REF_DIFF	.	Integer	The 3 adjacent bases to the locus do not fully match the reference genome
-############################################################
-############################################################
-
-# TBD : to make it more robust , maybe we can do the following:
-# given a vcf,get all info/format fields
-# go over the records - if fields is integer/float mark the field name for aggregation
 
 info_fields_for_training = ["TR_DISTANCE", "TR_LENGTH", "TR_SEQ_UNIT_LENGTH"]
 
