@@ -1,7 +1,10 @@
+import sys
+
 import numpy as np
 import pandas as pd
 import xgboost
 from sklearn.preprocessing import LabelEncoder
+from ugbio_core.logger import logger
 
 
 def load_model(xgb_model_file: str) -> "xgboost.XGBClassifier":
@@ -39,6 +42,10 @@ def predict(xgb_model: "xgboost.XGBClassifier", df_calls: "pd.DataFrame") -> "np
         np.ndarray: Array of predicted probabilities for the positive class ("1").
     """
     model_features = xgb_model.get_booster().feature_names
+    missing_features = [f for f in model_features if f not in df_calls.columns]
+    if len(missing_features) > 0:
+        logger.error(f"The following model features are missing from input DataFrame: {missing_features}")
+        sys.exit(1)
     X = df_calls[model_features]  # noqa: N806
 
     set_categorical_columns(X)

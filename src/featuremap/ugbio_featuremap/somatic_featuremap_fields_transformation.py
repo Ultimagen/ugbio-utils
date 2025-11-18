@@ -2,7 +2,6 @@ import argparse
 import logging
 import math
 import os
-import statistics
 import subprocess
 import sys
 import tempfile
@@ -83,30 +82,15 @@ added_info_features = {
     "REF_ALLELE": ["reference allele", "String"],
     "ALT_ALLELE": ["alternative allele", "String"],
 }
-columns_for_aggregation = [FeatureMapFields.MQUAL.value, FeatureMapFields.SNVQ.value]
+columns_for_aggregation = [FeatureMapFields.MQUAL.value, FeatureMapFields.SNVQ.value, FeatureMapFields.MAPQ.value]
 
 
 def process_sample_columns(df_variants, prefix):  # noqa: C901
-    def aggregate_mean(df, colname):
-        values = []
-        for tup in df[colname]:
-            cleaned_list = list(tup)
-            values.append(statistics.mean(cleaned_list))
-        return values
-
-    def aggregate_min(df, colname):
-        values = []
-        for tup in df[colname]:
-            cleaned_list = list(tup)
-            values.append(min(cleaned_list))
-        return values
-
-    def aggregate_max(df, colname):
-        values = []
-        for tup in df[colname]:
-            cleaned_list = list(tup)
-            values.append(max(cleaned_list))
-        return values
+    def add_agg_features(df, feature_name, prefix):
+        df[f"{prefix}{feature_name}_min"] = df[f"{prefix}{feature_name}"].apply(lambda x: x.min())
+        df[f"{prefix}{feature_name}_max"] = df[f"{prefix}{feature_name}"].apply(lambda x: x.max())
+        df[f"{prefix}{feature_name}_mean"] = df[f"{prefix}{feature_name}"].apply(lambda x: x.mean())
+        return df
 
     def parse_is_duplicate(df, dup_colname, prefix):
         df[f"{prefix}count_duplicate"] = df[dup_colname].apply(
@@ -157,9 +141,7 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
     # Process aggregations for each column
     for colname in columns_for_aggregation:
         colname_lower = colname.lower()
-        df_variants[f"{prefix}{colname_lower}_mean"] = aggregate_mean(df_variants, f"{prefix}{colname_lower}")
-        df_variants[f"{prefix}{colname_lower}_max"] = aggregate_max(df_variants, f"{prefix}{colname_lower}")
-        df_variants[f"{prefix}{colname_lower}_min"] = aggregate_min(df_variants, f"{prefix}{colname_lower}")
+        df_variants = add_agg_features(df_variants, f"{colname_lower}", prefix)
 
     # Process duplicates
     df_variants = parse_is_duplicate(df_variants, f"{prefix}{FeatureMapFields.DUP.value.lower()}", prefix)

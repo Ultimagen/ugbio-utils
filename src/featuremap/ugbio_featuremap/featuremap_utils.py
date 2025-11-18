@@ -48,6 +48,7 @@ class FeatureMapFields(Enum):
     RAW_VAF = "RAW_VAF"  # raw variant allele frequency
     VAF = "VAF"  # variant allele frequency after filtering
     DP_MAPQ60 = "DP_MAPQ60"  # depth of reads with mapq>=60
+    MAPQ = "MAPQ"  # mapping quality of reads supporting the variant
 
 
 class FeatureMapFilters(Enum):
