@@ -78,19 +78,49 @@ aws ecr get-login-password --region us-east-1 | docker login --username AWS --pa
 # Choose specific module container (CNV/comparison/etc.)
 ```
 
+## Coding Conventions
+
+### Python Code Style
+
+- **String Quotes**: Always use double quotes for strings
+- **Docstrings**: Use triple double quotes for docstrings and multi-line strings
+- **Line Length**: 120 characters (enforced by Ruff)
+- **Python Version**: Target Python 3.11
+- **Linting**: Ruff configuration in [.ruff.toml](.ruff.toml) includes:
+  - pycodestyle (E, W)
+  - pyflakes (F)
+  - flake8-bugbear (B)
+  - pandas-vet (PD)
+  - NumPy-specific rules (NPY)
+  - isort (I) for import sorting
+  - pylint (PL) with max 10 arguments per function
+
+### Testing Conventions
+
+- **Framework**: Use `pytest` for all tests
+- **Test Location**: Place tests in `tests/` folder within each module
+- **Mocking**: Mock external bioinformatics tools (bcftools, samtools, truvari, etc.) using `@patch`
+
+```python
+from unittest.mock import patch
+
+@patch("subprocess.run")
+@patch("ugbio_core.vcfbed.vcftools.get_vcf_df")
+def test_my_function(mock_vcf_df, mock_run):
+    # Test implementation
+    pass
+```
+
+- **Entry Point**: Each module must have `run_tests = "pytest:main"` in `pyproject.toml`
+- **Test Execution**: Run tests in dev containers/dockers where bioinformatics tools are available
+
 ## Key Technical Patterns
 
 ### Pipeline Execution
+
 - **SimplePipeline**: Core framework in `ugbio_core` for executing shell commands
 - **Parallel Processing**: Region-based chunking for large genomics files (300Mbp default chunks)
 - **Truvari Integration**: SV comparison uses `--passonly` flags (conditional via `ignore_filter` parameter)
-
-### Testing Patterns
-- Use `pytest` framework with mocking for external tools
-```python
-@patch("subprocess.run")
-@patch("ugbio_core.vcfbed.vcftools.get_vcf_df")
-```
 
 ### Dependency Management
 - Modules declare workspace dependencies in `pyproject.toml`:
