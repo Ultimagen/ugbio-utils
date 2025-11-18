@@ -851,26 +851,26 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3
     random_seed: int, optional
         random seed for plotting, default 3456
     """
-    df_tf_in = df_tf_in.assign(tf=df_tf_in["tf"].clip(lower=zero_tf_fill))
-    any_nonzero_tf = (df_tf_in["tf"] > 0).any()
+    df_tf_in = df_tf_in.assign(ctdna_vaf=df_tf_in["ctdna_vaf"].clip(lower=zero_tf_fill))
+    any_nonzero_tf = (df_tf_in["ctdna_vaf"] > 0).any()
     try:
-        df_tf_matched = df_tf_in.loc[("matched", slice(None)), "tf"]
+        df_tf_matched = df_tf_in.loc[("matched", slice(None)), "ctdna_vaf"]
     except KeyError:
-        df_tf_matched = pd.DataFrame({"signature_type": [np.nan], "signature": [np.nan], "tf": [np.nan]}).set_index(
-            ["signature_type", "signature"]
-        )["tf"]
+        df_tf_matched = pd.DataFrame(
+            {"signature_type": [np.nan], "signature": [np.nan], "ctdna_vaf": [np.nan]}
+        ).set_index(["signature_type", "signature"])["ctdna_vaf"]
     try:
-        df_tf_control = df_tf_in.loc[("control", slice(None)), "tf"]
+        df_tf_control = df_tf_in.loc[("control", slice(None)), "ctdna_vaf"]
     except KeyError:
-        df_tf_control = pd.DataFrame({"signature_type": [np.nan], "signature": [np.nan], "tf": [np.nan]}).set_index(
-            ["signature_type", "signature"]
-        )["tf"]
+        df_tf_control = pd.DataFrame(
+            {"signature_type": [np.nan], "signature": [np.nan], "ctdna_vaf": [np.nan]}
+        ).set_index(["signature_type", "signature"])["ctdna_vaf"]
     try:
-        df_tf_db_control = df_tf_in.loc[("db_control", slice(None)), "tf"]
+        df_tf_db_control = df_tf_in.loc[("db_control", slice(None)), "ctdna_vaf"]
     except KeyError:
-        df_tf_db_control = pd.DataFrame({"signature_type": [np.nan], "signature": [np.nan], "tf": [np.nan]}).set_index(
-            ["signature_type", "signature"]
-        )["tf"]
+        df_tf_db_control = pd.DataFrame(
+            {"signature_type": [np.nan], "signature": [np.nan], "ctdna_vaf": [np.nan]}
+        ).set_index(["signature_type", "signature"])["ctdna_vaf"]
 
     plt.figure(figsize=(8, 12))
     if title:
@@ -881,7 +881,7 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3
         y = df_tf_matched.to_numpy()
         labels = (
             df_tf_matched.index.get_level_values("signature")
-            + df_tf_matched.apply(lambda x: f" (TF={x:.1e})").to_numpy()
+            + df_tf_matched.apply(lambda x: f" (ctDNA VAF={x:.1e})").to_numpy()
         )
         hscat1 = plt.scatter(x, y, s=100, c="#D03020")
         for i, label in enumerate(labels):
@@ -953,7 +953,7 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3
         print("WARNING: Could not set plot to log scale")
     plt.xticks([])
     plt.xlim(-0.2, 0.5)
-    plt.ylabel("Measured tumor fraction")
+    plt.ylabel("Measured ctDNA VAF")
     plt.legend(
         [hscat1, hscat2, hbp1["boxes"][0], hscat3, hbp2["boxes"][0]],
         [
@@ -1033,7 +1033,7 @@ def get_tf_from_filtered_data(
     df_tf = df_supporting_reads.join(df_coverage).fillna(0)
     df_tf["corrected_coverage"] = df_tf["coverage"] * denom_ratio
     df_tf["corrected_coverage"] = np.ceil(df_tf["corrected_coverage"])
-    df_tf = df_tf.assign(tf=df_tf["supporting_reads"] / df_tf["corrected_coverage"]).sort_index(ascending=False)
+    df_tf = df_tf.assign(ctdna_vaf=df_tf["supporting_reads"] / df_tf["corrected_coverage"]).sort_index(ascending=False)
 
     if plot_results:
         plot_tf(df_tf, title=title)

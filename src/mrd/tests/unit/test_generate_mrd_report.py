@@ -29,11 +29,11 @@ def test_generate_mrd_report(output_path, resources_dir):
         matched_signatures_vcf_files=[str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf.gz")],
         control_signatures_vcf_files=[str(resources_dir / "Pa_67_FFPE.ann.chr20.filtered.vcf.gz")],
         db_control_signatures_vcf_files=[
-            str(resources_dir / "syn0_Pa_46_FreshFrozen.ann.chr20.filtered_pancan.filtered.filtered.vcf.gz"),
-            str(resources_dir / "syn1_Pa_46_FreshFrozen.ann.chr20.filtered_pancan.filtered.filtered.vcf.gz"),
-            str(resources_dir / "syn2_Pa_46_FreshFrozen.ann.chr20.filtered_pancan.filtered.filtered.vcf.gz"),
-            str(resources_dir / "syn3_Pa_46_FreshFrozen.ann.chr20.filtered_pancan.filtered.filtered.vcf.gz"),
-            str(resources_dir / "syn4_Pa_46_FreshFrozen.ann.chr20.filtered_pancan.filtered.filtered.vcf.gz"),
+            str(resources_dir / "syn0_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn1_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn2_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn3_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn4_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
         ],
         coverage_bed=str(resources_dir / "Pa_46_333_LuNgs_08.regions.bed.gz"),
         # tumor_sample=args_in.tumor_sample,
@@ -41,7 +41,7 @@ def test_generate_mrd_report(output_path, resources_dir):
         output_basename="test_report",
         featuremap_file=str(resources_dir / "Pa_46_333_LuNgs_08.featuremap_df.parquet"),
         signature_filter_query="(norm_coverage <= 2.5) and (norm_coverage >= 0.6)",
-        read_filter_query="filt>0 and snvq>40",  # snvq>40 for this test set
+        read_filter_query="filt>0 and snvq>60 and mapq>=60",
         srsnv_metadata_json=str(resources_dir / "Pa_46_333_LuNgs_08.srsnv_metadata.json"),
     )
 
@@ -54,8 +54,8 @@ def test_generate_mrd_report(output_path, resources_dir):
     assert output_report_html.stat().st_size > 0
 
     # test h5 output
-    h5_output = str(output_path / "test_report.tumor_fraction.h5")
-    h5_expected = str(resources_dir / "test_report.tumor_fraction.expected_output.h5")
+    h5_output = str(output_path / "test_report.ctdna_vaf.h5")
+    h5_expected = str(resources_dir / "test_report.ctdna_vaf.expected_output.h5")
     with pd.HDFStore(h5_expected) as store:
         h5_keys = store.keys()
     with pd.HDFStore(h5_output) as store:
