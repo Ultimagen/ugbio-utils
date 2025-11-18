@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pysam
 import pytest
-from ugbio_featuremap import integrate_mpileup_to_sfmp
+from ugbio_featuremap import integrate_mpileup_to_sfm
 
 
 @pytest.fixture
@@ -74,7 +74,7 @@ def validate_vcf_format_fields(vcf_path, expected_fields):
 
 
 def test_mpileup_info_integration_to_merged_vcf(tmp_path, resources_dir):
-    sfmp_vcf = pjoin(resources_dir, "Pa_46.tumor_normal.merged.tumor_PASS.tr_info.chr1_3425000-4016800.vcf.gz")
+    sfm_vcf = pjoin(resources_dir, "Pa_46.tumor_normal.merged.tumor_PASS.tr_info.chr1_3425000-4016800.vcf.gz")
     tumor_mpileup_vcf = pjoin(resources_dir, "Pa_46_FreshFrozen.cov60.cram_minipileup.chr1_3425000-4016800.pileup")
     normal_mpileup_vcf = pjoin(resources_dir, "Pa_46_Buffycoat.cov30.cram_minipileup.chr1_3425000-4016800.pileup")
     distance_start_to_center = "2"
@@ -84,14 +84,14 @@ def test_mpileup_info_integration_to_merged_vcf(tmp_path, resources_dir):
         resources_dir, "expected_Pa_46.tumor_normal.merged.tumor_PASS.tr_info.chr1_3425000-4016800.mpileup.vcf.gz"
     )
 
-    out_sfmp_vcf = pjoin(out_dir, os.path.basename(sfmp_vcf).replace(".vcf.gz", ".mpileup.vcf.gz"))
+    out_sfm_vcf = pjoin(out_dir, os.path.basename(sfm_vcf).replace(".vcf.gz", ".mpileup.vcf.gz"))
 
     # Run the script's main function
-    integrate_mpileup_to_sfmp.run(
+    integrate_mpileup_to_sfm.run(
         [
-            "integrate_mpileup_to_sfmp",
-            "--sfmp_vcf",
-            sfmp_vcf,
+            "integrate_mpileup_to_sfm",
+            "--sfm_vcf",
+            sfm_vcf,
             "--tumor_mpileup",
             tumor_mpileup_vcf,
             "--normal_mpileup",
@@ -104,13 +104,13 @@ def test_mpileup_info_integration_to_merged_vcf(tmp_path, resources_dir):
     )
 
     # check that the output file exists and has the expected content
-    assert os.path.isfile(out_sfmp_vcf)
+    assert os.path.isfile(out_sfm_vcf)
 
     # count the number of variants (excluding the header)
-    out_num_variants, out_pass_count = count_num_variants(out_sfmp_vcf)
+    out_num_variants, out_pass_count = count_num_variants(out_sfm_vcf)
     expected_num_variants, expected_pass_count = count_num_variants(expected_out_vcf)
     assert expected_num_variants == out_num_variants
     assert expected_pass_count == out_pass_count
 
     mpileup_format_fields = ["ref_counts_pm_2", "nonref_counts_pm_2"]
-    assert validate_vcf_format_fields(out_sfmp_vcf, mpileup_format_fields)
+    assert validate_vcf_format_fields(out_sfm_vcf, mpileup_format_fields)
