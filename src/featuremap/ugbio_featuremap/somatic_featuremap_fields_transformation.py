@@ -16,7 +16,7 @@ from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
 from ugbio_core.vcfbed import vcftools
 
-from ugbio_featuremap import somatic_pileup_featuremap_inference_utils
+from ugbio_featuremap import somatic_featuremap_inference_utils
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.somatic_featuremap_utils import integrate_tandem_repeat_features
 
@@ -58,9 +58,15 @@ columns_for_aggregation = [FeatureMapFields.MQUAL.value, FeatureMapFields.SNVQ.v
 
 def process_sample_columns(df_variants, prefix):  # noqa: C901
     def add_agg_features(df, feature_name, prefix):
-        df[f"{prefix}{feature_name}_min"] = df[f"{prefix}{feature_name}"].apply(lambda x: x.min())
-        df[f"{prefix}{feature_name}_max"] = df[f"{prefix}{feature_name}"].apply(lambda x: x.max())
-        df[f"{prefix}{feature_name}_mean"] = df[f"{prefix}{feature_name}"].apply(lambda x: x.mean())
+        df[f"{prefix}{feature_name}_min"] = df[f"{prefix}{feature_name}"].apply(
+            lambda x: min(x) if x is not None and len(x) > 0 and None not in x else float("nan")
+        )
+        df[f"{prefix}{feature_name}_max"] = df[f"{prefix}{feature_name}"].apply(
+            lambda x: max(x) if x is not None and len(x) > 0 and None not in x else float("nan")
+        )
+        df[f"{prefix}{feature_name}_mean"] = df[f"{prefix}{feature_name}"].apply(
+            lambda x: sum(x) / len(x) if x is not None and len(x) > 0 and None not in x else float("nan")
+        )
         return df
 
     def parse_is_duplicate(df, dup_colname, prefix):
@@ -323,10 +329,10 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
             df_variants = df_sfm_fields_transformation(df_variants)
 
             if xgb_model_file is not None:
-                xgb_clf_es = somatic_pileup_featuremap_inference_utils.load_model(xgb_model_file)
+                xgb_clf_es = somatic_featuremap_inference_utils.load_model(xgb_model_file)
                 model_features = xgb_clf_es.get_booster().feature_names
                 logger.info(f"loaded model. model features: {model_features}")
-                df_variants["xgb_proba"] = somatic_pileup_featuremap_inference_utils.predict(xgb_clf_es, df_variants)
+                df_variants["xgb_proba"] = somatic_featuremap_inference_utils.predict(xgb_clf_es, df_variants)
             # Write df_variants to parquet file
             parquet_output = output_vcf.replace(".vcf.gz", "_featuremap.parquet")
             df_variants.to_parquet(parquet_output, index=False)
