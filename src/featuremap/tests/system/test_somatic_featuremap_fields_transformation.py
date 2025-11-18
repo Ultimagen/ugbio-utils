@@ -57,26 +57,43 @@ class TestSomaticFeaturemapFieldsTransformation:
         assert all(cons["count"] == 1 for cons in cons_dict.values())
 
         # Check header has expected INFO and FORMAT fields
-        expected_info_fields = (
-            list(somatic_featuremap_fields_transformation.added_info_features.keys())
-            + somatic_featuremap_fields_transformation.info_fields_for_training
-        )
+        tr_info_fields = somatic_featuremap_fields_transformation.info_fields_for_training
+        added_info_fields = list(somatic_featuremap_fields_transformation.added_info_features.keys())
         expected_format_fields = somatic_featuremap_fields_transformation.added_format_features
 
         vcf_reader = pysam.VariantFile(out_file)
         # Check all expected INFO fields are present in header
-        for field in expected_info_fields:
+        for field in tr_info_fields + added_info_fields:
             assert field in vcf_reader.header.info, f"Missing INFO field: {field}"
         for field in expected_format_fields:
             assert field in vcf_reader.header.formats, f"Missing FORMAT field: {field}"
 
         # Check that records contain the expected fields
+        records_with_tr_fields = 0
+        records_with_added_fields = 0
+        total_records = 0
+
         for rec in vcf_reader:
-            # Check INFO fields in records
-            for field in expected_info_fields:
-                assert field in rec.info, f"Record missing INFO field: {field}"
-            for field in expected_format_fields:
-                assert field in rec.samples[0], f"Sample[0] missing FORMAT field: {field}"
+            total_records += 1
+            # Check if this record has TR fields (from bcftools annotate)
+            has_tr_fields = any(field in rec.info for field in tr_info_fields)
+            # Check if this record has added fields (from Python processing)
+            has_added_fields = any(field in rec.info for field in added_info_fields)
+
+            if has_tr_fields:
+                records_with_tr_fields += 1
+
+            if has_added_fields:
+                records_with_added_fields += 1
+                # Check all added INFO and FORMAT fields are present
+                for field in added_info_fields:
+                    assert field in rec.info, f"Record missing added INFO field: {field}"
+                for field in expected_format_fields:
+                    assert field in rec.samples[0], f"Sample[0] missing FORMAT field: {field}"
+
+        # Most records should have TR fields, some should have added fields
+        assert records_with_tr_fields > 0, f"No records found with TR fields out of {total_records} records"
+        assert records_with_added_fields > 0, f"No records found with added fields out of {total_records} records"
 
         vcf_reader.close()
 

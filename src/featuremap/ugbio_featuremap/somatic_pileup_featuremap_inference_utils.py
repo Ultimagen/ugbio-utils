@@ -20,7 +20,7 @@ def load_model(xgb_model_file: str) -> "xgboost.XGBClassifier":
     return xgb_clf_es
 
 
-def set_categorial_columns(df):
+def set_categorical_columns(df):
     categorical_columns = df.select_dtypes(include=["object", "category"]).columns
     le = LabelEncoder()
     for col in categorical_columns:
@@ -41,7 +41,7 @@ def predict(xgb_model: "xgboost.XGBClassifier", df_calls: "pd.DataFrame") -> "np
     model_features = xgb_model.get_booster().feature_names
     X = df_calls[model_features]  # noqa: N806
 
-    set_categorial_columns(X)
+    set_categorical_columns(X)
     for col in X.select_dtypes(include="object").columns:
         X[col] = X[col].astype("category")
 
