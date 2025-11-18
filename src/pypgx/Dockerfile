@@ -1,25 +1,25 @@
-FROM ubuntu:24.04
+FROM python:3.12-bullseye
+
+ARG PYPGX_BRANCH=0.26.0-dev
+ARG PYPGX_BUNDLE_BRANCH=0.25.0
 
 # Install dependencies and create venv
 RUN apt-get update && \
-    apt-get install --no-install-recommends -y python3.12 python3.12-venv python3.12-dev python3-pip openjdk-17-jdk git build-essential wget unzip && \
-    ln -sf /usr/bin/python3.12 /usr/bin/python3
+    apt-get install --no-install-recommends -y openjdk-17-jre git build-essential wget unzip
 
 # Create venv and install pip
-RUN python3 -m venv --without-pip /opt/venv && \
-    python3 -m pip install --target=/opt/venv/lib/python3.12/site-packages pip setuptools wheel && \
-    echo '#!/bin/bash\n/opt/venv/bin/python -m pip "$@"' > /opt/venv/bin/pip && \
-    chmod +x /opt/venv/bin/pip
+RUN python3 -m venv /opt/venv && \
+    /opt/venv/bin/pip install --upgrade pip setuptools wheel
 
 # Install pypgx
 RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
     cd /opt/pypgx && \
-    git switch 0.26.0-dev && \
+    git switch ${PYPGX_BRANCH} && \
     /opt/venv/bin/pip install . && \
     rm -rf /opt/pypgx
 
 # Clone the pypgx-bundle repository at the corresponding version
-RUN git clone --branch 0.25.0 --depth 1 https://github.com/sbslee/pypgx-bundle /opt/pypgx-bundle
+RUN git clone --branch ${PYPGX_BUNDLE_BRANCH} --depth 1 https://github.com/sbslee/pypgx-bundle /opt/pypgx-bundle
 
 # Install GATK
 ENV GATK_VERSION=4.5.0.0
@@ -30,11 +30,10 @@ RUN wget -q https://github.com/broadinstitute/gatk/releases/download/${GATK_VERS
     rm /tmp/gatk.zip
 
 # Remove unnecessary packages and recreate python3 symlink
-RUN apt-get purge -y git python3.12-dev python3-pip wget unzip && \
+RUN apt-get purge -y git wget unzip && \
     apt-get autoremove -y && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    ln -sf /usr/bin/python3.12 /usr/bin/python3
+    rm -rf /var/lib/apt/lists/*
 
 # Set environment variables for venv and pypgx bundle
 ENV PATH="/opt/venv/bin:$PATH"
