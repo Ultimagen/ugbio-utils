@@ -1,21 +1,17 @@
-FROM python:3.12-bullseye
+FROM python:3.12-slim
 
 ARG PYPGX_BRANCH=0.26.0-dev
 ARG PYPGX_BUNDLE_BRANCH=0.25.0
 
 # Install dependencies and create venv
 RUN apt-get update && \
-    apt-get install --no-install-recommends -y openjdk-17-jre git build-essential wget unzip
-
-# Create venv and install pip
-RUN python3 -m venv /opt/venv && \
-    /opt/venv/bin/pip install --upgrade pip setuptools wheel
+    apt-get install --no-install-recommends -y default-jre-headless git build-essential wget unzip
 
 # Install pypgx
 RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
     cd /opt/pypgx && \
     git switch ${PYPGX_BRANCH} && \
-    /opt/venv/bin/pip install . && \
+    pip install . && \
     rm -rf /opt/pypgx
 
 # Clone the pypgx-bundle repository at the corresponding version
@@ -35,8 +31,7 @@ RUN apt-get purge -y git wget unzip && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Set environment variables for venv and pypgx bundle
-ENV PATH="/opt/venv/bin:$PATH"
+# Set environment variables for pypgx bundle
 ENV PYPGX_BUNDLE=/opt/pypgx-bundle
 
 # Create a script to run tests from docker CI
