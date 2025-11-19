@@ -51,8 +51,6 @@ def predict(xgb_model: "xgboost.XGBClassifier", df_calls: "pd.DataFrame") -> "np
     X = df_calls[model_features]  # noqa: N806
 
     set_categorical_columns(X)
-    # for col in X.select_dtypes(include="object").columns:
-    #     X[col] = X[col].astype("category")
 
     probabilities = xgb_model.predict_proba(X)
     df_probabilities = pd.DataFrame(probabilities, columns=["0", "1"])
