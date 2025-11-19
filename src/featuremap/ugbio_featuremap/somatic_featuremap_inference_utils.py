@@ -28,6 +28,8 @@ def set_categorical_columns(df):
     le = LabelEncoder()
     for col in categorical_columns:
         df.loc[:, col] = le.fit_transform(df[col].astype(str))
+    for col in df.select_dtypes(include="object").columns:
+        df[col] = df[col].astype("category")
 
 
 def predict(xgb_model: "xgboost.XGBClassifier", df_calls: "pd.DataFrame") -> "np.ndarray":
@@ -49,8 +51,8 @@ def predict(xgb_model: "xgboost.XGBClassifier", df_calls: "pd.DataFrame") -> "np
     X = df_calls[model_features]  # noqa: N806
 
     set_categorical_columns(X)
-    for col in X.select_dtypes(include="object").columns:
-        X[col] = X[col].astype("category")
+    # for col in X.select_dtypes(include="object").columns:
+    #     X[col] = X[col].astype("category")
 
     probabilities = xgb_model.predict_proba(X)
     df_probabilities = pd.DataFrame(probabilities, columns=["0", "1"])
