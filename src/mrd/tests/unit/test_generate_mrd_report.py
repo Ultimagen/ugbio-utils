@@ -39,7 +39,7 @@ def test_generate_mrd_report(output_path, resources_dir):
         # tumor_sample=args_in.tumor_sample,
         output_dir=output_path,
         output_basename="test_report",
-        featuremap_file=str(resources_dir / "Pa_46_333_LuNgs_08.featuremap_df.parquet"),
+        featuremap_file=str(resources_dir / "Pa_46_333_LuNgs_08.featuremap_df.subsampled.parquet"),
         signature_filter_query="(norm_coverage <= 2.5) and (norm_coverage >= 0.6)",
         read_filter_query="filt>0 and snvq>60 and mapq>=60",
         srsnv_metadata_json=str(resources_dir / "Pa_46_333_LuNgs_08.srsnv_metadata.json"),
