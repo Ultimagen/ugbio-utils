@@ -179,6 +179,7 @@ def get_dup_cnmops_cnv_calls(
     if os.path.getsize(out_cnmops_cnvs_dup_calls) > 0:
         run_cmd(
             f"cat {out_cnmops_cnvs_dup_calls} | \
+                bedtools sort -i - | \
                 bedtools merge -d {distance_threshold} -c 4 -o distinct -i - | \
                 awk '$3-$2>=10000' | \
                 sed 's/$/\\tDUP\\tcn.mops/' | \
