@@ -20,29 +20,6 @@ def sample_name():
 class TestCombineCnmopsCnvpytorCNVCalls:
     """Tests for combine_cnmops_cnvpytor_cnv_calls module."""
 
-    # Tests for calculate_gaps_count_per_cnv function
-    def test_calculate_gaps_with_n_bases(self):
-        """Test calculation of N bases in CNV regions."""
-
-    def test_calculate_gaps_no_n_bases(self):
-        """Test calculation when there are no N bases."""
-
-    def test_calculate_gaps_invalid_region(self):
-        """Test handling of invalid genomic regions."""
-
-    def test_calculate_gaps_missing_fasta(self):
-        """Test error handling when FASTA file doesn't exist."""
-
-    # Tests for parse_cnmops_cnv_calls function
-    def test_parse_cnmops_basic(self):
-        """Test basic parsing of cn.mops CNV calls."""
-
-    def test_parse_cnmops_with_pn_filter(self):
-        """Test parsing with pN threshold filtering."""
-
-    def test_parse_cnmops_tag_removal(self):
-        """Test removal of UG-CNV-LCR and LEN tags."""
-
     # Tests for get_dup_cnmops_cnv_calls function
     def test_get_dup_cnmops_unsorted_dataframe(self, tmpdir, sample_name):
         """Test that unsorted duplications dataframe is properly sorted by chrom and start position."""
@@ -208,68 +185,3 @@ class TestCombineCnmopsCnvpytorCNVCalls:
 
         # Should return empty string when no duplications found
         assert result_file == ""
-
-    # Tests for parse_cnvpytor_cnv_calls function
-    def test_parse_cnvpytor_basic(self):
-        """Test basic parsing of cnvpytor CNV calls."""
-
-    def test_parse_cnvpytor_region_split(self):
-        """Test parsing of CNV region (chr:start-end format)."""
-
-    def test_parse_cnvpytor_pn_filter(self):
-        """Test filtering by pN threshold."""
-
-    # Tests for get_dup_cnvpytor_cnv_calls function
-    def test_get_dup_cnvpytor_basic(self):
-        """Test extraction of duplication calls from cnvpytor."""
-
-    def test_get_dup_cnvpytor_no_duplications(self):
-        """Test handling when no duplications are found."""
-
-    # Tests for process_del_jalign_results function
-    def test_process_del_jalign_basic(self):
-        """Test basic processing of jalign deletion results."""
-
-    def test_process_del_jalign_source_identification(self):
-        """Test correct identification of source (cn.mops vs cnvpytor)."""
-
-    def test_process_del_jalign_copy_number_parsing(self):
-        """Test parsing of copy number from CN field."""
-
-    def test_process_del_jalign_pn_filtering(self):
-        """Test filtering by pN threshold."""
-
-    def test_process_del_jalign_merging(self):
-        """Test merging of deletion calls."""
-
-    # Integration tests for the complete run function
-    def test_run_complete_pipeline(self, tmpdir):
-        """Test complete pipeline execution with all components."""
-
-    def test_run_with_lcr_annotation(self, tmpdir):
-        """Test pipeline with UG-CNV-LCR annotation."""
-
-    def test_run_without_lcr_annotation(self, tmpdir):
-        """Test pipeline without UG-CNV-LCR annotation."""
-
-    def test_run_no_duplications_found(self, tmpdir):
-        """Test pipeline when no duplications are found."""
-
-    def test_run_vcf_output_generation(self, tmpdir):
-        """Test that VCF output is correctly generated."""
-
-    def test_run_combined_bed_format(self, tmpdir):
-        """Test format of combined BED output file."""
-
-    # Tests for command-line argument parsing
-    def test_parse_args_all_required(self):
-        """Test parsing with all required arguments."""
-
-    def test_parse_args_with_optional(self):
-        """Test parsing with optional arguments."""
-
-    def test_parse_args_missing_required(self):
-        """Test error handling for missing required arguments."""
-
-    def test_parse_args_default_values(self):
-        """Test that default values are correctly set."""
