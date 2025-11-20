@@ -11,11 +11,15 @@ def load_model(xgb_model_file: str) -> "xgboost.XGBClassifier":
     """
     Load a pre-trained XGBoost model from a file.
 
-    Args:
-        xgb_model_file (str): Path to the XGBoost model file.
+    Parameters
+    ----------
+    xgb_model_file : str
+        Path to the XGBoost model file.
 
-    Returns:
-        xgboost.XGBClassifier: The loaded XGBoost classifier model.
+    Returns
+    -------
+    xgboost.XGBClassifier
+        The loaded XGBoost classifier model.
     """
     # load xgb model
     xgb_clf_es = xgboost.XGBClassifier()
@@ -24,6 +28,23 @@ def load_model(xgb_model_file: str) -> "xgboost.XGBClassifier":
 
 
 def set_categorical_columns(df):
+    """
+    Convert categorical columns in DataFrame to encoded categories.
+
+    This function identifies categorical columns (object and category dtypes),
+    applies label encoding to convert them to numerical values, and ensures
+    all object columns are converted to category dtype.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame to process. Modified in place.
+
+    Notes
+    -----
+    This function modifies the DataFrame in place. Categorical columns are
+    label-encoded using sklearn.preprocessing.LabelEncoder.
+    """
     categorical_columns = df.select_dtypes(include=["object", "category"]).columns
     le = LabelEncoder()
     for col in categorical_columns:
@@ -36,12 +57,22 @@ def predict(xgb_model: "xgboost.XGBClassifier", df_calls: "pd.DataFrame") -> "np
     """
     Generate prediction probabilities for the positive class using a trained XGBoost model.
 
-    Args:
-        xgb_model (xgboost.XGBClassifier): Trained XGBoost classifier with accessible feature names.
-        df_calls (pd.DataFrame): DataFrame containing feature columns required by the model.
+    Parameters
+    ----------
+    xgb_model : xgboost.XGBClassifier
+        Trained XGBoost classifier with accessible feature names.
+    df_calls : pd.DataFrame
+        DataFrame containing feature columns required by the model.
 
-    Returns:
-        np.ndarray: Array of predicted probabilities for the positive class ("1").
+    Returns
+    -------
+    np.ndarray
+        Array of predicted probabilities for the positive class ("1").
+
+    Raises
+    ------
+    SystemExit
+        If required model features are missing from the input DataFrame.
     """
     model_features = xgb_model.get_booster().feature_names
     missing_features = [f for f in model_features if f not in df_calls.columns]

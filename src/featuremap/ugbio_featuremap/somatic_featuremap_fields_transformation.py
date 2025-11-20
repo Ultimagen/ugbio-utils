@@ -57,6 +57,26 @@ columns_for_aggregation = [FeatureMapFields.MQUAL.value, FeatureMapFields.SNVQ.v
 
 
 def process_sample_columns(df_variants, prefix):  # noqa: C901
+    """
+    Process columns for a sample with given prefix (t_ or n_).
+
+    This function processes various columns for tumor or normal samples,
+    including alternative reads, aggregation features, duplicates, and
+    padding reference counts.
+
+    Parameters
+    ----------
+    df_variants : pd.DataFrame
+        DataFrame containing variant information.
+    prefix : str
+        Sample prefix ('t_' for tumor, 'n_' for normal).
+
+    Returns
+    -------
+    pd.DataFrame
+        Modified DataFrame with processed sample columns.
+    """
+
     def add_agg_features(df, feature_name, prefix):
         df[f"{prefix}{feature_name}_min"] = df[f"{prefix}{feature_name}"].apply(
             lambda x: min(x) if x is not None and len(x) > 0 and None not in x else float("nan")
@@ -132,6 +152,23 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
 
 
 def df_sfm_fields_transformation(df_variants):  # noqa: C901
+    """
+    Transform somatic featuremap fields for both tumor and normal samples.
+
+    Processes both tumor ('t_') and normal ('n_') sample columns and adds
+    reference and alternative allele information.
+
+    Parameters
+    ----------
+    df_variants : pd.DataFrame
+        DataFrame containing variant information for tumor and normal samples.
+
+    Returns
+    -------
+    pd.DataFrame
+        Transformed DataFrame with processed fields for both samples and
+        added allele information.
+    """
     # Process both tumor and normal samples
     for prefix in ["t_", "n_"]:
         df_variants = process_sample_columns(df_variants, prefix)
@@ -142,6 +179,18 @@ def df_sfm_fields_transformation(df_variants):  # noqa: C901
 
 
 def add_fields_to_header(hdr, added_format_features, added_info_features):
+    """
+    Add custom FORMAT and INFO fields to VCF header.
+
+    Parameters
+    ----------
+    hdr : pysam.VariantHeader
+        VCF header object to modify.
+    added_format_features : dict
+        Dictionary of FORMAT fields to add with their descriptions and types.
+    added_info_features : dict
+        Dictionary of INFO fields to add with their descriptions and types.
+    """
     for field in added_format_features:
         field_type = added_format_features[field][1]
         field_description = added_format_features[field][0]
@@ -153,7 +202,19 @@ def add_fields_to_header(hdr, added_format_features, added_info_features):
 
 
 def get_chrom_order_from_vcf_header(vcf_header):
-    """Extract chromosome ordering from VCF header contigs."""
+    """
+    Extract chromosome ordering from VCF header contigs.
+
+    Parameters
+    ----------
+    vcf_header : pysam.VariantHeader
+        VCF header object containing contig information.
+
+    Returns
+    -------
+    dict
+        Dictionary mapping chromosome names to their order indices.
+    """
     chrom_order = {}
     for i, contig in enumerate(vcf_header.contigs):
         chrom_order[contig] = i
@@ -161,7 +222,26 @@ def get_chrom_order_from_vcf_header(vcf_header):
 
 
 def chrom_sort_key(chrom, chrom_order):
-    """Generate sort key based on VCF header contig order."""
+    """
+    Generate sort key based on VCF header contig order.
+
+    Parameters
+    ----------
+    chrom : str
+        Chromosome name to get sort key for.
+    chrom_order : dict
+        Dictionary mapping chromosome names to their order indices.
+
+    Returns
+    -------
+    int
+        Sort key for the chromosome.
+
+    Raises
+    ------
+    ValueError
+        If chromosome is not found in VCF header contigs.
+    """
     if chrom in chrom_order:
         return chrom_order[chrom]  # Use VCF header order
     else:
@@ -169,7 +249,22 @@ def chrom_sort_key(chrom, chrom_order):
 
 
 def process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_params):
-    """Process VCF records serially by iterating through both VCF and DataFrame simultaneously."""
+    """
+    Process VCF records serially by iterating through both VCF and DataFrame simultaneously.
+
+    Parameters
+    ----------
+    vcfin : pysam.VariantFile
+        Input VCF file object for reading.
+    df_variants : pd.DataFrame
+        DataFrame containing variant information with aggregated features.
+    hdr : pysam.VariantHeader
+        VCF header object for the output file.
+    vcfout : pysam.VariantFile
+        Output VCF file object for writing.
+    write_agg_params : bool
+        Whether to write aggregated parameters to the output VCF.
+    """
 
     # Get chromosome ordering from VCF header
     chrom_order = get_chrom_order_from_vcf_header(vcfin.header)
@@ -245,16 +340,25 @@ def read_merged_tumor_normal_vcf(
     """
     Reads a merged tumor-normal VCF file and returns a concatenated DataFrame with prefixed columns
     for tumor and normal samples.
-    Args:
-        vcf_file (str): Path to the VCF file containing both tumor and normal samples.
-        custom_info_fields (list[str]): List of custom INFO fields to extract from the VCF.
-        fillna_dict (dict[str, object], optional): Dictionary specifying values to fill missing data
-            for each field. Defaults to None.
-        chrom (str, optional): Chromosome to filter the VCF records. If None, all chromosomes are
-            included. Defaults to None.
-    Returns:
-        pd.DataFrame: A DataFrame with tumor columns prefixed by 't_' and normal columns
-            prefixed by 'n_'. Missing values are filled according to `fillna_dict` if provided.
+
+    Parameters
+    ----------
+    vcf_file : str
+        Path to the VCF file containing both tumor and normal samples.
+    custom_info_fields : list of str
+        List of custom INFO fields to extract from the VCF.
+    fillna_dict : dict of str to object, optional
+        Dictionary specifying values to fill missing data for each field.
+        Defaults to None.
+    chrom : str, optional
+        Chromosome to filter the VCF records. If None, all chromosomes are
+        included. Defaults to None.
+
+    Returns
+    -------
+    pd.DataFrame
+        A DataFrame with tumor columns prefixed by 't_' and normal columns
+        prefixed by 'n_'. Missing values are filled according to `fillna_dict` if provided.
     """
     # Read to df
     if chrom is not None:
@@ -290,13 +394,35 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
     somatic_featuremap_vcf_file: str,
     output_vcf: str,
     filter_tags=None,
-    genomic_interval: str = None,
+    genomic_region: str = None,
     xgb_model_file: str = None,
     write_agg_params: bool = True,  # noqa: FBT001, FBT002
     verbose: bool = True,  # noqa: FBT001, FBT002
 ) -> str:
     """
-    Write the vcf file with the aggregated fields and the xgb probability
+    Write the vcf file with the aggregated fields and the xgb probability.
+
+    Parameters
+    ----------
+    somatic_featuremap_vcf_file : str
+        Path to input somatic featuremap VCF file.
+    output_vcf : str
+        Path to output VCF file with aggregated fields.
+    filter_tags : str, optional
+        Filter tags to apply on the VCF file. Defaults to None.
+    genomic_region : str, optional
+        Specific genomic interval to process. Defaults to None.
+    xgb_model_file : str, optional
+        Path to XGBoost model file for inference. Defaults to None.
+    write_agg_params : bool, optional
+        Whether to write aggregated parameters to output. Defaults to True.
+    verbose : bool, optional
+        Whether to enable verbose logging. Defaults to True.
+
+    Returns
+    -------
+    str
+        Path to the output VCF file with aggregated fields and XGBoost probabilities.
     """
     if verbose:
         logger.setLevel(logging.DEBUG)
@@ -306,7 +432,7 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
     vcf_utils = VcfUtils()
     # filter vcf file for the given filter tags and genomic interval
     filter_string = f"-f {filter_tags}" if filter_tags else ""
-    interval_string = f"-r {genomic_interval}" if genomic_interval else ""
+    interval_string = f"-r {genomic_region}" if genomic_region else ""
     extra_args = f"{filter_string} {interval_string}"
     temp_dir = tempfile.mkdtemp(dir=os.path.dirname(output_vcf))
     try:
@@ -430,29 +556,42 @@ def collapse_bed_by_chunks(bed_file: str, num_chunks: int) -> list[str]:
         collapsed.append((chrom, start, end))
 
     # Write output
-    genomic_intervals = []
+    genomic_regions = []
     for chrom, start, end in collapsed:
-        genomic_intervals.append(f"{chrom}:{start}-{end}")
-    return genomic_intervals
+        genomic_regions.append(f"{chrom}:{start}-{end}")
+    return genomic_regions
 
 
 def featuremap_fields_aggregation_on_an_interval_list(
     featuremap_vcf_file: str,
     output_vcf: str,
-    interval_list_bed_file: str,
+    genomic_regions_bed_file: str,
     filter_tags=None,
     xgb_model_file: str = None,
     verbose: bool = True,  # noqa: FBT001, FBT002
 ) -> None:
     """
-    Apply featuremap fields aggregation on an interval list
-    Inputs:
-        featuremap (str): The input featuremap vcf file
-        output_vcf (str): The output pileup vcf file
-        interval_list (str): The interval list file
-        verbose (bool): The verbosity level (default: True)
-    Output:
-        output_vcf (str): The output vcf file including the aggregated fields and the xgb probability
+    Apply featuremap fields aggregation on an interval list.
+
+    Parameters
+    ----------
+    featuremap_vcf_file : str
+        The input featuremap VCF file.
+    output_vcf : str
+        The output pileup VCF file.
+    genomic_regions_bed_file : str
+        genomic regions list in BED file.
+    filter_tags : str, optional
+        Filter tags to apply. Defaults to None.
+    xgb_model_file : str, optional
+        Path to XGBoost model file for inference. Defaults to None.
+    verbose : bool, optional
+        Whether to enable verbose logging. Defaults to True
+
+    Returns
+    -------
+    str
+        The output VCF file including the aggregated fields and the XGBoost probability.
     """
     if not output_vcf.endswith(".vcf.gz"):
         logger.debug("adding .vcf.gz suffix to the output vcf file")
@@ -460,18 +599,18 @@ def featuremap_fields_aggregation_on_an_interval_list(
 
     with tempfile.TemporaryDirectory(dir=dirname(output_vcf)):
         num_cpus = os.cpu_count()
-        genomic_intervals = collapse_bed_by_chunks(interval_list_bed_file, num_chunks=num_cpus)
+        genomic_regions = collapse_bed_by_chunks(genomic_regions_bed_file, num_chunks=num_cpus)
 
         params = [
             (
                 featuremap_vcf_file,
-                f"{output_vcf}.{genomic_interval}.int_list.vcf.gz",
+                f"{output_vcf}.{genomic_region}.int_list.vcf.gz",
                 filter_tags,
-                genomic_interval,
+                genomic_region,
                 xgb_model_file,
                 verbose,
             )
-            for genomic_interval in genomic_intervals
+            for genomic_region in genomic_regions
         ]
         num_cpus = os.cpu_count()
         with ThreadPoolExecutor(max_workers=num_cpus) as executor:
@@ -521,10 +660,10 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "-i",
-        "--interval_list_bed_file",
+        "--genomic_regions_bed_file",
         type=str,
         required=True,
-        help="""Interval list BED file""",
+        help="""genomic regions BED file""",
     )
     parser.add_argument(
         "-ref_tr",
@@ -543,17 +682,24 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument(
         "-v",
-        "--verbose",
-        type=bool,
-        required=False,
+        "--disable_verbose",
+        action="store_false",
         default=True,
-        help="""Whether to print debug messages (default: True)""",
+        help="""Disable verbose output and debug messages. When used, verbose mode is turned off
+                (default: verbose enabled)""",
     )
     return parser.parse_args(argv[1:])
 
 
 def run(argv):
-    """Add aggregated parameters and xgb probability to the featuremap pileup vcf file"""
+    """
+    Add aggregated parameters and xgb probability to the featuremap pileup vcf file.
+
+    Parameters
+    ----------
+    argv : list of str
+        Command line arguments including the script name.
+    """
     args_in = __parse_args(argv)
 
     # add tandem repeat features
@@ -563,14 +709,19 @@ def run(argv):
     featuremap_fields_aggregation_on_an_interval_list(
         sfm_with_tr,
         args_in.output_vcf,
-        args_in.interval_list_bed_file,
+        args_in.genomic_regions_bed_file,
         args_in.filter_string,
         args_in.xgb_model_file,
-        args_in.verbose,
+        args_in.disable_verbose,
     )
 
 
 def main():
+    """
+    Main entry point for the script.
+
+    Calls run() with command line arguments from sys.argv.
+    """
     run(sys.argv)
 
 
