@@ -558,7 +558,7 @@ def collapse_bed_by_chunks(bed_file: str, num_chunks: int) -> list[str]:
     # Write output
     genomic_regions = []
     for chrom, start, end in collapsed:
-        genomic_regions.append(f"{chrom}:{start}-{end}")
+        genomic_regions.append(f"{chrom}:{start+1}-{end}")
     return genomic_regions
 
 
