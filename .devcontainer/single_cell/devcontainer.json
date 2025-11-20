@@ -3,7 +3,7 @@
 {
 	"name": "Single Cell",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_single_cell:1.17.0",
+	"image": "337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_single_cell:1.17.1",
 	"runArgs": [
 		"--init",
 		"--network=host"
