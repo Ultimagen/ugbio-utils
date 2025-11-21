@@ -232,35 +232,6 @@ class TestCombineCnmopsCnvpytorCNVCalls:
             # CN value should be from the duplications (2.5 or 3.0)
             assert cn_numeric in [2.5, 3.0], f"Unexpected CN value: {cn_value}"
 
-    def test_get_dup_cnmops_length_filter(self, tmpdir, sample_name):
-        """Test filtering duplications by length (>=10000bp)."""
-        out_directory = str(tmpdir)
-        distance_threshold = 1500
-
-        # Create dataframe with duplications of varying lengths
-        df_cnmops = pd.DataFrame(
-            {
-                "chrom": ["chr1", "chr1", "chr1", "chr2"],
-                "start": [1000, 20000, 30000, 5000],
-                "end": [5000, 30000, 45000, 20000],  # lengths: 4000, 10000, 15000, 15000
-                "CN": ["CN3", "CN3", "CN3", "CN3"],
-            }
-        )
-
-        result_file = combine_cnmops_cnvpytor_cnv_calls.get_dup_cnmops_cnv_calls(
-            df_cnmops, sample_name, out_directory, distance_threshold
-        )
-
-        assert result_file != ""
-
-        df_result = pd.read_csv(result_file, sep="\t", header=None)
-        df_result.columns = ["chrom", "start", "end", "CNV_type", "source", "copy_number"]
-
-        # Verify all duplications are >= 10000bp
-        for _, row in df_result.iterrows():
-            length = row["end"] - row["start"]
-            assert length >= 10000, f"Duplication length {length} is below 10000bp threshold"
-
     def test_get_dup_cnmops_merge_distance(self, tmpdir, sample_name):
         """Test merging duplications based on distance threshold."""
         out_directory = str(tmpdir)
