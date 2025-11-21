@@ -11,6 +11,7 @@ import pysam
 import ugbio_cnv.convert_combined_cnv_results_to_output_formats as output_results
 from pyfaidx import Fasta
 from ugbio_core.logger import logger
+from ugbio_core.vcf_utils import VcfUtils
 
 bedmap = "bedmap"
 
@@ -162,13 +163,12 @@ def _add_metadata_records(record_dict1, record_dict2, record_type, enforced_info
             # Check if type or number differ
             if hasattr(record1, "type") and hasattr(record2, "type"):
                 if record1.type != record2.type:
-                    msg = f"{record_type} field '{key}' has conflicting types: " f"'{record1.type}' vs '{record2.type}'"
+                    msg = f"{record_type} field '{key}' has conflicting types: '{record1.type}' vs '{record2.type}'"
                     raise RuntimeError(msg)
             if hasattr(record1, "number") and hasattr(record2, "number"):
                 if record1.number != record2.number:
                     msg = (
-                        f"{record_type} field '{key}' has conflicting numbers: "
-                        f"'{record1.number}' vs '{record2.number}'"
+                        f"{record_type} field '{key}' has conflicting numbers: '{record1.number}' vs '{record2.number}'"
                     )
                     raise RuntimeError(msg)
 
@@ -184,9 +184,7 @@ def _add_metadata_records(record_dict1, record_dict2, record_type, enforced_info
             combined_header.add_line(str(record_dict2[key].record))
 
 
-def combine_vcf_headers_for_cnv(
-    header1: "pysam.VariantHeader", header2: "pysam.VariantHeader"
-) -> "pysam.VariantHeader":
+def combine_vcf_headers_for_cnv(header1: pysam.VariantHeader, header2: pysam.VariantHeader) -> pysam.VariantHeader:
     """
     Combine two VCF headers into a single header for CNV/SV variant calls.
 
@@ -258,6 +256,199 @@ def combine_vcf_headers_for_cnv(
             combined_header.add_sample(sample)
 
     return combined_header
+
+
+def _update_vcf_contigs(
+    vcf_utils: VcfUtils,
+    cnmops_vcf: str,
+    cnvpytor_vcf: str,
+    fasta_index: str,
+    output_directory: str,
+) -> tuple[str, str]:
+    """
+    Update VCF headers with contigs from FASTA index.
+
+    Parameters
+    ----------
+    vcf_utils : VcfUtils
+        VcfUtils instance for VCF operations
+    cnmops_vcf : str
+        Path to cn.mops VCF
+    cnvpytor_vcf : str
+        Path to CNVpytor VCF
+    fasta_index : str
+        Path to FASTA index file
+    output_directory : str
+        Output directory for temporary files
+
+    Returns
+    -------
+    tuple[str, str]
+        Paths to updated cn.mops and CNVpytor VCF files
+    """
+    logger.info("Updating VCF headers with contigs from FASTA index")
+    cnmops_vcf_updated = pjoin(output_directory, "cnmops.updated_contigs.vcf.gz")
+    cnvpytor_vcf_updated = pjoin(output_directory, "cnvpytor.updated_contigs.vcf.gz")
+
+    vcf_utils.update_vcf_contigs_from_fai(cnmops_vcf, cnmops_vcf_updated, fasta_index)
+    vcf_utils.update_vcf_contigs_from_fai(cnvpytor_vcf, cnvpytor_vcf_updated, fasta_index)
+
+    return cnmops_vcf_updated, cnvpytor_vcf_updated
+
+
+def _write_vcf_records_with_source(
+    vcf_in: pysam.VariantFile,
+    vcf_out: pysam.VariantFile,
+    combined_header: pysam.VariantHeader,
+    source_name: str,
+) -> None:
+    """
+    Write VCF records to output file with CNV_SOURCE annotation.
+
+    Parameters
+    ----------
+    vcf_in : pysam.VariantFile
+        Input VCF file to read records from
+    vcf_out : pysam.VariantFile
+        Output VCF file to write records to
+    combined_header : pysam.VariantHeader
+        Combined header for creating new records
+    source_name : str
+        Source name to add to CNV_SOURCE INFO field
+    """
+    logger.info(f"Writing records from {source_name} VCF")
+    for record in vcf_in:
+        # Create new record with combined header
+        new_record = VcfUtils.copy_vcf_record(record, combined_header)
+        # Add source tag if not already present
+        if "CNV_SOURCE" not in new_record.info:
+            new_record.info["CNV_SOURCE"] = (source_name,)
+        vcf_out.write(new_record)
+
+
+def _cleanup_temp_files(temp_files: list[str]) -> None:
+    """
+    Remove temporary files and their indices.
+
+    Parameters
+    ----------
+    temp_files : list[str]
+        List of temporary file paths to remove
+    """
+    logger.info("Cleaning up temporary files")
+    for temp_file in temp_files:
+        if os.path.exists(temp_file):
+            os.unlink(temp_file)
+        # Also remove index files
+        for ext in [".tbi", ".csi"]:
+            index_file = temp_file + ext
+            if os.path.exists(index_file):
+                os.unlink(index_file)
+
+
+def combine_cnv_vcfs(
+    cnmops_vcf: str,
+    cnvpytor_vcf: str,
+    fasta_index: str,
+    output_vcf: str,
+    output_directory: str,
+) -> str:
+    """
+    Combine VCF files from cn.mops and CNVpytor into a single sorted and indexed VCF.
+
+    This function performs the following steps:
+    1. Updates headers of both VCFs to contain the same contigs from the FASTA index
+    2. Combines the headers from both updated files
+    3. Adds an INFO tag for the source (CNV_SOURCE) to identify the caller
+    4. Writes records from both VCF files to the combined output
+    5. Sorts and indexes the final VCF
+
+    Note: This function does NOT merge overlapping CNV records - it simply concatenates
+    all records from both input files.
+
+    Parameters
+    ----------
+    cnmops_vcf : str
+        Path to the cn.mops VCF file (.vcf.gz)
+    cnvpytor_vcf : str
+        Path to the CNVpytor VCF file (.vcf.gz)
+    fasta_index : str
+        Path to the reference genome FASTA index file (.fai)
+    output_vcf : str
+        Path to the output combined VCF file (.vcf.gz)
+    output_directory : str
+        Directory for storing temporary files
+
+    Returns
+    -------
+    str
+        Path to the final sorted and indexed combined VCF file
+
+    Raises
+    ------
+    FileNotFoundError
+        If any of the input files do not exist
+    RuntimeError
+        If VCF processing fails
+
+    Examples
+    --------
+    >>> combined_vcf = combine_cnv_vcfs(
+    ...     cnmops_vcf="cnmops.vcf.gz",
+    ...     cnvpytor_vcf="cnvpytor.vcf.gz",
+    ...     fasta_index="genome.fa.fai",
+    ...     output_vcf="combined.vcf.gz",
+    ...     output_directory="/tmp/cnv_combine"
+    ... )
+    """
+    # Validate input files exist
+    for input_file in [cnmops_vcf, cnvpytor_vcf, fasta_index]:
+        if not os.path.exists(input_file):
+            raise FileNotFoundError(f"Input file does not exist: {input_file}")
+
+    # Create output directory if it doesn't exist
+    os.makedirs(output_directory, exist_ok=True)
+
+    vcf_utils = VcfUtils()
+
+    # Step 1: Update headers to contain same contigs from FASTA index
+    cnmops_vcf_updated, cnvpytor_vcf_updated = _update_vcf_contigs(
+        vcf_utils, cnmops_vcf, cnvpytor_vcf, fasta_index, output_directory
+    )
+
+    # Step 2 & 3: Open updated VCF files, combine headers, and add CNV_SOURCE tag
+    logger.info("Combining VCF headers and adding CNV_SOURCE INFO tag")
+    with pysam.VariantFile(cnmops_vcf_updated) as vcf1, pysam.VariantFile(cnvpytor_vcf_updated) as vcf2:
+        # Combine headers
+        combined_header = combine_vcf_headers_for_cnv(vcf1.header, vcf2.header)
+
+        # Add INFO tag for source if not already present
+        if "CNV_SOURCE" not in combined_header.info:
+            combined_header.info.add(
+                "CNV_SOURCE",
+                number=".",
+                type="String",
+                description="The tool that called this CNV (cn.mops or cnvpytor)",
+            )
+
+        # Step 4: Write records from both VCF files
+        logger.info("Writing records from both VCF files to temporary combined VCF")
+        temp_combined_vcf = pjoin(output_directory, "temp_combined.vcf.gz")
+
+        with pysam.VariantFile(temp_combined_vcf, "w", header=combined_header) as vcf_out:
+            _write_vcf_records_with_source(vcf1, vcf_out, combined_header, "cn.mops")
+            _write_vcf_records_with_source(vcf2, vcf_out, combined_header, "cnvpytor")
+
+    # Step 5: Sort and index the VCF
+    logger.info("Sorting and indexing the combined VCF")
+    vcf_utils.sort_vcf(temp_combined_vcf, output_vcf)
+    vcf_utils.index_vcf(output_vcf)
+
+    # Clean up temporary files
+    _cleanup_temp_files([cnmops_vcf_updated, cnvpytor_vcf_updated, temp_combined_vcf])
+
+    logger.info(f"Successfully created combined VCF: {output_vcf}")
+    return output_vcf
 
 
 def get_dup_cnmops_cnv_calls(
