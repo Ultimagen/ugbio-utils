@@ -1,0 +1,12 @@
+[project]
+name = "ugbio_pypgx"
+version = "0.26.0-r2"
+description = "PyPGx"
+authors = [
+    { name = "Gil Hornung", email = "gil.hornung@ultimagen.com" },
+    { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
+]
+readme = "README_pypgx.md"
+
+[project.license]
+text = "Apache-2.0"

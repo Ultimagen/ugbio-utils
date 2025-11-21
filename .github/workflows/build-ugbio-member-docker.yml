@@ -19,6 +19,7 @@ on:
           - "ppmseq"
           - "single_cell"
           - "srsnv"
+          - "pypgx"
         required: true
         default: ""
 
