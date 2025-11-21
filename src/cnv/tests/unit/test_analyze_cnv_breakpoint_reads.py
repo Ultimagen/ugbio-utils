@@ -11,16 +11,23 @@ from ugbio_cnv.analyze_cnv_breakpoint_reads import (
     check_read_cnv_consistency,
     get_supplementary_alignments,
 )
-from ugbio_core.filter_bed import parse_bed_file
 
 
 @pytest.fixture
-def temp_bed_file():
-    """Create a temporary BED file for testing."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
-        f.write("chr1\t1000\t2000\n")
-        f.write("chr1\t5000\t6000\n")
-        f.write("chr2\t10000\t11000\n")
+def temp_vcf_file():
+    """Create a temporary VCF file for testing."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as f:
+        # Write VCF header
+        f.write("##fileformat=VCFv4.2\n")
+        f.write("##contig=<ID=chr1,length=100000>\n")
+        f.write("##contig=<ID=chr2,length=100000>\n")
+        f.write('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">\n')
+        f.write('##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant">\n')
+        f.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
+        # Add three CNV variants
+        f.write("chr1\t1001\t.\tN\t<DUP>\t.\tPASS\tSVTYPE=DUP;END=2000\n")
+        f.write("chr1\t5001\t.\tN\t<DEL>\t.\tPASS\tSVTYPE=DEL;END=6000\n")
+        f.write("chr2\t10001\t.\tN\t<DUP>\t.\tPASS\tSVTYPE=DUP;END=11000\n")
         temp_path = f.name
     yield temp_path
     Path(temp_path).unlink()
@@ -87,24 +94,15 @@ def temp_bam_file():
     Path(temp_path + ".bai").unlink(missing_ok=True)
 
 
-def test_parse_bed_file(temp_bed_file):
-    """Test BED file parsing."""
-    intervals = parse_bed_file(temp_bed_file)
-    assert len(intervals) == 3
-    assert intervals[0] == ("chr1", 1000, 2000)
-    assert intervals[1] == ("chr1", 5000, 6000)
-    assert intervals[2] == ("chr2", 10000, 11000)
-
-
-def test_get_supplementary_alignments():
+def test_get_supplementary_alignments(temp_bam_file):
     """Test parsing SA tag."""
     read = pysam.AlignedSegment()
     read.query_name = "test_read"
     read.set_tag("SA", "chr1,1000,+,50M30S,60,0;chr1,2000,-,30S50M,60,0;")
 
-    # Need a dummy alignment file for the function signature
-    # but it's not actually used when parsing SA tag
-    supp_alns = get_supplementary_alignments(None, read)
+    # Open a real alignment file for the function signature
+    with pysam.AlignmentFile(temp_bam_file, "rb") as bam:
+        supp_alns = get_supplementary_alignments(bam, read)
 
     assert len(supp_alns) == 2
     # First: 50M means +50 on reference, 30S on right, + strand
@@ -195,31 +193,49 @@ def test_analyze_interval_breakpoints(temp_bam_file):
         assert evidence.deletion_reads == 1
 
 
-def test_analyze_cnv_breakpoints(temp_bam_file, temp_bed_file):
-    """Test full analysis workflow."""
-    results_df = analyze_cnv_breakpoints(
-        bam_file=temp_bam_file,
-        bed_file=temp_bed_file,
-        cushion=100,
-        output_file=None,
-    )
+def test_analyze_cnv_breakpoints(temp_bam_file, temp_vcf_file):
+    """Test full analysis workflow with VCF output."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as output_f:
+        output_vcf_path = output_f.name
 
-    assert len(results_df) == 3  # Three intervals in the BED file
-    assert "chrom" in results_df.columns
-    assert "start" in results_df.columns
-    assert "end" in results_df.columns
-    assert "duplication_reads" in results_df.columns
-    assert "deletion_reads" in results_df.columns
-    assert "total_reads" in results_df.columns
+    try:
+        # Run analysis
+        analyze_cnv_breakpoints(
+            bam_file=temp_bam_file,
+            vcf_file=temp_vcf_file,
+            cushion=100,
+            output_file=output_vcf_path,
+        )
 
-    # First interval should have reads
-    first_row = results_df.iloc[0]
-    assert first_row["chrom"] == "chr1"
-    assert first_row["start"] == 1000
-    assert first_row["end"] == 2000
-    assert first_row["total_reads"] == 2
-    assert first_row["duplication_reads"] == 1
-    assert first_row["deletion_reads"] == 1
+        # Read and verify output VCF
+        vcf = pysam.VariantFile(output_vcf_path)
+
+        # Check that INFO fields are added
+        assert "CNV_DUP_READS" in vcf.header.info
+        assert "CNV_DEL_READS" in vcf.header.info
+        assert "CNV_TOTAL_READS" in vcf.header.info
+        assert "CNV_DUP_FRAC" in vcf.header.info
+        assert "CNV_DEL_FRAC" in vcf.header.info
+
+        # Collect records
+        records = list(vcf)
+        assert len(records) == 3  # Three variants in the VCF file
+
+        # Check first record (chr1:1001-2000)
+        first_record = records[0]
+        assert first_record.chrom == "chr1"
+        assert first_record.start == 1000  # VCF is 1-based, pysam converts to 0-based
+        assert first_record.stop == 2000
+        assert "CNV_DUP_READS" in first_record.info
+        assert "CNV_DEL_READS" in first_record.info
+        assert "CNV_TOTAL_READS" in first_record.info
+        assert first_record.info["CNV_TOTAL_READS"] == 2
+        assert first_record.info["CNV_DUP_READS"] == 1
+        assert first_record.info["CNV_DEL_READS"] == 1
+
+        vcf.close()
+    finally:
+        Path(output_vcf_path).unlink(missing_ok=True)
 
 
 def test_analyze_cnv_breakpoints_real_data():
@@ -238,27 +254,58 @@ def test_analyze_cnv_breakpoints_real_data():
     assert os.path.exists(dup_bam_file), f"BAM file not found: {dup_bam_file}"
     assert os.path.exists(dup_bed_file), f"BED file not found: {dup_bed_file}"
 
-    # Run analysis on duplication
-    dup_df = analyze_cnv_breakpoints(
-        bam_file=dup_bam_file,
-        bed_file=dup_bed_file,
-        cushion=1000,
-        output_file=None,
-    )
+    # Create a temporary VCF file from the BED file
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as dup_vcf_f:
+        dup_vcf_file = dup_vcf_f.name
+        # Write VCF header
+        dup_vcf_f.write("##fileformat=VCFv4.2\n")
+        dup_vcf_f.write("##contig=<ID=chr2,length=1000000000>\n")
+        dup_vcf_f.write('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">\n')
+        dup_vcf_f.write('##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant">\n')
+        dup_vcf_f.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
 
-    # Should have one interval
-    assert len(dup_df) == 1
+        # Read BED file and convert to VCF
+        with open(dup_bed_file) as bed_f:
+            for line in bed_f:
+                parts = line.strip().split("\t")
+                chrom, start, end = parts[0], int(parts[1]), int(parts[2])
+                # VCF is 1-based
+                dup_vcf_f.write(f"{chrom}\t{start+1}\t.\tN\t<DUP>\t.\tPASS\tSVTYPE=DUP;END={end}\n")
 
-    # Check the interval
-    dup_row = dup_df.iloc[0]
-    assert dup_row["chrom"] == "chr2"
-    assert dup_row["start"] == 122526000
-    assert dup_row["end"] == 122537000
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as dup_output_f:
+        dup_output_vcf = dup_output_f.name
 
-    # Should have at least 10 reads consistent with duplication
-    assert (
-        dup_row["duplication_reads"] >= 10
-    ), f"Expected at least 10 duplication reads, but found {dup_row['duplication_reads']}"
+    try:
+        # Run analysis on duplication
+        analyze_cnv_breakpoints(
+            bam_file=dup_bam_file,
+            vcf_file=dup_vcf_file,
+            cushion=1000,
+            output_file=dup_output_vcf,
+        )
+
+        # Read output VCF
+        dup_vcf = pysam.VariantFile(dup_output_vcf)
+        records = list(dup_vcf)
+        dup_vcf.close()
+
+        # Should have one interval
+        assert len(records) == 1
+
+        # Check the interval
+        dup_record = records[0]
+        assert dup_record.chrom == "chr2"
+        assert dup_record.start == 122526000  # 0-based
+        assert dup_record.stop == 122537000
+
+        # Should have at least 10 reads consistent with duplication
+        assert (
+            dup_record.info["CNV_DUP_READS"] >= 10
+        ), f"Expected at least 10 duplication reads, but found {dup_record.info['CNV_DUP_READS']}"
+
+    finally:
+        Path(dup_vcf_file).unlink(missing_ok=True)
+        Path(dup_output_vcf).unlink(missing_ok=True)
 
     # Test deletion
     del_bam_file = os.path.join(resources_dir, "deletion.bam")
@@ -268,24 +315,55 @@ def test_analyze_cnv_breakpoints_real_data():
     assert os.path.exists(del_bam_file), f"BAM file not found: {del_bam_file}"
     assert os.path.exists(del_bed_file), f"BED file not found: {del_bed_file}"
 
-    # Run analysis on deletion
-    del_df = analyze_cnv_breakpoints(
-        bam_file=del_bam_file,
-        bed_file=del_bed_file,
-        cushion=1000,
-        output_file=None,
-    )
+    # Create a temporary VCF file from the BED file
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as del_vcf_f:
+        del_vcf_file = del_vcf_f.name
+        # Write VCF header
+        del_vcf_f.write("##fileformat=VCFv4.2\n")
+        del_vcf_f.write("##contig=<ID=chr1,length=1000000000>\n")
+        del_vcf_f.write('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">\n')
+        del_vcf_f.write('##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant">\n')
+        del_vcf_f.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
 
-    # Should have one interval
-    assert len(del_df) == 1
+        # Read BED file and convert to VCF
+        with open(del_bed_file) as bed_f:
+            for line in bed_f:
+                parts = line.strip().split("\t")
+                chrom, start, end = parts[0], int(parts[1]), int(parts[2])
+                # VCF is 1-based
+                del_vcf_f.write(f"{chrom}\t{start+1}\t.\tN\t<DEL>\t.\tPASS\tSVTYPE=DEL;END={end}\n")
 
-    # Check the interval
-    del_row = del_df.iloc[0]
-    assert del_row["chrom"] == "chr1"
-    assert del_row["start"] == 113069000
-    assert del_row["end"] == 113071000
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as del_output_f:
+        del_output_vcf = del_output_f.name
 
-    # Should have at least 10 reads consistent with deletion
-    assert (
-        del_row["deletion_reads"] >= 10
-    ), f"Expected at least 10 deletion reads, but found {del_row['deletion_reads']}"
+    try:
+        # Run analysis on deletion
+        analyze_cnv_breakpoints(
+            bam_file=del_bam_file,
+            vcf_file=del_vcf_file,
+            cushion=1000,
+            output_file=del_output_vcf,
+        )
+
+        # Read output VCF
+        del_vcf = pysam.VariantFile(del_output_vcf)
+        records = list(del_vcf)
+        del_vcf.close()
+
+        # Should have one interval
+        assert len(records) == 1
+
+        # Check the interval
+        del_record = records[0]
+        assert del_record.chrom == "chr1"
+        assert del_record.start == 113069000  # 0-based
+        assert del_record.stop == 113071000
+
+        # Should have at least 10 reads consistent with deletion
+        assert (
+            del_record.info["CNV_DEL_READS"] >= 10
+        ), f"Expected at least 10 deletion reads, but found {del_record.info['CNV_DEL_READS']}"
+
+    finally:
+        Path(del_vcf_file).unlink(missing_ok=True)
+        Path(del_output_vcf).unlink(missing_ok=True)

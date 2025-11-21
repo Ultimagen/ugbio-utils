@@ -1,9 +1,10 @@
 """
 Analyze reads at CNV breakpoints for duplication and deletion evidence.
 
-This script analyzes single-ended reads at interval boundaries to identify
+This script analyzes single-ended reads at CNV breakpoints to identify
 supporting evidence for duplications and deletions based on read orientation
-and position patterns.
+and position patterns. It takes a VCF file as input and outputs an annotated
+VCF with breakpoint evidence in INFO fields.
 """
 
 import argparse
@@ -11,10 +12,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-import pandas as pd
 import pysam
 from ugbio_core.dna_sequence_utils import CIGAR_OPS, parse_cigar_string
-from ugbio_core.filter_bed import parse_bed_file
 from ugbio_core.logger import logger
 
 # CIGAR operation constants
@@ -404,31 +403,26 @@ def analyze_interval_breakpoints(
 
 def analyze_cnv_breakpoints(
     bam_file: str,
-    bed_file: str,
+    vcf_file: str,
     cushion: int = 100,
     output_file: str | None = None,
     reference_fasta: str | None = None,
-) -> pd.DataFrame:
+) -> None:
     """
-    Analyze all intervals in a BED file for CNV breakpoint evidence.
+    Analyze all CNV intervals in a VCF file for breakpoint evidence.
 
     Parameters
     ----------
     bam_file : str
         Path to BAM or CRAM file
-    bed_file : str
-        Path to BED file with intervals
+    vcf_file : str
+        Path to VCF file with CNV variants
     cushion : int, optional
         Number of bases to extend search around breakpoints (default: 100)
     output_file : str, optional
-        Path to output TSV file (default: None, prints to stdout)
+        Path to output VCF file (default: None, writes to stdout)
     reference_fasta : str, optional
         Path to reference FASTA file (required for CRAM files)
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with results
     """
     # Determine file mode based on extension
     file_ext = Path(bam_file).suffix.lower()
@@ -443,46 +437,54 @@ def analyze_cnv_breakpoints(
     else:
         raise ValueError(f"Unsupported file format: {file_ext}. Only .bam and .cram are supported.")
 
-    # Parse intervals from BED file
-    intervals = parse_bed_file(bed_file)
-    logger.info(f"Loaded {len(intervals)} intervals from {bed_file}")
+    # Open input VCF and add new INFO fields to header
+    with pysam.VariantFile(vcf_file) as vcf_in:
+        hdr = vcf_in.header
+        hdr.info.add("CNV_DUP_READS", "1", "Integer", "Number of reads supporting duplication at breakpoints")
+        hdr.info.add("CNV_DEL_READS", "1", "Integer", "Number of reads supporting deletion at breakpoints")
+        hdr.info.add("CNV_TOTAL_READS", "1", "Integer", "Total reads analyzed at breakpoints")
+        hdr.info.add("CNV_DUP_FRAC", "1", "Float", "Fraction of reads supporting duplication")
+        hdr.info.add("CNV_DEL_FRAC", "1", "Float", "Fraction of reads supporting deletion")
 
-    # Analyze each interval
-    results = []
-    for i, (chrom, start, end) in enumerate(intervals, 1):
-        if i % 100 == 0:
-            logger.info(f"Processing interval {i}/{len(intervals)}: {chrom}:{start}-{end}")
+        # Open output VCF with modified header
+        if output_file:
+            vcf_out = pysam.VariantFile(output_file, "w", header=hdr)
+        else:
+            vcf_out = pysam.VariantFile("-", "w", header=hdr)
 
-        evidence = analyze_interval_breakpoints(alignment_file, chrom, start, end, cushion)
-        results.append(
-            {
-                "chrom": evidence.chrom,
-                "start": evidence.start,
-                "end": evidence.end,
-                "length": evidence.end - evidence.start,
-                "duplication_reads": evidence.duplication_reads,
-                "deletion_reads": evidence.deletion_reads,
-                "total_reads": evidence.total_reads,
-                "dup_fraction": (
-                    evidence.duplication_reads / evidence.total_reads if evidence.total_reads > 0 else 0.0
-                ),
-                "del_fraction": (evidence.deletion_reads / evidence.total_reads if evidence.total_reads > 0 else 0.0),
-            }
-        )
+        # Process each variant
+        variant_count = 0
+        for record in vcf_in:
+            variant_count += 1
+            if variant_count % 100 == 0:
+                logger.info(f"Processing variant {variant_count}: {record.chrom}:{record.start}-{record.stop}")
 
+            # Analyze breakpoints for this variant
+            evidence = analyze_interval_breakpoints(alignment_file, record.chrom, record.start, record.stop, cushion)
+
+            # Add new INFO fields directly to the record
+            record.info["CNV_DUP_READS"] = evidence.duplication_reads
+            record.info["CNV_DEL_READS"] = evidence.deletion_reads
+            record.info["CNV_TOTAL_READS"] = evidence.total_reads
+
+            if evidence.total_reads > 0:
+                record.info["CNV_DUP_FRAC"] = evidence.duplication_reads / evidence.total_reads
+                record.info["CNV_DEL_FRAC"] = evidence.deletion_reads / evidence.total_reads
+            else:
+                record.info["CNV_DUP_FRAC"] = 0.0
+                record.info["CNV_DEL_FRAC"] = 0.0
+
+            # Write annotated record
+            vcf_out.write(record)
+
+        vcf_out.close()
+
+    # Close alignment file
     alignment_file.close()
 
-    # Create DataFrame
-    results_df = pd.DataFrame(results)
-
-    # Output results
+    logger.info(f"Processed {variant_count} variants")
     if output_file:
-        results_df.to_csv(output_file, sep="\t", index=False)
-        logger.info(f"Results written to {output_file}")
-    else:
-        print(results_df.to_csv(sep="\t", index=False))
-
-    return results_df
+        logger.info(f"Annotated VCF written to {output_file}")
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -497,9 +499,9 @@ def get_parser() -> argparse.ArgumentParser:
         help="Path to BAM or CRAM file with single-ended reads",
     )
     parser.add_argument(
-        "--bed-file",
+        "--vcf-file",
         required=True,
-        help="Path to BED file with intervals to analyze",
+        help="Path to VCF file with CNV variants to analyze",
     )
     parser.add_argument(
         "--cushion",
@@ -510,7 +512,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-file",
         default=None,
-        help="Path to output TSV file (default: stdout)",
+        help="Path to output VCF file (default: stdout)",
     )
     parser.add_argument(
         "--reference-fasta",
@@ -528,7 +530,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         analyze_cnv_breakpoints(
             bam_file=args.bam_file,
-            bed_file=args.bed_file,
+            vcf_file=args.vcf_file,
             cushion=args.cushion,
             output_file=args.output_file,
             reference_fasta=args.reference_fasta,
