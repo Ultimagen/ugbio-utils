@@ -192,9 +192,11 @@ def combine_vcf_headers_for_cnv(header1: pysam.VariantHeader, header2: pysam.Var
     callers (e.g., cn.mops and CNVpytor). It creates a new header that includes all
     metadata from both input headers with special handling for structural variant fields.
 
-    For INFO, FORMAT, and FILTER fields with the same ID:
+    For INFO and FORMAT fields with the same ID:
     - If type and number match, use the first definition
     - If type or number differ, raise RuntimeError
+
+    FILTER fields are not included in the combined header.
 
     Special enforcement for CNV/SV-related fields to ensure VCF spec compliance:
     - SVLEN: enforces Number="." (variable-length array) per VCF 4.2 spec for structural variants
@@ -215,7 +217,7 @@ def combine_vcf_headers_for_cnv(header1: pysam.VariantHeader, header2: pysam.Var
     Raises
     ------
     RuntimeError
-        If INFO/FORMAT/FILTER IDs collide with different type or number specifications
+        If INFO/FORMAT IDs collide with different type or number specifications
         (except for SVLEN and SVTYPE which are enforced to standard values)
 
     Examples
@@ -243,9 +245,6 @@ def combine_vcf_headers_for_cnv(header1: pysam.VariantHeader, header2: pysam.Var
 
     # Add FORMAT fields
     _add_metadata_records(header1.formats, header2.formats, "FORMAT", enforced_info_specs, combined_header)
-
-    # Add FILTER fields
-    _add_metadata_records(header1.filters, header2.filters, "FILTER", enforced_info_specs, combined_header)
 
     # Add samples from both headers
     for sample in header1.samples:
@@ -358,7 +357,7 @@ def combine_cnv_vcfs(
 
     This function performs the following steps:
     1. Updates headers of both VCFs to contain the same contigs from the FASTA index
-    2. Combines the headers from both updated files
+    2. Combines the headers from both updated files (excluding FILTER fields)
     3. Adds an INFO tag for the source (CNV_SOURCE) to identify the caller
     4. Writes records from both VCF files to the combined output
     5. Sorts and indexes the final VCF
@@ -416,10 +415,10 @@ def combine_cnv_vcfs(
         vcf_utils, cnmops_vcf, cnvpytor_vcf, fasta_index, output_directory
     )
 
-    # Step 2 & 3: Open updated VCF files, combine headers, and add CNV_SOURCE tag
+    # Step 2: Open updated VCF files, combine headers (excluding FILTER fields), and add CNV_SOURCE tag
     logger.info("Combining VCF headers and adding CNV_SOURCE INFO tag")
     with pysam.VariantFile(cnmops_vcf_updated) as vcf1, pysam.VariantFile(cnvpytor_vcf_updated) as vcf2:
-        # Combine headers
+        # Combine headers (excluding FILTER fields)
         combined_header = combine_vcf_headers_for_cnv(vcf1.header, vcf2.header)
 
         # Add INFO tag for source if not already present
@@ -431,7 +430,7 @@ def combine_cnv_vcfs(
                 description="The tool that called this CNV (cn.mops or cnvpytor)",
             )
 
-        # Step 4: Write records from both VCF files
+        # Step 3: Write records from both VCF files
         logger.info("Writing records from both VCF files to temporary combined VCF")
         temp_combined_vcf = pjoin(output_directory, "temp_combined.vcf.gz")
 
@@ -439,7 +438,7 @@ def combine_cnv_vcfs(
             _write_vcf_records_with_source(vcf1, vcf_out, combined_header, "cn.mops")
             _write_vcf_records_with_source(vcf2, vcf_out, combined_header, "cnvpytor")
 
-    # Step 5: Sort and index the VCF
+    # Step 4: Sort and index the VCF
     logger.info("Sorting and indexing the combined VCF")
     vcf_utils.sort_vcf(temp_combined_vcf, output_vcf)
     vcf_utils.index_vcf(output_vcf)

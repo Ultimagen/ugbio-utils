@@ -190,11 +190,12 @@ def test_combine_cnv_vcfs_basic(temp_dir, cnmops_vcf, cnvpytor_vcf, fasta_index)
         assert records[3].start == 15000  # cnvpytor_dup1
 
         # Check CNV_SOURCE annotation
+        # CNV_SOURCE is defined with Number="." so pysam returns tuples
         sources = [rec.info.get("CNV_SOURCE") for rec in records]
-        assert "cn.mops" in sources
-        assert "cnvpytor" in sources
-        assert sources.count("cn.mops") == 2
-        assert sources.count("cnvpytor") == 2
+        assert ("cn.mops",) in sources
+        assert ("cnvpytor",) in sources
+        assert sources.count(("cn.mops",)) == 2
+        assert sources.count(("cnvpytor",)) == 2
 
 
 def test_combine_cnv_vcfs_missing_input(temp_dir, fasta_index):
