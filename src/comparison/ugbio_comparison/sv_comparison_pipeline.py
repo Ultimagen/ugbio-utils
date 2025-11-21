@@ -217,7 +217,7 @@ class SVComparison:
         df_calls = pd.concat((df_tp_calls, df_fp))
         return df_base, df_calls
 
-    def run_pipeline(
+    def run_pipeline(  # noqa: PLR0913
         self,
         calls: str,
         gt: str,
