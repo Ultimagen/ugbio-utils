@@ -7,6 +7,7 @@ import sys
 from os.path import join as pjoin
 
 import pandas as pd
+import pysam
 import ugbio_cnv.convert_combined_cnv_results_to_output_formats as output_results
 from pyfaidx import Fasta
 from ugbio_core.logger import logger
@@ -138,6 +139,125 @@ def parse_cnmops_cnv_calls(cnmops_cnv_calls: str, out_directory: str, ref_fasta:
     df_cnmops_cnvs = df_cnmops_cnvs[df_cnmops_cnvs["pN"] <= pN]
 
     return df_cnmops_cnvs
+
+
+# Helper function to check and add metadata records
+def _add_metadata_records(record_dict1, record_dict2, record_type, enforced_info_specs, combined_header):
+    """Add metadata records (INFO/FORMAT/FILTER) to combined header."""
+    # Collect all unique keys from both headers
+    all_keys = set(record_dict1.keys()) | set(record_dict2.keys())
+
+    for key in all_keys:
+        # Check if this field has enforced specifications
+        if record_type == "INFO" and key in enforced_info_specs:
+            number, data_type, description = enforced_info_specs[key]
+            combined_header.info.add(key, number, data_type, description)
+            continue
+
+        # Handle fields that exist in both headers
+        if key in record_dict1 and key in record_dict2:
+            record1 = record_dict1[key]
+            record2 = record_dict2[key]
+
+            # Check if type or number differ
+            if hasattr(record1, "type") and hasattr(record2, "type"):
+                if record1.type != record2.type:
+                    msg = f"{record_type} field '{key}' has conflicting types: " f"'{record1.type}' vs '{record2.type}'"
+                    raise RuntimeError(msg)
+            if hasattr(record1, "number") and hasattr(record2, "number"):
+                if record1.number != record2.number:
+                    msg = (
+                        f"{record_type} field '{key}' has conflicting numbers: "
+                        f"'{record1.number}' vs '{record2.number}'"
+                    )
+                    raise RuntimeError(msg)
+
+            # If we get here, they're compatible - use the first one
+            combined_header.add_line(str(record1.record))
+
+        # Handle fields that only exist in header1
+        elif key in record_dict1:
+            combined_header.add_line(str(record_dict1[key].record))
+
+        # Handle fields that only exist in header2
+        elif key in record_dict2:
+            combined_header.add_line(str(record_dict2[key].record))
+
+
+def combine_vcf_headers_for_cnv(
+    header1: "pysam.VariantHeader", header2: "pysam.VariantHeader"
+) -> "pysam.VariantHeader":
+    """
+    Combine two VCF headers into a single header for CNV/SV variant calls.
+
+    This function is specifically designed for merging headers from different CNV/SV
+    callers (e.g., cn.mops and CNVpytor). It creates a new header that includes all
+    metadata from both input headers with special handling for structural variant fields.
+
+    For INFO, FORMAT, and FILTER fields with the same ID:
+    - If type and number match, use the first definition
+    - If type or number differ, raise RuntimeError
+
+    Special enforcement for CNV/SV-related fields to ensure VCF spec compliance:
+    - SVLEN: enforces Number="." (variable-length array) per VCF 4.2 spec for structural variants
+    - SVTYPE: enforces Number=1 (single value) per VCF 4.2 spec for structural variants
+
+    Parameters
+    ----------
+    header1 : pysam.VariantHeader
+        The first VCF header (takes precedence in case of identical collisions)
+    header2 : pysam.VariantHeader
+        The second VCF header to merge
+
+    Returns
+    -------
+    pysam.VariantHeader
+        A new combined VCF header with unified metadata
+
+    Raises
+    ------
+    RuntimeError
+        If INFO/FORMAT/FILTER IDs collide with different type or number specifications
+        (except for SVLEN and SVTYPE which are enforced to standard values)
+
+    Examples
+    --------
+    >>> import pysam
+    >>> header1 = pysam.VariantFile("cnmops.vcf.gz").header
+    >>> header2 = pysam.VariantFile("cnvpytor.vcf.gz").header
+    >>> combined = combine_vcf_headers_for_cnv(header1, header2)
+    """
+    # Enforced specifications for CNV/SV fields per VCF 4.2 spec
+    enforced_info_specs = {
+        "SVLEN": (".", "Integer", "CNV length"),
+        "SVTYPE": (1, "String", "CNV type. can be DUP or DEL"),
+    }
+
+    # Start with a copy of the first header
+    combined_header = pysam.VariantHeader()
+
+    # Copy contigs from header1 (assuming they're the same)
+    for contig in header1.contigs.values():
+        combined_header.contigs.add(contig.name, length=contig.length)
+
+    # Add INFO fields
+    _add_metadata_records(header1.info, header2.info, "INFO", enforced_info_specs, combined_header)
+
+    # Add FORMAT fields
+    _add_metadata_records(header1.formats, header2.formats, "FORMAT", enforced_info_specs, combined_header)
+
+    # Add FILTER fields
+    _add_metadata_records(header1.filters, header2.filters, "FILTER", enforced_info_specs, combined_header)
+
+    # Add samples from both headers
+    for sample in header1.samples:
+        if sample not in combined_header.samples:
+            combined_header.add_sample(sample)
+    for sample in header2.samples:
+        if sample not in combined_header.samples:
+            combined_header.add_sample(sample)
+
+    return combined_header
 
 
 def get_dup_cnmops_cnv_calls(

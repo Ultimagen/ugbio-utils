@@ -393,9 +393,6 @@ class VcfUtils:
         # Index the output VCF
         self.index_vcf(output_vcf)
 
-        # Index the output VCF
-        self.index_vcf(output_vcf)
-
     @staticmethod
     def copy_vcf_record(rec: "pysam.VariantRecord", new_header: "pysam.VariantHeader") -> "pysam.VariantRecord":
         """
