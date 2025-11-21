@@ -18,11 +18,7 @@ def add_cnmops_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.Vari
     # Add meta-information to the header
     header.add_meta("fileformat", value="VCFv4.2")
     header.add_meta("source", value="ULTIMA_CNV")
-
-    # Add sample names to the header
-    header.add_sample(sample_name)
-
-    header.add_line("##GENOOX_VCF_TYPE=ULTIMA_CNV")
+    header.add_meta("GENOOX_VCF_TYPE", value="ULTIMA_CNV")
 
     # Add contigs info to the header
     df_genome = pd.read_csv(fasta_index_file, sep="\t", header=None, usecols=[0, 1])
@@ -30,32 +26,64 @@ def add_cnmops_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.Vari
     for _, row in df_genome.iterrows():
         chr_id = row["chr"]
         length = row["length"]
-        header.add_line(f"##contig=<ID={chr_id},length={length}>")
+        header.contigs.add(chr_id, length=int(length))
 
-    # Add ALT
-    header.add_line('##ALT=<ID=<CNV>,Description="Copy number variant region">')
-    header.add_line('##ALT=<ID=<DEL>,Description="Deletion relative to the reference">')
-    header.add_line('##ALT=<ID=<DUP>,Description="Region of elevated copy number relative to the reference">')
+    # Add ALT using add_line for structured header lines
+    header.add_line('##ALT=<ID=CNV,Description="Copy number variant region">')
+    header.add_line('##ALT=<ID=DEL,Description="Deletion relative to the reference">')
+    header.add_line('##ALT=<ID=DUP,Description="Region of elevated copy number relative to the reference">')
 
-    # Add FILTER
-    header.add_line('##FILTER=<ID=PASS,Description="high confidence CNV call">')
-    header.add_line('##FILTER=<ID=UG-CNV-LCR,Description="CNV calls overlpping (>50% overlap) with UG-CNV-LCR">')
-    header.add_line('##FILTER=<ID=LEN,Description="CNV calls with length less then 10Kb">')
+    # Add FILTER using structured method (PASS is automatically added by pysam)
+    header.filters.add("UG-CNV-LCR", None, None, "CNV calls overlpping (>50% overlap) with UG-CNV-LCR")
+    header.filters.add("LEN", None, None, "CNV calls with length less then 10Kb")
 
-    # Add INFO
-    header.add_line(
-        '##INFO=<ID=CONFIDENCE,Number=1,Type=String,Description="Confidence level for CNV call.'
-        + 'can be one of: LOW,MEDIUM,HIGH">'
-    )
-    header.add_line('##INFO=<ID=CopyNumber,Number=1,Type=Float,Description="copy number of CNV call">')
-    header.add_line('##INFO=<ID=RoundedCopyNumber,Number=1,Type=Integer,Description="rounded copy number of CNV call">')
-    header.add_line('##INFO=<ID=SVLEN,Number=.,Type=Integer,Description="CNV length">')
-    header.add_line('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="CNV type. can be DUP or DEL">')
+    # Add INFO using structured method
+    header.info.add("CONFIDENCE", "1", "String", "Confidence level for CNV call.can be one of: LOW,MEDIUM,HIGH")
+    header.info.add("CopyNumber", "1", "Float", "copy number of CNV call")
+    header.info.add("RoundedCopyNumber", "1", "Integer", "rounded copy number of CNV call")
+    header.info.add("SVLEN", ".", "Integer", "CNV length")
+    header.info.add("SVTYPE", "1", "String", "CNV type. can be DUP or DEL")
 
-    # Add FORMAT
-    header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
+    # Add FORMAT using structured method
+    header.formats.add("GT", "1", "String", "Genotype")
+
+    # Add sample names to the header
+    header.add_sample(sample_name)
 
     return header
+
+
+def _generate_record_id(cnv_type: str, del_counter: int, dup_counter: int) -> tuple[str, str, int, int]:
+    """Generates unique record ID based on CNV type.
+
+    Parameters
+    ----------
+    cnv_type : str
+        Type of CNV ("<DEL>" or "<DUP>")
+    del_counter : int
+        Current deletion counter
+    dup_counter : int
+        Current duplication counter
+
+    Returns
+    -------
+    str
+        Generated record ID
+    str
+        CNV type without angle brackets
+    int
+        Updated deletion counter
+    int
+        Updated duplication counter
+    """
+    svtype = cnv_type.replace("<", "").replace(">", "")
+    if svtype == "DEL":
+        del_counter += 1
+        record_id = f"cnmops_DEL_{del_counter}"
+    else:  # DUP
+        dup_counter += 1
+        record_id = f"cnmops_DUP_{dup_counter}"
+    return record_id, svtype, del_counter, dup_counter
 
 
 def write_cnmops_vcf(outfile: str, header: pysam.VariantHeader, cnv_annotated_bed_file: str, sample_name: str) -> None:
@@ -68,6 +96,10 @@ def write_cnmops_vcf(outfile: str, header: pysam.VariantHeader, cnv_annotated_be
             annotated with UG-CNV-LCR.
         sample_name (str): Name of the sample.
     """
+    # Counters for generating unique IDs
+    del_counter = 0
+    dup_counter = 0
+
     with pysam.VariantFile(outfile, mode="w", header=header) as vcf_out:
         df_cnvs = pd.read_csv(cnv_annotated_bed_file, sep="\t", header=None)
         df_cnvs.columns = ["chr", "start", "end", "info"]
@@ -96,13 +128,14 @@ def write_cnmops_vcf(outfile: str, header: pysam.VariantHeader, cnv_annotated_be
             record.ref = "N"
             record.alts = (cnv_type,)
 
+            # Generate unique ID for the record
+            record.id, svtype, del_counter, dup_counter = _generate_record_id(cnv_type, del_counter, dup_counter)
+
             confidence = "HIGH"
             if len(filters) > 0:
                 for f in filters:
                     record.filter.add(f)
                 confidence = "FAIL"
-                if len(filters) > 1:
-                    confidence = "FAIL"
             else:
                 record.filter.add("PASS")
 
@@ -110,7 +143,7 @@ def write_cnmops_vcf(outfile: str, header: pysam.VariantHeader, cnv_annotated_be
             record.info["CopyNumber"] = cn
             record.info["RoundedCopyNumber"] = int(round(cn))
             record.info["SVLEN"] = int(end) - int(start)
-            record.info["SVTYPE"] = cnv_type.replace("<", "").replace(">", "")
+            record.info["SVTYPE"] = svtype
             # END position is automatically generated for multi-base variants
 
             # Set genotype information for each sample
