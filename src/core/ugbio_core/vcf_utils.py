@@ -360,6 +360,42 @@ class VcfUtils:
         self.__execute(f"gatk VariantAnnotator -V {input_file} -O {output_file} -R {reference_fasta} -A TandemRepeat")
         return output_file
 
+    def update_vcf_contigs_from_fai(
+        self,
+        input_vcf: str,
+        output_vcf: str,
+        fasta_fai: str,
+    ) -> None:
+        """
+        Update VCF header contig information using FASTA FAI file and index the output.
+
+        This function updates the VCF header contig lines using information from a FASTA
+        index (.fai) file. The contig lines are replaced with entries from the FAI file.
+
+        Parameters
+        ----------
+        input_vcf : str
+            Input VCF file path (can be .vcf or .vcf.gz)
+        output_vcf : str
+            Output VCF file path (.vcf.gz recommended)
+        fasta_fai : str
+            Path to the FASTA index (.fai) file
+
+        Returns
+        -------
+        None
+            Writes the updated VCF to output_vcf and creates an index
+
+        """
+        # Use bcftools reheader to update contig lines from FAI file
+        self.__execute(f"bcftools reheader -f {fasta_fai} -o {output_vcf} {input_vcf}")
+
+        # Index the output VCF
+        self.index_vcf(output_vcf)
+
+        # Index the output VCF
+        self.index_vcf(output_vcf)
+
     @staticmethod
     def copy_vcf_record(rec: "pysam.VariantRecord", new_header: "pysam.VariantHeader") -> "pysam.VariantRecord":
         """
