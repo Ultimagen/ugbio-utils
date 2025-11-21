@@ -304,6 +304,9 @@ def _write_vcf_records_with_source(
     """
     Write VCF records to output file with CNV_SOURCE annotation.
 
+    Note: This function clears all FILTER values from input records since
+    FILTER definitions are not included in the combined header.
+
     Parameters
     ----------
     vcf_in : pysam.VariantFile
@@ -317,6 +320,8 @@ def _write_vcf_records_with_source(
     """
     logger.info(f"Writing records from {source_name} VCF")
     for record in vcf_in:
+        # Clear filters before copying to avoid KeyError with undefined filters
+        record.filter.clear()
         # Create new record with combined header
         new_record = VcfUtils.copy_vcf_record(record, combined_header)
         # Add source tag if not already present
