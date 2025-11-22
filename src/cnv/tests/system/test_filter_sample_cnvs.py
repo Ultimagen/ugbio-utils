@@ -51,7 +51,7 @@ class TestFilterSampleCnvsIntegration:
         """Test the complete filter_sample_cnvs pipeline with all inputs."""
         # Input files
         input_bed_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.bed")
-        cnv_lcr_file = pjoin(resources_dir, "UG-CNV-LCR.bed")
+        cnv_lcr_file = pjoin(resources_dir, "ug_cnv_lcr.chr5.bed")
         sample_norm_coverage_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cov.bed")
         cohort_avg_coverage_file = pjoin(resources_dir, "coverage.cohort.bed")
         fasta_index_file = pjoin(resources_dir, "Homo_sapiens_assembly38.fasta.fai")
