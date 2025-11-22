@@ -94,3 +94,51 @@ class TestProcessCnmopsCnvsIntegration:
 
         # Compare output VCF with expected VCF
         compare_vcfs(out_vcf_file, expected_vcf_file)
+
+    def test_process_cnmops_cnvs_without_lcr_filtering(self, tmpdir, resources_dir):
+        """Test the process_cnmops_cnvs pipeline without LCR filtering."""
+        # Input files
+        input_bed_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.bed")
+        sample_norm_coverage_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cov.bed")
+        cohort_avg_coverage_file = pjoin(resources_dir, "coverage.cohort.bed")
+        fasta_index_file = pjoin(resources_dir, "Homo_sapiens_assembly38.fasta.fai")
+        sample_name = "test_sample_no_lcr"
+
+        # Run the pipeline without cnv_lcr_file
+        process_cnmops_cnvs.run(
+            [
+                "process_cnmops_cnvs",
+                "--input_bed_file",
+                input_bed_file,
+                "--out_directory",
+                f"{tmpdir}/",
+                "--sample_norm_coverage_file",
+                sample_norm_coverage_file,
+                "--cohort_avg_coverage_file",
+                cohort_avg_coverage_file,
+                "--fasta_index_file",
+                fasta_index_file,
+                "--intersection_cutoff",
+                "0.5",
+                "--sample_name",
+                sample_name,
+            ]
+        )
+
+        # Check that output files exist
+        out_vcf_file = pjoin(tmpdir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.sorted.annotate.vcf.gz")
+        out_vcf_idx_file = pjoin(tmpdir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.sorted.annotate.vcf.gz.tbi")
+
+        assert os.path.exists(out_vcf_file), f"Output VCF file not found: {out_vcf_file}"
+        assert os.path.exists(out_vcf_idx_file), f"Output VCF index file not found: {out_vcf_idx_file}"
+
+        # Verify VCF can be opened and has records
+        vcf = pysam.VariantFile(out_vcf_file)
+        records = list(vcf)
+        assert len(records) > 0, "Output VCF should contain variants"
+
+        # Verify that all variants have PASS filter (no LCR filtering applied)
+        for rec in records:
+            assert (
+                "PASS" in rec.filter.keys() or len(rec.filter.keys()) == 0
+            ), f"Expected PASS filter when no LCR filtering, got: {rec.filter.keys()}"

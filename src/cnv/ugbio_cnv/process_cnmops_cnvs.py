@@ -248,12 +248,12 @@ def run(argv):
     parser.add_argument(
         "--intersection_cutoff",
         help="intersection cutoff for bedtools subtract function",
-        required=True,
+        required=False,
         type=float,
         default=0.5,
     )
-    parser.add_argument("--cnv_lcr_file", help="UG-CNV-LCR bed file", required=True, type=str)
-    parser.add_argument("--min_cnv_length", required=True, type=int, default=10000)
+    parser.add_argument("--cnv_lcr_file", help="UG-CNV-LCR bed file", required=False, type=str)
+    parser.add_argument("--min_cnv_length", required=False, type=int, default=10000)
     parser.add_argument(
         "--out_directory",
         help="out directory where intermediate and output files will be saved."
@@ -291,9 +291,19 @@ def run(argv):
         cmd = f"cp {args.input_bed_file} {args.input_bed_file.replace('--','-TMP-')}"
         os.system(cmd)  # noqa: S605
         args.input_bed_file = args.input_bed_file.replace("--", "-TMP-")
-    out_annotate_bed_file = annotate_bed(
-        args.input_bed_file, args.intersection_cutoff, args.cnv_lcr_file, prefix, args.min_cnv_length
-    )
+
+    # Only annotate if lcr_file is provided
+    if args.cnv_lcr_file:
+        out_annotate_bed_file = annotate_bed(
+            args.input_bed_file, args.intersection_cutoff, args.cnv_lcr_file, prefix, args.min_cnv_length
+        )
+    else:
+        # If no lcr_file, just copy the input bed file (sorted)
+        out_bed_file_sorted = prefix + os.path.basename(args.input_bed_file).rstrip(".bed") + ".sorted.annotate.bed"
+        cmd = bedtools + " sort -i " + args.input_bed_file + " > " + out_bed_file_sorted
+        os.system(cmd)  # noqa: S605
+        logger.info(cmd)
+        out_annotate_bed_file = out_bed_file_sorted
 
     target_file = out_annotate_bed_file.replace("-TMP-", "--")
     cmd = f"mv {out_annotate_bed_file} {target_file}"
@@ -318,9 +328,7 @@ def run(argv):
         sys.exit(1)  # Exit with error status
     logger.info("Cleaning temporary files...")
     mu.cleanup_temp_files([out_annotate_bed_file] + [cov[2] for cov in coverage_annotations])
-    logger.info("output files:")
-    logger.info(out_annotate_bed_file)
-    logger.info(out_vcf_file)
+    logger.info(f"output files: {out_vcf_file}")
 
 
 def main():
@@ -329,6 +337,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# TODO:
-# cleanup coverage_annotations (remove temporary files)
