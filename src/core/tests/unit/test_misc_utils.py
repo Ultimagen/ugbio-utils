@@ -1,8 +1,10 @@
+import os
+import tempfile
 from io import StringIO
 
 import numpy as np
 import pytest
-from ugbio_core.misc_utils import BufferedFileIterator, idx_last_nz, idx_next_nz
+from ugbio_core.misc_utils import BufferedFileIterator, cleanup_temp_files, idx_last_nz, idx_next_nz
 
 
 class TestMiscUtils:
@@ -223,3 +225,111 @@ class TestBufferedFileIterator:
         # This should raise ValueError due to "invalid"
         with pytest.raises(ValueError):
             next(iterator)
+
+
+class TestCleanupTempFiles:
+    def test_cleanup_single_file(self):
+        """Test cleanup of a single temporary file."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            temp_file = tmp.name
+            tmp.write(b"test content")
+
+        assert os.path.exists(temp_file)
+
+        cleanup_temp_files([temp_file])
+
+        assert not os.path.exists(temp_file)
+
+    def test_cleanup_multiple_files(self):
+        """Test cleanup of multiple temporary files."""
+        temp_files = []
+        for i in range(3):
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                temp_files.append(tmp.name)
+                tmp.write(f"test content {i}".encode())
+
+        for f in temp_files:
+            assert os.path.exists(f)
+
+        cleanup_temp_files(temp_files)
+
+        for f in temp_files:
+            assert not os.path.exists(f)
+
+    def test_cleanup_with_index_files(self):
+        """Test cleanup of files with various index extensions."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".vcf") as tmp:
+            temp_file = tmp.name
+            tmp.write(b"test vcf content")
+
+        # Create associated index files
+        index_extensions = [".tbi", ".csi", ".idx", ".crai", ".bai"]
+        index_files = []
+        for ext in index_extensions:
+            index_file = temp_file + ext
+            with open(index_file, "w") as f:
+                f.write("index content")
+            index_files.append(index_file)
+
+        # Verify all files exist
+        assert os.path.exists(temp_file)
+        for idx_file in index_files:
+            assert os.path.exists(idx_file)
+
+        # Cleanup
+        cleanup_temp_files([temp_file])
+
+        # Verify all files are removed
+        assert not os.path.exists(temp_file)
+        for idx_file in index_files:
+            assert not os.path.exists(idx_file)
+
+    def test_cleanup_nonexistent_file(self):
+        """Test that cleanup handles nonexistent files gracefully."""
+        nonexistent_file = "/tmp/nonexistent_file_xyz123.tmp"
+
+        # Should not raise an error
+        cleanup_temp_files([nonexistent_file])
+
+    def test_cleanup_empty_list(self):
+        """Test cleanup with empty file list."""
+        cleanup_temp_files([])
+
+    def test_cleanup_mixed_existing_nonexisting(self):
+        """Test cleanup with mix of existing and non-existing files."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            existing_file = tmp.name
+            tmp.write(b"test content")
+
+        nonexistent_file = "/tmp/nonexistent_file_xyz456.tmp"
+
+        temp_files = [existing_file, nonexistent_file]
+
+        assert os.path.exists(existing_file)
+        assert not os.path.exists(nonexistent_file)
+
+        cleanup_temp_files(temp_files)
+
+        assert not os.path.exists(existing_file)
+        assert not os.path.exists(nonexistent_file)
+
+    def test_cleanup_with_some_index_files(self):
+        """Test cleanup when only some index files exist."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".bam") as tmp:
+            temp_file = tmp.name
+            tmp.write(b"test bam content")
+
+        # Create only .bai index file
+        bai_file = temp_file + ".bai"
+        with open(bai_file, "w") as f:
+            f.write("bam index")
+
+        # Other index files don't exist
+        assert os.path.exists(temp_file)
+        assert os.path.exists(bai_file)
+
+        cleanup_temp_files([temp_file])
+
+        # Both should be removed
+        assert not os.path.exists(temp_file)
+        assert not os.path.exists(bai_file)

@@ -31,6 +31,34 @@ INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
         "INFO",
     ),
     "JUMP_ALIGNMENTS": ("JUMP_ALIGNMENTS", 1, "Float", "Number of jump alignments supporting this CNV", "INFO"),
+    "CNMOPS_COV_MEAN": (
+        "CNMOPS_COV_MEAN",
+        1,
+        "Float",
+        "Mean coverage in the CNV region for the sample (cn.mops)",
+        "INFO",
+    ),
+    "CNMOPS_COV_STDEV": (
+        "CNMOPS_COV_STDEV",
+        1,
+        "Float",
+        "Standard deviation of coverage in the CNV region for the sample (cn.mops)",
+        "INFO",
+    ),
+    "CNMOPS_COHORT_MEAN": (
+        "CNMOPS_COHORT_MEAN",
+        1,
+        "Float",
+        "Mean coverage in the CNV region across the cohort (cn.mops)",
+        "INFO",
+    ),
+    "CNMOPS_COHORT_STDEV": (
+        "CNMOPS_COHORT_STDEV",
+        1,
+        "Float",
+        "Standard deviation of coverage in the CNV region across the cohort (cn.mops)",
+        "INFO",
+    ),
 }
 
 # the reason filters require special treatment is that they need to be
@@ -60,6 +88,20 @@ FILTER_TAG_REGISTRY = {
         None,
         None,
         "Overlaps with telomere or centromere regions",
+        "FILTER",
+    ),
+    "LEN": (
+        "LEN",
+        None,
+        None,
+        "CNV length is below the minimum length threshold (cn.mops)",
+        "FILTER",
+    ),
+    "UG-CNV-LCR": (
+        "UG-CNV-LCR",
+        None,
+        None,
+        "Overlaps with low-complexity regions as defined by UGBio CNV module",
         "FILTER",
     ),
 }

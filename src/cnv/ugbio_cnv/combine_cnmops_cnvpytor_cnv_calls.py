@@ -9,6 +9,7 @@ from os.path import join as pjoin
 import pandas as pd
 import pysam
 import ugbio_cnv.convert_combined_cnv_results_to_output_formats as output_results
+import ugbio_core.misc_utils as mu
 from pyfaidx import Fasta
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
@@ -449,7 +450,7 @@ def combine_cnv_vcfs(
     vcf_utils.index_vcf(output_vcf)
 
     # Clean up temporary files
-    _cleanup_temp_files([cnmops_vcf_updated, cnvpytor_vcf_updated, temp_combined_vcf])
+    mu.cleanup_temp_files([cnmops_vcf_updated, cnvpytor_vcf_updated, temp_combined_vcf])
 
     logger.info(f"Successfully created combined VCF: {output_vcf}")
     return output_vcf

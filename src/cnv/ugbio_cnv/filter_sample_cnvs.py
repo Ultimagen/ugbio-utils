@@ -18,10 +18,13 @@
 import argparse
 import logging
 import os
+import subprocess
 import sys
 import warnings
 
 import pandas as pd
+import ugbio_cnv.convert_combined_cnv_results_to_output_formats as vcf_writer
+import ugbio_core.misc_utils as mu
 from ugbio_core import filter_bed
 from ugbio_core.logger import logger
 
@@ -123,7 +126,7 @@ def aggregate_annotations_in_df(
     - Coverage annotation column names are formatted as CNMOPS_{SAMPLE}_{OPERATION}
       in uppercase (e.g., CNMOPS_COV_MEAN)
     - CopyNumber is converted to an integer by removing the "CN" prefix
-    - FILTER is a tuple of filter names (("PASS",) tuple when no filters present)
+    - filter is a tuple of filter names (("PASS",) tuple when no filters present)
     """
     # Read the primary bed file (no header, 4 columns)
     cnv_df = pd.read_csv(primary_bed_file, sep="\t", header=None, names=["chr", "start", "end", "annotation"])
@@ -149,9 +152,13 @@ def aggregate_annotations_in_df(
             filters.extend(part_items[1:])
 
         # Return copy number and tuple of filters (PASS tuple if no filters)
-        return copy_number, tuple(filters) if filters else ("PASS",)
+        return copy_number, ",".join(tuple(filters)) if filters else "PASS"
 
-    cnv_df[["CopyNumber", "FILTER"]] = cnv_df["annotation"].apply(lambda x: pd.Series(parse_annotation(x)))
+    neutral = 2
+    cnv_df[["CopyNumber", "filter"]] = cnv_df["annotation"].apply(lambda x: pd.Series(parse_annotation(x)))
+    cnv_df["SVTYPE"] = cnv_df["CopyNumber"].apply(
+        lambda x: "DUP" if x > neutral else ("DEL" if x < neutral else "NEUTRAL")
+    )
     cnv_df = cnv_df.drop(columns=["annotation"])
 
     # Process each coverage annotation file
@@ -207,7 +214,7 @@ def _aggregate_coverages(
     coverage_annotations = []
     # annotate with coverage info
     input_sample = ["cov", "cohort"]
-    output_param = ["mean", "std"]
+    output_param = ["mean", "stdev"]
     for isamp in input_sample:
         for oparam in output_param:
             out_annotate_bed_file_cov = annotated_bed_file.replace(".annotate.bed", f".annotate.{isamp}.{oparam}.bed")
@@ -230,8 +237,8 @@ def run(argv):
     1. lcr bed (ug_cnv_lcr) file
     3. length
     output consists of 2 files:
+    - VCF file with filtering tags
     - annotated bed file with filtering tags
-    - filtered bed file
     """
     parser = argparse.ArgumentParser(
         prog="filter_sample_cnvs.py", description="Filter cnvs bed file by: ug_cnv_lcr, length"
@@ -264,6 +271,13 @@ def run(argv):
         required=False,
         default="INFO",
     )
+    parser.add_argument(
+        "--fasta_index_file",
+        help="tab delimeted file holding reference genome chr ids with their lengths. (.fai file)",
+        required=True,
+        type=str,
+    )
+    parser.add_argument("--sample_name", help="sample name", required=True, type=str)
 
     args = parser.parse_args(argv[1:])
     logger.setLevel(getattr(logging, args.verbosity))
@@ -291,10 +305,21 @@ def run(argv):
             out_annotate_bed_file, args.sample_norm_coverage_file, args.cohort_avg_coverage_file, args.out_directory
         )
 
-    _ = aggregate_annotations_in_df(out_annotate_bed_file, coverage_annotations)
-
+    cnmops_cnv_df = aggregate_annotations_in_df(out_annotate_bed_file, coverage_annotations)
+    out_vcf_file = out_annotate_bed_file.replace(".bed", ".vcf.gz")
+    vcf_writer.write_cnv_vcf(out_vcf_file, cnmops_cnv_df, args.sample_name, args.fasta_index_file)
+    # index outfile
+    try:
+        cmd = ["bcftools", "index", "-t", out_vcf_file]
+        subprocess.check_call(cmd)
+    except subprocess.CalledProcessError as e:
+        logging.error(f"bcftools index command failed with exit code: {e.returncode}")
+        sys.exit(1)  # Exit with error status
+    logger.info("Cleaning temporary files...")
+    mu.cleanup_temp_files([out_annotate_bed_file] + [cov[2] for cov in coverage_annotations])
     logger.info("output files:")
     logger.info(out_annotate_bed_file)
+    logger.info(out_vcf_file)
 
 
 def main():
@@ -303,3 +328,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# TODO:
+# cleanup coverage_annotations (remove temporary files)
