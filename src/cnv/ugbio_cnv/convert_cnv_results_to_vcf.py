@@ -34,7 +34,7 @@ def add_cnmops_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.Vari
     header.add_line('##ALT=<ID=DUP,Description="Region of elevated copy number relative to the reference">')
 
     # Add FILTER using structured method (PASS is automatically added by pysam)
-    header.filters.add("UG-CNV-LCR", None, None, "CNV calls overlpping (>50% overlap) with UG-CNV-LCR")
+    header.filters.add("UG-CNV-LCR", None, None, "CNV calls overlapping (>50% overlap) with UG-CNV-LCR")
     header.filters.add("LEN", None, None, "CNV calls with length less then 10Kb")
 
     # Add INFO using structured method

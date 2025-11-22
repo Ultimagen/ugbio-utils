@@ -435,7 +435,7 @@ def _add_genotype_to_record(record: pysam.VariantRecord, sample_name: str, row: 
     record.samples[sample_name]["GT"] = gt
 
 
-def write_combined_vcf(outfile: str, cnv_df: pd.DataFrame, sample_name: str, fasta_index_file: str) -> None:
+def write_cnv_vcf(outfile: str, cnv_df: pd.DataFrame, sample_name: str, fasta_index_file: str) -> None:
     """
     Write CNV calls directly from dataframe to a VCF file.
 
@@ -520,7 +520,7 @@ def run(argv):
 
     # Process CNV data and write VCF
     cnv_df = prepare_cnv_dataframe(args.cnv_annotated_bed_file)
-    write_combined_vcf(out_vcf_file, cnv_df, args.sample_name, args.fasta_index_file)
+    write_cnv_vcf(out_vcf_file, cnv_df, args.sample_name, args.fasta_index_file)
 
     # index outfile
     try:
