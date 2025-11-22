@@ -167,7 +167,7 @@ def aggregate_annotations_in_df(
             filters.extend(part_items[1:])
 
         # Return copy number and tuple of filters (PASS tuple if no filters)
-        return copy_number, ",".join(tuple(filters)) if filters else "PASS"
+        return copy_number, ",".join(filters) if filters else "PASS"
 
     neutral = 2
     cnv_df[["CopyNumber", "filter"]] = cnv_df["annotation"].apply(lambda x: pd.Series(parse_annotation(x)))
@@ -219,7 +219,7 @@ def _aggregate_coverages(
         Path to the sample normalized coverage bed file.
     cohort_avg_coverage_file : str
         Path to the cohort average coverage bed file.
-    tmpdir : str
+    tempdir : str
         Directory to store intermediate files.
     Returns
     -------
