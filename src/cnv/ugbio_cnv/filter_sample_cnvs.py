@@ -21,6 +21,7 @@ import os
 import sys
 import warnings
 
+import pandas as pd
 from ugbio_core import filter_bed
 from ugbio_core.logger import logger
 
@@ -87,10 +88,140 @@ def annotate_bed(bed_file, lcr_cutoff, lcr_file, prefix, length_cutoff=10000):
     return out_annotate
 
 
+def aggregate_annotations_in_df(
+    primary_bed_file: str, coverage_annotations: list[tuple[str, str, str]]
+) -> pd.DataFrame:
+    """
+    Aggregate multiple annotation bed files into a single DataFrame.
+
+    This function reads a primary bed file and merges coverage annotations from multiple
+    bed files into a single DataFrame. The primary bed file's 4th column contains
+    semicolon-separated annotations, each of which has a copy number and optional filters.
+    The copy number is extracted as an integer, and filters are stored as a tuple.
+
+    Parameters
+    ----------
+    primary_bed_file : str
+        Path to the primary bed file with 4 columns (chr, start, end, annotation).
+        The 4th column contains annotations like "CN2", "CN3|UG-CNV-LCR", or
+        "CN1|LEN;CN1|UG-CNV-LCR" (semicolon-separated, CN is always the same).
+    coverage_annotations : list of tuple
+        List of tuples, each containing (sample_name, operation, bed_file_path).
+        Example: [('cov', 'mean', 'file1.bed'), ('cov', 'std', 'file2.bed')]
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns: chr, start, end, CopyNumber (int), FILTER (tuple),
+        and additional columns for each coverage annotation (e.g., CNMOPS_COV_MEAN,
+        CNMOPS_COV_STD, CNMOPS_COHORT_MEAN, CNMOPS_COHORT_STD).
+
+    Notes
+    -----
+    - All bed files are assumed to have the same regions in the same order
+    - The function performs sorting to ensure proper alignment
+    - Coverage annotation column names are formatted as CNMOPS_{SAMPLE}_{OPERATION}
+      in uppercase (e.g., CNMOPS_COV_MEAN)
+    - CopyNumber is converted to an integer by removing the "CN" prefix
+    - FILTER is a tuple of filter names (("PASS",) tuple when no filters present)
+    """
+    # Read the primary bed file (no header, 4 columns)
+    cnv_df = pd.read_csv(primary_bed_file, sep="\t", header=None, names=["chr", "start", "end", "annotation"])
+
+    # Sort the DataFrame to ensure consistent ordering
+    cnv_df = cnv_df.sort_values(["chr", "start", "end"]).reset_index(drop=True)
+
+    # Parse the annotation column
+    # Format: "CN2", "CN3|UG-CNV-LCR", or "CN1|LEN;CN1|UG-CNV-LCR"
+    def parse_annotation(annotation_str):
+        # Split by semicolon to get all annotations
+        parts = annotation_str.split(";")
+
+        # Extract copy number from first part (remove "CN" prefix)
+        first_part = parts[0].split("|")
+        copy_number = int(first_part[0].replace("CN", ""))
+
+        # Collect all filters from all parts
+        filters = []
+        for part in parts:
+            part_items = part.split("|")
+            # Skip the CN part (first item) and add any filters
+            filters.extend(part_items[1:])
+
+        # Return copy number and tuple of filters (PASS tuple if no filters)
+        return copy_number, tuple(filters) if filters else ("PASS",)
+
+    cnv_df[["CopyNumber", "FILTER"]] = cnv_df["annotation"].apply(lambda x: pd.Series(parse_annotation(x)))
+    cnv_df = cnv_df.drop(columns=["annotation"])
+
+    # Process each coverage annotation file
+    for sample_name, operation, bed_file_path in coverage_annotations:
+        # Read the coverage annotation bed file
+        cov_df = pd.read_csv(bed_file_path, sep="\t", header=None)
+
+        # Assign column names for sorting
+        cov_df.columns = [f"col_{i}" for i in range(len(cov_df.columns))]
+
+        # Sort to match the primary bed file (first 3 columns are chr, start, end)
+        cov_df = cov_df.sort_values(by=["col_0", "col_1", "col_2"]).reset_index(drop=True)
+
+        # Extract the last column (the coverage value)
+        last_col_name = cov_df.columns[-1]
+        coverage_values = cov_df[last_col_name]
+
+        # Create column name in the format CNMOPS_{SAMPLE}_{OPERATION} (uppercase)
+        col_name = f"CNMOPS_{sample_name.upper()}_{operation.upper()}"
+
+        # Add the coverage values as a new column
+        cnv_df[col_name] = coverage_values.to_numpy()
+
+    return cnv_df
+
+
 def check_path(path):
     if not os.path.exists(os.path.dirname(path)):
         os.makedirs(os.path.dirname(path))
         logger.info("creating out directory : %s", path)
+
+
+def _aggregate_coverages(
+    annotated_bed_file: str, sample_norm_coverage_file: str, cohort_avg_coverage_file: str, tempdir: str
+) -> list[tuple[str, str, str]]:
+    """
+    Prepare coverage annotations for aggregation.
+    Parameters
+    ----------
+    annotated_bed_file : str
+        Path to the annotated bed file.
+    sample_norm_coverage_file : str
+        Path to the sample normalized coverage bed file.
+    cohort_avg_coverage_file : str
+        Path to the cohort average coverage bed file.
+    tmpdir : str
+        Directory to store intermediate files.
+    Returns
+    -------
+    list of tuple
+        List of tuples containing (sample/cohort cvg type, operation, bed_file_path) for coverage annotations.
+    """
+    coverage_annotations = []
+    # annotate with coverage info
+    input_sample = ["cov", "cohort"]
+    output_param = ["mean", "std"]
+    for isamp in input_sample:
+        for oparam in output_param:
+            out_annotate_bed_file_cov = annotated_bed_file.replace(".annotate.bed", f".annotate.{isamp}.{oparam}.bed")
+            input_cov_file = sample_norm_coverage_file if isamp == "cov" else cohort_avg_coverage_file
+            filter_bed.bedtools_map(
+                a_bed=annotated_bed_file,
+                b_bed=input_cov_file,
+                output_bed=out_annotate_bed_file_cov,
+                operation=oparam,
+                presort=True,
+                tempdir=tempdir,
+            )
+            coverage_annotations.append((isamp, oparam, out_annotate_bed_file_cov))
+    return coverage_annotations
 
 
 def run(argv):
@@ -108,7 +239,7 @@ def run(argv):
     parser.add_argument("--input_bed_file", help="input bed file with .bed suffix", required=True, type=str)
     parser.add_argument(
         "--intersection_cutoff",
-        help="intersection cutoff for bedtools substruct function",
+        help="intersection cutoff for bedtools subtract function",
         required=True,
         type=float,
         default=0.5,
@@ -154,16 +285,13 @@ def run(argv):
     os.system(cmd)  # noqa: S605
     out_annotate_bed_file = target_file
 
+    coverage_annotations = []
     if args.sample_norm_coverage_file and args.cohort_avg_coverage_file:
-        # annotate with coverage info
-        out_annotate_bed_file_cov = out_annotate_bed_file.replace(".annotate.bed", ".annotate.cov.bed")
-        filter_bed.bedtools_map(
-            out_annotate_bed_file,
-            args.sample_norm_coverage_file,
-            args.cohort_avg_coverage_file,
-            out_annotate_bed_file_cov,
+        coverage_annotations = _aggregate_coverages(
+            out_annotate_bed_file, args.sample_norm_coverage_file, args.cohort_avg_coverage_file, args.out_directory
         )
-        out_annotate_bed_file = out_annotate_bed_file_cov
+
+    _ = aggregate_annotations_in_df(out_annotate_bed_file, coverage_annotations)
 
     logger.info("output files:")
     logger.info(out_annotate_bed_file)
