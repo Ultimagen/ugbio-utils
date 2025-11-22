@@ -280,6 +280,12 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     )
     parser.add_argument("--out_directory", help="output directory", required=True, type=str)
     parser.add_argument("--sample_name", help="sample name", required=True, type=str)
+    parser.add_argument(
+        "--vcf-like",
+        help="input CNV calls are in VCF-like format (e.g cn.mops,cnvpytor)",
+        action="store_true",
+        required=False,
+    )
     parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO")
 
     args = parser.parse_args(argv[1:])
@@ -340,13 +346,22 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     ##### plot CNV calls #####
     ##########################
     # load UG calls
+    def extract_copy_number(info_string):
+        spstr = info_string.split(";")
+        spstr = [x for x in spstr if x.startswith("CopyNumber")][0]
+        return float(spstr.replace("CopyNumber=", ""))
+
     if args.duplication_cnv_calls:
         if os.path.getsize(args.duplication_cnv_calls) > 0:
             df_dup = pd.read_csv(args.duplication_cnv_calls, sep="\t", header=None)
-            df_dup.columns = ["chr", "start", "end", "copy-number"]
+            if args.vcf_like:
+                df_dup.columns = ["chr", "start", "end", "info"]
+                df_dup["copy-number"] = df_dup["info"].apply(extract_copy_number)
+            else:
+                df_dup.columns = ["chr", "start", "end", "copy-number"]
             df_dup = get_x_location_for_fig(df_dup, df_germline_cov_norm_100k)
         else:
-            logger.warn("duplication_cnv_calls file is empty")
+            logger.warning("duplication_cnv_calls file is empty")
             df_dup = None
     else:
         df_dup = None
@@ -354,10 +369,15 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     if args.deletion_cnv_calls:
         if os.path.getsize(args.deletion_cnv_calls) > 0:
             df_del = pd.read_csv(args.deletion_cnv_calls, sep="\t", header=None)
-            df_del.columns = ["chr", "start", "end", "copy-number"]
+            if args.vcf_like:
+                df_del.columns = ["chr", "start", "end", "info"]
+                df_del["copy-number"] = df_del["info"].apply(extract_copy_number)
+            else:
+                df_del.columns = ["chr", "start", "end", "copy-number"]
+
             df_del = get_x_location_for_fig(df_del, df_germline_cov_norm_100k)
         else:
-            logger.warn("deletion_cnv_calls file is empty")
+            logger.warning("deletion_cnv_calls file is empty")
             df_del = None
     else:
         df_del = None
@@ -368,7 +388,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
             df_gt_dup.columns = ["chr", "start", "end", "copy-number"]
             df_gt_dup = get_x_location_for_fig(df_gt_dup, df_germline_cov_norm_100k)
         else:
-            logger.warn("gt_duplication_cnv_calls file is empty")
+            logger.warning("gt_duplication_cnv_calls file is empty")
             df_gt_dup = None
     else:
         df_gt_dup = None
@@ -379,7 +399,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
             df_gt_del.columns = ["chr", "start", "end", "copy-number"]
             df_gt_del = get_x_location_for_fig(df_gt_del, df_germline_cov_norm_100k)
         else:
-            logger.warn("gt_deletion_cnv_calls file is empty")
+            logger.warning("gt_deletion_cnv_calls file is empty")
             df_gt_del = None
     else:
         df_gt_del = None
