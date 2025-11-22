@@ -157,7 +157,7 @@ def aggregate_annotations_in_df(
 
         # Extract copy number from first part (remove "CN" prefix)
         first_part = parts[0].split("|")
-        copy_number = int(first_part[0].replace("CN", ""))
+        copy_number = float(first_part[0].replace("CN", ""))
 
         # Collect all filters from all parts
         filters = []
