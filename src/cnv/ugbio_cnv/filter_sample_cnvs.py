@@ -84,12 +84,7 @@ def annotate_bed(bed_file, lcr_cutoff, lcr_file, prefix, length_cutoff=10000):
     os.system(cmd)  # noqa: S605
     logger.info(cmd)
 
-    out_filtered = prefix + os.path.basename(bed_file).rstrip(".bed") + ".filter.bed"
-    cmd = "cat " + out_annotate + " | grep -v \"|\" | sed 's/\t$//' > " + out_filtered
-    os.system(cmd)  # noqa: S605
-    logger.info(cmd)
-
-    return [out_annotate, out_filtered]
+    return out_annotate
 
 
 def check_path(path):
@@ -128,6 +123,11 @@ def run(argv):
         type=str,
     )
     parser.add_argument(
+        "--sample_norm_coverage_file", help="sample normalized coverage file (BED)", required=False, type=str
+    )
+    parser.add_argument("--cohort_avg_coverage_file", help="Cohort average coverage (BED)", required=False, type=str)
+
+    parser.add_argument(
         "--verbosity",
         help="Verbosity: ERROR, WARNING, INFO, DEBUG",
         required=False,
@@ -145,7 +145,7 @@ def run(argv):
         cmd = f"cp {args.input_bed_file} {args.input_bed_file.replace('--','-TMP-')}"
         os.system(cmd)  # noqa: S605
         args.input_bed_file = args.input_bed_file.replace("--", "-TMP-")
-    [out_annotate_bed_file, out_filtered_bed_file] = annotate_bed(
+    out_annotate_bed_file = annotate_bed(
         args.input_bed_file, args.intersection_cutoff, args.cnv_lcr_file, prefix, args.min_cnv_length
     )
 
@@ -154,14 +154,19 @@ def run(argv):
     os.system(cmd)  # noqa: S605
     out_annotate_bed_file = target_file
 
-    target_file = out_filtered_bed_file.replace("-TMP-", "--")
-    cmd = f"mv {out_filtered_bed_file} {target_file}"
-    os.system(cmd)  # noqa: S605
-    out_filtered_bed_file = target_file
+    if args.sample_norm_coverage_file and args.cohort_avg_coverage_file:
+        # annotate with coverage info
+        out_annotate_bed_file_cov = out_annotate_bed_file.replace(".annotate.bed", ".annotate.cov.bed")
+        filter_bed.bedtools_map(
+            out_annotate_bed_file,
+            args.sample_norm_coverage_file,
+            args.cohort_avg_coverage_file,
+            out_annotate_bed_file_cov,
+        )
+        out_annotate_bed_file = out_annotate_bed_file_cov
 
     logger.info("output files:")
     logger.info(out_annotate_bed_file)
-    logger.info(out_filtered_bed_file)
 
 
 def main():

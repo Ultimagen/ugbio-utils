@@ -163,3 +163,44 @@ def test_bedtools_map(tmpdir, a_content, b_content, column, operation, expected_
         result = f.readlines()
 
     assert result == expected_lines
+
+
+def test_bedtools_map_with_custom_tempdir(tmpdir):
+    """Test bedtools_map with custom temporary directory location."""
+    a_content = "chr1\t300\t400\tregion2\nchr1\t100\t200\tregion1\n"  # unsorted
+    b_content = "chr1\t350\t360\tscore3\t30\nchr1\t150\t160\tscore1\t10\n"  # unsorted
+
+    a_file = tmpdir.join("a.bed")
+    a_file.write(a_content)
+
+    b_file = tmpdir.join("b.bed")
+    b_file.write(b_content)
+
+    # Create custom temp directory
+    custom_temp = tmpdir.join("custom_temp")
+    custom_temp.mkdir()
+
+    output_file = str(tmpdir.join("output.bed"))
+
+    # Run with custom tempdir
+    bedtools_map(
+        a_bed=str(a_file),
+        b_bed=str(b_file),
+        output_bed=output_file,
+        column=5,
+        operation="mean",
+        presort=True,
+        tempdir=str(custom_temp),
+        sp=SimplePipeline(0, 100),
+    )
+
+    # Read output
+    with open(output_file) as f:
+        result = f.readlines()
+
+    # Verify results
+    expected = [
+        "chr1\t100\t200\tregion1\t10\n",
+        "chr1\t300\t400\tregion2\t30\n",
+    ]
+    assert result == expected

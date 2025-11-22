@@ -275,6 +275,7 @@ def bedtools_map(
     presort: bool = False,
     sp: SimplePipeline | None = None,
     additional_args: str = "",
+    tempdir: str | None = None,
 ) -> None:
     """
     Run bedtools map to annotate intervals in file A with values from file B.
@@ -301,6 +302,9 @@ def bedtools_map(
         SimplePipeline object for command execution logging.
     additional_args : str, optional
         Additional arguments to pass to bedtools map (e.g., "-null 0").
+    tempdir : str, optional
+        Directory to use for temporary files when presort=True.
+        If None, uses the system default temporary directory.
 
     Returns
     -------
@@ -318,6 +322,7 @@ def bedtools_map(
     --------
     >>> bedtools_map("regions.bed", "scores.bed", "annotated.bed", column=5, operation="max")
     >>> bedtools_map("regions.bed", "scores.bed", "output.bed", presort=True, additional_args="-null 0")
+    >>> bedtools_map("regions.bed", "scores.bed", "output.bed", presort=True, tempdir="/scratch")
     """
     # Check if input files exist
     if not os.path.exists(a_bed):
@@ -334,9 +339,9 @@ def bedtools_map(
 
     # Prepare file paths (sort if requested)
     if presort:
-        with tempfile.TemporaryDirectory() as tempdir:
-            sorted_a = os.path.join(tempdir, "sorted_a.bed")
-            sorted_b = os.path.join(tempdir, "sorted_b.bed")
+        with tempfile.TemporaryDirectory(dir=tempdir) as tmpdir:
+            sorted_a = os.path.join(tmpdir, "sorted_a.bed")
+            sorted_b = os.path.join(tmpdir, "sorted_b.bed")
 
             # Sort file A
             sort_a_cmd = f"{bedtools} sort -i {a_bed} > {sorted_a}"
