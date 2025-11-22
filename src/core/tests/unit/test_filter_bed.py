@@ -1,6 +1,6 @@
 import pytest
 from simppl.simple_pipeline import SimplePipeline
-from ugbio_core.filter_bed import intersect_bed_regions
+from ugbio_core.filter_bed import bedtools_map, intersect_bed_regions
 
 
 @pytest.mark.parametrize(
@@ -66,3 +66,100 @@ def test_intersect_bed_regions(tmpdir, include_regions, exclude_regions, expecte
         result = f.readlines()
 
     assert result == expected_output
+
+
+@pytest.mark.parametrize(
+    "a_content, b_content, column, operation, expected_lines, presort",
+    [
+        # Test basic mean operation on column 4 (scores)
+        (
+            "chr1\t100\t200\tregion1\n" "chr1\t300\t400\tregion2\n",
+            "chr1\t150\t160\tscore1\t10\n" "chr1\t170\t180\tscore2\t20\n" "chr1\t350\t360\tscore3\t30\n",
+            5,
+            "mean",
+            [
+                "chr1\t100\t200\tregion1\t15\n",
+                "chr1\t300\t400\tregion2\t30\n",
+            ],
+            False,
+        ),
+        # Test sum operation
+        (
+            "chr1\t100\t200\tregion1\n",
+            "chr1\t150\t160\tscore1\t10\n" "chr1\t170\t180\tscore2\t20\n",
+            5,
+            "sum",
+            ["chr1\t100\t200\tregion1\t30\n"],
+            False,
+        ),
+        # Test max operation
+        (
+            "chr1\t100\t200\tregion1\n",
+            "chr1\t150\t160\tscore1\t10\n" "chr1\t170\t180\tscore2\t25\n" "chr1\t190\t195\tscore3\t5\n",
+            5,
+            "max",
+            ["chr1\t100\t200\tregion1\t25\n"],
+            False,
+        ),
+        # Test count operation
+        (
+            "chr1\t100\t200\tregion1\n" "chr1\t300\t400\tregion2\n",
+            "chr1\t150\t160\tscore1\t10\n" "chr1\t170\t180\tscore2\t20\n" "chr1\t350\t360\tscore3\t30\n",
+            5,
+            "count",
+            [
+                "chr1\t100\t200\tregion1\t2\n",
+                "chr1\t300\t400\tregion2\t1\n",
+            ],
+            False,
+        ),
+        # Test with presort enabled
+        (
+            "chr1\t300\t400\tregion2\n" "chr1\t100\t200\tregion1\n",  # unsorted
+            "chr1\t350\t360\tscore3\t30\n" "chr1\t150\t160\tscore1\t10\n",  # unsorted
+            5,
+            "mean",
+            [
+                "chr1\t100\t200\tregion1\t10\n",
+                "chr1\t300\t400\tregion2\t30\n",
+            ],
+            True,
+        ),
+        # Test collapse operation (concatenates values)
+        (
+            "chr1\t100\t200\tregion1\n",
+            "chr1\t150\t160\tscore1\t10\n" "chr1\t170\t180\tscore2\t20\n",
+            5,
+            "collapse",
+            ["chr1\t100\t200\tregion1\t10,20\n"],
+            False,
+        ),
+    ],
+)
+def test_bedtools_map(tmpdir, a_content, b_content, column, operation, expected_lines, presort):
+    """Test bedtools_map function with various operations and parameters."""
+    # Create input files
+    a_file = tmpdir.join("a.bed")
+    a_file.write(a_content)
+
+    b_file = tmpdir.join("b.bed")
+    b_file.write(b_content)
+
+    output_file = str(tmpdir.join("output.bed"))
+
+    # Run bedtools_map
+    bedtools_map(
+        a_bed=str(a_file),
+        b_bed=str(b_file),
+        output_bed=output_file,
+        column=column,
+        operation=operation,
+        presort=presort,
+        sp=SimplePipeline(0, 100),
+    )
+
+    # Read and verify output
+    with open(output_file) as f:
+        result = f.readlines()
+
+    assert result == expected_lines

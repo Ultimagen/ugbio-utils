@@ -16,6 +16,25 @@ bedtools = "bedtools"
 
 
 def filter_by_bed_file(in_bed_file, filtration_cutoff, filtering_bed_file, prefix, tag):
+    """Filter BED file by another BED file using bedtools subtract.
+    Parameters
+    ----------
+    in_bed_file : str
+        Input BED file to be filtered.
+    filtration_cutoff : float
+        Filtration cutoff (fraction of overlap required to filter).
+    filtering_bed_file : str
+        BED file containing regions to filter out.
+    prefix : str
+        Prefix for output files.
+    tag : str
+        Tag to append to output filenames.
+
+    Returns
+    -------
+    str
+        Path to the annotated BED file with filtered regions marked.
+    """
     out_filename = os.path.basename(in_bed_file)
     out_filtered_bed_file = prefix + out_filename.rstrip(".bed") + "." + tag + ".bed"
     cmd = (
@@ -244,3 +263,101 @@ def count_bases_in_bed_file(file_path: str) -> int:
                 n_bases_in_region += int(spl[2]) - int(spl[1])
 
     return n_bases_in_region
+
+
+def bedtools_map(
+    a_bed: str,
+    b_bed: str,
+    output_bed: str,
+    column: int | str = 4,
+    operation: str = "mean",
+    *,
+    presort: bool = False,
+    sp: SimplePipeline | None = None,
+    additional_args: str = "",
+) -> None:
+    """
+    Run bedtools map to annotate intervals in file A with values from file B.
+
+    Parameters
+    ----------
+    a_bed : str
+        Path to BED file A (intervals to be annotated).
+    b_bed : str
+        Path to BED file B (annotation source).
+    output_bed : str
+        Path to output BED file with annotations.
+    column : int or str, optional
+        Column number from B file to map onto A (default: 4).
+        Can be an integer or string representation of integer.
+    operation : str, optional
+        Operation to apply when multiple B intervals overlap an A interval.
+        Options include: sum, mean, median, min, max, count, collapse, etc.
+        Default: "mean". See bedtools map documentation for full list.
+    presort : bool, optional
+        If True, sort input files before running bedtools map (default: False).
+        Bedtools map requires sorted input.
+    sp : SimplePipeline, optional
+        SimplePipeline object for command execution logging.
+    additional_args : str, optional
+        Additional arguments to pass to bedtools map (e.g., "-null 0").
+
+    Returns
+    -------
+    None
+        The function saves the annotated regions to the output_bed file.
+
+    Raises
+    ------
+    FileNotFoundError
+        If either input file does not exist.
+    RuntimeError
+        If bedtools is not installed.
+
+    Examples
+    --------
+    >>> bedtools_map("regions.bed", "scores.bed", "annotated.bed", column=5, operation="max")
+    >>> bedtools_map("regions.bed", "scores.bed", "output.bed", presort=True, additional_args="-null 0")
+    """
+    # Check if input files exist
+    if not os.path.exists(a_bed):
+        raise FileNotFoundError(f"File A '{a_bed}' does not exist.")
+    if not os.path.exists(b_bed):
+        raise FileNotFoundError(f"File B '{b_bed}' does not exist.")
+
+    # Check if bedtools is installed
+    if shutil.which(bedtools) is None:
+        raise RuntimeError("bedtools is not installed. Please install bedtools and make sure it is in your PATH.")
+
+    # Convert column to string for command construction
+    column_str = str(column)
+
+    # Prepare file paths (sort if requested)
+    if presort:
+        with tempfile.TemporaryDirectory() as tempdir:
+            sorted_a = os.path.join(tempdir, "sorted_a.bed")
+            sorted_b = os.path.join(tempdir, "sorted_b.bed")
+
+            # Sort file A
+            sort_a_cmd = f"{bedtools} sort -i {a_bed} > {sorted_a}"
+            print_and_execute(sort_a_cmd, simple_pipeline=sp, module_name=__name__)
+
+            # Sort file B
+            sort_b_cmd = f"{bedtools} sort -i {b_bed} > {sorted_b}"
+            print_and_execute(sort_b_cmd, simple_pipeline=sp, module_name=__name__)
+
+            # Run bedtools map
+            map_cmd = f"{bedtools} map -a {sorted_a} -b {sorted_b} " f"-c {column_str} -o {operation}"
+            if additional_args:
+                map_cmd += f" {additional_args}"
+            map_cmd += f" > {output_bed}"
+
+            print_and_execute(map_cmd, simple_pipeline=sp, module_name=__name__)
+    else:
+        # Run bedtools map directly on input files
+        map_cmd = f"{bedtools} map -a {a_bed} -b {b_bed} " f"-c {column_str} -o {operation}"
+        if additional_args:
+            map_cmd += f" {additional_args}"
+        map_cmd += f" > {output_bed}"
+
+        print_and_execute(map_cmd, simple_pipeline=sp, module_name=__name__)
