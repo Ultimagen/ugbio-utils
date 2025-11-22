@@ -80,7 +80,8 @@ class TestFilterSampleCnvs:
             "start",
             "end",
             "CopyNumber",
-            "FILTER",
+            "filter",
+            "SVTYPE",
             "CNMOPS_COV_MEAN",
             "CNMOPS_COV_STD",
             "CNMOPS_COHORT_MEAN",
@@ -95,7 +96,8 @@ class TestFilterSampleCnvs:
         assert result_df.iloc[0]["start"] == 1000
         assert result_df.iloc[0]["end"] == 2000
         assert result_df.iloc[0]["CopyNumber"] == 2  # Integer, not "CN2"
-        assert result_df.iloc[0]["FILTER"] == ("PASS",)  # PASS tuple when no filters
+        assert result_df.iloc[0]["filter"] == "PASS"  # PASS string when no filters
+        assert result_df.iloc[0]["SVTYPE"] == "NEUTRAL"  # CN2 is neutral
         assert result_df.iloc[0]["CNMOPS_COV_MEAN"] == 1.5
         assert result_df.iloc[0]["CNMOPS_COV_STD"] == 0.1
         assert result_df.iloc[0]["CNMOPS_COHORT_MEAN"] == 1.0
@@ -103,12 +105,14 @@ class TestFilterSampleCnvs:
 
         # Verify second row (single filter)
         assert result_df.iloc[1]["CopyNumber"] == 3  # Integer, not "CN3"
-        assert result_df.iloc[1]["FILTER"] == ("UG-CNV-LCR",)  # Tuple with one element
+        assert result_df.iloc[1]["filter"] == "UG-CNV-LCR"  # String with one filter
+        assert result_df.iloc[1]["SVTYPE"] == "DUP"  # CN3 is duplication
         assert result_df.iloc[1]["CNMOPS_COV_MEAN"] == 2.3
 
         # Verify third row (semicolon-separated with multiple filters)
         assert result_df.iloc[2]["CopyNumber"] == 1  # Integer, not "CN1"
-        assert result_df.iloc[2]["FILTER"] == ("LEN", "UG-CNV-LCR")  # Tuple with two elements
+        assert result_df.iloc[2]["filter"] == "LEN,UG-CNV-LCR"  # Comma-separated string with two filters
+        assert result_df.iloc[2]["SVTYPE"] == "DEL"  # CN1 is deletion
         assert result_df.iloc[2]["CNMOPS_COV_MEAN"] == 0.8
 
     def test_aggregate_annotations_empty_coverage_list(self, tmpdir):
@@ -122,11 +126,13 @@ class TestFilterSampleCnvs:
         result_df = aggregate_annotations_in_df(str(primary_bed_file), [])
 
         # Verify the structure - should only have the basic columns
-        assert list(result_df.columns) == ["chr", "start", "end", "CopyNumber", "FILTER"]
+        assert list(result_df.columns) == ["chr", "start", "end", "CopyNumber", "filter", "SVTYPE"]
 
         # Verify the data
         assert len(result_df) == 2
         assert result_df.iloc[0]["CopyNumber"] == 2  # Integer
-        assert result_df.iloc[0]["FILTER"] == ("PASS",)  # PASS tuple when no filters
+        assert result_df.iloc[0]["filter"] == "PASS"  # PASS string when no filters
+        assert result_df.iloc[0]["SVTYPE"] == "NEUTRAL"  # CN2 is neutral
         assert result_df.iloc[1]["CopyNumber"] == 3  # Integer
-        assert result_df.iloc[1]["FILTER"] == ("UG-CNV-LCR",)  # Tuple
+        assert result_df.iloc[1]["filter"] == "UG-CNV-LCR"  # String
+        assert result_df.iloc[1]["SVTYPE"] == "DUP"  # CN3 is duplication
