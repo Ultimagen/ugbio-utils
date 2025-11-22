@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pysam
 import pytest
-from ugbio_cnv import filter_sample_cnvs
+from ugbio_cnv import process_cnmops_cnvs
 
 
 @pytest.fixture
@@ -44,11 +44,11 @@ def compare_vcfs(vcf1_file, vcf2_file):
             ), f"Variant {i}: INFO mismatch in {key}: {rec1.info[key]} != {rec2.info[key]}"
 
 
-class TestFilterSampleCnvsIntegration:
-    """Integration tests for the complete filter_sample_cnvs pipeline."""
+class TestProcessCnmopsCnvsIntegration:
+    """Integration tests for the complete process_cnmops_cnvs pipeline."""
 
-    def test_filter_sample_cnvs_full_pipeline(self, tmpdir, resources_dir):
-        """Test the complete filter_sample_cnvs pipeline with all inputs."""
+    def test_process_cnmops_cnvs_full_pipeline(self, tmpdir, resources_dir):
+        """Test the complete process_cnmops_cnvs pipeline with all inputs."""
         # Input files
         input_bed_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.bed")
         cnv_lcr_file = pjoin(resources_dir, "ug_cnv_lcr.chr5.bed")
@@ -61,9 +61,9 @@ class TestFilterSampleCnvsIntegration:
         expected_vcf_file = pjoin(resources_dir, "expected_test_sample.cnv.filtered.vcf.gz")
 
         # Run the pipeline
-        filter_sample_cnvs.run(
+        process_cnmops_cnvs.run(
             [
-                "filter_sample_cnvs",
+                "process_cnmops_cnvs",
                 "--input_bed_file",
                 input_bed_file,
                 "--cnv_lcr_file",

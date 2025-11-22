@@ -12,7 +12,7 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 # DESCRIPTION
-#    Filter CNV calls by length and UG-CNV-LCR.
+#    Process CNV calls from cn.mops: filter by length and UG-CNV-LCR, annotate, and convert to VCF.
 # CHANGELOG in reverse chronological order
 
 import argparse
@@ -241,7 +241,8 @@ def run(argv):
     - annotated bed file with filtering tags
     """
     parser = argparse.ArgumentParser(
-        prog="filter_sample_cnvs.py", description="Filter cnvs bed file by: ug_cnv_lcr, length"
+        prog="process_cnmops_cnvs.py",
+        description="Process CNV calls from cn.mops: filter, annotate, and convert to VCF",
     )
     parser.add_argument("--input_bed_file", help="input bed file with .bed suffix", required=True, type=str)
     parser.add_argument(
