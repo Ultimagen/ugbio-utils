@@ -306,8 +306,9 @@ def run(argv):
         out_annotate_bed_file = out_bed_file_sorted
 
     target_file = out_annotate_bed_file.replace("-TMP-", "--")
-    cmd = f"mv {out_annotate_bed_file} {target_file}"
-    os.system(cmd)  # noqa: S605
+    if out_annotate_bed_file != target_file:
+        cmd = f"mv {out_annotate_bed_file} {target_file}"
+        os.system(cmd)  # noqa: S605
     out_annotate_bed_file = target_file
 
     coverage_annotations = []
