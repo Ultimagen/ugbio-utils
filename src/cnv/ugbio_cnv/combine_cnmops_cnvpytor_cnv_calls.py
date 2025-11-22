@@ -331,26 +331,6 @@ def _write_vcf_records_with_source(
         vcf_out.write(new_record)
 
 
-def _cleanup_temp_files(temp_files: list[str]) -> None:
-    """
-    Remove temporary files and their indices.
-
-    Parameters
-    ----------
-    temp_files : list[str]
-        List of temporary file paths to remove
-    """
-    logger.info("Cleaning up temporary files")
-    for temp_file in temp_files:
-        if os.path.exists(temp_file):
-            os.unlink(temp_file)
-        # Also remove index files
-        for ext in [".tbi", ".csi"]:
-            index_file = temp_file + ext
-            if os.path.exists(index_file):
-                os.unlink(index_file)
-
-
 def combine_cnv_vcfs(
     cnmops_vcf: str,
     cnvpytor_vcf: str,
