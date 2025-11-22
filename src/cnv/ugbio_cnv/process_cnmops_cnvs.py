@@ -36,12 +36,27 @@ bedmap = "bedmap"
 
 def annotate_bed(bed_file, lcr_cutoff, lcr_file, prefix, length_cutoff=10000):
     # get filters regions
-    lcr_bed_file = filter_bed.filter_by_bed_file(bed_file, lcr_cutoff, lcr_file, prefix, "UG-CNV-LCR")
-    length_bed_file = filter_bed.filter_by_length(bed_file, length_cutoff, prefix)
+    filter_files = []
+
+    if lcr_file is not None:
+        lcr_bed_file = filter_bed.filter_by_bed_file(bed_file, lcr_cutoff, lcr_file, prefix, "UG-CNV-LCR")
+        filter_files.append(lcr_bed_file)
+
+    if length_cutoff is not None and length_cutoff > 0:
+        length_bed_file = filter_bed.filter_by_length(bed_file, length_cutoff, prefix)
+        filter_files.append(length_bed_file)
+
+    if not filter_files:
+        # No filters to apply, just return sorted bed file
+        out_bed_file_sorted = prefix + os.path.basename(bed_file).rstrip(".bed") + ".sorted.annotate.bed"
+        cmd = bedtools + " sort -i " + bed_file + " > " + out_bed_file_sorted
+        os.system(cmd)  # noqa: S605
+        logger.info(cmd)
+        return out_bed_file_sorted
 
     # merge all filters and sort
     out_filters_unsorted = prefix + "filters.annotate.unsorted.bed"
-    cmd = "cat " + lcr_bed_file + " " + length_bed_file + " > " + out_filters_unsorted
+    cmd = "cat " + " ".join(filter_files) + " > " + out_filters_unsorted
 
     os.system(cmd)  # noqa: S605
     logger.info(cmd)
@@ -292,14 +307,14 @@ def run(argv):
         os.system(cmd)  # noqa: S605
         args.input_bed_file = args.input_bed_file.replace("--", "-TMP-")
 
-    # Only annotate if lcr_file is provided
-    if args.cnv_lcr_file:
+    # Annotate if lcr_file or min_cnv_length is provided
+    if args.cnv_lcr_file or args.min_cnv_length:
         out_annotate_bed_file = annotate_bed(
             args.input_bed_file, args.intersection_cutoff, args.cnv_lcr_file, prefix, args.min_cnv_length
         )
     else:
-        # If no lcr_file, just copy the input bed file (sorted)
-        out_bed_file_sorted = prefix + os.path.basename(args.input_bed_file).rstrip(".bed") + ".sorted.annotate.bed"
+        # If no filtering, just sort the input bed file
+        out_bed_file_sorted = prefix + os.path.basename(args.input_bed_file).rstrip(".bed") + ".annotate.bed"
         cmd = bedtools + " sort -i " + args.input_bed_file + " > " + out_bed_file_sorted
         os.system(cmd)  # noqa: S605
         logger.info(cmd)

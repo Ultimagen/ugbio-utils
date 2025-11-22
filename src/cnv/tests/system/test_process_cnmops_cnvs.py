@@ -126,8 +126,8 @@ class TestProcessCnmopsCnvsIntegration:
         )
 
         # Check that output files exist
-        out_vcf_file = pjoin(tmpdir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.sorted.annotate.vcf.gz")
-        out_vcf_idx_file = pjoin(tmpdir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.sorted.annotate.vcf.gz.tbi")
+        out_vcf_file = pjoin(tmpdir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.annotate.vcf.gz")
+        out_vcf_idx_file = pjoin(tmpdir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.annotate.vcf.gz.tbi")
 
         assert os.path.exists(out_vcf_file), f"Output VCF file not found: {out_vcf_file}"
         assert os.path.exists(out_vcf_idx_file), f"Output VCF index file not found: {out_vcf_idx_file}"
@@ -137,8 +137,60 @@ class TestProcessCnmopsCnvsIntegration:
         records = list(vcf)
         assert len(records) > 0, "Output VCF should contain variants"
 
-        # Verify that all variants have PASS filter (no LCR filtering applied)
+        # Verify that variants have LEN filter (length filtering applied) but no LCR filter
         for rec in records:
-            assert (
-                "PASS" in rec.filter.keys() or len(rec.filter.keys()) == 0
-            ), f"Expected PASS filter when no LCR filtering, got: {rec.filter.keys()}"
+            filter_keys = list(rec.filter.keys())
+            # Should have either PASS or LEN filter, but not UG-CNV-LCR
+            assert "UG-CNV-LCR" not in filter_keys, f"Unexpected UG-CNV-LCR filter: {filter_keys}"
+
+    def test_process_cnmops_cnvs_no_filtering(self, tmpdir, resources_dir):
+        """Test the process_cnmops_cnvs pipeline without any filtering."""
+        # Input files
+        input_bed_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.bed")
+        sample_norm_coverage_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cov.bed")
+        cohort_avg_coverage_file = pjoin(resources_dir, "coverage.cohort.bed")
+        fasta_index_file = pjoin(resources_dir, "Homo_sapiens_assembly38.fasta.fai")
+        sample_name = "test_sample_no_filter"
+
+        # Run the pipeline without any filtering (no cnv_lcr_file and min_cnv_length=None)
+        process_cnmops_cnvs.run(
+            [
+                "process_cnmops_cnvs",
+                "--input_bed_file",
+                input_bed_file,
+                "--out_directory",
+                f"{tmpdir}/",
+                "--sample_norm_coverage_file",
+                sample_norm_coverage_file,
+                "--cohort_avg_coverage_file",
+                cohort_avg_coverage_file,
+                "--fasta_index_file",
+                fasta_index_file,
+                "--intersection_cutoff",
+                "0.5",
+                "--sample_name",
+                sample_name,
+                "--min_cnv_length",
+                "0",  # Disable length filtering
+            ]
+        )
+
+        # Check that output files exist (no filtering, just sorted)
+        out_vcf_file = pjoin(tmpdir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.annotate.vcf.gz")
+        out_vcf_idx_file = pjoin(tmpdir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.annotate.vcf.gz.tbi")
+
+        assert os.path.exists(out_vcf_file), f"Output VCF file not found: {out_vcf_file}"
+        assert os.path.exists(out_vcf_idx_file), f"Output VCF index file not found: {out_vcf_idx_file}"
+
+        # Verify VCF can be opened and has records
+        vcf = pysam.VariantFile(out_vcf_file)
+        records = list(vcf)
+        assert len(records) > 0, "Output VCF should contain variants"
+
+        # Verify that all variants have PASS filter (no filtering applied)
+        for rec in records:
+            filter_keys = list(rec.filter.keys())
+            # Should have PASS filter only, no LEN or UG-CNV-LCR
+            assert "PASS" in filter_keys or len(filter_keys) == 0, f"Expected PASS filter, got: {filter_keys}"
+            assert "UG-CNV-LCR" not in filter_keys, f"Unexpected UG-CNV-LCR filter: {filter_keys}"
+            assert "LEN" not in filter_keys, f"Unexpected LEN filter: {filter_keys}"
