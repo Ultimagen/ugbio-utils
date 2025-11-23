@@ -42,13 +42,6 @@ def __parse_args_legacy(argv: list[str]) -> argparse.Namespace:
         type=int,
         default=1500,
     )
-    parser.add_argument(
-        "--duplication_length_cutoff_for_cnmops_filter",
-        help="Defines the minimum duplication length considered valid during cn.mops CNV filtering",
-        required=False,
-        type=int,
-        default=10000,
-    )
     parser.add_argument("--ug_cnv_lcr", help="UG-CNV-LCR bed file", required=False, type=str)
     parser.add_argument("--ref_fasta", help="reference genome fasta file", required=True, type=str)
     parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
@@ -514,7 +507,6 @@ def get_dup_cnmops_cnv_calls(
             f"cat {out_cnmops_cnvs_dup_calls} | \
                 bedtools sort -i - | \
                 bedtools merge -d {distance_threshold} -c 4 -o distinct -i - | \
-                awk '$3-$2>=10000' | \
                 sed 's/$/\\tDUP\\tcn.mops/' | \
                 cut -f1,2,3,5,6,4 > {cnmops_cnvs_dup}"
         )
