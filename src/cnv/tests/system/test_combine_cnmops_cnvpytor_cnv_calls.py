@@ -37,39 +37,29 @@ def compare_vcfs(vcf1_file, vcf2_file):
 
 class TestCombineCnmopsCnvpytorCnvCalls:
     def test_combine_cnmops_cnvpytor_cnv_calls(self, tmpdir, resources_dir):
-        input_cnmops_file = pjoin(resources_dir, "NA24385.cnmops500mod.full.cnvs.chr19.bed")
-        input_cnvpytor_file = pjoin(resources_dir, "HG002_full_sample.pytor.bin500.CNVs.chr19.tsv")
-        input_jalign_file = pjoin(resources_dir, "HG002_full_sample.TEST.DEL.jalign.chr19.bed")
-        input_ug_cnv_lcr_file = pjoin(resources_dir, "ug_cnv_lcr.chr19.bed")
-        input_ref_fasta_file = pjoin(resources_dir, "chr19.fasta")
-        input_fasta_index_file = pjoin(resources_dir, "chr19.fasta.fai")
-        sample_name = "test_HG002"
+        input_cnmops_file = pjoin(resources_dir, "NA24385.cnmops.cnvs.chr1_1-12950000.vcf.gz")
+        input_cnvpytor_file = pjoin(resources_dir, "HG002_full_sample.pytor.bin500.CNVs.chr1_1-12950000.vcf.gz")
+        input_fasta_index_file = pjoin(resources_dir, "Homo_sapiens_assembly38.fasta.fai")
         expected_out_combined_vcf = pjoin(resources_dir, "expected_test_HG002.cnv.vcf.gz")
 
         combine_cnmops_cnvpytor_cnv_calls.run(
             [
                 "cnv_results_to_vcf",
-                "--cnmops_cnv_calls",
+                "--cnmops_vcf",
                 input_cnmops_file,
-                "--cnvpytor_cnv_calls",
+                "--cnvpytor_vcf",
                 input_cnvpytor_file,
-                "--del_jalign_merged_results",
-                input_jalign_file,
-                "--ug_cnv_lcr",
-                input_ug_cnv_lcr_file,
-                "--ref_fasta",
-                input_ref_fasta_file,
                 "--fasta_index",
                 input_fasta_index_file,
                 "--out_directory",
                 f"{tmpdir}/",
-                "--sample_name",
-                sample_name,
+                "--output_vcf",
+                f"{tmpdir}/combined.cnmops.cnvpytor.vcf.gz",
             ]
         )
 
-        out_combined_vcf = pjoin(tmpdir, f"{sample_name}.cnv.vcf.gz")
+        out_combined_vcf = pjoin(tmpdir, "combined.cnmops.cnvpytor.vcf.gz")
         assert os.path.exists(out_combined_vcf)
-        out_combined_vcf_idx = pjoin(tmpdir, f"{sample_name}.cnv.vcf.gz.tbi")
+        out_combined_vcf_idx = pjoin(tmpdir, "combined.cnmops.cnvpytor.vcf.gz.tbi")
         assert os.path.exists(out_combined_vcf_idx)
         compare_vcfs(out_combined_vcf, expected_out_combined_vcf)

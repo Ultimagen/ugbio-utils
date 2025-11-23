@@ -22,7 +22,7 @@ def run_cmd(cmd):
     subprocess.run(cmd, shell=True, check=True)  # noqa: S602
 
 
-def __parse_args(argv: list[str]) -> argparse.Namespace:
+def __parse_args_legacy(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="combine_cnmops_cnvpytor_cnv_calls.py",
         description="Combines CNV calls from various sources, filters, converts into final bed/VCF formats.",
@@ -54,6 +54,23 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
     parser.add_argument("--out_directory", help="output directory", required=False, type=str)
     parser.add_argument("--sample_name", help="sample name", required=True, type=str)
+    parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO")
+
+    return parser.parse_args(argv[1:])
+
+
+def __parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="combine_cnmops_cnvpytor_cnv_calls.py",
+        description="Combines CNV calls from various sources into VCF.",
+    )
+
+    parser.add_argument("--cnmops_vcf", help="input VCF file holding cn.mops CNV calls", required=True, type=str)
+    parser.add_argument("--cnvpytor_vcf", help="input VCF file holding cnvpytor CNV calls", required=True, type=str)
+    parser.add_argument("--output_vcf", help="output combined VCF file", required=True, type=str)
+    parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
+    parser.add_argument("--out_directory", help="output directory", required=False, type=str)
+
     parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO")
 
     return parser.parse_args(argv[1:])
@@ -670,7 +687,7 @@ def process_del_jalign_results(
     return out_del_jalign_merged
 
 
-def run(argv):
+def run_legacy(argv):
     """
     Combine CNVs from cn.mops and cnvpytor using jalign results and convert them to VCF.
 
@@ -811,6 +828,25 @@ def run(argv):
     logger.info(vcf_args)
     out_cnvs_combined_annotated_vcf = output_results.run(vcf_args)
     logger.info(f"out_cnvs_combined_annotated_vcf: {out_cnvs_combined_annotated_vcf}")
+
+
+def run(argv: list[str]):
+    """
+    Combine CNVs from cn.mops and cnvpytor.
+
+    Parameters
+    ----------
+    argv : list of str
+        Command-line arguments.
+    """
+    args = __parse_args(argv)
+    combine_cnv_vcfs(
+        cnmops_vcf=args.cnmops_vcf,
+        cnvpytor_vcf=args.cnvpytor_vcf,
+        fasta_index=args.fasta_index,
+        output_vcf=args.output_vcf,
+        output_directory=args.out_directory,
+    )
 
 
 def main():
