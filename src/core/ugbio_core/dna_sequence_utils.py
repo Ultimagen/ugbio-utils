@@ -102,3 +102,62 @@ def get_max_softclip_len(cigar):
     start = int(group[0][:-1]) if group[0] else 0
     end = int(group[1][:-1]) if group[1] else 0
     return max(start, end)
+
+
+# CIGAR operation codes per SAM specification
+CIGAR_OPS = {
+    "M": 0,  # Match or mismatch
+    "I": 1,  # Insertion
+    "D": 2,  # Deletion
+    "N": 3,  # Skipped region (intron)
+    "S": 4,  # Soft clip
+    "H": 5,  # Hard clip
+    "P": 6,  # Padding
+    "=": 7,  # Sequence match
+    "X": 8,  # Sequence mismatch
+}
+
+
+def parse_cigar_string(cigar_str: str) -> list[tuple[int, int]]:
+    """
+    Parse CIGAR string into list of (operation, length) tuples.
+
+    This function parses CIGAR strings in the same format as pysam, converting
+    CIGAR operations to their numeric codes according to the SAM specification.
+
+    Parameters
+    ----------
+    cigar_str : str
+        CIGAR string (e.g., "50M30S" or "30S50M")
+
+    Returns
+    -------
+    list[tuple[int, int]]
+        List of (operation, length) tuples where operation is a numeric code:
+        M=0, I=1, D=2, N=3, S=4, H=5, P=6, ==7, X=8
+
+    Examples
+    --------
+    >>> parse_cigar_string("50M30S")
+    [(0, 50), (4, 30)]
+    >>> parse_cigar_string("30S50M")
+    [(4, 30), (0, 50)]
+    """
+    operations = []
+    i = 0
+
+    while i < len(cigar_str):
+        # Parse number
+        num_str = ""
+        while i < len(cigar_str) and cigar_str[i].isdigit():
+            num_str += cigar_str[i]
+            i += 1
+        if num_str and i < len(cigar_str):
+            length = int(num_str)
+            op_char = cigar_str[i]
+            op_code = CIGAR_OPS.get(op_char, -1)
+            if op_code != -1:
+                operations.append((op_code, length))
+            i += 1
+
+    return operations
