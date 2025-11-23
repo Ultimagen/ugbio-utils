@@ -240,6 +240,7 @@ def _aggregate_coverages(
                 operation=oparam,
                 presort=True,
                 tempdir=tempdir,
+                column=5,
             )
             coverage_annotations.append((isamp, oparam, out_annotate_bed_file_cov))
     return coverage_annotations

@@ -269,7 +269,7 @@ def bedtools_map(
     a_bed: str,
     b_bed: str,
     output_bed: str,
-    column: int | str = 4,
+    column: int | str = 5,
     operation: str = "mean",
     *,
     presort: bool = False,
@@ -289,7 +289,7 @@ def bedtools_map(
     output_bed : str
         Path to output BED file with annotations.
     column : int or str, optional
-        Column number from B file to map onto A (default: 4).
+        Column number from B file to map onto A (default: 5).
         Can be an integer or string representation of integer.
     operation : str, optional
         Operation to apply when multiple B intervals overlap an A interval.
