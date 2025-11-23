@@ -36,7 +36,7 @@ def filter_by_bed_file(in_bed_file, filtration_cutoff, filtering_bed_file, prefi
         Path to the annotated BED file with filtered regions marked.
     """
     out_filename = os.path.basename(in_bed_file)
-    out_filtered_bed_file = prefix + out_filename.rstrip(".bed") + "." + tag + ".bed"
+    out_filtered_bed_file = prefix + os.path.splitext(out_filename)[0] + "." + tag + ".bed"
     cmd = (
         bedtools
         + " subtract -N -f "
@@ -50,7 +50,7 @@ def filter_by_bed_file(in_bed_file, filtration_cutoff, filtering_bed_file, prefi
     )
 
     os.system(cmd)  # noqa: S605
-    filtered_out_records = prefix + out_filename.rstrip(".bed") + "." + tag + ".filtered_out.bed"
+    filtered_out_records = prefix + os.path.splitext(out_filename)[0] + "." + tag + ".filtered_out.bed"
     cmd = (
         bedtools
         + " subtract -N -f "
@@ -64,7 +64,7 @@ def filter_by_bed_file(in_bed_file, filtration_cutoff, filtering_bed_file, prefi
     )
 
     os.system(cmd)  # noqa: S605
-    out_annotate_file = prefix + out_filename.rstrip(".bed") + "." + tag + ".annotate.bed"
+    out_annotate_file = prefix + os.path.splitext(out_filename)[0] + "." + tag + ".annotate.bed"
     cmd = "cat " + filtered_out_records + ' | awk \'{print $1"\t"$2"\t"$3"\t"$4"|' + tag + "\"}' > " + out_annotate_file
     os.system(cmd)  # noqa: S605
 
@@ -73,10 +73,10 @@ def filter_by_bed_file(in_bed_file, filtration_cutoff, filtering_bed_file, prefi
 
 def filter_by_length(bed_file, length_cutoff, prefix):
     out_filename = os.path.basename(bed_file)
-    out_len_file = prefix + out_filename.rstrip(".bed") + ".len.bed"
+    out_len_file = prefix + os.path.splitext(out_filename)[0] + ".len.bed"
     cmd = "awk '$3-$2<" + str(length_cutoff) + "' " + bed_file + " > " + out_len_file
     os.system(cmd)  # noqa: S605
-    out_len_annotate_file = prefix + out_filename.rstrip(".bed") + ".len.annotate.bed"
+    out_len_annotate_file = prefix + os.path.splitext(out_filename)[0] + ".len.annotate.bed"
     cmd = "cat " + out_len_file + ' | awk \'{print $1"\t"$2"\t"$3"\t"$4"|LEN"}\' > ' + out_len_annotate_file
     os.system(cmd)  # noqa: S605
 
