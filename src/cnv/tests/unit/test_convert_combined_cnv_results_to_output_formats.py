@@ -179,5 +179,5 @@ class TestConvertCombinedCnvResultsToOutputFormats:
         cnv_df = convert_combined_cnv_results_to_output_formats.prepare_cnv_dataframe(cnv_annotated_bed_file)
         convert_combined_cnv_results_to_output_formats.write_cnv_vcf(outfile, cnv_df, sample_name, fasta_index_file)
 
-        expected_vcf_file = pjoin(resources_dir, "expected_test_HG002.cnv.vcf.gz")
+        expected_vcf_file = pjoin(resources_dir, "expected_test_HG002.legacy.cnv.vcf.gz")
         compare_vcfs(expected_vcf_file, outfile)
