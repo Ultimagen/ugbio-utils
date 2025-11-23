@@ -120,17 +120,17 @@ Rscript --vanilla /VariantCalling/ugvc/cnv/cnv_calling_using_cnmops.R \
 ```
 output is a csv file consisting of all called CNVs for all samples in the cohort.
 
-### filter_sample_cnvs.py
-Filter CNV calls by length and UG-CNV-LCR regions.
+### process_cnmops_cnvs.py
+Process CNV calls from cn.mops: filter by length and UG-CNV-LCR regions, annotate, and convert to VCF.
 ### Usage
 ```
-usage: filter_sample_cnvs.py [-h] --input_bed_file INPUT_BED_FILE
+usage: process_cnmops_cnvs.py [-h] --input_bed_file INPUT_BED_FILE
                              --intersection_cutoff INTERSECTION_CUTOFF
                              --cnv_lcr_file CNV_LCR_FILE --min_cnv_length
                              MIN_CNV_LENGTH [--out_directory OUT_DIRECTORY]
                              [--verbosity VERBOSITY]
 
-Filter cnvs bed file by: ug_cnv_lcr, length
+Process CNV calls from cn.mops: filter, annotate, and convert to VCF
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -151,7 +151,7 @@ optional arguments:
 ### Example
 ```
 conda activate genomics.py3
-python /VariantCalling/ugvc filter_sample_cnvs \
+python /VariantCalling/ugvc process_cnmops_cnvs \
         --input_bed_file test_sample.cnvs.bed \
         --intersection_cutoff 0.5 \
         --cnv_lcr_file ug_cnv_lcr.bed \

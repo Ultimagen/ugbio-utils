@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import itertools
+import os
+import os.path
 from collections import deque
 from collections.abc import Callable
 from typing import Any
@@ -274,3 +276,22 @@ def idx_next_nz(inp: np.ndarray | list) -> np.ndarray:
     result = idx_last_nz(inp[::-1])
     result = len(inp) - result - 1
     return result[::-1]
+
+
+def cleanup_temp_files(temp_files: list[str]) -> None:
+    """
+    Remove temporary files and their indices.
+
+    Parameters
+    ----------
+    temp_files : list[str]
+        List of temporary file paths to remove
+    """
+    for temp_file in temp_files:
+        if os.path.exists(temp_file):
+            os.unlink(temp_file)
+        # Also remove index files
+        for ext in [".tbi", ".csi", ".idx", ".crai", ".bai"]:
+            index_file = temp_file + ext
+            if os.path.exists(index_file):
+                os.unlink(index_file)
