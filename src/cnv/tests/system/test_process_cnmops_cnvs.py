@@ -194,3 +194,62 @@ class TestProcessCnmopsCnvsIntegration:
             assert "PASS" in filter_keys or len(filter_keys) == 0, f"Expected PASS filter, got: {filter_keys}"
             assert "UG-CNV-LCR" not in filter_keys, f"Unexpected UG-CNV-LCR filter: {filter_keys}"
             assert "LEN" not in filter_keys, f"Unexpected LEN filter: {filter_keys}"
+
+    def test_process_cnmops_cnvs_vcf_ids(self, tmpdir, resources_dir):
+        """Test that VCF IDs are generated in the correct format: cnmops_<svtype>_<count>."""
+        # Input files
+        input_bed_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.bed")
+        sample_norm_coverage_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cov.bed")
+        cohort_avg_coverage_file = pjoin(resources_dir, "coverage.cohort.bed")
+        fasta_index_file = pjoin(resources_dir, "Homo_sapiens_assembly38.fasta.fai")
+        sample_name = "test_sample_ids"
+
+        # Run the pipeline
+        process_cnmops_cnvs.run(
+            [
+                "process_cnmops_cnvs",
+                "--input_bed_file",
+                input_bed_file,
+                "--out_directory",
+                f"{tmpdir}/",
+                "--sample_norm_coverage_file",
+                sample_norm_coverage_file,
+                "--cohort_avg_coverage_file",
+                cohort_avg_coverage_file,
+                "--fasta_index_file",
+                fasta_index_file,
+                "--intersection_cutoff",
+                "0.5",
+                "--sample_name",
+                sample_name,
+                "--min_cnv_length",
+                "0",
+            ]
+        )
+
+        # Check the VCF
+        out_vcf_file = pjoin(tmpdir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.annotate.vcf.gz")
+        vcf = pysam.VariantFile(out_vcf_file)
+        records = list(vcf)
+
+        # Track counts per SVTYPE
+        svtype_counts = {"dup": 0, "del": 0, "neutral": 0}
+
+        # Verify all records have IDs in the correct format
+        for rec in records:
+            assert rec.id is not None, f"Record at {rec.chrom}:{rec.start} has no ID"
+
+            svtype = rec.info.get("SVTYPE")
+            assert svtype is not None, f"Record at {rec.chrom}:{rec.start} has no SVTYPE"
+
+            svtype_lower = svtype.lower()
+            svtype_counts[svtype_lower] += 1
+
+            expected_id = f"cnmops_{svtype_lower}_{svtype_counts[svtype_lower]}"
+            assert (
+                rec.id == expected_id
+            ), f"Record at {rec.chrom}:{rec.start} has ID '{rec.id}', expected '{expected_id}'"
+
+        # Verify we have some variants of each type
+        assert svtype_counts["dup"] > 0, "Expected at least one DUP variant"
+        assert svtype_counts["del"] > 0, "Expected at least one DEL variant"

@@ -312,6 +312,11 @@ def _create_base_vcf_record(vcf_out: pysam.VariantFile, row: pd.Series) -> pysam
     record.stop = row["end"]
     record.ref = "N"
     record.alts = (f"<{row['SVTYPE']}>",)
+
+    # Set ID if present in the dataframe
+    if "ID" in row and pd.notna(row["ID"]):
+        record.id = str(row["ID"])
+
     return record
 
 

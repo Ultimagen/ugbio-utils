@@ -18,14 +18,13 @@
 import argparse
 import logging
 import os
-import subprocess
 import sys
 import warnings
 
 import pandas as pd
 import ugbio_cnv.convert_combined_cnv_results_to_output_formats as vcf_writer
 import ugbio_core.misc_utils as mu
-from ugbio_core import filter_bed
+from ugbio_core import filter_bed, vcf_utils
 from ugbio_core.logger import logger
 
 warnings.filterwarnings("ignore")
@@ -246,6 +245,31 @@ def _aggregate_coverages(
     return coverage_annotations
 
 
+def add_ids(cnmops_cnv_df: pd.DataFrame) -> pd.DataFrame:
+    """Add IDs to the CNV DataFrame in the format cnmops_<svtype>_<count>.
+
+    Parameters
+    ----------
+    cnmops_cnv_df : pd.DataFrame
+        Input
+
+    Returns
+    -------
+    pd.DataFrame
+        Output, ID added
+    """
+
+    # Add IDs in the format cnmops_<svtype>_<count>
+    svtype_counts = {}
+    ids = []
+    for _, row in cnmops_cnv_df.iterrows():
+        svtype = row["SVTYPE"].lower()
+        svtype_counts[svtype] = svtype_counts.get(svtype, 0) + 1
+        ids.append(f"cnmops_{svtype}_{svtype_counts[svtype]}")
+    cnmops_cnv_df["ID"] = ids
+    return cnmops_cnv_df
+
+
 def run(argv):
     """
     Given a bed file, this script will filter it by :
@@ -333,15 +357,12 @@ def run(argv):
         )
 
     cnmops_cnv_df = aggregate_annotations_in_df(out_annotate_bed_file, coverage_annotations)
+    cnmops_cnv_df = add_ids(cnmops_cnv_df)
+
     out_vcf_file = out_annotate_bed_file.replace(".bed", ".vcf.gz")
     vcf_writer.write_cnv_vcf(out_vcf_file, cnmops_cnv_df, args.sample_name, args.fasta_index_file)
-    # index outfile
-    try:
-        cmd = ["bcftools", "index", "-t", out_vcf_file]
-        subprocess.check_call(cmd)
-    except subprocess.CalledProcessError as e:
-        logging.error(f"bcftools index command failed with exit code: {e.returncode}")
-        sys.exit(1)  # Exit with error status
+    vu = vcf_utils.VcfUtils()
+    vu.index_vcf(out_vcf_file)
     logger.info("Cleaning temporary files...")
     mu.cleanup_temp_files([out_annotate_bed_file] + [cov[2] for cov in coverage_annotations])
     logger.info(f"output files: {out_vcf_file}")
