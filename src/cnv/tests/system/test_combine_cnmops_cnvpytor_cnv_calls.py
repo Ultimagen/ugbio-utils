@@ -45,6 +45,7 @@ class TestCombineCnmopsCnvpytorCnvCalls:
         combine_cnmops_cnvpytor_cnv_calls.run(
             [
                 "cnv_results_to_vcf",
+                "concat",
                 "--cnmops_vcf",
                 input_cnmops_file,
                 "--cnvpytor_vcf",

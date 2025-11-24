@@ -59,19 +59,51 @@ def __parse_args_legacy(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv[1:])
 
 
-def __parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="combine_cnmops_cnvpytor_cnv_calls.py",
-        description="Combines CNV calls from various sources into VCF.",
-    )
-
+def __parse_args_concat(parser: argparse.ArgumentParser) -> None:
+    """Add arguments specific to the concat tool."""
     parser.add_argument("--cnmops_vcf", help="input VCF file holding cn.mops CNV calls", required=True, type=str)
     parser.add_argument("--cnvpytor_vcf", help="input VCF file holding cnvpytor CNV calls", required=True, type=str)
     parser.add_argument("--output_vcf", help="output combined VCF file", required=True, type=str)
     parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
     parser.add_argument("--out_directory", help="output directory", required=False, type=str)
 
+
+def __parse_args(argv: list[str]) -> argparse.Namespace:
+    """
+    Parse command-line arguments using subparsers for different tools.
+
+    This allows each tool to have its own set of arguments while sharing
+    common options like verbosity.
+
+    To add a new tool:
+    1. Create a new __parse_args_<toolname>() function with tool-specific arguments
+    2. Add a new subparser below for the tool
+    3. Add a new elif block in the run() function to handle the tool
+    """
+    # Main parser
+    parser = argparse.ArgumentParser(
+        prog="combine_cnmops_cnvpytor_cnv_calls.py",
+        description="CNV processing toolkit - runs various CNV-related tools.",
+    )
+
+    # Common arguments across all tools
     parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO")
+
+    # Create subparsers for different tools
+    subparsers = parser.add_subparsers(dest="tool", help="Tool to run", required=True)
+
+    # Concat tool subparser
+    concat_parser = subparsers.add_parser(
+        "concat",
+        help="Combine CNV VCFs from different callers (cn.mops and cnvpytor)",
+        description="Combines CNV VCF files from cn.mops and cnvpytor into a single sorted and indexed VCF.",
+    )
+    __parse_args_concat(concat_parser)
+
+    # Future tools can be added here as new subparsers:
+    # Example:
+    # filter_parser = subparsers.add_parser("filter", help="Filter CNV calls")
+    # __parse_args_filter(filter_parser)
 
     return parser.parse_args(argv[1:])
 
@@ -852,25 +884,60 @@ def run_legacy(argv):
 
 def run(argv: list[str]):
     """
-    Combine CNVs from cn.mops and cnvpytor.
+    Driver function for CNV processing tools.
+
+    This function routes execution to the appropriate tool based on the first argument.
+    Currently supported tools:
+    - concat: Combines CNV VCFs from cn.mops and cnvpytor into a single sorted VCF
+
+    The function can be called:
+    1. As a standalone script: python combine_cnmops_cnvpytor_cnv_calls.py concat --cnmops_vcf ... --cnvpytor_vcf ...
+    2. As part of combine_cnmops_cnvpytor_cnv_calls: combine_cnmops_cnvpytor_cnv_calls concat --cnmops_vcf ...
 
     Parameters
     ----------
     argv : list of str
-        Command-line arguments.
+        Command-line arguments where argv[1] is the tool name (e.g., 'concat')
+        and remaining arguments are tool-specific parameters.
+
+    Examples
+    --------
+    >>> run(['prog', 'concat', '--cnmops_vcf', 'cnmops.vcf.gz',
+    ...      '--cnvpytor_vcf', 'cnvpytor.vcf.gz', '--output_vcf', 'combined.vcf.gz',
+    ...      '--fasta_index', 'genome.fa.fai', '--out_directory', '/tmp'])
     """
     args = __parse_args(argv)
-    combine_cnv_vcfs(
-        cnmops_vcf=args.cnmops_vcf,
-        cnvpytor_vcf=args.cnvpytor_vcf,
-        fasta_index=args.fasta_index,
-        output_vcf=args.output_vcf,
-        output_directory=args.out_directory,
-    )
+    logger.setLevel(getattr(logging, args.verbosity))
+
+    if args.tool == "concat":
+        combine_cnv_vcfs(
+            cnmops_vcf=args.cnmops_vcf,
+            cnvpytor_vcf=args.cnvpytor_vcf,
+            fasta_index=args.fasta_index,
+            output_vcf=args.output_vcf,
+            output_directory=args.out_directory,
+        )
+    else:
+        raise ValueError(f"Unknown tool: {args.tool}")
 
 
 def main():
     run(sys.argv)
+
+
+def main_concat():
+    """
+    Entry point for standalone combine_cnv_vcfs script.
+
+    This allows running the concat tool directly without specifying the tool name:
+    combine_cnv_vcfs --cnmops_vcf ... --cnvpytor_vcf ...
+
+    Instead of:
+    combine_cnmops_cnvpytor_cnv_calls concat --cnmops_vcf ... --cnvpytor_vcf ...
+    """
+    # Insert 'concat' as the tool argument
+    argv = [sys.argv[0], "concat"] + sys.argv[1:]
+    run(argv)
 
 
 if __name__ == "__main__":
