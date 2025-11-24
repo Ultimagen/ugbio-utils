@@ -214,7 +214,7 @@ def combine_vcf_headers_for_cnv(header1: pysam.VariantHeader, header2: pysam.Var
     - If type and number match, use the first definition
     - If type or number differ, raise RuntimeError
 
-    FILTER fields are not included in the combined header.
+    FILTER fields are cleared.
 
     Special enforcement for CNV/SV-related fields to ensure VCF spec compliance:
     - SVLEN: enforces Number="." (variable-length array) per VCF 4.2 spec for structural variants
@@ -247,8 +247,8 @@ def combine_vcf_headers_for_cnv(header1: pysam.VariantHeader, header2: pysam.Var
     """
     # Enforced specifications for CNV/SV fields per VCF 4.2 spec
     enforced_info_specs = {
-        "SVLEN": (".", "Integer", "CNV length"),
-        "SVTYPE": (1, "String", "CNV type. can be DUP or DEL"),
+        "SVLEN": (".", "Integer", "Length of structural variant (SV) per VCF 4.2 specification"),
+        "SVTYPE": (1, "String", "Type of structural variant (SV); e.g. DEL, DUP, etc. (per VCF 4.2 specification)"),
     }
 
     # Start with a copy of the first header
@@ -338,7 +338,7 @@ def _write_vcf_records_with_source(
     """
     logger.info(f"Writing records from {source_name} VCF")
     for record in vcf_in:
-        # Clear filters before copying to avoid KeyError with undefined filters
+        # Clear filters - we remove filters imposed by the previous pipelines
         record.filter.clear()
         # Create new record with combined header
         new_record = VcfUtils.copy_vcf_record(record, combined_header)

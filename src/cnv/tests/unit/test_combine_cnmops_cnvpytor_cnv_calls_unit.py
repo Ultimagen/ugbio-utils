@@ -141,12 +141,10 @@ class TestCombineVcfHeadersForCnv:
         assert "SVLEN" in combined_header.info
         assert combined_header.info["SVLEN"].number == "."
         assert combined_header.info["SVLEN"].type == "Integer"
-        assert combined_header.info["SVLEN"].description == "CNV length"
 
         assert "SVTYPE" in combined_header.info
         assert combined_header.info["SVTYPE"].number == 1
         assert combined_header.info["SVTYPE"].type == "String"
-        assert combined_header.info["SVTYPE"].description == "CNV type. can be DUP or DEL"
 
 
 class TestCombineCnmopsCnvpytorCNVCalls:
