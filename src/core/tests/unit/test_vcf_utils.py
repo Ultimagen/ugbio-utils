@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pysam
 import pytest
 from simppl.simple_pipeline import SimplePipeline
+from ugbio_core.bed_utils import BedUtils
 from ugbio_core.vcf_utils import VcfUtils
 
 
@@ -15,26 +16,14 @@ def resources_dir():
     return Path(__file__).parent.parent / "resources"
 
 
-@patch("simppl.simple_pipeline.SimplePipeline.print_and_run")
-@patch("subprocess.call")
-def test_intersect_bed_files(mock_subprocess_call, mock_sp_print_and_run, tmp_path, resources_dir):
+def test_intersect_bed_files_bed_utils(tmp_path, resources_dir):
+    """Test BedUtils.intersect_bed_files as the preferred method"""
     bed1 = pjoin(resources_dir, "bed1.bed")
     bed2 = pjoin(resources_dir, "bed2.bed")
     output_path = pjoin(tmp_path, "output.bed")
 
-    # Test with simple pipeline
-    sp = SimplePipeline(0, 10)
-    VcfUtils(sp).intersect_bed_files(bed1, bed2, output_path)
-    # Verify SimplePipeline.print_and_run was called correctly
-    expected_cmd = " ".join(["bedtools", "intersect", "-a", bed1, "-b", bed2])
-    mock_sp_print_and_run.assert_called_once_with(expected_cmd, out=output_path, module_name="ugbio_core.vcf_utils")
-
-    # Reset mock for next test
-    mock_sp_print_and_run.reset_mock()
-
-    # Test without simple pipeline
-    VcfUtils().intersect_bed_files(bed1, bed2, output_path)
-    mock_subprocess_call.assert_called_once_with(expected_cmd, stdout=mock.ANY, shell=True)
+    # Use BedUtils instead - no deprecation warning expected
+    BedUtils().intersect_bed_files(bed1, bed2, output_path)
     assert exists(output_path)
 
 

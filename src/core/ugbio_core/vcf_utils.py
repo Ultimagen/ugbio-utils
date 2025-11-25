@@ -157,22 +157,6 @@ class VcfUtils:
         # Execute the filtering command
         self.__execute(" ".join(cmd_parts))
 
-    def intersect_bed_files(self, input_bed1: str, input_bed2: str, bed_output: str) -> None:
-        """Intersects bed files
-
-        Parameters
-        ----------
-        input_bed1 : str
-            Input Bed file
-        input_bed2 : str
-            Input Bed file
-        bed_output : str
-            Output bed intersected file
-
-        Writes output_fn file
-        """
-        self.__execute(f"bedtools intersect -a {input_bed1} -b {input_bed2}", output_file=bed_output)
-
     def intersect_with_intervals(self, input_fn: str, intervals_fn: str, output_fn: str) -> None:
         """Intersects VCF with intervalList. Writes output_fn file
 

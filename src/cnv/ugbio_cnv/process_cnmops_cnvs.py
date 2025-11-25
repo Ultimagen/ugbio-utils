@@ -24,7 +24,7 @@ import warnings
 import pandas as pd
 import ugbio_cnv.convert_combined_cnv_results_to_output_formats as vcf_writer
 import ugbio_core.misc_utils as mu
-from ugbio_core import filter_bed, vcf_utils
+from ugbio_core import bed_utils, vcf_utils
 from ugbio_core.logger import logger
 
 warnings.filterwarnings("ignore")
@@ -36,13 +36,14 @@ bedmap = "bedmap"
 def annotate_bed(bed_file, lcr_cutoff, lcr_file, prefix, length_cutoff=10000):
     # get filters regions
     filter_files = []
+    bed_utils_instance = bed_utils.BedUtils()
 
     if lcr_file is not None:
-        lcr_bed_file = filter_bed.filter_by_bed_file(bed_file, lcr_cutoff, lcr_file, prefix, "UG-CNV-LCR")
+        lcr_bed_file = bed_utils_instance.filter_by_bed_file(bed_file, lcr_cutoff, lcr_file, prefix, "UG-CNV-LCR")
         filter_files.append(lcr_bed_file)
 
     if length_cutoff is not None and length_cutoff > 0:
-        length_bed_file = filter_bed.filter_by_length(bed_file, length_cutoff, prefix)
+        length_bed_file = bed_utils_instance.filter_by_length(bed_file, length_cutoff, prefix)
         filter_files.append(length_bed_file)
 
     if not filter_files:
@@ -199,12 +200,6 @@ def aggregate_annotations_in_df(
     return cnv_df
 
 
-def check_path(path):
-    if not os.path.exists(os.path.dirname(path)):
-        os.makedirs(os.path.dirname(path))
-        logger.info("creating out directory : %s", path)
-
-
 def _aggregate_coverages(
     annotated_bed_file: str, sample_norm_coverage_file: str, cohort_avg_coverage_file: str, tempdir: str
 ) -> list[tuple[str, str, str]]:
@@ -229,17 +224,18 @@ def _aggregate_coverages(
     # annotate with coverage info
     input_sample = ["cov", "cohort"]
     output_param = ["mean", "stdev"]
+
     for isamp in input_sample:
         for oparam in output_param:
             out_annotate_bed_file_cov = annotated_bed_file.replace(".annotate.bed", f".annotate.{isamp}.{oparam}.bed")
             input_cov_file = sample_norm_coverage_file if isamp == "cov" else cohort_avg_coverage_file
-            filter_bed.bedtools_map(
+            bed_utils.BedUtils().bedtools_map(
                 a_bed=annotated_bed_file,
                 b_bed=input_cov_file,
                 output_bed=out_annotate_bed_file_cov,
                 operation=oparam,
                 presort=True,
-                tempdir=tempdir,
+                tempdir_prefix=tempdir,
                 column=5,
             )
             coverage_annotations.append((isamp, oparam, out_annotate_bed_file_cov))

@@ -30,6 +30,7 @@ import pysam
 from joblib import Parallel, delayed
 from simppl.simple_pipeline import SimplePipeline
 from tqdm import tqdm
+from ugbio_core.bed_utils import BedUtils
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
 from ugbio_core.h5_utils import read_hdf
 from ugbio_core.logger import logger
@@ -264,7 +265,7 @@ def _intersect_intervals_and_save_args(vu, cmp_intervals, highconf_intervals, ar
         logger.info(f"copy {args.highconf_intervals} to {args.output_interval}")
         copyfile(str(highconf_intervals.as_bed_file()), args.output_interval)
     else:
-        vu.intersect_bed_files(
+        BedUtils().intersect_bed_files(
             str(cmp_intervals.as_bed_file()), str(highconf_intervals.as_bed_file()), args.output_interval
         )
 

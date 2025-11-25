@@ -161,8 +161,28 @@ def parse_cnmops_cnv_calls(cnmops_cnv_calls: str, out_directory: str, ref_fasta:
 
 
 # Helper function to check and add metadata records
-def _add_metadata_records(record_dict1, record_dict2, record_type, enforced_info_specs, combined_header):
-    """Add metadata records (INFO/FORMAT/FILTER) to combined header."""
+def _add_metadata_records(
+    record_dict1: pysam.VariantHeaderMetadata,
+    record_dict2: pysam.VariantHeaderMetadata,
+    record_type: str,
+    enforced_info_specs: dict,
+    combined_header: pysam.VariantHeader,
+) -> None:
+    """Add metadata records (INFO/FORMAT/FILTER) to combined header. (service function), modifies the header in place
+    Parameters
+    ----------
+    record_dict1 : pysam.VariantHeaderMetadata
+        Dictionary of metadata records from the first header
+    record_dict2 : pysam.VariantHeaderMetadata
+        Dictionary of metadata records from the second header
+    record_type : str
+        Type of metadata records ("INFO", "FORMAT", or "FILTER")
+    enforced_info_specs : dict
+        Dictionary of enforced specifications for certain INFO fields
+    combined_header : pysam.VariantHeader
+        The combined VCF header to add records to
+    """
+
     # Collect all unique keys from both headers
     all_keys = set(record_dict1.keys()) | set(record_dict2.keys())
 
