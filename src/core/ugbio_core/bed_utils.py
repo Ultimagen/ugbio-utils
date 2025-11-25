@@ -53,6 +53,25 @@ class BedUtils:
         self, in_bed_file: str, filtration_cutoff: float, filtering_bed_file: str, prefix: str, tag: str
     ) -> str:
         """Filter BED file by another BED file using bedtools subtract.
+        Example
+        -------
+        Suppose you have:
+        - `in_bed_file`: "input.bed" containing intervals to filter. should contain name (4th column)
+        - `filtering_bed_file`: "exclude.bed" containing regions to exclude
+        - `filtration_cutoff`: 0.5
+        - `prefix`: "results/"
+        - `tag`: "EXCL"
+
+        After running:
+            BedUtils().filter_by_bed_file("input.bed", 0.5, "exclude.bed", "results/", "EXCL")
+
+        You will get:
+        - Annotated BED: results/input.EXCL.annotate.bed (filtered out intervals with "|EXCL" tag in column 4)
+
+        Example output (results/input.EXCL.annotate.bed):
+        chr1    1000    2000    region1|EXCL
+        chr2    3000    4000    region2|EXCL
+        chr2    4000    6000    region3
         Parameters
         ----------
         in_bed_file : str
@@ -109,6 +128,9 @@ class BedUtils:
             + out_annotate_file
         )
         self.__execute(cmd)
+        # remove temporary files
+        os.unlink(filtered_out_records)
+        os.unlink(out_filtered_bed_file)
 
         return out_annotate_file
 
@@ -134,7 +156,7 @@ class BedUtils:
         out_len_annotate_file = prefix + os.path.splitext(out_filename)[0] + ".len.annotate.bed"
         cmd = "cat " + out_len_file + ' | awk \'{print $1"\t"$2"\t"$3"\t"$4"|LEN"}\' > ' + out_len_annotate_file
         self.__execute(cmd)
-
+        os.unlink(out_len_file)
         return out_len_annotate_file
 
     def __validate_intersect_bed_regions(
@@ -438,6 +460,54 @@ class BedUtils:
                     n_bases_in_region += int(spl[2]) - int(spl[1])
 
         return n_bases_in_region
+
+    def bedtools_sort(
+        self,
+        input_bed: str,
+        output_bed: str,
+        additional_args: str = "",
+    ):
+        """
+        Sort a BED file using bedtools sort.
+
+        Parameters
+        ----------
+        input_bed : str
+            Path to input BED file to be sorted.
+        output_bed : str
+            Path to output sorted BED file.
+        additional_args : str, optional
+            Additional arguments to pass to bedtools sort (e.g., "-header").
+            Default: "" (no additional arguments).
+
+        Returns
+        -------
+        None
+            The function saves the sorted BED file to output_bed.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the input file does not exist.
+        RuntimeError
+            If bedtools is not installed.
+
+        """
+        # Check if input file exists
+        if not os.path.exists(input_bed):
+            raise FileNotFoundError(f"Input file '{input_bed}' does not exist.")
+
+        # Check if bedtools is installed
+        if shutil.which(self.bedtools) is None:
+            raise RuntimeError("bedtools is not installed. Please install bedtools and make sure it is in your PATH.")
+
+        # Build and execute sort command
+        sort_cmd = f"{self.bedtools} sort -i {input_bed}"
+        if additional_args:
+            sort_cmd += f" {additional_args}"
+        sort_cmd += f" > {output_bed}"
+
+        self.__execute(sort_cmd)
 
     def bedtools_map(
         self,

@@ -77,6 +77,37 @@ def get_parser():
     return parser
 
 
+def merge_filter_files(original_bed: str, filter_files: list[str], output_file: str):
+    """Merges multiple filter bed files into a single sorted bed file.
+
+    Parameters
+    ----------
+    original_bed : str
+        Original bed: four columns (chr, start, end, copy-number)
+    filter_files : list[str]
+        BED files with filters added to merge. Each file should have four columns (chr, start, end, CN2|LEN etc.)
+        Some lines are empty
+    output_file : str
+        Output file: filters will be combined by ;, if all filters are empty, the result will be just CN
+    """
+    original_bed_df = pd.read_csv(original_bed, sep="\t", header=None, names=["chr", "start", "end", "copy-number"])
+    original_bed_df = original_bed_df.set_index(["chr", "start", "end"])
+    filter_dfs = []
+    for filter_file in filter_files:
+        filter_df = pd.read_csv(filter_file, sep="\t", header=None, names=["chr", "start", "end", "filter"])
+        filter_df = filter_df.set_index(["chr", "start", "end"])
+        filter_dfs.append(filter_df)
+    merged_df = pd.concat((original_bed_df, *filter_dfs), axis=1, join="outer").fillna("")
+    cols = ["copy-number"] + [f"filter_{i}" for i in range(len(filter_dfs))]
+    merged_df.columns = cols
+    merged_df["combine_filters"] = merged_df[cols[1:]].apply(lambda x: ";".join([y for y in x if y]), axis=1)
+    merged_df["combined_cn"] = merged_df.apply(
+        lambda x: x["copy-number"] if x["combine_filters"] == "" else x["combine_filters"], axis=1
+    )
+    merged_df = merged_df.reset_index()
+    merged_df.to_csv(output_file, sep="\t", header=False, index=False, columns=["chr", "start", "end", "combined_cn"])
+
+
 def annotate_bed(bed_file, lcr_cutoff, lcr_file, prefix, length_cutoff=10000):
     # get filters regions
     filter_files = []
@@ -93,59 +124,18 @@ def annotate_bed(bed_file, lcr_cutoff, lcr_file, prefix, length_cutoff=10000):
     if not filter_files:
         # No filters to apply, just return sorted bed file
         out_bed_file_sorted = prefix + os.path.splitext(os.path.basename(bed_file))[0] + ".annotate.bed"
-        cmd = bedtools + " sort -i " + bed_file + " > " + out_bed_file_sorted
-        os.system(cmd)  # noqa: S605
-        logger.info(cmd)
+        bu.bedtools_sort(bed_file, out_bed_file_sorted)
         return out_bed_file_sorted
 
-    # merge all filters and sort
-    out_filters_unsorted = prefix + "filters.annotate.unsorted.bed"
-    cmd = "cat " + " ".join(filter_files) + " > " + out_filters_unsorted
-
-    os.system(cmd)  # noqa: S605
-    logger.info(cmd)
-
-    out_filters_sorted = prefix + "filters.annotate.bed"
-    cmd = bedtools + " sort -i " + out_filters_unsorted + " > " + out_filters_sorted
-    os.system(cmd)  # noqa: S605
-    logger.info(cmd)
-
-    out_bed_file_sorted = prefix + os.path.splitext(os.path.basename(bed_file))[0] + ".sorted.bed"
-    cmd = bedtools + " sort -i " + bed_file + " > " + out_bed_file_sorted
-    os.system(cmd)  # noqa: S605
-    logger.info(cmd)
-
-    # annotate bed files by filters
-    out_unsorted_annotate = prefix + os.path.splitext(os.path.basename(bed_file))[0] + ".unsorted.annotate.bed"
-    cmd = (
-        bedmap
-        + " --echo --echo-map-id-uniq --delim '\\t' "
-        + out_bed_file_sorted
-        + " "
-        + out_filters_sorted
-        + " > "
-        + out_unsorted_annotate
-    )
-    os.system(cmd)  # noqa: S605
-    logger.info(cmd)
-    # combine to 4th column
-
     out_combined_info = prefix + os.path.splitext(os.path.basename(bed_file))[0] + ".unsorted.annotate.combined.bed"
-    cmd = (
-        "cat "
-        + out_unsorted_annotate
-        + ' | awk \'{if($5=="")'
-        + "{print $0}"
-        + 'else{print $1"\t"$2"\t"$3"\t"$5}}\' | sed \'s/\t$//\' > '
-        + out_combined_info
-    )
-    os.system(cmd)  # noqa: S605
-    logger.info(cmd)
+    merge_filter_files(bed_file, filter_files, out_combined_info)
+    # merge all filters and sort
 
     out_annotate = prefix + os.path.splitext(os.path.basename(bed_file))[0] + ".annotate.bed"
-    cmd = "sort -k1,1V -k2,2n -k3,3n " + out_combined_info + " > " + out_annotate
-    os.system(cmd)  # noqa: S605
-    logger.info(cmd)
+    bu.bedtools_sort(out_combined_info, out_annotate)
+    os.unlink(out_combined_info)
+    for f in filter_files:
+        os.unlink(f)
 
     return out_annotate
 

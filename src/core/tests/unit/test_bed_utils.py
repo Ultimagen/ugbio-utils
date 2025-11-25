@@ -287,3 +287,31 @@ def test_intersect_bed_files_with_custom_tempdir(tmpdir):
 
     expected = ["chr1\t150\t200\n"]
     assert result == expected
+
+
+def test_bedtools_sort(tmpdir):
+    """Test bedtools_sort with unsorted BED file."""
+    # Create unsorted BED file
+    unsorted_content = (
+        "chr2\t300\t400\tregion3\n" "chr1\t100\t200\tregion1\n" "chr1\t500\t600\tregion4\n" "chr1\t200\t300\tregion2\n"
+    )
+    input_file = tmpdir.join("unsorted.bed")
+    input_file.write(unsorted_content)
+
+    output_file = str(tmpdir.join("sorted.bed"))
+
+    # Run bedtools_sort
+    BedUtils().bedtools_sort(input_bed=str(input_file), output_bed=output_file)
+
+    # Read and verify output is sorted
+    with open(output_file) as f:
+        result = f.readlines()
+
+    # Expected: sorted by chromosome then by start position
+    expected = [
+        "chr1\t100\t200\tregion1\n",
+        "chr1\t200\t300\tregion2\n",
+        "chr1\t500\t600\tregion4\n",
+        "chr2\t300\t400\tregion3\n",
+    ]
+    assert result == expected
