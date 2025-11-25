@@ -33,22 +33,66 @@ bedtools = "bedtools"
 bedmap = "bedmap"
 
 
+def get_parser():
+    parser = argparse.ArgumentParser(
+        prog="process_cnmops_cnvs.py",
+        description="Process CNV calls from cn.mops: filter, annotate, and convert to VCF",
+    )
+    parser.add_argument("--input_bed_file", help="input bed file with .bed suffix", required=True, type=str)
+    parser.add_argument(
+        "--intersection_cutoff",
+        help="intersection cutoff for bedtools subtract function",
+        required=False,
+        type=float,
+        default=0.5,
+    )
+    parser.add_argument("--cnv_lcr_file", help="UG-CNV-LCR bed file", required=False, type=str)
+    parser.add_argument("--min_cnv_length", required=False, type=int, default=10000)
+    parser.add_argument(
+        "--out_directory",
+        help="out directory where intermediate and output files will be saved."
+        " if not supplied all files will be written to current directory",
+        required=False,
+        type=str,
+    )
+    parser.add_argument(
+        "--sample_norm_coverage_file", help="sample normalized coverage file (BED)", required=False, type=str
+    )
+    parser.add_argument("--cohort_avg_coverage_file", help="Cohort average coverage (BED)", required=False, type=str)
+
+    parser.add_argument(
+        "--verbosity",
+        help="Verbosity: ERROR, WARNING, INFO, DEBUG",
+        required=False,
+        default="INFO",
+    )
+    parser.add_argument(
+        "--fasta_index_file",
+        help="tab delimeted file holding reference genome chr ids with their lengths. (.fai file)",
+        required=True,
+        type=str,
+    )
+    parser.add_argument("--sample_name", help="sample name", required=True, type=str)
+
+    return parser
+
+
 def annotate_bed(bed_file, lcr_cutoff, lcr_file, prefix, length_cutoff=10000):
     # get filters regions
     filter_files = []
-    bed_utils_instance = bed_utils.BedUtils()
+    bu = bed_utils.BedUtils()
 
     if lcr_file is not None:
-        lcr_bed_file = bed_utils_instance.filter_by_bed_file(bed_file, lcr_cutoff, lcr_file, prefix, "UG-CNV-LCR")
+        lcr_bed_file = bu.filter_by_bed_file(bed_file, lcr_cutoff, lcr_file, prefix, "UG-CNV-LCR")
         filter_files.append(lcr_bed_file)
 
     if length_cutoff is not None and length_cutoff > 0:
-        length_bed_file = bed_utils_instance.filter_by_length(bed_file, length_cutoff, prefix)
+        length_bed_file = bu.filter_by_length(bed_file, length_cutoff, prefix)
         filter_files.append(length_bed_file)
 
     if not filter_files:
         # No filters to apply, just return sorted bed file
-        out_bed_file_sorted = prefix + os.path.splitext(os.path.basename(bed_file))[0] + ".sorted.annotate.bed"
+        out_bed_file_sorted = prefix + os.path.splitext(os.path.basename(bed_file))[0] + ".annotate.bed"
         cmd = bedtools + " sort -i " + bed_file + " > " + out_bed_file_sorted
         os.system(cmd)  # noqa: S605
         logger.info(cmd)
@@ -182,14 +226,13 @@ def aggregate_annotations_in_df(
         cov_df = pd.read_csv(bed_file_path, sep="\t", header=None)
 
         # Assign column names for sorting
-        cov_df.columns = ["chrom", "start", "end", "cov"]
+        cov_df.columns = ["chrom", "start", "end", "name", "cov"]
 
         # Sort to match the primary bed file (first 3 columns are chr, start, end)
         cov_df = cov_df.sort_values(by=["chrom", "start", "end"]).reset_index(drop=True)
 
         # Extract the last column (the coverage value)
-        last_col_name = cov_df.columns[-1]
-        coverage_values = cov_df[last_col_name]
+        coverage_values = cov_df["cov"]
 
         # Create column name in the format CNMOPS_{SAMPLE}_{OPERATION} (uppercase)
         col_name = f"CNMOPS_{sample_name.upper()}_{operation.upper()}"
@@ -274,46 +317,8 @@ def run(argv):
     3. length
     output is a VCF file with filtering tags
     """
-    parser = argparse.ArgumentParser(
-        prog="process_cnmops_cnvs.py",
-        description="Process CNV calls from cn.mops: filter, annotate, and convert to VCF",
-    )
-    parser.add_argument("--input_bed_file", help="input bed file with .bed suffix", required=True, type=str)
-    parser.add_argument(
-        "--intersection_cutoff",
-        help="intersection cutoff for bedtools subtract function",
-        required=False,
-        type=float,
-        default=0.5,
-    )
-    parser.add_argument("--cnv_lcr_file", help="UG-CNV-LCR bed file", required=False, type=str)
-    parser.add_argument("--min_cnv_length", required=False, type=int, default=10000)
-    parser.add_argument(
-        "--out_directory",
-        help="out directory where intermediate and output files will be saved."
-        " if not supplied all files will be written to current directory",
-        required=False,
-        type=str,
-    )
-    parser.add_argument(
-        "--sample_norm_coverage_file", help="sample normalized coverage file (BED)", required=False, type=str
-    )
-    parser.add_argument("--cohort_avg_coverage_file", help="Cohort average coverage (BED)", required=False, type=str)
 
-    parser.add_argument(
-        "--verbosity",
-        help="Verbosity: ERROR, WARNING, INFO, DEBUG",
-        required=False,
-        default="INFO",
-    )
-    parser.add_argument(
-        "--fasta_index_file",
-        help="tab delimeted file holding reference genome chr ids with their lengths. (.fai file)",
-        required=True,
-        type=str,
-    )
-    parser.add_argument("--sample_name", help="sample name", required=True, type=str)
-
+    parser = get_parser()
     args = parser.parse_args(argv[1:])
     logger.setLevel(getattr(logging, args.verbosity))
 

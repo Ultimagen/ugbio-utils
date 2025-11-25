@@ -31,15 +31,15 @@ INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
         "INFO",
     ),
     "JUMP_ALIGNMENTS": ("JUMP_ALIGNMENTS", 1, "Float", "Number of jump alignments supporting this CNV", "INFO"),
-    "CNMOPS_COV_MEAN": (
-        "CNMOPS_COV_MEAN",
+    "CNMOPS_SAMPLE_MEAN": (
+        "CNMOPS_SAMPLE_MEAN",
         1,
         "Float",
         "Mean coverage in the CNV region for the sample (cn.mops)",
         "INFO",
     ),
-    "CNMOPS_COV_STDEV": (
-        "CNMOPS_COV_STDEV",
+    "CNMOPS_SAMPLE_STDEV": (
+        "CNMOPS_SAMPLE_STDEV",
         1,
         "Float",
         "Standard deviation of coverage in the CNV region for the sample (cn.mops)",
