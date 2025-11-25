@@ -182,10 +182,10 @@ def aggregate_annotations_in_df(
         cov_df = pd.read_csv(bed_file_path, sep="\t", header=None)
 
         # Assign column names for sorting
-        cov_df.columns = [f"col_{i}" for i in range(len(cov_df.columns))]
+        cov_df.columns = ["chrom", "start", "end", "cov"]
 
         # Sort to match the primary bed file (first 3 columns are chr, start, end)
-        cov_df = cov_df.sort_values(by=["col_0", "col_1", "col_2"]).reset_index(drop=True)
+        cov_df = cov_df.sort_values(by=["chrom", "start", "end"]).reset_index(drop=True)
 
         # Extract the last column (the coverage value)
         last_col_name = cov_df.columns[-1]
@@ -222,13 +222,13 @@ def _aggregate_coverages(
     """
     coverage_annotations = []
     # annotate with coverage info
-    input_sample = ["cov", "cohort"]
+    input_sample = ["sample", "cohort"]
     output_param = ["mean", "stdev"]
 
     for isamp in input_sample:
         for oparam in output_param:
             out_annotate_bed_file_cov = annotated_bed_file.replace(".annotate.bed", f".annotate.{isamp}.{oparam}.bed")
-            input_cov_file = sample_norm_coverage_file if isamp == "cov" else cohort_avg_coverage_file
+            input_cov_file = sample_norm_coverage_file if isamp == "sample" else cohort_avg_coverage_file
             bed_utils.BedUtils().bedtools_map(
                 a_bed=annotated_bed_file,
                 b_bed=input_cov_file,
@@ -269,12 +269,10 @@ def add_ids(cnmops_cnv_df: pd.DataFrame) -> pd.DataFrame:
 
 def run(argv):
     """
-    Given a bed file, this script will filter it by :
+    Given a cn.mops bed file, this script will filter it by :
     1. lcr bed (ug_cnv_lcr) file
     3. length
-    output consists of 2 files:
-    - VCF file with filtering tags
-    - annotated bed file with filtering tags
+    output is a VCF file with filtering tags
     """
     parser = argparse.ArgumentParser(
         prog="process_cnmops_cnvs.py",
@@ -323,29 +321,11 @@ def run(argv):
     if args.out_directory:
         prefix = args.out_directory
         prefix = prefix.rstrip("/") + "/"
-    if "--" in args.input_bed_file:
-        cmd = f"cp {args.input_bed_file} {args.input_bed_file.replace('--','-TMP-')}"
-        os.system(cmd)  # noqa: S605
-        args.input_bed_file = args.input_bed_file.replace("--", "-TMP-")
 
-    # Annotate if lcr_file or min_cnv_length is provided
-    if args.cnv_lcr_file or args.min_cnv_length:
-        out_annotate_bed_file = annotate_bed(
-            args.input_bed_file, args.intersection_cutoff, args.cnv_lcr_file, prefix, args.min_cnv_length
-        )
-    else:
-        # If no filtering, just sort the input bed file
-        out_bed_file_sorted = prefix + os.path.splitext(os.path.basename(args.input_bed_file))[0] + ".annotate.bed"
-        cmd = bedtools + " sort -i " + args.input_bed_file + " > " + out_bed_file_sorted
-        os.system(cmd)  # noqa: S605
-        logger.info(cmd)
-        out_annotate_bed_file = out_bed_file_sorted
-
-    target_file = out_annotate_bed_file.replace("-TMP-", "--")
-    if out_annotate_bed_file != target_file:
-        cmd = f"mv {out_annotate_bed_file} {target_file}"
-        os.system(cmd)  # noqa: S605
-    out_annotate_bed_file = target_file
+    # Annotate with lcr_file or min_cnv_length are provided, sort otherwise
+    out_annotate_bed_file = annotate_bed(
+        args.input_bed_file, args.intersection_cutoff, args.cnv_lcr_file, prefix, args.min_cnv_length
+    )
 
     coverage_annotations = []
     if args.sample_norm_coverage_file and args.cohort_avg_coverage_file:
