@@ -21,23 +21,33 @@ suppressPackageStartupMessages(library("argparse"))
 parser <- ArgumentParser()
 parser$add_argument("input_file", help = "input RDS file containing GenomicRanges object")
 parser$add_argument("--mean", action = "store_true", help = "export mean coverage instead of per-sample coverage")
+parser$add_argument("--sample_name", help = "export coverage for a specific sample only")
 args <- parser$parse_args()
 
 germline_coverage_rds <- args$input_file
 gr <- readRDS(germline_coverage_rds)
 
 
-if (!args$mean) {
+if (!is.null(args$sample_name)) {
+  # Export only the specified sample
+  sample_names <- colnames(mcols(gr))
+  gr_sample <- gr
+  mcols(gr_sample) <- NULL
+  mcols(gr_sample)$score <- mcols(gr)[[make.names(args$sample_name)]]
+  export.bed(gr_sample, paste0(args$sample_name, ".cov.bed"))
+} else if (!args$mean) {
+  # Export all samples
   sample_names <- colnames(mcols(gr))
   for (sample in sample_names) {
     gr_sample <- gr
     mcols(gr_sample) <- NULL
-    mcols(gr_sample)$score <- mcols(gr)[[sample]]
+    mcols(gr_sample)$score <- mcols(gr)[[make.names(sample)]]
     export.bed(gr_sample, paste0(sample, ".cov.bed"))
   }
 } else {
+  # Export mean coverage
   df <- as.data.frame(gr)
-  df$cohort_avg <- rowMeans(df[, sample_names], na.rm = TRUE)
+  df$cohort_avg <- rowMeans(df, na.rm = TRUE)
   gr_cohort <- GRanges(
     seqnames = df$seqnames,
     ranges = IRanges(start = df$start, end = df$end),
