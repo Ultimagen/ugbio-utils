@@ -37,7 +37,7 @@ if (!args$mean) {
   }
 } else {
   df <- as.data.frame(gr)
-  df$cohort_avg <- rowMeans(df[, sample.names], na.rm = TRUE)
+  df$cohort_avg <- rowMeans(df[, sample_names], na.rm = TRUE)
   gr_cohort <- GRanges(
     seqnames = df$seqnames,
     ranges = IRanges(start = df$start, end = df$end),
