@@ -47,7 +47,7 @@ if (!is.null(args$sample_name)) {
 } else {
   # Export mean coverage
   df <- as.data.frame(gr)
-  df$cohort_avg <- rowMeans(df, na.rm = TRUE)
+  df$cohort_avg <- rowMeans(df[, 6:ncol(df)], na.rm = TRUE)
   gr_cohort <- GRanges(
     seqnames = df$seqnames,
     ranges = IRanges(start = df$start, end = df$end),
