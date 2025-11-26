@@ -68,7 +68,7 @@ def get_parser():
     )
     parser.add_argument(
         "--fasta_index_file",
-        help="tab delimeted file holding reference genome chr ids with their lengths. (.fai file)",
+        help="tab delimited file holding reference genome chr ids with their lengths. (.fai file)",
         required=True,
         type=str,
     )

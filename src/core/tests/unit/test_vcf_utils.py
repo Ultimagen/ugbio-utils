@@ -306,7 +306,7 @@ def test_collapse_vcf(mocker, mock_logger):
     mock_p1.returncode = 0
     mock_p2.returncode = 0
     open("tmp.vcf", "w").close()  # Create the file to be removed
-    vcf_utils.collapse_vcf("input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8)
+    vcf_utils.collapse_vcf("input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, refdist=1000)
 
     mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
     mock_subprocess_popen.assert_any_call(
@@ -315,16 +315,18 @@ def test_collapse_vcf(mocker, mock_logger):
             "collapse",
             "-i",
             "input.vcf",
-            "-t",
             "-c",
             "tmp.vcf",
             "--passonly",
+            "-t",
             "--bed",
             "regions.bed",
             "--pctseq",
             "0.9",
             "--pctsize",
             "0.8",
+            "--refdist",
+            "1000",
         ],
         stdout=mocker.ANY,
     )
@@ -349,7 +351,9 @@ def test_collapse_vcf_ignore_filter(mocker, mock_logger):
     with open("tmp.vcf", "w"):
         pass  # Create the file to be removed
 
-    vcf_utils.collapse_vcf("input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, ignore_filter=True)
+    vcf_utils.collapse_vcf(
+        "input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, refdist=1000, ignore_filter=True
+    )
 
     mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
     # Verify --passonly is NOT included when ignore_filter=True
@@ -359,15 +363,64 @@ def test_collapse_vcf_ignore_filter(mocker, mock_logger):
             "collapse",
             "-i",
             "input.vcf",
-            "-t",
             "-c",
             "tmp.vcf",
+            "-t",
             "--bed",
             "regions.bed",
             "--pctseq",
             "0.9",
             "--pctsize",
             "0.8",
+            "--refdist",
+            "1000",
+        ],
+        stdout=mocker.ANY,
+    )
+    mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
+    # Verify both processes were set up correctly
+    assert mock_p1.returncode == 0
+    assert mock_p2.returncode == 0
+
+
+def test_collapse_vcf_ignore_type(mocker, mock_logger):
+    """Test collapse_vcf with ignore_type=False removes -t flag"""
+    mock_sp = mocker.Mock()
+    vcf_utils = VcfUtils(simple_pipeline=mock_sp, logger=mock_logger)
+
+    mock_subprocess_popen = mocker.patch("subprocess.Popen")
+    mock_p1 = mocker.Mock()
+    mock_p2 = mocker.Mock()
+    mock_subprocess_popen.side_effect = [mock_p1, mock_p2]
+    mock_p1.stdout = mocker.Mock()
+    mock_p1.returncode = 0
+    mock_p2.returncode = 0
+    with open("tmp.vcf", "w"):
+        pass  # Create the file to be removed
+
+    vcf_utils.collapse_vcf(
+        "input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, refdist=1000, ignore_type=False
+    )
+
+    mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
+    # Verify -t is NOT included when ignore_type=False
+    mock_subprocess_popen.assert_any_call(
+        [
+            "truvari",
+            "collapse",
+            "-i",
+            "input.vcf",
+            "-c",
+            "tmp.vcf",
+            "--passonly",
+            "--bed",
+            "regions.bed",
+            "--pctseq",
+            "0.9",
+            "--pctsize",
+            "0.8",
+            "--refdist",
+            "1000",
         ],
         stdout=mocker.ANY,
     )

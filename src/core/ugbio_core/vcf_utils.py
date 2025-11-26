@@ -287,7 +287,7 @@ class VcfUtils:
         vcf: str,
         output_vcf: str,
         bed: str | None = None,
-        refdist: float = 500.0,
+        refdist: int = 500,
         pctseq: float = 0.0,
         pctsize: float = 0.0,
         *,
@@ -305,8 +305,8 @@ class VcfUtils:
             Output VCF file
         bed : str, optional
             Bed file, by default None
-        refdist : float, optional
-            Reference distance for collapsing variants, by default 500.0
+        refdist : int, optional
+            Reference distance for collapsing variants, by default 500
         pctseq : float, optional
             Percentage of sequence identity, by default 0.0
         pctsize : float, optional
@@ -335,7 +335,7 @@ class VcfUtils:
             truvari_cmd.extend(["--bed", bed])
         truvari_cmd.extend(["--pctseq", str(pctseq)])
         truvari_cmd.extend(["--pctsize", str(pctsize)])
-        truvari_cmd.extend(["--refdist", str(refdist)])
+        truvari_cmd.extend(["--refdist", str(int(refdist))])
 
         self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
         p1 = subprocess.Popen(truvari_cmd, stdout=subprocess.PIPE)
