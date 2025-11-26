@@ -141,7 +141,7 @@ def annotate_vcf_with_gap_perc(input_vcf: str, ref_fasta: str, output_vcf: str) 
                 start = record.start
                 end = record.stop
                 try:
-                    seq_obj = genome[chrom][start:end]
+                    seq_obj = genome[chrom][start : end + 1]
                     seq = seq_obj.seq if seq_obj is not None else ""
                     n_count = seq.upper().count("N")
                     region_len = end - start + 1
