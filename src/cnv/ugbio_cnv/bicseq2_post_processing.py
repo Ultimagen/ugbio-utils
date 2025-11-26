@@ -27,12 +27,6 @@ from ugbio_core.logger import logger
 warnings.filterwarnings("ignore")
 
 
-def check_path(path):
-    if not os.path.exists(os.path.dirname(path)):
-        os.makedirs(os.path.dirname(path))
-        logger.info("creating out directory : %s", path)
-
-
 def run(argv):
     """
     Conversion of bicseq2 output text file to BED format :

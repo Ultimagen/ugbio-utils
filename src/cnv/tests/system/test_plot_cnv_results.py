@@ -41,6 +41,7 @@ class TestPlotCnvResults:
                 input_dup_bed,
                 "--deletion_cnv_calls",
                 input_del_bed,
+                "--vcf-like",
             ]
         )
 

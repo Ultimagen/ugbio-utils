@@ -157,22 +157,6 @@ class VcfUtils:
         # Execute the filtering command
         self.__execute(" ".join(cmd_parts))
 
-    def intersect_bed_files(self, input_bed1: str, input_bed2: str, bed_output: str) -> None:
-        """Intersects bed files
-
-        Parameters
-        ----------
-        input_bed1 : str
-            Input Bed file
-        input_bed2 : str
-            Input Bed file
-        bed_output : str
-            Output bed intersected file
-
-        Writes output_fn file
-        """
-        self.__execute(f"bedtools intersect -a {input_bed1} -b {input_bed2}", output_file=bed_output)
-
     def intersect_with_intervals(self, input_fn: str, intervals_fn: str, output_fn: str) -> None:
         """Intersects VCF with intervalList. Writes output_fn file
 
@@ -359,6 +343,39 @@ class VcfUtils:
         output_file = input_file.replace("vcf.gz", "annotated.vcf.gz")
         self.__execute(f"gatk VariantAnnotator -V {input_file} -O {output_file} -R {reference_fasta} -A TandemRepeat")
         return output_file
+
+    def update_vcf_contigs_from_fai(
+        self,
+        input_vcf: str,
+        output_vcf: str,
+        fasta_fai: str,
+    ) -> None:
+        """
+        Update VCF header contig information using FASTA FAI file and index the output.
+
+        This function updates the VCF header contig lines using information from a FASTA
+        index (.fai) file. The contig lines are replaced with entries from the FAI file.
+
+        Parameters
+        ----------
+        input_vcf : str
+            Input VCF file path (can be .vcf or .vcf.gz)
+        output_vcf : str
+            Output VCF file path (.vcf.gz recommended)
+        fasta_fai : str
+            Path to the FASTA index (.fai) file
+
+        Returns
+        -------
+        None
+            Writes the updated VCF to output_vcf and creates an index
+
+        """
+        # Use bcftools reheader to update contig lines from FAI file
+        self.__execute(f"bcftools reheader -f {fasta_fai} -o {output_vcf} {input_vcf}")
+
+        # Index the output VCF
+        self.index_vcf(output_vcf)
 
     @staticmethod
     def copy_vcf_record(rec: "pysam.VariantRecord", new_header: "pysam.VariantHeader") -> "pysam.VariantRecord":

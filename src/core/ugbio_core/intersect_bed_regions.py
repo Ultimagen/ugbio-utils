@@ -2,7 +2,7 @@ import argparse
 import sys
 
 from simppl.simple_pipeline import SimplePipeline
-from ugbio_core.filter_bed import intersect_bed_regions
+from ugbio_core.bed_utils import BedUtils
 
 
 def get_parser():
@@ -43,13 +43,12 @@ def run(argv):
     SimplePipeline.add_parse_args(parser)
     args = parser.parse_args(argv[1:])
     sp = SimplePipeline(args.fc, args.lc, debug=args.d, print_timing=True)
-    intersect_bed_regions(
+    BedUtils(simple_pipeline=sp).intersect_bed_regions(
         include_regions=args.include_regions,
         exclude_regions=args.exclude_regions,
         output_bed=args.output_bed,
         assume_input_sorted=args.assume_input_sorted,
         max_mem=args.max_mem,
-        sp=sp,
     )
 
 

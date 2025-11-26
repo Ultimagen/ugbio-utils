@@ -31,6 +31,34 @@ INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
         "INFO",
     ),
     "JUMP_ALIGNMENTS": ("JUMP_ALIGNMENTS", 1, "Float", "Number of jump alignments supporting this CNV", "INFO"),
+    "CNMOPS_SAMPLE_MEAN": (
+        "CNMOPS_SAMPLE_MEAN",
+        1,
+        "Float",
+        "Mean coverage in the CNV region for the sample (cn.mops)",
+        "INFO",
+    ),
+    "CNMOPS_SAMPLE_STDEV": (
+        "CNMOPS_SAMPLE_STDEV",
+        1,
+        "Float",
+        "Standard deviation of coverage in the CNV region for the sample (cn.mops)",
+        "INFO",
+    ),
+    "CNMOPS_COHORT_MEAN": (
+        "CNMOPS_COHORT_MEAN",
+        1,
+        "Float",
+        "Mean coverage in the CNV region across the cohort (cn.mops)",
+        "INFO",
+    ),
+    "CNMOPS_COHORT_STDEV": (
+        "CNMOPS_COHORT_STDEV",
+        1,
+        "Float",
+        "Standard deviation of coverage in the CNV region across the cohort (cn.mops)",
+        "INFO",
+    ),
 }
 
 # the reason filters require special treatment is that they need to be
@@ -60,6 +88,20 @@ FILTER_TAG_REGISTRY = {
         None,
         None,
         "Overlaps with telomere or centromere regions",
+        "FILTER",
+    ),
+    "LEN": (
+        "LEN",
+        None,
+        None,
+        "CNV length is below the minimum length threshold (cn.mops)",
+        "FILTER",
+    ),
+    "UG-CNV-LCR": (
+        "UG-CNV-LCR",
+        None,
+        None,
+        "Overlaps with low-complexity regions as defined by UGBio CNV module",
         "FILTER",
     ),
 }
@@ -270,6 +312,11 @@ def _create_base_vcf_record(vcf_out: pysam.VariantFile, row: pd.Series) -> pysam
     record.stop = row["end"]
     record.ref = "N"
     record.alts = (f"<{row['SVTYPE']}>",)
+
+    # Set ID if present in the dataframe
+    if "ID" in row and pd.notna(row["ID"]):
+        record.id = str(row["ID"])
+
     return record
 
 
@@ -435,7 +482,7 @@ def _add_genotype_to_record(record: pysam.VariantRecord, sample_name: str, row: 
     record.samples[sample_name]["GT"] = gt
 
 
-def write_combined_vcf(outfile: str, cnv_df: pd.DataFrame, sample_name: str, fasta_index_file: str) -> None:
+def write_cnv_vcf(outfile: str, cnv_df: pd.DataFrame, sample_name: str, fasta_index_file: str) -> None:
     """
     Write CNV calls directly from dataframe to a VCF file.
 
@@ -520,7 +567,7 @@ def run(argv):
 
     # Process CNV data and write VCF
     cnv_df = prepare_cnv_dataframe(args.cnv_annotated_bed_file)
-    write_combined_vcf(out_vcf_file, cnv_df, args.sample_name, args.fasta_index_file)
+    write_cnv_vcf(out_vcf_file, cnv_df, args.sample_name, args.fasta_index_file)
 
     # index outfile
     try:

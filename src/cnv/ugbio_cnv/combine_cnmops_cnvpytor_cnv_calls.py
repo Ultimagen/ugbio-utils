@@ -7,9 +7,12 @@ import sys
 from os.path import join as pjoin
 
 import pandas as pd
+import pysam
 import ugbio_cnv.convert_combined_cnv_results_to_output_formats as output_results
+import ugbio_core.misc_utils as mu
 from pyfaidx import Fasta
 from ugbio_core.logger import logger
+from ugbio_core.vcf_utils import VcfUtils
 
 bedmap = "bedmap"
 
@@ -19,7 +22,7 @@ def run_cmd(cmd):
     subprocess.run(cmd, shell=True, check=True)  # noqa: S602
 
 
-def __parse_args(argv: list[str]) -> argparse.Namespace:
+def __parse_args_legacy(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="combine_cnmops_cnvpytor_cnv_calls.py",
         description="Combines CNV calls from various sources, filters, converts into final bed/VCF formats.",
@@ -51,6 +54,23 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
     parser.add_argument("--out_directory", help="output directory", required=False, type=str)
     parser.add_argument("--sample_name", help="sample name", required=True, type=str)
+    parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO")
+
+    return parser.parse_args(argv[1:])
+
+
+def __parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="combine_cnmops_cnvpytor_cnv_calls.py",
+        description="Combines CNV calls from various sources into VCF.",
+    )
+
+    parser.add_argument("--cnmops_vcf", help="input VCF file holding cn.mops CNV calls", required=True, type=str)
+    parser.add_argument("--cnvpytor_vcf", help="input VCF file holding cnvpytor CNV calls", required=True, type=str)
+    parser.add_argument("--output_vcf", help="output combined VCF file", required=True, type=str)
+    parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
+    parser.add_argument("--out_directory", help="output directory", required=False, type=str)
+
     parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO")
 
     return parser.parse_args(argv[1:])
@@ -138,6 +158,319 @@ def parse_cnmops_cnv_calls(cnmops_cnv_calls: str, out_directory: str, ref_fasta:
     df_cnmops_cnvs = df_cnmops_cnvs[df_cnmops_cnvs["pN"] <= pN]
 
     return df_cnmops_cnvs
+
+
+# Helper function to check and add metadata records
+def _add_metadata_records(
+    record_dict1: pysam.VariantHeaderMetadata,
+    record_dict2: pysam.VariantHeaderMetadata,
+    record_type: str,
+    enforced_info_specs: dict,
+    combined_header: pysam.VariantHeader,
+) -> None:
+    """Add metadata records (INFO/FORMAT/FILTER) to combined header. (service function), modifies the header in place
+    Parameters
+    ----------
+    record_dict1 : pysam.VariantHeaderMetadata
+        Dictionary of metadata records from the first header
+    record_dict2 : pysam.VariantHeaderMetadata
+        Dictionary of metadata records from the second header
+    record_type : str
+        Type of metadata records ("INFO", "FORMAT", or "FILTER")
+    enforced_info_specs : dict
+        Dictionary of enforced specifications for certain INFO fields
+    combined_header : pysam.VariantHeader
+        The combined VCF header to add records to
+    """
+
+    # Collect all unique keys from both headers
+    all_keys = set(record_dict1.keys()) | set(record_dict2.keys())
+
+    for key in all_keys:
+        # Check if this field has enforced specifications
+        if record_type == "INFO" and key in enforced_info_specs:
+            number, data_type, description = enforced_info_specs[key]
+            combined_header.info.add(key, number, data_type, description)
+            continue
+
+        # Handle fields that exist in both headers
+        if key in record_dict1 and key in record_dict2:
+            record1 = record_dict1[key]
+            record2 = record_dict2[key]
+
+            # Check if type or number differ
+            if hasattr(record1, "type") and hasattr(record2, "type"):
+                if record1.type != record2.type:
+                    msg = f"{record_type} field '{key}' has conflicting types: '{record1.type}' vs '{record2.type}'"
+                    raise RuntimeError(msg)
+            if hasattr(record1, "number") and hasattr(record2, "number"):
+                if record1.number != record2.number:
+                    msg = (
+                        f"{record_type} field '{key}' has conflicting numbers: '{record1.number}' vs '{record2.number}'"
+                    )
+                    raise RuntimeError(msg)
+
+            # If we get here, they're compatible - use the first one
+            combined_header.add_line(str(record1.record))
+
+        # Handle fields that only exist in header1
+        elif key in record_dict1:
+            combined_header.add_line(str(record_dict1[key].record))
+
+        # Handle fields that only exist in header2
+        elif key in record_dict2:
+            combined_header.add_line(str(record_dict2[key].record))
+
+
+def combine_vcf_headers_for_cnv(header1: pysam.VariantHeader, header2: pysam.VariantHeader) -> pysam.VariantHeader:
+    """
+    Combine two VCF headers into a single header for CNV/SV variant calls.
+
+    This function is specifically designed for merging headers from different CNV/SV
+    callers (e.g., cn.mops and CNVpytor). It creates a new header that includes all
+    metadata from both input headers with special handling for structural variant fields.
+
+    For INFO and FORMAT fields with the same ID:
+    - If type and number match, use the first definition
+    - If type or number differ, raise RuntimeError
+
+    FILTER fields are cleared.
+
+    Special enforcement for CNV/SV-related fields to ensure VCF spec compliance:
+    - SVLEN: enforces Number="." (variable-length array) per VCF 4.2 spec for structural variants
+    - SVTYPE: enforces Number=1 (single value) per VCF 4.2 spec for structural variants
+
+    Parameters
+    ----------
+    header1 : pysam.VariantHeader
+        The first VCF header (takes precedence in case of identical collisions)
+    header2 : pysam.VariantHeader
+        The second VCF header to merge
+
+    Returns
+    -------
+    pysam.VariantHeader
+        A new combined VCF header with unified metadata
+
+    Raises
+    ------
+    RuntimeError
+        If INFO/FORMAT IDs collide with different type or number specifications
+        (except for SVLEN and SVTYPE which are enforced to standard values)
+
+    Examples
+    --------
+    >>> import pysam
+    >>> header1 = pysam.VariantFile("cnmops.vcf.gz").header
+    >>> header2 = pysam.VariantFile("cnvpytor.vcf.gz").header
+    >>> combined = combine_vcf_headers_for_cnv(header1, header2)
+    """
+    # Enforced specifications for CNV/SV fields per VCF 4.2 spec
+    enforced_info_specs = {
+        "SVLEN": (".", "Integer", "Length of structural variant (SV) per VCF 4.2 specification"),
+        "SVTYPE": (1, "String", "Type of structural variant (SV); e.g. DEL, DUP, etc. (per VCF 4.2 specification)"),
+    }
+
+    # Start with a copy of the first header
+    combined_header = pysam.VariantHeader()
+
+    # Copy contigs from header1 (assuming they're the same)
+    for contig in header1.contigs.values():
+        combined_header.contigs.add(contig.name, length=contig.length)
+
+    # Add INFO fields
+    _add_metadata_records(header1.info, header2.info, "INFO", enforced_info_specs, combined_header)
+
+    # Add FORMAT fields
+    _add_metadata_records(header1.formats, header2.formats, "FORMAT", enforced_info_specs, combined_header)
+
+    # Add samples from both headers
+    for sample in header1.samples:
+        if sample not in combined_header.samples:
+            combined_header.add_sample(sample)
+    for sample in header2.samples:
+        if sample not in combined_header.samples:
+            combined_header.add_sample(sample)
+
+    return combined_header
+
+
+def _update_vcf_contigs(
+    vcf_utils: VcfUtils,
+    cnmops_vcf: str,
+    cnvpytor_vcf: str,
+    fasta_index: str,
+    output_directory: str,
+) -> tuple[str, str]:
+    """
+    Update VCF headers with contigs from FASTA index.
+
+    Parameters
+    ----------
+    vcf_utils : VcfUtils
+        VcfUtils instance for VCF operations
+    cnmops_vcf : str
+        Path to cn.mops VCF
+    cnvpytor_vcf : str
+        Path to CNVpytor VCF
+    fasta_index : str
+        Path to FASTA index file
+    output_directory : str
+        Output directory for temporary files
+
+    Returns
+    -------
+    tuple[str, str]
+        Paths to updated cn.mops and CNVpytor VCF files
+    """
+    logger.info("Updating VCF headers with contigs from FASTA index")
+    cnmops_vcf_updated = pjoin(output_directory, "cnmops.updated_contigs.vcf.gz")
+    cnvpytor_vcf_updated = pjoin(output_directory, "cnvpytor.updated_contigs.vcf.gz")
+
+    vcf_utils.update_vcf_contigs_from_fai(cnmops_vcf, cnmops_vcf_updated, fasta_index)
+    vcf_utils.update_vcf_contigs_from_fai(cnvpytor_vcf, cnvpytor_vcf_updated, fasta_index)
+
+    return cnmops_vcf_updated, cnvpytor_vcf_updated
+
+
+def _write_vcf_records_with_source(
+    vcf_in: pysam.VariantFile,
+    vcf_out: pysam.VariantFile,
+    combined_header: pysam.VariantHeader,
+    source_name: str,
+) -> None:
+    """
+    Write VCF records to output file with CNV_SOURCE annotation.
+
+    Note: This function clears all FILTER values from input records since
+    FILTER definitions are not included in the combined header.
+
+    Parameters
+    ----------
+    vcf_in : pysam.VariantFile
+        Input VCF file to read records from
+    vcf_out : pysam.VariantFile
+        Output VCF file to write records to
+    combined_header : pysam.VariantHeader
+        Combined header for creating new records
+    source_name : str
+        Source name to add to CNV_SOURCE INFO field
+    """
+    logger.info(f"Writing records from {source_name} VCF")
+    for record in vcf_in:
+        # Clear filters - we remove filters imposed by the previous pipelines
+        record.filter.clear()
+        # Create new record with combined header
+        new_record = VcfUtils.copy_vcf_record(record, combined_header)
+        # Add source tag if not already present
+        if "CNV_SOURCE" not in new_record.info:
+            new_record.info["CNV_SOURCE"] = (source_name,)
+        vcf_out.write(new_record)
+
+
+def combine_cnv_vcfs(
+    cnmops_vcf: str,
+    cnvpytor_vcf: str,
+    fasta_index: str,
+    output_vcf: str,
+    output_directory: str,
+) -> str:
+    """
+    Combine VCF files from cn.mops and CNVpytor into a single sorted and indexed VCF.
+
+    This function performs the following steps:
+    1. Updates headers of both VCFs to contain the same contigs from the FASTA index
+    2. Combines the headers from both updated files (excluding FILTER fields)
+    3. Adds an INFO tag for the source (CNV_SOURCE) to identify the caller
+    4. Writes records from both VCF files to the combined output
+    5. Sorts and indexes the final VCF
+
+    Note: This function does NOT merge overlapping CNV records - it simply concatenates
+    all records from both input files.
+
+    Parameters
+    ----------
+    cnmops_vcf : str
+        Path to the cn.mops VCF file (.vcf.gz)
+    cnvpytor_vcf : str
+        Path to the CNVpytor VCF file (.vcf.gz)
+    fasta_index : str
+        Path to the reference genome FASTA index file (.fai)
+    output_vcf : str
+        Path to the output combined VCF file (.vcf.gz)
+    output_directory : str
+        Directory for storing temporary files
+
+    Returns
+    -------
+    str
+        Path to the final sorted and indexed combined VCF file
+
+    Raises
+    ------
+    FileNotFoundError
+        If any of the input files do not exist
+    RuntimeError
+        If VCF processing fails
+
+    Examples
+    --------
+    >>> combined_vcf = combine_cnv_vcfs(
+    ...     cnmops_vcf="cnmops.vcf.gz",
+    ...     cnvpytor_vcf="cnvpytor.vcf.gz",
+    ...     fasta_index="genome.fa.fai",
+    ...     output_vcf="combined.vcf.gz",
+    ...     output_directory="/tmp/cnv_combine"
+    ... )
+    """
+    # Validate input files exist
+    for input_file in [cnmops_vcf, cnvpytor_vcf, fasta_index]:
+        if not os.path.exists(input_file):
+            raise FileNotFoundError(f"Input file does not exist: {input_file}")
+
+    # Create output directory if it doesn't exist
+    os.makedirs(output_directory, exist_ok=True)
+
+    vcf_utils = VcfUtils()
+
+    # Step 1: Update headers to contain same contigs from FASTA index
+    cnmops_vcf_updated, cnvpytor_vcf_updated = _update_vcf_contigs(
+        vcf_utils, cnmops_vcf, cnvpytor_vcf, fasta_index, output_directory
+    )
+
+    # Step 2: Open updated VCF files, combine headers (excluding FILTER fields), and add CNV_SOURCE tag
+    logger.info("Combining VCF headers and adding CNV_SOURCE INFO tag")
+    with pysam.VariantFile(cnmops_vcf_updated) as vcf1, pysam.VariantFile(cnvpytor_vcf_updated) as vcf2:
+        # Combine headers (excluding FILTER fields)
+        combined_header = combine_vcf_headers_for_cnv(vcf1.header, vcf2.header)
+
+        # Add INFO tag for source if not already present
+        if "CNV_SOURCE" not in combined_header.info:
+            combined_header.info.add(
+                "CNV_SOURCE",
+                number=".",
+                type="String",
+                description="The tool that called this CNV (cn.mops or cnvpytor)",
+            )
+
+        # Step 3: Write records from both VCF files
+        logger.info("Writing records from both VCF files to temporary combined VCF")
+        temp_combined_vcf = pjoin(output_directory, "temp_combined.vcf.gz")
+
+        with pysam.VariantFile(temp_combined_vcf, "w", header=combined_header) as vcf_out:
+            _write_vcf_records_with_source(vcf1, vcf_out, combined_header, "cn.mops")
+            _write_vcf_records_with_source(vcf2, vcf_out, combined_header, "cnvpytor")
+
+    # Step 4: Sort and index the VCF
+    logger.info("Sorting and indexing the combined VCF")
+    vcf_utils.sort_vcf(temp_combined_vcf, output_vcf)
+    vcf_utils.index_vcf(output_vcf)
+
+    # Clean up temporary files
+    mu.cleanup_temp_files([cnmops_vcf_updated, cnvpytor_vcf_updated, temp_combined_vcf])
+
+    logger.info(f"Successfully created combined VCF: {output_vcf}")
+    return output_vcf
 
 
 def get_dup_cnmops_cnv_calls(
@@ -374,7 +707,7 @@ def process_del_jalign_results(
     return out_del_jalign_merged
 
 
-def run(argv):
+def run_legacy(argv):
     """
     Combine CNVs from cn.mops and cnvpytor using jalign results and convert them to VCF.
 
@@ -515,6 +848,25 @@ def run(argv):
     logger.info(vcf_args)
     out_cnvs_combined_annotated_vcf = output_results.run(vcf_args)
     logger.info(f"out_cnvs_combined_annotated_vcf: {out_cnvs_combined_annotated_vcf}")
+
+
+def run(argv: list[str]):
+    """
+    Combine CNVs from cn.mops and cnvpytor.
+
+    Parameters
+    ----------
+    argv : list of str
+        Command-line arguments.
+    """
+    args = __parse_args(argv)
+    combine_cnv_vcfs(
+        cnmops_vcf=args.cnmops_vcf,
+        cnvpytor_vcf=args.cnvpytor_vcf,
+        fasta_index=args.fasta_index,
+        output_vcf=args.output_vcf,
+        output_directory=args.out_directory,
+    )
 
 
 def main():

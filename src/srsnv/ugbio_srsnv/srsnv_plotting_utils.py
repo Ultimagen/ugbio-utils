@@ -24,7 +24,7 @@ from sklearn.metrics import (
     recall_score,
 )
 from tqdm import tqdm
-from ugbio_core.filter_bed import count_bases_in_bed_file
+from ugbio_core.bed_utils import BedUtils
 from ugbio_core.logger import logger
 from ugbio_core.plotting_utils import set_pyplot_defaults
 from ugbio_core.reports.report_utils import generate_report
@@ -422,7 +422,7 @@ def retention_noise_and_mrd_lod_simulation(  # noqa: PLR0913
     df_tp = featuremap_df.query("label == 1")
 
     # count the # of bases in region
-    n_bases_in_region = count_bases_in_bed_file(single_sub_regions)
+    n_bases_in_region = BedUtils().count_bases_in_bed_file(single_sub_regions)
 
     # get coverage statistics
     (

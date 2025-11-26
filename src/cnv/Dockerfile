@@ -80,6 +80,7 @@ RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', '
 RUN R -e "BiocManager::install(c('GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'zlibbioc'))"
 RUN R -e "BiocManager::install(c('rhdf5', 'rhdf5filters', 'rhdf5lib', 'Rhtslib', 'Rsamtools'))"
 RUN R -e "BiocManager::install('exomeCopy')"
+RUN R -e "BiocManager::install('rtracklayer')"
 
 # Install other necessary R packages
 RUN R -e "install.packages(c('bitops', 'codetools', 'cpp11', 'crayon', 'findpython', 'formatR', 'futile.logger', 'futile.options', 'jsonlite', 'lambda.r', 'magrittr', 'R6', 'RCurl', 'snow'), repos='https://cran.r-project.org')"
