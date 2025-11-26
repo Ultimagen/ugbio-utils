@@ -995,7 +995,7 @@ def run(argv: list[str]):
             output_vcf=args.output_vcf,
             output_directory=args.out_directory,
         )
-    if args.tool == "filter_dup_cnmmops":
+    elif args.tool == "filter_dup_cnmmops":
         filter_dup_cnmmops_cnv_calls(
             combined_calls=args.combined_calls,
             combined_calls_annotated=args.combined_calls_annotated,
