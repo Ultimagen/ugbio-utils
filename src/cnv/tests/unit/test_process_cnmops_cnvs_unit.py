@@ -95,7 +95,7 @@ class TestProcessCnmopsCnvs:
         assert result_df.iloc[0]["chr"] == "chr1"
         assert result_df.iloc[0]["start"] == 1000
         assert result_df.iloc[0]["end"] == 2000
-        assert result_df.iloc[0]["CopyNumber"] == 2  # Integer, not "CN2"
+        assert result_df.iloc[0]["CopyNumber"] == 2
         assert result_df.iloc[0]["filter"] == "PASS"  # PASS string when no filters
         assert result_df.iloc[0]["SVTYPE"] == "NEUTRAL"  # CN2 is neutral
         assert result_df.iloc[0]["CNMOPS_COV_MEAN"] == 1.5
