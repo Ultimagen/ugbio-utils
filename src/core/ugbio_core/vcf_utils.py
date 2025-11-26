@@ -1,5 +1,7 @@
+import logging
 import os
 import os.path
+import subprocess
 
 import pysam
 from simppl.simple_pipeline import SimplePipeline
@@ -13,17 +15,25 @@ class VcfUtils:
     ----------
     sp : SimplePipeline
         Simple pipeline object
+    logger : logging.Logger
+        Logger instance
     """
 
-    def __init__(self, simple_pipeline: SimplePipeline | None = None):
+    def __init__(self, simple_pipeline: SimplePipeline | None = None, logger: logging.Logger | None = None):
         """Combines VCF in parts from GATK and indices the result
 
         Parameters
         ----------
         simple_pipeline : SimplePipeline, optional
             Optional SimplePipeline object for executing shell commands
+        logger : logging.Logger, optional
+            Optional logger instance
         """
         self.sp = simple_pipeline
+        if logger is None:
+            self.logger = logging.getLogger(__name__)
+        else:
+            self.logger = logger
 
     def __execute(self, command: str, output_file: str | None = None):
         """Summary
@@ -248,6 +258,71 @@ class VcfUtils:
 
         # Index the output VCF
         self.index_vcf(output_vcf)
+
+    def collapse_vcf(
+        self,
+        vcf: str,
+        output_vcf: str,
+        bed: str | None = None,
+        pctseq: float = 0.0,
+        pctsize: float = 0.0,
+        *,
+        ignore_filter: bool = False,
+    ):
+        """
+        Collapse SV/CNV VCF using truvari collapse
+
+        Parameters
+        ----------
+        vcf : str
+            Input VCF file
+        output_vcf : str
+            Output VCF file
+        bed : str, optional
+            Bed file, by default None
+        pctseq : float, optional
+            Percentage of sequence identity, by default 0.0
+        pctsize : float, optional
+            Percentage of size identity, by default 0.0
+        ignore_filter : bool, optional
+            If True, ignore FILTER field (remove --passonly flag), by default False
+
+        Returns
+        -------
+        None
+        """
+        from os.path import dirname
+        from os.path import join as pjoin
+
+        removed_vcf_path = pjoin(dirname(output_vcf), "tmp.vcf")
+        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-t", "-c", removed_vcf_path]
+
+        if not ignore_filter:
+            truvari_cmd.append("--passonly")
+
+        if bed:
+            truvari_cmd.extend(["--bed", bed])
+        truvari_cmd.extend(["--pctseq", str(pctseq)])
+        truvari_cmd.extend(["--pctsize", str(pctsize)])
+
+        self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
+        p1 = subprocess.Popen(truvari_cmd, stdout=subprocess.PIPE)
+        p2 = subprocess.Popen(["bcftools", "view", "-Oz", "-o", output_vcf], stdin=p1.stdout)  # noqa: S607
+        if p1.stdout:
+            p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
+        p2.communicate()  # Wait for p2 to finish
+        p1.wait()  # Wait for p1 to finish
+        if p1.returncode != 0:
+            raise RuntimeError(f"truvari collapse failed with error code {p1.returncode}")
+        if p2.returncode != 0:
+            raise RuntimeError(f"bcftools view failed with error code {p2.returncode}")
+
+        # Parameterize the file path
+        if os.path.exists(removed_vcf_path):
+            os.unlink(removed_vcf_path)
+            self.logger.info(f"Deleted temporary file: {removed_vcf_path}")
+        else:
+            self.logger.warning(f"Temporary file not found: {removed_vcf_path}")
 
     def annotate_vcf(
         self,

@@ -2,7 +2,6 @@
 import logging
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 from os.path import basename, dirname
@@ -30,7 +29,7 @@ class SVComparison:
             Optional SimplePipeline object for executing shell commands
         """
         self.sp = simple_pipeline
-        self.vu = VcfUtils(self.sp)
+        self.vu = VcfUtils(self.sp, logger=logger)
         if logger is None:
             self.logger = logging.getLogger(__name__)
         else:
@@ -47,68 +46,6 @@ class SVComparison:
             Description
         """
         print_and_execute(command, output_file=output_file, simple_pipeline=self.sp, module_name=__name__)
-
-    def collapse_vcf(
-        self,
-        vcf: str,
-        output_vcf: str,
-        bed: str | None = None,
-        pctseq: float = 0.0,
-        pctsize: float = 0.0,
-        *,
-        ignore_filter: bool = False,
-    ):
-        """
-        Collapse VCF using truvari collapse
-
-        Parameters
-        ----------
-        vcf : str
-            Input VCF file
-        output_vcf : str
-            Output VCF file
-        bed : str, optional
-            Bed file, by default None
-        pctseq : float, optional
-            Percentage of sequence identity, by default 0.0
-        pctsize : float, optional
-            Percentage of size identity, by default 0.0
-        ignore_filter : bool, optional
-            If True, ignore FILTER field (remove --passonly flag), by default False
-
-        Returns
-        -------
-        None
-        """
-        removed_vcf_path = pjoin(dirname(output_vcf), "tmp.vcf")
-        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-t", "-c", removed_vcf_path]
-
-        if not ignore_filter:
-            truvari_cmd.append("--passonly")
-
-        if bed:
-            truvari_cmd.extend(["--bed", bed])
-        truvari_cmd.extend(["--pctseq", str(pctseq)])
-        truvari_cmd.extend(["--pctsize", str(pctsize)])
-
-        self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
-        p1 = subprocess.Popen(truvari_cmd, stdout=subprocess.PIPE)
-        p2 = subprocess.Popen(["bcftools", "view", "-Oz", "-o", output_vcf], stdin=p1.stdout)  # noqa: S607
-        if p1.stdout:
-            p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
-        p2.communicate()  # Wait for p2 to finish
-        p1.wait()  # Wait for p1 to finish
-        if p1.returncode != 0:
-            raise RuntimeError(f"truvari collapse failed with error code {p1.returncode}")
-        if p2.returncode != 0:
-            raise RuntimeError(f"bcftools view failed with error code {p2.returncode}")
-
-        # Parameterize the file path
-        if os.path.exists(removed_vcf_path):
-            os.unlink(removed_vcf_path)
-            self.logger.info(f"Deleted temporary file: {removed_vcf_path}")
-        else:
-            self.logger.warning(f"Temporary file not found: {removed_vcf_path}")
 
     def run_truvari(
         self,
@@ -267,7 +204,7 @@ class SVComparison:
             calls_fn = calls
             collapsed_fn = pjoin(workdir, basename(calls).replace(".vcf.gz", "_collapsed.vcf.gz"))
             tmpfiles_to_move = []
-            self.collapse_vcf(
+            self.vu.collapse_vcf(
                 calls_fn,
                 collapsed_fn,
                 bed=hcr_bed,
@@ -287,7 +224,7 @@ class SVComparison:
 
             gt_fn = gt
             gt_collapsed_fn = pjoin(workdir, basename(gt).replace(".vcf.gz", "_collapsed.vcf.gz"))
-            self.collapse_vcf(
+            self.vu.collapse_vcf(
                 gt_fn,
                 gt_collapsed_fn,
                 bed=hcr_bed,
