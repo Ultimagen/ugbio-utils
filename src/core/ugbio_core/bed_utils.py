@@ -365,10 +365,10 @@ class BedUtils:
             return
 
         sort_bed_cmd = f"sort-bed --max-mem {max_mem}"
-        with tempfile.TemporaryDirectory(dir=tempdir_prefix):
+        with tempfile.TemporaryDirectory(dir=tempdir_prefix) as tempdir:
             # Function to get a temp file path within the tempdir
             def get_temp_file():
-                return tempfile.NamedTemporaryFile(delete=False, dir=tempdir_prefix).name
+                return tempfile.NamedTemporaryFile(delete=False, dir=tempdir).name
 
             # Process the include regions
             intersected_include_file = self.__process_include_regions(
