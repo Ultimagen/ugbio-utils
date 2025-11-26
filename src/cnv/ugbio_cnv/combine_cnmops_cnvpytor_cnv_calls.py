@@ -216,7 +216,9 @@ def _add_metadata_records(
             combined_header.add_line(str(record_dict2[key].record))
 
 
-def combine_vcf_headers_for_cnv(header1: pysam.VariantHeader, header2: pysam.VariantHeader) -> pysam.VariantHeader:
+def combine_vcf_headers_for_cnv(
+    header1: pysam.VariantHeader, header2: pysam.VariantHeader, *, keep_filters: bool = False
+) -> pysam.VariantHeader:
     """
     Combine two VCF headers into a single header for CNV/SV variant calls.
 
@@ -228,7 +230,7 @@ def combine_vcf_headers_for_cnv(header1: pysam.VariantHeader, header2: pysam.Var
     - If type and number match, use the first definition
     - If type or number differ, raise RuntimeError
 
-    FILTER fields are cleared.
+    FILTER fields are cleared unless keep_filters is set to True.
 
     Special enforcement for CNV/SV-related fields to ensure VCF spec compliance:
     - SVLEN: enforces Number="." (variable-length array) per VCF 4.2 spec for structural variants
@@ -240,6 +242,8 @@ def combine_vcf_headers_for_cnv(header1: pysam.VariantHeader, header2: pysam.Var
         The first VCF header (takes precedence in case of identical collisions)
     header2 : pysam.VariantHeader
         The second VCF header to merge
+    keep_filters : bool, optional
+        Whether to keep FILTER fields from both headers. Default is False (FILTERs are cleared).
 
     Returns
     -------
@@ -277,6 +281,10 @@ def combine_vcf_headers_for_cnv(header1: pysam.VariantHeader, header2: pysam.Var
 
     # Add FORMAT fields
     _add_metadata_records(header1.formats, header2.formats, "FORMAT", enforced_info_specs, combined_header)
+
+    if keep_filters:
+        # Add FILTER fields
+        _add_metadata_records(header1.filters, header2.filters, "FILTER", {}, combined_header)
 
     # Add samples from both headers
     for sample in header1.samples:

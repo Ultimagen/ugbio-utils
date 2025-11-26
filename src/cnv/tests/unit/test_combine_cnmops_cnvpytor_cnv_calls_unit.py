@@ -146,6 +146,36 @@ class TestCombineVcfHeadersForCnv:
         assert combined_header.info["SVTYPE"].number == 1
         assert combined_header.info["SVTYPE"].type == "String"
 
+    def test_combine_vcf_headers_filters_kept_when_requested(self):
+        """Test that FILTER fields are combined when keep_filters=True"""
+        # Create headers with FILTER fields
+        header1 = pysam.VariantHeader()
+        header1.add_line("##contig=<ID=chr1,length=248956422>")
+        header1.add_line('##FILTER=<ID=PASS,Description="All filters passed">')
+        header1.add_line('##FILTER=<ID=LowQual,Description="Low quality">')
+        header1.add_line('##INFO=<ID=DP,Number=1,Type=Integer,Description="Depth">')
+
+        header2 = pysam.VariantHeader()
+        header2.add_line("##contig=<ID=chr1,length=248956422>")
+        header2.add_line('##FILTER=<ID=PASS,Description="All filters passed">')
+        header2.add_line('##FILTER=<ID=HighCoverage,Description="High coverage region">')
+        header2.add_line('##INFO=<ID=AF,Number=1,Type=Float,Description="Allele Frequency">')
+
+        # Combine with keep_filters=True
+        combined_header = combine_cnmops_cnvpytor_cnv_calls.combine_vcf_headers_for_cnv(
+            header1, header2, keep_filters=True
+        )
+
+        # Verify FILTER fields from both headers are present
+        assert "LowQual" in combined_header.filters
+        assert "HighCoverage" in combined_header.filters
+        assert combined_header.filters["LowQual"].description == "Low quality"
+        assert combined_header.filters["HighCoverage"].description == "High coverage region"
+
+        # Verify INFO fields are still present
+        assert "DP" in combined_header.info
+        assert "AF" in combined_header.info
+
 
 def create_test_fasta(fasta_path: str, sequences: dict[str, str]) -> None:
     """Create a test FASTA file with specified sequences.
