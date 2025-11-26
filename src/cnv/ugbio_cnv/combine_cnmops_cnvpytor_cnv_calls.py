@@ -505,6 +505,66 @@ def combine_cnv_vcfs(
     return output_vcf
 
 
+def filter_dup_cnmmops_cnv_calls(
+    combined_calls: str, combined_calls_annotated: str, filtered_length: str, distance_threshold: int
+) -> None:
+    """Adds CNMOPS_SHORT_DUPLICATION filter to the short duplications that cn.mops returns.
+    Parameters
+    ----------
+    combined_calls : str
+        Path to the combined cn.mops and cnvpytor CNV calls bed file.
+    combined_calls_annotated : str
+        Path to the combined cn.mops and cnvpytor CNV calls bed file with annotations.
+    filtered_length : str
+        Minimum duplication length to be considered valid.
+    distance_threshold : int
+        Distance threshold for merging CNV segments.
+    """
+    output_dir = os.path.dirname(combined_calls_annotated)
+    temporary_files = []
+    vu = VcfUtils()
+
+    deletion_vcf = pjoin(output_dir, "temp_deletions.vcf.gz")
+    vu.view_vcf(combined_calls, deletion_vcf, extra_args='-i INFO/SVTYPE="DEL"')
+    vu.index_vcf(deletion_vcf)
+    temporary_files.append(deletion_vcf)
+
+    duplication_vcf = pjoin(output_dir, "temp_duplications.vcf.gz")
+    vu.view_vcf(combined_calls, duplication_vcf, extra_args='-i INFO/SVTYPE="DUP"')
+    vu.index_vcf(duplication_vcf)
+    temporary_files.append(duplication_vcf)
+
+    collapsed_duplication_vcf = pjoin(output_dir, "temp_collapsed_duplications.vcf.gz")
+    vu.collapse_vcf(duplication_vcf, collapsed_duplication_vcf, ignore_type=False, refdist=distance_threshold)
+    temporary_files.append(collapsed_duplication_vcf)
+
+    combined_calls = pjoin(output_dir, "temp_combined_calls.vcf.gz")
+    vu.concat_vcf([deletion_vcf, collapsed_duplication_vcf], combined_calls)
+    vu.index_vcf(combined_calls)
+    temporary_files.append(combined_calls)
+
+    with pysam.VariantFile(combined_calls) as vcf_in:
+        hdr = vcf_in.header
+        hdr.filters.add(
+            "CNMOPS_SHORT_DUPLICATION",
+            None,
+            None,
+            "Duplication length is shorter than the defined threshold in cn.mops calls.",
+        )
+        with pysam.VariantFile(combined_calls_annotated, "w", header=vcf_in.header) as vcf_out:
+            for record in vcf_in:
+                if record.info["SVTYPE"] == "DUP":
+                    svlen = abs(record.info.get("SVLEN", [0])[0])
+                    if svlen < int(filtered_length):
+                        if "FILTER" in record.filter.keys():
+                            record.filter.add("CNMOPS_SHORT_DUPLICATION")
+                        else:
+                            record.filter.add("CNMOPS_SHORT_DUPLICATION")
+                vcf_out.write(record)
+    vu.index_vcf(combined_calls_annotated)
+    mu.cleanup_temp_files(temporary_files)
+
+
 def get_dup_cnmops_cnv_calls(
     df_cnmops: pd.DataFrame, sample_name: str, out_directory: str, distance_threshold: int
 ) -> str:

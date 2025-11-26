@@ -112,6 +112,29 @@ class VcfUtils:
         self.__execute(f"bcftools reheader -h {new_header} {input_file}")
         self.index_vcf(output_file)
 
+    def concat_vcf(self, input_files: list[str], output_file: str):
+        """Concatenate VCF files using bcftools concat and index
+
+        Parameters
+        ----------
+        input_files : list[str]
+            List of input VCF files
+        output_file : str
+            Output VCF file
+
+        Returns
+        -------
+        None
+            Generates `output_file`.
+        """
+        input_files_str = " ".join(input_files)
+        tmpdir = os.path.dirname(output_file)
+        out_tmp_file = f"{os.path.join(tmpdir, os.path.basename(output_file))}.tmp.vcf.gz"
+        self.__execute(f"bcftools concat -o {out_tmp_file} -O z {input_files_str}")
+        self.sort_vcf(output_file, output_file + ".sorted.vcf.gz")
+        self.index_vcf(output_file)
+        os.unlink(out_tmp_file)
+
     def filter_vcf(
         self,
         input_vcf: str,
@@ -264,10 +287,12 @@ class VcfUtils:
         vcf: str,
         output_vcf: str,
         bed: str | None = None,
+        refdist: float = 500.0,
         pctseq: float = 0.0,
         pctsize: float = 0.0,
         *,
         ignore_filter: bool = False,
+        ignore_type: bool = True,
     ):
         """
         Collapse SV/CNV VCF using truvari collapse
@@ -280,12 +305,16 @@ class VcfUtils:
             Output VCF file
         bed : str, optional
             Bed file, by default None
+        refdist : float, optional
+            Reference distance for collapsing variants, by default 500.0
         pctseq : float, optional
             Percentage of sequence identity, by default 0.0
         pctsize : float, optional
             Percentage of size identity, by default 0.0
         ignore_filter : bool, optional
             If True, ignore FILTER field (remove --passonly flag), by default False
+        ignore_type : bool, optional
+            If True, ignore SVTYPE when collapsing variants, by default True
 
         Returns
         -------
@@ -295,15 +324,18 @@ class VcfUtils:
         from os.path import join as pjoin
 
         removed_vcf_path = pjoin(dirname(output_vcf), "tmp.vcf")
-        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-t", "-c", removed_vcf_path]
+        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-c", removed_vcf_path]
 
         if not ignore_filter:
             truvari_cmd.append("--passonly")
+        if ignore_type:
+            truvari_cmd.append("-t")
 
         if bed:
             truvari_cmd.extend(["--bed", bed])
         truvari_cmd.extend(["--pctseq", str(pctseq)])
         truvari_cmd.extend(["--pctsize", str(pctsize)])
+        truvari_cmd.extend(["--refdist", str(refdist)])
 
         self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
         p1 = subprocess.Popen(truvari_cmd, stdout=subprocess.PIPE)
