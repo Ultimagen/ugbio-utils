@@ -35,20 +35,6 @@ def __parse_args_legacy(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--del_jalign_merged_results", help="jaign results for Deletions in tsv format", required=True, type=str
     )
-    parser.add_argument(
-        "--distance_threshold",
-        help="distance threshold for merging CNV segments",
-        required=False,
-        type=int,
-        default=1500,
-    )
-    parser.add_argument(
-        "--duplication_length_cutoff_for_cnmops_filter",
-        help="Defines the minimum duplication length considered valid during cn.mops CNV filtering",
-        required=False,
-        type=int,
-        default=10000,
-    )
     parser.add_argument("--ug_cnv_lcr", help="UG-CNV-LCR bed file", required=False, type=str)
     parser.add_argument("--ref_fasta", help="reference genome fasta file", required=True, type=str)
     parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
@@ -66,6 +52,31 @@ def __parse_args_concat(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output_vcf", help="output combined VCF file", required=True, type=str)
     parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
     parser.add_argument("--out_directory", help="output directory", required=False, type=str)
+
+
+def __parse_args_dup_length_filter(parser: argparse.ArgumentParser) -> None:
+    """Add arguments specific to the duplication length_filter tool."""
+    parser.add_argument("--combined_calls", help="Input combined CNV calls VCF file", required=True, type=str)
+    parser.add_argument(
+        "--combined_calls_annotated",
+        help="Output combined CNV calls VCF file with filtering annotation",
+        required=True,
+        type=str,
+    )
+    parser.add_argument(
+        "--filtered_length",
+        help="Minimum duplication length to be considered valid",
+        required=True,
+        type=int,
+        default=10000,
+    )
+    parser.add_argument(
+        "--distance_threshold",
+        help="Distance threshold for merging CNV segments",
+        required=False,
+        type=int,
+        default=1500,
+    )
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
@@ -98,7 +109,14 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         help="Combine CNV VCFs from different callers (cn.mops and cnvpytor)",
         description="Combines CNV VCF files from cn.mops and cnvpytor into a single sorted and indexed VCF.",
     )
+    dup_filter_parser = subparsers.add_parser(
+        "filter_cnmops_dups",
+        help="Filter short duplications from cn.mops calls in the combined CNV VCF",
+        description="Adds CNMOPS_SHORT_DUPLICATION filter to short duplications in cn.mops calls.",
+    )
+
     __parse_args_concat(concat_parser)
+    __parse_args_dup_length_filter(dup_filter_parser)
 
     # Future tools can be added here as new subparsers:
     # Example:
@@ -977,6 +995,13 @@ def run(argv: list[str]):
             output_vcf=args.output_vcf,
             output_directory=args.out_directory,
         )
+    if args.tool == "filter_dup_cnmmops":
+        filter_dup_cnmmops_cnv_calls(
+            combined_calls=args.combined_calls,
+            combined_calls_annotated=args.combined_calls_annotated,
+            filtered_length=args.filtered_length,
+            distance_threshold=args.distance_threshold,
+        )
     else:
         raise ValueError(f"Unknown tool: {args.tool}")
 
@@ -997,6 +1022,21 @@ def main_concat():
     """
     # Insert 'concat' as the tool argument
     argv = [sys.argv[0], "concat"] + sys.argv[1:]
+    run(argv)
+
+
+def main_filter_dup_cnmmops():
+    """
+    Entry point for standalone filter_dup_cnmmops_cnv_calls script.
+
+    This allows running the filter_dup_cnmmops tool directly without specifying the tool name:
+    filter_dup_cnmmops_cnv_calls --combined_calls ... --combined_calls_annotated ...
+
+    Instead of:
+    combine_cnmops_cnvpytor_cnv_calls filter_dup_cnmmops --combined_calls ... --combined_calls_annotated ...
+    """
+    # Insert 'filter_dup_cnmmops' as the tool argument
+    argv = [sys.argv[0], "filter_dup_cnmmops"] + sys.argv[1:]
     run(argv)
 
 

@@ -31,6 +31,7 @@ plot_FREEC_neutral_AF = "ugbio_cnv.plot_FREEC_neutral_AF:main"
 run_cnvpytor = "ugbio_cnv.run_cnvpytor:main"
 combine_cnmops_cnvpytor_cnv_calls = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main"
 combine_cnv_vcfs = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_concat"
+filter_dup_cnmmops_cnv_calls = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_filter_dup_cnmmops"
 convert_combined_cnv_results_to_vcf = "ugbio_cnv.convert_combined_cnv_results_to_vcf:main"
 
 [tool.uv]
