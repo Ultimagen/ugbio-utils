@@ -1,5 +1,3 @@
-from os.path import exists
-from os.path import join as pjoin
 from pathlib import Path
 from unittest import mock
 from unittest.mock import patch
@@ -7,7 +5,6 @@ from unittest.mock import patch
 import pysam
 import pytest
 from simppl.simple_pipeline import SimplePipeline
-from ugbio_core.bed_utils import BedUtils
 from ugbio_core.vcf_utils import VcfUtils
 
 
@@ -20,17 +17,6 @@ def mock_logger(mocker):
 @pytest.fixture
 def resources_dir():
     return Path(__file__).parent.parent / "resources"
-
-
-def test_intersect_bed_files_bed_utils(tmp_path, resources_dir):
-    """Test BedUtils.intersect_bed_files as the preferred method"""
-    bed1 = pjoin(resources_dir, "bed1.bed")
-    bed2 = pjoin(resources_dir, "bed2.bed")
-    output_path = pjoin(tmp_path, "output.bed")
-
-    # Use BedUtils instead - no deprecation warning expected
-    BedUtils().intersect_bed_files(bed1, bed2, output_path)
-    assert exists(output_path)
 
 
 class TestVcfUtils:
@@ -292,139 +278,210 @@ class TestVcfUtils:
                 fai_contigs
             ), f"Number of contigs in VCF ({len(vcf_contigs)}) does not match FAI ({len(fai_contigs)})"
 
+    def test_collapse_vcf(self, mocker, mock_logger):
+        """Test collapse_vcf method"""
+        mock_sp = mocker.Mock()
+        vcf_utils = VcfUtils(simple_pipeline=mock_sp, logger=mock_logger)
 
-def test_collapse_vcf(mocker, mock_logger):
-    """Test collapse_vcf method"""
-    mock_sp = mocker.Mock()
-    vcf_utils = VcfUtils(simple_pipeline=mock_sp, logger=mock_logger)
+        mock_subprocess_popen = mocker.patch("subprocess.Popen")
+        mock_p1 = mocker.Mock()
+        mock_p2 = mocker.Mock()
+        mock_subprocess_popen.side_effect = [mock_p1, mock_p2]
+        mock_p1.stdout = mocker.Mock()
+        mock_p1.returncode = 0
+        mock_p2.returncode = 0
+        open("tmp.vcf", "w").close()  # Create the file to be removed
+        vcf_utils.collapse_vcf("input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, refdist=1000)
 
-    mock_subprocess_popen = mocker.patch("subprocess.Popen")
-    mock_p1 = mocker.Mock()
-    mock_p2 = mocker.Mock()
-    mock_subprocess_popen.side_effect = [mock_p1, mock_p2]
-    mock_p1.stdout = mocker.Mock()
-    mock_p1.returncode = 0
-    mock_p2.returncode = 0
-    open("tmp.vcf", "w").close()  # Create the file to be removed
-    vcf_utils.collapse_vcf("input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, refdist=1000)
+        mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
+        mock_subprocess_popen.assert_any_call(
+            [
+                "truvari",
+                "collapse",
+                "-i",
+                "input.vcf",
+                "-c",
+                "tmp.vcf",
+                "--passonly",
+                "-t",
+                "--bed",
+                "regions.bed",
+                "--pctseq",
+                "0.9",
+                "--pctsize",
+                "0.8",
+                "--refdist",
+                "1000",
+            ],
+            stdout=mocker.ANY,
+        )
+        mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
+        # Verify both processes were set up correctly
+        assert mock_p1.returncode == 0
+        assert mock_p2.returncode == 0
 
-    mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
-    mock_subprocess_popen.assert_any_call(
-        [
-            "truvari",
-            "collapse",
-            "-i",
-            "input.vcf",
-            "-c",
-            "tmp.vcf",
-            "--passonly",
-            "-t",
-            "--bed",
-            "regions.bed",
-            "--pctseq",
-            "0.9",
-            "--pctsize",
-            "0.8",
-            "--refdist",
-            "1000",
-        ],
-        stdout=mocker.ANY,
-    )
-    mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
-    # Verify both processes were set up correctly
-    assert mock_p1.returncode == 0
-    assert mock_p2.returncode == 0
+    def test_collapse_vcf_ignore_filter(self, mocker, mock_logger):
+        """Test collapse_vcf with ignore_filter=True removes --passonly flag"""
+        mock_sp = mocker.Mock()
+        vcf_utils = VcfUtils(simple_pipeline=mock_sp, logger=mock_logger)
 
+        mock_subprocess_popen = mocker.patch("subprocess.Popen")
+        mock_p1 = mocker.Mock()
+        mock_p2 = mocker.Mock()
+        mock_subprocess_popen.side_effect = [mock_p1, mock_p2]
+        mock_p1.stdout = mocker.Mock()
+        mock_p1.returncode = 0
+        mock_p2.returncode = 0
+        with open("tmp.vcf", "w"):
+            pass  # Create the file to be removed
 
-def test_collapse_vcf_ignore_filter(mocker, mock_logger):
-    """Test collapse_vcf with ignore_filter=True removes --passonly flag"""
-    mock_sp = mocker.Mock()
-    vcf_utils = VcfUtils(simple_pipeline=mock_sp, logger=mock_logger)
+        vcf_utils.collapse_vcf(
+            "input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, refdist=1000, ignore_filter=True
+        )
 
-    mock_subprocess_popen = mocker.patch("subprocess.Popen")
-    mock_p1 = mocker.Mock()
-    mock_p2 = mocker.Mock()
-    mock_subprocess_popen.side_effect = [mock_p1, mock_p2]
-    mock_p1.stdout = mocker.Mock()
-    mock_p1.returncode = 0
-    mock_p2.returncode = 0
-    with open("tmp.vcf", "w"):
-        pass  # Create the file to be removed
+        mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
+        # Verify --passonly is NOT included when ignore_filter=True
+        mock_subprocess_popen.assert_any_call(
+            [
+                "truvari",
+                "collapse",
+                "-i",
+                "input.vcf",
+                "-c",
+                "tmp.vcf",
+                "-t",
+                "--bed",
+                "regions.bed",
+                "--pctseq",
+                "0.9",
+                "--pctsize",
+                "0.8",
+                "--refdist",
+                "1000",
+            ],
+            stdout=mocker.ANY,
+        )
+        mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
+        # Verify both processes were set up correctly
+        assert mock_p1.returncode == 0
+        assert mock_p2.returncode == 0
 
-    vcf_utils.collapse_vcf(
-        "input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, refdist=1000, ignore_filter=True
-    )
+    def test_collapse_vcf_ignore_type(self, mocker, mock_logger):
+        """Test collapse_vcf with ignore_type=False removes -t flag"""
+        mock_sp = mocker.Mock()
+        vcf_utils = VcfUtils(simple_pipeline=mock_sp, logger=mock_logger)
 
-    mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
-    # Verify --passonly is NOT included when ignore_filter=True
-    mock_subprocess_popen.assert_any_call(
-        [
-            "truvari",
-            "collapse",
-            "-i",
-            "input.vcf",
-            "-c",
-            "tmp.vcf",
-            "-t",
-            "--bed",
-            "regions.bed",
-            "--pctseq",
-            "0.9",
-            "--pctsize",
-            "0.8",
-            "--refdist",
-            "1000",
-        ],
-        stdout=mocker.ANY,
-    )
-    mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
-    # Verify both processes were set up correctly
-    assert mock_p1.returncode == 0
-    assert mock_p2.returncode == 0
+        mock_subprocess_popen = mocker.patch("subprocess.Popen")
+        mock_p1 = mocker.Mock()
+        mock_p2 = mocker.Mock()
+        mock_subprocess_popen.side_effect = [mock_p1, mock_p2]
+        mock_p1.stdout = mocker.Mock()
+        mock_p1.returncode = 0
+        mock_p2.returncode = 0
+        with open("tmp.vcf", "w"):
+            pass  # Create the file to be removed
 
+        vcf_utils.collapse_vcf(
+            "input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, refdist=1000, ignore_type=False
+        )
 
-def test_collapse_vcf_ignore_type(mocker, mock_logger):
-    """Test collapse_vcf with ignore_type=False removes -t flag"""
-    mock_sp = mocker.Mock()
-    vcf_utils = VcfUtils(simple_pipeline=mock_sp, logger=mock_logger)
+        mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
+        # Verify -t is NOT included when ignore_type=False
+        mock_subprocess_popen.assert_any_call(
+            [
+                "truvari",
+                "collapse",
+                "-i",
+                "input.vcf",
+                "-c",
+                "tmp.vcf",
+                "--passonly",
+                "--bed",
+                "regions.bed",
+                "--pctseq",
+                "0.9",
+                "--pctsize",
+                "0.8",
+                "--refdist",
+                "1000",
+            ],
+            stdout=mocker.ANY,
+        )
+        mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
+        # Verify both processes were set up correctly
+        assert mock_p1.returncode == 0
+        assert mock_p2.returncode == 0
 
-    mock_subprocess_popen = mocker.patch("subprocess.Popen")
-    mock_p1 = mocker.Mock()
-    mock_p2 = mocker.Mock()
-    mock_subprocess_popen.side_effect = [mock_p1, mock_p2]
-    mock_p1.stdout = mocker.Mock()
-    mock_p1.returncode = 0
-    mock_p2.returncode = 0
-    with open("tmp.vcf", "w"):
-        pass  # Create the file to be removed
+    @patch("os.unlink")
+    @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
+    def test_concat_vcf_basic(self, mock_execute, mock_unlink, tmp_path):
+        """Test concat_vcf with basic parameters"""
+        input_files = [
+            str(tmp_path / "input1.vcf.gz"),
+            str(tmp_path / "input2.vcf.gz"),
+            str(tmp_path / "input3.vcf.gz"),
+        ]
+        output_vcf = str(tmp_path / "output.vcf.gz")
+        tmp_file = str(tmp_path / "output.vcf.gz.tmp.vcf.gz")
 
-    vcf_utils.collapse_vcf(
-        "input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, refdist=1000, ignore_type=False
-    )
+        vcf_utils = VcfUtils()
+        vcf_utils.concat_vcf(input_files=input_files, output_file=output_vcf)
 
-    mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
-    # Verify -t is NOT included when ignore_type=False
-    mock_subprocess_popen.assert_any_call(
-        [
-            "truvari",
-            "collapse",
-            "-i",
-            "input.vcf",
-            "-c",
-            "tmp.vcf",
-            "--passonly",
-            "--bed",
-            "regions.bed",
-            "--pctseq",
-            "0.9",
-            "--pctsize",
-            "0.8",
-            "--refdist",
-            "1000",
-        ],
-        stdout=mocker.ANY,
-    )
-    mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
-    # Verify both processes were set up correctly
-    assert mock_p1.returncode == 0
-    assert mock_p2.returncode == 0
+        # Verify the correct sequence of commands
+        input_files_str = " ".join(input_files)
+        expected_calls = [
+            mock.call(f"bcftools concat -a -o {tmp_file} -O z {input_files_str}"),
+            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file}"),
+            mock.call(f"bcftools index -tf {output_vcf}"),
+        ]
+        mock_execute.assert_has_calls(expected_calls)
+        assert mock_execute.call_count == 3
+
+        # Verify temporary file is cleaned up
+        mock_unlink.assert_called_once_with(tmp_file)
+
+    @patch("os.unlink")
+    @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
+    def test_concat_vcf_single_file(self, mock_execute, mock_unlink, tmp_path):
+        """Test concat_vcf with a single input file"""
+        input_files = [str(tmp_path / "input1.vcf.gz")]
+        output_vcf = str(tmp_path / "output.vcf.gz")
+        tmp_file = str(tmp_path / "output.vcf.gz.tmp.vcf.gz")
+
+        vcf_utils = VcfUtils()
+        vcf_utils.concat_vcf(input_files=input_files, output_file=output_vcf)
+
+        # Verify commands are still executed even with single file
+        expected_calls = [
+            mock.call(f"bcftools concat -a -o {tmp_file} -O z {input_files[0]}"),
+            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file}"),
+            mock.call(f"bcftools index -tf {output_vcf}"),
+        ]
+        mock_execute.assert_has_calls(expected_calls)
+
+        # Verify temporary file is cleaned up
+        mock_unlink.assert_called_once_with(tmp_file)
+
+    @patch("os.unlink")
+    @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
+    def test_concat_vcf_many_files(self, mock_execute, mock_unlink, tmp_path):
+        """Test concat_vcf with many input files"""
+        # Create a list of 10 input files
+        input_files = [str(tmp_path / f"input{i}.vcf.gz") for i in range(1, 11)]
+        output_vcf = str(tmp_path / "output.vcf.gz")
+        tmp_file = str(tmp_path / "output.vcf.gz.tmp.vcf.gz")
+
+        vcf_utils = VcfUtils()
+        vcf_utils.concat_vcf(input_files=input_files, output_file=output_vcf)
+
+        # Verify the concat command includes all files
+        input_files_str = " ".join(input_files)
+        expected_calls = [
+            mock.call(f"bcftools concat -a -o {tmp_file} -O z {input_files_str}"),
+            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file}"),
+            mock.call(f"bcftools index -tf {output_vcf}"),
+        ]
+        mock_execute.assert_has_calls(expected_calls)
+
+        # Verify temporary file is cleaned up
+        mock_unlink.assert_called_once_with(tmp_file)

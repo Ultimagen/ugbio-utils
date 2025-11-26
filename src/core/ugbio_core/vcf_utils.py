@@ -130,8 +130,8 @@ class VcfUtils:
         input_files_str = " ".join(input_files)
         tmpdir = os.path.dirname(output_file)
         out_tmp_file = f"{os.path.join(tmpdir, os.path.basename(output_file))}.tmp.vcf.gz"
-        self.__execute(f"bcftools concat -o {out_tmp_file} -O z {input_files_str}")
-        self.sort_vcf(output_file, output_file + ".sorted.vcf.gz")
+        self.__execute(f"bcftools concat -a -o {out_tmp_file} -O z {input_files_str}")
+        self.sort_vcf(out_tmp_file, output_file)
         self.index_vcf(output_file)
         os.unlink(out_tmp_file)
 

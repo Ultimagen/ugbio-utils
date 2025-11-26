@@ -423,7 +423,7 @@ def combine_cnv_vcfs(
     cnvpytor_vcf: str,
     fasta_index: str,
     output_vcf: str,
-    output_directory: str,
+    output_directory: str | None = None,
 ) -> str:
     """
     Combine VCF files from cn.mops and CNVpytor into a single sorted and indexed VCF.
@@ -448,7 +448,7 @@ def combine_cnv_vcfs(
         Path to the reference genome FASTA index file (.fai)
     output_vcf : str
         Path to the output combined VCF file (.vcf.gz)
-    output_directory : str
+    output_directory : str, optional
         Directory for storing temporary files
 
     Returns
@@ -479,6 +479,8 @@ def combine_cnv_vcfs(
             raise FileNotFoundError(f"Input file does not exist: {input_file}")
 
     # Create output directory if it doesn't exist
+    if output_directory is None:
+        output_directory = os.path.dirname(output_vcf)
     os.makedirs(output_directory, exist_ok=True)
 
     vcf_utils = VcfUtils()
@@ -543,17 +545,18 @@ def filter_dup_cnmmops_cnv_calls(
     vu = VcfUtils()
 
     deletion_vcf = pjoin(output_dir, "temp_deletions.vcf.gz")
-    vu.view_vcf(combined_calls, deletion_vcf, extra_args='-i INFO/SVTYPE="DEL"')
+    vu.view_vcf(combined_calls, deletion_vcf, extra_args="-e \"(INFO/SVTYPE='DUP') && (INFO/CNV_SOURCE='cn.mops')\"")
     vu.index_vcf(deletion_vcf)
     temporary_files.append(deletion_vcf)
 
     duplication_vcf = pjoin(output_dir, "temp_duplications.vcf.gz")
-    vu.view_vcf(combined_calls, duplication_vcf, extra_args='-i INFO/SVTYPE="DUP"')
+    vu.view_vcf(combined_calls, duplication_vcf, extra_args="-i \"(INFO/SVTYPE='DUP') && (INFO/CNV_SOURCE='cn.mops')\"")
     vu.index_vcf(duplication_vcf)
     temporary_files.append(duplication_vcf)
 
     collapsed_duplication_vcf = pjoin(output_dir, "temp_collapsed_duplications.vcf.gz")
     vu.collapse_vcf(duplication_vcf, collapsed_duplication_vcf, ignore_type=False, refdist=distance_threshold)
+    vu.index_vcf(collapsed_duplication_vcf)
     temporary_files.append(collapsed_duplication_vcf)
 
     combined_calls = pjoin(output_dir, "temp_combined_calls.vcf.gz")
@@ -995,7 +998,7 @@ def run(argv: list[str]):
             output_vcf=args.output_vcf,
             output_directory=args.out_directory,
         )
-    elif args.tool == "filter_dup_cnmmops":
+    elif args.tool == "filter_cnmops_dups":
         filter_dup_cnmmops_cnv_calls(
             combined_calls=args.combined_calls,
             combined_calls_annotated=args.combined_calls_annotated,
@@ -1036,7 +1039,7 @@ def main_filter_dup_cnmmops():
     combine_cnmops_cnvpytor_cnv_calls filter_dup_cnmmops --combined_calls ... --combined_calls_annotated ...
     """
     # Insert 'filter_dup_cnmmops' as the tool argument
-    argv = [sys.argv[0], "filter_dup_cnmmops"] + sys.argv[1:]
+    argv = [sys.argv[0], "filter_cnmops_dups"] + sys.argv[1:]
     run(argv)
 
 
