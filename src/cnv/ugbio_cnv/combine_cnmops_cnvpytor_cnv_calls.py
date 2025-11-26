@@ -1,14 +1,12 @@
 import argparse
 import logging
 import os
-import re
 import subprocess
 import sys
 from os.path import join as pjoin
 
 import pandas as pd
 import pysam
-import ugbio_cnv.convert_combined_cnv_results_to_output_formats as output_results
 import ugbio_core.misc_utils as mu
 from pyfaidx import Fasta
 from ugbio_core.logger import logger
@@ -20,29 +18,6 @@ bedmap = "bedmap"
 def run_cmd(cmd):
     logger.info(cmd)
     subprocess.run(cmd, shell=True, check=True)  # noqa: S602
-
-
-def __parse_args_legacy(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="combine_cnmops_cnvpytor_cnv_calls.py",
-        description="Combines CNV calls from various sources, filters, converts into final bed/VCF formats.",
-    )
-
-    parser.add_argument("--cnmops_cnv_calls", help="input bed file holding cn.mops CNV calls", required=True, type=str)
-    parser.add_argument(
-        "--cnvpytor_cnv_calls", help="input bed file holding cnvpytor CNV calls", required=True, type=str
-    )
-    parser.add_argument(
-        "--del_jalign_merged_results", help="jaign results for Deletions in tsv format", required=True, type=str
-    )
-    parser.add_argument("--ug_cnv_lcr", help="UG-CNV-LCR bed file", required=False, type=str)
-    parser.add_argument("--ref_fasta", help="reference genome fasta file", required=True, type=str)
-    parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
-    parser.add_argument("--out_directory", help="output directory", required=False, type=str)
-    parser.add_argument("--sample_name", help="sample name", required=True, type=str)
-    parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO")
-
-    return parser.parse_args(argv[1:])
 
 
 def __parse_args_concat(parser: argparse.ArgumentParser) -> None:
@@ -79,6 +54,13 @@ def __parse_args_dup_length_filter(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def __parse_args_gaps_perc(parser: argparse.ArgumentParser) -> None:
+    """Add arguments specific to the gaps percentage filter tool."""
+    parser.add_argument("--calls_vcf", help="VCF file with CNV calls", required=True, type=str)
+    parser.add_argument("--output_vcf", help="Output VCF file", required=True, type=str)
+    parser.add_argument("--ref_fasta", help="Reference genome FASTA file", required=True, type=str)
+
+
 def __parse_args(argv: list[str]) -> argparse.Namespace:
     """
     Parse command-line arguments using subparsers for different tools.
@@ -109,105 +91,67 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         help="Combine CNV VCFs from different callers (cn.mops and cnvpytor)",
         description="Combines CNV VCF files from cn.mops and cnvpytor into a single sorted and indexed VCF.",
     )
+    __parse_args_concat(concat_parser)
+
     dup_filter_parser = subparsers.add_parser(
         "filter_cnmops_dups",
         help="Filter short duplications from cn.mops calls in the combined CNV VCF",
         description="Adds CNMOPS_SHORT_DUPLICATION filter to short duplications in cn.mops calls.",
     )
-
-    __parse_args_concat(concat_parser)
     __parse_args_dup_length_filter(dup_filter_parser)
 
-    # Future tools can be added here as new subparsers:
-    # Example:
-    # filter_parser = subparsers.add_parser("filter", help="Filter CNV calls")
-    # __parse_args_filter(filter_parser)
+    gaps_perc_parser = subparsers.add_parser(
+        "annotate_gaps",
+        help="Annotate CNV calls with percentage of gaps (Ns) from reference genome",
+        description="Annotates CNV calls in a VCF with the percentage of gaps (Ns) in the reference genome.",
+    )
+    __parse_args_gaps_perc(gaps_perc_parser)
 
     return parser.parse_args(argv[1:])
 
 
-def calculate_gaps_count_per_cnv(df_cnmops_calls: pd.DataFrame, ref_fasta: str) -> pd.DataFrame:
+def annotate_vcf_with_gap_perc(input_vcf: str, ref_fasta: str, output_vcf: str) -> None:
     """
-    Calculate the number of 'N' bases in each CNV call region from the reference genome FASTA file.
-
-     Parameters
-     ----------
-     df_cnmops_calls : pandas.DataFrame
-         DataFrame containing CNV calls with columns ['chrom', 'start', 'end'].
-     ref_fasta : str
-         Path to the reference genome FASTA file.
-
-     Returns
-     -------
-     pandas.DataFrame
-         Updated DataFrame with additional columns: 'N_count', 'len', and 'pN'.
-    """
-    if not os.path.exists(ref_fasta):
-        raise FileNotFoundError(f"Fasta file {ref_fasta} does not exist.")
-
-    genome = Fasta(ref_fasta, build_index=False, rebuild=False)
-
-    n_count = []
-    for index, row in df_cnmops_calls.iterrows():  # noqa: B007
-        chrom = row["chrom"]
-        start = row["start"]
-        end = row["end"]
-        # pyfaidx uses 0-based start, end-exclusive indexing
-        try:
-            seq_obj = genome[chrom][start - 1 : end]  # Convert to 0-based
-            if seq_obj is not None:
-                seq = seq_obj.seq
-                cnv_n_count = seq.upper().count("N")
-            else:
-                logger.warning(f"Could not retrieve sequence for {chrom}:{start}-{end}")
-                cnv_n_count = 0
-        except (KeyError, IndexError) as e:
-            logger.warning(f"Error retrieving sequence for {chrom}:{start}-{end}: {e}")
-            cnv_n_count = 0
-        n_count.append(cnv_n_count)
-
-    df_cnmops_calls["N_count"] = n_count
-    df_cnmops_calls["len"] = df_cnmops_calls["end"] - df_cnmops_calls["start"] + 1
-    df_cnmops_calls["pN"] = df_cnmops_calls["N_count"] / df_cnmops_calls["len"]
-
-    return df_cnmops_calls
-
-
-def parse_cnmops_cnv_calls(cnmops_cnv_calls: str, out_directory: str, ref_fasta: str, pN: float = 0) -> pd.DataFrame:  # noqa: N803
-    """
-    Parses cn.mops CNV calls from an input BED file.
+    Annotate CNV VCF records with GAP_PERC INFO field representing the fraction of 'N' bases in the CNV region.
 
     Parameters
     ----------
-    cnmops_cnv_calls : str
-        Path to the cn.mops CNV calls BED file.
-    out_directory : str
-        Output directory to store results.
-    pN : float
-        Threshold for filtering CNV calls based on the fraction of reference genome
-        gaps (Ns) in the call region.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame containing parsed and filtered CNV calls.
-
+    input_vcf : str
+        Path to input VCF file containing CNV calls.
+    ref_fasta : str
+        Path to reference genome FASTA file.
+    output_vcf : str
+        Path to output VCF file with GAP_PERC annotation.
     """
-    cnmops_cnv_calls_tmp_file = f"{pjoin(out_directory, os.path.basename(cnmops_cnv_calls))}.tmp"
 
-    # remove all tags from cnmops cnv calls file:
-    run_cmd(
-        f"cat {cnmops_cnv_calls} | sed 's/UG-CNV-LCR//g' | sed 's/LEN//g' | sed 's/|//g' \
-            > {cnmops_cnv_calls_tmp_file}"
-    )
+    genome = Fasta(ref_fasta)
 
-    df_cnmops_cnvs = pd.read_csv(cnmops_cnv_calls_tmp_file, sep="\t", header=None)
-    df_cnmops_cnvs.columns = ["chrom", "start", "end", "CN"]
-    df_cnmops_cnvs = calculate_gaps_count_per_cnv(df_cnmops_cnvs, ref_fasta)
-    # Filter by pN value
-    df_cnmops_cnvs = df_cnmops_cnvs[df_cnmops_cnvs["pN"] <= pN]
-
-    return df_cnmops_cnvs
+    with pysam.VariantFile(input_vcf) as vcf_in:
+        header = vcf_in.header
+        if "GAP_PERC" not in header.info:
+            header.info.add(
+                "GAP_PERC",
+                number=1,
+                type="Float",
+                description="Fraction of N bases in the CNV region from reference genome",
+            )
+        with pysam.VariantFile(output_vcf, "w", header=header) as vcf_out:
+            for record in vcf_in:
+                chrom = record.chrom
+                start = record.start
+                end = record.stop
+                try:
+                    seq_obj = genome[chrom][start:end]
+                    seq = seq_obj.seq if seq_obj is not None else ""
+                    n_count = seq.upper().count("N")
+                    region_len = end - start + 1
+                    gap_perc = n_count / region_len if region_len > 0 else 0.0
+                except Exception as e:
+                    logger.warning(f"Could not retrieve sequence for {chrom}:{start}-{end}: {e}")
+                    gap_perc = 0.0
+                record.info["GAP_PERC"] = round(gap_perc, 5)
+                vcf_out.write(record)
+    VcfUtils().index_vcf(output_vcf)
 
 
 # Helper function to check and add metadata records
@@ -586,161 +530,6 @@ def filter_dup_cnmmops_cnv_calls(
     mu.cleanup_temp_files(temporary_files)
 
 
-def get_dup_cnmops_cnv_calls(
-    df_cnmops: pd.DataFrame, sample_name: str, out_directory: str, distance_threshold: int
-) -> str:
-    """
-    Parameters
-    ----------
-    df_cnmops : pandas.DataFrame
-        DataFrame holding cn.mops CNV calls.
-    sample_name : str
-        Sample name.
-    out_directory : str
-        Output folder to store results.
-    distance_threshold : int
-        Distance threshold for merging CNV segments.
-
-    Returns
-    -------
-    str
-        Path to the duplications called by cn.mops bed file.
-    """
-    # get duplications from cn.mops calls
-    cnmops_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.bed")
-
-    # df_cnmops = pd.read_csv(cnmops_cnv_calls, sep="\t", header=None)
-    # df_cnmops.columns = ["chrom", "start", "end", "CN"]
-    def extract_cn_number(item):
-        match = re.search(r"CN([\d\.]+)", item)
-        return match.group(1) if match else 0
-
-    df_cnmops["cn_numbers"] = [extract_cn_number(item) for item in df_cnmops["CN"]]
-    out_cnmops_cnvs_dup_calls = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.calls.bed")
-    neutral_cn = 2
-    df_cnmops[df_cnmops["cn_numbers"].astype(float) > neutral_cn][["chrom", "start", "end", "CN"]].to_csv(
-        out_cnmops_cnvs_dup_calls, sep="\t", header=False, index=False
-    )
-
-    if os.path.getsize(out_cnmops_cnvs_dup_calls) > 0:
-        run_cmd(
-            f"cat {out_cnmops_cnvs_dup_calls} | \
-                bedtools sort -i - | \
-                bedtools merge -d {distance_threshold} -c 4 -o distinct -i - | \
-                awk '$3-$2>=10000' | \
-                sed 's/$/\\tDUP\\tcn.mops/' | \
-                cut -f1,2,3,5,6,4 > {cnmops_cnvs_dup}"
-        )
-
-        df_cnmops_cnvs_dup = pd.read_csv(cnmops_cnvs_dup, sep="\t", header=None)
-        df_cnmops_cnvs_dup.columns = ["chrom", "start", "end", "CN", "CNV_type", "source"]
-        df_cnmops_cnvs_dup["copy_number"] = df_cnmops_cnvs_dup["CN"].apply(lambda x: x.replace("CN", ""))
-
-        out_cnmops_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.all_fields.bed")
-        df_cnmops_cnvs_dup[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
-            out_cnmops_cnvs_dup, sep="\t", header=False, index=False
-        )
-
-        return out_cnmops_cnvs_dup
-    else:
-        logger.info("No duplications found in cn.mops CNV calls.")
-        return ""
-
-
-def parse_cnvpytor_cnv_calls(cnvpytor_cnv_calls: str, pN: float = 0) -> pd.DataFrame:  # noqa: N803
-    """
-    Parses cnvpytor CNV calls from a tsv file.
-
-    Parameters
-    ----------
-    cnvpytor_cnv_calls : str
-        Path to the cnvpytor CNV calls bed file.
-    pN : float
-        Threshold for filtering CNV calls based on the fraction of reference genome
-        gaps (Ns) in call region.
-
-    Returns
-    -------
-    pandas.DataFrame
-        DataFrame containing parsed CNV calls.
-    """
-    # Result is stored in tab separated files with following columns:
-    # CNV type: "deletion" or "duplication",
-    # CNV region (chr:start-end),
-    # CNV size,
-    # CNV level - read depth normalized to 1,
-    # e-val1 -- e-value (p-value multiplied by genome size divided by bin size) calculated
-    #           using t-test statistics between RD statistics in the region and global,
-    # e-val2 -- e-value (p-value multiplied by genome size divided by bin size) from the probability of RD values within
-    #           the region to be in the tails of a gaussian distribution of binned RD,
-    # e-val3 -- same as e-val1 but for the middle of CNV,
-    # e-val4 -- same as e-val2 but for the middle of CNV,
-    # q0 -- fraction of reads mapped with q0 quality in call region,
-    # pN -- fraction of reference genome gaps (Ns) in call region,
-    # dG -- distance from closest large (>100bp) gap in reference genome.
-
-    df_cnvpytor_cnvs = pd.read_csv(cnvpytor_cnv_calls, sep="\t", header=None)
-    df_cnvpytor_cnvs.columns = [
-        "cnv_type",
-        "cnv_region",
-        "len",
-        "cnv_level",
-        "e-val1",
-        "e-val2",
-        "e-val3",
-        "e-val4",
-        "q0",
-        "pN",
-        "dG",
-    ]
-
-    # Split cnv_region into 'chr', 'start', 'end'
-    df_cnvpytor_cnvs[["chrom", "pos"]] = df_cnvpytor_cnvs["cnv_region"].str.split(":", expand=True)
-    df_cnvpytor_cnvs[["start", "end"]] = df_cnvpytor_cnvs["pos"].str.split("-", expand=True)
-    df_cnvpytor_cnvs = df_cnvpytor_cnvs.drop(columns="pos")
-    df_cnvpytor_cnvs["start"] = df_cnvpytor_cnvs["start"].astype(int)
-    df_cnvpytor_cnvs["end"] = df_cnvpytor_cnvs["end"].astype(int)
-
-    # Filter by pN value
-    df_cnvpytor_cnvs = df_cnvpytor_cnvs[df_cnvpytor_cnvs["pN"] <= 0]
-
-    return df_cnvpytor_cnvs
-
-
-def get_dup_cnvpytor_cnv_calls(df_cnvpytor_cnv_calls: pd.DataFrame, sample_name: str, out_directory: str) -> str:  # noqa: N803
-    """
-    Parameters
-    ----------
-    df_cnvpytor_cnv_calls : pandas.DataFrame
-        DataFrame holding cnvpytor CNV calls.
-    sample_name : str
-        Sample name.
-    out_directory : str
-        Output folder to store results.
-
-    Returns
-    -------
-    str
-        Path to the duplications called by cnvpytor bed file.
-    """
-    cnvpytor_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnvpytor_cnvs.DUP.bed")
-    df_cnvpytor_cnv_calls_duplications = df_cnvpytor_cnv_calls[
-        df_cnvpytor_cnv_calls["cnv_type"] == "duplication"
-    ].copy()
-    df_cnvpytor_cnv_calls_duplications["cnv_type"] = "DUP"
-    df_cnvpytor_cnv_calls_duplications["copy_number"] = "DUP"
-    df_cnvpytor_cnv_calls_duplications["source"] = "cnvpytor"
-
-    if len(df_cnvpytor_cnv_calls_duplications) > 0:
-        df_cnvpytor_cnv_calls_duplications[["chrom", "start", "end", "cnv_type", "source", "copy_number"]].to_csv(
-            cnvpytor_cnvs_dup, sep="\t", header=False, index=False
-        )
-        return cnvpytor_cnvs_dup
-    else:
-        logger.info("No duplications found in cnvpytor CNV calls.")
-        return ""
-
-
 def process_del_jalign_results(
     del_jalign_results: str,
     sample_name: str,
@@ -796,7 +585,6 @@ def process_del_jalign_results(
         lambda x: "DEL" if pd.Series(x).str.contains("deletion").any() else x
     )
 
-    df_cnmops_cnvpytor_del = calculate_gaps_count_per_cnv(df_cnmops_cnvpytor_del, ref_fasta)
     df_cnmops_cnvpytor_del_filtered = df_cnmops_cnvpytor_del[df_cnmops_cnvpytor_del["pN"] <= pN]
 
     out_del_jalign = pjoin(
@@ -818,149 +606,6 @@ def process_del_jalign_results(
     )
 
     return out_del_jalign_merged
-
-
-def run_legacy(argv):
-    """
-    Combine CNVs from cn.mops and cnvpytor using jalign results and convert them to VCF.
-
-    Parameters
-    ----------
-    argv : list of str
-        Command-line arguments.
-
-    Input Arguments
-    ---------------
-    --cnmops_cnv_calls : str
-        Input BED file holding cn.mops CNV calls.
-    --cnvpytor_cnv_calls : str
-        Input BED file holding cnvpytor CNV calls.
-    --del_jalign_merged_results : str
-        Jalign results for deletions in TSV format.
-
-    Output Files
-    ------------
-    <sample_name>.cnmops_cnvpytor.cnvs.combined.bed : str
-        Combined CNV calls called by cn.mops and cnvpytor.
-    <sample_name>.cnmops_cnvpytor.cnvs.combined.UG-CNV-LCR_annotate.bed : str
-        Combined CNV calls with UG-CNV-LCR annotation.
-    """
-    args = __parse_args(argv)
-    logger.setLevel(getattr(logging, args.verbosity))
-
-    out_directory = args.out_directory
-    sample_name = args.sample_name
-    # format cnvpytor cnv calls :
-    df_cnmops_cnv_calls = parse_cnmops_cnv_calls(args.cnmops_cnv_calls, out_directory, args.ref_fasta)
-    df_cnvpytor_cnv_calls = parse_cnvpytor_cnv_calls(args.cnvpytor_cnv_calls)
-
-    ############################
-    ### process DUPlications ###
-    ############################
-    out_cnmops_cnvs_dup = get_dup_cnmops_cnv_calls(
-        df_cnmops_cnv_calls, sample_name, out_directory, args.distance_threshold
-    )
-    out_cnvpytor_cnvs_dup = get_dup_cnvpytor_cnv_calls(df_cnvpytor_cnv_calls, sample_name, out_directory)
-    # merge duplications
-    if not out_cnmops_cnvs_dup and not out_cnvpytor_cnvs_dup:
-        logger.info("No duplications found in cn.mops and cnvpytor CNV calls.")
-        cnmops_cnvpytor_merged_dup = ""
-    else:
-        cnmops_cnvpytor_merged_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvpytor.DUP.merged.bed")
-        run_cmd(
-            f'cat {out_cnmops_cnvs_dup} {out_cnvpytor_cnvs_dup} | bedtools sort -i - | \
-            bedtools merge -c 4,5,6 -o distinct -i - | \
-                awk \'{{print $0 "\t" "0" }}\' > {cnmops_cnvpytor_merged_dup}'
-        )
-
-    ############################
-    ###  process DELetions   ###
-    ############################
-
-    out_del_jalign_merged = process_del_jalign_results(
-        args.del_jalign_merged_results, sample_name, out_directory, ref_fasta=args.ref_fasta, pN=0
-    )
-
-    # combine results
-    out_cnvs_combined = pjoin(out_directory, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.bed")
-    columns = "\t".join(["#chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "jalign_written"])
-    with open(out_cnvs_combined, "w") as out_fh:
-        out_fh.write(f"{columns}\n")
-
-    # Use unix sort instead of bedtools sort for proper end coordinate sorting when starts are identical
-    run_cmd(
-        f"cat {cnmops_cnvpytor_merged_dup} {out_del_jalign_merged} | sort -k1,1 -k2,2n -k3,3n >> {out_cnvs_combined}"
-    )
-    logger.info(f"out_cnvs_combined: {out_cnvs_combined}")
-
-    if args.ug_cnv_lcr:
-        # annotate with ug-cnv-lcr if provided
-        # result file should be in the following format:
-        # ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "UG-CNV-LCR"]
-
-        sorted_ug_cnv_lcr = f"{out_cnvs_combined}.lcr.bed"
-        run_cmd(f"sort -k1,1 -k2,2n -k3,3n {args.ug_cnv_lcr} > {sorted_ug_cnv_lcr}")
-
-        out_cnvs_combined_annotated = f"{out_cnvs_combined}.annotate.tsv"
-        run_cmd(
-            f"bedmap --header --echo --echo-map-id-uniq --delim '\\t' --bases-uniq-f \
-            {out_cnvs_combined} {sorted_ug_cnv_lcr} > {out_cnvs_combined_annotated}"
-        )
-
-        os.unlink(sorted_ug_cnv_lcr)
-
-        logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
-
-        overlap_filtration_cutoff = 0.5  # 50% overlap with LCR regions
-        # note: despite what it sounds, bedmap --header skips the header in the output
-        df_annotate_calls = pd.read_csv(out_cnvs_combined_annotated, sep="\t", header=None)
-        df_annotate_calls.columns = [
-            "#chr",
-            "start",
-            "end",
-            "CNV_type",
-            "CNV_calls_source",
-            "copy_number",
-            "jalign_written",
-            "UG-CNV-LCR",
-            "pUG-CNV-LCR_overlap",
-        ]
-        df_annotate_calls["LCR_label_value"] = df_annotate_calls.apply(
-            lambda row: row["UG-CNV-LCR"] if row["pUG-CNV-LCR_overlap"] >= overlap_filtration_cutoff else ".", axis=1
-        )
-
-        df_annotate_calls[
-            [
-                "#chr",
-                "start",
-                "end",
-                "CNV_type",
-                "CNV_calls_source",
-                "copy_number",
-                "LCR_label_value",
-                "jalign_written",
-            ]
-        ].to_csv(out_cnvs_combined_annotated, sep="\t", index=False)
-        logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
-
-    else:
-        out_cnvs_combined_annotated = out_cnvs_combined
-
-    # convert to vcf
-    vcf_args = [
-        "combine_cnmops_cnvpytor_cnv_calls",
-        "--cnv_annotated_bed_file",
-        out_cnvs_combined_annotated,
-        "--fasta_index_file",
-        args.fasta_index,
-        "--out_directory",
-        out_directory,
-        "--sample_name",
-        sample_name,
-    ]
-    logger.info(vcf_args)
-    out_cnvs_combined_annotated_vcf = output_results.run(vcf_args)
-    logger.info(f"out_cnvs_combined_annotated_vcf: {out_cnvs_combined_annotated_vcf}")
 
 
 def run(argv: list[str]):
@@ -1005,6 +650,12 @@ def run(argv: list[str]):
             filtered_length=args.filtered_length,
             distance_threshold=args.distance_threshold,
         )
+    elif args.tool == "annotate_gaps":
+        annotate_vcf_with_gap_perc(
+            input_vcf=args.calls_vcf,
+            ref_fasta=args.ref_fasta,
+            output_vcf=args.output_vcf,
+        )
     else:
         raise ValueError(f"Unknown tool: {args.tool}")
 
@@ -1040,6 +691,21 @@ def main_filter_dup_cnmmops():
     """
     # Insert 'filter_dup_cnmmops' as the tool argument
     argv = [sys.argv[0], "filter_cnmops_dups"] + sys.argv[1:]
+    run(argv)
+
+
+def main_gaps_perc():
+    """
+    Entry point for standalone annotate_vcf_with_gap_perc script.
+
+    This allows running the annotate_gaps tool directly without specifying the tool name:
+    annotate_gaps --input_vcf ... --ref_fasta ... --output_vcf ...
+
+    Instead of:
+    combine_cnmops_cnvpytor_cnv_calls annotate_gaps --input_vcf ... --ref_fasta ... --output_vcf ...
+    """
+    # Insert 'annotate_gaps' as the tool argument
+    argv = [sys.argv[0], "annotate_gaps"] + sys.argv[1:]
     run(argv)
 
 
