@@ -293,7 +293,8 @@ class VcfUtils:
         *,
         ignore_filter: bool = False,
         ignore_type: bool = True,
-    ):
+        erase_removed: bool = True,
+    ) -> str | None:
         """
         Collapse SV/CNV VCF using truvari collapse
 
@@ -315,16 +316,19 @@ class VcfUtils:
             If True, ignore FILTER field (remove --passonly flag), by default False
         ignore_type : bool, optional
             If True, ignore SVTYPE when collapsing variants, by default True
+        erase_removed: bool, optional
+            If True, delete the temporary file with removed variants, by default True,
+            if not return the location of the file
 
         Returns
         -------
-        None
+        None | str
         """
         from os.path import dirname
         from os.path import join as pjoin
 
         removed_vcf_path = pjoin(dirname(output_vcf), "tmp.vcf")
-        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-c", removed_vcf_path]
+        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-c", removed_vcf_path, "--sizemax", "-1", "--chain"]
 
         if not ignore_filter:
             truvari_cmd.append("--passonly")
@@ -350,11 +354,11 @@ class VcfUtils:
             raise RuntimeError(f"bcftools view failed with error code {p2.returncode}")
 
         # Parameterize the file path
-        if os.path.exists(removed_vcf_path):
+        if erase_removed:
             os.unlink(removed_vcf_path)
             self.logger.info(f"Deleted temporary file: {removed_vcf_path}")
         else:
-            self.logger.warning(f"Temporary file not found: {removed_vcf_path}")
+            return removed_vcf_path
 
     def annotate_vcf(
         self,
@@ -485,7 +489,7 @@ class VcfUtils:
         self.index_vcf(output_vcf)
 
     @staticmethod
-    def copy_vcf_record(rec: "pysam.VariantRecord", new_header: "pysam.VariantHeader") -> "pysam.VariantRecord":
+    def copy_vcf_record(rec: pysam.VariantRecord, new_header: pysam.VariantHeader) -> pysam.VariantRecord:
         """
         Create a new VCF record with the same data as the input record, but using a new header.
 
