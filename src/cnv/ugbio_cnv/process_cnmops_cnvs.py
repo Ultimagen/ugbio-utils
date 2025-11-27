@@ -330,7 +330,7 @@ def run(argv):
 
     cnmops_cnv_df = aggregate_annotations_in_df(out_annotate_bed_file, coverage_annotations)
     cnmops_cnv_df = add_ids(cnmops_cnv_df)
-
+    cnmops_cnv_df["SVLEN"] = cnmops_cnv_df["end"] - cnmops_cnv_df["start"]
     out_vcf_file = out_annotate_bed_file.replace(".bed", ".vcf.gz")
     vcf_writer.write_cnv_vcf(out_vcf_file, cnmops_cnv_df, args.sample_name, args.fasta_index_file)
     vu = vcf_utils.VcfUtils()
