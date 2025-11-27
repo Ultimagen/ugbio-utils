@@ -1,3 +1,5 @@
+# Utilities for merging overlapping CNV records in VCF files
+
 import numpy as np
 import pysam
 import ugbio_core.misc_utils as mu

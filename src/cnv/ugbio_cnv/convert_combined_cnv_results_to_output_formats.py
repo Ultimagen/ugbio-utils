@@ -25,7 +25,7 @@ INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
     ),
     "CNV_SOURCE": (
         "CNV_SOURCE",
-        1,
+        ".",
         "String",
         "the tool called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
         "INFO",

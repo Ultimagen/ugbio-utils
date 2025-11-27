@@ -1,3 +1,4 @@
+# utilities for combining VCFs
 from os.path import join as pjoin
 
 import pysam

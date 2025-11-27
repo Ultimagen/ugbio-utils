@@ -259,7 +259,10 @@ def combine_cnv_vcfs(
 def filter_dup_cnmmops_cnv_calls(
     combined_calls: str, combined_calls_annotated: str, filtered_length: str, distance_threshold: int
 ) -> None:
-    """Adds CNMOPS_SHORT_DUPLICATION filter to the short duplications that cn.mops returns.
+    """
+    Collapses adjacent cnmops duplications with distance less than distance_threshold
+    Adds CNMOPS_SHORT_DUPLICATION filter to the short duplications (less than filtered_length) that cn.mops returns.
+
     Parameters
     ----------
     combined_calls : str
