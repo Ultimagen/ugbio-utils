@@ -5,6 +5,7 @@ different modules in the ugbio_utils workspace.
 """
 # ruff: noqa: S101
 
+import numpy as np
 import pysam
 
 
@@ -50,6 +51,6 @@ def compare_vcfs(vcf1_file, vcf2_file):
             rec1.info.keys() == rec2.info.keys()
         ), f"Variant {i}: INFO fields mismatch: {rec1.info.keys()} != {rec2.info.keys()}"
         for key in rec1.info.keys():
-            assert (
-                rec1.info[key] == rec2.info[key]
+            assert (rec1.info[key] == rec2.info[key]) or (
+                np.isnan(rec1.info[key]) and np.isnan(rec2.info[key])
             ), f"Variant {i}: INFO mismatch in {key}: {rec1.info[key]} != {rec2.info[key]}"
