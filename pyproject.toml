@@ -9,6 +9,7 @@ readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
     "gwplot>=0.4.1",
+    "pytest-cov>=7.0.0",
 ]
 
 [project.license]
@@ -27,6 +28,7 @@ dev-dependencies = [
     "pybedtools>=0.11.0",
     "pymongo>=4.11.1",
     "pytest>=8.3.3",
+    "pytest-cov",
     "ruff>=0.6.9",
     "sigprofilerassignment>=0.0.29",
     "sigprofilermatrixgenerator>=1.2.14",

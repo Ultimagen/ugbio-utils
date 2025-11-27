@@ -63,6 +63,13 @@ trimmer_failure_codes_csv_ppmseq_v1_incl_failed_rsq = (
 
 
 def _compare_vcfs(vcf_file1, vcf_file2):
+    """Compare VCF files using set-based comparison (order-independent).
+
+    Note: This function uses a different approach than ugbio_core.tests.test_utils.compare_vcfs.
+    It performs unordered comparison of records and includes header comparison.
+    Use this for cases where record order doesn't matter and headers should be checked.
+    """
+
     def extract_header(vcf_file):
         with pysam.VariantFile(vcf_file) as vcf:
             return vcf.header
