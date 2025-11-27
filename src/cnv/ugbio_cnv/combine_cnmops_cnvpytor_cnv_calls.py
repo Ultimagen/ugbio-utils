@@ -5,14 +5,15 @@ import subprocess
 import sys
 from os.path import join as pjoin
 
+import numpy as np
 import pandas as pd
 import pysam
 import ugbio_core.misc_utils as mu
 from pyfaidx import Fasta
+from ugbio_cnv.convert_combined_cnv_results_to_output_formats import FILTER_TAG_REGISTRY, INFO_TAG_REGISTRY
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
-
-bedmap = "bedmap"
+from ugbio_core.vcfbed import vcftools
 
 
 def run_cmd(cmd):
@@ -129,12 +130,7 @@ def annotate_vcf_with_gap_perc(input_vcf: str, ref_fasta: str, output_vcf: str) 
     with pysam.VariantFile(input_vcf) as vcf_in:
         header = vcf_in.header
         if "GAP_PERC" not in header.info:
-            header.info.add(
-                "GAP_PERC",
-                number=1,
-                type="Float",
-                description="Fraction of N bases in the CNV region from reference genome",
-            )
+            header.info.add(*INFO_TAG_REGISTRY["GAP_PERC"][:-1])
         with pysam.VariantFile(output_vcf, "w", header=header) as vcf_out:
             for record in vcf_in:
                 chrom = record.chrom
@@ -450,12 +446,7 @@ def combine_cnv_vcfs(
 
         # Add INFO tag for source if not already present
         if "CNV_SOURCE" not in combined_header.info:
-            combined_header.info.add(
-                "CNV_SOURCE",
-                number=".",
-                type="String",
-                description="The tool that called this CNV (cn.mops or cnvpytor)",
-            )
+            combined_header.info.add(*INFO_TAG_REGISTRY["CNV_SOURCE"][:-1])
 
         # Step 3: Write records from both VCF files
         logger.info("Writing records from both VCF files to temporary combined VCF")
@@ -507,7 +498,7 @@ def filter_dup_cnmmops_cnv_calls(
     temporary_files.append(duplication_vcf)
 
     collapsed_duplication_vcf = pjoin(output_dir, "temp_collapsed_duplications.vcf.gz")
-    vu.collapse_vcf(duplication_vcf, collapsed_duplication_vcf, ignore_type=False, refdist=distance_threshold)
+    merge_cnvs_in_vcf(duplication_vcf, collapsed_duplication_vcf, distance=distance_threshold)
     vu.index_vcf(collapsed_duplication_vcf)
     temporary_files.append(collapsed_duplication_vcf)
 
@@ -518,13 +509,8 @@ def filter_dup_cnmmops_cnv_calls(
 
     with pysam.VariantFile(combined_calls) as vcf_in:
         hdr = vcf_in.header
-        hdr.filters.add(
-            "CNMOPS_SHORT_DUPLICATION",
-            None,
-            None,
-            "Duplication length is shorter than the defined threshold in cn.mops calls.",
-        )
-        with pysam.VariantFile(combined_calls_annotated, "w", header=vcf_in.header) as vcf_out:
+        hdr.filters.add(*FILTER_TAG_REGISTRY["CNMOPS_SHORT_DUPLICATION"][:-1])
+        with pysam.VariantFile(combined_calls_annotated, "w", header=hdr) as vcf_out:
             for record in vcf_in:
                 if record.info["SVTYPE"] == "DUP":
                     svlen = abs(record.info.get("SVLEN", [0])[0])
@@ -535,6 +521,75 @@ def filter_dup_cnmmops_cnv_calls(
                             record.filter.add("CNMOPS_SHORT_DUPLICATION")
                 vcf_out.write(record)
     vu.index_vcf(combined_calls_annotated)
+    mu.cleanup_temp_files(temporary_files)
+
+
+def merge_cnvs_in_vcf(input_vcf: str, output_vcf: str, distance: int = 1000) -> None:
+    """
+    Merge CNV variants in a VCF file that are within a specified distance.
+
+    Parameters
+    ----------
+    input_vcf : str
+        Path to the input VCF file containing CNV variants.
+    output_vcf : str
+        Path to the output VCF file where merged variants will be written.
+    distance : int, optional
+        Maximum distance between CNV variants to consider them for merging, by default 1000.
+
+    Returns
+    -------
+    None
+        Writes the merged VCF to output_vcf and creates an index.
+    """
+    output_vcf_collapse = output_vcf + ".collapse.tmp.vcf.gz"
+    temporary_files = [output_vcf_collapse]
+    vu = VcfUtils()
+    removed_vcf = vu.collapse_vcf(
+        vcf=input_vcf,
+        output_vcf=output_vcf_collapse,
+        refdist=distance,
+        pctseq=0.0,
+        pctsize=0.0,
+        ignore_filter=True,
+        ignore_type=False,
+        erase_removed=False,
+    )
+    temporary_files.append(str(removed_vcf))
+
+    action_dictionary = {
+        "weighted_avg": [
+            "CNMOPS_COV_MEAN",
+            "CNMOPS_COV_STDEV",
+            "CNMOPS_COHORT_MEAN",
+            "CNMOPS_COHORT_STDEV",
+            "CopyNumber",
+        ]
+    }
+    all_fields = sum(action_dictionary.values(), [])
+    update_df = vcftools.get_vcf_df(str(removed_vcf), custom_info_fields=all_fields + ["SVLEN", "MatchId"]).sort_index()
+    update_df["matchid"] = update_df["matchid"].apply(lambda x: x[0]).astype(float)
+    update_df["end"] = update_df["pos"] + update_df["svlen"].apply(lambda x: x[0]) - 1
+    with pysam.VariantFile(output_vcf_collapse) as vcf_in:
+        hdr = vcf_in.header
+        with pysam.VariantFile(output_vcf, "w", header=hdr) as vcf_out:
+            for record in vcf_in:
+                if "CollapseId" in record.info:
+                    cid = float(record.info["CollapseId"])
+                    update_records = update_df[update_df["matchid"] == cid]
+                    record.stop = update_records["end"].max()
+                    for action, fields in action_dictionary.items():
+                        for field in fields:
+                            values = np.array(list(update_records[field.lower()]) + [record.info[field]])
+                            if action == "weighted_avg":
+                                lengths = np.array(
+                                    list(update_records["svlen"].apply(lambda x: x[0])) + [record.info["SVLEN"][0]]
+                                )
+                                weighted_avg = np.sum(values * lengths) / np.sum(lengths)
+                                record.info[field] = round(weighted_avg, 3)
+
+                    record.info["SVLEN"] = (record.stop - record.start,)
+                vcf_out.write(record)
     mu.cleanup_temp_files(temporary_files)
 
 
