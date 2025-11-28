@@ -279,14 +279,12 @@ def filter_dup_cnmmops_cnv_calls(
     vu = VcfUtils()
 
     deletion_vcf = pjoin(output_dir, "temp_deletions.vcf.gz")
-    vu.view_vcf(combined_calls, deletion_vcf, extra_args=r'-e "(INFO/SVTYPE=\'DUP\') && (INFO/CNV_SOURCE=\'cn.mops\')"')
+    vu.view_vcf(combined_calls, deletion_vcf, extra_args="-e \"(INFO/SVTYPE='DUP') && (INFO/CNV_SOURCE='cn.mops')\"")
     vu.index_vcf(deletion_vcf)
     temporary_files.append(deletion_vcf)
 
     duplication_vcf = pjoin(output_dir, "temp_duplications.vcf.gz")
-    vu.view_vcf(
-        combined_calls, duplication_vcf, extra_args=r'-i "(INFO/SVTYPE=\'DUP\') && (INFO/CNV_SOURCE=\'cn.mops\')"'
-    )
+    vu.view_vcf(combined_calls, duplication_vcf, extra_args="-i \"(INFO/SVTYPE='DUP') && (INFO/CNV_SOURCE='cn.mops')\"")
     vu.index_vcf(duplication_vcf)
     temporary_files.append(duplication_vcf)
 
