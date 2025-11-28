@@ -28,6 +28,8 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     procps `# for monitoring script memory usage` \
     sysstat `# for monitoring script IO metrics` \
     sudo `# install sudo` \
+    make \
+    gcc \
     ; \
     apt-get autoclean && rm -rf /var/lib/apt/lists/*
 
