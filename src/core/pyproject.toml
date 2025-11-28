@@ -16,7 +16,7 @@ dependencies = [
     "pyfaidx>=0.8.1",
     "h5py>=3.11.0",
     "scipy>=1.14.0",
-    "pytest-mock>=3.14.0",
+    "truvari>=5.4.0"
 ]
 
 [project.optional-dependencies]
@@ -56,6 +56,7 @@ generate_report = "ugbio_core.reports.report_utils:main"
 dev-dependencies = [
     "pre-commit>=4.0.1",
     "pytest>=8.3.3",
+    "pytest-mock>=3.14.0",
     "ruff>=0.6.9",
 ]
 
