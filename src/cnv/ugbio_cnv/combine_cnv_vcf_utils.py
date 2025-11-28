@@ -260,8 +260,8 @@ def merge_cnvs_in_vcf(input_vcf: str, output_vcf: str, distance: int = 1000) -> 
 
     action_dictionary = {
         "weighted_avg": [
-            "CNMOPS_COV_MEAN",
-            "CNMOPS_COV_STDEV",
+            "CNMOPS_SAMPLE_MEAN",
+            "CNMOPS_SAMPLE_STDEV",
             "CNMOPS_COHORT_MEAN",
             "CNMOPS_COHORT_STDEV",
             "CopyNumber",

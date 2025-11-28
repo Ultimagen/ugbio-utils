@@ -165,15 +165,15 @@ def aggregate_annotations_in_df(
     -------
     pd.DataFrame
         DataFrame with columns: chr, start, end, CopyNumber (int), FILTER (tuple),
-        and additional columns for each coverage annotation (e.g., CNMOPS_COV_MEAN,
-        CNMOPS_COV_STD, CNMOPS_COHORT_MEAN, CNMOPS_COHORT_STD).
+        and additional columns for each coverage annotation (e.g., CNMOPS_SAMPLE_MEAN,
+        CNMOPS_SAMPLE_STDEV, CNMOPS_COHORT_MEAN, CNMOPS_COHORT_STD).
 
     Notes
     -----
     - All bed files are assumed to have the same regions in the same order
     - The function performs sorting to ensure proper alignment
     - Coverage annotation column names are formatted as CNMOPS_{SAMPLE}_{OPERATION}
-      in uppercase (e.g., CNMOPS_COV_MEAN)
+      in uppercase (e.g., CNMOPS_SAMPLE_MEAN)
     - CopyNumber is converted to an integer by removing the "CN" prefix
     - filter is a tuple of filter names (("PASS",) tuple when no filters present)
     """

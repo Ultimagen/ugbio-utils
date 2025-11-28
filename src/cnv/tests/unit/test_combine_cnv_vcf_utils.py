@@ -357,8 +357,8 @@ def cnv_vcf_header():
     header.add_line('##INFO=<ID=SVLEN,Number=.,Type=Integer,Description="SV length">')
     header.add_line('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="SV type">')
     header.add_line('##INFO=<ID=CollapseId,Number=1,Type=Integer,Description="Collapse ID">')
-    header.add_line('##INFO=<ID=CNMOPS_COV_MEAN,Number=1,Type=Float,Description="Mean coverage">')
-    header.add_line('##INFO=<ID=CNMOPS_COV_STDEV,Number=1,Type=Float,Description="Coverage stdev">')
+    header.add_line('##INFO=<ID=CNMOPS_SAMPLE_MEAN,Number=1,Type=Float,Description="Mean coverage">')
+    header.add_line('##INFO=<ID=CNMOPS_SAMPLE_STDEV,Number=1,Type=Float,Description="Coverage stdev">')
     header.add_line('##INFO=<ID=CNMOPS_COHORT_MEAN,Number=1,Type=Float,Description="Cohort mean">')
     header.add_line('##INFO=<ID=CNMOPS_COHORT_STDEV,Number=1,Type=Float,Description="Cohort stdev">')
     header.add_line('##INFO=<ID=CopyNumber,Number=1,Type=Float,Description="Copy number">')
@@ -386,8 +386,8 @@ def tmp_vcf_with_cnvs(tmp_path, cnv_vcf_header):
         record1.alleles = ("N", "<DEL>")
         record1.info["SVLEN"] = (1000,)
         record1.info["SVTYPE"] = "DEL"
-        record1.info["CNMOPS_COV_MEAN"] = 10.5
-        record1.info["CNMOPS_COV_STDEV"] = 2.1
+        record1.info["CNMOPS_SAMPLE_MEAN"] = 10.5
+        record1.info["CNMOPS_SAMPLE_STDEV"] = 2.1
         record1.info["CNMOPS_COHORT_MEAN"] = 20.0
         record1.info["CNMOPS_COHORT_STDEV"] = 3.5
         record1.info["CopyNumber"] = 1.0
@@ -403,8 +403,8 @@ def tmp_vcf_with_cnvs(tmp_path, cnv_vcf_header):
         record2.alleles = ("N", "<DEL>")
         record2.info["SVLEN"] = (1000,)
         record2.info["SVTYPE"] = "DEL"
-        record2.info["CNMOPS_COV_MEAN"] = 11.0
-        record2.info["CNMOPS_COV_STDEV"] = 2.3
+        record2.info["CNMOPS_SAMPLE_MEAN"] = 11.0
+        record2.info["CNMOPS_SAMPLE_STDEV"] = 2.3
         record2.info["CNMOPS_COHORT_MEAN"] = 20.5
         record2.info["CNMOPS_COHORT_STDEV"] = 3.6
         record2.info["CopyNumber"] = 1.1
@@ -420,8 +420,8 @@ def tmp_vcf_with_cnvs(tmp_path, cnv_vcf_header):
         record3.alleles = ("N", "<DUP>")
         record3.info["SVLEN"] = (2000,)
         record3.info["SVTYPE"] = "DUP"
-        record3.info["CNMOPS_COV_MEAN"] = 30.0
-        record3.info["CNMOPS_COV_STDEV"] = 4.5
+        record3.info["CNMOPS_SAMPLE_MEAN"] = 30.0
+        record3.info["CNMOPS_SAMPLE_STDEV"] = 4.5
         record3.info["CNMOPS_COHORT_MEAN"] = 20.0
         record3.info["CNMOPS_COHORT_STDEV"] = 3.5
         record3.info["CopyNumber"] = 3.0
@@ -463,8 +463,8 @@ class TestMergeCnvsInVcf:
                 "pos": [1000, 2500],
                 "svlen": [(1000,), (1000,)],
                 "matchid": [(1.0,), (1.0,)],  # Same matchid means they were collapsed together
-                "cnmops_cov_mean": [10.5, 11.0],
-                "cnmops_cov_stdev": [2.1, 2.3],
+                "cnmops_sample_mean": [10.5, 11.0],
+                "cnmops_sample_stdev": [2.1, 2.3],
                 "cnmops_cohort_mean": [20.0, 20.5],
                 "cnmops_cohort_stdev": [3.5, 3.6],
                 "copynumber": [1.0, 1.1],
@@ -483,8 +483,8 @@ class TestMergeCnvsInVcf:
             record.info["CollapseId"] = 1.0
             record.info["SVLEN"] = (2500,)
             record.info["SVTYPE"] = "DEL"
-            record.info["CNMOPS_COV_MEAN"] = 10.5
-            record.info["CNMOPS_COV_STDEV"] = 2.1
+            record.info["CNMOPS_SAMPLE_MEAN"] = 10.5
+            record.info["CNMOPS_SAMPLE_STDEV"] = 2.1
             record.info["CNMOPS_COHORT_MEAN"] = 20.0
             record.info["CNMOPS_COHORT_STDEV"] = 3.5
             record.info["CopyNumber"] = 1.0
@@ -512,8 +512,8 @@ class TestMergeCnvsInVcf:
 
         # Verify get_vcf_df was called
         expected_fields = [
-            "CNMOPS_COV_MEAN",
-            "CNMOPS_COV_STDEV",
+            "CNMOPS_SAMPLE_MEAN",
+            "CNMOPS_SAMPLE_STDEV",
             "CNMOPS_COHORT_MEAN",
             "CNMOPS_COHORT_STDEV",
             "CopyNumber",
@@ -559,8 +559,8 @@ class TestMergeCnvsInVcf:
                 "pos": [1000, 2500],
                 "svlen": [(1000,), (2000,)],
                 "matchid": [(1.0,), (1.0,)],
-                "cnmops_cov_mean": [10.0, 20.0],
-                "cnmops_cov_stdev": [1.0, 2.0],
+                "cnmops_sample_mean": [10.0, 20.0],
+                "cnmops_sample_stdev": [1.0, 2.0],
                 "cnmops_cohort_mean": [15.0, 25.0],
                 "cnmops_cohort_stdev": [2.0, 3.0],
                 "copynumber": [1.0, 2.0],
@@ -578,8 +578,8 @@ class TestMergeCnvsInVcf:
             record.info["CollapseId"] = 1.0
             record.info["SVLEN"] = (1500,)  # Original merged length
             record.info["SVTYPE"] = "DEL"
-            record.info["CNMOPS_COV_MEAN"] = 15.0  # Will be replaced by weighted avg
-            record.info["CNMOPS_COV_STDEV"] = 1.5
+            record.info["CNMOPS_SAMPLE_MEAN"] = 15.0  # Will be replaced by weighted avg
+            record.info["CNMOPS_SAMPLE_STDEV"] = 1.5
             record.info["CNMOPS_COHORT_MEAN"] = 20.0
             record.info["CNMOPS_COHORT_STDEV"] = 2.5
             record.info["CopyNumber"] = 1.5
@@ -600,12 +600,12 @@ class TestMergeCnvsInVcf:
 
             record = records[0]
 
-            # Calculate expected weighted average for CNMOPS_COV_MEAN
+            # Calculate expected weighted average for CNMOPS_SAMPLE_MEAN
             # Values: [10.0, 20.0, 15.0] (from removed records + collapsed record)
             # Lengths: [1000, 2000, 1500]
             # Weighted avg = (10*1000 + 20*2000 + 15*1500) / (1000+2000+1500) = 72500/4500 = 16.111
             expected_mean = (10.0 * 1000 + 20.0 * 2000 + 15.0 * 1500) / (1000 + 2000 + 1500)
-            assert abs(record.info["CNMOPS_COV_MEAN"] - round(expected_mean, 3)) < 0.001
+            assert abs(record.info["CNMOPS_SAMPLE_MEAN"] - round(expected_mean, 3)) < 0.001
 
             # Verify SVLEN was updated to record.stop - record.start
             assert record.info["SVLEN"] == (record.stop - record.start,)
