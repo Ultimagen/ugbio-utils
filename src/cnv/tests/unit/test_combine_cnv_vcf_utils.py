@@ -438,9 +438,9 @@ def tmp_vcf_with_cnvs(tmp_path, cnv_vcf_header):
 class TestMergeCnvsInVcf:
     """Tests for merge_cnvs_in_vcf function."""
 
-    @patch("ugbio_cnv.merge_cnv_vcf_utils.mu.cleanup_temp_files")
-    @patch("ugbio_cnv.merge_cnv_vcf_utils.vcftools.get_vcf_df")
-    @patch("ugbio_cnv.merge_cnv_vcf_utils.VcfUtils")
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.mu.cleanup_temp_files")
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.vcftools.get_vcf_df")
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.VcfUtils")
     def test_merge_cnvs_basic_workflow(
         self, mock_vcf_utils_class, mock_get_vcf_df, mock_cleanup, tmp_path, cnv_vcf_header
     ):
@@ -531,9 +531,9 @@ class TestMergeCnvsInVcf:
         # Verify output file was created
         assert output_vcf.exists()
 
-    @patch("ugbio_cnv.merge_cnv_vcf_utils.mu.cleanup_temp_files")
-    @patch("ugbio_cnv.merge_cnv_vcf_utils.vcftools.get_vcf_df")
-    @patch("ugbio_cnv.merge_cnv_vcf_utils.VcfUtils")
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.mu.cleanup_temp_files")
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.vcftools.get_vcf_df")
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.VcfUtils")
     def test_merge_cnvs_weighted_average_calculation(
         self, mock_vcf_utils_class, mock_get_vcf_df, mock_cleanup, tmp_path, cnv_vcf_header
     ):
