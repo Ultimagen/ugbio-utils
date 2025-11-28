@@ -217,7 +217,8 @@ def combine_cnv_vcfs(
     # Create output directory if it doesn't exist
     if output_directory is None:
         output_directory = os.path.dirname(output_vcf)
-    os.makedirs(output_directory, exist_ok=True)
+    if output_directory:  # file with no directory evaluates to ""
+        os.makedirs(output_directory, exist_ok=True)
 
     vcf_utils = VcfUtils()
 
