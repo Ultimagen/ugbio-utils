@@ -278,7 +278,7 @@ class TestVcfUtils:
                 fai_contigs
             ), f"Number of contigs in VCF ({len(vcf_contigs)}) does not match FAI ({len(fai_contigs)})"
 
-    def test_collapse_vcf(self, mocker, mock_logger):
+    def test_collapse_vcf(self, mocker, mock_logger, tmp_path):
         """Test collapse_vcf method"""
         mock_sp = mocker.Mock()
         vcf_utils = VcfUtils(simple_pipeline=mock_sp, logger=mock_logger)
@@ -290,10 +290,12 @@ class TestVcfUtils:
         mock_p1.stdout = mocker.Mock()
         mock_p1.returncode = 0
         mock_p2.returncode = 0
-        open("tmp.vcf", "w").close()  # Create the file to be removed
-        vcf_utils.collapse_vcf("input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, refdist=1000)
+        open(str(tmp_path / "tmp.vcf"), "w").close()  # Create the file to be removed
+        vcf_utils.collapse_vcf(
+            "input.vcf", str(tmp_path / "output.vcf.gz"), bed="regions.bed", pctseq=0.9, pctsize=0.8, refdist=1000
+        )
 
-        mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
+        mock_logger.info.assert_called_with(f"Deleted temporary file: {str(tmp_path / 'tmp.vcf')}")
         mock_subprocess_popen.assert_any_call(
             [
                 "truvari",
@@ -301,7 +303,7 @@ class TestVcfUtils:
                 "-i",
                 "input.vcf",
                 "-c",
-                "tmp.vcf",
+                str(tmp_path / "tmp.vcf"),
                 "--sizemax",
                 "-1",
                 "--chain",
@@ -318,12 +320,14 @@ class TestVcfUtils:
             ],
             stdout=mocker.ANY,
         )
-        mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
+        mock_subprocess_popen.assert_any_call(
+            ["bcftools", "view", "-Oz", "-o", str(tmp_path / "output.vcf.gz")], stdin=mock_p1.stdout
+        )
         # Verify both processes were set up correctly
         assert mock_p1.returncode == 0
         assert mock_p2.returncode == 0
 
-    def test_collapse_vcf_ignore_filter(self, mocker, mock_logger):
+    def test_collapse_vcf_ignore_filter(self, mocker, mock_logger, tmp_path):
         """Test collapse_vcf with ignore_filter=True removes --passonly flag"""
         mock_sp = mocker.Mock()
         vcf_utils = VcfUtils(simple_pipeline=mock_sp, logger=mock_logger)
@@ -335,14 +339,20 @@ class TestVcfUtils:
         mock_p1.stdout = mocker.Mock()
         mock_p1.returncode = 0
         mock_p2.returncode = 0
-        with open("tmp.vcf", "w"):
+        with open(str(tmp_path / "tmp.vcf"), "w"):
             pass  # Create the file to be removed
 
         vcf_utils.collapse_vcf(
-            "input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, refdist=1000, ignore_filter=True
+            "input.vcf",
+            str(tmp_path / "output.vcf.gz"),
+            bed="regions.bed",
+            pctseq=0.9,
+            pctsize=0.8,
+            refdist=1000,
+            ignore_filter=True,
         )
 
-        mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
+        mock_logger.info.assert_called_with(f"Deleted temporary file: {tmp_path / 'tmp.vcf'}")
         # Verify --passonly is NOT included when ignore_filter=True
         mock_subprocess_popen.assert_any_call(
             [
@@ -351,7 +361,7 @@ class TestVcfUtils:
                 "-i",
                 "input.vcf",
                 "-c",
-                "tmp.vcf",
+                str(tmp_path / "tmp.vcf"),
                 "--sizemax",
                 "-1",
                 "--chain",
@@ -367,12 +377,14 @@ class TestVcfUtils:
             ],
             stdout=mocker.ANY,
         )
-        mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
+        mock_subprocess_popen.assert_any_call(
+            ["bcftools", "view", "-Oz", "-o", str(tmp_path / "output.vcf.gz")], stdin=mock_p1.stdout
+        )
         # Verify both processes were set up correctly
         assert mock_p1.returncode == 0
         assert mock_p2.returncode == 0
 
-    def test_collapse_vcf_ignore_type(self, mocker, mock_logger):
+    def test_collapse_vcf_ignore_type(self, mocker, mock_logger, tmp_path):
         """Test collapse_vcf with ignore_type=False removes -t flag"""
         mock_sp = mocker.Mock()
         vcf_utils = VcfUtils(simple_pipeline=mock_sp, logger=mock_logger)
@@ -384,14 +396,20 @@ class TestVcfUtils:
         mock_p1.stdout = mocker.Mock()
         mock_p1.returncode = 0
         mock_p2.returncode = 0
-        with open("tmp.vcf", "w"):
+        with open(str(tmp_path / "tmp.vcf"), "w"):
             pass  # Create the file to be removed
 
         vcf_utils.collapse_vcf(
-            "input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, refdist=1000, ignore_type=False
+            "input.vcf",
+            str(tmp_path / "output.vcf.gz"),
+            bed="regions.bed",
+            pctseq=0.9,
+            pctsize=0.8,
+            refdist=1000,
+            ignore_type=False,
         )
 
-        mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
+        mock_logger.info.assert_called_with(f"Deleted temporary file: {tmp_path / 'tmp.vcf'}")
         # Verify -t is NOT included when ignore_type=False
         mock_subprocess_popen.assert_any_call(
             [
@@ -400,7 +418,7 @@ class TestVcfUtils:
                 "-i",
                 "input.vcf",
                 "-c",
-                "tmp.vcf",
+                str(tmp_path / "tmp.vcf"),
                 "--sizemax",
                 "-1",
                 "--chain",
@@ -416,7 +434,9 @@ class TestVcfUtils:
             ],
             stdout=mocker.ANY,
         )
-        mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
+        mock_subprocess_popen.assert_any_call(
+            ["bcftools", "view", "-Oz", "-o", str(tmp_path / "output.vcf.gz")], stdin=mock_p1.stdout
+        )
         # Verify both processes were set up correctly
         assert mock_p1.returncode == 0
         assert mock_p2.returncode == 0
