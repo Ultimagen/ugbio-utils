@@ -33,6 +33,7 @@ combine_cnmops_cnvpytor_cnv_calls = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls
 combine_cnv_vcfs = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_concat"
 filter_dup_cnmmops_cnv_calls = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_filter_dup_cnmmops"
 convert_combined_cnv_results_to_vcf = "ugbio_cnv.convert_combined_cnv_results_to_vcf:main"
+filter_sample_cnvs = "ugbio_cnv.filter_sample_cnvs:main"
 
 [tool.uv]
 dev-dependencies = [
