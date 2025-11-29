@@ -124,12 +124,12 @@ def annotate_vcf_with_gap_perc(input_vcf: str, ref_fasta: str, output_vcf: str) 
     input_vcf : str
         Path to input VCF file containing CNV calls.
     ref_fasta : str
-        Path to reference genome FASTA file.
+        Path to reference genome FASTA file. Should have .fai index.
     output_vcf : str
         Path to output VCF file with GAP_PERC annotation.
     """
 
-    genome = Fasta(ref_fasta)
+    genome = Fasta(ref_fasta, rebuild=False, build_index=False)
 
     with pysam.VariantFile(input_vcf) as vcf_in:
         header = vcf_in.header
