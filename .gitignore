@@ -11,3 +11,7 @@ dist/
 *.DS_Store
 extensions.txt
 uv.lock
+
+# Test output files (should be written to tmpdir, but adding as safeguard)
+in_segments.txt_annotated.txt
+in_segments.txt_CNVs.bed
