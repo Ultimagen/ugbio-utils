@@ -237,7 +237,7 @@ def process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_para
             or (
                 current_df_record.t_chrom == vcf_chrom
                 and current_df_record.t_pos == vcf_pos
-                and current_df_record.alt_allele != vcf_alt  # case3: next alt allele for multi-allelic site
+                and current_df_record.alt_allele != vcf_alt  # case3: alt allele for multi-allelic site
             )
         ):
             current_df_record = next(df_iter, None)
