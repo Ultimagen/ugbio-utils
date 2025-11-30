@@ -54,6 +54,7 @@ added_info_features = {
     "ALT_ALLELE": ["alternative allele", "String"],
 }
 columns_for_aggregation = [FeatureMapFields.MQUAL.value, FeatureMapFields.SNVQ.value, FeatureMapFields.MAPQ.value]
+ORIGINAL_RECORD_INDEX_FIELD = "record_index"
 
 
 def process_sample_columns(df_variants, prefix):  # noqa: C901
@@ -201,53 +202,6 @@ def add_fields_to_header(hdr, added_format_features, added_info_features):
         hdr.info.add(field, 1, field_type, field_description)
 
 
-def get_chrom_order_from_vcf_header(vcf_header):
-    """
-    Extract chromosome ordering from VCF header contigs.
-
-    Parameters
-    ----------
-    vcf_header : pysam.VariantHeader
-        VCF header object containing contig information.
-
-    Returns
-    -------
-    dict
-        Dictionary mapping chromosome names to their order indices.
-    """
-    chrom_order = {}
-    for i, contig in enumerate(vcf_header.contigs):
-        chrom_order[contig] = i
-    return chrom_order
-
-
-def chrom_sort_key(chrom, chrom_order):
-    """
-    Generate sort key based on VCF header contig order.
-
-    Parameters
-    ----------
-    chrom : str
-        Chromosome name to get sort key for.
-    chrom_order : dict
-        Dictionary mapping chromosome names to their order indices.
-
-    Returns
-    -------
-    int
-        Sort key for the chromosome.
-
-    Raises
-    ------
-    ValueError
-        If chromosome is not found in VCF header contigs.
-    """
-    if chrom in chrom_order:
-        return chrom_order[chrom]  # Use VCF header order
-    else:
-        raise ValueError(f"Chromosome '{chrom}' not found in VCF header contigs")
-
-
 def process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_params):
     """
     Process VCF records serially by iterating through both VCF and DataFrame simultaneously.
@@ -266,20 +220,8 @@ def process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_para
         Whether to write aggregated parameters to the output VCF.
     """
 
-    # Get chromosome ordering from VCF header
-    chrom_order = get_chrom_order_from_vcf_header(vcfin.header)
-
-    # Sort df_variants to match VCF sort order (chrom, pos, alt_allele)
-    # Use VCF header contig order when available
-    df_variants_sorted = df_variants.copy()
-    df_variants_sorted["_chrom_sort_key"] = df_variants_sorted["t_chrom"].apply(
-        lambda x: chrom_sort_key(x, chrom_order)
-    )
-    df_variants_sorted = df_variants_sorted.sort_values(["_chrom_sort_key", "t_pos", "alt_allele"]).reset_index(
-        drop=True
-    )
-    df_variants_sorted = df_variants_sorted.drop(columns=["_chrom_sort_key"])
-
+    # Use original record order for processing
+    df_variants_sorted = df_variants.sort_values(f"t_{ORIGINAL_RECORD_INDEX_FIELD}").reset_index(drop=True)
     df_iter = iter(df_variants_sorted.itertuples(index=False))
     current_df_record = next(df_iter, None)
 
@@ -290,12 +232,12 @@ def process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_para
 
         # Skip to matching DataFrame record or process without match
         while current_df_record is not None and (
-            current_df_record.t_chrom < vcf_chrom
-            or (current_df_record.t_chrom == vcf_chrom and current_df_record.t_pos < vcf_pos)
+            current_df_record.t_chrom < vcf_chrom  # case1: next chromosome
+            or (current_df_record.t_chrom == vcf_chrom and current_df_record.t_pos < vcf_pos)  # case2: next position
             or (
                 current_df_record.t_chrom == vcf_chrom
                 and current_df_record.t_pos == vcf_pos
-                and current_df_record.alt_allele < vcf_alt
+                and current_df_record.alt_allele != vcf_alt  # case3: next alt allele for multi-allelic site
             )
         ):
             current_df_record = next(df_iter, None)
@@ -376,6 +318,8 @@ def read_merged_tumor_normal_vcf(
             df_tumor = df_tumor.drop(columns=[colname])
             df_normal = df_normal.drop(columns=[colname])
 
+    # keep original records order
+    df_tumor[ORIGINAL_RECORD_INDEX_FIELD] = range(1, len(df_tumor) + 1)
     # merge dataframes
     df_tumor_normal = pd.concat([df_tumor.add_prefix("t_"), df_normal.add_prefix("n_")], axis=1)
 
@@ -617,12 +561,13 @@ def featuremap_fields_aggregation_on_an_interval_list(
             results = list(executor.map(lambda p: featuremap_fields_aggregation(*p), params))
 
         # Write each string to the file
-        with open("interval_vcf_files.list", "w") as file:
+        interval_list_file = pjoin(tempfile.gettempdir(), "interval_vcf_files.list")
+        with open(interval_list_file, "w") as file:
             for interval_vcf_file in results:
                 file.write(interval_vcf_file + "\n")
 
         cmd = (
-            f"bcftools concat -f interval_vcf_files.list -a | "
+            f"bcftools concat -f {interval_list_file} -a | "
             f"bcftools sort - -Oz -o {output_vcf} && "
             f"bcftools index -t {output_vcf}"
         )
