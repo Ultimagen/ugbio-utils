@@ -506,7 +506,7 @@ class TestMergeCnvsInVcf:
             pctseq=0.0,
             pctsize=0.0,
             ignore_filter=True,
-            ignore_type=False,
+            ignore_sv_type=False,
             erase_removed=False,
         )
 
