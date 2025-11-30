@@ -292,7 +292,7 @@ class VcfUtils:
         pctsize: float = 0.0,
         *,
         ignore_filter: bool = False,
-        ignore_type: bool = True,
+        ignore_sv_type: bool = True,
         erase_removed: bool = True,
     ) -> str | None:
         """
@@ -305,7 +305,7 @@ class VcfUtils:
         output_vcf : str
             Output VCF file
         bed : str, optional
-            Bed file, by default None
+            Restrict collapsing to this bed file, by default None
         refdist : int, optional
             Reference distance for collapsing variants, by default 500
         pctseq : float, optional
@@ -313,8 +313,8 @@ class VcfUtils:
         pctsize : float, optional
             Percentage of size identity, by default 0.0
         ignore_filter : bool, optional
-            If True, ignore FILTER field (remove --passonly flag), by default False
-        ignore_type : bool, optional
+            If True, ignore FILTER field (remove truvari's --passonly flag), by default False
+        ignore_sv_type : bool, optional
             If True, ignore SVTYPE when collapsing variants, by default True
         erase_removed: bool, optional
             If True, delete the temporary file with removed variants, by default True,
@@ -332,7 +332,7 @@ class VcfUtils:
 
         if not ignore_filter:
             truvari_cmd.append("--passonly")
-        if ignore_type:
+        if ignore_sv_type:
             truvari_cmd.append("-t")
 
         if bed:

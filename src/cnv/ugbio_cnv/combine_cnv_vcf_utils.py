@@ -253,7 +253,7 @@ def merge_cnvs_in_vcf(input_vcf: str, output_vcf: str, distance: int = 1000) -> 
         pctseq=0.0,
         pctsize=0.0,
         ignore_filter=True,
-        ignore_type=False,
+        ignore_sv_type=False,
         erase_removed=False,
     )
     temporary_files.append(str(removed_vcf))

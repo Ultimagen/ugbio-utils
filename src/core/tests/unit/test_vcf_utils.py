@@ -406,7 +406,7 @@ class TestVcfUtils:
             pctseq=0.9,
             pctsize=0.8,
             refdist=1000,
-            ignore_type=False,
+            ignore_sv_type=False,
         )
 
         mock_logger.info.assert_called_with(f"Deleted temporary file: {tmp_path / 'tmp.vcf'}")
