@@ -39,17 +39,17 @@ class TestProcessCnmopsCnvs:
         primary_bed_file.write(primary_bed_content)
 
         # Create coverage annotation files
-        cov_mean_content = (
+        sample_mean_content = (
             "chr1\t1000\t2000\tregion1\t1.5\n" "chr1\t3000\t4000\tregion2\t2.3\n" "chr2\t5000\t6000\tregion3\t0.8\n"
         )
-        cov_mean_file = tmpdir.join("cov_mean.bed")
-        cov_mean_file.write(cov_mean_content)
+        sample_mean_file = tmpdir.join("cov_mean.bed")
+        sample_mean_file.write(sample_mean_content)
 
-        cov_std_content = (
+        sample_std_content = (
             "chr1\t1000\t2000\tregion1\t0.1\n" "chr1\t3000\t4000\tregion2\t0.2\n" "chr2\t5000\t6000\tregion3\t0.15\n"
         )
-        cov_std_file = tmpdir.join("cov_std.bed")
-        cov_std_file.write(cov_std_content)
+        sample_std_file = tmpdir.join("cov_std.bed")
+        sample_std_file.write(sample_std_content)
 
         cohort_mean_content = (
             "chr1\t1000\t2000\tregion1\t1.0\n" "chr1\t3000\t4000\tregion2\t1.0\n" "chr2\t5000\t6000\tregion3\t1.0\n"
@@ -65,10 +65,10 @@ class TestProcessCnmopsCnvs:
 
         # Prepare coverage annotations list
         coverage_annotations = [
-            ("cov", "mean", str(cov_mean_file)),
-            ("cov", "std", str(cov_std_file)),
+            ("sample", "mean", str(sample_mean_file)),
+            ("sample", "stdev", str(sample_std_file)),
             ("cohort", "mean", str(cohort_mean_file)),
-            ("cohort", "std", str(cohort_std_file)),
+            ("cohort", "stdev", str(cohort_std_file)),
         ]
 
         # Call the function
@@ -82,10 +82,10 @@ class TestProcessCnmopsCnvs:
             "CopyNumber",
             "filter",
             "SVTYPE",
-            "CNMOPS_COV_MEAN",
-            "CNMOPS_COV_STD",
+            "CNMOPS_SAMPLE_MEAN",
+            "CNMOPS_SAMPLE_STDEV",
             "CNMOPS_COHORT_MEAN",
-            "CNMOPS_COHORT_STD",
+            "CNMOPS_COHORT_STDEV",
         ]
 
         # Verify the number of rows
@@ -98,22 +98,22 @@ class TestProcessCnmopsCnvs:
         assert result_df.iloc[0]["CopyNumber"] == 2
         assert result_df.iloc[0]["filter"] == "PASS"  # PASS string when no filters
         assert result_df.iloc[0]["SVTYPE"] == "NEUTRAL"  # CN2 is neutral
-        assert result_df.iloc[0]["CNMOPS_COV_MEAN"] == 1.5
-        assert result_df.iloc[0]["CNMOPS_COV_STD"] == 0.1
+        assert result_df.iloc[0]["CNMOPS_SAMPLE_MEAN"] == 1.5
+        assert result_df.iloc[0]["CNMOPS_SAMPLE_STDEV"] == 0.1
         assert result_df.iloc[0]["CNMOPS_COHORT_MEAN"] == 1.0
-        assert result_df.iloc[0]["CNMOPS_COHORT_STD"] == 0.05
+        assert result_df.iloc[0]["CNMOPS_COHORT_STDEV"] == 0.05
 
         # Verify second row (single filter)
         assert result_df.iloc[1]["CopyNumber"] == 3  # Integer, not "CN3"
         assert result_df.iloc[1]["filter"] == "UG-CNV-LCR"  # String with one filter
         assert result_df.iloc[1]["SVTYPE"] == "DUP"  # CN3 is duplication
-        assert result_df.iloc[1]["CNMOPS_COV_MEAN"] == 2.3
+        assert result_df.iloc[1]["CNMOPS_SAMPLE_MEAN"] == 2.3
 
         # Verify third row (semicolon-separated with multiple filters)
         assert result_df.iloc[2]["CopyNumber"] == 1  # Integer, not "CN1"
         assert result_df.iloc[2]["filter"] == "LEN,UG-CNV-LCR"  # Comma-separated string with two filters
         assert result_df.iloc[2]["SVTYPE"] == "DEL"  # CN1 is deletion
-        assert result_df.iloc[2]["CNMOPS_COV_MEAN"] == 0.8
+        assert result_df.iloc[2]["CNMOPS_SAMPLE_MEAN"] == 0.8
 
     def test_aggregate_annotations_empty_coverage_list(self, tmpdir):
         """Test aggregating with empty coverage annotations list."""

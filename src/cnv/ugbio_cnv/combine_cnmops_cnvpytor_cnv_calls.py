@@ -1,20 +1,23 @@
 import argparse
 import logging
 import os
-import re
 import subprocess
 import sys
 from os.path import join as pjoin
 
 import pandas as pd
 import pysam
-import ugbio_cnv.convert_combined_cnv_results_to_output_formats as output_results
 import ugbio_core.misc_utils as mu
 from pyfaidx import Fasta
+from ugbio_cnv.combine_cnv_vcf_utils import (
+    combine_vcf_headers_for_cnv,
+    merge_cnvs_in_vcf,
+    update_vcf_contigs,
+    write_vcf_records_with_source,
+)
+from ugbio_cnv.convert_combined_cnv_results_to_output_formats import FILTER_TAG_REGISTRY, INFO_TAG_REGISTRY
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
-
-bedmap = "bedmap"
 
 
 def run_cmd(cmd):
@@ -22,350 +25,133 @@ def run_cmd(cmd):
     subprocess.run(cmd, shell=True, check=True)  # noqa: S602
 
 
-def __parse_args_legacy(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="combine_cnmops_cnvpytor_cnv_calls.py",
-        description="Combines CNV calls from various sources, filters, converts into final bed/VCF formats.",
-    )
-
-    parser.add_argument("--cnmops_cnv_calls", help="input bed file holding cn.mops CNV calls", required=True, type=str)
-    parser.add_argument(
-        "--cnvpytor_cnv_calls", help="input bed file holding cnvpytor CNV calls", required=True, type=str
-    )
-    parser.add_argument(
-        "--del_jalign_merged_results", help="jaign results for Deletions in tsv format", required=True, type=str
-    )
-    parser.add_argument(
-        "--distance_threshold",
-        help="distance threshold for merging CNV segments",
-        required=False,
-        type=int,
-        default=1500,
-    )
-    parser.add_argument(
-        "--duplication_length_cutoff_for_cnmops_filter",
-        help="Defines the minimum duplication length considered valid during cn.mops CNV filtering",
-        required=False,
-        type=int,
-        default=10000,
-    )
-    parser.add_argument("--ug_cnv_lcr", help="UG-CNV-LCR bed file", required=False, type=str)
-    parser.add_argument("--ref_fasta", help="reference genome fasta file", required=True, type=str)
-    parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
-    parser.add_argument("--out_directory", help="output directory", required=False, type=str)
-    parser.add_argument("--sample_name", help="sample name", required=True, type=str)
-    parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO")
-
-    return parser.parse_args(argv[1:])
-
-
-def __parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="combine_cnmops_cnvpytor_cnv_calls.py",
-        description="Combines CNV calls from various sources into VCF.",
-    )
-
+def __parse_args_concat(parser: argparse.ArgumentParser) -> None:
+    """Add arguments specific to the concat tool."""
     parser.add_argument("--cnmops_vcf", help="input VCF file holding cn.mops CNV calls", required=True, type=str)
     parser.add_argument("--cnvpytor_vcf", help="input VCF file holding cnvpytor CNV calls", required=True, type=str)
     parser.add_argument("--output_vcf", help="output combined VCF file", required=True, type=str)
     parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
     parser.add_argument("--out_directory", help="output directory", required=False, type=str)
 
+
+def __parse_args_dup_length_filter(parser: argparse.ArgumentParser) -> None:
+    """Add arguments specific to the duplication length_filter tool."""
+    parser.add_argument("--combined_calls", help="Input combined CNV calls VCF file", required=True, type=str)
+    parser.add_argument(
+        "--combined_calls_annotated",
+        help="Output combined CNV calls VCF file with filtering annotation",
+        required=True,
+        type=str,
+    )
+    parser.add_argument(
+        "--filtered_length",
+        help="Minimum duplication length to be considered valid",
+        required=True,
+        type=int,
+        default=10000,
+    )
+    parser.add_argument(
+        "--distance_threshold",
+        help="Distance threshold for merging CNV segments",
+        required=False,
+        type=int,
+        default=1500,
+    )
+
+
+def __parse_args_gaps_perc(parser: argparse.ArgumentParser) -> None:
+    """Add arguments specific to the gaps percentage filter tool."""
+    parser.add_argument("--calls_vcf", help="VCF file with CNV calls", required=True, type=str)
+    parser.add_argument("--output_vcf", help="Output VCF file", required=True, type=str)
+    parser.add_argument("--ref_fasta", help="Reference genome FASTA file", required=True, type=str)
+
+
+def __parse_args(argv: list[str]) -> argparse.Namespace:
+    """
+    Parse command-line arguments using subparsers for different tools.
+
+    This allows each tool to have its own set of arguments while sharing
+    common options like verbosity.
+
+    To add a new tool:
+    1. Create a new __parse_args_<toolname>() function with tool-specific arguments
+    2. Add a new subparser below for the tool
+    3. Add a new elif block in the run() function to handle the tool
+    """
+    # Main parser
+    parser = argparse.ArgumentParser(
+        prog="combine_cnmops_cnvpytor_cnv_calls.py",
+        description="CNV processing toolkit - runs various CNV-related tools.",
+    )
+
+    # Common arguments across all tools
     parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO")
+
+    # Create subparsers for different tools
+    subparsers = parser.add_subparsers(dest="tool", help="Tool to run", required=True)
+
+    # Concat tool subparser
+    concat_parser = subparsers.add_parser(
+        "concat",
+        help="Combine CNV VCFs from different callers (cn.mops and cnvpytor)",
+        description="Combines CNV VCF files from cn.mops and cnvpytor into a single sorted and indexed VCF.",
+    )
+    __parse_args_concat(concat_parser)
+
+    dup_filter_parser = subparsers.add_parser(
+        "filter_cnmops_dups",
+        help="Filter short duplications from cn.mops calls in the combined CNV VCF",
+        description="Adds CNMOPS_SHORT_DUPLICATION filter to short duplications in cn.mops calls.",
+    )
+    __parse_args_dup_length_filter(dup_filter_parser)
+
+    gaps_perc_parser = subparsers.add_parser(
+        "annotate_gaps",
+        help="Annotate CNV calls with percentage of gaps (Ns) from reference genome",
+        description="Annotates CNV calls in a VCF with the percentage of gaps (Ns) in the reference genome.",
+    )
+    __parse_args_gaps_perc(gaps_perc_parser)
 
     return parser.parse_args(argv[1:])
 
 
-def calculate_gaps_count_per_cnv(df_cnmops_calls: pd.DataFrame, ref_fasta: str) -> pd.DataFrame:
+def annotate_vcf_with_gap_perc(input_vcf: str, ref_fasta: str, output_vcf: str) -> None:
     """
-    Calculate the number of 'N' bases in each CNV call region from the reference genome FASTA file.
-
-     Parameters
-     ----------
-     df_cnmops_calls : pandas.DataFrame
-         DataFrame containing CNV calls with columns ['chrom', 'start', 'end'].
-     ref_fasta : str
-         Path to the reference genome FASTA file.
-
-     Returns
-     -------
-     pandas.DataFrame
-         Updated DataFrame with additional columns: 'N_count', 'len', and 'pN'.
-    """
-    if not os.path.exists(ref_fasta):
-        raise FileNotFoundError(f"Fasta file {ref_fasta} does not exist.")
-
-    genome = Fasta(ref_fasta, build_index=False, rebuild=False)
-
-    n_count = []
-    for index, row in df_cnmops_calls.iterrows():  # noqa: B007
-        chrom = row["chrom"]
-        start = row["start"]
-        end = row["end"]
-        # pyfaidx uses 0-based start, end-exclusive indexing
-        try:
-            seq_obj = genome[chrom][start - 1 : end]  # Convert to 0-based
-            if seq_obj is not None:
-                seq = seq_obj.seq
-                cnv_n_count = seq.upper().count("N")
-            else:
-                logger.warning(f"Could not retrieve sequence for {chrom}:{start}-{end}")
-                cnv_n_count = 0
-        except (KeyError, IndexError) as e:
-            logger.warning(f"Error retrieving sequence for {chrom}:{start}-{end}: {e}")
-            cnv_n_count = 0
-        n_count.append(cnv_n_count)
-
-    df_cnmops_calls["N_count"] = n_count
-    df_cnmops_calls["len"] = df_cnmops_calls["end"] - df_cnmops_calls["start"] + 1
-    df_cnmops_calls["pN"] = df_cnmops_calls["N_count"] / df_cnmops_calls["len"]
-
-    return df_cnmops_calls
-
-
-def parse_cnmops_cnv_calls(cnmops_cnv_calls: str, out_directory: str, ref_fasta: str, pN: float = 0) -> pd.DataFrame:  # noqa: N803
-    """
-    Parses cn.mops CNV calls from an input BED file.
+    Annotate CNV VCF records with GAP_PERC INFO field representing the fraction of 'N' bases in the CNV region.
 
     Parameters
     ----------
-    cnmops_cnv_calls : str
-        Path to the cn.mops CNV calls BED file.
-    out_directory : str
-        Output directory to store results.
-    pN : float
-        Threshold for filtering CNV calls based on the fraction of reference genome
-        gaps (Ns) in the call region.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame containing parsed and filtered CNV calls.
-
-    """
-    cnmops_cnv_calls_tmp_file = f"{pjoin(out_directory, os.path.basename(cnmops_cnv_calls))}.tmp"
-
-    # remove all tags from cnmops cnv calls file:
-    run_cmd(
-        f"cat {cnmops_cnv_calls} | sed 's/UG-CNV-LCR//g' | sed 's/LEN//g' | sed 's/|//g' \
-            > {cnmops_cnv_calls_tmp_file}"
-    )
-
-    df_cnmops_cnvs = pd.read_csv(cnmops_cnv_calls_tmp_file, sep="\t", header=None)
-    df_cnmops_cnvs.columns = ["chrom", "start", "end", "CN"]
-    df_cnmops_cnvs = calculate_gaps_count_per_cnv(df_cnmops_cnvs, ref_fasta)
-    # Filter by pN value
-    df_cnmops_cnvs = df_cnmops_cnvs[df_cnmops_cnvs["pN"] <= pN]
-
-    return df_cnmops_cnvs
-
-
-# Helper function to check and add metadata records
-def _add_metadata_records(
-    record_dict1: pysam.VariantHeaderMetadata,
-    record_dict2: pysam.VariantHeaderMetadata,
-    record_type: str,
-    enforced_info_specs: dict,
-    combined_header: pysam.VariantHeader,
-) -> None:
-    """Add metadata records (INFO/FORMAT/FILTER) to combined header. (service function), modifies the header in place
-    Parameters
-    ----------
-    record_dict1 : pysam.VariantHeaderMetadata
-        Dictionary of metadata records from the first header
-    record_dict2 : pysam.VariantHeaderMetadata
-        Dictionary of metadata records from the second header
-    record_type : str
-        Type of metadata records ("INFO", "FORMAT", or "FILTER")
-    enforced_info_specs : dict
-        Dictionary of enforced specifications for certain INFO fields
-    combined_header : pysam.VariantHeader
-        The combined VCF header to add records to
+    input_vcf : str
+        Path to input VCF file containing CNV calls.
+    ref_fasta : str
+        Path to reference genome FASTA file. Should have .fai index.
+    output_vcf : str
+        Path to output VCF file with GAP_PERC annotation.
     """
 
-    # Collect all unique keys from both headers
-    all_keys = set(record_dict1.keys()) | set(record_dict2.keys())
+    genome = Fasta(ref_fasta, rebuild=False, build_index=False)
 
-    for key in all_keys:
-        # Check if this field has enforced specifications
-        if record_type == "INFO" and key in enforced_info_specs:
-            number, data_type, description = enforced_info_specs[key]
-            combined_header.info.add(key, number, data_type, description)
-            continue
-
-        # Handle fields that exist in both headers
-        if key in record_dict1 and key in record_dict2:
-            record1 = record_dict1[key]
-            record2 = record_dict2[key]
-
-            # Check if type or number differ
-            if hasattr(record1, "type") and hasattr(record2, "type"):
-                if record1.type != record2.type:
-                    msg = f"{record_type} field '{key}' has conflicting types: '{record1.type}' vs '{record2.type}'"
-                    raise RuntimeError(msg)
-            if hasattr(record1, "number") and hasattr(record2, "number"):
-                if record1.number != record2.number:
-                    msg = (
-                        f"{record_type} field '{key}' has conflicting numbers: '{record1.number}' vs '{record2.number}'"
-                    )
-                    raise RuntimeError(msg)
-
-            # If we get here, they're compatible - use the first one
-            combined_header.add_line(str(record1.record))
-
-        # Handle fields that only exist in header1
-        elif key in record_dict1:
-            combined_header.add_line(str(record_dict1[key].record))
-
-        # Handle fields that only exist in header2
-        elif key in record_dict2:
-            combined_header.add_line(str(record_dict2[key].record))
-
-
-def combine_vcf_headers_for_cnv(header1: pysam.VariantHeader, header2: pysam.VariantHeader) -> pysam.VariantHeader:
-    """
-    Combine two VCF headers into a single header for CNV/SV variant calls.
-
-    This function is specifically designed for merging headers from different CNV/SV
-    callers (e.g., cn.mops and CNVpytor). It creates a new header that includes all
-    metadata from both input headers with special handling for structural variant fields.
-
-    For INFO and FORMAT fields with the same ID:
-    - If type and number match, use the first definition
-    - If type or number differ, raise RuntimeError
-
-    FILTER fields are cleared.
-
-    Special enforcement for CNV/SV-related fields to ensure VCF spec compliance:
-    - SVLEN: enforces Number="." (variable-length array) per VCF 4.2 spec for structural variants
-    - SVTYPE: enforces Number=1 (single value) per VCF 4.2 spec for structural variants
-
-    Parameters
-    ----------
-    header1 : pysam.VariantHeader
-        The first VCF header (takes precedence in case of identical collisions)
-    header2 : pysam.VariantHeader
-        The second VCF header to merge
-
-    Returns
-    -------
-    pysam.VariantHeader
-        A new combined VCF header with unified metadata
-
-    Raises
-    ------
-    RuntimeError
-        If INFO/FORMAT IDs collide with different type or number specifications
-        (except for SVLEN and SVTYPE which are enforced to standard values)
-
-    Examples
-    --------
-    >>> import pysam
-    >>> header1 = pysam.VariantFile("cnmops.vcf.gz").header
-    >>> header2 = pysam.VariantFile("cnvpytor.vcf.gz").header
-    >>> combined = combine_vcf_headers_for_cnv(header1, header2)
-    """
-    # Enforced specifications for CNV/SV fields per VCF 4.2 spec
-    enforced_info_specs = {
-        "SVLEN": (".", "Integer", "Length of structural variant (SV) per VCF 4.2 specification"),
-        "SVTYPE": (1, "String", "Type of structural variant (SV); e.g. DEL, DUP, etc. (per VCF 4.2 specification)"),
-    }
-
-    # Start with a copy of the first header
-    combined_header = pysam.VariantHeader()
-
-    # Copy contigs from header1 (assuming they're the same)
-    for contig in header1.contigs.values():
-        combined_header.contigs.add(contig.name, length=contig.length)
-
-    # Add INFO fields
-    _add_metadata_records(header1.info, header2.info, "INFO", enforced_info_specs, combined_header)
-
-    # Add FORMAT fields
-    _add_metadata_records(header1.formats, header2.formats, "FORMAT", enforced_info_specs, combined_header)
-
-    # Add samples from both headers
-    for sample in header1.samples:
-        if sample not in combined_header.samples:
-            combined_header.add_sample(sample)
-    for sample in header2.samples:
-        if sample not in combined_header.samples:
-            combined_header.add_sample(sample)
-
-    return combined_header
-
-
-def _update_vcf_contigs(
-    vcf_utils: VcfUtils,
-    cnmops_vcf: str,
-    cnvpytor_vcf: str,
-    fasta_index: str,
-    output_directory: str,
-) -> tuple[str, str]:
-    """
-    Update VCF headers with contigs from FASTA index.
-
-    Parameters
-    ----------
-    vcf_utils : VcfUtils
-        VcfUtils instance for VCF operations
-    cnmops_vcf : str
-        Path to cn.mops VCF
-    cnvpytor_vcf : str
-        Path to CNVpytor VCF
-    fasta_index : str
-        Path to FASTA index file
-    output_directory : str
-        Output directory for temporary files
-
-    Returns
-    -------
-    tuple[str, str]
-        Paths to updated cn.mops and CNVpytor VCF files
-    """
-    logger.info("Updating VCF headers with contigs from FASTA index")
-    cnmops_vcf_updated = pjoin(output_directory, "cnmops.updated_contigs.vcf.gz")
-    cnvpytor_vcf_updated = pjoin(output_directory, "cnvpytor.updated_contigs.vcf.gz")
-
-    vcf_utils.update_vcf_contigs_from_fai(cnmops_vcf, cnmops_vcf_updated, fasta_index)
-    vcf_utils.update_vcf_contigs_from_fai(cnvpytor_vcf, cnvpytor_vcf_updated, fasta_index)
-
-    return cnmops_vcf_updated, cnvpytor_vcf_updated
-
-
-def _write_vcf_records_with_source(
-    vcf_in: pysam.VariantFile,
-    vcf_out: pysam.VariantFile,
-    combined_header: pysam.VariantHeader,
-    source_name: str,
-) -> None:
-    """
-    Write VCF records to output file with CNV_SOURCE annotation.
-
-    Note: This function clears all FILTER values from input records since
-    FILTER definitions are not included in the combined header.
-
-    Parameters
-    ----------
-    vcf_in : pysam.VariantFile
-        Input VCF file to read records from
-    vcf_out : pysam.VariantFile
-        Output VCF file to write records to
-    combined_header : pysam.VariantHeader
-        Combined header for creating new records
-    source_name : str
-        Source name to add to CNV_SOURCE INFO field
-    """
-    logger.info(f"Writing records from {source_name} VCF")
-    for record in vcf_in:
-        # Clear filters - we remove filters imposed by the previous pipelines
-        record.filter.clear()
-        # Create new record with combined header
-        new_record = VcfUtils.copy_vcf_record(record, combined_header)
-        # Add source tag if not already present
-        if "CNV_SOURCE" not in new_record.info:
-            new_record.info["CNV_SOURCE"] = (source_name,)
-        vcf_out.write(new_record)
+    with pysam.VariantFile(input_vcf) as vcf_in:
+        header = vcf_in.header
+        if "GAP_PERC" not in header.info:
+            header.info.add(*INFO_TAG_REGISTRY["GAP_PERC"][:-1])
+        with pysam.VariantFile(output_vcf, "w", header=header) as vcf_out:
+            for record in vcf_in:
+                chrom = record.chrom
+                start = record.start
+                end = record.stop
+                try:
+                    seq_obj = genome[chrom][start : end + 1]
+                    seq = seq_obj.seq if seq_obj is not None else ""
+                    n_count = seq.upper().count("N")
+                    region_len = end - start + 1
+                    gap_perc = n_count / region_len if region_len > 0 else 0.0
+                except Exception as e:
+                    logger.warning(f"Could not retrieve sequence for {chrom}:{start}-{end}: {e}")
+                    gap_perc = 0.0
+                record.info["GAP_PERC"] = round(gap_perc, 5)
+                vcf_out.write(record)
+    VcfUtils().index_vcf(output_vcf)
 
 
 def combine_cnv_vcfs(
@@ -373,7 +159,7 @@ def combine_cnv_vcfs(
     cnvpytor_vcf: str,
     fasta_index: str,
     output_vcf: str,
-    output_directory: str,
+    output_directory: str | None = None,
 ) -> str:
     """
     Combine VCF files from cn.mops and CNVpytor into a single sorted and indexed VCF.
@@ -398,7 +184,7 @@ def combine_cnv_vcfs(
         Path to the reference genome FASTA index file (.fai)
     output_vcf : str
         Path to the output combined VCF file (.vcf.gz)
-    output_directory : str
+    output_directory : str, optional
         Directory for storing temporary files
 
     Returns
@@ -429,12 +215,15 @@ def combine_cnv_vcfs(
             raise FileNotFoundError(f"Input file does not exist: {input_file}")
 
     # Create output directory if it doesn't exist
-    os.makedirs(output_directory, exist_ok=True)
+    if output_directory is None:
+        output_directory = os.path.dirname(output_vcf)
+    if output_directory:  # file with no directory evaluates to ""
+        os.makedirs(output_directory, exist_ok=True)
 
     vcf_utils = VcfUtils()
 
     # Step 1: Update headers to contain same contigs from FASTA index
-    cnmops_vcf_updated, cnvpytor_vcf_updated = _update_vcf_contigs(
+    cnmops_vcf_updated, cnvpytor_vcf_updated = update_vcf_contigs(
         vcf_utils, cnmops_vcf, cnvpytor_vcf, fasta_index, output_directory
     )
 
@@ -446,20 +235,15 @@ def combine_cnv_vcfs(
 
         # Add INFO tag for source if not already present
         if "CNV_SOURCE" not in combined_header.info:
-            combined_header.info.add(
-                "CNV_SOURCE",
-                number=".",
-                type="String",
-                description="The tool that called this CNV (cn.mops or cnvpytor)",
-            )
+            combined_header.info.add(*INFO_TAG_REGISTRY["CNV_SOURCE"][:-1])
 
         # Step 3: Write records from both VCF files
         logger.info("Writing records from both VCF files to temporary combined VCF")
         temp_combined_vcf = pjoin(output_directory, "temp_combined.vcf.gz")
 
         with pysam.VariantFile(temp_combined_vcf, "w", header=combined_header) as vcf_out:
-            _write_vcf_records_with_source(vcf1, vcf_out, combined_header, "cn.mops")
-            _write_vcf_records_with_source(vcf2, vcf_out, combined_header, "cnvpytor")
+            write_vcf_records_with_source(vcf1, vcf_out, combined_header, "cn.mops")
+            write_vcf_records_with_source(vcf2, vcf_out, combined_header, "cnvpytor")
 
     # Step 4: Sort and index the VCF
     logger.info("Sorting and indexing the combined VCF")
@@ -473,159 +257,63 @@ def combine_cnv_vcfs(
     return output_vcf
 
 
-def get_dup_cnmops_cnv_calls(
-    df_cnmops: pd.DataFrame, sample_name: str, out_directory: str, distance_threshold: int
-) -> str:
+def filter_dup_cnmmops_cnv_calls(
+    combined_calls: str, combined_calls_annotated: str, filtered_length: str, distance_threshold: int
+) -> None:
     """
+    Collapses adjacent cnmops duplications with distance less than distance_threshold
+    Adds CNMOPS_SHORT_DUPLICATION filter to the short duplications (less than filtered_length) that cn.mops returns.
+
     Parameters
     ----------
-    df_cnmops : pandas.DataFrame
-        DataFrame holding cn.mops CNV calls.
-    sample_name : str
-        Sample name.
-    out_directory : str
-        Output folder to store results.
+    combined_calls : str
+        Path to the combined cn.mops and cnvpytor CNV calls bed file.
+    combined_calls_annotated : str
+        Path to the combined cn.mops and cnvpytor CNV calls bed file with annotations.
+    filtered_length : str
+        Minimum duplication length to be considered valid.
     distance_threshold : int
         Distance threshold for merging CNV segments.
-
-    Returns
-    -------
-    str
-        Path to the duplications called by cn.mops bed file.
     """
-    # get duplications from cn.mops calls
-    cnmops_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.bed")
+    output_dir = os.path.dirname(combined_calls_annotated)
+    temporary_files = []
+    vu = VcfUtils()
 
-    # df_cnmops = pd.read_csv(cnmops_cnv_calls, sep="\t", header=None)
-    # df_cnmops.columns = ["chrom", "start", "end", "CN"]
-    def extract_cn_number(item):
-        match = re.search(r"CN([\d\.]+)", item)
-        return match.group(1) if match else 0
+    deletion_vcf = pjoin(output_dir, "temp_deletions.vcf.gz")
+    vu.view_vcf(combined_calls, deletion_vcf, extra_args="-e \"(INFO/SVTYPE='DUP') && (INFO/CNV_SOURCE='cn.mops')\"")
+    vu.index_vcf(deletion_vcf)
+    temporary_files.append(deletion_vcf)
 
-    df_cnmops["cn_numbers"] = [extract_cn_number(item) for item in df_cnmops["CN"]]
-    out_cnmops_cnvs_dup_calls = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.calls.bed")
-    neutral_cn = 2
-    df_cnmops[df_cnmops["cn_numbers"].astype(float) > neutral_cn][["chrom", "start", "end", "CN"]].to_csv(
-        out_cnmops_cnvs_dup_calls, sep="\t", header=False, index=False
-    )
+    duplication_vcf = pjoin(output_dir, "temp_duplications.vcf.gz")
+    vu.view_vcf(combined_calls, duplication_vcf, extra_args="-i \"(INFO/SVTYPE='DUP') && (INFO/CNV_SOURCE='cn.mops')\"")
+    vu.index_vcf(duplication_vcf)
+    temporary_files.append(duplication_vcf)
 
-    if os.path.getsize(out_cnmops_cnvs_dup_calls) > 0:
-        run_cmd(
-            f"cat {out_cnmops_cnvs_dup_calls} | \
-                bedtools sort -i - | \
-                bedtools merge -d {distance_threshold} -c 4 -o distinct -i - | \
-                awk '$3-$2>=10000' | \
-                sed 's/$/\\tDUP\\tcn.mops/' | \
-                cut -f1,2,3,5,6,4 > {cnmops_cnvs_dup}"
-        )
+    collapsed_duplication_vcf = pjoin(output_dir, "temp_collapsed_duplications.vcf.gz")
+    merge_cnvs_in_vcf(duplication_vcf, collapsed_duplication_vcf, distance=distance_threshold)
+    vu.index_vcf(collapsed_duplication_vcf)
+    temporary_files.append(collapsed_duplication_vcf)
 
-        df_cnmops_cnvs_dup = pd.read_csv(cnmops_cnvs_dup, sep="\t", header=None)
-        df_cnmops_cnvs_dup.columns = ["chrom", "start", "end", "CN", "CNV_type", "source"]
-        df_cnmops_cnvs_dup["copy_number"] = df_cnmops_cnvs_dup["CN"].apply(lambda x: x.replace("CN", ""))
+    combined_calls = pjoin(output_dir, "temp_combined_calls.vcf.gz")
+    vu.concat_vcf([deletion_vcf, collapsed_duplication_vcf], combined_calls)
+    vu.index_vcf(combined_calls)
+    temporary_files.append(combined_calls)
 
-        out_cnmops_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvs.DUP.all_fields.bed")
-        df_cnmops_cnvs_dup[["chrom", "start", "end", "CNV_type", "source", "copy_number"]].to_csv(
-            out_cnmops_cnvs_dup, sep="\t", header=False, index=False
-        )
-
-        return out_cnmops_cnvs_dup
-    else:
-        logger.info("No duplications found in cn.mops CNV calls.")
-        return ""
-
-
-def parse_cnvpytor_cnv_calls(cnvpytor_cnv_calls: str, pN: float = 0) -> pd.DataFrame:  # noqa: N803
-    """
-    Parses cnvpytor CNV calls from a tsv file.
-
-    Parameters
-    ----------
-    cnvpytor_cnv_calls : str
-        Path to the cnvpytor CNV calls bed file.
-    pN : float
-        Threshold for filtering CNV calls based on the fraction of reference genome
-        gaps (Ns) in call region.
-
-    Returns
-    -------
-    pandas.DataFrame
-        DataFrame containing parsed CNV calls.
-    """
-    # Result is stored in tab separated files with following columns:
-    # CNV type: "deletion" or "duplication",
-    # CNV region (chr:start-end),
-    # CNV size,
-    # CNV level - read depth normalized to 1,
-    # e-val1 -- e-value (p-value multiplied by genome size divided by bin size) calculated
-    #           using t-test statistics between RD statistics in the region and global,
-    # e-val2 -- e-value (p-value multiplied by genome size divided by bin size) from the probability of RD values within
-    #           the region to be in the tails of a gaussian distribution of binned RD,
-    # e-val3 -- same as e-val1 but for the middle of CNV,
-    # e-val4 -- same as e-val2 but for the middle of CNV,
-    # q0 -- fraction of reads mapped with q0 quality in call region,
-    # pN -- fraction of reference genome gaps (Ns) in call region,
-    # dG -- distance from closest large (>100bp) gap in reference genome.
-
-    df_cnvpytor_cnvs = pd.read_csv(cnvpytor_cnv_calls, sep="\t", header=None)
-    df_cnvpytor_cnvs.columns = [
-        "cnv_type",
-        "cnv_region",
-        "len",
-        "cnv_level",
-        "e-val1",
-        "e-val2",
-        "e-val3",
-        "e-val4",
-        "q0",
-        "pN",
-        "dG",
-    ]
-
-    # Split cnv_region into 'chr', 'start', 'end'
-    df_cnvpytor_cnvs[["chrom", "pos"]] = df_cnvpytor_cnvs["cnv_region"].str.split(":", expand=True)
-    df_cnvpytor_cnvs[["start", "end"]] = df_cnvpytor_cnvs["pos"].str.split("-", expand=True)
-    df_cnvpytor_cnvs = df_cnvpytor_cnvs.drop(columns="pos")
-    df_cnvpytor_cnvs["start"] = df_cnvpytor_cnvs["start"].astype(int)
-    df_cnvpytor_cnvs["end"] = df_cnvpytor_cnvs["end"].astype(int)
-
-    # Filter by pN value
-    df_cnvpytor_cnvs = df_cnvpytor_cnvs[df_cnvpytor_cnvs["pN"] <= 0]
-
-    return df_cnvpytor_cnvs
-
-
-def get_dup_cnvpytor_cnv_calls(df_cnvpytor_cnv_calls: pd.DataFrame, sample_name: str, out_directory: str) -> str:  # noqa: N803
-    """
-    Parameters
-    ----------
-    df_cnvpytor_cnv_calls : pandas.DataFrame
-        DataFrame holding cnvpytor CNV calls.
-    sample_name : str
-        Sample name.
-    out_directory : str
-        Output folder to store results.
-
-    Returns
-    -------
-    str
-        Path to the duplications called by cnvpytor bed file.
-    """
-    cnvpytor_cnvs_dup = pjoin(out_directory, f"{sample_name}.cnvpytor_cnvs.DUP.bed")
-    df_cnvpytor_cnv_calls_duplications = df_cnvpytor_cnv_calls[
-        df_cnvpytor_cnv_calls["cnv_type"] == "duplication"
-    ].copy()
-    df_cnvpytor_cnv_calls_duplications["cnv_type"] = "DUP"
-    df_cnvpytor_cnv_calls_duplications["copy_number"] = "DUP"
-    df_cnvpytor_cnv_calls_duplications["source"] = "cnvpytor"
-
-    if len(df_cnvpytor_cnv_calls_duplications) > 0:
-        df_cnvpytor_cnv_calls_duplications[["chrom", "start", "end", "cnv_type", "source", "copy_number"]].to_csv(
-            cnvpytor_cnvs_dup, sep="\t", header=False, index=False
-        )
-        return cnvpytor_cnvs_dup
-    else:
-        logger.info("No duplications found in cnvpytor CNV calls.")
-        return ""
+    with pysam.VariantFile(combined_calls) as vcf_in:
+        hdr = vcf_in.header
+        hdr.filters.add(*FILTER_TAG_REGISTRY["CNMOPS_SHORT_DUPLICATION"][:-1])
+        with pysam.VariantFile(combined_calls_annotated, "w", header=hdr) as vcf_out:
+            for record in vcf_in:
+                if record.info["SVTYPE"] == "DUP":
+                    svlen = abs(record.info.get("SVLEN", [0])[0])
+                    if svlen < int(filtered_length):
+                        if "FILTER" in record.filter.keys():
+                            record.filter.add("CNMOPS_SHORT_DUPLICATION")
+                        else:
+                            record.filter.add("CNMOPS_SHORT_DUPLICATION")
+                vcf_out.write(record)
+    vu.index_vcf(combined_calls_annotated)
+    mu.cleanup_temp_files(temporary_files)
 
 
 def process_del_jalign_results(
@@ -683,7 +371,6 @@ def process_del_jalign_results(
         lambda x: "DEL" if pd.Series(x).str.contains("deletion").any() else x
     )
 
-    df_cnmops_cnvpytor_del = calculate_gaps_count_per_cnv(df_cnmops_cnvpytor_del, ref_fasta)
     df_cnmops_cnvpytor_del_filtered = df_cnmops_cnvpytor_del[df_cnmops_cnvpytor_del["pN"] <= pN]
 
     out_del_jalign = pjoin(
@@ -707,170 +394,105 @@ def process_del_jalign_results(
     return out_del_jalign_merged
 
 
-def run_legacy(argv):
+def run(argv: list[str]):
     """
-    Combine CNVs from cn.mops and cnvpytor using jalign results and convert them to VCF.
+    Driver function for CNV processing tools.
+
+    This function routes execution to the appropriate tool based on the first argument.
+    Currently supported tools:
+    - concat: Combines CNV VCFs from cn.mops and cnvpytor into a single sorted VCF
+
+    The function can be called:
+    1. As a standalone script: python combine_cnmops_cnvpytor_cnv_calls.py concat --cnmops_vcf ... --cnvpytor_vcf ...
+    2. As part of combine_cnmops_cnvpytor_cnv_calls: combine_cnmops_cnvpytor_cnv_calls concat --cnmops_vcf ...
 
     Parameters
     ----------
     argv : list of str
-        Command-line arguments.
+        Command-line arguments where argv[1] is the tool name (e.g., 'concat')
+        and remaining arguments are tool-specific parameters.
 
-    Input Arguments
-    ---------------
-    --cnmops_cnv_calls : str
-        Input BED file holding cn.mops CNV calls.
-    --cnvpytor_cnv_calls : str
-        Input BED file holding cnvpytor CNV calls.
-    --del_jalign_merged_results : str
-        Jalign results for deletions in TSV format.
-
-    Output Files
-    ------------
-    <sample_name>.cnmops_cnvpytor.cnvs.combined.bed : str
-        Combined CNV calls called by cn.mops and cnvpytor.
-    <sample_name>.cnmops_cnvpytor.cnvs.combined.UG-CNV-LCR_annotate.bed : str
-        Combined CNV calls with UG-CNV-LCR annotation.
+    Examples
+    --------
+    >>> run(['prog', 'concat', '--cnmops_vcf', 'cnmops.vcf.gz',
+    ...      '--cnvpytor_vcf', 'cnvpytor.vcf.gz', '--output_vcf', 'combined.vcf.gz',
+    ...      '--fasta_index', 'genome.fa.fai', '--out_directory', '/tmp'])
     """
     args = __parse_args(argv)
     logger.setLevel(getattr(logging, args.verbosity))
 
-    out_directory = args.out_directory
-    sample_name = args.sample_name
-    # format cnvpytor cnv calls :
-    df_cnmops_cnv_calls = parse_cnmops_cnv_calls(args.cnmops_cnv_calls, out_directory, args.ref_fasta)
-    df_cnvpytor_cnv_calls = parse_cnvpytor_cnv_calls(args.cnvpytor_cnv_calls)
-
-    ############################
-    ### process DUPlications ###
-    ############################
-    out_cnmops_cnvs_dup = get_dup_cnmops_cnv_calls(
-        df_cnmops_cnv_calls, sample_name, out_directory, args.distance_threshold
-    )
-    out_cnvpytor_cnvs_dup = get_dup_cnvpytor_cnv_calls(df_cnvpytor_cnv_calls, sample_name, out_directory)
-    # merge duplications
-    if not out_cnmops_cnvs_dup and not out_cnvpytor_cnvs_dup:
-        logger.info("No duplications found in cn.mops and cnvpytor CNV calls.")
-        cnmops_cnvpytor_merged_dup = ""
+    if args.tool == "concat":
+        combine_cnv_vcfs(
+            cnmops_vcf=args.cnmops_vcf,
+            cnvpytor_vcf=args.cnvpytor_vcf,
+            fasta_index=args.fasta_index,
+            output_vcf=args.output_vcf,
+            output_directory=args.out_directory,
+        )
+    elif args.tool == "filter_cnmops_dups":
+        filter_dup_cnmmops_cnv_calls(
+            combined_calls=args.combined_calls,
+            combined_calls_annotated=args.combined_calls_annotated,
+            filtered_length=args.filtered_length,
+            distance_threshold=args.distance_threshold,
+        )
+    elif args.tool == "annotate_gaps":
+        annotate_vcf_with_gap_perc(
+            input_vcf=args.calls_vcf,
+            ref_fasta=args.ref_fasta,
+            output_vcf=args.output_vcf,
+        )
     else:
-        cnmops_cnvpytor_merged_dup = pjoin(out_directory, f"{sample_name}.cnmops_cnvpytor.DUP.merged.bed")
-        run_cmd(
-            f'cat {out_cnmops_cnvs_dup} {out_cnvpytor_cnvs_dup} | bedtools sort -i - | \
-            bedtools merge -c 4,5,6 -o distinct -i - | \
-                awk \'{{print $0 "\t" "0" }}\' > {cnmops_cnvpytor_merged_dup}'
-        )
-
-    ############################
-    ###  process DELetions   ###
-    ############################
-
-    out_del_jalign_merged = process_del_jalign_results(
-        args.del_jalign_merged_results, sample_name, out_directory, ref_fasta=args.ref_fasta, pN=0
-    )
-
-    # combine results
-    out_cnvs_combined = pjoin(out_directory, f"{sample_name}.cnmops_cnvpytor.cnvs.combined.bed")
-    columns = "\t".join(["#chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "jalign_written"])
-    with open(out_cnvs_combined, "w") as out_fh:
-        out_fh.write(f"{columns}\n")
-
-    # Use unix sort instead of bedtools sort for proper end coordinate sorting when starts are identical
-    run_cmd(
-        f"cat {cnmops_cnvpytor_merged_dup} {out_del_jalign_merged} | sort -k1,1 -k2,2n -k3,3n >> {out_cnvs_combined}"
-    )
-    logger.info(f"out_cnvs_combined: {out_cnvs_combined}")
-
-    if args.ug_cnv_lcr:
-        # annotate with ug-cnv-lcr if provided
-        # result file should be in the following format:
-        # ["chr", "start", "end", "CNV_type", "CNV_calls_source", "copy_number", "UG-CNV-LCR"]
-
-        sorted_ug_cnv_lcr = f"{out_cnvs_combined}.lcr.bed"
-        run_cmd(f"sort -k1,1 -k2,2n -k3,3n {args.ug_cnv_lcr} > {sorted_ug_cnv_lcr}")
-
-        out_cnvs_combined_annotated = f"{out_cnvs_combined}.annotate.tsv"
-        run_cmd(
-            f"bedmap --header --echo --echo-map-id-uniq --delim '\\t' --bases-uniq-f \
-            {out_cnvs_combined} {sorted_ug_cnv_lcr} > {out_cnvs_combined_annotated}"
-        )
-
-        os.unlink(sorted_ug_cnv_lcr)
-
-        logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
-
-        overlap_filtration_cutoff = 0.5  # 50% overlap with LCR regions
-        # note: despite what it sounds, bedmap --header skips the header in the output
-        df_annotate_calls = pd.read_csv(out_cnvs_combined_annotated, sep="\t", header=None)
-        df_annotate_calls.columns = [
-            "#chr",
-            "start",
-            "end",
-            "CNV_type",
-            "CNV_calls_source",
-            "copy_number",
-            "jalign_written",
-            "UG-CNV-LCR",
-            "pUG-CNV-LCR_overlap",
-        ]
-        df_annotate_calls["LCR_label_value"] = df_annotate_calls.apply(
-            lambda row: row["UG-CNV-LCR"] if row["pUG-CNV-LCR_overlap"] >= overlap_filtration_cutoff else ".", axis=1
-        )
-
-        df_annotate_calls[
-            [
-                "#chr",
-                "start",
-                "end",
-                "CNV_type",
-                "CNV_calls_source",
-                "copy_number",
-                "LCR_label_value",
-                "jalign_written",
-            ]
-        ].to_csv(out_cnvs_combined_annotated, sep="\t", index=False)
-        logger.info(f"out_cnvs_combined_annotated: {out_cnvs_combined_annotated}")
-
-    else:
-        out_cnvs_combined_annotated = out_cnvs_combined
-
-    # convert to vcf
-    vcf_args = [
-        "combine_cnmops_cnvpytor_cnv_calls",
-        "--cnv_annotated_bed_file",
-        out_cnvs_combined_annotated,
-        "--fasta_index_file",
-        args.fasta_index,
-        "--out_directory",
-        out_directory,
-        "--sample_name",
-        sample_name,
-    ]
-    logger.info(vcf_args)
-    out_cnvs_combined_annotated_vcf = output_results.run(vcf_args)
-    logger.info(f"out_cnvs_combined_annotated_vcf: {out_cnvs_combined_annotated_vcf}")
-
-
-def run(argv: list[str]):
-    """
-    Combine CNVs from cn.mops and cnvpytor.
-
-    Parameters
-    ----------
-    argv : list of str
-        Command-line arguments.
-    """
-    args = __parse_args(argv)
-    combine_cnv_vcfs(
-        cnmops_vcf=args.cnmops_vcf,
-        cnvpytor_vcf=args.cnvpytor_vcf,
-        fasta_index=args.fasta_index,
-        output_vcf=args.output_vcf,
-        output_directory=args.out_directory,
-    )
+        raise ValueError(f"Unknown tool: {args.tool}")
 
 
 def main():
     run(sys.argv)
+
+
+def main_concat():
+    """
+    Entry point for standalone combine_cnv_vcfs script.
+
+    This allows running the concat tool directly without specifying the tool name:
+    combine_cnv_vcfs --cnmops_vcf ... --cnvpytor_vcf ...
+
+    Instead of:
+    combine_cnmops_cnvpytor_cnv_calls concat --cnmops_vcf ... --cnvpytor_vcf ...
+    """
+    # Insert 'concat' as the tool argument
+    argv = [sys.argv[0], "concat"] + sys.argv[1:]
+    run(argv)
+
+
+def main_filter_dup_cnmmops():
+    """
+    Entry point for standalone filter_dup_cnmmops_cnv_calls script.
+
+    This allows running the filter_dup_cnmmops tool directly without specifying the tool name:
+    filter_dup_cnmmops_cnv_calls --combined_calls ... --combined_calls_annotated ...
+
+    Instead of:
+    combine_cnmops_cnvpytor_cnv_calls filter_dup_cnmmops --combined_calls ... --combined_calls_annotated ...
+    """
+    # Insert 'filter_dup_cnmmops' as the tool argument
+    argv = [sys.argv[0], "filter_cnmops_dups"] + sys.argv[1:]
+    run(argv)
+
+
+def main_gaps_perc():
+    """
+    Entry point for standalone annotate_vcf_with_gap_perc script.
+
+    This allows running the annotate_gaps tool directly without specifying the tool name:
+    annotate_gaps --input_vcf ... --ref_fasta ... --output_vcf ...
+
+    Instead of:
+    combine_cnmops_cnvpytor_cnv_calls annotate_gaps --input_vcf ... --ref_fasta ... --output_vcf ...
+    """
+    # Insert 'annotate_gaps' as the tool argument
+    argv = [sys.argv[0], "annotate_gaps"] + sys.argv[1:]
+    run(argv)
 
 
 if __name__ == "__main__":

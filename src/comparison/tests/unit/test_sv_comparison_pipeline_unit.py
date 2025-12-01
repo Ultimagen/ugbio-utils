@@ -2,93 +2,6 @@ import pandas as pd
 from ugbio_comparison.sv_comparison_pipeline import SVComparison, get_parser  # Adjust the import path as needed
 
 
-def test_collapse_vcf(mocker):
-    mock_logger = mocker.Mock()
-    mock_sp = mocker.Mock()
-    sv_comparison = SVComparison(simple_pipeline=mock_sp, logger=mock_logger)
-
-    mock_subprocess_popen = mocker.patch("subprocess.Popen")
-    mock_p1 = mocker.Mock()
-    mock_p2 = mocker.Mock()
-    mock_subprocess_popen.side_effect = [mock_p1, mock_p2]
-    mock_p1.stdout = mocker.Mock()
-    mock_p1.returncode = 0
-    mock_p2.returncode = 0
-    open("tmp.vcf", "w").close()  # Create the file to be removed
-    sv_comparison.collapse_vcf("input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8)
-
-    mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
-    mock_subprocess_popen.assert_any_call(
-        [
-            "truvari",
-            "collapse",
-            "-i",
-            "input.vcf",
-            "-t",
-            "-c",
-            "tmp.vcf",
-            "--passonly",
-            "--bed",
-            "regions.bed",
-            "--pctseq",
-            "0.9",
-            "--pctsize",
-            "0.8",
-        ],
-        stdout=mocker.ANY,
-    )
-    mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
-    # Verify both processes were set up correctly
-    assert mock_p1.returncode == 0
-    assert mock_p2.returncode == 0
-
-
-def test_collapse_vcf_ignore_filter(mocker):
-    """Test collapse_vcf with ignore_filter=True removes --passonly flag"""
-    mock_logger = mocker.Mock()
-    mock_sp = mocker.Mock()
-    sv_comparison = SVComparison(simple_pipeline=mock_sp, logger=mock_logger)
-
-    mock_subprocess_popen = mocker.patch("subprocess.Popen")
-    mock_p1 = mocker.Mock()
-    mock_p2 = mocker.Mock()
-    mock_subprocess_popen.side_effect = [mock_p1, mock_p2]
-    mock_p1.stdout = mocker.Mock()
-    mock_p1.returncode = 0
-    mock_p2.returncode = 0
-    with open("tmp.vcf", "w"):
-        pass  # Create the file to be removed
-
-    sv_comparison.collapse_vcf(
-        "input.vcf", "output.vcf.gz", bed="regions.bed", pctseq=0.9, pctsize=0.8, ignore_filter=True
-    )
-
-    mock_logger.info.assert_called_with("Deleted temporary file: tmp.vcf")
-    # Verify --passonly is NOT included when ignore_filter=True
-    mock_subprocess_popen.assert_any_call(
-        [
-            "truvari",
-            "collapse",
-            "-i",
-            "input.vcf",
-            "-t",
-            "-c",
-            "tmp.vcf",
-            "--bed",
-            "regions.bed",
-            "--pctseq",
-            "0.9",
-            "--pctsize",
-            "0.8",
-        ],
-        stdout=mocker.ANY,
-    )
-    mock_subprocess_popen.assert_any_call(["bcftools", "view", "-Oz", "-o", "output.vcf.gz"], stdin=mock_p1.stdout)
-    # Verify both processes were set up correctly
-    assert mock_p1.returncode == 0
-    assert mock_p2.returncode == 0
-
-
 def test_run_truvari(mocker):
     mock_logger = mocker.Mock()
     mock_sp = mocker.Mock()
@@ -201,7 +114,7 @@ def test_run_pipeline(mocker):
     mock_logger = mocker.Mock()
     mock_sp = mocker.Mock()
     sv_comparison = SVComparison(simple_pipeline=mock_sp, logger=mock_logger)
-    mock_collapse_vcf = mocker.patch.object(sv_comparison, "collapse_vcf")
+    mock_collapse_vcf = mocker.patch.object(sv_comparison.vu, "collapse_vcf")
     mock_sort_vcf = mocker.patch.object(sv_comparison.vu, "sort_vcf")
     mock_index_vcf = mocker.patch.object(sv_comparison.vu, "index_vcf")
     mock_run_truvari = mocker.patch.object(sv_comparison, "run_truvari")
@@ -278,7 +191,7 @@ def test_run_pipeline_ignore_filter(mocker):
     mock_logger = mocker.Mock()
     mock_sp = mocker.Mock()
     sv_comparison = SVComparison(simple_pipeline=mock_sp, logger=mock_logger)
-    mock_collapse_vcf = mocker.patch.object(sv_comparison, "collapse_vcf")
+    mock_collapse_vcf = mocker.patch.object(sv_comparison.vu, "collapse_vcf")
     _ = mocker.patch.object(sv_comparison.vu, "sort_vcf")
     _ = mocker.patch.object(sv_comparison.vu, "index_vcf")
     mock_run_truvari = mocker.patch.object(sv_comparison, "run_truvari")

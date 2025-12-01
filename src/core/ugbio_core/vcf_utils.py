@@ -1,5 +1,7 @@
+import logging
 import os
 import os.path
+import subprocess
 
 import pysam
 from simppl.simple_pipeline import SimplePipeline
@@ -13,17 +15,25 @@ class VcfUtils:
     ----------
     sp : SimplePipeline
         Simple pipeline object
+    logger : logging.Logger
+        Logger instance
     """
 
-    def __init__(self, simple_pipeline: SimplePipeline | None = None):
+    def __init__(self, simple_pipeline: SimplePipeline | None = None, logger: logging.Logger | None = None):
         """Combines VCF in parts from GATK and indices the result
 
         Parameters
         ----------
         simple_pipeline : SimplePipeline, optional
             Optional SimplePipeline object for executing shell commands
+        logger : logging.Logger, optional
+            Optional logger instance
         """
         self.sp = simple_pipeline
+        if logger is None:
+            self.logger = logging.getLogger(__name__)
+        else:
+            self.logger = logger
 
     def __execute(self, command: str, output_file: str | None = None):
         """Summary
@@ -101,6 +111,29 @@ class VcfUtils:
         """
         self.__execute(f"bcftools reheader -h {new_header} {input_file}")
         self.index_vcf(output_file)
+
+    def concat_vcf(self, input_files: list[str], output_file: str):
+        """Concatenate VCF files using bcftools concat and index
+
+        Parameters
+        ----------
+        input_files : list[str]
+            List of input VCF files
+        output_file : str
+            Output VCF file
+
+        Returns
+        -------
+        None
+            Generates `output_file`.
+        """
+        input_files_str = " ".join(input_files)
+        tmpdir = os.path.dirname(output_file)
+        out_tmp_file = f"{os.path.join(tmpdir, os.path.basename(output_file))}.tmp.vcf.gz"
+        self.__execute(f"bcftools concat -a -o {out_tmp_file} -O z {input_files_str}")
+        self.sort_vcf(out_tmp_file, output_file)
+        self.index_vcf(output_file)
+        os.unlink(out_tmp_file)
 
     def filter_vcf(
         self,
@@ -249,6 +282,84 @@ class VcfUtils:
         # Index the output VCF
         self.index_vcf(output_vcf)
 
+    def collapse_vcf(
+        self,
+        vcf: str,
+        output_vcf: str,
+        bed: str | None = None,
+        refdist: int = 500,
+        pctseq: float = 0.0,
+        pctsize: float = 0.0,
+        *,
+        ignore_filter: bool = False,
+        ignore_sv_type: bool = True,
+        erase_removed: bool = True,
+    ) -> str | None:
+        """
+        Collapse SV/CNV VCF using truvari collapse
+
+        Parameters
+        ----------
+        vcf : str
+            Input VCF file
+        output_vcf : str
+            Output VCF file
+        bed : str, optional
+            Restrict collapsing to this bed file, by default None
+        refdist : int, optional
+            Reference distance for collapsing variants, by default 500
+        pctseq : float, optional
+            Percentage of sequence identity, by default 0.0
+        pctsize : float, optional
+            Percentage of size identity, by default 0.0
+        ignore_filter : bool, optional
+            If True, ignore FILTER field (remove truvari's --passonly flag), by default False
+        ignore_sv_type : bool, optional
+            If True, ignore SVTYPE when collapsing variants, by default True
+        erase_removed: bool, optional
+            If True, delete the temporary file with removed variants, by default True,
+            if not return the location of the file
+
+        Returns
+        -------
+        None | str
+        """
+        from os.path import dirname
+        from os.path import join as pjoin
+
+        removed_vcf_path = pjoin(dirname(output_vcf), "tmp.vcf")
+        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-c", removed_vcf_path, "--sizemax", "-1", "--chain"]
+
+        if not ignore_filter:
+            truvari_cmd.append("--passonly")
+        if ignore_sv_type:
+            truvari_cmd.append("-t")
+
+        if bed:
+            truvari_cmd.extend(["--bed", bed])
+        truvari_cmd.extend(["--pctseq", str(pctseq)])
+        truvari_cmd.extend(["--pctsize", str(pctsize)])
+        truvari_cmd.extend(["--refdist", str(int(refdist))])
+
+        self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
+        p1 = subprocess.Popen(truvari_cmd, stdout=subprocess.PIPE)
+        p2 = subprocess.Popen(["bcftools", "view", "-Oz", "-o", output_vcf], stdin=p1.stdout)  # noqa: S607
+        if p1.stdout:
+            p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
+        p2.communicate()  # Wait for p2 to finish
+        p1.wait()  # Wait for p1 to finish
+        if p1.returncode != 0:
+            raise RuntimeError(f"truvari collapse failed with error code {p1.returncode}")
+        if p2.returncode != 0:
+            raise RuntimeError(f"bcftools view failed with error code {p2.returncode}")
+
+        # Parameterize the file path
+        if erase_removed:
+            os.unlink(removed_vcf_path)
+            self.logger.info(f"Deleted temporary file: {removed_vcf_path}")
+        else:
+            return removed_vcf_path
+
     def annotate_vcf(
         self,
         input_vcf: str,
@@ -378,7 +489,7 @@ class VcfUtils:
         self.index_vcf(output_vcf)
 
     @staticmethod
-    def copy_vcf_record(rec: "pysam.VariantRecord", new_header: "pysam.VariantHeader") -> "pysam.VariantRecord":
+    def copy_vcf_record(rec: pysam.VariantRecord, new_header: pysam.VariantHeader) -> pysam.VariantRecord:
         """
         Create a new VCF record with the same data as the input record, but using a new header.
 

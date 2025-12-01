@@ -68,7 +68,7 @@ def get_parser():
     )
     parser.add_argument(
         "--fasta_index_file",
-        help="tab delimeted file holding reference genome chr ids with their lengths. (.fai file)",
+        help="tab delimited file holding reference genome chr ids with their lengths. (.fai file)",
         required=True,
         type=str,
     )
@@ -165,15 +165,15 @@ def aggregate_annotations_in_df(
     -------
     pd.DataFrame
         DataFrame with columns: chr, start, end, CopyNumber (int), FILTER (tuple),
-        and additional columns for each coverage annotation (e.g., CNMOPS_COV_MEAN,
-        CNMOPS_COV_STD, CNMOPS_COHORT_MEAN, CNMOPS_COHORT_STD).
+        and additional columns for each coverage annotation (e.g., CNMOPS_SAMPLE_MEAN,
+        CNMOPS_SAMPLE_STDEV, CNMOPS_COHORT_MEAN, CNMOPS_COHORT_STD).
 
     Notes
     -----
     - All bed files are assumed to have the same regions in the same order
     - The function performs sorting to ensure proper alignment
     - Coverage annotation column names are formatted as CNMOPS_{SAMPLE}_{OPERATION}
-      in uppercase (e.g., CNMOPS_COV_MEAN)
+      in uppercase (e.g., CNMOPS_SAMPLE_MEAN)
     - CopyNumber is converted to an integer by removing the "CN" prefix
     - filter is a tuple of filter names (("PASS",) tuple when no filters present)
     """
@@ -330,7 +330,7 @@ def run(argv):
 
     cnmops_cnv_df = aggregate_annotations_in_df(out_annotate_bed_file, coverage_annotations)
     cnmops_cnv_df = add_ids(cnmops_cnv_df)
-
+    cnmops_cnv_df["SVLEN"] = cnmops_cnv_df["end"] - cnmops_cnv_df["start"]
     out_vcf_file = out_annotate_bed_file.replace(".bed", ".vcf.gz")
     vcf_writer.write_cnv_vcf(out_vcf_file, cnmops_cnv_df, args.sample_name, args.fasta_index_file)
     vu = vcf_utils.VcfUtils()

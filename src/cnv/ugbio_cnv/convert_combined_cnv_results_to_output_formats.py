@@ -25,7 +25,7 @@ INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
     ),
     "CNV_SOURCE": (
         "CNV_SOURCE",
-        1,
+        ".",
         "String",
         "the tool called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
         "INFO",
@@ -59,6 +59,7 @@ INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
         "Standard deviation of coverage in the CNV region across the cohort (cn.mops)",
         "INFO",
     ),
+    "GAP_PERC": ("GAP_PERC", 1, "Float", "Fraction of N bases in the CNV region from reference genome", "INFO"),
 }
 
 # the reason filters require special treatment is that they need to be
@@ -102,6 +103,13 @@ FILTER_TAG_REGISTRY = {
         None,
         None,
         "Overlaps with low-complexity regions as defined by UGBio CNV module",
+        "FILTER",
+    ),
+    "CNMOPS_SHORT_DUPLICATION": (
+        "CNMOPS_SHORT_DUPLICATION",
+        None,
+        None,
+        "Duplication length is shorter than the defined threshold in cn.mops calls.",
         "FILTER",
     ),
 }
