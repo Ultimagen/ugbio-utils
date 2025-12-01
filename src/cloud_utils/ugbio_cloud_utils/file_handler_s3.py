@@ -8,6 +8,11 @@ from typing import Any
 
 import pysam
 
+try:
+    import certifi
+except ImportError:
+    certifi = None
+
 logger = logging.getLogger(__name__)
 
 # Constants
@@ -23,6 +28,45 @@ def _get_aws_cli_path() -> str:
     if not aws_cli:
         raise RuntimeError("AWS CLI not found in PATH")
     return aws_cli
+
+
+def _setup_ssl_certificates() -> None:
+    """
+    Set up SSL certificate bundle for libcurl (used by pysam/htslib for S3 access).
+
+    Sets CURL_CA_BUNDLE or SSL_CERT_FILE environment variable if not already set.
+    Tries certifi package first, then common system locations.
+    """
+    # If already set, don't override
+    if os.environ.get("CURL_CA_BUNDLE") or os.environ.get("SSL_CERT_FILE"):
+        return
+
+    # Try certifi package first (most reliable)
+    if certifi:
+        cert_path = certifi.where()
+        if os.path.isfile(cert_path):
+            os.environ["CURL_CA_BUNDLE"] = cert_path
+            logger.debug(f"Set CURL_CA_BUNDLE to {cert_path} (from certifi)")
+            return
+
+    # Try common system locations
+    common_paths = [
+        "/etc/ssl/certs/ca-certificates.crt",  # Debian/Ubuntu
+        "/etc/pki/tls/certs/ca-bundle.crt",  # Red Hat/CentOS
+        "/etc/ssl/cert.pem",  # Some systems
+        "/usr/local/etc/openssl/cert.pem",  # macOS (Homebrew)
+    ]
+
+    for cert_path in common_paths:
+        if os.path.isfile(cert_path):
+            os.environ["CURL_CA_BUNDLE"] = cert_path
+            logger.debug(f"Set CURL_CA_BUNDLE to {cert_path} (system location)")
+            return
+
+    logger.warning(
+        "Could not find SSL certificate bundle. S3 access may fail with SSL errors. "
+        "Consider installing certifi package or setting CURL_CA_BUNDLE environment variable."
+    )
 
 
 def _parse_aws_config(config_path: str = "~/.aws/config") -> dict[str, str]:
@@ -83,6 +127,9 @@ def _setup_aws_credentials(file_path: str, profile: str | None = None) -> str | 
     :param profile: AWS CLI profile; if None, attempt to deduce from ~/.aws/config
     :returns: The profile used (for error messages), or None if no profile was set up
     """
+    # Set up SSL certificates first (needed for libcurl S3 access)
+    _setup_ssl_certificates()
+
     if profile is None:
         try:
             acct2prof = _parse_aws_config()
@@ -130,9 +177,20 @@ def _read_file_from_s3(
     try:
         return file_reader_func(file_path, *args, **kwargs)
     except OSError as e:
-        if "Permission denied" in str(e):
+        error_str = str(e)
+        if "Permission denied" in error_str:
             profile_msg = f" Did you run `aws sso login --profile {used_profile}`?" if used_profile else ""
             raise RuntimeError(f"Permission denied reading {file_path}.{profile_msg}") from e
+        if "SSL" in error_str or "CA cert" in error_str or "libcurl" in error_str.lower():
+            curl_ca_bundle = os.environ.get("CURL_CA_BUNDLE", "not set")
+            if os.environ.get("CURL_CA_BUNDLE"):
+                cert_msg = f" SSL certificate issue detected. CURL_CA_BUNDLE is set to {curl_ca_bundle}."
+            else:
+                cert_msg = (
+                    " SSL certificate bundle not found. Consider installing certifi package "
+                    "or setting CURL_CA_BUNDLE."
+                )
+            raise RuntimeError(f"SSL certificate error reading {file_path}.{cert_msg}") from e
         raise
 
 
