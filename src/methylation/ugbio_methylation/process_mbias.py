@@ -87,7 +87,7 @@ def run(argv: list[str] | None = None):
         df_mbias_input["PercentMethylation"] = df_mbias_input["nMethylated"] / (
             df_mbias_input["nMethylated"] + df_mbias_input["nUnmethylated"]
         )
-        cols = ["Read", "nMethylated", "nUnmethylated"]
+        cols = ["Read"]
         df_mbias_input = df_mbias_input.drop(columns=cols)
 
         # create dataframe from input files
@@ -103,7 +103,7 @@ def run(argv: list[str] | None = None):
         # ==========================================================================================
         dict_json_output = {}
         for strand in df_csv_output["detail"].unique():
-            temp_dict = get_dict_from_dataframe(df_csv_output, strand)
+            temp_dict = get_dict_from_dataframe(df_csv_output[["metric", "value", "detail"]], strand)
             dict_json_output.update(temp_dict)
 
         # print to JSON file

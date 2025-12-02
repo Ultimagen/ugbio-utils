@@ -321,7 +321,7 @@ def calc_total_cp_gs(
 # ====================================================================
 def calc_distrib_per_strand(data_frame: pd.DataFrame):
     """
-    Goal: Function for calculating distribution per strand in Mbias
+    Goal: Function for calculating distribution per strand (Original Top or Original Bottom) in Mbias
 
     Parameters
     ----------
@@ -344,9 +344,9 @@ def calc_distrib_per_strand(data_frame: pd.DataFrame):
     # change and sort column names
     # --------------------------------------------
     col = "PercentMethylationPosition"
-    df_distrib.columns = ["detail", "metric", "value"]
+    df_distrib.columns = ["detail", "metric", "nMethylated", "nUnmethylated", "value"]
     df_distrib = df_distrib.assign(metric=col + "_" + df_distrib["metric"].astype(str))
-    df_distrib = df_distrib[df_distrib.columns[[1, 2, 0]]]
+    df_distrib = df_distrib[["metric", "value", "detail", "nMethylated", "nUnmethylated"]]
 
     # add descriptive statistics: mean, std, median
     # --------------------------------------------
