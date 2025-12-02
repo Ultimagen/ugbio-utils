@@ -56,7 +56,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap_var.add_argument("--input", help="MethylDackel Mbias input file", type=str, required=True)
     ap_var.add_argument("--output", help="Output file basename", type=str, required=True)
     ap_var.add_argument(
-        "--noCpG", help="use this flag to tag Mbias call on no-CpG cytosines", type=bool, required=False
+        "--noCpG", help="use this flag to tag Mbias call on no-CpG cytosines", action="store_true", default=False
     )
     ap_var.add_argument("--taps", help="Indicate if input is TAPS data", action="store_true", default=False)
 

@@ -115,7 +115,7 @@ def get_ctrl_genomes_data(
         col = ["PercentMethylation"]
         prefix = "PercentMethylationPosition_"
         col_names = ["value", "metric", "detail"]
-        df_output = pd.DataFrame(columns=col_names)
+        df_output = pd.DataFrame(columns=col_names).astype({"metric": "object", "detail": "object"})
         df_control = pd.DataFrame(columns=col_names)
         for temp_genome in list_genomes:
             pat = r"^" + temp_genome
@@ -124,8 +124,7 @@ def get_ctrl_genomes_data(
                 data_frame_sub = data_frame.loc[idx, :]
                 df_control = data_frame_sub[col].copy()
                 df_control = df_control.reset_index(drop=True)
-                df_control.loc[:, "metric"] = prefix + df_control.index.astype(str)
-                df_control.loc[:, "detail"] = temp_genome
+                df_control = df_control.assign(metric=prefix + df_control.index.astype(str), detail=temp_genome)
                 df_control.columns = col_names
                 df_control = df_control[df_control.columns[[1, 0, 2]]]
 
@@ -178,7 +177,7 @@ def calc_percent_methylation(
 
         df_pcnt = df_pcnt.dropna(axis=0)
         if rel:  # get relative values
-            df_pcnt.loc[:, "value"] = df_pcnt["value"] / np.sum(df_pcnt["value"])
+            df_pcnt = df_pcnt.assign(value=df_pcnt["value"] / np.sum(df_pcnt["value"]))
 
         # add other metrics long format
         desc = x.describe()
@@ -186,14 +185,14 @@ def calc_percent_methylation(
         desc = desc.rename(index={"50%": "median"})
         desc = pd.DataFrame({"metric": desc.index, "value": desc})
         df_pcnt = pd.concat([df_pcnt, desc], axis=0, ignore_index=True)
-        df_pcnt.loc[:, "metric"] = col + "_" + df_pcnt["metric"].astype(str)
+        df_pcnt = df_pcnt.assign(metric=col + "_" + df_pcnt["metric"].astype(str))
 
         if not rel:
             add_row = pd.DataFrame({"metric": "TotalCpGs", "value": np.array(x).size}, index=[0])
             df_pcnt = pd.concat([df_pcnt, add_row], axis=0, ignore_index=True)
         df_distrib = pd.concat((df_distrib, df_pcnt), ignore_index=True)
         df_distrib = df_distrib.fillna(0)
-        df_distrib["detail"] = table_type
+        df_distrib = df_distrib.assign(detail=table_type)
         df_distrib = df_distrib.drop_duplicates()
 
         return df_distrib
@@ -251,26 +250,25 @@ def calc_coverage_methylation(detail_type: str, data_frame: pd.DataFrame, rel: s
             desc = pd.DataFrame({"metric": desc.index, "value": desc})
 
             # assign names for metrics
-            df_abs_cov.loc[:, "metric"] = col + "_" + df_abs_cov["metric"].astype(str)
+            df_abs_cov = df_abs_cov.assign(metric=col + "_" + df_abs_cov["metric"].astype(str))
 
             # calc relative values
             if not col.startswith("TotalCpG"):
                 y = np.cumsum(df_abs_cov["value"]) / (np.sum(df_abs_cov["value"]))
                 df_rel_cov = df_abs_cov.copy()
-                df_rel_cov.loc[:, "value"] = y
-                df_rel_cov.loc[:, "metric"] = "Cumulative" + df_rel_cov["metric"].astype(str)
+                df_rel_cov = df_rel_cov.assign(value=y, metric="Cumulative" + df_rel_cov["metric"].astype(str))
 
             if not rel:
-                desc.loc[:, "metric"] = col + "_" + desc["metric"].astype(str)
+                desc = desc.assign(metric=col + "_" + desc["metric"].astype(str))
                 df_abs_cov = pd.concat([df_abs_cov, desc], axis=0, ignore_index=True)
 
             else:
                 df_abs_cov = desc.copy()
-                df_abs_cov.loc[:, "metric"] = col + "_" + df_abs_cov["metric"].astype(str)
+                df_abs_cov = df_abs_cov.assign(metric=col + "_" + df_abs_cov["metric"].astype(str))
 
             df_distrib = pd.concat((df_distrib, df_abs_cov, df_rel_cov), ignore_index=True)
             df_distrib = df_distrib.fillna(0)
-            df_distrib["detail"] = detail_type
+            df_distrib = df_distrib.assign(detail=detail_type)
 
             df_distrib = df_distrib.drop_duplicates()
 
@@ -310,11 +308,11 @@ def calc_total_cp_gs(
     desc = desc[rows]
     desc = desc.rename(index={"50%": "median"})
     desc = pd.DataFrame({"metric": desc.index, "value": desc})
-    desc.loc[:, "metric"] = col + "_" + desc["metric"].astype(str)
+    desc = desc.assign(metric=col + "_" + desc["metric"].astype(str))
     # output
     df_distrib = pd.concat((df_distrib, desc), ignore_index=True)
     df_distrib = df_distrib.fillna(0)
-    df_distrib["detail"] = key_word
+    df_distrib = df_distrib.assign(detail=key_word)
     df_distrib = df_distrib.drop_duplicates()
 
     return df_distrib
@@ -347,7 +345,7 @@ def calc_distrib_per_strand(data_frame: pd.DataFrame):
     # --------------------------------------------
     col = "PercentMethylationPosition"
     df_distrib.columns = ["detail", "metric", "value"]
-    df_distrib.loc[:, "metric"] = col + "_" + df_distrib["metric"].astype(str)
+    df_distrib = df_distrib.assign(metric=col + "_" + df_distrib["metric"].astype(str))
     df_distrib = df_distrib[df_distrib.columns[[1, 2, 0]]]
 
     # add descriptive statistics: mean, std, median
@@ -361,8 +359,7 @@ def calc_distrib_per_strand(data_frame: pd.DataFrame):
         desc = desc[rows]
         desc = desc.rename(index={"50%": "median"})
         desc = pd.DataFrame({"metric": desc.index, "value": desc})
-        desc.loc[:, "detail"] = temp_strand
-        desc.loc[:, "metric"] = col + "_" + desc["metric"]
+        desc = desc.assign(detail=temp_strand, metric=col + "_" + desc["metric"])
         df_distrib = pd.concat([df_distrib, desc], axis=0, ignore_index=True)
 
     return df_distrib
