@@ -48,6 +48,7 @@ from ugbio_methylation.methyldackel_utils import (
     calc_coverage_methylation,
     calc_percent_methylation,
     get_dict_from_dataframe,
+    read_merge_context_file,
 )
 
 
@@ -62,6 +63,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap_var.add_argument("--input_chg", help="MethylDackel mergeContext CHG context file", type=str, required=True)
     ap_var.add_argument("--input_chh", help="MethylDackel mergeContext CHH context file", type=str, required=True)
     ap_var.add_argument("--output", help="Output file basename", type=str, required=True)
+    ap_var.add_argument("--taps", help="Indicate if input is TAPS data", action="store_true", default=False)
 
     return ap_var.parse_args(argv[1:])
 
@@ -82,37 +84,18 @@ def run(argv: list[str] | None = None):
         # import input files
         # ====================================================================
         # import CHG file
-        in_file_name = args.input_chg
-        df_chg = df_chh = pd.DataFrame()
-
-        col_names = ["chr", "start", "end", "PercentMethylation", "coverage_methylated", "coverage_unmethylated"]
-        df_chg_input = pd.read_csv(in_file_name, sep="\t", header=0, names=col_names)
-
-        # calculate total coverage
-        df_chg_input["Coverage"] = df_chg_input.apply(
-            lambda x: x["coverage_methylated"] + x["coverage_unmethylated"], axis=1
-        )
-
-        pat = r"^chr"  # use human genome chromosomes
-        idx = df_chg_input.chr.str.contains(pat)
-
-        if idx.any(axis=None):
-            df_chg = df_chg_input.loc[idx, :].copy()
+        df_chg_input = read_merge_context_file(args.input_chg, is_taps=args.taps)
 
         # import CHG file
-        in_file_name = args.input_chh
-        col_names = ["chr", "start", "end", "PercentMethylation", "coverage_methylated", "coverage_unmethylated"]
-        df_chh_input = pd.read_csv(in_file_name, sep="\t", header=0, names=col_names)
+        df_chh_input = read_merge_context_file(args.input_chh, is_taps=args.taps)
 
-        # drop rows with low coverage (default 10 = total of methylated + unmethylated coverage)
-        df_chh_input["Coverage"] = df_chh_input.apply(
-            lambda x: x["coverage_methylated"] + x["coverage_unmethylated"], axis=1
-        )
-
-        idx = df_chh_input.chr.str.contains(pat)
-
-        if idx.any(axis=None):
-            df_chh = df_chh_input.loc[idx, :].copy()
+        pat = r"^chr"  # limit to the human genome chromosomes
+        idx_chg = df_chg_input.chr.str.contains(pat)
+        if idx_chg.any(axis=None):
+            df_chg = df_chg_input.loc[idx_chg, :].copy()
+        idx_chh = df_chh_input.chr.str.contains(pat)
+        if idx_chh.any(axis=None):
+            df_chh = df_chh_input.loc[idx_chh, :].copy()
 
         # create combined dataframe from input files
         # ===================================================================

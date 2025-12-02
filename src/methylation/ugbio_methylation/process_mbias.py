@@ -58,6 +58,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap_var.add_argument(
         "--noCpG", help="use this flag to tag Mbias call on no-CpG cytosines", type=bool, required=False
     )
+    ap_var.add_argument("--taps", help="Indicate if input is TAPS data", action="store_true", default=False)
 
     return ap_var.parse_args(argv[1:])
 
@@ -78,6 +79,11 @@ def run(argv: list[str] | None = None):
         # import Mbais file
         in_file_name = args.input
         df_mbias_input = pd.read_csv(in_file_name, sep="\t")
+        if args.taps:
+            df_mbias_input["nMethylated"], df_mbias_input["nUnmethylated"] = (
+                df_mbias_input["nUnmethylated"],
+                df_mbias_input["nMethylated"],
+            )
         df_mbias_input["PercentMethylation"] = df_mbias_input["nMethylated"] / (
             df_mbias_input["nMethylated"] + df_mbias_input["nUnmethylated"]
         )

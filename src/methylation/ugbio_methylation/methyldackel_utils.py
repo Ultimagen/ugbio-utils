@@ -337,7 +337,7 @@ def calc_distrib_per_strand(data_frame: pd.DataFrame):
 
     """
 
-    # initalise
+    # initialize
     rows = ["mean", "std", "50%"]
 
     grouped_by_strands = data_frame.groupby(["Strand"])
@@ -366,3 +366,32 @@ def calc_distrib_per_strand(data_frame: pd.DataFrame):
         df_distrib = pd.concat([df_distrib, desc], axis=0, ignore_index=True)
 
     return df_distrib
+
+
+def read_merge_context_file(in_file_name: str, is_taps: bool = False) -> pd.DataFrame:  # noqa: FBT001, FBT002
+    """
+    Goal: Function for reading MethylDackel mergeContext file
+
+    Parameters
+    ----------
+    in_file_name: str
+        Input MethylDackel mergeContext file name
+    is_taps: bool
+        Indicate if input is TAPS data
+
+    Returns
+    -------
+    df_in_report: pd.DataFrame
+        Output is dataframe with methylation data
+
+    """
+    col_names = ["chr", "start", "end", "PercentMethylation", "coverage_methylated", "coverage_unmethylated"]
+    df_in_report = pd.read_csv(in_file_name, sep="\t", header=0, names=col_names)
+    if is_taps:
+        df_in_report["PercentMethylation"] = 100 - df_in_report["PercentMethylation"]
+        df_in_report["coverage_methylated"], df_in_report["coverage_unmethylated"] = (
+            df_in_report["coverage_unmethylated"],
+            df_in_report["coverage_methylated"],
+        )
+    df_in_report["Coverage"] = df_in_report["coverage_methylated"] + df_in_report["coverage_unmethylated"]
+    return df_in_report
