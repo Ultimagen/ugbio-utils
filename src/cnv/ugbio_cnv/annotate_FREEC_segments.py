@@ -19,6 +19,7 @@ import argparse
 import logging
 import os
 import sys
+from os.path import join as pjoin
 
 import numpy as np
 import pandas as pd
@@ -54,6 +55,13 @@ def run(argv):
         default=0.97,
     )
     parser.add_argument(
+        "--out_directory",
+        help="Output directory where intermediate and output files will be saved. "
+        "If not supplied, all files will be written to the current directory.",
+        required=False,
+        type=str,
+    )
+    parser.add_argument(
         "--verbosity",
         help="Verbosity: ERROR, WARNING, INFO, DEBUG",
         required=False,
@@ -62,6 +70,8 @@ def run(argv):
 
     args = parser.parse_args(argv[1:])
     logger.setLevel(getattr(logging, args.verbosity))
+
+    out_directory = args.out_directory if args.out_directory else "."
 
     df_segments = pd.read_csv(args.input_segments_file, sep="\t")
 
@@ -75,9 +85,9 @@ def run(argv):
         ),
     )
 
-    out_annotated_file = os.path.basename(args.input_segments_file) + "_annotated.txt"
+    out_annotated_file = pjoin(out_directory, os.path.basename(args.input_segments_file) + "_annotated.txt")
     df_segments.to_csv(out_annotated_file, sep="\t", index=False)
-    out_cnvs_file = os.path.basename(args.input_segments_file) + "_CNVs.bed"
+    out_cnvs_file = pjoin(out_directory, os.path.basename(args.input_segments_file) + "_CNVs.bed")
     df_segments[df_segments["alteration"] != "neutral"][["chr", "start", "end", "median_ratio"]].to_csv(
         out_cnvs_file, sep="\t", index=False, header=None
     )
