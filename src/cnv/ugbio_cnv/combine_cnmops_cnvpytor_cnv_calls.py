@@ -86,6 +86,12 @@ def __parse_args_annotate_regions(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=0.5,
     )
+    parser.add_argument(
+        "--genome",
+        help="Genome file (chr tab length or .fai)",
+        required=True,
+        type=str,
+    )
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
@@ -185,7 +191,7 @@ def annotate_vcf_with_gap_perc(input_vcf: str, ref_fasta: str, output_vcf: str) 
 
 
 def annotate_vcf_with_regions(
-    input_vcf: str, annotation_bed: str, output_vcf: str, overlap_fraction: float = 0.5
+    input_vcf: str, annotation_bed: str, output_vcf: str, genome: str, overlap_fraction: float = 0.5
 ) -> None:
     """
     Annotate CNV VCF records with region annotations from a BED file.
@@ -206,6 +212,8 @@ def annotate_vcf_with_regions(
     overlap_fraction : float, optional
         Minimum fraction of CNV length that must overlap with annotation regions to
         collect annotations. Must be between 0.0 and 1.0. Default is 0.5.
+    genome: str
+        Genome file (chr tab length or .fai)
 
     Notes
     -----
@@ -221,6 +229,7 @@ def annotate_vcf_with_regions(
     ...     input_vcf="cnv_calls.vcf.gz",
     ...     annotation_bed="genome_regions.bed",
     ...     output_vcf="cnv_calls.annotated.vcf.gz",
+    ...     geome = "Homo_sapiens_assembly38.fasta",
     ...     overlap_fraction=0.5
     ... )
     """
@@ -262,7 +271,7 @@ def annotate_vcf_with_regions(
         map_bed = pjoin(tmpdir, "map.bed")
         # Use collapse operation to collect all annotation values (4th column) separated by '|'
         bed_utils.bedtools_map(
-            vcf_bed, annotation_bed, map_bed, column=4, operation="collapse", additional_args='-delim "|"'
+            vcf_bed, annotation_bed, map_bed, column=4, operation="collapse", additional_args=f'-delim "|" -g {genome}'
         )
 
         # Parse map results to collect annotations only for CNVs meeting threshold
@@ -604,6 +613,7 @@ def run(argv: list[str]):
             annotation_bed=args.annotation_bed,
             output_vcf=args.output_vcf,
             overlap_fraction=args.overlap_fraction,
+            genome=args.genome,
         )
     else:
         raise ValueError(f"Unknown tool: {args.tool}")

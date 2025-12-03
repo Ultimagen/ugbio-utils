@@ -71,6 +71,7 @@ class TestCombineCnmopsCnvpytorCnvCalls:
         """Integration test for annotating VCF with region annotations from BED file."""
         input_vcf = pjoin(resources_dir, "HG002.full_sample.combined.step1.chr5.vcf.gz")
         annotation_bed = pjoin(resources_dir, "ug_cnv_lcr.chr5.bed")
+        genome = pjoin(resources_dir, "Homo_sapiens_assembly38.fasta.fai")
         output_vcf = pjoin(tmpdir, "annotated_regions.vcf.gz")
         expected_output_vcf = pjoin(resources_dir, "HG002.full_sample.combined.step1.chr5.annotated.vcf.gz")
 
@@ -86,6 +87,8 @@ class TestCombineCnmopsCnvpytorCnvCalls:
                 output_vcf,
                 "--overlap_fraction",
                 "0.5",
+                "--genome",
+                genome,
             ]
         )
 
