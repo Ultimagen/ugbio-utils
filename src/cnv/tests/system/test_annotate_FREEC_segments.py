@@ -16,15 +16,12 @@ def resources_dir():
 
 
 class TestAnnotateFREECSegments:
-    def test_annotate_freec_segments(self, tmpdir, resources_dir, monkeypatch):
+    def test_annotate_freec_segments(self, tmpdir, resources_dir):
         input_segments_file = pjoin(resources_dir, "in_segments.txt")
         gain_cutoff = 1.03
         loss_cutoff = 0.97
         expected_out_segments_annotated = pjoin(resources_dir, "expected_in_segments_annotated.txt")
         expected_out_segments_cnvs = pjoin(resources_dir, "expected_in_segments_CNVs.bed")
-
-        # Change to tmpdir so output files are written there and cleaned up automatically
-        monkeypatch.chdir(tmpdir)
 
         annotate_FREEC_segments.run(
             [
@@ -35,10 +32,12 @@ class TestAnnotateFREECSegments:
                 str(gain_cutoff),
                 "--loss_cutoff",
                 str(loss_cutoff),
+                "--out_directory",
+                str(tmpdir),
             ]
         )
 
-        out_segments_annotated = os.path.basename(input_segments_file) + "_annotated.txt"
-        out_segments_cnvs = os.path.basename(input_segments_file) + "_CNVs.bed"
+        out_segments_annotated = pjoin(tmpdir, os.path.basename(input_segments_file) + "_annotated.txt")
+        out_segments_cnvs = pjoin(tmpdir, os.path.basename(input_segments_file) + "_CNVs.bed")
         assert filecmp.cmp(out_segments_annotated, expected_out_segments_annotated)
         assert filecmp.cmp(out_segments_cnvs, expected_out_segments_cnvs)
