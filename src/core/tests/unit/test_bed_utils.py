@@ -315,3 +315,39 @@ def test_bedtools_sort(tmpdir):
         "chr2\t300\t400\tregion3\n",
     ]
     assert result == expected
+
+
+def test_bedtools_coverage(tmpdir):
+    """Test bedtools_coverage with basic coverage calculation."""
+    # Create BED file A (regions to compute coverage for)
+    a_content = "chr1\t100\t200\tregion1\n" "chr1\t300\t400\tregion2\n" "chr2\t500\t600\tregion3\n"
+    a_file = tmpdir.join("a.bed")
+    a_file.write(a_content)
+
+    # Create BED file B (intervals for coverage)
+    # region1 has 2 overlaps covering 30 bases out of 100
+    # region2 has 1 overlap covering 20 bases out of 100
+    # region3 has no overlaps
+    b_content = "chr1\t120\t140\tfeature1\n" "chr1\t160\t170\tfeature2\n" "chr1\t350\t370\tfeature3\n"
+    b_file = tmpdir.join("b.bed")
+    b_file.write(b_content)
+
+    output_file = str(tmpdir.join("output.bed"))
+
+    # Run bedtools_coverage
+    BedUtils().bedtools_coverage(a_bed=str(a_file), b_bed=str(b_file), output_bed=output_file)
+
+    # Read and verify output
+    with open(output_file) as f:
+        result = f.readlines()
+
+    # Expected columns: original A columns + count + covered_bases + length + fraction
+    # region1: 2 overlaps, 30 bases covered, 100 bases total, 0.3 fraction
+    # region2: 1 overlap, 20 bases covered, 100 bases total, 0.2 fraction
+    # region3: 0 overlaps, 0 bases covered, 100 bases total, 0.0 fraction
+    expected = [
+        "chr1\t100\t200\tregion1\t2\t30\t100\t0.3000000\n",
+        "chr1\t300\t400\tregion2\t1\t20\t100\t0.2000000\n",
+        "chr2\t500\t600\tregion3\t0\t0\t100\t0.0000000\n",
+    ]
+    assert result == expected

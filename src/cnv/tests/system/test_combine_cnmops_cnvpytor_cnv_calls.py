@@ -66,3 +66,32 @@ class TestCombineCnmopsCnvpytorCnvCalls:
         assert os.path.exists(output_vcf)
         assert os.path.exists(f"{output_vcf}.tbi")
         compare_vcfs(output_vcf, expected_output_vcf)
+
+    def test_annotate_vcf_with_regions(self, tmpdir, resources_dir):
+        """Integration test for annotating VCF with region annotations from BED file."""
+        input_vcf = pjoin(resources_dir, "HG002.full_sample.combined.step1.chr5.vcf.gz")
+        annotation_bed = pjoin(resources_dir, "ug_cnv_lcr.chr5.bed")
+        output_vcf = pjoin(tmpdir, "annotated_regions.vcf.gz")
+        expected_output_vcf = pjoin(resources_dir, "HG002.full_sample.combined.step1.chr5.annotated.vcf.gz")
+
+        combine_cnmops_cnvpytor_cnv_calls.run(
+            [
+                "cnv_results_to_vcf",
+                "annotate_regions",
+                "--input_vcf",
+                input_vcf,
+                "--annotation_bed",
+                annotation_bed,
+                "--output_vcf",
+                output_vcf,
+                "--overlap_fraction",
+                "0.5",
+            ]
+        )
+
+        # Check output files exist
+        assert os.path.exists(output_vcf)
+        assert os.path.exists(f"{output_vcf}.tbi")
+
+        # Compare output with expected output for consistency
+        compare_vcfs(output_vcf, expected_output_vcf)

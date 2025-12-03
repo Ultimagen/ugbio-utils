@@ -615,6 +615,264 @@ class TestMergeCnvsInVcf:
             assert record.stop == 4499
 
 
+class TestCnvVcfToBed:
+    """Tests for cnv_vcf_to_bed function."""
+
+    def test_cnv_vcf_to_bed_basic(self, tmp_vcf_with_cnvs, tmp_path):
+        """Test basic VCF to BED conversion without additional fields."""
+        output_bed = tmp_path / "output.bed"
+
+        # Convert VCF to BED
+        combine_cnv_vcf_utils.cnv_vcf_to_bed(str(tmp_vcf_with_cnvs), str(output_bed))
+
+        # Verify BED file was created and has correct format
+        assert output_bed.exists()
+
+        # Read and verify BED contents
+        with open(output_bed) as f:
+            lines = f.readlines()
+
+        assert len(lines) == 3  # We have 3 CNV records in tmp_vcf_with_cnvs
+
+        # Check first line (chr1:1000-2000)
+        fields = lines[0].strip().split("\t")
+        assert len(fields) == 4  # chr, start, end, name
+        assert fields[0] == "chr1"
+        assert fields[1] == "1000"
+        assert fields[2] == "2000"
+        assert fields[3] == "CNV_000000000"  # Auto-generated index name
+
+        # Check second line (chr1:2500-3500)
+        fields = lines[1].strip().split("\t")
+        assert fields[0] == "chr1"
+        assert fields[1] == "2500"
+        assert fields[2] == "3500"
+        assert fields[3] == "CNV_000000001"
+
+        # Check third line (chr1:10000-12000)
+        fields = lines[2].strip().split("\t")
+        assert fields[0] == "chr1"
+        assert fields[1] == "10000"
+        assert fields[2] == "12000"
+        assert fields[3] == "CNV_000000002"
+
+    def test_cnv_vcf_to_bed_with_info_fields(self, tmp_vcf_with_cnvs, tmp_path):
+        """Test VCF to BED conversion with additional INFO fields."""
+        output_bed = tmp_path / "output_with_info.bed"
+
+        # Convert VCF to BED with additional INFO fields
+        combine_cnv_vcf_utils.cnv_vcf_to_bed(
+            str(tmp_vcf_with_cnvs),
+            str(output_bed),
+            include_info_fields=["SVTYPE", "SVLEN", "CopyNumber"],
+        )
+
+        # Verify BED file was created
+        assert output_bed.exists()
+
+        # Read and verify BED contents
+        with open(output_bed) as f:
+            lines = f.readlines()
+
+        assert len(lines) == 3
+
+        # Check first line has all requested fields
+        fields = lines[0].strip().split("\t")
+        assert len(fields) == 7  # chr, start, end, name, SVTYPE, SVLEN, CopyNumber
+        assert fields[0] == "chr1"
+        assert fields[1] == "1000"
+        assert fields[2] == "2000"
+        assert fields[3] == "CNV_000000000"
+        assert fields[4] == "DEL"
+        assert fields[5] == "1000"  # SVLEN extracted from tuple
+        assert fields[6] == "1.0"  # CopyNumber
+
+        # Check second line
+        fields = lines[1].strip().split("\t")
+        assert fields[4] == "DEL"
+        assert fields[5] == "1000"
+        assert fields[6] == "1.1"
+
+        # Check third line (DUP with different copy number)
+        fields = lines[2].strip().split("\t")
+        assert fields[4] == "DUP"
+        assert fields[5] == "2000"
+        assert fields[6] == "3.0"
+
+    def test_cnv_vcf_to_bed_name_format_index(self, tmp_vcf_with_cnvs, tmp_path):
+        """Test VCF to BED conversion with index-based naming."""
+        output_bed = tmp_path / "output_index.bed"
+
+        # Convert with index naming
+        combine_cnv_vcf_utils.cnv_vcf_to_bed(str(tmp_vcf_with_cnvs), str(output_bed), name_format="index")
+
+        # Verify BED contents
+        with open(output_bed) as f:
+            lines = f.readlines()
+
+        # All names should be CNV_XXXXXXXXX format
+        for i, line in enumerate(lines):
+            fields = line.strip().split("\t")
+            assert fields[3] == f"CNV_{i:09d}"
+
+    def test_cnv_vcf_to_bed_name_format_position(self, tmp_vcf_with_cnvs, tmp_path):
+        """Test VCF to BED conversion with position-based naming."""
+        output_bed = tmp_path / "output_position.bed"
+
+        # Convert with position naming
+        combine_cnv_vcf_utils.cnv_vcf_to_bed(str(tmp_vcf_with_cnvs), str(output_bed), name_format="position")
+
+        # Verify BED contents
+        with open(output_bed) as f:
+            lines = f.readlines()
+
+        # Check position-based names
+        assert lines[0].split("\t")[3] == "chr1:1000-2000"
+        assert lines[1].split("\t")[3] == "chr1:2500-3500"
+        assert lines[2].split("\t")[3] == "chr1:10000-12000"
+
+    def test_cnv_vcf_to_bed_with_record_ids(self, tmp_path, cnv_vcf_header):
+        """Test VCF to BED conversion when VCF records have IDs."""
+        # Create VCF with record IDs
+        vcf_with_ids = tmp_path / "vcf_with_ids.vcf.gz"
+        with pysam.VariantFile(str(vcf_with_ids), "w", header=cnv_vcf_header) as vcf:
+            record = vcf.new_record()
+            record.contig = "chr1"
+            record.pos = 1000
+            record.stop = 2000
+            record.id = "CNV_DEL_001"
+            record.alleles = ("N", "<DEL>")
+            record.info["SVLEN"] = (1000,)
+            record.info["SVTYPE"] = "DEL"
+            record.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record)
+
+        output_bed = tmp_path / "output_with_ids.bed"
+
+        # Convert with auto naming (should use record IDs)
+        combine_cnv_vcf_utils.cnv_vcf_to_bed(str(vcf_with_ids), str(output_bed), name_format="auto")
+
+        # Verify ID is used
+        with open(output_bed) as f:
+            line = f.readline()
+        fields = line.strip().split("\t")
+        assert fields[3] == "CNV_DEL_001"
+
+        # Also test with explicit "id" format
+        output_bed_id = tmp_path / "output_id_format.bed"
+        combine_cnv_vcf_utils.cnv_vcf_to_bed(str(vcf_with_ids), str(output_bed_id), name_format="id")
+
+        with open(output_bed_id) as f:
+            line = f.readline()
+        fields = line.strip().split("\t")
+        assert fields[3] == "CNV_DEL_001"
+
+    def test_cnv_vcf_to_bed_missing_info_fields(self, tmp_path, cnv_vcf_header):
+        """Test VCF to BED conversion handles missing INFO fields gracefully."""
+        # Create VCF with minimal fields
+        vcf_minimal = tmp_path / "vcf_minimal.vcf.gz"
+        with pysam.VariantFile(str(vcf_minimal), "w", header=cnv_vcf_header) as vcf:
+            record = vcf.new_record()
+            record.contig = "chr1"
+            record.pos = 1000
+            record.stop = 2000
+            record.alleles = ("N", "<DEL>")
+            record.info["SVTYPE"] = "DEL"
+            # Intentionally not setting SVLEN or CopyNumber
+            record.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record)
+
+        output_bed = tmp_path / "output_missing_fields.bed"
+
+        # Request fields that may not exist
+        combine_cnv_vcf_utils.cnv_vcf_to_bed(
+            str(vcf_minimal),
+            str(output_bed),
+            include_info_fields=["SVTYPE", "SVLEN", "CopyNumber", "NonExistentField"],
+        )
+
+        # Verify missing fields are represented as "."
+        with open(output_bed) as f:
+            line = f.readline()
+        fields = line.strip().split("\t")
+        assert len(fields) == 8  # chr, start, end, name, 4 INFO fields
+        assert fields[4] == "DEL"  # SVTYPE exists
+        assert fields[5] == "."  # SVLEN missing
+        assert fields[6] == "."  # CopyNumber missing
+        assert fields[7] == "."  # NonExistentField missing
+
+    def test_cnv_vcf_to_bed_empty_vcf(self, tmp_path, cnv_vcf_header):
+        """Test VCF to BED conversion with empty VCF file."""
+        # Create empty VCF
+        empty_vcf = tmp_path / "empty.vcf.gz"
+        with pysam.VariantFile(str(empty_vcf), "w", header=cnv_vcf_header):
+            pass  # Write no records
+
+        output_bed = tmp_path / "empty_output.bed"
+
+        # Convert empty VCF
+        combine_cnv_vcf_utils.cnv_vcf_to_bed(str(empty_vcf), str(output_bed))
+
+        # Verify empty BED file is created
+        assert output_bed.exists()
+        with open(output_bed) as f:
+            lines = f.readlines()
+        assert len(lines) == 0
+
+    def test_cnv_vcf_to_bed_tuple_handling(self, tmp_path, cnv_vcf_header):
+        """Test that tuple INFO values are properly handled."""
+        # Add header for multi-value field
+        cnv_vcf_header.add_line('##INFO=<ID=MultiValue,Number=.,Type=Integer,Description="Multi-value field">')
+
+        vcf_with_tuples = tmp_path / "vcf_with_tuples.vcf.gz"
+        with pysam.VariantFile(str(vcf_with_tuples), "w", header=cnv_vcf_header) as vcf:
+            # Record with single-value tuple
+            record1 = vcf.new_record()
+            record1.contig = "chr1"
+            record1.pos = 1000
+            record1.stop = 2000
+            record1.alleles = ("N", "<DEL>")
+            record1.info["SVLEN"] = (1000,)  # Single value
+            record1.info["SVTYPE"] = "DEL"
+            record1.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record1)
+
+            # Record with multi-value tuple
+            record2 = vcf.new_record()
+            record2.contig = "chr1"
+            record2.pos = 5000
+            record2.stop = 6000
+            record2.alleles = ("N", "<DEL>")
+            record2.info["SVLEN"] = (500, 1000)  # Multiple values
+            record2.info["MultiValue"] = (10, 20, 30)
+            record2.info["SVTYPE"] = "DEL"
+            record2.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record2)
+
+        output_bed = tmp_path / "output_tuples.bed"
+
+        # Convert with fields that have tuple values
+        combine_cnv_vcf_utils.cnv_vcf_to_bed(
+            str(vcf_with_tuples),
+            str(output_bed),
+            include_info_fields=["SVLEN", "MultiValue"],
+        )
+
+        # Verify tuple handling
+        with open(output_bed) as f:
+            lines = f.readlines()
+
+        # First record: single-value tuple should be extracted
+        fields1 = lines[0].strip().split("\t")
+        assert fields1[4] == "1000"  # Single value extracted
+        assert fields1[5] == "."  # MultiValue not present
+
+        # Second record: multi-value tuple should be comma-separated
+        fields2 = lines[1].strip().split("\t")
+        assert fields2[4] == "500,1000"  # Multiple values comma-separated
+        assert fields2[5] == "10,20,30"  # Multiple values comma-separated
+
+
 class TestMergeCnvsInVcfIntegration:
     """Integration tests for merge_cnvs_in_vcf using real data."""
 

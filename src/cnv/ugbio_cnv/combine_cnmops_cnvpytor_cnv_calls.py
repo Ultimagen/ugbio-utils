@@ -3,6 +3,7 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 from os.path import join as pjoin
 
 import pandas as pd
@@ -10,12 +11,14 @@ import pysam
 import ugbio_core.misc_utils as mu
 from pyfaidx import Fasta
 from ugbio_cnv.combine_cnv_vcf_utils import (
+    cnv_vcf_to_bed,
     combine_vcf_headers_for_cnv,
     merge_cnvs_in_vcf,
     update_vcf_contigs,
     write_vcf_records_with_source,
 )
 from ugbio_cnv.convert_combined_cnv_results_to_output_formats import FILTER_TAG_REGISTRY, INFO_TAG_REGISTRY
+from ugbio_core.bed_utils import BedUtils
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
 
@@ -66,6 +69,25 @@ def __parse_args_gaps_perc(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--ref_fasta", help="Reference genome FASTA file", required=True, type=str)
 
 
+def __parse_args_annotate_regions(parser: argparse.ArgumentParser) -> None:
+    """Add arguments specific to the region annotation tool."""
+    parser.add_argument("--input_vcf", help="Input VCF file with CNV calls", required=True, type=str)
+    parser.add_argument("--output_vcf", help="Output VCF file with region annotations", required=True, type=str)
+    parser.add_argument(
+        "--annotation_bed",
+        help="BED file with region annotations (chr, start, end, annotation)",
+        required=True,
+        type=str,
+    )
+    parser.add_argument(
+        "--overlap_fraction",
+        help="Minimum fraction of CNV that must overlap with annotation region (0.0-1.0)",
+        required=False,
+        type=float,
+        default=0.5,
+    )
+
+
 def __parse_args(argv: list[str]) -> argparse.Namespace:
     """
     Parse command-line arguments using subparsers for different tools.
@@ -112,6 +134,14 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     )
     __parse_args_gaps_perc(gaps_perc_parser)
 
+    annotate_regions_parser = subparsers.add_parser(
+        "annotate_regions",
+        help="Annotate CNV calls with region annotations from BED file",
+        description="Annotates CNV calls in a VCF with region-based annotations"
+        " (e.g., telomere, centromere, low coverage).",
+    )
+    __parse_args_annotate_regions(annotate_regions_parser)
+
     return parser.parse_args(argv[1:])
 
 
@@ -152,6 +182,132 @@ def annotate_vcf_with_gap_perc(input_vcf: str, ref_fasta: str, output_vcf: str) 
                 record.info["GAP_PERC"] = round(gap_perc, 5)
                 vcf_out.write(record)
     VcfUtils().index_vcf(output_vcf)
+
+
+def annotate_vcf_with_regions(
+    input_vcf: str, annotation_bed: str, output_vcf: str, overlap_fraction: float = 0.5
+) -> None:
+    """
+    Annotate CNV VCF records with region annotations from a BED file.
+
+    For each CNV record, identifies overlapping annotation regions and collects their
+    annotations. If the overlap fraction exceeds the threshold, all unique annotations
+    are added to the REGION_ANNOTATIONS INFO field.
+
+    Parameters
+    ----------
+    input_vcf : str
+        Path to input VCF file containing CNV calls. Each record must have start and stop fields.
+    annotation_bed : str
+        Path to BED file with region annotations in format: chr, start, end, annotation.
+        Annotations can contain multiple values separated by '|' (e.g., "Telomere_Centromere|Coverage-Mappability").
+    output_vcf : str
+        Path to output VCF file with REGION_ANNOTATIONS added to INFO field.
+    overlap_fraction : float, optional
+        Minimum fraction of CNV length that must overlap with annotation regions to
+        collect annotations. Must be between 0.0 and 1.0. Default is 0.5.
+
+    Notes
+    -----
+    - For each CNV record, calculates overlap with all annotation regions in the BED file
+    - Collects annotations from regions where overlap exceeds overlap_fraction * CNV_length
+    - All annotation values (split by '|') are collected and made unique
+    - Final unique annotations are joined with '|' and added to REGION_ANNOTATIONS INFO field
+    - If no annotations meet the threshold, REGION_ANNOTATIONS will be empty or not added
+
+    Examples
+    --------
+    >>> annotate_vcf_with_regions(
+    ...     input_vcf="cnv_calls.vcf.gz",
+    ...     annotation_bed="genome_regions.bed",
+    ...     output_vcf="cnv_calls.annotated.vcf.gz",
+    ...     overlap_fraction=0.5
+    ... )
+    """
+    # Create temporary directory in the same directory as output_vcf
+    output_dir = os.path.dirname(output_vcf) or "."
+    with tempfile.TemporaryDirectory(dir=output_dir) as tmpdir:
+        # Step 1: Convert VCF to BED format with unique index-based identifiers
+        logger.info("Converting VCF to BED format")
+        vcf_bed = pjoin(tmpdir, "input_cnvs.bed")
+        cnv_vcf_to_bed(input_vcf, vcf_bed, assign_id=True)
+
+        # Step 2: Run bedtools coverage to calculate total overlap statistics
+        # bedtools coverage output adds these columns to each interval in A:
+        # - Number of features in B that overlapped
+        # - Number of bases in A that had coverage from B
+        # - Length of A interval
+        # - Fraction of A that had coverage from B (this is what we need!)
+        logger.info("Running bedtools coverage to calculate total overlaps")
+        coverage_bed = pjoin(tmpdir, "coverage.bed")
+        bed_utils = BedUtils()
+        bed_utils.bedtools_coverage(vcf_bed, annotation_bed, coverage_bed)
+
+        # Step 3: Parse coverage results to identify CNVs meeting the overlap threshold
+        logger.info("Identifying CNVs meeting overlap threshold")
+        cnv_indices_meeting_threshold = set()
+        with open(coverage_bed) as cov_fh:
+            for line in cov_fh:
+                fields = line.rstrip().split("\t")
+                record_id = fields[3]  # The unique identifier (e.g., CNV_000000001)
+                idx = int(record_id.split("_")[1])  # Extract numeric index
+                overlap_fraction_actual = float(fields[7])  # Fraction of bases in A with coverage from all B features
+
+                if overlap_fraction_actual >= overlap_fraction:
+                    cnv_indices_meeting_threshold.add(idx)
+
+        # Step 4: Collect annotations for CNVs meeting threshold using bedtools map
+        # bedtools map will aggregate all annotation values from overlapping B features
+        logger.info("Collecting annotations for CNVs meeting threshold")
+        map_bed = pjoin(tmpdir, "map.bed")
+        # Use collapse operation to collect all annotation values (4th column) separated by '|'
+        bed_utils.bedtools_map(
+            vcf_bed, annotation_bed, map_bed, column=4, operation="collapse", additional_args='-delim "|"'
+        )
+
+        # Parse map results to collect annotations only for CNVs meeting threshold
+        cnv_annotations = {}  # Maps record_index -> set of annotation values
+        with open(map_bed) as map_fh:
+            for line in map_fh:
+                fields = line.rstrip().split("\t")
+                record_id = fields[3]  # From A (CNV) - format: CNV_000000001
+                idx = int(record_id.split("_")[1])  # Extract the numeric index
+
+                # Only collect annotations for CNVs that met the threshold
+                if idx not in cnv_indices_meeting_threshold:
+                    continue
+
+                # The mapped column contains '|'-separated annotation values
+                mapped_values = fields[4]
+                if mapped_values != ".":  # bedtools map uses "." for no overlap
+                    cnv_annotations[idx] = set(mapped_values.split("|"))
+
+        # Step 5: Write output VCF with REGION_ANNOTATIONS
+        logger.info("Writing annotated VCF")
+        with pysam.VariantFile(input_vcf) as vcf_in:
+            header = vcf_in.header
+
+            # Add REGION_ANNOTATIONS INFO field if not present
+            if "REGION_ANNOTATIONS" not in header.info:
+                header.info.add(*INFO_TAG_REGISTRY["REGION_ANNOTATIONS"][:-1])
+
+            with pysam.VariantFile(output_vcf, "w", header=header) as vcf_out:
+                for record_index, record in enumerate(vcf_in):
+                    # Add annotations if this CNV has any
+                    if record_index in cnv_annotations and cnv_annotations[record_index]:
+                        # Get existing annotations if present
+                        existing_annotations = set()
+                        if "REGION_ANNOTATIONS" in record.info:
+                            existing_annotations = set(record.info["REGION_ANNOTATIONS"])
+
+                        # Combine existing and new annotations
+                        all_annotations = sorted(existing_annotations | cnv_annotations[record_index])
+                        record.info["REGION_ANNOTATIONS"] = all_annotations
+
+                    vcf_out.write(record)
+
+    VcfUtils().index_vcf(output_vcf)
+    logger.info(f"Successfully annotated VCF with regions: {output_vcf}")
 
 
 def combine_cnv_vcfs(
@@ -442,6 +598,13 @@ def run(argv: list[str]):
             ref_fasta=args.ref_fasta,
             output_vcf=args.output_vcf,
         )
+    elif args.tool == "annotate_regions":
+        annotate_vcf_with_regions(
+            input_vcf=args.input_vcf,
+            annotation_bed=args.annotation_bed,
+            output_vcf=args.output_vcf,
+            overlap_fraction=args.overlap_fraction,
+        )
     else:
         raise ValueError(f"Unknown tool: {args.tool}")
 
@@ -492,6 +655,21 @@ def main_gaps_perc():
     """
     # Insert 'annotate_gaps' as the tool argument
     argv = [sys.argv[0], "annotate_gaps"] + sys.argv[1:]
+    run(argv)
+
+
+def main_annotate_regions():
+    """
+    Entry point for standalone annotate_vcf_with_regions script.
+
+    This allows running the annotate_regions tool directly without specifying the tool name:
+    annotate_regions --input_vcf ... --annotation_bed ... --output_vcf ... --overlap_fraction ...
+
+    Instead of:
+    combine_cnmops_cnvpytor_cnv_calls annotate_regions --input_vcf ... --annotation_bed ... --output_vcf ...
+    """
+    # Insert 'annotate_regions' as the tool argument
+    argv = [sys.argv[0], "annotate_regions"] + sys.argv[1:]
     run(argv)
 
 
