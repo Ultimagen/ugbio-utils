@@ -56,8 +56,8 @@ def run(argv):
     )
     parser.add_argument(
         "--out_directory",
-        help="out directory where intermediate and output files will be saved."
-        " if not supplied all files will be written to current directory",
+        help="Output directory where intermediate and output files will be saved. "
+        "If not supplied, all files will be written to the current directory.",
         required=False,
         type=str,
     )
