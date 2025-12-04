@@ -136,6 +136,7 @@ def write_vcf_records_with_source(
     for record in vcf_in:
         # Clear filters - we remove filters imposed by the previous pipelines
         record.filter.clear()
+        record.filter.add("PASS")
         # Create new record with combined header
         new_record = VcfUtils.copy_vcf_record(record, combined_header)
         # Add source tag if not already present

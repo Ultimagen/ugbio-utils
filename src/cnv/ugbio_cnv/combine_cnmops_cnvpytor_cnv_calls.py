@@ -473,6 +473,8 @@ def filter_dup_cnmmops_cnv_calls(
                     svlen = abs(record.info.get("SVLEN", [0])[0])
                     if svlen < int(filtered_length):
                         if "FILTER" in record.filter.keys():
+                            if "PASS" in record.filter.keys():
+                                record.filter.clear()
                             record.filter.add("CNMOPS_SHORT_DUPLICATION")
                         else:
                             record.filter.add("CNMOPS_SHORT_DUPLICATION")
