@@ -48,6 +48,28 @@ class TestParsers:
         pd.testing.assert_frame_equal(result_csv, ref_csv)
 
     # ------------------------------------------------------
+    def test_process_mbias_taps(self, tmpdir, resources_dir):
+        output_prefix = f"{tmpdir}/output_Mbias_TAPS"
+        output_file = output_prefix + ".csv"
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+        process_mbias.run(
+            [
+                "process_Mbias",
+                "--input",
+                f"{resources_dir}/input_Mbias.bedGraph",
+                "--output",
+                f"{output_prefix}",
+                "--taps",
+            ]
+        )
+
+        result_csv = pd.read_csv(output_file)
+        ref_csv = pd.read_csv(open(f"{resources_dir}/ProcessMethylDackelMbias.TAPS.csv"))
+
+        pd.testing.assert_frame_equal(result_csv, ref_csv)
+
+    # ------------------------------------------------------
 
     def test_process_per_read(self, tmpdir, resources_dir):
         output_prefix = f"{tmpdir}/output_perRead"
@@ -66,6 +88,29 @@ class TestParsers:
 
         result_csv = pd.read_csv(output_file)
         ref_csv = pd.read_csv(open(f"{resources_dir}/ProcessMethylDackelPerRead.csv"))
+
+        pd.testing.assert_frame_equal(result_csv, ref_csv)
+
+    # ------------------------------------------------------
+
+    def test_process_per_read_taps(self, tmpdir, resources_dir):
+        output_prefix = f"{tmpdir}/output_perRead_TAPS"
+        output_file = output_prefix + ".csv"
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+        process_per_read.run(
+            [
+                "process_perRead",
+                "--input",
+                f"{resources_dir}/input_perRead.bedGraph",
+                "--output",
+                f"{output_prefix}",
+                "--taps",
+            ]
+        )
+
+        result_csv = pd.read_csv(output_file)
+        ref_csv = pd.read_csv(open(f"{resources_dir}/ProcessMethylDackelPerRead.TAPS.csv"))
 
         pd.testing.assert_frame_equal(result_csv, ref_csv)
 
@@ -95,6 +140,31 @@ class TestParsers:
 
     # ------------------------------------------------------
 
+    def test_process_merge_context_no_cpg_taps(self, tmpdir, resources_dir):
+        output_prefix = f"{tmpdir}/output_mergeContextNoCpG_TAPS"
+        output_file = output_prefix + ".csv"
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+        process_merge_context_no_cp_g.run(
+            [
+                "process_mergeContextNoCpG",
+                "--input_chg",
+                f"{resources_dir}/input_mergeContextNoCpG_CHG.bedGraph",
+                "--input_chh",
+                f"{resources_dir}/input_mergeContextNoCpG_CHH.bedGraph",
+                "--output",
+                f"{output_prefix}",
+                "--taps",
+            ]
+        )
+
+        result_csv = pd.read_csv(output_file)
+        ref_csv = pd.read_csv(open(f"{resources_dir}/ProcessMethylDackelMergeContextNoCpG.TAPS.csv"))
+
+        pd.testing.assert_frame_equal(result_csv, ref_csv)
+
+    # ------------------------------------------------------
+
     def test_process_merge_context(self, tmpdir, resources_dir):
         output_prefix = f"{tmpdir}/output_mergeContext"
         output_file = output_prefix + ".csv"
@@ -117,6 +187,46 @@ class TestParsers:
             result_csv_sub = result_csv.loc[idx, :].copy()
 
         ref_csv = pd.read_csv(open(f"{resources_dir}/ProcessConcatMethylDackelMergeContext.csv"))
+        idx = ref_csv.detail.str.contains(pat)
+        if idx.any(axis=None):
+            ref_csv_sub = ref_csv.loc[idx, :].copy()
+
+        pat = r"^PercentMethylation_"
+        idx = result_csv_sub.metric.str.contains(pat)
+        if idx.any(axis=None):
+            result_output = result_csv_sub.loc[idx, :].copy()
+
+        idx = ref_csv_sub.metric.str.contains(pat)
+        if idx.any(axis=None):
+            ref_output = ref_csv_sub.loc[idx, :].copy()
+
+        assert np.all(np.sum(result_output.value) == np.sum(ref_output.value))
+
+    # ------------------------------------------------------
+
+    def test_process_merge_context_taps(self, tmpdir, resources_dir):
+        output_prefix = f"{tmpdir}/output_mergeContext_TAPS"
+        output_file = output_prefix + ".csv"
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+        process_merge_context.run(
+            [
+                "process_mergeContext",
+                "--input",
+                f"{resources_dir}/input_mergeContext.bedGraph",
+                "--output",
+                f"{output_prefix}",
+                "--taps",
+            ]
+        )
+
+        result_csv = pd.read_csv(output_file)
+        pat = r"^hg"
+        idx = result_csv.detail.str.contains(pat)
+        if idx.any(axis=None):
+            result_csv_sub = result_csv.loc[idx, :].copy()
+
+        ref_csv = pd.read_csv(open(f"{resources_dir}/ProcessConcatMethylDackelMergeContext.TAPS.csv"))
         idx = ref_csv.detail.str.contains(pat)
         if idx.any(axis=None):
             ref_csv_sub = ref_csv.loc[idx, :].copy()
