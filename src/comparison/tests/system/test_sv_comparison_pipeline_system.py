@@ -31,3 +31,24 @@ class TestSVComparisonPipeline:
             ]
         )
         assert os.path.exists(output_file)
+
+    def test_sv_comparison_pipeline_nofilter(self, tmpdir, resources_dir):
+        output_file = f"{tmpdir}/HG002.h5"
+        os.makedirs(dirname(output_file), exist_ok=True)
+        sv_comparison_pipeline.run(
+            [
+                "sv_comparison_pipeline",
+                "--calls",
+                f"{resources_dir}/hg002.ug.release.chr9.vcf.gz",
+                "--gt",
+                f"{resources_dir}/GRCh38_HG2-T2TQ100-V1.1_stvar.chr9.vcf.gz",
+                "--hcr_bed",
+                f"{resources_dir}/GRCh38_HG2-T2TQ100-V1.1_stvar.benchmark.chr9.bed",
+                "--output_filename",
+                output_file,
+                "--outdir",
+                os.path.join(str(tmpdir), "truvari"),
+                "--ignore_filter",
+            ]
+        )
+        assert os.path.exists(output_file)
