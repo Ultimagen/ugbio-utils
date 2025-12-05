@@ -209,6 +209,7 @@ class SVComparison:
                 self.logger.info("Ignoring FILTER field in VCFs")
                 self.vu.remove_filters(input_vcf=calls, output_vcf=pjoin(workdir, "calls.nofilter.vcf.gz"))
                 calls = pjoin(workdir, "calls.nofilter.vcf.gz")
+                self.vu.index_vcf(calls)
             self.logger.info(f"Running truvari pipeline with calls: {calls} and gt: {gt}")
             calls_fn = calls
             collapsed_fn = pjoin(workdir, basename(calls).replace(".vcf.gz", "_collapsed.vcf.gz"))
