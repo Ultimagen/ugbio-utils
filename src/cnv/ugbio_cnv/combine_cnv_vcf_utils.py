@@ -225,6 +225,18 @@ def combine_vcf_headers_for_cnv(
     return combined_header
 
 
+def cnv_vcf_to_bed(input_vcf: str, output_bed: str, *, assign_id=True) -> None:
+    """Convert CNV VCF file to BED format with chr, start, end, ID columns."""
+    logger.info(f"Converting CNV VCF to BED: {input_vcf} -> {output_bed}")
+    with pysam.VariantFile(input_vcf) as vcf_in, open(output_bed, "w") as bed_out:
+        for idx, record in enumerate(vcf_in):
+            if assign_id:
+                name = f"CNV_{idx:09d}"
+                bed_out.write(f"{record.contig}\t{record.start}\t{record.stop}\t{name}\n")
+            else:
+                bed_out.write(f"{record.contig}\t{record.start}\t{record.stop}\n")
+
+
 def merge_cnvs_in_vcf(input_vcf: str, output_vcf: str, distance: int = 1000) -> None:
     """
     Merge CNV variants in a VCF file that are within a specified distance.

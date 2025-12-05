@@ -608,3 +608,68 @@ class BedUtils:
             map_cmd += f" > {output_bed}"
 
             self.__execute(map_cmd)
+
+    def bedtools_coverage(
+        self,
+        a_bed: str,
+        b_bed: str,
+        output_bed: str,
+        additional_args: str = "",
+    ):
+        """
+        Run bedtools coverage to compute coverage of intervals in file A by intervals in file B.
+
+        Parameters
+        ----------
+        a_bed : str
+            Path to BED file A (intervals to compute coverage for).
+        b_bed : str
+            Path to BED file B (intervals to use for coverage calculation).
+        output_bed : str
+            Path to output BED file with coverage statistics.
+        additional_args : str, optional
+            Additional arguments to pass to bedtools coverage (e.g., "-hist", "-d", "-counts").
+            Default: "" (returns default coverage columns).
+
+        Returns
+        -------
+        None
+            The function saves the coverage results to the output_bed file.
+
+        Raises
+        ------
+        FileNotFoundError
+            If either input file does not exist.
+        RuntimeError
+            If bedtools is not installed.
+
+        Notes
+        -----
+        By default, bedtools coverage adds the following columns to each interval in A:
+        - Number of features in B that overlapped the A interval
+        - Number of bases in A that had non-zero coverage from features in B
+        - Length of the A interval
+        - Fraction of bases in A that had non-zero coverage
+
+        Examples
+        --------
+        >>> bedtools_coverage("regions.bed", "reads.bed", "coverage.bed")
+        >>> bedtools_coverage("regions.bed", "reads.bed", "coverage.bed", additional_args="-hist")
+        """
+        # Check if input files exist
+        if not os.path.exists(a_bed):
+            raise FileNotFoundError(f"File A '{a_bed}' does not exist.")
+        if not os.path.exists(b_bed):
+            raise FileNotFoundError(f"File B '{b_bed}' does not exist.")
+
+        # Check if bedtools is installed
+        if shutil.which(self.bedtools) is None:
+            raise RuntimeError("bedtools is not installed. Please install bedtools and make sure it is in your PATH.")
+
+        # Run bedtools coverage directly on input files
+        coverage_cmd = f"{self.bedtools} coverage -a {a_bed} -b {b_bed}"
+        if additional_args:
+            coverage_cmd += f" {additional_args}"
+        coverage_cmd += f" > {output_bed}"
+
+        self.__execute(coverage_cmd)
