@@ -482,6 +482,31 @@ class VcfUtils:
         # Index the output VCF
         self.index_vcf(output_vcf)
 
+    def remove_filters(
+        self,
+        input_vcf: str,
+        output_vcf: str,
+        filters_to_remove: list[str] | None = None,
+    ) -> None:
+        """Remove specific filters or all filters from a VCF file using bcftools annotate.
+
+        Parameters
+        ----------
+        input_vcf : str
+            Path to input VCF file
+        output_vcf : str
+            Path to output VCF file
+        filters_to_remove : list[str], optional
+            List of specific filter names to remove (e.g., ['LowQual', 'LowDP']), if None - all are removed
+        """
+
+        # Build annotation removal string
+        if filters_to_remove is None:
+            annotation = "FILTER"
+        else:
+            annotation = f"FILTER/{','.join(filters_to_remove)}"
+        self.__execute(f"bcftools annotate -x {annotation} -o {output_vcf} {input_vcf}")
+
     @staticmethod
     def copy_vcf_record(rec: pysam.VariantRecord, new_header: pysam.VariantHeader) -> pysam.VariantRecord:
         """

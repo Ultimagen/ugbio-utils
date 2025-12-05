@@ -351,3 +351,30 @@ class TestVcfUtils:
 
         # Verify temporary file is cleaned up
         mock_unlink.assert_called_once_with(tmp_file)
+
+    @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
+    def test_remove_filters_all(self, mock_execute, tmp_path):
+        """Test removing all filters from VCF."""
+        input_vcf = str(tmp_path / "input.vcf.gz")
+        output_vcf = str(tmp_path / "output.vcf.gz")
+
+        vcf_utils = VcfUtils()
+        vcf_utils.remove_filters(input_vcf=input_vcf, output_vcf=output_vcf)
+
+        # Verify the correct bcftools command was called
+        expected_cmd = f"bcftools annotate -x FILTER -o {output_vcf} {input_vcf}"
+        mock_execute.assert_called_once_with(expected_cmd)
+
+    @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
+    def test_remove_filters_specific(self, mock_execute, tmp_path):
+        """Test removing specific filters from VCF."""
+        input_vcf = str(tmp_path / "input.vcf.gz")
+        output_vcf = str(tmp_path / "output.vcf.gz")
+        filters = ["LowQual", "LowDP"]
+
+        vcf_utils = VcfUtils()
+        vcf_utils.remove_filters(input_vcf=input_vcf, output_vcf=output_vcf, filters_to_remove=filters)
+
+        # Verify the correct bcftools command was called
+        expected_cmd = f"bcftools annotate -x FILTER/LowQual,LowDP -o {output_vcf} {input_vcf}"
+        mock_execute.assert_called_once_with(expected_cmd)
