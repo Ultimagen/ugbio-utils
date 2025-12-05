@@ -58,6 +58,7 @@ class SVComparison:
         *,
         erase_outdir: bool = True,
         ignore_filter: bool = False,
+        ignore_type: bool = True,
     ):
         """
         Run truvari, generate truvari report and concordance VCF
@@ -79,6 +80,8 @@ class SVComparison:
             Erase output directory if it exists, by default True
         ignore_filter : bool, optional
             If True, ignore FILTER field (remove --passonly flag), by default False
+        ignore_type : bool, optional
+            If True, ignore SVTYPE when matching to truth, by default True
 
         Returns
         -------
@@ -87,18 +90,9 @@ class SVComparison:
         if erase_outdir and os.path.exists(outdir):
             shutil.rmtree(outdir)
 
-        truvari_cmd = [
-            "truvari",
-            "bench",
-            "-b",
-            gt,
-            "-c",
-            calls,
-            "-o",
-            outdir,
-            "-t",
-        ]
-
+        truvari_cmd = ["truvari", "bench", "-b", gt, "-c", calls, "-o", outdir]
+        if ignore_type:
+            truvari_cmd.append("-t")
         if not ignore_filter:
             truvari_cmd.insert(len(truvari_cmd), "--passonly")
 
@@ -132,25 +126,33 @@ class SVComparison:
         """
         info_fields_to_read: list[str] = list(("SVTYPE", "SVLEN") + custom_info_fields)
         df_tp_base = vcftools.get_vcf_df(pjoin(truvari_dir, "tp-base.vcf.gz"), custom_info_fields=info_fields_to_read)
-        df_tp_base["svlen_int"] = df_tp_base["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
+        df_tp_base["svlen_int"] = df_tp_base["svlen"].apply(
+            lambda x: x[0] if isinstance(x, tuple) else (x if x is not None else 0)
+        )
         df_tp_base["label"] = "TP"
         df_fn = vcftools.get_vcf_df(pjoin(truvari_dir, "fn.vcf.gz"), custom_info_fields=info_fields_to_read)
-        df_fn["svlen_int"] = df_fn["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
+        df_fn["svlen_int"] = df_fn["svlen"].apply(
+            lambda x: x[0] if isinstance(x, tuple) else (x if x is not None else 0)
+        )
         df_fn["label"] = "FN"
         df_base = pd.concat((df_tp_base, df_fn))
 
         df_tp_calls = vcftools.get_vcf_df(pjoin(truvari_dir, "tp-comp.vcf.gz"), custom_info_fields=info_fields_to_read)
         df_tp_calls["label"] = "TP"
-        df_tp_calls["svlen_int"] = df_tp_calls["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
+        df_tp_calls["svlen_int"] = df_tp_calls["svlen"].apply(
+            lambda x: x[0] if isinstance(x, tuple) else (x if x is not None else 0)
+        )
 
         df_fp = vcftools.get_vcf_df(pjoin(truvari_dir, "fp.vcf.gz"), custom_info_fields=info_fields_to_read)
         df_fp["label"] = "FP"
-        df_fp["svlen_int"] = df_fp["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x).fillna(0)
+        df_fp["svlen_int"] = df_fp["svlen"].apply(
+            lambda x: x[0] if isinstance(x, tuple) else (x if x is not None else 0)
+        )
 
         df_calls = pd.concat((df_tp_calls, df_fp))
         return df_base, df_calls
 
-    def run_pipeline(
+    def run_pipeline(  # noqa: PLR0913
         self,
         calls: str,
         gt: str,
@@ -163,6 +165,7 @@ class SVComparison:
         *,
         erase_outdir: bool = True,
         ignore_filter: bool = False,
+        ignore_type: bool = True,
     ):
         """
         Run truvari pipeline
@@ -189,6 +192,8 @@ class SVComparison:
             If True, ignore FILTER field (remove --passonly flag), by default False
         custom_info_fields : list[str], optional
             Custom info fields to read from the VCFs, in addition SVTYPE and SVLEN
+        ignore_type : bool, optional
+            If True, ignore SVTYPE when matching to truth, by default True
 
         Returns
         -------
@@ -200,6 +205,10 @@ class SVComparison:
                 "output_file_name must not be under outdir to avoid conflicts (with running truvari bench)."
             )
         with tempfile.TemporaryDirectory(dir=dirname(output_file_name)) as workdir:
+            if ignore_filter:
+                self.logger.info("Ignoring FILTER field in VCFs")
+                self.vu.remove_filters(input_vcf=calls, output_vcf=pjoin(workdir, "calls.nofilter.vcf.gz"))
+                calls = pjoin(workdir, "calls.nofilter.vcf.gz")
             self.logger.info(f"Running truvari pipeline with calls: {calls} and gt: {gt}")
             calls_fn = calls
             collapsed_fn = pjoin(workdir, basename(calls).replace(".vcf.gz", "_collapsed.vcf.gz"))
@@ -211,6 +220,7 @@ class SVComparison:
                 pctseq=pctseq,
                 pctsize=pctsize,
                 ignore_filter=ignore_filter,
+                ignore_sv_type=ignore_type,
             )
             calls_fn = collapsed_fn
             tmpfiles_to_move.append(calls_fn)
@@ -249,6 +259,7 @@ class SVComparison:
                 pctsize=pctsize,
                 erase_outdir=erase_outdir,
                 ignore_filter=ignore_filter,
+                ignore_type=ignore_type,
             )
             df_base, df_calls = self.truvari_to_dataframes(outdir, custom_info_fields=custom_info_fields)
             df_base.to_hdf(output_file_name, key="base", mode="w")
