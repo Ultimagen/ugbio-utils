@@ -422,7 +422,7 @@ def training_prep_cnv(
         pipeline.run_pipeline(
             calls=call_vcf,
             gt=base_vcf,
-            output_file_name=str(dname / Path(stemname + "_concordance.h5")),
+            output_file_name=str(dname / Path(stemname + ".concordance.h5")),
             outdir=temp_dir,
             hcr_bed=hcr,
             custom_info_fields=tuple(custom_annotations) if custom_annotations is not None else (),
@@ -430,8 +430,11 @@ def training_prep_cnv(
             ignore_filter=True,
             ignore_type=ignore_cnv_type,
         )
-    concordance_df = pd.read_hdf(str(dname / Path(stemname + "_concordance.h5")), key="calls")
-    concordance_df = concordance_df.replace({"label": {"TP": 1, "FP": 0}})
+    if ignore_cnv_type:
+        concordance_df = pd.read_hdf(str(dname / Path(stemname + ".concordance.h5")), key="calls")
+        concordance_df = concordance_df.replace({"label": {"TP": 1, "FP": 0}})
+    else:
+        raise NotImplementedError("CNV type-aware matching is not implemented yet.")
     train_set = concordance_df.iloc[0 : int(concordance_df.shape[0] * train_fraction)]
     test_set = concordance_df.iloc[int(concordance_df.shape[0] * train_fraction) :]
     train_set.to_hdf(str(dname / Path(stemname + ".train.h5")), key="train", mode="w")

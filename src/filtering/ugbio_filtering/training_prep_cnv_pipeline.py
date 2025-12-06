@@ -71,7 +71,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     args = ap_var.parse_args(argv)
     if args.custom_annotations is None:
         args.custom_annotations = [
-            "JUMP_ALIGNMENTS",
             "REGION_ANNOTATIONS",
             "CNV_SOURCE",
             "RoundedCopyNumber",
