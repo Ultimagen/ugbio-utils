@@ -177,6 +177,9 @@ def modify_features_based_on_vcf_type(  # noqa C901
     def region_annotation_encode_df(df):
         return pd.DataFrame(np.array(df.apply(region_annotation_encode)).reshape(-1, 1), index=df.index)
 
+    def copy_number_encode_df(df):
+        return pd.DataFrame(df.max(axis=1), index=df.index)
+
     default_filler = impute.SimpleImputer(strategy="constant", fill_value=0)
     tuple_filter = preprocessing.FunctionTransformer(tuple_encode_df)
     ins_del_encode_filter = preprocessing.FunctionTransformer(ins_del_encode_df)
@@ -190,6 +193,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
     gt_filter = preprocessing.FunctionTransformer(gt_encode_df)
     svtype_encode_filter = preprocessing.FunctionTransformer(svtype_encode_df)
     region_annotation_encode_filter = preprocessing.FunctionTransformer(region_annotation_encode_df)
+    copy_number_encode_filter = preprocessing.FunctionTransformer(copy_number_encode_df)
     transform_list = [
         ("ad", tuple_encode_doublet_df_transformer, "ad"),
         ("gt", gt_filter, "gt"),
@@ -283,6 +287,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
             ("jalign_dup_support_strong", "passthrough", ["jalign_dup_support_strong"]),
             ("jalign_del_support_strong", "passthrough", ["jalign_del_support_strong"]),
             ("svlen_int", "passthrough", ["svlen_int"]),
+            ("copynumber", copy_number_encode_filter, ["cn", "copynumber"]),
         ]
         features = [x[0] for x in transform_list]
 
