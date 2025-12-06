@@ -64,7 +64,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     ap_var.add_argument(
         "--vcf_type",
-        help='VCF type - "single_sample"(GATK) or "deep_variant"',
+        help='VCF type - "single_sample"(GATK), "deep_variant" or "CNV"',
         type=VcfType,
         choices=list(VcfType),
         default=VcfType.SINGLE_SAMPLE,

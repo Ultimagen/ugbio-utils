@@ -1,3 +1,4 @@
+import itertools
 from collections import defaultdict
 from collections.abc import Iterable
 
@@ -75,6 +76,12 @@ def allele_encode(x):
     return bases.get(x, 0)
 
 
+def svtype_encode(x):
+    """Translate SVTYPE into integer."""
+    encoding = {"DEL": 1, "DUP": 2}
+    return encoding.get(x, 0)
+
+
 def gt_encode(x):
     """Checks whether the variant is heterozygous(0) or homozygous(1)"""
     if x == (1, 1):
@@ -87,6 +94,15 @@ INS_DEL_ENCODE = {"ins": -1, "del": 1, "NA": 0}
 
 def ins_del_encode(x, encode_dct=INS_DEL_ENCODE):  # pylint: disable=dangerous-default-value
     return encode_dct[x]
+
+
+def region_annotation_encode(x):
+    regions = ["Telomere_Centromere", "Clusters", "Coverage-Mappability"]
+    subsets = []
+    for r in range(len(regions) + 1):
+        subsets.extend(itertools.combinations(regions, r))
+    encoding = dict(zip(subsets, range(1, len(subsets) + 1), strict=False))
+    return encoding.get(x, 0)
 
 
 def get_needed_features(vtype: VcfType = VcfType.SINGLE_SAMPLE, custom_annotations: list | None = None) -> list:
@@ -115,7 +131,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
     Parameters
     ----------
     vtype: string
-        The type of the input vcf. Either "single_sample", "joint" or "dv"
+        The type of the input vcf. Either "single_sample", "joint", "dv" or cnv
     custom_annotations: list, optional
         Additional custom (non-required) annotations. Some will have pre-registered custom transforms
     Returns
@@ -155,6 +171,12 @@ def modify_features_based_on_vcf_type(  # noqa C901
     def ins_del_encode_df(df):
         return pd.DataFrame(np.array(df[0].apply(ins_del_encode)).reshape(-1, 1), index=df.index)
 
+    def svtype_encode_df(df):
+        return pd.DataFrame(np.array(df.apply(svtype_encode)).reshape(-1, 1), index=df.index)
+
+    def region_annotation_encode_df(df):
+        return pd.DataFrame(np.array(df.apply(region_annotation_encode)).reshape(-1, 1), index=df.index)
+
     default_filler = impute.SimpleImputer(strategy="constant", fill_value=0)
     tuple_filter = preprocessing.FunctionTransformer(tuple_encode_df)
     ins_del_encode_filter = preprocessing.FunctionTransformer(ins_del_encode_df)
@@ -166,7 +188,8 @@ def modify_features_based_on_vcf_type(  # noqa C901
     allele_filter_single = preprocessing.FunctionTransformer(allele_encode_single)
     allele_filter = preprocessing.FunctionTransformer(allele_encode_df)
     gt_filter = preprocessing.FunctionTransformer(gt_encode_df)
-
+    svtype_encode_filter = preprocessing.FunctionTransformer(svtype_encode_df)
+    region_annotation_encode_filter = preprocessing.FunctionTransformer(region_annotation_encode_df)
     transform_list = [
         ("ad", tuple_encode_doublet_df_transformer, "ad"),
         ("gt", gt_filter, "gt"),
@@ -237,6 +260,32 @@ def modify_features_based_on_vcf_type(  # noqa C901
         features = [x[0] for x in transform_list]
     elif vtype == VcfType.JOINT:
         pass
+    elif vtype == VcfType.CNV:
+        transform_list = [
+            ("svtype", svtype_encode_filter, "svtype"),
+            ("region_annotations", region_annotation_encode_filter, "region_annotations"),
+            ("cnmops_sample_stdev", default_filler, ["cnmops_sample_stdev"]),
+            ("cnmops_sample_mean", default_filler, ["cnmops_sample_mean"]),
+            ("cnmops_cohort_stdev", default_filler, ["cnmops_cohort_stdev"]),
+            ("cnmops_cohort_mean", default_filler, ["cnmops_cohort_mean"]),
+            ("pytorq0", default_filler, ["pytorq0"]),
+            ("pytorp2", default_filler, ["pytorp2"]),
+            ("pytorrd", default_filler, ["pytorrd"]),
+            ("pytorp1", default_filler, ["pytorp1"]),
+            ("pytorp3", default_filler, ["pytorp3"]),
+            ("gap_perc", "passthrough", ["gap_perc"]),
+            ("cnv_dup_reads", "passthrough", ["cnv_dup_reads"]),
+            ("cnv_del_reads", "passthrough", ["cnv_del_reads"]),
+            ("cnv_dup_frac", "passthrough", ["cnv_dup_frac"]),
+            ("cnv_del_frac", "passthrough", ["cnv_del_frac"]),
+            ("jalign_dup_support", "passthrough", ["jalign_dup_support"]),
+            ("jalign_del_support", "passthrough", ["jalign_del_support"]),
+            ("jalign_dup_support_strong", "passthrough", ["jalign_dup_support_strong"]),
+            ("jalign_del_support_strong", "passthrough", ["jalign_del_support_strong"]),
+            ("svlen_int", "passthrough", ["svlen_int"]),
+        ]
+        features = [x[0] for x in transform_list]
+
     else:
         raise ValueError("Unrecognized VCF type")
 
