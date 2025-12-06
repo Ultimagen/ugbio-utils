@@ -433,6 +433,7 @@ def training_prep_cnv(
     if ignore_cnv_type:
         concordance_df = pd.read_hdf(str(dname / Path(stemname + ".concordance.h5")), key="calls")
         concordance_df = concordance_df.replace({"label": {"TP": 1, "FP": 0}})
+        concordance_df = concordance_df.sort_index()
     else:
         raise NotImplementedError("CNV type-aware matching is not implemented yet.")
     train_set = concordance_df.iloc[0 : int(concordance_df.shape[0] * train_fraction)]
