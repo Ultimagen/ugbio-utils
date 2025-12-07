@@ -4,11 +4,8 @@ version = "1.17.3-0"
 requires-python = ">= 3.11"
 dependencies = [
     "ugbio_core[reports]",
-    "pandas[hdf5]>=2.2.2",
     "bio>=1.7.1",
     "seaborn>=0.13.2",
-    "matplotlib>=3.9.1",
-    "numpy<2.0.0",
 ]
 description = "Ultima Genomics Single Cell utils"
 authors = [
@@ -19,13 +16,6 @@ readme = "README.single_cell.md"
 [project.scripts]
 single_cell_qc = "ugbio_single_cell.single_cell_qc_pipeline:main"
 run_tests = "pytest:main"
-
-[tool.uv]
-dev-dependencies = [
-    "pre-commit>=4.0.1",
-    "pytest>=8.3.3",
-    "ruff>=0.6.9",
-]
 
 [tool.uv.sources.ugbio_core]
 workspace = true
