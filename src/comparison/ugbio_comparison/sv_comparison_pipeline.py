@@ -166,6 +166,7 @@ class SVComparison:
         erase_outdir: bool = True,
         ignore_filter: bool = False,
         ignore_type: bool = True,
+        skip_collapse: bool = False,
     ):
         """
         Run truvari pipeline
@@ -194,6 +195,8 @@ class SVComparison:
             Custom info fields to read from the VCFs, in addition SVTYPE and SVLEN
         ignore_type : bool, optional
             If True, ignore SVTYPE when matching to truth, by default True
+        skip_collapse : bool, optional
+            If True, skip VCF collapsing step for calls (ground truth is always collapsed), by default False
 
         Returns
         -------
@@ -212,26 +215,30 @@ class SVComparison:
                 self.vu.index_vcf(calls)
             self.logger.info(f"Running truvari pipeline with calls: {calls} and gt: {gt}")
             calls_fn = calls
-            collapsed_fn = pjoin(workdir, basename(calls).replace(".vcf.gz", "_collapsed.vcf.gz"))
             tmpfiles_to_move = []
-            self.vu.collapse_vcf(
-                calls_fn,
-                collapsed_fn,
-                bed=hcr_bed,
-                pctseq=pctseq,
-                pctsize=pctsize,
-                ignore_filter=ignore_filter,
-                ignore_sv_type=ignore_type,
-            )
-            calls_fn = collapsed_fn
-            tmpfiles_to_move.append(calls_fn)
 
-            self.vu.sort_vcf(calls_fn, calls_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz"))
-            calls_fn = calls_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz")
-            tmpfiles_to_move.append(calls_fn)
-            tmpfiles_to_move.append(calls_fn + ".tbi")
+            if not skip_collapse:
+                collapsed_fn = pjoin(workdir, basename(calls).replace(".vcf.gz", "_collapsed.vcf.gz"))
+                self.vu.collapse_vcf(
+                    calls_fn,
+                    collapsed_fn,
+                    bed=hcr_bed,
+                    pctseq=pctseq,
+                    pctsize=pctsize,
+                    ignore_filter=ignore_filter,
+                    ignore_sv_type=ignore_type,
+                )
+                calls_fn = collapsed_fn
+                tmpfiles_to_move.append(calls_fn)
 
-            self.vu.index_vcf(calls_fn)
+                self.vu.sort_vcf(calls_fn, calls_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz"))
+                calls_fn = calls_fn.replace("_collapsed.vcf.gz", "_collapsed.sort.vcf.gz")
+                tmpfiles_to_move.append(calls_fn)
+                tmpfiles_to_move.append(calls_fn + ".tbi")
+
+                self.vu.index_vcf(calls_fn)
+            else:
+                self.logger.info("Skipping VCF collapsing for calls")
 
             gt_fn = gt
             gt_collapsed_fn = pjoin(workdir, basename(gt).replace(".vcf.gz", "_collapsed.vcf.gz"))
@@ -299,6 +306,11 @@ def get_parser():
         action="store_true",
         help="Ignore FILTER field in VCF (remove --passonly flag from truvari commands)",
     )
+    parser.add_argument(
+        "--skip_collapse",
+        action="store_true",
+        help="Skip VCF collapsing step for calls (ground truth is always collapsed)",
+    )
     parser.add_argument("--verbosity", default="INFO", help="Logging verbosity level")
     return parser
 
@@ -320,6 +332,7 @@ def run(argv):
         output_file_name=args.output_filename,
         custom_info_fields=tuple(args.custom_info_fields),
         ignore_filter=args.ignore_filter,
+        skip_collapse=args.skip_collapse,
     )
 
 
