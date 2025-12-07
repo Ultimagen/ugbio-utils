@@ -82,6 +82,12 @@ def svtype_encode(x):
     return encoding.get(x, 0)
 
 
+def cnv_source_encode(x):
+    """Translate CNV_SOURCE into integer."""
+    encoding = {"cn.mops": 1, "cnvpytor": 2}
+    return encoding.get(x, 0)
+
+
 def gt_encode(x):
     """Checks whether the variant is heterozygous(0) or homozygous(1)"""
     if x == (1, 1):
@@ -180,6 +186,9 @@ def modify_features_based_on_vcf_type(  # noqa C901
     def copy_number_encode_df(df):
         return pd.DataFrame(df.max(axis=1), index=df.index)
 
+    def cnv_source_encode_df(df):
+        return pd.DataFrame(np.array(df["cnv_source"].apply(cnv_source_encode)).reshape(-1, 1), index=df.index)
+
     default_filler = impute.SimpleImputer(strategy="constant", fill_value=0)
     tuple_filter = preprocessing.FunctionTransformer(tuple_encode_df)
     ins_del_encode_filter = preprocessing.FunctionTransformer(ins_del_encode_df)
@@ -194,6 +203,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
     svtype_encode_filter = preprocessing.FunctionTransformer(svtype_encode_df)
     region_annotation_encode_filter = preprocessing.FunctionTransformer(region_annotation_encode_df)
     copy_number_encode_filter = preprocessing.FunctionTransformer(copy_number_encode_df)
+    cnv_source_encode_filter = preprocessing.FunctionTransformer(cnv_source_encode_df)
     transform_list = [
         ("ad", tuple_encode_doublet_df_transformer, "ad"),
         ("gt", gt_filter, "gt"),
@@ -288,6 +298,8 @@ def modify_features_based_on_vcf_type(  # noqa C901
             ("jalign_del_support_strong", "passthrough", ["jalign_del_support_strong"]),
             ("svlen_int", "passthrough", ["svlen_int"]),
             ("copynumber", copy_number_encode_filter, ["cn", "copynumber"]),
+            ("cnv_source", cnv_source_encode_filter, ["cnv_source"]),
+            # ("best_overlap_svtype", svtype_encode_filter, "best_overlap_svtype"),
         ]
         features = [x[0] for x in transform_list]
 

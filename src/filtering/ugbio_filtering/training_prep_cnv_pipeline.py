@@ -68,6 +68,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=False,
         action="store_true",
     )
+
+    ap_var.add_argument(
+        "--skip_collapse",
+        help="Skip collapsing variants before comparison",
+        required=False,
+        default=False,
+        action="store_true",
+    )
+
     args = ap_var.parse_args(argv)
     if args.custom_annotations is None:
         args.custom_annotations = [
@@ -116,6 +125,7 @@ def run(argv: list[str]):
         train_fraction=args.train_fraction,
         output_prefix=args.output_prefix,
         ignore_cnv_type=args.ignore_cnv_type,
+        skip_collapse=args.skip_collapse,
     )
     logger.info("Prepare training data finished")
     return 0

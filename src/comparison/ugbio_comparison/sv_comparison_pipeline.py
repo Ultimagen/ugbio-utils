@@ -59,6 +59,7 @@ class SVComparison:
         erase_outdir: bool = True,
         ignore_filter: bool = False,
         ignore_type: bool = True,
+        skip_collapse: bool = False,
     ):
         """
         Run truvari, generate truvari report and concordance VCF
@@ -82,7 +83,9 @@ class SVComparison:
             If True, ignore FILTER field (remove --passonly flag), by default False
         ignore_type : bool, optional
             If True, ignore SVTYPE when matching to truth, by default True
-
+        skip_collapse : bool, optional
+            If True, VCF collapsing step was skipped (usually for defining truthset) and
+            truvari should run with -p multi
         Returns
         -------
         None
@@ -98,6 +101,8 @@ class SVComparison:
 
         if bed:
             truvari_cmd.extend(["--includebed", bed])
+        if skip_collapse:
+            truvari_cmd.extend(["--pick", "multi"])
         truvari_cmd.extend(["--pctseq", str(pctseq)])
         truvari_cmd.extend(["--pctsize", str(pctsize)])
 
@@ -268,6 +273,7 @@ class SVComparison:
                 erase_outdir=erase_outdir,
                 ignore_filter=ignore_filter,
                 ignore_type=ignore_type,
+                skip_collapse=skip_collapse,
             )
             df_base, df_calls = self.truvari_to_dataframes(outdir, custom_info_fields=custom_info_fields)
             df_base.to_hdf(output_file_name, key="base", mode="w")

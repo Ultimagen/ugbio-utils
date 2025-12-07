@@ -387,6 +387,7 @@ def training_prep_cnv(
     output_prefix: str,
     *,
     ignore_cnv_type: bool,
+    skip_collapse: bool,
 ) -> None:
     """Prepare training data for CNV filtering model
 
@@ -406,6 +407,8 @@ def training_prep_cnv(
         Output HDF5 files prefix
     ignore_cnv_type : bool
         Ignore CNV type when matching to truth
+    skip_collapse : bool
+        Skip collapsing variants before comparison
 
     Returns
     -------
@@ -429,6 +432,7 @@ def training_prep_cnv(
             erase_outdir=True,
             ignore_filter=True,
             ignore_type=ignore_cnv_type,
+            skip_collapse=skip_collapse,
         )
     if ignore_cnv_type:
         concordance_df = pd.read_hdf(str(dname / Path(stemname + ".concordance.h5")), key="calls")
