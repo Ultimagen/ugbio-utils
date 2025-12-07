@@ -24,13 +24,6 @@ text = "Apache-2.0"
 run_tests = "pytest:main"
 ppmSeq_qc_analysis = "ugbio_ppmseq.ppmSeq_qc_analysis:main"
 
-[tool.uv]
-dev-dependencies = [
-    "pre-commit>=4.0.1",
-    "pytest>=8.3.3",
-    "ruff>=0.6.9",
-]
-
 [tool.uv.sources.ugbio_core]
 workspace = true
 
