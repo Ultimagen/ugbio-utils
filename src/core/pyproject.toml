@@ -8,27 +8,28 @@ authors = [
 ]
 readme = "README.core.md"
 dependencies = [
-    "simppl>=1.0.7",
-    "pandas[hdf5]>=2.2.2",
+    "simppl>=1.0.7,<2.0.0",
+    "pandas[hdf5]>=2.2.2,<3.0.0",
     "numpy>=1.26.4,<2.0.0",
-    "pysam>=0.22.1",
-    "matplotlib>=3.7.1",
-    "pyfaidx>=0.8.1",
-    "h5py>=3.11.0",
-    "scipy>=1.14.0"]
+    "pysam>=0.22.1,<1.0.0",
+    "matplotlib>=3.7.1,<4.0.0",
+    "pyfaidx>=0.8.1,<1.0.0",
+    "h5py>=3.11.0,<4.0.0",
+    "scipy>=1.14.0,<2.0.0",
+]
 
 [project.optional-dependencies]
 vcfbed = [
-    "pybigwig>=0.3.18",
-    "tqdm>=4.66.4",
-    "bgzip>=0.5.0",
-    "truvari>=5.4.0",
-    "pytest-mock>=3.14.0"
+    "pybigwig>=0.3.18,<0.4.0",
+    "tqdm>=4.66.4,<5.0.0",
+    "bgzip>=0.5.0,<0.6.0",
+    "truvari>=5.4.0,<6.0.0",
+    "pytest-mock>=3.14.0,<4.0.0",
 ]
 reports = [
-    "papermill>=2.6.0",
-    "jupyter>=1.1.1",
-    "nbconvert>=7.16.5",
+    "papermill>=2.6.0,<3.0.0",
+    "jupyter>=1.1.1,<2.0.0",
+    "nbconvert>=7.16.5,<8.0.0",
 ]
 concordance = [
     "scikit-learn>=1.5.2,<1.6.0",
@@ -50,13 +51,6 @@ generate_report = "ugbio_core.reports.report_utils:main"
 [tool.setuptools.package-data]
 "*" = [
     "**/reports/*",
-]
-
-[tool.uv]
-dev-dependencies = [
-    "pre-commit>=4.0.1",
-    "pytest>=8.3.3",
-    "ruff>=0.6.9",
 ]
 
 [build-system]

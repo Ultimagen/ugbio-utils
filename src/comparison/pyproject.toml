@@ -21,13 +21,6 @@ run_tests = "pytest:main"
 run_comparison_pipeline = "ugbio_comparison.run_comparison_pipeline:main"
 sv_comparison_pipeline = "ugbio_comparison.sv_comparison_pipeline:main"
 
-[tool.uv]
-dev-dependencies = [
-    "pre-commit>=4.0.1",
-    "pytest>=8.3.3",
-    "ruff>=0.6.9",
-]
-
 [tool.uv.sources.ugbio_core]
 workspace = true
 

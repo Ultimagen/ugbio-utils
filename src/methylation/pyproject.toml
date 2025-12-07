@@ -8,10 +8,7 @@ authors = [
 ]
 dependencies = [
     "ugbio_core[reports]",
-    "pandas[hdf5]>=2.2.2",
-    "numpy>=1.26.4,<2.0.0",
     "seaborn>=0.13.2",
-    "matplotlib>=3.8.4",
 ]
 readme = "README.methylation.md"
 requires-python = ">=3.11"
@@ -23,13 +20,6 @@ process_mergeContext = "ugbio_methylation.process_merge_context:run"
 process_mergeContextNoCpG = "ugbio_methylation.process_merge_context_no_cp_g:run"
 process_perRead = "ugbio_methylation.process_per_read:run"
 generate_report = "ugbio_methylation.generate_methylation_report:main"
-
-[tool.uv]
-dev-dependencies = [
-    "pre-commit>=4.0.1",
-    "pytest>=8.3.3",
-    "ruff>=0.6.9",
-]
 
 [tool.uv.sources.ugbio_core]
 workspace = true

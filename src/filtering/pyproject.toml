@@ -32,14 +32,6 @@ train_cnv_filtering_model = "ugbio_filtering.train_cnv_filtering_model:main"
 training_prep_pipeline = "ugbio_filtering.training_prep_pipeline:main"
 filter_low_af_ratio_to_background = "ugbio_filtering.filter_low_af_ratio_to_background:main"
 
-[tool.uv]
-dev-dependencies = [
-    "jupyter>=1.1.1",
-    "pre-commit>=4.0.1",
-    "pytest>=8.3.3",
-    "ruff>=0.6.9",
-]
-
 [tool.uv.sources.ugbio_core]
 workspace = true
 
