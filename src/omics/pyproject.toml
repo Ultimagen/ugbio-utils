@@ -9,7 +9,7 @@ dependencies = [
     "plotly>=5.23.0",
     "google-cloud-storage>=2.19.0",
     "boto3>=1.35.69",
-    "pandas>=2.2.3",
+    "pandas>=2.2.3,<3.0.0",
     "winval>=0.7.5",
 ]
 readme = "README.omics.md"

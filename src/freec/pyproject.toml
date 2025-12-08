@@ -7,8 +7,8 @@ authors = [
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
 ]
 dependencies = [
-    "pandas>=2.2.2",
-    "pyfaidx>=0.8.1",
+    "pandas>=2.2.2,<3.0.0",
+    "pyfaidx>=0.8.1,<1.0.0",
 ]
 requires-python = ">=3.11"
 readme = "README.freec.md"
