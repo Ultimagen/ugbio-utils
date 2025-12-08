@@ -107,6 +107,7 @@ class TestSomaticFeaturemapFieldsTransformation:
         out_dir = tmpdir
         model_file = pjoin(resources_dir, "HG006_HG003.v1.23.5pGenome.t_alt_reads_2-10.json")
         out_file = pjoin(out_dir, "Pa_46.tumor_normal.merged.tumor_PASS.mpileup_PASS.chr19.xgb_proba.vcf.gz")
+        genome_file = pjoin(resources_dir, "Homo_sapiens_assembly38.fasta.fai")
 
         # Run the script's main function
         somatic_featuremap_fields_transformation.run(
@@ -122,6 +123,8 @@ class TestSomaticFeaturemapFieldsTransformation:
                 ref_tr_file,
                 "-xgb_model",
                 model_file,
+                "-g",
+                genome_file,
             ]
         )
 
