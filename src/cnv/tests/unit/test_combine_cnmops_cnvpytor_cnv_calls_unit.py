@@ -251,3 +251,320 @@ class TestAnnotateVcfWithGapPerc:
 
         # Check that index file exists (.tbi or .csi)
         assert os.path.exists(output_vcf + ".tbi") or os.path.exists(output_vcf + ".csi")
+
+
+class TestAnnotateVcfWithRegions:
+    """Tests for annotate_vcf_with_regions function."""
+
+    def create_test_bed(self, bed_path: str, regions: list[dict]) -> None:
+        """Create a test BED file with annotation regions.
+
+        Parameters
+        ----------
+        bed_path : str
+            Path to create the BED file
+        regions : list[dict]
+            List of region dicts with keys: chrom, start, end, annotation
+        """
+        with open(bed_path, "w") as f:
+            for region in regions:
+                f.write(f"{region['chrom']}\t{region['start']}\t{region['end']}\t{region['annotation']}\n")
+
+    def test_annotate_regions_basic(self, tmp_path, resources_dir):
+        """Test basic annotation with single overlapping region."""
+        input_vcf = os.path.join(tmp_path, "input.vcf.gz")
+        annotation_bed = os.path.join(tmp_path, "annotations.bed")
+        output_vcf = os.path.join(tmp_path, "output.vcf.gz")
+
+        # Create input VCF with one CNV
+        create_test_vcf_for_gap_perc(
+            input_vcf,
+            [{"chrom": "chr1", "start": 1000, "stop": 2000, "svtype": "DEL"}],
+            {"chr1": 10000},
+        )
+
+        # Create annotation BED with overlapping region
+        self.create_test_bed(
+            annotation_bed,
+            [{"chrom": "chr1", "start": 500, "end": 1500, "annotation": "Telomere_Centromere"}],
+        )
+
+        combine_cnmops_cnvpytor_cnv_calls.annotate_vcf_with_regions(
+            input_vcf,
+            annotation_bed,
+            output_vcf,
+            overlap_fraction=0.3,
+            genome=str(resources_dir / "Homo_sapiens_assembly38.fasta.fai"),
+        )
+
+        with pysam.VariantFile(output_vcf) as vcf:
+            records = list(vcf)
+            assert len(records) == 1
+            # Overlap: 1000-1500 = 500bp, CNV length = 1001bp, fraction = 500/1001 = 0.499 > 0.3
+            assert "REGION_ANNOTATIONS" in records[0].info
+            # pysam returns INFO fields with Number=. as tuples
+            annotations = records[0].info["REGION_ANNOTATIONS"]
+            assert isinstance(annotations, tuple)
+            assert set(annotations) == {"Telomere_Centromere"}
+
+    def test_annotate_regions_multiple_annotations(self, tmp_path, resources_dir):
+        """Test that multiple overlapping regions combine their annotations."""
+        input_vcf = os.path.join(tmp_path, "input.vcf.gz")
+        annotation_bed = os.path.join(tmp_path, "annotations.bed")
+        output_vcf = os.path.join(tmp_path, "output.vcf.gz")
+
+        create_test_vcf_for_gap_perc(
+            input_vcf,
+            [{"chrom": "chr1", "start": 1000, "stop": 2000, "svtype": "DEL"}],
+            {"chr1": 10000},
+        )
+
+        # Create multiple overlapping annotation regions
+        self.create_test_bed(
+            annotation_bed,
+            [
+                {"chrom": "chr1", "start": 500, "end": 1500, "annotation": "Telomere_Centromere"},
+                {"chrom": "chr1", "start": 1200, "end": 1800, "annotation": "Coverage-Mappability"},
+                {"chrom": "chr1", "start": 1700, "end": 2200, "annotation": "Clusters"},
+            ],
+        )
+
+        combine_cnmops_cnvpytor_cnv_calls.annotate_vcf_with_regions(
+            input_vcf,
+            annotation_bed,
+            output_vcf,
+            overlap_fraction=0.3,
+            genome=str(resources_dir / "Homo_sapiens_assembly38.fasta.fai"),
+        )
+
+        with pysam.VariantFile(output_vcf) as vcf:
+            records = list(vcf)
+            assert len(records) == 1
+            assert "REGION_ANNOTATIONS" in records[0].info
+            # pysam returns INFO fields with Number=. as tuples
+            annotations = records[0].info["REGION_ANNOTATIONS"]
+            assert isinstance(annotations, tuple)
+            assert set(annotations) == {"Telomere_Centromere", "Coverage-Mappability", "Clusters"}
+
+    def test_annotate_regions_pipe_separated_annotations(self, tmp_path, resources_dir):
+        """Test handling of annotation values that contain pipe separators."""
+        input_vcf = os.path.join(tmp_path, "input.vcf.gz")
+        annotation_bed = os.path.join(tmp_path, "annotations.bed")
+        output_vcf = os.path.join(tmp_path, "output.vcf.gz")
+
+        create_test_vcf_for_gap_perc(
+            input_vcf,
+            [{"chrom": "chr1", "start": 1000, "stop": 2000, "svtype": "DEL"}],
+            {"chr1": 10000},
+        )
+
+        # Create annotation BED with pipe-separated values
+        self.create_test_bed(
+            annotation_bed,
+            [
+                {"chrom": "chr1", "start": 500, "end": 1500, "annotation": "Telomere_Centromere|Coverage-Mappability"},
+                {"chrom": "chr1", "start": 1700, "end": 2200, "annotation": "Clusters"},
+            ],
+        )
+
+        combine_cnmops_cnvpytor_cnv_calls.annotate_vcf_with_regions(
+            input_vcf,
+            annotation_bed,
+            output_vcf,
+            overlap_fraction=0.3,
+            genome=str(resources_dir / "Homo_sapiens_assembly38.fasta.fai"),
+        )
+
+        with pysam.VariantFile(output_vcf) as vcf:
+            records = list(vcf)
+            assert len(records) == 1
+            assert "REGION_ANNOTATIONS" in records[0].info
+            # pysam returns INFO fields with Number=. as tuples
+            annotations = records[0].info["REGION_ANNOTATIONS"]
+            assert isinstance(annotations, tuple)
+            # All three annotations should be present and unique
+            assert set(annotations) == {"Telomere_Centromere", "Coverage-Mappability", "Clusters"}
+
+    def test_annotate_regions_below_threshold(self, tmp_path, resources_dir):
+        """Test that CNVs below overlap threshold are not annotated."""
+        input_vcf = os.path.join(tmp_path, "input.vcf.gz")
+        annotation_bed = os.path.join(tmp_path, "annotations.bed")
+        output_vcf = os.path.join(tmp_path, "output.vcf.gz")
+
+        create_test_vcf_for_gap_perc(
+            input_vcf,
+            [{"chrom": "chr1", "start": 1000, "stop": 2000, "svtype": "DEL"}],
+            {"chr1": 10000},
+        )
+
+        # Create annotation that overlaps by less than threshold
+        # Overlap: 1000-1200 = 200bp, CNV length = 1001bp, fraction = 200/1001 = 0.199 < 0.5
+        self.create_test_bed(
+            annotation_bed,
+            [{"chrom": "chr1", "start": 500, "end": 1200, "annotation": "Telomere_Centromere"}],
+        )
+
+        combine_cnmops_cnvpytor_cnv_calls.annotate_vcf_with_regions(
+            input_vcf,
+            annotation_bed,
+            output_vcf,
+            overlap_fraction=0.5,
+            genome=str(resources_dir / "Homo_sapiens_assembly38.fasta.fai"),
+        )
+
+        with pysam.VariantFile(output_vcf) as vcf:
+            records = list(vcf)
+            assert len(records) == 1
+            # Should not have annotation because overlap < 50%
+            # With list-based format, field may exist but should be empty
+            if "REGION_ANNOTATIONS" in records[0].info:
+                annotations = records[0].info["REGION_ANNOTATIONS"]
+                # Should be empty tuple or have no elements
+                assert len(annotations) == 0, f"Expected no annotations but got: {annotations}"
+
+    def test_annotate_regions_total_overlap_threshold(self, tmp_path, resources_dir):
+        """Test that total overlap from multiple regions is calculated correctly."""
+        input_vcf = os.path.join(tmp_path, "input.vcf.gz")
+        annotation_bed = os.path.join(tmp_path, "annotations.bed")
+        output_vcf = os.path.join(tmp_path, "output.vcf.gz")
+
+        # CNV: chr1:1000-2000 (length = 1001bp)
+        create_test_vcf_for_gap_perc(
+            input_vcf,
+            [{"chrom": "chr1", "start": 1000, "stop": 2000, "svtype": "DEL"}],
+            {"chr1": 10000},
+        )
+
+        # Two regions that individually don't meet threshold but together do
+        # Region 1: 1000-1250 = 250bp overlap (24.9%)
+        # Region 2: 1250-1500 = 250bp overlap (24.9%)
+        # Total: 500bp overlap (49.9%) >= 0.4 threshold
+        self.create_test_bed(
+            annotation_bed,
+            [
+                {"chrom": "chr1", "start": 800, "end": 1250, "annotation": "Telomere_Centromere"},
+                {"chrom": "chr1", "start": 1250, "end": 1500, "annotation": "Coverage-Mappability"},
+            ],
+        )
+
+        combine_cnmops_cnvpytor_cnv_calls.annotate_vcf_with_regions(
+            input_vcf,
+            annotation_bed,
+            output_vcf,
+            overlap_fraction=0.4,
+            genome=str(resources_dir / "Homo_sapiens_assembly38.fasta.fai"),
+        )
+
+        with pysam.VariantFile(output_vcf) as vcf:
+            records = list(vcf)
+            assert len(records) == 1
+            # Should have both annotations because total overlap >= 40%
+            assert "REGION_ANNOTATIONS" in records[0].info
+            # pysam returns INFO fields with Number=. as tuples
+            annotations = records[0].info["REGION_ANNOTATIONS"]
+            assert isinstance(annotations, tuple)
+            assert set(annotations) == {"Telomere_Centromere", "Coverage-Mappability"}
+
+    def test_annotate_regions_preserves_existing(self, tmp_path, resources_dir):
+        """Test that existing REGION_ANNOTATIONS are preserved and merged."""
+        input_vcf = os.path.join(tmp_path, "input.vcf.gz")
+        annotation_bed = os.path.join(tmp_path, "annotations.bed")
+        output_vcf = os.path.join(tmp_path, "output.vcf.gz")
+
+        # Create input VCF with existing REGION_ANNOTATIONS
+        header = pysam.VariantHeader()
+        header.add_meta("fileformat", value="VCFv4.2")
+        header.contigs.add("chr1", length=10000)
+        header.info.add("SVTYPE", number=1, type="String", description="Type of structural variant")
+        header.info.add(
+            "REGION_ANNOTATIONS",
+            number=".",
+            type="String",
+            description="Aggregated region-based annotations for the CNV",
+        )
+        header.add_sample("test_sample")
+
+        with pysam.VariantFile(input_vcf, "w", header=header) as vcf:
+            rec = vcf.new_record(contig="chr1", start=1000, stop=2000, alleles=("N", "<DEL>"))
+            rec.info["SVTYPE"] = "DEL"
+            rec.info["REGION_ANNOTATIONS"] = "ExistingAnnotation"
+            vcf.write(rec)
+
+        pysam.tabix_index(input_vcf, preset="vcf", force=True)
+
+        # Create annotation BED
+        self.create_test_bed(
+            annotation_bed,
+            [{"chrom": "chr1", "start": 500, "end": 1500, "annotation": "NewAnnotation"}],
+        )
+
+        combine_cnmops_cnvpytor_cnv_calls.annotate_vcf_with_regions(
+            input_vcf,
+            annotation_bed,
+            output_vcf,
+            overlap_fraction=0.3,
+            genome=str(resources_dir / "Homo_sapiens_assembly38.fasta.fai"),
+        )
+
+        with pysam.VariantFile(output_vcf) as vcf:
+            records = list(vcf)
+            assert len(records) == 1
+            assert "REGION_ANNOTATIONS" in records[0].info
+            # pysam returns INFO fields with Number=. as tuples
+            annotations = records[0].info["REGION_ANNOTATIONS"]
+            assert isinstance(annotations, tuple)
+            # Should have both existing and new annotations
+            assert set(annotations) == {"ExistingAnnotation", "NewAnnotation"}
+
+    def test_annotate_regions_multiple_cnvs(self, tmp_path, resources_dir):
+        """Test annotation of multiple CNVs with different overlap patterns."""
+        input_vcf = os.path.join(tmp_path, "input.vcf.gz")
+        annotation_bed = os.path.join(tmp_path, "annotations.bed")
+        output_vcf = os.path.join(tmp_path, "output.vcf.gz")
+
+        # Create three CNVs
+        create_test_vcf_for_gap_perc(
+            input_vcf,
+            [
+                {"chrom": "chr1", "start": 1000, "stop": 2000, "svtype": "DEL"},  # Will be annotated
+                {"chrom": "chr1", "start": 5000, "stop": 6000, "svtype": "DUP"},  # Will be annotated
+                {"chrom": "chr1", "start": 8000, "stop": 9000, "svtype": "DEL"},  # Won't be annotated (no overlap)
+            ],
+            {"chr1": 10000},
+        )
+
+        # Create annotations
+        self.create_test_bed(
+            annotation_bed,
+            [
+                {"chrom": "chr1", "start": 500, "end": 1600, "annotation": "Telomere_Centromere"},
+                {"chrom": "chr1", "start": 5200, "end": 6500, "annotation": "Coverage-Mappability"},
+            ],
+        )
+
+        combine_cnmops_cnvpytor_cnv_calls.annotate_vcf_with_regions(
+            input_vcf,
+            annotation_bed,
+            output_vcf,
+            overlap_fraction=0.5,
+            genome=str(resources_dir / "Homo_sapiens_assembly38.fasta.fai"),
+        )
+
+        with pysam.VariantFile(output_vcf) as vcf:
+            records = list(vcf)
+            assert len(records) == 3
+
+            # First CNV: should be annotated
+            assert "REGION_ANNOTATIONS" in records[0].info
+            annotations = records[0].info["REGION_ANNOTATIONS"]
+            assert isinstance(annotations, tuple)
+            assert set(annotations) == {"Telomere_Centromere"}
+
+            # Second CNV: should be annotated
+            assert "REGION_ANNOTATIONS" in records[1].info
+            annotations = records[1].info["REGION_ANNOTATIONS"]
+            assert isinstance(annotations, tuple)
+            assert set(annotations) == {"Coverage-Mappability"}
+
+            # Third CNV: should not be annotated (no overlap)
+            assert "REGION_ANNOTATIONS" not in records[2].info
