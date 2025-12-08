@@ -90,28 +90,19 @@ When analyzing dependencies, look for these patterns:
 
 ## Response Format
 
-When suggesting a dependency change:
+When suggesting a dependency change, use this structure:
 
-```markdown
-## Analysis
-[Explain what you found about existing dependencies]
+**Analysis**
+- Explain what you found about existing dependencies
 
-## Recommendation
-**File**: `src/<module>/pyproject.toml`
+**Recommendation**
+- **File**: `src/<module>/pyproject.toml`
+- **Add to dependencies**: `"package>=x.y.z,<a.b.c"`
+- **Reasoning**: Explain why this placement and version
 
-**Add to dependencies**:
-```toml
-"package>=x.y.z,<a.b.c"
-```
-
-**Reasoning**: [Why this placement and version]
-
-## Considerations
-
-- [Any conflicts or notes]
-- [Alternative suggestions if applicable]
-
-```
+**Considerations**
+- Note any conflicts or trade-offs
+- Include alternative suggestions if applicable
 
 ## Key Principles
 
