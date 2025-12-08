@@ -3,10 +3,7 @@ name = "ugbio_ppmseq"
 version = "1.17.3-0"
 requires-python = ">=3.11"
 dependencies = [
-    "ugbio_core[vcfbed,reports]",
-    "seaborn>=0.13.2",
-    "pyarrow>=17.0.0",
-    "fastparquet>=2024.5.0",
+    "ugbio_core[vcfbed,reports,viz,parquet]",
 ]
 description = "Ultima Genomics ppmSeq utils"
 authors = [

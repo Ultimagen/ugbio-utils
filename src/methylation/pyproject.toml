@@ -7,8 +7,7 @@ authors = [
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
 ]
 dependencies = [
-    "ugbio_core[reports]",
-    "seaborn>=0.13.2",
+    "ugbio_core[reports,viz]",
 ]
 readme = "README.methylation.md"
 requires-python = ">=3.11"
