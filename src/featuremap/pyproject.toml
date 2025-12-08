@@ -3,10 +3,8 @@ name = "ugbio_featuremap"
 version = "1.17.3-0"
 requires-python = ">=3.11"
 dependencies = [
-    "ugbio_core[vcfbed]",
+    "ugbio_core[vcfbed,ml]",
     "ugbio_ppmseq",
-    "scikit-learn>=1.5.2,<1.6.0",
-    "xgboost==2.1.2",
     "polars>=1.27.1",
 ]
 description = "Ultima Genomics FeatureMap utils"

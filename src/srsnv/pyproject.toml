@@ -3,12 +3,9 @@ name = "ugbio_srsnv"
 version = "1.17.3-0"
 requires-python = ">=3.11"
 dependencies = [
-    "ugbio_core[vcfbed,reports]",
+    "ugbio_core[vcfbed,reports,ml]",
     "ugbio_ppmseq",
     "ugbio_featuremap",
-    "joblib>=1.4.2",
-    "xgboost==2.1.2",
-    "scikit-learn>=1.5.1,<1.6.0",
     "numba>=0.60.0",
     "shap>=0.46.0",
 ]
