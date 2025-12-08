@@ -177,7 +177,7 @@ def calc_percent_methylation(
 
         df_pcnt = df_pcnt.dropna(axis=0)
         if rel:  # get relative values
-            df_pcnt = df_pcnt.assign(value=df_pcnt["value"] / np.sum(df_pcnt["value"]))
+            df_pcnt.loc[:, "value"] = df_pcnt["value"] / np.sum(df_pcnt["value"])
 
         # add other metrics long format
         desc = x.describe()

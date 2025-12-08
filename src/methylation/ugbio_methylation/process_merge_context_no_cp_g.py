@@ -89,7 +89,7 @@ def run(argv: list[str] | None = None):
         # import CHG file
         df_chh_input = read_merge_context_file(args.input_chh, is_taps=args.taps)
 
-        pat = r"^chr"  # limit to the human genome chromosomes
+        pat = r"[^Lambda_NEB|pUC19]"  # limit to the human genome chromosomes
         idx_chg = df_chg_input.chr.str.contains(pat)
         if idx_chg.any(axis=None):
             df_chg = df_chg_input.loc[idx_chg, :].copy()
