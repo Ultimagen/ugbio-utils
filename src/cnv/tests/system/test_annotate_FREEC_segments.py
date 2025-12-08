@@ -32,10 +32,12 @@ class TestAnnotateFREECSegments:
                 str(gain_cutoff),
                 "--loss_cutoff",
                 str(loss_cutoff),
+                "--out_directory",
+                str(tmpdir),
             ]
         )
 
-        out_segments_annotated = os.path.basename(input_segments_file) + "_annotated.txt"
-        out_segments_cnvs = os.path.basename(input_segments_file) + "_CNVs.bed"
+        out_segments_annotated = pjoin(tmpdir, os.path.basename(input_segments_file) + "_annotated.txt")
+        out_segments_cnvs = pjoin(tmpdir, os.path.basename(input_segments_file) + "_CNVs.bed")
         assert filecmp.cmp(out_segments_annotated, expected_out_segments_annotated)
         assert filecmp.cmp(out_segments_cnvs, expected_out_segments_cnvs)
