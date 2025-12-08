@@ -1,7 +1,8 @@
 import logging
 import os
 import os.path
-import subprocess
+from os.path import dirname
+from os.path import join as pjoin
 
 import pysam
 from simppl.simple_pipeline import SimplePipeline
@@ -324,8 +325,6 @@ class VcfUtils:
         -------
         None | str
         """
-        from os.path import dirname
-        from os.path import join as pjoin
 
         removed_vcf_path = pjoin(dirname(output_vcf), "tmp.vcf")
         truvari_cmd = ["truvari", "collapse", "-i", vcf, "-c", removed_vcf_path, "--sizemax", "-1", "--chain"]
@@ -342,16 +341,22 @@ class VcfUtils:
         truvari_cmd.extend(["--refdist", str(int(refdist))])
 
         self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
-        p1 = subprocess.Popen(truvari_cmd, stdout=subprocess.PIPE)
-        p2 = subprocess.Popen(["bcftools", "view", "-Oz", "-o", output_vcf], stdin=p1.stdout)  # noqa: S607
-        if p1.stdout:
-            p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
-        p2.communicate()  # Wait for p2 to finish
-        p1.wait()  # Wait for p1 to finish
-        if p1.returncode != 0:
-            raise RuntimeError(f"truvari collapse failed with error code {p1.returncode}")
-        if p2.returncode != 0:
-            raise RuntimeError(f"bcftools view failed with error code {p2.returncode}")
+
+        bcftools_cmd = ["bcftools", "view", "-Oz", "-o", output_vcf]
+        complete_command = f"{' '.join(truvari_cmd)} | {' '.join(bcftools_cmd)}"
+        self.logger.info(f"Complete command: {complete_command}")
+        self.__execute(complete_command)
+        # p1 = subprocess.Popen(truvari_cmd, stdout=subprocess.PIPE)
+        # p2 = subprocess.Popen(["bcftools", "view", "-Oz", "-o", output_vcf], stdin=p1.stdout)  # noqa: S607
+        # if p1.stdout:
+        #     p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
+        # p2.communicate()  # Wait for p2 to finish
+        # p1.wait()  # Wait for p1 to finish
+        # if p1.returncode != 0:
+        #     raise RuntimeError(f"truvari collapse failed with error code {p1.returncode},
+        # raized p1.stderr: {p1.stderr}")
+        # if p2.returncode != 0:
+        #     raise RuntimeError(f"bcftools view failed with error code {p2.returncode}")
 
         # Parameterize the file path
         if erase_removed:
