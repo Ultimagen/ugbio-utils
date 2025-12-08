@@ -176,6 +176,7 @@ def test_run_pipeline(mocker):
         erase_outdir=True,
         ignore_filter=False,
         ignore_type=True,
+        skip_collapse=False,
     )
     mock_to_hdf.assert_called()
 
@@ -258,6 +259,7 @@ def test_run_pipeline_ignore_filter(mocker):
         erase_outdir=True,
         ignore_filter=True,
         ignore_type=True,
+        skip_collapse=False,
     )
 
 

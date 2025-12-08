@@ -30,14 +30,6 @@ INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
         "the tool called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
         "INFO",
     ),
-    "JUMP_ALIGNMENTS": ("JUMP_ALIGNMENTS", 1, "Float", "Number of jump alignments supporting this CNV", "INFO"),
-    "CNMOPS_SAMPLE_MEAN": (
-        "CNMOPS_SAMPLE_MEAN",
-        1,
-        "Float",
-        "Mean coverage in the CNV region for the sample (cn.mops)",
-        "INFO",
-    ),
     "CNMOPS_SAMPLE_STDEV": (
         "CNMOPS_SAMPLE_STDEV",
         1,
@@ -364,8 +356,6 @@ def _get_possible_column_names(original_col: str) -> list[str]:
     possible_cols = [original_col]
     if original_col == "CNV_SOURCE":
         possible_cols.append("CNV_calls_source")
-    elif original_col == "JUMP_ALIGNMENTS":
-        possible_cols.append("jalign_written")
     return possible_cols
 
 
