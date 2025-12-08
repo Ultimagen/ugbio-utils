@@ -3,7 +3,7 @@ name = "ugbio_mrd"
 version = "1.17.3-0"
 requires-python = ">=3.11"
 dependencies = [
-    "ugbio_core[vcfbed,reports]",
+    "ugbio_core[vcfbed,reports,viz]",
     "ugbio_ppmseq",
     "ugbio_featuremap",
 ]
