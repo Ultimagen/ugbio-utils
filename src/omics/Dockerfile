@@ -17,8 +17,7 @@ FROM python:3.11-slim
 ARG OUT_DIR
 
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
-
-COPY --from=build $(find ${OUT_DIR} -name "*.whl") && \
+RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
     pip install "${WHEEL_FILE}[db]" && \
     rm -rf ${OUT_DIR}
 
