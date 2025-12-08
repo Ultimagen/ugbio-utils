@@ -18,102 +18,69 @@ Help users add, update, or verify dependencies across all ugbio modules while:
 ### Architecture
 
 - **Root**: `pyproject.toml` with workspace configuration and dev-dependencies
-- **Core**: `src/core/ugbio_core` - Foundation package with optional extras:
-  - `vcfbed`: VCF processing tools (pybigwig, tqdm, bgzip, truvari, pytest-mock)
-  - `reports`: Report generation (papermill, jupyter, nbconvert)
-  - `concordance`: Concordance analysis (scikit-learn)
-- **Members**: Specialized modules in `src/*/` - some depend on ugbio_core, others are standalone
+- **Core**: `src/core/ugbio_core` - Foundation package with base dependencies (data science/genomics stack) and optional extras for specialized functionality
+- **Members**: Specialized modules in `src/*/` organized by functionality:
+  - **Heavy modules**: Depend on ugbio_core + extras (e.g., ppmseq, featuremap, srsnv, cnv)
+  - **Pipeline modules**: Build on other members (e.g., filtering → comparison → ugbio_core)
+  - **Standalone modules**: Minimal dependencies, no ugbio_core (e.g., cloud_utils, omics, freec, pypgx)
 
-### Dependency Hierarchy
+### Dependency Patterns
 
-```text
-ugbio_core (foundation)
-  ├── pandas, numpy, pysam, matplotlib, scipy, h5py, pyfaidx, simppl
-  └── extras: vcfbed, reports, concordance
+**Before suggesting consolidation, ALWAYS:**
+1. Read the actual pyproject.toml files to see current state
+2. Count how many dependencies a module would actually use vs. inherit
+3. Check if extras exist that match the module's needs
 
-ugbio_ppmseq → ugbio_core[vcfbed,reports]
-  └── seaborn, pyarrow, fastparquet
+## Decision Framework
 
-ugbio_featuremap → ugbio_core[vcfbed] + ugbio_ppmseq
-  └── scikit-learn, xgboost, polars
+### Step 1: Understand the Request
+- Which module needs the dependency?
+- What package and version is needed?
+- What's the use case?
 
-ugbio_comparison → ugbio_core[concordance,vcfbed]
-  └── joblib
+### Step 2: Gather Context (ALWAYS read files first)
+- Read the target module's `pyproject.toml`
+- Search for the package across all workspace pyproject.toml files
+- Check ugbio_core's base dependencies and available extras
 
-ugbio_filtering → ugbio_comparison
-  └── xgboost, pickle-secure, biopython, dill
+### Step 3: Analyze Consolidation Potential
 
-ugbio_mrd → ugbio_core[vcfbed,reports] + ugbio_ppmseq + ugbio_featuremap
+**For adding a new dependency:**
+- Used in 1-2 modules → Keep module-specific
+- Used in 3+ modules → Consider ugbio_core extra if thematically related
+- Specialized/heavy packages (ML, cloud) → Prefer extras over base
 
-ugbio_srsnv → ugbio_core[vcfbed,reports] + ugbio_ppmseq + ugbio_featuremap
-  └── joblib, xgboost, scikit-learn, numba, shap
+**For suggesting a module depend on parent:**
+- **Calculate utilization**: Count dependencies module would use / total parent base dependencies
+- **Apply 50% rule**: Only consolidate if ≥ 50% utilization
+- **Check extras**: Can extras reduce bloat? (e.g., ugbio_core[ml] vs. full ugbio_core)
+- **Lightweight modules** (1-3 deps) → Usually stay standalone
 
-ugbio_cnv → ugbio_core[vcfbed]
-  └── seaborn, cnvpytor, setuptools, fastparquet, pyarrow
+### Step 4: Version Consistency
+- All instances of a package should have compatible version constraints
+- Add upper bounds for stability (`<major+1.0.0`)
+- Pin exact versions for ML packages when reproducibility is critical
 
-ugbio_methylation → ugbio_core[reports]
-  └── seaborn
+### Step 5: Make Recommendation
+- Specify exact file(s) to modify
+- Show exact pyproject.toml changes
+- **Explain the math**: Show utilization calculation if suggesting consolidation
+- Note any trade-offs or considerations
 
-ugbio_single_cell → ugbio_core[reports]
-  └── bio, seaborn
+## Common Dependency Categories
 
-ugbio_cloud_utils (standalone)
-  └── boto3, google-cloud-storage, pysam
+When analyzing dependencies, look for these patterns:
 
-ugbio_omics (standalone)
-  └── plotly, google-cloud-storage, boto3, pandas, winval
+- **Data Science Core**: pandas, numpy, scipy, matplotlib, h5py → typically in ugbio_core base
+- **Genomics Core**: pysam, pyfaidx → typically in ugbio_core base
+- **VCF/Genomics Tools**: VCF processing utilities → often in ugbio_core extras
+- **Visualization**: plotting libraries → often in ugbio_core extras
+- **ML/Training**: scikit-learn, xgboost, joblib → often in ugbio_core extras
+- **Data Formats**: parquet, arrow, HDF5 → may be in ugbio_core extras
+- **Cloud**: boto3, google-cloud-storage → typically module-specific or standalone
+- **Specialized Tools**: domain-specific packages → module-specific
 
-ugbio_freec (standalone)
-  └── pandas, pyfaidx
-
-ugbio_pypgx (minimal wrapper)
-```
-
-## Workflow for Dependency Requests
-
-1. **Understand the Request**
-   - Which module needs the dependency?
-   - What package and version is needed?
-   - What's it used for?
-
-2. **Check Existing Coverage**
-   - Is it already in ugbio_core base dependencies?
-   - Is it in a ugbio_core extra the module already uses?
-   - Is it inherited from another workspace dependency?
-
-3. **Analyze Usage Pattern**
-   - How many modules would benefit from this dependency?
-   - If multiple modules need it, suggest adding to ugbio_core or creating an extra
-   - If specific to one or two modules, add it there
-
-3a. **Avoid Dependency Bloat (CRITICAL)**
-   - Before suggesting a module depend on ugbio_core or another workspace member, calculate the cost/benefit:
-     - **Count**: How many dependencies would the module actually use vs. how many it would inherit?
-     - **Rule**: Only suggest parent dependency if module uses ≥50% of parent's base dependencies
-     - **Example - BAD**: freec only needs pandas + pyfaidx (2 deps) → ugbio_core has 8 base deps → 25% utilization = keep standalone
-     - **Example - GOOD**: ppmseq needs pandas, numpy, pysam, matplotlib, pyfaidx (5+ deps) → 60%+ utilization = use ugbio_core
-   - Lightweight modules (1-3 deps) should usually stay standalone
-   - Consider extras: If module needs pandas but not scipy/h5py, maybe it shouldn't depend on ugbio_core base
-
-4. **Version Alignment**
-   - Check if the package is used elsewhere with different version constraints
-   - Ensure consistency (e.g., xgboost==2.1.2 across all modules)
-   - Respect upper bounds for stability
-
-5. **Make Recommendation**
-   - Specify exact file to modify
-   - Provide exact pyproject.toml change
-   - Explain reasoning
-   - Note any conflicts or considerations
-
-## Common Patterns
-
-- **Data Science Core**: pandas, numpy, scipy, matplotlib → ugbio_core
-- **Genomics Core**: pysam, pyfaidx → ugbio_core
-- **VCF Processing**: truvari, bgzip, tqdm → ugbio_core[vcfbed]
-- **Visualization**: seaborn → module-specific (multiple modules use it)
-- **ML**: scikit-learn, xgboost → module-specific with version alignment
-- **Cloud**: boto3, google-cloud-storage → module-specific or standalone
+**Always check the actual ugbio_core pyproject.toml to see what's available before recommending changes.**
 
 ## Version Constraints Strategy
 
@@ -159,40 +126,31 @@ When suggesting a dependency change:
   - Standalone is often better for lightweight utilities
   - Adding proper version constraints (`<3.0.0`) is better than inheriting everything
 
-## Example Interactions
+## Example Decision-Making Process
 
-**User**: "I need to add requests to ppmseq"
+**User**: "I need to add <package> to <module>"
 
-**You**:
+**Your Process**:
+1. Read `src/<module>/pyproject.toml` to understand current dependencies
+2. Search for `<package>` across all pyproject.toml files to check for existing usage
+3. If used in 3+ modules: Consider ugbio_core extra (if thematically related)
+4. If used in 1-2 modules: Keep module-specific with version constraints
+5. Suggest specific changes with reasoning
 
-1. Read `src/ppmseq/pyproject.toml`
-2. Check if requests is used elsewhere
-3. Suggest adding `requests>=2.31.0,<3.0.0` to ppmseq dependencies
-4. Explain it's module-specific, no duplication found
+**User**: "Should <module> depend on ugbio_core (or another member)?"
 
-**User**: "Should seaborn be moved to ugbio_core?"
+**Your Process**:
+1. Read `src/<module>/pyproject.toml` - count its current dependencies
+2. Read `src/core/pyproject.toml` (or parent) - count base dependencies and available extras
+3. Calculate overlap: How many dependencies would the module actually use?
+4. Apply 50% rule: If < 50% utilization → recommend staying standalone
+5. If ≥ 50% utilization → check if appropriate extras exist, suggest consolidation
+6. **Always explain the math**: "Module uses X out of Y base deps = Z% utilization"
 
-**You**:
+**User**: "Check for version conflicts with <package>"
 
-1. Check all modules using seaborn
-2. Analyze: Multiple modules use it (cnv, methylation, mrd, ppmseq, single_cell, srsnv)
-3. Suggest: Could create `ugbio_core[viz]` extra with seaborn
-4. Or keep module-specific since not all modules need it
-
-**User**: "Check xgboost versions"
-
-**You**:
-
-1. Search for xgboost across all pyproject.toml files
-2. Report: featuremap, filtering, srsnv all use `==2.1.2` ✅
-3. Confirm: Versions are aligned, no action needed
-
-**User**: "Should freec depend on ugbio_core?"
-
-**You**:
-
-1. Read freec's dependencies: pandas, pyfaidx (2 packages)
-2. Read ugbio_core base dependencies: 8 packages (pandas, numpy, pysam, matplotlib, scipy, h5py, pyfaidx, simppl)
-3. Calculate: freec would only use 2 out of 8 = 25% utilization
-4. **Recommend**: NO - Keep freec standalone with proper version constraints
-5. Reasoning: Adding ugbio_core would force 6 unnecessary heavy scientific packages
+**Your Process**:
+1. Search all pyproject.toml files for the package
+2. List all version constraints found
+3. Identify conflicts or missing upper bounds
+4. Suggest standardization if needed
