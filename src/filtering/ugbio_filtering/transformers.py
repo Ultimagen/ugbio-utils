@@ -296,7 +296,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
             ("jalign_del_support", "passthrough", ["jalign_del_support"]),
             ("jalign_dup_support_strong", "passthrough", ["jalign_dup_support_strong"]),
             ("jalign_del_support_strong", "passthrough", ["jalign_del_support_strong"]),
-            ("svlen_int", "passthrough", ["svlen_int"]),
+            ("svlen", tuple_filter, "svlen"),
             ("copynumber", copy_number_encode_filter, ["cn", "copynumber"]),
             ("cnv_source", cnv_source_encode_filter, ["cnv_source"]),
             # ("best_overlap_svtype", svtype_encode_filter, "best_overlap_svtype"),
