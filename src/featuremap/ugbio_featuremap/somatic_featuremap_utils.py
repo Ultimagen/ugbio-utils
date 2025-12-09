@@ -14,10 +14,10 @@ def _create_variant_bed(merged_vcf, bed_file):
     sp.print_and_run(cmd_bcftools, out=bed_file)
 
 
-def _find_closest_tandem_repeats(bed1, bed2, output_file):
+def _find_closest_tandem_repeats(bed1, bed2, genome_file, output_file):
     """Find closest tandem repeats for each variant."""
     sp = SimplePipeline(0, 1)
-    cmd = f"bedtools closest -D ref -a {bed1} -b {bed2} | cut -f1,3,5-10"
+    cmd = f"bedtools closest -D ref -g {genome_file} -a {bed1} -b {bed2} | cut -f1,3,5-10"
     sp.print_and_run(cmd, out=output_file)
 
 
@@ -59,7 +59,7 @@ def _prepare_annotation_files(tmpdir, tr_tsv_file):
     return gz_tsv, hdr_file
 
 
-def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
+def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, genome_file, out_dir):
     """
     Integrate tandem repeat features into a VCF file.
 
@@ -72,6 +72,8 @@ def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
         Path to the input VCF file (gzipped) containing variants to be annotated.
     ref_tr_file : str
         Path to the reference tandem repeat BED file containing tandem repeat regions.
+    genome_file : str
+        Path to the reference genome FASTA index file (.fai).
     out_dir : str
         Output directory where the annotated VCF file and temporary files will be written.
 
@@ -98,7 +100,7 @@ def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, out_dir):
 
         # Find closest tandem repeats
         bed1_with_closest_tr_tsv = pjoin(tmpdir, "merged_vcf.tmp.TRdata.tsv")
-        _find_closest_tandem_repeats(bed1, ref_tr_file, bed1_with_closest_tr_tsv)
+        _find_closest_tandem_repeats(bed1, ref_tr_file, genome_file, bed1_with_closest_tr_tsv)
 
         # Prepare annotation files
         gz_tsv, hdr_file = _prepare_annotation_files(tmpdir, bed1_with_closest_tr_tsv)

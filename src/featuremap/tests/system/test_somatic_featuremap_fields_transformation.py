@@ -18,6 +18,7 @@ class TestSomaticFeaturemapFieldsTransformation:
         somatic_featuremap_vcf = pjoin(resources_dir, "Pa_46.tumor_normal.merged.tumor_PASS.mpileup_PASS.chr19.vcf.gz")
         ref_tr_file = pjoin(resources_dir, "tr_hg38.chr19.bed")
         interval_list_bed_file = pjoin(resources_dir, "wgs_calling_regions.hg38.chr19_test.interval_list.bed")
+        genome_file = pjoin(resources_dir, "Homo_sapiens_assembly38.fasta.fai")
         filter_string = "PASS"
         out_dir = tmpdir
         out_file = pjoin(out_dir, "Pa_46.tumor_normal.merged.tumor_PASS.mpileup_PASS.chr19.xgb_proba.vcf.gz")
@@ -38,6 +39,8 @@ class TestSomaticFeaturemapFieldsTransformation:
                 filter_string,
                 "-ref_tr",
                 ref_tr_file,
+                "-g",
+                genome_file,
             ]
         )
 
@@ -104,6 +107,7 @@ class TestSomaticFeaturemapFieldsTransformation:
         out_dir = tmpdir
         model_file = pjoin(resources_dir, "HG006_HG003.v1.23.5pGenome.t_alt_reads_2-10.json")
         out_file = pjoin(out_dir, "Pa_46.tumor_normal.merged.tumor_PASS.mpileup_PASS.chr19.xgb_proba.vcf.gz")
+        genome_file = pjoin(resources_dir, "Homo_sapiens_assembly38.fasta.fai")
 
         # Run the script's main function
         somatic_featuremap_fields_transformation.run(
@@ -119,6 +123,8 @@ class TestSomaticFeaturemapFieldsTransformation:
                 ref_tr_file,
                 "-xgb_model",
                 model_file,
+                "-g",
+                genome_file,
             ]
         )
 

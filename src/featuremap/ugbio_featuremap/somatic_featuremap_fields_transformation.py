@@ -611,6 +611,13 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         help="""genomic regions BED file""",
     )
     parser.add_argument(
+        "-g",
+        "--genome_file",
+        type=str,
+        required=True,
+        help="""Genome FASTA index (.fai) file""",
+    )
+    parser.add_argument(
         "-ref_tr",
         "--ref_tr_file",
         type=str,
@@ -649,7 +656,9 @@ def run(argv):
 
     # add tandem repeat features
     out_dir = dirname(args_in.output_vcf)
-    sfm_with_tr = integrate_tandem_repeat_features(args_in.somatic_featuremap, args_in.ref_tr_file, out_dir)
+    sfm_with_tr = integrate_tandem_repeat_features(
+        args_in.somatic_featuremap, args_in.ref_tr_file, args_in.genome_file, out_dir
+    )
 
     featuremap_fields_aggregation_on_an_interval_list(
         sfm_with_tr,
