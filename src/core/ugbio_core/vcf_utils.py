@@ -346,17 +346,6 @@ class VcfUtils:
         complete_command = f"{' '.join(truvari_cmd)} | {' '.join(bcftools_cmd)}"
         self.logger.info(f"Complete command: {complete_command}")
         self.__execute(complete_command)
-        # p1 = subprocess.Popen(truvari_cmd, stdout=subprocess.PIPE)
-        # p2 = subprocess.Popen(["bcftools", "view", "-Oz", "-o", output_vcf], stdin=p1.stdout)  # noqa: S607
-        # if p1.stdout:
-        #     p1.stdout.close()  # Allow p1 to receive a SIGPIPE if p2 exits.
-        # p2.communicate()  # Wait for p2 to finish
-        # p1.wait()  # Wait for p1 to finish
-        # if p1.returncode != 0:
-        #     raise RuntimeError(f"truvari collapse failed with error code {p1.returncode},
-        # raized p1.stderr: {p1.stderr}")
-        # if p2.returncode != 0:
-        #     raise RuntimeError(f"bcftools view failed with error code {p2.returncode}")
 
         # Parameterize the file path
         if erase_removed:
