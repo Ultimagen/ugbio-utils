@@ -65,15 +65,32 @@ def train_model(
     x_train_df = pd.DataFrame(transformer.fit_transform(df_train))
     _validate_data(x_train_df)
     logger.info("Transform: done")
-    clf = xgboost.XGBClassifier(
-        n_estimators=100,
-        learning_rate=0.15,
-        subsample=0.4,
-        max_depth=6,
-        random_state=0,
-        colsample_bytree=0.4,
-        n_jobs=14,
-    )
+    if vtype != VcfType.CNV:
+        clf = xgboost.XGBClassifier(
+            n_estimators=100,
+            learning_rate=0.15,
+            subsample=0.4,
+            max_depth=6,
+            random_state=0,
+            colsample_bytree=0.4,
+            n_jobs=14,
+        )
+    else:
+        clf = xgboost.XGBClassifier(
+            objective="binary:logistic",
+            eval_metric="logloss",
+            max_depth=2,
+            min_child_weight=15,
+            subsample=0.6,
+            colsample_bytree=0.6,
+            learning_rate=0.01,
+            gamma=3,
+            reg_alpha=2.0,
+            reg_lambda=10.0,
+            random_state=42,
+            n_estimators=200,
+        )
+
     clf.fit(x_train_df, labels_train)
     return clf, transformer
 
@@ -133,6 +150,7 @@ def eval_model(
     df: pd.DataFrame,  # noqa PD901
     model: xgboost.XGBClassifier,
     transformer: compose.ColumnTransformer,
+    vtype: VcfType,
     *,
     add_testing_group_column: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -147,6 +165,8 @@ def eval_model(
         Model
     transformer: compose.ColumnTransformer
         Data prep transformer
+    vtype: VcfType
+        The type of the input vcf
     add_testing_group_column: bool
         Should default testing grouping be added (default: True),
         if False will look for grouping in `group_testing`
@@ -183,15 +203,22 @@ def eval_model(
         select = df["label"].apply(lambda x: x in {0, 1})
     elif gt_type == GtType.EXACT:
         select = df["label"].apply(lambda x: x in {(0, 0), (0, 1), (1, 1), (1, 0)})
+    else:
+        raise ValueError("Unknown gt_type")
     labels = labels[select]
     if gt_type == GtType.EXACT:
         labels = np.array(transformers.label_encode.transform(list(labels))) > 0
         df["predict"] = df["predict"] > 0
 
     df = df.loc[select]  # noqa PD901
-    result = evaluate_results(
-        df, pd.Series(list(labels), index=df.index), add_testing_group_column=add_testing_group_column
-    )
+
+    if vtype == VcfType.CNV:
+        df["group_testing"] = df["svtype"]
+        result = evaluate_results(df, pd.Series(list(labels), index=df.index), add_testing_group_column=False)
+    else:
+        result = evaluate_results(
+            df, pd.Series(list(labels), index=df.index), add_testing_group_column=add_testing_group_column
+        )
     if isinstance(result, tuple):
         return result
     raise RuntimeError("Unexpected result")

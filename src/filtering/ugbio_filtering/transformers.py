@@ -301,7 +301,8 @@ def modify_features_based_on_vcf_type(  # noqa C901
             ("cnv_source", cnv_source_encode_filter, ["cnv_source"]),
             # ("best_overlap_svtype", svtype_encode_filter, "best_overlap_svtype"),
         ]
-        features = [x[0] for x in transform_list]
+        features = [[x[2]] if type(x[2]) is str else x[2] for x in transform_list]
+        features = sum(features, [])
 
     else:
         raise ValueError("Unrecognized VCF type")
