@@ -32,9 +32,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     ap_var.add_argument("--call_vcf", help="Call VCF file", type=str, required=True)
     ap_var.add_argument("--base_vcf", help="Truth VCF file", type=str, required=True)
-    ap_var.add_argument(
-        "--reference", help="Reference file prefix. Requires .fai,and .sdf folder", type=str, required=False
-    )
     ap_var.add_argument("--hcr", help="High confidence regions BED file", type=str, required=False)
     ap_var.add_argument(
         "--custom_annotations",

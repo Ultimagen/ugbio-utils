@@ -38,9 +38,9 @@ def test_prepare_ground_truth(tmpdir, resources_dir):
 # Test file paths
 
 
-def test_training_prep_cnv_with_ignore_filter_true(tmpdir, resources_dir):
+def test_training_prep_cnv(tmpdir, resources_dir):
     """
-    Test training_prep_cnv with ignore_filter=True
+    Test training_prep_cnv
 
     This test verifies that the function correctly processes CNV data
     when ignoring FILTER fields, which is the typical use case for
@@ -50,7 +50,7 @@ def test_training_prep_cnv_with_ignore_filter_true(tmpdir, resources_dir):
     base_vcf = str(resources_dir / "GRCh38_HG2-T2TQ100-V1.1_stvar.ge1000.vcf.gz")
     hcr_bed = str(resources_dir / "GRCh38_HG2-T2TQ100-V1.1_stvar.benchmark.bed")
 
-    output_prefix = str(tmpdir / "cnv_training_ignore_filter")
+    output_prefix = str(tmpdir / "cnv_training")
 
     # Custom annotations to extract from the VCF
     custom_annotations = [
@@ -73,12 +73,13 @@ def test_training_prep_cnv_with_ignore_filter_true(tmpdir, resources_dir):
         train_fraction=0.7,
         output_prefix=output_prefix,
         ignore_cnv_type=True,
+        skip_collapse=False,
     )
 
     # Verify output files were created
-    train_file = Path(tmpdir) / "cnv_training_ignore_filter.train.h5"
-    test_file = Path(tmpdir) / "cnv_training_ignore_filter.test.h5"
-    concordance_file = Path(tmpdir) / "cnv_training_ignore_filter_concordance.h5"
+    train_file = Path(tmpdir) / "cnv_training.train.h5"
+    test_file = Path(tmpdir) / "cnv_training.test.h5"
+    concordance_file = Path(tmpdir) / "cnv_training.concordance.h5"
 
     assert train_file.exists(), f"Training file not created: {train_file}"
     assert test_file.exists(), f"Test file not created: {test_file}"
@@ -100,5 +101,5 @@ def test_training_prep_cnv_with_ignore_filter_true(tmpdir, resources_dir):
     assert train_label_dist[0] > train_label_dist[1], "Training set should have more FP (0) than TP (1)"
 
     # Verify specific counts match expected values for this test data
-    assert train_label_dist[0] == 1766, f"Expected 1766 FP in training set, got {train_label_dist[0]}"
-    assert train_label_dist[1] == 642, f"Expected 642 TP in training set, got {train_label_dist[1]}"
+    assert train_label_dist[0] == 1926, f"Expected 1926 FP in training set, got {train_label_dist[0]}"
+    assert train_label_dist[1] == 482, f"Expected 482 TP in training set, got {train_label_dist[1]}"
