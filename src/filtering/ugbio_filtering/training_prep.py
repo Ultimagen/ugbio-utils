@@ -444,4 +444,4 @@ def training_prep_cnv(
     test_set = concordance_df.iloc[int(concordance_df.shape[0] * train_fraction) :]
     train_set.to_hdf(str(dname / Path(stemname + ".train.h5")), key="train", mode="w")
     test_set.to_hdf(str(dname / Path(stemname + ".test.h5")), key="test", mode="w")
-    # TODO: ignore_cnv_type is True, but can be used downstream to correct the labels if needed
+    # TODO: ignore_cnv_type is False, but can be used downstream to correct the labels if needed
