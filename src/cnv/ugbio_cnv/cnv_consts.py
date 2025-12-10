@@ -17,6 +17,13 @@ INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
         "the tool called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
         "INFO",
     ),
+    "CNMOPS_SAMPLE_MEAN": (
+        "CNMOPS_SAMPLE_MEAN",
+        1,
+        "Float",
+        "Mean coverage in the CNV region for the sample (cn.mops)",
+        "INFO",
+    ),
     "CNMOPS_SAMPLE_STDEV": (
         "CNMOPS_SAMPLE_STDEV",
         1,
