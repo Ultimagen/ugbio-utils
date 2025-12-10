@@ -47,6 +47,18 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap_var.add_argument(
         "--recalibrate_genotype", help="Use if the model allows to re-call genotype", default=False, action="store_true"
     )
+    ap_var.add_argument(
+        "--overwrite_qual_tag",
+        help="Write the score to QUAL field in addition to TREE_SCORE/GQ",
+        default=False,
+        action="store_true",
+    )
+    ap_var.add_argument(
+        "--decision_threshold",
+        help="Decision threshold for filtering variants (default: 30)",
+        type=float,
+        default=30.0,
+    )
 
     ap_var.add_argument(
         "--ref_fasta", help="Reference FASTA file (only required for multiallelic treatment)", required=False, type=str
@@ -159,14 +171,18 @@ def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many
                     logger.info("Writing records")
                     for i, rec in tqdm.tqdm(enumerate(chunk)):
                         if args.model_file is not None:
-                            if quals[i] <= 30:  # noqa PLR2004
+                            if quals[i] <= args.decision_threshold:
                                 if "PASS" in rec.filter.keys():
                                     del rec.filter["PASS"]
                                 rec.filter.add("LOW_SCORE")
                             if not args.recalibrate_genotype:
                                 rec.info["TREE_SCORE"] = float(quals[i])
+                                if args.overwrite_qual_tag:
+                                    rec.qual = float(quals[i])
                             else:
                                 rec.samples[0]["GQ"] = int(gq[i])
+                                if args.overwrite_qual_tag:
+                                    rec.qual = float(gq[i])
                                 assert rec.alleles is not None  # noqa S101
                                 rec.samples[0]["PL"] = [
                                     int(x) for x in phreds[i, : (len(rec.alleles) + 1) * len(rec.alleles) // 2]
