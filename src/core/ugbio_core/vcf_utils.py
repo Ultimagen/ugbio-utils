@@ -365,8 +365,8 @@ class VcfUtils:
         input_vcf: str,
         output_vcf: str,
         annotation_file: str,
-        header_file: str = None,
-        columns: str = None,
+        header_file: str | None = None,
+        columns: str | None = None,
         n_threads: int = 1,
         extra_args: str = "",
     ) -> None:

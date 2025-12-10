@@ -1,15 +1,7 @@
-import argparse
-import logging
-import statistics
-import subprocess
-import sys
 import warnings
-from os.path import join as pjoin
 
-import numpy as np
 import pandas as pd
 import pysam
-from ugbio_core.logger import logger
 
 warnings.filterwarnings("ignore")
 
@@ -172,52 +164,6 @@ def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHead
     return header
 
 
-def read_cnv_annotated_file_to_df(cnv_annotated_bed_file: str) -> pd.DataFrame:
-    """
-    Read an annotated CNV file and return a DataFrame.
-
-    Parameters
-    ----------
-    cnv_annotated_bed_file : str
-        Path to the input annotated CNV file.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame containing the CNV data from the file.
-    """
-    df_cnvs = pd.read_csv(cnv_annotated_bed_file, sep="\t")
-    df_cnvs = df_cnvs.rename(columns={"#chr": "chr"})
-    return df_cnvs
-
-
-def calculate_copy_number(copy_number: str | int) -> float | str | None:
-    """
-    Calculate the average copy number from a string of copy number values.
-
-    Parameters
-    ----------
-    copy_number : str or int
-        A string containing copy number values separated by commas, or an integer value.
-
-    Returns
-    -------
-    float or str or None
-        The average copy number as a float, or the original string if it is a float or symbolic.
-    """
-    if isinstance(copy_number, str):
-        cn_list = copy_number.split(",")
-        cn_list_filtered = [float(item) for item in cn_list if item not in (["DUP", "DEL"])]
-
-        if len(cn_list_filtered) > 0:
-            copy_number_value = statistics.mean(cn_list_filtered)
-        else:
-            copy_number_value = None
-    else:
-        copy_number_value = float(copy_number)
-    return copy_number_value
-
-
 def process_filter_columns(
     row: pd.Series,
     filter_columns_registry: list = FILTER_COLUMNS_REGISTRY,
@@ -261,33 +207,6 @@ def process_filter_columns(
 
     # Return 'PASS' if no filters, otherwise return comma-separated filter list
     return "PASS" if len(unique_filters) == 0 else ",".join(sorted(unique_filters))
-
-
-def prepare_cnv_dataframe(cnv_annotated_bed_file: str) -> pd.DataFrame:
-    """
-    Prepare CNV dataframe for VCF output by processing filters and calculating derived fields.
-
-    Parameters
-    ----------
-    cnv_annotated_bed_file : str
-        Path to the input file containing combined CNV calls and annotated with UG-CNV-LCR.
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame containing the processed CNV data ready for VCF conversion.
-    """
-    df_cnvs = read_cnv_annotated_file_to_df(cnv_annotated_bed_file)
-    df_cnvs[FILTER_ANNOTATION_NAME] = df_cnvs.apply(process_filter_columns, axis=1)
-    df_cnvs["filter"] = "PASS"
-    df_cnvs["CopyNumber"] = df_cnvs["copy_number"].apply(calculate_copy_number).replace(np.nan, None)
-    df_cnvs["RoundedCopyNumber"] = df_cnvs["CopyNumber"].apply(
-        lambda x: int(round(x)) if isinstance(x, float) else pd.NA
-    )
-    df_cnvs["RoundedCopyNumber"] = df_cnvs["RoundedCopyNumber"].astype("Int64")
-    df_cnvs["SVLEN"] = df_cnvs["end"] - df_cnvs["start"]
-    df_cnvs["SVTYPE"] = df_cnvs["CNV_type"]
-    return df_cnvs
 
 
 def _create_base_vcf_record(vcf_out: pysam.VariantFile, row: pd.Series) -> pysam.VariantRecord:
@@ -513,77 +432,3 @@ def write_cnv_vcf(outfile: str, cnv_df: pd.DataFrame, sample_name: str, fasta_in
 
             # Write the completed record to the VCF file
             vcf_out.write(record)
-
-
-def run(argv):
-    """
-    Converts combined CNV calls (from cnmops, cnvpytor, gridss) and outputs VCF file.
-
-    Parameters
-    ----------
-    argv : list
-        Command line arguments.
-
-    Notes
-    -----
-    Input arguments:
-    --cnv_annotated_bed_file: input file holding CNV calls.
-    --fasta_index_file: (.fai file) tab delimeted file holding reference genome chr ids with their lengths.
-    --out_directory: output directory
-    --sample_name: sample name
-
-    Output files:
-    vcf file: <sample_name>.cnv.vcf.gz
-        shows called CNVs in zipped vcf format.
-    vcf index file: <sample_name>.cnv.vcf.gz.tbi
-        vcf corresponding index file.
-    """
-    parser = argparse.ArgumentParser(
-        prog="convert_combined_cnv_results_to_output_formats.py", description="converts CNV calls to VCF."
-    )
-
-    parser.add_argument("--cnv_annotated_bed_file", help="input file holding CNV calls", required=True, type=str)
-    parser.add_argument(
-        "--fasta_index_file",
-        help="tab delimeted file holding reference genome chr ids with their lengths. (.fai file)",
-        required=True,
-        type=str,
-    )
-    parser.add_argument("--out_directory", help="output directory", required=False, type=str)
-    parser.add_argument("--sample_name", help="sample name", required=True, type=str)
-    parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO")
-
-    args = parser.parse_args(argv[1:])
-    logger.setLevel(getattr(logging, args.verbosity))
-
-    # Prepare output file path
-    if args.out_directory:
-        out_directory = args.out_directory
-    else:
-        out_directory = ""
-    out_vcf_file = pjoin(out_directory, args.sample_name + ".cnv.vcf.gz")
-
-    # Process CNV data and write VCF
-    cnv_df = prepare_cnv_dataframe(args.cnv_annotated_bed_file)
-    write_cnv_vcf(out_vcf_file, cnv_df, args.sample_name, args.fasta_index_file)
-
-    # index outfile
-    try:
-        cmd = ["bcftools", "index", "-t", out_vcf_file]
-        subprocess.check_call(cmd)
-    except subprocess.CalledProcessError as e:
-        logging.error(f"bcftools index command failed with exit code: {e.returncode}")
-        sys.exit(1)  # Exit with error status
-
-    logger.info(f"output file: {out_vcf_file}")
-    logger.info(f"output file index: {out_vcf_file}.tbi")
-
-    return out_vcf_file
-
-
-def main():
-    run(sys.argv)
-
-
-if __name__ == "__main__":
-    main()

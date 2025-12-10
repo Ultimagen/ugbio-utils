@@ -1,111 +1,63 @@
-from os.path import join as pjoin
-from pathlib import Path
-
 import pandas as pd
 import pytest
-from ugbio_cnv import convert_combined_cnv_results_to_output_formats
 from ugbio_cnv.convert_combined_cnv_results_to_output_formats import process_filter_columns
-from ugbio_core.test_utils import compare_vcfs
 
 
-@pytest.fixture
-def resources_dir():
-    return Path(__file__).parent.parent / "resources"
+class TestProcessFilterColumns:
+    """Tests for process_filter_columns function."""
 
-
-def compare_strings_ignoring_order(str1, str2, delimiter=","):
-    set1 = sorted(str1.split(delimiter))
-    set2 = sorted(str2.split(delimiter))
-    return set1 == set2
-
-
-class TestConvertCombinedCnvResultsToOutputFormats:
+    # Define test registries for use across all test methods
     test_filter_columns_registry = ["jalign_filter", "LCR_label_value"]
     test_filter_tag_registry = {
-        "Clusters": ("Clusters", None, None, "Overlaps with locations with frequent clusters of CNV", "FILTER"),
-        "Coverage-Mappability": (
-            "Coverage-Mappability",
-            None,
-            None,
-            "Overlaps with low coverage or low mappability regions",
-            "FILTER",
-        ),
-        "Telomere_Centromere": (
-            "Telomere_Centromere",
-            None,
-            None,
-            "Overlaps with telomere or centromere regions",
-            "FILTER",
-        ),
-        "NO_JUMP_ALIGNMENT": ("NO_JUMP_ALIGNMENT", None, None, "No jump alignment support", "FILTER"),
-        "Filter1": ("Filter1", None, None, "Test Filter 1", "FILTER"),
-        "Filter2": ("Filter2", None, None, "Test Filter 2", "FILTER"),
-        "Filter3": ("Filter3", None, None, "Test Filter 3", "FILTER"),
+        "LowQual": ("LowQual", None, None, "Low quality filter", "FILTER"),
+        "HighCoverage": ("HighCoverage", None, None, "High coverage filter", "FILTER"),
+        "LCR": ("LCR", None, None, "Low complexity region", "FILTER"),
     }
 
-    def test_single_filter_value(self):
+    def test_process_filter_columns_single_filter(self):
         """Test processing a single filter value."""
-        row = pd.Series({"jalign_filter": "NO_JUMP_ALIGNMENT", "LCR_label_value": "."})
+        row = pd.Series({"jalign_filter": "LowQual", "LCR_label_value": "PASS"})
         result = process_filter_columns(
             row,
             filter_columns_registry=self.test_filter_columns_registry,
             filter_tags_registry=self.test_filter_tag_registry,
         )
-        assert compare_strings_ignoring_order(result, "NO_JUMP_ALIGNMENT")
+        assert result == "LowQual"
 
-    def test_multiple_filters_pipe_separator(self):
-        """Test processing multiple filter values separated by |."""
-        row = pd.Series({"jalign_filter": "Filter1|Filter2", "LCR_label_value": "PASS"})
+    def test_process_filter_columns_multiple_filters(self):
+        """Test processing multiple filter values from different columns."""
+        row = pd.Series({"jalign_filter": "LowQual", "LCR_label_value": "HighCoverage"})
         result = process_filter_columns(
             row,
             filter_columns_registry=self.test_filter_columns_registry,
             filter_tags_registry=self.test_filter_tag_registry,
         )
-        assert compare_strings_ignoring_order(result, "Filter1,Filter2")
+        # Should be sorted and comma-separated
+        assert result == "HighCoverage,LowQual"
 
-    def test_multiple_filters_comma_separator(self):
-        """Test processing multiple filter values separated by ,."""
-        row = pd.Series({"jalign_filter": "Filter1;Filter2", "LCR_label_value": "."})
+    def test_process_filter_columns_pipe_separated(self):
+        """Test processing pipe-separated filter values in a single column."""
+        row = pd.Series({"jalign_filter": "LowQual|HighCoverage", "LCR_label_value": "PASS"})
         result = process_filter_columns(
             row,
             filter_columns_registry=self.test_filter_columns_registry,
             filter_tags_registry=self.test_filter_tag_registry,
         )
-        assert compare_strings_ignoring_order(result, "Filter1,Filter2")
+        assert result == "HighCoverage,LowQual"
 
-    def test_mixed_separators(self):
-        """Test processing values with mixed | and , separators."""
-        row = pd.Series({"jalign_filter": "Filter1|Filter2;Filter3", "LCR_label_value": "PASS"})
+    def test_process_filter_columns_semicolon_separated(self):
+        """Test processing semicolon-separated filter values in a single column."""
+        row = pd.Series({"jalign_filter": "LowQual;HighCoverage", "LCR_label_value": "PASS"})
         result = process_filter_columns(
             row,
             filter_columns_registry=self.test_filter_columns_registry,
             filter_tags_registry=self.test_filter_tag_registry,
         )
-        assert compare_strings_ignoring_order(result, "Filter1,Filter2,Filter3")
+        assert result == "HighCoverage,LowQual"
 
-    def test_duplicate_filter_removal(self):
-        """Test that duplicate filters are removed."""
-        row = pd.Series({"jalign_filter": "Filter1|Filter1", "LCR_label_value": "Filter1"})
-        result = process_filter_columns(
-            row,
-            filter_columns_registry=self.test_filter_columns_registry,
-            filter_tags_registry=self.test_filter_tag_registry,
-        )
-        assert result == "Filter1"
-
-    def test_excluded_values_filtered_out(self):
-        """Test that PASS, ., and nan values are filtered out."""
-        row = pd.Series({"jalign_filter": "Filter1|PASS|.", "LCR_label_value": "PASS"})
-        result = process_filter_columns(
-            row,
-            filter_columns_registry=self.test_filter_columns_registry,
-            filter_tags_registry=self.test_filter_tag_registry,
-        )
-        assert result == "Filter1"
-
-    def test_all_excluded_values_returns_pass(self):
-        """Test that when all values are excluded, PASS is returned."""
-        row = pd.Series({"jalign_filter": "PASS", "LCR_label_value": "."})
+    def test_process_filter_columns_pass_only(self):
+        """Test that PASS values are filtered out and result is PASS."""
+        row = pd.Series({"jalign_filter": "PASS", "LCR_label_value": "PASS"})
         result = process_filter_columns(
             row,
             filter_columns_registry=self.test_filter_columns_registry,
@@ -113,48 +65,22 @@ class TestConvertCombinedCnvResultsToOutputFormats:
         )
         assert result == "PASS"
 
-    def test_empty_values_returns_pass(self):
-        """Test that empty/null values return PASS."""
-        row = pd.Series({"jalign_filter": None, "LCR_label_value": pd.NA})
+    def test_process_filter_columns_duplicates_removed(self):
+        """Test that duplicate filter values are removed."""
+        row = pd.Series({"jalign_filter": "LowQual|LowQual", "LCR_label_value": "LowQual"})
         result = process_filter_columns(
             row,
             filter_columns_registry=self.test_filter_columns_registry,
             filter_tags_registry=self.test_filter_tag_registry,
         )
-        assert result == "PASS"
+        assert result == "LowQual"
 
-    def test_filters_from_multiple_columns(self):
-        """Test combining filters from multiple columns."""
-        row = pd.Series({"jalign_filter": "Filter1", "LCR_label_value": "Filter2|Filter3"})
-        result = process_filter_columns(
-            row,
-            filter_columns_registry=self.test_filter_columns_registry,
-            filter_tags_registry=self.test_filter_tag_registry,
-        )
-        assert compare_strings_ignoring_order(result, "Filter1,Filter2,Filter3")
-
-    def test_real_world_example(self):
-        """Test with realistic filter values."""
-        row = pd.Series({"jalign_filter": "NO_JUMP_ALIGNMENT", "LCR_label_value": "Coverage-Mappability|Clusters"})
-        result = process_filter_columns(
-            row,
-            filter_columns_registry=self.test_filter_columns_registry,
-            filter_tags_registry=self.test_filter_tag_registry,
-        )
-        assert compare_strings_ignoring_order(result, "NO_JUMP_ALIGNMENT,Coverage-Mappability,Clusters")
-
-    def test_write_combined_vcf(self, tmpdir, resources_dir):
-        sample_name = "TEST_HG002_chr19"
-        cnv_annotated_bed_file = pjoin(
-            resources_dir, "expected_test_HG002.cnmops_cnvpytor.cnvs.combined.bed.annotate.bed"
-        )
-
-        fasta_index_file = pjoin(resources_dir, "chr19.fasta.fai")
-        outfile = pjoin(tmpdir, f"{sample_name}.cnv.vcf.gz")
-
-        # Use the new workflow - prepare dataframe and write VCF
-        cnv_df = convert_combined_cnv_results_to_output_formats.prepare_cnv_dataframe(cnv_annotated_bed_file)
-        convert_combined_cnv_results_to_output_formats.write_cnv_vcf(outfile, cnv_df, sample_name, fasta_index_file)
-
-        expected_vcf_file = pjoin(resources_dir, "expected_test_HG002.legacy.cnv.vcf.gz")
-        compare_vcfs(expected_vcf_file, outfile)
+    def test_process_filter_columns_unknown_filter_raises_error(self):
+        """Test that unknown filter values raise a ValueError."""
+        row = pd.Series({"jalign_filter": "UnknownFilter", "LCR_label_value": "PASS"})
+        with pytest.raises(ValueError, match="Unknown filter values found"):
+            process_filter_columns(
+                row,
+                filter_columns_registry=self.test_filter_columns_registry,
+                filter_tags_registry=self.test_filter_tag_registry,
+            )
