@@ -82,6 +82,10 @@ def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many
     logger = logging.getLogger(__name__)
 
     try:
+        model = None
+        transformer = None
+        blacklists = None
+
         if args.model_file is not None:
             logger.info(f"Loading model from {args.model_file}")
             with open(args.model_file, "rb") as model_file:
@@ -120,6 +124,7 @@ def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many
                         continue
                     logger.info(f"{vcf_df.shape[0]} variants found on {contig}")
                     if args.blacklist is not None:
+                        assert blacklists is not None  # noqa S101
                         blacklist_app = [x.apply(vcf_df) for x in blacklists]
                         blacklist = merge_blacklists(blacklist_app)
                         logger.info("Applying blacklist")
@@ -132,6 +137,7 @@ def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many
                         logger.info("Marking CG insertions")
 
                     if args.model_file is not None:
+                        df_original = None
                         if args.treat_multiallelics:
                             df_original = vcf_df.copy()
                             logger.info("Processing multiallelics -> pre-classifier")
@@ -139,11 +145,12 @@ def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many
                                 vcf_df, args.ref_fasta, str(contig), args.input_file
                             )
                         logger.info("Applying classifier")
+                        assert model is not None and transformer is not None  # noqa S101
                         _, scores = variant_filtering_utils.apply_model(vcf_df, model, transformer)
 
                         if args.treat_multiallelics:
                             logger.info("Treating multiallelics -> post-classifier")
-
+                            assert df_original is not None  # noqa S101
                             set_source = [x in df_original.index for x in vcf_df.index]
                             set_dest = [x in vcf_df.index for x in df_original.index]
                             df_original["ml_lik"] = pd.Series(
@@ -167,19 +174,27 @@ def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many
                             phreds[np.arange(phreds.shape[0]), tmp[:, 1]]
                             - phreds[np.arange(phreds.shape[0]), tmp[:, 0]]
                         )
+                    else:
+                        # Initialize variables when model is not used
+                        quals = None
+                        gq = None
+                        phreds = None
 
                     logger.info("Writing records")
                     for i, rec in tqdm.tqdm(enumerate(chunk)):
                         if args.model_file is not None:
+                            assert quals is not None  # noqa S101
                             if quals[i] <= args.decision_threshold:
                                 if "PASS" in rec.filter.keys():
                                     del rec.filter["PASS"]
                                 rec.filter.add("LOW_SCORE")
                             if not args.recalibrate_genotype:
+                                assert quals is not None  # noqa S101
                                 rec.info["TREE_SCORE"] = float(quals[i])
                                 if args.overwrite_qual_tag:
                                     rec.qual = float(quals[i])
                             else:
+                                assert gq is not None and phreds is not None  # noqa S101
                                 rec.samples[0]["GQ"] = int(gq[i])
                                 if args.overwrite_qual_tag:
                                     rec.qual = float(gq[i])
