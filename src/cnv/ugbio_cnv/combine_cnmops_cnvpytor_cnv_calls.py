@@ -9,6 +9,7 @@ from os.path import join as pjoin
 import pysam
 import ugbio_core.misc_utils as mu
 from pyfaidx import Fasta
+from ugbio_cnv.cnv_consts import FILTER_TAG_REGISTRY, INFO_TAG_REGISTRY
 from ugbio_cnv.combine_cnv_vcf_utils import (
     cnv_vcf_to_bed,
     combine_vcf_headers_for_cnv,
@@ -16,7 +17,6 @@ from ugbio_cnv.combine_cnv_vcf_utils import (
     update_vcf_contigs,
     write_vcf_records_with_source,
 )
-from ugbio_cnv.convert_combined_cnv_results_to_output_formats import FILTER_TAG_REGISTRY, INFO_TAG_REGISTRY
 from ugbio_core.bed_utils import BedUtils
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils

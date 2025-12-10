@@ -1,102 +1,16 @@
+"""Utilities for processing and writing CNV calls from cn.mops and other CNV callers."""
+
 import warnings
 
 import pandas as pd
 import pysam
-
-warnings.filterwarnings("ignore")
-
-# NOTE: both the id and the column name should appear in the registry
-# (after converting table to BED the names are as in the VCF)
-INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
-    "CNV_calls_source": (
-        "CNV_SOURCE",
-        1,
-        "String",
-        "the tool called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
-        "INFO",
-    ),
-    "CNV_SOURCE": (
-        "CNV_SOURCE",
-        ".",
-        "String",
-        "the tool called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
-        "INFO",
-    ),
-    "CNMOPS_SAMPLE_STDEV": (
-        "CNMOPS_SAMPLE_STDEV",
-        1,
-        "Float",
-        "Standard deviation of coverage in the CNV region for the sample (cn.mops)",
-        "INFO",
-    ),
-    "CNMOPS_COHORT_MEAN": (
-        "CNMOPS_COHORT_MEAN",
-        1,
-        "Float",
-        "Mean coverage in the CNV region across the cohort (cn.mops)",
-        "INFO",
-    ),
-    "CNMOPS_COHORT_STDEV": (
-        "CNMOPS_COHORT_STDEV",
-        1,
-        "Float",
-        "Standard deviation of coverage in the CNV region across the cohort (cn.mops)",
-        "INFO",
-    ),
-    "GAP_PERC": ("GAP_PERC", 1, "Float", "Fraction of N bases in the CNV region from reference genome", "INFO"),
-}
-
-# the reason filters require special treatment is that they need to be
-# unique and should be PASS if none present. In the end filter tags are added to info
-# All columns from FILTER_COLUMNS_REGISTRY are aggregated into a single INFO field FILTER_ANNOTATION_NAME
-FILTER_COLUMNS_REGISTRY = ["LCR_label_value"]
-FILTER_ANNOTATION_NAME = "REGION_ANNOTATIONS"
-INFO_TAG_REGISTRY[FILTER_ANNOTATION_NAME] = (
-    "REGION_ANNOTATIONS",
-    ".",
-    "String",
-    "Aggregated region-based annotations for the CNV (e.g., LCR status and other region filters)",
-    "INFO",
+from ugbio_cnv.cnv_consts import (
+    FILTER_COLUMNS_REGISTRY,
+    FILTER_TAG_REGISTRY,
+    INFO_TAG_REGISTRY,
 )
 
-FILTER_TAG_REGISTRY = {
-    "Clusters": ("Clusters", None, None, "Overlaps with locations with frequent clusters of CNV", "FILTER"),
-    "Coverage-Mappability": (
-        "Coverage-Mappability",
-        None,
-        None,
-        "Overlaps with low coverage or low mappability regions",
-        "FILTER",
-    ),
-    "Telomere_Centromere": (
-        "Telomere_Centromere",
-        None,
-        None,
-        "Overlaps with telomere or centromere regions",
-        "FILTER",
-    ),
-    "LEN": (
-        "LEN",
-        None,
-        None,
-        "CNV length is below the minimum length threshold (cn.mops)",
-        "FILTER",
-    ),
-    "UG-CNV-LCR": (
-        "UG-CNV-LCR",
-        None,
-        None,
-        "Overlaps with low-complexity regions as defined by UGBio CNV module",
-        "FILTER",
-    ),
-    "CNMOPS_SHORT_DUPLICATION": (
-        "CNMOPS_SHORT_DUPLICATION",
-        None,
-        None,
-        "Duplication length is shorter than the defined threshold in cn.mops calls.",
-        "FILTER",
-    ),
-}
+warnings.filterwarnings("ignore")
 
 
 def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHeader:
@@ -432,3 +346,151 @@ def write_cnv_vcf(outfile: str, cnv_df: pd.DataFrame, sample_name: str, fasta_in
 
             # Write the completed record to the VCF file
             vcf_out.write(record)
+
+
+def merge_filter_files(original_bed: str, filter_files: list[str], output_file: str) -> None:
+    """Merges multiple filter bed files into a single sorted bed file.
+
+    Parameters
+    ----------
+    original_bed : str
+        Original bed: four columns (chr, start, end, copy-number)
+    filter_files : list[str]
+        BED files with filters added to merge. Each file should have four columns (chr, start, end, CN2|LEN etc.)
+        Some lines are empty
+    output_file : str
+        Output file: filters will be combined by ;, if all filters are empty, the result will be just CN
+    """
+    original_bed_df = pd.read_csv(original_bed, sep="\t", header=None, names=["chr", "start", "end", "copy-number"])
+    original_bed_df = original_bed_df.set_index(["chr", "start", "end"])
+    filter_dfs = []
+    for filter_file in filter_files:
+        filter_df = pd.read_csv(filter_file, sep="\t", header=None, names=["chr", "start", "end", "filter"])
+        filter_df = filter_df.set_index(["chr", "start", "end"])
+        filter_dfs.append(filter_df)
+    merged_df = pd.concat((original_bed_df, *filter_dfs), axis=1, join="outer").fillna("")
+    cols = ["copy-number"] + [f"filter_{i}" for i in range(len(filter_dfs))]
+    merged_df.columns = cols
+    merged_df["combine_filters"] = merged_df[cols[1:]].apply(lambda x: ";".join([y for y in x if y]), axis=1)
+    merged_df["combined_cn"] = merged_df.apply(
+        lambda x: x["copy-number"] if x["combine_filters"] == "" else x["combine_filters"], axis=1
+    )
+    merged_df = merged_df.reset_index()
+    merged_df.to_csv(output_file, sep="\t", header=False, index=False, columns=["chr", "start", "end", "combined_cn"])
+
+
+def aggregate_annotations_in_df(
+    primary_bed_file: str, coverage_annotations: list[tuple[str, str, str]]
+) -> pd.DataFrame:
+    """
+    Aggregate multiple annotation bed files into a single DataFrame.
+
+    This function reads a primary bed file and merges coverage annotations from multiple
+    bed files into a single DataFrame. The primary bed file's 4th column contains
+    semicolon-separated annotations, each of which has a copy number and optional filters.
+    The copy number is extracted as an integer, and filters are stored as a tuple.
+
+    Parameters
+    ----------
+    primary_bed_file : str
+        Path to the primary bed file with 4 columns (chr, start, end, annotation).
+        The 4th column contains annotations like "CN2", "CN3|UG-CNV-LCR", or
+        "CN1|LEN;CN1|UG-CNV-LCR" (semicolon-separated, CN is always the same).
+    coverage_annotations : list of tuple
+        List of tuples, each containing (sample_name, operation, bed_file_path).
+        Example: [('cov', 'mean', 'file1.bed'), ('cov', 'std', 'file2.bed')]
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns: chr, start, end, CopyNumber (int), FILTER (tuple),
+        and additional columns for each coverage annotation (e.g., CNMOPS_SAMPLE_MEAN,
+        CNMOPS_SAMPLE_STDEV, CNMOPS_COHORT_MEAN, CNMOPS_COHORT_STD).
+
+    Notes
+    -----
+    - All bed files are assumed to have the same regions in the same order
+    - The function performs sorting to ensure proper alignment
+    - Coverage annotation column names are formatted as CNMOPS_{SAMPLE}_{OPERATION}
+      in uppercase (e.g., CNMOPS_SAMPLE_MEAN)
+    - CopyNumber is converted to an integer by removing the "CN" prefix
+    - filter is a tuple of filter names (("PASS",) tuple when no filters present)
+    """
+    # Read the primary bed file (no header, 4 columns)
+    cnv_df = pd.read_csv(primary_bed_file, sep="\t", header=None, names=["chr", "start", "end", "annotation"])
+
+    # Sort the DataFrame to ensure consistent ordering
+    cnv_df = cnv_df.sort_values(["chr", "start", "end"]).reset_index(drop=True)
+
+    # Parse the annotation column
+    # Format: "CN2", "CN3|UG-CNV-LCR", or "CN1|LEN;CN1|UG-CNV-LCR"
+    def parse_annotation(annotation_str):
+        # Split by semicolon to get all annotations
+        parts = annotation_str.split(";")
+
+        # Extract copy number from first part (remove "CN" prefix)
+        first_part = parts[0].split("|")
+        copy_number = float(first_part[0].replace("CN", ""))
+
+        # Collect all filters from all parts
+        filters = []
+        for part in parts:
+            part_items = part.split("|")
+            # Skip the CN part (first item) and add any filters
+            filters.extend(part_items[1:])
+
+        # Return copy number and tuple of filters (PASS tuple if no filters)
+        return copy_number, ",".join(filters) if filters else "PASS"
+
+    neutral = 2
+    cnv_df[["CopyNumber", "filter"]] = cnv_df["annotation"].apply(lambda x: pd.Series(parse_annotation(x)))
+    cnv_df["SVTYPE"] = cnv_df["CopyNumber"].apply(
+        lambda x: "DUP" if x > neutral else ("DEL" if x < neutral else "NEUTRAL")
+    )
+    cnv_df = cnv_df.drop(columns=["annotation"])
+
+    # Process each coverage annotation file
+    for sample_name, operation, bed_file_path in coverage_annotations:
+        # Read the coverage annotation bed file
+        cov_df = pd.read_csv(bed_file_path, sep="\t", header=None)
+
+        # Assign column names for sorting
+        cov_df.columns = ["chrom", "start", "end", "name", "cov"]
+
+        # Sort to match the primary bed file (first 3 columns are chr, start, end)
+        cov_df = cov_df.sort_values(by=["chrom", "start", "end"]).reset_index(drop=True)
+
+        # Extract the last column (the coverage value)
+        coverage_values = cov_df["cov"]
+
+        # Create column name in the format CNMOPS_{SAMPLE}_{OPERATION} (uppercase)
+        col_name = f"CNMOPS_{sample_name.upper()}_{operation.upper()}"
+
+        # Add the coverage values as a new column
+        cnv_df[col_name] = coverage_values.to_numpy()
+
+    return cnv_df
+
+
+def add_ids(cnmops_cnv_df: pd.DataFrame) -> pd.DataFrame:
+    """Add IDs to the CNV DataFrame in the format cnmops_<svtype>_<count>.
+
+    Parameters
+    ----------
+    cnmops_cnv_df : pd.DataFrame
+        Input
+
+    Returns
+    -------
+    pd.DataFrame
+        Output, ID added
+    """
+    # Add IDs in the format cnmops_<svtype>_<count>
+    svtype_counts = {}
+    ids = []
+    for _, row in cnmops_cnv_df.iterrows():
+        svtype = row["SVTYPE"].lower()
+        svtype_counts[svtype] = svtype_counts.get(svtype, 0) + 1
+        ids.append(f"cnmops_{svtype}_{svtype_counts[svtype]}")
+    cnmops_cnv_df["ID"] = ids
+    return cnmops_cnv_df
