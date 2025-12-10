@@ -294,6 +294,7 @@ class VcfUtils:
         *,
         ignore_filter: bool = False,
         ignore_sv_type: bool = True,
+        pick_best: bool = False,
         erase_removed: bool = True,
     ) -> str | None:
         """
@@ -317,6 +318,8 @@ class VcfUtils:
             If True, ignore FILTER field (remove truvari's --passonly flag), by default False
         ignore_sv_type : bool, optional
             If True, ignore SVTYPE when collapsing variants, by default True
+        pick_best : bool, optional
+            If True, pick the best variant among those being merged, by default False, pick first
         erase_removed: bool, optional
             If True, delete the temporary file with removed variants, by default True,
             if not return the location of the file
@@ -333,7 +336,10 @@ class VcfUtils:
             truvari_cmd.append("--passonly")
         if ignore_sv_type:
             truvari_cmd.append("-t")
-
+        if pick_best:
+            truvari_cmd.extend(["--pick", "maxqual"])
+        else:
+            truvari_cmd.extend(["--pick", "first"])
         if bed:
             truvari_cmd.extend(["--bed", bed])
         truvari_cmd.extend(["--pctseq", str(pctseq)])

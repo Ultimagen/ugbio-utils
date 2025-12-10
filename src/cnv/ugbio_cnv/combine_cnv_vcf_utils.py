@@ -238,7 +238,15 @@ def cnv_vcf_to_bed(input_vcf: str, output_bed: str, *, assign_id=True) -> None:
                 bed_out.write(f"{record.contig}\t{record.start}\t{record.stop}\n")
 
 
-def merge_cnvs_in_vcf(input_vcf: str, output_vcf: str, distance: int = 1000) -> None:
+def merge_cnvs_in_vcf(
+    input_vcf: str,
+    output_vcf: str,
+    distance: int = 1000,
+    *,
+    ignore_sv_type: bool = False,
+    ignore_filter: bool = True,
+    pick_best: bool = False,
+) -> None:
     """
     Merge CNV variants in a VCF file that are within a specified distance.
 
@@ -250,7 +258,12 @@ def merge_cnvs_in_vcf(input_vcf: str, output_vcf: str, distance: int = 1000) -> 
         Path to the output VCF file where merged variants will be written.
     distance : int, optional
         Maximum distance between CNV variants to consider them for merging, by default 1000.
-
+    ignore_sv_type : bool, optional
+        Whether to ignore SVTYPE when collapsing variants, by default False.
+    ignore_filter: bool, optional
+        Whether to ignore FILTER status when collapsing variants, by default True.
+    pick_best : bool, optional
+        Whether to pick the best variant among those being merged (or the first: False), by default False.
     Returns
     -------
     None
@@ -265,8 +278,9 @@ def merge_cnvs_in_vcf(input_vcf: str, output_vcf: str, distance: int = 1000) -> 
         refdist=distance,
         pctseq=0.0,
         pctsize=0.0,
-        ignore_filter=True,
-        ignore_sv_type=False,
+        ignore_filter=ignore_filter,
+        ignore_sv_type=ignore_sv_type,
+        pick_best=pick_best,
         erase_removed=False,
     )
     temporary_files.append(str(removed_vcf))

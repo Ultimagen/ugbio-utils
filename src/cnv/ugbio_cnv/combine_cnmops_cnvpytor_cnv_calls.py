@@ -99,10 +99,10 @@ def __parse_args_merge_records(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output_vcf", help="Output VCF file with merged CNV calls", required=True, type=str)
     parser.add_argument(
         "--distance",
-        help="Distance threshold for merging CNV segments (default: 1500)",
+        help="Distance threshold for merging CNV segments (default: 0)",
         required=False,
         type=int,
-        default=1500,
+        default=0,
     )
 
 
