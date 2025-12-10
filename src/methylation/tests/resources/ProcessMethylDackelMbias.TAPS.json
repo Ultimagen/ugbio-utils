@@ -5,15 +5,15 @@
         [
           {
             "metric": "PercentMethylation_mean",
-            "value": 0.4813850151770692
+            "value": 0.5186149848229308
           },
           {
             "metric": "PercentMethylation_std",
-            "value": 0.10813683852153314
+            "value": 0.10813683852153315
           },
           {
             "metric": "PercentMethylation_median",
-            "value": 0.5227982510930669
+            "value": 0.4772017489069332
           }
         ],
         {
@@ -24,1443 +24,1443 @@
           "values": [
             [
               "PercentMethylationPosition_1",
-              0.5309902241138525
+              0.4690097758861475
             ],
             [
               "PercentMethylationPosition_2",
-              0.5587955100857391
+              0.44120448991426087
             ],
             [
               "PercentMethylationPosition_3",
-              0.5199713887738584
+              0.4800286112261416
             ],
             [
               "PercentMethylationPosition_4",
-              0.5558985371091129
+              0.44410146289088714
             ],
             [
               "PercentMethylationPosition_5",
-              0.5416118032344104
+              0.4583881967655897
             ],
             [
               "PercentMethylationPosition_6",
-              0.5451492055290014
+              0.4548507944709986
             ],
             [
               "PercentMethylationPosition_7",
-              0.5468776075564901
+              0.4531223924435099
             ],
             [
               "PercentMethylationPosition_8",
-              0.5483601286173634
+              0.45163987138263667
             ],
             [
               "PercentMethylationPosition_9",
-              0.5495112622184445
+              0.45048873778155546
             ],
             [
               "PercentMethylationPosition_10",
-              0.5450193152177502
+              0.4549806847822498
             ],
             [
               "PercentMethylationPosition_11",
-              0.5467704901667165
+              0.4532295098332834
             ],
             [
               "PercentMethylationPosition_12",
-              0.5517734268523751
+              0.44822657314762493
             ],
             [
               "PercentMethylationPosition_13",
-              0.5459882583170255
+              0.45401174168297453
             ],
             [
               "PercentMethylationPosition_14",
-              0.5549325161374454
+              0.4450674838625546
             ],
             [
               "PercentMethylationPosition_15",
-              0.5489594450373533
+              0.4510405549626467
             ],
             [
               "PercentMethylationPosition_16",
-              0.5522494029561738
+              0.44775059704382625
             ],
             [
               "PercentMethylationPosition_17",
-              0.5537962362102531
+              0.4462037637897469
             ],
             [
               "PercentMethylationPosition_18",
-              0.5438991005084083
+              0.4561008994915917
             ],
             [
               "PercentMethylationPosition_19",
-              0.5471177194558094
+              0.45288228054419055
             ],
             [
               "PercentMethylationPosition_20",
-              0.5494666319760635
+              0.4505333680239365
             ],
             [
               "PercentMethylationPosition_21",
-              0.5479552950971915
+              0.45204470490280846
             ],
             [
               "PercentMethylationPosition_22",
-              0.5481228228615662
+              0.4518771771384337
             ],
             [
               "PercentMethylationPosition_23",
-              0.5461676159479252
+              0.4538323840520749
             ],
             [
               "PercentMethylationPosition_24",
-              0.5494865354656153
+              0.4505134645343846
             ],
             [
               "PercentMethylationPosition_25",
-              0.5513127253006668
+              0.4486872746993333
             ],
             [
               "PercentMethylationPosition_26",
-              0.5424884970558899
+              0.4575115029441102
             ],
             [
               "PercentMethylationPosition_27",
-              0.5452846000128924
+              0.4547153999871076
             ],
             [
               "PercentMethylationPosition_28",
-              0.5497176608035309
+              0.45028233919646915
             ],
             [
               "PercentMethylationPosition_29",
-              0.5457223319198524
+              0.4542776680801476
             ],
             [
               "PercentMethylationPosition_30",
-              0.5437359098228663
+              0.45626409017713365
             ],
             [
               "PercentMethylationPosition_31",
-              0.5474118625631839
+              0.4525881374368162
             ],
             [
               "PercentMethylationPosition_32",
-              0.55087131155318
+              0.44912868844681997
             ],
             [
               "PercentMethylationPosition_33",
-              0.5402339368690915
+              0.4597660631309085
             ],
             [
               "PercentMethylationPosition_34",
-              0.543136
+              0.456864
             ],
             [
               "PercentMethylationPosition_35",
-              0.5447183440769654
+              0.45528165592303455
             ],
             [
               "PercentMethylationPosition_36",
-              0.5440911431513903
+              0.45590885684860966
             ],
             [
               "PercentMethylationPosition_37",
-              0.5492581035470929
+              0.4507418964529071
             ],
             [
               "PercentMethylationPosition_38",
-              0.5469149439798011
+              0.45308505602019883
             ],
             [
               "PercentMethylationPosition_39",
-              0.5469385182617464
+              0.45306148173825356
             ],
             [
               "PercentMethylationPosition_40",
-              0.5452097683155918
+              0.45479023168440824
             ],
             [
               "PercentMethylationPosition_41",
-              0.5464071856287425
+              0.4535928143712575
             ],
             [
               "PercentMethylationPosition_42",
-              0.5422063421170166
+              0.4577936578829835
             ],
             [
               "PercentMethylationPosition_43",
-              0.5502645502645502
+              0.4497354497354497
             ],
             [
               "PercentMethylationPosition_44",
-              0.5401761582244269
+              0.45982384177557317
             ],
             [
               "PercentMethylationPosition_45",
-              0.546232012118152
+              0.453767987881848
             ],
             [
               "PercentMethylationPosition_46",
-              0.5426278520849724
+              0.45737214791502756
             ],
             [
               "PercentMethylationPosition_47",
-              0.5497994124522223
+              0.45020058754777775
             ],
             [
               "PercentMethylationPosition_48",
-              0.5422028283857816
+              0.45779717161421835
             ],
             [
               "PercentMethylationPosition_49",
-              0.5468312187135976
+              0.4531687812864024
             ],
             [
               "PercentMethylationPosition_50",
-              0.5493339282299701
+              0.45066607177002993
             ],
             [
               "PercentMethylationPosition_51",
-              0.5444596879686054
+              0.45554031203139456
             ],
             [
               "PercentMethylationPosition_52",
-              0.5425467903854071
+              0.4574532096145929
             ],
             [
               "PercentMethylationPosition_53",
-              0.5416377734350375
+              0.4583622265649625
             ],
             [
               "PercentMethylationPosition_54",
-              0.548803812748879
+              0.45119618725112093
             ],
             [
               "PercentMethylationPosition_55",
-              0.5397809076682316
+              0.4602190923317684
             ],
             [
               "PercentMethylationPosition_56",
-              0.5509074606560925
+              0.44909253934390747
             ],
             [
               "PercentMethylationPosition_57",
-              0.5478847487548074
+              0.4521152512451926
             ],
             [
               "PercentMethylationPosition_58",
-              0.5440474695466533
+              0.4559525304533467
             ],
             [
               "PercentMethylationPosition_59",
-              0.536739904800933
+              0.4632600951990669
             ],
             [
               "PercentMethylationPosition_60",
-              0.5430969445492267
+              0.4569030554507733
             ],
             [
               "PercentMethylationPosition_61",
-              0.5453410981697171
+              0.45465890183028285
             ],
             [
               "PercentMethylationPosition_62",
-              0.5481015025874431
+              0.4518984974125569
             ],
             [
               "PercentMethylationPosition_63",
-              0.5528920653995762
+              0.44710793460042375
             ],
             [
               "PercentMethylationPosition_64",
-              0.5475569520816967
+              0.4524430479183032
             ],
             [
               "PercentMethylationPosition_65",
-              0.5412438364879911
+              0.45875616351200893
             ],
             [
               "PercentMethylationPosition_66",
-              0.5458367840988724
+              0.4541632159011276
             ],
             [
               "PercentMethylationPosition_67",
-              0.543696682464455
+              0.45630331753554504
             ],
             [
               "PercentMethylationPosition_68",
-              0.5501559988654628
+              0.4498440011345372
             ],
             [
               "PercentMethylationPosition_69",
-              0.5459704520956186
+              0.45402954790438144
             ],
             [
               "PercentMethylationPosition_70",
-              0.5482293951739267
+              0.45177060482607334
             ],
             [
               "PercentMethylationPosition_71",
-              0.5457275629880188
+              0.45427243701198117
             ],
             [
               "PercentMethylationPosition_72",
-              0.5515003798429983
+              0.4484996201570018
             ],
             [
               "PercentMethylationPosition_73",
-              0.5468990422358297
+              0.4531009577641702
             ],
             [
               "PercentMethylationPosition_74",
-              0.546050755631594
+              0.45394924436840606
             ],
             [
               "PercentMethylationPosition_75",
-              0.5398277717976319
+              0.46017222820236814
             ],
             [
               "PercentMethylationPosition_76",
-              0.5480020264707745
+              0.4519979735292255
             ],
             [
               "PercentMethylationPosition_77",
-              0.5422947274693125
+              0.45770527253068755
             ],
             [
               "PercentMethylationPosition_78",
-              0.5366785612783024
+              0.4633214387216977
             ],
             [
               "PercentMethylationPosition_79",
-              0.5466209349593496
+              0.4533790650406504
             ],
             [
               "PercentMethylationPosition_80",
-              0.5423431469490606
+              0.45765685305093934
             ],
             [
               "PercentMethylationPosition_81",
-              0.5405023900420263
+              0.4594976099579738
             ],
             [
               "PercentMethylationPosition_82",
-              0.5490962697090117
+              0.45090373029098835
             ],
             [
               "PercentMethylationPosition_83",
-              0.5454280060981543
+              0.45457199390184566
             ],
             [
               "PercentMethylationPosition_84",
-              0.5440549122750745
+              0.4559450877249254
             ],
             [
               "PercentMethylationPosition_85",
-              0.5411414905306703
+              0.4588585094693297
             ],
             [
               "PercentMethylationPosition_86",
-              0.5432874493927126
+              0.45671255060728744
             ],
             [
               "PercentMethylationPosition_87",
-              0.5425751515933428
+              0.4574248484066572
             ],
             [
               "PercentMethylationPosition_88",
-              0.5377793543809861
+              0.4622206456190138
             ],
             [
               "PercentMethylationPosition_89",
-              0.5412680395654289
+              0.4587319604345711
             ],
             [
               "PercentMethylationPosition_90",
-              0.5387352417920104
+              0.4612647582079896
             ],
             [
               "PercentMethylationPosition_91",
-              0.5403422178348141
+              0.45965778216518594
             ],
             [
               "PercentMethylationPosition_92",
-              0.5446915515495901
+              0.45530844845040985
             ],
             [
               "PercentMethylationPosition_93",
-              0.5445098039215687
+              0.4554901960784314
             ],
             [
               "PercentMethylationPosition_94",
-              0.5418457730884461
+              0.458154226911554
             ],
             [
               "PercentMethylationPosition_95",
-              0.5378450870077195
+              0.4621549129922805
             ],
             [
               "PercentMethylationPosition_96",
-              0.5416857236197321
+              0.4583142763802679
             ],
             [
               "PercentMethylationPosition_97",
-              0.5408001584472173
+              0.4591998415527827
             ],
             [
               "PercentMethylationPosition_98",
-              0.539056021758599
+              0.46094397824140104
             ],
             [
               "PercentMethylationPosition_99",
-              0.5387929594869911
+              0.4612070405130089
             ],
             [
               "PercentMethylationPosition_100",
-              0.53854599900183
+              0.46145400099817
             ],
             [
               "PercentMethylationPosition_101",
-              0.5408353285448257
+              0.45916467145517426
             ],
             [
               "PercentMethylationPosition_102",
-              0.5437595890867855
+              0.4562404109132146
             ],
             [
               "PercentMethylationPosition_103",
-              0.5417677758202307
+              0.45823222417976933
             ],
             [
               "PercentMethylationPosition_104",
-              0.5379479264528251
+              0.46205207354717487
             ],
             [
               "PercentMethylationPosition_105",
-              0.5362090363264348
+              0.4637909636735652
             ],
             [
               "PercentMethylationPosition_106",
-              0.5370307050536826
+              0.46296929494631744
             ],
             [
               "PercentMethylationPosition_107",
-              0.5393389278986128
+              0.46066107210138724
             ],
             [
               "PercentMethylationPosition_108",
-              0.5367239280400379
+              0.4632760719599621
             ],
             [
               "PercentMethylationPosition_109",
-              0.5377590806484712
+              0.46224091935152883
             ],
             [
               "PercentMethylationPosition_110",
-              0.5340951731195633
+              0.46590482688043666
             ],
             [
               "PercentMethylationPosition_111",
-              0.5400589404427387
+              0.45994105955726133
             ],
             [
               "PercentMethylationPosition_112",
-              0.5376875734734804
+              0.4623124265265196
             ],
             [
               "PercentMethylationPosition_113",
-              0.5390792661820699
+              0.4609207338179301
             ],
             [
               "PercentMethylationPosition_114",
-              0.5357494375703037
+              0.4642505624296963
             ],
             [
               "PercentMethylationPosition_115",
-              0.5353369253376251
+              0.46466307466237494
             ],
             [
               "PercentMethylationPosition_116",
-              0.5368275959567399
+              0.46317240404326004
             ],
             [
               "PercentMethylationPosition_117",
-              0.5338841209358641
+              0.4661158790641359
             ],
             [
               "PercentMethylationPosition_118",
-              0.5392308775883927
+              0.4607691224116073
             ],
             [
               "PercentMethylationPosition_119",
-              0.5314819418303207
+              0.46851805816967934
             ],
             [
               "PercentMethylationPosition_120",
-              0.5361662685822253
+              0.4638337314177748
             ],
             [
               "PercentMethylationPosition_121",
-              0.5362096630415404
+              0.4637903369584596
             ],
             [
               "PercentMethylationPosition_122",
-              0.5387155831568367
+              0.4612844168431633
             ],
             [
               "PercentMethylationPosition_123",
-              0.5334245785909811
+              0.46657542140901886
             ],
             [
               "PercentMethylationPosition_124",
-              0.5359833248007021
+              0.4640166751992979
             ],
             [
               "PercentMethylationPosition_125",
-              0.5344746631993355
+              0.46552533680066455
             ],
             [
               "PercentMethylationPosition_126",
-              0.538659793814433
+              0.46134020618556704
             ],
             [
               "PercentMethylationPosition_127",
-              0.5428697377121446
+              0.4571302622878554
             ],
             [
               "PercentMethylationPosition_128",
-              0.5338624921912322
+              0.4661375078087679
             ],
             [
               "PercentMethylationPosition_129",
-              0.532892277790237
+              0.46710772220976304
             ],
             [
               "PercentMethylationPosition_130",
-              0.5399267946515276
+              0.4600732053484724
             ],
             [
               "PercentMethylationPosition_131",
-              0.5330270170924463
+              0.46697298290755374
             ],
             [
               "PercentMethylationPosition_132",
-              0.5305601441657907
+              0.46943985583420933
             ],
             [
               "PercentMethylationPosition_133",
-              0.5375777339602609
+              0.4624222660397391
             ],
             [
               "PercentMethylationPosition_134",
-              0.5346697212676594
+              0.46533027873234056
             ],
             [
               "PercentMethylationPosition_135",
-              0.5313625165813909
+              0.46863748341860906
             ],
             [
               "PercentMethylationPosition_136",
-              0.5315110683349374
+              0.46848893166506256
             ],
             [
               "PercentMethylationPosition_137",
-              0.5335896942895597
+              0.4664103057104403
             ],
             [
               "PercentMethylationPosition_138",
-              0.5351666405883273
+              0.46483335941167264
             ],
             [
               "PercentMethylationPosition_139",
-              0.5261287298859553
+              0.4738712701140447
             ],
             [
               "PercentMethylationPosition_140",
-              0.5341208396520073
+              0.46587916034799265
             ],
             [
               "PercentMethylationPosition_141",
-              0.5311893540338232
+              0.4688106459661769
             ],
             [
               "PercentMethylationPosition_142",
-              0.5332644052968545
+              0.4667355947031455
             ],
             [
               "PercentMethylationPosition_143",
-              0.533679808356003
+              0.4663201916439969
             ],
             [
               "PercentMethylationPosition_144",
-              0.5274648466409012
+              0.47253515335909874
             ],
             [
               "PercentMethylationPosition_145",
-              0.529939253688169
+              0.4700607463118311
             ],
             [
               "PercentMethylationPosition_146",
-              0.5271369020595155
+              0.47286309794048453
             ],
             [
               "PercentMethylationPosition_147",
-              0.527577136654002
+              0.4724228633459981
             ],
             [
               "PercentMethylationPosition_148",
-              0.5274982252474214
+              0.4725017747525786
             ],
             [
               "PercentMethylationPosition_149",
-              0.5330630858880162
+              0.4669369141119838
             ],
             [
               "PercentMethylationPosition_150",
-              0.5290134168535997
+              0.4709865831464003
             ],
             [
               "PercentMethylationPosition_151",
-              0.5328186974879515
+              0.4671813025120484
             ],
             [
               "PercentMethylationPosition_152",
-              0.5235430420146023
+              0.4764569579853976
             ],
             [
               "PercentMethylationPosition_153",
-              0.5262834845894164
+              0.4737165154105835
             ],
             [
               "PercentMethylationPosition_154",
-              0.5333068818057576
+              0.46669311819424236
             ],
             [
               "PercentMethylationPosition_155",
-              0.5281342546890424
+              0.47186574531095754
             ],
             [
               "PercentMethylationPosition_156",
-              0.5249067661161427
+              0.4750932338838572
             ],
             [
               "PercentMethylationPosition_157",
-              0.5296017222820237
+              0.4703982777179763
             ],
             [
               "PercentMethylationPosition_158",
-              0.524092558983666
+              0.4759074410163339
             ],
             [
               "PercentMethylationPosition_159",
-              0.5304283875712447
+              0.4695716124287553
             ],
             [
               "PercentMethylationPosition_160",
-              0.5283699421965318
+              0.47163005780346823
             ],
             [
               "PercentMethylationPosition_161",
-              0.5214692667562184
+              0.47853073324378154
             ],
             [
               "PercentMethylationPosition_162",
-              0.5269486490309804
+              0.4730513509690197
             ],
             [
               "PercentMethylationPosition_163",
-              0.5232952344052693
+              0.47670476559473074
             ],
             [
               "PercentMethylationPosition_164",
-              0.5233536966665063
+              0.47664630333349367
             ],
             [
               "PercentMethylationPosition_165",
-              0.5227403293757181
+              0.4772596706242819
             ],
             [
               "PercentMethylationPosition_166",
-              0.5260495948931991
+              0.47395040510680086
             ],
             [
               "PercentMethylationPosition_167",
-              0.5227181342983515
+              0.4772818657016486
             ],
             [
               "PercentMethylationPosition_168",
-              0.5212055228386203
+              0.47879447716137974
             ],
             [
               "PercentMethylationPosition_169",
-              0.5198792406488256
+              0.4801207593511743
             ],
             [
               "PercentMethylationPosition_170",
-              0.5260678070265288
+              0.4739321929734713
             ],
             [
               "PercentMethylationPosition_171",
-              0.5180859859446052
+              0.4819140140553948
             ],
             [
               "PercentMethylationPosition_172",
-              0.5249183218378883
+              0.4750816781621117
             ],
             [
               "PercentMethylationPosition_173",
-              0.5250156347717323
+              0.47498436522826765
             ],
             [
               "PercentMethylationPosition_174",
-              0.5262407602956706
+              0.4737592397043295
             ],
             [
               "PercentMethylationPosition_175",
-              0.5237865120274914
+              0.47621348797250856
             ],
             [
               "PercentMethylationPosition_176",
-              0.5211054733887509
+              0.47889452661124904
             ],
             [
               "PercentMethylationPosition_177",
-              0.5131017672151127
+              0.48689823278488725
             ],
             [
               "PercentMethylationPosition_178",
-              0.5243546700423799
+              0.4756453299576201
             ],
             [
               "PercentMethylationPosition_179",
-              0.519487813096709
+              0.480512186903291
             ],
             [
               "PercentMethylationPosition_180",
-              0.5167159426881965
+              0.4832840573118035
             ],
             [
               "PercentMethylationPosition_181",
-              0.518216044019693
+              0.481783955980307
             ],
             [
               "PercentMethylationPosition_182",
-              0.5227702354356418
+              0.4772297645643581
             ],
             [
               "PercentMethylationPosition_183",
-              0.5253355407083309
+              0.4746644592916691
             ],
             [
               "PercentMethylationPosition_184",
-              0.5092064239072887
+              0.49079357609271135
             ],
             [
               "PercentMethylationPosition_185",
-              0.5243662391887861
+              0.47563376081121383
             ],
             [
               "PercentMethylationPosition_186",
-              0.5176052018157281
+              0.4823947981842719
             ],
             [
               "PercentMethylationPosition_187",
-              0.5241086273785331
+              0.47589137262146686
             ],
             [
               "PercentMethylationPosition_188",
-              0.5259655451209653
+              0.4740344548790348
             ],
             [
               "PercentMethylationPosition_189",
-              0.5227982510930669
+              0.4772017489069332
             ],
             [
               "PercentMethylationPosition_190",
-              0.5267228370221329
+              0.4732771629778672
             ],
             [
               "PercentMethylationPosition_191",
-              0.5164092664092664
+              0.48359073359073357
             ],
             [
               "PercentMethylationPosition_192",
-              0.5235608928338337
+              0.4764391071661663
             ],
             [
               "PercentMethylationPosition_193",
-              0.5222842139809649
+              0.47771578601903514
             ],
             [
               "PercentMethylationPosition_194",
-              0.5127084454007531
+              0.4872915545992469
             ],
             [
               "PercentMethylationPosition_195",
-              0.523300642543118
+              0.47669935745688197
             ],
             [
               "PercentMethylationPosition_196",
-              0.5149304608671939
+              0.4850695391328061
             ],
             [
               "PercentMethylationPosition_197",
-              0.5194274028629857
+              0.48057259713701433
             ],
             [
               "PercentMethylationPosition_198",
-              0.5238789393308344
+              0.47612106066916565
             ],
             [
               "PercentMethylationPosition_199",
-              0.5199599370439262
+              0.4800400629560738
             ],
             [
               "PercentMethylationPosition_200",
-              0.5183987350869628
+              0.48160126491303723
             ],
             [
               "PercentMethylationPosition_201",
-              0.5176599634369287
+              0.4823400365630713
             ],
             [
               "PercentMethylationPosition_202",
-              0.5211370262390671
+              0.47886297376093295
             ],
             [
               "PercentMethylationPosition_203",
-              0.524129279811098
+              0.47587072018890203
             ],
             [
               "PercentMethylationPosition_204",
-              0.5185789512719721
+              0.4814210487280279
             ],
             [
               "PercentMethylationPosition_205",
-              0.5166666666666667
+              0.48333333333333334
             ],
             [
               "PercentMethylationPosition_206",
-              0.5184398239490059
+              0.4815601760509941
             ],
             [
               "PercentMethylationPosition_207",
-              0.5145874071177161
+              0.48541259288228394
             ],
             [
               "PercentMethylationPosition_208",
-              0.5187987892305241
+              0.48120121076947586
             ],
             [
               "PercentMethylationPosition_209",
-              0.5186844842762263
+              0.4813155157237737
             ],
             [
               "PercentMethylationPosition_210",
-              0.5237395986294665
+              0.47626040137053355
             ],
             [
               "PercentMethylationPosition_211",
-              0.5161582852431987
+              0.4838417147568013
             ],
             [
               "PercentMethylationPosition_212",
-              0.5131393517367155
+              0.4868606482632844
             ],
             [
               "PercentMethylationPosition_213",
-              0.5193752638243985
+              0.48062473617560153
             ],
             [
               "PercentMethylationPosition_214",
-              0.5223286162189645
+              0.4776713837810355
             ],
             [
               "PercentMethylationPosition_215",
-              0.52734375
+              0.47265625
             ],
             [
               "PercentMethylationPosition_216",
-              0.5160293208513644
+              0.4839706791486355
             ],
             [
               "PercentMethylationPosition_217",
-              0.5193533902110462
+              0.48064660978895374
             ],
             [
               "PercentMethylationPosition_218",
-              0.5147912885662432
+              0.4852087114337568
             ],
             [
               "PercentMethylationPosition_219",
-              0.5199851618288046
+              0.4800148381711954
             ],
             [
               "PercentMethylationPosition_220",
-              0.5289348616158792
+              0.4710651383841208
             ],
             [
               "PercentMethylationPosition_221",
-              0.5190753617741026
+              0.48092463822589737
             ],
             [
               "PercentMethylationPosition_222",
-              0.517503805175038
+              0.4824961948249619
             ],
             [
               "PercentMethylationPosition_223",
-              0.5216218819223731
+              0.47837811807762687
             ],
             [
               "PercentMethylationPosition_224",
-              0.5209936678032148
+              0.4790063321967852
             ],
             [
               "PercentMethylationPosition_225",
-              0.525790188093853
+              0.47420981190614697
             ],
             [
               "PercentMethylationPosition_226",
-              0.5181206706154
+              0.48187932938459993
             ],
             [
               "PercentMethylationPosition_227",
-              0.5119735755573905
+              0.4880264244426094
             ],
             [
               "PercentMethylationPosition_228",
-              0.5219320879347714
+              0.4780679120652286
             ],
             [
               "PercentMethylationPosition_229",
-              0.5119557272632348
+              0.48804427273676515
             ],
             [
               "PercentMethylationPosition_230",
-              0.5088874259381172
+              0.4911125740618828
             ],
             [
               "PercentMethylationPosition_231",
-              0.5146052774459767
+              0.4853947225540232
             ],
             [
               "PercentMethylationPosition_232",
-              0.509475539885412
+              0.49052446011458795
             ],
             [
               "PercentMethylationPosition_233",
-              0.5155361050328228
+              0.48446389496717723
             ],
             [
               "PercentMethylationPosition_234",
-              0.5121427764599571
+              0.4878572235400429
             ],
             [
               "PercentMethylationPosition_235",
-              0.5203938115330521
+              0.47960618846694797
             ],
             [
               "PercentMethylationPosition_236",
-              0.5150041513462222
+              0.4849958486537777
             ],
             [
               "PercentMethylationPosition_237",
-              0.5179839091339328
+              0.4820160908660672
             ],
             [
               "PercentMethylationPosition_238",
-              0.5161368599854405
+              0.4838631400145596
             ],
             [
               "PercentMethylationPosition_239",
-              0.5113986444855206
+              0.48860135551447936
             ],
             [
               "PercentMethylationPosition_240",
-              0.5114741830880519
+              0.48852581691194813
             ],
             [
               "PercentMethylationPosition_241",
-              0.5188985582543187
+              0.48110144174568126
             ],
             [
               "PercentMethylationPosition_242",
-              0.5067902846696265
+              0.49320971533037344
             ],
             [
               "PercentMethylationPosition_243",
-              0.515498204070773
+              0.4845017959292271
             ],
             [
               "PercentMethylationPosition_244",
-              0.5069664781349151
+              0.4930335218650848
             ],
             [
               "PercentMethylationPosition_245",
-              0.5152598295298323
+              0.4847401704701677
             ],
             [
               "PercentMethylationPosition_246",
-              0.515506061460389
+              0.4844939385396109
             ],
             [
               "PercentMethylationPosition_247",
-              0.5099971838918614
+              0.49000281610813856
             ],
             [
               "PercentMethylationPosition_248",
-              0.5231631749778696
+              0.47683682502213043
             ],
             [
               "PercentMethylationPosition_249",
-              0.5001476232654266
+              0.4998523767345734
             ],
             [
               "PercentMethylationPosition_250",
-              0.5114503816793893
+              0.48854961832061067
             ],
             [
               "PercentMethylationPosition_251",
-              0.5009986172991243
+              0.4990013827008757
             ],
             [
               "PercentMethylationPosition_252",
-              0.5083798882681564
+              0.49162011173184356
             ],
             [
               "PercentMethylationPosition_253",
-              0.49914529914529915
+              0.5008547008547009
             ],
             [
               "PercentMethylationPosition_254",
-              0.49568276303165976
+              0.5043172369683403
             ],
             [
               "PercentMethylationPosition_255",
-              0.512065637065637
+              0.48793436293436293
             ],
             [
               "PercentMethylationPosition_256",
-              0.5078534031413613
+              0.49214659685863876
             ],
             [
               "PercentMethylationPosition_257",
-              0.5051975051975052
+              0.49480249480249483
             ],
             [
               "PercentMethylationPosition_258",
-              0.5014129282938891
+              0.49858707170611094
             ],
             [
               "PercentMethylationPosition_259",
-              0.49751508697195596
+              0.502484913028044
             ],
             [
               "PercentMethylationPosition_260",
-              0.4882436765229783
+              0.5117563234770217
             ],
             [
               "PercentMethylationPosition_261",
-              0.49488677867056247
+              0.5051132213294376
             ],
             [
               "PercentMethylationPosition_262",
-              0.5055658627087198
+              0.49443413729128016
             ],
             [
               "PercentMethylationPosition_263",
-              0.4881919516342339
+              0.5118080483657661
             ],
             [
               "PercentMethylationPosition_264",
-              0.5026940730393135
+              0.4973059269606865
             ],
             [
               "PercentMethylationPosition_265",
-              0.49624208860759494
+              0.5037579113924051
             ],
             [
               "PercentMethylationPosition_266",
-              0.49458483754512633
+              0.5054151624548736
             ],
             [
               "PercentMethylationPosition_267",
-              0.5026848409748038
+              0.4973151590251962
             ],
             [
               "PercentMethylationPosition_268",
-              0.49522799575821846
+              0.5047720042417816
             ],
             [
               "PercentMethylationPosition_269",
-              0.4872899612236105
+              0.5127100387763894
             ],
             [
               "PercentMethylationPosition_270",
-              0.4977767896843041
+              0.5022232103156958
             ],
             [
               "PercentMethylationPosition_271",
-              0.48017723880597013
+              0.5198227611940298
             ],
             [
               "PercentMethylationPosition_272",
-              0.4813836175834735
+              0.5186163824165265
             ],
             [
               "PercentMethylationPosition_273",
-              0.4755126658624849
+              0.524487334137515
             ],
             [
               "PercentMethylationPosition_274",
-              0.46872663842511836
+              0.5312733615748816
             ],
             [
               "PercentMethylationPosition_275",
-              0.4719895287958115
+              0.5280104712041885
             ],
             [
               "PercentMethylationPosition_276",
-              0.48255966430632047
+              0.5174403356936795
             ],
             [
               "PercentMethylationPosition_277",
-              0.4724847137298499
+              0.5275152862701501
             ],
             [
               "PercentMethylationPosition_278",
-              0.47317596566523606
+              0.526824034334764
             ],
             [
               "PercentMethylationPosition_279",
-              0.465216146578872
+              0.534783853421128
             ],
             [
               "PercentMethylationPosition_280",
-              0.4737788432724004
+              0.5262211567275996
             ],
             [
               "PercentMethylationPosition_281",
-              0.4694878871511806
+              0.5305121128488194
             ],
             [
               "PercentMethylationPosition_282",
-              0.46453451551614944
+              0.5354654844838506
             ],
             [
               "PercentMethylationPosition_283",
-              0.4726205997392438
+              0.5273794002607562
             ],
             [
               "PercentMethylationPosition_284",
-              0.4677954847277556
+              0.5322045152722443
             ],
             [
               "PercentMethylationPosition_285",
-              0.4512152166255724
+              0.5487847833744276
             ],
             [
               "PercentMethylationPosition_286",
-              0.45013172751223185
+              0.5498682724877682
             ],
             [
               "PercentMethylationPosition_287",
-              0.4345468628969791
+              0.5654531371030209
             ],
             [
               "PercentMethylationPosition_288",
-              0.4385485758876317
+              0.5614514241123684
             ],
             [
               "PercentMethylationPosition_289",
-              0.45636509207365894
+              0.5436349079263411
             ],
             [
               "PercentMethylationPosition_290",
-              0.4424778761061947
+              0.5575221238938053
             ],
             [
               "PercentMethylationPosition_291",
-              0.43355704697986575
+              0.5664429530201343
             ],
             [
               "PercentMethylationPosition_292",
-              0.4352022058823529
+              0.5647977941176471
             ],
             [
               "PercentMethylationPosition_293",
-              0.43895205140879884
+              0.5610479485912012
             ],
             [
               "PercentMethylationPosition_294",
-              0.4342629482071713
+              0.5657370517928287
             ],
             [
               "PercentMethylationPosition_295",
-              0.4123819517313746
+              0.5876180482686254
             ],
             [
               "PercentMethylationPosition_296",
-              0.398068669527897
+              0.601931330472103
             ],
             [
               "PercentMethylationPosition_297",
-              0.4322981366459627
+              0.5677018633540373
             ],
             [
               "PercentMethylationPosition_298",
-              0.40344168260038243
+              0.5965583173996176
             ],
             [
               "PercentMethylationPosition_299",
-              0.4203739522888459
+              0.5796260477111541
             ],
             [
               "PercentMethylationPosition_300",
-              0.4276901987662783
+              0.5723098012337218
             ],
             [
               "PercentMethylationPosition_301",
-              0.40130151843817785
+              0.5986984815618221
             ],
             [
               "PercentMethylationPosition_302",
-              0.40749063670411984
+              0.5925093632958801
             ],
             [
               "PercentMethylationPosition_303",
-              0.4083191850594228
+              0.5916808149405772
             ],
             [
               "PercentMethylationPosition_304",
-              0.3935018050541516
+              0.6064981949458483
             ],
             [
               "PercentMethylationPosition_305",
-              0.4141132776230269
+              0.585886722376973
             ],
             [
               "PercentMethylationPosition_306",
-              0.4044734389561976
+              0.5955265610438024
             ],
             [
               "PercentMethylationPosition_307",
-              0.37591623036649213
+              0.6240837696335079
             ],
             [
               "PercentMethylationPosition_308",
-              0.37336244541484714
+              0.6266375545851528
             ],
             [
               "PercentMethylationPosition_309",
-              0.3718535469107552
+              0.6281464530892449
             ],
             [
               "PercentMethylationPosition_310",
-              0.3761467889908257
+              0.6238532110091743
             ],
             [
               "PercentMethylationPosition_311",
-              0.3533424283765348
+              0.6466575716234653
             ],
             [
               "PercentMethylationPosition_312",
-              0.381294964028777
+              0.6187050359712231
             ],
             [
               "PercentMethylationPosition_313",
-              0.3602584814216478
+              0.6397415185783522
             ],
             [
               "PercentMethylationPosition_314",
-              0.37948717948717947
+              0.6205128205128205
             ],
             [
               "PercentMethylationPosition_315",
-              0.352622061482821
+              0.6473779385171791
             ],
             [
               "PercentMethylationPosition_316",
-              0.3522504892367906
+              0.6477495107632094
             ],
             [
               "PercentMethylationPosition_317",
-              0.3416666666666667
+              0.6583333333333333
             ],
             [
               "PercentMethylationPosition_318",
-              0.31990521327014215
+              0.6800947867298578
             ],
             [
               "PercentMethylationPosition_319",
-              0.3556085918854415
+              0.6443914081145584
             ],
             [
               "PercentMethylationPosition_320",
-              0.32608695652173914
+              0.6739130434782609
             ],
             [
               "PercentMethylationPosition_321",
-              0.3565217391304348
+              0.6434782608695652
             ],
             [
               "PercentMethylationPosition_322",
-              0.31309904153354634
+              0.6869009584664537
             ],
             [
               "PercentMethylationPosition_323",
-              0.2974910394265233
+              0.7025089605734767
             ],
             [
               "PercentMethylationPosition_324",
-              0.30120481927710846
+              0.6987951807228916
             ],
             [
               "PercentMethylationPosition_325",
-              0.3181818181818182
+              0.6818181818181818
             ],
             [
               "PercentMethylationPosition_326",
-              0.3193717277486911
+              0.680628272251309
             ],
             [
               "PercentMethylationPosition_327",
-              0.36787564766839376
+              0.6321243523316062
             ],
             [
               "PercentMethylationPosition_328",
-              0.32098765432098764
+              0.6790123456790124
             ],
             [
               "PercentMethylationPosition_329",
-              0.28313253012048195
+              0.7168674698795181
             ],
             [
               "PercentMethylationPosition_330",
-              0.26356589147286824
+              0.7364341085271318
             ],
             [
               "PercentMethylationPosition_331",
-              0.2605633802816901
+              0.7394366197183099
             ],
             [
               "PercentMethylationPosition_332",
-              0.29133858267716534
+              0.7086614173228346
             ],
             [
               "PercentMethylationPosition_333",
-              0.25961538461538464
+              0.7403846153846154
             ],
             [
               "PercentMethylationPosition_334",
-              0.3402061855670103
+              0.6597938144329897
             ],
             [
               "PercentMethylationPosition_335",
-              0.24468085106382978
+              0.7553191489361702
             ],
             [
               "PercentMethylationPosition_336",
-              0.3194444444444444
+              0.6805555555555556
             ],
             [
               "PercentMethylationPosition_337",
-              0.2753623188405797
+              0.7246376811594203
             ],
             [
               "PercentMethylationPosition_338",
-              0.22857142857142856
+              0.7714285714285715
             ],
             [
               "PercentMethylationPosition_339",
-              0.23636363636363636
+              0.7636363636363637
             ],
             [
               "PercentMethylationPosition_340",
-              0.29508196721311475
+              0.7049180327868853
             ],
             [
               "PercentMethylationPosition_341",
-              0.23255813953488372
+              0.7674418604651163
             ],
             [
               "PercentMethylationPosition_342",
-              0.3
+              0.7
             ],
             [
               "PercentMethylationPosition_343",
-              0.3225806451612903
+              0.6774193548387096
             ],
             [
               "PercentMethylationPosition_344",
-              0.32142857142857145
+              0.6785714285714286
             ],
             [
               "PercentMethylationPosition_345",
-              0.2903225806451613
+              0.7096774193548387
             ],
             [
               "PercentMethylationPosition_346",
-              0.25
+              0.75
             ],
             [
               "PercentMethylationPosition_347",
-              0.21739130434782608
+              0.782608695652174
             ],
             [
               "PercentMethylationPosition_348",
-              0.3333333333333333
+              0.6666666666666666
             ],
             [
               "PercentMethylationPosition_349",
-              0.16666666666666666
+              0.8333333333333334
             ],
             [
               "PercentMethylationPosition_350",
-              0.36363636363636365
+              0.6363636363636364
             ],
             [
               "PercentMethylationPosition_351",
-              0.2
+              0.8
             ],
             [
               "PercentMethylationPosition_352",
-              0.09090909090909091
+              0.9090909090909091
             ],
             [
               "PercentMethylationPosition_353",
-              0.3
+              0.7
             ],
             [
               "PercentMethylationPosition_354",
-              0.2857142857142857
+              0.7142857142857143
             ],
             [
               "PercentMethylationPosition_355",
-              0.06666666666666667
+              0.9333333333333333
             ],
             [
               "PercentMethylationPosition_356",
-              0.125
+              0.875
             ],
             [
               "PercentMethylationPosition_357",
-              0.3076923076923077
+              0.6923076923076923
             ],
             [
               "PercentMethylationPosition_358",
-              0.25
+              0.75
             ],
             [
               "PercentMethylationPosition_359",
-              0.125
+              0.875
             ],
             [
               "PercentMethylationPosition_360",
-              0.16666666666666666
+              0.8333333333333334
             ],
             [
               "PercentMethylationPosition_361",
@@ -1468,11 +1468,11 @@
             ],
             [
               "PercentMethylationPosition_362",
-              0.3333333333333333
+              0.6666666666666666
             ],
             [
               "PercentMethylationPosition_363",
-              0.0
+              1.0
             ],
             [
               "PercentMethylationPosition_364",
@@ -1484,19 +1484,19 @@
             ],
             [
               "PercentMethylationPosition_368",
-              0.0
-            ],
-            [
-              "PercentMethylationPosition_370",
-              0.0
-            ],
-            [
-              "PercentMethylationPosition_377",
               1.0
             ],
             [
-              "PercentMethylationPosition_379",
+              "PercentMethylationPosition_370",
+              1.0
+            ],
+            [
+              "PercentMethylationPosition_377",
               0.0
+            ],
+            [
+              "PercentMethylationPosition_379",
+              1.0
             ]
           ]
         }
@@ -1505,7 +1505,7 @@
         [
           {
             "metric": "PercentMethylation_mean",
-            "value": 0.47654043854733447
+            "value": 0.5234595614526656
           },
           {
             "metric": "PercentMethylation_std",
@@ -1513,7 +1513,7 @@
           },
           {
             "metric": "PercentMethylation_median",
-            "value": 0.5398259264143479
+            "value": 0.4601740735856521
           }
         ],
         {
@@ -1524,1443 +1524,1443 @@
           "values": [
             [
               "PercentMethylationPosition_1",
-              0.10918551647028468
+              0.8908144835297154
             ],
             [
               "PercentMethylationPosition_2",
-              0.26908409494378327
+              0.7309159050562167
             ],
             [
               "PercentMethylationPosition_3",
-              0.47746251234623327
+              0.5225374876537667
             ],
             [
               "PercentMethylationPosition_4",
-              0.48457027300303335
+              0.5154297269969667
             ],
             [
               "PercentMethylationPosition_5",
-              0.5162422522589799
+              0.4837577477410201
             ],
             [
               "PercentMethylationPosition_6",
-              0.5184026499815974
+              0.48159735001840265
             ],
             [
               "PercentMethylationPosition_7",
-              0.5273236639597149
+              0.47267633604028514
             ],
             [
               "PercentMethylationPosition_8",
-              0.5330243760035032
+              0.46697562399649684
             ],
             [
               "PercentMethylationPosition_9",
-              0.5327979054627795
+              0.4672020945372205
             ],
             [
               "PercentMethylationPosition_10",
-              0.531372066016821
+              0.4686279339831791
             ],
             [
               "PercentMethylationPosition_11",
-              0.5291260376264182
+              0.47087396237358176
             ],
             [
               "PercentMethylationPosition_12",
-              0.5291483086334341
+              0.4708516913665659
             ],
             [
               "PercentMethylationPosition_13",
-              0.531288955372725
+              0.468711044627275
             ],
             [
               "PercentMethylationPosition_14",
-              0.5262708244340025
+              0.4737291755659974
             ],
             [
               "PercentMethylationPosition_15",
-              0.5337818696883853
+              0.46621813031161474
             ],
             [
               "PercentMethylationPosition_16",
-              0.5288379983036472
+              0.47116200169635286
             ],
             [
               "PercentMethylationPosition_17",
-              0.5374189342209107
+              0.4625810657790893
             ],
             [
               "PercentMethylationPosition_18",
-              0.5321363338732468
+              0.4678636661267533
             ],
             [
               "PercentMethylationPosition_19",
-              0.5375542064180399
+              0.4624457935819601
             ],
             [
               "PercentMethylationPosition_20",
-              0.5331402945019245
+              0.4668597054980755
             ],
             [
               "PercentMethylationPosition_21",
-              0.5360335389092925
+              0.4639664610907075
             ],
             [
               "PercentMethylationPosition_22",
-              0.5322033898305085
+              0.46779661016949153
             ],
             [
               "PercentMethylationPosition_23",
-              0.5369111219038368
+              0.46308887809616317
             ],
             [
               "PercentMethylationPosition_24",
-              0.5390041777960414
+              0.4609958222039586
             ],
             [
               "PercentMethylationPosition_25",
-              0.5359405122555769
+              0.464059487744423
             ],
             [
               "PercentMethylationPosition_26",
-              0.5370940981275184
+              0.46290590187248165
             ],
             [
               "PercentMethylationPosition_27",
-              0.5396503760689632
+              0.46034962393103684
             ],
             [
               "PercentMethylationPosition_28",
-              0.5362834917891097
+              0.4637165082108902
             ],
             [
               "PercentMethylationPosition_29",
-              0.5340631347034321
+              0.46593686529656786
             ],
             [
               "PercentMethylationPosition_30",
-              0.5338769305186055
+              0.4661230694813945
             ],
             [
               "PercentMethylationPosition_31",
-              0.5360255266588897
+              0.46397447334111025
             ],
             [
               "PercentMethylationPosition_32",
-              0.53965616628802
+              0.4603438337119799
             ],
             [
               "PercentMethylationPosition_33",
-              0.5377155895577478
+              0.4622844104422522
             ],
             [
               "PercentMethylationPosition_34",
-              0.5362436823716971
+              0.463756317628303
             ],
             [
               "PercentMethylationPosition_35",
-              0.5414953399122807
+              0.4585046600877193
             ],
             [
               "PercentMethylationPosition_36",
-              0.5411479711997846
+              0.4588520288002153
             ],
             [
               "PercentMethylationPosition_37",
-              0.5384563395512301
+              0.46154366044876993
             ],
             [
               "PercentMethylationPosition_38",
-              0.5414779257656683
+              0.45852207423433167
             ],
             [
               "PercentMethylationPosition_39",
-              0.5420848387528435
+              0.4579151612471564
             ],
             [
               "PercentMethylationPosition_40",
-              0.5374720171071536
+              0.4625279828928464
             ],
             [
               "PercentMethylationPosition_41",
-              0.5380842659644502
+              0.4619157340355497
             ],
             [
               "PercentMethylationPosition_42",
-              0.538960171077252
+              0.4610398289227479
             ],
             [
               "PercentMethylationPosition_43",
-              0.5329242942399249
+              0.4670757057600751
             ],
             [
               "PercentMethylationPosition_44",
-              0.5390444258172674
+              0.4609555741827326
             ],
             [
               "PercentMethylationPosition_45",
-              0.5359702681178656
+              0.4640297318821343
             ],
             [
               "PercentMethylationPosition_46",
-              0.5388907230108947
+              0.4611092769891053
             ],
             [
               "PercentMethylationPosition_47",
-              0.5426651661591421
+              0.45733483384085793
             ],
             [
               "PercentMethylationPosition_48",
-              0.5405602277994834
+              0.4594397722005165
             ],
             [
               "PercentMethylationPosition_49",
-              0.5358357178926106
+              0.4641642821073893
             ],
             [
               "PercentMethylationPosition_50",
-              0.5404540355045205
+              0.45954596449547946
             ],
             [
               "PercentMethylationPosition_51",
-              0.5409180327868852
+              0.45908196721311473
             ],
             [
               "PercentMethylationPosition_52",
-              0.5342702415362637
+              0.4657297584637363
             ],
             [
               "PercentMethylationPosition_53",
-              0.5407622121940775
+              0.45923778780592245
             ],
             [
               "PercentMethylationPosition_54",
-              0.5399432680255953
+              0.46005673197440466
             ],
             [
               "PercentMethylationPosition_55",
-              0.5420188636141118
+              0.45798113638588817
             ],
             [
               "PercentMethylationPosition_56",
-              0.5417651694247438
+              0.4582348305752561
             ],
             [
               "PercentMethylationPosition_57",
-              0.5393800978792822
+              0.4606199021207178
             ],
             [
               "PercentMethylationPosition_58",
-              0.541943684004693
+              0.458056315995307
             ],
             [
               "PercentMethylationPosition_59",
-              0.5314281968932293
+              0.46857180310677066
             ],
             [
               "PercentMethylationPosition_60",
-              0.5416502560063017
+              0.4583497439936983
             ],
             [
               "PercentMethylationPosition_61",
-              0.5383323453862873
+              0.46166765461371273
             ],
             [
               "PercentMethylationPosition_62",
-              0.5388832686094703
+              0.46111673139052967
             ],
             [
               "PercentMethylationPosition_63",
-              0.5399748443899764
+              0.46002515561002355
             ],
             [
               "PercentMethylationPosition_64",
-              0.5447300771208227
+              0.4552699228791774
             ],
             [
               "PercentMethylationPosition_65",
-              0.5433452652131467
+              0.45665473478685326
             ],
             [
               "PercentMethylationPosition_66",
-              0.5408908480821106
+              0.4591091519178893
             ],
             [
               "PercentMethylationPosition_67",
-              0.5393422893016296
+              0.46065771069837036
             ],
             [
               "PercentMethylationPosition_68",
-              0.5402302599393366
+              0.4597697400606634
             ],
             [
               "PercentMethylationPosition_69",
-              0.5418918481602537
+              0.4581081518397463
             ],
             [
               "PercentMethylationPosition_70",
-              0.5372172540768017
+              0.4627827459231983
             ],
             [
               "PercentMethylationPosition_71",
-              0.5403670612521368
+              0.4596329387478631
             ],
             [
               "PercentMethylationPosition_72",
-              0.5446746519909356
+              0.45532534800906443
             ],
             [
               "PercentMethylationPosition_73",
-              0.5387360498313003
+              0.4612639501686997
             ],
             [
               "PercentMethylationPosition_74",
-              0.5427257714600265
+              0.45727422853997346
             ],
             [
               "PercentMethylationPosition_75",
-              0.5388451443569554
+              0.4611548556430446
             ],
             [
               "PercentMethylationPosition_76",
-              0.5415910515722441
+              0.458408948427756
             ],
             [
               "PercentMethylationPosition_77",
-              0.5424210732727629
+              0.4575789267272371
             ],
             [
               "PercentMethylationPosition_78",
-              0.5428281306298929
+              0.4571718693701071
             ],
             [
               "PercentMethylationPosition_79",
-              0.5430949727993708
+              0.4569050272006292
             ],
             [
               "PercentMethylationPosition_80",
-              0.5458061161483214
+              0.4541938838516785
             ],
             [
               "PercentMethylationPosition_81",
-              0.5478260869565217
+              0.45217391304347826
             ],
             [
               "PercentMethylationPosition_82",
-              0.5393247399070863
+              0.4606752600929137
             ],
             [
               "PercentMethylationPosition_83",
-              0.5395713913496613
+              0.46042860865033874
             ],
             [
               "PercentMethylationPosition_84",
-              0.5396653897783453
+              0.4603346102216547
             ],
             [
               "PercentMethylationPosition_85",
-              0.5417307377719613
+              0.4582692622280386
             ],
             [
               "PercentMethylationPosition_86",
-              0.5480510090054559
+              0.45194899099454416
             ],
             [
               "PercentMethylationPosition_87",
-              0.5479217761714212
+              0.4520782238285788
             ],
             [
               "PercentMethylationPosition_88",
-              0.545002778958381
+              0.454997221041619
             ],
             [
               "PercentMethylationPosition_89",
-              0.5398259264143479
+              0.4601740735856521
             ],
             [
               "PercentMethylationPosition_90",
-              0.5431774103415404
+              0.4568225896584596
             ],
             [
               "PercentMethylationPosition_91",
-              0.540834486849911
+              0.45916551315008897
             ],
             [
               "PercentMethylationPosition_92",
-              0.5410983547574657
+              0.45890164524253424
             ],
             [
               "PercentMethylationPosition_93",
-              0.5433697914945643
+              0.4566302085054357
             ],
             [
               "PercentMethylationPosition_94",
-              0.5416666666666666
+              0.4583333333333333
             ],
             [
               "PercentMethylationPosition_95",
-              0.5436586329514026
+              0.4563413670485974
             ],
             [
               "PercentMethylationPosition_96",
-              0.5446136566350632
+              0.4553863433649367
             ],
             [
               "PercentMethylationPosition_97",
-              0.5451191544520889
+              0.4548808455479111
             ],
             [
               "PercentMethylationPosition_98",
-              0.5416970500497182
+              0.45830294995028176
             ],
             [
               "PercentMethylationPosition_99",
-              0.5410070506851138
+              0.45899294931488627
             ],
             [
               "PercentMethylationPosition_100",
-              0.5442548653692348
+              0.4557451346307651
             ],
             [
               "PercentMethylationPosition_101",
-              0.5461097516006839
+              0.45389024839931613
             ],
             [
               "PercentMethylationPosition_102",
-              0.5437623232964609
+              0.4562376767035391
             ],
             [
               "PercentMethylationPosition_103",
-              0.5385050774096887
+              0.46149492259031133
             ],
             [
               "PercentMethylationPosition_104",
-              0.5453512465744268
+              0.45464875342557315
             ],
             [
               "PercentMethylationPosition_105",
-              0.5477008236353329
+              0.45229917636466704
             ],
             [
               "PercentMethylationPosition_106",
-              0.5399406770993147
+              0.4600593229006853
             ],
             [
               "PercentMethylationPosition_107",
-              0.5461007174948032
+              0.4538992825051968
             ],
             [
               "PercentMethylationPosition_108",
-              0.541663843913014
+              0.45833615608698597
             ],
             [
               "PercentMethylationPosition_109",
-              0.5396083819993129
+              0.46039161800068706
             ],
             [
               "PercentMethylationPosition_110",
-              0.5424731550509541
+              0.4575268449490459
             ],
             [
               "PercentMethylationPosition_111",
-              0.5431138759288059
+              0.45688612407119406
             ],
             [
               "PercentMethylationPosition_112",
-              0.5454203433887407
+              0.4545796566112593
             ],
             [
               "PercentMethylationPosition_113",
-              0.5427550178718724
+              0.4572449821281276
             ],
             [
               "PercentMethylationPosition_114",
-              0.5382255534251351
+              0.46177444657486494
             ],
             [
               "PercentMethylationPosition_115",
-              0.5422899482734517
+              0.45771005172654833
             ],
             [
               "PercentMethylationPosition_116",
-              0.5399396872150922
+              0.4600603127849078
             ],
             [
               "PercentMethylationPosition_117",
-              0.547134092900964
+              0.45286590709903596
             ],
             [
               "PercentMethylationPosition_118",
-              0.5429157239819005
+              0.45708427601809953
             ],
             [
               "PercentMethylationPosition_119",
-              0.5448275862068965
+              0.45517241379310347
             ],
             [
               "PercentMethylationPosition_120",
-              0.543656862396415
+              0.456343137603585
             ],
             [
               "PercentMethylationPosition_121",
-              0.5466833095577746
+              0.4533166904422254
             ],
             [
               "PercentMethylationPosition_122",
-              0.5432590519252162
+              0.45674094807478377
             ],
             [
               "PercentMethylationPosition_123",
-              0.5457511652922195
+              0.45424883470778055
             ],
             [
               "PercentMethylationPosition_124",
-              0.5408078846084673
+              0.45919211539153265
             ],
             [
               "PercentMethylationPosition_125",
-              0.5437591240875912
+              0.45624087591240875
             ],
             [
               "PercentMethylationPosition_126",
-              0.5440020197648416
+              0.45599798023515836
             ],
             [
               "PercentMethylationPosition_127",
-              0.5447107167533365
+              0.4552892832466635
             ],
             [
               "PercentMethylationPosition_128",
-              0.5474056260020406
+              0.4525943739979595
             ],
             [
               "PercentMethylationPosition_129",
-              0.5416344133583988
+              0.45836558664160126
             ],
             [
               "PercentMethylationPosition_130",
-              0.546242019191278
+              0.45375798080872193
             ],
             [
               "PercentMethylationPosition_131",
-              0.5447163433274544
+              0.45528365667254556
             ],
             [
               "PercentMethylationPosition_132",
-              0.5482241101837644
+              0.4517758898162356
             ],
             [
               "PercentMethylationPosition_133",
-              0.5412998688893051
+              0.4587001311106949
             ],
             [
               "PercentMethylationPosition_134",
-              0.5444171547326658
+              0.4555828452673342
             ],
             [
               "PercentMethylationPosition_135",
-              0.5470072551390568
+              0.45299274486094315
             ],
             [
               "PercentMethylationPosition_136",
-              0.5394475469435178
+              0.4605524530564821
             ],
             [
               "PercentMethylationPosition_137",
-              0.5423408116770282
+              0.45765918832297176
             ],
             [
               "PercentMethylationPosition_138",
-              0.5426676435429761
+              0.45733235645702386
             ],
             [
               "PercentMethylationPosition_139",
-              0.5454475397834547
+              0.4545524602165453
             ],
             [
               "PercentMethylationPosition_140",
-              0.5432093963907902
+              0.4567906036092097
             ],
             [
               "PercentMethylationPosition_141",
-              0.5425344847798054
+              0.4574655152201946
             ],
             [
               "PercentMethylationPosition_142",
-              0.5467991861011113
+              0.4532008138988887
             ],
             [
               "PercentMethylationPosition_143",
-              0.5442982803708694
+              0.4557017196291307
             ],
             [
               "PercentMethylationPosition_144",
-              0.546696582395128
+              0.45330341760487197
             ],
             [
               "PercentMethylationPosition_145",
-              0.5498472423219167
+              0.45015275767808327
             ],
             [
               "PercentMethylationPosition_146",
-              0.5448477942373433
+              0.4551522057626567
             ],
             [
               "PercentMethylationPosition_147",
-              0.5470255763835238
+              0.4529744236164762
             ],
             [
               "PercentMethylationPosition_148",
-              0.5445678455800992
+              0.4554321544199008
             ],
             [
               "PercentMethylationPosition_149",
-              0.541341847735943
+              0.45865815226405704
             ],
             [
               "PercentMethylationPosition_150",
-              0.5508362857378265
+              0.4491637142621735
             ],
             [
               "PercentMethylationPosition_151",
-              0.5455268556118391
+              0.45447314438816094
             ],
             [
               "PercentMethylationPosition_152",
-              0.5506783719074222
+              0.4493216280925778
             ],
             [
               "PercentMethylationPosition_153",
-              0.5470813804857264
+              0.45291861951427353
             ],
             [
               "PercentMethylationPosition_154",
-              0.5446486486486487
+              0.45535135135135135
             ],
             [
               "PercentMethylationPosition_155",
-              0.5477750948602966
+              0.45222490513970337
             ],
             [
               "PercentMethylationPosition_156",
-              0.5391925030653354
+              0.46080749693466455
             ],
             [
               "PercentMethylationPosition_157",
-              0.5425879890095512
+              0.45741201099044876
             ],
             [
               "PercentMethylationPosition_158",
-              0.5485866904073002
+              0.45141330959269976
             ],
             [
               "PercentMethylationPosition_159",
-              0.5431152841135568
+              0.45688471588644314
             ],
             [
               "PercentMethylationPosition_160",
-              0.5465538089480049
+              0.4534461910519952
             ],
             [
               "PercentMethylationPosition_161",
-              0.5469891546036212
+              0.4530108453963788
             ],
             [
               "PercentMethylationPosition_162",
-              0.5449461379784551
+              0.4550538620215448
             ],
             [
               "PercentMethylationPosition_163",
-              0.542247898172937
+              0.45775210182706305
             ],
             [
               "PercentMethylationPosition_164",
-              0.545530648311785
+              0.45446935168821506
             ],
             [
               "PercentMethylationPosition_165",
-              0.5478362028850629
+              0.4521637971149372
             ],
             [
               "PercentMethylationPosition_166",
-              0.5447531594641928
+              0.4552468405358073
             ],
             [
               "PercentMethylationPosition_167",
-              0.5479154876438408
+              0.4520845123561592
             ],
             [
               "PercentMethylationPosition_168",
-              0.5473219427913227
+              0.45267805720867726
             ],
             [
               "PercentMethylationPosition_169",
-              0.5472477741157952
+              0.45275222588420483
             ],
             [
               "PercentMethylationPosition_170",
-              0.5429286731137402
+              0.4570713268862599
             ],
             [
               "PercentMethylationPosition_171",
-              0.5470390275754684
+              0.4529609724245316
             ],
             [
               "PercentMethylationPosition_172",
-              0.5399056319646622
+              0.4600943680353378
             ],
             [
               "PercentMethylationPosition_173",
-              0.548299593107952
+              0.45170040689204805
             ],
             [
               "PercentMethylationPosition_174",
-              0.5429116010715022
+              0.45708839892849784
             ],
             [
               "PercentMethylationPosition_175",
-              0.5413265833247236
+              0.4586734166752764
             ],
             [
               "PercentMethylationPosition_176",
-              0.5438432350953791
+              0.4561567649046208
             ],
             [
               "PercentMethylationPosition_177",
-              0.54854597851716
+              0.4514540214828399
             ],
             [
               "PercentMethylationPosition_178",
-              0.5396672551222382
+              0.4603327448777617
             ],
             [
               "PercentMethylationPosition_179",
-              0.5405126534158792
+              0.45948734658412077
             ],
             [
               "PercentMethylationPosition_180",
-              0.5487838058442619
+              0.45121619415573816
             ],
             [
               "PercentMethylationPosition_181",
-              0.5515875199471744
+              0.44841248005282563
             ],
             [
               "PercentMethylationPosition_182",
-              0.5390520694259012
+              0.4609479305740988
             ],
             [
               "PercentMethylationPosition_183",
-              0.5504270603540924
+              0.44957293964590755
             ],
             [
               "PercentMethylationPosition_184",
-              0.5462999492757707
+              0.45370005072422925
             ],
             [
               "PercentMethylationPosition_185",
-              0.5376743654241939
+              0.4623256345758061
             ],
             [
               "PercentMethylationPosition_186",
-              0.5440193592993777
+              0.4559806407006223
             ],
             [
               "PercentMethylationPosition_187",
-              0.5438915620232367
+              0.4561084379767633
             ],
             [
               "PercentMethylationPosition_188",
-              0.5445609048380411
+              0.4554390951619589
             ],
             [
               "PercentMethylationPosition_189",
-              0.5387213510253317
+              0.46127864897466825
             ],
             [
               "PercentMethylationPosition_190",
-              0.5430528375733855
+              0.4569471624266145
             ],
             [
               "PercentMethylationPosition_191",
-              0.54544360178163
+              0.4545563982183701
             ],
             [
               "PercentMethylationPosition_192",
-              0.5420456654909969
+              0.45795433450900314
             ],
             [
               "PercentMethylationPosition_193",
-              0.5495263785207954
+              0.45047362147920456
             ],
             [
               "PercentMethylationPosition_194",
-              0.5453795902835035
+              0.4546204097164965
             ],
             [
               "PercentMethylationPosition_195",
-              0.5456951077836582
+              0.4543048922163418
             ],
             [
               "PercentMethylationPosition_196",
-              0.5385818561001042
+              0.4614181438998957
             ],
             [
               "PercentMethylationPosition_197",
-              0.5457419482315747
+              0.4542580517684252
             ],
             [
               "PercentMethylationPosition_198",
-              0.5556830453563715
+              0.4443169546436285
             ],
             [
               "PercentMethylationPosition_199",
-              0.5473798533803964
+              0.4526201466196036
             ],
             [
               "PercentMethylationPosition_200",
-              0.5431947840260799
+              0.45680521597392015
             ],
             [
               "PercentMethylationPosition_201",
-              0.5406976744186046
+              0.45930232558139533
             ],
             [
               "PercentMethylationPosition_202",
-              0.5420242570395063
+              0.45797574296049365
             ],
             [
               "PercentMethylationPosition_203",
-              0.5422002122391227
+              0.45779978776087726
             ],
             [
               "PercentMethylationPosition_204",
-              0.5451224752900731
+              0.45487752470992693
             ],
             [
               "PercentMethylationPosition_205",
-              0.5464072930873591
+              0.45359270691264086
             ],
             [
               "PercentMethylationPosition_206",
-              0.5423629002576371
+              0.4576370997423629
             ],
             [
               "PercentMethylationPosition_207",
-              0.5494762227748888
+              0.45052377722511117
             ],
             [
               "PercentMethylationPosition_208",
-              0.5507809580748823
+              0.4492190419251177
             ],
             [
               "PercentMethylationPosition_209",
-              0.548667837239484
+              0.4513321627605161
             ],
             [
               "PercentMethylationPosition_210",
-              0.5422986708365911
+              0.4577013291634089
             ],
             [
               "PercentMethylationPosition_211",
-              0.5450510084884355
+              0.45494899151156454
             ],
             [
               "PercentMethylationPosition_212",
-              0.5410616705698673
+              0.4589383294301327
             ],
             [
               "PercentMethylationPosition_213",
-              0.5453451043338684
+              0.4546548956661316
             ],
             [
               "PercentMethylationPosition_214",
-              0.5446370176586004
+              0.4553629823413996
             ],
             [
               "PercentMethylationPosition_215",
-              0.5451431367751407
+              0.4548568632248593
             ],
             [
               "PercentMethylationPosition_216",
-              0.5446435946146857
+              0.4553564053853143
             ],
             [
               "PercentMethylationPosition_217",
-              0.543395265970985
+              0.456604734029015
             ],
             [
               "PercentMethylationPosition_218",
-              0.5482328837288715
+              0.4517671162711286
             ],
             [
               "PercentMethylationPosition_219",
-              0.5368639667705088
+              0.46313603322949115
             ],
             [
               "PercentMethylationPosition_220",
-              0.5527891038431508
+              0.4472108961568491
             ],
             [
               "PercentMethylationPosition_221",
-              0.5508102784492792
+              0.44918972155072073
             ],
             [
               "PercentMethylationPosition_222",
-              0.5439718868264553
+              0.4560281131735448
             ],
             [
               "PercentMethylationPosition_223",
-              0.550405245423914
+              0.44959475457608594
             ],
             [
               "PercentMethylationPosition_224",
-              0.5527847049044057
+              0.4472152950955943
             ],
             [
               "PercentMethylationPosition_225",
-              0.5415316232984536
+              0.45846837670154644
             ],
             [
               "PercentMethylationPosition_226",
-              0.5429418515684774
+              0.4570581484315226
             ],
             [
               "PercentMethylationPosition_227",
-              0.548830160083357
+              0.451169839916643
             ],
             [
               "PercentMethylationPosition_228",
-              0.5441559695010134
+              0.4558440304989866
             ],
             [
               "PercentMethylationPosition_229",
-              0.5406278389017866
+              0.4593721610982134
             ],
             [
               "PercentMethylationPosition_230",
-              0.5466331658291458
+              0.45336683417085427
             ],
             [
               "PercentMethylationPosition_231",
-              0.5432844995389816
+              0.45671550046101833
             ],
             [
               "PercentMethylationPosition_232",
-              0.5438721498371335
+              0.45612785016286644
             ],
             [
               "PercentMethylationPosition_233",
-              0.5507910074937552
+              0.4492089925062448
             ],
             [
               "PercentMethylationPosition_234",
-              0.5335981107771576
+              0.4664018892228424
             ],
             [
               "PercentMethylationPosition_235",
-              0.5489754318206201
+              0.4510245681793799
             ],
             [
               "PercentMethylationPosition_236",
-              0.5491239742736749
+              0.4508760257263251
             ],
             [
               "PercentMethylationPosition_237",
-              0.543534434333221
+              0.45646556566677904
             ],
             [
               "PercentMethylationPosition_238",
-              0.5529771338012226
+              0.44702286619877746
             ],
             [
               "PercentMethylationPosition_239",
-              0.5448786900920282
+              0.4551213099079718
             ],
             [
               "PercentMethylationPosition_240",
-              0.5461197073287754
+              0.45388029267122465
             ],
             [
               "PercentMethylationPosition_241",
-              0.5491657791977281
+              0.4508342208022719
             ],
             [
               "PercentMethylationPosition_242",
-              0.5440047961630695
+              0.45599520383693043
             ],
             [
               "PercentMethylationPosition_243",
-              0.5561306223043746
+              0.4438693776956254
             ],
             [
               "PercentMethylationPosition_244",
-              0.5394671314741036
+              0.4605328685258964
             ],
             [
               "PercentMethylationPosition_245",
-              0.5365023326188375
+              0.46349766738116255
             ],
             [
               "PercentMethylationPosition_246",
-              0.5425189759423646
+              0.4574810240576354
             ],
             [
               "PercentMethylationPosition_247",
-              0.5458867027598046
+              0.45411329724019545
             ],
             [
               "PercentMethylationPosition_248",
-              0.5390583903208838
+              0.46094160967911624
             ],
             [
               "PercentMethylationPosition_249",
-              0.5452541672406668
+              0.4547458327593332
             ],
             [
               "PercentMethylationPosition_250",
-              0.5504407443682664
+              0.4495592556317336
             ],
             [
               "PercentMethylationPosition_251",
-              0.5460750853242321
+              0.4539249146757679
             ],
             [
               "PercentMethylationPosition_252",
-              0.5469620958751393
+              0.45303790412486067
             ],
             [
               "PercentMethylationPosition_253",
-              0.5378299120234604
+              0.4621700879765396
             ],
             [
               "PercentMethylationPosition_254",
-              0.541077738515901
+              0.4589222614840989
             ],
             [
               "PercentMethylationPosition_255",
-              0.5418075622502305
+              0.4581924377497694
             ],
             [
               "PercentMethylationPosition_256",
-              0.5466956251939187
+              0.45330437480608127
             ],
             [
               "PercentMethylationPosition_257",
-              0.5472106320506877
+              0.4527893679493123
             ],
             [
               "PercentMethylationPosition_258",
-              0.5306927568249961
+              0.46930724317500394
             ],
             [
               "PercentMethylationPosition_259",
-              0.5400512656199936
+              0.4599487343800064
             ],
             [
               "PercentMethylationPosition_260",
-              0.5287662121715996
+              0.4712337878284004
             ],
             [
               "PercentMethylationPosition_261",
-              0.535726554448643
+              0.4642734455513569
             ],
             [
               "PercentMethylationPosition_262",
-              0.5357266736038848
+              0.4642733263961152
             ],
             [
               "PercentMethylationPosition_263",
-              0.522466039707419
+              0.477533960292581
             ],
             [
               "PercentMethylationPosition_264",
-              0.5338385618611209
+              0.4661614381388791
             ],
             [
               "PercentMethylationPosition_265",
-              0.5204880713895466
+              0.47951192861045344
             ],
             [
               "PercentMethylationPosition_266",
-              0.5308526551982049
+              0.46914734480179504
             ],
             [
               "PercentMethylationPosition_267",
-              0.531663049911225
+              0.4683369500887749
             ],
             [
               "PercentMethylationPosition_268",
-              0.5258987243911867
+              0.4741012756088133
             ],
             [
               "PercentMethylationPosition_269",
-              0.5228652367462566
+              0.47713476325374343
             ],
             [
               "PercentMethylationPosition_270",
-              0.51977162190738
+              0.48022837809262
             ],
             [
               "PercentMethylationPosition_271",
-              0.5166557805355977
+              0.48334421946440237
             ],
             [
               "PercentMethylationPosition_272",
-              0.5146443514644351
+              0.48535564853556484
             ],
             [
               "PercentMethylationPosition_273",
-              0.5227016037948949
+              0.47729839620510506
             ],
             [
               "PercentMethylationPosition_274",
-              0.5126245077600186
+              0.48737549223998144
             ],
             [
               "PercentMethylationPosition_275",
-              0.5078181380803464
+              0.4921818619196536
             ],
             [
               "PercentMethylationPosition_276",
-              0.5025728987993139
+              0.4974271012006861
             ],
             [
               "PercentMethylationPosition_277",
-              0.48513104838709675
+              0.5148689516129032
             ],
             [
               "PercentMethylationPosition_278",
-              0.4968569931901519
+              0.5031430068098481
             ],
             [
               "PercentMethylationPosition_279",
-              0.5107856191744341
+              0.4892143808255659
             ],
             [
               "PercentMethylationPosition_280",
-              0.5272214386459803
+              0.47277856135401974
             ],
             [
               "PercentMethylationPosition_281",
-              0.5095078299776287
+              0.4904921700223714
             ],
             [
               "PercentMethylationPosition_282",
-              0.4849194729136164
+              0.5150805270863836
             ],
             [
               "PercentMethylationPosition_283",
-              0.48282208588957054
+              0.5171779141104295
             ],
             [
               "PercentMethylationPosition_284",
-              0.4821025475653015
+              0.5178974524346985
             ],
             [
               "PercentMethylationPosition_285",
-              0.49899396378269617
+              0.5010060362173038
             ],
             [
               "PercentMethylationPosition_286",
-              0.47658979734451434
+              0.5234102026554857
             ],
             [
               "PercentMethylationPosition_287",
-              0.4696054034838251
+              0.5303945965161749
             ],
             [
               "PercentMethylationPosition_288",
-              0.48052930056710774
+              0.5194706994328923
             ],
             [
               "PercentMethylationPosition_289",
-              0.4640905542544887
+              0.5359094457455114
             ],
             [
               "PercentMethylationPosition_290",
-              0.47188360204482893
+              0.5281163979551711
             ],
             [
               "PercentMethylationPosition_291",
-              0.44138806601777403
+              0.558611933982226
             ],
             [
               "PercentMethylationPosition_292",
-              0.470362473347548
+              0.529637526652452
             ],
             [
               "PercentMethylationPosition_293",
-              0.46290247316845545
+              0.5370975268315445
             ],
             [
               "PercentMethylationPosition_294",
-              0.43199608610567514
+              0.5680039138943248
             ],
             [
               "PercentMethylationPosition_295",
-              0.45495495495495497
+              0.545045045045045
             ],
             [
               "PercentMethylationPosition_296",
-              0.4521276595744681
+              0.5478723404255319
             ],
             [
               "PercentMethylationPosition_297",
-              0.42935678944474986
+              0.5706432105552501
             ],
             [
               "PercentMethylationPosition_298",
-              0.45166959578207383
+              0.5483304042179262
             ],
             [
               "PercentMethylationPosition_299",
-              0.45146871008939976
+              0.5485312899106003
             ],
             [
               "PercentMethylationPosition_300",
-              0.4316353887399464
+              0.5683646112600537
             ],
             [
               "PercentMethylationPosition_301",
-              0.42290748898678415
+              0.5770925110132159
             ],
             [
               "PercentMethylationPosition_302",
-              0.4139250191277735
+              0.5860749808722264
             ],
             [
               "PercentMethylationPosition_303",
-              0.4150793650793651
+              0.584920634920635
             ],
             [
               "PercentMethylationPosition_304",
-              0.4134217067108534
+              0.5865782932891467
             ],
             [
               "PercentMethylationPosition_305",
-              0.4329805996472663
+              0.5670194003527337
             ],
             [
               "PercentMethylationPosition_306",
-              0.3967495219885277
+              0.6032504780114722
             ],
             [
               "PercentMethylationPosition_307",
-              0.38438735177865613
+              0.6156126482213439
             ],
             [
               "PercentMethylationPosition_308",
-              0.36644591611479027
+              0.6335540838852097
             ],
             [
               "PercentMethylationPosition_309",
-              0.3864894795127353
+              0.6135105204872646
             ],
             [
               "PercentMethylationPosition_310",
-              0.375743162901308
+              0.6242568370986921
             ],
             [
               "PercentMethylationPosition_311",
-              0.3743455497382199
+              0.6256544502617801
             ],
             [
               "PercentMethylationPosition_312",
-              0.3788732394366197
+              0.6211267605633802
             ],
             [
               "PercentMethylationPosition_313",
-              0.3588235294117647
+              0.6411764705882353
             ],
             [
               "PercentMethylationPosition_314",
-              0.39767054908485855
+              0.6023294509151415
             ],
             [
               "PercentMethylationPosition_315",
-              0.371900826446281
+              0.628099173553719
             ],
             [
               "PercentMethylationPosition_316",
-              0.35658914728682173
+              0.6434108527131783
             ],
             [
               "PercentMethylationPosition_317",
-              0.33468559837728196
+              0.665314401622718
             ],
             [
               "PercentMethylationPosition_318",
-              0.3793103448275862
+              0.6206896551724138
             ],
             [
               "PercentMethylationPosition_319",
-              0.291358024691358
+              0.7086419753086419
             ],
             [
               "PercentMethylationPosition_320",
-              0.3351206434316354
+              0.6648793565683646
             ],
             [
               "PercentMethylationPosition_321",
-              0.3170028818443804
+              0.6829971181556196
             ],
             [
               "PercentMethylationPosition_322",
-              0.3523809523809524
+              0.6476190476190476
             ],
             [
               "PercentMethylationPosition_323",
-              0.30985915492957744
+              0.6901408450704225
             ],
             [
               "PercentMethylationPosition_324",
-              0.3466135458167331
+              0.6533864541832669
             ],
             [
               "PercentMethylationPosition_325",
-              0.324
+              0.676
             ],
             [
               "PercentMethylationPosition_326",
-              0.32113821138211385
+              0.6788617886178862
             ],
             [
               "PercentMethylationPosition_327",
-              0.32211538461538464
+              0.6778846153846154
             ],
             [
               "PercentMethylationPosition_328",
-              0.32105263157894737
+              0.6789473684210526
             ],
             [
               "PercentMethylationPosition_329",
-              0.2345679012345679
+              0.7654320987654321
             ],
             [
               "PercentMethylationPosition_330",
-              0.3541666666666667
+              0.6458333333333334
             ],
             [
               "PercentMethylationPosition_331",
-              0.2748091603053435
+              0.7251908396946565
             ],
             [
               "PercentMethylationPosition_332",
-              0.25874125874125875
+              0.7412587412587412
             ],
             [
               "PercentMethylationPosition_333",
-              0.28846153846153844
+              0.7115384615384616
             ],
             [
               "PercentMethylationPosition_334",
-              0.2872340425531915
+              0.7127659574468085
             ],
             [
               "PercentMethylationPosition_335",
-              0.23931623931623933
+              0.7606837606837606
             ],
             [
               "PercentMethylationPosition_336",
-              0.25
+              0.75
             ],
             [
               "PercentMethylationPosition_337",
-              0.21428571428571427
+              0.7857142857142857
             ],
             [
               "PercentMethylationPosition_338",
-              0.2602739726027397
+              0.7397260273972602
             ],
             [
               "PercentMethylationPosition_339",
-              0.3
+              0.7
             ],
             [
               "PercentMethylationPosition_340",
-              0.14285714285714285
+              0.8571428571428571
             ],
             [
               "PercentMethylationPosition_341",
-              0.22641509433962265
+              0.7735849056603774
             ],
             [
               "PercentMethylationPosition_342",
-              0.14
+              0.86
             ],
             [
               "PercentMethylationPosition_343",
-              0.1891891891891892
+              0.8108108108108109
             ],
             [
               "PercentMethylationPosition_344",
-              0.2619047619047619
+              0.7380952380952381
             ],
             [
               "PercentMethylationPosition_345",
-              0.26666666666666666
+              0.7333333333333333
             ],
             [
               "PercentMethylationPosition_346",
-              0.23076923076923078
+              0.7692307692307693
             ],
             [
               "PercentMethylationPosition_347",
-              0.17142857142857143
+              0.8285714285714286
             ],
             [
               "PercentMethylationPosition_348",
-              0.2692307692307692
+              0.7307692307692307
             ],
             [
               "PercentMethylationPosition_349",
-              0.2222222222222222
+              0.7777777777777778
             ],
             [
               "PercentMethylationPosition_350",
-              0.16666666666666666
+              0.8333333333333334
             ],
             [
               "PercentMethylationPosition_351",
-              0.2
+              0.8
             ],
             [
               "PercentMethylationPosition_352",
-              0.058823529411764705
+              0.9411764705882353
             ],
             [
               "PercentMethylationPosition_353",
-              0.3
+              0.7
             ],
             [
               "PercentMethylationPosition_354",
-              0.1111111111111111
+              0.8888888888888888
             ],
             [
               "PercentMethylationPosition_355",
-              0.18181818181818182
+              0.8181818181818182
             ],
             [
               "PercentMethylationPosition_356",
-              0.18181818181818182
+              0.8181818181818182
             ],
             [
               "PercentMethylationPosition_357",
-              0.42857142857142855
+              0.5714285714285714
             ],
             [
               "PercentMethylationPosition_358",
-              0.0
+              1.0
             ],
             [
               "PercentMethylationPosition_359",
-              0.0
+              1.0
             ],
             [
               "PercentMethylationPosition_360",
-              0.0
+              1.0
             ],
             [
               "PercentMethylationPosition_361",
@@ -2968,27 +2968,27 @@
             ],
             [
               "PercentMethylationPosition_362",
-              0.0
+              1.0
             ],
             [
               "PercentMethylationPosition_364",
-              0.0
+              1.0
             ],
             [
               "PercentMethylationPosition_365",
-              0.0
+              1.0
             ],
             [
               "PercentMethylationPosition_366",
-              0.0
+              1.0
             ],
             [
               "PercentMethylationPosition_367",
-              0.0
+              1.0
             ],
             [
               "PercentMethylationPosition_368",
-              0.0
+              1.0
             ],
             [
               "PercentMethylationPosition_369",
@@ -2996,23 +2996,23 @@
             ],
             [
               "PercentMethylationPosition_370",
-              0.0
+              1.0
             ],
             [
               "PercentMethylationPosition_373",
-              0.0
+              1.0
             ],
             [
               "PercentMethylationPosition_379",
-              0.0
+              1.0
             ],
             [
               "PercentMethylationPosition_383",
-              0.0
+              1.0
             ],
             [
               "PercentMethylationPosition_389",
-              0.0
+              1.0
             ]
           ]
         }
