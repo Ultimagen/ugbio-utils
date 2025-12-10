@@ -378,3 +378,40 @@ class TestVcfUtils:
         # Verify the correct bcftools command was called
         expected_cmd = f"bcftools annotate -x FILTER/LowQual,LowDP -o {output_vcf} {input_vcf}"
         mock_execute.assert_called_once_with(expected_cmd)
+
+    @patch("os.unlink")
+    @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
+    def test_collapse_vcf_pick_best(self, mock_execute, mock_unlink, tmp_path, mock_logger):
+        """Test collapse_vcf with pick_best parameter"""
+        input_vcf = str(tmp_path / "input.vcf.gz")
+        output_vcf = str(tmp_path / "output.vcf.gz")
+        removed_vcf_path = str(tmp_path / "tmp.vcf")
+
+        # Test with pick_best=True
+        vcf_utils = VcfUtils(logger=mock_logger)
+        vcf_utils.collapse_vcf(vcf=input_vcf, output_vcf=output_vcf, pick_best=True)
+
+        # Verify the command includes --keep maxqual
+        call_args = mock_execute.call_args[0][0]
+        assert "--keep maxqual" in call_args
+        assert "--keep first" not in call_args
+        assert "truvari collapse" in call_args
+        assert "bcftools view" in call_args
+
+        # Verify temporary file cleanup
+        mock_unlink.assert_called_once_with(removed_vcf_path)
+
+        # Reset mocks
+        mock_execute.reset_mock()
+        mock_unlink.reset_mock()
+
+        # Test with pick_best=False (default)
+        vcf_utils.collapse_vcf(vcf=input_vcf, output_vcf=output_vcf, pick_best=False)
+
+        # Verify the command includes --keep first
+        call_args = mock_execute.call_args[0][0]
+        assert "--keep first" in call_args
+        assert "--keep maxqual" not in call_args
+
+        # Verify temporary file cleanup again
+        mock_unlink.assert_called_once_with(removed_vcf_path)

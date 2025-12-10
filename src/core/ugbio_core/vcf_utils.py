@@ -337,9 +337,9 @@ class VcfUtils:
         if ignore_sv_type:
             truvari_cmd.append("-t")
         if pick_best:
-            truvari_cmd.extend(["--pick", "maxqual"])
+            truvari_cmd.extend(["--keep", "maxqual"])
         else:
-            truvari_cmd.extend(["--pick", "first"])
+            truvari_cmd.extend(["--keep", "first"])
         if bed:
             truvari_cmd.extend(["--bed", bed])
         truvari_cmd.extend(["--pctseq", str(pctseq)])
