@@ -518,6 +518,12 @@ class TestMergeCnvsInVcf:
             "CNMOPS_COHORT_MEAN",
             "CNMOPS_COHORT_STDEV",
             "CopyNumber",
+            "GAP_PERC",
+            "JALIGN_DEL_SUPPORT",
+            "JALIGN_DUP_SUPPORT",
+            "JALIGN_DEL_SUPPORT_STRONG",
+            "JALIGN_DUP_SUPPORT_STRONG",
+            "CNV_SOURCE",
             "SVLEN",
             "MatchId",
         ]
