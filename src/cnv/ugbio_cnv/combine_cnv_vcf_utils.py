@@ -308,7 +308,7 @@ def merge_cnvs_in_vcf(
                     record.stop = update_records["end"].max()
                     for action, fields in action_dictionary.items():
                         for field in fields:
-                            values = np.array(list(update_records[field.lower()]) + [record.info[field]])
+                            values = np.array(list(update_records[field.lower()]) + [record.info.get(field, np.nan)])
                             if action == "weighted_avg":
                                 lengths = np.array(
                                     list(update_records["svlen"].apply(lambda x: x[0])) + [record.info["SVLEN"][0]]
@@ -317,5 +317,9 @@ def merge_cnvs_in_vcf(
                                 record.info[field] = round(weighted_avg, 3)
 
                     record.info["SVLEN"] = (record.stop - record.start,)
+                collapse_info_fields = ["CollapseId", "NumCollapsed", "NumConsolidated"]
+                for c in collapse_info_fields:
+                    if c in record.info:
+                        del record.info[c]
                 vcf_out.write(record)
     mu.cleanup_temp_files(temporary_files)
