@@ -209,35 +209,50 @@ When suggesting a dependency change, structure your response as:
 
 ---
 
-## Post-Change Testing: Validating with Docker
+## Post-Change Testing: Running Unit Tests
 
-**CRITICAL**: After making ANY changes to pyproject.toml files, you MUST validate by running unit tests in a Docker container with proper bioinformatics tooling.
+**IMPORTANT**: After making ANY changes to pyproject.toml files, you SHOULD validate by running unit tests:
 
-### Why Docker Testing?
-Local dev environments typically lack required bioinformatics tools (bedtools, bcftools, bedmap, samtools, GATK, etc.). The GitHub Actions workflow runs tests in a properly configured Docker container with all tools pre-installed.
+```bash
+# Run unit tests for the modified module(s)
+uv run pytest src/<module>/tests/unit/ -v
+```
 
-### Validation Workflow
+### Testing Procedure
 
 1. **After modifying pyproject.toml files**: Commit changes with clear message
-2. **Trigger Docker build workflow**:
+2. **Run unit tests**:
    ```bash
-   gh workflow run build-ugbio-member-docker.yml \
-     --ref deps_aligner \
-     --field member=<module-name> \
-     --field image-tag=<change-ticket-id>
+   uv run pytest src/<module>/tests/unit/ -v --tb=short
    ```
-3. **Monitor test results**: Check GitHub Actions tab for workflow status
-4. **Interpret results**:
-   - ✅ All unit tests pass → Changes are validated and safe to merge
-   - ❌ Tests fail → Review error messages, adjust dependencies, re-trigger workflow
-5. **Report outcome**: Confirm all tests pass before considering work complete
+3. **Interpret results**:
+   - ✅ All unit tests pass → Changes are validated and safe
+   - ⚠️ Tests fail due to missing bioinformatics tools → See "Handling Missing Tools" below
+   - ❌ Tests fail due to code issues → Review error messages and adjust dependencies accordingly
 
-### Example Workflow Sequence
+### Handling Missing Tools
+
+Some tests require bioinformatics tools (bedtools, bcftools, bedmap, samtools, GATK, etc.) that may not be available in all local dev environments.
+
+**If tests fail with "command not found" errors**:
+
+1. **Ask the user** if they have an alternative way to run tests or prefer to skip validation
+2. **Document which tools are missing** from the error messages
+3. **If user wants to proceed without testing**: Document this decision clearly in the commit message
+4. **If user wants proper testing**: Direct them to use a dev container or suggest running tests through CI/CD pipeline
+
+**Example handling**:
+- Tests fail: `bedmap: command not found`
+- Agent asks: "Tests require bedtools which isn't available locally. Would you like to: (a) Skip validation, (b) Use a dev container, or (c) Rely on CI/CD validation?"
+- Proceed based on user preference
+
+### Example Workflow
 1. User requests: "Add seaborn to srsnv"
 2. Agent: Modifies `src/srsnv/pyproject.toml`, commits change
-3. Agent: Triggers workflow: `gh workflow run build-ugbio-member-docker.yml --ref deps_aligner --field member=srsnv --field image-tag=TICKET-123`
-4. Agent: Monitors workflow completion
-5. Agent: Reports test results and validation status
+3. Agent: Runs: `uv run pytest src/srsnv/tests/unit/ -v`
+4. If tests pass → Agent reports success
+5. If tests fail due to missing tools → Agent asks user how to proceed
+6. Agent documents outcome and any decisions made
 
 ---
 
