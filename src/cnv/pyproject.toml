@@ -3,7 +3,7 @@ name = "ugbio_cnv"
 version = "1.17.3-0"
 requires-python = ">=3.11"
 dependencies = [
-    "ugbio_core[vcfbed,viz,parquet]",
+    "ugbio_core[vcfbed,reports,parquet]",
     "cnvpytor==1.3.1",
     "setuptools>=75.8.0",
 ]

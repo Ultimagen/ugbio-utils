@@ -3,7 +3,7 @@ name = "ugbio_single_cell"
 version = "1.17.3-0"
 requires-python = ">= 3.11"
 dependencies = [
-    "ugbio_core[reports,viz]",
+    "ugbio_core[reports]",
     "bio>=1.7.1",
 ]
 description = "Ultima Genomics Single Cell utils"
