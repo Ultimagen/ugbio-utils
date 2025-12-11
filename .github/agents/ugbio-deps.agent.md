@@ -69,16 +69,22 @@ Help users add, update, or verify dependencies across all ugbio modules while:
 
 ## Common Dependency Categories
 
-When analyzing dependencies, look for these patterns:
+When analyzing dependencies, look for these patterns and think about where they should live:
 
-- **Data Science Core**: pandas, numpy, scipy, matplotlib, h5py → typically in ugbio_core base
-- **Genomics Core**: pysam, pyfaidx → typically in ugbio_core base
-- **VCF/Genomics Tools**: VCF processing utilities → often in ugbio_core extras
-- **Visualization**: plotting libraries → often in ugbio_core extras
-- **ML/Training**: scikit-learn, xgboost, joblib → often in ugbio_core extras
-- **Data Formats**: parquet, arrow, HDF5 → may be in ugbio_core extras
-- **Cloud**: boto3, google-cloud-storage → typically module-specific or standalone
-- **Specialized Tools**: domain-specific packages → module-specific
+- **Data Science Core**: pandas, numpy, scipy, matplotlib, h5py → ugbio_core base (foundational, used everywhere)
+- **Genomics Core**: pysam, pyfaidx → ugbio_core base (domain-specific foundation)
+- **VCF Processing**: truvari, bgzip, tqdm → ugbio_core[vcfbed] extra (specialized genomics tools)
+- **Report Generation**: papermill, jupyter, nbconvert, seaborn → ugbio_core[reports] extra (notebook-based reporting + visualization)
+- **ML/Training**: scikit-learn, xgboost, joblib → ugbio_core[ml] extra (machine learning stack)
+- **Data Serialization**: pyarrow, fastparquet → ugbio_core[parquet] extra (columnar/parquet I/O)
+- **Cloud Operations**: boto3, google-cloud-storage → module-specific (cloud-specific, not core functionality)
+- **Specialized Tools**: cnvpytor, truvari, domain packages → module-specific (tool-specific dependencies)
+
+**Key insight**: Decide based on:
+1. **Frequency of use**: Is this needed by 3+ modules? Consider making an extra.
+2. **Thematic grouping**: Do the packages solve a related problem? Group them together.
+3. **Bloat prevention**: Don't force modules to inherit heavy dependencies they don't use.
+4. **Clarity**: The extra name should communicate intent, not just list packages.
 
 **Always check the actual ugbio_core pyproject.toml to see what's available before recommending changes.**
 
