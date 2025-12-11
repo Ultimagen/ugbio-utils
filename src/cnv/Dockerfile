@@ -99,7 +99,9 @@ COPY --from=build ${OUT_DIR} ${OUT_DIR}
 RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
 
 #download cnvpytor additional necessary files (described here: https://github.com/abyzovlab/CNVpytor?tab=readme-ov-file#install-using-pip)
-RUN cnvpytor -download
+ENV PYTOR_DATA_DIR=/usr/share/cnvpytor_data
+RUN mkdir -p $PYTOR_DATA_DIR
+RUN cnvpytor -download $PYTOR_DATA_DIR
 
 USER ugbio
 
