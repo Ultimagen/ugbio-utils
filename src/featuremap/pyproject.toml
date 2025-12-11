@@ -3,11 +3,8 @@ name = "ugbio_featuremap"
 version = "1.17.3-0"
 requires-python = ">=3.11"
 dependencies = [
-    "ugbio_core[vcfbed]",
+    "ugbio_core[vcfbed,ml]",
     "ugbio_ppmseq",
-    "seaborn>=0.13.2",
-    "scikit-learn>=1.5.2,<1.6.0",
-    "xgboost==2.1.2",
     "polars>=1.27.1",
 ]
 description = "Ultima Genomics FeatureMap utils"
@@ -29,13 +26,6 @@ add_aggregate_params_and_xgb_score_to_pileup_featuremap = "ugbio_featuremap.feat
 create_somatic_featuremap = "ugbio_featuremap.create_somatic_featuremap:main"
 integrate_mpileup_to_sfm = "ugbio_featuremap.integrate_mpileup_to_sfm:main"
 somatic_featuremap_fields_transformation = "ugbio_featuremap.somatic_featuremap_fields_transformation:main"
-
-[tool.uv]
-dev-dependencies = [
-    "pre-commit>=4.0.1",
-    "pytest>=8.3.3",
-    "ruff>=0.6.9",
-]
 
 [tool.uv.sources.ugbio_core]
 workspace = true

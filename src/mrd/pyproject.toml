@@ -23,13 +23,6 @@ run_tests = "pytest:main"
 generate_synthetic_signatures = "ugbio_mrd.generate_synthetic_signatures:main"
 generate_report = "ugbio_mrd.generate_mrd_report:main"
 
-[tool.uv]
-dev-dependencies = [
-    "pre-commit>=4.0.1",
-    "pytest>=8.3.3",
-    "ruff>=0.6.9",
-]
-
 [tool.uv.sources.ugbio_core]
 workspace = true
 

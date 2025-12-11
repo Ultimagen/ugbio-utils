@@ -31,7 +31,7 @@ RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
 COPY --from=build ${OUT_DIR} ${OUT_DIR}
 RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
-    pip install "${WHEEL_FILE}[vcfbed,reports,concordance]" && \
+    pip install "${WHEEL_FILE}[vcfbed,reports,ml]" && \
     rm -rf ${OUT_DIR}
 
 USER ugbio
