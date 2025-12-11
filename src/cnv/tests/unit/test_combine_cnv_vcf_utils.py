@@ -523,6 +523,7 @@ class TestMergeCnvsInVcf:
             "JALIGN_DUP_SUPPORT",
             "JALIGN_DEL_SUPPORT_STRONG",
             "JALIGN_DUP_SUPPORT_STRONG",
+            "TREE_SCORE",
             "CNV_SOURCE",
             "SVLEN",
             "MatchId",
