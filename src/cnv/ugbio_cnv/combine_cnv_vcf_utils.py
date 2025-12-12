@@ -351,7 +351,7 @@ AGGREGATION_ACTIONS = {
 }
 
 
-def _value_aggregator(
+def _value_aggregator(  # noqa: C901
     record: pysam.VariantRecord,
     update_records: pd.DataFrame,
     field: str,
@@ -361,7 +361,7 @@ def _value_aggregator(
 ):
     """Helper function to aggregate INFO field values based on specified action."""
     if field.lower() not in update_records.columns:
-        return record
+        return
     values = []
     if val_number == 1:
         values = list(update_records[field.lower()]) + [record.info.get(field, np.nan)]
@@ -377,10 +377,14 @@ def _value_aggregator(
         values = values[~drop]
         lengths = lengths[~drop]
         weighted_avg = np.sum(values * lengths) / np.sum(lengths)
+        if all(pd.isna(x) for x in values):
+            return
         record.info[field] = round(weighted_avg, 3)
 
     if action == "max":
-        if str(val_type) == "Float":
+        if all(pd.isna(x) for x in values):
+            return
+        elif str(val_type) == "Float":
             record.info[field] = float(np.nanmax(values))
         elif str(val_type) == "Integer":
             record.info[field] = int(np.nanmax(values))
