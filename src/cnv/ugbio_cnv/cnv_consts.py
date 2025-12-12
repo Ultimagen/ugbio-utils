@@ -5,16 +5,16 @@
 INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
     "CNV_calls_source": (
         "CNV_SOURCE",
-        1,
+        ".",
         "String",
-        "the tool called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
+        "the tool that called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
         "INFO",
     ),
     "CNV_SOURCE": (
         "CNV_SOURCE",
         ".",
         "String",
-        "the tool called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
+        "the tool that called this CNV. can be combination of: cn.mops, cnvpytor, gridss",
         "INFO",
     ),
     "CNMOPS_SAMPLE_MEAN": (
