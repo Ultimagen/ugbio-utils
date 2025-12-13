@@ -181,7 +181,9 @@ def modify_features_based_on_vcf_type(  # noqa C901
         return pd.DataFrame(np.array(df.apply(svtype_encode)).reshape(-1, 1), index=df.index)
 
     def region_annotation_encode_df(df):
-        return pd.DataFrame(np.array(df.apply(region_annotation_encode)).reshape(-1, 1), index=df.index)
+        return pd.DataFrame(
+            np.array(df["region_annotations"].apply(region_annotation_encode)).reshape(-1, 1), index=df.index
+        )
 
     def copy_number_encode_df(df):
         return pd.DataFrame(df.max(axis=1), index=df.index)
@@ -277,7 +279,6 @@ def modify_features_based_on_vcf_type(  # noqa C901
     elif vtype == VcfType.CNV:
         transform_list = [
             ("svtype", svtype_encode_filter, "svtype"),
-            ("region_annotations", region_annotation_encode_filter, "region_annotations"),
             ("cnmops_sample_stdev", default_filler, ["cnmops_sample_stdev"]),
             ("cnmops_sample_mean", default_filler, ["cnmops_sample_mean"]),
             ("cnmops_cohort_stdev", default_filler, ["cnmops_cohort_stdev"]),
@@ -323,11 +324,14 @@ def modify_features_based_on_vcf_type(  # noqa C901
     long_hmer_transformer = make_pipeline(
         impute.SimpleImputer(strategy="constant", fill_value="0", missing_values=None), convert_to_numeric_transformer
     )
+    region_annotation_transformer = make_pipeline(region_annotation_encode_filter)
 
     if custom_annotations is None:
         custom_annotations = []
     custom_fields_dict = defaultdict(lambda: default_transformer)
     custom_fields_dict["long_hmer"] = long_hmer_transformer
+    custom_fields_dict["region_annotations"] = region_annotation_transformer
+
     for an in custom_annotations:
         features.append(an)
         transform_list.append((an, custom_fields_dict[an], [an]))
