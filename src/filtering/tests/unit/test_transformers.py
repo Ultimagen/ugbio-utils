@@ -1,12 +1,15 @@
 import pandas as pd
 import pytest
+from ugbio_filtering.tprep_constants import VcfType
 from ugbio_filtering.transformers import (
     allele_encode,
     encode_labels,
+    get_transformer,
     gt_encode,
     ins_del_encode,
     motif_encode_left,
     motif_encode_right,
+    region_annotation_encode,
     tuple_break,
     tuple_break_second,
     tuple_break_third,
@@ -84,3 +87,51 @@ class TestTransformers:
             encode_labels([(0, 1, 2), (0, 0, 1)])  # type: ignore
         with pytest.raises(ValueError):
             encode_labels([(0, 2), (1, 2)])
+
+    def test_region_annotation_encode(self):
+        # Test with a tuple of region annotations
+        result = region_annotation_encode(("Telomere_Centromere", "Clusters"))
+        assert result > 0
+        # Test with empty tuple
+        result = region_annotation_encode(())
+        assert result > 0
+        # Test with unknown annotation
+        result = region_annotation_encode(("Unknown",))
+        assert result == 0
+
+    def test_copy_number_encode_df(self):
+        # Test copy number encoding through CNV transformer
+        # The copy_number_encode_df function takes max of CN and CopyNumber columns
+        transformer = get_transformer(VcfType.CNV)
+        test_df = pd.DataFrame(
+            {
+                "svtype": ["DEL"],
+                "region_annotations": [()],
+                "cnmops_sample_stdev": [1.0],
+                "cnmops_sample_mean": [2.0],
+                "cnmops_cohort_stdev": [1.5],
+                "cnmops_cohort_mean": [2.5],
+                "pytorq0": [0.1],
+                "pytorp2": [0.2],
+                "pytorrd": [0.3],
+                "pytorp1": [0.4],
+                "pytorp3": [0.5],
+                "gap_perc": [0.01],
+                "cnv_dup_reads": [10],
+                "cnv_del_reads": [5],
+                "cnv_dup_frac": [0.6],
+                "cnv_del_frac": [0.3],
+                "jalign_dup_support": [8],
+                "jalign_del_support": [4],
+                "jalign_dup_support_strong": [6],
+                "jalign_del_support_strong": [3],
+                "svlen": [(1000,)],
+                "cn": [2],
+                "copynumber": [3],
+                "cnv_source": ["cnmops"],
+            }
+        )
+        result = transformer.fit_transform(test_df)
+        # Check that copynumber column exists and has the max value (3)
+        assert "copynumber__0" in result.columns
+        assert result["copynumber__0"].iloc[0] == 3

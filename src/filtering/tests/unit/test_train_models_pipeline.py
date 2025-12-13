@@ -29,3 +29,24 @@ class TestRunTraining:
         )
         assert os.path.exists(f"{tmpdir}/approximate_gt.model.h5")
         assert os.path.exists(f"{tmpdir}/approximate_gt.model.pkl")
+
+    def test_run_training_cnv(self, tmpdir, resources_dir):
+        train_models_pipeline.run(
+            [
+                "train_models_pipeline",
+                "--train_dfs",
+                f"{resources_dir}/hg002.train.cnv.h5",
+                "--test_dfs",
+                f"{resources_dir}/hg002.test.cnv.h5",
+                "--output_file_prefix",
+                f"{tmpdir}/cnv.model",
+                "--gt_type",
+                "approximate",
+                "--vcf_type",
+                "cnv",
+                "--verbosity",
+                "DEBUG",
+            ]
+        )
+        assert os.path.exists(f"{tmpdir}/cnv.model.h5")
+        assert os.path.exists(f"{tmpdir}/cnv.model.pkl")

@@ -150,6 +150,7 @@ def test_run_pipeline(mocker):
         pctseq=0.9,
         pctsize=0.8,
         ignore_filter=False,
+        ignore_sv_type=True,
     )
     mock_collapse_vcf.assert_any_call(
         "ground_truth.vcf.gz",
@@ -174,6 +175,8 @@ def test_run_pipeline(mocker):
         pctsize=0.8,
         erase_outdir=True,
         ignore_filter=False,
+        ignore_type=True,
+        skip_collapse=False,
     )
     mock_to_hdf.assert_called()
 
@@ -192,6 +195,7 @@ def test_run_pipeline_ignore_filter(mocker):
     mock_sp = mocker.Mock()
     sv_comparison = SVComparison(simple_pipeline=mock_sp, logger=mock_logger)
     mock_collapse_vcf = mocker.patch.object(sv_comparison.vu, "collapse_vcf")
+    mock_remove_filters = mocker.patch.object(sv_comparison.vu, "remove_filters")
     _ = mocker.patch.object(sv_comparison.vu, "sort_vcf")
     _ = mocker.patch.object(sv_comparison.vu, "index_vcf")
     mock_run_truvari = mocker.patch.object(sv_comparison, "run_truvari")
@@ -220,14 +224,20 @@ def test_run_pipeline_ignore_filter(mocker):
         ignore_filter=True,
     )
 
-    # Verify collapse_vcf calls with ignore_filter=True
+    # Verify remove_filters is called to create the nofilter version
+    mock_remove_filters.assert_called_once_with(
+        input_vcf="calls.vcf.gz", output_vcf="/tmp/test_dir/calls.nofilter.vcf.gz"
+    )
+
+    # Verify collapse_vcf calls with the nofilter file for calls
     mock_collapse_vcf.assert_any_call(
-        "calls.vcf.gz",
-        "/tmp/test_dir/calls_collapsed.vcf.gz",
+        "/tmp/test_dir/calls.nofilter.vcf.gz",
+        "/tmp/test_dir/calls.nofilter_collapsed.vcf.gz",
         bed="regions.bed",
         pctseq=0.9,
         pctsize=0.8,
         ignore_filter=True,
+        ignore_sv_type=True,
     )
     mock_collapse_vcf.assert_any_call(
         "ground_truth.vcf.gz",
@@ -238,9 +248,9 @@ def test_run_pipeline_ignore_filter(mocker):
         ignore_filter=True,
     )
 
-    # Verify truvari is called with ignore_filter=True
+    # Verify truvari is called with ignore_filter=True and the processed files
     mock_run_truvari.assert_called_once_with(
-        calls="/tmp/test_dir/calls_collapsed.sort.vcf.gz",
+        calls="/tmp/test_dir/calls.nofilter_collapsed.sort.vcf.gz",
         gt="/tmp/test_dir/ground_truth_collapsed.sort.vcf.gz",
         outdir="output_dir",
         bed="regions.bed",
@@ -248,6 +258,8 @@ def test_run_pipeline_ignore_filter(mocker):
         pctsize=0.8,
         erase_outdir=True,
         ignore_filter=True,
+        ignore_type=True,
+        skip_collapse=False,
     )
 
 

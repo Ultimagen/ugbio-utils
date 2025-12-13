@@ -2,6 +2,7 @@
 from os.path import join as pjoin
 
 import numpy as np
+import pandas as pd
 import pysam
 from ugbio_core import misc_utils as mu
 from ugbio_core.logger import logger
@@ -136,6 +137,7 @@ def write_vcf_records_with_source(
     for record in vcf_in:
         # Clear filters - we remove filters imposed by the previous pipelines
         record.filter.clear()
+        record.filter.add("PASS")
         # Create new record with combined header
         new_record = VcfUtils.copy_vcf_record(record, combined_header)
         # Add source tag if not already present
@@ -237,7 +239,16 @@ def cnv_vcf_to_bed(input_vcf: str, output_bed: str, *, assign_id=True) -> None:
                 bed_out.write(f"{record.contig}\t{record.start}\t{record.stop}\n")
 
 
-def merge_cnvs_in_vcf(input_vcf: str, output_vcf: str, distance: int = 1000) -> None:
+def merge_cnvs_in_vcf(
+    input_vcf: str,
+    output_vcf: str,
+    distance: int = 1000,
+    *,
+    ignore_sv_type: bool = False,
+    ignore_filter: bool = True,
+    pick_best: bool = False,
+    do_not_merge_collapsed_filtered: bool = False,
+) -> None:
     """
     Merge CNV variants in a VCF file that are within a specified distance.
 
@@ -249,7 +260,15 @@ def merge_cnvs_in_vcf(input_vcf: str, output_vcf: str, distance: int = 1000) -> 
         Path to the output VCF file where merged variants will be written.
     distance : int, optional
         Maximum distance between CNV variants to consider them for merging, by default 1000.
+    ignore_sv_type : bool, optional
+        Whether to ignore SVTYPE when collapsing variants, by default False.
+    ignore_filter: bool, optional
+        Whether to ignore FILTER status when collapsing variants, by default True.
+    do_not_merge_collapsed_filtered: bool, optional
+        Whether to avoid merging filtered out variants were removed by collapsing, by default False.
 
+    pick_best : bool, optional
+        Whether to pick the best variant among those being merged (or the first: False), by default False.
     Returns
     -------
     None
@@ -264,25 +283,22 @@ def merge_cnvs_in_vcf(input_vcf: str, output_vcf: str, distance: int = 1000) -> 
         refdist=distance,
         pctseq=0.0,
         pctsize=0.0,
-        ignore_filter=True,
-        ignore_sv_type=False,
+        ignore_filter=ignore_filter,
+        ignore_sv_type=ignore_sv_type,
+        pick_best=pick_best,
         erase_removed=False,
     )
     temporary_files.append(str(removed_vcf))
+    all_fields = sum(AGGREGATION_ACTIONS.values(), [])
 
-    action_dictionary = {
-        "weighted_avg": [
-            "CNMOPS_SAMPLE_MEAN",
-            "CNMOPS_SAMPLE_STDEV",
-            "CNMOPS_COHORT_MEAN",
-            "CNMOPS_COHORT_STDEV",
-            "CopyNumber",
-        ]
-    }
-    all_fields = sum(action_dictionary.values(), [])
     update_df = vcftools.get_vcf_df(str(removed_vcf), custom_info_fields=all_fields + ["SVLEN", "MatchId"]).sort_index()
     update_df["matchid"] = update_df["matchid"].apply(lambda x: x[0]).astype(float)
     update_df["end"] = update_df["pos"] + update_df["svlen"].apply(lambda x: x[0]) - 1
+
+    if do_not_merge_collapsed_filtered:
+        unselect = (update_df["filter"] != "PASS") & (update_df["filter"] != "") & (update_df["filter"] != ".")
+        update_df = update_df.loc[~unselect]
+
     with pysam.VariantFile(output_vcf_collapse) as vcf_in:
         hdr = vcf_in.header
         with pysam.VariantFile(output_vcf, "w", header=hdr) as vcf_out:
@@ -290,17 +306,89 @@ def merge_cnvs_in_vcf(input_vcf: str, output_vcf: str, distance: int = 1000) -> 
                 if "CollapseId" in record.info:
                     cid = float(record.info["CollapseId"])
                     update_records = update_df[update_df["matchid"] == cid]
-                    record.stop = update_records["end"].max()
-                    for action, fields in action_dictionary.items():
-                        for field in fields:
-                            values = np.array(list(update_records[field.lower()]) + [record.info[field]])
-                            if action == "weighted_avg":
-                                lengths = np.array(
-                                    list(update_records["svlen"].apply(lambda x: x[0])) + [record.info["SVLEN"][0]]
-                                )
-                                weighted_avg = np.sum(values * lengths) / np.sum(lengths)
-                                record.info[field] = round(weighted_avg, 3)
+                    if not update_records.empty:
+                        record.start = min(update_records["pos"].min(), record.start)
+                        record.stop = max(update_records["end"].max(), record.stop)
+
+                        for action, fields in AGGREGATION_ACTIONS.items():
+                            for field in fields:
+                                if field in hdr.info:
+                                    _value_aggregator(
+                                        record,
+                                        update_records,
+                                        field,
+                                        action,
+                                        hdr.info[field].number,
+                                        hdr.info[field].type,
+                                    )
 
                     record.info["SVLEN"] = (record.stop - record.start,)
+                collapse_info_fields = ["CollapseId", "NumCollapsed", "NumConsolidated"]
+                for c in collapse_info_fields:
+                    if c in record.info:
+                        del record.info[c]
                 vcf_out.write(record)
     mu.cleanup_temp_files(temporary_files)
+
+
+AGGREGATION_ACTIONS = {
+    "weighted_avg": [
+        "CNMOPS_SAMPLE_MEAN",
+        "CNMOPS_SAMPLE_STDEV",
+        "CNMOPS_COHORT_MEAN",
+        "CNMOPS_COHORT_STDEV",
+        "CopyNumber",
+    ],
+    "max": [
+        "GAP_PERC",
+        "JALIGN_DEL_SUPPORT",
+        "JALIGN_DUP_SUPPORT",
+        "JALIGN_DEL_SUPPORT_STRONG",
+        "JALIGN_DUP_SUPPORT_STRONG",
+        "TREE_SCORE",
+    ],
+    "aggregate": ["CNV_SOURCE"],
+}
+
+
+def _value_aggregator(  # noqa: C901
+    record: pysam.VariantRecord,
+    update_records: pd.DataFrame,
+    field: str,
+    action: str,
+    val_number: str | None,
+    val_type: str | None,
+):
+    """Helper function to aggregate INFO field values based on specified action."""
+    if field.lower() not in update_records.columns:
+        return
+    values = []
+    if val_number == 1:
+        values = list(update_records[field.lower()]) + [record.info.get(field, np.nan)]
+    elif str(val_number) == ".":
+        values = list(update_records[field.lower()]) + [record.info.get(field, (None,))]
+        values = [item for sublist in values for item in sublist if item is not None]
+    else:
+        raise ValueError(f"Unsupported value number for aggregation: {val_number}")
+    if action == "weighted_avg":
+        lengths = np.array(list(update_records["svlen"].apply(lambda x: x[0])) + [record.info["SVLEN"][0]])
+        values = np.array(values)
+        drop = np.isnan(values) | np.isnan(lengths)
+        values = values[~drop]
+        lengths = lengths[~drop]
+        weighted_avg = np.sum(values * lengths) / np.sum(lengths)
+        if all(pd.isna(x) for x in values):
+            return
+        record.info[field] = round(weighted_avg, 3)
+
+    if action == "max":
+        if all(pd.isna(x) for x in values):
+            return
+        elif str(val_type) == "Float":
+            record.info[field] = float(np.nanmax(values))
+        elif str(val_type) == "Integer":
+            record.info[field] = int(np.nanmax(values))
+        else:
+            raise ValueError(f"Unsupported value type for max aggregation: {val_type}")
+    if action == "aggregate":
+        record.info[field] = tuple(set(values))

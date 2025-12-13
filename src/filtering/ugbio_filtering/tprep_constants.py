@@ -18,6 +18,7 @@ class VcfType(Enum):
     DEEP_VARIANT = "deep_variant"
     DEEP_VARIANT_WITH_SOFTCLIP_COUNTS = "deep_variant_extended"
     JOINT = "joint_callset"
+    CNV = "cnv"
 
     def __str__(self):
         return self.value

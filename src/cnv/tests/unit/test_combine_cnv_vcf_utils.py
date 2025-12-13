@@ -507,6 +507,7 @@ class TestMergeCnvsInVcf:
             pctsize=0.0,
             ignore_filter=True,
             ignore_sv_type=False,
+            pick_best=False,
             erase_removed=False,
         )
 
@@ -517,6 +518,13 @@ class TestMergeCnvsInVcf:
             "CNMOPS_COHORT_MEAN",
             "CNMOPS_COHORT_STDEV",
             "CopyNumber",
+            "GAP_PERC",
+            "JALIGN_DEL_SUPPORT",
+            "JALIGN_DUP_SUPPORT",
+            "JALIGN_DEL_SUPPORT_STRONG",
+            "JALIGN_DUP_SUPPORT_STRONG",
+            "TREE_SCORE",
+            "CNV_SOURCE",
             "SVLEN",
             "MatchId",
         ]

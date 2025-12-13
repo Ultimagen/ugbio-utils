@@ -64,7 +64,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     ap_var.add_argument(
         "--vcf_type",
-        help='VCF type - "single_sample"(GATK) or "deep_variant"',
+        help='VCF type - "single_sample"(GATK), "deep_variant" or "cnv"',
         type=VcfType,
         choices=list(VcfType),
         default=VcfType.SINGLE_SAMPLE,
@@ -113,8 +113,8 @@ def run(argv: list[str]):
         test_df = read_data(args.test_dfs, features_to_extract)
         logger.info("Read test data: done")
 
-        train_results = evaluate_model(train_df, model, transformer, "training")
-        test_results = evaluate_model(test_df, model, transformer, "test")
+        train_results = evaluate_model(train_df, model, transformer, "training", args.vcf_type)
+        test_results = evaluate_model(test_df, model, transformer, "test", args.vcf_type)
 
         save_results(args.output_file_prefix, model, transformer, train_results, test_results)
         logger.info("Model training run: success")
@@ -140,9 +140,9 @@ def train_model(train_df: pd.DataFrame, args: argparse.Namespace):
     return model, transformer
 
 
-def evaluate_model(df: pd.DataFrame, model, transformer, data_type: str):
+def evaluate_model(df: pd.DataFrame, model, transformer, data_type: str, vtype: VcfType):
     logger.info(f"Evaluate {data_type}: start")
-    results = variant_filtering_utils.eval_model(df, model, transformer)
+    results = variant_filtering_utils.eval_model(df, model, transformer, vtype)
     logger.info(f"Evaluate {data_type}: done")
     return results
 
