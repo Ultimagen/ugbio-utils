@@ -289,6 +289,9 @@ def merge_cnvs_in_vcf(
         erase_removed=False,
     )
     temporary_files.append(str(removed_vcf))
+    vu.sort_vcf(output_vcf_collapse, output_vcf_collapse.replace(".tmp.vcf.gz", ".sort.tmp.vcf.gz"))
+    output_vcf_collapse = output_vcf_collapse.replace(".tmp.vcf.gz", ".sort.tmp.vcf.gz")
+    temporary_files.append(output_vcf_collapse)
     all_fields = sum(AGGREGATION_ACTIONS.values(), [])
 
     update_df = vcftools.get_vcf_df(str(removed_vcf), custom_info_fields=all_fields + ["SVLEN", "MatchId"]).sort_index()

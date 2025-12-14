@@ -449,6 +449,7 @@ class TestMergeCnvsInVcf:
         input_vcf = tmp_path / "input.vcf.gz"
         output_vcf = tmp_path / "output.vcf.gz"
         collapse_vcf = tmp_path / "output.vcf.gz.collapse.tmp.vcf.gz"  # Must match function's naming
+        collapse_sorted_vcf = tmp_path / "output.vcf.gz.collapse.sort.tmp.vcf.gz"  # After sorting
         removed_vcf = tmp_path / "removed.vcf.gz"
 
         # Create mock VcfUtils instance
@@ -490,6 +491,12 @@ class TestMergeCnvsInVcf:
             record.info["CopyNumber"] = 1.0
             record.samples["test_sample"]["GT"] = (0, 1)
             vcf.write(record)
+
+        # Create the sorted VCF file (copy of collapsed VCF for this test)
+        with pysam.VariantFile(str(collapse_vcf), "r") as vcf_in:
+            with pysam.VariantFile(str(collapse_sorted_vcf), "w", header=vcf_in.header) as vcf_out:
+                for record in vcf_in:
+                    vcf_out.write(record)
 
         # Create dummy input file (not read by test)
         with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
@@ -550,6 +557,7 @@ class TestMergeCnvsInVcf:
         input_vcf = tmp_path / "input.vcf.gz"
         output_vcf = tmp_path / "output.vcf.gz"
         collapse_vcf = tmp_path / "output.vcf.gz.collapse.tmp.vcf.gz"  # Must match function's naming
+        collapse_sorted_vcf = tmp_path / "output.vcf.gz.collapse.sort.tmp.vcf.gz"  # After sorting
         removed_vcf = tmp_path / "removed.vcf.gz"
 
         # Create mock VcfUtils instance
@@ -593,6 +601,12 @@ class TestMergeCnvsInVcf:
             record.info["CopyNumber"] = 1.5
             record.samples["test_sample"]["GT"] = (0, 1)
             vcf.write(record)
+
+        # Create the sorted VCF file (copy of collapsed VCF for this test)
+        with pysam.VariantFile(str(collapse_vcf), "r") as vcf_in:
+            with pysam.VariantFile(str(collapse_sorted_vcf), "w", header=vcf_in.header) as vcf_out:
+                for record in vcf_in:
+                    vcf_out.write(record)
 
         # Create dummy input file
         with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
