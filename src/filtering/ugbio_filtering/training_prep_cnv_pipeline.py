@@ -91,7 +91,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "pytorP1",
             "pytorP3",
             "CN",
-            "GAP_PERC",
+            "GAP_PERCENTAGE",
             "CNV_DUP_READS",
             "CNV_DEL_READS",
             "CNV_DUP_FRAC",

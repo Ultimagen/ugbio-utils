@@ -45,7 +45,13 @@ INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
         "Standard deviation of coverage in the CNV region across the cohort (cn.mops)",
         "INFO",
     ),
-    "GAP_PERC": ("GAP_PERC", 1, "Float", "Fraction of N bases in the CNV region from reference genome", "INFO"),
+    "GAP_PERCENTAGE": (
+        "GAP_PERCENTAGE",
+        1,
+        "Float",
+        "Fraction of N bases in the CNV region from reference genome",
+        "INFO",
+    ),
 }
 
 # the reason filters require special treatment is that they need to be

@@ -9,7 +9,7 @@ from os.path import join as pjoin
 import pysam
 import ugbio_core.misc_utils as mu
 from pyfaidx import Fasta
-from ugbio_cnv.cnv_consts import FILTER_TAG_REGISTRY, INFO_TAG_REGISTRY
+from ugbio_cnv.cnv_vcf_consts import FILTER_TAG_REGISTRY, INFO_TAG_REGISTRY
 from ugbio_cnv.combine_cnv_vcf_utils import (
     cnv_vcf_to_bed,
     combine_vcf_headers_for_cnv,
@@ -172,7 +172,7 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
 
 def annotate_vcf_with_gap_perc(input_vcf: str, ref_fasta: str, output_vcf: str) -> None:
     """
-    Annotate CNV VCF records with GAP_PERC INFO field representing the fraction of 'N' bases in the CNV region.
+    Annotate CNV VCF records with GAP_PERCENTAGE INFO field representing the fraction of 'N' bases in the CNV region.
 
     Parameters
     ----------
@@ -181,15 +181,15 @@ def annotate_vcf_with_gap_perc(input_vcf: str, ref_fasta: str, output_vcf: str) 
     ref_fasta : str
         Path to reference genome FASTA file. Should have .fai index.
     output_vcf : str
-        Path to output VCF file with GAP_PERC annotation.
+        Path to output VCF file with GAP_PERCENTAGE annotation.
     """
 
     genome = Fasta(ref_fasta, rebuild=False, build_index=False)
 
     with pysam.VariantFile(input_vcf) as vcf_in:
         header = vcf_in.header
-        if "GAP_PERC" not in header.info:
-            header.info.add(*INFO_TAG_REGISTRY["GAP_PERC"][:-1])
+        if "GAP_PERCENTAGE" not in header.info:
+            header.info.add(*INFO_TAG_REGISTRY["GAP_PERCENTAGE"][:-1])
         with pysam.VariantFile(output_vcf, "w", header=header) as vcf_out:
             for record in vcf_in:
                 chrom = record.chrom
@@ -204,7 +204,7 @@ def annotate_vcf_with_gap_perc(input_vcf: str, ref_fasta: str, output_vcf: str) 
                 except Exception as e:
                     logger.warning(f"Could not retrieve sequence for {chrom}:{start}-{end}: {e}")
                     gap_perc = 0.0
-                record.info["GAP_PERC"] = round(gap_perc, 5)
+                record.info["GAP_PERCENTAGE"] = round(gap_perc, 5)
                 vcf_out.write(record)
     VcfUtils().index_vcf(output_vcf)
 
@@ -491,12 +491,9 @@ def filter_dup_cnmmops_cnv_calls(
                 if record.info["SVTYPE"] == "DUP":
                     svlen = abs(record.info.get("SVLEN", [0])[0])
                     if svlen < int(filtered_length):
-                        if "FILTER" in record.filter.keys():
-                            if "PASS" in record.filter.keys():
-                                record.filter.clear()
-                            record.filter.add("CNMOPS_SHORT_DUPLICATION")
-                        else:
-                            record.filter.add("CNMOPS_SHORT_DUPLICATION")
+                        if "PASS" in record.filter.keys():
+                            record.filter.clear()
+                        record.filter.add("CNMOPS_SHORT_DUPLICATION")
                 vcf_out.write(record)
     vu.index_vcf(combined_calls_annotated)
     mu.cleanup_temp_files(temporary_files)

@@ -59,7 +59,7 @@ def test_training_prep_cnv(tmpdir, resources_dir):
         "CNMOPS_COHORT_MEAN",
         "CNMOPS_COHORT_STDEV",
         "CNV_SOURCE",
-        "GAP_PERC",
+        "GAP_PERCENTAGE",
         "SVLEN",
         "SVTYPE",
     ]

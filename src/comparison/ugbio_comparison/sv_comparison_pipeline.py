@@ -129,30 +129,31 @@ class SVComparison:
         tuple[pd.DataFrame, pd.DataFrame]
             Tuple of truvari base and calls concordance dataframes
         """
+
+        def assign_svlen_int(df):
+            return (
+                df["svlen"]
+                .apply(lambda x: x[0] if isinstance(x, tuple) else (x if x is not None else 0))
+                .fillna(0)
+                .astype(int)
+            )
+
         info_fields_to_read: list[str] = list(("SVTYPE", "SVLEN") + custom_info_fields)
         df_tp_base = vcftools.get_vcf_df(pjoin(truvari_dir, "tp-base.vcf.gz"), custom_info_fields=info_fields_to_read)
-        df_tp_base["svlen_int"] = df_tp_base["svlen"].apply(
-            lambda x: x[0] if isinstance(x, tuple) else (x if x is not None else 0)
-        )
+        df_tp_base["svlen_int"] = assign_svlen_int(df_tp_base)
         df_tp_base["label"] = "TP"
         df_fn = vcftools.get_vcf_df(pjoin(truvari_dir, "fn.vcf.gz"), custom_info_fields=info_fields_to_read)
-        df_fn["svlen_int"] = df_fn["svlen"].apply(
-            lambda x: x[0] if isinstance(x, tuple) else (x if x is not None else 0)
-        )
+        df_fn["svlen_int"] = assign_svlen_int(df_fn)
         df_fn["label"] = "FN"
         df_base = pd.concat((df_tp_base, df_fn))
 
         df_tp_calls = vcftools.get_vcf_df(pjoin(truvari_dir, "tp-comp.vcf.gz"), custom_info_fields=info_fields_to_read)
         df_tp_calls["label"] = "TP"
-        df_tp_calls["svlen_int"] = df_tp_calls["svlen"].apply(
-            lambda x: x[0] if isinstance(x, tuple) else (x if x is not None else 0)
-        )
+        df_tp_calls["svlen_int"] = assign_svlen_int(df_tp_calls)
 
         df_fp = vcftools.get_vcf_df(pjoin(truvari_dir, "fp.vcf.gz"), custom_info_fields=info_fields_to_read)
         df_fp["label"] = "FP"
-        df_fp["svlen_int"] = df_fp["svlen"].apply(
-            lambda x: x[0] if isinstance(x, tuple) else (x if x is not None else 0)
-        )
+        df_fp["svlen_int"] = assign_svlen_int(df_fp)
 
         df_calls = pd.concat((df_tp_calls, df_fp))
         return df_base, df_calls

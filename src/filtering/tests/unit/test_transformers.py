@@ -96,8 +96,8 @@ class TestTransformers:
         result = region_annotation_encode(())
         assert result > 0
         # Test with unknown annotation
-        result = region_annotation_encode(("Unknown",))
-        assert result == 0
+        with pytest.raises(KeyError):
+            region_annotation_encode(("Unknown",))
 
     def test_copy_number_encode_df(self):
         # Test copy number encoding through CNV transformer
@@ -116,7 +116,7 @@ class TestTransformers:
                 "pytorrd": [0.3],
                 "pytorp1": [0.4],
                 "pytorp3": [0.5],
-                "gap_perc": [0.01],
+                "gap_percentage": [0.01],
                 "cnv_dup_reads": [10],
                 "cnv_del_reads": [5],
                 "cnv_dup_frac": [0.6],
@@ -128,7 +128,7 @@ class TestTransformers:
                 "svlen": [(1000,)],
                 "cn": [2],
                 "copynumber": [3],
-                "cnv_source": ["cnmops"],
+                "cnv_source": [("cn.mops",)],
             }
         )
         result = transformer.fit_transform(test_df)

@@ -343,7 +343,7 @@ AGGREGATION_ACTIONS = {
         "CopyNumber",
     ],
     "max": [
-        "GAP_PERC",
+        "GAP_PERCENTAGE",
         "JALIGN_DEL_SUPPORT",
         "JALIGN_DUP_SUPPORT",
         "JALIGN_DEL_SUPPORT_STRONG",

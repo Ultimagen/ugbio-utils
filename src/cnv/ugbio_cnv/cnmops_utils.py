@@ -4,7 +4,7 @@ import warnings
 
 import pandas as pd
 import pysam
-from ugbio_cnv.cnv_consts import (
+from ugbio_cnv.cnv_vcf_consts import (
     FILTER_COLUMNS_REGISTRY,
     FILTER_TAG_REGISTRY,
     INFO_TAG_REGISTRY,

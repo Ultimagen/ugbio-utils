@@ -1,6 +1,7 @@
 import itertools
 from collections import defaultdict
 from collections.abc import Iterable
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -79,13 +80,15 @@ def allele_encode(x):
 def svtype_encode(x):
     """Translate SVTYPE into integer."""
     encoding = {"DEL": 1, "DUP": 2}
-    return encoding.get(x, 0)
+    return encoding[x]
 
 
 def cnv_source_encode(x):
     """Translate CNV_SOURCE into integer."""
     encoding = {"cn.mops": 1, "cnvpytor": 2}
-    return encoding.get(x, 0)
+    if len(x) != 1:
+        raise ValueError(f"Unexpected cnv_source value: {x}")
+    return encoding[x[0]]
 
 
 def gt_encode(x):
@@ -102,13 +105,22 @@ def ins_del_encode(x, encode_dct=INS_DEL_ENCODE):  # pylint: disable=dangerous-d
     return encode_dct[x]
 
 
-def region_annotation_encode(x):
+@lru_cache(maxsize=1)
+def _get_region_encoding():
     regions = ["Telomere_Centromere", "Clusters", "Coverage-Mappability"]
     subsets = []
     for r in range(len(regions) + 1):
-        subsets.extend(itertools.combinations(regions, r))
-    encoding = dict(zip(subsets, range(1, len(subsets) + 1), strict=False))
-    return encoding.get(x, 0)
+        subsets.extend(itertools.combinations(sorted(regions), r))
+    for i in range(len(subsets)):
+        subsets[i] = tuple(sorted(subsets[i]))
+    return dict(zip(subsets, range(1, len(subsets) + 1), strict=False))
+
+
+def region_annotation_encode(x):
+    encoding = _get_region_encoding()
+    if x is None:
+        return 0
+    return encoding[tuple(sorted(x))]
 
 
 def get_needed_features(vtype: VcfType = VcfType.SINGLE_SAMPLE, custom_annotations: list | None = None) -> list:
@@ -288,7 +300,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
             ("pytorrd", default_filler, ["pytorrd"]),
             ("pytorp1", default_filler, ["pytorp1"]),
             ("pytorp3", default_filler, ["pytorp3"]),
-            ("gap_perc", "passthrough", ["gap_perc"]),
+            ("gap_percentage", "passthrough", ["gap_percentage"]),
             ("cnv_dup_reads", "passthrough", ["cnv_dup_reads"]),
             ("cnv_del_reads", "passthrough", ["cnv_del_reads"]),
             ("cnv_dup_frac", "passthrough", ["cnv_dup_frac"]),
