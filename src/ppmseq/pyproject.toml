@@ -3,10 +3,7 @@ name = "ugbio_ppmseq"
 version = "1.17.3-0"
 requires-python = ">=3.11"
 dependencies = [
-    "ugbio_core[vcfbed,reports]",
-    "seaborn>=0.13.2",
-    "pyarrow>=17.0.0",
-    "fastparquet>=2024.5.0",
+    "ugbio_core[vcfbed,reports,parquet]",
 ]
 description = "Ultima Genomics ppmSeq utils"
 authors = [
@@ -23,13 +20,6 @@ text = "Apache-2.0"
 [project.scripts]
 run_tests = "pytest:main"
 ppmSeq_qc_analysis = "ugbio_ppmseq.ppmSeq_qc_analysis:main"
-
-[tool.uv]
-dev-dependencies = [
-    "pre-commit>=4.0.1",
-    "pytest>=8.3.3",
-    "ruff>=0.6.9",
-]
 
 [tool.uv.sources.ugbio_core]
 workspace = true
