@@ -98,8 +98,11 @@ def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many
                 blacklists = pickle.load(blf)  # noqa S301
         if args.treat_multiallelics and args.ref_fasta is None:
             raise ValueError("Reference FASTA file is required for multiallelic treatment")
-        assert os.path.exists(args.input_file), f"Input file {args.input_file} does not exist"  # noqa S101
-        assert os.path.exists(args.input_file + ".tbi"), f"Index file {args.input_file}.tbi does not exist"  # noqa S101
+        if not os.path.exists(args.input_file):
+            raise RuntimeError(f"Input file {args.input_file} does not exist")
+        if not os.path.exists(args.input_file + ".tbi"):
+            raise RuntimeError(f"Index file {args.input_file}.tbi does not exist")
+
         with pysam.VariantFile(args.input_file) as infile:
             hdr = infile.header
             if args.model_file is not None:
@@ -124,7 +127,8 @@ def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many
                         continue
                     logger.info(f"{vcf_df.shape[0]} variants found on {contig}")
                     if args.blacklist is not None:
-                        assert blacklists is not None  # noqa S101
+                        if blacklists is None:
+                            raise ValueError("Blacklist must be provided when --blacklist argument is used")
                         blacklist_app = [x.apply(vcf_df) for x in blacklists]
                         blacklist = merge_blacklists(blacklist_app)
                         logger.info("Applying blacklist")
@@ -144,13 +148,13 @@ def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many
                             vcf_df = training_prep.process_multiallelic_spandel(
                                 vcf_df, args.ref_fasta, str(contig), args.input_file
                             )
-                        logger.info("Applying classifier")
-                        assert model is not None and transformer is not None  # noqa S101
+                        if model is None or transformer is None:
+                            raise ValueError("Model and transformer must be loaded before applying classifier")
                         _, scores = variant_filtering_utils.apply_model(vcf_df, model, transformer)
 
                         if args.treat_multiallelics:
-                            logger.info("Treating multiallelics -> post-classifier")
-                            assert df_original is not None  # noqa S101
+                            if df_original is None:
+                                raise ValueError("Original dataframe must be available for multiallelic treatment")
                             set_source = [x in df_original.index for x in vcf_df.index]
                             set_dest = [x in vcf_df.index for x in df_original.index]
                             df_original["ml_lik"] = pd.Series(
@@ -183,22 +187,26 @@ def run(argv: list[str]):  # noqa C901 PLR0912 PLR0915# pylint: disable=too-many
                     logger.info("Writing records")
                     for i, rec in tqdm.tqdm(enumerate(chunk)):
                         if args.model_file is not None:
-                            assert quals is not None  # noqa S101
+                            if quals is None:
+                                raise RuntimeError("Quals must be computed when model is used")
                             if quals[i] <= args.decision_threshold:
                                 if "PASS" in rec.filter.keys():
                                     del rec.filter["PASS"]
                                 rec.filter.add("LOW_SCORE")
                             if not args.recalibrate_genotype:
-                                assert quals is not None  # noqa S101
+                                if quals is None:
+                                    raise RuntimeError("Quals must be computed when model is used")
                                 rec.info["TREE_SCORE"] = float(quals[i])
                                 if args.overwrite_qual_tag:
                                     rec.qual = float(quals[i])
                             else:
-                                assert gq is not None and phreds is not None  # noqa S101
+                                if gq is None or phreds is None:
+                                    raise RuntimeError("GQ and PL must be computed to recalibrate genotype")
                                 rec.samples[0]["GQ"] = int(gq[i])
                                 if args.overwrite_qual_tag:
                                     rec.qual = float(gq[i])
-                                assert rec.alleles is not None  # noqa S101
+                                if rec.alleles is None:
+                                    raise RuntimeError("Alleles must be present to recalibrate genotype")
                                 rec.samples[0]["PL"] = [
                                     int(x) for x in phreds[i, : (len(rec.alleles) + 1) * len(rec.alleles) // 2]
                                 ]
