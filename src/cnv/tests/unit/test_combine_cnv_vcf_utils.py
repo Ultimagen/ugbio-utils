@@ -455,6 +455,16 @@ class TestMergeCnvsInVcf:
         # Create mock VcfUtils instance
         mock_vu = MagicMock()
         mock_vu.collapse_vcf.return_value = removed_vcf
+
+        # Mock sort_vcf to create the output file
+        def mock_sort_vcf(input_path, output_path):
+            # Copy the unsorted file to the output path
+            with pysam.VariantFile(str(input_path), "r") as vcf_in:
+                with pysam.VariantFile(str(output_path), "w", header=vcf_in.header) as vcf_out:
+                    for record in vcf_in:
+                        vcf_out.write(record)
+
+        mock_vu.sort_vcf.side_effect = mock_sort_vcf
         mock_vcf_utils_class.return_value = mock_vu
 
         # Create mock dataframe for removed records
@@ -563,6 +573,16 @@ class TestMergeCnvsInVcf:
         # Create mock VcfUtils instance
         mock_vu = MagicMock()
         mock_vu.collapse_vcf.return_value = removed_vcf
+
+        # Mock sort_vcf to create the output file
+        def mock_sort_vcf(input_path, output_path):
+            # Copy the unsorted file to the output path
+            with pysam.VariantFile(str(input_path), "r") as vcf_in:
+                with pysam.VariantFile(str(output_path), "w", header=vcf_in.header) as vcf_out:
+                    for record in vcf_in:
+                        vcf_out.write(record)
+
+        mock_vu.sort_vcf.side_effect = mock_sort_vcf
         mock_vcf_utils_class.return_value = mock_vu
 
         # Create mock dataframe with two records that were merged
