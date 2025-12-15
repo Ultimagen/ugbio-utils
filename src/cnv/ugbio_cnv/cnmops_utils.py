@@ -55,6 +55,7 @@ def add_vcf_header(sample_name: str, fasta_index_file: str) -> pysam.VariantHead
     header.add_line('##ALT=<ID=CNV,Description="Copy number variant region">')
     header.add_line('##ALT=<ID=DEL,Description="Deletion relative to the reference">')
     header.add_line('##ALT=<ID=DUP,Description="Region of elevated copy number relative to the reference">')
+    header.add_line('##ALT=<ID=NEUTRAL,Description="Region of somewhat different cn relative to the reference">')
 
     # Add FILTER (PASS is automatically included by pysam)
     for filter_tag in FILTER_TAG_REGISTRY.values():

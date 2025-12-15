@@ -79,7 +79,7 @@ def allele_encode(x):
 
 def svtype_encode(x):
     """Translate SVTYPE into integer."""
-    encoding = {"DEL": 1, "DUP": 2}
+    encoding = {"DEL": 1, "DUP": 2, "NEUTRAL": 0}
     return encoding[x]
 
 
