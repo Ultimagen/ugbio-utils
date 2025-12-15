@@ -75,6 +75,7 @@ def read_trimmer_failure_codes(
         If the columns are not as expected
     """
     df_trimmer_failure_codes = pd.read_csv(trimmer_failure_codes_csv)
+
     expected_columns = [
         "read group",
         "code",
@@ -94,6 +95,23 @@ def read_trimmer_failure_codes(
     df_trimmer_failure_codes = df_trimmer_failure_codes.rename(
         columns={c: c.replace(" ", "_").lower() for c in df_trimmer_failure_codes.columns}
     )
+
+    # If there's more than one format, keep the failed_read_count from the last format rows,
+    # and take total_read_count from the first (per [read group, segment, reason] combination)
+    if not (df_trimmer_failure_codes["format"] == df_trimmer_failure_codes["format"].iloc[0]).all():
+        # Group by the key columns except 'format', then for each group:
+        # - Keep failed_read_count from the last occurrence by format order (keep last)
+        # - Keep total_read_count from the first occurrence (keep first)
+        # This requires us to group by ['read_group', 'segment', 'reason']
+        grouped = df_trimmer_failure_codes.sort_values("format").groupby(
+            ["read_group", "segment", "reason"], sort=False, as_index=False
+        )
+
+        failed_read_count = grouped["failed_read_count"].last()
+        total_read_count = grouped["total_read_count"].first()
+
+        df_trimmer_failure_codes = failed_read_count.merge(total_read_count, on=["read_group", "segment", "reason"])
+        # Add back 'format' if really needed? The rest of the code does not use it
 
     # group by segment and reason (aggregate read groups)
     df_trimmer_failure_codes = df_trimmer_failure_codes.groupby(["segment", "reason"]).agg(

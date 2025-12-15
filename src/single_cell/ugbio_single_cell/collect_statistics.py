@@ -222,7 +222,7 @@ def extract_statistics_table(h5_file: Path):  # noqa: PLR0915
 
         # number of Failed reads due to rsq or other prefilters (e.g., subsampling)
         trimmer_stats_df = store[H5Keys.TRIMMER_STATS.value]
-        trimmer_start_segment_stats_df = trimmer_stats_df[trimmer_stats_df["segment label"] == "start"]
+        trimmer_start_segment_stats_df = trimmer_stats_df[trimmer_stats_df["segment index"] == 0].head(1)
         num_failed_reads = 0
         if len(trimmer_start_segment_stats_df) > 0:
             num_failed_reads = trimmer_start_segment_stats_df["num failures"].sum()
@@ -230,8 +230,12 @@ def extract_statistics_table(h5_file: Path):  # noqa: PLR0915
             stats["pct_PF"] = 100 * (num_input_reads - num_failed_reads) / num_input_reads
 
         # number of Trimmed reads
-        num_trimmed_reads_list = store[H5Keys.TRIMMER_STATS.value]["num trimmed reads"].to_numpy()
-        num_trimmed_reads = next((x for x in num_trimmed_reads_list if x != 0), None)
+        # Sum all values in "num trimmed reads" where "segment index" == 0
+        num_trimmed_reads = (
+            store[H5Keys.TRIMMER_STATS.value]
+            .loc[store[H5Keys.TRIMMER_STATS.value]["segment index"] == 0, "num trimmed reads"]
+            .sum()
+        )
         stats["num_trimmed_reads"] = num_trimmed_reads
 
         # pct_pass_trimmer
