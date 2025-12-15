@@ -9,12 +9,12 @@ a tar.gz archive containing all outputs.
 The script automatically saves raw data to a CSV cache file, which can be reused
 in subsequent runs with the --use-cache flag to avoid redundant database queries.
 
-Outlier filtering using the IQR (Interquartile Range) method can be applied to
-improve histogram visualization by removing extreme values that skew the distribution.
+Individual workflow plots show side-by-side comparison of original data and outlier-filtered
+data using the IQR (Interquartile Range) method for better visualization.
 
 Usage:
     python cost_distribution_by_version.py <version> [--account 471112545487] [--days 180]
-                                                      [--create-tarball] [--use-cache] [--filter-outliers]
+                                                      [--create-tarball] [--use-cache]
 
 Example:
     python cost_distribution_by_version.py v1.25.0          # Exact version, query database
@@ -22,7 +22,6 @@ Example:
     python cost_distribution_by_version.py v1.25 --account 471112545487 --days 90
     python cost_distribution_by_version.py v1.25 --create-tarball  # Also create tar.gz archive
     python cost_distribution_by_version.py v1.25 --use-cache  # Use cached data from previous run
-    python cost_distribution_by_version.py v1.25 --use-cache --filter-outliers  # Use cache and filter outliers
 """
 
 import argparse
@@ -214,10 +213,10 @@ def create_histograms(  # noqa: PLR0915
     df: pd.DataFrame,
     output_dir: Path = Path("."),
     version: str = "unknown",
-    *,
-    filter_outliers: bool = False,  # noqa: FBT001, FBT002
 ) -> None:
-    """Create histograms of cost distribution per workflow.
+    """Create histograms of cost distribution per workflow with side-by-side comparison.
+
+    Creates both original and outlier-filtered views for comparison.
 
     Parameters
     ----------
@@ -227,56 +226,50 @@ def create_histograms(  # noqa: PLR0915
         Directory to save plots (default: current directory)
     version : str, optional
         Version string for plot titles (default: "unknown")
-    filter_outliers : bool, optional
-        Whether to filter outliers for better visualization (default: False)
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     workflows = df["workflowName"].unique()
-    logger.info(f"\nCreating histograms for {len(workflows)} workflows:")
-    if filter_outliers:
-        logger.info("  (Filtering outliers using IQR method)")
+    logger.info(f"\nCreating side-by-side comparison histograms for {len(workflows)} workflows:")
 
-    # Create a figure with subplots for all workflows
+    # Create a figure with subplots for all workflows (original data only)
     fig = plt.figure(figsize=(16, 4 * len(workflows)))
 
     for idx, workflow in enumerate(sorted(workflows), 1):
         workflow_data = df[df["workflowName"] == workflow]
         costs_all = workflow_data["cost"].to_numpy()
-
-        # Filter outliers if requested
-        if filter_outliers:
-            costs, outliers_arr, outlier_count = filter_outliers_iqr(costs_all)
-            outlier_info = f", {outlier_count} outliers filtered"
-        else:
-            costs = costs_all
-            outlier_count = 0
-            outlier_info = ""
+        costs_filtered, _, outlier_count = filter_outliers_iqr(costs_all)
 
         ax = fig.add_subplot(len(workflows), 1, idx)
 
-        # Create histogram
-        ax.hist(costs, bins=30, edgecolor="black", alpha=0.7, color="skyblue")
+        # Create histogram with original data
+        ax.hist(costs_all, bins=30, edgecolor="black", alpha=0.7, color="skyblue")
 
         # Add statistics
-        mean_cost = costs.mean()
-        median_cost = np.median(costs)
-        max_cost = costs.max()
-        min_cost = costs.min()
-        count = len(costs)
+        mean_cost = costs_all.mean()
+        median_cost = np.median(costs_all)
+        max_cost = costs_all.max()
+        min_cost = costs_all.min()
+        count = len(costs_all)
 
         ax.axvline(mean_cost, color="red", linestyle="--", linewidth=2, label=f"Mean: ${mean_cost:.2f}")
         ax.axvline(median_cost, color="green", linestyle="--", linewidth=2, label=f"Median: ${median_cost:.2f}")
 
         ax.set_xlabel("Cost (USD)")
         ax.set_ylabel("Frequency")
-        title_str = f"{workflow} (v{version})\nn={count}{outlier_info}, Min=${min_cost:.2f}, Max=${max_cost:.2f}"
+        title_str = f"{workflow} (v{version})\nn={count}, Min=${min_cost:.2f}, Max=${max_cost:.2f}"
         ax.set_title(title_str, fontsize=11, fontweight="bold")
         ax.legend()
         ax.grid(visible=True, alpha=0.3)
 
-        logger.info(f"  {workflow}: {count} runs, mean=${mean_cost:.2f}, median=${median_cost:.2f}{outlier_info}")
+        # Log with both original and filtered stats for comparison
+        mean_filtered = costs_filtered.mean()
+        median_filtered = np.median(costs_filtered)
+        logger.info(
+            f"  {workflow}: {count} runs (original), mean=${mean_cost:.2f}, median=${median_cost:.2f} | "
+            f"{len(costs_filtered)} runs (filtered), mean=${mean_filtered:.2f}, median=${median_filtered:.2f}"
+        )
 
     plt.tight_layout()
 
@@ -287,49 +280,57 @@ def create_histograms(  # noqa: PLR0915
 
     plt.close(fig)
 
-    # Create individual plots for each workflow
+    # Create individual side-by-side comparison plots for each workflow
     for workflow in sorted(workflows):
         workflow_data = df[df["workflowName"] == workflow]
         costs_all = workflow_data["cost"].to_numpy()
+        costs_filtered, _, outlier_count = filter_outliers_iqr(costs_all)
 
-        # Filter outliers if requested
-        if filter_outliers:
-            costs, _, outlier_count = filter_outliers_iqr(costs_all)
-            outlier_info = f", {outlier_count} outliers filtered"
-        else:
-            costs = costs_all
-            outlier_count = 0
-            outlier_info = ""
+        # Create side-by-side subplots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 6))
 
-        fig, ax = plt.subplots(figsize=(10, 6))
-
-        ax.hist(costs, bins=30, edgecolor="black", alpha=0.7, color="skyblue")
-
-        mean_cost = costs.mean()
-        median_cost = np.median(costs)
-        max_cost = costs.max()
-        min_cost = costs.min()
-        count = len(costs)
-
-        ax.axvline(mean_cost, color="red", linestyle="--", linewidth=2, label=f"Mean: ${mean_cost:.2f}")
-        ax.axvline(median_cost, color="green", linestyle="--", linewidth=2, label=f"Median: ${median_cost:.2f}")
-
-        ax.set_xlabel("Cost (USD)")
-        ax.set_ylabel("Frequency")
-        title_str = (
-            f"Cost Distribution - {workflow} (v{version})\n"
-            f"n={count}{outlier_info}, Min=${min_cost:.2f}, Max=${max_cost:.2f}"
+        # Left plot: Original data
+        ax1.hist(costs_all, bins=30, edgecolor="black", alpha=0.7, color="skyblue")
+        mean_all = costs_all.mean()
+        median_all = np.median(costs_all)
+        ax1.axvline(mean_all, color="red", linestyle="--", linewidth=2, label=f"Mean: ${mean_all:.2f}")
+        ax1.axvline(median_all, color="green", linestyle="--", linewidth=2, label=f"Median: ${median_all:.2f}")
+        ax1.set_xlabel("Cost (USD)")
+        ax1.set_ylabel("Frequency")
+        ax1.set_title(
+            f"Original Data\nn={len(costs_all)}, Min=${costs_all.min():.2f}, Max=${costs_all.max():.2f}",
+            fontsize=12,
+            fontweight="bold",
         )
-        ax.set_title(title_str, fontsize=12, fontweight="bold")
-        ax.legend()
-        ax.grid(visible=True, alpha=0.3)
+        ax1.legend()
+        ax1.grid(visible=True, alpha=0.3)
 
-        # Save individual plot
+        # Right plot: Filtered data
+        ax2.hist(costs_filtered, bins=30, edgecolor="black", alpha=0.7, color="lightcoral")
+        mean_filtered = costs_filtered.mean()
+        median_filtered = np.median(costs_filtered)
+        ax2.axvline(mean_filtered, color="red", linestyle="--", linewidth=2, label=f"Mean: ${mean_filtered:.2f}")
+        ax2.axvline(
+            median_filtered, color="green", linestyle="--", linewidth=2, label=f"Median: ${median_filtered:.2f}"
+        )
+        ax2.set_xlabel("Cost (USD)")
+        ax2.set_ylabel("Frequency")
+        ax2.set_title(
+            f"Filtered Data ({outlier_count} outliers removed)\n"
+            f"n={len(costs_filtered)}, Min=${costs_filtered.min():.2f}, Max=${costs_filtered.max():.2f}",
+            fontsize=12,
+            fontweight="bold",
+        )
+        ax2.legend()
+        ax2.grid(visible=True, alpha=0.3)
+
+        # Overall title
+        fig.suptitle(f"Cost Distribution - {workflow} (v{version})", fontsize=14, fontweight="bold", y=1.02)
+
         safe_workflow_name = workflow.replace("/", "_").replace(" ", "_")
-        output_file = output_dir / f"cost_distribution_v{version}_{safe_workflow_name}.png"
+        output_file = output_dir / f"cost_distribution_v{version}_{safe_workflow_name}_comparison.png"
         plt.savefig(output_file, dpi=150, bbox_inches="tight")
-        logger.info(f"Individual histogram saved: {output_file}")
-
+        logger.info(f"Comparison histogram saved: {output_file}")
         plt.close(fig)
 
 
@@ -423,11 +424,6 @@ def main():
     parser.add_argument(
         "--use-cache", action="store_true", help="Use cached data if available instead of querying database"
     )
-    parser.add_argument(
-        "--filter-outliers",
-        action="store_true",
-        help="Filter outliers using IQR method for better histogram visualization",
-    )
 
     args = parser.parse_args()
 
@@ -450,37 +446,13 @@ def main():
         logger.warning("No data to analyze")
         return
 
-    # Create visualizations and summary
-    # If filter_outliers is enabled, create both filtered and non-filtered outputs in separate directories
-    if args.filter_outliers:
-        # Create non-filtered outputs in 'original' subdirectory
-        original_dir = args.output_dir / "original"
-        logger.info("\n" + "=" * 80)
-        logger.info("Creating outputs WITHOUT outlier filtering:")
-        logger.info("=" * 80)
-        create_histograms(df, original_dir, args.version, filter_outliers=False)
-        create_summary_csv(df, original_dir, args.version)
+    # Create visualizations and summary with side-by-side comparisons
+    create_histograms(df, args.output_dir, args.version)
+    create_summary_csv(df, args.output_dir, args.version)
 
-        # Create filtered outputs in 'filtered' subdirectory
-        filtered_dir = args.output_dir / "filtered"
-        logger.info("\n" + "=" * 80)
-        logger.info("Creating outputs WITH outlier filtering:")
-        logger.info("=" * 80)
-        create_histograms(df, filtered_dir, args.version, filter_outliers=True)
-        create_summary_csv(df, filtered_dir, args.version)
-
-        # Create tarballs if requested
-        if args.create_tarball:
-            create_tarball(original_dir, args.version)
-            create_tarball(filtered_dir, args.version + "_filtered")
-    else:
-        # Only create non-filtered outputs in the main output directory
-        create_histograms(df, args.output_dir, args.version, filter_outliers=False)
-        create_summary_csv(df, args.output_dir, args.version)
-
-        # Create tarball if requested
-        if args.create_tarball:
-            create_tarball(args.output_dir, args.version)
+    # Create tarball if requested
+    if args.create_tarball:
+        create_tarball(args.output_dir, args.version)
 
     logger.info("\n" + "=" * 80)
     logger.info("Analysis complete!")
