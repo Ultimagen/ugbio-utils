@@ -1,5 +1,6 @@
 """Utilities for processing and writing CNV calls from cn.mops and other CNV callers."""
 
+import os
 import warnings
 
 import pandas as pd
@@ -9,6 +10,7 @@ from ugbio_cnv.cnv_vcf_consts import (
     FILTER_TAG_REGISTRY,
     INFO_TAG_REGISTRY,
 )
+from ugbio_core import bed_utils
 
 warnings.filterwarnings("ignore")
 
@@ -494,3 +496,96 @@ def add_ids(cnmops_cnv_df: pd.DataFrame) -> pd.DataFrame:
         ids.append(f"cnmops_{svtype}_{svtype_counts[svtype]}")
     cnmops_cnv_df["ID"] = ids
     return cnmops_cnv_df
+
+
+def annotate_bed(bed_file: str, lcr_cutoff: float, lcr_file: str, prefix: str, length_cutoff: int = 10000) -> str:
+    """
+    Annotate bed file with filters: lcr and length
+    Parameters
+    ----------
+    bed_file : str
+        Path to the input bed file.
+    lcr_cutoff : float
+        Intersection cutoff for LCR filtering.
+    lcr_file : str
+        Path to the UG-CNV-LCR bed file.
+    prefix : str
+        Prefix for output files.
+    length_cutoff : int, optional
+        Minimum CNV length for filtering, by default 10000.
+    Returns
+    -------
+    str
+        Path to the annotated bed file.
+    """
+    # get filters regions
+    filter_files = []
+    bu = bed_utils.BedUtils()
+
+    if lcr_file is not None:
+        lcr_bed_file = bu.filter_by_bed_file(bed_file, lcr_cutoff, lcr_file, prefix, "UG-CNV-LCR")
+        filter_files.append(lcr_bed_file)
+
+    if length_cutoff is not None and length_cutoff > 0:
+        length_bed_file = bu.filter_by_length(bed_file, length_cutoff, prefix)
+        filter_files.append(length_bed_file)
+
+    if not filter_files:
+        # No filters to apply, just return sorted bed file
+        out_bed_file_sorted = prefix + os.path.splitext(os.path.basename(bed_file))[0] + ".annotate.bed"
+        bu.bedtools_sort(bed_file, out_bed_file_sorted)
+        return out_bed_file_sorted
+
+    out_combined_info = prefix + os.path.splitext(os.path.basename(bed_file))[0] + ".unsorted.annotate.combined.bed"
+    merge_filter_files(bed_file, filter_files, out_combined_info)
+    # merge all filters and sort
+
+    out_annotate = prefix + os.path.splitext(os.path.basename(bed_file))[0] + ".annotate.bed"
+    bu.bedtools_sort(out_combined_info, out_annotate)
+    os.unlink(out_combined_info)
+    for f in filter_files:
+        os.unlink(f)
+
+    return out_annotate
+
+
+def aggregate_coverages(
+    annotated_bed_file: str, sample_norm_coverage_file: str, cohort_avg_coverage_file: str, tempdir: str
+) -> list[tuple[str, str, str]]:
+    """
+    Prepare coverage annotations for aggregation.
+    Parameters
+    ----------
+    annotated_bed_file : str
+        Path to the annotated bed file.
+    sample_norm_coverage_file : str
+        Path to the sample normalized coverage bed file.
+    cohort_avg_coverage_file : str
+        Path to the cohort average coverage bed file.
+    tempdir : str
+        Directory to store intermediate files.
+    Returns
+    -------
+    list of tuple
+        List of tuples containing (sample/cohort cvg type, operation, bed_file_path) for coverage annotations.
+    """
+    coverage_annotations = []
+    # annotate with coverage info
+    input_sample = ["sample", "cohort"]
+    output_param = ["mean", "stdev"]
+
+    for isamp in input_sample:
+        for oparam in output_param:
+            out_annotate_bed_file_cov = annotated_bed_file.replace(".annotate.bed", f".annotate.{isamp}.{oparam}.bed")
+            input_cov_file = sample_norm_coverage_file if isamp == "sample" else cohort_avg_coverage_file
+            bed_utils.BedUtils().bedtools_map(
+                a_bed=annotated_bed_file,
+                b_bed=input_cov_file,
+                output_bed=out_annotate_bed_file_cov,
+                operation=oparam,
+                presort=True,
+                tempdir_prefix=tempdir,
+                column=5,
+            )
+            coverage_annotations.append((isamp, oparam, out_annotate_bed_file_cov))
+    return coverage_annotations

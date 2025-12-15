@@ -17,13 +17,12 @@
 
 import argparse
 import logging
-import os
 import sys
 import warnings
 
 import ugbio_core.misc_utils as mu
 from ugbio_cnv import cnmops_utils
-from ugbio_core import bed_utils, vcf_utils
+from ugbio_core import vcf_utils
 from ugbio_core.logger import logger
 
 warnings.filterwarnings("ignore")
@@ -76,80 +75,6 @@ def get_parser():
     return parser
 
 
-def annotate_bed(bed_file, lcr_cutoff, lcr_file, prefix, length_cutoff=10000):
-    # get filters regions
-    filter_files = []
-    bu = bed_utils.BedUtils()
-
-    if lcr_file is not None:
-        lcr_bed_file = bu.filter_by_bed_file(bed_file, lcr_cutoff, lcr_file, prefix, "UG-CNV-LCR")
-        filter_files.append(lcr_bed_file)
-
-    if length_cutoff is not None and length_cutoff > 0:
-        length_bed_file = bu.filter_by_length(bed_file, length_cutoff, prefix)
-        filter_files.append(length_bed_file)
-
-    if not filter_files:
-        # No filters to apply, just return sorted bed file
-        out_bed_file_sorted = prefix + os.path.splitext(os.path.basename(bed_file))[0] + ".annotate.bed"
-        bu.bedtools_sort(bed_file, out_bed_file_sorted)
-        return out_bed_file_sorted
-
-    out_combined_info = prefix + os.path.splitext(os.path.basename(bed_file))[0] + ".unsorted.annotate.combined.bed"
-    cnmops_utils.merge_filter_files(bed_file, filter_files, out_combined_info)
-    # merge all filters and sort
-
-    out_annotate = prefix + os.path.splitext(os.path.basename(bed_file))[0] + ".annotate.bed"
-    bu.bedtools_sort(out_combined_info, out_annotate)
-    os.unlink(out_combined_info)
-    for f in filter_files:
-        os.unlink(f)
-
-    return out_annotate
-
-
-def _aggregate_coverages(
-    annotated_bed_file: str, sample_norm_coverage_file: str, cohort_avg_coverage_file: str, tempdir: str
-) -> list[tuple[str, str, str]]:
-    """
-    Prepare coverage annotations for aggregation.
-    Parameters
-    ----------
-    annotated_bed_file : str
-        Path to the annotated bed file.
-    sample_norm_coverage_file : str
-        Path to the sample normalized coverage bed file.
-    cohort_avg_coverage_file : str
-        Path to the cohort average coverage bed file.
-    tempdir : str
-        Directory to store intermediate files.
-    Returns
-    -------
-    list of tuple
-        List of tuples containing (sample/cohort cvg type, operation, bed_file_path) for coverage annotations.
-    """
-    coverage_annotations = []
-    # annotate with coverage info
-    input_sample = ["sample", "cohort"]
-    output_param = ["mean", "stdev"]
-
-    for isamp in input_sample:
-        for oparam in output_param:
-            out_annotate_bed_file_cov = annotated_bed_file.replace(".annotate.bed", f".annotate.{isamp}.{oparam}.bed")
-            input_cov_file = sample_norm_coverage_file if isamp == "sample" else cohort_avg_coverage_file
-            bed_utils.BedUtils().bedtools_map(
-                a_bed=annotated_bed_file,
-                b_bed=input_cov_file,
-                output_bed=out_annotate_bed_file_cov,
-                operation=oparam,
-                presort=True,
-                tempdir_prefix=tempdir,
-                column=5,
-            )
-            coverage_annotations.append((isamp, oparam, out_annotate_bed_file_cov))
-    return coverage_annotations
-
-
 def run(argv):
     """
     Given a cn.mops bed file, this script will filter it by :
@@ -168,13 +93,13 @@ def run(argv):
         prefix = prefix.rstrip("/") + "/"
 
     # Annotate with lcr_file or min_cnv_length are provided, sort otherwise
-    out_annotate_bed_file = annotate_bed(
+    out_annotate_bed_file = cnmops_utils.annotate_bed(
         args.input_bed_file, args.intersection_cutoff, args.cnv_lcr_file, prefix, args.min_cnv_length
     )
 
     coverage_annotations = []
     if args.sample_norm_coverage_file and args.cohort_avg_coverage_file:
-        coverage_annotations = _aggregate_coverages(
+        coverage_annotations = cnmops_utils.aggregate_coverages(
             out_annotate_bed_file, args.sample_norm_coverage_file, args.cohort_avg_coverage_file, args.out_directory
         )
 

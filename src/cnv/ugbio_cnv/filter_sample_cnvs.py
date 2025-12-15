@@ -19,7 +19,7 @@ import argparse
 import logging
 import sys
 
-from ugbio_cnv.process_cnmops_cnvs import annotate_bed
+from ugbio_cnv.cnmops_utils import annotate_bed
 from ugbio_core.logger import logger
 
 
