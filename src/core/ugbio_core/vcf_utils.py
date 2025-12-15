@@ -489,13 +489,8 @@ class VcfUtils:
         # Index the output VCF
         self.index_vcf(output_vcf)
 
-    def remove_filters(
-        self,
-        input_vcf: str,
-        output_vcf: str,
-        filters_to_remove: list[str] | None = None,
-    ) -> None:
-        """Remove specific filters or all filters from a VCF file using bcftools annotate.
+    def remove_filters(self, input_vcf: str, output_vcf: str, filters_to_remove: list[str] | None = None) -> None:
+        """Remove specific filters or all filters from VCF records using bcftools annotate.
 
         Parameters
         ----------
