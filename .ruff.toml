@@ -40,6 +40,7 @@ ignore = [
     "COM812",
     "B027",
     "S603",
+    "PD901",  # Allow generic 'df' variable name for DataFrames
 ]
 
 [lint.per-file-ignores]
