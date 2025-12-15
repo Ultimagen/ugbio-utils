@@ -297,7 +297,7 @@ class TestVcfUtils:
         input_files_str = " ".join(input_files)
         expected_calls = [
             mock.call(f"bcftools concat -a -o {tmp_file} -O z {input_files_str}"),
-            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file}"),
+            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file} -T {tmp_path}"),
             mock.call(f"bcftools index -tf {output_vcf}"),
         ]
         mock_execute.assert_has_calls(expected_calls)
@@ -320,7 +320,7 @@ class TestVcfUtils:
         # Verify commands are still executed even with single file
         expected_calls = [
             mock.call(f"bcftools concat -a -o {tmp_file} -O z {input_files[0]}"),
-            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file}"),
+            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file} -T {tmp_path}"),
             mock.call(f"bcftools index -tf {output_vcf}"),
         ]
         mock_execute.assert_has_calls(expected_calls)
@@ -344,7 +344,7 @@ class TestVcfUtils:
         input_files_str = " ".join(input_files)
         expected_calls = [
             mock.call(f"bcftools concat -a -o {tmp_file} -O z {input_files_str}"),
-            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file}"),
+            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file} -T {tmp_path}"),
             mock.call(f"bcftools index -tf {output_vcf}"),
         ]
         mock_execute.assert_has_calls(expected_calls)

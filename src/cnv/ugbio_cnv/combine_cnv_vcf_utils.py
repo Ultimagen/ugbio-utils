@@ -289,8 +289,6 @@ def merge_cnvs_in_vcf(
         erase_removed=False,
     )
     temporary_files.append(str(removed_vcf))
-    vu.sort_vcf(output_vcf_collapse, output_vcf_collapse.replace(".tmp.vcf.gz", ".sort.tmp.vcf.gz"))
-    output_vcf_collapse = output_vcf_collapse.replace(".tmp.vcf.gz", ".sort.tmp.vcf.gz")
     temporary_files.append(output_vcf_collapse)
     all_fields = sum(AGGREGATION_ACTIONS.values(), [])
 
@@ -301,10 +299,11 @@ def merge_cnvs_in_vcf(
     if do_not_merge_collapsed_filtered:
         unselect = (update_df["filter"] != "PASS") & (update_df["filter"] != "") & (update_df["filter"] != ".")
         update_df = update_df.loc[~unselect]
-
+    output_vcf_mrg_unsort = output_vcf.replace(".vcf.gz", ".unsorted.vcf.gz")
+    temporary_files.append(output_vcf_mrg_unsort)
     with pysam.VariantFile(output_vcf_collapse) as vcf_in:
         hdr = vcf_in.header
-        with pysam.VariantFile(output_vcf, "w", header=hdr) as vcf_out:
+        with pysam.VariantFile(output_vcf_mrg_unsort, "w", header=hdr) as vcf_out:
             for record in vcf_in:
                 if "CollapseId" in record.info:
                     cid = float(record.info["CollapseId"])
@@ -331,6 +330,7 @@ def merge_cnvs_in_vcf(
                     if c in record.info:
                         del record.info[c]
                 vcf_out.write(record)
+    vu.sort_vcf(output_vcf_mrg_unsort, output_vcf)
     mu.cleanup_temp_files(temporary_files)
 
 

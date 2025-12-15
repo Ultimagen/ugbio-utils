@@ -92,7 +92,8 @@ class VcfUtils:
         None
             Generates `output_file`.
         """
-        self.__execute(f"bcftools sort -o {output_file} -O z {input_file}")
+        tempdir = os.path.dirname(os.path.abspath(output_file))
+        self.__execute(f"bcftools sort -o {output_file} -O z {input_file} -T {tempdir}")
 
     def reheader_vcf(self, input_file: str, new_header: str, output_file: str):
         """Run bcftools reheader and index
