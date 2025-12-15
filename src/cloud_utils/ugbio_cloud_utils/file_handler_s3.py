@@ -6,12 +6,20 @@ import subprocess
 from collections.abc import Callable
 from typing import Any
 
-import pysam
-
 try:
     import certifi
 except ImportError:
     certifi = None
+
+# Set up SSL certificates BEFORE importing pysam (libcurl initializes at import time)
+if not os.environ.get("CURL_CA_BUNDLE") and not os.environ.get("SSL_CERT_FILE"):
+    if certifi:
+        cert_path = certifi.where()
+        if os.path.isfile(cert_path):
+            os.environ["CURL_CA_BUNDLE"] = cert_path
+            os.environ["SSL_CERT_FILE"] = cert_path
+
+import pysam
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +42,11 @@ def _setup_ssl_certificates() -> None:
     """
     Set up SSL certificate bundle for libcurl (used by pysam/htslib for S3 access).
 
-    Sets CURL_CA_BUNDLE or SSL_CERT_FILE environment variable if not already set.
+    Sets CURL_CA_BUNDLE and SSL_CERT_FILE environment variables if not already set.
     Tries certifi package first, then common system locations.
     """
     # If already set, don't override
-    if os.environ.get("CURL_CA_BUNDLE") or os.environ.get("SSL_CERT_FILE"):
+    if os.environ.get("CURL_CA_BUNDLE") and os.environ.get("SSL_CERT_FILE"):
         return
 
     # Try certifi package first (most reliable)
@@ -46,13 +54,15 @@ def _setup_ssl_certificates() -> None:
         cert_path = certifi.where()
         if os.path.isfile(cert_path):
             os.environ["CURL_CA_BUNDLE"] = cert_path
-            logger.debug(f"Set CURL_CA_BUNDLE to {cert_path} (from certifi)")
+            os.environ["SSL_CERT_FILE"] = cert_path
+            logger.debug(f"Set CURL_CA_BUNDLE and SSL_CERT_FILE to {cert_path} (from certifi)")
             return
 
     # Try common system locations
     common_paths = [
         "/etc/ssl/certs/ca-certificates.crt",  # Debian/Ubuntu
-        "/etc/pki/tls/certs/ca-bundle.crt",  # Red Hat/CentOS
+        "/etc/pki/tls/certs/ca-bundle.crt",  # Red Hat/CentOS/Amazon Linux
+        "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem",  # RHEL/CentOS 7+
         "/etc/ssl/cert.pem",  # Some systems
         "/usr/local/etc/openssl/cert.pem",  # macOS (Homebrew)
     ]
@@ -60,7 +70,8 @@ def _setup_ssl_certificates() -> None:
     for cert_path in common_paths:
         if os.path.isfile(cert_path):
             os.environ["CURL_CA_BUNDLE"] = cert_path
-            logger.debug(f"Set CURL_CA_BUNDLE to {cert_path} (system location)")
+            os.environ["SSL_CERT_FILE"] = cert_path
+            logger.debug(f"Set CURL_CA_BUNDLE and SSL_CERT_FILE to {cert_path} (system location)")
             return
 
     logger.warning(
