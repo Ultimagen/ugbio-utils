@@ -233,41 +233,57 @@ def create_histograms(  # noqa: PLR0915
     workflows = df["workflowName"].unique()
     logger.info(f"\nCreating side-by-side comparison histograms for {len(workflows)} workflows:")
 
-    # Create a figure with subplots for all workflows (original data only)
-    fig = plt.figure(figsize=(16, 4 * len(workflows)))
+    # Create a figure with side-by-side subplots for all workflows (original vs filtered)
+    fig = plt.figure(figsize=(20, 4 * len(workflows)))
 
     for idx, workflow in enumerate(sorted(workflows), 1):
         workflow_data = df[df["workflowName"] == workflow]
         costs_all = workflow_data["cost"].to_numpy()
         costs_filtered, _, outlier_count = filter_outliers_iqr(costs_all)
 
-        ax = fig.add_subplot(len(workflows), 1, idx)
+        # Left subplot: Original data
+        ax1 = fig.add_subplot(len(workflows), 2, 2 * idx - 1)
+        ax1.hist(costs_all, bins=30, edgecolor="black", alpha=0.7, color="skyblue")
 
-        # Create histogram with original data
-        ax.hist(costs_all, bins=30, edgecolor="black", alpha=0.7, color="skyblue")
+        mean_all = costs_all.mean()
+        median_all = np.median(costs_all)
+        ax1.axvline(mean_all, color="red", linestyle="--", linewidth=2, label=f"Mean: ${mean_all:.2f}")
+        ax1.axvline(median_all, color="green", linestyle="--", linewidth=2, label=f"Median: ${median_all:.2f}")
 
-        # Add statistics
-        mean_cost = costs_all.mean()
-        median_cost = np.median(costs_all)
-        max_cost = costs_all.max()
-        min_cost = costs_all.min()
-        count = len(costs_all)
+        ax1.set_xlabel("Cost (USD)")
+        ax1.set_ylabel("Frequency")
+        title_str = (
+            f"{workflow} - Original (v{version})\n"
+            f"n={len(costs_all)}, Min=${costs_all.min():.2f}, Max=${costs_all.max():.2f}"
+        )
+        ax1.set_title(title_str, fontsize=10, fontweight="bold")
+        ax1.legend(fontsize=8)
+        ax1.grid(visible=True, alpha=0.3)
 
-        ax.axvline(mean_cost, color="red", linestyle="--", linewidth=2, label=f"Mean: ${mean_cost:.2f}")
-        ax.axvline(median_cost, color="green", linestyle="--", linewidth=2, label=f"Median: ${median_cost:.2f}")
+        # Right subplot: Filtered data
+        ax2 = fig.add_subplot(len(workflows), 2, 2 * idx)
+        ax2.hist(costs_filtered, bins=30, edgecolor="black", alpha=0.7, color="lightcoral")
 
-        ax.set_xlabel("Cost (USD)")
-        ax.set_ylabel("Frequency")
-        title_str = f"{workflow} (v{version})\nn={count}, Min=${min_cost:.2f}, Max=${max_cost:.2f}"
-        ax.set_title(title_str, fontsize=11, fontweight="bold")
-        ax.legend()
-        ax.grid(visible=True, alpha=0.3)
-
-        # Log with both original and filtered stats for comparison
         mean_filtered = costs_filtered.mean()
         median_filtered = np.median(costs_filtered)
+        ax2.axvline(mean_filtered, color="red", linestyle="--", linewidth=2, label=f"Mean: ${mean_filtered:.2f}")
+        ax2.axvline(
+            median_filtered, color="green", linestyle="--", linewidth=2, label=f"Median: ${median_filtered:.2f}"
+        )
+
+        ax2.set_xlabel("Cost (USD)")
+        ax2.set_ylabel("Frequency")
+        title_str = (
+            f"{workflow} - Filtered ({outlier_count} outliers removed)\n"
+            f"n={len(costs_filtered)}, Min=${costs_filtered.min():.2f}, Max=${costs_filtered.max():.2f}"
+        )
+        ax2.set_title(title_str, fontsize=10, fontweight="bold")
+        ax2.legend(fontsize=8)
+        ax2.grid(visible=True, alpha=0.3)
+
+        # Log with both original and filtered stats for comparison
         logger.info(
-            f"  {workflow}: {count} runs (original), mean=${mean_cost:.2f}, median=${median_cost:.2f} | "
+            f"  {workflow}: {len(costs_all)} runs (original), mean=${mean_all:.2f}, median=${median_all:.2f} | "
             f"{len(costs_filtered)} runs (filtered), mean=${mean_filtered:.2f}, median=${median_filtered:.2f}"
         )
 
