@@ -392,11 +392,10 @@ def create_tarball(output_dir: Path, version: str) -> None:
     staging_dir = output_dir / f"cost_analysis_v{version}"
     staging_dir.mkdir(exist_ok=True)
 
-    # Copy all PNG and CSV files to staging directory
+    # Copy all PNG and CSV files to staging directory (glob doesn't traverse subdirs, so no need to filter)
     for file_pattern in ["*.png", "*.csv"]:
         for file_path in output_dir.glob(file_pattern):
-            if not file_path.parent.name.endswith(f"v{version}"):  # Skip files in staging dir
-                shutil.copy2(file_path, staging_dir / file_path.name)
+            shutil.copy2(file_path, staging_dir / file_path.name)
 
     # Create tar.gz
     tarball_path = output_dir / f"cost_analysis_v{version}.tar.gz"
@@ -430,8 +429,11 @@ def main():
     # Create output directory
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Normalize version string for file names (remove leading 'v' if present)
+    version_normalized = args.version.lstrip("v")
+
     # Define cache file path
-    cache_file = args.output_dir / f"raw_data_v{args.version}_account{args.account}_days{args.days}.csv"
+    cache_file = args.output_dir / f"raw_data_v{version_normalized}_account{args.account}_days{args.days}.csv"
 
     # Try to load from cache if requested
     df = None
@@ -447,12 +449,12 @@ def main():
         return
 
     # Create visualizations and summary with side-by-side comparisons
-    create_histograms(df, args.output_dir, args.version)
-    create_summary_csv(df, args.output_dir, args.version)
+    create_histograms(df, args.output_dir, version_normalized)
+    create_summary_csv(df, args.output_dir, version_normalized)
 
     # Create tarball if requested
     if args.create_tarball:
-        create_tarball(args.output_dir, args.version)
+        create_tarball(args.output_dir, version_normalized)
 
     logger.info("\n" + "=" * 80)
     logger.info("Analysis complete!")
