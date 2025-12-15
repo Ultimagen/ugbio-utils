@@ -457,7 +457,7 @@ def aggregate_annotations_in_df(
         cov_df = pd.read_csv(bed_file_path, sep="\t", header=None)
 
         # Assign column names for sorting
-        cov_df.columns = ["chrom", "start", "end", "name", "cov"]
+        cov_df.columns = ["chrom", "start", "end", "filter-name", "cov"]
 
         # Sort to match the primary bed file (first 3 columns are chr, start, end)
         cov_df = cov_df.sort_values(by=["chrom", "start", "end"]).reset_index(drop=True)

@@ -266,14 +266,33 @@ def merge_cnvs_in_vcf(
         Whether to ignore FILTER status when collapsing variants, by default True.
     do_not_merge_collapsed_filtered: bool, optional
         Whether to avoid merging filtered out variants were removed by collapsing, by default False.
-
     pick_best : bool, optional
-        Whether to pick the best variant among those being merged (or the first: False), by default False.
+        Whether to pick the best variant (by QUAL) among those being merged (or the first: False), by default False.
     Returns
     -------
     None
         Writes the merged VCF to output_vcf and creates an index.
     """
+
+    aggregation_actions = {
+        "weighted_avg": [
+            "CNMOPS_SAMPLE_MEAN",
+            "CNMOPS_SAMPLE_STDEV",
+            "CNMOPS_COHORT_MEAN",
+            "CNMOPS_COHORT_STDEV",
+            "CopyNumber",
+        ],
+        "max": [
+            "GAP_PERCENTAGE",
+            "JALIGN_DEL_SUPPORT",
+            "JALIGN_DUP_SUPPORT",
+            "JALIGN_DEL_SUPPORT_STRONG",
+            "JALIGN_DUP_SUPPORT_STRONG",
+            "TREE_SCORE",
+        ],
+        "aggregate": ["CNV_SOURCE"],
+    }
+
     output_vcf_collapse = output_vcf + ".collapse.tmp.vcf.gz"
     temporary_files = [output_vcf_collapse]
     vu = VcfUtils()
@@ -290,7 +309,7 @@ def merge_cnvs_in_vcf(
     )
     temporary_files.append(str(removed_vcf))
     temporary_files.append(output_vcf_collapse)
-    all_fields = sum(AGGREGATION_ACTIONS.values(), [])
+    all_fields = sum(aggregation_actions.values(), [])
 
     update_df = vcftools.get_vcf_df(str(removed_vcf), custom_info_fields=all_fields + ["SVLEN", "MatchId"]).sort_index()
     update_df["matchid"] = update_df["matchid"].apply(lambda x: x[0]).astype(float)
@@ -312,7 +331,7 @@ def merge_cnvs_in_vcf(
                         record.start = min(update_records["pos"].min(), record.start)
                         record.stop = max(update_records["end"].max(), record.stop)
 
-                        for action, fields in AGGREGATION_ACTIONS.items():
+                        for action, fields in aggregation_actions.items():
                             for field in fields:
                                 if field in hdr.info:
                                     _value_aggregator(
@@ -332,26 +351,6 @@ def merge_cnvs_in_vcf(
                 vcf_out.write(record)
     vu.sort_vcf(output_vcf_mrg_unsort, output_vcf)
     mu.cleanup_temp_files(temporary_files)
-
-
-AGGREGATION_ACTIONS = {
-    "weighted_avg": [
-        "CNMOPS_SAMPLE_MEAN",
-        "CNMOPS_SAMPLE_STDEV",
-        "CNMOPS_COHORT_MEAN",
-        "CNMOPS_COHORT_STDEV",
-        "CopyNumber",
-    ],
-    "max": [
-        "GAP_PERCENTAGE",
-        "JALIGN_DEL_SUPPORT",
-        "JALIGN_DUP_SUPPORT",
-        "JALIGN_DEL_SUPPORT_STRONG",
-        "JALIGN_DUP_SUPPORT_STRONG",
-        "TREE_SCORE",
-    ],
-    "aggregate": ["CNV_SOURCE"],
-}
 
 
 def _value_aggregator(  # noqa: C901
@@ -376,12 +375,12 @@ def _value_aggregator(  # noqa: C901
     if action == "weighted_avg":
         lengths = np.array(list(update_records["svlen"].apply(lambda x: x[0])) + [record.info["SVLEN"][0]])
         values = np.array(values)
+        if all(pd.isna(x) for x in values):
+            return
         drop = np.isnan(values) | np.isnan(lengths)
         values = values[~drop]
         lengths = lengths[~drop]
         weighted_avg = np.sum(values * lengths) / np.sum(lengths)
-        if all(pd.isna(x) for x in values):
-            return
         record.info[field] = round(weighted_avg, 3)
 
     if action == "max":
