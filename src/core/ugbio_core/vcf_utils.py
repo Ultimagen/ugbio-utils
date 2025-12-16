@@ -92,7 +92,8 @@ class VcfUtils:
         None
             Generates `output_file`.
         """
-        self.__execute(f"bcftools sort -o {output_file} -O z {input_file}")
+        tempdir = os.path.dirname(os.path.abspath(output_file))
+        self.__execute(f"bcftools sort -o {output_file} -O z {input_file} -T {tempdir}/")
 
     def reheader_vcf(self, input_file: str, new_header: str, output_file: str):
         """Run bcftools reheader and index
@@ -294,6 +295,7 @@ class VcfUtils:
         *,
         ignore_filter: bool = False,
         ignore_sv_type: bool = True,
+        pick_best: bool = False,
         erase_removed: bool = True,
     ) -> str | None:
         """
@@ -317,6 +319,8 @@ class VcfUtils:
             If True, ignore FILTER field (remove truvari's --passonly flag), by default False
         ignore_sv_type : bool, optional
             If True, ignore SVTYPE when collapsing variants, by default True
+        pick_best : bool, optional
+            If True, pick the best variant among those being merged, by default False, pick first
         erase_removed: bool, optional
             If True, delete the temporary file with removed variants, by default True,
             if not return the location of the file
@@ -333,7 +337,10 @@ class VcfUtils:
             truvari_cmd.append("--passonly")
         if ignore_sv_type:
             truvari_cmd.append("-t")
-
+        if pick_best:
+            truvari_cmd.extend(["--keep", "maxqual"])
+        else:
+            truvari_cmd.extend(["--keep", "first"])
         if bed:
             truvari_cmd.extend(["--bed", bed])
         truvari_cmd.extend(["--pctseq", str(pctseq)])
@@ -359,8 +366,8 @@ class VcfUtils:
         input_vcf: str,
         output_vcf: str,
         annotation_file: str,
-        header_file: str = None,
-        columns: str = None,
+        header_file: str | None = None,
+        columns: str | None = None,
         n_threads: int = 1,
         extra_args: str = "",
     ) -> None:
@@ -481,6 +488,26 @@ class VcfUtils:
 
         # Index the output VCF
         self.index_vcf(output_vcf)
+
+    def remove_filters(self, input_vcf: str, output_vcf: str, filters_to_remove: list[str] | None = None) -> None:
+        """Remove specific filters or all filters from VCF records using bcftools annotate.
+
+        Parameters
+        ----------
+        input_vcf : str
+            Path to input VCF file
+        output_vcf : str
+            Path to output VCF file
+        filters_to_remove : list[str], optional
+            List of specific filter names to remove (e.g., ['LowQual', 'LowDP']), if None - all are removed
+        """
+
+        # Build annotation removal string
+        if filters_to_remove is None:
+            annotation = "FILTER"
+        else:
+            annotation = f"FILTER/{','.join(filters_to_remove)}"
+        self.__execute(f"bcftools annotate -x {annotation} -o {output_vcf} {input_vcf}")
 
     @staticmethod
     def copy_vcf_record(rec: pysam.VariantRecord, new_header: pysam.VariantHeader) -> pysam.VariantRecord:

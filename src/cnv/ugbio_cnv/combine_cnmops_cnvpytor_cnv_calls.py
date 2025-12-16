@@ -6,10 +6,10 @@ import sys
 import tempfile
 from os.path import join as pjoin
 
-import pandas as pd
 import pysam
 import ugbio_core.misc_utils as mu
 from pyfaidx import Fasta
+from ugbio_cnv.cnv_vcf_consts import FILTER_TAG_REGISTRY, INFO_TAG_REGISTRY
 from ugbio_cnv.combine_cnv_vcf_utils import (
     cnv_vcf_to_bed,
     combine_vcf_headers_for_cnv,
@@ -17,7 +17,6 @@ from ugbio_cnv.combine_cnv_vcf_utils import (
     update_vcf_contigs,
     write_vcf_records_with_source,
 )
-from ugbio_cnv.convert_combined_cnv_results_to_output_formats import FILTER_TAG_REGISTRY, INFO_TAG_REGISTRY
 from ugbio_core.bed_utils import BedUtils
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
@@ -94,6 +93,19 @@ def __parse_args_annotate_regions(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def __parse_args_merge_records(parser: argparse.ArgumentParser) -> None:
+    """Add arguments specific to the merge records tool."""
+    parser.add_argument("--input_vcf", help="Input VCF file with CNV calls to merge", required=True, type=str)
+    parser.add_argument("--output_vcf", help="Output VCF file with merged CNV calls", required=True, type=str)
+    parser.add_argument(
+        "--distance",
+        help="Distance threshold for merging CNV segments (default: 0)",
+        required=False,
+        type=int,
+        default=0,
+    )
+
+
 def __parse_args(argv: list[str]) -> argparse.Namespace:
     """
     Parse command-line arguments using subparsers for different tools.
@@ -148,12 +160,19 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     )
     __parse_args_annotate_regions(annotate_regions_parser)
 
+    merge_records_parser = subparsers.add_parser(
+        "merge_records",
+        help="Merge adjacent or nearby CNV records in a VCF file",
+        description="Merges CNV records that are within a specified distance threshold.",
+    )
+    __parse_args_merge_records(merge_records_parser)
+
     return parser.parse_args(argv[1:])
 
 
 def annotate_vcf_with_gap_perc(input_vcf: str, ref_fasta: str, output_vcf: str) -> None:
     """
-    Annotate CNV VCF records with GAP_PERC INFO field representing the fraction of 'N' bases in the CNV region.
+    Annotate CNV VCF records with GAP_PERCENTAGE INFO field representing the fraction of 'N' bases in the CNV region.
 
     Parameters
     ----------
@@ -162,15 +181,15 @@ def annotate_vcf_with_gap_perc(input_vcf: str, ref_fasta: str, output_vcf: str) 
     ref_fasta : str
         Path to reference genome FASTA file. Should have .fai index.
     output_vcf : str
-        Path to output VCF file with GAP_PERC annotation.
+        Path to output VCF file with GAP_PERCENTAGE annotation.
     """
 
     genome = Fasta(ref_fasta, rebuild=False, build_index=False)
 
     with pysam.VariantFile(input_vcf) as vcf_in:
         header = vcf_in.header
-        if "GAP_PERC" not in header.info:
-            header.info.add(*INFO_TAG_REGISTRY["GAP_PERC"][:-1])
+        if "GAP_PERCENTAGE" not in header.info:
+            header.info.add(*INFO_TAG_REGISTRY["GAP_PERCENTAGE"][:-1])
         with pysam.VariantFile(output_vcf, "w", header=header) as vcf_out:
             for record in vcf_in:
                 chrom = record.chrom
@@ -185,7 +204,7 @@ def annotate_vcf_with_gap_perc(input_vcf: str, ref_fasta: str, output_vcf: str) 
                 except Exception as e:
                     logger.warning(f"Could not retrieve sequence for {chrom}:{start}-{end}: {e}")
                     gap_perc = 0.0
-                record.info["GAP_PERC"] = round(gap_perc, 5)
+                record.info["GAP_PERCENTAGE"] = round(gap_perc, 5)
                 vcf_out.write(record)
     VcfUtils().index_vcf(output_vcf)
 
@@ -472,91 +491,12 @@ def filter_dup_cnmmops_cnv_calls(
                 if record.info["SVTYPE"] == "DUP":
                     svlen = abs(record.info.get("SVLEN", [0])[0])
                     if svlen < int(filtered_length):
-                        if "FILTER" in record.filter.keys():
-                            record.filter.add("CNMOPS_SHORT_DUPLICATION")
-                        else:
-                            record.filter.add("CNMOPS_SHORT_DUPLICATION")
+                        if "PASS" in record.filter.keys():
+                            record.filter.clear()
+                        record.filter.add("CNMOPS_SHORT_DUPLICATION")
                 vcf_out.write(record)
     vu.index_vcf(combined_calls_annotated)
     mu.cleanup_temp_files(temporary_files)
-
-
-def process_del_jalign_results(
-    del_jalign_results: str,
-    sample_name: str,
-    out_directory: str,
-    ref_fasta: str,
-    pN: float = 0,  # noqa: N803
-) -> str:
-    """
-    Processes jalign results for deletions and filters them.
-
-    Parameters
-    ----------
-    del_jalign_results : str
-        Jalign results for Deletions in tsv format.
-    sample_name : str
-        Sample name.
-    out_directory : str
-        Output folder to store results.
-    ref_fasta : str
-        Reference genome fasta file.
-    pN : float, optional
-        Threshold for filtering CNV calls based on the fraction of reference genome gaps (Ns) in the call region.
-
-    Returns
-    -------
-    str
-        Path to deletions called by cn.mops and cnvpytor bed file.
-    """
-    # reads jalign results
-    df_cnmops_cnvpytor_del = pd.read_csv(del_jalign_results, sep="\t", header=None)
-    df_cnmops_cnvpytor_del.columns = [
-        "chrom",
-        "start",
-        "end",
-        "CN",
-        "jalign_written",
-        "6",
-        "7",
-        "jdelsize_min",
-        "jdelsize_max",
-        "jdelsize_avg",
-        "jumpland_min",
-        "jumpland_max",
-        "jumpland_avg",
-    ]
-    df_cnmops_cnvpytor_del["len"] = df_cnmops_cnvpytor_del["end"] - df_cnmops_cnvpytor_del["start"]
-    df_cnmops_cnvpytor_del["source"] = df_cnmops_cnvpytor_del["CN"].apply(
-        lambda x: "cn.mops" if pd.Series(x).str.contains("CN").any() else "cnvpytor"
-    )
-    df_cnmops_cnvpytor_del["CNV_type"] = "DEL"
-    df_cnmops_cnvpytor_del["copy_number"] = df_cnmops_cnvpytor_del["CN"].apply(lambda x: x.replace("CN", ""))
-    df_cnmops_cnvpytor_del["copy_number"] = df_cnmops_cnvpytor_del["copy_number"].apply(
-        lambda x: "DEL" if pd.Series(x).str.contains("deletion").any() else x
-    )
-
-    df_cnmops_cnvpytor_del_filtered = df_cnmops_cnvpytor_del[df_cnmops_cnvpytor_del["pN"] <= pN]
-
-    out_del_jalign = pjoin(
-        out_directory,
-        f"{sample_name}.cnmops_cnvpytor.DEL.jalign.bed",
-    )
-    df_cnmops_cnvpytor_del_filtered[
-        ["chrom", "start", "end", "CNV_type", "source", "copy_number", "jalign_written"]
-    ].to_csv(out_del_jalign, sep="\t", header=False, index=False)
-
-    out_del_jalign_merged = pjoin(
-        out_directory,
-        f"{sample_name}.cnmops_cnvpytor.DEL.jalign.merged.bed",
-    )
-
-    run_cmd(
-        f"cat {out_del_jalign} | bedtools sort -i - | \
-            bedtools merge -c 4,5,6,7 -o distinct,distinct,distinct,max  -i -  > {out_del_jalign_merged}"
-    )
-
-    return out_del_jalign_merged
 
 
 def run(argv: list[str]):
@@ -614,6 +554,13 @@ def run(argv: list[str]):
             output_vcf=args.output_vcf,
             overlap_fraction=args.overlap_fraction,
             genome=args.genome,
+        )
+    elif args.tool == "merge_records":
+        merge_cnvs_in_vcf(
+            input_vcf=args.input_vcf,
+            output_vcf=args.output_vcf,
+            distance=args.distance,
+            do_not_merge_collapsed_filtered=True,
         )
     else:
         raise ValueError(f"Unknown tool: {args.tool}")
@@ -680,6 +627,21 @@ def main_annotate_regions():
     """
     # Insert 'annotate_regions' as the tool argument
     argv = [sys.argv[0], "annotate_regions"] + sys.argv[1:]
+    run(argv)
+
+
+def main_merge_records():
+    """
+    Entry point for standalone merge_cnvs_in_vcf script.
+
+    This allows running the merge_records tool directly without specifying the tool name:
+    merge_records --input_vcf ... --output_vcf ... --distance ...
+
+    Instead of:
+    combine_cnmops_cnvpytor_cnv_calls merge_records --input_vcf ... --output_vcf ... --distance ...
+    """
+    # Insert 'merge_records' as the tool argument
+    argv = [sys.argv[0], "merge_records"] + sys.argv[1:]
     run(argv)
 
 

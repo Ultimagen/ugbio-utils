@@ -1,5 +1,7 @@
+import itertools
 from collections import defaultdict
 from collections.abc import Iterable
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -75,6 +77,20 @@ def allele_encode(x):
     return bases.get(x, 0)
 
 
+def svtype_encode(x):
+    """Translate SVTYPE into integer."""
+    encoding = {"DEL": 1, "DUP": 2, "NEUTRAL": 0}
+    return encoding[x]
+
+
+def cnv_source_encode(x):
+    """Translate CNV_SOURCE into integer."""
+    encoding = {"cn.mops": 1, "cnvpytor": 2}
+    if len(x) != 1:
+        raise ValueError(f"Unexpected cnv_source value: {x}")
+    return encoding[x[0]]
+
+
 def gt_encode(x):
     """Checks whether the variant is heterozygous(0) or homozygous(1)"""
     if x == (1, 1):
@@ -87,6 +103,24 @@ INS_DEL_ENCODE = {"ins": -1, "del": 1, "NA": 0}
 
 def ins_del_encode(x, encode_dct=INS_DEL_ENCODE):  # pylint: disable=dangerous-default-value
     return encode_dct[x]
+
+
+@lru_cache(maxsize=1)
+def _get_region_encoding():
+    regions = ["Telomere_Centromere", "Clusters", "Coverage-Mappability"]
+    subsets = []
+    for r in range(len(regions) + 1):
+        subsets.extend(itertools.combinations(sorted(regions), r))
+    for i in range(len(subsets)):
+        subsets[i] = tuple(sorted(subsets[i]))
+    return dict(zip(subsets, range(1, len(subsets) + 1), strict=False))
+
+
+def region_annotation_encode(x):
+    encoding = _get_region_encoding()
+    if x is None:
+        return 0
+    return encoding[tuple(sorted(x))]
 
 
 def get_needed_features(vtype: VcfType = VcfType.SINGLE_SAMPLE, custom_annotations: list | None = None) -> list:
@@ -115,7 +149,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
     Parameters
     ----------
     vtype: string
-        The type of the input vcf. Either "single_sample", "joint" or "dv"
+        The type of the input vcf. Either "single_sample", "joint", "dv" or cnv
     custom_annotations: list, optional
         Additional custom (non-required) annotations. Some will have pre-registered custom transforms
     Returns
@@ -155,6 +189,20 @@ def modify_features_based_on_vcf_type(  # noqa C901
     def ins_del_encode_df(df):
         return pd.DataFrame(np.array(df[0].apply(ins_del_encode)).reshape(-1, 1), index=df.index)
 
+    def svtype_encode_df(df):
+        return pd.DataFrame(np.array(df.apply(svtype_encode)).reshape(-1, 1), index=df.index)
+
+    def region_annotation_encode_df(df):
+        return pd.DataFrame(
+            np.array(df["region_annotations"].apply(region_annotation_encode)).reshape(-1, 1), index=df.index
+        )
+
+    def copy_number_encode_df(df):
+        return pd.DataFrame(df.max(axis=1), index=df.index)
+
+    def cnv_source_encode_df(df):
+        return pd.DataFrame(np.array(df["cnv_source"].apply(cnv_source_encode)).reshape(-1, 1), index=df.index)
+
     default_filler = impute.SimpleImputer(strategy="constant", fill_value=0)
     tuple_filter = preprocessing.FunctionTransformer(tuple_encode_df)
     ins_del_encode_filter = preprocessing.FunctionTransformer(ins_del_encode_df)
@@ -166,7 +214,10 @@ def modify_features_based_on_vcf_type(  # noqa C901
     allele_filter_single = preprocessing.FunctionTransformer(allele_encode_single)
     allele_filter = preprocessing.FunctionTransformer(allele_encode_df)
     gt_filter = preprocessing.FunctionTransformer(gt_encode_df)
-
+    svtype_encode_filter = preprocessing.FunctionTransformer(svtype_encode_df)
+    region_annotation_encode_filter = preprocessing.FunctionTransformer(region_annotation_encode_df)
+    copy_number_encode_filter = preprocessing.FunctionTransformer(copy_number_encode_df)
+    cnv_source_encode_filter = preprocessing.FunctionTransformer(cnv_source_encode_df)
     transform_list = [
         ("ad", tuple_encode_doublet_df_transformer, "ad"),
         ("gt", gt_filter, "gt"),
@@ -237,6 +288,35 @@ def modify_features_based_on_vcf_type(  # noqa C901
         features = [x[0] for x in transform_list]
     elif vtype == VcfType.JOINT:
         pass
+    elif vtype == VcfType.CNV:
+        transform_list = [
+            ("svtype", svtype_encode_filter, "svtype"),
+            ("cnmops_sample_stdev", default_filler, ["cnmops_sample_stdev"]),
+            ("cnmops_sample_mean", default_filler, ["cnmops_sample_mean"]),
+            ("cnmops_cohort_stdev", default_filler, ["cnmops_cohort_stdev"]),
+            ("cnmops_cohort_mean", default_filler, ["cnmops_cohort_mean"]),
+            ("pytorq0", default_filler, ["pytorq0"]),
+            ("pytorp2", default_filler, ["pytorp2"]),
+            ("pytorrd", default_filler, ["pytorrd"]),
+            ("pytorp1", default_filler, ["pytorp1"]),
+            ("pytorp3", default_filler, ["pytorp3"]),
+            ("gap_percentage", "passthrough", ["gap_percentage"]),
+            ("cnv_dup_reads", "passthrough", ["cnv_dup_reads"]),
+            ("cnv_del_reads", "passthrough", ["cnv_del_reads"]),
+            ("cnv_dup_frac", "passthrough", ["cnv_dup_frac"]),
+            ("cnv_del_frac", "passthrough", ["cnv_del_frac"]),
+            ("jalign_dup_support", "passthrough", ["jalign_dup_support"]),
+            ("jalign_del_support", "passthrough", ["jalign_del_support"]),
+            ("jalign_dup_support_strong", "passthrough", ["jalign_dup_support_strong"]),
+            ("jalign_del_support_strong", "passthrough", ["jalign_del_support_strong"]),
+            ("svlen", tuple_filter, "svlen"),
+            ("copynumber", copy_number_encode_filter, ["cn", "copynumber"]),
+            ("cnv_source", cnv_source_encode_filter, ["cnv_source"]),
+            # ("best_overlap_svtype", svtype_encode_filter, "best_overlap_svtype"),
+        ]
+        features = [[x[2]] if isinstance(x[2], str) else x[2] for x in transform_list]
+        features = sum(features, [])
+
     else:
         raise ValueError("Unrecognized VCF type")
 
@@ -256,11 +336,14 @@ def modify_features_based_on_vcf_type(  # noqa C901
     long_hmer_transformer = make_pipeline(
         impute.SimpleImputer(strategy="constant", fill_value="0", missing_values=None), convert_to_numeric_transformer
     )
+    region_annotation_transformer = make_pipeline(region_annotation_encode_filter)
 
     if custom_annotations is None:
         custom_annotations = []
     custom_fields_dict = defaultdict(lambda: default_transformer)
     custom_fields_dict["long_hmer"] = long_hmer_transformer
+    custom_fields_dict["region_annotations"] = region_annotation_transformer
+
     for an in custom_annotations:
         features.append(an)
         transform_list.append((an, custom_fields_dict[an], [an]))

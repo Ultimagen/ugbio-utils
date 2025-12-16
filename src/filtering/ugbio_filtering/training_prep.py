@@ -1,4 +1,6 @@
+import tempfile
 import warnings
+from os.path import abspath, dirname
 from pathlib import Path
 
 import numpy as np
@@ -6,6 +8,7 @@ import pandas as pd
 import pyfaidx
 import pysam
 import tqdm.auto as tqdm
+import ugbio_comparison.sv_comparison_pipeline as svp
 import ugbio_comparison.vcf_comparison_utils as vcu
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed import vcftools
@@ -373,3 +376,73 @@ def label_with_approximate_gt(
             vcf_df.to_hdf((dirname / Path(stemname + "_test.h5")), key=chromosome, mode="a")
         else:
             vcf_df.to_hdf(output_file, key=chromosome, mode="a")
+
+
+def training_prep_cnv(
+    call_vcf: str,
+    base_vcf: str,
+    hcr: str,
+    custom_annotations: list[str] | None,
+    train_fraction: float,
+    output_prefix: str,
+    *,
+    ignore_cnv_type: bool,
+    skip_collapse: bool,
+) -> None:
+    """Prepare training data for CNV filtering model
+
+    Parameters
+    ----------
+    call_vcf : str
+        Call VCF file
+    base_vcf : str
+        Truth VCF file
+    hcr : str
+        High confidence regions BED file
+    custom_annotations : list[str] | None
+        Custom INFO annotations to read from the VCF
+    train_fraction : float
+        Fraction of CNVs to use for training (rest will be used for testing)
+    output_prefix : str
+        Output HDF5 files prefix
+    ignore_cnv_type : bool
+        Ignore CNV type when matching to truth
+    skip_collapse : bool
+        Skip collapsing variants before comparison
+
+    Returns
+    -------
+    None
+        Writes training and testing data to HDF5 files
+    """
+    pipeline = svp.SVComparison()
+    if not ignore_cnv_type:
+        raise NotImplementedError("CNV type-aware matching is not implemented yet.")
+    with tempfile.TemporaryDirectory(dir=dirname(abspath(output_prefix))) as temp_dir:
+        dname = Path(output_prefix).parent
+        stemname = Path(output_prefix).stem
+
+        pipeline.run_pipeline(
+            calls=call_vcf,
+            gt=base_vcf,
+            output_file_name=str(dname / Path(stemname + ".concordance.h5")),
+            outdir=temp_dir,
+            hcr_bed=hcr,
+            custom_info_fields=tuple(custom_annotations) if custom_annotations is not None else (),
+            erase_outdir=True,
+            ignore_filter=True,
+            ignore_type=ignore_cnv_type,
+            skip_collapse=skip_collapse,
+        )
+    if ignore_cnv_type:
+        concordance_df = pd.read_hdf(str(dname / Path(stemname + ".concordance.h5")), key="calls")
+        concordance_df = concordance_df.replace({"label": {"TP": 1, "FP": 0}})
+        concordance_df = concordance_df.sort_index()
+    else:
+        raise NotImplementedError("CNV type-aware matching is not implemented yet.")
+    split_idx = int(concordance_df.shape[0] * train_fraction)
+    train_set = concordance_df.iloc[0:split_idx]
+    test_set = concordance_df.iloc[split_idx:]
+    train_set.to_hdf(str(dname / Path(stemname + ".train.h5")), key="train", mode="w")
+    test_set.to_hdf(str(dname / Path(stemname + ".test.h5")), key="test", mode="w")
+    # TODO: ignore_cnv_type is False, but can be used downstream to correct the labels if needed

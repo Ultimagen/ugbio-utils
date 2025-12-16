@@ -19,7 +19,7 @@ import argparse
 import logging
 import sys
 
-from ugbio_cnv.process_cnmops_cnvs import annotate_bed
+from ugbio_cnv.cnmops_utils import annotate_bed
 from ugbio_core.logger import logger
 
 
@@ -27,7 +27,8 @@ def get_parser():
     """Create and return argument parser for the CLI."""
     parser = argparse.ArgumentParser(
         prog="filter_sample_cnvs",
-        description="Filter CNV calls from BED file using LCR regions and/or length filters",
+        description="Filter CNV calls from BED file using LCR regions and/or length filters. "
+        "Note: only used in ControlFREEC pipeline, needs to be merged with prrocess_cnmops_cnvs.py later.",
     )
     parser.add_argument(
         "--input_bed_file",

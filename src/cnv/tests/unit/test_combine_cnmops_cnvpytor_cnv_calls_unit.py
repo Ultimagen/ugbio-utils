@@ -82,7 +82,7 @@ class TestAnnotateVcfWithGapPerc:
     """Tests for annotate_vcf_with_gap_perc function."""
 
     def test_gap_perc_all_ns(self, tmp_path):
-        """Test that a region with 100% N bases returns GAP_PERC = 1.0."""
+        """Test that a region with 100% N bases returns GAP_PERCENTAGE = 1.0."""
         fasta_path = os.path.join(tmp_path, "ref.fa")
         input_vcf = os.path.join(tmp_path, "input.vcf.gz")
         output_vcf = os.path.join(tmp_path, "output.vcf.gz")
@@ -100,14 +100,14 @@ class TestAnnotateVcfWithGapPerc:
         with pysam.VariantFile(output_vcf) as vcf:
             records = list(vcf)
             assert len(records) == 1
-            assert "GAP_PERC" in records[0].info
+            assert "GAP_PERCENTAGE" in records[0].info
             # region_len = stop - start + 1 = 100 - 0 + 1 = 101
             # seq = genome[0:101] = 101 N's
             # gap_perc = 101/101 = 1.0
-            assert records[0].info["GAP_PERC"] == 1.0
+            assert records[0].info["GAP_PERCENTAGE"] == 1.0
 
     def test_gap_perc_no_ns(self, tmp_path):
-        """Test that a region with 0% N bases returns GAP_PERC = 0.0."""
+        """Test that a region with 0% N bases returns GAP_PERCENTAGE = 0.0."""
         fasta_path = os.path.join(tmp_path, "ref.fa")
         input_vcf = os.path.join(tmp_path, "input.vcf.gz")
         output_vcf = os.path.join(tmp_path, "output.vcf.gz")
@@ -125,8 +125,8 @@ class TestAnnotateVcfWithGapPerc:
         with pysam.VariantFile(output_vcf) as vcf:
             records = list(vcf)
             assert len(records) == 1
-            assert "GAP_PERC" in records[0].info
-            assert records[0].info["GAP_PERC"] == 0.0
+            assert "GAP_PERCENTAGE" in records[0].info
+            assert records[0].info["GAP_PERCENTAGE"] == 0.0
 
     def test_gap_perc_mixed_bases(self, tmp_path):
         """Test that a region with mixed N's and bases returns correct fraction."""
@@ -151,7 +151,7 @@ class TestAnnotateVcfWithGapPerc:
             assert len(records) == 1
             # region_len = 101, n_count = 50
             expected_gap_perc = 50 / 101
-            assert records[0].info["GAP_PERC"] == pytest.approx(expected_gap_perc, rel=1e-4)
+            assert records[0].info["GAP_PERCENTAGE"] == pytest.approx(expected_gap_perc, rel=1e-4)
 
     def test_gap_perc_lowercase_ns_counted(self, tmp_path):
         """Test that lowercase 'n' bases are also counted as gaps."""
@@ -174,7 +174,7 @@ class TestAnnotateVcfWithGapPerc:
             assert len(records) == 1
             # Lowercase n's should be counted as N's after .upper() conversion
             # region_len = 101, n_count = 101
-            assert records[0].info["GAP_PERC"] == 1.0
+            assert records[0].info["GAP_PERCENTAGE"] == 1.0
 
     def test_gap_perc_multiple_records(self, tmp_path):
         """Test that multiple VCF records are all annotated correctly."""
@@ -205,16 +205,16 @@ class TestAnnotateVcfWithGapPerc:
             assert len(records) == 3
 
             # Region 0-50: 51 N's, region_len = 51, gap_perc = 1.0
-            assert records[0].info["GAP_PERC"] == 1.0
+            assert records[0].info["GAP_PERCENTAGE"] == 1.0
 
             # Region 51-100: 50 A's, region_len = 50, gap_perc = 0.0
-            assert records[1].info["GAP_PERC"] == 0.0
+            assert records[1].info["GAP_PERCENTAGE"] == 0.0
 
             # Region 101-150: 25 N's + 25 A's, region_len = 50, gap_perc = 0.5
-            assert records[2].info["GAP_PERC"] == 0.5
+            assert records[2].info["GAP_PERCENTAGE"] == 0.5
 
     def test_gap_perc_header_added(self, tmp_path):
-        """Test that GAP_PERC INFO field is added to the VCF header."""
+        """Test that GAP_PERCENTAGE INFO field is added to the VCF header."""
         fasta_path = os.path.join(tmp_path, "ref.fa")
         input_vcf = os.path.join(tmp_path, "input.vcf.gz")
         output_vcf = os.path.join(tmp_path, "output.vcf.gz")
@@ -229,8 +229,8 @@ class TestAnnotateVcfWithGapPerc:
         combine_cnmops_cnvpytor_cnv_calls.annotate_vcf_with_gap_perc(input_vcf, fasta_path, output_vcf)
 
         with pysam.VariantFile(output_vcf) as vcf:
-            assert "GAP_PERC" in vcf.header.info
-            gap_perc_info = vcf.header.info["GAP_PERC"]
+            assert "GAP_PERCENTAGE" in vcf.header.info
+            gap_perc_info = vcf.header.info["GAP_PERCENTAGE"]
             assert gap_perc_info.type == "Float"
             assert gap_perc_info.number == 1
 
