@@ -129,6 +129,11 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
 
         return df_variants
 
+    def starnd_count(col):
+        t = col.explode().dropna().astype(int)
+        out = pd.get_dummies(t).groupby(level=0).sum().reindex(col.index, fill_value=0)
+        return out
+
     """Process columns for a sample with given prefix (t_ or n_)"""
     # Process alt_reads
     df_variants[f"{prefix}alt_reads"] = [tup[1] for tup in df_variants[f"{prefix}ad"]]
@@ -148,6 +153,10 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
         f"{prefix}{format_mpileup_fields_for_training[0]}",
         f"{prefix}{format_mpileup_fields_for_training[1]}",
     )
+
+    # Only add strand count if rev column exists
+    if f"{prefix}rev" in df_variants.columns:
+        df_variants[[f"{prefix}forward_count", f"{prefix}reverse_count"]] = starnd_count(df_variants[f"{prefix}rev"])
 
     return df_variants
 
@@ -175,6 +184,7 @@ def df_sfm_fields_transformation(df_variants):  # noqa: C901
         df_variants = process_sample_columns(df_variants, prefix)
     df_variants["ref_allele"] = [tup[0] for tup in df_variants["t_alleles"]]
     df_variants["alt_allele"] = [tup[1] for tup in df_variants["t_alleles"]]
+    df_variants["n_dp"] = df_variants["n_dp"].fillna(df_variants["n_ref2"] + df_variants["n_nonref2"])
 
     return df_variants
 
