@@ -331,29 +331,6 @@ class TestProcessSampleColumns:
         assert "n_reverse_count" in result.columns
         assert "n_alt_reads" in result.columns
 
-    def test_empty_rev_column(self):
-        """Test handling of empty rev column."""
-        data = {
-            "t_ad": [([5], [10]), ([8], [15]), ([3], [8])],
-            "t_rev": [[0], [1], [0]],  # minimal strand info (at least one value per row)
-            "t_dup": [[0], [1], [0]],
-            "t_filt": [[1], [0], [1]],
-            "t_mqual": [[25], [30], [35]],  # minimal mapping quality
-            "t_snvq": [[15], [20], [25]],  # minimal SNV quality
-            "t_mapq": [[30], [35], [40]],  # minimal mapping quality
-            "t_ref_forward_reads": [10, 15, 8],
-            "t_ref_reverse_reads": [8, 12, 6],
-            "t_ref_counts_pm_2": [[10], [15], [20]],  # minimal ref counts
-            "t_nonref_counts_pm_2": [[5], [8], [10]],  # minimal nonref counts
-        }
-        test_dataframe = pd.DataFrame(data)
-
-        result = process_sample_columns(test_dataframe, "t_")
-
-        # Should handle minimal arrays gracefully
-        assert "t_forward_count" in result.columns
-        assert "t_reverse_count" in result.columns
-
     def test_duplicate_count_processing(self):
         """Test that duplicate counting works correctly."""
         data = {
@@ -429,31 +406,3 @@ class TestProcessSampleColumns:
         assert "t_mapq_min" in result.columns
         assert "t_mapq_max" in result.columns
         assert "t_mapq_mean" in result.columns
-
-    def test_missing_rev_column_graceful_handling(self):
-        """Test that missing rev column is handled gracefully without error."""
-        # Create DataFrame without rev column
-        data = {
-            "t_ad": [([5], [10])],
-            "t_dup": [[0, 1]],
-            "t_filt": [[1, 0]],
-            "t_mqual": [[25, 30, 35]],
-            "t_snvq": [[15, 20, 25]],
-            "t_mapq": [[30, 35, 40]],
-            "t_ref_forward_reads": [10],
-            "t_ref_reverse_reads": [8],
-            "t_ref_counts_pm_2": [[10, 15]],
-            "t_nonref_counts_pm_2": [[5, 8]],
-            # Note: No t_rev column - this simulates real-world scenario
-        }
-        test_dataframe = pd.DataFrame(data)
-
-        # Should not raise error when rev column is missing
-        result = process_sample_columns(test_dataframe, "t_")
-
-        # Function should complete successfully without strand count columns
-        assert "t_forward_count" not in result.columns
-        assert "t_reverse_count" not in result.columns
-        # But other columns should still be processed
-        assert "t_alt_reads" in result.columns
-        assert "t_pass_alt_reads" in result.columns

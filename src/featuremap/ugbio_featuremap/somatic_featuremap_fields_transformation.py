@@ -34,6 +34,7 @@ format_fields_for_training = [
     FeatureMapFields.ADJ_REF_DIFF.value,
     FeatureMapFields.DP_MAPQ60.value,
     FeatureMapFields.DUP.value,
+    FeatureMapFields.REV.value,
 ]
 format_mpileup_fields_for_training = ["ref_counts_pm_2", "nonref_counts_pm_2"]
 
@@ -48,6 +49,8 @@ added_format_features = {
     "SNVQ_MIN": ["mean value of SNVQ", "Float"],
     "COUNT_DUPLICATE": ["number of duplicate reads", "Integer"],
     "COUNT_NON_DUPLICATE": ["number of non-duplicate reads", "Integer"],
+    "REVERSE_COUNT": ["number of reverse strand reads", "Integer"],
+    "FORWARD_COUNT": ["number of forward strand reads", "Integer"],
 }
 added_info_features = {
     "REF_ALLELE": ["reference allele", "String"],
@@ -129,10 +132,18 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
 
         return df_variants
 
-    def starnd_count(col):
-        t = col.explode().dropna().astype(int)
-        out = pd.get_dummies(t).groupby(level=0).sum().reindex(col.index, fill_value=0)
-        return out
+    def count_zeros_ones(x):
+        """
+        Count number of 0s and 1s in a tuple/list.
+        Handles None, NaN, empty tuples.
+        """
+        if x is None or (isinstance(x, float) and pd.isna(x)):
+            return pd.Series({"num0": 0, "num1": 0})
+
+        # filter only valid values
+        clean = [v for v in x if v in (0, 1)]
+
+        return pd.Series({"num0": clean.count(0), "num1": clean.count(1)})
 
     """Process columns for a sample with given prefix (t_ or n_)"""
     # Process alt_reads
@@ -154,9 +165,9 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
         f"{prefix}{format_mpileup_fields_for_training[1]}",
     )
 
-    # Only add strand count if rev column exists
-    if f"{prefix}rev" in df_variants.columns:
-        df_variants[[f"{prefix}forward_count", f"{prefix}reverse_count"]] = starnd_count(df_variants[f"{prefix}rev"])
+    df_variants[[f"{prefix}forward_count", f"{prefix}reverse_count"]] = df_variants[f"{prefix}rev"].apply(
+        count_zeros_ones
+    )
 
     return df_variants
 
