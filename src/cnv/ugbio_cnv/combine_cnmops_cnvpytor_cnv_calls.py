@@ -561,6 +561,7 @@ def run(argv: list[str]):
             output_vcf=args.output_vcf,
             distance=args.distance,
             do_not_merge_collapsed_filtered=True,
+            pick_best=True,
         )
     else:
         raise ValueError(f"Unknown tool: {args.tool}")
