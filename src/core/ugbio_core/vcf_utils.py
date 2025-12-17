@@ -346,13 +346,9 @@ class VcfUtils:
         truvari_cmd.extend(["--pctseq", str(pctseq)])
         truvari_cmd.extend(["--pctsize", str(pctsize)])
         truvari_cmd.extend(["--refdist", str(int(refdist))])
-
+        truvari_cmd.extend(["-o", output_vcf])
         self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
-
-        bcftools_cmd = ["bcftools", "view", "-Oz", "-o", output_vcf]
-        complete_command = f"{' '.join(truvari_cmd)} | {' '.join(bcftools_cmd)}"
-        self.logger.info(f"Complete command: {complete_command}")
-        self.__execute(complete_command)
+        self.__execute(" ".join(truvari_cmd))
 
         # Parameterize the file path
         if erase_removed:
