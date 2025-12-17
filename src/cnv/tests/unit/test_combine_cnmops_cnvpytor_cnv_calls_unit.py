@@ -1,5 +1,7 @@
 import os
+import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pysam
 import pytest
@@ -568,3 +570,35 @@ class TestAnnotateVcfWithRegions:
 
             # Third CNV: should not be annotated (no overlap)
             assert "REGION_ANNOTATIONS" not in records[2].info
+
+
+def test_main_merge_records_calls_with_pick_best_true():
+    """Test that main_merge_records calls merge_cnvs_in_vcf with pick_best=True."""
+    test_input_vcf = "/path/to/input.vcf.gz"
+    test_output_vcf = "/path/to/output.vcf.gz"
+    test_distance = 1500
+
+    # Mock sys.argv to simulate command-line arguments
+    test_argv = [
+        "merge_records",
+        "--input_vcf",
+        test_input_vcf,
+        "--output_vcf",
+        test_output_vcf,
+        "--distance",
+        str(test_distance),
+    ]
+
+    with patch.object(sys, "argv", test_argv):
+        with patch("ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls.merge_cnvs_in_vcf") as mock_merge:
+            # Call the main_merge_records function
+            combine_cnmops_cnvpytor_cnv_calls.main_merge_records()
+
+            # Verify that merge_cnvs_in_vcf was called with the correct parameters
+            mock_merge.assert_called_once_with(
+                input_vcf=test_input_vcf,
+                output_vcf=test_output_vcf,
+                distance=test_distance,
+                do_not_merge_collapsed_filtered=True,
+                pick_best=True,
+            )
