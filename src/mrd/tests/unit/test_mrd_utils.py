@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 from pandas.testing import assert_frame_equal
 from ugbio_mrd.mrd_utils import (
+    calc_tumor_fraction_denominator_ratio,
     generate_synthetic_signatures,
     read_intersection_dataframes,
     read_signature,
@@ -158,3 +159,32 @@ def test_generate_synthetic_signatures(tmpdir, resources_dir):
     assert (
         signature.groupby(["ref", "alt"]).value_counts() == expected_signature.groupby(["ref", "alt"]).value_counts()
     ).all()
+
+
+def test_calc_tumor_fraction_denominator_ratio(tmpdir, resources_dir):
+    """Test calc_tumor_fraction_denominator_ratio function with real parquet file."""
+    featuremap_file = pjoin(resources_dir, "416119_L7402.featuremap_df.10k.parquet")
+    metadata_file = pjoin(resources_dir, "416119_L7402.srsnv_metadata.json")
+
+    # Test with a simple query that uses columns from the parquet file
+    read_filter_query = "filt>0 and snvq>60"
+
+    # Run the function
+    denom_ratio, filt_ratio, read_filter_non_filt = calc_tumor_fraction_denominator_ratio(
+        featuremap_df_file=featuremap_file,
+        srsnv_metadata_json=metadata_file,
+        read_filter_query=read_filter_query,
+    )
+
+    # Verify return values are floats
+    assert isinstance(denom_ratio, float | np.floating)
+    assert isinstance(filt_ratio, float | np.floating)
+    assert isinstance(read_filter_non_filt, float | np.floating)
+
+    # Verify values
+    assert np.isclose(filt_ratio, 0.7100585107278435)
+    assert np.isclose(read_filter_non_filt, 0.6822598056854984)
+    assert np.isclose(denom_ratio, 0.4844443815545129)
+
+    # Verify the calculation: denom_ratio = filt_ratio * read_filter_non_filt
+    assert np.isclose(denom_ratio, filt_ratio * read_filter_non_filt)
