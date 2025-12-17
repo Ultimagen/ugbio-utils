@@ -98,7 +98,7 @@ def read_trimmer_failure_codes(
 
     # If there's more than one format, keep the failed_read_count from the last format rows,
     # and take total_read_count from the first (per [read group, segment, reason] combination)
-    if not (df_trimmer_failure_codes["format"] == df_trimmer_failure_codes["format"].iloc[0]).all():
+    if df_trimmer_failure_codes["format"].nunique()>1:
         # Group by the key columns except 'format', then for each group:
         # - Keep failed_read_count from the last occurrence by format order (keep last)
         # - Keep total_read_count from the first occurrence (keep first)
