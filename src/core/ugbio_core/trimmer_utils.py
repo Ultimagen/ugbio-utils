@@ -136,16 +136,19 @@ def read_trimmer_failure_codes(
 
     # add row with total counts
     if add_total:
+        # Grab the unique format(s); if there's more than one, set to None/'multiple' for the total.
+        unique_formats = df_trimmer_failure_codes["format"].unique()
+        total_format = unique_formats[0] if len(unique_formats) == 1 else "multiple"
+
         total_row = pd.DataFrame(
             {
-                "failed_read_count": df_trimmer_failure_codes["failed_read_count"].sum(),
-                "total_read_count": df_trimmer_failure_codes["total_read_count"].iloc[0],
-                "PCT_failure": df_trimmer_failure_codes["PCT_failure"].sum(),
+                "format": [total_format],
+                "failed_read_count": [df_trimmer_failure_codes["failed_read_count"].sum()],
+                "total_read_count": [df_trimmer_failure_codes["total_read_count"].iloc[0]],
+                "PCT_failure": [df_trimmer_failure_codes["PCT_failure"].sum()],
             },
-            index=pd.MultiIndex.from_tuples([("total", "total")]),
+            index=pd.MultiIndex.from_tuples([("total", "total")], names=["segment", "reason"]),
         )
 
-        df_trimmer_failure_codes = pd.concat([df_trimmer_failure_codes, total_row])
-        df_trimmer_failure_codes.index = df_trimmer_failure_codes.index.set_names(["segment", "reason"])
-
+        df_trimmer_failure_codes = pd.concat([df_trimmer_failure_codes, total_row], ignore_index=False)
     return df_trimmer_failure_codes
