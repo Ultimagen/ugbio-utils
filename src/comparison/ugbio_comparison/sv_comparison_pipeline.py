@@ -138,7 +138,7 @@ class SVComparison:
                 .astype(int)
             )
 
-        info_fields_to_read: list[str] = list(("SVTYPE", "SVLEN") + custom_info_fields)
+        info_fields_to_read: list[str] = list(("SVTYPE", "SVLEN", "MatchId") + custom_info_fields)
         df_tp_base = vcftools.get_vcf_df(pjoin(truvari_dir, "tp-base.vcf.gz"), custom_info_fields=info_fields_to_read)
         df_tp_base["svlen_int"] = assign_svlen_int(df_tp_base)
         df_tp_base["label"] = "TP"
@@ -156,6 +156,30 @@ class SVComparison:
         df_fp["svlen_int"] = assign_svlen_int(df_fp)
 
         df_calls = pd.concat((df_tp_calls, df_fp))
+
+        # Add label_type field
+        # For non-TP variants, label_type equals label
+        df_fn["label_type"] = df_fn["label"]
+        df_fp["label_type"] = df_fp["label"]
+
+        # For TP variants, label_type is the SVTYPE from the matching variant in the paired VCF
+        # Create mapping from MatchId to SVTYPE for each TP dataframe
+        if not df_tp_base.empty and "matchid" in df_tp_base.columns:
+            matchid_to_svtype_calls = df_tp_calls.set_index("matchid")["svtype"].to_dict()
+            df_tp_base["label_type"] = df_tp_base["matchid"].map(matchid_to_svtype_calls)
+        else:
+            df_tp_base["label_type"] = df_tp_base["label"]
+
+        if not df_tp_calls.empty and "matchid" in df_tp_calls.columns:
+            matchid_to_svtype_base = df_tp_base.set_index("matchid")["svtype"].to_dict()
+            df_tp_calls["label_type"] = df_tp_calls["matchid"].map(matchid_to_svtype_base)
+        else:
+            df_tp_calls["label_type"] = df_tp_calls["label"]
+
+        # Recreate concatenated dataframes with label_type field
+        df_base = pd.concat((df_tp_base, df_fn))
+        df_calls = pd.concat((df_tp_calls, df_fp))
+
         return df_base, df_calls
 
     def run_pipeline(  # noqa: PLR0913
