@@ -96,11 +96,19 @@ def read_trimmer_failure_codes(
         columns={c: c.replace(" ", "_").lower() for c in df_trimmer_failure_codes.columns}
     )
 
+    # Make 'format' and 'segment' categorical so sorting respects order of appearance
+    for col in ["format", "segment"]:
+        original_order = df_trimmer_failure_codes[col].drop_duplicates().tolist()
+        df_trimmer_failure_codes[col] = pd.Categorical(
+            df_trimmer_failure_codes[col], categories=original_order, ordered=True
+        )
+
     # group by segment and reason (aggregate read groups)
     df_trimmer_failure_codes = (
         df_trimmer_failure_codes.groupby(["format", "segment", "reason"])
         .agg({x: "sum" for x in ("failed_read_count", "total_read_count")})
         .reset_index(level=["format"])
+        .query("total_read_count > 0")
     )
 
     # Move 'format' to first column if it's not already
