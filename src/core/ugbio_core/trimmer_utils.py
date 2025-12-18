@@ -146,15 +146,19 @@ def read_trimmer_failure_codes(
     if add_total:
         if len(df_trimmer_failure_codes["format"].unique()) > 1:
             total_format = "multiple"
-            pct_failure = None
+            pct_failure = float("nan")
+            total_read_count = float("nan")
+            failed_read_count = float("nan")
         else:
             total_format = df_trimmer_failure_codes["format"].unique()[0]
             pct_failure = df_trimmer_failure_codes["PCT_failure"].sum()
+            total_read_count = df_trimmer_failure_codes["total_read_count"].sum()
+            failed_read_count = df_trimmer_failure_codes["failed_read_count"].sum()
         total_row = pd.DataFrame(
             {
                 "format": [total_format],
-                "failed_read_count": [df_trimmer_failure_codes["failed_read_count"].sum()],
-                "total_read_count": [df_trimmer_failure_codes["total_read_count"].iloc[0]],
+                "failed_read_count": [failed_read_count],
+                "total_read_count": [total_read_count],
                 "PCT_failure": [pct_failure],
             },
             index=pd.MultiIndex.from_tuples([("total", "total")], names=["segment", "reason"]),
