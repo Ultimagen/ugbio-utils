@@ -57,7 +57,7 @@ def collect_statistics(
     # Read inputs into df
     trimmer_stats = pd.read_csv(input_files.trimmer_stats_csv)
     df_trimmer_failure_codes = read_trimmer_failure_codes(
-        input_files.trimmer_failure_codes_csv, add_total=False, include_pretrim_filters=False
+        input_files.trimmer_failure_codes_csv, add_total=True, include_pretrim_filters=False
     )
     sorter_stats = read_sorter_statistics_csv(input_files.sorter_stats_csv)
     if input_files.sorter_stats_json:
