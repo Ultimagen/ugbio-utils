@@ -1782,21 +1782,21 @@ class SRSNVReport:
             max_value=self.max_qual,
         )
         performance_info = {
-            ("Median SNVQ", "All reads"): signif(median_qual, 3),
-            ("Median SNVQ", "Mixed, start"): signif(median_qual_mixed_start, 3),
-            ("Median SNVQ", "Mixed, both ends"): signif(median_qual_mixed, 3),
-            ("Recall at SNVQ=50", "All reads"): signif(recall_at_50 / recall_at_0, 3),
-            ("Recall at SNVQ=50", "Mixed, start"): signif(recall_at_50_mixed_start / recall_at_0_mixed_start, 3),
-            ("Recall at SNVQ=50", "Mixed, both ends"): signif(recall_at_50_mixed / recall_at_0_mixed, 3),
-            ("Recall at SNVQ=60", "All reads"): signif(recall_at_60 / recall_at_0, 3),
-            ("Recall at SNVQ=60", "Mixed, start"): signif(recall_at_60_mixed_start / recall_at_0_mixed_start, 3),
-            ("Recall at SNVQ=60", "Mixed, both ends"): signif(recall_at_60_mixed / recall_at_0_mixed, 3),
-            ("Pre-filter Recall", "All reads"): signif(recall_at_0, 3),
-            ("Pre-filter Recall", "Mixed, start"): signif(recall_at_0_mixed_start, 3),
-            ("Pre-filter Recall", "Mixed, both ends"): signif(recall_at_0_mixed, 3),
-            ("ROC AUC (Phred)", "All reads"): signif(roc_auc_phred, 3),
-            ("ROC AUC (Phred)", "Mixed, start"): signif(roc_auc_phred_mixed_start, 3),
-            ("ROC AUC (Phred)", "Mixed, both ends"): signif(roc_auc_phred_mixed, 3),
+            ("Median SNVQ", "All reads"): signif(median_qual, 4),
+            ("Median SNVQ", "Mixed, start"): signif(median_qual_mixed_start, 4),
+            ("Median SNVQ", "Mixed, both ends"): signif(median_qual_mixed, 4),
+            ("Recall at SNVQ=50", "All reads"): signif(recall_at_50 / recall_at_0, 4),
+            ("Recall at SNVQ=50", "Mixed, start"): signif(recall_at_50_mixed_start / recall_at_0_mixed_start, 4),
+            ("Recall at SNVQ=50", "Mixed, both ends"): signif(recall_at_50_mixed / recall_at_0_mixed, 4),
+            ("Recall at SNVQ=60", "All reads"): signif(recall_at_60 / recall_at_0, 4),
+            ("Recall at SNVQ=60", "Mixed, start"): signif(recall_at_60_mixed_start / recall_at_0_mixed_start, 4),
+            ("Recall at SNVQ=60", "Mixed, both ends"): signif(recall_at_60_mixed / recall_at_0_mixed, 4),
+            ("Pre-filter Recall", "All reads"): signif(recall_at_0, 4),
+            ("Pre-filter Recall", "Mixed, start"): signif(recall_at_0_mixed_start, 4),
+            ("Pre-filter Recall", "Mixed, both ends"): signif(recall_at_0_mixed, 4),
+            ("ROC AUC (Phred)", "All reads"): signif(roc_auc_phred, 4),
+            ("ROC AUC (Phred)", "Mixed, start"): signif(roc_auc_phred_mixed_start, 4),
+            ("ROC AUC (Phred)", "Mixed, both ends"): signif(roc_auc_phred_mixed, 4),
         }
         # Info about versions
         version_info = {
@@ -2139,7 +2139,7 @@ class SRSNVReport:
 
         qual_stats_description = pd.concat(list(qual_stats_description.values()), axis=1)
         run_quality_table = pd.DataFrame(
-            signif(qual_stats_description.values, 3),
+            signif(qual_stats_description.values, 4),
             index=qual_stats_description.index,
             columns=qual_stats_description.columns,
         ).drop(index="count")
