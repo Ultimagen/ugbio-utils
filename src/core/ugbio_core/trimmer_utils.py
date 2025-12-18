@@ -105,10 +105,9 @@ def read_trimmer_failure_codes(
 
     # group by segment and reason (aggregate read groups)
     df_trimmer_failure_codes = (
-        df_trimmer_failure_codes.groupby(["format", "segment", "reason"])
+        df_trimmer_failure_codes.groupby(["format", "segment", "reason"], observed=True)
         .agg({x: "sum" for x in ("failed_read_count", "total_read_count")})
         .reset_index(level=["format"])
-        .query("total_read_count > 0")
     )
 
     # Move 'format' to first column if it's not already
@@ -143,7 +142,8 @@ def read_trimmer_failure_codes(
     )
 
     # add row with total counts
-    if add_total:
+    # total will not be added if there is more than one format
+    if add_total and len(df_trimmer_failure_codes["format"].unique()) == 1:
         # Grab the unique format(s); if there's more than one, set to None/'multiple' for the total.
         unique_formats = df_trimmer_failure_codes["format"].unique()
         total_format = unique_formats[0] if len(unique_formats) == 1 else "multiple"
