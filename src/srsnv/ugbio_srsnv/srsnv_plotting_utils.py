@@ -2485,6 +2485,9 @@ class SRSNVReport:
     ):
         """Plot histogram and quality stats for a numerical feature."""
         logger.info(f"Plotting quality and histogram for feature {col}")
+        if self.data_df[col].isna().all():
+            logger.warning(f"Column {col} contains only NaN values. Skipping plot.")
+            return
         is_discrete = (self.data_df[col] - np.round(self.data_df[col])).abs().max() < 0.05  # noqa: PLR2004
         if is_discrete:
             bin_edges = None
