@@ -110,6 +110,9 @@ def read_trimmer_failure_codes(
         .reset_index(level=["format"])
     )
 
+    # For a trimmer csv with multiple formats, slightly different logic is needed.
+    is_multiple_format = len(df_trimmer_failure_codes["format"].unique()) > 1
+
     # Move 'format' to first column if it's not already
     columns = list(df_trimmer_failure_codes.columns)
     if "format" in columns:
@@ -117,13 +120,21 @@ def read_trimmer_failure_codes(
         df_trimmer_failure_codes = df_trimmer_failure_codes[columns]
 
     # remove segment start if not include_pretrim_filters
+    # For multiple formats, we will subtract pretrim_failed_read_count just from the first format
     if not include_pretrim_filters and ("start" in df_trimmer_failure_codes.index.get_level_values("segment")):
         pretrim_failed_read_count = df_trimmer_failure_codes[df_trimmer_failure_codes.index.isin(["start"], level=0)][
             "failed_read_count"
         ].sum()
         df_trimmer_failure_codes = df_trimmer_failure_codes.drop(index=["start"], level="segment", errors="ignore")
-        df_trimmer_failure_codes["total_read_count"] -= pretrim_failed_read_count
+        if not is_multiple_format:
+            df_trimmer_failure_codes["total_read_count"] -= pretrim_failed_read_count
+        else:
+            # Subtract pretrim_failed_read_count just from the first format
+            first_format = df_trimmer_failure_codes["format"].unique()[0]
+            mask_first_format = df_trimmer_failure_codes["format"] == first_format
+            df_trimmer_failure_codes.loc[mask_first_format, "total_read_count"] -= pretrim_failed_read_count
     # remove rsq file if not include_failed_rsq
+    # For multiple formats, we will subtract rsq_failed_read_count just from the first format
     elif not include_failed_rsq and (
         "rsq file" in df_trimmer_failure_codes.index.get_level_values("reason")
         or "rsq filter" in df_trimmer_failure_codes.index.get_level_values("reason")
@@ -134,7 +145,13 @@ def read_trimmer_failure_codes(
         df_trimmer_failure_codes = df_trimmer_failure_codes.drop(
             index=["rsq file", "rsq filter"], level="reason", errors="ignore"
         )
-        df_trimmer_failure_codes["total_read_count"] -= rsq_failed_read_count
+        if not is_multiple_format:
+            df_trimmer_failure_codes["total_read_count"] -= rsq_failed_read_count
+        else:
+            # Subtract rsq_failed_read_count just from the first format
+            first_format = df_trimmer_failure_codes["format"].unique()[0]
+            mask_first_format = df_trimmer_failure_codes["format"] == first_format
+            df_trimmer_failure_codes.loc[mask_first_format, "total_read_count"] -= rsq_failed_read_count
 
     # calculate percentage of failed reads
     df_trimmer_failure_codes = df_trimmer_failure_codes.assign(
@@ -144,7 +161,7 @@ def read_trimmer_failure_codes(
     # add row with total counts
     # total will not be added if there is more than one format
     if add_total:
-        if len(df_trimmer_failure_codes["format"].unique()) > 1:
+        if is_multiple_format:
             total_format = "multiple"
             pct_failure = float("nan")
             total_read_count = float("nan")
