@@ -96,27 +96,18 @@ def read_trimmer_failure_codes(
         columns={c: c.replace(" ", "_").lower() for c in df_trimmer_failure_codes.columns}
     )
 
-    # If there's more than one format, keep the failed_read_count from the last format rows,
-    # and take total_read_count from the first (per [read group, segment, reason] combination)
-    if df_trimmer_failure_codes["format"].nunique()>1:
-        # Group by the key columns except 'format', then for each group:
-        # - Keep failed_read_count from the last occurrence by format order (keep last)
-        # - Keep total_read_count from the first occurrence (keep first)
-        # This requires us to group by ['read_group', 'segment', 'reason']
-        grouped = df_trimmer_failure_codes.sort_values("format").groupby(
-            ["read_group", "segment", "reason"], sort=False, as_index=False
-        )
-
-        failed_read_count = grouped["failed_read_count"].last()
-        total_read_count = grouped["total_read_count"].first()
-
-        df_trimmer_failure_codes = failed_read_count.merge(total_read_count, on=["read_group", "segment", "reason"])
-        # Add back 'format' if really needed? The rest of the code does not use it
-
     # group by segment and reason (aggregate read groups)
-    df_trimmer_failure_codes = df_trimmer_failure_codes.groupby(["segment", "reason"]).agg(
-        {x: "sum" for x in ("failed_read_count", "total_read_count")}
+    df_trimmer_failure_codes = (
+        df_trimmer_failure_codes.groupby(["format", "segment", "reason"])
+        .agg({x: "sum" for x in ("failed_read_count", "total_read_count")})
+        .reset_index(level=["format"])
     )
+
+    # Move 'format' to first column if it's not already
+    columns = list(df_trimmer_failure_codes.columns)
+    if "format" in columns:
+        columns.insert(0, columns.pop(columns.index("format")))
+        df_trimmer_failure_codes = df_trimmer_failure_codes[columns]
 
     # remove segment start if not include_pretrim_filters
     if not include_pretrim_filters and ("start" in df_trimmer_failure_codes.index.get_level_values("segment")):

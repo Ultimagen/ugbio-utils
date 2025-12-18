@@ -57,7 +57,7 @@ def collect_statistics(
     # Read inputs into df
     trimmer_stats = pd.read_csv(input_files.trimmer_stats_csv)
     df_trimmer_failure_codes = read_trimmer_failure_codes(
-        input_files.trimmer_failure_codes_csv, add_total=True, include_pretrim_filters=False
+        input_files.trimmer_failure_codes_csv, add_total=False, include_pretrim_filters=False
     )
     sorter_stats = read_sorter_statistics_csv(input_files.sorter_stats_csv)
     if input_files.sorter_stats_json:
@@ -223,6 +223,7 @@ def extract_statistics_table(h5_file: Path):  # noqa: PLR0915
         # number of Failed reads due to rsq or other prefilters (e.g., subsampling)
         trimmer_stats_df = store[H5Keys.TRIMMER_STATS.value]
         trimmer_start_segment_stats_df = trimmer_stats_df[trimmer_stats_df["segment index"] == 0].head(1)
+        # PF failures are failures from the first row of the trimmer statistics.
         num_failed_reads = 0
         if len(trimmer_start_segment_stats_df) > 0:
             num_failed_reads = trimmer_start_segment_stats_df["num failures"].sum()
