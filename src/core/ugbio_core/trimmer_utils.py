@@ -152,7 +152,7 @@ def read_trimmer_failure_codes(
         else:
             total_format = df_trimmer_failure_codes["format"].unique()[0]
             pct_failure = df_trimmer_failure_codes["PCT_failure"].sum()
-            total_read_count = df_trimmer_failure_codes["total_read_count"].sum()
+            total_read_count = df_trimmer_failure_codes["total_read_count"].iloc[0]
             failed_read_count = df_trimmer_failure_codes["failed_read_count"].sum()
         total_row = pd.DataFrame(
             {
