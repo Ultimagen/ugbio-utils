@@ -6,6 +6,7 @@ import pandas as pd
 import xgboost
 from pandas.core.groupby import DataFrameGroupBy
 from sklearn import compose
+from sklearn.ensemble import RandomForestClassifier
 from ugbio_core import math_utils
 from ugbio_core.concordance.concordance_utils import add_grouping_column, get_concordance_metrics, init_metrics_df
 from ugbio_core.logger import logger
@@ -76,19 +77,15 @@ def train_model(
             n_jobs=14,
         )
     else:
-        clf = xgboost.XGBClassifier(
-            objective="binary:logistic",
-            eval_metric="logloss",
-            max_depth=2,
-            min_child_weight=15,
-            subsample=0.6,
-            colsample_bytree=0.6,
-            learning_rate=0.01,
-            gamma=3,
-            reg_alpha=2.0,
-            reg_lambda=10.0,
+        RandomForestClassifier(
+            n_estimators=300,
+            max_depth=4,
+            min_samples_split=30,
+            min_samples_leaf=15,
+            max_features="sqrt",
             random_state=42,
-            n_estimators=200,
+            n_jobs=-1,
+            class_weight="balanced",
         )
 
     clf.fit(x_train_df, labels_train)

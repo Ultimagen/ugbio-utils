@@ -291,10 +291,6 @@ def modify_features_based_on_vcf_type(  # noqa C901
     elif vtype == VcfType.CNV:
         transform_list = [
             ("svtype", svtype_encode_filter, "svtype"),
-            ("cnmops_sample_stdev", default_filler, ["cnmops_sample_stdev"]),
-            ("cnmops_sample_mean", default_filler, ["cnmops_sample_mean"]),
-            ("cnmops_cohort_stdev", default_filler, ["cnmops_cohort_stdev"]),
-            ("cnmops_cohort_mean", default_filler, ["cnmops_cohort_mean"]),
             ("pytorq0", default_filler, ["pytorq0"]),
             ("pytorp2", default_filler, ["pytorp2"]),
             ("pytorrd", default_filler, ["pytorrd"]),
@@ -312,7 +308,6 @@ def modify_features_based_on_vcf_type(  # noqa C901
             ("svlen", tuple_filter, "svlen"),
             ("copynumber", copy_number_encode_filter, ["cn", "copynumber"]),
             ("cnv_source", cnv_source_encode_filter, ["cnv_source"]),
-            # ("best_overlap_svtype", svtype_encode_filter, "best_overlap_svtype"),
         ]
         features = [[x[2]] if isinstance(x[2], str) else x[2] for x in transform_list]
         features = sum(features, [])
