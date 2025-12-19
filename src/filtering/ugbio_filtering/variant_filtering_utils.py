@@ -77,7 +77,7 @@ def train_model(
             n_jobs=14,
         )
     else:
-        RandomForestClassifier(
+        clf = RandomForestClassifier(
             n_estimators=300,
             max_depth=4,
             min_samples_split=30,
