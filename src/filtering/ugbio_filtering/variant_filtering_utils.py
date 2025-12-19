@@ -24,7 +24,7 @@ def train_model(
     vtype: VcfType,
     annots: list | None = None,
 ) -> tuple[compose.ColumnTransformer, xgboost.XGBRFClassifier]:
-    """Trains model xgboost model on a subset of dataframe
+    """Trains model on a dataframe.
 
     Parameters
     ----------
