@@ -52,7 +52,7 @@ import shutil
 import subprocess
 import tempfile
 import traceback
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
@@ -435,6 +435,65 @@ def _assert_vcf_index_exists(vcf: str) -> None:
             raise RuntimeError(f"VCF index not found: {index_path}")
 
 
+def _run_region_jobs(
+    *,
+    regions: list[str],
+    vcf_path: str,
+    fmt_str: str,
+    job_cfg: VCFJobConfig,
+    jobs: int,
+    tmpdir: str,
+    spawn_ctx: _mp.context.BaseContext,
+) -> list[str]:
+    """Run region conversions in parallel and return created part-files.
+
+    Raises
+    ------
+    RuntimeError
+        If any region fails to convert. The original worker exception is chained
+        as the cause.
+    """
+    part_files: list[str] = []
+
+    with ProcessPoolExecutor(max_workers=jobs, mp_context=spawn_ctx) as executor:
+        futures: dict[Future[str], tuple[str, str]] = {}
+        for i, region in enumerate(regions):
+            part_path = Path(tmpdir) / f"part_{i:06d}.parquet"
+            part_files.append(str(part_path))
+            fut = executor.submit(
+                _process_region_to_parquet,
+                region,
+                vcf_path,
+                fmt_str,
+                job_cfg,
+                str(part_path),
+            )
+            futures[fut] = (region, str(part_path))
+
+        failures: list[tuple[str, str, BaseException]] = []
+        for fut in as_completed(futures):
+            exc = fut.exception()
+            if exc is None:
+                continue
+            region, part_path = futures[fut]
+            failures.append((region, part_path, exc))
+            log.error(
+                "Error processing region %s (part=%s)\n%s",
+                region,
+                part_path,
+                "".join(traceback.format_exception(exc)),
+            )
+
+        if failures:
+            first_region, first_part, first_exc = failures[0]
+            raise RuntimeError(
+                f"{len(failures)} region(s) failed during VCF→Parquet conversion; "
+                f"first failure: {first_region} (part={first_part})"
+            ) from first_exc
+
+    return [p for p in part_files if Path(p).is_file()]
+
+
 def vcf_to_parquet(
     vcf: str,
     out: str,
@@ -536,35 +595,15 @@ def vcf_to_parquet(
         # Temporary directory for ordered part-files
         with tempfile.TemporaryDirectory() as tmpdir:
             spawn_ctx = _mp.get_context("spawn")
-            part_files: list[str] = []
-
-            with ProcessPoolExecutor(max_workers=jobs, mp_context=spawn_ctx) as executor:
-                futures = {}
-                for i, region in enumerate(regions):
-                    part_path = Path(tmpdir) / f"part_{i:06d}.parquet"
-                    part_files.append(str(part_path))
-                    futures[
-                        executor.submit(
-                            _process_region_to_parquet,
-                            region,
-                            vcf,
-                            fmt_str,
-                            job_cfg,
-                            str(part_path),
-                        )
-                    ] = str(part_path)
-
-                for fut in as_completed(futures):
-                    if fut.exception():
-                        # Forward the traceback from the worker so the root cause is visible.
-                        log.error(
-                            "Region %s raised an exception\n%s",
-                            futures[fut],
-                            "".join(traceback.format_exception(fut.exception())),
-                        )
-
-            # keep only those parts that were actually created
-            part_files = [p for p in part_files if Path(p).is_file()]
+            part_files = _run_region_jobs(
+                regions=regions,
+                vcf_path=vcf,
+                fmt_str=fmt_str,
+                job_cfg=job_cfg,
+                jobs=jobs,
+                tmpdir=tmpdir,
+                spawn_ctx=spawn_ctx,
+            )
             if not part_files:
                 raise RuntimeError("No Parquet part-files were produced – all regions empty or failed")
 
