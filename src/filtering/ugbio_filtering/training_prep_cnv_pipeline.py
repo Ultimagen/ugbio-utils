@@ -102,8 +102,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "JALIGN_DEL_SUPPORT_STRONG",
             "SVTYPE",
             "SVLEN",
-            "DISCORDANT_OVERLAP",
-            "CONCORDANT_OVERLAP",
         ]
 
     return args
