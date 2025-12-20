@@ -601,4 +601,5 @@ def test_main_merge_records_calls_with_pick_best_true():
                 distance=test_distance,
                 do_not_merge_collapsed_filtered=True,
                 pick_best=True,
+                ignore_sv_type=True,
             )
