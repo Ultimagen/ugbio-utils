@@ -103,8 +103,4 @@ ENV PYTOR_DATA_DIR=/usr/share/cnvpytor_data
 RUN mkdir -p $PYTOR_DATA_DIR
 RUN cnvpytor -download
 
-USER ugbio
-
-WORKDIR /home/ugbio
-
 COPY --from=build ./src/cnv/cnmops ./src/cnv/cnmops
