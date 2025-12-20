@@ -23,6 +23,7 @@ vcfbed = [
     "pybigwig>=0.3.18,<0.4.0",
     "tqdm>=4.66.4,<5.0.0",
     "bgzip>=0.5.0,<0.6.0",
+    "intervaltree<=3.1.0",
     "truvari>=5.4.0,<6.0.0",
     "pytest-mock>=3.14.0,<4.0.0",
 ]
