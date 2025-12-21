@@ -793,7 +793,7 @@ def main(argv: list[str] | None = None) -> None:
         "--chunk-bp",
         type=int,
         default=CHUNK_BP_DEFAULT,
-        help="Base-pairs per processing chunk (default 300 Mbp)",
+        help=f"Base-pairs per processing chunk (default {CHUNK_BP_DEFAULT} bp)",
     )
     # ───────────── new verbose flag ─────────────
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
