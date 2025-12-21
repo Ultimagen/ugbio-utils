@@ -378,6 +378,68 @@ def label_with_approximate_gt(
             vcf_df.to_hdf(output_file, key=chromosome, mode="a")
 
 
+def _add_high_gap_percentage_calls(
+    concordance_df: pd.DataFrame,
+    call_vcf: str,
+    custom_annotations: list[str] | None,
+    gap_threshold: float = 0.02,
+) -> pd.DataFrame:
+    """Add calls with GAP_PERCENTAGE > threshold as false positives to concordance dataframe.
+
+    Calls with high GAP_PERCENTAGE are typically missing from the concordance dataframe
+    because they don't match truth variants. This function identifies such calls and
+    adds them with label=0 (false positive).
+
+    Parameters
+    ----------
+    concordance_df : pd.DataFrame
+        Concordance dataframe from comparison pipeline
+    call_vcf : str
+        Original call VCF file
+    custom_annotations : list[str] | None
+        Custom INFO annotations to read from the VCF
+    gap_threshold : float, optional
+        GAP_PERCENTAGE threshold (default 0.02 = 2%)
+
+    Returns
+    -------
+    pd.DataFrame
+        Updated concordance dataframe with high GAP_PERCENTAGE calls added as FPs
+    """
+    # Ensure GAP_PERCENTAGE is in the list of fields to read
+    fields_to_read = list(custom_annotations) if custom_annotations else []
+
+    # Read all calls from VCF with GAP_PERCENTAGE annotation
+    all_calls_df = vcftools.get_vcf_df(call_vcf, custom_info_fields=fields_to_read)
+
+    # Filter for calls with GAP_PERCENTAGE > threshold
+    if "gap_percentage" in all_calls_df.columns:
+        high_gap_calls = all_calls_df[all_calls_df["gap_percentage"] > gap_threshold].copy()
+
+        # Find calls missing from concordance dataframe
+        missing_calls = high_gap_calls.index.difference(concordance_df.index)
+        if len(missing_calls) > 0:
+            logger.info(
+                f"Adding {len(missing_calls)} calls with GAP_PERCENTAGE > "
+                f"{gap_threshold * 100:.1f}% as false positives"
+            )
+
+            # Extract missing calls and mark as false positives
+            missing_calls_df = high_gap_calls.loc[missing_calls].copy()
+            missing_calls_df["label"] = "FP"  # False positive
+            missing_calls_df["label_type"] = "FP"  # False positive
+            missing_calls_df["matchid"] = np.nan
+            missing_calls_df["svlen_int"] = missing_calls_df["svlen"].apply(lambda x: x[0])
+            # Combine with original concordance dataframe
+            concordance_df = pd.concat([concordance_df, missing_calls_df]).sort_index()
+        else:
+            logger.info(f"No calls with GAP_PERCENTAGE > {gap_threshold * 100:.1f}% " f"are missing from concordance")
+    else:
+        raise RuntimeError("GAP_PERCENTAGE field not found in call VCF")
+
+    return concordance_df
+
+
 def training_prep_cnv(
     call_vcf: str,
     base_vcf: str,
@@ -434,12 +496,21 @@ def training_prep_cnv(
             ignore_type=ignore_cnv_type,
             skip_collapse=skip_collapse,
         )
+    concordance_df = pd.DataFrame(pd.read_hdf(str(dname / Path(stemname + ".concordance.h5")), key="calls"))
+    # Add calls with high GAP_PERCENTAGE as false positives if missing from concordance
+    concordance_df = _add_high_gap_percentage_calls(
+        concordance_df=concordance_df,
+        call_vcf=call_vcf,
+        custom_annotations=custom_annotations,
+        gap_threshold=0.02,
+    )
+
     if ignore_cnv_type:
-        concordance_df = pd.read_hdf(str(dname / Path(stemname + ".concordance.h5")), key="calls")
         concordance_df = concordance_df.replace({"label": {"TP": 1, "FP": 0}})
         concordance_df = concordance_df.sort_index()
     else:
         raise NotImplementedError("CNV type-aware matching is not implemented yet.")
+
     split_idx = int(concordance_df.shape[0] * train_fraction)
     train_set = concordance_df.iloc[0:split_idx]
     test_set = concordance_df.iloc[split_idx:]
