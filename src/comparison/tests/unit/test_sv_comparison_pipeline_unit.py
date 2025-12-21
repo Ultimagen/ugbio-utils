@@ -62,10 +62,10 @@ def test_truvari_to_dataframes(mocker):
     mock_vcftools = mocker.patch("ugbio_core.vcfbed.vcftools.get_vcf_df")  # Adjusted import path
 
     mock_vcftools.side_effect = [
-        pd.DataFrame([{"svtype": "DEL", "svlen": 100}]),  # tp-base.vcf.gz
-        pd.DataFrame([{"svtype": "INS", "svlen": 200}]),  # fn.vcf.gz
-        pd.DataFrame([{"svtype": "DEL", "svlen": 150}]),  # tp-comp.vcf.gz
-        pd.DataFrame([{"svtype": "INS", "svlen": 250}]),  # fp.vcf.gz
+        pd.DataFrame([{"svtype": "DEL", "svlen": 100, "matchid": "match1"}]),  # tp-base.vcf.gz
+        pd.DataFrame([{"svtype": "INS", "svlen": 200, "matchid": None}]),  # fn.vcf.gz
+        pd.DataFrame([{"svtype": "INV", "svlen": 150, "matchid": "match1"}]),  # tp-comp.vcf.gz
+        pd.DataFrame([{"svtype": "INS", "svlen": 250, "matchid": None}]),  # fp.vcf.gz
     ]
 
     sv_comparison = SVComparison()
@@ -76,6 +76,16 @@ def test_truvari_to_dataframes(mocker):
     assert not df_calls.empty
     assert "label" in df_base.columns
     assert "label" in df_calls.columns
+    assert "label_type" in df_base.columns
+    assert "label_type" in df_calls.columns
+    # Check that TP base variant has label_type from tp-comp (INV)
+    assert df_base.iloc[0]["label_type"] == "INV", "TP base should have label_type from matching tp-comp"
+    # Check that FN has label_type equal to label
+    assert df_base.iloc[1]["label_type"] == "FN", "FN should have label_type equal to label"
+    # Check that TP calls variant has label_type from tp-base (DEL)
+    assert df_calls.iloc[0]["label_type"] == "DEL", "TP calls should have label_type from matching tp-base"
+    # Check that FP has label_type equal to label
+    assert df_calls.iloc[1]["label_type"] == "FP", "FP should have label_type equal to label"
 
 
 def test_truvari_to_dataframes_svlen_processing(mocker):
@@ -84,10 +94,10 @@ def test_truvari_to_dataframes_svlen_processing(mocker):
 
     # Mock dataframes with various svlen formats including tuples and single values
     mock_vcftools.side_effect = [
-        pd.DataFrame([{"svtype": "DEL", "svlen": (100,)}]),  # tp-base.vcf.gz with tuple
-        pd.DataFrame([{"svtype": "INS", "svlen": 200}]),  # fn.vcf.gz with single value
-        pd.DataFrame([{"svtype": "DEL", "svlen": (150, 75)}]),  # tp-comp.vcf.gz with tuple
-        pd.DataFrame([{"svtype": "INS", "svlen": None}]),  # fp.vcf.gz with None value
+        pd.DataFrame([{"svtype": "DEL", "svlen": (100,), "matchid": "m1"}]),  # tp-base.vcf.gz with tuple
+        pd.DataFrame([{"svtype": "INS", "svlen": 200, "matchid": None}]),  # fn.vcf.gz with single value
+        pd.DataFrame([{"svtype": "DUP", "svlen": (150, 75), "matchid": "m1"}]),  # tp-comp.vcf.gz with tuple
+        pd.DataFrame([{"svtype": "INS", "svlen": None, "matchid": None}]),  # fp.vcf.gz with None value
     ]
 
     sv_comparison = SVComparison()
@@ -98,6 +108,8 @@ def test_truvari_to_dataframes_svlen_processing(mocker):
     assert "svlen_int" in df_base.columns, "svlen_int column should be created"
     assert "svlen" in df_calls.columns, "Original svlen column should be preserved"
     assert "svlen_int" in df_calls.columns, "svlen_int column should be created"
+    assert "label_type" in df_base.columns, "label_type column should be created"
+    assert "label_type" in df_calls.columns, "label_type column should be created"
 
     # Check that original svlen values are preserved
     assert df_base.iloc[0]["svlen"] == (100,), "Original tuple svlen should be preserved"
@@ -108,6 +120,12 @@ def test_truvari_to_dataframes_svlen_processing(mocker):
     assert df_base.iloc[1]["svlen_int"] == 200, "Single svlen should be preserved as integer"
     assert df_calls.iloc[0]["svlen_int"] == 150, "Tuple svlen should be converted to first element"
     assert df_calls.iloc[1]["svlen_int"] == 0, "None svlen should be filled with 0"
+
+    # Check label_type values
+    assert df_base.iloc[0]["label_type"] == "DUP", "TP base should have label_type from matching tp-comp"
+    assert df_base.iloc[1]["label_type"] == "FN", "FN should have label_type equal to label"
+    assert df_calls.iloc[0]["label_type"] == "DEL", "TP calls should have label_type from matching tp-base"
+    assert df_calls.iloc[1]["label_type"] == "FP", "FP should have label_type equal to label"
 
 
 def test_run_pipeline(mocker):
