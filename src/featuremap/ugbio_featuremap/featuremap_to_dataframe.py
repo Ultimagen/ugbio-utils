@@ -788,7 +788,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--output", required=True, help="Output Parquet file")
     parser.add_argument("--jobs", type=int, default=DEFAULT_JOBS, help="Parallel jobs (0 = auto)")
     parser.add_argument("--drop-info", nargs="*", default=[], help="INFO tags to drop")
-    parser.add_argument("--drop-format", nargs="*", default=["GT"], help="FORMAT tags to drop")
+    parser.add_argument("--drop-format", nargs="*", default=["GT", "AD", "X_TCM"], help="FORMAT tags to drop")
     parser.add_argument(
         "--chunk-bp",
         type=int,
