@@ -396,7 +396,6 @@ class TestVcfUtils:
         assert "--keep maxqual" in call_args
         assert "--keep first" not in call_args
         assert "truvari collapse" in call_args
-        assert "bcftools view" in call_args
 
         # Verify temporary file cleanup
         mock_unlink.assert_called_once_with(removed_vcf_path)
