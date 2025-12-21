@@ -108,9 +108,5 @@ def test_training_prep_cnv(tmpdir, resources_dir):
     # Total FP should be original 2798 from concordance + up to 482 high gap calls
     # (some high gap calls might already be in concordance, so we check a range)
     # Total TP should be 642 from concordance
-    assert 3200 <= total_fp <= 3300, f"Expected ~3280 total FP (2798 + ~482 high gap), got {total_fp}"
+    assert 3284 == total_fp, f"Expected 3284 total FP, got {total_fp}"
     assert total_tp == 642, f"Expected 642 total TP, got {total_tp}"
-
-    # Verify that high GAP_PERCENTAGE calls were actually added
-    # The total should be significantly higher than the original 2798 + 642 = 3440
-    assert total_fp + total_tp > 3900, "Expected more calls after adding high GAP_PERCENTAGE variants"

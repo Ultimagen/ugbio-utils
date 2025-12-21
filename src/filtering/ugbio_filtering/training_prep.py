@@ -433,7 +433,7 @@ def _add_high_gap_percentage_calls(
             # Combine with original concordance dataframe
             concordance_df = pd.concat([concordance_df, missing_calls_df]).sort_index()
         else:
-            logger.info(f"No calls with GAP_PERCENTAGE > {gap_threshold * 100:.1f}% " "are missing from concordance")
+            logger.info(f"No calls with GAP_PERCENTAGE > {gap_threshold * 100:.1f}% " f"are missing from concordance")
     else:
         raise RuntimeError("GAP_PERCENTAGE field not found in call VCF")
 

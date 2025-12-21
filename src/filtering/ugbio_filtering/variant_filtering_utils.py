@@ -23,7 +23,7 @@ def train_model(
     gt_type: GtType,
     vtype: VcfType,
     annots: list | None = None,
-) -> tuple[compose.ColumnTransformer, xgboost.XGBRFClassifier]:
+) -> tuple[compose.ColumnTransformer, xgboost.XGBClassifier | RandomForestClassifier]:
     """Trains model on a dataframe.
 
     Parameters
@@ -40,7 +40,7 @@ def train_model(
     Returns
     -------
     tuple:
-        Trained transformer and classifier model
+        Trained transformer and classifier model (XGBClassifier or RandomForestClassifier in case of CNV)
 
     Raises
     ------
