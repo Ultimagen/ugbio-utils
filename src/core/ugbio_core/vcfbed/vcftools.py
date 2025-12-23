@@ -91,6 +91,7 @@ def get_vcf_df(  # noqa: PLR0912, C901
         "GT",
         "PL",
         "DP",
+        "DP_RAW",
         "AD",
         "MQ",
         "MMQ",
