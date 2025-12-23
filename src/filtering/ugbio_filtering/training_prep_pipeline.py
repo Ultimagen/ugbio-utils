@@ -21,7 +21,7 @@ import argparse
 import logging
 import sys
 
-from ugbio_core import logger
+from ugbio_core.logger import logger
 
 from ugbio_filtering import tprep_constants, training_prep
 
