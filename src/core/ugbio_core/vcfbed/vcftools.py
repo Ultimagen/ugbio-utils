@@ -138,6 +138,7 @@ def get_vcf_df(  # noqa: PLR0912, C901
         "X_IL",
         "X_HIL",
         "X_HIN",
+        "X_HIB",
         "X_LM",
         "X_RM",
         "X_GCC",
