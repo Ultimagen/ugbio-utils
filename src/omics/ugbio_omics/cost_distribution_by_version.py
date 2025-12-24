@@ -102,7 +102,6 @@ def query_cost_data(
     pd.DataFrame
         DataFrame with queried run data
     """
-    logger.info(f"\nQuerying database for cost data... version: {version}")
     workspace = f"aws-{account_id}"
     cutoff_date = get_date_cutoff(days)
 
@@ -443,7 +442,7 @@ def main():
 
     # Query database if no cached data available
     if runs_data is None:
-        runs_data = query_cost_data(args.version, args.account, args.days, output_dir=args.output_dir)
+        runs_data = query_cost_data(version_normalized, args.account, args.days, output_dir=args.output_dir)
 
     if runs_data.empty:
         logger.warning("No data to analyze")
