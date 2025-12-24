@@ -1731,6 +1731,74 @@ class SRSNVReport:
 
         return pr_df
 
+    def get_dataset_sizes(self):
+        """Calculate dataset sizes for different folds and overall."""
+        dataset_sizes = {}
+        if self.params["num_CV_folds"] >= 2:  # noqa: PLR2004
+            dataset_sizes[("All", "Total")] = self.data_df.shape[0]
+            dataset_sizes[("TPs", "Total")] = self.data_df[LABEL].sum()
+            dataset_sizes[("FPs", "Total")] = (~self.data_df[LABEL]).sum()
+            dataset_sizes[("% TPs", "Total")] = signif(100 * self.data_df[LABEL].mean(), SIG_DIGITS)
+            for f in range(self.params["num_CV_folds"]):
+                dataset_sizes[("All", f"fold {f}")] = (self.data_df[FOLD_ID] == f).sum()
+                dataset_sizes[("TPs", f"fold {f}")] = ((self.data_df[FOLD_ID] == f) & (self.data_df[LABEL])).sum()
+                dataset_sizes[("FPs", f"fold {f}")] = ((self.data_df[FOLD_ID] == f) & (~self.data_df[LABEL])).sum()
+                dataset_sizes[("% TPs", f"fold {f}")] = signif(
+                    ((self.data_df[FOLD_ID] == f) & (self.data_df[LABEL])).sum()
+                    / ((self.data_df[FOLD_ID] == f).sum())
+                    * 100,
+                    SIG_DIGITS,
+                )
+            dataset_sizes[("All", "test only")] = (self.data_df[FOLD_ID].isna()).sum()
+            dataset_sizes[("TPs", "test only")] = ((self.data_df[FOLD_ID].isna()) & (self.data_df[LABEL])).sum()
+            dataset_sizes[("FPs", "test only")] = ((self.data_df[FOLD_ID].isna()) & (~self.data_df[LABEL])).sum()
+            dataset_sizes[("% TPs", "test only")] = signif(
+                ((self.data_df[FOLD_ID].isna()) & (self.data_df[LABEL])).sum()
+                / ((self.data_df[FOLD_ID].isna()).sum())
+                * 100,
+                SIG_DIGITS,
+            )
+            other_fold_ids_cond = np.logical_and(
+                ~self.data_df[FOLD_ID].isin(np.arange(self.params["num_CV_folds"])), ~self.data_df[FOLD_ID].isna()
+            )
+            if other_fold_ids_cond.any():
+                dataset_sizes[("All", "other")] = other_fold_ids_cond.sum()
+                dataset_sizes[("TPs", "other")] = (other_fold_ids_cond & (self.data_df[LABEL])).sum()
+                dataset_sizes[("FPs", "other")] = (other_fold_ids_cond & (~self.data_df[LABEL])).sum()
+                dataset_sizes[("% TPs", "other")] = signif(
+                    ((other_fold_ids_cond) & (self.data_df[LABEL]) / (other_fold_ids_cond).sum()) * 100, SIG_DIGITS
+                )
+        else:  # Train/test split
+            dataset_sizes = {
+                ("All", "train"): (self.data_df[FOLD_ID] == -1).sum(),
+                ("TPs", "train"): ((self.data_df[FOLD_ID] == -1) & (self.data_df[LABEL])).sum(),
+                ("FPs", "train"): ((self.data_df[FOLD_ID] == -1) & (~self.data_df[LABEL])).sum(),
+                ("% TPs", "train"): signif(
+                    ((self.data_df[FOLD_ID] == -1) & (self.data_df[LABEL])).sum()
+                    / ((self.data_df[FOLD_ID] == -1).sum())
+                    * 100,
+                    SIG_DIGITS,
+                ),
+                ("All", "test"): (self.data_df[FOLD_ID] == 0).sum(),
+                ("TPs", "test"): ((self.data_df[FOLD_ID] == 0) & (self.data_df[LABEL])).sum(),
+                ("FPs", "test"): ((self.data_df[FOLD_ID] == 0) & (~self.data_df[LABEL])).sum(),
+                ("% TPs", "test"): signif(
+                    ((self.data_df[FOLD_ID] == 0) & (self.data_df[LABEL])).sum()
+                    / ((self.data_df[FOLD_ID] == 0).sum())
+                    * 100,
+                    SIG_DIGITS,
+                ),
+            }
+            other_fold_ids_cond = ~self.data_df[FOLD_ID].isin([-1, 0])
+            if other_fold_ids_cond.any():
+                dataset_sizes[("All", "other")] = other_fold_ids_cond.sum()
+                dataset_sizes[("TPs", "other")] = (other_fold_ids_cond & (self.data_df[LABEL])).sum()
+                dataset_sizes[("FPs", "other")] = (other_fold_ids_cond & (~self.data_df[LABEL])).sum()
+                dataset_sizes[("% TPs", "other")] = signif(
+                    ((other_fold_ids_cond) & (self.data_df[LABEL]) / (other_fold_ids_cond).sum()) * 100, SIG_DIGITS
+                )
+        return dataset_sizes
+
     @exception_handler
     def calc_run_info_table(self):
         """Calculate run_info_table, a table with general run information."""
@@ -1817,25 +1885,8 @@ class SRSNVReport:
             ("Number of CV folds", ""): self.params["num_CV_folds"],
         }
         # Info about training set size
-        if self.params["num_CV_folds"] >= 2:  # noqa: PLR2004
-            dataset_sizes = {
-                ("dataset size", f"fold {f}"): (self.data_df[FOLD_ID] == f).sum()
-                for f in range(self.params["num_CV_folds"])
-            }
-            dataset_sizes[("dataset size", "test only")] = (self.data_df[FOLD_ID].isna()).sum()
-            other_fold_ids = np.logical_and(
-                ~self.data_df[FOLD_ID].isin(np.arange(self.params["num_CV_folds"])), ~self.data_df[FOLD_ID].isna()
-            ).sum()
-            if other_fold_ids > 0:
-                dataset_sizes[("dataset size", "other")] = other_fold_ids
-        else:  # Train/test split
-            dataset_sizes = {
-                ("dataset size", "train"): (self.data_df[FOLD_ID] == -1).sum(),
-                ("dataset size", "test"): (self.data_df[FOLD_ID] == 0).sum(),
-            }
-            other_fold_ids = ~self.data_df[FOLD_ID].isin([-1, 0]).sum()
-            if other_fold_ids > 0:
-                dataset_sizes[("dataset size", "other")] = other_fold_ids
+        dataset_sizes = self.get_dataset_sizes()
+        # Generate tables and save to h5
         run_info_table = pd.Series({**general_info, **version_info}, name="")
         run_quality_summary_table = pd.Series({**performance_info}, name="")
         training_info_table = pd.Series({**training_info, **dataset_sizes}, name="")
