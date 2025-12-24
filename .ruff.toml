@@ -39,9 +39,8 @@ ignore = [
     "PTH123",
     "COM812",
     "B027",
-    "S603",
-    "PD901",  # Allow generic 'df' variable name for DataFrames
-]
+    "S603"
+    ]
 
 [lint.per-file-ignores]
 "**/tests/*" = [
