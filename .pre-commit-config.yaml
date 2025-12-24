@@ -14,11 +14,13 @@ repos:
       - id: check-json
         exclude: ^\.devcontainer/|^src/.*/tests/resources/.*$ # Exclude .devcontainer folder to keep the comments in the json files, exclude test resources
       - id: check-added-large-files
-        exclude_patterns:
-          - src/omics/tests/resources/cromwell_pricelist.json
-          - ^src/featuremap/tests/resources/.*_chr1_alt2_8.test_size_0.1.xgb_model.json$ # Exclude model files
-          - ^src/featuremap/tests/resources/.*\.chr1_3425000-4016800\.pileup$ # Exclude pileup files
-        exclude: src/featuremap/tests/resources/HG006_HG003.v1.23.5pGenome.t_alt_reads_2-10.json
+        exclude: |
+          (?x)^(
+            src/omics/tests/resources/cromwell_pricelist\.json|
+            src/featuremap/tests/resources/.*_chr1_alt2_8\.test_size_0\.1\.xgb_model\.json|
+            src/featuremap/tests/resources/.*\.chr1_3425000-4016800\.pileup|
+            src/featuremap/tests/resources/HG006_HG003\.v1\.23\.5pGenome\.t_alt_reads_2-10\.json
+          )$
 
 
 

@@ -32,6 +32,7 @@ report_run_completion = "ugbio_omics.report_run_completion:main"
 report_missing_runs = "ugbio_omics.report_missing_runs:main"
 omics_cache_path = "ugbio_omics.omics_cache_path:main"
 retrieve_from_glacier = "ugbio_omics.retrieve_from_glacier:main"
+cost_distribution_by_version = "ugbio_omics.cost_distribution_by_version:main"
 
 [build-system]
 requires = [
