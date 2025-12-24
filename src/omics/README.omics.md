@@ -30,6 +30,8 @@ Admin tools:
    Run `uv run report_run_completion --help` for more details.
 2. Report Missing runs - Manually triggers the start and end AWS Lambda handlers to report mongodb on omics run/s that are missing from the db.
    Run `uv run report_missing_runs --help` for more details.
+3. Cost Distribution by Version - Analyze cost distribution per workflow for a specific version or version prefix. Queries the Papyrus database for runs matching a version (exact or prefix match), groups by workflow name, and generates histograms with cost statistics. Supports caching, outlier filtering, and tarball creation.
+   Run `uv run cost_distribution_by_version --help` for more details.
 
 ## Run with Docker
 

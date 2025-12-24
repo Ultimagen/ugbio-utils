@@ -39,8 +39,8 @@ ignore = [
     "PTH123",
     "COM812",
     "B027",
-    "S603",
-]
+    "S603"
+    ]
 
 [lint.per-file-ignores]
 "**/tests/*" = [
