@@ -14,8 +14,6 @@ from ugbio_featuremap.filter_dataframe import (
     validate_filter_config,
 )
 
-pl.enable_string_cache()
-
 SAMPLE = Path(__file__).parent.parent / "resources" / "416119-L7402.raw.featuremap.head.vcf.gz"
 
 
