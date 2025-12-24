@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 from ugbio_featuremap.somatic_featuremap_fields_transformation import (
     ORIGINAL_RECORD_INDEX_FIELD,
+    process_sample_columns,
     process_vcf_records_serially,
 )
 
@@ -247,3 +248,161 @@ class TestProcessVcfRecordsSerially:
                 process_vcf_records_serially(vcfin, sample_dataframe, mock_vcf_header, vcfout, write_agg_params=True)
 
         vcfout.write.assert_called_once_with(mock_vcf_record)
+
+
+class TestProcessSampleColumns:
+    """Test class for process_sample_columns function."""
+
+    @pytest.fixture
+    def sample_dataframe_with_rev(self):
+        """Create a sample DataFrame with rev column for strand count testing."""
+        data = {
+            "t_chrom": ["chr1", "chr1", "chr2"],
+            "t_pos": [1000, 1001, 2000],
+            "t_ad": [([10, 5], [20, 10]), ([15, 8], [25, 12]), ([8, 4], [30, 15])],  # (alt_count, total_count)
+            "t_rev": [[1, 0, 1], [0, 0, 1], [1, 1, 0]],  # strand info for reads
+            "t_dup": [[0, 0, 1], [1, 0, 0], [0, 1, 1]],  # duplicate info
+            "t_filt": [[1, 1, 0], [0, 1, 1], [1, 0, 1]],  # filter info for pass_alt_reads
+            "t_mqual": [[25, 30, 35], [20, 25, 30], [40, 45, 50]],  # mapping quality
+            "t_snvq": [[15, 20, 25], [10, 15, 20], [30, 35, 40]],  # SNV quality
+            "t_mapq": [[30, 35, 40], [25, 30, 35], [45, 50, 55]],  # mapping quality
+            "t_ref_forward_reads": [20, 25, 30],
+            "t_ref_reverse_reads": [18, 22, 28],
+            "t_ref_counts_pm_2": [[10, 15, 20], [12, 18, 22], [14, 20, 25]],  # ref counts
+            "t_nonref_counts_pm_2": [[5, 8, 10], [6, 9, 12], [7, 10, 13]],  # nonref counts
+        }
+        return pd.DataFrame(data)
+
+    def test_strand_count_basic(self, sample_dataframe_with_rev):
+        """Test basic strand count functionality."""
+        result = process_sample_columns(sample_dataframe_with_rev, "t_")
+
+        # Verify that forward_count and reverse_count columns are added
+        assert "t_forward_count" in result.columns
+        assert "t_reverse_count" in result.columns
+
+    def test_strand_count_values(self):
+        """Test strand count calculation with specific values."""
+        test_data = {
+            "t_ad": [([5], [10]), ([8], [15])],
+            "t_rev": [[1, 0, 1], [0, 0]],  # first row: 2 forward (1), 1 reverse (0)
+            "t_dup": [[0, 0, 1], [1, 0]],
+            "t_filt": [[1, 1, 0], [0, 0]],
+            "t_mqual": [[25, 30, 35], [20, 25]],  # mapping quality
+            "t_snvq": [[15, 20, 25], [10, 15]],  # SNV quality
+            "t_mapq": [[30, 35, 40], [25, 30]],  # mapping quality
+            "t_ref_forward_reads": [10, 15],
+            "t_ref_reverse_reads": [8, 12],
+            "t_ref_counts_pm_2": [[10, 15], [12, 18]],  # ref counts
+            "t_nonref_counts_pm_2": [[5, 8], [6, 9]],  # nonref counts
+        }
+        test_dataframe = pd.DataFrame(test_data)
+
+        result = process_sample_columns(test_dataframe, "t_")
+
+        # Check that the strand count columns exist
+        assert "t_forward_count" in result.columns
+        assert "t_reverse_count" in result.columns
+
+        # Check that alt_reads column is correctly processed from ad
+        assert "t_alt_reads" in result.columns
+
+    def test_process_sample_columns_normal_prefix(self):
+        """Test process_sample_columns with normal sample prefix 'n_'."""
+        data = {
+            "n_ad": [([5], [10]), ([8], [15])],
+            "n_rev": [[1, 0], [0, 1]],
+            "n_dup": [[0, 1], [1, 0]],
+            "n_filt": [[1, 0], [0, 1]],
+            "n_mqual": [[25, 30], [20, 25]],  # mapping quality
+            "n_snvq": [[15, 20], [10, 15]],  # SNV quality
+            "n_mapq": [[30, 35], [25, 30]],  # mapping quality
+            "n_ref_forward_reads": [10, 15],
+            "n_ref_reverse_reads": [8, 12],
+            "n_ref_counts_pm_2": [[10, 15], [12, 18]],  # ref counts
+            "n_nonref_counts_pm_2": [[5, 8], [6, 9]],  # nonref counts
+        }
+        test_dataframe = pd.DataFrame(data)
+
+        result = process_sample_columns(test_dataframe, "n_")
+
+        # Verify that forward_count and reverse_count columns are added with normal prefix
+        assert "n_forward_count" in result.columns
+        assert "n_reverse_count" in result.columns
+        assert "n_alt_reads" in result.columns
+
+    def test_duplicate_count_processing(self):
+        """Test that duplicate counting works correctly."""
+        data = {
+            "t_ad": [([5], [10]), ([8], [15])],
+            "t_rev": [[1, 0], [0, 1]],
+            "t_dup": [[1, 1, 0], [0, 0, 1]],  # first: 2 duplicates, second: 1 duplicate
+            "t_filt": [[1, 0], [0, 1]],
+            "t_mqual": [[25, 30], [20, 25]],
+            "t_snvq": [[15, 20], [10, 15]],
+            "t_mapq": [[30, 35], [25, 30]],
+            "t_ref_forward_reads": [10, 15],
+            "t_ref_reverse_reads": [8, 12],
+            "t_ref_counts_pm_2": [[10, 15], [12, 18]],  # ref counts
+            "t_nonref_counts_pm_2": [[5, 8], [6, 9]],  # nonref counts
+        }
+
+        test_dataframe = pd.DataFrame(data)
+
+        result = process_sample_columns(test_dataframe, "t_")
+
+        # Check duplicate-related columns are added
+        assert "t_count_duplicate" in result.columns
+        assert "t_count_non_duplicate" in result.columns
+
+    def test_pass_alt_reads_processing(self):
+        """Test that pass_alt_reads is correctly calculated from filter column."""
+        data = {
+            "t_ad": [([5], [10]), ([8], [15])],
+            "t_rev": [[1, 0], [0, 1]],
+            "t_dup": [[0, 1], [1, 0]],
+            "t_filt": [[1, 1, 1], [0, 1, 0]],  # first: 3 pass, second: 1 pass
+            "t_mqual": [[25, 30], [20, 25]],
+            "t_snvq": [[15, 20], [10, 15]],
+            "t_mapq": [[30, 35], [25, 30]],
+            "t_ref_forward_reads": [10, 15],
+            "t_ref_reverse_reads": [8, 12],
+            "t_ref_counts_pm_2": [[10, 15], [12, 18]],  # ref counts
+            "t_nonref_counts_pm_2": [[5, 8], [6, 9]],  # nonref counts
+        }
+        test_dataframe = pd.DataFrame(data)
+
+        result = process_sample_columns(test_dataframe, "t_")
+
+        # Check pass_alt_reads column is added
+        assert "t_pass_alt_reads" in result.columns
+
+    def test_aggregation_features(self):
+        """Test that aggregation features are correctly computed."""
+        data = {
+            "t_ad": [([5], [10])],
+            "t_rev": [[1, 0]],
+            "t_dup": [[0, 1]],
+            "t_filt": [[1, 0]],
+            "t_mqual": [[25, 30, 35]],  # min=25, max=35, mean=30
+            "t_snvq": [[15, 20, 25]],  # min=15, max=25, mean=20
+            "t_mapq": [[30, 35, 40]],  # min=30, max=40, mean=35
+            "t_ref_forward_reads": [10],
+            "t_ref_reverse_reads": [8],
+            "t_ref_counts_pm_2": [[10, 15]],  # ref counts
+            "t_nonref_counts_pm_2": [[5, 8]],  # nonref counts
+        }
+        test_dataframe = pd.DataFrame(data)
+
+        result = process_sample_columns(test_dataframe, "t_")
+
+        # Check aggregation columns are added
+        assert "t_mqual_min" in result.columns
+        assert "t_mqual_max" in result.columns
+        assert "t_mqual_mean" in result.columns
+        assert "t_snvq_min" in result.columns
+        assert "t_snvq_max" in result.columns
+        assert "t_snvq_mean" in result.columns
+        assert "t_mapq_min" in result.columns
+        assert "t_mapq_max" in result.columns
+        assert "t_mapq_mean" in result.columns

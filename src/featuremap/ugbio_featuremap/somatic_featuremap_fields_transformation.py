@@ -34,6 +34,7 @@ format_fields_for_training = [
     FeatureMapFields.ADJ_REF_DIFF.value,
     FeatureMapFields.DP_MAPQ60.value,
     FeatureMapFields.DUP.value,
+    FeatureMapFields.REV.value,
 ]
 format_mpileup_fields_for_training = ["ref_counts_pm_2", "nonref_counts_pm_2"]
 
@@ -48,6 +49,8 @@ added_format_features = {
     "SNVQ_MIN": ["mean value of SNVQ", "Float"],
     "COUNT_DUPLICATE": ["number of duplicate reads", "Integer"],
     "COUNT_NON_DUPLICATE": ["number of non-duplicate reads", "Integer"],
+    "REVERSE_COUNT": ["number of reverse strand reads", "Integer"],
+    "FORWARD_COUNT": ["number of forward strand reads", "Integer"],
 }
 added_info_features = {
     "REF_ALLELE": ["reference allele", "String"],
@@ -148,6 +151,12 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
         f"{prefix}{format_mpileup_fields_for_training[0]}",
         f"{prefix}{format_mpileup_fields_for_training[1]}",
     )
+    # Process forward/reverse counts
+    df_variants[[f"{prefix}forward_count", f"{prefix}reverse_count"]] = df_variants[f"{prefix}rev"].apply(
+        lambda x: pd.Series({"num0": 0, "num1": 0})
+        if x is None or (isinstance(x, float) and pd.isna(x))
+        else pd.Series({"num0": [v for v in x if v in (0, 1)].count(0), "num1": [v for v in x if v in (0, 1)].count(1)})
+    )
 
     return df_variants
 
@@ -175,6 +184,7 @@ def df_sfm_fields_transformation(df_variants):  # noqa: C901
         df_variants = process_sample_columns(df_variants, prefix)
     df_variants["ref_allele"] = [tup[0] for tup in df_variants["t_alleles"]]
     df_variants["alt_allele"] = [tup[1] for tup in df_variants["t_alleles"]]
+    df_variants["n_dp"] = df_variants["n_dp"].fillna(df_variants["n_ref2"] + df_variants["n_nonref2"])
 
     return df_variants
 
