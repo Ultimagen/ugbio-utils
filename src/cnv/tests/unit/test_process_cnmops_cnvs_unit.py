@@ -3,7 +3,7 @@ from os.path import join as pjoin
 from pathlib import Path
 
 import pytest
-from ugbio_cnv.process_cnmops_cnvs import aggregate_annotations_in_df, annotate_bed
+from ugbio_cnv.cnmops_utils import aggregate_annotations_in_df, annotate_bed
 
 
 @pytest.fixture

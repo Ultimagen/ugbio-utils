@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from os.path import basename, splitext
 from os.path import join as pjoin
 
+import fastparquet
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -20,6 +21,8 @@ from ugbio_core.vcfbed.variant_annotation import (
     get_trinuc_substitution_dist,
     parse_trinuc_sub,
 )
+
+LABEL_COL = "label"
 
 default_featuremap_info_fields = {
     "X_CIGAR": str,
@@ -394,7 +397,7 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
                         + [(rec.info[c][0] if isinstance(rec.info[c], tuple) else rec.info[c]) for c in x_columns]
                     )
                 )
-        logger.debug(f"Done reading vcf file {signature_vcf_files}" "Converting to dataframe")
+        logger.debug(f"Done reading vcf file {signature_vcf_files}Converting to dataframe")
         df_sig = (
             pd.DataFrame(
                 entries,
@@ -1089,9 +1092,28 @@ def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadat
     denom_ratio: float
         ratio of filtered to total reads
     """
-    df_model_data = pd.read_parquet(featuremap_df_file, engine="fastparquet")
-    df_model_data = df_model_data.rename(columns=lambda x: x.lower())
-    df_model_data["filt"] = 1  # by definition, all reads in the featuremap training dataset pass filter
+    # Read parquet (only required columns) and apply read filter query to true positives
+    # Get column names from parquet schema without reading data
+    parquet_file = fastparquet.ParquetFile(featuremap_df_file)
+    parquet_columns = parquet_file.columns
+    if LABEL_COL not in parquet_columns:
+        raise ValueError(f"Required column '{LABEL_COL}' not found in parquet file columns: {list(parquet_columns)}")
+    query_lower = read_filter_query.lower()
+    columns_to_read = [LABEL_COL] + [
+        col for col in parquet_columns if col.lower() in query_lower and col.lower() != LABEL_COL
+    ]
+    read_filter_non_filt = (
+        pd.read_parquet(
+            featuremap_df_file,
+            engine="fastparquet",
+            columns=columns_to_read,
+        )
+        .rename(columns=lambda x: x.lower())  # rename columns to lowercase
+        .assign(filt=1)  # by definition, all reads in the featuremap training dataset pass filter
+        .query(LABEL_COL)  # filter for true positives
+        .eval(read_filter_query)  # evaluate the read filter query, return a boolean series
+        .mean()  # mean of the boolean series, return the fraction of true positives that pass the read filter query
+    )
 
     # read srsnv metadata filtering funnel
     with open(srsnv_metadata_json) as f:
@@ -1106,6 +1128,5 @@ def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadat
     ]  # final number of true positives (before downsampling)
     filt_ratio = filt_numer / filt_denom
 
-    read_filter_non_filt = df_model_data.query("label").eval(read_filter_query).mean()
     denom_ratio = filt_ratio * read_filter_non_filt
     return denom_ratio, filt_ratio, read_filter_non_filt

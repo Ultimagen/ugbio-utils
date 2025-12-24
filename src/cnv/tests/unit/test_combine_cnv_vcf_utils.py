@@ -449,11 +449,22 @@ class TestMergeCnvsInVcf:
         input_vcf = tmp_path / "input.vcf.gz"
         output_vcf = tmp_path / "output.vcf.gz"
         collapse_vcf = tmp_path / "output.vcf.gz.collapse.tmp.vcf.gz"  # Must match function's naming
+        collapse_sorted_vcf = tmp_path / "output.vcf.gz.collapse.sort.tmp.vcf.gz"  # After sorting
         removed_vcf = tmp_path / "removed.vcf.gz"
 
         # Create mock VcfUtils instance
         mock_vu = MagicMock()
         mock_vu.collapse_vcf.return_value = removed_vcf
+
+        # Mock sort_vcf to create the output file
+        def mock_sort_vcf(input_path, output_path):
+            # Copy the unsorted file to the output path
+            with pysam.VariantFile(str(input_path), "r") as vcf_in:
+                with pysam.VariantFile(str(output_path), "w", header=vcf_in.header) as vcf_out:
+                    for record in vcf_in:
+                        vcf_out.write(record)
+
+        mock_vu.sort_vcf.side_effect = mock_sort_vcf
         mock_vcf_utils_class.return_value = mock_vu
 
         # Create mock dataframe for removed records
@@ -491,6 +502,12 @@ class TestMergeCnvsInVcf:
             record.samples["test_sample"]["GT"] = (0, 1)
             vcf.write(record)
 
+        # Create the sorted VCF file (copy of collapsed VCF for this test)
+        with pysam.VariantFile(str(collapse_vcf), "r") as vcf_in:
+            with pysam.VariantFile(str(collapse_sorted_vcf), "w", header=vcf_in.header) as vcf_out:
+                for record in vcf_in:
+                    vcf_out.write(record)
+
         # Create dummy input file (not read by test)
         with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
             pass
@@ -507,6 +524,7 @@ class TestMergeCnvsInVcf:
             pctsize=0.0,
             ignore_filter=True,
             ignore_sv_type=False,
+            pick_best=False,
             erase_removed=False,
         )
 
@@ -517,6 +535,13 @@ class TestMergeCnvsInVcf:
             "CNMOPS_COHORT_MEAN",
             "CNMOPS_COHORT_STDEV",
             "CopyNumber",
+            "GAP_PERCENTAGE",
+            "JALIGN_DEL_SUPPORT",
+            "JALIGN_DUP_SUPPORT",
+            "JALIGN_DEL_SUPPORT_STRONG",
+            "JALIGN_DUP_SUPPORT_STRONG",
+            "TREE_SCORE",
+            "CNV_SOURCE",
             "SVLEN",
             "MatchId",
         ]
@@ -542,11 +567,22 @@ class TestMergeCnvsInVcf:
         input_vcf = tmp_path / "input.vcf.gz"
         output_vcf = tmp_path / "output.vcf.gz"
         collapse_vcf = tmp_path / "output.vcf.gz.collapse.tmp.vcf.gz"  # Must match function's naming
+        collapse_sorted_vcf = tmp_path / "output.vcf.gz.collapse.sort.tmp.vcf.gz"  # After sorting
         removed_vcf = tmp_path / "removed.vcf.gz"
 
         # Create mock VcfUtils instance
         mock_vu = MagicMock()
         mock_vu.collapse_vcf.return_value = removed_vcf
+
+        # Mock sort_vcf to create the output file
+        def mock_sort_vcf(input_path, output_path):
+            # Copy the unsorted file to the output path
+            with pysam.VariantFile(str(input_path), "r") as vcf_in:
+                with pysam.VariantFile(str(output_path), "w", header=vcf_in.header) as vcf_out:
+                    for record in vcf_in:
+                        vcf_out.write(record)
+
+        mock_vu.sort_vcf.side_effect = mock_sort_vcf
         mock_vcf_utils_class.return_value = mock_vu
 
         # Create mock dataframe with two records that were merged
@@ -585,6 +621,12 @@ class TestMergeCnvsInVcf:
             record.info["CopyNumber"] = 1.5
             record.samples["test_sample"]["GT"] = (0, 1)
             vcf.write(record)
+
+        # Create the sorted VCF file (copy of collapsed VCF for this test)
+        with pysam.VariantFile(str(collapse_vcf), "r") as vcf_in:
+            with pysam.VariantFile(str(collapse_sorted_vcf), "w", header=vcf_in.header) as vcf_out:
+                for record in vcf_in:
+                    vcf_out.write(record)
 
         # Create dummy input file
         with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:

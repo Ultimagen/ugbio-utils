@@ -90,6 +90,7 @@ FP_READ_RETENTION_RATIO = "fp_read_retention_ratio"
 RESIDUAL_SNV_RATE = "residual_snv_rate"
 BASE_PATH = Path(__file__).parent
 REPORTS_DIR = "reports"
+SIG_DIGITS = 4  # number of significant digits for floating point numbers in report tables
 
 
 class ExceptionConfig:
@@ -1730,6 +1731,74 @@ class SRSNVReport:
 
         return pr_df
 
+    def get_dataset_sizes(self):
+        """Calculate dataset sizes for different folds and overall."""
+        dataset_sizes = {}
+        if self.params["num_CV_folds"] >= 2:  # noqa: PLR2004
+            dataset_sizes[("All", "Total")] = self.data_df.shape[0]
+            dataset_sizes[("TPs", "Total")] = self.data_df[LABEL].sum()
+            dataset_sizes[("FPs", "Total")] = (~self.data_df[LABEL]).sum()
+            dataset_sizes[("% TPs", "Total")] = signif(100 * self.data_df[LABEL].mean(), SIG_DIGITS)
+            for f in range(self.params["num_CV_folds"]):
+                dataset_sizes[("All", f"fold {f}")] = (self.data_df[FOLD_ID] == f).sum()
+                dataset_sizes[("TPs", f"fold {f}")] = ((self.data_df[FOLD_ID] == f) & (self.data_df[LABEL])).sum()
+                dataset_sizes[("FPs", f"fold {f}")] = ((self.data_df[FOLD_ID] == f) & (~self.data_df[LABEL])).sum()
+                dataset_sizes[("% TPs", f"fold {f}")] = signif(
+                    ((self.data_df[FOLD_ID] == f) & (self.data_df[LABEL])).sum()
+                    / ((self.data_df[FOLD_ID] == f).sum())
+                    * 100,
+                    SIG_DIGITS,
+                )
+            dataset_sizes[("All", "test only")] = (self.data_df[FOLD_ID].isna()).sum()
+            dataset_sizes[("TPs", "test only")] = ((self.data_df[FOLD_ID].isna()) & (self.data_df[LABEL])).sum()
+            dataset_sizes[("FPs", "test only")] = ((self.data_df[FOLD_ID].isna()) & (~self.data_df[LABEL])).sum()
+            dataset_sizes[("% TPs", "test only")] = signif(
+                ((self.data_df[FOLD_ID].isna()) & (self.data_df[LABEL])).sum()
+                / ((self.data_df[FOLD_ID].isna()).sum())
+                * 100,
+                SIG_DIGITS,
+            )
+            other_fold_ids_cond = np.logical_and(
+                ~self.data_df[FOLD_ID].isin(np.arange(self.params["num_CV_folds"])), ~self.data_df[FOLD_ID].isna()
+            )
+            if other_fold_ids_cond.any():
+                dataset_sizes[("All", "other")] = other_fold_ids_cond.sum()
+                dataset_sizes[("TPs", "other")] = (other_fold_ids_cond & (self.data_df[LABEL])).sum()
+                dataset_sizes[("FPs", "other")] = (other_fold_ids_cond & (~self.data_df[LABEL])).sum()
+                dataset_sizes[("% TPs", "other")] = signif(
+                    (other_fold_ids_cond & self.data_df[LABEL]).sum() / (other_fold_ids_cond).sum() * 100, SIG_DIGITS
+                )
+        else:  # Train/test split
+            dataset_sizes = {
+                ("All", "train"): (self.data_df[FOLD_ID] == -1).sum(),
+                ("TPs", "train"): ((self.data_df[FOLD_ID] == -1) & (self.data_df[LABEL])).sum(),
+                ("FPs", "train"): ((self.data_df[FOLD_ID] == -1) & (~self.data_df[LABEL])).sum(),
+                ("% TPs", "train"): signif(
+                    ((self.data_df[FOLD_ID] == -1) & (self.data_df[LABEL])).sum()
+                    / ((self.data_df[FOLD_ID] == -1).sum())
+                    * 100,
+                    SIG_DIGITS,
+                ),
+                ("All", "test"): (self.data_df[FOLD_ID] == 0).sum(),
+                ("TPs", "test"): ((self.data_df[FOLD_ID] == 0) & (self.data_df[LABEL])).sum(),
+                ("FPs", "test"): ((self.data_df[FOLD_ID] == 0) & (~self.data_df[LABEL])).sum(),
+                ("% TPs", "test"): signif(
+                    ((self.data_df[FOLD_ID] == 0) & (self.data_df[LABEL])).sum()
+                    / ((self.data_df[FOLD_ID] == 0).sum())
+                    * 100,
+                    SIG_DIGITS,
+                ),
+            }
+            other_fold_ids_cond = ~self.data_df[FOLD_ID].isin([-1, 0])
+            if other_fold_ids_cond.any():
+                dataset_sizes[("All", "other")] = other_fold_ids_cond.sum()
+                dataset_sizes[("TPs", "other")] = (other_fold_ids_cond & (self.data_df[LABEL])).sum()
+                dataset_sizes[("FPs", "other")] = (other_fold_ids_cond & (~self.data_df[LABEL])).sum()
+                dataset_sizes[("% TPs", "other")] = signif(
+                    (other_fold_ids_cond & self.data_df[LABEL]).sum() / (other_fold_ids_cond).sum() * 100, SIG_DIGITS
+                )
+        return dataset_sizes
+
     @exception_handler
     def calc_run_info_table(self):
         """Calculate run_info_table, a table with general run information."""
@@ -1782,21 +1851,25 @@ class SRSNVReport:
             max_value=self.max_qual,
         )
         performance_info = {
-            ("Median SNVQ", "All reads"): signif(median_qual, 3),
-            ("Median SNVQ", "Mixed, start"): signif(median_qual_mixed_start, 3),
-            ("Median SNVQ", "Mixed, both ends"): signif(median_qual_mixed, 3),
-            ("Recall at SNVQ=50", "All reads"): signif(recall_at_50 / recall_at_0, 3),
-            ("Recall at SNVQ=50", "Mixed, start"): signif(recall_at_50_mixed_start / recall_at_0_mixed_start, 3),
-            ("Recall at SNVQ=50", "Mixed, both ends"): signif(recall_at_50_mixed / recall_at_0_mixed, 3),
-            ("Recall at SNVQ=60", "All reads"): signif(recall_at_60 / recall_at_0, 3),
-            ("Recall at SNVQ=60", "Mixed, start"): signif(recall_at_60_mixed_start / recall_at_0_mixed_start, 3),
-            ("Recall at SNVQ=60", "Mixed, both ends"): signif(recall_at_60_mixed / recall_at_0_mixed, 3),
-            ("Pre-filter Recall", "All reads"): signif(recall_at_0, 3),
-            ("Pre-filter Recall", "Mixed, start"): signif(recall_at_0_mixed_start, 3),
-            ("Pre-filter Recall", "Mixed, both ends"): signif(recall_at_0_mixed, 3),
-            ("ROC AUC (Phred)", "All reads"): signif(roc_auc_phred, 3),
-            ("ROC AUC (Phred)", "Mixed, start"): signif(roc_auc_phred_mixed_start, 3),
-            ("ROC AUC (Phred)", "Mixed, both ends"): signif(roc_auc_phred_mixed, 3),
+            ("Median SNVQ", "All reads"): signif(median_qual, SIG_DIGITS),
+            ("Median SNVQ", "Mixed, start"): signif(median_qual_mixed_start, SIG_DIGITS),
+            ("Median SNVQ", "Mixed, both ends"): signif(median_qual_mixed, SIG_DIGITS),
+            ("Recall at SNVQ=50", "All reads"): signif(recall_at_50 / recall_at_0, SIG_DIGITS),
+            ("Recall at SNVQ=50", "Mixed, start"): signif(
+                recall_at_50_mixed_start / recall_at_0_mixed_start, SIG_DIGITS
+            ),
+            ("Recall at SNVQ=50", "Mixed, both ends"): signif(recall_at_50_mixed / recall_at_0_mixed, SIG_DIGITS),
+            ("Recall at SNVQ=60", "All reads"): signif(recall_at_60 / recall_at_0, SIG_DIGITS),
+            ("Recall at SNVQ=60", "Mixed, start"): signif(
+                recall_at_60_mixed_start / recall_at_0_mixed_start, SIG_DIGITS
+            ),
+            ("Recall at SNVQ=60", "Mixed, both ends"): signif(recall_at_60_mixed / recall_at_0_mixed, SIG_DIGITS),
+            ("Pre-filter Recall", "All reads"): signif(recall_at_0, SIG_DIGITS),
+            ("Pre-filter Recall", "Mixed, start"): signif(recall_at_0_mixed_start, SIG_DIGITS),
+            ("Pre-filter Recall", "Mixed, both ends"): signif(recall_at_0_mixed, SIG_DIGITS),
+            ("ROC AUC (Phred)", "All reads"): signif(roc_auc_phred, SIG_DIGITS),
+            ("ROC AUC (Phred)", "Mixed, start"): signif(roc_auc_phred_mixed_start, SIG_DIGITS),
+            ("ROC AUC (Phred)", "Mixed, both ends"): signif(roc_auc_phred_mixed, SIG_DIGITS),
         }
         # Info about versions
         version_info = {
@@ -1812,25 +1885,8 @@ class SRSNVReport:
             ("Number of CV folds", ""): self.params["num_CV_folds"],
         }
         # Info about training set size
-        if self.params["num_CV_folds"] >= 2:  # noqa: PLR2004
-            dataset_sizes = {
-                ("dataset size", f"fold {f}"): (self.data_df[FOLD_ID] == f).sum()
-                for f in range(self.params["num_CV_folds"])
-            }
-            dataset_sizes[("dataset size", "test only")] = (self.data_df[FOLD_ID].isna()).sum()
-            other_fold_ids = np.logical_and(
-                ~self.data_df[FOLD_ID].isin(np.arange(self.params["num_CV_folds"])), ~self.data_df[FOLD_ID].isna()
-            ).sum()
-            if other_fold_ids > 0:
-                dataset_sizes[("dataset size", "other")] = other_fold_ids
-        else:  # Train/test split
-            dataset_sizes = {
-                ("dataset size", "train"): (self.data_df[FOLD_ID] == -1).sum(),
-                ("dataset size", "test"): (self.data_df[FOLD_ID] == 0).sum(),
-            }
-            other_fold_ids = ~self.data_df[FOLD_ID].isin([-1, 0]).sum()
-            if other_fold_ids > 0:
-                dataset_sizes[("dataset size", "other")] = other_fold_ids
+        dataset_sizes = self.get_dataset_sizes()
+        # Generate tables and save to h5
         run_info_table = pd.Series({**general_info, **version_info}, name="")
         run_quality_summary_table = pd.Series({**performance_info}, name="")
         training_info_table = pd.Series({**training_info, **dataset_sizes}, name="")
@@ -2139,7 +2195,7 @@ class SRSNVReport:
 
         qual_stats_description = pd.concat(list(qual_stats_description.values()), axis=1)
         run_quality_table = pd.DataFrame(
-            signif(qual_stats_description.values, 3),
+            signif(qual_stats_description.values, SIG_DIGITS),
             index=qual_stats_description.index,
             columns=qual_stats_description.columns,
         ).drop(index="count")
@@ -2485,7 +2541,16 @@ class SRSNVReport:
     ):
         """Plot histogram and quality stats for a numerical feature."""
         logger.info(f"Plotting quality and histogram for feature {col}")
-        is_discrete = (self.data_df[col] - np.round(self.data_df[col])).abs().max() < 0.05  # noqa: PLR2004
+        if self.data_df[col].isna().all():
+            logger.warning(f"Column {col} contains only NaN values. Skipping plot.")
+            return
+        is_discrete = (
+            (self.data_df[col] - np.round(self.data_df[col])).abs().max() < 0.05  # noqa: PLR2004
+            or (
+                self.data_df.loc[self.data_df[col].notna(), col]
+                == self.data_df.loc[self.data_df[col].notna(), col].iloc[0]
+            ).all()  # A constant column
+        )
         if is_discrete:
             bin_edges = None
         else:

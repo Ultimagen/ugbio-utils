@@ -6,6 +6,7 @@ import pandas as pd
 import xgboost
 from pandas.core.groupby import DataFrameGroupBy
 from sklearn import compose
+from sklearn.ensemble import RandomForestClassifier
 from ugbio_core import math_utils
 from ugbio_core.concordance.concordance_utils import add_grouping_column, get_concordance_metrics, init_metrics_df
 from ugbio_core.logger import logger
@@ -22,8 +23,8 @@ def train_model(
     gt_type: GtType,
     vtype: VcfType,
     annots: list | None = None,
-) -> tuple[compose.ColumnTransformer, xgboost.XGBRFClassifier]:
-    """Trains model xgboost model on a subset of dataframe
+) -> tuple[compose.ColumnTransformer, xgboost.XGBClassifier | RandomForestClassifier]:
+    """Trains model on a dataframe.
 
     Parameters
     ----------
@@ -39,7 +40,7 @@ def train_model(
     Returns
     -------
     tuple:
-        Trained transformer and classifier model
+        Trained transformer and classifier model (XGBClassifier or RandomForestClassifier in case of CNV)
 
     Raises
     ------
@@ -65,15 +66,28 @@ def train_model(
     x_train_df = pd.DataFrame(transformer.fit_transform(df_train))
     _validate_data(x_train_df)
     logger.info("Transform: done")
-    clf = xgboost.XGBClassifier(
-        n_estimators=100,
-        learning_rate=0.15,
-        subsample=0.4,
-        max_depth=6,
-        random_state=0,
-        colsample_bytree=0.4,
-        n_jobs=14,
-    )
+    if vtype != VcfType.CNV:
+        clf = xgboost.XGBClassifier(
+            n_estimators=100,
+            learning_rate=0.15,
+            subsample=0.4,
+            max_depth=6,
+            random_state=0,
+            colsample_bytree=0.4,
+            n_jobs=14,
+        )
+    else:
+        clf = RandomForestClassifier(
+            n_estimators=300,
+            max_depth=4,
+            min_samples_split=30,
+            min_samples_leaf=15,
+            max_features="sqrt",
+            random_state=42,
+            n_jobs=-1,
+            class_weight="balanced",
+        )
+
     clf.fit(x_train_df, labels_train)
     return clf, transformer
 
@@ -133,6 +147,7 @@ def eval_model(
     df: pd.DataFrame,  # noqa PD901
     model: xgboost.XGBClassifier,
     transformer: compose.ColumnTransformer,
+    vtype: VcfType,
     *,
     add_testing_group_column: bool = True,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -147,6 +162,8 @@ def eval_model(
         Model
     transformer: compose.ColumnTransformer
         Data prep transformer
+    vtype: VcfType
+        The type of the input vcf
     add_testing_group_column: bool
         Should default testing grouping be added (default: True),
         if False will look for grouping in `group_testing`
@@ -183,15 +200,22 @@ def eval_model(
         select = df["label"].apply(lambda x: x in {0, 1})
     elif gt_type == GtType.EXACT:
         select = df["label"].apply(lambda x: x in {(0, 0), (0, 1), (1, 1), (1, 0)})
+    else:
+        raise ValueError("Unknown gt_type")
     labels = labels[select]
     if gt_type == GtType.EXACT:
         labels = np.array(transformers.label_encode.transform(list(labels))) > 0
         df["predict"] = df["predict"] > 0
 
     df = df.loc[select]  # noqa PD901
-    result = evaluate_results(
-        df, pd.Series(list(labels), index=df.index), add_testing_group_column=add_testing_group_column
-    )
+
+    if vtype == VcfType.CNV:
+        df["group_testing"] = df["svtype"]
+        result = evaluate_results(df, pd.Series(list(labels), index=df.index), add_testing_group_column=False)
+    else:
+        result = evaluate_results(
+            df, pd.Series(list(labels), index=df.index), add_testing_group_column=add_testing_group_column
+        )
     if isinstance(result, tuple):
         return result
     raise RuntimeError("Unexpected result")

@@ -297,7 +297,7 @@ class TestVcfUtils:
         input_files_str = " ".join(input_files)
         expected_calls = [
             mock.call(f"bcftools concat -a -o {tmp_file} -O z {input_files_str}"),
-            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file}"),
+            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file} -T {tmp_path}/"),
             mock.call(f"bcftools index -tf {output_vcf}"),
         ]
         mock_execute.assert_has_calls(expected_calls)
@@ -320,7 +320,7 @@ class TestVcfUtils:
         # Verify commands are still executed even with single file
         expected_calls = [
             mock.call(f"bcftools concat -a -o {tmp_file} -O z {input_files[0]}"),
-            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file}"),
+            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file} -T {tmp_path}/"),
             mock.call(f"bcftools index -tf {output_vcf}"),
         ]
         mock_execute.assert_has_calls(expected_calls)
@@ -344,10 +344,73 @@ class TestVcfUtils:
         input_files_str = " ".join(input_files)
         expected_calls = [
             mock.call(f"bcftools concat -a -o {tmp_file} -O z {input_files_str}"),
-            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file}"),
+            mock.call(f"bcftools sort -o {output_vcf} -O z {tmp_file} -T {tmp_path}/"),
             mock.call(f"bcftools index -tf {output_vcf}"),
         ]
         mock_execute.assert_has_calls(expected_calls)
 
         # Verify temporary file is cleaned up
         mock_unlink.assert_called_once_with(tmp_file)
+
+    @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
+    def test_remove_filters_all(self, mock_execute, tmp_path):
+        """Test removing all filters from VCF."""
+        input_vcf = str(tmp_path / "input.vcf.gz")
+        output_vcf = str(tmp_path / "output.vcf.gz")
+
+        vcf_utils = VcfUtils()
+        vcf_utils.remove_filters(input_vcf=input_vcf, output_vcf=output_vcf)
+
+        # Verify the correct bcftools command was called
+        expected_cmd = f"bcftools annotate -x FILTER -o {output_vcf} {input_vcf}"
+        mock_execute.assert_called_once_with(expected_cmd)
+
+    @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
+    def test_remove_filters_specific(self, mock_execute, tmp_path):
+        """Test removing specific filters from VCF."""
+        input_vcf = str(tmp_path / "input.vcf.gz")
+        output_vcf = str(tmp_path / "output.vcf.gz")
+        filters = ["LowQual", "LowDP"]
+
+        vcf_utils = VcfUtils()
+        vcf_utils.remove_filters(input_vcf=input_vcf, output_vcf=output_vcf, filters_to_remove=filters)
+
+        # Verify the correct bcftools command was called
+        expected_cmd = f"bcftools annotate -x FILTER/LowQual,LowDP -o {output_vcf} {input_vcf}"
+        mock_execute.assert_called_once_with(expected_cmd)
+
+    @patch("os.unlink")
+    @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
+    def test_collapse_vcf_pick_best(self, mock_execute, mock_unlink, tmp_path, mock_logger):
+        """Test collapse_vcf with pick_best parameter"""
+        input_vcf = str(tmp_path / "input.vcf.gz")
+        output_vcf = str(tmp_path / "output.vcf.gz")
+        removed_vcf_path = str(tmp_path / "tmp.vcf")
+
+        # Test with pick_best=True
+        vcf_utils = VcfUtils(logger=mock_logger)
+        vcf_utils.collapse_vcf(vcf=input_vcf, output_vcf=output_vcf, pick_best=True)
+
+        # Verify the command includes --keep maxqual
+        call_args = mock_execute.call_args[0][0]
+        assert "--keep maxqual" in call_args
+        assert "--keep first" not in call_args
+        assert "truvari collapse" in call_args
+
+        # Verify temporary file cleanup
+        mock_unlink.assert_called_once_with(removed_vcf_path)
+
+        # Reset mocks
+        mock_execute.reset_mock()
+        mock_unlink.reset_mock()
+
+        # Test with pick_best=False (default)
+        vcf_utils.collapse_vcf(vcf=input_vcf, output_vcf=output_vcf, pick_best=False)
+
+        # Verify the command includes --keep first
+        call_args = mock_execute.call_args[0][0]
+        assert "--keep first" in call_args
+        assert "--keep maxqual" not in call_args
+
+        # Verify temporary file cleanup again
+        mock_unlink.assert_called_once_with(removed_vcf_path)

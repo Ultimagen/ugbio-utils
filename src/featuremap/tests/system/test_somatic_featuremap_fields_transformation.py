@@ -105,7 +105,7 @@ class TestSomaticFeaturemapFieldsTransformation:
         ref_tr_file = pjoin(resources_dir, "tr_hg38.chr19.bed")
         interval_list_bed_file = pjoin(resources_dir, "wgs_calling_regions.hg38.chr19_test.interval_list.bed")
         out_dir = tmpdir
-        model_file = pjoin(resources_dir, "HG006_HG003.v1.23.5pGenome.t_alt_reads_2-10.json")
+        model_file = pjoin(resources_dir, "HG006_HG003.v1.25.WG.t_alt_readsGT1.V1.15.json")
         out_file = pjoin(out_dir, "Pa_46.tumor_normal.merged.tumor_PASS.mpileup_PASS.chr19.xgb_proba.vcf.gz")
         genome_file = pjoin(resources_dir, "Homo_sapiens_assembly38.fasta.fai")
 
