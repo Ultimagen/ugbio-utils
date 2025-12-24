@@ -1766,7 +1766,7 @@ class SRSNVReport:
                 dataset_sizes[("TPs", "other")] = (other_fold_ids_cond & (self.data_df[LABEL])).sum()
                 dataset_sizes[("FPs", "other")] = (other_fold_ids_cond & (~self.data_df[LABEL])).sum()
                 dataset_sizes[("% TPs", "other")] = signif(
-                    ((other_fold_ids_cond) & (self.data_df[LABEL]) / (other_fold_ids_cond).sum()) * 100, SIG_DIGITS
+                    (other_fold_ids_cond & self.data_df[LABEL]).sum() / (other_fold_ids_cond).sum() * 100, SIG_DIGITS
                 )
         else:  # Train/test split
             dataset_sizes = {
@@ -1795,7 +1795,7 @@ class SRSNVReport:
                 dataset_sizes[("TPs", "other")] = (other_fold_ids_cond & (self.data_df[LABEL])).sum()
                 dataset_sizes[("FPs", "other")] = (other_fold_ids_cond & (~self.data_df[LABEL])).sum()
                 dataset_sizes[("% TPs", "other")] = signif(
-                    ((other_fold_ids_cond) & (self.data_df[LABEL]) / (other_fold_ids_cond).sum()) * 100, SIG_DIGITS
+                    (other_fold_ids_cond & self.data_df[LABEL]).sum() / (other_fold_ids_cond).sum() * 100, SIG_DIGITS
                 )
         return dataset_sizes
 
