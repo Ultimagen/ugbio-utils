@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_pypgx"
-version = "1.17.3-0"
+version = "1.18.0"
 description = "PyPGx"
 authors = [
     { name = "Gil Hornung", email = "gil.hornung@ultimagen.com" },
