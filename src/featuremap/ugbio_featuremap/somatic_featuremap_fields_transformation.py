@@ -132,19 +132,6 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
 
         return df_variants
 
-    def count_zeros_ones(x):
-        """
-        Count number of 0s and 1s in a tuple/list.
-        Handles None, NaN, empty tuples.
-        """
-        if x is None or (isinstance(x, float) and pd.isna(x)):
-            return pd.Series({"num0": 0, "num1": 0})
-
-        # filter only valid values
-        clean = [v for v in x if v in (0, 1)]
-
-        return pd.Series({"num0": clean.count(0), "num1": clean.count(1)})
-
     """Process columns for a sample with given prefix (t_ or n_)"""
     # Process alt_reads
     df_variants[f"{prefix}alt_reads"] = [tup[1] for tup in df_variants[f"{prefix}ad"]]
@@ -164,9 +151,11 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
         f"{prefix}{format_mpileup_fields_for_training[0]}",
         f"{prefix}{format_mpileup_fields_for_training[1]}",
     )
-
+    # Process forward/reverse counts
     df_variants[[f"{prefix}forward_count", f"{prefix}reverse_count"]] = df_variants[f"{prefix}rev"].apply(
-        count_zeros_ones
+        lambda x: pd.Series({"num0": 0, "num1": 0})
+        if x is None or (isinstance(x, float) and pd.isna(x))
+        else pd.Series({"num0": [v for v in x if v in (0, 1)].count(0), "num1": [v for v in x if v in (0, 1)].count(1)})
     )
 
     return df_variants
