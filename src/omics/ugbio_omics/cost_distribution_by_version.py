@@ -110,7 +110,7 @@ def query_cost_data(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Define cache file path
-    cache_file = output_dir / f"raw_data_v{version}_account{account_id}_days{days}.csv"
+    cache_file = output_dir / f"raw_data_{version}_account{account_id}_days{days}.csv"
 
     logger.info("Querying database for:")
     logger.info(f"  Version: {version}")
@@ -237,7 +237,7 @@ def create_histograms(  # noqa: PLR0915
         ax1.set_xlabel("Cost (USD)")
         ax1.set_ylabel("Frequency")
         title_str = (
-            f"{workflow} - Original (v{version})\n"
+            f"{workflow} - Original ({version})\n"
             f"n={len(costs_all)}, Min=${costs_all.min():.2f}, Max=${costs_all.max():.2f}"
         )
         ax1.set_title(title_str, fontsize=10, fontweight="bold")
@@ -274,7 +274,7 @@ def create_histograms(  # noqa: PLR0915
     plt.tight_layout()
 
     # Save the combined figure
-    output_file = output_dir / f"cost_distribution_v{version}_combined.png"
+    output_file = output_dir / f"cost_distribution_{version}_combined.png"
     plt.savefig(output_file, dpi=150, bbox_inches="tight")
     logger.info(f"\nCombined histogram saved: {output_file}")
 
@@ -325,10 +325,10 @@ def create_histograms(  # noqa: PLR0915
         ax2.grid(visible=True, alpha=0.3)
 
         # Overall title
-        fig.suptitle(f"Cost Distribution - {workflow} (v{version})", fontsize=14, fontweight="bold", y=1.02)
+        fig.suptitle(f"Cost Distribution - {workflow} ({version})", fontsize=14, fontweight="bold", y=1.02)
 
         safe_workflow_name = workflow.replace("/", "_").replace(" ", "_")
-        output_file = output_dir / f"cost_distribution_v{version}_{safe_workflow_name}_comparison.png"
+        output_file = output_dir / f"cost_distribution_{version}_{safe_workflow_name}_comparison.png"
         plt.savefig(output_file, dpi=150, bbox_inches="tight")
         logger.info(f"Comparison histogram saved: {output_file}")
         plt.close(fig)
@@ -369,7 +369,7 @@ def create_summary_csv(runs_data: pd.DataFrame, output_dir: Path = Path("."), ve
 
     summary_df = pd.DataFrame(summary_data)
 
-    output_file = output_dir / f"cost_summary_v{version}.csv"
+    output_file = output_dir / f"cost_summary_{version}.csv"
     summary_df.to_csv(output_file, index=False)
     logger.info(f"\nSummary CSV saved: {output_file}")
     logger.info("\nCost Summary:")
@@ -389,7 +389,7 @@ def create_tarball(output_dir: Path, version: str) -> None:
     output_dir = Path(output_dir)
 
     # Create a temporary directory for staging files
-    staging_dir = output_dir / f"cost_analysis_v{version}"
+    staging_dir = output_dir / f"cost_analysis_{version}"
     staging_dir.mkdir(exist_ok=True)
 
     # Copy all PNG and CSV files to staging directory (glob doesn't traverse subdirs, so no need to filter)
@@ -398,9 +398,9 @@ def create_tarball(output_dir: Path, version: str) -> None:
             shutil.copy2(file_path, staging_dir / file_path.name)
 
     # Create tar.gz
-    tarball_path = output_dir / f"cost_analysis_v{version}.tar.gz"
+    tarball_path = output_dir / f"cost_analysis_{version}.tar.gz"
     with tarfile.open(tarball_path, "w:gz") as tar:
-        tar.add(staging_dir, arcname=f"cost_analysis_v{version}")
+        tar.add(staging_dir, arcname=f"cost_analysis_{version}")
 
     logger.info(f"\nTarball created: {tarball_path}")
 
@@ -429,11 +429,8 @@ def main():
     # Create output directory
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Normalize version string for file names (remove leading 'v' if present)
-    version_normalized = args.version.lstrip("v")
-
     # Define cache file path
-    cache_file = args.output_dir / f"raw_data_v{version_normalized}_account{args.account}_days{args.days}.csv"
+    cache_file = args.output_dir / f"raw_data_{args.version}_account{args.account}_days{args.days}.csv"
 
     # Try to load from cache if requested
     runs_data = None
@@ -442,19 +439,19 @@ def main():
 
     # Query database if no cached data available
     if runs_data is None:
-        runs_data = query_cost_data(version_normalized, args.account, args.days, output_dir=args.output_dir)
+        runs_data = query_cost_data(args.version, args.account, args.days, output_dir=args.output_dir)
 
     if runs_data.empty:
         logger.warning("No data to analyze")
         return
 
     # Create visualizations and summary with side-by-side comparisons
-    create_histograms(runs_data, args.output_dir, version_normalized)
-    create_summary_csv(runs_data, args.output_dir, version_normalized)
+    create_histograms(runs_data, args.output_dir, args.version)
+    create_summary_csv(runs_data, args.output_dir, args.version)
 
     # Create tarball if requested
     if args.create_tarball:
-        create_tarball(args.output_dir, version_normalized)
+        create_tarball(args.output_dir, args.version)
 
     logger.info("\n" + "=" * 80)
     logger.info("Analysis complete!")
