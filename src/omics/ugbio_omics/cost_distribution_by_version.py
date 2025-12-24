@@ -102,6 +102,7 @@ def query_cost_data(
     pd.DataFrame
         DataFrame with queried run data
     """
+    logger.info(f"\nQuerying database for cost data... version: {version}")
     workspace = f"aws-{account_id}"
     cutoff_date = get_date_cutoff(days)
 
