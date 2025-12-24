@@ -73,9 +73,9 @@ def load_cached_data(cache_file: Path) -> pd.DataFrame | None:
     """
     if cache_file.exists():
         logger.info(f"Loading cached data from: {cache_file}")
-        df = pd.read_csv(cache_file)
-        logger.info(f"Loaded {len(df)} records from cache")
-        return df
+        runs_data = pd.read_csv(cache_file)
+        logger.info(f"Loaded {len(runs_data)} records from cache")
+        return runs_data
     return None
 
 
@@ -147,38 +147,22 @@ def query_cost_data(
         return pd.DataFrame()
 
     # Extract relevant fields from documents
-    data = []
-    for doc in docs:
-        metadata = doc.get("metadata", {})
-        inputs = doc.get("inputs", {})
-        data.append(
-            {
-                "workflowId": metadata.get("workflowId"),
-                "workflowName": metadata.get("workflowName"),
-                "cost": metadata.get("cost"),
-                "createdAt": metadata.get("createdAt"),
-                "status": metadata.get("status"),
-                "runId": metadata.get("runId"),
-                "pipeline_version": inputs.get("pipeline_version"),
-            }
-        )
-
-    df = pd.DataFrame(data)
+    runs_data = pd.concat([db_access.inputs2df(x) for x in docs])
 
     # Filter out records with no cost data
-    df = df.dropna(subset=["cost"])
-    logger.info(f"Records with cost data: {len(df)}")
+    runs_data = runs_data.dropna(subset=["cost"])
+    logger.info(f"Records with cost data: {len(runs_data)}")
 
     # Filter by workflows if specified
     if workflows:
-        df = df[df["workflowName"].isin(workflows)]
-        logger.info(f"Records after workflow filtering: {len(df)}")
+        runs_data = runs_data[runs_data["workflowName"].isin(workflows)]
+        logger.info(f"Records after workflow filtering: {len(runs_data)}")
 
     # Save raw data to cache file
-    df.to_csv(cache_file, index=False)
+    runs_data.to_csv(cache_file, index=False)
     logger.info(f"Raw data saved to: {cache_file}")
 
-    return df
+    return runs_data
 
 
 def filter_outliers_iqr(costs: np.ndarray, iqr_multiplier: float = 1.5) -> tuple[np.ndarray, np.ndarray, int]:
@@ -210,7 +194,7 @@ def filter_outliers_iqr(costs: np.ndarray, iqr_multiplier: float = 1.5) -> tuple
 
 
 def create_histograms(  # noqa: PLR0915
-    df: pd.DataFrame,
+    runs_data: pd.DataFrame,
     output_dir: Path = Path("."),
     version: str = "unknown",
 ) -> None:
@@ -220,7 +204,7 @@ def create_histograms(  # noqa: PLR0915
 
     Parameters
     ----------
-    df : pd.DataFrame
+    runs_data : pd.DataFrame
         DataFrame with columns: workflowName, cost
     output_dir : Path, optional
         Directory to save plots (default: current directory)
@@ -230,14 +214,14 @@ def create_histograms(  # noqa: PLR0915
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    workflows = df["workflowName"].unique()
+    workflows = runs_data["workflowName"].unique()
     logger.info(f"\nCreating side-by-side comparison histograms for {len(workflows)} workflows:")
 
     # Create a figure with side-by-side subplots for all workflows (original vs filtered)
     fig = plt.figure(figsize=(20, 4 * len(workflows)))
 
     for idx, workflow in enumerate(sorted(workflows), 1):
-        workflow_data = df[df["workflowName"] == workflow]
+        workflow_data = runs_data[runs_data["workflowName"] == workflow]
         costs_all = workflow_data["cost"].to_numpy()
         costs_filtered, _, outlier_count = filter_outliers_iqr(costs_all)
 
@@ -298,7 +282,7 @@ def create_histograms(  # noqa: PLR0915
 
     # Create individual side-by-side comparison plots for each workflow
     for workflow in sorted(workflows):
-        workflow_data = df[df["workflowName"] == workflow]
+        workflow_data = runs_data[runs_data["workflowName"] == workflow]
         costs_all = workflow_data["cost"].to_numpy()
         costs_filtered, _, outlier_count = filter_outliers_iqr(costs_all)
 
@@ -350,12 +334,12 @@ def create_histograms(  # noqa: PLR0915
         plt.close(fig)
 
 
-def create_summary_csv(df: pd.DataFrame, output_dir: Path = Path("."), version: str = "unknown") -> None:
+def create_summary_csv(runs_data: pd.DataFrame, output_dir: Path = Path("."), version: str = "unknown") -> None:
     """Create a CSV summary of cost statistics per workflow.
 
     Parameters
     ----------
-    df : pd.DataFrame
+    runs_data : pd.DataFrame
         DataFrame with columns: workflowName, cost
     output_dir : Path, optional
         Directory to save CSV (default: current directory)
@@ -366,8 +350,8 @@ def create_summary_csv(df: pd.DataFrame, output_dir: Path = Path("."), version: 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     summary_data = []
-    for workflow in sorted(df["workflowName"].unique()):
-        workflow_data = df[df["workflowName"] == workflow]
+    for workflow in sorted(runs_data["workflowName"].unique()):
+        workflow_data = runs_data[runs_data["workflowName"] == workflow]
         costs = workflow_data["cost"].to_numpy()
 
         summary_data.append(
@@ -452,21 +436,21 @@ def main():
     cache_file = args.output_dir / f"raw_data_v{version_normalized}_account{args.account}_days{args.days}.csv"
 
     # Try to load from cache if requested
-    df = None
+    runs_data = None
     if args.use_cache:
-        df = load_cached_data(cache_file)
+        runs_data = load_cached_data(cache_file)
 
     # Query database if no cached data available
-    if df is None:
-        df = query_cost_data(args.version, args.account, args.days, output_dir=args.output_dir)
+    if runs_data is None:
+        runs_data = query_cost_data(args.version, args.account, args.days, output_dir=args.output_dir)
 
-    if df.empty:
+    if runs_data.empty:
         logger.warning("No data to analyze")
         return
 
     # Create visualizations and summary with side-by-side comparisons
-    create_histograms(df, args.output_dir, version_normalized)
-    create_summary_csv(df, args.output_dir, version_normalized)
+    create_histograms(runs_data, args.output_dir, version_normalized)
+    create_summary_csv(runs_data, args.output_dir, version_normalized)
 
     # Create tarball if requested
     if args.create_tarball:
