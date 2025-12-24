@@ -2493,7 +2493,13 @@ class SRSNVReport:
         if self.data_df[col].isna().all():
             logger.warning(f"Column {col} contains only NaN values. Skipping plot.")
             return
-        is_discrete = (self.data_df[col] - np.round(self.data_df[col])).abs().max() < 0.05  # noqa: PLR2004
+        is_discrete = (
+            (self.data_df[col] - np.round(self.data_df[col])).abs().max() < 0.05  # noqa: PLR2004
+            or (
+                self.data_df.loc[self.data_df[col].notna(), col]
+                == self.data_df.loc[self.data_df[col].notna(), col].iloc[0]
+            ).all()  # A constant column
+        )
         if is_discrete:
             bin_edges = None
         else:
