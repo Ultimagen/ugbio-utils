@@ -11,6 +11,7 @@ import ugbio_core.misc_utils as mu
 from pyfaidx import Fasta
 from ugbio_cnv.cnv_vcf_consts import FILTER_TAG_REGISTRY, INFO_TAG_REGISTRY
 from ugbio_cnv.combine_cnv_vcf_utils import (
+    annotate_vcf_with_ml_scores,
     cnv_vcf_to_bed,
     combine_vcf_headers_for_cnv,
     merge_cnvs_in_vcf,
@@ -120,6 +121,18 @@ def __parse_args_merge_records(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def __parse_args_add_ml_scores(parser: argparse.ArgumentParser) -> None:
+    """Add arguments specific to the add_ml_scores tool."""
+    parser.add_argument("--input_vcf", help="Input VCF file with CNV calls", required=True, type=str)
+    parser.add_argument(
+        "--ml_bed",
+        help="BED file with ML predictions (chr, start, end, prob, ...)",
+        required=True,
+        type=str,
+    )
+    parser.add_argument("--output_vcf", help="Output VCF file with ML score annotations", required=True, type=str)
+
+
 def __parse_args(argv: list[str]) -> argparse.Namespace:
     """
     Parse command-line arguments using subparsers for different tools.
@@ -180,6 +193,13 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         description="Merges CNV records that are within a specified distance threshold.",
     )
     __parse_args_merge_records(merge_records_parser)
+
+    add_ml_scores_parser = subparsers.add_parser(
+        "add_ml_scores",
+        help="Annotate CNV calls with ML prediction scores from BED file",
+        description="Adds CNV_PRED INFO field with maximum ML score from CNV breakpoint regions.",
+    )
+    __parse_args_add_ml_scores(add_ml_scores_parser)
 
     analyze_breakpoints_parser = subparsers.add_parser(
         "analyze_breakpoint_reads",
@@ -610,6 +630,12 @@ def run(argv: list[str]):
             ignore_sv_type=True,
             pick_best=True,
         )
+    elif args.tool == "add_ml_scores":
+        annotate_vcf_with_ml_scores(
+            input_vcf=args.input_vcf,
+            ml_bed=args.ml_bed,
+            output_vcf=args.output_vcf,
+        )
     elif args.tool == "analyze_breakpoint_reads":
         from ugbio_cnv.analyze_cnv_breakpoint_reads import analyze_cnv_breakpoints
 
@@ -700,6 +726,21 @@ def main_merge_records():
     """
     # Insert 'merge_records' as the tool argument
     argv = [sys.argv[0], "merge_records"] + sys.argv[1:]
+    run(argv)
+
+
+def main_add_ml_scores():
+    """
+    Entry point for standalone add_ml_scores script.
+
+    This allows running the add_ml_scores tool directly without specifying the tool name:
+    add_ml_scores --input_vcf ... --ml_bed ... --output_vcf ...
+
+    Instead of:
+    combine_cnmops_cnvpytor_cnv_calls add_ml_scores --input_vcf ... --ml_bed ... --output_vcf ...
+    """
+    # Insert 'add_ml_scores' as the tool argument
+    argv = [sys.argv[0], "add_ml_scores"] + sys.argv[1:]
     run(argv)
 
 

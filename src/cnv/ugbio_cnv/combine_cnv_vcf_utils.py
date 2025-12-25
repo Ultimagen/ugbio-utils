@@ -396,3 +396,80 @@ def _value_aggregator(  # noqa: C901
             raise ValueError(f"Unsupported value type for max aggregation: {val_type}")
     if action == "aggregate":
         record.info[field] = tuple(set(values))
+
+
+def annotate_vcf_with_ml_scores(input_vcf: str, ml_bed: str, output_vcf: str) -> None:
+    """
+    Annotate CNV VCF records with CNV_PRED INFO field containing maximum ML prediction score from breakpoint regions.
+
+    Parameters
+    ----------
+    input_vcf : str
+        Path to input VCF file containing CNV calls.
+    ml_bed : str
+        Path to BED file with ML predictions. Format: chr, start, end, prob, pred, input_file_name.
+        BED intervals follow standard half-open convention: [start, end).
+    output_vcf : str
+        Path to output VCF file with CNV_PRED annotation.
+
+    Raises
+    ------
+    ValueError
+        If multiple overlapping intervals are found for the same position in the ML BED file.
+
+    Notes
+    -----
+    - BED intervals are treated as half-open [start, end) per BED format specification
+    - If a CNV breakpoint position is not contained in any ML prediction interval, score defaults to 0.0
+    - If a CNV is on a chromosome not present in the ML BED file, a warning is logged and score defaults to 0.0
+    - Multiple overlapping intervals for the same position will raise an error
+    """
+    from intervaltree import Interval, IntervalTree
+    from ugbio_cnv.cnv_vcf_consts import INFO_TAG_REGISTRY
+
+    logger.info(f"Loading ML predictions from {ml_bed}")
+    ml_trees = {}
+    bed_intervals = pd.read_csv(ml_bed, sep="\t").rename({"#chrom": "chrom"}, axis=1)
+    for _, line in bed_intervals.iterrows():
+        chrom, start, end, prob = line["chrom"], line["start"], line["stop"], line["prob"]
+
+        if chrom not in ml_trees:
+            ml_trees[chrom] = IntervalTree()
+
+        if overlaps := ml_trees[chrom].overlap(start, end):
+            raise ValueError(
+                f"Multiple overlapping intervals found in ML BED file at {chrom}:{start}-{end}. "
+                f"Existing intervals: {overlaps}"
+            )
+        ml_trees[chrom].add(Interval(start, end, prob))
+
+    with pysam.VariantFile(input_vcf) as vcf_in:
+        header = vcf_in.header
+        if "CNV_PRED" not in header.info:
+            header.info.add(*INFO_TAG_REGISTRY["CNV_PRED"][:-1])
+
+        with pysam.VariantFile(output_vcf, "w", header=header) as vcf_out:
+            for record in vcf_in:
+                chrom, start, end = record.chrom, record.start, record.stop
+
+                if chrom not in ml_trees:
+                    record.info["CNV_PRED"] = 0.0
+                    vcf_out.write(record)
+                    continue
+
+                tree = ml_trees[chrom]
+                start_prob = _get_single_interval_prob(tree.at(start), chrom, start)
+                end_prob = _get_single_interval_prob(tree.at(end), chrom, end)
+
+                record.info["CNV_PRED"] = round(max(start_prob, end_prob), 6)
+                vcf_out.write(record)
+
+    VcfUtils().index_vcf(output_vcf)
+    logger.info(f"Successfully annotated VCF with ML scores: {output_vcf}")
+
+
+def _get_single_interval_prob(intervals, chrom: str, pos: int) -> float:
+    """Extract probability from interval set, raising error if multiple overlaps exist."""
+    if len(intervals) > 1:
+        raise ValueError(f"Multiple overlapping intervals found for position {chrom}:{pos}. Intervals: {intervals}")
+    return intervals.pop().data if intervals else 0.0

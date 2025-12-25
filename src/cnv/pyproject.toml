@@ -7,6 +7,7 @@ dependencies = [
     "seaborn>=0.13.2,<1.0.0",
     "cnvpytor==1.3.1",
     "setuptools>=75.8.0",
+    "intervaltree>=3.1.0",
 ]
 description = "Ultima Genomics CNV utils"
 authors = [
@@ -31,6 +32,7 @@ combine_cnmops_cnvpytor_cnv_calls = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls
 combine_cnv_vcfs = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_concat"
 filter_dup_cnmmops_cnv_calls = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_filter_dup_cnmmops"
 annotate_vcf_with_regions = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_annotate_regions"
+add_ml_scores = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_add_ml_scores"
 analyze_cnv_breakpoint_reads = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_analyze_breakpoints"
 run_jalign = "ugbio_cnv.run_jalign:main"
 

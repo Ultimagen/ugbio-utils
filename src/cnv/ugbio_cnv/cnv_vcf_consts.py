@@ -52,6 +52,13 @@ INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
         "Fraction of N bases in the CNV region from reference genome",
         "INFO",
     ),
+    "CNV_PRED": (
+        "CNV_PRED",
+        1,
+        "Float",
+        "Maximum ML prediction score from CNV breakpoint regions",
+        "INFO",
+    ),
 }
 
 # the reason filters require special treatment is that they need to be
