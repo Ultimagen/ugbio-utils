@@ -491,6 +491,7 @@ def training_prep_cnv(
             outdir=temp_dir,
             hcr_bed=hcr,
             custom_info_fields=tuple(custom_annotations) if custom_annotations is not None else (),
+            maxsize=-1,
             erase_outdir=True,
             ignore_filter=True,
             ignore_type=ignore_cnv_type,

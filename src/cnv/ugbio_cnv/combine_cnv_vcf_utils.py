@@ -302,6 +302,7 @@ def merge_cnvs_in_vcf(
         refdist=distance,
         pctseq=0.0,
         pctsize=0.0,
+        maxsize=-1,
         ignore_filter=ignore_filter,
         ignore_sv_type=ignore_sv_type,
         pick_best=pick_best,
