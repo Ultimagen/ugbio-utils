@@ -72,24 +72,21 @@ def _add_metadata_records(
             combined_header.add_line(str(record_dict2[key].record))
 
 
-def update_vcf_contigs(
+def update_vcf_contig(
     vcf_utils: VcfUtils,
-    cnmops_vcf: str,
-    cnvpytor_vcf: str,
+    input_vcf: str,
     fasta_index: str,
     output_directory: str,
-) -> tuple[str, str]:
+) -> str:
     """
-    Update VCF headers with contigs from FASTA index.
+    Update a VCF header with contigs from FASTA index.
 
     Parameters
     ----------
     vcf_utils : VcfUtils
         VcfUtils instance for VCF operations
-    cnmops_vcf : str
-        Path to cn.mops VCF
-    cnvpytor_vcf : str
-        Path to CNVpytor VCF
+    input_vcf : str
+        Path to input VCF file
     fasta_index : str
         Path to FASTA index file
     output_directory : str
@@ -97,17 +94,19 @@ def update_vcf_contigs(
 
     Returns
     -------
-    tuple[str, str]
-        Paths to updated cn.mops and CNVpytor VCF files
+    str
+        Path to updated VCF file
     """
-    logger.info("Updating VCF headers with contigs from FASTA index")
-    cnmops_vcf_updated = pjoin(output_directory, "cnmops.updated_contigs.vcf.gz")
-    cnvpytor_vcf_updated = pjoin(output_directory, "cnvpytor.updated_contigs.vcf.gz")
+    from pathlib import Path
 
-    vcf_utils.update_vcf_contigs_from_fai(cnmops_vcf, cnmops_vcf_updated, fasta_index)
-    vcf_utils.update_vcf_contigs_from_fai(cnvpytor_vcf, cnvpytor_vcf_updated, fasta_index)
+    # Generate unique output filename based on input filename
+    input_basename = Path(input_vcf).stem.replace(".vcf", "")
+    output_vcf = pjoin(output_directory, f"{input_basename}.updated_contigs.vcf.gz")
 
-    return cnmops_vcf_updated, cnvpytor_vcf_updated
+    logger.info(f"Updating VCF header with contigs from FASTA index: {input_vcf}")
+    vcf_utils.update_vcf_contigs_from_fai(input_vcf, output_vcf, fasta_index)
+
+    return output_vcf
 
 
 def write_vcf_records_with_source(
