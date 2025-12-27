@@ -14,7 +14,7 @@ from ugbio_cnv.combine_cnv_vcf_utils import (
     cnv_vcf_to_bed,
     combine_vcf_headers_for_cnv,
     merge_cnvs_in_vcf,
-    update_vcf_contigs,
+    update_vcf_contig,
     write_vcf_records_with_source,
 )
 from ugbio_core.bed_utils import BedUtils
@@ -29,8 +29,22 @@ def run_cmd(cmd):
 
 def __parse_args_concat(parser: argparse.ArgumentParser) -> None:
     """Add arguments specific to the concat tool."""
-    parser.add_argument("--cnmops_vcf", help="input VCF file holding cn.mops CNV calls", required=True, type=str)
-    parser.add_argument("--cnvpytor_vcf", help="input VCF file holding cnvpytor CNV calls", required=True, type=str)
+    parser.add_argument(
+        "--cnmops_vcf",
+        help="input VCF file(s) holding cn.mops CNV calls",
+        required=False,
+        type=str,
+        nargs="*",
+        default=[],
+    )
+    parser.add_argument(
+        "--cnvpytor_vcf",
+        help="input VCF file(s) holding cnvpytor CNV calls",
+        required=False,
+        type=str,
+        nargs="*",
+        default=[],
+    )
     parser.add_argument("--output_vcf", help="output combined VCF file", required=True, type=str)
     parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
     parser.add_argument("--out_directory", help="output directory", required=False, type=str)
@@ -339,8 +353,8 @@ def annotate_vcf_with_regions(
 
 
 def combine_cnv_vcfs(
-    cnmops_vcf: str,
-    cnvpytor_vcf: str,
+    cnmops_vcf: list[str],
+    cnvpytor_vcf: list[str],
     fasta_index: str,
     output_vcf: str,
     output_directory: str | None = None,
@@ -349,21 +363,21 @@ def combine_cnv_vcfs(
     Combine VCF files from cn.mops and CNVpytor into a single sorted and indexed VCF.
 
     This function performs the following steps:
-    1. Updates headers of both VCFs to contain the same contigs from the FASTA index
-    2. Combines the headers from both updated files (excluding FILTER fields)
+    1. Updates headers of all VCFs to contain the same contigs from the FASTA index
+    2. Combines the headers from all updated files (excluding FILTER fields)
     3. Adds an INFO tag for the source (CNV_SOURCE) to identify the caller
-    4. Writes records from both VCF files to the combined output
+    4. Writes records from all VCF files to the combined output
     5. Sorts and indexes the final VCF
 
     Note: This function does NOT merge overlapping CNV records - it simply concatenates
-    all records from both input files.
+    all records from all input files.
 
     Parameters
     ----------
-    cnmops_vcf : str
-        Path to the cn.mops VCF file (.vcf.gz)
-    cnvpytor_vcf : str
-        Path to the CNVpytor VCF file (.vcf.gz)
+    cnmops_vcf : list[str]
+        List of paths to cn.mops VCF files (.vcf.gz). Can be empty.
+    cnvpytor_vcf : list[str]
+        List of paths to CNVpytor VCF files (.vcf.gz). Can be empty.
     fasta_index : str
         Path to the reference genome FASTA index file (.fai)
     output_vcf : str
@@ -380,54 +394,75 @@ def combine_cnv_vcfs(
     ------
     FileNotFoundError
         If any of the input files do not exist
+    ValueError
+        If both cnmops_vcf and cnvpytor_vcf are empty
     RuntimeError
         If VCF processing fails
 
     Examples
     --------
     >>> combined_vcf = combine_cnv_vcfs(
-    ...     cnmops_vcf="cnmops.vcf.gz",
-    ...     cnvpytor_vcf="cnvpytor.vcf.gz",
+    ...     cnmops_vcf=["cnmops.vcf.gz"],
+    ...     cnvpytor_vcf=["cnvpytor1.vcf.gz", "cnvpytor2.vcf.gz"],
     ...     fasta_index="genome.fa.fai",
     ...     output_vcf="combined.vcf.gz",
     ...     output_directory="/tmp/cnv_combine"
     ... )
     """
-    # Validate input files exist
-    for input_file in [cnmops_vcf, cnvpytor_vcf, fasta_index]:
-        if not os.path.exists(input_file):
-            raise FileNotFoundError(f"Input file does not exist: {input_file}")
+    # Validate that at least one VCF list is not empty
+    if not cnmops_vcf and not cnvpytor_vcf:
+        raise ValueError("At least one of cnmops_vcf or cnvpytor_vcf must be non-empty")
 
     # Create output directory if it doesn't exist
     if output_directory is None:
-        output_directory = os.path.dirname(output_vcf)
+        output_directory = os.path.dirname(os.path.abspath(output_vcf))
     if output_directory:  # file with no directory evaluates to ""
         os.makedirs(output_directory, exist_ok=True)
 
     vcf_utils = VcfUtils()
 
     # Step 1: Update headers to contain same contigs from FASTA index
-    cnmops_vcf_updated, cnvpytor_vcf_updated = update_vcf_contigs(
-        vcf_utils, cnmops_vcf, cnvpytor_vcf, fasta_index, output_directory
-    )
+    logger.info("Updating VCF headers to match FASTA index contigs")
+    updated_vcfs = []
+    vcf_metadata = []  # List of (updated_path, source_name) tuples
+
+    # Collect all VCF files with their source labels
+    all_vcf_sources = [(vcf, "cn.mops") for vcf in cnmops_vcf] + [(vcf, "cnvpytor") for vcf in cnvpytor_vcf]
+
+    # Update headers for all VCFs
+    for vcf_file, source in all_vcf_sources:
+        updated_vcf = update_vcf_contig(vcf_utils, vcf_file, fasta_index, output_directory)
+        updated_vcfs.append(updated_vcf)
+        vcf_metadata.append((updated_vcf, source))
 
     # Step 2: Open updated VCF files, combine headers (excluding FILTER fields), and add CNV_SOURCE tag
     logger.info("Combining VCF headers and adding CNV_SOURCE INFO tag")
-    with pysam.VariantFile(cnmops_vcf_updated) as vcf1, pysam.VariantFile(cnvpytor_vcf_updated) as vcf2:
-        # Combine headers (excluding FILTER fields)
-        combined_header = combine_vcf_headers_for_cnv(vcf1.header, vcf2.header)
+
+    # Open all VCF files
+    vcf_handles = [pysam.VariantFile(vcf_path) for vcf_path, _ in vcf_metadata]
+
+    try:
+        # Combine headers from all files
+        combined_header = vcf_handles[0].header.copy()
+        for vcf_handle in vcf_handles[1:]:
+            combined_header = combine_vcf_headers_for_cnv(combined_header, vcf_handle.header)
 
         # Add INFO tag for source if not already present
         if "CNV_SOURCE" not in combined_header.info:
             combined_header.info.add(*INFO_TAG_REGISTRY["CNV_SOURCE"][:-1])
 
-        # Step 3: Write records from both VCF files
-        logger.info("Writing records from both VCF files to temporary combined VCF")
+        # Step 3: Write records from all VCF files
+        logger.info(f"Writing records from {len(vcf_handles)} VCF files to temporary combined VCF")
         temp_combined_vcf = pjoin(output_directory, "temp_combined.vcf.gz")
 
         with pysam.VariantFile(temp_combined_vcf, "w", header=combined_header) as vcf_out:
-            write_vcf_records_with_source(vcf1, vcf_out, combined_header, "cn.mops")
-            write_vcf_records_with_source(vcf2, vcf_out, combined_header, "cnvpytor")
+            # Write records from each VCF with appropriate source annotation
+            for vcf_handle, (_, source_name) in zip(vcf_handles, vcf_metadata, strict=False):
+                write_vcf_records_with_source(vcf_handle, vcf_out, combined_header, source_name)
+    finally:
+        # Close all VCF handles
+        for vcf_handle in vcf_handles:
+            vcf_handle.close()
 
     # Step 4: Sort and index the VCF
     logger.info("Sorting and indexing the combined VCF")
@@ -435,7 +470,7 @@ def combine_cnv_vcfs(
     vcf_utils.index_vcf(output_vcf)
 
     # Clean up temporary files
-    mu.cleanup_temp_files([cnmops_vcf_updated, cnvpytor_vcf_updated, temp_combined_vcf])
+    mu.cleanup_temp_files(updated_vcfs + [temp_combined_vcf])
 
     logger.info(f"Successfully created combined VCF: {output_vcf}")
     return output_vcf
@@ -520,7 +555,8 @@ def run(argv: list[str]):
     Examples
     --------
     >>> run(['prog', 'concat', '--cnmops_vcf', 'cnmops.vcf.gz',
-    ...      '--cnvpytor_vcf', 'cnvpytor.vcf.gz', '--output_vcf', 'combined.vcf.gz',
+    ...      '--cnvpytor_vcf', 'cnvpytor1.vcf.gz', 'cnvpytor2.vcf.gz',
+    ...      '--output_vcf', 'combined.vcf.gz',
     ...      '--fasta_index', 'genome.fa.fai', '--out_directory', '/tmp'])
     """
     args = __parse_args(argv)
