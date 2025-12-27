@@ -522,6 +522,7 @@ class TestMergeCnvsInVcf:
             refdist=1000,
             pctseq=0.0,
             pctsize=0.0,
+            maxsize=-1,
             ignore_filter=True,
             ignore_sv_type=False,
             pick_best=False,
