@@ -335,7 +335,7 @@ class VcfUtils:
         """
 
         removed_vcf_path = pjoin(dirname(output_vcf), "tmp.vcf")
-        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-c", removed_vcf_path, "--sizemax", "-1", "--chain"]
+        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-c", removed_vcf_path, "--chain"]
 
         if not ignore_filter:
             truvari_cmd.append("--passonly")
