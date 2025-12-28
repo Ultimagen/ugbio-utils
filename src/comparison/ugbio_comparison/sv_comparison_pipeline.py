@@ -79,8 +79,8 @@ class SVComparison:
         pctsize : float, optional
             Percentage of size identity, by default 0.0
         maxsize : int, optional
-            Maximum size for SV comparison, by default 50000. For CNV comparison, consider increasing this value.
-            (-1 - unlimited)
+            Maximum size for SV comparison, by default 50000. For CNV comparison,
+            consider increasing this value or use -1 for unlimited.
         erase_outdir : bool, optional
             Erase output directory if it exists, by default True
         ignore_filter : bool, optional

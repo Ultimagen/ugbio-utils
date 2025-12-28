@@ -317,8 +317,9 @@ class VcfUtils:
         pctsize : float, optional
             Percentage of size identity, by default 0.0
         maxsize : int, optional
-            Maximum size for SV comparison, by default 50000. For CNV comparison, consider increasing this value.
-            (or -1 for unlimited).
+            Maximum size for SV comparison, by default 50000. For CNV
+            comparison, consider increasing this value or use -1 for
+            unlimited.
         ignore_filter : bool, optional
             If True, ignore FILTER field (remove truvari's --passonly flag), by default False
         ignore_sv_type : bool, optional
