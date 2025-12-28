@@ -108,5 +108,5 @@ def test_training_prep_cnv(tmpdir, resources_dir):
     # Total FP should be original 2798 from concordance + up to 482 high gap calls
     # (some high gap calls might already be in concordance, so we check a range)
     # Total TP should be 642 from concordance
-    assert 3284 == total_fp, f"Expected 3284 total FP, got {total_fp}"
-    assert total_tp == 642, f"Expected 642 total TP, got {total_tp}"
+    assert 3401 == total_fp, f"Expected 3401 total FP, got {total_fp}"
+    assert total_tp == 676, f"Expected 676 total TP, got {total_tp}"

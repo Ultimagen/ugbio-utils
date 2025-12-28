@@ -284,7 +284,7 @@ class VcfUtils:
         # Index the output VCF
         self.index_vcf(output_vcf)
 
-    def collapse_vcf(
+    def collapse_vcf(  # noqa: PLR0913
         self,
         vcf: str,
         output_vcf: str,
@@ -292,6 +292,7 @@ class VcfUtils:
         refdist: int = 500,
         pctseq: float = 0.0,
         pctsize: float = 0.0,
+        maxsize: int = 50000,
         *,
         ignore_filter: bool = False,
         ignore_sv_type: bool = True,
@@ -315,6 +316,10 @@ class VcfUtils:
             Percentage of sequence identity, by default 0.0
         pctsize : float, optional
             Percentage of size identity, by default 0.0
+        maxsize : int, optional
+            Maximum size for SV comparison, by default 50000. For CNV
+            comparison, consider increasing this value or use -1 for
+            unlimited.
         ignore_filter : bool, optional
             If True, ignore FILTER field (remove truvari's --passonly flag), by default False
         ignore_sv_type : bool, optional
@@ -331,7 +336,7 @@ class VcfUtils:
         """
 
         removed_vcf_path = pjoin(dirname(output_vcf), "tmp.vcf")
-        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-c", removed_vcf_path, "--sizemax", "-1", "--chain"]
+        truvari_cmd = ["truvari", "collapse", "-i", vcf, "-c", removed_vcf_path, "--chain"]
 
         if not ignore_filter:
             truvari_cmd.append("--passonly")
@@ -346,6 +351,7 @@ class VcfUtils:
         truvari_cmd.extend(["--pctseq", str(pctseq)])
         truvari_cmd.extend(["--pctsize", str(pctsize)])
         truvari_cmd.extend(["--refdist", str(int(refdist))])
+        truvari_cmd.extend(["--sizemax", str(maxsize)])
         truvari_cmd.extend(["-o", output_vcf])
         self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
         self.__execute(" ".join(truvari_cmd))

@@ -21,11 +21,11 @@ def test_run_truvari(mocker):
 
     mock_logger.info.assert_called_with(
         "truvari command: truvari bench -b ground_truth.vcf -c calls.vcf -o output_dir"
-        " -t --passonly --includebed regions.bed --pctseq 0.9 --pctsize 0.8"
+        " -t --passonly --includebed regions.bed --pctseq 0.9 --pctsize 0.8 --sizemax 50000"
     )
     mock_execute.assert_called_once_with(
         "truvari bench -b ground_truth.vcf -c calls.vcf -o output_dir -t"
-        " --passonly --includebed regions.bed --pctseq 0.9 --pctsize 0.8"
+        " --passonly --includebed regions.bed --pctseq 0.9 --pctsize 0.8 --sizemax 50000"
     )
 
 
@@ -50,11 +50,11 @@ def test_run_truvari_ignore_filter(mocker):
 
     mock_logger.info.assert_called_with(
         "truvari command: truvari bench -b ground_truth.vcf -c calls.vcf -o output_dir"
-        " -t --includebed regions.bed --pctseq 0.9 --pctsize 0.8"
+        " -t --includebed regions.bed --pctseq 0.9 --pctsize 0.8 --sizemax 50000"
     )
     mock_execute.assert_called_once_with(
         "truvari bench -b ground_truth.vcf -c calls.vcf -o output_dir -t"
-        " --includebed regions.bed --pctseq 0.9 --pctsize 0.8"
+        " --includebed regions.bed --pctseq 0.9 --pctsize 0.8 --sizemax 50000"
     )
 
 
@@ -167,6 +167,7 @@ def test_run_pipeline(mocker):
         bed="regions.bed",
         pctseq=0.9,
         pctsize=0.8,
+        maxsize=50000,
         ignore_filter=False,
         ignore_sv_type=True,
     )
@@ -176,6 +177,7 @@ def test_run_pipeline(mocker):
         bed="regions.bed",
         pctseq=0.9,
         pctsize=0.8,
+        maxsize=50000,
         ignore_filter=False,
     )
 
@@ -191,6 +193,7 @@ def test_run_pipeline(mocker):
         bed="regions.bed",
         pctseq=0.9,
         pctsize=0.8,
+        maxsize=50000,
         erase_outdir=True,
         ignore_filter=False,
         ignore_type=True,
@@ -238,6 +241,7 @@ def test_run_pipeline_ignore_filter(mocker):
         hcr_bed="regions.bed",
         pctseq=0.9,
         pctsize=0.8,
+        maxsize=50000,
         erase_outdir=True,
         ignore_filter=True,
     )
@@ -254,6 +258,7 @@ def test_run_pipeline_ignore_filter(mocker):
         bed="regions.bed",
         pctseq=0.9,
         pctsize=0.8,
+        maxsize=50000,
         ignore_filter=True,
         ignore_sv_type=True,
     )
@@ -263,6 +268,7 @@ def test_run_pipeline_ignore_filter(mocker):
         bed="regions.bed",
         pctseq=0.9,
         pctsize=0.8,
+        maxsize=50000,
         ignore_filter=True,
     )
 
@@ -274,6 +280,7 @@ def test_run_pipeline_ignore_filter(mocker):
         bed="regions.bed",
         pctseq=0.9,
         pctsize=0.8,
+        maxsize=50000,
         erase_outdir=True,
         ignore_filter=True,
         ignore_type=True,

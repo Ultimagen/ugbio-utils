@@ -47,7 +47,7 @@ class SVComparison:
         """
         print_and_execute(command, output_file=output_file, simple_pipeline=self.sp, module_name=__name__)
 
-    def run_truvari(
+    def run_truvari(  # noqa: PLR0913
         self,
         calls: str,
         gt: str,
@@ -55,6 +55,7 @@ class SVComparison:
         bed: str | None = None,
         pctseq: float = 0.0,
         pctsize: float = 0.0,
+        maxsize: int = 50000,
         *,
         erase_outdir: bool = True,
         ignore_filter: bool = False,
@@ -77,6 +78,9 @@ class SVComparison:
             Percentage of sequence identity, by default 0.0
         pctsize : float, optional
             Percentage of size identity, by default 0.0
+        maxsize : int, optional
+            Maximum size for SV comparison, by default 50000. For CNV comparison,
+            consider increasing this value or use -1 for unlimited.
         erase_outdir : bool, optional
             Erase output directory if it exists, by default True
         ignore_filter : bool, optional
@@ -105,6 +109,7 @@ class SVComparison:
             truvari_cmd.extend(["--pick", "multi"])
         truvari_cmd.extend(["--pctseq", str(pctseq)])
         truvari_cmd.extend(["--pctsize", str(pctsize)])
+        truvari_cmd.extend(["--sizemax", str(maxsize)])
 
         self.logger.info(f"truvari command: {' '.join(truvari_cmd)}")
         self.__execute(" ".join(truvari_cmd))
@@ -191,6 +196,7 @@ class SVComparison:
         hcr_bed: str | None = None,
         pctseq: float = 0.0,
         pctsize: float = 0.0,
+        maxsize: int = 50000,
         custom_info_fields: tuple = (),
         *,
         erase_outdir: bool = True,
@@ -217,6 +223,8 @@ class SVComparison:
             Percentage of sequence identity, by default 0.0
         pctsize : float, optional
             Percentage of size identity, by default 0.0
+        maxsize : int, optional
+            Maximum size for SV comparison, by default 50000. For CNV comparison, consider increasing this value.
         erase_outdir : bool, optional
             Erase output directory if it exists, by default True
         ignore_filter : bool, optional
@@ -255,6 +263,7 @@ class SVComparison:
                     bed=hcr_bed,
                     pctseq=pctseq,
                     pctsize=pctsize,
+                    maxsize=maxsize,
                     ignore_filter=ignore_filter,
                     ignore_sv_type=ignore_type,
                 )
@@ -278,6 +287,7 @@ class SVComparison:
                 bed=hcr_bed,
                 pctseq=pctseq,
                 pctsize=pctsize,
+                maxsize=maxsize,
                 ignore_filter=ignore_filter,
             )
             gt_fn = gt_collapsed_fn
@@ -295,6 +305,7 @@ class SVComparison:
                 bed=hcr_bed,
                 pctseq=pctseq,
                 pctsize=pctsize,
+                maxsize=maxsize,
                 erase_outdir=erase_outdir,
                 ignore_filter=ignore_filter,
                 ignore_type=ignore_type,
@@ -330,6 +341,12 @@ def get_parser():
     parser.add_argument("--pctseq", type=float, default=0.0, help="Percentage of sequence identity")
     parser.add_argument("--pctsize", type=float, default=0.0, help="Percentage of size identity")
     parser.add_argument(
+        "--maxsize",
+        type=int,
+        default=50000,
+        help="Maximum size for SV comparison (default: 50000). For CNV comparison, consider increasing this value.",
+    )
+    parser.add_argument(
         "--custom_info_fields", type=str, action="append", default=[], help="Custom info fields to read from the VCFs"
     )
     parser.add_argument(
@@ -359,6 +376,7 @@ def run(argv):
         hcr_bed=args.hcr_bed,
         pctseq=args.pctseq,
         pctsize=args.pctsize,
+        maxsize=args.maxsize,
         outdir=args.outdir,
         output_file_name=args.output_filename,
         custom_info_fields=tuple(args.custom_info_fields),
