@@ -214,14 +214,13 @@ def combine_vcf_headers_for_cnv(
     if keep_filters:
         # Add FILTER fields
         _add_metadata_records(header1.filters, header2.filters, "FILTER", {}, combined_header)
-
+    if tuple(header1.samples) != tuple(header2.samples):
+        raise RuntimeError("Input VCF headers have different samples; cannot combine.")
     # Add samples from both headers
     for sample in header1.samples:
-        if sample not in combined_header.samples:
-            combined_header.add_sample(sample)
-    for sample in header2.samples:
-        if sample not in combined_header.samples:
-            combined_header.add_sample(sample)
+        if sample in combined_header.samples:
+            continue
+        combined_header.add_sample(sample)
 
     return combined_header
 
