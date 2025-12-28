@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 UGBio Utils is a bioinformatics pipeline toolkit organized as a UV workspace with modular components. Each module in `src/` is a separate Python package with its own Docker container for cloud deployment. The repository is public on GitHub, with Docker images published to both AWS ECR (internal) and Docker Hub (public).
 
+**The project uses pre-commit hooks** for code quality checks (Ruff linting/formatting). These run automatically on `git commit`.
+
 ## Architecture
 
 ### Workspace Structure
