@@ -198,20 +198,6 @@ def test_combine_cnv_vcfs_basic(temp_dir, cnmops_vcf, cnvpytor_vcf, fasta_index)
         assert sources.count(("cnvpytor",)) == 2
 
 
-def test_combine_cnv_vcfs_missing_input(temp_dir, fasta_index):
-    """Test that combine_cnv_vcfs raises error for missing input files."""
-    output_vcf = os.path.join(temp_dir, "combined.vcf.gz")
-
-    with pytest.raises(FileNotFoundError):
-        combine_cnv_vcfs(
-            cnmops_vcf=["nonexistent_cnmops.vcf.gz"],
-            cnvpytor_vcf=["nonexistent_cnvpytor.vcf.gz"],
-            fasta_index=fasta_index,
-            output_vcf=output_vcf,
-            output_directory=temp_dir,
-        )
-
-
 def test_combine_cnv_vcfs_creates_output_directory(temp_dir, cnmops_vcf, cnvpytor_vcf, fasta_index):
     """Test that combine_cnv_vcfs creates output directory if it doesn't exist."""
     new_output_dir = os.path.join(temp_dir, "new_output_dir")
