@@ -196,7 +196,7 @@ def read_vcf_from_s3(
     return _read_file_from_s3(vcf_file, profile, SUPPORTED_VCF_EXTENSIONS, pysam.VariantFile, "r")
 
 
-def make_sure_s3_file_exists(s3_path, s3_client: str | None, profile: str | None):
+def make_sure_s3_file_exists(s3_path, s3_client: str | None = None, profile: str | None = None):
     """
     Make sure an S3 file exists.
 
