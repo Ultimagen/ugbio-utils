@@ -222,5 +222,5 @@ def make_sure_s3_file_exists(s3_path, s3_client: str | None = None, profile: str
         s3_client.head_object(Bucket=bucket, Key=key)
         return s3_path
     except botocore.exceptions.ClientError:
-        logger.error(f"S3 file does not exist: {s3_path}")
+        logger.error(f"S3 file could not be found: {s3_path}")
         raise
