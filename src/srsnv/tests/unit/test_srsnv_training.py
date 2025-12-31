@@ -2,8 +2,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
-from ugbio_srsnv.srsnv_training import _parse_model_params
+from ugbio_srsnv.srsnv_training import NaNToNullEncoder, _parse_model_params
 
 
 @pytest.fixture
@@ -161,3 +162,63 @@ def test_parse_model_params_invalid() -> None:  # noqa: D103
         _parse_model_params("eta=0.1:max_depth")  # uneven tokens
     with pytest.raises(ValueError):
         _parse_model_params("eta")  # missing '='
+
+
+def test_nan_to_null_encoder() -> None:
+    """Test that NaNToNullEncoder properly converts NaN to null in JSON output."""
+    # Test with various data structures containing NaN values
+    test_data = {
+        "simple_nan": float("nan"),
+        "list_with_nan": [1.0, float("nan"), 3.0],
+        "nested_dict": {
+            "value": float("nan"),
+            "array": [float("nan"), 2.0, float("nan")],
+        },
+        "normal_values": [1, 2, 3],
+        "string": "test",
+    }
+
+    # Encode using custom encoder
+    json_string = json.dumps(test_data, cls=NaNToNullEncoder)
+
+    # Verify that 'NaN' does not appear in the output
+    assert "NaN" not in json_string, "JSON output should not contain 'NaN' strings"
+
+    # Verify that 'null' appears where NaN values were
+    assert "null" in json_string, "JSON output should contain 'null' values"
+
+    # Verify that the JSON can be parsed
+    parsed_data = json.loads(json_string)
+
+    # Check that NaN values were converted to None (which becomes null in JSON)
+    assert parsed_data["simple_nan"] is None
+    assert parsed_data["list_with_nan"][1] is None
+    assert parsed_data["nested_dict"]["value"] is None
+    assert parsed_data["nested_dict"]["array"][0] is None
+    assert parsed_data["nested_dict"]["array"][2] is None
+
+    # Check that normal values are preserved
+    assert parsed_data["normal_values"] == [1, 2, 3]
+    assert parsed_data["string"] == "test"
+
+
+def test_nan_to_null_encoder_with_numpy() -> None:
+    """Test NaNToNullEncoder with NumPy NaN values."""
+    test_data = {
+        "numpy_nan": np.nan,
+        "numpy_array_list": [np.nan, 1.0, np.nan],
+        "mixed": {"np_nan": np.nan, "py_nan": float("nan"), "value": 42},
+    }
+
+    json_string = json.dumps(test_data, cls=NaNToNullEncoder)
+
+    # Verify no NaN in output
+    assert "NaN" not in json_string
+
+    # Verify it's valid JSON
+    parsed_data = json.loads(json_string)
+    assert parsed_data["numpy_nan"] is None
+    assert parsed_data["numpy_array_list"] == [None, 1.0, None]
+    assert parsed_data["mixed"]["np_nan"] is None
+    assert parsed_data["mixed"]["py_nan"] is None
+    assert parsed_data["mixed"]["value"] == 42
