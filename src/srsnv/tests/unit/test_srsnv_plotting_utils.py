@@ -93,14 +93,14 @@ def test_prepare_report_with_mock_data(tmpdir):
         "filtering_stats": {
             "positive": {
                 "filters": [
-                    {"name": "raw", "rows": 100, "type": "raw"},
-                    {"name": "coverage_ge_min", "rows": 90, "type": "region", "field": "DP", "op": "ge", "value": 20},
+                    {"name": "raw", "funnel": 100, "type": "raw"},
+                    {"name": "coverage_ge_min", "funnel": 90, "type": "region", "field": "DP", "op": "ge", "value": 20},
                 ]
             },
             "negative": {
                 "filters": [
-                    {"name": "raw", "rows": 100, "type": "raw"},
-                    {"name": "coverage_ge_min", "rows": 90, "type": "region", "field": "DP", "op": "ge", "value": 20},
+                    {"name": "raw", "funnel": 100, "type": "raw"},
+                    {"name": "coverage_ge_min", "funnel": 90, "type": "region", "field": "DP", "op": "ge", "value": 20},
                 ]
             },
         },
@@ -195,10 +195,10 @@ def test_resources_calc_run_info():
     resources_dir = Path(__file__).parent.parent / "resources"
 
     # Load the featuremap dataframe
-    featuremap_df = pd.read_parquet(resources_dir / "416119_L7402.test.featuremap_df.parquet")
+    featuremap_df = pd.read_parquet(resources_dir / "402572-CL10377.featuremap_df.parquet")
 
     # Load the metadata
-    metadata_path = resources_dir / "416119_L7402.test.srsnv_metadata.json"
+    metadata_path = resources_dir / "402572-CL10377.srsnv_metadata.json"
     with open(metadata_path) as f:
         metadata = json.load(f)
 
@@ -221,12 +221,12 @@ def real_models_calc_run_info(test_resources_calc_run_info):
         else:
             model_filename = os.path.basename(model_path)
 
-        # Update the filename to match new naming convention
-        if "416119_L7402.model_fold_" in model_filename and ".test." not in model_filename:
-            model_filename = model_filename.replace("416119_L7402.model_fold_", "416119_L7402.test.model_fold_")
-
         absolute_model_path = resources_dir / model_filename
         model.load_model(str(absolute_model_path))
+
+        # Manually set the required attributes that sklearn expects for XGBoost models
+        model.n_classes_ = 2  # Binary classification
+
         models.append(model)
 
     return models

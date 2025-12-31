@@ -500,14 +500,14 @@ class TestGetFilterRatio:
     def sample_filters(self):
         """Create sample filter list for testing."""
         return [
-            {"name": "raw", "type": "raw", "rows": 1000},
-            {"name": "coverage_ge_min", "type": "region", "rows": 950},
-            {"name": "coverage_le_max", "type": "region", "rows": 900},
-            {"name": "mapq_ge_60", "type": "quality", "rows": 800},
-            {"name": "no_adj_ref_diff", "type": "quality", "rows": 700},
-            {"name": "bcsq_gt_40", "type": "quality", "rows": 600},
-            {"name": "ref_eq_alt", "type": "label", "rows": 500},
-            {"name": "downsample", "type": "downsample", "rows": 100},
+            {"name": "raw", "type": "raw", "funnel": 1000},
+            {"name": "coverage_ge_min", "type": "region", "funnel": 950},
+            {"name": "coverage_le_max", "type": "region", "funnel": 900},
+            {"name": "mapq_ge_60", "type": "quality", "funnel": 800},
+            {"name": "no_adj_ref_diff", "type": "quality", "funnel": 700},
+            {"name": "bcsq_gt_40", "type": "quality", "funnel": 600},
+            {"name": "ref_eq_alt", "type": "label", "funnel": 500},
+            {"name": "downsample", "type": "downsample", "funnel": 100},
         ]
 
     def test_default_behavior(self, sample_filters):
@@ -516,7 +516,7 @@ class TestGetFilterRatio:
 
         ratio = get_filter_ratio(sample_filters)
         # Default: last before first 'label' (index 6) / raw (index 0)
-        # = filters[5]['rows'] / filters[0]['rows'] = 600 / 1000 = 0.6
+        # = filters[5]['funnel'] / filters[0]['funnel'] = 600 / 1000 = 0.6
         assert ratio == 0.6
 
     def test_by_name_numerator_and_denominator(self, sample_filters):
@@ -524,7 +524,7 @@ class TestGetFilterRatio:
         from ugbio_srsnv.srsnv_utils import get_filter_ratio
 
         # Last before 'ref_eq_alt' (index 6) / last before 'mapq_ge_60' (index 3)
-        # = filters[5]['rows'] / filters[2]['rows'] = 600 / 900
+        # = filters[5]['funnel'] / filters[2]['funnel'] = 600 / 900
         ratio = get_filter_ratio(sample_filters, numerator_filter="ref_eq_alt", denominator_filter="mapq_ge_60")
         assert ratio == pytest.approx(600 / 900)
 
@@ -533,7 +533,7 @@ class TestGetFilterRatio:
         from ugbio_srsnv.srsnv_utils import get_filter_ratio
 
         # Last before first 'quality' (index 3) / 'raw' (index 0)
-        # = filters[2]['rows'] / filters[0]['rows'] = 900 / 1000
+        # = filters[2]['funnel'] / filters[0]['funnel'] = 900 / 1000
         ratio = get_filter_ratio(sample_filters, numerator_type="quality", denominator_type="raw")
         assert ratio == 0.9
 
@@ -543,7 +543,7 @@ class TestGetFilterRatio:
 
         # By name for numerator, by type for denominator
         ratio = get_filter_ratio(sample_filters, numerator_filter="ref_eq_alt", denominator_type="quality")
-        # = filters[5]['rows'] / filters[2]['rows'] = 600 / 900
+        # = filters[5]['funnel'] / filters[2]['funnel'] = 600 / 900
         assert ratio == pytest.approx(600 / 900)
 
     def test_raw_special_case_numerator(self, sample_filters):
@@ -551,7 +551,7 @@ class TestGetFilterRatio:
         from ugbio_srsnv.srsnv_utils import get_filter_ratio
 
         ratio = get_filter_ratio(sample_filters, numerator_filter="raw", denominator_filter="raw")
-        # Both use filters[0]['rows'] / filters[0]['rows'] = 1.0
+        # Both use filters[0]['funnel'] / filters[0]['funnel'] = 1.0
         assert ratio == 1.0
 
     def test_raw_special_case_type(self, sample_filters):
@@ -596,9 +596,9 @@ class TestGetFilterRatio:
         from ugbio_srsnv.srsnv_utils import get_filter_ratio
 
         filters = [
-            {"name": "raw", "type": "raw", "rows": 0},  # Raw has 0 rows
-            {"name": "filter2", "type": "quality", "rows": 100},
-            {"name": "filter3", "type": "label", "rows": 50},
+            {"name": "raw", "type": "raw", "funnel": 0},  # Raw has 0 rows
+            {"name": "filter2", "type": "quality", "funnel": 100},
+            {"name": "filter3", "type": "label", "funnel": 50},
         ]
         with pytest.raises(ValueError, match="Denominator filter has 0 rows"):
             # Denominator uses 'raw' which has 0 rows
@@ -608,7 +608,7 @@ class TestGetFilterRatio:
         """Test with a single 'raw' filter."""
         from ugbio_srsnv.srsnv_utils import get_filter_ratio
 
-        filters = [{"name": "raw", "type": "raw", "rows": 500}]
+        filters = [{"name": "raw", "type": "raw", "funnel": 500}]
         ratio = get_filter_ratio(filters, numerator_type="raw", denominator_type="raw")
         assert ratio == 1.0
 
@@ -628,6 +628,6 @@ class TestGetFilterRatio:
 
         # Last before 'downsample' (index 7) / last before first 'label' (index 6)
         # When numerator_filter is specified, it takes precedence over numerator_type
-        # = filters[6]['rows'] / filters[5]['rows'] = 500 / 600
+        # = filters[6]['funnel'] / filters[5]['funnel'] = 500 / 600
         ratio = get_filter_ratio(sample_filters, numerator_filter="downsample", denominator_type="label")
         assert ratio == pytest.approx(500 / 600)
