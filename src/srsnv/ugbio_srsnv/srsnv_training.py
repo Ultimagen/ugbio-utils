@@ -74,6 +74,16 @@ EDIT_DIST_FEATURES = [
 pl.enable_string_cache()
 
 
+# ───────────────────────── JSON encoder ───────────────────────────
+class NaNToNullEncoder(json.JSONEncoder):
+    """Custom JSON encoder that converts NaN values to null."""
+
+    def iterencode(self, obj, *, _one_shot=False):
+        """Encode recursively, handling NaN in nested structures."""
+        for chunk in super().iterencode(obj, _one_shot=_one_shot):
+            yield chunk.replace("NaN", "null")
+
+
 # ───────────────────────── parsers ────────────────────────────
 def _parse_interval_list_tabix(path: str) -> tuple[dict[str, int], list[str]]:
     # Parse headers for chrom_sizes (must still scan file start)
@@ -960,7 +970,7 @@ class SRSNVTrainer:
         }
 
         with metadata_path.open("w") as fh:
-            json.dump(metadata, fh, indent=2)
+            json.dump(metadata, fh, indent=2, cls=NaNToNullEncoder)
         logger.info(f"Saved metadata → {metadata_path}")
         logger.info(
             "Metadata includes %d chromosome to model mappings and %d features",
