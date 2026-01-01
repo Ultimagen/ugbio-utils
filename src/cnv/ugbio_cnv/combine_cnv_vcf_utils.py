@@ -1,5 +1,6 @@
 # utilities for combining VCFs
 from os.path import join as pjoin
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -97,10 +98,9 @@ def update_vcf_contig(
     str
         Path to updated VCF file
     """
-    from pathlib import Path
 
     # Generate unique output filename based on input filename
-    input_basename = Path(input_vcf).stem.replace(".vcf", "")
+    input_basename = Path(input_vcf).name.replace(".vcf.gz", "").replace(".vcf", "")
     output_vcf = pjoin(output_directory, f"{input_basename}.updated_contigs.vcf.gz")
 
     logger.info(f"Updating VCF header with contigs from FASTA index: {input_vcf}")

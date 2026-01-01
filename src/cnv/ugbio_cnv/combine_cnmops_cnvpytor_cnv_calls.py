@@ -360,7 +360,7 @@ def combine_cnv_vcfs(
     output_directory: str | None = None,
 ) -> str:
     """
-    Combine VCF files from cn.mops and CNVpytor into a single sorted and indexed VCF.
+    Concatenates VCF files from cn.mops and CNVpytor into a single sorted and indexed VCF.
 
     This function performs the following steps:
     1. Updates headers of all VCFs to contain the same contigs from the FASTA index
@@ -434,6 +434,8 @@ def combine_cnv_vcfs(
         updated_vcf = update_vcf_contig(vcf_utils, vcf_file, fasta_index, output_directory)
         updated_vcfs.append(updated_vcf)
         vcf_metadata.append((updated_vcf, source))
+    if len(updated_vcfs) != len(set(updated_vcfs)):
+        raise RuntimeError("Duplicate updated VCF paths detected after header update, data lost, aborting.")
 
     # Step 2: Open updated VCF files, combine headers (excluding FILTER fields), and add CNV_SOURCE tag
     logger.info("Combining VCF headers and adding CNV_SOURCE INFO tag")
