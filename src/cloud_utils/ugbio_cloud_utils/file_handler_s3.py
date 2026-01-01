@@ -6,6 +6,8 @@ import subprocess
 from collections.abc import Callable
 from typing import Any
 
+import boto3
+import botocore
 import pysam
 
 logger = logging.getLogger(__name__)
@@ -192,3 +194,33 @@ def read_vcf_from_s3(
     :returns: an open pysam.VariantFile (caller must close it)
     """
     return _read_file_from_s3(vcf_file, profile, SUPPORTED_VCF_EXTENSIONS, pysam.VariantFile, "r")
+
+
+def make_sure_s3_file_exists(s3_path, s3_client: str | None = None, profile: str | None = None):
+    """
+    Make sure an S3 file exists.
+
+    :param s3_path: S3 path, e.g. "s3://…/file.vcf.gz" or "s3://…/file.vcf"
+    :param s3_client: S3 client
+    :param profile: AWS CLI profile; if None, attempt to deduce from ~/.aws/config
+    :returns: the file path if the file exists
+    :raises: ValueError if the S3 path is invalid or the file does not exist
+    """
+    if not s3_client:
+        s3_client = boto3.client("s3")
+    if not s3_path or not s3_path.startswith("s3://"):
+        raise ValueError(f"Invalid S3 path: {s3_path}")
+
+    parts = s3_path[5:].split("/", 1)
+    if len(parts) != 2:  # noqa: PLR2004
+        raise ValueError(f"Invalid S3 path format: {s3_path}")
+
+    bucket, key = parts
+
+    try:
+        _setup_aws_credentials(s3_path, profile)
+        s3_client.head_object(Bucket=bucket, Key=key)
+        return s3_path
+    except botocore.exceptions.ClientError:
+        logger.error(f"S3 file could not be found: {s3_path}")
+        raise
