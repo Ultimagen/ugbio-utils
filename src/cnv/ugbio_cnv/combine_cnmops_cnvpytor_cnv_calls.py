@@ -430,12 +430,10 @@ def combine_cnv_vcfs(
     all_vcf_sources = [(vcf, "cn.mops") for vcf in cnmops_vcf] + [(vcf, "cnvpytor") for vcf in cnvpytor_vcf]
 
     # Update headers for all VCFs
-    for vcf_file, source in all_vcf_sources:
-        updated_vcf = update_vcf_contig(vcf_utils, vcf_file, fasta_index, output_directory)
+    for idx, (vcf_file, source) in enumerate(all_vcf_sources):
+        updated_vcf = update_vcf_contig(vcf_utils, vcf_file, fasta_index, output_directory, index=idx)
         updated_vcfs.append(updated_vcf)
         vcf_metadata.append((updated_vcf, source))
-    if len(updated_vcfs) != len(set(updated_vcfs)):
-        raise RuntimeError("Duplicate updated VCF paths detected after header update, data lost, aborting.")
 
     # Step 2: Open updated VCF files, combine headers (excluding FILTER fields), and add CNV_SOURCE tag
     logger.info("Combining VCF headers and adding CNV_SOURCE INFO tag")

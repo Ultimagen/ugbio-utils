@@ -78,6 +78,7 @@ def update_vcf_contig(
     input_vcf: str,
     fasta_index: str,
     output_directory: str,
+    index: int = 0,
 ) -> str:
     """
     Update a VCF header with contigs from FASTA index.
@@ -92,6 +93,8 @@ def update_vcf_contig(
         Path to FASTA index file
     output_directory : str
         Output directory for temporary files
+    index : int, optional
+        Index to append to filename for uniqueness (default: 0)
 
     Returns
     -------
@@ -99,9 +102,9 @@ def update_vcf_contig(
         Path to updated VCF file
     """
 
-    # Generate unique output filename based on input filename
+    # Generate unique output filename based on input filename and index
     input_basename = Path(input_vcf).name.replace(".vcf.gz", "").replace(".vcf", "")
-    output_vcf = pjoin(output_directory, f"{input_basename}.updated_contigs.vcf.gz")
+    output_vcf = pjoin(output_directory, f"{input_basename}.{index}.updated_contigs.vcf.gz")
 
     logger.info(f"Updating VCF header with contigs from FASTA index: {input_vcf}")
     vcf_utils.update_vcf_contigs_from_fai(input_vcf, output_vcf, fasta_index)
