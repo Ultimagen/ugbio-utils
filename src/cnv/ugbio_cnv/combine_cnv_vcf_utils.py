@@ -1,5 +1,6 @@
 # utilities for combining VCFs
 from os.path import join as pjoin
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -72,42 +73,43 @@ def _add_metadata_records(
             combined_header.add_line(str(record_dict2[key].record))
 
 
-def update_vcf_contigs(
+def update_vcf_contig(
     vcf_utils: VcfUtils,
-    cnmops_vcf: str,
-    cnvpytor_vcf: str,
+    input_vcf: str,
     fasta_index: str,
     output_directory: str,
-) -> tuple[str, str]:
+    index: int = 0,
+) -> str:
     """
-    Update VCF headers with contigs from FASTA index.
+    Update a VCF header with contigs from FASTA index.
 
     Parameters
     ----------
     vcf_utils : VcfUtils
         VcfUtils instance for VCF operations
-    cnmops_vcf : str
-        Path to cn.mops VCF
-    cnvpytor_vcf : str
-        Path to CNVpytor VCF
+    input_vcf : str
+        Path to input VCF file
     fasta_index : str
         Path to FASTA index file
     output_directory : str
         Output directory for temporary files
+    index : int, optional
+        Index to append to filename for uniqueness (default: 0)
 
     Returns
     -------
-    tuple[str, str]
-        Paths to updated cn.mops and CNVpytor VCF files
+    str
+        Path to updated VCF file
     """
-    logger.info("Updating VCF headers with contigs from FASTA index")
-    cnmops_vcf_updated = pjoin(output_directory, "cnmops.updated_contigs.vcf.gz")
-    cnvpytor_vcf_updated = pjoin(output_directory, "cnvpytor.updated_contigs.vcf.gz")
 
-    vcf_utils.update_vcf_contigs_from_fai(cnmops_vcf, cnmops_vcf_updated, fasta_index)
-    vcf_utils.update_vcf_contigs_from_fai(cnvpytor_vcf, cnvpytor_vcf_updated, fasta_index)
+    # Generate unique output filename based on input filename and index
+    input_basename = Path(input_vcf).name.replace(".vcf.gz", "").replace(".vcf", "")
+    output_vcf = pjoin(output_directory, f"{input_basename}.{index}.updated_contigs.vcf.gz")
 
-    return cnmops_vcf_updated, cnvpytor_vcf_updated
+    logger.info(f"Updating VCF header with contigs from FASTA index: {input_vcf}")
+    vcf_utils.update_vcf_contigs_from_fai(input_vcf, output_vcf, fasta_index)
+
+    return output_vcf
 
 
 def write_vcf_records_with_source(
@@ -215,14 +217,13 @@ def combine_vcf_headers_for_cnv(
     if keep_filters:
         # Add FILTER fields
         _add_metadata_records(header1.filters, header2.filters, "FILTER", {}, combined_header)
-
+    if tuple(header1.samples) != tuple(header2.samples):
+        raise RuntimeError("Input VCF headers have different samples; cannot combine.")
     # Add samples from both headers
     for sample in header1.samples:
-        if sample not in combined_header.samples:
-            combined_header.add_sample(sample)
-    for sample in header2.samples:
-        if sample not in combined_header.samples:
-            combined_header.add_sample(sample)
+        if sample in combined_header.samples:
+            continue
+        combined_header.add_sample(sample)
 
     return combined_header
 

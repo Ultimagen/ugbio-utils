@@ -29,14 +29,17 @@ class TestCombineVcfHeadersForCnv:
         with pysam.VariantFile(str(vcf1_path), "r") as vcf1:
             header1 = vcf1.header
 
-        # Create a second header for testing
+        # Create a second header for testing with matching sample name
+        # Get the sample name from header1
+        sample_name = list(header1.samples)[0] if header1.samples else "sample1"
+
         header2 = pysam.VariantHeader()
         header2.add_line("##contig=<ID=chr1,length=248956422>")
         header2.add_line('##INFO=<ID=SVLEN,Number=.,Type=Integer,Description="CNV length">')
         header2.add_line('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="CNV type. can be DUP or DEL">')
         header2.add_line('##INFO=<ID=CopyNumber,Number=1,Type=Float,Description="Copy number">')
         header2.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
-        header2.add_sample("sample2")
+        header2.add_sample(sample_name)
 
         # Combine the headers (header1 has Number=1 for SVLEN, should be enforced to ".")
         combined_header = combine_cnv_vcf_utils.combine_vcf_headers_for_cnv(header1, header2)
@@ -61,7 +64,7 @@ class TestCombineVcfHeadersForCnv:
 
     def test_combine_vcf_headers_collision_compatible(self):
         """Test that compatible collisions (same type and number) are handled correctly"""
-        # Create two headers with the same INFO field
+        # Create two headers with the same INFO field and same sample name
         header1 = pysam.VariantHeader()
         header1.add_line("##contig=<ID=chr1,length=248956422>")
         header1.add_line('##INFO=<ID=DP,Number=1,Type=Integer,Description="Total Depth">')
@@ -72,7 +75,7 @@ class TestCombineVcfHeadersForCnv:
         header2.add_line("##contig=<ID=chr1,length=248956422>")
         header2.add_line('##INFO=<ID=DP,Number=1,Type=Integer,Description="Different Description">')
         header2.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
-        header2.add_sample("sample2")
+        header2.add_sample("sample1")  # Same sample name
 
         # Should not raise an error - same type and number
         combined_header = combine_cnv_vcf_utils.combine_vcf_headers_for_cnv(header1, header2)
@@ -83,9 +86,8 @@ class TestCombineVcfHeadersForCnv:
         assert combined_header.info["DP"].number == 1
         assert combined_header.info["DP"].description == "Total Depth"  # From header1
 
-        # Verify both samples are present
+        # Verify sample is present
         assert "sample1" in combined_header.samples
-        assert "sample2" in combined_header.samples
 
     def test_combine_vcf_headers_collision_different_type(self):
         """Test that collisions with different types raise RuntimeError"""

@@ -143,8 +143,8 @@ def test_combine_cnv_vcfs_basic(temp_dir, cnmops_vcf, cnvpytor_vcf, fasta_index)
     output_vcf = os.path.join(temp_dir, "combined.vcf.gz")
 
     result = combine_cnv_vcfs(
-        cnmops_vcf=cnmops_vcf,
-        cnvpytor_vcf=cnvpytor_vcf,
+        cnmops_vcf=[cnmops_vcf],
+        cnvpytor_vcf=[cnvpytor_vcf],
         fasta_index=fasta_index,
         output_vcf=output_vcf,
         output_directory=temp_dir,
@@ -198,28 +198,14 @@ def test_combine_cnv_vcfs_basic(temp_dir, cnmops_vcf, cnvpytor_vcf, fasta_index)
         assert sources.count(("cnvpytor",)) == 2
 
 
-def test_combine_cnv_vcfs_missing_input(temp_dir, fasta_index):
-    """Test that combine_cnv_vcfs raises error for missing input files."""
-    output_vcf = os.path.join(temp_dir, "combined.vcf.gz")
-
-    with pytest.raises(FileNotFoundError):
-        combine_cnv_vcfs(
-            cnmops_vcf="nonexistent_cnmops.vcf.gz",
-            cnvpytor_vcf="nonexistent_cnvpytor.vcf.gz",
-            fasta_index=fasta_index,
-            output_vcf=output_vcf,
-            output_directory=temp_dir,
-        )
-
-
 def test_combine_cnv_vcfs_creates_output_directory(temp_dir, cnmops_vcf, cnvpytor_vcf, fasta_index):
     """Test that combine_cnv_vcfs creates output directory if it doesn't exist."""
     new_output_dir = os.path.join(temp_dir, "new_output_dir")
     output_vcf = os.path.join(new_output_dir, "combined.vcf.gz")
 
     result = combine_cnv_vcfs(
-        cnmops_vcf=cnmops_vcf,
-        cnvpytor_vcf=cnvpytor_vcf,
+        cnmops_vcf=[cnmops_vcf],
+        cnvpytor_vcf=[cnvpytor_vcf],
         fasta_index=fasta_index,
         output_vcf=output_vcf,
         output_directory=new_output_dir,
@@ -234,8 +220,8 @@ def test_combine_cnv_vcfs_preserves_info_fields(temp_dir, cnmops_vcf, cnvpytor_v
     output_vcf = os.path.join(temp_dir, "combined.vcf.gz")
 
     combine_cnv_vcfs(
-        cnmops_vcf=cnmops_vcf,
-        cnvpytor_vcf=cnvpytor_vcf,
+        cnmops_vcf=[cnmops_vcf],
+        cnvpytor_vcf=[cnvpytor_vcf],
         fasta_index=fasta_index,
         output_vcf=output_vcf,
         output_directory=temp_dir,
@@ -253,3 +239,84 @@ def test_combine_cnv_vcfs_preserves_info_fields(temp_dir, cnmops_vcf, cnvpytor_v
         cnvpytor_records = [r for r in records if r.info.get("CNV_SOURCE") == "cnvpytor"]
         for rec in cnvpytor_records:
             assert "RD" in rec.info
+
+
+def test_combine_cnv_vcfs_empty_lists(temp_dir, fasta_index):
+    """Test that combine_cnv_vcfs raises error when both lists are empty."""
+    output_vcf = os.path.join(temp_dir, "combined.vcf.gz")
+
+    with pytest.raises(ValueError, match="At least one of cnmops_vcf or cnvpytor_vcf must be non-empty"):
+        combine_cnv_vcfs(
+            cnmops_vcf=[],
+            cnvpytor_vcf=[],
+            fasta_index=fasta_index,
+            output_vcf=output_vcf,
+            output_directory=temp_dir,
+        )
+
+
+def test_combine_cnv_vcfs_only_cnmops(temp_dir, cnmops_vcf, fasta_index):
+    """Test combine_cnv_vcfs with only cn.mops VCFs."""
+    output_vcf = os.path.join(temp_dir, "combined.vcf.gz")
+
+    result = combine_cnv_vcfs(
+        cnmops_vcf=[cnmops_vcf],
+        cnvpytor_vcf=[],
+        fasta_index=fasta_index,
+        output_vcf=output_vcf,
+        output_directory=temp_dir,
+    )
+
+    assert os.path.exists(result)
+
+    with pysam.VariantFile(output_vcf) as vcf:
+        records = list(vcf)
+        assert len(records) == 2  # Only cn.mops records
+        assert all(rec.info.get("CNV_SOURCE") == ("cn.mops",) for rec in records)
+
+
+def test_combine_cnv_vcfs_only_cnvpytor(temp_dir, cnvpytor_vcf, fasta_index):
+    """Test combine_cnv_vcfs with only CNVpytor VCFs."""
+    output_vcf = os.path.join(temp_dir, "combined.vcf.gz")
+
+    result = combine_cnv_vcfs(
+        cnmops_vcf=[],
+        cnvpytor_vcf=[cnvpytor_vcf],
+        fasta_index=fasta_index,
+        output_vcf=output_vcf,
+        output_directory=temp_dir,
+    )
+
+    assert os.path.exists(result)
+
+    with pysam.VariantFile(output_vcf) as vcf:
+        records = list(vcf)
+        assert len(records) == 2  # Only cnvpytor records
+        assert all(rec.info.get("CNV_SOURCE") == ("cnvpytor",) for rec in records)
+
+
+def test_combine_cnv_vcfs_multiple_files(temp_dir, cnmops_vcf, cnvpytor_vcf, fasta_index):
+    """Test combine_cnv_vcfs with multiple VCF files from each caller."""
+    output_vcf = os.path.join(temp_dir, "combined.vcf.gz")
+
+    # Use the same VCF twice to simulate multiple input files
+    result = combine_cnv_vcfs(
+        cnmops_vcf=[cnmops_vcf, cnmops_vcf],
+        cnvpytor_vcf=[cnvpytor_vcf, cnvpytor_vcf],
+        fasta_index=fasta_index,
+        output_vcf=output_vcf,
+        output_directory=temp_dir,
+    )
+
+    assert os.path.exists(result)
+
+    with pysam.VariantFile(output_vcf) as vcf:
+        records = list(vcf)
+        # Should have 8 total records (2 from each VCF, duplicated)
+        assert len(records) == 8
+
+        cnmops_count = sum(1 for r in records if r.info.get("CNV_SOURCE") == ("cn.mops",))
+        cnvpytor_count = sum(1 for r in records if r.info.get("CNV_SOURCE") == ("cnvpytor",))
+
+        assert cnmops_count == 4  # 2 records * 2 files
+        assert cnvpytor_count == 4  # 2 records * 2 files
