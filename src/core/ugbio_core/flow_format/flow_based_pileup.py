@@ -1,8 +1,9 @@
 # Set of classes for working with pileup in a flow space.
 # Allows to fetch the flow probabilities for each hompolymer in the pileup.
+import numpy as np
 import pysam
-import pysam.Pileup
 import ugbio_core.flow_format.flow_based_read as fbr
+import ugbio_core.math_utils as phred
 
 
 class FlowBasedIteratorColumn:
@@ -125,3 +126,63 @@ class FlowBasedAlignmentFile(pysam.AlignmentFile):
             contig, start, end, truncate=True, min_base_quality=0, flag_filter=3844, min_mapping_quality=mq
         )
         return FlowBasedIteratorColumn(pup)
+
+
+def get_hmer_qualities_from_pileup_element(
+    pe: pysam.PileupRead, max_hmer: int = 20, min_call_prob: float = 0.1
+) -> tuple:
+    """
+    Return hmer length probabilities for a single PileupRead element
+
+    Parameters
+    ----------
+    pe : pysam.PileupRead
+        PileupRead element
+    max_hmer : int
+        Maximum hmer length that we call
+    min_call_prob : float
+        Minimum probability for the called hmer length
+
+    Returns
+    -------
+    tuple:
+        pair (hmer,probabilities of hmer length) for the read in the PileupRead element
+    See also
+    --------
+    flow_based_read.FlowBasedRead.get_flow_matrix_column_for_base
+    """
+    filler = 10 ** (-35 / 10) / (max_hmer + 1)
+
+    qpos = pe.query_position_or_next
+    hnuc = str(pe.alignment.query_sequence)[qpos]
+    qstart = qpos
+    while qstart > 0 and str(pe.alignment.query_sequence)[qstart - 1] == hnuc:
+        qstart -= 1
+    qend = qpos + 1
+    while qend < len(str(pe.alignment.query_sequence)) and str(pe.alignment.query_sequence)[qend] == hnuc:
+        qend += 1
+
+    hmer_probs = np.zeros(max_hmer + 1)
+    hmer_length = qend - qstart
+
+    # smear probabilities
+    if qstart == 0 or qend == len(str(pe.alignment.query_sequence)):
+        hmer_probs[:] = 1.0
+    else:
+        query_qualities = pe.alignment.query_qualities
+        if query_qualities is None:
+            raise ValueError("query_qualities is None")
+        qual = query_qualities[qstart:qend]
+        probs = phred.unphred(np.asarray(qual))
+        tp_tag = pe.alignment.get_tag("tp")
+        if not isinstance(tp_tag, list | np.ndarray):
+            raise ValueError("tp tag must be a list or array")
+        tps = tp_tag[qstart:qend]
+        for tpval, p in zip(tps, probs, strict=False):
+            hmer_probs[tpval + hmer_length] += p
+        hmer_probs = np.clip(hmer_probs, filler, None)
+        hmer_probs[hmer_length] = 0
+        hmer_probs[hmer_length] = max(1 - np.sum(hmer_probs), min_call_prob)
+
+    hmer_probs /= np.sum(hmer_probs)
+    return hnuc, hmer_probs
