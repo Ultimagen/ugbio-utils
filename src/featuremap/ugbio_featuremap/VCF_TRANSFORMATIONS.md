@@ -15,12 +15,12 @@ The script transforms a somatic featuremap VCF through multiple stages:
 
 ## 1. Tandem Repeat Features Integration
 
-**Location:** `run()` function, lines 669-671  
+**Location:** `run()` function, lines 669-671
 **Function:** `integrate_tandem_repeat_features()` (imported from `somatic_featuremap_utils`)
 
 ### Added INFO Fields:
 - **TR_START** - Start position of the closest tandem repeat
-- **TR_END** - End position of the closest tandem repeat  
+- **TR_END** - End position of the closest tandem repeat
 - **TR_SEQ** - Sequence of the tandem repeat unit
 - **TR_LENGTH** - Total length of the tandem repeat region
 - **TR_SEQ_UNIT_LENGTH** - Length of the tandem repeat unit
@@ -38,8 +38,10 @@ The script transforms a somatic featuremap VCF through multiple stages:
 - **Filter by filter tags** - Applies `-f {filter_tags}` filter using `vcf_utils.view_vcf()`
   - Line 388: `filter_string = f"-f {filter_tags}" if filter_tags else ""`
   - Line 396-397: `vcf_utils.view_vcf()` with filter_string
-  
-- **Filter by genomic region** - Applies `-r {genomic_region}` interval filter
+  - Dror addes the flags and we need to filter by them with bcftool view (-f PASS)
+
+- **Filter by genomic region** - split to intervals (already done in the pipeline).
+Applies `-r {genomic_region}` interval filter
   - Line 389: `interval_string = f"-r {genomic_region}" if genomic_region else ""`
   - Line 396-397: `vcf_utils.view_vcf()` with interval_string
 
@@ -47,6 +49,7 @@ The script transforms a somatic featuremap VCF through multiple stages:
   - Line 399: `vcf_utils.index_vcf(filtered_featuremap)`
 
 **Reference:** Lines 387-399
+
 
 ---
 
@@ -96,16 +99,16 @@ The script transforms a somatic featuremap VCF through multiple stages:
 - **Location:** Line 184 (called for both `t_` and `n_` prefixes)
 - **Function:** `process_sample_columns()` (lines 63-161)
 
-#### 4.1.1 Alternative Reads Extraction
+#### 4.1.1 Alternative Reads Extraction - DROR??
 - **Action:** Extracts alternative read count from AD (Allele Depth) field
 - **Location:** Line 137
 - **Code:** `df_variants[f"{prefix}alt_reads"] = [tup[1] for tup in df_variants[f"{prefix}ad"]]`
 - **Output Field:** `{prefix}alt_reads` (e.g., `t_alt_reads`, `n_alt_reads`)
 
-#### 4.1.2 Pass Alternative Reads Calculation
+#### 4.1.2 Pass Alternative Reads Calculation - DROR??
 - **Action:** Sums filtered reads from FILT field
 - **Location:** Lines 139-141
-- **Code:** 
+- **Code:**
   ```python
   df_variants[f"{prefix}pass_alt_reads"] = df_variants[f"{prefix}{FeatureMapFields.FILT.value.lower()}"].apply(
       lambda x: sum(x) if x is not None and len(x) > 0 and None not in x else float("nan")
@@ -113,7 +116,7 @@ The script transforms a somatic featuremap VCF through multiple stages:
   ```
 - **Output Field:** `{prefix}pass_alt_reads`
 
-#### 4.1.3 Quality Score Aggregations
+#### 4.1.3 Quality Score Aggregations - DROR??
 - **Action:** Calculates min, max, and mean for MQUAL, SNVQ, and MAPQ fields
 - **Location:** Lines 143-145 (calls `add_agg_features()`, lines 84-94)
 - **Aggregated Fields:**
@@ -122,7 +125,7 @@ The script transforms a somatic featuremap VCF through multiple stages:
   - `{prefix}mapq_min`, `{prefix}mapq_max`, `{prefix}mapq_mean`
 - **Reference:** Lines 84-94 (add_agg_features function)
 
-#### 4.1.4 Duplicate Read Counting
+#### 4.1.4 Duplicate Read Counting - DROR??
 - **Action:** Counts duplicate and non-duplicate reads from DUP field
 - **Location:** Line 148 (calls `parse_is_duplicate()`, lines 96-105)
 - **Output Fields:**
@@ -130,7 +133,7 @@ The script transforms a somatic featuremap VCF through multiple stages:
   - `{prefix}count_non_duplicate` - Count of non-duplicate reads (where value == 0)
 - **Reference:** Lines 96-105
 
-#### 4.1.5 Padding Reference Counts Expansion
+#### 4.1.5 Padding Reference Counts Expansion - DROR??
 - **Action:** Expands `ref_counts_pm_2` and `nonref_counts_pm_2` arrays into individual columns
 - **Location:** Lines 149-153 (calls `parse_padding_ref_counts()`, lines 107-133)
 - **Output Fields:**
@@ -138,7 +141,7 @@ The script transforms a somatic featuremap VCF through multiple stages:
   - `{prefix}nonref0`, `{prefix}nonref1`, `{prefix}nonref2`, ... (one per padding position)
 - **Reference:** Lines 107-133
 
-#### 4.1.6 Forward/Reverse Strand Counting
+#### 4.1.6 Forward/Reverse Strand Counting - DROR??
 - **Action:** Counts forward (0) and reverse (1) strand reads from REV field
 - **Location:** Lines 155-159
 - **Code:**
@@ -151,7 +154,7 @@ The script transforms a somatic featuremap VCF through multiple stages:
   ```
 - **Output Fields:** `{prefix}forward_count`, `{prefix}reverse_count`
 
-### 4.2 Allele Extraction
+### 4.2 Allele Extraction - DROR??
 - **Action:** Extracts reference and alternative alleles from `t_alleles` tuple
 - **Location:** Lines 185-186
 - **Code:**
@@ -161,7 +164,7 @@ The script transforms a somatic featuremap VCF through multiple stages:
   ```
 - **Output Fields:** `ref_allele`, `alt_allele`
 
-### 4.3 Normal Depth Calculation
+### 4.3 Normal Depth Calculation - DROR??
 - **Action:** Fills missing `n_dp` values with sum of `n_ref2` and `n_nonref2`
 - **Location:** Line 187
 - **Code:** `df_variants["n_dp"] = df_variants["n_dp"].fillna(df_variants["n_ref2"] + df_variants["n_nonref2"])`
@@ -189,6 +192,8 @@ The script transforms a somatic featuremap VCF through multiple stages:
 
 **Reference:** Lines 411-415
 
+Running `xgb_clf_es.get_booster().feature_names` will give the column nemas needed for the model (what columns to load from the df)
+
 ---
 
 ## 6. Parquet File Export
@@ -209,6 +214,7 @@ The script transforms a somatic featuremap VCF through multiple stages:
 ---
 
 ## 7. VCF Header Modifications
+Not needed if DROR is adding this information (he will add it to the header as well)
 
 **Location:** `add_fields_to_header()` function, lines 192-212
 
@@ -237,7 +243,7 @@ All fields defined in `added_info_features` dictionary (lines 55-58):
 **Location:** Lines 209-212
 
 ### Optional XGB_PROBA INFO Field:
-- **XGB_PROBA** - XGBoost model predicted probability (Float)
+- **XGB_PROBA** - XGBoost model predicted probability (Float) - THE ONLY FILED HEDAER TO ADD!
 - **Location:** Lines 425-426, 439-440 (conditional on xgb_model_file)
 
 **Reference:** Lines 192-212, 424, 425-426, 438-440
@@ -247,6 +253,7 @@ All fields defined in `added_info_features` dictionary (lines 55-58):
 ## 8. VCF Record Writing with New Fields
 
 **Location:** `process_vcf_records_serially()` function, lines 215-286
+------ use the index (from step 3.3) to make sure df record and vcf record are aligned.
 
 ### Transformations:
 
@@ -268,12 +275,12 @@ All fields defined in `added_info_features` dictionary (lines 55-58):
   for key in added_format_features:
       tumor_value = getattr(current_df_record, f"t_{key.lower()}")
       normal_value = getattr(current_df_record, f"n_{key.lower()}")
-      
+
       if pd.notna(tumor_value):
           vcf_row.samples[0][key.upper()] = tumor_value
       else:
           vcf_row.samples[0][key.upper()] = None
-      
+
       if pd.notna(normal_value):
           vcf_row.samples[1][key.upper()] = normal_value
       else:
@@ -331,10 +338,10 @@ All fields defined in `added_info_features` dictionary (lines 55-58):
 
 ### INFO Fields Added:
 1. TR_START, TR_END, TR_SEQ, TR_LENGTH, TR_SEQ_UNIT_LENGTH, TR_DISTANCE (from tandem repeat integration)
-2. REF_ALLELE, ALT_ALLELE (extracted from alleles)
+2. REF_ALLELE, ALT_ALLELE (extracted from alleles) - DROR??
 3. XGB_PROBA (optional, from XGBoost inference)
 
-### FORMAT Fields Added:
+### FORMAT Fields Added: - DROR??
 1. ALT_READS (extracted from AD)
 2. PASS_ALT_READS (summed from FILT)
 3. MQUAL_MEAN, MQUAL_MAX, MQUAL_MIN (aggregated from MQUAL)
@@ -353,5 +360,3 @@ All fields defined in `added_info_features` dictionary (lines 55-58):
 - Padding counts expanded into individual columns
 - Quality scores aggregated (min/max/mean)
 - Normal depth calculated from ref/nonref counts
-
-
