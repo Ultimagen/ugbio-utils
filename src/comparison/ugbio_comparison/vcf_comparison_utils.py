@@ -258,7 +258,7 @@ class VcfComparisonUtils:
 
         # Step1 - bcftools norm
 
-        self.__execute(f"bcftools norm -f {ref} -m+any -o {tempdir}/step1.vcf.gz -O z {input_vcf}")
+        self.__execute(f"bcftools norm -c s -f {ref} -m+any -o {tempdir}/step1.vcf.gz -O z {input_vcf}")
         self.vu.index_vcf(f"{tempdir}/step1.vcf.gz")
         self.__execute(
             f"bcftools annotate -a {input_vcf} -c CHROM,POS,CALL,BASE -Oz \
