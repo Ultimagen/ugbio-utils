@@ -1,5 +1,7 @@
 # Set of classes for working with pileup in a flow space.
 # Allows to fetch the flow probabilities for each hompolymer in the pileup.
+from array import array
+
 import numpy as np
 import pysam
 import ugbio_core.flow_format.flow_based_read as fbr
@@ -164,7 +166,9 @@ def get_hmer_qualities_from_pileup_element(
 
     hmer_probs = np.zeros(max_hmer + 1)
     hmer_length = qend - qstart
-
+    key = fbr.generate_key_from_sequence(str(pe.alignment.query_sequence), "TGCA")
+    cumsum_key = np.cumsum(key)
+    cycle = np.searchsorted(cumsum_key, pe.query_position_or_next)
     # smear probabilities
     if qstart == 0 or qend == len(str(pe.alignment.query_sequence)):
         hmer_probs[:] = 1.0
@@ -175,7 +179,7 @@ def get_hmer_qualities_from_pileup_element(
         qual = query_qualities[qstart:qend]
         probs = phred.unphred(np.asarray(qual))
         tp_tag = pe.alignment.get_tag("tp")
-        if not isinstance(tp_tag, list | np.ndarray):
+        if not isinstance(tp_tag, list | np.ndarray | array):
             raise ValueError("tp tag must be a list or array")
         tps = tp_tag[qstart:qend]
         for tpval, p in zip(tps, probs, strict=False):
@@ -185,4 +189,4 @@ def get_hmer_qualities_from_pileup_element(
         hmer_probs[hmer_length] = max(1 - np.sum(hmer_probs), min_call_prob)
 
     hmer_probs /= np.sum(hmer_probs)
-    return hnuc, hmer_probs
+    return hnuc, hmer_probs, not pe.alignment.is_reverse, cycle
