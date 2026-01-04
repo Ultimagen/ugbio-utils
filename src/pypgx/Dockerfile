@@ -10,7 +10,7 @@ RUN apt-get update && \
 # Install pypgx
 RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
     cd /opt/pypgx && \
-    git switch ${PYPGX_BRANCH} && \
+    git checkout ${PYPGX_BRANCH} && \
     pip install . && \
     rm -rf /opt/pypgx
 
