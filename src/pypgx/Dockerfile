@@ -1,7 +1,7 @@
 FROM python:3.12-slim
 
-ARG PYPGX_BRANCH=0.26.0-dev
-ARG PYPGX_BUNDLE_BRANCH=0.25.0
+ARG PYPGX_BRANCH=0.26.0
+ARG PYPGX_BUNDLE_BRANCH=0.26.0
 
 # Install dependencies and create venv
 RUN apt-get update && \
