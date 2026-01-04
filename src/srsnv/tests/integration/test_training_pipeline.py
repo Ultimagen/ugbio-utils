@@ -18,13 +18,11 @@ def test_end_to_end_training(tmp_path: Path) -> None:
     resources = Path(__file__).parent.parent / "resources"
     pos_file = resources / "416119_L7402.test.random_sample.featuremap.filtered.sample.parquet"
     neg_file = resources / "416119_L7402.test.raw.featuremap.filtered.sample.parquet"
-    pos_stats = resources / "416119_L7402.test.random_sample.featuremap.stats_positive.json"
-    neg_stats = resources / "416119_L7402.test.random_sample.featuremap.stats_negative.json"
-    raw_stats = resources / "416119_L7402.test.raw.featuremap.stats.json"
+    stats_file = resources / "416119_L7402.test.unified_stats.json"
 
     assert pos_file.is_file(), "positive parquet missing"
     assert neg_file.is_file(), "negative parquet missing"
-    assert raw_stats.is_file(), "raw featuremap stats missing"
+    assert stats_file.is_file(), "unified stats file missing"
 
     # ---------------------------------------------------------------- regions
     # Use the real hg38 calling regions shipped with the repository
@@ -38,10 +36,7 @@ def test_end_to_end_training(tmp_path: Path) -> None:
     args = argparse.Namespace(
         positive=str(pos_file),
         negative=str(neg_file),
-        stats_positive=str(pos_stats),
-        stats_negative=str(neg_stats),
-        stats_featuremap=str(raw_stats),
-        aligned_bases=134329535408,
+        stats_file=str(stats_file),
         mean_coverage=30.0,
         training_regions=str(interval_list),
         k_folds=2,

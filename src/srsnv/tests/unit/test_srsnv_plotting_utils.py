@@ -227,6 +227,10 @@ def real_models_calc_run_info(test_resources_calc_run_info):
 
         absolute_model_path = resources_dir / model_filename
         model.load_model(str(absolute_model_path))
+
+        # Manually set the required attributes that sklearn expects for XGBoost models
+        model.n_classes_ = 2  # Binary classification
+
         models.append(model)
 
     return models
