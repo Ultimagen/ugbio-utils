@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import os
 import random
-import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
+import pyfaidx
 import pysam
 from ugbio_core.logger import logger
 
@@ -117,31 +117,6 @@ class JAlignConfig:
         return cmd
 
 
-def count_md_mismatches(read: pysam.AlignedSegment) -> int | None:
-    """Count the number of mismatches using the MD tag.
-
-    Indels are not counted, only substitutions.
-
-    Parameters
-    ----------
-    read : pysam.AlignedSegment
-        Aligned read from BAM/CRAM file
-
-    Returns
-    -------
-    int or None
-        Number of mismatches found, or None if MD tag is missing
-    """
-    try:
-        md_tag = read.get_tag("MD")
-    except KeyError:
-        return None
-
-    # Find all letters in the MD string, which represent mismatches
-    mismatches = re.findall(r"[A-Z]", str(md_tag))
-    return len(mismatches)
-
-
 def count_nm_mismatches(read: pysam.AlignedSegment) -> int | None:
     """Count the number of mismatches using the NM tag.
 
@@ -167,81 +142,6 @@ def count_nm_mismatches(read: pysam.AlignedSegment) -> int | None:
         return None
 
     return nm_tag
-
-
-def count_softclip_mismatches(read: pysam.AlignedSegment, reference: pysam.FastaFile) -> int:
-    """Count mismatches in soft-clipped regions of a read.
-
-    Examines both left and right soft-clipped portions.
-
-    Parameters
-    ----------
-    read : pysam.AlignedSegment
-        Aligned read from BAM/CRAM file
-    reference : pysam.FastaFile
-        Reference genome FASTA file
-
-    Returns
-    -------
-    int
-        Number of mismatches in soft-clipped regions
-    """
-    if read.is_unmapped:
-        return 0
-
-    seq = read.query_sequence
-    if not seq:
-        return 0
-
-    mismatches = 0
-    ref_name = read.reference_name
-    start = read.reference_start
-    end = read.reference_end
-
-    cigartuples = read.cigartuples
-    if not cigartuples or not start or not end:
-        return 0
-
-    soft_clip = CIGAR_SOFT_CLIP
-
-    # Left soft clip
-    if cigartuples[0][0] == soft_clip:
-        clip_len = cigartuples[0][1]
-        clipped_bases = seq[:clip_len]
-        ref_start = max(0, start - clip_len)
-        ref_bases = reference.fetch(ref_name, ref_start, start)
-        for rb, qb in zip(ref_bases, clipped_bases, strict=False):
-            if rb.upper() != qb.upper():
-                mismatches += 1
-
-    # Right soft clip
-    if cigartuples[-1][0] == soft_clip:
-        clip_len = cigartuples[-1][1]
-        clipped_bases = seq[-clip_len:]
-        ref_bases = reference.fetch(ref_name, end, end + clip_len)
-        for rb, qb in zip(ref_bases, clipped_bases, strict=False):
-            if rb.upper() != qb.upper():
-                mismatches += 1
-
-    return mismatches
-
-
-def is_softclipped(read: pysam.AlignedSegment) -> bool:
-    """Check if read has any soft clipping.
-
-    Parameters
-    ----------
-    read : pysam.AlignedSegment
-        Aligned read from BAM/CRAM file
-
-    Returns
-    -------
-    bool
-        True if read has soft clipping on either end
-    """
-    if not read.cigartuples:
-        return False
-    return read.cigartuples[0][0] == pysam.CSOFT_CLIP or read.cigartuples[-1][0] == pysam.CSOFT_CLIP
 
 
 def is_substantial_softclipped(read: pysam.AlignedSegment, threshold: int) -> bool:
@@ -283,10 +183,6 @@ def accept_read(read: pysam.AlignedSegment, min_mismatches: int) -> bool:
     bool
         True if read should be accepted for analysis
     """
-    if read.is_duplicate:
-        return False
-    if min_mismatches <= 0:
-        return True
     nm = count_nm_mismatches(read)
     if nm is None:
         nm = 0
@@ -365,8 +261,8 @@ def _fetch_reads_at_breakpoints(
 
         for read in reads_file.fetch(
             chrom,
-            max(0, loc - config.fetch_read_padding),
-            loc + config.fetch_read_padding,
+            rmin,
+            rmax,
         ):
             if read.is_duplicate:
                 continue
@@ -394,7 +290,7 @@ def _fetch_reads_at_breakpoints(
 def _extract_references(
     chrom: str,
     refs_extents: list[list[int]],
-    fasta_file: pysam.FastaFile,
+    fasta_file: pyfaidx.Fasta,
 ) -> list[tuple[int, str]]:
     """Extract reference sequences for breakpoint regions.
 
@@ -404,7 +300,7 @@ def _extract_references(
         Chromosome name
     refs_extents : list of lists
         Extent coordinates [[start1, end1], [start2, end2]]
-    fasta_file : pysam.FastaFile
+    fasta_file : pyfaidx.Fasta
         Opened reference FASTA file
 
     Returns
@@ -414,7 +310,7 @@ def _extract_references(
     """
     refs = []
     for rmin, rmax in refs_extents:
-        ref_seq = fasta_file.fetch(chrom, rmin, rmax)
+        ref_seq = fasta_file[chrom][rmin:rmax].seq.upper()  # type: ignore
         refs.append((rmin, ref_seq))
     return refs
 
@@ -469,7 +365,7 @@ def _write_alignment_input(
 
     with open(input_file, "w") as f:
         for read in reads.values():
-            if subsample_ratio < 1.0 and random.random() > subsample_ratio:  # noqa: S311
+            if random.random() > subsample_ratio:  # noqa: S311
                 continue
 
             reads_in_order.append(read)
@@ -522,6 +418,9 @@ def _parse_alignment_results(
     lines = alignment_output.split("\n")
 
     # Skip header line
+    if log_file:
+        log_file.write(lines[0] + "\n")
+
     for alignment, read in zip(lines[1:], reads_in_order, strict=False):
         if log_file:
             log_file.write(alignment + "\n")
@@ -614,11 +513,11 @@ def process_cnv(
     start: int,
     end: int,
     reads_file: pysam.AlignmentFile,
-    fasta_file: pysam.FastaFile,
+    fasta_file: pyfaidx.Fasta,
     config: JAlignConfig,
     temp_dir: Path,
     log_file: TextIO | None = None,
-) -> tuple[int, int, int, int]:
+) -> tuple[tuple[int, int, int, int], list]:
     """Process a single CNV region with jump alignment.
 
     Analyzes reads at CNV breakpoints to identify supporting evidence
@@ -634,7 +533,7 @@ def process_cnv(
         CNV end position (0-based)
     reads_file : pysam.AlignmentFile
         Opened alignment file (BAM/CRAM)
-    fasta_file : pysam.FastaFile
+    fasta_file : pyfaidx.Fasta
         Opened reference FASTA file
     config : JAlignConfig
         Configuration parameters for alignment
@@ -645,7 +544,7 @@ def process_cnv(
 
     Returns
     -------
-    tuple[int, int, int, int]
+    tuple[tuple[int, int, int, int], list]
         Counts of supporting alignments:
         (jump_better, djump_better, jump_much_better, djump_much_better)
     """
@@ -659,7 +558,7 @@ def process_cnv(
 
     if not reads:
         logger.debug(f"No reads found for {chrom}:{start}-{end}")
-        return 0, 0, 0, 0
+        return (0, 0, 0, 0), []
 
     # Extract reference sequences
     refs = _extract_references(chrom, refs_extents, fasta_file)
@@ -686,4 +585,4 @@ def process_cnv(
         log_file.write(f"<<< alignments: {chrom}:{start}-{end}\n")
 
     # Count supporting alignments
-    return _count_supporting_alignments(realignments, config)
+    return _count_supporting_alignments(realignments, config), realignments
