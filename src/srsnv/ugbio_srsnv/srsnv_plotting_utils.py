@@ -1502,7 +1502,11 @@ class SRSNVReport:
         if not isinstance(models, list):
             raise TypeError(f"models should be a list of models, got {type(models)=}")
         for k, model in enumerate(models):
-            if not sklearn.base.is_classifier(model):
+            # Check if it's a classifier (either sklearn or xgboost)
+            is_valid_classifier = sklearn.base.is_classifier(model) or (
+                hasattr(model, "predict_proba") and hasattr(model, "__class__") and "XGB" in model.__class__.__name__
+            )
+            if not is_valid_classifier:
                 raise ValueError(f"model {model} (fold {k}) is not a classifier, please provide a classifier model")
         if not isinstance(data_df, pd.DataFrame):
             raise TypeError("df is not a DataFrame, please provide a DataFrame")

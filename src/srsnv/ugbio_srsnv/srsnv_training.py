@@ -36,7 +36,6 @@ import xgboost as xgb
 from scipy.stats import gaussian_kde
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
-from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
 
 from ugbio_srsnv.srsnv_utils import (
     EPS,
@@ -366,14 +365,118 @@ def _probability_recalibration(prob_orig: np.ndarray, y_all: np.ndarray) -> np.n
     return prob_orig.copy()
 
 
+def _convert_unified_stats_to_legacy_format(unified_stats: dict, section: str, filter_key: str) -> dict:  # noqa: C901
+    """
+    Convert unified stats format to legacy format expected by existing code.
+
+    Args:
+        unified_stats: The unified stats dictionary
+        section: Section name ('filtering_stats_full_output' or 'filtering_stats_random_sample')
+        filter_key: Filter key ('filters' or 'f2_filters')
+
+    Returns:
+        Dictionary in legacy format with 'filters' list
+    """
+    if section not in unified_stats:
+        raise ValueError(f"Section '{section}' not found in unified stats")
+
+    section_data = unified_stats[section]
+    if filter_key not in section_data:
+        raise ValueError(f"Filter key '{filter_key}' not found in section '{section}'")
+
+    filters_dict = section_data[filter_key]
+
+    # Convert from dict format to list format expected by legacy code
+    filters_list = []
+
+    # Always add raw filter first
+    if "raw" in filters_dict:
+        raw_filter = {"name": "raw", "type": "raw"}
+        if "funnel" in filters_dict["raw"]:
+            raw_filter["rows"] = filters_dict["raw"]["funnel"]
+        elif "rows" in filters_dict["raw"]:
+            raw_filter["rows"] = filters_dict["raw"]["rows"]
+        filters_list.append(raw_filter)
+
+    # Add other filters, preserving their metadata
+    for filter_name, filter_data in filters_dict.items():
+        if filter_name == "raw":
+            continue  # Already processed
+
+        filter_entry = {"name": filter_name}
+
+        # Copy metadata fields
+        for field in ["type", "field", "op", "value"]:
+            if field in filter_data:
+                filter_entry[field] = filter_data[field]
+
+        # Use 'funnel' as 'rows' for legacy compatibility
+        if "funnel" in filter_data:
+            filter_entry["rows"] = filter_data["funnel"]
+        elif "rows" in filter_data:
+            filter_entry["rows"] = filter_data["rows"]
+
+        filters_list.append(filter_entry)
+
+    return {"filters": filters_list}
+
+
+def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, dict, dict]:
+    """
+    Extract positive, negative, and raw stats from unified stats file.
+
+    The unified stats file should contain a single section with:
+    - f2_filters: True-positive (TP) data
+    - filters: False-positive (FP) data (raw featuremap stats)
+
+    Args:
+        unified_stats_path: Path to the unified stats JSON file
+
+    Returns:
+        Tuple of (positive_stats, negative_stats, raw_stats) in legacy format
+    """
+    # Read the unified stats file directly
+    with open(unified_stats_path, encoding="utf-8") as f:
+        unified_stats = json.load(f)
+
+    # Validate basic structure
+    if "filtering_stats_random_sample" not in unified_stats:
+        raise ValueError("Unified stats file missing 'filtering_stats_random_sample' section")
+
+    random_sample_section = unified_stats["filtering_stats_random_sample"]
+
+    # Check for f2_filters (positive/TP) and filters (negative/FP)
+    if "f2_filters" not in random_sample_section:
+        raise ValueError("Unified stats file missing 'f2_filters' section for positive (TP) data")
+
+    if "filters" not in random_sample_section:
+        raise ValueError("Unified stats file missing 'filters' section for negative (FP) data")
+
+    logger.info("Using f2_filters section as positive (true-positive) data")
+    logger.info("Using filters section as negative (false-positive) data")
+
+    # Extract positive stats (f2_filters = TP)
+    positive_stats = _convert_unified_stats_to_legacy_format(
+        unified_stats, "filtering_stats_random_sample", "f2_filters"
+    )
+
+    # Extract negative stats (filters = FP, raw featuremap)
+    negative_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
+
+    # Raw stats use the same filters section (FP data represents the larger dataset)
+    raw_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
+
+    return positive_stats, negative_stats, raw_stats
+
+
 # ───────────────────────── core logic ─────────────────────────────────────
 class SRSNVTrainer:
-    def __init__(self, args: argparse.Namespace):  # noqa: PLR0915
+    def __init__(self, args: argparse.Namespace):  # noqa: PLR0915, C901
         logger.debug("Initializing SRSNVTrainer")
         self.args = args
         self.out_dir = Path(args.output)
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.max_qual = self.args.max_qual if self.args.max_qual is not None else MAX_PHRED
+        self.max_qual = self.args.max_qual if self.args.max_qual is not None else MAX_PHRED  # noqa: C901
         self.eps = 10 ** (-self.max_qual / 10)  # small value to avoid division by zero
 
         # RNG
@@ -382,24 +485,28 @@ class SRSNVTrainer:
         self.rng = np.random.default_rng(self.seed)
 
         # ─────────── read filtering-stats JSONs & compute priors ───────────
-        self.pos_stats = read_filtering_stats_json(args.stats_positive)
-        self.neg_stats = read_filtering_stats_json(args.stats_negative)
-        self.raw_stats = read_filtering_stats_json(args.stats_featuremap)
+        self.pos_stats, self.neg_stats, self.raw_stats = _extract_stats_from_unified(args.stats_file)
         self.mean_coverage = args.mean_coverage
         if self.mean_coverage is None:
-            raise ValueError("--mean-coverage is required if not present in stats-featuremap JSON")
+            raise ValueError("--mean-coverage is required if not present in stats-file JSON")
         self.n_bases_in_region = count_bases_in_interval_list(args.training_regions)
 
         # sanity-check: identical “quality/region” filters in the two random-sample stats files
         def _quality_region_filters(st):
-            return [f for f in st["filters"] if f.get("type") in {"quality", "region"}]
+            filters = []
+            for f in st["filters"]:
+                if f.get("type") in {"quality", "region"}:
+                    # Create filter definition without row counts for comparison
+                    filter_def = {k: v for k, v in f.items() if k != "rows"}
+                    filters.append(filter_def)
+            return filters
 
         pos_qr = _quality_region_filters(self.pos_stats)
         neg_qr = _quality_region_filters(self.neg_stats)
         if pos_qr != neg_qr:
             raise ValueError(
                 "Mismatch between quality/region filters of "
-                "--stats-positive and --stats-negative:\n"
+                "positive (f2_filters) and negative (filters) sections in stats-file:\n"
                 f" positive={pos_qr}\n negative={neg_qr}"
             )
 
@@ -1008,19 +1115,10 @@ def _cli() -> argparse.Namespace:
         help="Maximum Phred score for model quality",
     )
     ap.add_argument(
-        "--stats-positive",
+        "--stats-file",
         required=True,
-        help="JSON file with filtering stats for positive random-sample set",
-    )
-    ap.add_argument(
-        "--stats-negative",
-        required=True,
-        help="JSON file with filtering stats for negative random-sample set",
-    )
-    ap.add_argument(
-        "--stats-featuremap",
-        required=True,
-        help="JSON file with filtering stats for raw featuremap",
+        help="JSON file with unified filtering stats containing positive (f2_filters), "
+        "negative (filters), and raw featuremap data",
     )
     ap.add_argument(
         "--mean-coverage",
