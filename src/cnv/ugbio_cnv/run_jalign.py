@@ -5,8 +5,6 @@ This script processes multiple CNV regions from a BED file, running jump
 alignment on each region and writing results to output files.
 """
 
-from __future__ import annotations
-
 import argparse
 import logging
 import os
@@ -14,6 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pyfaidx
 import pysam
 from ugbio_cnv.jalign import JAlignConfig, process_cnv
 from ugbio_core.logger import logger
@@ -44,7 +43,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "cnv_bed",
         type=str,
-        help="BED file with CNV regions (chr, start, end)",
+        help="BED file with CNV candidates (chr, start, end)",
     )
     parser.add_argument(
         "ref_fasta",
@@ -92,13 +91,13 @@ def get_parser() -> argparse.ArgumentParser:
     config_group.add_argument(
         "--min-mismatches",
         type=int,
-        default=5,
+        default=1,
         help="Minimum mismatches required to accept a read",
     )
     config_group.add_argument(
         "--softclip-threshold",
         type=int,
-        default=30,
+        default=10,
         help="Minimum soft-clip length to consider substantial",
     )
     config_group.add_argument(
@@ -129,13 +128,15 @@ def get_parser() -> argparse.ArgumentParser:
         "--max-score-fraction",
         type=float,
         default=0.9,
-        help="Fraction of max score for minimal threshold",
+        help="Fraction of theoretical maximal score (all matches) that the jump alignment needs "
+        "to achieve to be considered support",
     )
     config_group.add_argument(
         "--stringent-max-score-fraction",
         type=float,
         default=0.95,
-        help="Fraction of max score for stringent threshold",
+        help="Fraction of theoretical maximal score (all matches) that the jump alignment needs "
+        "to achieve to be considered strong support",
     )
     config_group.add_argument(
         "--tool-path",
@@ -261,8 +262,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
         # Open input files
         logger.info("Opening input files...")
         reads_file = pysam.AlignmentFile(args.input_cram, "rb", reference_filename=args.ref_fasta)
-        fasta_file = pysam.FastaFile(args.ref_fasta)
-        chrom_sizes = dict(zip(fasta_file.references, fasta_file.lengths, strict=True))
+        reference = pyfaidx.Fasta(args.ref_fasta)
 
         # Set up output files
         output_bed = args.output_prefix + ".bed"
@@ -275,44 +275,34 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
         cnv_count = 0
         with open(output_bed, "w") as out_bed, open(output_log, "w") as flog:
             with open(args.cnv_bed) as f:
-                for line_num, line in enumerate(f, 1):
+                for line in f:
                     # Skip comments
                     if line.startswith("#"):
                         out_bed.write(line)
                         continue
 
                     # Parse BED line
-                    try:
-                        bed_line = line.strip().split()
-                        bed_chrom, bed_start, bed_end = bed_line[:3]
-                        bed_start = int(bed_start)
-                        bed_end = int(bed_end)
-                    except (ValueError, IndexError) as e:
-                        logger.warning(f"Skipping malformed line {line_num}: {e}")
-                        continue
-
-                    # Check if end position is valid
-                    if bed_end + config.fetch_read_padding > chrom_sizes.get(bed_chrom, float("inf")):
-                        logger.warning(
-                            f"CNV {bed_chrom}:{bed_start}-{bed_end} extends beyond chromosome end, writing zeros"
-                        )
-                        outline = f"{line.rstrip()}\t0\t0\t0\t0\n"
-                        out_bed.write(outline)
-                        continue
+                    bed_line = line.strip().split()
+                    bed_chrom, bed_start, bed_end = bed_line[:3]
+                    bed_start = int(bed_start)
+                    bed_end = int(bed_end)
 
                     # Process this CNV region
                     try:
                         (
-                            jump_better,
-                            djump_better,
-                            jump_much_better,
-                            djump_much_better,
+                            (
+                                jump_better,
+                                djump_better,
+                                jump_much_better,
+                                djump_much_better,
+                            ),
+                            _,
                         ) = process_cnv(
                             bed_chrom,
                             bed_start,
                             bed_end,
                             reads_file,
-                            fasta_file,
+                            reference,
                             config,
                             temp_dir,
                             flog,
@@ -338,7 +328,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
 
         # Close files
         reads_file.close()
-        fasta_file.close()
+        reference.close()
 
         logger.info(f"Successfully processed {cnv_count} CNV regions")
         return 0
