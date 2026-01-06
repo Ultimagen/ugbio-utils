@@ -9,13 +9,137 @@ import argparse
 import logging
 import os
 import sys
-import tempfile
+import time
 from pathlib import Path
 
+import pandas as pd
 import pyfaidx
 import pysam
 from ugbio_cnv.jalign import JAlignConfig, process_cnv
 from ugbio_core.logger import logger
+
+
+def create_bam_header(
+    reads_file: pysam.AlignmentFile,
+) -> pysam.AlignmentHeader:
+    """Create BAM header with required read groups for jump alignment.
+
+    Parameters
+    ----------
+    reads_file : pysam.AlignmentFile
+        Input alignment file to copy header from
+
+    Returns
+    -------
+    pysam.AlignmentHeader
+        BAM header with REF1, REF2, DUP, and DEL read groups
+    """
+    header_dict = reads_file.header.to_dict()
+
+    # Ensure required read groups exist
+    if "RG" not in header_dict:
+        header_dict["RG"] = []
+
+    existing_rg_ids = {rg["ID"] for rg in header_dict.get("RG", [])}
+    for rgid in ["REF1", "REF2", "DUP", "DEL"]:
+        if rgid not in existing_rg_ids:
+            header_dict["RG"].append(
+                {
+                    "ID": rgid,
+                    "SM": "SAMPLE",
+                    "PL": "ULTIMA",
+                }
+            )
+
+    return pysam.AlignmentHeader.from_dict(header_dict)
+
+
+def process_single_cnv(
+    rec_data: tuple,
+    input_cram: str,
+    ref_fasta: str,
+    config: JAlignConfig,
+    temp_dir: Path,
+) -> tuple:
+    """Process a single CNV region.
+
+    Parameters
+    ----------
+    rec_data : tuple
+        Tuple of (index, chrom, start, end) for the CNV
+    input_cram : str
+        Path to input CRAM/BAM file
+    ref_fasta : str
+        Path to reference FASTA file
+    config : JAlignConfig
+        Configuration for jump alignment
+    temp_dir : Path
+        Directory for temporary files
+
+    Returns
+    -------
+    tuple
+        (index, chrom, start, end, fwd_better, rev_better, fwd_strong_better,
+         rev_strong_better, alignment_results, realigned_reads, cycle_time, success, error_msg)
+    """
+    idx, chrom, start, end = rec_data
+
+    try:
+        # Open files in worker (each process needs its own file handles)
+        reads_file = pysam.AlignmentFile(input_cram, "rb", reference_filename=ref_fasta)
+        reference = pyfaidx.Fasta(ref_fasta)
+
+        # Create BAM header in worker to avoid pickling issues
+        bam_header = create_bam_header(reads_file)
+
+        cycle_start_time = time.time()
+
+        (
+            (
+                fwd_better,
+                rev_better,
+                fwd_strong_better,
+                rev_strong_better,
+            ),
+            alignment_results,
+            realigned_reads,
+            _,
+        ) = process_cnv(
+            chrom,
+            start,
+            end,
+            reads_file,
+            reference,
+            config,
+            temp_dir,
+            None,  # No log file in parallel mode
+            bam_header,
+        )
+
+        cycle_time = time.time() - cycle_start_time
+
+        # Close files
+        reads_file.close()
+        reference.close()
+
+        return (
+            idx,
+            chrom,
+            start,
+            end,
+            fwd_better,
+            rev_better,
+            fwd_strong_better,
+            rev_strong_better,
+            alignment_results,
+            realigned_reads,
+            cycle_time,
+            True,
+            None,
+        )
+
+    except Exception as e:
+        return (idx, chrom, start, end, 0, 0, 0, 0, None, [], 0.0, False, str(e))
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -41,9 +165,9 @@ def get_parser() -> argparse.ArgumentParser:
         help="Input CRAM or BAM file with aligned reads",
     )
     parser.add_argument(
-        "cnv_bed",
+        "cnv_vcf",
         type=str,
-        help="BED file with CNV candidates (chr, start, end)",
+        help="VCF file with CNV candidates (chr, start, end)",
     )
     parser.add_argument(
         "ref_fasta",
@@ -73,7 +197,7 @@ def get_parser() -> argparse.ArgumentParser:
     config_group.add_argument(
         "--gap-open-score",
         type=int,
-        default=-18,
+        default=-12,
         help="Penalty for opening a gap",
     )
     config_group.add_argument(
@@ -170,37 +294,7 @@ def get_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def validate_inputs(args: argparse.Namespace) -> None:
-    """Validate input files and parameters.
-
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Parsed command-line arguments
-
-    Raises
-    ------
-    FileNotFoundError
-        If required input files do not exist
-    ValueError
-        If parameters are invalid
-    """
-    # Check input files exist
-    for filepath, name in [
-        (args.input_cram, "Input CRAM/BAM"),
-        (args.cnv_bed, "CNV BED"),
-        (args.ref_fasta, "Reference FASTA"),
-    ]:
-        if not Path(filepath).exists():
-            raise FileNotFoundError(f"{name} file not found: {filepath}")
-
-    # Validate output directory exists
-    output_dir = Path(args.output_prefix).parent
-    if output_dir != Path("") and not output_dir.exists():
-        raise FileNotFoundError(f"Output directory does not exist: {output_dir}")
-
-
-def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
+def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901
     """Main entry point for the CLI.
 
     Parameters
@@ -220,9 +314,6 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
     logger.setLevel(getattr(logging, args.verbosity))
 
     try:
-        # Validate inputs
-        validate_inputs(args)
-
         # Create configuration
         config = JAlignConfig(
             match_score=args.match_score,
@@ -255,7 +346,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
             temp_dir = Path(args.temp_dir)
             temp_dir.mkdir(parents=True, exist_ok=True)
         else:
-            temp_dir = Path(tempfile.gettempdir())
+            temp_dir = Path(args.output_prefix).resolve()
 
         logger.info(f"Using temporary directory: {temp_dir}")
 
@@ -263,74 +354,117 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915
         logger.info("Opening input files...")
         reads_file = pysam.AlignmentFile(args.input_cram, "rb", reference_filename=args.ref_fasta)
         reference = pyfaidx.Fasta(args.ref_fasta)
-
+        bam_header = create_bam_header(reads_file)
         # Set up output files
-        output_bed = args.output_prefix + ".bed"
-        output_log = args.output_prefix + ".log"
+        output_vcf = args.output_prefix + ".vcf.gz"
+        realigned_bam = args.output_prefix + ".realigned.bam"
+        logger.info(f"Processing CNV regions from {args.cnv_vcf}")
+        logger.info(f"Writing results to {output_vcf}")
 
-        logger.info(f"Processing CNV regions from {args.cnv_bed}")
-        logger.info(f"Writing results to {output_bed}")
+        # Read all VCF records first
+        logger.info("Reading CNV records...")
+        cnv_records = []
+        with pysam.VariantFile(args.cnv_vcf) as f:
+            vcf_header = f.header
+            vcf_header.info.add(
+                "JALIGN_DUP_SUPPORT", 1, "Integer", "Number of reads supporting the duplication via jump alignment"
+            )
+            vcf_header.info.add(
+                "JALIGN_DEL_SUPPORT", 1, "Integer", "Number of reads supporting the deletion via jump alignment"
+            )
+            vcf_header.info.add(
+                "JALIGN_DUP_SUPPORT_STRONG",
+                1,
+                "Integer",
+                "Number of reads strongly supporting the duplication via jump alignment",
+            )
+            vcf_header.info.add(
+                "JALIGN_DEL_SUPPORT_STRONG",
+                1,
+                "Integer",
+                "Number of reads strongly supporting the deletion via jump alignment",
+            )
 
-        # Process each CNV region
+            for idx, rec in enumerate(f):
+                # Store record data as tuple for parallel processing
+                rec_data = (idx, rec.chrom, rec.start, rec.stop)
+                cnv_records.append((rec, rec_data))
+
+        logger.info(f"Processing {len(cnv_records)} CNV regions...")
+
+        # Process CNVs sequentially
+        processing_results = []
+        for _, rec_data in cnv_records:
+            result = process_single_cnv(
+                rec_data,
+                args.input_cram,
+                args.ref_fasta,
+                config,
+                temp_dir,
+            )
+            processing_results.append(result)
+
+        # Write results
+        logger.info("Writing results...")
         cnv_count = 0
-        with open(output_bed, "w") as out_bed, open(output_log, "w") as flog:
-            with open(args.cnv_bed) as f:
-                for line in f:
-                    # Skip comments
-                    if line.startswith("#"):
-                        out_bed.write(line)
-                        continue
+        failed_count = 0
+        alignment_results_list = []
 
-                    # Parse BED line
-                    bed_line = line.strip().split()
-                    bed_chrom, bed_start, bed_end = bed_line[:3]
-                    bed_start = int(bed_start)
-                    bed_end = int(bed_end)
+        with pysam.VariantFile(output_vcf, "w", header=vcf_header) as out_vcf:
+            with pysam.AlignmentFile(realigned_bam, "w", header=bam_header) as realigned_bam_file:
+                for (rec, _), result in zip(cnv_records, processing_results, strict=False):
+                    (
+                        idx,
+                        chrom,
+                        start,
+                        end,
+                        fwd_better,
+                        rev_better,
+                        fwd_strong_better,
+                        rev_strong_better,
+                        alignment_results,
+                        realigned_reads,
+                        cycle_time,
+                        success,
+                        error_msg,
+                    ) = result
 
-                    # Process this CNV region
-                    try:
-                        (
-                            (
-                                jump_better,
-                                djump_better,
-                                jump_much_better,
-                                djump_much_better,
-                            ),
-                            _,
-                        ) = process_cnv(
-                            bed_chrom,
-                            bed_start,
-                            bed_end,
-                            reads_file,
-                            reference,
-                            config,
-                            temp_dir,
-                            flog,
-                        )
+                    if success:
+                        # Update VCF record
+                        rec.info["JALIGN_DUP_SUPPORT"] = rev_better
+                        rec.info["JALIGN_DEL_SUPPORT"] = fwd_better
+                        rec.info["JALIGN_DUP_SUPPORT_STRONG"] = rev_strong_better
+                        rec.info["JALIGN_DEL_SUPPORT_STRONG"] = fwd_strong_better
 
-                        # Write output line
-                        outline = (
-                            f"{line.rstrip()}\t{jump_better}\t{djump_better}\t{jump_much_better}\t{djump_much_better}\n"
-                        )
-                        out_bed.write(outline)
-                        logger.info(outline.rstrip())
+                        # Write realigned reads
+                        for rc in realigned_reads:
+                            realigned_bam_file.write(rc)
 
+                        out_vcf.write(rec)
                         cnv_count += 1
+                        alignment_results_list.append(alignment_results)
 
-                    except Exception as e:
-                        logger.error(
-                            f"Error processing {bed_chrom}:{bed_start}-{bed_end}: {e}",
-                            exc_info=True,
+                        logger.info(
+                            f"{chrom}:{start}-{end} - DUP:{rev_better}/{rev_strong_better} \
+                            DEL:{fwd_better}/{fwd_strong_better} - "
+                            f"Realigned reads: {len(realigned_reads)} - Time: {cycle_time:.2f}s"
                         )
-                        # Write zeros for failed regions
-                        outline = f"{line.rstrip()}\t0\t0\t0\t0\n"
-                        out_bed.write(outline)
+                    else:
+                        failed_count += 1
+                        logger.error(f"Error processing {chrom}:{start}-{end}: {error_msg}")
 
         # Close files
         reads_file.close()
         reference.close()
 
+        # Save alignment results
+        if alignment_results_list:
+            alignment_results = pd.concat(alignment_results_list)
+            alignment_results.to_csv(args.output_prefix + ".csv", index=False)
+
         logger.info(f"Successfully processed {cnv_count} CNV regions")
+        if failed_count > 0:
+            logger.warning(f"Failed to process {failed_count} CNV regions")
         return 0
 
     except Exception as e:
