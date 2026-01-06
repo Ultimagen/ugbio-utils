@@ -238,13 +238,15 @@ def add_fields_to_header(hdr, added_format_features, added_info_features):
         Dictionary of INFO fields to add with their descriptions and types.
     """
     for field in added_format_features:
-        field_type = added_format_features[field][1]
-        field_description = added_format_features[field][0]
-        hdr.formats.add(field, 1, field_type, field_description)
+        if field not in hdr.formats:
+            field_type = added_format_features[field][1]
+            field_description = added_format_features[field][0]
+            hdr.formats.add(field, 1, field_type, field_description)
     for field in added_info_features:
-        field_type = added_info_features[field][1]
-        field_description = added_info_features[field][0]
-        hdr.info.add(field, 1, field_type, field_description)
+        if field not in hdr.info:
+            field_type = added_info_features[field][1]
+            field_description = added_info_features[field][0]
+            hdr.info.add(field, 1, field_type, field_description)
 
 
 def process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_params):
@@ -457,7 +459,7 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
             with pysam.VariantFile(filtered_featuremap) as vcfin:
                 hdr = vcfin.header
                 add_fields_to_header(hdr, added_format_features, added_info_features)
-                if xgb_model_file is not None:
+                if xgb_model_file is not None and "XGB_PROBA" not in hdr.info:
                     hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
                 with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
                     process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_params)
@@ -471,7 +473,7 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
             with pysam.VariantFile(filtered_featuremap) as vcfin:
                 hdr = vcfin.header
                 add_fields_to_header(hdr, added_format_features, added_info_features)
-                if xgb_model_file is not None:
+                if xgb_model_file is not None and "XGB_PROBA" not in hdr.info:
                     hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
                 with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
                     pass  # Just create the file with header
