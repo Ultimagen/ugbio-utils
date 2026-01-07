@@ -82,7 +82,7 @@ def process_single_cnv(
     -------
     tuple
         (index, chrom, start, end, fwd_better, rev_better, fwd_strong_better,
-         rev_strong_better, alignment_results, realigned_reads, cycle_time, success, error_msg)
+         rev_strong_better, alignment_results, temp_bam_file, cycle_time, success, error_msg)
     """
     idx, chrom, start, end = rec_data
 
@@ -120,10 +120,17 @@ def process_single_cnv(
 
         cycle_time = time.time() - cycle_start_time
 
+        # Write realigned reads to temporary BAM file
+        temp_bam_file = None
+        if realigned_reads:
+            temp_bam_file = temp_dir / f"jalign_realigned_{chrom}_{start}_{end}_{os.getpid()}_{idx}.bam"
+            with pysam.AlignmentFile(str(temp_bam_file), "wb", header=bam_header) as temp_bam:
+                for read in realigned_reads:
+                    temp_bam.write(read)
+
         # Close files
         reads_file.close()
         reference.close()
-
         return (
             idx,
             chrom,
@@ -134,14 +141,14 @@ def process_single_cnv(
             fwd_strong_better,
             rev_strong_better,
             alignment_results,
-            realigned_reads,
+            temp_bam_file,
             cycle_time,
             True,
             None,
         )
 
     except Exception as e:
-        return (idx, chrom, start, end, 0, 0, 0, 0, None, [], 0.0, False, str(e))
+        return (idx, chrom, start, end, 0, 0, 0, 0, None, None, 0.0, False, str(e))
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -434,9 +441,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
         cnv_count = 0
         failed_count = 0
         alignment_results_list = []
+        temp_bam_files = []
 
         with pysam.VariantFile(output_vcf, "w", header=vcf_header) as out_vcf:
-            with pysam.AlignmentFile(realigned_bam, "w", header=bam_header) as realigned_bam_file:
+            with pysam.AlignmentFile(realigned_bam, "wb", header=bam_header) as realigned_bam_file:
                 for (rec, _), result in zip(cnv_records, processing_results, strict=False):
                     (
                         idx,
@@ -448,7 +456,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                         fwd_strong_better,
                         rev_strong_better,
                         alignment_results,
-                        realigned_reads,
+                        temp_bam_file,
                         cycle_time,
                         success,
                         error_msg,
@@ -461,18 +469,23 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                         rec.info["JALIGN_DUP_SUPPORT_STRONG"] = rev_strong_better
                         rec.info["JALIGN_DEL_SUPPORT_STRONG"] = fwd_strong_better
 
-                        # Write realigned reads
-                        for rc in realigned_reads:
-                            realigned_bam_file.write(rc)
+                        # Read and write realigned reads from temporary BAM file
+                        read_count = 0
+                        if temp_bam_file and temp_bam_file.exists():
+                            with pysam.AlignmentFile(temp_bam_file, "rb") as temp_bam:
+                                for read in temp_bam:
+                                    realigned_bam_file.write(read)
+                                    read_count += 1
+                            temp_bam_files.append(temp_bam_file)
 
                         out_vcf.write(rec)
                         cnv_count += 1
                         alignment_results_list.append(alignment_results)
 
                         logger.info(
-                            f"{chrom}:{start}-{end} - DUP:{rev_better}/{rev_strong_better} \
-                            DEL:{fwd_better}/{fwd_strong_better} - "
-                            f"Realigned reads: {len(realigned_reads)} - Time: {cycle_time:.2f}s"
+                            f"{chrom}:{start}-{end} - DUP:{rev_better}/{rev_strong_better} "
+                            f"DEL:{fwd_better}/{fwd_strong_better} - "
+                            f"Realigned reads: {read_count} - Time: {cycle_time:.2f}s"
                         )
                     else:
                         failed_count += 1
@@ -481,6 +494,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
         # Close files
         reads_file.close()
         reference.close()
+
+        # Clean up temporary BAM files
+        for temp_bam_file in temp_bam_files:
+            if temp_bam_file and temp_bam_file.exists():
+                temp_bam_file.unlink()
+
+        logger.info(f"Cleaned up {len(temp_bam_files)} temporary BAM files")
 
         # Save alignment results
         if alignment_results_list:
