@@ -266,6 +266,10 @@ class TestProcessSampleColumns:
             "t_mqual": [[25, 30, 35], [20, 25, 30], [40, 45, 50]],  # mapping quality
             "t_snvq": [[15, 20, 25], [10, 15, 20], [30, 35, 40]],  # SNV quality
             "t_mapq": [[30, 35, 40], [25, 30, 35], [45, 50, 55]],  # mapping quality
+            "t_edist": [[1, 2, 0], [0, 1, 2], [2, 1, 0]],  # edit distance
+            "t_rl": [[100, 150, 120], [110, 140, 130], [105, 145, 125]],  # read length
+            "t_scst": [[5, 0, 10], [0, 8, 0], [12, 0, 6]],  # soft clip start
+            "t_sced": [[0, 7, 0], [9, 0, 5], [0, 11, 0]],  # soft clip end
             "t_ref_forward_reads": [20, 25, 30],
             "t_ref_reverse_reads": [18, 22, 28],
             "t_ref_counts_pm_2": [[10, 15, 20], [12, 18, 22], [14, 20, 25]],  # ref counts
@@ -291,6 +295,10 @@ class TestProcessSampleColumns:
             "t_mqual": [[25, 30, 35], [20, 25]],  # mapping quality
             "t_snvq": [[15, 20, 25], [10, 15]],  # SNV quality
             "t_mapq": [[30, 35, 40], [25, 30]],  # mapping quality
+            "t_edist": [[1, 2, 0], [0, 1]],  # edit distance
+            "t_rl": [[100, 150, 120], [110, 140]],  # read length
+            "t_scst": [[5, 0, 10], [0, 8]],  # soft clip start
+            "t_sced": [[0, 7, 0], [9, 0]],  # soft clip end
             "t_ref_forward_reads": [10, 15],
             "t_ref_reverse_reads": [8, 12],
             "t_ref_counts_pm_2": [[10, 15], [12, 18]],  # ref counts
@@ -317,6 +325,10 @@ class TestProcessSampleColumns:
             "n_mqual": [[25, 30], [20, 25]],  # mapping quality
             "n_snvq": [[15, 20], [10, 15]],  # SNV quality
             "n_mapq": [[30, 35], [25, 30]],  # mapping quality
+            "n_edist": [[1, 2], [0, 1]],  # edit distance
+            "n_rl": [[100, 150], [110, 140]],  # read length
+            "n_scst": [[5, 0], [0, 8]],  # soft clip start
+            "n_sced": [[0, 7], [9, 0]],  # soft clip end
             "n_ref_forward_reads": [10, 15],
             "n_ref_reverse_reads": [8, 12],
             "n_ref_counts_pm_2": [[10, 15], [12, 18]],  # ref counts
@@ -341,6 +353,10 @@ class TestProcessSampleColumns:
             "t_mqual": [[25, 30], [20, 25]],
             "t_snvq": [[15, 20], [10, 15]],
             "t_mapq": [[30, 35], [25, 30]],
+            "t_edist": [[1, 2], [0, 1]],  # edit distance
+            "t_rl": [[100, 150], [110, 140]],  # read length
+            "t_scst": [[5, 0], [0, 8]],  # soft clip start
+            "t_sced": [[0, 7], [9, 0]],  # soft clip end
             "t_ref_forward_reads": [10, 15],
             "t_ref_reverse_reads": [8, 12],
             "t_ref_counts_pm_2": [[10, 15], [12, 18]],  # ref counts
@@ -365,6 +381,10 @@ class TestProcessSampleColumns:
             "t_mqual": [[25, 30], [20, 25]],
             "t_snvq": [[15, 20], [10, 15]],
             "t_mapq": [[30, 35], [25, 30]],
+            "t_edist": [[1, 2], [0, 1]],  # edit distance
+            "t_rl": [[100, 150], [110, 140]],  # read length
+            "t_scst": [[5, 0], [0, 8]],  # soft clip start
+            "t_sced": [[0, 7], [9, 0]],  # soft clip end
             "t_ref_forward_reads": [10, 15],
             "t_ref_reverse_reads": [8, 12],
             "t_ref_counts_pm_2": [[10, 15], [12, 18]],  # ref counts
@@ -387,6 +407,10 @@ class TestProcessSampleColumns:
             "t_mqual": [[25, 30, 35]],  # min=25, max=35, mean=30
             "t_snvq": [[15, 20, 25]],  # min=15, max=25, mean=20
             "t_mapq": [[30, 35, 40]],  # min=30, max=40, mean=35
+            "t_edist": [[1, 2, 0]],  # min=0, max=2, mean=1
+            "t_rl": [[100, 150, 120]],  # min=100, max=150, mean=123.33
+            "t_scst": [[5, 0, 10]],  # soft clip start
+            "t_sced": [[0, 7, 0]],  # soft clip end
             "t_ref_forward_reads": [10],
             "t_ref_reverse_reads": [8],
             "t_ref_counts_pm_2": [[10, 15]],  # ref counts
@@ -406,3 +430,16 @@ class TestProcessSampleColumns:
         assert "t_mapq_min" in result.columns
         assert "t_mapq_max" in result.columns
         assert "t_mapq_mean" in result.columns
+        assert "t_edist_min" in result.columns
+        assert "t_edist_max" in result.columns
+        assert "t_edist_mean" in result.columns
+        assert "t_rl_min" in result.columns
+        assert "t_rl_max" in result.columns
+        assert "t_rl_mean" in result.columns
+
+        # Check soft clip count columns are added
+        assert "t_scst_num_reads" in result.columns
+        assert "t_sced_num_reads" in result.columns
+
+        # Check MAPQ0 count column is added
+        assert "t_map0_count" in result.columns

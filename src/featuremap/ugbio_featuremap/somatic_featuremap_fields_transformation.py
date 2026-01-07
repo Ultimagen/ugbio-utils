@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from os.path import basename, dirname
 from os.path import join as pjoin
 
+import numpy as np
 import pandas as pd
 import pysam
 from ugbio_core.logger import logger
@@ -35,6 +36,8 @@ format_fields_for_training = [
     FeatureMapFields.DP_MAPQ60.value,
     FeatureMapFields.DUP.value,
     FeatureMapFields.REV.value,
+    FeatureMapFields.SCST.value,
+    FeatureMapFields.SCED.value,
 ]
 format_mpileup_fields_for_training = ["ref_counts_pm_2", "nonref_counts_pm_2"]
 
@@ -51,12 +54,27 @@ added_format_features = {
     "COUNT_NON_DUPLICATE": ["number of non-duplicate reads", "Integer"],
     "REVERSE_COUNT": ["number of reverse strand reads", "Integer"],
     "FORWARD_COUNT": ["number of forward strand reads", "Integer"],
+    "EDIST_MEAN": ["mean value of EDIST", "Float"],
+    "EDIST_MAX": ["max value of EDIST", "Float"],
+    "EDIST_MIN": ["min value of EDIST", "Float"],
+    "RL_MEAN": ["mean value of RL", "Float"],
+    "RL_MAX": ["max value of RL", "Float"],
+    "RL_MIN": ["min value of RL", "Float"],
+    "SCST_NUM_READS": ["number of soft clip start reads", "Integer"],
+    "SCED_NUM_READS": ["number of soft clip end reads", "Integer"],
+    "MAP0_COUNT": ["number of reads with mapping quality 0", "Integer"],
 }
 added_info_features = {
     "REF_ALLELE": ["reference allele", "String"],
     "ALT_ALLELE": ["alternative allele", "String"],
 }
-columns_for_aggregation = [FeatureMapFields.MQUAL.value, FeatureMapFields.SNVQ.value, FeatureMapFields.MAPQ.value]
+columns_for_aggregation = [
+    FeatureMapFields.MQUAL.value,
+    FeatureMapFields.SNVQ.value,
+    FeatureMapFields.MAPQ.value,
+    FeatureMapFields.EDIST.value,
+    FeatureMapFields.RL.value,
+]
 ORIGINAL_RECORD_INDEX_FIELD = "record_index"
 
 
@@ -132,6 +150,21 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
 
         return df_variants
 
+    def count_num_sc_reads(df_variants, prefix):
+        df_variants[f"{prefix}scst_num_reads"] = df_variants[f"{prefix}scst"].apply(
+            lambda x: sum((v is not None) and (v > 0) for v in x) if isinstance(x, (tuple, list)) else np.nan  # noqa: UP038
+        )
+        df_variants[f"{prefix}sced_num_reads"] = df_variants[f"{prefix}sced"].apply(
+            lambda x: sum((v is not None) and (v > 0) for v in x) if isinstance(x, (tuple, list)) else np.nan  # noqa: UP038
+        )
+        return df_variants
+
+    def count_mapq0_reads(df_variants, prefix):
+        df_variants[f"{prefix}map0_count"] = df_variants[f"{prefix}mapq"].apply(
+            lambda x: sum(v == 0 for v in x) if x is not None else np.nan
+        )
+        return df_variants
+
     """Process columns for a sample with given prefix (t_ or n_)"""
     # Process alt_reads
     df_variants[f"{prefix}alt_reads"] = [tup[1] for tup in df_variants[f"{prefix}ad"]]
@@ -157,6 +190,8 @@ def process_sample_columns(df_variants, prefix):  # noqa: C901
         if x is None or (isinstance(x, float) and pd.isna(x))
         else pd.Series({"num0": [v for v in x if v in (0, 1)].count(0), "num1": [v for v in x if v in (0, 1)].count(1)})
     )
+    df_variants = count_num_sc_reads(df_variants, prefix)
+    df_variants = count_mapq0_reads(df_variants, prefix)
 
     return df_variants
 
@@ -203,13 +238,15 @@ def add_fields_to_header(hdr, added_format_features, added_info_features):
         Dictionary of INFO fields to add with their descriptions and types.
     """
     for field in added_format_features:
-        field_type = added_format_features[field][1]
-        field_description = added_format_features[field][0]
-        hdr.formats.add(field, 1, field_type, field_description)
+        if field not in hdr.formats:
+            field_type = added_format_features[field][1]
+            field_description = added_format_features[field][0]
+            hdr.formats.add(field, 1, field_type, field_description)
     for field in added_info_features:
-        field_type = added_info_features[field][1]
-        field_description = added_info_features[field][0]
-        hdr.info.add(field, 1, field_type, field_description)
+        if field not in hdr.info:
+            field_type = added_info_features[field][1]
+            field_description = added_info_features[field][0]
+            hdr.info.add(field, 1, field_type, field_description)
 
 
 def process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_params):
@@ -422,7 +459,7 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
             with pysam.VariantFile(filtered_featuremap) as vcfin:
                 hdr = vcfin.header
                 add_fields_to_header(hdr, added_format_features, added_info_features)
-                if xgb_model_file is not None:
+                if xgb_model_file is not None and "XGB_PROBA" not in hdr.info:
                     hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
                 with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
                     process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_params)
@@ -436,7 +473,7 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
             with pysam.VariantFile(filtered_featuremap) as vcfin:
                 hdr = vcfin.header
                 add_fields_to_header(hdr, added_format_features, added_info_features)
-                if xgb_model_file is not None:
+                if xgb_model_file is not None and "XGB_PROBA" not in hdr.info:
                     hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
                 with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
                     pass  # Just create the file with header

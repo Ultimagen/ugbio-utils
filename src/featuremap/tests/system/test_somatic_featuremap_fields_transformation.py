@@ -130,3 +130,64 @@ class TestSomaticFeaturemapFieldsTransformation:
 
         # check that the output file exists and has the expected content
         assert os.path.isfile(out_file)
+
+    def test_somatic_featuremap_fields_transformation_with_ffpe_model(self, tmpdir, resources_dir):
+        somatic_featuremap_vcf = pjoin(resources_dir, "Pa_46.tumor_normal.merged.tumor_PASS.mpileup_PASS.chr19.vcf.gz")
+        ref_tr_file = pjoin(resources_dir, "tr_hg38.chr19.bed")
+        interval_list_bed_file = pjoin(resources_dir, "wgs_calling_regions.hg38.chr19_test.interval_list.bed")
+        out_dir = tmpdir
+        model_file = pjoin(resources_dir, "FFPE_TapasPa46_Pa67.v1.26.WG.t_alt_readsGT1.FFPEV1.7.json")
+        out_file = pjoin(out_dir, "Pa_46.tumor_normal.merged.tumor_PASS.mpileup_PASS.chr19.xgb_proba.vcf.gz")
+        genome_file = pjoin(resources_dir, "Homo_sapiens_assembly38.fasta.fai")
+
+        # Run the script's main function
+        somatic_featuremap_fields_transformation.run(
+            [
+                "somatic_featuremap_fields_transformation",
+                "-sfm",
+                somatic_featuremap_vcf,
+                "-o",
+                out_file,
+                "-i",
+                interval_list_bed_file,
+                "-ref_tr",
+                ref_tr_file,
+                "-xgb_model",
+                model_file,
+                "-g",
+                genome_file,
+            ]
+        )
+
+        # check that the output file exists and has the expected content
+        assert os.path.isfile(out_file)
+
+    def test_somatic_featuremap_fields_transformation_with_model_and_transformed_sfm_vcf(self, tmpdir, resources_dir):
+        somatic_featuremap_vcf = pjoin(resources_dir, "Pa_46.SFM.Transformed.xgb_proba.vcf.gz")
+        ref_tr_file = pjoin(resources_dir, "tr_hg38.chr19.bed")
+        interval_list_bed_file = pjoin(resources_dir, "wgs_calling_regions.hg38.chr19_test.interval_list.bed")
+        out_dir = tmpdir
+        model_file = pjoin(resources_dir, "HG006_HG003.v1.25.WG.t_alt_readsGT1.V1.15.json")
+        out_file = pjoin(out_dir, "Pa_46.SFM.Transformed.xgb_proba.xgb_proba.vcf.gz")
+        genome_file = pjoin(resources_dir, "Homo_sapiens_assembly38.fasta.fai")
+
+        # Run the script's main function
+        somatic_featuremap_fields_transformation.run(
+            [
+                "somatic_featuremap_fields_transformation",
+                "-sfm",
+                somatic_featuremap_vcf,
+                "-o",
+                out_file,
+                "-i",
+                interval_list_bed_file,
+                "-ref_tr",
+                ref_tr_file,
+                "-xgb_model",
+                model_file,
+                "-g",
+                genome_file,
+            ]
+        )
+        # check that the output file exists and has the expected content
+        assert os.path.isfile(out_file)
