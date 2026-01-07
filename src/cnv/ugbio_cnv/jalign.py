@@ -13,6 +13,7 @@ import json
 import os
 import random
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
@@ -1017,6 +1018,8 @@ def process_cnv(  # noqa: C901
         - List of BAM records
         - BAM header
     """
+    start_time = time.time()
+
     if log_file:
         log_file.write(f"\n>>> {chrom}:{start}-{end}\n")
 
@@ -1097,6 +1100,13 @@ def process_cnv(  # noqa: C901
 
     if log_file:
         log_file.write(f"<<< alignments: {chrom}:{start}-{end}\n")
+
+    elapsed_time = time.time() - start_time
+    logger.info(
+        f"Completed CNV {chrom}:{start}-{end} in {elapsed_time:.2f}s - "
+        f"DUP: {counts[0]}/({counts[2]} stringent), DEL: {counts[1]}/({counts[3]} stringent)"
+    )
+
     result_df["chrom"] = chrom
     result_df["start"] = start
     result_df["end"] = end
