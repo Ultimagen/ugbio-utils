@@ -89,7 +89,7 @@ def process_single_cnv(
     try:
         # Open files in worker (each process needs its own file handles)
         reads_file = pysam.AlignmentFile(input_cram, "rb", reference_filename=ref_fasta)
-        reference = pyfaidx.Fasta(ref_fasta)
+        reference = pyfaidx.Fasta(ref_fasta, rebuild=False)
 
         # Create BAM header in worker to avoid pickling issues
         bam_header = create_bam_header(reads_file)
