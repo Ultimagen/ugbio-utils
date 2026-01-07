@@ -38,6 +38,7 @@ RUN apt-get update && \
     libncursesw5-dev \
     libopenblas-dev \
     libstdc++-10-dev \
+    libparasail3 libparasail-dev \
     tzdata \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
@@ -90,6 +91,9 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
+
+COPY jump_align /opt/
+COPY para_jalign /opt/
 
 ARG OUT_DIR
 

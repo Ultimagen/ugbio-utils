@@ -7,9 +7,11 @@ alignment on each region and writing results to output files.
 
 import argparse
 import logging
+import multiprocessing as mp
 import os
 import sys
 import time
+from functools import partial
 from pathlib import Path
 
 import pandas as pd
@@ -278,6 +280,12 @@ def get_parser() -> argparse.ArgumentParser:
     # Runtime options
     runtime_group = parser.add_argument_group("runtime options")
     runtime_group.add_argument(
+        "--threads",
+        type=int,
+        default=1,
+        help="Number of parallel threads for processing CNVs (default: 1 for sequential processing)",
+    )
+    runtime_group.add_argument(
         "--temp-dir",
         type=str,
         default=None,
@@ -294,7 +302,7 @@ def get_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901
+def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
     """Main entry point for the CLI.
 
     Parameters
@@ -346,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901
             temp_dir = Path(args.temp_dir)
             temp_dir.mkdir(parents=True, exist_ok=True)
         else:
-            temp_dir = Path(args.output_prefix).resolve()
+            temp_dir = Path(args.output_prefix).parent
 
         logger.info(f"Using temporary directory: {temp_dir}")
 
@@ -392,17 +400,34 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901
 
         logger.info(f"Processing {len(cnv_records)} CNV regions...")
 
-        # Process CNVs sequentially
-        processing_results = []
-        for _, rec_data in cnv_records:
-            result = process_single_cnv(
-                rec_data,
-                args.input_cram,
-                args.ref_fasta,
-                config,
-                temp_dir,
+        # Process CNVs in parallel or sequentially
+        if args.threads > 1:
+            logger.info(f"Using {args.threads} parallel threads")
+            # Create partial function with fixed arguments
+            worker_func = partial(
+                process_single_cnv,
+                input_cram=args.input_cram,
+                ref_fasta=args.ref_fasta,
+                config=config,
+                temp_dir=temp_dir,
             )
-            processing_results.append(result)
+
+            # Process in parallel using multiprocessing
+            with mp.Pool(processes=args.threads) as pool:
+                processing_results = pool.map(worker_func, [rec_data for _, rec_data in cnv_records])
+        else:
+            logger.info("Processing sequentially (single thread)")
+            # Process CNVs sequentially
+            processing_results = []
+            for _, rec_data in cnv_records:
+                result = process_single_cnv(
+                    rec_data,
+                    args.input_cram,
+                    args.ref_fasta,
+                    config,
+                    temp_dir,
+                )
+                processing_results.append(result)
 
         # Write results
         logger.info("Writing results...")
