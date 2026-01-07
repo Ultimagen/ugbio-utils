@@ -172,6 +172,7 @@ def get_hmer_qualities_from_pileup_element(
     # smear probabilities
     if qstart == 0 or qend == len(str(pe.alignment.query_sequence)):
         hmer_probs[:] = 1.0
+        is_edge = True
     else:
         query_qualities = pe.alignment.query_qualities
         if query_qualities is None:
@@ -187,6 +188,6 @@ def get_hmer_qualities_from_pileup_element(
         hmer_probs = np.clip(hmer_probs, filler, None)
         hmer_probs[hmer_length] = 0
         hmer_probs[hmer_length] = max(1 - np.sum(hmer_probs), min_call_prob)
-
+        is_edge = False
     hmer_probs /= np.sum(hmer_probs)
-    return hnuc, hmer_probs, not pe.alignment.is_reverse, cycle
+    return hnuc, hmer_probs, not pe.alignment.is_reverse, cycle, is_edge, not pe.alignment.is_duplicate
