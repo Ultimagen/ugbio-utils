@@ -425,9 +425,11 @@ def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, d
     """
     Extract positive, negative, and raw stats from unified stats file.
 
-    The unified stats file should contain a single section with:
-    - f2_filters: True-positive (TP) data
-    - filters: False-positive (FP) data (raw featuremap stats)
+    The unified stats file should contain sections:
+    - filtering_stats_full_output: Full dataset stats
+    - filtering_stats_random_sample: Random sample stats
+
+    Each section may contain 'f2_filters' and 'filters' subsections, or the filter data directly.
 
     Args:
         unified_stats_path: Path to the unified stats JSON file
@@ -439,34 +441,85 @@ def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, d
     with open(unified_stats_path, encoding="utf-8") as f:
         unified_stats = json.load(f)
 
-    # Validate basic structure
+    # Validate basic structure - check for the main sections
     if "filtering_stats_random_sample" not in unified_stats:
         raise ValueError("Unified stats file missing 'filtering_stats_random_sample' section")
 
     random_sample_section = unified_stats["filtering_stats_random_sample"]
 
-    # Check for f2_filters (positive/TP) and filters (negative/FP)
-    if "f2_filters" not in random_sample_section:
-        raise ValueError("Unified stats file missing 'f2_filters' section for positive (TP) data")
+    # Check if the new format has f2_filters and filters within random_sample_section
+    # or if the section itself contains the filter data
+    if "f2_filters" in random_sample_section and "filters" in random_sample_section:
+        # Old format: f2_filters and filters are subsections
+        logger.info("Using f2_filters section as positive (true-positive) data")
+        logger.info("Using filters section as negative (false-positive) data")
 
-    if "filters" not in random_sample_section:
-        raise ValueError("Unified stats file missing 'filters' section for negative (FP) data")
+        positive_stats = _convert_unified_stats_to_legacy_format(
+            unified_stats, "filtering_stats_random_sample", "f2_filters"
+        )
+        negative_stats = _convert_unified_stats_to_legacy_format(
+            unified_stats, "filtering_stats_random_sample", "filters"
+        )
+        raw_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
+    else:
+        # New format: sections contain filter data under 'filters' key
+        # Use filtering_stats_full_output as positive (TP) and filtering_stats_random_sample as negative (FP)
+        if "filtering_stats_full_output" not in unified_stats:
+            raise ValueError("Unified stats file missing 'filtering_stats_full_output' section")
 
-    logger.info("Using f2_filters section as positive (true-positive) data")
-    logger.info("Using filters section as negative (false-positive) data")
+        logger.info("Using filtering_stats_full_output section as positive (true-positive) data")
+        logger.info("Using filtering_stats_random_sample section as negative (false-positive) data")
 
-    # Extract positive stats (f2_filters = TP)
-    positive_stats = _convert_unified_stats_to_legacy_format(
-        unified_stats, "filtering_stats_random_sample", "f2_filters"
-    )
-
-    # Extract negative stats (filters = FP, raw featuremap)
-    negative_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
-
-    # Raw stats use the same filters section (FP data represents the larger dataset)
-    raw_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
+        # Convert sections using their 'filters' subsections
+        positive_stats = _convert_unified_stats_to_legacy_format(
+            unified_stats, "filtering_stats_full_output", "filters"
+        )
+        negative_stats = _convert_unified_stats_to_legacy_format(
+            unified_stats, "filtering_stats_random_sample", "filters"
+        )
+        raw_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
 
     return positive_stats, negative_stats, raw_stats
+
+
+def _extract_filters_from_section(section_data: dict) -> list[dict]:
+    """
+    Extract filters from a section that contains filter data directly.
+
+    Args:
+        section_data: Dictionary containing filter information
+
+    Returns:
+        List of filter dictionaries in legacy format
+    """
+    filters_list = []
+
+    # If the section contains a filters dict, process it
+    if isinstance(section_data, dict):
+        # Check if it's already in the expected format with a filters list
+        if "filters" in section_data and isinstance(section_data["filters"], list):
+            return section_data["filters"]
+
+        # Otherwise, assume the section contains filter data directly
+        # Look for keys that represent filters
+        for filter_name, filter_data in section_data.items():
+            if isinstance(filter_data, dict):
+                filter_entry = {"name": filter_name}
+
+                # Copy metadata fields
+                for field in ["type", "field", "op", "value"]:
+                    if field in filter_data:
+                        filter_entry[field] = filter_data[field]
+
+                # Use 'funnel' as 'rows' for legacy compatibility
+                if "funnel" in filter_data:
+                    filter_entry["rows"] = filter_data["funnel"]
+                elif "rows" in filter_data:
+                    filter_entry["rows"] = filter_data["rows"]
+
+                filters_list.append(filter_entry)
+
+    return filters_list
 
 
 # ───────────────────────── core logic ─────────────────────────────────────
