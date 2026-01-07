@@ -13,70 +13,6 @@ def test_recalibration_columns(tmp_path):
     resources_dir = Path(__file__).parent.parent / "resources"
     positive_path = resources_dir / "416119_L7402.test.random_sample.featuremap.filtered.sample.parquet"
     negative_path = resources_dir / "416119_L7402.test.raw.featuremap.filtered.sample.parquet"
-    stats_file_path = resources_dir / "416119_L7402.test.unified_stats.json"
-    interval_list_path = resources_dir / "wgs_calling_regions.without_encode_blacklist.hg38.interval_list.gz"
-
-    # Create args using real file paths
-    # Use the exact features from the trained model metadata
-    features_str = (
-        "REF:ALT:X_PREV1:X_NEXT1:X_PREV2:X_NEXT2:X_PREV3:X_NEXT3:X_HMER_REF:X_HMER_ALT:"
-        "BCSQ:BCSQCSS:RL:INDEX:REV:SCST:SCED:SMQ_BEFORE:SMQ_AFTER:tm:rq:st:et:EDIST:HAMDIST:HAMDIST_FILT"
-    )
-
-    args = SimpleNamespace(
-        positive=str(positive_path),
-        negative=str(negative_path),
-        stats_file=str(stats_file_path),
-        mean_coverage=30.0,
-        training_regions=str(interval_list_path),
-        k_folds=2,
-        model_params=None,
-        output=str(tmp_path),
-        basename="test_",
-        features=features_str,
-        random_seed=42,
-        verbose=False,
-        max_qual=100.0,
-        quality_lut_size=1000,
-        metadata=None,
-    )
-
-    # Create trainer and load the data - this tests the unified stats loading
-    trainer = SRSNVTrainer(args)
-
-    # Verify that the trainer was created successfully with the unified stats
-    assert trainer.pos_stats is not None, "Positive stats should be loaded"
-    assert trainer.neg_stats is not None, "Negative stats should be loaded"
-    assert trainer.raw_stats is not None, "Raw stats should be loaded"
-
-    # Verify that stats have the expected structure
-    assert "filters" in trainer.pos_stats, "Positive stats should have filters"
-    assert "filters" in trainer.neg_stats, "Negative stats should have filters"
-    assert "filters" in trainer.raw_stats, "Raw stats should have filters"
-
-    # Verify that data was loaded
-    assert trainer.data_frame is not None, "Data frame should be loaded"
-    assert trainer.data_frame.height > 0, "Data frame should have rows"
-
-    # Verify basic trainer attributes are set correctly
-    assert trainer.mean_coverage == 30.0, "Mean coverage should be set"
-    assert trainer.k_folds == 2, "K folds should be set"
-    assert trainer.seed == 42, "Random seed should be set"
-
-    print("✅ SRSNVTrainer successfully created with unified stats file")
-    print(f"✅ Loaded {trainer.data_frame.height} rows of data")
-    print(f"✅ Positive stats: {len(trainer.pos_stats['filters'])} filters")
-    print(f"✅ Negative stats: {len(trainer.neg_stats['filters'])} filters")
-    print(f"✅ Raw stats: {len(trainer.raw_stats['filters'])} filters")
-
-
-def test_recalibration_columns_new_format(tmp_path):
-    """Trainer should load new format unified stats file and create SRSNVTrainer instance successfully."""
-
-    # Define paths to the test resources
-    resources_dir = Path(__file__).parent.parent / "resources"
-    positive_path = resources_dir / "416119_L7402.test.random_sample.featuremap.filtered.sample.parquet"
-    negative_path = resources_dir / "416119_L7402.test.raw.featuremap.filtered.sample.parquet"
     stats_file_path = resources_dir / "416119_L7402.test.unified_stats_new_format.json"
     interval_list_path = resources_dir / "wgs_calling_regions.without_encode_blacklist.hg38.interval_list.gz"
 
@@ -96,7 +32,7 @@ def test_recalibration_columns_new_format(tmp_path):
         k_folds=2,
         model_params=None,
         output=str(tmp_path),
-        basename="test_new_",
+        basename="test_",
         features=features_str,
         random_seed=42,
         verbose=False,
@@ -127,7 +63,7 @@ def test_recalibration_columns_new_format(tmp_path):
     assert trainer.k_folds == 2, "K folds should be set"
     assert trainer.seed == 42, "Random seed should be set"
 
-    print("✅ SRSNVTrainer successfully created with new format unified stats file")
+    print("✅ SRSNVTrainer successfully created with unified stats file")
     print(f"✅ Loaded {trainer.data_frame.height} rows of data")
     print(f"✅ Positive stats: {len(trainer.pos_stats['filters'])} filters")
     print(f"✅ Negative stats: {len(trainer.neg_stats['filters'])} filters")

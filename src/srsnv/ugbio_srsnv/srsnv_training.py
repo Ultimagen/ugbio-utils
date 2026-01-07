@@ -425,11 +425,11 @@ def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, d
     """
     Extract positive, negative, and raw stats from unified stats file.
 
-    The unified stats file should contain sections:
-    - filtering_stats_full_output: Full dataset stats
-    - filtering_stats_random_sample: Random sample stats
+    The unified stats file must contain sections:
+    - filtering_stats_full_output: Full dataset stats (positive/TP data)
+    - filtering_stats_random_sample: Random sample stats (negative/FP data)
 
-    Each section may contain 'f2_filters' and 'filters' subsections, or the filter data directly.
+    Each section contains a 'filters' subsection with the filter data.
 
     Args:
         unified_stats_path: Path to the unified stats JSON file
@@ -441,85 +441,22 @@ def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, d
     with open(unified_stats_path, encoding="utf-8") as f:
         unified_stats = json.load(f)
 
-    # Validate basic structure - check for the main sections
+    # Validate required sections
     if "filtering_stats_random_sample" not in unified_stats:
         raise ValueError("Unified stats file missing 'filtering_stats_random_sample' section")
 
-    random_sample_section = unified_stats["filtering_stats_random_sample"]
+    if "filtering_stats_full_output" not in unified_stats:
+        raise ValueError("Unified stats file missing 'filtering_stats_full_output' section")
 
-    # Check if the new format has f2_filters and filters within random_sample_section
-    # or if the section itself contains the filter data
-    if "f2_filters" in random_sample_section and "filters" in random_sample_section:
-        # Old format: f2_filters and filters are subsections
-        logger.info("Using f2_filters section as positive (true-positive) data")
-        logger.info("Using filters section as negative (false-positive) data")
+    logger.info("Using filtering_stats_full_output section as positive (true-positive) data")
+    logger.info("Using filtering_stats_random_sample section as negative (false-positive) data")
 
-        positive_stats = _convert_unified_stats_to_legacy_format(
-            unified_stats, "filtering_stats_random_sample", "f2_filters"
-        )
-        negative_stats = _convert_unified_stats_to_legacy_format(
-            unified_stats, "filtering_stats_random_sample", "filters"
-        )
-        raw_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
-    else:
-        # New format: sections contain filter data under 'filters' key
-        # Use filtering_stats_full_output as positive (TP) and filtering_stats_random_sample as negative (FP)
-        if "filtering_stats_full_output" not in unified_stats:
-            raise ValueError("Unified stats file missing 'filtering_stats_full_output' section")
-
-        logger.info("Using filtering_stats_full_output section as positive (true-positive) data")
-        logger.info("Using filtering_stats_random_sample section as negative (false-positive) data")
-
-        # Convert sections using their 'filters' subsections
-        positive_stats = _convert_unified_stats_to_legacy_format(
-            unified_stats, "filtering_stats_full_output", "filters"
-        )
-        negative_stats = _convert_unified_stats_to_legacy_format(
-            unified_stats, "filtering_stats_random_sample", "filters"
-        )
-        raw_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
+    # Convert sections using their 'filters' subsections
+    positive_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_full_output", "filters")
+    negative_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
+    raw_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
 
     return positive_stats, negative_stats, raw_stats
-
-
-def _extract_filters_from_section(section_data: dict) -> list[dict]:
-    """
-    Extract filters from a section that contains filter data directly.
-
-    Args:
-        section_data: Dictionary containing filter information
-
-    Returns:
-        List of filter dictionaries in legacy format
-    """
-    filters_list = []
-
-    # If the section contains a filters dict, process it
-    if isinstance(section_data, dict):
-        # Check if it's already in the expected format with a filters list
-        if "filters" in section_data and isinstance(section_data["filters"], list):
-            return section_data["filters"]
-
-        # Otherwise, assume the section contains filter data directly
-        # Look for keys that represent filters
-        for filter_name, filter_data in section_data.items():
-            if isinstance(filter_data, dict):
-                filter_entry = {"name": filter_name}
-
-                # Copy metadata fields
-                for field in ["type", "field", "op", "value"]:
-                    if field in filter_data:
-                        filter_entry[field] = filter_data[field]
-
-                # Use 'funnel' as 'rows' for legacy compatibility
-                if "funnel" in filter_data:
-                    filter_entry["rows"] = filter_data["funnel"]
-                elif "rows" in filter_data:
-                    filter_entry["rows"] = filter_data["rows"]
-
-                filters_list.append(filter_entry)
-
-    return filters_list
 
 
 # ───────────────────────── core logic ─────────────────────────────────────
@@ -559,7 +496,8 @@ class SRSNVTrainer:
         if pos_qr != neg_qr:
             raise ValueError(
                 "Mismatch between quality/region filters of "
-                "positive (f2_filters) and negative (filters) sections in stats-file:\n"
+                "positive (filtering_stats_full_output) and negative "
+                "(filtering_stats_random_sample) sections in stats-file:\n"
                 f" positive={pos_qr}\n negative={neg_qr}"
             )
 
