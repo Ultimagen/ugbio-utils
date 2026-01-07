@@ -371,8 +371,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
         reference = pyfaidx.Fasta(args.ref_fasta)
         bam_header = create_bam_header(reads_file)
         # Set up output files
-        output_vcf = args.output_prefix + ".vcf.gz"
-        realigned_bam = args.output_prefix + ".realigned.bam"
+        output_vcf = args.output_prefix + ".jalign.vcf.gz"
+        realigned_bam = args.output_prefix + ".jalign.bam"
         logger.info(f"Processing CNV regions from {args.cnv_vcf}")
         logger.info(f"Writing results to {output_vcf}")
 
@@ -505,7 +505,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
         # Save alignment results
         if alignment_results_list:
             alignment_results = pd.concat(alignment_results_list)
-            alignment_results.to_csv(args.output_prefix + ".csv", index=False)
+            alignment_results.to_csv(args.output_prefix + ".jalign.csv", index=False)
 
         logger.info(f"Successfully processed {cnv_count} CNV regions")
         if failed_count > 0:
