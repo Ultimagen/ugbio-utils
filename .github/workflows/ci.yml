@@ -43,7 +43,7 @@ jobs:
       uses: astral-sh/setup-uv@v3
       with:
         # Install a specific version of uv.
-        version: "0.4.17"
+        version: "0.9.17"
 
     - name: Install dev dependencies
       run: uv sync --group dev
