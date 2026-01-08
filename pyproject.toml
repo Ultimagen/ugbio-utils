@@ -12,8 +12,8 @@ dependencies = []
 [project.license]
 text = "Apache-2.0"
 
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "dnspython>=2.7.0",
     "ipykernel>=6.29.5",
     "jupyter>=1.1.1",
