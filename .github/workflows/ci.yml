@@ -43,7 +43,7 @@ jobs:
       uses: astral-sh/setup-uv@v3
 
     - name: Install pre-commit dependencies
-      run: uv sync --group pre-commit-group
+      run: uv sync --only-group pre-commit-group
 
     - name: Run pre-commit
       run: |
