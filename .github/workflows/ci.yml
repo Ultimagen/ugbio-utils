@@ -45,6 +45,9 @@ jobs:
         # Install a specific version of uv.
         version: "0.4.17"
 
+    - name: Install dev dependencies
+      run: uv sync --group dev
+
     - name: Run pre-commit
       run: |
         uv run pre-commit install
