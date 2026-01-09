@@ -57,10 +57,15 @@ RUN apt-get update && \
     gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' && \
     gpg --armor --export '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' | tee /etc/apt/trusted.gpg.d/cran_debian_key.asc && \
     echo "deb https://cloud.r-project.org/bin/linux/debian bullseye-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
+    # Add r2u repository for pre-compiled R packages (much faster than compiling from source)
+    wget -q -O- https://eddelbuettel.github.io/r2u/assets/dirk_eddelbuettel_key.asc | tee -a /etc/apt/trusted.gpg.d/cranapt_key.asc && \
+    echo "deb [arch=amd64] https://r2u.stat.illinois.edu/debian bullseye main" | tee /etc/apt/sources.list.d/cranapt.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
     r-base=4.5.1-1~bullseyecran.0 \
     r-base-dev=4.5.1-1~bullseyecran.0 && \
+    # Configure R to use binary packages from r2u
+    echo 'options(repos = c(CRAN = "https://r2u.stat.illinois.edu/debian"))' >> /etc/R/Rprofile.site && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -84,18 +89,47 @@ RUN cd /opt && \
     fi
 
 
-# Install additional R dependencies
-RUN R -e "install.packages(c('argparse', 'BiocManager'), repos='https://cran.r-project.org')"
+# Install R packages using apt-get (pre-compiled binaries from r2u)
+# This is MUCH faster than compiling from source (10-100x speedup)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    r-cran-argparse \
+    r-cran-biocmanager \
+    r-bioc-biocgenerics \
+    r-bioc-biocparallel \
+    r-bioc-biostrings \
+    r-bioc-biobase \
+    r-bioc-genomeinfodb \
+    r-bioc-genomicranges \
+    r-bioc-iranges \
+    r-bioc-s4vectors \
+    r-bioc-xvector \
+    r-bioc-zlibbioc \
+    r-bioc-rhdf5 \
+    r-bioc-rhdf5filters \
+    r-bioc-rhdf5lib \
+    r-bioc-rhtslib \
+    r-bioc-rsamtools \
+    r-bioc-rtracklayer \
+    r-cran-bitops \
+    r-cran-codetools \
+    r-cran-cpp11 \
+    r-cran-crayon \
+    r-cran-findpython \
+    r-cran-formatr \
+    r-cran-futile.logger \
+    r-cran-futile.options \
+    r-cran-jsonlite \
+    r-cran-lambda.r \
+    r-cran-magrittr \
+    r-cran-r6 \
+    r-cran-rcurl \
+    r-cran-snow && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install Bioconductor packages one by one, ensuring dependencies are met
-RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', 'Biobase'))"
-RUN R -e "BiocManager::install(c('GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'zlibbioc'))"
-RUN R -e "BiocManager::install(c('rhdf5', 'rhdf5filters', 'rhdf5lib', 'Rhtslib', 'Rsamtools'))"
-RUN R -e "BiocManager::install('exomeCopy')"
-RUN R -e "BiocManager::install('rtracklayer')"
-
-# Install other necessary R packages
-RUN R -e "install.packages(c('bitops', 'codetools', 'cpp11', 'crayon', 'findpython', 'formatR', 'futile.logger', 'futile.options', 'jsonlite', 'lambda.r', 'magrittr', 'R6', 'RCurl', 'snow'), repos='https://cran.r-project.org')"
+# Install remaining packages that may not be in r2u using R commands
+RUN R -e "BiocManager::install('exomeCopy', ask=FALSE, update=FALSE)"
 
 # Remove unnecessary files
 RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
