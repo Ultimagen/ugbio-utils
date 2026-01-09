@@ -274,8 +274,8 @@ def get_parser() -> argparse.ArgumentParser:
     config_group.add_argument(
         "--tool-path",
         type=str,
-        default=os.environ.get("TOOL", "jump_align"),
-        help="Path or name of jump alignment tool executable",
+        default=os.environ.get("TOOL", "para_jalign"),
+        help="Path or name of para_jalign tool executable",
     )
     config_group.add_argument(
         "--random-seed",
@@ -347,14 +347,6 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
             tool_path=args.tool_path,
             random_seed=args.random_seed,
         )
-
-        # Check for local jump_align tool (for backward compatibility)
-        local_tool_path = Path("jump_align") / config.tool_path
-        if local_tool_path.exists():
-            logger.info(f"Using local jump alignment tool: {local_tool_path}")
-            config.tool_path = str(local_tool_path)
-            # Rebuild command template with updated path
-            config.__post_init__()
 
         # Set up temporary directory
         if args.temp_dir:

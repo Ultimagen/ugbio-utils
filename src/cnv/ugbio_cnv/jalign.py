@@ -83,7 +83,7 @@ class JAlignConfig:
     max_reads_per_cnv: int = 4000
     max_score_fraction: float = 0.9
     stringent_max_score_fraction: float = 0.95
-    tool_path: str = "jump_align"
+    tool_path: str = "para_jalign"
     random_seed: int = 0
     output_all_alignments: bool = False
     _alignment_cmd_template: list[str] = field(init=False, repr=False)
