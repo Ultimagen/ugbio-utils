@@ -56,9 +56,9 @@ runs:
         tags: ${{ inputs.workspace-folder }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
-        build-args: |
-          BASE_IMAGE=${{ steps.ecr-login.outputs.registry }}/${{ inputs.ugbio_base_image }}
-          GITHUB_TOKEN=${{ inputs.github-token }}
+        secrets: |
+          github_token=${{ inputs.github-token }}
+        build-args: BASE_IMAGE=${{ steps.ecr-login.outputs.registry }}/${{ inputs.ugbio_base_image }}
 
     - name: Run python tests (if exist) in the container
       working-directory: src/${{ inputs.workspace-folder }}
