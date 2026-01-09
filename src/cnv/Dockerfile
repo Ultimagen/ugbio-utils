@@ -57,7 +57,7 @@ RUN --mount=type=secret,id=github_token \
         -H "Accept: application/vnd.github+json" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}" | tr -d '\000-\037') && \
+        "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}" | tr -d '\000-\010\013\014\016-\037') && \
     if ! echo "${RELEASE_DATA}" | jq empty 2>/dev/null; then \
         echo "ERROR: Invalid JSON response from GitHub API" && \
         echo "Response (first 500 chars):" && \
