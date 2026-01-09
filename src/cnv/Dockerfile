@@ -74,7 +74,8 @@ RUN --mount=type=secret,id=github_token \
         -H "X-GitHub-Api-Version: 2022-11-28" \
         "${ASSET_URL}" \
         -o /opt/para_jalign && \
-    chmod +x /opt/para_jalign
+    chmod +x /opt/para_jalign && \
+    rm /tmp/release_data.json
 
 # Download and install R
 RUN wget https://cloud.r-project.org/src/base/R-4/R-4.3.1.tar.gz && \
