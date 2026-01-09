@@ -40,6 +40,7 @@ RUN apt-get update && \
     libopenblas-dev \
     libstdc++-10-dev \
     libparasail3 libparasail-dev \
+    libhdf5-dev \
     tzdata \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
@@ -104,7 +105,7 @@ RUN apt-get update && \
 RUN R -e "install.packages(c('argparse', 'BiocManager', 'bitops', 'codetools', 'findpython', 'futile.logger', 'futile.options', 'lambda.r'), repos='https://cloud.r-project.org/', Ncpus=4)"
 
 # Install Bioconductor packages - using Ncpus for parallel compilation
-RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', 'Biobase', 'GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'zlibbioc', 'rhdf5', 'rhdf5filters', 'rhdf5lib', 'Rhtslib', 'Rsamtools', 'exomeCopy', 'rtracklayer'), ask=FALSE, update=FALSE, Ncpus=4)"
+RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', 'Biobase', 'GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'rhdf5', 'rhdf5filters', 'Rhtslib', 'Rsamtools', 'rtracklayer'), ask=FALSE, update=FALSE, Ncpus=4)"
 
 # Remove unnecessary files
 RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
