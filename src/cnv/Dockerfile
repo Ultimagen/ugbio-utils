@@ -1,5 +1,6 @@
 ARG BASE_IMAGE=ugbio_base
 ARG OUT_DIR=/tmp/ugbio
+ARG GITHUB_TOKEN
 FROM python:3.11-bullseye AS build
 
 ARG OUT_DIR
@@ -92,8 +93,17 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
-COPY jump_align /opt/
-COPY para_jalign /opt/
+# Download para_jalign binary from private jalign repository
+ARG GITHUB_TOKEN
+ARG JALIGN_VERSION=1.4.0
+RUN if [ -n "$GITHUB_TOKEN" ]; then \
+        wget --header="Authorization: token ${GITHUB_TOKEN}" \
+        https://github.com/Ultimagen/jalign/releases/download/${JALIGN_VERSION}/para_jalign-${JALIGN_VERSION}-debian-bullseye-x64 \
+        -O /opt/para_jalign && \
+        chmod +x /opt/para_jalign; \
+    else \
+        echo "ERROR: GITHUB_TOKEN is required to download para_jalign from private repository" && exit 1; \
+    fi
 
 ARG OUT_DIR
 

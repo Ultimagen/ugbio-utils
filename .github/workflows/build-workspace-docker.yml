@@ -93,4 +93,6 @@ jobs:
          docker-tag: ${{ inputs.docker-tag }}
          docker-context: ${{ inputs.docker-context }}
          project-version: ${{ needs.pre-build.outputs.project-version }}
-         docker-build-args: BASE_IMAGE=${{ needs.pre-build.outputs.ecr-registry }}/ugbio_base:1.7.0
+         docker-build-args: |
+           BASE_IMAGE=${{ needs.pre-build.outputs.ecr-registry }}/ugbio_base:1.7.0
+           GITHUB_TOKEN=${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
