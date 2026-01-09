@@ -57,13 +57,18 @@ RUN --mount=type=secret,id=github_token \
         -H "Accept: application/vnd.github+json" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}") && \
+        "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}" | tr -d '\000-\037') && \
+    if ! echo "${RELEASE_DATA}" | jq empty 2>/dev/null; then \
+        echo "ERROR: Invalid JSON response from GitHub API" && \
+        echo "Response (first 500 chars): ${RELEASE_DATA:0:500}" && \
+        exit 1; \
+    fi && \
     ASSET_URL=$(echo "${RELEASE_DATA}" | jq -r ".assets[] | select(.name == \"${ASSET_NAME}\") | .url" | head -1) && \
     echo "Asset URL: ${ASSET_URL}" && \
     if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then \
         echo "ERROR: Could not find asset '${ASSET_NAME}' in release ${JALIGN_VERSION}" && \
         echo "Available assets:" && \
-        echo "${RELEASE_DATA}" | jq -r '.assets[].name' && \
+        echo "${RELEASE_DATA}" | jq -r '.assets[].name' 2>/dev/null || echo "Could not parse assets" && \
         exit 1; \
     fi && \
     curl -sL \
