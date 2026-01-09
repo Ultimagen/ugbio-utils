@@ -73,6 +73,31 @@ RUN cd /opt && \
         git clone --branch ug.master https://github.com/Ultimagen/cn.mops.git cn.mops; \
     fi
 
+# Download para_jalign binary from private jalign repository
+ARG JALIGN_VERSION=1.4.0
+RUN --mount=type=secret,id=github_token \
+    if [ ! -f /run/secrets/github_token ]; then \
+        echo "ERROR: github_token secret is required to download para_jalign from private repository" && exit 1; \
+    fi && \
+    GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
+    ASSET_URL=$(curl -sL \
+        -H "Accept: application/vnd.github+json" \
+        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}" \
+        | grep -o "https://api.github.com/repos/Ultimagen/jalign/releases/assets/[0-9]*" \
+        | head -1) && \
+    echo "Asset URL: ${ASSET_URL}" && \
+    if [ -z "$ASSET_URL" ]; then \
+        echo "ERROR: Could not find para_jalign asset in release ${JALIGN_VERSION}" && exit 1; \
+    fi && \
+    curl -sL \
+        -H "Accept: application/octet-stream" \
+        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        "${ASSET_URL}" \
+        -o /opt/para_jalign && \
+    chmod +x /opt/para_jalign
 
 # Install additional R dependencies
 RUN R -e "install.packages(c('argparse', 'BiocManager'), repos='https://cran.r-project.org')"
@@ -92,31 +117,6 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
-
-# Download para_jalign binary from private jalign repository
-ARG JALIGN_VERSION=1.4.0
-RUN --mount=type=secret,id=github_token \
-    if [ ! -f /run/secrets/github_token ]; then \
-        echo "ERROR: github_token secret is required to download para_jalign from private repository" && exit 1; \
-    fi && \
-    GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
-    ASSET_URL=$(curl -sL \
-        -H "Accept: application/vnd.github+json" \
-        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-        -H "X-GitHub-Api-Version: 2022-11-28" \
-        "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}" \
-        | grep -o "https://api.github.com/repos/Ultimagen/jalign/releases/assets/[0-9]*" \
-        | head -1) && \
-    if [ -z "$ASSET_URL" ]; then \
-        echo "ERROR: Could not find para_jalign asset in release ${JALIGN_VERSION}" && exit 1; \
-    fi && \
-    curl -sL \
-        -H "Accept: application/octet-stream" \
-        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-        -H "X-GitHub-Api-Version: 2022-11-28" \
-        "${ASSET_URL}" \
-        -o /opt/para_jalign && \
-    chmod +x /opt/para_jalign
 
 ARG OUT_DIR
 
