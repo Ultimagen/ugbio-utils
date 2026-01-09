@@ -60,7 +60,9 @@ RUN --mount=type=secret,id=github_token \
         "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}" | tr -d '\000-\037') && \
     if ! echo "${RELEASE_DATA}" | jq empty 2>/dev/null; then \
         echo "ERROR: Invalid JSON response from GitHub API" && \
-        echo "Response (first 500 chars): ${RELEASE_DATA:0:500}" && \
+        echo "Response (first 500 chars):" && \
+        echo "${RELEASE_DATA}" | head -c 500 && \
+        echo "" && \
         exit 1; \
     fi && \
     ASSET_URL=$(echo "${RELEASE_DATA}" | jq -r ".assets[] | select(.name == \"${ASSET_NAME}\") | .url" | head -1) && \
