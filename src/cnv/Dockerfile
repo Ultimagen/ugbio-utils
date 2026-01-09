@@ -80,16 +80,20 @@ RUN --mount=type=secret,id=github_token \
         echo "ERROR: github_token secret is required to download para_jalign from private repository" && exit 1; \
     fi && \
     GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
-    ASSET_URL=$(curl -sL \
+    ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bullseye-x64" && \
+    echo "Looking for asset: ${ASSET_NAME}" && \
+    RELEASE_DATA=$(curl -sL \
         -H "Accept: application/vnd.github+json" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}" \
-        | grep -o "https://api.github.com/repos/Ultimagen/jalign/releases/assets/[0-9]*" \
-        | head -1) && \
+        "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}") && \
+    ASSET_URL=$(echo "${RELEASE_DATA}" | jq -r ".assets[] | select(.name == \"${ASSET_NAME}\") | .url" | head -1) && \
     echo "Asset URL: ${ASSET_URL}" && \
-    if [ -z "$ASSET_URL" ]; then \
-        echo "ERROR: Could not find para_jalign asset in release ${JALIGN_VERSION}" && exit 1; \
+    if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then \
+        echo "ERROR: Could not find asset '${ASSET_NAME}' in release ${JALIGN_VERSION}" && \
+        echo "Available assets:" && \
+        echo "${RELEASE_DATA}" | jq -r '.assets[].name' && \
+        exit 1; \
     fi && \
     curl -sL \
         -H "Accept: application/octet-stream" \
