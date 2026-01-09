@@ -46,14 +46,23 @@ RUN apt-get update && \
 
 
 # Download and install R
-RUN wget https://cloud.r-project.org/src/base/R-4/R-4.3.1.tar.gz && \
-    tar -xzf R-4.3.1.tar.gz && \
-    cd R-4.3.1 && \
-    ./configure --with-x=no --enable-R-shlib && \
-    make && \
-    make install && \
-    cd .. && \
-    rm -rf R-4.3.1 R-4.3.1.tar.gz
+# Install R from CRAN's pre-compiled Debian packages
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    dirmngr \
+    gnupg \
+    apt-transport-https \
+    ca-certificates \
+    software-properties-common && \
+    gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' && \
+    gpg --armor --export '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' | tee /etc/apt/trusted.gpg.d/cran_debian_key.asc && \
+    echo "deb https://cloud.r-project.org/bin/linux/debian bullseye-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    r-base=4.3.1-1~bullseyecran.0 \
+    r-base-dev=4.3.1-1~bullseyecran.0 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install samtools
 ARG SAMTOOLS_VERSION=1.17
