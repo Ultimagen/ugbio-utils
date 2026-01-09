@@ -44,7 +44,7 @@ RUN apt-get update && \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
-    # Download para_jalign binary from private jalign repository
+# Download para_jalign binary from private jalign repository
 ARG JALIGN_VERSION=1.4.0
 RUN --mount=type=secret,id=github_token \
     if [ ! -f /run/secrets/github_token ]; then \
@@ -76,7 +76,7 @@ RUN --mount=type=secret,id=github_token \
         -o /opt/para_jalign && \
     chmod +x /opt/para_jalign
 
-    # Download and install R
+# Download and install R
 RUN wget https://cloud.r-project.org/src/base/R-4/R-4.3.1.tar.gz && \
     tar -xzf R-4.3.1.tar.gz && \
     cd R-4.3.1 && \
