@@ -53,24 +53,19 @@ RUN --mount=type=secret,id=github_token \
     GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
     ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bullseye-x64" && \
     echo "Looking for asset: ${ASSET_NAME}" && \
-    RELEASE_DATA=$(curl -sL \
+    curl -sL \
         -H "Accept: application/vnd.github+json" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}" | tr -d '\000-\010\013\014\016-\037') && \
-    if ! echo "${RELEASE_DATA}" | jq empty 2>/dev/null; then \
-        echo "ERROR: Invalid JSON response from GitHub API" && \
-        echo "Response (first 500 chars):" && \
-        echo "${RELEASE_DATA}" | head -c 500 && \
-        echo "" && \
-        exit 1; \
-    fi && \
-    ASSET_URL=$(echo "${RELEASE_DATA}" | jq -r ".assets[] | select(.name == \"${ASSET_NAME}\") | .url" | head -1) && \
+        "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}" \
+        -o /tmp/release_data.json && \
+    ASSET_URL=$(cat /tmp/release_data.json | \
+        jq -r ".assets[] | select(.name == \"${ASSET_NAME}\") | .url" | head -1) && \
     echo "Asset URL: ${ASSET_URL}" && \
     if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then \
         echo "ERROR: Could not find asset '${ASSET_NAME}' in release ${JALIGN_VERSION}" && \
         echo "Available assets:" && \
-        echo "${RELEASE_DATA}" | jq -r '.assets[].name' 2>/dev/null || echo "Could not parse assets" && \
+        cat /tmp/release_data.json | jq -r '.assets[].name' && \
         exit 1; \
     fi && \
     curl -sL \
@@ -81,7 +76,7 @@ RUN --mount=type=secret,id=github_token \
         -o /opt/para_jalign && \
     chmod +x /opt/para_jalign
 
-# Download and install R
+    # Download and install R
 RUN wget https://cloud.r-project.org/src/base/R-4/R-4.3.1.tar.gz && \
     tar -xzf R-4.3.1.tar.gz && \
     cd R-4.3.1 && \
