@@ -24,6 +24,9 @@ inputs:
   ugbio_base_image:
       description: "ugbio_base image"
       required: true
+  github-token:
+      description: "GitHub token for private repository access"
+      required: false
 
 runs:
   using: "composite"
@@ -53,6 +56,8 @@ runs:
         tags: ${{ inputs.workspace-folder }}
         cache-from: type=gha
         cache-to: type=gha,mode=max
+        secrets: |
+          github_token=${{ inputs.github-token }}
         build-args: BASE_IMAGE=${{ steps.ecr-login.outputs.registry }}/${{ inputs.ugbio_base_image }}
 
     - name: Run python tests (if exist) in the container

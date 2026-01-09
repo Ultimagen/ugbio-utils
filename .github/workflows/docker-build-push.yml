@@ -204,6 +204,8 @@ jobs:
           tags: ${{ env.DOCKER_DESTINATIONS }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          secrets: |
+            github_token=${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
           build-args: |
             VERSION_DOCKER=${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
             ${{ inputs.docker-build-args }}
