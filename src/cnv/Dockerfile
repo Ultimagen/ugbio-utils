@@ -59,8 +59,8 @@ RUN apt-get update && \
     echo "deb https://cloud.r-project.org/bin/linux/debian bullseye-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-    r-base=4.3.1-1~bullseyecran.0 \
-    r-base-dev=4.3.1-1~bullseyecran.0 && \
+    r-base=4.5.1-1~bullseyecran.0 \
+    r-base-dev=4.5.1-1~bullseyecran.0 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
