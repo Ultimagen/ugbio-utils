@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """CLI for batch processing CNV regions with jump alignment.
 
-This script processes multiple CNV regions from a BED file, running jump
-alignment on each region and writing results to output files.
+This script annotates CNV VCF file with the counts of jump alignments around the breakpoints.
 """
 
 import argparse
@@ -63,26 +62,49 @@ def process_single_cnv(
     config: JAlignConfig,
     temp_dir: Path,
 ) -> tuple:
-    """Process a single CNV region.
+    """Process a single CNV region with jump alignment.
+
+    This function is designed to be called in parallel by multiprocessing workers.
+    Each worker opens its own file handles and processes one CNV region independently.
+
 
     Parameters
     ----------
-    rec_data : tuple
-        Tuple of (index, chrom, start, end) for the CNV
+    rec_data : tuple of (int, str, int, int)
+        CNV record data containing (index, chromosome, start, end)
     input_cram : str
-        Path to input CRAM/BAM file
+        Path to input CRAM or BAM file with aligned reads
     ref_fasta : str
-        Path to reference FASTA file
+        Path to reference genome FASTA file (must have .fai index)
     config : JAlignConfig
-        Configuration for jump alignment
+        Configuration object containing alignment parameters and thresholds
     temp_dir : Path
-        Directory for temporary files
+        Directory path for writing temporary BAM files
 
     Returns
     -------
-    tuple
-        (index, chrom, start, end, fwd_better, rev_better, fwd_strong_better,
-         rev_strong_better, alignment_results, temp_bam_file, cycle_time, success, error_msg)
+    tuple of (int, str, int, int, int, int, int, int, pd.DataFrame or None, Path or None, float, bool, str or None)
+        Results tuple containing:
+        - idx : int - CNV record index
+        - chrom : str - Chromosome name
+        - start : int - CNV start position
+        - end : int - CNV end position
+        - fwd_better : int - Number of reads supporting deletion
+        - rev_better : int - Number of reads supporting duplication
+        - fwd_strong_better : int - Number of reads strongly supporting deletion
+        - rev_strong_better : int - Number of reads strongly supporting duplication
+        - alignment_results : pd.DataFrame or None - Detailed alignment statistics
+        - temp_bam_file : Path or None - Path to temporary BAM file with realigned reads
+        - cycle_time : float - Processing time in seconds
+        - success : bool - Whether processing succeeded
+        - error_msg : str or None - Error message if processing failed, None otherwise
+
+    Notes
+    -----
+    - Each parallel worker creates its own pysam.AlignmentFile and pyfaidx.Fasta handles
+    - Temporary BAM files are named with PID and index to avoid collisions. This is preferred
+      instead of pysam.AlignedSegment due to pickling issues with multiprocessing.
+    - File handles are explicitly closed after processing to prevent resource leaks
     """
     idx, chrom, start, end = rec_data
 
@@ -181,12 +203,12 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "ref_fasta",
         type=str,
-        help="Reference genome FASTA file",
+        help="Reference genome FASTA file (need to have FAI index)",
     )
     parser.add_argument(
         "output_prefix",
         type=str,
-        help="Output prefix for .bed and .log files",
+        help="Output prefix for the output files",
     )
 
     # Configuration parameters
