@@ -382,7 +382,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
         # Open input files
         logger.info("Opening input files...")
         reads_file = pysam.AlignmentFile(args.input_cram, "rb", reference_filename=args.ref_fasta)
-        reference = pyfaidx.Fasta(args.ref_fasta)
+        reference = pyfaidx.Fasta(args.ref_fasta, rebuild=False)
         bam_header = create_bam_header(reads_file)
         # Set up output files
         output_vcf = args.output_prefix + ".jalign.vcf.gz"
