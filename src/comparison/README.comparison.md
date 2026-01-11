@@ -1,9 +1,6 @@
 # ugbio_comparison
 
-This module includes comparison python scripts and utilities for bioinformatics pipelines. It provides tools for comparing VCF callsets against ground truth datasets, with support for both small variant and structural variant (SV) comparisons.
-
-## JIRA Issue ID
-BIOIN-2028
+This module includes comparison python scripts and utilities for bioinformatics pipelines. It provides tools for comparing VCF callsets against ground truth datasets, with support for both small variant, structural variant (SV) and copy number (CNV) comparisons.
 
 ## Overview
 
@@ -32,13 +29,11 @@ Compare VCF callsets to ground truth using VCFEVAL as the comparison engine. Thi
 - Generate concordance metrics (TP, FP, FN)
 - Annotate variants with coverage, mappability, and other genomic features
 - Support for both single-interval and whole-genome comparisons
-- Reinterpret variants based on sequence context
 
 #### Usage
 
 ```bash
 run_comparison_pipeline \
-  --n_parts <number_of_parts> \
   --input_prefix <input_vcf_prefix> \
   --output_file <output_h5_file> \
   --output_interval <output_bed_file> \
@@ -46,32 +41,34 @@ run_comparison_pipeline \
   --highconf_intervals <high_confidence_bed> \
   --reference <reference_fasta> \
   --call_sample_name <sample_name> \
-  --truth_sample_name <truth_sample_name>
+  --truth_sample_name <truth_sample_name> \
+  --disable_reinterpretation \
+  --n_parts 0 \
 ```
 
 #### Key Parameters
 
-- `--n_parts`: Number of parts the VCF is split into (use 0 for a single complete VCF)
 - `--input_prefix`: Prefix of the input VCF file(s)
 - `--output_file`: Output HDF5 file containing concordance results
 - `--output_interval`: Output BED file of intersected intervals
-- `--gtr_vcf`: Ground truth VCF file for comparison
+- `--gtr_vcf`: Ground truth VCF file for comparison (e.g. GIAB VCF)
 - `--cmp_intervals`: Optional regions for comparison (BED/interval_list)
-- `--highconf_intervals`: High confidence intervals (BED/interval_list)
+- `--highconf_intervals`: High confidence intervals (e.g. GIAB HCR BED)
 - `--reference`: Reference genome FASTA file
 - `--reference_dict`: Reference genome dictionary file
 - `--call_sample_name`: Name of the call sample
 - `--truth_sample_name`: Name of the truth sample
+- `--n_parts`: Number of parts the VCF is split into (use 0 for a single complete VCF)
+
 
 #### Optional Parameters
 
-- `--coverage_bw_high_quality`: BigWig file with high MAPQ coverage
-- `--coverage_bw_all_quality`: BigWig file with all MAPQ coverage
+- `--coverage_bw_high_quality`: Input BigWig file with high MAPQ coverage
+- `--coverage_bw_all_quality`: Input BigWig file with all MAPQ coverage
 - `--annotate_intervals`: Interval files for annotation (can be specified multiple times)
-- `--runs_intervals`: Homopolymer runs intervals
-- `--hpol_filter_length_dist`: Length and distance to homopolymer run to mark (default: 10 10)
+- `--runs_intervals`: Homopolymer runs intervals (BED file), used for annotation of closeness to homopolymer indel
 - `--ignore_filter_status`: Ignore variant filter status
-- `--disable_reinterpretation`: Disable variant reinterpretation
+- `--disable_reinterpretation`: Disable variant reinterpretation (i.e. reinterpret variants using likely false hmer indel)
 - `--scoring_field`: Alternative scoring field to use (copied to TREE_SCORE)
 - `--flow_order`: Sequencing flow order (4 cycle)
 - `--n_jobs`: Number of parallel jobs for chromosome processing (default: -1 for all CPUs)
@@ -92,8 +89,8 @@ run_comparison_pipeline \
   --call_sample_name SAMPLE-001 \
   --truth_sample_name HG004 \
   --n_jobs 8 \
-  --ignore_filter_status \
-  --verbosity INFO
+  --verbosity INFO \
+  --disable_reinterpretation
 ```
 
 ### 2. sv_comparison_pipeline
