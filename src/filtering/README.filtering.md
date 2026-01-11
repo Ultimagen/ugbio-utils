@@ -129,7 +129,8 @@ training_prep_pipeline \
 - `--call_vcf`: VCF file with variant calls to evaluate
 - `--gt_type`: Ground truth type - "exact" (requires base_vcf) or "approximate"
 - `--base_vcf`: Truth VCF file (required for exact ground truth)
-- `--reference`: Reference FASTA file prefix (requires .fai and .sdf)
+- `--reference`: Reference FASTA file prefix (requires .fai index)
+- `--reference_sdf`: Reference SDF folder (RTG format). If not provided, uses `<reference>.sdf`
 - `--hcr`: High confidence regions BED file
 - `--output_prefix`: Prefix for output HDF5 files (train and test sets)
 - `--contig_for_test`: Chromosome to use as test set
@@ -339,7 +340,7 @@ uv run pytest src/filtering/tests/
 
 Or using Docker:
 ```bash
-docker run --rm -v .:/workdir <docker_image> run_tests /workdir/src/filtering
+docker run --rm -v .:/workdir ugbio_filtering:latest run_tests /workdir/src/filtering
 ```
 
 ### Building the Docker Image
