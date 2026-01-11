@@ -41,7 +41,8 @@ class TestRunCNVpytor:
         expected_out_cnvs_file = os.path.join(resources_dir, "HG002.pytor.bin500.CNVs.tsv")
 
         # Read both files into dataframes and compare with tolerance for floats
-        df_actual = pd.read_csv(out_cnvs_file, sep="\t")
-        df_expected = pd.read_csv(expected_out_cnvs_file, sep="\t")
+        # Files are space-separated (multiple spaces), not tab-separated despite .tsv extension
+        df_actual = pd.read_csv(out_cnvs_file, sep=r"\s+", header=None)
+        df_expected = pd.read_csv(expected_out_cnvs_file, sep=r"\s+", header=None)
 
         pd.testing.assert_frame_equal(df_actual, df_expected, rtol=1e-5, atol=1e-8)
