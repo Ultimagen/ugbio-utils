@@ -69,7 +69,7 @@ run_comparison_pipeline \
 - `--coverage_bw_all_quality`: BigWig file with all MAPQ coverage
 - `--annotate_intervals`: Interval files for annotation (can be specified multiple times)
 - `--runs_intervals`: Homopolymer runs intervals
-- `--hpol_filter_length_dist`: Length and distance to hmer run to mark (default: 10 10)
+- `--hpol_filter_length_dist`: Length and distance to homopolymer run to mark (default: 10 10)
 - `--ignore_filter_status`: Ignore variant filter status
 - `--disable_reinterpretation`: Disable variant reinterpretation
 - `--scoring_field`: Alternative scoring field to use (copied to TREE_SCORE)
