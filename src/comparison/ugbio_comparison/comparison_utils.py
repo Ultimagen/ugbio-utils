@@ -326,7 +326,6 @@ def annotate_concordance(
     annotate_intervals: list[str] | None = None,
     runfile: str | None = None,
     flow_order: str | None = DEFAULT_FLOW_ORDER,
-    hmer_run_length_dist: tuple = (10, 10),
 ) -> tuple[pd.DataFrame, list]:
     """Annotates concordance data with information about SNP/INDELs and motifs
 
@@ -346,8 +345,6 @@ def annotate_concordance(
         bed file with positions of hmer runs (in order to mark homopolymer runs)
     flow_order : str, optional
         Flow order
-    hmer_run_length_dist : tuple, optional
-        tuple (min_hmer_run_length, max_distance) for marking variants near homopolymer runs
 
     No Longer Returned
     ------------------
@@ -371,10 +368,6 @@ def annotate_concordance(
     if bw_all_quality is not None and bw_high_quality is not None:
         logger.info("Calculating coverage")
         concordance_df = annotation.get_coverage(concordance_df, bw_high_quality, bw_all_quality)
-    if runfile is not None:
-        length, dist = hmer_run_length_dist
-        logger.info("Marking homopolymer runs")
-        concordance_df = close_to_hmer_run(concordance_df, runfile, min_hmer_run_length=length, max_distance=dist)
     annots = []
     if annotate_intervals is not None:
         for annotation_file in annotate_intervals:

@@ -21,11 +21,6 @@ class TestRunComparisonPipeline:
         run_comparison_pipeline.run(
             [
                 "run_comparison_pipeline",
-                "--n_parts",
-                "0",
-                "--hpol_filter_length_dist",
-                "12",
-                "10",
                 "--input_prefix",
                 f"{resources_dir}/004797-UGAv3-51.filtered.chr1_1_1000000",
                 "--output_file",
@@ -67,7 +62,60 @@ class TestRunComparisonPipeline:
             ]
         )
         output_df = read_hdf(f"{tmpdir}/004797-UGAv3-51.comp.h5", key="chr1")
-        assert {"tp": 346, "fn": 29, "fp": 27} == dict(output_df["classify"].value_counts())
+        assert {"tp": 345, "fn": 30, "fp": 27} == dict(output_df["classify"].value_counts())
+
+    def test_run_comparison_pipeline_without_runs_intervals(self, tmpdir, resources_dir):
+        """Test that pipeline works without runs_intervals (skips homopolymer run annotation)."""
+        output_file = f"{tmpdir}/HG00239.vcf.gz"
+        os.makedirs(dirname(output_file), exist_ok=True)
+        general_inputs_dir = resources_dir / "chr1_head"
+        run_comparison_pipeline.run(
+            [
+                "run_comparison_pipeline",
+                "--input_prefix",
+                f"{resources_dir}/004797-UGAv3-51.filtered.chr1_1_1000000",
+                "--output_file",
+                f"{tmpdir}/004797-UGAv3-51.comp.no_runs.h5",
+                "--output_interval",
+                f"{tmpdir}/004797-UGAv3-51.comp.no_runs.bed",
+                "--gtr_vcf",
+                f"{resources_dir}/HG004_GRCh38_GIAB_1_22_v4.2.1_benchmark.broad-header.chr1_1_1000000.vcf.gz",
+                "--highconf_intervals",
+                f"{resources_dir}/HG004_GRCh38_GIAB_1_22_v4.2.1_benchmark_noinconsistent.chr1_1_1000000.bed",
+                "--use_tmpdir",
+                "--reference",
+                f"{general_inputs_dir}/Homo_sapiens_assembly38.fasta",
+                "--reference_dict",
+                f"{general_inputs_dir}/Homo_sapiens_assembly38.dict",
+                "--call_sample_name",
+                "UGAv3-51",
+                "--truth_sample_name",
+                "HG004",
+                "--ignore_filter_status",
+                "--flow_order",
+                DEFAULT_FLOW_ORDER,
+                "--annotate_intervals",
+                f"{general_inputs_dir}/LCR-hs38.bed",
+                "--annotate_intervals",
+                f"{general_inputs_dir}/exome.twist.bed",
+                "--annotate_intervals",
+                f"{general_inputs_dir}/mappability.0.bed",
+                "--annotate_intervals",
+                f"{general_inputs_dir}/hmers_7_and_higher.bed",
+                "--n_jobs",
+                "4",
+                "--coverage_bw_all_quality",
+                f"{resources_dir}/004797-UGAv3-51.chr1.q0.Q0.l0.w1.depth.chr1_1_1000000.bw",
+                "--coverage_bw_high_quality",
+                f"{resources_dir}/004797-UGAv3-51.chr1.q0.Q20.l0.w1.depth.chr1_1_1000000.bw",
+            ]
+        )
+        output_df = read_hdf(f"{tmpdir}/004797-UGAv3-51.comp.no_runs.h5", key="chr1")
+        # Should produce same classification results but without homopolymer run columns
+        assert {"tp": 345, "fn": 30, "fp": 27} == dict(output_df["classify"].value_counts())
+        # Verify homopolymer run columns are not present
+        assert "close_to_hmer_run" not in output_df.columns
+        assert "inside_hmer_run" not in output_df.columns
 
     def test_run_comparison_pipeline_sentieon(self, tmpdir, resources_dir):
         output_file = f"{tmpdir}/004777-UGAv3-20.pred.chr1_1_1000000.comp.h5"
@@ -77,11 +125,6 @@ class TestRunComparisonPipeline:
         run_comparison_pipeline.run(
             [
                 "run_comparison_pipeline",
-                "--n_parts",
-                "0",
-                "--hpol_filter_length_dist",
-                "12",
-                "10",
                 "--input_prefix",
                 f"{resources_dir}/004777-UGAv3-20.pred.chr1_1-1000000",
                 "--output_file",
@@ -112,7 +155,6 @@ class TestRunComparisonPipeline:
                 f"{general_inputs_dir}/mappability.0.bed",
                 "--annotate_intervals",
                 f"{general_inputs_dir}/hmers_7_and_higher.bed",
-                "--disable_reinterpretation",
                 "--scoring_field",
                 "ML_PROB",
                 "--n_jobs",
@@ -130,11 +172,6 @@ class TestRunComparisonPipeline:
         run_comparison_pipeline.run(
             [
                 "run_comparison_pipeline",
-                "--n_parts",
-                "0",
-                "--hpol_filter_length_dist",
-                "12",
-                "10",
                 "--input_prefix",
                 f"{resources_dir}/dv.pred.chr1_1-1000000",
                 "--output_file",
@@ -165,7 +202,6 @@ class TestRunComparisonPipeline:
                 f"{general_inputs_dir}/mappability.0.bed",
                 "--annotate_intervals",
                 f"{general_inputs_dir}/hmers_7_and_higher.bed",
-                "--disable_reinterpretation",
                 "--scoring_field",
                 "QUAL",
                 "--revert_hom_ref",

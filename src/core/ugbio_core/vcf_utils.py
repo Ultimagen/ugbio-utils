@@ -48,25 +48,6 @@ class VcfUtils:
         """
         print_and_execute(command, output_file=output_file, simple_pipeline=self.sp, module_name=__name__)
 
-    def combine_vcf(self, n_parts: int, input_prefix: str, output_fname: str):
-        """Combines VCF in parts from GATK and indices the result
-
-        Parameters
-        ----------
-        n_parts : int
-            Number of VCF parts (names will be 1-based)
-        input_prefix : str
-            Prefix of the VCF files (including directory) 1.vcf.gz ... will be added
-        output_fname : str
-            Name of the output VCF
-        """
-        input_files = [f"{input_prefix}.{x}.vcf" for x in range(1, n_parts + 1)] + [
-            f"{input_prefix}.{x}.vcf.gz" for x in range(1, n_parts + 1)
-        ]
-        input_files = [x for x in input_files if os.path.exists(x)]
-        self.__execute(f"bcftools concat -o {output_fname} -O z {input_files}")
-        self.index_vcf(output_fname)
-
     def index_vcf(self, vcf: str):
         """Tabix index on VCF
 
@@ -94,25 +75,6 @@ class VcfUtils:
         """
         tempdir = os.path.dirname(os.path.abspath(output_file))
         self.__execute(f"bcftools sort -o {output_file} -O z {input_file} -T {tempdir}/")
-
-    def reheader_vcf(self, input_file: str, new_header: str, output_file: str):
-        """Run bcftools reheader and index
-
-        Parameters
-        ----------
-        input_file : str
-            Input file name
-        new_header : str
-            Name of the new header
-        output_file : str
-            Name of the output file
-
-        No Longer Returned
-        ------------------
-        None, generates `output_file`
-        """
-        self.__execute(f"bcftools reheader -h {new_header} {input_file}")
-        self.index_vcf(output_file)
 
     def concat_vcf(self, input_files: list[str], output_file: str):
         """Concatenate VCF files using bcftools concat and index

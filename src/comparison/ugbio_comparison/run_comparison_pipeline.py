@@ -55,10 +55,9 @@ def _contig_concordance_annotate_reinterpretation(  # noqa: PLR0913
     bw_all_quality,
     annotate_intervals,
     runs_intervals,
-    hpol_filter_length_dist,
     flow_order,
     base_name_outputfile,
-    disable_reinterpretation,
+    enable_reinterpretation,
     ignore_low_quality_fps,
     scoring_field,
 ):
@@ -77,11 +76,10 @@ def _contig_concordance_annotate_reinterpretation(  # noqa: PLR0913
         bw_all_quality,
         annotate_intervals,
         runs_intervals,
-        hmer_run_length_dist=hpol_filter_length_dist,
         flow_order=flow_order,
     )
 
-    if not disable_reinterpretation:
+    if enable_reinterpretation:
         annotated_concordance = comparison_utils.reinterpret_variants(
             annotated_concordance, reference, ignore_low_quality_fps=ignore_low_quality_fps
         )
@@ -91,12 +89,6 @@ def _contig_concordance_annotate_reinterpretation(  # noqa: PLR0913
 
 def get_parser() -> argparse.ArgumentParser:
     ap_var = argparse.ArgumentParser(prog="run_comparison_pipeline.py", description="Compare VCF to ground truth")
-    ap_var.add_argument(
-        "--n_parts",
-        help="Number of parts that the VCF is split into",
-        required=True,
-        type=int,
-    )
     ap_var.add_argument("--input_prefix", help="Prefix of the input file", required=True, type=str)
     ap_var.add_argument("--output_file", help="Output h5 file", required=True, type=str)
     ap_var.add_argument(
@@ -166,19 +158,6 @@ def get_parser() -> argparse.ArgumentParser:
         default="sm1",
     )
     ap_var.add_argument("--truth_sample_name", help="Name of the truth sample", required=True)
-    ap_var.add_argument("--header_file", help="Desired header", required=False, default=None)
-    ap_var.add_argument(
-        "--filter_runs",
-        help="Should variants on hmer runs be filtered out",
-        action="store_true",
-    )
-    ap_var.add_argument(
-        "--hpol_filter_length_dist",
-        nargs=2,
-        type=int,
-        help="Length and distance to the hpol run to mark",
-        default=[10, 10],
-    )
     ap_var.add_argument("--ignore_filter_status", help="Ignore variant filter status", action="store_true")
     ap_var.add_argument(
         "--revert_hom_ref",
@@ -208,8 +187,8 @@ def get_parser() -> argparse.ArgumentParser:
         type=str,
     )
     ap_var.add_argument(
-        "--disable_reinterpretation",
-        help="Should re-interpretation be run",
+        "--enable_reinterpretation",
+        help="Enable variant reinterpretation in flow space (disabled by default)",
         action="store_true",
     )
     ap_var.add_argument(
@@ -279,7 +258,6 @@ def _create_comparison_pipeline(vcu, vu, cmp_intervals, highconf_intervals, args
     return ComparisonPipeline(
         vcu=vcu,
         vu=vu,
-        n_parts=args.n_parts,
         input_prefix=args.input_prefix,
         truth_file=args.gtr_vcf,
         cmp_intervals=cmp_intervals,
@@ -289,7 +267,6 @@ def _create_comparison_pipeline(vcu, vu, cmp_intervals, highconf_intervals, args
         call_sample=args.call_sample_name,
         truth_sample=args.truth_sample_name,
         output_file_name=args.output_file,
-        header=args.header_file,
         output_suffix=args.output_suffix,
         ignore_filter=args.ignore_filter_status,
         revert_hom_ref=args.revert_hom_ref,
@@ -310,11 +287,10 @@ def _process_single_interval_concordance(raw_calls_vcf, concordance_vcf, runs_in
         args.coverage_bw_all_quality,
         args.annotate_intervals,
         runs_intervals.as_bed_file(),
-        hmer_run_length_dist=args.hpol_filter_length_dist,
         flow_order=args.flow_order,
     )
 
-    if not args.disable_reinterpretation:
+    if args.enable_reinterpretation:
         annotated_concordance_df = comparison_utils.reinterpret_variants(
             annotated_concordance_df,
             args.reference,
@@ -360,10 +336,9 @@ def _process_whole_genome_concordance(raw_calls_vcf, concordance_vcf, runs_inter
             args.coverage_bw_all_quality,
             args.annotate_intervals,
             runs_intervals.as_bed_file(),
-            args.hpol_filter_length_dist,
             args.flow_order,
             base_name_outputfile,
-            args.disable_reinterpretation,
+            args.enable_reinterpretation,
             args.is_mutect,
             args.scoring_field,
         )
