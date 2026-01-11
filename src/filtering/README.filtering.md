@@ -1,15 +1,17 @@
-# ugbio_filtering
+# ugbio_filtering (v1.19.0)
 
-This module includes filtering python scripts and utils for bioinformatics pipelines. It provides tools for variant filtering, model training, systematic error correction (SEC), and quality control of variant calls.
+This module includes filtering python scripts and utils for bioinformatics pipelines.
+It provides tools for variant filtering, model training, and quality control of variant calls.
 
 ## Installation
 
 To install the filtering module with all dependencies:
 
 ```bash
-uv sync --package ugbio_filtering
+pip install ugbio_filtering
 ```
 
+The tool with all required dependencies can be also used in docker image: `ultimagenomics\ugbio_filtering`
 ## CLI Scripts
 
 The filtering module provides several command-line tools for different stages of the variant filtering pipeline:
@@ -164,101 +166,6 @@ training_prep_cnv_pipeline \
 - `--ignore_cnv_type`: Ignore CNV type when matching to truth
 - `--skip_collapse`: Skip collapsing variants before comparison
 
-### Systematic Error Correction (SEC)
-
-#### `error_correction_training`
-
-Collects statistics from gVCF files for systematic error correction model training.
-
-**Purpose**: Gather allele count statistics at ground truth positions to build conditional allele distributions.
-
-**Usage**:
-```bash
-error_correction_training \
-  --relevant_coords regions.bed \
-  --ground_truth_vcf truth.vcf.gz \
-  --gvcf_file sample.g.vcf.gz \
-  --sample_id SAMPLE_NAME \
-  --output_file allele_distributions.tsv
-```
-
-**Key Parameters**:
-- `--relevant_coords`: BED file with genomic regions to analyze
-- `--ground_truth_vcf`: VCF file with true genotypes (tabix indexed)
-- `--gvcf_file`: gVCF file with raw read information
-- `--sample_id`: Sample identifier
-- `--output_file`: Output TSV file with allele distributions
-
-#### `merge_conditional_allele_distributions`
-
-Combines conditional allele distributions from multiple samples.
-
-**Purpose**: Aggregate statistics from multiple samples to create a comprehensive error correction model.
-
-**Usage**:
-```bash
-merge_conditional_allele_distributions \
-  --conditional_allele_distribution_files file_list.txt \
-  --output_prefix merged_model
-```
-
-**Key Parameters**:
-- `--conditional_allele_distribution_files`: Text file containing paths to individual distribution files (one per line)
-- `--output_prefix`: Prefix for output pickle files (per chromosome)
-
-#### `correct_systematic_errors`
-
-Applies systematic error correction to filter false positive calls.
-
-**Purpose**: Use conditional allele distribution models to identify and filter systematic sequencing errors.
-
-**Usage**:
-```bash
-correct_systematic_errors \
-  --relevant_coords regions.bed \
-  --model model_chr*.pkl \
-  --gvcf sample.g.vcf.gz \
-  --output_file corrected.vcf.gz \
-  [--strand_enrichment_pval_thresh 0.00001] \
-  [--lesser_strand_enrichment_pval_thresh 0.05]
-```
-
-**Key Parameters**:
-- `--relevant_coords`: BED file with regions to analyze
-- `--model`: Pickle file(s) with conditional allele distributions (supports glob patterns)
-- `--gvcf`: gVCF file with raw read information
-- `--output_file`: Output VCF, pickle, or BED file
-- `--strand_enrichment_pval_thresh`: P-value threshold for strand bias (default: 0.00001)
-- `--lesser_strand_enrichment_pval_thresh`: Lesser strand bias threshold (default: 0.05)
-
-#### `assess_sec_concordance`
-
-Evaluates the performance of systematic error correction.
-
-**Purpose**: Compare variant calls before and after SEC to ground truth and generate accuracy metrics.
-
-**Usage**:
-```bash
-assess_sec_concordance \
-  --concordance_h5_input comparison.h5 \
-  --genome_fasta reference.fa \
-  --raw_exclude_list raw_blacklist.bed \
-  --sec_exclude_list sec_blacklist.bed \
-  --hcr high_confidence.bed \
-  --output_prefix evaluation \
-  [--dataset_key all] \
-  [--ignore_genotype]
-```
-
-**Key Parameters**:
-- `--concordance_h5_input`: HDF5 file with variant comparison results
-- `--genome_fasta`: Reference genome FASTA file
-- `--raw_exclude_list`: BED file with raw exclude list (SEC input)
-- `--sec_exclude_list`: BED file with SEC call types (SEC output)
-- `--hcr`: High confidence regions BED file
-- `--output_prefix`: Prefix for output statistics and error analysis files
-- `--ignore_genotype`: Ignore genotype when comparing to ground truth
-
 ## Typical Workflows
 
 ### Training and Applying a Filtering Model
@@ -289,66 +196,6 @@ assess_sec_concordance \
      --model_file model.pkl \
      --output_file filtered_calls.vcf.gz
    ```
-
-### Systematic Error Correction Pipeline
-
-1. **Collect statistics per sample**:
-   ```bash
-   error_correction_training \
-     --relevant_coords regions.bed \
-     --ground_truth_vcf truth.vcf.gz \
-     --gvcf_file sample.g.vcf.gz \
-     --sample_id SAMPLE \
-     --output_file sample_dist.tsv
-   ```
-
-2. **Merge distributions from multiple samples**:
-   ```bash
-   merge_conditional_allele_distributions \
-     --conditional_allele_distribution_files samples.txt \
-     --output_prefix sec_model
-   ```
-
-3. **Apply error correction**:
-   ```bash
-   correct_systematic_errors \
-     --relevant_coords regions.bed \
-     --model sec_model_*.pkl \
-     --gvcf sample.g.vcf.gz \
-     --output_file corrected.vcf.gz
-   ```
-
-4. **Evaluate results**:
-   ```bash
-   assess_sec_concordance \
-     --concordance_h5_input comparison.h5 \
-     --genome_fasta ref.fa \
-     --raw_exclude_list raw.bed \
-     --sec_exclude_list sec.bed \
-     --hcr hcr.bed \
-     --output_prefix evaluation
-   ```
-
-## Development
-
-### Running Tests
-
-Run tests using pytest in the dev container:
-```bash
-uv run pytest src/filtering/tests/
-```
-
-Or using Docker:
-```bash
-docker run --rm -v .:/workdir ugbio_filtering:latest run_tests /workdir/src/filtering
-```
-
-### Building the Docker Image
-
-```bash
-docker build -t ugbio_filtering:latest -f src/filtering/Dockerfile .
-```
-
 ## Dependencies
 
 The filtering module depends on:
@@ -357,11 +204,11 @@ The filtering module depends on:
 - `pickle-secure`: Secure pickle operations
 - `biopython`: Biological sequence manipulation
 - `dill`: Enhanced pickling
-- External tools: bcftools, samtools, GATK (included in Docker image)
+
+- External tools: bcftools, samtools, GATK. RTG tools and picard
 
 ## Additional Notes
 
 - All VCF input files must be bgzip-compressed and tabix-indexed (.tbi)
 - Models are stored as pickle files containing XGBoost classifiers and preprocessing transformers
 - Custom annotations allow extending the feature set beyond standard VCF fields
-- SEC (Systematic Error Correction) is particularly effective for ultra-high accuracy sequencing platforms
