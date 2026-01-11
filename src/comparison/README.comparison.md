@@ -1,4 +1,4 @@
-# ugbio_comparison
+# ugbio_comparison (updated to v1.19.0)
 
 This module includes comparison python scripts and utilities for bioinformatics pipelines. It provides tools for comparing VCF callsets against ground truth datasets, with support for both small variant, structural variant (SV) and copy number (CNV) comparisons.
 
@@ -14,8 +14,10 @@ The comparison module provides two main CLI scripts for variant comparison:
 To install the comparison module with all dependencies:
 
 ```bash
-uv sync --package ugbio_comparison
+pip install ugbio-comparison
 ```
+
+The tool can also be run from the docker image `ultimagenomics\ugbio_comparison:1.19.0`
 
 ## CLI Scripts
 
@@ -70,7 +72,7 @@ run_comparison_pipeline \
 - `--ignore_filter_status`: Ignore variant filter status
 - `--disable_reinterpretation`: Disable variant reinterpretation (i.e. reinterpret variants using likely false hmer indel)
 - `--scoring_field`: Alternative scoring field to use (copied to TREE_SCORE)
-- `--flow_order`: Sequencing flow order (4 cycle)
+- `--flow_order`: Sequencing flow order (4 cycle, TGCA)
 - `--n_jobs`: Number of parallel jobs for chromosome processing (default: -1 for all CPUs)
 - `--use_tmpdir`: Store temporary files in temporary directory
 - `--verbosity`: Logging level (ERROR, WARNING, INFO, DEBUG)
@@ -171,7 +173,6 @@ sv_comparison_pipeline \
   - `input_args` key: Input parameters used
   - Per-chromosome keys (for whole-genome mode)
 - **BED files**: Generated from concordance results for visualization
-- **Interval BED file** (`output_interval`): Intersected comparison intervals
 
 ### sv_comparison_pipeline
 
@@ -184,7 +185,6 @@ sv_comparison_pipeline \
   - `fn.vcf.gz`: False negative variants
   - `fp.vcf.gz`: False positive variants
   - `summary.json`: Summary statistics
-  - Collapsed and sorted VCF files
 
 ## Run with Docker
 
