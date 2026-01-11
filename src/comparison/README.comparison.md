@@ -209,9 +209,19 @@ docker run -v <local_data>:/data -v <local_output>:/output \
 
 ## Dependencies
 
-The comparison module depends on:
+### Python Dependencies
 - `ugbio_core[ml,vcfbed]` - Core utilities and VCF/BED processing
-- External tools: bcftools, VCFEVAL (RTG Tools), Truvari
+  - Includes Truvari 5.4.0+ for SV comparison
+
+### Binary Tool Dependencies
+The following binary tools are included in the Docker image:
+- **bcftools** 1.20 - VCF/BCF manipulation
+- **samtools** 1.20 - SAM/BAM/CRAM manipulation
+- **bedtools** 2.31.0 - Genome interval operations
+- **bedops** - BED file operations
+- **GATK** 4.6.0.0 - Genome Analysis Toolkit
+- **Picard** 3.3.0 - Java-based command-line tools for manipulating high-throughput sequencing data
+- **RTG Tools** 3.12.1 - Provides VCFEVAL for variant comparison
 
 ## Notes
 
