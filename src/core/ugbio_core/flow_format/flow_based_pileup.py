@@ -7,6 +7,8 @@ import pysam
 import ugbio_core.flow_format.flow_based_read as fbr
 import ugbio_core.math_utils as phred
 
+BAM_CSOFT_CLIP = 4
+
 
 class FlowBasedIteratorColumn:
     """Wrapper for pysam.IteratorColumn that allows to fetch flow probabilities for each homopolymer in the pileup.
@@ -130,8 +132,8 @@ class FlowBasedAlignmentFile(pysam.AlignmentFile):
         return FlowBasedIteratorColumn(pup)
 
 
-def get_hmer_qualities_from_pileup_element(
-    pe: pysam.PileupRead, max_hmer: int = 20, min_call_prob: float = 0.1
+def get_hmer_qualities_from_pileup_element(  # noqa: C901
+    pe: pysam.PileupRead, max_hmer: int = 20, min_call_prob: float = 0.1, *, soft_clipping_as_edge: bool = True
 ) -> tuple:
     """
     Return hmer length probabilities for a single PileupRead element
@@ -144,6 +146,8 @@ def get_hmer_qualities_from_pileup_element(
         Maximum hmer length that we call
     min_call_prob : float
         Minimum probability for the called hmer length
+    soft_clipping_as_edge : bool
+        Whether to treat soft-clipped edges as edges for probability smearing
 
     Returns
     -------
@@ -170,7 +174,20 @@ def get_hmer_qualities_from_pileup_element(
     cumsum_key = np.cumsum(key)
     cycle = np.searchsorted(cumsum_key, pe.query_position_or_next)
     # smear probabilities
-    if qstart == 0 or qend == len(str(pe.alignment.query_sequence)):
+    is_soft_clipped = False
+    if pe.alignment.cigartuples and soft_clipping_as_edge:
+        # Check if base is adjacent to soft-clipping at start
+        if pe.alignment.cigartuples[0][0] == BAM_CSOFT_CLIP:
+            soft_clip_end = pe.alignment.cigartuples[0][1]
+            if qstart - soft_clip_end <= 1:
+                is_soft_clipped = True
+        # Check if base is adjacent to soft-clipping at end
+        if pe.alignment.cigartuples[-1][0] == BAM_CSOFT_CLIP:
+            query_length = pe.alignment.query_length
+            soft_clip_start = query_length - pe.alignment.cigartuples[-1][1]
+            if qend - soft_clip_start <= 1:
+                is_soft_clipped = True
+    if qstart == 0 or qend == len(str(pe.alignment.query_sequence)) or is_soft_clipped:
         hmer_probs[:] = 1.0
         is_edge = True
     else:
