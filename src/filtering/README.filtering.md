@@ -1,6 +1,6 @@
-# ugbio_filtering (v1.19.0)
+# ugbio_filtering
 
-This module includes filtering python scripts and utils for bioinformatics pipelines.
+This module includes filtering python scripts for bioinformatics pipelines.
 It provides tools for variant filtering, model training, and quality control of variant calls.
 
 ## Installation
@@ -11,7 +11,7 @@ To install the filtering module with all dependencies:
 pip install ugbio_filtering
 ```
 
-The tool with all required dependencies can be also used in docker image: `ultimagenomics\ugbio_filtering`
+The tool with all required dependencies can be also used in docker image: [`ultimagenomics/ugbio_filtering`](https://hub.docker.com/r/ultimagenomics/ugbio_filtering)
 ## CLI Scripts
 
 The filtering module provides several command-line tools for different stages of the variant filtering pipeline:
@@ -22,7 +22,7 @@ The filtering module provides several command-line tools for different stages of
 
 Applies machine learning-based filtering to VCF files after GATK variant calling.
 
-**Purpose**: Filter variants using trained models, blacklists, and custom annotations to improve callset quality.
+**Purpose**: Filter variants using trained models, blacklists, and custom annotation bed files to improve callset quality.
 
 **Usage**:
 ```bash
@@ -30,10 +30,8 @@ filter_variants_pipeline \
   --input_file input.vcf.gz \
   --output_file filtered.vcf.gz \
   --model_file model.pkl \
-  [--blacklist blacklist.pkl] \
   [--custom_annotations ANNOTATION1 ANNOTATION2] \
   [--decision_threshold 30] \
-  [--blacklist_cg_insertions] \
   [--treat_multiallelics --ref_fasta reference.fa] \
   [--recalibrate_genotype] \
   [--overwrite_qual_tag] \
@@ -44,15 +42,13 @@ filter_variants_pipeline \
 - `--input_file`: Input VCF file (requires .tbi index)
 - `--output_file`: Output VCF file with filtering annotations
 - `--model_file`: Pickle file containing trained XGBoost model and transformer
-- `--blacklist`: Optional pickle file with blacklisted regions
 - `--decision_threshold`: Score threshold for filtering variants (default: 30)
-- `--blacklist_cg_insertions`: Flag to filter CCG/GGC insertions
 - `--treat_multiallelics`: Apply special handling for multiallelic sites
 - `--recalibrate_genotype`: Allow model to re-call genotypes
 
 #### `filter_low_af_ratio_to_background`
 
-Filters variants based on allele frequency ratio to background.
+Filters somatic variants based on allele frequency ratio to background.
 
 **Purpose**: Remove variants with low AF ratio in GT ALT alleles compared to background, useful for somatic variant calling.
 
@@ -198,17 +194,4 @@ training_prep_cnv_pipeline \
    ```
 ## Dependencies
 
-The filtering module depends on:
-- `ugbio_core`: Core utilities for VCF processing
-- `ugbio_comparison`: Variant comparison utilities
-- `pickle-secure`: Secure pickle operations
-- `biopython`: Biological sequence manipulation
-- `dill`: Enhanced pickling
-
-- External tools: bcftools, samtools, GATK. RTG tools and picard
-
-## Additional Notes
-
-- All VCF input files must be bgzip-compressed and tabix-indexed (.tbi)
-- Models are stored as pickle files containing XGBoost classifiers and preprocessing transformers
-- Custom annotations allow extending the feature set beyond standard VCF fields
+The filtering module depends on the following external tools: bcftools, samtools, GATK. RTG tools and picard
