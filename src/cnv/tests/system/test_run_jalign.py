@@ -119,8 +119,11 @@ class TestRunJalign:
         output_bam = f"{output_prefix}.jalign.bam"
         output_csv = f"{output_prefix}.jalign.csv"
 
-        # Mock para_jalign execution
-        with patch("subprocess.run", side_effect=mock_para_jalign):
+        # Mock para_jalign execution and tool existence check
+        with (
+            patch("subprocess.run", side_effect=mock_para_jalign),
+            patch("shutil.which", return_value="/usr/bin/para_jalign"),
+        ):
             # Run CLI with 2 threads
             exit_code = run_jalign.main(
                 [
@@ -198,8 +201,11 @@ class TestRunJalign:
             if not os.path.exists(pjoin(resources_dir, json_file)):
                 pytest.skip(f"Expected JSON file {json_file} not yet generated")
 
-        # Mock para_jalign execution (will use real JSON outputs)
-        with patch("subprocess.run", side_effect=mock_para_jalign):
+        # Mock para_jalign execution and tool existence check (will use real JSON outputs)
+        with (
+            patch("subprocess.run", side_effect=mock_para_jalign),
+            patch("shutil.which", return_value="/usr/bin/para_jalign"),
+        ):
             # Run CLI
             exit_code = run_jalign.main(
                 [
