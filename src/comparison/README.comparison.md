@@ -1,4 +1,4 @@
-# ugbio_comparison (updated to v1.19.0)
+# ugbio_comparison
 
 This module includes comparison python scripts and utilities for bioinformatics pipelines. It provides tools for comparing VCF callsets against ground truth datasets, with support for both small variant, structural variant (SV) and copy number (CNV) comparisons.
 
@@ -17,7 +17,7 @@ To install the comparison module with all dependencies:
 pip install ugbio-comparison
 ```
 
-The tool can also be run from the docker image `ultimagenomics\ugbio_comparison:1.19.0`
+The tool can also be run from the docker image in dockerhub [`ultimagenomics/ugbio_comparison`](https://hub.docker.com/r/ultimagenomics/ugbio_comparison).
 
 ## CLI Scripts
 
@@ -44,8 +44,6 @@ run_comparison_pipeline \
   --reference <reference_fasta> \
   --call_sample_name <sample_name> \
   --truth_sample_name <truth_sample_name> \
-  --disable_reinterpretation \
-  --n_parts 0 \
 ```
 
 #### Key Parameters
@@ -60,7 +58,6 @@ run_comparison_pipeline \
 - `--reference_dict`: Reference genome dictionary file
 - `--call_sample_name`: Name of the call sample
 - `--truth_sample_name`: Name of the truth sample
-- `--n_parts`: Number of parts the VCF is split into (use 0 for a single complete VCF)
 
 
 #### Optional Parameters
@@ -70,7 +67,7 @@ run_comparison_pipeline \
 - `--annotate_intervals`: Interval files for annotation (can be specified multiple times)
 - `--runs_intervals`: Homopolymer runs intervals (BED file), used for annotation of closeness to homopolymer indel
 - `--ignore_filter_status`: Ignore variant filter status
-- `--disable_reinterpretation`: Disable variant reinterpretation (i.e. reinterpret variants using likely false hmer indel)
+- `--enable_reinterpretation`: Enable variant reinterpretation (i.e. reinterpret variants using likely false hmer indel)
 - `--scoring_field`: Alternative scoring field to use (copied to TREE_SCORE)
 - `--flow_order`: Sequencing flow order (4 cycle, TGCA)
 - `--n_jobs`: Number of parallel jobs for chromosome processing (default: -1 for all CPUs)
@@ -81,7 +78,6 @@ run_comparison_pipeline \
 
 ```bash
 run_comparison_pipeline \
-  --n_parts 0 \
   --input_prefix /data/sample.filtered \
   --output_file /results/sample.comp.h5 \
   --output_interval /results/sample.comp.bed \
@@ -92,7 +88,6 @@ run_comparison_pipeline \
   --truth_sample_name HG004 \
   --n_jobs 8 \
   --verbosity INFO \
-  --disable_reinterpretation
 ```
 
 ### 2. sv_comparison_pipeline
@@ -102,6 +97,7 @@ Compare structural variant (SV) callsets using Truvari for benchmarking. This pi
 #### Purpose
 
 - Compare SV calls against a ground truth dataset using Truvari
+- We recommend using SV ground truth callsets from NIST as the source of truth
 - Collapse overlapping variants before comparison
 - Generate detailed concordance metrics for SVs
 - Support for different SV types (DEL, INS, DUP, etc.)
@@ -113,6 +109,7 @@ Compare structural variant (SV) callsets using Truvari for benchmarking. This pi
 sv_comparison_pipeline \
   --calls <input_calls_vcf> \
   --gt <ground_truth_vcf> \
+  --hcr_bed <high confidence bed> \
   --output_filename <output_h5_file> \
   --outdir <truvari_output_dir>
 ```
@@ -185,24 +182,6 @@ sv_comparison_pipeline \
   - `fn.vcf.gz`: False negative variants
   - `fp.vcf.gz`: False positive variants
   - `summary.json`: Summary statistics
-
-## Run with Docker
-
-You can run the comparison tools using Docker:
-
-```bash
-docker run -v <local_data>:/data -v <local_output>:/output \
-  337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_comparison:latest \
-  run_comparison_pipeline <arguments>
-```
-
-For SV comparison:
-
-```bash
-docker run -v <local_data>:/data -v <local_output>:/output \
-  337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_comparison:latest \
-  sv_comparison_pipeline <arguments>
-```
 
 ## Dependencies
 
