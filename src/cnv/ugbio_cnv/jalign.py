@@ -97,7 +97,6 @@ class JAlignConfig:
             str(self.mismatch_score),
             str(self.gap_open_score),
             str(self.gap_extend_score),
-            "1",
             str(self.jump_score),
             "",  # Placeholder for input file path
             "",  # Placeholder for output JSON file path
@@ -119,8 +118,8 @@ class JAlignConfig:
             Command with arguments ready for execution
         """
         cmd = self._alignment_cmd_template.copy()
-        input_file_idx = 7
-        output_file_idx = 8
+        input_file_idx = 6
+        output_file_idx = 7
         cmd[input_file_idx] = str(input_file)
         cmd[output_file_idx] = str(output_file)
         return cmd
