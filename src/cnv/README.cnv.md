@@ -6,11 +6,12 @@ This module provides Python scripts and utilities for Copy Number Variation (CNV
 
 The CNV module integrates multiple CNV calling algorithms and provides tools for processing, filtering, combining, annotating, and visualizing CNV calls. It supports both germline and somatic CNV detection workflows.
 
-### Supported CNV Callers
+Note that the package itself does not call variants, it just provides facilities for preparing data, calling, changing the format and combining callsets.
+
+The package is designed to work with the following CNV callers:
 
 - **cn.mops** - Read depth-based CNV caller using a Bayesian approach
 - **CNVpytor** - Read depth analysis for CNV detection
-- **BIC-seq2** - Bayesian Information Criterion-based segmentation for CNV calling
 - **ControlFREEC** - Control-FREEC for somatic CNV detection
 
 ## Installation
@@ -20,8 +21,10 @@ The CNV module integrates multiple CNV calling algorithms and provides tools for
 Install the CNV module and its dependencies:
 
 ```bash
-uv sync --package ugbio-cnv
+pip install ugbio-cnv
 ```
+
+Pre-built docker image can be downloaded from Dockerhub: `ultimagenomics\ugbio-cnv`
 
 ### Using Docker
 
@@ -38,27 +41,6 @@ docker build -f src/cnv/Dockerfile -t ugbio_cnv .
 ```
 
 ## Available Tools
-
-### CNV Calling
-
-#### `run_cnvpytor`
-Run CNVpytor on a single sample to detect CNVs using read depth analysis.
-
-```bash
-run_cnvpytor \
-  --input_bam_cram_file sample.cram \
-  --sample_name SAMPLE_ID \
-  --ref_fasta reference.fasta \
-  --bin_size 500 \
-  --out_directory ./output
-```
-
-**Key Parameters:**
-- `--input_bam_cram_file` - Input BAM/CRAM file
-- `--sample_name` - Sample identifier
-- `--ref_fasta` - Reference genome FASTA
-- `--bin_size` - Window size for coverage calculation (default: 500)
-- `--chr_list` - Comma-separated list of chromosomes to analyze
 
 ### CNV Processing
 
@@ -79,17 +61,6 @@ process_cnmops_cnvs \
 - `--cnv_lcr_file` - UG-CNV-LCR BED file for filtering low-complexity regions
 - `--min_cnv_length` - Minimum CNV length to report (default: 10000)
 - `--intersection_cutoff` - Overlap threshold for bedtools subtract (default: 0.5)
-
-#### `filter_sample_cnvs`
-Filter CNV calls from BED files using low-complexity regions and/or length filters.
-
-```bash
-filter_sample_cnvs \
-  --input_bed_file cnvs.bed \
-  --cnv_lcr_file ug_cnv_lcr.bed \
-  --min_cnv_length 10000 \
-  --out_directory ./output
-```
 
 ### Combining CNV Calls
 
@@ -151,7 +122,7 @@ analyze_cnv_breakpoint_reads \
   --window_size 100
 ```
 
-### Somatic CNV Tools (ControlFREEC & BIC-seq2)
+### Somatic CNV Tools (ControlFREEC)
 
 #### `annotate_FREEC_segments`
 Annotate segments from ControlFREEC output as gain/loss/neutral based on fold-change thresholds.
@@ -161,17 +132,6 @@ annotate_FREEC_segments \
   --input_segments_file segments.txt \
   --gain_cutoff 1.03 \
   --loss_cutoff 0.97 \
-  --out_directory ./output
-```
-
-#### `bicseq2_post_processing`
-Convert BIC-seq2 output to BED format with copy number annotations.
-
-```bash
-bicseq2_post_processing \
-  --input_bicseq2_txt_file bicseq2_output.txt \
-  --ratio_DUP_cutoff 0.25 \
-  --ratio_DEL_cutoff -0.25 \
   --out_directory ./output
 ```
 
@@ -199,63 +159,6 @@ plot_FREEC_neutral_AF \
   --out_directory ./plots
 ```
 
-## Docker Usage
-
-Run any tool using the Docker container:
-
-```bash
-docker run --rm \
-  -v /path/to/data:/data \
-  337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_cnv:latest \
-  <tool_name> <arguments>
-```
-
-Example - running CNVpytor:
-
-```bash
-docker run --rm \
-  -v $(pwd):/workdir \
-  337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_cnv:latest \
-  run_cnvpytor \
-    --input_bam_cram_file /workdir/sample.cram \
-    --sample_name SAMPLE_01 \
-    --ref_fasta /workdir/reference.fasta \
-    --out_directory /workdir/output
-```
-
-## Development
-
-### Dev Container Setup
-
-This module includes a dev container configuration for VSCode:
-
-1. Install the Dev Containers extension in VSCode
-2. Login to AWS ECR:
-   ```bash
-   aws ecr get-login-password --region us-east-1 | \
-     docker login --username AWS --password-stdin \
-     337532070941.dkr.ecr.us-east-1.amazonaws.com
-   ```
-3. Open Command Palette (F1) → "Dev Containers: Open Folder in Container..."
-4. Select the `ugbio-utils` root directory
-5. Choose the CNV dev container
-
-### Running Tests
-
-Inside the dev container:
-
-```bash
-uv run pytest src/cnv/tests/
-```
-
-Or using Docker:
-
-```bash
-docker run --rm -v .:/workdir \
-  337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_cnv:latest \
-  run_tests /workdir/src/cnv
-```
-
 ## Dependencies
 
 The module depends on:
@@ -278,6 +181,8 @@ The module includes R scripts in the `cnmops/` directory:
 
 ## Notes
 
+- See germline and somatic CNV calling workflows published in GH repository `Ultimagen\healthomics-workflows`
+for the reference implementations of the suggested workflows.
 - For optimal CNV calling, use cohort-based approaches when multiple samples are available
 - Filter CNV calls using the provided LCR (low-complexity region) files to reduce false positives
 - Consider minimum CNV length thresholds based on your sequencing depth and biological context
