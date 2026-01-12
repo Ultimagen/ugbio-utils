@@ -8,6 +8,7 @@ import argparse
 import logging
 import multiprocessing as mp
 import os
+import shutil
 import sys
 import time
 from functools import partial
@@ -369,6 +370,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
             tool_path=args.tool_path,
             random_seed=args.random_seed,
         )
+
+        # Resolve and log the actual path of the alignment tool
+        tool_real_path = shutil.which(config.tool_path)
+        if tool_real_path:
+            logger.info(f"Using alignment tool: {tool_real_path}")
+        else:
+            logger.error(f"Alignment tool '{config.tool_path}' not found, please modify PATH or provide full path")
+            raise RuntimeError(f"Alignment tool '{config.tool_path}' not found")
 
         # Set up temporary directory
         if args.temp_dir:
