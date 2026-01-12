@@ -24,21 +24,8 @@ Install the CNV module and its dependencies:
 pip install ugbio-cnv
 ```
 
-Pre-built docker image can be downloaded from Dockerhub: `ultimagenomics\ugbio-cnv`
+Pre-built docker image can be downloaded from Dockerhub: [`ultimagenomics/ugbio_cnv`](https://hub.docker.com/r/ultimagenomics/ugbio_filtering)
 
-### Using Docker
-
-Pull the pre-built Docker image:
-
-```bash
-docker pull 337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_cnv:latest
-```
-
-Or build locally from the repository root:
-
-```bash
-docker build -f src/cnv/Dockerfile -t ugbio_cnv .
-```
 
 ## Available Tools
 
@@ -88,7 +75,7 @@ combine_cnmops_cnvpytor_cnv_calls \
   --merge_distance 1000
 ```
 
-#### `filter_dup_cnmmops_cnv_calls`
+    #### `filter_dup_cnmmops_cnv_calls`
 Add CNMOPS_SHORT_DUPLICATION filter to short duplications in cn.mops calls.
 
 ```bash
