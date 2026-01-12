@@ -32,7 +32,7 @@ Pre-built docker image can be downloaded from Dockerhub: [`ultimagenomics/ugbio_
 ### CNV Processing
 
 #### `process_cnmops_cnvs`
-Process CNV calls from cn.mops: filter by length and low-complexity regions, annotate, and convert to VCF format.
+Process CNV calls in BED format from cn.mops and ControlFREEC: filter by length and low-complexity regions, annotate, and convert to VCF format.
 
 ```bash
 process_cnmops_cnvs \
@@ -45,14 +45,25 @@ process_cnmops_cnvs \
 
 **Key Parameters:**
 - `--input_bed_file` - Input BED file from cn.mops
-- `--cnv_lcr_file` - UG-CNV-LCR BED file for filtering low-complexity regions
-- `--min_cnv_length` - Minimum CNV length to report (default: 10000)
-- `--intersection_cutoff` - Overlap threshold for bedtools subtract (default: 0.5)
+- `--cnv_lcr_file` - UG-CNV-LCR BED file for filtering low-complexity regions (see workflows for the BED)
+- `--min_cnv_length` - CNVs below this length will be marked (default: 10000)
+- `--intersection_cutoff` - Overlap threshold with the cnv lcr(default: 0.5)
 
 ### Combining CNV Calls
 
-#### `combine_cnv_vcfs`
-Combine CNV VCF files from different callers (cn.mops and CNVpytor) into a single sorted and indexed VCF.
+Tools for combining and analyzing CNV calls (currently implemented combining of CNV calls from cn.mops and CNVPytor) are all aggregated under CLI interface `combine_cnmops_cnvpytor_cnv_calls`. This CLI contains the following tools - each can also be called by a standalone script:
+
+```
+    concat              Combine CNV VCFs from different callers (cn.mops and cnvpytor)
+    filter_cnmops_dups  Filter short duplications from cn.mops calls in the combined CNV VCF
+    annotate_gaps       Annotate CNV calls with percentage of gaps (Ns) from reference genome
+    annotate_regions    Annotate CNV calls with region annotations from BED file
+    merge_records       Merge adjacent or nearby CNV records in a VCF file
+```
+
+#### `concat`
+Concatenate CNV VCF files from different callers (cn.mops and CNVpytor) into a single sorted and indexed VCF.
+The tool adds "source" tag for each CNV
 
 ```bash
 combine_cnv_vcfs \
@@ -63,50 +74,57 @@ combine_cnv_vcfs \
   --out_directory ./output
 ```
 
-#### `combine_cnmops_cnvpytor_cnv_calls`
-Advanced tool for combining and merging CNV calls with configurable distance thresholds.
+#### `filter_cnmmops_dups`
+Add CNMOPS_SHORT_DUPLICATION filter to short duplications in `cn.mops` calls.
 
 ```bash
-combine_cnmops_cnvpytor_cnv_calls \
-  --cnmops_vcf cnmops_calls.vcf \
-  --cnvpytor_vcf cnvpytor_calls.vcf \
-  --output_vcf merged.vcf.gz \
-  --fasta_index reference.fasta.fai \
-  --merge_distance 1000
-```
-
-    #### `filter_dup_cnmmops_cnv_calls`
-Add CNMOPS_SHORT_DUPLICATION filter to short duplications in cn.mops calls.
-
-```bash
-filter_dup_cnmmops_cnv_calls \
-  --input_vcf cnmops_calls.vcf \
-  --output_vcf filtered.vcf \
+filter_cnmops_dups \
+  --input_vcf cnmops_calls.vcf.gz \
+  --output_vcf filtered.vcf.gz \
   --min_dup_length 1000
 ```
 
-### Annotation Tools
-
-#### `annotate_vcf_with_regions`
-Annotate CNV calls with custom genomic regions or calculate gap (N) percentage in reference genome.
+#### `annotate_regions`
+Annotate CNV calls with custom genomic regions that they overlap. The BED is expected to contain |-separated names of regions in the fourth column. The annotation is added to the info field under tag REGION_ANNOTATION
 
 ```bash
-annotate_vcf_with_regions \
-  --input_vcf calls.vcf \
-  --output_vcf annotated.vcf \
-  --annotation_bed regions.bed \
-  --annotation_name CUSTOM_REGION
+annotate_regions \
+  --input_vcf calls.vcf.gz \
+  --output_vcf annotated.vcf.gz \
+  --annotation_bed regions.bed
+```
+#### `annotate_gaps`
+Annotate CNV calls with percentage of Ns that they cover. Adds an info tag GAPS_PERCENTAGE
+
+```bash
+annotate_gaps \
+  --calls_vcf calls.vcf.gz \
+  --output_vcf annotated.vcf.gz \
+  --ref_fasta Homo_sapiens_assembly38.fasta
+```
+
+#### `merge_records`
+
+Combines overlapping records in the VCF
+
+```bash
+merge_records
+   --input_vcf calls.vcf.gz \
+   --output_vcf calls.combined.vcf.gz \
+   --distance 0
 ```
 
 #### `analyze_cnv_breakpoint_reads`
 Analyze single-ended reads at CNV breakpoints to identify supporting evidence for duplications and deletions.
+Counts of supporting evidence appear as info tags in the VCF
 
 ```bash
 analyze_cnv_breakpoint_reads \
-  --input_vcf cnv_calls.vcf \
-  --input_bam sample.bam \
-  --output_vcf annotated.vcf \
-  --window_size 100
+  --vcf-file cnv_calls.vcf.gz \
+  --bam-file sample.bam \
+  --output-file annotated.vcf.gz \
+  --cushion 100 \
+  --reference-fasta Homo_sapiens_assembly38.fasta
 ```
 
 ### Somatic CNV Tools (ControlFREEC)
@@ -159,7 +177,7 @@ The module depends on:
 
 ## Key R Scripts
 
-The module includes R scripts in the `cnmops/` directory:
+The module includes R scripts in the `cnmops/` directory. They are used by cn.mops pipeline and are not intended for standalone usage.
 
 - `cnv_calling_using_cnmops.R` - Main cn.mops calling script
 - `get_reads_count_from_bam.R` - Extract read counts from BAM files
