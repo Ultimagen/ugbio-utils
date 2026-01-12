@@ -196,7 +196,7 @@ def prepare_ground_truth(
     vcfeval_output = pipeline.run_vcfeval_concordance(
         input_file=input_vcf,
         truth_file=base_vcf,
-        output_prefix=input_vcf.replace(".vcf.gz", ""),
+        output_prefix=output_h5.replace(".h5", ""),
         ref_genome=reference,
         sdf_index=reference_sdf,
         evaluation_regions=hcr,
