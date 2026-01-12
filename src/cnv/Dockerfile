@@ -95,7 +95,7 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
 # Download para_jalign binary from private jalign repository
-ARG JALIGN_VERSION=1.4.0
+ARG JALIGN_VERSION=1.4.1
 RUN --mount=type=secret,id=github_token \
     if [ ! -f /run/secrets/github_token ]; then \
         echo "ERROR: github_token secret is required to download para_jalign from private repository" && exit 1; \
