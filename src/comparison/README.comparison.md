@@ -4,6 +4,8 @@ This module includes comparison python scripts and utilities for bioinformatics 
 
 ## Overview
 
+The comparison module is built on top of `ugbio_core` and provides command-line tools for variant benchmarking against ground truth datasets. For detailed usage of each tool, see the [CLI Scripts](#cli-scripts) section below.
+
 The comparison module provides two main CLI scripts for variant comparison:
 
 1. **run_comparison_pipeline** - Compare small variant callsets to ground truth using VCFEVAL
