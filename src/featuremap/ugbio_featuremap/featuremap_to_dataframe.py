@@ -94,6 +94,8 @@ class VCFJobConfig:
     info_ids: list[str]
     scalar_fmt_ids: list[str]
     list_fmt_ids: list[str]
+    sample_list: list[str]
+    fmt_ids: list[str]
 
 
 # ───────────────── header helpers ────────────────────────────────────────────
@@ -568,6 +570,13 @@ def vcf_to_parquet(
         idx = len(base_cols) + format_ids.index(list_col)
         list_fmt_indices.append(idx)
 
+    # Fetch sample list ONCE in main process
+    sample_list = _get_sample_list(vcf, bcftools)
+    log.info(f"Found {len(sample_list)} sample(s): {sample_list}")
+
+    # Cache fmt_ids
+    fmt_ids = list(fmt_meta.keys())
+
     with pl.StringCache():
         # Generate genomic regions (fixed windows via bedtools)
         regions = _generate_genomic_regions(
@@ -591,6 +600,8 @@ def vcf_to_parquet(
             info_ids=info_ids,
             scalar_fmt_ids=scalar_fmt_ids,
             list_fmt_ids=list_fmt_ids,
+            sample_list=sample_list,
+            fmt_ids=fmt_ids,
         )
 
         # Temporary directory for ordered part-files
@@ -759,11 +770,30 @@ def _stream_region_to_polars(
     fmt_str: str,
     job_cfg: VCFJobConfig,
 ) -> pl.DataFrame:
-    """Run bcftools→awk and return a typed Polars DataFrame for *region*."""
-    sample_list = _get_sample_list(vcf_path, job_cfg.bcftools_path)
+    """
+    Run bcftools→awk and return a typed Polars DataFrame for *region*.
+    If VCF has multiple samples, create a separate dataframe for each sample and join them on CHROM and POS.
+    The final dataframe will have the same columns as the input VCF, but with the sample name prefixed to the FORMAT columns to avoid column name conflicts in the join.
+
+    Parameters
+    ----------
+    region : str
+        Genomic region in format "chr:start-end" or "chr"
+    vcf_path : str
+        Path to VCF file
+    fmt_str : str
+        bcftools query format string
+    job_cfg : VCFJobConfig
+        Job configuration object with processing metadata
+
+    Returns
+    -------
+    pl.DataFrame
+        Typed Polars DataFrame for the region
+    """
     frames: dict[str, pl.DataFrame] = {}
 
-    for sample in sample_list:
+    for sample in job_cfg.sample_list:
         single_sample_tsv = _bcftools_awk_stdout(
             region=region,
             vcf_path=vcf_path,
@@ -773,6 +803,8 @@ def _stream_region_to_polars(
             list_indices=job_cfg.list_indices,
             sample_name=sample
         )
+        if not single_sample_tsv.strip():
+            continue
         frame = _frame_from_tsv(single_sample_tsv, cols=job_cfg.columns, schema=job_cfg.schema)
         if not frame.is_empty():
             frame = _cast_column_data_types(frame, job_cfg)
@@ -782,7 +814,7 @@ def _stream_region_to_polars(
     elif len(frames) > 1:
         # Multi-sample case
         # Add sample name prefix to the FORMAT fields to avoid column name conflicts in the join
-        fmt_ids = job_cfg.fmt_meta.keys()
+        fmt_ids = job_cfg.fmt_ids
 
         for sample, frame in frames.items():
             frames[sample] = frame.rename({col: f"{sample}_{col}" for col in frame.columns if col in fmt_ids})
