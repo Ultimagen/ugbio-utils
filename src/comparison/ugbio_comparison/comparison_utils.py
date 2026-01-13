@@ -324,7 +324,6 @@ def annotate_concordance(
     bw_high_quality: list[str] | None = None,
     bw_all_quality: list[str] | None = None,
     annotate_intervals: list[str] | None = None,
-    runfile: str | None = None,
     flow_order: str | None = DEFAULT_FLOW_ORDER,
 ) -> tuple[pd.DataFrame, list]:
     """Annotates concordance data with information about SNP/INDELs and motifs
@@ -341,8 +340,6 @@ def annotate_concordance(
         Coverage bigWig file from all mapq reads  (Optional)
     annotate_intervals : list[str], optional
         Interval files for annotation
-    runfile : str, optional
-        bed file with positions of hmer runs (in order to mark homopolymer runs)
     flow_order : str, optional
         Flow order
 

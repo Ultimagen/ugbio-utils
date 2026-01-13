@@ -119,7 +119,6 @@ class AssessSECConcordance:
         self.df, _ = annotate_concordance(
             self.df,
             self.ref_genome_file,
-            runfile=self.hcr,
             flow_order=DEFAULT_FLOW_ORDER,
             annotate_intervals=self.exclude_lists_beds,
         )

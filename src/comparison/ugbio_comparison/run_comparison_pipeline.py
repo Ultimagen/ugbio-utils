@@ -54,7 +54,6 @@ def _contig_concordance_annotate_reinterpretation(  # noqa: PLR0913
     bw_high_quality,
     bw_all_quality,
     annotate_intervals,
-    runs_intervals,
     flow_order,
     base_name_outputfile,
     enable_reinterpretation,
@@ -75,7 +74,6 @@ def _contig_concordance_annotate_reinterpretation(  # noqa: PLR0913
         bw_high_quality,
         bw_all_quality,
         annotate_intervals,
-        runs_intervals,
         flow_order=flow_order,
     )
 
@@ -110,13 +108,6 @@ def get_parser() -> argparse.ArgumentParser:
         help="High confidence intervals (bed/interval_list)",
         required=True,
         type=str,
-    )
-    ap_var.add_argument(
-        "--runs_intervals",
-        help="Runs intervals (bed/interval_list)",
-        required=False,
-        type=str,
-        default=None,
     )
     ap_var.add_argument(
         "--annotate_intervals",
@@ -220,7 +211,7 @@ def _setup_pipeline_and_utilities(args) -> tuple[SimplePipeline, VcfComparisonUt
     return sp, vcu, vu
 
 
-def _setup_interval_files(sp, args) -> tuple[IntervalFile, IntervalFile, IntervalFile]:
+def _setup_interval_files(sp, args) -> tuple[IntervalFile, IntervalFile]:
     """Setup interval file objects."""
     # use tmpdir consistent with comparison_pipeline
     if args.use_tmpdir:
@@ -232,9 +223,8 @@ def _setup_interval_files(sp, args) -> tuple[IntervalFile, IntervalFile, Interva
     highconf_intervals = IntervalFile(
         sp, args.highconf_intervals, args.reference, args.reference_dict, scratchdir=scratchdir
     )
-    runs_intervals = IntervalFile(sp, args.runs_intervals, args.reference, args.reference_dict, scratchdir=scratchdir)
 
-    return cmp_intervals, highconf_intervals, runs_intervals
+    return cmp_intervals, highconf_intervals
 
 
 def _intersect_intervals_and_save_args(vu, cmp_intervals, highconf_intervals, args) -> None:
@@ -273,7 +263,7 @@ def _create_comparison_pipeline(vcu, vu, cmp_intervals, highconf_intervals, args
     )
 
 
-def _process_single_interval_concordance(raw_calls_vcf, concordance_vcf, runs_intervals, args) -> None:
+def _process_single_interval_concordance(raw_calls_vcf, concordance_vcf, args) -> None:
     """Process concordance for single interval file."""
     concordance_df = comparison_utils.vcf2concordance(
         raw_calls_vcf,
@@ -286,7 +276,6 @@ def _process_single_interval_concordance(raw_calls_vcf, concordance_vcf, runs_in
         args.coverage_bw_high_quality,
         args.coverage_bw_all_quality,
         args.annotate_intervals,
-        runs_intervals.as_bed_file(),
         flow_order=args.flow_order,
     )
 
@@ -320,7 +309,7 @@ def _get_filtered_contigs(raw_calls_vcf) -> list[str]:
         return filtered_contigs
 
 
-def _process_whole_genome_concordance(raw_calls_vcf, concordance_vcf, runs_intervals, args) -> None:
+def _process_whole_genome_concordance(raw_calls_vcf, concordance_vcf, args) -> None:
     """Process concordance for whole genome (per chromosome)."""
     contigs = _get_filtered_contigs(raw_calls_vcf)
     base_name_outputfile = os.path.splitext(args.output_file)[0]
@@ -335,7 +324,6 @@ def _process_whole_genome_concordance(raw_calls_vcf, concordance_vcf, runs_inter
             args.coverage_bw_high_quality,
             args.coverage_bw_all_quality,
             args.annotate_intervals,
-            runs_intervals.as_bed_file(),
             args.flow_order,
             base_name_outputfile,
             args.enable_reinterpretation,
@@ -392,7 +380,7 @@ def run(argv: list[str]):
     sp, vcu, vu = _setup_pipeline_and_utilities(args)
 
     # Setup interval files
-    cmp_intervals, highconf_intervals, runs_intervals = _setup_interval_files(sp, args)
+    cmp_intervals, highconf_intervals = _setup_interval_files(sp, args)
 
     # Intersect intervals and save arguments
     _intersect_intervals_and_save_args(vu, cmp_intervals, highconf_intervals, args)
@@ -404,10 +392,10 @@ def run(argv: list[str]):
     # Process concordance based on interval type
     if not cmp_intervals.is_none():
         # single interval-file concordance - will be saved in a single dataframe
-        _process_single_interval_concordance(raw_calls_vcf, concordance_vcf, runs_intervals, args)
+        _process_single_interval_concordance(raw_calls_vcf, concordance_vcf, args)
     else:
         # whole-genome concordance - will be saved in dataframe per chromosome
-        _process_whole_genome_concordance(raw_calls_vcf, concordance_vcf, runs_intervals, args)
+        _process_whole_genome_concordance(raw_calls_vcf, concordance_vcf, args)
 
 
 def main():
