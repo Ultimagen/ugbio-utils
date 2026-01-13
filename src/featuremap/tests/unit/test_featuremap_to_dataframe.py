@@ -534,8 +534,9 @@ def test_qual_dtype_float_even_if_empty(tmp_path: Path) -> None:
     vcf_txt = (
         "##fileformat=VCFv4.2\n"
         "##contig=<ID=chr1,length=1000>\n"
-        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
-        "chr1\t10\t.\tA\tT\t.\tPASS\t.\n"
+        "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\n"
+        "chr1\t10\t.\tA\tT\t.\tPASS\t.\tGT\t0/1\n"
     )
     plain = tmp_path / "qual_missing.vcf"
     plain.write_text(vcf_txt)
@@ -550,6 +551,85 @@ def test_qual_dtype_float_even_if_empty(tmp_path: Path) -> None:
     featuremap_dataframe = pl.read_parquet(out)
     print(featuremap_dataframe.schema)
     assert featuremap_dataframe["QUAL"].dtype == pl.Float64, "QUAL should be Float64 even if all values are missing"
+
+
+def test_missing_sample_data(tmp_path: Path) -> None:
+    """VCF should handle missing sample data ('.' in sample column) correctly."""
+    vcf_txt = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000>\n"
+        "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
+        "##FORMAT=<ID=VAF,Number=1,Type=Float,Description=\"Variant Allele Frequency\">\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\n"
+        "chr1\t10\t.\tA\tT\t30.0\tPASS\t.\tGT:VAF\t0/1:0.5\n"
+        "chr1\t20\t.\tC\tG\t25.0\tPASS\t.\tGT:VAF\t.:.\n"
+    )
+    plain = tmp_path / "missing_sample.vcf"
+    plain.write_text(vcf_txt)
+    vcf_gz = tmp_path / "missing_sample.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"],
+        check=True,
+    )
+    out = tmp_path / "out.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(str(vcf_gz), str(out), jobs=1)
+
+    featuremap_dataframe = pl.read_parquet(out)
+    # Should have 2 rows (one per variant)
+    assert featuremap_dataframe.height == 2, "Should have 2 rows"
+    # Check that missing data is handled (VAF should be Float64, filled with 0.0 for missing)
+    assert featuremap_dataframe["VAF"].dtype == pl.Float64, "VAF should be Float64"
+    # First row should have VAF=0.5, second row should have VAF=0.0 (missing values filled)
+    vaf_values = featuremap_dataframe["VAF"].to_list()
+    assert vaf_values[0] == 0.5, "First row should have VAF=0.5"
+    assert vaf_values[1] == 0.0, "Second row should have VAF=0.0 (missing value filled)"
+
+
+def test_multi_sample_vcf(tmp_path: Path) -> None:
+    """Multi-sample VCF should produce columns with sample name prefixes for FORMAT fields."""
+    vcf_txt = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr19,length=58617616>\n"
+        "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
+        "##FORMAT=<ID=VAF,Number=1,Type=Float,Description=\"Variant Allele Frequency\">\n"
+        "##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Number of reads containing this location\">\n"
+        "##FORMAT=<ID=RN,Number=.,Type=String,Description=\"Query (read) name\">\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tPa_46_FreshFrozen\tPa_46_Buffycoat\n"
+        "chr19\t271215\t.\tG\tC\t41.94\tPASS\t.\tGT:VAF:DP:RN\t./.:0.0298507:67:021152_1-Z0115-2981480323\t./.:0:44:.\n"
+        "chr19\t271241\t.\tA\tG\t42.6\tPASS\t.\tGT:VAF:DP:RN\t./.:0.0151515:66:021152_1-Z0115-2353376084\t./.:0:35:.\n"
+    )
+    plain = tmp_path / "multi_sample.vcf"
+    plain.write_text(vcf_txt)
+    vcf_gz = tmp_path / "multi_sample.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"],
+        check=True,
+    )
+    out = tmp_path / "out.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(str(vcf_gz), str(out), jobs=1)
+
+    featuremap_dataframe = pl.read_parquet(out)
+    # Should have rows (one per read due to RN list explosion)
+    assert featuremap_dataframe.height > 0, "Should have at least one row"
+    # Check that FORMAT fields are prefixed with sample names
+    assert "Pa_46_FreshFrozen_VAF" in featuremap_dataframe.columns, "Should have Pa_46_FreshFrozen_VAF column"
+    assert "Pa_46_Buffycoat_VAF" in featuremap_dataframe.columns, "Should have Pa_46_Buffycoat_VAF column"
+    assert "Pa_46_FreshFrozen_DP" in featuremap_dataframe.columns, "Should have Pa_46_FreshFrozen_DP column"
+    assert "Pa_46_Buffycoat_DP" in featuremap_dataframe.columns, "Should have Pa_46_Buffycoat_DP column"
+    assert "Pa_46_FreshFrozen_RN" in featuremap_dataframe.columns, "Should have Pa_46_FreshFrozen_RN column"
+    assert "Pa_46_Buffycoat_RN" in featuremap_dataframe.columns, "Should have Pa_46_Buffycoat_RN column"
+    # Fixed columns should not be prefixed
+    assert "CHROM" in featuremap_dataframe.columns, "CHROM should not be prefixed"
+    assert "POS" in featuremap_dataframe.columns, "POS should not be prefixed"
+    assert "QUAL" in featuremap_dataframe.columns, "QUAL should not be prefixed"
+    # Check that data is correctly joined - both samples should have data for the same positions
+    assert featuremap_dataframe["POS"].n_unique() == 2, "Should have 2 unique positions"
+    # Check that VAF values are correctly preserved
+    freshfrozen_vaf = featuremap_dataframe["Pa_46_FreshFrozen_VAF"].to_list()
+    buffycoat_vaf = featuremap_dataframe["Pa_46_Buffycoat_VAF"].to_list()
+    # At least one row should have the expected VAF values
+    assert any(v == 0.0298507 for v in freshfrozen_vaf if v is not None), "Should have VAF=0.0298507 for Pa_46_FreshFrozen"
+    assert any(v == 0.0 for v in buffycoat_vaf if v is not None), "Should have VAF=0.0 for Pa_46_Buffycoat"
 
 
 def test_x_alt_categories(tmp_path: Path, input_featuremap: Path) -> None:

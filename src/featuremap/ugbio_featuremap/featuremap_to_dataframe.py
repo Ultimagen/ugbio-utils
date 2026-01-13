@@ -213,10 +213,10 @@ def _cast_expr(col: str, meta: dict) -> pl.Expr:
     if meta["cat"]:
         cats = meta["cat"] + ([] if "" in meta["cat"] else [""])
         return base.fill_null(value="").cast(pl.Enum(cats), strict=True).alias(col)
-    elif meta["type"] in (_POLARS_DTYPE["Integer"], _POLARS_DTYPE["Float"]):
-        return base.fill_null(value=0).cast(_POLARS_DTYPE[meta["type"]], strict=True).alias(col)
-    elif meta["type"] == _POLARS_DTYPE["Flag"]:
+    elif meta["type"] == "Flag":
         return base.fill_null(value=False).cast(pl.Boolean, strict=True).alias(col)
+    elif meta["type"] in _POLARS_DTYPE:
+        return base.fill_null(value=0).cast(_POLARS_DTYPE[meta["type"]], strict=True).alias(col)
 
     # ---- default (Utf8) --------------------------------------------------
     return base.alias(col)
