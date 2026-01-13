@@ -649,3 +649,127 @@ def test_x_alt_categories(tmp_path: Path, input_featuremap: Path) -> None:
         assert set(frame[X_ALT].cat.get_categories()) == set(
             frame[ALT].cat.get_categories()
         ), "X_ALT categories must match ALT categories"
+
+
+def test_aggregate_mode_list_fields(tmp_path: Path) -> None:
+    """
+    Test that aggregate mode replaces list columns with aggregation metrics (mean, min, max, count).
+    
+    This test verifies:
+    1. List columns are replaced with 4 columns (mean, min, max, count)
+    2. Row count is one per variant (not exploded)
+    3. Aggregate columns have correct types (Float64 for mean/min/max, Int64 for count)
+    4. Aggregate values are computed correctly
+    """
+    # Create a VCF with list fields containing numeric values
+    vcf_txt = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000000>\n"
+        "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n"
+        "##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Depth\">\n"
+        "##FORMAT=<ID=AD,Number=.,Type=Integer,Description=\"Allelic depths\">\n"
+        "##FORMAT=<ID=RL,Number=.,Type=Integer,Description=\"Read lengths\">\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\n"
+        "chr1\t100\t.\tA\tG\t30.0\tPASS\t.\tGT:DP:AD:RL\t0/1:50:10,20,15:100,101,102\n"
+        "chr1\t200\t.\tC\tT\t25.0\tPASS\t.\tGT:DP:AD:RL\t0/1:30:5,10:200,201\n"
+        "chr1\t300\t.\tG\tA\t20.0\tPASS\t.\tGT:DP:AD:RL\t0/1:40:.:.\n"
+    )
+    plain = tmp_path / "aggregate_test.vcf"
+    plain.write_text(vcf_txt)
+    vcf_gz = tmp_path / "aggregate_test.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"],
+        check=True,
+    )
+    
+    # Test aggregate mode
+    out_aggregate = tmp_path / "aggregate.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(vcf_gz), str(out_aggregate), drop_format={"GT"}, list_mode="aggregate", jobs=1
+    )
+    
+    df_aggregate = pl.read_parquet(out_aggregate)
+    
+    # Should have 3 rows (one per variant, not exploded)
+    assert df_aggregate.height == 3, "Aggregate mode should have one row per variant"
+    
+    # Check that list columns are replaced with aggregate columns
+    assert "AD" not in df_aggregate.columns, "Original AD column should be removed"
+    assert "RL" not in df_aggregate.columns, "Original RL column should be removed"
+    assert "AD_mean" in df_aggregate.columns, "Should have AD_mean column"
+    assert "AD_min" in df_aggregate.columns, "Should have AD_min column"
+    assert "AD_max" in df_aggregate.columns, "Should have AD_max column"
+    assert "AD_count" in df_aggregate.columns, "Should have AD_count column"
+    assert "RL_mean" in df_aggregate.columns, "Should have RL_mean column"
+    assert "RL_min" in df_aggregate.columns, "Should have RL_min column"
+    assert "RL_max" in df_aggregate.columns, "Should have RL_max column"
+    assert "RL_count" in df_aggregate.columns, "Should have RL_count column"
+    
+    # Check column types
+    assert df_aggregate["AD_mean"].dtype == pl.Float64, "AD_mean should be Float64"
+    assert df_aggregate["AD_min"].dtype == pl.Float64, "AD_min should be Float64"
+    assert df_aggregate["AD_max"].dtype == pl.Float64, "AD_max should be Float64"
+    assert df_aggregate["AD_count"].dtype == pl.Int64, "AD_count should be Int64"
+    assert df_aggregate["RL_mean"].dtype == pl.Float64, "RL_mean should be Float64"
+    assert df_aggregate["RL_min"].dtype == pl.Float64, "RL_min should be Float64"
+    assert df_aggregate["RL_max"].dtype == pl.Float64, "RL_max should be Float64"
+    assert df_aggregate["RL_count"].dtype == pl.Int64, "RL_count should be Int64"
+    
+    # Check aggregate values for first variant (AD: 10,20,15)
+    first_row = df_aggregate.filter(pl.col("POS") == 100)
+    assert first_row.height == 1, "Should have one row for POS=100"
+    ad_mean_val = first_row["AD_mean"].item()
+    ad_min_val = first_row["AD_min"].item()
+    ad_max_val = first_row["AD_max"].item()
+    ad_count_val = first_row["AD_count"].item()
+    
+    # AD values: 10, 20, 15 -> mean=15.0, min=10, max=20, count=3
+    assert abs(ad_mean_val - 15.0) < 0.0001, f"AD_mean should be 15.0, got {ad_mean_val}"
+    assert ad_min_val == 10.0, f"AD_min should be 10.0, got {ad_min_val}"
+    assert ad_max_val == 20.0, f"AD_max should be 20.0, got {ad_max_val}"
+    assert ad_count_val == 3, f"AD_count should be 3, got {ad_count_val}"
+    
+    # Check RL values for first variant (RL: 100,101,102)
+    rl_mean_val = first_row["RL_mean"].item()
+    rl_min_val = first_row["RL_min"].item()
+    rl_max_val = first_row["RL_max"].item()
+    rl_count_val = first_row["RL_count"].item()
+    
+    # RL values: 100, 101, 102 -> mean=101.0, min=100, max=102, count=3
+    assert abs(rl_mean_val - 101.0) < 0.0001, f"RL_mean should be 101.0, got {rl_mean_val}"
+    assert rl_min_val == 100.0, f"RL_min should be 100.0, got {rl_min_val}"
+    assert rl_max_val == 102.0, f"RL_max should be 102.0, got {rl_max_val}"
+    assert rl_count_val == 3, f"RL_count should be 3, got {rl_count_val}"
+    
+    # Check second variant (AD: 5,10 -> mean=7.5, min=5, max=10, count=2)
+    second_row = df_aggregate.filter(pl.col("POS") == 200)
+    assert second_row.height == 1, "Should have one row for POS=200"
+    ad_mean_val2 = second_row["AD_mean"].item()
+    ad_min_val2 = second_row["AD_min"].item()
+    ad_max_val2 = second_row["AD_max"].item()
+    ad_count_val2 = second_row["AD_count"].item()
+    
+    assert abs(ad_mean_val2 - 7.5) < 0.0001, f"AD_mean should be 7.5, got {ad_mean_val2}"
+    assert ad_min_val2 == 5.0, f"AD_min should be 5.0, got {ad_min_val2}"
+    assert ad_max_val2 == 10.0, f"AD_max should be 10.0, got {ad_max_val2}"
+    assert ad_count_val2 == 2, f"AD_count should be 2, got {ad_count_val2}"
+    
+    # Check third variant (AD: . -> mean=., min=., max=., count=0)
+    third_row = df_aggregate.filter(pl.col("POS") == 300)
+    assert third_row.height == 1, "Should have one row for POS=300"
+    ad_mean_val3 = third_row["AD_mean"].item()
+    ad_count_val3 = third_row["AD_count"].item()
+    
+    # When no valid values, should return "." for mean/min/max and 0 for count
+    assert ad_mean_val3 is None or str(ad_mean_val3) == ".", f"AD_mean should be None or '.', got {ad_mean_val3}"
+    assert ad_count_val3 == 0, f"AD_count should be 0 for missing values, got {ad_count_val3}"
+    
+    # Compare with explode mode to verify row count difference
+    out_explode = tmp_path / "explode.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(vcf_gz), str(out_explode), drop_format={"GT"}, list_mode="explode", jobs=1
+    )
+    
+    df_explode = pl.read_parquet(out_explode)
+    # Explode mode should have more rows (one per list element)
+    assert df_explode.height > df_aggregate.height, "Explode mode should have more rows than aggregate mode"

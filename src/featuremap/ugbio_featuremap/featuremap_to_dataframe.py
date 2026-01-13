@@ -340,27 +340,37 @@ def _make_query_string(format_ids: list[str], query_info: list[str]) -> str:
     )
 
 
-def _get_awk_script_path() -> str:
-    """Get path to the AWK script for list explosion."""
+def _get_awk_script_path(mode: str = "explode") -> str:
+    """Get path to the AWK script for list handling.
+    
+    Parameters
+    ----------
+    mode : str
+        Either "explode" or "aggregate" to select the appropriate script.
+    
+    Returns
+    -------
+    str
+        Path to the AWK script.
+    """
+    if mode not in ("explode", "aggregate"):
+        raise ValueError(f"Invalid mode: {mode}. Must be 'explode' or 'aggregate'")
+    
+    script_name = "explode_lists.awk" if mode == "explode" else "aggregate_lists.awk"
+    
     # First try the standard approach (should work in development and installed package)
     script_dir = Path(__file__).parent
-    awk_script = script_dir / "explode_lists.awk"
+    awk_script = script_dir / script_name
     if awk_script.exists():
         return str(awk_script)
-
+    
     # Fallback using importlib.resources for robust package resource access
     try:
         import importlib.resources as pkg_resources
 
-        try:
-            # Python 3.9+
-            ref = pkg_resources.files("ugbio_featuremap") / "explode_lists.awk"
-            with pkg_resources.as_file(ref) as awk_path:
-                return str(awk_path)
-        except AttributeError:
-            # Python 3.8 fallback
-            with pkg_resources.path("ugbio_featuremap", "explode_lists.awk") as awk_path:
-                return str(awk_path)
+        ref = pkg_resources.files("ugbio_featuremap") / script_name
+        with pkg_resources.as_file(ref) as awk_path:
+            return str(awk_path)
     except ImportError:
         pass
 
@@ -420,6 +430,62 @@ def _build_explicit_schema(cols: list[str], info_meta: dict, fmt_meta: dict) -> 
         else:
             schema[col] = pl.Utf8
     return schema
+
+
+def _transform_cols_and_schema_for_aggregate(
+    cols: list[str],
+    list_fmt_ids: list[str],
+    info_meta: dict,
+    fmt_meta: dict,
+) -> tuple[list[str], dict[str, pl.PolarsDataType]]:
+    """
+    Transform columns and schema for aggregate mode.
+    
+    In aggregate mode, each list column is replaced with 4 columns:
+    {col}_mean, {col}_min, {col}_max, {col}_count
+    
+    Parameters
+    ----------
+    cols : list[str]
+        Original column names
+    list_fmt_ids : list[str]
+        List of FORMAT field IDs that are lists
+    info_meta : dict
+        INFO field metadata
+    fmt_meta : dict
+        FORMAT field metadata
+    
+    Returns
+    -------
+    tuple[list[str], dict[str, pl.PolarsDataType]]
+        Transformed columns and schema
+    """
+    transformed_cols: list[str] = []
+    
+    for col in cols:
+        if col in list_fmt_ids:
+            # Replace list column with 4 aggregation columns
+            transformed_cols.extend([
+                f"{col}_mean",
+                f"{col}_min",
+                f"{col}_max",
+                f"{col}_count",
+            ])
+        else:
+            # Keep non-list columns as-is
+            transformed_cols.append(col)
+    
+    # Build schema for transformed columns using existing function
+    schema = _build_explicit_schema(transformed_cols, info_meta, fmt_meta)
+    
+    # Override schema for aggregation columns (they're not in metadata)
+    for col in list_fmt_ids:
+        schema[f"{col}_mean"] = pl.Float64
+        schema[f"{col}_min"] = pl.Float64
+        schema[f"{col}_max"] = pl.Float64
+        schema[f"{col}_count"] = pl.Int64
+    
+    return transformed_cols, schema
 
 
 def _assert_vcf_index_exists(vcf: str) -> None:
@@ -504,6 +570,7 @@ def vcf_to_parquet(
     drop_format: set[str] | None = None,
     chunk_bp: int = CHUNK_BP_DEFAULT,
     jobs: int = DEFAULT_JOBS,
+    list_mode: str = "explode",
 ) -> None:
     """
     Convert VCF to Parquet using region-based parallel processing.
@@ -528,6 +595,9 @@ def vcf_to_parquet(
         Maximum number of base-pairs per chunk (default 300 Mbp).
     jobs : int
         Number of parallel jobs (0 = auto-detect CPU cores)
+    list_mode : str
+        How to handle list format fields: "explode" (one row per list element) or
+        "aggregate" (mean, min, max, count metrics). Default is "explode".
     """
     log.info(f"Converting {vcf} to {out} using region-based parallel processing")
     _assert_vcf_index_exists(vcf)
@@ -577,6 +647,14 @@ def vcf_to_parquet(
     # Cache fmt_ids
     fmt_ids = list(fmt_meta.keys())
 
+    # Transform columns and schema for aggregate mode
+    if list_mode == "aggregate":
+        cols, schema = _transform_cols_and_schema_for_aggregate(
+            cols, list_fmt_ids, info_meta, fmt_meta
+        )
+    else:
+        schema = _build_explicit_schema(cols, info_meta, fmt_meta)
+
     with pl.StringCache():
         # Generate genomic regions (fixed windows via bedtools)
         regions = _generate_genomic_regions(
@@ -591,10 +669,10 @@ def vcf_to_parquet(
         # Build immutable job configuration (shared by every worker)  ▼ NEW
         job_cfg = VCFJobConfig(
             bcftools_path=bcftools,
-            awk_script=_get_awk_script_path(),
+            awk_script=_get_awk_script_path(mode=list_mode),
             columns=cols,
             list_indices=list_fmt_indices,
-            schema=_build_explicit_schema(cols, info_meta, fmt_meta),
+            schema=schema,
             info_meta=info_meta,
             fmt_meta=fmt_meta,
             info_ids=info_ids,
@@ -852,7 +930,12 @@ def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, job_cfg: VCFJobC
     # build expressions for INFO / FORMAT
     exprs.extend(_cast_expr(tag, job_cfg.info_meta[tag]) for tag in job_cfg.info_ids)
     exprs.extend(_cast_expr(tag, job_cfg.fmt_meta[tag]) for tag in job_cfg.scalar_fmt_ids)
-    exprs.extend(_cast_expr(tag, job_cfg.fmt_meta[tag]) for tag in job_cfg.list_fmt_ids)
+    # Only cast list columns if they exist (they're replaced with aggregate columns in aggregate mode)
+    exprs.extend(
+        _cast_expr(tag, job_cfg.fmt_meta[tag])
+        for tag in job_cfg.list_fmt_ids
+        if tag in featuremap_dataframe.columns
+    )
 
     # QUAL ─ force Float64 even if all values are missing
     if QUAL in featuremap_dataframe.columns:
@@ -885,6 +968,12 @@ def main(argv: list[str] | None = None) -> None:
         default=CHUNK_BP_DEFAULT,
         help=f"Base-pairs per processing chunk (default {CHUNK_BP_DEFAULT} bp)",
     )
+    parser.add_argument(
+        "--list-mode",
+        choices=["explode", "aggregate"],
+        default="explode",
+        help="How to handle list format fields: 'explode' (one row per list element) or 'aggregate' (mean, min, max, count metrics). Default is 'explode'.",
+    )
     # ───────────── new verbose flag ─────────────
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     # -------------------------------------------
@@ -906,6 +995,7 @@ def main(argv: list[str] | None = None) -> None:
         drop_format=set(args.drop_format),
         chunk_bp=args.chunk_bp,
         jobs=args.jobs,
+        list_mode=args.list_mode,
     )
 
 
