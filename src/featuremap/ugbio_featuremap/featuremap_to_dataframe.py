@@ -47,6 +47,7 @@ import argparse
 import logging
 import multiprocessing as _mp  # NEW
 import os
+from polars.dataframe.frame import DataFrame
 import re
 import shutil
 import subprocess
@@ -653,7 +654,6 @@ def _process_region_to_parquet(
             )
             if frame.is_empty():
                 return ""
-            frame = _cast_column_data_types(frame, job_cfg)
             frame.write_parquet(output_file)
             return output_file
 
@@ -671,9 +671,10 @@ def _bcftools_awk_stdout(
     bcftools: str,
     awk_script: str,
     list_indices: list[int],
+    sample_name: str,
 ) -> str:
     """Return TSV (string) produced by `bcftools | awk` for a region."""
-    bcftools_cmd = [bcftools, "query", "-f", fmt_str, vcf_path]
+    bcftools_cmd = [bcftools, "query", "-s", sample_name, "-f", fmt_str, vcf_path]
     if region:
         bcftools_cmd.insert(2, "-r")
         bcftools_cmd.insert(3, region)
@@ -721,7 +722,37 @@ def _frame_from_tsv(tsv: str, *, cols: list[str], schema: dict[str, pl.PolarsDat
         schema=schema,
     )
 
-
+def _get_sample_list(vcf: str, bcftools: str) -> list[str]:
+    """
+    Get the list of samples in the VCF file.
+    
+    Parameters
+    ----------
+    vcf : str
+        Path to input VCF file
+    bcftools : str
+        Path to bcftools executable
+    
+    Returns
+    -------
+    list[str]
+        List of samples in the VCF
+    """
+    cmd = [bcftools, "query", "-l", vcf]
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        samples = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
+        return samples
+    except subprocess.CalledProcessError as e:
+        log.error(f"Could not determine sample list from {cmd}: {e}.")
+        raise RuntimeError(f"Could not determine sample list from {cmd}: {e}.")
+    
 def _stream_region_to_polars(
     region: str,
     vcf_path: str,
@@ -729,18 +760,45 @@ def _stream_region_to_polars(
     job_cfg: VCFJobConfig,
 ) -> pl.DataFrame:
     """Run bcftools→awk and return a typed Polars DataFrame for *region*."""
-    tsv = _bcftools_awk_stdout(
-        region=region,
-        vcf_path=vcf_path,
-        fmt_str=fmt_str,
-        bcftools=job_cfg.bcftools_path,
-        awk_script=job_cfg.awk_script,
-        list_indices=job_cfg.list_indices,
-    )
-    frame = _frame_from_tsv(tsv, cols=job_cfg.columns, schema=job_cfg.schema)
-    if frame.is_empty():
-        return frame
-    return _cast_column_data_types(frame, job_cfg)
+    sample_list = _get_sample_list(vcf_path, job_cfg.bcftools_path)
+    frames: dict[str, pl.DataFrame] = {}
+
+    for sample in sample_list:
+        single_sample_tsv = _bcftools_awk_stdout(
+            region=region,
+            vcf_path=vcf_path,
+            fmt_str=fmt_str,
+            bcftools=job_cfg.bcftools_path,
+            awk_script=job_cfg.awk_script,
+            list_indices=job_cfg.list_indices,
+            sample_name=sample
+        )
+        frame = _frame_from_tsv(single_sample_tsv, cols=job_cfg.columns, schema=job_cfg.schema)
+        if not frame.is_empty():
+            frame = _cast_column_data_types(frame, job_cfg)
+            frames[sample] = frame
+    if not frames:
+        final_frame = pl.DataFrame()
+    elif len(frames) > 1:
+        # Multi-sample case
+        # Add sample name prefix to the FORMAT fields to avoid column name conflicts in the join
+        fmt_ids = job_cfg.fmt_meta.keys()
+
+        for sample, frame in frames.items():
+            frames[sample] = frame.rename({col: f"{sample}_{col}" for col in frame.columns if col in fmt_ids})
+            
+        frame_list = list(frames.values())
+        final_frame = frame_list[0]
+
+        # Use CHROM and POS as join keys (genomic coordinates)
+        join_keys = [CHROM, POS]
+        for frame in frame_list[1:]:
+            final_frame = final_frame.join(frame, on=join_keys, how="outer", coalesce=True)
+        
+    else:
+        # Single sample case
+        final_frame = list(frames.values())[0]
+    return final_frame
 
 
 def _cast_ref_alt_columns() -> list[pl.Expr]:
