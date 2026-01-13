@@ -13,6 +13,7 @@ args <- parser$parse_args()
 
 bg <- read.table(args$input_bedGraph, sep="\t", skip=0)
 colnames(bg) <- c("seqnames", "start", "end", args$sample_name)
+bg$start <- bg$start + 1  # Convert to 1-based coordinates
 gr <- makeGRangesFromDataFrame(bg, ignore.strand=TRUE, keep.extra.columns=TRUE)
 out_file_name <- paste(args$sample_name, ".ReadCounts.rds", sep="")
 saveRDS(gr, file=out_file_name)
