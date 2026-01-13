@@ -23,14 +23,14 @@ The tool can also be run from the docker image in dockerhub [`ultimagenomics/ugb
 
 ### 1. run_comparison_pipeline
 
-Compare VCF callsets to ground truth using VCFEVAL as the comparison engine. This pipeline supports parallel processing by chromosome, annotation with various genomic features, and detailed concordance analysis.
+Compare VCF callsets to ground truth using VCFEVAL as the comparison engine. This pipeline supports, annotation with various genomic features, and detailed concordance analysis of specific variant types (downstream).
 
 #### Purpose
 
 - Compare variant calls against a ground truth dataset
 - Generate concordance metrics (TP, FP, FN)
 - Annotate variants with coverage, mappability, and other genomic features
-- Support for both single-interval and whole-genome comparisons
+- Annotate variants with properties like SNV/Indel/homopolymer Indel etc.
 
 #### Usage
 
@@ -59,7 +59,6 @@ run_comparison_pipeline \
 - `--call_sample_name`: Name of the call sample
 - `--truth_sample_name`: Name of the truth sample
 
-
 #### Optional Parameters
 
 - `--coverage_bw_high_quality`: Input BigWig file with high MAPQ coverage
@@ -73,6 +72,14 @@ run_comparison_pipeline \
 - `--n_jobs`: Number of parallel jobs for chromosome processing (default: -1 for all CPUs)
 - `--use_tmpdir`: Store temporary files in temporary directory
 - `--verbosity`: Logging level (ERROR, WARNING, INFO, DEBUG)
+
+#### Output Files
+
+- **HDF5 file** (`output_file`): Contains concordance dataframes with classifications (TP, FP, FN)
+  - `concordance` key: Main concordance results
+  - `input_args` key: Input parameters used
+  - Per-chromosome keys (for whole-genome mode)
+- **BED files**: Generated from concordance results for visualization
 
 #### Example
 
@@ -132,6 +139,18 @@ sv_comparison_pipeline \
 - `--skip_collapse`: Skip VCF collapsing step for calls (ground truth is always collapsed)
 - `--verbosity`: Logging level (default: INFO)
 
+#### Output files
+
+- **HDF5 file** (`output_filename`): Contains two concordance dataframes:
+  - `base` key: Ground truth concordance (TP, FN)
+  - `calls` key: Calls concordance (TP, FP)
+- **Truvari directory** (`outdir`): Contains Truvari bench results:
+  - `tp-base.vcf.gz`: True positive variants in ground truth
+  - `tp-comp.vcf.gz`: True positive variants in calls
+  - `fn.vcf.gz`: False negative variants
+  - `fp.vcf.gz`: False positive variants
+  - `summary.json`: Summary statistics
+
 #### Example
 
 ```bash
@@ -161,36 +180,10 @@ sv_comparison_pipeline \
   --ignore_filter
 ```
 
-## Output Files
-
-### run_comparison_pipeline
-
-- **HDF5 file** (`output_file`): Contains concordance dataframes with classifications (TP, FP, FN)
-  - `concordance` key: Main concordance results
-  - `input_args` key: Input parameters used
-  - Per-chromosome keys (for whole-genome mode)
-- **BED files**: Generated from concordance results for visualization
-
-### sv_comparison_pipeline
-
-- **HDF5 file** (`output_filename`): Contains two concordance dataframes:
-  - `base` key: Ground truth concordance (TP, FN)
-  - `calls` key: Calls concordance (TP, FP)
-- **Truvari directory** (`outdir`): Contains Truvari bench results:
-  - `tp-base.vcf.gz`: True positive variants in ground truth
-  - `tp-comp.vcf.gz`: True positive variants in calls
-  - `fn.vcf.gz`: False negative variants
-  - `fp.vcf.gz`: False positive variants
-  - `summary.json`: Summary statistics
 
 ## Dependencies
 
-### Python Dependencies
-- `ugbio_core[ml,vcfbed]` - Core utilities and VCF/BED processing
-  - Includes Truvari 5.4.0+ for SV comparison
-
-### Binary Tool Dependencies
-The following binary tools are included in the Docker image:
+The following binary tools are included in the Docker image and need to be installed for standalone running:
 - **bcftools** 1.20 - VCF/BCF manipulation
 - **samtools** 1.20 - SAM/BAM/CRAM manipulation
 - **bedtools** 2.31.0 - Genome interval operations
