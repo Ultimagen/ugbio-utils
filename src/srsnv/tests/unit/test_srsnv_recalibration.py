@@ -14,7 +14,7 @@ def test_recalibration_columns(tmp_path):
     positive_path = resources_dir / "416119_L7402.test.random_sample.featuremap.filtered.sample.parquet"
     negative_path = resources_dir / "416119_L7402.test.raw.featuremap.filtered.sample.parquet"
     stats_file_path = resources_dir / "416119_L7402.test.unified_stats_new_format.json"
-    interval_list_path = resources_dir / "wgs_calling_regions.without_encode_blacklist.hg38.interval_list.gz"
+    bed_file_path = resources_dir / "wgs_calling_regions.without_encode_blacklist.hg38.bed"
 
     # Create args using real file paths
     # Use the exact features from the trained model metadata
@@ -28,7 +28,7 @@ def test_recalibration_columns(tmp_path):
         negative=str(negative_path),
         stats_file=str(stats_file_path),
         mean_coverage=30.0,
-        training_regions=str(interval_list_path),
+        training_regions=str(bed_file_path),
         k_folds=2,
         model_params=None,
         output=str(tmp_path),

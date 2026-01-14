@@ -20,10 +20,8 @@
 from __future__ import annotations
 
 import argparse
-import gzip
 import json
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -31,9 +29,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import polars as pl
-import pysam
 import xgboost as xgb
 from scipy.stats import gaussian_kde
+from ugbio_core.bed_utils import BedUtils
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
@@ -74,179 +72,59 @@ pl.enable_string_cache()
 
 
 # ───────────────────────── parsers ────────────────────────────
-def _parse_interval_list_tabix(path: str) -> tuple[dict[str, int], list[str]]:
-    # Parse headers for chrom_sizes (must still scan file start)
-    chrom_sizes = {}
-    with pysam.TabixFile(path) as tbx:
-        for line in tbx.header:
-            if line.startswith("@SQ"):
-                chrom_name = None
-                for field in line.strip().split("\t")[1:]:
-                    key, val = field.split(":", 1)
-                    if key == "SN":
-                        chrom_name = val
-                    elif key == "LN" and chrom_name is not None:
-                        chrom_sizes[chrom_name] = int(val)
-        # chroms_in_data: use tabix index for fast chromosome listing
-        chroms_in_data = list(tbx.contigs)
-    missing = [c for c in chroms_in_data if c not in chrom_sizes]
-    if missing:
-        raise ValueError(f"Missing @SQ header for contigs: {missing}")
-    return chrom_sizes, chroms_in_data
-
-
-def _parse_interval_list_manual(path: str) -> tuple[dict[str, int], list[str]]:
+def _parse_bed_file(path: str) -> tuple[dict[str, int], list[str]]:
     """
-    Picard/Broad interval-list:
-    header lines: '@SQ\tSN:chr1\tLN:248956422'
-    data  lines:  'chr1   100  200  +  region1'
+    Parse a BED file to extract chromosome sizes and order.
 
-    Supports both plain text and gzipped files (detected by .gz extension).
-
-    Returns
-    -------
-    chrom_sizes : dict[str, int]
-    chroms_in_data : list[str]  # preserve original order of appearance
-    """
-    chrom_sizes: dict[str, int] = {}
-    chroms_in_data: list[str] = []
-
-    # Determine if file is gzipped based on extension
-    is_gzipped = path.endswith(".gz")
-
-    if is_gzipped:
-        fh = gzip.open(path, "rt", encoding="utf-8")
-    else:
-        fh = open(path, encoding="utf-8")
-
-    try:
-        for line in fh:
-            if line.startswith("@SQ"):
-                chrom_name = None
-                for field in line.strip().split("\t")[1:]:
-                    key, val = field.split(":", 1)
-                    if key == "SN":
-                        chrom_name = val
-                    elif key == "LN" and chrom_name is not None:
-                        chrom_sizes[chrom_name] = int(val)
-            elif not line.startswith("@"):
-                chrom = line.split("\t", 1)[0]
-                if chrom not in chroms_in_data:
-                    chroms_in_data.append(chrom)
-    finally:
-        fh.close()
-
-    missing = [c for c in chroms_in_data if c not in chrom_sizes]
-    if missing:
-        raise ValueError(f"Missing @SQ header for contigs: {missing}")
-    return chrom_sizes, chroms_in_data
-
-
-def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
-    """
-    Parse a Picard/Broad interval-list file to extract chromosome sizes and order.
+    For BED files, chromosome "size" is calculated as the maximum end position
+    for each chromosome in the file.
 
     Parameters
     ----------
     path : str
-        Path to the interval-list file (supports .gz files).
+        Path to the BED file.
 
     Returns
     -------
     tuple[dict[str, int], list[str]]
-        chrom_sizes: Dictionary mapping chromosome names to their lengths.
-        chroms_in_data: List of chromosomes in the order they appear in the file.
+        chrom_sizes: Dictionary mapping chromosome names to their maximum end positions.
+        chroms_in_data: List of chromosomes in the order they first appear in the file.
     """
-    candidate_tbi = path + ".tbi"
-    if os.path.exists(candidate_tbi):
-        return _parse_interval_list_tabix(path)
-    else:
-        return _parse_interval_list_manual(path)
+    chrom_sizes: dict[str, int] = {}
+    chroms_in_data: list[str] = []
 
+    min_bed_fields = 3  # BED format requires at least chrom, start, end
 
-def count_bases_in_interval_list(path: str) -> int:
-    """
-    Count the number of bases covered by intervals in a Picard/Broad interval list.
-
-    Parameters
-    ----------
-    path : str
-        Path to the interval-list file (supports .gz files).
-
-    Returns
-    -------
-    Total number of bases covered by the intervals [int]
-    """
-    candidate_tbi = path + ".tbi"
-    if os.path.exists(candidate_tbi):
-        return count_bases_in_interval_list_tabix(path)
-    else:
-        return count_bases_in_interval_list_manual(path)
-
-
-def count_bases_in_interval_list_manual(interval_list_path: str) -> int:
-    """
-    Count the number of bases covered by intervals in a bgzipped Picard-style
-    interval list (.interval_list.gz). Does not use pysam.
-
-    Parameters
-    ----------
-    interval_list_path : str
-        Path to the bgzipped interval list.
-
-    Returns
-    -------
-    int
-        Total number of bases covered by the intervals.
-    """
-    total_bases = 0
-
-    with gzip.open(interval_list_path, "rt") as f:  # text mode
-        for line in f:
-            if line.startswith("@"):  # skip header lines
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            # Skip comment lines and header lines
+            if line.startswith(("#", "@")) or not line.strip():
                 continue
 
             fields = line.strip().split("\t")
-            if len(fields) < 3:  # noqa: PLR2004
-                continue  # malformed line
-
-            start, end = int(fields[1]), int(fields[2])
-            total_bases += end - start + 1  # Picard intervals are inclusive
-
-    return total_bases
-
-
-def count_bases_in_interval_list_tabix(interval_list_path: str) -> int:
-    """
-    Count the number of bases covered by intervals in a bgzipped, tabix-indexed
-    Picard-style interval list (.interval_list.gz with .tbi index).
-
-    Parameters
-    ----------
-    interval_list_path : str
-        Path to the bgzipped interval list (must have a .tbi index).
-
-    Returns
-    -------
-    int
-        Total number of bases covered by the intervals.
-    """
-    total_bases = 0
-
-    with pysam.TabixFile(interval_list_path) as tbx:
-        for record in tbx.fetch():
-            # Skip header lines starting with '@'
-            if record.startswith("@"):
+            if len(fields) < min_bed_fields:
                 continue
 
-            fields = record.strip().split("\t")
-            if len(fields) < 3:  # noqa: PLR2004
-                continue  # malformed line
+            chrom = fields[0]
+            try:
+                end = int(fields[2])
+            except ValueError:
+                continue
 
-            _, start, end = fields[0], int(fields[1]), int(fields[2])
-            total_bases += end - start + 1  # Picard intervals are inclusive
+            # Track chromosome order
+            if chrom not in chroms_in_data:
+                chroms_in_data.append(chrom)
 
-    return total_bases
+            # Update maximum end position for this chromosome
+            if chrom not in chrom_sizes:
+                chrom_sizes[chrom] = end
+            else:
+                chrom_sizes[chrom] = max(chrom_sizes[chrom], end)
+
+    if not chrom_sizes:
+        raise ValueError(f"No valid BED entries found in {path}")
+
+    return chrom_sizes, chroms_in_data
 
 
 def _parse_model_params(mp: str | None) -> dict[str, Any]:
@@ -479,7 +357,7 @@ class SRSNVTrainer:
         self.mean_coverage = args.mean_coverage
         if self.mean_coverage is None:
             raise ValueError("--mean-coverage is required if not present in stats-file JSON")
-        self.n_bases_in_region = count_bases_in_interval_list(args.training_regions)
+        self.n_bases_in_region = BedUtils().count_bases_in_bed_file(args.training_regions)
 
         # sanity-check: identical “quality/region” filters in the two random-sample stats files
         def _quality_region_filters(st):
@@ -534,8 +412,8 @@ class SRSNVTrainer:
         self.k_folds = max(1, args.k_folds)
 
         # Folds
-        logger.debug("Parsing interval list from %s", args.training_regions)
-        chrom_sizes, chrom_list = _parse_interval_list(args.training_regions)
+        logger.debug("Parsing BED file from %s", args.training_regions)
+        chrom_sizes, chrom_list = _parse_bed_file(args.training_regions)
         # partition_into_folds expects a pandas Series
         logger.debug("Partitioning %d chromosomes into %d folds", len(chrom_list), self.k_folds)
         self.chrom_to_fold: dict[str, int] = partition_into_folds(
@@ -1001,7 +879,8 @@ class SRSNVTrainer:
         model_paths: dict[int, str] = {}
         for fold_idx, model in enumerate(self.models):
             path = self.out_dir / f"{base}model_fold_{fold_idx}.json"
-            model.save_model(path)
+            # Use get_booster().save_model() to avoid XGBoost 2.x compatibility issues
+            model.get_booster().save_model(path)
             model_paths[fold_idx] = str(path)
             logger.info("Saved model for fold %d → %s", fold_idx, path)
 
@@ -1082,7 +961,7 @@ def _cli() -> argparse.Namespace:
     ap.add_argument(
         "--training-regions",
         required=True,
-        help="Picard interval_list file (supports .gz files)",
+        help="BED file containing training regions",
     )
     ap.add_argument("--k-folds", type=int, default=1, help="Number of CV folds (≥1)")
     ap.add_argument(

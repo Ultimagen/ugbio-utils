@@ -26,8 +26,8 @@ def test_end_to_end_training(tmp_path: Path) -> None:
 
     # ---------------------------------------------------------------- regions
     # Use the real hg38 calling regions shipped with the repository
-    interval_list = resources / "wgs_calling_regions.without_encode_blacklist.hg38.interval_list.gz"
-    assert interval_list.is_file(), "interval_list fixture missing"
+    bed_file = resources / "wgs_calling_regions.without_encode_blacklist.hg38.bed"
+    assert bed_file.is_file(), "BED file fixture missing"
 
     # ---------------------------------------------------------------- args
     # use env-provided directory if defined, otherwise fall back to tmp_path
@@ -38,7 +38,7 @@ def test_end_to_end_training(tmp_path: Path) -> None:
         negative=str(neg_file),
         stats_file=str(stats_file),
         mean_coverage=30.0,
-        training_regions=str(interval_list),
+        training_regions=str(bed_file),
         k_folds=2,
         model_params="n_estimators=2:max_depth=2:enable_categorical=true",  # keep test fast
         features="REF:ALT:X_HMER_REF:X_HMER_ALT:X_PREV1:X_NEXT1:X_PREV2:X_NEXT2:X_PREV3:X_NEXT3:BCSQ:BCSQCSS:RL:INDEX:DUP:REV:"
