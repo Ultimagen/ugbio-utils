@@ -101,19 +101,65 @@ def copy_omics_cached_indexes(cache_s3_uri):
         copy_object(s3_client, bucket_name, source_key, dest_key)
 
 
+def process_task_ids_file(run_id, task_ids_file, output_file):
+    """
+    Process a file with task IDs and output a tab-separated file with task ID and cache path.
+    If there's an error retrieving a cache path, leave the path blank but still output the line.
+    If output_file is None, output to stdout.
+    """
+    import sys
+    
+    with open(task_ids_file, "r") as infile:
+        outfile = sys.stdout if output_file is None else open(output_file, "w")
+        try:
+            # Write header
+            outfile.write("task_id\tcache_path\n")
+            
+            for line in infile:
+                task_id = line.strip()
+                if not task_id:  # Skip empty lines
+                    continue
+                
+                try:
+                    cache_path = get_run_cache_path(run_id, task_id)
+                    outfile.write(f"{task_id}\t{cache_path}\n")
+                except Exception as e:
+                    logging.warning(f"Error retrieving cache path for task {task_id}: {e}")
+                    outfile.write(f"{task_id}\t\n")
+        finally:
+            if output_file is not None:
+                outfile.close()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("run_id", help="AWS HealthOmics run id")
     parser.add_argument(
         "--task-id", type=str, help="HealthOmics run task-id. Leave empty to get the base run cache uri."
     )
+    parser.add_argument(
+        "--task-ids-file",
+        type=str,
+        help="File containing task IDs (one per line). Output will be written to a tab-separated file.",
+    )
+    parser.add_argument(
+        "--output-file",
+        type=str,
+        default=None,
+        help="Output file for task ID and cache path mapping (default: stdout)",
+    )
     parser.add_argument("--copy-indexes", dest="copy_indexes", action="store_true", help="copy indexes cached files")
     parser.set_defaults(copy_indexes=False)
     args = parser.parse_args()
 
-    cache_s3_uri = get_run_cache_path(args.run_id, args.task_id)
-    if args.copy_indexes:
-        copy_omics_cached_indexes(cache_s3_uri)
+    if args.task_ids_file:
+        # Process file with multiple task IDs
+        process_task_ids_file(args.run_id, args.task_ids_file, args.output_file)
+    else:
+        # Original single task ID behavior
+        cache_s3_uri = get_run_cache_path(args.run_id, args.task_id)
+        if args.copy_indexes:
+            copy_omics_cached_indexes(cache_s3_uri)
 
 
 if __name__ == "__main__":
