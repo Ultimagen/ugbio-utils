@@ -60,11 +60,6 @@ def parse_args(argv):
         default="all",
     )
     parser.add_argument(
-        "--hcr",
-        help="bed file describing high confidence regions (runs.conservative.bed)",
-        required=True,
-    )
-    parser.add_argument(
         "--output_prefix",
         help="prefix to output files containing stats and info about errors",
         required=True,
@@ -96,7 +91,6 @@ class AssessSECConcordance:
         classify_column,
         raw_exclude_list,
         sec_exclude_list,
-        hcr,
         out_pref,
     ):
         self.ref_genome_file = ref_genome_file
@@ -104,7 +98,6 @@ class AssessSECConcordance:
         self.classify_column = classify_column
         self.raw_exclude_list = raw_exclude_list
         self.sec_exclude_list = sec_exclude_list
-        self.hcr = hcr
         self.out_pref = out_pref
         self.exclude_lists_beds = [raw_exclude_list, sec_exclude_list]
 
@@ -300,7 +293,6 @@ def run(argv):
         ref_genome_file=ref_genome_file,
         dataset_key=dataset_key,
         classify_column=classify_column,
-        hcr=args.hcr,
         raw_exclude_list=args.raw_exclude_list,
         sec_exclude_list=args.sec_exclude_list,
         out_pref=args.output_prefix,
