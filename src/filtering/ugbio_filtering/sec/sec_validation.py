@@ -51,11 +51,6 @@ def parse_args(argv):
     )
     parser.add_argument("--processes", default=5, type=int, help="number of parallel processes to run")
     parser.add_argument(
-        "--hcr",
-        required=True,
-        help="hcr for assess_sec_concordance (runs.convervative.bed)",
-    )
-    parser.add_argument(
         "--use_known_variants_info",
         default=False,
         action="store_true",
@@ -130,7 +125,6 @@ def run(argv):
             f"--genome_fasta {genome_fasta} "
             f"--raw_exclude_list {relevant_coords_file} "
             f"--sec_exclude_list {sec_vcf}.bed "
-            f"--hcr {args.hcr} "
             f"--output_prefix {out_dir}/assessment{novel_detection_suffix}/{sample_id}"
         )
 

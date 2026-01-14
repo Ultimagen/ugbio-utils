@@ -21,7 +21,6 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
         self,
         vcu: VcfComparisonUtils,
         vu: VcfUtils,
-        n_parts: int,
         input_prefix: str,
         truth_file: str,
         cmp_intervals: IntervalFile,
@@ -31,7 +30,6 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
         truth_sample: str,
         output_file_name: str,
         sdf_index: str | None = None,
-        header: str | None = None,
         output_suffix: str | None = None,
         *,
         ignore_filter: bool = False,
@@ -44,13 +42,8 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
             VcfComparisonUtils object for executing common functions via unix shell
         vu: VcfUtils
             VcfUtils object for VCF utility functions
-        n_parts : int
-            For input VCF split into number of parts - specifiy the number of parts. Specify
-            zero for complete VCF
         input_prefix : str
-            Input prefix for the vcf. If the vcf is split into multiple parts, the script
-            will look for <input_prefix>.1.vcf, <input_prefix>.2.vcf etc. For the non-split VCF
-            will look for <input_prefix>.vcf.gz
+            Input prefix for the vcf. The script will look for <input_prefix>.vcf.gz
         truth_file : str, optional
             Truth calls file
         cmp_intervals : vcf_pipeline_utils.IntervalFile, optional
@@ -69,8 +62,6 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
             Name of the output file - will determine the name of the vcfeval output directory.
             The output_file_name should include the output_dir and output_dir and output_file_name
             are mutually exclusive
-        header : str, optional
-            for backward compatibility - to be able to change the header of the VCF. Default None
         output_suffix : str, optional
             Suffix for the output file name (e.g. chr9) -
             otherwise the output file nams are starting with the input prefix
@@ -82,7 +73,6 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
         """
         self.vcu = vcu
         self.vu = vu
-        self.n_parts = n_parts
         self.input_prefix = input_prefix
         self.truth_file = truth_file
         self.cmp_intervals = cmp_intervals
@@ -94,7 +84,6 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
         self.output_file_name = output_file_name
         self.ignore_filter = ignore_filter
         self.revert_hom_ref = revert_hom_ref
-        self.header = header
         self.output_suffix = output_suffix
 
         self.output_dir = dirname(output_file_name)
@@ -109,9 +98,8 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
         high_conf_calls_vcf, high_conf_concordance_vcf: Tuple[str, str]
         """
 
-        combined_fn = self.__combine_vcf()
-        reheader_fn = self.__reheader_vcf(combined_fn)
-        revert_fn = self.__revert_hom_ref(reheader_fn)
+        combined_fn = self.input_prefix + ".vcf.gz"
+        revert_fn = self.__revert_hom_ref(combined_fn)
         select_intervals_fn = self.__select_comparison_intervals(revert_fn)
 
         concordance_vcf = self.vcu.run_vcfeval_concordance(
@@ -141,30 +129,13 @@ class ComparisonPipeline:  # pylint: disable=too-many-instance-attributes
         )
         return high_conf_calls_vcf, high_conf_concordance_vcf
 
-    def __combine_vcf(self):
-        output_fn = pjoin(self.output_dir, self.input_prefix_basename + f"{self.output_suffix}.vcf.gz")
-        if self.n_parts > 0:
-            self.vu.combine_vcf(self.n_parts, self.input_prefix, output_fn)
-        else:
-            output_fn = self.input_prefix + ".vcf.gz"
-        return output_fn
-
-    def __reheader_vcf(self, output_fn):
-        reheader_fn = pjoin(self.output_dir, self.input_prefix_basename + f"{self.output_suffix}.rhdr.vcf.gz")
-        if self.header is not None:
-            self.vu.reheader_vcf(output_fn, self.header, reheader_fn)
-        else:
-            shutil.copy(output_fn, reheader_fn)
-            shutil.copy(".".join((output_fn, "tbi")), ".".join((reheader_fn, "tbi")))
-        return reheader_fn
-
-    def __revert_hom_ref(self, reheader_fn):
+    def __revert_hom_ref(self, combined_fn):
         revert_fn = pjoin(self.output_dir, self.input_prefix_basename + f"{self.output_suffix}.rev.hom.ref.vcf.gz")
         if self.revert_hom_ref:
-            self.vcu.transform_hom_calls_to_het_calls(reheader_fn, revert_fn)
+            self.vcu.transform_hom_calls_to_het_calls(combined_fn, revert_fn)
         else:
-            shutil.copy(reheader_fn, revert_fn)
-            shutil.copy(".".join((reheader_fn, "tbi")), ".".join((revert_fn, "tbi")))
+            shutil.copy(combined_fn, revert_fn)
+            shutil.copy(".".join((combined_fn, "tbi")), ".".join((revert_fn, "tbi")))
         return revert_fn
 
     def __select_comparison_intervals(self, revert_fn):

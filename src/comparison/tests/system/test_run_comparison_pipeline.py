@@ -21,11 +21,6 @@ class TestRunComparisonPipeline:
         run_comparison_pipeline.run(
             [
                 "run_comparison_pipeline",
-                "--n_parts",
-                "0",
-                "--hpol_filter_length_dist",
-                "12",
-                "10",
                 "--input_prefix",
                 f"{resources_dir}/004797-UGAv3-51.filtered.chr1_1_1000000",
                 "--output_file",
@@ -37,8 +32,6 @@ class TestRunComparisonPipeline:
                 "--highconf_intervals",
                 f"{resources_dir}/HG004_GRCh38_GIAB_1_22_v4.2.1_benchmark_noinconsistent.chr1_1_1000000.bed",
                 "--use_tmpdir",
-                "--runs_intervals",
-                f"{general_inputs_dir}/hg38_runs.conservative.bed",
                 "--reference",
                 f"{general_inputs_dir}/Homo_sapiens_assembly38.fasta",
                 "--reference_dict",
@@ -67,7 +60,7 @@ class TestRunComparisonPipeline:
             ]
         )
         output_df = read_hdf(f"{tmpdir}/004797-UGAv3-51.comp.h5", key="chr1")
-        assert {"tp": 346, "fn": 29, "fp": 27} == dict(output_df["classify"].value_counts())
+        assert {"tp": 345, "fn": 30, "fp": 27} == dict(output_df["classify"].value_counts())
 
     def test_run_comparison_pipeline_sentieon(self, tmpdir, resources_dir):
         output_file = f"{tmpdir}/004777-UGAv3-20.pred.chr1_1_1000000.comp.h5"
@@ -77,11 +70,6 @@ class TestRunComparisonPipeline:
         run_comparison_pipeline.run(
             [
                 "run_comparison_pipeline",
-                "--n_parts",
-                "0",
-                "--hpol_filter_length_dist",
-                "12",
-                "10",
                 "--input_prefix",
                 f"{resources_dir}/004777-UGAv3-20.pred.chr1_1-1000000",
                 "--output_file",
@@ -92,8 +80,6 @@ class TestRunComparisonPipeline:
                 f"{resources_dir}/HG001_GRCh38_1_22_v4.2.1_benchmark.chr1_1-1000000.vcf.gz",
                 "--highconf_intervals",
                 f"{resources_dir}/HG001_GRCh38_1_22_v4.2.1_benchmark.chr1_1-1000000.bed",
-                "--runs_intervals",
-                f"{general_inputs_dir}/hg38_runs.conservative.bed",
                 "--reference",
                 f"{general_inputs_dir}/Homo_sapiens_assembly38.fasta",
                 "--reference_dict",
@@ -112,7 +98,6 @@ class TestRunComparisonPipeline:
                 f"{general_inputs_dir}/mappability.0.bed",
                 "--annotate_intervals",
                 f"{general_inputs_dir}/hmers_7_and_higher.bed",
-                "--disable_reinterpretation",
                 "--scoring_field",
                 "ML_PROB",
                 "--n_jobs",
@@ -130,11 +115,6 @@ class TestRunComparisonPipeline:
         run_comparison_pipeline.run(
             [
                 "run_comparison_pipeline",
-                "--n_parts",
-                "0",
-                "--hpol_filter_length_dist",
-                "12",
-                "10",
                 "--input_prefix",
                 f"{resources_dir}/dv.pred.chr1_1-1000000",
                 "--output_file",
@@ -145,8 +125,6 @@ class TestRunComparisonPipeline:
                 f"{resources_dir}/HG001_GRCh38_1_22_v4.2.1_benchmark.chr1_1-1000000.vcf.gz",
                 "--highconf_intervals",
                 f"{resources_dir}/HG001_GRCh38_1_22_v4.2.1_benchmark.chr1_1-1000000.bed",
-                "--runs_intervals",
-                f"{general_inputs_dir}/hg38_runs.conservative.bed",
                 "--reference",
                 f"{general_inputs_dir}/Homo_sapiens_assembly38.fasta",
                 "--reference_dict",
@@ -165,7 +143,6 @@ class TestRunComparisonPipeline:
                 f"{general_inputs_dir}/mappability.0.bed",
                 "--annotate_intervals",
                 f"{general_inputs_dir}/hmers_7_and_higher.bed",
-                "--disable_reinterpretation",
                 "--scoring_field",
                 "QUAL",
                 "--revert_hom_ref",
