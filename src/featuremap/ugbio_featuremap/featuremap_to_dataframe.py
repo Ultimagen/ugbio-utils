@@ -67,6 +67,46 @@ log = logging.getLogger(__name__)
 # Configuration constants
 DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
 CHUNK_BP_DEFAULT = 10_000_000  # 10 Mbp per processing chunk
+MAX_DEBUG_FILES_TO_SHOW = 3  # Number of file paths to show in debug logs
+
+
+def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> None:
+    """
+    Configure logging for the current process.
+
+    Parameters
+    ----------
+    log_level : int
+        Logging level to configure (e.g., logging.INFO, logging.DEBUG)
+    check_worker_cache : bool
+        If True, check if logging is already configured at this level (for worker processes).
+        If False, always reconfigure (for main process).
+    """
+    # Use function attribute to track configured log level in worker processes
+    # This avoids using global variables
+    if not hasattr(_configure_logging, "_worker_log_level"):
+        _configure_logging._worker_log_level = None  # type: ignore[attr-defined]
+
+    # For worker processes, only configure if not already configured or if level changed
+    if check_worker_cache and _configure_logging._worker_log_level == log_level:  # type: ignore[attr-defined]
+        return
+
+    # Clear any existing handlers and reconfigure
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    log.handlers.clear()
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
+    # Ensure both root logger and module logger use the correct level
+    root_logger.setLevel(log_level)
+    log.setLevel(log_level)
+
+    # Track configured level for worker processes
+    if check_worker_cache:
+        _configure_logging._worker_log_level = log_level  # type: ignore[attr-defined]
 
 
 @dataclass
@@ -96,6 +136,7 @@ class VCFJobConfig:
     list_fmt_ids: list[str]
     sample_list: list[str]
     fmt_ids: list[str]
+    log_level: int
 
 
 # ───────────────── header helpers ────────────────────────────────────────────
@@ -192,6 +233,7 @@ def header_meta(vcf: str, bcftools_path: str, threads: int = 0) -> tuple[dict, d
                 "cat":   list[str] | None   # enumeration from {_,..._}
             }
     """
+    log.debug(f"Parsing VCF header from {vcf}")
     cmd = [bcftools_path, "view", "-h"]
     if threads > 0:
         cmd.extend(["--threads", str(threads)])
@@ -205,6 +247,9 @@ def header_meta(vcf: str, bcftools_path: str, threads: int = 0) -> tuple[dict, d
     for m in FORMAT_RE.finditer(txt):
         k, n, t, d = m.groups()
         fmt[k] = {"num": n, "type": t, "cat": _enum(d)}
+    log.info(f"Parsed header: {len(info)} INFO fields, {len(fmt)} FORMAT fields")
+    log.debug(f"INFO fields: {list(info.keys())}")
+    log.debug(f"FORMAT fields: {list(fmt.keys())}")
     return info, fmt
 
 
@@ -266,6 +311,7 @@ def _generate_genomic_regions(
     If *window_size* is None it is chosen so that the number of windows is
     ~10× ``jobs``.
     """
+    log.debug("Extracting contig information from VCF header")
     # Extract contig lengths from header
     contig_re = re.compile(r"##contig=<ID=([^,>]+),length=(\d+)")
     header = subprocess.check_output([bcftools_path, "view", "-h", vcf_path], text=True)
@@ -288,6 +334,7 @@ def _generate_genomic_regions(
 
     try:
         # bedtools makewindows
+        log.info(f"Generating genomic regions with window size {window_size:,} bp")
         proc = subprocess.run(
             [
                 bedtools_path,
@@ -398,10 +445,15 @@ def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> Non
 
     if len(parquet_files) == 1:
         # Single file - just move it
+        log.debug(f"Single  sample file, moving to output: {output_path}")
         shutil.move(parquet_files[0], output_path)
         return
 
-    log.debug(f"Merging {len(parquet_files)} Parquet files lazily")
+    log.info(f"Merging {len(parquet_files)} Parquet part-file(s) into final output")
+    log.debug(
+        f"Part-files: {parquet_files[:MAX_DEBUG_FILES_TO_SHOW]}"
+        f"{'...' if len(parquet_files) > MAX_DEBUG_FILES_TO_SHOW else ''}"
+    )
 
     # Use lazy scanning and streaming write for memory efficiency
     lazy_frames = [pl.scan_parquet(f) for f in parquet_files]
@@ -410,13 +462,14 @@ def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> Non
     merged_lazy = pl.concat(lazy_frames, how="vertical")
 
     # Stream write to final output
+    log.debug(f"Writing merged Parquet to: {output_path}")
     merged_lazy.sink_parquet(output_path)
 
     # Clean up temporary files
     for f in parquet_files:
         Path(f).unlink(missing_ok=True)
 
-    log.debug(f"Merged Parquet files written to: {output_path}")
+    log.debug(f"Successfully merged {len(parquet_files)} part-file(s)")
 
 
 def _build_explicit_schema(cols: list[str], info_meta: dict, fmt_meta: dict) -> dict[str, pl.PolarsDataType]:
@@ -525,6 +578,8 @@ def _run_region_jobs(
         as the cause.
     """
     part_files: list[str] = []
+    completed = 0
+    total = len(regions)
 
     with ProcessPoolExecutor(max_workers=jobs, mp_context=spawn_ctx) as executor:
         futures: dict[Future[str], tuple[str, str]] = {}
@@ -545,15 +600,20 @@ def _run_region_jobs(
         for fut in as_completed(futures):
             exc = fut.exception()
             if exc is None:
-                continue
-            region, part_path = futures[fut]
-            failures.append((region, part_path, exc))
-            log.error(
-                "Error processing region %s (part=%s)\n%s",
-                region,
-                part_path,
-                "".join(traceback.format_exception(exc)),
-            )
+                completed += 1
+                region, part_path = futures[fut]
+                log.debug(f"Completed region {region} ({completed}/{total})")
+                if completed % max(1, total // 10) == 0 or completed == total:
+                    log.info(f"Progress: {completed}/{total} regions processed ({100*completed//total}%)")
+            else:
+                region, part_path = futures[fut]
+                failures.append((region, part_path, exc))
+                log.error(
+                    "Error processing region %s (part=%s)\n%s",
+                    region,
+                    part_path,
+                    "".join(traceback.format_exception(exc)),
+                )
 
         if failures:
             first_region, first_part, first_exc = failures[0]
@@ -562,10 +622,12 @@ def _run_region_jobs(
                 f"first failure: {first_region} (part={first_part})"
             ) from first_exc
 
-    return [p for p in part_files if Path(p).is_file()]
+    valid_files = [p for p in part_files if Path(p).is_file()]
+    log.info(f"Successfully processed {len(valid_files)} region(s) with data")
+    return valid_files
 
 
-def vcf_to_parquet(
+def vcf_to_parquet(  # noqa: PLR0915
     vcf: str,
     out: str,
     drop_info: set[str] | None = None,
@@ -573,6 +635,7 @@ def vcf_to_parquet(
     chunk_bp: int = CHUNK_BP_DEFAULT,
     jobs: int = DEFAULT_JOBS,
     list_mode: str = "explode",
+    log_level: int = logging.INFO,
 ) -> None:
     """
     Convert VCF to Parquet using region-based parallel processing.
@@ -601,14 +664,17 @@ def vcf_to_parquet(
         How to handle list format fields: "explode" (one row per list element) or
         "aggregate" (mean, min, max, count metrics). Default is "explode".
     """
-    log.info(f"Converting {vcf} to {out} using region-based parallel processing")
+    log.info(f"Input: {vcf}")
+    log.info(f"Output: {out}")
+    log.info(f"List mode: {list_mode}")
     _assert_vcf_index_exists(vcf)
+    log.debug("VCF index found")
 
     # Auto-detect optimal job count if not specified
     if jobs == 0:
         jobs = os.cpu_count() or 4
 
-    log.info(f"Using {jobs} parallel jobs for region processing")
+    log.info(f"Using {jobs} parallel job(s) for region processing")
 
     # Resolve tool paths
     bcftools = _resolve_bcftools_command()
@@ -619,9 +685,15 @@ def vcf_to_parquet(
 
     # Filter dropped fields
     if drop_info:
+        dropped_info = [k for k in info_meta.keys() if k in drop_info]
         info_meta = {k: v for k, v in info_meta.items() if k not in drop_info}
+        if dropped_info:
+            log.info(f"Dropping {len(dropped_info)} INFO field(s): {dropped_info}")
     if drop_format:
+        dropped_fmt = [k for k in fmt_meta.keys() if k in drop_format]
         fmt_meta = {k: v for k, v in fmt_meta.items() if k not in drop_format}
+        if dropped_fmt:
+            log.info(f"Dropping {len(dropped_fmt)} FORMAT field(s): {dropped_fmt}")
 
     # Validate FORMAT fields
     format_ids = list(fmt_meta.keys())
@@ -630,6 +702,9 @@ def vcf_to_parquet(
     # Split FORMAT fields
     scalar_fmt_ids, list_fmt_ids = _split_format_ids(format_ids, fmt_meta)
     info_ids = list(info_meta.keys())
+    log.info(f"Processing {len(scalar_fmt_ids)} scalar FORMAT field(s), {len(list_fmt_ids)} list FORMAT field(s)")
+    log.debug(f"Scalar FORMAT fields: {scalar_fmt_ids}")
+    log.debug(f"List FORMAT fields: {list_fmt_ids}")
 
     # Build query string and column names
     fmt_str = _make_query_string(format_ids, info_ids)
@@ -657,8 +732,10 @@ def vcf_to_parquet(
 
     # Transform columns and schema for aggregate mode
     if list_mode == "aggregate":
+        log.info("Using aggregate mode: list fields will be aggregated (mean, min, max, count)")
         cols, schema = _transform_cols_and_schema_for_aggregate(cols, list_fmt_ids, info_meta, fmt_meta)
     else:
+        log.info("Using explode mode: list fields will be expanded to one row per element")
         schema = _build_explicit_schema(cols, info_meta, fmt_meta)
 
     with pl.StringCache():
@@ -670,7 +747,8 @@ def vcf_to_parquet(
             bedtools,
             window_size=chunk_bp,
         )
-        log.info(f"Created {len(regions)} regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")  # noqa PLR2004
+        log.info(f"Created {len(regions)} regions for parallel processing")
+        log.debug(f"First 5 regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")  # noqa PLR2004
 
         # Build immutable job configuration (shared by every worker)  ▼ NEW
         job_cfg = VCFJobConfig(
@@ -686,6 +764,7 @@ def vcf_to_parquet(
             list_fmt_ids=list_fmt_ids,
             sample_list=sample_list,
             fmt_ids=fmt_ids,
+            log_level=log_level,
         )
 
         # Temporary directory for ordered part-files
@@ -739,7 +818,10 @@ def _process_region_to_parquet(
     str
         Path to created parquet file, empty string if no data
     """
+    # Configure logging once per worker process
+    _configure_logging(job_cfg.log_level, check_worker_cache=True)
     try:
+        log.debug(f"Processing region {region}")
         with pl.StringCache():
             frame = _stream_region_to_polars(
                 region=region,
@@ -748,7 +830,9 @@ def _process_region_to_parquet(
                 job_cfg=job_cfg,
             )
             if frame.is_empty():
+                log.debug(f"Region {region} contains no data, skipping")
                 return ""
+            log.debug(f"Region {region}: {frame.height} rows, writing to {output_file}")
             frame.write_parquet(output_file)
             return output_file
 
@@ -850,6 +934,7 @@ def _convert_sample_frames_to_polars(
     frames: dict[str, pl.DataFrame] = {}
 
     for sample in job_cfg.sample_list:
+        log.debug(f"Processing sample {sample} for region {region}")
         single_sample_tsv = _bcftools_awk_stdout(
             region=region,
             vcf_path=vcf_path,
@@ -860,6 +945,7 @@ def _convert_sample_frames_to_polars(
             sample_name=sample,
         )
         if not single_sample_tsv.strip():
+            log.debug(f"Sample {sample} has no data in region {region}")
             continue
         frame = _frame_from_tsv(single_sample_tsv, cols=job_cfg.columns, schema=job_cfg.schema)
         if not frame.is_empty():
@@ -1011,12 +1097,8 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     # ───────────── logging setup ───────────────
-    if args.verbose:
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        )
-        log.setLevel(logging.DEBUG)
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    _configure_logging(log_level, check_worker_cache=False)
     # -------------------------------------------
 
     vcf_to_parquet(
@@ -1027,6 +1109,7 @@ def main(argv: list[str] | None = None) -> None:
         chunk_bp=args.chunk_bp,
         jobs=args.jobs,
         list_mode=args.list_mode,
+        log_level=log_level,
     )
 
 
