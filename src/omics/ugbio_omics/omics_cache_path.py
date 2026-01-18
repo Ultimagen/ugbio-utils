@@ -168,7 +168,7 @@ def main():
 
     if args.task_ids_file:
         # Process file with multiple task IDs
-        process_task_ids_file(args.run_id, args.task_ids_file, args.output_file, args.copy_indexes)
+        process_task_ids_file(args.run_id, args.task_ids_file, args.output_file, copy_indexes=args.copy_indexes)
     else:
         # Original single task ID behavior
         cache_s3_uri = get_run_cache_path(args.run_id, args.task_id)
