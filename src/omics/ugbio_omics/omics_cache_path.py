@@ -126,21 +126,17 @@ def process_task_ids_file(run_id, task_ids_file, output_file, copy_indexes=False
                 if not task_id:  # Skip empty lines
                     continue
                 
-                # Check if task_id is an integer
-                if not task_id.isdigit():
-                    logging.warning(f"Task ID '{task_id}' is not a valid integer, skipping")
-                    outfile.write(f"{task_id}\t\n")
-                    continue
-                
+                got_path = False
                 try:
                     cache_path = get_run_cache_path(run_id, task_id)
                     outfile.write(f"{task_id}\t{cache_path}\n")
-                    
-                    if copy_indexes:
-                        copy_omics_cached_indexes(cache_path)
+                    got_path = True
                 except Exception as e:
                     logging.warning(f"Error retrieving cache path for task {task_id}: {e}")
                     outfile.write(f"{task_id}\t\n")
+
+                if got_path and copy_indexes:
+                    copy_omics_cached_indexes(cache_path)
         finally:
             if output_file is not None:
                 outfile.close()
@@ -150,7 +146,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("run_id", help="AWS HealthOmics run id")
     parser.add_argument(
-        "--task-id", type=str, help="HealthOmics run task-id. Leave empty to get the base run cache uri."
+        "--task-id", type=str, help="HealthOmics run task ID. Leave empty to get the base run cache uri."
     )
     parser.add_argument(
         "--task-ids-file",
