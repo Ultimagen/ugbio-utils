@@ -136,6 +136,14 @@ REF_ALLELE_CATS = ALT_ALLELE_CATS + [
     "N",
 ]
 
+# Aggregation types and their Polars dtypes for aggregate mode
+AGGREGATION_TYPES = [
+    ("mean", pl.Float64),
+    ("min", pl.Float64),
+    ("max", pl.Float64),
+    ("count", pl.Int64),
+]
+
 
 def _enum(desc: str) -> list[str] | None:
     """
@@ -440,8 +448,9 @@ def _transform_cols_and_schema_for_aggregate(
     """
     Transform columns and schema for aggregate mode.
 
-    In aggregate mode, each list column is replaced with 4 columns:
+    In aggregate mode, each list column is replaced with aggregation columns:
     {col}_mean, {col}_min, {col}_max, {col}_count
+    (defined by AGGREGATION_TYPES)
 
     Parameters
     ----------
@@ -463,15 +472,8 @@ def _transform_cols_and_schema_for_aggregate(
 
     for col in cols:
         if col in list_fmt_ids:
-            # Replace list column with 4 aggregation columns
-            transformed_cols.extend(
-                [
-                    f"{col}_mean",
-                    f"{col}_min",
-                    f"{col}_max",
-                    f"{col}_count",
-                ]
-            )
+            # Replace list column with aggregation columns
+            transformed_cols.extend([f"{col}_{suffix}" for suffix, _ in AGGREGATION_TYPES])
         else:
             # Keep non-list columns as-is
             transformed_cols.append(col)
@@ -481,10 +483,8 @@ def _transform_cols_and_schema_for_aggregate(
 
     # Override schema for aggregation columns (they're not in metadata)
     for col in list_fmt_ids:
-        schema[f"{col}_mean"] = pl.Float64
-        schema[f"{col}_min"] = pl.Float64
-        schema[f"{col}_max"] = pl.Float64
-        schema[f"{col}_count"] = pl.Int64
+        for suffix, dtype in AGGREGATION_TYPES:
+            schema[f"{col}_{suffix}"] = dtype
 
     return transformed_cols, schema
 
@@ -879,11 +879,18 @@ def _convert_sample_frames_to_polars(
 
 def _join_multi_sample_frames(frames: dict[str, pl.DataFrame], job_cfg: VCFJobConfig) -> pl.DataFrame:
     """Join multiple sample DataFrames, renaming FORMAT columns and dropping duplicates."""
-    fmt_ids = job_cfg.fmt_ids
+    aggregation_suffixes = {suffix for suffix, _ in AGGREGATION_TYPES}
 
-    # Rename FORMAT columns with sample suffix
+    # Build set of all columns that need sample suffix (FORMAT + aggregate columns)
+    cols_to_rename = set(job_cfg.fmt_ids)
+    for list_id in job_cfg.list_fmt_ids:
+        for suffix in aggregation_suffixes:
+            cols_to_rename.add(f"{list_id}_{suffix}")
+
+    # Rename FORMAT columns and aggregate columns with sample suffix
     for sample, frame in frames.items():
-        frames[sample] = frame.rename({col: f"{col}_{sample}" for col in frame.columns if col in fmt_ids})
+        rename_map = {col: f"{col}_{sample}" for col in frame.columns if col in cols_to_rename}
+        frames[sample] = frame.rename(rename_map)
 
     frame_list = list(frames.values())
     final_frame = frame_list[0]
@@ -893,7 +900,7 @@ def _join_multi_sample_frames(frames: dict[str, pl.DataFrame], job_cfg: VCFJobCo
 
     # Columns to drop from subsequent frames (QUAL, INFO) - they're identical across samples
     non_sample_specific_cols = {QUAL} | set(job_cfg.info_ids)
-    cols_to_drop = non_sample_specific_cols - set(join_keys) - set(fmt_ids)
+    cols_to_drop = non_sample_specific_cols - set(join_keys) - set(job_cfg.fmt_ids)
 
     # Join remaining frames, dropping duplicate columns
     for frame in frame_list[1:]:
@@ -936,7 +943,7 @@ def _stream_region_to_polars(
     if not frames:
         return pl.DataFrame()
 
-    if len(frames) == 1:
+    if len(job_cfg.sample_list) == 1:
         return list(frames.values())[0]
 
     return _join_multi_sample_frames(frames, job_cfg)
