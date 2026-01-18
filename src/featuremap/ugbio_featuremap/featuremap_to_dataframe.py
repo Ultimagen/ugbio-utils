@@ -47,7 +47,6 @@ import argparse
 import logging
 import multiprocessing as _mp  # NEW
 import os
-from polars.dataframe.frame import DataFrame
 import re
 import shutil
 import subprocess
@@ -342,12 +341,12 @@ def _make_query_string(format_ids: list[str], query_info: list[str]) -> str:
 
 def _get_awk_script_path(mode: str = "explode") -> str:
     """Get path to the AWK script for list handling.
-    
+
     Parameters
     ----------
     mode : str
         Either "explode" or "aggregate" to select the appropriate script.
-    
+
     Returns
     -------
     str
@@ -355,15 +354,15 @@ def _get_awk_script_path(mode: str = "explode") -> str:
     """
     if mode not in ("explode", "aggregate"):
         raise ValueError(f"Invalid mode: {mode}. Must be 'explode' or 'aggregate'")
-    
+
     script_name = "explode_lists.awk" if mode == "explode" else "aggregate_lists.awk"
-    
+
     # First try the standard approach (should work in development and installed package)
     script_dir = Path(__file__).parent
     awk_script = script_dir / script_name
     if awk_script.exists():
         return str(awk_script)
-    
+
     # Fallback using importlib.resources for robust package resource access
     try:
         import importlib.resources as pkg_resources
@@ -440,10 +439,10 @@ def _transform_cols_and_schema_for_aggregate(
 ) -> tuple[list[str], dict[str, pl.PolarsDataType]]:
     """
     Transform columns and schema for aggregate mode.
-    
+
     In aggregate mode, each list column is replaced with 4 columns:
     {col}_mean, {col}_min, {col}_max, {col}_count
-    
+
     Parameters
     ----------
     cols : list[str]
@@ -454,37 +453,39 @@ def _transform_cols_and_schema_for_aggregate(
         INFO field metadata
     fmt_meta : dict
         FORMAT field metadata
-    
+
     Returns
     -------
     tuple[list[str], dict[str, pl.PolarsDataType]]
         Transformed columns and schema
     """
     transformed_cols: list[str] = []
-    
+
     for col in cols:
         if col in list_fmt_ids:
             # Replace list column with 4 aggregation columns
-            transformed_cols.extend([
-                f"{col}_mean",
-                f"{col}_min",
-                f"{col}_max",
-                f"{col}_count",
-            ])
+            transformed_cols.extend(
+                [
+                    f"{col}_mean",
+                    f"{col}_min",
+                    f"{col}_max",
+                    f"{col}_count",
+                ]
+            )
         else:
             # Keep non-list columns as-is
             transformed_cols.append(col)
-    
+
     # Build schema for transformed columns using existing function
     schema = _build_explicit_schema(transformed_cols, info_meta, fmt_meta)
-    
+
     # Override schema for aggregation columns (they're not in metadata)
     for col in list_fmt_ids:
         schema[f"{col}_mean"] = pl.Float64
         schema[f"{col}_min"] = pl.Float64
         schema[f"{col}_max"] = pl.Float64
         schema[f"{col}_count"] = pl.Int64
-    
+
     return transformed_cols, schema
 
 
@@ -649,9 +650,7 @@ def vcf_to_parquet(
 
     # Transform columns and schema for aggregate mode
     if list_mode == "aggregate":
-        cols, schema = _transform_cols_and_schema_for_aggregate(
-            cols, list_fmt_ids, info_meta, fmt_meta
-        )
+        cols, schema = _transform_cols_and_schema_for_aggregate(cols, list_fmt_ids, info_meta, fmt_meta)
     else:
         schema = _build_explicit_schema(cols, info_meta, fmt_meta)
 
@@ -811,17 +810,18 @@ def _frame_from_tsv(tsv: str, *, cols: list[str], schema: dict[str, pl.PolarsDat
         schema=schema,
     )
 
+
 def _get_sample_list(vcf: str, bcftools: str) -> list[str]:
     """
     Get the list of samples in the VCF file.
-    
+
     Parameters
     ----------
     vcf : str
         Path to input VCF file
     bcftools : str
         Path to bcftools executable
-    
+
     Returns
     -------
     list[str]
@@ -831,8 +831,7 @@ def _get_sample_list(vcf: str, bcftools: str) -> list[str]:
     try:
         result = subprocess.run(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
             check=True,
         )
@@ -840,8 +839,9 @@ def _get_sample_list(vcf: str, bcftools: str) -> list[str]:
         return samples
     except subprocess.CalledProcessError as e:
         log.error(f"Could not determine sample list from {cmd}: {e}.")
-        raise RuntimeError(f"Could not determine sample list from {cmd}: {e}.")
-    
+        raise RuntimeError(f"Could not determine sample list from {cmd}: {e}.") from e
+
+
 def _stream_region_to_polars(
     region: str,
     vcf_path: str,
@@ -851,7 +851,8 @@ def _stream_region_to_polars(
     """
     Run bcftools→awk and return a typed Polars DataFrame for *region*.
     If VCF has multiple samples, create a separate dataframe for each sample and join them on CHROM and POS.
-    The final dataframe will have the same columns as the input VCF, but with the sample name prefixed to the FORMAT columns to avoid column name conflicts in the join.
+    The final dataframe will have the same columns as the input VCF, but with the sample name prefixed to the FORMAT
+    columns to avoid column name conflicts in the join.
 
     Parameters
     ----------
@@ -879,7 +880,7 @@ def _stream_region_to_polars(
             bcftools=job_cfg.bcftools_path,
             awk_script=job_cfg.awk_script,
             list_indices=job_cfg.list_indices,
-            sample_name=sample
+            sample_name=sample,
         )
         if not single_sample_tsv.strip():
             continue
@@ -896,7 +897,7 @@ def _stream_region_to_polars(
 
         for sample, frame in frames.items():
             frames[sample] = frame.rename({col: f"{sample}_{col}" for col in frame.columns if col in fmt_ids})
-            
+
         frame_list = list(frames.values())
         final_frame = frame_list[0]
 
@@ -904,7 +905,7 @@ def _stream_region_to_polars(
         join_keys = [CHROM, POS]
         for frame in frame_list[1:]:
             final_frame = final_frame.join(frame, on=join_keys, how="outer", coalesce=True)
-        
+
     else:
         # Single sample case
         final_frame = list(frames.values())[0]
@@ -932,9 +933,7 @@ def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, job_cfg: VCFJobC
     exprs.extend(_cast_expr(tag, job_cfg.fmt_meta[tag]) for tag in job_cfg.scalar_fmt_ids)
     # Only cast list columns if they exist (they're replaced with aggregate columns in aggregate mode)
     exprs.extend(
-        _cast_expr(tag, job_cfg.fmt_meta[tag])
-        for tag in job_cfg.list_fmt_ids
-        if tag in featuremap_dataframe.columns
+        _cast_expr(tag, job_cfg.fmt_meta[tag]) for tag in job_cfg.list_fmt_ids if tag in featuremap_dataframe.columns
     )
 
     # QUAL ─ force Float64 even if all values are missing
@@ -972,7 +971,10 @@ def main(argv: list[str] | None = None) -> None:
         "--list-mode",
         choices=["explode", "aggregate"],
         default="explode",
-        help="How to handle list format fields: 'explode' (one row per list element) or 'aggregate' (mean, min, max, count metrics). Default is 'explode'.",
+        help=(
+            "How to handle list format fields: 'explode' (one row per list element) or 'aggregate' "
+            "(mean, min, max, count metrics). Default is 'explode'."
+        ),
     )
     # ───────────── new verbose flag ─────────────
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")

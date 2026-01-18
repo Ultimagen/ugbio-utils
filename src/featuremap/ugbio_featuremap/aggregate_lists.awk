@@ -15,25 +15,25 @@ BEGIN {
 function compute_aggregations(col_idx, values_str, values, n, i, val, sum, count, min_val, max_val, mean) {
     # Split the list (comma-separated values)
     n = split(values_str, values, ",")
-    
+
     sum = 0
     count = 0
     min_val = ""
     max_val = ""
-    
+
     # Process each value in the list
     for (i = 1; i <= n; i++) {
         # Trim whitespace and try to convert to number
         val = values[i]
         gsub(/^[ \t]+|[ \t]+$/, "", val)
-        
+
         # Skip empty values, ".", or non-numeric values
         if (val == "" || val == "." || val !~ /^-?[0-9]+\.?[0-9]*$/) {
             continue
         }
-        
+
         val = val + 0  # Convert to number
-        
+
         if (count == 0) {
             min_val = val
             max_val = val
@@ -41,16 +41,16 @@ function compute_aggregations(col_idx, values_str, values, n, i, val, sum, count
             if (val < min_val) min_val = val
             if (val > max_val) max_val = val
         }
-        
+
         sum += val
         count++
     }
-    
+
     # Return results as string: "mean\tmin\tmax\tcount"
     if (count == 0) {
         return ".\t.\t.\t0"
     }
-    
+
     mean = sum / count
     return sprintf("%.6f\t%.6f\t%.6f\t%d", mean, min_val, max_val, count)
 }
