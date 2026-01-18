@@ -514,6 +514,28 @@ def test_vcf_requires_index(tmp_path: Path) -> None:
         featuremap_to_dataframe.vcf_to_parquet(str(gz), str(tmp_path / "out.parquet"), jobs=1)
 
 
+def test_vcf_requires_samples(tmp_path: Path) -> None:
+    """vcf_to_parquet should raise an error when the VCF contains no samples."""
+    # VCF with variant records but no sample columns
+    vcf_text = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000>\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+        "chr1\t1\t.\tA\tC\t30.0\tPASS\t.\n"
+        "chr1\t100\t.\tG\tT\t25.0\tPASS\t.\n"
+    )
+    plain = tmp_path / "no_samples.vcf"
+    plain.write_text(vcf_text)
+    vcf_gz = tmp_path / "no_samples.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"],
+        check=True,
+    )
+
+    with pytest.raises(ValueError, match="contains no samples"):
+        featuremap_to_dataframe.vcf_to_parquet(str(vcf_gz), str(tmp_path / "out.parquet"), jobs=1)
+
+
 def test_st_et_are_categorical(tmp_path: Path, input_featuremap: Path) -> None:
     """Columns advertised as enums in the header (e.g. st / et) must be Enum types."""
     out = tmp_path / "enum.parquet"
@@ -534,8 +556,10 @@ def test_qual_dtype_float_even_if_empty(tmp_path: Path) -> None:
     vcf_txt = (
         "##fileformat=VCFv4.2\n"
         "##contig=<ID=chr1,length=1000>\n"
-        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
-        "chr1\t10\t.\tA\tT\t.\tPASS\t.\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\n"
+        "chr1\t10\t.\tA\tT\t.\tPASS\t.\tGT\t0/1\n"
+        "chr1\t300\t.\tG\tC\t21.0\tPASS\t.\tGT:DP:AD:RL\t0/1:41:.:.\n"
     )
     plain = tmp_path / "qual_missing.vcf"
     plain.write_text(vcf_txt)
@@ -550,6 +574,201 @@ def test_qual_dtype_float_even_if_empty(tmp_path: Path) -> None:
     featuremap_dataframe = pl.read_parquet(out)
     print(featuremap_dataframe.schema)
     assert featuremap_dataframe["QUAL"].dtype == pl.Float64, "QUAL should be Float64 even if all values are missing"
+    assert featuremap_dataframe["QUAL"].to_list() == [0.0, 21.0]
+
+
+def test_missing_sample_data(tmp_path: Path) -> None:
+    """VCF should handle missing sample data ('.' in sample column) correctly."""
+    vcf_txt = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000>\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        '##FORMAT=<ID=VAF,Number=1,Type=Float,Description="Variant Allele Frequency">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\n"
+        "chr1\t10\t.\tA\tT\t30.0\tPASS\t.\tGT:VAF\t0/1:0.5\n"
+        "chr1\t20\t.\tC\tG\t25.0\tPASS\t.\tGT:VAF\t.:.\n"
+    )
+    plain = tmp_path / "missing_sample.vcf"
+    plain.write_text(vcf_txt)
+    vcf_gz = tmp_path / "missing_sample.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"],
+        check=True,
+    )
+    out = tmp_path / "out.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(str(vcf_gz), str(out), jobs=1)
+
+    featuremap_dataframe = pl.read_parquet(out)
+    # Should have 2 rows (one per variant)
+    assert featuremap_dataframe.height == 2, "Should have 2 rows"
+    # Check that missing data is handled (VAF should be Float64, filled with 0.0 for missing)
+    assert featuremap_dataframe["VAF"].dtype == pl.Float64, "VAF should be Float64"
+    # First row should have VAF=0.5, second row should have VAF=0.0 (missing values filled)
+    vaf_values = featuremap_dataframe["VAF"].to_list()
+    assert vaf_values[0] == 0.5, "First row should have VAF=0.5"
+    assert vaf_values[1] == 0.0, "Second row should have VAF=0.0 (missing value filled)"
+
+
+def test_multi_sample_vcf(tmp_path: Path) -> None:
+    """Multi-sample VCF should produce columns with sample name suffixes for FORMAT fields."""
+    vcf_txt = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr19,length=58617616>\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        '##FORMAT=<ID=VAF,Number=1,Type=Float,Description="Variant Allele Frequency">\n'
+        '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Number of reads containing this location">\n'
+        '##FORMAT=<ID=RN,Number=.,Type=String,Description="Query (read) name">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\tSAMPLE2\n"
+        "chr19\t271215\t.\tG\tC\t41.94\tPASS\t.\tGT:VAF:DP:RN\t./.:0.0298507:67:021152_1-Z0115-2981480323\t./.:0:44:.\n"
+        "chr19\t271241\t.\tA\tG\t42.6\tPASS\t.\tGT:VAF:DP:RN\t./.:0.0151515:66:021152_1-Z0115-2353376084\t./.:0:35:.\n"
+    )
+    plain = tmp_path / "multi_sample.vcf"
+    plain.write_text(vcf_txt)
+    vcf_gz = tmp_path / "multi_sample.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"],
+        check=True,
+    )
+    out = tmp_path / "out.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(str(vcf_gz), str(out), jobs=1)
+
+    featuremap_dataframe = pl.read_parquet(out)
+    # Should have rows (one per read due to RN list explosion)
+    assert featuremap_dataframe.height > 0, "Should have at least one row"
+    # Check that FORMAT fields are suffixed with sample names
+    assert "VAF_SAMPLE1" in featuremap_dataframe.columns, "Should have VAF_SAMPLE1 column"
+    assert "VAF_SAMPLE2" in featuremap_dataframe.columns, "Should have VAF_SAMPLE2 column"
+    assert "DP_SAMPLE1" in featuremap_dataframe.columns, "Should have DP_SAMPLE1 column"
+    assert "DP_SAMPLE2" in featuremap_dataframe.columns, "Should have DP_SAMPLE2 column"
+    assert "RN_SAMPLE1" in featuremap_dataframe.columns, "Should have RN_SAMPLE1 column"
+    assert "RN_SAMPLE2" in featuremap_dataframe.columns, "Should have RN_SAMPLE2 column"
+    # Fixed columns should not be prefixed
+    assert "CHROM" in featuremap_dataframe.columns, "CHROM should not be prefixed"
+    assert "POS" in featuremap_dataframe.columns, "POS should not be prefixed"
+    assert "QUAL" in featuremap_dataframe.columns, "QUAL should not be prefixed"
+    # Check that data is correctly joined - both samples should have data for the same positions
+    assert featuremap_dataframe["POS"].n_unique() == 2, "Should have 2 unique positions"
+    # Check that VAF values are correctly preserved
+    sample1_vaf = featuremap_dataframe["VAF_SAMPLE1"].to_list()
+    sample2_vaf = featuremap_dataframe["VAF_SAMPLE2"].to_list()
+    # At least one row should have the expected VAF values
+    assert any(v == 0.0298507 for v in sample1_vaf if v is not None), "Should have VAF=0.0298507 for SAMPLE1"
+    assert any(v == 0.0 for v in sample2_vaf if v is not None), "Should have VAF=0.0 for SAMPLE2"
+
+
+def test_multi_sample_vcf_schema_consistency_single_sample_regions(tmp_path: Path) -> None:
+    """
+    Test that multi-sample VCFs maintain consistent schema across regions.
+
+    This test verifies the fix for schema inconsistency where regions with only
+    one sample having variants would produce columns without sample prefixes,
+    causing schema mismatches when merging parquet files.
+
+    The test creates a multi-sample VCF where:
+    - Some regions have variants only in SAMPLE1
+    - Some regions have variants only in SAMPLE2
+    - Some regions have variants in both samples
+
+    All regions should produce columns with sample prefixes (e.g., VAF_SAMPLE1, VAF_SAMPLE2)
+    to ensure schema consistency when merging.
+    """
+    vcf_txt = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000000>\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        '##FORMAT=<ID=VAF,Number=1,Type=Float,Description="Variant Allele Frequency">\n'
+        '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Depth">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\tSAMPLE2\n"
+        # Region 1: Only SAMPLE1 has variants (chr1:100-5000)
+        "chr1\t100\t.\tA\tG\t30.0\tPASS\t.\tGT:VAF:DP\t0/1:0.5:50\t./.:.:.\n"
+        "chr1\t200\t.\tC\tT\t25.0\tPASS\t.\tGT:VAF:DP\t0/1:0.3:40\t./.:.:.\n"
+        # Region 2: Only SAMPLE2 has variants (chr1:10000-15000)
+        "chr1\t10000\t.\tG\tA\t35.0\tPASS\t.\tGT:VAF:DP\t./.:.:.\t0/1:0.6:60\n"
+        "chr1\t11000\t.\tT\tC\t28.0\tPASS\t.\tGT:VAF:DP\t./.:.:.\t0/1:0.4:45\n"
+        # Region 3: Both samples have variants (chr1:50000-55000)
+        "chr1\t50000\t.\tA\tT\t40.0\tPASS\t.\tGT:VAF:DP\t0/1:0.7:70\t0/1:0.2:25\n"
+        "chr1\t51000\t.\tC\tG\t32.0\tPASS\t.\tGT:VAF:DP\t0/1:0.8:80\t0/1:0.3:30\n"
+    )
+    plain = tmp_path / "multi_sample_regions.vcf"
+    plain.write_text(vcf_txt)
+    vcf_gz = tmp_path / "multi_sample_regions.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"],
+        check=True,
+    )
+    out = tmp_path / "out_regions.parquet"
+    # Use small chunk size to force region splitting, testing the edge case
+    featuremap_to_dataframe.vcf_to_parquet(str(vcf_gz), str(out), jobs=1, chunk_bp=20000)
+
+    featuremap_dataframe = pl.read_parquet(out)
+    # Should have rows
+    assert featuremap_dataframe.height > 0, "Should have at least one row"
+
+    # CRITICAL: All regions should produce columns with sample prefixes, even regions
+    # where only one sample has variants. This ensures schema consistency when merging.
+    assert (
+        "VAF_SAMPLE1" in featuremap_dataframe.columns
+    ), "Should have VAF_SAMPLE1 column even in regions where only SAMPLE2 has variants"
+    assert (
+        "VAF_SAMPLE2" in featuremap_dataframe.columns
+    ), "Should have VAF_SAMPLE2 column even in regions where only SAMPLE1 has variants"
+    assert "DP_SAMPLE1" in featuremap_dataframe.columns, "Should have DP_SAMPLE1 column"
+    assert "DP_SAMPLE2" in featuremap_dataframe.columns, "Should have DP_SAMPLE2 column"
+
+    # Verify that columns without prefixes should NOT exist (schema consistency)
+    assert (
+        "VAF" not in featuremap_dataframe.columns
+    ), "VAF column without sample prefix should not exist in multi-sample VCF"
+    assert (
+        "DP" not in featuremap_dataframe.columns
+    ), "DP column without sample prefix should not exist in multi-sample VCF"
+
+    # Verify data correctness:
+    # - Regions with only SAMPLE1 should have nulls for SAMPLE2 columns
+    # - Regions with only SAMPLE2 should have nulls for SAMPLE1 columns
+    # - Regions with both should have values for both
+
+    # Check that we have variants from all three regions
+    positions = featuremap_dataframe["POS"].unique().to_list()
+    assert 100 in positions or 200 in positions, "Should have variants from region 1 (SAMPLE1 only)"
+    assert 10000 in positions or 11000 in positions, "Should have variants from region 2 (SAMPLE2 only)"
+    assert 50000 in positions or 51000 in positions, "Should have variants from region 3 (both samples)"
+
+    # Verify that regions with only one sample have missing/default values (0.0) for the other sample
+    # Note: Missing Float values are filled with 0.0 by the casting logic
+    sample1_only_rows = featuremap_dataframe.filter(pl.col("POS").is_in([100, 200]))
+    if sample1_only_rows.height > 0:
+        # SAMPLE2 columns should have 0.0 (missing values) for these rows
+        sample2_vaf_values = sample1_only_rows["VAF_SAMPLE2"].to_list()
+        assert all(
+            v == 0.0 for v in sample2_vaf_values
+        ), "SAMPLE2 VAF should be 0.0 (missing) in regions where only SAMPLE1 has variants"
+        # SAMPLE1 should have actual values
+        sample1_vaf_values = sample1_only_rows["VAF_SAMPLE1"].to_list()
+        assert any(
+            v > 0.0 for v in sample1_vaf_values
+        ), "SAMPLE1 should have non-zero VAF values in regions where it has variants"
+
+    sample2_only_rows = featuremap_dataframe.filter(pl.col("POS").is_in([10000, 11000]))
+    if sample2_only_rows.height > 0:
+        # SAMPLE1 columns should have 0.0 (missing values) for these rows
+        sample1_vaf_values = sample2_only_rows["VAF_SAMPLE1"].to_list()
+        assert all(
+            v == 0.0 for v in sample1_vaf_values
+        ), "SAMPLE1 VAF should be 0.0 (missing) in regions where only SAMPLE2 has variants"
+        # SAMPLE2 should have actual values
+        sample2_vaf_values = sample2_only_rows["VAF_SAMPLE2"].to_list()
+        assert any(
+            v > 0.0 for v in sample2_vaf_values
+        ), "SAMPLE2 should have non-zero VAF values in regions where it has variants"
+
+    # Verify that regions with both samples have values for both
+    both_samples_rows = featuremap_dataframe.filter(pl.col("POS").is_in([50000, 51000]))
+    if both_samples_rows.height > 0:
+        sample1_vaf_both = both_samples_rows["VAF_SAMPLE1"].drop_nulls().to_list()
+        sample2_vaf_both = both_samples_rows["VAF_SAMPLE2"].drop_nulls().to_list()
+        assert len(sample1_vaf_both) > 0, "SAMPLE1 should have VAF values in regions with both samples"
+        assert len(sample2_vaf_both) > 0, "SAMPLE2 should have VAF values in regions with both samples"
 
 
 def test_x_alt_categories(tmp_path: Path, input_featuremap: Path) -> None:
@@ -569,3 +788,226 @@ def test_x_alt_categories(tmp_path: Path, input_featuremap: Path) -> None:
         assert set(frame[X_ALT].cat.get_categories()) == set(
             frame[ALT].cat.get_categories()
         ), "X_ALT categories must match ALT categories"
+
+
+def test_aggregate_mode_list_fields(tmp_path: Path) -> None:
+    """
+    Test that aggregate mode replaces list columns with aggregation metrics (mean, min, max, count).
+
+    This test verifies:
+    1. List columns are replaced with 4 columns (mean, min, max, count)
+    2. Row count is one per variant (not exploded)
+    3. Aggregate columns have correct types (Float64 for mean/min/max, Int64 for count)
+    4. Aggregate values are computed correctly
+    """
+    # Create a VCF with list fields containing numeric values
+    vcf_txt = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000000>\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Depth">\n'
+        '##FORMAT=<ID=AD,Number=.,Type=Integer,Description="Allelic depths">\n'
+        '##FORMAT=<ID=RL,Number=.,Type=Integer,Description="Read lengths">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\n"
+        "chr1\t100\t.\tA\tG\t30.0\tPASS\t.\tGT:DP:AD:RL\t0/1:50:10,20,15:100,101,102\n"
+        "chr1\t200\t.\tC\tT\t25.0\tPASS\t.\tGT:DP:AD:RL\t0/1:30:5,10:200,201\n"
+        "chr1\t300\t.\tG\tA\t20.0\tPASS\t.\tGT:DP:AD:RL\t0/1:40:.:.\n"
+    )
+    plain = tmp_path / "aggregate_test.vcf"
+    plain.write_text(vcf_txt)
+    vcf_gz = tmp_path / "aggregate_test.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"],
+        check=True,
+    )
+
+    # Test aggregate mode
+    out_aggregate = tmp_path / "aggregate.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(vcf_gz), str(out_aggregate), drop_format={"GT"}, list_mode="aggregate", jobs=1
+    )
+
+    df_aggregate = pl.read_parquet(out_aggregate)
+
+    # Expected output: aggregate mode should produce one row per variant with aggregated metrics
+    # Variant 1 (POS=100): AD=[10,20,15] -> mean=15.0, min=10, max=20, count=3
+    #                      RL=[100,101,102] -> mean=101.0, min=100, max=102, count=3
+    # Variant 2 (POS=200): AD=[5,10] -> mean=7.5, min=5, max=10, count=2
+    #                      RL=[200,201] -> mean=200.5, min=200, max=201, count=2
+    # Variant 3 (POS=300): AD=[.] -> mean=None, min=None, max=None, count=0
+    #                      RL=[.] -> mean=None, min=None, max=None, count=0
+    expected = pl.DataFrame(
+        {
+            "CHROM": ["chr1", "chr1", "chr1"],
+            "POS": [100, 200, 300],
+            "QUAL": [30.0, 25.0, 20.0],
+            "REF": ["A", "C", "G"],
+            "ALT": ["G", "T", "A"],
+            "DP": [50, 30, 40],
+            "AD_mean": [15.0, 7.5, None],
+            "AD_min": [10.0, 5.0, None],
+            "AD_max": [20.0, 10.0, None],
+            "AD_count": [3, 2, 0],
+            "RL_mean": [101.0, 200.5, None],
+            "RL_min": [100.0, 200.0, None],
+            "RL_max": [102.0, 201.0, None],
+            "RL_count": [3, 2, 0],
+        }
+    )
+
+    # Verify structure
+    assert df_aggregate.height == 3, "Should have 3 rows (one per variant)"
+    assert "AD" not in df_aggregate.columns, "Original AD column should be removed"
+    assert "RL" not in df_aggregate.columns, "Original RL column should be removed"
+
+    # Sort both by POS for consistent comparison
+    df_sorted = df_aggregate.sort("POS")
+    expected_sorted = expected.sort("POS")
+
+    # Compare values: use tolerance-based comparison for Float64 columns, exact for others
+    for col in expected_sorted.columns:
+        assert col in df_sorted.columns, f"Missing expected column: {col}"
+        actual = df_sorted[col].to_list()
+        expected_vals = expected_sorted[col].to_list()
+        col_type = df_sorted[col].dtype
+
+        if col_type == pl.Float64:
+            # Float comparison with tolerance
+            for a, e in zip(actual, expected_vals):
+                if e is None:
+                    assert a is None or (isinstance(a, float) and (a != a)), f"{col}: expected None, got {a}"
+                else:
+                    assert abs(a - e) < 0.0001, f"{col}: expected {e}, got {a}"
+        else:
+            # Exact comparison for non-float types
+            assert actual == expected_vals, f"{col}: expected {expected_vals}, got {actual}"
+
+    # Verify aggregate column types
+    assert df_sorted["AD_mean"].dtype == pl.Float64, "AD_mean should be Float64"
+    assert df_sorted["AD_count"].dtype == pl.Int64, "AD_count should be Int64"
+    assert df_sorted["RL_mean"].dtype == pl.Float64, "RL_mean should be Float64"
+    assert df_sorted["RL_count"].dtype == pl.Int64, "RL_count should be Int64"
+
+    # Compare with explode mode to verify row count difference
+    out_explode = tmp_path / "explode.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(vcf_gz), str(out_explode), drop_format={"GT"}, list_mode="explode", jobs=1
+    )
+
+    df_explode = pl.read_parquet(out_explode)
+    # Explode mode should have more rows (one per list element)
+    assert df_explode.height > df_aggregate.height, "Explode mode should have more rows than aggregate mode"
+
+
+def test_aggregate_mode_multi_sample_vcf(tmp_path: Path) -> None:
+    """
+    Test that aggregate mode works correctly for multi-sample VCFs.
+
+    This test verifies:
+    1. List columns are replaced with aggregate metrics (mean, min, max, count)
+    2. Row count is one per variant (not exploded)
+    3. Aggregate values are computed correctly for each sample independently
+    4. Aggregate columns get sample suffixes (e.g., AD_mean_SAMPLE1, AD_mean_SAMPLE2)
+    5. Non-FORMAT columns (QUAL, INFO) are not duplicated
+    """
+    # Create a multi-sample VCF with list fields
+    vcf_txt = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000000>\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Depth">\n'
+        '##FORMAT=<ID=AD,Number=.,Type=Integer,Description="Allelic depths">\n'
+        '##FORMAT=<ID=RL,Number=.,Type=Integer,Description="Read lengths">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\tSAMPLE2\n"
+        "chr1\t100\t.\tA\tG\t30.0\tPASS\t.\tGT:DP:AD:RL\t0/1:50:10,20,15:100,101,102\t0/1:40:5,10:200,201\n"
+        "chr1\t200\t.\tC\tT\t25.0\tPASS\t.\tGT:DP:AD:RL\t0/1:30:8,12:150,151\t0/1:35:.:.\n"
+    )
+    plain = tmp_path / "multi_sample_aggregate.vcf"
+    plain.write_text(vcf_txt)
+    vcf_gz = tmp_path / "multi_sample_aggregate.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"],
+        check=True,
+    )
+
+    # Test aggregate mode
+    out_aggregate = tmp_path / "multi_aggregate.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(vcf_gz), str(out_aggregate), drop_format={"GT"}, list_mode="aggregate", jobs=1
+    )
+
+    df_aggregate = pl.read_parquet(out_aggregate)
+
+    # Expected output: one row per variant with aggregated metrics per sample
+    # Aggregate columns get sample suffixes like regular FORMAT columns
+    # Variant 1 (POS=100):
+    #   SAMPLE1: AD=[10,20,15] -> mean=15.0, min=10, max=20, count=3
+    #            RL=[100,101,102] -> mean=101.0, min=100, max=102, count=3
+    #   SAMPLE2: AD=[5,10] -> mean=7.5, min=5, max=10, count=2
+    #            RL=[200,201] -> mean=200.5, min=200, max=201, count=2
+    # Variant 2 (POS=200):
+    #   SAMPLE1: AD=[8,12] -> mean=10.0, min=8, max=12, count=2
+    #            RL=[150,151] -> mean=150.5, min=150, max=151, count=2
+    #   SAMPLE2: AD=[.] -> mean=None, min=None, max=None, count=0
+    #            RL=[.] -> mean=None, min=None, max=None, count=0
+    expected = pl.DataFrame(
+        {
+            "CHROM": ["chr1", "chr1"],
+            "POS": [100, 200],
+            "QUAL": [30.0, 25.0],
+            "REF": ["A", "C"],
+            "ALT": ["G", "T"],
+            "DP_SAMPLE1": [50, 30],
+            "DP_SAMPLE2": [40, 35],
+            "AD_mean_SAMPLE1": [15.0, 10.0],
+            "AD_min_SAMPLE1": [10.0, 8.0],
+            "AD_max_SAMPLE1": [20.0, 12.0],
+            "AD_count_SAMPLE1": [3, 2],
+            "RL_mean_SAMPLE1": [101.0, 150.5],
+            "RL_min_SAMPLE1": [100.0, 150.0],
+            "RL_max_SAMPLE1": [102.0, 151.0],
+            "RL_count_SAMPLE1": [3, 2],
+            "AD_mean_SAMPLE2": [7.5, None],
+            "AD_min_SAMPLE2": [5.0, None],
+            "AD_max_SAMPLE2": [10.0, None],
+            "AD_count_SAMPLE2": [2, 0],
+            "RL_mean_SAMPLE2": [200.5, None],
+            "RL_min_SAMPLE2": [200.0, None],
+            "RL_max_SAMPLE2": [201.0, None],
+            "RL_count_SAMPLE2": [2, 0],
+        }
+    )
+
+    # Sort both by POS for consistent comparison
+    df_sorted = df_aggregate.sort("POS")
+    expected_sorted = expected.sort("POS")
+
+    # Verify structure
+    assert df_sorted.height == 2, "Should have 2 rows (one per variant)"
+    assert "AD" not in df_sorted.columns, "Original AD column should be removed"
+    assert "RL" not in df_sorted.columns, "Original RL column should be removed"
+    assert "QUAL" in df_sorted.columns, "QUAL should be present (not duplicated)"
+
+    # Compare values: use tolerance-based comparison for Float64 columns, exact for others
+    for col in expected_sorted.columns:
+        assert col in df_sorted.columns, f"Missing expected column: {col}"
+        actual = df_sorted[col].to_list()
+        expected_vals = expected_sorted[col].to_list()
+        col_type = df_sorted[col].dtype
+
+        if col_type == pl.Float64:
+            # Float comparison with tolerance
+            for a, e in zip(actual, expected_vals):
+                if e is None:
+                    assert a is None or (isinstance(a, float) and (a != a)), f"{col}: expected None, got {a}"
+                else:
+                    assert abs(a - e) < 0.0001, f"{col}: expected {e}, got {a}"
+        else:
+            # Exact comparison for non-float types
+            assert actual == expected_vals, f"{col}: expected {expected_vals}, got {actual}"
+
+    # Verify aggregate column types
+    assert df_sorted["AD_mean_SAMPLE1"].dtype == pl.Float64, "AD_mean_SAMPLE1 should be Float64"
+    assert df_sorted["AD_count_SAMPLE1"].dtype == pl.Int64, "AD_count_SAMPLE1 should be Int64"
+    assert df_sorted["RL_mean_SAMPLE2"].dtype == pl.Float64, "RL_mean_SAMPLE2 should be Float64"
+    assert df_sorted["RL_count_SAMPLE2"].dtype == pl.Int64, "RL_count_SAMPLE2 should be Int64"

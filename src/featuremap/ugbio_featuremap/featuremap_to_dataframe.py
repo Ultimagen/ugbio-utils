@@ -58,6 +58,7 @@ from io import StringIO
 from pathlib import Path
 
 import polars as pl
+import pysam
 
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
@@ -66,6 +67,46 @@ log = logging.getLogger(__name__)
 # Configuration constants
 DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
 CHUNK_BP_DEFAULT = 10_000_000  # 10 Mbp per processing chunk
+MAX_DEBUG_FILES_TO_SHOW = 3  # Number of file paths to show in debug logs
+
+
+def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> None:
+    """
+    Configure logging for the current process.
+
+    Parameters
+    ----------
+    log_level : int
+        Logging level to configure (e.g., logging.INFO, logging.DEBUG)
+    check_worker_cache : bool
+        If True, check if logging is already configured at this level (for worker processes).
+        If False, always reconfigure (for main process).
+    """
+    # Use function attribute to track configured log level in worker processes
+    # This avoids using global variables
+    if not hasattr(_configure_logging, "_worker_log_level"):
+        _configure_logging._worker_log_level = None  # type: ignore[attr-defined]
+
+    # For worker processes, only configure if not already configured or if level changed
+    if check_worker_cache and _configure_logging._worker_log_level == log_level:  # type: ignore[attr-defined]
+        return
+
+    # Clear any existing handlers and reconfigure
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    log.handlers.clear()
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
+    # Ensure both root logger and module logger use the correct level
+    root_logger.setLevel(log_level)
+    log.setLevel(log_level)
+
+    # Track configured level for worker processes
+    if check_worker_cache:
+        _configure_logging._worker_log_level = log_level  # type: ignore[attr-defined]
 
 
 @dataclass
@@ -93,6 +134,9 @@ class VCFJobConfig:
     info_ids: list[str]
     scalar_fmt_ids: list[str]
     list_fmt_ids: list[str]
+    sample_list: list[str]
+    fmt_ids: list[str]
+    log_level: int
 
 
 # ───────────────── header helpers ────────────────────────────────────────────
@@ -132,6 +176,14 @@ REF_ALLELE_CATS = ALT_ALLELE_CATS + [
     "H",
     "V",
     "N",
+]
+
+# Aggregation types and their Polars dtypes for aggregate mode
+AGGREGATION_TYPES = [
+    ("mean", pl.Float64),
+    ("min", pl.Float64),
+    ("max", pl.Float64),
+    ("count", pl.Int64),
 ]
 
 
@@ -181,6 +233,7 @@ def header_meta(vcf: str, bcftools_path: str, threads: int = 0) -> tuple[dict, d
                 "cat":   list[str] | None   # enumeration from {_,..._}
             }
     """
+    log.debug(f"Parsing VCF header from {vcf}")
     cmd = [bcftools_path, "view", "-h"]
     if threads > 0:
         cmd.extend(["--threads", str(threads)])
@@ -194,6 +247,9 @@ def header_meta(vcf: str, bcftools_path: str, threads: int = 0) -> tuple[dict, d
     for m in FORMAT_RE.finditer(txt):
         k, n, t, d = m.groups()
         fmt[k] = {"num": n, "type": t, "cat": _enum(d)}
+    log.info(f"Parsed header: {len(info)} INFO fields, {len(fmt)} FORMAT fields")
+    log.debug(f"INFO fields: {list(info.keys())}")
+    log.debug(f"FORMAT fields: {list(fmt.keys())}")
     return info, fmt
 
 
@@ -210,10 +266,10 @@ def _cast_expr(col: str, meta: dict) -> pl.Expr:
     if meta["cat"]:
         cats = meta["cat"] + ([] if "" in meta["cat"] else [""])
         return base.fill_null(value="").cast(pl.Enum(cats), strict=True).alias(col)
-    elif meta["type"] in (_POLARS_DTYPE["Integer"], _POLARS_DTYPE["Float"]):
-        return base.fill_null(value=0).cast(_POLARS_DTYPE[meta["type"]], strict=True).alias(col)
-    elif meta["type"] == _POLARS_DTYPE["Flag"]:
+    elif meta["type"] == "Flag":
         return base.fill_null(value=False).cast(pl.Boolean, strict=True).alias(col)
+    elif meta["type"] in _POLARS_DTYPE:
+        return base.fill_null(value=0).cast(_POLARS_DTYPE[meta["type"]], strict=True).alias(col)
 
     # ---- default (Utf8) --------------------------------------------------
     return base.alias(col)
@@ -255,6 +311,7 @@ def _generate_genomic_regions(
     If *window_size* is None it is chosen so that the number of windows is
     ~10× ``jobs``.
     """
+    log.debug("Extracting contig information from VCF header")
     # Extract contig lengths from header
     contig_re = re.compile(r"##contig=<ID=([^,>]+),length=(\d+)")
     header = subprocess.check_output([bcftools_path, "view", "-h", vcf_path], text=True)
@@ -277,6 +334,7 @@ def _generate_genomic_regions(
 
     try:
         # bedtools makewindows
+        log.info(f"Generating genomic regions with window size {window_size:,} bp")
         proc = subprocess.run(
             [
                 bedtools_path,
@@ -337,11 +395,27 @@ def _make_query_string(format_ids: list[str], query_info: list[str]) -> str:
     )
 
 
-def _get_awk_script_path() -> str:
-    """Get path to the AWK script for list explosion."""
+def _get_awk_script_path(mode: str = "explode") -> str:
+    """Get path to the AWK script for list handling.
+
+    Parameters
+    ----------
+    mode : str
+        Either "explode" or "aggregate" to select the appropriate script.
+
+    Returns
+    -------
+    str
+        Path to the AWK script.
+    """
+    if mode not in ("explode", "aggregate"):
+        raise ValueError(f"Invalid mode: {mode}. Must be 'explode' or 'aggregate'")
+
+    script_name = "explode_lists.awk" if mode == "explode" else "aggregate_lists.awk"
+
     # First try the standard approach (should work in development and installed package)
     script_dir = Path(__file__).parent
-    awk_script = script_dir / "explode_lists.awk"
+    awk_script = script_dir / script_name
     if awk_script.exists():
         return str(awk_script)
 
@@ -349,15 +423,9 @@ def _get_awk_script_path() -> str:
     try:
         import importlib.resources as pkg_resources
 
-        try:
-            # Python 3.9+
-            ref = pkg_resources.files("ugbio_featuremap") / "explode_lists.awk"
-            with pkg_resources.as_file(ref) as awk_path:
-                return str(awk_path)
-        except AttributeError:
-            # Python 3.8 fallback
-            with pkg_resources.path("ugbio_featuremap", "explode_lists.awk") as awk_path:
-                return str(awk_path)
+        ref = pkg_resources.files("ugbio_featuremap") / script_name
+        with pkg_resources.as_file(ref) as awk_path:
+            return str(awk_path)
     except ImportError:
         pass
 
@@ -377,10 +445,15 @@ def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> Non
 
     if len(parquet_files) == 1:
         # Single file - just move it
+        log.debug(f"Single  sample file, moving to output: {output_path}")
         shutil.move(parquet_files[0], output_path)
         return
 
-    log.debug(f"Merging {len(parquet_files)} Parquet files lazily")
+    log.info(f"Merging {len(parquet_files)} Parquet part-file(s) into final output")
+    log.debug(
+        f"Part-files: {parquet_files[:MAX_DEBUG_FILES_TO_SHOW]}"
+        f"{'...' if len(parquet_files) > MAX_DEBUG_FILES_TO_SHOW else ''}"
+    )
 
     # Use lazy scanning and streaming write for memory efficiency
     lazy_frames = [pl.scan_parquet(f) for f in parquet_files]
@@ -389,13 +462,14 @@ def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> Non
     merged_lazy = pl.concat(lazy_frames, how="vertical")
 
     # Stream write to final output
+    log.debug(f"Writing merged Parquet to: {output_path}")
     merged_lazy.sink_parquet(output_path)
 
     # Clean up temporary files
     for f in parquet_files:
         Path(f).unlink(missing_ok=True)
 
-    log.debug(f"Merged Parquet files written to: {output_path}")
+    log.debug(f"Successfully merged {len(parquet_files)} part-file(s)")
 
 
 def _build_explicit_schema(cols: list[str], info_meta: dict, fmt_meta: dict) -> dict[str, pl.PolarsDataType]:
@@ -417,6 +491,56 @@ def _build_explicit_schema(cols: list[str], info_meta: dict, fmt_meta: dict) -> 
         else:
             schema[col] = pl.Utf8
     return schema
+
+
+def _transform_cols_and_schema_for_aggregate(
+    cols: list[str],
+    list_fmt_ids: list[str],
+    info_meta: dict,
+    fmt_meta: dict,
+) -> tuple[list[str], dict[str, pl.PolarsDataType]]:
+    """
+    Transform columns and schema for aggregate mode.
+
+    In aggregate mode, each list column is replaced with aggregation columns:
+    {col}_mean, {col}_min, {col}_max, {col}_count
+    (defined by AGGREGATION_TYPES)
+
+    Parameters
+    ----------
+    cols : list[str]
+        Original column names
+    list_fmt_ids : list[str]
+        List of FORMAT field IDs that are lists
+    info_meta : dict
+        INFO field metadata
+    fmt_meta : dict
+        FORMAT field metadata
+
+    Returns
+    -------
+    tuple[list[str], dict[str, pl.PolarsDataType]]
+        Transformed columns and schema
+    """
+    transformed_cols: list[str] = []
+
+    for col in cols:
+        if col in list_fmt_ids:
+            # Replace list column with aggregation columns
+            transformed_cols.extend([f"{col}_{suffix}" for suffix, _ in AGGREGATION_TYPES])
+        else:
+            # Keep non-list columns as-is
+            transformed_cols.append(col)
+
+    # Build schema for transformed columns using existing function
+    schema = _build_explicit_schema(transformed_cols, info_meta, fmt_meta)
+
+    # Override schema for aggregation columns (they're not in metadata)
+    for col in list_fmt_ids:
+        for suffix, dtype in AGGREGATION_TYPES:
+            schema[f"{col}_{suffix}"] = dtype
+
+    return transformed_cols, schema
 
 
 def _assert_vcf_index_exists(vcf: str) -> None:
@@ -454,6 +578,8 @@ def _run_region_jobs(
         as the cause.
     """
     part_files: list[str] = []
+    completed = 0
+    total = len(regions)
 
     with ProcessPoolExecutor(max_workers=jobs, mp_context=spawn_ctx) as executor:
         futures: dict[Future[str], tuple[str, str]] = {}
@@ -474,15 +600,20 @@ def _run_region_jobs(
         for fut in as_completed(futures):
             exc = fut.exception()
             if exc is None:
-                continue
-            region, part_path = futures[fut]
-            failures.append((region, part_path, exc))
-            log.error(
-                "Error processing region %s (part=%s)\n%s",
-                region,
-                part_path,
-                "".join(traceback.format_exception(exc)),
-            )
+                completed += 1
+                region, part_path = futures[fut]
+                log.debug(f"Completed region {region} ({completed}/{total})")
+                if completed % max(1, total // 10) == 0 or completed == total:
+                    log.info(f"Progress: {completed}/{total} regions processed ({100*completed//total}%)")
+            else:
+                region, part_path = futures[fut]
+                failures.append((region, part_path, exc))
+                log.error(
+                    "Error processing region %s (part=%s)\n%s",
+                    region,
+                    part_path,
+                    "".join(traceback.format_exception(exc)),
+                )
 
         if failures:
             first_region, first_part, first_exc = failures[0]
@@ -491,16 +622,20 @@ def _run_region_jobs(
                 f"first failure: {first_region} (part={first_part})"
             ) from first_exc
 
-    return [p for p in part_files if Path(p).is_file()]
+    valid_files = [p for p in part_files if Path(p).is_file()]
+    log.info(f"Successfully processed {len(valid_files)} region(s) with data")
+    return valid_files
 
 
-def vcf_to_parquet(
+def vcf_to_parquet(  # noqa: PLR0915
     vcf: str,
     out: str,
     drop_info: set[str] | None = None,
     drop_format: set[str] | None = None,
     chunk_bp: int = CHUNK_BP_DEFAULT,
     jobs: int = DEFAULT_JOBS,
+    list_mode: str = "explode",
+    log_level: int = logging.INFO,
 ) -> None:
     """
     Convert VCF to Parquet using region-based parallel processing.
@@ -525,15 +660,21 @@ def vcf_to_parquet(
         Maximum number of base-pairs per chunk (default 300 Mbp).
     jobs : int
         Number of parallel jobs (0 = auto-detect CPU cores)
+    list_mode : str
+        How to handle list format fields: "explode" (one row per list element) or
+        "aggregate" (mean, min, max, count metrics). Default is "explode".
     """
-    log.info(f"Converting {vcf} to {out} using region-based parallel processing")
+    log.info(f"Input: {vcf}")
+    log.info(f"Output: {out}")
+    log.info(f"List mode: {list_mode}")
     _assert_vcf_index_exists(vcf)
+    log.debug("VCF index found")
 
     # Auto-detect optimal job count if not specified
     if jobs == 0:
         jobs = os.cpu_count() or 4
 
-    log.info(f"Using {jobs} parallel jobs for region processing")
+    log.info(f"Using {jobs} parallel job(s) for region processing")
 
     # Resolve tool paths
     bcftools = _resolve_bcftools_command()
@@ -544,9 +685,15 @@ def vcf_to_parquet(
 
     # Filter dropped fields
     if drop_info:
+        dropped_info = [k for k in info_meta.keys() if k in drop_info]
         info_meta = {k: v for k, v in info_meta.items() if k not in drop_info}
+        if dropped_info:
+            log.info(f"Dropping {len(dropped_info)} INFO field(s): {dropped_info}")
     if drop_format:
+        dropped_fmt = [k for k in fmt_meta.keys() if k in drop_format]
         fmt_meta = {k: v for k, v in fmt_meta.items() if k not in drop_format}
+        if dropped_fmt:
+            log.info(f"Dropping {len(dropped_fmt)} FORMAT field(s): {dropped_fmt}")
 
     # Validate FORMAT fields
     format_ids = list(fmt_meta.keys())
@@ -555,6 +702,9 @@ def vcf_to_parquet(
     # Split FORMAT fields
     scalar_fmt_ids, list_fmt_ids = _split_format_ids(format_ids, fmt_meta)
     info_ids = list(info_meta.keys())
+    log.info(f"Processing {len(scalar_fmt_ids)} scalar FORMAT field(s), {len(list_fmt_ids)} list FORMAT field(s)")
+    log.debug(f"Scalar FORMAT fields: {scalar_fmt_ids}")
+    log.debug(f"List FORMAT fields: {list_fmt_ids}")
 
     # Build query string and column names
     fmt_str = _make_query_string(format_ids, info_ids)
@@ -567,6 +717,27 @@ def vcf_to_parquet(
         idx = len(base_cols) + format_ids.index(list_col)
         list_fmt_indices.append(idx)
 
+    # Fetch sample list ONCE in main process
+    sample_list = _get_sample_list(vcf)
+    log.info(f"Found {len(sample_list)} sample(s): {sample_list}")
+
+    if not sample_list:
+        raise ValueError(
+            f"VCF file '{vcf}' contains no samples. "
+            "VCF files without samples cannot be processed as variant data requires sample-specific FORMAT fields."
+        )
+
+    # Cache fmt_ids
+    fmt_ids = list(fmt_meta.keys())
+
+    # Transform columns and schema for aggregate mode
+    if list_mode == "aggregate":
+        log.info("Using aggregate mode: list fields will be aggregated (mean, min, max, count)")
+        cols, schema = _transform_cols_and_schema_for_aggregate(cols, list_fmt_ids, info_meta, fmt_meta)
+    else:
+        log.info("Using explode mode: list fields will be expanded to one row per element")
+        schema = _build_explicit_schema(cols, info_meta, fmt_meta)
+
     with pl.StringCache():
         # Generate genomic regions (fixed windows via bedtools)
         regions = _generate_genomic_regions(
@@ -576,20 +747,24 @@ def vcf_to_parquet(
             bedtools,
             window_size=chunk_bp,
         )
-        log.info(f"Created {len(regions)} regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")  # noqa PLR2004
+        log.info(f"Created {len(regions)} regions for parallel processing")
+        log.debug(f"First 5 regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")  # noqa PLR2004
 
         # Build immutable job configuration (shared by every worker)  ▼ NEW
         job_cfg = VCFJobConfig(
             bcftools_path=bcftools,
-            awk_script=_get_awk_script_path(),
+            awk_script=_get_awk_script_path(mode=list_mode),
             columns=cols,
             list_indices=list_fmt_indices,
-            schema=_build_explicit_schema(cols, info_meta, fmt_meta),
+            schema=schema,
             info_meta=info_meta,
             fmt_meta=fmt_meta,
             info_ids=info_ids,
             scalar_fmt_ids=scalar_fmt_ids,
             list_fmt_ids=list_fmt_ids,
+            sample_list=sample_list,
+            fmt_ids=fmt_ids,
+            log_level=log_level,
         )
 
         # Temporary directory for ordered part-files
@@ -643,7 +818,10 @@ def _process_region_to_parquet(
     str
         Path to created parquet file, empty string if no data
     """
+    # Configure logging once per worker process
+    _configure_logging(job_cfg.log_level, check_worker_cache=True)
     try:
+        log.debug(f"Processing region {region}")
         with pl.StringCache():
             frame = _stream_region_to_polars(
                 region=region,
@@ -652,8 +830,9 @@ def _process_region_to_parquet(
                 job_cfg=job_cfg,
             )
             if frame.is_empty():
+                log.debug(f"Region {region} contains no data, skipping")
                 return ""
-            frame = _cast_column_data_types(frame, job_cfg)
+            log.debug(f"Region {region}: {frame.height} rows, writing to {output_file}")
             frame.write_parquet(output_file)
             return output_file
 
@@ -671,9 +850,10 @@ def _bcftools_awk_stdout(
     bcftools: str,
     awk_script: str,
     list_indices: list[int],
+    sample_name: str,
 ) -> str:
     """Return TSV (string) produced by `bcftools | awk` for a region."""
-    bcftools_cmd = [bcftools, "query", "-f", fmt_str, vcf_path]
+    bcftools_cmd = [bcftools, "query", "-s", sample_name, "-f", fmt_str, vcf_path]
     if region:
         bcftools_cmd.insert(2, "-r")
         bcftools_cmd.insert(3, region)
@@ -722,25 +902,129 @@ def _frame_from_tsv(tsv: str, *, cols: list[str], schema: dict[str, pl.PolarsDat
     )
 
 
+def _get_sample_list(vcf: str) -> list[str]:
+    """
+    Get the list of samples in the VCF file.
+
+    Parameters
+    ----------
+    vcf : str
+        Path to input VCF/BCF file
+
+    Returns
+    -------
+    list[str]
+        List of samples in the VCF
+    """
+    try:
+        with pysam.VariantFile(vcf) as h_vcf:
+            return list(h_vcf.header.samples)
+    except Exception as e:
+        log.error(f"Could not determine sample list from VCF {vcf}: {e}.")
+        raise RuntimeError(f"Could not determine sample list from VCF {vcf}: {e}.") from e
+
+
+def _convert_sample_frames_to_polars(
+    region: str,
+    vcf_path: str,
+    fmt_str: str,
+    job_cfg: VCFJobConfig,
+) -> dict[str, pl.DataFrame]:
+    """Collect DataFrames for each sample in the region."""
+    frames: dict[str, pl.DataFrame] = {}
+
+    for sample in job_cfg.sample_list:
+        log.debug(f"Processing sample {sample} for region {region}")
+        single_sample_tsv = _bcftools_awk_stdout(
+            region=region,
+            vcf_path=vcf_path,
+            fmt_str=fmt_str,
+            bcftools=job_cfg.bcftools_path,
+            awk_script=job_cfg.awk_script,
+            list_indices=job_cfg.list_indices,
+            sample_name=sample,
+        )
+        if not single_sample_tsv.strip():
+            log.debug(f"Sample {sample} has no data in region {region}")
+            continue
+        frame = _frame_from_tsv(single_sample_tsv, cols=job_cfg.columns, schema=job_cfg.schema)
+        if not frame.is_empty():
+            frame = _cast_column_data_types(frame, job_cfg)
+            frames[sample] = frame
+
+    return frames
+
+
+def _join_multi_sample_frames(frames: dict[str, pl.DataFrame], job_cfg: VCFJobConfig) -> pl.DataFrame:
+    """Join multiple sample DataFrames, renaming FORMAT columns and dropping duplicates."""
+    aggregation_suffixes = {suffix for suffix, _ in AGGREGATION_TYPES}
+
+    # Build set of all columns that need sample suffix (FORMAT + aggregate columns)
+    cols_to_rename = set(job_cfg.fmt_ids)
+    for list_id in job_cfg.list_fmt_ids:
+        for suffix in aggregation_suffixes:
+            cols_to_rename.add(f"{list_id}_{suffix}")
+
+    # Rename FORMAT columns and aggregate columns with sample suffix
+    for sample, frame in frames.items():
+        rename_map = {col: f"{col}_{sample}" for col in frame.columns if col in cols_to_rename}
+        frames[sample] = frame.rename(rename_map)
+
+    frame_list = list(frames.values())
+    final_frame = frame_list[0]
+
+    # Join keys: CHROM, POS, REF, ALT (genomic coordinates and alleles)
+    join_keys = [CHROM, POS, REF, ALT]
+
+    # Columns to drop from subsequent frames (QUAL, INFO) - they're identical across samples
+    non_sample_specific_cols = {QUAL} | set(job_cfg.info_ids)
+    cols_to_drop = non_sample_specific_cols - set(join_keys) - set(job_cfg.fmt_ids)
+
+    # Join remaining frames, dropping duplicate columns
+    for frame in frame_list[1:]:
+        frame_dropped = frame.drop([col for col in cols_to_drop if col in frame.columns])
+        final_frame = final_frame.join(frame_dropped, on=join_keys, how="outer", coalesce=True)
+
+    return final_frame
+
+
 def _stream_region_to_polars(
     region: str,
     vcf_path: str,
     fmt_str: str,
     job_cfg: VCFJobConfig,
 ) -> pl.DataFrame:
-    """Run bcftools→awk and return a typed Polars DataFrame for *region*."""
-    tsv = _bcftools_awk_stdout(
-        region=region,
-        vcf_path=vcf_path,
-        fmt_str=fmt_str,
-        bcftools=job_cfg.bcftools_path,
-        awk_script=job_cfg.awk_script,
-        list_indices=job_cfg.list_indices,
-    )
-    frame = _frame_from_tsv(tsv, cols=job_cfg.columns, schema=job_cfg.schema)
-    if frame.is_empty():
-        return frame
-    return _cast_column_data_types(frame, job_cfg)
+    """
+    Run bcftools→awk and return a typed Polars DataFrame for *region*.
+    If VCF has multiple samples, create a separate dataframe for each sample and join them on CHROM, POS, REF, ALT.
+    The final dataframe will have the same columns as the input VCF, but with the FORMAT column name suffixed with
+    the sample name to avoid column name conflicts in the join.
+
+    Parameters
+    ----------
+    region : str
+        Genomic region in format "chr:start-end" or "chr"
+    vcf_path : str
+        Path to VCF file
+    fmt_str : str
+        bcftools query format string
+    job_cfg : VCFJobConfig
+        Job configuration object with processing metadata
+
+    Returns
+    -------
+    pl.DataFrame
+        Typed Polars DataFrame for the region
+    """
+    frames = _convert_sample_frames_to_polars(region, vcf_path, fmt_str, job_cfg)
+
+    if not frames:
+        return pl.DataFrame()
+
+    if len(job_cfg.sample_list) == 1:
+        return list(frames.values())[0]
+
+    return _join_multi_sample_frames(frames, job_cfg)
 
 
 def _cast_ref_alt_columns() -> list[pl.Expr]:
@@ -762,7 +1046,10 @@ def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, job_cfg: VCFJobC
     # build expressions for INFO / FORMAT
     exprs.extend(_cast_expr(tag, job_cfg.info_meta[tag]) for tag in job_cfg.info_ids)
     exprs.extend(_cast_expr(tag, job_cfg.fmt_meta[tag]) for tag in job_cfg.scalar_fmt_ids)
-    exprs.extend(_cast_expr(tag, job_cfg.fmt_meta[tag]) for tag in job_cfg.list_fmt_ids)
+    # Only cast list columns if they exist (they're replaced with aggregate columns in aggregate mode)
+    exprs.extend(
+        _cast_expr(tag, job_cfg.fmt_meta[tag]) for tag in job_cfg.list_fmt_ids if tag in featuremap_dataframe.columns
+    )
 
     # QUAL ─ force Float64 even if all values are missing
     if QUAL in featuremap_dataframe.columns:
@@ -795,18 +1082,23 @@ def main(argv: list[str] | None = None) -> None:
         default=CHUNK_BP_DEFAULT,
         help=f"Base-pairs per processing chunk (default {CHUNK_BP_DEFAULT} bp)",
     )
+    parser.add_argument(
+        "--list-mode",
+        choices=["explode", "aggregate"],
+        default="explode",
+        help=(
+            "How to handle list format fields: 'explode' (one row per list element) or 'aggregate' "
+            "(mean, min, max, count metrics). Default is 'explode'."
+        ),
+    )
     # ───────────── new verbose flag ─────────────
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     # -------------------------------------------
     args = parser.parse_args(argv)
 
     # ───────────── logging setup ───────────────
-    if args.verbose:
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        )
-        log.setLevel(logging.DEBUG)
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    _configure_logging(log_level, check_worker_cache=False)
     # -------------------------------------------
 
     vcf_to_parquet(
@@ -816,6 +1108,8 @@ def main(argv: list[str] | None = None) -> None:
         drop_format=set(args.drop_format),
         chunk_bp=args.chunk_bp,
         jobs=args.jobs,
+        list_mode=args.list_mode,
+        log_level=log_level,
     )
 
 
