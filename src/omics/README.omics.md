@@ -15,7 +15,7 @@ List of tools:
 3. **Get Run Logs** - Download logs of an Omics run. For FAILED run by default, you'll get the logs of all failed tasks or the run's engine log if there are no failed tasks. For successful runs by default, you'll get all tasks' logs. You can use --task-id to get the log for a specific task.
 
    Run `uv run get_omics_logs --help` for more details.
-4. **Get Omics Cache Path** - Get S3 uri of the cache of an Omics run. You can choose to copy the indexes files using --copy-indexes. Use --task-id to get the cache uri / copy indexes for a specific task.
+4. **Get Omics Cache Path** - Get S3 uri of the cache of an Omics run. You can choose to copy the indexes files using `--copy-indexes`. Use `--task-id` to get the cache uri / copy indexes for a specific task. Alternatively, use `--task-ids-file` to process multiple task IDs from a file and output their cache paths.  
 
    Run `uv run omics_cache_path --help` for more details.
 5. **Manifest Log** - Download and parse the manifest log of an Omics run. The manifest log contains a lot of information about storage usage, CPU and memory usage per task, Docker images, inputs, and general information about the run.
