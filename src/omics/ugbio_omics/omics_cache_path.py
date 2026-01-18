@@ -106,6 +106,7 @@ def copy_omics_cached_indexes(cache_s3_uri):
     if not found_index:
         logging.warning(f"No index files found in cache path: {cache_s3_uri}")
 
+
 def process_task_ids_file(run_id, task_ids_file, output_file, *, copy_indexes=False):
     """
     Process a file with task IDs and output a tab-separated file with task ID and cache path.
@@ -115,7 +116,7 @@ def process_task_ids_file(run_id, task_ids_file, output_file, *, copy_indexes=Fa
     """
     import sys
 
-    with open(task_ids_file, "r") as infile:
+    with open(task_ids_file) as infile:
         outfile = sys.stdout if output_file is None else open(output_file, "w")
         try:
             # Write header
@@ -125,7 +126,7 @@ def process_task_ids_file(run_id, task_ids_file, output_file, *, copy_indexes=Fa
                 task_id = line.strip()
                 if not task_id:  # Skip empty lines
                     continue
-
+                # Retrieve cache path
                 got_path = False
                 try:
                     cache_path = get_run_cache_path(run_id, task_id)
@@ -134,7 +135,7 @@ def process_task_ids_file(run_id, task_ids_file, output_file, *, copy_indexes=Fa
                 except Exception as e:
                     logging.warning(f"Error retrieving cache path for task {task_id}: {e}")
                     outfile.write(f"{task_id}\t\n")
-
+                # Copy index files if requested and path retrieval was successful
                 if got_path and copy_indexes:
                     try:
                         copy_omics_cached_indexes(cache_path)
