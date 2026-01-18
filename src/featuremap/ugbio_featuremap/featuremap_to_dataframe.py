@@ -58,6 +58,7 @@ from io import StringIO
 from pathlib import Path
 
 import polars as pl
+import pysam
 
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
@@ -642,7 +643,7 @@ def vcf_to_parquet(
         list_fmt_indices.append(idx)
 
     # Fetch sample list ONCE in main process
-    sample_list = _get_sample_list(vcf, bcftools)
+    sample_list = _get_sample_list(vcf)
     log.info(f"Found {len(sample_list)} sample(s): {sample_list}")
 
     if not sample_list:
@@ -817,35 +818,26 @@ def _frame_from_tsv(tsv: str, *, cols: list[str], schema: dict[str, pl.PolarsDat
     )
 
 
-def _get_sample_list(vcf: str, bcftools: str) -> list[str]:
+def _get_sample_list(vcf: str) -> list[str]:
     """
     Get the list of samples in the VCF file.
 
     Parameters
     ----------
     vcf : str
-        Path to input VCF file
-    bcftools : str
-        Path to bcftools executable
+        Path to input VCF/BCF file
 
     Returns
     -------
     list[str]
         List of samples in the VCF
     """
-    cmd = [bcftools, "query", "-l", vcf]
     try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        samples = [line.strip() for line in result.stdout.strip().split("\n") if line.strip()]
-        return samples
-    except subprocess.CalledProcessError as e:
-        log.error(f"Could not determine sample list from {cmd}: {e}.")
-        raise RuntimeError(f"Could not determine sample list from {cmd}: {e}.") from e
+        with pysam.VariantFile(vcf) as h_vcf:
+            return list(h_vcf.header.samples)
+    except Exception as e:
+        log.error(f"Could not determine sample list from VCF {vcf}: {e}.")
+        raise RuntimeError(f"Could not determine sample list from VCF {vcf}: {e}.") from e
 
 
 def _convert_sample_frames_to_polars(
