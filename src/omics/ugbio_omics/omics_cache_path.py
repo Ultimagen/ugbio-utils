@@ -114,18 +114,18 @@ def process_task_ids_file(run_id, task_ids_file, output_file, *, copy_indexes=Fa
     If copy_indexes is True, copy cached index files for each task.
     """
     import sys
-    
+
     with open(task_ids_file, "r") as infile:
         outfile = sys.stdout if output_file is None else open(output_file, "w")
         try:
             # Write header
             outfile.write("task_id\tcache_path\n")
-            
+
             for line in infile:
                 task_id = line.strip()
                 if not task_id:  # Skip empty lines
                     continue
-                
+
                 got_path = False
                 try:
                     cache_path = get_run_cache_path(run_id, task_id)
