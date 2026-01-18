@@ -95,17 +95,23 @@ def copy_omics_cached_indexes(cache_s3_uri):
     bucket_name, prefix = process_s3_uri(cache_s3_uri)
 
     # List and process objects
+    found_index = False
     for source_key in list_objects_with_index(s3_client, bucket_name, prefix):
+        found_index = True
         # Create destination key by removing '_index' substring
         dest_key = re.sub(r"_index", "", source_key)
+        logging.info(f"Copying index file to: {dest_key}")
         copy_object(s3_client, bucket_name, source_key, dest_key)
 
+    if not found_index:
+        logging.warning(f"No index files found in cache path: {cache_s3_uri}")
 
-def process_task_ids_file(run_id, task_ids_file, output_file):
+def process_task_ids_file(run_id, task_ids_file, output_file, copy_indexes=False):
     """
     Process a file with task IDs and output a tab-separated file with task ID and cache path.
     If there's an error retrieving a cache path, leave the path blank but still output the line.
     If output_file is None, output to stdout.
+    If copy_indexes is True, copy cached index files for each task.
     """
     import sys
     
@@ -120,9 +126,18 @@ def process_task_ids_file(run_id, task_ids_file, output_file):
                 if not task_id:  # Skip empty lines
                     continue
                 
+                # Check if task_id is an integer
+                if not task_id.isdigit():
+                    logging.warning(f"Task ID '{task_id}' is not a valid integer, skipping")
+                    outfile.write(f"{task_id}\t\n")
+                    continue
+                
                 try:
                     cache_path = get_run_cache_path(run_id, task_id)
                     outfile.write(f"{task_id}\t{cache_path}\n")
+                    
+                    if copy_indexes:
+                        copy_omics_cached_indexes(cache_path)
                 except Exception as e:
                     logging.warning(f"Error retrieving cache path for task {task_id}: {e}")
                     outfile.write(f"{task_id}\t\n")
@@ -154,7 +169,7 @@ def main():
 
     if args.task_ids_file:
         # Process file with multiple task IDs
-        process_task_ids_file(args.run_id, args.task_ids_file, args.output_file)
+        process_task_ids_file(args.run_id, args.task_ids_file, args.output_file, args.copy_indexes)
     else:
         # Original single task ID behavior
         cache_s3_uri = get_run_cache_path(args.run_id, args.task_id)
