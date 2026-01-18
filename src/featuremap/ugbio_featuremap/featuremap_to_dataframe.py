@@ -645,6 +645,12 @@ def vcf_to_parquet(
     sample_list = _get_sample_list(vcf, bcftools)
     log.info(f"Found {len(sample_list)} sample(s): {sample_list}")
 
+    if not sample_list:
+        raise ValueError(
+            f"VCF file '{vcf}' contains no samples. "
+            "VCF files without samples cannot be processed as variant data requires sample-specific FORMAT fields."
+        )
+
     # Cache fmt_ids
     fmt_ids = list(fmt_meta.keys())
 
@@ -842,34 +848,13 @@ def _get_sample_list(vcf: str, bcftools: str) -> list[str]:
         raise RuntimeError(f"Could not determine sample list from {cmd}: {e}.") from e
 
 
-def _stream_region_to_polars(
+def _convert_sample_frames_to_polars(
     region: str,
     vcf_path: str,
     fmt_str: str,
     job_cfg: VCFJobConfig,
-) -> pl.DataFrame:
-    """
-    Run bcftools→awk and return a typed Polars DataFrame for *region*.
-    If VCF has multiple samples, create a separate dataframe for each sample and join them on CHROM and POS.
-    The final dataframe will have the same columns as the input VCF, but with the sample name prefixed to the FORMAT
-    columns to avoid column name conflicts in the join.
-
-    Parameters
-    ----------
-    region : str
-        Genomic region in format "chr:start-end" or "chr"
-    vcf_path : str
-        Path to VCF file
-    fmt_str : str
-        bcftools query format string
-    job_cfg : VCFJobConfig
-        Job configuration object with processing metadata
-
-    Returns
-    -------
-    pl.DataFrame
-        Typed Polars DataFrame for the region
-    """
+) -> dict[str, pl.DataFrame]:
+    """Collect DataFrames for each sample in the region."""
     frames: dict[str, pl.DataFrame] = {}
 
     for sample in job_cfg.sample_list:
@@ -888,28 +873,73 @@ def _stream_region_to_polars(
         if not frame.is_empty():
             frame = _cast_column_data_types(frame, job_cfg)
             frames[sample] = frame
-    if not frames:
-        final_frame = pl.DataFrame()
-    elif len(frames) > 1:
-        # Multi-sample case
-        # Add sample name prefix to the FORMAT fields to avoid column name conflicts in the join
-        fmt_ids = job_cfg.fmt_ids
 
-        for sample, frame in frames.items():
-            frames[sample] = frame.rename({col: f"{sample}_{col}" for col in frame.columns if col in fmt_ids})
+    return frames
 
-        frame_list = list(frames.values())
-        final_frame = frame_list[0]
 
-        # Use CHROM and POS as join keys (genomic coordinates)
-        join_keys = [CHROM, POS]
-        for frame in frame_list[1:]:
-            final_frame = final_frame.join(frame, on=join_keys, how="outer", coalesce=True)
+def _join_multi_sample_frames(frames: dict[str, pl.DataFrame], job_cfg: VCFJobConfig) -> pl.DataFrame:
+    """Join multiple sample DataFrames, renaming FORMAT columns and dropping duplicates."""
+    fmt_ids = job_cfg.fmt_ids
 
-    else:
-        # Single sample case
-        final_frame = list(frames.values())[0]
+    # Rename FORMAT columns with sample suffix
+    for sample, frame in frames.items():
+        frames[sample] = frame.rename({col: f"{col}_{sample}" for col in frame.columns if col in fmt_ids})
+
+    frame_list = list(frames.values())
+    final_frame = frame_list[0]
+
+    # Join keys: CHROM, POS, REF, ALT (genomic coordinates and alleles)
+    join_keys = [CHROM, POS, REF, ALT]
+
+    # Columns to drop from subsequent frames (QUAL, INFO) - they're identical across samples
+    non_sample_specific_cols = {QUAL} | set(job_cfg.info_ids)
+    cols_to_drop = non_sample_specific_cols - set(join_keys) - set(fmt_ids)
+
+    # Join remaining frames, dropping duplicate columns
+    for frame in frame_list[1:]:
+        frame_dropped = frame.drop([col for col in cols_to_drop if col in frame.columns])
+        final_frame = final_frame.join(frame_dropped, on=join_keys, how="outer", coalesce=True)
+
     return final_frame
+
+
+def _stream_region_to_polars(
+    region: str,
+    vcf_path: str,
+    fmt_str: str,
+    job_cfg: VCFJobConfig,
+) -> pl.DataFrame:
+    """
+    Run bcftools→awk and return a typed Polars DataFrame for *region*.
+    If VCF has multiple samples, create a separate dataframe for each sample and join them on CHROM, POS, REF, ALT.
+    The final dataframe will have the same columns as the input VCF, but with the FORMAT column name suffixed with
+    the sample name to avoid column name conflicts in the join.
+
+    Parameters
+    ----------
+    region : str
+        Genomic region in format "chr:start-end" or "chr"
+    vcf_path : str
+        Path to VCF file
+    fmt_str : str
+        bcftools query format string
+    job_cfg : VCFJobConfig
+        Job configuration object with processing metadata
+
+    Returns
+    -------
+    pl.DataFrame
+        Typed Polars DataFrame for the region
+    """
+    frames = _convert_sample_frames_to_polars(region, vcf_path, fmt_str, job_cfg)
+
+    if not frames:
+        return pl.DataFrame()
+
+    if len(frames) == 1:
+        return list(frames.values())[0]
+
+    return _join_multi_sample_frames(frames, job_cfg)
 
 
 def _cast_ref_alt_columns() -> list[pl.Expr]:

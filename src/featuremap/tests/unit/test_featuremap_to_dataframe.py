@@ -514,6 +514,28 @@ def test_vcf_requires_index(tmp_path: Path) -> None:
         featuremap_to_dataframe.vcf_to_parquet(str(gz), str(tmp_path / "out.parquet"), jobs=1)
 
 
+def test_vcf_requires_samples(tmp_path: Path) -> None:
+    """vcf_to_parquet should raise an error when the VCF contains no samples."""
+    # VCF with variant records but no sample columns
+    vcf_text = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000>\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n"
+        "chr1\t1\t.\tA\tC\t30.0\tPASS\t.\n"
+        "chr1\t100\t.\tG\tT\t25.0\tPASS\t.\n"
+    )
+    plain = tmp_path / "no_samples.vcf"
+    plain.write_text(vcf_text)
+    vcf_gz = tmp_path / "no_samples.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"],
+        check=True,
+    )
+
+    with pytest.raises(ValueError, match="contains no samples"):
+        featuremap_to_dataframe.vcf_to_parquet(str(vcf_gz), str(tmp_path / "out.parquet"), jobs=1)
+
+
 def test_st_et_are_categorical(tmp_path: Path, input_featuremap: Path) -> None:
     """Columns advertised as enums in the header (e.g. st / et) must be Enum types."""
     out = tmp_path / "enum.parquet"
@@ -537,6 +559,7 @@ def test_qual_dtype_float_even_if_empty(tmp_path: Path) -> None:
         '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
         "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\n"
         "chr1\t10\t.\tA\tT\t.\tPASS\t.\tGT\t0/1\n"
+        "chr1\t300\t.\tG\tC\t21.0\tPASS\t.\tGT:DP:AD:RL\t0/1:41:.:.\n"
     )
     plain = tmp_path / "qual_missing.vcf"
     plain.write_text(vcf_txt)
@@ -551,6 +574,7 @@ def test_qual_dtype_float_even_if_empty(tmp_path: Path) -> None:
     featuremap_dataframe = pl.read_parquet(out)
     print(featuremap_dataframe.schema)
     assert featuremap_dataframe["QUAL"].dtype == pl.Float64, "QUAL should be Float64 even if all values are missing"
+    assert featuremap_dataframe["QUAL"].to_list() == [0.0, 21.0]
 
 
 def test_missing_sample_data(tmp_path: Path) -> None:
@@ -586,7 +610,7 @@ def test_missing_sample_data(tmp_path: Path) -> None:
 
 
 def test_multi_sample_vcf(tmp_path: Path) -> None:
-    """Multi-sample VCF should produce columns with sample name prefixes for FORMAT fields."""
+    """Multi-sample VCF should produce columns with sample name suffixes for FORMAT fields."""
     vcf_txt = (
         "##fileformat=VCFv4.2\n"
         "##contig=<ID=chr19,length=58617616>\n"
@@ -594,7 +618,7 @@ def test_multi_sample_vcf(tmp_path: Path) -> None:
         '##FORMAT=<ID=VAF,Number=1,Type=Float,Description="Variant Allele Frequency">\n'
         '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Number of reads containing this location">\n'
         '##FORMAT=<ID=RN,Number=.,Type=String,Description="Query (read) name">\n'
-        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tPa_46_FreshFrozen\tPa_46_Buffycoat\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\tSAMPLE2\n"
         "chr19\t271215\t.\tG\tC\t41.94\tPASS\t.\tGT:VAF:DP:RN\t./.:0.0298507:67:021152_1-Z0115-2981480323\t./.:0:44:.\n"
         "chr19\t271241\t.\tA\tG\t42.6\tPASS\t.\tGT:VAF:DP:RN\t./.:0.0151515:66:021152_1-Z0115-2353376084\t./.:0:35:.\n"
     )
@@ -611,13 +635,13 @@ def test_multi_sample_vcf(tmp_path: Path) -> None:
     featuremap_dataframe = pl.read_parquet(out)
     # Should have rows (one per read due to RN list explosion)
     assert featuremap_dataframe.height > 0, "Should have at least one row"
-    # Check that FORMAT fields are prefixed with sample names
-    assert "Pa_46_FreshFrozen_VAF" in featuremap_dataframe.columns, "Should have Pa_46_FreshFrozen_VAF column"
-    assert "Pa_46_Buffycoat_VAF" in featuremap_dataframe.columns, "Should have Pa_46_Buffycoat_VAF column"
-    assert "Pa_46_FreshFrozen_DP" in featuremap_dataframe.columns, "Should have Pa_46_FreshFrozen_DP column"
-    assert "Pa_46_Buffycoat_DP" in featuremap_dataframe.columns, "Should have Pa_46_Buffycoat_DP column"
-    assert "Pa_46_FreshFrozen_RN" in featuremap_dataframe.columns, "Should have Pa_46_FreshFrozen_RN column"
-    assert "Pa_46_Buffycoat_RN" in featuremap_dataframe.columns, "Should have Pa_46_Buffycoat_RN column"
+    # Check that FORMAT fields are suffixed with sample names
+    assert "VAF_SAMPLE1" in featuremap_dataframe.columns, "Should have VAF_SAMPLE1 column"
+    assert "VAF_SAMPLE2" in featuremap_dataframe.columns, "Should have VAF_SAMPLE2 column"
+    assert "DP_SAMPLE1" in featuremap_dataframe.columns, "Should have DP_SAMPLE1 column"
+    assert "DP_SAMPLE2" in featuremap_dataframe.columns, "Should have DP_SAMPLE2 column"
+    assert "RN_SAMPLE1" in featuremap_dataframe.columns, "Should have RN_SAMPLE1 column"
+    assert "RN_SAMPLE2" in featuremap_dataframe.columns, "Should have RN_SAMPLE2 column"
     # Fixed columns should not be prefixed
     assert "CHROM" in featuremap_dataframe.columns, "CHROM should not be prefixed"
     assert "POS" in featuremap_dataframe.columns, "POS should not be prefixed"
@@ -625,13 +649,11 @@ def test_multi_sample_vcf(tmp_path: Path) -> None:
     # Check that data is correctly joined - both samples should have data for the same positions
     assert featuremap_dataframe["POS"].n_unique() == 2, "Should have 2 unique positions"
     # Check that VAF values are correctly preserved
-    freshfrozen_vaf = featuremap_dataframe["Pa_46_FreshFrozen_VAF"].to_list()
-    buffycoat_vaf = featuremap_dataframe["Pa_46_Buffycoat_VAF"].to_list()
+    sample1_vaf = featuremap_dataframe["VAF_SAMPLE1"].to_list()
+    sample2_vaf = featuremap_dataframe["VAF_SAMPLE2"].to_list()
     # At least one row should have the expected VAF values
-    assert any(
-        v == 0.0298507 for v in freshfrozen_vaf if v is not None
-    ), "Should have VAF=0.0298507 for Pa_46_FreshFrozen"
-    assert any(v == 0.0 for v in buffycoat_vaf if v is not None), "Should have VAF=0.0 for Pa_46_Buffycoat"
+    assert any(v == 0.0298507 for v in sample1_vaf if v is not None), "Should have VAF=0.0298507 for SAMPLE1"
+    assert any(v == 0.0 for v in sample2_vaf if v is not None), "Should have VAF=0.0 for SAMPLE2"
 
 
 def test_x_alt_categories(tmp_path: Path, input_featuremap: Path) -> None:
