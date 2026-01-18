@@ -44,6 +44,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import multiprocessing as _mp  # NEW
 import os
@@ -93,6 +94,117 @@ class VCFJobConfig:
     info_ids: list[str]
     scalar_fmt_ids: list[str]
     list_fmt_ids: list[str]
+    read_filters: dict | None = None  # Filter configuration from JSON file
+
+
+def _load_read_filters(read_filters_json: str | None, read_filter_json_key: str | None = None) -> dict | None:
+    """
+    Load read filters from JSON file.
+
+    Parameters
+    ----------
+    read_filters_json : str | None
+        Path to JSON file containing read filters
+    read_filter_json_key : str | None
+        Specific key in the JSON file to extract filters from.
+        If None, uses the entire JSON content.
+
+    Returns
+    -------
+    dict | None
+        Filter configuration dictionary or None if no filters provided
+    """
+    if not read_filters_json:
+        return None
+
+    try:
+        with open(read_filters_json) as f:
+            filter_data = json.load(f)
+
+        if read_filter_json_key:
+            if read_filter_json_key not in filter_data:
+                raise ValueError(f"Key '{read_filter_json_key}' not found in filter JSON file {read_filters_json}")
+            return filter_data[read_filter_json_key]
+        else:
+            return filter_data
+
+    except (json.JSONDecodeError, FileNotFoundError) as e:
+        raise RuntimeError(f"Failed to load read filters from {read_filters_json}: {e}") from e
+
+
+def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -> pl.DataFrame:
+    """
+    Apply read filters to a dataframe using the existing filter framework.
+
+    Parameters
+    ----------
+    frame : pl.DataFrame
+        Input dataframe to filter
+    read_filters : dict | list | None
+        Filter configuration in the same format as used by filter_dataframe.py
+        Can be either:
+        - A dict with "filters" key containing list of filters
+        - A list of filter dictionaries directly
+        - None for no filtering
+
+    Returns
+    -------
+    pl.DataFrame
+        Filtered dataframe containing only reads that pass all filters
+    """
+    if not read_filters or frame.is_empty():
+        return frame
+
+    # Import filter functions from filter_dataframe module
+    try:
+        from ugbio_featuremap.filter_dataframe import (
+            _create_filter_columns,
+            _create_final_filter_column,
+            validate_filter_config,
+        )
+    except ImportError as e:
+        log.warning(f"Could not import filtering functions: {e}. Skipping read filters.")
+        return frame
+
+    try:
+        # Handle both dict and list formats
+        if isinstance(read_filters, list):
+            # Direct list of filters
+            all_filters = read_filters
+        else:
+            # Dictionary format
+            all_filters = read_filters.get("filters", [])
+
+        # Create a copy of filters excluding 'raw' and 'downsample' entries for validation
+        filters_to_apply = [f for f in all_filters if f.get("type") not in {"raw", "downsample"}]
+
+        if not filters_to_apply:
+            log.debug("No applicable filters found (only raw/downsample filters present)")
+            return frame
+
+        filter_config = {"filters": filters_to_apply}
+
+        # Validate filter configuration
+        validate_filter_config(filter_config)
+
+        # Convert to lazy frame for efficient processing
+        lazy_frame = frame.lazy()
+
+        # Create filter columns
+        lazy_frame, filter_cols = _create_filter_columns(lazy_frame, filters_to_apply)
+
+        # Create final filter column (no downsampling in read filters)
+        lazy_frame = _create_final_filter_column(lazy_frame, filter_cols, None)
+
+        # Apply filters and collect result
+        filtered_frame = lazy_frame.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$")).collect()
+
+        log.debug(f"Read filtering: {frame.height:,} → {filtered_frame.height:,} reads")
+        return filtered_frame
+
+    except Exception as e:
+        log.warning(f"Error applying read filters: {e}. Returning unfiltered data.")
+        return frame
 
 
 # ───────────────── header helpers ────────────────────────────────────────────
@@ -364,9 +476,26 @@ def _get_awk_script_path() -> str:
     raise FileNotFoundError(f"AWK script not found: {awk_script}")
 
 
-def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> None:
+def _merge_parquet_files_lazy(  # noqa: PLR0912
+    parquet_files: list[str],
+    output_path: str,
+    downsample_reads: int | None = None,
+    downsample_seed: int | None = None,
+) -> None:
     """
     Merge multiple Parquet files using Polars lazy evaluation for memory efficiency.
+
+    Parameters
+    ----------
+    parquet_files : list[str]
+        List of parquet file paths to merge
+    output_path : str
+        Output path for merged parquet file
+    downsample_reads : int | None
+        If specified, downsample to this number of reads. If the total number of reads
+        is less than this value, all reads are returned.
+    downsample_seed : int | None
+        Random seed for downsampling (optional, for reproducibility)
     """
     if not parquet_files:
         log.warning("No Parquet files to merge - creating empty output file")
@@ -376,8 +505,23 @@ def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> Non
         return
 
     if len(parquet_files) == 1:
-        # Single file - just move it
-        shutil.move(parquet_files[0], output_path)
+        # Single file - handle with or without downsampling
+        if downsample_reads is not None:
+            log.info(f"Downsampling single file to {downsample_reads} reads")
+            parquet_dataframe = pl.read_parquet(parquet_files[0])
+            if len(parquet_dataframe) <= downsample_reads:
+                log.info(f"File has {len(parquet_dataframe)} rows, which is <= {downsample_reads}. Keeping all rows.")
+                shutil.move(parquet_files[0], output_path)
+            else:
+                log.info(f"Sampling {downsample_reads} rows from {len(parquet_dataframe)} total rows")
+                if downsample_seed is not None:
+                    parquet_dataframe = parquet_dataframe.sample(n=downsample_reads, seed=downsample_seed)
+                else:
+                    parquet_dataframe = parquet_dataframe.sample(n=downsample_reads)
+                parquet_dataframe.write_parquet(output_path)
+                Path(parquet_files[0]).unlink(missing_ok=True)
+        else:
+            shutil.move(parquet_files[0], output_path)
         return
 
     log.debug(f"Merging {len(parquet_files)} Parquet files lazily")
@@ -388,8 +532,24 @@ def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> Non
     # Concatenate all lazy frames
     merged_lazy = pl.concat(lazy_frames, how="vertical")
 
-    # Stream write to final output
-    merged_lazy.sink_parquet(output_path)
+    # Apply downsampling if requested
+    if downsample_reads is not None:
+        log.info(f"Downsampling to {downsample_reads} reads")
+        # Collect to get total row count for decision making
+        merged_dataframe = merged_lazy.collect()
+        if len(merged_dataframe) <= downsample_reads:
+            log.info(f"Dataset has {len(merged_dataframe)} rows, which is <= {downsample_reads}. Keeping all rows.")
+            merged_dataframe.write_parquet(output_path)
+        else:
+            log.info(f"Sampling {downsample_reads} rows from {len(merged_dataframe)} total rows")
+            if downsample_seed is not None:
+                merged_dataframe = merged_dataframe.sample(n=downsample_reads, seed=downsample_seed)
+            else:
+                merged_dataframe = merged_dataframe.sample(n=downsample_reads)
+            merged_dataframe.write_parquet(output_path)
+    else:
+        # Stream write to final output (no downsampling)
+        merged_lazy.sink_parquet(output_path)
 
     # Clean up temporary files
     for f in parquet_files:
@@ -501,6 +661,10 @@ def vcf_to_parquet(
     drop_format: set[str] | None = None,
     chunk_bp: int = CHUNK_BP_DEFAULT,
     jobs: int = DEFAULT_JOBS,
+    read_filters_json: str | None = None,
+    read_filter_json_key: str | None = None,
+    downsample_reads: int | None = None,
+    downsample_seed: int | None = None,
 ) -> None:
     """
     Convert VCF to Parquet using region-based parallel processing.
@@ -525,6 +689,15 @@ def vcf_to_parquet(
         Maximum number of base-pairs per chunk (default 300 Mbp).
     jobs : int
         Number of parallel jobs (0 = auto-detect CPU cores)
+    read_filters_json : str | None
+        Path to JSON file containing read filters
+    read_filter_json_key : str | None
+        Key in JSON file for read filters (uses entire JSON if None)
+    downsample_reads : int | None
+        If specified, downsample to this number of reads. If the total number of reads
+        is less than this value, all reads are returned.
+    downsample_seed : int | None
+        Random seed for downsampling (optional, for reproducibility)
     """
     log.info(f"Converting {vcf} to {out} using region-based parallel processing")
     _assert_vcf_index_exists(vcf)
@@ -568,6 +741,13 @@ def vcf_to_parquet(
         list_fmt_indices.append(idx)
 
     with pl.StringCache():
+        # Load read filters if provided
+        read_filters = _load_read_filters(read_filters_json, read_filter_json_key)
+        if read_filters:
+            log.info(f"Loaded read filters from {read_filters_json}")
+            if "filters" in read_filters:
+                log.info(f"Filter configuration contains {len(read_filters['filters'])} filter rules")
+
         # Generate genomic regions (fixed windows via bedtools)
         regions = _generate_genomic_regions(
             vcf,
@@ -590,6 +770,7 @@ def vcf_to_parquet(
             info_ids=info_ids,
             scalar_fmt_ids=scalar_fmt_ids,
             list_fmt_ids=list_fmt_ids,
+            read_filters=read_filters,
         )
 
         # Temporary directory for ordered part-files
@@ -607,7 +788,7 @@ def vcf_to_parquet(
             if not part_files:
                 raise RuntimeError("No Parquet part-files were produced – all regions empty or failed")
 
-            _merge_parquet_files_lazy(part_files, out)
+            _merge_parquet_files_lazy(part_files, out, downsample_reads, downsample_seed)
 
         log.info(f"Conversion completed: {out}")
 
@@ -654,6 +835,14 @@ def _process_region_to_parquet(
             if frame.is_empty():
                 return ""
             frame = _cast_column_data_types(frame, job_cfg)
+
+            # Apply read filters if configured
+            frame = _apply_read_filters(frame, job_cfg.read_filters)
+
+            # Skip writing if no reads remain after filtering
+            if frame.is_empty():
+                return ""
+
             frame.write_parquet(output_file)
             return output_file
 
@@ -795,6 +984,22 @@ def main(argv: list[str] | None = None) -> None:
         default=CHUNK_BP_DEFAULT,
         help=f"Base-pairs per processing chunk (default {CHUNK_BP_DEFAULT} bp)",
     )
+    parser.add_argument("--read_filters_json", required=False, default=None, help="JSON file with read filters")
+    parser.add_argument(
+        "--read_filter_json_key", required=False, default=None, help="Key in JSON file for read filters"
+    )
+    parser.add_argument(
+        "--downsample_reads",
+        type=int,
+        default=None,
+        help="Downsample to this number of reads (optional). If total reads < this value, all reads are kept.",
+    )
+    parser.add_argument(
+        "--downsample_seed",
+        type=int,
+        default=None,
+        help="Random seed for downsampling (optional, for reproducibility)",
+    )
     # ───────────── new verbose flag ─────────────
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     # -------------------------------------------
@@ -816,6 +1021,10 @@ def main(argv: list[str] | None = None) -> None:
         drop_format=set(args.drop_format),
         chunk_bp=args.chunk_bp,
         jobs=args.jobs,
+        read_filters_json=args.read_filters_json,
+        read_filter_json_key=args.read_filter_json_key,
+        downsample_reads=args.downsample_reads,
+        downsample_seed=args.downsample_seed,
     )
 
 

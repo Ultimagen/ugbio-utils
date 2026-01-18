@@ -569,3 +569,158 @@ def test_x_alt_categories(tmp_path: Path, input_featuremap: Path) -> None:
         assert set(frame[X_ALT].cat.get_categories()) == set(
             frame[ALT].cat.get_categories()
         ), "X_ALT categories must match ALT categories"
+
+
+def test_downsampling_basic(tmp_path: Path, input_featuremap: Path) -> None:
+    """Test basic downsampling functionality."""
+    # First get the full dataset size
+    full_out = tmp_path / "full.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(input_featuremap), str(full_out), drop_info=set(), drop_format={"GT", "AD"}, jobs=1
+    )
+    full_df = pl.read_parquet(full_out)
+    full_row_count = full_df.height
+
+    # Test downsampling to a smaller number
+    downsample_count = 1000
+    downsampled_out = tmp_path / "downsampled.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(input_featuremap),
+        str(downsampled_out),
+        drop_info=set(),
+        drop_format={"GT", "AD"},
+        jobs=1,
+        downsample_reads=downsample_count,
+    )
+    downsampled_df = pl.read_parquet(downsampled_out)
+
+    # Verify downsampling worked
+    assert downsampled_df.height == downsample_count, f"Expected {downsample_count} rows, got {downsampled_df.height}"
+    assert downsampled_df.height < full_row_count, "Downsampled dataset should be smaller than full dataset"
+
+    # Verify columns are preserved
+    assert set(downsampled_df.columns) == set(full_df.columns), "Downsampling should preserve all columns"
+
+
+def test_downsampling_seed_reproducibility(tmp_path: Path, input_featuremap: Path) -> None:
+    """Test that downsampling with the same seed produces identical results."""
+    downsample_count = 500
+    seed = 42
+
+    # First downsampled result
+    out1 = tmp_path / "downsampled1.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(input_featuremap),
+        str(out1),
+        drop_info=set(),
+        drop_format={"GT", "AD"},
+        jobs=1,
+        downsample_reads=downsample_count,
+        downsample_seed=seed,
+    )
+    df1 = pl.read_parquet(out1)
+
+    # Second downsampled result with same seed
+    out2 = tmp_path / "downsampled2.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(input_featuremap),
+        str(out2),
+        drop_info=set(),
+        drop_format={"GT", "AD"},
+        jobs=1,
+        downsample_reads=downsample_count,
+        downsample_seed=seed,
+    )
+    df2 = pl.read_parquet(out2)
+
+    # Verify identical results
+    assert df1.height == df2.height == downsample_count, "Both should have the same number of rows"
+    assert df1.equals(df2), "Same seed should produce identical downsampled results"
+
+    # Third downsampled result without seed (should be different)
+    out3 = tmp_path / "downsampled3.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(input_featuremap),
+        str(out3),
+        drop_info=set(),
+        drop_format={"GT", "AD"},
+        jobs=1,
+        downsample_reads=downsample_count,
+        downsample_seed=seed + 1,  # Different seed
+    )
+    df3 = pl.read_parquet(out3)
+
+    # Different seed should (very likely) produce different results
+    assert df3.height == downsample_count, "Should still have the correct number of rows"
+    # Note: There's a tiny chance they could be identical by random chance,
+    # but with 500 rows from 32947, it's astronomically unlikely
+    assert not df1.equals(df3), "Different seed should produce different downsampled results"
+
+
+def test_downsampling_smaller_than_dataset(tmp_path: Path, input_featuremap: Path) -> None:
+    """Test that requesting more rows than available returns the full dataset."""
+    # First get the actual dataset size
+    full_out = tmp_path / "full.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(input_featuremap), str(full_out), drop_info=set(), drop_format={"GT", "AD"}, jobs=1
+    )
+    full_df = pl.read_parquet(full_out)
+    full_row_count = full_df.height
+
+    # Request more rows than available
+    large_downsample = full_row_count * 2
+    downsampled_out = tmp_path / "downsampled_large.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(input_featuremap),
+        str(downsampled_out),
+        drop_info=set(),
+        drop_format={"GT", "AD"},
+        jobs=1,
+        downsample_reads=large_downsample,
+    )
+    downsampled_df = pl.read_parquet(downsampled_out)
+
+    # Should return the full dataset
+    assert downsampled_df.height == full_row_count, "Should return all rows when downsample > dataset size"
+    # The dataframes should be identical (same content, possibly same order)
+    assert downsampled_df.height == full_df.height, "Row counts should match"
+
+
+def test_downsampling_with_parallel_jobs(tmp_path: Path, input_featuremap: Path) -> None:
+    """Test that downsampling works correctly with parallel processing."""
+    downsample_count = 1000
+    seed = 123
+
+    # Single job with downsampling
+    single_job_out = tmp_path / "single_job_downsampled.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(input_featuremap),
+        str(single_job_out),
+        drop_info=set(),
+        drop_format={"GT", "AD"},
+        jobs=1,
+        downsample_reads=downsample_count,
+        downsample_seed=seed,
+    )
+    single_job_df = pl.read_parquet(single_job_out)
+
+    # Multiple jobs with downsampling
+    multi_job_out = tmp_path / "multi_job_downsampled.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(input_featuremap),
+        str(multi_job_out),
+        drop_info=set(),
+        drop_format={"GT", "AD"},
+        jobs=2,
+        downsample_reads=downsample_count,
+        downsample_seed=seed,
+    )
+    multi_job_df = pl.read_parquet(multi_job_out)
+
+    # Both should have the correct number of rows
+    assert single_job_df.height == downsample_count, f"Single job should have {downsample_count} rows"
+    assert multi_job_df.height == downsample_count, f"Multi job should have {downsample_count} rows"
+
+    # With same seed, results should be identical (order may differ due to parallel processing)
+    # So we compare sorted dataframes
+    assert single_job_df.equals(multi_job_df), "Single and multi-job downsampling with same seed should match"

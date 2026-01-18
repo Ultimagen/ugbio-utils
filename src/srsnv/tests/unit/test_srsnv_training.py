@@ -3,133 +3,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from ugbio_srsnv.srsnv_training import _parse_model_params
+from ugbio_srsnv.srsnv_training import (
+    _convert_unified_stats_to_legacy_format,
+    _extract_stats_from_unified,
+    _parse_model_params,
+)
 
 
 @pytest.fixture
 def resources_dir():
     return Path(__file__).parent.parent / "resources"
-
-
-# def __count_variants(vcf_file):
-#     counter = 0
-#     for _ in pysam.VariantFile(vcf_file):
-#         counter += 1
-#     return counter
-
-
-# def test_prepare_featuremap_for_model(tmpdir, resources_dir):
-#     """Test that downsampling training-set works as expected"""
-
-#     input_featuremap_vcf = pjoin(
-#         resources_dir,
-#         "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.vcf.gz",
-#     )
-#     rng = np.random.default_rng(0)
-#     downsampled_training_featuremap_vcf, _, _, _, _ = prepare_featuremap_for_model(
-#         workdir=tmpdir,
-#         input_featuremap_vcf=input_featuremap_vcf,
-#         train_set_size=12,
-#         test_set_size=3,
-#         balanced_sampling_info_fields=None,
-#         rng=rng,
-#     )
-
-#     # Since we use random downsampling the train_set_size might differ slightly from expected
-#     n_variants = __count_variants(downsampled_training_featuremap_vcf)
-#     assert n_variants >= 8 and n_variants <= 16
-
-
-# def test_prepare_featuremap_for_model_with_prefilter(tmpdir, resources_dir):
-#     """Test that downsampling training-set works as expected"""
-
-#     input_featuremap_vcf = pjoin(
-#         resources_dir,
-#         "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.vcf.gz",
-#     )
-#     rng = np.random.default_rng(0)
-#     pre_filter_bcftools_include = "(X_SCORE>4) && (X_EDIST<10)"
-#     (downsampled_training_featuremap_vcf, downsampled_test_featuremap_vcf, _, _, _) = prepare_featuremap_for_model(
-#         workdir=tmpdir,
-#         input_featuremap_vcf=input_featuremap_vcf,
-#         train_set_size=100,
-#         test_set_size=100,
-#         balanced_sampling_info_fields=None,
-#         pre_filter_bcftools_include=pre_filter_bcftools_include,
-#         rng=rng,
-#     )
-#     # In this scenario we are pre-filtering the test data so that only 4 FeatureMap entries pass:
-#     total_variants = int(
-#         subprocess.check_output(
-#             f"bcftools view -H {input_featuremap_vcf} -i '{pre_filter_bcftools_include}' | wc -l",
-#             shell=True,
-#         )
-#         .decode()
-#         .strip()
-#     )
-#     assert total_variants == 4
-#     # and since we are asking for more entries than are available, we should get all of them in equal ratios
-#     n_variants = __count_variants(downsampled_training_featuremap_vcf)
-#     assert n_variants == 2
-#     n_variants = __count_variants(downsampled_test_featuremap_vcf)
-#     assert n_variants == 2
-
-
-# def test_prepare_featuremap_for_model_with_motif_balancing(tmpdir, resources_dir):
-#     """Test that downsampling training-set works as expected"""
-
-#     input_featuremap_vcf = pjoin(
-#         resources_dir,
-#         "333_LuNgs_08.annotated_featuremap.vcf.gz",
-#     )
-#     balanced_sampling_info_fields = ["trinuc_context", "is_forward"]
-#     train_set_size = (4**3) * 10  # 10 variants per context
-#     for random_seed in range(2):
-#         rng = np.random.default_rng(random_seed)
-#         downsampled_training_featuremap_vcf, _, _, _, _ = prepare_featuremap_for_model(
-#             workdir=tmpdir,
-#             input_featuremap_vcf=input_featuremap_vcf,
-#             train_set_size=train_set_size,
-#             test_set_size=train_set_size,
-#             balanced_sampling_info_fields=balanced_sampling_info_fields,
-#             rng=rng,
-#         )
-#         assert __count_variants(downsampled_training_featuremap_vcf) == train_set_size
-
-#         balanced_sampling_info_fields_counter = defaultdict(int)
-#         with pysam.VariantFile(downsampled_training_featuremap_vcf) as fmap:
-#             for record in fmap.fetch():
-#                 balanced_sampling_info_fields_counter[
-#                     tuple(record.info.get(info_field) for info_field in balanced_sampling_info_fields)
-#                 ] += 1
-#         assert sum(balanced_sampling_info_fields_counter.values()) == train_set_size
-#         # T-test that the number of variants per context is in line with a uniform with to 99% confidence
-#         _, pvalue = ttest_1samp(
-#             list(balanced_sampling_info_fields_counter.values()),
-#             np.mean(list(balanced_sampling_info_fields_counter.values())),
-#         )
-#         assert pvalue > 0.01
-#         os.remove(downsampled_training_featuremap_vcf)
-#         os.remove(downsampled_training_featuremap_vcf + ".tbi")
-
-
-# def test_prepare_featuremap_for_model_training_and_test_sets(tmpdir, resources_dir):
-#     """Test that downsampling of training and test sets works as expected"""
-#     input_featuremap_vcf = pjoin(
-#         resources_dir,
-#         "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.vcf.gz",
-#     )
-#     rng = np.random.default_rng(0)
-#     (downsampled_training_featuremap_vcf, downsampled_test_featuremap_vcf, _, _, _) = prepare_featuremap_for_model(
-#         workdir=tmpdir,
-#         input_featuremap_vcf=input_featuremap_vcf,
-#         train_set_size=12,
-#         test_set_size=3,
-#         balanced_sampling_info_fields=None,
-#         rng=rng,
-#     )
-#     assert __count_variants(downsampled_training_featuremap_vcf) == 12
-#     assert __count_variants(downsampled_test_featuremap_vcf) == 2
 
 
 @pytest.mark.parametrize(
@@ -161,3 +44,99 @@ def test_parse_model_params_invalid() -> None:  # noqa: D103
         _parse_model_params("eta=0.1:max_depth")  # uneven tokens
     with pytest.raises(ValueError):
         _parse_model_params("eta")  # missing '='
+
+
+def test_extract_stats_from_unified_new_format(resources_dir):
+    """Test _extract_stats_from_unified with new format (filtering_stats sections)."""
+    stats_file = resources_dir / "416119_L7402.test.unified_stats_new_format.json"
+    pos_stats, neg_stats, raw_stats = _extract_stats_from_unified(stats_file)
+
+    # Verify structure
+    assert "filters" in pos_stats
+    assert "filters" in neg_stats
+    assert "filters" in raw_stats
+
+    # Verify some basic content
+    assert isinstance(pos_stats["filters"], list)
+    assert isinstance(neg_stats["filters"], list)
+    assert len(pos_stats["filters"]) > 0
+    assert len(neg_stats["filters"]) > 0
+
+    # Verify that raw filter is present
+    raw_filter_pos = next((f for f in pos_stats["filters"] if f["name"] == "raw"), None)
+    raw_filter_neg = next((f for f in neg_stats["filters"] if f["name"] == "raw"), None)
+    assert raw_filter_pos is not None
+    assert raw_filter_neg is not None
+    assert raw_filter_pos["type"] == "raw"
+    assert raw_filter_neg["type"] == "raw"
+
+
+def test_extract_stats_from_unified_missing_section():
+    """Test _extract_stats_from_unified with missing required sections."""
+    import tempfile
+
+    # Test missing filtering_stats_random_sample
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump({"filtering_stats_full_output": {"filters": {}}}, f)
+        temp_path = f.name
+
+    with pytest.raises(ValueError, match="missing 'filtering_stats_random_sample' section"):
+        _extract_stats_from_unified(temp_path)
+
+    # Clean up
+    Path(temp_path).unlink()
+
+    # Test missing filtering_stats_full_output
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump({"filtering_stats_random_sample": {"filters": {}}}, f)
+        temp_path = f.name
+
+    with pytest.raises(ValueError, match="missing 'filtering_stats_full_output' section"):
+        _extract_stats_from_unified(temp_path)
+
+    # Clean up
+    Path(temp_path).unlink()
+
+
+def test_convert_unified_stats_to_legacy_format():
+    """Test _convert_unified_stats_to_legacy_format function."""
+    unified_stats = {
+        "filtering_stats_random_sample": {
+            "filters": {
+                "raw": {"funnel": 1000, "type": "raw"},
+                "filter1": {"funnel": 800, "type": "quality", "field": "MAPQ", "op": "ge", "value": 60},
+            }
+        }
+    }
+
+    result = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
+
+    assert "filters" in result
+    filters_list = result["filters"]
+    assert len(filters_list) == 2
+
+    # Check raw filter is first
+    assert filters_list[0]["name"] == "raw"
+    assert filters_list[0]["type"] == "raw"
+    assert filters_list[0]["rows"] == 1000
+
+    # Check other filter
+    filter1 = next((f for f in filters_list if f["name"] == "filter1"), None)
+    assert filter1 is not None
+    assert filter1["type"] == "quality"
+    assert filter1["field"] == "MAPQ"
+    assert filter1["op"] == "ge"
+    assert filter1["value"] == 60
+    assert filter1["rows"] == 800
+
+
+def test_convert_unified_stats_to_legacy_format_missing_section():
+    """Test _convert_unified_stats_to_legacy_format with missing sections."""
+    unified_stats = {}
+
+    with pytest.raises(ValueError, match="Section 'missing_section' not found"):
+        _convert_unified_stats_to_legacy_format(unified_stats, "missing_section", "filters")
+
+    unified_stats = {"section1": {}}
+    with pytest.raises(ValueError, match="Filter key 'missing_filter' not found"):
+        _convert_unified_stats_to_legacy_format(unified_stats, "section1", "missing_filter")

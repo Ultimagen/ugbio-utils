@@ -20,10 +20,8 @@
 from __future__ import annotations
 
 import argparse
-import gzip
 import json
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -31,12 +29,11 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import polars as pl
-import pysam
 import xgboost as xgb
 from scipy.stats import gaussian_kde
+from ugbio_core.bed_utils import BedUtils
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
-from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
 
 from ugbio_srsnv.srsnv_utils import (
     EPS,
@@ -75,179 +72,59 @@ pl.enable_string_cache()
 
 
 # ───────────────────────── parsers ────────────────────────────
-def _parse_interval_list_tabix(path: str) -> tuple[dict[str, int], list[str]]:
-    # Parse headers for chrom_sizes (must still scan file start)
-    chrom_sizes = {}
-    with pysam.TabixFile(path) as tbx:
-        for line in tbx.header:
-            if line.startswith("@SQ"):
-                chrom_name = None
-                for field in line.strip().split("\t")[1:]:
-                    key, val = field.split(":", 1)
-                    if key == "SN":
-                        chrom_name = val
-                    elif key == "LN" and chrom_name is not None:
-                        chrom_sizes[chrom_name] = int(val)
-        # chroms_in_data: use tabix index for fast chromosome listing
-        chroms_in_data = list(tbx.contigs)
-    missing = [c for c in chroms_in_data if c not in chrom_sizes]
-    if missing:
-        raise ValueError(f"Missing @SQ header for contigs: {missing}")
-    return chrom_sizes, chroms_in_data
-
-
-def _parse_interval_list_manual(path: str) -> tuple[dict[str, int], list[str]]:
+def _parse_bed_file(path: str) -> tuple[dict[str, int], list[str]]:
     """
-    Picard/Broad interval-list:
-    header lines: '@SQ\tSN:chr1\tLN:248956422'
-    data  lines:  'chr1   100  200  +  region1'
+    Parse a BED file to extract chromosome sizes and order.
 
-    Supports both plain text and gzipped files (detected by .gz extension).
-
-    Returns
-    -------
-    chrom_sizes : dict[str, int]
-    chroms_in_data : list[str]  # preserve original order of appearance
-    """
-    chrom_sizes: dict[str, int] = {}
-    chroms_in_data: list[str] = []
-
-    # Determine if file is gzipped based on extension
-    is_gzipped = path.endswith(".gz")
-
-    if is_gzipped:
-        fh = gzip.open(path, "rt", encoding="utf-8")
-    else:
-        fh = open(path, encoding="utf-8")
-
-    try:
-        for line in fh:
-            if line.startswith("@SQ"):
-                chrom_name = None
-                for field in line.strip().split("\t")[1:]:
-                    key, val = field.split(":", 1)
-                    if key == "SN":
-                        chrom_name = val
-                    elif key == "LN" and chrom_name is not None:
-                        chrom_sizes[chrom_name] = int(val)
-            elif not line.startswith("@"):
-                chrom = line.split("\t", 1)[0]
-                if chrom not in chroms_in_data:
-                    chroms_in_data.append(chrom)
-    finally:
-        fh.close()
-
-    missing = [c for c in chroms_in_data if c not in chrom_sizes]
-    if missing:
-        raise ValueError(f"Missing @SQ header for contigs: {missing}")
-    return chrom_sizes, chroms_in_data
-
-
-def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
-    """
-    Parse a Picard/Broad interval-list file to extract chromosome sizes and order.
+    For BED files, chromosome "size" is calculated as the maximum end position
+    for each chromosome in the file.
 
     Parameters
     ----------
     path : str
-        Path to the interval-list file (supports .gz files).
+        Path to the BED file.
 
     Returns
     -------
     tuple[dict[str, int], list[str]]
-        chrom_sizes: Dictionary mapping chromosome names to their lengths.
-        chroms_in_data: List of chromosomes in the order they appear in the file.
+        chrom_sizes: Dictionary mapping chromosome names to their maximum end positions.
+        chroms_in_data: List of chromosomes in the order they first appear in the file.
     """
-    candidate_tbi = path + ".tbi"
-    if os.path.exists(candidate_tbi):
-        return _parse_interval_list_tabix(path)
-    else:
-        return _parse_interval_list_manual(path)
+    chrom_sizes: dict[str, int] = {}
+    chroms_in_data: list[str] = []
 
+    min_bed_fields = 3  # BED format requires at least chrom, start, end
 
-def count_bases_in_interval_list(path: str) -> int:
-    """
-    Count the number of bases covered by intervals in a Picard/Broad interval list.
-
-    Parameters
-    ----------
-    path : str
-        Path to the interval-list file (supports .gz files).
-
-    Returns
-    -------
-    Total number of bases covered by the intervals [int]
-    """
-    candidate_tbi = path + ".tbi"
-    if os.path.exists(candidate_tbi):
-        return count_bases_in_interval_list_tabix(path)
-    else:
-        return count_bases_in_interval_list_manual(path)
-
-
-def count_bases_in_interval_list_manual(interval_list_path: str) -> int:
-    """
-    Count the number of bases covered by intervals in a bgzipped Picard-style
-    interval list (.interval_list.gz). Does not use pysam.
-
-    Parameters
-    ----------
-    interval_list_path : str
-        Path to the bgzipped interval list.
-
-    Returns
-    -------
-    int
-        Total number of bases covered by the intervals.
-    """
-    total_bases = 0
-
-    with gzip.open(interval_list_path, "rt") as f:  # text mode
-        for line in f:
-            if line.startswith("@"):  # skip header lines
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            # Skip comment lines and header lines
+            if line.startswith(("#", "@")) or not line.strip():
                 continue
 
             fields = line.strip().split("\t")
-            if len(fields) < 3:  # noqa: PLR2004
-                continue  # malformed line
-
-            start, end = int(fields[1]), int(fields[2])
-            total_bases += end - start + 1  # Picard intervals are inclusive
-
-    return total_bases
-
-
-def count_bases_in_interval_list_tabix(interval_list_path: str) -> int:
-    """
-    Count the number of bases covered by intervals in a bgzipped, tabix-indexed
-    Picard-style interval list (.interval_list.gz with .tbi index).
-
-    Parameters
-    ----------
-    interval_list_path : str
-        Path to the bgzipped interval list (must have a .tbi index).
-
-    Returns
-    -------
-    int
-        Total number of bases covered by the intervals.
-    """
-    total_bases = 0
-
-    with pysam.TabixFile(interval_list_path) as tbx:
-        for record in tbx.fetch():
-            # Skip header lines starting with '@'
-            if record.startswith("@"):
+            if len(fields) < min_bed_fields:
                 continue
 
-            fields = record.strip().split("\t")
-            if len(fields) < 3:  # noqa: PLR2004
-                continue  # malformed line
+            chrom = fields[0]
+            try:
+                end = int(fields[2])
+            except ValueError:
+                continue
 
-            _, start, end = fields[0], int(fields[1]), int(fields[2])
-            total_bases += end - start + 1  # Picard intervals are inclusive
+            # Track chromosome order
+            if chrom not in chroms_in_data:
+                chroms_in_data.append(chrom)
 
-    return total_bases
+            # Update maximum end position for this chromosome
+            if chrom not in chrom_sizes:
+                chrom_sizes[chrom] = end
+            else:
+                chrom_sizes[chrom] = max(chrom_sizes[chrom], end)
+
+    if not chrom_sizes:
+        raise ValueError(f"No valid BED entries found in {path}")
+
+    return chrom_sizes, chroms_in_data
 
 
 def _parse_model_params(mp: str | None) -> dict[str, Any]:
@@ -366,14 +243,108 @@ def _probability_recalibration(prob_orig: np.ndarray, y_all: np.ndarray) -> np.n
     return prob_orig.copy()
 
 
+def _convert_unified_stats_to_legacy_format(unified_stats: dict, section: str, filter_key: str) -> dict:  # noqa: C901
+    """
+    Convert unified stats format to legacy format expected by existing code.
+
+    Args:
+        unified_stats: The unified stats dictionary
+        section: Section name ('filtering_stats_full_output' or 'filtering_stats_random_sample')
+        filter_key: Filter key ('filters' or 'f2_filters')
+
+    Returns:
+        Dictionary in legacy format with 'filters' list
+    """
+    if section not in unified_stats:
+        raise ValueError(f"Section '{section}' not found in unified stats")
+
+    section_data = unified_stats[section]
+    if filter_key not in section_data:
+        raise ValueError(f"Filter key '{filter_key}' not found in section '{section}'")
+
+    filters_dict = section_data[filter_key]
+
+    # Convert from dict format to list format expected by legacy code
+    filters_list = []
+
+    # Always add raw filter first
+    if "raw" in filters_dict:
+        raw_filter = {"name": "raw", "type": "raw"}
+        if "funnel" in filters_dict["raw"]:
+            raw_filter["rows"] = filters_dict["raw"]["funnel"]
+        elif "rows" in filters_dict["raw"]:
+            raw_filter["rows"] = filters_dict["raw"]["rows"]
+        filters_list.append(raw_filter)
+
+    # Add other filters, preserving their metadata
+    for filter_name, filter_data in filters_dict.items():
+        if filter_name == "raw":
+            continue  # Already processed
+
+        filter_entry = {"name": filter_name}
+
+        # Copy metadata fields
+        for field in ["type", "field", "op", "value"]:
+            if field in filter_data:
+                filter_entry[field] = filter_data[field]
+
+        # Use 'funnel' as 'rows' for legacy compatibility
+        if "funnel" in filter_data:
+            filter_entry["rows"] = filter_data["funnel"]
+        elif "rows" in filter_data:
+            filter_entry["rows"] = filter_data["rows"]
+
+        filters_list.append(filter_entry)
+
+    return {"filters": filters_list}
+
+
+def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, dict, dict]:
+    """
+    Extract positive, negative, and raw stats from unified stats file.
+
+    The unified stats file must contain sections:
+    - filtering_stats_full_output: Full dataset stats (positive/TP data)
+    - filtering_stats_random_sample: Random sample stats (negative/FP data)
+
+    Each section contains a 'filters' subsection with the filter data.
+
+    Args:
+        unified_stats_path: Path to the unified stats JSON file
+
+    Returns:
+        Tuple of (positive_stats, negative_stats, raw_stats) in legacy format
+    """
+    # Read the unified stats file directly
+    with open(unified_stats_path, encoding="utf-8") as f:
+        unified_stats = json.load(f)
+
+    # Validate required sections
+    if "filtering_stats_random_sample" not in unified_stats:
+        raise ValueError("Unified stats file missing 'filtering_stats_random_sample' section")
+
+    if "filtering_stats_full_output" not in unified_stats:
+        raise ValueError("Unified stats file missing 'filtering_stats_full_output' section")
+
+    logger.info("Using filtering_stats_full_output section as positive (true-positive) data")
+    logger.info("Using filtering_stats_random_sample section as negative (false-positive) data")
+
+    # Convert sections using their 'filters' subsections
+    positive_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_full_output", "filters")
+    negative_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
+    raw_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
+
+    return positive_stats, negative_stats, raw_stats
+
+
 # ───────────────────────── core logic ─────────────────────────────────────
 class SRSNVTrainer:
-    def __init__(self, args: argparse.Namespace):  # noqa: PLR0915
+    def __init__(self, args: argparse.Namespace):  # noqa: PLR0915, C901
         logger.debug("Initializing SRSNVTrainer")
         self.args = args
         self.out_dir = Path(args.output)
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.max_qual = self.args.max_qual if self.args.max_qual is not None else MAX_PHRED
+        self.max_qual = self.args.max_qual if self.args.max_qual is not None else MAX_PHRED  # noqa: C901
         self.eps = 10 ** (-self.max_qual / 10)  # small value to avoid division by zero
 
         # RNG
@@ -382,24 +353,29 @@ class SRSNVTrainer:
         self.rng = np.random.default_rng(self.seed)
 
         # ─────────── read filtering-stats JSONs & compute priors ───────────
-        self.pos_stats = read_filtering_stats_json(args.stats_positive)
-        self.neg_stats = read_filtering_stats_json(args.stats_negative)
-        self.raw_stats = read_filtering_stats_json(args.stats_featuremap)
+        self.pos_stats, self.neg_stats, self.raw_stats = _extract_stats_from_unified(args.stats_file)
         self.mean_coverage = args.mean_coverage
         if self.mean_coverage is None:
-            raise ValueError("--mean-coverage is required if not present in stats-featuremap JSON")
-        self.n_bases_in_region = count_bases_in_interval_list(args.training_regions)
+            raise ValueError("--mean-coverage is required if not present in stats-file JSON")
+        self.n_bases_in_region = BedUtils().count_bases_in_bed_file(args.training_regions)
 
         # sanity-check: identical “quality/region” filters in the two random-sample stats files
         def _quality_region_filters(st):
-            return [f for f in st["filters"] if f.get("type") in {"quality", "region"}]
+            filters = []
+            for f in st["filters"]:
+                if f.get("type") in {"quality", "region"}:
+                    # Create filter definition without row counts for comparison
+                    filter_def = {k: v for k, v in f.items() if k != "rows"}
+                    filters.append(filter_def)
+            return filters
 
         pos_qr = _quality_region_filters(self.pos_stats)
         neg_qr = _quality_region_filters(self.neg_stats)
         if pos_qr != neg_qr:
             raise ValueError(
                 "Mismatch between quality/region filters of "
-                "--stats-positive and --stats-negative:\n"
+                "positive (filtering_stats_full_output) and negative "
+                "(filtering_stats_random_sample) sections in stats-file:\n"
                 f" positive={pos_qr}\n negative={neg_qr}"
             )
 
@@ -436,8 +412,8 @@ class SRSNVTrainer:
         self.k_folds = max(1, args.k_folds)
 
         # Folds
-        logger.debug("Parsing interval list from %s", args.training_regions)
-        chrom_sizes, chrom_list = _parse_interval_list(args.training_regions)
+        logger.debug("Parsing BED file from %s", args.training_regions)
+        chrom_sizes, chrom_list = _parse_bed_file(args.training_regions)
         # partition_into_folds expects a pandas Series
         logger.debug("Partitioning %d chromosomes into %d folds", len(chrom_list), self.k_folds)
         self.chrom_to_fold: dict[str, int] = partition_into_folds(
@@ -903,7 +879,8 @@ class SRSNVTrainer:
         model_paths: dict[int, str] = {}
         for fold_idx, model in enumerate(self.models):
             path = self.out_dir / f"{base}model_fold_{fold_idx}.json"
-            model.save_model(path)
+            # Use get_booster().save_model() to avoid XGBoost 2.x compatibility issues
+            model.get_booster().save_model(path)
             model_paths[fold_idx] = str(path)
             logger.info("Saved model for fold %d → %s", fold_idx, path)
 
@@ -984,7 +961,7 @@ def _cli() -> argparse.Namespace:
     ap.add_argument(
         "--training-regions",
         required=True,
-        help="Picard interval_list file (supports .gz files)",
+        help="BED file containing training regions",
     )
     ap.add_argument("--k-folds", type=int, default=1, help="Number of CV folds (≥1)")
     ap.add_argument(
@@ -1008,19 +985,10 @@ def _cli() -> argparse.Namespace:
         help="Maximum Phred score for model quality",
     )
     ap.add_argument(
-        "--stats-positive",
+        "--stats-file",
         required=True,
-        help="JSON file with filtering stats for positive random-sample set",
-    )
-    ap.add_argument(
-        "--stats-negative",
-        required=True,
-        help="JSON file with filtering stats for negative random-sample set",
-    )
-    ap.add_argument(
-        "--stats-featuremap",
-        required=True,
-        help="JSON file with filtering stats for raw featuremap",
+        help="JSON file with unified filtering stats containing positive (f2_filters), "
+        "negative (filters), and raw featuremap data",
     )
     ap.add_argument(
         "--mean-coverage",
