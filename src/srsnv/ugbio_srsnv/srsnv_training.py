@@ -915,6 +915,31 @@ class SRSNVTrainer:
             self.y_lut.tolist(),
         ]
 
+        # Remove any existing downsample segments and add new ones
+        # to ensure exactly one downsample segment per training set
+        n_pos = self.data_frame.height - self.n_neg
+        downsample_positive = {
+            "name": "downsample",
+            "rows": n_pos,
+            "type": "downsample",
+            "method": "random",
+            "seed": 0,
+        }
+        downsample_negative = {
+            "name": "downsample",
+            "rows": self.n_neg,
+            "type": "downsample",
+            "method": "random",
+            "seed": 0,
+        }
+
+        # Remove existing downsample segments and append the new ones
+        self.pos_stats["filters"] = [f for f in self.pos_stats["filters"] if f.get("type") != "downsample"]
+        self.pos_stats["filters"].append(downsample_positive)
+
+        self.neg_stats["filters"] = [f for f in self.neg_stats["filters"] if f.get("type") != "downsample"]
+        self.neg_stats["filters"].append(downsample_negative)
+
         # stats and priors
         stats = {
             "positive": self.pos_stats,

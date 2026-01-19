@@ -140,3 +140,106 @@ def test_convert_unified_stats_to_legacy_format_missing_section():
     unified_stats = {"section1": {}}
     with pytest.raises(ValueError, match="Filter key 'missing_filter' not found"):
         _convert_unified_stats_to_legacy_format(unified_stats, "section1", "missing_filter")
+
+
+def test_downsample_segments_added_to_metadata(tmp_path: Path, resources_dir: Path) -> None:
+    """Test that downsample segments are added to positive and negative stats in metadata."""
+    import argparse
+
+    from ugbio_srsnv.srsnv_training import SRSNVTrainer
+
+    # Setup paths
+    pos_file = resources_dir / "416119_L7402.test.random_sample.featuremap.filtered.sample.parquet"
+    neg_file = resources_dir / "416119_L7402.test.raw.featuremap.filtered.sample.parquet"
+    stats_file = resources_dir / "416119_L7402.test.unified_stats_new_format.json"
+    bed_file = resources_dir / "wgs_calling_regions.without_encode_blacklist.hg38.bed"
+
+    # Create args for trainer
+    args = argparse.Namespace(
+        positive=str(pos_file),
+        negative=str(neg_file),
+        stats_file=str(stats_file),
+        mean_coverage=30.0,
+        training_regions=str(bed_file),
+        k_folds=1,
+        model_params="n_estimators=2:max_depth=2:enable_categorical=true",
+        features="REF:ALT:X_HMER_REF:X_HMER_ALT",
+        output=str(tmp_path),
+        basename="test_downsample.",
+        random_seed=0,
+        verbose=False,
+        max_qual=100.0,
+        quality_lut_size=100,
+        metadata=None,
+    )
+
+    # Initialize and run trainer
+    trainer = SRSNVTrainer(args)
+    trainer.train()
+    trainer.save()
+
+    # Load metadata
+    metadata_path = tmp_path / "test_downsample.srsnv_metadata.json"
+    assert metadata_path.is_file(), "metadata file not created"
+
+    with metadata_path.open() as f:
+        metadata = json.load(f)
+
+    # Check that filtering_stats has positive and negative
+    assert "filtering_stats" in metadata
+    assert "positive" in metadata["filtering_stats"]
+    assert "negative" in metadata["filtering_stats"]
+
+    pos_stats = metadata["filtering_stats"]["positive"]
+    neg_stats = metadata["filtering_stats"]["negative"]
+
+    # Check that both have filters list
+    assert "filters" in pos_stats
+    assert "filters" in neg_stats
+
+    # Find all downsample segments
+    pos_downsample = [f for f in pos_stats["filters"] if f.get("type") == "downsample"]
+    neg_downsample = [f for f in neg_stats["filters"] if f.get("type") == "downsample"]
+
+    # Verify exactly one downsample segment exists in each
+    assert (
+        len(pos_downsample) == 1
+    ), f"Expected exactly one downsample segment in positive stats, found {len(pos_downsample)}"
+    assert (
+        len(neg_downsample) == 1
+    ), f"Expected exactly one downsample segment in negative stats, found {len(neg_downsample)}"
+
+    # Get the downsample segments
+    pos_ds = pos_downsample[0]
+    neg_ds = neg_downsample[0]
+
+    # Verify the downsample segment is the last filter
+    assert pos_stats["filters"][-1] == pos_ds, "Downsample segment should be the last filter in positive stats"
+    assert neg_stats["filters"][-1] == neg_ds, "Downsample segment should be the last filter in negative stats"
+    assert pos_ds["name"] == "downsample"
+    assert pos_ds["type"] == "downsample"
+    assert pos_ds["method"] == "random"
+    assert pos_ds["seed"] == 0
+    assert "rows" in pos_ds
+    assert isinstance(pos_ds["rows"], int)
+    assert pos_ds["rows"] > 0
+
+    # Verify downsample segment structure for negative
+    assert neg_ds["name"] == "downsample"
+    assert neg_ds["type"] == "downsample"
+    assert neg_ds["method"] == "random"
+    assert neg_ds["seed"] == 0
+    assert "rows" in neg_ds
+    assert isinstance(neg_ds["rows"], int)
+    assert neg_ds["rows"] > 0
+
+    # Verify that row counts match the actual data loaded from parquet files
+    # The trainer's data_frame should have total rows equal to pos + neg
+    expected_total = pos_ds["rows"] + neg_ds["rows"]
+    assert expected_total == trainer.data_frame.height, (
+        f"Downsample row counts ({pos_ds['rows']} + {neg_ds['rows']} = {expected_total}) "
+        f"don't match total data frame height ({trainer.data_frame.height})"
+    )
+    assert (
+        neg_ds["rows"] == trainer.n_neg
+    ), f"Negative downsample rows ({neg_ds['rows']}) don't match trainer.n_neg ({trainer.n_neg})"
