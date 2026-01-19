@@ -22,20 +22,28 @@ suppressPackageStartupMessages(library(rhdf5))
 
 parser <- ArgumentParser()
 parser$add_argument("-cohort_rc", "--cohort_reads_count_file",
-                    help="input cohort reads count file in rds format")
+                    help = "input cohort reads count file in rds format")
 parser$add_argument("-sample_rc", "--sample_reads_count_file",
-                    help="input sample reads count file in rds format")
-parser$add_argument("--save_hdf", action='store_true',
-                    help="whether to save reads count data-frames in hdf5 format")
-parser$add_argument("--save_csv", action='store_true',
-                    help="whether to save reads count data-frames in csv format")
+                    help = "input sample reads count file in rds format")
+parser$add_argument("--save_hdf", action = "store_true",
+                    help = "save reads count data-frames in hdf5 format")
+parser$add_argument("--save_csv", action = "store_true",
+                    help = "save reads count data-frames in csv format")
 args <- parser$parse_args()
 
 cohort_reads_count_file <- args$cohort_reads_count_file
 sample_reads_count_file <- args$sample_reads_count_file
 # load reads count rds files
-gr1<- readRDS(file = cohort_reads_count_file )
-gr2<-readRDS(file = sample_reads_count_file)
+gr1 <- readRDS(file = cohort_reads_count_file)
+gr2 <- readRDS(file = sample_reads_count_file)
+
+# validate that gr1 and gr2 have the same genomic ranges
+if (!identical(ranges(gr1), ranges(gr2))) {
+  stop("Error: The granges of cohort and sample do not match. Cannot merge.")
+}
+if (!identical(seqnames(gr1), seqnames(gr2))) {
+  stop("Error: The seqnames of cohort and sample do not match. Cannot merge.")
+}
 
 # merge sample to cohort
 merged_cohort_reads_count <- GRanges(
@@ -47,10 +55,14 @@ merged_cohort_reads_count <- GRanges(
 )
 
 # save merged cohort
-saveRDS(merged_cohort_reads_count,file="merged_cohort_reads_count.rds")
-if(args$save_csv){
-  write.csv(as.data.frame(merged_cohort_reads_count),file="merged_cohort_reads_count.csv", row.names = FALSE,quote=FALSE)
+saveRDS(merged_cohort_reads_count, file = "merged_cohort_reads_count.rds")
+if (args$save_csv) {
+  write.csv(as.data.frame(merged_cohort_reads_count),
+            file = "merged_cohort_reads_count.csv", row.names = FALSE,
+            quote = FALSE)
 }
-if(args$save_hdf){
-  h5write(as.data.frame(merged_cohort_reads_count),"merged_cohort_reads_count.hdf5","merged_cohort_reads_count")
+if (args$save_hdf) {
+  h5write(as.data.frame(merged_cohort_reads_count),
+          "merged_cohort_reads_count.hdf5",
+          "merged_cohort_reads_count")
 }
