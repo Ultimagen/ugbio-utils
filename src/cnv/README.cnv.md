@@ -251,4 +251,5 @@ process_cnvs.run([
 ```
 
 **Input:** BED file with CNV calls from CN.MOPS or ControlFREEC
+
 **Output:** Filtered and annotated VCF file with CNV calls (`.vcf.gz` and `.vcf.gz.tbi`)
