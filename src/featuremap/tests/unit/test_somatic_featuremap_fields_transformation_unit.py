@@ -1,3 +1,5 @@
+import os
+import tempfile
 from collections import namedtuple
 from unittest.mock import MagicMock, patch
 
@@ -5,6 +7,7 @@ import pandas as pd
 import pytest
 from ugbio_featuremap.somatic_featuremap_fields_transformation import (
     ORIGINAL_RECORD_INDEX_FIELD,
+    collapse_bed_by_chunks,
     process_sample_columns,
     process_vcf_records_serially,
 )
@@ -450,11 +453,6 @@ class TestCollapseBedByChunks:
 
     def test_single_chromosome_single_chunk(self):
         """Test with a single chromosome and single chunk."""
-        import os
-        import tempfile
-
-        from ugbio_featuremap.somatic_featuremap_fields_transformation import collapse_bed_by_chunks
-
         # Create a temporary BED file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
             f.write("chr1\t1000\t2000\n")
@@ -471,10 +469,6 @@ class TestCollapseBedByChunks:
 
     def test_single_chromosome_multiple_chunks(self):
         """Test with a single chromosome divided into multiple chunks."""
-        import os
-        import tempfile
-
-        from ugbio_featuremap.somatic_featuremap_fields_transformation import collapse_bed_by_chunks
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
             f.write("chr1\t1000\t2000\n")
@@ -493,10 +487,6 @@ class TestCollapseBedByChunks:
 
     def test_chromosome_switching_within_chunk(self):
         """Test that chromosome switches within a chunk are handled correctly."""
-        import os
-        import tempfile
-
-        from ugbio_featuremap.somatic_featuremap_fields_transformation import collapse_bed_by_chunks
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
             # 6 rows, requesting 2 chunks (3 rows each)
@@ -521,11 +511,6 @@ class TestCollapseBedByChunks:
 
     def test_chromosome_switching_multiple_times(self):
         """Test multiple chromosome switches across chunks."""
-        import os
-        import tempfile
-
-        from ugbio_featuremap.somatic_featuremap_fields_transformation import collapse_bed_by_chunks
-
         with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
             f.write("chr1\t1000\t2000\n")
             f.write("chr1\t2000\t3000\n")
@@ -549,10 +534,6 @@ class TestCollapseBedByChunks:
 
     def test_more_chunks_than_rows(self):
         """Test when requested chunks exceed number of rows."""
-        import os
-        import tempfile
-
-        from ugbio_featuremap.somatic_featuremap_fields_transformation import collapse_bed_by_chunks
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
             f.write("chr1\t1000\t2000\n")
@@ -570,11 +551,6 @@ class TestCollapseBedByChunks:
 
     def test_chromosome_switch_at_chunk_boundary(self):
         """Test chromosome switch exactly at a chunk boundary."""
-        import os
-        import tempfile
-
-        from ugbio_featuremap.somatic_featuremap_fields_transformation import collapse_bed_by_chunks
-
         with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
             f.write("chr1\t1000\t2000\n")
             f.write("chr1\t2000\t3000\n")
@@ -593,11 +569,6 @@ class TestCollapseBedByChunks:
 
     def test_single_row(self):
         """Test with a single row BED file."""
-        import os
-        import tempfile
-
-        from ugbio_featuremap.somatic_featuremap_fields_transformation import collapse_bed_by_chunks
-
         with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
             f.write("chr1\t1000\t2000\n")
             bed_file = f.name
