@@ -12,6 +12,7 @@ description = "Ultima Genomics CNV utils"
 authors = [
     { name = "Tammy Biniashvili", email = "tammy.biniashvili@ultimagen.com" },
     { name = "Avigail Moldovan", email = "avigail.moldovan@ultimagen.com" },
+    { name = "Ilya Soifer", email = "ilya.soifer@ultimagen.com"}
 ]
 readme = "README.cnv.md"
 

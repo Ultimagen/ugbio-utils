@@ -17,43 +17,8 @@ from pathlib import Path
 import pandas as pd
 import pyfaidx
 import pysam
-from ugbio_cnv.jalign import JAlignConfig, process_cnv
+from ugbio_cnv.jalign import JAlignConfig, create_bam_header, process_cnv
 from ugbio_core.logger import logger
-
-
-def create_bam_header(
-    reads_file: pysam.AlignmentFile,
-) -> pysam.AlignmentHeader:
-    """Create BAM header with required read groups for jump alignment.
-
-    Parameters
-    ----------
-    reads_file : pysam.AlignmentFile
-        Input alignment file to copy header from
-
-    Returns
-    -------
-    pysam.AlignmentHeader
-        BAM header with REF1, REF2, DUP, and DEL read groups
-    """
-    header_dict = reads_file.header.to_dict()
-
-    # Ensure required read groups exist
-    if "RG" not in header_dict:
-        header_dict["RG"] = []
-
-    existing_rg_ids = {rg["ID"] for rg in header_dict.get("RG", [])}
-    for rgid in ["REF1", "REF2", "DUP", "DEL"]:
-        if rgid not in existing_rg_ids:
-            header_dict["RG"].append(
-                {
-                    "ID": rgid,
-                    "SM": "SAMPLE",
-                    "PL": "ULTIMA",
-                }
-            )
-
-    return pysam.AlignmentHeader.from_dict(header_dict)
 
 
 def process_single_cnv(
@@ -115,7 +80,7 @@ def process_single_cnv(
         reference = pyfaidx.Fasta(ref_fasta, rebuild=False)
 
         # Create BAM header in worker to avoid pickling issues
-        bam_header = create_bam_header(reads_file)
+        bam_header = create_bam_header(reads_file.header)
 
         cycle_start_time = time.time()
 
@@ -392,7 +357,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
         logger.info("Opening input files...")
         reads_file = pysam.AlignmentFile(args.input_cram, "rb", reference_filename=args.ref_fasta)
         reference = pyfaidx.Fasta(args.ref_fasta, rebuild=False)
-        bam_header = create_bam_header(reads_file)
+        bam_header = create_bam_header(reads_file.header)
         # Set up output files
         output_vcf = args.output_prefix + ".jalign.vcf.gz"
         realigned_bam = args.output_prefix + ".jalign.bam"

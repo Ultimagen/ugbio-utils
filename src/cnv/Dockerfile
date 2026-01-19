@@ -98,7 +98,7 @@ RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 ARG JALIGN_VERSION=1.4.1
 RUN --mount=type=secret,id=github_token \
     if [ ! -f /run/secrets/github_token ]; then \
-        echo "ERROR: github_token secret is required to download para_jalign from private repository" && exit 1; \
+        echo "ERROR: Authentication required to download dependencies" && exit 1; \
     fi && \
     GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
     ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bullseye-x64" && \
@@ -118,7 +118,7 @@ RUN --mount=type=secret,id=github_token \
         cat /tmp/release_data.json | jq -r '.assets[].name' && \
         exit 1; \
     fi && \
-    curl -sL \
+    curl -sLf \
         -H "Accept: application/octet-stream" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \

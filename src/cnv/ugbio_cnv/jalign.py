@@ -517,7 +517,7 @@ def _extract_references(
     """
     refs = []
     for rmin, rmax in refs_extents:
-        ref_seq = fasta_file[chrom][rmin:rmax].seq.upper().replace("N", "A")  # type: ignore
+        ref_seq = fasta_file[chrom][rmin:rmax].seq.upper()  # type: ignore
         refs.append((rmin, ref_seq))
     return refs
 
@@ -572,7 +572,7 @@ def _write_alignment_input(
 
     with open(input_file, "w") as f:
         for read in reads.values():
-            if random.random() > subsample_ratio:  # noqa: S311
+            if random.random() > subsample_ratio:  # noqa: S311 (not a cryptographic operation, no need for strong random)
                 continue
 
             reads_in_order.append(read)
@@ -684,9 +684,9 @@ def determine_best_alignments(df: pd.DataFrame, config: JAlignConfig) -> dict[st
         # Determine best alignment based on evaluation results
         if jump_forward_is_best and jump_backward_is_best:
             # Both jump alignments are good, choose the one with higher score
-            score = row.get("jump_forward.score", 0)
-            dscore = row.get("jump_backward.score", 0)
-            best_alignments[qname] = "jump_forward" if score >= dscore else "jump_backward"
+            del_score = row.get("jump_forward.score", 0)
+            dup_score = row.get("jump_backward.score", 0)
+            best_alignments[qname] = "jump_forward" if del_score >= dup_score else "jump_backward"
         elif jump_forward_is_best:
             best_alignments[qname] = "jump_forward"
         elif jump_backward_is_best:
@@ -809,7 +809,7 @@ def _create_bam_records_for_alignment_type(
         )
 
 
-def create_all_bam_records_from_json(
+def create_bam_records_from_json(
     json_file: Path,
     reads_in_order: list[pysam.AlignedSegment],
     chrom: str,
@@ -929,9 +929,7 @@ def _parse_alignment_results(
     return alignment_df
 
 
-def _count_supporting_alignments(  # noqa: C901, PLR0912
-    df: pd.DataFrame, config: JAlignConfig
-) -> tuple[int, int, int, int]:
+def _count_supporting_alignments(df: pd.DataFrame, config: JAlignConfig) -> tuple[int, int, int, int]:
     """Count alignments supporting DUP and DEL hypotheses.
 
     Parameters
@@ -958,22 +956,48 @@ def _count_supporting_alignments(  # noqa: C901, PLR0912
             _evaluate_alignment_scores(row, config)
         )
 
-        # Count DUP jump alignments
-        if jump_forward_is_best:
-            jump_better += 1
-        if jump_forward_is_stringent:
-            jump_much_better += 1
-
-        # Count DEL jump alignments
-        if jump_backward_is_best:
-            djump_better += 1
-        if jump_backward_is_stringent:
-            djump_much_better += 1
+        jump_better += jump_forward_is_best
+        jump_much_better += jump_forward_is_stringent
+        djump_better += jump_backward_is_best
+        djump_much_better += jump_backward_is_stringent
 
     return jump_better, djump_better, jump_much_better, djump_much_better
 
 
-def process_cnv(  # noqa: C901
+def create_bam_header(reads_header: pysam.AlignmentHeader) -> pysam.AlignmentHeader:
+    """Create BAM header with required read groups for jump alignment.
+
+    Parameters
+    ----------
+    reads_header : pysam.AlignmentHeader
+        Input alignment header to copy and extend
+
+    Returns
+    -------
+    pysam.AlignmentHeader
+        BAM header with REF1, REF2, DUP, and DEL read groups added
+    """
+    header_dict = reads_header.to_dict()
+    # Add read groups if not present
+    if "RG" not in header_dict:
+        header_dict["RG"] = []
+
+    # Ensure all required read groups are present
+    existing_rg_ids = {rg["ID"] for rg in header_dict.get("RG", [])}
+    for rgid in ["REF1", "REF2", "DUP", "DEL"]:
+        if rgid not in existing_rg_ids:
+            header_dict["RG"].append(
+                {
+                    "ID": rgid,
+                    "SM": "SAMPLE",
+                    "PL": "ULTIMA",
+                }
+            )
+
+    return pysam.AlignmentHeader.from_dict(header_dict)
+
+
+def process_cnv(
     chrom: str,
     start: int,
     end: int,
@@ -1036,34 +1060,17 @@ def process_cnv(  # noqa: C901
 
     # Create BAM header for generating alignment records
     if header is None:
-        header_dict = reads_file.header.to_dict()
-        # Add read groups if not present
-        if "RG" not in header_dict:
-            header_dict["RG"] = []
-
-        # Ensure all required read groups are present
-        existing_rg_ids = {rg["ID"] for rg in header_dict.get("RG", [])}
-        for rgid in ["REF1", "REF2", "DUP", "DEL"]:
-            if rgid not in existing_rg_ids:
-                header_dict["RG"].append(
-                    {
-                        "ID": rgid,
-                        "SM": "SAMPLE",
-                        "PL": "ULTIMA",
-                    }
-                )
-
-        header = pysam.AlignmentHeader.from_dict(header_dict)
+        header = create_bam_header(reads_file.header)
 
     # Write alignment input file
     input_file, reads_in_order = _write_alignment_input(reads, refs, temp_dir, chrom, start, end, config, log_file)
 
     # Create output JSON file path
     output_file = temp_dir / f"jalign_{chrom}_{start}_{end}_{os.getpid()}_output.json"
+    alignment_cmd = config.build_alignment_command(input_file, output_file)
 
     # Run jump alignment tool
     try:
-        alignment_cmd = config.build_alignment_command(input_file, output_file)
         run_alignment_tool(alignment_cmd, log_file)
 
         # Parse results from JSON file
@@ -1077,7 +1084,7 @@ def process_cnv(  # noqa: C901
         best_alignments = determine_best_alignments(result_df, config)
 
         # Create BAM records from alignments
-        bam_records = create_all_bam_records_from_json(
+        bam_records = create_bam_records_from_json(
             output_file,
             reads_in_order,
             chrom,

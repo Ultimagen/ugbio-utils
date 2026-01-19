@@ -18,8 +18,8 @@ import pysam
 import pytest
 from ugbio_cnv.jalign import (
     JAlignConfig,
-    create_all_bam_records_from_json,
     create_bam_record_from_alignment,
+    create_bam_records_from_json,
     create_bam_records_from_jump_alignment,
     create_bam_records_from_simple_alignment,
     determine_best_alignments,
@@ -337,7 +337,7 @@ class TestJSONParsing:
 
         try:
             # Create BAM records
-            records = create_all_bam_records_from_json(
+            records = create_bam_records_from_json(
                 json_file=json_file,
                 reads_in_order=reads_in_order,
                 chrom="chr1",
@@ -376,7 +376,7 @@ class TestJSONParsing:
             json_file = Path(f.name)
 
         try:
-            records = create_all_bam_records_from_json(
+            records = create_bam_records_from_json(
                 json_file=json_file,
                 reads_in_order=reads_in_order,
                 chrom="chr1",
@@ -527,7 +527,7 @@ class TestIntegration:
             json_file = Path(f.name)
 
         try:
-            records = create_all_bam_records_from_json(
+            records = create_bam_records_from_json(
                 json_file=json_file,
                 reads_in_order=reads,
                 chrom="chr1",
