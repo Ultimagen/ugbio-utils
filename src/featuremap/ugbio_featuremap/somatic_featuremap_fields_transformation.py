@@ -546,10 +546,20 @@ def collapse_bed_by_chunks(bed_file: str, num_chunks: int) -> list[str]:
         current_chrom = chunk_df_bed_regions.iloc[0]["chrom"]
         current_start = chunk_df_bed_regions.iloc[0]["start"]
 
-        for idx, row in chunk_df_bed_regions.iterrows():
+        # Use a relative index within the chunk to safely access the
+        # previous row when a chromosome switch is detected. This
+        # avoids mixing label-based indices from iterrows() with
+        # positional indexing on the full DataFrame.
+        for rel_idx, (_, row) in enumerate(chunk_df_bed_regions.iterrows()):
             if row["chrom"] != current_chrom:
-                # Save the previous chromosome chunk
-                prev_end = df_bed_regions.iloc[idx - 1]["end"]
+                # Skip if this is somehow the first row in the chunk;
+                # a chromosome change on the first row is not expected,
+                # but this guard keeps the code robust.
+                if rel_idx == 0:
+                    continue
+                # Save the previous chromosome chunk using the previous
+                # row within the current chunk.
+                prev_end = chunk_df_bed_regions.iloc[rel_idx - 1]["end"]
                 collapsed.append((current_chrom, current_start, prev_end))
                 # Start a new chunk for the new chromosome
                 current_chrom = row["chrom"]
