@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pysam
 import pytest
-from ugbio_cnv import process_cnmops_cnvs
+from ugbio_cnv import process_cnvs
 from ugbio_core.test_utils import compare_vcfs
 
 
@@ -13,11 +13,11 @@ def resources_dir():
     return Path(__file__).parent.parent / "resources"
 
 
-class TestProcessCnmopsCnvsIntegration:
-    """Integration tests for the complete process_cnmops_cnvs pipeline."""
+class TestProcessCnvsIntegration:
+    """Integration tests for the complete process_cnvs pipeline."""
 
-    def test_process_cnmops_cnvs_full_pipeline(self, tmpdir, resources_dir):
-        """Test the complete process_cnmops_cnvs pipeline with all inputs."""
+    def test_process_cnvs_full_pipeline(self, tmpdir, resources_dir):
+        """Test the complete process_cnvs pipeline with all inputs."""
         # Input files
         input_bed_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.bed")
         cnv_lcr_file = pjoin(resources_dir, "ug_cnv_lcr.chr5.bed")
@@ -30,9 +30,9 @@ class TestProcessCnmopsCnvsIntegration:
         expected_vcf_file = pjoin(resources_dir, "expected_test_sample.cnv.filtered.vcf.gz")
 
         # Run the pipeline
-        process_cnmops_cnvs.run(
+        process_cnvs.run(
             [
-                "process_cnmops_cnvs",
+                "process_cnvs",
                 "--input_bed_file",
                 input_bed_file,
                 "--cnv_lcr_file",
@@ -64,8 +64,8 @@ class TestProcessCnmopsCnvsIntegration:
         # Compare output VCF with expected VCF
         compare_vcfs(out_vcf_file, expected_vcf_file)
 
-    def test_process_cnmops_cnvs_without_lcr_filtering(self, tmpdir, resources_dir):
-        """Test the process_cnmops_cnvs pipeline without LCR filtering."""
+    def test_process_cnvs_without_lcr_filtering(self, tmpdir, resources_dir):
+        """Test the process_cnvs pipeline without LCR filtering."""
         # Input files
         input_bed_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.bed")
         sample_norm_coverage_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cov.bed")
@@ -74,9 +74,9 @@ class TestProcessCnmopsCnvsIntegration:
         sample_name = "test_sample_no_lcr"
 
         # Run the pipeline without cnv_lcr_file
-        process_cnmops_cnvs.run(
+        process_cnvs.run(
             [
-                "process_cnmops_cnvs",
+                "process_cnvs",
                 "--input_bed_file",
                 input_bed_file,
                 "--out_directory",
@@ -112,8 +112,8 @@ class TestProcessCnmopsCnvsIntegration:
             # Should have either PASS or LEN filter, but not UG-CNV-LCR
             assert "UG-CNV-LCR" not in filter_keys, f"Unexpected UG-CNV-LCR filter: {filter_keys}"
 
-    def test_process_cnmops_cnvs_no_filtering(self, tmpdir, resources_dir):
-        """Test the process_cnmops_cnvs pipeline without any filtering."""
+    def test_process_cnvs_no_filtering(self, tmpdir, resources_dir):
+        """Test the process_cnvs pipeline without any filtering."""
         # Input files
         input_bed_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.bed")
         sample_norm_coverage_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cov.bed")
@@ -122,9 +122,9 @@ class TestProcessCnmopsCnvsIntegration:
         sample_name = "test_sample_no_filter"
 
         # Run the pipeline without any filtering (no cnv_lcr_file and min_cnv_length=None)
-        process_cnmops_cnvs.run(
+        process_cnvs.run(
             [
-                "process_cnmops_cnvs",
+                "process_cnvs",
                 "--input_bed_file",
                 input_bed_file,
                 "--out_directory",
@@ -164,7 +164,7 @@ class TestProcessCnmopsCnvsIntegration:
             assert "UG-CNV-LCR" not in filter_keys, f"Unexpected UG-CNV-LCR filter: {filter_keys}"
             assert "LEN" not in filter_keys, f"Unexpected LEN filter: {filter_keys}"
 
-    def test_process_cnmops_cnvs_vcf_ids(self, tmpdir, resources_dir):
+    def test_process_cnvs_vcf_ids(self, tmpdir, resources_dir):
         """Test that VCF IDs are generated in the correct format: cnmops_<svtype>_<count>."""
         # Input files
         input_bed_file = pjoin(resources_dir, "005499-X0040_MAPQ0.MAPQ0.bam.chr5.cnvs.bed")
@@ -174,9 +174,9 @@ class TestProcessCnmopsCnvsIntegration:
         sample_name = "test_sample_ids"
 
         # Run the pipeline
-        process_cnmops_cnvs.run(
+        process_cnvs.run(
             [
-                "process_cnmops_cnvs",
+                "process_cnvs",
                 "--input_bed_file",
                 input_bed_file,
                 "--out_directory",

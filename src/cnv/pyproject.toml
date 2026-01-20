@@ -21,7 +21,7 @@ text = "Apache-2.0"
 
 [project.scripts]
 run_tests = "pytest:main"
-process_cnmops_cnvs = "ugbio_cnv.process_cnmops_cnvs:main"
+process_cnvs = "ugbio_cnv.process_cnvs:main"
 plot_cnv_results = "ugbio_cnv.plot_cnv_results:main"
 bicseq2_post_processing = "ugbio_cnv.bicseq2_post_processing:main"
 annotate_FREEC_segments = "ugbio_cnv.annotate_FREEC_segments:main"
