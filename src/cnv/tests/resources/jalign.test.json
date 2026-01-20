@@ -1,0 +1,5148 @@
+[
+    {
+        "qname": "036742_1-Z0027-0359559133",
+        "align1": {
+            "score": 654,
+            "begin": 0,
+            "cigar": "337M3S"
+        },
+        "align2": {
+            "score": 20,
+            "begin": 512,
+            "cigar": "255S10M75S"
+        },
+        "jump_forward": {
+            "score": 660,
+            "readlen1": 333,
+            "readlen2": 7,
+            "begin1": 0,
+            "cigar1": "333M7S",
+            "begin2": 1166,
+            "cigar2": "333S7M"
+        },
+        "jump_backward": {
+            "score": 654,
+            "readlen1": 7,
+            "readlen2": 333,
+            "begin1": 164,
+            "cigar1": "7M333S",
+            "begin2": 7,
+            "cigar2": "7S330M3S"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2200427548",
+        "align1": {
+            "score": 468,
+            "begin": 49,
+            "cigar": "6S52M1D140M1D9M1D34M1D34M1D10M5S"
+        },
+        "align2": {
+            "score": 20,
+            "begin": 512,
+            "cigar": "209S10M71S"
+        },
+        "jump_forward": {
+            "score": 476,
+            "readlen1": 277,
+            "readlen2": 13,
+            "begin1": 49,
+            "cigar1": "6S52M1D140M1D9M1D34M1D36M13S",
+            "begin2": 247,
+            "cigar2": "277S6M7S"
+        },
+        "jump_backward": {
+            "score": 478,
+            "readlen1": 6,
+            "readlen2": 284,
+            "begin1": 152,
+            "cigar1": "1S5M284S",
+            "begin2": 49,
+            "cigar2": "6S52M1D140M1D9M1D34M1D34M1D10M5S"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0766278977",
+        "align1": {
+            "score": 636,
+            "begin": 77,
+            "cigar": "309M1D25M14S"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "314S13M21S"
+        },
+        "jump_forward": {
+            "score": 646,
+            "readlen1": 334,
+            "readlen2": 14,
+            "begin1": 77,
+            "cigar1": "309M1D25M14S",
+            "begin2": 281,
+            "cigar2": "341S7M"
+        },
+        "jump_backward": {
+            "score": 636,
+            "readlen1": 5,
+            "readlen2": 343,
+            "begin1": 551,
+            "cigar1": "5M343S",
+            "begin2": 82,
+            "cigar2": "5S304M1D25M14S"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2781525150",
+        "align1": {
+            "score": 616,
+            "begin": 86,
+            "cigar": "15M1D153M1I172M"
+        },
+        "align2": {
+            "score": 30,
+            "begin": 507,
+            "cigar": "164S15M162S"
+        },
+        "jump_forward": {
+            "score": 616,
+            "readlen1": 332,
+            "readlen2": 9,
+            "begin1": 86,
+            "cigar1": "15M1D153M1I163M9S",
+            "begin2": 1505,
+            "cigar2": "332S9M"
+        },
+        "jump_backward": {
+            "score": 616,
+            "readlen1": 6,
+            "readlen2": 335,
+            "begin1": 727,
+            "cigar1": "6M335S",
+            "begin2": 92,
+            "cigar2": "6S9M1D153M1I172M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3658352952",
+        "align1": {
+            "score": 648,
+            "begin": 86,
+            "cigar": "338M1D12M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "306S13M31S"
+        },
+        "jump_forward": {
+            "score": 650,
+            "readlen1": 341,
+            "readlen2": 9,
+            "begin1": 86,
+            "cigar1": "339M11S",
+            "begin2": 765,
+            "cigar2": "341S9M"
+        },
+        "jump_backward": {
+            "score": 648,
+            "readlen1": 6,
+            "readlen2": 344,
+            "begin1": 727,
+            "cigar1": "6M344S",
+            "begin2": 92,
+            "cigar2": "6S332M1D12M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2269777509",
+        "align1": {
+            "score": 644,
+            "begin": 96,
+            "cigar": "337M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "296S13M28S"
+        },
+        "jump_forward": {
+            "score": 644,
+            "readlen1": 331,
+            "readlen2": 6,
+            "begin1": 96,
+            "cigar1": "331M6S",
+            "begin2": 340,
+            "cigar2": "331S6M"
+        },
+        "jump_backward": {
+            "score": 644,
+            "readlen1": 5,
+            "readlen2": 332,
+            "begin1": 295,
+            "cigar1": "5M332S",
+            "begin2": 101,
+            "cigar2": "5S332M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2558872514",
+        "align1": {
+            "score": 514,
+            "begin": 97,
+            "cigar": "1S262M"
+        },
+        "align2": {
+            "score": 20,
+            "begin": 512,
+            "cigar": "159S10M94S"
+        },
+        "jump_forward": {
+            "score": 514,
+            "readlen1": 258,
+            "readlen2": 5,
+            "begin1": 97,
+            "cigar1": "1S257M5S",
+            "begin2": 539,
+            "cigar2": "258S5M"
+        },
+        "jump_backward": {
+            "score": 516,
+            "readlen1": 5,
+            "readlen2": 258,
+            "begin1": 789,
+            "cigar1": "5M258S",
+            "begin2": 101,
+            "cigar2": "5S258M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0298305257",
+        "align1": {
+            "score": 656,
+            "begin": 101,
+            "cigar": "161M1D79M1D115M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "289S13M53S"
+        },
+        "jump_forward": {
+            "score": 656,
+            "readlen1": 351,
+            "readlen2": 4,
+            "begin1": 101,
+            "cigar1": "161M1D79M1D111M4S",
+            "begin2": 346,
+            "cigar2": "351S4M"
+        },
+        "jump_backward": {
+            "score": 656,
+            "readlen1": 7,
+            "readlen2": 348,
+            "begin1": 1164,
+            "cigar1": "7M348S",
+            "begin2": 108,
+            "cigar2": "7S154M1D79M1D115M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2615150144",
+        "align1": {
+            "score": 460,
+            "begin": 108,
+            "cigar": "235M37S"
+        },
+        "align2": {
+            "score": 20,
+            "begin": 512,
+            "cigar": "147S10M115S"
+        },
+        "jump_forward": {
+            "score": 470,
+            "readlen1": 232,
+            "readlen2": 40,
+            "begin1": 108,
+            "cigar1": "232M40S",
+            "begin2": 585,
+            "cigar2": "232S8M32S"
+        },
+        "jump_backward": {
+            "score": 460,
+            "readlen1": 5,
+            "readlen2": 267,
+            "begin1": 1069,
+            "cigar1": "5M267S",
+            "begin2": 113,
+            "cigar2": "5S230M37S"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2459994390",
+        "align1": {
+            "score": 366,
+            "begin": 117,
+            "cigar": "37M1I31M1D105M1I43M"
+        },
+        "align2": {
+            "score": 20,
+            "begin": 512,
+            "cigar": "138S10M70S"
+        },
+        "jump_forward": {
+            "score": 366,
+            "readlen1": 213,
+            "readlen2": 5,
+            "begin1": 117,
+            "cigar1": "37M1I31M1D105M1I38M5S",
+            "begin2": 778,
+            "cigar2": "213S5M"
+        },
+        "jump_backward": {
+            "score": 366,
+            "readlen1": 8,
+            "readlen2": 210,
+            "begin1": 1377,
+            "cigar1": "8M210S",
+            "begin2": 125,
+            "cigar2": "8S29M1I31M1D105M1I43M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2659521007",
+        "align1": {
+            "score": 680,
+            "begin": 117,
+            "cigar": "355M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "275S13M67S"
+        },
+        "jump_forward": {
+            "score": 680,
+            "readlen1": 351,
+            "readlen2": 4,
+            "begin1": 117,
+            "cigar1": "351M4S",
+            "begin2": 8,
+            "cigar2": "351S4M"
+        },
+        "jump_backward": {
+            "score": 680,
+            "readlen1": 8,
+            "readlen2": 347,
+            "begin1": 1377,
+            "cigar1": "8M347S",
+            "begin2": 125,
+            "cigar2": "8S347M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2703036589",
+        "align1": {
+            "score": 628,
+            "begin": 117,
+            "cigar": "7M1I131M1D205M1I9M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "275S13M66S"
+        },
+        "jump_forward": {
+            "score": 638,
+            "readlen1": 340,
+            "readlen2": 14,
+            "begin1": 117,
+            "cigar1": "7M1I131M1D201M14S",
+            "begin2": 467,
+            "cigar2": "340S7M7S"
+        },
+        "jump_backward": {
+            "score": 642,
+            "readlen1": 8,
+            "readlen2": 346,
+            "begin1": 1377,
+            "cigar1": "8M346S",
+            "begin2": 124,
+            "cigar2": "8S131M1D205M1I9M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0901421337",
+        "align1": {
+            "score": 684,
+            "begin": 117,
+            "cigar": "357M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "275S13M69S"
+        },
+        "jump_forward": {
+            "score": 684,
+            "readlen1": 351,
+            "readlen2": 6,
+            "begin1": 117,
+            "cigar1": "351M6S",
+            "begin2": 36,
+            "cigar2": "351S6M"
+        },
+        "jump_backward": {
+            "score": 684,
+            "readlen1": 8,
+            "readlen2": 349,
+            "begin1": 1377,
+            "cigar1": "8M349S",
+            "begin2": 125,
+            "cigar2": "8S349M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0542838859",
+        "align1": {
+            "score": 552,
+            "begin": 127,
+            "cigar": "243M1I54M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "266S13M19S"
+        },
+        "jump_forward": {
+            "score": 552,
+            "readlen1": 292,
+            "readlen2": 6,
+            "begin1": 127,
+            "cigar1": "243M1I48M6S",
+            "begin2": 296,
+            "cigar2": "292S6M"
+        },
+        "jump_backward": {
+            "score": 552,
+            "readlen1": 6,
+            "readlen2": 292,
+            "begin1": 1229,
+            "cigar1": "6M292S",
+            "begin2": 133,
+            "cigar2": "6S237M1I54M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-3070897830",
+        "align1": {
+            "score": 616,
+            "begin": 128,
+            "cigar": "318M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "264S13M41S"
+        },
+        "jump_forward": {
+            "score": 616,
+            "readlen1": 313,
+            "readlen2": 5,
+            "begin1": 128,
+            "cigar1": "313M5S",
+            "begin2": 76,
+            "cigar2": "313S5M"
+        },
+        "jump_backward": {
+            "score": 616,
+            "readlen1": 5,
+            "readlen2": 313,
+            "begin1": 1230,
+            "cigar1": "5M313S",
+            "begin2": 133,
+            "cigar2": "5S313M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0701206753",
+        "align1": {
+            "score": 582,
+            "begin": 147,
+            "cigar": "301M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "245S13M43S"
+        },
+        "jump_forward": {
+            "score": 582,
+            "readlen1": 296,
+            "readlen2": 5,
+            "begin1": 147,
+            "cigar1": "296M5S",
+            "begin2": 872,
+            "cigar2": "296S5M"
+        },
+        "jump_backward": {
+            "score": 582,
+            "readlen1": 7,
+            "readlen2": 294,
+            "begin1": 1451,
+            "cigar1": "7M294S",
+            "begin2": 154,
+            "cigar2": "7S294M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2137487749",
+        "align1": {
+            "score": 684,
+            "begin": 148,
+            "cigar": "362M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "244S13M105S"
+        },
+        "jump_forward": {
+            "score": 684,
+            "readlen1": 357,
+            "readlen2": 5,
+            "begin1": 148,
+            "cigar1": "357M5S",
+            "begin2": 240,
+            "cigar2": "357S5M"
+        },
+        "jump_backward": {
+            "score": 684,
+            "readlen1": 6,
+            "readlen2": 356,
+            "begin1": 1452,
+            "cigar1": "6M356S",
+            "begin2": 154,
+            "cigar2": "6S356M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3101550871",
+        "align1": {
+            "score": 562,
+            "begin": 154,
+            "cigar": "168M1D134M1S"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "237S13M53S"
+        },
+        "jump_forward": {
+            "score": 564,
+            "readlen1": 297,
+            "readlen2": 6,
+            "begin1": 154,
+            "cigar1": "168M1D129M6S",
+            "begin2": 1105,
+            "cigar2": "297S6M"
+        },
+        "jump_backward": {
+            "score": 562,
+            "readlen1": 6,
+            "readlen2": 297,
+            "begin1": 904,
+            "cigar1": "6M297S",
+            "begin2": 160,
+            "cigar2": "6S162M1D134M1S"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0045618658",
+        "align1": {
+            "score": 502,
+            "begin": 154,
+            "cigar": "266M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "238S13M15S"
+        },
+        "jump_forward": {
+            "score": 506,
+            "readlen1": 258,
+            "readlen2": 8,
+            "begin1": 154,
+            "cigar1": "258M8S",
+            "begin2": 1319,
+            "cigar2": "259S7M"
+        },
+        "jump_backward": {
+            "score": 502,
+            "readlen1": 6,
+            "readlen2": 260,
+            "begin1": 904,
+            "cigar1": "6M260S",
+            "begin2": 160,
+            "cigar2": "6S260M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1090403060",
+        "align1": {
+            "score": 560,
+            "begin": 168,
+            "cigar": "5S290M2S"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "229S13M55S"
+        },
+        "jump_forward": {
+            "score": 564,
+            "readlen1": 293,
+            "readlen2": 4,
+            "begin1": 168,
+            "cigar1": "5S288M4S",
+            "begin2": 373,
+            "cigar2": "293S4M"
+        },
+        "jump_backward": {
+            "score": 568,
+            "readlen1": 8,
+            "readlen2": 289,
+            "begin1": 16,
+            "cigar1": "1S7M289S",
+            "begin2": 171,
+            "cigar2": "8S287M2S"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-3211725716",
+        "align1": {
+            "score": 468,
+            "begin": 165,
+            "cigar": "223M1D22M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "226S13M6S"
+        },
+        "jump_forward": {
+            "score": 468,
+            "readlen1": 226,
+            "readlen2": 19,
+            "begin1": 165,
+            "cigar1": "226M19S",
+            "begin2": 769,
+            "cigar2": "226S13M6S"
+        },
+        "jump_backward": {
+            "score": 468,
+            "readlen1": 6,
+            "readlen2": 239,
+            "begin1": 251,
+            "cigar1": "6M239S",
+            "begin2": 171,
+            "cigar2": "6S217M1D22M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2915136287",
+        "align1": {
+            "score": 694,
+            "begin": 169,
+            "cigar": "76M1I292M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "224S13M132S"
+        },
+        "jump_forward": {
+            "score": 694,
+            "readlen1": 362,
+            "readlen2": 7,
+            "begin1": 169,
+            "cigar1": "76M1I285M7S",
+            "begin2": 407,
+            "cigar2": "362S7M"
+        },
+        "jump_backward": {
+            "score": 694,
+            "readlen1": 5,
+            "readlen2": 364,
+            "begin1": 1254,
+            "cigar1": "5M364S",
+            "begin2": 174,
+            "cigar2": "5S71M1I292M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0937965295",
+        "align1": {
+            "score": 606,
+            "begin": 188,
+            "cigar": "318M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "204S13M101S"
+        },
+        "jump_forward": {
+            "score": 606,
+            "readlen1": 313,
+            "readlen2": 5,
+            "begin1": 188,
+            "cigar1": "313M5S",
+            "begin2": 1313,
+            "cigar2": "313S5M"
+        },
+        "jump_backward": {
+            "score": 606,
+            "readlen1": 4,
+            "readlen2": 314,
+            "begin1": 984,
+            "cigar1": "4M314S",
+            "begin2": 192,
+            "cigar2": "4S314M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0502055845",
+        "align1": {
+            "score": 620,
+            "begin": 188,
+            "cigar": "325M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "204S13M108S"
+        },
+        "jump_forward": {
+            "score": 620,
+            "readlen1": 320,
+            "readlen2": 5,
+            "begin1": 188,
+            "cigar1": "320M5S",
+            "begin2": 423,
+            "cigar2": "320S5M"
+        },
+        "jump_backward": {
+            "score": 620,
+            "readlen1": 4,
+            "readlen2": 321,
+            "begin1": 984,
+            "cigar1": "4M321S",
+            "begin2": 192,
+            "cigar2": "4S321M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3168445588",
+        "align1": {
+            "score": 620,
+            "begin": 195,
+            "cigar": "325M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "197S13M115S"
+        },
+        "jump_forward": {
+            "score": 620,
+            "readlen1": 320,
+            "readlen2": 5,
+            "begin1": 195,
+            "cigar1": "320M5S",
+            "begin2": 42,
+            "cigar2": "320S5M"
+        },
+        "jump_backward": {
+            "score": 620,
+            "readlen1": 6,
+            "readlen2": 319,
+            "begin1": 537,
+            "cigar1": "6M319S",
+            "begin2": 201,
+            "cigar2": "6S319M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1101786478",
+        "align1": {
+            "score": 614,
+            "begin": 198,
+            "cigar": "322M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "194S13M115S"
+        },
+        "jump_forward": {
+            "score": 614,
+            "readlen1": 317,
+            "readlen2": 5,
+            "begin1": 198,
+            "cigar1": "317M5S",
+            "begin2": 42,
+            "cigar2": "317S5M"
+        },
+        "jump_backward": {
+            "score": 614,
+            "readlen1": 5,
+            "readlen2": 317,
+            "begin1": 404,
+            "cigar1": "5M317S",
+            "begin2": 203,
+            "cigar2": "5S317M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1125683754",
+        "align1": {
+            "score": 622,
+            "begin": 250,
+            "cigar": "10M1D322M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "141S13M178S"
+        },
+        "jump_forward": {
+            "score": 622,
+            "readlen1": 328,
+            "readlen2": 4,
+            "begin1": 250,
+            "cigar1": "10M1D318M4S",
+            "begin2": 420,
+            "cigar2": "328S4M"
+        },
+        "jump_backward": {
+            "score": 632,
+            "readlen1": 10,
+            "readlen2": 322,
+            "begin1": 507,
+            "cigar1": "1S9M322S",
+            "begin2": 261,
+            "cigar2": "10S322M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1609707667",
+        "align1": {
+            "score": 388,
+            "begin": 276,
+            "cigar": "209M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "116S13M80S"
+        },
+        "jump_forward": {
+            "score": 388,
+            "readlen1": 205,
+            "readlen2": 4,
+            "begin1": 276,
+            "cigar1": "205M4S",
+            "begin2": 52,
+            "cigar2": "205S4M"
+        },
+        "jump_backward": {
+            "score": 388,
+            "readlen1": 5,
+            "readlen2": 204,
+            "begin1": 858,
+            "cigar1": "5M204S",
+            "begin2": 281,
+            "cigar2": "5S204M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1157777821",
+        "align1": {
+            "score": 714,
+            "begin": 276,
+            "cigar": "372M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "116S13M243S"
+        },
+        "jump_forward": {
+            "score": 714,
+            "readlen1": 367,
+            "readlen2": 5,
+            "begin1": 276,
+            "cigar1": "367M5S",
+            "begin2": 824,
+            "cigar2": "367S5M"
+        },
+        "jump_backward": {
+            "score": 714,
+            "readlen1": 5,
+            "readlen2": 367,
+            "begin1": 858,
+            "cigar1": "5M367S",
+            "begin2": 281,
+            "cigar2": "5S367M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1840858483",
+        "align1": {
+            "score": 596,
+            "begin": 290,
+            "cigar": "313M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "102S13M198S"
+        },
+        "jump_forward": {
+            "score": 596,
+            "readlen1": 308,
+            "readlen2": 5,
+            "begin1": 290,
+            "cigar1": "308M5S",
+            "begin2": 952,
+            "cigar2": "308S5M"
+        },
+        "jump_backward": {
+            "score": 596,
+            "readlen1": 5,
+            "readlen2": 308,
+            "begin1": 838,
+            "cigar1": "5M308S",
+            "begin2": 295,
+            "cigar2": "5S308M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0986635999",
+        "align1": {
+            "score": 664,
+            "begin": 292,
+            "cigar": "347M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "100S13M234S"
+        },
+        "jump_forward": {
+            "score": 664,
+            "readlen1": 341,
+            "readlen2": 6,
+            "begin1": 292,
+            "cigar1": "341M6S",
+            "begin2": 936,
+            "cigar2": "341S6M"
+        },
+        "jump_backward": {
+            "score": 664,
+            "readlen1": 5,
+            "readlen2": 342,
+            "begin1": 1053,
+            "cigar1": "5M342S",
+            "begin2": 297,
+            "cigar2": "5S342M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2355043926",
+        "align1": {
+            "score": 730,
+            "begin": 298,
+            "cigar": "380M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "94S13M273S"
+        },
+        "jump_forward": {
+            "score": 730,
+            "readlen1": 375,
+            "readlen2": 5,
+            "begin1": 298,
+            "cigar1": "375M5S",
+            "begin2": 202,
+            "cigar2": "375S5M"
+        },
+        "jump_backward": {
+            "score": 740,
+            "readlen1": 6,
+            "readlen2": 374,
+            "begin1": 939,
+            "cigar1": "6M374S",
+            "begin2": 304,
+            "cigar2": "6S374M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3630579061",
+        "align1": {
+            "score": 626,
+            "begin": 304,
+            "cigar": "3S323M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "91S13M222S"
+        },
+        "jump_forward": {
+            "score": 626,
+            "readlen1": 319,
+            "readlen2": 7,
+            "begin1": 304,
+            "cigar1": "3S316M7S",
+            "begin2": 294,
+            "cigar2": "319S7M"
+        },
+        "jump_backward": {
+            "score": 632,
+            "readlen1": 6,
+            "readlen2": 320,
+            "begin1": 101,
+            "cigar1": "6M320S",
+            "begin2": 307,
+            "cigar2": "6S320M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3496633722",
+        "align1": {
+            "score": 566,
+            "begin": 304,
+            "cigar": "1S293M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "89S13M192S"
+        },
+        "jump_forward": {
+            "score": 566,
+            "readlen1": 288,
+            "readlen2": 6,
+            "begin1": 304,
+            "cigar1": "1S287M6S",
+            "begin2": 908,
+            "cigar2": "288S6M"
+        },
+        "jump_backward": {
+            "score": 568,
+            "readlen1": 7,
+            "readlen2": 287,
+            "begin1": 1040,
+            "cigar1": "7M287S",
+            "begin2": 310,
+            "cigar2": "7S287M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3091492010",
+        "align1": {
+            "score": 510,
+            "begin": 309,
+            "cigar": "265M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "83S13M169S"
+        },
+        "jump_forward": {
+            "score": 510,
+            "readlen1": 260,
+            "readlen2": 5,
+            "begin1": 309,
+            "cigar1": "260M5S",
+            "begin2": 856,
+            "cigar2": "260S5M"
+        },
+        "jump_backward": {
+            "score": 510,
+            "readlen1": 6,
+            "readlen2": 259,
+            "begin1": 345,
+            "cigar1": "6M259S",
+            "begin2": 315,
+            "cigar2": "6S259M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0566853040",
+        "align1": {
+            "score": 600,
+            "begin": 314,
+            "cigar": "310M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "78S13M219S"
+        },
+        "jump_forward": {
+            "score": 600,
+            "readlen1": 304,
+            "readlen2": 6,
+            "begin1": 314,
+            "cigar1": "304M6S",
+            "begin2": 267,
+            "cigar2": "304S6M"
+        },
+        "jump_backward": {
+            "score": 600,
+            "readlen1": 5,
+            "readlen2": 305,
+            "begin1": 611,
+            "cigar1": "5M305S",
+            "begin2": 319,
+            "cigar2": "5S305M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3285965158",
+        "align1": {
+            "score": 740,
+            "begin": 320,
+            "cigar": "380M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "72S13M295S"
+        },
+        "jump_forward": {
+            "score": 740,
+            "readlen1": 374,
+            "readlen2": 6,
+            "begin1": 320,
+            "cigar1": "374M6S",
+            "begin2": 341,
+            "cigar2": "374S6M"
+        },
+        "jump_backward": {
+            "score": 740,
+            "readlen1": 6,
+            "readlen2": 374,
+            "begin1": 1025,
+            "cigar1": "6M374S",
+            "begin2": 326,
+            "cigar2": "6S374M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1309293467",
+        "align1": {
+            "score": 736,
+            "begin": 322,
+            "cigar": "378M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "70S13M295S"
+        },
+        "jump_forward": {
+            "score": 736,
+            "readlen1": 372,
+            "readlen2": 6,
+            "begin1": 322,
+            "cigar1": "372M6S",
+            "begin2": 341,
+            "cigar2": "372S6M"
+        },
+        "jump_backward": {
+            "score": 736,
+            "readlen1": 8,
+            "readlen2": 370,
+            "begin1": 1167,
+            "cigar1": "8M370S",
+            "begin2": 330,
+            "cigar2": "8S370M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0597197920",
+        "align1": {
+            "score": 686,
+            "begin": 327,
+            "cigar": "358M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "65S13M280S"
+        },
+        "jump_forward": {
+            "score": 686,
+            "readlen1": 351,
+            "readlen2": 7,
+            "begin1": 327,
+            "cigar1": "351M7S",
+            "begin2": 1195,
+            "cigar2": "351S7M"
+        },
+        "jump_backward": {
+            "score": 686,
+            "readlen1": 5,
+            "readlen2": 353,
+            "begin1": 275,
+            "cigar1": "5M353S",
+            "begin2": 332,
+            "cigar2": "5S353M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2729170339",
+        "align1": {
+            "score": 582,
+            "begin": 354,
+            "cigar": "301M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "38S13M250S"
+        },
+        "jump_forward": {
+            "score": 582,
+            "readlen1": 297,
+            "readlen2": 4,
+            "begin1": 354,
+            "cigar1": "297M4S",
+            "begin2": 8,
+            "cigar2": "297S4M"
+        },
+        "jump_backward": {
+            "score": 582,
+            "readlen1": 5,
+            "readlen2": 296,
+            "begin1": 539,
+            "cigar1": "5M296S",
+            "begin2": 359,
+            "cigar2": "5S296M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2855606701",
+        "align1": {
+            "score": 512,
+            "begin": 378,
+            "cigar": "1S266M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "15S13M239S"
+        },
+        "jump_forward": {
+            "score": 512,
+            "readlen1": 263,
+            "readlen2": 4,
+            "begin1": 378,
+            "cigar1": "1S262M4S",
+            "begin2": 499,
+            "cigar2": "263S4M"
+        },
+        "jump_backward": {
+            "score": 514,
+            "readlen1": 5,
+            "readlen2": 262,
+            "begin1": 791,
+            "cigar1": "5M262S",
+            "begin2": 382,
+            "cigar2": "5S262M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0432361676",
+        "align1": {
+            "score": 706,
+            "begin": 385,
+            "cigar": "363M"
+        },
+        "align2": {
+            "score": 26,
+            "begin": 769,
+            "cigar": "7S13M343S"
+        },
+        "jump_forward": {
+            "score": 706,
+            "readlen1": 360,
+            "readlen2": 3,
+            "begin1": 385,
+            "cigar1": "360M3S",
+            "begin2": 242,
+            "cigar2": "360S3M"
+        },
+        "jump_backward": {
+            "score": 706,
+            "readlen1": 6,
+            "readlen2": 357,
+            "begin1": 1421,
+            "cigar1": "6M357S",
+            "begin2": 391,
+            "cigar2": "6S357M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2186388128",
+        "align1": {
+            "score": 584,
+            "begin": 471,
+            "cigar": "297M"
+        },
+        "align2": {
+            "score": 22,
+            "begin": 949,
+            "cigar": "1S11M285S"
+        },
+        "jump_forward": {
+            "score": 584,
+            "readlen1": 292,
+            "readlen2": 5,
+            "begin1": 471,
+            "cigar1": "292M5S",
+            "begin2": 573,
+            "cigar2": "292S5M"
+        },
+        "jump_backward": {
+            "score": 584,
+            "readlen1": 6,
+            "readlen2": 291,
+            "begin1": 340,
+            "cigar1": "6M291S",
+            "begin2": 477,
+            "cigar2": "6S291M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-3160364174",
+        "align1": {
+            "score": 688,
+            "begin": 471,
+            "cigar": "359M2S"
+        },
+        "align2": {
+            "score": 22,
+            "begin": 949,
+            "cigar": "1S11M349S"
+        },
+        "jump_forward": {
+            "score": 692,
+            "readlen1": 356,
+            "readlen2": 5,
+            "begin1": 471,
+            "cigar1": "356M5S",
+            "begin2": 958,
+            "cigar2": "356S5M"
+        },
+        "jump_backward": {
+            "score": 688,
+            "readlen1": 6,
+            "readlen2": 355,
+            "begin1": 340,
+            "cigar1": "6M355S",
+            "begin2": 477,
+            "cigar2": "6S353M2S"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2220422104",
+        "align1": {
+            "score": 726,
+            "begin": 472,
+            "cigar": "368M"
+        },
+        "align2": {
+            "score": 22,
+            "begin": 949,
+            "cigar": "11M357S"
+        },
+        "jump_forward": {
+            "score": 726,
+            "readlen1": 361,
+            "readlen2": 7,
+            "begin1": 472,
+            "cigar1": "361M7S",
+            "begin2": 894,
+            "cigar2": "361S7M"
+        },
+        "jump_backward": {
+            "score": 726,
+            "readlen1": 11,
+            "readlen2": 357,
+            "begin1": 949,
+            "cigar1": "11M357S",
+            "begin2": 483,
+            "cigar2": "11S357M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1291380349",
+        "align1": {
+            "score": 593,
+            "begin": 472,
+            "cigar": "199M2D114M"
+        },
+        "align2": {
+            "score": 20,
+            "begin": 949,
+            "cigar": "10M303S"
+        },
+        "jump_forward": {
+            "score": 593,
+            "readlen1": 307,
+            "readlen2": 6,
+            "begin1": 472,
+            "cigar1": "199M2D108M6S",
+            "begin2": 79,
+            "cigar2": "307S6M"
+        },
+        "jump_backward": {
+            "score": 596,
+            "readlen1": 10,
+            "readlen2": 303,
+            "begin1": 949,
+            "cigar1": "10M303S",
+            "begin2": 486,
+            "cigar2": "14S185M2D114M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0232703731",
+        "align1": {
+            "score": 464,
+            "begin": 498,
+            "cigar": "229M1I19M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 38,
+            "cigar": "84S9M156S"
+        },
+        "jump_forward": {
+            "score": 464,
+            "readlen1": 244,
+            "readlen2": 5,
+            "begin1": 498,
+            "cigar1": "229M1I14M5S",
+            "begin2": 386,
+            "cigar2": "244S5M"
+        },
+        "jump_backward": {
+            "score": 464,
+            "readlen1": 5,
+            "readlen2": 244,
+            "begin1": 663,
+            "cigar1": "5M244S",
+            "begin2": 503,
+            "cigar2": "5S224M1I19M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2820139114",
+        "align1": {
+            "score": 688,
+            "begin": 511,
+            "cigar": "354M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 38,
+            "cigar": "71S9M274S"
+        },
+        "jump_forward": {
+            "score": 688,
+            "readlen1": 349,
+            "readlen2": 5,
+            "begin1": 511,
+            "cigar1": "349M5S",
+            "begin2": 778,
+            "cigar2": "349S5M"
+        },
+        "jump_backward": {
+            "score": 692,
+            "readlen1": 8,
+            "readlen2": 346,
+            "begin1": 398,
+            "cigar1": "6M348S",
+            "begin2": 519,
+            "cigar2": "8S346M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3074115711",
+        "align1": {
+            "score": 520,
+            "begin": 518,
+            "cigar": "1S270M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 38,
+            "cigar": "65S9M197S"
+        },
+        "jump_forward": {
+            "score": 520,
+            "readlen1": 266,
+            "readlen2": 5,
+            "begin1": 518,
+            "cigar1": "1S265M5S",
+            "begin2": 993,
+            "cigar2": "266S5M"
+        },
+        "jump_backward": {
+            "score": 522,
+            "readlen1": 6,
+            "readlen2": 265,
+            "begin1": 2,
+            "cigar1": "6M265S",
+            "begin2": 523,
+            "cigar2": "6S265M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0349365327",
+        "align1": {
+            "score": 339,
+            "begin": 523,
+            "cigar": "60M1I37M1D60M1D21M1I17M2I2M1D4M1I36M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 45,
+            "cigar": "104S9M129S"
+        },
+        "jump_forward": {
+            "score": 339,
+            "readlen1": 237,
+            "readlen2": 5,
+            "begin1": 523,
+            "cigar1": "60M1I37M1D60M1D21M1I17M2I2M1D4M1I31M5S",
+            "begin2": 46,
+            "cigar2": "237S5M"
+        },
+        "jump_backward": {
+            "score": 339,
+            "readlen1": 4,
+            "readlen2": 238,
+            "begin1": 984,
+            "cigar1": "4M238S",
+            "begin2": 527,
+            "cigar2": "4S56M1I37M1D60M1D21M1I17M2I2M1D4M1I36M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0590281142",
+        "align1": {
+            "score": 690,
+            "begin": 529,
+            "cigar": "350M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 38,
+            "cigar": "53S9M288S"
+        },
+        "jump_forward": {
+            "score": 690,
+            "readlen1": 345,
+            "readlen2": 5,
+            "begin1": 529,
+            "cigar1": "345M5S",
+            "begin2": 595,
+            "cigar2": "345S5M"
+        },
+        "jump_backward": {
+            "score": 690,
+            "readlen1": 4,
+            "readlen2": 346,
+            "begin1": 49,
+            "cigar1": "4M346S",
+            "begin2": 533,
+            "cigar2": "4S346M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3459916203",
+        "align1": {
+            "score": 590,
+            "begin": 534,
+            "cigar": "300M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 38,
+            "cigar": "48S9M243S"
+        },
+        "jump_forward": {
+            "score": 590,
+            "readlen1": 293,
+            "readlen2": 7,
+            "begin1": 534,
+            "cigar1": "293M7S",
+            "begin2": 209,
+            "cigar2": "293S7M"
+        },
+        "jump_backward": {
+            "score": 590,
+            "readlen1": 5,
+            "readlen2": 295,
+            "begin1": 372,
+            "cigar1": "5M295S",
+            "begin2": 539,
+            "cigar2": "5S295M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-3125181416",
+        "align1": {
+            "score": 626,
+            "begin": 544,
+            "cigar": "323M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 38,
+            "cigar": "38S9M276S"
+        },
+        "jump_forward": {
+            "score": 626,
+            "readlen1": 318,
+            "readlen2": 5,
+            "begin1": 544,
+            "cigar1": "318M5S",
+            "begin2": 194,
+            "cigar2": "318S5M"
+        },
+        "jump_backward": {
+            "score": 626,
+            "readlen1": 4,
+            "readlen2": 319,
+            "begin1": 1008,
+            "cigar1": "4M319S",
+            "begin2": 548,
+            "cigar2": "4S319M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0976639158",
+        "align1": {
+            "score": 632,
+            "begin": 548,
+            "cigar": "194M1I7M1I121M1I17M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 38,
+            "cigar": "34S9M299S"
+        },
+        "jump_forward": {
+            "score": 634,
+            "readlen1": 323,
+            "readlen2": 19,
+            "begin1": 548,
+            "cigar1": "194M1I7M1I120M19S",
+            "begin2": 913,
+            "cigar2": "323S8M11S"
+        },
+        "jump_backward": {
+            "score": 632,
+            "readlen1": 5,
+            "readlen2": 337,
+            "begin1": 1143,
+            "cigar1": "5M337S",
+            "begin2": 553,
+            "cigar2": "5S189M1I7M1I121M1I17M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1122371695",
+        "align1": {
+            "score": 666,
+            "begin": 550,
+            "cigar": "343M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 38,
+            "cigar": "32S9M302S"
+        },
+        "jump_forward": {
+            "score": 666,
+            "readlen1": 339,
+            "readlen2": 4,
+            "begin1": 550,
+            "cigar1": "339M4S",
+            "begin2": 136,
+            "cigar2": "339S4M"
+        },
+        "jump_backward": {
+            "score": 666,
+            "readlen1": 5,
+            "readlen2": 338,
+            "begin1": 245,
+            "cigar1": "5M338S",
+            "begin2": 555,
+            "cigar2": "5S338M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3061381794",
+        "align1": {
+            "score": 628,
+            "begin": 561,
+            "cigar": "319M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 38,
+            "cigar": "21S9M289S"
+        },
+        "jump_forward": {
+            "score": 628,
+            "readlen1": 313,
+            "readlen2": 6,
+            "begin1": 561,
+            "cigar1": "313M6S",
+            "begin2": 1300,
+            "cigar2": "313S6M"
+        },
+        "jump_backward": {
+            "score": 628,
+            "readlen1": 6,
+            "readlen2": 313,
+            "begin1": 1501,
+            "cigar1": "6M313S",
+            "begin2": 567,
+            "cigar2": "6S313M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2844879888",
+        "align1": {
+            "score": 710,
+            "begin": 570,
+            "cigar": "360M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 38,
+            "cigar": "12S9M339S"
+        },
+        "jump_forward": {
+            "score": 710,
+            "readlen1": 355,
+            "readlen2": 5,
+            "begin1": 570,
+            "cigar1": "355M5S",
+            "begin2": 94,
+            "cigar2": "355S5M"
+        },
+        "jump_backward": {
+            "score": 710,
+            "readlen1": 4,
+            "readlen2": 356,
+            "begin1": 857,
+            "cigar1": "4M356S",
+            "begin2": 574,
+            "cigar2": "4S356M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2365419478",
+        "align1": {
+            "score": 618,
+            "begin": 582,
+            "cigar": "34M1I173M1I28M1D34M1I10M1I20M1D51M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 38,
+            "cigar": "9M345S"
+        },
+        "jump_forward": {
+            "score": 618,
+            "readlen1": 348,
+            "readlen2": 6,
+            "begin1": 582,
+            "cigar1": "34M1I173M1I28M1D34M1I10M1I20M1D45M6S",
+            "begin2": 120,
+            "cigar2": "348S6M"
+        },
+        "jump_backward": {
+            "score": 618,
+            "readlen1": 9,
+            "readlen2": 345,
+            "begin1": 38,
+            "cigar1": "9M345S",
+            "begin2": 591,
+            "cigar2": "9S25M1I173M1I28M1D34M1I10M1I20M1D51M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0298015833",
+        "align1": {
+            "score": 452,
+            "begin": 584,
+            "cigar": "226M32S"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 45,
+            "cigar": "43S9M206S"
+        },
+        "jump_forward": {
+            "score": 462,
+            "readlen1": 226,
+            "readlen2": 32,
+            "begin1": 584,
+            "cigar1": "226M32S",
+            "begin2": 118,
+            "cigar2": "233S6M19S"
+        },
+        "jump_backward": {
+            "score": 452,
+            "readlen1": 7,
+            "readlen2": 251,
+            "begin1": 40,
+            "cigar1": "7M251S",
+            "begin2": 591,
+            "cigar2": "7S219M32S"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0140751591",
+        "align1": {
+            "score": 448,
+            "begin": 592,
+            "cigar": "12M1D52M1D182M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 45,
+            "cigar": "34S9M203S"
+        },
+        "jump_forward": {
+            "score": 448,
+            "readlen1": 239,
+            "readlen2": 7,
+            "begin1": 592,
+            "cigar1": "12M1D52M1D175M7S",
+            "begin2": 894,
+            "cigar2": "239S7M"
+        },
+        "jump_backward": {
+            "score": 448,
+            "readlen1": 6,
+            "readlen2": 240,
+            "begin1": 360,
+            "cigar1": "6M240S",
+            "begin2": 605,
+            "cigar2": "12S52M1D182M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2014086990",
+        "align1": {
+            "score": 498,
+            "begin": 596,
+            "cigar": "299M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 45,
+            "cigar": "31S9M259S"
+        },
+        "jump_forward": {
+            "score": 498,
+            "readlen1": 294,
+            "readlen2": 5,
+            "begin1": 596,
+            "cigar1": "294M5S",
+            "begin2": 866,
+            "cigar2": "294S5M"
+        },
+        "jump_backward": {
+            "score": 508,
+            "readlen1": 22,
+            "readlen2": 277,
+            "begin1": 1192,
+            "cigar1": "12S8M279S",
+            "begin2": 618,
+            "cigar2": "22S277M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2839079349",
+        "align1": {
+            "score": 570,
+            "begin": 601,
+            "cigar": "305M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 339,
+            "cigar": "186S9M110S"
+        },
+        "jump_forward": {
+            "score": 570,
+            "readlen1": 299,
+            "readlen2": 6,
+            "begin1": 601,
+            "cigar1": "299M6S",
+            "begin2": 101,
+            "cigar2": "299S6M"
+        },
+        "jump_backward": {
+            "score": 570,
+            "readlen1": 7,
+            "readlen2": 298,
+            "begin1": 686,
+            "cigar1": "7M298S",
+            "begin2": 608,
+            "cigar2": "7S298M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2629775154",
+        "align1": {
+            "score": 602,
+            "begin": 605,
+            "cigar": "306M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 45,
+            "cigar": "22S9M275S"
+        },
+        "jump_forward": {
+            "score": 602,
+            "readlen1": 300,
+            "readlen2": 6,
+            "begin1": 605,
+            "cigar1": "300M6S",
+            "begin2": 292,
+            "cigar2": "300S6M"
+        },
+        "jump_backward": {
+            "score": 602,
+            "readlen1": 6,
+            "readlen2": 300,
+            "begin1": 401,
+            "cigar1": "6M300S",
+            "begin2": 611,
+            "cigar2": "6S300M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1003184555",
+        "align1": {
+            "score": 528,
+            "begin": 610,
+            "cigar": "2S269M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 45,
+            "cigar": "19S9M243S"
+        },
+        "jump_forward": {
+            "score": 528,
+            "readlen1": 266,
+            "readlen2": 5,
+            "begin1": 610,
+            "cigar1": "2S264M5S",
+            "begin2": 595,
+            "cigar2": "266S5M"
+        },
+        "jump_backward": {
+            "score": 532,
+            "readlen1": 5,
+            "readlen2": 266,
+            "begin1": 1,
+            "cigar1": "5M266S",
+            "begin2": 613,
+            "cigar2": "5S266M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1084519677",
+        "align1": {
+            "score": 338,
+            "begin": 626,
+            "cigar": "68M2D44M2D120M3S"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 45,
+            "cigar": "1S9M225S"
+        },
+        "jump_forward": {
+            "score": 344,
+            "readlen1": 229,
+            "readlen2": 6,
+            "begin1": 626,
+            "cigar1": "68M2D44M2D117M6S",
+            "begin2": 26,
+            "cigar2": "229S6M"
+        },
+        "jump_backward": {
+            "score": 338,
+            "readlen1": 8,
+            "readlen2": 227,
+            "begin1": 512,
+            "cigar1": "8M227S",
+            "begin2": 634,
+            "cigar2": "8S60M2D44M2D120M3S"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1497468086",
+        "align1": {
+            "score": 554,
+            "begin": 632,
+            "cigar": "62M1D231M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 339,
+            "cigar": "154S9M130S"
+        },
+        "jump_forward": {
+            "score": 554,
+            "readlen1": 288,
+            "readlen2": 5,
+            "begin1": 632,
+            "cigar1": "62M1D226M5S",
+            "begin2": 136,
+            "cigar2": "288S5M"
+        },
+        "jump_backward": {
+            "score": 554,
+            "readlen1": 6,
+            "readlen2": 287,
+            "begin1": 299,
+            "cigar1": "6M287S",
+            "begin2": 638,
+            "cigar2": "6S56M1D231M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1002939843",
+        "align1": {
+            "score": 494,
+            "begin": 651,
+            "cigar": "262M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 339,
+            "cigar": "136S9M117S"
+        },
+        "jump_forward": {
+            "score": 494,
+            "readlen1": 257,
+            "readlen2": 5,
+            "begin1": 651,
+            "cigar1": "257M5S",
+            "begin2": 579,
+            "cigar2": "257S5M"
+        },
+        "jump_backward": {
+            "score": 494,
+            "readlen1": 5,
+            "readlen2": 257,
+            "begin1": 36,
+            "cigar1": "5M257S",
+            "begin2": 656,
+            "cigar2": "5S257M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2715133197",
+        "align1": {
+            "score": 427,
+            "begin": 662,
+            "cigar": "1S32M1I33M2I55M1D80M1I63M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 339,
+            "cigar": "128S9M131S"
+        },
+        "jump_forward": {
+            "score": 427,
+            "readlen1": 263,
+            "readlen2": 5,
+            "begin1": 662,
+            "cigar1": "1S32M1I33M2I55M1D80M1I58M5S",
+            "begin2": 136,
+            "cigar2": "263S5M"
+        },
+        "jump_backward": {
+            "score": 429,
+            "readlen1": 4,
+            "readlen2": 264,
+            "begin1": 894,
+            "cigar1": "4M264S",
+            "begin2": 665,
+            "cigar2": "4S29M1I33M2I55M1D80M1I63M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0716027383",
+        "align1": {
+            "score": 535,
+            "begin": 670,
+            "cigar": "39M2D16M1I41M1D104M1I22M1D68M1I14M1D36M"
+        },
+        "align2": {
+            "score": 20,
+            "begin": 1454,
+            "cigar": "295S10M38S"
+        },
+        "jump_forward": {
+            "score": 535,
+            "readlen1": 338,
+            "readlen2": 5,
+            "begin1": 670,
+            "cigar1": "39M2D16M1I41M1D104M1I22M1D68M1I14M1D31M5S",
+            "begin2": 1222,
+            "cigar2": "338S5M"
+        },
+        "jump_backward": {
+            "score": 535,
+            "readlen1": 6,
+            "readlen2": 337,
+            "begin1": 1474,
+            "cigar1": "6M337S",
+            "begin2": 676,
+            "cigar2": "6S33M2D16M1I41M1D104M1I22M1D68M1I14M1D36M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0345882123",
+        "align1": {
+            "score": 518,
+            "begin": 672,
+            "cigar": "55M1I209M1I12M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 339,
+            "cigar": "116S9M153S"
+        },
+        "jump_forward": {
+            "score": 518,
+            "readlen1": 272,
+            "readlen2": 6,
+            "begin1": 672,
+            "cigar1": "55M1I209M13S",
+            "begin2": 1330,
+            "cigar2": "272S6M"
+        },
+        "jump_backward": {
+            "score": 518,
+            "readlen1": 5,
+            "readlen2": 273,
+            "begin1": 471,
+            "cigar1": "5M273S",
+            "begin2": 677,
+            "cigar2": "5S50M1I209M1I12M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0773908227",
+        "align1": {
+            "score": 506,
+            "begin": 677,
+            "cigar": "258M2S"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 339,
+            "cigar": "110S9M141S"
+        },
+        "jump_forward": {
+            "score": 510,
+            "readlen1": 256,
+            "readlen2": 4,
+            "begin1": 677,
+            "cigar1": "256M4S",
+            "begin2": 831,
+            "cigar2": "256S4M"
+        },
+        "jump_backward": {
+            "score": 510,
+            "readlen1": 9,
+            "readlen2": 251,
+            "begin1": 1195,
+            "cigar1": "1S7M252S",
+            "begin2": 686,
+            "cigar2": "9S249M2S"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2581376851",
+        "align1": {
+            "score": 405,
+            "begin": 694,
+            "cigar": "20M2D11M2I7M1D15M1I14M2I53M1D17M1D159M12S"
+        },
+        "align2": {
+            "score": 20,
+            "begin": 1454,
+            "cigar": "272S10M31S"
+        },
+        "jump_forward": {
+            "score": 413,
+            "readlen1": 298,
+            "readlen2": 15,
+            "begin1": 694,
+            "cigar1": "20M2D11M2I7M1D15M1I14M2I53M1D17M1D156M15S",
+            "begin2": 1474,
+            "cigar2": "305S8M"
+        },
+        "jump_backward": {
+            "score": 405,
+            "readlen1": 7,
+            "readlen2": 306,
+            "begin1": 341,
+            "cigar1": "7M306S",
+            "begin2": 701,
+            "cigar2": "7S13M2D11M2I7M1D15M1I14M2I53M1D17M1D159M12S"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1241243942",
+        "align1": {
+            "score": 468,
+            "begin": 709,
+            "cigar": "5S126M1I124M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 339,
+            "cigar": "83S9M164S"
+        },
+        "jump_forward": {
+            "score": 474,
+            "readlen1": 249,
+            "readlen2": 7,
+            "begin1": 709,
+            "cigar1": "5S126M1I117M7S",
+            "begin2": 422,
+            "cigar2": "249S5M2S"
+        },
+        "jump_backward": {
+            "score": 478,
+            "readlen1": 5,
+            "readlen2": 251,
+            "begin1": 134,
+            "cigar1": "5M251S",
+            "begin2": 709,
+            "cigar2": "5S126M1I124M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2983116400",
+        "align1": {
+            "score": 456,
+            "begin": 818,
+            "cigar": "185M1D94M5S"
+        },
+        "align2": {
+            "score": 20,
+            "begin": 1454,
+            "cigar": "148S10M126S"
+        },
+        "jump_forward": {
+            "score": 464,
+            "readlen1": 266,
+            "readlen2": 18,
+            "begin1": 818,
+            "cigar1": "185M1D81M18S",
+            "begin2": 757,
+            "cigar2": "266S7M11S"
+        },
+        "jump_backward": {
+            "score": 456,
+            "readlen1": 6,
+            "readlen2": 278,
+            "begin1": 397,
+            "cigar1": "6M278S",
+            "begin2": 824,
+            "cigar2": "6S179M1D94M5S"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1575116550",
+        "align1": {
+            "score": 513,
+            "begin": 874,
+            "cigar": "4S31M2D11M3D24M1D13M1I19M1D144M1I82M"
+        },
+        "align2": {
+            "score": 20,
+            "begin": 1454,
+            "cigar": "91S10M229S"
+        },
+        "jump_forward": {
+            "score": 513,
+            "readlen1": 325,
+            "readlen2": 5,
+            "begin1": 874,
+            "cigar1": "4S31M2D11M3D24M1D13M1I19M1D144M1I77M5S",
+            "begin2": 218,
+            "cigar2": "325S5M"
+        },
+        "jump_backward": {
+            "score": 521,
+            "readlen1": 6,
+            "readlen2": 324,
+            "begin1": 188,
+            "cigar1": "6M324S",
+            "begin2": 876,
+            "cigar2": "6S29M2D11M3D24M1D13M1I19M1D144M1I82M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0015975152",
+        "align1": {
+            "score": 480,
+            "begin": 1018,
+            "cigar": "245M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 329,
+            "cigar": "108S9M128S"
+        },
+        "jump_forward": {
+            "score": 480,
+            "readlen1": 239,
+            "readlen2": 6,
+            "begin1": 1018,
+            "cigar1": "239M6S",
+            "begin2": 1235,
+            "cigar2": "239S6M"
+        },
+        "jump_backward": {
+            "score": 480,
+            "readlen1": 7,
+            "readlen2": 238,
+            "begin1": 104,
+            "cigar1": "7M238S",
+            "begin2": 1025,
+            "cigar2": "7S238M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0218765934",
+        "align1": {
+            "score": 448,
+            "begin": 1051,
+            "cigar": "21M1I73M1I29M1I124M1S"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 329,
+            "cigar": "76S9M166S"
+        },
+        "jump_forward": {
+            "score": 450,
+            "readlen1": 244,
+            "readlen2": 7,
+            "begin1": 1051,
+            "cigar1": "21M1I73M1I29M1I118M7S",
+            "begin2": 433,
+            "cigar2": "244S7M"
+        },
+        "jump_backward": {
+            "score": 448,
+            "readlen1": 6,
+            "readlen2": 245,
+            "begin1": 724,
+            "cigar1": "6M245S",
+            "begin2": 1057,
+            "cigar2": "6S15M1I73M1I29M1I124M1S"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0350626140",
+        "align1": {
+            "score": 392,
+            "begin": 1057,
+            "cigar": "5S79M1I4M1I5M1I41M1D101M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 329,
+            "cigar": "74S9M155S"
+        },
+        "jump_forward": {
+            "score": 404,
+            "readlen1": 226,
+            "readlen2": 12,
+            "begin1": 1057,
+            "cigar1": "5S79M1I4M1I5M1I41M1D89M12S",
+            "begin2": 277,
+            "cigar2": "226S8M4S"
+        },
+        "jump_backward": {
+            "score": 400,
+            "readlen1": 6,
+            "readlen2": 232,
+            "begin1": 174,
+            "cigar1": "1S5M232S",
+            "begin2": 1058,
+            "cigar2": "6S78M1I4M1I5M1I41M1D101M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2294365684",
+        "align1": {
+            "score": 526,
+            "begin": 1058,
+            "cigar": "268M"
+        },
+        "align2": {
+            "score": 18,
+            "begin": 329,
+            "cigar": "68S9M191S"
+        },
+        "jump_forward": {
+            "score": 526,
+            "readlen1": 264,
+            "readlen2": 4,
+            "begin1": 1058,
+            "cigar1": "264M4S",
+            "begin2": 57,
+            "cigar2": "264S4M"
+        },
+        "jump_backward": {
+            "score": 526,
+            "readlen1": 6,
+            "readlen2": 262,
+            "begin1": 340,
+            "cigar1": "6M262S",
+            "begin2": 1064,
+            "cigar2": "6S262M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2238172995",
+        "align1": {
+            "score": 282,
+            "begin": 1289,
+            "cigar": "146M196S"
+        },
+        "align2": {
+            "score": 22,
+            "begin": 1245,
+            "cigar": "85S16M241S"
+        },
+        "jump_forward": {
+            "score": 292,
+            "readlen1": 146,
+            "readlen2": 196,
+            "begin1": 1289,
+            "cigar1": "146M196S",
+            "begin2": 810,
+            "cigar2": "234S9M99S"
+        },
+        "jump_backward": {
+            "score": 282,
+            "readlen1": 5,
+            "readlen2": 337,
+            "begin1": 1488,
+            "cigar1": "5M337S",
+            "begin2": 1294,
+            "cigar2": "5S141M196S"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3080032455",
+        "align1": {
+            "score": 18,
+            "begin": 202,
+            "cigar": "173S9M109S"
+        },
+        "align2": {
+            "score": 481,
+            "begin": 0,
+            "cigar": "5I233M2I18M1I32M"
+        },
+        "jump_forward": {
+            "score": 493,
+            "readlen1": 17,
+            "readlen2": 274,
+            "begin1": 1059,
+            "cigar1": "9S8M274S",
+            "begin2": 22,
+            "cigar2": "27S211M2I18M1I32M"
+        },
+        "jump_backward": {
+            "score": 485,
+            "readlen1": 283,
+            "readlen2": 8,
+            "begin1": 0,
+            "cigar1": "5I233M2I18M1I24M8S",
+            "begin2": 590,
+            "cigar2": "285S6M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0862970620",
+        "align1": {
+            "score": 18,
+            "begin": 202,
+            "cigar": "157S9M151S"
+        },
+        "align2": {
+            "score": 624,
+            "begin": 11,
+            "cigar": "317M"
+        },
+        "jump_forward": {
+            "score": 624,
+            "readlen1": 5,
+            "readlen2": 312,
+            "begin1": 195,
+            "cigar1": "5M312S",
+            "begin2": 16,
+            "cigar2": "5S312M"
+        },
+        "jump_backward": {
+            "score": 624,
+            "readlen1": 313,
+            "readlen2": 4,
+            "begin1": 11,
+            "cigar1": "313M4S",
+            "begin2": 245,
+            "cigar2": "313S4M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0341815283",
+        "align1": {
+            "score": 22,
+            "begin": 478,
+            "cigar": "49S11M253S"
+        },
+        "align2": {
+            "score": 318,
+            "begin": 68,
+            "cigar": "154S159M"
+        },
+        "jump_forward": {
+            "score": 330,
+            "readlen1": 154,
+            "readlen2": 159,
+            "begin1": 478,
+            "cigar1": "49S11M253S",
+            "begin2": 68,
+            "cigar2": "154S159M"
+        },
+        "jump_backward": {
+            "score": 318,
+            "readlen1": 308,
+            "readlen2": 5,
+            "begin1": 68,
+            "cigar1": "154S154M5S",
+            "begin2": 974,
+            "cigar2": "308S5M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0905749869",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "216S13M94S"
+        },
+        "align2": {
+            "score": 610,
+            "begin": 553,
+            "cigar": "76M1I133M1D113M"
+        },
+        "jump_forward": {
+            "score": 610,
+            "readlen1": 6,
+            "readlen2": 317,
+            "begin1": 251,
+            "cigar1": "6M317S",
+            "begin2": 559,
+            "cigar2": "6S70M1I133M1D113M"
+        },
+        "jump_backward": {
+            "score": 610,
+            "readlen1": 316,
+            "readlen2": 7,
+            "begin1": 553,
+            "cigar1": "76M1I133M1D106M7S",
+            "begin2": 619,
+            "cigar2": "316S7M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1413963785",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "199S13M117S"
+        },
+        "align2": {
+            "score": 636,
+            "begin": 569,
+            "cigar": "193M1D136M"
+        },
+        "jump_forward": {
+            "score": 636,
+            "readlen1": 4,
+            "readlen2": 325,
+            "begin1": 71,
+            "cigar1": "4M325S",
+            "begin2": 573,
+            "cigar2": "4S189M1D136M"
+        },
+        "jump_backward": {
+            "score": 636,
+            "readlen1": 324,
+            "readlen2": 5,
+            "begin1": 569,
+            "cigar1": "193M1D131M5S",
+            "begin2": 833,
+            "cigar2": "324S5M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-3029478563",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "176S13M136S"
+        },
+        "align2": {
+            "score": 628,
+            "begin": 592,
+            "cigar": "170M1D155M"
+        },
+        "jump_forward": {
+            "score": 628,
+            "readlen1": 5,
+            "readlen2": 320,
+            "begin1": 846,
+            "cigar1": "5M320S",
+            "begin2": 597,
+            "cigar2": "5S165M1D155M"
+        },
+        "jump_backward": {
+            "score": 628,
+            "readlen1": 319,
+            "readlen2": 6,
+            "begin1": 592,
+            "cigar1": "170M1D149M6S",
+            "begin2": 240,
+            "cigar2": "319S6M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0313326751",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "171S13M70S"
+        },
+        "align2": {
+            "score": 486,
+            "begin": 597,
+            "cigar": "165M1D89M"
+        },
+        "jump_forward": {
+            "score": 486,
+            "readlen1": 5,
+            "readlen2": 249,
+            "begin1": 312,
+            "cigar1": "5M249S",
+            "begin2": 602,
+            "cigar2": "5S160M1D89M"
+        },
+        "jump_backward": {
+            "score": 486,
+            "readlen1": 249,
+            "readlen2": 5,
+            "begin1": 597,
+            "cigar1": "165M1D84M5S",
+            "begin2": 51,
+            "cigar2": "249S5M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0253038665",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "168S13M145S"
+        },
+        "align2": {
+            "score": 538,
+            "begin": 600,
+            "cigar": "162M1D19M2I5M1D49M2D22M1D26M1D3M1I31M6S"
+        },
+        "jump_forward": {
+            "score": 538,
+            "readlen1": 4,
+            "readlen2": 322,
+            "begin1": 723,
+            "cigar1": "4M322S",
+            "begin2": 604,
+            "cigar2": "4S158M1D19M2I5M1D49M2D22M1D26M1D3M1I31M6S"
+        },
+        "jump_backward": {
+            "score": 550,
+            "readlen1": 320,
+            "readlen2": 6,
+            "begin1": 600,
+            "cigar1": "162M1D19M2I5M1D49M2D22M1D26M1D3M1I31M6S",
+            "begin2": 948,
+            "cigar2": "320S6M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2568279104",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "148S13M171S"
+        },
+        "align2": {
+            "score": 542,
+            "begin": 623,
+            "cigar": "130M1I6M1I37M1I21M1D68M1I4M1D21M1D41M"
+        },
+        "jump_forward": {
+            "score": 542,
+            "readlen1": 4,
+            "readlen2": 328,
+            "begin1": 313,
+            "cigar1": "4M328S",
+            "begin2": 627,
+            "cigar2": "4S126M1I6M1I37M1I21M1D68M1I4M1D21M1D41M"
+        },
+        "jump_backward": {
+            "score": 542,
+            "readlen1": 325,
+            "readlen2": 7,
+            "begin1": 623,
+            "cigar1": "130M1I6M1I37M1I21M1D68M1I4M1D21M1D34M7S",
+            "begin2": 692,
+            "cigar2": "325S7M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-3018614563",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "144S13M146S"
+        },
+        "align2": {
+            "score": 584,
+            "begin": 624,
+            "cigar": "138M1D165M"
+        },
+        "jump_forward": {
+            "score": 584,
+            "readlen1": 4,
+            "readlen2": 299,
+            "begin1": 313,
+            "cigar1": "4M299S",
+            "begin2": 628,
+            "cigar2": "4S134M1D165M"
+        },
+        "jump_backward": {
+            "score": 584,
+            "readlen1": 297,
+            "readlen2": 6,
+            "begin1": 624,
+            "cigar1": "138M1D159M6S",
+            "begin2": 948,
+            "cigar2": "297S6M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2053975646",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "142S13M140S"
+        },
+        "align2": {
+            "score": 568,
+            "begin": 626,
+            "cigar": "136M1D159M"
+        },
+        "jump_forward": {
+            "score": 568,
+            "readlen1": 4,
+            "readlen2": 291,
+            "begin1": 895,
+            "cigar1": "4M291S",
+            "begin2": 630,
+            "cigar2": "4S132M1D159M"
+        },
+        "jump_backward": {
+            "score": 568,
+            "readlen1": 290,
+            "readlen2": 5,
+            "begin1": 626,
+            "cigar1": "136M1D154M5S",
+            "begin2": 949,
+            "cigar2": "290S5M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1970838418",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "138S13M156S"
+        },
+        "align2": {
+            "score": 560,
+            "begin": 630,
+            "cigar": "132M1D155M1I10M9S"
+        },
+        "jump_forward": {
+            "score": 560,
+            "readlen1": 8,
+            "readlen2": 299,
+            "begin1": 399,
+            "cigar1": "8M299S",
+            "begin2": 638,
+            "cigar2": "8S124M1D155M1I10M9S"
+        },
+        "jump_backward": {
+            "score": 572,
+            "readlen1": 298,
+            "readlen2": 9,
+            "begin1": 630,
+            "cigar1": "132M1D155M1I10M9S",
+            "begin2": 272,
+            "cigar2": "300S6M1S"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0085269362",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "105S13M176S"
+        },
+        "align2": {
+            "score": 571,
+            "begin": 664,
+            "cigar": "2S97M2D195M"
+        },
+        "jump_forward": {
+            "score": 575,
+            "readlen1": 4,
+            "readlen2": 290,
+            "begin1": 161,
+            "cigar1": "4M290S",
+            "begin2": 666,
+            "cigar2": "4S95M2D195M"
+        },
+        "jump_backward": {
+            "score": 571,
+            "readlen1": 285,
+            "readlen2": 9,
+            "begin1": 664,
+            "cigar1": "2S97M2D186M9S",
+            "begin2": 472,
+            "cigar2": "285S9M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-3046589121",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "94S13M231S"
+        },
+        "align2": {
+            "score": 642,
+            "begin": 674,
+            "cigar": "88M1D223M1I22M4S"
+        },
+        "jump_forward": {
+            "score": 642,
+            "readlen1": 5,
+            "readlen2": 333,
+            "begin1": 314,
+            "cigar1": "5M333S",
+            "begin2": 679,
+            "cigar2": "5S83M1D223M1I22M4S"
+        },
+        "jump_backward": {
+            "score": 650,
+            "readlen1": 332,
+            "readlen2": 6,
+            "begin1": 674,
+            "cigar1": "88M1D223M1I20M6S",
+            "begin2": 1294,
+            "cigar2": "332S6M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2805199552",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "222S13M92S"
+        },
+        "align2": {
+            "score": 622,
+            "begin": 546,
+            "cigar": "216M1D111M"
+        },
+        "jump_forward": {
+            "score": 630,
+            "readlen1": 6,
+            "readlen2": 321,
+            "begin1": 1160,
+            "cigar1": "1S5M321S",
+            "begin2": 552,
+            "cigar2": "6S210M1D111M"
+        },
+        "jump_backward": {
+            "score": 622,
+            "readlen1": 321,
+            "readlen2": 6,
+            "begin1": 546,
+            "cigar1": "216M1D105M6S",
+            "begin2": 404,
+            "cigar2": "321S6M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0226268382",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "220S13M86S"
+        },
+        "align2": {
+            "score": 608,
+            "begin": 552,
+            "cigar": "4S210M1D105M"
+        },
+        "jump_forward": {
+            "score": 616,
+            "readlen1": 6,
+            "readlen2": 313,
+            "begin1": 1367,
+            "cigar1": "6M313S",
+            "begin2": 554,
+            "cigar2": "6S208M1D105M"
+        },
+        "jump_backward": {
+            "score": 608,
+            "readlen1": 314,
+            "readlen2": 5,
+            "begin1": 552,
+            "cigar1": "4S210M1D100M5S",
+            "begin2": 991,
+            "cigar2": "314S5M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1985711112",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "230S13M78S"
+        },
+        "align2": {
+            "score": 610,
+            "begin": 538,
+            "cigar": "224M1D97M"
+        },
+        "jump_forward": {
+            "score": 610,
+            "readlen1": 5,
+            "readlen2": 316,
+            "begin1": 196,
+            "cigar1": "5M316S",
+            "begin2": 543,
+            "cigar2": "5S219M1D97M"
+        },
+        "jump_backward": {
+            "score": 610,
+            "readlen1": 317,
+            "readlen2": 4,
+            "begin1": 538,
+            "cigar1": "224M1D93M4S",
+            "begin2": 284,
+            "cigar2": "317S4M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2257290903",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "238S13M65S"
+        },
+        "align2": {
+            "score": 600,
+            "begin": 530,
+            "cigar": "232M1D84M"
+        },
+        "jump_forward": {
+            "score": 600,
+            "readlen1": 5,
+            "readlen2": 311,
+            "begin1": 1072,
+            "cigar1": "5M311S",
+            "begin2": 535,
+            "cigar2": "5S227M1D84M"
+        },
+        "jump_backward": {
+            "score": 600,
+            "readlen1": 312,
+            "readlen2": 4,
+            "begin1": 530,
+            "cigar1": "232M1D80M4S",
+            "begin2": 828,
+            "cigar2": "312S4M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1222547408",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "275S13M27S"
+        },
+        "align2": {
+            "score": 586,
+            "begin": 493,
+            "cigar": "269M1D40M6S"
+        },
+        "jump_forward": {
+            "score": 586,
+            "readlen1": 5,
+            "readlen2": 310,
+            "begin1": 2,
+            "cigar1": "5M310S",
+            "begin2": 498,
+            "cigar2": "5S264M1D40M6S"
+        },
+        "jump_backward": {
+            "score": 596,
+            "readlen1": 307,
+            "readlen2": 8,
+            "begin1": 493,
+            "cigar1": "269M1D38M8S",
+            "begin2": 857,
+            "cigar2": "307S7M1S"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3295239651",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "279S13M24S"
+        },
+        "align2": {
+            "score": 598,
+            "begin": 489,
+            "cigar": "273M1D42M1S"
+        },
+        "jump_forward": {
+            "score": 598,
+            "readlen1": 5,
+            "readlen2": 311,
+            "begin1": 1036,
+            "cigar1": "5M311S",
+            "begin2": 494,
+            "cigar2": "5S268M1D42M1S"
+        },
+        "jump_backward": {
+            "score": 600,
+            "readlen1": 309,
+            "readlen2": 7,
+            "begin1": 489,
+            "cigar1": "273M1D36M7S",
+            "begin2": 47,
+            "cigar2": "309S7M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0883396901",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "22S13M207S"
+        },
+        "align2": {
+            "score": 426,
+            "begin": 746,
+            "cigar": "16M1D45M1D50M1I130M"
+        },
+        "jump_forward": {
+            "score": 426,
+            "readlen1": 5,
+            "readlen2": 237,
+            "begin1": 155,
+            "cigar1": "5M237S",
+            "begin2": 751,
+            "cigar2": "5S11M1D45M1D50M1I130M"
+        },
+        "jump_backward": {
+            "score": 426,
+            "readlen1": 227,
+            "readlen2": 15,
+            "begin1": 746,
+            "cigar1": "16M1D45M1D50M1I115M15S",
+            "begin2": 745,
+            "cigar2": "231S6M5S"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3069499882",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "286S13M15S"
+        },
+        "align2": {
+            "score": 596,
+            "begin": 482,
+            "cigar": "280M1D34M"
+        },
+        "jump_forward": {
+            "score": 596,
+            "readlen1": 5,
+            "readlen2": 309,
+            "begin1": 514,
+            "cigar1": "5M309S",
+            "begin2": 487,
+            "cigar2": "5S275M1D34M"
+        },
+        "jump_backward": {
+            "score": 596,
+            "readlen1": 309,
+            "readlen2": 5,
+            "begin1": 482,
+            "cigar1": "280M1D29M5S",
+            "begin2": 1130,
+            "cigar2": "309S5M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0355127811",
+        "align1": {
+            "score": 26,
+            "begin": 392,
+            "cigar": "9S13M333S"
+        },
+        "align2": {
+            "score": 568,
+            "begin": 763,
+            "cigar": "3S37M1D72M1I76M1D16M1I75M1I73M"
+        },
+        "jump_forward": {
+            "score": 574,
+            "readlen1": 6,
+            "readlen2": 349,
+            "begin1": 368,
+            "cigar1": "6M349S",
+            "begin2": 766,
+            "cigar2": "6S34M1D72M1I76M1D16M1I75M1I73M"
+        },
+        "jump_backward": {
+            "score": 576,
+            "readlen1": 343,
+            "readlen2": 12,
+            "begin1": 763,
+            "cigar1": "3S37M1D72M1I76M1D16M1I75M1I61M12S",
+            "begin2": 1137,
+            "cigar2": "348S7M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1638989234",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "180S11M160S"
+        },
+        "align2": {
+            "score": 664,
+            "begin": 778,
+            "cigar": "9S342M"
+        },
+        "jump_forward": {
+            "score": 674,
+            "readlen1": 10,
+            "readlen2": 341,
+            "begin1": 215,
+            "cigar1": "4S6M341S",
+            "begin2": 779,
+            "cigar2": "10S341M"
+        },
+        "jump_backward": {
+            "score": 664,
+            "readlen1": 343,
+            "readlen2": 8,
+            "begin1": 778,
+            "cigar1": "9S324M18S",
+            "begin2": 870,
+            "cigar2": "343S8M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1571910054",
+        "align1": {
+            "score": 18,
+            "begin": 9,
+            "cigar": "342S9M1S"
+        },
+        "align2": {
+            "score": 527,
+            "begin": 781,
+            "cigar": "19M1I25M1I45M1D4M1D77M2D37M1I34M1I12M1D82M1D8M5S"
+        },
+        "jump_forward": {
+            "score": 527,
+            "readlen1": 6,
+            "readlen2": 346,
+            "begin1": 2,
+            "cigar1": "6M346S",
+            "begin2": 787,
+            "cigar2": "6S13M1I25M1I45M1D4M1D77M2D37M1I34M1I12M1D82M1D8M5S"
+        },
+        "jump_backward": {
+            "score": 537,
+            "readlen1": 347,
+            "readlen2": 5,
+            "begin1": 781,
+            "cigar1": "19M1I25M1I45M1D4M1D77M2D37M1I34M1I12M1D82M1D8M5S",
+            "begin2": 1191,
+            "cigar2": "347S5M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1089622642",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "160S11M187S"
+        },
+        "align2": {
+            "score": 696,
+            "begin": 789,
+            "cigar": "358M"
+        },
+        "jump_forward": {
+            "score": 696,
+            "readlen1": 6,
+            "readlen2": 352,
+            "begin1": 417,
+            "cigar1": "6M352S",
+            "begin2": 795,
+            "cigar2": "6S352M"
+        },
+        "jump_backward": {
+            "score": 696,
+            "readlen1": 351,
+            "readlen2": 7,
+            "begin1": 789,
+            "cigar1": "351M7S",
+            "begin2": 988,
+            "cigar2": "351S7M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2399492608",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "156S11M186S"
+        },
+        "align2": {
+            "score": 672,
+            "begin": 793,
+            "cigar": "334M1I18M"
+        },
+        "jump_forward": {
+            "score": 672,
+            "readlen1": 6,
+            "readlen2": 347,
+            "begin1": 885,
+            "cigar1": "6M347S",
+            "begin2": 799,
+            "cigar2": "6S328M1I18M"
+        },
+        "jump_backward": {
+            "score": 672,
+            "readlen1": 347,
+            "readlen2": 6,
+            "begin1": 793,
+            "cigar1": "334M1I12M6S",
+            "begin2": 947,
+            "cigar2": "347S6M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2732871971",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "152S11M191S"
+        },
+        "align2": {
+            "score": 678,
+            "begin": 797,
+            "cigar": "354M"
+        },
+        "jump_forward": {
+            "score": 678,
+            "readlen1": 6,
+            "readlen2": 348,
+            "begin1": 607,
+            "cigar1": "6M348S",
+            "begin2": 803,
+            "cigar2": "6S348M"
+        },
+        "jump_backward": {
+            "score": 678,
+            "readlen1": 347,
+            "readlen2": 7,
+            "begin1": 797,
+            "cigar1": "347M7S",
+            "begin2": 774,
+            "cigar2": "347S7M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0269357676",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "151S11M191S"
+        },
+        "align2": {
+            "score": 648,
+            "begin": 798,
+            "cigar": "251M1D99M3S"
+        },
+        "jump_forward": {
+            "score": 648,
+            "readlen1": 6,
+            "readlen2": 347,
+            "begin1": 368,
+            "cigar1": "6M347S",
+            "begin2": 804,
+            "cigar2": "6S245M1D99M3S"
+        },
+        "jump_backward": {
+            "score": 654,
+            "readlen1": 347,
+            "readlen2": 6,
+            "begin1": 798,
+            "cigar1": "251M1D96M6S",
+            "begin2": 306,
+            "cigar2": "347S6M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1316977824",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "140S11M132S"
+        },
+        "align2": {
+            "score": 564,
+            "begin": 810,
+            "cigar": "1S282M"
+        },
+        "jump_forward": {
+            "score": 566,
+            "readlen1": 4,
+            "readlen2": 279,
+            "begin1": 662,
+            "cigar1": "4M279S",
+            "begin2": 813,
+            "cigar2": "4S279M"
+        },
+        "jump_backward": {
+            "score": 564,
+            "readlen1": 279,
+            "readlen2": 4,
+            "begin1": 810,
+            "cigar1": "1S278M4S",
+            "begin2": 258,
+            "cigar2": "279S4M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3707657523",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "130S11M209S"
+        },
+        "align2": {
+            "score": 680,
+            "begin": 819,
+            "cigar": "350M"
+        },
+        "jump_forward": {
+            "score": 680,
+            "readlen1": 5,
+            "readlen2": 345,
+            "begin1": 26,
+            "cigar1": "5M345S",
+            "begin2": 824,
+            "cigar2": "5S345M"
+        },
+        "jump_backward": {
+            "score": 680,
+            "readlen1": 344,
+            "readlen2": 6,
+            "begin1": 819,
+            "cigar1": "344M6S",
+            "begin2": 118,
+            "cigar2": "344S6M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1725849154",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "126S11M218S"
+        },
+        "align2": {
+            "score": 690,
+            "begin": 823,
+            "cigar": "355M"
+        },
+        "jump_forward": {
+            "score": 690,
+            "readlen1": 5,
+            "readlen2": 350,
+            "begin1": 194,
+            "cigar1": "5M350S",
+            "begin2": 828,
+            "cigar2": "5S350M"
+        },
+        "jump_backward": {
+            "score": 690,
+            "readlen1": 351,
+            "readlen2": 4,
+            "begin1": 823,
+            "cigar1": "351M4S",
+            "begin2": 828,
+            "cigar2": "351S4M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1040516230",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "125S11M169S"
+        },
+        "align2": {
+            "score": 590,
+            "begin": 824,
+            "cigar": "305M"
+        },
+        "jump_forward": {
+            "score": 590,
+            "readlen1": 5,
+            "readlen2": 300,
+            "begin1": 479,
+            "cigar1": "5M300S",
+            "begin2": 829,
+            "cigar2": "5S300M"
+        },
+        "jump_backward": {
+            "score": 590,
+            "readlen1": 300,
+            "readlen2": 5,
+            "begin1": 824,
+            "cigar1": "300M5S",
+            "begin2": 165,
+            "cigar2": "300S5M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0684682969",
+        "align1": {
+            "score": 20,
+            "begin": 473,
+            "cigar": "108S10M214S"
+        },
+        "align2": {
+            "score": 620,
+            "begin": 841,
+            "cigar": "108M1D73M1D151M"
+        },
+        "jump_forward": {
+            "score": 620,
+            "readlen1": 5,
+            "readlen2": 327,
+            "begin1": 1157,
+            "cigar1": "5M327S",
+            "begin2": 846,
+            "cigar2": "5S103M1D73M1D151M"
+        },
+        "jump_backward": {
+            "score": 620,
+            "readlen1": 324,
+            "readlen2": 8,
+            "begin1": 841,
+            "cigar1": "108M1D73M1D143M8S",
+            "begin2": 322,
+            "cigar2": "324S8M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2917362498",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "105S11M239S"
+        },
+        "align2": {
+            "score": 690,
+            "begin": 844,
+            "cigar": "355M"
+        },
+        "jump_forward": {
+            "score": 690,
+            "readlen1": 4,
+            "readlen2": 351,
+            "begin1": 398,
+            "cigar1": "4M351S",
+            "begin2": 848,
+            "cigar2": "4S351M"
+        },
+        "jump_backward": {
+            "score": 690,
+            "readlen1": 349,
+            "readlen2": 6,
+            "begin1": 844,
+            "cigar1": "349M6S",
+            "begin2": 609,
+            "cigar2": "349S6M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0001560626",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "96S11M240S"
+        },
+        "align2": {
+            "score": 674,
+            "begin": 853,
+            "cigar": "347M"
+        },
+        "jump_forward": {
+            "score": 674,
+            "readlen1": 6,
+            "readlen2": 341,
+            "begin1": 1244,
+            "cigar1": "6M341S",
+            "begin2": 859,
+            "cigar2": "6S341M"
+        },
+        "jump_backward": {
+            "score": 674,
+            "readlen1": 340,
+            "readlen2": 7,
+            "begin1": 853,
+            "cigar1": "340M7S",
+            "begin2": 1017,
+            "cigar2": "340S7M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-3404475164",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "92S11M187S"
+        },
+        "align2": {
+            "score": 560,
+            "begin": 857,
+            "cigar": "290M"
+        },
+        "jump_forward": {
+            "score": 560,
+            "readlen1": 4,
+            "readlen2": 286,
+            "begin1": 285,
+            "cigar1": "4M286S",
+            "begin2": 861,
+            "cigar2": "4S286M"
+        },
+        "jump_backward": {
+            "score": 560,
+            "readlen1": 283,
+            "readlen2": 7,
+            "begin1": 857,
+            "cigar1": "283M7S",
+            "begin2": 988,
+            "cigar2": "283S7M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1621733509",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "91S11M236S"
+        },
+        "align2": {
+            "score": 656,
+            "begin": 858,
+            "cigar": "338M"
+        },
+        "jump_forward": {
+            "score": 656,
+            "readlen1": 5,
+            "readlen2": 333,
+            "begin1": 45,
+            "cigar1": "5M333S",
+            "begin2": 863,
+            "cigar2": "5S333M"
+        },
+        "jump_backward": {
+            "score": 656,
+            "readlen1": 334,
+            "readlen2": 4,
+            "begin1": 858,
+            "cigar1": "334M4S",
+            "begin2": 16,
+            "cigar2": "334S4M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1449871280",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "90S11M160S"
+        },
+        "align2": {
+            "score": 502,
+            "begin": 859,
+            "cigar": "261M"
+        },
+        "jump_forward": {
+            "score": 502,
+            "readlen1": 6,
+            "readlen2": 255,
+            "begin1": 384,
+            "cigar1": "6M255S",
+            "begin2": 865,
+            "cigar2": "6S255M"
+        },
+        "jump_backward": {
+            "score": 502,
+            "readlen1": 253,
+            "readlen2": 8,
+            "begin1": 859,
+            "cigar1": "243M18S",
+            "begin2": 870,
+            "cigar2": "253S8M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2560284011",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "76S11M267S"
+        },
+        "align2": {
+            "score": 676,
+            "begin": 873,
+            "cigar": "298M1D56M"
+        },
+        "jump_forward": {
+            "score": 676,
+            "readlen1": 8,
+            "readlen2": 346,
+            "begin1": 444,
+            "cigar1": "8M346S",
+            "begin2": 881,
+            "cigar2": "8S290M1D56M"
+        },
+        "jump_backward": {
+            "score": 676,
+            "readlen1": 348,
+            "readlen2": 6,
+            "begin1": 873,
+            "cigar1": "298M1D50M6S",
+            "begin2": 74,
+            "cigar2": "348S6M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2721825097",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "52S11M262S"
+        },
+        "align2": {
+            "score": 630,
+            "begin": 897,
+            "cigar": "325M"
+        },
+        "jump_forward": {
+            "score": 630,
+            "readlen1": 5,
+            "readlen2": 320,
+            "begin1": 836,
+            "cigar1": "5M320S",
+            "begin2": 902,
+            "cigar2": "5S320M"
+        },
+        "jump_backward": {
+            "score": 630,
+            "readlen1": 319,
+            "readlen2": 6,
+            "begin1": 897,
+            "cigar1": "319M6S",
+            "begin2": 1125,
+            "cigar2": "319S6M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2751640337",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "47S11M141S"
+        },
+        "align2": {
+            "score": 372,
+            "begin": 902,
+            "cigar": "91M1D19M1D88M1S"
+        },
+        "jump_forward": {
+            "score": 372,
+            "readlen1": 4,
+            "readlen2": 195,
+            "begin1": 27,
+            "cigar1": "4M195S",
+            "begin2": 906,
+            "cigar2": "4S87M1D19M1D88M1S"
+        },
+        "jump_backward": {
+            "score": 374,
+            "readlen1": 195,
+            "readlen2": 4,
+            "begin1": 902,
+            "cigar1": "91M1D19M1D85M4S",
+            "begin2": 833,
+            "cigar2": "195S4M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3557131307",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "45S11M308S"
+        },
+        "align2": {
+            "score": 680,
+            "begin": 904,
+            "cigar": "94M1I207M1I61M"
+        },
+        "jump_forward": {
+            "score": 680,
+            "readlen1": 6,
+            "readlen2": 358,
+            "begin1": 154,
+            "cigar1": "6M358S",
+            "begin2": 910,
+            "cigar2": "6S88M1I207M1I61M"
+        },
+        "jump_backward": {
+            "score": 680,
+            "readlen1": 356,
+            "readlen2": 8,
+            "begin1": 904,
+            "cigar1": "94M1I207M1I53M8S",
+            "begin2": 657,
+            "cigar2": "356S8M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3720988866",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "40S11M220S"
+        },
+        "align2": {
+            "score": 522,
+            "begin": 909,
+            "cigar": "271M"
+        },
+        "jump_forward": {
+            "score": 522,
+            "readlen1": 6,
+            "readlen2": 265,
+            "begin1": 213,
+            "cigar1": "6M265S",
+            "begin2": 915,
+            "cigar2": "6S265M"
+        },
+        "jump_backward": {
+            "score": 522,
+            "readlen1": 267,
+            "readlen2": 4,
+            "begin1": 909,
+            "cigar1": "267M4S",
+            "begin2": 895,
+            "cigar2": "267S4M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3176499995",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "39S11M219S"
+        },
+        "align2": {
+            "score": 518,
+            "begin": 910,
+            "cigar": "269M"
+        },
+        "jump_forward": {
+            "score": 518,
+            "readlen1": 5,
+            "readlen2": 264,
+            "begin1": 214,
+            "cigar1": "5M264S",
+            "begin2": 915,
+            "cigar2": "5S264M"
+        },
+        "jump_backward": {
+            "score": 518,
+            "readlen1": 264,
+            "readlen2": 5,
+            "begin1": 910,
+            "cigar1": "264M5S",
+            "begin2": 828,
+            "cigar2": "264S5M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3363518130",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "28S11M305S"
+        },
+        "align2": {
+            "score": 668,
+            "begin": 921,
+            "cigar": "344M"
+        },
+        "jump_forward": {
+            "score": 668,
+            "readlen1": 5,
+            "readlen2": 339,
+            "begin1": 863,
+            "cigar1": "5M339S",
+            "begin2": 926,
+            "cigar2": "5S339M"
+        },
+        "jump_backward": {
+            "score": 668,
+            "readlen1": 337,
+            "readlen2": 7,
+            "begin1": 921,
+            "cigar1": "337M7S",
+            "begin2": 518,
+            "cigar2": "337S7M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1660067693",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "23S11M305S"
+        },
+        "align2": {
+            "score": 658,
+            "begin": 926,
+            "cigar": "339M"
+        },
+        "jump_forward": {
+            "score": 658,
+            "readlen1": 5,
+            "readlen2": 334,
+            "begin1": 469,
+            "cigar1": "5M334S",
+            "begin2": 931,
+            "cigar2": "5S334M"
+        },
+        "jump_backward": {
+            "score": 658,
+            "readlen1": 332,
+            "readlen2": 7,
+            "begin1": 926,
+            "cigar1": "332M7S",
+            "begin2": 518,
+            "cigar2": "332S7M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2557355471",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "21S11M253S"
+        },
+        "align2": {
+            "score": 550,
+            "begin": 928,
+            "cigar": "285M"
+        },
+        "jump_forward": {
+            "score": 550,
+            "readlen1": 6,
+            "readlen2": 279,
+            "begin1": 447,
+            "cigar1": "6M279S",
+            "begin2": 934,
+            "cigar2": "6S279M"
+        },
+        "jump_backward": {
+            "score": 550,
+            "readlen1": 279,
+            "readlen2": 6,
+            "begin1": 928,
+            "cigar1": "279M6S",
+            "begin2": 993,
+            "cigar2": "279S6M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-3119314588",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "311S16M31S"
+        },
+        "align2": {
+            "score": 674,
+            "begin": 933,
+            "cigar": "16M1D342M"
+        },
+        "jump_forward": {
+            "score": 674,
+            "readlen1": 6,
+            "readlen2": 352,
+            "begin1": 666,
+            "cigar1": "6M352S",
+            "begin2": 939,
+            "cigar2": "6S10M1D342M"
+        },
+        "jump_backward": {
+            "score": 674,
+            "readlen1": 354,
+            "readlen2": 4,
+            "begin1": 933,
+            "cigar1": "16M1D338M4S",
+            "begin2": 27,
+            "cigar2": "354S4M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-3526040785",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "14S11M273S"
+        },
+        "align2": {
+            "score": 563,
+            "begin": 935,
+            "cigar": "284M2D14M"
+        },
+        "jump_forward": {
+            "score": 563,
+            "readlen1": 7,
+            "readlen2": 291,
+            "begin1": 959,
+            "cigar1": "7M291S",
+            "begin2": 942,
+            "cigar2": "7S277M2D14M"
+        },
+        "jump_backward": {
+            "score": 563,
+            "readlen1": 292,
+            "readlen2": 6,
+            "begin1": 935,
+            "cigar1": "284M2D8M6S",
+            "begin2": 127,
+            "cigar2": "292S6M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1451726567",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "303S16M36S"
+        },
+        "align2": {
+            "score": 631,
+            "begin": 950,
+            "cigar": "6S85M2I262M"
+        },
+        "jump_forward": {
+            "score": 639,
+            "readlen1": 6,
+            "readlen2": 349,
+            "begin1": 545,
+            "cigar1": "4M351S",
+            "begin2": 950,
+            "cigar2": "6S85M2I262M"
+        },
+        "jump_backward": {
+            "score": 631,
+            "readlen1": 350,
+            "readlen2": 5,
+            "begin1": 950,
+            "cigar1": "6S85M2I257M5S",
+            "begin2": 747,
+            "cigar2": "350S5M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0155355244",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "4S11M231S"
+        },
+        "align2": {
+            "score": 472,
+            "begin": 945,
+            "cigar": "246M"
+        },
+        "jump_forward": {
+            "score": 472,
+            "readlen1": 4,
+            "readlen2": 242,
+            "begin1": 699,
+            "cigar1": "4M242S",
+            "begin2": 949,
+            "cigar2": "4S242M"
+        },
+        "jump_backward": {
+            "score": 472,
+            "readlen1": 238,
+            "readlen2": 8,
+            "begin1": 945,
+            "cigar1": "238M8S",
+            "begin2": 345,
+            "cigar2": "238S8M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1259166669",
+        "align1": {
+            "score": 22,
+            "begin": 472,
+            "cigar": "4S11M257S"
+        },
+        "align2": {
+            "score": 524,
+            "begin": 945,
+            "cigar": "272M"
+        },
+        "jump_forward": {
+            "score": 524,
+            "readlen1": 4,
+            "readlen2": 268,
+            "begin1": 699,
+            "cigar1": "4M268S",
+            "begin2": 949,
+            "cigar2": "4S268M"
+        },
+        "jump_backward": {
+            "score": 524,
+            "readlen1": 266,
+            "readlen2": 6,
+            "begin1": 945,
+            "cigar1": "266M6S",
+            "begin2": 410,
+            "cigar2": "266S6M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2318581602",
+        "align1": {
+            "score": 18,
+            "begin": 277,
+            "cigar": "77S9M204S"
+        },
+        "align2": {
+            "score": 560,
+            "begin": 952,
+            "cigar": "290M"
+        },
+        "jump_forward": {
+            "score": 560,
+            "readlen1": 8,
+            "readlen2": 282,
+            "begin1": 475,
+            "cigar1": "8M282S",
+            "begin2": 960,
+            "cigar2": "8S282M"
+        },
+        "jump_backward": {
+            "score": 560,
+            "readlen1": 285,
+            "readlen2": 5,
+            "begin1": 952,
+            "cigar1": "285M5S",
+            "begin2": 1299,
+            "cigar2": "285S5M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2878737970",
+        "align1": {
+            "score": 18,
+            "begin": 277,
+            "cigar": "74S9M189S"
+        },
+        "align2": {
+            "score": 524,
+            "begin": 955,
+            "cigar": "272M"
+        },
+        "jump_forward": {
+            "score": 524,
+            "readlen1": 5,
+            "readlen2": 267,
+            "begin1": 478,
+            "cigar1": "5M267S",
+            "begin2": 960,
+            "cigar2": "5S267M"
+        },
+        "jump_backward": {
+            "score": 524,
+            "readlen1": 266,
+            "readlen2": 6,
+            "begin1": 955,
+            "cigar1": "266M6S",
+            "begin2": 520,
+            "cigar2": "266S6M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2478803899",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "281S16M8S"
+        },
+        "align2": {
+            "score": 562,
+            "begin": 966,
+            "cigar": "124M1I90M1I89M"
+        },
+        "jump_forward": {
+            "score": 562,
+            "readlen1": 5,
+            "readlen2": 300,
+            "begin1": 95,
+            "cigar1": "5M300S",
+            "begin2": 971,
+            "cigar2": "5S119M1I90M1I89M"
+        },
+        "jump_backward": {
+            "score": 562,
+            "readlen1": 300,
+            "readlen2": 5,
+            "begin1": 966,
+            "cigar1": "124M1I90M1I84M5S",
+            "begin2": 1083,
+            "cigar2": "300S5M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2596929138",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "255S16M84S"
+        },
+        "align2": {
+            "score": 642,
+            "begin": 992,
+            "cigar": "188M1I48M1I112M5S"
+        },
+        "jump_forward": {
+            "score": 642,
+            "readlen1": 6,
+            "readlen2": 349,
+            "begin1": 1266,
+            "cigar1": "6M349S",
+            "begin2": 998,
+            "cigar2": "6S182M1I48M1I112M5S"
+        },
+        "jump_backward": {
+            "score": 650,
+            "readlen1": 350,
+            "readlen2": 5,
+            "begin1": 992,
+            "cigar1": "188M1I48M1I112M5S",
+            "begin2": 325,
+            "cigar2": "350S4M1S"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0401477610",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "239S16M62S"
+        },
+        "align2": {
+            "score": 563,
+            "begin": 1004,
+            "cigar": "209M2D64M1I9M1I33M"
+        },
+        "jump_forward": {
+            "score": 563,
+            "readlen1": 4,
+            "readlen2": 313,
+            "begin1": 268,
+            "cigar1": "4M313S",
+            "begin2": 1008,
+            "cigar2": "4S205M2D64M1I9M1I33M"
+        },
+        "jump_backward": {
+            "score": 563,
+            "readlen1": 315,
+            "readlen2": 2,
+            "begin1": 1004,
+            "cigar1": "209M2D64M1I9M1I31M2S",
+            "begin2": 72,
+            "cigar2": "315S2M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3121643386",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "243S16M47S"
+        },
+        "align2": {
+            "score": 540,
+            "begin": 1004,
+            "cigar": "196M1I24M1I66M1I17M"
+        },
+        "jump_forward": {
+            "score": 540,
+            "readlen1": 4,
+            "readlen2": 302,
+            "begin1": 268,
+            "cigar1": "4M302S",
+            "begin2": 1008,
+            "cigar2": "4S192M1I24M1I66M1I17M"
+        },
+        "jump_backward": {
+            "score": 540,
+            "readlen1": 302,
+            "readlen2": 4,
+            "begin1": 1004,
+            "cigar1": "196M1I24M1I66M1I13M4S",
+            "begin2": 545,
+            "cigar2": "302S4M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0735432399",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "233S16M67S"
+        },
+        "align2": {
+            "score": 590,
+            "begin": 1011,
+            "cigar": "20M1D296M"
+        },
+        "jump_forward": {
+            "score": 590,
+            "readlen1": 6,
+            "readlen2": 310,
+            "begin1": 117,
+            "cigar1": "6M310S",
+            "begin2": 1017,
+            "cigar2": "6S14M1D296M"
+        },
+        "jump_backward": {
+            "score": 590,
+            "readlen1": 310,
+            "readlen2": 6,
+            "begin1": 1011,
+            "cigar1": "20M1D290M6S",
+            "begin2": 928,
+            "cigar2": "310S6M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2292977632",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "228S16M25S"
+        },
+        "align2": {
+            "score": 508,
+            "begin": 1017,
+            "cigar": "269M"
+        },
+        "jump_forward": {
+            "score": 508,
+            "readlen1": 4,
+            "readlen2": 265,
+            "begin1": 2,
+            "cigar1": "4M265S",
+            "begin2": 1021,
+            "cigar2": "4S265M"
+        },
+        "jump_backward": {
+            "score": 514,
+            "readlen1": 262,
+            "readlen2": 7,
+            "begin1": 1017,
+            "cigar1": "262M7S",
+            "begin2": 16,
+            "cigar2": "264S5M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1252284853",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "225S16M44S"
+        },
+        "align2": {
+            "score": 532,
+            "begin": 1024,
+            "cigar": "4S281M"
+        },
+        "jump_forward": {
+            "score": 540,
+            "readlen1": 4,
+            "readlen2": 281,
+            "begin1": 399,
+            "cigar1": "4M281S",
+            "begin2": 1024,
+            "cigar2": "4S281M"
+        },
+        "jump_backward": {
+            "score": 532,
+            "readlen1": 280,
+            "readlen2": 5,
+            "begin1": 1024,
+            "cigar1": "4S276M5S",
+            "begin2": 874,
+            "cigar2": "280S5M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-3139809981",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "219S16M106S"
+        },
+        "align2": {
+            "score": 642,
+            "begin": 1026,
+            "cigar": "341M"
+        },
+        "jump_forward": {
+            "score": 642,
+            "readlen1": 7,
+            "readlen2": 334,
+            "begin1": 387,
+            "cigar1": "7M334S",
+            "begin2": 1033,
+            "cigar2": "7S334M"
+        },
+        "jump_backward": {
+            "score": 642,
+            "readlen1": 336,
+            "readlen2": 5,
+            "begin1": 1026,
+            "cigar1": "336M5S",
+            "begin2": 876,
+            "cigar2": "336S5M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1219105221",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "217S16M45S"
+        },
+        "align2": {
+            "score": 526,
+            "begin": 1028,
+            "cigar": "278M"
+        },
+        "jump_forward": {
+            "score": 526,
+            "readlen1": 7,
+            "readlen2": 271,
+            "begin1": 209,
+            "cigar1": "7M271S",
+            "begin2": 1035,
+            "cigar2": "7S271M"
+        },
+        "jump_backward": {
+            "score": 526,
+            "readlen1": 272,
+            "readlen2": 6,
+            "begin1": 1028,
+            "cigar1": "272M6S",
+            "begin2": 874,
+            "cigar2": "272S6M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3037399113",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "202S16M71S"
+        },
+        "align2": {
+            "score": 534,
+            "begin": 1044,
+            "cigar": "199M1I89M"
+        },
+        "jump_forward": {
+            "score": 534,
+            "readlen1": 4,
+            "readlen2": 285,
+            "begin1": 219,
+            "cigar1": "4M285S",
+            "begin2": 1048,
+            "cigar2": "4S195M1I89M"
+        },
+        "jump_backward": {
+            "score": 534,
+            "readlen1": 283,
+            "readlen2": 6,
+            "begin1": 1044,
+            "cigar1": "199M1I83M6S",
+            "begin2": 959,
+            "cigar2": "283S6M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0925700216",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "192S16M127S"
+        },
+        "align2": {
+            "score": 606,
+            "begin": 1052,
+            "cigar": "88M1D117M1D130M"
+        },
+        "jump_forward": {
+            "score": 606,
+            "readlen1": 5,
+            "readlen2": 330,
+            "begin1": 129,
+            "cigar1": "5M330S",
+            "begin2": 1057,
+            "cigar2": "5S83M1D117M1D130M"
+        },
+        "jump_backward": {
+            "score": 606,
+            "readlen1": 330,
+            "readlen2": 5,
+            "begin1": 1052,
+            "cigar1": "88M1D117M1D125M5S",
+            "begin2": 747,
+            "cigar2": "330S5M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2568711889",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "192S16M49S"
+        },
+        "align2": {
+            "score": 484,
+            "begin": 1053,
+            "cigar": "257M"
+        },
+        "jump_forward": {
+            "score": 484,
+            "readlen1": 5,
+            "readlen2": 252,
+            "begin1": 292,
+            "cigar1": "5M252S",
+            "begin2": 1058,
+            "cigar2": "5S252M"
+        },
+        "jump_backward": {
+            "score": 484,
+            "readlen1": 252,
+            "readlen2": 5,
+            "begin1": 1053,
+            "cigar1": "252M5S",
+            "begin2": 21,
+            "cigar2": "252S5M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-3375785446",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "177S16M110S"
+        },
+        "align2": {
+            "score": 566,
+            "begin": 1068,
+            "cigar": "303M"
+        },
+        "jump_forward": {
+            "score": 566,
+            "readlen1": 4,
+            "readlen2": 299,
+            "begin1": 54,
+            "cigar1": "4M299S",
+            "begin2": 1072,
+            "cigar2": "4S299M"
+        },
+        "jump_backward": {
+            "score": 566,
+            "readlen1": 299,
+            "readlen2": 4,
+            "begin1": 1068,
+            "cigar1": "299M4S",
+            "begin2": 410,
+            "cigar2": "299S4M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-3522218833",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "160S16M116S"
+        },
+        "align2": {
+            "score": 544,
+            "begin": 1085,
+            "cigar": "292M"
+        },
+        "jump_forward": {
+            "score": 544,
+            "readlen1": 5,
+            "readlen2": 287,
+            "begin1": 45,
+            "cigar1": "5M287S",
+            "begin2": 1090,
+            "cigar2": "5S287M"
+        },
+        "jump_backward": {
+            "score": 544,
+            "readlen1": 287,
+            "readlen2": 5,
+            "begin1": 1085,
+            "cigar1": "287M5S",
+            "begin2": 712,
+            "cigar2": "287S5M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0613122920",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "153S16M187S"
+        },
+        "align2": {
+            "score": 634,
+            "begin": 1092,
+            "cigar": "285M1I26M1D18M1D26M"
+        },
+        "jump_forward": {
+            "score": 640,
+            "readlen1": 13,
+            "readlen2": 343,
+            "begin1": 371,
+            "cigar1": "1S7M348S",
+            "begin2": 1105,
+            "cigar2": "13S272M1I26M1D18M1D26M"
+        },
+        "jump_backward": {
+            "score": 634,
+            "readlen1": 351,
+            "readlen2": 5,
+            "begin1": 1092,
+            "cigar1": "285M1I26M1D18M1D21M5S",
+            "begin2": 296,
+            "cigar2": "351S5M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2176910874",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "148S16M75S"
+        },
+        "align2": {
+            "score": 454,
+            "begin": 1104,
+            "cigar": "7S232M"
+        },
+        "jump_forward": {
+            "score": 464,
+            "readlen1": 8,
+            "readlen2": 231,
+            "begin1": 1330,
+            "cigar1": "2S6M231S",
+            "begin2": 1105,
+            "cigar2": "8S231M"
+        },
+        "jump_backward": {
+            "score": 454,
+            "readlen1": 233,
+            "readlen2": 6,
+            "begin1": 1104,
+            "cigar1": "7S226M6S",
+            "begin2": 942,
+            "cigar2": "233S6M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-0089900811",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "131S16M159S"
+        },
+        "align2": {
+            "score": 586,
+            "begin": 1114,
+            "cigar": "303M3S"
+        },
+        "jump_forward": {
+            "score": 586,
+            "readlen1": 6,
+            "readlen2": 300,
+            "begin1": 872,
+            "cigar1": "6M300S",
+            "begin2": 1120,
+            "cigar2": "6S297M3S"
+        },
+        "jump_backward": {
+            "score": 592,
+            "readlen1": 299,
+            "readlen2": 7,
+            "begin1": 1114,
+            "cigar1": "299M7S",
+            "begin2": 105,
+            "cigar2": "299S7M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2586510983",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "126S16M206S"
+        },
+        "align2": {
+            "score": 666,
+            "begin": 1119,
+            "cigar": "348M"
+        },
+        "jump_forward": {
+            "score": 666,
+            "readlen1": 5,
+            "readlen2": 343,
+            "begin1": 245,
+            "cigar1": "5M343S",
+            "begin2": 1124,
+            "cigar2": "5S343M"
+        },
+        "jump_backward": {
+            "score": 666,
+            "readlen1": 344,
+            "readlen2": 4,
+            "begin1": 1119,
+            "cigar1": "344M4S",
+            "begin2": 42,
+            "cigar2": "344S4M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2004243846",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "123S16M149S"
+        },
+        "align2": {
+            "score": 556,
+            "begin": 1122,
+            "cigar": "288M"
+        },
+        "jump_forward": {
+            "score": 556,
+            "readlen1": 5,
+            "readlen2": 283,
+            "begin1": 385,
+            "cigar1": "5M283S",
+            "begin2": 1127,
+            "cigar2": "5S283M"
+        },
+        "jump_backward": {
+            "score": 556,
+            "readlen1": 282,
+            "readlen2": 6,
+            "begin1": 1122,
+            "cigar1": "282M6S",
+            "begin2": 101,
+            "cigar2": "282S6M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2714540436",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "116S16M198S"
+        },
+        "align2": {
+            "score": 626,
+            "begin": 1129,
+            "cigar": "137M1I192M"
+        },
+        "jump_forward": {
+            "score": 626,
+            "readlen1": 5,
+            "readlen2": 325,
+            "begin1": 40,
+            "cigar1": "5M325S",
+            "begin2": 1134,
+            "cigar2": "5S132M1I192M"
+        },
+        "jump_backward": {
+            "score": 626,
+            "readlen1": 323,
+            "readlen2": 7,
+            "begin1": 1129,
+            "cigar1": "137M1I185M7S",
+            "begin2": 147,
+            "cigar2": "323S7M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2951580606",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "118S16M168S"
+        },
+        "align2": {
+            "score": 556,
+            "begin": 1129,
+            "cigar": "51M1I20M1I229M"
+        },
+        "jump_forward": {
+            "score": 556,
+            "readlen1": 5,
+            "readlen2": 297,
+            "begin1": 40,
+            "cigar1": "5M297S",
+            "begin2": 1134,
+            "cigar2": "5S46M1I20M1I229M"
+        },
+        "jump_backward": {
+            "score": 556,
+            "readlen1": 294,
+            "readlen2": 8,
+            "begin1": 1129,
+            "cigar1": "51M1I20M1I221M8S",
+            "begin2": 1314,
+            "cigar2": "294S8M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2633771665",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "110S16M160S"
+        },
+        "align2": {
+            "score": 538,
+            "begin": 1136,
+            "cigar": "44M1I241M"
+        },
+        "jump_forward": {
+            "score": 538,
+            "readlen1": 6,
+            "readlen2": 280,
+            "begin1": 1211,
+            "cigar1": "6M280S",
+            "begin2": 1142,
+            "cigar2": "6S38M1I241M"
+        },
+        "jump_backward": {
+            "score": 538,
+            "readlen1": 281,
+            "readlen2": 5,
+            "begin1": 1136,
+            "cigar1": "44M1I236M5S",
+            "begin2": 269,
+            "cigar2": "281S5M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-2997083566",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "103S16M118S"
+        },
+        "align2": {
+            "score": 454,
+            "begin": 1142,
+            "cigar": "237M"
+        },
+        "jump_forward": {
+            "score": 454,
+            "readlen1": 5,
+            "readlen2": 232,
+            "begin1": 61,
+            "cigar1": "5M232S",
+            "begin2": 1147,
+            "cigar2": "5S232M"
+        },
+        "jump_backward": {
+            "score": 454,
+            "readlen1": 232,
+            "readlen2": 5,
+            "begin1": 1142,
+            "cigar1": "232M5S",
+            "begin2": 178,
+            "cigar2": "232S5M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1493747061",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "103S16M179S"
+        },
+        "align2": {
+            "score": 576,
+            "begin": 1142,
+            "cigar": "298M"
+        },
+        "jump_forward": {
+            "score": 576,
+            "readlen1": 5,
+            "readlen2": 293,
+            "begin1": 61,
+            "cigar1": "5M293S",
+            "begin2": 1147,
+            "cigar2": "5S293M"
+        },
+        "jump_backward": {
+            "score": 576,
+            "readlen1": 293,
+            "readlen2": 5,
+            "begin1": 1142,
+            "cigar1": "293M5S",
+            "begin2": 279,
+            "cigar2": "293S5M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-3389647997",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "97S16M236S"
+        },
+        "align2": {
+            "score": 678,
+            "begin": 1148,
+            "cigar": "349M"
+        },
+        "jump_forward": {
+            "score": 678,
+            "readlen1": 6,
+            "readlen2": 343,
+            "begin1": 155,
+            "cigar1": "6M343S",
+            "begin2": 1154,
+            "cigar2": "6S343M"
+        },
+        "jump_backward": {
+            "score": 678,
+            "readlen1": 344,
+            "readlen2": 5,
+            "begin1": 1148,
+            "cigar1": "344M5S",
+            "begin2": 401,
+            "cigar2": "344S5M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-2690486068",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "86S16M198S"
+        },
+        "align2": {
+            "score": 563,
+            "begin": 1161,
+            "cigar": "49M2I249M"
+        },
+        "jump_forward": {
+            "score": 563,
+            "readlen1": 4,
+            "readlen2": 296,
+            "begin1": 399,
+            "cigar1": "4M296S",
+            "begin2": 1165,
+            "cigar2": "4S45M2I249M"
+        },
+        "jump_backward": {
+            "score": 563,
+            "readlen1": 295,
+            "readlen2": 5,
+            "begin1": 1161,
+            "cigar1": "49M2I244M5S",
+            "begin2": 966,
+            "cigar2": "295S5M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1426766455",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "80S16M249S"
+        },
+        "align2": {
+            "score": 566,
+            "begin": 1162,
+            "cigar": "9M1D38M1D32M1D217M1I14M1I33M"
+        },
+        "jump_forward": {
+            "score": 574,
+            "readlen1": 9,
+            "readlen2": 336,
+            "begin1": 101,
+            "cigar1": "2S7M336S",
+            "begin2": 1172,
+            "cigar2": "9S38M1D32M1D217M1I14M1I33M"
+        },
+        "jump_backward": {
+            "score": 566,
+            "readlen1": 340,
+            "readlen2": 5,
+            "begin1": 1162,
+            "cigar1": "9M1D38M1D32M1D217M1I14M1I28M5S",
+            "begin2": 822,
+            "cigar2": "340S5M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1368472517",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "82S16M181S"
+        },
+        "align2": {
+            "score": 524,
+            "begin": 1163,
+            "cigar": "241M1I37M"
+        },
+        "jump_forward": {
+            "score": 524,
+            "readlen1": 6,
+            "readlen2": 273,
+            "begin1": 118,
+            "cigar1": "6M273S",
+            "begin2": 1169,
+            "cigar2": "6S235M1I37M"
+        },
+        "jump_backward": {
+            "score": 524,
+            "readlen1": 273,
+            "readlen2": 6,
+            "begin1": 1163,
+            "cigar1": "241M1I31M6S",
+            "begin2": 519,
+            "cigar2": "273S6M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-0059894936",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "67S16M185S"
+        },
+        "align2": {
+            "score": 516,
+            "begin": 1178,
+            "cigar": "268M"
+        },
+        "jump_forward": {
+            "score": 516,
+            "readlen1": 4,
+            "readlen2": 264,
+            "begin1": 6,
+            "cigar1": "4M264S",
+            "begin2": 1182,
+            "cigar2": "4S264M"
+        },
+        "jump_backward": {
+            "score": 516,
+            "readlen1": 264,
+            "readlen2": 4,
+            "begin1": 1178,
+            "cigar1": "264M4S",
+            "begin2": 410,
+            "cigar2": "264S4M"
+        }
+    },
+    {
+        "qname": "036742_1-Z0027-1105355041",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "55S16M271S"
+        },
+        "align2": {
+            "score": 638,
+            "begin": 1190,
+            "cigar": "189M1D42M1D110M1S"
+        },
+        "jump_forward": {
+            "score": 638,
+            "readlen1": 5,
+            "readlen2": 337,
+            "begin1": 53,
+            "cigar1": "5M337S",
+            "begin2": 1195,
+            "cigar2": "5S184M1D42M1D110M1S"
+        },
+        "jump_backward": {
+            "score": 640,
+            "readlen1": 338,
+            "readlen2": 4,
+            "begin1": 1190,
+            "cigar1": "189M1D42M1D107M4S",
+            "begin2": 18,
+            "cigar2": "338S4M"
+        }
+    },
+    {
+        "qname": "036742_2-Z0027-1428982223",
+        "align1": {
+            "score": 22,
+            "begin": 1374,
+            "cigar": "44S16M280S"
+        },
+        "align2": {
+            "score": 560,
+            "begin": 1201,
+            "cigar": "178M1D16M1D6M1I116M1I18M4S"
+        },
+        "jump_forward": {
+            "score": 560,
+            "readlen1": 6,
+            "readlen2": 334,
+            "begin1": 1094,
+            "cigar1": "6M334S",
+            "begin2": 1207,
+            "cigar2": "6S172M1D16M1D6M1I116M1I18M4S"
+        },
+        "jump_backward": {
+            "score": 568,
+            "readlen1": 334,
+            "readlen2": 6,
+            "begin1": 1201,
+            "cigar1": "178M1D16M1D6M1I116M1I16M6S",
+            "begin2": 673,
+            "cigar2": "334S6M"
+        }
+    }
+]

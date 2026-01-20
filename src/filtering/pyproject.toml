@@ -10,7 +10,6 @@ authors = [
 dependencies = [
     "ugbio_comparison",
     "pickle-secure>=0.99.9",
-    "biopython>=1.73",
     "dill>=0.3.9",
 ]
 requires-python = ">=3.11"
