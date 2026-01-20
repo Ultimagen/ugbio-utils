@@ -35,7 +35,7 @@ bedmap = "bedmap"
 def get_parser():
     parser = argparse.ArgumentParser(
         prog="process_cnvs.py",
-        description="Process CNV calls from cn.mops and ControlFREEC: " "filter, annotate, and convert to VCF",
+        description="Process CNV calls from cn.mops and ControlFREEC: filter, annotate, and convert to VCF",
     )
     parser.add_argument("--input_bed_file", help="input bed file with .bed suffix", required=True, type=str)
     parser.add_argument(
