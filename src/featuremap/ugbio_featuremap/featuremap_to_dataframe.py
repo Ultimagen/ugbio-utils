@@ -113,11 +113,23 @@ def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> N
 class ColumnConfig:
     """Configuration for column processing."""
 
-    info_ids: list[str]
-    scalar_fmt_ids: list[str]
-    list_fmt_ids: list[str]
-    info_meta: dict
-    fmt_meta: dict
+    # Metadata dictionaries
+    info_meta: dict  # INFO field metadata (e.g. {X_HMER_REF: {"num": "1", "type": "String", "cat": None}})
+    fmt_meta: dict  # FORMAT fields metadata (e.g. {DP: {"num": "1", "type": "Integer", "cat": None}})
+
+    # Field names
+    info_ids: list[str]  # INFO field names (e.g. X_NEXT1)
+    fmt_ids: list[str]  # FORMAT field names (e.g. DP, MQUAL)
+    scalar_fmt_ids: list[str]  # FORMAT field names with scalar values (e.g. DP)
+    list_fmt_ids: list[str]  # FORMAT field names with list values (e.g. MQUAL)
+
+    # Expand columns
+    expand_columns: dict[str, int] | None = None  # columns to expand into multiple columns (e.g. {"AD": 2})
+    expand_sizes: list[int] | None = None  # Size of each expand column
+
+    # Indices
+    list_indices: list[int] | None = None  # 0-based column indices for list columns
+    expand_indices: list[int] | None = None  # 0-based column indices for expand columns
 
 
 @dataclass
@@ -127,15 +139,9 @@ class VCFJobConfig:
     bcftools_path: str
     awk_script: str
     columns: list[str]
-    list_indices: list[int]
     schema: dict[str, pl.PolarsDataType]
-    info_meta: dict
-    fmt_meta: dict
-    info_ids: list[str]
-    scalar_fmt_ids: list[str]
-    list_fmt_ids: list[str]
+    column_config: ColumnConfig
     sample_list: list[str]
-    fmt_ids: list[str]
     log_level: int
 
 
@@ -184,6 +190,7 @@ AGGREGATION_TYPES = [
     ("min", pl.Float64),
     ("max", pl.Float64),
     ("count", pl.Int64),
+    ("count_zero", pl.Int64),
 ]
 
 
@@ -358,16 +365,23 @@ def _generate_genomic_regions(
     return regions
 
 
-def _sanity_check_format_numbers(format_ids: list[str], fmt_meta: dict) -> None:
-    """Raise if any FORMAT tag has a Number we do not support."""
+def _sanity_check_format_numbers(
+    format_ids: list[str], fmt_meta: dict, expand_columns: dict[str, int] | None = None
+) -> None:
+    """
+    Raise an error if any FORMAT tag has a Number we do not support. (not "1" or ".")
+    When in aggregate mode, we allow all Number values for expand columns.
+    """
+    expand_columns = expand_columns or {}
     for tag in format_ids:
         num = fmt_meta[tag]["num"]
         if num not in {"1", "."}:
-            raise ValueError(
-                f"Unsupported FORMAT field {tag}: Number={num}. "
-                "Only '1' (scalar) or '.' (variable list) are supported. "
-                "Use --drop-format to exclude this tag."
-            )
+            if tag not in expand_columns:
+                raise ValueError(
+                    f"Unsupported FORMAT field {tag}: Number={num}. "
+                    "Only '1' (scalar) or '.' (variable list) are supported. "
+                    "Use --drop-format to exclude this tag."
+                )
 
 
 def _split_format_ids(format_ids: list[str], fmt_meta: dict) -> tuple[list[str], list[str]]:
@@ -493,18 +507,23 @@ def _build_explicit_schema(cols: list[str], info_meta: dict, fmt_meta: dict) -> 
     return schema
 
 
-def _transform_cols_and_schema_for_aggregate(
+# TODO: remove the noqa and fix the code
+def _transform_cols_and_schema_for_aggregate(  # noqa: C901
     cols: list[str],
     list_fmt_ids: list[str],
     info_meta: dict,
     fmt_meta: dict,
+    expand_columns: dict[str, int] | None = None,
 ) -> tuple[list[str], dict[str, pl.PolarsDataType]]:
     """
     Transform columns and schema for aggregate mode.
 
-    In aggregate mode, each list column is replaced with aggregation columns:
-    {col}_mean, {col}_min, {col}_max, {col}_count
-    (defined by AGGREGATION_TYPES)
+    In aggregate mode:
+    - Each list column is replaced with aggregation columns:
+      {col}_mean, {col}_min, {col}_max, {col}_count, {col}_count_zero
+      (defined by AGGREGATION_TYPES)
+    - Each expand column is replaced with indexed columns:
+      {col}_0, {col}_1, ... (up to size)
 
     Parameters
     ----------
@@ -516,6 +535,8 @@ def _transform_cols_and_schema_for_aggregate(
         INFO field metadata
     fmt_meta : dict
         FORMAT field metadata
+    expand_columns : dict[str, int] | None
+        Mapping of column names to their expand sizes (e.g., {"AD": 2})
 
     Returns
     -------
@@ -523,9 +544,14 @@ def _transform_cols_and_schema_for_aggregate(
         Transformed columns and schema
     """
     transformed_cols: list[str] = []
+    expand_columns = expand_columns or {}
 
     for col in cols:
-        if col in list_fmt_ids:
+        if col in expand_columns:
+            # Replace expand column with indexed columns
+            size = expand_columns[col]
+            transformed_cols.extend([f"{col}_{i}" for i in range(size)])
+        elif col in list_fmt_ids:
             # Replace list column with aggregation columns
             transformed_cols.extend([f"{col}_{suffix}" for suffix, _ in AGGREGATION_TYPES])
         else:
@@ -537,8 +563,21 @@ def _transform_cols_and_schema_for_aggregate(
 
     # Override schema for aggregation columns (they're not in metadata)
     for col in list_fmt_ids:
-        for suffix, dtype in AGGREGATION_TYPES:
-            schema[f"{col}_{suffix}"] = dtype
+        if col not in expand_columns:  # Don't add aggregation schema for expand columns
+            for suffix, dtype in AGGREGATION_TYPES:
+                schema[f"{col}_{suffix}"] = dtype
+
+    # Override schema for expand columns (determine type from metadata)
+    for col, size in expand_columns.items():
+        col_type = pl.Int64  # Default to Int64
+        if col in fmt_meta:
+            meta_type = fmt_meta[col].get("type", "Integer")
+            if meta_type == "Float":
+                col_type = pl.Float64
+            elif meta_type == "String":
+                col_type = pl.Utf8
+        for i in range(size):
+            schema[f"{col}_{i}"] = col_type
 
     return transformed_cols, schema
 
@@ -627,7 +666,8 @@ def _run_region_jobs(
     return valid_files
 
 
-def vcf_to_parquet(  # noqa: PLR0915
+# TODO: remove the noqa and fix the code
+def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
     vcf: str,
     out: str,
     drop_info: set[str] | None = None,
@@ -636,6 +676,7 @@ def vcf_to_parquet(  # noqa: PLR0915
     jobs: int = DEFAULT_JOBS,
     list_mode: str = "explode",
     log_level: int = logging.INFO,
+    expand_columns: dict[str, int] | None = None,
 ) -> None:
     """
     Convert VCF to Parquet using region-based parallel processing.
@@ -662,7 +703,13 @@ def vcf_to_parquet(  # noqa: PLR0915
         Number of parallel jobs (0 = auto-detect CPU cores)
     list_mode : str
         How to handle list format fields: "explode" (one row per list element) or
-        "aggregate" (mean, min, max, count metrics). Default is "explode".
+        "aggregate" (mean, min, max, count, count_zero metrics). Default is "explode".
+    log_level : int
+        Logging level (e.g., logging.DEBUG, logging.INFO)
+    expand_columns : dict[str, int] | None
+        Mapping of column names to their expand sizes. In aggregate mode,
+        these columns are expanded into indexed columns (e.g., {"AD": 2} produces
+        AD_0, AD_1) instead of being aggregated. Only used when list_mode="aggregate".
     """
     log.info(f"Input: {vcf}")
     log.info(f"Output: {out}")
@@ -697,25 +744,44 @@ def vcf_to_parquet(  # noqa: PLR0915
 
     # Validate FORMAT fields
     format_ids = list(fmt_meta.keys())
-    _sanity_check_format_numbers(format_ids, fmt_meta)
+    _sanity_check_format_numbers(format_ids, fmt_meta, expand_columns)
 
     # Split FORMAT fields
     scalar_fmt_ids, list_fmt_ids = _split_format_ids(format_ids, fmt_meta)
     info_ids = list(info_meta.keys())
-    log.info(f"Processing {len(scalar_fmt_ids)} scalar FORMAT field(s), {len(list_fmt_ids)} list FORMAT field(s)")
+
+    # Handle expand columns: remove them from list_fmt_ids for aggregation
+    # They will be expanded into individual columns instead of aggregated
+    expand_columns = expand_columns or {}
+    effective_list_fmt_ids = [col for col in list_fmt_ids if col not in expand_columns]
+    expand_ids = [col for col in list_fmt_ids if col in expand_columns]
+
+    if expand_columns:
+        log.info(f"Expand columns (will be expanded): {expand_ids}")
+    log.info(
+        f"Processing {len(scalar_fmt_ids)} scalar FORMAT field(s), {len(effective_list_fmt_ids)} list FORMAT field(s)"
+    )
     log.debug(f"Scalar FORMAT fields: {scalar_fmt_ids}")
-    log.debug(f"List FORMAT fields: {list_fmt_ids}")
+    log.debug(f"List FORMAT fields: {effective_list_fmt_ids}")
 
     # Build query string and column names
     fmt_str = _make_query_string(format_ids, info_ids)
     cols = [CHROM, POS, QUAL, REF, ALT] + info_ids + format_ids
 
-    # Find indices of list columns for AWK script
+    # Find indices of list columns for AWK script (excluding fixed-tuple columns)
     list_fmt_indices = []
     base_cols = [CHROM, POS, QUAL, REF, ALT] + info_ids
-    for list_col in list_fmt_ids:
+    for list_col in effective_list_fmt_ids:
         idx = len(base_cols) + format_ids.index(list_col)
         list_fmt_indices.append(idx)
+
+    # Find indices of expand columns for AWK script
+    expand_indices = []
+    expand_sizes = []
+    for expand_col in expand_ids:
+        idx = len(base_cols) + format_ids.index(expand_col)
+        expand_indices.append(idx)
+        expand_sizes.append(expand_columns[expand_col])
 
     # Fetch sample list ONCE in main process
     sample_list = _get_sample_list(vcf)
@@ -732,10 +798,14 @@ def vcf_to_parquet(  # noqa: PLR0915
 
     # Transform columns and schema for aggregate mode
     if list_mode == "aggregate":
-        log.info("Using aggregate mode: list fields will be aggregated (mean, min, max, count)")
-        cols, schema = _transform_cols_and_schema_for_aggregate(cols, list_fmt_ids, info_meta, fmt_meta)
+        log.info("Using aggregate mode: list fields will be aggregated (mean, min, max, count, count_zero)")
+        cols, schema = _transform_cols_and_schema_for_aggregate(
+            cols, effective_list_fmt_ids, info_meta, fmt_meta, expand_columns
+        )
     else:
         log.info("Using explode mode: list fields will be expanded to one row per element")
+        if expand_columns:
+            log.warning("expand_columns is only used in aggregate mode; ignoring in explode mode")
         schema = _build_explicit_schema(cols, info_meta, fmt_meta)
 
     with pl.StringCache():
@@ -750,20 +820,28 @@ def vcf_to_parquet(  # noqa: PLR0915
         log.info(f"Created {len(regions)} regions for parallel processing")
         log.debug(f"First 5 regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")  # noqa PLR2004
 
-        # Build immutable job configuration (shared by every worker)  ▼ NEW
+        # Build immutable job configuration (shared by every worker)
+        # Build column configuration
+        col_cfg = ColumnConfig(
+            info_meta=info_meta,
+            fmt_meta=fmt_meta,
+            info_ids=info_ids,
+            fmt_ids=fmt_ids,
+            scalar_fmt_ids=scalar_fmt_ids,
+            list_fmt_ids=effective_list_fmt_ids,
+            expand_columns=expand_columns if list_mode == "aggregate" else None,
+            expand_sizes=expand_sizes if list_mode == "aggregate" else None,
+            expand_indices=expand_indices if list_mode == "aggregate" else None,
+            list_indices=list_fmt_indices,
+        )
+
         job_cfg = VCFJobConfig(
             bcftools_path=bcftools,
             awk_script=_get_awk_script_path(mode=list_mode),
             columns=cols,
-            list_indices=list_fmt_indices,
             schema=schema,
-            info_meta=info_meta,
-            fmt_meta=fmt_meta,
-            info_ids=info_ids,
-            scalar_fmt_ids=scalar_fmt_ids,
-            list_fmt_ids=list_fmt_ids,
+            column_config=col_cfg,
             sample_list=sample_list,
-            fmt_ids=fmt_ids,
             log_level=log_level,
         )
 
@@ -851,8 +929,37 @@ def _bcftools_awk_stdout(
     awk_script: str,
     list_indices: list[int],
     sample_name: str,
+    expand_indices: list[int] | None = None,
+    expand_sizes: list[int] | None = None,
 ) -> str:
-    """Return TSV (string) produced by `bcftools | awk` for a region."""
+    """Return TSV (string) produced by `bcftools | awk` for a region.
+
+    Parameters
+    ----------
+    region : str
+        Genomic region in format "chr:start-end"
+    vcf_path : str
+        Path to the VCF file
+    fmt_str : str
+        bcftools query format string
+    bcftools : str
+        Path to bcftools executable
+    awk_script : str
+        Path to the AWK script
+    list_indices : list[int]
+        0-based column indices for list columns to aggregate
+    sample_name : str
+        Name of the sample to extract
+    expand_indices : list[int] | None
+        0-based column indices for expand columns to split
+    expand_sizes : list[int] | None
+        Size of each expand column (parallel array with expand_indices)
+
+    Returns
+    -------
+    str
+        TSV string output from bcftools | awk pipeline
+    """
     bcftools_cmd = [bcftools, "query", "-s", sample_name, "-f", fmt_str, vcf_path]
     if region:
         bcftools_cmd.insert(2, "-r")
@@ -862,9 +969,20 @@ def _bcftools_awk_stdout(
         "awk",
         "-v",
         f"list_indices={','.join(map(str, list_indices))}",
-        "-f",
-        awk_script,
     ]
+
+    # Add expand column parameters if provided
+    if expand_indices and expand_sizes:
+        awk_cmd.extend(
+            [
+                "-v",
+                f"expand_indices={','.join(map(str, expand_indices))}",
+                "-v",
+                f"expand_sizes={','.join(map(str, expand_sizes))}",
+            ]
+        )
+
+    awk_cmd.extend(["-f", awk_script])
 
     bcftool = subprocess.Popen(bcftools_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     awk = subprocess.Popen(
@@ -941,8 +1059,10 @@ def _convert_sample_frames_to_polars(
             fmt_str=fmt_str,
             bcftools=job_cfg.bcftools_path,
             awk_script=job_cfg.awk_script,
-            list_indices=job_cfg.list_indices,
+            list_indices=job_cfg.column_config.list_indices,
             sample_name=sample,
+            expand_indices=job_cfg.column_config.expand_indices,
+            expand_sizes=job_cfg.column_config.expand_sizes,
         )
         if not single_sample_tsv.strip():
             log.debug(f"Sample {sample} has no data in region {region}")
@@ -959,11 +1079,17 @@ def _join_multi_sample_frames(frames: dict[str, pl.DataFrame], job_cfg: VCFJobCo
     """Join multiple sample DataFrames, renaming FORMAT columns and dropping duplicates."""
     aggregation_suffixes = {suffix for suffix, _ in AGGREGATION_TYPES}
 
-    # Build set of all columns that need sample suffix (FORMAT + aggregate columns)
-    cols_to_rename = set(job_cfg.fmt_ids)
-    for list_id in job_cfg.list_fmt_ids:
+    # Build set of all columns that need sample suffix (FORMAT + aggregate columns + expand columns)
+    cols_to_rename = set(job_cfg.column_config.fmt_ids)
+    for list_id in job_cfg.column_config.list_fmt_ids:
         for suffix in aggregation_suffixes:
             cols_to_rename.add(f"{list_id}_{suffix}")
+
+    # Add expand column split columns (e.g., AD_0, AD_1)
+    if job_cfg.column_config.expand_columns:
+        for col, size in job_cfg.column_config.expand_columns.items():
+            for i in range(size):
+                cols_to_rename.add(f"{col}_{i}")
 
     # Rename FORMAT columns and aggregate columns with sample suffix
     for sample, frame in frames.items():
@@ -977,8 +1103,8 @@ def _join_multi_sample_frames(frames: dict[str, pl.DataFrame], job_cfg: VCFJobCo
     join_keys = [CHROM, POS, REF, ALT]
 
     # Columns to drop from subsequent frames (QUAL, INFO) - they're identical across samples
-    non_sample_specific_cols = {QUAL} | set(job_cfg.info_ids)
-    cols_to_drop = non_sample_specific_cols - set(join_keys) - set(job_cfg.fmt_ids)
+    non_sample_specific_cols = {QUAL} | set(job_cfg.column_config.info_ids)
+    cols_to_drop = non_sample_specific_cols - set(join_keys) - set(job_cfg.column_config.fmt_ids)
 
     # Join remaining frames, dropping duplicate columns
     for frame in frame_list[1:]:
@@ -1044,11 +1170,12 @@ def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, job_cfg: VCFJobC
     exprs: list[pl.Expr] = [pl.col(POS).cast(pl.Int64)]
 
     # build expressions for INFO / FORMAT
-    exprs.extend(_cast_expr(tag, job_cfg.info_meta[tag]) for tag in job_cfg.info_ids)
-    exprs.extend(_cast_expr(tag, job_cfg.fmt_meta[tag]) for tag in job_cfg.scalar_fmt_ids)
+    col_cfg = job_cfg.column_config
+    exprs.extend(_cast_expr(tag, col_cfg.info_meta[tag]) for tag in col_cfg.info_ids)
+    exprs.extend(_cast_expr(tag, col_cfg.fmt_meta[tag]) for tag in col_cfg.scalar_fmt_ids)
     # Only cast list columns if they exist (they're replaced with aggregate columns in aggregate mode)
     exprs.extend(
-        _cast_expr(tag, job_cfg.fmt_meta[tag]) for tag in job_cfg.list_fmt_ids if tag in featuremap_dataframe.columns
+        _cast_expr(tag, col_cfg.fmt_meta[tag]) for tag in col_cfg.list_fmt_ids if tag in featuremap_dataframe.columns
     )
 
     # QUAL ─ force Float64 even if all values are missing
@@ -1088,18 +1215,38 @@ def main(argv: list[str] | None = None) -> None:
         default="explode",
         help=(
             "How to handle list format fields: 'explode' (one row per list element) or 'aggregate' "
-            "(mean, min, max, count metrics). Default is 'explode'."
+            "(mean, min, max, count, count_zero metrics). Default is 'explode'."
         ),
     )
-    # ───────────── new verbose flag ─────────────
+    parser.add_argument(
+        "--expand-columns",
+        nargs="*",
+        default=[],
+        metavar="COL:SIZE",
+        help=(
+            "Columns to expand into multiple columns instead of aggregate (only in aggregate mode). "
+            "Format: COL:SIZE, e.g., 'AD:2' expands AD into AD_0, AD_1."
+        ),
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
-    # -------------------------------------------
     args = parser.parse_args(argv)
 
-    # ───────────── logging setup ───────────────
+    # Parse expand columns
+    expand_columns: dict[str, int] | None = None
+    if args.expand_columns:
+        expand_columns = {}
+        for spec in args.expand_columns:
+            if ":" not in spec:
+                parser.error(f"Invalid expand-columns format: {spec}. Expected COL:SIZE, e.g., 'AD:2'")
+            col, size_str = spec.split(":", 1)
+            try:
+                size = int(size_str)
+            except ValueError:
+                parser.error(f"Invalid size in expand-columns: {spec}. Size must be an integer.")
+            expand_columns[col] = size
+
     log_level = logging.DEBUG if args.verbose else logging.INFO
     _configure_logging(log_level, check_worker_cache=False)
-    # -------------------------------------------
 
     vcf_to_parquet(
         vcf=args.input,
@@ -1110,6 +1257,7 @@ def main(argv: list[str] | None = None) -> None:
         jobs=args.jobs,
         list_mode=args.list_mode,
         log_level=log_level,
+        expand_columns=expand_columns,
     )
 
 
