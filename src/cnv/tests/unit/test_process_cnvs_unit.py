@@ -3,7 +3,7 @@ from os.path import join as pjoin
 from pathlib import Path
 
 import pytest
-from ugbio_cnv.cnmops_utils import aggregate_annotations_in_df, annotate_bed
+from ugbio_cnv.cnv_bed_format_utils import aggregate_annotations_in_df, annotate_bed
 
 
 @pytest.fixture
@@ -11,7 +11,7 @@ def resources_dir():
     return Path(__file__).parent.parent / "resources"
 
 
-class TestProcessCnmopsCnvs:
+class TestProcessCnvs:
     def test_annotate_bed(self, tmpdir, resources_dir):
         input_bed_file = pjoin(resources_dir, "unfiltered_cnvs.bed")
         expected_out_annotate_bed_file = pjoin(resources_dir, "annotate_cnv.bed")

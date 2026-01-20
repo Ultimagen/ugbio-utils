@@ -1,4 +1,4 @@
-"""Utilities for processing and writing CNV calls from cn.mops and other CNV callers."""
+"""Utilities for processing and writing CNV calls from CN.MOPS, ControlFREEC, and other CNV callers."""
 
 import os
 import warnings

@@ -192,3 +192,64 @@ for the reference implementations of the suggested workflows.
 - Filter CNV calls using the provided LCR (low-complexity region) files to reduce false positives
 - Consider minimum CNV length thresholds based on your sequencing depth and biological context
 - The module supports both GRCh37 and GRCh38 reference genomes
+## Key Components
+
+### process_cnvs
+
+Process CNV calls from CN.MOPS or ControlFREEC in BED format: filter by length and UG-CNV-LCR, annotate with coverage statistics, and convert to VCF format.
+
+**Note:** This module is called programmatically (not via CLI) from other pipeline scripts.
+
+#### Programmatic Usage
+
+The `process_cnvs` module is typically invoked from other pipeline components. Here are examples:
+
+**Basic usage (minimal filtering):**
+```python
+from ugbio_cnv import process_cnvs
+
+process_cnvs.run([
+    "process_cnvs",
+    "--input_bed_file", "cnv_calls.bed",
+    "--fasta_index_file", "reference.fasta.fai",
+    "--sample_name", "sample_001"
+])
+```
+
+**With LCR filtering and length thresholds:**
+```python
+from ugbio_cnv import process_cnvs
+
+process_cnvs.run([
+    "process_cnvs",
+    "--input_bed_file", "cnv_calls.bed",
+    "--cnv_lcr_file", "ug_cnv_lcr.bed",
+    "--min_cnv_length", "10000",
+    "--intersection_cutoff", "0.5",
+    "--fasta_index_file", "reference.fasta.fai",
+    "--sample_name", "sample_001",
+    "--out_directory", "/path/to/output/"
+])
+```
+
+**Full pipeline with coverage annotations:**
+```python
+from ugbio_cnv import process_cnvs
+
+process_cnvs.run([
+    "process_cnvs",
+    "--input_bed_file", "cnv_calls.bed",
+    "--cnv_lcr_file", "ug_cnv_lcr.bed",
+    "--min_cnv_length", "10000",
+    "--sample_norm_coverage_file", "sample.normalized_coverage.bed",
+    "--cohort_avg_coverage_file", "cohort.average_coverage.bed",
+    "--fasta_index_file", "reference.fasta.fai",
+    "--sample_name", "sample_001",
+    "--out_directory", "/path/to/output/",
+    "--verbosity", "INFO"
+])
+```
+
+**Input:** BED file with CNV calls from CN.MOPS or ControlFREEC
+
+**Output:** Filtered and annotated VCF file with CNV calls (`.vcf.gz` and `.vcf.gz.tbi`)

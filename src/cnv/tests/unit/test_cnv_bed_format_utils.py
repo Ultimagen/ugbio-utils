@@ -1,6 +1,6 @@
 import pandas as pd
 import pytest
-from ugbio_cnv.cnmops_utils import process_filter_columns
+from ugbio_cnv.cnv_bed_format_utils import process_filter_columns
 
 
 class TestProcessFilterColumns:

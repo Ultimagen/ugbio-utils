@@ -12,7 +12,8 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 # DESCRIPTION
-#    Process CNV calls from cn.mops: filter by length and UG-CNV-LCR, annotate, and convert to VCF.
+#    Process CNV calls in BED format like from cn.mops and ControlFREEC:
+#    filter by length and UG-CNV-LCR, annotate, and convert to VCF.
 # CHANGELOG in reverse chronological order
 
 import argparse
@@ -21,7 +22,7 @@ import sys
 import warnings
 
 import ugbio_core.misc_utils as mu
-from ugbio_cnv import cnmops_utils
+from ugbio_cnv import cnv_bed_format_utils
 from ugbio_core import vcf_utils
 from ugbio_core.logger import logger
 
@@ -33,8 +34,8 @@ bedmap = "bedmap"
 
 def get_parser():
     parser = argparse.ArgumentParser(
-        prog="process_cnmops_cnvs.py",
-        description="Process CNV calls from cn.mops: filter, annotate, and convert to VCF",
+        prog="process_cnvs.py",
+        description="Process CNV calls from cn.mops and ControlFREEC: filter, annotate, and convert to VCF",
     )
     parser.add_argument("--input_bed_file", help="input bed file with .bed suffix", required=True, type=str)
     parser.add_argument(
@@ -77,10 +78,10 @@ def get_parser():
 
 def run(argv):
     """
-    Given a cn.mops bed file, this script will filter it by :
+    Given a CNV BED file from cn.mops or ControlFREEC, this script will filter it by:
     1. lcr bed (ug_cnv_lcr) file
-    3. length
-    output is a VCF file with filtering tags
+    2. length
+    Output is a VCF file with filtering tags.
     """
 
     parser = get_parser()
@@ -93,21 +94,21 @@ def run(argv):
         prefix = prefix.rstrip("/") + "/"
 
     # Annotate with lcr_file or min_cnv_length are provided, sort otherwise
-    out_annotate_bed_file = cnmops_utils.annotate_bed(
+    out_annotate_bed_file = cnv_bed_format_utils.annotate_bed(
         args.input_bed_file, args.intersection_cutoff, args.cnv_lcr_file, prefix, args.min_cnv_length
     )
 
     coverage_annotations = []
     if args.sample_norm_coverage_file and args.cohort_avg_coverage_file:
-        coverage_annotations = cnmops_utils.aggregate_coverages(
+        coverage_annotations = cnv_bed_format_utils.aggregate_coverages(
             out_annotate_bed_file, args.sample_norm_coverage_file, args.cohort_avg_coverage_file, args.out_directory
         )
 
-    cnmops_cnv_df = cnmops_utils.aggregate_annotations_in_df(out_annotate_bed_file, coverage_annotations)
-    cnmops_cnv_df = cnmops_utils.add_ids(cnmops_cnv_df)
-    cnmops_cnv_df["SVLEN"] = cnmops_cnv_df["end"] - cnmops_cnv_df["start"]
+    cnv_df = cnv_bed_format_utils.aggregate_annotations_in_df(out_annotate_bed_file, coverage_annotations)
+    cnv_df = cnv_bed_format_utils.add_ids(cnv_df)
+    cnv_df["SVLEN"] = cnv_df["end"] - cnv_df["start"]
     out_vcf_file = out_annotate_bed_file.replace(".bed", ".vcf.gz")
-    cnmops_utils.write_cnv_vcf(out_vcf_file, cnmops_cnv_df, args.sample_name, args.fasta_index_file)
+    cnv_bed_format_utils.write_cnv_vcf(out_vcf_file, cnv_df, args.sample_name, args.fasta_index_file)
     vu = vcf_utils.VcfUtils()
     vu.index_vcf(out_vcf_file)
     logger.info("Cleaning temporary files...")
