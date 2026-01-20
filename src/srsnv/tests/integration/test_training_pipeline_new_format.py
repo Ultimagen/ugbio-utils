@@ -122,10 +122,9 @@ def test_trainer_initialization_with_new_stats_format(tmp_path: Path) -> None:
     # Verify that the trainer was created successfully with the new format
     assert trainer.pos_stats is not None, "Positive stats should be loaded"
     assert trainer.neg_stats is not None, "Negative stats should be loaded"
-    assert trainer.raw_stats is not None, "Raw stats should be loaded"
 
     # Verify that all stats have the expected structure
-    for stats in [trainer.pos_stats, trainer.neg_stats, trainer.raw_stats]:
+    for stats in [trainer.pos_stats, trainer.neg_stats]:
         assert "filters" in stats, "Stats should have 'filters' key"
         assert isinstance(stats["filters"], list), "Filters should be a list"
         assert len(stats["filters"]) > 0, "Should have at least one filter"

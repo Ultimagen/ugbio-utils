@@ -299,13 +299,13 @@ def _convert_unified_stats_to_legacy_format(unified_stats: dict, section: str, f
     return {"filters": filters_list}
 
 
-def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, dict, dict]:
+def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, dict]:
     """
-    Extract positive, negative, and raw stats from unified stats file.
+    Extract positive and negative stats from unified stats file.
 
     The unified stats file must contain sections:
-    - filtering_stats_full_output: Full dataset stats (positive/TP data)
-    - filtering_stats_random_sample: Random sample stats (negative/FP data)
+    - filtering_stats_full_output: Full dataset stats (negative/FP data)
+    - filtering_stats_random_sample: Random sample stats (positive/TP data)
 
     Each section contains a 'filters' subsection with the filter data.
 
@@ -313,7 +313,7 @@ def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, d
         unified_stats_path: Path to the unified stats JSON file
 
     Returns:
-        Tuple of (positive_stats, negative_stats, raw_stats) in legacy format
+        Tuple of (positive_stats, negative_stats) in legacy format
     """
     # Read the unified stats file directly
     with open(unified_stats_path, encoding="utf-8") as f:
@@ -326,15 +326,14 @@ def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, d
     if "filtering_stats_full_output" not in unified_stats:
         raise ValueError("Unified stats file missing 'filtering_stats_full_output' section")
 
-    logger.info("Using filtering_stats_full_output section as positive (true-positive) data")
-    logger.info("Using filtering_stats_random_sample section as negative (false-positive) data")
+    logger.info("Using filtering_stats_random_sample section as positive (true-positive) data")
+    logger.info("Using filtering_stats_full_output section as negative (false-positive) data")
 
     # Convert sections using their 'filters' subsections
-    positive_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_full_output", "filters")
-    negative_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
-    raw_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
+    positive_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
+    negative_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_full_output", "filters")
 
-    return positive_stats, negative_stats, raw_stats
+    return positive_stats, negative_stats
 
 
 # ───────────────────────── core logic ─────────────────────────────────────
@@ -353,7 +352,7 @@ class SRSNVTrainer:
         self.rng = np.random.default_rng(self.seed)
 
         # ─────────── read filtering-stats JSONs & compute priors ───────────
-        self.pos_stats, self.neg_stats, self.raw_stats = _extract_stats_from_unified(args.stats_file)
+        self.pos_stats, self.neg_stats = _extract_stats_from_unified(args.stats_file)
         self.mean_coverage = args.mean_coverage
         if self.mean_coverage is None:
             raise ValueError("--mean-coverage is required if not present in stats-file JSON")
@@ -389,12 +388,11 @@ class SRSNVTrainer:
         # new prior_real_error calculation
         pos_after_filter = _last_non_downsample_rows(self.pos_stats)
         neg_after_filter = _last_non_downsample_rows(self.neg_stats)
-        raw_after_filter = _last_non_downsample_rows(self.raw_stats)
         self.prior_real_error = max(
             self.eps,
             min(1.0 - self.eps, neg_after_filter / (neg_after_filter + pos_after_filter)),
         )
-        self.raw_featuremap_size_filtered = raw_after_filter
+        self.raw_featuremap_size_filtered = neg_after_filter
 
         # Data
         logger.debug(
@@ -942,8 +940,8 @@ class SRSNVTrainer:
 
         # stats and priors
         stats = {
-            "positive": self.pos_stats,
             "negative": self.neg_stats,
+            "positive": self.pos_stats,
             "prior_train_error": self.prior_train_error,
             "prior_real_error": self.prior_real_error,
         }
@@ -1012,8 +1010,7 @@ def _cli() -> argparse.Namespace:
     ap.add_argument(
         "--stats-file",
         required=True,
-        help="JSON file with unified filtering stats containing positive (f2_filters), "
-        "negative (filters), and raw featuremap data",
+        help="JSON file with unified filtering stats containing positive (f2_filters), " "negative (filters)",
     )
     ap.add_argument(
         "--mean-coverage",

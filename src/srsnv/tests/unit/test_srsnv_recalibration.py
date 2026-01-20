@@ -47,12 +47,10 @@ def test_recalibration_columns(tmp_path):
     # Verify that the trainer was created successfully with the new format
     assert trainer.pos_stats is not None, "Positive stats should be loaded"
     assert trainer.neg_stats is not None, "Negative stats should be loaded"
-    assert trainer.raw_stats is not None, "Raw stats should be loaded"
 
     # Verify that stats have the expected structure
     assert "filters" in trainer.pos_stats, "Positive stats should have filters"
     assert "filters" in trainer.neg_stats, "Negative stats should have filters"
-    assert "filters" in trainer.raw_stats, "Raw stats should have filters"
 
     # Verify that data was loaded
     assert trainer.data_frame is not None, "Data frame should be loaded"
@@ -67,4 +65,3 @@ def test_recalibration_columns(tmp_path):
     print(f"✅ Loaded {trainer.data_frame.height} rows of data")
     print(f"✅ Positive stats: {len(trainer.pos_stats['filters'])} filters")
     print(f"✅ Negative stats: {len(trainer.neg_stats['filters'])} filters")
-    print(f"✅ Raw stats: {len(trainer.raw_stats['filters'])} filters")

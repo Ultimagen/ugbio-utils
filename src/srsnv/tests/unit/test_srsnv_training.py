@@ -49,12 +49,11 @@ def test_parse_model_params_invalid() -> None:  # noqa: D103
 def test_extract_stats_from_unified_new_format(resources_dir):
     """Test _extract_stats_from_unified with new format (filtering_stats sections)."""
     stats_file = resources_dir / "416119_L7402.test.unified_stats_new_format.json"
-    pos_stats, neg_stats, raw_stats = _extract_stats_from_unified(stats_file)
+    pos_stats, neg_stats = _extract_stats_from_unified(stats_file)
 
     # Verify structure
     assert "filters" in pos_stats
     assert "filters" in neg_stats
-    assert "filters" in raw_stats
 
     # Verify some basic content
     assert isinstance(pos_stats["filters"], list)
