@@ -11,9 +11,9 @@ def test_recalibration_columns(tmp_path):
 
     # Define paths to the test resources
     resources_dir = Path(__file__).parent.parent / "resources"
-    positive_path = resources_dir / "416119_L7402.test.random_sample.featuremap.filtered.sample.parquet"
-    negative_path = resources_dir / "416119_L7402.test.raw.featuremap.filtered.sample.parquet"
-    stats_file_path = resources_dir / "416119_L7402.test.unified_stats_new_format.json"
+    positive_path = resources_dir / "402572-CL10377.random_sample.featuremap.filtered.parquet"
+    negative_path = resources_dir / "402572-CL10377.raw.featuremap.filtered.parquet"
+    stats_file_path = resources_dir / "402572-CL10377.model_filters_status.funnel.edited.json"
     bed_file_path = resources_dir / "wgs_calling_regions.without_encode_blacklist.hg38.bed"
 
     # Create args using real file paths

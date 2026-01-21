@@ -1544,6 +1544,18 @@ class SRSNVReport:
             logger.info(f"Adding {IS_FORWARD} column to data_df as negation of {REV}")
             self.data_df.loc[:, IS_FORWARD] = self.data_df[REV].astype(int) != 1
 
+        # Add is_mixed columns if they don't exist
+        if IS_MIXED not in self.data_df.columns:
+            logger.info(f"Adding {IS_MIXED}, {IS_MIXED_START}, and {IS_MIXED_END} columns to data_df")
+            # Import here to avoid circular dependency
+            from ugbio_srsnv.srsnv_report import add_is_mixed_to_featuremap_df
+
+            adapter_version = self.params.get("adapter_version", None)
+            categorical_features = [f["name"] for f in self.srsnv_metadata["features"] if f.get("type") == "c"]
+            self.data_df = add_is_mixed_to_featuremap_df(
+                self.data_df, adapter_version=adapter_version, categorical_features_names=categorical_features
+            )
+
         # add logits to data_df
         self.data_df[ML_LOGIT_TEST] = prob_to_logit(
             self.data_df[ML_PROB_1_TEST], max_value=self.max_qual

@@ -16,9 +16,9 @@ def test_end_to_end_training_new_stats_format(tmp_path: Path) -> None:
     """
     # ------------------------------------------------------------------ paths
     resources = Path(__file__).parent.parent / "resources"
-    pos_file = resources / "416119_L7402.test.random_sample.featuremap.filtered.sample.parquet"
-    neg_file = resources / "416119_L7402.test.raw.featuremap.filtered.sample.parquet"
-    stats_file = resources / "416119_L7402.test.unified_stats_new_format.json"
+    pos_file = resources / "402572-CL10377.random_sample.featuremap.filtered.parquet"
+    neg_file = resources / "402572-CL10377.raw.featuremap.filtered.parquet"
+    stats_file = resources / "402572-CL10377.model_filters_status.funnel.edited.json"
 
     assert pos_file.is_file(), "positive parquet missing"
     assert neg_file.is_file(), "negative parquet missing"
@@ -93,9 +93,9 @@ def test_trainer_initialization_with_new_stats_format(tmp_path: Path) -> None:
     without running the full training pipeline.
     """
     resources = Path(__file__).parent.parent / "resources"
-    pos_file = resources / "416119_L7402.test.random_sample.featuremap.filtered.sample.parquet"
-    neg_file = resources / "416119_L7402.test.raw.featuremap.filtered.sample.parquet"
-    stats_file = resources / "416119_L7402.test.unified_stats_new_format.json"
+    pos_file = resources / "402572-CL10377.random_sample.featuremap.filtered.parquet"
+    neg_file = resources / "402572-CL10377.raw.featuremap.filtered.parquet"
+    stats_file = resources / "402572-CL10377.model_filters_status.funnel.edited.json"
     bed_file = resources / "wgs_calling_regions.without_encode_blacklist.hg38.bed"
 
     args = argparse.Namespace(

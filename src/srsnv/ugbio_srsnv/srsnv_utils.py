@@ -418,7 +418,8 @@ def _find_filter_rows(filters, filter_spec, spec_type, filter_label="numerator")
     # Special case: "raw" means the first filter itself
     if filter_spec == "raw":
         if filters[0].get("type") == "raw" or filters[0].get("name") == "raw":
-            return filters[0]["rows"]
+            # Try funnel first (new format), then rows (old format)
+            return filters[0].get("funnel", filters[0].get("rows"))
         raise ValueError(f"First filter is not 'raw' (for {filter_label})")
 
     # Find the target filter
@@ -434,7 +435,8 @@ def _find_filter_rows(filters, filter_spec, spec_type, filter_label="numerator")
     if target_index == 0:
         raise ValueError(f"Cannot get filter before '{filter_spec}' as it is the first filter (for {filter_label})")
 
-    return filters[target_index - 1]["rows"]
+    # Try funnel first (new format), then rows (old format)
+    return filters[target_index - 1].get("funnel", filters[target_index - 1].get("rows"))
 
 
 def get_filter_ratio(

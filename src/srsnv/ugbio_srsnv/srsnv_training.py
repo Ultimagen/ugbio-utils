@@ -243,7 +243,7 @@ def _probability_recalibration(prob_orig: np.ndarray, y_all: np.ndarray) -> np.n
     return prob_orig.copy()
 
 
-def _convert_unified_stats_to_legacy_format(unified_stats: dict, section: str, filter_key: str) -> dict:  # noqa: C901
+def _convert_unified_stats_to_legacy_format(unified_stats: dict, section: str, filter_key: str) -> dict:  # noqa: C901, PLR0912
     """
     Convert unified stats format to legacy format expected by existing code.
 
@@ -270,9 +270,13 @@ def _convert_unified_stats_to_legacy_format(unified_stats: dict, section: str, f
     # Always add raw filter first
     if "raw" in filters_dict:
         raw_filter = {"name": "raw", "type": "raw"}
+        # Preserve funnel and pass from input if present
         if "funnel" in filters_dict["raw"]:
-            raw_filter["rows"] = filters_dict["raw"]["funnel"]
-        elif "rows" in filters_dict["raw"]:
+            raw_filter["funnel"] = filters_dict["raw"]["funnel"]
+        if "pass" in filters_dict["raw"]:
+            raw_filter["pass"] = filters_dict["raw"]["pass"]
+        # Fallback to rows for backwards compatibility
+        if "rows" in filters_dict["raw"]:
             raw_filter["rows"] = filters_dict["raw"]["rows"]
         filters_list.append(raw_filter)
 
@@ -288,10 +292,13 @@ def _convert_unified_stats_to_legacy_format(unified_stats: dict, section: str, f
             if field in filter_data:
                 filter_entry[field] = filter_data[field]
 
-        # Use 'funnel' as 'rows' for legacy compatibility
+        # Preserve funnel and pass from input if present
         if "funnel" in filter_data:
-            filter_entry["rows"] = filter_data["funnel"]
-        elif "rows" in filter_data:
+            filter_entry["funnel"] = filter_data["funnel"]
+        if "pass" in filter_data:
+            filter_entry["pass"] = filter_data["pass"]
+        # Fallback to rows for backwards compatibility
+        if "rows" in filter_data:
             filter_entry["rows"] = filter_data["rows"]
 
         filters_list.append(filter_entry)
@@ -364,7 +371,7 @@ class SRSNVTrainer:
             for f in st["filters"]:
                 if f.get("type") in {"quality", "region"}:
                     # Create filter definition without row counts for comparison
-                    filter_def = {k: v for k, v in f.items() if k != "rows"}
+                    filter_def = {k: v for k, v in f.items() if k not in {"rows", "funnel", "pass"}}
                     filters.append(filter_def)
             return filters
 
@@ -382,7 +389,8 @@ class SRSNVTrainer:
         def _last_non_downsample_rows(stats: dict) -> int:
             for f in reversed(stats["filters"]):
                 if f.get("type") != "downsample":
-                    return f["rows"]
+                    # Try funnel first (new format), then rows (old format)
+                    return f.get("funnel", f.get("rows"))
             raise ValueError("stats JSON has no non-downsample filter entry")
 
         # new prior_real_error calculation
@@ -918,14 +926,16 @@ class SRSNVTrainer:
         n_pos = self.data_frame.height - self.n_neg
         downsample_positive = {
             "name": "downsample",
-            "rows": n_pos,
+            "funnel": n_pos,
+            "pass": n_pos,
             "type": "downsample",
             "method": "random",
             "seed": 0,
         }
         downsample_negative = {
             "name": "downsample",
-            "rows": self.n_neg,
+            "funnel": self.n_neg,
+            "pass": self.n_neg,
             "type": "downsample",
             "method": "random",
             "seed": 0,

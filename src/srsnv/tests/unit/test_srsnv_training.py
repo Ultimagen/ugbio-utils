@@ -48,7 +48,7 @@ def test_parse_model_params_invalid() -> None:  # noqa: D103
 
 def test_extract_stats_from_unified_new_format(resources_dir):
     """Test _extract_stats_from_unified with new format (filtering_stats sections)."""
-    stats_file = resources_dir / "416119_L7402.test.unified_stats_new_format.json"
+    stats_file = resources_dir / "402572-CL10377.model_filters_status.funnel.edited.json"
     pos_stats, neg_stats = _extract_stats_from_unified(stats_file)
 
     # Verify structure
@@ -117,7 +117,7 @@ def test_convert_unified_stats_to_legacy_format():
     # Check raw filter is first
     assert filters_list[0]["name"] == "raw"
     assert filters_list[0]["type"] == "raw"
-    assert filters_list[0]["rows"] == 1000
+    assert filters_list[0]["funnel"] == 1000
 
     # Check other filter
     filter1 = next((f for f in filters_list if f["name"] == "filter1"), None)
@@ -126,7 +126,7 @@ def test_convert_unified_stats_to_legacy_format():
     assert filter1["field"] == "MAPQ"
     assert filter1["op"] == "ge"
     assert filter1["value"] == 60
-    assert filter1["rows"] == 800
+    assert filter1["funnel"] == 800
 
 
 def test_convert_unified_stats_to_legacy_format_missing_section():
@@ -148,9 +148,9 @@ def test_downsample_segments_added_to_metadata(tmp_path: Path, resources_dir: Pa
     from ugbio_srsnv.srsnv_training import SRSNVTrainer
 
     # Setup paths
-    pos_file = resources_dir / "416119_L7402.test.random_sample.featuremap.filtered.sample.parquet"
-    neg_file = resources_dir / "416119_L7402.test.raw.featuremap.filtered.sample.parquet"
-    stats_file = resources_dir / "416119_L7402.test.unified_stats_new_format.json"
+    pos_file = resources_dir / "402572-CL10377.random_sample.featuremap.filtered.parquet"
+    neg_file = resources_dir / "402572-CL10377.raw.featuremap.filtered.parquet"
+    stats_file = resources_dir / "402572-CL10377.model_filters_status.funnel.edited.json"
     bed_file = resources_dir / "wgs_calling_regions.without_encode_blacklist.hg38.bed"
 
     # Create args for trainer
@@ -219,26 +219,32 @@ def test_downsample_segments_added_to_metadata(tmp_path: Path, resources_dir: Pa
     assert pos_ds["type"] == "downsample"
     assert pos_ds["method"] == "random"
     assert pos_ds["seed"] == 0
-    assert "rows" in pos_ds
-    assert isinstance(pos_ds["rows"], int)
-    assert pos_ds["rows"] > 0
+    assert "funnel" in pos_ds
+    assert isinstance(pos_ds["funnel"], int)
+    assert pos_ds["funnel"] > 0
+    # Verify pass field is present and matches funnel for positive
+    assert "pass" in pos_ds, "pass field should be present in positive downsample segment"
+    assert pos_ds["pass"] == pos_ds["funnel"], "pass should equal funnel for positive downsample"
 
     # Verify downsample segment structure for negative
     assert neg_ds["name"] == "downsample"
     assert neg_ds["type"] == "downsample"
     assert neg_ds["method"] == "random"
     assert neg_ds["seed"] == 0
-    assert "rows" in neg_ds
-    assert isinstance(neg_ds["rows"], int)
-    assert neg_ds["rows"] > 0
+    assert "funnel" in neg_ds
+    assert isinstance(neg_ds["funnel"], int)
+    assert neg_ds["funnel"] > 0
+    # Verify pass field is present and matches funnel for negative
+    assert "pass" in neg_ds, "pass field should be present in negative downsample segment"
+    assert neg_ds["pass"] == neg_ds["funnel"], "pass should equal funnel for negative downsample"
 
     # Verify that row counts match the actual data loaded from parquet files
     # The trainer's data_frame should have total rows equal to pos + neg
-    expected_total = pos_ds["rows"] + neg_ds["rows"]
+    expected_total = pos_ds["funnel"] + neg_ds["funnel"]
     assert expected_total == trainer.data_frame.height, (
-        f"Downsample row counts ({pos_ds['rows']} + {neg_ds['rows']} = {expected_total}) "
+        f"Downsample row counts ({pos_ds['funnel']} + {neg_ds['funnel']} = {expected_total}) "
         f"don't match total data frame height ({trainer.data_frame.height})"
     )
     assert (
-        neg_ds["rows"] == trainer.n_neg
-    ), f"Negative downsample rows ({neg_ds['rows']}) don't match trainer.n_neg ({trainer.n_neg})"
+        neg_ds["funnel"] == trainer.n_neg
+    ), f"Negative downsample rows ({neg_ds['funnel']}) don't match trainer.n_neg ({trainer.n_neg})"
