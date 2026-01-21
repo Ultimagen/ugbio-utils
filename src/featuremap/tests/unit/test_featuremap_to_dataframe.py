@@ -55,6 +55,8 @@ def _assert_df_equal(
                     assert a is None or (
                         isinstance(a, float) and math.isnan(a)
                     ), f"{col}[{i}]: expected None/NaN, got {a}"
+                elif a is None or (isinstance(a, float) and math.isnan(a)):
+                    assert False, f"{col}[{i}]: expected {e}, got None/NaN"
                 else:
                     assert abs(a - e) < rtol, f"{col}[{i}]: expected {e}, got {a}"
         else:
@@ -1054,3 +1056,34 @@ def test_aggregate_mode_expand_columns_multi_sample(tmp_path: Path) -> None:
     # AD should NOT have aggregation columns
     assert "AD_mean_SAMPLE1" not in multi_expand_df.columns and "AD_count_SAMPLE1" not in multi_expand_df.columns
     assert "AD_mean_SAMPLE2" not in multi_expand_df.columns and "AD_count_SAMPLE2" not in multi_expand_df.columns
+
+
+def test_expand_columns_raises_error_in_explode_mode() -> None:
+    """Test that expand_columns raises ValueError when used with explode mode."""
+
+    # Should raise ValueError when expand_columns is used with explode mode (default)
+    with pytest.raises(ValueError, match="expand_columns is not supported in explode mode"):
+        featuremap_to_dataframe.vcf_to_parquet(
+            "input.vcf", "output.parquet", drop_format={"GT"}, expand_columns={"AD": 2}, jobs=1
+        )
+
+    # Should also raise when explicitly using explode mode
+    with pytest.raises(ValueError, match="expand_columns is not supported in explode mode"):
+        featuremap_to_dataframe.vcf_to_parquet(
+            "input.vcf", "output.parquet", drop_format={"GT"}, list_mode="explode", expand_columns={"AD": 2}, jobs=1
+        )
+
+
+def test_expand_columns_rejects_invalid_sizes(tmp_path: Path) -> None:
+    """Test that expand_columns rejects zero or negative sizes."""
+    # Test zero size
+    with pytest.raises(ValueError, match="expand_columns size must be positive"):
+        featuremap_to_dataframe.vcf_to_parquet(
+            "input.vcf", "output.parquet", drop_format={"GT"}, list_mode="aggregate", expand_columns={"AD": 0}, jobs=1
+        )
+
+    # Test negative size
+    with pytest.raises(ValueError, match="expand_columns size must be positive"):
+        featuremap_to_dataframe.vcf_to_parquet(
+            "input.vcf", "output.parquet", drop_format={"GT"}, list_mode="aggregate", expand_columns={"AD": -1}, jobs=1
+        )

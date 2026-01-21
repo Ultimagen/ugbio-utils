@@ -507,7 +507,6 @@ def _build_explicit_schema(cols: list[str], info_meta: dict, fmt_meta: dict) -> 
     return schema
 
 
-# TODO: remove the noqa and fix the code
 def _transform_cols_and_schema_for_aggregate(  # noqa: C901
     cols: list[str],
     list_fmt_ids: list[str],
@@ -569,17 +568,45 @@ def _transform_cols_and_schema_for_aggregate(  # noqa: C901
 
     # Override schema for expand columns (determine type from metadata)
     for col, size in expand_columns.items():
-        col_type = pl.Int64  # Default to Int64
-        if col in fmt_meta:
-            meta_type = fmt_meta[col].get("type", "Integer")
-            if meta_type == "Float":
-                col_type = pl.Float64
-            elif meta_type == "String":
-                col_type = pl.Utf8
+        if col in fmt_meta and fmt_meta[col]["type"] in _POLARS_DTYPE:
+            col_type = _POLARS_DTYPE[fmt_meta[col]["type"]]
+        else:
+            col_type = pl.Utf8
+
         for i in range(size):
             schema[f"{col}_{i}"] = col_type
 
     return transformed_cols, schema
+
+
+def _validate_expand_columns(expand_columns: dict[str, int] | None, list_mode: str) -> None:
+    """
+    Validate expand_columns parameter.
+
+    Parameters
+    ----------
+    expand_columns : dict[str, int] | None
+        Mapping of column names to their expand sizes
+    list_mode : str
+        How to handle list format fields: "explode" or "aggregate"
+
+    Raises
+    ------
+    ValueError
+        If expand_columns is used in explode mode or if any size is non-positive
+    """
+    if expand_columns:
+        if list_mode == "explode":
+            raise ValueError(
+                f"expand_columns is not supported in explode mode (got {expand_columns}). "
+                "Use list_mode='aggregate' to use expand_columns."
+            )
+        for col, size in expand_columns.items():
+            if size <= 0:
+                raise ValueError(
+                    f"expand_columns size must be positive (got {col}:{size}). "
+                    "Each expand column must have a size greater than 0."
+                )
 
 
 def _assert_vcf_index_exists(vcf: str) -> None:
@@ -666,7 +693,6 @@ def _run_region_jobs(
     return valid_files
 
 
-# TODO: remove the noqa and fix the code
 def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
     vcf: str,
     out: str,
@@ -714,6 +740,9 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
     log.info(f"Input: {vcf}")
     log.info(f"Output: {out}")
     log.info(f"List mode: {list_mode}")
+
+    _validate_expand_columns(expand_columns, list_mode)
+
     _assert_vcf_index_exists(vcf)
     log.debug("VCF index found")
 
