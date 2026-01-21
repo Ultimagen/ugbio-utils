@@ -616,7 +616,7 @@ def test_main_analyze_breakpoints_calls_analyze_cnv_breakpoints():
     # Mock sys.argv to simulate command-line arguments
     # Note: argument names use hyphens (--bam-file) as defined in analyze_cnv_breakpoint_reads.get_parser
     test_argv = [
-        "analyze_breakpoints",
+        "analyze_breakpoint_reads",
         "--bam-file",
         test_bam_file,
         "--vcf-file",
