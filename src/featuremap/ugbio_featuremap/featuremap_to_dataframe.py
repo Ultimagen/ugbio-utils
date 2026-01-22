@@ -626,8 +626,7 @@ def _validate_expand_columns(
     if missing:
         missing_str = ", ".join(sorted(missing))
         raise ValueError(
-            "expand_columns must refer to FORMAT fields present in the VCF header. "
-            f"Missing: {missing_str}."
+            "expand_columns must refer to FORMAT fields present in the VCF header. " f"Missing: {missing_str}."
         )
 
     scalar_fields = [col for col in expand_columns if fmt_meta[col]["num"] == "1"]
