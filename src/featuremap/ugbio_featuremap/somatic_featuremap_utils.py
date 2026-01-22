@@ -16,7 +16,7 @@ def _create_variant_bed(merged_vcf, bed_file):
 
 def _find_closest_tandem_repeats(bed1, bed2, genome_file, output_file):
     """Find closest tandem repeats for each variant."""
-    sp = SimplePipeline(0, 1)
+    sp = SimplePipeline(0, 2)
     sorted_tandem_repeats_bed = pjoin(os.path.dirname(output_file), "tandem_repeats.sorted.bed")
     cmd = f"bedtools sort -i {bed2} -g {genome_file}"
     sp.print_and_run(cmd, out=sorted_tandem_repeats_bed)
