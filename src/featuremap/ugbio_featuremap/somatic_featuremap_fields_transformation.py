@@ -1,12 +1,9 @@
 import argparse
 import logging
-import math
 import os
-import subprocess
 import sys
 import tempfile
 import warnings
-from concurrent.futures import ThreadPoolExecutor
 from os.path import basename, dirname
 from os.path import join as pjoin
 
@@ -385,13 +382,15 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
     somatic_featuremap_vcf_file: str,
     output_vcf: str,
     filter_tags=None,
-    genomic_region: str = None,
     xgb_model_file: str = None,
     write_agg_params: bool = True,  # noqa: FBT001, FBT002
     verbose: bool = True,  # noqa: FBT001, FBT002
 ) -> str:
     """
     Write the vcf file with the aggregated fields and the xgb probability.
+
+    This function processes the entire input VCF file. Parallelization is handled
+    externally by the pipeline - input files are pre-chunked.
 
     Parameters
     ----------
@@ -401,8 +400,6 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
         Path to output VCF file with aggregated fields.
     filter_tags : str, optional
         Filter tags to apply on the VCF file. Defaults to None.
-    genomic_region : str, optional
-        Specific genomic interval to process. Defaults to None.
     xgb_model_file : str, optional
         Path to XGBoost model file for inference. Defaults to None.
     write_agg_params : bool, optional
@@ -421,10 +418,9 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
             handler.setLevel(logging.DEBUG)
 
     vcf_utils = VcfUtils()
-    # filter vcf file for the given filter tags and genomic interval
+    # filter vcf file for the given filter tags (process entire file)
     filter_string = f"-f {filter_tags}" if filter_tags else ""
-    interval_string = f"-r {genomic_region}" if genomic_region else ""
-    extra_args = f"{filter_string} {interval_string}"
+    extra_args = filter_string
     temp_dir = tempfile.mkdtemp(dir=os.path.dirname(output_vcf))
     try:
         filtered_featuremap = pjoin(
@@ -493,159 +489,6 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
                     logger.error(f"Error removing temporary file {file_path}: {e}")
 
 
-def collapse_bed_by_chunks(bed_file: str, num_chunks: int) -> list[str]:
-    """
-    Collapse a sorted BED file into equal-sized chunks by number of rows.
-
-    This function reads a BED file and divides it into approximately equal-sized chunks
-    based on the number of rows. Each chunk is represented by a single genomic interval
-    spanning from the first to the last position within that chunk. Chunks are automatically
-    split when chromosome boundaries are encountered.
-
-    Parameters
-    ----------
-    bed_file : str
-        Path to input sorted BED file containing columns (chrom, start, end).
-    num_chunks : int
-        Number of chunks to create. If the number of rows in the BED file
-        is less than num_chunks, the actual number of chunks will be
-        adjusted accordingly.
-
-    Returns
-    -------
-    list of str
-        List of genomic intervals in the format "chrom:start-end",
-        where each interval represents a collapsed chunk.
-
-    Notes
-    -----
-    - The function assumes the input BED file is sorted, has no header, and contains
-      exactly 3 columns: chromosome, start position, and end position.
-    - Chunks are created based on equal distribution of rows, not equal
-      genomic distance.
-    - Chunks are automatically split when chromosome boundaries are crossed.
-
-    Examples
-    --------
-    >>> intervals = collapse_bed_by_chunks("input.bed", num_chunks=4)
-    >>> print(intervals)
-    ['chr1:1000-5000', 'chr1:5001-10000', 'chr2:1000-8000', 'chr2:8001-15000']
-    """
-    df_bed_regions = pd.read_csv(bed_file, sep="\t", header=None, names=["chrom", "start", "end"], usecols=[0, 1, 2])
-    n = len(df_bed_regions)
-    # Handle case where rows < chunks: adjust num_chunks
-    num_chunks = min(num_chunks, n)
-    # Compute chunk size (number of rows per chunk, roughly equal)
-    chunk_size = math.ceil(n / num_chunks)
-    # Collapse into chunks
-    collapsed = []
-    for i in range(0, n, chunk_size):
-        chunk_df_bed_regions = df_bed_regions.iloc[i : i + chunk_size]
-
-        # Handle chromosome switching within the chunk
-        current_chrom = chunk_df_bed_regions.iloc[0]["chrom"]
-        current_start = chunk_df_bed_regions.iloc[0]["start"]
-
-        # Use a relative index within the chunk to safely access the
-        # previous row when a chromosome switch is detected. This
-        # avoids mixing label-based indices from iterrows() with
-        # positional indexing on the full DataFrame.
-        for rel_idx, (_, row) in enumerate(chunk_df_bed_regions.iterrows()):
-            if row["chrom"] != current_chrom:
-                # Skip if this is somehow the first row in the chunk;
-                # a chromosome change on the first row is not expected,
-                # but this guard keeps the code robust.
-                if rel_idx == 0:
-                    continue
-                # Save the previous chromosome chunk using the previous
-                # row within the current chunk.
-                prev_end = chunk_df_bed_regions.iloc[rel_idx - 1]["end"]
-                collapsed.append((current_chrom, current_start, prev_end))
-                # Start a new chunk for the new chromosome
-                current_chrom = row["chrom"]
-                current_start = row["start"]
-
-        # Add the final chunk
-        end = chunk_df_bed_regions.iloc[-1]["end"]
-        collapsed.append((current_chrom, current_start, end))
-
-    # Write output
-    genomic_regions = []
-    for chrom, start, end in collapsed:
-        genomic_regions.append(f"{chrom}:{start+1}-{end}")
-    return genomic_regions
-
-
-def featuremap_fields_aggregation_on_an_interval_list(
-    featuremap_vcf_file: str,
-    output_vcf: str,
-    genomic_regions_bed_file: str,
-    filter_tags=None,
-    xgb_model_file: str = None,
-    verbose: bool = True,  # noqa: FBT001, FBT002
-) -> None:
-    """
-    Apply featuremap fields aggregation on an interval list.
-
-    Parameters
-    ----------
-    featuremap_vcf_file : str
-        The input featuremap VCF file.
-    output_vcf : str
-        The output pileup VCF file.
-    genomic_regions_bed_file : str
-        genomic regions list in BED file.
-    filter_tags : str, optional
-        Filter tags to apply. Defaults to None.
-    xgb_model_file : str, optional
-        Path to XGBoost model file for inference. Defaults to None.
-    verbose : bool, optional
-        Whether to enable verbose logging. Defaults to True
-
-    Returns
-    -------
-    str
-        The output VCF file including the aggregated fields and the XGBoost probability.
-    """
-    if not output_vcf.endswith(".vcf.gz"):
-        logger.debug("adding .vcf.gz suffix to the output vcf file")
-        output_vcf = output_vcf + ".vcf.gz"
-
-    with tempfile.TemporaryDirectory(dir=dirname(output_vcf)):
-        num_cpus = os.cpu_count()
-        genomic_regions = collapse_bed_by_chunks(genomic_regions_bed_file, num_chunks=num_cpus)
-
-        params = [
-            (
-                featuremap_vcf_file,
-                f"{output_vcf}.{genomic_region}.int_list.vcf.gz",
-                filter_tags,
-                genomic_region,
-                xgb_model_file,
-                verbose,
-            )
-            for genomic_region in genomic_regions
-        ]
-        num_cpus = os.cpu_count()
-        with ThreadPoolExecutor(max_workers=num_cpus) as executor:
-            results = list(executor.map(lambda p: featuremap_fields_aggregation(*p), params))
-
-        # Write each string to the file
-        interval_list_file = pjoin(tempfile.gettempdir(), "interval_vcf_files.list")
-        with open(interval_list_file, "w") as file:
-            for interval_vcf_file in results:
-                file.write(interval_vcf_file + "\n")
-
-        cmd = (
-            f"bcftools concat -f {interval_list_file} -a | "
-            f"bcftools sort - -Oz -o {output_vcf} && "
-            f"bcftools index -t {output_vcf}"
-        )
-        logger.debug(cmd)
-        subprocess.check_call(cmd, shell=True)  # noqa: S602
-    return output_vcf
-
-
 def __parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="somatic featuremap fields transformation",
@@ -672,13 +515,6 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         type=str,
         required=True,
         help="""Output pileup vcf file""",
-    )
-    parser.add_argument(
-        "-i",
-        "--genomic_regions_bed_file",
-        type=str,
-        required=True,
-        help="""genomic regions BED file""",
     )
     parser.add_argument(
         "-g",
@@ -717,6 +553,10 @@ def run(argv):
     """
     Add aggregated parameters and xgb probability to the featuremap pileup vcf file.
 
+    This script processes pre-chunked somatic featuremap VCF files. Parallelization
+    is handled externally by the pipeline - this script processes the entire input
+    file in a single pass for optimal performance.
+
     Parameters
     ----------
     argv : list of str
@@ -724,19 +564,25 @@ def run(argv):
     """
     args_in = __parse_args(argv)
 
-    # add tandem repeat features
-    out_dir = dirname(args_in.output_vcf)
+    # Ensure output has .vcf.gz suffix
+    output_vcf = args_in.output_vcf
+    if not output_vcf.endswith(".vcf.gz"):
+        logger.debug("adding .vcf.gz suffix to the output vcf file")
+        output_vcf = output_vcf + ".vcf.gz"
+
+    # Add tandem repeat features
+    out_dir = dirname(output_vcf)
     sfm_with_tr = integrate_tandem_repeat_features(
         args_in.somatic_featuremap, args_in.ref_tr_file, args_in.genome_file, out_dir
     )
 
-    featuremap_fields_aggregation_on_an_interval_list(
+    # Process entire file directly (no chunking - input is already pre-chunked by pipeline)
+    featuremap_fields_aggregation(
         sfm_with_tr,
-        args_in.output_vcf,
-        args_in.genomic_regions_bed_file,
-        args_in.filter_string,
-        args_in.xgb_model_file,
-        args_in.disable_verbose,
+        output_vcf,
+        filter_tags=args_in.filter_string,
+        xgb_model_file=args_in.xgb_model_file,
+        verbose=args_in.disable_verbose,
     )
 
 
