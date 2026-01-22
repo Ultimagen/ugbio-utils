@@ -1,16 +1,20 @@
 import argparse
 import logging
 import sys
+import tempfile
 import warnings
 from os.path import dirname
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import pysam
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed import vcftools
 
 from ugbio_featuremap import somatic_featuremap_inference_utils
+from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.somatic_featuremap_utils import filter_and_annotate_tr
 
@@ -69,6 +73,175 @@ columns_for_aggregation = [
     FeatureMapFields.RL.value,
 ]
 ORIGINAL_RECORD_INDEX_FIELD = "record_index"
+
+# Sample prefixes for tumor (index 0) and normal (index 1)
+TUMOR_PREFIX = "t_"
+NORMAL_PREFIX = "n_"
+
+
+def read_vcf_with_aggregation(vcf_file: str) -> pl.DataFrame:
+    """
+    Read VCF file using vcf_to_parquet with aggregate mode.
+
+    This is a more efficient alternative to read_merged_tumor_normal_vcf that uses
+    bcftools + AWK for aggregation instead of Python lambdas.
+
+    Parameters
+    ----------
+    vcf_file : str
+        Path to the input VCF file (gzipped, indexed).
+
+    Returns
+    -------
+    pl.DataFrame
+        Polars DataFrame with aggregated features and sample-suffixed columns.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        parquet_path = Path(tmpdir) / "aggregated.parquet"
+
+        # Use vcf_to_parquet with aggregate mode
+        # Keep AD column for ALT_READS extraction, expand to AD_0, AD_1
+        vcf_to_parquet(
+            vcf=vcf_file,
+            out=str(parquet_path),
+            drop_format={"GT", "X_TCM"},  # Drop unnecessary columns
+            list_mode="aggregate",
+            expand_columns={"AD": 2},  # Split AD into AD_0 (ref), AD_1 (alt)
+        )
+
+        aggregated_df = pl.read_parquet(parquet_path)
+
+    return aggregated_df
+
+
+def get_sample_names_from_vcf(vcf_file: str) -> tuple[str, str]:
+    """
+    Get tumor and normal sample names from VCF file.
+
+    Convention: index 0 = tumor, index 1 = normal.
+
+    Parameters
+    ----------
+    vcf_file : str
+        Path to the VCF file.
+
+    Returns
+    -------
+    tuple[str, str]
+        Tuple of (tumor_sample_name, normal_sample_name).
+    """
+    with pysam.VariantFile(vcf_file) as vcf:
+        samples = list(vcf.header.samples)
+        if len(samples) < 2:  # noqa: PLR2004
+            raise ValueError(f"Expected at least 2 samples in VCF, found {len(samples)}: {samples}")
+        return samples[0], samples[1]
+
+
+def transform_aggregated_df(variants_df: pl.DataFrame, tumor_sample: str, normal_sample: str) -> pd.DataFrame:
+    """
+    Transform aggregated Polars DataFrame to match the expected format for ML inference.
+
+    This function:
+    1. Derives additional columns from aggregation statistics
+    2. Renames columns to match the ML model's expected feature names
+
+    Parameters
+    ----------
+    variants_df : pl.DataFrame
+        DataFrame from vcf_to_parquet with aggregate mode.
+    tumor_sample : str
+        Name of the tumor sample (column suffix).
+    normal_sample : str
+        Name of the normal sample (column suffix).
+
+    Returns
+    -------
+    pd.DataFrame
+        Pandas DataFrame with columns matching ML model expectations.
+    """
+    # Create sample suffix mappings
+    samples = [(tumor_sample, TUMOR_PREFIX), (normal_sample, NORMAL_PREFIX)]
+
+    # Derive columns for each sample
+    derived_exprs = []
+    rename_map = {}
+
+    for sample_name, prefix in samples:
+        s = f"_{sample_name}"  # Original suffix from vcf_to_parquet
+
+        # Derive sum-based columns (sum = mean * count for 0/1 fields)
+        # COUNT_DUPLICATE = sum(DUP) = mean(DUP) * count(DUP)
+        derived_exprs.append(
+            (pl.col(f"DUP_mean{s}") * pl.col(f"DUP_count{s}")).round(0).cast(pl.Int64).alias(f"{prefix}count_duplicate")
+        )
+        # COUNT_NON_DUPLICATE = count - sum
+        derived_exprs.append(
+            (pl.col(f"DUP_count{s}") - (pl.col(f"DUP_mean{s}") * pl.col(f"DUP_count{s}")).round(0))
+            .cast(pl.Int64)
+            .alias(f"{prefix}count_non_duplicate")
+        )
+        # REVERSE_COUNT = sum(REV)
+        derived_exprs.append(
+            (pl.col(f"REV_mean{s}") * pl.col(f"REV_count{s}")).round(0).cast(pl.Int64).alias(f"{prefix}reverse_count")
+        )
+        # FORWARD_COUNT = count - sum
+        derived_exprs.append(
+            (pl.col(f"REV_count{s}") - (pl.col(f"REV_mean{s}") * pl.col(f"REV_count{s}")).round(0))
+            .cast(pl.Int64)
+            .alias(f"{prefix}forward_count")
+        )
+        # PASS_ALT_READS = sum(FILT)
+        derived_exprs.append(
+            (pl.col(f"FILT_mean{s}") * pl.col(f"FILT_count{s}"))
+            .round(0)
+            .cast(pl.Int64)
+            .alias(f"{prefix}pass_alt_reads")
+        )
+        # SCST_NUM_READS = count - count_zero (count of non-zero values)
+        derived_exprs.append(
+            (pl.col(f"SCST_count{s}") - pl.col(f"SCST_count_zero{s}")).cast(pl.Int64).alias(f"{prefix}scst_num_reads")
+        )
+        # SCED_NUM_READS = count - count_zero
+        derived_exprs.append(
+            (pl.col(f"SCED_count{s}") - pl.col(f"SCED_count_zero{s}")).cast(pl.Int64).alias(f"{prefix}sced_num_reads")
+        )
+
+        # Build rename map for existing columns
+        # Aggregation columns (mean/min/max)
+        for agg_col in ["MQUAL", "SNVQ", "MAPQ", "EDIST", "RL"]:
+            rename_map[f"{agg_col}_mean{s}"] = f"{prefix}{agg_col.lower()}_mean"
+            rename_map[f"{agg_col}_min{s}"] = f"{prefix}{agg_col.lower()}_min"
+            rename_map[f"{agg_col}_max{s}"] = f"{prefix}{agg_col.lower()}_max"
+
+        # Count zero for MAPQ (MAP0_COUNT)
+        rename_map[f"MAPQ_count_zero{s}"] = f"{prefix}map0_count"
+
+        # ALT_READS from AD_1
+        rename_map[f"AD_1{s}"] = f"{prefix}alt_reads"
+
+        # Scalar columns
+        rename_map[f"DP{s}"] = f"{prefix}dp"
+        rename_map[f"VAF{s}"] = f"{prefix}vaf"
+        rename_map[f"RAW_VAF{s}"] = f"{prefix}raw_vaf"
+
+    # Apply derived columns
+    variants_df = variants_df.with_columns(derived_exprs)
+
+    # Rename columns that exist
+    existing_rename = {k: v for k, v in rename_map.items() if k in variants_df.columns}
+    variants_df = variants_df.rename(existing_rename)
+
+    # Add common columns
+    variants_df = variants_df.with_columns([pl.col("REF").alias("ref_allele"), pl.col("ALT").alias("alt_allele")])
+
+    # Handle n_dp fillna with n_ref2 + n_nonref2 (if ref/nonref columns exist)
+    # This will be done later when PILEUP columns are processed
+
+    # Add record index for VCF writing
+    variants_df = variants_df.with_row_index(f"{TUMOR_PREFIX}{ORIGINAL_RECORD_INDEX_FIELD}", offset=1)
+
+    # Convert to pandas for compatibility with existing code
+    return variants_df.to_pandas()
 
 
 def process_sample_columns(df_variants, prefix):  # noqa: C901
@@ -380,6 +553,7 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
     xgb_model_file: str = None,
     write_agg_params: bool = True,  # noqa: FBT001, FBT002
     verbose: bool = True,  # noqa: FBT001, FBT002
+    use_optimized: bool = True,  # noqa: FBT001, FBT002
 ) -> str:
     """
     Write the vcf file with the aggregated fields and the xgb probability.
@@ -399,6 +573,8 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
         Whether to write aggregated parameters to output. Defaults to True.
     verbose : bool, optional
         Whether to enable verbose logging. Defaults to True.
+    use_optimized : bool, optional
+        Whether to use the optimized vcf_to_parquet-based reading. Defaults to True.
 
     Returns
     -------
@@ -410,49 +586,79 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
         for handler in logger.handlers:
             handler.setLevel(logging.DEBUG)
 
-    # Input VCF is already filtered and TR-annotated
-    custom_info_fields = (
-        format_fields_for_training
-        + format_mpileup_fields_for_training
-        + info_fields_for_training
-        + columns_for_aggregation
-    )
-    df_variants = read_merged_tumor_normal_vcf(somatic_featuremap_vcf_file, custom_info_fields=custom_info_fields)
-    if len(df_variants) > 0:
+    if use_optimized:
+        # Optimized path: use vcf_to_parquet with aggregate mode
+        logger.info("Using optimized VCF reading with vcf_to_parquet")
+
+        # Get sample names for column mapping
+        tumor_sample, normal_sample = get_sample_names_from_vcf(somatic_featuremap_vcf_file)
+        logger.debug(f"Tumor sample: {tumor_sample}, Normal sample: {normal_sample}")
+
+        # Read VCF using vcf_to_parquet with aggregation
+        df_polars = read_vcf_with_aggregation(somatic_featuremap_vcf_file)
+
+        if df_polars.is_empty():
+            logger.warning(f"No variants found in the input VCF: {somatic_featuremap_vcf_file}")
+            # Create an empty VCF with the updated header
+            with pysam.VariantFile(somatic_featuremap_vcf_file) as vcfin:
+                hdr = vcfin.header
+                add_fields_to_header(hdr, added_format_features, added_info_features)
+                if xgb_model_file is not None and "XGB_PROBA" not in hdr.info:
+                    hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
+                with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
+                    pass  # Just create the file with header
+            pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
+            return output_vcf
+
+        # Transform aggregated DataFrame to match expected format
+        df_variants = transform_aggregated_df(df_polars, tumor_sample, normal_sample)
+        logger.info(f"Transformed DataFrame with {len(df_variants)} variants")
+    else:
+        # Legacy path: use original pysam-based reading with pandas lambdas
+        logger.info("Using legacy VCF reading with pysam")
+        custom_info_fields = (
+            format_fields_for_training
+            + format_mpileup_fields_for_training
+            + info_fields_for_training
+            + columns_for_aggregation
+        )
+        df_variants = read_merged_tumor_normal_vcf(somatic_featuremap_vcf_file, custom_info_fields=custom_info_fields)
+        if len(df_variants) == 0:
+            logger.warning(f"No variants found in the input VCF: {somatic_featuremap_vcf_file}")
+            # Create an empty VCF with the updated header
+            with pysam.VariantFile(somatic_featuremap_vcf_file) as vcfin:
+                hdr = vcfin.header
+                add_fields_to_header(hdr, added_format_features, added_info_features)
+                if xgb_model_file is not None and "XGB_PROBA" not in hdr.info:
+                    hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
+                with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
+                    pass  # Just create the file with header
+            pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
+            return output_vcf
         df_variants = df_sfm_fields_transformation(df_variants)
 
-        if xgb_model_file is not None:
-            xgb_clf_es = somatic_featuremap_inference_utils.load_model(xgb_model_file)
-            model_features = xgb_clf_es.get_booster().feature_names
-            logger.info(f"loaded model. model features: {model_features}")
-            df_variants["xgb_proba"] = somatic_featuremap_inference_utils.predict(xgb_clf_es, df_variants)
-        # Write df_variants to parquet file
-        parquet_output = output_vcf.replace(".vcf.gz", "_featuremap.parquet")
-        df_variants.to_parquet(parquet_output, index=False)
-        logger.info(f"Written feature map dataframe to {parquet_output}")
+    # XGBoost inference
+    if xgb_model_file is not None:
+        xgb_clf_es = somatic_featuremap_inference_utils.load_model(xgb_model_file)
+        model_features = xgb_clf_es.get_booster().feature_names
+        logger.info(f"loaded model. model features: {model_features}")
+        df_variants["xgb_proba"] = somatic_featuremap_inference_utils.predict(xgb_clf_es, df_variants)
 
-        # Serial processing to avoid expensive lookups for each record
-        with pysam.VariantFile(somatic_featuremap_vcf_file) as vcfin:
-            hdr = vcfin.header
-            add_fields_to_header(hdr, added_format_features, added_info_features)
-            if xgb_model_file is not None and "XGB_PROBA" not in hdr.info:
-                hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
-            with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
-                process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_params)
-        pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
-        return output_vcf
-    else:
-        logger.warning(f"No variants found in the input VCF: {somatic_featuremap_vcf_file}")
-        # Create an empty VCF with the updated header
-        with pysam.VariantFile(somatic_featuremap_vcf_file) as vcfin:
-            hdr = vcfin.header
-            add_fields_to_header(hdr, added_format_features, added_info_features)
-            if xgb_model_file is not None and "XGB_PROBA" not in hdr.info:
-                hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
-            with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
-                pass  # Just create the file with header
-        pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
-        return output_vcf
+    # Write df_variants to parquet file
+    parquet_output = output_vcf.replace(".vcf.gz", "_featuremap.parquet")
+    df_variants.to_parquet(parquet_output, index=False)
+    logger.info(f"Written feature map dataframe to {parquet_output}")
+
+    # Serial processing to avoid expensive lookups for each record
+    with pysam.VariantFile(somatic_featuremap_vcf_file) as vcfin:
+        hdr = vcfin.header
+        add_fields_to_header(hdr, added_format_features, added_info_features)
+        if xgb_model_file is not None and "XGB_PROBA" not in hdr.info:
+            hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
+        with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
+            process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_params)
+    pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
+    return output_vcf
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
