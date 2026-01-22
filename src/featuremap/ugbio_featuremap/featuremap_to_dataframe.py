@@ -722,6 +722,38 @@ def _run_region_jobs(
     return valid_files
 
 
+def _drop_fields(
+    info_meta: dict,
+    fmt_meta: dict,
+    drop_info: set[str] | None,
+    drop_format: set[str] | None,
+    expand_columns: dict[str, int] | None = None,
+) -> tuple[dict, dict]:
+    """
+    Drop fields from INFO and FORMAT metadata.
+    If expand_columns are provided, any FORMAT fields that are used for expand columns will not be dropped.
+    """
+    if drop_info:
+        dropped_info = [k for k in info_meta.keys() if k in drop_info]
+        info_meta = {k: v for k, v in info_meta.items() if k not in drop_info}
+        if dropped_info:
+            log.info(f"Dropping {len(dropped_info)} INFO field(s): {dropped_info}")
+    if drop_format:
+        if expand_columns:
+            new_drop_format = drop_format - set(expand_columns.keys())
+            if new_drop_format != drop_format:
+                drop_format = new_drop_format
+                log.info(
+                    f"One or more FORMAT fields were asked to be dropped, but are used for expand columns. "
+                    f"Note they will not be dropped. {drop_format=}, {expand_columns=}"
+                )
+        dropped_fmt = [k for k in fmt_meta.keys() if k in drop_format]
+        fmt_meta = {k: v for k, v in fmt_meta.items() if k not in drop_format}
+        if dropped_fmt:
+            log.info(f"Dropping {len(dropped_fmt)} FORMAT field(s): {dropped_fmt}")
+    return info_meta, fmt_meta
+
+
 def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
     vcf: str,
     out: str,
@@ -788,17 +820,7 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
 
     _validate_expand_columns(expand_columns, list_mode, fmt_meta)
 
-    # Filter dropped fields
-    if drop_info:
-        dropped_info = [k for k in info_meta.keys() if k in drop_info]
-        info_meta = {k: v for k, v in info_meta.items() if k not in drop_info}
-        if dropped_info:
-            log.info(f"Dropping {len(dropped_info)} INFO field(s): {dropped_info}")
-    if drop_format:
-        dropped_fmt = [k for k in fmt_meta.keys() if k in drop_format]
-        fmt_meta = {k: v for k, v in fmt_meta.items() if k not in drop_format}
-        if dropped_fmt:
-            log.info(f"Dropping {len(dropped_fmt)} FORMAT field(s): {dropped_fmt}")
+    info_meta, fmt_meta = _drop_fields(info_meta, fmt_meta, drop_info, drop_format, expand_columns)
 
     # Validate FORMAT fields
     format_ids = list(fmt_meta.keys())
@@ -862,8 +884,6 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
         )
     else:
         log.info("Using explode mode: list fields will be expanded to one row per element")
-        if expand_columns:
-            log.warning("expand_columns is only used in aggregate mode; ignoring in explode mode")
         schema = _build_explicit_schema(cols, info_meta, fmt_meta)
 
     with pl.StringCache():
