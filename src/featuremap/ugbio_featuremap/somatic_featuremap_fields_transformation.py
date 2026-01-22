@@ -1,22 +1,18 @@
 import argparse
 import logging
-import os
 import sys
-import tempfile
 import warnings
-from os.path import basename, dirname
-from os.path import join as pjoin
+from os.path import dirname
 
 import numpy as np
 import pandas as pd
 import pysam
 from ugbio_core.logger import logger
-from ugbio_core.vcf_utils import VcfUtils
 from ugbio_core.vcfbed import vcftools
 
 from ugbio_featuremap import somatic_featuremap_inference_utils
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
-from ugbio_featuremap.somatic_featuremap_utils import integrate_tandem_repeat_features
+from ugbio_featuremap.somatic_featuremap_utils import filter_and_annotate_tr
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -381,7 +377,6 @@ def read_merged_tumor_normal_vcf(
 def featuremap_fields_aggregation(  # noqa: C901, PLR0915
     somatic_featuremap_vcf_file: str,
     output_vcf: str,
-    filter_tags=None,
     xgb_model_file: str = None,
     write_agg_params: bool = True,  # noqa: FBT001, FBT002
     verbose: bool = True,  # noqa: FBT001, FBT002
@@ -389,17 +384,15 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
     """
     Write the vcf file with the aggregated fields and the xgb probability.
 
-    This function processes the entire input VCF file. Parallelization is handled
-    externally by the pipeline - input files are pre-chunked.
+    This function processes the entire input VCF file. The input is expected to be
+    already filtered and TR-annotated (via filter_and_annotate_tr).
 
     Parameters
     ----------
     somatic_featuremap_vcf_file : str
-        Path to input somatic featuremap VCF file.
+        Path to input somatic featuremap VCF file (already filtered and TR-annotated).
     output_vcf : str
         Path to output VCF file with aggregated fields.
-    filter_tags : str, optional
-        Filter tags to apply on the VCF file. Defaults to None.
     xgb_model_file : str, optional
         Path to XGBoost model file for inference. Defaults to None.
     write_agg_params : bool, optional
@@ -417,76 +410,49 @@ def featuremap_fields_aggregation(  # noqa: C901, PLR0915
         for handler in logger.handlers:
             handler.setLevel(logging.DEBUG)
 
-    vcf_utils = VcfUtils()
-    # filter vcf file for the given filter tags (process entire file)
-    filter_string = f"-f {filter_tags}" if filter_tags else ""
-    extra_args = filter_string
-    temp_dir = tempfile.mkdtemp(dir=os.path.dirname(output_vcf))
-    try:
-        filtered_featuremap = pjoin(
-            temp_dir, basename(somatic_featuremap_vcf_file).replace(".vcf.gz", ".sorted.filtered.vcf.gz")
-        )
-        vcf_utils.view_vcf(
-            somatic_featuremap_vcf_file, filtered_featuremap, extra_args=extra_args, n_threads=os.cpu_count()
-        )
-        vcf_utils.index_vcf(filtered_featuremap)
+    # Input VCF is already filtered and TR-annotated
+    custom_info_fields = (
+        format_fields_for_training
+        + format_mpileup_fields_for_training
+        + info_fields_for_training
+        + columns_for_aggregation
+    )
+    df_variants = read_merged_tumor_normal_vcf(somatic_featuremap_vcf_file, custom_info_fields=custom_info_fields)
+    if len(df_variants) > 0:
+        df_variants = df_sfm_fields_transformation(df_variants)
 
-        custom_info_fields = (
-            format_fields_for_training
-            + format_mpileup_fields_for_training
-            + info_fields_for_training
-            + columns_for_aggregation
-        )
-        df_variants = read_merged_tumor_normal_vcf(filtered_featuremap, custom_info_fields=custom_info_fields)
-        if len(df_variants) > 0:
-            df_variants = df_sfm_fields_transformation(df_variants)
+        if xgb_model_file is not None:
+            xgb_clf_es = somatic_featuremap_inference_utils.load_model(xgb_model_file)
+            model_features = xgb_clf_es.get_booster().feature_names
+            logger.info(f"loaded model. model features: {model_features}")
+            df_variants["xgb_proba"] = somatic_featuremap_inference_utils.predict(xgb_clf_es, df_variants)
+        # Write df_variants to parquet file
+        parquet_output = output_vcf.replace(".vcf.gz", "_featuremap.parquet")
+        df_variants.to_parquet(parquet_output, index=False)
+        logger.info(f"Written feature map dataframe to {parquet_output}")
 
-            if xgb_model_file is not None:
-                xgb_clf_es = somatic_featuremap_inference_utils.load_model(xgb_model_file)
-                model_features = xgb_clf_es.get_booster().feature_names
-                logger.info(f"loaded model. model features: {model_features}")
-                df_variants["xgb_proba"] = somatic_featuremap_inference_utils.predict(xgb_clf_es, df_variants)
-            # Write df_variants to parquet file
-            parquet_output = output_vcf.replace(".vcf.gz", "_featuremap.parquet")
-            df_variants.to_parquet(parquet_output, index=False)
-            logger.info(f"Written feature map dataframe to {parquet_output}")
-
-            # Serial processing to avoid expensive lookups for each record
-            with pysam.VariantFile(filtered_featuremap) as vcfin:
-                hdr = vcfin.header
-                add_fields_to_header(hdr, added_format_features, added_info_features)
-                if xgb_model_file is not None and "XGB_PROBA" not in hdr.info:
-                    hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
-                with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
-                    process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_params)
-                vcfout.close()
-                vcfin.close()
-            pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
-            return output_vcf
-        else:
-            logger.warning(f"No variants found in the filtered VCF: {filtered_featuremap}")
-            # Create an empty VCF with the updated header
-            with pysam.VariantFile(filtered_featuremap) as vcfin:
-                hdr = vcfin.header
-                add_fields_to_header(hdr, added_format_features, added_info_features)
-                if xgb_model_file is not None and "XGB_PROBA" not in hdr.info:
-                    hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
-                with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
-                    pass  # Just create the file with header
-                vcfout.close()
-                vcfin.close()
-            pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
-            return output_vcf
-    finally:
-        # Clean up temporary directory
-        if os.path.exists(temp_dir):
-            for filename in os.listdir(temp_dir):
-                file_path = os.path.join(temp_dir, filename)
-                try:
-                    if os.path.isfile(file_path) or os.path.islink(file_path):
-                        os.unlink(file_path)
-                except Exception as e:
-                    logger.error(f"Error removing temporary file {file_path}: {e}")
+        # Serial processing to avoid expensive lookups for each record
+        with pysam.VariantFile(somatic_featuremap_vcf_file) as vcfin:
+            hdr = vcfin.header
+            add_fields_to_header(hdr, added_format_features, added_info_features)
+            if xgb_model_file is not None and "XGB_PROBA" not in hdr.info:
+                hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
+            with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
+                process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_params)
+        pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
+        return output_vcf
+    else:
+        logger.warning(f"No variants found in the input VCF: {somatic_featuremap_vcf_file}")
+        # Create an empty VCF with the updated header
+        with pysam.VariantFile(somatic_featuremap_vcf_file) as vcfin:
+            hdr = vcfin.header
+            add_fields_to_header(hdr, added_format_features, added_info_features)
+            if xgb_model_file is not None and "XGB_PROBA" not in hdr.info:
+                hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
+            with pysam.VariantFile(output_vcf, mode="w", header=hdr) as vcfout:
+                pass  # Just create the file with header
+        pysam.tabix_index(output_vcf, preset="vcf", min_shift=0, force=True)
+        return output_vcf
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
@@ -570,17 +536,22 @@ def run(argv):
         logger.debug("adding .vcf.gz suffix to the output vcf file")
         output_vcf = output_vcf + ".vcf.gz"
 
-    # Add tandem repeat features
+    # Unified preprocessing: filter PASS variants AND add tandem repeat features
+    # This is more efficient than doing them separately since we only process
+    # PASS variants through TR annotation
     out_dir = dirname(output_vcf)
-    sfm_with_tr = integrate_tandem_repeat_features(
-        args_in.somatic_featuremap, args_in.ref_tr_file, args_in.genome_file, out_dir
+    sfm_filtered_with_tr = filter_and_annotate_tr(
+        args_in.somatic_featuremap,
+        args_in.ref_tr_file,
+        args_in.genome_file,
+        out_dir,
+        filter_string=args_in.filter_string,
     )
 
-    # Process entire file directly (no chunking - input is already pre-chunked by pipeline)
+    # Process entire file directly (already filtered and TR-annotated)
     featuremap_fields_aggregation(
-        sfm_with_tr,
+        sfm_filtered_with_tr,
         output_vcf,
-        filter_tags=args_in.filter_string,
         xgb_model_file=args_in.xgb_model_file,
         verbose=args_in.disable_verbose,
     )

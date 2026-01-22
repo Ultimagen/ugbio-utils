@@ -4,10 +4,11 @@ from os.path import join as pjoin
 
 import pysam
 from simppl.simple_pipeline import SimplePipeline
+from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
 
 
-def _create_variant_bed(merged_vcf, bed_file):
+def _create_variant_bed(merged_vcf: str, bed_file: str) -> None:
     """Create a BED file from VCF variants."""
     sp = SimplePipeline(0, 1)
     cmd_bcftools = f"bcftools query -f '%CHROM\t%POS0\t%END\n' {merged_vcf}"
@@ -59,7 +60,7 @@ def _prepare_annotation_files(tmpdir, tr_tsv_file):
     return gz_tsv, hdr_file
 
 
-def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, genome_file, out_dir):
+def integrate_tandem_repeat_features(merged_vcf: str, ref_tr_file: str, genome_file: str, out_dir: str) -> str:
     """
     Integrate tandem repeat features into a VCF file.
 
@@ -119,3 +120,84 @@ def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, genome_file, out_d
         )
 
     return merged_vcf_with_tr_info
+
+
+def filter_and_annotate_tr(
+    input_vcf: str,
+    ref_tr_file: str,
+    genome_file: str,
+    out_dir: str,
+    filter_string: str | None = "PASS",
+) -> str:
+    """
+    Filter VCF and annotate with tandem repeat features in a single pass.
+
+    This unified preprocessing function:
+    1. Filters the VCF to keep only specified variants (e.g., PASS)
+    2. Annotates the filtered variants with tandem repeat information
+
+    By filtering first, we reduce the number of variants processed by TR annotation,
+    improving performance on large files.
+
+    Parameters
+    ----------
+    input_vcf : str
+        Path to the input VCF file (gzipped).
+    ref_tr_file : str
+        Path to the reference tandem repeat BED file.
+    genome_file : str
+        Path to the reference genome FASTA index file (.fai).
+    out_dir : str
+        Output directory for the processed VCF file.
+    filter_string : str, optional
+        FILTER value to keep (e.g., "PASS"). If None, no filtering is applied.
+        Defaults to "PASS".
+
+    Returns
+    -------
+    str
+        Path to the output VCF file with FILTER applied and TR annotations added.
+        The output file will have '.filtered.tr_info.vcf.gz' suffix.
+    """
+    vcf_utils = VcfUtils()
+
+    with tempfile.TemporaryDirectory(dir=out_dir) as tmpdir:
+        # Step 1: Filter VCF (if filter_string is provided)
+        if filter_string:
+            logger.debug(f"Filtering VCF with filter: {filter_string}")
+            filtered_vcf = pjoin(tmpdir, os.path.basename(input_vcf).replace(".vcf.gz", ".filtered.vcf.gz"))
+            extra_args = f"-f {filter_string}"
+            vcf_utils.view_vcf(input_vcf, filtered_vcf, n_threads=os.cpu_count() or 1, extra_args=extra_args)
+            vcf_utils.index_vcf(filtered_vcf)
+            vcf_to_annotate = filtered_vcf
+        else:
+            vcf_to_annotate = input_vcf
+
+        # Step 2: Create variant BED file from filtered VCF
+        logger.debug("Creating variant BED file for TR annotation")
+        bed_file = pjoin(tmpdir, "variants.bed")
+        _create_variant_bed(vcf_to_annotate, bed_file)
+
+        # Step 3: Find closest tandem repeats
+        logger.debug("Finding closest tandem repeats")
+        tr_tsv = pjoin(tmpdir, "variants.tr_data.tsv")
+        _find_closest_tandem_repeats(bed_file, ref_tr_file, genome_file, tr_tsv)
+
+        # Step 4: Prepare annotation files (sort, bgzip, tabix)
+        logger.debug("Preparing TR annotation files")
+        gz_tsv, hdr_file = _prepare_annotation_files(tmpdir, tr_tsv)
+
+        # Step 5: Annotate VCF with TR fields
+        logger.debug("Annotating VCF with TR fields")
+        output_suffix = ".filtered.tr_info.vcf.gz" if filter_string else ".tr_info.vcf.gz"
+        output_vcf = pjoin(out_dir, os.path.basename(input_vcf).replace(".vcf.gz", output_suffix))
+        vcf_utils.annotate_vcf(
+            input_vcf=vcf_to_annotate,
+            output_vcf=output_vcf,
+            annotation_file=gz_tsv,
+            header_file=hdr_file,
+            columns="CHROM,POS,INFO/TR_START,INFO/TR_END,INFO/TR_SEQ,INFO/TR_LENGTH,INFO/TR_SEQ_UNIT_LENGTH,INFO/TR_DISTANCE",
+        )
+
+    logger.info(f"Filtered and TR-annotated VCF written to: {output_vcf}")
+    return output_vcf
