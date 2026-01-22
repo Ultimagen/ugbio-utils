@@ -320,6 +320,9 @@ def process_vcf_records_serially(vcfin, df_variants, hdr, vcfout, write_agg_para
                 if "XGB_PROBA" in hdr.info and hasattr(current_df_record, "xgb_proba"):
                     vcf_row.info["XGB_PROBA"] = current_df_record.xgb_proba
 
+        # Set genotype to 0/1 for tumor sample
+        vcf_row.samples[0]["GT"] = (0, 1)  # Tumor sample
+
         vcfout.write(vcf_row)
 
 
@@ -568,6 +571,8 @@ def collapse_bed_by_chunks(bed_file: str, num_chunks: int) -> list[str]:
         # Add the final chunk
         end = chunk_df_bed_regions.iloc[-1]["end"]
         collapsed.append((current_chrom, current_start, end))
+    logger.debug(f"Collapsed {n} BED rows into {len(collapsed)} chunks.")
+    logger.debug(f"Collapsed chunks: {collapsed}")
 
     # Write output
     genomic_regions = []
@@ -580,6 +585,7 @@ def collapse_bed_by_chunks(bed_file: str, num_chunks: int) -> list[str]:
                 f"This may indicate chromosome boundaries were incorrectly handled in chunking."
             )
         genomic_regions.append(f"{chrom}:{start+1}-{end}")
+    logger.debug(f"Genomic regions: {genomic_regions}")
     return genomic_regions
 
 
@@ -621,6 +627,7 @@ def featuremap_fields_aggregation_on_an_interval_list(
     with tempfile.TemporaryDirectory(dir=dirname(output_vcf)):
         num_cpus = os.cpu_count()
         genomic_regions = collapse_bed_by_chunks(genomic_regions_bed_file, num_chunks=num_cpus)
+        logger.debug("genomic_regions: %s", genomic_regions)
 
         params = [
             (
