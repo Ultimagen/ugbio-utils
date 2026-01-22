@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import math
 import os
 import subprocess
 import warnings
@@ -23,6 +24,43 @@ from ugbio_featuremap.featuremap_to_dataframe import (
     _resolve_bcftools_command,
     header_meta,
 )
+
+
+def _assert_df_equal(
+    actual: pl.DataFrame, expected: pl.DataFrame, rtol: float = 1e-5, *, check_row_count: bool = True
+) -> None:
+    """Assert DataFrames match on expected columns, with tolerance for floats.
+
+    Only columns in `expected` are checked. Additional columns in `actual` are ignored.
+    """
+    # Sort both by POS for consistent comparison
+    if "POS" in actual.columns:
+        actual = actual.sort("POS")
+        expected = expected.sort("POS")
+
+    if check_row_count:
+        assert (
+            actual.height == expected.height
+        ), f"Row count mismatch: actual {actual.height}, expected {expected.height}"
+
+    # Check expected columns exist and values match
+    for col in expected.columns:
+        assert col in actual.columns, f"Missing expected column: {col}"
+        actual_vals = actual[col].to_list()
+        expected_vals = expected[col].to_list()
+
+        if actual[col].dtype == pl.Float64:
+            for i, (a, e) in enumerate(zip(actual_vals, expected_vals)):
+                if e is None or (isinstance(e, float) and math.isnan(e)):
+                    assert a is None or (
+                        isinstance(a, float) and math.isnan(a)
+                    ), f"{col}[{i}]: expected None/NaN, got {a}"
+                elif a is None or (isinstance(a, float) and math.isnan(a)):
+                    assert False, f"{col}[{i}]: expected {e}, got None/NaN"
+                else:
+                    assert abs(a - e) < rtol, f"{col}[{i}]: expected {e}, got {a}"
+        else:
+            assert actual_vals == expected_vals, f"{col}: expected {expected_vals}, got {actual_vals}"
 
 
 # --- fixtures --------------------------------------------------------------
@@ -792,15 +830,15 @@ def test_x_alt_categories(tmp_path: Path, input_featuremap: Path) -> None:
 
 def test_aggregate_mode_list_fields(tmp_path: Path) -> None:
     """
-    Test that aggregate mode replaces list columns with aggregation metrics (mean, min, max, count).
+    Test that aggregate mode replaces list columns with aggregation metrics (mean, min, max, count, count_zero).
 
     This test verifies:
-    1. List columns are replaced with 4 columns (mean, min, max, count)
+    1. List columns are replaced with 5 columns (mean, min, max, count, count_zero)
     2. Row count is one per variant (not exploded)
-    3. Aggregate columns have correct types (Float64 for mean/min/max, Int64 for count)
+    3. Aggregate columns have correct types (Float64 for mean/min/max, Int64 for count/count_zero)
     4. Aggregate values are computed correctly
     """
-    # Create a VCF with list fields containing numeric values
+    # Create a VCF with list fields containing numeric values (including zeros)
     vcf_txt = (
         "##fileformat=VCFv4.2\n"
         "##contig=<ID=chr1,length=1000000>\n"
@@ -809,8 +847,8 @@ def test_aggregate_mode_list_fields(tmp_path: Path) -> None:
         '##FORMAT=<ID=AD,Number=.,Type=Integer,Description="Allelic depths">\n'
         '##FORMAT=<ID=RL,Number=.,Type=Integer,Description="Read lengths">\n'
         "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\n"
-        "chr1\t100\t.\tA\tG\t30.0\tPASS\t.\tGT:DP:AD:RL\t0/1:50:10,20,15:100,101,102\n"
-        "chr1\t200\t.\tC\tT\t25.0\tPASS\t.\tGT:DP:AD:RL\t0/1:30:5,10:200,201\n"
+        "chr1\t100\t.\tA\tG\t30.0\tPASS\t.\tGT:DP:AD:RL\t0/1:50:10,0,15:100,0,102\n"
+        "chr1\t200\t.\tC\tT\t25.0\tPASS\t.\tGT:DP:AD:RL\t0/1:30:0,0:200,201\n"
         "chr1\t300\t.\tG\tA\t20.0\tPASS\t.\tGT:DP:AD:RL\t0/1:40:.:.\n"
     )
     plain = tmp_path / "aggregate_test.vcf"
@@ -827,15 +865,15 @@ def test_aggregate_mode_list_fields(tmp_path: Path) -> None:
         str(vcf_gz), str(out_aggregate), drop_format={"GT"}, list_mode="aggregate", jobs=1
     )
 
-    df_aggregate = pl.read_parquet(out_aggregate)
+    aggregate_df = pl.read_parquet(out_aggregate)
 
     # Expected output: aggregate mode should produce one row per variant with aggregated metrics
-    # Variant 1 (POS=100): AD=[10,20,15] -> mean=15.0, min=10, max=20, count=3
-    #                      RL=[100,101,102] -> mean=101.0, min=100, max=102, count=3
-    # Variant 2 (POS=200): AD=[5,10] -> mean=7.5, min=5, max=10, count=2
-    #                      RL=[200,201] -> mean=200.5, min=200, max=201, count=2
-    # Variant 3 (POS=300): AD=[.] -> mean=None, min=None, max=None, count=0
-    #                      RL=[.] -> mean=None, min=None, max=None, count=0
+    # Variant 1 (POS=100): AD=[10,0,15] -> mean=8.33, min=0, max=15, count=3, count_zero=1
+    #                      RL=[100,0,102] -> mean=67.33, min=0, max=102, count=3, count_zero=1
+    # Variant 2 (POS=200): AD=[0,0] -> mean=0.0, min=0, max=0, count=2, count_zero=2
+    #                      RL=[200,201] -> mean=200.5, min=200, max=201, count=2, count_zero=0
+    # Variant 3 (POS=300): AD=[.] -> mean=None, min=None, max=None, count=0, count_zero=0
+    #                      RL=[.] -> mean=None, min=None, max=None, count=0, count_zero=0
     expected = pl.DataFrame(
         {
             "CHROM": ["chr1", "chr1", "chr1"],
@@ -844,59 +882,23 @@ def test_aggregate_mode_list_fields(tmp_path: Path) -> None:
             "REF": ["A", "C", "G"],
             "ALT": ["G", "T", "A"],
             "DP": [50, 30, 40],
-            "AD_mean": [15.0, 7.5, None],
-            "AD_min": [10.0, 5.0, None],
-            "AD_max": [20.0, 10.0, None],
+            "AD_mean": [25.0 / 3.0, 0.0, None],
+            "AD_min": [0.0, 0.0, None],
+            "AD_max": [15.0, 0.0, None],
             "AD_count": [3, 2, 0],
-            "RL_mean": [101.0, 200.5, None],
-            "RL_min": [100.0, 200.0, None],
+            "AD_count_zero": [1, 2, 0],
+            "RL_mean": [202.0 / 3.0, 200.5, None],
+            "RL_min": [0.0, 200.0, None],
             "RL_max": [102.0, 201.0, None],
             "RL_count": [3, 2, 0],
+            "RL_count_zero": [1, 0, 0],
         }
     )
 
-    # Verify structure
-    assert df_aggregate.height == 3, "Should have 3 rows (one per variant)"
-    assert "AD" not in df_aggregate.columns, "Original AD column should be removed"
-    assert "RL" not in df_aggregate.columns, "Original RL column should be removed"
-
-    # Sort both by POS for consistent comparison
-    df_sorted = df_aggregate.sort("POS")
-    expected_sorted = expected.sort("POS")
-
-    # Compare values: use tolerance-based comparison for Float64 columns, exact for others
-    for col in expected_sorted.columns:
-        assert col in df_sorted.columns, f"Missing expected column: {col}"
-        actual = df_sorted[col].to_list()
-        expected_vals = expected_sorted[col].to_list()
-        col_type = df_sorted[col].dtype
-
-        if col_type == pl.Float64:
-            # Float comparison with tolerance
-            for a, e in zip(actual, expected_vals):
-                if e is None:
-                    assert a is None or (isinstance(a, float) and (a != a)), f"{col}: expected None, got {a}"
-                else:
-                    assert abs(a - e) < 0.0001, f"{col}: expected {e}, got {a}"
-        else:
-            # Exact comparison for non-float types
-            assert actual == expected_vals, f"{col}: expected {expected_vals}, got {actual}"
-
-    # Verify aggregate column types
-    assert df_sorted["AD_mean"].dtype == pl.Float64, "AD_mean should be Float64"
-    assert df_sorted["AD_count"].dtype == pl.Int64, "AD_count should be Int64"
-    assert df_sorted["RL_mean"].dtype == pl.Float64, "RL_mean should be Float64"
-    assert df_sorted["RL_count"].dtype == pl.Int64, "RL_count should be Int64"
-
-    # Compare with explode mode to verify row count difference
-    out_explode = tmp_path / "explode.parquet"
-    featuremap_to_dataframe.vcf_to_parquet(
-        str(vcf_gz), str(out_explode), drop_format={"GT"}, list_mode="explode", jobs=1
-    )
-
-    df_explode = pl.read_parquet(out_explode)
-    # Explode mode should have more rows (one per list element)
-    assert df_explode.height > df_aggregate.height, "Explode mode should have more rows than aggregate mode"
+    _assert_df_equal(aggregate_df, expected)
+    assert (
+        "AD" not in aggregate_df.columns and "RL" not in aggregate_df.columns
+    ), "Original list columns should be removed"
 
 
 def test_aggregate_mode_multi_sample_vcf(tmp_path: Path) -> None:
@@ -904,7 +906,7 @@ def test_aggregate_mode_multi_sample_vcf(tmp_path: Path) -> None:
     Test that aggregate mode works correctly for multi-sample VCFs.
 
     This test verifies:
-    1. List columns are replaced with aggregate metrics (mean, min, max, count)
+    1. List columns are replaced with aggregate metrics (mean, min, max, count, count_zero)
     2. Row count is one per variant (not exploded)
     3. Aggregate values are computed correctly for each sample independently
     4. Aggregate columns get sample suffixes (e.g., AD_mean_SAMPLE1, AD_mean_SAMPLE2)
@@ -919,7 +921,7 @@ def test_aggregate_mode_multi_sample_vcf(tmp_path: Path) -> None:
         '##FORMAT=<ID=AD,Number=.,Type=Integer,Description="Allelic depths">\n'
         '##FORMAT=<ID=RL,Number=.,Type=Integer,Description="Read lengths">\n'
         "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\tSAMPLE2\n"
-        "chr1\t100\t.\tA\tG\t30.0\tPASS\t.\tGT:DP:AD:RL\t0/1:50:10,20,15:100,101,102\t0/1:40:5,10:200,201\n"
+        "chr1\t100\t.\tA\tG\t30.0\tPASS\t.\tGT:DP:AD:RL\t0/1:50:10,0,15:100,101,102\t0/1:40:0,10:200,201\n"
         "chr1\t200\t.\tC\tT\t25.0\tPASS\t.\tGT:DP:AD:RL\t0/1:30:8,12:150,151\t0/1:35:.:.\n"
     )
     plain = tmp_path / "multi_sample_aggregate.vcf"
@@ -936,78 +938,194 @@ def test_aggregate_mode_multi_sample_vcf(tmp_path: Path) -> None:
         str(vcf_gz), str(out_aggregate), drop_format={"GT"}, list_mode="aggregate", jobs=1
     )
 
-    df_aggregate = pl.read_parquet(out_aggregate)
+    multi_aggregate_df = pl.read_parquet(out_aggregate)
 
     # Expected output: one row per variant with aggregated metrics per sample
     # Aggregate columns get sample suffixes like regular FORMAT columns
     # Variant 1 (POS=100):
-    #   SAMPLE1: AD=[10,20,15] -> mean=15.0, min=10, max=20, count=3
-    #            RL=[100,101,102] -> mean=101.0, min=100, max=102, count=3
-    #   SAMPLE2: AD=[5,10] -> mean=7.5, min=5, max=10, count=2
-    #            RL=[200,201] -> mean=200.5, min=200, max=201, count=2
+    #   SAMPLE1: AD=[10,0,15] -> mean=8.33, min=0, max=15, count=3, count_zero=1
+    #            RL=[100,101,102] -> mean=101.0, min=100, max=102, count=3, count_zero=0
+    #   SAMPLE2: AD=[0,10] -> mean=5.0, min=0, max=10, count=2, count_zero=1
+    #            RL=[200,201] -> mean=200.5, min=200, max=201, count=2, count_zero=0
     # Variant 2 (POS=200):
-    #   SAMPLE1: AD=[8,12] -> mean=10.0, min=8, max=12, count=2
-    #            RL=[150,151] -> mean=150.5, min=150, max=151, count=2
-    #   SAMPLE2: AD=[.] -> mean=None, min=None, max=None, count=0
-    #            RL=[.] -> mean=None, min=None, max=None, count=0
+    #   SAMPLE1: AD=[8,12] -> mean=10.0, min=8, max=12, count=2, count_zero=0
+    #            RL=[150,151] -> mean=150.5, min=150, max=151, count=2, count_zero=0
+    #   SAMPLE2: AD=[.] -> mean=None, min=None, max=None, count=0, count_zero=0
+    #            RL=[.] -> mean=None, min=None, max=None, count=0, count_zero=0
     expected = pl.DataFrame(
         {
-            "CHROM": ["chr1", "chr1"],
             "POS": [100, 200],
-            "QUAL": [30.0, 25.0],
-            "REF": ["A", "C"],
-            "ALT": ["G", "T"],
             "DP_SAMPLE1": [50, 30],
             "DP_SAMPLE2": [40, 35],
-            "AD_mean_SAMPLE1": [15.0, 10.0],
-            "AD_min_SAMPLE1": [10.0, 8.0],
-            "AD_max_SAMPLE1": [20.0, 12.0],
+            "AD_mean_SAMPLE1": [25.0 / 3.0, 10.0],
+            "AD_min_SAMPLE1": [0.0, 8.0],
+            "AD_max_SAMPLE1": [15.0, 12.0],
             "AD_count_SAMPLE1": [3, 2],
+            "AD_count_zero_SAMPLE1": [1, 0],
             "RL_mean_SAMPLE1": [101.0, 150.5],
-            "RL_min_SAMPLE1": [100.0, 150.0],
-            "RL_max_SAMPLE1": [102.0, 151.0],
             "RL_count_SAMPLE1": [3, 2],
-            "AD_mean_SAMPLE2": [7.5, None],
-            "AD_min_SAMPLE2": [5.0, None],
+            "RL_count_zero_SAMPLE1": [0, 0],
+            "AD_mean_SAMPLE2": [5.0, None],
+            "AD_min_SAMPLE2": [0.0, None],
             "AD_max_SAMPLE2": [10.0, None],
             "AD_count_SAMPLE2": [2, 0],
+            "AD_count_zero_SAMPLE2": [1, 0],
             "RL_mean_SAMPLE2": [200.5, None],
-            "RL_min_SAMPLE2": [200.0, None],
-            "RL_max_SAMPLE2": [201.0, None],
             "RL_count_SAMPLE2": [2, 0],
+            "RL_count_zero_SAMPLE2": [0, 0],
         }
     )
+    _assert_df_equal(multi_aggregate_df, expected)
 
-    # Sort both by POS for consistent comparison
-    df_sorted = df_aggregate.sort("POS")
-    expected_sorted = expected.sort("POS")
+    # Verify aggregate columns have sample suffixes
+    assert "AD_mean_SAMPLE1" in multi_aggregate_df.columns and "AD_mean_SAMPLE2" in multi_aggregate_df.columns
 
-    # Verify structure
-    assert df_sorted.height == 2, "Should have 2 rows (one per variant)"
-    assert "AD" not in df_sorted.columns, "Original AD column should be removed"
-    assert "RL" not in df_sorted.columns, "Original RL column should be removed"
-    assert "QUAL" in df_sorted.columns, "QUAL should be present (not duplicated)"
 
-    # Compare values: use tolerance-based comparison for Float64 columns, exact for others
-    for col in expected_sorted.columns:
-        assert col in df_sorted.columns, f"Missing expected column: {col}"
-        actual = df_sorted[col].to_list()
-        expected_vals = expected_sorted[col].to_list()
-        col_type = df_sorted[col].dtype
+def test_aggregate_mode_expand_columns(tmp_path: Path) -> None:
+    """Test expand_columns: AD is expanded into AD_0, AD_1 instead of aggregated."""
+    vcf_txt = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000000>\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths">\n'
+        '##FORMAT=<ID=RL,Number=.,Type=Integer,Description="Read lengths">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\n"
+        "chr1\t100\t.\tA\tG\t30.0\tPASS\t.\tGT:AD:RL\t0/1:10,25:100,101,102\n"
+        "chr1\t200\t.\tC\tT\t25.0\tPASS\t.\tGT:AD:RL\t0/1:5,15:200,201\n"
+    )
+    plain = tmp_path / "expand_columns.vcf"
+    plain.write_text(vcf_txt)
+    vcf_gz = tmp_path / "expand_columns.vcf.gz"
+    subprocess.run(["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"], check=True)
 
-        if col_type == pl.Float64:
-            # Float comparison with tolerance
-            for a, e in zip(actual, expected_vals):
-                if e is None:
-                    assert a is None or (isinstance(a, float) and (a != a)), f"{col}: expected None, got {a}"
-                else:
-                    assert abs(a - e) < 0.0001, f"{col}: expected {e}, got {a}"
-        else:
-            # Exact comparison for non-float types
-            assert actual == expected_vals, f"{col}: expected {expected_vals}, got {actual}"
+    out = tmp_path / "expand_columns.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(vcf_gz), str(out), drop_format={"GT"}, list_mode="aggregate", expand_columns={"AD": 2}, jobs=1
+    )
+    expand_df = pl.read_parquet(out)
 
-    # Verify aggregate column types
-    assert df_sorted["AD_mean_SAMPLE1"].dtype == pl.Float64, "AD_mean_SAMPLE1 should be Float64"
-    assert df_sorted["AD_count_SAMPLE1"].dtype == pl.Int64, "AD_count_SAMPLE1 should be Int64"
-    assert df_sorted["RL_mean_SAMPLE2"].dtype == pl.Float64, "RL_mean_SAMPLE2 should be Float64"
-    assert df_sorted["RL_count_SAMPLE2"].dtype == pl.Int64, "RL_count_SAMPLE2 should be Int64"
+    # AD split: AD=10,25 -> AD_0=10, AD_1=25; RL aggregated
+    expected = pl.DataFrame(
+        {
+            "POS": [100, 200],
+            "AD_0": [10, 5],
+            "AD_1": [25, 15],
+            "RL_mean": [101.0, 200.5],
+            "RL_count": [3, 2],
+        }
+    )
+    _assert_df_equal(expand_df, expected)
+
+    # AD should NOT have aggregation columns
+    assert "AD_mean" not in expand_df.columns and "AD_count" not in expand_df.columns
+
+
+def test_aggregate_mode_expand_columns_multi_sample(tmp_path: Path) -> None:
+    """Test expand_columns with multi-sample VCF: expanded columns get sample suffixes."""
+    vcf_txt = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000000>\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\tSAMPLE2\n"
+        "chr1\t100\t.\tA\tG\t30.0\tPASS\t.\tGT:AD\t0/1:10,25\t0/0:35,5\n"
+        "chr1\t200\t.\tC\tT\t25.0\tPASS\t.\tGT:AD\t0/1:5,15\t0/0:30,0\n"
+    )
+    plain = tmp_path / "expand_columns_multi.vcf"
+    plain.write_text(vcf_txt)
+    vcf_gz = tmp_path / "expand_columns_multi.vcf.gz"
+    subprocess.run(["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"], check=True)
+
+    out = tmp_path / "expand_columns_multi.parquet"
+    featuremap_to_dataframe.vcf_to_parquet(
+        str(vcf_gz), str(out), drop_format={"GT"}, list_mode="aggregate", expand_columns={"AD": 2}, jobs=1
+    )
+    multi_expand_df = pl.read_parquet(out)
+
+    # AD split with sample suffixes: SAMPLE1 AD=10,25, SAMPLE2 AD=35,5
+    expected = pl.DataFrame(
+        {
+            "POS": [100, 200],
+            "AD_0_SAMPLE1": [10, 5],
+            "AD_1_SAMPLE1": [25, 15],
+            "AD_0_SAMPLE2": [35, 30],
+            "AD_1_SAMPLE2": [5, 0],
+        }
+    )
+    _assert_df_equal(multi_expand_df, expected)
+    # AD should NOT have aggregation columns
+    assert "AD_mean_SAMPLE1" not in multi_expand_df.columns and "AD_count_SAMPLE1" not in multi_expand_df.columns
+    assert "AD_mean_SAMPLE2" not in multi_expand_df.columns and "AD_count_SAMPLE2" not in multi_expand_df.columns
+
+
+def test_expand_columns_raises_error_in_explode_mode(input_featuremap: Path) -> None:
+    """Test that expand_columns raises ValueError when used with explode mode."""
+
+    # Should raise ValueError when expand_columns is used with explode mode (default)
+    with pytest.raises(ValueError, match="expand_columns is not supported in explode mode"):
+        featuremap_to_dataframe.vcf_to_parquet(
+            str(input_featuremap), "output.parquet", drop_format={"GT"}, expand_columns={"AD": 2}, jobs=1
+        )
+
+    # Should also raise when explicitly using explode mode
+    with pytest.raises(ValueError, match="expand_columns is not supported in explode mode"):
+        featuremap_to_dataframe.vcf_to_parquet(
+            str(input_featuremap),
+            "output.parquet",
+            drop_format={"GT"},
+            list_mode="explode",
+            expand_columns={"AD": 2},
+            jobs=1,
+        )
+
+
+def test_expand_columns_rejects_invalid_sizes(input_featuremap: Path) -> None:
+    """Test that expand_columns rejects zero or negative sizes."""
+    # Test zero size
+    with pytest.raises(ValueError, match="expand_columns size must be positive"):
+        featuremap_to_dataframe.vcf_to_parquet(
+            str(input_featuremap),
+            "output.parquet",
+            drop_format={"GT"},
+            list_mode="aggregate",
+            expand_columns={"AD": 0},
+            jobs=1,
+        )
+
+    # Test negative size
+    with pytest.raises(ValueError, match="expand_columns size must be positive"):
+        featuremap_to_dataframe.vcf_to_parquet(
+            str(input_featuremap),
+            "output.parquet",
+            drop_format={"GT"},
+            list_mode="aggregate",
+            expand_columns={"AD": -1},
+            jobs=1,
+        )
+
+
+def test_expand_columns_rejects_scalar_format(tmp_path: Path) -> None:
+    """Test that expand_columns rejects scalar FORMAT fields."""
+    vcf_txt = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000000>\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Depth">\n'
+        '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\n"
+        "chr1\t100\t.\tA\tG\t30.0\tPASS\t.\tGT:DP:AD\t0/1:12:10,25\n"
+    )
+    plain = tmp_path / "expand_columns_scalar.vcf"
+    plain.write_text(vcf_txt)
+    vcf_gz = tmp_path / "expand_columns_scalar.vcf.gz"
+    subprocess.run(["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"], check=True)
+
+    with pytest.raises(ValueError, match="Scalar fields: DP"):
+        featuremap_to_dataframe.vcf_to_parquet(
+            str(vcf_gz),
+            str(tmp_path / "expand_columns_scalar.parquet"),
+            drop_format={"GT"},
+            list_mode="aggregate",
+            expand_columns={"DP": 1},
+            jobs=1,
+        )
