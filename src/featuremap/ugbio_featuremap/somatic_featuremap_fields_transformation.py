@@ -231,11 +231,20 @@ def transform_aggregated_df(variants_df: pl.DataFrame, tumor_sample: str, normal
     existing_rename = {k: v for k, v in rename_map.items() if k in variants_df.columns}
     variants_df = variants_df.rename(existing_rename)
 
-    # Add common columns
+    # Add common columns for alleles
     variants_df = variants_df.with_columns([pl.col("REF").alias("ref_allele"), pl.col("ALT").alias("alt_allele")])
 
+    # Add TR_DISTANCE for ML model (INFO field, shared between samples)
+    if "TR_DISTANCE" in variants_df.columns:
+        variants_df = variants_df.with_columns(pl.col("TR_DISTANCE").alias("t_tr_distance"))
+
+    # Rename CHROM and POS columns to match expected format (t_ prefix for VCF writing)
+    variants_df = variants_df.with_columns(
+        [pl.col("CHROM").alias(f"{TUMOR_PREFIX}chrom"), pl.col("POS").alias(f"{TUMOR_PREFIX}pos")]
+    )
+
     # Handle n_dp fillna with n_ref2 + n_nonref2 (if ref/nonref columns exist)
-    # This will be done later when PILEUP columns are processed
+    # Note: ref/nonref columns from PILEUP require separate processing (TODO)
 
     # Add record index for VCF writing
     variants_df = variants_df.with_row_index(f"{TUMOR_PREFIX}{ORIGINAL_RECORD_INDEX_FIELD}", offset=1)
