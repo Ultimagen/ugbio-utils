@@ -579,7 +579,11 @@ def _transform_cols_and_schema_for_aggregate(  # noqa: C901
     return transformed_cols, schema
 
 
-def _validate_expand_columns(expand_columns: dict[str, int] | None, list_mode: str) -> None:
+def _validate_expand_columns(
+    expand_columns: dict[str, int] | None,
+    list_mode: str,
+    fmt_meta: dict[str, dict] | None = None,
+) -> None:
     """
     Validate expand_columns parameter.
 
@@ -589,24 +593,50 @@ def _validate_expand_columns(expand_columns: dict[str, int] | None, list_mode: s
         Mapping of column names to their expand sizes
     list_mode : str
         How to handle list format fields: "explode" or "aggregate"
+    fmt_meta : dict[str, dict] | None
+        FORMAT metadata mapping from header_meta. When provided, validates that expand_columns
+        only refers to list-type FORMAT fields present in the header.
 
     Raises
     ------
     ValueError
-        If expand_columns is used in explode mode or if any size is non-positive
+        If expand_columns is used in explode mode, if any size is non-positive, or if
+        expand_columns contains missing or scalar FORMAT fields.
     """
-    if expand_columns:
-        if list_mode == "explode":
+    if not expand_columns:
+        return
+
+    if list_mode == "explode":
+        raise ValueError(
+            f"expand_columns is not supported in explode mode (got {expand_columns}). "
+            "Use list_mode='aggregate' to use expand_columns."
+        )
+
+    for col, size in expand_columns.items():
+        if size <= 0:
             raise ValueError(
-                f"expand_columns is not supported in explode mode (got {expand_columns}). "
-                "Use list_mode='aggregate' to use expand_columns."
+                f"expand_columns size must be positive (got {col}:{size}). "
+                "Each expand column must have a size greater than 0."
             )
-        for col, size in expand_columns.items():
-            if size <= 0:
-                raise ValueError(
-                    f"expand_columns size must be positive (got {col}:{size}). "
-                    "Each expand column must have a size greater than 0."
-                )
+
+    if fmt_meta is None:
+        return
+
+    missing = [col for col in expand_columns if col not in fmt_meta]
+    if missing:
+        missing_str = ", ".join(sorted(missing))
+        raise ValueError(
+            "expand_columns must refer to FORMAT fields present in the VCF header. "
+            f"Missing: {missing_str}."
+        )
+
+    scalar_fields = [col for col in expand_columns if fmt_meta[col]["num"] == "1"]
+    if scalar_fields:
+        scalar_str = ", ".join(sorted(scalar_fields))
+        raise ValueError(
+            "expand_columns can only be used with list-type FORMAT fields (Number != 1). "
+            f"Scalar fields: {scalar_str}."
+        )
 
 
 def _assert_vcf_index_exists(vcf: str) -> None:
@@ -733,15 +763,13 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
     log_level : int
         Logging level (e.g., logging.DEBUG, logging.INFO)
     expand_columns : dict[str, int] | None
-        Mapping of column names to their expand sizes. In aggregate mode,
+        Mapping of list-type FORMAT field names to their expand sizes. In aggregate mode,
         these columns are expanded into indexed columns (e.g., {"AD": 2} produces
         AD_0, AD_1) instead of being aggregated. Only used when list_mode="aggregate".
     """
     log.info(f"Input: {vcf}")
     log.info(f"Output: {out}")
     log.info(f"List mode: {list_mode}")
-
-    _validate_expand_columns(expand_columns, list_mode)
 
     _assert_vcf_index_exists(vcf)
     log.debug("VCF index found")
@@ -758,6 +786,8 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
 
     # Parse VCF header
     info_meta, fmt_meta = header_meta(vcf, bcftools, threads=1)
+
+    _validate_expand_columns(expand_columns, list_mode, fmt_meta)
 
     # Filter dropped fields
     if drop_info:

@@ -1087,3 +1087,30 @@ def test_expand_columns_rejects_invalid_sizes(tmp_path: Path) -> None:
         featuremap_to_dataframe.vcf_to_parquet(
             "input.vcf", "output.parquet", drop_format={"GT"}, list_mode="aggregate", expand_columns={"AD": -1}, jobs=1
         )
+
+
+def test_expand_columns_rejects_scalar_format(tmp_path: Path) -> None:
+    """Test that expand_columns rejects scalar FORMAT fields."""
+    vcf_txt = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1,length=1000000>\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Depth">\n'
+        '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE1\n"
+        "chr1\t100\t.\tA\tG\t30.0\tPASS\t.\tGT:DP:AD\t0/1:12:10,25\n"
+    )
+    plain = tmp_path / "expand_columns_scalar.vcf"
+    plain.write_text(vcf_txt)
+    vcf_gz = tmp_path / "expand_columns_scalar.vcf.gz"
+    subprocess.run(["bcftools", "view", str(plain), "-Oz", "-o", str(vcf_gz), "--write-index=tbi"], check=True)
+
+    with pytest.raises(ValueError, match="Scalar fields: DP"):
+        featuremap_to_dataframe.vcf_to_parquet(
+            str(vcf_gz),
+            str(tmp_path / "expand_columns_scalar.parquet"),
+            drop_format={"GT"},
+            list_mode="aggregate",
+            expand_columns={"DP": 1},
+            jobs=1,
+        )
