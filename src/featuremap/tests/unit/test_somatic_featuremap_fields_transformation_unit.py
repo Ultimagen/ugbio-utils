@@ -1,3 +1,5 @@
+import os
+import tempfile
 from collections import namedtuple
 from unittest.mock import MagicMock, patch
 
@@ -5,6 +7,7 @@ import pandas as pd
 import pytest
 from ugbio_featuremap.somatic_featuremap_fields_transformation import (
     ORIGINAL_RECORD_INDEX_FIELD,
+    collapse_bed_by_chunks,
     process_sample_columns,
     process_vcf_records_serially,
 )
@@ -443,3 +446,136 @@ class TestProcessSampleColumns:
 
         # Check MAPQ0 count column is added
         assert "t_map0_count" in result.columns
+
+
+class TestCollapseBedByChunks:
+    """Test class for collapse_bed_by_chunks function."""
+
+    def test_single_chromosome_single_chunk(self):
+        """Test with a single chromosome and single chunk."""
+        # Create a temporary BED file
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
+            f.write("chr1\t1000\t2000\n")
+            f.write("chr1\t2000\t3000\n")
+            f.write("chr1\t3000\t4000\n")
+            bed_file = f.name
+
+        try:
+            result = collapse_bed_by_chunks(bed_file, num_chunks=1)
+            assert len(result) == 1
+            assert result[0] == "chr1:1001-4000"  # 1-based coordinates
+        finally:
+            os.unlink(bed_file)
+
+    def test_single_chromosome_multiple_chunks(self):
+        """Test with a single chromosome divided into multiple chunks."""
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
+            f.write("chr1\t1000\t2000\n")
+            f.write("chr1\t2000\t3000\n")
+            f.write("chr1\t3000\t4000\n")
+            f.write("chr1\t4000\t5000\n")
+            bed_file = f.name
+
+        try:
+            result = collapse_bed_by_chunks(bed_file, num_chunks=2)
+            assert len(result) == 2
+            assert result[0] == "chr1:1001-3000"  # First 2 rows
+            assert result[1] == "chr1:3001-5000"  # Last 2 rows
+        finally:
+            os.unlink(bed_file)
+
+    def test_chromosome_switching_within_chunk(self):
+        """Test that chromosome switches within a chunk are handled correctly."""
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
+            # 6 rows, requesting 2 chunks (3 rows each)
+            # But chr1 and chr2 boundary is at row 3 - this is AT the chunk boundary, not within!
+            f.write("chr1\t1000\t2000\n")  # Row 0
+            f.write("chr1\t2000\t3000\n")  # Row 1
+            f.write("chr1\t3000\t4000\n")  # Row 2
+            f.write("chr2\t1000\t2000\n")  # Row 3 - NEW chunk starts here
+            f.write("chr2\t2000\t3000\n")  # Row 4
+            f.write("chr2\t3000\t4000\n")  # Row 5
+            bed_file = f.name
+
+        try:
+            result = collapse_bed_by_chunks(bed_file, num_chunks=2)
+            # Chunk boundary aligns with chromosome boundary
+            # Should create 2 chunks: chr1 (rows 0-2), chr2 (rows 3-5)
+            assert len(result) == 2
+            assert result[0] == "chr1:1001-4000"  # All chr1 rows
+            assert result[1] == "chr2:1001-4000"  # All chr2 rows
+        finally:
+            os.unlink(bed_file)
+
+    def test_chromosome_switching_multiple_times(self):
+        """Test multiple chromosome switches across chunks."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
+            f.write("chr1\t1000\t2000\n")
+            f.write("chr1\t2000\t3000\n")
+            f.write("chr2\t1000\t2000\n")
+            f.write("chr2\t2000\t3000\n")
+            f.write("chr3\t1000\t2000\n")
+            f.write("chr3\t2000\t3000\n")
+            bed_file = f.name
+
+        try:
+            result = collapse_bed_by_chunks(bed_file, num_chunks=2)
+            # First chunk: rows 0-2 (chr1 + chr2)
+            # Second chunk: rows 3-5 (chr2 + chr3)
+            assert len(result) == 4
+            assert result[0] == "chr1:1001-3000"  # chr1 from first chunk
+            assert result[1] == "chr2:1001-2000"  # chr2 from first chunk
+            assert result[2] == "chr2:2001-3000"  # chr2 from second chunk
+            assert result[3] == "chr3:1001-3000"  # chr3 from second chunk
+        finally:
+            os.unlink(bed_file)
+
+    def test_more_chunks_than_rows(self):
+        """Test when requested chunks exceed number of rows."""
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
+            f.write("chr1\t1000\t2000\n")
+            f.write("chr1\t2000\t3000\n")
+            bed_file = f.name
+
+        try:
+            result = collapse_bed_by_chunks(bed_file, num_chunks=5)
+            # Should only create 2 chunks (one per row)
+            assert len(result) == 2
+            assert result[0] == "chr1:1001-2000"
+            assert result[1] == "chr1:2001-3000"
+        finally:
+            os.unlink(bed_file)
+
+    def test_chromosome_switch_at_chunk_boundary(self):
+        """Test chromosome switch exactly at a chunk boundary."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
+            f.write("chr1\t1000\t2000\n")
+            f.write("chr1\t2000\t3000\n")
+            f.write("chr2\t1000\t2000\n")
+            f.write("chr2\t2000\t3000\n")
+            bed_file = f.name
+
+        try:
+            result = collapse_bed_by_chunks(bed_file, num_chunks=2)
+            # Chunk boundary at row 2, which is also chromosome boundary
+            assert len(result) == 2
+            assert result[0] == "chr1:1001-3000"
+            assert result[1] == "chr2:1001-3000"
+        finally:
+            os.unlink(bed_file)
+
+    def test_single_row(self):
+        """Test with a single row BED file."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".bed", delete=False) as f:
+            f.write("chr1\t1000\t2000\n")
+            bed_file = f.name
+
+        try:
+            result = collapse_bed_by_chunks(bed_file, num_chunks=1)
+            assert len(result) == 1
+            assert result[0] == "chr1:1001-2000"
+        finally:
+            os.unlink(bed_file)

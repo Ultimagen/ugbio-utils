@@ -499,7 +499,8 @@ def collapse_bed_by_chunks(bed_file: str, num_chunks: int) -> list[str]:
 
     This function reads a BED file and divides it into approximately equal-sized chunks
     based on the number of rows. Each chunk is represented by a single genomic interval
-    spanning from the first to the last position within that chunk.
+    spanning from the first to the last position within that chunk. Chunks are automatically
+    split when chromosome boundaries are encountered.
 
     Parameters
     ----------
@@ -518,12 +519,11 @@ def collapse_bed_by_chunks(bed_file: str, num_chunks: int) -> list[str]:
 
     Notes
     -----
-    - The function assumes the input BED file has no header and contains
+    - The function assumes the input BED file is sorted, has no header, and contains
       exactly 3 columns: chromosome, start position, and end position.
     - Chunks are created based on equal distribution of rows, not equal
       genomic distance.
-    - Each chunk preserves the chromosome of its first row; this assumes
-      chunks don't span multiple chromosomes.
+    - Chunks are automatically split when chromosome boundaries are crossed.
 
     Examples
     --------
@@ -541,10 +541,33 @@ def collapse_bed_by_chunks(bed_file: str, num_chunks: int) -> list[str]:
     collapsed = []
     for i in range(0, n, chunk_size):
         chunk_df_bed_regions = df_bed_regions.iloc[i : i + chunk_size]
-        chrom = chunk_df_bed_regions.iloc[0]["chrom"]
-        start = chunk_df_bed_regions.iloc[0]["start"]
+
+        # Handle chromosome switching within the chunk
+        current_chrom = chunk_df_bed_regions.iloc[0]["chrom"]
+        current_start = chunk_df_bed_regions.iloc[0]["start"]
+
+        # Use a relative index within the chunk to safely access the
+        # previous row when a chromosome switch is detected. This
+        # avoids mixing label-based indices from iterrows() with
+        # positional indexing on the full DataFrame.
+        for rel_idx, (_, row) in enumerate(chunk_df_bed_regions.iterrows()):
+            if row["chrom"] != current_chrom:
+                # Skip if this is somehow the first row in the chunk;
+                # a chromosome change on the first row is not expected,
+                # but this guard keeps the code robust.
+                if rel_idx == 0:
+                    continue
+                # Save the previous chromosome chunk using the previous
+                # row within the current chunk.
+                prev_end = chunk_df_bed_regions.iloc[rel_idx - 1]["end"]
+                collapsed.append((current_chrom, current_start, prev_end))
+                # Start a new chunk for the new chromosome
+                current_chrom = row["chrom"]
+                current_start = row["start"]
+
+        # Add the final chunk
         end = chunk_df_bed_regions.iloc[-1]["end"]
-        collapsed.append((chrom, start, end))
+        collapsed.append((current_chrom, current_start, end))
 
     # Write output
     genomic_regions = []
