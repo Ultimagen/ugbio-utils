@@ -221,10 +221,6 @@ def real_models_calc_run_info(test_resources_calc_run_info):
         else:
             model_filename = os.path.basename(model_path)
 
-        # Update the filename to match new naming convention
-        if "402572-CL10377.model_fold_" in model_filename and ".test." not in model_filename:
-            model_filename = model_filename.replace("402572-CL10377.model_fold_", "402572-CL10377.test.model_fold_")
-
         absolute_model_path = resources_dir / model_filename
         model.load_model(str(absolute_model_path))
 
