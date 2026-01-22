@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from enum import Enum
 
 from ugbio_core.consts import (
@@ -18,6 +19,7 @@ class FeatureMapFields(Enum):
     QUAL = QUAL.upper()
     FILTER = FILTER.upper()
     ID = "ID"
+    XGB_PROBA = "XGB_PROBA"
     SAMPLE = "SAMPLE"
     X_ALT = "X_ALT"
     X_PREV1 = "X_PREV1"
@@ -51,6 +53,7 @@ class FeatureMapFields(Enum):
     MAPQ = "MAPQ"  # mapping quality of reads supporting the variant
     SCST = "SCST"  # soft clip start
     SCED = "SCED"  # soft clip end
+    AD = "AD"  # allelic depths
 
 
 class FeatureMapFilters(Enum):
@@ -58,3 +61,24 @@ class FeatureMapFilters(Enum):
     SINGLE_READ = "SingleRead"
     PASS = "PASS"  # noqa: S105
     PRE_FILTERED = "PreFiltered"
+
+
+@dataclass(frozen=True)
+class VcfInfoField:
+    """VCF INFO field definition."""
+
+    field_id: str
+    number: str
+    field_type: str
+    description: str
+
+
+class TandemRepeatFields(Enum):
+    """Tandem Repeat INFO field names."""
+
+    TR_START = "TR_START"
+    TR_END = "TR_END"
+    TR_SEQ = "TR_SEQ"
+    TR_LENGTH = "TR_LENGTH"
+    TR_SEQ_UNIT_LENGTH = "TR_SEQ_UNIT_LENGTH"
+    TR_DISTANCE = "TR_DISTANCE"
