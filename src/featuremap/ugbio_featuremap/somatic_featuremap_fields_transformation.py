@@ -572,6 +572,13 @@ def collapse_bed_by_chunks(bed_file: str, num_chunks: int) -> list[str]:
     # Write output
     genomic_regions = []
     for chrom, start, end in collapsed:
+        # Validate that end >= start to catch cross-chromosome bugs
+        if end <= start:
+            raise ValueError(
+                f"Invalid genomic region generated: {chrom}:{start+1}-{end}. "
+                f"End position ({end}) must be greater than start position ({start}). "
+                f"This may indicate chromosome boundaries were incorrectly handled in chunking."
+            )
         genomic_regions.append(f"{chrom}:{start+1}-{end}")
     return genomic_regions
 
