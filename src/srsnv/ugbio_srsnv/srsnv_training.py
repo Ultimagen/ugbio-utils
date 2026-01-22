@@ -72,57 +72,84 @@ pl.enable_string_cache()
 
 
 # ───────────────────────── parsers ────────────────────────────
-def _parse_bed_file(path: str) -> tuple[dict[str, int], list[str]]:
+def _parse_sq_header(line: str) -> tuple[str | None, int | None]:
     """
-    Parse a BED file to extract chromosome sizes and order.
+    Parse an @SQ header line to extract chromosome name and length.
 
-    For BED files, chromosome "size" is calculated as the maximum end position
-    for each chromosome in the file.
+    Parameters
+    ----------
+    line : str
+        An @SQ header line from an interval list file.
+
+    Returns
+    -------
+    tuple[str | None, int | None]
+        chrom_name: Chromosome name from SN tag, or None if not found.
+        chrom_length: Chromosome length from LN tag, or None if not found.
+    """
+    fields = line.strip().split("\t")
+    chrom_name = None
+    chrom_length = None
+    for field in fields[1:]:  # Skip @SQ itself
+        if field.startswith("SN:"):
+            chrom_name = field[3:]
+        elif field.startswith("LN:"):
+            chrom_length = int(field[3:])
+    return chrom_name, chrom_length
+
+
+def _parse_interval_list_file(path: str) -> tuple[dict[str, int], list[str]]:
+    """
+    Parse an interval list file to extract chromosome sizes and order.
+
+    Chromosome sizes are extracted from @SQ header lines (SN and LN tags).
+    Chromosome order is determined by the order they appear in the data section.
 
     Parameters
     ----------
     path : str
-        Path to the BED file.
+        Path to the interval list file (.interval_list).
 
     Returns
     -------
     tuple[dict[str, int], list[str]]
-        chrom_sizes: Dictionary mapping chromosome names to their maximum end positions.
-        chroms_in_data: List of chromosomes in the order they first appear in the file.
+        chrom_sizes: Dictionary mapping chromosome names to their lengths from @SQ headers.
+        chroms_in_data: List of chromosomes in the order they first appear in the data.
     """
     chrom_sizes: dict[str, int] = {}
     chroms_in_data: list[str] = []
 
-    min_bed_fields = 3  # BED format requires at least chrom, start, end
+    min_fields = 3  # Interval list format requires at least chrom, start, end
 
     with open(path, encoding="utf-8") as fh:
         for line in fh:
-            # Skip comment lines and header lines
+            # Parse @SQ header lines to get chromosome lengths
+            if line.startswith("@SQ"):
+                chrom_name, chrom_length = _parse_sq_header(line)
+                if chrom_name and chrom_length:
+                    chrom_sizes[chrom_name] = chrom_length
+                continue
+
+            # Skip other header/comment lines
             if line.startswith(("#", "@")) or not line.strip():
                 continue
 
             fields = line.strip().split("\t")
-            if len(fields) < min_bed_fields:
+            if len(fields) < min_fields:
                 continue
 
             chrom = fields[0]
             try:
-                end = int(fields[2])
+                _ = int(fields[2])
             except ValueError:
                 continue
 
-            # Track chromosome order
+            # Track chromosome order as they appear in the data
             if chrom not in chroms_in_data:
                 chroms_in_data.append(chrom)
 
-            # Update maximum end position for this chromosome
-            if chrom not in chrom_sizes:
-                chrom_sizes[chrom] = end
-            else:
-                chrom_sizes[chrom] = max(chrom_sizes[chrom], end)
-
     if not chrom_sizes:
-        raise ValueError(f"No valid BED entries found in {path}")
+        raise ValueError(f"No @SQ headers found in interval list file {path}")
 
     return chrom_sizes, chroms_in_data
 
@@ -418,8 +445,8 @@ class SRSNVTrainer:
         self.k_folds = max(1, args.k_folds)
 
         # Folds
-        logger.debug("Parsing BED file from %s", args.training_regions)
-        chrom_sizes, chrom_list = _parse_bed_file(args.training_regions)
+        logger.debug("Parsing interval list file from %s", args.training_regions)
+        chrom_sizes, chrom_list = _parse_interval_list_file(args.training_regions)
         # partition_into_folds expects a pandas Series
         logger.debug("Partitioning %d chromosomes into %d folds", len(chrom_list), self.k_folds)
         self.chrom_to_fold: dict[str, int] = partition_into_folds(
@@ -994,7 +1021,7 @@ def _cli() -> argparse.Namespace:
     ap.add_argument(
         "--training-regions",
         required=True,
-        help="BED file containing training regions",
+        help="Interval list file (.interval_list) containing training regions",
     )
     ap.add_argument("--k-folds", type=int, default=1, help="Number of CV folds (≥1)")
     ap.add_argument(

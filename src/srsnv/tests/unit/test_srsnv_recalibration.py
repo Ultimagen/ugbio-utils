@@ -14,7 +14,7 @@ def test_recalibration_columns(tmp_path):
     positive_path = resources_dir / "402572-CL10377.random_sample.featuremap.filtered.parquet"
     negative_path = resources_dir / "402572-CL10377.raw.featuremap.filtered.parquet"
     stats_file_path = resources_dir / "402572-CL10377.model_filters_status.funnel.edited.json"
-    bed_file_path = resources_dir / "wgs_calling_regions.without_encode_blacklist.hg38.bed"
+    bed_file_path = resources_dir / "wgs_calling_regions.without_encode_blacklist.hg38.chr1_22.interval_list"
 
     # Create args using real file paths
     # Use the exact features from the trained model metadata

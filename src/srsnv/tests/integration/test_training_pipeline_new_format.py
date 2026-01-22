@@ -26,8 +26,8 @@ def test_end_to_end_training_new_stats_format(tmp_path: Path) -> None:
 
     # ---------------------------------------------------------------- regions
     # Use the real hg38 calling regions shipped with the repository
-    bed_file = resources / "wgs_calling_regions.without_encode_blacklist.hg38.bed"
-    assert bed_file.is_file(), "BED file fixture missing"
+    bed_file = resources / "wgs_calling_regions.without_encode_blacklist.hg38.chr1_22.interval_list"
+    assert bed_file.is_file(), "Interval list file fixture missing"
 
     # ---------------------------------------------------------------- args
     # use env-provided directory if defined, otherwise fall back to tmp_path
@@ -96,7 +96,7 @@ def test_trainer_initialization_with_new_stats_format(tmp_path: Path) -> None:
     pos_file = resources / "402572-CL10377.random_sample.featuremap.filtered.parquet"
     neg_file = resources / "402572-CL10377.raw.featuremap.filtered.parquet"
     stats_file = resources / "402572-CL10377.model_filters_status.funnel.edited.json"
-    bed_file = resources / "wgs_calling_regions.without_encode_blacklist.hg38.bed"
+    bed_file = resources / "wgs_calling_regions.without_encode_blacklist.hg38.chr1_22.interval_list"
 
     args = argparse.Namespace(
         positive=str(pos_file),

@@ -26,7 +26,7 @@ def test_end_to_end_training(tmp_path: Path) -> None:
 
     # ---------------------------------------------------------------- regions
     # Use the real hg38 calling regions shipped with the repository
-    bed_file = resources / "wgs_calling_regions.without_encode_blacklist.hg38.bed"
+    bed_file = resources / "wgs_calling_regions.without_encode_blacklist.hg38.chr1_22.interval_list"
     assert bed_file.is_file(), "BED file fixture missing"
 
     # ---------------------------------------------------------------- args

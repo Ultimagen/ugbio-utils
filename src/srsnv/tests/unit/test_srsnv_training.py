@@ -151,7 +151,7 @@ def test_downsample_segments_added_to_metadata(tmp_path: Path, resources_dir: Pa
     pos_file = resources_dir / "402572-CL10377.random_sample.featuremap.filtered.parquet"
     neg_file = resources_dir / "402572-CL10377.raw.featuremap.filtered.parquet"
     stats_file = resources_dir / "402572-CL10377.model_filters_status.funnel.edited.json"
-    bed_file = resources_dir / "wgs_calling_regions.without_encode_blacklist.hg38.bed"
+    bed_file = resources_dir / "wgs_calling_regions.without_encode_blacklist.hg38.chr1_22.interval_list"
 
     # Create args for trainer
     args = argparse.Namespace(
