@@ -161,3 +161,50 @@ def parse_cigar_string(cigar_str: str) -> list[tuple[int, int]]:
             i += 1
 
     return operations
+
+
+# CIGAR operations that consume reference bases (per SAM specification)
+CIGAR_CONSUMES_REFERENCE = {
+    CIGAR_OPS["M"],  # Match or mismatch
+    CIGAR_OPS["D"],  # Deletion
+    CIGAR_OPS["N"],  # Skipped region (intron)
+    CIGAR_OPS["="],  # Sequence match
+    CIGAR_OPS["X"],  # Sequence mismatch
+}
+
+
+def get_reference_alignment_end(reference_start: int, cigar: str) -> int:
+    """
+    Calculate the reference alignment end position from start and CIGAR string.
+
+    The end position is calculated by summing the lengths of CIGAR operations
+    that consume reference bases (M, D, N, =, X) and adding to the start position.
+    The returned end position is exclusive (one past the last aligned base),
+    following Python's half-open interval convention.
+
+    Parameters
+    ----------
+    reference_start : int
+        0-based reference start position of the alignment
+    cigar : str
+        CIGAR string (e.g., "50M2D30M" or "30S50M10I20M")
+
+    Returns
+    -------
+    int
+        0-based exclusive end position on the reference
+
+    Examples
+    --------
+    >>> get_reference_alignment_end(100, "50M")
+    150
+    >>> get_reference_alignment_end(100, "30S50M")
+    150
+    >>> get_reference_alignment_end(100, "50M2D30M")
+    182
+    >>> get_reference_alignment_end(100, "50M10I30M")
+    180
+    """
+    cigar_tuples = parse_cigar_string(cigar)
+    reference_consumed = sum(length for op, length in cigar_tuples if op in CIGAR_CONSUMES_REFERENCE)
+    return reference_start + reference_consumed

@@ -13,11 +13,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pysam
-from ugbio_core.dna_sequence_utils import CIGAR_OPS, parse_cigar_string
+from ugbio_core.dna_sequence_utils import CIGAR_OPS, get_reference_alignment_end, parse_cigar_string
 from ugbio_core.logger import logger
 
 # CIGAR operation constants
 CIGAR_SOFT_CLIP = CIGAR_OPS["S"]
+WINDOW_SIZE = 500  # minimal CNV window size
 
 
 @dataclass
@@ -73,7 +74,7 @@ def has_left_soft_clip(cigar_tuples: list[tuple[int, int]] | None) -> bool:
 def get_supplementary_alignments(
     alignment_file: pysam.AlignmentFile,
     read: pysam.AlignedSegment,
-) -> list[tuple[str, int, bool, bool, bool]]:
+) -> list[tuple[str, int, int, bool, bool, bool]]:
     """
     Get supplementary alignments for a read from the SA tag.
 
@@ -87,7 +88,7 @@ def get_supplementary_alignments(
     Returns
     -------
     list of tuples
-        List of (chrom, pos, has_left_soft_clip, has_right_soft_clip, is_reverse) for supplementary alignments
+        List of (chrom, pos, end, has_left_soft_clip, has_right_soft_clip, is_reverse) for supplementary alignments
     """
     if not read.has_tag("SA"):
         return []
@@ -113,8 +114,8 @@ def get_supplementary_alignments(
         cigar_tups = parse_cigar_string(cigar_str)
         left_soft_clip = has_left_soft_clip(cigar_tups)
         right_soft_clip = has_right_soft_clip(cigar_tups)
-
-        supplementary_alns.append((chrom, pos, left_soft_clip, right_soft_clip, is_reverse))
+        end = get_reference_alignment_end(pos, cigar_str)
+        supplementary_alns.append((chrom, pos, end, left_soft_clip, right_soft_clip, is_reverse))
 
     return supplementary_alns
 
@@ -124,7 +125,7 @@ def _prepare_read_for_cnv_check(
     interval_start: int,
     interval_end: int,
     cushion: int,
-) -> tuple[str, int, bool, bool, bool, int, int, int, int] | None:
+) -> tuple[str, int, int, bool, bool, bool, int, int, int, int] | None:
     """
     Prepare and validate read information for CNV consistency checking.
 
@@ -142,12 +143,13 @@ def _prepare_read_for_cnv_check(
     Returns
     -------
     tuple or None
-        (chrom, start, is_reverse, has_left_clip, has_right_clip,
+        (chrom, start, end, is_reverse, has_left_clip, has_right_clip,
          start_region_start, start_region_end, end_region_start, end_region_end)
         or None if read is not valid for checking
     """
     primary_chrom = read.reference_name
     primary_start = read.reference_start
+    primary_end = int(read.reference_end)
     primary_is_reverse = read.is_reverse
 
     if primary_chrom is None or primary_start is None or read.cigartuples is None:
@@ -172,6 +174,7 @@ def _prepare_read_for_cnv_check(
     return (
         primary_chrom,
         primary_start,
+        primary_end,
         primary_is_reverse,
         primary_has_left_clip,
         primary_has_right_clip,
@@ -187,7 +190,7 @@ def check_read_cnv_consistency(
     interval_start: int,
     interval_end: int,
     cushion: int,
-    supplementary_alns: list[tuple[str, int, bool, bool, bool]],
+    supplementary_alns: list[tuple[str, int, int, bool, bool, bool]],
 ) -> tuple[bool, bool]:
     """
     Check if a split read is consistent with duplication or deletion at this interval.
@@ -219,7 +222,7 @@ def check_read_cnv_consistency(
     """
     if not supplementary_alns:
         return False, False
-
+    cnv_size = interval_end - interval_start
     # Prepare and validate read information
     prep_result = _prepare_read_for_cnv_check(read, interval_start, interval_end, cushion)
     if prep_result is None:
@@ -228,6 +231,7 @@ def check_read_cnv_consistency(
     (
         primary_chrom,
         primary_start,
+        primary_end,
         primary_is_reverse,
         primary_has_left_clip,
         primary_has_right_clip,
@@ -238,7 +242,7 @@ def check_read_cnv_consistency(
     ) = prep_result
 
     # Check supplementary alignments
-    for supp_chrom, supp_start, supp_left_clip, supp_right_clip, supp_is_reverse in supplementary_alns:
+    for supp_chrom, supp_start, supp_end, supp_left_clip, supp_right_clip, supp_is_reverse in supplementary_alns:
         # Must be on same chromosome and same strand
         primary_near_start = start_region_start <= primary_start <= start_region_end
         primary_near_end = end_region_start <= primary_start <= end_region_end
@@ -257,19 +261,25 @@ def check_read_cnv_consistency(
         # Determine which is first part (right clip) and which is second part (left clip)
         is_dup = _alignment_consistent_with_dup(
             primary_start,
+            primary_end,
             supp_start,
+            supp_end,
             primary_has_left_clip,
             primary_has_right_clip,
             supp_left_clip,
             supp_right_clip,
+            cnv_size,
         )
         is_del = _alignment_consistent_with_del(
             primary_start,
+            primary_end,
             supp_start,
+            supp_end,
             primary_has_left_clip,
             primary_has_right_clip,
             supp_left_clip,
             supp_right_clip,
+            cnv_size,
         )
         if is_dup or is_del:
             return is_dup, is_del
@@ -277,32 +287,48 @@ def check_read_cnv_consistency(
 
 
 def _alignment_consistent_with_dup(
-    primary_start, supp_start, primary_left_clip, primary_right_clip, supp_left_clip, supp_right_clip
+    primary_start,
+    primary_end,
+    supp_start,
+    supp_end,
+    primary_left_clip,
+    primary_right_clip,
+    supp_left_clip,
+    supp_right_clip,
+    expected_dist,
 ) -> bool:
     # Case 1: Primary has right clip (first part), supplementary has left clip (second part)
     if primary_right_clip and supp_left_clip:
-        if primary_start > supp_start:
+        if primary_start > supp_end and (primary_end - supp_start) > expected_dist - 2 * WINDOW_SIZE:
             return True
 
     # Case 2: Primary has left clip (second part), supplementary has right clip (first part)
     if primary_left_clip and supp_right_clip:
-        if supp_start > primary_start:
+        if supp_start > primary_end and (supp_end - primary_start) > expected_dist - 2 * WINDOW_SIZE:
             return True  # Duplication: first part AFTER second part
 
     return False
 
 
 def _alignment_consistent_with_del(
-    primary_start, supp_start, primary_left_clip, primary_right_clip, supp_left_clip, supp_right_clip
+    primary_start,
+    primary_end,
+    supp_start,
+    supp_end,
+    primary_left_clip,
+    primary_right_clip,
+    supp_left_clip,
+    supp_right_clip,
+    expected_dist,
 ) -> bool:
     # Case 1: Primary has right clip (first part), supplementary has left clip (second part)
     if primary_right_clip and supp_left_clip:
-        if primary_start < supp_start:
+        if primary_end < supp_start and (supp_start - primary_end) > expected_dist - 2 * WINDOW_SIZE:
             return True
 
     # Case 2: Primary has left clip (second part), supplementary has right clip (first part)
     if primary_left_clip and supp_right_clip:
-        if supp_start < primary_start:
+        if supp_start < primary_start and (primary_start - supp_end) > expected_dist - 2 * WINDOW_SIZE:
             return True  # Duplication: first part AFTER second part
 
     return False

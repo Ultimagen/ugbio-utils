@@ -106,9 +106,9 @@ def test_get_supplementary_alignments(temp_bam_file):
 
     assert len(supp_alns) == 2
     # First: 50M means +50 on reference, 30S on right, + strand
-    assert supp_alns[0] == ("chr1", 999, False, True, False)  # 0-based, no left clip, has right clip, forward
+    assert supp_alns[0] == ("chr1", 999, 1049, False, True, False)  # 0-based, no left clip, has right clip, forward
     # Second: 30S on left, 50M means +50 on reference, - strand
-    assert supp_alns[1] == ("chr1", 1999, True, False, True)  # 0-based, has left clip, no right clip, reverse
+    assert supp_alns[1] == ("chr1", 1999, 2049, True, False, True)  # 0-based, has left clip, no right clip, reverse
 
 
 def test_check_read_cnv_consistency_duplication():
@@ -137,7 +137,7 @@ def test_check_read_cnv_consistency_duplication():
     # Second part (left clip) at earlier position than first part -> duplication
     # Primary is near END (2050), supplementary is near START (950)
     # Same strand (forward) as primary
-    supplementary_alns = [("chr1", 950, True, False, False)]  # has left clip, no right clip, forward
+    supplementary_alns = [("chr1", 950, 1000, True, False, False)]  # has left clip, no right clip, forward
 
     # First part (2050) > Second part (950) -> duplication
     is_dup, is_del = check_read_cnv_consistency(read, 1000, 2000, 100, supplementary_alns)
@@ -171,7 +171,7 @@ def test_check_read_cnv_consistency_deletion():
     # Second part (left clip) at later position than first part -> deletion
     # Primary is near START (950), supplementary is near END (2050)
     # Same strand (forward) as primary
-    supplementary_alns = [("chr1", 2050, True, False, False)]  # has left clip, no right clip, forward
+    supplementary_alns = [("chr1", 2050, 2100, True, False, False)]  # has left clip, no right clip, forward
 
     # First part (950) < Second part (2050) -> deletion
     is_dup, is_del = check_read_cnv_consistency(read, 1000, 2000, 100, supplementary_alns)
