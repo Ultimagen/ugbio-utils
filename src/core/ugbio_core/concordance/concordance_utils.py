@@ -310,6 +310,7 @@ def init_metrics_df() -> pd.DataFrame:
             "precision",
             "recall",
             "f1",
+            "aucpr",
             "initial_tp",
             "initial_fp",
             "initial_fn",
@@ -329,6 +330,7 @@ def _get_empty_recall_precision() -> dict:
         "precision": 1.0,
         "recall": 1.0,
         "f1": 1.0,
+        "aucpr": 0.0,
         "initial_tp": 0,
         "initial_fp": 0,
         "initial_fn": 0,
@@ -396,6 +398,8 @@ def get_concordance_metrics(
     else:
         threshold = 0
 
+    aucpr = stats_utils.get_aucpr(precisions_curve, recalls_curve)
+
     curve_df = pd.DataFrame(
         pd.Series(
             {
@@ -439,6 +443,7 @@ def get_concordance_metrics(
                 "precision": precision,
                 "recall": recall,
                 "f1": f1,
+                "aucpr": aucpr,
                 "initial_tp": initial_tp,
                 "initial_fp": initial_fp,
                 "initial_fn": initial_fn,

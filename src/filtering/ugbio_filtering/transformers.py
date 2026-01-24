@@ -301,6 +301,8 @@ def modify_features_based_on_vcf_type(  # noqa C901
             ("cnv_del_reads", "passthrough", ["cnv_del_reads"]),
             ("cnv_dup_frac", "passthrough", ["cnv_dup_frac"]),
             ("cnv_del_frac", "passthrough", ["cnv_del_frac"]),
+            ("del_reads_median_insert_size", default_filler, ["del_reads_median_insert_size"]),
+            ("dup_reads_median_insert_size", default_filler, ["dup_reads_median_insert_size"]),
             ("jalign_dup_support", "passthrough", ["jalign_dup_support"]),
             ("jalign_del_support", "passthrough", ["jalign_del_support"]),
             ("jalign_dup_support_strong", "passthrough", ["jalign_dup_support_strong"]),
