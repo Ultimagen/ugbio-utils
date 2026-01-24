@@ -38,9 +38,13 @@ from ugbio_core.vcf_utils import VcfUtils
 from ugbio_core.vcfbed import vcftools
 from ugbio_core.vcfbed.interval_file import IntervalFile
 
-from ugbio_comparison import comparison_utils
 from ugbio_comparison.comparison_pipeline import ComparisonPipeline
-from ugbio_comparison.vcf_comparison_utils import VcfComparisonUtils
+from ugbio_comparison.vcf_comparison_utils import (
+    VcfComparisonUtils,
+    annotate_concordance,
+    reinterpret_variants,
+    vcf2concordance,
+)
 
 MIN_CONTIG_LENGTH = 100000
 
@@ -61,14 +65,14 @@ def _contig_concordance_annotate_reinterpretation(  # noqa: PLR0913
     scoring_field,
 ):
     logger.info("Reading %s", contig)
-    concordance = comparison_utils.vcf2concordance(
+    concordance = vcf2concordance(
         raw_calls_vcf,
         concordance_vcf,
         contig,
         scoring_field=scoring_field,
     )
 
-    annotated_concordance, _ = comparison_utils.annotate_concordance(
+    annotated_concordance, _ = annotate_concordance(
         concordance,
         reference,
         bw_high_quality,
@@ -78,7 +82,7 @@ def _contig_concordance_annotate_reinterpretation(  # noqa: PLR0913
     )
 
     if enable_reinterpretation:
-        annotated_concordance = comparison_utils.reinterpret_variants(
+        annotated_concordance = reinterpret_variants(
             annotated_concordance, reference, ignore_low_quality_fps=ignore_low_quality_fps
         )
     logger.debug("%s: %s", contig, annotated_concordance.shape)
@@ -265,12 +269,12 @@ def _create_comparison_pipeline(vcu, vu, cmp_intervals, highconf_intervals, args
 
 def _process_single_interval_concordance(raw_calls_vcf, concordance_vcf, args) -> None:
     """Process concordance for single interval file."""
-    concordance_df = comparison_utils.vcf2concordance(
+    concordance_df = vcf2concordance(
         raw_calls_vcf,
         concordance_vcf,
         scoring_field=args.scoring_field,
     )
-    annotated_concordance_df, _ = comparison_utils.annotate_concordance(
+    annotated_concordance_df, _ = annotate_concordance(
         concordance_df,
         args.reference,
         args.coverage_bw_high_quality,
@@ -280,7 +284,7 @@ def _process_single_interval_concordance(raw_calls_vcf, concordance_vcf, args) -
     )
 
     if args.enable_reinterpretation:
-        annotated_concordance_df = comparison_utils.reinterpret_variants(
+        annotated_concordance_df = reinterpret_variants(
             annotated_concordance_df,
             args.reference,
             ignore_low_quality_fps=args.is_mutect,
