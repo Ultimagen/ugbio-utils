@@ -454,9 +454,10 @@ def vcf2concordance(  # noqa PLR0915 C901
         This value replaces the TREE_SCORE in the output data frame.
         When None TREE_SCORE is not replaced (default: None)
 
-    No Longer Returned
-    ------------------
+    Returns
+    -------
     pd.DataFrame
+        Concordance dataframe
     """
 
     if chromosome is None:
@@ -644,12 +645,12 @@ def annotate_concordance(
     flow_order : str, optional
         Flow order
 
-    No Longer Returned
-    ------------------
+    Returns
+    -------
     pd.DataFrame
         Annotated dataframe
     list
-        list of the names of the annotations
+        List of the names of the annotations
     """
 
     if annotate_intervals is None:
@@ -696,16 +697,16 @@ def reinterpret_variants(
     reference_fasta : str
         Indexed FASTA
     ignore_low_quality_fps : bool, optional
-        Shoud the low quality false positives be ignored in reinterpretation (True for mutect, default False)
+        Should the low quality false positives be ignored in reinterpretation (True for mutect, default False)
+
+    Returns
+    -------
+    pd.DataFrame
+        Reinterpreted dataframe
 
     See Also
     --------
     `flow_based_concordance.py`
-
-    No Longer Returned
-    ------------------
-    pd.DataFrame
-        Reinterpreted dataframe
     """
     logger.info("Variants reinterpret")
     concordance_df_result = pd.DataFrame()
@@ -719,7 +720,7 @@ def reinterpret_variants(
 
 
 def _get_locations_to_work_on(input_df: pd.DataFrame, *, ignore_low_quality_fps: bool = False) -> dict:
-    """Dictionary of  in the dataframe that we care about
+    """Dictionary of locations in the dataframe that we care about
 
     Parameters
     ----------
