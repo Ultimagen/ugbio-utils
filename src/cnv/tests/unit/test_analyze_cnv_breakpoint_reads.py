@@ -1,5 +1,6 @@
 """Tests for analyze_cnv_breakpoint_reads module."""
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -254,8 +255,6 @@ def test_analyze_cnv_breakpoints(temp_bam_file, temp_vcf_file, dummy_fasta_file)
 
 def test_analyze_cnv_breakpoints_real_data():
     """Test with real duplication and deletion data from resources."""
-    import os
-    from pathlib import Path
 
     # Get path to resources directory
     resources_dir = Path(__file__).parent.parent / "resources"
