@@ -24,7 +24,7 @@ from os.path import basename, dirname, splitext
 import pandas as pd
 from pandas import DataFrame, Series
 from simppl.cli import get_parser
-from ugbio_comparison.comparison_utils import annotate_concordance
+from ugbio_comparison.vcf_comparison_utils import annotate_concordance
 from ugbio_core.concordance.concordance_utils import (
     apply_filter,
     calc_accuracy_metrics,
