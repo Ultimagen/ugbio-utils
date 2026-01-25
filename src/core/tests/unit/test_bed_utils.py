@@ -357,8 +357,8 @@ def test_count_bases_in_bed_file(tmpdir):
     """Test count_bases_in_bed_file to verify it correctly counts bases in a BED file."""
     from pathlib import Path
 
-    # Use the existing bed1.bed file from comparison tests
-    test_resources = Path(__file__).parent.parent.parent.parent / "comparison" / "tests" / "resources"
+    # Use the existing bed1.bed file from core test resources
+    test_resources = Path(__file__).parent.parent / "resources"
     bed1_path = test_resources / "bed1.bed"
 
     if bed1_path.exists():
