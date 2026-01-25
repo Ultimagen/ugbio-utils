@@ -138,6 +138,31 @@ def get_f1(precision: float, recall, null_value=np.nan) -> float:
     return safe_divide(2 * precision * recall, precision + recall)
 
 
+def get_aucpr(precisions: np.ndarray, recalls: np.ndarray) -> float:
+    """
+    Calculate Area Under the Precision-Recall Curve using trapezoidal integration.
+
+    Parameters
+    ----------
+    precisions : np.ndarray
+        Array of precision values
+    recalls : np.ndarray
+        Array of recall values
+
+    Returns
+    -------
+    float
+        Area under the precision-recall curve
+    """
+    if len(recalls) <= 1:
+        return 0.0
+    # Sort by recall to ensure proper integration order
+    sorted_indices = np.argsort(recalls)
+    sorted_recalls = recalls[sorted_indices]
+    sorted_precisions = precisions[sorted_indices]
+    return float(np.trapz(sorted_precisions, sorted_recalls))  # noqa: NPY201 not switching to numpy 2.0
+
+
 def precision_recall_curve(
     gtr: np.ndarray | pd.Series,
     predictions: np.ndarray | pd.Series,

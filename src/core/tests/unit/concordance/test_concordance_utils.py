@@ -42,6 +42,7 @@ class TestConcordanceUtils(unittest.TestCase):
             "precision": [0.75],
             "recall": [0.75],
             "f1": [0.75],
+            "aucpr": [0.0],
         }
         # DataFrame dict contains index->value dictionaries per each column
         expected_indels = {"group": {7: "INDELS"}}
@@ -84,9 +85,10 @@ class TestConcordanceUtils(unittest.TestCase):
             "tp": [3],
             "fp": [0],
             "fn": [1],
-            "precision": [1],
+            "precision": [1.0],
             "recall": [0.75],
             "f1": [0.85714],
+            "aucpr": [0.0],
         }
 
         # DataFrame dict contains index->value dictionaries per each column
@@ -162,6 +164,7 @@ def test_get_empty_recall_precision():
         "precision": 1.0,
         "recall": 1.0,
         "f1": 1.0,
+        "aucpr": 0.0,
         "initial_tp": 0,
         "initial_fp": 0,
         "initial_fn": 0,
@@ -200,6 +203,7 @@ def test_get_concordance_metrics():
             "precision": [0.5],
             "recall": [0.3333333],
             "f1": [0.4],
+            "aucpr": [0.0],
             "initial_tp": [2],
             "initial_fp": [2],
             "initial_fn": [1],

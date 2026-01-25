@@ -96,6 +96,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "CNV_DEL_READS",
             "CNV_DUP_FRAC",
             "CNV_DEL_FRAC",
+            "DEL_READS_MEDIAN_INSERT_SIZE",
+            "DUP_READS_MEDIAN_INSERT_SIZE",
             "JALIGN_DUP_SUPPORT",
             "JALIGN_DEL_SUPPORT",
             "JALIGN_DUP_SUPPORT_STRONG",

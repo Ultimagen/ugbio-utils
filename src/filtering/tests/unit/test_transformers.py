@@ -121,6 +121,8 @@ class TestTransformers:
                 "cnv_del_reads": [5],
                 "cnv_dup_frac": [0.6],
                 "cnv_del_frac": [0.3],
+                "del_reads_median_insert_size": [100.0],
+                "dup_reads_median_insert_size": [200.0],
                 "jalign_dup_support": [8],
                 "jalign_del_support": [4],
                 "jalign_dup_support_strong": [6],

@@ -1,5 +1,6 @@
 """Tests for analyze_cnv_breakpoint_reads module."""
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -17,20 +18,27 @@ from ugbio_cnv.analyze_cnv_breakpoint_reads import (
 def temp_vcf_file():
     """Create a temporary VCF file for testing."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as f:
-        # Write VCF header
+        # Write VCF header matching dummy.fasta (10Kb per chromosome)
         f.write("##fileformat=VCFv4.2\n")
-        f.write("##contig=<ID=chr1,length=100000>\n")
-        f.write("##contig=<ID=chr2,length=100000>\n")
+        f.write("##contig=<ID=chr1,length=10000>\n")
+        f.write("##contig=<ID=chr2,length=10000>\n")
         f.write('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">\n')
         f.write('##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant">\n')
         f.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
-        # Add three CNV variants
+        # Add three CNV variants (positions within 10Kb chromosome limits)
         f.write("chr1\t1001\t.\tN\t<DUP>\t.\tPASS\tSVTYPE=DUP;END=2000\n")
         f.write("chr1\t5001\t.\tN\t<DEL>\t.\tPASS\tSVTYPE=DEL;END=6000\n")
-        f.write("chr2\t10001\t.\tN\t<DUP>\t.\tPASS\tSVTYPE=DUP;END=11000\n")
+        f.write("chr2\t3001\t.\tN\t<DUP>\t.\tPASS\tSVTYPE=DUP;END=4000\n")
         temp_path = f.name
     yield temp_path
     Path(temp_path).unlink()
+
+
+@pytest.fixture
+def dummy_fasta_file():
+    """Return path to the dummy FASTA file in resources."""
+    resources_dir = Path(__file__).parent.parent / "resources"
+    return str(resources_dir / "dummy.fasta")
 
 
 @pytest.fixture
@@ -39,12 +47,12 @@ def temp_bam_file():
     with tempfile.NamedTemporaryFile(suffix=".bam", delete=False) as f:
         temp_path = f.name
 
-    # Create a simple BAM file with header
+    # Create a simple BAM file with header matching dummy.fasta (10Kb per chromosome)
     header = {
         "HD": {"VN": "1.0"},
         "SQ": [
-            {"SN": "chr1", "LN": 100000},
-            {"SN": "chr2", "LN": 100000},
+            {"SN": "chr1", "LN": 10000},
+            {"SN": "chr2", "LN": 10000},
         ],
     }
 
@@ -106,9 +114,9 @@ def test_get_supplementary_alignments(temp_bam_file):
 
     assert len(supp_alns) == 2
     # First: 50M means +50 on reference, 30S on right, + strand
-    assert supp_alns[0] == ("chr1", 999, False, True, False)  # 0-based, no left clip, has right clip, forward
+    assert supp_alns[0] == ("chr1", 999, 1049, False, True, False)  # 0-based, no left clip, has right clip, forward
     # Second: 30S on left, 50M means +50 on reference, - strand
-    assert supp_alns[1] == ("chr1", 1999, True, False, True)  # 0-based, has left clip, no right clip, reverse
+    assert supp_alns[1] == ("chr1", 1999, 2049, True, False, True)  # 0-based, has left clip, no right clip, reverse
 
 
 def test_check_read_cnv_consistency_duplication():
@@ -137,12 +145,14 @@ def test_check_read_cnv_consistency_duplication():
     # Second part (left clip) at earlier position than first part -> duplication
     # Primary is near END (2050), supplementary is near START (950)
     # Same strand (forward) as primary
-    supplementary_alns = [("chr1", 950, True, False, False)]  # has left clip, no right clip, forward
+    supplementary_alns = [("chr1", 950, 1000, True, False, False)]  # has left clip, no right clip, forward
 
     # First part (2050) > Second part (950) -> duplication
-    is_dup, is_del = check_read_cnv_consistency(read, 1000, 2000, 100, supplementary_alns)
+    is_dup, is_del, insert_size = check_read_cnv_consistency(read, 1000, 2000, 100, supplementary_alns)
     assert is_dup is True
     assert is_del is False
+    assert insert_size is not None
+    assert insert_size > 0
 
 
 def test_check_read_cnv_consistency_deletion():
@@ -171,12 +181,14 @@ def test_check_read_cnv_consistency_deletion():
     # Second part (left clip) at later position than first part -> deletion
     # Primary is near START (950), supplementary is near END (2050)
     # Same strand (forward) as primary
-    supplementary_alns = [("chr1", 2050, True, False, False)]  # has left clip, no right clip, forward
+    supplementary_alns = [("chr1", 2050, 2100, True, False, False)]  # has left clip, no right clip, forward
 
     # First part (950) < Second part (2050) -> deletion
-    is_dup, is_del = check_read_cnv_consistency(read, 1000, 2000, 100, supplementary_alns)
+    is_dup, is_del, insert_size = check_read_cnv_consistency(read, 1000, 2000, 100, supplementary_alns)
     assert is_dup is False
     assert is_del is True
+    assert insert_size is not None
+    assert insert_size > 0
 
 
 def test_analyze_interval_breakpoints(temp_bam_file):
@@ -193,7 +205,7 @@ def test_analyze_interval_breakpoints(temp_bam_file):
         assert evidence.deletion_reads == 1
 
 
-def test_analyze_cnv_breakpoints(temp_bam_file, temp_vcf_file):
+def test_analyze_cnv_breakpoints(temp_bam_file, temp_vcf_file, dummy_fasta_file):
     """Test full analysis workflow with VCF output."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as output_f:
         output_vcf_path = output_f.name
@@ -203,6 +215,7 @@ def test_analyze_cnv_breakpoints(temp_bam_file, temp_vcf_file):
         analyze_cnv_breakpoints(
             bam_file=temp_bam_file,
             vcf_file=temp_vcf_file,
+            reference_fasta=dummy_fasta_file,
             cushion=100,
             output_file=output_vcf_path,
         )
@@ -216,6 +229,8 @@ def test_analyze_cnv_breakpoints(temp_bam_file, temp_vcf_file):
         assert "CNV_TOTAL_READS" in vcf.header.info
         assert "CNV_DUP_FRAC" in vcf.header.info
         assert "CNV_DEL_FRAC" in vcf.header.info
+        assert "DUP_READS_MEDIAN_INSERT_SIZE" in vcf.header.info
+        assert "DEL_READS_MEDIAN_INSERT_SIZE" in vcf.header.info
 
         # Collect records
         records = list(vcf)
@@ -240,8 +255,6 @@ def test_analyze_cnv_breakpoints(temp_bam_file, temp_vcf_file):
 
 def test_analyze_cnv_breakpoints_real_data():
     """Test with real duplication and deletion data from resources."""
-    import os
-    from pathlib import Path
 
     # Get path to resources directory
     resources_dir = Path(__file__).parent.parent / "resources"
@@ -275,11 +288,16 @@ def test_analyze_cnv_breakpoints_real_data():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as dup_output_f:
         dup_output_vcf = dup_output_f.name
 
+    # Use Homo_sapiens_assembly38.fasta.fai location to find reference
+    # For this test, we use a minimal reference - the BAM contains reference info
+    reference_fasta = os.path.join(resources_dir, "chr19.fasta")
+
     try:
         # Run analysis on duplication
         analyze_cnv_breakpoints(
             bam_file=dup_bam_file,
             vcf_file=dup_vcf_file,
+            reference_fasta=reference_fasta,
             cushion=1000,
             output_file=dup_output_vcf,
         )
@@ -302,6 +320,10 @@ def test_analyze_cnv_breakpoints_real_data():
         assert (
             dup_record.info["CNV_DUP_READS"] >= 10
         ), f"Expected at least 10 duplication reads, but found {dup_record.info['CNV_DUP_READS']}"
+
+        # Check insert size statistics are present when there are supporting reads
+        if dup_record.info["CNV_DUP_READS"] >= 1:
+            assert "DUP_READS_MEDIAN_INSERT_SIZE" in dup_record.info
 
     finally:
         Path(dup_vcf_file).unlink(missing_ok=True)
@@ -341,6 +363,7 @@ def test_analyze_cnv_breakpoints_real_data():
         analyze_cnv_breakpoints(
             bam_file=del_bam_file,
             vcf_file=del_vcf_file,
+            reference_fasta=reference_fasta,
             cushion=1000,
             output_file=del_output_vcf,
         )
@@ -363,6 +386,10 @@ def test_analyze_cnv_breakpoints_real_data():
         assert (
             del_record.info["CNV_DEL_READS"] >= 10
         ), f"Expected at least 10 deletion reads, but found {del_record.info['CNV_DEL_READS']}"
+
+        # Check insert size statistics are present when there are supporting reads
+        if del_record.info["CNV_DEL_READS"] >= 1:
+            assert "DEL_READS_MEDIAN_INSERT_SIZE" in del_record.info
 
     finally:
         Path(del_vcf_file).unlink(missing_ok=True)
