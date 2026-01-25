@@ -119,13 +119,13 @@ def create_new_header(main_vcf: pysam.VariantFile, distance_start_to_center: int
         f"ref_counts_pm_{distance_start_to_center}",
         ".",
         "Integer",
-        f"Reference counts at positions ±0..{distance_start_to_center}",
+        f"Reference counts at positions -{distance_start_to_center}..0..{distance_start_to_center}",
     )
     header.formats.add(
         f"nonref_counts_pm_{distance_start_to_center}",
         ".",
         "Integer",
-        f"Non-reference counts at positions ±0..{distance_start_to_center}",
+        f"Non-reference counts at positions -{distance_start_to_center}..0..{distance_start_to_center}",
     )
 
     return header
