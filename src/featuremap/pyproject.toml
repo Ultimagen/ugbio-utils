@@ -6,6 +6,8 @@ dependencies = [
     "ugbio_core[vcfbed,ml]",
     "ugbio_ppmseq",
     "polars>=1.27.1",
+    "cyclopts>=3.0",
+    "rich>=13.0",
 ]
 description = "Ultima Genomics FeatureMap utils"
 authors = [

@@ -1,12 +1,12 @@
-import argparse
 import logging
-import sys
 import warnings
 from pathlib import Path
 
+import cyclopts
 import pandas as pd
 import polars as pl
 import pysam
+from rich.console import Console
 from ugbio_core.logger import logger
 
 from ugbio_featuremap import somatic_featuremap_inference_utils
@@ -16,6 +16,11 @@ from ugbio_featuremap.somatic_featuremap_utils import (
     TR_CONFIG,
     filter_and_annotate_tr,
 )
+
+app = cyclopts.App(
+    help="Classify somatic featuremap variants using XGBoost model.",
+)
+console = Console(stderr=True)
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -591,70 +596,52 @@ def write_enhanced_vcf(
 # =============================================================================
 
 
-def __parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        prog="somatic featuremap fields transformation",
-        description=run.__doc__,
-    )
-    parser.add_argument(
-        "-sfm",
-        "--somatic_featuremap",
-        type=Path,
-        required=True,
-        help="""somatic featuremap vcf file""",
-    )
-    parser.add_argument(
-        "-filter_string",
-        "--filter_string",
-        type=str,
-        required=False,
-        default="PASS",
-        help="""filter tags to apply on the somatic featuremap pileup vcf file""",
-    )
-    parser.add_argument(
-        "-o",
-        "--output_vcf",
-        type=Path,
-        required=True,
-        help="""Output pileup vcf file""",
-    )
-    parser.add_argument(
-        "-g",
-        "--genome_file",
-        type=Path,
-        required=True,
-        help="""Genome FASTA index (.fai) file""",
-    )
-    parser.add_argument(
-        "-ref_tr",
-        "--ref_tr_file",
-        type=Path,
-        required=True,
-        help="""Reference tandem repeat file in BED format""",
-    )
-    parser.add_argument(
-        "-xgb_model",
-        "--xgb_model_file",
-        type=Path,
-        required=True,
-        help="""XGBoost model file for inference""",
-    )
-    parser.add_argument(
-        "-v",
-        "--disable_verbose",
-        action="store_false",
-        default=True,
-        help="""Disable verbose output and debug messages. When used, verbose mode is turned off
-                (default: verbose enabled)""",
-    )
-    return parser.parse_args(argv[1:])
+@app.default
+def run(
+    somatic_featuremap: Path,
+    output_vcf: Path,
+    genome_file: Path,
+    ref_tr_file: Path,
+    xgb_model_file: Path,
+    *,
+    filter_string: str = "PASS",
+    write_agg_params: bool = False,
+    verbose: bool = False,
+) -> None:
+    """Classify somatic featuremap variants using XGBoost model.
 
+    Runs the full classification pipeline:
+    1. Filter VCF and add TR annotations
+    2. Convert VCF to dataframe with aggregations
+    3. Run XGBoost classifier
+    4. Write enhanced VCF with predictions
 
-def run(argv: list[str]) -> None:
-    args_in = __parse_args(argv)
+    Parameters
+    ----------
+    somatic_featuremap
+        Somatic featuremap VCF file (gzipped, indexed).
+    output_vcf
+        Output VCF file path.
+    genome_file
+        Genome FASTA index (.fai) file.
+    ref_tr_file
+        Reference tandem repeat file in BED format.
+    xgb_model_file
+        XGBoost model file for inference.
+    filter_string
+        Filter tags to apply on the VCF file.
+    write_agg_params
+        Write aggregated parameters to output VCF.
+    verbose
+        Enable verbose output and debug messages.
 
+    Examples
+    --------
+    $ somatic_featuremap_fields_transformation input.vcf.gz -o output.vcf.gz \\
+        --genome-file genome.fa.fai --ref-tr-file tandem_repeats.bed \\
+        --xgb-model-file model.json
+    """
     # Ensure output has .vcf.gz suffix
-    output_vcf = args_in.output_vcf
     if not str(output_vcf).endswith(".vcf.gz"):
         logger.debug("adding .vcf.gz suffix to the output vcf file")
         output_vcf = output_vcf.with_suffix(".vcf.gz")
@@ -663,17 +650,20 @@ def run(argv: list[str]) -> None:
     out_dir = output_vcf.parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    somatic_featuremap_classifier(
-        somatic_featuremap_vcf_path=args_in.somatic_featuremap,
-        ref_tr_file=args_in.ref_tr_file,
-        genome_file=args_in.genome_file,
-        out_dir=out_dir,
-        filter_string=args_in.filter_string,
-        xgb_model_path=args_in.xgb_model_file,
-        output_vcf=output_vcf,
-        write_agg_params=args_in.write_agg_params,
-        verbose=args_in.verbose,
-    )
+    with console.status("[bold cyan]Running somatic featuremap classifier..."):
+        somatic_featuremap_classifier(
+            somatic_featuremap_vcf_path=somatic_featuremap,
+            ref_tr_file=ref_tr_file,
+            genome_file=genome_file,
+            out_dir=out_dir,
+            filter_string=filter_string,
+            xgb_model_path=xgb_model_file,
+            output_vcf=output_vcf,
+            write_agg_params=write_agg_params,
+            verbose=verbose,
+        )
+
+    console.print(f"[green]✓[/green] Output VCF written to: {output_vcf}")
 
 
 def somatic_featuremap_classifier(
@@ -740,12 +730,8 @@ def somatic_featuremap_classifier(
 
 
 def main():
-    """
-    Main entry point for the script.
-
-    Calls run() with command line arguments from sys.argv.
-    """
-    run(sys.argv)
+    """Main entry point for the script."""
+    app()
 
 
 if __name__ == "__main__":
