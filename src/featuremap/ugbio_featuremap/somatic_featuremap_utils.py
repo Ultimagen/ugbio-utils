@@ -1,10 +1,70 @@
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import pysam
 from simppl.simple_pipeline import SimplePipeline
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
+
+
+@dataclass(frozen=True)
+class VcfInfoField:
+    """VCF INFO field definition."""
+
+    field_id: str
+    number: str
+    field_type: str
+    description: str
+
+
+@dataclass(frozen=True)
+class TandemRepeatConfig:
+    """Configuration for Tandem Repeat INFO fields added to VCF during TR annotation."""
+
+    fields: tuple[VcfInfoField, ...] = (
+        VcfInfoField("TR_START", "1", "Integer", "Closest tandem Repeat Start"),
+        VcfInfoField("TR_END", "1", "Integer", "Closest Tandem Repeat End"),
+        VcfInfoField("TR_SEQ", "1", "String", "Closest Tandem Repeat Sequence"),
+        VcfInfoField("TR_LENGTH", "1", "Integer", "Closest Tandem Repeat total length"),
+        VcfInfoField("TR_SEQ_UNIT_LENGTH", "1", "Integer", "Closest Tandem Repeat unit length"),
+        VcfInfoField("TR_DISTANCE", "1", "Integer", "Closest Tandem Repeat Distance"),
+    )
+
+    def all_field_ids(self) -> set[str]:
+        """Return set of all TR field IDs."""
+        return {field.field_id for field in self.fields}
+
+
+@dataclass(frozen=True)
+class PileupConfig:
+    """Configuration for PILEUP-based ref/nonref calculations.
+
+    PILEUP position mapping: L2→ref0, L1→ref1, C→ref2, R1→ref3, R2→ref4
+    """
+
+    positions: tuple[str, ...] = ("L2", "L1", "C", "R1", "R2")
+    bases: tuple[str, ...] = ("A", "C", "G", "T")
+    indels: tuple[str, ...] = ("DEL", "INS")
+
+    def get_column_name(self, element: str, position: str, sample_suffix: str) -> str:
+        """Get the full PILEUP column name."""
+        return f"PILEUP_{element}_{position}{sample_suffix}"
+
+    def get_all_format_fields(self) -> set[str]:
+        """Get all PILEUP FORMAT field names (without sample suffix)."""
+        fields = set()
+        for pos in self.positions:
+            for base in self.bases:
+                fields.add(f"PILEUP_{base}_{pos}")
+            for indel in self.indels:
+                fields.add(f"PILEUP_{indel}_{pos}")
+        return fields
+
+
+# Singleton instances for use throughout the codebase
+TR_CONFIG = TandemRepeatConfig()
+PILEUP_CONFIG = PileupConfig()
 
 
 def _create_variant_bed(merged_vcf: Path, bed_file: Path) -> None:
@@ -36,17 +96,15 @@ def _prepare_annotation_files(tmpdir: Path, tr_tsv_file: Path) -> tuple[Path, Pa
     sp.print_and_run(cmd)
 
     header = pysam.VariantHeader()
-    info_fields = [
-        ("TR_START", "1", "Integer", "Closest tandem Repeat Start"),
-        ("TR_END", "1", "Integer", "Closest Tandem Repeat End"),
-        ("TR_SEQ", "1", "String", "Closest Tandem Repeat Sequence"),
-        ("TR_LENGTH", "1", "Integer", "Closest Tandem Repeat total length"),
-        ("TR_SEQ_UNIT_LENGTH", "1", "Integer", "Closest Tandem Repeat unit length"),
-        ("TR_DISTANCE", "1", "Integer", "Closest Tandem Repeat Distance"),
-    ]
-    for hdr_id, hdr_number, hdr_type, hdr_description in info_fields:
+    for tr_field in TR_CONFIG.fields:
         header.add_meta(
-            "INFO", items=[("ID", hdr_id), ("Number", hdr_number), ("Type", hdr_type), ("Description", hdr_description)]
+            "INFO",
+            items=[
+                ("ID", tr_field.field_id),
+                ("Number", tr_field.number),
+                ("Type", tr_field.field_type),
+                ("Description", tr_field.description),
+            ],
         )
 
     hdr_file = tmpdir / "tr_hdr.txt"
@@ -56,8 +114,6 @@ def _prepare_annotation_files(tmpdir: Path, tr_tsv_file: Path) -> tuple[Path, Pa
             f.write(line + "\n")
 
     return gz_tsv, hdr_file
-
-
 
 
 def filter_and_annotate_tr(

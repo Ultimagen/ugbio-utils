@@ -1,7 +1,6 @@
 import argparse
 import logging
 import sys
-import tempfile
 import warnings
 from pathlib import Path
 
@@ -12,7 +11,11 @@ from ugbio_core.logger import logger
 
 from ugbio_featuremap import somatic_featuremap_inference_utils
 from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
-from ugbio_featuremap.somatic_featuremap_utils import filter_and_annotate_tr
+from ugbio_featuremap.somatic_featuremap_utils import (
+    PILEUP_CONFIG,
+    TR_CONFIG,
+    filter_and_annotate_tr,
+)
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -22,10 +25,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # These are the columns needed from the VCF to compute the model's expected features.
 # =============================================================================
 
-# INFO fields required for inference
-REQUIRED_INFO_FIELDS: set[str] = {
-    "TR_DISTANCE",  # Tandem repeat distance (added by TR annotation step)
-}
+# INFO fields required for inference (includes all TR fields added by annotation step)
+REQUIRED_INFO_FIELDS: set[str] = TR_CONFIG.all_field_ids()
 
 # FORMAT fields required for inference (per-sample fields)
 # These are used directly or for deriving aggregated features
@@ -45,43 +46,15 @@ REQUIRED_FORMAT_FIELDS: set[str] = {
     "SCST",  # Soft clip start -> scst_num_reads (count non-zero)
     "SCED",  # Soft clip end -> sced_num_reads (count non-zero)
     # PILEUP columns for ref0-4 / nonref0-4 calculations
-    "PILEUP_A_L2",
-    "PILEUP_A_L1",
-    "PILEUP_A_C",
-    "PILEUP_A_R1",
-    "PILEUP_A_R2",
-    "PILEUP_C_L2",
-    "PILEUP_C_L1",
-    "PILEUP_C_C",
-    "PILEUP_C_R1",
-    "PILEUP_C_R2",
-    "PILEUP_G_L2",
-    "PILEUP_G_L1",
-    "PILEUP_G_C",
-    "PILEUP_G_R1",
-    "PILEUP_G_R2",
-    "PILEUP_T_L2",
-    "PILEUP_T_L1",
-    "PILEUP_T_C",
-    "PILEUP_T_R1",
-    "PILEUP_T_R2",
-    "PILEUP_DEL_L2",
-    "PILEUP_DEL_L1",
-    "PILEUP_DEL_C",
-    "PILEUP_DEL_R1",
-    "PILEUP_DEL_R2",
-    "PILEUP_INS_L2",
-    "PILEUP_INS_L1",
-    "PILEUP_INS_C",
-    "PILEUP_INS_R1",
-    "PILEUP_INS_R2",
+    *PILEUP_CONFIG.get_all_format_fields(),
 }
 
 # =============================================================================
 # VCF OUTPUT FIELD DEFINITIONS
 # =============================================================================
 
-# TODO: I'm not sure if we stil need ADDED_FORMAT_FEATURES and ADDED_INFO_FEATURES since they are added to the parquet and not the output VCF
+# TODO: I'm not sure if we still need ADDED_FORMAT_FEATURES and ADDED_INFO_FEATURES
+# since they are added to the parquet and not the output VCF
 ADDED_FORMAT_FEATURES = {
     "ALT_READS": ["number of supporting reads for the alternative allele", "Integer"],
     "PASS_ALT_READS": ["number of passed supporting reads for the alternative allele", "Integer"],
@@ -157,7 +130,7 @@ def get_columns_to_drop_from_vcf(vcf_path: Path) -> tuple[set[str], set[str]]:
     return drop_info, drop_format
 
 
-def read_vcf_with_aggregation(vcf_path: Path) -> pl.DataFrame:
+def read_vcf_with_aggregation(vcf_path: Path, output_parquet_path: Path) -> pl.DataFrame:
     """
     Read VCF file into polars dataframe with column aggregations.
 
@@ -168,6 +141,8 @@ def read_vcf_with_aggregation(vcf_path: Path) -> pl.DataFrame:
     ----------
     vcf_path : Path
         Path to the input VCF file (gzipped, indexed).
+    output_parquet_path : Path
+        Path to save the aggregated parquet file.
 
     Returns
     -------
@@ -177,20 +152,17 @@ def read_vcf_with_aggregation(vcf_path: Path) -> pl.DataFrame:
     # Compute which columns to drop based on required fields
     drop_info, drop_format = get_columns_to_drop_from_vcf(vcf_path)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        parquet_path = Path(tmpdir) / "aggregated.parquet"
+    vcf_to_parquet(
+        vcf=str(vcf_path),
+        out=str(output_parquet_path),
+        drop_info=drop_info,
+        drop_format=drop_format,
+        list_mode="aggregate",
+        expand_columns={"AD": 2},  # Split AD into AD_0 (ref), AD_1 (alt)
+    )
 
-        vcf_to_parquet(
-            vcf=str(vcf_path),
-            out=str(parquet_path),
-            drop_info=drop_info,
-            drop_format=drop_format,
-            list_mode="aggregate",
-            expand_columns={"AD": 2},  # Split AD into AD_0 (ref), AD_1 (alt)
-        )
-
-        logger.info(f"Read aggregated dataframe from parquet file: {parquet_path}")
-        aggregated_df = pl.read_parquet(parquet_path)
+    logger.info(f"Read aggregated dataframe from parquet file: {output_parquet_path}")
+    aggregated_df = pl.read_parquet(output_parquet_path)
 
     return aggregated_df
 
@@ -213,18 +185,12 @@ def get_sample_names_from_vcf(vcf_path: Path) -> tuple[str, str]:
     """
     with pysam.VariantFile(str(vcf_path)) as vcf:
         samples = list(vcf.header.samples)
-        if len(samples) < 2:  
+        if len(samples) < 2:  # noqa: PLR2004
             raise ValueError(f"Expected at least 2 samples in VCF, found {len(samples)}: {samples}")
         return samples[0], samples[1]
 
 
-# PILEUP position mapping: L2→ref0, L1→ref1, C→ref2, R1→ref3, R2→ref4
-PILEUP_POSITIONS = ["L2", "L1", "C", "R1", "R2"]
-PILEUP_BASES = ["A", "C", "G", "T"]
-PILEUP_INDELS = ["DEL", "INS"]
-
-
-def calculate_ref_nonref_columns(variants_df: pl.DataFrame, sample_suffix: str, output_prefix: str) -> pl.DataFrame:
+def calculate_ref_nonref_columns(variants_df: pl.DataFrame, sample_suffix: str) -> pl.DataFrame:
     """
     Calculate ref0-4 and nonref0-4 columns from PILEUP columns.
 
@@ -232,36 +198,37 @@ def calculate_ref_nonref_columns(variants_df: pl.DataFrame, sample_suffix: str, 
     - ref{i} = PILEUP_{REF}_{pos}_{sample}
     - nonref{i} = sum of PILEUP_{non-REF bases}_{pos} + PILEUP_{DEL}_{pos} + PILEUP_{INS}_{pos}
 
+    Output columns follow sample suffix convention (e.g., ref0_Pa_46_FreshFrozen).
+
     Parameters
     ----------
     variants_df : pl.DataFrame
         DataFrame with PILEUP columns.
     sample_suffix : str
         Sample suffix from vcf_to_parquet (e.g., "_Pa_46_FreshFrozen").
-    output_prefix : str
-        Output column prefix ("t_" or "n_").
 
     Returns
     -------
     pl.DataFrame
-        DataFrame with ref0-4 and nonref0-4 columns added.
+        DataFrame with ref0-4 and nonref0-4 columns added (with sample suffix).
     """
     ref_nonref_exprs = []
 
-    for i, pos in enumerate(PILEUP_POSITIONS):
+    for i, pos in enumerate(PILEUP_CONFIG.positions):
         # Build ref column: select the PILEUP column matching the REF allele
+        # TODO: use PILEUP_CONFIG.bases instead of hardcoding the bases
         ref_expr = (
             pl.when(pl.col("REF") == "A")
-            .then(pl.col(f"PILEUP_A_{pos}{sample_suffix}"))
+            .then(pl.col(PILEUP_CONFIG.get_column_name("A", pos, sample_suffix)))
             .when(pl.col("REF") == "C")
-            .then(pl.col(f"PILEUP_C_{pos}{sample_suffix}"))
+            .then(pl.col(PILEUP_CONFIG.get_column_name("C", pos, sample_suffix)))
             .when(pl.col("REF") == "G")
-            .then(pl.col(f"PILEUP_G_{pos}{sample_suffix}"))
+            .then(pl.col(PILEUP_CONFIG.get_column_name("G", pos, sample_suffix)))
             .when(pl.col("REF") == "T")
-            .then(pl.col(f"PILEUP_T_{pos}{sample_suffix}"))
+            .then(pl.col(PILEUP_CONFIG.get_column_name("T", pos, sample_suffix)))
             .otherwise(pl.lit(0))
             .fill_null(0)
-            .alias(f"{output_prefix}ref{i}")
+            .alias(f"ref{i}{sample_suffix}")
         )
         ref_nonref_exprs.append(ref_expr)
 
@@ -269,21 +236,21 @@ def calculate_ref_nonref_columns(variants_df: pl.DataFrame, sample_suffix: str, 
         nonref_components = []
 
         # Add non-REF base counts (exclude the REF base)
-        for base in PILEUP_BASES:
-            col_name = f"PILEUP_{base}_{pos}{sample_suffix}"
+        for base in PILEUP_CONFIG.bases:
+            col_name = PILEUP_CONFIG.get_column_name(base, pos, sample_suffix)
             if col_name in variants_df.columns:
                 nonref_components.append(
                     pl.when(pl.col("REF") != base).then(pl.col(col_name).fill_null(0)).otherwise(pl.lit(0))
                 )
 
         # Add DEL and INS counts (always included in nonref)
-        for indel in PILEUP_INDELS:
-            col_name = f"PILEUP_{indel}_{pos}{sample_suffix}"
+        for indel in PILEUP_CONFIG.indels:
+            col_name = PILEUP_CONFIG.get_column_name(indel, pos, sample_suffix)
             if col_name in variants_df.columns:
                 nonref_components.append(pl.col(col_name).fill_null(0))
 
         if nonref_components:
-            nonref_expr = pl.sum_horizontal(nonref_components).alias(f"{output_prefix}nonref{i}")
+            nonref_expr = pl.sum_horizontal(nonref_components).alias(f"nonref{i}{sample_suffix}")
             ref_nonref_exprs.append(nonref_expr)
 
     if ref_nonref_exprs:
@@ -295,6 +262,8 @@ def calculate_ref_nonref_columns(variants_df: pl.DataFrame, sample_suffix: str, 
 def calculate_pileup_features(variants_df: pl.DataFrame, tumor_sample: str, normal_sample: str) -> pl.DataFrame:
     """
     Calculate PILEUP-based ref0-4 and nonref0-4 features for both samples.
+
+    Output columns use sample suffix convention (e.g., ref0_Pa_46_FreshFrozen).
 
     Parameters
     ----------
@@ -308,88 +277,100 @@ def calculate_pileup_features(variants_df: pl.DataFrame, tumor_sample: str, norm
     Returns
     -------
     pl.DataFrame
-        DataFrame with ref0-4, nonref0-4 columns for both t_ and n_ prefixes.
+        DataFrame with ref0-4, nonref0-4 columns for both samples (with sample suffix).
     """
     # Calculate for tumor sample
-    variants_df = calculate_ref_nonref_columns(variants_df, f"_{tumor_sample}", TUMOR_PREFIX)
+    variants_df = calculate_ref_nonref_columns(variants_df, f"_{tumor_sample}")
 
     # Calculate for normal sample
-    variants_df = calculate_ref_nonref_columns(variants_df, f"_{normal_sample}", NORMAL_PREFIX)
+    variants_df = calculate_ref_nonref_columns(variants_df, f"_{normal_sample}")
 
     return variants_df
 
 
-def aggregated_df_post_processing(variants_df: pl.DataFrame, tumor_sample: str, normal_sample: str) -> pd.DataFrame:
+def aggregated_df_post_processing(variants_df: pl.DataFrame, samples: list[str]) -> pl.DataFrame:
     """
     Post-process the aggregated Polars DataFrame to include all required features by ML inference.
+    Derives additional columns from aggregation statistics (with sample suffix)
     E.g.  add Sum, count non zero and add ref/nonref columns for PILEUP columns, etc.
 
-    This function:
-    1. Derives additional columns from aggregation statistics
-    2. Renames columns to match the ML model's expected feature names
 
     Parameters
     ----------
     variants_df : pl.DataFrame
         DataFrame from vcf_to_parquet with aggregate mode.
-    tumor_sample : str
-        Name of the tumor sample (column suffix).
-    normal_sample : str
-        Name of the normal sample (column suffix).
+    samples : list[str]
+        List of sample names.
 
     Returns
     -------
     pd.DataFrame
         Pandas DataFrame with columns matching ML model expectations.
     """
-    # Create sample suffix mappings
-    samples = [(tumor_sample, TUMOR_PREFIX), (normal_sample, NORMAL_PREFIX)]
 
-    # Derive columns for each sample
+    # Derive columns for each sample (using sample suffix convention)
     derived_exprs = []
-    rename_map = {}
 
-    for sample_name, prefix in samples:
+    for sample_name in samples:
         s = f"_{sample_name}"  # Original suffix from vcf_to_parquet
 
         # Derive sum-based columns (sum = mean * count for 0/1 fields)
         # COUNT_DUPLICATE = sum(DUP) = mean(DUP) * count(DUP)
         derived_exprs.append(
-            (pl.col(f"DUP_mean{s}") * pl.col(f"DUP_count{s}")).round(0).cast(pl.Int64).alias(f"{prefix}count_duplicate")
+            (pl.col(f"DUP_mean{s}") * pl.col(f"DUP_count{s}")).round(0).cast(pl.Int64).alias(f"count_duplicate{s}")
         )
         # COUNT_NON_DUPLICATE = count - sum
         derived_exprs.append(
             (pl.col(f"DUP_count{s}") - (pl.col(f"DUP_mean{s}") * pl.col(f"DUP_count{s}")).round(0))
             .cast(pl.Int64)
-            .alias(f"{prefix}count_non_duplicate")
+            .alias(f"count_non_duplicate{s}")
         )
         # REVERSE_COUNT = sum(REV)
         derived_exprs.append(
-            (pl.col(f"REV_mean{s}") * pl.col(f"REV_count{s}")).round(0).cast(pl.Int64).alias(f"{prefix}reverse_count")
+            (pl.col(f"REV_mean{s}") * pl.col(f"REV_count{s}")).round(0).cast(pl.Int64).alias(f"reverse_count{s}")
         )
         # FORWARD_COUNT = count - sum
         derived_exprs.append(
             (pl.col(f"REV_count{s}") - (pl.col(f"REV_mean{s}") * pl.col(f"REV_count{s}")).round(0))
             .cast(pl.Int64)
-            .alias(f"{prefix}forward_count")
+            .alias(f"forward_count{s}")
         )
         # PASS_ALT_READS = sum(FILT)
         derived_exprs.append(
-            (pl.col(f"FILT_mean{s}") * pl.col(f"FILT_count{s}"))
-            .round(0)
-            .cast(pl.Int64)
-            .alias(f"{prefix}pass_alt_reads")
+            (pl.col(f"FILT_mean{s}") * pl.col(f"FILT_count{s}")).round(0).cast(pl.Int64).alias(f"pass_alt_reads{s}")
         )
         # SCST_NUM_READS = count - count_zero (count of non-zero values)
         derived_exprs.append(
-            (pl.col(f"SCST_count{s}") - pl.col(f"SCST_count_zero{s}")).cast(pl.Int64).alias(f"{prefix}scst_num_reads")
+            (pl.col(f"SCST_count{s}") - pl.col(f"SCST_count_zero{s}")).cast(pl.Int64).alias(f"scst_num_reads{s}")
         )
         # SCED_NUM_READS = count - count_zero
         derived_exprs.append(
-            (pl.col(f"SCED_count{s}") - pl.col(f"SCED_count_zero{s}")).cast(pl.Int64).alias(f"{prefix}sced_num_reads")
+            (pl.col(f"SCED_count{s}") - pl.col(f"SCED_count_zero{s}")).cast(pl.Int64).alias(f"sced_num_reads{s}")
         )
 
-        # Build rename map for existing columns
+    # Apply derived columns
+    variants_df = variants_df.with_columns(derived_exprs)
+
+    return variants_df
+
+
+def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str]) -> pl.DataFrame:
+    """
+    Rename the dataframe columns to match the model expected features.
+
+    Parameters
+    ----------
+    variants_df : pl.DataFrame
+        DataFrame with sample-suffixed columns.
+    samples : list[tuple[str, str]]
+        List of (sample_name, prefix) tuples.
+    """
+
+    # Build rename map: convert all sample-suffixed columns to t_/n_ prefix convention
+    rename_map = {}
+    for sample_name, prefix in [(samples[0], TUMOR_PREFIX), (samples[1], NORMAL_PREFIX)]:
+        s = f"_{sample_name}"
+
         # Aggregation columns (mean/min/max)
         for agg_col in ["MQUAL", "SNVQ", "MAPQ", "EDIST", "RL"]:
             rename_map[f"{agg_col}_mean{s}"] = f"{prefix}{agg_col.lower()}_mean"
@@ -407,8 +388,19 @@ def aggregated_df_post_processing(variants_df: pl.DataFrame, tumor_sample: str, 
         rename_map[f"VAF{s}"] = f"{prefix}vaf"
         rename_map[f"RAW_VAF{s}"] = f"{prefix}raw_vaf"
 
-    # Apply derived columns
-    variants_df = variants_df.with_columns(derived_exprs)
+        # Derived columns in post_processing
+        rename_map[f"count_duplicate{s}"] = f"{prefix}count_duplicate"
+        rename_map[f"count_non_duplicate{s}"] = f"{prefix}count_non_duplicate"
+        rename_map[f"reverse_count{s}"] = f"{prefix}reverse_count"
+        rename_map[f"forward_count{s}"] = f"{prefix}forward_count"
+        rename_map[f"pass_alt_reads{s}"] = f"{prefix}pass_alt_reads"
+        rename_map[f"scst_num_reads{s}"] = f"{prefix}scst_num_reads"
+        rename_map[f"sced_num_reads{s}"] = f"{prefix}sced_num_reads"
+
+        # ref/nonref columns from PILEUP
+        for i in range(len(PILEUP_CONFIG.positions)):
+            rename_map[f"ref{i}{s}"] = f"{prefix}ref{i}"
+            rename_map[f"nonref{i}{s}"] = f"{prefix}nonref{i}"
 
     # Rename columns that exist
     existing_rename = {k: v for k, v in rename_map.items() if k in variants_df.columns}
@@ -436,9 +428,7 @@ def aggregated_df_post_processing(variants_df: pl.DataFrame, tumor_sample: str, 
             .alias("n_dp")
         )
 
-    # TODO: don't convert to pandas, keep as polars dataframe once model compatibility verified
-    # Convert to pandas for compatibility with existing code
-    return variants_df.to_pandas()
+    return variants_df
 
 
 # =============================================================================
@@ -447,7 +437,7 @@ def aggregated_df_post_processing(variants_df: pl.DataFrame, tumor_sample: str, 
 
 
 def run_classifier(
-    df_variants: pd.DataFrame,
+    df_variants: pl.DataFrame,
     xgb_model_path: Path,
 ) -> pd.DataFrame:
     """
@@ -465,18 +455,22 @@ def run_classifier(
     pd.DataFrame
         DataFrame with xgb_proba column added.
     """
+    # TODO: don't convert to pandas, keep as polars dataframe once model compatibility verified
+    df_variants_pandas = df_variants.to_pandas()
+
     xgb_clf = somatic_featuremap_inference_utils.load_xgb_model(xgb_model_path)
     model_features = xgb_clf.get_booster().feature_names
     logger.info(f"Loaded model with features: {model_features}")
 
-    df_variants["xgb_proba"] = somatic_featuremap_inference_utils.predict(xgb_clf, df_variants)
-    return df_variants
+    df_variants["xgb_proba"] = somatic_featuremap_inference_utils.predict(xgb_clf, df_variants_pandas)
+    return df_variants_pandas
 
 
 # =============================================================================
 # STEP 4: Write Output VCF
 # Implemented in write_enhanced_vcf() above
 # =============================================================================
+
 
 # TODO: should we only add the xgb_proba field to the output VCF?
 def add_fields_to_header(hdr: pysam.VariantHeader) -> None:
@@ -591,6 +585,7 @@ def write_enhanced_vcf(
 
     pysam.tabix_index(str(output_vcf_path), preset="vcf", min_shift=0, force=True)
 
+
 # =============================================================================
 # MAIN ORCHESTRATION FUNCTION
 # =============================================================================
@@ -669,29 +664,29 @@ def run(argv: list[str]) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     somatic_featuremap_classifier(
-        somatic_featuremap_vcf_path=args_in.somatic_featuremap, 
-        ref_tr_file=args_in.ref_tr_file, 
-        genome_file=args_in.genome_file, 
-        out_dir=out_dir, 
-        filter_string=args_in.filter_string, 
-        xgb_model_path=args_in.xgb_model_file, 
-        output_vcf=output_vcf, 
-        write_agg_params=args_in.write_agg_params, 
+        somatic_featuremap_vcf_path=args_in.somatic_featuremap,
+        ref_tr_file=args_in.ref_tr_file,
+        genome_file=args_in.genome_file,
+        out_dir=out_dir,
+        filter_string=args_in.filter_string,
+        xgb_model_path=args_in.xgb_model_file,
+        output_vcf=output_vcf,
+        write_agg_params=args_in.write_agg_params,
         verbose=args_in.verbose,
     )
 
 
 def somatic_featuremap_classifier(
-    somatic_featuremap_vcf_path: Path, 
-    ref_tr_file: Path, 
-    genome_file: Path, 
-    out_dir: Path, 
-    filter_string: str, 
-    xgb_model_path: Path, 
-    output_vcf: Path, 
+    somatic_featuremap_vcf_path: Path,
+    ref_tr_file: Path,
+    genome_file: Path,
+    out_dir: Path,
+    filter_string: str,
+    xgb_model_path: Path,
+    output_vcf: Path,
     *,
-    write_agg_params: bool = False,  
-    verbose: bool = False,  
+    write_agg_params: bool = False,
+    verbose: bool = False,
 ) -> Path:
     """
     Classify somatic featuremap variants using XGBoost model.
@@ -717,20 +712,24 @@ def somatic_featuremap_classifier(
     )
 
     logger.info("Step 2: Converting VCF to dataframe and adding transformations")
-    df_polars = read_vcf_with_aggregation(sfm_filtered_with_tr)
+    # Save parquet alongside output VCF
+    output_parquet_path = output_vcf.with_suffix(".parquet")
+    df_polars = read_vcf_with_aggregation(sfm_filtered_with_tr, output_parquet_path)
 
     if df_polars.is_empty():
         # TODO: handle better
         logger.warning(f"No variants found in the input VCF: {somatic_featuremap_vcf_path}")
-    
+
     tumor_sample, normal_sample = get_sample_names_from_vcf(somatic_featuremap_vcf_path)
+    samples = [tumor_sample, normal_sample]
 
     logger.info("Calculating PILEUP-based ref/nonref features")
     df_polars = calculate_pileup_features(df_polars, tumor_sample, normal_sample)
     logger.info("Post-processing the aggregated dataframe")
-    df_variants = aggregated_df_post_processing(df_polars, tumor_sample, normal_sample)
+    df_variants = aggregated_df_post_processing(df_polars, samples)
 
     logger.info("Step 3: Running the classifier")
+    df_variants = rename_cols_for_model(df_variants, samples)
     df_variants = run_classifier(df_variants, xgb_model_path)
 
     logger.info("Step 4: Writing enhanced VCF")

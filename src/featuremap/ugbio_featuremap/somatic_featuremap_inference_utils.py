@@ -1,3 +1,4 @@
+from pathlib import Path
 import sys
 
 import numpy as np
@@ -7,14 +8,14 @@ from sklearn.preprocessing import LabelEncoder
 from ugbio_core.logger import logger
 
 
-def load_model(xgb_model_file: str) -> "xgboost.XGBClassifier":
+def load_xgb_model(xgb_model_path: Path) -> "xgboost.XGBClassifier":
     """
-    Load a pre-trained XGBoost model from a file.
+    Load a pre-trained XGBoost model from a path.
 
     Parameters
     ----------
-    xgb_model_file : str
-        Path to the XGBoost model file.
+    xgb_model_path : Path
+        Path to the XGBoost model.
 
     Returns
     -------
@@ -23,7 +24,7 @@ def load_model(xgb_model_file: str) -> "xgboost.XGBClassifier":
     """
     # load xgb model
     xgb_clf_es = xgboost.XGBClassifier()
-    xgb_clf_es.load_model(xgb_model_file)
+    xgb_clf_es.load_model(xgb_model_path)
     return xgb_clf_es
 
 
