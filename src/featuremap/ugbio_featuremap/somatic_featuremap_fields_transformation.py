@@ -30,8 +30,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # These are the columns needed from the VCF to compute the model's expected features.
 # =============================================================================
 
-# INFO fields required for inference (includes all TR fields added by annotation step)
-REQUIRED_INFO_FIELDS: set[str] = TR_CONFIG.all_field_ids()
+# INFO fields required for inference (includes TR_DISTANCE field added by annotation step)
+REQUIRED_INFO_FIELDS: set[str] = {TR_CONFIG.distance_field_id}
 
 # FORMAT fields required for inference (per-sample fields)
 # These are used directly or for deriving aggregated features
@@ -373,6 +373,12 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str]) -> pl.D
 
     # Build rename map: convert all sample-suffixed columns to t_/n_ prefix convention
     rename_map = {}
+
+    # rename INFO fields
+    for info_field in REQUIRED_INFO_FIELDS:
+        rename_map[info_field] = f"{TUMOR_PREFIX}{info_field.lower()}"
+
+    # rename FORMAT fields
     for sample_name, prefix in [(samples[0], TUMOR_PREFIX), (samples[1], NORMAL_PREFIX)]:
         s = f"_{sample_name}"
 
@@ -467,7 +473,7 @@ def run_classifier(
     model_features = xgb_clf.get_booster().feature_names
     logger.info(f"Loaded model with features: {model_features}")
 
-    df_variants["xgb_proba"] = somatic_featuremap_inference_utils.predict(xgb_clf, df_variants_pandas)
+    df_variants_pandas["xgb_proba"] = somatic_featuremap_inference_utils.predict(xgb_clf, df_variants_pandas)
     return df_variants_pandas
 
 

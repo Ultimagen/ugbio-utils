@@ -35,6 +35,11 @@ class TandemRepeatConfig:
         """Return set of all TR field IDs."""
         return {field.field_id for field in self.fields}
 
+    @property
+    def distance_field_id(self) -> str:
+        """Return the TR_DISTANCE field ID."""
+        return next(field.field_id for field in self.fields if "Distance" in field.description)
+
 
 @dataclass(frozen=True)
 class PileupConfig:
