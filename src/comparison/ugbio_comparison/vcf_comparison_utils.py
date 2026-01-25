@@ -7,14 +7,14 @@ import numpy as np
 import pandas as pd
 import pyfaidx
 import pysam
-from simppl.simple_pipeline import SimplePipeline
 import ugbio_core.concordance.flow_based_concordance as fbc
 import ugbio_core.vcfbed.variant_annotation as annotation
+from simppl.simple_pipeline import SimplePipeline
 from ugbio_core.consts import DEFAULT_FLOW_ORDER
 from ugbio_core.exec_utils import print_and_execute
 from ugbio_core.logger import logger
-from ugbio_core.vcfbed import vcftools
 from ugbio_core.vcf_utils import VcfUtils
+from ugbio_core.vcfbed import vcftools
 
 
 class VcfComparisonUtils:
@@ -229,10 +229,10 @@ class VcfComparisonUtils:
                 ref_genome,
             )
 
-            vcf_concordance_file = f'{output_prefix + ".vcfeval_concordance.vcf.gz"}'
+            vcf_concordance_file = f"{output_prefix}.vcfeval_concordance.vcf.gz"
             # move the file to be compatible with the output file of the genotype
             # concordance
-            self.__execute(f'mv {os.path.join(vcfeval_output_dir, "output.norm.vcf.gz")} {vcf_concordance_file}')
+            self.__execute(f"mv {os.path.join(vcfeval_output_dir, 'output.norm.vcf.gz')} {vcf_concordance_file}")
 
             # generate index file for the vcf.gz file
             self.vu.index_vcf(vcf_concordance_file)
@@ -361,6 +361,7 @@ class VcfComparisonUtils:
 
 
 # Functions moved from comparison_utils.py
+
 
 def _fix_errors(df: pd.DataFrame) -> pd.DataFrame:
     """Parses dataframe generated from the VCFEVAL concordance VCF and prepares it for

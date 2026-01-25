@@ -8,7 +8,6 @@ from ugbio_comparison.vcf_comparison_utils import (
     vcf2concordance,
 )
 from ugbio_core.h5_utils import read_hdf
-from ugbio_core.vcfbed import vcftools
 
 
 @pytest.fixture
