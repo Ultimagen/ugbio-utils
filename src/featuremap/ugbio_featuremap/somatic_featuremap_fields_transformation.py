@@ -31,12 +31,17 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # =============================================================================
 
 # INFO fields required for inference (includes TR_DISTANCE field added by annotation step)
-REQUIRED_INFO_FIELDS: set[str] = {TR_CONFIG.distance_field_id}
+REQUIRED_INFO_FIELDS: set[str] = {
+    TR_CONFIG.distance_field_id,
+    TR_CONFIG.length_field_id,
+    TR_CONFIG.unit_length_field_id,
+}
 
 # FORMAT fields required for inference (per-sample fields)
 # These are used directly or for deriving aggregated features
 REQUIRED_FORMAT_FIELDS: set[str] = {
     "DP",  # Read depth -> t_dp, n_dp
+    "DP_FILT",  # Read depth of reads that pass filters -> t_dp_filt, n_dp_filt
     "VAF",  # Variant allele frequency -> t_vaf, n_vaf
     "RAW_VAF",  # Raw VAF -> t_raw_vaf, n_raw_vaf
     "AD",  # Allelic depths -> AD_1 for alt_reads
@@ -398,6 +403,7 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str]) -> pl.D
         rename_map[f"DP{s}"] = f"{prefix}dp"
         rename_map[f"VAF{s}"] = f"{prefix}vaf"
         rename_map[f"RAW_VAF{s}"] = f"{prefix}raw_vaf"
+        rename_map[f"DP_FILT{s}"] = f"{prefix}dp_filt"
 
         # Derived columns in post_processing
         rename_map[f"count_duplicate{s}"] = f"{prefix}count_duplicate"

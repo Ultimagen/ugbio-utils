@@ -36,9 +36,19 @@ class TandemRepeatConfig:
         return {field.field_id for field in self.fields}
 
     @property
+    def length_field_id(self) -> str:
+        """Return the TR_LENGTH field ID."""
+        return "TR_LENGTH"
+
+    @property
+    def unit_length_field_id(self) -> str:
+        """Return the TR_SEQ_UNIT_LENGTH field ID."""
+        return "TR_SEQ_UNIT_LENGTH"
+
+    @property
     def distance_field_id(self) -> str:
         """Return the TR_DISTANCE field ID."""
-        return next(field.field_id for field in self.fields if "Distance" in field.description)
+        return "TR_DISTANCE"
 
 
 @dataclass(frozen=True)
