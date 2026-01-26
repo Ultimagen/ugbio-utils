@@ -429,16 +429,6 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str]) -> pl.D
         [pl.col("CHROM").alias(f"{TUMOR_PREFIX}chrom"), pl.col("POS").alias(f"{TUMOR_PREFIX}pos")]
     )
 
-    # TODO: I'm not sure if we still need this since we calcaulte the ref_nonref differntly now
-    # Handle n_dp fillna with n_ref2 + n_nonref2 (if ref/nonref columns exist)
-    if "n_dp" in variants_df.columns and "n_ref2" in variants_df.columns and "n_nonref2" in variants_df.columns:
-        variants_df = variants_df.with_columns(
-            pl.when(pl.col("n_dp").is_null())
-            .then(pl.col("n_ref2") + pl.col("n_nonref2"))
-            .otherwise(pl.col("n_dp"))
-            .alias("n_dp")
-        )
-
     return variants_df
 
 
