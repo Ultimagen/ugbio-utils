@@ -132,7 +132,9 @@ def _load_read_filters(read_filters_json: str | None, read_filter_json_key: str 
         raise RuntimeError(f"Failed to load read filters from {read_filters_json}: {e}") from e
 
 
-def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -> pl.DataFrame:
+def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
+    frame: pl.DataFrame, read_filters: dict | list | None
+) -> pl.DataFrame:
     """
     Apply read filters to a dataframe using the existing filter framework.
 
@@ -182,29 +184,168 @@ def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -
             log.debug("No applicable filters found (only raw/downsample filters present)")
             return frame
 
+        # Patch specific filters that compare integer 0 against string/categorical columns
+        # or need special null-handling logic
+        log.info(f"Checking {len(filters_to_apply)} filters for patches...")
+        patched_count = 0
+        for i, f in enumerate(filters_to_apply):
+            field_name = f.get("field", "")
+            op = f.get("op", "")
+            value = f.get("value")
+
+            # DBSNP_ID == 0 means "not in dbSNP" -> check for empty string
+            if f.get("type") == "region" and field_name == "DBSNP_ID" and op == "eq" and value == 0:
+                log.info(f"Patching filter '{f.get('name')}': converting DBSNP_ID == 0 to empty string check")
+                filters_to_apply[i] = {
+                    "name": f.get("name", "not_in_dbsnp_patched"),
+                    "type": "region",
+                    "field": "DBSNP_ID",
+                    "op": "eq",
+                    "value": "",  # Check for empty/null (represented as empty string after conversion)
+                }
+                patched_count += 1
+
+            # UG_HCR != 0 means "in UG HCR" -> check for non-empty string
+            elif f.get("type") == "region" and field_name == "UG_HCR" and op == "ne" and value == 0:
+                log.info(f"Patching filter '{f.get('name')}': converting UG_HCR != 0 to non-empty string check")
+                filters_to_apply[i] = {
+                    "name": f.get("name", "in_ug_hcr_patched"),
+                    "type": "region",
+                    "field": "UG_HCR",
+                    "op": "ne",
+                    "value": "",  # Check for not empty/null
+                }
+                patched_count += 1
+
+        if patched_count > 0:
+            log.info(f"Applied {patched_count} filter patches")
+
+        # Debug: log first few filters after patching
+        for i, f in enumerate(filters_to_apply[:3]):
+            log.info(f"Filter {i}: {f.get('name')} = {f}")
+
         filter_config = {"filters": filters_to_apply}
 
         # Validate filter configuration
-        validate_filter_config(filter_config)
+        try:
+            validate_filter_config(filter_config)
+        except Exception as e:
+            filter_names = [f.get("name", f.get("type", "unnamed")) for f in filters_to_apply]
+            log.error(f"FATAL: Filter validation failed. Filters: {filter_names}")
+            log.error(f"Validation error: {e}")
+            raise RuntimeError(f"Filter validation failed for filters {filter_names}: {e}") from e
 
         # Convert to lazy frame for efficient processing
         lazy_frame = frame.lazy()
 
-        # Create filter columns
+        # Create filter columns and apply filters
         lazy_frame, filter_cols = _create_filter_columns(lazy_frame, filters_to_apply)
 
-        # Create final filter column (no downsampling in read filters)
+        # Special handling for fields that need null-aware filtering
+        # This ensures records with missing values are handled correctly
+        for _i, f in enumerate(filters_to_apply):
+            field_name = f.get("field", "")
+            filter_name = f.get("name", f"{field_name}_filter")
+            col_name = f"__filter_{filter_name}"
+
+            if col_name not in filter_cols:
+                continue
+
+            # gnomAD_AF: include null values (missing = not in gnomAD = rare)
+            if field_name == "gnomAD_AF" and f.get("type") == "region":
+                log.info(f"Adding null handling for gnomAD_AF filter: '{filter_name}'")
+                lazy_frame = lazy_frame.with_columns((pl.col(col_name) | pl.col("gnomAD_AF").is_null()).alias(col_name))
+
+            # DBSNP_ID: include null values (missing = not in dbSNP)
+            elif field_name == "DBSNP_ID" and f.get("type") == "region" and f.get("op") == "eq":
+                log.info(f"Adding null handling for DBSNP_ID filter: '{filter_name}'")
+                lazy_frame = lazy_frame.with_columns((pl.col(col_name) | pl.col("DBSNP_ID").is_null()).alias(col_name))
+
+            # UG_HCR: exclude null values (missing = not in HCR, so filter them out)
+            elif field_name == "UG_HCR" and f.get("type") == "region" and f.get("op") == "ne":
+                log.info(f"Adding NOT-null requirement for UG_HCR filter: '{filter_name}'")
+                lazy_frame = lazy_frame.with_columns(
+                    (pl.col(col_name) & pl.col("UG_HCR").is_not_null()).alias(col_name)
+                )
+
         lazy_frame = _create_final_filter_column(lazy_frame, filter_cols, None)
 
         # Apply filters and collect result
-        filtered_frame = lazy_frame.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$")).collect()
+        try:
+            filtered_frame = lazy_frame.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$")).collect()
+        except Exception as e:
+            # Error during filter execution - test each filter individually to identify the problem
+            log.error(f"Error during filter execution: {e}")
+            log.error("Testing each filter individually to identify the problematic filter...")
+
+            problematic_filter = None
+            for i, f in enumerate(filters_to_apply):
+                filter_name = f.get("name", "unnamed")
+                filter_type = f.get("type", "unknown")
+                try:
+                    # Test this filter alone - full execution with collect
+                    test_lazy = frame.lazy()
+                    test_lazy, test_cols = _create_filter_columns(test_lazy, [f])
+                    test_lazy = _create_final_filter_column(test_lazy, test_cols, None)
+                    _ = test_lazy.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$")).collect()
+                    log.debug(
+                        f"  ✓ Filter {i + 1}/{len(filters_to_apply)}: {filter_name} (type={filter_type}) - EXECUTED OK"
+                    )
+                except Exception as filter_error:
+                    problematic_filter = f
+                    log.error(
+                        f"  ✗ Filter {i + 1}/{len(filters_to_apply)}: "
+                        f"{filter_name} (type={filter_type}) - EXECUTION FAILED"
+                    )
+                    log.error(f"    Error: {filter_error}")
+                    log.error(f"    Filter configuration: {json.dumps(f, indent=2)}")
+
+                    # Additional diagnostic info
+                    if "column" in f:
+                        col_name = f["column"]
+                        if col_name in frame.columns:
+                            col_dtype = frame[col_name].dtype
+                            log.error(f"    Column '{col_name}' has dtype: {col_dtype}")
+                            if "value" in f:
+                                value_type = type(f["value"]).__name__
+                                log.error(
+                                    f"    Filter is trying to compare with value: {f['value']} (type: {value_type})"
+                                )
+                                log.error(f"    → This appears to be a type mismatch: {col_dtype} vs {value_type}")
+                    break
+
+            if problematic_filter:
+                log.error(f"FATAL: Identified problematic filter: {problematic_filter.get('name', 'unnamed')}")
+                log.error(f"Full filter configuration: {json.dumps(problematic_filter, indent=2)}")
+                log.error("Fix: Ensure the filter value type matches the column type")
+                log.error("     - If column is string/Enum, use string values in quotes")
+                log.error("     - If column is numeric, use numeric values without quotes")
+                filter_name = problematic_filter.get("name", "unnamed")
+                raise RuntimeError(
+                    f"Filter '{filter_name}' execution failed. "
+                    f"Configuration: {json.dumps(problematic_filter)}. "
+                    f"Original error: {e}"
+                ) from e
+            else:
+                log.error("FATAL: Could not identify specific problematic filter through individual testing.")
+                raise RuntimeError(f"Filter execution failed but could not identify specific filter. Error: {e}") from e
 
         log.debug(f"Read filtering: {frame.height:,} → {filtered_frame.height:,} reads")
         return filtered_frame
 
     except Exception as e:
-        log.warning(f"Error applying read filters: {e}. Returning unfiltered data.")
-        return frame
+        # Catch any unexpected errors
+        filter_summary = []
+        try:
+            all_filters = read_filters if isinstance(read_filters, list) else read_filters.get("filters", [])
+            for f in all_filters:
+                filter_summary.append(f.get("name", f.get("type", "unnamed")))
+        except Exception:
+            filter_summary = ["<error parsing filters>"]
+
+        log.error(f"FATAL: Unexpected error applying read filters. Filters: {filter_summary}")
+        log.error(f"Error: {e}")
+        raise RuntimeError(f"Unexpected error applying read filters {filter_summary}: {e}") from e
 
 
 # ───────────────── header helpers ────────────────────────────────────────────
@@ -408,7 +549,7 @@ def _generate_genomic_regions(
     regions: list[str] = []
     for line in proc.stdout.strip().split("\n"):
         chrom, start0, end = line.split("\t")
-        regions.append(f"{chrom}:{int(start0)+1}-{end}")  # convert to 1-based inclusive
+        regions.append(f"{chrom}:{int(start0) + 1}-{end}")  # convert to 1-based inclusive
     return regions
 
 
