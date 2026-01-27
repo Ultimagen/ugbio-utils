@@ -40,20 +40,30 @@ RUN apt-get update && \
     libopenblas-dev \
     libstdc++-10-dev \
     libparasail3 libparasail-dev \
+    libhdf5-dev \
     tzdata \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
 
 
 # Download and install R
-RUN wget https://cloud.r-project.org/src/base/R-4/R-4.3.1.tar.gz && \
-    tar -xzf R-4.3.1.tar.gz && \
-    cd R-4.3.1 && \
-    ./configure --with-x=no --enable-R-shlib && \
-    make && \
-    make install && \
-    cd .. && \
-    rm -rf R-4.3.1 R-4.3.1.tar.gz
+# Install R from CRAN's pre-compiled Debian packages
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    dirmngr \
+    gnupg \
+    apt-transport-https \
+    ca-certificates \
+    software-properties-common && \
+    gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' && \
+    gpg --armor --export '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' | tee /etc/apt/trusted.gpg.d/cran_debian_key.asc && \
+    echo "deb https://cloud.r-project.org/bin/linux/debian bullseye-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    r-base=4.5.1-1~bullseyecran.0 \
+    r-base-dev=4.5.1-1~bullseyecran.0 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install samtools
 ARG SAMTOOLS_VERSION=1.17
@@ -75,18 +85,27 @@ RUN cd /opt && \
     fi
 
 
-# Install additional R dependencies
-RUN R -e "install.packages(c('argparse', 'BiocManager'), repos='https://cran.r-project.org')"
+# Install R packages using apt-get where available (pre-compiled binaries from Debian)
+# This is much faster than compiling from source
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    r-cran-cpp11 \
+    r-cran-crayon \
+    r-cran-formatr \
+    r-cran-jsonlite \
+    r-cran-magrittr \
+    r-cran-r6 \
+    r-cran-rcurl \
+    r-cran-snow && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
-# Install Bioconductor packages one by one, ensuring dependencies are met
-RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', 'Biobase'))"
-RUN R -e "BiocManager::install(c('GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'zlibbioc'))"
-RUN R -e "BiocManager::install(c('rhdf5', 'rhdf5filters', 'rhdf5lib', 'Rhtslib', 'Rsamtools'))"
-RUN R -e "BiocManager::install('exomeCopy')"
-RUN R -e "BiocManager::install('rtracklayer')"
+# Install remaining R packages that aren't available as Debian packages
+# Using BiocManager for Bioconductor packages and install.packages for CRAN packages
+RUN R -e "install.packages(c('argparse', 'BiocManager', 'bitops', 'codetools', 'findpython', 'futile.logger', 'futile.options', 'lambda.r'), repos='https://cloud.r-project.org/', Ncpus=4)"
 
-# Install other necessary R packages
-RUN R -e "install.packages(c('bitops', 'codetools', 'cpp11', 'crayon', 'findpython', 'formatR', 'futile.logger', 'futile.options', 'jsonlite', 'lambda.r', 'magrittr', 'R6', 'RCurl', 'snow'), repos='https://cran.r-project.org')"
+# Install Bioconductor packages - using Ncpus for parallel compilation
+RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', 'Biobase', 'GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'rhdf5', 'rhdf5filters', 'Rhtslib', 'Rsamtools', 'rtracklayer'), ask=FALSE, update=FALSE, Ncpus=4)"
 
 # Remove unnecessary files
 RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
