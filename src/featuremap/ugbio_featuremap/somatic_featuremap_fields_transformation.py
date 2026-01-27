@@ -11,6 +11,7 @@ from ugbio_core.logger import logger
 
 from ugbio_featuremap import somatic_featuremap_inference_utils
 from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
+from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.somatic_featuremap_utils import (
     PILEUP_CONFIG,
     TR_CONFIG,
@@ -36,30 +37,30 @@ REQUIRED_INFO_FIELDS: set[str] = {
     TR_CONFIG.distance_field_id,
     TR_CONFIG.length_field_id,
     TR_CONFIG.unit_length_field_id,
-    "X_PREV1",
-    "X_PREV2",
-    "X_NEXT1",
-    "X_NEXT2",
+    FeatureMapFields.X_PREV1.value,
+    FeatureMapFields.X_PREV2.value,
+    FeatureMapFields.X_NEXT1.value,
+    FeatureMapFields.X_NEXT2.value,
 }
 
 # FORMAT fields required for inference (per-sample fields)
 # These are used directly or for deriving aggregated features
 REQUIRED_FORMAT_FIELDS: set[str] = {
-    "DP",  # Read depth -> t_dp, n_dp
-    "DP_FILT",  # Read depth of reads that pass filters -> t_dp_filt, n_dp_filt
-    "VAF",  # Variant allele frequency -> t_vaf, n_vaf
-    "RAW_VAF",  # Raw VAF -> t_raw_vaf, n_raw_vaf
-    "AD",  # Allelic depths -> AD_1 for alt_reads
-    "MQUAL",  # Mapping quality per read -> mean/min/max aggregations
-    "SNVQ",  # SNV quality per read -> mean/min/max aggregations
-    "MAPQ",  # Mapping quality (for count_zero -> map0_count)
-    "EDIST",  # Edit distance -> mean/min/max aggregations
-    "RL",  # Read length -> mean/min/max aggregations
-    "DUP",  # Duplicate flag -> count_duplicate, count_non_duplicate
-    "REV",  # Reverse strand flag -> reverse_count, forward_count
-    "FILT",  # Filter flag -> pass_alt_reads
-    "SCST",  # Soft clip start -> scst_num_reads (count non-zero)
-    "SCED",  # Soft clip end -> sced_num_reads (count non-zero)
+    FeatureMapFields.DP.value,  # Read depth -> t_dp, n_dp
+    FeatureMapFields.DP_FILT.value,  # Read depth of reads that pass filters -> t_dp_filt, n_dp_filt
+    FeatureMapFields.VAF.value,  # Variant allele frequency -> t_vaf, n_vaf
+    FeatureMapFields.RAW_VAF.value,  # Raw VAF -> t_raw_vaf, n_raw_vaf
+    FeatureMapFields.AD.value,  # Allelic depths -> AD_1 for alt_reads
+    FeatureMapFields.MQUAL.value,  # Mapping quality per read -> mean/min/max aggregations
+    FeatureMapFields.SNVQ.value,  # SNV quality per read -> mean/min/max aggregations
+    FeatureMapFields.MAPQ.value,  # Mapping quality (for count_zero -> map0_count)
+    FeatureMapFields.EDIST.value,  # Edit distance -> mean/min/max aggregations
+    FeatureMapFields.RL.value,  # Read length -> mean/min/max aggregations
+    FeatureMapFields.DUP.value,  # Duplicate flag -> count_duplicate, count_non_duplicate
+    FeatureMapFields.REV.value,  # Reverse strand flag -> reverse_count, forward_count
+    FeatureMapFields.FILT.value,  # Filter flag -> pass_alt_reads
+    FeatureMapFields.SCST.value,  # Soft clip start -> scst_num_reads (count non-zero)
+    FeatureMapFields.SCED.value,  # Soft clip end -> sced_num_reads (count non-zero)
     # PILEUP columns for ref0-4 / nonref0-4 calculations
     *PILEUP_CONFIG.get_all_format_fields(),
 }
@@ -178,6 +179,7 @@ def read_vcf_with_aggregation(vcf_path: Path, output_parquet_path: Path) -> pl.D
 
     logger.info(f"Read aggregated dataframe from parquet file: {output_parquet_path}")
     aggregated_df = pl.read_parquet(output_parquet_path)
+    logger.info(f"Loaded {len(aggregated_df):,} variants from parquet: {output_parquet_path}")
 
     return aggregated_df
 
@@ -394,22 +396,29 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str]) -> pl.D
         s = f"_{sample_name}"
 
         # Aggregation columns (mean/min/max)
-        for agg_col in ["MQUAL", "SNVQ", "MAPQ", "EDIST", "RL"]:
-            rename_map[f"{agg_col}_mean{s}"] = f"{prefix}{agg_col.lower()}_mean"
-            rename_map[f"{agg_col}_min{s}"] = f"{prefix}{agg_col.lower()}_min"
-            rename_map[f"{agg_col}_max{s}"] = f"{prefix}{agg_col.lower()}_max"
+        agg_fields = [
+            FeatureMapFields.MQUAL,
+            FeatureMapFields.SNVQ,
+            FeatureMapFields.MAPQ,
+            FeatureMapFields.EDIST,
+            FeatureMapFields.RL,
+        ]
+        for field in agg_fields:
+            rename_map[f"{field.value}_mean{s}"] = f"{prefix}{field.value.lower()}_mean"
+            rename_map[f"{field.value}_min{s}"] = f"{prefix}{field.value.lower()}_min"
+            rename_map[f"{field.value}_max{s}"] = f"{prefix}{field.value.lower()}_max"
 
         # Count zero for MAPQ (MAP0_COUNT)
-        rename_map[f"MAPQ_count_zero{s}"] = f"{prefix}map0_count"
+        rename_map[f"{FeatureMapFields.MAPQ.value}_count_zero{s}"] = f"{prefix}map0_count"
 
         # ALT_READS from AD_1
         rename_map[f"AD_1{s}"] = f"{prefix}alt_reads"
 
         # Scalar columns
-        rename_map[f"DP{s}"] = f"{prefix}dp"
-        rename_map[f"VAF{s}"] = f"{prefix}vaf"
-        rename_map[f"RAW_VAF{s}"] = f"{prefix}raw_vaf"
-        rename_map[f"DP_FILT{s}"] = f"{prefix}dp_filt"
+        rename_map[f"{FeatureMapFields.DP.value}{s}"] = f"{prefix}dp"
+        rename_map[f"{FeatureMapFields.VAF.value}{s}"] = f"{prefix}vaf"
+        rename_map[f"{FeatureMapFields.RAW_VAF.value}{s}"] = f"{prefix}raw_vaf"
+        rename_map[f"{FeatureMapFields.DP_FILT.value}{s}"] = f"{prefix}dp_filt"
 
         # Derived columns in post_processing
         rename_map[f"count_duplicate{s}"] = f"{prefix}count_duplicate"
@@ -430,7 +439,12 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str]) -> pl.D
     variants_df = variants_df.rename(existing_rename)
 
     # Add common columns for alleles
-    variants_df = variants_df.with_columns([pl.col("REF").alias("ref_allele"), pl.col("ALT").alias("alt_allele")])
+    variants_df = variants_df.with_columns(
+        [
+            pl.col(FeatureMapFields.REF.value).alias("ref_allele"),
+            pl.col(FeatureMapFields.ALT.value).alias("alt_allele"),
+        ]
+    )
 
     # Add TR_DISTANCE for ML model (INFO field, shared between samples)
     if "TR_DISTANCE" in variants_df.columns:
@@ -438,7 +452,10 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str]) -> pl.D
 
     # Rename CHROM and POS columns to match expected format (t_ prefix for VCF writing)
     variants_df = variants_df.with_columns(
-        [pl.col("CHROM").alias(f"{TUMOR_PREFIX}chrom"), pl.col("POS").alias(f"{TUMOR_PREFIX}pos")]
+        [
+            pl.col(FeatureMapFields.CHROM.value).alias(f"{TUMOR_PREFIX}chrom"),
+            pl.col(FeatureMapFields.POS.value).alias(f"{TUMOR_PREFIX}pos"),
+        ]
     )
 
     return variants_df
@@ -473,9 +490,11 @@ def run_classifier(
 
     xgb_clf = somatic_featuremap_inference_utils.load_xgb_model(xgb_model_path)
     model_features = xgb_clf.get_booster().feature_names
-    logger.info(f"Loaded model with features: {model_features}")
+    logger.debug(f"Model features: {model_features}")
 
     df_variants_pandas["xgb_proba"] = somatic_featuremap_inference_utils.predict(xgb_clf, df_variants_pandas)
+    logger.info(f"Classified {len(df_variants_pandas):,} variants with XGBoost model")
+
     return df_variants_pandas
 
 
@@ -575,6 +594,7 @@ def write_enhanced_vcf(
         Whether to write aggregated parameters to the output VCF. Defaults to True.
     """
     lookup = _build_variant_lookup(df_variants)
+    logger.debug(f"Built variant lookup with {len(lookup):,} entries")
 
     with pysam.VariantFile(str(input_vcf_path)) as vcfin:
         hdr = vcfin.header
@@ -651,7 +671,7 @@ def run(
     """
     # Ensure output has .vcf.gz suffix
     if not str(output_vcf).endswith(".vcf.gz"):
-        logger.debug("adding .vcf.gz suffix to the output vcf file")
+        logger.info(f"Adding .vcf.gz suffix to output file: {output_vcf.name}")
         output_vcf = output_vcf.with_suffix(".vcf.gz")
 
     # Use output directory for temporary files
@@ -691,7 +711,7 @@ def somatic_featuremap_classifier(
 
     Steps:
     1. Filter VCF and add TR annotations
-    2. Convert VCF to dataframe and add transformations such asaggreagtions and PILEUP-based ref/nonref features
+    2. Convert VCF to dataframe and add transformations such as aggregations and PILEUP-based ref/nonref features
     3. Run classifier and add XGBoost probability on the dataframe
     4. Write enhanced VCF with XGBoost probability
     """
@@ -720,6 +740,7 @@ def somatic_featuremap_classifier(
 
     tumor_sample, normal_sample = get_sample_names_from_vcf(somatic_featuremap_vcf_path)
     samples = [tumor_sample, normal_sample]
+    logger.info(f"Processing samples: tumor={tumor_sample}, normal={normal_sample}")
 
     logger.info("Calculating PILEUP-based ref/nonref features")
     df_polars = calculate_pileup_features(df_polars, tumor_sample, normal_sample)

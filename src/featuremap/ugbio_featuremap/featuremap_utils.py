@@ -51,6 +51,7 @@ class FeatureMapFields(Enum):
     MAPQ = "MAPQ"  # mapping quality of reads supporting the variant
     SCST = "SCST"  # soft clip start
     SCED = "SCED"  # soft clip end
+    AD = "AD"  # allelic depths
 
 
 class FeatureMapFilters(Enum):

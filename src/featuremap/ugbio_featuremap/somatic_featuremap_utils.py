@@ -7,6 +7,8 @@ from simppl.simple_pipeline import SimplePipeline
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
 
+from ugbio_featuremap.featuremap_utils import FeatureMapFields
+
 
 @dataclass(frozen=True)
 class VcfInfoField:
@@ -82,11 +84,11 @@ class PileupConfig:
             If position is not recognized.
         """
         position_to_ref_col = {
-            "L2": "X_PREV2",
-            "L1": "X_PREV1",
-            "C": "REF",
-            "R1": "X_NEXT1",
-            "R2": "X_NEXT2",
+            "L2": FeatureMapFields.X_PREV2.value,
+            "L1": FeatureMapFields.X_PREV1.value,
+            "C": FeatureMapFields.REF.value,
+            "R1": FeatureMapFields.X_NEXT1.value,
+            "R2": FeatureMapFields.X_NEXT2.value,
         }
         if position not in position_to_ref_col:
             raise ValueError(f"Unknown position: {position}. Expected one of {self.positions}")
@@ -202,7 +204,7 @@ def filter_and_annotate_tr(
 
         # Step 1: Filter VCF (if filter_string is provided)
         if filter_string:
-            logger.debug(f"Filtering VCF with filter: {filter_string}")
+            logger.info(f"Filtering VCF to keep variants with FILTER={filter_string}")
             filtered_vcf = tmpdir_path / input_vcf.name.replace(".vcf.gz", ".filtered.vcf.gz")
             extra_args = f"-f {filter_string}"
             vcf_utils.view_vcf(str(input_vcf), str(filtered_vcf), n_threads=1, extra_args=extra_args)
@@ -226,7 +228,7 @@ def filter_and_annotate_tr(
         gz_tsv, hdr_file = _prepare_annotation_files(tmpdir_path, tr_tsv)
 
         # Step 5: Annotate VCF with TR fields
-        logger.debug("Annotating VCF with TR fields")
+        logger.info("Annotating VCF with tandem repeat information")
         output_suffix = ".filtered.tr_info.vcf.gz" if filter_string else ".tr_info.vcf.gz"
         output_vcf = out_dir / input_vcf.name.replace(".vcf.gz", output_suffix)
         vcf_utils.annotate_vcf(
