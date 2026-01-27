@@ -56,11 +56,41 @@ class PileupConfig:
     """Configuration for PILEUP-based ref/nonref calculations.
 
     PILEUP position mapping: L2→ref0, L1→ref1, C→ref2, R1→ref3, R2→ref4
+    Reference column mapping: L2→X_PREV2, L1→X_PREV1, C→REF, R1→X_NEXT1, R2→X_NEXT2
     """
 
     positions: tuple[str, ...] = ("L2", "L1", "C", "R1", "R2")
     bases: tuple[str, ...] = ("A", "C", "G", "T")
     indels: tuple[str, ...] = ("DEL", "INS")
+
+    def get_reference_column(self, position: str) -> str:
+        """Get the reference column name for a given position.
+
+        Parameters
+        ----------
+        position : str
+            PILEUP position (L2, L1, C, R1, or R2).
+
+        Returns
+        -------
+        str
+            Reference column name (X_PREV2, X_PREV1, REF, X_NEXT1, or X_NEXT2).
+
+        Raises
+        ------
+        ValueError
+            If position is not recognized.
+        """
+        position_to_ref_col = {
+            "L2": "X_PREV2",
+            "L1": "X_PREV1",
+            "C": "REF",
+            "R1": "X_NEXT1",
+            "R2": "X_NEXT2",
+        }
+        if position not in position_to_ref_col:
+            raise ValueError(f"Unknown position: {position}. Expected one of {self.positions}")
+        return position_to_ref_col[position]
 
     def get_column_name(self, element: str, position: str, sample_suffix: str) -> str:
         """Get the full PILEUP column name."""

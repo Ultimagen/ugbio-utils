@@ -31,10 +31,15 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # =============================================================================
 
 # INFO fields required for inference (includes TR_DISTANCE field added by annotation step)
+# X_PREV1, X_PREV2, X_NEXT1, X_NEXT2 are needed for ref/nonref calculations
 REQUIRED_INFO_FIELDS: set[str] = {
     TR_CONFIG.distance_field_id,
     TR_CONFIG.length_field_id,
     TR_CONFIG.unit_length_field_id,
+    "X_PREV1",
+    "X_PREV2",
+    "X_NEXT1",
+    "X_NEXT2",
 }
 
 # FORMAT fields required for inference (per-sample fields)
@@ -204,9 +209,16 @@ def calculate_ref_nonref_columns(variants_df: pl.DataFrame, sample_suffix: str) 
     """
     Calculate ref0-4 and nonref0-4 columns from PILEUP columns.
 
+    For each position, compare to the appropriate reference:
+    - L2 → X_PREV2
+    - L1 → X_PREV1
+    - C → REF
+    - R1 → X_NEXT1
+    - R2 → X_NEXT2
+
     For each position (L2, L1, C, R1, R2) → (ref0, ref1, ref2, ref3, ref4):
-    - ref{i} = PILEUP_{REF}_{pos}_{sample}
-    - nonref{i} = sum of PILEUP_{non-REF bases}_{pos} + PILEUP_{DEL}_{pos} + PILEUP_{INS}_{pos}
+    - ref{i} = PILEUP_{reference_base}_{pos}_{sample}
+    - nonref{i} = sum of PILEUP_{non-reference bases}_{pos} + PILEUP_{DEL}_{pos} + PILEUP_{INS}_{pos}
 
     Output columns follow sample suffix convention (e.g., ref0_Pa_46_FreshFrozen).
 
@@ -225,32 +237,26 @@ def calculate_ref_nonref_columns(variants_df: pl.DataFrame, sample_suffix: str) 
     ref_nonref_exprs = []
 
     for i, pos in enumerate(PILEUP_CONFIG.positions):
-        # Build ref column: select the PILEUP column matching the REF allele
-        # TODO: use PILEUP_CONFIG.bases instead of hardcoding the bases
-        ref_expr = (
-            pl.when(pl.col("REF") == "A")
-            .then(pl.col(PILEUP_CONFIG.get_column_name("A", pos, sample_suffix)))
-            .when(pl.col("REF") == "C")
-            .then(pl.col(PILEUP_CONFIG.get_column_name("C", pos, sample_suffix)))
-            .when(pl.col("REF") == "G")
-            .then(pl.col(PILEUP_CONFIG.get_column_name("G", pos, sample_suffix)))
-            .when(pl.col("REF") == "T")
-            .then(pl.col(PILEUP_CONFIG.get_column_name("T", pos, sample_suffix)))
-            .otherwise(pl.lit(0))
-            .fill_null(0)
-            .alias(f"ref{i}{sample_suffix}")
-        )
+        ref_col = PILEUP_CONFIG.get_reference_column(pos)
+
+        # Build ref column: select the PILEUP column matching the reference base for this position
+        ref_expr = pl.when(pl.lit(value=False)).then(pl.lit(None))  # Start with a dummy condition that never matches
+        for base in PILEUP_CONFIG.bases:
+            ref_expr = ref_expr.when(pl.col(ref_col) == base).then(
+                pl.col(PILEUP_CONFIG.get_column_name(base, pos, sample_suffix))
+            )
+        ref_expr = ref_expr.otherwise(pl.lit(0)).fill_null(0).alias(f"ref{i}{sample_suffix}")
         ref_nonref_exprs.append(ref_expr)
 
-        # Build nonref column: sum of non-REF bases + DEL + INS
+        # Build nonref column: sum of non-reference bases + DEL + INS
         nonref_components = []
 
-        # Add non-REF base counts (exclude the REF base)
+        # Add non-reference base counts (exclude the reference base for this position)
         for base in PILEUP_CONFIG.bases:
             col_name = PILEUP_CONFIG.get_column_name(base, pos, sample_suffix)
             if col_name in variants_df.columns:
                 nonref_components.append(
-                    pl.when(pl.col("REF") != base).then(pl.col(col_name).fill_null(0)).otherwise(pl.lit(0))
+                    pl.when(pl.col(ref_col) != base).then(pl.col(col_name).fill_null(0)).otherwise(pl.lit(0))
                 )
 
         # Add DEL and INS counts (always included in nonref)
