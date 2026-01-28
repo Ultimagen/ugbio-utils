@@ -3,17 +3,19 @@ import warnings
 from pathlib import Path
 
 import cyclopts
-import pandas as pd
 import polars as pl
 import pysam
 from ugbio_core.logger import logger
+from ugbio_core.vcf_utils import VcfUtils
 
 from ugbio_featuremap import somatic_featuremap_inference_utils
 from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
-from ugbio_featuremap.featuremap_utils import FeatureMapFields, TandemRepeatFields
+from ugbio_featuremap.featuremap_utils import FeatureMapFields, TandemRepeatFields, VcfInfoField
 from ugbio_featuremap.somatic_featuremap_utils import (
     PILEUP_CONFIG,
+    _run_shell_command,
     filter_and_annotate_tr,
+    write_vcf_info_header_file,
 )
 
 app = cyclopts.App(
@@ -62,44 +64,14 @@ REQUIRED_FORMAT_FIELDS: set[str] = {
     *PILEUP_CONFIG.get_all_format_fields(),
 }
 
-# =============================================================================
-# VCF OUTPUT FIELD DEFINITIONS
-# =============================================================================
-
-# TODO: I'm not sure if we still need ADDED_FORMAT_FEATURES and ADDED_INFO_FEATURES
-# since they are added to the parquet and not the output VCF
-ADDED_FORMAT_FEATURES = {
-    "ALT_READS": ["number of supporting reads for the alternative allele", "Integer"],
-    "PASS_ALT_READS": ["number of passed supporting reads for the alternative allele", "Integer"],
-    "MQUAL_MEAN": ["mean value of MQUAL", "Float"],
-    "SNVQ_MEAN": ["mean value of SNVQ", "Float"],
-    "MQUAL_MAX": ["max value of MQUAL", "Float"],
-    "SNVQ_MAX": ["max value of SNVQ", "Float"],
-    "MQUAL_MIN": ["min value of MQUAL", "Float"],
-    "SNVQ_MIN": ["min value of SNVQ", "Float"],
-    "COUNT_DUPLICATE": ["number of duplicate reads", "Integer"],
-    "COUNT_NON_DUPLICATE": ["number of non-duplicate reads", "Integer"],
-    "REVERSE_COUNT": ["number of reverse strand reads", "Integer"],
-    "FORWARD_COUNT": ["number of forward strand reads", "Integer"],
-    "EDIST_MEAN": ["mean value of EDIST", "Float"],
-    "EDIST_MAX": ["max value of EDIST", "Float"],
-    "EDIST_MIN": ["min value of EDIST", "Float"],
-    "RL_MEAN": ["mean value of RL", "Float"],
-    "RL_MAX": ["max value of RL", "Float"],
-    "RL_MIN": ["min value of RL", "Float"],
-    "SCST_NUM_READS": ["number of soft clip start reads", "Integer"],
-    "SCED_NUM_READS": ["number of soft clip end reads", "Integer"],
-    "MAP0_COUNT": ["number of reads with mapping quality 0", "Integer"],
-}
-
-ADDED_INFO_FEATURES = {
-    "REF_ALLELE": ["reference allele", "String"],
-    "ALT_ALLELE": ["alternative allele", "String"],
-}
-
 # Sample prefixes for tumor (index 0) and normal (index 1)
 TUMOR_PREFIX = "t_"
 NORMAL_PREFIX = "n_"
+
+# XGBoost probability INFO field definition
+XGB_PROBA_INFO_FIELD = VcfInfoField(
+    FeatureMapFields.XGB_PROBA.value, "1", "Float", "XGBoost model predicted probability"
+)
 
 
 # =============================================================================
@@ -319,8 +291,8 @@ def aggregated_df_post_processing(variants_df: pl.DataFrame, samples: list[str])
 
     Returns
     -------
-    pd.DataFrame
-        Pandas DataFrame with columns matching ML model expectations.
+    pl.DataFrame
+        Polars DataFrame with derived columns for ML inference.
     """
 
     # Derive columns for each sample (using sample suffix convention)
@@ -466,21 +438,21 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str]) -> pl.D
 def run_classifier(
     df_variants: pl.DataFrame,
     xgb_model_path: Path,
-) -> pd.DataFrame:
+) -> pl.Series:
     """
     Run XGBoost classifier on the prepared DataFrame.
 
     Parameters
     ----------
-    df_variants : pd.DataFrame
-        DataFrame with features prepared for ML inference.
+    df_variants : pl.DataFrame
+        DataFrame with features prepared for ML inference
     xgb_model_path : Path
         Path to the XGBoost model file.
 
     Returns
     -------
-    pd.DataFrame
-        DataFrame with xgb_proba column added.
+    pl.Series
+        Series with xgb_proba predictions.
     """
     # TODO: don't convert to pandas, keep as polars dataframe once model compatibility verified
     df_variants_pandas = df_variants.to_pandas()
@@ -489,95 +461,42 @@ def run_classifier(
     model_features = xgb_clf.get_booster().feature_names
     logger.debug(f"Model features: {model_features}")
 
-    df_variants_pandas["xgb_proba"] = somatic_featuremap_inference_utils.predict(xgb_clf, df_variants_pandas)
-    logger.info(f"Classified {len(df_variants_pandas):,} variants with XGBoost model")
+    predictions = somatic_featuremap_inference_utils.predict(xgb_clf, df_variants_pandas)
+    logger.info(f"Classified {len(predictions):,} variants with XGBoost model")
 
-    return df_variants_pandas
+    return pl.Series(FeatureMapFields.XGB_PROBA.value.lower(), predictions)
 
 
 # =============================================================================
-# STEP 4: Write Output VCF
-# Implemented in write_enhanced_vcf() above
+# STEP 4: Annotate VCF with XGBoost probability
 # =============================================================================
 
 
-# TODO: should we only add the xgb_proba field to the output VCF?
-def add_fields_to_header(hdr: pysam.VariantHeader) -> None:
+def _get_xgb_proba_bcftools_columns() -> str:
+    """Return the columns string for bcftools annotate with XGB_PROBA.
+
+    Format: CHROM,POS,REF,ALT,INFO/XGB_PROBA
     """
-    Add custom FORMAT and INFO fields to VCF header.
-
-    Uses the global ADDED_FORMAT_FEATURES and ADDED_INFO_FEATURES dictionaries.
-
-    Parameters
-    ----------
-    hdr : pysam.VariantHeader
-        VCF header object to modify.
-    """
-    for field, (description, field_type) in ADDED_FORMAT_FEATURES.items():
-        if field not in hdr.formats:
-            hdr.formats.add(field, 1, field_type, description)
-    for field, (description, field_type) in ADDED_INFO_FEATURES.items():
-        if field not in hdr.info:
-            hdr.info.add(field, 1, field_type, description)
+    return (
+        f"{FeatureMapFields.CHROM.value},"
+        f"{FeatureMapFields.POS.value},"
+        f"{FeatureMapFields.REF.value},"
+        f"{FeatureMapFields.ALT.value},"
+        f"INFO/{FeatureMapFields.XGB_PROBA.value}"
+    )
 
 
-def _is_valid_value(value: object) -> bool:
-    """Check if a value is valid (not None and not NaN)."""
-    if value is None:
-        return False
-    try:
-        return bool(pd.notna(value))
-    except (ValueError, TypeError):
-        return True
-
-
-def _build_variant_lookup(df_variants: pd.DataFrame) -> dict[tuple[str, int, str], dict]:
-    """Build lookup dictionary from DataFrame for O(1) access during VCF writing."""
-    lookup: dict[tuple[str, int, str], dict] = {}
-    for _, row in df_variants.iterrows():
-        chrom = row["t_chrom"]
-        pos = row["t_pos"]
-        alt = row["alt_allele"]
-        key = (str(chrom), int(pos), str(alt))
-        lookup[key] = row.to_dict()
-    return lookup
-
-
-def _add_record_fields(vcf_row: pysam.VariantRecord, df_record: dict, write_agg_params: bool) -> None:  # noqa: FBT001
-    """Add aggregated fields and XGBoost probability to a VCF record."""
-    if write_agg_params:
-        # Add INFO fields
-        for field_name in ADDED_INFO_FEATURES:
-            value = df_record.get(field_name.lower())
-            if _is_valid_value(value):
-                vcf_row.info[field_name] = value
-
-        # Add FORMAT fields for both samples
-        for field_name in ADDED_FORMAT_FEATURES:
-            tumor_value = df_record.get(f"t_{field_name.lower()}")
-            normal_value = df_record.get(f"n_{field_name.lower()}")
-
-            vcf_row.samples[0][field_name] = tumor_value if _is_valid_value(tumor_value) else None
-            vcf_row.samples[1][field_name] = normal_value if _is_valid_value(normal_value) else None
-
-    # Add XGBoost probability
-    xgb_proba = df_record.get("xgb_proba")
-    if _is_valid_value(xgb_proba):
-        vcf_row.info["XGB_PROBA"] = xgb_proba
-
-
-def write_enhanced_vcf(
+def annotate_vcf_with_xgb_proba(
     input_vcf_path: Path,
     output_vcf_path: Path,
-    df_variants: pd.DataFrame,
-    write_agg_params: bool = True,  # noqa: FBT001, FBT002
+    df_variants: pl.DataFrame,
+    n_threads: int = 1,
 ) -> None:
     """
-    Write enhanced VCF with aggregated features and XGBoost probability.
+    Annotate VCF with XGBoost probability using bcftools annotate.
 
-    Implements a Batch write with lookup.
-    Creates a lookup dictionary for O(1) access, then iterates through VCF records
-    and adds the computed features.
+    Creates a tab-delimited annotation file from the DataFrame, compresses and indexes it,
+    then uses bcftools annotate to add the XGB_PROBA INFO field to the VCF.
 
     Parameters
     ----------
@@ -585,35 +504,60 @@ def write_enhanced_vcf(
         Path to the input VCF file.
     output_vcf_path : Path
         Path to the output VCF file.
-    df_variants : pd.DataFrame
-        DataFrame containing variant information with aggregated features and xgb_proba.
-    write_agg_params : bool, optional
-        Whether to write aggregated parameters to the output VCF. Defaults to True.
+    df_variants : pl.DataFrame
+        Polars DataFrame containing variant information with xgb_proba column.
+        Must have columns: CHROM, POS, REF, ALT, xgb_proba
+    n_threads : int, optional
+        Number of threads for bcftools. Defaults to 1.
     """
-    lookup = _build_variant_lookup(df_variants)
-    logger.debug(f"Built variant lookup with {len(lookup):,} entries")
+    work_dir = output_vcf_path.parent
+    annotation_tsv = work_dir / "xgb_proba_annotations.tsv"
+    annotation_tsv_gz = work_dir / "xgb_proba_annotations.tsv.gz"
+    header_file = work_dir / "xgb_proba_header.txt"
 
-    with pysam.VariantFile(str(input_vcf_path)) as vcfin:
-        hdr = vcfin.header
-        add_fields_to_header(hdr)
-        if "XGB_PROBA" not in hdr.info:
-            hdr.info.add("XGB_PROBA", 1, "Float", "XGBoost model predicted probability")
+    # Select columns for annotation TSV: CHROM, POS, REF, ALT, xgb_proba
+    annotation_df = df_variants.select(
+        [
+            pl.col(FeatureMapFields.CHROM.value),
+            pl.col(FeatureMapFields.POS.value),
+            pl.col(FeatureMapFields.REF.value),
+            pl.col(FeatureMapFields.ALT.value),
+            pl.col(FeatureMapFields.XGB_PROBA.value.lower()),
+        ]
+    ).sort([FeatureMapFields.CHROM.value, FeatureMapFields.POS.value])
 
-        with pysam.VariantFile(str(output_vcf_path), mode="w", header=hdr) as vcfout:
-            for vcf_row in vcfin:
-                alleles = vcf_row.alleles
-                vcf_alt = alleles[1] if alleles is not None and len(alleles) > 1 else None
+    # Write TSV without header (bcftools expects no header in annotation file)
+    annotation_df.write_csv(annotation_tsv, separator="\t", include_header=False)
+    logger.debug(f"Created annotation TSV with {len(annotation_df):,} records: {annotation_tsv}")
 
-                if vcf_alt is not None:
-                    key = (vcf_row.chrom, vcf_row.pos, vcf_alt)
-                    df_record = lookup.get(key)
+    # Compress with bgzip and index with tabix
+    _run_shell_command(f"bgzip -f {annotation_tsv}")
+    logger.debug(f"Compressed annotation file: {annotation_tsv_gz}")
 
-                    if df_record is not None:
-                        _add_record_fields(vcf_row, df_record, write_agg_params)
+    _run_shell_command(f"tabix -s1 -b2 -e2 {annotation_tsv_gz}")
+    logger.debug(f"Indexed annotation file: {annotation_tsv_gz}.tbi")
 
-                vcfout.write(vcf_row)
+    # Create header file with INFO field definition
+    write_vcf_info_header_file([XGB_PROBA_INFO_FIELD], header_file)
+    logger.debug(f"Created header file: {header_file}")
 
-    pysam.tabix_index(str(output_vcf_path), preset="vcf", min_shift=0, force=True)
+    # Annotate VCF using bcftools annotate
+    vcf_utils = VcfUtils()
+    vcf_utils.annotate_vcf(
+        input_vcf=str(input_vcf_path),
+        output_vcf=str(output_vcf_path),
+        annotation_file=str(annotation_tsv_gz),
+        header_file=str(header_file),
+        columns=_get_xgb_proba_bcftools_columns(),
+        n_threads=n_threads,
+    )
+    logger.info(f"Annotated VCF with {FeatureMapFields.XGB_PROBA.value}: {output_vcf_path}")
+
+    # Cleanup temporary files
+    annotation_tsv_gz.unlink(missing_ok=True)
+    Path(str(annotation_tsv_gz) + ".tbi").unlink(missing_ok=True)
+    header_file.unlink(missing_ok=True)
+    logger.debug("Cleaned up temporary annotation files")
 
 
 # =============================================================================
@@ -630,7 +574,6 @@ def run(
     xgb_model_file: Path,
     *,
     filter_string: str = "PASS",
-    write_agg_params: bool = False,
     verbose: bool = False,
 ) -> None:
     """Classify somatic featuremap variants using XGBoost model.
@@ -639,7 +582,7 @@ def run(
     1. Filter VCF and add TR annotations
     2. Convert VCF to dataframe with aggregations
     3. Run XGBoost classifier
-    4. Write enhanced VCF with predictions
+    4. Annotate VCF with XGBoost probability
 
     Parameters
     ----------
@@ -655,8 +598,6 @@ def run(
         XGBoost model file for inference.
     filter_string
         Filter tags to apply on the VCF file.
-    write_agg_params
-        Write aggregated parameters to output VCF.
     verbose
         Enable verbose output and debug messages.
 
@@ -683,7 +624,6 @@ def run(
         filter_string=filter_string,
         xgb_model_path=xgb_model_file,
         output_vcf=output_vcf,
-        write_agg_params=write_agg_params,
         verbose=verbose,
     )
 
@@ -697,7 +637,6 @@ def somatic_featuremap_classifier(
     xgb_model_path: Path,
     output_vcf: Path,
     *,
-    write_agg_params: bool = False,
     verbose: bool = False,
 ) -> Path:
     """
@@ -707,7 +646,7 @@ def somatic_featuremap_classifier(
     1. Filter VCF and add TR annotations
     2. Convert VCF to dataframe and add transformations such as aggregations and PILEUP-based ref/nonref features
     3. Run classifier and add XGBoost probability on the dataframe
-    4. Write enhanced VCF with XGBoost probability
+    4. Annotate VCF with XGBoost probability using bcftools annotate
     """
     if verbose:
         logger.setLevel(logging.DEBUG)
@@ -724,7 +663,7 @@ def somatic_featuremap_classifier(
     )
 
     logger.info("Step 2: Converting VCF to dataframe and adding transformations")
-    # Save parquet alongside output VCF
+
     output_parquet_path = output_vcf.with_suffix(".parquet")
     df_polars = read_vcf_with_aggregation(sfm_filtered_with_tr, output_parquet_path)
 
@@ -739,14 +678,19 @@ def somatic_featuremap_classifier(
     logger.info("Calculating PILEUP-based ref/nonref features")
     df_polars = calculate_pileup_features(df_polars, tumor_sample, normal_sample)
     logger.info("Post-processing the aggregated dataframe")
-    df_variants = aggregated_df_post_processing(df_polars, samples)
+    df_polars = aggregated_df_post_processing(df_polars, samples)
+    # TODO: in debug mode- save the dataframe to a parquet file (with all extra transformations and post processing)
 
     logger.info("Step 3: Running the classifier")
-    df_variants = rename_cols_for_model(df_variants, samples)
-    df_variants = run_classifier(df_variants, xgb_model_path)
+    # Create a renamed copy for model inference (temporary pandas conversion inside)
+    df_for_model = rename_cols_for_model(df_polars, samples)
+    xgb_proba: pl.Series = run_classifier(df_for_model, xgb_model_path)
 
-    logger.info("Step 4: Writing enhanced VCF")
-    write_enhanced_vcf(somatic_featuremap_vcf_path, output_vcf, df_variants, write_agg_params)
+    # Add predictions to polars DataFrame
+    df_polars = df_polars.with_columns(xgb_proba)
+
+    logger.info("Step 4: Annotating VCF with XGBoost probability")
+    annotate_vcf_with_xgb_proba(sfm_filtered_with_tr, output_vcf, df_polars)
     logger.info(f"Output VCF written to: {output_vcf}")
 
     return output_vcf

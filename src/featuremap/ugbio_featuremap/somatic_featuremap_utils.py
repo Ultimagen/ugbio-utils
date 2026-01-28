@@ -115,6 +115,36 @@ def _run_shell_command(cmd: str, output_file: Path | None = None) -> None:
         subprocess.run(cmd, shell=True, check=True)  # noqa: S602
 
 
+def write_vcf_info_header_file(info_fields: list[VcfInfoField], header_file: Path) -> None:
+    """Write a VCF header file with INFO field definitions.
+
+    Creates a header file suitable for use with bcftools annotate -h option.
+
+    Parameters
+    ----------
+    info_fields : list[VcfInfoField]
+        List of VcfInfoField objects defining the INFO fields to add.
+    header_file : Path
+        Path to the output header file.
+    """
+    header = pysam.VariantHeader()
+    for field in info_fields:
+        header.add_meta(
+            "INFO",
+            items=[
+                ("ID", field.field_id),
+                ("Number", field.number),
+                ("Type", field.field_type),
+                ("Description", field.description),
+            ],
+        )
+
+    with open(header_file, "w") as f:
+        lines = str(header).splitlines()
+        for line in lines[1:-1]:
+            f.write(line + "\n")
+
+
 def _create_tr_annotation_file(
     input_vcf: Path, ref_tr_file: Path, genome_file: Path, tmpdir: Path
 ) -> tuple[Path, Path]:
@@ -137,23 +167,8 @@ def _create_tr_annotation_file(
     _run_shell_command(cmd)
 
     # Create header file for bcftools annotate
-    header = pysam.VariantHeader()
-    for tr_field in TR_CONFIG.fields:
-        header.add_meta(
-            "INFO",
-            items=[
-                ("ID", tr_field.field_id),
-                ("Number", tr_field.number),
-                ("Type", tr_field.field_type),
-                ("Description", tr_field.description),
-            ],
-        )
-
     hdr_file = tmpdir / "tr_hdr.txt"
-    with open(hdr_file, "w") as f:
-        lines = str(header).splitlines()
-        for line in lines[1:-1]:
-            f.write(line + "\n")
+    write_vcf_info_header_file(list(TR_CONFIG.fields), hdr_file)
 
     return gz_tsv, hdr_file
 
