@@ -139,5 +139,5 @@ def test_trainer_initialization_with_new_stats_format(tmp_path: Path) -> None:
     assert "mapq_ge_60" in neg_filters, "Should have 'mapq_ge_60' filter in negative stats"
 
     # Test the prior calculation works
-    assert hasattr(trainer, "prior_real_error"), "Should have calculated prior_real_error"
-    assert 0 < trainer.prior_real_error < 1, "Prior should be a valid probability"
+    assert hasattr(trainer, "prior_train_error"), "Should have calculated prior_train_error"
+    assert 0 < trainer.prior_train_error < 1, "Prior should be a valid probability"

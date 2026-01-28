@@ -420,13 +420,8 @@ class SRSNVTrainer:
                     return f.get("funnel", f.get("rows"))
             raise ValueError("stats JSON has no non-downsample filter entry")
 
-        # new prior_real_error calculation
-        pos_after_filter = _last_non_downsample_rows(self.pos_stats)
+        # Calculate raw_featuremap_size_filtered
         neg_after_filter = _last_non_downsample_rows(self.neg_stats)
-        self.prior_real_error = max(
-            self.eps,
-            min(1.0 - self.eps, neg_after_filter / (neg_after_filter + pos_after_filter)),
-        )
         self.raw_featuremap_size_filtered = neg_after_filter
 
         # Data
@@ -684,7 +679,6 @@ class SRSNVTrainer:
             eps = self.eps
         pd_df = self.data_frame.to_pandas()
         mqual_fp_max = pd_df.loc[pd_df[LABEL_COL].astype(int) == 0, MQUAL].quantile(fp_mqual_cutoff_quantile)
-        prior_real_error = self.prior_real_error
 
         # Determine x_lut points based on whether quality_lut_size is provided
         if self.args.quality_lut_size is not None:
@@ -725,8 +719,9 @@ class SRSNVTrainer:
         tpr = np.clip(tpr, eps, 1.0)
         fpr = np.clip(fpr, eps, 1.0)
 
+        snvq_prefactor = self._calculate_snvq_prefactor()
         precision = tpr / (tpr + fpr * (len(mqual_f) / len(mqual_t)))
-        self.y_lut = -10 * np.log10(np.clip((prior_real_error / 3) * ((1 - precision) / precision), eps, 1))
+        self.y_lut = -10 * np.log10(np.clip(snvq_prefactor * ((1 - precision) / precision), eps, 1))
 
         logger.debug("Created KDE-smoothed MQUAL→SNVQ lookup table with %d points", len(self.x_lut))
 
@@ -738,7 +733,6 @@ class SRSNVTrainer:
             eps = self.eps
         pd_df = self.data_frame.to_pandas()
         mqual_fp_max = pd_df.loc[pd_df[LABEL_COL].astype(int) == 0, MQUAL].quantile(fp_mqual_cutoff_quantile)
-        # prior_real_error = self.prior_real_error
 
         # Determine x_lut points based on whether quality_lut_size is provided
         if self.args.quality_lut_size is not None:
@@ -857,10 +851,10 @@ class SRSNVTrainer:
         prob_rescaled = _probability_rescaling(
             prob_recal,
             sample_prior=1 - self.prior_train_error,  # prior of a true call from training data
-            target_prior=1 - self.prior_real_error,  # prior of a true call from real data
+            target_prior=1 - self.prior_train_error,  # using training prior (prior_real_error removed)
             eps=self.eps,
         )
-        logger.debug("Completed probability rescaling to real-data prior")
+        logger.debug("Completed probability rescaling")
 
         # attach new columns ------------------------------------------------
         logger.debug("Attaching per-fold probabilities and intermediate columns")
@@ -980,7 +974,6 @@ class SRSNVTrainer:
             "negative": self.neg_stats,
             "positive": self.pos_stats,
             "prior_train_error": self.prior_train_error,
-            "prior_real_error": self.prior_real_error,
         }
 
         # Save comprehensive metadata
