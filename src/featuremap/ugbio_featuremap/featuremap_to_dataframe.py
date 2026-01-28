@@ -61,12 +61,44 @@ from pathlib import Path
 import polars as pl
 
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
+from ugbio_featuremap.filter_dataframe import (
+    _create_filter_columns,
+    _create_final_filter_column,
+    validate_filter_config,
+)
 
 log = logging.getLogger(__name__)
 
 # Configuration constants
 DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
 CHUNK_BP_DEFAULT = 10_000_000  # 10 Mbp per processing chunk
+
+# ───────────────────────────── constants ──────────────────────────────────
+# Configuration keys
+KEY_FIELD = "field"
+KEY_OP = "op"
+KEY_TYPE = "type"
+KEY_VALUE = "value"
+KEY_VALUES = "values"
+KEY_VALUE_FIELD = "value_field"
+KEY_NAME = "name"
+KEY_FILTERS = "filters"
+KEY_DOWNSAMPLE = "downsample"
+KEY_SIZE = "size"
+KEY_METHOD = "method"
+KEY_SEED = "seed"
+
+# Filter types
+TYPE_QUALITY = "quality"
+TYPE_REGION = "region"
+TYPE_LABEL = "label"
+TYPE_MAPPING = "mapping"
+TYPE_DOWNSAMPLE = "downsample"
+TYPE_RAW = "raw"
+
+# Downsample methods
+METHOD_HEAD = "head"
+METHOD_RANDOM = "random"
 
 
 @dataclass
@@ -157,17 +189,6 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
     if not read_filters or frame.is_empty():
         return frame
 
-    # Import filter functions from filter_dataframe module
-    try:
-        from ugbio_featuremap.filter_dataframe import (
-            _create_filter_columns,
-            _create_final_filter_column,
-            validate_filter_config,
-        )
-    except ImportError as e:
-        log.warning(f"Could not import filtering functions: {e}. Skipping read filters.")
-        return frame
-
     try:
         # Handle both dict and list formats
         if isinstance(read_filters, list):
@@ -178,7 +199,7 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
             all_filters = read_filters.get("filters", [])
 
         # Create a copy of filters excluding 'raw' and 'downsample' entries for validation
-        filters_to_apply = [f for f in all_filters if f.get("type") not in {"raw", "downsample"}]
+        filters_to_apply = [f for f in all_filters if f.get(KEY_TYPE) not in {TYPE_RAW, TYPE_DOWNSAMPLE}]
 
         if not filters_to_apply:
             log.debug("No applicable filters found (only raw/downsample filters present)")
@@ -189,31 +210,31 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
         log.info(f"Checking {len(filters_to_apply)} filters for patches...")
         patched_count = 0
         for i, f in enumerate(filters_to_apply):
-            field_name = f.get("field", "")
-            op = f.get("op", "")
-            value = f.get("value")
+            field_name = f.get(KEY_FIELD, "")
+            op = f.get(KEY_OP, "")
+            value = f.get(KEY_VALUE)
 
             # DBSNP_ID == 0 means "not in dbSNP" -> check for empty string
-            if f.get("type") == "region" and field_name == "DBSNP_ID" and op == "eq" and value == 0:
+            if f.get(KEY_TYPE) == TYPE_REGION and field_name == "DBSNP_ID" and op == "eq" and value == 0:
                 log.info(f"Patching filter '{f.get('name')}': converting DBSNP_ID == 0 to empty string check")
                 filters_to_apply[i] = {
-                    "name": f.get("name", "not_in_dbsnp_patched"),
-                    "type": "region",
-                    "field": "DBSNP_ID",
-                    "op": "eq",
-                    "value": "",  # Check for empty/null (represented as empty string after conversion)
+                    KEY_NAME: f.get(KEY_NAME, "not_in_dbsnp_patched"),
+                    KEY_TYPE: TYPE_REGION,
+                    KEY_FIELD: "DBSNP_ID",
+                    KEY_OP: "eq",
+                    KEY_VALUE: "",  # Check for empty/null (represented as empty string after conversion)
                 }
                 patched_count += 1
 
             # UG_HCR != 0 means "in UG HCR" -> check for non-empty string
-            elif f.get("type") == "region" and field_name == "UG_HCR" and op == "ne" and value == 0:
-                log.info(f"Patching filter '{f.get('name')}': converting UG_HCR != 0 to non-empty string check")
+            elif f.get(KEY_TYPE) == TYPE_REGION and field_name == "UG_HCR" and op == "ne" and value == 0:
+                log.info(f"Patching filter '{f.get(KEY_NAME)}': converting UG_HCR != 0 to non-empty string check")
                 filters_to_apply[i] = {
-                    "name": f.get("name", "in_ug_hcr_patched"),
-                    "type": "region",
-                    "field": "UG_HCR",
-                    "op": "ne",
-                    "value": "",  # Check for not empty/null
+                    KEY_NAME: f.get(KEY_NAME, "in_ug_hcr_patched"),
+                    KEY_TYPE: TYPE_REGION,
+                    KEY_FIELD: "UG_HCR",
+                    KEY_OP: "ne",
+                    KEY_VALUE: "",  # Check for not empty/null
                 }
                 patched_count += 1
 
@@ -222,7 +243,7 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
 
         # Debug: log first few filters after patching
         for i, f in enumerate(filters_to_apply[:3]):
-            log.info(f"Filter {i}: {f.get('name')} = {f}")
+            log.info(f"Filter {i}: {f.get(KEY_NAME)} = {f}")
 
         filter_config = {"filters": filters_to_apply}
 
@@ -230,7 +251,7 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
         try:
             validate_filter_config(filter_config)
         except Exception as e:
-            filter_names = [f.get("name", f.get("type", "unnamed")) for f in filters_to_apply]
+            filter_names = [f.get(KEY_NAME, f.get(KEY_TYPE, "unnamed")) for f in filters_to_apply]
             log.error(f"FATAL: Filter validation failed. Filters: {filter_names}")
             log.error(f"Validation error: {e}")
             raise RuntimeError(f"Filter validation failed for filters {filter_names}: {e}") from e
@@ -244,25 +265,25 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
         # Special handling for fields that need null-aware filtering
         # This ensures records with missing values are handled correctly
         for _i, f in enumerate(filters_to_apply):
-            field_name = f.get("field", "")
-            filter_name = f.get("name", f"{field_name}_filter")
+            field_name = f.get(KEY_FIELD, "")
+            filter_name = f.get(KEY_NAME, f"{field_name}_filter")
             col_name = f"__filter_{filter_name}"
 
             if col_name not in filter_cols:
                 continue
 
             # gnomAD_AF: include null values (missing = not in gnomAD = rare)
-            if field_name == "gnomAD_AF" and f.get("type") == "region":
+            if field_name == "gnomAD_AF" and f.get(KEY_TYPE) == TYPE_REGION:
                 log.info(f"Adding null handling for gnomAD_AF filter: '{filter_name}'")
                 lazy_frame = lazy_frame.with_columns((pl.col(col_name) | pl.col("gnomAD_AF").is_null()).alias(col_name))
 
             # DBSNP_ID: include null values (missing = not in dbSNP)
-            elif field_name == "DBSNP_ID" and f.get("type") == "region" and f.get("op") == "eq":
+            elif field_name == "DBSNP_ID" and f.get(KEY_TYPE) == TYPE_REGION and f.get(KEY_OP) == "eq":
                 log.info(f"Adding null handling for DBSNP_ID filter: '{filter_name}'")
                 lazy_frame = lazy_frame.with_columns((pl.col(col_name) | pl.col("DBSNP_ID").is_null()).alias(col_name))
 
             # UG_HCR: exclude null values (missing = not in HCR, so filter them out)
-            elif field_name == "UG_HCR" and f.get("type") == "region" and f.get("op") == "ne":
+            elif field_name == "UG_HCR" and f.get(KEY_TYPE) == TYPE_REGION and f.get(KEY_OP) == "ne":
                 log.info(f"Adding NOT-null requirement for UG_HCR filter: '{filter_name}'")
                 lazy_frame = lazy_frame.with_columns(
                     (pl.col(col_name) & pl.col("UG_HCR").is_not_null()).alias(col_name)
@@ -280,8 +301,8 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
 
             problematic_filter = None
             for i, f in enumerate(filters_to_apply):
-                filter_name = f.get("name", "unnamed")
-                filter_type = f.get("type", "unknown")
+                filter_name = f.get(KEY_NAME, "unnamed")
+                filter_type = f.get(KEY_TYPE, "unknown")
                 try:
                     # Test this filter alone - full execution with collect
                     test_lazy = frame.lazy()
@@ -315,12 +336,12 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
                     break
 
             if problematic_filter:
-                log.error(f"FATAL: Identified problematic filter: {problematic_filter.get('name', 'unnamed')}")
+                log.error(f"FATAL: Identified problematic filter: {problematic_filter.get(KEY_NAME, 'unnamed')}")
                 log.error(f"Full filter configuration: {json.dumps(problematic_filter, indent=2)}")
                 log.error("Fix: Ensure the filter value type matches the column type")
                 log.error("     - If column is string/Enum, use string values in quotes")
                 log.error("     - If column is numeric, use numeric values without quotes")
-                filter_name = problematic_filter.get("name", "unnamed")
+                filter_name = problematic_filter.get(KEY_NAME, "unnamed")
                 raise RuntimeError(
                     f"Filter '{filter_name}' execution failed. "
                     f"Configuration: {json.dumps(problematic_filter)}. "
@@ -339,7 +360,7 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
         try:
             all_filters = read_filters if isinstance(read_filters, list) else read_filters.get("filters", [])
             for f in all_filters:
-                filter_summary.append(f.get("name", f.get("type", "unnamed")))
+                filter_summary.append(f.get(KEY_NAME, f.get(KEY_TYPE, "unnamed")))
         except Exception:
             filter_summary = ["<error parsing filters>"]
 
