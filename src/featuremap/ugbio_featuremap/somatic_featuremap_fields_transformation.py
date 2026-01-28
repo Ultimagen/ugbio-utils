@@ -11,10 +11,9 @@ from ugbio_core.logger import logger
 
 from ugbio_featuremap import somatic_featuremap_inference_utils
 from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
-from ugbio_featuremap.featuremap_utils import FeatureMapFields
+from ugbio_featuremap.featuremap_utils import FeatureMapFields, TandemRepeatFields
 from ugbio_featuremap.somatic_featuremap_utils import (
     PILEUP_CONFIG,
-    TR_CONFIG,
     filter_and_annotate_tr,
 )
 
@@ -31,12 +30,12 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # These are the columns needed from the VCF to compute the model's expected features.
 # =============================================================================
 
-# INFO fields required for inference (includes TR_DISTANCE field added by annotation step)
+# INFO fields required for inference (includes TR fields added by annotation step)
 # X_PREV1, X_PREV2, X_NEXT1, X_NEXT2 are needed for ref/nonref calculations
 REQUIRED_INFO_FIELDS: set[str] = {
-    TR_CONFIG.distance_field_id,
-    TR_CONFIG.length_field_id,
-    TR_CONFIG.unit_length_field_id,
+    TandemRepeatFields.TR_DISTANCE.value,
+    TandemRepeatFields.TR_LENGTH.value,
+    TandemRepeatFields.TR_SEQ_UNIT_LENGTH.value,
     FeatureMapFields.X_PREV1.value,
     FeatureMapFields.X_PREV2.value,
     FeatureMapFields.X_NEXT1.value,
@@ -447,8 +446,8 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str]) -> pl.D
     )
 
     # Add TR_DISTANCE for ML model (INFO field, shared between samples)
-    if "TR_DISTANCE" in variants_df.columns:
-        variants_df = variants_df.with_columns(pl.col("TR_DISTANCE").alias("t_tr_distance"))
+    if TandemRepeatFields.TR_DISTANCE.value in variants_df.columns:
+        variants_df = variants_df.with_columns(pl.col(TandemRepeatFields.TR_DISTANCE.value).alias("t_tr_distance"))
 
     # Rename CHROM and POS columns to match expected format (t_ prefix for VCF writing)
     variants_df = variants_df.with_columns(

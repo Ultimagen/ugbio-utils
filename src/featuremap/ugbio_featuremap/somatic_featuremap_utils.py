@@ -1,56 +1,43 @@
+import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import pysam
-from simppl.simple_pipeline import SimplePipeline
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
 
-from ugbio_featuremap.featuremap_utils import FeatureMapFields
-
-
-@dataclass(frozen=True)
-class VcfInfoField:
-    """VCF INFO field definition."""
-
-    field_id: str
-    number: str
-    field_type: str
-    description: str
+from ugbio_featuremap.featuremap_utils import (
+    FeatureMapFields,
+    TandemRepeatFields,
+    VcfInfoField,
+)
 
 
 @dataclass(frozen=True)
 class TandemRepeatConfig:
-    """Configuration for Tandem Repeat INFO fields added to VCF during TR annotation."""
+    """Configuration for Tandem Repeat INFO fields added to VCF during TR annotation.
+
+    Use TandemRepeatFields enum for field name access.
+    This class provides VCF metadata (type, description) and helper methods.
+    """
 
     fields: tuple[VcfInfoField, ...] = (
-        VcfInfoField("TR_START", "1", "Integer", "Closest tandem Repeat Start"),
-        VcfInfoField("TR_END", "1", "Integer", "Closest Tandem Repeat End"),
-        VcfInfoField("TR_SEQ", "1", "String", "Closest Tandem Repeat Sequence"),
-        VcfInfoField("TR_LENGTH", "1", "Integer", "Closest Tandem Repeat total length"),
-        VcfInfoField("TR_SEQ_UNIT_LENGTH", "1", "Integer", "Closest Tandem Repeat unit length"),
-        VcfInfoField("TR_DISTANCE", "1", "Integer", "Closest Tandem Repeat Distance"),
+        VcfInfoField(TandemRepeatFields.TR_START.value, "1", "Integer", "Closest tandem Repeat Start"),
+        VcfInfoField(TandemRepeatFields.TR_END.value, "1", "Integer", "Closest Tandem Repeat End"),
+        VcfInfoField(TandemRepeatFields.TR_SEQ.value, "1", "String", "Closest Tandem Repeat Sequence"),
+        VcfInfoField(TandemRepeatFields.TR_LENGTH.value, "1", "Integer", "Closest Tandem Repeat total length"),
+        VcfInfoField(TandemRepeatFields.TR_SEQ_UNIT_LENGTH.value, "1", "Integer", "Closest Tandem Repeat unit length"),
+        VcfInfoField(TandemRepeatFields.TR_DISTANCE.value, "1", "Integer", "Closest Tandem Repeat Distance"),
     )
 
-    def all_field_ids(self) -> set[str]:
-        """Return set of all TR field IDs."""
-        return {field.field_id for field in self.fields}
+    def get_bcftools_annotate_columns(self) -> str:
+        """Return the columns string for bcftools annotate.
 
-    @property
-    def length_field_id(self) -> str:
-        """Return the TR_LENGTH field ID."""
-        return "TR_LENGTH"
-
-    @property
-    def unit_length_field_id(self) -> str:
-        """Return the TR_SEQ_UNIT_LENGTH field ID."""
-        return "TR_SEQ_UNIT_LENGTH"
-
-    @property
-    def distance_field_id(self) -> str:
-        """Return the TR_DISTANCE field ID."""
-        return "TR_DISTANCE"
+        Format: CHROM,POS,INFO/TR_START,INFO/TR_END,...
+        """
+        info_cols = ",".join(f"INFO/{field.value}" for field in TandemRepeatFields)
+        return f"{FeatureMapFields.CHROM.value},{FeatureMapFields.POS.value},{info_cols}"
 
 
 @dataclass(frozen=True)
@@ -114,34 +101,42 @@ TR_CONFIG = TandemRepeatConfig()
 PILEUP_CONFIG = PileupConfig()
 
 
-def _create_variant_bed(merged_vcf: Path, bed_file: Path) -> None:
-    """Create a BED file from VCF variants."""
-    sp = SimplePipeline(0, 1)
-    cmd_bcftools = f"bcftools query -f '%CHROM\t%POS0\t%END\n' {merged_vcf}"
-    sp.print_and_run(cmd_bcftools, out=str(bed_file))
+def _run_shell_command(cmd: str, output_file: Path | None = None) -> None:
+    """Run a shell command, optionally redirecting stdout to a file.
+
+    Uses shell=True because commands may contain pipes (e.g., "bedtools ... | cut ...").
+    All command strings are constructed internally - no user input is passed directly.
+    """
+    logger.debug(f"Running: {cmd}")
+    if output_file:
+        with open(output_file, "w") as f:
+            subprocess.run(cmd, shell=True, check=True, stdout=f)  # noqa: S602
+    else:
+        subprocess.run(cmd, shell=True, check=True)  # noqa: S602
 
 
-def _find_closest_tandem_repeats(bed1: Path, bed2: Path, genome_file: Path, output_file: Path) -> None:
-    """Find closest tandem repeats for each variant."""
-    sp = SimplePipeline(0, 1)
-    cmd = f"bedtools closest -D ref -g {genome_file} -a {bed1} -b {bed2} | cut -f1,3,5-10"
-    sp.print_and_run(cmd, out=str(output_file))
+def _create_tr_annotation_file(
+    input_vcf: Path, ref_tr_file: Path, genome_file: Path, tmpdir: Path
+) -> tuple[Path, Path]:
+    """Create TR annotation file from VCF in one piped command.
 
-
-def _prepare_annotation_files(tmpdir: Path, tr_tsv_file: Path) -> tuple[Path, Path]:
-    """Prepare files for VCF annotation."""
-    sp = SimplePipeline(0, 3)
-    sorted_tsv = tmpdir / "tmp.TRdata.sorted.tsv"
-    cmd = f"sort -k1,1 -k2,2n {tr_tsv_file}"
-    sp.print_and_run(cmd, out=str(sorted_tsv))
-
-    gz_tsv = sorted_tsv.with_suffix(".tsv.gz")
-    cmd = f"bgzip -c {sorted_tsv}"
-    sp.print_and_run(cmd, out=str(gz_tsv))
+    Pipeline: bcftools query -> bedtools closest -> cut -> sort -> bgzip
+    Then: tabix for indexing
+    """
+    gz_tsv = tmpdir / "tr_annotation.tsv.gz"
+    cmd = (
+        f"bcftools query -f '%CHROM\\t%POS0\\t%END\\n' {input_vcf} | "
+        f"bedtools closest -D ref -g {genome_file} -a stdin -b {ref_tr_file} | "
+        f"cut -f1,3,5-10 | "
+        f"sort -k1,1 -k2,2n | "
+        f"bgzip -c"
+    )
+    _run_shell_command(cmd, gz_tsv)
 
     cmd = f"tabix -s 1 -b 2 -e 2 {gz_tsv}"
-    sp.print_and_run(cmd)
+    _run_shell_command(cmd)
 
+    # Create header file for bcftools annotate
     header = pysam.VariantHeader()
     for tr_field in TR_CONFIG.fields:
         header.add_meta(
@@ -213,21 +208,11 @@ def filter_and_annotate_tr(
         else:
             vcf_to_annotate = input_vcf
 
-        # Step 2: Create variant BED file from filtered VCF
-        logger.debug("Creating variant BED file for TR annotation")
-        bed_file = tmpdir_path / "variants.bed"
-        _create_variant_bed(vcf_to_annotate, bed_file)
+        # Step 2: Create TR annotation file (fully piped: bcftools -> bedtools -> cut -> sort -> bgzip)
+        logger.info(f"Creating TR annotation file for {vcf_to_annotate}")
+        gz_tsv, hdr_file = _create_tr_annotation_file(vcf_to_annotate, ref_tr_file, genome_file, tmpdir_path)
 
-        # Step 3: Find closest tandem repeats
-        logger.debug("Finding closest tandem repeats")
-        tr_tsv = tmpdir_path / "variants.tr_data.tsv"
-        _find_closest_tandem_repeats(bed_file, ref_tr_file, genome_file, tr_tsv)
-
-        # Step 4: Prepare annotation files (sort, bgzip, tabix)
-        logger.debug("Preparing TR annotation files")
-        gz_tsv, hdr_file = _prepare_annotation_files(tmpdir_path, tr_tsv)
-
-        # Step 5: Annotate VCF with TR fields
+        # Step 3: Annotate VCF with TR fields
         logger.info("Annotating VCF with tandem repeat information")
         output_suffix = ".filtered.tr_info.vcf.gz" if filter_string else ".tr_info.vcf.gz"
         output_vcf = out_dir / input_vcf.name.replace(".vcf.gz", output_suffix)
@@ -236,7 +221,7 @@ def filter_and_annotate_tr(
             output_vcf=str(output_vcf),
             annotation_file=str(gz_tsv),
             header_file=str(hdr_file),
-            columns="CHROM,POS,INFO/TR_START,INFO/TR_END,INFO/TR_SEQ,INFO/TR_LENGTH,INFO/TR_SEQ_UNIT_LENGTH,INFO/TR_DISTANCE",
+            columns=TR_CONFIG.get_bcftools_annotate_columns(),
         )
 
     logger.info(f"Filtered and TR-annotated VCF written to: {output_vcf}")
