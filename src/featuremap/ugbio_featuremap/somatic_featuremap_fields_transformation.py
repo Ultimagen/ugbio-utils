@@ -6,7 +6,6 @@ import cyclopts
 import pandas as pd
 import polars as pl
 import pysam
-from rich.console import Console
 from ugbio_core.logger import logger
 
 from ugbio_featuremap import somatic_featuremap_inference_utils
@@ -20,7 +19,6 @@ from ugbio_featuremap.somatic_featuremap_utils import (
 app = cyclopts.App(
     help="Classify somatic featuremap variants using XGBoost model.",
 )
-console = Console(stderr=True)
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=DeprecationWarning)
@@ -677,20 +675,17 @@ def run(
     out_dir = output_vcf.parent
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    with console.status("[bold cyan]Running somatic featuremap classifier..."):
-        somatic_featuremap_classifier(
-            somatic_featuremap_vcf_path=somatic_featuremap,
-            ref_tr_file=ref_tr_file,
-            genome_file=genome_file,
-            out_dir=out_dir,
-            filter_string=filter_string,
-            xgb_model_path=xgb_model_file,
-            output_vcf=output_vcf,
-            write_agg_params=write_agg_params,
-            verbose=verbose,
-        )
-
-    console.print(f"[green]✓[/green] Output VCF written to: {output_vcf}")
+    somatic_featuremap_classifier(
+        somatic_featuremap_vcf_path=somatic_featuremap,
+        ref_tr_file=ref_tr_file,
+        genome_file=genome_file,
+        out_dir=out_dir,
+        filter_string=filter_string,
+        xgb_model_path=xgb_model_file,
+        output_vcf=output_vcf,
+        write_agg_params=write_agg_params,
+        verbose=verbose,
+    )
 
 
 def somatic_featuremap_classifier(
