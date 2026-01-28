@@ -761,7 +761,7 @@ class SRSNVTrainer:
 
     def _calculate_snvq_prefactor(self) -> float:
         filtering_ratio = get_filter_ratio(self.pos_stats["filters"], numerator_type="label", denominator_type="raw")
-        effective_bases_covered = self.mean_coverage * self.n_bases_in_region * filtering_ratio
+        self.effective_bases_covered = self.mean_coverage * self.n_bases_in_region * filtering_ratio
         logger.info(
             f"mean_coverage: {self.mean_coverage}, "
             f"n_bases_in_region: {self.n_bases_in_region}, "
@@ -769,9 +769,10 @@ class SRSNVTrainer:
         )
         logger.info(
             f"raw_featuremap_size_filtered: {self.raw_featuremap_size_filtered}, "
-            f"effective bases covered: {effective_bases_covered}"
+            f"effective bases covered: {self.effective_bases_covered}"
         )
-        return self.raw_featuremap_size_filtered / effective_bases_covered
+        self.snvq_prefactor = self.raw_featuremap_size_filtered / self.effective_bases_covered
+        return self.snvq_prefactor
 
     # ─────────────────────── training / prediction ──────────────────────
     def train(self) -> None:
@@ -985,7 +986,11 @@ class SRSNVTrainer:
             "quality_recalibration_table": quality_recalibration_table,
             "filtering_stats": stats,
             "model_params": self.model_params,
-            "training_parameters": {"max_qual": self.max_qual},
+            "training_parameters": {
+                "max_qual": self.max_qual,
+                "effective_bases_covered": self.effective_bases_covered,
+                "snvq_prefactor": self.snvq_prefactor,
+            },
             "metadata": self.user_metadata,
         }
 
