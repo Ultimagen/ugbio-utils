@@ -638,7 +638,7 @@ def somatic_featuremap_classifier(
     output_vcf: Path,
     *,
     verbose: bool = False,
-) -> Path:
+) -> Path | None:
     """
     Classify somatic featuremap variants using XGBoost model.
 
@@ -668,8 +668,8 @@ def somatic_featuremap_classifier(
     df_polars = read_vcf_with_aggregation(sfm_filtered_with_tr, output_parquet_path)
 
     if df_polars.is_empty():
-        # TODO: handle better
-        logger.warning(f"No variants found in the input VCF: {somatic_featuremap_vcf_path}")
+        logger.warning(f"No variants found in the input VCF after filtering: {somatic_featuremap_vcf_path}")
+        return None
 
     tumor_sample, normal_sample = get_sample_names_from_vcf(somatic_featuremap_vcf_path)
     samples = [tumor_sample, normal_sample]
@@ -679,7 +679,6 @@ def somatic_featuremap_classifier(
     df_polars = calculate_pileup_features(df_polars, tumor_sample, normal_sample)
     logger.info("Post-processing the aggregated dataframe")
     df_polars = aggregated_df_post_processing(df_polars, samples)
-    # TODO: in debug mode- save the dataframe to a parquet file (with all extra transformations and post processing)
 
     logger.info("Step 3: Running the classifier")
     # Create a renamed copy for model inference (temporary pandas conversion inside)
@@ -689,11 +688,17 @@ def somatic_featuremap_classifier(
     # Add predictions to polars DataFrame
     df_polars = df_polars.with_columns(xgb_proba)
 
+    # In debug mode, save the full processed DataFrame to parquet
+    if verbose:
+        debug_parquet_path = output_vcf.with_suffix(".debug.parquet")
+        df_polars.write_parquet(debug_parquet_path)
+        logger.debug(f"Saved debug parquet with all transformations and xgb_score: {debug_parquet_path}")
+
     logger.info("Step 4: Annotating VCF with XGBoost probability")
     annotate_vcf_with_xgb_proba(sfm_filtered_with_tr, output_vcf, df_polars)
     logger.info(f"Output VCF written to: {output_vcf}")
 
-    return output_vcf
+    return output_vcf if df_polars.height > 0 else None
 
 
 def main():
