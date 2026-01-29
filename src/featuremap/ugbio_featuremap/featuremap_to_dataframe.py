@@ -59,10 +59,11 @@ from pathlib import Path
 
 import polars as pl
 import pysam
+from ugbio_core.logger import logger as log
 
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
-log = logging.getLogger(__name__)
+# log = logging.getLogger(__name__)
 
 # Configuration constants
 DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
