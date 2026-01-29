@@ -237,12 +237,14 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
                 log.info(f"Adding null handling for gnomAD_AF filter: '{filter_name}'")
                 lazy_frame = lazy_frame.with_columns((pl.col(col_name) | pl.col("gnomAD_AF").is_null()).alias(col_name))
 
-            # DBSNP_ID: include null values (missing = not in dbSNP)
-            elif field_name == "DBSNP_ID" and f.get(KEY_TYPE) == TYPE_REGION and f.get(KEY_OP) == "eq":
-                log.info(f"Adding null handling for DBSNP_ID filter: '{filter_name}'")
-                lazy_frame = lazy_frame.with_columns((pl.col(col_name) | pl.col("DBSNP_ID").is_null()).alias(col_name))
+            # ID: include null values (missing = not in dbSNP)
+            # In VCF, ID column has "." when variant is not in dbSNP, which converts to null in dataframe
+            elif field_name == "ID" and f.get(KEY_TYPE) == TYPE_REGION and f.get(KEY_OP) == "eq":
+                log.info(f"Adding null handling for ID filter: '{filter_name}'")
+                lazy_frame = lazy_frame.with_columns((pl.col(col_name) | pl.col("ID").is_null()).alias(col_name))
 
-            # UG_HCR: exclude null values (missing = not in HCR, so filter them out)
+            # UG_HCR: require non-null values (null = not in HCR, should be filtered out)
+            # For filter UG_HCR != false, only TRUE values should pass
             elif field_name == "UG_HCR" and f.get(KEY_TYPE) == TYPE_REGION and f.get(KEY_OP) == "ne":
                 log.info(f"Adding NOT-null requirement for UG_HCR filter: '{filter_name}'")
                 lazy_frame = lazy_frame.with_columns(

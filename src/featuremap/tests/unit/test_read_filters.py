@@ -35,35 +35,26 @@ def test_vcf_to_parquet_with_real_filters(tmp_path: Path):
 
     output_parquet = tmp_path / "filtered_output.parquet"
 
-    # Convert with read filters - may produce empty result if filters are too restrictive
-    try:
-        vcf_to_parquet(
-            vcf=TEST_FEATUREMAP,
-            out=str(output_parquet),
-            drop_format={"GT", "AD", "X_TCM"},
-            jobs=2,
-            read_filters_json=TEST_FILTERS_JSON,
-            chunk_bp=1_000_000,  # Smaller chunks for test
-        )
+    # Convert with read filters - should produce valid output
+    vcf_to_parquet(
+        vcf=TEST_FEATUREMAP,
+        out=str(output_parquet),
+        drop_format={"GT", "AD", "X_TCM"},
+        jobs=2,
+        read_filters_json=TEST_FILTERS_JSON,
+        chunk_bp=1_000_000,  # Smaller chunks for test
+    )
 
-        # If conversion succeeded, check the output
-        assert output_parquet.exists()
-        result_df = pl.read_parquet(output_parquet)
-        print(f"Output shape: {result_df.shape}")
-        print(f"Columns: {result_df.columns}")
+    # Verify the output exists and is not empty
+    assert output_parquet.exists(), "Output Parquet file should exist"
+    result_df = pl.read_parquet(output_parquet)
+    print(f"Output shape: {result_df.shape}")
+    print(f"Columns: {result_df.columns}")
 
-        # Note: result_df may be empty if filters are very restrictive
-        # This is valid behavior - just verify structure is correct
-        assert "CHROM" in result_df.columns
-        assert "POS" in result_df.columns
-
-    except RuntimeError as e:
-        # If all regions are filtered out, that's acceptable for this test
-        # The important thing is that filtering doesn't crash with type errors
-        if "No Parquet part-files were produced" in str(e):
-            print(f"All data filtered out (expected with strict filters): {e}")
-        else:
-            raise
+    # Verify that we have some reads after filtering (not all filtered out)
+    assert result_df.height > 0, "Filtered output should not be empty - all reads were filtered out"
+    assert "CHROM" in result_df.columns
+    assert "POS" in result_df.columns
 
 
 def test_vcf_to_parquet_no_filters_comparison(tmp_path: Path):
@@ -180,33 +171,26 @@ def test_vcf_to_parquet_with_filter_key(tmp_path: Path):
 
     output_parquet = tmp_path / "filtered_output_f2.parquet"
 
-    # Convert with read filters using 'f2_filters' key - may produce empty result
-    try:
-        vcf_to_parquet(
-            vcf=TEST_FEATUREMAP_RANDOM,
-            out=str(output_parquet),
-            drop_format={"GT", "AD", "X_TCM"},
-            jobs=2,
-            read_filters_json=TEST_FILTERS_JSON,
-            read_filter_json_key="f2_filters",
-            chunk_bp=1_000_000,  # Smaller chunks for test
-        )
+    # Convert with read filters using 'f2_filters' key - should produce valid output
+    vcf_to_parquet(
+        vcf=TEST_FEATUREMAP_RANDOM,
+        out=str(output_parquet),
+        drop_format={"GT", "AD", "X_TCM"},
+        jobs=2,
+        read_filters_json=TEST_FILTERS_JSON,
+        read_filter_json_key="f2_filters",
+        chunk_bp=1_000_000,  # Smaller chunks for test
+    )
 
-        # If conversion succeeded, check the output
-        assert output_parquet.exists()
-        result_df = pl.read_parquet(output_parquet)
-        print(f"F2 filtered output shape: {result_df.shape}")
+    # Verify the output exists and is not empty
+    assert output_parquet.exists(), "Output Parquet file should exist"
+    result_df = pl.read_parquet(output_parquet)
+    print(f"F2 filtered output shape: {result_df.shape}")
 
-        # Note: result_df may be empty if filters are very restrictive
-        assert "CHROM" in result_df.columns
-        assert "POS" in result_df.columns
-
-    except RuntimeError as e:
-        # If all regions are filtered out, that's acceptable
-        if "No Parquet part-files were produced" in str(e):
-            print(f"All data filtered out with f2_filters (expected with strict filters): {e}")
-        else:
-            raise
+    # Verify that we have some reads after filtering (not all filtered out)
+    assert result_df.height > 0, "F2 filtered output should not be empty - all reads were filtered out"
+    assert "CHROM" in result_df.columns
+    assert "POS" in result_df.columns
 
 
 def test_vcf_to_parquet_with_f2_filters(tmp_path: Path):

@@ -40,7 +40,7 @@
       "value": 60
     },
     {
-      "name": "mapq_ge_60",
+      "name": "mapq_le_60",
       "type": "mapping",
       "field": "MAPQ",
       "op": "le",
@@ -136,7 +136,7 @@
       "value": 60
     },
     {
-      "name": "mapq_ge_60",
+      "name": "mapq_le_60",
       "type": "mapping",
       "field": "MAPQ",
       "op": "le",
