@@ -90,7 +90,7 @@ def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> N
     if check_worker_cache and _configure_logging._worker_log_level == log_level:  # type: ignore[attr-defined]
         return
 
-    # Clear any existing handlers and reconfigure
+    # Reconfigure the root logger for this process.
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
     logging.basicConfig(
@@ -100,6 +100,11 @@ def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> N
     )
     root_logger.setLevel(log_level)
     log.setLevel(log_level)
+    if log.handlers:
+        # Avoid double logging when the shared logger already has handlers.
+        log.propagate = False
+        for handler in log.handlers:
+            handler.setLevel(log_level)
 
     # Track configured level for worker processes
     if check_worker_cache:
