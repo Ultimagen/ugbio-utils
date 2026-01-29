@@ -99,7 +99,6 @@ def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> N
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         force=True,
     )
-    # Ensure both root logger and module logger use the correct level
     root_logger.setLevel(log_level)
     log.setLevel(log_level)
 
