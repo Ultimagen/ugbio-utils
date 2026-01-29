@@ -93,7 +93,6 @@ def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> N
     # Clear any existing handlers and reconfigure
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
-    log.handlers.clear()
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
