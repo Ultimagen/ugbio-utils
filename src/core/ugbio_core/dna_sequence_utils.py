@@ -206,5 +206,5 @@ def get_reference_alignment_end(reference_start: int, cigar: str) -> int:
     180
     """
     cigar_tuples = parse_cigar_string(cigar)
-    reference_consumed = sum(length for op, length in cigar_tuples if op in CIGAR_CONSUMES_REFERENCE)
+    reference_consumed = sum(length for op_code, length in cigar_tuples if op_code in CIGAR_CONSUMES_REFERENCE)
     return reference_start + reference_consumed
