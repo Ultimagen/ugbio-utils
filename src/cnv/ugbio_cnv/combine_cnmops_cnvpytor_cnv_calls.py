@@ -181,6 +181,16 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     )
     __parse_args_merge_records(merge_records_parser)
 
+    analyze_breakpoints_parser = subparsers.add_parser(
+        "analyze_breakpoint_reads",
+        help="Analyze reads at CNV breakpoints for DUP/DEL evidence",
+        description="Annotates CNV VCF with breakpoint read support information.",
+    )
+    # Reuse argument definitions from analyze_cnv_breakpoint_reads module
+    from ugbio_cnv.analyze_cnv_breakpoint_reads import get_parser as get_breakpoint_parser
+
+    get_breakpoint_parser(analyze_breakpoints_parser)
+
     return parser.parse_args(argv[1:])
 
 
@@ -600,6 +610,16 @@ def run(argv: list[str]):
             ignore_sv_type=True,
             pick_best=True,
         )
+    elif args.tool == "analyze_breakpoint_reads":
+        from ugbio_cnv.analyze_cnv_breakpoint_reads import analyze_cnv_breakpoints
+
+        analyze_cnv_breakpoints(
+            bam_file=args.bam_file,
+            vcf_file=args.vcf_file,
+            cushion=args.cushion,
+            output_file=args.output_file,
+            reference_fasta=args.reference_fasta,
+        )
     else:
         raise ValueError(f"Unknown tool: {args.tool}")
 
@@ -680,6 +700,21 @@ def main_merge_records():
     """
     # Insert 'merge_records' as the tool argument
     argv = [sys.argv[0], "merge_records"] + sys.argv[1:]
+    run(argv)
+
+
+def main_analyze_breakpoints():
+    """
+    Entry point for standalone analyze_breakpoint_reads script.
+
+    This allows running the analyze_breakpoint_reads tool directly without specifying the tool name:
+    analyze_cnv_breakpoint_reads --bam-file ... --vcf-file ... --output-file ...
+
+    Instead of:
+    combine_cnmops_cnvpytor_cnv_calls analyze_breakpoint_reads --bam-file ... --vcf-file ...
+    """
+    # Insert 'analyze_breakpoint_reads' as the tool argument
+    argv = [sys.argv[0], "analyze_breakpoint_reads"] + sys.argv[1:]
     run(argv)
 
 

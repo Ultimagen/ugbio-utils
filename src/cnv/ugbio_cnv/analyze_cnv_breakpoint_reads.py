@@ -487,12 +487,25 @@ def analyze_cnv_breakpoints(
         logger.info(f"Annotated VCF written to {output_file}")
 
 
-def get_parser() -> argparse.ArgumentParser:
-    """Create argument parser."""
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+def get_parser(parser: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser:
+    """Create or populate argument parser.
+
+    Parameters
+    ----------
+    parser : argparse.ArgumentParser, optional
+        Existing parser to add arguments to. If None, creates a new parser.
+        This allows reusing the argument definitions in subparser contexts.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Parser with all arguments added.
+    """
+    if parser is None:
+        parser = argparse.ArgumentParser(
+            description=__doc__,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
     parser.add_argument(
         "--bam-file",
         required=True,

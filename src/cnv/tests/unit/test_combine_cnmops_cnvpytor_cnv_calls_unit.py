@@ -603,3 +603,42 @@ def test_main_merge_records_calls_with_pick_best_true():
                 pick_best=True,
                 ignore_sv_type=True,
             )
+
+
+def test_main_analyze_breakpoints_calls_analyze_cnv_breakpoints():
+    """Test that main_analyze_breakpoints calls analyze_cnv_breakpoints with correct params."""
+    test_bam_file = "/path/to/reads.bam"
+    test_vcf_file = "/path/to/cnvs.vcf.gz"
+    test_output_file = "/path/to/output.vcf.gz"
+    test_cushion = 200
+    test_reference_fasta = "/path/to/ref.fa"
+
+    # Mock sys.argv to simulate command-line arguments
+    # Note: argument names use hyphens (--bam-file) as defined in analyze_cnv_breakpoint_reads.get_parser
+    test_argv = [
+        "analyze_breakpoint_reads",
+        "--bam-file",
+        test_bam_file,
+        "--vcf-file",
+        test_vcf_file,
+        "--output-file",
+        test_output_file,
+        "--cushion",
+        str(test_cushion),
+        "--reference-fasta",
+        test_reference_fasta,
+    ]
+
+    with patch.object(sys, "argv", test_argv):
+        with patch("ugbio_cnv.analyze_cnv_breakpoint_reads.analyze_cnv_breakpoints") as mock_analyze:
+            # Call the main_analyze_breakpoints function
+            combine_cnmops_cnvpytor_cnv_calls.main_analyze_breakpoints()
+
+            # Verify that analyze_cnv_breakpoints was called with the correct parameters
+            mock_analyze.assert_called_once_with(
+                bam_file=test_bam_file,
+                vcf_file=test_vcf_file,
+                cushion=test_cushion,
+                output_file=test_output_file,
+                reference_fasta=test_reference_fasta,
+            )
