@@ -205,46 +205,6 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
             log.debug("No applicable filters found (only raw/downsample filters present)")
             return frame
 
-        # Patch specific filters that compare integer 0 against string/categorical columns
-        # or need special null-handling logic
-        log.info(f"Checking {len(filters_to_apply)} filters for patches...")
-        patched_count = 0
-        for i, f in enumerate(filters_to_apply):
-            field_name = f.get(KEY_FIELD, "")
-            op = f.get(KEY_OP, "")
-            value = f.get(KEY_VALUE)
-
-            # DBSNP_ID == 0 means "not in dbSNP" -> check for empty string
-            if f.get(KEY_TYPE) == TYPE_REGION and field_name == "DBSNP_ID" and op == "eq" and value == 0:
-                log.info(f"Patching filter '{f.get('name')}': converting DBSNP_ID == 0 to empty string check")
-                filters_to_apply[i] = {
-                    KEY_NAME: f.get(KEY_NAME, "not_in_dbsnp_patched"),
-                    KEY_TYPE: TYPE_REGION,
-                    KEY_FIELD: "DBSNP_ID",
-                    KEY_OP: "eq",
-                    KEY_VALUE: "",  # Check for empty/null (represented as empty string after conversion)
-                }
-                patched_count += 1
-
-            # UG_HCR != 0 means "in UG HCR" -> check for non-empty string
-            elif f.get(KEY_TYPE) == TYPE_REGION and field_name == "UG_HCR" and op == "ne" and value == 0:
-                log.info(f"Patching filter '{f.get(KEY_NAME)}': converting UG_HCR != 0 to non-empty string check")
-                filters_to_apply[i] = {
-                    KEY_NAME: f.get(KEY_NAME, "in_ug_hcr_patched"),
-                    KEY_TYPE: TYPE_REGION,
-                    KEY_FIELD: "UG_HCR",
-                    KEY_OP: "ne",
-                    KEY_VALUE: "",  # Check for not empty/null
-                }
-                patched_count += 1
-
-        if patched_count > 0:
-            log.info(f"Applied {patched_count} filter patches")
-
-        # Debug: log first few filters after patching
-        for i, f in enumerate(filters_to_apply[:3]):
-            log.info(f"Filter {i}: {f.get(KEY_NAME)} = {f}")
-
         filter_config = {"filters": filters_to_apply}
 
         # Validate filter configuration
@@ -390,7 +350,7 @@ X_ALT = FeatureMapFields.X_ALT.value
 MQUAL = FeatureMapFields.MQUAL.value
 SNVQ = FeatureMapFields.SNVQ.value
 # Reserved/fixed VCF columns (cannot be overridden)
-RESERVED = {CHROM, POS, REF, ALT, QUAL, FILTER}
+RESERVED = {CHROM, POS, ID, REF, ALT, QUAL, FILTER}
 
 # Category dictionaries
 ALT_ALLELE_CATS = ["A", "C", "G", "T"]
@@ -593,13 +553,14 @@ def _split_format_ids(format_ids: list[str], fmt_meta: dict) -> tuple[list[str],
 
 
 def _make_query_string(format_ids: list[str], query_info: list[str]) -> str:
-    """Build the bcftools query format string (now includes %QUAL)."""
+    """Build the bcftools query format string (now includes %QUAL and %ID)."""
     bracket = "[" + "\t".join(f"%{t}" for t in format_ids) + "]"
     return (
         "\t".join(
             [
                 "%CHROM",
                 "%POS",
+                "%ID",
                 "%QUAL",
                 "%REF",
                 "%ALT",
@@ -893,11 +854,11 @@ def vcf_to_parquet(
 
     # Build query string and column names
     fmt_str = _make_query_string(format_ids, info_ids)
-    cols = [CHROM, POS, QUAL, REF, ALT] + info_ids + format_ids
+    cols = [CHROM, POS, ID, QUAL, REF, ALT] + info_ids + format_ids
 
     # Find indices of list columns for AWK script
     list_fmt_indices = []
-    base_cols = [CHROM, POS, QUAL, REF, ALT] + info_ids
+    base_cols = [CHROM, POS, ID, QUAL, REF, ALT] + info_ids
     for list_col in list_fmt_ids:
         idx = len(base_cols) + format_ids.index(list_col)
         list_fmt_indices.append(idx)

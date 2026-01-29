@@ -5,11 +5,25 @@
       "type": "raw"
     },
     {
+      "name": "not_in_dbsnp",
+      "type": "region",
+      "field": "ID",
+      "op": "eq",
+      "value": "."
+    },
+    {
       "name": "not_in_gnomad",
       "type": "region",
       "field": "gnomAD_AF",
       "op": "le",
       "value": 0.0001
+    },
+    {
+      "name": "in_ug_hcr",
+      "type": "region",
+      "field": "UG_HCR",
+      "op": "ne",
+      "value": false
     },
     {
       "name": "coverage_ge_min",
@@ -89,9 +103,9 @@
     {
       "name": "not_in_dbsnp",
       "type": "region",
-      "field": "DBSNP_ID",
+      "field": "ID",
       "op": "eq",
-      "value": 0
+      "value": "."
     },
     {
       "name": "not_in_gnomad",
@@ -105,7 +119,7 @@
       "type": "region",
       "field": "UG_HCR",
       "op": "ne",
-      "value": 0
+      "value": false
     },
     {
       "name": "coverage_ge_min",
