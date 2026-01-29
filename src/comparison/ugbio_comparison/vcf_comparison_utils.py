@@ -666,15 +666,12 @@ def annotate_concordance(
         logger.info("Calculating coverage")
         concordance_df = annotation.get_coverage(concordance_df, bw_high_quality, bw_all_quality)
     annots = []
-    if annotate_intervals is not None:
-        for annotation_file in annotate_intervals:
-            logger.info("Annotating intervals")
-            concordance_df, annot = annotation.annotate_intervals(concordance_df, annotation_file)
-            annots.append(annot)
+    for annotation_file in annotate_intervals:
+        logger.info("Annotating intervals")
+        concordance_df, annot = annotation.annotate_intervals(concordance_df, annotation_file)
+        annots.append(annot)
     logger.debug("Filling filter column")  # debug since not interesting step
     concordance_df = annotation.fill_filter_column(concordance_df)
-
-    logger.info("Filling filter column")
     if flow_order is not None:
         concordance_df = annotation.annotate_cycle_skip(concordance_df, flow_order=flow_order)
     return concordance_df, annots
