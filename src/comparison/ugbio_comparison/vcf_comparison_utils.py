@@ -360,9 +360,6 @@ class VcfComparisonUtils:
         self.vu.index_vcf(output_file_calls)
 
 
-# Functions moved from comparison_utils.py
-
-
 def _fix_errors(df: pd.DataFrame) -> pd.DataFrame:
     """Parses dataframe generated from the VCFEVAL concordance VCF and prepares it for
      classify/classify_gt functions that only consider the genotypes of the call and the base
