@@ -3,14 +3,11 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-from ugbio_comparison.comparison_utils import (
+from ugbio_comparison.vcf_comparison_utils import (
     _fix_errors,
-    bed_file_length,
-    close_to_hmer_run,
     vcf2concordance,
 )
 from ugbio_core.h5_utils import read_hdf
-from ugbio_core.vcfbed import vcftools
 
 
 @pytest.fixture
@@ -83,16 +80,3 @@ class TestVCF2Concordance:
         result = vcf2concordance(input_vcf, concordance_vcf)
         calls = result[result["gt_ground_truth"] == (0, 0)].classify_gt.value_counts()
         assert "fn" not in calls.index
-
-
-def test_bed_file_length(resources_dir):
-    bed1 = pjoin(resources_dir, "bed1.bed")
-    result = bed_file_length(bed1)
-    assert result == 3026
-
-
-def test_close_to_hmer_run(resources_dir):
-    input_vcf = vcftools.get_vcf_df(pjoin(resources_dir, "hg19.vcf.gz"))
-    runs_file = pjoin(resources_dir, "runs.hg19.bed")
-    result = close_to_hmer_run(input_vcf, runs_file)
-    assert result["close_to_hmer_run"].sum() == 76

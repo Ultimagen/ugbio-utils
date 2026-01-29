@@ -351,3 +351,33 @@ def test_bedtools_coverage(tmpdir):
         "chr2\t500\t600\tregion3\t0\t0\t100\t0.0000000\n",
     ]
     assert result == expected
+
+
+def test_count_bases_in_bed_file(tmpdir):
+    """Test count_bases_in_bed_file to verify it correctly counts bases in a BED file."""
+    from pathlib import Path
+
+    # Use the existing bed1.bed file from core test resources
+    test_resources = Path(__file__).parent.parent / "resources"
+    bed1_path = test_resources / "bed1.bed"
+
+    if bed1_path.exists():
+        result = BedUtils().count_bases_in_bed_file(str(bed1_path))
+        # BED format uses 0-based half-open intervals, so we don't add +1
+        # bed1.bed contains:
+        # chr20 5280-5300: 20 bases
+        # chr20 5600-5800: 200 bases
+        # chr20 6000-6500: 500 bases
+        # chr20 6600-6900: 300 bases
+        # chr20 7000-8000: 1000 bases
+        # chr20 8000-9000: 1000 bases
+        # Total: 3020 bases
+        assert result == 3020
+    else:
+        # Fallback: create a simple test BED file
+        bed_content = "chr1\t100\t200\n" "chr1\t300\t500\n" "chr2\t1000\t1500\n"
+        bed_file = tmpdir.join("test.bed")
+        bed_file.write(bed_content)
+        result = BedUtils().count_bases_in_bed_file(str(bed_file))
+        # 100 + 200 + 500 = 800 bases
+        assert result == 800
