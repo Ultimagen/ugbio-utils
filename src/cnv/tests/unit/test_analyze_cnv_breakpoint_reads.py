@@ -447,23 +447,17 @@ def test_median_insert_size_none_values(temp_vcf_file, dummy_fasta_file):
         records = list(vcf)
         assert len(records) == 3  # Three variants in the VCF file
 
-        # Check each record has the insert size fields with 0.0 values (not None)
+        # Check each record has the insert size fields set to 0.0 (not None).
+        # Accessing missing keys in record.info will raise KeyError, ensuring
+        # the test still fails if the fields are absent.
         for record in records:
-            # Fields must be present
-            assert (
-                "DUP_READS_MEDIAN_INSERT_SIZE" in record.info
-            ), f"DUP_READS_MEDIAN_INSERT_SIZE missing from record at {record.chrom}:{record.pos}"
-            assert (
-                "DEL_READS_MEDIAN_INSERT_SIZE" in record.info
-            ), f"DEL_READS_MEDIAN_INSERT_SIZE missing from record at {record.chrom}:{record.pos}"
-
             # Values must be 0.0 (not None)
-            assert (
-                record.info["DUP_READS_MEDIAN_INSERT_SIZE"] == 0.0
-            ), f"Expected DUP_READS_MEDIAN_INSERT_SIZE=0.0, got {record.info['DUP_READS_MEDIAN_INSERT_SIZE']}"
-            assert (
-                record.info["DEL_READS_MEDIAN_INSERT_SIZE"] == 0.0
-            ), f"Expected DEL_READS_MEDIAN_INSERT_SIZE=0.0, got {record.info['DEL_READS_MEDIAN_INSERT_SIZE']}"
+            assert record.info["DUP_READS_MEDIAN_INSERT_SIZE"] == 0.0, (
+                "Expected DUP_READS_MEDIAN_INSERT_SIZE=0.0, got " f"{record.info['DUP_READS_MEDIAN_INSERT_SIZE']}"
+            )
+            assert record.info["DEL_READS_MEDIAN_INSERT_SIZE"] == 0.0, (
+                "Expected DEL_READS_MEDIAN_INSERT_SIZE=0.0, got " f"{record.info['DEL_READS_MEDIAN_INSERT_SIZE']}"
+            )
 
         vcf.close()
     finally:
