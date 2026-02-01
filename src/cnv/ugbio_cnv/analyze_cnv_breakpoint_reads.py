@@ -9,11 +9,11 @@ VCF with breakpoint evidence in INFO fields.
 
 import argparse
 import sys
-from dataclasses import dataclass
-from pathlib import Path
+from dataclasses import dataclass, field
+from statistics import median
 
 import pysam
-from ugbio_core.dna_sequence_utils import CIGAR_OPS, parse_cigar_string
+from ugbio_core.dna_sequence_utils import CIGAR_OPS, get_reference_alignment_end, parse_cigar_string
 from ugbio_core.logger import logger
 
 # CIGAR operation constants
@@ -30,6 +30,22 @@ class BreakpointEvidence:
     duplication_reads: int
     deletion_reads: int
     total_reads: int
+    dup_insert_sizes: list[int] = field(default_factory=list)
+    del_insert_sizes: list[int] = field(default_factory=list)
+
+    @property
+    def dup_median_insert_size(self) -> float | None:
+        """Calculate median insert size for duplication-supporting reads."""
+        if len(self.dup_insert_sizes) < 1:
+            return None
+        return median(self.dup_insert_sizes)
+
+    @property
+    def del_median_insert_size(self) -> float | None:
+        """Calculate median insert size for deletion-supporting reads."""
+        if len(self.del_insert_sizes) < 1:
+            return None
+        return median(self.del_insert_sizes)
 
 
 def has_right_soft_clip(cigar_tuples: list[tuple[int, int]] | None) -> bool:
@@ -73,7 +89,7 @@ def has_left_soft_clip(cigar_tuples: list[tuple[int, int]] | None) -> bool:
 def get_supplementary_alignments(
     alignment_file: pysam.AlignmentFile,
     read: pysam.AlignedSegment,
-) -> list[tuple[str, int, bool, bool, bool]]:
+) -> list[tuple[str, int, int, bool, bool, bool]]:
     """
     Get supplementary alignments for a read from the SA tag.
 
@@ -87,7 +103,7 @@ def get_supplementary_alignments(
     Returns
     -------
     list of tuples
-        List of (chrom, pos, has_left_soft_clip, has_right_soft_clip, is_reverse) for supplementary alignments
+        List of (chrom, pos, end, has_left_soft_clip, has_right_soft_clip, is_reverse) for supplementary alignments
     """
     if not read.has_tag("SA"):
         return []
@@ -113,8 +129,8 @@ def get_supplementary_alignments(
         cigar_tups = parse_cigar_string(cigar_str)
         left_soft_clip = has_left_soft_clip(cigar_tups)
         right_soft_clip = has_right_soft_clip(cigar_tups)
-
-        supplementary_alns.append((chrom, pos, left_soft_clip, right_soft_clip, is_reverse))
+        end = get_reference_alignment_end(pos, cigar_str)
+        supplementary_alns.append((chrom, pos, end, left_soft_clip, right_soft_clip, is_reverse))
 
     return supplementary_alns
 
@@ -124,7 +140,7 @@ def _prepare_read_for_cnv_check(
     interval_start: int,
     interval_end: int,
     cushion: int,
-) -> tuple[str, int, bool, bool, bool, int, int, int, int] | None:
+) -> tuple[str, int, int, bool, bool, bool, int, int, int, int] | None:
     """
     Prepare and validate read information for CNV consistency checking.
 
@@ -142,12 +158,15 @@ def _prepare_read_for_cnv_check(
     Returns
     -------
     tuple or None
-        (chrom, start, is_reverse, has_left_clip, has_right_clip,
+        (chrom, start, end, is_reverse, has_left_clip, has_right_clip,
          start_region_start, start_region_end, end_region_start, end_region_end)
         or None if read is not valid for checking
     """
     primary_chrom = read.reference_name
     primary_start = read.reference_start
+    if read.reference_end is None:
+        raise RuntimeError(f"Corrupt read {read.query_name} with no reference end found")
+    primary_end = read.reference_end
     primary_is_reverse = read.is_reverse
 
     if primary_chrom is None or primary_start is None or read.cigartuples is None:
@@ -172,6 +191,7 @@ def _prepare_read_for_cnv_check(
     return (
         primary_chrom,
         primary_start,
+        primary_end,
         primary_is_reverse,
         primary_has_left_clip,
         primary_has_right_clip,
@@ -187,8 +207,8 @@ def check_read_cnv_consistency(
     interval_start: int,
     interval_end: int,
     cushion: int,
-    supplementary_alns: list[tuple[str, int, bool, bool, bool]],
-) -> tuple[bool, bool]:
+    supplementary_alns: list[tuple[str, int, int, bool, bool, bool]],
+) -> tuple[bool, bool, int | None]:
     """
     Check if a split read is consistent with duplication or deletion at this interval.
 
@@ -214,20 +234,20 @@ def check_read_cnv_consistency(
 
     Returns
     -------
-    tuple[bool, bool]
-        (is_duplication, is_deletion)
+    tuple[bool, bool, int | None]
+        (is_duplication, is_deletion, insert_size)
     """
     if not supplementary_alns:
-        return False, False
-
+        return False, False, None
     # Prepare and validate read information
     prep_result = _prepare_read_for_cnv_check(read, interval_start, interval_end, cushion)
     if prep_result is None:
-        return False, False
+        return False, False, None
 
     (
         primary_chrom,
         primary_start,
+        primary_end,
         primary_is_reverse,
         primary_has_left_clip,
         primary_has_right_clip,
@@ -238,7 +258,7 @@ def check_read_cnv_consistency(
     ) = prep_result
 
     # Check supplementary alignments
-    for supp_chrom, supp_start, supp_left_clip, supp_right_clip, supp_is_reverse in supplementary_alns:
+    for supp_chrom, supp_start, supp_end, supp_left_clip, supp_right_clip, supp_is_reverse in supplementary_alns:
         # Must be on same chromosome and same strand
         primary_near_start = start_region_start <= primary_start <= start_region_end
         primary_near_end = end_region_start <= primary_start <= end_region_end
@@ -255,57 +275,196 @@ def check_read_cnv_consistency(
             continue
 
         # Determine which is first part (right clip) and which is second part (left clip)
-        is_dup = _alignment_consistent_with_dup(
+        dup_insert_size = _alignment_consistent_with_dup(
             primary_start,
+            primary_end,
             supp_start,
+            supp_end,
             primary_has_left_clip,
             primary_has_right_clip,
             supp_left_clip,
             supp_right_clip,
         )
-        is_del = _alignment_consistent_with_del(
+        del_insert_size = _alignment_consistent_with_del(
             primary_start,
+            primary_end,
             supp_start,
+            supp_end,
             primary_has_left_clip,
             primary_has_right_clip,
             supp_left_clip,
             supp_right_clip,
         )
-        if is_dup or is_del:
-            return is_dup, is_del
-    return False, False
+        if dup_insert_size is not None:
+            return True, False, dup_insert_size
+        if del_insert_size is not None:
+            return False, True, del_insert_size
+    return False, False, None
 
 
 def _alignment_consistent_with_dup(
-    primary_start, supp_start, primary_left_clip, primary_right_clip, supp_left_clip, supp_right_clip
-) -> bool:
+    primary_start,
+    primary_end,
+    supp_start,
+    supp_end,
+    primary_left_clip,
+    primary_right_clip,
+    supp_left_clip,
+    supp_right_clip,
+) -> int | None:
+    """Check if alignment is consistent with duplication and return insert size if so."""
     # Case 1: Primary has right clip (first part), supplementary has left clip (second part)
     if primary_right_clip and supp_left_clip:
-        if primary_start > supp_start:
-            return True
+        insert_size = primary_end - supp_start
+        if primary_start > supp_end:
+            return insert_size
 
     # Case 2: Primary has left clip (second part), supplementary has right clip (first part)
     if primary_left_clip and supp_right_clip:
-        if supp_start > primary_start:
-            return True  # Duplication: first part AFTER second part
+        insert_size = supp_end - primary_start
+        if supp_start > primary_end:
+            return insert_size  # Duplication: first part AFTER second part
 
-    return False
+    return None
 
 
 def _alignment_consistent_with_del(
-    primary_start, supp_start, primary_left_clip, primary_right_clip, supp_left_clip, supp_right_clip
-) -> bool:
+    primary_start,
+    primary_end,
+    supp_start,
+    supp_end,
+    primary_left_clip,
+    primary_right_clip,
+    supp_left_clip,
+    supp_right_clip,
+) -> int | None:
+    """Check if alignment is consistent with deletion and return insert size if so."""
     # Case 1: Primary has right clip (first part), supplementary has left clip (second part)
     if primary_right_clip and supp_left_clip:
-        if primary_start < supp_start:
-            return True
+        insert_size = supp_start - primary_end
+        if primary_end < supp_start:
+            return insert_size
 
     # Case 2: Primary has left clip (second part), supplementary has right clip (first part)
     if primary_left_clip and supp_right_clip:
+        insert_size = primary_start - supp_end
         if supp_start < primary_start:
-            return True  # Duplication: first part AFTER second part
+            return insert_size  # Deletion: first part BEFORE second part
 
-    return False
+    return None
+
+
+def _should_skip_read(read: pysam.AlignedSegment) -> bool:
+    """
+    Check if a read should be skipped during breakpoint analysis.
+
+    Skips unmapped, secondary, supplementary, and duplicate reads.
+
+    Parameters
+    ----------
+    read : pysam.AlignedSegment
+        The read to check
+
+    Returns
+    -------
+    bool
+        True if read should be skipped
+    """
+    return read.is_unmapped or read.is_secondary or read.is_supplementary or read.is_duplicate
+
+
+def _is_read_near_breakpoint(
+    read_start: int,
+    start_region_start: int,
+    start_region_end: int,
+    end_region_start: int,
+    end_region_end: int,
+) -> bool:
+    """
+    Check if read start position is near either breakpoint region.
+
+    Parameters
+    ----------
+    read_start : int
+        The reference start position of the read
+    start_region_start : int
+        Start of the interval start region
+    start_region_end : int
+        End of the interval start region
+    end_region_start : int
+        Start of the interval end region
+    end_region_end : int
+        End of the interval end region
+
+    Returns
+    -------
+    bool
+        True if read is near either breakpoint
+    """
+    near_start = start_region_start <= read_start <= start_region_end
+    near_end = end_region_start <= read_start <= end_region_end
+    return near_start or near_end
+
+
+def _process_read_for_cnv_evidence(
+    read: pysam.AlignedSegment,
+    alignment_file: pysam.AlignmentFile,
+    start: int,
+    end: int,
+    cushion: int,
+) -> tuple[bool, bool, int | None]:
+    """
+    Process a single read to determine CNV evidence.
+
+    Parameters
+    ----------
+    read : pysam.AlignedSegment
+        The read to process
+    alignment_file : pysam.AlignmentFile
+        Open BAM/CRAM file for fetching supplementary alignments
+    start : int
+        Interval start position (0-based)
+    end : int
+        Interval end position (0-based)
+    cushion : int
+        Number of bases to extend search around breakpoints
+
+    Returns
+    -------
+    tuple[bool, bool, int | None]
+        (is_duplication, is_deletion, insert_size)
+    """
+    supplementary_alns = get_supplementary_alignments(alignment_file, read)
+    return check_read_cnv_consistency(read, start, end, cushion, supplementary_alns)
+
+
+def _calculate_breakpoint_regions(
+    start: int,
+    end: int,
+    cushion: int,
+) -> tuple[int, int, int, int]:
+    """
+    Calculate the breakpoint search regions.
+
+    Parameters
+    ----------
+    start : int
+        Interval start position (0-based)
+    end : int
+        Interval end position (0-based)
+    cushion : int
+        Number of bases to extend search around breakpoints
+
+    Returns
+    -------
+    tuple[int, int, int, int]
+        (start_region_start, start_region_end, end_region_start, end_region_end)
+    """
+    start_region_start = max(0, start - cushion)
+    start_region_end = start + cushion
+    end_region_start = max(0, end - cushion)
+    end_region_end = end + cushion
+    return start_region_start, start_region_end, end_region_start, end_region_end
 
 
 def analyze_interval_breakpoints(
@@ -336,60 +495,43 @@ def analyze_interval_breakpoints(
     BreakpointEvidence
         Counts of reads supporting duplication and deletion
     """
+    # Calculate breakpoint regions
+    regions = _calculate_breakpoint_regions(start, end, cushion)
+    start_region_start, start_region_end, end_region_start, end_region_end = regions
+
+    # Initialize counters and tracking
     duplication_reads = 0
     deletion_reads = 0
-
-    # Track reads we've already processed to avoid double counting
-    processed_reads = set()
-
-    # Define the two breakpoint regions
-    start_region_start = max(0, start - cushion)
-    start_region_end = start + cushion
-    end_region_start = end - cushion
-    end_region_end = end + cushion
-
-    # Fetch reads from the combined region covering both breakpoints
-    fetch_start = start_region_start
-    fetch_end = end_region_end
+    dup_insert_sizes: list[int] = []
+    del_insert_sizes: list[int] = []
+    processed_reads: set[str] = set()
 
     try:
-        for read in alignment_file.fetch(chrom, fetch_start, fetch_end):
-            # Skip unmapped, secondary, supplementary, duplicate reads
-            if read.is_unmapped or read.is_secondary or read.is_supplementary or read.is_duplicate:
-                continue
-
-            # Skip if we already processed this read
-            if read.query_name in processed_reads:
+        for read in alignment_file.fetch(chrom, start_region_start, end_region_end):
+            if _should_skip_read(read) or read.query_name in processed_reads:
                 continue
 
             read_start = read.reference_start
-            if read_start is None:
+
+            if not _is_read_near_breakpoint(
+                read_start, start_region_start, start_region_end, end_region_start, end_region_end
+            ):
                 continue
-
-            # Check if read start is near either breakpoint
-            near_start = start_region_start <= read_start <= start_region_end
-            near_end = end_region_start <= read_start <= end_region_end
-
-            if not (near_start or near_end):
-                continue
-
-            # Add to processed set
             processed_reads.add(read.query_name)
 
-            # Get supplementary alignments for this read
-            supplementary_alns = get_supplementary_alignments(alignment_file, read)
+            is_dup, is_del, insert_size = _process_read_for_cnv_evidence(read, alignment_file, start, end, cushion)
 
-            # Check for duplication and deletion evidence
-            is_dup, is_del = check_read_cnv_consistency(read, start, end, cushion, supplementary_alns)
             if is_dup:
                 duplication_reads += 1
+                if insert_size is not None and insert_size > 0:
+                    dup_insert_sizes.append(insert_size)
             elif is_del:
                 deletion_reads += 1
+                if insert_size is not None and insert_size > 0:
+                    del_insert_sizes.append(insert_size)
 
     except Exception as e:
         logger.warning(f"Error fetching reads for {chrom}:{start}-{end}: {e}")
-
-    total_reads = len(processed_reads)
 
     return BreakpointEvidence(
         chrom=chrom,
@@ -397,16 +539,18 @@ def analyze_interval_breakpoints(
         end=end,
         duplication_reads=duplication_reads,
         deletion_reads=deletion_reads,
-        total_reads=total_reads,
+        total_reads=len(processed_reads),
+        dup_insert_sizes=dup_insert_sizes,
+        del_insert_sizes=del_insert_sizes,
     )
 
 
 def analyze_cnv_breakpoints(
     bam_file: str,
     vcf_file: str,
+    reference_fasta: str,
     cushion: int = 100,
     output_file: str | None = None,
-    reference_fasta: str | None = None,
 ) -> None:
     """
     Analyze all CNV intervals in a VCF file for breakpoint evidence.
@@ -421,21 +565,10 @@ def analyze_cnv_breakpoints(
         Number of bases to extend search around breakpoints (default: 100)
     output_file : str, optional
         Path to output VCF file (default: None, writes to stdout)
-    reference_fasta : str, optional
+    reference_fasta : str
         Path to reference FASTA file (required for CRAM files)
     """
-    # Determine file mode based on extension
-    file_ext = Path(bam_file).suffix.lower()
-    if file_ext == ".cram":
-        if reference_fasta is None:
-            raise ValueError("Reference FASTA is required for CRAM files")
-        mode = "rc"
-        alignment_file = pysam.AlignmentFile(bam_file, mode, reference_filename=reference_fasta)
-    elif file_ext == ".bam":
-        mode = "rb"
-        alignment_file = pysam.AlignmentFile(bam_file, mode)
-    else:
-        raise ValueError(f"Unsupported file format: {file_ext}. Only .bam and .cram are supported.")
+    alignment_file = pysam.AlignmentFile(bam_file, "r", reference_filename=reference_fasta)
 
     # Open input VCF and add new INFO fields to header
     with pysam.VariantFile(vcf_file) as vcf_in:
@@ -445,6 +578,8 @@ def analyze_cnv_breakpoints(
         hdr.info.add("CNV_TOTAL_READS", "1", "Integer", "Total reads analyzed at breakpoints")
         hdr.info.add("CNV_DUP_FRAC", "1", "Float", "Fraction of reads supporting duplication")
         hdr.info.add("CNV_DEL_FRAC", "1", "Float", "Fraction of reads supporting deletion")
+        hdr.info.add("DUP_READS_MEDIAN_INSERT_SIZE", "1", "Float", "Median insert size of duplication-supporting reads")
+        hdr.info.add("DEL_READS_MEDIAN_INSERT_SIZE", "1", "Float", "Median insert size of deletion-supporting reads")
 
         # Open output VCF with modified header
         if output_file:
@@ -474,6 +609,11 @@ def analyze_cnv_breakpoints(
                 record.info["CNV_DUP_FRAC"] = 0.0
                 record.info["CNV_DEL_FRAC"] = 0.0
 
+            # Add insert size statistics
+            if evidence.dup_median_insert_size is not None:
+                record.info["DUP_READS_MEDIAN_INSERT_SIZE"] = evidence.dup_median_insert_size
+            if evidence.del_median_insert_size is not None:
+                record.info["DEL_READS_MEDIAN_INSERT_SIZE"] = evidence.del_median_insert_size
             # Write annotated record
             vcf_out.write(record)
 
@@ -529,8 +669,8 @@ def get_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argume
     )
     parser.add_argument(
         "--reference-fasta",
-        default=None,
-        help="Path to reference FASTA file (required for CRAM files)",
+        required=True,
+        help="Path to reference FASTA file",
     )
     return parser
 
@@ -544,9 +684,9 @@ def main(argv: list[str] | None = None) -> int:
         analyze_cnv_breakpoints(
             bam_file=args.bam_file,
             vcf_file=args.vcf_file,
+            reference_fasta=args.reference_fasta,
             cushion=args.cushion,
             output_file=args.output_file,
-            reference_fasta=args.reference_fasta,
         )
         return 0
     except Exception as e:

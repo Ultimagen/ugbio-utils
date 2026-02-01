@@ -58,3 +58,23 @@ class TestDnaUtils:
             (4, 5),
             (5, 5),
         ]
+
+    def test_get_reference_alignment_end(self):
+        # Test simple match - 50 bases consumed on reference
+        assert dna_sequence_utils.get_reference_alignment_end(100, "50M") == 150
+
+        # Test with soft clip at start - soft clips don't consume reference
+        assert dna_sequence_utils.get_reference_alignment_end(100, "30S50M") == 150
+
+        # Test with deletion - deletions consume reference bases
+        assert dna_sequence_utils.get_reference_alignment_end(100, "50M2D30M") == 182
+
+        # Test with insertion - insertions don't consume reference bases
+        assert dna_sequence_utils.get_reference_alignment_end(100, "50M10I30M") == 180
+
+        # Test complex CIGAR with multiple operations
+        # 10S (no ref) + 40M (40 ref) + 2D (2 ref) + 20M (20 ref) + 10S (no ref)
+        assert dna_sequence_utils.get_reference_alignment_end(0, "10S40M2D20M10S") == 62
+
+        # Test with hard clips - hard clips don't consume reference
+        assert dna_sequence_utils.get_reference_alignment_end(100, "5H50M5H") == 150

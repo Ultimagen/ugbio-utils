@@ -1,174 +1,479 @@
-# CLAUDE.md
+# CLAUDE.md - ugbio_utils Development Guide
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance for Claude Code and developers working with the ugbio_utils UV workspace.
 
 ## Project Overview
 
-UGBio Utils is a bioinformatics pipeline toolkit organized as a UV workspace with modular components. Each module in `src/` is a separate Python package with its own Docker container for cloud deployment. The repository is public on GitHub, with Docker images published to both AWS ECR (internal) and Docker Hub (public).
+**ugbio_utils** is Ultima Genomics' modular bioinformatics toolkit organized as a UV workspace with 13 independent Python packages. Each package is independently versioned, tested, and deployed as a Docker container.
 
-**The project uses pre-commit hooks** for code quality checks (Ruff linting/formatting). These run automatically on `git commit`.
+- **Current Version:** 1.20.0-0
+- **Python Target:** 3.11+
+- **Package Manager:** UV (not pip/conda)
+- **License:** Apache-2.0
+- **Total Codebase:** 281 Python files, 99 test files
+- **Docker Registry:** AWS ECR + Docker Hub
 
 ## Architecture
 
 ### Workspace Structure
-- **UV Workspace**: Monorepo with multiple packages under `src/`, managed by UV package manager
-- **Core Module**: `ugbio_core` provides VCF processing (`vcfbed/`), statistics utilities, and shared infrastructure. All other modules depend on this.
-- **Pipeline Modules**: comparison (Truvari SV analysis), featuremap (VCF→Parquet conversion), filtering, CNV calling, methylation analysis, MRD, ppmseq, srsnv, single_cell, freec, omics
-- **Cloud Integration**: AWS HealthOmics workflow management, Cromwell cost comparison
 
-### Module Pattern
-Each module follows a consistent structure:
 ```
-src/<module>/
-├── Dockerfile                    # Multi-stage build from ugbio_base
-├── pyproject.toml               # UV workspace member config
-├── ugbio_<module>/              # Python source code
-├── tests/                       # pytest test suite
-└── README.<module>.md           # Module documentation
+src/
+├── core/         (74 files) ugbio_core         - Foundation (ALL depend on this)
+├── cnv/          (41 files) ugbio_cnv          - CNV calling (JALIGN, CNVpytor, FREEC)
+├── comparison/   (11 files) ugbio_comparison   - Variant comparison (Truvari)
+├── featuremap/   (21 files) ugbio_featuremap   - Feature extraction (VCF→Parquet)
+├── filtering/    (50 files) ugbio_filtering    - ML filtering, SEC, training
+├── mrd/          (6 files)  ugbio_mrd          - Minimal residual disease
+├── ppmseq/       (6 files)  ugbio_ppmseq       - PPMSeq QC analysis
+├── srsnv/        (20 files) ugbio_srsnv        - Single-read SNV calling
+├── methylation/  (12 files) ugbio_methylation  - Methylation analysis
+├── single_cell/  (8 files)  ugbio_single_cell  - Single-cell genomics
+├── cloud_utils/  (4 files)  ugbio_cloud_utils  - AWS/GCS integration
+├── omics/        (25 files) ugbio_omics        - AWS HealthOmics workflows
+├── freec/        (2 files)  ugbio_freec        - FREEC CNV config
+└── pypgx/        (0 files)  ugbio_pypgx        - Pharmacogenomics (stub)
 ```
 
-### Docker Architecture
-- **`ugbio_base`**: Foundation image (Python 3.11-bullseye) with bcftools, samtools, bedtools, bedops
-- **Module Images**: Multi-stage builds that first build wheels, then install on ugbio_base with additional tools (e.g., GATK, Truvari)
+### Module Dependency Hierarchy
+
+**Level 0 (Foundation):**
+- ugbio_core (no dependencies)
+- ugbio_cloud_utils (no workspace dependencies)
+- ugbio_freec (no workspace dependencies)
+
+**Level 1 (Direct Core Dependencies):**
+- ugbio_cnv, ugbio_comparison, ugbio_ppmseq, ugbio_methylation, ugbio_single_cell, ugbio_omics
+
+**Level 2 (Secondary Dependencies):**
+- ugbio_featuremap (depends: core, ppmseq)
+- ugbio_filtering (depends: comparison → core)
+- ugbio_srsnv (depends: core, ppmseq, featuremap)
+
+**Level 3 (Complex Dependencies):**
+- ugbio_mrd (depends: core, ppmseq, featuremap)
 
 ## Development Commands
 
 ### Environment Setup
+
 ```bash
-# Install UV first (if not installed)
+# Install UV (required once)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install full workspace with all packages
+# Full workspace with all packages and extras
 uv sync --all-extras --all-packages
 
-# Install specific module only
-uv sync --package ugbio-<module>
-
-# Install pre-commit hooks (Ruff formatting/linting)
-uv run pre-commit install
+# Specific module only
+uv sync --package ugbio-core
+uv sync --package ugbio-filtering
 ```
 
 ### Testing
+
 ```bash
-# Run tests for a specific module (preferred in dev container)
-uv run pytest src/<module>/tests/
-
-# Run tests for core functionality
+# Specific module tests (preferred)
 uv run pytest src/core/tests/
+uv run pytest src/filtering/tests/
+uv run pytest src/cnv/tests/
 
-# Run all tests (excluding cnmops)
+# All tests (excludes cnmops)
 uv run pytest --durations=0 src/ --ignore src/cnv/cnmops
 
+# Specific test file
+uv run pytest src/filtering/tests/unit/test_train_models_pipeline.py -v
+
 # Docker-based testing
-docker run --rm -v .:/workdir <image> run_tests /workdir/src/<module>
+docker run --rm -v .:/workdir <image> run_tests /workdir/src/core
 ```
 
 ### Linting & Formatting
+
 ```bash
-# Pre-commit runs automatically on commit, or manually:
-uv run pre-commit run --all-files
+# Pre-commit runs automatically on git commit, or manually:
+uv run pre-commit install  # Install hooks
+uv run pre-commit run --all-files  # Run all checks
 
 # Ruff is configured via .ruff.toml (line length 120, Python 3.11 target)
 ```
 
-### Dev Containers
-```bash
-# AWS ECR login (required before pulling images)
-aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 337532070941.dkr.ecr.us-east-1.amazonaws.com
+## Core Modules
 
-# Open in VSCode: F1 → "Dev Containers: Open Folder in Container"
-# Choose specific module container (CNV/comparison/etc.)
-```
+### ugbio_core - Foundation Layer
 
-## Coding Conventions
+**Purpose:** Provides VCF processing, utilities, and infrastructure for all other modules.
 
-### Python Code Style
+**Key Components:**
+- `vcfbed/vcftools.py` - Main VCF→DataFrame conversion via `get_vcf_df()`
+- `exec_utils.py` - SimplePipeline wrapper for shell command execution
+- `h5_utils.py` - HDF5 file I/O
+- `stats_utils.py` - Statistical utilities (AUCPR metric, etc.)
+- `logger.py` - Centralized logging (currently under refinement for DEBUG level control)
+- `reports/` - Jupyter-based report generation
+- `dna/`, `flow_format/`, `concordance/` - Specialized modules
 
-- **String Quotes**: Always use double quotes for strings
-- **Docstrings**: Use triple double quotes for docstrings and multi-line strings
-- **Line Length**: 120 characters (enforced by Ruff)
-- **Python Version**: Target Python 3.11
-- **Linting**: Ruff configuration in [.ruff.toml](.ruff.toml) includes:
-  - pycodestyle (E, W)
-  - pyflakes (F)
-  - flake8-bugbear (B)
-  - pandas-vet (PD)
-  - NumPy-specific rules (NPY)
-  - isort (I) for import sorting
-  - pylint (PL) with max 10 arguments per function
+**Entry Points:** 7
+- Core processing: `annotate_contig`, `intersect_bed_regions`, `sorter_stats_to_mean_coverage`, `sorter_to_h5`, `convert_h5_to_json`, `collect_existing_metrics`, `generate_report`
 
-### Testing Conventions
+**Optional Extras:**
+- `[vcfbed]` - VCF processing (pybigwig, biopython, truvari, etc.)
+- `[ml]` - Machine learning (scikit-learn, xgboost)
+- `[reports]` - Report generation (papermill, jupyter, seaborn)
+- `[parquet]` - Parquet support (pyarrow, fastparquet)
 
-- **Framework**: Use `pytest` for all tests
-- **Test Location**: Place tests in `tests/` folder within each module
-- **Mocking**: Mock external bioinformatics tools (bcftools, samtools, truvari, etc.) using `@patch`
+### ugbio_filtering - ML-Based Variant Filtering
 
+**Purpose:** ML model training, variant filtering, and Systematic Error Correction (SEC).
+
+**Key Pipelines:**
+- `train_models_pipeline.py` (MAIN - currently under BIOIN-2620 development)
+- `training_prep_pipeline.py` - Prepare training data from VCFs
+- `training_prep_cnv_pipeline.py` - CNV-specific training (with new AUCPR metric)
+- `filter_variants_pipeline.py` - Apply trained models
+
+**Key Modules:**
+- `transformers.py` - Feature extraction and transformation
+- `variant_filtering_utils.py` - Core filtering utilities
+- `multiallelics.py`, `spandel.py`, `blacklist.py` - Specialized filtering
+
+**SEC (Systematic Error Correction):**
+- `sec/error_correction_training.py` - Train error models
+- `sec/correct_systematic_errors.py` - Apply corrections
+- `sec/assess_sec_concordance.py` - Validate SEC
+
+**Entry Points:** 8
+- `train_models_pipeline`, `training_prep_pipeline`, `training_prep_cnv_pipeline`, `filter_variants_pipeline`, `error_correction_training`, `merge_conditional_allele_distributions`, `assess_sec_concordance`, `correct_systematic_errors`
+
+### ugbio_featuremap - Feature Extraction & Pileup
+
+**Purpose:** Convert VCFs to feature maps for machine learning.
+
+**Key Modules:**
+- `featuremap_to_dataframe.py` - Main VCF→Parquet with multi-sample support (DATA-8973)
+- `featuremap_xgb_prediction.py` - XGBoost integration
+- `create_somatic_featuremap.py` - Somatic feature maps
+- `integrate_mpileup_to_sfm.py` - Mpileup integration
+
+**Entry Points:** 7
+- `featuremap_to_dataframe`, `filter_featuremap`, `add_aggregate_params_and_xgb_score_to_pileup_featuremap`, `create_somatic_featuremap`, `integrate_mpileup_to_sfm`, `somatic_featuremap_fields_transformation`
+
+### ugbio_cnv - Copy Number Variation
+
+**Purpose:** CNV detection and analysis (JALIGN, CNVpytor, FREEC, BicSeq2).
+
+**Key Modules:**
+- `jalign.py` - JALIGN alignment algorithm
+- `run_jalign.py` - JALIGN execution
+- `analyze_cnv_breakpoint_reads.py` - Read analysis for CNV breakpoints (RECENTLY REFINED - requires consistent insert size)
+- `run_cnvpytor.py` - CNVpytor integration
+- `combine_cnmops_cnvpytor_cnv_calls.py` - Multi-tool fusion
+- `bicseq2_post_processing.py`, `annotate_FREEC_segments.py` - Post-processing
+
+**Entry Points:** 10
+- `run_jalign`, `analyze_cnv_breakpoint_reads`, `process_cnvs`, `run_cnvpytor`, `combine_cnmops_cnvpytor_cnv_calls`, `combine_cnv_vcfs`, `filter_dup_cnmmops_cnv_calls`, `annotate_vcf_with_regions`, `plot_cnv_results`, `annotate_FREEC_segments`
+
+### Other Modules
+
+**ugbio_comparison** (11 files):
+- Truvari-based SV comparison
+- Produces concordance analysis
+- Entry points: `run_comparison_pipeline`, `sv_comparison_pipeline`
+
+**ugbio_srsnv** (20 files):
+- Single-read SNV detection, training, inference with SHAP
+- Entry points: `srsnv_training`, `srsnv_inference`, `srsnv_report`
+
+**ugbio_mrd** (6 files):
+- Minimal residual disease detection
+- Entry points: `generate_synthetic_signatures`, `generate_report`
+
+**ugbio_omics** (25 files):
+- AWS HealthOmics cost analysis, performance monitoring
+- Entry points: `compare_cromwell_omics`, `get_omics_logs`, `performance`, etc.
+
+**ugbio_methylation, ugbio_single_cell, ugbio_ppmseq, ugbio_cloud_utils, ugbio_freec**:
+- Specialized analysis domains
+- See pyproject.toml for entry points
+
+## Architectural Patterns
+
+### 1. SimplePipeline Wrapper
+
+All shell command execution uses `exec_utils.print_and_execute()`:
 ```python
-from unittest.mock import patch
-
-@patch("subprocess.run")
-@patch("ugbio_core.vcfbed.vcftools.get_vcf_df")
-def test_my_function(mock_vcf_df, mock_run):
-    # Test implementation
-    pass
+from ugbio_core.exec_utils import print_and_execute
+print_and_execute("bcftools view -h file.vcf")
 ```
 
-- **Entry Point**: Each module must have `run_tests = "pytest:main"` in `pyproject.toml`
-- **Test Execution**: Run tests in dev containers/dockers where bioinformatics tools are available
+### 2. VCF Processing Pipeline
 
-## Key Technical Patterns
+All VCF operations flow through `vcftools.get_vcf_df()`:
+```python
+from ugbio_core.vcfbed.vcftools import get_vcf_df
+df = get_vcf_df("file.vcf", sample_id=0, chromosome="chr1")
+```
 
-### Pipeline Execution
+### 3. HDF5 Data Format
 
-- **SimplePipeline**: Core framework in `ugbio_core` for executing shell commands
-- **Parallel Processing**: Region-based chunking for large genomics files (300Mbp default chunks)
-- **Truvari Integration**: SV comparison uses `--passonly` flags (conditional via `ignore_filter` parameter)
+Intermediate results stored as HDF5 files:
+```python
+from ugbio_core.h5_utils import read_hdf
+df = read_hdf("file.h5", columns_subset=["feature1", "label"])
+```
 
-### Dependency Management
-- Modules declare workspace dependencies in `pyproject.toml`:
+### 4. ML Model Training
+
+Training pattern used in `filtering/train_models_pipeline.py`:
+1. Load training data (HDF5)
+2. Train model + transformer
+3. Evaluate on test set
+4. Save as pickle/dill
+
+### 5. Centralized Logging
+
+All modules use:
+```python
+from ugbio_core.logger import logger
+logger.info("message")
+logger.debug("debug info")
+```
+
+**Note:** Currently refining DEBUG level control (BIOIN-2620).
+
+### 6. Entry Point Scripts
+
+Each module defines entry points in pyproject.toml:
 ```toml
-[tool.uv.sources]
-ugbio_core = {workspace = true}
+[project.scripts]
+run_tests = "pytest:main"
+train_models_pipeline = "ugbio_filtering.train_models_pipeline:main"
 ```
-- Each module must include `run_tests = "pytest:main"` script for CI
 
-### AWS/Cloud Integration
+All implement pattern: `parse_args()` → `run(argv)`
+
+### 7. Optional Dependencies
+
+Lightweight installation possible:
+```bash
+pip install ugbio_core[vcfbed]  # VCF processing only
+pip install ugbio_core[ml]      # ML features
+pip install ugbio_core[reports] # Report generation
+```
+
+## Testing
+
+### Test Organization
+
+99 test files organized by module:
+- **core:** 26 test files (unit + system)
+- **filtering:** 15 test files
+- **cnv:** 17 test files
+- **omics:** 10 test files
+- **featuremap:** 8 test files
+- **srsnv:** 8 test files
+- **comparison:** 5 test files
+- **Others:** 10 test files combined
+
+### Test Resources (Git LFS)
+
+Large test files tracked via Git LFS:
+- JALIGN CRAM files
+- XGBoost model JSON files
+- Pileup files
+- VCF/BAM test data
+
+Excluded from pre-commit checks to preserve integrity.
+
+### Running Tests
+
+```bash
+# Module-specific (preferred)
+uv run pytest src/core/tests/
+
+# All modules
+uv run pytest --durations=0 src/ --ignore src/cnv/cnmops
+
+# Docker-based
+docker run --rm -v .:/workdir <image> run_tests /workdir/src/<module>
+```
+
+## Code Style & Quality
+
+### Ruff Configuration (.ruff.toml)
+
+- **Line Length:** 120 characters
+- **Target Python:** 3.11
+- **String Quotes:** Double quotes (enforced)
+- **Import Sorting:** isort integration
+- **Auto-fix:** Enabled
+
+### Linting Rules
+
+**Enabled:** E, F, W, B, PD, NPY, C4, C90, I, UP, ASYNC, S, N, A, COM, PIE, FBT, PL
+
+**Disabled for Tests:** S101 (assertions), PLR (pylint rules), B (bugbear), ERA, S (security)
+
+**Pylint Max Args:** 10 per function
+
+### Pre-commit Hooks
+
+- Ruff linting + formatting
+- Trailing whitespace, end-of-file fixers
+- YAML/JSON validation
+- Large file checks (excludes test resources)
+
+```bash
+uv run pre-commit install
+uv run pre-commit run --all-files
+```
+
+## CI/CD Pipeline
+
+### GitHub Actions (.github/workflows/ci.yml)
+
+1. **Pre-commit Check** - Ruff linting/formatting on all files
+2. **Security Scans** - Trivy for Docker config and filesystem
+3. **Parallel Tests** - All 13 modules tested matrix-style
+4. **Docker Building** - Multi-stage builds for each module
+
+### Docker Architecture
+
+**Base Image:** `ugbio_base:1.7.0`
+- Python 3.11-bullseye
+- Pre-installed: bcftools, samtools, bedtools, bedops
+
+**Module Images:**
+- Multi-stage build (Build + Runtime)
+- Runtime: FROM ugbio_base + module-specific tools
+
+**Registry:**
+- Public: Docker Hub
+
+## Important Patterns & Conventions
+
+### String Formatting
 ```python
-from ugbio_omics import compare_cromwell_omics, get_omics_log
-# Cost comparison between Cromwell and AWS HealthOmics
-# Performance monitoring via CloudWatch logs
+# YES - Double quotes (enforced)
+message = "Hello world"
+
+# NO - Single quotes
+message = 'Hello world'
 ```
 
-## Critical Code Locations
+### Docstrings
+```python
+# Triple double quotes
+def my_function():
+    """
+    Function description.
 
-- **Core VCF Logic**: [src/core/ugbio_core/vcfbed/vcftools.py](src/core/ugbio_core/vcfbed/vcftools.py)
-- **Pipeline Framework**: [src/core/ugbio_core/exec_utils.py](src/core/ugbio_core/exec_utils.py), [src/core/ugbio_core/vcf_utils.py](src/core/ugbio_core/vcf_utils.py)
-- **SV Comparison**: [src/comparison/ugbio_comparison/sv_comparison_pipeline.py](src/comparison/ugbio_comparison/sv_comparison_pipeline.py)
-- **Parallel VCF Processing**: [src/featuremap/ugbio_featuremap/featuremap_to_dataframe.py](src/featuremap/ugbio_featuremap/featuremap_to_dataframe.py)
+    Returns
+    -------
+    result_type
+        Description
+    """
+```
 
-## Adding New Modules
+### Entry Point Pattern
+```python
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    ap = argparse.ArgumentParser()
+    # Add arguments
+    return ap.parse_args(argv)
 
-When creating a new module in `src/`:
+def run(argv: list[str]):
+    args = parse_args(argv[1:])
+    # Implementation
 
-1. **Create standard structure**: Dockerfile, pyproject.toml, README.<module>.md, ugbio_<module>/, tests/
-2. **pyproject.toml requirements**:
-   - Include `[build-system]` with setuptools backend
-   - Add `run_tests = "pytest:main"` script
-   - Declare workspace dependencies via `[tool.uv.sources]`
-3. **Dockerfile**: Build from `ugbio_base` using multi-stage pattern (see existing modules)
-4. **Put common code in ugbio_core**: Check if functionality already exists; if new code is reusable, add it to core
+if __name__ == "__main__":
+    import sys
+    run(sys.argv)
+```
 
-## CI/CD
+### Module Usage
+```python
+# Logger
+from ugbio_core.logger import logger
+logger.info("Processing...")
 
-- **ci.yml**: Runs pre-commit (Ruff), Trivy security scans, and pytest for all modules
-- **build-ugbio-base-docker.yml**: Builds foundational `ugbio_base` image
-- **build-ugbio-member-docker.yml**: Builds module-specific Docker images
-- **docker-build-push.yml**: Reusable workflow for scanning, building, and pushing images
+# VCF
+from ugbio_core.vcfbed.vcftools import get_vcf_df
+df = get_vcf_df("file.vcf")
 
-## Common Gotchas
+# Execution
+from ugbio_core.exec_utils import print_and_execute
+print_and_execute("bcftools view file.vcf")
+```
 
-- If `uv` has hardlink issues, delete `.venv` and run `uv sync` again
-- Ensure correct Python interpreter in VSCode (.venv/bin/python)
-- Dev container `devcontainer.json` must not mount non-existent directories
-- WDL validation: Use `miniwdl check "${file}"` (available as VS Code task)
-- Version managed across workspace: see root `pyproject.toml` for current version (1.16.3-0)
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/core/ugbio_core/vcfbed/vcftools.py` | Core VCF→DataFrame engine |
+| `src/core/ugbio_core/exec_utils.py` | Shell execution wrapper |
+| `src/core/ugbio_core/logger.py` | Centralized logging |
+| `src/filtering/ugbio_filtering/train_models_pipeline.py` | Main ML training pipeline |
+| `src/filtering/ugbio_filtering/transformers.py` | Feature transformers |
+| `src/cnv/ugbio_cnv/jalign.py` | JALIGN alignment |
+| `src/featuremap/ugbio_featuremap/featuremap_to_dataframe.py` | Feature extraction |
+| `pyproject.toml` | Root workspace config |
+| `.ruff.toml` | Linting rules |
+| `.pre-commit-config.yaml` | Pre-commit hooks |
+| `.github/workflows/ci.yml` | CI/CD pipeline |
+
+## Troubleshooting
+
+### UV Hardlink Issues
+```bash
+rm -rf .venv
+uv sync --all-extras --all-packages
+```
+
+### Python Interpreter in VSCode
+- Check: `.venv/bin/python` is selected
+- Dev containers: Python 3.11 from image
+
+### Git LFS Test Resources
+```bash
+git lfs install
+git lfs pull
+```
+
+
+## Related Documentation
+
+- **Parent Project:** `/BioinfoResearch/CLAUDE.md` - Overall research toolkit structure
+- **VariantCalling:** `../CLAUDE.md` - Production pipeline documentation
+- **Module READMEs:** `src/<module>/README.<module>.md` - Module-specific guides
+
+## Quick Reference
+
+### Commands
+```bash
+# Setup
+uv sync --all-extras --all-packages
+
+# Test
+uv run pytest src/core/tests/
+
+# Lint
+uv run pre-commit run --all-files
+
+# Run pipeline
+python -m ugbio_filtering.train_models_pipeline --train_dfs file.h5 --test_dfs file2.h5 --output_file_prefix out
+```
+
+### Module Imports
+```python
+from ugbio_core.logger import logger
+from ugbio_core.vcfbed.vcftools import get_vcf_df
+from ugbio_core.exec_utils import print_and_execute
+from ugbio_filtering import train_models_pipeline
+```
+
+### Entry Points
+```bash
+train_models_pipeline --train_dfs train.h5 --test_dfs test.h5 --output_file_prefix model
+filter_variants_pipeline --input_vcf calls.vcf --model_file model.pkl --output_vcf filtered.vcf
+run_jalign --input_bam reads.bam --ref_genome ref.fa --output_dir results
+```

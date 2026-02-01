@@ -10,6 +10,6 @@ formatter = logging.Formatter("%(asctime)s - %(module)s - %(levelname)s - %(mess
 
 # create console handler and set level to info
 ch = logging.StreamHandler(stream=sys.stderr)
-ch.setLevel(logging.INFO)
+ch.setLevel(logging.DEBUG)  # this will allow it to be controlled by the logger
 ch.setFormatter(formatter)
 logger.addHandler(ch)
