@@ -164,7 +164,9 @@ def _prepare_read_for_cnv_check(
     """
     primary_chrom = read.reference_name
     primary_start = read.reference_start
-    primary_end = int(read.reference_end)
+    if read.reference_end is None:
+        raise RuntimeError(f"Corrupt read {read.query_name} with no reference end found")
+    primary_end = read.reference_end
     primary_is_reverse = read.is_reverse
 
     if primary_chrom is None or primary_start is None or read.cigartuples is None:
@@ -237,7 +239,6 @@ def check_read_cnv_consistency(
     """
     if not supplementary_alns:
         return False, False, None
-    cnv_size = interval_end - interval_start
     # Prepare and validate read information
     prep_result = _prepare_read_for_cnv_check(read, interval_start, interval_end, cushion)
     if prep_result is None:
@@ -283,7 +284,6 @@ def check_read_cnv_consistency(
             primary_has_right_clip,
             supp_left_clip,
             supp_right_clip,
-            cnv_size,
         )
         del_insert_size = _alignment_consistent_with_del(
             primary_start,
@@ -294,7 +294,6 @@ def check_read_cnv_consistency(
             primary_has_right_clip,
             supp_left_clip,
             supp_right_clip,
-            cnv_size,
         )
         if dup_insert_size is not None:
             return True, False, dup_insert_size
@@ -312,7 +311,6 @@ def _alignment_consistent_with_dup(
     primary_right_clip,
     supp_left_clip,
     supp_right_clip,
-    expected_dist,
 ) -> int | None:
     """Check if alignment is consistent with duplication and return insert size if so."""
     # Case 1: Primary has right clip (first part), supplementary has left clip (second part)
@@ -339,7 +337,6 @@ def _alignment_consistent_with_del(
     primary_right_clip,
     supp_left_clip,
     supp_right_clip,
-    expected_dist,
 ) -> int | None:
     """Check if alignment is consistent with deletion and return insert size if so."""
     # Case 1: Primary has right clip (first part), supplementary has left clip (second part)
@@ -465,7 +462,7 @@ def _calculate_breakpoint_regions(
     """
     start_region_start = max(0, start - cushion)
     start_region_end = start + cushion
-    end_region_start = end - cushion
+    end_region_start = max(0, end - cushion)
     end_region_end = end + cushion
     return start_region_start, start_region_end, end_region_start, end_region_end
 
@@ -515,14 +512,11 @@ def analyze_interval_breakpoints(
                 continue
 
             read_start = read.reference_start
-            if read_start is None:
-                continue
 
             if not _is_read_near_breakpoint(
                 read_start, start_region_start, start_region_end, end_region_start, end_region_end
             ):
                 continue
-
             processed_reads.add(read.query_name)
 
             is_dup, is_del, insert_size = _process_read_for_cnv_evidence(read, alignment_file, start, end, cushion)
@@ -662,8 +656,8 @@ def get_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--reference-fasta",
-        default=None,
-        help="Path to reference FASTA file (required for CRAM files)",
+        required=True,
+        help="Path to reference FASTA file",
     )
     return parser
 
