@@ -394,3 +394,73 @@ def test_analyze_cnv_breakpoints_real_data():
     finally:
         Path(del_vcf_file).unlink(missing_ok=True)
         Path(del_output_vcf).unlink(missing_ok=True)
+
+
+def test_median_insert_size_none_values(temp_vcf_file, dummy_fasta_file):
+    """Test that median insert size fields are set to 0.0 when no supporting reads are found.
+
+    This is a regression test for a bug where missing insert size fields (None values)
+    caused downstream filtering to crash with "Data matrix contains null in column 12".
+    The fix ensures these fields are always present with 0.0 as the default value.
+    """
+    # Create a BAM file with NO reads (empty)
+    with tempfile.NamedTemporaryFile(suffix=".bam", delete=False) as f:
+        empty_bam_path = f.name
+
+    # Create an empty BAM file with header
+    header = {
+        "HD": {"VN": "1.0"},
+        "SQ": [
+            {"SN": "chr1", "LN": 10000},
+            {"SN": "chr2", "LN": 10000},
+        ],
+    }
+
+    with pysam.AlignmentFile(empty_bam_path, "wb", header=header):
+        pass  # Write header only, no reads
+
+    # Index the empty BAM file
+    pysam.index(empty_bam_path)
+
+    # Create output VCF file
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as output_f:
+        output_vcf_path = output_f.name
+
+    try:
+        # Run analysis with empty BAM (no supporting reads)
+        analyze_cnv_breakpoints(
+            bam_file=empty_bam_path,
+            vcf_file=temp_vcf_file,
+            reference_fasta=dummy_fasta_file,
+            cushion=100,
+            output_file=output_vcf_path,
+        )
+
+        # Read and verify output VCF
+        vcf = pysam.VariantFile(output_vcf_path)
+
+        # Check that INFO fields are added to header
+        assert "DUP_READS_MEDIAN_INSERT_SIZE" in vcf.header.info
+        assert "DEL_READS_MEDIAN_INSERT_SIZE" in vcf.header.info
+
+        # Collect records
+        records = list(vcf)
+        assert len(records) == 3  # Three variants in the VCF file
+
+        # Check each record has the insert size fields set to 0.0 (not None).
+        # Accessing missing keys in record.info will raise KeyError, ensuring
+        # the test still fails if the fields are absent.
+        for record in records:
+            # Values must be 0.0 (not None)
+            assert record.info["DUP_READS_MEDIAN_INSERT_SIZE"] == 0.0, (
+                "Expected DUP_READS_MEDIAN_INSERT_SIZE=0.0, got " f"{record.info['DUP_READS_MEDIAN_INSERT_SIZE']}"
+            )
+            assert record.info["DEL_READS_MEDIAN_INSERT_SIZE"] == 0.0, (
+                "Expected DEL_READS_MEDIAN_INSERT_SIZE=0.0, got " f"{record.info['DEL_READS_MEDIAN_INSERT_SIZE']}"
+            )
+
+        vcf.close()
+    finally:
+        Path(empty_bam_path).unlink(missing_ok=True)
+        Path(empty_bam_path + ".bai").unlink(missing_ok=True)
+        Path(output_vcf_path).unlink(missing_ok=True)

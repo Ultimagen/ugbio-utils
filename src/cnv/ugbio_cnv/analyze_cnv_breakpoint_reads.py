@@ -609,11 +609,13 @@ def analyze_cnv_breakpoints(
                 record.info["CNV_DUP_FRAC"] = 0.0
                 record.info["CNV_DEL_FRAC"] = 0.0
 
-            # Add insert size statistics
-            if evidence.dup_median_insert_size is not None:
-                record.info["DUP_READS_MEDIAN_INSERT_SIZE"] = evidence.dup_median_insert_size
-            if evidence.del_median_insert_size is not None:
-                record.info["DEL_READS_MEDIAN_INSERT_SIZE"] = evidence.del_median_insert_size
+            # Add insert size statistics (use 0.0 if None to ensure downstream processing)
+            record.info["DUP_READS_MEDIAN_INSERT_SIZE"] = (
+                evidence.dup_median_insert_size if evidence.dup_median_insert_size is not None else 0.0
+            )
+            record.info["DEL_READS_MEDIAN_INSERT_SIZE"] = (
+                evidence.del_median_insert_size if evidence.del_median_insert_size is not None else 0.0
+            )
             # Write annotated record
             vcf_out.write(record)
 
