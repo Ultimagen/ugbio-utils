@@ -59,10 +59,9 @@ from pathlib import Path
 
 import polars as pl
 import pysam
+from ugbio_core.logger import logger as log
 
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
-
-log = logging.getLogger(__name__)
 
 # Configuration constants
 DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
@@ -91,18 +90,21 @@ def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> N
     if check_worker_cache and _configure_logging._worker_log_level == log_level:  # type: ignore[attr-defined]
         return
 
-    # Clear any existing handlers and reconfigure
+    # Reconfigure the root logger for this process.
     root_logger = logging.getLogger()
     root_logger.handlers.clear()
-    log.handlers.clear()
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         force=True,
     )
-    # Ensure both root logger and module logger use the correct level
     root_logger.setLevel(log_level)
     log.setLevel(log_level)
+    if log.handlers:
+        # Avoid double logging when the shared logger already has handlers.
+        log.propagate = False
+        for handler in log.handlers:
+            handler.setLevel(log_level)
 
     # Track configured level for worker processes
     if check_worker_cache:
