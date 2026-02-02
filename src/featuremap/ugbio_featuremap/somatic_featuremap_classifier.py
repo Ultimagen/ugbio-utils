@@ -695,7 +695,7 @@ def somatic_featuremap_classifier(
         variants within these regions are processed. Useful for quick testing
         or targeted analysis on specific genomic regions.
     n_threads
-        Number of threads for bcftools operations.
+        Number of threads for parallel processing.
     verbose
         Enable verbose output and debug messages.
 
