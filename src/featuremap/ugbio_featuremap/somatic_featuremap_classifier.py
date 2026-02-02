@@ -39,6 +39,7 @@ def filter_and_annotate_tr(
     out_dir: Path,
     filter_string: str | None = "PASS",
     regions_bed_file: Path | None = None,
+    n_threads: int = 1,
 ) -> Path:
     """
     Filter VCF and annotate with tandem repeat features in a single pass.
@@ -64,6 +65,8 @@ def filter_and_annotate_tr(
     regions_bed_file : Path, optional
         BED file specifying regions to process. If provided, only variants
         within these regions are processed. Defaults to None (process all regions).
+    n_threads : int, optional
+        Number of threads for bcftools operations. Defaults to 1.
 
     Returns
     -------
@@ -89,7 +92,7 @@ def filter_and_annotate_tr(
         if extra_args_parts:
             filtered_vcf = tmpdir_path / input_vcf.name.replace(".vcf.gz", ".filtered.vcf.gz")
             extra_args = " ".join(extra_args_parts)
-            vcf_utils.view_vcf(str(input_vcf), str(filtered_vcf), n_threads=1, extra_args=extra_args)
+            vcf_utils.view_vcf(str(input_vcf), str(filtered_vcf), n_threads=n_threads, extra_args=extra_args)
             vcf_utils.index_vcf(str(filtered_vcf))
             vcf_to_annotate = filtered_vcf
         else:
@@ -109,6 +112,7 @@ def filter_and_annotate_tr(
             annotation_file=str(gz_tsv),
             header_file=str(hdr_file),
             columns=TR_CONFIG.get_bcftools_annotate_columns(),
+            n_threads=n_threads,
         )
 
     logger.info(f"Filtered and TR-annotated VCF written to: {output_vcf}")
@@ -652,6 +656,7 @@ def somatic_featuremap_classifier(
     *,
     filter_string: str = "PASS",
     regions_bed_file: Path | None = None,
+    n_threads: int = 1,
     verbose: bool = False,
 ) -> Path | None:
     """
@@ -681,6 +686,8 @@ def somatic_featuremap_classifier(
         Optional BED file specifying regions to process. When provided, only
         variants within these regions are processed. Useful for quick testing
         or targeted analysis on specific genomic regions.
+    n_threads
+        Number of threads for bcftools operations.
     verbose
         Enable verbose output and debug messages.
 
@@ -708,6 +715,7 @@ def somatic_featuremap_classifier(
         out_dir,
         filter_string=filter_string,
         regions_bed_file=regions_bed_file,
+        n_threads=n_threads,
     )
 
     logger.info("Step 2: Converting VCF to dataframe and adding transformations")
@@ -730,7 +738,9 @@ def somatic_featuremap_classifier(
         logger.debug(f"Saved debug parquet with all transformations and xgb_score: {debug_parquet_path}")
 
     logger.info("Step 4: Annotating VCF with XGBoost probability")
-    annotate_vcf_with_xgb_proba(sfm_filtered_with_tr, output_vcf, aggregated_df, tumor_sample=tumor_sample)
+    annotate_vcf_with_xgb_proba(
+        sfm_filtered_with_tr, output_vcf, aggregated_df, tumor_sample=tumor_sample, n_threads=n_threads
+    )
     logger.info(f"Output VCF written to: {output_vcf}")
 
     return output_vcf
