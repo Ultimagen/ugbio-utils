@@ -52,6 +52,13 @@ INFO_TAG_REGISTRY: dict[str, tuple[str, int | str, str, str, str]] = {
         "Fraction of N bases in the CNV region from reference genome",
         "INFO",
     ),
+    "CIPOS": (
+        "CIPOS",
+        2,
+        "Integer",
+        "Confidence interval around POS for imprecise variants",
+        "INFO",
+    ),
 }
 
 # the reason filters require special treatment is that they need to be

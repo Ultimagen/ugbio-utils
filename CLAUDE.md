@@ -97,6 +97,70 @@ uv run pre-commit run --all-files  # Run all checks
 # Ruff is configured via .ruff.toml (line length 120, Python 3.11 target)
 ```
 
+## Development Workflow & Testing Requirements
+
+### Adding New Features or Modifying Existing Code
+
+**MANDATORY: All code changes MUST include tests and pass the full test suite.**
+
+When adding features or modifying existing functionality:
+
+1. **Write Tests First or Alongside Implementation**
+   - Add unit tests for new functions/classes
+   - Add system/integration tests for end-to-end workflows
+   - Update existing tests if behavior changes
+
+2. **Run Module-Specific Tests During Development**
+   ```bash
+   # Run tests for the module you're working on
+   uv run pytest src/cnv/tests/ -v
+   uv run pytest src/filtering/tests/ -v
+   ```
+
+3. **Run Full Module Test Suite Before Committing**
+   ```bash
+   # Ensure ALL tests pass, not just new ones
+   uv run pytest src/cnv/tests/ -v --tb=short
+   ```
+
+4. **Verify Pre-commit Checks Pass**
+   ```bash
+   uv run pre-commit run --files <modified_files>
+   ```
+
+5. **Update Documentation**
+   - Update docstrings for modified functions
+   - Update module README if adding new features
+   - Update CLAUDE.md if changing architecture or adding new patterns
+
+### Test Coverage Guidelines
+
+- **Unit tests** (`tests/unit/`): Test individual functions and classes in isolation
+- **System tests** (`tests/system/`): Test complete workflows and integration
+- **Minimum requirement**: New code must have corresponding tests
+- **Best practice**: Aim for >80% code coverage on modified modules
+
+### Example Workflow
+
+```bash
+# 1. Make code changes
+vim src/cnv/ugbio_cnv/process_cnvs.py
+
+# 2. Add/update tests
+vim src/cnv/tests/unit/test_process_cnvs_unit.py
+vim src/cnv/tests/system/test_process_cnvs.py
+
+# 3. Run tests for your module
+uv run pytest src/cnv/tests/ -v
+
+# 4. Run pre-commit checks
+uv run pre-commit run --files src/cnv/ugbio_cnv/process_cnvs.py
+
+# 5. Commit only after all tests pass
+git add src/cnv/ugbio_cnv/process_cnvs.py src/cnv/tests/
+git commit -m "Add new feature to process_cnvs"
+```
+
 ## Core Modules
 
 ### ugbio_core - Foundation Layer
@@ -166,6 +230,7 @@ uv run pre-commit run --all-files  # Run all checks
 - `run_jalign.py` - JALIGN execution
 - `analyze_cnv_breakpoint_reads.py` - Read analysis for CNV breakpoints (RECENTLY REFINED - requires consistent insert size)
 - `run_cnvpytor.py` - CNVpytor integration
+- `process_cnvs.py` - Process CNV calls from cn.mops/FREEC
 - `combine_cnmops_cnvpytor_cnv_calls.py` - Multi-tool fusion
 - `bicseq2_post_processing.py`, `annotate_FREEC_segments.py` - Post-processing
 
@@ -415,6 +480,10 @@ print_and_execute("bcftools view file.vcf")
 | `src/filtering/ugbio_filtering/train_models_pipeline.py` | Main ML training pipeline |
 | `src/filtering/ugbio_filtering/transformers.py` | Feature transformers |
 | `src/cnv/ugbio_cnv/jalign.py` | JALIGN alignment |
+| `src/cnv/ugbio_cnv/process_cnvs.py` | CNV processing and VCF generation |
+| `src/cnv/ugbio_cnv/cnv_bed_format_utils.py` | CNV VCF writing utilities |
+| `src/cnv/ugbio_cnv/combine_cnv_vcf_utils.py` | CNV VCF merging and aggregation |
+| `src/cnv/ugbio_cnv/cnv_vcf_consts.py` | CNV VCF field definitions |
 | `src/featuremap/ugbio_featuremap/featuremap_to_dataframe.py` | Feature extraction |
 | `pyproject.toml` | Root workspace config |
 | `.ruff.toml` | Linting rules |
