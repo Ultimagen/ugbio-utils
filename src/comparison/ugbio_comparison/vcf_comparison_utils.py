@@ -19,16 +19,19 @@ class VcfComparisonUtils:
         Simple pipeline object
     """
 
-    def __init__(self, simple_pipeline: SimplePipeline | None = None):
+    def __init__(self, simple_pipeline: SimplePipeline | None = None, rtg_mem: str = "12G"):
         """Combines VCF in parts from GATK and indices the result
 
         Parameters
         ----------
         simple_pipeline : SimplePipeline, optional
             Optional SimplePipeline object for executing shell commands
+        rtg_mem : str, optional
+            Memory passed to RTG Tools via the RTG_MEM environment variable (default: "12G")
         """
         self.sp = simple_pipeline
         self.vu = VcfUtils()
+        self.rtg_mem = rtg_mem
 
     def __execute(self, command: str, output_file: str | None = None):
         """Summary
@@ -91,7 +94,7 @@ class VcfComparisonUtils:
             shutil.rmtree(outdir)
         cmd = [
             "rtg",
-            "RTG_MEM=12G",
+            f"RTG_MEM={self.rtg_mem}",
             "vcfeval",
             "-b",
             gt,

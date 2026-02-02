@@ -199,6 +199,13 @@ def get_parser() -> argparse.ArgumentParser:
         required=False,
         default="INFO",
     )
+    ap_var.add_argument(
+        "--rtg_mem",
+        help='Memory for RTG Tools via RTG_MEM (e.g. "12G", "24G")',
+        required=False,
+        default="12G",
+        type=str,
+    )
     return ap_var
 
 
@@ -206,7 +213,7 @@ def _setup_pipeline_and_utilities(args) -> tuple[SimplePipeline, VcfComparisonUt
     """Setup pipeline and utility objects."""
     logger.setLevel(getattr(logging, args.verbosity))
     sp = SimplePipeline(args.fc, args.lc, debug=args.d, print_timing=True)
-    vcu = VcfComparisonUtils(sp)
+    vcu = VcfComparisonUtils(sp, rtg_mem=args.rtg_mem)
     vu = VcfUtils(sp)
     return sp, vcu, vu
 
