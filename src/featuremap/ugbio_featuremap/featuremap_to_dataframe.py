@@ -62,6 +62,14 @@ import polars as pl
 
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import (
+    KEY_FIELD,
+    KEY_FILTERS,
+    KEY_NAME,
+    KEY_OP,
+    KEY_TYPE,
+    TYPE_DOWNSAMPLE,
+    TYPE_RAW,
+    TYPE_REGION,
     _create_filter_columns,
     _create_final_filter_column,
     validate_filter_config,
@@ -72,33 +80,6 @@ log = logging.getLogger(__name__)
 # Configuration constants
 DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
 CHUNK_BP_DEFAULT = 10_000_000  # 10 Mbp per processing chunk
-
-# ───────────────────────────── constants ──────────────────────────────────
-# Configuration keys
-KEY_FIELD = "field"
-KEY_OP = "op"
-KEY_TYPE = "type"
-KEY_VALUE = "value"
-KEY_VALUES = "values"
-KEY_VALUE_FIELD = "value_field"
-KEY_NAME = "name"
-KEY_FILTERS = "filters"
-KEY_DOWNSAMPLE = "downsample"
-KEY_SIZE = "size"
-KEY_METHOD = "method"
-KEY_SEED = "seed"
-
-# Filter types
-TYPE_QUALITY = "quality"
-TYPE_REGION = "region"
-TYPE_LABEL = "label"
-TYPE_MAPPING = "mapping"
-TYPE_DOWNSAMPLE = "downsample"
-TYPE_RAW = "raw"
-
-# Downsample methods
-METHOD_HEAD = "head"
-METHOD_RANDOM = "random"
 
 
 @dataclass
@@ -196,7 +177,7 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
             all_filters = read_filters
         else:
             # Dictionary format
-            all_filters = read_filters.get("filters", [])
+            all_filters = read_filters.get(KEY_FILTERS, [])
 
         # Create a copy of filters excluding 'raw' and 'downsample' entries for validation
         filters_to_apply = [f for f in all_filters if f.get(KEY_TYPE) not in {TYPE_RAW, TYPE_DOWNSAMPLE}]
@@ -205,7 +186,7 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
             log.debug("No applicable filters found (only raw/downsample filters present)")
             return frame
 
-        filter_config = {"filters": filters_to_apply}
+        filter_config = {KEY_FILTERS: filters_to_apply}
 
         # Validate filter configuration
         try:
@@ -601,7 +582,7 @@ def _get_awk_script_path() -> str:
     raise FileNotFoundError(f"AWK script not found: {awk_script}")
 
 
-def _merge_parquet_files_lazy(  # noqa: PLR0912
+def _merge_parquet_files_lazy(  # noqa: PLR0912, E501
     parquet_files: list[str],
     output_path: str,
     downsample_reads: int | None = None,
@@ -629,24 +610,23 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912
         empty_df.write_parquet(output_path)
         return
 
+    log.debug(f"Recieved paruqet files: {parquet_files}")
     if len(parquet_files) == 1:
-        # Single file - handle with or without downsampling
-        if downsample_reads is not None:
-            log.info(f"Downsampling single file to {downsample_reads} reads")
-            parquet_dataframe = pl.read_parquet(parquet_files[0])
-            if len(parquet_dataframe) <= downsample_reads:
-                log.info(f"File has {len(parquet_dataframe)} rows, which is <= {downsample_reads}. Keeping all rows.")
-                shutil.move(parquet_files[0], output_path)
-            else:
-                log.info(f"Sampling {downsample_reads} rows from {len(parquet_dataframe)} total rows")
-                if downsample_seed is not None:
-                    parquet_dataframe = parquet_dataframe.sample(n=downsample_reads, seed=downsample_seed)
-                else:
-                    parquet_dataframe = parquet_dataframe.sample(n=downsample_reads)
-                parquet_dataframe.write_parquet(output_path)
-                Path(parquet_files[0]).unlink(missing_ok=True)
-        else:
+        log.debug("Only one Parquet file present - skipping merge")
+        if downsample_reads is None:
             shutil.move(parquet_files[0], output_path)
+        else:
+            # Need to collect to check height
+            parquet_dataframe = pl.read_parquet(parquet_files[0])
+            if parquet_dataframe.height <= downsample_reads:
+                log.debug(
+                    f"Dataset has {parquet_dataframe.height} rows, which is <= requested {downsample_reads} - keeping all rows"  # noqa E501
+                )
+                parquet_dataframe.write_parquet(output_path)
+            else:
+                log.info(f"Sampling {downsample_reads} rows from {parquet_dataframe.height} total rows")
+                parquet_dataframe.sample(n=downsample_reads, seed=downsample_seed).write_parquet(output_path)
+            Path(parquet_files[0]).unlink(missing_ok=True)
         return
 
     log.debug(f"Merging {len(parquet_files)} Parquet files lazily")
@@ -658,23 +638,19 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912
     merged_lazy = pl.concat(lazy_frames, how="vertical")
 
     # Apply downsampling if requested
-    if downsample_reads is not None:
-        log.info(f"Downsampling to {downsample_reads} reads")
-        # Collect to get total row count for decision making
-        merged_dataframe = merged_lazy.collect()
-        if len(merged_dataframe) <= downsample_reads:
-            log.info(f"Dataset has {len(merged_dataframe)} rows, which is <= {downsample_reads}. Keeping all rows.")
-            merged_dataframe.write_parquet(output_path)
-        else:
-            log.info(f"Sampling {downsample_reads} rows from {len(merged_dataframe)} total rows")
-            if downsample_seed is not None:
-                merged_dataframe = merged_dataframe.sample(n=downsample_reads, seed=downsample_seed)
-            else:
-                merged_dataframe = merged_dataframe.sample(n=downsample_reads)
-            merged_dataframe.write_parquet(output_path)
-    else:
-        # Stream write to final output (no downsampling)
+    if downsample_reads is None:
         merged_lazy.sink_parquet(output_path)
+    else:
+        # Need to collect to check height and perform sampling
+        merged_df = merged_lazy.collect()
+        if merged_df.height <= downsample_reads:
+            log.debug(
+                f"Dataset has {merged_df.height} rows, which is <= requested {downsample_reads} - keeping all rows"
+            )
+            merged_df.write_parquet(output_path)
+        else:
+            log.info(f"Sampling {downsample_reads} rows from {merged_df.height} total rows")
+            merged_df.sample(n=downsample_reads, seed=downsample_seed).write_parquet(output_path)
 
     # Clean up temporary files
     for f in parquet_files:
