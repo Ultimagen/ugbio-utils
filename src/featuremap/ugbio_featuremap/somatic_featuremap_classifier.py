@@ -38,13 +38,15 @@ def filter_and_annotate_tr(
     genome_index_file: Path,
     out_dir: Path,
     filter_string: str | None = "PASS",
+    regions_bed_file: Path | None = None,
 ) -> Path:
     """
     Filter VCF and annotate with tandem repeat features in a single pass.
 
     This unified preprocessing function:
-    1. Filters the VCF to keep only specified variants (e.g., PASS)
-    2. Annotates the filtered variants with tandem repeat information
+    1. Filters the VCF to specified regions (if regions_bed_file provided)
+    2. Filters the VCF to keep only specified variants (e.g., PASS)
+    3. Annotates the filtered variants with tandem repeat information
 
     Parameters
     ----------
@@ -59,6 +61,9 @@ def filter_and_annotate_tr(
     filter_string : str, optional
         FILTER value to keep (e.g., "PASS"). If None, no filtering is applied.
         Defaults to "PASS".
+    regions_bed_file : Path, optional
+        BED file specifying regions to process. If provided, only variants
+        within these regions are processed. Defaults to None (process all regions).
 
     Returns
     -------
@@ -71,11 +76,19 @@ def filter_and_annotate_tr(
     with tempfile.TemporaryDirectory(dir=out_dir) as tmpdir:
         tmpdir_path = Path(tmpdir)
 
-        # Step 1: Filter VCF (if filter_string is provided)
+        # Build extra_args for bcftools view - combine region and filter options
+        extra_args_parts = []
+        if regions_bed_file:
+            logger.info(f"Restricting to regions from: {regions_bed_file}")
+            extra_args_parts.append(f"-R {regions_bed_file}")
         if filter_string:
             logger.info(f"Filtering VCF to keep variants with FILTER={filter_string}")
+            extra_args_parts.append(f"-f {filter_string}")
+
+        # Step 1: Filter VCF by regions and/or FILTER status
+        if extra_args_parts:
             filtered_vcf = tmpdir_path / input_vcf.name.replace(".vcf.gz", ".filtered.vcf.gz")
-            extra_args = f"-f {filter_string}"
+            extra_args = " ".join(extra_args_parts)
             vcf_utils.view_vcf(str(input_vcf), str(filtered_vcf), n_threads=1, extra_args=extra_args)
             vcf_utils.index_vcf(str(filtered_vcf))
             vcf_to_annotate = filtered_vcf
@@ -638,6 +651,7 @@ def somatic_featuremap_classifier(
     xgb_model_file: Path,
     *,
     filter_string: str = "PASS",
+    regions_bed_file: Path | None = None,
     verbose: bool = False,
 ) -> Path | None:
     """
@@ -663,6 +677,10 @@ def somatic_featuremap_classifier(
         XGBoost model file for inference.
     filter_string
         Filter tags to apply on the VCF file.
+    regions_bed_file
+        Optional BED file specifying regions to process. When provided, only
+        variants within these regions are processed. Useful for quick testing
+        or targeted analysis on specific genomic regions.
     verbose
         Enable verbose output and debug messages.
 
@@ -671,6 +689,10 @@ def somatic_featuremap_classifier(
     $ somatic_featuremap_fields_transformation input.vcf.gz -o output.vcf.gz \\
         --genome-file genome.fa.fai --ref-tr-file tandem_repeats.bed \\
         --xgb-model-file model.json
+
+    $ somatic_featuremap_fields_transformation input.vcf.gz -o output.vcf.gz \\
+        --genome-file genome.fa.fai --ref-tr-file tandem_repeats.bed \\
+        --xgb-model-file model.json --regions-bed-file chr1_test.bed
     """
     output_vcf, out_dir = initialization(output_vcf, verbose=verbose)
 
@@ -685,6 +707,7 @@ def somatic_featuremap_classifier(
         genome_index_file,
         out_dir,
         filter_string=filter_string,
+        regions_bed_file=regions_bed_file,
     )
 
     logger.info("Step 2: Converting VCF to dataframe and adding transformations")
