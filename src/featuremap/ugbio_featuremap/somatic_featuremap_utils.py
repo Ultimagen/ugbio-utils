@@ -119,10 +119,13 @@ def _run_shell_command(cmd: str, output_file: Path | None = None) -> None:
         subprocess.run(cmd, shell=True, check=True)  # noqa: S602
 
 
-def write_vcf_info_header_file(info_fields: list[VcfInfoField], header_file: Path) -> None:
-    """Write a VCF header file with INFO field definitions.
+def write_vcf_info_header_file(
+    info_fields: list[VcfInfoField], header_file: Path, additional_header_lines: list[str] | None = None
+) -> None:
+    """Write a VCF header file with INFO field definitions and optional additional header lines.
 
     Creates a header file suitable for use with bcftools annotate -h option.
+    Can include both INFO/FORMAT field definitions and arbitrary custom header lines.
 
     Parameters
     ----------
@@ -130,6 +133,9 @@ def write_vcf_info_header_file(info_fields: list[VcfInfoField], header_file: Pat
         List of VcfInfoField objects defining the INFO fields to add.
     header_file : Path
         Path to the output header file.
+    additional_header_lines : list[str], optional
+        List of additional header lines to append (e.g., ["##tumor_sample=<sample_name>"]).
+        These lines will be written as-is after the INFO field definitions.
     """
     header = pysam.VariantHeader()
     for field in info_fields:
@@ -147,6 +153,10 @@ def write_vcf_info_header_file(info_fields: list[VcfInfoField], header_file: Pat
         lines = str(header).splitlines()
         for line in lines[1:-1]:
             f.write(line + "\n")
+
+        if additional_header_lines:
+            for line in additional_header_lines:
+                f.write(line + "\n")
 
 
 def get_sample_names_from_vcf(vcf_path: Path) -> tuple[str, str]:

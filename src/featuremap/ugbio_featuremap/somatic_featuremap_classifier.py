@@ -533,6 +533,7 @@ def annotate_vcf_with_xgb_proba(
     input_vcf_path: Path,
     output_vcf_path: Path,
     df_variants: pl.DataFrame,
+    tumor_sample: str | None = None,
     n_threads: int = 1,
 ) -> None:
     """
@@ -550,6 +551,8 @@ def annotate_vcf_with_xgb_proba(
     df_variants : pl.DataFrame
         Polars DataFrame containing variant information with xgb_proba column.
         Must have columns: CHROM, POS, REF, ALT, xgb_proba
+    tumor_sample : str, optional
+        Tumor sample name to add as header line (##tumor_sample=<sample_name>).
     n_threads : int, optional
         Number of threads for bcftools. Defaults to 1.
     """
@@ -580,8 +583,11 @@ def annotate_vcf_with_xgb_proba(
     _run_shell_command(f"tabix -s1 -b2 -e2 {annotation_tsv_gz}")
     logger.debug(f"Indexed annotation file: {annotation_tsv_gz}.tbi")
 
-    # Create header file with INFO field definition
-    write_vcf_info_header_file([XGB_PROBA_INFO_FIELD], header_file)
+    # Create header file with INFO field definition and optional tumor_sample header line
+    additional_header_lines = []
+    if tumor_sample:
+        additional_header_lines.append(f"##tumor_sample={tumor_sample}")
+    write_vcf_info_header_file([XGB_PROBA_INFO_FIELD], header_file, additional_header_lines=additional_header_lines)
     logger.debug(f"Created header file: {header_file}")
 
     # Annotate VCF using bcftools annotate
@@ -701,7 +707,7 @@ def somatic_featuremap_classifier(
         logger.debug(f"Saved debug parquet with all transformations and xgb_score: {debug_parquet_path}")
 
     logger.info("Step 4: Annotating VCF with XGBoost probability")
-    annotate_vcf_with_xgb_proba(sfm_filtered_with_tr, output_vcf, aggregated_df)
+    annotate_vcf_with_xgb_proba(sfm_filtered_with_tr, output_vcf, aggregated_df, tumor_sample=tumor_sample)
     logger.info(f"Output VCF written to: {output_vcf}")
 
     return output_vcf
