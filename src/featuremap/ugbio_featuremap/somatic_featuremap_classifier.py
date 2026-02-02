@@ -183,7 +183,11 @@ def get_columns_to_drop_from_vcf(vcf_path: Path) -> tuple[set[str], set[str]]:
 
 
 def read_vcf_with_aggregation(
-    vcf_path: Path, output_parquet_path: Path, tumor_sample: str, normal_sample: str
+    vcf_path: Path,
+    output_parquet_path: Path,
+    tumor_sample: str,
+    normal_sample: str,
+    n_threads: int = 1,
 ) -> pl.DataFrame:
     """
     Read VCF file into polars dataframe with column aggregations.
@@ -201,6 +205,9 @@ def read_vcf_with_aggregation(
         Tumor sample name.
     normal_sample : str
         Normal sample name.
+    n_threads : int, optional
+        Number of parallel jobs for VCF to Parquet conversion. Defaults to 1.
+
     Returns
     -------
     pl.DataFrame
@@ -214,6 +221,7 @@ def read_vcf_with_aggregation(
         out=str(output_parquet_path),
         drop_info=drop_info,
         drop_format=drop_format,
+        jobs=n_threads,
         list_mode="aggregate",
         expand_columns={"AD": 2},  # Split AD into AD_0 (ref), AD_1 (alt)
     )
@@ -720,7 +728,9 @@ def somatic_featuremap_classifier(
 
     logger.info("Step 2: Converting VCF to dataframe and adding transformations")
     output_parquet_path = output_vcf.with_suffix(".parquet")
-    aggregated_df = read_vcf_with_aggregation(sfm_filtered_with_tr, output_parquet_path, tumor_sample, normal_sample)
+    aggregated_df = read_vcf_with_aggregation(
+        sfm_filtered_with_tr, output_parquet_path, tumor_sample, normal_sample, n_threads=n_threads
+    )
 
     logger.info("Step 3: Running the classifier")
     # Create a renamed copy for model inference
