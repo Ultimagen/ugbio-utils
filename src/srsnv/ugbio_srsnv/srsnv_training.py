@@ -904,7 +904,7 @@ class SRSNVTrainer:
 
         # final quality (Phred)
         # snvq_raw = prob_to_phred(prob_rescaled, max_value=self.max_qual)
-        self._create_quality_lookup_table()
+        self._create_quality_lookup_table(use_kde=self.args.use_kde_smoothing)
         logger.debug("Created MQUAL→SNVQ lookup table")
         snvq = np.interp(mqual, self.x_lut, self.y_lut)
         logger.debug("Interpolated SNVQ values from lookup table")
@@ -1070,6 +1070,11 @@ def _cli() -> argparse.Namespace:
         type=int,
         default=1000,
         help="Number of points in the MQUAL→SNVQ lookup table " "(default 1000)",
+    )
+    ap.add_argument(
+        "--use-kde-smoothing",
+        action="store_true",
+        help="Whether to use KDE smoothing for the MQUAL→SNVQ lookup table (default False)",
     )
     ap.add_argument(
         "--metadata",
