@@ -10,6 +10,7 @@ import pysam
 import ugbio_core.misc_utils as mu
 from pyfaidx import Fasta
 from ugbio_cnv.analyze_cnv_breakpoint_reads import analyze_cnv_breakpoints
+from ugbio_cnv.analyze_cnv_breakpoint_reads import get_parser as get_breakpoint_parser
 from ugbio_cnv.cnv_vcf_consts import INFO_TAG_REGISTRY
 from ugbio_cnv.combine_cnv_vcf_utils import (
     cnv_vcf_to_bed,
@@ -156,8 +157,6 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         description="Annotates CNV VCF with breakpoint read support information.",
     )
     # Reuse argument definitions from analyze_cnv_breakpoint_reads module
-    from ugbio_cnv.analyze_cnv_breakpoint_reads import get_parser as get_breakpoint_parser
-
     get_breakpoint_parser(analyze_breakpoints_parser)
 
     return parser.parse_args(argv[1:])
