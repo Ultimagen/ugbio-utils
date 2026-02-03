@@ -83,6 +83,9 @@ def filter_and_annotate_tr(
         extra_args_parts = []
         if regions_bed_file:
             logger.info(f"Restricting to regions from: {regions_bed_file}")
+            with open(regions_bed_file) as f:
+                regions = [line.strip() for line in f]
+                logger.debug("\n".join(regions))
             extra_args_parts.append(f"-R {regions_bed_file}")
         if filter_string:
             logger.info(f"Filtering VCF to keep variants with FILTER={filter_string}")
@@ -662,11 +665,12 @@ def somatic_featuremap_classifier(
     ref_tr_file: Path,
     xgb_model_file: Path,
     *,
+    output_parquet: Path | None = None,
     filter_string: str = "PASS",
     regions_bed_file: Path | None = None,
     n_threads: int = 1,
     verbose: bool = False,
-) -> Path | None:
+) -> tuple[Path, Path]:
     """
     Classify somatic featuremap variants using XGBoost model.
 
@@ -688,6 +692,8 @@ def somatic_featuremap_classifier(
         Reference tandem repeat file in BED format.
     xgb_model_file
         XGBoost model file for inference.
+    output_parquet
+        Output Parquet file path. If not provided, a default path will be used.
     filter_string
         Filter tags to apply on the VCF file.
     regions_bed_file
@@ -727,9 +733,11 @@ def somatic_featuremap_classifier(
     )
 
     logger.info("Step 2: Converting VCF to dataframe and adding transformations")
-    output_parquet_path = output_vcf.with_suffix(".parquet")
+    if output_parquet is None:
+        output_parquet = output_vcf.with_name(output_vcf.name.replace(".vcf.gz", "_featuremap.parquet"))
+    logger.info(f"Output Parquet file: {output_parquet}")
     aggregated_df = read_vcf_with_aggregation(
-        sfm_filtered_with_tr, output_parquet_path, tumor_sample, normal_sample, n_threads=n_threads
+        sfm_filtered_with_tr, output_parquet, tumor_sample, normal_sample, n_threads=n_threads
     )
 
     logger.info("Step 3: Running the classifier")
@@ -743,9 +751,8 @@ def somatic_featuremap_classifier(
 
     # In debug mode, save the full processed DataFrame to parquet
     if verbose:
-        debug_parquet_path = output_vcf.with_suffix(".debug.parquet")
-        aggregated_df.write_parquet(debug_parquet_path)
-        logger.debug(f"Saved debug parquet with all transformations and xgb_score: {debug_parquet_path}")
+        aggregated_df.write_parquet(output_parquet)
+        logger.debug(f"Saved debug parquet with all transformations and xgb_score: {output_parquet}")
 
     logger.info("Step 4: Annotating VCF with XGBoost probability")
     annotate_vcf_with_xgb_proba(
@@ -753,7 +760,7 @@ def somatic_featuremap_classifier(
     )
     logger.info(f"Output VCF written to: {output_vcf}")
 
-    return output_vcf
+    return output_vcf, output_parquet
 
 
 def main():
