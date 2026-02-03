@@ -96,11 +96,4 @@ FILTER_TAG_REGISTRY = {
         "Overlaps with low-complexity regions as defined by UGBio CNV module",
         "FILTER",
     ),
-    "CNMOPS_SHORT_DUPLICATION": (
-        "CNMOPS_SHORT_DUPLICATION",
-        None,
-        None,
-        "Duplication length is shorter than the defined threshold in cn.mops calls.",
-        "FILTER",
-    ),
 }

@@ -74,16 +74,6 @@ combine_cnv_vcfs \
   --out_directory ./output
 ```
 
-#### `filter_cnmmops_dups`
-Add CNMOPS_SHORT_DUPLICATION filter to short duplications in `cn.mops` calls.
-
-```bash
-filter_cnmops_dups \
-  --input_vcf cnmops_calls.vcf.gz \
-  --output_vcf filtered.vcf.gz \
-  --min_dup_length 1000
-```
-
 #### `annotate_regions`
 Annotate CNV calls with custom genomic regions that they overlap. The BED is expected to contain |-separated names of regions in the fourth column. The annotation is added to the info field under tag REGION_ANNOTATION
 
