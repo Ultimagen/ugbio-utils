@@ -1,9 +1,13 @@
+import json
 import logging
+import os
 import tempfile
+import time
 from pathlib import Path
 
 import cyclopts
 import polars as pl
+import psutil
 import pysam
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
@@ -23,6 +27,53 @@ from ugbio_featuremap.somatic_featuremap_utils import (
     get_sample_names_from_vcf,
     write_vcf_info_header_file,
 )
+
+# #region agent log - Performance instrumentation
+PERF_LOG_PREFIX = "[PERF]"
+
+
+def _get_resource_snapshot() -> dict:
+    """Return CPU, memory, and I/O counters for current process."""
+    proc = psutil.Process(os.getpid())
+    cpu_times = proc.cpu_times()
+    try:
+        io_counters = proc.io_counters()
+        io_read_mb = io_counters.read_bytes / (1024 * 1024)
+        io_write_mb = io_counters.write_bytes / (1024 * 1024)
+    except Exception:
+        io_read_mb = None
+        io_write_mb = None
+    return {
+        "rss_mb": _get_memory_mb(),
+        "cpu_user_sec": cpu_times.user,
+        "cpu_system_sec": cpu_times.system,
+        "io_read_mb": io_read_mb,
+        "io_write_mb": io_write_mb,
+    }
+
+
+def _log_perf(location: str, message: str, data: dict | None = None) -> None:
+    """Log a performance entry to the regular logger with PERF prefix."""
+    payload = data.copy() if data else {}
+    payload["resources"] = _get_resource_snapshot()
+    data_str = json.dumps(payload) if payload else "{}"
+    logger.info(f"{PERF_LOG_PREFIX} [{location}] {message} | {data_str}")
+
+
+def _get_memory_mb() -> float:
+    """Get current process memory usage in MB."""
+    return psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024)
+
+
+def _get_file_size_mb(path: Path) -> float:
+    """Get file size in MB."""
+    try:
+        return path.stat().st_size / (1024 * 1024)
+    except Exception:
+        return 0.0
+
+
+# #endregion agent log
 
 app = cyclopts.App(
     help="Classify somatic featuremap variants using XGBoost model.",
@@ -74,6 +125,17 @@ def filter_and_annotate_tr(
         Path to the output VCF file with FILTER applied and TR annotations added.
         The output file will have '.filtered.tr_info.vcf.gz' suffix.
     """
+    # #region agent log
+    step1_start = time.time()
+    mem_start = _get_memory_mb()
+    input_size_mb = _get_file_size_mb(input_vcf)
+    _log_perf(
+        "filter_and_annotate_tr:entry",
+        "Starting filter and TR annotation",
+        {"input_vcf": str(input_vcf), "input_size_mb": input_size_mb, "n_threads": n_threads, "mem_mb": mem_start},
+    )
+    # #endregion agent log
+
     vcf_utils = VcfUtils()
 
     with tempfile.TemporaryDirectory(dir=out_dir) as tmpdir:
@@ -117,6 +179,23 @@ def filter_and_annotate_tr(
             columns=TR_CONFIG.get_bcftools_annotate_columns(),
             n_threads=n_threads,
         )
+
+    # #region agent log
+    step1_elapsed = time.time() - step1_start
+    output_size_mb = _get_file_size_mb(output_vcf)
+    mem_end = _get_memory_mb()
+    _log_perf(
+        "filter_and_annotate_tr:exit",
+        "Completed filter and TR annotation",
+        {
+            "elapsed_sec": step1_elapsed,
+            "output_vcf": str(output_vcf),
+            "output_size_mb": output_size_mb,
+            "mem_delta_mb": mem_end - mem_start,
+            "mem_mb": mem_end,
+        },
+    )
+    # #endregion agent log
 
     logger.info(f"Filtered and TR-annotated VCF written to: {output_vcf}")
     return output_vcf
@@ -216,8 +295,28 @@ def read_vcf_with_aggregation(
     pl.DataFrame
         Polars DataFrame with aggregated features and sample-suffixed columns.
     """
+    # #region agent log
+    step2_start = time.time()
+    mem_start = _get_memory_mb()
+    vcf_size_mb = _get_file_size_mb(vcf_path)
+    _log_perf(
+        "read_vcf_with_aggregation:entry",
+        "Starting VCF to DataFrame conversion",
+        {"vcf_path": str(vcf_path), "vcf_size_mb": vcf_size_mb, "n_threads": n_threads, "mem_mb": mem_start},
+    )
+    # #endregion agent log
+
     # Compute which columns to drop based on required fields
     drop_info, drop_format = get_columns_to_drop_from_vcf(vcf_path)
+
+    # #region agent log
+    vcf_to_parquet_start = time.time()
+    _log_perf(
+        "vcf_to_parquet:start",
+        "Starting vcf_to_parquet conversion",
+        {"n_threads": n_threads, "drop_info_count": len(drop_info), "drop_format_count": len(drop_format)},
+    )
+    # #endregion agent log
 
     vcf_to_parquet(
         vcf=str(vcf_path),
@@ -229,6 +328,16 @@ def read_vcf_with_aggregation(
         expand_columns={"AD": 2},  # Split AD into AD_0 (ref), AD_1 (alt)
     )
 
+    # #region agent log
+    vcf_to_parquet_elapsed = time.time() - vcf_to_parquet_start
+    parquet_size_mb = _get_file_size_mb(output_parquet_path)
+    _log_perf(
+        "vcf_to_parquet:end",
+        "Completed vcf_to_parquet conversion",
+        {"elapsed_sec": vcf_to_parquet_elapsed, "parquet_size_mb": parquet_size_mb, "mem_mb": _get_memory_mb()},
+    )
+    # #endregion agent log
+
     logger.info(f"Read aggregated dataframe from parquet file: {output_parquet_path}")
     aggregated_df = pl.read_parquet(output_parquet_path)
 
@@ -238,11 +347,40 @@ def read_vcf_with_aggregation(
 
     logger.info(f"Loaded {len(aggregated_df):,} variants from parquet: {output_parquet_path}")
 
+    # #region agent log
+    pileup_start = time.time()
+    _log_perf("calculate_pileup_features:start", "Starting PILEUP calculation", {"row_count": len(aggregated_df)})
+    # #endregion agent log
+
     logger.info("Calculating PILEUP-based ref/nonref features")
     aggregated_df = calculate_pileup_features(aggregated_df, tumor_sample, normal_sample)
 
+    # #region agent log
+    pileup_elapsed = time.time() - pileup_start
+    _log_perf("calculate_pileup_features:end", "Completed PILEUP calculation", {"elapsed_sec": pileup_elapsed})
+    postproc_start = time.time()
+    # #endregion agent log
+
     logger.info("Post-processing the aggregated dataframe")
     aggregated_df = aggregated_df_post_processing(aggregated_df, [tumor_sample, normal_sample])
+
+    # #region agent log
+    postproc_elapsed = time.time() - postproc_start
+    step2_elapsed = time.time() - step2_start
+    mem_end = _get_memory_mb()
+    _log_perf(
+        "read_vcf_with_aggregation:exit",
+        "Completed VCF to DataFrame",
+        {
+            "elapsed_sec": step2_elapsed,
+            "postproc_elapsed_sec": postproc_elapsed,
+            "row_count": len(aggregated_df),
+            "col_count": len(aggregated_df.columns),
+            "mem_mb": mem_end,
+            "mem_delta_mb": mem_end - mem_start,
+        },
+    )
+    # #endregion agent log
 
     return aggregated_df
 
@@ -525,14 +663,63 @@ def run_classifier(
     pl.Series
         Series with xgb_proba predictions.
     """
-    # TODO: don't convert to pandas, keep as polars dataframe once model compatibility verified
-    df_variants_pandas = df_variants.to_pandas()
+    # #region agent log
+    step3_start = time.time()
+    mem_start = _get_memory_mb()
+    _log_perf(
+        "run_classifier:entry",
+        "Starting XGBoost classifier",
+        {"variant_count": len(df_variants), "col_count": len(df_variants.columns), "mem_mb": mem_start},
+    )
+    # #endregion agent log
 
+    # TODO: don't convert to pandas, keep as polars dataframe once model compatibility verified
+    # #region agent log
+    pandas_convert_start = time.time()
+    # #endregion agent log
+    df_variants_pandas = df_variants.to_pandas()
+    # #region agent log
+    pandas_convert_elapsed = time.time() - pandas_convert_start
+    _log_perf(
+        "run_classifier:pandas_convert",
+        "Converted Polars to Pandas",
+        {"elapsed_sec": pandas_convert_elapsed, "mem_mb": _get_memory_mb()},
+    )
+    # #endregion agent log
+
+    # #region agent log
+    model_load_start = time.time()
+    # #endregion agent log
     xgb_clf = somatic_featuremap_inference_utils.load_xgb_model(xgb_model_path)
+    # #region agent log
+    model_load_elapsed = time.time() - model_load_start
+    _log_perf("run_classifier:model_load", "Loaded XGBoost model", {"elapsed_sec": model_load_elapsed})
+    # #endregion agent log
+
     model_features = xgb_clf.get_booster().feature_names
     logger.debug(f"Model features: {model_features}")
 
+    # #region agent log
+    predict_start = time.time()
+    # #endregion agent log
     predictions = somatic_featuremap_inference_utils.predict(xgb_clf, df_variants_pandas)
+    # #region agent log
+    predict_elapsed = time.time() - predict_start
+    step3_elapsed = time.time() - step3_start
+    mem_end = _get_memory_mb()
+    _log_perf(
+        "run_classifier:exit",
+        "Completed XGBoost classification",
+        {
+            "elapsed_sec": step3_elapsed,
+            "predict_elapsed_sec": predict_elapsed,
+            "variant_count": len(predictions),
+            "mem_mb": mem_end,
+            "mem_delta_mb": mem_end - mem_start,
+        },
+    )
+    # #endregion agent log
+
     logger.info(f"Classified {len(predictions):,} variants with XGBoost model")
 
     return pl.Series(FeatureMapFields.XGB_PROBA.value.lower(), predictions)
@@ -584,6 +771,17 @@ def annotate_vcf_with_xgb_proba(
     n_threads : int, optional
         Number of threads for bcftools. Defaults to 1.
     """
+    # #region agent log
+    step4_start = time.time()
+    mem_start = _get_memory_mb()
+    input_vcf_size = _get_file_size_mb(input_vcf_path)
+    _log_perf(
+        "annotate_vcf_with_xgb_proba:entry",
+        "Starting VCF annotation",
+        {"input_vcf": str(input_vcf_path), "input_vcf_size_mb": input_vcf_size, "variant_count": len(df_variants)},
+    )
+    # #endregion agent log
+
     work_dir = output_vcf_path.parent
     annotation_tsv = work_dir / "xgb_proba_annotations.tsv"
     annotation_tsv_gz = work_dir / "xgb_proba_annotations.tsv.gz"
@@ -635,6 +833,22 @@ def annotate_vcf_with_xgb_proba(
     Path(str(annotation_tsv_gz) + ".tbi").unlink(missing_ok=True)
     header_file.unlink(missing_ok=True)
     logger.debug("Cleaned up temporary annotation files")
+
+    # #region agent log
+    step4_elapsed = time.time() - step4_start
+    output_vcf_size = _get_file_size_mb(output_vcf_path)
+    mem_end = _get_memory_mb()
+    _log_perf(
+        "annotate_vcf_with_xgb_proba:exit",
+        "Completed VCF annotation",
+        {
+            "elapsed_sec": step4_elapsed,
+            "output_vcf_size_mb": output_vcf_size,
+            "mem_mb": mem_end,
+            "mem_delta_mb": mem_end - mem_start,
+        },
+    )
+    # #endregion agent log
 
 
 # =============================================================================
@@ -715,6 +929,22 @@ def somatic_featuremap_classifier(
         --genome-file genome.fa.fai --ref-tr-file tandem_repeats.bed \\
         --xgb-model-file model.json --regions-bed-file chr1_test.bed
     """
+    # #region agent log
+    pipeline_start = time.time()
+    mem_start = _get_memory_mb()
+    input_size_mb = _get_file_size_mb(somatic_featuremap)
+    _log_perf(
+        "somatic_featuremap_classifier:entry",
+        "Starting pipeline",
+        {
+            "input_vcf": str(somatic_featuremap),
+            "input_size_mb": input_size_mb,
+            "n_threads": n_threads,
+            "mem_mb": mem_start,
+        },
+    )
+    # #endregion agent log
+
     output_vcf, out_dir = initialization(output_vcf, verbose=verbose)
 
     tumor_sample, normal_sample = get_sample_names_from_vcf(somatic_featuremap)
@@ -759,6 +989,24 @@ def somatic_featuremap_classifier(
         sfm_filtered_with_tr, output_vcf, aggregated_df, tumor_sample=tumor_sample, n_threads=n_threads
     )
     logger.info(f"Output VCF written to: {output_vcf}")
+
+    # #region agent log
+    pipeline_elapsed = time.time() - pipeline_start
+    output_size_mb = _get_file_size_mb(output_vcf)
+    mem_end = _get_memory_mb()
+    _log_perf(
+        "somatic_featuremap_classifier:exit",
+        "Pipeline completed",
+        {
+            "elapsed_sec": pipeline_elapsed,
+            "output_vcf": str(output_vcf),
+            "output_size_mb": output_size_mb,
+            "variant_count": len(aggregated_df),
+            "mem_mb": mem_end,
+            "mem_peak_delta_mb": mem_end - mem_start,
+        },
+    )
+    # #endregion agent log
 
     return output_vcf, output_parquet
 

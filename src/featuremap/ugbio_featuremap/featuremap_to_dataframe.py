@@ -44,6 +44,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import multiprocessing as _mp  # NEW
 import os
@@ -51,6 +52,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import traceback
 from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -58,9 +60,50 @@ from io import StringIO
 from pathlib import Path
 
 import polars as pl
+import psutil
 import pysam
+from ugbio_core.logger import logger
 
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
+
+# #region agent log - Performance instrumentation
+PERF_LOG_PREFIX = "[PERF]"
+
+
+def _get_resource_snapshot() -> dict:
+    """Return CPU, memory, and I/O counters for current process."""
+    proc = psutil.Process(os.getpid())
+    cpu_times = proc.cpu_times()
+    try:
+        io_counters = proc.io_counters()
+        io_read_mb = io_counters.read_bytes / (1024 * 1024)
+        io_write_mb = io_counters.write_bytes / (1024 * 1024)
+    except Exception:
+        io_read_mb = None
+        io_write_mb = None
+    return {
+        "rss_mb": _get_memory_mb(),
+        "cpu_user_sec": cpu_times.user,
+        "cpu_system_sec": cpu_times.system,
+        "io_read_mb": io_read_mb,
+        "io_write_mb": io_write_mb,
+    }
+
+
+def _log_perf(location: str, message: str, data: dict | None = None) -> None:
+    """Log a performance entry to the regular logger with PERF prefix."""
+    payload = data.copy() if data else {}
+    payload["resources"] = _get_resource_snapshot()
+    data_str = json.dumps(payload) if payload else "{}"
+    logger.info(f"{PERF_LOG_PREFIX} [{location}] {message} | {data_str}")
+
+
+def _get_memory_mb() -> float:
+    """Get current process memory usage in MB."""
+    return psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024)
+
+
+# #endregion agent log
 
 log = logging.getLogger(__name__)
 
@@ -672,6 +715,15 @@ def _run_region_jobs(
         If any region fails to convert. The original worker exception is chained
         as the cause.
     """
+    # #region agent log
+    region_jobs_start = time.time()
+    _log_perf(
+        "_run_region_jobs:entry",
+        "Starting parallel region processing",
+        {"region_count": len(regions), "jobs": jobs},
+    )
+    # #endregion agent log
+
     part_files: list[str] = []
     completed = 0
     total = len(regions)
@@ -719,6 +771,23 @@ def _run_region_jobs(
 
     valid_files = [p for p in part_files if Path(p).is_file()]
     log.info(f"Successfully processed {len(valid_files)} region(s) with data")
+
+    # #region agent log
+    region_jobs_elapsed = time.time() - region_jobs_start
+    total_part_size = sum(Path(p).stat().st_size / (1024 * 1024) for p in valid_files if Path(p).exists())
+    _log_perf(
+        "_run_region_jobs:exit",
+        "Completed parallel region processing",
+        {
+            "elapsed_sec": region_jobs_elapsed,
+            "region_count": len(regions),
+            "valid_file_count": len(valid_files),
+            "total_part_size_mb": total_part_size,
+            "throughput_regions_per_sec": len(regions) / region_jobs_elapsed if region_jobs_elapsed > 0 else 0,
+        },
+    )
+    # #endregion agent log
+
     return valid_files
 
 
@@ -798,6 +867,17 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
         these columns are expanded into indexed columns (e.g., {"AD": 2} produces
         AD_0, AD_1) instead of being aggregated. Only used when list_mode="aggregate".
     """
+    # #region agent log
+    vcf_to_parquet_start = time.time()
+    mem_start = _get_memory_mb()
+    vcf_size = Path(vcf).stat().st_size / (1024 * 1024) if Path(vcf).exists() else 0
+    _log_perf(
+        "vcf_to_parquet:entry",
+        "Starting VCF to Parquet conversion",
+        {"vcf": vcf, "vcf_size_mb": vcf_size, "jobs": jobs, "list_mode": list_mode, "mem_mb": mem_start},
+    )
+    # #endregion agent log
+
     log.info(f"Input: {vcf}")
     log.info(f"Output: {out}")
     log.info(f"List mode: {list_mode}")
@@ -897,6 +977,28 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
         )
         log.info(f"Created {len(regions)} regions for parallel processing")
         log.debug(f"First 5 regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")  # noqa PLR2004
+        # #region agent log
+        _log_perf(
+            "vcf_to_parquet:config",
+            "VCF to Parquet configuration",
+            {
+                "jobs": jobs,
+                "chunk_bp": chunk_bp,
+                "list_mode": list_mode,
+                "expand_columns": expand_columns,
+                "info_fields": len(info_ids),
+                "format_fields": len(format_ids),
+                "scalar_format_fields": len(scalar_fmt_ids),
+                "list_format_fields": len(effective_list_fmt_ids),
+                "sample_count": len(sample_list),
+                "region_count": len(regions),
+                "bcftools_path": bcftools,
+                "bedtools_path": bedtools,
+                "awk_script": _get_awk_script_path(mode=list_mode),
+                "schema_columns": len(cols),
+            },
+        )
+        # #endregion agent log
 
         # Build immutable job configuration (shared by every worker)
         # Build column configuration
@@ -938,7 +1040,34 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
             if not part_files:
                 raise RuntimeError("No Parquet part-files were produced – all regions empty or failed")
 
+            # #region agent log
+            merge_start = time.time()
+            _log_perf("vcf_to_parquet:merge_start", "Starting parquet merge", {"part_file_count": len(part_files)})
+            # #endregion agent log
+
             _merge_parquet_files_lazy(part_files, out)
+
+            # #region agent log
+            merge_elapsed = time.time() - merge_start
+            _log_perf("vcf_to_parquet:merge_end", "Completed parquet merge", {"elapsed_sec": merge_elapsed})
+            # #endregion agent log
+
+        # #region agent log
+        vcf_to_parquet_elapsed = time.time() - vcf_to_parquet_start
+        output_size = Path(out).stat().st_size / (1024 * 1024) if Path(out).exists() else 0
+        mem_end = _get_memory_mb()
+        _log_perf(
+            "vcf_to_parquet:exit",
+            "Completed VCF to Parquet conversion",
+            {
+                "elapsed_sec": vcf_to_parquet_elapsed,
+                "output": out,
+                "output_size_mb": output_size,
+                "mem_mb": mem_end,
+                "mem_delta_mb": mem_end - mem_start,
+            },
+        )
+        # #endregion agent log
 
         log.info(f"Conversion completed: {out}")
 

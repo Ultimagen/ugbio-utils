@@ -1,12 +1,56 @@
+import json
 import logging
 import os
 import os.path
+import time
 from os.path import dirname
 from os.path import join as pjoin
+from pathlib import Path
 
+import psutil
 import pysam
 from simppl.simple_pipeline import SimplePipeline
 from ugbio_core.exec_utils import print_and_execute
+from ugbio_core.logger import logger
+
+# #region agent log - Performance instrumentation
+PERF_LOG_PREFIX = "[PERF]"
+
+
+def _get_resource_snapshot() -> dict:
+    """Return CPU, memory, and I/O counters for current process."""
+    proc = psutil.Process(os.getpid())
+    cpu_times = proc.cpu_times()
+    try:
+        io_counters = proc.io_counters()
+        io_read_mb = io_counters.read_bytes / (1024 * 1024)
+        io_write_mb = io_counters.write_bytes / (1024 * 1024)
+    except Exception:
+        io_read_mb = None
+        io_write_mb = None
+    return {
+        "rss_mb": _get_memory_mb(),
+        "cpu_user_sec": cpu_times.user,
+        "cpu_system_sec": cpu_times.system,
+        "io_read_mb": io_read_mb,
+        "io_write_mb": io_write_mb,
+    }
+
+
+def _log_perf(location: str, message: str, data: dict | None = None) -> None:
+    """Log a performance entry to the regular logger with PERF prefix."""
+    payload = data.copy() if data else {}
+    payload["resources"] = _get_resource_snapshot()
+    data_str = json.dumps(payload) if payload else "{}"
+    logger.info(f"{PERF_LOG_PREFIX} [{location}] {message} | {data_str}")
+
+
+def _get_memory_mb() -> float:
+    """Get current process memory usage in MB."""
+    return psutil.Process(os.getpid()).memory_info().rss / (1024 * 1024)
+
+
+# #endregion agent log
 
 
 class VcfUtils:
@@ -46,7 +90,21 @@ class VcfUtils:
         output_file : str, optional
             Description
         """
+        # #region agent log
+        start_time = time.time()
+        mem_start = _get_memory_mb()
+        _log_perf("vcf_utils:execute_start", "Executing VCF command", {"command": command, "mem_mb": mem_start})
+        # #endregion agent log
         print_and_execute(command, output_file=output_file, simple_pipeline=self.sp, module_name=__name__)
+        # #region agent log
+        elapsed = time.time() - start_time
+        mem_end = _get_memory_mb()
+        _log_perf(
+            "vcf_utils:execute_end",
+            "Completed VCF command",
+            {"elapsed_sec": elapsed, "mem_mb": mem_end, "mem_delta_mb": mem_end - mem_start},
+        )
+        # #endregion agent log
 
     def index_vcf(self, vcf: str):
         """Tabix index on VCF
@@ -190,6 +248,12 @@ class VcfUtils:
         extra_args : str, optional
             Additional arguments to pass to bcftools view (default is empty string)
         """
+        # #region agent log
+        start_time = time.time()
+        input_size = Path(input_vcf).stat().st_size / (1024 * 1024) if Path(input_vcf).exists() else 0
+        _log_perf("view_vcf:entry", "Starting bcftools view", {"input_vcf": input_vcf, "input_size_mb": input_size})
+        # #endregion agent log
+
         # Build the bcftools view command
         cmd_parts = ["bcftools", "view"]
 
@@ -205,6 +269,16 @@ class VcfUtils:
 
         # Execute the view command
         self.__execute(" ".join(cmd_parts))
+
+        # #region agent log
+        elapsed = time.time() - start_time
+        output_size = Path(output_vcf).stat().st_size / (1024 * 1024) if Path(output_vcf).exists() else 0
+        _log_perf(
+            "view_vcf:exit",
+            "Completed bcftools view",
+            {"elapsed_sec": elapsed, "output_vcf": output_vcf, "output_size_mb": output_size},
+        )
+        # #endregion agent log
 
     def remove_filter_annotations(self, input_vcf: str, output_vcf: str, n_threads: int = 1) -> None:
         """
@@ -367,6 +441,16 @@ class VcfUtils:
         ...     extra_args="--some-extra-arg"
         ... )
         """
+        # #region agent log
+        start_time = time.time()
+        input_size = Path(input_vcf).stat().st_size / (1024 * 1024) if Path(input_vcf).exists() else 0
+        _log_perf(
+            "annotate_vcf:entry",
+            "Starting bcftools annotate",
+            {"input_vcf": input_vcf, "input_size_mb": input_size, "n_threads": n_threads},
+        )
+        # #endregion agent log
+
         # Build the bcftools annotate command
         cmd_parts = ["bcftools", "annotate"]
 
@@ -399,6 +483,16 @@ class VcfUtils:
 
         # Index the output VCF
         self.index_vcf(output_vcf)
+
+        # #region agent log
+        elapsed = time.time() - start_time
+        output_size = Path(output_vcf).stat().st_size / (1024 * 1024) if Path(output_vcf).exists() else 0
+        _log_perf(
+            "annotate_vcf:exit",
+            "Completed bcftools annotate",
+            {"elapsed_sec": elapsed, "output_vcf": output_vcf, "output_size_mb": output_size},
+        )
+        # #endregion agent log
 
     def annotate_tandem_repeats(self, input_file: str, reference_fasta: str) -> str:
         """Runs VariantAnnotator on the input file to add tandem repeat annotations (maybe others)

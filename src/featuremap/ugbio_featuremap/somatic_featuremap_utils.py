@@ -1,7 +1,9 @@
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import psutil
 import pysam
 from ugbio_core.logger import logger
 
@@ -111,12 +113,49 @@ def _run_shell_command(cmd: str, output_file: Path | None = None) -> None:
     Uses shell=True because commands may contain pipes (e.g., "bedtools ... | cut ...").
     All command strings are constructed internally - no user input is passed directly.
     """
+    # #region agent log
+    start_time = time.time()
+    proc = psutil.Process()
+    mem_start = proc.memory_info().rss / (1024 * 1024)
+    cpu_start = proc.cpu_times()
+    try:
+        io_start = proc.io_counters()
+        io_read_start = io_start.read_bytes / (1024 * 1024)
+        io_write_start = io_start.write_bytes / (1024 * 1024)
+    except Exception:
+        io_read_start = None
+        io_write_start = None
+    logger.info(f'[PERF] [_run_shell_command:start] Executing shell command | {{"cmd": "{cmd}"}}')
+    # #endregion agent log
     logger.debug(f"Running: {cmd}")
     if output_file:
         with open(output_file, "w") as f:
             subprocess.run(cmd, shell=True, check=True, stdout=f)  # noqa: S602
     else:
         subprocess.run(cmd, shell=True, check=True)  # noqa: S602
+    # #region agent log
+    elapsed = time.time() - start_time
+    proc = psutil.Process()
+    mem_end = proc.memory_info().rss / (1024 * 1024)
+    cpu_end = proc.cpu_times()
+    try:
+        io_end = proc.io_counters()
+        io_read_end = io_end.read_bytes / (1024 * 1024)
+        io_write_end = io_end.write_bytes / (1024 * 1024)
+    except Exception:
+        io_read_end = None
+        io_write_end = None
+    output_size_mb = output_file.stat().st_size / (1024 * 1024) if output_file and output_file.exists() else 0.0
+    logger.info(
+        f"[PERF] [_run_shell_command:end] Completed shell command | "
+        f'{{"elapsed_sec": {elapsed}, "output_file": "{output_file}", '
+        f'"output_size_mb": {output_size_mb}, "mem_delta_mb": {mem_end - mem_start}, '
+        f'"cpu_user_sec": {cpu_end.user - cpu_start.user}, '
+        f'"cpu_system_sec": {cpu_end.system - cpu_start.system}, '
+        f'"io_read_mb": {None if io_read_end is None or io_read_start is None else io_read_end - io_read_start}, '
+        f'"io_write_mb": {None if io_write_end is None or io_write_start is None else io_write_end - io_write_start}}}'
+    )
+    # #endregion agent log
 
 
 def write_vcf_info_header_file(
