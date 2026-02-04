@@ -630,7 +630,7 @@ def test_main_analyze_breakpoints_calls_analyze_cnv_breakpoints():
     ]
 
     with patch.object(sys, "argv", test_argv):
-        with patch("ugbio_cnv.analyze_cnv_breakpoint_reads.analyze_cnv_breakpoints") as mock_analyze:
+        with patch("ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls.analyze_cnv_breakpoints") as mock_analyze:
             # Call the main_analyze_breakpoints function
             combine_cnmops_cnvpytor_cnv_calls.main_analyze_breakpoints()
 

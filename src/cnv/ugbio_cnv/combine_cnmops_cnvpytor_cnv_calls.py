@@ -9,7 +9,9 @@ from os.path import join as pjoin
 import pysam
 import ugbio_core.misc_utils as mu
 from pyfaidx import Fasta
-from ugbio_cnv.cnv_vcf_consts import FILTER_TAG_REGISTRY, INFO_TAG_REGISTRY
+from ugbio_cnv.analyze_cnv_breakpoint_reads import analyze_cnv_breakpoints
+from ugbio_cnv.analyze_cnv_breakpoint_reads import get_parser as get_breakpoint_parser
+from ugbio_cnv.cnv_vcf_consts import INFO_TAG_REGISTRY
 from ugbio_cnv.combine_cnv_vcf_utils import (
     cnv_vcf_to_bed,
     combine_vcf_headers_for_cnv,
@@ -48,31 +50,6 @@ def __parse_args_concat(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output_vcf", help="output combined VCF file", required=True, type=str)
     parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
     parser.add_argument("--out_directory", help="output directory", required=False, type=str)
-
-
-def __parse_args_dup_length_filter(parser: argparse.ArgumentParser) -> None:
-    """Add arguments specific to the duplication length_filter tool."""
-    parser.add_argument("--combined_calls", help="Input combined CNV calls VCF file", required=True, type=str)
-    parser.add_argument(
-        "--combined_calls_annotated",
-        help="Output combined CNV calls VCF file with filtering annotation",
-        required=True,
-        type=str,
-    )
-    parser.add_argument(
-        "--filtered_length",
-        help="Minimum duplication length to be considered valid",
-        required=True,
-        type=int,
-        default=10000,
-    )
-    parser.add_argument(
-        "--distance_threshold",
-        help="Distance threshold for merging CNV segments",
-        required=False,
-        type=int,
-        default=1500,
-    )
 
 
 def __parse_args_gaps_perc(parser: argparse.ArgumentParser) -> None:
@@ -152,13 +129,6 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     )
     __parse_args_concat(concat_parser)
 
-    dup_filter_parser = subparsers.add_parser(
-        "filter_cnmops_dups",
-        help="Filter short duplications from cn.mops calls in the combined CNV VCF",
-        description="Adds CNMOPS_SHORT_DUPLICATION filter to short duplications in cn.mops calls.",
-    )
-    __parse_args_dup_length_filter(dup_filter_parser)
-
     gaps_perc_parser = subparsers.add_parser(
         "annotate_gaps",
         help="Annotate CNV calls with percentage of gaps (Ns) from reference genome",
@@ -187,8 +157,6 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         description="Annotates CNV VCF with breakpoint read support information.",
     )
     # Reuse argument definitions from analyze_cnv_breakpoint_reads module
-    from ugbio_cnv.analyze_cnv_breakpoint_reads import get_parser as get_breakpoint_parser
-
     get_breakpoint_parser(analyze_breakpoints_parser)
 
     return parser.parse_args(argv[1:])
@@ -486,64 +454,6 @@ def combine_cnv_vcfs(
     return output_vcf
 
 
-def filter_dup_cnmmops_cnv_calls(
-    combined_calls: str, combined_calls_annotated: str, filtered_length: str, distance_threshold: int
-) -> None:
-    """
-    Collapses adjacent cnmops duplications with distance less than distance_threshold
-    Adds CNMOPS_SHORT_DUPLICATION filter to the short duplications (less than filtered_length) that cn.mops returns.
-
-    Parameters
-    ----------
-    combined_calls : str
-        Path to the combined cn.mops and cnvpytor CNV calls bed file.
-    combined_calls_annotated : str
-        Path to the combined cn.mops and cnvpytor CNV calls bed file with annotations.
-    filtered_length : str
-        Minimum duplication length to be considered valid.
-    distance_threshold : int
-        Distance threshold for merging CNV segments.
-    """
-    output_dir = os.path.dirname(combined_calls_annotated)
-    temporary_files = []
-    vu = VcfUtils()
-
-    deletion_vcf = pjoin(output_dir, "temp_deletions.vcf.gz")
-    vu.view_vcf(combined_calls, deletion_vcf, extra_args="-e \"(INFO/SVTYPE='DUP') && (INFO/CNV_SOURCE='cn.mops')\"")
-    vu.index_vcf(deletion_vcf)
-    temporary_files.append(deletion_vcf)
-
-    duplication_vcf = pjoin(output_dir, "temp_duplications.vcf.gz")
-    vu.view_vcf(combined_calls, duplication_vcf, extra_args="-i \"(INFO/SVTYPE='DUP') && (INFO/CNV_SOURCE='cn.mops')\"")
-    vu.index_vcf(duplication_vcf)
-    temporary_files.append(duplication_vcf)
-
-    collapsed_duplication_vcf = pjoin(output_dir, "temp_collapsed_duplications.vcf.gz")
-    merge_cnvs_in_vcf(duplication_vcf, collapsed_duplication_vcf, distance=distance_threshold)
-    vu.index_vcf(collapsed_duplication_vcf)
-    temporary_files.append(collapsed_duplication_vcf)
-
-    combined_calls = pjoin(output_dir, "temp_combined_calls.vcf.gz")
-    vu.concat_vcf([deletion_vcf, collapsed_duplication_vcf], combined_calls)
-    vu.index_vcf(combined_calls)
-    temporary_files.append(combined_calls)
-
-    with pysam.VariantFile(combined_calls) as vcf_in:
-        hdr = vcf_in.header
-        hdr.filters.add(*FILTER_TAG_REGISTRY["CNMOPS_SHORT_DUPLICATION"][:-1])
-        with pysam.VariantFile(combined_calls_annotated, "w", header=hdr) as vcf_out:
-            for record in vcf_in:
-                if record.info["SVTYPE"] == "DUP":
-                    svlen = abs(record.info.get("SVLEN", [0])[0])
-                    if svlen < int(filtered_length):
-                        if "PASS" in record.filter.keys():
-                            record.filter.clear()
-                        record.filter.add("CNMOPS_SHORT_DUPLICATION")
-                vcf_out.write(record)
-    vu.index_vcf(combined_calls_annotated)
-    mu.cleanup_temp_files(temporary_files)
-
-
 def run(argv: list[str]):
     """
     Driver function for CNV processing tools.
@@ -580,13 +490,6 @@ def run(argv: list[str]):
             output_vcf=args.output_vcf,
             output_directory=args.out_directory,
         )
-    elif args.tool == "filter_cnmops_dups":
-        filter_dup_cnmmops_cnv_calls(
-            combined_calls=args.combined_calls,
-            combined_calls_annotated=args.combined_calls_annotated,
-            filtered_length=args.filtered_length,
-            distance_threshold=args.distance_threshold,
-        )
     elif args.tool == "annotate_gaps":
         annotate_vcf_with_gap_perc(
             input_vcf=args.calls_vcf,
@@ -611,8 +514,6 @@ def run(argv: list[str]):
             pick_best=True,
         )
     elif args.tool == "analyze_breakpoint_reads":
-        from ugbio_cnv.analyze_cnv_breakpoint_reads import analyze_cnv_breakpoints
-
         analyze_cnv_breakpoints(
             bam_file=args.bam_file,
             vcf_file=args.vcf_file,
@@ -640,21 +541,6 @@ def main_concat():
     """
     # Insert 'concat' as the tool argument
     argv = [sys.argv[0], "concat"] + sys.argv[1:]
-    run(argv)
-
-
-def main_filter_dup_cnmmops():
-    """
-    Entry point for standalone filter_dup_cnmmops_cnv_calls script.
-
-    This allows running the filter_dup_cnmmops tool directly without specifying the tool name:
-    filter_dup_cnmmops_cnv_calls --combined_calls ... --combined_calls_annotated ...
-
-    Instead of:
-    combine_cnmops_cnvpytor_cnv_calls filter_dup_cnmmops --combined_calls ... --combined_calls_annotated ...
-    """
-    # Insert 'filter_dup_cnmmops' as the tool argument
-    argv = [sys.argv[0], "filter_cnmops_dups"] + sys.argv[1:]
     run(argv)
 
 

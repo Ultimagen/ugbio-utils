@@ -42,31 +42,6 @@ class TestCombineCnmopsCnvpytorCnvCalls:
         assert os.path.exists(out_combined_vcf_idx)
         compare_vcfs(out_combined_vcf, expected_out_combined_vcf)
 
-    def test_filter_cnmops_dups(self, tmpdir, resources_dir):
-        """Test filtering of short cn.mops duplications with merging of adjacent segments."""
-        input_vcf = pjoin(resources_dir, "HG002.full_sample.combined.step1.vcf.gz")
-        expected_output_vcf = pjoin(resources_dir, "HG002.full_sample.combined.step2.vcf.gz")
-        output_vcf = pjoin(tmpdir, "filtered_dups.vcf.gz")
-
-        combine_cnmops_cnvpytor_cnv_calls.run(
-            [
-                "cnv_results_to_vcf",
-                "filter_cnmops_dups",
-                "--combined_calls",
-                input_vcf,
-                "--combined_calls_annotated",
-                output_vcf,
-                "--filtered_length",
-                "10000",
-                "--distance_threshold",
-                "1500",
-            ]
-        )
-
-        assert os.path.exists(output_vcf)
-        assert os.path.exists(f"{output_vcf}.tbi")
-        compare_vcfs(output_vcf, expected_output_vcf)
-
     def test_annotate_vcf_with_regions(self, tmpdir, resources_dir):
         """Integration test for annotating VCF with region annotations from BED file."""
         input_vcf = pjoin(resources_dir, "HG002.full_sample.combined.step1.chr5.vcf.gz")
