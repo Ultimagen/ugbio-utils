@@ -634,6 +634,15 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, E501
     # Use lazy scanning and streaming write for memory efficiency
     lazy_frames = [pl.scan_parquet(f) for f in parquet_files]
 
+    try:  # TODO remove this block
+        lazy_frames_size = [frame.select(pl.len()).collect().item() for frame in lazy_frames]
+        log.debug(f"Individual Parquet file sizes (rows): {lazy_frames_size}")
+        lazy_frames_head = [frame.head(3).collect() for frame in lazy_frames]
+        for i, head in enumerate(lazy_frames_head):
+            log.debug(f"Parquet file {i} head:\n{head}")
+    except Exception as e:
+        log.warning(f"Could not determine individual Parquet file sizes: {e}")
+
     # Concatenate all lazy frames
     merged_lazy = pl.concat(lazy_frames, how="vertical")
 
