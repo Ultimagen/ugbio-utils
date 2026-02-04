@@ -55,6 +55,8 @@ MIN_BINS_DEFAULT = 10
 MIN_INTERPOLATION_POINTS = 2
 MIN_POINTS_FOR_LOWESS = 10
 MIN_SAVGOL_WINDOW = 11
+SIGMA_MIN = 1e-2
+SIGMA_MAX = 100.0
 
 
 def extract_validation_subset(
@@ -482,8 +484,8 @@ def fit_score_std_lowess(  # noqa: C901, PLR0912, PLR0915
 def build_score_std_interpolator(
     score_grid: np.ndarray,
     std_smooth: np.ndarray,
-    sigma_min: float = 1e-6,
-    sigma_max: float = 100.0,
+    sigma_min: float = SIGMA_MIN,
+    sigma_max: float = SIGMA_MAX,
     fill_value: str = "extrapolate",
     *,
     bounds_error: bool = False,
@@ -611,8 +613,8 @@ def create_uncertainty_function_pipeline_fast(  # noqa: PLR0913, PLR0915, C901
     prob_to_logit_fn: Callable = prob_to_logit,
     transform_mode: str = "mqual",
     lowess_frac: float = 0.3,
-    sigma_min: float = 1e-6,
-    sigma_max: float = 100.0,
+    sigma_min: float = SIGMA_MIN,
+    sigma_max: float = SIGMA_MAX,
     min_val_size: int = 5000,
 ) -> tuple[Callable[[np.ndarray], np.ndarray], dict[str, Any]]:
     """
@@ -788,8 +790,8 @@ def create_uncertainty_function_pipeline(  # noqa: PLR0913
     prob_to_logit_fn: Callable = prob_to_logit,
     transform_mode: str = "mqual",
     lowess_frac: float = 0.3,
-    sigma_min: float = 1e-6,
-    sigma_max: float = 100.0,
+    sigma_min: float = SIGMA_MIN,
+    sigma_max: float = SIGMA_MAX,
     min_val_size: int = 5000,
     **lowess_kwargs,
 ) -> tuple[Callable[[np.ndarray], np.ndarray], dict[str, Any]]:
@@ -817,9 +819,9 @@ def create_uncertainty_function_pipeline(  # noqa: PLR0913
     lowess_frac : float, optional
         LOWESS smoothing fraction, by default 0.3
     sigma_min : float, optional
-        Minimum allowed standard deviation, by default 1e-6
+        Minimum allowed standard deviation, by default SIGMA_MIN
     sigma_max : float, optional
-        Maximum allowed standard deviation, by default 100.0
+        Maximum allowed standard deviation, by default SIGMA_MAX
     min_val_size : int, optional
         Minimum validation set size, by default 5000
     **lowess_kwargs
@@ -1541,6 +1543,95 @@ def interpolate_grid_to_points(
 
 
 # ─────────────────────────────── Step 3: Adaptive KDE ───────────────────────────────
+
+
+def weighted_quantile(
+    values: np.ndarray,
+    quantiles: float | np.ndarray,
+    weights: np.ndarray | None = None,
+    *,
+    values_sorted: bool = False,
+) -> float | np.ndarray:
+    """
+    Calculate weighted quantiles of an array.
+
+    For the qth weighted quantile, finds x such that:
+    weights[values < x].sum() / weights.sum() = q
+
+    Parameters
+    ----------
+    values : np.ndarray
+        Input array of values
+    quantiles : float or np.ndarray
+        Quantile(s) to compute (in range [0, 1])
+    weights : np.ndarray, optional
+        Weights for each value. If None, uses uniform weights (equivalent
+        to np.quantile)
+    values_sorted : bool, optional
+        If True, assumes values are already sorted (with matching weights).
+        By default False
+
+    Returns
+    -------
+    Union[float, np.ndarray]
+        Weighted quantile value(s)
+
+    Examples
+    --------
+    >>> values = np.array([1, 2, 3, 4, 5])
+    >>> weights = np.array([1, 1, 1, 1, 1])
+    >>> weighted_quantile(values, 0.5, weights)  # Median
+    3.0
+    >>> weights = np.array([0, 0, 1, 0, 0])
+    >>> weighted_quantile(values, 0.5, weights)  # All weight on value 3
+    3.0
+    """
+    values = np.asarray(values)
+    quantiles = np.asarray(quantiles)
+    is_scalar = quantiles.ndim == 0
+
+    if is_scalar:
+        quantiles = quantiles.reshape(1)
+
+    if weights is None:
+        weights = np.ones_like(values)
+    else:
+        weights = np.asarray(weights)
+
+    if len(values) != len(weights):
+        raise ValueError("Values and weights must have same length")
+
+    if len(values) == 0:
+        return np.nan if is_scalar else np.full_like(quantiles, np.nan)
+
+    # Remove NaN values
+    valid_mask = ~(np.isnan(values) | np.isnan(weights))
+    values = values[valid_mask]
+    weights = weights[valid_mask]
+
+    if len(values) == 0:
+        return np.nan if is_scalar else np.full_like(quantiles, np.nan)
+
+    # Sort values and weights together
+    if not values_sorted:
+        sort_idx = np.argsort(values)
+        values = values[sort_idx]
+        weights = weights[sort_idx]
+
+    # Compute cumulative sum of weights
+    weighted_cumsum = np.cumsum(weights)
+    total_weight = weighted_cumsum[-1]
+
+    if total_weight <= 0:
+        return np.nan if is_scalar else np.full_like(quantiles, np.nan)
+
+    # Normalize to [0, 1]
+    weighted_cumsum_norm = weighted_cumsum / total_weight
+
+    # Interpolate to find quantile values
+    result = np.interp(quantiles, weighted_cumsum_norm, values)
+
+    return float(result[0]) if is_scalar else result
 
 
 def truncate_density_tails(  # noqa: PLR0912
