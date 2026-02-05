@@ -85,7 +85,7 @@ app = cyclopts.App(
 # =============================================================================
 def filter_and_annotate_tr(
     input_vcf: Path,
-    ref_tr_file: Path,
+    tandem_repeats_bed: Path,
     genome_index_file: Path,
     out_dir: Path,
     filter_string: str | None = "PASS",
@@ -104,7 +104,7 @@ def filter_and_annotate_tr(
     ----------
     input_vcf : Path
         Path to the input VCF file (gzipped).
-    ref_tr_file : Path
+    tandem_repeats_bed : Path
         Path to the reference tandem repeat BED file.
     genome_index_file : Path
         Path to the reference genome FASTA index file (.fai).
@@ -165,7 +165,9 @@ def filter_and_annotate_tr(
 
         # Step 2: Create TR annotation file (fully piped: bcftools -> bedtools -> cut -> sort -> bgzip)
         logger.info(f"Creating TR annotation file for {vcf_to_annotate}")
-        gz_tsv, hdr_file = _create_tr_annotation_file(vcf_to_annotate, ref_tr_file, genome_index_file, tmpdir_path)
+        gz_tsv, hdr_file = _create_tr_annotation_file(
+            vcf_to_annotate, tandem_repeats_bed, genome_index_file, tmpdir_path
+        )
 
         # Step 3: Annotate VCF with TR fields
         logger.info("Annotating VCF with tandem repeat information")
@@ -202,7 +204,7 @@ def filter_and_annotate_tr(
 
 
 def _create_tr_annotation_file(
-    input_vcf: Path, ref_tr_file: Path, genome_index_file: Path, tmpdir: Path
+    input_vcf: Path, tandem_repeats_bed: Path, genome_index_file: Path, tmpdir: Path
 ) -> tuple[Path, Path]:
     """Create TR annotation file from VCF in one piped command.
 
@@ -212,7 +214,7 @@ def _create_tr_annotation_file(
     gz_tsv = tmpdir / "tr_annotation.tsv.gz"
     cmd = (
         f"bcftools query -f '%CHROM\\t%POS0\\t%END\\n' {input_vcf} | "
-        f"bedtools closest -D ref -g {genome_index_file} -a stdin -b {ref_tr_file} | "
+        f"bedtools closest -D ref -g {genome_index_file} -a stdin -b {tandem_repeats_bed} | "
         f"cut -f1,3,5-10 | "
         f"sort -k1,1 -k2,2n | "
         f"bgzip -c"
@@ -876,7 +878,7 @@ def somatic_featuremap_classifier(
     somatic_featuremap: Path,
     output_vcf: Path,
     genome_index_file: Path,
-    ref_tr_file: Path,
+    tandem_repeats_bed: Path,
     xgb_model_file: Path,
     *,
     output_parquet: Path | None = None,
@@ -902,7 +904,7 @@ def somatic_featuremap_classifier(
         Output VCF file path.
     genome_index_file
         Genome FASTA index (.fai) file.
-    ref_tr_file
+    tandem_repeats_bed
         Reference tandem repeat file in BED format.
     xgb_model_file
         XGBoost model file for inference.
@@ -922,11 +924,11 @@ def somatic_featuremap_classifier(
     Examples
     --------
     $ somatic_featuremap_fields_transformation input.vcf.gz -o output.vcf.gz \\
-        --genome-file genome.fa.fai --ref-tr-file tandem_repeats.bed \\
+        --genome-file genome.fa.fai --tandem-repeats-bed tandem_repeats.bed \\
         --xgb-model-file model.json
 
     $ somatic_featuremap_fields_transformation input.vcf.gz -o output.vcf.gz \\
-        --genome-file genome.fa.fai --ref-tr-file tandem_repeats.bed \\
+        --genome-file genome.fa.fai --tandem-repeats-bed tandem_repeats.bed \\
         --xgb-model-file model.json --regions-bed-file chr1_test.bed
     """
     # #region agent log
@@ -954,7 +956,7 @@ def somatic_featuremap_classifier(
     logger.info("Step 1: Filtering VCF and adding TR annotations")
     sfm_filtered_with_tr = filter_and_annotate_tr(
         somatic_featuremap,
-        ref_tr_file,
+        tandem_repeats_bed,
         genome_index_file,
         out_dir,
         filter_string=filter_string,
