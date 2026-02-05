@@ -56,6 +56,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     ap_var.add_argument("--input", help="MethylDackel perRead file", type=str, required=True)
     ap_var.add_argument("--output", help="Output file basename", type=str, required=True)
+    ap_var.add_argument("--taps", help="Indicate if input is TAPS data", action="store_true", default=False)
 
     return ap_var.parse_args(argv[1:])
 
@@ -76,6 +77,8 @@ def run(argv: list[str] | None = None):
         in_file_name = args.input
         col_names = ["read_name", "chr", "start", "PercentMethylation", "TotalCpGs"]
         df_per_read = pd.read_csv(in_file_name, sep="\t", header=0, names=col_names)
+        if args.taps:
+            df_per_read["PercentMethylation"] = 100 - df_per_read["PercentMethylation"]
         df_per_read = df_per_read.drop(columns="read_name")
         df_per_read = df_per_read.dropna()
 

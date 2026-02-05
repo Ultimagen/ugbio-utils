@@ -51,6 +51,7 @@ from ugbio_methylation.methyldackel_utils import (
     find_list_genomes,
     get_ctrl_genomes_data,
     get_dict_from_dataframe,
+    read_merge_context_file,
 )
 
 # ============================================================================
@@ -65,6 +66,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     ap_var.add_argument("--input", help="MethylDackel mergeContext file", type=str, required=True)
     ap_var.add_argument("--output", help="Output file basename", type=str, required=True)
+    ap_var.add_argument("--taps", help="Indicate if input is TAPS data", action="store_true", default=False)
 
     return ap_var.parse_args(argv[1:])
 
@@ -84,9 +86,7 @@ def run(argv: list[str] | None = None):
         # import input files
         # ============================================================================
         in_file_name = args.input
-        col_names = ["chr", "start", "end", "PercentMethylation", "coverage_methylated", "coverage_unmethylated"]
-        df_in_report = pd.read_csv(in_file_name, sep="\t", header=0, names=col_names)
-        df_in_report["Coverage"] = df_in_report["coverage_methylated"] + df_in_report["coverage_unmethylated"]
+        df_in_report = read_merge_context_file(in_file_name, is_taps=args.taps)
 
         # Get chromosomes and genomes from MethylDackel mergeContext file
         # ===================================================================

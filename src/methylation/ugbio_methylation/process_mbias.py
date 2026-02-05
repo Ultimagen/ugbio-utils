@@ -56,8 +56,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap_var.add_argument("--input", help="MethylDackel Mbias input file", type=str, required=True)
     ap_var.add_argument("--output", help="Output file basename", type=str, required=True)
     ap_var.add_argument(
-        "--noCpG", help="use this flag to tag Mbias call on no-CpG cytosines", type=bool, required=False
+        "--noCpG", help="use this flag to tag Mbias call on no-CpG cytosines", action="store_true", default=False
     )
+    ap_var.add_argument("--taps", help="Indicate if input is TAPS data", action="store_true", default=False)
 
     return ap_var.parse_args(argv[1:])
 
@@ -78,10 +79,15 @@ def run(argv: list[str] | None = None):
         # import Mbais file
         in_file_name = args.input
         df_mbias_input = pd.read_csv(in_file_name, sep="\t")
+        if args.taps:
+            df_mbias_input["nMethylated"], df_mbias_input["nUnmethylated"] = (
+                df_mbias_input["nUnmethylated"],
+                df_mbias_input["nMethylated"],
+            )
         df_mbias_input["PercentMethylation"] = df_mbias_input["nMethylated"] / (
             df_mbias_input["nMethylated"] + df_mbias_input["nUnmethylated"]
         )
-        cols = ["Read", "nMethylated", "nUnmethylated"]
+        cols = ["Read"]
         df_mbias_input = df_mbias_input.drop(columns=cols)
 
         # create dataframe from input files
@@ -97,7 +103,7 @@ def run(argv: list[str] | None = None):
         # ==========================================================================================
         dict_json_output = {}
         for strand in df_csv_output["detail"].unique():
-            temp_dict = get_dict_from_dataframe(df_csv_output, strand)
+            temp_dict = get_dict_from_dataframe(df_csv_output[["metric", "value", "detail"]], strand)
             dict_json_output.update(temp_dict)
 
         # print to JSON file
