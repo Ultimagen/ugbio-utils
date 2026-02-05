@@ -25,6 +25,7 @@ from itertools import cycle
 import numpy as np
 import pandas as pd
 import xgboost as xgb
+from pandas.api.types import CategoricalDtype
 from sklearn.metrics import roc_auc_score
 from ugbio_ppmseq.ppmSeq_utils import (
     MAX_TOTAL_HMER_LENGTHS_IN_LOOPS,
@@ -215,6 +216,51 @@ def _aggregate_probabilities_from_folds(
     # Use nanmean to allow for NaNs (e.g., for in-fold exclusion)
     transformed_mean = np.nanmean(transformed_probs, axis=0)
     return inverse_transform_fn(transformed_mean)
+
+
+def set_featuremap_df_dtypes(df: pd.DataFrame, feature_dtypes: list) -> pd.DataFrame:
+    """
+    Prepare a DataFrame for training by ensuring correct column order and dtypes.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame with feature columns
+    feature_dtypes : list
+        List of dicts specifying feature names, types, and categorical encodings
+        Each dict has keys: 'name', 'type', and optionally 'values' for categorical features
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns in correct order and proper dtypes
+    """
+    df_for_training = df.copy()
+
+    # Apply correct dtypes
+    for feature_spec in feature_dtypes:
+        col_name = feature_spec["name"]
+        dtype_type = feature_spec["type"]
+
+        if dtype_type == "c":  # Categorical
+            # Get category values in the order specified by the integer mapping
+            values_dict = feature_spec["values"]
+            # Sort by integer value to get correct category order
+            categories = [k for k, v in sorted(values_dict.items(), key=lambda x: x[1])]
+
+            # Create CategoricalDtype with specified categories
+            cat_dtype = CategoricalDtype(categories=categories, ordered=False)
+
+            # Convert column to categorical with correct categories
+            df_for_training[col_name] = df_for_training[col_name].astype(cat_dtype)
+
+        elif dtype_type == "int":
+            df_for_training[col_name] = df_for_training[col_name].astype("int64")
+
+        elif dtype_type == "float":
+            df_for_training[col_name] = df_for_training[col_name].astype("float64")
+
+    return df_for_training
 
 
 def k_fold_predict_proba(
