@@ -1703,7 +1703,7 @@ class SRSNVReport:
             condition = np.ones_like(self.data_df[LABEL], dtype=bool)
         data_df["condition"] = condition
         condition_rates_by_label = data_df.groupby(LABEL)["condition"].mean().sort_index()
-        cond_true_rate = condition_rates_by_label[1]
+        cond_true_rate = condition_rates_by_label[True]
         cond_snvq_shift = np.diff(10 * np.log10(condition_rates_by_label.to_numpy()))
 
         kde_estimator = AdaptiveKDEPrecisionEstimator()
