@@ -879,7 +879,7 @@ def somatic_featuremap_classifier(
     output_vcf: Path,
     genome_index_file: Path,
     tandem_repeats_bed: Path,
-    xgb_model_file: Path,
+    xgb_model_json: Path,
     *,
     output_parquet: Path | None = None,
     filter_string: str = "PASS",
@@ -906,7 +906,7 @@ def somatic_featuremap_classifier(
         Genome FASTA index (.fai) file.
     tandem_repeats_bed
         Reference tandem repeat file in BED format.
-    xgb_model_file
+    xgb_model_json
         XGBoost model file for inference.
     output_parquet
         Output Parquet file path. If not provided, a default path will be used.
@@ -925,11 +925,11 @@ def somatic_featuremap_classifier(
     --------
     $ somatic_featuremap_fields_transformation input.vcf.gz -o output.vcf.gz \\
         --genome-file genome.fa.fai --tandem-repeats-bed tandem_repeats.bed \\
-        --xgb-model-file model.json
+        --xgb-model-json model.json
 
     $ somatic_featuremap_fields_transformation input.vcf.gz -o output.vcf.gz \\
         --genome-file genome.fa.fai --tandem-repeats-bed tandem_repeats.bed \\
-        --xgb-model-file model.json --regions-bed-file chr1_test.bed
+        --xgb-model-json model.json --regions-bed-file chr1_test.bed
     """
     # #region agent log
     pipeline_start = time.time()
@@ -976,7 +976,7 @@ def somatic_featuremap_classifier(
     # Create a renamed copy for model inference
     samples = [tumor_sample, normal_sample]
     df_for_model = rename_cols_for_model(aggregated_df, samples)
-    xgb_proba: pl.Series = run_classifier(df_for_model, xgb_model_file)
+    xgb_proba: pl.Series = run_classifier(df_for_model, xgb_model_json)
 
     # Add predictions to the aggregated dataframe
     aggregated_df = aggregated_df.with_columns(xgb_proba)
