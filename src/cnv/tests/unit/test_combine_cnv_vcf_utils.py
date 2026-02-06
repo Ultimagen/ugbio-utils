@@ -358,7 +358,7 @@ def cnv_vcf_header():
     header.add_line('##INFO=<ID=END,Number=1,Type=Integer,Description="End position">')
     header.add_line('##INFO=<ID=SVLEN,Number=.,Type=Integer,Description="SV length">')
     header.add_line('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="SV type">')
-    # Note: CollapseId is added by Truvari automatically, don't pre-define it
+    header.add_line('##INFO=<ID=CollapseId,Number=1,Type=String,Description="Truvari collapse ID">')
     header.add_line('##INFO=<ID=CNMOPS_SAMPLE_MEAN,Number=1,Type=Float,Description="Mean coverage">')
     header.add_line('##INFO=<ID=CNMOPS_SAMPLE_STDEV,Number=1,Type=Float,Description="Coverage stdev">')
     header.add_line('##INFO=<ID=CNMOPS_COHORT_MEAN,Number=1,Type=Float,Description="Cohort mean">')
@@ -494,7 +494,7 @@ class TestMergeCnvsInVcf:
             record.pos = 1000
             record.stop = 3500
             record.alleles = ("N", "<DEL>")
-            record.info["CollapseId"] = 1.0
+            record.info["CollapseId"] = "1"
             record.info["SVLEN"] = (2500,)
             record.info["SVTYPE"] = "DEL"
             record.info["CNMOPS_SAMPLE_MEAN"] = 10.5
@@ -616,7 +616,7 @@ class TestMergeCnvsInVcf:
             record.pos = 1000
             record.stop = 3500
             record.alleles = ("N", "<DEL>")
-            record.info["CollapseId"] = 1.0
+            record.info["CollapseId"] = "1"
             record.info["SVLEN"] = (1500,)  # Original merged length
             record.info["SVTYPE"] = "DEL"
             record.filter.add("PASS")
