@@ -475,6 +475,7 @@ class TestMergeCnvsInVcf:
                 "chrom": ["chr1", "chr1"],
                 "pos": [1000, 2500],
                 "svlen": [(1000,), (1000,)],
+                "filter": ["PASS", "PASS"],
                 "matchid": [(1.0,), (1.0,)],  # Same matchid means they were collapsed together
                 "cnmops_sample_mean": [10.5, 11.0],
                 "cnmops_sample_stdev": [2.1, 2.3],
@@ -597,6 +598,7 @@ class TestMergeCnvsInVcf:
                 "chrom": ["chr1", "chr1"],
                 "pos": [1000, 2500],
                 "svlen": [(1000,), (2000,)],
+                "filter": ["PASS", "PASS"],
                 "matchid": [(1.0,), (1.0,)],
                 "cnmops_sample_mean": [10.0, 20.0],
                 "cnmops_sample_stdev": [1.0, 2.0],
@@ -617,6 +619,7 @@ class TestMergeCnvsInVcf:
             record.info["CollapseId"] = "1"
             record.info["SVLEN"] = (1500,)  # Original merged length
             record.info["SVTYPE"] = "DEL"
+            record.filter.add("PASS")
             record.info["CNMOPS_SAMPLE_MEAN"] = 15.0  # Will be replaced by weighted avg
             record.info["CNMOPS_SAMPLE_STDEV"] = 1.5
             record.info["CNMOPS_COHORT_MEAN"] = 20.0
