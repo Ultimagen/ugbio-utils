@@ -248,7 +248,6 @@ def merge_cnvs_in_vcf(
     ignore_sv_type: bool = False,
     ignore_filter: bool = True,
     pick_best: bool = False,
-    do_not_merge_collapsed_filtered: bool = False,
 ) -> None:
     """
     Merge CNV variants in a VCF file that are within a specified distance.
@@ -265,8 +264,6 @@ def merge_cnvs_in_vcf(
         Whether to ignore SVTYPE when collapsing variants, by default False.
     ignore_filter: bool, optional
         Whether to ignore FILTER status when collapsing variants, by default True.
-    do_not_merge_collapsed_filtered: bool, optional
-        Whether to avoid merging filtered out variants were removed by collapsing, by default False.
     pick_best : bool, optional
         Whether to pick the best variant (by QUAL) among those being merged (or the first: False), by default False.
     Returns
@@ -309,6 +306,7 @@ def merge_cnvs_in_vcf(
         pick_best=pick_best,
         erase_removed=False,
     )
+
     temporary_files.append(str(removed_vcf))
     temporary_files.append(output_vcf_collapse)
     all_fields = sum(aggregation_actions.values(), [])
@@ -317,9 +315,8 @@ def merge_cnvs_in_vcf(
     update_df["matchid"] = update_df["matchid"].apply(lambda x: x[0]).astype(float)
     update_df["end"] = update_df["pos"] + update_df["svlen"].apply(lambda x: x[0]) - 1
 
-    if do_not_merge_collapsed_filtered:
-        unselect = (update_df["filter"] != "PASS") & (update_df["filter"] != "") & (update_df["filter"] != ".")
-        update_df = update_df.loc[~unselect]
+    unselect = (update_df["filter"] != "PASS") & (update_df["filter"] != "") & (update_df["filter"] != ".")
+    update_df = update_df.loc[~unselect]
     output_vcf_mrg_unsort = output_vcf.replace(".vcf.gz", ".unsorted.vcf.gz")
     temporary_files.append(output_vcf_mrg_unsort)
     with pysam.VariantFile(output_vcf_collapse) as vcf_in:
@@ -351,8 +348,56 @@ def merge_cnvs_in_vcf(
                     if c in record.info:
                         del record.info[c]
                 vcf_out.write(record)
+
+    # If we did not ignore filter, overlapping low confidence variants were not collapsed and here we remove them
+    if not ignore_filter:
+        output_vcf_mrg_unsort = _remove_overlapping_filtered_variants(
+            input_vcf,
+            output_vcf_mrg_unsort,
+            output_vcf,
+            distance=distance,
+            ignore_sv_type=ignore_sv_type,
+            pick_best=pick_best,
+        )
+        temporary_files.extend([output_vcf_mrg_unsort])
     vu.sort_vcf(output_vcf_mrg_unsort, output_vcf)
     mu.cleanup_temp_files(temporary_files)
+
+
+def _remove_overlapping_filtered_variants(
+    original_vcf: str, merged_vcf: str, output_vcf: str, distance: int, *, ignore_sv_type: bool, pick_best: bool
+) -> str:
+    output_vcf_collapse = output_vcf + ".collapse.tmp.2.vcf.gz"
+    vu = VcfUtils()
+    removed_vcf = vu.collapse_vcf(
+        vcf=original_vcf,
+        output_vcf=output_vcf_collapse,
+        refdist=distance,
+        pctseq=0.0,
+        pctsize=0.0,
+        maxsize=-1,
+        ignore_filter=True,
+        ignore_sv_type=ignore_sv_type,
+        pick_best=pick_best,
+        erase_removed=False,
+    )
+    removed_df = vcftools.get_vcf_df(str(removed_vcf))
+    filtered_out = ~(
+        pd.isna(removed_df["filter"])
+        | (removed_df["filter"] == "")
+        | (removed_df["filter"] == ".")
+        | (removed_df["filter"] == "PASS")
+    )
+    remove_ids = set(removed_df.loc[filtered_out]["id"])
+    with pysam.VariantFile(merged_vcf) as vcf_in:
+        hdr = vcf_in.header
+        with pysam.VariantFile(output_vcf_collapse, "w", header=hdr) as vcf_out:
+            for record in vcf_in:
+                if record.id in remove_ids:
+                    continue
+                vcf_out.write(record)
+    mu.cleanup_temp_files([str(removed_vcf)])
+    return output_vcf_collapse
 
 
 def _value_aggregator(  # noqa: C901
