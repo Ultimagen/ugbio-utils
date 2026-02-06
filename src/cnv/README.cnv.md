@@ -173,6 +173,54 @@ The module includes R scripts in the `cnmops/` directory. They are used by cn.mo
 - `get_reads_count_from_bam.R` - Extract read counts from BAM files
 - `create_reads_count_cohort_matrix.R` - Build cohort matrix for cn.mops
 - `normalize_reads_count.R` - Normalize read counts across samples
+- `rebin_cohort_reads_count.R` - Re-bin existing cohort to larger bin sizes
+
+### Re-binning CNmops Cohorts
+
+#### `rebin_cohort_reads_count.R`
+
+Re-bin an existing cn.mops cohort from smaller bins to larger bins by aggregating read counts. This allows you to adjust the resolution of existing cohorts without regenerating from BAM files.
+
+```bash
+Rscript cnmops/rebin_cohort_reads_count.R \
+  --input_cohort_file cohort_1000bp.rds \
+  --original_window_length 1000 \
+  --new_window_length 5000 \
+  --output_file cohort_5000bp.rds \
+  --save_csv
+```
+
+**Parameters:**
+- `-i, --input_cohort_file` - Input cohort RDS file path (required)
+- `-owl, --original_window_length` - Original window length in bp (required, e.g., 1000)
+- `-nwl, --new_window_length` - New window length in bp (required, must be divisible by original)
+- `-o, --output_file` - Output RDS file path (default: rebinned_cohort_reads_count.rds)
+- `--save_csv` - Also save output as CSV format
+- `--save_hdf` - Also save output as HDF5 format
+
+**Requirements:**
+- New window length must be larger than original window length
+- New window length must be divisible by original window length
+- Read counts are summed across bins that fall within each new bin
+
+**Example Workflow:**
+```bash
+# Original cohort at 1000 bp resolution
+cohort_file="HapMap2_65samples_cohort_v2.0.hg38.ReadsCount.rds"
+
+# Re-bin to 5000 bp for faster processing
+Rscript cnmops/rebin_cohort_reads_count.R \
+  -i ${cohort_file} \
+  -owl 1000 \
+  -nwl 5000 \
+  -o HapMap2_65samples_cohort_v2.0.hg38.ReadsCount.5000bp.rds \
+  --save_csv
+
+# Use rebinned cohort in CNV calling
+# (Sample reads count must also be generated with matching 5000 bp bins)
+```
+
+**Note:** When using a rebinned cohort for CNV calling, samples must be processed with the same window length as the rebinned cohort.
 
 ## Notes
 
