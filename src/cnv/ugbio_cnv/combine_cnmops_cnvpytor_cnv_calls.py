@@ -597,7 +597,6 @@ def run(argv: list[str]):
             output_vcf=args.output_vcf,
             distance=args.distance,
             ignore_filter=False,
-            do_not_merge_collapsed_filtered=True,
             ignore_sv_type=True,
             pick_best=True,
         )
