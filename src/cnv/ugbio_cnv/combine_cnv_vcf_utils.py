@@ -388,12 +388,13 @@ def _remove_overlapping_filtered_variants(
         | (removed_df["filter"] == ".")
         | (removed_df["filter"] == "PASS")
     )
-    remove_ids = set(removed_df.loc[filtered_out]["id"])
+    # TODO [BIOIN-2653]: make sure the IDs are unique at this point
+    remove_ids = set(removed_df.loc[filtered_out][["id", "chrom", "pos"]].apply(lambda x: tuple(x), axis=1))
     with pysam.VariantFile(merged_vcf) as vcf_in:
         hdr = vcf_in.header
         with pysam.VariantFile(output_vcf_collapse, "w", header=hdr) as vcf_out:
             for record in vcf_in:
-                if record.id in remove_ids:
+                if (record.id, record.contig, record.pos) in remove_ids:
                     continue
                 vcf_out.write(record)
     mu.cleanup_temp_files([str(removed_vcf)])
