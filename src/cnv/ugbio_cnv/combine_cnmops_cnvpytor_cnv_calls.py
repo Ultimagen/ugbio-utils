@@ -52,7 +52,7 @@ def __parse_args_concat(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--out_directory", help="output directory", required=False, type=str)
     parser.add_argument(
         "--make_ids_unique",
-        help="assign unique IDs to all variants (format: CNV_000000001, CNV_000000002, etc.)",
+        help="ensure all variant IDs are unique by appending suffixes (e.g., ID_1, ID_2) when duplicates exist",
         action="store_true",
         default=False,
     )
@@ -445,10 +445,10 @@ def combine_cnv_vcfs(
 
         with pysam.VariantFile(temp_combined_vcf, "w", header=combined_header) as vcf_out:
             # Write records from each VCF with appropriate source annotation
-            record_counter = 0
+            seen_ids = set()
             for vcf_handle, (_, source_name) in zip(vcf_handles, vcf_metadata, strict=False):
-                record_counter = write_vcf_records_with_source(
-                    vcf_handle, vcf_out, combined_header, source_name, make_ids_unique, record_counter
+                seen_ids = write_vcf_records_with_source(
+                    vcf_handle, vcf_out, combined_header, source_name, make_ids_unique, seen_ids
                 )
     finally:
         # Close all VCF handles
