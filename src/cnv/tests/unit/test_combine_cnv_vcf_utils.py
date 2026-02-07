@@ -1079,6 +1079,95 @@ class TestMergeCnvsInVcfTwoStage:
             records = list(vcf)
             assert len(records) == 0
 
+    def test_two_stage_same_id_different_positions_not_filtered(self, tmp_path, cnv_vcf_header):
+        """Test that CNVs with same ID but different positions are not incorrectly filtered (BIOIN-2648).
+
+        This is a regression test for a bug where variants were incorrectly removed based on ID alone
+        without considering position. The fix uses (id, chrom, pos) tuple instead of just id.
+        """
+        input_vcf = tmp_path / "input.vcf.gz"
+        output_vcf = tmp_path / "output.vcf.gz"
+
+        # Add FILTER line to header
+        cnv_vcf_header.add_line('##FILTER=<ID=LowQual,Description="Low quality">')
+
+        # Create input VCF with two CNVs that have the same ID but different positions
+        with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
+            # PASS variant at position 1000
+            record1 = vcf.new_record()
+            record1.contig = "chr1"
+            record1.pos = 1000
+            record1.stop = 2000
+            record1.id = "CNV_000000001"  # Same ID
+            record1.alleles = ("N", "<DEL>")
+            record1.info["SVLEN"] = (1000,)
+            record1.info["SVTYPE"] = "DEL"
+            record1.qual = 50.0
+            record1.filter.add("PASS")
+            record1.samples["test_sample"]["GT"] = (0, 1)
+            record1.samples["test_sample"]["CN"] = 1.0
+            vcf.write(record1)
+
+            # Filtered variant at a different position with same ID
+            record2 = vcf.new_record()
+            record2.contig = "chr1"
+            record2.pos = 5000
+            record2.stop = 6000
+            record2.id = "CNV_000000001"  # Same ID as record1
+            record2.alleles = ("N", "<DEL>")
+            record2.info["SVLEN"] = (1000,)
+            record2.info["SVTYPE"] = "DEL"
+            record2.qual = 15.0
+            record2.filter.add("LowQual")
+            record2.samples["test_sample"]["GT"] = (0, 1)
+            record2.samples["test_sample"]["CN"] = 1.0
+            vcf.write(record2)
+
+            # PASS variant at yet another position with same ID
+            record3 = vcf.new_record()
+            record3.contig = "chr1"
+            record3.pos = 10000
+            record3.stop = 11000
+            record3.id = "CNV_000000001"  # Same ID again
+            record3.alleles = ("N", "<DUP>")
+            record3.info["SVLEN"] = (1000,)
+            record3.info["SVTYPE"] = "DUP"
+            record3.qual = 60.0
+            record3.filter.add("PASS")
+            record3.samples["test_sample"]["GT"] = (0, 1)
+            record3.samples["test_sample"]["CN"] = 3.0
+            vcf.write(record3)
+
+        # Index the VCF file
+        pysam.tabix_index(str(input_vcf), preset="vcf", force=True)
+
+        # Execute with ignore_filter=False
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1000, ignore_filter=False)
+
+        # Verify: All 3 records should be in output (2 PASS, 1 filtered)
+        # The filtered one should NOT be removed just because it shares the same ID
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = list(vcf)
+            assert len(records) == 3, f"Expected 3 records, got {len(records)}"
+
+            # Verify we have the correct positions
+            positions = sorted([rec.pos for rec in records])
+            assert positions == [1000, 5000, 10000], f"Expected positions [1000, 5000, 10000], got {positions}"
+
+            # Verify filters: 2 PASS, 1 LowQual
+            filters = [rec.filter.keys() for rec in records]
+            pass_count = sum(1 for f in filters if f == ["PASS"])
+            lowqual_count = sum(1 for f in filters if f == ["LowQual"])
+            assert pass_count == 2, f"Expected 2 PASS records, got {pass_count}"
+            assert lowqual_count == 1, f"Expected 1 LowQual record, got {lowqual_count}"
+
+            # Verify the filtered record is at the correct position
+            filtered_records = [rec for rec in records if rec.filter.keys() == ["LowQual"]]
+            assert len(filtered_records) == 1
+            assert (
+                filtered_records[0].pos == 5000
+            ), f"Expected filtered record at pos 5000, got {filtered_records[0].pos}"
+
 
 class TestMergeCnvsInVcfIntegration:
     """Integration tests for merge_cnvs_in_vcf using real data."""
