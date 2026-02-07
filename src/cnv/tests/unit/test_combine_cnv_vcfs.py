@@ -323,7 +323,7 @@ def test_combine_cnv_vcfs_multiple_files(temp_dir, cnmops_vcf, cnvpytor_vcf, fas
 
 
 def test_combine_cnv_vcfs_make_ids_unique(temp_dir, cnmops_vcf, cnvpytor_vcf, fasta_index):
-    """Test that make_ids_unique parameter assigns unique IDs to all variants."""
+    """Test that make_ids_unique parameter preserves original IDs and makes them unique."""
     output_vcf = os.path.join(temp_dir, "combined_unique_ids.vcf.gz")
 
     result = combine_cnv_vcfs(
@@ -343,16 +343,18 @@ def test_combine_cnv_vcfs_make_ids_unique(temp_dir, cnmops_vcf, cnvpytor_vcf, fa
         # Should have 4 total records
         assert len(records) == 4
 
-        # All records should have IDs in the format CNV_000000000, CNV_000000001, etc.
+        # All records should have IDs
         ids = [rec.id for rec in records]
-        assert all(id is not None and id.startswith("CNV_") for id in ids)
+        assert all(id is not None for id in ids)
 
         # IDs should be unique
         assert len(set(ids)) == len(ids)
 
-        # IDs should be sequentially numbered (after sorting)
-        expected_ids = [f"CNV_{i:09d}" for i in range(4)]
-        assert sorted(ids) == sorted(expected_ids)
+        # Original IDs should be preserved since there are no duplicates
+        assert "cnmops_del1" in ids
+        assert "cnmops_dup1" in ids
+        assert "cnvpytor_del1" in ids
+        assert "cnvpytor_dup1" in ids
 
 
 def test_combine_cnv_vcfs_without_make_ids_unique(temp_dir, cnmops_vcf, cnvpytor_vcf, fasta_index):
@@ -385,7 +387,7 @@ def test_combine_cnv_vcfs_without_make_ids_unique(temp_dir, cnmops_vcf, cnvpytor
 
 
 def test_combine_cnv_vcfs_unique_ids_multiple_files(temp_dir, cnmops_vcf, cnvpytor_vcf, fasta_index):
-    """Test that make_ids_unique works correctly with multiple input files."""
+    """Test that make_ids_unique adds suffixes when there are duplicate IDs."""
     output_vcf = os.path.join(temp_dir, "combined_unique_multi.vcf.gz")
 
     # Use the same VCF twice to simulate duplicate records
@@ -410,9 +412,11 @@ def test_combine_cnv_vcfs_unique_ids_multiple_files(temp_dir, cnmops_vcf, cnvpyt
         ids = [rec.id for rec in records]
         assert len(set(ids)) == len(ids)
 
-        # All IDs should follow the format
-        assert all(id.startswith("CNV_") for id in ids)
-
-        # Verify sequential numbering
-        expected_ids = [f"CNV_{i:09d}" for i in range(6)]
-        assert sorted(ids) == sorted(expected_ids)
+        # First occurrence should preserve original ID, duplicates should have suffix
+        # cnmops_del1, cnmops_del1_1, cnmops_dup1, cnmops_dup1_1, cnvpytor_del1, cnvpytor_dup1
+        assert "cnmops_del1" in ids
+        assert "cnmops_del1_1" in ids
+        assert "cnmops_dup1" in ids
+        assert "cnmops_dup1_1" in ids
+        assert "cnvpytor_del1" in ids
+        assert "cnvpytor_dup1" in ids

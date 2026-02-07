@@ -139,8 +139,8 @@ def write_vcf_records_with_source(
     combined_header: pysam.VariantHeader,
     source_name: str,
     make_ids_unique: bool = False,
-    record_counter: int = 0,
-) -> int:
+    seen_ids: set | None = None,
+) -> set:
     """
     Write VCF records to output file with CNV_SOURCE annotation.
 
@@ -158,16 +158,18 @@ def write_vcf_records_with_source(
     source_name : str
         Source name to add to CNV_SOURCE INFO field
     make_ids_unique : bool, optional
-        If True, assign unique IDs to all records (default: False)
-    record_counter : int, optional
-        Starting counter for unique ID generation (default: 0)
+        If True, ensure all IDs are unique by appending suffixes (default: False)
+    seen_ids : set, optional
+        Set of already-seen IDs for tracking uniqueness (default: None, creates new set)
 
     Returns
     -------
-    int
-        The final record counter value after processing all records
+    set
+        The updated set of seen IDs
     """
     logger.info(f"Writing records from {source_name} VCF")
+    if seen_ids is None:
+        seen_ids = set()
 
     for record in vcf_in:
         # Clear filters - we remove filters imposed by the previous pipelines
@@ -176,17 +178,29 @@ def write_vcf_records_with_source(
         # Create new record with combined header
         new_record = VcfUtils.copy_vcf_record(record, combined_header)
 
-        # Assign unique ID if requested
+        # Ensure unique ID if requested
         if make_ids_unique:
-            new_record.id = f"CNV_{record_counter:09d}"
-            record_counter += 1
+            original_id = new_record.id
+            if original_id is None or original_id == ".":
+                # Generate ID based on position if none exists
+                original_id = f"{new_record.chrom}_{new_record.start}_{new_record.stop}"
+
+            # Make ID unique if it already exists
+            unique_id = original_id
+            suffix = 1
+            while unique_id in seen_ids:
+                unique_id = f"{original_id}_{suffix}"
+                suffix += 1
+
+            new_record.id = unique_id
+            seen_ids.add(unique_id)
 
         # Add source tag if not already present
         if "CNV_SOURCE" not in new_record.info:
             new_record.info["CNV_SOURCE"] = (source_name,)
         vcf_out.write(new_record)
 
-    return record_counter
+    return seen_ids
 
 
 def combine_vcf_headers_for_cnv(
