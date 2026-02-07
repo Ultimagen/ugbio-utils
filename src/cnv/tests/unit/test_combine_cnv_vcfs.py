@@ -339,17 +339,17 @@ def test_combine_cnv_vcfs_make_ids_unique(temp_dir, cnmops_vcf, cnvpytor_vcf, fa
 
     with pysam.VariantFile(output_vcf) as vcf:
         records = list(vcf)
-        
+
         # Should have 4 total records
         assert len(records) == 4
-        
+
         # All records should have IDs in the format CNV_000000000, CNV_000000001, etc.
         ids = [rec.id for rec in records]
         assert all(id is not None and id.startswith("CNV_") for id in ids)
-        
+
         # IDs should be unique
         assert len(set(ids)) == len(ids)
-        
+
         # IDs should be sequentially numbered (after sorting)
         expected_ids = [f"CNV_{i:09d}" for i in range(4)]
         assert sorted(ids) == sorted(expected_ids)
@@ -372,10 +372,10 @@ def test_combine_cnv_vcfs_without_make_ids_unique(temp_dir, cnmops_vcf, cnvpytor
 
     with pysam.VariantFile(output_vcf) as vcf:
         records = list(vcf)
-        
+
         # Should have 4 total records
         assert len(records) == 4
-        
+
         # Check that original IDs are preserved
         ids = [rec.id for rec in records]
         assert "cnmops_del1" in ids
@@ -402,17 +402,17 @@ def test_combine_cnv_vcfs_unique_ids_multiple_files(temp_dir, cnmops_vcf, cnvpyt
 
     with pysam.VariantFile(output_vcf) as vcf:
         records = list(vcf)
-        
+
         # Should have 6 total records (2 * 2 from cnmops + 2 from cnvpytor)
         assert len(records) == 6
-        
+
         # All IDs should be unique
         ids = [rec.id for rec in records]
         assert len(set(ids)) == len(ids)
-        
+
         # All IDs should follow the format
         assert all(id.startswith("CNV_") for id in ids)
-        
+
         # Verify sequential numbering
         expected_ids = [f"CNV_{i:09d}" for i in range(6)]
         assert sorted(ids) == sorted(expected_ids)
