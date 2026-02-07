@@ -194,6 +194,8 @@ def write_vcf_records_with_source(
 
             new_record.id = unique_id
             seen_ids.add(unique_id)
+        # Note: When make_ids_unique is False, IDs are not tracked and duplicates are allowed
+        # This preserves the original behavior where duplicate IDs may exist
 
         # Add source tag if not already present
         if "CNV_SOURCE" not in new_record.info:
