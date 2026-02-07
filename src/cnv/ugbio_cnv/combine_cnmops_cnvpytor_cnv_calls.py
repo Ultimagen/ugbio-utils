@@ -342,6 +342,7 @@ def combine_cnv_vcfs(
     fasta_index: str,
     output_vcf: str,
     output_directory: str | None = None,
+    *,
     make_ids_unique: bool = False,
 ) -> str:
     """
@@ -448,7 +449,12 @@ def combine_cnv_vcfs(
             seen_ids = set()
             for vcf_handle, (_, source_name) in zip(vcf_handles, vcf_metadata, strict=False):
                 seen_ids = write_vcf_records_with_source(
-                    vcf_handle, vcf_out, combined_header, source_name, make_ids_unique, seen_ids
+                    vcf_handle,
+                    vcf_out,
+                    combined_header,
+                    source_name,
+                    make_ids_unique=make_ids_unique,
+                    seen_ids=seen_ids,
                 )
     finally:
         # Close all VCF handles
