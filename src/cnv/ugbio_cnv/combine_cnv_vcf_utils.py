@@ -139,7 +139,7 @@ def write_vcf_records_with_source(
     combined_header: pysam.VariantHeader,
     source_name: str,
     make_ids_unique: bool = False,
-    record_counter: int | None = None,
+    record_counter: int = 0,
 ) -> int:
     """
     Write VCF records to output file with CNV_SOURCE annotation.
@@ -168,8 +168,6 @@ def write_vcf_records_with_source(
         The final record counter value after processing all records
     """
     logger.info(f"Writing records from {source_name} VCF")
-    if record_counter is None:
-        record_counter = 0
 
     for record in vcf_in:
         # Clear filters - we remove filters imposed by the previous pipelines
