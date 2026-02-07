@@ -599,7 +599,7 @@ def test_main_merge_records_calls_with_pick_best_true():
                 input_vcf=test_input_vcf,
                 output_vcf=test_output_vcf,
                 distance=test_distance,
-                do_not_merge_collapsed_filtered=True,
+                ignore_filter=False,
                 pick_best=True,
                 ignore_sv_type=True,
             )
