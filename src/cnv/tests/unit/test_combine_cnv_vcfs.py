@@ -320,3 +320,99 @@ def test_combine_cnv_vcfs_multiple_files(temp_dir, cnmops_vcf, cnvpytor_vcf, fas
 
         assert cnmops_count == 4  # 2 records * 2 files
         assert cnvpytor_count == 4  # 2 records * 2 files
+
+
+def test_combine_cnv_vcfs_make_ids_unique(temp_dir, cnmops_vcf, cnvpytor_vcf, fasta_index):
+    """Test that make_ids_unique parameter assigns unique IDs to all variants."""
+    output_vcf = os.path.join(temp_dir, "combined_unique_ids.vcf.gz")
+
+    result = combine_cnv_vcfs(
+        cnmops_vcf=[cnmops_vcf],
+        cnvpytor_vcf=[cnvpytor_vcf],
+        fasta_index=fasta_index,
+        output_vcf=output_vcf,
+        output_directory=temp_dir,
+        make_ids_unique=True,
+    )
+
+    assert os.path.exists(result)
+
+    with pysam.VariantFile(output_vcf) as vcf:
+        records = list(vcf)
+        
+        # Should have 4 total records
+        assert len(records) == 4
+        
+        # All records should have IDs in the format CNV_000000000, CNV_000000001, etc.
+        ids = [rec.id for rec in records]
+        assert all(id is not None and id.startswith("CNV_") for id in ids)
+        
+        # IDs should be unique
+        assert len(set(ids)) == len(ids)
+        
+        # IDs should be sequentially numbered (after sorting)
+        expected_ids = [f"CNV_{i:09d}" for i in range(4)]
+        assert sorted(ids) == sorted(expected_ids)
+
+
+def test_combine_cnv_vcfs_without_make_ids_unique(temp_dir, cnmops_vcf, cnvpytor_vcf, fasta_index):
+    """Test that without make_ids_unique parameter, original IDs are preserved."""
+    output_vcf = os.path.join(temp_dir, "combined_original_ids.vcf.gz")
+
+    result = combine_cnv_vcfs(
+        cnmops_vcf=[cnmops_vcf],
+        cnvpytor_vcf=[cnvpytor_vcf],
+        fasta_index=fasta_index,
+        output_vcf=output_vcf,
+        output_directory=temp_dir,
+        make_ids_unique=False,
+    )
+
+    assert os.path.exists(result)
+
+    with pysam.VariantFile(output_vcf) as vcf:
+        records = list(vcf)
+        
+        # Should have 4 total records
+        assert len(records) == 4
+        
+        # Check that original IDs are preserved
+        ids = [rec.id for rec in records]
+        assert "cnmops_del1" in ids
+        assert "cnmops_dup1" in ids
+        assert "cnvpytor_del1" in ids
+        assert "cnvpytor_dup1" in ids
+
+
+def test_combine_cnv_vcfs_unique_ids_multiple_files(temp_dir, cnmops_vcf, cnvpytor_vcf, fasta_index):
+    """Test that make_ids_unique works correctly with multiple input files."""
+    output_vcf = os.path.join(temp_dir, "combined_unique_multi.vcf.gz")
+
+    # Use the same VCF twice to simulate duplicate records
+    result = combine_cnv_vcfs(
+        cnmops_vcf=[cnmops_vcf, cnmops_vcf],
+        cnvpytor_vcf=[cnvpytor_vcf],
+        fasta_index=fasta_index,
+        output_vcf=output_vcf,
+        output_directory=temp_dir,
+        make_ids_unique=True,
+    )
+
+    assert os.path.exists(result)
+
+    with pysam.VariantFile(output_vcf) as vcf:
+        records = list(vcf)
+        
+        # Should have 6 total records (2 * 2 from cnmops + 2 from cnvpytor)
+        assert len(records) == 6
+        
+        # All IDs should be unique
+        ids = [rec.id for rec in records]
+        assert len(set(ids)) == len(ids)
+        
+        # All IDs should follow the format
+        assert all(id.startswith("CNV_") for id in ids)
+        
+        # Verify sequential numbering
+        expected_ids = [f"CNV_{i:09d}" for i in range(6)]
+        assert sorted(ids) == sorted(expected_ids)

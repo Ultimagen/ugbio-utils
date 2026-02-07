@@ -138,7 +138,9 @@ def write_vcf_records_with_source(
     vcf_out: pysam.VariantFile,
     combined_header: pysam.VariantHeader,
     source_name: str,
-) -> None:
+    make_ids_unique: bool = False,
+    record_counter: int | None = None,
+) -> int:
     """
     Write VCF records to output file with CNV_SOURCE annotation.
 
@@ -155,18 +157,38 @@ def write_vcf_records_with_source(
         Combined header for creating new records
     source_name : str
         Source name to add to CNV_SOURCE INFO field
+    make_ids_unique : bool, optional
+        If True, assign unique IDs to all records (default: False)
+    record_counter : int, optional
+        Starting counter for unique ID generation (default: 0)
+
+    Returns
+    -------
+    int
+        The final record counter value after processing all records
     """
     logger.info(f"Writing records from {source_name} VCF")
+    if record_counter is None:
+        record_counter = 0
+
     for record in vcf_in:
         # Clear filters - we remove filters imposed by the previous pipelines
         record.filter.clear()
         record.filter.add("PASS")
         # Create new record with combined header
         new_record = VcfUtils.copy_vcf_record(record, combined_header)
+
+        # Assign unique ID if requested
+        if make_ids_unique:
+            new_record.id = f"CNV_{record_counter:09d}"
+            record_counter += 1
+
         # Add source tag if not already present
         if "CNV_SOURCE" not in new_record.info:
             new_record.info["CNV_SOURCE"] = (source_name,)
         vcf_out.write(new_record)
+
+    return record_counter
 
 
 def combine_vcf_headers_for_cnv(
