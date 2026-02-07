@@ -50,6 +50,12 @@ def __parse_args_concat(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output_vcf", help="output combined VCF file", required=True, type=str)
     parser.add_argument("--fasta_index", help="fasta.fai file", required=True, type=str)
     parser.add_argument("--out_directory", help="output directory", required=False, type=str)
+    parser.add_argument(
+        "--make_ids_unique",
+        help="assign unique IDs to all variants (format: CNV_000000001, CNV_000000002, etc.)",
+        action="store_true",
+        default=False,
+    )
 
 
 def __parse_args_gaps_perc(parser: argparse.ArgumentParser) -> None:
@@ -336,6 +342,7 @@ def combine_cnv_vcfs(
     fasta_index: str,
     output_vcf: str,
     output_directory: str | None = None,
+    make_ids_unique: bool = False,
 ) -> str:
     """
     Concatenates VCF files from cn.mops and CNVpytor into a single sorted and indexed VCF.
@@ -362,6 +369,8 @@ def combine_cnv_vcfs(
         Path to the output combined VCF file (.vcf.gz)
     output_directory : str, optional
         Directory for storing temporary files
+    make_ids_unique : bool, optional
+        If True, assign unique IDs to all variants (default: False)
 
     Returns
     -------
@@ -384,7 +393,8 @@ def combine_cnv_vcfs(
     ...     cnvpytor_vcf=["cnvpytor1.vcf.gz", "cnvpytor2.vcf.gz"],
     ...     fasta_index="genome.fa.fai",
     ...     output_vcf="combined.vcf.gz",
-    ...     output_directory="/tmp/cnv_combine"
+    ...     output_directory="/tmp/cnv_combine",
+    ...     make_ids_unique=True
     ... )
     """
     # Validate that at least one VCF list is not empty
@@ -435,8 +445,11 @@ def combine_cnv_vcfs(
 
         with pysam.VariantFile(temp_combined_vcf, "w", header=combined_header) as vcf_out:
             # Write records from each VCF with appropriate source annotation
+            record_counter = 0
             for vcf_handle, (_, source_name) in zip(vcf_handles, vcf_metadata, strict=False):
-                write_vcf_records_with_source(vcf_handle, vcf_out, combined_header, source_name)
+                record_counter = write_vcf_records_with_source(
+                    vcf_handle, vcf_out, combined_header, source_name, make_ids_unique, record_counter
+                )
     finally:
         # Close all VCF handles
         for vcf_handle in vcf_handles:
@@ -489,6 +502,7 @@ def run(argv: list[str]):
             fasta_index=args.fasta_index,
             output_vcf=args.output_vcf,
             output_directory=args.out_directory,
+            make_ids_unique=args.make_ids_unique,
         )
     elif args.tool == "annotate_gaps":
         annotate_vcf_with_gap_perc(
