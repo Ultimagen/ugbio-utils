@@ -138,6 +138,7 @@ def write_vcf_records_with_source(
     vcf_out: pysam.VariantFile,
     combined_header: pysam.VariantHeader,
     source_name: str,
+    *,
     make_ids_unique: bool = False,
     seen_ids: set | None = None,
 ) -> set:

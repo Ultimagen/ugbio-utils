@@ -345,7 +345,7 @@ def test_combine_cnv_vcfs_make_ids_unique(temp_dir, cnmops_vcf, cnvpytor_vcf, fa
 
         # All records should have IDs
         ids = [rec.id for rec in records]
-        assert all(id is not None for id in ids)
+        assert all(variant_id is not None for variant_id in ids)
 
         # IDs should be unique
         assert len(set(ids)) == len(ids)
