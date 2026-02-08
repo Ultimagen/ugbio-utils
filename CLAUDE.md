@@ -77,7 +77,6 @@ uv run pytest src/core/tests/
 uv run pytest src/filtering/tests/
 uv run pytest src/cnv/tests/
 
-# All tests (excludes cnmops)
 uv run pytest --durations=0 src/ --ignore src/cnv/cnmops
 
 # Specific test file
@@ -86,6 +85,8 @@ uv run pytest src/filtering/tests/unit/test_train_models_pipeline.py -v
 # Docker-based testing
 docker run --rm -v .:/workdir <image> run_tests /workdir/src/core
 ```
+
+**Note:** Tests under `src/cnv/cnmops/` are not expected to pass and should be excluded from test runs.
 
 ### Linting & Formatting
 
@@ -101,6 +102,33 @@ uv run pre-commit run --all-files  # Run all checks
 
 ### ugbio_core - Foundation Layer
 
+### Building Docker Images
+
+Docker images can be built via GitHub Actions workflow:
+
+```bash
+# Trigger Docker build for a specific module
+gh workflow run "build-ugbio-member-docker.yml" --ref <branch-name> -f member=<module>
+
+# Examples:
+gh workflow run "build-ugbio-member-docker.yml" --ref patch-1.20.0-BIOIN-2648 -f member=cnv
+gh workflow run "build-ugbio-member-docker.yml" --ref main -f member=core
+gh workflow run "build-ugbio-member-docker.yml" --ref my-branch -f member=filtering
+
+# Check build status
+gh run list --workflow build-ugbio-member-docker.yml --limit 5
+
+# View specific run details
+gh run view <run-id>
+```
+
+**Available modules**: `core`, `cnv`, `comparison`, `featuremap`, `filtering`, `mrd`, `ppmseq`, `srsnv`, `methylation`, `single_cell`, `cloud_utils`, `omics`, `freec`
+
+**Docker registries**:
+- **AWS ECR** (internal): `337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_<module>:<tag>`
+- **Docker Hub** (public): `ultimagenomics/ugbio_<module>:<tag>`
+
+## Coding Conventions
 **Purpose:** Provides VCF processing, utilities, and infrastructure for all other modules.
 
 **Key Components:**
