@@ -24,6 +24,7 @@ from itertools import cycle
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import xgboost as xgb
 from pandas.api.types import CategoricalDtype
 from sklearn.metrics import roc_auc_score
@@ -170,6 +171,58 @@ def logit_to_prob(logit: np.ndarray, *, phred: bool = True) -> np.ndarray:
     if phred:
         logit = logit / 10.0  # convert from Phred to logit space
     return 1.0 / (1.0 + 10 ** (-logit))
+
+
+def polars_to_pandas_efficient(
+    data_frame: pl.DataFrame | pl.LazyFrame, columns: list[str], *, downcast_float: bool = False
+) -> pd.DataFrame:
+    """
+    Convert Polars DataFrame to Pandas with memory optimization.
+
+    Selects only needed columns and optionally downcasts float64 to float32.
+    Uses lazy evaluation to minimize peak memory usage.
+
+    Parameters
+    ----------
+    columns : list[str]
+        List of column names to convert.
+    downcast_float : bool, optional
+        If True, cast float64 columns to float32 before conversion
+        to reduce memory footprint (default: False).
+
+    Returns
+    -------
+    pd.DataFrame
+        Pandas DataFrame with selected columns and optional downcasting.
+    """
+    # Start with lazy frame if possible, otherwise use eager
+    if hasattr(data_frame, "lazy"):
+        df_to_convert = data_frame.lazy()
+    else:
+        df_to_convert = data_frame
+
+    # Select columns
+    df_to_convert = df_to_convert.select(columns)
+
+    if downcast_float:
+        # Build cast expressions for downcasting
+        cast_exprs = []
+        for col in columns:
+            col_dtype = data_frame[col].dtype
+            if col_dtype == pl.Float64:
+                cast_exprs.append(pl.col(col).cast(pl.Float32).alias(col))
+            else:
+                cast_exprs.append(pl.col(col))
+
+        df_to_convert = df_to_convert.select(cast_exprs)
+
+    # Collect (materialize) and convert to pandas
+    if hasattr(df_to_convert, "collect"):
+        pd_df = df_to_convert.collect().to_pandas()
+    else:
+        pd_df = df_to_convert.to_pandas()
+
+    return pd_df
 
 
 def _aggregate_probabilities_from_folds(
