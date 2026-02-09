@@ -10,6 +10,26 @@ from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
 from ugbio_core.vcfbed import vcftools
 
+# Module-level configuration for CNV INFO field aggregation
+CNV_AGGREGATION_ACTIONS = {
+    "weighted_avg": [
+        "CNMOPS_SAMPLE_MEAN",
+        "CNMOPS_SAMPLE_STDEV",
+        "CNMOPS_COHORT_MEAN",
+        "CNMOPS_COHORT_STDEV",
+        "CopyNumber",
+    ],
+    "max": [
+        "GAP_PERCENTAGE",
+        "JALIGN_DEL_SUPPORT",
+        "JALIGN_DUP_SUPPORT",
+        "JALIGN_DEL_SUPPORT_STRONG",
+        "JALIGN_DUP_SUPPORT_STRONG",
+        "TREE_SCORE",
+    ],
+    "aggregate": ["CNV_SOURCE"],
+}
+
 
 # Helper function to check and add metadata records
 def _add_metadata_records(
@@ -240,6 +260,131 @@ def cnv_vcf_to_bed(input_vcf: str, output_bed: str, *, assign_id=True) -> None:
                 bed_out.write(f"{record.contig}\t{record.start}\t{record.stop}\n")
 
 
+def _prepare_update_dataframe(removed_vcf: str, aggregation_fields: list[str], *, ignore_filter: bool) -> pd.DataFrame:
+    """
+    Load and prepare dataframe of collapsed variants for aggregation.
+
+    Parameters
+    ----------
+    removed_vcf : str
+        Path to the VCF file containing removed/collapsed variants
+    aggregation_fields : list[str]
+        List of INFO field names to include in the dataframe
+    ignore_filter : bool
+        Whether to include filtered variants in the update dataframe
+
+    Returns
+    -------
+    pd.DataFrame
+        Filtered dataframe with matchid, pos, end columns ready for aggregation
+    """
+    update_df = vcftools.get_vcf_df(
+        str(removed_vcf), custom_info_fields=aggregation_fields + ["SVLEN", "MatchId"]
+    ).sort_index()
+
+    update_df["matchid"] = update_df["matchid"].apply(lambda x: x[0]).astype(float)
+    update_df["end"] = update_df["pos"] + update_df["svlen"].apply(lambda x: x[0]) - 1
+
+    # When ignore_filter=False, exclude filtered variants from aggregation/boundary adjustment.
+    # Treat NaN, empty string, ".", and "PASS" as not filtered, to match
+    # _remove_overlapping_filtered_variants() behavior.
+    if not ignore_filter:
+        unselect = (
+            update_df["filter"].notna()
+            & (update_df["filter"] != "PASS")
+            & (update_df["filter"] != "")
+            & (update_df["filter"] != ".")
+        )
+        update_df = update_df.loc[~unselect]
+
+    return update_df
+
+
+def _aggregate_record_info_fields(
+    record: pysam.VariantRecord,
+    update_records: pd.DataFrame,
+    aggregation_actions: dict[str, list[str]],
+    header: pysam.VariantHeader,
+) -> None:
+    """
+    Aggregate INFO fields for a single record based on collapsed variants.
+
+    Modifies the record in-place by:
+    1. Updating start/stop boundaries to span all collapsed variants
+    2. Aggregating INFO field values using specified actions
+    3. Updating SVLEN based on new boundaries
+    4. Removing collapse metadata fields
+
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        The variant record to update
+    update_records : pd.DataFrame
+        Dataframe containing collapsed variants for this record
+    aggregation_actions : dict[str, list[str]]
+        Dictionary mapping aggregation action to list of INFO field names
+    header : pysam.VariantHeader
+        VCF header containing INFO field definitions
+    """
+    # Update boundaries to span all collapsed variants
+    record.start = min(update_records["pos"].min(), record.start)
+    record.stop = max(update_records["end"].max(), record.stop)
+
+    # Aggregate INFO fields based on defined actions
+    for action, fields in aggregation_actions.items():
+        for field in fields:
+            if field in header.info:
+                _value_aggregator(
+                    record,
+                    update_records,
+                    field,
+                    action,
+                    header.info[field].number,
+                    header.info[field].type,
+                )
+
+    # Update SVLEN to match new boundaries
+    record.info["SVLEN"] = (record.stop - record.start,)
+
+    # Clean up collapse metadata fields
+    collapse_info_fields = ["CollapseId", "NumCollapsed", "NumConsolidated"]
+    for field_name in collapse_info_fields:
+        if field_name in record.info:
+            del record.info[field_name]
+
+
+def _aggregate_collapsed_vcf(
+    input_vcf_path: str,
+    output_vcf_path: str,
+    update_df: pd.DataFrame,
+    aggregation_actions: dict[str, list[str]],
+) -> None:
+    """
+    Read collapsed VCF, aggregate INFO fields, and write to output.
+
+    Parameters
+    ----------
+    input_vcf_path : str
+        Path to the collapsed VCF file to read
+    output_vcf_path : str
+        Path where aggregated VCF will be written
+    update_df : pd.DataFrame
+        Dataframe containing collapsed variant information for aggregation
+    aggregation_actions : dict[str, list[str]]
+        Dictionary mapping aggregation action to list of INFO field names
+    """
+    with pysam.VariantFile(input_vcf_path) as vcf_in:
+        header = vcf_in.header
+        with pysam.VariantFile(output_vcf_path, "w", header=header) as vcf_out:
+            for record in vcf_in:
+                if "CollapseId" in record.info:
+                    cid = float(record.info["CollapseId"])
+                    update_records = update_df[update_df["matchid"] == cid]
+                    if not update_records.empty:
+                        _aggregate_record_info_fields(record, update_records, aggregation_actions, header)
+                vcf_out.write(record)
+
+
 def merge_cnvs_in_vcf(
     input_vcf: str,
     output_vcf: str,
@@ -252,6 +397,25 @@ def merge_cnvs_in_vcf(
     """
     Merge CNV variants in a VCF file that are within a specified distance.
 
+    This function performs a two-stage merge process:
+    1. Collapse overlapping variants using VcfUtils.collapse_vcf, which groups variants
+       within the specified distance into single representative records.
+    2. Aggregate INFO fields from collapsed variants using weighted averaging (for means/stdevs),
+       max (for quality/support scores), or concatenation (for sources).
+    3. Adjust variant boundaries based on the minimum start and maximum end positions
+       of all variants in each collapsed group.
+
+    Variants are considered for merging based on:
+    - Reference distance: Variants within `distance` bp are candidates for merging
+    - SV type matching: Unless `ignore_sv_type=True`, only variants with the same SVTYPE merge
+    - Filter status: When `ignore_filter=False`, only PASS variants participate in collapsing
+      and aggregation. Filtered variants overlapping with PASS variants are removed in a
+      second-stage filtering step.
+
+    When `ignore_filter=False`, the function performs an additional filtering pass to remove
+    any filtered variants that overlap with PASS variants, ensuring that high-confidence
+    calls take precedence over low-confidence calls.
+
     Parameters
     ----------
     input_vcf : str
@@ -263,7 +427,10 @@ def merge_cnvs_in_vcf(
     ignore_sv_type : bool, optional
         Whether to ignore SVTYPE when collapsing variants, by default False.
     ignore_filter: bool, optional
-        Whether to ignore FILTER status when collapsing variants, by default True.
+        Whether to ignore FILTER status when collapsing and aggregating variants, by default True.
+        When False, filtered variants are excluded from both the initial collapse and from
+        aggregation/boundary adjustments. Filtered variants overlapping with PASS variants
+        are also removed in a second-stage filtering step.
     pick_best : bool, optional
         Whether to pick the best variant (by QUAL) among those being merged (or the first: False), by default False.
     Returns
@@ -271,28 +438,10 @@ def merge_cnvs_in_vcf(
     None
         Writes the merged VCF to output_vcf and creates an index.
     """
-
-    aggregation_actions = {
-        "weighted_avg": [
-            "CNMOPS_SAMPLE_MEAN",
-            "CNMOPS_SAMPLE_STDEV",
-            "CNMOPS_COHORT_MEAN",
-            "CNMOPS_COHORT_STDEV",
-            "CopyNumber",
-        ],
-        "max": [
-            "GAP_PERCENTAGE",
-            "JALIGN_DEL_SUPPORT",
-            "JALIGN_DUP_SUPPORT",
-            "JALIGN_DEL_SUPPORT_STRONG",
-            "JALIGN_DUP_SUPPORT_STRONG",
-            "TREE_SCORE",
-        ],
-        "aggregate": ["CNV_SOURCE"],
-    }
-
+    # Stage 1: Collapse overlapping variants
     output_vcf_collapse = output_vcf + ".collapse.tmp.vcf.gz"
     temporary_files = [output_vcf_collapse]
+
     vu = VcfUtils()
     removed_vcf = vu.collapse_vcf(
         vcf=input_vcf,
@@ -306,67 +455,45 @@ def merge_cnvs_in_vcf(
         pick_best=pick_best,
         erase_removed=False,
     )
+    temporary_files.extend([str(removed_vcf), output_vcf_collapse])
 
-    temporary_files.append(str(removed_vcf))
-    temporary_files.append(output_vcf_collapse)
-    all_fields = sum(aggregation_actions.values(), [])
+    # Stage 2: Prepare dataframe and aggregate INFO fields
+    all_fields = sum(CNV_AGGREGATION_ACTIONS.values(), [])
+    update_df = _prepare_update_dataframe(removed_vcf, all_fields, ignore_filter=ignore_filter)
 
-    update_df = vcftools.get_vcf_df(str(removed_vcf), custom_info_fields=all_fields + ["SVLEN", "MatchId"]).sort_index()
-    update_df["matchid"] = update_df["matchid"].apply(lambda x: x[0]).astype(float)
-    update_df["end"] = update_df["pos"] + update_df["svlen"].apply(lambda x: x[0]) - 1
+    output_vcf_unsorted = output_vcf.replace(".vcf.gz", ".unsorted.vcf.gz")
+    temporary_files.append(output_vcf_unsorted)
 
-    unselect = (update_df["filter"] != "PASS") & (update_df["filter"] != "") & (update_df["filter"] != ".")
-    update_df = update_df.loc[~unselect]
-    output_vcf_mrg_unsort = output_vcf.replace(".vcf.gz", ".unsorted.vcf.gz")
-    temporary_files.append(output_vcf_mrg_unsort)
-    with pysam.VariantFile(output_vcf_collapse) as vcf_in:
-        hdr = vcf_in.header
-        with pysam.VariantFile(output_vcf_mrg_unsort, "w", header=hdr) as vcf_out:
-            for record in vcf_in:
-                if "CollapseId" in record.info:
-                    cid = float(record.info["CollapseId"])
-                    update_records = update_df[update_df["matchid"] == cid]
-                    if not update_records.empty:
-                        record.start = min(update_records["pos"].min(), record.start)
-                        record.stop = max(update_records["end"].max(), record.stop)
+    _aggregate_collapsed_vcf(output_vcf_collapse, output_vcf_unsorted, update_df, CNV_AGGREGATION_ACTIONS)
 
-                        for action, fields in aggregation_actions.items():
-                            for field in fields:
-                                if field in hdr.info:
-                                    _value_aggregator(
-                                        record,
-                                        update_records,
-                                        field,
-                                        action,
-                                        hdr.info[field].number,
-                                        hdr.info[field].type,
-                                    )
-
-                    record.info["SVLEN"] = (record.stop - record.start,)
-                collapse_info_fields = ["CollapseId", "NumCollapsed", "NumConsolidated"]
-                for c in collapse_info_fields:
-                    if c in record.info:
-                        del record.info[c]
-                vcf_out.write(record)
-
-    # If we did not ignore filter, overlapping low confidence variants were not collapsed and here we remove them
+    # Stage 3: Remove overlapping filtered variants (if applicable)
     if not ignore_filter:
-        output_vcf_mrg_unsort = _remove_overlapping_filtered_variants(
+        output_vcf_unsorted = _remove_overlapping_filtered_variants(
             input_vcf,
-            output_vcf_mrg_unsort,
+            output_vcf_unsorted,
             output_vcf,
             distance=distance,
             ignore_sv_type=ignore_sv_type,
             pick_best=pick_best,
         )
-        temporary_files.extend([output_vcf_mrg_unsort])
-    vu.sort_vcf(output_vcf_mrg_unsort, output_vcf)
+        temporary_files.append(output_vcf_unsorted)
+
+    # Stage 4: Sort and cleanup
+    vu.sort_vcf(output_vcf_unsorted, output_vcf)
     mu.cleanup_temp_files(temporary_files)
 
 
 def _remove_overlapping_filtered_variants(
     original_vcf: str, merged_vcf: str, output_vcf: str, distance: int, *, ignore_sv_type: bool, pick_best: bool
 ) -> str:
+    """
+    Remove merged records that overlap variants filtered by a second pass.
+
+    This function performs a "second-stage" filtering step after an initial
+    merge/collapse of CNV calls. It re-runs `VcfUtils.collapse_vcf` on the
+    original input VCF to identify overlapping variants and their filters,
+    then removes the corresponding records from the already merged VCF.
+    """
     output_vcf_collapse = output_vcf + ".collapse.tmp.2.vcf.gz"
     vu = VcfUtils()
     removed_vcf = vu.collapse_vcf(
@@ -389,7 +516,9 @@ def _remove_overlapping_filtered_variants(
         | (removed_df["filter"] == "PASS")
     )
     # TODO [BIOIN-2653]: make sure the IDs are unique at this point, so no need to do complicated ID
-    remove_ids = set(removed_df.loc[filtered_out][["id", "chrom", "pos"]].apply(lambda x: tuple(x), axis=1))
+    # handling. Use itertuples for efficiency on large DataFrames instead of DataFrame.apply(axis=1).
+    filtered_id_pos = removed_df.loc[filtered_out, ["id", "chrom", "pos"]]
+    remove_ids = set(filtered_id_pos.itertuples(index=False, name=None))
     with pysam.VariantFile(merged_vcf) as vcf_in:
         hdr = vcf_in.header
         with pysam.VariantFile(output_vcf_collapse, "w", header=hdr) as vcf_out:
