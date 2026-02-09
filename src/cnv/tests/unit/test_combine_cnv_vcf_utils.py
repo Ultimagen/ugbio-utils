@@ -358,7 +358,7 @@ def cnv_vcf_header():
     header.add_line('##INFO=<ID=END,Number=1,Type=Integer,Description="End position">')
     header.add_line('##INFO=<ID=SVLEN,Number=.,Type=Integer,Description="SV length">')
     header.add_line('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="SV type">')
-    header.add_line('##INFO=<ID=CollapseId,Number=1,Type=Integer,Description="Collapse ID">')
+    header.add_line('##INFO=<ID=CollapseId,Number=1,Type=String,Description="Truvari collapse ID">')
     header.add_line('##INFO=<ID=CNMOPS_SAMPLE_MEAN,Number=1,Type=Float,Description="Mean coverage">')
     header.add_line('##INFO=<ID=CNMOPS_SAMPLE_STDEV,Number=1,Type=Float,Description="Coverage stdev">')
     header.add_line('##INFO=<ID=CNMOPS_COHORT_MEAN,Number=1,Type=Float,Description="Cohort mean">')
@@ -475,6 +475,7 @@ class TestMergeCnvsInVcf:
                 "chrom": ["chr1", "chr1"],
                 "pos": [1000, 2500],
                 "svlen": [(1000,), (1000,)],
+                "filter": ["PASS", "PASS"],
                 "matchid": [(1.0,), (1.0,)],  # Same matchid means they were collapsed together
                 "cnmops_sample_mean": [10.5, 11.0],
                 "cnmops_sample_stdev": [2.1, 2.3],
@@ -493,7 +494,7 @@ class TestMergeCnvsInVcf:
             record.pos = 1000
             record.stop = 3500
             record.alleles = ("N", "<DEL>")
-            record.info["CollapseId"] = 1.0
+            record.info["CollapseId"] = "1"
             record.info["SVLEN"] = (2500,)
             record.info["SVTYPE"] = "DEL"
             record.info["CNMOPS_SAMPLE_MEAN"] = 10.5
@@ -597,6 +598,7 @@ class TestMergeCnvsInVcf:
                 "chrom": ["chr1", "chr1"],
                 "pos": [1000, 2500],
                 "svlen": [(1000,), (2000,)],
+                "filter": ["PASS", "PASS"],
                 "matchid": [(1.0,), (1.0,)],
                 "cnmops_sample_mean": [10.0, 20.0],
                 "cnmops_sample_stdev": [1.0, 2.0],
@@ -614,9 +616,10 @@ class TestMergeCnvsInVcf:
             record.pos = 1000
             record.stop = 3500
             record.alleles = ("N", "<DEL>")
-            record.info["CollapseId"] = 1.0
+            record.info["CollapseId"] = "1"
             record.info["SVLEN"] = (1500,)  # Original merged length
             record.info["SVTYPE"] = "DEL"
+            record.filter.add("PASS")
             record.info["CNMOPS_SAMPLE_MEAN"] = 15.0  # Will be replaced by weighted avg
             record.info["CNMOPS_SAMPLE_STDEV"] = 1.5
             record.info["CNMOPS_COHORT_MEAN"] = 20.0
@@ -658,6 +661,463 @@ class TestMergeCnvsInVcf:
             # Verify END was updated to max of merged records
             # max end = 4499 (from pos=2500 + svlen=2000 - 1)
             assert record.stop == 4499
+
+
+def make_cnv_record(vcf, contig, pos, stop, record_id, svtype="DEL", svlen=None, qual=50.0, filter_val="PASS", **info):
+    """
+    Helper function to create CNV records with minimal boilerplate.
+
+    Parameters
+    ----------
+    vcf : pysam.VariantFile
+        The VCF file object to create the record from
+    contig : str
+        Chromosome name
+    pos : int
+        Start position (1-based)
+    stop : int
+        Stop position (1-based)
+    record_id : str
+        Variant ID
+    svtype : str, optional
+        SV type (DEL, DUP, etc.), by default "DEL"
+    svlen : int, optional
+        SV length, calculated from stop-pos if not provided
+    qual : float, optional
+        Quality score, by default 50.0
+    filter_val : str, optional
+        Filter value ("PASS", "LowQual", etc.), by default "PASS"
+    **info : dict
+        Additional INFO fields (e.g., CNMOPS_SAMPLE_MEAN=2.5)
+
+    Returns
+    -------
+    pysam.VariantRecord
+        The created variant record
+    """
+    record = vcf.new_record()
+    record.contig = contig
+    record.pos = pos
+    record.stop = stop
+    record.id = record_id
+    record.alleles = ("N", f"<{svtype}>")
+    record.info["SVTYPE"] = svtype
+    record.info["SVLEN"] = (svlen if svlen is not None else stop - pos,)
+    record.qual = qual
+    if filter_val:
+        record.filter.add(filter_val)
+    record.samples["test_sample"]["GT"] = (0, 1)
+
+    # Add any additional INFO fields
+    for key, value in info.items():
+        record.info[key] = value
+
+    return record
+
+
+class TestMergeCnvsInVcfTwoStage:
+    """Integration tests for two-stage merge with ignore_filter=False."""
+
+    def test_two_stage_pass_variants_only(self, tmp_path, cnv_vcf_header):
+        """Test two-stage merge with only PASS variants."""
+        input_vcf = tmp_path / "input.vcf.gz"
+        output_vcf = tmp_path / "output.vcf.gz"
+
+        # Create input VCF with 3 overlapping PASS DEL variants
+        with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
+            vcf.write(make_cnv_record(vcf, "chr1", 1000, 2000, "CNV1", qual=50.0, CNMOPS_SAMPLE_MEAN=2.5))
+            vcf.write(make_cnv_record(vcf, "chr1", 1500, 2500, "CNV2", qual=45.0, CNMOPS_SAMPLE_MEAN=3.0))
+            vcf.write(make_cnv_record(vcf, "chr1", 2000, 3000, "CNV3", qual=40.0, CNMOPS_SAMPLE_MEAN=2.8))
+
+        # Index the VCF file
+        pysam.tabix_index(str(input_vcf), preset="vcf", force=True)
+
+        # Execute with ignore_filter=False
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1000, ignore_filter=False)
+
+        # Verify: 3 PASS variants should merge into 1
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = list(vcf)
+            assert len(records) == 1
+            assert records[0].filter.keys() == ["PASS"]
+            # Verify aggregation occurred
+            assert "CNMOPS_SAMPLE_MEAN" in records[0].info
+
+    def test_two_stage_filtered_variants_only(self, tmp_path, cnv_vcf_header):
+        """Test two-stage merge with only filtered variants - only first variant kept."""
+        input_vcf = tmp_path / "input.vcf.gz"
+        output_vcf = tmp_path / "output.vcf.gz"
+
+        # Add FILTER line to header
+        cnv_vcf_header.add_line('##FILTER=<ID=LowQual,Description="Low quality">')
+
+        # Create input VCF with 3 overlapping filtered variants
+        with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
+            vcf.write(make_cnv_record(vcf, "chr1", 1000, 2000, "CNV1", svtype="DUP", qual=15.0, filter_val="LowQual"))
+            vcf.write(make_cnv_record(vcf, "chr1", 1500, 2500, "CNV2", svtype="DUP", qual=12.0, filter_val="LowQual"))
+            vcf.write(make_cnv_record(vcf, "chr1", 2000, 3000, "CNV3", svtype="DUP", qual=10.0, filter_val="LowQual"))
+
+        # Index the VCF file
+        pysam.tabix_index(str(input_vcf), preset="vcf", force=True)
+
+        # Execute with ignore_filter=False
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1000, ignore_filter=False)
+
+        # Verify: Only first variant should remain (merged)
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = list(vcf)
+            assert len(records) == 1
+            assert records[0].filter.keys() == ["LowQual"]
+
+    def test_two_stage_mixed_non_overlapping(self, tmp_path, cnv_vcf_header):
+        """Test two-stage merge with PASS and non-overlapping filtered variants."""
+        input_vcf = tmp_path / "input.vcf.gz"
+        output_vcf = tmp_path / "output.vcf.gz"
+
+        # Add FILTER line to header
+        cnv_vcf_header.add_line('##FILTER=<ID=LowQual,Description="Low quality">')
+
+        # Create input VCF
+        with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
+            # PASS variant 1
+            record1 = vcf.new_record()
+            record1.contig = "chr1"
+            record1.pos = 1000
+            record1.stop = 2000
+            record1.id = "CNV1"
+            record1.alleles = ("N", "<DEL>")
+            record1.info["SVLEN"] = (1000,)
+            record1.info["SVTYPE"] = "DEL"
+            record1.qual = 50.0
+            record1.filter.add("PASS")
+            record1.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record1)
+
+            # PASS variant 2 (overlapping with variant 1)
+            record2 = vcf.new_record()
+            record2.contig = "chr1"
+            record2.pos = 1500
+            record2.stop = 2500
+            record2.id = "CNV2"
+            record2.alleles = ("N", "<DEL>")
+            record2.info["SVLEN"] = (1000,)
+            record2.info["SVTYPE"] = "DEL"
+            record2.qual = 45.0
+            record2.filter.add("PASS")
+            record2.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record2)
+
+            # Filtered variant (far away, distance > 1000)
+            record3 = vcf.new_record()
+            record3.contig = "chr1"
+            record3.pos = 10000
+            record3.stop = 11000
+            record3.id = "CNV3"
+            record3.alleles = ("N", "<DEL>")
+            record3.info["SVLEN"] = (1000,)
+            record3.info["SVTYPE"] = "DEL"
+            record3.qual = 20.0
+            record3.filter.add("LowQual")
+            record3.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record3)
+
+        # Index the VCF file
+        pysam.tabix_index(str(input_vcf), preset="vcf", force=True)
+
+        # Execute with ignore_filter=False
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1000, ignore_filter=False)
+
+        # Verify: 2 records (1 merged PASS, 1 filtered preserved)
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = list(vcf)
+            assert len(records) == 2
+            # Check we have one PASS and one filtered
+            filters = [rec.filter.keys() for rec in records]
+            assert ["PASS"] in filters
+            assert ["LowQual"] in filters
+
+    def test_two_stage_overlapping_filtered_removed(self, tmp_path, cnv_vcf_header):
+        """Test that overlapping filtered variants with PASS are removed (BIOIN-2648 core)."""
+        input_vcf = tmp_path / "input.vcf.gz"
+        output_vcf = tmp_path / "output.vcf.gz"
+
+        # Add FILTER line to header
+        cnv_vcf_header.add_line('##FILTER=<ID=LowQual,Description="Low quality">')
+
+        # Create input VCF with overlapping PASS and filtered
+        with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
+            vcf.write(make_cnv_record(vcf, "chr1", 1000, 2000, "CNV1", qual=50.0))
+            vcf.write(make_cnv_record(vcf, "chr1", 1500, 2500, "CNV2", qual=20.0, filter_val="LowQual"))
+
+        # Index the VCF file
+        pysam.tabix_index(str(input_vcf), preset="vcf", force=True)
+
+        # Execute with ignore_filter=False
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1000, ignore_filter=False)
+
+        # Verify: Only PASS variant should be in output (filtered removed)
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = list(vcf)
+            assert len(records) == 1
+            assert records[0].filter.keys() == ["PASS"]
+
+    def test_two_stage_multiple_filtered_one_pass(self, tmp_path, cnv_vcf_header):
+        """Test multiple filtered variants overlapping with one PASS."""
+        input_vcf = tmp_path / "input.vcf.gz"
+        output_vcf = tmp_path / "output.vcf.gz"
+
+        # Add FILTER lines to header
+        cnv_vcf_header.add_line('##FILTER=<ID=LowQual,Description="Low quality">')
+        cnv_vcf_header.add_line('##FILTER=<ID=HighCov,Description="High coverage">')
+
+        # Create input VCF
+        with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
+            # PASS variant
+            record1 = vcf.new_record()
+            record1.contig = "chr1"
+            record1.pos = 1000
+            record1.stop = 2000
+            record1.id = "CNV1"
+            record1.alleles = ("N", "<DEL>")
+            record1.info["SVLEN"] = (1000,)
+            record1.info["SVTYPE"] = "DEL"
+            record1.qual = 50.0
+            record1.filter.add("PASS")
+            record1.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record1)
+
+            # Filtered variant 1 overlapping
+            record2 = vcf.new_record()
+            record2.contig = "chr1"
+            record2.pos = 1200
+            record2.stop = 2200
+            record2.id = "CNV2"
+            record2.alleles = ("N", "<DEL>")
+            record2.info["SVLEN"] = (1000,)
+            record2.info["SVTYPE"] = "DEL"
+            record2.qual = 20.0
+            record2.filter.add("LowQual")
+            record2.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record2)
+
+            # Filtered variant 3 overlapping (position 1400)
+            record4 = vcf.new_record()
+            record4.contig = "chr1"
+            record4.pos = 1400
+            record4.stop = 1900
+            record4.id = "CNV4"
+            record4.alleles = ("N", "<DEL>")
+            record4.info["SVLEN"] = (500,)
+            record4.info["SVTYPE"] = "DEL"
+            record4.qual = 18.0
+            record4.filter.add("LowQual")
+            record4.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record4)
+
+            # Filtered variant 2 overlapping (position 1800)
+            record3 = vcf.new_record()
+            record3.contig = "chr1"
+            record3.pos = 1800
+            record3.stop = 2800
+            record3.id = "CNV3"
+            record3.alleles = ("N", "<DEL>")
+            record3.info["SVLEN"] = (1000,)
+            record3.info["SVTYPE"] = "DEL"
+            record3.qual = 15.0
+            record3.filter.add("HighCov")
+            record3.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record3)
+
+        # Index the VCF file
+        pysam.tabix_index(str(input_vcf), preset="vcf", force=True)
+
+        # Execute with ignore_filter=False
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1000, ignore_filter=False)
+
+        # Verify: Only PASS should remain (all filtered removed)
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = list(vcf)
+            assert len(records) == 1
+            assert records[0].filter.keys() == ["PASS"]
+
+    def test_two_stage_filtered_preserved(self, tmp_path, cnv_vcf_header):
+        """Test that non-overlapping filtered variants are preserved."""
+        input_vcf = tmp_path / "input.vcf.gz"
+        output_vcf = tmp_path / "output.vcf.gz"
+
+        # Add FILTER line to header
+        cnv_vcf_header.add_line('##FILTER=<ID=LowQual,Description="Low quality">')
+
+        # Create input VCF
+        with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
+            # PASS variant 1
+            record1 = vcf.new_record()
+            record1.contig = "chr1"
+            record1.pos = 1000
+            record1.stop = 2000
+            record1.id = "CNV1"
+            record1.alleles = ("N", "<DEL>")
+            record1.info["SVLEN"] = (1000,)
+            record1.info["SVTYPE"] = "DEL"
+            record1.qual = 50.0
+            record1.filter.add("PASS")
+            record1.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record1)
+
+            # PASS variant 2 (overlapping with variant 1)
+            record2 = vcf.new_record()
+            record2.contig = "chr1"
+            record2.pos = 1500
+            record2.stop = 2500
+            record2.id = "CNV2"
+            record2.alleles = ("N", "<DEL>")
+            record2.info["SVLEN"] = (1000,)
+            record2.info["SVTYPE"] = "DEL"
+            record2.qual = 45.0
+            record2.filter.add("PASS")
+            record2.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record2)
+
+            # Filtered variant (far away - should be preserved)
+            record3 = vcf.new_record()
+            record3.contig = "chr1"
+            record3.pos = 5000
+            record3.stop = 6000
+            record3.id = "CNV3"
+            record3.alleles = ("N", "<DEL>")
+            record3.info["SVLEN"] = (1000,)
+            record3.info["SVTYPE"] = "DEL"
+            record3.qual = 20.0
+            record3.filter.add("LowQual")
+            record3.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record3)
+
+        # Index the VCF file
+        pysam.tabix_index(str(input_vcf), preset="vcf", force=True)
+
+        # Execute with ignore_filter=False
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1000, ignore_filter=False)
+
+        # Verify: 2 records (1 merged PASS, 1 filtered preserved)
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = list(vcf)
+            assert len(records) == 2
+            # Check filters
+            filters = [rec.filter.keys() for rec in records]
+            assert ["PASS"] in filters
+            assert ["LowQual"] in filters
+            # Verify the filtered record is at position 5000
+            filtered_record = [rec for rec in records if rec.filter.keys() == ["LowQual"]][0]
+            assert filtered_record.pos == 5000
+
+    def test_two_stage_empty_vcf(self, tmp_path, cnv_vcf_header):
+        """Test two-stage merge with empty VCF."""
+        input_vcf = tmp_path / "input.vcf.gz"
+        output_vcf = tmp_path / "output.vcf.gz"
+
+        # Create empty VCF (header only)
+        with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
+            pass  # No records
+
+        # Index the VCF file
+        pysam.tabix_index(str(input_vcf), preset="vcf", force=True)
+
+        # Execute with ignore_filter=False
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1000, ignore_filter=False)
+
+        # Verify: Output should also be empty
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = list(vcf)
+            assert len(records) == 0
+
+    def test_two_stage_same_id_different_positions_not_filtered(self, tmp_path, cnv_vcf_header):
+        """Test that CNVs with same ID but different positions are not incorrectly filtered (BIOIN-2648).
+
+        This is a regression test for a bug where variants were incorrectly removed based on ID alone
+        without considering position. The fix uses (id, chrom, pos) tuple instead of just id.
+        """
+        input_vcf = tmp_path / "input.vcf.gz"
+        output_vcf = tmp_path / "output.vcf.gz"
+
+        # Add FILTER line to header
+        cnv_vcf_header.add_line('##FILTER=<ID=LowQual,Description="Low quality">')
+
+        # Create input VCF with two CNVs that have the same ID but different positions
+        with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
+            # PASS variant at position 1000
+            record1 = vcf.new_record()
+            record1.contig = "chr1"
+            record1.pos = 1000
+            record1.stop = 2000
+            record1.id = "CNV_000000001"  # Same ID
+            record1.alleles = ("N", "<DEL>")
+            record1.info["SVLEN"] = (1000,)
+            record1.info["SVTYPE"] = "DEL"
+            record1.qual = 50.0
+            record1.filter.add("PASS")
+            record1.samples["test_sample"]["GT"] = (0, 1)
+            record1.samples["test_sample"]["CN"] = 1.0
+            vcf.write(record1)
+
+            # Filtered variant at a different position with same ID
+            record2 = vcf.new_record()
+            record2.contig = "chr1"
+            record2.pos = 5000
+            record2.stop = 6000
+            record2.id = "CNV_000000001"  # Same ID as record1
+            record2.alleles = ("N", "<DEL>")
+            record2.info["SVLEN"] = (1000,)
+            record2.info["SVTYPE"] = "DEL"
+            record2.qual = 15.0
+            record2.filter.add("LowQual")
+            record2.samples["test_sample"]["GT"] = (0, 1)
+            record2.samples["test_sample"]["CN"] = 1.0
+            vcf.write(record2)
+
+            # PASS variant at yet another position with same ID
+            record3 = vcf.new_record()
+            record3.contig = "chr1"
+            record3.pos = 10000
+            record3.stop = 11000
+            record3.id = "CNV_000000001"  # Same ID again
+            record3.alleles = ("N", "<DUP>")
+            record3.info["SVLEN"] = (1000,)
+            record3.info["SVTYPE"] = "DUP"
+            record3.qual = 60.0
+            record3.filter.add("PASS")
+            record3.samples["test_sample"]["GT"] = (0, 1)
+            record3.samples["test_sample"]["CN"] = 3.0
+            vcf.write(record3)
+
+        # Index the VCF file
+        pysam.tabix_index(str(input_vcf), preset="vcf", force=True)
+
+        # Execute with ignore_filter=False
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1000, ignore_filter=False)
+
+        # Verify: All 3 records should be in output (2 PASS, 1 filtered)
+        # The filtered one should NOT be removed just because it shares the same ID
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = list(vcf)
+            assert len(records) == 3, f"Expected 3 records, got {len(records)}"
+
+            # Verify we have the correct positions
+            positions = sorted([rec.pos for rec in records])
+            assert positions == [1000, 5000, 10000], f"Expected positions [1000, 5000, 10000], got {positions}"
+
+            # Verify filters: 2 PASS, 1 LowQual
+            filters = [rec.filter.keys() for rec in records]
+            pass_count = sum(1 for f in filters if f == ["PASS"])
+            lowqual_count = sum(1 for f in filters if f == ["LowQual"])
+            assert pass_count == 2, f"Expected 2 PASS records, got {pass_count}"
+            assert lowqual_count == 1, f"Expected 1 LowQual record, got {lowqual_count}"
+
+            # Verify the filtered record is at the correct position
+            filtered_records = [rec for rec in records if rec.filter.keys() == ["LowQual"]]
+            assert len(filtered_records) == 1
+            assert (
+                filtered_records[0].pos == 5000
+            ), f"Expected filtered record at pos 5000, got {filtered_records[0].pos}"
 
 
 class TestMergeCnvsInVcfIntegration:
