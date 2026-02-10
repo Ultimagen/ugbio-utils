@@ -553,15 +553,15 @@ def _cast_expr(col: str, meta: dict) -> pl.Expr:
     2. fills remaining nulls
     3. casts to the final dtype
     """
-    base = pl.when(pl.col(col).cast(pl.Utf8).is_in(["", "."])).then(None).otherwise(pl.col(col))
+    base = pl.when(pl.col(col).cast(pl.Utf8, strict=False).is_in(["", "."])).then(None).otherwise(pl.col(col))
 
     # ---- categorical handling -------------------------------------------
     if meta["cat"]:
         cats = meta["cat"] + ([] if "" in meta["cat"] else [""])
         return base.fill_null(value="").cast(pl.Enum(cats), strict=True).alias(col)
-    elif meta["type"] in (_POLARS_DTYPE["Integer"], _POLARS_DTYPE["Float"]):
+    elif meta["type"] in ("Integer", "Float"):
         return base.fill_null(value=0).cast(_POLARS_DTYPE[meta["type"]], strict=True).alias(col)
-    elif meta["type"] == _POLARS_DTYPE["Flag"]:
+    elif meta["type"] == "Flag":
         return base.fill_null(value=False).cast(pl.Boolean, strict=True).alias(col)
 
     # ---- default (Utf8) --------------------------------------------------
