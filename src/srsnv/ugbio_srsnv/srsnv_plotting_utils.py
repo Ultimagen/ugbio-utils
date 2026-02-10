@@ -2240,8 +2240,9 @@ class SRSNVReport:
         if not ppmseq_tags_in_data:
             data_df_tp[start_tag_col] = np.nan
             data_df_tp[end_tag_col] = np.nan
-        if data_df_tp[start_tag_col].isna().any() or data_df_tp[end_tag_col].isna().any():
-            data_df_tp = data_df_tp.astype({start_tag_col: str, end_tag_col: str})
+        # Convert categorical columns to string to ensure all values are preserved in groupby/unstack
+        # Categorical dtypes with limited categories can cause missing values in the output
+        data_df_tp = data_df_tp.astype({start_tag_col: str, end_tag_col: str})
         ppmseq_category_quality_table = (
             data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)[QUAL].median().unstack()  # noqa PD010
         )
