@@ -1235,31 +1235,9 @@ class TestMergeCnvsInVcfTwoStage:
         pysam.tabix_index(str(input_vcf), preset="vcf", force=True)
 
         # Execute with ignore_filter=False
-        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1000, ignore_filter=False)
-
-        # Verify: All 3 records should be in output (2 PASS, 1 filtered)
-        # The filtered one should NOT be removed just because it shares the same ID
-        with pysam.VariantFile(str(output_vcf)) as vcf:
-            records = list(vcf)
-            assert len(records) == 3, f"Expected 3 records, got {len(records)}"
-
-            # Verify we have the correct positions
-            positions = sorted([rec.pos for rec in records])
-            assert positions == [1000, 5000, 10000], f"Expected positions [1000, 5000, 10000], got {positions}"
-
-            # Verify filters: 2 PASS, 1 LowQual
-            filters = [rec.filter.keys() for rec in records]
-            pass_count = sum(1 for f in filters if f == ["PASS"])
-            lowqual_count = sum(1 for f in filters if f == ["LowQual"])
-            assert pass_count == 2, f"Expected 2 PASS records, got {pass_count}"
-            assert lowqual_count == 1, f"Expected 1 LowQual record, got {lowqual_count}"
-
-            # Verify the filtered record is at the correct position
-            filtered_records = [rec for rec in records if rec.filter.keys() == ["LowQual"]]
-            assert len(filtered_records) == 1
-            assert (
-                filtered_records[0].pos == 5000
-            ), f"Expected filtered record at pos 5000, got {filtered_records[0].pos}"
+        # Execute with ignore_filter=False - should fail due to duplicate IDs
+        with pytest.raises(ValueError, match="duplicate variant IDs"):
+            combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1000, ignore_filter=False)
 
 
 class TestMergeCnvsInVcfIntegration:
