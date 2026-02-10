@@ -444,7 +444,6 @@ def _verify_unique_ids(vcf_path: str) -> None:
     (None or ".") are allowed and not counted as duplicates.
     """
     seen_ids = set()
-    duplicates = set()
 
     with pysam.VariantFile(vcf_path) as vcf_in:
         for record in vcf_in:
@@ -454,25 +453,13 @@ def _verify_unique_ids(vcf_path: str) -> None:
                 continue
 
             if variant_id in seen_ids:
-                duplicates.add(variant_id)
+                raise ValueError(
+                    f"VCF file contains  duplicate variant IDs: {variant_id}. "
+                    "All variant IDs must be unique for merge operations. "
+                    "Consider using the --make_ids_unique flag when combining VCF files."
+                )
             else:
                 seen_ids.add(variant_id)
-
-    if duplicates:
-        # Limit the number of duplicate IDs shown in error message for readability
-        max_display_duplicates = 10
-        duplicate_list = sorted(duplicates)
-        if len(duplicate_list) > max_display_duplicates:
-            duplicate_sample = (
-                ", ".join(duplicate_list[:max_display_duplicates]) + f", ... ({len(duplicate_list)} total)"
-            )
-        else:
-            duplicate_sample = ", ".join(duplicate_list)
-        raise ValueError(
-            f"VCF file contains {len(duplicates)} duplicate variant IDs: {duplicate_sample}. "
-            "All variant IDs must be unique for merge operations. "
-            "Consider using the --make_ids_unique flag when combining VCF files."
-        )
 
 
 def merge_cnvs_in_vcf(
