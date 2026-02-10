@@ -167,7 +167,7 @@ def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
         return _parse_interval_list_manual(path)
 
 
-def count_bases_in_interval_list(path: str) -> int:
+def count_bases_in_interval_list(path: str, logger_fn=None) -> int:
     """
     Count the number of bases covered by intervals in a Picard/Broad interval list.
 
@@ -182,8 +182,12 @@ def count_bases_in_interval_list(path: str) -> int:
     """
     candidate_tbi = path + ".tbi"
     if os.path.exists(candidate_tbi):
+        if logger_fn is not None:
+            logger_fn("Counting total bases in interval list using tabix index")
         return count_bases_in_interval_list_tabix(path)
     else:
+        if logger_fn is not None:
+            logger_fn("Counting total bases in interval list using manual parsing")
         return count_bases_in_interval_list_manual(path)
 
 
@@ -411,7 +415,8 @@ class SRSNVTrainer:
         self.mean_coverage = args.mean_coverage
         if self.mean_coverage is None:
             raise ValueError("--mean-coverage is required if not present in stats-featuremap JSON")
-        self.n_bases_in_region = count_bases_in_interval_list(args.training_regions)
+        self.n_bases_in_region = count_bases_in_interval_list(args.training_regions, logger_fn=logger.debug)
+        logger.debug("Bases in training regions: %d", self.n_bases_in_region)
 
         # sanity-check: identical “quality/region” filters in the two random-sample stats files
         def _quality_region_filters(st):
@@ -850,7 +855,7 @@ class SRSNVTrainer:
         # ---------- convert Polars → Pandas with categories -------------
         logger.debug("Converting Polars DataFrame to Pandas for training")
         cols_for_training = feat_cols + [LABEL_COL, FOLD_COL]
-        pd_df = polars_to_pandas_efficient(self.data_frame, cols_for_training, downcast_float=self.args.downcast_float)
+        pd_df = polars_to_pandas_efficient(self.data_frame, cols_for_training, downcast_float=self.downcast_float)
         logger.debug("Pandas DataFrame shape: %s", pd_df.shape)
         for col in feat_cols:
             if pd_df[col].dtype == object:
