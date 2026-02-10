@@ -693,9 +693,9 @@ class TestMergeCnvsInVcf:
         mock_vcf_utils_class.return_value = mock_vu
 
         # Create mock dataframe with two records that have CIPOS values
-        # Record 1: CIPOS=(-250, 251)
-        # Record 2: CIPOS=(-300, 301)
-        # Expected merged CIPOS: (min(-250, -300), min(251, 301)) = (-300, 251)
+        # Record 1: CIPOS=(-250, 251) with length = 251 - (-250) = 501
+        # Record 2: CIPOS=(-300, 301) with length = 301 - (-300) = 601
+        # Expected merged CIPOS: tuple with min length = (-250, 251)
         mock_df = pd.DataFrame(
             {
                 "chrom": ["chr1", "chr1"],
@@ -737,12 +737,13 @@ class TestMergeCnvsInVcf:
 
             record = records[0]
 
-            # Verify CIPOS was aggregated correctly using element-wise minimum
+            # Verify CIPOS was aggregated correctly using minlength
             # Input values: [(-250, 251), (-300, 301), (-200, 200)]
-            # Expected: (min(-250, -300, -200), min(251, 301, 200)) = (-300, 200)
+            # Lengths: [501, 601, 400]
+            # Expected: tuple with min length = (-200, 200)
             assert "CIPOS" in record.info, "CIPOS should be present in merged record"
             cipos = record.info["CIPOS"]
-            assert cipos == (-300, 200), f"Expected CIPOS=(-300, 200), got {cipos}"
+            assert cipos == (-200, 200), f"Expected CIPOS=(-200, 200), got {cipos}"
 
 
 def make_cnv_record(vcf, contig, pos, stop, record_id, svtype="DEL", svlen=None, qual=50.0, filter_val="PASS", **info):
