@@ -2355,16 +2355,32 @@ class SRSNVReport:
 
         training_results = [clf.evals_result() for clf in self.models]
         num_folds = len(training_results)
+
+        # Determine which logloss metric is available (logloss for binary, mlogloss for multiclass)
+        # Check the first model's results to determine the metric name
+        logloss_key = None
+        if "logloss" in training_results[0]["validation_0"]:
+            logloss_key = "logloss"
+        elif "mlogloss" in training_results[0]["validation_0"]:
+            logloss_key = "mlogloss"
+        else:
+            raise ValueError(
+                "Neither 'logloss' nor 'mlogloss' found in training results. "
+                f"Available metrics: {list(training_results[0]['validation_0'].keys())}"
+            )
+
         fig, axes = plt.subplots(1, 2, figsize=(16, 6))
         ax = axes[0]
         train_logloss = list_of_jagged_lists_to_array(
-            [result["validation_0"]["mlogloss"] for result in training_results]
+            [result["validation_0"][logloss_key] for result in training_results]
         )
-        val_logloss = list_of_jagged_lists_to_array([result["validation_1"]["mlogloss"] for result in training_results])
+        val_logloss = list_of_jagged_lists_to_array(
+            [result["validation_1"][logloss_key] for result in training_results]
+        )
         for ri, result in enumerate(training_results):
             label = "Individual folds" if ri == 1 else None  # will reach ri==1 iff when using CV
-            ax.plot(result["validation_0"]["mlogloss"], c="grey", alpha=0.7, label=label)
-            ax.plot(result["validation_1"]["mlogloss"], c="grey", alpha=0.7)
+            ax.plot(result["validation_0"][logloss_key], c="grey", alpha=0.7, label=label)
+            ax.plot(result["validation_1"][logloss_key], c="grey", alpha=0.7)
 
         kfolds_label = f" (mean of {num_folds} folds)" if num_folds >= 2 else ""  # noqa: PLR2004
         ax.plot(np.nanmean(train_logloss, axis=0), label="Train" + kfolds_label)
