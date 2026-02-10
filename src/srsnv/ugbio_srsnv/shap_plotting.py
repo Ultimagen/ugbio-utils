@@ -142,6 +142,62 @@ class SHAPPlotter:
         if len(models) != len(fold_values):
             raise ValueError(f"Number of models ({len(models)}) doesn't match number of folds ({len(fold_values)})")
 
+    def _standardize_shap_values(self, shap_values: np.ndarray) -> np.ndarray:
+        """
+        Standardize SHAP values to 2D format (n_samples, n_features+1).
+
+        XGBoost returns different SHAP array shapes depending on the objective:
+        - binary:logistic: (n_samples, n_features+1) - contributions to log-odds
+        - multi:softprob with num_class=2: (n_samples, 2, n_features+1) -
+        contributions to each class's log-odds
+
+        For binary classification visualization, we need the contribution to the
+        positive class log-odds, which is:
+        - For binary:logistic: already in this format (use as-is)
+        - For multi:softprob: difference between class 1 and class 0
+
+        Parameters
+        ----------
+        shap_values : np.ndarray
+            SHAP values array from XGBoost's predict with pred_contribs=True.
+            Can be either 2D (binary:logistic) or 3D (multi:softprob).
+
+        Returns
+        -------
+        np.ndarray
+            Standardized 2D SHAP values with shape (n_samples, n_features+1).
+            Values represent contributions to the log-odds of the positive class.
+            The last column (index -1) contains base values (bias term).
+
+        Notes
+        -----
+        - For binary:logistic (2D input), returns input unchanged
+        - For multi:softprob (3D input), computes class 1 - class 0 difference
+        - Both approaches yield mathematically equivalent interpretations for
+        binary classification
+        - The standardized output can be used directly without further
+        differencing operations
+        """
+        if shap_values.ndim == 2:  # noqa: PLR2004
+            # Binary classification (binary:logistic): already in correct format
+            # Shape is (n_samples, n_features+1)
+            # Values represent contributions to log-odds of positive class
+            return shap_values
+
+        elif shap_values.ndim == 3:  # noqa: PLR2004
+            # Multi-class (multi:softprob with num_class=2):
+            # Shape is (n_samples, 2, n_features+1)
+            # Compute difference: class 1 - class 0
+            # This gives contributions to log-odds ratio (positive vs negative)
+            shap_values[:, 1, :] -= shap_values[:, 0, :]
+            return shap_values[:, 1, :]
+
+        else:
+            raise ValueError(
+                f"Expected SHAP values with 2 or 3 dimensions, got "
+                f"{shap_values.ndim} dimensions. Shape: {shap_values.shape}"
+            )
+
     def _parse_features_metadata(self, features_metadata: list[dict]) -> tuple[list[str], dict[str, list]]:
         """
         Parse features metadata from srsnv_metadata format.
@@ -273,8 +329,8 @@ class SHAPPlotter:
         x_sample_plot = x_sample.copy()
 
         # Create SHAP explanation object
-        base_values_plot = shap_values[0, 1, -1] - shap_values[0, 0, -1]
-        shap_values_plot = shap_values[:, 1, :-1] - shap_values[:, 0, :-1]
+        base_values_plot = shap_values[0, -1]
+        shap_values_plot = shap_values[:, :-1]
         explanation = shap.Explanation(
             values=shap_values_plot,
             base_values=base_values_plot,
@@ -419,7 +475,7 @@ class SHAPPlotter:
 
         # Get top features by SHAP importance
         total_features = shap_values.shape[2] - 1  # Exclude bias term
-        top_features = np.abs(shap_values[:, 1, :-1] - shap_values[:, 0, :-1]).mean(axis=0).argsort()[::-1][:n_features]
+        top_features = np.abs(shap_values[:, :-1]).mean(axis=0).argsort()[::-1][:n_features]
 
         # Filter grouped_features to only include groups represented in top features
         top_feature_names = [x_sample_plot.columns[i] for i in top_features]
@@ -449,19 +505,13 @@ class SHAPPlotter:
             inds_for_plot = self.rng.choice(inds_for_plot, size=nplot_sample, replace=False)
 
         # Prepare SHAP values and data
-        base_values_plot = shap_values[0, 1, -1] - shap_values[0, 0, -1]
+        base_values_plot = shap_values[0, -1]
 
         if add_other_features:
             # SHAP values for top features
-            shap_top = (
-                shap_values[inds_for_plot.reshape((-1, 1)), 1, top_features]
-                - shap_values[inds_for_plot.reshape((-1, 1)), 0, top_features]
-            )
+            shap_top = shap_values[inds_for_plot.reshape((-1, 1)), top_features]
             # SHAP values for "other features" (sum across other features)
-            shap_other = (
-                shap_values[inds_for_plot, 1, :][:, other_features]
-                - shap_values[inds_for_plot, 0, :][:, other_features]
-            ).sum(axis=1, keepdims=True)
+            shap_other = (shap_values[inds_for_plot, :][:, other_features]).sum(axis=1, keepdims=True)
             # Concatenate
             shap_values_plot = np.hstack([shap_top, shap_other])
 
@@ -488,10 +538,7 @@ class SHAPPlotter:
             order = np.concatenate([order[order != shap_values_plot.shape[1] - 1], [shap_values_plot.shape[1] - 1]])
         else:
             # No other features - standard processing
-            shap_values_plot = (
-                shap_values[inds_for_plot.reshape((-1, 1)), 1, top_features]
-                - shap_values[inds_for_plot.reshape((-1, 1)), 0, top_features]
-            )
+            shap_values_plot = shap_values[inds_for_plot.reshape((-1, 1)), top_features]
             data_for_plot = x_sample_plot.iloc[inds_for_plot, top_features]
             feature_names = list(x_sample_plot.columns[top_features])
 
@@ -631,6 +678,8 @@ class SHAPPlotter:
             x_sample_dm, pred_contribs=True, iteration_range=(0, model.best_ntree_limit)
         )
 
+        shap_values = self._standardize_shap_values(shap_values)
+
         return shap_values, x_sample, y_sample
 
     def get_feature_importance_summary(
@@ -664,9 +713,9 @@ class SHAPPlotter:
 
         # Calculate mean absolute SHAP values for feature importance
         # For binary classification, use difference between class 1 and class 0
-        mean_abs_shap_scores = pd.Series(
-            np.abs(shap_values[:, 1, :-1] - shap_values[:, 0, :-1]).mean(axis=0), index=x_sample.columns
-        ).sort_values(ascending=False)
+        mean_abs_shap_scores = pd.Series(np.abs(shap_values[:, :-1]).mean(axis=0), index=x_sample.columns).sort_values(
+            ascending=False
+        )
 
         return mean_abs_shap_scores
 
