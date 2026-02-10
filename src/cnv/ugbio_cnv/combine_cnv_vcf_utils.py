@@ -28,7 +28,7 @@ CNV_AGGREGATION_ACTIONS = {
         "TREE_SCORE",
     ],
     "aggregate": ["CNV_SOURCE"],
-    "min": ["CIPOS"],
+    "minlength": ["CIPOS"],
 }
 
 

@@ -715,7 +715,7 @@ class TestMergeCnvsInVcf:
             record.pos = 1000
             record.stop = 3500
             record.alleles = ("N", "<DEL>")
-            record.info["CollapseId"] = 1.0
+            record.info["CollapseId"] = "1.0"
             record.info["SVLEN"] = (2500,)
             record.info["SVTYPE"] = "DEL"
             record.info["CIPOS"] = (-200, 200)  # Will be replaced by min aggregation
