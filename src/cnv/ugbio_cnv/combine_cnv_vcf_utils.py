@@ -28,6 +28,7 @@ CNV_AGGREGATION_ACTIONS = {
         "TREE_SCORE",
     ],
     "aggregate": ["CNV_SOURCE"],
+    "min": ["CIPOS"],
 }
 
 
@@ -438,7 +439,7 @@ def merge_cnvs_in_vcf(
     None
         Writes the merged VCF to output_vcf and creates an index.
     """
-    # Stage 1: Collapse overlapping variants
+
     output_vcf_collapse = output_vcf + ".collapse.tmp.vcf.gz"
     temporary_files = [output_vcf_collapse]
 
@@ -530,7 +531,7 @@ def _remove_overlapping_filtered_variants(
     return output_vcf_collapse
 
 
-def _value_aggregator(  # noqa: C901
+def _value_aggregator(  # noqa: C901, PLR0912
     record: pysam.VariantRecord,
     update_records: pd.DataFrame,
     field: str,
@@ -547,6 +548,9 @@ def _value_aggregator(  # noqa: C901
     elif str(val_number) == ".":
         values = list(update_records[field.lower()]) + [record.info.get(field, (None,))]
         values = [item for sublist in values for item in sublist if item is not None]
+    elif isinstance(val_number, int) and val_number > 1:
+        # Handle fixed-size arrays (e.g., CIPOS with Number=2)
+        values = list(update_records[field.lower()]) + [record.info.get(field, None)]
     else:
         raise ValueError(f"Unsupported value number for aggregation: {val_number}")
     if action == "weighted_avg":
@@ -569,5 +573,19 @@ def _value_aggregator(  # noqa: C901
             record.info[field] = int(np.nanmax(values))
         else:
             raise ValueError(f"Unsupported value type for max aggregation: {val_type}")
+    if action == "min":
+        # Filter out None/nan values
+        valid_values = [v for v in values if v is not None and not (isinstance(v, float) and pd.isna(v))]
+        if not valid_values:
+            return
+        # Convert to numpy array for element-wise minimum
+        values_array = np.array(valid_values)
+        min_values = np.min(values_array, axis=0)
+        if str(val_type) == "Float":
+            record.info[field] = tuple([float(x) for x in min_values])
+        elif str(val_type) == "Integer":
+            record.info[field] = tuple([int(x) for x in min_values])
+        else:
+            raise ValueError(f"Unsupported value type for min aggregation: {val_type}")
     if action == "aggregate":
         record.info[field] = tuple(set(values))

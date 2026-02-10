@@ -546,6 +546,7 @@ class TestMergeCnvsInVcf:
             "JALIGN_DUP_SUPPORT_STRONG",
             "TREE_SCORE",
             "CNV_SOURCE",
+            "CIPOS",
             "SVLEN",
             "MatchId",
         ]
@@ -661,6 +662,87 @@ class TestMergeCnvsInVcf:
             # Verify END was updated to max of merged records
             # max end = 4499 (from pos=2500 + svlen=2000 - 1)
             assert record.stop == 4499
+
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.mu.cleanup_temp_files")
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.vcftools.get_vcf_df")
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.VcfUtils")
+    def test_merge_cnvs_cipos_aggregation(
+        self, mock_vcf_utils_class, mock_get_vcf_df, mock_cleanup, tmp_path, cnv_vcf_header
+    ):
+        """Test that CIPOS values are correctly aggregated using element-wise minimum."""
+        # Add CIPOS to header
+        cnv_vcf_header.add_line('##INFO=<ID=CIPOS,Number=2,Type=Integer,Description="Confidence interval around POS">')
+
+        # Setup
+        input_vcf = tmp_path / "input.vcf.gz"
+        output_vcf = tmp_path / "output.vcf.gz"
+        collapse_vcf = tmp_path / "output.vcf.gz.collapse.tmp.vcf.gz"
+        removed_vcf = tmp_path / "removed.vcf.gz"
+
+        # Create mock VcfUtils instance
+        mock_vu = MagicMock()
+        mock_vu.collapse_vcf.return_value = removed_vcf
+
+        def mock_sort_vcf(input_path, output_path):
+            with pysam.VariantFile(str(input_path), "r") as vcf_in:
+                with pysam.VariantFile(str(output_path), "w", header=vcf_in.header) as vcf_out:
+                    for record in vcf_in:
+                        vcf_out.write(record)
+
+        mock_vu.sort_vcf.side_effect = mock_sort_vcf
+        mock_vcf_utils_class.return_value = mock_vu
+
+        # Create mock dataframe with two records that have CIPOS values
+        # Record 1: CIPOS=(-250, 251)
+        # Record 2: CIPOS=(-300, 301)
+        # Expected merged CIPOS: (min(-250, -300), min(251, 301)) = (-300, 251)
+        mock_df = pd.DataFrame(
+            {
+                "chrom": ["chr1", "chr1"],
+                "pos": [1000, 2500],
+                "svlen": [(1000,), (1000,)],
+                "matchid": [(1.0,), (1.0,)],
+                "cipos": [(-250, 251), (-300, 301)],
+                "cnmops_sample_mean": [10.0, 11.0],
+            }
+        )
+        mock_get_vcf_df.return_value = mock_df
+
+        # Create collapsed VCF with CIPOS
+        with pysam.VariantFile(str(collapse_vcf), "w", header=cnv_vcf_header) as vcf:
+            record = vcf.new_record()
+            record.contig = "chr1"
+            record.pos = 1000
+            record.stop = 3500
+            record.alleles = ("N", "<DEL>")
+            record.info["CollapseId"] = 1.0
+            record.info["SVLEN"] = (2500,)
+            record.info["SVTYPE"] = "DEL"
+            record.info["CIPOS"] = (-200, 200)  # Will be replaced by min aggregation
+            record.info["CNMOPS_SAMPLE_MEAN"] = 10.5
+            record.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record)
+
+        # Create dummy input file
+        with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
+            pass
+
+        # Execute
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1000)
+
+        # Read output and verify CIPOS aggregation
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = list(vcf)
+            assert len(records) == 1
+
+            record = records[0]
+
+            # Verify CIPOS was aggregated correctly using element-wise minimum
+            # Input values: [(-250, 251), (-300, 301), (-200, 200)]
+            # Expected: (min(-250, -300, -200), min(251, 301, 200)) = (-300, 200)
+            assert "CIPOS" in record.info, "CIPOS should be present in merged record"
+            cipos = record.info["CIPOS"]
+            assert cipos == (-300, 200), f"Expected CIPOS=(-300, 200), got {cipos}"
 
 
 def make_cnv_record(vcf, contig, pos, stop, record_id, svtype="DEL", svlen=None, qual=50.0, filter_val="PASS", **info):
