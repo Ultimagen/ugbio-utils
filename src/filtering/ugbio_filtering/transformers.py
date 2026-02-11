@@ -267,6 +267,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
         transform_list.extend(
             [
                 ("qual", "passthrough", ["qual"]),
+                ("dp_raw", default_filler, ["dp_raw"]),
                 ("fs", default_filler, ["fs"]),
                 ("qd", default_filler, ["qd"]),
                 ("mq", default_filler, ["mq"]),

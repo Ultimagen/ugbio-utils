@@ -179,7 +179,7 @@ class VcfComparisonUtils:
         otherwise - returns the output directory of vcfeval
         """
 
-        output_dir = os.path.dirname(output_prefix)
+        output_dir = os.path.dirname(os.path.abspath(output_prefix))
         if sdf_index is not None:
             sdf_path = sdf_index
         else:
