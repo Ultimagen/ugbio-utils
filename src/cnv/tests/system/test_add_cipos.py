@@ -58,27 +58,26 @@ class TestAddCiposIntegration:
         assert os.path.exists(out_vcf_file), f"Output VCF file not created: {out_vcf_file}"
 
         # Check the VCF with CIPOS
-        vcf = pysam.VariantFile(out_vcf_file)
+        with pysam.VariantFile(out_vcf_file) as vcf:
+            # Verify header has CIPOS INFO field
+            assert "CIPOS" in vcf.header.info, "CIPOS not found in VCF header"
+            assert vcf.header.info["CIPOS"].number == 2, "CIPOS should have 2 values"
+            assert vcf.header.info["CIPOS"].type == "Integer", "CIPOS should be Integer type"
 
-        # Verify header has CIPOS INFO field
-        assert "CIPOS" in vcf.header.info, "CIPOS not found in VCF header"
-        assert vcf.header.info["CIPOS"].number == 2, "CIPOS should have 2 values"
-        assert vcf.header.info["CIPOS"].type == "Integer", "CIPOS should be Integer type"
+            # Verify all records have CIPOS
+            records = list(vcf)
+            assert len(records) > 0, "Output VCF should contain variants"
 
-        # Verify all records have CIPOS
-        records = list(vcf)
-        assert len(records) > 0, "Output VCF should contain variants"
+            for rec in records:
+                assert "CIPOS" in rec.info, f"Record at {rec.chrom}:{rec.start} missing CIPOS"
+                cipos = rec.info["CIPOS"]
+                assert len(cipos) == 2, f"CIPOS should have 2 values, got {len(cipos)}"
 
-        for rec in records:
-            assert "CIPOS" in rec.info, f"Record at {rec.chrom}:{rec.start} missing CIPOS"
-            cipos = rec.info["CIPOS"]
-            assert len(cipos) == 2, f"CIPOS should have 2 values, got {len(cipos)}"
-
-            # Verify CIPOS values match expected calculation: (-window_size/2, window_size/2+1)
-            expected_cipos = (round(-window_size / 2), round(window_size / 2 + 1))
-            assert (
-                cipos == expected_cipos
-            ), f"Record at {rec.chrom}:{rec.start} has CIPOS {cipos}, expected {expected_cipos}"
+                # Verify CIPOS values match expected calculation: (-window_size/2, window_size/2+1)
+                expected_cipos = (round(-window_size / 2), round(window_size / 2 + 1))
+                assert (
+                    cipos == expected_cipos
+                ), f"Record at {rec.chrom}:{rec.start} has CIPOS {cipos}, expected {expected_cipos}"
 
     def test_add_cipos_with_different_window_sizes(self, tmpdir, resources_dir):
         """Test adding CIPOS with various window sizes."""

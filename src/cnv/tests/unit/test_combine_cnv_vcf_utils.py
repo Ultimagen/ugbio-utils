@@ -669,7 +669,12 @@ class TestMergeCnvsInVcf:
     def test_merge_cnvs_cipos_aggregation(
         self, mock_vcf_utils_class, mock_get_vcf_df, mock_cleanup, tmp_path, cnv_vcf_header
     ):
-        """Test that CIPOS values are correctly aggregated using element-wise minimum."""
+        """Test CIPOS aggregation using the minlength strategy.
+
+        The CIPOS confidence interval is selected as the tightest
+        (shortest-width) interval across the merged records, rather
+        than by taking an element-wise minimum.
+        """
         # Add CIPOS to header
         cnv_vcf_header.add_line('##INFO=<ID=CIPOS,Number=2,Type=Integer,Description="Confidence interval around POS">')
 
@@ -718,7 +723,7 @@ class TestMergeCnvsInVcf:
             record.info["CollapseId"] = "1.0"
             record.info["SVLEN"] = (2500,)
             record.info["SVTYPE"] = "DEL"
-            record.info["CIPOS"] = (-200, 200)  # Will be replaced by min aggregation
+            record.info["CIPOS"] = (-200, 200)  # Will be replaced by min-length aggregation
             record.info["CNMOPS_SAMPLE_MEAN"] = 10.5
             record.samples["test_sample"]["GT"] = (0, 1)
             vcf.write(record)

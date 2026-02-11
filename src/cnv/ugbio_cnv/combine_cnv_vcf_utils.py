@@ -440,6 +440,7 @@ def merge_cnvs_in_vcf(
         Writes the merged VCF to output_vcf and creates an index.
     """
 
+    # Stage 1: Collapse overlapping variants into representative records
     output_vcf_collapse = output_vcf + ".collapse.tmp.vcf.gz"
     temporary_files = [output_vcf_collapse]
 
@@ -460,7 +461,7 @@ def merge_cnvs_in_vcf(
 
     # Stage 2: Prepare dataframe and aggregate INFO fields
     all_fields = sum(CNV_AGGREGATION_ACTIONS.values(), [])
-    update_df = _prepare_update_dataframe(removed_vcf, all_fields, ignore_filter=ignore_filter)
+    update_df = _prepare_update_dataframe(str(removed_vcf), all_fields, ignore_filter=ignore_filter)
 
     output_vcf_unsorted = output_vcf.replace(".vcf.gz", ".unsorted.vcf.gz")
     temporary_files.append(output_vcf_unsorted)
