@@ -163,6 +163,8 @@ def test_recalibration_columns_kde(tmp_path):
         quality_lut_size=1000,
         metadata=None,
         use_kde_smoothing=True,
+        use_gpu=False,
+        use_float64=False,
     )
 
     # Create trainer and load the data
