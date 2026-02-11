@@ -141,7 +141,7 @@ def write_vcf_records_with_source(
     *,
     make_ids_unique: bool = False,
     seen_ids: set | None = None,
-) -> set:
+) -> set[str]:
     """
     Write VCF records to output file with CNV_SOURCE annotation.
 
@@ -450,11 +450,13 @@ def _verify_unique_ids(vcf_path: str) -> None:
             variant_id = record.id
             # Skip records with missing IDs
             if variant_id is None or variant_id == ".":
-                continue
+                raise ValueError(
+                    "Collapsing callsets only works when the variants have unique IDs. Found record with missing ID."
+                )
 
             if variant_id in seen_ids:
                 raise ValueError(
-                    f"VCF file contains  duplicate variant IDs: {variant_id}. "
+                    f"VCF file contains duplicate variant IDs: {variant_id}. "
                     "All variant IDs must be unique for merge operations. "
                     "Consider using the --make_ids_unique flag when combining VCF files."
                 )
