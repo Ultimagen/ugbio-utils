@@ -2498,7 +2498,7 @@ class SRSNVReport:
 
         # Calculate and save SHAP feature importance scores
         mean_abs_SHAP_scores = pd.Series(  # noqa: N806
-            np.abs(shap_values[:, :-1] - shap_values[:, :-1]).mean(axis=0), index=x_sample.columns
+            np.abs(shap_values[:, :-1]).mean(axis=0), index=x_sample.columns
         ).sort_values(ascending=False)
         mean_abs_SHAP_scores.to_hdf(self.output_h5_filename, key="mean_abs_SHAP_scores", mode="a")
 
