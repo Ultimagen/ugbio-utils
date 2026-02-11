@@ -377,35 +377,58 @@ def aggregated_df_post_processing(variants_df: pl.DataFrame, samples: list[str])
         # Derive sum-based columns (sum = mean * count for 0/1 fields)
         # COUNT_DUPLICATE = sum(DUP) = mean(DUP) * count(DUP)
         derived_exprs.append(
-            (pl.col(f"DUP_mean{s}") * pl.col(f"DUP_count{s}")).round(0).cast(pl.Int64).alias(f"count_duplicate{s}")
+            (pl.col(f"{FeatureMapFields.DUP.value}_mean{s}") * pl.col(f"{FeatureMapFields.DUP.value}_count{s}"))
+            .round(0)
+            .cast(pl.Int64)
+            .alias(f"count_duplicate{s}")
         )
         # COUNT_NON_DUPLICATE = count - sum
         derived_exprs.append(
-            (pl.col(f"DUP_count{s}") - (pl.col(f"DUP_mean{s}") * pl.col(f"DUP_count{s}")).round(0))
+            (
+                pl.col(f"{FeatureMapFields.DUP.value}_count{s}")
+                - (
+                    pl.col(f"{FeatureMapFields.DUP.value}_mean{s}") * pl.col(f"{FeatureMapFields.DUP.value}_count{s}")
+                ).round(0)
+            )
             .cast(pl.Int64)
             .alias(f"count_non_duplicate{s}")
         )
         # REVERSE_COUNT = sum(REV)
         derived_exprs.append(
-            (pl.col(f"REV_mean{s}") * pl.col(f"REV_count{s}")).round(0).cast(pl.Int64).alias(f"reverse_count{s}")
+            (pl.col(f"{FeatureMapFields.REV.value}_mean{s}") * pl.col(f"{FeatureMapFields.REV.value}_count{s}"))
+            .round(0)
+            .cast(pl.Int64)
+            .alias(f"reverse_count{s}")
         )
         # FORWARD_COUNT = count - sum
         derived_exprs.append(
-            (pl.col(f"REV_count{s}") - (pl.col(f"REV_mean{s}") * pl.col(f"REV_count{s}")).round(0))
+            (
+                pl.col(f"{FeatureMapFields.REV.value}_count{s}")
+                - (
+                    pl.col(f"{FeatureMapFields.REV.value}_mean{s}") * pl.col(f"{FeatureMapFields.REV.value}_count{s}")
+                ).round(0)
+            )
             .cast(pl.Int64)
             .alias(f"forward_count{s}")
         )
         # PASS_ALT_READS = sum(FILT)
         derived_exprs.append(
-            (pl.col(f"FILT_mean{s}") * pl.col(f"FILT_count{s}")).round(0).cast(pl.Int64).alias(f"pass_alt_reads{s}")
+            (pl.col(f"{FeatureMapFields.FILT.value}_mean{s}") * pl.col(f"{FeatureMapFields.FILT.value}_count{s}"))
+            .round(0)
+            .cast(pl.Int64)
+            .alias(f"pass_alt_reads{s}")
         )
         # SCST_NUM_READS = count - count_zero (count of non-zero values)
         derived_exprs.append(
-            (pl.col(f"SCST_count{s}") - pl.col(f"SCST_count_zero{s}")).cast(pl.Int64).alias(f"scst_num_reads{s}")
+            (pl.col(f"{FeatureMapFields.SCST.value}_count{s}") - pl.col(f"{FeatureMapFields.SCST.value}_count_zero{s}"))
+            .cast(pl.Int64)
+            .alias(f"scst_num_reads{s}")
         )
         # SCED_NUM_READS = count - count_zero
         derived_exprs.append(
-            (pl.col(f"SCED_count{s}") - pl.col(f"SCED_count_zero{s}")).cast(pl.Int64).alias(f"sced_num_reads{s}")
+            (pl.col(f"{FeatureMapFields.SCED.value}_count{s}") - pl.col(f"{FeatureMapFields.SCED.value}_count_zero{s}"))
+            .cast(pl.Int64)
+            .alias(f"sced_num_reads{s}")
         )
 
     # Apply derived columns
@@ -691,7 +714,7 @@ def somatic_featuremap_classifier(
     genome_index_file
         Genome FASTA index (.fai) file.
     tandem_repeats_bed
-        Reference tandem repeat file in BED format.
+        Reference tandem repeat file in BED format (sorted by chromosome and start position).
     xgb_model_json
         XGBoost model file for inference.
     output_parquet
