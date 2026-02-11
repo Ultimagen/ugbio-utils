@@ -1441,6 +1441,7 @@ class SRSNVReport:
         statistics_json_file: str = None,
         rng: Any = None,
         *,
+        use_gpu_for_shap: bool = False,
         raise_exceptions: bool = False,
     ):
         """loads model, data, params and generate plots for report. Saves data in hdf5 file
@@ -1471,6 +1472,7 @@ class SRSNVReport:
         self.num_cv_folds = len(models)
         self.data_df = data_df
         self.params = params
+        self.use_gpu_for_shap = use_gpu_for_shap
         self.out_path = out_path
         self.base_name = base_name
         self.lod_filters = lod_filters
@@ -2447,6 +2449,8 @@ class SRSNVReport:
             features_metadata=self.srsnv_metadata["features"],
             label_col=LABEL,
             random_state=42,  # Use a fixed seed for reproducible plots
+            logger=logger,
+            use_gpu=self.use_gpu_for_shap,
         )
 
     @exception_handler
@@ -2494,7 +2498,7 @@ class SRSNVReport:
 
         # Calculate and save SHAP feature importance scores
         mean_abs_SHAP_scores = pd.Series(  # noqa: N806
-            np.abs(shap_values[:, 1, :-1] - shap_values[:, 0, :-1]).mean(axis=0), index=x_sample.columns
+            np.abs(shap_values[:, :-1] - shap_values[:, :-1]).mean(axis=0), index=x_sample.columns
         ).sort_values(ascending=False)
         mean_abs_SHAP_scores.to_hdf(self.output_h5_filename, key="mean_abs_SHAP_scores", mode="a")
 

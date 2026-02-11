@@ -113,6 +113,8 @@ def prepare_report(  # noqa: C901 PLR0915
     basename: str = "",
     models_prefix: str | None = None,
     random_seed: int | None = None,
+    *,
+    use_gpu_for_shap: bool = False,
 ) -> None:
     """
     Prepare the SNV report based on the provided featuremap dataframe and metadata.
@@ -124,6 +126,7 @@ def prepare_report(  # noqa: C901 PLR0915
         basename (str): Basename prefix for output files.
         models_prefix (str | None): Prefix for model JSON files.
         random_seed (int | None): Random seed for reproducibility.
+        use_gpu_for_shap (bool): Whether to use GPU for SHAP calculations if available.
     """
     logger.info("Preparing SNV report...")
 
@@ -277,6 +280,7 @@ def prepare_report(  # noqa: C901 PLR0915
         statistics_json_file=statistics_json_file,
         srsnv_metadata=srsnv_metadata,
         rng=rng,
+        use_gpu_for_shap=use_gpu_for_shap,
     )
 
     # Run the report generation
@@ -309,6 +313,7 @@ def _cli() -> argparse.Namespace:
     )
     ap.add_argument("--random-seed", type=int, default=None)
     ap.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    ap.add_argument("--use-gpu-for-shap", action="store_true", help="Use GPU for SHAP calculations if available")
 
     args = ap.parse_args()
     return args
@@ -329,6 +334,7 @@ def main() -> None:
         basename=args.basename,
         models_prefix=args.models_prefix,
         random_seed=args.random_seed,
+        use_gpu_for_shap=args.use_gpu_for_shap,
     )
 
 
