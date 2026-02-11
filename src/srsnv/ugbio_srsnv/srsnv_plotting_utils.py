@@ -2506,21 +2506,6 @@ class SRSNVReport:
         self._save_plt(output_filename=output_filename_importance, fig=fig_importance)
         self._save_plt(output_filename=output_filename_beeswarm, fig=fig_beeswarm)
 
-    def _get_trinuc_stats(self, q1: float = 0.1, q2: float = 0.9):
-        data_df = self.data_df.copy()
-        data_df[IS_CYCLE_SKIP] = data_df[IS_CYCLE_SKIP].astype(int)
-        trinuc_stats = data_df.groupby([TRINUC_CONTEXT_WITH_ALT, LABEL, IS_FORWARD, IS_MIXED]).agg(
-            median_qual=(QUAL, "median"),
-            quantile1_qual=(QUAL, lambda x: x.quantile(q1)),
-            quantile3_qual=(QUAL, lambda x: x.quantile(q2)),
-            is_cycle_skip=(IS_CYCLE_SKIP, "mean"),
-            count=(QUAL, "size"),
-        )
-        trinuc_stats["fraction"] = trinuc_stats["count"] / self.data_df.shape[0]
-        trinuc_stats = trinuc_stats.reset_index()
-        trinuc_stats[IS_FORWARD] = trinuc_stats[IS_FORWARD].astype(bool)
-        return trinuc_stats
-
     @exception_handler
     def calc_and_plot_trinuc_plot(  # noqa: PLR0915 #TODO: refactor
         self,
@@ -2529,10 +2514,6 @@ class SRSNVReport:
         motif_orientation: str = "seq_dir",
     ):
         logger.info("Calculating trinuc context statistics")
-        # trinuc_stats = self._get_trinuc_stats(q1=0.1, q2=0.9)
-        # trinuc_stats.set_index([TRINUC_CONTEXT_WITH_ALT, LABEL, IS_FORWARD, IS_MIXED]).to_hdf(
-        #     self.output_h5_filename, key="trinuc_stats", mode="a"
-        # )
 
         # Call the new plotting function
         fig, stats_df = calc_and_plot_trinuc_hist(

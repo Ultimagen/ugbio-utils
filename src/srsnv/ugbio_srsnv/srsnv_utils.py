@@ -739,7 +739,7 @@ class HandlePPMSeqTagsInFeatureMapDataFrame:
         end_tag_col: str | None = None,
         logger=None,
     ):
-        self.featuremap_df = featuremap_df.copy()
+        self.featuremap_df = featuremap_df
         self.categorical_features_names = categorical_features_names
         self.ppmseq_adapter_version = ppmseq_adapter_version
         self.start_tag_col = start_tag_col
