@@ -235,6 +235,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
         <chr><start><end><copy-number>
     --out_directory: output directory
     --sample_name: sample name
+    --neutral_ploidy: neutral ploidy value for plotting the reference line in copy number plot
     output files:
     coverage plot: <sample_name>.CNV.coverage.jpeg
         shows normalized (log scale) coverage along the genome for the germline (and tumor) samples.
