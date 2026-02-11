@@ -3,16 +3,15 @@ import numpy as np
 from math import log
 from typing import Tuple, Optional, Dict, List
 import statsmodels.api as sm
-from ugbio_core.flow_format.flow_based_pileup import (
-    get_hmer_qualities_from_pileup_element,
-)
+import ugbio_core.flow_format.flow_based_read as fbr
+import ugbio_core.math_utils as phred
 import pysam
-import os
 from bisect import bisect_right
 from pyfaidx import Fasta
 
 
 # Global constants
+BAM_CSOFT_CLIP = 4
 MAX_HMER_SIZE = 21
 SEQUENCE_CONTEXT_SIZE = 30
 HMER_SPLIT_MIDPOINT = 0.5
@@ -287,6 +286,79 @@ def fill_direction_results_with_error(direction_results: Dict, prefixes: List) -
     ]
     for direction in range(len(prefixes)):
         direction_results[direction] = {field: -1 for field in fields}
+
+def get_hmer_qualities_from_pileup_element(  # noqa: C901
+    pe: pysam.PileupRead, max_hmer: int = 20, min_call_prob: float = 0.1, *, soft_clipping_as_edge: bool = True
+) -> tuple:
+    """Return hmer length probabilities for a single PileupRead element.
+    
+    Parameters
+    ----------
+    pe : pysam.PileupRead
+        PileupRead element
+    max_hmer : int
+        Maximum hmer length that we call
+    min_call_prob : float
+        Minimum probability for the called hmer length
+    soft_clipping_as_edge : bool
+        Whether to treat soft-clipped edges as edges for probability smearing
+
+    Returns
+    -------
+    tuple:
+        (nucleotide, probabilities, is_forward, cycle, is_edge, is_not_duplicate)
+    """
+    filler = 10 ** (-35 / 10) / (max_hmer + 1)
+
+    qpos = pe.query_position_or_next
+    hnuc = str(pe.alignment.query_sequence)[qpos]
+    qstart = qpos
+    while qstart > 0 and str(pe.alignment.query_sequence)[qstart - 1] == hnuc:
+        qstart -= 1
+    qend = qpos + 1
+    while qend < len(str(pe.alignment.query_sequence)) and str(pe.alignment.query_sequence)[qend] == hnuc:
+        qend += 1
+
+    hmer_probs = np.zeros(max_hmer + 1)
+    hmer_length = qend - qstart
+    key = fbr.generate_key_from_sequence(str(pe.alignment.query_sequence), "TGCA")
+    cumsum_key = np.cumsum(key)
+    cycle = np.searchsorted(cumsum_key, pe.query_position_or_next)
+    # smear probabilities
+    is_soft_clipped = False
+    if pe.alignment.cigartuples and soft_clipping_as_edge:
+        # Check if base is adjacent to soft-clipping at start
+        if pe.alignment.cigartuples[0][0] == BAM_CSOFT_CLIP:
+            soft_clip_end = pe.alignment.cigartuples[0][1]
+            if qstart - soft_clip_end <= 1:
+                is_soft_clipped = True
+        # Check if base is adjacent to soft-clipping at end
+        if pe.alignment.cigartuples[-1][0] == BAM_CSOFT_CLIP:
+            query_length = pe.alignment.query_length
+            soft_clip_start = query_length - pe.alignment.cigartuples[-1][1]
+            if qend - soft_clip_start <= 1:
+                is_soft_clipped = True
+    if qstart == 0 or qend == len(str(pe.alignment.query_sequence)) or is_soft_clipped:
+        hmer_probs[:] = 1.0
+        is_edge = True
+    else:
+        query_qualities = pe.alignment.query_qualities
+        if query_qualities is None:
+            raise ValueError("query_qualities is None")
+        qual = query_qualities[qstart:qend]
+        probs = phred.unphred(np.asarray(qual))
+        tp_tag = pe.alignment.get_tag("tp")
+        if not isinstance(tp_tag, list | np.ndarray):
+            raise ValueError("tp tag must be a list or array")
+        tps = tp_tag[qstart:qend]
+        for tpval, p in zip(tps, probs, strict=False):
+            hmer_probs[tpval + hmer_length] += p
+        hmer_probs = np.clip(hmer_probs, filler, None)
+        hmer_probs[hmer_length] = 0
+        hmer_probs[hmer_length] = max(1 - np.sum(hmer_probs), min_call_prob)
+        is_edge = False
+    hmer_probs /= np.sum(hmer_probs)
+    return hnuc, hmer_probs, not pe.alignment.is_reverse, cycle, is_edge, not pe.alignment.is_duplicate
 
 def variant_calling(vcf_file, normal_reads_file, tumor_reads_file, vcf_out_file, min_hmer=4, zamir = 0.5, target_intervals_bed_file = None, tumor_germline_file = None, normal_germline_file = None):
     ref_fasta_path = '/data/Runs/genomes/hg38/Homo_sapiens_assembly38.fasta'
