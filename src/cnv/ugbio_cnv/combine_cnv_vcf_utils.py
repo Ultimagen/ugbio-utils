@@ -423,6 +423,58 @@ def _aggregate_collapsed_vcf(
                 vcf_out.write(record)
 
 
+def _verify_unique_ids(vcf_path: str) -> None:
+    """
+    Verify that all variant IDs in a VCF file are unique.
+
+    Parameters
+    ----------
+    vcf_path : str
+        Path to the VCF file to check
+
+    Raises
+    ------
+    ValueError
+        If duplicate IDs are found in the VCF file
+
+    Notes
+    -----
+    This validation ensures that variant IDs can be used reliably for matching
+    and tracking variants through merge operations. Records with missing IDs
+    (None or ".") are allowed and not counted as duplicates.
+    """
+    seen_ids = set()
+    duplicates = set()
+
+    with pysam.VariantFile(vcf_path) as vcf_in:
+        for record in vcf_in:
+            variant_id = record.id
+            # Skip records with missing IDs
+            if variant_id is None or variant_id == ".":
+                continue
+
+            if variant_id in seen_ids:
+                duplicates.add(variant_id)
+            else:
+                seen_ids.add(variant_id)
+
+    if duplicates:
+        # Limit the number of duplicate IDs shown in error message for readability
+        max_display_duplicates = 10
+        duplicate_list = sorted(duplicates)
+        if len(duplicate_list) > max_display_duplicates:
+            duplicate_sample = (
+                ", ".join(duplicate_list[:max_display_duplicates]) + f", ... ({len(duplicate_list)} total)"
+            )
+        else:
+            duplicate_sample = ", ".join(duplicate_list)
+        raise ValueError(
+            f"VCF file contains {len(duplicates)} duplicate variant IDs: {duplicate_sample}. "
+            "All variant IDs must be unique for merge operations. "
+            "Consider using the --make_ids_unique flag when combining VCF files."
+        )
+
+
 def merge_cnvs_in_vcf(
     input_vcf: str,
     output_vcf: str,
@@ -475,9 +527,17 @@ def merge_cnvs_in_vcf(
     -------
     None
         Writes the merged VCF to output_vcf and creates an index.
-    """
 
-    # Stage 1: Collapse overlapping variants into representative records
+    Raises
+    ------
+    ValueError
+        If the input VCF contains duplicate variant IDs
+    """
+    # Validate that all IDs are unique before merging
+    logger.info(f"Validating unique variant IDs in {input_vcf}")
+    _verify_unique_ids(input_vcf)
+
+    # Stage 1: Collapse overlapping variants
     output_vcf_collapse = output_vcf + ".collapse.tmp.vcf.gz"
     temporary_files = [output_vcf_collapse]
 
