@@ -88,6 +88,46 @@ def add_is_mixed_to_featuremap_df(
     return tags_handler.featuremap_df
 
 
+def compute_is_cycle_skip_column(data_df: pd.DataFrame, flow_order: str = "TGCA") -> pd.Series:
+    """
+    Compute the is_cycle_skip column for a featuremap dataframe.
+
+    This function calculates whether each variant represents a cycle skip
+    based on the reference and alternate motifs (prev1 + ref/alt + next1).
+
+    Args:
+        data_df: DataFrame containing X_PREV1, REF, ALT, and X_NEXT1 columns
+        flow_order: Flow order string (default: "TGCA")
+
+    Returns:
+        pd.Series: Boolean series indicating cycle skip status for each variant
+    """
+    logger.info("Computing is_cycle_skip column")
+
+    # Create motif strings without copying the full dataframe
+    ref_motif = data_df[X_PREV1].astype(str) + data_df[REF].astype(str) + data_df[X_NEXT1].astype(str)
+    alt_motif = data_df[X_PREV1].astype(str) + data_df[ALT].astype(str) + data_df[X_NEXT1].astype(str)
+
+    # Get cycle skip lookup table
+    cycle_skip_df = get_cycle_skip_dataframe(flow_order)[[IS_CYCLE_SKIP]]
+
+    # Create temporary dataframe for merge operation
+    motif_df = pd.DataFrame(
+        {"ref_motif": ref_motif, "alt_motif": alt_motif},
+        index=data_df.index,
+    )
+
+    # Merge and extract only the is_cycle_skip column
+    result = motif_df.merge(
+        cycle_skip_df,
+        left_on=["ref_motif", "alt_motif"],
+        right_index=True,
+        how="left",
+    )[IS_CYCLE_SKIP]
+
+    return result
+
+
 def add_is_cycle_skip_to_featuremap_df(data_df: pd.DataFrame, flow_order: str = "TGCA") -> pd.DataFrame:
     """Add is_cycle_skip column to featuremap_df"""
     logger.info("Adding is_cycle_skip column to featuremap")
@@ -233,7 +273,7 @@ def prepare_report(  # noqa: C901 PLR0915
         params["adapter_version"],
         params["categorical_features_names"],
     )
-    data_df = add_is_cycle_skip_to_featuremap_df(data_df)
+    data_df[IS_CYCLE_SKIP] = compute_is_cycle_skip_column(data_df)
 
     # Handle random seed
     rng = None
