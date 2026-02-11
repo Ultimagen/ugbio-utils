@@ -24,7 +24,7 @@ def add_cipos_to_vcf(input_vcf: str, output_vcf: str, window_size: int) -> None:
         (-window_size/2, window_size/2+1).
     """
     with pysam.VariantFile(input_vcf) as vcf_in:
-        header = vcf_in.header.copy()
+        header = vcf_in.header
 
         # Add CIPOS to header if not already present
         if "CIPOS" not in header.info:
