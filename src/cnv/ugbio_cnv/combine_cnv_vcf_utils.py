@@ -28,6 +28,7 @@ CNV_AGGREGATION_ACTIONS = {
         "TREE_SCORE",
     ],
     "aggregate": ["CNV_SOURCE"],
+    "minlength": ["CIPOS"],
 }
 
 
@@ -438,7 +439,8 @@ def merge_cnvs_in_vcf(
     None
         Writes the merged VCF to output_vcf and creates an index.
     """
-    # Stage 1: Collapse overlapping variants
+
+    # Stage 1: Collapse overlapping variants into representative records
     output_vcf_collapse = output_vcf + ".collapse.tmp.vcf.gz"
     temporary_files = [output_vcf_collapse]
 
@@ -459,7 +461,7 @@ def merge_cnvs_in_vcf(
 
     # Stage 2: Prepare dataframe and aggregate INFO fields
     all_fields = sum(CNV_AGGREGATION_ACTIONS.values(), [])
-    update_df = _prepare_update_dataframe(removed_vcf, all_fields, ignore_filter=ignore_filter)
+    update_df = _prepare_update_dataframe(str(removed_vcf), all_fields, ignore_filter=ignore_filter)
 
     output_vcf_unsorted = output_vcf.replace(".vcf.gz", ".unsorted.vcf.gz")
     temporary_files.append(output_vcf_unsorted)
@@ -530,7 +532,90 @@ def _remove_overlapping_filtered_variants(
     return output_vcf_collapse
 
 
-def _value_aggregator(  # noqa: C901
+def _aggregate_weighted_avg(
+    record: pysam.VariantRecord,
+    update_records: pd.DataFrame,
+    field: str,
+    values: list,
+) -> None:
+    """Aggregate field using weighted average based on SVLEN."""
+    lengths = np.array(list(update_records["svlen"].apply(lambda x: x[0])) + [record.info["SVLEN"][0]])
+    values_array = np.array(values)
+    if all(pd.isna(x) for x in values):
+        return
+    drop = np.isnan(values_array) | np.isnan(lengths)
+    values_array = values_array[~drop]
+    lengths = lengths[~drop]
+    weighted_avg = np.sum(values_array * lengths) / np.sum(lengths)
+    record.info[field] = round(weighted_avg, 3)
+
+
+def _aggregate_max(
+    record: pysam.VariantRecord,
+    field: str,
+    values: list,
+    val_type: str | None,
+) -> None:
+    """Aggregate field using maximum value."""
+    if all(pd.isna(x) for x in values):
+        return
+    if str(val_type) == "Float":
+        record.info[field] = float(np.nanmax(values))
+    elif str(val_type) == "Integer":
+        record.info[field] = int(np.nanmax(values))
+    else:
+        raise ValueError(f"Unsupported value type for max aggregation: {val_type}")
+
+
+def _aggregate_min(
+    record: pysam.VariantRecord,
+    field: str,
+    values: list,
+    val_type: str | None,
+) -> None:
+    """Aggregate field using element-wise minimum for tuples."""
+    valid_values = [v for v in values if v is not None and not (isinstance(v, float) and pd.isna(v))]
+    if not valid_values:
+        return
+    values_array = np.array(valid_values)
+    min_values = np.min(values_array, axis=0)
+    if str(val_type) == "Float":
+        record.info[field] = tuple([float(x) for x in min_values])
+    elif str(val_type) == "Integer":
+        record.info[field] = tuple([int(x) for x in min_values])
+    else:
+        raise ValueError(f"Unsupported value type for min aggregation: {val_type}")
+
+
+def _aggregate_minlength(
+    record: pysam.VariantRecord,
+    field: str,
+    values: list,
+    val_type: str | None,
+) -> None:
+    """Aggregate field by selecting tuple with minimum interval length (x[1] - x[0])."""
+    valid_values = [v for v in values if v is not None and not (isinstance(v, float) and pd.isna(v))]
+    if not valid_values:
+        return
+    min_tuple = min(valid_values, key=lambda x: x[1] - x[0])
+    if str(val_type) == "Float":
+        record.info[field] = tuple([float(x) for x in min_tuple])
+    elif str(val_type) == "Integer":
+        record.info[field] = tuple([int(x) for x in min_tuple])
+    else:
+        raise ValueError(f"Unsupported value type for minlength aggregation: {val_type}")
+
+
+def _aggregate_set(
+    record: pysam.VariantRecord,
+    field: str,
+    values: list,
+) -> None:
+    """Aggregate field by collecting unique values."""
+    record.info[field] = tuple(set(values))
+
+
+def _value_aggregator(
     record: pysam.VariantRecord,
     update_records: pd.DataFrame,
     field: str,
@@ -538,36 +623,49 @@ def _value_aggregator(  # noqa: C901
     val_number: str | None,
     val_type: str | None,
 ):
-    """Helper function to aggregate INFO field values based on specified action."""
+    """
+    Helper function to aggregate INFO field values based on specified action.
+
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        VCF record to update
+    update_records : pd.DataFrame
+        DataFrame containing records to aggregate
+    field : str
+        INFO field name to aggregate
+    action : str
+        Aggregation action to perform (weighted_avg, max, min, minlength, aggregate)
+    val_number : str | None
+        Number specification for the field
+    val_type : str | None
+        Type specification for the field
+    """
     if field.lower() not in update_records.columns:
         return
+
+    # Collect values based on field number specification
     values = []
     if val_number == 1:
         values = list(update_records[field.lower()]) + [record.info.get(field, np.nan)]
     elif str(val_number) == ".":
         values = list(update_records[field.lower()]) + [record.info.get(field, (None,))]
         values = [item for sublist in values for item in sublist if item is not None]
+    elif isinstance(val_number, int) and val_number > 1:
+        values = list(update_records[field.lower()]) + [record.info.get(field, None)]
     else:
         raise ValueError(f"Unsupported value number for aggregation: {val_number}")
-    if action == "weighted_avg":
-        lengths = np.array(list(update_records["svlen"].apply(lambda x: x[0])) + [record.info["SVLEN"][0]])
-        values = np.array(values)
-        if all(pd.isna(x) for x in values):
-            return
-        drop = np.isnan(values) | np.isnan(lengths)
-        values = values[~drop]
-        lengths = lengths[~drop]
-        weighted_avg = np.sum(values * lengths) / np.sum(lengths)
-        record.info[field] = round(weighted_avg, 3)
 
-    if action == "max":
-        if all(pd.isna(x) for x in values):
-            return
-        elif str(val_type) == "Float":
-            record.info[field] = float(np.nanmax(values))
-        elif str(val_type) == "Integer":
-            record.info[field] = int(np.nanmax(values))
-        else:
-            raise ValueError(f"Unsupported value type for max aggregation: {val_type}")
-    if action == "aggregate":
-        record.info[field] = tuple(set(values))
+    # Dispatch to appropriate aggregation function
+    if action == "weighted_avg":
+        _aggregate_weighted_avg(record, update_records, field, values)
+    elif action == "max":
+        _aggregate_max(record, field, values, val_type)
+    elif action == "min":
+        _aggregate_min(record, field, values, val_type)
+    elif action == "minlength":
+        _aggregate_minlength(record, field, values, val_type)
+    elif action == "aggregate":
+        _aggregate_set(record, field, values)
+    else:
+        raise ValueError(f"Unsupported aggregation action: {action}")

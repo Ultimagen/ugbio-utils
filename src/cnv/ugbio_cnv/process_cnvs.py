@@ -108,7 +108,10 @@ def run(argv):
     cnv_df = cnv_bed_format_utils.add_ids(cnv_df)
     cnv_df["SVLEN"] = cnv_df["end"] - cnv_df["start"]
     out_vcf_file = out_annotate_bed_file.replace(".bed", ".vcf.gz")
+
+    # Write VCF
     cnv_bed_format_utils.write_cnv_vcf(out_vcf_file, cnv_df, args.sample_name, args.fasta_index_file)
+
     vu = vcf_utils.VcfUtils()
     vu.index_vcf(out_vcf_file)
     logger.info("Cleaning temporary files...")
