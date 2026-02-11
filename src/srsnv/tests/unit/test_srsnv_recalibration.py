@@ -52,6 +52,8 @@ def test_recalibration_columns(tmp_path):
         max_qual=100.0,
         quality_lut_size=1000,
         metadata=None,
+        use_gpu=False,
+        use_float64=False,
     )
 
     # Create trainer and load the data
