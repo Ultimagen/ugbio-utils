@@ -105,6 +105,23 @@ PILEUP_CONFIG = PileupConfig()
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
+_MAX_DEBUG_REGION_LINES = 10
+
+
+def _log_regions_bed_preview(regions_bed_file: Path) -> None:
+    """Log a limited preview of regions BED file for debug."""
+    preview: list[str] = []
+    total = 0
+    with open(regions_bed_file) as f:
+        for line in f:
+            total += 1
+            if len(preview) < _MAX_DEBUG_REGION_LINES:
+                preview.append(line.strip())
+    if preview:
+        msg = f"Regions BED preview (first {len(preview)} of {total} regions):"
+        logger.debug(f"{msg}\n" + "\n".join(preview))
+
+
 def _run_shell_command(cmd: str, output_file: Path | None = None) -> None:
     """Run a shell command, optionally redirecting stdout to a file.
 
@@ -156,7 +173,8 @@ def write_vcf_info_header_file(
 
         if additional_header_lines:
             for line in additional_header_lines:
-                f.write(line + "\n")
+                formatted_line = line if line.startswith("##") else f"##{line}"
+                f.write(formatted_line + "\n")
 
 
 def get_sample_names_from_vcf(vcf_path: Path) -> tuple[str, str]:

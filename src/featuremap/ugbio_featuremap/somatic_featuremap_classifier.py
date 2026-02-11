@@ -1,10 +1,12 @@
 import logging
+import re
 import tempfile
 from pathlib import Path
 
 import cyclopts
 import polars as pl
 import pysam
+import xgboost
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
 
@@ -19,6 +21,7 @@ from ugbio_featuremap.somatic_featuremap_utils import (
     TR_CONFIG,
     TUMOR_PREFIX,
     XGB_PROBA_INFO_FIELD,
+    _log_regions_bed_preview,
     _run_shell_command,
     get_sample_names_from_vcf,
     write_vcf_info_header_file,
@@ -83,9 +86,7 @@ def filter_and_annotate_tr(
         extra_args_parts = []
         if regions_bed_file:
             logger.info(f"Restricting to regions from: {regions_bed_file}")
-            with open(regions_bed_file) as f:
-                regions = [line.strip() for line in f]
-                logger.debug("\n".join(regions))
+            _log_regions_bed_preview(regions_bed_file)
             extra_args_parts.append(f"-R {regions_bed_file}")
         if filter_string:
             logger.info(f"Filtering VCF to keep variants with FILTER={filter_string}")
@@ -93,7 +94,8 @@ def filter_and_annotate_tr(
 
         # Step 1: Filter VCF by regions and/or FILTER status
         if extra_args_parts:
-            filtered_vcf = tmpdir_path / input_vcf.name.replace(".vcf.gz", ".filtered.vcf.gz")
+            # Strip extension first, then append new suffix to avoid double .vcf.gz in the name
+            filtered_vcf = tmpdir_path / (input_vcf.name.replace(".vcf.gz", "") + ".filtered.vcf.gz")
             extra_args = " ".join(extra_args_parts)
             vcf_utils.view_vcf(str(input_vcf), str(filtered_vcf), n_threads=n_threads, extra_args=extra_args)
             vcf_utils.index_vcf(str(filtered_vcf))
@@ -110,7 +112,7 @@ def filter_and_annotate_tr(
         # Step 3: Annotate VCF with TR fields
         logger.info("Annotating VCF with tandem repeat information")
         output_suffix = ".filtered.tr_info.vcf.gz" if filter_string else ".tr_info.vcf.gz"
-        output_vcf = out_dir / input_vcf.name.replace(".vcf.gz", output_suffix)
+        output_vcf = out_dir / (input_vcf.name.replace(".vcf.gz", "") + output_suffix)
         vcf_utils.annotate_vcf(
             input_vcf=str(vcf_to_annotate),
             output_vcf=str(output_vcf),
@@ -244,7 +246,7 @@ def read_vcf_with_aggregation(
     aggregated_df = calculate_pileup_features(aggregated_df, tumor_sample, normal_sample)
 
     logger.info("Post-processing the aggregated dataframe")
-    aggregated_df = aggregated_df_post_processing(aggregated_df, [tumor_sample, normal_sample])
+    aggregated_df = aggregated_df_post_processing(aggregated_df, sample_names=[tumor_sample, normal_sample])
 
     return aggregated_df
 
@@ -348,7 +350,7 @@ def calculate_pileup_features(variants_df: pl.DataFrame, tumor_sample: str, norm
     return variants_df
 
 
-def aggregated_df_post_processing(variants_df: pl.DataFrame, samples: list[str]) -> pl.DataFrame:
+def aggregated_df_post_processing(variants_df: pl.DataFrame, sample_names: list[str]) -> pl.DataFrame:
     """
     Post-process the aggregated Polars DataFrame to include all required features by ML inference.
     Derives additional columns from aggregation statistics (with sample suffix)
@@ -359,7 +361,7 @@ def aggregated_df_post_processing(variants_df: pl.DataFrame, samples: list[str])
     ----------
     variants_df : pl.DataFrame
         DataFrame from vcf_to_parquet with aggregate mode.
-    samples : list[str]
+    sample_names : list[str]
         List of sample names.
 
     Returns
@@ -371,7 +373,7 @@ def aggregated_df_post_processing(variants_df: pl.DataFrame, samples: list[str])
     # Derive columns for each sample (using sample suffix convention)
     derived_exprs = []
 
-    for sample_name in samples:
+    for sample_name in sample_names:
         s = f"_{sample_name}"  # Original suffix from vcf_to_parquet
 
         # Derive sum-based columns (sum = mean * count for 0/1 fields)
@@ -553,7 +555,8 @@ def run_classifier(
     # TODO: don't convert to pandas, keep as polars dataframe once model compatibility verified
     df_variants_pandas = df_variants.to_pandas()
 
-    xgb_clf = somatic_featuremap_inference_utils.load_xgb_model(xgb_model_path)
+    xgb_clf = xgboost.XGBClassifier()
+    xgb_clf.load_model(xgb_model_path)
     model_features = xgb_clf.get_booster().feature_names
     logger.debug(f"Model features: {model_features}")
 
@@ -665,16 +668,63 @@ def annotate_vcf_with_xgb_proba(
 # =============================================================================
 # MAIN ORCHESTRATION FUNCTION
 # =============================================================================
-def initialization(output_vcf: Path, *, verbose: bool = False) -> tuple[Path, Path]:
+def validate_inputs_and_prepare_output(
+    output_vcf: Path,
+    filter_string: str,
+    *,
+    somatic_featuremap: Path,
+    genome_index_file: Path,
+    tandem_repeats_bed: Path,
+    xgb_model_json: Path,
+    regions_bed_file: Path | None = None,
+    verbose: bool = False,
+) -> tuple[Path, Path]:
+    """Validate input files and prepare the output directory. Also sets up logging if verbose is True.
+
+    Checks that all required input files exist, validates the filter_string format,
+    ensures the output VCF path has a .vcf.gz suffix, and creates the output directory.
+
+    Returns
+    -------
+    tuple[Path, Path]
+        (output_vcf, out_dir) - the resolved output VCF path and the output directory.
+
+    Raises
+    ------
+    FileNotFoundError
+        If any required input file does not exist.
+    ValueError
+        If filter_string contains invalid characters.
+    """
     if verbose:
         logger.setLevel(logging.DEBUG)
         for handler in logger.handlers:
             handler.setLevel(logging.DEBUG)
 
+    if filter_string and not re.fullmatch(r"[a-zA-Z0-9_-]+", filter_string):
+        raise ValueError(
+            f"filter_string must contain only alphanumeric characters, underscores, and hyphens; got: {filter_string!r}"
+        )
+
+    input_files = [
+        (somatic_featuremap, "somatic_featuremap"),
+        (genome_index_file, "genome_index_file"),
+        (tandem_repeats_bed, "tandem_repeats_bed"),
+        (xgb_model_json, "xgb_model_json"),
+    ]
+    if regions_bed_file is not None:
+        input_files.append((regions_bed_file, "regions_bed_file"))
+    for path, name in input_files:
+        if not path.exists():
+            raise FileNotFoundError(f"Input file does not exist: {name}={path}")
+
     # Ensure output has .vcf.gz suffix
     if not output_vcf.name.endswith(".vcf.gz"):
-        logger.info(f"Adding .vcf.gz suffix to output file: {output_vcf.name}")
-        output_vcf = output_vcf.with_suffix(".vcf.gz")
+        if output_vcf.name.endswith(".vcf"):
+            output_vcf = output_vcf.parent / (output_vcf.name + ".gz")
+        else:
+            output_vcf = output_vcf.with_suffix(".vcf.gz")
+        logger.info(f"Adjusted output file to: {output_vcf.name}")
 
     # create output directory
     out_dir = output_vcf.parent
@@ -740,7 +790,16 @@ def somatic_featuremap_classifier(
         --genome-file genome.fa.fai --tandem-repeats-bed tandem_repeats.bed \\
         --xgb-model-json model.json --regions-bed-file chr1_test.bed
     """
-    output_vcf, out_dir = initialization(output_vcf, verbose=verbose)
+    output_vcf, out_dir = validate_inputs_and_prepare_output(
+        output_vcf,
+        filter_string,
+        somatic_featuremap=somatic_featuremap,
+        genome_index_file=genome_index_file,
+        tandem_repeats_bed=tandem_repeats_bed,
+        xgb_model_json=xgb_model_json,
+        regions_bed_file=regions_bed_file,
+        verbose=verbose,
+    )
 
     tumor_sample, normal_sample = get_sample_names_from_vcf(somatic_featuremap)
 

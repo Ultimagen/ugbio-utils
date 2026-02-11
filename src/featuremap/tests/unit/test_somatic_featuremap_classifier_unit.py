@@ -18,6 +18,7 @@ from ugbio_featuremap.somatic_featuremap_classifier import (
     read_vcf_with_aggregation,
     rename_cols_for_model,
     run_classifier,
+    somatic_featuremap_classifier,
 )
 from ugbio_featuremap.somatic_featuremap_utils import (
     PILEUP_CONFIG,
@@ -555,3 +556,68 @@ class TestXgbProbaBcftoolsColumns:
         columns = _get_xgb_proba_bcftools_columns()
 
         assert columns == "CHROM,POS,REF,ALT,INFO/XGB_PROBA"
+
+
+class TestFilterStringValidation:
+    """Test filter_string validation in somatic_featuremap_classifier."""
+
+    def test_invalid_filter_string_with_space_raises(
+        self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_v115
+    ):
+        """filter_string with spaces raises ValueError."""
+        output_vcf = tmp_path / "output.vcf.gz"
+        with pytest.raises(ValueError, match="filter_string must contain only"):
+            somatic_featuremap_classifier(
+                somatic_featuremap=mini_somatic_vcf,
+                output_vcf=output_vcf,
+                genome_index_file=genome_fai,
+                tandem_repeats_bed=tr_bed,
+                xgb_model_json=xgb_model_v115,
+                filter_string="PASS ",
+            )
+
+    def test_invalid_filter_string_with_special_chars_raises(
+        self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_v115
+    ):
+        """filter_string with non-standard characters raises ValueError."""
+        output_vcf = tmp_path / "output.vcf.gz"
+        with pytest.raises(ValueError, match="filter_string must contain only"):
+            somatic_featuremap_classifier(
+                somatic_featuremap=mini_somatic_vcf,
+                output_vcf=output_vcf,
+                genome_index_file=genome_fai,
+                tandem_repeats_bed=tr_bed,
+                xgb_model_json=xgb_model_v115,
+                filter_string="foo;bar",
+            )
+
+
+class TestInputFileValidation:
+    """Test input file existence validation in initialization."""
+
+    def test_missing_somatic_featuremap_raises(self, tmp_path, tr_bed, genome_fai, xgb_model_v115):
+        """Missing somatic_featuremap raises FileNotFoundError."""
+        output_vcf = tmp_path / "output.vcf.gz"
+        missing_vcf = tmp_path / "nonexistent.vcf.gz"
+        with pytest.raises(FileNotFoundError, match="Input file does not exist"):
+            somatic_featuremap_classifier(
+                somatic_featuremap=missing_vcf,
+                output_vcf=output_vcf,
+                genome_index_file=genome_fai,
+                tandem_repeats_bed=tr_bed,
+                xgb_model_json=xgb_model_v115,
+            )
+
+    def test_missing_regions_bed_raises(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_v115):
+        """Missing regions_bed_file raises FileNotFoundError when provided."""
+        output_vcf = tmp_path / "output.vcf.gz"
+        missing_bed = tmp_path / "nonexistent.bed"
+        with pytest.raises(FileNotFoundError, match="Input file does not exist"):
+            somatic_featuremap_classifier(
+                somatic_featuremap=mini_somatic_vcf,
+                output_vcf=output_vcf,
+                genome_index_file=genome_fai,
+                tandem_repeats_bed=tr_bed,
+                xgb_model_json=xgb_model_v115,
+                regions_bed_file=missing_bed,
+            )
