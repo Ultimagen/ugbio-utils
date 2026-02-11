@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 
 import matplotlib.pyplot as plt
@@ -26,6 +27,11 @@ import pandas as pd
 import shap
 import xgboost as xgb
 from matplotlib import cm
+
+# Create a default logger for this module
+_default_logger = logging.getLogger(__name__)
+_default_logger.addHandler(logging.StreamHandler())
+_default_logger.setLevel(logging.INFO)
 
 # Constants for plot formatting and colorbar display
 MAX_LABEL_LENGTH_FOR_HORIZONTAL = 5  # Maximum character length before rotating colorbar labels
@@ -70,6 +76,9 @@ class SHAPPlotter:
         categorical_features_dict: dict[str, list] = None,
         label_col: str = "label",
         random_state: int = 42,
+        logger: logging.Logger | None = None,
+        *,
+        use_gpu: bool = True,
     ):
         """
         Initialize the SHAPPlotter.
@@ -99,6 +108,8 @@ class SHAPPlotter:
             Name of the column containing the target labels.
         random_state : int, default 42
             Random state for reproducible sampling.
+        use_gpu : bool, default True
+            Whether to use GPU for SHAP value computation if available.
 
         Raises
         ------
@@ -107,11 +118,22 @@ class SHAPPlotter:
             if required columns are missing from the data, or if feature information
             is not provided in any valid format.
         """
+        self.logger = logger if logger is not None else _default_logger
         self.models = models
         self.data = data
         self.fold_id_col = fold_id_col
         self.label_col = label_col
         self.rng = np.random.default_rng(random_state)
+        # GPU support
+        self.use_gpu = use_gpu
+        if self.use_gpu:
+            # Check if XGBoost is compiled with GPU support
+            try:
+                gpu_test_model = xgb.XGBClassifier(tree_method="hist", device="cuda")
+                gpu_test_model.fit(np.array([[0], [1]]), np.array([0, 1]))
+            except Exception:
+                self.use_gpu = False
+                self.logger.warning("XGBoost GPU support not available - falling back to CPU for SHAP calculations")
 
         # Validate inputs
         if fold_id_col not in data.columns:
@@ -474,7 +496,7 @@ class SHAPPlotter:
         )
 
         # Get top features by SHAP importance
-        total_features = shap_values.shape[2] - 1  # Exclude bias term
+        total_features = shap_values.shape[1] - 1  # Exclude bias term
         top_features = np.abs(shap_values[:, :-1]).mean(axis=0).argsort()[::-1][:n_features]
 
         # Filter grouped_features to only include groups represented in top features
@@ -636,9 +658,6 @@ class SHAPPlotter:
         - Handles both numerical and categorical features automatically
         - Ensures reproducible sampling using the class's random_state
         - Test data (NaN fold_id) can be processed by any model
-        - Assumes XGBoost models trained with "objective": "multi:softprob" which returns
-          3D SHAP arrays with shape (n_samples, n_classes, n_features+1)
-        - TODO: Add support for standard binary classification models that return 2D arrays
         """
         # Determine which data to use
         if data_subset is not None:
@@ -673,6 +692,10 @@ class SHAPPlotter:
         # Create DMatrix with categorical features properly encoded
         # x_sample contains categorical features with their original metadata-based encodings
         # enable_categorical=True tells XGBoost to handle them as categorical (not ordinal)
+        if self.use_gpu:
+            model.set_params(device="cuda")
+        else:
+            model.set_params(device="cpu")
         x_sample_dm = xgb.DMatrix(data=x_sample, label=y_sample, enable_categorical=True)
         shap_values = model.get_booster().predict(
             x_sample_dm, pred_contribs=True, iteration_range=(0, model.best_ntree_limit)
