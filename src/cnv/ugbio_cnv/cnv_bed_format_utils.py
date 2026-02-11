@@ -316,9 +316,7 @@ def _add_genotype_to_record(record: pysam.VariantRecord, sample_name: str, row: 
     record.samples[sample_name]["GT"] = gt
 
 
-def write_cnv_vcf(
-    outfile: str, cnv_df: pd.DataFrame, sample_name: str, fasta_index_file: str, window_size: int | None = None
-) -> None:
+def write_cnv_vcf(outfile: str, cnv_df: pd.DataFrame, sample_name: str, fasta_index_file: str) -> None:
     """
     Write CNV calls directly from dataframe to a VCF file.
 
@@ -332,9 +330,6 @@ def write_cnv_vcf(
         The name of the sample.
     fasta_index_file : str
         Path to the reference genome index file (.fai).
-    window_size : int | None, optional
-        Window size (bin size) used for CNV calling. Used to calculate CIPOS confidence interval.
-        If provided, CIPOS will be set to [-window_size/2, window_size/2+1] (rounded).
     """
     header = add_vcf_header(sample_name, fasta_index_file)
 
@@ -348,10 +343,6 @@ def write_cnv_vcf(
 
             # Add INFO field information to the record
             _add_info_fields_to_record(record, row)
-
-            # Add CIPOS if window_size is provided
-            if window_size is not None:
-                record.info["CIPOS"] = (round(-window_size / 2), round(window_size / 2 + 1))
 
             # Add genotype information to the record
             _add_genotype_to_record(record, sample_name, row)
