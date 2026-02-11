@@ -2594,20 +2594,25 @@ class SRSNVReport:
             q2 [float]: upper quantile for interquartile range
             bin_edges [list]: bin edges for discretization. If it is None, use discrete (integer) values
         """
-        data_df = self.data_df.copy()
+        required_cols = [col, LABEL, IS_MIXED, QUAL]
+
+        # If binning is needed, create binned column in a view/subset
         if bin_edges is not None:
-            data_df[col] = pd.cut(data_df[col], bin_edges, labels=(bin_edges[1:] + bin_edges[:-1]) / 2)
-        stats_for_plot = (
-            data_df.sample(frac=1)
-            .groupby([col, LABEL, IS_MIXED])
-            .agg(
-                median_qual=(QUAL, "median"),
-                quantile1_qual=(QUAL, lambda x: x.quantile(q1)),
-                quantile3_qual=(QUAL, lambda x: x.quantile(q2)),
-                count=(QUAL, "size"),
-            )
+            # Work with a subset of data to avoid full copy
+            subset = self.data_df[required_cols].copy()  # Only copy required columns
+            subset[col] = pd.cut(subset[col], bin_edges, labels=(bin_edges[1:] + bin_edges[:-1]) / 2)
+        else:
+            # Use a view of the original dataframe (no copy needed)
+            subset = self.data_df[required_cols]
+
+        stats_for_plot = subset.groupby([col, LABEL, IS_MIXED], observed=True).agg(
+            median_qual=(QUAL, "median"),
+            quantile1_qual=(QUAL, lambda x: x.quantile(q1)),
+            quantile3_qual=(QUAL, lambda x: x.quantile(q2)),
+            count=(QUAL, "size"),
         )
-        stats_for_plot["fraction"] = stats_for_plot["count"] / data_df.shape[0]
+        total_count = len(self.data_df)
+        stats_for_plot["fraction"] = stats_for_plot["count"] / total_count
         stats_for_plot = stats_for_plot.reset_index()
         return stats_for_plot
 
