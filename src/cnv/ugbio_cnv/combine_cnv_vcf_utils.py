@@ -138,7 +138,10 @@ def write_vcf_records_with_source(
     vcf_out: pysam.VariantFile,
     combined_header: pysam.VariantHeader,
     source_name: str,
-) -> None:
+    *,
+    make_ids_unique: bool = False,
+    seen_ids: set | None = None,
+) -> set[str]:
     """
     Write VCF records to output file with CNV_SOURCE annotation.
 
@@ -155,18 +158,52 @@ def write_vcf_records_with_source(
         Combined header for creating new records
     source_name : str
         Source name to add to CNV_SOURCE INFO field
+    make_ids_unique : bool, optional
+        If True, ensure all IDs are unique by appending suffixes (default: False)
+    seen_ids : set, optional
+        Set of already-seen IDs for tracking uniqueness (default: None, creates new set)
+
+    Returns
+    -------
+    set
+        The updated set of seen IDs
     """
     logger.info(f"Writing records from {source_name} VCF")
+    if seen_ids is None:
+        seen_ids = set()
+
     for record in vcf_in:
         # Clear filters - we remove filters imposed by the previous pipelines
         record.filter.clear()
         record.filter.add("PASS")
         # Create new record with combined header
         new_record = VcfUtils.copy_vcf_record(record, combined_header)
+
+        # Ensure unique ID if requested
+        if make_ids_unique:
+            original_id = new_record.id
+            if original_id is None or original_id == ".":
+                # Generate ID based on position if none exists
+                original_id = f"{new_record.chrom}_{new_record.start}_{new_record.stop}"
+
+            # Make ID unique if it already exists
+            unique_id = original_id
+            suffix = 1
+            while unique_id in seen_ids:
+                unique_id = f"{original_id}_{suffix}"
+                suffix += 1
+
+            new_record.id = unique_id
+            seen_ids.add(unique_id)
+        # Note: When make_ids_unique is False, IDs are not tracked and duplicates are allowed
+        # This preserves the original behavior where duplicate IDs may exist
+
         # Add source tag if not already present
         if "CNV_SOURCE" not in new_record.info:
             new_record.info["CNV_SOURCE"] = (source_name,)
         vcf_out.write(new_record)
+
+    return seen_ids
 
 
 def combine_vcf_headers_for_cnv(
@@ -386,6 +423,47 @@ def _aggregate_collapsed_vcf(
                 vcf_out.write(record)
 
 
+def _verify_unique_ids(vcf_path: str) -> None:
+    """
+    Verify that all variant IDs in a VCF file are unique.
+
+    Parameters
+    ----------
+    vcf_path : str
+        Path to the VCF file to check
+
+    Raises
+    ------
+    ValueError
+        If duplicate IDs are found in the VCF file
+
+    Notes
+    -----
+    This validation ensures that variant IDs can be used reliably for matching
+    and tracking variants through merge operations. Records with missing IDs
+    (None or ".") are allowed and not counted as duplicates.
+    """
+    seen_ids = set()
+
+    with pysam.VariantFile(vcf_path) as vcf_in:
+        for record in vcf_in:
+            variant_id = record.id
+            # Skip records with missing IDs
+            if variant_id is None or variant_id == ".":
+                raise ValueError(
+                    "Collapsing callsets only works when the variants have unique IDs. Found record with missing ID."
+                )
+
+            if variant_id in seen_ids:
+                raise ValueError(
+                    f"VCF file contains duplicate variant IDs: {variant_id}. "
+                    "All variant IDs must be unique for merge operations. "
+                    "Consider using the --make_ids_unique flag when combining VCF files."
+                )
+            else:
+                seen_ids.add(variant_id)
+
+
 def merge_cnvs_in_vcf(
     input_vcf: str,
     output_vcf: str,
@@ -438,9 +516,17 @@ def merge_cnvs_in_vcf(
     -------
     None
         Writes the merged VCF to output_vcf and creates an index.
-    """
 
-    # Stage 1: Collapse overlapping variants into representative records
+    Raises
+    ------
+    ValueError
+        If the input VCF contains duplicate variant IDs
+    """
+    # Validate that all IDs are unique before merging
+    logger.info(f"Validating unique variant IDs in {input_vcf}")
+    _verify_unique_ids(input_vcf)
+
+    # Stage 1: Collapse overlapping variants
     output_vcf_collapse = output_vcf + ".collapse.tmp.vcf.gz"
     temporary_files = [output_vcf_collapse]
 
@@ -517,15 +603,13 @@ def _remove_overlapping_filtered_variants(
         | (removed_df["filter"] == ".")
         | (removed_df["filter"] == "PASS")
     )
-    # TODO [BIOIN-2653]: make sure the IDs are unique at this point, so no need to do complicated ID
-    # handling. Use itertuples for efficiency on large DataFrames instead of DataFrame.apply(axis=1).
-    filtered_id_pos = removed_df.loc[filtered_out, ["id", "chrom", "pos"]]
-    remove_ids = set(filtered_id_pos.itertuples(index=False, name=None))
+    # With unique IDs enforced, we can simply use ID for matching
+    remove_ids = set(removed_df.loc[filtered_out, "id"])
     with pysam.VariantFile(merged_vcf) as vcf_in:
         hdr = vcf_in.header
         with pysam.VariantFile(output_vcf_collapse, "w", header=hdr) as vcf_out:
             for record in vcf_in:
-                if (record.id, record.contig, record.pos) in remove_ids:
+                if record.id in remove_ids:
                     continue
                 vcf_out.write(record)
     mu.cleanup_temp_files([str(removed_vcf)])

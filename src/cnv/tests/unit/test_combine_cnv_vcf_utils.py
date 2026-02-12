@@ -803,6 +803,60 @@ def make_cnv_record(vcf, contig, pos, stop, record_id, svtype="DEL", svlen=None,
     return record
 
 
+def test_merge_cnvs_duplicate_ids_fail(tmp_path, cnv_vcf_header):
+    """Test that merge_cnvs_in_vcf fails when input VCF has duplicate IDs."""
+    input_vcf = tmp_path / "input_with_duplicates.vcf.gz"
+    output_vcf = tmp_path / "output.vcf.gz"
+
+    # Create a VCF with duplicate IDs
+    with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf_out:
+        # First record with ID "dup_id"
+        rec1 = vcf_out.new_record(
+            contig="chr1",
+            start=1000,
+            stop=2000,
+            alleles=("N", "<DEL>"),
+            id="dup_id",
+        )
+        rec1.info["SVTYPE"] = "DEL"
+        rec1.info["SVLEN"] = (-1000,)
+        vcf_out.write(rec1)
+
+        # Second record with same ID "dup_id"
+        rec2 = vcf_out.new_record(
+            contig="chr1",
+            start=5000,
+            stop=6000,
+            alleles=("N", "<DEL>"),
+            id="dup_id",
+        )
+        rec2.info["SVTYPE"] = "DEL"
+        rec2.info["SVLEN"] = (-1000,)
+        vcf_out.write(rec2)
+
+        # Third record with unique ID
+        rec3 = vcf_out.new_record(
+            contig="chr1",
+            start=10000,
+            stop=11000,
+            alleles=("N", "<DEL>"),
+            id="unique_id",
+        )
+        rec3.info["SVTYPE"] = "DEL"
+        rec3.info["SVLEN"] = (-1000,)
+        vcf_out.write(rec3)
+
+    pysam.tabix_index(str(input_vcf), preset="vcf", force=True)
+
+    # Test that merge_cnvs_in_vcf raises ValueError for duplicate IDs
+    with pytest.raises(ValueError, match="duplicate variant IDs.*dup_id"):
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(
+            input_vcf=str(input_vcf),
+            output_vcf=str(output_vcf),
+            distance=1000,
+        )
+
+
 class TestMergeCnvsInVcfTwoStage:
     """Integration tests for two-stage merge with ignore_filter=False."""
 
@@ -1181,31 +1235,9 @@ class TestMergeCnvsInVcfTwoStage:
         pysam.tabix_index(str(input_vcf), preset="vcf", force=True)
 
         # Execute with ignore_filter=False
-        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1000, ignore_filter=False)
-
-        # Verify: All 3 records should be in output (2 PASS, 1 filtered)
-        # The filtered one should NOT be removed just because it shares the same ID
-        with pysam.VariantFile(str(output_vcf)) as vcf:
-            records = list(vcf)
-            assert len(records) == 3, f"Expected 3 records, got {len(records)}"
-
-            # Verify we have the correct positions
-            positions = sorted([rec.pos for rec in records])
-            assert positions == [1000, 5000, 10000], f"Expected positions [1000, 5000, 10000], got {positions}"
-
-            # Verify filters: 2 PASS, 1 LowQual
-            filters = [rec.filter.keys() for rec in records]
-            pass_count = sum(1 for f in filters if f == ["PASS"])
-            lowqual_count = sum(1 for f in filters if f == ["LowQual"])
-            assert pass_count == 2, f"Expected 2 PASS records, got {pass_count}"
-            assert lowqual_count == 1, f"Expected 1 LowQual record, got {lowqual_count}"
-
-            # Verify the filtered record is at the correct position
-            filtered_records = [rec for rec in records if rec.filter.keys() == ["LowQual"]]
-            assert len(filtered_records) == 1
-            assert (
-                filtered_records[0].pos == 5000
-            ), f"Expected filtered record at pos 5000, got {filtered_records[0].pos}"
+        # Execute with ignore_filter=False - should fail due to duplicate IDs
+        with pytest.raises(ValueError, match="duplicate variant IDs"):
+            combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1000, ignore_filter=False)
 
 
 class TestMergeCnvsInVcfIntegration:
