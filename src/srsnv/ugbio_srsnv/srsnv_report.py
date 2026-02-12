@@ -55,7 +55,6 @@ IS_MIXED_END = "is_mixed_end"
 
 PROB_ORIG = "prob_orig"
 PROB_RECAL = "prob_recal"
-PROB_RESCALED = "prob_rescaled"
 PROB_TRAIN = "prob_train"
 PROB_FOLD_TMPL = "prob_fold_{k}"
 

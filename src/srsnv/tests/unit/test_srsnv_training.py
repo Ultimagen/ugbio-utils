@@ -4,7 +4,6 @@ from typing import Any
 
 import pytest
 from ugbio_srsnv.srsnv_training import (
-    _convert_unified_stats_to_legacy_format,
     _extract_stats_from_unified,
     _parse_model_params,
 )
@@ -95,50 +94,6 @@ def test_extract_stats_from_unified_missing_section():
 
     # Clean up
     Path(temp_path).unlink()
-
-
-def test_convert_unified_stats_to_legacy_format():
-    """Test _convert_unified_stats_to_legacy_format function."""
-    unified_stats = {
-        "filtering_stats_random_sample": {
-            "filters": {
-                "raw": {"funnel": 1000, "type": "raw"},
-                "filter1": {"funnel": 800, "type": "quality", "field": "MAPQ", "op": "ge", "value": 60},
-            }
-        }
-    }
-
-    result = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
-
-    assert "filters" in result
-    filters_list = result["filters"]
-    assert len(filters_list) == 2
-
-    # Check raw filter is first
-    assert filters_list[0]["name"] == "raw"
-    assert filters_list[0]["type"] == "raw"
-    assert filters_list[0]["funnel"] == 1000
-
-    # Check other filter
-    filter1 = next((f for f in filters_list if f["name"] == "filter1"), None)
-    assert filter1 is not None
-    assert filter1["type"] == "quality"
-    assert filter1["field"] == "MAPQ"
-    assert filter1["op"] == "ge"
-    assert filter1["value"] == 60
-    assert filter1["funnel"] == 800
-
-
-def test_convert_unified_stats_to_legacy_format_missing_section():
-    """Test _convert_unified_stats_to_legacy_format with missing sections."""
-    unified_stats = {}
-
-    with pytest.raises(ValueError, match="Section 'missing_section' not found"):
-        _convert_unified_stats_to_legacy_format(unified_stats, "missing_section", "filters")
-
-    unified_stats = {"section1": {}}
-    with pytest.raises(ValueError, match="Filter key 'missing_filter' not found"):
-        _convert_unified_stats_to_legacy_format(unified_stats, "section1", "missing_filter")
 
 
 def test_downsample_segments_added_to_metadata(tmp_path: Path, resources_dir: Path) -> None:

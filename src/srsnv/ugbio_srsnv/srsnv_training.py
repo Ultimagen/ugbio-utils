@@ -34,6 +34,14 @@ from scipy.stats import gaussian_kde
 from ugbio_core.bed_utils import BedUtils
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
+from ugbio_featuremap.filter_dataframe import (
+    KEY_NAME,
+    KEY_TYPE,
+    TYPE_DOWNSAMPLE,
+    TYPE_QUALITY,
+    TYPE_RAW,
+    TYPE_REGION,
+)
 
 from ugbio_srsnv.srsnv_utils import (
     EPS,
@@ -44,6 +52,8 @@ from ugbio_srsnv.srsnv_utils import (
     safe_roc_auc,
 )
 
+KEY_FUNNEL = "funnel"
+KEY_PASS = "pass"  # noqa: S105
 FOLD_COL = "fold_id"
 LABEL_COL = "label"
 CHROM = FeatureMapFields.CHROM.value
@@ -58,7 +68,6 @@ SNVQ_RAW = SNVQ + "_RAW"
 
 PROB_ORIG = "prob_orig"
 PROB_RECAL = "prob_recal"
-PROB_RESCALED = "prob_rescaled"
 PROB_TRAIN = "prob_train"
 PROB_FOLD_TMPL = "prob_fold_{k}"
 
@@ -270,69 +279,6 @@ def _probability_recalibration(prob_orig: np.ndarray, y_all: np.ndarray) -> np.n
     return prob_orig.copy()
 
 
-def _convert_unified_stats_to_legacy_format(unified_stats: dict, section: str, filter_key: str) -> dict:  # noqa: C901, PLR0912
-    """
-    Convert unified stats format to legacy format expected by existing code.
-
-    Args:
-        unified_stats: The unified stats dictionary
-        section: Section name ('filtering_stats_full_output' or 'filtering_stats_random_sample')
-        filter_key: Filter key ('filters' or 'f2_filters')
-
-    Returns:
-        Dictionary in legacy format with 'filters' list
-    """
-    if section not in unified_stats:
-        raise ValueError(f"Section '{section}' not found in unified stats")
-
-    section_data = unified_stats[section]
-    if filter_key not in section_data:
-        raise ValueError(f"Filter key '{filter_key}' not found in section '{section}'")
-
-    filters_dict = section_data[filter_key]
-
-    # Convert from dict format to list format expected by legacy code
-    filters_list = []
-
-    # Always add raw filter first
-    if "raw" in filters_dict:
-        raw_filter = {"name": "raw", "type": "raw"}
-        # Preserve funnel and pass from input if present
-        if "funnel" in filters_dict["raw"]:
-            raw_filter["funnel"] = filters_dict["raw"]["funnel"]
-        if "pass" in filters_dict["raw"]:
-            raw_filter["pass"] = filters_dict["raw"]["pass"]
-        # Fallback to rows for backwards compatibility
-        if "rows" in filters_dict["raw"]:
-            raw_filter["rows"] = filters_dict["raw"]["rows"]
-        filters_list.append(raw_filter)
-
-    # Add other filters, preserving their metadata
-    for filter_name, filter_data in filters_dict.items():
-        if filter_name == "raw":
-            continue  # Already processed
-
-        filter_entry = {"name": filter_name}
-
-        # Copy metadata fields
-        for field in ["type", "field", "op", "value"]:
-            if field in filter_data:
-                filter_entry[field] = filter_data[field]
-
-        # Preserve funnel and pass from input if present
-        if "funnel" in filter_data:
-            filter_entry["funnel"] = filter_data["funnel"]
-        if "pass" in filter_data:
-            filter_entry["pass"] = filter_data["pass"]
-        # Fallback to rows for backwards compatibility
-        if "rows" in filter_data:
-            filter_entry["rows"] = filter_data["rows"]
-
-        filters_list.append(filter_entry)
-
-    return {"filters": filters_list}
-
-
 def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, dict]:
     """
     Extract positive and negative stats from unified stats file.
@@ -363,9 +309,33 @@ def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, d
     logger.info("Using filtering_stats_random_sample section as positive (true-positive) data")
     logger.info("Using filtering_stats_full_output section as negative (false-positive) data")
 
-    # Convert sections using their 'filters' subsections
-    positive_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_random_sample", "filters")
-    negative_stats = _convert_unified_stats_to_legacy_format(unified_stats, "filtering_stats_full_output", "filters")
+    # Extract filters subsections and convert from dict to list format
+    def _convert_filters_dict_to_list(filters_dict: dict) -> list[dict]:
+        """Convert filters from dict format to list format."""
+        filters_list = []
+
+        # Always add raw filter first if it exists
+        if TYPE_RAW in filters_dict:
+            raw_filter = {KEY_NAME: TYPE_RAW, KEY_TYPE: TYPE_RAW}
+            raw_filter.update(filters_dict[TYPE_RAW])
+            filters_list.append(raw_filter)
+
+        # Add other filters
+        for filter_name, filter_data in filters_dict.items():
+            if filter_name == TYPE_RAW:
+                continue  # Already processed
+
+            # Create filter entry with name
+            filter_entry = {KEY_NAME: filter_name}
+            filter_entry.update(filter_data)
+            filters_list.append(filter_entry)
+
+        return filters_list
+
+    positive_stats = {
+        "filters": _convert_filters_dict_to_list(unified_stats["filtering_stats_random_sample"]["filters"])
+    }
+    negative_stats = {"filters": _convert_filters_dict_to_list(unified_stats["filtering_stats_full_output"]["filters"])}
 
     return positive_stats, negative_stats
 
@@ -377,7 +347,7 @@ class SRSNVTrainer:
         self.args = args
         self.out_dir = Path(args.output)
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.max_qual = self.args.max_qual if self.args.max_qual is not None else MAX_PHRED  # noqa: C901
+        self.max_qual = self.args.max_qual or MAX_PHRED
         self.eps = 10 ** (-self.max_qual / 10)  # small value to avoid division by zero
 
         # RNG
@@ -396,9 +366,9 @@ class SRSNVTrainer:
         def _quality_region_filters(st):
             filters = []
             for f in st["filters"]:
-                if f.get("type") in {"quality", "region"}:
+                if f.get(KEY_TYPE) in {TYPE_QUALITY, TYPE_REGION}:
                     # Create filter definition without row counts for comparison
-                    filter_def = {k: v for k, v in f.items() if k not in {"rows", "funnel", "pass"}}
+                    filter_def = {k: v for k, v in f.items() if k not in {KEY_FUNNEL, KEY_PASS}}
                     filters.append(filter_def)
             return filters
 
@@ -413,15 +383,14 @@ class SRSNVTrainer:
             )
 
         # helper: last entry that is *not* a down-sample operation
-        def _last_non_downsample_rows(stats: dict) -> int:
+        def _last_non_downsample_funnel(stats: dict) -> int:
             for f in reversed(stats["filters"]):
-                if f.get("type") != "downsample":
-                    # Try funnel first (new format), then rows (old format)
-                    return f.get("funnel", f.get("rows"))
+                if f.get(KEY_TYPE) != TYPE_DOWNSAMPLE:
+                    return f.get(KEY_FUNNEL)
             raise ValueError("stats JSON has no non-downsample filter entry")
 
         # Calculate raw_featuremap_size_filtered
-        neg_after_filter = _last_non_downsample_rows(self.neg_stats)
+        neg_after_filter = _last_non_downsample_funnel(self.neg_stats)
         self.raw_featuremap_size_filtered = neg_after_filter
 
         # Data
@@ -847,29 +816,17 @@ class SRSNVTrainer:
         prob_recal = _probability_recalibration(prob_orig, y_all)
         logger.debug("Applied probability recalibration")
 
-        # ------------------------------------------------------------------
-        # global rescaling to the real-data prior
-        prob_rescaled = _probability_rescaling(
-            prob_recal,
-            sample_prior=1 - self.prior_train_error,  # prior of a true call from training data
-            target_prior=1 - self.prior_train_error,  # using training prior (prior_real_error removed)
-            eps=self.eps,
-        )
-        logger.debug("Completed probability rescaling")
-
         # attach new columns ------------------------------------------------
         logger.debug("Attaching per-fold probabilities and intermediate columns")
         new_cols = [pl.Series(PROB_FOLD_TMPL.format(k=k), preds_prob[k]) for k in range(self.k_folds)] + [
             pl.Series(PROB_ORIG, prob_orig),
             pl.Series(PROB_RECAL, prob_recal),
-            pl.Series(PROB_RESCALED, prob_rescaled),
             pl.Series(MQUAL, mqual),
         ]
 
         self.data_frame = self.data_frame.with_columns(new_cols)
 
         # final quality (Phred)
-        # snvq_raw = prob_to_phred(prob_rescaled, max_value=self.max_qual)
         self._create_quality_lookup_table()
         logger.debug("Created MQUAL→SNVQ lookup table")
         snvq = np.interp(mqual, self.x_lut, self.y_lut)
@@ -908,6 +865,17 @@ class SRSNVTrainer:
         for fold_idx, model in enumerate(self.models):
             path = self.out_dir / f"{base}model_fold_{fold_idx}.json"
             # Use get_booster().save_model() to avoid XGBoost 2.x compatibility issues
+            # NOTE:
+            #   In XGBoost 2.x the sklearn wrapper's save_model() interface and
+            #   behavior are not as stable as the core Booster API. In some
+            #   versions, calling model.save_model() on the sklearn estimator
+            #   can either be unavailable, change output format, or serialize
+            #   additional sklearn-specific state that is not expected by our
+            #   downstream consumers (which assume a plain Booster model in
+            #   JSON format).
+            #   To ensure consistent, forward-compatible serialization across
+            #   XGBoost 2.x releases, we explicitly serialize the underlying
+            #   Booster instead of the sklearn estimator itself.
             model.get_booster().save_model(path)
             model_paths[fold_idx] = str(path)
             logger.info("Saved model for fold %d → %s", fold_idx, path)
@@ -1045,7 +1013,8 @@ def _cli() -> argparse.Namespace:
     ap.add_argument(
         "--stats-file",
         required=True,
-        help="JSON file with unified filtering stats containing positive (f2_filters), " "negative (filters)",
+        help="JSON file with filtering stats containing positive (f2_filters),"
+        " and negative (filters). Obtanied from snvfind -S",
     )
     ap.add_argument(
         "--mean-coverage",

@@ -33,6 +33,7 @@ from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions, PpmseqCategories
 
 from ugbio_srsnv.shap_plotting import SHAPPlotter
+from ugbio_srsnv.srsnv_report import add_is_mixed_to_featuremap_df
 from ugbio_srsnv.srsnv_utils import (
     ET,
     ET_FILLNA,
@@ -1547,8 +1548,6 @@ class SRSNVReport:
         # Add is_mixed columns if they don't exist
         if IS_MIXED not in self.data_df.columns:
             logger.info(f"Adding {IS_MIXED}, {IS_MIXED_START}, and {IS_MIXED_END} columns to data_df")
-            # Import here to avoid circular dependency
-            from ugbio_srsnv.srsnv_report import add_is_mixed_to_featuremap_df
 
             adapter_version = self.params.get("adapter_version", None)
             categorical_features = [f["name"] for f in self.srsnv_metadata["features"] if f.get("type") == "c"]
