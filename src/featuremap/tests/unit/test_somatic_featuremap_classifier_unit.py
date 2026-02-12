@@ -608,6 +608,45 @@ class TestInputFileValidation:
                 xgb_model_json=xgb_model_v115,
             )
 
+    def test_missing_genome_index_raises(self, tmp_path, mini_somatic_vcf, tr_bed, xgb_model_v115):
+        """Missing genome_index_file raises FileNotFoundError."""
+        output_vcf = tmp_path / "output.vcf.gz"
+        missing_fai = tmp_path / "nonexistent.fai"
+        with pytest.raises(FileNotFoundError, match="Input file does not exist"):
+            somatic_featuremap_classifier(
+                somatic_featuremap=mini_somatic_vcf,
+                output_vcf=output_vcf,
+                genome_index_file=missing_fai,
+                tandem_repeats_bed=tr_bed,
+                xgb_model_json=xgb_model_v115,
+            )
+
+    def test_missing_tandem_repeats_bed_raises(self, tmp_path, mini_somatic_vcf, genome_fai, xgb_model_v115):
+        """Missing tandem_repeats_bed raises FileNotFoundError."""
+        output_vcf = tmp_path / "output.vcf.gz"
+        missing_bed = tmp_path / "nonexistent.bed"
+        with pytest.raises(FileNotFoundError, match="Input file does not exist"):
+            somatic_featuremap_classifier(
+                somatic_featuremap=mini_somatic_vcf,
+                output_vcf=output_vcf,
+                genome_index_file=genome_fai,
+                tandem_repeats_bed=missing_bed,
+                xgb_model_json=xgb_model_v115,
+            )
+
+    def test_missing_xgb_model_raises(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai):
+        """Missing xgb_model_json raises FileNotFoundError."""
+        output_vcf = tmp_path / "output.vcf.gz"
+        missing_model = tmp_path / "nonexistent.json"
+        with pytest.raises(FileNotFoundError, match="Input file does not exist"):
+            somatic_featuremap_classifier(
+                somatic_featuremap=mini_somatic_vcf,
+                output_vcf=output_vcf,
+                genome_index_file=genome_fai,
+                tandem_repeats_bed=tr_bed,
+                xgb_model_json=missing_model,
+            )
+
     def test_missing_regions_bed_raises(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_v115):
         """Missing regions_bed_file raises FileNotFoundError when provided."""
         output_vcf = tmp_path / "output.vcf.gz"

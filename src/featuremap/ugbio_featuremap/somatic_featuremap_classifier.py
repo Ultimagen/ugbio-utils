@@ -23,6 +23,7 @@ from ugbio_featuremap.somatic_featuremap_utils import (
     XGB_PROBA_INFO_FIELD,
     _log_regions_bed_preview,
     _run_shell_command,
+    cleanup_intermediate_files,
     get_sample_names_from_vcf,
     write_vcf_info_header_file,
 )
@@ -659,10 +660,7 @@ def annotate_vcf_with_xgb_proba(
     logger.info(f"Annotated VCF with {FeatureMapFields.XGB_PROBA.value}: {output_vcf_path}")
 
     # Cleanup temporary files
-    annotation_tsv_gz.unlink(missing_ok=True)
-    Path(str(annotation_tsv_gz) + ".tbi").unlink(missing_ok=True)
-    header_file.unlink(missing_ok=True)
-    logger.debug("Cleaned up temporary annotation files")
+    cleanup_intermediate_files([annotation_tsv_gz, Path(str(annotation_tsv_gz) + ".tbi"), header_file])
 
 
 # =============================================================================
@@ -706,17 +704,13 @@ def validate_inputs_and_prepare_output(
             f"filter_string must contain only alphanumeric characters, underscores, and hyphens; got: {filter_string!r}"
         )
 
-    input_files = [
-        (somatic_featuremap, "somatic_featuremap"),
-        (genome_index_file, "genome_index_file"),
-        (tandem_repeats_bed, "tandem_repeats_bed"),
-        (xgb_model_json, "xgb_model_json"),
-    ]
+    input_files = [somatic_featuremap, genome_index_file, tandem_repeats_bed, xgb_model_json]
     if regions_bed_file is not None:
-        input_files.append((regions_bed_file, "regions_bed_file"))
-    for path, name in input_files:
-        if not path.exists():
-            raise FileNotFoundError(f"Input file does not exist: {name}={path}")
+        input_files.append(regions_bed_file)
+    if not all(path.exists() for path in input_files):
+        raise FileNotFoundError(
+            f"Input file does not exist: {[path.name for path in input_files if not path.exists()]}"
+        )
 
     # Ensure output has .vcf.gz suffix
     if not output_vcf.name.endswith(".vcf.gz"):
@@ -843,6 +837,9 @@ def somatic_featuremap_classifier(
         sfm_filtered_with_tr, output_vcf, aggregated_df, tumor_sample=tumor_sample, n_threads=n_threads
     )
     logger.info(f"Output VCF written to: {output_vcf}")
+
+    # Clean up intermediate files
+    cleanup_intermediate_files([sfm_filtered_with_tr, Path(str(sfm_filtered_with_tr) + ".tbi")])
 
     return output_vcf, output_parquet
 

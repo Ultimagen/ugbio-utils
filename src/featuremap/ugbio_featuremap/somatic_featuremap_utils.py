@@ -122,6 +122,13 @@ def _log_regions_bed_preview(regions_bed_file: Path) -> None:
         logger.debug(f"{msg}\n" + "\n".join(preview))
 
 
+def cleanup_intermediate_files(file_paths: list[Path]) -> None:
+    """Remove intermediate files if they exist, logging any errors."""
+    for file_path in file_paths:
+        file_path.unlink(missing_ok=True)
+        logger.debug(f"Cleaned up intermediate file: {file_path}")
+
+
 def _run_shell_command(cmd: str, output_file: Path | None = None) -> None:
     """Run a shell command, optionally redirecting stdout to a file.
 
