@@ -1,11 +1,8 @@
 # Set of classes for working with pileup in a flow space.
 # Allows to fetch the flow probabilities for each hompolymer in the pileup.
-from array import array
 
-import numpy as np
 import pysam
 import ugbio_core.flow_format.flow_based_read as fbr
-import ugbio_core.math_utils as phred
 
 BAM_CSOFT_CLIP = 4
 
