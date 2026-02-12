@@ -245,10 +245,14 @@ def test_selected_dtypes(tmp_path: Path, input_featuremap: Path):
     numeric_cols = set(featuremap_dataframe.select(pl.selectors.numeric()).columns)
     enum_cols = {c for c, dt in featuremap_dataframe.schema.items() if isinstance(dt, pl.Enum)}
     cols_to_check = list(numeric_cols | enum_cols)
+
     if cols_to_check:  # defensive – some tiny frames may lack numeric/Enum cols
-        assert (
-            featuremap_dataframe.select(pl.col(cols_to_check).null_count()).sum().row(0)[0] == 0
-        ), "Unexpected null values in numeric / Enum columns"
+        null_counts = featuremap_dataframe.select(pl.col(cols_to_check).null_count())
+        cols_with_nulls = [col for col in cols_to_check if null_counts[col][0] > 0]
+        assert len(cols_with_nulls) == 0, (
+            f"Unexpected null values in numeric/Enum columns: {cols_with_nulls}. "
+            f"Null counts: {[(col, null_counts[col][0]) for col in cols_with_nulls]}"
+        )
 
 
 def test_parallel_vcf_conversion_comprehensive(tmp_path: Path, input_featuremap: Path) -> None:
