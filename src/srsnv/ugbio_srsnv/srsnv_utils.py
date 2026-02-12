@@ -24,7 +24,9 @@ from itertools import cycle
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import xgboost as xgb
+from pandas.api.types import CategoricalDtype
 from sklearn.metrics import roc_auc_score
 from ugbio_ppmseq.ppmSeq_utils import (
     MAX_TOTAL_HMER_LENGTHS_IN_LOOPS,
@@ -171,6 +173,58 @@ def logit_to_prob(logit: np.ndarray, *, phred: bool = True) -> np.ndarray:
     return 1.0 / (1.0 + 10 ** (-logit))
 
 
+def polars_to_pandas_efficient(
+    data_frame: pl.DataFrame | pl.LazyFrame, columns: list[str], *, downcast_float: bool = False
+) -> pd.DataFrame:
+    """
+    Convert Polars DataFrame to Pandas with memory optimization.
+
+    Selects only needed columns and optionally downcasts float64 to float32.
+    Uses lazy evaluation to minimize peak memory usage.
+
+    Parameters
+    ----------
+    columns : list[str]
+        List of column names to convert.
+    downcast_float : bool, optional
+        If True, cast float64 columns to float32 before conversion
+        to reduce memory footprint (default: False).
+
+    Returns
+    -------
+    pd.DataFrame
+        Pandas DataFrame with selected columns and optional downcasting.
+    """
+    # Start with lazy frame if possible, otherwise use eager
+    if hasattr(data_frame, "lazy"):
+        df_to_convert = data_frame.lazy()
+    else:
+        df_to_convert = data_frame
+
+    # Select columns
+    df_to_convert = df_to_convert.select(columns)
+
+    if downcast_float:
+        # Build cast expressions for downcasting
+        cast_exprs = []
+        for col in columns:
+            col_dtype = data_frame[col].dtype
+            if col_dtype == pl.Float64:
+                cast_exprs.append(pl.col(col).cast(pl.Float32).alias(col))
+            else:
+                cast_exprs.append(pl.col(col))
+
+        df_to_convert = df_to_convert.select(cast_exprs)
+
+    # Collect (materialize) and convert to pandas
+    if hasattr(df_to_convert, "collect"):
+        pd_df = df_to_convert.collect().to_pandas()
+    else:
+        pd_df = df_to_convert.to_pandas()
+
+    return pd_df
+
+
 def _aggregate_probabilities_from_folds(
     prob_matrix: np.ndarray, transform: str = "logit", max_phred: float = MAX_PHRED
 ) -> np.ndarray:
@@ -215,6 +269,51 @@ def _aggregate_probabilities_from_folds(
     # Use nanmean to allow for NaNs (e.g., for in-fold exclusion)
     transformed_mean = np.nanmean(transformed_probs, axis=0)
     return inverse_transform_fn(transformed_mean)
+
+
+def set_featuremap_df_dtypes(df: pd.DataFrame, feature_dtypes: list) -> pd.DataFrame:
+    """
+    Prepare a DataFrame for training by ensuring correct column order and dtypes.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input DataFrame with feature columns
+    feature_dtypes : list
+        List of dicts specifying feature names, types, and categorical encodings
+        Each dict has keys: 'name', 'type', and optionally 'values' for categorical features
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with columns in correct order and proper dtypes
+    """
+    df_for_training = df.copy()
+
+    # Apply correct dtypes
+    for feature_spec in feature_dtypes:
+        col_name = feature_spec["name"]
+        dtype_type = feature_spec["type"]
+
+        if dtype_type == "c":  # Categorical
+            # Get category values in the order specified by the integer mapping
+            values_dict = feature_spec["values"]
+            # Sort by integer value to get correct category order
+            categories = [k for k, v in sorted(values_dict.items(), key=lambda x: x[1])]
+
+            # Create CategoricalDtype with specified categories
+            cat_dtype = CategoricalDtype(categories=categories, ordered=False)
+
+            # Convert column to categorical with correct categories
+            df_for_training[col_name] = df_for_training[col_name].astype(cat_dtype)
+
+        elif dtype_type == "int":
+            df_for_training[col_name] = df_for_training[col_name].astype("int64")
+
+        elif dtype_type == "float":
+            df_for_training[col_name] = df_for_training[col_name].astype("float64")
+
+    return df_for_training
 
 
 def k_fold_predict_proba(
@@ -640,7 +739,7 @@ class HandlePPMSeqTagsInFeatureMapDataFrame:
         end_tag_col: str | None = None,
         logger=None,
     ):
-        self.featuremap_df = featuremap_df.copy()
+        self.featuremap_df = featuremap_df
         self.categorical_features_names = categorical_features_names
         self.ppmseq_adapter_version = ppmseq_adapter_version
         self.start_tag_col = start_tag_col

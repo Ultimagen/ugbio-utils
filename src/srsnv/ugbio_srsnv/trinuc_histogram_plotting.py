@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib import gridspec
+from ugbio_core.logger import logger
 
 from ugbio_srsnv.srsnv_utils import FLOW_ORDER, get_trinuc_context_with_alt_fwd_vectorized, is_cycle_skip
 
@@ -340,30 +341,52 @@ def calc_trinuc_stats(  # noqa: C901, PLR0912, PLR0913, PLR0915
         DataFrame with histogram counts, quality stats, and cycle skip info indexed by trinucleotide context
     """
     trinuc_symmetric_ref_alt, symmetric_index, snv_labels = _get_trinuc_with_alt_in_order(order=order)
-    plot_df = plot_df.copy()
+
+    # Validate motif_orientation early
     if motif_orientation not in {"seq_dir", "ref_dir", "fwd_only"}:
         raise ValueError(f"{motif_orientation=} is not one of the allowed values {{'seq_dir', 'ref_dir', 'fwd_only'}}.")
+    # Determine required columns to minimize data copying
+    required_cols = [trinuc_col, is_forward_col]
+    if labels is not None:
+        required_cols.append(label_col)
+    if include_quality and qual_col in plot_df.columns:
+        required_cols.append(qual_col)
+        if is_mixed_col in plot_df.columns:
+            required_cols.append(is_mixed_col)
+    if include_cycle_skip and cycle_skip_col in plot_df.columns:
+        required_cols.append(cycle_skip_col)
+
+    # Create working subset - only copy if we need to modify
     if motif_orientation == "fwd_only":
-        plot_df = plot_df.loc[plot_df[is_forward_col], :]
+        # Filter and copy required columns
+        working_df = plot_df.loc[plot_df[is_forward_col], required_cols].copy()
     elif motif_orientation == "seq_dir":
-        plot_df[trinuc_col] = get_trinuc_context_with_alt_fwd_vectorized(plot_df[trinuc_col], plot_df[is_forward_col])
-    plot_df["trinuc_context_with_alt_int"] = plot_df[trinuc_col].map(
-        {trinuc: i for i, trinuc in enumerate(trinuc_symmetric_ref_alt)}
-    )
+        # Need to modify trinuc_col, so copy required columns
+        working_df = plot_df[required_cols].copy()
+        working_df[trinuc_col] = get_trinuc_context_with_alt_fwd_vectorized(
+            working_df[trinuc_col], working_df[is_forward_col]
+        )
+    else:  # ref_dir
+        # Can use a view if no modifications needed
+        working_df = plot_df[required_cols]
+
+    # Create trinuc integer mapping once
+    trinuc_to_int = {trinuc: i for i, trinuc in enumerate(trinuc_symmetric_ref_alt)}
+    working_df["trinuc_context_with_alt_int"] = working_df[trinuc_col].map(trinuc_to_int)
 
     if labels is None:
-        plot_df[label_col] = "all reads"
+        working_df[label_col] = "all reads"
         labels = ["all reads"]
 
     stats_data = {}
     total_snvs_per_label = {}
 
     for label in labels:
-        hist_cond = plot_df[label_col] == label
+        hist_cond = working_df[label_col] == label
 
         # Calculate histogram stats
         counts = (
-            plot_df.loc[hist_cond, "trinuc_context_with_alt_int"]
+            working_df.loc[hist_cond, "trinuc_context_with_alt_int"]
             .value_counts()
             .reindex(range(2 * TRINUC_FORWARD_COUNT), fill_value=0)
             .sort_index()
@@ -379,56 +402,82 @@ def calc_trinuc_stats(  # noqa: C901, PLR0912, PLR0913, PLR0915
         stats_data[hist_col_name] = normed
 
     # Calculate quality stats if requested
-    if include_quality and qual_col in plot_df.columns:
-        qual_cond = plot_df[label_col]
-        qual_subset = plot_df.loc[qual_cond].copy()
+    if include_quality and qual_col in working_df.columns:
+        qual_cond = working_df[label_col]
+        required_qual_cols = [qual_col, "trinuc_context_with_alt_int"]
+        if is_mixed_col in working_df.columns:
+            required_qual_cols.append(is_mixed_col)
+        qual_subset = working_df.loc[qual_cond, required_qual_cols]  # had .copy() here
 
         if not qual_subset.empty:
-            stats_to_calculate = {
-                "median_qual": "median",
-                "q1_qual": lambda x: x.quantile(q1),
-                "q2_qual": lambda x: x.quantile(q2),
-                "count": "count",
-            }
+            quantiles = [q1, 0.5, q2]  # q1, median, q2
 
-            # Calculate stats on all data first
+            # Calculate stats on all data first - more efficient aggregation
             all_qual_stats = (
-                qual_subset.groupby("trinuc_context_with_alt_int")[qual_col]
-                .agg(list(stats_to_calculate.values()))
+                qual_subset.groupby("trinuc_context_with_alt_int")[qual_col]  # noqa: PD010
+                .quantile(quantiles)
+                .unstack(level=-1)
                 .reindex(range(TRINUC_FORWARD_COUNT * 2), fill_value=np.nan)
             )
 
-            # Store all data stats with 'all' prefix
-            for i, (stat_key, _) in enumerate(stats_to_calculate.items()):
-                stat_array = all_qual_stats.iloc[:, i].to_numpy()
-                if collapsed:
-                    # Average forward and reverse for collapsed mode
-                    stat_array = (stat_array[:TRINUC_FORWARD_COUNT] + stat_array[TRINUC_FORWARD_COUNT:]) / 2
-                stats_data[f"mixed=all {stat_key}"] = stat_array
+            # Also get counts efficiently
+            all_counts = (
+                qual_subset.groupby("trinuc_context_with_alt_int")
+                .size()
+                .reindex(range(TRINUC_FORWARD_COUNT * 2), fill_value=0)
+            )
 
+            # Store all data stats with 'all' prefix
+            stat_mapping = {q1: "q1_qual", 0.5: "median_qual", q2: "q2_qual"}
+            for q_val, stat_name in stat_mapping.items():
+                stat_array = all_qual_stats[q_val].to_numpy()
+                if collapsed:
+                    stat_array = (stat_array[:TRINUC_FORWARD_COUNT] + stat_array[TRINUC_FORWARD_COUNT:]) / 2
+                stats_data[f"mixed=all {stat_name}"] = stat_array
+
+            # Add count
+            count_array = all_counts.to_numpy()
+            if collapsed:
+                count_array = count_array[:TRINUC_FORWARD_COUNT] + count_array[TRINUC_FORWARD_COUNT:]
+            stats_data["mixed=all count"] = count_array
+
+            # Calculate stats for each is_mixed value if present
             if is_mixed_col in qual_subset.columns:
-                # Calculate stats for each is_mixed value slice
                 for is_mixed in qual_subset[is_mixed_col].unique():
                     mixed_subset = qual_subset[qual_subset[is_mixed_col] == is_mixed]
                     if not mixed_subset.empty:
                         mixed_qual_stats = (
-                            mixed_subset.groupby("trinuc_context_with_alt_int")[qual_col]
-                            .agg(list(stats_to_calculate.values()))
+                            mixed_subset.groupby("trinuc_context_with_alt_int")[qual_col]  # noqa: PD010
+                            .quantile(quantiles)
+                            .unstack(level=-1)
                             .reindex(range(TRINUC_FORWARD_COUNT * 2), fill_value=np.nan)
                         )
 
+                        mixed_counts = (
+                            mixed_subset.groupby("trinuc_context_with_alt_int")
+                            .size()
+                            .reindex(range(TRINUC_FORWARD_COUNT * 2), fill_value=0)
+                        )
+
                         # Store mixed-specific stats
-                        for i, (stat_key, _) in enumerate(stats_to_calculate.items()):
-                            stat_array = mixed_qual_stats.iloc[:, i].to_numpy()
+                        for q_val, stat_name in stat_mapping.items():
+                            stat_array = mixed_qual_stats[q_val].to_numpy()
                             if collapsed:
-                                # Average forward and reverse for collapsed mode
                                 stat_array = (stat_array[:TRINUC_FORWARD_COUNT] + stat_array[TRINUC_FORWARD_COUNT:]) / 2
-                            stats_data[f"mixed={is_mixed} {stat_key}"] = stat_array
+                            stats_data[f"mixed={is_mixed} {stat_name}"] = stat_array
+
+                        # Add count
+                        count_array = mixed_counts.to_numpy()
+                        if collapsed:
+                            count_array = count_array[:TRINUC_FORWARD_COUNT] + count_array[TRINUC_FORWARD_COUNT:]
+                        stats_data[f"mixed={is_mixed} count"] = count_array
 
     # Calculate cycle skip stats if requested
-    if include_cycle_skip and cycle_skip_col in plot_df.columns:
+    if include_cycle_skip and cycle_skip_col in working_df.columns:
         cycle_skip_stats = (
-            plot_df.groupby("trinuc_context_with_alt_int")[cycle_skip_col].mean().reindex(range(192), fill_value=np.nan)
+            working_df.groupby("trinuc_context_with_alt_int")[cycle_skip_col]
+            .mean()
+            .reindex(range(192), fill_value=np.nan)
         )
         if collapsed:
             cycle_skip_stats = (
@@ -870,6 +919,7 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913
     stats_df : pd.DataFrame
         Statistics dataframe
     """
+    logger.debug("Calculating trinuc statistics...")
     stats_df = calc_trinuc_stats(
         plot_df,
         trinuc_col=trinuc_col,
@@ -895,6 +945,7 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913
         )
 
     if include_quality:
+        logger.debug("Plotting trinuc histogram and quality panels...")
         fig = plot_trinuc_hist_and_qual_panels(
             stats_df,
             q1=q1,
@@ -910,6 +961,7 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913
         )
     else:
         # Extract only histogram columns for backward compatibility
+        logger.debug("Extracting histogram columns without quality panels...")
         hist_cols = [
             col
             for col in stats_df.columns
@@ -917,6 +969,7 @@ def calc_and_plot_trinuc_hist(  # noqa: PLR0913
         ]
         hist_stats_df = stats_df[hist_cols]
 
+        logger.debug("Plotting trinuc histogram panels without quality...")
         fig = plot_trinuc_hist_panels(
             hist_stats_df,
             order=order,
