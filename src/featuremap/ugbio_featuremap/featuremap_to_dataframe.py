@@ -244,9 +244,213 @@ def _apply_ug_hcr_null_handling(lazy_frame: pl.LazyFrame, col_name: str, filter_
     return lazy_frame.with_columns((pl.col(col_name) & pl.col("UG_HCR").is_not_null()).alias(col_name))
 
 
-def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
-    frame: pl.DataFrame, read_filters: dict | list | None
+def _prepare_filter_config(read_filters: dict | list | None) -> list[dict]:
+    """
+    Extract and validate filter configuration from input.
+
+    Parameters
+    ----------
+    read_filters : dict | list | None
+        Filter configuration in various formats
+
+    Returns
+    -------
+    list[dict]
+        List of validated filter dictionaries, excluding raw/downsample filters
+
+    Raises
+    ------
+    RuntimeError
+        If filter validation fails
+    """
+    # Handle both dict and list formats
+    if isinstance(read_filters, list):
+        all_filters = read_filters
+    else:
+        all_filters = read_filters.get(KEY_FILTERS, [])
+
+    # Create a copy of filters excluding 'raw' and 'downsample' entries for validation
+    filters_to_apply = [f for f in all_filters if f.get(KEY_TYPE) not in {TYPE_RAW, TYPE_DOWNSAMPLE}]
+
+    if not filters_to_apply:
+        log.debug("No applicable filters found (only raw/downsample filters present)")
+        return []
+
+    # Log the filters being applied
+    log.debug(f"Filters to apply ({len(filters_to_apply)}):")
+    for i, f in enumerate(filters_to_apply):
+        log.debug(
+            f"  {i+1}. {f.get(KEY_NAME, 'unnamed')}: {f.get(KEY_FIELD)} {f.get(KEY_OP)} {f.get(KEY_VALUE, f.get(KEY_VALUE_FIELD, 'N/A'))}"  # noqa E501
+        )
+
+    # Validate filter configuration
+    filter_config = {KEY_FILTERS: filters_to_apply}
+    try:
+        validate_filter_config(filter_config)
+    except Exception as e:
+        filter_names = [f.get(KEY_NAME, f.get(KEY_TYPE, "unnamed")) for f in filters_to_apply]
+        log.error(f"FATAL: Filter validation failed. Filters: {filter_names}")
+        log.error(f"Validation error: {e}")
+        raise RuntimeError(f"Filter validation failed for filters {filter_names}: {e}") from e
+
+    return filters_to_apply
+
+
+def _apply_null_handling_to_filters(
+    lazy_frame: pl.LazyFrame, filters_to_apply: list[dict], filter_cols: list[str]
+) -> pl.LazyFrame:
+    """
+    Apply special null-handling logic for specific fields.
+
+    This ensures records with missing values are handled correctly per field semantics:
+    - gnomAD_AF: null = not in gnomAD = rare (should pass filter)
+    - ID: null = "." in VCF = not in dbSNP (special handling)
+    - UG_HCR: null = not in HCR (should fail filter)
+
+    Parameters
+    ----------
+    lazy_frame : pl.LazyFrame
+        The lazy frame with filter columns
+    filters_to_apply : list[dict]
+        List of filter configurations
+    filter_cols : list[str]
+        List of filter column names
+
+    Returns
+    -------
+    pl.LazyFrame
+        Lazy frame with updated filter columns
+    """
+    for f in filters_to_apply:
+        field_name = f.get(KEY_FIELD, "")
+        filter_name = f.get(KEY_NAME, f"{field_name}_filter")
+        col_name = f"__filter_{filter_name}"
+
+        if col_name not in filter_cols:
+            continue
+
+        # gnomAD_AF: include null values (missing = not in gnomAD = rare)
+        if field_name == "gnomAD_AF" and f.get(KEY_TYPE) == TYPE_REGION:
+            lazy_frame = _apply_gnomad_null_handling(lazy_frame, col_name, filter_name)
+
+        # ID: VCF uses "." for variants not in dbSNP, but Polars converts "." to null during parsing
+        # Need to treat null as "." for ID filters
+        elif field_name == "ID" and f.get(KEY_TYPE) == TYPE_REGION:
+            lazy_frame = _apply_id_null_handling(lazy_frame, col_name, filter_name, f.get(KEY_OP), f.get(KEY_VALUE))
+
+        # UG_HCR: require non-null values (null = not in HCR, should be filtered out)
+        elif field_name == "UG_HCR" and f.get(KEY_TYPE) == TYPE_REGION and f.get(KEY_OP) == "ne":
+            lazy_frame = _apply_ug_hcr_null_handling(lazy_frame, col_name, filter_name)
+
+    return lazy_frame
+
+
+def _log_filter_statistics(df_with_filters: pl.DataFrame, filter_cols: list[str]) -> None:
+    """
+    Log per-filter statistics showing pass/fail counts.
+
+    Parameters
+    ----------
+    df_with_filters : pl.DataFrame
+        DataFrame with filter columns
+    filter_cols : list[str]
+        List of filter column names to report on
+    """
+    log.debug(f"Filter statistics for region (total rows: {df_with_filters.height:,}):")
+    for col in filter_cols:
+        if col in df_with_filters.columns:
+            pass_count = df_with_filters[col].sum()
+            fail_count = df_with_filters.height - pass_count
+            pct = 100.0 * pass_count / df_with_filters.height if df_with_filters.height > 0 else 0
+            log.debug(f"  {col}: {pass_count:,} pass ({pct:.1f}%) / {fail_count:,} fail")
+
+
+def _execute_filters_with_diagnostics(
+    df_final: pl.DataFrame, filters_to_apply: list[dict], frame: pl.DataFrame
 ) -> pl.DataFrame:
+    """
+    Execute final filtering with diagnostic error handling.
+
+    If filtering fails, test each filter individually to identify the problematic one.
+
+    Parameters
+    ----------
+    df_final : pl.DataFrame
+        DataFrame with __filter_final column
+    filters_to_apply : list[dict]
+        List of filter configurations for diagnostic purposes
+    frame : pl.DataFrame
+        Original frame for diagnostic testing
+
+    Returns
+    -------
+    pl.DataFrame
+        Filtered dataframe with filter columns removed
+
+    Raises
+    ------
+    RuntimeError
+        If filter execution fails
+    """
+    try:
+        return df_final.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$"))
+    except Exception as e:
+        # Error during filter execution - test each filter individually to identify the problem
+        log.error(f"Error during filter execution: {e}")
+        log.error("Testing each filter individually to identify the problematic filter...")
+
+        problematic_filter = None
+        for i, f in enumerate(filters_to_apply):
+            filter_name = f.get(KEY_NAME, "unnamed")
+            filter_type = f.get(KEY_TYPE, "unknown")
+            try:
+                # Test this filter alone - full execution with collect
+                test_lazy = frame.lazy()
+                test_lazy, test_cols = _create_filter_columns(test_lazy, [f])
+                test_lazy = _create_final_filter_column(test_lazy, test_cols, None)
+                _ = test_lazy.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$")).collect()
+                log.debug(
+                    f"  ✓ Filter {i + 1}/{len(filters_to_apply)}: {filter_name} (type={filter_type}) - EXECUTED OK"
+                )
+            except Exception as filter_error:
+                problematic_filter = f
+                log.error(
+                    f"  ✗ Filter {i + 1}/{len(filters_to_apply)}: "
+                    f"{filter_name} (type={filter_type}) - EXECUTION FAILED"
+                )
+                log.error(f"    Error: {filter_error}")
+                log.error(f"    Filter configuration: {json.dumps(f, indent=2)}")
+
+                # Additional diagnostic info
+                if "column" in f:
+                    col_name = f["column"]
+                    if col_name in frame.columns:
+                        col_dtype = frame[col_name].dtype
+                        log.error(f"    Column '{col_name}' has dtype: {col_dtype}")
+                        if "value" in f:
+                            value_type = type(f["value"]).__name__
+                            log.error(f"    Filter is trying to compare with value: {f['value']} (type: {value_type})")
+                            log.error(f"    → This appears to be a type mismatch: {col_dtype} vs {value_type}")
+                break
+
+        if problematic_filter:
+            log.error(f"FATAL: Identified problematic filter: {problematic_filter.get(KEY_NAME, 'unnamed')}")
+            log.error(f"Full filter configuration: {json.dumps(problematic_filter, indent=2)}")
+            log.error("Fix: Ensure the filter value type matches the column type")
+            log.error("     - If column is string/Enum, use string values in quotes")
+            log.error("     - If column is numeric, use numeric values without quotes")
+            filter_name = problematic_filter.get(KEY_NAME, "unnamed")
+            raise RuntimeError(
+                f"Filter '{filter_name}' execution failed. "
+                f"Configuration: {json.dumps(problematic_filter)}. "
+                f"Original error: {e}"
+            ) from e
+        else:
+            log.error("FATAL: Could not identify specific problematic filter through individual testing.")
+            raise RuntimeError(f"Filter execution failed but could not identify specific filter. Error: {e}") from e
+
+
+def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -> pl.DataFrame:
     """
     Apply read filters to a dataframe using the existing filter framework.
 
@@ -276,38 +480,10 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
     log.info(f"Starting read filter application on {frame.height:,} rows")
 
     try:
-        # Handle both dict and list formats
-        if isinstance(read_filters, list):
-            # Direct list of filters
-            all_filters = read_filters
-        else:
-            # Dictionary format
-            all_filters = read_filters.get(KEY_FILTERS, [])
-
-        # Create a copy of filters excluding 'raw' and 'downsample' entries for validation
-        filters_to_apply = [f for f in all_filters if f.get(KEY_TYPE) not in {TYPE_RAW, TYPE_DOWNSAMPLE}]
-
+        # Extract and validate filter configuration
+        filters_to_apply = _prepare_filter_config(read_filters)
         if not filters_to_apply:
-            log.debug("No applicable filters found (only raw/downsample filters present)")
             return frame
-
-        # Log the filters being applied
-        log.debug(f"Filters to apply ({len(filters_to_apply)}):")
-        for i, f in enumerate(filters_to_apply):
-            log.debug(
-                f"  {i+1}. {f.get(KEY_NAME, 'unnamed')}: {f.get(KEY_FIELD)} {f.get(KEY_OP)} {f.get(KEY_VALUE, f.get(KEY_VALUE_FIELD, 'N/A'))}"  # noqa E501
-            )
-
-        filter_config = {KEY_FILTERS: filters_to_apply}
-
-        # Validate filter configuration
-        try:
-            validate_filter_config(filter_config)
-        except Exception as e:
-            filter_names = [f.get(KEY_NAME, f.get(KEY_TYPE, "unnamed")) for f in filters_to_apply]
-            log.error(f"FATAL: Filter validation failed. Filters: {filter_names}")
-            log.error(f"Validation error: {e}")
-            raise RuntimeError(f"Filter validation failed for filters {filter_names}: {e}") from e
 
         log.debug(f"Applying {len(filters_to_apply)} filters to dataframe with {frame.height:,} rows")
 
@@ -316,47 +492,19 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
 
         # Create filter columns and apply filters
         lazy_frame, filter_cols = _create_filter_columns(lazy_frame, filters_to_apply)
-
         log.debug(f"Created filter columns: {filter_cols}")
 
         # Apply special null-handling for specific fields BEFORE collecting statistics
-        # This ensures records with missing values are handled correctly per field semantics
-        for _i, f in enumerate(filters_to_apply):
-            field_name = f.get(KEY_FIELD, "")
-            filter_name = f.get(KEY_NAME, f"{field_name}_filter")
-            col_name = f"__filter_{filter_name}"
+        lazy_frame = _apply_null_handling_to_filters(lazy_frame, filters_to_apply, filter_cols)
 
-            if col_name not in filter_cols:
-                continue
-
-            # gnomAD_AF: include null values (missing = not in gnomAD = rare)
-            if field_name == "gnomAD_AF" and f.get(KEY_TYPE) == TYPE_REGION:
-                lazy_frame = _apply_gnomad_null_handling(lazy_frame, col_name, filter_name)
-
-            # ID: VCF uses "." for variants not in dbSNP, but Polars converts "." to null during parsing
-            # Need to treat null as "." for ID filters
-            elif field_name == "ID" and f.get(KEY_TYPE) == TYPE_REGION:
-                lazy_frame = _apply_id_null_handling(lazy_frame, col_name, filter_name, f.get(KEY_OP), f.get(KEY_VALUE))
-
-            # UG_HCR: require non-null values (null = not in HCR, should be filtered out)
-            elif field_name == "UG_HCR" and f.get(KEY_TYPE) == TYPE_REGION and f.get(KEY_OP) == "ne":
-                lazy_frame = _apply_ug_hcr_null_handling(lazy_frame, col_name, filter_name)
-
-        # Now collect with filter columns to check individual filter statistics (after null handling)
+        # Collect with filter columns to check individual filter statistics (after null handling)
         df_with_filters = lazy_frame.collect()
 
-        # Log per-filter statistics
-        log.info(f"Filter statistics for region (total rows: {df_with_filters.height:,}):")
-        for col in filter_cols:
-            if col in df_with_filters.columns:
-                pass_count = df_with_filters[col].sum()
-                fail_count = df_with_filters.height - pass_count
-                pct = 100.0 * pass_count / df_with_filters.height if df_with_filters.height > 0 else 0
-                log.info(f"  {col}: {pass_count:,} pass ({pct:.1f}%) / {fail_count:,} fail")
+        # Log per-filter statistics (DEBUG level)
+        _log_filter_statistics(df_with_filters, filter_cols)
 
         # Back to lazy for final filter column creation
         lazy_frame = df_with_filters.lazy()
-
         lazy_frame = _create_final_filter_column(lazy_frame, filter_cols, None)
 
         # Log final filter statistics
@@ -364,67 +512,10 @@ def _apply_read_filters(  # noqa: C901, PLR0912, PLR0915
         final_pass = df_final["__filter_final"].sum()
         final_fail = df_final.height - final_pass
         pct = 100.0 * final_pass / df_final.height if df_final.height > 0 else 0
-        log.info(f"  __filter_final (ALL COMBINED): {final_pass:,} pass ({pct:.1f}%) / {final_fail:,} fail")
+        log.debug(f"  __filter_final (ALL COMBINED): {final_pass:,} pass ({pct:.1f}%) / {final_fail:,} fail")
 
-        # Apply filters and collect result
-        try:
-            filtered_frame = df_final.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$"))
-        except Exception as e:
-            # Error during filter execution - test each filter individually to identify the problem
-            log.error(f"Error during filter execution: {e}")
-            log.error("Testing each filter individually to identify the problematic filter...")
-
-            problematic_filter = None
-            for i, f in enumerate(filters_to_apply):
-                filter_name = f.get(KEY_NAME, "unnamed")
-                filter_type = f.get(KEY_TYPE, "unknown")
-                try:
-                    # Test this filter alone - full execution with collect
-                    test_lazy = frame.lazy()
-                    test_lazy, test_cols = _create_filter_columns(test_lazy, [f])
-                    test_lazy = _create_final_filter_column(test_lazy, test_cols, None)
-                    _ = test_lazy.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$")).collect()
-                    log.debug(
-                        f"  ✓ Filter {i + 1}/{len(filters_to_apply)}: {filter_name} (type={filter_type}) - EXECUTED OK"
-                    )
-                except Exception as filter_error:
-                    problematic_filter = f
-                    log.error(
-                        f"  ✗ Filter {i + 1}/{len(filters_to_apply)}: "
-                        f"{filter_name} (type={filter_type}) - EXECUTION FAILED"
-                    )
-                    log.error(f"    Error: {filter_error}")
-                    log.error(f"    Filter configuration: {json.dumps(f, indent=2)}")
-
-                    # Additional diagnostic info
-                    if "column" in f:
-                        col_name = f["column"]
-                        if col_name in frame.columns:
-                            col_dtype = frame[col_name].dtype
-                            log.error(f"    Column '{col_name}' has dtype: {col_dtype}")
-                            if "value" in f:
-                                value_type = type(f["value"]).__name__
-                                log.error(
-                                    f"    Filter is trying to compare with value: {f['value']} (type: {value_type})"
-                                )
-                                log.error(f"    → This appears to be a type mismatch: {col_dtype} vs {value_type}")
-                    break
-
-            if problematic_filter:
-                log.error(f"FATAL: Identified problematic filter: {problematic_filter.get(KEY_NAME, 'unnamed')}")
-                log.error(f"Full filter configuration: {json.dumps(problematic_filter, indent=2)}")
-                log.error("Fix: Ensure the filter value type matches the column type")
-                log.error("     - If column is string/Enum, use string values in quotes")
-                log.error("     - If column is numeric, use numeric values without quotes")
-                filter_name = problematic_filter.get(KEY_NAME, "unnamed")
-                raise RuntimeError(
-                    f"Filter '{filter_name}' execution failed. "
-                    f"Configuration: {json.dumps(problematic_filter)}. "
-                    f"Original error: {e}"
-                ) from e
-            else:
-                log.error("FATAL: Could not identify specific problematic filter through individual testing.")
-                raise RuntimeError(f"Filter execution failed but could not identify specific filter. Error: {e}") from e
+        # Apply filters with diagnostic error handling
+        filtered_frame = _execute_filters_with_diagnostics(df_final, filters_to_apply, frame)
 
         log.debug(f"Read filtering: {frame.height:,} → {filtered_frame.height:,} reads")
         return filtered_frame
@@ -1358,7 +1449,8 @@ def _stream_region_to_polars(
     )
 
     # Count raw TSV lines to detect truncation
-    tsv_lines = tsv.count("\n") if tsv else 0
+    # Note: After strip(), a non-empty string with N lines has N-1 newlines
+    tsv_lines = (tsv.count("\n") + 1) if tsv else 0
 
     frame = _frame_from_tsv(tsv, cols=job_cfg.columns, schema=job_cfg.schema)
     if frame.is_empty():
@@ -1375,7 +1467,7 @@ def _stream_region_to_polars(
             f"possible truncation or parsing issue"
         )
 
-    log.info(f"Region {region}: AWK produced {tsv_lines} TSV lines → {frame.height:,} DataFrame rows")
+    log.debug(f"Region {region}: AWK produced {tsv_lines} TSV lines → {frame.height:,} DataFrame rows")
     return _cast_column_data_types(frame, job_cfg)
 
 
