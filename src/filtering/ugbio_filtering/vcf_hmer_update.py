@@ -192,8 +192,8 @@ def get_pval(exps, groups, w):
     g = np.asarray(groups, dtype=float)  # 0 or 1
     w = np.asarray(w, dtype=float)
 
-    X = sm.add_constant(g)  # intercept + group effect
-    res = sm.WLS(y, X, weights=w).fit()
+    x_matrix = sm.add_constant(g)  # intercept + group effect
+    res = sm.WLS(y, x_matrix, weights=w).fit()
     p_val = float(res.pvalues[1])
 
     length = len(exps)
@@ -207,9 +207,9 @@ def get_pval(exps, groups, w):
         added_weights_max[idx] *= (((i + 1.0) / length) ** 2) + 1.0
         added_weights_min[idx] *= (((length - i) / length) ** 2) + 1.0
 
-    res = sm.WLS(y, X, weights=added_weights_max).fit()
+    res = sm.WLS(y, x_matrix, weights=added_weights_max).fit()
     p_val = min(p_val, float(res.pvalues[1]))
-    res = sm.WLS(y, X, weights=added_weights_min).fit()
+    res = sm.WLS(y, x_matrix, weights=added_weights_min).fit()
     p_val = min(p_val, float(res.pvalues[1]))
     return p_val
 
@@ -276,7 +276,13 @@ def direction_score(normal_score, normal_mixture, tumor_score, tumor_mixture):
 
 
 def combine_scores(
-    ttest_score, likely_score, likely_mixture, normal_fw_score, normal_fw_mixture, tumor_fw_score, tumor_fw_mixture
+    ttest_score,
+    likely_score,
+    likely_mixture,
+    normal_fw_score,
+    normal_fw_mixture,
+    tumor_fw_score,
+    tumor_fw_mixture,
 ):
     """Combine multiple scoring metrics into single score."""
     score = ttest_score / 4
@@ -391,7 +397,7 @@ def get_hmer_qualities_from_pileup_element(  # noqa: C901
     return hnuc, hmer_probs, not pe.alignment.is_reverse, cycle, is_edge, not pe.alignment.is_duplicate
 
 
-def variant_calling(
+def variant_calling(  # noqa: C901, PLR0912, PLR0915
     vcf_file,
     normal_reads_file,
     tumor_reads_file,
@@ -508,7 +514,7 @@ def variant_calling(
         for var in this_loc_variants:
             if var.qual > rec.qual:
                 size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]])[0]
-                if size == my_hmer_size or size == -1:
+                if size in (my_hmer_size, -1):
                     other_variant = 1
         germline_normal_vars = normal_germline.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
         for var in germline_normal_vars:
@@ -531,7 +537,7 @@ def variant_calling(
             continue
 
         # Normalize contig name for pileup (remove chr prefix if present)
-        pileup_chrom = chrom.replace("chr", "") if chrom.startswith("chr") else chrom
+        # Note: pileup_chrom not currently used but kept for potential future use
 
         p = get_safe_pileup(
             normal_reads,
@@ -665,7 +671,7 @@ def variant_calling(
                             pi_new = float(r.mean())
                             pi = min(max(pi_new, PI_MIN), PI_MAX)
                         h1_mixtures.append(pi)
-                    except:
+                    except Exception:
                         h1_mixtures.append(0.002)
                 extra_likelyhoods = []
                 for i in range(len(exp_shift_tries)):
