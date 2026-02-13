@@ -21,10 +21,11 @@
 # USAGE
 #    Rscript rebin_cohort_reads_count.R \
 #      --input_cohort_file cohort.rds \
-#      --original_window_length 1000 \
 #      --new_window_length 5000 \
 #      --output_file rebinned_cohort.rds
+#
 # CHANGELOG in reverse chronological order
+#    2026-02-13: Auto-detect original_window_length from max width, handle equal window case
 #    2026-02-13: Fix boundary handling - use max of original ends, not rounded (BIOIN-2615)
 
 suppressPackageStartupMessages(library(cn.mops))
@@ -38,8 +39,9 @@ parser$add_argument("-i", "--input_cohort_file",
                     help = "Input cohort RDS file path")
 parser$add_argument("-owl", "--original_window_length",
                     type = "integer",
-                    required = TRUE,
-                    help = "Original window length (bp) of input cohort")
+                    required = FALSE,
+                    default = NULL,
+                    help = "Original window length (bp). DEPRECATED: Auto-detected if not provided.")
 parser$add_argument("-nwl", "--new_window_length",
                     type = "integer",
                     required = TRUE,
@@ -54,85 +56,119 @@ parser$add_argument("--save_csv", action = "store_true",
 
 args <- parser$parse_args()
 
-# Validate inputs
-if (args$new_window_length %% args$original_window_length != 0) {
-  stop("Error: new_window_length (", args$new_window_length,
-       ") must be divisible by original_window_length (", args$original_window_length, ")")
-}
-
-if (args$new_window_length <= args$original_window_length) {
-  stop("Error: new_window_length (", args$new_window_length,
-       ") must be larger than original_window_length (", args$original_window_length, ")")
-}
-
-bin_factor <- args$new_window_length / args$original_window_length
-cat("Re-binning cohort with bin factor:", bin_factor, "\n")
-cat("Input file:", args$input_cohort_file, "\n")
-cat("Original window length:", args$original_window_length, "bp\n")
-cat("New window length:", args$new_window_length, "bp\n")
-
-# Load input cohort
+# Load cohort first (needed for auto-detection)
 cat("Loading input cohort...\n")
 gr <- readRDS(args$input_cohort_file)
 cat("Input cohort has", length(gr), "bins\n")
 
-# Convert GRanges to data frame
-df <- as.data.frame(gr)
+# Auto-detect or validate original window length
+if (is.null(args$original_window_length)) {
+  # Auto-detect: use max width (handles most cases, including partial bins)
+  widths <- width(gr)
+  original_window_length <- max(widths)
+  cat("Auto-detected original_window_length:", original_window_length, "bp (max width)\n")
 
-# Get sample column names from data frame (after conversion, R makes names syntactically valid)
-# Sample columns are everything except the genomic coordinate columns
-genomic_cols <- c("seqnames", "start", "end", "width", "strand")
-sample_cols <- setdiff(colnames(df), genomic_cols)
-cat("Number of samples:", length(sample_cols), "\n")
-
-# Create new bin assignments
-# Genomic coordinates are 1-based and right-closed (inclusive on both ends)
-# Original bins: 1-1000, 1001-2000, 2001-3000, ...
-# New bins must maintain this alignment: 1-N, (N+1)-2N, (2N+1)-3N, ...
-# Formula: new_bin_start = floor((start - 1) / new_window_length) * new_window_length + 1
-df$new_bin_start <- floor((df$start - 1) / args$new_window_length) * args$new_window_length + 1
-
-# Create a grouping key for aggregation (without end position, which will be calculated)
-df$bin_key <- paste(df$seqnames, df$new_bin_start, sep = "_")
-
-# Aggregate read counts by new bins using base R
-cat("Aggregating read counts...\n")
-
-# Get unique bin keys and calculate their end positions
-# For each bin_key, the new_bin_end is the MAX of original bin ends in that group
-bin_ends <- tapply(df$end, df$bin_key, max)
-
-# Get unique bin keys and their coordinates
-unique_bins <- unique(df[, c("seqnames", "new_bin_start", "bin_key")])
-unique_bins <- unique_bins[order(unique_bins$seqnames, unique_bins$new_bin_start), ]
-
-# Add calculated end positions
-unique_bins$new_bin_end <- bin_ends[match(unique_bins$bin_key, names(bin_ends))]
-
-# Initialize result data frame
-rebinned_df <- unique_bins[, c("seqnames", "new_bin_start", "new_bin_end")]
-
-# Aggregate each sample column using tapply
-for (col in sample_cols) {
-  # Sum read counts for each bin using tapply
-  aggregated <- tapply(df[[col]], df$bin_key, sum)
-  # Convert to data frame and match with unique_bins order
-  rebinned_df[[col]] <- aggregated[match(unique_bins$bin_key, names(aggregated))]
+} else {
+  # User provided a value - use it directly
+  original_window_length <- args$original_window_length
 }
 
-cat("Output cohort has", nrow(rebinned_df), "bins\n")
 
-# Create new GRanges object
-cat("Creating new GRanges object...\n")
-new_gr <- GRanges(
-  seqnames = rebinned_df$seqnames,
-  ranges = IRanges(start = rebinned_df$new_bin_start, end = rebinned_df$new_bin_end),
-  strand = "*"
-)
+# Handle case where new == original (no re-binning needed)
+if (args$new_window_length == original_window_length) {
+  cat("INFO: new_window_length (", args$new_window_length, " bp) equals original_window_length (",
+      original_window_length, " bp)\n", sep="")
+  cat("      No re-binning needed. Saving cohort to output file...\n")
 
-# Add sample read counts as metadata columns
-for (col in sample_cols) {
-  mcols(new_gr)[[col]] <- rebinned_df[[col]]
+  # Save outputs
+  new_gr = gr
+} else {
+  # Validate divisibility
+  if (args$new_window_length %% original_window_length != 0) {
+    stop("ERROR: new_window_length (", args$new_window_length,
+        " bp) must be evenly divisible by original_window_length (", original_window_length, " bp).\n",
+        "       Remainder: ", args$new_window_length %% original_window_length, " bp")
+  }
+
+  # Validate new > original
+  if (args$new_window_length < original_window_length) {
+    stop("ERROR: new_window_length (", args$new_window_length,
+        " bp) must be larger than original_window_length (", original_window_length, " bp).\n",
+        "       This script only aggregates to larger bins, not splits to smaller bins.")
+  }
+
+  bin_factor <- args$new_window_length / original_window_length
+  cat("=== Re-binning Parameters ===\n")
+  cat("Input file:", args$input_cohort_file, "\n")
+  cat("Original window length:", original_window_length, "bp")
+  if (is.null(args$original_window_length)) {
+    cat(" (auto-detected)\n")
+  } else {
+    cat(" (user-provided)\n")
+  }
+  cat("New window length:", args$new_window_length, "bp\n")
+  cat("Bin factor:", bin_factor, "x\n")
+  cat("==============================\n\n")
+
+
+  # Convert GRanges to data frame
+  df <- as.data.frame(gr)
+
+  # Get sample column names from data frame (after conversion, R makes names syntactically valid)
+  # Sample columns are everything except the genomic coordinate columns
+  genomic_cols <- c("seqnames", "start", "end", "width", "strand")
+  sample_cols <- setdiff(colnames(df), genomic_cols)
+  cat("Number of samples:", length(sample_cols), "\n")
+
+  # Create new bin assignments
+  # Genomic coordinates are 1-based and right-closed (inclusive on both ends)
+  # Original bins: 1-1000, 1001-2000, 2001-3000, ...
+  # New bins must maintain this alignment: 1-N, (N+1)-2N, (2N+1)-3N, ...
+  # Formula: new_bin_start = floor((start - 1) / new_window_length) * new_window_length + 1
+  df$new_bin_start <- floor((df$start - 1) / args$new_window_length) * args$new_window_length + 1
+
+  # Create a grouping key for aggregation (without end position, which will be calculated)
+  df$bin_key <- paste(df$seqnames, df$new_bin_start, sep = "_")
+
+  cat("Aggregating read counts...\n")
+
+  # Get unique bin keys and calculate their end positions
+  # For each bin_key, the new_bin_end is the MAX of original bin ends in that group
+  bin_ends <- tapply(df$end, df$bin_key, max)
+
+  # Get unique bin keys and their coordinates
+  unique_bins <- unique(df[, c("seqnames", "new_bin_start", "bin_key")])
+  unique_bins <- unique_bins[order(unique_bins$seqnames, unique_bins$new_bin_start), ]
+
+  # Add calculated end positions
+  unique_bins$new_bin_end <- bin_ends[match(unique_bins$bin_key, names(bin_ends))]
+
+  # Initialize result data frame
+  rebinned_df <- unique_bins[, c("seqnames", "new_bin_start", "new_bin_end")]
+
+  # Aggregate each sample column using tapply
+  for (col in sample_cols) {
+    # Sum read counts for each bin using tapply
+    aggregated <- tapply(df[[col]], df$bin_key, sum)
+    # Convert to data frame and match with unique_bins order
+    rebinned_df[[col]] <- aggregated[match(unique_bins$bin_key, names(aggregated))]
+  }
+
+  cat("Output cohort has", nrow(rebinned_df), "bins\n")
+
+  # Create new GRanges object
+  cat("Creating new GRanges object...\n")
+  new_gr <- GRanges(
+    seqnames = rebinned_df$seqnames,
+    ranges = IRanges(start = rebinned_df$new_bin_start, end = rebinned_df$new_bin_end),
+    strand = "*"
+  )
+
+  # Add sample read counts as metadata columns
+  for (col in sample_cols) {
+    mcols(new_gr)[[col]] <- rebinned_df[[col]]
+  }
+
 }
 
 # Save output
