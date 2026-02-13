@@ -1,4 +1,4 @@
-# Copyright 2025 Ultima Genomics Inc.
+# Copyright 2026 Ultima Genomics Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License");
 #    you may not use this file except in compliance with the License.
@@ -15,12 +15,17 @@
 #    Re-bin an existing CNmops cohort from smaller bins to larger bins by
 #    aggregating read counts. This allows users to adjust the resolution of
 #    existing cohorts without regenerating from BAM files.
+#    IMPORTANT: New bin end positions are calculated as the maximum of the
+#    original bin ends within each group, ensuring that partial bins at
+#    chromosome ends are not artificially extended.
 # USAGE
 #    Rscript rebin_cohort_reads_count.R \
 #      --input_cohort_file cohort.rds \
 #      --original_window_length 1000 \
 #      --new_window_length 5000 \
 #      --output_file rebinned_cohort.rds
+# CHANGELOG in reverse chronological order
+#    2026-02-13: Fix boundary handling - use max of original ends, not rounded (BIOIN-2615)
 
 suppressPackageStartupMessages(library(cn.mops))
 suppressPackageStartupMessages(library(magrittr))
@@ -81,19 +86,28 @@ sample_cols <- setdiff(colnames(df), genomic_cols)
 cat("Number of samples:", length(sample_cols), "\n")
 
 # Create new bin assignments
-# New bins are aligned to genome coordinates: [0, new_window_length), [new_window_length, 2*new_window_length), ...
-df$new_bin_start <- floor(df$start / args$new_window_length) * args$new_window_length
-df$new_bin_end <- df$new_bin_start + args$new_window_length
+# Genomic coordinates are 1-based and right-closed (inclusive on both ends)
+# Original bins: 1-1000, 1001-2000, 2001-3000, ...
+# New bins must maintain this alignment: 1-N, (N+1)-2N, (2N+1)-3N, ...
+# Formula: new_bin_start = floor((start - 1) / new_window_length) * new_window_length + 1
+df$new_bin_start <- floor((df$start - 1) / args$new_window_length) * args$new_window_length + 1
 
-# Create a grouping key for aggregation
-df$bin_key <- paste(df$seqnames, df$new_bin_start, df$new_bin_end, sep = "_")
+# Create a grouping key for aggregation (without end position, which will be calculated)
+df$bin_key <- paste(df$seqnames, df$new_bin_start, sep = "_")
 
 # Aggregate read counts by new bins using base R
 cat("Aggregating read counts...\n")
 
+# Get unique bin keys and calculate their end positions
+# For each bin_key, the new_bin_end is the MAX of original bin ends in that group
+bin_ends <- tapply(df$end, df$bin_key, max)
+
 # Get unique bin keys and their coordinates
-unique_bins <- unique(df[, c("seqnames", "new_bin_start", "new_bin_end", "bin_key")])
+unique_bins <- unique(df[, c("seqnames", "new_bin_start", "bin_key")])
 unique_bins <- unique_bins[order(unique_bins$seqnames, unique_bins$new_bin_start), ]
+
+# Add calculated end positions
+unique_bins$new_bin_end <- bin_ends[match(unique_bins$bin_key, names(bin_ends))]
 
 # Initialize result data frame
 rebinned_df <- unique_bins[, c("seqnames", "new_bin_start", "new_bin_end")]

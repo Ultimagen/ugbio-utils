@@ -179,49 +179,48 @@ The module includes R scripts in the `cnmops/` directory. They are used by cn.mo
 
 #### `rebin_cohort_reads_count.R`
 
-Re-bin an existing cn.mops cohort from smaller bins to larger bins by aggregating read counts. This allows you to adjust the resolution of existing cohorts without regenerating from BAM files.
+Re-bin an existing cn.mops cohort from smaller bins to larger bins by aggregating read counts. This allows you to adjust the resolution of existing cohorts without regenerating from BAM files, which is useful for:
+- Reducing computational memory requirements for large cohorts
+- Faster CNV calling with coarser resolution
+- Testing different bin sizes without re-processing BAM files
 
+**Usage:**
 ```bash
 Rscript cnmops/rebin_cohort_reads_count.R \
-  --input_cohort_file cohort_1000bp.rds \
-  --original_window_length 1000 \
-  --new_window_length 5000 \
-  --output_file cohort_5000bp.rds \
+  -i cohort_1000bp.rds \
+  -owl 1000 \
+  -nwl 5000 \
+  -o cohort_5000bp.rds \
   --save_csv
 ```
 
 **Parameters:**
-- `-i, --input_cohort_file` - Input cohort RDS file path (required)
-- `-owl, --original_window_length` - Original window length in bp (required, e.g., 1000)
-- `-nwl, --new_window_length` - New window length in bp (required, must be divisible by original)
-- `-o, --output_file` - Output RDS file path (default: rebinned_cohort_reads_count.rds)
-- `--save_csv` - Also save output as CSV format
-- `--save_hdf` - Also save output as HDF5 format
+- `-i, --input_cohort_file` - Input cohort RDS file (required)
+- `-owl, --original_window_length` - Original bin size in bp (required)
+- `-nwl, --new_window_length` - New bin size in bp (required, must be divisible by original)
+- `-o, --output_file` - Output RDS file (default: `rebinned_cohort_reads_count.rds`)
+- `--save_csv` - Also save as CSV format
+- `--save_hdf` - Also save as HDF5 format
 
-**Requirements:**
-- New window length must be larger than original window length
-- New window length must be divisible by original window length
-- Read counts are summed across bins that fall within each new bin
+**Important Notes:**
+- New window length must be larger than and divisible by the original window length
+- Genomic coordinates use 1-based, right-closed format (e.g., 1-1000, 1001-2000, ...)
+- Partial bins at chromosome ends are preserved without artificial extension
+- Read counts are summed from all original bins within each new bin
+- Total read counts per sample are preserved across the rebinning
 
-**Example Workflow:**
+**Example:**
 ```bash
-# Original cohort at 1000 bp resolution
-cohort_file="HapMap2_65samples_cohort_v2.0.hg38.ReadsCount.rds"
-
-# Re-bin to 5000 bp for faster processing
+# Re-bin HapMap2 cohort from 1000 bp to 5000 bp
 Rscript cnmops/rebin_cohort_reads_count.R \
-  -i ${cohort_file} \
+  -i HapMap2_65samples_cohort_v2.0.hg38.ReadsCount.rds \
   -owl 1000 \
   -nwl 5000 \
-  -o HapMap2_65samples_cohort_v2.0.hg38.ReadsCount.5000bp.rds \
-  --save_csv
+  -o HapMap2_65samples_cohort_v2.0.hg38.ReadsCount.5000bp.rds
 
-# Use rebinned cohort in CNV calling
-# (Sample reads count must also be generated with matching 5000 bp bins)
+# Result: 3,088,281 bins → 617,665 bins (5x reduction)
+# Last bin on chr1: 248955001-248956422 (partial bin, not extended to 248960000)
 ```
-
-**Note:** When using a rebinned cohort for CNV calling, samples must be processed with the same window length as the rebinned cohort.
-
 ## Notes
 
 - See germline and somatic CNV calling workflows published in GH repository `Ultimagen\healthomics-workflows`

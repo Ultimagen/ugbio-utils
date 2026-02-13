@@ -75,11 +75,16 @@ def test_rebin_cohort_2x(tmpdir, resources_dir, script_path):
     # The original cohort has 1992 bins (as shown in script output)
     original_bin_count = 1992
 
-    # Check that bin widths are 2001 (in R IRanges, width = end - start + 1)
-    assert (df_rebinned["width"] == 2001).all(), "All bins should have width 2001"
+    # Check that full bins have width 2000 (in genomic coordinates, width = end - start + 1)
+    # But partial bins at chromosome ends may be smaller
+    assert df_rebinned["width"].max() == 2000, "Maximum bin width should be 2000"
+    assert (df_rebinned["width"] <= 2000).all(), "No bins should exceed 2000 bp"
+
+    # Check 1-based alignment: all starts should be (N*2000 + 1)
+    assert (df_rebinned["start"] % 2000 == 1).all(), "Start positions should align to N*2000+1 (1-based coordinates)"
 
     # Check that we have approximately half the number of bins
-    # (may not be exact due to gaps in coverage)
+    # (may not be exact due to gaps in coverage and partial bins)
     assert len(df_rebinned) < original_bin_count, "Rebinned cohort should have fewer bins"
     assert len(df_rebinned) <= original_bin_count / 2 + 100, "Should be roughly half the bins"
 
@@ -111,11 +116,19 @@ def test_rebin_cohort_5x(tmpdir, resources_dir, script_path):
     # Load rebinned data
     df_rebinned = pd.read_csv(out_csv)
 
-    # Check that bin widths are 5001 (in R IRanges, width = end - start + 1)
-    assert (df_rebinned["width"] == 5001).all(), "All bins should have width 5001"
+    # Check that full bins have width 5000 (in genomic coordinates, width = end - start + 1)
+    # But partial bins at chromosome ends may be smaller
+    assert df_rebinned["width"].max() == 5000, "Maximum bin width should be 5000"
+    assert (df_rebinned["width"] <= 5000).all(), "No bins should exceed 5000 bp"
 
-    # Check that bins are aligned to 5000 bp boundaries
-    assert (df_rebinned["start"] % 5000 == 0).all(), "Start positions should be multiples of 5000"
+    # CRITICAL TEST for BIOIN-2615: Check 1-based alignment
+    # All starts should be (N*5000 + 1), ensuring proper coordinate handling
+    assert (df_rebinned["start"] % 5000 == 1).all(), "Start positions should align to N*5000+1 (1-based coordinates)"
+
+    # Verify that some bins are partial (at chromosome ends)
+    assert (
+        df_rebinned["width"] < 5000
+    ).any(), "Should have some partial bins at chromosome ends (not artificially extended)"
 
 
 def test_rebin_invalid_window_size(tmpdir, resources_dir, script_path):
