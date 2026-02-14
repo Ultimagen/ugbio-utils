@@ -30,15 +30,11 @@ gr <- readRDS(germline_coverage_rds)
 
 
 if (args$intervals_only) {
-  # Export only the intervals without coverage data (BED3 format: chr, start, end)
-  df <- as.data.frame(gr)
-  bed3 <- data.frame(
-    chrom = df$seqnames,
-    start = df$start - 1,  # Convert to 0-based coordinates for BED
-    end = df$end
-  )
+  # Export only the intervals without coverage data
+  gr_intervals <- gr
+  mcols(gr_intervals) <- NULL
   output_file <- "intervals.bed"
-  write.table(bed3, file = output_file, sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE)
+  export.bed(gr_intervals, output_file)
 } else if (!is.null(args$sample_name)) {
   # Export only the specified sample
   sample_names <- colnames(mcols(gr))
