@@ -81,7 +81,7 @@ def test_export_cohort_matrix_to_bed_intervals_only(tmpdir, resources_dir, scrip
     df_expected = pd.read_csv(expected_bed, sep="\t", header=None)
 
     # Verify structure: export.bed() produces BED6 format (chr, start, end, name, score, strand)
-    assert df_actual.shape[1] == 6, f"Expected 6 columns (BED6 format), got {df_actual.shape[1]}"
+    assert df_actual.shape[1] == 3, f"Expected 3 columns (BED format), got {df_actual.shape[1]}"
 
     # Verify same number of intervals
     assert (
@@ -89,4 +89,4 @@ def test_export_cohort_matrix_to_bed_intervals_only(tmpdir, resources_dir, scrip
     ), f"Expected {df_expected.shape[0]} intervals, got {df_actual.shape[0]}"
 
     # Verify coordinates match (first 3 columns: chr, start, end)
-    pd.testing.assert_frame_equal(df_actual.iloc[:, :3], df_expected.iloc[:, :3], check_dtype=False, check_names=False)
+    pd.testing.assert_frame_equal(df_actual, df_expected.iloc[:, :3], check_dtype=False, check_names=False)

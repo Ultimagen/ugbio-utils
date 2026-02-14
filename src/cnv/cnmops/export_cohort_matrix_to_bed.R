@@ -34,7 +34,19 @@ if (args$intervals_only) {
   gr_intervals <- gr
   mcols(gr_intervals) <- NULL
   output_file <- "intervals.bed"
-  export.bed(gr_intervals, output_file)
+  bed3 <- data.frame(
+    chrom = as.character(seqnames(gr)),
+    start = sprintf("%d", start(gr) - 1L),
+    end   = sprintf("%d", end(gr))
+  )
+  write.table(
+    bed3,
+    file = output_file,
+    sep = "\t",
+    quote = FALSE,
+    row.names = FALSE,
+    col.names = FALSE
+  )
 } else if (!is.null(args$sample_name)) {
   # Export only the specified sample
   sample_names <- colnames(mcols(gr))
