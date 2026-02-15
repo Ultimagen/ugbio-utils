@@ -33,13 +33,13 @@ from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions, PpmseqCategories
 
 from ugbio_srsnv.shap_plotting import SHAPPlotter
-from ugbio_srsnv.srsnv_report import add_is_mixed_to_featuremap_df
 from ugbio_srsnv.srsnv_utils import (
     ET,
     ET_FILLNA,
     MAX_PHRED,
     ST,
     ST_FILLNA,
+    add_is_mixed_to_featuremap_df,
     construct_trinuc_context_with_alt,
     get_base_error_rate_from_filters,
     get_base_recall_from_filters,

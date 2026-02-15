@@ -26,6 +26,8 @@ import numpy as np
 import pandas as pd
 import xgboost as xgb
 from sklearn.metrics import roc_auc_score
+from ugbio_core.logger import logger
+from ugbio_core.vcfbed.variant_annotation import get_cycle_skip_dataframe
 from ugbio_ppmseq.ppmSeq_utils import (
     MAX_TOTAL_HMER_LENGTHS_IN_LOOPS,
     MIN_TOTAL_HMER_LENGTHS_IN_LOOPS,
@@ -44,6 +46,7 @@ REV = "REV"
 IS_MIXED = "is_mixed"
 IS_MIXED_START = "is_mixed_start"
 IS_MIXED_END = "is_mixed_end"
+IS_CYCLE_SKIP = "is_cycle_skip"
 ST = "st"
 ET = "et"
 AS = "as"
@@ -951,3 +954,42 @@ class HandlePPMSeqTagsInFeatureMapDataFrame:
         self.featuremap_df[IS_MIXED] = np.logical_and(
             self.featuremap_df[IS_MIXED_START], self.featuremap_df[IS_MIXED_END]
         )
+
+
+def add_is_mixed_to_featuremap_df(
+    data_df: pd.DataFrame,
+    adapter_version: str = None,  # Default to v1, can be overridden
+    categorical_features_names: list[str] | None = None,
+) -> pd.DataFrame:
+    """Add is_mixed columns to featuremap_df
+    NOTE: THIS FUNCTION IS A PATCH AND SHOULD BE REPLACED
+    """
+    logger.info("Adding is_mixed columns to featuremap")
+    # TODO: use the information from adapter_version instead of this patch
+    tags_handler = HandlePPMSeqTagsInFeatureMapDataFrame(
+        featuremap_df=data_df,
+        categorical_features_names=categorical_features_names or [],
+        ppmseq_adapter_version=adapter_version,  # This should be set based on the actual adapter version used
+        logger=logger,
+    )
+    tags_handler.fill_nan_tags()
+    tags_handler.add_is_mixed_to_featuremap_df()
+    return tags_handler.featuremap_df
+
+
+def add_is_cycle_skip_to_featuremap_df(data_df: pd.DataFrame, flow_order: str = "TGCA") -> pd.DataFrame:
+    """Add is_cycle_skip column to featuremap_df"""
+    logger.info("Adding is_cycle_skip column to featuremap")
+    data_df = (
+        data_df.assign(
+            ref_motif=data_df[PREV1].astype(str) + data_df[REF].astype(str) + data_df[NEXT1].astype(str),
+            alt_motif=data_df[PREV1].astype(str) + data_df[ALT].astype(str) + data_df[NEXT1].astype(str),
+        )
+        .merge(
+            get_cycle_skip_dataframe(flow_order)[[IS_CYCLE_SKIP]],
+            left_on=["ref_motif", "alt_motif"],
+            right_index=True,
+        )
+        .drop(columns=["ref_motif", "alt_motif"])
+    )
+    return data_df
