@@ -501,45 +501,6 @@ def _annotate_vcf_record_with_evidence(record: pysam.VariantRecord, evidence: Br
     )
 
 
-def _create_read_with_read_group(read: pysam.AlignedSegment, read_group: str) -> pysam.AlignedSegment:
-    """
-    Create a copy of a read with the specified read group tag.
-
-    Parameters
-    ----------
-    read : pysam.AlignedSegment
-        Original read to copy
-    read_group : str
-        Read group ID to assign (e.g., 'DUP', 'DEL')
-
-    Returns
-    -------
-    pysam.AlignedSegment
-        New read with read group tag set
-    """
-    new_read = pysam.AlignedSegment()
-    new_read.query_name = read.query_name
-    new_read.query_sequence = read.query_sequence
-    new_read.flag = read.flag
-    new_read.reference_id = read.reference_id
-    new_read.reference_start = read.reference_start
-    new_read.mapping_quality = read.mapping_quality
-    new_read.cigartuples = read.cigartuples
-    new_read.next_reference_id = read.next_reference_id
-    new_read.next_reference_start = read.next_reference_start
-    new_read.template_length = read.template_length
-    new_read.query_qualities = read.query_qualities
-
-    # Copy tags
-    for tag, value in read.get_tags():
-        new_read.set_tag(tag, value)
-
-    # Set read group tag
-    new_read.set_tag("RG", read_group, value_type="Z")
-
-    return new_read
-
-
 def analyze_interval_breakpoints(
     alignment_file: pysam.AlignmentFile,
     chrom: str,
@@ -692,8 +653,9 @@ def analyze_cnv_breakpoints(
             # Write supporting reads to BAM if requested
             if bam_out:
                 for read, read_group in evidence.supporting_reads:
-                    new_read = _create_read_with_read_group(read, read_group)
-                    bam_out.write(new_read)
+                    # Set read group tag on the original read
+                    read.set_tag("RG", read_group, value_type="Z")
+                    bam_out.write(read)
 
         vcf_out.close()
         if bam_out:
