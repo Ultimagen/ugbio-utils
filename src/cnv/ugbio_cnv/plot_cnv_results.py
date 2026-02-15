@@ -348,8 +348,17 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     # load UG calls
     def extract_copy_number(info_string):
         spstr = info_string.split(";")
-        spstr = [x for x in spstr if x.startswith("CopyNumber")][0]
-        return float(spstr.replace("CopyNumber=", ""))
+        spstr_copynumber = [x for x in spstr if x.startswith("CopyNumber=")]
+        copynumber_value = None
+        if len(spstr_copynumber) == 1:
+            copynumber_value = spstr_copynumber[0].replace("CopyNumber=", "")
+            copynumber_value = None if copynumber_value == "." else float(copynumber_value)
+        spstr_cn = [x for x in spstr if x.startswith("CN=")]
+        cn_value = None
+        if len(spstr_cn) == 1:
+            cn_value = spstr_cn[0].replace("CN=", "")
+            cn_value = None if cn_value == "." else float(cn_value)
+        return min([v for v in [copynumber_value, cn_value] if v is not None])
 
     if args.duplication_cnv_calls:
         if os.path.getsize(args.duplication_cnv_calls) > 0:
