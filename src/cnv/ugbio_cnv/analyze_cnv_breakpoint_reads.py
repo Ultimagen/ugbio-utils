@@ -469,6 +469,38 @@ def _calculate_breakpoint_regions(
     return start_region_start, start_region_end, end_region_start, end_region_end
 
 
+def _annotate_vcf_record_with_evidence(record: pysam.VariantRecord, evidence: BreakpointEvidence) -> None:
+    """
+    Annotate a VCF record with CNV breakpoint evidence.
+
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        VCF record to annotate
+    evidence : BreakpointEvidence
+        Breakpoint evidence data to add to record
+    """
+    # Add new INFO fields directly to the record
+    record.info["CNV_DUP_READS"] = evidence.duplication_reads
+    record.info["CNV_DEL_READS"] = evidence.deletion_reads
+    record.info["CNV_TOTAL_READS"] = evidence.total_reads
+
+    if evidence.total_reads > 0:
+        record.info["CNV_DUP_FRAC"] = evidence.duplication_reads / evidence.total_reads
+        record.info["CNV_DEL_FRAC"] = evidence.deletion_reads / evidence.total_reads
+    else:
+        record.info["CNV_DUP_FRAC"] = 0.0
+        record.info["CNV_DEL_FRAC"] = 0.0
+
+    # Add insert size statistics (use 0.0 if None to ensure downstream processing)
+    record.info["DUP_READS_MEDIAN_INSERT_SIZE"] = (
+        evidence.dup_median_insert_size if evidence.dup_median_insert_size is not None else 0.0
+    )
+    record.info["DEL_READS_MEDIAN_INSERT_SIZE"] = (
+        evidence.del_median_insert_size if evidence.del_median_insert_size is not None else 0.0
+    )
+
+
 def _create_read_with_read_group(read: pysam.AlignedSegment, read_group: str) -> pysam.AlignedSegment:
     """
     Create a copy of a read with the specified read group tag.
@@ -651,25 +683,9 @@ def analyze_cnv_breakpoints(
             # Analyze breakpoints for this variant
             evidence = analyze_interval_breakpoints(alignment_file, record.chrom, record.start, record.stop, cushion)
 
-            # Add new INFO fields directly to the record
-            record.info["CNV_DUP_READS"] = evidence.duplication_reads
-            record.info["CNV_DEL_READS"] = evidence.deletion_reads
-            record.info["CNV_TOTAL_READS"] = evidence.total_reads
+            # Annotate VCF record with evidence
+            _annotate_vcf_record_with_evidence(record, evidence)
 
-            if evidence.total_reads > 0:
-                record.info["CNV_DUP_FRAC"] = evidence.duplication_reads / evidence.total_reads
-                record.info["CNV_DEL_FRAC"] = evidence.deletion_reads / evidence.total_reads
-            else:
-                record.info["CNV_DUP_FRAC"] = 0.0
-                record.info["CNV_DEL_FRAC"] = 0.0
-
-            # Add insert size statistics (use 0.0 if None to ensure downstream processing)
-            record.info["DUP_READS_MEDIAN_INSERT_SIZE"] = (
-                evidence.dup_median_insert_size if evidence.dup_median_insert_size is not None else 0.0
-            )
-            record.info["DEL_READS_MEDIAN_INSERT_SIZE"] = (
-                evidence.del_median_insert_size if evidence.del_median_insert_size is not None else 0.0
-            )
             # Write annotated record
             vcf_out.write(record)
 
