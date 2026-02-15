@@ -464,3 +464,51 @@ def test_median_insert_size_none_values(temp_vcf_file, dummy_fasta_file):
         Path(empty_bam_path).unlink(missing_ok=True)
         Path(empty_bam_path + ".bai").unlink(missing_ok=True)
         Path(output_vcf_path).unlink(missing_ok=True)
+
+
+def test_analyze_cnv_breakpoints_with_bam_output(temp_bam_file, temp_vcf_file, dummy_fasta_file):
+    """Test that split reads BAM output is written correctly with proper read groups."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as output_f:
+        output_vcf_path = output_f.name
+
+    with tempfile.NamedTemporaryFile(suffix=".bam", delete=False) as bam_f:
+        output_bam_path = bam_f.name
+
+    try:
+        # Run analysis with BAM output
+        analyze_cnv_breakpoints(
+            bam_file=temp_bam_file,
+            vcf_file=temp_vcf_file,
+            reference_fasta=dummy_fasta_file,
+            cushion=100,
+            output_file=output_vcf_path,
+            output_bam=output_bam_path,
+        )
+
+        # Read and verify output BAM
+        with pysam.AlignmentFile(output_bam_path, "rb") as bam_out:
+            # Check that header has read groups
+            header_dict = bam_out.header.to_dict()
+            assert "RG" in header_dict
+            rg_ids = {rg["ID"] for rg in header_dict["RG"]}
+            # Should have DUP and DEL read groups at minimum
+            assert "DUP" in rg_ids
+            assert "DEL" in rg_ids
+
+            # Collect reads and their read groups
+            reads = list(bam_out)
+            assert len(reads) == 2  # Two supporting reads (one DUP, one DEL)
+
+            # Check that reads have proper read groups
+            read_groups = [read.get_tag("RG") for read in reads]
+            assert "DUP" in read_groups
+            assert "DEL" in read_groups
+
+            # Verify read names match the expected ones
+            read_names = {read.query_name for read in reads}
+            assert "read1" in read_names  # Duplication-supporting read
+            assert "read2" in read_names  # Deletion-supporting read
+
+    finally:
+        Path(output_vcf_path).unlink(missing_ok=True)
+        Path(output_bam_path).unlink(missing_ok=True)

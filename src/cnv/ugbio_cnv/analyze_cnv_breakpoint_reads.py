@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from statistics import median
 
 import pysam
+from ugbio_cnv.jalign import create_bam_header
 from ugbio_core.dna_sequence_utils import CIGAR_OPS, get_reference_alignment_end, parse_cigar_string
 from ugbio_core.logger import logger
 
@@ -32,6 +33,7 @@ class BreakpointEvidence:
     total_reads: int
     dup_insert_sizes: list[int] = field(default_factory=list)
     del_insert_sizes: list[int] = field(default_factory=list)
+    supporting_reads: list[tuple[pysam.AlignedSegment, str]] = field(default_factory=list)
 
     @property
     def dup_median_insert_size(self) -> float | None:
@@ -505,6 +507,7 @@ def analyze_interval_breakpoints(
     dup_insert_sizes: list[int] = []
     del_insert_sizes: list[int] = []
     processed_reads: set[str] = set()
+    supporting_reads: list[tuple[pysam.AlignedSegment, str]] = []
 
     try:
         for read in alignment_file.fetch(chrom, start_region_start, end_region_end):
@@ -525,10 +528,12 @@ def analyze_interval_breakpoints(
                 duplication_reads += 1
                 if insert_size is not None and insert_size > 0:
                     dup_insert_sizes.append(insert_size)
+                supporting_reads.append((read, "DUP"))
             elif is_del:
                 deletion_reads += 1
                 if insert_size is not None and insert_size > 0:
                     del_insert_sizes.append(insert_size)
+                supporting_reads.append((read, "DEL"))
 
     except Exception as e:
         logger.warning(f"Error fetching reads for {chrom}:{start}-{end}: {e}")
@@ -542,6 +547,7 @@ def analyze_interval_breakpoints(
         total_reads=len(processed_reads),
         dup_insert_sizes=dup_insert_sizes,
         del_insert_sizes=del_insert_sizes,
+        supporting_reads=supporting_reads,
     )
 
 
@@ -551,6 +557,7 @@ def analyze_cnv_breakpoints(
     reference_fasta: str,
     cushion: int = 100,
     output_file: str | None = None,
+    output_bam: str | None = None,
 ) -> None:
     """
     Analyze all CNV intervals in a VCF file for breakpoint evidence.
@@ -567,6 +574,8 @@ def analyze_cnv_breakpoints(
         Path to output VCF file (default: None, writes to stdout)
     reference_fasta : str
         Path to reference FASTA file (required for CRAM files)
+    output_bam : str, optional
+        Path to output BAM file with split reads supporting CNV calls (default: None, no BAM output)
     """
     alignment_file = pysam.AlignmentFile(bam_file, "r", reference_filename=reference_fasta)
 
@@ -586,6 +595,12 @@ def analyze_cnv_breakpoints(
             vcf_out = pysam.VariantFile(output_file, "w", header=hdr)
         else:
             vcf_out = pysam.VariantFile("-", "w", header=hdr)
+
+        # Open output BAM if requested
+        bam_out = None
+        if output_bam:
+            bam_header = create_bam_header(alignment_file.header)
+            bam_out = pysam.AlignmentFile(output_bam, "wb", header=bam_header)
 
         # Process each variant
         variant_count = 0
@@ -619,7 +634,35 @@ def analyze_cnv_breakpoints(
             # Write annotated record
             vcf_out.write(record)
 
+            # Write supporting reads to BAM if requested
+            if bam_out:
+                for read, read_group in evidence.supporting_reads:
+                    # Create a new read with the appropriate read group
+                    new_read = pysam.AlignedSegment()
+                    new_read.query_name = read.query_name
+                    new_read.query_sequence = read.query_sequence
+                    new_read.flag = read.flag
+                    new_read.reference_id = read.reference_id
+                    new_read.reference_start = read.reference_start
+                    new_read.mapping_quality = read.mapping_quality
+                    new_read.cigartuples = read.cigartuples
+                    new_read.next_reference_id = read.next_reference_id
+                    new_read.next_reference_start = read.next_reference_start
+                    new_read.template_length = read.template_length
+                    new_read.query_qualities = read.query_qualities
+
+                    # Copy tags
+                    for tag, value in read.get_tags():
+                        new_read.set_tag(tag, value)
+
+                    # Set read group tag
+                    new_read.set_tag("RG", read_group, value_type="Z")
+
+                    bam_out.write(new_read)
+
         vcf_out.close()
+        if bam_out:
+            bam_out.close()
 
     # Close alignment file
     alignment_file.close()
@@ -627,6 +670,8 @@ def analyze_cnv_breakpoints(
     logger.info(f"Processed {variant_count} variants")
     if output_file:
         logger.info(f"Annotated VCF written to {output_file}")
+    if output_bam:
+        logger.info(f"Split reads BAM written to {output_bam}")
 
 
 def get_parser(parser: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser:
@@ -674,6 +719,11 @@ def get_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argume
         required=True,
         help="Path to reference FASTA file",
     )
+    parser.add_argument(
+        "--output-bam",
+        default=None,
+        help="Path to output BAM file with split reads supporting CNV calls (default: None, no BAM output)",
+    )
     return parser
 
 
@@ -689,6 +739,7 @@ def main(argv: list[str] | None = None) -> int:
             reference_fasta=args.reference_fasta,
             cushion=args.cushion,
             output_file=args.output_file,
+            output_bam=args.output_bam,
         )
         return 0
     except Exception as e:
