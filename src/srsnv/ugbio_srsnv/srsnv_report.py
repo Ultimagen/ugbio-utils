@@ -88,22 +88,46 @@ def add_is_mixed_to_featuremap_df(
     return tags_handler.featuremap_df
 
 
-def add_is_cycle_skip_to_featuremap_df(data_df: pd.DataFrame, flow_order: str = "TGCA") -> pd.DataFrame:
-    """Add is_cycle_skip column to featuremap_df"""
-    logger.info("Adding is_cycle_skip column to featuremap")
-    data_df = (
-        data_df.assign(
-            ref_motif=data_df[X_PREV1].astype(str) + data_df[REF].astype(str) + data_df[X_NEXT1].astype(str),
-            alt_motif=data_df[X_PREV1].astype(str) + data_df[ALT].astype(str) + data_df[X_NEXT1].astype(str),
-        )
-        .merge(
-            get_cycle_skip_dataframe(flow_order)[[IS_CYCLE_SKIP]],
-            left_on=["ref_motif", "alt_motif"],
-            right_index=True,
-        )
-        .drop(columns=["ref_motif", "alt_motif"])
+def compute_is_cycle_skip_column(data_df: pd.DataFrame, flow_order: str = "TGCA") -> pd.Series:
+    """
+    Compute the is_cycle_skip column for a featuremap dataframe.
+
+    This function calculates whether each variant represents a cycle skip
+    based on the reference and alternate motifs (prev1 + ref/alt + next1).
+
+    Args:
+        data_df: DataFrame containing X_PREV1, REF, ALT, and X_NEXT1 columns
+        flow_order: Flow order string (default: "TGCA")
+
+    Returns:
+        pd.Series: Boolean series indicating cycle skip status for each variant
+    """
+    logger.info("Computing is_cycle_skip column")
+
+    # Create motif strings without copying the full dataframe
+    ref_motif = data_df[X_PREV1].astype(str) + data_df[REF].astype(str) + data_df[X_NEXT1].astype(str)
+    alt_motif = data_df[X_PREV1].astype(str) + data_df[ALT].astype(str) + data_df[X_NEXT1].astype(str)
+
+    # Get cycle skip lookup table
+    cycle_skip_df = get_cycle_skip_dataframe(flow_order)[[IS_CYCLE_SKIP]]
+
+    # Create temporary dataframe for merge operation
+    motif_df = pd.DataFrame(
+        {"ref_motif": ref_motif, "alt_motif": alt_motif},
+        index=data_df.index,
     )
-    return data_df
+
+    # Merge and extract only the is_cycle_skip column
+    result = motif_df.merge(
+        cycle_skip_df,
+        left_on=["ref_motif", "alt_motif"],
+        right_index=True,
+        how="left",
+    )[IS_CYCLE_SKIP]
+
+    result.index = data_df.index  # Ensure the index is the same as the original dataframe
+
+    return result
 
 
 def prepare_report(  # noqa: C901 PLR0915
@@ -113,6 +137,8 @@ def prepare_report(  # noqa: C901 PLR0915
     basename: str = "",
     models_prefix: str | None = None,
     random_seed: int | None = None,
+    *,
+    use_gpu_for_shap: bool = False,
 ) -> None:
     """
     Prepare the SNV report based on the provided featuremap dataframe and metadata.
@@ -124,6 +150,7 @@ def prepare_report(  # noqa: C901 PLR0915
         basename (str): Basename prefix for output files.
         models_prefix (str | None): Prefix for model JSON files.
         random_seed (int | None): Random seed for reproducibility.
+        use_gpu_for_shap (bool): Whether to use GPU for SHAP calculations if available.
     """
     logger.info("Preparing SNV report...")
 
@@ -230,7 +257,7 @@ def prepare_report(  # noqa: C901 PLR0915
         params["adapter_version"],
         params["categorical_features_names"],
     )
-    data_df = add_is_cycle_skip_to_featuremap_df(data_df)
+    data_df[IS_CYCLE_SKIP] = compute_is_cycle_skip_column(data_df)
 
     # Handle random seed
     rng = None
@@ -277,6 +304,7 @@ def prepare_report(  # noqa: C901 PLR0915
         statistics_json_file=statistics_json_file,
         srsnv_metadata=srsnv_metadata,
         rng=rng,
+        use_gpu_for_shap=use_gpu_for_shap,
     )
 
     # Run the report generation
@@ -309,6 +337,7 @@ def _cli() -> argparse.Namespace:
     )
     ap.add_argument("--random-seed", type=int, default=None)
     ap.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    ap.add_argument("--use-gpu-for-shap", action="store_true", help="Use GPU for SHAP calculations if available")
 
     args = ap.parse_args()
     return args
@@ -329,6 +358,7 @@ def main() -> None:
         basename=args.basename,
         models_prefix=args.models_prefix,
         random_seed=args.random_seed,
+        use_gpu_for_shap=args.use_gpu_for_shap,
     )
 
 

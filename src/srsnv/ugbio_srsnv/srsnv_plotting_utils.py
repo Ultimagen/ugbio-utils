@@ -1441,6 +1441,7 @@ class SRSNVReport:
         statistics_json_file: str = None,
         rng: Any = None,
         *,
+        use_gpu_for_shap: bool = False,
         raise_exceptions: bool = False,
     ):
         """loads model, data, params and generate plots for report. Saves data in hdf5 file
@@ -1471,6 +1472,7 @@ class SRSNVReport:
         self.num_cv_folds = len(models)
         self.data_df = data_df
         self.params = params
+        self.use_gpu_for_shap = use_gpu_for_shap
         self.out_path = out_path
         self.base_name = base_name
         self.lod_filters = lod_filters
@@ -2355,16 +2357,32 @@ class SRSNVReport:
 
         training_results = [clf.evals_result() for clf in self.models]
         num_folds = len(training_results)
+
+        # Determine which logloss metric is available (logloss for binary, mlogloss for multiclass)
+        # Check the first model's results to determine the metric name
+        logloss_key = None
+        if "logloss" in training_results[0]["validation_0"]:
+            logloss_key = "logloss"
+        elif "mlogloss" in training_results[0]["validation_0"]:
+            logloss_key = "mlogloss"
+        else:
+            raise ValueError(
+                "Neither 'logloss' nor 'mlogloss' found in training results. "
+                f"Available metrics: {list(training_results[0]['validation_0'].keys())}"
+            )
+
         fig, axes = plt.subplots(1, 2, figsize=(16, 6))
         ax = axes[0]
         train_logloss = list_of_jagged_lists_to_array(
-            [result["validation_0"]["mlogloss"] for result in training_results]
+            [result["validation_0"][logloss_key] for result in training_results]
         )
-        val_logloss = list_of_jagged_lists_to_array([result["validation_1"]["mlogloss"] for result in training_results])
+        val_logloss = list_of_jagged_lists_to_array(
+            [result["validation_1"][logloss_key] for result in training_results]
+        )
         for ri, result in enumerate(training_results):
             label = "Individual folds" if ri == 1 else None  # will reach ri==1 iff when using CV
-            ax.plot(result["validation_0"]["mlogloss"], c="grey", alpha=0.7, label=label)
-            ax.plot(result["validation_1"]["mlogloss"], c="grey", alpha=0.7)
+            ax.plot(result["validation_0"][logloss_key], c="grey", alpha=0.7, label=label)
+            ax.plot(result["validation_1"][logloss_key], c="grey", alpha=0.7)
 
         kfolds_label = f" (mean of {num_folds} folds)" if num_folds >= 2 else ""  # noqa: PLR2004
         ax.plot(np.nanmean(train_logloss, axis=0), label="Train" + kfolds_label)
@@ -2431,6 +2449,8 @@ class SRSNVReport:
             features_metadata=self.srsnv_metadata["features"],
             label_col=LABEL,
             random_state=42,  # Use a fixed seed for reproducible plots
+            logger=logger,
+            use_gpu=self.use_gpu_for_shap,
         )
 
     @exception_handler
@@ -2478,28 +2498,13 @@ class SRSNVReport:
 
         # Calculate and save SHAP feature importance scores
         mean_abs_SHAP_scores = pd.Series(  # noqa: N806
-            np.abs(shap_values[:, 1, :-1] - shap_values[:, 0, :-1]).mean(axis=0), index=x_sample.columns
+            np.abs(shap_values[:, :-1]).mean(axis=0), index=x_sample.columns
         ).sort_values(ascending=False)
         mean_abs_SHAP_scores.to_hdf(self.output_h5_filename, key="mean_abs_SHAP_scores", mode="a")
 
         # Save plots using the existing _save_plt method to maintain consistency
         self._save_plt(output_filename=output_filename_importance, fig=fig_importance)
         self._save_plt(output_filename=output_filename_beeswarm, fig=fig_beeswarm)
-
-    def _get_trinuc_stats(self, q1: float = 0.1, q2: float = 0.9):
-        data_df = self.data_df.copy()
-        data_df[IS_CYCLE_SKIP] = data_df[IS_CYCLE_SKIP].astype(int)
-        trinuc_stats = data_df.groupby([TRINUC_CONTEXT_WITH_ALT, LABEL, IS_FORWARD, IS_MIXED]).agg(
-            median_qual=(QUAL, "median"),
-            quantile1_qual=(QUAL, lambda x: x.quantile(q1)),
-            quantile3_qual=(QUAL, lambda x: x.quantile(q2)),
-            is_cycle_skip=(IS_CYCLE_SKIP, "mean"),
-            count=(QUAL, "size"),
-        )
-        trinuc_stats["fraction"] = trinuc_stats["count"] / self.data_df.shape[0]
-        trinuc_stats = trinuc_stats.reset_index()
-        trinuc_stats[IS_FORWARD] = trinuc_stats[IS_FORWARD].astype(bool)
-        return trinuc_stats
 
     @exception_handler
     def calc_and_plot_trinuc_plot(  # noqa: PLR0915 #TODO: refactor
@@ -2509,10 +2514,6 @@ class SRSNVReport:
         motif_orientation: str = "seq_dir",
     ):
         logger.info("Calculating trinuc context statistics")
-        # trinuc_stats = self._get_trinuc_stats(q1=0.1, q2=0.9)
-        # trinuc_stats.set_index([TRINUC_CONTEXT_WITH_ALT, LABEL, IS_FORWARD, IS_MIXED]).to_hdf(
-        #     self.output_h5_filename, key="trinuc_stats", mode="a"
-        # )
 
         # Call the new plotting function
         fig, stats_df = calc_and_plot_trinuc_hist(
@@ -2574,20 +2575,25 @@ class SRSNVReport:
             q2 [float]: upper quantile for interquartile range
             bin_edges [list]: bin edges for discretization. If it is None, use discrete (integer) values
         """
-        data_df = self.data_df.copy()
+        required_cols = [col, LABEL, IS_MIXED, QUAL]
+
+        # If binning is needed, create binned column in a view/subset
         if bin_edges is not None:
-            data_df[col] = pd.cut(data_df[col], bin_edges, labels=(bin_edges[1:] + bin_edges[:-1]) / 2)
-        stats_for_plot = (
-            data_df.sample(frac=1)
-            .groupby([col, LABEL, IS_MIXED])
-            .agg(
-                median_qual=(QUAL, "median"),
-                quantile1_qual=(QUAL, lambda x: x.quantile(q1)),
-                quantile3_qual=(QUAL, lambda x: x.quantile(q2)),
-                count=(QUAL, "size"),
-            )
+            # Work with a subset of data to avoid full copy
+            subset = self.data_df[required_cols].copy()  # Only copy required columns
+            subset[col] = pd.cut(subset[col], bin_edges, labels=(bin_edges[1:] + bin_edges[:-1]) / 2)
+        else:
+            # Use a view of the original dataframe (no copy needed)
+            subset = self.data_df[required_cols]
+
+        stats_for_plot = subset.groupby([col, LABEL, IS_MIXED], observed=True).agg(
+            median_qual=(QUAL, "median"),
+            quantile1_qual=(QUAL, lambda x: x.quantile(q1)),
+            quantile3_qual=(QUAL, lambda x: x.quantile(q2)),
+            count=(QUAL, "size"),
         )
-        stats_for_plot["fraction"] = stats_for_plot["count"] / data_df.shape[0]
+        total_count = len(self.data_df)
+        stats_for_plot["fraction"] = stats_for_plot["count"] / total_count
         stats_for_plot = stats_for_plot.reset_index()
         return stats_for_plot
 

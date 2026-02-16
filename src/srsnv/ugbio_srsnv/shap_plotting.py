@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 
 import matplotlib.pyplot as plt
@@ -26,6 +27,11 @@ import pandas as pd
 import shap
 import xgboost as xgb
 from matplotlib import cm
+
+# Create a default logger for this module
+_default_logger = logging.getLogger(__name__)
+_default_logger.addHandler(logging.StreamHandler())
+_default_logger.setLevel(logging.INFO)
 
 # Constants for plot formatting and colorbar display
 MAX_LABEL_LENGTH_FOR_HORIZONTAL = 5  # Maximum character length before rotating colorbar labels
@@ -70,6 +76,9 @@ class SHAPPlotter:
         categorical_features_dict: dict[str, list] = None,
         label_col: str = "label",
         random_state: int = 42,
+        logger: logging.Logger | None = None,
+        *,
+        use_gpu: bool = True,
     ):
         """
         Initialize the SHAPPlotter.
@@ -99,6 +108,8 @@ class SHAPPlotter:
             Name of the column containing the target labels.
         random_state : int, default 42
             Random state for reproducible sampling.
+        use_gpu : bool, default True
+            Whether to use GPU for SHAP value computation if available.
 
         Raises
         ------
@@ -107,11 +118,22 @@ class SHAPPlotter:
             if required columns are missing from the data, or if feature information
             is not provided in any valid format.
         """
+        self.logger = logger if logger is not None else _default_logger
         self.models = models
         self.data = data
         self.fold_id_col = fold_id_col
         self.label_col = label_col
         self.rng = np.random.default_rng(random_state)
+        # GPU support
+        self.use_gpu = use_gpu
+        if self.use_gpu:
+            # Check if XGBoost is compiled with GPU support
+            try:
+                gpu_test_model = xgb.XGBClassifier(tree_method="hist", device="cuda")
+                gpu_test_model.fit(np.array([[0], [1]]), np.array([0, 1]))
+            except Exception:
+                self.use_gpu = False
+                self.logger.warning("XGBoost GPU support not available - falling back to CPU for SHAP calculations")
 
         # Validate inputs
         if fold_id_col not in data.columns:
@@ -141,6 +163,62 @@ class SHAPPlotter:
         fold_values = data[fold_id_col].dropna().unique()
         if len(models) != len(fold_values):
             raise ValueError(f"Number of models ({len(models)}) doesn't match number of folds ({len(fold_values)})")
+
+    def _standardize_shap_values(self, shap_values: np.ndarray) -> np.ndarray:
+        """
+        Standardize SHAP values to 2D format (n_samples, n_features+1).
+
+        XGBoost returns different SHAP array shapes depending on the objective:
+        - binary:logistic: (n_samples, n_features+1) - contributions to log-odds
+        - multi:softprob with num_class=2: (n_samples, 2, n_features+1) -
+        contributions to each class's log-odds
+
+        For binary classification visualization, we need the contribution to the
+        positive class log-odds, which is:
+        - For binary:logistic: already in this format (use as-is)
+        - For multi:softprob: difference between class 1 and class 0
+
+        Parameters
+        ----------
+        shap_values : np.ndarray
+            SHAP values array from XGBoost's predict with pred_contribs=True.
+            Can be either 2D (binary:logistic) or 3D (multi:softprob).
+
+        Returns
+        -------
+        np.ndarray
+            Standardized 2D SHAP values with shape (n_samples, n_features+1).
+            Values represent contributions to the log-odds of the positive class.
+            The last column (index -1) contains base values (bias term).
+
+        Notes
+        -----
+        - For binary:logistic (2D input), returns input unchanged
+        - For multi:softprob (3D input), computes class 1 - class 0 difference
+        - Both approaches yield mathematically equivalent interpretations for
+        binary classification
+        - The standardized output can be used directly without further
+        differencing operations
+        """
+        if shap_values.ndim == 2:  # noqa: PLR2004
+            # Binary classification (binary:logistic): already in correct format
+            # Shape is (n_samples, n_features+1)
+            # Values represent contributions to log-odds of positive class
+            return shap_values
+
+        elif shap_values.ndim == 3:  # noqa: PLR2004
+            # Multi-class (multi:softprob with num_class=2):
+            # Shape is (n_samples, 2, n_features+1)
+            # Compute difference: class 1 - class 0
+            # This gives contributions to log-odds ratio (positive vs negative)
+            shap_values[:, 1, :] -= shap_values[:, 0, :]
+            return shap_values[:, 1, :]
+
+        else:
+            raise ValueError(
+                f"Expected SHAP values with 2 or 3 dimensions, got "
+                f"{shap_values.ndim} dimensions. Shape: {shap_values.shape}"
+            )
 
     def _parse_features_metadata(self, features_metadata: list[dict]) -> tuple[list[str], dict[str, list]]:
         """
@@ -273,8 +351,8 @@ class SHAPPlotter:
         x_sample_plot = x_sample.copy()
 
         # Create SHAP explanation object
-        base_values_plot = shap_values[0, 1, -1] - shap_values[0, 0, -1]
-        shap_values_plot = shap_values[:, 1, :-1] - shap_values[:, 0, :-1]
+        base_values_plot = shap_values[0, -1]
+        shap_values_plot = shap_values[:, :-1]
         explanation = shap.Explanation(
             values=shap_values_plot,
             base_values=base_values_plot,
@@ -418,8 +496,8 @@ class SHAPPlotter:
         )
 
         # Get top features by SHAP importance
-        total_features = shap_values.shape[2] - 1  # Exclude bias term
-        top_features = np.abs(shap_values[:, 1, :-1] - shap_values[:, 0, :-1]).mean(axis=0).argsort()[::-1][:n_features]
+        total_features = shap_values.shape[1] - 1  # Exclude bias term
+        top_features = np.abs(shap_values[:, :-1]).mean(axis=0).argsort()[::-1][:n_features]
 
         # Filter grouped_features to only include groups represented in top features
         top_feature_names = [x_sample_plot.columns[i] for i in top_features]
@@ -449,19 +527,13 @@ class SHAPPlotter:
             inds_for_plot = self.rng.choice(inds_for_plot, size=nplot_sample, replace=False)
 
         # Prepare SHAP values and data
-        base_values_plot = shap_values[0, 1, -1] - shap_values[0, 0, -1]
+        base_values_plot = shap_values[0, -1]
 
         if add_other_features:
             # SHAP values for top features
-            shap_top = (
-                shap_values[inds_for_plot.reshape((-1, 1)), 1, top_features]
-                - shap_values[inds_for_plot.reshape((-1, 1)), 0, top_features]
-            )
+            shap_top = shap_values[inds_for_plot.reshape((-1, 1)), top_features]
             # SHAP values for "other features" (sum across other features)
-            shap_other = (
-                shap_values[inds_for_plot, 1, :][:, other_features]
-                - shap_values[inds_for_plot, 0, :][:, other_features]
-            ).sum(axis=1, keepdims=True)
+            shap_other = (shap_values[inds_for_plot, :][:, other_features]).sum(axis=1, keepdims=True)
             # Concatenate
             shap_values_plot = np.hstack([shap_top, shap_other])
 
@@ -488,10 +560,7 @@ class SHAPPlotter:
             order = np.concatenate([order[order != shap_values_plot.shape[1] - 1], [shap_values_plot.shape[1] - 1]])
         else:
             # No other features - standard processing
-            shap_values_plot = (
-                shap_values[inds_for_plot.reshape((-1, 1)), 1, top_features]
-                - shap_values[inds_for_plot.reshape((-1, 1)), 0, top_features]
-            )
+            shap_values_plot = shap_values[inds_for_plot.reshape((-1, 1)), top_features]
             data_for_plot = x_sample_plot.iloc[inds_for_plot, top_features]
             feature_names = list(x_sample_plot.columns[top_features])
 
@@ -589,9 +658,6 @@ class SHAPPlotter:
         - Handles both numerical and categorical features automatically
         - Ensures reproducible sampling using the class's random_state
         - Test data (NaN fold_id) can be processed by any model
-        - Assumes XGBoost models trained with "objective": "multi:softprob" which returns
-          3D SHAP arrays with shape (n_samples, n_classes, n_features+1)
-        - TODO: Add support for standard binary classification models that return 2D arrays
         """
         # Determine which data to use
         if data_subset is not None:
@@ -626,10 +692,16 @@ class SHAPPlotter:
         # Create DMatrix with categorical features properly encoded
         # x_sample contains categorical features with their original metadata-based encodings
         # enable_categorical=True tells XGBoost to handle them as categorical (not ordinal)
+        if self.use_gpu:
+            model.set_params(device="cuda")
+        else:
+            model.set_params(device="cpu")
         x_sample_dm = xgb.DMatrix(data=x_sample, label=y_sample, enable_categorical=True)
         shap_values = model.get_booster().predict(
             x_sample_dm, pred_contribs=True, iteration_range=(0, model.best_ntree_limit)
         )
+
+        shap_values = self._standardize_shap_values(shap_values)
 
         return shap_values, x_sample, y_sample
 
@@ -664,9 +736,9 @@ class SHAPPlotter:
 
         # Calculate mean absolute SHAP values for feature importance
         # For binary classification, use difference between class 1 and class 0
-        mean_abs_shap_scores = pd.Series(
-            np.abs(shap_values[:, 1, :-1] - shap_values[:, 0, :-1]).mean(axis=0), index=x_sample.columns
-        ).sort_values(ascending=False)
+        mean_abs_shap_scores = pd.Series(np.abs(shap_values[:, :-1]).mean(axis=0), index=x_sample.columns).sort_values(
+            ascending=False
+        )
 
         return mean_abs_shap_scores
 

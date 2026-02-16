@@ -45,7 +45,9 @@ def test_end_to_end_training(tmp_path: Path) -> None:
         mean_coverage=30.0,
         training_regions=str(interval_list),
         k_folds=2,
-        model_params="n_estimators=2:max_depth=2:enable_categorical=true",  # keep test fast
+        model_params=(
+            'n_estimators=2:max_depth=2:enable_categorical=true:eval_metric=["auc","logloss"]'
+        ),  # keep test fast
         features="REF:ALT:X_HMER_REF:X_HMER_ALT:X_PREV1:X_NEXT1:X_PREV2:X_NEXT2:X_PREV3:X_NEXT3:BCSQ:BCSQCSS:RL:INDEX:DUP:REV:"
         "SCST:SCED:MAPQ:EDIST:SMQ_BEFORE:SMQ_AFTER:tm:rq:st:et",
         output=str(out_dir),  # override tmp_path when env var is set
@@ -56,6 +58,8 @@ def test_end_to_end_training(tmp_path: Path) -> None:
         quality_lut_size=1000,
         metadata=None,  # Add missing metadata attribute
         use_kde_smoothing=True,
+        use_gpu=False,  # Disable GPU for testing to avoid dependency issues
+        use_float32=False,  # Use float32 for testing to reduce memory usage
     )
 
     # ---------------------------------------------------------------- train

@@ -44,9 +44,9 @@ from ugbio_srsnv.srsnv_utils import (
     all_models_predict_proba,
     get_filter_ratio,
     phred_to_prob,
+    polars_to_pandas_efficient,
     prob_to_logit,
     prob_to_phred,
-    safe_roc_auc,
 )
 
 FOLD_COL = "fold_id"
@@ -167,7 +167,7 @@ def _parse_interval_list(path: str) -> tuple[dict[str, int], list[str]]:
         return _parse_interval_list_manual(path)
 
 
-def count_bases_in_interval_list(path: str) -> int:
+def count_bases_in_interval_list(path: str, logger_fn=None) -> int:
     """
     Count the number of bases covered by intervals in a Picard/Broad interval list.
 
@@ -182,8 +182,12 @@ def count_bases_in_interval_list(path: str) -> int:
     """
     candidate_tbi = path + ".tbi"
     if os.path.exists(candidate_tbi):
+        if logger_fn is not None:
+            logger_fn("Counting total bases in interval list using tabix index")
         return count_bases_in_interval_list_tabix(path)
     else:
+        if logger_fn is not None:
+            logger_fn("Counting total bases in interval list using manual parsing")
         return count_bases_in_interval_list_manual(path)
 
 
@@ -370,7 +374,7 @@ def _probability_recalibration(prob_orig: np.ndarray, y_all: np.ndarray) -> np.n
 
 # ───────────────────────── core logic ─────────────────────────────────────
 class SRSNVTrainer:
-    def __init__(self, args: argparse.Namespace):  # noqa: PLR0915
+    def __init__(self, args: argparse.Namespace):  # noqa: C901, PLR0915
         logger.debug("Initializing SRSNVTrainer")
         self.args = args
         self.out_dir = Path(args.output)
@@ -383,6 +387,27 @@ class SRSNVTrainer:
         logger.debug("Using random seed: %d", self.seed)
         self.rng = np.random.default_rng(self.seed)
 
+        # GPU / CPU
+        self.use_gpu = args.use_gpu
+        if self.use_gpu:
+            logger.debug("GPU usage requested for training")
+            # Check if XGBoost is compiled with GPU support
+            try:
+                gpu_test_model = xgb.XGBClassifier(tree_method="hist", device="cuda")
+                gpu_test_model.fit(np.array([[0], [1]]), np.array([0, 1]))
+                logger.info("Using GPU for XGBoost training")
+            except Exception as e:
+                logger.warning(
+                    "GPU support for XGBoost is not available or not working. "
+                    "Falling back to CPU. Error details: %s",
+                    str(e),
+                )
+                self.use_gpu = False
+        else:
+            logger.info("Using CPU for XGBoost training")
+
+        self.downcast_float = args.use_float32
+
         # ─────────── read filtering-stats JSONs & compute priors ───────────
         self.pos_stats = read_filtering_stats_json(args.stats_positive)
         self.neg_stats = read_filtering_stats_json(args.stats_negative)
@@ -390,7 +415,8 @@ class SRSNVTrainer:
         self.mean_coverage = args.mean_coverage
         if self.mean_coverage is None:
             raise ValueError("--mean-coverage is required if not present in stats-featuremap JSON")
-        self.n_bases_in_region = count_bases_in_interval_list(args.training_regions)
+        self.n_bases_in_region = count_bases_in_interval_list(args.training_regions, logger_fn=logger.debug)
+        logger.debug("Bases in training regions: %d", self.n_bases_in_region)
 
         # sanity-check: identical “quality/region” filters in the two random-sample stats files
         def _quality_region_filters(st):
@@ -461,6 +487,18 @@ class SRSNVTrainer:
             self.k_folds,
             self.model_params,
         )
+        # Set GPU/CPU parameters for XGBoost
+        if self.use_gpu:
+            self.model_params["device"] = "cuda"
+            self.model_params["sampling_method"] = "gradient_based"
+            self.model_params.pop("nthread", None)  # Ignored for GPU, explicitly remove for clarity
+            self.model_params.pop("n_jobs", None)  # Ignored for GPU, explicitly remove for clarity
+        else:
+            self.model_params["device"] = "cpu"
+            if "n_jobs" not in self.model_params:
+                self.model_params["n_jobs"] = -1  # Default behavior, stated explicitly for clarity
+            self.model_params.pop("nthread", None)  # "n_jobs" is preferred over "nthread" for sklearn api
+        # Initialize one model per fold
         self.models = [xgb.XGBClassifier(**self.model_params) for _ in range(self.k_folds)]
 
         # optional user-supplied feature subset
@@ -816,7 +854,8 @@ class SRSNVTrainer:
 
         # ---------- convert Polars → Pandas with categories -------------
         logger.debug("Converting Polars DataFrame to Pandas for training")
-        pd_df = self.data_frame.to_pandas()
+        cols_for_training = feat_cols + [LABEL_COL, FOLD_COL]
+        pd_df = polars_to_pandas_efficient(self.data_frame, cols_for_training, downcast_float=self.downcast_float)
         logger.debug("Pandas DataFrame shape: %s", pd_df.shape)
         for col in feat_cols:
             if pd_df[col].dtype == object:
@@ -849,15 +888,29 @@ class SRSNVTrainer:
                 ],
                 verbose=10 if self.args.verbose else False,
             )
-            auc_val = safe_roc_auc(y_val, self.models[fold_idx].predict_proba(x_val)[:, 1], logger=logger)
-            auc_train = safe_roc_auc(y_train, self.models[fold_idx].predict_proba(x_train)[:, 1], logger=logger)
+            # Extract AUC values from training results instead of recalculating
+            eval_result = self.models[fold_idx].evals_result()
+
+            # Determine which iteration to use (best_iteration if early stopping)
+            best_iteration = getattr(self.models[fold_idx], "best_iteration", None)
+            if best_iteration is None or best_iteration < 0:
+                # No early stopping or best_iteration not set, use last iteration
+                best_iteration = len(eval_result["validation_0"]["auc"]) - 1
+
+            # Access AUC values from the eval_result dictionary
+            # eval_set[0] is training set -> "validation_0"
+            # eval_set[1] is validation set -> "validation_1"
+            auc_train = eval_result["validation_0"]["auc"][best_iteration]
+            auc_val = eval_result["validation_1"]["auc"][best_iteration]
+            # Add best_iteration to logging for clarity
             logger.debug(
-                "Finished training for fold %d (fold #%d of %d), AUC: %.4f (validation) / %.4f (training)",
+                "Finished training fold %d (fold #%d of %d), AUC: %.4f (validation) / %.4f (training) at iteration %d",
                 fold_idx,
                 fold_idx + 1,
                 self.k_folds,
                 auc_val,
                 auc_train,
+                best_iteration,
             )
 
         # ---------- add calibrated quality columns ----------------------
@@ -934,7 +987,15 @@ class SRSNVTrainer:
         )
         df_path = self.out_dir / f"{base}featuremap_df.parquet"
         logger.debug("Saving dataframe to %s", df_path)
-        self.data_frame.to_pandas().to_parquet(df_path)
+        self.data_frame.write_parquet(df_path)
+        # self.data_frame.to_pandas().to_parquet(df_path) # Old version with pandas coversion
+        # For large datasets, consider using Polars' lazy API for more efficient writing:
+        # if hasattr(self.data_frame, 'lazy'):
+        #     # Convert to lazy, then write with streaming
+        #     self.data_frame.lazy().sink_parquet(df_path)
+        # else:
+        #     # Fallback to regular write for already-lazy frames
+        #     self.data_frame.write_parquet(df_path)
         logger.info(f"Saved dataframe → {df_path}")
 
         # models – JSON, one file per fold
@@ -1070,6 +1131,16 @@ def _cli() -> argparse.Namespace:
         type=int,
         default=1000,
         help="Number of points in the MQUAL→SNVQ lookup table " "(default 1000)",
+    )
+    ap.add_argument(
+        "--use-gpu",
+        action="store_true",
+        help="Use GPU for training (if available and supported by XGBoost installation)",
+    )
+    ap.add_argument(
+        "--use-float32",
+        action="store_true",
+        help="Use float32 precision for training, trading precision for reduced memory and compute. Default is float64",
     )
     ap.add_argument(
         "--use-kde-smoothing",

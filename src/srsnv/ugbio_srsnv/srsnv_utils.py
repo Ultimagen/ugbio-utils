@@ -24,6 +24,7 @@ from itertools import cycle
 
 import numpy as np
 import pandas as pd
+import polars as pl
 import xgboost as xgb
 from pandas.api.types import CategoricalDtype
 from sklearn.metrics import roc_auc_score
@@ -172,6 +173,58 @@ def logit_to_prob(logit: np.ndarray, *, phred: bool = True) -> np.ndarray:
     return 1.0 / (1.0 + 10 ** (-logit))
 
 
+def polars_to_pandas_efficient(
+    data_frame: pl.DataFrame | pl.LazyFrame, columns: list[str], *, downcast_float: bool = False
+) -> pd.DataFrame:
+    """
+    Convert Polars DataFrame to Pandas with memory optimization.
+
+    Selects only needed columns and optionally downcasts float64 to float32.
+    Uses lazy evaluation to minimize peak memory usage.
+
+    Parameters
+    ----------
+    columns : list[str]
+        List of column names to convert.
+    downcast_float : bool, optional
+        If True, cast float64 columns to float32 before conversion
+        to reduce memory footprint (default: False).
+
+    Returns
+    -------
+    pd.DataFrame
+        Pandas DataFrame with selected columns and optional downcasting.
+    """
+    # Start with lazy frame if possible, otherwise use eager
+    if hasattr(data_frame, "lazy"):
+        df_to_convert = data_frame.lazy()
+    else:
+        df_to_convert = data_frame
+
+    # Select columns
+    df_to_convert = df_to_convert.select(columns)
+
+    if downcast_float:
+        # Build cast expressions for downcasting
+        cast_exprs = []
+        for col in columns:
+            col_dtype = data_frame[col].dtype
+            if col_dtype == pl.Float64:
+                cast_exprs.append(pl.col(col).cast(pl.Float32).alias(col))
+            else:
+                cast_exprs.append(pl.col(col))
+
+        df_to_convert = df_to_convert.select(cast_exprs)
+
+    # Collect (materialize) and convert to pandas
+    if hasattr(df_to_convert, "collect"):
+        pd_df = df_to_convert.collect().to_pandas()
+    else:
+        pd_df = df_to_convert.to_pandas()
+
+    return pd_df
+
+
 def _aggregate_probabilities_from_folds(
     prob_matrix: np.ndarray, transform: str = "logit", max_phred: float = MAX_PHRED
 ) -> np.ndarray:
@@ -221,6 +274,9 @@ def _aggregate_probabilities_from_folds(
 def set_featuremap_df_dtypes(df: pd.DataFrame, feature_dtypes: list) -> pd.DataFrame:
     """
     Prepare a DataFrame for training by ensuring correct column order and dtypes.
+    This is intended for cases where Polars-generated parquet files are read in pandas and category encoding might
+    break, this function forces the category datatypes. Reading the dataframes directly in polars should circumvent
+    this issue.
 
     Parameters
     ----------
@@ -686,7 +742,7 @@ class HandlePPMSeqTagsInFeatureMapDataFrame:
         end_tag_col: str | None = None,
         logger=None,
     ):
-        self.featuremap_df = featuremap_df.copy()
+        self.featuremap_df = featuremap_df
         self.categorical_features_names = categorical_features_names
         self.ppmseq_adapter_version = ppmseq_adapter_version
         self.start_tag_col = start_tag_col
