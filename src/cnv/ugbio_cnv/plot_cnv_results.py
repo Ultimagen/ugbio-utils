@@ -169,7 +169,13 @@ def plot_amp_del_cnv_calls(
 
 
 def plot_cnv_calls(
-    sample_name, out_directory, df_chr_graphic, df_germline_cov_norm_100k, df_dup=None, df_del=None
+    sample_name,
+    out_directory,
+    df_chr_graphic,
+    df_germline_cov_norm_100k,
+    df_dup=None,
+    df_del=None,
+    neutral_ploidy: int = 2,
 ) -> str:
     """plot the copy number along the genome"""
     if df_dup is None and df_del is None:
@@ -198,7 +204,7 @@ def plot_cnv_calls(
             previous = chr_index
         plt.axvline(x=0, color="black", alpha=0.5)
 
-        plt.axhline(y=3, color="grey", alpha=0.5)
+        plt.axhline(y=neutral_ploidy, color="grey", alpha=0.5)
 
         plt.xticks(xticks, xticks_labels, rotation=60)
         plt.yticks([0, 1, 2, 3, 4, 5, 6, 7, 8], [0, 1, 2, 3, 4, 5, 6, 7, 8])
@@ -229,6 +235,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
         <chr><start><end><copy-number>
     --out_directory: output directory
     --sample_name: sample name
+    --neutral_ploidy: neutral ploidy value for plotting the reference line in copy number plot
     output files:
     coverage plot: <sample_name>.CNV.coverage.jpeg
         shows normalized (log scale) coverage along the genome for the germline (and tumor) samples.
@@ -287,6 +294,13 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
         required=False,
     )
     parser.add_argument("--verbosity", help="Verbosity: ERROR, WARNING, INFO, DEBUG", required=False, default="INFO")
+    parser.add_argument(
+        "--neutral_ploidy",
+        help="Neutral ploidy value for plotting the reference line in copy number plot",
+        required=False,
+        type=int,
+        default=2,
+    )
 
     args = parser.parse_args(argv[1:])
     logger.setLevel(getattr(logging, args.verbosity))
@@ -417,7 +431,13 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
         df_chr_graphic, args.out_directory, args.sample_name, df_dup, df_del, df_gt_dup, df_gt_del
     )
     out_cnv_calls_figure = plot_cnv_calls(
-        args.sample_name, args.out_directory, df_chr_graphic, df_germline_cov_norm_100k, df_dup, df_del
+        args.sample_name,
+        args.out_directory,
+        df_chr_graphic,
+        df_germline_cov_norm_100k,
+        df_dup,
+        df_del,
+        args.neutral_ploidy,
     )
 
     logger.info("output files:")
