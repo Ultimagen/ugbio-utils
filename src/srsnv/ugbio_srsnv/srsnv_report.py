@@ -125,6 +125,8 @@ def compute_is_cycle_skip_column(data_df: pd.DataFrame, flow_order: str = "TGCA"
         how="left",
     )[IS_CYCLE_SKIP]
 
+    result.index = data_df.index  # Ensure the index is the same as the original dataframe
+
     return result
 
 
