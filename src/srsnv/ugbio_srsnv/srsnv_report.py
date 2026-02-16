@@ -128,24 +128,6 @@ def compute_is_cycle_skip_column(data_df: pd.DataFrame, flow_order: str = "TGCA"
     return result
 
 
-def add_is_cycle_skip_to_featuremap_df(data_df: pd.DataFrame, flow_order: str = "TGCA") -> pd.DataFrame:
-    """Add is_cycle_skip column to featuremap_df"""
-    logger.info("Adding is_cycle_skip column to featuremap")
-    data_df = (
-        data_df.assign(
-            ref_motif=data_df[X_PREV1].astype(str) + data_df[REF].astype(str) + data_df[X_NEXT1].astype(str),
-            alt_motif=data_df[X_PREV1].astype(str) + data_df[ALT].astype(str) + data_df[X_NEXT1].astype(str),
-        )
-        .merge(
-            get_cycle_skip_dataframe(flow_order)[[IS_CYCLE_SKIP]],
-            left_on=["ref_motif", "alt_motif"],
-            right_index=True,
-        )
-        .drop(columns=["ref_motif", "alt_motif"])
-    )
-    return data_df
-
-
 def prepare_report(  # noqa: C901 PLR0915
     featuremap_df: str,  # Path to the featuremap dataframe parquet file
     srsnv_metadata: str,  # Path to the srsnv_metadata JSON file
