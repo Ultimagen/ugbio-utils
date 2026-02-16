@@ -33,7 +33,7 @@ from ugbio_core.vcfbed.variant_annotation import get_cycle_skip_dataframe
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
 from ugbio_srsnv.srsnv_plotting_utils import SRSNVReport, create_srsnv_report_html
-from ugbio_srsnv.srsnv_utils import HandlePPMSeqTagsInFeatureMapDataFrame
+from ugbio_srsnv.srsnv_utils import ET, ST, HandlePPMSeqTagsInFeatureMapDataFrame
 
 FOLD_COL = "fold_id"
 LABEL_COL = "label"
@@ -221,8 +221,8 @@ def prepare_report(  # noqa: C901 PLR0915
     params["docker_image"] = user_meta.get("docker_image", None)
     params["pipeline_version"] = user_meta.get("pipeline_version", None)
     params["pre-filter"] = None
-    params["start_tag_col"] = "st"
-    params["end_tag_col"] = "et"
+    params["start_tag_col"] = ST
+    params["end_tag_col"] = ET
 
     # Add columns to featuremap_df
     data_df = add_is_mixed_to_featuremap_df(
