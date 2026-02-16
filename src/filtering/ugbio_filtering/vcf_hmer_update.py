@@ -1,4 +1,6 @@
 import argparse
+import logging
+from array import array
 from bisect import bisect_right
 from math import log
 
@@ -9,9 +11,12 @@ import ugbio_core.flow_format.flow_based_read as fbr
 import ugbio_core.math_utils as phred
 from pyfaidx import Fasta
 
+# Logger setup
+logger = logging.getLogger(__name__)
+
 # Global constants
 BAM_CSOFT_CLIP = 4
-MAX_HMER_SIZE = 21
+HMER_NUM_POSSIBLE_SIZES = 21
 SEQUENCE_CONTEXT_SIZE = 30
 HMER_SPLIT_MIDPOINT = 0.5
 EM_INITIAL_PI = 0.05
@@ -116,17 +121,27 @@ def calc_exp(frequencies):
 
 
 def find_best_mixture_hmer_sizes(results):
-    hmer_size_to_likely = [[0, i] for i in range(MAX_HMER_SIZE)]
+    hmer_size_to_likely = [[0, i] for i in range(HMER_NUM_POSSIBLE_SIZES)]
     for result in results:
         size_prob = result[1]
-        for size in range(MAX_HMER_SIZE):
+        for size in range(HMER_NUM_POSSIBLE_SIZES):
             hmer_size_to_likely[size][0] -= log(1 - size_prob[size])
     hmer_size_to_likely.sort()
     return hmer_size_to_likely[-1][1], hmer_size_to_likely[-2][1]
 
 
-def get_max_nuc(nuc_list):
-    """Find most common nucleotide in list."""
+def get_max_nuc(nuc_list: list[str]) -> str | None:
+    """Find the most frequent nucleotide in a list.
+
+    Returns the nucleotide (base) that appears most frequently in the input list.
+    Uses Counter from collections to efficiently count occurrences.
+
+    Args:
+        nuc_list: List of nucleotide characters (strings)
+
+    Returns:
+        The most common nucleotide as a string, or None if list is empty
+    """
     if not nuc_list:
         return None
     from collections import Counter
@@ -151,8 +166,33 @@ def process_reads(reads):
     return processed_results
 
 
-def calc_parameters(reads):
-    """Calculate expectation split and confidence parameters from reads."""
+def calc_parameters(reads: list) -> list:
+    """Calculate expectation split and confidence parameters from reads.
+
+    This function computes statistical parameters from hmer read data to establish
+    thresholds for quality filtering. It uses the 2/3 quantile of fractional expectation
+    remainders to define adaptive split points for probability binning.
+
+    Algorithm:
+    1. Calculates fractional remainders (expectation - floor(expectation)) for all reads
+    2. Sorts remainders and extracts the 2/3 quantile value
+    3. Adapts split thresholds based on read coverage:
+       - Low coverage: uses fixed thresholds
+       - High coverage: uses 3-point or 5-point split based on 2/3 and 3/7 quantiles
+    4. Determines confidence threshold and cycle count based on coverage level
+
+    Args:
+        reads: List of processed read tuples, each containing (expectation, max_confidence,
+               high_confidence, ref_val, other_val) from process_reads output
+
+    Returns:
+        List containing:
+        - [0]: exp_split tuple defining probability boundaries (2-5 elements representing
+               fractional thresholds for hmer size binning)
+        - [1]: (high_conf, cycle) tuple where:
+            * high_conf: Quality confidence threshold for filtering (float)
+            * cycle: Read cycle threshold indicating base quality criteria (int)
+    """
     remainder_list = sorted([abs(x[0] - round(x[0])) for x in reads])
     idx_2_3 = len(remainder_list) * 2 // 3
     remainder = remainder_list[idx_2_3]
@@ -186,8 +226,33 @@ def get_cell(read, params, cell_shift, exp_move=0):
     return cell
 
 
-def get_pval(exps, groups, w):
-    """Calculate p-value using weighted least squares regression."""
+def get_pval(exps: list[float], groups: list[int], w: list[float]) -> float:
+    """Calculate p-value testing for group effect using weighted least squares regression.
+
+    Performs statistical hypothesis testing to detect significant differences in hmer
+    expectation values between normal (group 0) and tumor (group 1) samples.
+
+    Hypothesis Testing:
+    - H0 (Null): No difference in expectation values between groups (coefficient = 0)
+    - H1 (Alternative): Significant difference exists between groups (coefficient ≠ 0)
+
+    Algorithm:
+    1. Fits initial WLS regression: expectation ~ intercept + group_effect
+    2. Extracts p-value for the group coefficient
+    3. Tests alternative weight schemes to capture different aspects of the data:
+       - added_weights_max: Emphasizes differences at extremes (higher values get higher weights)
+       - added_weights_min: Emphasizes central values (lower values get higher weights)
+    4. Returns minimum p-value across all weight schemes (conservative approach for detecting signal)
+
+    Args:
+        exps: List of expectation values (hmer sizes) from reads
+        groups: List of group labels (0=normal samples, 1=tumor samples), same length as exps
+        w: List of confidence weights for each read, same length as exps
+
+    Returns:
+        p-value (float): Minimum p-value from group coefficient across weight schemes.
+                        Lower values indicate stronger evidence of group difference.
+    """
     y = np.asarray(exps, dtype=float)
     g = np.asarray(groups, dtype=float)  # 0 or 1
     w = np.asarray(w, dtype=float)
@@ -236,35 +301,6 @@ def is_pass(rec):
     return "PASS" in rec.filter or len(rec.filter) == 0
 
 
-def get_safe_pileup(alignment_file, chrom, start, end, **kwargs):
-    """Safely get pileup, trying both chr-prefixed and non-prefixed contig names.
-
-    Args:
-        alignment_file: pysam AlignmentFile object
-        chrom: Chromosome name
-        start: Start position
-        end: End position
-        **kwargs: Additional arguments to pass to pileup()
-
-    Returns:
-        Pileup iterator or None if no reads found at position
-    """
-    try:
-        # Try original format first
-        return alignment_file.pileup(chrom, start, end, **kwargs)
-    except ValueError:
-        try:
-            # Try with chr prefix if not present
-            if not chrom.startswith("chr"):
-                return alignment_file.pileup(f"chr{chrom}", start, end, **kwargs)
-            # Try without chr prefix if present
-            else:
-                return alignment_file.pileup(chrom.replace("chr", ""), start, end, **kwargs)
-        except ValueError:
-            # Return empty pileup-like iterator
-            return iter([])
-
-
 def direction_score(normal_score, normal_mixture, tumor_score, tumor_mixture):
     """Calculate directional score for tumor vs normal comparison."""
     normal_score_clamped = max(min(normal_score, NORMAL_SCORE_MAX), 0)
@@ -279,33 +315,34 @@ def combine_scores(
     ttest_score,
     likely_score,
     likely_mixture,
-    normal_fw_score,
-    normal_fw_mixture,
-    tumor_fw_score,
-    tumor_fw_mixture,
+    normal_ml_score,
+    normal_ml_mixture,
+    tumor_ml_score,
+    tumor_ml_mixture,
+    mixture_bound,
 ):
     """Combine multiple scoring metrics into single score."""
     score = ttest_score / 4
     likely_mixture_multiplier = min((likely_mixture**2) * TUMOR_MIXTURE_MULTIPLIER_FACTOR, 1)
     score += max(0, likely_score) * likely_mixture_multiplier
-    ml_score = direction_score(normal_fw_score, normal_fw_mixture, tumor_fw_score, tumor_fw_mixture)
+    ml_score = direction_score(normal_ml_score, normal_ml_mixture, tumor_ml_score, tumor_ml_mixture)
     score += ml_score
+    if likely_mixture < mixture_bound:
+        score = 0
     return score
 
 
-def fill_direction_results_with_error(direction_results: dict, prefixes: list) -> None:
-    """Fill direction_results with -1 for all directions and fields.
+def fill_direction_results_with_error() -> dict:
+    """Create error result dictionary with -1 for all fields.
 
-    Args:
-        direction_results: Dictionary to fill with error values
-        prefixes: List of direction prefixes (e.g., ['fw_', 'bw_'])
+    Returns:
+        Dictionary with all fields set to -1
     """
     fields = [
         "normal_exp",
         "tumor_exp",
         "normal_cvg",
         "tumor_cvg",
-        "ins_size",
         "ttest_score",
         "likely_score",
         "mixture",
@@ -319,8 +356,7 @@ def fill_direction_results_with_error(direction_results: dict, prefixes: list) -
         "tumor_ml_mixture",
         "tot_score",
     ]
-    for direction in range(len(prefixes)):
-        direction_results[direction] = {field: -1 for field in fields}
+    return {field: -1 for field in fields}
 
 
 def get_hmer_qualities_from_pileup_element(  # noqa: C901
@@ -384,8 +420,8 @@ def get_hmer_qualities_from_pileup_element(  # noqa: C901
         qual = query_qualities[qstart:qend]
         probs = phred.unphred(np.asarray(qual))
         tp_tag = pe.alignment.get_tag("tp")
-        if not isinstance(tp_tag, list | np.ndarray):
-            raise ValueError("tp tag must be a list or array")
+        if not isinstance(tp_tag, list | np.ndarray | array):
+            raise ValueError("tp tag must be a list or array, " + str(pe.alignment.query_name))
         tps = tp_tag[qstart:qend]
         for tpval, p in zip(tps, probs, strict=False):
             hmer_probs[tpval + hmer_length] += p
@@ -397,338 +433,686 @@ def get_hmer_qualities_from_pileup_element(  # noqa: C901
     return hnuc, hmer_probs, not pe.alignment.is_reverse, cycle, is_edge, not pe.alignment.is_duplicate
 
 
-def variant_calling(  # noqa: C901, PLR0912, PLR0915
-    vcf_file,
-    normal_reads_file,
-    tumor_reads_file,
-    vcf_out_file,
-    min_hmer=4,
-    zamir=0.5,
-    target_intervals_bed_file=None,
-    tumor_germline_file=None,
-    normal_germline_file=None,
-):
-    ref_fasta_path = "/data/Runs/genomes/hg38/Homo_sapiens_assembly38.fasta"
-    normal_reads = pysam.AlignmentFile(normal_reads_file, check_sq=False, reference_filename=ref_fasta_path)
-    tumor_reads = pysam.AlignmentFile(tumor_reads_file, check_sq=False, reference_filename=ref_fasta_path)
-    normal_germline = pysam.VariantFile(normal_germline_file)
-    tumor_germline = None
-    if tumor_germline_file:
-        tumor_germline = pysam.VariantFile(tumor_germline_file)
-    prefixes = ["fw_", "bw_"]
-    f = pysam.VariantFile(vcf_file)
-    f.header.info.add("normal_exp", number="A", type="Float", description="Normal hmer size expectancy")
-    f.header.info.add("tumor_exp", number="A", type="Float", description="Tumor hmer sizeexpectancy")
-    f.header.info.add("normal_cvg", number="A", type="Integer", description="Number of normal reads")
-    f.header.info.add("tumor_cvg", number="A", type="Integer", description="Number of tumor reads")
-    f.header.info.add("ins_size", number="A", type="Integer", description="Best insertion size")
-    f.header.info.add("ttest_score", number="A", type="Float", description="Score from ttest")
-    f.header.info.add("likely_score", number="A", type="Float", description="Score from likelyhood")
-    f.header.info.add("mixture", number="A", type="Float", description="Best mixture size")
-    f.header.info.add(
-        "normal_main_hmer",
-        number="A",
-        type="Integer",
-        description="Best hmer of normal according to machine probabilities",
-    )
-    f.header.info.add(
-        "tumor_main_hmer",
-        number="A",
-        type="Integer",
-        description="Best hmer of tumor according to machine probabilities",
-    )
-    f.header.info.add(
-        "normal_second_hmer",
-        number="A",
-        type="Integer",
-        description="Second best hmer of normal according to machine probabilities",
-    )
-    f.header.info.add(
-        "tumor_second_hmer",
-        number="A",
-        type="Integer",
-        description="Second best hmer of tumor according to machine probabilities",
-    )
-    f.header.info.add("normal_ml_score", number="A", type="Float", description="Normal forward score")
-    f.header.info.add("normal_ml_mixture", number="A", type="Float", description="Normal forward mixture")
-    f.header.info.add("tumor_ml_score", number="A", type="Float", description="Tumor forward score")
-    f.header.info.add("tumor_ml_mixture", number="A", type="Float", description="Tumor forward mixture")
+def _setup_vcf_headers(vcf_file, verbose):
+    """Setup VCF headers and return file handle.
 
-    fields = [
+    Args:
+        vcf_file: Path to input VCF file
+        verbose: If True, add all fields; if False, only add mixture and tot_score
+
+    Returns:
+        pysam.VariantFile with headers configured
+    """
+    f = pysam.VariantFile(vcf_file)
+    prefixes = ["fw_", "bw_"]
+
+    # Base fields for each direction
+    base_fields = [
         ("normal_exp", "A", "Float", "Normal hmer size expectancy"),
         ("tumor_exp", "A", "Float", "Tumor hmer size expectancy"),
         ("normal_cvg", "A", "Integer", "Number of normal reads"),
         ("tumor_cvg", "A", "Integer", "Number of tumor reads"),
-        ("ins_size", "A", "Integer", "Best insertion size"),
         ("ttest_score", "A", "Float", "Score from ttest"),
         ("likely_score", "A", "Float", "Score from likelihood"),
         ("mixture", "A", "Float", "Best mixture size"),
-        ("normal_main_hmer", "A", "Integer", "Best hmer of normal according to machine probabilities"),
-        ("tumor_main_hmer", "A", "Integer", "Best hmer of tumor according to machine probabilities"),
-        ("normal_second_hmer", "A", "Integer", "Second best hmer of normal according to machine probabilities"),
-        ("tumor_second_hmer", "A", "Integer", "Second best hmer of tumor according to machine probabilities"),
-        ("normal_ml_score", "A", "Float", "Normal machine likelihood score"),
-        ("normal_ml_mixture", "A", "Float", "Normal machine likelihood mixture"),
-        ("tumor_ml_score", "A", "Float", "Tumor machine likelihood score"),
-        ("tumor_ml_mixture", "A", "Float", "Tumor machine likelihood mixture"),
-        ("tot_score", "A", "Float", "combined score for machine likelihoods"),
+        ("normal_main_hmer", "A", "Integer", "Best hmer of normal"),
+        ("tumor_main_hmer", "A", "Integer", "Best hmer of tumor"),
+        ("normal_second_hmer", "A", "Integer", "Second best hmer of normal"),
+        ("tumor_second_hmer", "A", "Integer", "Second best hmer of tumor"),
+        ("normal_ml_score", "A", "Float", "Normal ML score"),
+        ("normal_ml_mixture", "A", "Float", "Normal ML mixture"),
+        ("tumor_ml_score", "A", "Float", "Tumor ML score"),
+        ("tumor_ml_mixture", "A", "Float", "Tumor ML mixture"),
+        ("tot_score", "A", "Float", "Combined ML score"),
     ]
 
-    for prefix in prefixes:
-        for name, number, typ, desc in fields:
-            f.header.info.add(f"{prefix}{name}", number=number, type=typ, description=desc)
+    if verbose:
+        # Verbose mode: Add all fields
+        # Add non-prefixed fields (for backward compatibility)
+        for name, number, typ, desc in base_fields:
+            f.header.info.add(name, number=number, type=typ, description=desc)
 
-    f.header.info.add("ref_hmer_size", number=1, type="Integer", description="Reference hmer size")
-    f.header.info.add(
-        "tot_score",
-        number="A",
-        type="Float",
-        description="Heuristic combined score of all statistical somatic variant tests",
-    )
-    f.header.info.add("other_variant", number=1, type="Integer", description="Other variant")
+        # Add prefixed fields for each direction
+        for prefix in prefixes:
+            for name, number, typ, desc in base_fields:
+                f.header.info.add(f"{prefix}{name}", number=number, type=typ, description=desc)
 
-    ref_fasta = Fasta(ref_fasta_path)
+        # Add debugging fields (verbose mode only)
+        f.header.info.add("ref_hmer_size", number=1, type="Integer", description="Reference hmer size")
+        f.header.info.add("other_variant", number=1, type="Integer", description="Other variant")
+    else:
+        # Minimal mode: Only add mixture and tot_score
+        f.header.info.add("mixture", number="A", type="Float", description="Average mixture across directions")
+        f.header.info.add("tot_score", number="A", type="Float", description="Combined ML score")
 
-    merged_intervals = None
-    if target_intervals_bed_file:
-        merged_intervals = load_bed_intervals(target_intervals_bed_file)
+    return f
 
-    fo = pysam.VariantFile(vcf_out_file, "wz", header=f.header.copy())
 
-    for rec in f.fetch():
-        if rec.info["VARIANT_TYPE"] != "h-indel" or rec.info["X_HIL"][0] < min_hmer or rec.qual == 0:
-            fo.write(rec)
-            continue
-        chrom = rec.contig
-        pos = rec.pos + rec.info["X_HIL"][0] // 2
-        ref_hmer_size = apply_variant(ref_fasta, [chrom, pos], [rec.pos, "", ""])[0]
-        rec.info["ref_hmer_size"] = ref_hmer_size
-        if merged_intervals:
-            if not pos_in_bed(merged_intervals, chrom, pos):
-                fo.write(rec)
-                continue
-        my_hmer_size = apply_variant(ref_fasta, [chrom, pos], [rec.pos, rec.ref, rec.alts[0]])[0]
-        # filter with same effect variants in the region
-        this_loc_variants = f.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
-        other_variant = 0
-        for var in this_loc_variants:
-            if var.qual > rec.qual:
-                size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]])[0]
-                if size in (my_hmer_size, -1):
-                    other_variant = 1
-        germline_normal_vars = normal_germline.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
-        for var in germline_normal_vars:
+def _check_normal_other_variants(
+    rec,
+    ref_fasta,
+    chrom: str,
+    pos: int,
+    ref_hmer_size: int,
+    normal_germline,
+) -> int:
+    """Check if record has conflicting variants in the region.
+
+    Args:
+        rec: VCF record
+        ref_fasta: Reference FASTA
+        chrom: Chromosome
+        pos: Position
+        ref_hmer_size: Reference homopolymer size
+        normal_germline: Normal germline VCF
+
+    Returns:
+        1 if other conflicting variants found, 0 otherwise
+    """
+
+    other_variant = 0
+
+    # Check normal germline variants
+    germline_normal_vars = normal_germline.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
+    for var in germline_normal_vars:
+        if is_pass(var):
+            size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]])[0]
+            if size != ref_hmer_size:
+                other_variant = 1
+
+    return other_variant
+
+
+def _check_other_variants(
+    rec,
+    ref_fasta,
+    chrom: str,
+    pos: int,
+    ref_hmer_size: int,
+    f,
+    tumor_germline_handle,
+) -> int:
+    """Check if record has conflicting variants in the region.
+
+    Args:
+        rec: VCF record
+        ref_fasta: Reference FASTA
+        chrom: Chromosome
+        pos: Position
+        ref_hmer_size: Reference homopolymer size
+        f: Input VCF file for fetching variants
+        tumor_germline_hanfle: Tumor germline VCF (optional)
+
+    Returns:
+        1 if other conflicting variants found, 0 otherwise
+    """
+    my_hmer_size = apply_variant(ref_fasta, [chrom, pos], [rec.pos, rec.ref, rec.alts[0]])[0]
+    other_variant = 0
+
+    # Check same location variants
+    this_loc_variants = f.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
+    for var in this_loc_variants:
+        if var.qual > rec.qual:
+            size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]])[0]
+            if size in (my_hmer_size, -1):
+                other_variant = 1
+
+    # Check tumor germline variants
+    if tumor_germline_handle:
+        germline_tumor_vars = tumor_germline_handle.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
+        for var in germline_tumor_vars:
             if is_pass(var):
                 size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]])[0]
-                if size != ref_hmer_size:
+                if size == ref_hmer_size:
+                    if var.ref == rec.ref and var.alts == rec.alts and var.pos == rec.pos:
+                        continue
                     other_variant = 1
-        if tumor_germline:
-            germline_tumor_vars = tumor_germline.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
-            for var in germline_tumor_vars:
-                if is_pass(var):
-                    size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]])[0]
-                    if size == ref_hmer_size:
-                        if var.ref == rec.ref and var.alts == rec.alts and var.pos == rec.pos:
-                            continue
-                        other_variant = 1
-        rec.info["other_variant"] = other_variant
-        if other_variant:
-            fo.write(rec)
-            continue
 
-        # Normalize contig name for pileup (remove chr prefix if present)
-        # Note: pileup_chrom not currently used but kept for potential future use
+    return other_variant
 
-        p = get_safe_pileup(
-            normal_reads,
-            chrom,
-            pos - 1,
-            pos,
-            truncate=True,
-            min_base_quality=READS_QUALITY_THRESHOLD,
-            min_mapping_quality=MIN_MAPPING_QUALITY,
-        )
-        pileup_list = list(p)
-        if not pileup_list:
-            fo.write(rec)
-            continue
-        pileup = pileup_list[0]
-        reads = pileup.pileups
-        normal_read_data = [get_hmer_qualities_from_pileup_element(x) for x in reads]
-        nuc = get_max_nuc([x[0] for x in normal_read_data])
-        p = get_safe_pileup(
-            tumor_reads,
-            chrom,
-            pos - 1,
-            pos,
-            truncate=True,
-            min_base_quality=READS_QUALITY_THRESHOLD,
-            min_mapping_quality=MIN_MAPPING_QUALITY,
-        )
-        pileup_list = list(p)
-        if not pileup_list:
-            fo.write(rec)
-            continue
-        pileup = pileup_list[0]
-        reads = pileup.pileups
-        tumor_read_data = [get_hmer_qualities_from_pileup_element(x) for x in reads]
 
-        # Loop over alternative alleles
-        all_direction_results = {}
-        for alt_idx, alt in enumerate(rec.alts):
-            exp_shift_tries = [len(alt) - len(rec.ref)]
+def _collect_tumor_pileup_data(tumor_reads, chrom: str, pos: int):
+    """Collect pileup data from tumor reads and determine nucleotide.
 
-            min_score = 50
+    Args:
+        tumor_reads: Tumor pysam AlignmentFile
+        chrom: Chromosome
+        pos: Position
+
+    Returns:
+        Tuple of (tumor_read_data, nuc) or None if no pileup data
+    """
+    p = tumor_reads.pileup(
+        chrom,
+        pos - 1,
+        pos,
+        truncate=True,
+        min_base_quality=READS_QUALITY_THRESHOLD,
+        min_mapping_quality=MIN_MAPPING_QUALITY,
+    )
+    pileup_list = list(p)
+    if not pileup_list:
+        return None, None
+    tumor_pileup = pileup_list[0]
+    results = [get_hmer_qualities_from_pileup_element(x) for x in tumor_pileup.pileups]
+
+    nuc = get_max_nuc([x[0] for x in results])
+    return results, nuc
+
+
+def _collect_normal_pileup_data(normal_reads, chrom: str, pos: int):
+    """Collect pileup data from normal reads.
+
+    Args:
+        normal_reads: Normal pysam AlignmentFile
+        chrom: Chromosome
+        pos: Position
+
+    Returns:
+        List of normal read data or None if no pileup data
+    """
+    p = normal_reads.pileup(
+        chrom,
+        pos - 1,
+        pos,
+        truncate=True,
+        min_base_quality=READS_QUALITY_THRESHOLD,
+        min_mapping_quality=MIN_MAPPING_QUALITY,
+    )
+    pileup_list = list(p)
+    if not pileup_list:
+        return None
+
+    normal_pileup = pileup_list[0]
+    return [get_hmer_qualities_from_pileup_element(x) for x in normal_pileup.pileups]
+
+
+def _process_multiple_normals_median(
+    normal_reads_files,
+    normal_germline_files,
+    tumor_read_data,
+    nuc,
+    chrom: str,
+    pos: int,
+    pseudocounts: float,
+    ref_fasta,
+    mixture_bound: float,
+    rec,
+    ref_fasta_path: str,
+) -> dict:
+    """Process multiple normal files and return median result by tot_score.
+
+    Args:
+        normal_reads_files: List of normal sample reads file paths
+        normal_germline_files: List of normal germline VCF file paths
+        tumor_read_data: Pre-computed tumor pileup read data
+        nuc: Nucleotide determined from tumor reads
+        chrom: Chromosome
+        pos: Position
+        pseudocounts: Prior count for EM algorithm
+        ref_fasta: Reference FASTA
+        mixture_bound: Mixture threshold
+        rec: VCF record
+        ref_fasta_path: Path to reference FASTA file
+
+    Returns:
+        Dictionary with median results
+    """
+    results_per_normal = []
+
+    ref_hmer_size = apply_variant(ref_fasta, [chrom, pos], [rec.pos, "", ""])[0]
+    for normal_reads_file, normal_germline_file in zip(normal_reads_files, normal_germline_files, strict=False):
+        try:
+            normal_reads = pysam.AlignmentFile(normal_reads_file, reference_filename=ref_fasta_path)
+            if normal_germline_file:
+                normal_germline = pysam.VariantFile(normal_germline_file)
+
+                # Check for conflicting variants with this specific normal_germline
+                other_variant = _check_normal_other_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, normal_germline)
+
+                if other_variant:
+                    logger.debug(f"Skipping normal file {normal_reads_file} due to conflicting variants")
+                    normal_reads.close()
+                    normal_germline.close()
+                    continue
+                normal_germline.close()
+
+            # Collect pileup data for this normal
+            normal_read_data = _collect_normal_pileup_data(normal_reads, chrom, pos)
+            if normal_read_data is None:
+                normal_reads.close()
+                continue
+
+            # Process all alternative alleles for this normal
             direction_results = {}
-            all_direction_results[alt_idx] = direction_results
+            for alt_idx, alt in enumerate(rec.alts):
+                exp_shift_tries = [len(alt) - len(rec.ref)]
+                direction_results[alt_idx] = {}
 
-            for direction in range(2):
-                exps = []
-                groups = []
-                weights = []
-                filtered_normal_reads = filter_reads(normal_read_data, nuc, direction)
-                filtered_normal_results = process_reads(filtered_normal_reads)
-                normal_cvg = len(filtered_normal_results)
-                normal_main_hmer, normal_second_hmer = find_best_mixture_hmer_sizes(filtered_normal_reads)
-                if (
-                    ref_hmer_size + exp_shift_tries[0] > MAX_HMER_SIZE
-                    or ref_hmer_size + exp_shift_tries[0] < 0
-                    or ref_hmer_size > MAX_HMER_SIZE
-                    or normal_main_hmer != ref_hmer_size
-                ):
-                    min_score = 0
-                    fill_direction_results_with_error(direction_results, prefixes)
-                    continue
-                normal_ml_score, normal_ml_mixture = get_machine_likelihood(
-                    filtered_normal_reads, ref_hmer_size, ref_hmer_size + exp_shift_tries[0]
+                # Process both directions
+                for direction in range(2):
+                    result = _process_direction_for_allele(
+                        direction,
+                        exp_shift_tries,
+                        rec.info.get("ref_hmer_size", -1)
+                        if "ref_hmer_size" in rec.info
+                        else apply_variant(ref_fasta, [chrom, pos], [rec.pos, "", ""])[0],
+                        normal_read_data,
+                        tumor_read_data,
+                        nuc,
+                        pseudocounts,
+                    )
+                    direction_results[alt_idx][direction] = result
+
+                    # Calculate combined score
+                    is_ins = len(alt) > len(rec.ref)
+                    pval_score = result.get("ttest_score", -1)
+                    ttest_score = (
+                        pval_score
+                        if (is_ins ^ (result.get("tumor_exp", 0) < result.get("normal_exp", 0)))
+                        else -pval_score
+                    )
+
+                    combined_score = combine_scores(
+                        ttest_score,
+                        result.get("likely_score", -1),
+                        result.get("mixture", 0),
+                        result.get("normal_ml_score", -1),
+                        result.get("normal_ml_mixture", 0),
+                        result.get("tumor_ml_score", -1),
+                        result.get("tumor_ml_mixture", 0),
+                        mixture_bound=mixture_bound,
+                    )
+                    direction_results[alt_idx][direction]["tot_score"] = round(combined_score, 4)
+
+            # Calculate tot_score for this normal
+            tot_score = tuple(
+                min(
+                    direction_results[alt_idx][0]["tot_score"],
+                    direction_results[alt_idx][1]["tot_score"],
                 )
-                filtered_tumor_reads = filter_reads(tumor_read_data, nuc, direction)
-                filtered_tumor_results = process_reads(filtered_tumor_reads)
-                tumor_cvg = len(filtered_tumor_results)
-                tumor_main_hmer, tumor_second_hmer = find_best_mixture_hmer_sizes(filtered_tumor_reads)
-                tumor_ml_score, tumor_ml_mixture = get_machine_likelihood(
-                    filtered_tumor_reads, ref_hmer_size, ref_hmer_size + exp_shift_tries[0]
-                )
-                params = calc_parameters(filtered_normal_results)
-                cell_shift = 2 * len(params[0])
-                num_cells = cell_shift * 21
-                original_counts = [zamir] * num_cells
-                extra_counts = [[zamir] * num_cells for x in exp_shift_tries]
+                for alt_idx in range(len(rec.alts))
+            )
 
-                for read in filtered_normal_results:
-                    exps.append(read[0])
-                    groups.append(0)
-                    certainty = read[1]
-                    weights.append(certainty)
-                    cell = get_cell(read, params, cell_shift)
-                    if cell >= 0 and cell < num_cells:
-                        original_counts[cell] += 1
-                    for x in range(len(exp_shift_tries)):
-                        curr_cell = cell + cell_shift * exp_shift_tries[x]
-                        if curr_cell >= 0 and curr_cell < num_cells:
-                            extra_counts[x][curr_cell] += 1
-                sum_counts = sum(original_counts)
-                normal_exp = sum(exps) / len(exps)
-                original_probs = [x / sum_counts for x in original_counts]
-                extra_probs = []
-                for count in extra_counts:
-                    sum_count = sum(count)
-                    extra_probs.append([x / sum_count for x in count])
-                original_likelyhood = 0
-                h0_probs = []
-                h1_probs = [[] for x in range(len(exp_shift_tries))]
-                if tumor_cvg == 0:
-                    print(f"failed on {chrom} position {pos} - tumor cvg is 0")
-                    min_score = 0
-                    fill_direction_results_with_error(direction_results, prefixes)
-                    continue
-                tot_number = 0
-                tot_exp = 0
-                for read in filtered_tumor_results:
-                    tot_number += 1
-                    tot_exp += read[0]
-                    exps.append(read[0])
-                    groups.append(1)
-                    certainty = read[1]
-                    weights.append(certainty)
-                    cell = get_cell(read, params, cell_shift)
-                    h0_probs.append(original_probs[cell])
-                    original_likelyhood += log(original_probs[cell])
-                    for i in range(len(exp_shift_tries)):
-                        h1_probs[i].append(extra_probs[i][cell])
-                tumor_exp = tot_exp / tot_number
-                ttest_pval = max(get_pval(exps, groups, weights), LOG_MIN_PVAL_BASE**2)
-                h0_probs = np.asarray(h0_probs, dtype=float)
-                h1_mixtures = []
-                for i in range(len(exp_shift_tries)):
-                    try:
-                        h1_probs[i] = np.asarray(h1_probs[i], dtype=float)
-                        pi = EM_INITIAL_PI
-                        for _ in range(EM_ITERATIONS):
-                            denom = pi * h1_probs[i] + (1.0 - pi) * h0_probs
-                            mon = pi * h1_probs[i]
-                            r = mon / denom
-                            pi_new = float(r.mean())
-                            pi = min(max(pi_new, PI_MIN), PI_MAX)
-                        h1_mixtures.append(pi)
-                    except Exception:
-                        h1_mixtures.append(0.002)
-                extra_likelyhoods = []
-                for i in range(len(exp_shift_tries)):
-                    likely = 0
-                    for j in range(len(h0_probs)):
-                        likely += log((1 - h1_mixtures[i]) * h0_probs[j] + h1_mixtures[i] * h1_probs[i][j])
-                    extra_likelyhoods.append(likely)
-                extra_score = max(extra_likelyhoods)
-                extra_shift = extra_likelyhoods.index(extra_score)
-                mixture = h1_mixtures[extra_shift]
-                tmp_score = (
-                    -SCORE_ADJUSTMENT_FACTOR
-                    * max(original_likelyhood - extra_score + log(len(exp_shift_tries)), MAX_LOG_LIKELIHOOD)
-                ) / log(LIKELIHOOD_LOG_BASE)
-                tmp_score = min(MAX_COMBINED_SCORE, tmp_score)
-                pval_score = -log(ttest_pval) / log(LIKELIHOOD_LOG_BASE)
-                likely_score = -log(ttest_pval) / log(LIKELIHOOD_LOG_BASE)
-                if tmp_score > 0:
-                    likely_score += tmp_score
-                pre = prefixes[direction]
+            results_per_normal.append((tot_score, direction_results))
 
-                # Store all results for this direction and allele
-                direction_results[direction] = {
-                    "normal_exp": round(normal_exp, 4),
-                    "tumor_exp": round(tumor_exp, 4),
-                    "normal_cvg": normal_cvg,
-                    "tumor_cvg": tumor_cvg,
-                    "ins_size": exp_shift_tries[extra_shift],
-                    "ttest_score": round(pval_score, 4),
-                    "likely_score": round(tmp_score, 4),
-                    "mixture": round(mixture, 4),
-                    "normal_main_hmer": normal_main_hmer,
-                    "tumor_main_hmer": tumor_main_hmer,
-                    "normal_second_hmer": normal_second_hmer,
-                    "tumor_second_hmer": tumor_second_hmer,
-                    "normal_ml_score": round(normal_ml_score, 4),
-                    "normal_ml_mixture": round(normal_ml_mixture, 4),
-                    "tumor_ml_score": round(tumor_ml_score, 4),
-                    "tumor_ml_mixture": round(tumor_ml_mixture, 4),
-                }
+            normal_reads.close()
+        except Exception as e:
+            logger.exception(f"Error processing normal file {normal_reads_file}: {e}")
+            continue
 
-                is_ins = len(alt) > len(rec.ref)
-                ttest_score = pval_score if (is_ins ^ (tumor_exp < normal_exp)) else -pval_score
-                combined_score = combine_scores(
-                    ttest_score,
-                    tmp_score,
-                    mixture,
-                    normal_ml_score,
-                    normal_ml_mixture,
-                    tumor_ml_score,
-                    tumor_ml_mixture,
-                )
-                direction_results[direction]["tot_score"] = round(combined_score, 4)
+    if not results_per_normal:
+        return None
 
-                min_score = min(combined_score, min_score)
+    # Sort by tot_score (use first allele's score for sorting)
+    results_per_normal.sort(key=lambda x: x[0][0])
 
-        # Write results as tuples for all alleles and directions
+    # Select median
+    num_normals = len(results_per_normal)
+    if num_normals % 2 == 1:
+        # Odd: take middle element
+        median_idx = num_normals // 2
+    else:
+        # Even: take the one with higher score
+        median_idx = num_normals // 2
+        # Compare scores at this index with the one before
+        if median_idx > 0 and results_per_normal[median_idx][0][0] < results_per_normal[median_idx - 1][0][0]:
+            median_idx -= 1
+
+    return results_per_normal[median_idx][1]
+
+
+def _validate_normal_data(ref_hmer_size: int, exp_shift_tries, normal_main_hmer: int) -> bool:
+    """Validate normal read data parameters.
+
+    Args:
+        ref_hmer_size: Reference homopolymer size
+        exp_shift_tries: List of possible hmer size differences
+        normal_main_hmer: Best hmer size from normal reads
+
+    Returns:
+        True if data is valid, False otherwise
+    """
+    return not (
+        ref_hmer_size + exp_shift_tries[0] > HMER_NUM_POSSIBLE_SIZES
+        or ref_hmer_size + exp_shift_tries[0] < 0
+        or ref_hmer_size > HMER_NUM_POSSIBLE_SIZES
+        or normal_main_hmer != ref_hmer_size
+    )
+
+
+def _process_reads_for_direction(
+    normal_read_data,
+    tumor_read_data,
+    nuc: str,
+    direction: int,
+    ref_hmer_size: int,
+    exp_shift_tries,
+) -> dict:
+    """Filter and process normal and tumor reads for a direction.
+
+    Args:
+        normal_read_data: Normal pileup read data
+        tumor_read_data: Tumor pileup read data
+        nuc: Nucleotide
+        direction: Direction index (0=forward, 1=backward)
+        ref_hmer_size: Reference homopolymer size
+        exp_shift_tries: List of possible hmer size differences
+
+    Returns:
+        Dictionary with processed read data or None if validation fails
+    """
+    # Process normal reads
+    filtered_normal_reads = filter_reads(normal_read_data, nuc, direction)
+    filtered_normal_results = process_reads(filtered_normal_reads)
+    normal_cvg = len(filtered_normal_results)
+    normal_main_hmer, normal_second_hmer = find_best_mixture_hmer_sizes(filtered_normal_reads)
+
+    # Validate normal data
+    if not _validate_normal_data(ref_hmer_size, exp_shift_tries, normal_main_hmer):
+        return None
+
+    # Get normal ML score
+    normal_ml_score, normal_ml_mixture = get_machine_likelihood(
+        filtered_normal_reads, ref_hmer_size, ref_hmer_size + exp_shift_tries[0]
+    )
+
+    # Process tumor reads
+    filtered_tumor_reads = filter_reads(tumor_read_data, nuc, direction)
+    filtered_tumor_results = process_reads(filtered_tumor_reads)
+    tumor_cvg = len(filtered_tumor_results)
+    tumor_main_hmer, tumor_second_hmer = find_best_mixture_hmer_sizes(filtered_tumor_reads)
+    tumor_ml_score, tumor_ml_mixture = get_machine_likelihood(
+        filtered_tumor_reads, ref_hmer_size, ref_hmer_size + exp_shift_tries[0]
+    )
+
+    if tumor_cvg == 0:
+        return None
+
+    return {
+        "filtered_normal_reads": filtered_normal_reads,
+        "filtered_normal_results": filtered_normal_results,
+        "normal_cvg": normal_cvg,
+        "normal_main_hmer": normal_main_hmer,
+        "normal_second_hmer": normal_second_hmer,
+        "normal_ml_score": normal_ml_score,
+        "normal_ml_mixture": normal_ml_mixture,
+        "filtered_tumor_reads": filtered_tumor_reads,
+        "filtered_tumor_results": filtered_tumor_results,
+        "tumor_cvg": tumor_cvg,
+        "tumor_main_hmer": tumor_main_hmer,
+        "tumor_second_hmer": tumor_second_hmer,
+        "tumor_ml_score": tumor_ml_score,
+        "tumor_ml_mixture": tumor_ml_mixture,
+    }
+
+
+def _calculate_em_parameters(
+    filtered_normal_results,
+    exp_shift_tries,
+    pseudocounts: float,
+) -> dict:
+    """Calculate EM parameters and cell counts from filtered normal results.
+
+    Args:
+        filtered_normal_results: Processed normal read data
+        exp_shift_tries: List of possible hmer size differences
+        pseudocounts: Prior count for EM algorithm
+
+    Returns:
+        Dictionary with EM parameters and cell counts
+    """
+    params = calc_parameters(filtered_normal_results)
+    cell_shift = 2 * len(params[0])
+    num_cells = cell_shift * 21
+    original_counts = [pseudocounts] * num_cells
+    extra_counts = [[pseudocounts] * num_cells for _ in exp_shift_tries]
+
+    exps = []
+    groups = []
+    weights = []
+
+    # Process normal reads
+    for read in filtered_normal_results:
+        exps.append(read[0])
+        groups.append(0)
+        weights.append(read[1])
+        cell = get_cell(read, params, cell_shift)
+        if 0 <= cell < num_cells:
+            original_counts[cell] += 1
+        for x in range(len(exp_shift_tries)):
+            curr_cell = cell + cell_shift * exp_shift_tries[x]
+            if 0 <= curr_cell < num_cells:
+                extra_counts[x][curr_cell] += 1
+
+    return {
+        "params": params,
+        "cell_shift": cell_shift,
+        "num_cells": num_cells,
+        "original_counts": original_counts,
+        "extra_counts": extra_counts,
+        "exps": exps,
+        "groups": groups,
+        "weights": weights,
+    }
+
+
+def _calculate_statistical_scores(
+    exps,
+    groups,
+    weights,
+    original_counts,
+    extra_counts,
+    filtered_tumor_results,
+    params,
+    cell_shift,
+    num_cells,
+    exp_shift_tries,
+) -> dict:
+    """Calculate statistical scores and mixture parameters using EM algorithm.
+
+    Args:
+        exps: List of expectation values from normal reads
+        groups: Group labels (0=normal, 1=tumor)
+        weights: Weights for each read
+        original_counts: Cell counts for H0 hypothesis
+        extra_counts: Cell counts for H1 hypotheses
+        filtered_tumor_results: Processed tumor read data
+        params: EM parameters
+        cell_shift: Cell shift value
+        num_cells: Total number of cells
+        exp_shift_tries: List of possible hmer size differences
+
+    Returns:
+        Dictionary with calculated scores
+    """
+    normal_exp = sum(exps) / len(exps) if exps else 0
+
+    # Calculate original likelihood for H0
+    sum_counts = sum(original_counts)
+    original_probs = [x / sum_counts for x in original_counts]
+    extra_probs = [[x / sum(count) for x in count] for count in extra_counts]
+
+    original_likelihood = 0
+    h0_probs = []
+    h1_probs = [[] for _ in range(len(exp_shift_tries))]
+
+    # Process tumor reads
+    tot_exp = 0
+    for read in filtered_tumor_results:
+        tot_exp += read[0]
+        exps.append(read[0])
+        groups.append(1)
+        weights.append(read[1])
+        cell = get_cell(read, params, cell_shift)
+        h0_probs.append(original_probs[cell])
+        original_likelihood += log(original_probs[cell])
+        for i in range(len(exp_shift_tries)):
+            h1_probs[i].append(extra_probs[i][cell])
+
+    tumor_exp = tot_exp / len(filtered_tumor_results) if filtered_tumor_results else 0
+
+    # Calculate statistical scores
+    ttest_pval = max(get_pval(exps, groups, weights), LOG_MIN_PVAL_BASE**2)
+    h0_probs = np.asarray(h0_probs, dtype=float)
+
+    # EM algorithm for mixture parameter
+    h1_mixtures = []
+    for i in range(len(exp_shift_tries)):
+        try:
+            h1_probs[i] = np.asarray(h1_probs[i], dtype=float)
+            pi = EM_INITIAL_PI
+            for _ in range(EM_ITERATIONS):
+                denom = pi * h1_probs[i] + (1.0 - pi) * h0_probs
+                r = (pi * h1_probs[i]) / denom
+                pi = min(max(float(r.mean()), PI_MIN), PI_MAX)
+            h1_mixtures.append(pi)
+        except Exception:
+            h1_mixtures.append(0.002)
+
+    # Calculate likelihoods
+    extra_likelihoods = []
+    for i in range(len(exp_shift_tries)):
+        likely = sum(
+            log((1 - h1_mixtures[i]) * h0_probs[j] + h1_mixtures[i] * h1_probs[i][j]) for j in range(len(h0_probs))
+        )
+        extra_likelihoods.append(likely)
+
+    extra_score = max(extra_likelihoods)
+    extra_shift = extra_likelihoods.index(extra_score)
+    mixture = h1_mixtures[extra_shift]
+
+    # Compute combined score from ttest and likelihood
+    tmp_score = (
+        -SCORE_ADJUSTMENT_FACTOR
+        * max(original_likelihood - extra_score + log(len(exp_shift_tries)), MAX_LOG_LIKELIHOOD)
+    ) / log(LIKELIHOOD_LOG_BASE)
+    tmp_score = min(MAX_COMBINED_SCORE, tmp_score)
+    pval_score = -log(ttest_pval) / log(LIKELIHOOD_LOG_BASE)
+    likely_score = pval_score + (tmp_score if tmp_score > 0 else 0)
+
+    return {
+        "normal_exp": normal_exp,
+        "tumor_exp": tumor_exp,
+        "pval_score": pval_score,
+        "likely_score": likely_score,
+        "mixture": mixture,
+        "extra_shift": extra_shift,
+    }
+
+
+def _process_direction_for_allele(
+    direction: int,
+    exp_shift_tries,
+    ref_hmer_size: int,
+    normal_read_data,
+    tumor_read_data,
+    nuc: str,
+    pseudocounts: float,
+) -> dict:
+    """Process a single direction for an allele.
+
+    Args:
+        direction: Direction index (0=forward, 1=backward)
+        exp_shift_tries: List of possible hmer size differences
+        ref_hmer_size: Reference homopolymer size
+        normal_read_data: Normal pileup read data
+        tumor_read_data: Tumor pileup read data
+        nuc: Nucleotide
+        pseudocounts: Prior count for EM algorithm
+
+    Returns:
+        Dict with direction results or error dict with -1 values
+    """
+    try:
+        # Process and validate reads
+        read_data = _process_reads_for_direction(
+            normal_read_data,
+            tumor_read_data,
+            nuc,
+            direction,
+            ref_hmer_size,
+            exp_shift_tries,
+        )
+        if read_data is None:
+            return fill_direction_results_with_error()
+
+        # Calculate EM parameters
+        em_params = _calculate_em_parameters(
+            read_data["filtered_normal_results"],
+            exp_shift_tries,
+            pseudocounts,
+        )
+
+        # Calculate statistical scores
+        scores = _calculate_statistical_scores(
+            em_params["exps"],
+            em_params["groups"],
+            em_params["weights"],
+            em_params["original_counts"],
+            em_params["extra_counts"],
+            read_data["filtered_tumor_results"],
+            em_params["params"],
+            em_params["cell_shift"],
+            em_params["num_cells"],
+            exp_shift_tries,
+        )
+
+        return {
+            "normal_exp": round(scores["normal_exp"], 4),
+            "tumor_exp": round(scores["tumor_exp"], 4),
+            "normal_cvg": read_data["normal_cvg"],
+            "tumor_cvg": read_data["tumor_cvg"],
+            "ttest_score": round(scores["pval_score"], 4),
+            "likely_score": round(scores["likely_score"], 4),
+            "mixture": round(scores["mixture"], 4),
+            "normal_main_hmer": read_data["normal_main_hmer"],
+            "tumor_main_hmer": read_data["tumor_main_hmer"],
+            "normal_second_hmer": read_data["normal_second_hmer"],
+            "tumor_second_hmer": read_data["tumor_second_hmer"],
+            "normal_ml_score": round(read_data["normal_ml_score"], 4),
+            "normal_ml_mixture": round(read_data["normal_ml_mixture"], 4),
+            "tumor_ml_score": round(read_data["tumor_ml_score"], 4),
+            "tumor_ml_mixture": round(read_data["tumor_ml_mixture"], 4),
+        }
+    except Exception as e:
+        logger.exception(f"Error processing direction {direction}: {e}")
+        return fill_direction_results_with_error()
+
+
+def _should_skip_record(rec, min_hmer: int) -> bool:
+    """Check if VCF record should be skipped from processing.
+
+    Args:
+        rec: VCF record
+        min_hmer: Minimum homopolymer size threshold
+
+    Returns:
+        True if record should be skipped, False otherwise
+    """
+    return rec.info["VARIANT_TYPE"] != "h-indel" or rec.info["X_HIL"][0] < min_hmer or rec.qual == 0
+
+
+def _write_results_to_record(
+    rec,
+    all_direction_results: dict,
+    verbose: bool,
+    score_bound: float,
+    mixture_bound: float,
+) -> None:
+    """Write processing results to VCF record and update filters.
+
+    Args:
+        rec: VCF record to update
+        all_direction_results: Dictionary with results for all directions and alleles
+        verbose: If True, write all fields; if False, write only mixture and tot_score
+        score_bound: Score threshold for PASS filter
+        mixture_bound: Mixture threshold for PASS filter
+    """
+    prefixes = ["fw_", "bw_"]
+
+    if verbose:
+        # Verbose mode: Write all fields for all alleles and directions
         for direction in range(2):
             pre = prefixes[direction]
 
@@ -738,7 +1122,6 @@ def variant_calling(  # noqa: C901, PLR0912, PLR0915
                 "tumor_exp",
                 "normal_cvg",
                 "tumor_cvg",
-                "ins_size",
                 "ttest_score",
                 "likely_score",
                 "mixture",
@@ -755,17 +1138,313 @@ def variant_calling(  # noqa: C901, PLR0912, PLR0915
                 values = tuple(all_direction_results[alt_idx][direction][field] for alt_idx in range(len(rec.alts)))
                 rec.info[pre + field] = values
 
-        # Write tot_score as minimum of fw_tot_score and bw_tot_score for each allele
-        tot_score_values = tuple(
-            min(all_direction_results[alt_idx][0]["tot_score"], all_direction_results[alt_idx][1]["tot_score"])
-            for alt_idx in range(len(rec.alts))
+    # Always write tot_score as minimum of fw_tot_score and bw_tot_score
+    tot_score_values = tuple(
+        min(
+            all_direction_results[alt_idx][0]["tot_score"],
+            all_direction_results[alt_idx][1]["tot_score"],
         )
-        rec.info["tot_score"] = tot_score_values
+        for alt_idx in range(len(rec.alts))
+    )
+    rec.info["tot_score"] = tot_score_values
 
-        # Write once after processing all alleles
-        fo.write(rec)
-    f.close()
-    fo.close()
+    # Always write mixture as average of fw_mixture and bw_mixture
+    mixture_values = tuple(
+        (all_direction_results[alt_idx][0]["mixture"] + all_direction_results[alt_idx][1]["mixture"]) / 2.0
+        for alt_idx in range(len(rec.alts))
+    )
+    rec.info["mixture"] = mixture_values
+
+    # Check if all alleles pass the score and mixture bounds
+    all_pass = all(
+        tot_score_values[alt_idx] > score_bound and mixture_values[alt_idx] > mixture_bound
+        for alt_idx in range(len(rec.alts))
+    )
+
+    # Set PASS filter if all alleles pass bounds
+    if all_pass:
+        rec.filter.clear()  # Clear any existing filters
+        rec.filter.add("PASS")
+
+
+def _process_record(
+    rec,
+    ref_fasta,
+    vcf_file,
+    normal_reads_files,
+    normal_germline_files,
+    tumor_germline_handle,
+    tumor_reads,
+    merged_intervals,
+    pseudocounts: float,
+    verbose: bool,
+    mixture_bound: float,
+    ref_fasta_path: str,
+) -> dict:
+    """Process a single VCF record and return results.
+
+    Args:
+        rec: VCF record to process
+        ref_fasta: Reference FASTA file
+        vcf_file: Input VCF file for variant checking
+        normal_reads_files: List of normal sample reads file paths
+        normal_germline_files: List of normal germline VCF file paths
+        tumor_germline_handle: Tumor germline VCF file handle (optional)
+        tumor_reads: Tumor pysam AlignmentFile
+        merged_intervals: Merged BED intervals or None
+        pseudocounts: Prior count for EM algorithm
+        verbose: Verbose flag for VCF field writing
+        mixture_bound: Mixture threshold
+        ref_fasta_path: Path to reference FASTA file
+
+    Returns:
+        Dictionary with result or None if record should not be processed
+    """
+    chrom = rec.contig
+    pos = rec.pos + rec.info["X_HIL"][0] // 2
+    ref_hmer_size = apply_variant(ref_fasta, [chrom, pos], [rec.pos, "", ""])[0]
+
+    if verbose:
+        rec.info["ref_hmer_size"] = ref_hmer_size
+
+    # Check target intervals
+    if merged_intervals:
+        if not pos_in_bed(merged_intervals, chrom, pos):
+            return None
+
+    # Check for conflicting variants (without normal_germline)
+    other_variant = _check_other_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, vcf_file, tumor_germline_handle)
+    if verbose:
+        rec.info["other_variant"] = other_variant
+    if other_variant:
+        return None
+
+    # Collect tumor pileup data and nucleotide once for all normals
+    tumor_pileup_data = _collect_tumor_pileup_data(tumor_reads, chrom, pos)
+    if tumor_pileup_data is None:
+        return None
+
+    tumor_read_data, nuc = tumor_pileup_data
+
+    # Process multiple normals and select median by tot_score
+    all_direction_results = _process_multiple_normals_median(
+        normal_reads_files,
+        normal_germline_files,
+        tumor_read_data,
+        nuc,
+        chrom,
+        pos,
+        pseudocounts,
+        ref_fasta,
+        mixture_bound,
+        rec,
+        ref_fasta_path,
+    )
+
+    return all_direction_results
+
+
+def _process_vcf_records(
+    vcf_file_handle,
+    ref_fasta,
+    normal_reads_files,
+    normal_germline_files,
+    tumor_germline_handle,
+    tumor_reads,
+    vcf_out_file_handle,
+    merged_intervals,
+    min_hmer: int,
+    pseudocounts: float,
+    verbose: bool,
+    score_bound: float,
+    mixture_bound: float,
+    ref_fasta_path: str,
+) -> None:
+    """Process all VCF records and write results.
+
+    Args:
+        vcf_file_handle: Input VCF file handle
+        ref_fasta: Reference FASTA file
+        vcf_file: Input VCF file path for variant checking
+        normal_reads_files: List of normal sample reads files
+        normal_germline_files: List of normal germline files
+        tumor_germline_handle: Tumor germline VCF file handle (optional)
+        tumor_reads: Tumor alignment file
+        vcf_out_file_handle: Output VCF file handle
+        merged_intervals: Merged BED intervals or None
+        min_hmer: Minimum homopolymer size
+        pseudocounts: Prior count
+        verbose: Verbose flag
+        score_bound: Score threshold
+        mixture_bound: Mixture threshold
+        ref_fasta_path: Path to reference FASTA file
+    """
+    for rec in vcf_file_handle.fetch():
+        # Check if record should be skipped
+        if _should_skip_record(rec, min_hmer):
+            vcf_out_file_handle.write(rec)
+            continue
+
+        # Process record
+        all_direction_results = _process_record(
+            rec,
+            ref_fasta,
+            vcf_file_handle,
+            normal_reads_files,
+            normal_germline_files,
+            tumor_germline_handle,
+            tumor_reads,
+            merged_intervals,
+            pseudocounts,
+            verbose,
+            mixture_bound,
+            ref_fasta_path,
+        )
+
+        if all_direction_results is None:
+            vcf_out_file_handle.write(rec)
+            continue
+
+        # Write results to VCF record
+        _write_results_to_record(
+            rec,
+            all_direction_results,
+            verbose,
+            score_bound,
+            mixture_bound,
+        )
+
+        # Write record after processing all alleles
+        vcf_out_file_handle.write(rec)
+
+
+def _close_files(vcf_handle, vcf_out_handle, tumor_reads_handle):
+    """Close all open file handles.
+
+    Args:
+        vcf_handle: Input VCF file handle
+        vcf_out_handle: Output VCF file handle
+        tumor_reads_handle: Tumor reads BAM file handle
+    """
+    vcf_handle.close()
+    vcf_out_handle.close()
+    tumor_reads_handle.close()
+
+
+def _initialize_files(vcf_file, vcf_out_file, tumor_reads_file, ref_fasta_path, tumor_germline_file, verbose):
+    """Initialize and open all required file handles.
+
+    Args:
+        vcf_file: Input VCF file path
+        vcf_out_file: Output VCF file path
+        tumor_reads_file: Tumor reads BAM file path
+        ref_fasta_path: Reference FASTA file path
+        tumor_germline_file: Tumor germline VCF file path
+        verbose: Verbose flag for VCF header setup
+
+    Returns:
+        Tuple of (vcf_handle, vcf_out_handle, ref_fasta, tumor_reads_handle)
+    """
+    # Setup VCF headers using helper function
+    vcf_handle = _setup_vcf_headers(vcf_file, verbose)
+
+    # Initialize tumor reads file
+    tumor_reads_handle = pysam.AlignmentFile(tumor_reads_file, reference_filename=ref_fasta_path)
+
+    # Load reference FASTA
+    ref_fasta = Fasta(ref_fasta_path)
+
+    # Open output VCF file
+    vcf_out_handle = pysam.VariantFile(vcf_out_file, "wz", header=vcf_handle.header.copy())
+
+    if tumor_germline_file:
+        tumor_germline_handle = pysam.VariantFile(tumor_germline_file)
+    else:
+        tumor_germline_handle = None
+
+    return vcf_handle, vcf_out_handle, ref_fasta, tumor_reads_handle, tumor_germline_handle
+
+
+def variant_calling(
+    vcf_file,
+    normal_reads_files,
+    tumor_reads_file,
+    vcf_out_file,
+    min_hmer=4,
+    pseudocounts=0.5,
+    target_intervals_bed_file=None,
+    tumor_germline_file=None,
+    normal_germline_file=None,
+    verbose=False,
+    score_bound=2.0,
+    mixture_bound=0.01,
+    ref_fasta_path="/data/Runs/genomes/hg38/Homo_sapiens_assembly38.fasta",
+):
+    """Process VCF records and add hmer-based scoring.
+
+    Main entry point for variant calling pipeline that processes VCF records
+    with pileup data from normal and tumor samples. Supports multiple normal
+    samples by accepting comma-separated file paths.
+
+    Args:
+        vcf_file: Input VCF file path
+        normal_reads_files: Comma-separated normal sample reads file paths or single path
+        tumor_reads_file: Tumor sample reads file path
+        vcf_out_file: Output VCF file path
+        min_hmer: Minimum homopolymer size threshold
+        pseudocounts: Prior count for EM algorithm
+        target_intervals_bed_file: Optional BED file for interval filtering
+        tumor_germline_file: Optional tumor germline VCF file
+        normal_germline_file: Comma-separated normal germline VCF file paths or single path
+        verbose: If True, write all fields; if False, only write mixture and tot_score
+        score_bound: Score threshold for PASS filter (default: 2.0)
+        mixture_bound: Mixture threshold for PASS filter (default: 0.01)
+        ref_fasta_path: Path to reference FASTA file
+    """
+    # Parse comma-separated file paths
+    normal_reads_files_list = [f.strip() for f in normal_reads_files.split(",")]
+    if normal_germline_file:
+        normal_germline_files_list = [f.strip() for f in normal_germline_file.split(",")]
+        # Validate that both lists have the same size
+        if len(normal_reads_files_list) != len(normal_germline_files_list):
+            raise ValueError(
+                f"Number of normal_reads_file ({len(normal_reads_files_list)}) must match "
+                f"number of normal_germline_file ({len(normal_germline_files_list)})"
+            )
+    else:
+        normal_germline_files_list = [None] * len(normal_reads_files_list)
+
+    # Initialize and open files
+    vcf_handle, vcf_out_handle, ref_fasta, tumor_reads, tumor_germline_handle = _initialize_files(
+        vcf_file, vcf_out_file, tumor_reads_file, ref_fasta_path, tumor_germline_file, verbose
+    )
+
+    # Load BED intervals if provided
+    merged_intervals = None
+    if target_intervals_bed_file:
+        merged_intervals = load_bed_intervals(target_intervals_bed_file)
+
+    try:
+        # Process VCF records
+        _process_vcf_records(
+            vcf_handle,
+            ref_fasta,
+            normal_reads_files_list,
+            normal_germline_files_list,
+            tumor_germline_handle,
+            tumor_reads,
+            vcf_out_handle,
+            merged_intervals,
+            min_hmer,
+            pseudocounts,
+            verbose,
+            score_bound,
+            mixture_bound,
+            ref_fasta_path,
+        )
+    finally:
+        # Close all file handles
+        _close_files(vcf_handle, vcf_out_handle, tumor_reads)
 
 
 def main() -> None:
@@ -779,7 +1458,7 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Example usage:\n"
         "  python vcf_hmer_update.py input.vcf normal_pileup.txt "
-        "tumor_pileup.txt output.vcf --min-hmer 4 --zamir 0.5",
+        "tumor_pileup.txt output.vcf --min-hmer 4 --pseudocounts 0.5",
     )
 
     # Required positional arguments
@@ -788,8 +1467,8 @@ def main() -> None:
         help="Input VCF file path",
     )
     parser.add_argument(
-        "normal_reads_file",
-        help="Normal sample reads file path",
+        "normal_reads_files",
+        help="Comma-separated normal sample reads file paths (or single path)",
     )
     parser.add_argument(
         "tumor_reads_file",
@@ -808,10 +1487,16 @@ def main() -> None:
         help="Minimum homopolymer size (default: 6)",
     )
     parser.add_argument(
-        "--zamir",
+        "--pseudocounts",
         type=float,
         default=0.5,
-        help="Zamir threshold parameter (default: 0.5)",
+        help="Pseudocounts prior for EM algorithm (default: 0.5)",
+    )
+    parser.add_argument(
+        "--ref-fasta",
+        type=str,
+        default="/data/Runs/genomes/hg38/Homo_sapiens_assembly38.fasta",
+        help="Path to reference FASTA file (default: hg38 path)",
     )
 
     parser.add_argument(
@@ -832,21 +1517,44 @@ def main() -> None:
         default="/data/Runs/cloud_sync/s3/"
         "genomics-pipeline-concordanz-us-east-1/test/germline/"
         "417309-TN20-126568-Z0280-CGCACAATGCGAGAT.vcf.gz",
-        help="Normal germline VCF file path (default: provided path)",
+        help="Comma-separated normal germline VCF file paths or single path (default: provided path)",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Write all fields to VCF output; if not set, only write mixture and tot_score",
+    )
+    parser.add_argument(
+        "--score-bound",
+        type=float,
+        default=2.0,
+        help="Score bound threshold (default: 2.0); "
+        "records above this score with mixture above mixture-bound are marked PASS",
+    )
+    parser.add_argument(
+        "--mixture-bound",
+        type=float,
+        default=0.01,
+        help="Mixture bound threshold (default: 0.01); "
+        "records above this mixture with score above score-bound are marked PASS",
     )
 
     args = parser.parse_args()
 
     variant_calling(
         args.input_vcf,
-        args.normal_reads_file,
+        args.normal_reads_files,
         args.tumor_reads_file,
         args.output_vcf,
         args.min_hmer,
-        args.zamir,
+        args.pseudocounts,
         args.bed_file,
         args.tumor_germline,
         args.normal_germline,
+        args.verbose,
+        args.score_bound,
+        args.mixture_bound,
+        args.ref_fasta,
     )
 
 
