@@ -628,7 +628,7 @@ def _collect_normal_pileup_data(normal_reads, chrom: str, pos: int):
 
 
 def _process_multiple_normals_median(
-    normal_reads_files,
+    normal_reads_list,
     normal_germline_files,
     tumor_read_data,
     nuc,
@@ -637,13 +637,12 @@ def _process_multiple_normals_median(
     pseudocounts: float,
     ref_fasta,
     mixture_bound: float,
-    rec,
-    ref_fasta_path: str,
+    rec
 ) -> dict:
     """Process multiple normal files and return median result by tot_score.
 
     Args:
-        normal_reads_files: List of normal sample reads file paths
+        normal_reads_list: List of normal sample reads file paths
         normal_germline_files: List of normal germline VCF file paths
         tumor_read_data: Pre-computed tumor pileup read data
         nuc: Nucleotide determined from tumor reads
@@ -653,7 +652,6 @@ def _process_multiple_normals_median(
         ref_fasta: Reference FASTA
         mixture_bound: Mixture threshold
         rec: VCF record
-        ref_fasta_path: Path to reference FASTA file
 
     Returns:
         Dictionary with median results
@@ -661,21 +659,19 @@ def _process_multiple_normals_median(
     results_per_normal = []
 
     ref_hmer_size = apply_variant(ref_fasta, [chrom, pos], [rec.pos, "", ""])[0]
-    for normal_reads_file, normal_germline_file in zip(normal_reads_files, normal_germline_files, strict=False):
+    for normal_reads, normal_germline_file in zip(normal_reads_list, normal_germline_files, strict=False):
         try:
-            normal_reads = pysam.AlignmentFile(normal_reads_file, reference_filename=ref_fasta_path)
-            if normal_germline_file:
-                normal_germline = pysam.VariantFile(normal_germline_file)
+            normal_germline = pysam.VariantFile(normal_germline_file)
 
-                # Check for conflicting variants with this specific normal_germline
-                other_variant = _check_normal_other_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, normal_germline)
+            # Check for conflicting variants with this specific normal_germline
+            other_variant = _check_normal_other_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, normal_germline)
 
-                if other_variant:
-                    logger.debug(f"Skipping normal file {normal_reads_file} due to conflicting variants")
-                    normal_reads.close()
-                    normal_germline.close()
-                    continue
+            if other_variant:
+                logger.debug(f"Skipping normal file {normal_germline_file} due to conflicting variants")
+                normal_reads.close()
                 normal_germline.close()
+                continue
+            normal_germline.close()
 
             # Collect pileup data for this normal
             normal_read_data = _collect_normal_pileup_data(normal_reads, chrom, pos)
@@ -738,7 +734,7 @@ def _process_multiple_normals_median(
 
             normal_reads.close()
         except Exception as e:
-            logger.exception(f"Error processing normal file {normal_reads_file}: {e}")
+            logger.exception(f"Error processing normal file {normal_germline_file}: {e}")
             continue
 
     if not results_per_normal:
@@ -1096,6 +1092,7 @@ def _should_skip_record(rec, min_hmer: int) -> bool:
 def _write_results_to_record(
     rec,
     all_direction_results: dict,
+    *,
     verbose: bool,
     score_bound: float,
     mixture_bound: float,
@@ -1171,15 +1168,15 @@ def _process_record(
     rec,
     ref_fasta,
     vcf_file,
-    normal_reads_files,
+    normal_reads,
     normal_germline_files,
     tumor_germline_handle,
     tumor_reads,
     merged_intervals,
     pseudocounts: float,
+    *,
     verbose: bool,
-    mixture_bound: float,
-    ref_fasta_path: str,
+    mixture_bound: float
 ) -> dict:
     """Process a single VCF record and return results.
 
@@ -1187,7 +1184,7 @@ def _process_record(
         rec: VCF record to process
         ref_fasta: Reference FASTA file
         vcf_file: Input VCF file for variant checking
-        normal_reads_files: List of normal sample reads file paths
+        normal_reads: List of normal sample reads file paths
         normal_germline_files: List of normal germline VCF file paths
         tumor_germline_handle: Tumor germline VCF file handle (optional)
         tumor_reads: Tumor pysam AlignmentFile
@@ -1195,7 +1192,6 @@ def _process_record(
         pseudocounts: Prior count for EM algorithm
         verbose: Verbose flag for VCF field writing
         mixture_bound: Mixture threshold
-        ref_fasta_path: Path to reference FASTA file
 
     Returns:
         Dictionary with result or None if record should not be processed
@@ -1228,7 +1224,7 @@ def _process_record(
 
     # Process multiple normals and select median by tot_score
     all_direction_results = _process_multiple_normals_median(
-        normal_reads_files,
+        normal_reads,
         normal_germline_files,
         tumor_read_data,
         nuc,
@@ -1237,8 +1233,7 @@ def _process_record(
         pseudocounts,
         ref_fasta,
         mixture_bound,
-        rec,
-        ref_fasta_path,
+        rec
     )
 
     return all_direction_results
@@ -1247,7 +1242,7 @@ def _process_record(
 def _process_vcf_records(
     vcf_file_handle,
     ref_fasta,
-    normal_reads_files,
+    normal_reads,
     normal_germline_files,
     tumor_germline_handle,
     tumor_reads,
@@ -1255,10 +1250,10 @@ def _process_vcf_records(
     merged_intervals,
     min_hmer: int,
     pseudocounts: float,
+    *,
     verbose: bool,
     score_bound: float,
-    mixture_bound: float,
-    ref_fasta_path: str,
+    mixture_bound: float
 ) -> None:
     """Process all VCF records and write results.
 
@@ -1290,15 +1285,14 @@ def _process_vcf_records(
             rec,
             ref_fasta,
             vcf_file_handle,
-            normal_reads_files,
+            normal_reads,
             normal_germline_files,
             tumor_germline_handle,
             tumor_reads,
             merged_intervals,
             pseudocounts,
-            verbose,
-            mixture_bound,
-            ref_fasta_path,
+            verbose=verbose,
+            mixture_bound = mixture_bound
         )
 
         if all_direction_results is None:
@@ -1331,13 +1325,14 @@ def _close_files(vcf_handle, vcf_out_handle, tumor_reads_handle):
     tumor_reads_handle.close()
 
 
-def _initialize_files(vcf_file, vcf_out_file, tumor_reads_file, ref_fasta_path, tumor_germline_file, verbose):
+def _initialize_files(vcf_file, vcf_out_file, tumor_reads_file, normal_reads_files, ref_fasta_path, tumor_germline_file, verbose):
     """Initialize and open all required file handles.
 
     Args:
         vcf_file: Input VCF file path
         vcf_out_file: Output VCF file path
         tumor_reads_file: Tumor reads BAM file path
+        normal_reads_files: List of BAM files paths
         ref_fasta_path: Reference FASTA file path
         tumor_germline_file: Tumor germline VCF file path
         verbose: Verbose flag for VCF header setup
@@ -1350,7 +1345,7 @@ def _initialize_files(vcf_file, vcf_out_file, tumor_reads_file, ref_fasta_path, 
 
     # Initialize tumor reads file
     tumor_reads_handle = pysam.AlignmentFile(tumor_reads_file, reference_filename=ref_fasta_path)
-
+    normal_reads_handles = [ pysam.AlignmentFile(normal_reads_file, reference_filename=ref_fasta_path) for normal_reads_file in normal_reads_files]
     # Load reference FASTA
     ref_fasta = Fasta(ref_fasta_path)
 
@@ -1362,7 +1357,7 @@ def _initialize_files(vcf_file, vcf_out_file, tumor_reads_file, ref_fasta_path, 
     else:
         tumor_germline_handle = None
 
-    return vcf_handle, vcf_out_handle, ref_fasta, tumor_reads_handle, tumor_germline_handle
+    return vcf_handle, vcf_out_handle, ref_fasta, tumor_reads_handle, normal_reads_handles, tumor_germline_handle
 
 
 def variant_calling(
@@ -1375,6 +1370,7 @@ def variant_calling(
     target_intervals_bed_file=None,
     tumor_germline_file=None,
     normal_germline_file=None,
+    *,
     verbose=False,
     score_bound=2.0,
     mixture_bound=0.01,
@@ -1415,8 +1411,8 @@ def variant_calling(
         normal_germline_files_list = [None] * len(normal_reads_files_list)
 
     # Initialize and open files
-    vcf_handle, vcf_out_handle, ref_fasta, tumor_reads, tumor_germline_handle = _initialize_files(
-        vcf_file, vcf_out_file, tumor_reads_file, ref_fasta_path, tumor_germline_file, verbose
+    vcf_handle, vcf_out_handle, ref_fasta, tumor_reads, normal_reads, tumor_germline_handle = _initialize_files(
+        vcf_file, vcf_out_file, tumor_reads_file, normal_reads_files, ref_fasta_path, tumor_germline_file, verbose
     )
 
     # Load BED intervals if provided
@@ -1429,7 +1425,7 @@ def variant_calling(
         _process_vcf_records(
             vcf_handle,
             ref_fasta,
-            normal_reads_files_list,
+            normal_reads,
             normal_germline_files_list,
             tumor_germline_handle,
             tumor_reads,
@@ -1437,10 +1433,9 @@ def variant_calling(
             merged_intervals,
             min_hmer,
             pseudocounts,
-            verbose,
-            score_bound,
-            mixture_bound,
-            ref_fasta_path,
+            verbose=verbose,
+            score_bound = score_bound,
+            mixture_bound = mixture_bound,
         )
     finally:
         # Close all file handles
@@ -1551,10 +1546,10 @@ def main() -> None:
         args.bed_file,
         args.tumor_germline,
         args.normal_germline,
-        args.verbose,
-        args.score_bound,
-        args.mixture_bound,
-        args.ref_fasta,
+        verbose=args.verbose,
+        score_bound = args.score_bound,
+        mixture_bound = args.mixture_bound,
+        ref_fasta_path = args.ref_fasta,
     )
 
 
