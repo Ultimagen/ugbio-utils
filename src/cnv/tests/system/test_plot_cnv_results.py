@@ -98,3 +98,77 @@ class TestPlotCnvResults:
         assert os.path.getsize(out_calls_fig) > 0
         assert os.path.getsize(out_coverage_fig) > 0
         assert os.path.getsize(out_dup_del_fig) > 0
+
+    def test_plot_cnv_with_vcf_like_format_copynumber_tag(self, tmpdir, resources_dir):
+        # Create a temporary CNV calls file with VCF-like INFO format
+        dup_content = (
+            "chr1\t1000000\t1500000\tSVTYPE=DUP;CopyNumber=3.5;END=1500000\n"
+            "chr1\t2000000\t2500000\tSVTYPE=DUP;CopyNumber=4.2;QUAL=HIGH\n"
+        )
+
+        dup_file = tmpdir.join("test_dup.bed")
+        dup_file.write(dup_content)
+
+        input_germline_coverage = pjoin(resources_dir, "NA11428.chr1_chr2.ReadCounts.bed")
+        sample_name = "test_copynumber_tag"
+        out_dir = str(tmpdir)
+
+        plot_cnv_results.run(
+            [
+                "plot_cnv_results",
+                "--germline_coverage",
+                input_germline_coverage,
+                "--out_directory",
+                out_dir,
+                "--sample_name",
+                sample_name,
+                "--duplication_cnv_calls",
+                str(dup_file),
+                "--vcf-like",
+            ]
+        )
+
+        out_calls_fig = tmpdir.join(f"{sample_name}.CNV.calls.jpeg")
+        out_coverage_fig = tmpdir.join(f"{sample_name}.CNV.coverage.jpeg")
+        out_dup_del_fig = tmpdir.join(f"{sample_name}.dup_del.calls.jpeg")
+
+        assert out_calls_fig.size() > 0
+        assert out_coverage_fig.size() > 0
+        assert out_dup_del_fig.size() > 0
+
+    def test_plot_cnv_with_vcf_like_format_cn_tag(self, tmpdir, resources_dir):
+        # Create a temporary CNV calls file with CN= tag only
+        del_content = (
+            "chr1\t3000000\t3500000\tSVTYPE=DEL;CN=1;END=3500000\n"
+            "chr2\t4000000\t4500000\tSVTYPE=DEL;CN=0.5;QUAL=30\n"
+        )
+
+        del_file = tmpdir.join("test_del.bed")
+        del_file.write(del_content)
+
+        input_germline_coverage = pjoin(resources_dir, "NA11428.chr1_chr2.ReadCounts.bed")
+        sample_name = "test_cn_tag"
+        out_dir = str(tmpdir)
+
+        plot_cnv_results.run(
+            [
+                "plot_cnv_results",
+                "--germline_coverage",
+                input_germline_coverage,
+                "--out_directory",
+                out_dir,
+                "--sample_name",
+                sample_name,
+                "--deletion_cnv_calls",
+                str(del_file),
+                "--vcf-like",
+            ]
+        )
+
+        out_calls_fig = tmpdir.join(f"{sample_name}.CNV.calls.jpeg")
+        out_coverage_fig = tmpdir.join(f"{sample_name}.CNV.coverage.jpeg")
+        out_dup_del_fig = tmpdir.join(f"{sample_name}.dup_del.calls.jpeg")
+
+        assert out_calls_fig.size() > 0
+        assert out_coverage_fig.size() > 0
+        assert out_dup_del_fig.size() > 0
