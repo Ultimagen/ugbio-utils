@@ -54,7 +54,7 @@ def test_recalibration_columns_count(tmp_path):
         metadata=None,
         use_kde_smoothing=False,
         use_gpu=False,
-        use_float64=False,
+        use_float32=False,
     )
 
     # Create trainer and load the data
@@ -166,7 +166,7 @@ def test_recalibration_columns_kde(tmp_path):
         metadata=None,
         use_kde_smoothing=True,
         use_gpu=False,
-        use_float64=False,
+        use_float32=False,
     )
 
     # Create trainer and load the data

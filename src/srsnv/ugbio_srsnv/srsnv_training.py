@@ -43,8 +43,8 @@ from ugbio_srsnv.srsnv_utils import (
     MAX_PHRED,
     all_models_predict_proba,
     get_filter_ratio,
-    polars_to_pandas_efficient,
     phred_to_prob,
+    polars_to_pandas_efficient,
     prob_to_logit,
     prob_to_phred,
 )
@@ -406,7 +406,7 @@ class SRSNVTrainer:
         else:
             logger.info("Using CPU for XGBoost training")
 
-        self.downcast_float = not args.use_float64
+        self.downcast_float = args.use_float32
 
         # ─────────── read filtering-stats JSONs & compute priors ───────────
         self.pos_stats = read_filtering_stats_json(args.stats_positive)
@@ -1138,9 +1138,9 @@ def _cli() -> argparse.Namespace:
         help="Use GPU for training (if available and supported by XGBoost installation)",
     )
     ap.add_argument(
-        "--use-float64",
+        "--use-float32",
         action="store_true",
-        help="Use float64 precision for training. Default is float32, trading precision for reduced memory and compute",
+        help="Use float32 precision for training, trading precision for reduced memory and compute. Default is float64",
     )
     ap.add_argument(
         "--use-kde-smoothing",

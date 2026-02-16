@@ -59,7 +59,7 @@ def test_end_to_end_training(tmp_path: Path) -> None:
         metadata=None,  # Add missing metadata attribute
         use_kde_smoothing=True,
         use_gpu=False,  # Disable GPU for testing to avoid dependency issues
-        use_float64=False,  # Use float32 for testing to reduce memory usage
+        use_float32=False,  # Use float32 for testing to reduce memory usage
     )
 
     # ---------------------------------------------------------------- train
