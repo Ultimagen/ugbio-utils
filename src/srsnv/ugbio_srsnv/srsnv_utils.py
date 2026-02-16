@@ -274,7 +274,9 @@ def _aggregate_probabilities_from_folds(
 def set_featuremap_df_dtypes(df: pd.DataFrame, feature_dtypes: list) -> pd.DataFrame:
     """
     Prepare a DataFrame for training by ensuring correct column order and dtypes.
-    This is intended for cases where Polars-generated parquet files are read in pandas and category encoding might break, this function forces the category datatypes. Reading the dataframes directly in polars should circumvent this issue.
+    This is intended for cases where Polars-generated parquet files are read in pandas and category encoding might
+    break, this function forces the category datatypes. Reading the dataframes directly in polars should circumvent
+    this issue.
 
     Parameters
     ----------
