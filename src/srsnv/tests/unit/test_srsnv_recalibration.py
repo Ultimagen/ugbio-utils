@@ -53,6 +53,8 @@ def test_recalibration_columns_count(tmp_path):
         quality_lut_size=1000,
         metadata=None,
         use_kde_smoothing=False,
+        use_gpu=False,
+        use_float64=False,
     )
 
     # Create trainer and load the data
