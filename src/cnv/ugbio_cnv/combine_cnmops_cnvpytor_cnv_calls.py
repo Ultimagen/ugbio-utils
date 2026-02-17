@@ -540,6 +540,7 @@ def run(argv: list[str]):
             cushion=args.cushion,
             output_file=args.output_file,
             reference_fasta=args.reference_fasta,
+            output_bam=args.output_bam,
         )
     else:
         raise ValueError(f"Unknown tool: {args.tool}")
