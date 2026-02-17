@@ -22,13 +22,31 @@ parser <- ArgumentParser()
 parser$add_argument("input_file", help = "input RDS file containing GenomicRanges object")
 parser$add_argument("--mean", action = "store_true", help = "export mean coverage instead of per-sample coverage")
 parser$add_argument("--sample_name", help = "export coverage for a specific sample only")
+parser$add_argument("--intervals_only", action = "store_true", help = "export only the intervals (chr, start, end) without coverage data")
 args <- parser$parse_args()
 
 germline_coverage_rds <- args$input_file
 gr <- readRDS(germline_coverage_rds)
 
 
-if (!is.null(args$sample_name)) {
+if (args$intervals_only) {
+  # Export only the intervals without coverage data
+  # can't use export.bed since it does not export 3-column BED
+  output_file <- "intervals.bed"
+  bed3 <- data.frame(
+    chrom = as.character(seqnames(gr)),
+    start = sprintf("%d", start(gr) - 1L),
+    end   = sprintf("%d", end(gr))
+  )
+  write.table(
+    bed3,
+    file = output_file,
+    sep = "\t",
+    quote = FALSE,
+    row.names = FALSE,
+    col.names = FALSE
+  )
+} else if (!is.null(args$sample_name)) {
   # Export only the specified sample
   sample_names <- colnames(mcols(gr))
   gr_sample <- gr
