@@ -641,4 +641,5 @@ def test_main_analyze_breakpoints_calls_analyze_cnv_breakpoints():
                 cushion=test_cushion,
                 output_file=test_output_file,
                 reference_fasta=test_reference_fasta,
+                output_bam=None,
             )
