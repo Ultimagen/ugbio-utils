@@ -106,6 +106,7 @@ jobs:
       matrix:
         module: ${{fromJson(needs.publish.outputs.matrix)}}
     uses: ./.github/workflows/build-workspace-docker.yml
+    secrets: inherit
     with:
       docker-file: src/${{ matrix.module }}/Dockerfile
       docker-image: ugbio_${{ matrix.module }}
