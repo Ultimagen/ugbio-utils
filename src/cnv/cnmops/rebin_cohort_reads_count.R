@@ -12,7 +12,7 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 # DESCRIPTION
-#    Re-bin an existing CNmops cohort from smaller bins to larger bins by
+#    Re-bin an existing cn.mops cohort from smaller bins to larger bins by
 #    aggregating read counts. This allows users to adjust the resolution of
 #    existing cohorts without regenerating from BAM files.
 #    IMPORTANT: New bin end positions are calculated as the maximum of the
@@ -81,20 +81,13 @@ if (args$new_window_length == original_window_length) {
   cat("      No re-binning needed. Saving cohort to output file...\n")
 
   # Save outputs
-  new_gr = gr
+  new_gr <- gr
 } else {
   # Validate divisibility
-  if (args$new_window_length %% original_window_length != 0) {
+  if ((args$new_window_length %% original_window_length != 0) || (args$new_window_length == 0)) {
     stop("ERROR: new_window_length (", args$new_window_length,
         " bp) must be evenly divisible by original_window_length (", original_window_length, " bp).\n",
         "       Remainder: ", args$new_window_length %% original_window_length, " bp")
-  }
-
-  # Validate new > original
-  if (args$new_window_length < original_window_length) {
-    stop("ERROR: new_window_length (", args$new_window_length,
-        " bp) must be larger than original_window_length (", original_window_length, " bp).\n",
-        "       This script only aggregates to larger bins, not splits to smaller bins.")
   }
 
   bin_factor <- args$new_window_length / original_window_length

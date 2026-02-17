@@ -80,7 +80,7 @@ def test_export_cohort_matrix_to_bed_intervals_only(tmpdir, resources_dir, scrip
     # Read expected file to get the number of intervals
     df_expected = pd.read_csv(expected_bed, sep="\t", header=None)
 
-    # Verify structure: export.bed() produces BED6 format (chr, start, end, name, score, strand)
+    # Verify structure: export.bed() produces BED6 format (chr, start, end, name, score, strand), we need three
     assert df_actual.shape[1] == 3, f"Expected 3 columns (BED format), got {df_actual.shape[1]}"
 
     # Verify same number of intervals

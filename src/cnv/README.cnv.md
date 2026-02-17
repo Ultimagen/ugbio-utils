@@ -196,7 +196,7 @@ Rscript cnmops/rebin_cohort_reads_count.R \
 
 **Parameters:**
 - `-i, --input_cohort_file` - Input cohort RDS file (required)
-- `-owl, --original_window_length` - Original bin size in bp (required)
+- `-owl, --original_window_length` - Original bin size in bp (optional), autodetected if not given
 - `-nwl, --new_window_length` - New bin size in bp (required, must be divisible by original)
 - `-o, --output_file` - Output RDS file (default: `rebinned_cohort_reads_count.rds`)
 - `--save_csv` - Also save as CSV format
@@ -214,7 +214,6 @@ Rscript cnmops/rebin_cohort_reads_count.R \
 # Re-bin HapMap2 cohort from 1000 bp to 5000 bp
 Rscript cnmops/rebin_cohort_reads_count.R \
   -i HapMap2_65samples_cohort_v2.0.hg38.ReadsCount.rds \
-  -owl 1000 \
   -nwl 5000 \
   -o HapMap2_65samples_cohort_v2.0.hg38.ReadsCount.5000bp.rds
 

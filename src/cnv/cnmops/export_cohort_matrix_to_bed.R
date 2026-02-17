@@ -31,8 +31,7 @@ gr <- readRDS(germline_coverage_rds)
 
 if (args$intervals_only) {
   # Export only the intervals without coverage data
-  gr_intervals <- gr
-  mcols(gr_intervals) <- NULL
+  # can't use export.bed since it does not export 3-column BED
   output_file <- "intervals.bed"
   bed3 <- data.frame(
     chrom = as.character(seqnames(gr)),
