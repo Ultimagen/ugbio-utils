@@ -28,6 +28,16 @@ import xgboost as xgb
 from sklearn.metrics import roc_auc_score
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed.variant_annotation import get_cycle_skip_dataframe
+from ugbio_featuremap.filter_dataframe import (
+    KEY_NAME,
+    KEY_TYPE,
+    STAT_ROWS,
+    TYPE_DOWNSAMPLE,
+    TYPE_FUNNEL,
+    TYPE_LABEL,
+    TYPE_QUALITY,
+    TYPE_RAW,
+)
 from ugbio_ppmseq.ppmSeq_utils import (
     MAX_TOTAL_HMER_LENGTHS_IN_LOOPS,
     MIN_TOTAL_HMER_LENGTHS_IN_LOOPS,
@@ -42,6 +52,9 @@ REF = "REF"
 NEXT1 = "X_NEXT1"
 ALT = "ALT"
 REV = "REV"
+
+NUMERATOR = "numerator"
+DENOMINATOR = "denominator"
 
 IS_MIXED = "is_mixed"
 IS_MIXED_START = "is_mixed_start"
@@ -385,7 +398,7 @@ def get_base_recall_from_filters(filters):
     Returns:
         float: Base recall value
     """
-    return get_filter_ratio(filters, denominator_type="quality", numerator_type="label")
+    return get_filter_ratio(filters, denominator_type=TYPE_QUALITY, numerator_type=TYPE_LABEL)
 
 
 def get_base_error_rate_from_filters(filters):
@@ -398,10 +411,10 @@ def get_base_error_rate_from_filters(filters):
     Returns:
         float: Base error rate of low VAF SNVs (rows before downsample / total raw rows)
     """
-    return get_filter_ratio(filters, numerator_filter="downsample", denominator_type="raw")
+    return get_filter_ratio(filters, numerator_filter=TYPE_DOWNSAMPLE, denominator_type=TYPE_RAW)
 
 
-def _find_filter_rows(filters, filter_spec, spec_type, filter_label="numerator"):
+def _find_filter_rows(filters, filter_spec, spec_type, filter_label=NUMERATOR):
     """Helper function to find the number of rows for a filter specification.
 
     Parameters
@@ -419,10 +432,10 @@ def _find_filter_rows(filters, filter_spec, spec_type, filter_label="numerator")
         Number of rows at the appropriate filter.
     """
     # Special case: "raw" means the first filter itself
-    if filter_spec == "raw":
-        if filters[0].get("type") == "raw" or filters[0].get("name") == "raw":
+    if filter_spec == TYPE_RAW:
+        if filters[0].get(KEY_TYPE) == TYPE_RAW or filters[0].get(KEY_NAME) == TYPE_RAW:
             # Try funnel first (new format), then rows (old format)
-            return filters[0].get("funnel", filters[0].get("rows"))
+            return filters[0].get(TYPE_FUNNEL, filters[0].get(STAT_ROWS))
         raise ValueError(f"First filter is not 'raw' (for {filter_label})")
 
     # Find the target filter
@@ -439,15 +452,15 @@ def _find_filter_rows(filters, filter_spec, spec_type, filter_label="numerator")
         raise ValueError(f"Cannot get filter before '{filter_spec}' as it is the first filter (for {filter_label})")
 
     # Try funnel first (new format), then rows (old format)
-    return filters[target_index - 1].get("funnel", filters[target_index - 1].get("rows"))
+    return filters[target_index - 1].get(TYPE_FUNNEL, filters[target_index - 1].get(STAT_ROWS))
 
 
 def get_filter_ratio(
     filters,
     numerator_filter=None,
     denominator_filter=None,
-    numerator_type="label",
-    denominator_type="raw",
+    numerator_type=TYPE_LABEL,
+    denominator_type=TYPE_RAW,
 ):
     """Calculate the ratio of rows between two filters in a filtering pipeline.
 
@@ -512,15 +525,15 @@ def get_filter_ratio(
 
     # Determine numerator rows
     if numerator_filter is not None:
-        numerator_rows = _find_filter_rows(filters, numerator_filter, "name", filter_label="numerator")
+        numerator_rows = _find_filter_rows(filters, numerator_filter, KEY_NAME, filter_label=NUMERATOR)
     else:
-        numerator_rows = _find_filter_rows(filters, numerator_type, "type", filter_label="numerator")
+        numerator_rows = _find_filter_rows(filters, numerator_type, KEY_TYPE, filter_label=NUMERATOR)
 
     # Determine denominator rows
     if denominator_filter is not None:
-        denominator_rows = _find_filter_rows(filters, denominator_filter, "name", filter_label="denominator")
+        denominator_rows = _find_filter_rows(filters, denominator_filter, KEY_NAME, filter_label=DENOMINATOR)
     else:
-        denominator_rows = _find_filter_rows(filters, denominator_type, "type", filter_label="denominator")
+        denominator_rows = _find_filter_rows(filters, denominator_type, KEY_TYPE, filter_label=DENOMINATOR)
 
     if denominator_rows == 0:
         raise ValueError("Denominator filter has 0 rows, cannot calculate ratio")

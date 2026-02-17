@@ -36,6 +36,13 @@ TYPE_LABEL = "label"
 TYPE_MAPPING = "mapping"
 TYPE_DOWNSAMPLE = "downsample"
 TYPE_RAW = "raw"
+TYPE_FUNNEL = "funnel"
+
+# Annotation fields
+FIELD_GNOMAD_AF = "gnomAD_AF"
+FIELD_ID = "ID"
+FIELD_UG_HCR = "UG_HCR"
+
 
 # Downsample methods
 METHOD_HEAD = "head"

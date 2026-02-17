@@ -35,9 +35,14 @@ from ugbio_core.bed_utils import BedUtils
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import (
+    KEY_FILTERS,
     KEY_NAME,
     KEY_TYPE,
+    KEY_VALUES,
+    METHOD_RANDOM,
     TYPE_DOWNSAMPLE,
+    TYPE_FUNNEL,
+    TYPE_PASS,
     TYPE_QUALITY,
     TYPE_RAW,
     TYPE_REGION,
@@ -52,8 +57,6 @@ from ugbio_srsnv.srsnv_utils import (
     safe_roc_auc,
 )
 
-KEY_FUNNEL = "funnel"
-KEY_PASS = "pass"  # noqa: S105
 FOLD_COL = "fold_id"
 LABEL_COL = "label"
 CHROM = FeatureMapFields.CHROM.value
@@ -368,7 +371,7 @@ class SRSNVTrainer:
             for f in st["filters"]:
                 if f.get(KEY_TYPE) in {TYPE_QUALITY, TYPE_REGION}:
                     # Create filter definition without row counts for comparison
-                    filter_def = {k: v for k, v in f.items() if k not in {KEY_FUNNEL, KEY_PASS}}
+                    filter_def = {k: v for k, v in f.items() if k not in {TYPE_FUNNEL, TYPE_PASS}}
                     filters.append(filter_def)
             return filters
 
@@ -384,9 +387,9 @@ class SRSNVTrainer:
 
         # helper: last entry that is *not* a down-sample operation
         def _last_non_downsample_funnel(stats: dict) -> int:
-            for f in reversed(stats["filters"]):
+            for f in reversed(stats[KEY_FILTERS]):
                 if f.get(KEY_TYPE) != TYPE_DOWNSAMPLE:
-                    return f.get(KEY_FUNNEL)
+                    return f.get(TYPE_FUNNEL)
             raise ValueError("stats JSON has no non-downsample filter entry")
 
         # Calculate raw_featuremap_size_filtered
@@ -900,9 +903,9 @@ class SRSNVTrainer:
                 else:
                     entry_type = dt  # keep as-is for other dtypes
 
-            entry = {"name": feat, "type": entry_type}
+            entry = {KEY_NAME: feat, KEY_TYPE: entry_type}
             if feat in self.categorical_encodings:
-                entry["values"] = self.categorical_encodings[feat]
+                entry[KEY_VALUES] = self.categorical_encodings[feat]
             features_meta.append(entry)
 
         # quality recalibration table
@@ -918,25 +921,25 @@ class SRSNVTrainer:
             "name": "downsample",
             "funnel": n_pos,
             "pass": n_pos,
-            "type": "downsample",
-            "method": "random",
+            "type": TYPE_DOWNSAMPLE,
+            "method": METHOD_RANDOM,
             "seed": 0,
         }
         downsample_negative = {
             "name": "downsample",
             "funnel": self.n_neg,
             "pass": self.n_neg,
-            "type": "downsample",
-            "method": "random",
+            "type": TYPE_DOWNSAMPLE,
+            "method": METHOD_RANDOM,
             "seed": 0,
         }
 
         # Remove existing downsample segments and append the new ones
-        self.pos_stats["filters"] = [f for f in self.pos_stats["filters"] if f.get("type") != "downsample"]
-        self.pos_stats["filters"].append(downsample_positive)
+        self.pos_stats[KEY_FILTERS] = [f for f in self.pos_stats[KEY_FILTERS] if f.get(KEY_TYPE) != TYPE_DOWNSAMPLE]
+        self.pos_stats[KEY_FILTERS].append(downsample_positive)
 
-        self.neg_stats["filters"] = [f for f in self.neg_stats["filters"] if f.get("type") != "downsample"]
-        self.neg_stats["filters"].append(downsample_negative)
+        self.neg_stats[KEY_FILTERS] = [f for f in self.neg_stats[KEY_FILTERS] if f.get(KEY_TYPE) != TYPE_DOWNSAMPLE]
+        self.neg_stats[KEY_FILTERS].append(downsample_negative)
 
         # stats and priors
         stats = {

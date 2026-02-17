@@ -62,6 +62,9 @@ import polars as pl
 
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import (
+    FIELD_GNOMAD_AF,
+    FIELD_ID,
+    FIELD_UG_HCR,
     KEY_FIELD,
     KEY_FILTERS,
     KEY_NAME,
@@ -150,8 +153,10 @@ def _load_read_filters(read_filters_json: str | None, read_filter_json_key: str 
         log.info(f"Loaded filter configuration: {json.dumps(result, indent=2)[:500]}...")  # Log first 500 chars
         return result
 
-    except (json.JSONDecodeError, FileNotFoundError) as e:
-        raise RuntimeError(f"Failed to load read filters from {read_filters_json}: {e}") from e
+    except FileNotFoundError as e:
+        raise RuntimeError(f"File not found: {read_filters_json}\n{e}") from e
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Failed to load read filters from {read_filters_json}\n{e}") from e
 
 
 def _apply_id_null_handling(
@@ -187,7 +192,7 @@ def _apply_id_null_handling(
     # Only apply null handling when checking for "." with equality
     if op == "eq" and value == ".":
         log.debug(f"Adding null handling for ID filter: '{filter_name}' (treating null as '.')")
-        return lazy_frame.with_columns((pl.col(col_name) | pl.col("ID").is_null()).alias(col_name))
+        return lazy_frame.with_columns((pl.col(col_name) | pl.col(FIELD_ID).is_null()).alias(col_name))
     # For other comparisons (ne, in, etc.), null values should fail the filter
     return lazy_frame
 
@@ -215,7 +220,7 @@ def _apply_gnomad_null_handling(lazy_frame: pl.LazyFrame, col_name: str, filter_
         Modified lazy frame with updated filter column
     """
     log.debug(f"Adding null handling for gnomAD_AF filter: '{filter_name}'")
-    return lazy_frame.with_columns((pl.col(col_name) | pl.col("gnomAD_AF").is_null()).alias(col_name))
+    return lazy_frame.with_columns((pl.col(col_name) | pl.col(FIELD_GNOMAD_AF).is_null()).alias(col_name))
 
 
 def _apply_ug_hcr_null_handling(lazy_frame: pl.LazyFrame, col_name: str, filter_name: str) -> pl.LazyFrame:
@@ -241,7 +246,7 @@ def _apply_ug_hcr_null_handling(lazy_frame: pl.LazyFrame, col_name: str, filter_
         Modified lazy frame with updated filter column requiring non-null values
     """
     log.debug(f"Adding NOT-null requirement for UG_HCR filter: '{filter_name}'")
-    return lazy_frame.with_columns((pl.col(col_name) & pl.col("UG_HCR").is_not_null()).alias(col_name))
+    return lazy_frame.with_columns((pl.col(col_name) & pl.col(FIELD_UG_HCR).is_not_null()).alias(col_name))
 
 
 def _prepare_filter_config(read_filters: dict | list | None) -> list[dict]:
@@ -330,16 +335,16 @@ def _apply_null_handling_to_filters(
             continue
 
         # gnomAD_AF: include null values (missing = not in gnomAD = rare)
-        if field_name == "gnomAD_AF" and f.get(KEY_TYPE) == TYPE_REGION:
+        if field_name == FIELD_GNOMAD_AF and f.get(KEY_TYPE) == TYPE_REGION:
             lazy_frame = _apply_gnomad_null_handling(lazy_frame, col_name, filter_name)
 
         # ID: VCF uses "." for variants not in dbSNP, but Polars converts "." to null during parsing
         # Need to treat null as "." for ID filters
-        elif field_name == "ID" and f.get(KEY_TYPE) == TYPE_REGION:
+        elif field_name == FIELD_ID and f.get(KEY_TYPE) == TYPE_REGION:
             lazy_frame = _apply_id_null_handling(lazy_frame, col_name, filter_name, f.get(KEY_OP), f.get(KEY_VALUE))
 
         # UG_HCR: require non-null values (null = not in HCR, should be filtered out)
-        elif field_name == "UG_HCR" and f.get(KEY_TYPE) == TYPE_REGION and f.get(KEY_OP) == "ne":
+        elif field_name == FIELD_UG_HCR and f.get(KEY_TYPE) == TYPE_REGION and f.get(KEY_OP) == "ne":
             lazy_frame = _apply_ug_hcr_null_handling(lazy_frame, col_name, filter_name)
 
     return lazy_frame
@@ -483,6 +488,7 @@ def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -
         # Extract and validate filter configuration
         filters_to_apply = _prepare_filter_config(read_filters)
         if not filters_to_apply:
+            log.info("No read filters provided - skipping filter step")
             return frame
 
         log.debug(f"Applying {len(filters_to_apply)} filters to dataframe with {frame.height:,} rows")
@@ -833,22 +839,24 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, E501
         empty_df.write_parquet(output_path)
         return
 
-    log.debug(f"Recieved paruqet files: {parquet_files}")
+    log.debug(f"Received {len(parquet_files)} parquet files: {','.join(parquet_files)}")
     if len(parquet_files) == 1:
         log.debug("Only one Parquet file present - skipping merge")
         if downsample_reads is None:
             shutil.move(parquet_files[0], output_path)
         else:
             # Need to collect to check height
-            parquet_dataframe = pl.read_parquet(parquet_files[0])
-            if parquet_dataframe.height <= downsample_reads:
+            dataframe_size = pl.scan_parquet(parquet_files[0]).select(pl.len()).collect().item()
+            if dataframe_size <= downsample_reads:
                 log.debug(
-                    f"Dataset has {parquet_dataframe.height} rows, which is <= requested {downsample_reads} - keeping all rows"  # noqa E501
+                    f"Dataset has {dataframe_size} rows, which is <= requested {downsample_reads} - keeping all rows"  # noqa E501
                 )
-                parquet_dataframe.write_parquet(output_path)
+                shutil.move(parquet_files[0], output_path)
             else:
-                log.info(f"Sampling {downsample_reads} rows from {parquet_dataframe.height} total rows")
-                parquet_dataframe.sample(n=downsample_reads, seed=downsample_seed).write_parquet(output_path)
+                log.info(f"Sampling {downsample_reads} rows from {dataframe_size} total rows")
+                pl.read_parquet(parquet_files[0]).sample(n=downsample_reads, seed=downsample_seed).write_parquet(
+                    output_path
+                )
             Path(parquet_files[0]).unlink(missing_ok=True)
         return
 
@@ -857,14 +865,8 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, E501
     # Use lazy scanning and streaming write for memory efficiency
     lazy_frames = [pl.scan_parquet(f) for f in parquet_files]
 
-    try:  # TODO remove this block
-        lazy_frames_size = [frame.select(pl.len()).collect().item() for frame in lazy_frames]
-        log.debug(f"Individual Parquet file sizes (rows): {lazy_frames_size}")
-        lazy_frames_head = [frame.head(3).collect() for frame in lazy_frames]
-        for i, head in enumerate(lazy_frames_head):
-            log.debug(f"Parquet file {i} head:\n{head}")
-    except Exception as e:
-        log.warning(f"Could not determine individual Parquet file sizes: {e}")
+    lazy_frames_size = [frame.select(pl.len()).collect().item() for frame in lazy_frames]
+    log.debug(f"Individual Parquet file sizes (rows): {', '.join(map(str, lazy_frames_size))}")
 
     # Concatenate all lazy frames
     merged_lazy = pl.concat(lazy_frames, how="vertical")
@@ -1152,11 +1154,13 @@ def _execute_parallel_conversion(
             spawn_ctx=spawn_ctx,
         )
         if not part_files:
-            log.error("No Parquet part-files were produced")
-            log.error("This could mean:")
-            log.error("  1. All regions were empty (no variants in the VCF)")
-            log.error("  2. All data was filtered out by read filters")
-            log.error("  3. All regions failed to process (check errors above)")
+            log.error(
+                "No Parquet part-files were produced\n"
+                "This could mean:\n"
+                "  1. All regions were empty (no variants in the VCF)\n"
+                "  2. All data was filtered out by read filters\n"
+                "  3. All regions failed to process (check errors above)"
+            )
             if read_filters:
                 log.error("")
                 log.error("Read filters were applied. Check if filters are too strict:")
@@ -1234,11 +1238,12 @@ def vcf_to_parquet(
 
     with pl.StringCache():
         # Load read filters if provided
-        read_filters = _load_read_filters(read_filters_json, read_filter_json_key)
-        if read_filters:
+        read_filters = None
+        if read_filters_json:
+            read_filters = _load_read_filters(read_filters_json, read_filter_json_key)
             log.info(f"Loaded read filters from {read_filters_json}")
-            if "filters" in read_filters:
-                log.info(f"Filter configuration contains {len(read_filters['filters'])} filter rules")
+            if KEY_FILTERS in read_filters:
+                log.info(f"Filter configuration contains {len(read_filters[KEY_FILTERS])} filter rules")
 
         # Generate genomic regions (fixed windows via bedtools)
         regions = _generate_genomic_regions(
@@ -1448,26 +1453,18 @@ def _stream_region_to_polars(
         list_indices=job_cfg.list_indices,
     )
 
-    # Count raw TSV lines to detect truncation
-    # Note: After strip(), a non-empty string with N lines has N-1 newlines
-    tsv_lines = (tsv.count("\n") + 1) if tsv else 0
-
     frame = _frame_from_tsv(tsv, cols=job_cfg.columns, schema=job_cfg.schema)
     if frame.is_empty():
+        # Count raw TSV lines to detect truncation (only when there's a problem)
+        # Note: After strip(), a non-empty string with N lines has N-1 newlines
+        tsv_lines = (tsv.count("\n") + 1) if tsv else 0
         if tsv_lines > 0:
             log.warning(
                 f"Region {region}: AWK produced {tsv_lines} TSV lines but DataFrame is empty - possible parsing error"
             )
         return frame
 
-    # Check if TSV lines match DataFrame rows (should be equal for valid data)
-    if tsv_lines != frame.height:
-        log.warning(
-            f"Region {region}: TSV lines ({tsv_lines}) != DataFrame rows ({frame.height}) - "
-            f"possible truncation or parsing issue"
-        )
-
-    log.debug(f"Region {region}: AWK produced {tsv_lines} TSV lines → {frame.height:,} DataFrame rows")
+    log.debug(f"Region {region}: {frame.height:,} DataFrame rows")
     return _cast_column_data_types(frame, job_cfg)
 
 
