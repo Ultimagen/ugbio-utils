@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_utils"
-version = "1.21.0-0"
+version = "1.21.0"
 description = "Ultima Genomics bioinfo utils"
 authors = [
     { name = "Avigail Moldovam ", email = "avigail.moldovan@ultimagen.com" },
