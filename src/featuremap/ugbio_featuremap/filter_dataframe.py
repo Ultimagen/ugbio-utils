@@ -36,6 +36,14 @@ TYPE_LABEL = "label"
 TYPE_MAPPING = "mapping"
 TYPE_DOWNSAMPLE = "downsample"
 TYPE_RAW = "raw"
+TYPE_FUNNEL = "funnel"
+TYPE_PASS = "pass"  # noqa: S105
+
+# Annotation fields
+FIELD_GNOMAD_AF = "gnomAD_AF"
+FIELD_ID = "ID"
+FIELD_UG_HCR = "UG_HCR"
+
 
 # Downsample methods
 METHOD_HEAD = "head"
@@ -318,7 +326,7 @@ def _create_filter_columns(
     """Create binary columns for each filter."""
     filter_cols = []
 
-    logger.info(f"Creating binary columns for {len(filters)} filters")
+    logger.debug(f"Creating binary columns for {len(filters)} filters")
 
     for rule in filters:
         name = rule.get(KEY_NAME) or f"{rule[KEY_FIELD]}_{rule[KEY_OP]}"
@@ -342,7 +350,7 @@ def _create_downsample_column(
     if KEY_DOWNSAMPLE not in cfg:
         return featuremap_dataframe, None
 
-    logger.info("Creating downsample column")
+    logger.debug("Creating downsample column")
 
     # Create combined filter mask
     all_filters_mask = pl.all_horizontal(filter_cols)
@@ -394,7 +402,7 @@ def _create_final_filter_column(
     downsample_col: str | None,
 ) -> pl.LazyFrame:
     """Create final AND column combining all filters."""
-    logger.info("Creating final filter column combining all filters")
+    logger.debug("Creating final filter column combining all filters")
 
     # For the final column, treat None in downsample as True if downsample doesn't exist
     if downsample_col:
@@ -414,7 +422,7 @@ def _calculate_statistics(
     cfg: dict[str, Any],
 ) -> dict[str, Any]:
     """Calculate filter statistics using binary columns."""
-    logger.info("Calculating filter statistics")
+    logger.debug("Calculating filter statistics")
 
     # Funnel statistics
     funnel = [(STAT_RAW, total_rows)]
@@ -443,12 +451,12 @@ def _calculate_statistics(
         single_effect[name] = count
 
     # Combination statistics
-    logger.info("Calculating combination statistics")
+    logger.debug("Calculating combination statistics")
 
     if len(filter_cols) == 0:
         combos: dict[str, int] = {}
     elif len(filter_cols) > MAX_COMBINATION_FILTERS:
-        logger.info(
+        logger.debug(
             "Skipping combination statistics: %d filters > %d",
             len(filter_cols),
             MAX_COMBINATION_FILTERS,
@@ -598,20 +606,20 @@ def filter_parquet(
       * Combination statistics show all unique pass/fail patterns across filters
     - Binary filter columns in out_path_full are prefixed with "__filter_".
     """
-    logger.info(f"Starting filter_parquet: input={in_path}")
+    logger.debug(f"Starting filter_parquet: input={in_path}")
 
     # Merge config from file and CLI arguments
     cfg = _merge_config_and_cli(cfg_path, cli_filters, cli_downsample)
 
     validate_filter_config(cfg)
-    logger.info(f"Configuration has {len(cfg[KEY_FILTERS])} filters")
+    logger.debug(f"Configuration has {len(cfg[KEY_FILTERS])} filters")
 
     # Create lazy frame for efficient processing
     featuremap_dataframe = pl.scan_parquet(in_path)
 
     # Get total row count from lazy frame
     total_rows = featuremap_dataframe.select(pl.len()).collect().item()
-    logger.info(f"Total rows in input: {total_rows:,}")
+    logger.debug(f"Total rows in input: {total_rows:,}")
 
     # Create filter columns
     featuremap_dataframe, filter_cols = _create_filter_columns(featuremap_dataframe, cfg[KEY_FILTERS])
@@ -628,7 +636,7 @@ def filter_parquet(
     # Write outputs
     if out_path:
         pl.Config.set_streaming_chunk_size(100_000)
-        logger.info(f"Writing filtered output to {out_path}")
+        logger.debug(f"Writing filtered output to {out_path}")
         (
             featuremap_dataframe.filter(pl.col(COL_FILTER_FINAL))
             .select(pl.exclude(f"^{COL_PREFIX_FILTER}.*$"))
@@ -637,21 +645,21 @@ def filter_parquet(
 
         # Get row count for logging
         written_rows = pl.scan_parquet(out_path).select(pl.len()).collect().item()
-        logger.info(f"Wrote filtered data: {written_rows:,} rows ({out_path})")
+        logger.debug(f"Wrote filtered data: {written_rows:,} rows ({out_path})")
 
     if out_path_full:
-        logger.info(f"Writing full output with filter columns to {out_path_full}")
+        logger.debug(f"Writing full output with filter columns to {out_path_full}")
         featuremap_dataframe.sink_parquet(out_path_full)
 
         # Get row count for logging
         full_rows = pl.scan_parquet(out_path_full).select(pl.len()).collect().item()
-        logger.info(f"Wrote full data with filters: {full_rows:,} rows ({out_path_full})")
-        logger.info(pl.read_parquet(out_path_full).select(f"^{COL_PREFIX_FILTER}.*$").sum())  # TODO remove this line
+        logger.debug(f"Wrote full data with filters: {full_rows:,} rows ({out_path_full})")
+        logger.debug(pl.read_parquet(out_path_full).select(f"^{COL_PREFIX_FILTER}.*$").sum())  # TODO remove this line
 
     # Write statistics
     with open(stats_path, "w") as f:
         json.dump(stats, f, indent=2)
-    logger.info(f"Wrote statistics to {stats_path}")
+    logger.debug(f"Wrote statistics to {stats_path}")
 
 
 def _build_cli() -> argparse.ArgumentParser:

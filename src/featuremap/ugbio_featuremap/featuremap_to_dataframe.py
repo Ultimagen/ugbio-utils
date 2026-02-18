@@ -44,6 +44,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import multiprocessing as _mp  # NEW
 import os
@@ -145,6 +146,104 @@ class VCFJobConfig:
     column_config: ColumnConfig
     sample_list: list[str]
     log_level: int
+    read_filters: dict | None = None  # Filter configuration from JSON file
+
+
+def _load_read_filters(read_filters_json: str | None, read_filter_json_key: str | None = None) -> dict | None:
+    """
+    Load read filters from JSON file.
+
+    Parameters
+    ----------
+    read_filters_json : str | None
+        Path to JSON file containing read filters
+    read_filter_json_key : str | None
+        Specific key in the JSON file to extract filters from.
+        If None, uses the entire JSON content.
+
+    Returns
+    -------
+    dict | None
+        Filter configuration dictionary or None if no filters provided
+    """
+    if not read_filters_json:
+        return None
+
+    log.info(f"Loading read filters from: {read_filters_json}")
+    try:
+        with open(read_filters_json) as f:
+            filter_data = json.load(f)
+
+        if read_filter_json_key:
+            log.info(f"Extracting filters from key: '{read_filter_json_key}'")
+            if read_filter_json_key not in filter_data:
+                raise ValueError(f"Key '{read_filter_json_key}' not found in filter JSON file {read_filters_json}")
+            return filter_data[read_filter_json_key]
+        return filter_data
+
+    except FileNotFoundError as e:
+        raise RuntimeError(f"File not found: {read_filters_json}\n{e}") from e
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Failed to load read filters from {read_filters_json}\n{e}") from e
+
+
+def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -> pl.DataFrame:
+    """
+    Apply read filters to a dataframe using the existing filter framework.
+
+    Parameters
+    ----------
+    frame : pl.DataFrame
+        Input dataframe to filter
+    read_filters : dict | list | None
+        Filter configuration in the same format as used by filter_dataframe.py
+
+    Returns
+    -------
+    pl.DataFrame
+        Filtered dataframe containing only reads that pass all filters
+    """
+    if not read_filters or frame.is_empty():
+        return frame
+
+    try:
+        from ugbio_featuremap.filter_dataframe import (
+            _create_filter_columns,
+            _create_final_filter_column,
+            validate_filter_config,
+        )
+    except ImportError as e:
+        log.warning(f"Could not import filtering functions: {e}. Skipping read filters.")
+        return frame
+
+    try:
+        # Handle both dict and list formats
+        if isinstance(read_filters, list):
+            all_filters = read_filters
+        else:
+            all_filters = read_filters.get("filters", [])
+
+        # Exclude 'raw' and 'downsample' entries
+        filters_to_apply = [f for f in all_filters if f.get("type") not in {"raw", "downsample"}]
+
+        if not filters_to_apply:
+            log.debug("No applicable filters found")
+            return frame
+
+        filter_config = {"filters": filters_to_apply}
+        validate_filter_config(filter_config)
+
+        lazy_frame = frame.lazy()
+        lazy_frame, filter_cols = _create_filter_columns(lazy_frame, filters_to_apply)
+        lazy_frame = _create_final_filter_column(lazy_frame, filter_cols, None)
+        filtered_frame = lazy_frame.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$")).collect()
+
+        log.debug(f"Read filtering: {frame.height:,} → {filtered_frame.height:,} reads")
+        return filtered_frame
+
+    except Exception as e:
+        log.warning(f"Error applying read filters: {e}. Returning unfiltered data.")
+        return frame
 
 
 # ───────────────── header helpers ────────────────────────────────────────────
@@ -448,9 +547,26 @@ def _get_awk_script_path(mode: str = "explode") -> str:
     raise FileNotFoundError(f"AWK script not found: {awk_script}")
 
 
-def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> None:
+def _merge_parquet_files_lazy(  # noqa: PLR0912
+    parquet_files: list[str],
+    output_path: str,
+    downsample_reads: int | None = None,
+    downsample_seed: int | None = None,
+) -> None:
     """
     Merge multiple Parquet files using Polars lazy evaluation for memory efficiency.
+
+    Parameters
+    ----------
+    parquet_files : list[str]
+        List of parquet file paths to merge
+    output_path : str
+        Output path for merged parquet file
+    downsample_reads : int | None
+        If specified, downsample to this number of reads. If the total number of reads
+        is less than this value, all reads are returned.
+    downsample_seed : int | None
+        Random seed for downsampling (optional, for reproducibility)
     """
     if not parquet_files:
         log.warning("No Parquet files to merge - creating empty output file")
@@ -459,10 +575,25 @@ def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> Non
         empty_df.write_parquet(output_path)
         return
 
+    log.debug(f"Received {len(parquet_files)} parquet files: {','.join(parquet_files)}")
     if len(parquet_files) == 1:
-        # Single file - just move it
-        log.debug(f"Single  sample file, moving to output: {output_path}")
-        shutil.move(parquet_files[0], output_path)
+        log.debug("Only one Parquet file present - skipping merge")
+        if downsample_reads is None:
+            shutil.move(parquet_files[0], output_path)
+        else:
+            # Need to collect to check height
+            dataframe_size = pl.scan_parquet(parquet_files[0]).select(pl.len()).collect().item()
+            if dataframe_size <= downsample_reads:
+                log.debug(
+                    f"Dataset has {dataframe_size} rows, which is <= requested {downsample_reads} - keeping all rows"
+                )
+                shutil.move(parquet_files[0], output_path)
+            else:
+                log.info(f"Sampling {downsample_reads} rows from {dataframe_size} total rows")
+                pl.read_parquet(parquet_files[0]).sample(n=downsample_reads, seed=downsample_seed).write_parquet(
+                    output_path
+                )
+            Path(parquet_files[0]).unlink(missing_ok=True)
         return
 
     log.info(f"Merging {len(parquet_files)} Parquet part-file(s) into final output")
@@ -474,12 +605,28 @@ def _merge_parquet_files_lazy(parquet_files: list[str], output_path: str) -> Non
     # Use lazy scanning and streaming write for memory efficiency
     lazy_frames = [pl.scan_parquet(f) for f in parquet_files]
 
+    lazy_frames_size = [frame.select(pl.len()).collect().item() for frame in lazy_frames]
+    log.debug(f"Individual Parquet file sizes (rows): {', '.join(map(str, lazy_frames_size))}")
+
     # Concatenate all lazy frames
     merged_lazy = pl.concat(lazy_frames, how="vertical")
 
-    # Stream write to final output
-    log.debug(f"Writing merged Parquet to: {output_path}")
-    merged_lazy.sink_parquet(output_path)
+    # Apply downsampling if requested
+    if downsample_reads is None:
+        # Stream write to final output
+        log.debug(f"Writing merged Parquet to: {output_path}")
+        merged_lazy.sink_parquet(output_path)
+    else:
+        # Need to collect to check height and perform sampling
+        merged_df = merged_lazy.collect()
+        if merged_df.height <= downsample_reads:
+            log.debug(
+                f"Dataset has {merged_df.height} rows, which is <= requested {downsample_reads} - keeping all rows"
+            )
+            merged_df.write_parquet(output_path)
+        else:
+            log.info(f"Sampling {downsample_reads} rows from {merged_df.height} total rows")
+            merged_df.sample(n=downsample_reads, seed=downsample_seed).write_parquet(output_path)
 
     # Clean up temporary files
     for f in parquet_files:
@@ -756,7 +903,7 @@ def _drop_fields(
     return info_meta, fmt_meta
 
 
-def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
+def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
     vcf: str,
     out: str,
     drop_info: set[str] | None = None,
@@ -766,6 +913,10 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
     list_mode: str = "explode",
     log_level: int = logging.INFO,
     expand_columns: dict[str, int] | None = None,
+    read_filters_json: str | None = None,
+    read_filter_json_key: str | None = None,
+    downsample_reads: int | None = None,
+    downsample_seed: int | None = None,
 ) -> None:
     """
     Convert VCF to Parquet using region-based parallel processing.
@@ -799,6 +950,10 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
         Mapping of list-type FORMAT field names to their expand sizes. In aggregate mode,
         these columns are expanded into indexed columns (e.g., {"AD": 2} produces
         AD_0, AD_1) instead of being aggregated. Only used when list_mode="aggregate".
+    read_filters_json : str | None
+        Path to JSON file containing read filters
+    read_filter_json_key : str | None
+        Key in JSON file for read filters (uses entire JSON if None)
     """
     log.info(f"Input: {vcf}")
     log.info(f"Output: {out}")
@@ -900,6 +1055,9 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
         log.info(f"Created {len(regions)} regions for parallel processing")
         log.debug(f"First 5 regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")  # noqa PLR2004
 
+        # Load read filters if provided
+        read_filters = _load_read_filters(read_filters_json, read_filter_json_key)
+
         # Build immutable job configuration (shared by every worker)
         # Build column configuration
         col_cfg = ColumnConfig(
@@ -923,6 +1081,7 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
             column_config=col_cfg,
             sample_list=sample_list,
             log_level=log_level,
+            read_filters=read_filters,
         )
 
         # Temporary directory for ordered part-files
@@ -940,7 +1099,7 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912
             if not part_files:
                 raise RuntimeError("No Parquet part-files were produced – all regions empty or failed")
 
-            _merge_parquet_files_lazy(part_files, out)
+            _merge_parquet_files_lazy(part_files, out, downsample_reads, downsample_seed)
 
         log.info(f"Conversion completed: {out}")
 
@@ -990,6 +1149,15 @@ def _process_region_to_parquet(
             if frame.is_empty():
                 log.debug(f"Region {region} contains no data, skipping")
                 return ""
+
+            # Apply read filters if configured
+            frame = _apply_read_filters(frame, job_cfg.read_filters)
+
+            # Skip writing if no reads remain after filtering
+            if frame.is_empty():
+                log.debug(f"Region {region}: no reads remain after filtering, skipping")
+                return ""
+
             log.debug(f"Region {region}: {frame.height} rows, writing to {output_file}")
             frame.write_parquet(output_file)
             return output_file
@@ -1308,6 +1476,10 @@ def main(argv: list[str] | None = None) -> None:
             "Format: COL:SIZE, e.g., 'AD:2' expands AD into AD_0, AD_1."
         ),
     )
+    parser.add_argument("--read_filters_json", required=False, default=None, help="JSON file with read filters")
+    parser.add_argument(
+        "--read_filter_json_key", required=False, default=None, help="Key in JSON file for read filters"
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     args = parser.parse_args(argv)
 
@@ -1338,6 +1510,8 @@ def main(argv: list[str] | None = None) -> None:
         list_mode=args.list_mode,
         log_level=log_level,
         expand_columns=expand_columns,
+        read_filters_json=args.read_filters_json,
+        read_filter_json_key=args.read_filter_json_key,
     )
 
 

@@ -40,6 +40,7 @@ from ugbio_srsnv.srsnv_utils import (
     MAX_PHRED,
     ST,
     ST_FILLNA,
+    add_is_mixed_to_featuremap_df,
     construct_trinuc_context_with_alt,
     get_base_recall_from_filters,
     phred_to_prob,
@@ -1505,7 +1506,11 @@ class SRSNVReport:
         if not isinstance(models, list):
             raise TypeError(f"models should be a list of models, got {type(models)=}")
         for k, model in enumerate(models):
-            if not sklearn.base.is_classifier(model):
+            # Check if it's a classifier (either sklearn or xgboost)
+            is_valid_classifier = sklearn.base.is_classifier(model) or (
+                hasattr(model, "predict_proba") and hasattr(model, "__class__") and "XGB" in model.__class__.__name__
+            )
+            if not is_valid_classifier:
                 raise ValueError(f"model {model} (fold {k}) is not a classifier, please provide a classifier model")
         if not isinstance(data_df, pd.DataFrame):
             raise TypeError("df is not a DataFrame, please provide a DataFrame")
@@ -1542,6 +1547,16 @@ class SRSNVReport:
         if IS_FORWARD not in self.data_df.columns and REV in self.data_df.columns:
             logger.info(f"Adding {IS_FORWARD} column to data_df as negation of {REV}")
             self.data_df.loc[:, IS_FORWARD] = self.data_df[REV].astype(int) != 1
+
+        # Add is_mixed columns if they don't exist
+        if IS_MIXED not in self.data_df.columns:
+            logger.info(f"Adding {IS_MIXED}, {IS_MIXED_START}, and {IS_MIXED_END} columns to data_df")
+
+            adapter_version = self.params.get("adapter_version", None)
+            categorical_features = [f["name"] for f in self.srsnv_metadata["features"] if f.get("type") == "c"]
+            self.data_df = add_is_mixed_to_featuremap_df(
+                self.data_df, adapter_version=adapter_version, categorical_features_names=categorical_features
+            )
 
         # add logits to data_df
         self.data_df[ML_LOGIT_TEST] = prob_to_logit(
