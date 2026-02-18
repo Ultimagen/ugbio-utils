@@ -125,6 +125,11 @@ def test_downsample_segments_added_to_metadata(tmp_path: Path, resources_dir: Pa
         max_qual=100.0,
         quality_lut_size=100,
         metadata=None,
+        use_gpu=False,
+        use_float32=False,
+        use_kde_smoothing=False,
+        transform_mode="logit",
+        mqual_cutoff_quantile=0.99,
     )
 
     # Initialize and run trainer

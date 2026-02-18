@@ -51,6 +51,8 @@ def test_recalibration_columns(tmp_path):
         use_kde_smoothing=False,
         use_gpu=False,
         use_float32=False,
+        transform_mode="logit",
+        mqual_cutoff_quantile=0.99,
     )
 
     # Create trainer and load the data

@@ -63,6 +63,24 @@ import pysam
 from ugbio_core.logger import logger as log
 
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
+from ugbio_featuremap.filter_dataframe import (
+    FIELD_GNOMAD_AF,
+    FIELD_ID,
+    FIELD_UG_HCR,
+    KEY_FIELD,
+    KEY_FILTERS,
+    KEY_NAME,
+    KEY_OP,
+    KEY_TYPE,
+    KEY_VALUE,
+    KEY_VALUE_FIELD,
+    TYPE_DOWNSAMPLE,
+    TYPE_RAW,
+    TYPE_REGION,
+    _create_filter_columns,
+    _create_final_filter_column,
+    validate_filter_config,
+)
 
 # Configuration constants
 DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
@@ -167,6 +185,7 @@ def _load_read_filters(read_filters_json: str | None, read_filter_json_key: str 
         Filter configuration dictionary or None if no filters provided
     """
     if not read_filters_json:
+        log.debug("No read_filters_json provided")
         return None
 
     log.info(f"Loading read filters from: {read_filters_json}")
@@ -178,13 +197,309 @@ def _load_read_filters(read_filters_json: str | None, read_filter_json_key: str 
             log.info(f"Extracting filters from key: '{read_filter_json_key}'")
             if read_filter_json_key not in filter_data:
                 raise ValueError(f"Key '{read_filter_json_key}' not found in filter JSON file {read_filters_json}")
-            return filter_data[read_filter_json_key]
-        return filter_data
+            result = filter_data[read_filter_json_key]
+        else:
+            log.info("Using entire JSON file content as filters")
+            result = filter_data
+
+        log.info(f"Loaded filter configuration: {json.dumps(result, indent=2)[:500]}...")
+        return result
 
     except FileNotFoundError as e:
         raise RuntimeError(f"File not found: {read_filters_json}\n{e}") from e
     except json.JSONDecodeError as e:
         raise RuntimeError(f"Failed to load read filters from {read_filters_json}\n{e}") from e
+
+
+def _apply_id_null_handling(
+    lazy_frame: pl.LazyFrame, col_name: str, filter_name: str, op: str, value: str
+) -> pl.LazyFrame:
+    """
+    Apply special null handling for ID filters.
+
+    In VCF files, variants not in dbSNP have ID = ".". However, Polars converts
+    "." to null during TSV parsing (via null_values=["."]).
+
+    For ID filters checking for "." (not in dbSNP), we need to treat null values
+    as passing the filter, since null means the original value was ".".
+
+    Parameters
+    ----------
+    lazy_frame : pl.LazyFrame
+        The lazy frame containing the filter column
+    col_name : str
+        The name of the filter column to modify
+    filter_name : str
+        The name of the filter for logging
+    op : str
+        The operation (e.g., "eq")
+    value : str
+        The value being compared (e.g., ".")
+
+    Returns
+    -------
+    pl.LazyFrame
+        Modified lazy frame with updated filter column
+    """
+    if op == "eq" and value == ".":
+        log.debug(f"Adding null handling for ID filter: '{filter_name}' (treating null as '.')")
+        return lazy_frame.with_columns((pl.col(col_name) | pl.col(FIELD_ID).is_null()).alias(col_name))
+    return lazy_frame
+
+
+def _apply_gnomad_null_handling(lazy_frame: pl.LazyFrame, col_name: str, filter_name: str) -> pl.LazyFrame:
+    """
+    Apply special null handling for gnomAD_AF filters.
+
+    In VCF files, variants not present in gnomAD have null/missing gnomAD_AF values.
+    For filtering purposes, missing gnomAD_AF should be treated as rare (passing the filter).
+    This function modifies the filter column to include null values as passing.
+
+    Parameters
+    ----------
+    lazy_frame : pl.LazyFrame
+        The lazy frame containing the filter column
+    col_name : str
+        The name of the filter column to modify
+    filter_name : str
+        The name of the filter for logging
+
+    Returns
+    -------
+    pl.LazyFrame
+        Modified lazy frame with updated filter column
+    """
+    log.debug(f"Adding null handling for gnomAD_AF filter: '{filter_name}'")
+    return lazy_frame.with_columns((pl.col(col_name) | pl.col(FIELD_GNOMAD_AF).is_null()).alias(col_name))
+
+
+def _apply_ug_hcr_null_handling(lazy_frame: pl.LazyFrame, col_name: str, filter_name: str) -> pl.LazyFrame:
+    """
+    Apply special null handling for UG_HCR filters.
+
+    For UG_HCR (Ultimagen High Confidence Region), null values indicate the variant
+    is NOT in the HCR and should be filtered out. This function ensures only
+    non-null TRUE values pass the filter.
+
+    Parameters
+    ----------
+    lazy_frame : pl.LazyFrame
+        The lazy frame containing the filter column
+    col_name : str
+        The name of the filter column to modify
+    filter_name : str
+        The name of the filter for logging
+
+    Returns
+    -------
+    pl.LazyFrame
+        Modified lazy frame with updated filter column requiring non-null values
+    """
+    log.debug(f"Adding NOT-null requirement for UG_HCR filter: '{filter_name}'")
+    return lazy_frame.with_columns((pl.col(col_name) & pl.col(FIELD_UG_HCR).is_not_null()).alias(col_name))
+
+
+def _prepare_filter_config(read_filters: dict | list | None) -> list[dict]:
+    """
+    Extract and validate filter configuration from input.
+
+    Parameters
+    ----------
+    read_filters : dict | list | None
+        Filter configuration in various formats
+
+    Returns
+    -------
+    list[dict]
+        List of validated filter dictionaries, excluding raw/downsample filters
+
+    Raises
+    ------
+    RuntimeError
+        If filter validation fails
+    """
+    if isinstance(read_filters, list):
+        all_filters = read_filters
+    else:
+        all_filters = read_filters.get(KEY_FILTERS, [])
+
+    filters_to_apply = [f for f in all_filters if f.get(KEY_TYPE) not in {TYPE_RAW, TYPE_DOWNSAMPLE}]
+
+    if not filters_to_apply:
+        log.debug("No applicable filters found (only raw/downsample filters present)")
+        return []
+
+    log.debug(f"Filters to apply ({len(filters_to_apply)}):")
+    for i, f in enumerate(filters_to_apply):
+        log.debug(
+            f"  {i+1}. {f.get(KEY_NAME, 'unnamed')}: {f.get(KEY_FIELD)} {f.get(KEY_OP)} "
+            f"{f.get(KEY_VALUE, f.get(KEY_VALUE_FIELD, 'N/A'))}"
+        )
+
+    filter_config = {KEY_FILTERS: filters_to_apply}
+    try:
+        validate_filter_config(filter_config)
+    except Exception as e:
+        filter_names = [f.get(KEY_NAME, f.get(KEY_TYPE, "unnamed")) for f in filters_to_apply]
+        log.error(f"FATAL: Filter validation failed. Filters: {filter_names}")
+        log.error(f"Validation error: {e}")
+        raise RuntimeError(f"Filter validation failed for filters {filter_names}: {e}") from e
+
+    return filters_to_apply
+
+
+def _apply_null_handling_to_filters(
+    lazy_frame: pl.LazyFrame, filters_to_apply: list[dict], filter_cols: list[str], available_cols: list[str]
+) -> pl.LazyFrame:
+    """
+    Apply special null-handling logic for specific fields.
+
+    This ensures records with missing values are handled correctly per field semantics:
+    - gnomAD_AF: null = not in gnomAD = rare (should pass filter)
+    - ID: null = "." in VCF = not in dbSNP (special handling)
+    - UG_HCR: null = not in HCR (should fail filter)
+
+    Parameters
+    ----------
+    lazy_frame : pl.LazyFrame
+        The lazy frame with filter columns
+    filters_to_apply : list[dict]
+        List of filter configurations
+    filter_cols : list[str]
+        List of filter column names
+    available_cols : list[str]
+        List of columns available in the dataframe
+
+    Returns
+    -------
+    pl.LazyFrame
+        Lazy frame with updated filter columns
+    """
+    for f in filters_to_apply:
+        field_name = f.get(KEY_FIELD, "")
+        filter_name = f.get(KEY_NAME, f"{field_name}_filter")
+        col_name = f"__filter_{filter_name}"
+
+        if col_name not in filter_cols:
+            continue
+
+        # Only apply null handling if the field exists in the dataframe
+        if field_name not in available_cols:
+            log.debug(f"Skipping null handling for {field_name}: column not present in dataframe")
+            continue
+
+        if field_name == FIELD_GNOMAD_AF and f.get(KEY_TYPE) == TYPE_REGION:
+            lazy_frame = _apply_gnomad_null_handling(lazy_frame, col_name, filter_name)
+
+        elif field_name == FIELD_ID and f.get(KEY_TYPE) == TYPE_REGION:
+            lazy_frame = _apply_id_null_handling(lazy_frame, col_name, filter_name, f.get(KEY_OP), f.get(KEY_VALUE))
+
+        elif field_name == FIELD_UG_HCR and f.get(KEY_TYPE) == TYPE_REGION and f.get(KEY_OP) == "ne":
+            lazy_frame = _apply_ug_hcr_null_handling(lazy_frame, col_name, filter_name)
+
+    return lazy_frame
+
+
+def _log_filter_statistics(df_with_filters: pl.DataFrame, filter_cols: list[str]) -> None:
+    """
+    Log per-filter statistics showing pass/fail counts.
+
+    Parameters
+    ----------
+    df_with_filters : pl.DataFrame
+        DataFrame with filter columns
+    filter_cols : list[str]
+        List of filter column names to report on
+    """
+    log.debug(f"Filter statistics for region (total rows: {df_with_filters.height:,}):")
+    for col in filter_cols:
+        if col in df_with_filters.columns:
+            pass_count = df_with_filters[col].sum()
+            fail_count = df_with_filters.height - pass_count
+            pct = 100.0 * pass_count / df_with_filters.height if df_with_filters.height > 0 else 0
+            log.debug(f"  {col}: {pass_count:,} pass ({pct:.1f}%) / {fail_count:,} fail")
+
+
+def _execute_filters_with_diagnostics(
+    df_final: pl.DataFrame, filters_to_apply: list[dict], frame: pl.DataFrame
+) -> pl.DataFrame:
+    """
+    Execute final filtering with diagnostic error handling.
+
+    If filtering fails, test each filter individually to identify the problematic one.
+
+    Parameters
+    ----------
+    df_final : pl.DataFrame
+        DataFrame with __filter_final column
+    filters_to_apply : list[dict]
+        List of filter configurations for diagnostic purposes
+    frame : pl.DataFrame
+        Original frame for diagnostic testing
+
+    Returns
+    -------
+    pl.DataFrame
+        Filtered dataframe with filter columns removed
+
+    Raises
+    ------
+    RuntimeError
+        If filter execution fails
+    """
+    try:
+        return df_final.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$"))
+    except Exception as e:
+        log.error(f"Error during filter execution: {e}")
+        log.error("Testing each filter individually to identify the problematic filter...")
+
+        problematic_filter = None
+        for i, f in enumerate(filters_to_apply):
+            filter_name = f.get(KEY_NAME, "unnamed")
+            filter_type = f.get(KEY_TYPE, "unknown")
+            try:
+                test_lazy = frame.lazy()
+                test_lazy, test_cols = _create_filter_columns(test_lazy, [f])
+                test_lazy = _create_final_filter_column(test_lazy, test_cols, None)
+                _ = test_lazy.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$")).collect()
+                log.debug(
+                    f"  ✓ Filter {i + 1}/{len(filters_to_apply)}: {filter_name} (type={filter_type}) - EXECUTED OK"
+                )
+            except Exception as filter_error:
+                problematic_filter = f
+                log.error(
+                    f"  ✗ Filter {i + 1}/{len(filters_to_apply)}: "
+                    f"{filter_name} (type={filter_type}) - EXECUTION FAILED"
+                )
+                log.error(f"    Error: {filter_error}")
+                log.error(f"    Filter configuration: {json.dumps(f, indent=2)}")
+
+                if "column" in f:
+                    col_name = f["column"]
+                    if col_name in frame.columns:
+                        col_dtype = frame[col_name].dtype
+                        log.error(f"    Column '{col_name}' has dtype: {col_dtype}")
+                        if "value" in f:
+                            value_type = type(f["value"]).__name__
+                            log.error(f"    Filter is trying to compare with value: {f['value']} (type: {value_type})")
+                            log.error(f"    → This appears to be a type mismatch: {col_dtype} vs {value_type}")
+                break
+
+        if problematic_filter:
+            log.error(f"FATAL: Identified problematic filter: {problematic_filter.get(KEY_NAME, 'unnamed')}")
+            log.error(f"Full filter configuration: {json.dumps(problematic_filter, indent=2)}")
+            log.error("Fix: Ensure the filter value type matches the column type")
+            log.error("     - If column is string/Enum, use string values in quotes")
+            log.error("     - If column is numeric, use numeric values without quotes")
+            filter_name = problematic_filter.get(KEY_NAME, "unnamed")
+            raise RuntimeError(
+                f"Filter '{filter_name}' execution failed. "
+                f"Configuration: {json.dumps(problematic_filter)}. "
+                f"Original error: {e}"
+            ) from e
+        else:
+            log.error("FATAL: Could not identify specific problematic filter through individual testing.")
+            raise RuntimeError(f"Filter execution failed but could not identify specific filter. Error: {e}") from e
 
 
 def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -> pl.DataFrame:
@@ -197,6 +512,10 @@ def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -
         Input dataframe to filter
     read_filters : dict | list | None
         Filter configuration in the same format as used by filter_dataframe.py
+        Can be either:
+        - A dict with "filters" key containing list of filters
+        - A list of filter dictionaries directly
+        - None for no filtering
 
     Returns
     -------
@@ -204,46 +523,51 @@ def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -
         Filtered dataframe containing only reads that pass all filters
     """
     if not read_filters or frame.is_empty():
+        if not read_filters:
+            log.info("No read filters provided - skipping filter step")
+        if frame.is_empty():
+            log.debug("Empty dataframe - skipping filter step")
         return frame
 
-    try:
-        from ugbio_featuremap.filter_dataframe import (
-            _create_filter_columns,
-            _create_final_filter_column,
-            validate_filter_config,
-        )
-    except ImportError as e:
-        log.warning(f"Could not import filtering functions: {e}. Skipping read filters.")
-        return frame
+    log.info(f"Starting read filter application on {frame.height:,} rows")
 
     try:
-        # Handle both dict and list formats
-        if isinstance(read_filters, list):
-            all_filters = read_filters
-        else:
-            all_filters = read_filters.get("filters", [])
-
-        # Exclude 'raw' and 'downsample' entries
-        filters_to_apply = [f for f in all_filters if f.get("type") not in {"raw", "downsample"}]
-
+        # Extract and validate filter configuration
+        filters_to_apply = _prepare_filter_config(read_filters)
         if not filters_to_apply:
-            log.debug("No applicable filters found")
+            log.info("No read filters provided - skipping filter step")
             return frame
 
-        filter_config = {"filters": filters_to_apply}
-        validate_filter_config(filter_config)
-
+        # Create filter columns using filter_dataframe functions
         lazy_frame = frame.lazy()
         lazy_frame, filter_cols = _create_filter_columns(lazy_frame, filters_to_apply)
-        lazy_frame = _create_final_filter_column(lazy_frame, filter_cols, None)
-        filtered_frame = lazy_frame.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$")).collect()
 
-        log.debug(f"Read filtering: {frame.height:,} → {filtered_frame.height:,} reads")
+        # Apply special null handling for specific fields
+        available_cols = frame.columns
+        lazy_frame = _apply_null_handling_to_filters(lazy_frame, filters_to_apply, filter_cols, available_cols)
+
+        # Create final filter column
+        lazy_frame = _create_final_filter_column(lazy_frame, filter_cols, None)
+
+        # Collect to materialize filter columns for statistics
+        df_with_filters = lazy_frame.collect()
+
+        # Log per-filter statistics
+        _log_filter_statistics(df_with_filters, filter_cols)
+
+        # Execute final filter with diagnostics
+        filtered_frame = _execute_filters_with_diagnostics(df_with_filters, filters_to_apply, frame)
+
+        rows_after = filtered_frame.height
+        pct_remaining = (rows_after / frame.height * 100) if frame.height > 0 else 0
+        log.info(f"Read filtering: {frame.height:,} → {rows_after:,} rows ({pct_remaining:.1f}% retained)")
+
         return filtered_frame
 
     except Exception as e:
-        log.warning(f"Error applying read filters: {e}. Returning unfiltered data.")
-        return frame
+        log.error(f"FATAL: Error applying read filters: {e}")
+        log.error(f"Traceback: {traceback.format_exc()}")
+        raise RuntimeError(f"Failed to apply read filters: {e}") from e
 
 
 # ───────────────── header helpers ────────────────────────────────────────────
@@ -492,13 +816,14 @@ def _split_format_ids(format_ids: list[str], fmt_meta: dict) -> tuple[list[str],
 
 
 def _make_query_string(format_ids: list[str], query_info: list[str]) -> str:
-    """Build the bcftools query format string (now includes %QUAL)."""
+    """Build the bcftools query format string (includes %ID and %QUAL)."""
     bracket = "[" + "\t".join(f"%{t}" for t in format_ids) + "]"
     return (
         "\t".join(
             [
                 "%CHROM",
                 "%POS",
+                "%ID",
                 "%QUAL",
                 "%REF",
                 "%ALT",
@@ -903,6 +1228,177 @@ def _drop_fields(
     return info_meta, fmt_meta
 
 
+def _setup_parallel_jobs(jobs: int) -> tuple[int, str, str]:
+    """
+    Configure parallel job settings and resolve tool paths.
+
+    Parameters
+    ----------
+    jobs : int
+        Number of parallel jobs (0 = auto-detect CPU cores)
+
+    Returns
+    -------
+    tuple[int, str, str]
+        (job_count, bcftools_path, bedtools_path)
+    """
+    if jobs == 0:
+        jobs = os.cpu_count() or 4
+
+    log.info(f"Using {jobs} parallel jobs for region processing")
+
+    bcftools = _resolve_bcftools_command()
+    bedtools = _resolve_bedtools_command()
+
+    return jobs, bcftools, bedtools
+
+
+def _prepare_vcf_metadata(
+    vcf: str,
+    bcftools: str,
+    drop_info: set[str] | None = None,
+    drop_format: set[str] | None = None,
+) -> tuple[dict, dict, list[str], list[str], list[str]]:
+    """
+    Parse VCF header and prepare metadata dictionaries.
+
+    Parameters
+    ----------
+    vcf : str
+        Path to VCF file
+    bcftools : str
+        Path to bcftools executable
+    drop_info : set[str] | None
+        INFO fields to exclude
+    drop_format : set[str] | None
+        FORMAT fields to exclude
+
+    Returns
+    -------
+    tuple[dict, dict, list[str], list[str], list[str]]
+        (info_meta, fmt_meta, info_ids, scalar_fmt_ids, list_fmt_ids)
+    """
+    info_meta, fmt_meta = header_meta(vcf, bcftools, threads=1)
+
+    if drop_info:
+        info_meta = {k: v for k, v in info_meta.items() if k not in drop_info}
+    if drop_format:
+        fmt_meta = {k: v for k, v in fmt_meta.items() if k not in drop_format}
+
+    format_ids = list(fmt_meta.keys())
+    _sanity_check_format_numbers(format_ids, fmt_meta)
+
+    scalar_fmt_ids, list_fmt_ids = _split_format_ids(format_ids, fmt_meta)
+    info_ids = list(info_meta.keys())
+
+    return info_meta, fmt_meta, info_ids, scalar_fmt_ids, list_fmt_ids
+
+
+def _setup_column_configuration(
+    info_ids: list[str],
+    format_ids: list[str],
+    list_fmt_ids: list[str],
+) -> tuple[str, list[str], list[int]]:
+    """
+    Build query string, column names, and list column indices.
+
+    Parameters
+    ----------
+    info_ids : list[str]
+        INFO field names
+    format_ids : list[str]
+        FORMAT field names
+    list_fmt_ids : list[str]
+        FORMAT fields with list values
+
+    Returns
+    -------
+    tuple[str, list[str], list[int]]
+        (fmt_str, cols, list_fmt_indices)
+    """
+    fmt_str = _make_query_string(format_ids, info_ids)
+    cols = [CHROM, POS, ID, QUAL, REF, ALT] + info_ids + format_ids
+
+    list_fmt_indices = []
+    base_cols = [CHROM, POS, ID, QUAL, REF, ALT] + info_ids
+    for list_col in list_fmt_ids:
+        idx = len(base_cols) + format_ids.index(list_col)
+        list_fmt_indices.append(idx)
+
+    return fmt_str, cols, list_fmt_indices
+
+
+def _execute_parallel_conversion(
+    vcf: str,
+    out: str,
+    regions: list[str],
+    fmt_str: str,
+    job_cfg: VCFJobConfig,
+    jobs: int,
+    read_filters: dict | list | None,
+    downsample_reads: int | None,
+    downsample_seed: int | None,
+) -> None:
+    """
+    Execute parallel region conversion and merge results.
+
+    Parameters
+    ----------
+    vcf : str
+        Path to input VCF file
+    out : str
+        Path to output Parquet file
+    regions : list[str]
+        Genomic regions to process
+    fmt_str : str
+        bcftools query format string
+    job_cfg : VCFJobConfig
+        Job configuration
+    jobs : int
+        Number of parallel jobs
+    read_filters : dict | list | None
+        Read filter configuration
+    downsample_reads : int | None
+        Number of reads to downsample to
+    downsample_seed : int | None
+        Random seed for downsampling
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        spawn_ctx = _mp.get_context("spawn")
+        part_files = _run_region_jobs(
+            regions=regions,
+            vcf_path=vcf,
+            fmt_str=fmt_str,
+            job_cfg=job_cfg,
+            jobs=jobs,
+            tmpdir=tmpdir,
+            spawn_ctx=spawn_ctx,
+        )
+        if not part_files:
+            log.error(
+                "No Parquet part-files were produced\n"
+                "This could mean:\n"
+                "  1. All regions were empty (no variants in the VCF)\n"
+                "  2. All data was filtered out by read filters\n"
+                "  3. All regions failed to process (check errors above)"
+            )
+            if read_filters:
+                log.error("")
+                log.error("Read filters were applied. Check if filters are too strict:")
+                if KEY_FILTERS in read_filters:
+                    for f in read_filters[KEY_FILTERS]:
+                        value_display = f.get(KEY_VALUE, f.get(KEY_VALUE_FIELD, "N/A"))
+                        log.error(
+                            f"  - {f.get(KEY_NAME, 'unnamed')}: {f.get(KEY_FIELD)} {f.get(KEY_OP)} {value_display}"
+                        )
+            raise RuntimeError(
+                "No Parquet part-files were produced – all regions empty or failed. "
+                "Check log for details. If using read filters, they may be filtering out all data."
+            )
+
+        _merge_parquet_files_lazy(part_files, out, downsample_reads, downsample_seed)
+
+
 def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
     vcf: str,
     out: str,
@@ -1003,11 +1499,11 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
 
     # Build query string and column names
     fmt_str = _make_query_string(format_ids, info_ids)
-    cols = [CHROM, POS, QUAL, REF, ALT] + info_ids + format_ids
+    cols = [CHROM, POS, ID, QUAL, REF, ALT] + info_ids + format_ids
 
     # Find indices of list columns for AWK script (excluding fixed-tuple columns)
     list_fmt_indices = []
-    base_cols = [CHROM, POS, QUAL, REF, ALT] + info_ids
+    base_cols = [CHROM, POS, ID, QUAL, REF, ALT] + info_ids
     for list_col in effective_list_fmt_ids:
         idx = len(base_cols) + format_ids.index(list_col)
         list_fmt_indices.append(idx)
@@ -1135,6 +1631,14 @@ def _process_region_to_parquet(
     str
         Path to created parquet file, empty string if no data
     """
+    # Configure logging for worker process (spawn context doesn't inherit parent's config)
+    # Use INFO level to see all important messages from workers
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
+
     # Configure logging once per worker process
     _configure_logging(job_cfg.log_level, check_worker_cache=True)
     try:
@@ -1147,19 +1651,33 @@ def _process_region_to_parquet(
                 job_cfg=job_cfg,
             )
             if frame.is_empty():
-                log.debug(f"Region {region} contains no data, skipping")
+                log.debug(f"Region {region}: No data (empty VCF region)")
                 return ""
 
+            rows_after_stream = frame.height
+            log.debug(f"Region {region}: {rows_after_stream:,} rows after streaming")
+
             # Apply read filters if configured
-            frame = _apply_read_filters(frame, job_cfg.read_filters)
+            if job_cfg.read_filters:
+                rows_before_filter = frame.height
+                frame = _apply_read_filters(frame, job_cfg.read_filters)
+                rows_after_filter = frame.height
+                pct_remaining = (rows_after_filter / rows_before_filter * 100) if rows_before_filter > 0 else 0
+                log.info(
+                    f"Region {region}: {rows_before_filter:,} → {rows_after_filter:,} rows after filtering "
+                    f"({pct_remaining:.1f}% retained)"
+                )
+            else:
+                log.debug(f"Region {region}: No filters applied, {frame.height:,} rows")
 
             # Skip writing if no reads remain after filtering
             if frame.is_empty():
-                log.debug(f"Region {region}: no reads remain after filtering, skipping")
+                log.info(f"Region {region}: All reads filtered out")
                 return ""
 
-            log.debug(f"Region {region}: {frame.height} rows, writing to {output_file}")
+            log.debug(f"Region {region}: {frame.height:,} rows, writing to {output_file}")
             frame.write_parquet(output_file)
+            log.debug(f"Region {region}: Wrote {frame.height:,} rows to {output_file}")
             return output_file
 
     except Exception:
@@ -1246,11 +1764,28 @@ def _bcftools_awk_stdout(
     out, awk_err = awk.communicate()
     bcftool.wait()
 
+    # Capture bcftools stderr
+    bcftool_err = bcftool.stderr.read() if bcftool.stderr else ""
+
+    # Check for errors or warnings
     if bcftool.returncode:  # pragma: no cover
-        err_msg = bcftool.stderr.read() if bcftool.stderr else ""
-        raise subprocess.CalledProcessError(bcftool.returncode, bcftools_cmd, err_msg)
+        log.error(f"bcftools failed for region {region}: return code {bcftool.returncode}")
+        log.error(f"bcftools stderr: {bcftool_err}")
+        raise subprocess.CalledProcessError(bcftool.returncode, bcftools_cmd, bcftool_err)
+
     if awk.returncode:  # pragma: no cover
+        log.error(f"AWK failed for region {region}: return code {awk.returncode}")
+        log.error(f"AWK stderr: {awk_err}")
         raise subprocess.CalledProcessError(awk.returncode, awk_cmd, awk_err)
+
+    # Log warnings from bcftools even if exit code is 0
+    if bcftool_err and bcftool_err.strip():
+        log.warning(f"bcftools warning for region {region}: {bcftool_err.strip()}")
+
+    # Log warnings from awk even if exit code is 0
+    if awk_err and awk_err.strip():
+        log.warning(f"AWK warning for region {region}: {awk_err.strip()}")
+
     return out.strip()
 
 

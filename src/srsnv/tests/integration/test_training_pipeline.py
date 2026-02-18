@@ -54,6 +54,8 @@ def test_end_to_end_training(tmp_path: Path) -> None:
         use_kde_smoothing=True,
         use_gpu=False,  # Disable GPU for testing to avoid dependency issues
         use_float32=False,  # Use float32 for testing to reduce memory usage
+        transform_mode="logit",
+        mqual_cutoff_quantile=0.99,
     )
 
     # ---------------------------------------------------------------- train
@@ -117,6 +119,11 @@ def test_trainer_initialization(tmp_path: Path) -> None:
         max_qual=100.0,
         quality_lut_size=1000,
         metadata=None,
+        use_gpu=False,
+        use_float32=False,
+        use_kde_smoothing=False,
+        transform_mode="logit",
+        mqual_cutoff_quantile=0.99,
     )
 
     # Create trainer and load the data

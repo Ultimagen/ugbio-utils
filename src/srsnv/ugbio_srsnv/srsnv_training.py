@@ -30,7 +30,6 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import xgboost as xgb
-from scipy.stats import gaussian_kde
 from ugbio_core.bed_utils import BedUtils
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
@@ -48,11 +47,14 @@ from ugbio_featuremap.filter_dataframe import (
     TYPE_REGION,
 )
 
+from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
 from ugbio_srsnv.srsnv_utils import (
     EPS,
     MAX_PHRED,
     all_models_predict_proba,
     get_filter_ratio,
+    phred_to_prob,
+    prob_to_logit,
     prob_to_phred,
     safe_roc_auc,
 )
@@ -358,12 +360,34 @@ class SRSNVTrainer:
         logger.debug("Using random seed: %d", self.seed)
         self.rng = np.random.default_rng(self.seed)
 
+        # GPU / CPU
+        self.use_gpu = args.use_gpu
+        if self.use_gpu:
+            logger.debug("GPU usage requested for training")
+            # Check if XGBoost is compiled with GPU support
+            try:
+                gpu_test_model = xgb.XGBClassifier(tree_method="hist", device="cuda")
+                gpu_test_model.fit(np.array([[0], [1]]), np.array([0, 1]))
+                logger.info("Using GPU for XGBoost training")
+            except Exception as e:
+                logger.warning(
+                    "GPU support for XGBoost is not available or not working. "
+                    "Falling back to CPU. Error details: %s",
+                    str(e),
+                )
+                self.use_gpu = False
+        else:
+            logger.info("Using CPU for XGBoost training")
+
+        self.downcast_float = args.use_float32
+
         # ─────────── read filtering-stats JSONs & compute priors ───────────
         self.pos_stats, self.neg_stats = _extract_stats_from_unified(args.stats_file)
         self.mean_coverage = args.mean_coverage
         if self.mean_coverage is None:
             raise ValueError("--mean-coverage is required if not present in stats-file JSON")
         self.n_bases_in_region = BedUtils().count_bases_in_bed_file(args.training_regions)
+        logger.debug("Bases in training regions: %d", self.n_bases_in_region)
 
         # sanity-check: identical “quality/region” filters in the two random-sample stats files
         def _quality_region_filters(st):
@@ -435,6 +459,18 @@ class SRSNVTrainer:
             self.k_folds,
             self.model_params,
         )
+        # Set GPU/CPU parameters for XGBoost
+        if self.use_gpu:
+            self.model_params["device"] = "cuda"
+            self.model_params["sampling_method"] = "gradient_based"
+            self.model_params.pop("nthread", None)  # Ignored for GPU, explicitly remove for clarity
+            self.model_params.pop("n_jobs", None)  # Ignored for GPU, explicitly remove for clarity
+        else:
+            self.model_params["device"] = "cpu"
+            if "n_jobs" not in self.model_params:
+                self.model_params["n_jobs"] = -1  # Default behavior, stated explicitly for clarity
+            self.model_params.pop("nthread", None)  # "n_jobs" is preferred over "nthread" for sklearn api
+        # Initialize one model per fold
         self.models = [xgb.XGBClassifier(**self.model_params) for _ in range(self.k_folds)]
 
         # optional user-supplied feature subset
@@ -590,112 +626,111 @@ class SRSNVTrainer:
             self.feature_dtypes[col] = dtype_str
             logger.debug("Column '%s' has dtype: %s", col, dtype_str)
 
-    def _prepare_kde_data(
-        self, mqual_t: np.ndarray, mqual_f: np.ndarray, mqual_max: float
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Prepare data for KDE by adding jitter and subsampling if necessary."""
-        # Add small jitter to avoid issues with identical values
-        jitter_scale = mqual_max * 1e-6
-        mqual_t_jittered = mqual_t + self.rng.normal(0, jitter_scale, len(mqual_t))
-        mqual_f_jittered = mqual_f + self.rng.normal(0, jitter_scale, len(mqual_f))
+    # ─────────────────────── quality lookup table ────────────────────────
+    def _validate_kde_args(self, transform_mode, mqual_cutoff_type):
+        if transform_mode not in {"mqual", "logit"}:
+            raise ValueError(f"transform_mode must be one of 'mqual' or 'logit'. Got: {transform_mode}")
+        if mqual_cutoff_type not in {"fp", "tp", "mp"}:
+            raise ValueError(f"mqual_cutoff_type must be one of 'fp', 'tp', or 'mp'. Got: {mqual_cutoff_type}")
 
-        # For efficiency with large datasets, subsample if necessary
-        max_kde_samples = 50000  # Limit for KDE efficiency
-        if len(mqual_t_jittered) > max_kde_samples:
-            idx_t = self.rng.choice(len(mqual_t_jittered), max_kde_samples, replace=False)
-            mqual_t_kde = mqual_t_jittered[idx_t]
-        else:
-            mqual_t_kde = mqual_t_jittered
-
-        if len(mqual_f_jittered) > max_kde_samples:
-            idx_f = self.rng.choice(len(mqual_f_jittered), max_kde_samples, replace=False)
-            mqual_f_kde = mqual_f_jittered[idx_f]
-        else:
-            mqual_f_kde = mqual_f_jittered
-
-        return mqual_t_kde, mqual_f_kde
-
-    def _compute_kde_rates(
-        self, kde_t, kde_f, x_lut: np.ndarray, mqual_max: float, eps: float
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Compute TPR and FPR using KDE integration."""
-        tpr = np.zeros(len(x_lut))
-        fpr = np.zeros(len(x_lut))
-
-        for i, threshold in enumerate(x_lut):
-            # Estimate P(MQUAL >= threshold) using numerical integration
-            x_range = np.linspace(threshold, mqual_max, 500)
-            if len(x_range) > 1:
-                dx = x_range[1] - x_range[0]
-                try:
-                    tpr[i] = np.trapezoid(kde_t(x_range), dx=dx)
-                    fpr[i] = np.trapezoid(kde_f(x_range), dx=dx)
-                except AttributeError:
-                    # Fallback for older numpy versions
-                    tpr[i] = np.trapz(kde_t(x_range), dx=dx)
-                    fpr[i] = np.trapz(kde_f(x_range), dx=dx)
+    def _determine_x_lut_max(self, estimator, pd_df, mqual_cutoff_type, mqual_cutoff_quantile):
+        if mqual_cutoff_type == "mp":
+            kde_metadata = getattr(estimator, "kde_metadata", None)
+            false_trunc_idx = kde_metadata["rates"].get("false_truncation_idx", 0) if kde_metadata else 0
+            if kde_metadata and false_trunc_idx > 0:
+                x_lut_max = estimator.from_grid(false_trunc_idx - 1)
+                logger.debug("Using KDE-detected false positive truncation at MQUAL=%.2f", x_lut_max)
             else:
-                # Handle edge case where threshold equals max
-                tpr[i] = eps
-                fpr[i] = eps
+                x_lut_max = pd_df.loc[pd_df[LABEL_COL].astype(int) == 0, MQUAL].quantile(mqual_cutoff_quantile)
+                logger.debug(
+                    "KDE did not detect false positive truncation, using quantile-based cutoff at MQUAL=%.2f", x_lut_max
+                )
+        elif mqual_cutoff_type == "tp":
+            x_lut_max = pd_df.loc[pd_df[LABEL_COL].astype(int) == 1, MQUAL].quantile(mqual_cutoff_quantile)
+            logger.debug("Using original data quantile-based true positive cutoff at MQUAL=%.2f", x_lut_max)
+        else:
+            x_lut_max = pd_df.loc[pd_df[LABEL_COL].astype(int) == 0, MQUAL].quantile(mqual_cutoff_quantile)
+            logger.debug("Using original data quantile-based false positive cutoff at MQUAL=%.2f", x_lut_max)
+        return x_lut_max
 
-        return tpr, fpr
-
-    def _create_quality_lookup_table_kde(self, fp_mqual_cutoff_quantile=0.999, eps=None) -> None:
+    def _create_quality_lookup_table_kde(
+        self,
+        transform_mode: str = "logit",
+        mqual_cutoff_quantile=1 - 1e-6,
+        mqual_cutoff_type: str = "fp",
+        eps=None,
+        kde_config_overrides: dict[str, Any] | None = None,
+    ) -> None:
         """
-        Build an interpolation table that maps MQUAL → SNVQ using KDE for smoothing.
-        Uses kernel density estimation to better estimate precision at high MQUAL values
-        where there are fewer datapoints.
+        Build an interpolation table that maps MQUAL → SNVQ using adaptive KDE for smoothing.
+        Uses the new smoothing_utils implementation with variable bandwidth kernel density estimation
+        to better estimate precision at high MQUAL values where there are fewer datapoints.
+
+        Parameters
+        ----------
+        transform_mode : str, optional
+            Transform space for KDE ('mqual' or 'logit'), by default 'logit'
+        mqual_cutoff_quantile : float, optional
+            Quantile for determining MQUAL cutoff if mqual_cutoff_type is 'fp' or 'tp', by default 1 - 1e-6
+        mqual_cutoff_type : str, optional
+            Type of cutoff to use for determining maximum MQUAL for x_lut.
+            Options are 'fp' (false positive), 'tp' (true positive), or 'mp' (machine precision), by default 'fp'
+        eps : float | None, optional
+            Small epsilon value for numerical stability, by default None (uses self.eps)
+        kde_config_overrides : dict[str, Any] | None, optional
+            Dictionary of parameter overrides for KDE configuration, by default None
         """
         if eps is None:
             eps = self.eps
-        pd_df = self.data_frame.to_pandas()
-        mqual_fp_max = pd_df.loc[pd_df[LABEL_COL].astype(int) == 0, MQUAL].quantile(fp_mqual_cutoff_quantile)
+        if kde_config_overrides is None:
+            kde_config_overrides = {}
+        self._validate_kde_args(transform_mode, mqual_cutoff_type)
 
-        # Determine x_lut points based on whether quality_lut_size is provided
+        pd_df = self.data_frame.to_pandas()
+
+        if pd_df[LABEL_COL].sum() == 0 or (~pd_df[LABEL_COL]).sum() == 0:
+            logger.warning("Insufficient data for KDE, falling back to counting method")
+            self._create_quality_lookup_table_count(mqual_cutoff_quantile, eps)
+            return
+
+        # Use AdaptiveKDEPrecisionEstimator for precision estimation
+        try:
+            estimator = AdaptiveKDEPrecisionEstimator(transform_mode=transform_mode, **kde_config_overrides)
+            estimator.fit(pd_df, num_cv_folds=self.k_folds)
+        except Exception as e:
+            logger.warning("Adaptive KDE failed: %s. Falling back to counting method.", e)
+            self._create_quality_lookup_table_count(mqual_cutoff_quantile, eps)
+            return
+
+        # Create lookup table
+        x_lut_max = self._determine_x_lut_max(estimator, pd_df, mqual_cutoff_type, mqual_cutoff_quantile)
+
+        # Define x_lut
         if self.args.quality_lut_size is not None:
             n_pts = self.args.quality_lut_size
-            self.x_lut = np.linspace(0.0, mqual_fp_max, n_pts)
+            self.x_lut = np.linspace(0.0, x_lut_max, n_pts)
         else:
-            # Use integer points from 0 to floor(mqual_fp_max)
-            max_int = int(np.floor(mqual_fp_max))
+            max_int = int(np.floor(x_lut_max))
             self.x_lut = np.arange(0, max_int + 1, dtype=float)
 
-        # Extract MQUAL values for true positives and false positives
-        mqual_t = pd_df[pd_df[LABEL_COL]][MQUAL].to_numpy()
-        mqual_f = pd_df[~pd_df[LABEL_COL]][MQUAL].to_numpy()
-
-        # Prepare data for KDE
-        mqual_t_kde, mqual_f_kde = self._prepare_kde_data(mqual_t, mqual_f, pd_df[MQUAL].max())
-
-        # Ensure we have data for KDE
-        if len(mqual_t_kde) == 0 or len(mqual_f_kde) == 0:
-            logger.warning("Insufficient data for KDE, falling back to threshold-based method")
-            # Fallback to original method
-            tpr = np.array([(mqual_t >= m_).mean() for m_ in self.x_lut])
-            fpr = np.array([(mqual_f >= m_).mean() for m_ in self.x_lut])
+        # Transform x_lut to grid space if needed
+        if transform_mode == "logit":
+            scores_lut = prob_to_logit(phred_to_prob(self.x_lut), phred=True)
         else:
-            # Create KDE estimators with controlled bandwidth
-            kde_t = gaussian_kde(mqual_t_kde)
-            kde_f = gaussian_kde(mqual_f_kde)
+            scores_lut = self.x_lut
 
-            kde_t.covariance_factor = lambda: 0.1
-            kde_t._compute_covariance()
-            kde_f.covariance_factor = lambda: 0.1
-            kde_f._compute_covariance()
+        # Interpolate FPR/TPR ratios to lookup table points
+        fpr_interp = estimator.get_fpr(scores_lut)
+        tpr_interp = estimator.get_tpr(scores_lut)
+        fp_interp = fpr_interp / tpr_interp
 
-            # Calculate smoothed TPR and FPR
-            tpr, fpr = self._compute_kde_rates(kde_t, kde_f, self.x_lut, pd_df[MQUAL].max(), eps)
-
-        # Ensure TPR and FPR are bounded and calculate SNVQ
-        tpr = np.clip(tpr, eps, 1.0)
-        fpr = np.clip(fpr, eps, 1.0)
-
+        # Convert to SNVQ
         snvq_prefactor = self._calculate_snvq_prefactor()
-        precision = tpr / (tpr + fpr * (len(mqual_f) / len(mqual_t)))
-        self.y_lut = -10 * np.log10(np.clip(snvq_prefactor * ((1 - precision) / precision), eps, 1))
+        self.y_lut = -10 * np.log10(np.clip(snvq_prefactor * fp_interp, eps, 1))
+        self.kde_estimator = estimator  # store for later inspection if needed
 
-        logger.debug("Created KDE-smoothed MQUAL→SNVQ lookup table with %d points", len(self.x_lut))
+        logger.debug("Created adaptive KDE MQUAL→SNVQ lookup table with %d points", len(self.x_lut))
+        logger.debug("SNVQ range: [%.2f, %.2f]", self.y_lut.min(), self.y_lut.max())
 
     def _create_quality_lookup_table_count(self, fp_mqual_cutoff_quantile=1 - 1e-5, eps=None) -> None:
         """
@@ -722,12 +757,38 @@ class SRSNVTrainer:
         snvq_prefactor = self._calculate_snvq_prefactor()  # old value was: (prior_real_error / 3)
         self.y_lut = -10 * np.log10(np.clip(snvq_prefactor * (fpr / tpr), eps, 1))
 
-    def _create_quality_lookup_table(self, eps=None, *, use_kde=False) -> None:
+    def _create_quality_lookup_table(
+        self,
+        eps=None,
+        *,
+        use_kde=True,
+        transform_mode: str = "logit",
+        mqual_cutoff_quantile: float = 0.99,
+        kde_config_overrides: dict | None = None,
+    ) -> None:
         """
         Build an interpolation table that maps MQUAL → SNVQ.
+
+        Parameters
+        ----------
+        eps : float, optional
+            Small value to avoid log(0).
+        use_kde : bool, default True
+            Use kernel density estimation for smoothing (preferred method).
+        transform_mode : str, default "logit"
+            Coordinate space for KDE: "mqual" or "logit".
+        mqual_cutoff_quantile : float, default 0.99
+            Quantile used to determine max MQUAL for lookup table.
+        kde_config_overrides : dict, optional
+            Override default KDE configuration parameters.
         """
         if use_kde:
-            self._create_quality_lookup_table_kde(eps=eps)
+            self._create_quality_lookup_table_kde(
+                eps=eps,
+                transform_mode=transform_mode,
+                mqual_cutoff_quantile=mqual_cutoff_quantile,
+                kde_config_overrides=kde_config_overrides,
+            )
         else:
             self._create_quality_lookup_table_count(eps=eps)
 
@@ -830,7 +891,11 @@ class SRSNVTrainer:
         self.data_frame = self.data_frame.with_columns(new_cols)
 
         # final quality (Phred)
-        self._create_quality_lookup_table()
+        self._create_quality_lookup_table(
+            use_kde=self.args.use_kde_smoothing,
+            transform_mode=self.args.transform_mode,
+            mqual_cutoff_quantile=self.args.mqual_cutoff_quantile,
+        )
         logger.debug("Created MQUAL→SNVQ lookup table")
         snvq = np.interp(mqual, self.x_lut, self.y_lut)
         logger.debug("Interpolated SNVQ values from lookup table")
@@ -1035,6 +1100,34 @@ def _cli() -> argparse.Namespace:
         action="append",
         default=[],
         help="Additional metadata key=value pairs (can be given multiple times)",
+    )
+    ap.add_argument(
+        "--use-gpu",
+        action="store_true",
+        help="Use GPU for XGBoost training (requires CUDA-enabled XGBoost)",
+    )
+    ap.add_argument(
+        "--use-float32",
+        action="store_true",
+        help="Downcast features to float32 to reduce memory usage",
+    )
+    ap.add_argument(
+        "--use-kde-smoothing",
+        action="store_true",
+        default=True,
+        help="Use adaptive KDE for quality score smoothing (default: True)",
+    )
+    ap.add_argument(
+        "--transform-mode",
+        choices=["mqual", "logit"],
+        default="logit",
+        help="Coordinate space for KDE: 'mqual' or 'logit' (default: logit)",
+    )
+    ap.add_argument(
+        "--mqual-cutoff-quantile",
+        type=float,
+        default=0.99,
+        help="Quantile for determining max MQUAL in lookup table (default: 0.99)",
     )
     return ap.parse_args()
 
