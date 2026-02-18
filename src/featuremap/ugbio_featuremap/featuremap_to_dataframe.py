@@ -1476,9 +1476,27 @@ def main(argv: list[str] | None = None) -> None:
             "Format: COL:SIZE, e.g., 'AD:2' expands AD into AD_0, AD_1."
         ),
     )
-    parser.add_argument("--read_filters_json", required=False, default=None, help="JSON file with read filters")
+    parser.add_argument(
+        "--read_filters_json",
+        "--read_filter_json",  # Allow both singular and plural forms
+        required=False,
+        default=None,
+        help="JSON file with read filters",
+    )
     parser.add_argument(
         "--read_filter_json_key", required=False, default=None, help="Key in JSON file for read filters"
+    )
+    parser.add_argument(
+        "--downsample_reads",
+        type=int,
+        default=None,
+        help="Downsample to this number of reads (optional). If total reads < this value, all reads are kept.",
+    )
+    parser.add_argument(
+        "--downsample_seed",
+        type=int,
+        default=None,
+        help="Random seed for downsampling (optional, for reproducibility)",
     )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     args = parser.parse_args(argv)
@@ -1512,6 +1530,8 @@ def main(argv: list[str] | None = None) -> None:
         expand_columns=expand_columns,
         read_filters_json=args.read_filters_json,
         read_filter_json_key=args.read_filter_json_key,
+        downsample_reads=args.downsample_reads,
+        downsample_seed=args.downsample_seed,
     )
 
 
