@@ -1179,6 +1179,11 @@ def _should_skip_record(rec, min_hmer: int) -> bool:
     Returns:
         True if record should be skipped, False otherwise
     """
+    # Check for required fields; skip if missing
+    if "VARIANT_TYPE" not in rec.info or "X_HIL" not in rec.info:
+        logger.debug(f"Record at {rec.contig}:{rec.pos} missing required fields (VARIANT_TYPE or X_HIL). Skipping.")
+        return True
+
     return rec.info["VARIANT_TYPE"] != "h-indel" or rec.info["X_HIL"][0] < min_hmer or rec.qual == 0
 
 
@@ -1279,6 +1284,11 @@ def _process_record(
     Returns:
         Dictionary with result or None if record should not be processed
     """
+    # Validate required fields
+    if "X_HIL" not in rec.info:
+        logger.debug(f"Record at {rec.contig}:{rec.pos} missing X_HIL field. Skipping processing.")
+        return None
+
     chrom = rec.contig
     pos = rec.pos + rec.info["X_HIL"][0] // 2
     ref_hmer_size = apply_variant(ref_fasta, [chrom, pos], [rec.pos, "", ""])[0]
@@ -1343,38 +1353,47 @@ def _process_vcf_records(
         config: Configuration dictionary with all parameters
     """
     for rec in vcf_file_handle.fetch():
-        # Check if record should be skipped
-        if _should_skip_record(rec, config["min_hmer"]):
+        try:
+            # Check if record should be skipped
+            if _should_skip_record(rec, config["min_hmer"]):
+                vcf_out_file_handle.write(rec)
+                continue
+
+            # Process record
+            all_direction_results = _process_record(
+                rec,
+                ref_fasta,
+                vcf_file_handle,
+                normal_reads,
+                tumor_germline_handle,
+                tumor_reads,
+                merged_intervals,
+                config,
+            )
+
+            if all_direction_results is None:
+                vcf_out_file_handle.write(rec)
+                continue
+
+            # Write results to VCF record
+            _write_results_to_record(
+                rec,
+                all_direction_results,
+                verbose=config["verbose"],
+                score_bound=config["score_bound"],
+                mixture_bound=config["mixture_bound"],
+            )
+
+            # Write record after processing all alleles
             vcf_out_file_handle.write(rec)
-            continue
 
-        # Process record
-        all_direction_results = _process_record(
-            rec,
-            ref_fasta,
-            vcf_file_handle,
-            normal_reads,
-            tumor_germline_handle,
-            tumor_reads,
-            merged_intervals,
-            config,
-        )
-
-        if all_direction_results is None:
+        except Exception as e:
+            # If processing fails, log error and write record as-is to ensure no data loss
+            logger.warning(
+                f"Error processing VCF record at {rec.contig}:{rec.pos}: {type(e).__name__}: {str(e)}. "
+                f"Writing record without analysis results."
+            )
             vcf_out_file_handle.write(rec)
-            continue
-
-        # Write results to VCF record
-        _write_results_to_record(
-            rec,
-            all_direction_results,
-            verbose=config["verbose"],
-            score_bound=config["score_bound"],
-            mixture_bound=config["mixture_bound"],
-        )
-
-        # Write record after processing all alleles
-        vcf_out_file_handle.write(rec)
 
 
 def _close_files(vcf_handle, vcf_out_handle, tumor_reads_handle, normal_reads_handles=None):
