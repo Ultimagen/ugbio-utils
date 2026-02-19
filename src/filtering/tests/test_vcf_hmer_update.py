@@ -391,6 +391,30 @@ class TestErrorHandling:
         # Between intervals
         assert pos_in_bed(intervals, "chr1", 250) is False
 
+    def test_should_skip_record_missing_xhil(self):
+        """Test _should_skip_record handles missing X_HIL field."""
+        from ugbio_filtering.vcf_hmer_update import _should_skip_record
+
+        mock_rec = Mock()
+        mock_rec.info = {"VARIANT_TYPE": "h-indel"}  # Missing X_HIL
+        mock_rec.qual = 10
+
+        # Should return True (skip) when X_HIL is missing
+        result = _should_skip_record(mock_rec, min_hmer=4)
+        assert result is True
+
+    def test_should_skip_record_missing_variant_type(self):
+        """Test _should_skip_record handles missing VARIANT_TYPE field."""
+        from ugbio_filtering.vcf_hmer_update import _should_skip_record
+
+        mock_rec = Mock()
+        mock_rec.info = {"X_HIL": [5]}  # Missing VARIANT_TYPE
+        mock_rec.qual = 10
+
+        # Should return True (skip) when VARIANT_TYPE is missing
+        result = _should_skip_record(mock_rec, min_hmer=4)
+        assert result is True
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
