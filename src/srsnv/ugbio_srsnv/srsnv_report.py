@@ -29,11 +29,15 @@ import pandas as pd
 import polars as pl
 import xgboost as xgb
 from ugbio_core.logger import logger
-from ugbio_core.vcfbed.variant_annotation import get_cycle_skip_dataframe
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
 from ugbio_srsnv.srsnv_plotting_utils import SRSNVReport, create_srsnv_report_html
-from ugbio_srsnv.srsnv_utils import ET, ST, HandlePPMSeqTagsInFeatureMapDataFrame
+from ugbio_srsnv.srsnv_utils import (
+    ET,
+    ST,
+    add_is_cycle_skip_to_featuremap_df,
+    add_is_mixed_to_featuremap_df,
+)
 
 FOLD_COL = "fold_id"
 LABEL_COL = "label"
@@ -55,7 +59,6 @@ IS_MIXED_END = "is_mixed_end"
 
 PROB_ORIG = "prob_orig"
 PROB_RECAL = "prob_recal"
-PROB_RESCALED = "prob_rescaled"
 PROB_TRAIN = "prob_train"
 PROB_FOLD_TMPL = "prob_fold_{k}"
 
@@ -65,69 +68,6 @@ IS_CYCLE_SKIP = "is_cycle_skip"
 EDIT_DIST_FEATURES = ["EDIST", "HAMDIST", "HAMDIST_FILT"]
 
 pl.enable_string_cache()
-
-
-def add_is_mixed_to_featuremap_df(
-    data_df: pd.DataFrame,
-    adapter_version: str = None,  # Default to v1, can be overridden
-    categorical_features_names: list[str] | None = None,
-) -> pd.DataFrame:
-    """Add is_mixed columns to featuremap_df
-    NOTE: THIS FUNCTION IS A PATCH AND SHOULD BE REPLACED
-    """
-    logger.info("Adding is_mixed columns to featuremap")
-    # TODO: use the information from adapter_version instead of this patch
-    tags_handler = HandlePPMSeqTagsInFeatureMapDataFrame(
-        featuremap_df=data_df,
-        categorical_features_names=categorical_features_names or [],
-        ppmseq_adapter_version=adapter_version,  # This should be set based on the actual adapter version used
-        logger=logger,
-    )
-    tags_handler.fill_nan_tags()
-    tags_handler.add_is_mixed_to_featuremap_df()
-    return tags_handler.featuremap_df
-
-
-def compute_is_cycle_skip_column(data_df: pd.DataFrame, flow_order: str = "TGCA") -> pd.Series:
-    """
-    Compute the is_cycle_skip column for a featuremap dataframe.
-
-    This function calculates whether each variant represents a cycle skip
-    based on the reference and alternate motifs (prev1 + ref/alt + next1).
-
-    Args:
-        data_df: DataFrame containing X_PREV1, REF, ALT, and X_NEXT1 columns
-        flow_order: Flow order string (default: "TGCA")
-
-    Returns:
-        pd.Series: Boolean series indicating cycle skip status for each variant
-    """
-    logger.info("Computing is_cycle_skip column")
-
-    # Create motif strings without copying the full dataframe
-    ref_motif = data_df[X_PREV1].astype(str) + data_df[REF].astype(str) + data_df[X_NEXT1].astype(str)
-    alt_motif = data_df[X_PREV1].astype(str) + data_df[ALT].astype(str) + data_df[X_NEXT1].astype(str)
-
-    # Get cycle skip lookup table
-    cycle_skip_df = get_cycle_skip_dataframe(flow_order)[[IS_CYCLE_SKIP]]
-
-    # Create temporary dataframe for merge operation
-    motif_df = pd.DataFrame(
-        {"ref_motif": ref_motif, "alt_motif": alt_motif},
-        index=data_df.index,
-    )
-
-    # Merge and extract only the is_cycle_skip column
-    result = motif_df.merge(
-        cycle_skip_df,
-        left_on=["ref_motif", "alt_motif"],
-        right_index=True,
-        how="left",
-    )[IS_CYCLE_SKIP]
-
-    result.index = data_df.index  # Ensure the index is the same as the original dataframe
-
-    return result
 
 
 def prepare_report(  # noqa: C901 PLR0915
@@ -257,7 +197,7 @@ def prepare_report(  # noqa: C901 PLR0915
         params["adapter_version"],
         params["categorical_features_names"],
     )
-    data_df[IS_CYCLE_SKIP] = compute_is_cycle_skip_column(data_df)
+    data_df = add_is_cycle_skip_to_featuremap_df(data_df)
 
     # Handle random seed
     rng = None

@@ -23,7 +23,8 @@ repos:
             src/featuremap/tests/resources/FFPE_TapasPa46_Pa67\.v1\.26\.WG\.t_alt_readsGT1\.FFPEV1\.7\.json|
             src/cnv/tests/resources/test\.jalign\.cram|
             src/cnv/tests/resources/expected_chr1_.*\.jalign\.json|
-            src/cnv/tests/resources/expected_test\.jalign\.csv
+            src/cnv/tests/resources/expected_test\.jalign\.csv|
+            src/srsnv/tests/resources/402572-CL10377\.model_fold_[0-2]\.json
           )$
 
 

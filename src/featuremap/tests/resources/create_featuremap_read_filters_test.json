@@ -1,0 +1,194 @@
+{
+  "filters": [
+    {
+      "name": "raw",
+      "type": "raw"
+    },
+    {
+      "name": "not_in_dbsnp",
+      "type": "region",
+      "field": "ID",
+      "op": "eq",
+      "value": "."
+    },
+    {
+      "name": "not_in_gnomad",
+      "type": "region",
+      "field": "gnomAD_AF",
+      "op": "le",
+      "value": 0.0001
+    },
+    {
+      "name": "in_ug_hcr",
+      "type": "region",
+      "field": "UG_HCR",
+      "op": "ne",
+      "value": false
+    },
+    {
+      "name": "coverage_ge_min",
+      "type": "region",
+      "field": "DP",
+      "op": "ge",
+      "value": 20
+    },
+    {
+      "name": "coverage_le_max",
+      "type": "region",
+      "field": "DP",
+      "op": "le",
+      "value": 60
+    },
+    {
+      "name": "mapq_le_60",
+      "type": "mapping",
+      "field": "MAPQ",
+      "op": "le",
+      "value": 60
+    },
+    {
+      "name": "no_adj_ref_diff",
+      "type": "quality",
+      "field": "ADJ_REF_DIFF",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "name": "bcsq_gt_40",
+      "type": "quality",
+      "field": "BCSQ",
+      "op": "gt",
+      "value": 40
+    },
+    {
+      "name": "edist_le_10",
+      "type": "quality",
+      "field": "EDIST",
+      "op": "lt",
+      "value": 10
+    },
+    {
+      "name": "alt_hmer_lt_7",
+      "type": "quality",
+      "field": "X_HMER_ALT",
+      "op": "lt",
+      "value": 7
+    },
+    {
+      "name": "not_a_duplicate",
+      "type": "label",
+      "field": "DUP",
+      "op": "eq",
+      "value": false
+    },
+    {
+      "name": "ref_ne_alt",
+      "type": "label",
+      "field": "REF",
+      "op": "ne",
+      "value_field": "ALT"
+    },
+    {
+      "name": "downsample",
+      "type": "downsample",
+      "method": "random",
+      "seed": 0
+    }
+  ],
+  "f2_filters": [
+    {
+      "name": "raw",
+      "type": "raw"
+    },
+    {
+      "name": "not_in_dbsnp",
+      "type": "region",
+      "field": "ID",
+      "op": "eq",
+      "value": "."
+    },
+    {
+      "name": "not_in_gnomad",
+      "type": "region",
+      "field": "gnomAD_AF",
+      "op": "le",
+      "value": 0.0001
+    },
+    {
+      "name": "in_ug_hcr",
+      "type": "region",
+      "field": "UG_HCR",
+      "op": "ne",
+      "value": false
+    },
+    {
+      "name": "coverage_ge_min",
+      "type": "region",
+      "field": "DP",
+      "op": "ge",
+      "value": 20
+    },
+    {
+      "name": "coverage_le_max",
+      "type": "region",
+      "field": "DP",
+      "op": "le",
+      "value": 60
+    },
+    {
+      "name": "mapq_le_60",
+      "type": "mapping",
+      "field": "MAPQ",
+      "op": "le",
+      "value": 60
+    },
+    {
+      "name": "no_adj_ref_diff",
+      "type": "quality",
+      "field": "ADJ_REF_DIFF",
+      "op": "eq",
+      "value": 0
+    },
+    {
+      "name": "bcsq_gt_40",
+      "type": "quality",
+      "field": "BCSQ",
+      "op": "gt",
+      "value": 40
+    },
+    {
+      "name": "edist_le_10",
+      "type": "quality",
+      "field": "EDIST",
+      "op": "lt",
+      "value": 10
+    },
+    {
+      "name": "alt_hmer_lt_7",
+      "type": "quality",
+      "field": "X_HMER_ALT",
+      "op": "lt",
+      "value": 7
+    },
+    {
+      "name": "not_a_duplicate",
+      "type": "label",
+      "field": "DUP",
+      "op": "eq",
+      "value": false
+    },
+    {
+      "name": "ref_eq_alt",
+      "type": "label",
+      "field": "REF",
+      "op": "eq",
+      "value_field": "ALT"
+    },
+    {
+      "name": "downsample",
+      "type": "downsample",
+      "method": "random",
+      "seed": 0
+    }
+  ]
+}
