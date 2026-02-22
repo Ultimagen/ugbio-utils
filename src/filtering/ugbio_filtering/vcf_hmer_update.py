@@ -786,6 +786,16 @@ def _process_multiple_normals_median(
             if normal_read_data is None:
                 continue
 
+            # Check minimum normal coverage threshold
+            min_normal_cvg_threshold = config["min_normal_cvg"]
+            normal_cvg = len(normal_read_data)
+            if min_normal_cvg_threshold > 0 and normal_cvg < min_normal_cvg_threshold:
+                logger.debug(
+                    f"Skipping normal file {normal_reads} due to low coverage:\n"
+                    f"  {normal_cvg} < {min_normal_cvg_threshold}"
+                )
+                continue
+
             # Process all alternative alleles for this normal
             direction_results = {}
             for alt_idx, alt in enumerate(rec.alts):
@@ -1169,12 +1179,13 @@ def _process_direction_for_allele(
         return fill_direction_results_with_error()
 
 
-def _should_skip_record(rec, min_hmer: int) -> bool:
+def _should_skip_record(rec, min_hmer: int, max_hmer: int) -> bool:
     """Check if VCF record should be skipped from processing.
 
     Args:
         rec: VCF record
         min_hmer: Minimum homopolymer size threshold
+        max_hmer: Maximum homopolymer size threshold
 
     Returns:
         True if record should be skipped, False otherwise
@@ -1184,7 +1195,8 @@ def _should_skip_record(rec, min_hmer: int) -> bool:
         logger.debug(f"Record at {rec.contig}:{rec.pos} missing required fields (VARIANT_TYPE or X_HIL). Skipping.")
         return True
 
-    return rec.info["VARIANT_TYPE"] != "h-indel" or rec.info["X_HIL"][0] < min_hmer or rec.qual == 0
+    hmer_size = rec.info["X_HIL"][0]
+    return rec.info["VARIANT_TYPE"] != "h-indel" or hmer_size < min_hmer or hmer_size > max_hmer or rec.qual == 0
 
 
 def _write_results_to_record(
@@ -1268,6 +1280,7 @@ def _process_record(
     tumor_reads,
     merged_intervals,
     config: dict,
+    tumor_read_data=None,
 ) -> dict:
     """Process a single VCF record and return results.
 
@@ -1280,6 +1293,7 @@ def _process_record(
         tumor_reads: Tumor pysam AlignmentFile
         merged_intervals: Merged BED intervals or None
         config: Configuration dictionary with all parameters
+        tumor_read_data: Pre-collected tumor pileup data (optional)
 
     Returns:
         Dictionary with result or None if record should not be processed
@@ -1308,12 +1322,15 @@ def _process_record(
     if other_variant:
         return None
 
-    # Collect tumor pileup data and nucleotide once for all normals
-    tumor_pileup_data = _collect_tumor_pileup_data(tumor_reads, chrom, pos)
-    if tumor_pileup_data is None:
-        return None
-
-    tumor_read_data, nuc = tumor_pileup_data
+    # Collect tumor pileup data if not already provided
+    if tumor_read_data is None:
+        pileup_result = _collect_tumor_pileup_data(tumor_reads, chrom, pos)
+        if pileup_result is None:
+            return None
+        tumor_read_data, nuc = pileup_result
+    else:
+        # Extract nucleotide from pre-collected tumor data
+        nuc = get_max_nuc([x[0] for x in tumor_read_data])
 
     # Process multiple normals and select median by tot_score
     all_direction_results = _process_multiple_normals_median(
@@ -1328,6 +1345,39 @@ def _process_record(
     )
 
     return all_direction_results
+
+
+def _validate_and_collect_tumor_data(rec, tumor_reads, config: dict) -> tuple | None:
+    """Validate and collect tumor pileup data for a record.
+
+    Collects tumor pileup data and checks against minimum coverage threshold.
+
+    Args:
+        rec: VCF record to process
+        tumor_reads: Tumor pysam AlignmentFile
+        config: Configuration dictionary with min_tumor_cvg parameter
+
+    Returns:
+        Tuple of (tumor_read_data, nuc) if valid, None if record should be skipped
+    """
+    # Calculate position for pileup
+    chrom = rec.contig
+    pos = rec.pos + rec.info["X_HIL"][0] // 2
+
+    # Collect tumor pileup data
+    tumor_pileup_data = _collect_tumor_pileup_data(tumor_reads, chrom, pos)
+    if tumor_pileup_data is None:
+        return None
+
+    tumor_read_data, nuc = tumor_pileup_data
+
+    # Check minimum tumor coverage threshold
+    min_tumor_cvg_threshold = config["min_tumor_cvg"]
+    tumor_cvg = len(tumor_read_data)
+    if min_tumor_cvg_threshold > 0 and tumor_cvg < min_tumor_cvg_threshold:
+        return None
+
+    return tumor_read_data, nuc
 
 
 def _process_vcf_records(
@@ -1355,11 +1405,19 @@ def _process_vcf_records(
     for rec in vcf_file_handle.fetch():
         try:
             # Check if record should be skipped
-            if _should_skip_record(rec, config["min_hmer"]):
+            if _should_skip_record(rec, config["min_hmer"], config["max_hmer"]):
                 vcf_out_file_handle.write(rec)
                 continue
 
-            # Process record
+            # Validate and collect tumor data (includes coverage check)
+            tumor_data = _validate_and_collect_tumor_data(rec, tumor_reads, config)
+            if tumor_data is None:
+                vcf_out_file_handle.write(rec)
+                continue
+
+            tumor_read_data, nuc = tumor_data
+
+            # Process record with pre-collected tumor data
             all_direction_results = _process_record(
                 rec,
                 ref_fasta,
@@ -1369,13 +1427,12 @@ def _process_vcf_records(
                 tumor_reads,
                 merged_intervals,
                 config,
+                tumor_read_data=tumor_read_data,
             )
 
-            if all_direction_results is None:
+            if all_direction_results is None or len(all_direction_results) == 0:
                 vcf_out_file_handle.write(rec)
                 continue
-
-            # Write results to VCF record
             _write_results_to_record(
                 rec,
                 all_direction_results,
@@ -1468,6 +1525,8 @@ def variant_calling(config):
             tumor_reads_file: Tumor sample reads file path
             vcf_out_file: Output VCF file path
             min_hmer: Minimum homopolymer size threshold
+            max_hmer: Maximum homopolymer size threshold
+            min_tumor_cvg: Minimum tumor coverage threshold
             pseudocounts: Prior count for EM algorithm
             target_intervals_bed_file: Optional BED file for interval filtering
             tumor_germline_file: Optional tumor germline VCF file
@@ -1549,10 +1608,28 @@ def main() -> None:
 
     # Optional arguments
     parser.add_argument(
-        "--min-hmer",
+        "--min_hmer",
         type=int,
         default=4,
         help="Minimum homopolymer size (default: 6)",
+    )
+    parser.add_argument(
+        "--max_hmer",
+        type=int,
+        default=20,
+        help="Maximum homopolymer size (default: 20)",
+    )
+    parser.add_argument(
+        "--min_tumor_cvg",
+        type=int,
+        default=0,
+        help="Minimum tumor coverage threshold (default: 0)",
+    )
+    parser.add_argument(
+        "--min_normal_cvg",
+        type=int,
+        default=0,
+        help="Minimum normal coverage threshold; normals below this are skipped (default: 0)",
     )
     parser.add_argument(
         "--pseudocounts",
@@ -1561,26 +1638,26 @@ def main() -> None:
         help="Pseudocounts prior for EM algorithm (default: 0.5)",
     )
     parser.add_argument(
-        "--ref-fasta",
+        "--ref_fasta",
         type=str,
         default="/data/Runs/genomes/hg38/Homo_sapiens_assembly38.fasta",
         help="Path to reference FASTA file (default: hg38 path)",
     )
 
     parser.add_argument(
-        "--bed-file",
+        "--bed_file",
         type=str,
         default=None,
         help="BED file with intervals to process",
     )
     parser.add_argument(
-        "--tumor-germline",
+        "--tumor_germline",
         type=str,
         default=None,
         help="Tumor germline VCF file path",
     )
     parser.add_argument(
-        "--normal-germline",
+        "--normal_germline",
         type=str,
         default="/data/Runs/cloud_sync/s3/"
         "genomics-pipeline-concordanz-us-east-1/test/germline/"
@@ -1593,18 +1670,18 @@ def main() -> None:
         help="Write all fields to VCF output; if not set, only write mixture and tot_score",
     )
     parser.add_argument(
-        "--score-bound",
+        "--score_bound",
         type=float,
         default=2.0,
         help="Score bound threshold (default: 2.0); "
-        "records above this score with mixture above mixture-bound are marked PASS",
+        "records above this score with mixture above mixture_bound are marked PASS",
     )
     parser.add_argument(
-        "--mixture-bound",
+        "--mixture_bound",
         type=float,
         default=0.01,
         help="Mixture bound threshold (default: 0.01); "
-        "records above this mixture with score above score-bound are marked PASS",
+        "records above this mixture with score above score_bound are marked PASS",
     )
 
     args = parser.parse_args()
@@ -1630,6 +1707,9 @@ def main() -> None:
         "tumor_reads_file": args.tumor_reads_file,
         "vcf_out_file": args.output_vcf,
         "min_hmer": args.min_hmer,
+        "max_hmer": args.max_hmer,
+        "min_tumor_cvg": args.min_tumor_cvg,
+        "min_normal_cvg": args.min_normal_cvg,
         "pseudocounts": args.pseudocounts,
         "target_intervals_bed_file": args.bed_file,
         "tumor_germline_file": args.tumor_germline,
