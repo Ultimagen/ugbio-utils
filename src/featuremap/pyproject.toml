@@ -6,6 +6,7 @@ dependencies = [
     "ugbio_core[vcfbed,ml]",
     "ugbio_ppmseq",
     "polars>=1.27.1",
+    "cyclopts>=3.0",
 ]
 description = "Ultima Genomics FeatureMap utils"
 authors = [
@@ -25,7 +26,7 @@ filter_featuremap = "ugbio_featuremap.filter_dataframe:main"
 add_aggregate_params_and_xgb_score_to_pileup_featuremap = "ugbio_featuremap.featuremap_xgb_prediction:main"
 create_somatic_featuremap = "ugbio_featuremap.create_somatic_featuremap:main"
 integrate_mpileup_to_sfm = "ugbio_featuremap.integrate_mpileup_to_sfm:main"
-somatic_featuremap_fields_transformation = "ugbio_featuremap.somatic_featuremap_fields_transformation:main"
+somatic_featuremap_classifier = "ugbio_featuremap.somatic_featuremap_classifier:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true
