@@ -1389,6 +1389,7 @@ def _process_vcf_records(
     vcf_out_file_handle,
     merged_intervals,
     config: dict,
+    vcf_handle_for_queries=None,
 ) -> None:
     """Process all VCF records and write results.
 
@@ -1401,6 +1402,7 @@ def _process_vcf_records(
         vcf_out_file_handle: Output VCF file handle
         merged_intervals: Merged BED intervals or None
         config: Configuration dictionary with all parameters
+        vcf_handle_for_queries: Separate VCF handle for nested queries (optional)
     """
     for rec in vcf_file_handle.fetch():
         try:
@@ -1421,7 +1423,7 @@ def _process_vcf_records(
             all_direction_results = _process_record(
                 rec,
                 ref_fasta,
-                vcf_file_handle,
+                vcf_handle_for_queries or vcf_file_handle,
                 normal_reads,
                 tumor_germline_handle,
                 tumor_reads,
@@ -1453,7 +1455,9 @@ def _process_vcf_records(
             vcf_out_file_handle.write(rec)
 
 
-def _close_files(vcf_handle, vcf_out_handle, tumor_reads_handle, normal_reads_handles=None):
+def _close_files(
+    vcf_handle, vcf_out_handle, tumor_reads_handle, normal_reads_handles=None, vcf_handle_for_queries=None
+):
     """Close all open file handles.
 
     Args:
@@ -1461,6 +1465,7 @@ def _close_files(vcf_handle, vcf_out_handle, tumor_reads_handle, normal_reads_ha
         vcf_out_handle: Output VCF file handle
         tumor_reads_handle: Tumor reads BAM file handle
         normal_reads_handles: List of normal reads BAM file handles (optional)
+        vcf_handle_for_queries: Separate VCF handle for nested queries (optional)
     """
     vcf_handle.close()
     vcf_out_handle.close()
@@ -1469,6 +1474,8 @@ def _close_files(vcf_handle, vcf_out_handle, tumor_reads_handle, normal_reads_ha
         for handle in normal_reads_handles:
             if handle:
                 handle.close()
+    if vcf_handle_for_queries:
+        vcf_handle_for_queries.close()
 
 
 def _initialize_files(
@@ -1486,10 +1493,15 @@ def _initialize_files(
         verbose: Verbose flag for VCF header setup
 
     Returns:
-        Tuple of (vcf_handle, vcf_out_handle, ref_fasta, tumor_reads_handle)
+        Tuple of file handles: (vcf_handle, vcf_out_handle, ref_fasta, tumor_reads_handle,
+                               normal_reads_handles, tumor_germline_handle, vcf_handle_for_queries)
     """
     # Setup VCF headers using helper function
     vcf_handle = _setup_vcf_headers(vcf_file, verbose)
+
+    # Open a separate VCF handle for nested queries to avoid iterator corruption
+    # (pysam does not support nested fetch() on same handle - see pysam issue #827)
+    vcf_handle_for_queries = pysam.VariantFile(vcf_file)
 
     # Initialize tumor reads file
     tumor_reads_handle = pysam.AlignmentFile(tumor_reads_file, reference_filename=ref_fasta_path)
@@ -1508,7 +1520,15 @@ def _initialize_files(
     else:
         tumor_germline_handle = None
 
-    return vcf_handle, vcf_out_handle, ref_fasta, tumor_reads_handle, normal_reads_handles, tumor_germline_handle
+    return (
+        vcf_handle,
+        vcf_out_handle,
+        ref_fasta,
+        tumor_reads_handle,
+        normal_reads_handles,
+        tumor_germline_handle,
+        vcf_handle_for_queries,
+    )
 
 
 def variant_calling(config):
@@ -1548,7 +1568,15 @@ def variant_calling(config):
     target_intervals_bed_file = config["target_intervals_bed_file"]
 
     # Initialize and open files
-    vcf_handle, vcf_out_handle, ref_fasta, tumor_reads, normal_reads, tumor_germline_handle = _initialize_files(
+    (
+        vcf_handle,
+        vcf_out_handle,
+        ref_fasta,
+        tumor_reads,
+        normal_reads,
+        tumor_germline_handle,
+        vcf_handle_for_queries,
+    ) = _initialize_files(
         vcf_file, vcf_out_file, tumor_reads_file, normal_reads_files_list, ref_fasta_path, tumor_germline_file, verbose
     )
 
@@ -1568,10 +1596,11 @@ def variant_calling(config):
             vcf_out_handle,
             merged_intervals,
             config,
+            vcf_handle_for_queries,
         )
     finally:
         # Close all file handles
-        _close_files(vcf_handle, vcf_out_handle, tumor_reads, normal_reads)
+        _close_files(vcf_handle, vcf_out_handle, tumor_reads, normal_reads, vcf_handle_for_queries)
 
 
 def main() -> None:
