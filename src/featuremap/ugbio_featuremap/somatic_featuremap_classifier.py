@@ -1,5 +1,6 @@
 import logging
 import re
+import sys
 import tempfile
 from pathlib import Path
 
@@ -150,7 +151,7 @@ def _create_tr_annotation_file(
 
     # Create header file for bcftools annotate
     hdr_file = tmpdir / "tr_hdr.txt"
-    write_vcf_info_header_file(list(TR_CONFIG.fields), hdr_file)
+    write_vcf_info_header_file(list(TR_CONFIG.info_fields), hdr_file)
 
     return gz_tsv, hdr_file
 
@@ -160,7 +161,7 @@ def _create_tr_annotation_file(
 # =============================================================================
 
 
-def get_columns_to_drop_from_vcf(vcf_path: Path) -> tuple[set[str], set[str]]:
+def get_fields_to_drop_from_vcf(vcf_path: Path) -> tuple[set[str], set[str]]:
     """
     Determine which INFO and FORMAT columns to drop based on required fields.
 
@@ -222,7 +223,7 @@ def read_vcf_with_aggregation(
         Polars DataFrame with aggregated features and sample-suffixed columns.
     """
     # Compute which columns to drop based on required fields
-    drop_info, drop_format = get_columns_to_drop_from_vcf(vcf_path)
+    drop_info, drop_format = get_fields_to_drop_from_vcf(vcf_path)
 
     vcf_to_parquet(
         vcf=str(vcf_path),
@@ -238,7 +239,7 @@ def read_vcf_with_aggregation(
     aggregated_df = pl.read_parquet(output_parquet_path)
 
     if aggregated_df.is_empty():
-        logger.error(f"No daata found in the aggregated dataframe: {output_parquet_path}")
+        logger.error(f"No data found in the aggregated dataframe: {output_parquet_path}")
         raise RuntimeError(f"No data found in the aggregated dataframe: {output_parquet_path}")
 
     logger.info(f"Loaded {len(aggregated_df):,} variants from parquet: {output_parquet_path}")
@@ -378,14 +379,14 @@ def aggregated_df_post_processing(variants_df: pl.DataFrame, sample_names: list[
         s = f"_{sample_name}"  # Original suffix from vcf_to_parquet
 
         # Derive sum-based columns (sum = mean * count for 0/1 fields)
-        # COUNT_DUPLICATE = sum(DUP) = mean(DUP) * count(DUP)
+        # count_DUP = sum(DUP) = mean(DUP) * count(DUP)
         derived_exprs.append(
             (pl.col(f"{FeatureMapFields.DUP.value}_mean{s}") * pl.col(f"{FeatureMapFields.DUP.value}_count{s}"))
             .round(0)
             .cast(pl.Int64)
-            .alias(f"count_duplicate{s}")
+            .alias(f"count_{FeatureMapFields.DUP.value}{s}")
         )
-        # COUNT_NON_DUPLICATE = count - sum
+        # count_non_DUP = count - sum
         derived_exprs.append(
             (
                 pl.col(f"{FeatureMapFields.DUP.value}_count{s}")
@@ -394,7 +395,7 @@ def aggregated_df_post_processing(variants_df: pl.DataFrame, sample_names: list[
                 ).round(0)
             )
             .cast(pl.Int64)
-            .alias(f"count_non_duplicate{s}")
+            .alias(f"count_non_{FeatureMapFields.DUP.value}{s}")
         )
         # REVERSE_COUNT = sum(REV)
         derived_exprs.append(
@@ -425,13 +426,13 @@ def aggregated_df_post_processing(variants_df: pl.DataFrame, sample_names: list[
         derived_exprs.append(
             (pl.col(f"{FeatureMapFields.SCST.value}_count{s}") - pl.col(f"{FeatureMapFields.SCST.value}_count_zero{s}"))
             .cast(pl.Int64)
-            .alias(f"scst_num_reads{s}")
+            .alias(f"{FeatureMapFields.SCST.value.lower()}_num_reads{s}")
         )
         # SCED_NUM_READS = count - count_zero
         derived_exprs.append(
             (pl.col(f"{FeatureMapFields.SCED.value}_count{s}") - pl.col(f"{FeatureMapFields.SCED.value}_count_zero{s}"))
             .cast(pl.Int64)
-            .alias(f"sced_num_reads{s}")
+            .alias(f"{FeatureMapFields.SCED.value.lower()}_num_reads{s}")
         )
 
     # Apply derived columns
@@ -445,7 +446,7 @@ def aggregated_df_post_processing(variants_df: pl.DataFrame, sample_names: list[
 # =============================================================================
 
 
-def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str]) -> pl.DataFrame:
+def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_path: Path | None = None) -> pl.DataFrame:
     """
     Rename the dataframe columns to match the model expected features.
 
@@ -455,7 +456,22 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str]) -> pl.D
         DataFrame with sample-suffixed columns.
     samples : list[tuple[str, str]]
         List of (sample_name, prefix) tuples.
+    vcf_path : Path, optional
+        Path to the VCF file. If provided, the sample names will be validated against the VCF file.
+        This is used for debugging purposes.
+
+    Returns
+    -------
+    pl.DataFrame
+        DataFrame with renamed columns.
     """
+    if vcf_path:
+        tumor_sample, normal_sample = get_sample_names_from_vcf(vcf_path)
+        if tumor_sample not in samples or normal_sample not in samples:
+            raise ValueError(
+                f"The given samples ({samples}) do not match the sample names in the VCF file: "
+                f"{tumor_sample}, {normal_sample}"
+            )
 
     # Build rename map: convert all sample-suffixed columns to t_/n_ prefix convention
     rename_map = {}
@@ -494,9 +510,9 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str]) -> pl.D
         rename_map[f"{FeatureMapFields.DP_FILT.value}{s}"] = f"{prefix}dp_filt"
 
         # Derived columns in post_processing
-        rename_map[f"count_duplicate{s}"] = f"{prefix}count_duplicate"
-        rename_map[f"count_non_duplicate{s}"] = f"{prefix}count_non_duplicate"
-        rename_map[f"reverse_count{s}"] = f"{prefix}reverse_count"
+        rename_map[f"count_{FeatureMapFields.DUP.value}{s}"] = f"{prefix}count_duplicate"
+        rename_map[f"count_non_{FeatureMapFields.DUP.value}{s}"] = f"{prefix}count_non_duplicate"
+        rename_map[f"{FeatureMapFields.REV.value}_count{s}"] = f"{prefix}reverse_count"
         rename_map[f"forward_count{s}"] = f"{prefix}forward_count"
         rename_map[f"pass_alt_reads{s}"] = f"{prefix}pass_alt_reads"
         rename_map[f"scst_num_reads{s}"] = f"{prefix}scst_num_reads"
@@ -644,6 +660,12 @@ def annotate_vcf_with_xgb_proba(
     additional_header_lines = []
     if tumor_sample:
         additional_header_lines.append(f"##tumor_sample={tumor_sample}")
+    try:
+        command = " ".join(sys.argv[1:])
+        additional_header_lines.append(f"##somatic_featuremap_classifier={command}")
+    except:  # noqa: E722
+        logger.warning("Could not get command line arguments to add to header. skipping.")
+
     write_vcf_info_header_file([XGB_PROBA_INFO_FIELD], header_file, additional_header_lines=additional_header_lines)
     logger.debug(f"Created header file: {header_file}")
 
@@ -745,7 +767,8 @@ def somatic_featuremap_classifier(
 
     Steps:
     1. Filter VCF and add TR annotations
-    2. Convert VCF to dataframe and add transformations such as aggregations and PILEUP-based ref/nonref features
+    2. Convert VCF to (polars) dataframe and add transformations such as aggregations and PILEUP-based
+     ref/nonref features
     3. Run XGBoost classifier
     4. Annotate VCF with XGBoost probability using bcftools annotate
 

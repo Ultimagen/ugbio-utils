@@ -20,7 +20,7 @@ from ugbio_featuremap.somatic_featuremap_classifier import (
 class TestFullPipeline:
     """End-to-end integration tests for the classifier pipeline."""
 
-    def test_full_pipeline_with_model(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_v115):
+    def test_full_pipeline_with_model(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_fresh_frozen):
         """Test complete pipeline with V1.15 model on minimal VCF."""
         output_vcf = tmp_path / "output.vcf.gz"
         output_parquet = tmp_path / "output.parquet"
@@ -30,7 +30,7 @@ class TestFullPipeline:
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
-            xgb_model_json=xgb_model_v115,
+            xgb_model_json=xgb_model_fresh_frozen,
             output_parquet=output_parquet,
             filter_string="PASS",
             n_threads=1,
@@ -78,7 +78,7 @@ class TestFullPipeline:
                 assert 0.0 <= xgb_proba <= 1.0
 
     def test_full_pipeline_verbose_saves_debug_parquet(
-        self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_v115
+        self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_fresh_frozen
     ):
         """Test verbose mode saves full DataFrame with xgb_proba to parquet."""
         output_vcf = tmp_path / "output.vcf.gz"
@@ -89,7 +89,7 @@ class TestFullPipeline:
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
-            xgb_model_json=xgb_model_v115,
+            xgb_model_json=xgb_model_fresh_frozen,
             output_parquet=output_parquet,
             filter_string="PASS",
             n_threads=1,
@@ -106,7 +106,7 @@ class TestOutputValidation:
     """Tests validating the structure and content of pipeline outputs."""
 
     @pytest.fixture(autouse=True)
-    def _run_pipeline(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_v115):
+    def _run_pipeline(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_fresh_frozen):
         """Run pipeline once and share outputs across tests in this class."""
         self.output_vcf = tmp_path / "output.vcf.gz"
         self.output_parquet = tmp_path / "output.parquet"
@@ -116,7 +116,7 @@ class TestOutputValidation:
             output_vcf=self.output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
-            xgb_model_json=xgb_model_v115,
+            xgb_model_json=xgb_model_fresh_frozen,
             output_parquet=self.output_parquet,
             filter_string="PASS",
             n_threads=1,
@@ -179,8 +179,8 @@ class TestOutputValidation:
         for sample in [TUMOR_SAMPLE, NORMAL_SAMPLE]:
             s = f"_{sample}"
             for col in [
-                f"count_duplicate{s}",
-                f"count_non_duplicate{s}",
+                f"count_DUP{s}",
+                f"count_non_DUP{s}",
                 f"reverse_count{s}",
                 f"forward_count{s}",
                 f"pass_alt_reads{s}",
@@ -203,7 +203,7 @@ class TestOutputValidation:
 class TestFilterVariations:
     """Test different filter_string options."""
 
-    def test_no_filter(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_v115):
+    def test_no_filter(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_fresh_frozen):
         """Test pipeline without filter (all variants processed)."""
         output_vcf = tmp_path / "output.vcf.gz"
 
@@ -212,7 +212,7 @@ class TestFilterVariations:
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
-            xgb_model_json=xgb_model_v115,
+            xgb_model_json=xgb_model_fresh_frozen,
             filter_string="",
             n_threads=1,
         )

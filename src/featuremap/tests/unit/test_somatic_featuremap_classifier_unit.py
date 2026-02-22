@@ -14,7 +14,7 @@ from ugbio_featuremap.somatic_featuremap_classifier import (
     aggregated_df_post_processing,
     calculate_ref_nonref_columns,
     filter_and_annotate_tr,
-    get_columns_to_drop_from_vcf,
+    get_fields_to_drop_from_vcf,
     read_vcf_with_aggregation,
     rename_cols_for_model,
     run_classifier,
@@ -104,7 +104,7 @@ class TestGetColumnsToDropFromVcf:
 
     def test_required_fields_are_kept(self, mini_somatic_vcf):
         """Fields in REQUIRED_INFO_FIELDS and REQUIRED_FORMAT_FIELDS should not be dropped."""
-        drop_info, drop_format = get_columns_to_drop_from_vcf(mini_somatic_vcf)
+        drop_info, drop_format = get_fields_to_drop_from_vcf(mini_somatic_vcf)
 
         # None of the required fields should be in the drop sets
         assert not (
@@ -116,7 +116,7 @@ class TestGetColumnsToDropFromVcf:
 
     def test_non_required_fields_are_dropped(self, mini_somatic_vcf):
         """Fields not in REQUIRED sets should be in drop sets."""
-        drop_info, drop_format = get_columns_to_drop_from_vcf(mini_somatic_vcf)
+        drop_info, drop_format = get_fields_to_drop_from_vcf(mini_somatic_vcf)
 
         # Non-required fields like X_HMER_REF, RPA, etc. should be dropped
         assert len(drop_info) > 0, "Expected some INFO fields to be dropped"
@@ -219,8 +219,8 @@ class TestReadVcfWithAggregation:
         for sample in [TUMOR_SAMPLE, NORMAL_SAMPLE]:
             s = f"_{sample}"
             for col_base in [
-                "count_duplicate",
-                "count_non_duplicate",
+                "count_DUP",
+                "count_non_DUP",
                 "reverse_count",
                 "forward_count",
                 "pass_alt_reads",
@@ -335,8 +335,8 @@ class TestAggregatedDfPostProcessing:
         for sample in [TUMOR_SAMPLE, NORMAL_SAMPLE]:
             s = f"_{sample}"
             dup_count = result[f"DUP_count{s}"][0]
-            count_dup = result[f"count_duplicate{s}"][0]
-            count_nondup = result[f"count_non_duplicate{s}"][0]
+            count_dup = result[f"count_DUP{s}"][0]
+            count_nondup = result[f"count_non_DUP{s}"][0]
             assert (
                 count_dup + count_nondup == dup_count
             ), f"Duplicate invariant failed for {sample}: {count_dup} + {count_nondup} != {dup_count}"
@@ -482,7 +482,9 @@ class TestRenameColsForModel:
 class TestRunClassifier:
     """Test Step 3: XGBoost classifier execution."""
 
-    def test_run_classifier_returns_predictions(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_v115):
+    def test_run_classifier_returns_predictions(
+        self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_fresh_frozen
+    ):
         """Classifier should return a Series with probabilities in [0, 1]."""
         # First run the pipeline steps to get a proper DataFrame
         filtered_vcf = filter_and_annotate_tr(
@@ -504,7 +506,7 @@ class TestRunClassifier:
         )
 
         renamed_df = rename_cols_for_model(aggregated_df, [TUMOR_SAMPLE, NORMAL_SAMPLE])
-        predictions = run_classifier(renamed_df, xgb_model_v115)
+        predictions = run_classifier(renamed_df, xgb_model_fresh_frozen)
 
         assert isinstance(predictions, pl.Series)
         assert len(predictions) == len(aggregated_df)
@@ -514,7 +516,7 @@ class TestRunClassifier:
         assert (predictions >= 0.0).all()
         assert (predictions <= 1.0).all()
 
-    def test_model_feature_compatibility(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_v115):
+    def test_model_feature_compatibility(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_fresh_frozen):
         """DataFrame columns after renaming should include all model features."""
         from ugbio_featuremap import somatic_featuremap_inference_utils
 
@@ -540,7 +542,7 @@ class TestRunClassifier:
         renamed_df = rename_cols_for_model(aggregated_df, [TUMOR_SAMPLE, NORMAL_SAMPLE])
 
         # Load model and check features
-        xgb_clf = somatic_featuremap_inference_utils.load_xgb_model(xgb_model_v115)
+        xgb_clf = somatic_featuremap_inference_utils.load_xgb_model(xgb_model_fresh_frozen)
         model_features = set(xgb_clf.get_booster().feature_names)
         df_features = set(renamed_df.columns)
 
@@ -562,7 +564,7 @@ class TestFilterStringValidation:
     """Test filter_string validation in somatic_featuremap_classifier."""
 
     def test_invalid_filter_string_with_space_raises(
-        self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_v115
+        self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_fresh_frozen
     ):
         """filter_string with spaces raises ValueError."""
         output_vcf = tmp_path / "output.vcf.gz"
@@ -572,12 +574,12 @@ class TestFilterStringValidation:
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=tr_bed,
-                xgb_model_json=xgb_model_v115,
+                xgb_model_json=xgb_model_fresh_frozen,
                 filter_string="PASS ",
             )
 
     def test_invalid_filter_string_with_special_chars_raises(
-        self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_v115
+        self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_fresh_frozen
     ):
         """filter_string with non-standard characters raises ValueError."""
         output_vcf = tmp_path / "output.vcf.gz"
@@ -587,7 +589,7 @@ class TestFilterStringValidation:
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=tr_bed,
-                xgb_model_json=xgb_model_v115,
+                xgb_model_json=xgb_model_fresh_frozen,
                 filter_string="foo;bar",
             )
 
@@ -595,7 +597,7 @@ class TestFilterStringValidation:
 class TestInputFileValidation:
     """Test input file existence validation in initialization."""
 
-    def test_missing_somatic_featuremap_raises(self, tmp_path, tr_bed, genome_fai, xgb_model_v115):
+    def test_missing_somatic_featuremap_raises(self, tmp_path, tr_bed, genome_fai, xgb_model_fresh_frozen):
         """Missing somatic_featuremap raises FileNotFoundError."""
         output_vcf = tmp_path / "output.vcf.gz"
         missing_vcf = tmp_path / "nonexistent.vcf.gz"
@@ -605,10 +607,10 @@ class TestInputFileValidation:
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=tr_bed,
-                xgb_model_json=xgb_model_v115,
+                xgb_model_json=xgb_model_fresh_frozen,
             )
 
-    def test_missing_genome_index_raises(self, tmp_path, mini_somatic_vcf, tr_bed, xgb_model_v115):
+    def test_missing_genome_index_raises(self, tmp_path, mini_somatic_vcf, tr_bed, xgb_model_fresh_frozen):
         """Missing genome_index_file raises FileNotFoundError."""
         output_vcf = tmp_path / "output.vcf.gz"
         missing_fai = tmp_path / "nonexistent.fai"
@@ -618,10 +620,10 @@ class TestInputFileValidation:
                 output_vcf=output_vcf,
                 genome_index_file=missing_fai,
                 tandem_repeats_bed=tr_bed,
-                xgb_model_json=xgb_model_v115,
+                xgb_model_json=xgb_model_fresh_frozen,
             )
 
-    def test_missing_tandem_repeats_bed_raises(self, tmp_path, mini_somatic_vcf, genome_fai, xgb_model_v115):
+    def test_missing_tandem_repeats_bed_raises(self, tmp_path, mini_somatic_vcf, genome_fai, xgb_model_fresh_frozen):
         """Missing tandem_repeats_bed raises FileNotFoundError."""
         output_vcf = tmp_path / "output.vcf.gz"
         missing_bed = tmp_path / "nonexistent.bed"
@@ -631,7 +633,7 @@ class TestInputFileValidation:
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=missing_bed,
-                xgb_model_json=xgb_model_v115,
+                xgb_model_json=xgb_model_fresh_frozen,
             )
 
     def test_missing_xgb_model_raises(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai):
@@ -647,7 +649,7 @@ class TestInputFileValidation:
                 xgb_model_json=missing_model,
             )
 
-    def test_missing_regions_bed_raises(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_v115):
+    def test_missing_regions_bed_raises(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_fresh_frozen):
         """Missing regions_bed_file raises FileNotFoundError when provided."""
         output_vcf = tmp_path / "output.vcf.gz"
         missing_bed = tmp_path / "nonexistent.bed"
@@ -657,6 +659,6 @@ class TestInputFileValidation:
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=tr_bed,
-                xgb_model_json=xgb_model_v115,
+                xgb_model_json=xgb_model_fresh_frozen,
                 regions_bed_file=missing_bed,
             )

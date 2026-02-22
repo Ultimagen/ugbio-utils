@@ -23,7 +23,7 @@ class TandemRepeatConfig:
     This class provides VCF metadata (type, description) and helper methods.
     """
 
-    fields: tuple[VcfInfoField, ...] = (
+    info_fields: tuple[VcfInfoField, ...] = (
         VcfInfoField(TandemRepeatFields.TR_START.value, "1", "Integer", "Closest tandem Repeat Start"),
         VcfInfoField(TandemRepeatFields.TR_END.value, "1", "Integer", "Closest Tandem Repeat End"),
         VcfInfoField(TandemRepeatFields.TR_SEQ.value, "1", "String", "Closest Tandem Repeat Sequence"),
@@ -86,7 +86,7 @@ class PileupConfig:
         """Get the full PILEUP column name."""
         return f"PILEUP_{element}_{position}{sample_suffix}"
 
-    def get_all_format_fields(self) -> set[str]:
+    def get_all_pileup_format_fields(self) -> set[str]:
         """Get all PILEUP FORMAT field names (without sample suffix)."""
         fields = set()
         for pos in self.positions:
@@ -242,7 +242,7 @@ REQUIRED_FORMAT_FIELDS: set[str] = {
     FeatureMapFields.SCST.value,  # Soft clip start -> scst_num_reads (count non-zero)
     FeatureMapFields.SCED.value,  # Soft clip end -> sced_num_reads (count non-zero)
     # PILEUP columns for ref0-4 / nonref0-4 calculations
-    *PILEUP_CONFIG.get_all_format_fields(),
+    *PILEUP_CONFIG.get_all_pileup_format_fields(),
 }
 
 # Sample prefixes for tumor (index 0) and normal (index 1)
