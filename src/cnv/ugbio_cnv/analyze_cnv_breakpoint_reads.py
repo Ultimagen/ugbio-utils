@@ -502,17 +502,6 @@ def _annotate_vcf_record_with_evidence(record: pysam.VariantRecord, evidence: Br
     )
 
 
-def _collect_supplementary_alignment(
-    read: pysam.AlignedSegment,
-    supplementary_reads: dict[str, list[pysam.AlignedSegment]],
-) -> None:
-    """Collect a supplementary alignment indexed by query name."""
-    query_name = str(read.query_name)
-    if query_name not in supplementary_reads:
-        supplementary_reads[query_name] = []
-    supplementary_reads[query_name].append(read)
-
-
 def _process_primary_read_for_evidence(
     read: pysam.AlignedSegment,
     alignment_file: pysam.AlignmentFile,
@@ -585,37 +574,44 @@ def _collect_reads_from_region(
     supporting_reads: list[tuple[pysam.AlignedSegment, str]] = []
     supplementary_reads: dict[str, list[pysam.AlignedSegment]] = {}
 
+    # Process ONLY the two breakpoint regions, not the entire interval
+    # This dramatically improves performance for large CNVs
+    regions_to_fetch = [
+        (start_region_start, start_region_end),  # Start breakpoint
+        (end_region_start, end_region_end),  # End breakpoint
+    ]
+
     try:
-        for read in alignment_file.fetch(chrom, start_region_start, end_region_end):
-            # Collect supplementary alignments separately
-            if read.is_supplementary:
-                _collect_supplementary_alignment(read, supplementary_reads)
-                continue
+        for region_start, region_end in regions_to_fetch:
+            for read in alignment_file.fetch(chrom, region_start, region_end):
+                # Skip supplementary reads in this phase - they'll be collected later
+                if read.is_supplementary:
+                    continue
 
-            if _should_skip_read(read) or read.query_name in processed_reads:
-                continue
+                if _should_skip_read(read) or read.query_name in processed_reads:
+                    continue
 
-            read_start = read.reference_start
+                read_start = read.reference_start
 
-            if not _is_read_near_breakpoint(
-                read_start, start_region_start, start_region_end, end_region_start, end_region_end
-            ):
-                continue
+                if not _is_read_near_breakpoint(
+                    read_start, start_region_start, start_region_end, end_region_start, end_region_end
+                ):
+                    continue
 
-            processed_reads.add(str(read.query_name))
+                processed_reads.add(str(read.query_name))
 
-            duplication_reads, deletion_reads = _process_primary_read_for_evidence(
-                read,
-                alignment_file,
-                start,
-                end,
-                cushion,
-                duplication_reads,
-                deletion_reads,
-                dup_insert_sizes,
-                del_insert_sizes,
-                supporting_reads,
-            )
+                duplication_reads, deletion_reads = _process_primary_read_for_evidence(
+                    read,
+                    alignment_file,
+                    start,
+                    end,
+                    cushion,
+                    duplication_reads,
+                    deletion_reads,
+                    dup_insert_sizes,
+                    del_insert_sizes,
+                    supporting_reads,
+                )
 
     except Exception as e:
         logger.warning(f"Error fetching reads for {chrom}:{start}-{end}: {e}")
@@ -629,6 +625,63 @@ def _collect_reads_from_region(
         supporting_reads,
         supplementary_reads,
     )
+
+
+def _collect_supplementary_alignments_for_supporting_reads(
+    alignment_file: pysam.AlignmentFile,
+    chrom: str,
+    supporting_reads: list[tuple[pysam.AlignedSegment, str]],
+    start_region_start: int,
+    end_region_end: int,
+) -> dict[str, list[pysam.AlignedSegment]]:
+    """
+    Collect supplementary alignments ONLY for reads that are supporting CNV evidence.
+
+    This is much more efficient than collecting all supplementary reads in the interval,
+    since typically only 10-100 reads support CNV out of 1M+ total reads.
+
+    Parameters
+    ----------
+    alignment_file : pysam.AlignmentFile
+        Open BAM/CRAM file
+    chrom : str
+        Chromosome name
+    supporting_reads : list[tuple[pysam.AlignedSegment, str]]
+        List of (read, read_group) tuples for supporting reads
+    start_region_start : int
+        Start of search region
+    end_region_end : int
+        End of search region
+
+    Returns
+    -------
+    dict[str, list[pysam.AlignedSegment]]
+        Dictionary mapping query_name to list of supplementary alignments
+    """
+    supplementary_reads: dict[str, list[pysam.AlignedSegment]] = {}
+
+    # Create set of query names we need supplementary alignments for
+    supporting_query_names = {str(read.query_name) for read, _ in supporting_reads}
+
+    if not supporting_query_names:
+        return supplementary_reads
+
+    try:
+        # Fetch supplementary alignments from the breakpoint regions
+        for read in alignment_file.fetch(chrom, start_region_start, end_region_end):
+            if not read.is_supplementary:
+                continue
+
+            query_name = str(read.query_name)
+            if query_name in supporting_query_names:
+                if query_name not in supplementary_reads:
+                    supplementary_reads[query_name] = []
+                supplementary_reads[query_name].append(read)
+
+    except Exception as e:
+        logger.warning(f"Error fetching supplementary reads: {e}")
+
+    return supplementary_reads
 
 
 def analyze_interval_breakpoints(
@@ -663,7 +716,7 @@ def analyze_interval_breakpoints(
     regions = _calculate_breakpoint_regions(start, end, cushion)
     start_region_start, start_region_end, end_region_start, end_region_end = regions
 
-    # Collect reads from the breakpoint region
+    # PHASE 1: Collect primary reads from the two breakpoint regions
     (
         duplication_reads,
         deletion_reads,
@@ -671,7 +724,7 @@ def analyze_interval_breakpoints(
         del_insert_sizes,
         processed_reads,
         supporting_reads,
-        supplementary_reads,
+        _,  # supplementary_reads not populated in phase 1
     ) = _collect_reads_from_region(
         alignment_file,
         chrom,
@@ -681,6 +734,16 @@ def analyze_interval_breakpoints(
         start_region_start,
         start_region_end,
         end_region_start,
+        end_region_end,
+    )
+
+    # PHASE 2: Collect supplementary alignments ONLY for supporting reads
+    # This is dramatically more efficient than collecting all supplementary reads
+    supplementary_reads = _collect_supplementary_alignments_for_supporting_reads(
+        alignment_file,
+        chrom,
+        supporting_reads,
+        start_region_start,
         end_region_end,
     )
 
