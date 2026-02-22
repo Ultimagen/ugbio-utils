@@ -400,7 +400,7 @@ class TestErrorHandling:
         mock_rec.qual = 10
 
         # Should return True (skip) when X_HIL is missing
-        result = _should_skip_record(mock_rec, min_hmer=4)
+        result = _should_skip_record(mock_rec, min_hmer=4, max_hmer=20)
         assert result is True
 
     def test_should_skip_record_missing_variant_type(self):
@@ -412,8 +412,293 @@ class TestErrorHandling:
         mock_rec.qual = 10
 
         # Should return True (skip) when VARIANT_TYPE is missing
-        result = _should_skip_record(mock_rec, min_hmer=4)
+        result = _should_skip_record(mock_rec, min_hmer=4, max_hmer=20)
         assert result is True
+
+
+class TestArgumentParsing:
+    """Test command-line argument parsing and validation."""
+
+    def test_default_min_hmer(self):
+        """Test default min_hmer value is 4."""
+        from ugbio_filtering.vcf_hmer_update import main
+
+        with patch(
+            "sys.argv",
+            [
+                "vcf_hmer_update.py",
+                "input.vcf",
+                "normal.bam",
+                "tumor.bam",
+                "output.vcf",
+            ],
+        ):
+            with patch("ugbio_filtering.vcf_hmer_update.variant_calling") as mock_variant_calling:
+                try:
+                    main()
+                except SystemExit:
+                    pass
+                if mock_variant_calling.called:
+                    config = mock_variant_calling.call_args[0][0]
+                    assert config["min_hmer"] == 4
+
+    def test_default_max_hmer(self):
+        """Test default max_hmer value is 20."""
+        from ugbio_filtering.vcf_hmer_update import main
+
+        with patch(
+            "sys.argv",
+            [
+                "vcf_hmer_update.py",
+                "input.vcf",
+                "normal.bam",
+                "tumor.bam",
+                "output.vcf",
+            ],
+        ):
+            with patch("ugbio_filtering.vcf_hmer_update.variant_calling") as mock_variant_calling:
+                try:
+                    main()
+                except SystemExit:
+                    pass
+                if mock_variant_calling.called:
+                    config = mock_variant_calling.call_args[0][0]
+                    assert config["max_hmer"] == 20
+
+    def test_default_min_tumor_cvg(self):
+        """Test default min_tumor_cvg value is 0."""
+        from ugbio_filtering.vcf_hmer_update import main
+
+        with patch(
+            "sys.argv",
+            [
+                "vcf_hmer_update.py",
+                "input.vcf",
+                "normal.bam",
+                "tumor.bam",
+                "output.vcf",
+            ],
+        ):
+            with patch("ugbio_filtering.vcf_hmer_update.variant_calling") as mock_variant_calling:
+                try:
+                    main()
+                except SystemExit:
+                    pass
+                if mock_variant_calling.called:
+                    config = mock_variant_calling.call_args[0][0]
+                    assert config["min_tumor_cvg"] == 0
+
+    def test_default_min_normal_cvg(self):
+        """Test default min_normal_cvg value is 0."""
+        from ugbio_filtering.vcf_hmer_update import main
+
+        with patch(
+            "sys.argv",
+            [
+                "vcf_hmer_update.py",
+                "input.vcf",
+                "normal.bam",
+                "tumor.bam",
+                "output.vcf",
+            ],
+        ):
+            with patch("ugbio_filtering.vcf_hmer_update.variant_calling") as mock_variant_calling:
+                try:
+                    main()
+                except SystemExit:
+                    pass
+                if mock_variant_calling.called:
+                    config = mock_variant_calling.call_args[0][0]
+                    assert config["min_normal_cvg"] == 0
+
+    def test_custom_min_hmer(self):
+        """Test custom min_hmer argument overrides default."""
+        from ugbio_filtering.vcf_hmer_update import main
+
+        with patch(
+            "sys.argv",
+            [
+                "vcf_hmer_update.py",
+                "input.vcf",
+                "normal.bam",
+                "tumor.bam",
+                "output.vcf",
+                "--min_hmer",
+                "8",
+            ],
+        ):
+            with patch("ugbio_filtering.vcf_hmer_update.variant_calling") as mock_variant_calling:
+                try:
+                    main()
+                except SystemExit:
+                    pass
+                if mock_variant_calling.called:
+                    config = mock_variant_calling.call_args[0][0]
+                    assert config["min_hmer"] == 8
+
+    def test_custom_max_hmer(self):
+        """Test custom max_hmer argument overrides default."""
+        from ugbio_filtering.vcf_hmer_update import main
+
+        with patch(
+            "sys.argv",
+            [
+                "vcf_hmer_update.py",
+                "input.vcf",
+                "normal.bam",
+                "tumor.bam",
+                "output.vcf",
+                "--max_hmer",
+                "15",
+            ],
+        ):
+            with patch("ugbio_filtering.vcf_hmer_update.variant_calling") as mock_variant_calling:
+                try:
+                    main()
+                except SystemExit:
+                    pass
+                if mock_variant_calling.called:
+                    config = mock_variant_calling.call_args[0][0]
+                    assert config["max_hmer"] == 15
+
+    def test_custom_min_tumor_cvg(self):
+        """Test custom min_tumor_cvg argument."""
+        from ugbio_filtering.vcf_hmer_update import main
+
+        with patch(
+            "sys.argv",
+            [
+                "vcf_hmer_update.py",
+                "input.vcf",
+                "normal.bam",
+                "tumor.bam",
+                "output.vcf",
+                "--min_tumor_cvg",
+                "50",
+            ],
+        ):
+            with patch("ugbio_filtering.vcf_hmer_update.variant_calling") as mock_variant_calling:
+                try:
+                    main()
+                except SystemExit:
+                    pass
+                if mock_variant_calling.called:
+                    config = mock_variant_calling.call_args[0][0]
+                    assert config["min_tumor_cvg"] == 50
+
+    def test_custom_min_normal_cvg(self):
+        """Test custom min_normal_cvg argument."""
+        from ugbio_filtering.vcf_hmer_update import main
+
+        with patch(
+            "sys.argv",
+            [
+                "vcf_hmer_update.py",
+                "input.vcf",
+                "normal.bam",
+                "tumor.bam",
+                "output.vcf",
+                "--min_normal_cvg",
+                "30",
+            ],
+        ):
+            with patch("ugbio_filtering.vcf_hmer_update.variant_calling") as mock_variant_calling:
+                try:
+                    main()
+                except SystemExit:
+                    pass
+                if mock_variant_calling.called:
+                    config = mock_variant_calling.call_args[0][0]
+                    assert config["min_normal_cvg"] == 30
+
+    def test_default_score_bound(self):
+        """Test default score_bound value is 2.0."""
+        from ugbio_filtering.vcf_hmer_update import main
+
+        with patch(
+            "sys.argv",
+            [
+                "vcf_hmer_update.py",
+                "input.vcf",
+                "normal.bam",
+                "tumor.bam",
+                "output.vcf",
+            ],
+        ):
+            with patch("ugbio_filtering.vcf_hmer_update.variant_calling") as mock_variant_calling:
+                try:
+                    main()
+                except SystemExit:
+                    pass
+                if mock_variant_calling.called:
+                    config = mock_variant_calling.call_args[0][0]
+                    assert config["score_bound"] == 2.0
+
+    def test_default_mixture_bound(self):
+        """Test default mixture_bound value is 0.01."""
+        from ugbio_filtering.vcf_hmer_update import main
+
+        with patch(
+            "sys.argv",
+            [
+                "vcf_hmer_update.py",
+                "input.vcf",
+                "normal.bam",
+                "tumor.bam",
+                "output.vcf",
+            ],
+        ):
+            with patch("ugbio_filtering.vcf_hmer_update.variant_calling") as mock_variant_calling:
+                try:
+                    main()
+                except SystemExit:
+                    pass
+                if mock_variant_calling.called:
+                    config = mock_variant_calling.call_args[0][0]
+                    assert config["mixture_bound"] == 0.01
+
+    def test_all_arguments_in_config(self):
+        """Test all arguments are properly stored in config dictionary."""
+        from ugbio_filtering.vcf_hmer_update import main
+
+        with patch(
+            "sys.argv",
+            [
+                "vcf_hmer_update.py",
+                "test_input.vcf",
+                "test_normal.bam",
+                "test_tumor.bam",
+                "test_output.vcf",
+                "--min_hmer",
+                "6",
+                "--max_hmer",
+                "25",
+                "--min_tumor_cvg",
+                "40",
+                "--min_normal_cvg",
+                "20",
+                "--score_bound",
+                "1.5",
+                "--mixture_bound",
+                "0.05",
+            ],
+        ):
+            with patch("ugbio_filtering.vcf_hmer_update.variant_calling") as mock_variant_calling:
+                try:
+                    main()
+                except SystemExit:
+                    pass
+                if mock_variant_calling.called:
+                    config = mock_variant_calling.call_args[0][0]
+                    assert config["min_hmer"] == 6
+                    assert config["max_hmer"] == 25
+                    assert config["min_tumor_cvg"] == 40
+                    assert config["min_normal_cvg"] == 20
+                    assert config["score_bound"] == 1.5
+                    assert config["mixture_bound"] == 0.05
+                    assert config["vcf_file"] == "test_input.vcf"
+                    assert config["tumor_reads_file"] == "test_tumor.bam"
+                    assert config["vcf_out_file"] == "test_output.vcf"
 
 
 if __name__ == "__main__":
