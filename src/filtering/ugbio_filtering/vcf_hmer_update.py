@@ -610,16 +610,28 @@ def _check_normal_other_variants(
     return other_variant
 
 
-def _check_other_variants(
-    rec,
-    ref_fasta,
-    chrom: str,
-    pos: int,
-    ref_hmer_size: int,
-    f,
-    tumor_germline_handle,
-) -> int:
-    """Check if record has conflicting variants in the region.
+def _get_variant_type(ref_len: int, alt_len: int) -> str:
+    """Determine variant type based on reference and alternate lengths.
+
+    Args:
+        ref_len: Length of reference allele
+        alt_len: Length of alternate allele
+
+    Returns:
+        'deletion', 'insertion', or 'snp'
+    """
+    if ref_len > alt_len:
+        return "deletion"
+    elif ref_len < alt_len:
+        return "insertion"
+    else:
+        return "snp"
+
+
+def _check_somatic_variants(
+    rec, ref_fasta: object, chrom: str, pos: int, ref_hmer_size: int, vcf_file, rec_type: str
+) -> bool:
+    """Check for conflicting variants in somatic VCF with higher QUAL.
 
     Args:
         rec: VCF record
@@ -627,35 +639,106 @@ def _check_other_variants(
         chrom: Chromosome
         pos: Position
         ref_hmer_size: Reference homopolymer size
-        f: Input VCF file for fetching variants
-        tumor_germline_hanfle: Tumor germline VCF (optional)
+        vcf_file: Input VCF file for fetching variants
+        rec_type: Variant type (insertion/deletion/snp)
+
+    Returns:
+        True if conflicting variant found, False otherwise
+    """
+    this_loc_variants = vcf_file.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
+    for var in this_loc_variants:
+        if var.qual > rec.qual:
+            size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]])[0]
+            # Check if variant changes hmer size and is same type as record
+            if size != ref_hmer_size:
+                var_type = _get_variant_type(len(var.ref), len(var.alts[0]))
+                if var_type == rec_type:
+                    logger.debug(
+                        f"Found conflicting {var_type} at {var.contig}:{var.pos} "
+                        f"({var.ref}→{var.alts[0]}) with QUAL={var.qual} > {rec.qual}"
+                    )
+                    return True
+    return False
+
+
+def _check_germline_variants(
+    rec, ref_fasta: object, chrom: str, pos: int, ref_hmer_size: int, tumor_germline_handle, rec_type: str
+) -> bool:
+    """Check for conflicting variants in germline VCF with PASS filter.
+
+    Args:
+        rec: VCF record
+        ref_fasta: Reference FASTA
+        chrom: Chromosome
+        pos: Position
+        ref_hmer_size: Reference homopolymer size
+        tumor_germline_handle: Tumor germline VCF
+        rec_type: Variant type (insertion/deletion/snp)
+
+    Returns:
+        True if conflicting variant found, False otherwise
+    """
+    if not tumor_germline_handle:
+        return False
+
+    germline_tumor_vars = tumor_germline_handle.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
+    for var in germline_tumor_vars:
+        if is_pass(var):
+            # Skip if it's the same variant as the somatic record
+            if var.ref == rec.ref and var.alts == rec.alts and var.pos == rec.pos:
+                continue
+            size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]])[0]
+            # Check if variant changes hmer size and is same type as record
+            if size != ref_hmer_size:
+                var_type = _get_variant_type(len(var.ref), len(var.alts[0]))
+                if var_type == rec_type:
+                    logger.debug(
+                        f"Found conflicting germline {var_type} at {var.contig}:{var.pos} "
+                        f"({var.ref}→{var.alts[0]}) matching record type"
+                    )
+                    return True
+    return False
+
+
+def _check_other_variants(variant_context: dict, config: dict) -> int:
+    """Check if record has conflicting variants in the region.
+
+    Detects if there are alternative variants (somatic with higher QUAL or germline with PASS)
+    that change the hmer size AND are of the same type (insertion/deletion) as the record.
+
+    Args:
+        variant_context: Dictionary with keys:
+            - rec: VCF record
+            - ref_fasta: Reference FASTA
+            - chrom: Chromosome
+            - pos: Position
+            - ref_hmer_size: Reference homopolymer size
+            - vcf_file: Input VCF file for fetching variants
+            - tumor_germline_handle: Tumor germline VCF (optional)
+        config: Configuration dictionary
 
     Returns:
         1 if other conflicting variants found, 0 otherwise
     """
-    my_hmer_size = apply_variant(ref_fasta, [chrom, pos], [rec.pos, rec.ref, rec.alts[0]])[0]
-    other_variant = 0
+    rec = variant_context["rec"]
+    ref_fasta = variant_context["ref_fasta"]
+    chrom = variant_context["chrom"]
+    pos = variant_context["pos"]
+    ref_hmer_size = variant_context["ref_hmer_size"]
+    vcf_file = variant_context["vcf_file"]
+    tumor_germline_handle = variant_context["tumor_germline_handle"]
 
-    # Check same location variants
-    this_loc_variants = f.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
-    for var in this_loc_variants:
-        if var.qual > rec.qual:
-            size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]])[0]
-            if size in (my_hmer_size, -1):
-                other_variant = 1
+    # Determine the variant type of the current record
+    rec_type = _get_variant_type(len(rec.ref), len(rec.alts[0]))
 
-    # Check tumor germline variants
-    if tumor_germline_handle:
-        germline_tumor_vars = tumor_germline_handle.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
-        for var in germline_tumor_vars:
-            if is_pass(var):
-                size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]])[0]
-                if size == ref_hmer_size:
-                    if var.ref == rec.ref and var.alts == rec.alts and var.pos == rec.pos:
-                        continue
-                    other_variant = 1
+    # Check for conflicts in somatic or germline VCFs
+    if _check_somatic_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, vcf_file, rec_type):
+        return 1
 
-    return other_variant
+    if _check_germline_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, tumor_germline_handle, rec_type):
+        return 1
+
+    return 0
 
 
 def _collect_tumor_pileup_data(tumor_reads, chrom: str, pos: int):
@@ -1315,8 +1398,17 @@ def _process_record(
         if not pos_in_bed(merged_intervals, chrom, pos):
             return None
 
-    # Check for conflicting variants (without normal_germline)
-    other_variant = _check_other_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, vcf_file, tumor_germline_handle)
+    # Check for conflicting variants
+    variant_context = {
+        "rec": rec,
+        "ref_fasta": ref_fasta,
+        "chrom": chrom,
+        "pos": pos,
+        "ref_hmer_size": ref_hmer_size,
+        "vcf_file": vcf_file,
+        "tumor_germline_handle": tumor_germline_handle,
+    }
+    other_variant = _check_other_variants(variant_context, config)
     if config["verbose"]:
         rec.info["other_variant"] = other_variant
     if other_variant:
