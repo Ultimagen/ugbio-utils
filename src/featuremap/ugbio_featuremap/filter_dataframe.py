@@ -37,6 +37,7 @@ TYPE_MAPPING = "mapping"
 TYPE_DOWNSAMPLE = "downsample"
 TYPE_RAW = "raw"
 TYPE_FUNNEL = "funnel"
+TYPE_PASS = "pass"  # noqa: S105
 
 # Annotation fields
 FIELD_GNOMAD_AF = "gnomAD_AF"
