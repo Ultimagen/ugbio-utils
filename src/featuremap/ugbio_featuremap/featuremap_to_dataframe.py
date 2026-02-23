@@ -46,7 +46,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import multiprocessing as _mp  # NEW
+import multiprocessing as _mp
 import os
 import re
 import shutil
@@ -59,6 +59,8 @@ from io import StringIO
 from pathlib import Path
 
 import polars as pl
+import pysam
+from ugbio_core.logger import logger as log
 
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import (
@@ -80,22 +82,75 @@ from ugbio_featuremap.filter_dataframe import (
     validate_filter_config,
 )
 
-log = logging.getLogger(__name__)
-
 # Configuration constants
 DEFAULT_JOBS = 0  # 0 means auto-detect CPU cores
 CHUNK_BP_DEFAULT = 10_000_000  # 10 Mbp per processing chunk
+MAX_DEBUG_FILES_TO_SHOW = 3  # Number of file paths to show in debug logs
+
+
+def _configure_logging(log_level: int, *, check_worker_cache: bool = False) -> None:
+    """
+    Configure logging for the current process.
+
+    Parameters
+    ----------
+    log_level : int
+        Logging level to configure (e.g., logging.INFO, logging.DEBUG)
+    check_worker_cache : bool
+        If True, check if logging is already configured at this level (for worker processes).
+        If False, always reconfigure (for main process).
+    """
+    # Use function attribute to track configured log level in worker processes
+    # This avoids using global variables
+    if not hasattr(_configure_logging, "_worker_log_level"):
+        _configure_logging._worker_log_level = None  # type: ignore[attr-defined]
+
+    # For worker processes, only configure if not already configured or if level changed
+    if check_worker_cache and _configure_logging._worker_log_level == log_level:  # type: ignore[attr-defined]
+        return
+
+    # Reconfigure the root logger for this process.
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
+    root_logger.setLevel(log_level)
+    log.setLevel(log_level)
+    if log.handlers:
+        # Avoid double logging when the shared logger already has handlers.
+        log.propagate = False
+        for handler in log.handlers:
+            handler.setLevel(log_level)
+
+    # Track configured level for worker processes
+    if check_worker_cache:
+        _configure_logging._worker_log_level = log_level  # type: ignore[attr-defined]
 
 
 @dataclass
 class ColumnConfig:
     """Configuration for column processing."""
 
-    info_ids: list[str]
-    scalar_fmt_ids: list[str]
-    list_fmt_ids: list[str]
-    info_meta: dict
-    fmt_meta: dict
+    # Metadata dictionaries
+    info_meta: dict  # INFO field metadata (e.g. {X_HMER_REF: {"num": "1", "type": "String", "cat": None}})
+    fmt_meta: dict  # FORMAT fields metadata (e.g. {DP: {"num": "1", "type": "Integer", "cat": None}})
+
+    # Field names
+    info_ids: list[str]  # INFO field names (e.g. X_NEXT1)
+    fmt_ids: list[str]  # FORMAT field names (e.g. DP, MQUAL)
+    scalar_fmt_ids: list[str]  # FORMAT field names with scalar values (e.g. DP)
+    list_fmt_ids: list[str]  # FORMAT field names with list values (e.g. MQUAL)
+
+    # Expand columns
+    expand_columns: dict[str, int] | None = None  # columns to expand into multiple columns (e.g. {"AD": 2})
+    expand_sizes: list[int] | None = None  # Size of each expand column
+
+    # Indices
+    list_indices: list[int] | None = None  # 0-based column indices for list columns
+    expand_indices: list[int] | None = None  # 0-based column indices for expand columns
 
 
 @dataclass
@@ -105,14 +160,63 @@ class VCFJobConfig:
     bcftools_path: str
     awk_script: str
     columns: list[str]
-    list_indices: list[int]
     schema: dict[str, pl.PolarsDataType]
-    info_meta: dict
-    fmt_meta: dict
-    info_ids: list[str]
-    scalar_fmt_ids: list[str]
-    list_fmt_ids: list[str]
-    read_filters: dict | None = None  # Filter configuration from JSON file
+    column_config: ColumnConfig
+    sample_list: list[str]
+    log_level: int
+    read_filters: dict | None = None
+
+
+# ───────────────── header helpers ────────────────────────────────────────────
+# Allow escaped quotes (\") within the Description text
+_QUOTED_VALUE = r'"((?:[^"\\]|\\.)*)'
+
+INFO_RE = re.compile(rf"##INFO=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description={_QUOTED_VALUE}")
+FORMAT_RE = re.compile(rf"##FORMAT=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description={_QUOTED_VALUE}")
+
+_POLARS_DTYPE = {"Integer": pl.Int64, "Float": pl.Float64, "Flag": pl.Boolean}
+# VCF column names – imported from FeatureMapFields for consistency
+CHROM = FeatureMapFields.CHROM.value
+POS = FeatureMapFields.POS.value
+REF = FeatureMapFields.REF.value
+ALT = FeatureMapFields.ALT.value
+QUAL = FeatureMapFields.QUAL.value
+FILTER = FeatureMapFields.FILTER.value
+ID = FeatureMapFields.ID.value
+SAMPLE = FeatureMapFields.SAMPLE.value
+X_ALT = FeatureMapFields.X_ALT.value
+MQUAL = FeatureMapFields.MQUAL.value
+SNVQ = FeatureMapFields.SNVQ.value
+# Reserved/fixed VCF columns (cannot be overridden)
+RESERVED = {CHROM, POS, REF, ALT, QUAL, FILTER}
+
+# Category dictionaries
+ALT_ALLELE_CATS = ["A", "C", "G", "T"]
+REF_ALLELE_CATS = ALT_ALLELE_CATS + [
+    "R",
+    "Y",
+    "K",
+    "M",
+    "S",
+    "W",
+    "B",
+    "D",
+    "H",
+    "V",
+    "N",
+]
+
+# Aggregation types and their Polars dtypes for aggregate mode
+AGGREGATION_TYPES = [
+    ("mean", pl.Float64),
+    ("min", pl.Float64),
+    ("max", pl.Float64),
+    ("count", pl.Int64),
+    ("count_zero", pl.Int64),
+]
+
+
+# ───────────────── read filter functions ─────────────────────────────────────
 
 
 def _load_read_filters(read_filters_json: str | None, read_filter_json_key: str | None = None) -> dict | None:
@@ -150,7 +254,7 @@ def _load_read_filters(read_filters_json: str | None, read_filter_json_key: str 
             log.info("Using entire JSON file content as filters")
             result = filter_data
 
-        log.info(f"Loaded filter configuration: {json.dumps(result, indent=2)[:500]}...")  # Log first 500 chars
+        log.info(f"Loaded filter configuration: {json.dumps(result, indent=2)[:500]}...")
         return result
 
     except FileNotFoundError as e:
@@ -170,30 +274,10 @@ def _apply_id_null_handling(
 
     For ID filters checking for "." (not in dbSNP), we need to treat null values
     as passing the filter, since null means the original value was ".".
-
-    Parameters
-    ----------
-    lazy_frame : pl.LazyFrame
-        The lazy frame containing the filter column
-    col_name : str
-        The name of the filter column to modify
-    filter_name : str
-        The name of the filter for logging
-    op : str
-        The operation (e.g., "eq")
-    value : str
-        The value being compared (e.g., ".")
-
-    Returns
-    -------
-    pl.LazyFrame
-        Modified lazy frame with updated filter column
     """
-    # Only apply null handling when checking for "." with equality
     if op == "eq" and value == ".":
         log.debug(f"Adding null handling for ID filter: '{filter_name}' (treating null as '.')")
         return lazy_frame.with_columns((pl.col(col_name) | pl.col(FIELD_ID).is_null()).alias(col_name))
-    # For other comparisons (ne, in, etc.), null values should fail the filter
     return lazy_frame
 
 
@@ -201,23 +285,8 @@ def _apply_gnomad_null_handling(lazy_frame: pl.LazyFrame, col_name: str, filter_
     """
     Apply special null handling for gnomAD_AF filters.
 
-    In VCF files, variants not present in gnomAD have null/missing gnomAD_AF values.
-    For filtering purposes, missing gnomAD_AF should be treated as rare (passing the filter).
-    This function modifies the filter column to include null values as passing.
-
-    Parameters
-    ----------
-    lazy_frame : pl.LazyFrame
-        The lazy frame containing the filter column
-    col_name : str
-        The name of the filter column to modify
-    filter_name : str
-        The name of the filter for logging
-
-    Returns
-    -------
-    pl.LazyFrame
-        Modified lazy frame with updated filter column
+    Variants not present in gnomAD have null/missing gnomAD_AF values.
+    For filtering, missing gnomAD_AF should be treated as rare (passing the filter).
     """
     log.debug(f"Adding null handling for gnomAD_AF filter: '{filter_name}'")
     return lazy_frame.with_columns((pl.col(col_name) | pl.col(FIELD_GNOMAD_AF).is_null()).alias(col_name))
@@ -228,22 +297,7 @@ def _apply_ug_hcr_null_handling(lazy_frame: pl.LazyFrame, col_name: str, filter_
     Apply special null handling for UG_HCR filters.
 
     For UG_HCR (Ultimagen High Confidence Region), null values indicate the variant
-    is NOT in the HCR and should be filtered out. This function ensures only
-    non-null TRUE values pass the filter.
-
-    Parameters
-    ----------
-    lazy_frame : pl.LazyFrame
-        The lazy frame containing the filter column
-    col_name : str
-        The name of the filter column to modify
-    filter_name : str
-        The name of the filter for logging
-
-    Returns
-    -------
-    pl.LazyFrame
-        Modified lazy frame with updated filter column requiring non-null values
+    is NOT in the HCR and should be filtered out. Only non-null TRUE values pass.
     """
     log.debug(f"Adding NOT-null requirement for UG_HCR filter: '{filter_name}'")
     return lazy_frame.with_columns((pl.col(col_name) & pl.col(FIELD_UG_HCR).is_not_null()).alias(col_name))
@@ -253,42 +307,26 @@ def _prepare_filter_config(read_filters: dict | list | None) -> list[dict]:
     """
     Extract and validate filter configuration from input.
 
-    Parameters
-    ----------
-    read_filters : dict | list | None
-        Filter configuration in various formats
-
-    Returns
-    -------
-    list[dict]
-        List of validated filter dictionaries, excluding raw/downsample filters
-
-    Raises
-    ------
-    RuntimeError
-        If filter validation fails
+    Returns list of validated filter dictionaries, excluding raw/downsample filters.
     """
-    # Handle both dict and list formats
     if isinstance(read_filters, list):
         all_filters = read_filters
     else:
         all_filters = read_filters.get(KEY_FILTERS, [])
 
-    # Create a copy of filters excluding 'raw' and 'downsample' entries for validation
     filters_to_apply = [f for f in all_filters if f.get(KEY_TYPE) not in {TYPE_RAW, TYPE_DOWNSAMPLE}]
 
     if not filters_to_apply:
         log.debug("No applicable filters found (only raw/downsample filters present)")
         return []
 
-    # Log the filters being applied
     log.debug(f"Filters to apply ({len(filters_to_apply)}):")
     for i, f in enumerate(filters_to_apply):
         log.debug(
-            f"  {i+1}. {f.get(KEY_NAME, 'unnamed')}: {f.get(KEY_FIELD)} {f.get(KEY_OP)} {f.get(KEY_VALUE, f.get(KEY_VALUE_FIELD, 'N/A'))}"  # noqa E501
+            f"  {i+1}. {f.get(KEY_NAME, 'unnamed')}: {f.get(KEY_FIELD)} {f.get(KEY_OP)} "
+            f"{f.get(KEY_VALUE, f.get(KEY_VALUE_FIELD, 'N/A'))}"
         )
 
-    # Validate filter configuration
     filter_config = {KEY_FILTERS: filters_to_apply}
     try:
         validate_filter_config(filter_config)
@@ -307,24 +345,9 @@ def _apply_null_handling_to_filters(
     """
     Apply special null-handling logic for specific fields.
 
-    This ensures records with missing values are handled correctly per field semantics:
     - gnomAD_AF: null = not in gnomAD = rare (should pass filter)
     - ID: null = "." in VCF = not in dbSNP (special handling)
     - UG_HCR: null = not in HCR (should fail filter)
-
-    Parameters
-    ----------
-    lazy_frame : pl.LazyFrame
-        The lazy frame with filter columns
-    filters_to_apply : list[dict]
-        List of filter configurations
-    filter_cols : list[str]
-        List of filter column names
-
-    Returns
-    -------
-    pl.LazyFrame
-        Lazy frame with updated filter columns
     """
     for f in filters_to_apply:
         field_name = f.get(KEY_FIELD, "")
@@ -334,16 +357,10 @@ def _apply_null_handling_to_filters(
         if col_name not in filter_cols:
             continue
 
-        # gnomAD_AF: include null values (missing = not in gnomAD = rare)
         if field_name == FIELD_GNOMAD_AF and f.get(KEY_TYPE) == TYPE_REGION:
             lazy_frame = _apply_gnomad_null_handling(lazy_frame, col_name, filter_name)
-
-        # ID: VCF uses "." for variants not in dbSNP, but Polars converts "." to null during parsing
-        # Need to treat null as "." for ID filters
         elif field_name == FIELD_ID and f.get(KEY_TYPE) == TYPE_REGION:
             lazy_frame = _apply_id_null_handling(lazy_frame, col_name, filter_name, f.get(KEY_OP), f.get(KEY_VALUE))
-
-        # UG_HCR: require non-null values (null = not in HCR, should be filtered out)
         elif field_name == FIELD_UG_HCR and f.get(KEY_TYPE) == TYPE_REGION and f.get(KEY_OP) == "ne":
             lazy_frame = _apply_ug_hcr_null_handling(lazy_frame, col_name, filter_name)
 
@@ -351,16 +368,7 @@ def _apply_null_handling_to_filters(
 
 
 def _log_filter_statistics(df_with_filters: pl.DataFrame, filter_cols: list[str]) -> None:
-    """
-    Log per-filter statistics showing pass/fail counts.
-
-    Parameters
-    ----------
-    df_with_filters : pl.DataFrame
-        DataFrame with filter columns
-    filter_cols : list[str]
-        List of filter column names to report on
-    """
+    """Log per-filter statistics showing pass/fail counts."""
     log.debug(f"Filter statistics for region (total rows: {df_with_filters.height:,}):")
     for col in filter_cols:
         if col in df_with_filters.columns:
@@ -377,30 +385,10 @@ def _execute_filters_with_diagnostics(
     Execute final filtering with diagnostic error handling.
 
     If filtering fails, test each filter individually to identify the problematic one.
-
-    Parameters
-    ----------
-    df_final : pl.DataFrame
-        DataFrame with __filter_final column
-    filters_to_apply : list[dict]
-        List of filter configurations for diagnostic purposes
-    frame : pl.DataFrame
-        Original frame for diagnostic testing
-
-    Returns
-    -------
-    pl.DataFrame
-        Filtered dataframe with filter columns removed
-
-    Raises
-    ------
-    RuntimeError
-        If filter execution fails
     """
     try:
         return df_final.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$"))
     except Exception as e:
-        # Error during filter execution - test each filter individually to identify the problem
         log.error(f"Error during filter execution: {e}")
         log.error("Testing each filter individually to identify the problematic filter...")
 
@@ -409,41 +397,22 @@ def _execute_filters_with_diagnostics(
             filter_name = f.get(KEY_NAME, "unnamed")
             filter_type = f.get(KEY_TYPE, "unknown")
             try:
-                # Test this filter alone - full execution with collect
                 test_lazy = frame.lazy()
                 test_lazy, test_cols = _create_filter_columns(test_lazy, [f])
                 test_lazy = _create_final_filter_column(test_lazy, test_cols, None)
                 _ = test_lazy.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$")).collect()
-                log.debug(
-                    f"  ✓ Filter {i + 1}/{len(filters_to_apply)}: {filter_name} (type={filter_type}) - EXECUTED OK"
-                )
+                log.debug(f"  Filter {i + 1}/{len(filters_to_apply)}: {filter_name} (type={filter_type}) - OK")
             except Exception as filter_error:
                 problematic_filter = f
                 log.error(
-                    f"  ✗ Filter {i + 1}/{len(filters_to_apply)}: "
+                    f"  Filter {i + 1}/{len(filters_to_apply)}: "
                     f"{filter_name} (type={filter_type}) - EXECUTION FAILED"
                 )
                 log.error(f"    Error: {filter_error}")
                 log.error(f"    Filter configuration: {json.dumps(f, indent=2)}")
-
-                # Additional diagnostic info
-                if "column" in f:
-                    col_name = f["column"]
-                    if col_name in frame.columns:
-                        col_dtype = frame[col_name].dtype
-                        log.error(f"    Column '{col_name}' has dtype: {col_dtype}")
-                        if "value" in f:
-                            value_type = type(f["value"]).__name__
-                            log.error(f"    Filter is trying to compare with value: {f['value']} (type: {value_type})")
-                            log.error(f"    → This appears to be a type mismatch: {col_dtype} vs {value_type}")
                 break
 
         if problematic_filter:
-            log.error(f"FATAL: Identified problematic filter: {problematic_filter.get(KEY_NAME, 'unnamed')}")
-            log.error(f"Full filter configuration: {json.dumps(problematic_filter, indent=2)}")
-            log.error("Fix: Ensure the filter value type matches the column type")
-            log.error("     - If column is string/Enum, use string values in quotes")
-            log.error("     - If column is numeric, use numeric values without quotes")
             filter_name = problematic_filter.get(KEY_NAME, "unnamed")
             raise RuntimeError(
                 f"Filter '{filter_name}' execution failed. "
@@ -451,7 +420,6 @@ def _execute_filters_with_diagnostics(
                 f"Original error: {e}"
             ) from e
         else:
-            log.error("FATAL: Could not identify specific problematic filter through individual testing.")
             raise RuntimeError(f"Filter execution failed but could not identify specific filter. Error: {e}") from e
 
 
@@ -465,10 +433,6 @@ def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -
         Input dataframe to filter
     read_filters : dict | list | None
         Filter configuration in the same format as used by filter_dataframe.py
-        Can be either:
-        - A dict with "filters" key containing list of filters
-        - A list of filter dictionaries directly
-        - None for no filtering
 
     Returns
     -------
@@ -485,7 +449,6 @@ def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -
     log.info(f"Starting read filter application on {frame.height:,} rows")
 
     try:
-        # Extract and validate filter configuration
         filters_to_apply = _prepare_filter_config(read_filters)
         if not filters_to_apply:
             log.info("No read filters provided - skipping filter step")
@@ -493,41 +456,30 @@ def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -
 
         log.debug(f"Applying {len(filters_to_apply)} filters to dataframe with {frame.height:,} rows")
 
-        # Convert to lazy frame for efficient processing
         lazy_frame = frame.lazy()
-
-        # Create filter columns and apply filters
         lazy_frame, filter_cols = _create_filter_columns(lazy_frame, filters_to_apply)
         log.debug(f"Created filter columns: {filter_cols}")
 
-        # Apply special null-handling for specific fields BEFORE collecting statistics
         lazy_frame = _apply_null_handling_to_filters(lazy_frame, filters_to_apply, filter_cols)
 
-        # Collect with filter columns to check individual filter statistics (after null handling)
         df_with_filters = lazy_frame.collect()
-
-        # Log per-filter statistics (DEBUG level)
         _log_filter_statistics(df_with_filters, filter_cols)
 
-        # Back to lazy for final filter column creation
         lazy_frame = df_with_filters.lazy()
         lazy_frame = _create_final_filter_column(lazy_frame, filter_cols, None)
 
-        # Log final filter statistics
         df_final = lazy_frame.collect()
         final_pass = df_final["__filter_final"].sum()
         final_fail = df_final.height - final_pass
         pct = 100.0 * final_pass / df_final.height if df_final.height > 0 else 0
         log.debug(f"  __filter_final (ALL COMBINED): {final_pass:,} pass ({pct:.1f}%) / {final_fail:,} fail")
 
-        # Apply filters with diagnostic error handling
         filtered_frame = _execute_filters_with_diagnostics(df_final, filters_to_apply, frame)
 
         log.debug(f"Read filtering: {frame.height:,} → {filtered_frame.height:,} reads")
         return filtered_frame
 
     except Exception as e:
-        # Catch any unexpected errors
         filter_summary = []
         try:
             all_filters = read_filters if isinstance(read_filters, list) else read_filters.get("filters", [])
@@ -542,43 +494,6 @@ def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -
 
 
 # ───────────────── header helpers ────────────────────────────────────────────
-# Allow escaped quotes (\") within the Description text
-_QUOTED_VALUE = r'"((?:[^"\\]|\\.)*)'
-
-INFO_RE = re.compile(rf"##INFO=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description={_QUOTED_VALUE}")
-FORMAT_RE = re.compile(rf"##FORMAT=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description={_QUOTED_VALUE}")
-
-_POLARS_DTYPE = {"Integer": pl.Int64, "Float": pl.Float64, "Flag": pl.Boolean}
-# VCF column names – imported from FeatureMapFields for consistency
-CHROM = FeatureMapFields.CHROM.value
-POS = FeatureMapFields.POS.value
-REF = FeatureMapFields.REF.value
-ALT = FeatureMapFields.ALT.value
-QUAL = FeatureMapFields.QUAL.value
-FILTER = FeatureMapFields.FILTER.value
-ID = FeatureMapFields.ID.value
-SAMPLE = FeatureMapFields.SAMPLE.value
-X_ALT = FeatureMapFields.X_ALT.value
-MQUAL = FeatureMapFields.MQUAL.value
-SNVQ = FeatureMapFields.SNVQ.value
-# Reserved/fixed VCF columns (cannot be overridden)
-RESERVED = {CHROM, POS, ID, REF, ALT, QUAL, FILTER}
-
-# Category dictionaries
-ALT_ALLELE_CATS = ["A", "C", "G", "T"]
-REF_ALLELE_CATS = ALT_ALLELE_CATS + [
-    "R",
-    "Y",
-    "K",
-    "M",
-    "S",
-    "W",
-    "B",
-    "D",
-    "H",
-    "V",
-    "N",
-]
 
 
 def _enum(desc: str) -> list[str] | None:
@@ -627,6 +542,7 @@ def header_meta(vcf: str, bcftools_path: str, threads: int = 0) -> tuple[dict, d
                 "cat":   list[str] | None   # enumeration from {_,..._}
             }
     """
+    log.debug(f"Parsing VCF header from {vcf}")
     cmd = [bcftools_path, "view", "-h"]
     if threads > 0:
         cmd.extend(["--threads", str(threads)])
@@ -640,6 +556,9 @@ def header_meta(vcf: str, bcftools_path: str, threads: int = 0) -> tuple[dict, d
     for m in FORMAT_RE.finditer(txt):
         k, n, t, d = m.groups()
         fmt[k] = {"num": n, "type": t, "cat": _enum(d)}
+    log.info(f"Parsed header: {len(info)} INFO fields, {len(fmt)} FORMAT fields")
+    log.debug(f"INFO fields: {list(info.keys())}")
+    log.debug(f"FORMAT fields: {list(fmt.keys())}")
     return info, fmt
 
 
@@ -650,16 +569,16 @@ def _cast_expr(col: str, meta: dict) -> pl.Expr:
     2. fills remaining nulls
     3. casts to the final dtype
     """
-    base = pl.when(pl.col(col).cast(pl.Utf8, strict=False).is_in(["", "."])).then(None).otherwise(pl.col(col))
+    base = pl.when(pl.col(col).cast(pl.Utf8).is_in(["", "."])).then(None).otherwise(pl.col(col))
 
     # ---- categorical handling -------------------------------------------
     if meta["cat"]:
         cats = meta["cat"] + ([] if "" in meta["cat"] else [""])
         return base.fill_null(value="").cast(pl.Enum(cats), strict=True).alias(col)
-    elif meta["type"] in ("Integer", "Float"):
-        return base.fill_null(value=0).cast(_POLARS_DTYPE[meta["type"]], strict=True).alias(col)
     elif meta["type"] == "Flag":
         return base.fill_null(value=False).cast(pl.Boolean, strict=True).alias(col)
+    elif meta["type"] in _POLARS_DTYPE:
+        return base.fill_null(value=0).cast(_POLARS_DTYPE[meta["type"]], strict=True).alias(col)
 
     # ---- default (Utf8) --------------------------------------------------
     return base.alias(col)
@@ -701,6 +620,7 @@ def _generate_genomic_regions(
     If *window_size* is None it is chosen so that the number of windows is
     ~10× ``jobs``.
     """
+    log.debug("Extracting contig information from VCF header")
     # Extract contig lengths from header
     contig_re = re.compile(r"##contig=<ID=([^,>]+),length=(\d+)")
     header = subprocess.check_output([bcftools_path, "view", "-h", vcf_path], text=True)
@@ -723,6 +643,7 @@ def _generate_genomic_regions(
 
     try:
         # bedtools makewindows
+        log.info(f"Generating genomic regions with window size {window_size:,} bp")
         proc = subprocess.run(
             [
                 bedtools_path,
@@ -742,20 +663,27 @@ def _generate_genomic_regions(
     regions: list[str] = []
     for line in proc.stdout.strip().split("\n"):
         chrom, start0, end = line.split("\t")
-        regions.append(f"{chrom}:{int(start0) + 1}-{end}")  # convert to 1-based inclusive
+        regions.append(f"{chrom}:{int(start0)+1}-{end}")  # convert to 1-based inclusive
     return regions
 
 
-def _sanity_check_format_numbers(format_ids: list[str], fmt_meta: dict) -> None:
-    """Raise if any FORMAT tag has a Number we do not support."""
+def _sanity_check_format_numbers(
+    format_ids: list[str], fmt_meta: dict, expand_columns: dict[str, int] | None = None
+) -> None:
+    """
+    Raise an error if any FORMAT tag has a Number we do not support. (not "1" or ".")
+    When in aggregate mode, we allow all Number values for expand columns.
+    """
+    expand_columns = expand_columns or {}
     for tag in format_ids:
         num = fmt_meta[tag]["num"]
         if num not in {"1", "."}:
-            raise ValueError(
-                f"Unsupported FORMAT field {tag}: Number={num}. "
-                "Only '1' (scalar) or '.' (variable list) are supported. "
-                "Use --drop-format to exclude this tag."
-            )
+            if tag not in expand_columns:
+                raise ValueError(
+                    f"Unsupported FORMAT field {tag}: Number={num}. "
+                    "Only '1' (scalar) or '.' (variable list) are supported. "
+                    "Use --drop-format to exclude this tag."
+                )
 
 
 def _split_format_ids(format_ids: list[str], fmt_meta: dict) -> tuple[list[str], list[str]]:
@@ -765,7 +693,7 @@ def _split_format_ids(format_ids: list[str], fmt_meta: dict) -> tuple[list[str],
 
 
 def _make_query_string(format_ids: list[str], query_info: list[str]) -> str:
-    """Build the bcftools query format string (now includes %QUAL and %ID)."""
+    """Build the bcftools query format string (includes %QUAL and %ID)."""
     bracket = "[" + "\t".join(f"%{t}" for t in format_ids) + "]"
     return (
         "\t".join(
@@ -784,11 +712,27 @@ def _make_query_string(format_ids: list[str], query_info: list[str]) -> str:
     )
 
 
-def _get_awk_script_path() -> str:
-    """Get path to the AWK script for list explosion."""
+def _get_awk_script_path(mode: str = "explode") -> str:
+    """Get path to the AWK script for list handling.
+
+    Parameters
+    ----------
+    mode : str
+        Either "explode" or "aggregate" to select the appropriate script.
+
+    Returns
+    -------
+    str
+        Path to the AWK script.
+    """
+    if mode not in ("explode", "aggregate"):
+        raise ValueError(f"Invalid mode: {mode}. Must be 'explode' or 'aggregate'")
+
+    script_name = "explode_lists.awk" if mode == "explode" else "aggregate_lists.awk"
+
     # First try the standard approach (should work in development and installed package)
     script_dir = Path(__file__).parent
-    awk_script = script_dir / "explode_lists.awk"
+    awk_script = script_dir / script_name
     if awk_script.exists():
         return str(awk_script)
 
@@ -796,22 +740,16 @@ def _get_awk_script_path() -> str:
     try:
         import importlib.resources as pkg_resources
 
-        try:
-            # Python 3.9+
-            ref = pkg_resources.files("ugbio_featuremap") / "explode_lists.awk"
-            with pkg_resources.as_file(ref) as awk_path:
-                return str(awk_path)
-        except AttributeError:
-            # Python 3.8 fallback
-            with pkg_resources.path("ugbio_featuremap", "explode_lists.awk") as awk_path:
-                return str(awk_path)
+        ref = pkg_resources.files("ugbio_featuremap") / script_name
+        with pkg_resources.as_file(ref) as awk_path:
+            return str(awk_path)
     except ImportError:
         pass
 
     raise FileNotFoundError(f"AWK script not found: {awk_script}")
 
 
-def _merge_parquet_files_lazy(  # noqa: PLR0912, E501
+def _merge_parquet_files_lazy(  # noqa: PLR0912
     parquet_files: list[str],
     output_path: str,
     downsample_reads: int | None = None,
@@ -834,22 +772,19 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, E501
     """
     if not parquet_files:
         log.warning("No Parquet files to merge - creating empty output file")
-        # Create an empty Parquet file with minimal structure
         empty_df = pl.DataFrame({"CHROM": [], "POS": [], "REF": [], "ALT": []})
         empty_df.write_parquet(output_path)
         return
 
-    log.debug(f"Received {len(parquet_files)} parquet files: {','.join(parquet_files)}")
     if len(parquet_files) == 1:
-        log.debug("Only one Parquet file present - skipping merge")
+        log.debug(f"Single part file, moving to output: {output_path}")
         if downsample_reads is None:
             shutil.move(parquet_files[0], output_path)
         else:
-            # Need to collect to check height
             dataframe_size = pl.scan_parquet(parquet_files[0]).select(pl.len()).collect().item()
             if dataframe_size <= downsample_reads:
                 log.debug(
-                    f"Dataset has {dataframe_size} rows, which is <= requested {downsample_reads} - keeping all rows"  # noqa E501
+                    f"Dataset has {dataframe_size} rows, which is <= requested {downsample_reads} - keeping all rows"
                 )
                 shutil.move(parquet_files[0], output_path)
             else:
@@ -860,22 +795,23 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, E501
             Path(parquet_files[0]).unlink(missing_ok=True)
         return
 
-    log.debug(f"Merging {len(parquet_files)} Parquet files lazily")
+    log.info(f"Merging {len(parquet_files)} Parquet part-file(s) into final output")
+    log.debug(
+        f"Part-files: {parquet_files[:MAX_DEBUG_FILES_TO_SHOW]}"
+        f"{'...' if len(parquet_files) > MAX_DEBUG_FILES_TO_SHOW else ''}"
+    )
 
-    # Use lazy scanning and streaming write for memory efficiency
     lazy_frames = [pl.scan_parquet(f) for f in parquet_files]
 
     lazy_frames_size = [frame.select(pl.len()).collect().item() for frame in lazy_frames]
     log.debug(f"Individual Parquet file sizes (rows): {', '.join(map(str, lazy_frames_size))}")
 
-    # Concatenate all lazy frames
     merged_lazy = pl.concat(lazy_frames, how="vertical")
 
-    # Apply downsampling if requested
     if downsample_reads is None:
+        log.debug(f"Writing merged Parquet to: {output_path}")
         merged_lazy.sink_parquet(output_path)
     else:
-        # Need to collect to check height and perform sampling
         merged_df = merged_lazy.collect()
         if merged_df.height <= downsample_reads:
             log.debug(
@@ -886,11 +822,10 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912, E501
             log.info(f"Sampling {downsample_reads} rows from {merged_df.height} total rows")
             merged_df.sample(n=downsample_reads, seed=downsample_seed).write_parquet(output_path)
 
-    # Clean up temporary files
     for f in parquet_files:
         Path(f).unlink(missing_ok=True)
 
-    log.debug(f"Merged Parquet files written to: {output_path}")
+    log.debug(f"Successfully merged {len(parquet_files)} part-file(s)")
 
 
 def _build_explicit_schema(cols: list[str], info_meta: dict, fmt_meta: dict) -> dict[str, pl.PolarsDataType]:
@@ -912,6 +847,137 @@ def _build_explicit_schema(cols: list[str], info_meta: dict, fmt_meta: dict) -> 
         else:
             schema[col] = pl.Utf8
     return schema
+
+
+def _transform_cols_and_schema_for_aggregate(  # noqa: C901
+    cols: list[str],
+    list_fmt_ids: list[str],
+    info_meta: dict,
+    fmt_meta: dict,
+    expand_columns: dict[str, int] | None = None,
+) -> tuple[list[str], dict[str, pl.PolarsDataType]]:
+    """
+    Transform columns and schema for aggregate mode.
+
+    In aggregate mode:
+    - Each list column is replaced with aggregation columns:
+      {col}_mean, {col}_min, {col}_max, {col}_count, {col}_count_zero
+      (defined by AGGREGATION_TYPES)
+    - Each expand column is replaced with indexed columns:
+      {col}_0, {col}_1, ... (up to size)
+
+    Parameters
+    ----------
+    cols : list[str]
+        Original column names
+    list_fmt_ids : list[str]
+        List of FORMAT field IDs that are lists
+    info_meta : dict
+        INFO field metadata
+    fmt_meta : dict
+        FORMAT field metadata
+    expand_columns : dict[str, int] | None
+        Mapping of column names to their expand sizes (e.g., {"AD": 2})
+
+    Returns
+    -------
+    tuple[list[str], dict[str, pl.PolarsDataType]]
+        Transformed columns and schema
+    """
+    transformed_cols: list[str] = []
+    expand_columns = expand_columns or {}
+
+    for col in cols:
+        if col in expand_columns:
+            # Replace expand column with indexed columns
+            size = expand_columns[col]
+            transformed_cols.extend([f"{col}_{i}" for i in range(size)])
+        elif col in list_fmt_ids:
+            # Replace list column with aggregation columns
+            transformed_cols.extend([f"{col}_{suffix}" for suffix, _ in AGGREGATION_TYPES])
+        else:
+            # Keep non-list columns as-is
+            transformed_cols.append(col)
+
+    # Build schema for transformed columns using existing function
+    schema = _build_explicit_schema(transformed_cols, info_meta, fmt_meta)
+
+    # Override schema for aggregation columns (they're not in metadata)
+    for col in list_fmt_ids:
+        if col not in expand_columns:  # Don't add aggregation schema for expand columns
+            for suffix, dtype in AGGREGATION_TYPES:
+                schema[f"{col}_{suffix}"] = dtype
+
+    # Override schema for expand columns (determine type from metadata)
+    for col, size in expand_columns.items():
+        if col in fmt_meta and fmt_meta[col]["type"] in _POLARS_DTYPE:
+            col_type = _POLARS_DTYPE[fmt_meta[col]["type"]]
+        else:
+            col_type = pl.Utf8
+
+        for i in range(size):
+            schema[f"{col}_{i}"] = col_type
+
+    return transformed_cols, schema
+
+
+def _validate_expand_columns(
+    expand_columns: dict[str, int] | None,
+    list_mode: str,
+    fmt_meta: dict[str, dict] | None = None,
+) -> None:
+    """
+    Validate expand_columns parameter.
+
+    Parameters
+    ----------
+    expand_columns : dict[str, int] | None
+        Mapping of column names to their expand sizes
+    list_mode : str
+        How to handle list format fields: "explode" or "aggregate"
+    fmt_meta : dict[str, dict] | None
+        FORMAT metadata mapping from header_meta. When provided, validates that expand_columns
+        only refers to list-type FORMAT fields present in the header.
+
+    Raises
+    ------
+    ValueError
+        If expand_columns is used in explode mode, if any size is non-positive, or if
+        expand_columns contains missing or scalar FORMAT fields.
+    """
+    if not expand_columns:
+        return
+
+    if list_mode == "explode":
+        raise ValueError(
+            f"expand_columns is not supported in explode mode (got {expand_columns}). "
+            "Use list_mode='aggregate' to use expand_columns."
+        )
+
+    for col, size in expand_columns.items():
+        if size <= 0:
+            raise ValueError(
+                f"expand_columns size must be positive (got {col}:{size}). "
+                "Each expand column must have a size greater than 0."
+            )
+
+    if fmt_meta is None:
+        return
+
+    missing = [col for col in expand_columns if col not in fmt_meta]
+    if missing:
+        missing_str = ", ".join(sorted(missing))
+        raise ValueError(
+            "expand_columns must refer to FORMAT fields present in the VCF header. " f"Missing: {missing_str}."
+        )
+
+    scalar_fields = [col for col in expand_columns if fmt_meta[col]["num"] == "1"]
+    if scalar_fields:
+        scalar_str = ", ".join(sorted(scalar_fields))
+        raise ValueError(
+            "expand_columns can only be used with list-type FORMAT fields (Number != 1). "
+            f"Scalar fields: {scalar_str}."
+        )
 
 
 def _assert_vcf_index_exists(vcf: str) -> None:
@@ -949,7 +1015,8 @@ def _run_region_jobs(
         as the cause.
     """
     part_files: list[str] = []
-    successful_parts = 0
+    completed = 0
+    total = len(regions)
 
     with ProcessPoolExecutor(max_workers=jobs, mp_context=spawn_ctx) as executor:
         futures: dict[Future[str], tuple[str, str]] = {}
@@ -969,7 +1036,13 @@ def _run_region_jobs(
         failures: list[tuple[str, str, BaseException]] = []
         for fut in as_completed(futures):
             exc = fut.exception()
-            if exc is not None:
+            if exc is None:
+                completed += 1
+                region, part_path = futures[fut]
+                log.debug(f"Completed region {region} ({completed}/{total})")
+                if completed % max(1, total // 10) == 0 or completed == total:
+                    log.info(f"Progress: {completed}/{total} regions processed ({100*completed//total}%)")
+            else:
                 region, part_path = futures[fut]
                 failures.append((region, part_path, exc))
                 log.error(
@@ -978,12 +1051,6 @@ def _run_region_jobs(
                     part_path,
                     "".join(traceback.format_exception(exc)),
                 )
-            else:
-                # Check result - empty string means no data (either before or after filtering)
-                result = fut.result()
-                if result:
-                    successful_parts += 1
-                # We can't distinguish between empty before/after filtering without more info
 
         if failures:
             first_region, first_part, first_exc = failures[0]
@@ -992,197 +1059,53 @@ def _run_region_jobs(
                 f"first failure: {first_region} (part={first_part})"
             ) from first_exc
 
-        log.info(f"Region processing complete: {successful_parts}/{len(regions)} regions produced data")
-
-    result_files = [p for p in part_files if Path(p).is_file()]
-    log.info(f"Created {len(result_files)} parquet part files")
-    return result_files
+    valid_files = [p for p in part_files if Path(p).is_file()]
+    log.info(f"Successfully processed {len(valid_files)} region(s) with data")
+    return valid_files
 
 
-def _setup_parallel_jobs(jobs: int) -> tuple[int, str, str]:
+def _drop_fields(
+    info_meta: dict,
+    fmt_meta: dict,
+    drop_info: set[str] | None,
+    drop_format: set[str] | None,
+    expand_columns: dict[str, int] | None = None,
+) -> tuple[dict, dict]:
     """
-    Configure parallel job settings and resolve tool paths.
-
-    Parameters
-    ----------
-    jobs : int
-        Number of parallel jobs (0 = auto-detect CPU cores)
-
-    Returns
-    -------
-    tuple[int, str, str]
-        (job_count, bcftools_path, bedtools_path)
+    Drop fields from INFO and FORMAT metadata.
+    If expand_columns are provided, any FORMAT fields that are used for expand columns will not be dropped.
     """
-    # Auto-detect optimal job count if not specified
-    if jobs == 0:
-        jobs = os.cpu_count() or 4
-
-    log.info(f"Using {jobs} parallel jobs for region processing")
-
-    # Resolve tool paths
-    bcftools = _resolve_bcftools_command()
-    bedtools = _resolve_bedtools_command()
-
-    return jobs, bcftools, bedtools
-
-
-def _prepare_vcf_metadata(
-    vcf: str,
-    bcftools: str,
-    drop_info: set[str] | None = None,
-    drop_format: set[str] | None = None,
-) -> tuple[dict, dict, list[str], list[str], list[str]]:
-    """
-    Parse VCF header and prepare metadata dictionaries.
-
-    Parameters
-    ----------
-    vcf : str
-        Path to VCF file
-    bcftools : str
-        Path to bcftools executable
-    drop_info : set[str] | None
-        INFO fields to exclude
-    drop_format : set[str] | None
-        FORMAT fields to exclude
-
-    Returns
-    -------
-    tuple[dict, dict, list[str], list[str], list[str]]
-        (info_meta, fmt_meta, info_ids, scalar_fmt_ids, list_fmt_ids)
-    """
-    # Parse VCF header
-    info_meta, fmt_meta = header_meta(vcf, bcftools, threads=1)
-
-    # Filter dropped fields
     if drop_info:
+        dropped_info = [k for k in info_meta.keys() if k in drop_info]
         info_meta = {k: v for k, v in info_meta.items() if k not in drop_info}
+        if dropped_info:
+            log.info(f"Dropping {len(dropped_info)} INFO field(s): {dropped_info}")
     if drop_format:
+        if expand_columns:
+            new_drop_format = drop_format - set(expand_columns.keys())
+            if new_drop_format != drop_format:
+                drop_format = new_drop_format
+                log.info(
+                    f"One or more FORMAT fields were asked to be dropped, but are used for expand columns. "
+                    f"Note they will not be dropped. {drop_format=}, {expand_columns=}"
+                )
+        dropped_fmt = [k for k in fmt_meta.keys() if k in drop_format]
         fmt_meta = {k: v for k, v in fmt_meta.items() if k not in drop_format}
-
-    # Validate FORMAT fields
-    format_ids = list(fmt_meta.keys())
-    _sanity_check_format_numbers(format_ids, fmt_meta)
-
-    # Split FORMAT fields
-    scalar_fmt_ids, list_fmt_ids = _split_format_ids(format_ids, fmt_meta)
-    info_ids = list(info_meta.keys())
-
-    return info_meta, fmt_meta, info_ids, scalar_fmt_ids, list_fmt_ids
+        if dropped_fmt:
+            log.info(f"Dropping {len(dropped_fmt)} FORMAT field(s): {dropped_fmt}")
+    return info_meta, fmt_meta
 
 
-def _setup_column_configuration(
-    info_ids: list[str],
-    format_ids: list[str],
-    list_fmt_ids: list[str],
-) -> tuple[str, list[str], list[int]]:
-    """
-    Build query string, column names, and list column indices.
-
-    Parameters
-    ----------
-    info_ids : list[str]
-        INFO field names
-    format_ids : list[str]
-        FORMAT field names
-    list_fmt_ids : list[str]
-        FORMAT fields with list values
-
-    Returns
-    -------
-    tuple[str, list[str], list[int]]
-        (fmt_str, cols, list_fmt_indices)
-    """
-    # Build query string and column names
-    fmt_str = _make_query_string(format_ids, info_ids)
-    cols = [CHROM, POS, ID, QUAL, REF, ALT] + info_ids + format_ids
-
-    # Find indices of list columns for AWK script
-    list_fmt_indices = []
-    base_cols = [CHROM, POS, ID, QUAL, REF, ALT] + info_ids
-    for list_col in list_fmt_ids:
-        idx = len(base_cols) + format_ids.index(list_col)
-        list_fmt_indices.append(idx)
-
-    return fmt_str, cols, list_fmt_indices
-
-
-def _execute_parallel_conversion(
-    vcf: str,
-    out: str,
-    regions: list[str],
-    fmt_str: str,
-    job_cfg: VCFJobConfig,
-    jobs: int,
-    read_filters: dict | list | None,
-    downsample_reads: int | None,
-    downsample_seed: int | None,
-) -> None:
-    """
-    Execute parallel region conversion and merge results.
-
-    Parameters
-    ----------
-    vcf : str
-        Path to input VCF file
-    out : str
-        Path to output Parquet file
-    regions : list[str]
-        Genomic regions to process
-    fmt_str : str
-        bcftools query format string
-    job_cfg : VCFJobConfig
-        Job configuration
-    jobs : int
-        Number of parallel jobs
-    read_filters : dict | list | None
-        Read filter configuration
-    downsample_reads : int | None
-        Number of reads to downsample to
-    downsample_seed : int | None
-        Random seed for downsampling
-    """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        spawn_ctx = _mp.get_context("spawn")
-        part_files = _run_region_jobs(
-            regions=regions,
-            vcf_path=vcf,
-            fmt_str=fmt_str,
-            job_cfg=job_cfg,
-            jobs=jobs,
-            tmpdir=tmpdir,
-            spawn_ctx=spawn_ctx,
-        )
-        if not part_files:
-            log.error(
-                "No Parquet part-files were produced\n"
-                "This could mean:\n"
-                "  1. All regions were empty (no variants in the VCF)\n"
-                "  2. All data was filtered out by read filters\n"
-                "  3. All regions failed to process (check errors above)"
-            )
-            if read_filters:
-                log.error("")
-                log.error("Read filters were applied. Check if filters are too strict:")
-                if "filters" in read_filters:
-                    for f in read_filters["filters"]:
-                        value_display = f.get("value", f.get("value_field", "N/A"))
-                        log.error(f"  - {f.get('name', 'unnamed')}: {f.get('field')} {f.get('op')} {value_display}")
-            raise RuntimeError(
-                "No Parquet part-files were produced – all regions empty or failed. "
-                "Check log for details. If using read filters, they may be filtering out all data."
-            )
-
-        _merge_parquet_files_lazy(part_files, out, downsample_reads, downsample_seed)
-
-
-def vcf_to_parquet(
+def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
     vcf: str,
     out: str,
     drop_info: set[str] | None = None,
     drop_format: set[str] | None = None,
     chunk_bp: int = CHUNK_BP_DEFAULT,
     jobs: int = DEFAULT_JOBS,
+    list_mode: str = "explode",
+    log_level: int = logging.INFO,
+    expand_columns: dict[str, int] | None = None,
     read_filters_json: str | None = None,
     read_filter_json_key: str | None = None,
     downsample_reads: int | None = None,
@@ -1208,9 +1131,18 @@ def vcf_to_parquet(
     drop_format : set[str] | None
         FORMAT fields to exclude
     chunk_bp : int
-        Maximum number of base-pairs per chunk (default 300 Mbp).
+        Maximum number of base-pairs per chunk (default 10 Mbp).
     jobs : int
         Number of parallel jobs (0 = auto-detect CPU cores)
+    list_mode : str
+        How to handle list format fields: "explode" (one row per list element) or
+        "aggregate" (mean, min, max, count, count_zero metrics). Default is "explode".
+    log_level : int
+        Logging level (e.g., logging.DEBUG, logging.INFO)
+    expand_columns : dict[str, int] | None
+        Mapping of list-type FORMAT field names to their expand sizes. In aggregate mode,
+        these columns are expanded into indexed columns (e.g., {"AD": 2} produces
+        AD_0, AD_1) instead of being aggregated. Only used when list_mode="aggregate".
     read_filters_json : str | None
         Path to JSON file containing read filters
     read_filter_json_key : str | None
@@ -1221,20 +1153,92 @@ def vcf_to_parquet(
     downsample_seed : int | None
         Random seed for downsampling (optional, for reproducibility)
     """
-    log.info(f"Converting {vcf} to {out} using region-based parallel processing")
+    log.info(f"Input: {vcf}")
+    log.info(f"Output: {out}")
+    log.info(f"List mode: {list_mode}")
+
     _assert_vcf_index_exists(vcf)
+    log.debug("VCF index found")
 
-    # Setup parallel jobs and resolve tool paths
-    jobs, bcftools, bedtools = _setup_parallel_jobs(jobs)
+    # Auto-detect optimal job count if not specified
+    if jobs == 0:
+        jobs = os.cpu_count() or 4
 
-    # Prepare VCF metadata
-    info_meta, fmt_meta, info_ids, scalar_fmt_ids, list_fmt_ids = _prepare_vcf_metadata(
-        vcf, bcftools, drop_info, drop_format
-    )
+    log.info(f"Using {jobs} parallel job(s) for region processing")
 
-    # Setup column configuration
+    # Resolve tool paths
+    bcftools = _resolve_bcftools_command()
+    bedtools = _resolve_bedtools_command()
+
+    # Parse VCF header
+    info_meta, fmt_meta = header_meta(vcf, bcftools, threads=1)
+
+    _validate_expand_columns(expand_columns, list_mode, fmt_meta)
+
+    info_meta, fmt_meta = _drop_fields(info_meta, fmt_meta, drop_info, drop_format, expand_columns)
+
+    # Validate FORMAT fields
     format_ids = list(fmt_meta.keys())
-    fmt_str, cols, list_fmt_indices = _setup_column_configuration(info_ids, format_ids, list_fmt_ids)
+    _sanity_check_format_numbers(format_ids, fmt_meta, expand_columns)
+
+    # Split FORMAT fields
+    scalar_fmt_ids, list_fmt_ids = _split_format_ids(format_ids, fmt_meta)
+    info_ids = list(info_meta.keys())
+
+    # Handle expand columns: remove them from list_fmt_ids for aggregation
+    expand_columns = expand_columns or {}
+    effective_list_fmt_ids = [col for col in list_fmt_ids if col not in expand_columns]
+    expand_ids = [col for col in list_fmt_ids if col in expand_columns]
+
+    if expand_columns:
+        log.info(f"Expand columns (will be expanded): {expand_ids}")
+    log.info(
+        f"Processing {len(scalar_fmt_ids)} scalar FORMAT field(s), {len(effective_list_fmt_ids)} list FORMAT field(s)"
+    )
+    log.debug(f"Scalar FORMAT fields: {scalar_fmt_ids}")
+    log.debug(f"List FORMAT fields: {effective_list_fmt_ids}")
+
+    # Build query string and column names
+    fmt_str = _make_query_string(format_ids, info_ids)
+    cols = [CHROM, POS, ID, QUAL, REF, ALT] + info_ids + format_ids
+
+    # Find indices of list columns for AWK script (excluding fixed-tuple columns)
+    list_fmt_indices = []
+    base_cols = [CHROM, POS, ID, QUAL, REF, ALT] + info_ids
+    for list_col in effective_list_fmt_ids:
+        idx = len(base_cols) + format_ids.index(list_col)
+        list_fmt_indices.append(idx)
+
+    # Find indices of expand columns for AWK script
+    expand_indices = []
+    expand_sizes = []
+    for expand_col in expand_ids:
+        idx = len(base_cols) + format_ids.index(expand_col)
+        expand_indices.append(idx)
+        expand_sizes.append(expand_columns[expand_col])
+
+    # Fetch sample list ONCE in main process
+    sample_list = _get_sample_list(vcf)
+    log.info(f"Found {len(sample_list)} sample(s): {sample_list}")
+
+    if not sample_list:
+        raise ValueError(
+            f"VCF file '{vcf}' contains no samples. "
+            "VCF files without samples cannot be processed as variant data requires sample-specific FORMAT fields."
+        )
+
+    # Cache fmt_ids
+    fmt_ids = list(fmt_meta.keys())
+
+    # Transform columns and schema for aggregate mode
+    if list_mode == "aggregate":
+        log.info("Using aggregate mode: list fields will be aggregated (mean, min, max, count, count_zero)")
+        cols, schema = _transform_cols_and_schema_for_aggregate(
+            cols, effective_list_fmt_ids, info_meta, fmt_meta, expand_columns
+        )
+    else:
+        log.info("Using explode mode: list fields will be expanded to one row per element")
+        schema = _build_explicit_schema(cols, info_meta, fmt_meta)
 
     with pl.StringCache():
         # Load read filters if provided
@@ -1242,7 +1246,7 @@ def vcf_to_parquet(
         if read_filters_json:
             read_filters = _load_read_filters(read_filters_json, read_filter_json_key)
             log.info(f"Loaded read filters from {read_filters_json}")
-            if KEY_FILTERS in read_filters:
+            if isinstance(read_filters, dict) and KEY_FILTERS in read_filters:
                 log.info(f"Filter configuration contains {len(read_filters[KEY_FILTERS])} filter rules")
 
         # Generate genomic regions (fixed windows via bedtools)
@@ -1253,27 +1257,67 @@ def vcf_to_parquet(
             bedtools,
             window_size=chunk_bp,
         )
-        log.info(f"Created {len(regions)} regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")  # noqa PLR2004
+        log.info(f"Created {len(regions)} regions for parallel processing")
+        log.debug(f"First 5 regions: {regions[:5]}{'...' if len(regions) > 5 else ''}")  # noqa PLR2004
 
-        # Build immutable job configuration (shared by every worker)
-        job_cfg = VCFJobConfig(
-            bcftools_path=bcftools,
-            awk_script=_get_awk_script_path(),
-            columns=cols,
-            list_indices=list_fmt_indices,
-            schema=_build_explicit_schema(cols, info_meta, fmt_meta),
+        # Build column configuration
+        col_cfg = ColumnConfig(
             info_meta=info_meta,
             fmt_meta=fmt_meta,
             info_ids=info_ids,
+            fmt_ids=fmt_ids,
             scalar_fmt_ids=scalar_fmt_ids,
-            list_fmt_ids=list_fmt_ids,
+            list_fmt_ids=effective_list_fmt_ids,
+            expand_columns=expand_columns if list_mode == "aggregate" else None,
+            expand_sizes=expand_sizes if list_mode == "aggregate" else None,
+            expand_indices=expand_indices if list_mode == "aggregate" else None,
+            list_indices=list_fmt_indices,
+        )
+
+        job_cfg = VCFJobConfig(
+            bcftools_path=bcftools,
+            awk_script=_get_awk_script_path(mode=list_mode),
+            columns=cols,
+            schema=schema,
+            column_config=col_cfg,
+            sample_list=sample_list,
+            log_level=log_level,
             read_filters=read_filters,
         )
 
-        # Execute parallel conversion
-        _execute_parallel_conversion(
-            vcf, out, regions, fmt_str, job_cfg, jobs, read_filters, downsample_reads, downsample_seed
-        )
+        # Temporary directory for ordered part-files
+        with tempfile.TemporaryDirectory() as tmpdir:
+            spawn_ctx = _mp.get_context("spawn")
+            part_files = _run_region_jobs(
+                regions=regions,
+                vcf_path=vcf,
+                fmt_str=fmt_str,
+                job_cfg=job_cfg,
+                jobs=jobs,
+                tmpdir=tmpdir,
+                spawn_ctx=spawn_ctx,
+            )
+            if not part_files:
+                log.error(
+                    "No Parquet part-files were produced\n"
+                    "This could mean:\n"
+                    "  1. All regions were empty (no variants in the VCF)\n"
+                    "  2. All data was filtered out by read filters\n"
+                    "  3. All regions failed to process (check errors above)"
+                )
+                if read_filters:
+                    log.error("")
+                    log.error("Read filters were applied. Check if filters are too strict:")
+                    if isinstance(read_filters, dict) and "filters" in read_filters:
+                        for f in read_filters["filters"]:
+                            value_display = f.get("value", f.get("value_field", "N/A"))
+                            log.error(f"  - {f.get('name', 'unnamed')}: {f.get('field')} {f.get('op')} {value_display}")
+                raise RuntimeError(
+                    "No Parquet part-files were produced – all regions empty or failed. "
+                    "Check log for details. If using read filters, they may be filtering out all data."
+                )
+
+            _merge_parquet_files_lazy(part_files, out, downsample_reads, downsample_seed)
 
         log.info(f"Conversion completed: {out}")
 
@@ -1309,15 +1353,10 @@ def _process_region_to_parquet(
     str
         Path to created parquet file, empty string if no data
     """
-    # Configure logging for worker process (spawn context doesn't inherit parent's config)
-    # Use INFO level to see all important messages from workers
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        force=True,  # Reconfigure even if already set
-    )
-
+    # Configure logging once per worker process
+    _configure_logging(job_cfg.log_level, check_worker_cache=True)
     try:
+        log.debug(f"Processing region {region}")
         with pl.StringCache():
             frame = _stream_region_to_polars(
                 region=region,
@@ -1326,37 +1365,32 @@ def _process_region_to_parquet(
                 job_cfg=job_cfg,
             )
             if frame.is_empty():
-                log.debug(f"Region {region}: No data (empty VCF region)")
+                log.debug(f"Region {region} contains no data, skipping")
                 return ""
 
             rows_after_awk = frame.height
-            frame = _cast_column_data_types(frame, job_cfg)
             log.debug(f"Region {region}: {rows_after_awk:,} rows after AWK explosion & type casting")
 
-            # Apply read filters if configured
-            if job_cfg.read_filters:
+            # Apply read filters for single-sample VCFs (multi-sample filters
+            # are applied per-sample inside _convert_sample_frames_to_polars)
+            if job_cfg.read_filters and len(job_cfg.sample_list) == 1:
                 rows_before_filter = frame.height
                 frame = _apply_read_filters(frame, job_cfg.read_filters)
                 rows_after_filter = frame.height
                 pct_remaining = (rows_after_filter / rows_before_filter * 100) if rows_before_filter > 0 else 0
                 log.info(
-                    f"Region {region}: {rows_before_filter:,} → {rows_after_filter:,} rows after filtering "
+                    f"Region {region}: {rows_before_filter:,} -> {rows_after_filter:,} rows after filtering "
                     f"({pct_remaining:.1f}% retained)"
                 )
-            else:
-                log.debug(f"Region {region}: No filters applied, {frame.height:,} rows")
+                if frame.is_empty():
+                    log.debug(f"Region {region}: all rows filtered out")
+                    return ""
 
-            # Skip writing if no reads remain after filtering
-            if frame.is_empty():
-                log.info(f"Region {region}: All reads filtered out")
-                return ""
-
+            log.debug(f"Region {region}: writing {frame.height} rows to {output_file}")
             frame.write_parquet(output_file)
-            log.debug(f"Region {region}: Wrote {frame.height:,} rows to {output_file}")
             return output_file
 
     except Exception:
-        # Emit full traceback inside the worker
         log.exception("Error processing region %s", region)
         raise
 
@@ -1369,9 +1403,39 @@ def _bcftools_awk_stdout(
     bcftools: str,
     awk_script: str,
     list_indices: list[int],
+    sample_name: str,
+    expand_indices: list[int] | None = None,
+    expand_sizes: list[int] | None = None,
 ) -> str:
-    """Return TSV (string) produced by `bcftools | awk` for a region."""
-    bcftools_cmd = [bcftools, "query", "-f", fmt_str, vcf_path]
+    """Return TSV (string) produced by `bcftools | awk` for a region.
+
+    Parameters
+    ----------
+    region : str
+        Genomic region in format "chr:start-end"
+    vcf_path : str
+        Path to the VCF file
+    fmt_str : str
+        bcftools query format string
+    bcftools : str
+        Path to bcftools executable
+    awk_script : str
+        Path to the AWK script
+    list_indices : list[int]
+        0-based column indices for list columns to aggregate
+    sample_name : str
+        Name of the sample to extract
+    expand_indices : list[int] | None
+        0-based column indices for expand columns to split
+    expand_sizes : list[int] | None
+        Size of each expand column (parallel array with expand_indices)
+
+    Returns
+    -------
+    str
+        TSV string output from bcftools | awk pipeline
+    """
+    bcftools_cmd = [bcftools, "query", "-s", sample_name, "-f", fmt_str, vcf_path]
     if region:
         bcftools_cmd.insert(2, "-r")
         bcftools_cmd.insert(3, region)
@@ -1380,9 +1444,20 @@ def _bcftools_awk_stdout(
         "awk",
         "-v",
         f"list_indices={','.join(map(str, list_indices))}",
-        "-f",
-        awk_script,
     ]
+
+    # Add expand column parameters if provided
+    if expand_indices and expand_sizes:
+        awk_cmd.extend(
+            [
+                "-v",
+                f"expand_indices={','.join(map(str, expand_indices))}",
+                "-v",
+                f"expand_sizes={','.join(map(str, expand_sizes))}",
+            ]
+        )
+
+    awk_cmd.extend(["-f", awk_script])
 
     bcftool = subprocess.Popen(bcftools_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     awk = subprocess.Popen(
@@ -1398,28 +1473,11 @@ def _bcftools_awk_stdout(
     out, awk_err = awk.communicate()
     bcftool.wait()
 
-    # Capture bcftools stderr
-    bcftool_err = bcftool.stderr.read() if bcftool.stderr else ""
-
-    # Check for errors or warnings
     if bcftool.returncode:  # pragma: no cover
-        log.error(f"bcftools failed for region {region}: return code {bcftool.returncode}")
-        log.error(f"bcftools stderr: {bcftool_err}")
-        raise subprocess.CalledProcessError(bcftool.returncode, bcftools_cmd, bcftool_err)
-
+        err_msg = bcftool.stderr.read() if bcftool.stderr else ""
+        raise subprocess.CalledProcessError(bcftool.returncode, bcftools_cmd, err_msg)
     if awk.returncode:  # pragma: no cover
-        log.error(f"AWK failed for region {region}: return code {awk.returncode}")
-        log.error(f"AWK stderr: {awk_err}")
         raise subprocess.CalledProcessError(awk.returncode, awk_cmd, awk_err)
-
-    # Log warnings from bcftools even if exit code is 0
-    if bcftool_err and bcftool_err.strip():
-        log.warning(f"bcftools warning for region {region}: {bcftool_err.strip()}")
-
-    # Log warnings from awk even if exit code is 0
-    if awk_err and awk_err.strip():
-        log.warning(f"AWK warning for region {region}: {awk_err.strip()}")
-
     return out.strip()
 
 
@@ -1437,35 +1495,147 @@ def _frame_from_tsv(tsv: str, *, cols: list[str], schema: dict[str, pl.PolarsDat
     )
 
 
+def _get_sample_list(vcf: str) -> list[str]:
+    """
+    Get the list of samples in the VCF file.
+
+    Parameters
+    ----------
+    vcf : str
+        Path to input VCF/BCF file
+
+    Returns
+    -------
+    list[str]
+        List of samples in the VCF
+    """
+    try:
+        with pysam.VariantFile(vcf) as h_vcf:
+            return list(h_vcf.header.samples)
+    except Exception as e:
+        log.error(f"Could not determine sample list from VCF {vcf}: {e}.")
+        raise RuntimeError(f"Could not determine sample list from VCF {vcf}: {e}.") from e
+
+
+def _convert_sample_frames_to_polars(
+    region: str,
+    vcf_path: str,
+    fmt_str: str,
+    job_cfg: VCFJobConfig,
+) -> dict[str, pl.DataFrame]:
+    """Collect DataFrames for each sample in the region.
+
+    Read filters are applied per-sample before the multi-sample join,
+    since FORMAT columns still have their original names (e.g. DP) at this stage.
+    After the join, they get sample suffixes (e.g. DP_SAMPLE1).
+    """
+    frames: dict[str, pl.DataFrame] = {}
+
+    for sample in job_cfg.sample_list:
+        log.debug(f"Processing sample {sample} for region {region}")
+        single_sample_tsv = _bcftools_awk_stdout(
+            region=region,
+            vcf_path=vcf_path,
+            fmt_str=fmt_str,
+            bcftools=job_cfg.bcftools_path,
+            awk_script=job_cfg.awk_script,
+            list_indices=job_cfg.column_config.list_indices,
+            sample_name=sample,
+            expand_indices=job_cfg.column_config.expand_indices,
+            expand_sizes=job_cfg.column_config.expand_sizes,
+        )
+        if not single_sample_tsv.strip():
+            log.debug(f"Sample {sample} has no data in region {region}")
+            continue
+        frame = _frame_from_tsv(single_sample_tsv, cols=job_cfg.columns, schema=job_cfg.schema)
+        if not frame.is_empty():
+            frame = _cast_column_data_types(frame, job_cfg)
+            if job_cfg.read_filters and len(job_cfg.sample_list) > 1:
+                rows_before = frame.height
+                frame = _apply_read_filters(frame, job_cfg.read_filters)
+                log.debug(f"Sample {sample}, region {region}: {rows_before:,} -> {frame.height:,} rows after filtering")
+            if not frame.is_empty():
+                frames[sample] = frame
+
+    return frames
+
+
+def _join_multi_sample_frames(frames: dict[str, pl.DataFrame], job_cfg: VCFJobConfig) -> pl.DataFrame:
+    """Join multiple sample DataFrames, renaming FORMAT columns and dropping duplicates."""
+    aggregation_suffixes = {suffix for suffix, _ in AGGREGATION_TYPES}
+
+    # Build set of all columns that need sample suffix (FORMAT + aggregate columns + expand columns)
+    cols_to_rename = set(job_cfg.column_config.fmt_ids)
+    for list_id in job_cfg.column_config.list_fmt_ids:
+        for suffix in aggregation_suffixes:
+            cols_to_rename.add(f"{list_id}_{suffix}")
+
+    # Add expand column split columns (e.g., AD_0, AD_1)
+    if job_cfg.column_config.expand_columns:
+        for col, size in job_cfg.column_config.expand_columns.items():
+            for i in range(size):
+                cols_to_rename.add(f"{col}_{i}")
+
+    # Rename FORMAT columns and aggregate columns with sample suffix
+    for sample, frame in frames.items():
+        rename_map = {col: f"{col}_{sample}" for col in frame.columns if col in cols_to_rename}
+        frames[sample] = frame.rename(rename_map)
+
+    frame_list = list(frames.values())
+    final_frame = frame_list[0]
+
+    # Join keys: CHROM, POS, REF, ALT (genomic coordinates and alleles)
+    join_keys = [CHROM, POS, REF, ALT]
+
+    # Columns to drop from subsequent frames (QUAL, INFO) - they're identical across samples
+    non_sample_specific_cols = {QUAL} | set(job_cfg.column_config.info_ids)
+    cols_to_drop = non_sample_specific_cols - set(join_keys) - set(job_cfg.column_config.fmt_ids)
+
+    # Join remaining frames, dropping duplicate columns
+    for frame in frame_list[1:]:
+        frame_dropped = frame.drop([col for col in cols_to_drop if col in frame.columns])
+        final_frame = final_frame.join(frame_dropped, on=join_keys, how="outer", coalesce=True)
+
+    return final_frame
+
+
 def _stream_region_to_polars(
     region: str,
     vcf_path: str,
     fmt_str: str,
     job_cfg: VCFJobConfig,
 ) -> pl.DataFrame:
-    """Run bcftools→awk and return a typed Polars DataFrame for *region*."""
-    tsv = _bcftools_awk_stdout(
-        region=region,
-        vcf_path=vcf_path,
-        fmt_str=fmt_str,
-        bcftools=job_cfg.bcftools_path,
-        awk_script=job_cfg.awk_script,
-        list_indices=job_cfg.list_indices,
-    )
+    """
+    Run bcftools→awk and return a typed Polars DataFrame for *region*.
+    If VCF has multiple samples, create a separate dataframe for each sample and join them on CHROM, POS, REF, ALT.
+    The final dataframe will have the same columns as the input VCF, but with the FORMAT column name suffixed with
+    the sample name to avoid column name conflicts in the join.
 
-    frame = _frame_from_tsv(tsv, cols=job_cfg.columns, schema=job_cfg.schema)
-    if frame.is_empty():
-        # Count raw TSV lines to detect truncation (only when there's a problem)
-        # Note: After strip(), a non-empty string with N lines has N-1 newlines
-        tsv_lines = (tsv.count("\n") + 1) if tsv else 0
-        if tsv_lines > 0:
-            log.warning(
-                f"Region {region}: AWK produced {tsv_lines} TSV lines but DataFrame is empty - possible parsing error"
-            )
-        return frame
+    Parameters
+    ----------
+    region : str
+        Genomic region in format "chr:start-end" or "chr"
+    vcf_path : str
+        Path to VCF file
+    fmt_str : str
+        bcftools query format string
+    job_cfg : VCFJobConfig
+        Job configuration object with processing metadata
 
-    log.debug(f"Region {region}: {frame.height:,} DataFrame rows")
-    return _cast_column_data_types(frame, job_cfg)
+    Returns
+    -------
+    pl.DataFrame
+        Typed Polars DataFrame for the region
+    """
+    frames = _convert_sample_frames_to_polars(region, vcf_path, fmt_str, job_cfg)
+
+    if not frames:
+        return pl.DataFrame()
+
+    if len(job_cfg.sample_list) == 1:
+        return list(frames.values())[0]
+
+    return _join_multi_sample_frames(frames, job_cfg)
 
 
 def _cast_ref_alt_columns() -> list[pl.Expr]:
@@ -1485,9 +1655,13 @@ def _cast_column_data_types(featuremap_dataframe: pl.DataFrame, job_cfg: VCFJobC
     exprs: list[pl.Expr] = [pl.col(POS).cast(pl.Int64)]
 
     # build expressions for INFO / FORMAT
-    exprs.extend(_cast_expr(tag, job_cfg.info_meta[tag]) for tag in job_cfg.info_ids)
-    exprs.extend(_cast_expr(tag, job_cfg.fmt_meta[tag]) for tag in job_cfg.scalar_fmt_ids)
-    exprs.extend(_cast_expr(tag, job_cfg.fmt_meta[tag]) for tag in job_cfg.list_fmt_ids)
+    col_cfg = job_cfg.column_config
+    exprs.extend(_cast_expr(tag, col_cfg.info_meta[tag]) for tag in col_cfg.info_ids)
+    exprs.extend(_cast_expr(tag, col_cfg.fmt_meta[tag]) for tag in col_cfg.scalar_fmt_ids)
+    # Only cast list columns if they exist (they're replaced with aggregate columns in aggregate mode)
+    exprs.extend(
+        _cast_expr(tag, col_cfg.fmt_meta[tag]) for tag in col_cfg.list_fmt_ids if tag in featuremap_dataframe.columns
+    )
 
     # QUAL ─ force Float64 even if all values are missing
     if QUAL in featuremap_dataframe.columns:
@@ -1521,40 +1695,65 @@ def main(argv: list[str] | None = None) -> None:
         help=f"Base-pairs per processing chunk (default {CHUNK_BP_DEFAULT} bp)",
     )
     parser.add_argument(
-        "--read_filters_json",
-        "--read_filter_json",  # Allow both singular and plural forms
-        required=False,
+        "--list-mode",
+        choices=["explode", "aggregate"],
+        default="explode",
+        help=(
+            "How to handle list format fields: 'explode' (one row per list element) or 'aggregate' "
+            "(mean, min, max, count, count_zero metrics). Default is 'explode'."
+        ),
+    )
+    parser.add_argument(
+        "--expand-columns",
+        nargs="*",
+        default=[],
+        metavar="COL:SIZE",
+        help=(
+            "Columns to expand into multiple columns instead of aggregate (only in aggregate mode). "
+            "Format: COL:SIZE, e.g., 'AD:2' expands AD into AD_0, AD_1."
+        ),
+    )
+    parser.add_argument(
+        "--read-filters-json",
         default=None,
-        help="JSON file with read filters",
+        help="Path to JSON file containing read filters to apply during conversion",
     )
     parser.add_argument(
-        "--read_filter_json_key", required=False, default=None, help="Key in JSON file for read filters"
+        "--read-filter-json-key",
+        default=None,
+        help="Key in read filters JSON file to extract filters from (uses entire JSON if not specified)",
     )
     parser.add_argument(
-        "--downsample_reads",
+        "--downsample-reads",
         type=int,
         default=None,
-        help="Downsample to this number of reads (optional). If total reads < this value, all reads are kept.",
+        help="Downsample to this number of reads after conversion (keeps all if fewer)",
     )
     parser.add_argument(
-        "--downsample_seed",
+        "--downsample-seed",
         type=int,
         default=None,
-        help="Random seed for downsampling (optional, for reproducibility)",
+        help="Random seed for reproducible downsampling",
     )
-    # ───────────── new verbose flag ─────────────
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
-    # -------------------------------------------
     args = parser.parse_args(argv)
 
-    # ───────────── logging setup ───────────────
-    if args.verbose:
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        )
-        log.setLevel(logging.DEBUG)
-    # -------------------------------------------
+    # Parse expand columns
+    expand_columns: dict[str, int] | None = None
+    if args.expand_columns:
+        expand_columns = {}
+        for spec in args.expand_columns:
+            if ":" not in spec:
+                parser.error(f"Invalid expand-columns format: {spec}. Expected COL:SIZE, e.g., 'AD:2'")
+            col, size_str = spec.split(":", 1)
+            try:
+                size = int(size_str)
+            except ValueError:
+                parser.error(f"Invalid size in expand-columns: {spec}. Size must be an integer.")
+            expand_columns[col] = size
+
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    _configure_logging(log_level, check_worker_cache=False)
 
     vcf_to_parquet(
         vcf=args.input,
@@ -1563,6 +1762,9 @@ def main(argv: list[str] | None = None) -> None:
         drop_format=set(args.drop_format),
         chunk_bp=args.chunk_bp,
         jobs=args.jobs,
+        list_mode=args.list_mode,
+        log_level=log_level,
+        expand_columns=expand_columns,
         read_filters_json=args.read_filters_json,
         read_filter_json_key=args.read_filter_json_key,
         downsample_reads=args.downsample_reads,
