@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SRSNV Model Comparison Report — XGBoost vs DNN</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --border: #dee2e6;
+    --accent: #0d6efd;
+    --better: #198754;
+    --worse: #dc3545;
+    --table-stripe: #f8f9fa;
+    --header-bg: #e9ecef;
+    --section-bg: #f5f7fa;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-size: 15px;
+    color: var(--fg);
+    background: var(--bg);
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px 32px 60px;
+    line-height: 1.55;
+  }
+  h1 { font-size: 28px; margin-bottom: 6px; color: #212529; }
+  h2 {
+    font-size: 20px;
+    margin: 36px 0 12px;
+    padding: 8px 14px;
+    background: var(--section-bg);
+    border-left: 4px solid var(--accent);
+    border-radius: 2px;
+  }
+  h3 { font-size: 16px; margin: 20px 0 8px; color: #495057; }
+  p { margin: 6px 0 10px; }
+  .subtitle { color: #6c757d; font-size: 14px; margin-bottom: 24px; }
+  .toc { margin: 16px 0 28px; padding: 12px 20px; background: var(--section-bg); border-radius: 4px; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  .toc ul { list-style: none; padding-left: 0; }
+  .toc li { padding: 3px 0; }
+  .toc li::before { content: "— "; color: #adb5bd; }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 10px 0 18px;
+    font-size: 14px;
+  }
+  th, td {
+    padding: 7px 12px;
+    border: 1px solid var(--border);
+    text-align: center;
+  }
+  th { background: var(--header-bg); font-weight: 600; }
+  tr:nth-child(even) { background: var(--table-stripe); }
+
+  .better { color: var(--better); font-weight: 600; }
+  .worse  { color: var(--worse); font-weight: 600; }
+
+  .plot-container { text-align: center; margin: 14px 0 20px; }
+  .plot-container img { max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 4px; }
+
+  details { margin: 6px 0 14px; }
+  summary { cursor: pointer; font-weight: 600; color: var(--accent); padding: 4px 0; }
+  summary:hover { text-decoration: underline; }
+
+  .note { font-size: 13px; color: #6c757d; font-style: italic; margin: 4px 0 12px; }
+  footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; color: #adb5bd; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>SRSNV Model Comparison Report</h1>
+<p class="subtitle">XGBoost vs Deep Neural Network (CNN) &mdash; Same data splits</p>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ul>
+    <li><a href="#summary">1. Executive Summary</a></li>
+    <li><a href="#dataset">2. Dataset Overview</a></li>
+    <li><a href="#roc">3. ROC Curves</a></li>
+    <li><a href="#pr">4. Precision-Recall Curves</a></li>
+    <li><a href="#score-dist">5. Score Distribution</a></li>
+    <li><a href="#calibration">6. Calibration</a></li>
+    <li><a href="#quality">7. Quality Score Distribution</a></li>
+    <li><a href="#training">8. Training Progress</a></li>
+    <li><a href="#confusion">9. Confusion Matrices</a></li>
+    <li><a href="#per-chrom">10. Per-Chromosome Performance</a></li>
+    <li><a href="#arch">11. Model Architecture Summary</a></li>
+    <li><a href="#error-analysis">13. Error Analysis</a></li>
+  </ul>
+</nav>
+
+<!-- ================================================================ -->
+<h2 id="summary">1. Executive Summary</h2>
+<table>
+  <thead>
+    <tr><th>Split</th><th>Metric</th><th>XGBoost</th><th>DNN</th><th>Delta (DNN&minus;XGB)</th></tr>
+  </thead>
+  <tbody>
+  {% for r in summary %}
+    <tr>
+      <td>{{ r.split }}</td>
+      <td>{{ r.metric }}</td>
+      <td>{{ r.xgb }}</td>
+      <td>{{ r.dnn }}</td>
+      <td class="{{ r.delta_class }}">{{ r.delta }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<!-- ================================================================ -->
+<h2 id="dataset">2. Dataset Overview</h2>
+<table>
+  <thead><tr><th>Split</th><th>Rows</th><th>Positives</th><th>Negatives</th><th>Prevalence</th></tr></thead>
+  <tbody>
+  {% for r in dataset %}
+    <tr><td>{{ r.split }}</td><td>{{ r.rows }}</td><td>{{ r.positives }}</td><td>{{ r.negatives }}</td><td>{{ r.prevalence }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p><strong>Split configuration:</strong>
+  Holdout chromosomes: <code>{{ split_config.holdout_chromosomes }}</code> |
+  Val fraction: <code>{{ split_config.val_fraction }}</code> |
+  Hash key: <code>{{ split_config.hash_key }}</code> |
+  Mode: <code>{{ split_config.split_mode }}</code>
+</p>
+<p class="note">
+  XGBoost rows: {{ split_config.xgb_total | default("N/A") }} |
+  DNN rows: {{ split_config.dnn_total | default("N/A") }} |
+  Merged rows: {{ split_config.merged_total | default("N/A") }}
+  — all counts match, confirming identical splits.
+</p>
+
+<!-- ================================================================ -->
+<h2 id="roc">3. ROC Curves</h2>
+{% if plots.roc %}
+<div class="plot-container"><img src="data:image/png;base64,{{ plots.roc }}" alt="ROC curves"></div>
+{% endif %}
+
+<!-- ================================================================ -->
+<h2 id="pr">4. Precision-Recall Curves</h2>
+{% if plots.pr %}
+<div class="plot-container"><img src="data:image/png;base64,{{ plots.pr }}" alt="PR curves"></div>
+{% endif %}
+
+<!-- ================================================================ -->
+<h2 id="score-dist">5. Score Distribution</h2>
+{% if plots.score_dist %}
+<div class="plot-container"><img src="data:image/png;base64,{{ plots.score_dist }}" alt="Score distribution"></div>
+{% endif %}
+
+<!-- ================================================================ -->
+<h2 id="calibration">6. Calibration</h2>
+{% if plots.calibration %}
+<div class="plot-container"><img src="data:image/png;base64,{{ plots.calibration }}" alt="Calibration curves"></div>
+{% endif %}
+
+<!-- ================================================================ -->
+<h2 id="quality">7. Quality Score Distribution</h2>
+{% if plots.quality_dist %}
+<div class="plot-container"><img src="data:image/png;base64,{{ plots.quality_dist }}" alt="Quality distribution"></div>
+{% endif %}
+
+<h3>MQUAL Percentiles (Test Set)</h3>
+<table>
+  <thead><tr><th>Model</th><th>Label</th><th>P5</th><th>P10</th><th>P25</th><th>P50</th><th>P75</th><th>P90</th><th>P95</th></tr></thead>
+  <tbody>
+  {% for r in quality_percentiles %}
+    <tr>
+      <td>{{ r.model }}</td><td>{{ r.label }}</td>
+      <td>{{ r.p5 }}</td><td>{{ r.p10 }}</td><td>{{ r.p25 }}</td><td>{{ r.p50 }}</td>
+      <td>{{ r.p75 }}</td><td>{{ r.p90 }}</td><td>{{ r.p95 }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<!-- ================================================================ -->
+<h2 id="training">8. Training Progress</h2>
+{% if plots.training_progress %}
+<div class="plot-container"><img src="data:image/png;base64,{{ plots.training_progress }}" alt="Training progress"></div>
+{% endif %}
+
+<!-- ================================================================ -->
+<h2 id="confusion">9. Confusion Matrices</h2>
+{% if plots.confusion %}
+<div class="plot-container"><img src="data:image/png;base64,{{ plots.confusion }}" alt="Confusion matrices"></div>
+{% endif %}
+
+<!-- ================================================================ -->
+<h2 id="per-chrom">10. Per-Chromosome Performance</h2>
+{% if per_chrom %}
+<table>
+  <thead><tr><th>Chromosome</th><th>N</th><th>AUC XGB</th><th>AUC DNN</th><th>&Delta; AUC</th><th>AUPR XGB</th><th>AUPR DNN</th><th>&Delta; AUPR</th></tr></thead>
+  <tbody>
+  {% for r in per_chrom %}
+    <tr>
+      <td>{{ r.chrom }}</td><td>{{ r.n }}</td>
+      <td>{{ r.auc_xgb }}</td><td>{{ r.auc_dnn }}</td><td class="{{ r.delta_auc_class }}">{{ r.delta_auc }}</td>
+      <td>{{ r.aupr_xgb }}</td><td>{{ r.aupr_dnn }}</td><td class="{{ r.delta_aupr_class }}">{{ r.delta_aupr }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% if plots.per_chrom %}
+<div class="plot-container"><img src="data:image/png;base64,{{ plots.per_chrom }}" alt="Per-chromosome"></div>
+{% endif %}
+
+<!-- ================================================================ -->
+<h2 id="arch">11. Model Architecture Summary</h2>
+<h3>XGBoost</h3>
+<table>
+  <tr><th>Parameter</th><th>Value</th></tr>
+  <tr><td>n_estimators</td><td>{{ arch.xgb.n_estimators | default("N/A") }}</td></tr>
+  <tr><td>early_stopping_rounds</td><td>{{ arch.xgb.early_stopping_rounds | default("N/A") }}</td></tr>
+  <tr><td>eval_metric</td><td>{{ arch.xgb.eval_metric | default("N/A") }}</td></tr>
+  <tr><td>Number of features</td><td>{{ arch.xgb.n_features | default("N/A") }}</td></tr>
+  <tr><td>Best iteration</td><td>{{ arch.xgb.best_iteration | default("N/A") }}</td></tr>
+</table>
+<details>
+  <summary>Feature list ({{ arch.xgb.n_features | default("?") }} features)</summary>
+  <p style="font-size:13px; word-break:break-all; padding:8px;">{{ arch.xgb.feature_names | default("N/A") }}</p>
+</details>
+
+<h3>DNN (CNN)</h3>
+<table>
+  <tr><th>Parameter</th><th>Value</th></tr>
+  <tr><td>Architecture</td><td>{{ arch.dnn.class_name | default("N/A") }}</td></tr>
+  <tr><td>Trainable parameters</td><td>{{ arch.dnn.trainable_parameters | default("N/A") }}</td></tr>
+  <tr><td>Epochs (max)</td><td>{{ arch.dnn.epochs | default("N/A") }}</td></tr>
+  <tr><td>Best epoch</td><td>{{ arch.dnn.best_epoch | default("N/A") }}</td></tr>
+  <tr><td>Early stopped</td><td>{{ arch.dnn.stopped_early | default("N/A") }}</td></tr>
+  <tr><td>Patience</td><td>{{ arch.dnn.patience | default("N/A") }}</td></tr>
+  <tr><td>Batch size</td><td>{{ arch.dnn.batch_size | default("N/A") }}</td></tr>
+  <tr><td>Learning rate</td><td>{{ arch.dnn.learning_rate | default("N/A") }}</td></tr>
+  <tr><td>Mixed precision (AMP)</td><td>{{ arch.dnn.use_amp | default("N/A") }}</td></tr>
+</table>
+
+<!-- ================================================================ -->
+<h2 id="error-analysis">13. Error Analysis &mdash; Where Does DNN Win/Lose?</h2>
+<p>All analyses below are on the <strong>test (holdout) set</strong>. For each feature slice we compute AUC for both models and show the delta. <span class="better">Green</span> = DNN better, <span class="worse">Red</span> = XGBoost better.</p>
+
+{% macro sliced_section(id, title, rows, plot_key) %}
+<h3 id="{{ id }}">{{ title }}</h3>
+{% if error_analysis[plot_key] %}
+<div class="plot-container"><img src="data:image/png;base64,{{ error_analysis[plot_key] }}" alt="{{ title }}"></div>
+{% endif %}
+{% if rows %}
+<details>
+  <summary>Data table ({{ rows | length }} slices)</summary>
+  <table>
+    <thead><tr><th>Value</th><th>N</th><th>AUC XGB</th><th>AUC DNN</th><th>&Delta; AUC</th>
+    {% if rows[0].aupr_xgb is defined %}<th>AUPR XGB</th><th>AUPR DNN</th>{% endif %}
+    </tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td>{{ r.value }}</td><td>{{ r.n }}</td>
+        <td>{{ r.auc_xgb }}</td><td>{{ r.auc_dnn }}</td>
+        <td class="{{ r.delta_class }}">{{ r.delta_auc }}</td>
+        {% if r.aupr_xgb is defined %}<td>{{ r.aupr_xgb }}</td><td>{{ r.aupr_dnn }}</td>{% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</details>
+{% endif %}
+{% endmacro %}
+
+{{ sliced_section("ea-sub", "13a. By Substitution Type (REF>ALT)", error_analysis.sub_type, "sub_type_plot") }}
+{{ sliced_section("ea-st", "13b. By Mixed Status (ppmSeq st)", error_analysis.mixed_st, "mixed_st_plot") }}
+{{ sliced_section("ea-et", "13c. By End Tag (et)", error_analysis.end_tag, "end_tag_plot") }}
+{{ sliced_section("ea-tm", "13d. By ppmSeq Combined Tag (tm)", error_analysis.tm_tag, "tm_tag_plot") }}
+{{ sliced_section("ea-hmer", "13e. By Homopolymer Length (X_HMER_REF)", error_analysis.hmer, "hmer_plot") }}
+{{ sliced_section("ea-edist", "13f. By Edit Distance", error_analysis.edist, "edist_plot") }}
+{{ sliced_section("ea-index", "13g. By Read Position (INDEX)", error_analysis.index_bin, "index_bin_plot") }}
+{{ sliced_section("ea-strand", "13h. By Strand", error_analysis.strand, "strand_plot") }}
+{{ sliced_section("ea-rq", "13i. By Read Quality (rq)", error_analysis.rq_bin, "rq_bin_plot") }}
+
+<h3 id="ea-trinuc">13j. By Trinucleotide Context</h3>
+<p>Heatmap shows &Delta;AUC (DNN &minus; XGB) for each trinucleotide context. Green = DNN better.</p>
+{% if error_analysis.trinuc_plot %}
+<div class="plot-container"><img src="data:image/png;base64,{{ error_analysis.trinuc_plot }}" alt="Trinuc heatmap"></div>
+{% endif %}
+{% if error_analysis.trinuc %}
+<details>
+  <summary>Data table ({{ error_analysis.trinuc | length }} trinucleotide contexts)</summary>
+  <table>
+    <thead><tr><th>Trinuc</th><th>N</th><th>AUC XGB</th><th>AUC DNN</th><th>&Delta; AUC</th></tr></thead>
+    <tbody>
+    {% for r in error_analysis.trinuc %}
+      <tr>
+        <td>{{ r.value }}</td><td>{{ r.n }}</td>
+        <td>{{ r.auc_xgb }}</td><td>{{ r.auc_dnn }}</td>
+        <td class="{{ r.delta_class }}">{{ r.delta_auc }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</details>
+{% endif %}
+
+<h3 id="ea-agreement">13k. Error Agreement Analysis</h3>
+<p>How do the two models agree/disagree on individual reads at threshold&nbsp;=&nbsp;0.5?</p>
+{% if error_analysis.agreement %}
+{% if error_analysis.agreement.plot %}
+<div class="plot-container"><img src="data:image/png;base64,{{ error_analysis.agreement.plot }}" alt="Error agreement"></div>
+{% endif %}
+<table>
+  <thead><tr><th>Category</th><th>Count</th><th>Percentage</th></tr></thead>
+  <tbody>
+  {% for c in error_analysis.agreement.categories %}
+    <tr><td>{{ c.name }}</td><td>{{ c.count }}</td><td>{{ c.pct }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<footer>Generated by <code>compare_models_report.py</code> &mdash; ugbio_srsnv</footer>
+</body>
+</html>

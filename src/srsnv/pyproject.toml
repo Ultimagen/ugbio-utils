@@ -32,6 +32,7 @@ srsnv_inference = "ugbio_srsnv.srsnv_inference:main"
 srsnv_training = "ugbio_srsnv.srsnv_training:main"
 srsnv_dnn_bam_training = "ugbio_srsnv.srsnv_dnn_bam_training:main"
 srsnv_report = "ugbio_srsnv.srsnv_report:main"
+compare_models_report = "ugbio_srsnv.compare_models_report:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true
