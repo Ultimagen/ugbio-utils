@@ -13,7 +13,7 @@ from ugbio_core.vcf_utils import VcfUtils
 
 from ugbio_featuremap import somatic_featuremap_inference_utils
 from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
-from ugbio_featuremap.featuremap_utils import FeatureMapFields, TandemRepeatFields
+from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.somatic_featuremap_utils import (
     NORMAL_PREFIX,
     PILEUP_CONFIG,
@@ -378,62 +378,19 @@ def aggregated_df_post_processing(variants_df: pl.DataFrame, sample_names: list[
     for sample_name in sample_names:
         s = f"_{sample_name}"  # Original suffix from vcf_to_parquet
 
-        # Derive sum-based columns (sum = mean * count for 0/1 fields)
-        # count_DUP = sum(DUP) = mean(DUP) * count(DUP)
-        derived_exprs.append(
-            (pl.col(f"{FeatureMapFields.DUP.value}_mean{s}") * pl.col(f"{FeatureMapFields.DUP.value}_count{s}"))
-            .round(0)
-            .cast(pl.Int64)
-            .alias(f"count_{FeatureMapFields.DUP.value}{s}")
-        )
-        # count_non_DUP = count - sum
-        derived_exprs.append(
-            (
-                pl.col(f"{FeatureMapFields.DUP.value}_count{s}")
-                - (
-                    pl.col(f"{FeatureMapFields.DUP.value}_mean{s}") * pl.col(f"{FeatureMapFields.DUP.value}_count{s}")
-                ).round(0)
+        # Count of non-zero values = count - count_zero
+        for field in (
+            FeatureMapFields.DUP,
+            FeatureMapFields.REV,
+            FeatureMapFields.FILT,
+            FeatureMapFields.SCST,
+            FeatureMapFields.SCED,
+        ):
+            derived_exprs.append(
+                (pl.col(f"{field.value}_count{s}") - pl.col(f"{field.value}_count_zero{s}"))
+                .cast(pl.Int64)
+                .alias(f"{field.value}_count_non_zero{s}")
             )
-            .cast(pl.Int64)
-            .alias(f"count_non_{FeatureMapFields.DUP.value}{s}")
-        )
-        # REVERSE_COUNT = sum(REV)
-        derived_exprs.append(
-            (pl.col(f"{FeatureMapFields.REV.value}_mean{s}") * pl.col(f"{FeatureMapFields.REV.value}_count{s}"))
-            .round(0)
-            .cast(pl.Int64)
-            .alias(f"reverse_count{s}")
-        )
-        # FORWARD_COUNT = count - sum
-        derived_exprs.append(
-            (
-                pl.col(f"{FeatureMapFields.REV.value}_count{s}")
-                - (
-                    pl.col(f"{FeatureMapFields.REV.value}_mean{s}") * pl.col(f"{FeatureMapFields.REV.value}_count{s}")
-                ).round(0)
-            )
-            .cast(pl.Int64)
-            .alias(f"forward_count{s}")
-        )
-        # PASS_ALT_READS = sum(FILT)
-        derived_exprs.append(
-            (pl.col(f"{FeatureMapFields.FILT.value}_mean{s}") * pl.col(f"{FeatureMapFields.FILT.value}_count{s}"))
-            .round(0)
-            .cast(pl.Int64)
-            .alias(f"pass_alt_reads{s}")
-        )
-        # SCST_NUM_READS = count - count_zero (count of non-zero values)
-        derived_exprs.append(
-            (pl.col(f"{FeatureMapFields.SCST.value}_count{s}") - pl.col(f"{FeatureMapFields.SCST.value}_count_zero{s}"))
-            .cast(pl.Int64)
-            .alias(f"{FeatureMapFields.SCST.value.lower()}_num_reads{s}")
-        )
-        # SCED_NUM_READS = count - count_zero
-        derived_exprs.append(
-            (pl.col(f"{FeatureMapFields.SCED.value}_count{s}") - pl.col(f"{FeatureMapFields.SCED.value}_count_zero{s}"))
-            .cast(pl.Int64)
-            .alias(f"{FeatureMapFields.SCED.value.lower()}_num_reads{s}")
-        )
 
     # Apply derived columns
     variants_df = variants_df.with_columns(derived_exprs)
@@ -476,7 +433,15 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
     # Build rename map: convert all sample-suffixed columns to t_/n_ prefix convention
     rename_map = {}
 
-    # rename INFO fields
+    # Rename CHROM and POS columns to match expected format (t_ prefix)
+    rename_map[FeatureMapFields.CHROM.value] = f"{TUMOR_PREFIX}chrom"
+    rename_map[FeatureMapFields.POS.value] = f"{TUMOR_PREFIX}pos"
+
+    # rename common columns for alleles
+    rename_map[FeatureMapFields.REF.value] = "ref_allele"
+    rename_map[FeatureMapFields.ALT.value] = "alt_allele"
+
+    # rename INFO fields with t_ prefix
     for info_field in REQUIRED_INFO_FIELDS:
         rename_map[info_field] = f"{TUMOR_PREFIX}{info_field.lower()}"
 
@@ -484,6 +449,7 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
     for sample_name, prefix in [(samples[0], TUMOR_PREFIX), (samples[1], NORMAL_PREFIX)]:
         s = f"_{sample_name}"
 
+        # TODO: change to lower and change sample name with t/n prefix
         # Aggregation columns (mean/min/max)
         agg_fields = [
             FeatureMapFields.MQUAL,
@@ -497,26 +463,27 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
             rename_map[f"{field.value}_min{s}"] = f"{prefix}{field.value.lower()}_min"
             rename_map[f"{field.value}_max{s}"] = f"{prefix}{field.value.lower()}_max"
 
-        # Count zero for MAPQ (MAP0_COUNT)
-        rename_map[f"{FeatureMapFields.MAPQ.value}_count_zero{s}"] = f"{prefix}map0_count"
-
-        # ALT_READS from AD_1
-        rename_map[f"AD_1{s}"] = f"{prefix}alt_reads"
-
         # Scalar columns
         rename_map[f"{FeatureMapFields.DP.value}{s}"] = f"{prefix}dp"
         rename_map[f"{FeatureMapFields.VAF.value}{s}"] = f"{prefix}vaf"
         rename_map[f"{FeatureMapFields.RAW_VAF.value}{s}"] = f"{prefix}raw_vaf"
         rename_map[f"{FeatureMapFields.DP_FILT.value}{s}"] = f"{prefix}dp_filt"
 
-        # Derived columns in post_processing
-        rename_map[f"count_{FeatureMapFields.DUP.value}{s}"] = f"{prefix}count_duplicate"
-        rename_map[f"count_non_{FeatureMapFields.DUP.value}{s}"] = f"{prefix}count_non_duplicate"
-        rename_map[f"{FeatureMapFields.REV.value}_count{s}"] = f"{prefix}reverse_count"
-        rename_map[f"forward_count{s}"] = f"{prefix}forward_count"
-        rename_map[f"pass_alt_reads{s}"] = f"{prefix}pass_alt_reads"
-        rename_map[f"scst_num_reads{s}"] = f"{prefix}scst_num_reads"
-        rename_map[f"sced_num_reads{s}"] = f"{prefix}sced_num_reads"
+        # TODO:name change
+        # Count zero for MAPQ (MAP0_COUNT)
+        rename_map[f"{FeatureMapFields.MAPQ.value}_count_zero{s}"] = f"{prefix}map0_count"
+
+        # ALT_READS from AD_1
+        rename_map[f"AD_1{s}"] = f"{prefix}alt_reads"
+
+        # 0/1 fields
+        rename_map[f"{FeatureMapFields.DUP.value}_count_non_zero{s}"] = f"{prefix}count_duplicate"
+        rename_map[f"{FeatureMapFields.DUP.value}_count_zero{s}"] = f"{prefix}count_non_duplicate"
+        rename_map[f"{FeatureMapFields.REV.value}_count_non_zero{s}"] = f"{prefix}reverse_count"
+        rename_map[f"{FeatureMapFields.REV.value}_count_zero{s}"] = f"{prefix}forward_count"
+        rename_map[f"{FeatureMapFields.FILT.value}_count_non_zero{s}"] = f"{prefix}pass_alt_reads"
+        rename_map[f"{FeatureMapFields.SCST.value}_count_non_zero{s}"] = f"{prefix}scst_num_reads"
+        rename_map[f"{FeatureMapFields.SCED.value}_count_non_zero{s}"] = f"{prefix}sced_num_reads"
 
         # ref/nonref columns from PILEUP
         for i in range(len(PILEUP_CONFIG.positions)):
@@ -526,26 +493,6 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
     # Rename columns that exist
     existing_rename = {k: v for k, v in rename_map.items() if k in variants_df.columns}
     variants_df = variants_df.rename(existing_rename)
-
-    # Add common columns for alleles
-    variants_df = variants_df.with_columns(
-        [
-            pl.col(FeatureMapFields.REF.value).alias("ref_allele"),
-            pl.col(FeatureMapFields.ALT.value).alias("alt_allele"),
-        ]
-    )
-
-    # Add TR_DISTANCE for ML model (INFO field, shared between samples)
-    if TandemRepeatFields.TR_DISTANCE.value in variants_df.columns:
-        variants_df = variants_df.with_columns(pl.col(TandemRepeatFields.TR_DISTANCE.value).alias("t_tr_distance"))
-
-    # Rename CHROM and POS columns to match expected format (t_ prefix for VCF writing)
-    variants_df = variants_df.with_columns(
-        [
-            pl.col(FeatureMapFields.CHROM.value).alias(f"{TUMOR_PREFIX}chrom"),
-            pl.col(FeatureMapFields.POS.value).alias(f"{TUMOR_PREFIX}pos"),
-        ]
-    )
 
     return variants_df
 

@@ -219,13 +219,13 @@ class TestReadVcfWithAggregation:
         for sample in [TUMOR_SAMPLE, NORMAL_SAMPLE]:
             s = f"_{sample}"
             for col_base in [
-                "count_DUP",
-                "count_non_DUP",
-                "reverse_count",
-                "forward_count",
-                "pass_alt_reads",
-                "scst_num_reads",
-                "sced_num_reads",
+                "DUP_count_non_zero",
+                "DUP_count_zero",
+                "REV_count_non_zero",
+                "REV_count_zero",
+                "FILT_count_non_zero",
+                "SCST_count_non_zero",
+                "SCED_count_non_zero",
             ]:
                 assert f"{col_base}{s}" in variants_df.columns, f"Missing derived column: {col_base}{s}"
 
@@ -315,12 +315,12 @@ class TestAggregatedDfPostProcessing:
         data = {}
         for sample in [TUMOR_SAMPLE, NORMAL_SAMPLE]:
             s = f"_{sample}"
-            data[f"DUP_mean{s}"] = [0.6]
             data[f"DUP_count{s}"] = [10]
-            data[f"REV_mean{s}"] = [0.4]
+            data[f"DUP_count_zero{s}"] = [4]
             data[f"REV_count{s}"] = [10]
-            data[f"FILT_mean{s}"] = [0.8]
+            data[f"REV_count_zero{s}"] = [6]
             data[f"FILT_count{s}"] = [10]
+            data[f"FILT_count_zero{s}"] = [2]
             data[f"SCST_count{s}"] = [10]
             data[f"SCST_count_zero{s}"] = [7]
             data[f"SCED_count{s}"] = [10]
@@ -328,50 +328,17 @@ class TestAggregatedDfPostProcessing:
 
         return pl.DataFrame(data)
 
-    def test_duplicate_count_invariant(self, sample_agg_df):
-        """count_duplicate + count_non_duplicate == DUP_count for each sample."""
+    def test_count_non_zero_calculation(self, sample_agg_df):
+        """All COUNT_NON_ZERO columns = count - count_zero."""
         result = aggregated_df_post_processing(sample_agg_df, [TUMOR_SAMPLE, NORMAL_SAMPLE])
 
         for sample in [TUMOR_SAMPLE, NORMAL_SAMPLE]:
             s = f"_{sample}"
-            dup_count = result[f"DUP_count{s}"][0]
-            count_dup = result[f"count_DUP{s}"][0]
-            count_nondup = result[f"count_non_DUP{s}"][0]
-            assert (
-                count_dup + count_nondup == dup_count
-            ), f"Duplicate invariant failed for {sample}: {count_dup} + {count_nondup} != {dup_count}"
-
-    def test_strand_count_invariant(self, sample_agg_df):
-        """forward_count + reverse_count == REV_count for each sample."""
-        result = aggregated_df_post_processing(sample_agg_df, [TUMOR_SAMPLE, NORMAL_SAMPLE])
-
-        for sample in [TUMOR_SAMPLE, NORMAL_SAMPLE]:
-            s = f"_{sample}"
-            rev_count = result[f"REV_count{s}"][0]
-            forward = result[f"forward_count{s}"][0]
-            reverse = result[f"reverse_count{s}"][0]
-            assert (
-                forward + reverse == rev_count
-            ), f"Strand invariant failed for {sample}: {forward} + {reverse} != {rev_count}"
-
-    def test_pass_alt_reads_calculation(self, sample_agg_df):
-        """pass_alt_reads = round(FILT_mean * FILT_count)."""
-        result = aggregated_df_post_processing(sample_agg_df, [TUMOR_SAMPLE, NORMAL_SAMPLE])
-
-        for sample in [TUMOR_SAMPLE, NORMAL_SAMPLE]:
-            s = f"_{sample}"
-            expected = round(0.8 * 10)
-            actual = result[f"pass_alt_reads{s}"][0]
-            assert actual == expected, f"pass_alt_reads for {sample}: {actual} != {expected}"
-
-    def test_scst_sced_num_reads_calculation(self, sample_agg_df):
-        """scst_num_reads = count - count_zero (count of non-zero SCST values)."""
-        result = aggregated_df_post_processing(sample_agg_df, [TUMOR_SAMPLE, NORMAL_SAMPLE])
-
-        for sample in [TUMOR_SAMPLE, NORMAL_SAMPLE]:
-            s = f"_{sample}"
-            assert result[f"scst_num_reads{s}"][0] == 10 - 7  # count - count_zero = 3
-            assert result[f"sced_num_reads{s}"][0] == 10 - 8  # count - count_zero = 2
+            assert result[f"DUP_count_non_zero{s}"][0] == 10 - 4
+            assert result[f"REV_count_non_zero{s}"][0] == 10 - 6
+            assert result[f"FILT_count_non_zero{s}"][0] == 10 - 2
+            assert result[f"SCST_count_non_zero{s}"][0] == 10 - 7
+            assert result[f"SCED_count_non_zero{s}"][0] == 10 - 8
 
 
 class TestRenameColsForModel:
@@ -404,13 +371,13 @@ class TestRenameColsForModel:
             data[f"DP_FILT{s}"] = [95]
 
             # Derived columns
-            data[f"count_duplicate{s}"] = [3]
-            data[f"count_non_duplicate{s}"] = [7]
-            data[f"reverse_count{s}"] = [4]
-            data[f"forward_count{s}"] = [6]
-            data[f"pass_alt_reads{s}"] = [8]
-            data[f"scst_num_reads{s}"] = [2]
-            data[f"sced_num_reads{s}"] = [1]
+            data[f"DUP_count_non_zero{s}"] = [3]
+            data[f"DUP_count_zero{s}"] = [7]
+            data[f"REV_count_non_zero{s}"] = [4]
+            data[f"REV_count_zero{s}"] = [6]
+            data[f"FILT_count_non_zero{s}"] = [8]
+            data[f"SCST_count_non_zero{s}"] = [2]
+            data[f"SCED_count_non_zero{s}"] = [1]
 
             # ref/nonref columns
             for i in range(5):

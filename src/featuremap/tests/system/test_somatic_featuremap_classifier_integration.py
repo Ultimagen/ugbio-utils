@@ -179,13 +179,13 @@ class TestOutputValidation:
         for sample in [TUMOR_SAMPLE, NORMAL_SAMPLE]:
             s = f"_{sample}"
             for col in [
-                f"count_DUP{s}",
-                f"count_non_DUP{s}",
-                f"reverse_count{s}",
-                f"forward_count{s}",
-                f"pass_alt_reads{s}",
-                f"scst_num_reads{s}",
-                f"sced_num_reads{s}",
+                f"DUP_count_non_zero{s}",
+                f"DUP_count_zero{s}",
+                f"REV_count_non_zero{s}",
+                f"REV_count_zero{s}",
+                f"FILT_count_non_zero{s}",
+                f"SCST_count_non_zero{s}",
+                f"SCED_count_non_zero{s}",
             ]:
                 assert col in parquet_df.columns, f"Missing derived column: {col}"
 

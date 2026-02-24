@@ -238,7 +238,7 @@ REQUIRED_FORMAT_FIELDS: set[str] = {
     FeatureMapFields.RL.value,  # Read length -> mean/min/max aggregations
     FeatureMapFields.DUP.value,  # Duplicate flag -> count_duplicate, count_non_duplicate
     FeatureMapFields.REV.value,  # Reverse strand flag -> reverse_count, forward_count
-    FeatureMapFields.FILT.value,  # Filter flag -> pass_alt_reads
+    FeatureMapFields.FILT.value,  # Filter flag -> pass_alt_reads (FILT count non-zero)
     FeatureMapFields.SCST.value,  # Soft clip start -> scst_num_reads (count non-zero)
     FeatureMapFields.SCED.value,  # Soft clip end -> sced_num_reads (count non-zero)
     # PILEUP columns for ref0-4 / nonref0-4 calculations
