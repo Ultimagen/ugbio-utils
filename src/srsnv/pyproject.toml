@@ -9,6 +9,7 @@ dependencies = [
     "numba>=0.60.0",
     "shap>=0.46.0",
     "statsmodels>=0.14.4",
+    "torch",
 ]
 description = "Ultima Genomics SRSNV utils"
 authors = [
@@ -29,6 +30,7 @@ text = "Apache-2.0"
 run_tests = "pytest:main"
 srsnv_inference = "ugbio_srsnv.srsnv_inference:main"
 srsnv_training = "ugbio_srsnv.srsnv_training:main"
+srsnv_dnn_bam_training = "ugbio_srsnv.srsnv_dnn_bam_training:main"
 srsnv_report = "ugbio_srsnv.srsnv_report:main"
 
 [tool.uv.sources.ugbio_core]

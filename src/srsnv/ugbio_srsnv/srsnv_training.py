@@ -38,6 +38,15 @@ from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
 
 from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
+from ugbio_srsnv.split_manifest import (
+    SPLIT_MODE_SINGLE_MODEL_READ_HASH,
+    assign_single_model_read_hash_role,
+    build_single_model_read_hash_manifest,
+    build_split_manifest,
+    load_split_manifest,
+    save_split_manifest,
+    validate_manifest_against_regions,
+)
 from ugbio_srsnv.srsnv_utils import (
     EPS,
     MAX_PHRED,
@@ -66,6 +75,7 @@ PROB_RECAL = "prob_recal"
 PROB_RESCALED = "prob_rescaled"
 PROB_TRAIN = "prob_train"
 PROB_FOLD_TMPL = "prob_fold_{k}"
+SPLIT_ROLE_COL = "split_role"
 
 EDIT_DIST_FEATURES = [
     FeatureMapFields.EDIST.value,
@@ -372,9 +382,19 @@ def _probability_recalibration(prob_orig: np.ndarray, y_all: np.ndarray) -> np.n
     return prob_orig.copy()
 
 
+def _parse_holdout_chromosomes(raw: str | None) -> list[str] | None:
+    if raw is None:
+        return None
+    tokens = [tok.strip() for tok in raw.split(",") if tok.strip()]
+    if not tokens:
+        return None
+    # Keep order while removing duplicates.
+    return list(dict.fromkeys(tokens))
+
+
 # ───────────────────────── core logic ─────────────────────────────────────
 class SRSNVTrainer:
-    def __init__(self, args: argparse.Namespace):  # noqa: C901, PLR0915
+    def __init__(self, args: argparse.Namespace):  # noqa: C901, PLR0912, PLR0915
         logger.debug("Initializing SRSNVTrainer")
         self.args = args
         self.out_dir = Path(args.output)
@@ -462,22 +482,86 @@ class SRSNVTrainer:
         self.prior_train_error = self.n_neg / self.data_frame.height
 
         self.k_folds = max(1, args.k_folds)
+        self.single_model_split = bool(getattr(args, "single_model_split", False))
+        self.val_fraction = float(getattr(args, "val_fraction", 0.1))
+        self.split_hash_key = getattr(args, "split_hash_key", "RN")
 
-        # Folds
-        logger.debug("Parsing interval list from %s", args.training_regions)
-        chrom_sizes, chrom_list = _parse_interval_list(args.training_regions)
-        # partition_into_folds expects a pandas Series
-        logger.debug("Partitioning %d chromosomes into %d folds", len(chrom_list), self.k_folds)
-        self.chrom_to_fold: dict[str, int] = partition_into_folds(
-            pd.Series({c: chrom_sizes[c] for c in chrom_list}),
-            self.k_folds,
-            n_chroms_leave_out=1,
-        )
-        logger.debug("Assigning folds to data")
-        self.data_frame = self.data_frame.with_columns(
-            pl.col(CHROM).map_elements(lambda c: self.chrom_to_fold.get(c), return_dtype=pl.Int64).alias(FOLD_COL)
-        )
-        logger.debug("Fold assignment complete")
+        # Folds / split manifest
+        split_manifest_in = getattr(args, "split_manifest_in", None)
+        split_manifest_out = getattr(args, "split_manifest_out", None)
+        holdout_chromosomes_raw = getattr(args, "holdout_chromosomes", None)
+        holdout_chromosomes = _parse_holdout_chromosomes(holdout_chromosomes_raw)
+        if self.single_model_split and not holdout_chromosomes:
+            holdout_chromosomes = ["chr21", "chr22"]
+
+        if split_manifest_in:
+            logger.info("Loading split manifest from %s", split_manifest_in)
+            self.split_manifest = load_split_manifest(split_manifest_in)
+            validate_manifest_against_regions(self.split_manifest, args.training_regions)
+        else:
+            logger.info("Building split manifest from training regions")
+            if self.single_model_split:
+                self.split_manifest = build_single_model_read_hash_manifest(
+                    training_regions=args.training_regions,
+                    random_seed=self.seed,
+                    holdout_chromosomes=holdout_chromosomes or ["chr21", "chr22"],
+                    val_fraction=self.val_fraction,
+                    hash_key=self.split_hash_key,
+                )
+            else:
+                self.split_manifest = build_split_manifest(
+                    training_regions=args.training_regions,
+                    k_folds=self.k_folds,
+                    random_seed=self.seed,
+                    holdout_chromosomes=holdout_chromosomes,
+                    n_chroms_leave_out=1,
+                )
+            if split_manifest_out:
+                save_split_manifest(self.split_manifest, split_manifest_out)
+                logger.info("Saved split manifest to %s", split_manifest_out)
+
+        self.single_model_split = self.split_manifest.get("split_mode") == SPLIT_MODE_SINGLE_MODEL_READ_HASH
+        if self.single_model_split:
+            if self.split_hash_key not in self.data_frame.columns:
+                raise ValueError(
+                    f"single-model split requires hash key column '{self.split_hash_key}' in input dataframe"
+                )
+            logger.info(
+                "Using single-model RN-hash split (holdout=%s, val_fraction=%.3f)",
+                ",".join(self.split_manifest["test_chromosomes"]),
+                float(self.split_manifest["val_fraction"]),
+            )
+            self.chrom_to_fold = {}
+            self.k_folds = 1
+            self.data_frame = self.data_frame.with_columns(
+                pl.struct([pl.col(CHROM), pl.col(self.split_hash_key)])
+                .map_elements(
+                    lambda s: assign_single_model_read_hash_role(
+                        chrom=str(s[CHROM]),
+                        rn=str(s[self.split_hash_key]),
+                        manifest=self.split_manifest,
+                    ),
+                    return_dtype=pl.String,
+                )
+                .alias(SPLIT_ROLE_COL)
+            )
+            self.data_frame = self.data_frame.with_columns(
+                pl.when(pl.col(SPLIT_ROLE_COL) == "train")
+                .then(pl.lit(0))
+                .when(pl.col(SPLIT_ROLE_COL) == "val")
+                .then(pl.lit(1))
+                .otherwise(pl.lit(None))
+                .cast(pl.Int64)
+                .alias(FOLD_COL)
+            )
+        else:
+            self.chrom_to_fold = {chrom: int(fold) for chrom, fold in self.split_manifest["chrom_to_fold"].items()}
+            logger.debug("Assigning folds to data")
+            ctf = self.chrom_to_fold
+            self.data_frame = self.data_frame.with_columns(
+                pl.col(CHROM).map_elements(lambda c: ctf.get(c), return_dtype=pl.Int64).alias(FOLD_COL)  # noqa: PLW0108
+            )
+            logger.debug("Fold assignment complete")
 
         # Models
         logger.debug("Parsing model parameters from: %s", args.model_params)
@@ -498,6 +582,10 @@ class SRSNVTrainer:
             if "n_jobs" not in self.model_params:
                 self.model_params["n_jobs"] = -1  # Default behavior, stated explicitly for clarity
             self.model_params.pop("nthread", None)  # "n_jobs" is preferred over "nthread" for sklearn api
+        if "early_stopping_rounds" not in self.model_params:
+            self.model_params["early_stopping_rounds"] = 10
+        if "n_estimators" not in self.model_params:
+            self.model_params["n_estimators"] = 2000
         # Initialize one model per fold
         self.models = [xgb.XGBClassifier(**self.model_params) for _ in range(self.k_folds)]
 
@@ -606,7 +694,7 @@ class SRSNVTrainer:
         return combined_df
 
     def _feature_columns(self) -> list[str]:
-        exclude = {LABEL_COL, FOLD_COL, CHROM, POS}
+        exclude = {LABEL_COL, FOLD_COL, CHROM, POS, SPLIT_ROLE_COL}
         all_feats = [c for c in self.data_frame.columns if c not in exclude]
         logger.debug("Found %d features in dataframe (before filtering)", len(all_feats))
 
@@ -868,50 +956,85 @@ class SRSNVTrainer:
         fold_arr = pd_df[FOLD_COL].to_numpy()
         y_all = pd_df[LABEL_COL].to_numpy()
         # ----------------------------------------------------------------
-        for fold_idx in range(self.k_folds):
-            logger.debug("Starting training for fold %d (fold #%d of %d)", fold_idx, fold_idx + 1, self.k_folds)
-            val_mask = fold_arr == fold_idx
-            train_mask = (~val_mask) & ~np.isnan(fold_arr)
-
+        if self.single_model_split:
+            logger.info("Training single-model mode (train/val split via RN hash)")
+            train_mask = fold_arr == 0
+            val_mask = fold_arr == 1
             x_train = pd_df.loc[train_mask, feat_cols]
             y_train = y_all[train_mask]
             x_val = pd_df.loc[val_mask, feat_cols]
             y_val = y_all[val_mask]
-            logger.debug("Train size: %d, Validation size: %d", len(x_train), len(x_val))
-
-            self.models[fold_idx].fit(
+            logger.info(
+                "Single-model split sizes: train=%d val=%d test=%d",
+                int(train_mask.sum()),
+                int(val_mask.sum()),
+                int(np.isnan(fold_arr).sum()),
+            )
+            self.models[0].fit(
                 x_train,
                 y_train,
-                eval_set=[
-                    (x_train, y_train),
-                    (x_val, y_val),
-                ],
+                eval_set=[(x_train, y_train), (x_val, y_val)],
                 verbose=10 if self.args.verbose else False,
             )
-            # Extract AUC values from training results instead of recalculating
-            eval_result = self.models[fold_idx].evals_result()
-
-            # Determine which iteration to use (best_iteration if early stopping)
-            best_iteration = getattr(self.models[fold_idx], "best_iteration", None)
+            eval_result = self.models[0].evals_result()
+            best_iteration = getattr(self.models[0], "best_iteration", None)
             if best_iteration is None or best_iteration < 0:
-                # No early stopping or best_iteration not set, use last iteration
                 best_iteration = len(eval_result["validation_0"]["auc"]) - 1
-
-            # Access AUC values from the eval_result dictionary
-            # eval_set[0] is training set -> "validation_0"
-            # eval_set[1] is validation set -> "validation_1"
-            auc_train = eval_result["validation_0"]["auc"][best_iteration]
-            auc_val = eval_result["validation_1"]["auc"][best_iteration]
-            # Add best_iteration to logging for clarity
-            logger.debug(
-                "Finished training fold %d (fold #%d of %d), AUC: %.4f (validation) / %.4f (training) at iteration %d",
-                fold_idx,
-                fold_idx + 1,
-                self.k_folds,
-                auc_val,
-                auc_train,
+            n_rounds = len(eval_result["validation_0"]["auc"])
+            logger.info(
+                "Single-model training complete: val_auc=%.4f train_auc=%.4f best_iteration=%d/%d early_stopped=%s",
+                eval_result["validation_1"]["auc"][best_iteration],
+                eval_result["validation_0"]["auc"][best_iteration],
                 best_iteration,
+                n_rounds,
+                best_iteration < n_rounds - 1,
             )
+        else:
+            for fold_idx in range(self.k_folds):
+                logger.debug("Starting training for fold %d (fold #%d of %d)", fold_idx, fold_idx + 1, self.k_folds)
+                val_mask = fold_arr == fold_idx
+                train_mask = (~val_mask) & ~np.isnan(fold_arr)
+
+                x_train = pd_df.loc[train_mask, feat_cols]
+                y_train = y_all[train_mask]
+                x_val = pd_df.loc[val_mask, feat_cols]
+                y_val = y_all[val_mask]
+                logger.debug("Train size: %d, Validation size: %d", len(x_train), len(x_val))
+
+                self.models[fold_idx].fit(
+                    x_train,
+                    y_train,
+                    eval_set=[
+                        (x_train, y_train),
+                        (x_val, y_val),
+                    ],
+                    verbose=10 if self.args.verbose else False,
+                )
+                # Extract AUC values from training results instead of recalculating
+                eval_result = self.models[fold_idx].evals_result()
+
+                # Determine which iteration to use (best_iteration if early stopping)
+                best_iteration = getattr(self.models[fold_idx], "best_iteration", None)
+                if best_iteration is None or best_iteration < 0:
+                    # No early stopping or best_iteration not set, use last iteration
+                    best_iteration = len(eval_result["validation_0"]["auc"]) - 1
+
+                # Access AUC values from the eval_result dictionary
+                # eval_set[0] is training set -> "validation_0"
+                # eval_set[1] is validation set -> "validation_1"
+                auc_train = eval_result["validation_0"]["auc"][best_iteration]
+                auc_val = eval_result["validation_1"]["auc"][best_iteration]
+                n_rounds = len(eval_result["validation_0"]["auc"])
+                logger.info(
+                    "Fold %d/%d complete: val_auc=%.4f train_auc=%.4f best_iteration=%d/%d early_stopped=%s",
+                    fold_idx + 1,
+                    self.k_folds,
+                    auc_val,
+                    auc_train,
+                    best_iteration,
+                    n_rounds,
+                    best_iteration < n_rounds - 1,
+                )
 
         # ---------- add calibrated quality columns ----------------------
         self._add_quality_columns(pd_df[feat_cols], fold_arr, y_all)
@@ -923,9 +1046,13 @@ class SRSNVTrainer:
     def _add_quality_columns(self, x_all, fold_arr: np.ndarray, y_all: np.ndarray) -> None:
         """Attach raw / recalibrated probabilities and quality columns."""
         logger.debug("Adding quality columns")
-        prob_orig, _, preds_prob = all_models_predict_proba(
-            self.models, x_all, fold_arr, max_phred=self.max_qual, return_val_and_train_preds=True
-        )
+        if self.single_model_split:
+            prob_orig = self.models[0].predict_proba(x_all)[:, 1]
+            preds_prob = {0: prob_orig}
+        else:
+            prob_orig, _, preds_prob = all_models_predict_proba(
+                self.models, x_all, fold_arr, max_phred=self.max_qual, return_val_and_train_preds=True
+            )
         mqual = prob_to_phred(prob_orig, max_value=self.max_qual)
         logger.debug("Computed original probabilities and MQUAL scores")
 
@@ -946,7 +1073,8 @@ class SRSNVTrainer:
 
         # attach new columns ------------------------------------------------
         logger.debug("Attaching per-fold probabilities and intermediate columns")
-        new_cols = [pl.Series(PROB_FOLD_TMPL.format(k=k), preds_prob[k]) for k in range(self.k_folds)] + [
+        fold_prob_cols = [pl.Series(PROB_FOLD_TMPL.format(k=k), preds_prob[k]) for k in sorted(preds_prob.keys())]
+        new_cols = fold_prob_cols + [
             pl.Series(PROB_ORIG, prob_orig),
             pl.Series(PROB_RECAL, prob_recal),
             pl.Series(PROB_RESCALED, prob_rescaled),
@@ -1006,8 +1134,12 @@ class SRSNVTrainer:
             model_paths[fold_idx] = str(path)
             logger.info("Saved model for fold %d → %s", fold_idx, path)
 
-        # map every chromosome to the model-file basename instead of the fold index
-        chrom_to_model_file = {chrom: Path(model_paths[fold]).name for chrom, fold in self.chrom_to_fold.items()}
+        # map chromosomes to model files
+        if self.single_model_split:
+            single_model_name = Path(model_paths[0]).name
+            chrom_to_model_file = dict.fromkeys(self.split_manifest.get("train_val_chromosomes", []), single_model_name)
+        else:
+            chrom_to_model_file = {chrom: Path(model_paths[fold]).name for chrom, fold in self.chrom_to_fold.items()}
 
         metadata_path = self.out_dir / f"{base}srsnv_metadata.json"
         logger.debug("Saving metadata to %s", metadata_path)
@@ -1050,11 +1182,20 @@ class SRSNVTrainer:
             "model_paths": model_paths,
             "training_results": self.training_results,
             "chrom_to_model": chrom_to_model_file,
+            "split_manifest": self.split_manifest,
             "features": features_meta,
             "quality_recalibration_table": quality_recalibration_table,
             "filtering_stats": stats,
             "model_params": self.model_params,
             "training_parameters": {"max_qual": self.max_qual},
+            "split_summary": {
+                "split_mode": self.split_manifest.get("split_mode", "chromosome_kfold"),
+                "n_train": int(self.data_frame.filter(pl.col(FOLD_COL) == 0).height),
+                "n_val": int(self.data_frame.filter(pl.col(FOLD_COL) == 1).height) if self.single_model_split else None,
+                "n_test": int(self.data_frame.filter(pl.col(FOLD_COL).is_null()).height),
+                "val_fraction": self.split_manifest.get("val_fraction"),
+                "hash_key": self.split_manifest.get("hash_key"),
+            },
             "metadata": self.user_metadata,
         }
 
@@ -1086,6 +1227,37 @@ def _cli() -> argparse.Namespace:
         help="Picard interval_list file (supports .gz files)",
     )
     ap.add_argument("--k-folds", type=int, default=1, help="Number of CV folds (≥1)")
+    ap.add_argument(
+        "--split-manifest-in",
+        default=None,
+        help="Path to an existing split-manifest JSON. If provided, overrides holdout/fold derivation.",
+    )
+    ap.add_argument(
+        "--split-manifest-out",
+        default=None,
+        help="Path to write the generated split-manifest JSON (used when --split-manifest-in is not provided).",
+    )
+    ap.add_argument(
+        "--holdout-chromosomes",
+        default=None,
+        help="Comma-separated holdout chromosomes (e.g. 'chr21,chr22'). If omitted, preserve legacy behavior.",
+    )
+    ap.add_argument(
+        "--single-model-split",
+        action="store_true",
+        help="Train one model using RN-hash train/val split and chromosome holdout test set.",
+    )
+    ap.add_argument(
+        "--val-fraction",
+        type=float,
+        default=0.1,
+        help="Validation fraction from non-holdout reads in single-model split mode.",
+    )
+    ap.add_argument(
+        "--split-hash-key",
+        default="RN",
+        help="Column used for deterministic hash split in single-model mode (currently only RN is supported).",
+    )
     ap.add_argument(
         "--model-params",
         help="XGBoost params as key=value tokens separated by ':' "
