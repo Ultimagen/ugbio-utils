@@ -173,7 +173,53 @@ The module includes R scripts in the `cnmops/` directory. They are used by cn.mo
 - `get_reads_count_from_bam.R` - Extract read counts from BAM files
 - `create_reads_count_cohort_matrix.R` - Build cohort matrix for cn.mops
 - `normalize_reads_count.R` - Normalize read counts across samples
+- `rebin_cohort_reads_count.R` - Re-bin existing cohort to larger bin sizes
 
+### Re-binning CNmops Cohorts
+
+#### `rebin_cohort_reads_count.R`
+
+Re-bin an existing cn.mops cohort from smaller bins to larger bins by aggregating read counts. This allows you to adjust the resolution of existing cohorts without regenerating from BAM files, which is useful for:
+- Reducing computational memory requirements for large cohorts
+- Faster CNV calling with coarser resolution
+- Testing different bin sizes without re-processing BAM files
+
+**Usage:**
+```bash
+Rscript cnmops/rebin_cohort_reads_count.R \
+  -i cohort_1000bp.rds \
+  -owl 1000 \
+  -nwl 5000 \
+  -o cohort_5000bp.rds \
+  --save_csv
+```
+
+**Parameters:**
+- `-i, --input_cohort_file` - Input cohort RDS file (required)
+- `-owl, --original_window_length` - Original bin size in bp (optional), autodetected if not given
+- `-nwl, --new_window_length` - New bin size in bp (required, must be divisible by original)
+- `-o, --output_file` - Output RDS file (default: `rebinned_cohort_reads_count.rds`)
+- `--save_csv` - Also save as CSV format
+- `--save_hdf` - Also save as HDF5 format
+
+**Important Notes:**
+- New window length must be larger than and divisible by the original window length
+- Genomic coordinates use 1-based, right-closed format (e.g., 1-1000, 1001-2000, ...)
+- Partial bins at chromosome ends are preserved without artificial extension
+- Read counts are summed from all original bins within each new bin
+- Total read counts per sample are preserved across the rebinning
+
+**Example:**
+```bash
+# Re-bin HapMap2 cohort from 1000 bp to 5000 bp
+Rscript cnmops/rebin_cohort_reads_count.R \
+  -i HapMap2_65samples_cohort_v2.0.hg38.ReadsCount.rds \
+  -nwl 5000 \
+  -o HapMap2_65samples_cohort_v2.0.hg38.ReadsCount.5000bp.rds
+
+# Result: 3,088,281 bins → 617,665 bins (5x reduction)
+# Last bin on chr1: 248955001-248956422 (partial bin, not extended to 248960000)
+```
 ## Notes
 
 - See germline and somatic CNV calling workflows published in GH repository `Ultimagen\healthomics-workflows`
