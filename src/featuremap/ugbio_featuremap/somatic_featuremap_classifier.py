@@ -255,7 +255,7 @@ def read_vcf_with_aggregation(
 
 def calculate_ref_nonref_columns(variants_df: pl.DataFrame, sample_suffix: str) -> pl.DataFrame:
     """
-    Calculate ref0-4 and nonref0-4 columns from PILEUP columns.
+    Calculate REF and NON_REF columns from PILEUP columns for each position.
 
     For each position, compare to the appropriate reference:
     - L2 → X_PREV2
@@ -264,11 +264,11 @@ def calculate_ref_nonref_columns(variants_df: pl.DataFrame, sample_suffix: str) 
     - R1 → X_NEXT1
     - R2 → X_NEXT2
 
-    For each position (L2, L1, C, R1, R2) → (ref0, ref1, ref2, ref3, ref4):
-    - ref{i} = PILEUP_{reference_base}_{pos}_{sample}
-    - nonref{i} = sum of PILEUP_{non-reference bases}_{pos} + PILEUP_{DEL}_{pos} + PILEUP_{INS}_{pos}
+    For each position (L2, L1, C, R1, R2):
+    - REF_{pos} = PILEUP_{reference_base}_{pos}_{sample}
+    - NON_REF_{pos} = sum of PILEUP_{non-reference bases}_{pos} + PILEUP_{DEL}_{pos} + PILEUP_{INS}_{pos}
 
-    Output columns follow sample suffix convention (e.g., ref0_Pa_46_FreshFrozen).
+    Output columns follow sample suffix convention (e.g., REF_C_Pa_46_FreshFrozen).
 
     Parameters
     ----------
@@ -280,11 +280,11 @@ def calculate_ref_nonref_columns(variants_df: pl.DataFrame, sample_suffix: str) 
     Returns
     -------
     pl.DataFrame
-        DataFrame with ref0-4 and nonref0-4 columns added (with sample suffix).
+        DataFrame with REF_{pos} and NON_REF_{pos} columns added (with sample suffix).
     """
     ref_nonref_exprs = []
 
-    for i, pos in enumerate(PILEUP_CONFIG.positions):
+    for pos in PILEUP_CONFIG.positions:
         ref_col = PILEUP_CONFIG.get_reference_column(pos)
 
         # Build ref column: select the PILEUP column matching the reference base for this position
@@ -293,7 +293,7 @@ def calculate_ref_nonref_columns(variants_df: pl.DataFrame, sample_suffix: str) 
             ref_expr = ref_expr.when(pl.col(ref_col) == base).then(
                 pl.col(PILEUP_CONFIG.get_column_name(base, pos, sample_suffix))
             )
-        ref_expr = ref_expr.otherwise(pl.lit(0)).fill_null(0).alias(f"ref{i}{sample_suffix}")
+        ref_expr = ref_expr.otherwise(pl.lit(0)).fill_null(0).alias(f"REF_{pos}{sample_suffix}")
         ref_nonref_exprs.append(ref_expr)
 
         # Build nonref column: sum of non-reference bases + DEL + INS
@@ -314,7 +314,7 @@ def calculate_ref_nonref_columns(variants_df: pl.DataFrame, sample_suffix: str) 
                 nonref_components.append(pl.col(col_name).fill_null(0))
 
         if nonref_components:
-            nonref_expr = pl.sum_horizontal(nonref_components).alias(f"nonref{i}{sample_suffix}")
+            nonref_expr = pl.sum_horizontal(nonref_components).alias(f"NON_REF_{pos}{sample_suffix}")
             ref_nonref_exprs.append(nonref_expr)
 
     if ref_nonref_exprs:
@@ -485,10 +485,10 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
         rename_map[f"{FeatureMapFields.SCST.value}_count_non_zero{s}"] = f"{prefix}scst_num_reads"
         rename_map[f"{FeatureMapFields.SCED.value}_count_non_zero{s}"] = f"{prefix}sced_num_reads"
 
-        # ref/nonref columns from PILEUP
-        for i in range(len(PILEUP_CONFIG.positions)):
-            rename_map[f"ref{i}{s}"] = f"{prefix}ref{i}"
-            rename_map[f"nonref{i}{s}"] = f"{prefix}nonref{i}"
+        # ref/nonref columns from PILEUP (map new names back to model-expected names)
+        for i, pos in enumerate(PILEUP_CONFIG.positions):
+            rename_map[f"REF_{pos}{s}"] = f"{prefix}ref{i}"
+            rename_map[f"NON_REF_{pos}{s}"] = f"{prefix}nonref{i}"
 
     # Rename columns that exist
     existing_rename = {k: v for k, v in rename_map.items() if k in variants_df.columns}

@@ -15,6 +15,7 @@ from conftest import (
 from ugbio_featuremap.somatic_featuremap_classifier import (
     somatic_featuremap_classifier,
 )
+from ugbio_featuremap.somatic_featuremap_utils import PILEUP_CONFIG
 
 
 class TestFullPipeline:
@@ -190,14 +191,14 @@ class TestOutputValidation:
                 assert col in parquet_df.columns, f"Missing derived column: {col}"
 
     def test_output_parquet_has_pileup_features(self):
-        """Parquet should contain ref0-4 and nonref0-4 for both samples."""
+        """Parquet should contain REF_{pos} and NON_REF_{pos} for both samples."""
         parquet_df = pl.read_parquet(self.result_parquet)
 
         for sample in [TUMOR_SAMPLE, NORMAL_SAMPLE]:
             s = f"_{sample}"
-            for i in range(5):
-                assert f"ref{i}{s}" in parquet_df.columns, f"Missing ref{i}{s}"
-                assert f"nonref{i}{s}" in parquet_df.columns, f"Missing nonref{i}{s}"
+            for pos in PILEUP_CONFIG.positions:
+                assert f"REF_{pos}{s}" in parquet_df.columns, f"Missing REF_{pos}{s}"
+                assert f"NON_REF_{pos}{s}" in parquet_df.columns, f"Missing NON_REF_{pos}{s}"
 
 
 class TestFilterVariations:

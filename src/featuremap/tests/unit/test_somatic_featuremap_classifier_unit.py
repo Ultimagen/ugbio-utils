@@ -188,7 +188,7 @@ class TestReadVcfWithAggregation:
                 assert col in variants_df.columns, f"Missing aggregated column: {col}"
 
     def test_pileup_ref_nonref_columns_present(self, tmp_path, filtered_vcf):
-        """DataFrame should have ref0-4 and nonref0-4 columns for both samples."""
+        """DataFrame should have REF_{pos} and NON_REF_{pos} columns for both samples."""
         output_parquet = tmp_path / "test.parquet"
 
         variants_df = read_vcf_with_aggregation(
@@ -200,9 +200,9 @@ class TestReadVcfWithAggregation:
         )
 
         for sample in [TUMOR_SAMPLE, NORMAL_SAMPLE]:
-            for i in range(5):
-                assert f"ref{i}_{sample}" in variants_df.columns, f"Missing ref{i}_{sample}"
-                assert f"nonref{i}_{sample}" in variants_df.columns, f"Missing nonref{i}_{sample}"
+            for pos in PILEUP_CONFIG.positions:
+                assert f"REF_{pos}_{sample}" in variants_df.columns, f"Missing REF_{pos}_{sample}"
+                assert f"NON_REF_{pos}_{sample}" in variants_df.columns, f"Missing NON_REF_{pos}_{sample}"
 
     def test_derived_columns_present(self, tmp_path, filtered_vcf):
         """DataFrame should have derived columns from post-processing."""
@@ -260,50 +260,50 @@ class TestCalculateRefNonrefColumns:
         return pl.DataFrame(data)
 
     def test_ref_nonref_columns_created(self, sample_pileup_df):
-        """Test that ref0-4 and nonref0-4 columns are created."""
+        """Test that REF_{pos} and NON_REF_{pos} columns are created."""
         suffix = f"_{TUMOR_SAMPLE}"
         result = calculate_ref_nonref_columns(sample_pileup_df, suffix)
 
-        for i in range(5):
-            assert f"ref{i}{suffix}" in result.columns
-            assert f"nonref{i}{suffix}" in result.columns
+        for pos in PILEUP_CONFIG.positions:
+            assert f"REF_{pos}{suffix}" in result.columns
+            assert f"NON_REF_{pos}{suffix}" in result.columns
 
     def test_ref_column_matches_reference_base(self, sample_pileup_df):
-        """ref column should equal the PILEUP count for the reference base at that position."""
+        """REF column should equal the PILEUP count for the reference base at that position."""
         suffix = f"_{TUMOR_SAMPLE}"
         result = calculate_ref_nonref_columns(sample_pileup_df, suffix)
 
-        # Position C (index 2): REF=A, so ref2 should be PILEUP_A_C
-        ref2_value = result[f"ref2{suffix}"][0]
+        # Position C: REF=A, so REF_C should be PILEUP_A_C
+        ref_c_value = result[f"REF_C{suffix}"][0]
         pileup_a_c = result[f"PILEUP_A_C{suffix}"][0]
-        assert ref2_value == pileup_a_c, f"ref2 ({ref2_value}) != PILEUP_A_C ({pileup_a_c})"
+        assert ref_c_value == pileup_a_c, f"REF_C ({ref_c_value}) != PILEUP_A_C ({pileup_a_c})"
 
     def test_nonref_is_sum_of_nonref_bases_plus_indels(self, sample_pileup_df):
-        """nonref should be sum of non-reference bases + DEL + INS."""
+        """NON_REF should be sum of non-reference bases + DEL + INS."""
         suffix = f"_{TUMOR_SAMPLE}"
         result = calculate_ref_nonref_columns(sample_pileup_df, suffix)
 
-        # Position C (index 2): REF=A
-        # nonref2 = PILEUP_C_C + PILEUP_G_C + PILEUP_T_C + PILEUP_DEL_C + PILEUP_INS_C
+        # Position C: REF=A
+        # NON_REF_C = PILEUP_C_C + PILEUP_G_C + PILEUP_T_C + PILEUP_DEL_C + PILEUP_INS_C
         expected_nonref = 10 + 10 + 10 + 1 + 1  # C, G, T (not A) + DEL + INS = 32
-        actual_nonref = result[f"nonref2{suffix}"][0]
-        assert actual_nonref == expected_nonref, f"nonref2 ({actual_nonref}) != expected ({expected_nonref})"
+        actual_nonref = result[f"NON_REF_C{suffix}"][0]
+        assert actual_nonref == expected_nonref, f"NON_REF_C ({actual_nonref}) != expected ({expected_nonref})"
 
     def test_ref_nonref_sum_invariant(self, sample_pileup_df):
-        """ref + nonref should equal sum of all PILEUP columns for that position."""
+        """REF + NON_REF should equal sum of all PILEUP columns for that position."""
         suffix = f"_{TUMOR_SAMPLE}"
         result = calculate_ref_nonref_columns(sample_pileup_df, suffix)
 
-        for i, pos in enumerate(PILEUP_CONFIG.positions):
-            ref_val = result[f"ref{i}{suffix}"][0]
-            nonref_val = result[f"nonref{i}{suffix}"][0]
+        for pos in PILEUP_CONFIG.positions:
+            ref_val = result[f"REF_{pos}{suffix}"][0]
+            nonref_val = result[f"NON_REF_{pos}{suffix}"][0]
             total_pileup = sum(
                 result[PILEUP_CONFIG.get_column_name(elem, pos, suffix)][0]
                 for elem in list(PILEUP_CONFIG.bases) + list(PILEUP_CONFIG.indels)
             )
             assert (
                 ref_val + nonref_val == total_pileup
-            ), f"Position {pos} (index {i}): ref({ref_val}) + nonref({nonref_val}) != total({total_pileup})"
+            ), f"Position {pos}: REF({ref_val}) + NON_REF({nonref_val}) != total({total_pileup})"
 
 
 class TestAggregatedDfPostProcessing:
@@ -380,9 +380,9 @@ class TestRenameColsForModel:
             data[f"SCED_count_non_zero{s}"] = [1]
 
             # ref/nonref columns
-            for i in range(5):
-                data[f"ref{i}{s}"] = [50]
-                data[f"nonref{i}{s}"] = [5]
+            for pos in PILEUP_CONFIG.positions:
+                data[f"REF_{pos}{s}"] = [50]
+                data[f"NON_REF_{pos}{s}"] = [5]
 
         return pl.DataFrame(data)
 
