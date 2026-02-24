@@ -8,6 +8,7 @@ VCF with breakpoint evidence in INFO fields.
 """
 
 import argparse
+import itertools
 import sys
 from dataclasses import dataclass, field
 from statistics import median
@@ -90,7 +91,6 @@ def has_left_soft_clip(cigar_tuples: list[tuple[int, int]] | None) -> bool:
 
 
 def get_supplementary_alignments(
-    alignment_file: pysam.AlignmentFile,
     read: pysam.AlignedSegment,
 ) -> list[tuple[str, int, int, bool, bool, bool]]:
     """
@@ -98,7 +98,6 @@ def get_supplementary_alignments(
 
     Parameters
     ----------
-    alignment_file : pysam.AlignmentFile
         Open BAM/CRAM file
     read : pysam.AlignedSegment
         The read to analyze
@@ -184,12 +183,6 @@ def _prepare_read_for_cnv_check(
     start_region_end = interval_start + cushion
     end_region_start = interval_end - cushion
     end_region_end = interval_end + cushion
-
-    primary_near_start = start_region_start <= primary_start <= start_region_end
-    primary_near_end = end_region_start <= primary_start <= end_region_end
-
-    if not (primary_near_start or primary_near_end):
-        return None
 
     return (
         primary_chrom,
@@ -376,39 +369,6 @@ def _should_skip_read(read: pysam.AlignedSegment) -> bool:
     return read.is_unmapped or read.is_secondary or read.is_supplementary or read.is_duplicate
 
 
-def _is_read_near_breakpoint(
-    read_start: int,
-    start_region_start: int,
-    start_region_end: int,
-    end_region_start: int,
-    end_region_end: int,
-) -> bool:
-    """
-    Check if read start position is near either breakpoint region.
-
-    Parameters
-    ----------
-    read_start : int
-        The reference start position of the read
-    start_region_start : int
-        Start of the interval start region
-    start_region_end : int
-        End of the interval start region
-    end_region_start : int
-        Start of the interval end region
-    end_region_end : int
-        End of the interval end region
-
-    Returns
-    -------
-    bool
-        True if read is near either breakpoint
-    """
-    near_start = start_region_start <= read_start <= start_region_end
-    near_end = end_region_start <= read_start <= end_region_end
-    return near_start or near_end
-
-
 def _process_read_for_cnv_evidence(
     read: pysam.AlignedSegment,
     alignment_file: pysam.AlignmentFile,
@@ -437,7 +397,7 @@ def _process_read_for_cnv_evidence(
     tuple[bool, bool, int | None]
         (is_duplication, is_deletion, insert_size)
     """
-    supplementary_alns = get_supplementary_alignments(alignment_file, read)
+    supplementary_alns = get_supplementary_alignments(read)
     return check_read_cnv_consistency(read, start, end, cushion, supplementary_alns)
 
 
@@ -574,44 +534,32 @@ def _collect_reads_from_region(
     supporting_reads: list[tuple[pysam.AlignedSegment, str]] = []
     supplementary_reads: dict[str, list[pysam.AlignedSegment]] = {}
 
-    # Process ONLY the two breakpoint regions, not the entire interval
-    # This dramatically improves performance for large CNVs
-    regions_to_fetch = [
-        (start_region_start, start_region_end),  # Start breakpoint
-        (end_region_start, end_region_end),  # End breakpoint
-    ]
-
     try:
-        for region_start, region_end in regions_to_fetch:
-            for read in alignment_file.fetch(chrom, region_start, region_end):
-                # Skip supplementary reads in this phase - they'll be collected later
-                if read.is_supplementary:
-                    continue
+        for read in itertools.chain(
+            alignment_file.fetch(chrom, start_region_start, start_region_end),
+            alignment_file.fetch(chrom, end_region_start, end_region_end),
+        ):
+            # Skip supplementary reads in this phase - they'll be collected later
+            if read.is_supplementary:
+                continue
 
-                if _should_skip_read(read) or read.query_name in processed_reads:
-                    continue
+            if _should_skip_read(read) or read.query_name in processed_reads:
+                continue
 
-                read_start = read.reference_start
+            processed_reads.add(str(read.query_name))
 
-                if not _is_read_near_breakpoint(
-                    read_start, start_region_start, start_region_end, end_region_start, end_region_end
-                ):
-                    continue
-
-                processed_reads.add(str(read.query_name))
-
-                duplication_reads, deletion_reads = _process_primary_read_for_evidence(
-                    read,
-                    alignment_file,
-                    start,
-                    end,
-                    cushion,
-                    duplication_reads,
-                    deletion_reads,
-                    dup_insert_sizes,
-                    del_insert_sizes,
-                    supporting_reads,
-                )
+            duplication_reads, deletion_reads = _process_primary_read_for_evidence(
+                read,
+                alignment_file,
+                start,
+                end,
+                cushion,
+                duplication_reads,
+                deletion_reads,
+                dup_insert_sizes,
+                del_insert_sizes,
+                supporting_reads,
+            )
 
     except Exception as e:
         logger.warning(f"Error fetching reads for {chrom}:{start}-{end}: {e}")
@@ -632,6 +580,8 @@ def _collect_supplementary_alignments_for_supporting_reads(
     chrom: str,
     supporting_reads: list[tuple[pysam.AlignedSegment, str]],
     start_region_start: int,
+    start_region_end: int,
+    end_region_start: int,
     end_region_end: int,
 ) -> dict[str, list[pysam.AlignedSegment]]:
     """
@@ -650,6 +600,10 @@ def _collect_supplementary_alignments_for_supporting_reads(
         List of (read, read_group) tuples for supporting reads
     start_region_start : int
         Start of search region
+    start_region_end: int
+        End of start breakpoint search region
+    end_region_start : int
+        Start of end breakpoint search region
     end_region_end : int
         End of search region
 
@@ -668,7 +622,10 @@ def _collect_supplementary_alignments_for_supporting_reads(
 
     try:
         # Fetch supplementary alignments from the breakpoint regions
-        for read in alignment_file.fetch(chrom, start_region_start, end_region_end):
+        for read in itertools.chain(
+            alignment_file.fetch(chrom, start_region_start, start_region_end),
+            alignment_file.fetch(chrom, end_region_start, end_region_end),
+        ):
             if not read.is_supplementary:
                 continue
 
@@ -744,6 +701,8 @@ def analyze_interval_breakpoints(
         chrom,
         supporting_reads,
         start_region_start,
+        start_region_end,
+        end_region_start,
         end_region_end,
     )
 

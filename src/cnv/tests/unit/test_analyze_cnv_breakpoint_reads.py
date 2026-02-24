@@ -146,8 +146,7 @@ def test_get_supplementary_alignments(temp_bam_file):
     read.set_tag("SA", "chr1,1000,+,50M30S,60,0;chr1,2000,-,30S50M,60,0;")
 
     # Open a real alignment file for the function signature
-    with pysam.AlignmentFile(temp_bam_file, "rb") as bam:
-        supp_alns = get_supplementary_alignments(bam, read)
+    supp_alns = get_supplementary_alignments(read)
 
     assert len(supp_alns) == 2
     # First: 50M means +50 on reference, 30S on right, + strand
