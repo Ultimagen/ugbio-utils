@@ -403,6 +403,32 @@ def aggregated_df_post_processing(variants_df: pl.DataFrame, sample_names: list[
 # =============================================================================
 
 
+def _build_sample_rename_map(columns: list[str], sample_name: str, prefix: str) -> dict[str, str]:
+    """Replace sample name suffix with the t_/n_ prefix for all matching columns.
+
+    For any column ending with ``_{sample_name}``, produce a mapping
+    ``original_col -> {prefix}{base}`` where *base* is the column name
+    without the sample suffix.
+    e.g. MQUAL_mean_Pa46 → t_MQUAL_mean
+
+    Parameters
+    ----------
+    columns : list[str]
+        Column names to scan.
+    sample_name : str
+        Sample name to look for as a suffix.
+    prefix : str
+        Prefix to prepend (e.g. ``"t_"`` or ``"n_"``).
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping from original column name to prefixed name.
+    """
+    suffix = f"_{sample_name}"
+    return {col: f"{prefix}{col[: -len(suffix)]}" for col in columns if col.endswith(suffix)}
+
+
 def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_path: Path | None = None) -> pl.DataFrame:
     """
     Rename the dataframe columns to match the model expected features.
@@ -411,8 +437,8 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
     ----------
     variants_df : pl.DataFrame
         DataFrame with sample-suffixed columns.
-    samples : list[tuple[str, str]]
-        List of (sample_name, prefix) tuples.
+    samples : list[str]
+        List of sample names (tumor first, normal second).
     vcf_path : Path, optional
         Path to the VCF file. If provided, the sample names will be validated against the VCF file.
         This is used for debugging purposes.
@@ -430,50 +456,32 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
                 f"{tumor_sample}, {normal_sample}"
             )
 
-    # Build rename map: convert all sample-suffixed columns to t_/n_ prefix convention
     rename_map = {}
 
-    # Rename CHROM and POS columns to match expected format (t_ prefix)
+    # Non-sample columns (no sample suffix)
     rename_map[FeatureMapFields.CHROM.value] = f"{TUMOR_PREFIX}chrom"
     rename_map[FeatureMapFields.POS.value] = f"{TUMOR_PREFIX}pos"
-
-    # rename common columns for alleles
     rename_map[FeatureMapFields.REF.value] = "ref_allele"
     rename_map[FeatureMapFields.ALT.value] = "alt_allele"
 
-    # rename INFO fields with t_ prefix
     for info_field in REQUIRED_INFO_FIELDS:
-        rename_map[info_field] = f"{TUMOR_PREFIX}{info_field.lower()}"
+        rename_map[info_field] = f"{TUMOR_PREFIX}{info_field}"
 
-    # rename FORMAT fields
-    for sample_name, prefix in [(samples[0], TUMOR_PREFIX), (samples[1], NORMAL_PREFIX)]:
+    # Sample specific columns
+    sample_prefix_tuples = [(samples[0], TUMOR_PREFIX), (samples[1], NORMAL_PREFIX)]
+
+    # Generic: replace _{sample_name} suffix with t_/n_ prefix for all sample-suffixed columns
+    for sample_name, prefix in sample_prefix_tuples:
+        rename_map.update(_build_sample_rename_map(variants_df.columns, sample_name, prefix))
+
+    # Override: model-specific names that don't follow the generic pattern
+    for sample_name, prefix in sample_prefix_tuples:
         s = f"_{sample_name}"
 
-        # TODO: change to lower and change sample name with t/n prefix
-        # Aggregation columns (mean/min/max)
-        agg_fields = [
-            FeatureMapFields.MQUAL,
-            FeatureMapFields.SNVQ,
-            FeatureMapFields.MAPQ,
-            FeatureMapFields.EDIST,
-            FeatureMapFields.RL,
-        ]
-        for field in agg_fields:
-            rename_map[f"{field.value}_mean{s}"] = f"{prefix}{field.value.lower()}_mean"
-            rename_map[f"{field.value}_min{s}"] = f"{prefix}{field.value.lower()}_min"
-            rename_map[f"{field.value}_max{s}"] = f"{prefix}{field.value.lower()}_max"
-
-        # Scalar columns
-        rename_map[f"{FeatureMapFields.DP.value}{s}"] = f"{prefix}dp"
-        rename_map[f"{FeatureMapFields.VAF.value}{s}"] = f"{prefix}vaf"
-        rename_map[f"{FeatureMapFields.RAW_VAF.value}{s}"] = f"{prefix}raw_vaf"
-        rename_map[f"{FeatureMapFields.DP_FILT.value}{s}"] = f"{prefix}dp_filt"
-
-        # TODO:name change
-        # Count zero for MAPQ (MAP0_COUNT)
+        # Count zero for MAPQ (mapq0_count)
         rename_map[f"{FeatureMapFields.MAPQ.value}_count_zero{s}"] = f"{prefix}map0_count"
 
-        # ALT_READS from AD_1
+        # alt_reads from AD_1
         rename_map[f"AD_1{s}"] = f"{prefix}alt_reads"
 
         # 0/1 fields
@@ -489,6 +497,9 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
         for i, pos in enumerate(PILEUP_CONFIG.positions):
             rename_map[f"REF_{pos}{s}"] = f"{prefix}ref{i}"
             rename_map[f"NON_REF_{pos}{s}"] = f"{prefix}nonref{i}"
+
+    # Lowercase all target names
+    rename_map = {k: v.lower() for k, v in rename_map.items()}
 
     # Rename columns that exist
     existing_rename = {k: v for k, v in rename_map.items() if k in variants_df.columns}
