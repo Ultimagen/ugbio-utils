@@ -536,8 +536,8 @@ def _collect_reads_from_region(
 
     try:
         for read in itertools.chain(
-            alignment_file.fetch(chrom, start_region_start, start_region_end),
-            alignment_file.fetch(chrom, end_region_start, end_region_end),
+            alignment_file.fetch(chrom, start_region_start, start_region_end, multiple_iterators=True),
+            alignment_file.fetch(chrom, end_region_start, end_region_end, multiple_iterators=True),
         ):
             # Skip supplementary reads in this phase - they'll be collected later
             if read.is_supplementary:
@@ -623,8 +623,8 @@ def _collect_supplementary_alignments_for_supporting_reads(
     try:
         # Fetch supplementary alignments from the breakpoint regions
         for read in itertools.chain(
-            alignment_file.fetch(chrom, start_region_start, start_region_end),
-            alignment_file.fetch(chrom, end_region_start, end_region_end),
+            alignment_file.fetch(chrom, start_region_start, start_region_end, multiple_iterators=True),
+            alignment_file.fetch(chrom, end_region_start, end_region_end, multiple_iterators=True),
         ):
             if not read.is_supplementary:
                 continue

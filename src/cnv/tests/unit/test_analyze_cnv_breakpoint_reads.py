@@ -7,6 +7,7 @@ from pathlib import Path
 import pysam
 import pytest
 from ugbio_cnv.analyze_cnv_breakpoint_reads import (
+    _collect_reads_from_region,
     analyze_cnv_breakpoints,
     analyze_interval_breakpoints,
     check_read_cnv_consistency,
@@ -239,6 +240,144 @@ def test_analyze_interval_breakpoints(temp_bam_file):
         assert evidence.total_reads == 2
         assert evidence.duplication_reads == 1
         assert evidence.deletion_reads == 1
+
+
+def test_analyze_interval_breakpoints_scans_both_breakpoint_windows():
+    """Regression test: ensure both breakpoint windows are scanned.
+
+    This catches a pysam iterator bug where chaining two ``fetch`` iterators from
+    the same handle can skip the first iterator unless independent iterators are
+    requested. The synthetic interval below has CNV-supporting SA evidence only
+    in the START breakpoint window.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".bam", delete=False) as bam_f:
+        bam_path = bam_f.name
+
+    header = {
+        "HD": {"VN": "1.0"},
+        "SQ": [
+            {"SN": "chr1", "LN": 10000},
+        ],
+    }
+
+    try:
+        with pysam.AlignmentFile(bam_path, "wb", header=header) as bam_out:
+            # START window read with SA evidence into END window.
+            split_read = pysam.AlignedSegment()
+            split_read.query_name = "split_read"
+            split_read.query_sequence = (
+                "ACGTACGTACGTACGTACGTACGTACGTACGT" "ACGTACGTACGTACGTACGTACGTACGTACGT" "ACGTACGTACGTACGT"
+            )
+            split_read.reference_id = 0
+            split_read.reference_start = 950  # START window for interval 1000-2000, cushion=100
+            split_read.cigartuples = [(0, 50), (4, 30)]  # first part: right soft clip
+            split_read.is_reverse = False
+            split_read.set_tag("SA", "chr1,2051,+,30S50M,60,0;")
+            bam_out.write(split_read)
+
+            # Non-SA read in END window to ensure second window has content.
+            end_only_read = pysam.AlignedSegment()
+            end_only_read.query_name = "end_only_read"
+            end_only_read.query_sequence = "A" * 80
+            end_only_read.reference_id = 0
+            end_only_read.reference_start = 1950
+            end_only_read.cigartuples = [(0, 80)]
+            end_only_read.is_reverse = False
+            bam_out.write(end_only_read)
+
+        pysam.index(bam_path)
+
+        with pysam.AlignmentFile(bam_path, "rb") as bam_in:
+            evidence = analyze_interval_breakpoints(bam_in, "chr1", 1000, 2000, 100)
+
+        assert evidence.total_reads == 2
+        assert evidence.duplication_reads == 0
+        assert evidence.deletion_reads == 1
+    finally:
+        Path(bam_path).unlink(missing_ok=True)
+        Path(bam_path + ".bai").unlink(missing_ok=True)
+
+
+def test_collect_reads_from_region_uses_independent_fetch_iterators(monkeypatch):
+    """Regression test for fetch iterator invalidation between breakpoint windows."""
+
+    class FakeAlignmentFile:
+        """Fake alignment file that invalidates prior iterators unless multiple_iterators=True."""
+
+        def __init__(self, start_reads, end_reads):
+            self.start_reads = start_reads
+            self.end_reads = end_reads
+            self._active_state = None
+
+        def fetch(self, chrom, start, end, *, multiple_iterators=False):  # noqa: ARG002
+            reads = self.start_reads if start < 1500 else self.end_reads
+            if multiple_iterators:
+                return iter(reads)
+
+            state = object()
+            self._active_state = state
+
+            def _iter_reads():
+                if self._active_state is not state:
+                    return
+                yield from reads
+
+            return _iter_reads()
+
+    start_read = pysam.AlignedSegment()
+    start_read.query_name = "start_read"
+    start_read.reference_id = 0
+    start_read.reference_start = 950
+    start_read.cigartuples = [(0, 50), (4, 30)]
+
+    end_read = pysam.AlignedSegment()
+    end_read.query_name = "end_read"
+    end_read.reference_id = 0
+    end_read.reference_start = 1950
+    end_read.cigartuples = [(0, 80)]
+
+    fake_alignment_file = FakeAlignmentFile([start_read], [end_read])
+
+    def _fake_process_primary_read_for_evidence(  # noqa: PLR0913
+        read,
+        alignment_file,
+        start,
+        end,
+        cushion,
+        duplication_reads,
+        deletion_reads,
+        dup_insert_sizes,
+        del_insert_sizes,
+        supporting_reads,
+    ):
+        return duplication_reads, deletion_reads
+
+    monkeypatch.setattr(
+        "ugbio_cnv.analyze_cnv_breakpoint_reads._process_primary_read_for_evidence",
+        _fake_process_primary_read_for_evidence,
+    )
+
+    (
+        _,
+        _,
+        _,
+        _,
+        processed_reads,
+        _,
+        _,
+    ) = _collect_reads_from_region(
+        fake_alignment_file,
+        "chr1",
+        1000,
+        2000,
+        100,
+        900,
+        1100,
+        1900,
+        2100,
+    )
+
+    assert processed_reads == {"start_read", "end_read"}
 
 
 def test_analyze_cnv_breakpoints(temp_bam_file, temp_vcf_file, dummy_fasta_file):
