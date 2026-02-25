@@ -10,6 +10,8 @@ dependencies = [
     "shap>=0.46.0",
     "statsmodels>=0.14.4",
     "torch",
+    "lightning>=2.0",
+    "torchmetrics>=1.0",
 ]
 description = "Ultima Genomics SRSNV utils"
 authors = [

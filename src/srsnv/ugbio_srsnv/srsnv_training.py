@@ -400,7 +400,7 @@ class SRSNVTrainer:
         self.out_dir = Path(args.output)
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.max_qual = self.args.max_qual if self.args.max_qual is not None else MAX_PHRED
-        self.eps = 10 ** (-self.max_qual / 10)  # small value to avoid division by zero
+        self.eps = 1e-12
 
         # RNG
         self.seed = args.random_seed or int(datetime.now().timestamp())
@@ -772,6 +772,7 @@ class SRSNVTrainer:
         mqual_cutoff_type: str = "fp",  # 'fp', 'tp', or 'mp'
         eps=None,
         kde_config_overrides: dict[str, Any] | None = None,
+        lut_mask=None,
     ) -> None:
         """
         Build an interpolation table that maps MQUAL → SNVQ using adaptive KDE for smoothing.
@@ -795,6 +796,8 @@ class SRSNVTrainer:
             - lowess_frac: float - LOWESS smoothing fraction for uncertainty
             - enforce_monotonic: bool - Whether to enforce monotonicity
             - truncation_mode: str - Tail truncation mode
+        lut_mask : array-like or None, optional
+            Boolean mask selecting rows to use for LUT construction.
         """
         if eps is None:
             eps = self.eps
@@ -804,9 +807,13 @@ class SRSNVTrainer:
 
         pd_df = self.data_frame.to_pandas()
 
+        if lut_mask is not None:
+            pd_df = pd_df.loc[lut_mask].copy()
+            logger.info("_create_quality_lookup_table_kde: using lut_mask (%d rows)", len(pd_df))
+
         if pd_df[LABEL_COL].sum() == 0 or (~pd_df[LABEL_COL]).sum() == 0:
             logger.warning("Insufficient data for KDE, falling back to counting method")
-            self._create_quality_lookup_table_count(mqual_cutoff_quantile, eps)
+            self._create_quality_lookup_table_count(mqual_cutoff_quantile, eps, lut_mask=lut_mask)
             return
 
         # Use AdaptiveKDEPrecisionEstimator for precision estimation
@@ -818,7 +825,7 @@ class SRSNVTrainer:
 
         except Exception as e:
             logger.warning("Adaptive KDE failed: %s. Falling back to counting method.", e)
-            self._create_quality_lookup_table_count(mqual_cutoff_quantile, eps)
+            self._create_quality_lookup_table_count(mqual_cutoff_quantile, eps, lut_mask=lut_mask)
             return
 
         # Create lookup table
@@ -854,15 +861,24 @@ class SRSNVTrainer:
         logger.debug("Created adaptive KDE MQUAL→SNVQ lookup table with %d points", len(self.x_lut))
         logger.debug("SNVQ range: [%.2f, %.2f]", self.y_lut.min(), self.y_lut.max())
 
-    def _create_quality_lookup_table_count(self, fp_mqual_cutoff_quantile=1 - 1e-6, eps=None) -> None:
+    def _create_quality_lookup_table_count(
+        self,
+        fp_mqual_cutoff_quantile=1 - 1e-6,
+        eps=None,
+        lut_mask=None,
+    ) -> None:
         """
         Build an interpolation table that maps MQUAL → SNVQ.
         """
         if eps is None:
             eps = self.eps
         pd_df = self.data_frame.to_pandas()
+
+        if lut_mask is not None:
+            pd_df = pd_df.loc[lut_mask].copy()
+            logger.info("_create_quality_lookup_table_count: using lut_mask (%d / %d rows)", len(pd_df), len(lut_mask))
+
         mqual_fp_max = pd_df.loc[pd_df[LABEL_COL].astype(int) == 0, MQUAL].quantile(fp_mqual_cutoff_quantile)
-        # prior_real_error = self.prior_real_error
 
         # Determine x_lut points based on whether quality_lut_size is provided
         if self.args.quality_lut_size is not None:
@@ -877,7 +893,7 @@ class SRSNVTrainer:
         mqual_f = pd_df[~pd_df[LABEL_COL]][MQUAL]
         tpr = np.array([(mqual_t >= m_).mean() for m_ in self.x_lut])
         fpr = np.array([(mqual_f >= m_).mean() for m_ in self.x_lut])
-        snvq_prefactor = self._calculate_snvq_prefactor()  # old value was: (prior_real_error / 3)
+        snvq_prefactor = self._calculate_snvq_prefactor()
         self.y_lut = -10 * np.log10(np.clip(snvq_prefactor * (fpr / tpr), eps, 1))
 
     def _create_quality_lookup_table(
@@ -888,6 +904,7 @@ class SRSNVTrainer:
         *,
         use_kde=True,
         kde_config_overrides: dict[str, Any] | None = None,
+        lut_mask=None,
         **kwargs,
     ) -> None:
         """
@@ -908,6 +925,9 @@ class SRSNVTrainer:
             - enforce_monotonic: bool - Whether to enforce monotonicity
             - truncation_mode: str - Tail truncation mode
             - transform_mode: str - Transform scale ("mqual", "logit")
+        lut_mask : array-like or None, optional
+            Boolean mask selecting rows to use for LUT construction.
+            When *None*, all rows are used.
         """
         if use_kde:
             self._create_quality_lookup_table_kde(
@@ -915,10 +935,15 @@ class SRSNVTrainer:
                 transform_mode=transform_mode,
                 kde_config_overrides=kde_config_overrides,
                 mqual_cutoff_quantile=mqual_cutoff_quantile,
+                lut_mask=lut_mask,
                 **kwargs,
             )
         else:
-            self._create_quality_lookup_table_count(eps=eps, fp_mqual_cutoff_quantile=mqual_cutoff_quantile)
+            self._create_quality_lookup_table_count(
+                eps=eps,
+                fp_mqual_cutoff_quantile=mqual_cutoff_quantile,
+                lut_mask=lut_mask,
+            )
 
     def _calculate_snvq_prefactor(self) -> float:
         filtering_ratio = get_filter_ratio(self.pos_stats["filters"], numerator_type="label", denominator_type="raw")
@@ -1083,9 +1108,19 @@ class SRSNVTrainer:
 
         self.data_frame = self.data_frame.with_columns(new_cols)
 
-        # final quality (Phred)
-        # snvq_raw = prob_to_phred(prob_rescaled, max_value=self.max_qual)
-        self._create_quality_lookup_table(use_kde=self.args.use_kde_smoothing)
+        # In single-model mode, build the LUT from validation data only
+        # to avoid overfitting bias from training-set predictions.
+        lut_mask = None
+        if self.single_model_split:
+            fold_col = self.data_frame[FOLD_COL].to_numpy()
+            lut_mask = fold_col == 1
+            logger.info(
+                "Single-model mode: building LUT from val data only (%d / %d rows)",
+                int(lut_mask.sum()),
+                len(lut_mask),
+            )
+
+        self._create_quality_lookup_table(use_kde=self.args.use_kde_smoothing, lut_mask=lut_mask)
         logger.debug("Created MQUAL→SNVQ lookup table")
         snvq = np.interp(mqual, self.x_lut, self.y_lut)
         logger.debug("Interpolated SNVQ values from lookup table")

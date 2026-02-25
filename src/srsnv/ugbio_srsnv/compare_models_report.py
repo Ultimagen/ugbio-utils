@@ -18,10 +18,12 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from jinja2 import Environment, FileSystemLoader
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
     average_precision_score,
+    brier_score_loss,
     confusion_matrix,
     f1_score,
     log_loss,
@@ -46,6 +48,8 @@ MIN_SAMPLE_SIZE = 10
 MIN_SLICE_SIZE = 50
 TRINUC_LEN = 3
 MAX_TICK_LABELS_HORIZONTAL = 6
+SNVQ_THRESHOLDS = [0, 30, 40, 50, 60]
+_LUT_PAIR_LEN = 2
 
 
 # ---------------------------------------------------------------------------
@@ -72,10 +76,22 @@ def load_data(
         dnn_meta = json.load(f)
 
     merged = xgb_df.merge(
-        dnn_df[["CHROM", "POS", "RN", "prob_orig"]].rename(columns={"prob_orig": "prob_dnn"}),
+        dnn_df[["CHROM", "POS", "RN", "prob_orig", "SNVQ", "MQUAL"]].rename(
+            columns={
+                "prob_orig": "prob_dnn",
+                "SNVQ": "snvq_dnn",
+                "MQUAL": "mqual_dnn",
+            }
+        ),
         on=["CHROM", "POS", "RN"],
     )
-    merged = merged.rename(columns={"prob_orig": "prob_xgb"})
+    merged = merged.rename(
+        columns={
+            "prob_orig": "prob_xgb",
+            "SNVQ": "snvq_xgb",
+            "MQUAL": "mqual_xgb",
+        }
+    )
     logger.info("Merged dataframe shape: %s", merged.shape)
 
     return {
@@ -110,11 +126,18 @@ def _safe_logloss(y: np.ndarray, p: np.ndarray) -> float | None:
     return float(log_loss(y, p, labels=[0, 1]))
 
 
+def _safe_brier(y: np.ndarray, p: np.ndarray) -> float | None:
+    if len(np.unique(y)) < MIN_UNIQUE_LABELS or len(y) < MIN_SAMPLE_SIZE:
+        return None
+    return float(brier_score_loss(y, p))
+
+
 def _calc_metrics(y: np.ndarray, p: np.ndarray) -> dict:
     return {
         "auc": _safe_auc(y, p),
         "aupr": _safe_aupr(y, p),
         "logloss": _safe_logloss(y, p),
+        "brier": _safe_brier(y, p),
     }
 
 
@@ -124,11 +147,36 @@ def _fmt(v, digits=4):
     return f"{v:.{digits}f}"
 
 
+def _relative_improvement(xgb_val: float | None, dnn_val: float | None, metric_name: str) -> float | None:
+    """Compute relative improvement as % of gap closed.
+
+    For higher-is-better metrics (AUC, AUPR): (dnn - xgb) / (1 - xgb) * 100
+    For lower-is-better metrics (logloss, brier): (xgb - dnn) / xgb * 100
+    """
+    if xgb_val is None or dnn_val is None:
+        return None
+    if metric_name in ("logloss", "brier"):
+        if xgb_val == 0:
+            return None
+        return (xgb_val - dnn_val) / xgb_val * 100
+    gap = 1.0 - xgb_val
+    if gap == 0:
+        return None
+    return (dnn_val - xgb_val) / gap * 100
+
+
+def _improvement_class(rel_imp: float | None) -> str:
+    """Return CSS class for relative improvement value (positive = better)."""
+    if rel_imp is None:
+        return ""
+    return "better" if rel_imp > 0 else "worse"
+
+
 def _delta_class(delta, metric_name):
     """Return CSS class for delta value."""
     if delta is None:
         return ""
-    if metric_name == "logloss":
+    if metric_name in ("logloss", "brier"):
         return "better" if delta < 0 else "worse"
     return "better" if delta > 0 else "worse"
 
@@ -144,6 +192,54 @@ def _fig_to_b64(fig: plt.Figure, dpi: int = 150) -> str:
     plt.close(fig)
     buf.seek(0)
     return base64.b64encode(buf.read()).decode("ascii")
+
+
+def _load_dnn_epoch_metrics(dnn_meta: dict) -> pd.DataFrame | None:
+    """Load per-epoch training metrics from Lightning CSVLogger output.
+
+    Infers the ``metrics.csv`` path from the first checkpoint path in metadata.
+    Lightning logs train and val metrics on separate rows, so we group by epoch
+    and take the first non-NaN value for each metric column.
+    """
+    ckpt_paths = dnn_meta.get("best_checkpoint_paths", [])
+    if not ckpt_paths:
+        logger.warning("No best_checkpoint_paths in DNN metadata — cannot locate CSVLogger output")
+        return None
+
+    ckpt_path = Path(ckpt_paths[0])
+    logs_dir = ckpt_path.parent / (ckpt_path.name.split(".dnn_model_fold_")[0] + ".lightning_logs")
+    if not logs_dir.is_dir():
+        parent = ckpt_path.parent
+        candidates = list(parent.glob("*.lightning_logs"))
+        if candidates:
+            logs_dir = candidates[0]
+        else:
+            logger.warning("Cannot find lightning_logs directory near %s", ckpt_path)
+            return None
+
+    csv_files = sorted(logs_dir.glob("fold_*/metrics.csv"))
+    if not csv_files:
+        logger.warning("No metrics.csv found in %s", logs_dir)
+        return None
+
+    frames = []
+    for csv_file in csv_files:
+        try:
+            metrics_df = pd.read_csv(csv_file)
+            if "epoch" not in metrics_df.columns:
+                continue
+            per_epoch = metrics_df.groupby("epoch").first().reset_index()
+            frames.append(per_epoch)
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to read %s", csv_file)
+            continue
+
+    if not frames:
+        return None
+
+    combined = pd.concat(frames, ignore_index=True).groupby("epoch").mean(numeric_only=True).reset_index()
+    logger.info("Loaded DNN epoch metrics: %d epochs from %d fold(s)", len(combined), len(frames))
+    return combined
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +266,11 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     p_xgb_val = m_val["prob_xgb"].to_numpy()
     p_dnn_val = m_val["prob_dnn"].to_numpy()
 
+    snvq_xgb_test = m_test["snvq_xgb"].to_numpy()
+    snvq_dnn_test = m_test["snvq_dnn"].to_numpy()
+    mqual_xgb_test = m_test["mqual_xgb"].to_numpy()
+    mqual_dnn_test = m_test["mqual_dnn"].to_numpy()
+
     report = {"plots": {}}
 
     # ---- 1. Executive summary ----
@@ -181,16 +282,16 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     ]:
         xm = _calc_metrics(y, p_xgb)
         dm = _calc_metrics(y, p_dnn)
-        for metric in ["auc", "aupr", "logloss"]:
-            delta = (dm[metric] - xm[metric]) if (dm[metric] is not None and xm[metric] is not None) else None
+        for metric in ["auc", "aupr", "logloss", "brier"]:
+            rel_imp = _relative_improvement(xm[metric], dm[metric], metric)
             summary_rows.append(
                 {
                     "split": split_name,
                     "metric": metric.upper(),
                     "xgb": _fmt(xm[metric]),
                     "dnn": _fmt(dm[metric]),
-                    "delta": _fmt(delta) if delta is not None else "N/A",
-                    "delta_class": _delta_class(delta, metric),
+                    "rel_imp": _fmt(rel_imp, 1) if rel_imp is not None else "N/A",
+                    "rel_imp_class": _improvement_class(rel_imp),
                 }
             )
     report["summary"] = summary_rows
@@ -266,66 +367,173 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     fig.tight_layout()
     report["plots"]["pr"] = _fig_to_b64(fig)
 
-    # ---- 5. Score distribution ----
-    logger.info("Generating score distributions")
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    for ax, model_name, probs in [
-        (axes[0], "XGBoost", p_xgb_test),
-        (axes[1], "DNN", p_dnn_test),
-    ]:
-        tp_mask = y_test == 1
-        ax.hist(probs[tp_mask], bins=100, alpha=0.6, label="TP", color=COLOR_BETTER, density=True)
-        ax.hist(probs[~tp_mask], bins=100, alpha=0.6, label="FP", color=COLOR_WORSE, density=True)
-        ax.set_xlabel("Predicted Probability")
-        ax.set_ylabel("Density")
-        ax.set_title(f"Score Distribution — {model_name} (Test)")
-        ax.legend(fontsize=10)
-        ax.grid(visible=True, alpha=0.3)
+    # ---- 5. Score distribution (SNVQ / Phred-scaled) ----
+    logger.info("Generating score distributions (SNVQ from parquet)")
+    tp_mask_global = y_test == 1
+    all_snvq = np.concatenate([snvq_xgb_test, snvq_dnn_test])
+    all_snvq_finite = all_snvq[np.isfinite(all_snvq)]
+    snvq_xlim = float(np.percentile(all_snvq_finite, 99.5)) if len(all_snvq_finite) > 0 else 100.0
+    snvq_bins = np.linspace(0, snvq_xlim, 100)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for snvq, model, ls in [(snvq_xgb_test, "XGB", "-"), (snvq_dnn_test, "DNN", "--")]:
+        ax.hist(
+            snvq[tp_mask_global],
+            bins=snvq_bins,
+            density=True,
+            histtype="step",
+            color=COLOR_BETTER,
+            linestyle=ls,
+            lw=1.5,
+            label=f"{model} TP",
+        )
+        ax.hist(
+            snvq[~tp_mask_global],
+            bins=snvq_bins,
+            density=True,
+            histtype="step",
+            color=COLOR_WORSE,
+            linestyle=ls,
+            lw=1.5,
+            label=f"{model} FP",
+        )
+    ax.set_xlabel("SNVQ (Phred-scaled)")
+    ax.set_ylabel("Density")
+    ax.set_title("SNVQ Distribution — Test Set (solid=XGB, dashed=DNN)")
+    ax.set_yscale("log")
+    ax.set_xlim(0, snvq_xlim)
+    ax.legend(fontsize=10)
+    ax.grid(visible=True, alpha=0.3)
     fig.tight_layout()
     report["plots"]["score_dist"] = _fig_to_b64(fig)
 
-    # ---- 6. Calibration ----
-    logger.info("Generating calibration curves")
-    fig, ax = plt.subplots(1, 1, figsize=(8, 7))
+    # ---- 6. Calibration + SNVQ-MQUAL mapping ----
+    logger.info("Generating calibration & SNVQ-MQUAL mapping")
+    fig, (ax_cal, ax_lut, ax_hist) = plt.subplots(
+        3,
+        1,
+        figsize=(9, 14),
+        gridspec_kw={"height_ratios": [3, 2, 1]},
+    )
+
     for model_name, probs, color in [("XGBoost", p_xgb_test, COLOR_XGB), ("DNN", p_dnn_test, COLOR_DNN)]:
         prob_true, prob_pred = calibration_curve(y_test, probs, n_bins=20, strategy="uniform")
         ece = float(np.mean(np.abs(prob_true - prob_pred)))
-        ax.plot(prob_pred, prob_true, "o-", color=color, lw=2, label=f"{model_name} (ECE={ece:.4f})")
-    ax.plot([0, 1], [0, 1], "k--", lw=1, alpha=0.4)
-    ax.set_xlabel("Mean Predicted Probability")
-    ax.set_ylabel("Fraction of Positives")
-    ax.set_title("Calibration Curve — Test Set")
-    ax.legend(fontsize=11)
-    ax.grid(visible=True, alpha=0.3)
+        ax_cal.plot(prob_pred, prob_true, "o-", color=color, lw=2, label=f"{model_name} (ECE={ece:.4f})")
+    ax_cal.plot([0, 1], [0, 1], "k--", lw=1, alpha=0.4)
+    ax_cal.set_xlabel("Mean Predicted Probability")
+    ax_cal.set_ylabel("Fraction of Positives")
+    ax_cal.set_title("Calibration Curve — Test Set")
+    ax_cal.legend(fontsize=11)
+    ax_cal.grid(visible=True, alpha=0.3)
+
+    for meta, model, color, ls in [
+        (xgb_meta, "XGB", COLOR_XGB, "-"),
+        (dnn_meta, "DNN", COLOR_DNN, "--"),
+    ]:
+        lut = meta.get("quality_recalibration_table")
+        if lut is not None and len(lut) == _LUT_PAIR_LEN:
+            x_lut, y_lut = np.array(lut[0]), np.array(lut[1])
+            ax_lut.plot(x_lut, y_lut, color=color, linestyle=ls, lw=2, label=f"{model}: MQUAL → SNVQ")
+    ax_lut_twin = ax_lut.twinx()
+    all_mq = np.concatenate([mqual_xgb_test, mqual_dnn_test])
+    all_mq_fin = all_mq[np.isfinite(all_mq)]
+    mq_max = float(np.percentile(all_mq_fin, 99.5)) if len(all_mq_fin) > 0 else 100.0
+    lut_bins = np.linspace(0, mq_max, 80)
+    for mqual_arr, model, ls in [(mqual_xgb_test, "XGB", "-"), (mqual_dnn_test, "DNN", "--")]:
+        mq_fin = mqual_arr[np.isfinite(mqual_arr)]
+        ax_lut_twin.hist(
+            mq_fin,
+            bins=lut_bins,
+            density=True,
+            histtype="step",
+            color="gray",
+            linestyle=ls,
+            lw=0.8,
+            alpha=0.5,
+            label=f"{model} MQUAL dist",
+        )
+    ax_lut.set_xlabel("MQUAL")
+    ax_lut.set_ylabel("SNVQ")
+    ax_lut.set_xlim(0, mq_max)
+    ax_lut.set_title("MQUAL → SNVQ Mapping (solid=XGB, dashed=DNN)")
+    ax_lut.legend(loc="upper left", fontsize=9)
+    ax_lut_twin.set_ylabel("Density")
+    ax_lut_twin.legend(loc="upper right", fontsize=8)
+    ax_lut.grid(visible=True, alpha=0.3)
+
+    prob_bins = np.linspace(0, 1, 80)
+    ax_hist.hist(
+        p_xgb_test,
+        bins=prob_bins,
+        density=True,
+        histtype="step",
+        color=COLOR_XGB,
+        linestyle="-",
+        lw=1.5,
+        label="XGBoost",
+    )
+    ax_hist.hist(
+        p_dnn_test, bins=prob_bins, density=True, histtype="step", color=COLOR_DNN, linestyle="--", lw=1.5, label="DNN"
+    )
+    ax_hist.set_xlabel("Predicted Probability")
+    ax_hist.set_ylabel("Density")
+    ax_hist.set_yscale("log")
+    ax_hist.legend(fontsize=9)
+    ax_hist.grid(visible=True, alpha=0.3)
     fig.tight_layout()
     report["plots"]["calibration"] = _fig_to_b64(fig)
 
-    # ---- 7. Quality score distribution ----
+    # ---- 7. Quality score distribution (MQUAL from parquet) ----
     logger.info("Computing quality score distributions")
     percentiles = [5, 10, 25, 50, 75, 90, 95]
     qual_rows = []
-    for model_name, probs in [("XGBoost", p_xgb_test), ("DNN", p_dnn_test)]:
-        mqual = -10 * np.log10(np.clip(1 - probs, 1e-10, 1))
+    for model_name, mqual_arr in [("XGBoost", mqual_xgb_test), ("DNN", mqual_dnn_test)]:
         for lbl_name, mask in [("TP", y_test == 1), ("FP", y_test == 0)]:
-            vals = mqual[mask]
+            vals = mqual_arr[mask]
+            vals = vals[np.isfinite(vals)]
             row = {"model": model_name, "label": lbl_name}
             for p in percentiles:
-                row[f"p{p}"] = _fmt(float(np.percentile(vals, p)), 1)
+                row[f"p{p}"] = _fmt(float(np.percentile(vals, p)), 1) if len(vals) > 0 else "N/A"
             qual_rows.append(row)
     report["quality_percentiles"] = qual_rows
 
-    fig, ax = plt.subplots(1, 1, figsize=(10, 5))
-    for model_name, probs, color in [("XGBoost", p_xgb_test, COLOR_XGB), ("DNN", p_dnn_test, COLOR_DNN)]:
-        mqual = -10 * np.log10(np.clip(1 - probs, 1e-10, 1))
-        tp_q = mqual[y_test == 1]
-        fp_q = mqual[y_test == 0]
-        ax.hist(tp_q, bins=100, alpha=0.4, label=f"{model_name} TP", color=color, density=True)
-        ax.hist(fp_q, bins=100, alpha=0.2, label=f"{model_name} FP", color=color, density=True, linestyle="--")
+    all_mqual = np.concatenate([mqual_xgb_test, mqual_dnn_test])
+    all_mqual_finite = all_mqual[np.isfinite(all_mqual)]
+    mqual_xlim = float(np.percentile(all_mqual_finite, 99.5)) if len(all_mqual_finite) > 0 else 100.0
+    mqual_bins = np.linspace(0, mqual_xlim, 100)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for mqual_arr, model, ls in [(mqual_xgb_test, "XGB", "-"), (mqual_dnn_test, "DNN", "--")]:
+        fin = np.isfinite(mqual_arr)
+        tp_q = mqual_arr[fin & (y_test == 1)]
+        fp_q = mqual_arr[fin & (y_test == 0)]
+        ax.hist(
+            tp_q,
+            bins=mqual_bins,
+            density=True,
+            histtype="step",
+            color=COLOR_BETTER,
+            linestyle=ls,
+            lw=1.5,
+            label=f"{model} TP",
+        )
+        ax.hist(
+            fp_q,
+            bins=mqual_bins,
+            density=True,
+            histtype="step",
+            color=COLOR_WORSE,
+            linestyle=ls,
+            lw=1.5,
+            label=f"{model} FP",
+        )
     ax.set_xlabel("MQUAL (Phred-scaled)")
     ax.set_ylabel("Density")
-    ax.set_title("Quality Score Distribution — Test Set")
-    ax.set_xlim(0, 40)
-    ax.legend(fontsize=9)
+    ax.set_title("Quality Score Distribution — Test Set (solid=XGB, dashed=DNN)")
+    ax.set_yscale("log")
+    ax.set_xlim(0, mqual_xlim)
+    ax.legend(fontsize=10)
     ax.grid(visible=True, alpha=0.3)
     fig.tight_layout()
     report["plots"]["quality_dist"] = _fig_to_b64(fig)
@@ -359,26 +567,30 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
             axes[1, 0].legend()
             axes[1, 0].grid(visible=True, alpha=0.3)
 
-    dnn_runtime = dnn_meta.get("training_runtime_metrics", [])
-    if dnn_runtime:
-        epochs = [r["epoch"] for r in dnn_runtime]
-        axes[0, 1].plot(epochs, [r["train_auc"] for r in dnn_runtime], color=COLOR_DNN, alpha=0.4, lw=1, label="Train")
-        axes[0, 1].plot(epochs, [r["val_auc"] for r in dnn_runtime], color=COLOR_DNN, lw=2, label="Val")
-        axes[0, 1].set_xlabel("Epoch")
-        axes[0, 1].set_ylabel("AUC")
-        axes[0, 1].set_title("DNN — AUC")
-        axes[0, 1].legend()
-        axes[0, 1].grid(visible=True, alpha=0.3)
+    dnn_epoch_metrics = _load_dnn_epoch_metrics(dnn_meta)
+    if dnn_epoch_metrics is not None and not dnn_epoch_metrics.empty:
+        epochs = dnn_epoch_metrics["epoch"].to_numpy()
+        if "val_auc" in dnn_epoch_metrics.columns:
+            if "train_auc" in dnn_epoch_metrics.columns:
+                axes[0, 1].plot(epochs, dnn_epoch_metrics["train_auc"], color=COLOR_DNN, alpha=0.4, lw=1, label="Train")
+            axes[0, 1].plot(epochs, dnn_epoch_metrics["val_auc"], color=COLOR_DNN, lw=2, label="Val")
+            axes[0, 1].set_xlabel("Epoch")
+            axes[0, 1].set_ylabel("AUC")
+            axes[0, 1].set_title("DNN — AUC")
+            axes[0, 1].legend()
+            axes[0, 1].grid(visible=True, alpha=0.3)
 
-        axes[1, 1].plot(
-            epochs, [r["train_logloss"] for r in dnn_runtime], color=COLOR_DNN, alpha=0.4, lw=1, label="Train"
-        )
-        axes[1, 1].plot(epochs, [r["val_logloss"] for r in dnn_runtime], color=COLOR_DNN, lw=2, label="Val")
-        axes[1, 1].set_xlabel("Epoch")
-        axes[1, 1].set_ylabel("Logloss")
-        axes[1, 1].set_title("DNN — Logloss")
-        axes[1, 1].legend()
-        axes[1, 1].grid(visible=True, alpha=0.3)
+        if "val_loss" in dnn_epoch_metrics.columns:
+            if "train_loss" in dnn_epoch_metrics.columns:
+                axes[1, 1].plot(
+                    epochs, dnn_epoch_metrics["train_loss"], color=COLOR_DNN, alpha=0.4, lw=1, label="Train"
+                )
+            axes[1, 1].plot(epochs, dnn_epoch_metrics["val_loss"], color=COLOR_DNN, lw=2, label="Val")
+            axes[1, 1].set_xlabel("Epoch")
+            axes[1, 1].set_ylabel("Loss")
+            axes[1, 1].set_title("DNN — Loss")
+            axes[1, 1].legend()
+            axes[1, 1].grid(visible=True, alpha=0.3)
 
     fig.suptitle("Training Progress", fontsize=14, y=1.01)
     fig.tight_layout()
@@ -429,20 +641,20 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
         auc_d = _safe_auc(yc, pd_c)
         aupr_x = _safe_aupr(yc, px_c)
         aupr_d = _safe_aupr(yc, pd_c)
-        delta_auc = (auc_d - auc_x) if (auc_d is not None and auc_x is not None) else None
-        delta_aupr = (aupr_d - aupr_x) if (aupr_d is not None and aupr_x is not None) else None
+        ri_auc = _relative_improvement(auc_x, auc_d, "auc")
+        ri_aupr = _relative_improvement(aupr_x, aupr_d, "aupr")
         chrom_rows.append(
             {
                 "chrom": chrom,
                 "n": int(mask_c.sum()),
                 "auc_xgb": _fmt(auc_x),
                 "auc_dnn": _fmt(auc_d),
-                "delta_auc": _fmt(delta_auc),
-                "delta_auc_class": _delta_class(delta_auc, "auc"),
+                "ri_auc": _fmt(ri_auc, 1) if ri_auc is not None else "N/A",
+                "ri_auc_class": _improvement_class(ri_auc),
                 "aupr_xgb": _fmt(aupr_x),
                 "aupr_dnn": _fmt(aupr_d),
-                "delta_aupr": _fmt(delta_aupr),
-                "delta_aupr_class": _delta_class(delta_aupr, "aupr"),
+                "ri_aupr": _fmt(ri_aupr, 1) if ri_aupr is not None else "N/A",
+                "ri_aupr_class": _improvement_class(ri_aupr),
             }
         )
     report["per_chrom"] = chrom_rows
@@ -498,6 +710,53 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
         },
     }
 
+    # ---- 12. SNVQ threshold recall ----
+    logger.info("Computing SNVQ threshold recall")
+    n_tp_test = int(y_test.sum())
+    tp_mask_test = y_test == 1
+
+    median_snvq_xgb = float(np.median(snvq_xgb_test[tp_mask_test]))
+    median_snvq_dnn = float(np.median(snvq_dnn_test[tp_mask_test]))
+
+    snvq_recall_rows = []
+    for thr in SNVQ_THRESHOLDS:
+        recall_xgb = float(np.sum((snvq_xgb_test >= thr) & tp_mask_test)) / n_tp_test if n_tp_test > 0 else 0
+        recall_dnn = float(np.sum((snvq_dnn_test >= thr) & tp_mask_test)) / n_tp_test if n_tp_test > 0 else 0
+        ri = _relative_improvement(recall_xgb, recall_dnn, "auc")
+        n_xgb = int(np.sum((snvq_xgb_test >= thr) & tp_mask_test))
+        n_dnn = int(np.sum((snvq_dnn_test >= thr) & tp_mask_test))
+        snvq_recall_rows.append(
+            {
+                "threshold": thr,
+                "recall_xgb": _fmt(recall_xgb),
+                "recall_dnn": _fmt(recall_dnn),
+                "n_xgb": f"{n_xgb:,}",
+                "n_dnn": f"{n_dnn:,}",
+                "ri": _fmt(ri, 1) if ri is not None else "N/A",
+                "ri_class": _improvement_class(ri),
+            }
+        )
+    report["snvq_recall"] = {
+        "rows": snvq_recall_rows,
+        "median_snvq_xgb": _fmt(median_snvq_xgb, 1),
+        "median_snvq_dnn": _fmt(median_snvq_dnn, 1),
+        "n_tp": f"{n_tp_test:,}",
+    }
+
+    # ---- 12b. SNVQ vs ppmSeq tags ----
+    logger.info("Computing SNVQ vs ppmSeq tag heatmaps")
+    report["snvq_tags"] = _compute_snvq_vs_ppmseq_tags(m_test, tp_mask_test, snvq_xgb_test, snvq_dnn_test)
+
+    # Section 14 (SNVQ-MQUAL mapping) is now embedded in Section 6 above
+
+    # ---- 15. Logit histogram ----
+    logger.info("Generating logit histogram")
+    report["plots"]["logit_hist"] = _compute_logit_histogram(m_test, y_test)
+
+    # ---- 16. SNVQ histogram by mixed status ----
+    logger.info("Generating SNVQ histogram by mixed status")
+    report["plots"]["snvq_mixed_hist"] = _compute_snvq_mixed_histogram(m_test, y_test, snvq_xgb_test, snvq_dnn_test)
+
     # ---- 13. Error analysis ----
     report["error_analysis"] = _compute_error_analysis(m_test, y_test)
 
@@ -526,7 +785,7 @@ def _sliced_auc(df: pd.DataFrame, y: np.ndarray, col: str, values: list | None =
         auc_d = _safe_auc(yi, df.loc[mask, "prob_dnn"].to_numpy())
         aupr_x = _safe_aupr(yi, df.loc[mask, "prob_xgb"].to_numpy())
         aupr_d = _safe_aupr(yi, df.loc[mask, "prob_dnn"].to_numpy())
-        delta = (auc_d - auc_x) if (auc_d is not None and auc_x is not None) else None
+        ri_auc = _relative_improvement(auc_x, auc_d, "auc")
         rows.append(
             {
                 "value": str(val) if val != "" else "(empty)",
@@ -535,8 +794,8 @@ def _sliced_auc(df: pd.DataFrame, y: np.ndarray, col: str, values: list | None =
                 "auc_dnn": auc_d,
                 "aupr_xgb": aupr_x,
                 "aupr_dnn": aupr_d,
-                "delta_auc": delta,
-                "delta_class": _delta_class(delta, "auc"),
+                "ri_auc": ri_auc,
+                "ri_class": _improvement_class(ri_auc),
             }
         )
     return rows
@@ -561,15 +820,15 @@ def _sliced_auc_numeric_bins(df: pd.DataFrame, y: np.ndarray, col: str, n_bins: 
             continue
         auc_x = _safe_auc(yi, df.loc[mask, "prob_xgb"].to_numpy())
         auc_d = _safe_auc(yi, df.loc[mask, "prob_dnn"].to_numpy())
-        delta = (auc_d - auc_x) if (auc_d is not None and auc_x is not None) else None
+        ri_auc = _relative_improvement(auc_x, auc_d, "auc")
         rows.append(
             {
                 "value": str(interval),
                 "n": n,
                 "auc_xgb": auc_x,
                 "auc_dnn": auc_d,
-                "delta_auc": delta,
-                "delta_class": _delta_class(delta, "auc"),
+                "ri_auc": ri_auc,
+                "ri_class": _improvement_class(ri_auc),
             }
         )
     return rows
@@ -622,7 +881,7 @@ def _make_trinuc_heatmap(test_df: pd.DataFrame, y: np.ndarray) -> tuple[str, lis
     prev_bases = sorted({t[0] for t in trinucs if len(t) == TRINUC_LEN})
     next_bases = sorted({t[2] for t in trinucs if len(t) == TRINUC_LEN})
 
-    delta_map = {r["value"]: r["delta_auc"] for r in rows if r["delta_auc"] is not None}
+    delta_map = {r["value"]: r["ri_auc"] for r in rows if r["ri_auc"] is not None}
     matrix = np.full((len(prev_bases) * len(bases), len(next_bases)), np.nan)
     y_labels = []
     for i, pb in enumerate(prev_bases):
@@ -642,8 +901,8 @@ def _make_trinuc_heatmap(test_df: pd.DataFrame, y: np.ndarray) -> tuple[str, lis
     ax.set_yticklabels(y_labels, fontsize=8)
     ax.set_xlabel("Next Base")
     ax.set_ylabel("Prev + Ref Base")
-    ax.set_title("Delta AUC (DNN - XGB) by Trinucleotide Context")
-    plt.colorbar(im, ax=ax, label="Delta AUC (green = DNN better)", shrink=0.6)
+    ax.set_title("Relative Improvement % (DNN vs XGB) by Trinucleotide Context")
+    plt.colorbar(im, ax=ax, label="% gap closed (green = DNN better)", shrink=0.6)
     fig.tight_layout()
     return _fig_to_b64(fig), rows
 
@@ -688,6 +947,222 @@ def _compute_error_agreement(df: pd.DataFrame, y: np.ndarray, threshold: float =
         "categories": categories,
         "plot": _fig_to_b64(fig),
     }
+
+
+def _compute_snvq_vs_ppmseq_tags(  # noqa: PLR0915
+    m_test: pd.DataFrame,
+    tp_mask: np.ndarray,
+    snvq_xgb: np.ndarray,
+    snvq_dnn: np.ndarray,
+) -> dict:
+    """Compute median SNVQ per ppmSeq start/end tag combination for both models."""
+    result: dict = {}
+    df_tp = m_test.loc[tp_mask].copy()
+
+    st_col = "st" if "st" in df_tp.columns else None
+    et_col = "et" if "et" in df_tp.columns else None
+    if st_col is None or et_col is None:
+        logger.warning("ppmSeq tag columns (st, et) not found — skipping SNVQ vs tags section")
+        return result
+
+    df_tp["snvq_xgb"] = snvq_xgb[tp_mask]
+    df_tp["snvq_dnn"] = snvq_dnn[tp_mask]
+    df_tp[st_col] = df_tp[st_col].astype(str).replace({"": "(empty)", "nan": "(empty)"})
+    df_tp[et_col] = df_tp[et_col].astype(str).replace({"": "(empty)", "nan": "(empty)"})
+
+    xgb_pivot = df_tp.pivot_table(index=st_col, columns=et_col, values="snvq_xgb", aggfunc="median", dropna=False)
+    dnn_pivot = df_tp.pivot_table(index=st_col, columns=et_col, values="snvq_dnn", aggfunc="median", dropna=False)
+    count_pivot = df_tp.pivot_table(index=st_col, columns=et_col, values="snvq_xgb", aggfunc="count", dropna=False)
+
+    preferred_order = ["MIXED", "MINUS", "PLUS", "(empty)"]
+    all_st_raw = set(xgb_pivot.index) | set(dnn_pivot.index)
+    all_et_raw = set(xgb_pivot.columns) | set(dnn_pivot.columns)
+    all_st = [t for t in preferred_order if t in all_st_raw] + sorted(all_st_raw - set(preferred_order))
+    all_et = [t for t in preferred_order if t in all_et_raw] + sorted(all_et_raw - set(preferred_order))
+    xgb_pivot = xgb_pivot.reindex(index=all_st, columns=all_et)
+    dnn_pivot = dnn_pivot.reindex(index=all_st, columns=all_et)
+    count_pivot = count_pivot.reindex(index=all_st, columns=all_et).fillna(0)
+
+    delta_pivot = dnn_pivot - xgb_pivot
+
+    pct_pivot = (count_pivot / count_pivot.to_numpy().sum()) * 100
+
+    def _annot_table(val_df, pct_df):
+        """Build combined annotation: value [pct%]."""
+        annot = val_df.copy().astype(object)
+        for r in annot.index:
+            for c in annot.columns:
+                v = val_df.loc[r, c]
+                p = pct_df.loc[r, c]
+                if pd.isna(v):
+                    annot.loc[r, c] = ""
+                else:
+                    annot.loc[r, c] = f"{v:.1f}\n[{p:.1f}%]"
+        return annot
+
+    fig, axes = plt.subplots(1, 3, figsize=(30, 10))
+
+    for ax, pivot, annot_piv, title, cmap in [
+        (axes[0], xgb_pivot, _annot_table(xgb_pivot, pct_pivot), "XGBoost — Median SNVQ", "inferno"),
+        (axes[1], dnn_pivot, _annot_table(dnn_pivot, pct_pivot), "DNN — Median SNVQ", "inferno"),
+    ]:
+        sns.heatmap(
+            pivot,
+            annot=annot_piv,
+            fmt="",
+            cmap=cmap,
+            cbar=True,
+            linewidths=1,
+            linecolor="black",
+            annot_kws={"size": 11},
+            square=True,
+            ax=ax,
+        )
+        ax.set_xlabel("ppmSeq End Tag (et)")
+        ax.set_ylabel("ppmSeq Start Tag (st)")
+        ax.set_title(title)
+        ax.tick_params(axis="x", rotation=45)
+        ax.tick_params(axis="y", rotation=0)
+
+    vmax = np.nanmax(np.abs(delta_pivot.to_numpy()))
+    if vmax == 0 or np.isnan(vmax):
+        vmax = 1.0
+    sns.heatmap(
+        delta_pivot,
+        annot=True,
+        fmt=".1f",
+        cmap="RdYlGn",
+        center=0,
+        vmin=-vmax,
+        vmax=vmax,
+        cbar=True,
+        linewidths=1,
+        linecolor="black",
+        annot_kws={"size": 10},
+        square=True,
+        ax=axes[2],
+    )
+    axes[2].set_xlabel("ppmSeq End Tag (et)")
+    axes[2].set_ylabel("ppmSeq Start Tag (st)")
+    axes[2].set_title("Delta Median SNVQ (DNN - XGBoost)")
+    axes[2].tick_params(axis="x", rotation=45)
+    axes[2].tick_params(axis="y", rotation=0)
+
+    fig.suptitle("SNVQ vs ppmSeq Start/End Tags (TP reads only, Test Set)", fontsize=14, y=1.02)
+    fig.tight_layout()
+    result["plot"] = _fig_to_b64(fig)
+
+    return result
+
+
+def _compute_logit_histogram(m_test: pd.DataFrame, y_test: np.ndarray) -> str:
+    """Plot logit histograms split by FP / TP mixed / TP non-mixed for both models."""
+    from ugbio_srsnv.srsnv_utils import prob_to_logit  # noqa: PLC0415
+
+    tp_mask = y_test == 1
+    st_vals = m_test["st"].astype(str).to_numpy() if "st" in m_test.columns else np.full(len(y_test), "")
+    et_vals = m_test["et"].astype(str).to_numpy() if "et" in m_test.columns else np.full(len(y_test), "")
+    is_mixed = (st_vals == "MIXED") & (et_vals == "MIXED")
+
+    fp_mask = ~tp_mask
+    tp_mixed_mask = tp_mask & is_mixed
+    tp_nonmixed_mask = tp_mask & ~is_mixed
+
+    logits_xgb = prob_to_logit(m_test["prob_xgb"].to_numpy(), phred=True)
+    logits_dnn = prob_to_logit(m_test["prob_dnn"].to_numpy(), phred=True)
+
+    all_finite = np.concatenate([logits_xgb, logits_dnn])
+    all_finite = all_finite[np.isfinite(all_finite)]
+    xlim_lo = float(np.percentile(all_finite, 0.5)) if len(all_finite) > 0 else -10
+    xlim_hi = float(np.percentile(all_finite, 99.5)) if len(all_finite) > 0 else 50
+    shared_bins = np.linspace(xlim_lo, xlim_hi, 100)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    categories = [
+        (fp_mask, "FP", "tab:blue"),
+        (tp_mixed_mask, "TP mixed", "green"),
+        (tp_nonmixed_mask, "TP non-mixed", "red"),
+    ]
+    for logits, model, ls in [(logits_xgb, "XGB", "-"), (logits_dnn, "DNN", "--")]:
+        for mask, cat_label, clr in categories:
+            vals = logits[mask]
+            vals = vals[np.isfinite(vals)]
+            if len(vals) > 0:
+                ax.hist(
+                    vals,
+                    bins=shared_bins,
+                    density=True,
+                    histtype="step",
+                    color=clr,
+                    linestyle=ls,
+                    lw=1.5,
+                    label=f"{model}: {cat_label}",
+                )
+
+    ax.set_xlabel("ML Logit (Phred scale)")
+    ax.set_ylabel("Density")
+    ax.set_title("Logit Distribution — Test Set (solid=XGB, dashed=DNN)")
+    ax.set_xlim(xlim_lo, xlim_hi)
+    ax.legend(fontsize=9, ncol=2)
+    ax.grid(visible=True, alpha=0.3)
+    fig.tight_layout()
+    return _fig_to_b64(fig)
+
+
+def _compute_snvq_mixed_histogram(
+    m_test: pd.DataFrame,
+    y_test: np.ndarray,
+    snvq_xgb: np.ndarray,
+    snvq_dnn: np.ndarray,
+) -> str:
+    """Plot SNVQ distribution for TP reads split by mixed status for both models."""
+    tp_mask = y_test == 1
+    st_vals = m_test["st"].astype(str).to_numpy() if "st" in m_test.columns else np.full(len(y_test), "")
+    et_vals = m_test["et"].astype(str).to_numpy() if "et" in m_test.columns else np.full(len(y_test), "")
+
+    is_mixed_start = st_vals == "MIXED"
+    is_mixed_end = et_vals == "MIXED"
+
+    nonmixed = tp_mask & ~is_mixed_start & ~is_mixed_end
+    one_end = tp_mask & (is_mixed_start ^ is_mixed_end)
+    both_ends = tp_mask & is_mixed_start & is_mixed_end
+
+    all_snvq_tp = np.concatenate([snvq_xgb[tp_mask], snvq_dnn[tp_mask]])
+    all_finite = all_snvq_tp[np.isfinite(all_snvq_tp)]
+    xlim_max = float(np.percentile(all_finite, 99.5)) if len(all_finite) > 0 else 100.0
+    shared_bins = np.linspace(0, xlim_max, 100)
+
+    categories = [
+        (nonmixed, "non-mixed", "red"),
+        (one_end, "mixed, one end", "blue"),
+        (both_ends, "mixed, both ends", "green"),
+    ]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for snvq, model, ls in [(snvq_xgb, "XGB", "-"), (snvq_dnn, "DNN", "--")]:
+        for mask, cat_label, clr in categories:
+            vals = snvq[mask]
+            vals = vals[np.isfinite(vals)]
+            if len(vals) > 0:
+                ax.hist(
+                    vals,
+                    bins=shared_bins,
+                    density=True,
+                    histtype="step",
+                    color=clr,
+                    linestyle=ls,
+                    lw=1.5,
+                    label=f"{model}: {cat_label}",
+                )
+
+    ax.set_xlabel("SNVQ")
+    ax.set_ylabel("Density")
+    ax.set_title("SNVQ by Mixed Status — TP reads, Test Set (solid=XGB, dashed=DNN)")
+    ax.set_xlim(0, xlim_max)
+    ax.legend(fontsize=9, ncol=2)
+    ax.grid(visible=True, alpha=0.3)
+    fig.tight_layout()
+    return _fig_to_b64(fig)
 
 
 def _compute_error_analysis(m_test: pd.DataFrame, y_test: np.ndarray) -> dict:
@@ -769,11 +1244,15 @@ def _compute_error_analysis(m_test: pd.DataFrame, y_test: np.ndarray) -> dict:
     ]:
         if key in ea and isinstance(ea[key], list):
             for r in ea[key]:
-                for f_key in ["auc_xgb", "auc_dnn", "aupr_xgb", "aupr_dnn", "delta_auc"]:
+                for f_key in ["auc_xgb", "auc_dnn", "aupr_xgb", "aupr_dnn"]:
                     if f_key in r and r[f_key] is not None and not isinstance(r[f_key], str):
                         r[f_key] = _fmt(r[f_key])
                     elif f_key in r and r[f_key] is None:
                         r[f_key] = "N/A"
+                if "ri_auc" in r and r["ri_auc"] is not None and not isinstance(r["ri_auc"], str):
+                    r["ri_auc"] = _fmt(r["ri_auc"], 1)
+                elif "ri_auc" in r and r["ri_auc"] is None:
+                    r["ri_auc"] = "N/A"
 
     return ea
 

@@ -1,0 +1,15 @@
+{
+    "tree_method": "hist",
+    "enable_categorical": true,
+    "n_estimators": 2000,
+    "eta": 0.13,
+    "max_depth": 18,
+    "subsample": 0.8,
+    "colsample_bytree": 0.87,
+    "gamma": 0.18,
+    "min_child_weight": 9,
+    "reg_lambda": 19.5,
+    "early_stopping_rounds": 20,
+    "objective": "binary:logistic",
+    "eval_metric": ["auc", "logloss"]
+}

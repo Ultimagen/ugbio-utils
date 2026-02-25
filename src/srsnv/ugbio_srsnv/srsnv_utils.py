@@ -28,6 +28,7 @@ import polars as pl
 import xgboost as xgb
 from pandas.api.types import CategoricalDtype
 from sklearn.metrics import roc_auc_score
+from ugbio_core.logger import logger as _logger
 from ugbio_ppmseq.ppmSeq_utils import (
     MAX_TOTAL_HMER_LENGTHS_IN_LOOPS,
     MIN_TOTAL_HMER_LENGTHS_IN_LOOPS,
@@ -59,7 +60,180 @@ ET_FILLNA = "et_fillna"  # end tag with NAs filled in
 FLOW_ORDER = ["T", "G", "C", "A"]
 
 MAX_PHRED = 100  # Default maximum Phred score for clipping
-EPS = 10 ** (-MAX_PHRED / 10)  # Small epsilon value for numerical stability in log calculations
+EPS = 1e-12  # Small epsilon value for numerical stability in log calculations
+
+
+def _probability_rescaling(
+    prob: np.ndarray,
+    sample_prior: float,
+    target_prior: float,
+    eps: float = EPS,
+) -> np.ndarray:
+    """
+    Rescale probabilities from the training prior to the real-data prior.
+
+    Formula (odds space, no logs):
+        odds_row       =  p / (1-p)
+        odds_sample    =  π_s / (1-π_s)
+        odds_target    =  π_t / (1-π_t)
+        odds_rescaled  =  odds_row * (odds_target / odds_sample)
+        p_rescaled     =  odds_rescaled / (1.0 + odds_rescaled)
+
+    The error component is divided by 3 (one substitution type out of three).
+    """
+    sample_prior = np.clip(sample_prior, eps, 1 - eps)
+    target_prior = np.clip(target_prior, eps, 1 - eps)
+
+    odds_sample = sample_prior / (1.0 - sample_prior)
+    odds_target = target_prior / (1.0 - target_prior)
+
+    p = np.clip(prob, eps, 1 - eps)
+    odds_row = p / (1.0 - p)
+
+    odds_rescaled = odds_row * (odds_target / odds_sample)
+    p_rescaled = odds_rescaled / (1.0 + odds_rescaled)
+    p_rescaled_snvq = 1 - ((1 - p_rescaled) / 3)
+
+    return p_rescaled_snvq
+
+
+def recalibrate_snvq(  # noqa: PLR0913
+    mqual: np.ndarray,
+    labels: np.ndarray,
+    *,
+    pos_stats: dict,
+    neg_stats: dict,
+    raw_stats: dict,
+    mean_coverage: float,
+    n_bases_in_region: int,
+    lut_mask: np.ndarray | None = None,
+    prior_train_error: float | None = None,
+    fp_mqual_cutoff_quantile: float = 1 - 1e-6,
+    max_qual: float = MAX_PHRED,
+    eps: float = EPS,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Build an MQUAL-to-SNVQ lookup table and return recalibrated SNVQ values.
+
+    This replicates the counting-based recalibration from ``SRSNVTrainer`` so
+    that any model (XGBoost **or** DNN) can produce calibrated SNVQ scores
+    given the same external statistics.
+
+    Parameters
+    ----------
+    mqual : np.ndarray
+        Raw Phred-scaled quality scores (``-10 * log10(1-p)``).
+    labels : np.ndarray
+        Binary labels (True/1 = true positive, False/0 = false positive).
+    pos_stats, neg_stats, raw_stats : dict
+        Filtering-stats JSON dicts for positive, negative, and raw featuremap.
+    mean_coverage : float
+        Mean sequencing coverage.
+    n_bases_in_region : int
+        Total bases covered by the training regions interval list.
+    lut_mask : np.ndarray | None
+        Boolean mask selecting which samples to use for building the LUT.
+        When *None*, all samples are used.  In single-model mode, pass a
+        mask that selects only validation data to avoid training-set
+        overfitting bias.
+    prior_train_error : float | None
+        Fraction of negatives in the training set.  When *None*, it is
+        estimated from *labels*.
+    fp_mqual_cutoff_quantile : float
+        Upper quantile of the FP MQUAL distribution used to cap the LUT
+        x-axis.
+    max_qual : float
+        Maximum Phred score for clipping.
+    eps : float
+        Small epsilon for numerical stability.
+
+    Returns
+    -------
+    snvq : np.ndarray
+        Recalibrated SNVQ scores (same length as *mqual*).
+    x_lut : np.ndarray
+        MQUAL values of the lookup table.
+    y_lut : np.ndarray
+        Corresponding SNVQ values of the lookup table.
+    """
+
+    labels_bool = np.asarray(labels, dtype=bool)
+
+    # --- priors -----------------------------------------------------------
+    def _last_non_downsample_rows(stats: dict) -> int:
+        for f in reversed(stats["filters"]):
+            if f.get("type") != "downsample":
+                return f["rows"]
+        raise ValueError("stats JSON has no non-downsample filter entry")
+
+    pos_after_filter = _last_non_downsample_rows(pos_stats)
+    neg_after_filter = _last_non_downsample_rows(neg_stats)
+    raw_after_filter = _last_non_downsample_rows(raw_stats)
+
+    prior_real_error = max(eps, min(1.0 - eps, neg_after_filter / (neg_after_filter + pos_after_filter)))
+
+    if prior_train_error is None:
+        n_neg = int((~labels_bool).sum())
+        prior_train_error = n_neg / len(labels_bool) if len(labels_bool) > 0 else 0.5
+
+    # --- snvq_prefactor ---------------------------------------------------
+    filtering_ratio = get_filter_ratio(pos_stats["filters"], numerator_type="label", denominator_type="raw")
+    effective_bases_covered = mean_coverage * n_bases_in_region * filtering_ratio
+    snvq_prefactor = raw_after_filter / effective_bases_covered
+
+    _logger.info(
+        "recalibrate_snvq: mean_coverage=%.1f, n_bases_in_region=%d, "
+        "filtering_ratio=%.6f, raw_after_filter=%d, effective_bases_covered=%.0f, "
+        "snvq_prefactor=%.6f, prior_train_error=%.6f, prior_real_error=%.6f",
+        mean_coverage,
+        n_bases_in_region,
+        filtering_ratio,
+        raw_after_filter,
+        effective_bases_covered,
+        snvq_prefactor,
+        prior_train_error,
+        prior_real_error,
+    )
+
+    # --- counting-based lookup table (same logic as SRSNVTrainer) ---------
+    mqual_clipped = np.clip(mqual, 0.0, max_qual)
+
+    if lut_mask is not None:
+        mqual_for_lut = mqual_clipped[lut_mask]
+        labels_for_lut = labels_bool[lut_mask]
+        _logger.info(
+            "recalibrate_snvq: using lut_mask (%d / %d samples for LUT)",
+            int(lut_mask.sum()),
+            len(lut_mask),
+        )
+    else:
+        mqual_for_lut = mqual_clipped
+        labels_for_lut = labels_bool
+
+    lut_df = pd.DataFrame({"label": labels_for_lut, "MQUAL": mqual_for_lut})
+    mqual_fp_max = lut_df.loc[lut_df["label"].astype(int) == 0, "MQUAL"].quantile(fp_mqual_cutoff_quantile)
+
+    max_int = int(np.floor(mqual_fp_max))
+    x_lut = np.arange(0, max_int + 1, dtype=float)
+
+    mqual_t = lut_df.loc[lut_df["label"], "MQUAL"]
+    mqual_f = lut_df.loc[~lut_df["label"], "MQUAL"]
+
+    tpr = np.array([(mqual_t >= m_).mean() for m_ in x_lut])
+    fpr = np.array([(mqual_f >= m_).mean() for m_ in x_lut])
+
+    y_lut = -10 * np.log10(np.clip(snvq_prefactor * (fpr / tpr), eps, 1))
+
+    # --- interpolate SNVQ for every sample --------------------------------
+    snvq = np.interp(mqual_clipped, x_lut, y_lut)
+
+    _logger.info(
+        "recalibrate_snvq: LUT has %d points, SNVQ range [%.2f, %.2f]",
+        len(x_lut),
+        y_lut.min(),
+        y_lut.max(),
+    )
+
+    return snvq, x_lut, y_lut
 
 
 def seq2key_common(Seq, start=0, *, flowOrder=FLOW_ORDER, iterative=True):  # noqa: N803
