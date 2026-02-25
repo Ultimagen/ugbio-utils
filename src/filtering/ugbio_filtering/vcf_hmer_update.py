@@ -648,16 +648,14 @@ def _check_somatic_variants(
     this_loc_variants = vcf_file.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
     for var in this_loc_variants:
         if var.qual > rec.qual:
-            size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]])[0]
-            # Check if variant changes hmer size and is same type as record
-            if size != ref_hmer_size:
-                var_type = _get_variant_type(len(var.ref), len(var.alts[0]))
-                if var_type == rec_type:
-                    logger.debug(
-                        f"Found conflicting {var_type} at {var.contig}:{var.pos} "
-                        f"({var.ref}→{var.alts[0]}) with QUAL={var.qual} > {rec.qual}"
-                    )
-                    return True
+            # Check if variant is same type as record (insertion/deletion)
+            var_type = _get_variant_type(len(var.ref), len(var.alts[0]))
+            if var_type == rec_type:
+                logger.debug(
+                    f"Found conflicting {var_type} at {var.contig}:{var.pos} "
+                    f"({var.ref}→{var.alts[0]}) with QUAL={var.qual} > {rec.qual}"
+                )
+                return True
     return False
 
 
@@ -687,16 +685,14 @@ def _check_germline_variants(
             # Skip if it's the same variant as the somatic record
             if var.ref == rec.ref and var.alts == rec.alts and var.pos == rec.pos:
                 continue
-            size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]])[0]
-            # Check if variant changes hmer size and is same type as record
-            if size != ref_hmer_size:
-                var_type = _get_variant_type(len(var.ref), len(var.alts[0]))
-                if var_type == rec_type:
-                    logger.debug(
-                        f"Found conflicting germline {var_type} at {var.contig}:{var.pos} "
-                        f"({var.ref}→{var.alts[0]}) matching record type"
-                    )
-                    return True
+            # Check if variant is same type as record (insertion/deletion)
+            var_type = _get_variant_type(len(var.ref), len(var.alts[0]))
+            if var_type == rec_type:
+                logger.debug(
+                    f"Found conflicting germline {var_type} at {var.contig}:{var.pos} "
+                    f"({var.ref}→{var.alts[0]}) matching record type"
+                )
+                return True
     return False
 
 
@@ -704,7 +700,7 @@ def _check_other_variants(variant_context: dict, config: dict) -> int:
     """Check if record has conflicting variants in the region.
 
     Detects if there are alternative variants (somatic with higher QUAL or germline with PASS)
-    that change the hmer size AND are of the same type (insertion/deletion) as the record.
+    that are of the same type (insertion/deletion) as the record.
 
     Args:
         variant_context: Dictionary with keys:
