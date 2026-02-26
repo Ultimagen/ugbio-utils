@@ -2,6 +2,7 @@ import argparse
 import logging
 from array import array
 from bisect import bisect_right
+from collections import Counter
 from math import log
 
 import numpy as np
@@ -170,7 +171,6 @@ def get_max_nuc(nuc_list: list[str]) -> str | None:
     """
     if not nuc_list:
         return None
-    from collections import Counter
 
     return Counter(nuc_list).most_common(1)[0][0]
 
@@ -444,7 +444,7 @@ def fill_direction_results_with_error() -> dict:
         "tumor_ml_mixture",
         "tot_score",
     ]
-    return {field: -1 for field in fields}
+    return dict.fromkeys(fields, -1)
 
 
 def get_hmer_qualities_from_pileup_element(  # noqa: C901
@@ -521,6 +521,44 @@ def get_hmer_qualities_from_pileup_element(  # noqa: C901
     return hnuc, hmer_probs, not pe.alignment.is_reverse, cycle, is_edge, not pe.alignment.is_duplicate
 
 
+def _add_verbose_headers(f, base_fields):
+    """Add verbose headers to VCF file.
+
+    Args:
+        f: pysam.VariantFile
+        base_fields: List of base field tuples
+    """
+    # Add non-prefixed fields (for backward compatibility)
+    for name, number, typ, desc in base_fields:
+        if name not in f.header.info:
+            f.header.info.add(name, number=number, type=typ, description=desc)
+
+    # Add prefixed fields for each direction
+    for prefix in DIRECTION_PREFIXES:
+        for name, number, typ, desc in base_fields:
+            field_name = f"{prefix}{name}"
+            if field_name not in f.header.info:
+                f.header.info.add(field_name, number=number, type=typ, description=desc)
+
+    # Add debugging fields (verbose mode only)
+    if "ref_hmer_size" not in f.header.info:
+        f.header.info.add("ref_hmer_size", number=1, type="Integer", description="Reference hmer size")
+    if "other_variant" not in f.header.info:
+        f.header.info.add("other_variant", number=1, type="Integer", description="Other variant")
+
+
+def _add_minimal_headers(f):
+    """Add minimal headers to VCF file.
+
+    Args:
+        f: pysam.VariantFile
+    """
+    if "mixture" not in f.header.info:
+        f.header.info.add("mixture", number="A", type="Float", description="Average mixture across directions")
+    if "tot_score" not in f.header.info:
+        f.header.info.add("tot_score", number="A", type="Float", description="Combined ML score")
+
+
 def _setup_vcf_headers(vcf_file, verbose):
     """Setup VCF headers and return file handle.
 
@@ -554,23 +592,9 @@ def _setup_vcf_headers(vcf_file, verbose):
     ]
 
     if verbose:
-        # Verbose mode: Add all fields
-        # Add non-prefixed fields (for backward compatibility)
-        for name, number, typ, desc in base_fields:
-            f.header.info.add(name, number=number, type=typ, description=desc)
-
-        # Add prefixed fields for each direction
-        for prefix in DIRECTION_PREFIXES:
-            for name, number, typ, desc in base_fields:
-                f.header.info.add(f"{prefix}{name}", number=number, type=typ, description=desc)
-
-        # Add debugging fields (verbose mode only)
-        f.header.info.add("ref_hmer_size", number=1, type="Integer", description="Reference hmer size")
-        f.header.info.add("other_variant", number=1, type="Integer", description="Other variant")
+        _add_verbose_headers(f, base_fields)
     else:
-        # Minimal mode: Only add mixture and tot_score
-        f.header.info.add("mixture", number="A", type="Float", description="Average mixture across directions")
-        f.header.info.add("tot_score", number="A", type="Float", description="Combined ML score")
+        _add_minimal_headers(f)
 
     return f
 
@@ -628,10 +652,125 @@ def _get_variant_type(ref_len: int, alt_len: int) -> str:
         return "snp"
 
 
+def _calculate_reference_hmer_at_position(ref_fasta: object, chrom: str, pos: int, indel_nuc: str = None) -> int:
+    """Calculate hmer size at a position in the true reference (no variants).
+
+    For h-indels, counts the hmer of the indel nucleotide **after** the insertion point.
+    This gives the size of the homopolymer that the indel will be inserted into/removed from.
+
+    Args:
+        ref_fasta: Reference FASTA file
+        chrom: Chromosome
+        pos: Position (0-based) - the position where the indel starts
+        indel_nuc: The nucleotide being inserted (for insertions) or affected (for deletions)
+
+    Returns:
+        Hmer size in the reference, or -1 if error
+    """
+    try:
+        # For h-indels, we want to count the nucleotides AFTER the insertion/deletion point
+        # e.g., for insertion C→CT at position pos, count T's starting from pos+1
+        if indel_nuc:
+            # Start counting from the position after the indel point
+            nuc = indel_nuc
+
+            # Count the indel nucleotide starting from position+1
+            # For insertion: counts nucleotides AFTER insertion point
+            # For deletion: counts nucleotides starting from deleted position
+            size = 0
+            check_pos = pos + 1
+            while check_pos < len(ref_fasta[chrom]) and str(ref_fasta[chrom][check_pos]) == nuc:
+                size += 1
+                check_pos += 1
+
+            return size
+        else:
+            # Non-indel case: count at the exact position
+            context_size = SEQUENCE_CONTEXT_SIZE
+            start_pos = max(0, pos - context_size)
+            end_pos = pos + 1 + context_size
+
+            seq = str(ref_fasta[chrom][start_pos:end_pos])
+            rel_pos = pos - start_pos
+            nuc = seq[rel_pos]
+
+            start = rel_pos
+            while start > 0 and seq[start - 1] == nuc:
+                start -= 1
+
+            end = rel_pos + 1
+            while end < len(seq) and seq[end] == nuc:
+                end += 1
+
+            size = end - start
+            return size
+    except (IndexError, TypeError):
+        return -1
+
+
+def _calculate_hmer_size_after_variant(
+    ref_fasta: object, chrom: str, var_pos: int, ref_allele: str, alt_allele: str
+) -> int:
+    """Calculate hmer size at variant position after variant is applied.
+
+    Args:
+        ref_fasta: Reference FASTA file
+        chrom: Chromosome
+        var_pos: Variant position (0-based)
+        ref_allele: Reference allele
+        alt_allele: Alternate allele
+
+    Returns:
+        Hmer size at variant position after variant applied, or -1 if error
+    """
+    try:
+        # Build sequence context around variant
+        context_size = SEQUENCE_CONTEXT_SIZE
+        start_pos = max(0, var_pos - context_size)
+        end_pos = var_pos + len(ref_allele) + context_size
+
+        # Get reference sequence before variant
+        ref_before = str(ref_fasta[chrom][start_pos:var_pos])
+        # Get reference sequence after variant
+        ref_after = str(ref_fasta[chrom][var_pos + len(ref_allele) : end_pos])
+
+        # Build sequence with variant applied
+        seq = ref_before + alt_allele + ref_after
+
+        # Find hmer at the alt_allele position
+        alt_pos = len(ref_before)
+
+        # Get the nucleotide we're checking
+        if alt_allele:  # If alt is not empty
+            nuc = alt_allele[0]
+        elif ref_after:
+            nuc = ref_after[0]
+        else:
+            return -1
+
+        # Count hmer backwards from position
+        start = alt_pos
+        while start > 0 and seq[start - 1] == nuc:
+            start -= 1
+
+        # Count hmer forwards from position
+        end = alt_pos + len(alt_allele)
+        while end < len(seq) and seq[end] == nuc:
+            end += 1
+
+        size = end - start
+        return size
+    except (IndexError, TypeError):
+        return -1
+
+
 def _check_somatic_variants(
     rec, ref_fasta: object, chrom: str, pos: int, ref_hmer_size: int, vcf_file, rec_type: str
 ) -> bool:
     """Check for conflicting variants in somatic VCF with higher QUAL.
+
+    For insertions: skip if alternative variant is also an insertion (hmer size increases)
+    For deletions: skip if alternative variant is also a deletion (hmer size decreases)
 
     Args:
         rec: VCF record
@@ -645,14 +784,41 @@ def _check_somatic_variants(
     Returns:
         True if conflicting variant found, False otherwise
     """
+    # Calculate the TRUE reference hmer at the record position (without any variants)
+    # For h-indels, calculate the hmer of the nucleotide being inserted/deleted
+    # pysam uses 1-based positions, so convert to 0-based for the function
+    indel_nuc = None
+    if rec_type == "insertion":
+        # For insertion, the indel nucleotide is the extra nucleotide in the alt
+        # e.g., C→CT means we're inserting T, so indel_nuc = 'T'
+        indel_nuc = rec.alts[0][len(rec.ref) :]
+        if len(indel_nuc) > 0:
+            indel_nuc = indel_nuc[0]  # Use first nucleotide of the insertion
+    elif rec_type == "deletion":
+        # For deletion, indel_nuc is the DELETED nucleotide
+        # e.g., GC→G means C is deleted, so indel_nuc = REF[len(ALT):][0]
+        deleted_nuc = rec.ref[len(rec.alts[0]) :]
+        indel_nuc = deleted_nuc[0] if deleted_nuc else None
+
+    true_ref_hmer = _calculate_reference_hmer_at_position(ref_fasta, chrom, rec.pos - 1, indel_nuc)
+
     this_loc_variants = vcf_file.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
     for var in this_loc_variants:
         if var.qual > rec.qual:
-            # Check if variant is same type as record (insertion/deletion)
-            var_type = _get_variant_type(len(var.ref), len(var.alts[0]))
-            if var_type == rec_type:
+            # Convert pysam 1-based position to 0-based for the function
+            size = _calculate_hmer_size_after_variant(ref_fasta, chrom, var.pos - 1, var.ref, var.alts[0])
+            # Check if variant has same direction as record, comparing against TRUE reference hmer
+            if rec_type == "insertion" and size > true_ref_hmer:
+                # Alternative is also insertion
                 logger.debug(
-                    f"Found conflicting {var_type} at {var.contig}:{var.pos} "
+                    f"Found conflicting insertion at {var.contig}:{var.pos} "
+                    f"({var.ref}→{var.alts[0]}) with QUAL={var.qual} > {rec.qual}"
+                )
+                return True
+            elif rec_type == "deletion" and size < true_ref_hmer:
+                # Alternative is also deletion
+                logger.debug(
+                    f"Found conflicting deletion at {var.contig}:{var.pos} "
                     f"({var.ref}→{var.alts[0]}) with QUAL={var.qual} > {rec.qual}"
                 )
                 return True
@@ -663,6 +829,9 @@ def _check_germline_variants(
     rec, ref_fasta: object, chrom: str, pos: int, ref_hmer_size: int, tumor_germline_handle, rec_type: str
 ) -> bool:
     """Check for conflicting variants in germline VCF with PASS filter.
+
+    For insertions: skip if alternative variant is also an insertion (hmer size increases)
+    For deletions: skip if alternative variant is also a deletion (hmer size decreases)
 
     Args:
         rec: VCF record
@@ -679,19 +848,42 @@ def _check_germline_variants(
     if not tumor_germline_handle:
         return False
 
+    # Calculate the TRUE reference hmer at the record position (without any variants)
+    # For h-indels, calculate the hmer of the nucleotide being inserted/deleted
+    # pysam uses 1-based positions, so convert to 0-based for the function
+    indel_nuc = None
+    if rec_type == "insertion":
+        # For insertion, the indel nucleotide is the extra nucleotide in the alt
+        # e.g., C→CT means we're inserting T, so indel_nuc = 'T'
+        indel_nuc = rec.alts[0][len(rec.ref) :]
+        if len(indel_nuc) > 0:
+            indel_nuc = indel_nuc[0]  # Use first nucleotide of the insertion
+    elif rec_type == "deletion":
+        # For deletion, indel_nuc is the DELETED nucleotide
+        # e.g., GC→G means C is deleted, so indel_nuc = REF[len(ALT):][0]
+        deleted_nuc = rec.ref[len(rec.alts[0]) :]
+        indel_nuc = deleted_nuc[0] if deleted_nuc else None
+
+    true_ref_hmer = _calculate_reference_hmer_at_position(ref_fasta, chrom, rec.pos - 1, indel_nuc)
+
     germline_tumor_vars = tumor_germline_handle.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
     for var in germline_tumor_vars:
         if is_pass(var):
             # Skip if it's the same variant as the somatic record
             if var.ref == rec.ref and var.alts == rec.alts and var.pos == rec.pos:
                 continue
-            # Check if variant is same type as record (insertion/deletion)
-            var_type = _get_variant_type(len(var.ref), len(var.alts[0]))
-            if var_type == rec_type:
+            # Convert pysam 1-based position to 0-based for the function
+            size = _calculate_hmer_size_after_variant(ref_fasta, chrom, var.pos - 1, var.ref, var.alts[0])
+            # Check if variant has same direction as record, comparing against TRUE reference hmer
+            if rec_type == "insertion" and size > true_ref_hmer:
+                # Alternative is also insertion
                 logger.debug(
-                    f"Found conflicting germline {var_type} at {var.contig}:{var.pos} "
-                    f"({var.ref}→{var.alts[0]}) matching record type"
+                    f"Found conflicting germline insertion at {var.contig}:{var.pos} ({var.ref}→{var.alts[0]})"
                 )
+                return True
+            elif rec_type == "deletion" and size < true_ref_hmer:
+                # Alternative is also deletion
+                logger.debug(f"Found conflicting germline deletion at {var.contig}:{var.pos} ({var.ref}→{var.alts[0]})")
                 return True
     return False
 
@@ -699,8 +891,8 @@ def _check_germline_variants(
 def _check_other_variants(variant_context: dict, config: dict) -> int:
     """Check if record has conflicting variants in the region.
 
-    Detects if there are alternative variants (somatic with higher QUAL or germline with PASS)
-    that are of the same type (insertion/deletion) as the record.
+    For insertions: skip test if there's an alternative insertion (higher QUAL somatic or PASS germline)
+    For deletions: skip test if there's an alternative deletion (higher QUAL somatic or PASS germline)
 
     Args:
         variant_context: Dictionary with keys:
@@ -1698,7 +1890,7 @@ def main() -> None:
     tool and calls the variant_calling function with the parsed arguments.
     """
     parser = argparse.ArgumentParser(
-        description="Update VCF records with hmer-based variant calling " "scores and quality metrics.",
+        description="Update VCF records with hmer-based variant calling scores and quality metrics.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Example usage:\n"
         "  python vcf_hmer_update.py input.vcf normal_pileup.txt "
