@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -30,7 +31,6 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import xgboost as xgb
-from ugbio_core.bed_utils import BedUtils
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import (
@@ -166,6 +166,45 @@ def _parse_interval_list_file(path: str) -> tuple[dict[str, int], list[str]]:
         raise ValueError(f"No @SQ headers found in interval list file {path}")
 
     return chrom_sizes, chroms_in_data
+
+
+def _count_bases_in_interval_list(path: str) -> int:
+    """
+    Count the total number of bases in an interval_list file.
+
+    Interval_list files use 1-based closed coordinates, so the
+    number of bases in each interval is ``end - start + 1``.
+
+    Parameters
+    ----------
+    path : str
+        Path to the interval_list file.
+
+    Returns
+    -------
+    int
+        Total number of bases across all intervals.
+
+    Raises
+    ------
+    FileNotFoundError
+        If *path* does not exist.
+    """
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"File not found: {path}")
+
+    n_bases = 0
+    number_of_fields = 3  # chrom, start, end
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            if line.startswith(("@", "#")) or not line.strip():
+                continue
+            fields = line.rstrip().split("\t")
+            if len(fields) < number_of_fields:
+                continue
+            # interval_list is 1-based, closed: bases = end - start + 1
+            n_bases += int(fields[2]) - int(fields[1]) + 1
+    return n_bases
 
 
 def _parse_model_params(mp: str | None) -> dict[str, Any]:
@@ -385,7 +424,7 @@ class SRSNVTrainer:
         self.mean_coverage = args.mean_coverage
         if self.mean_coverage is None:
             raise ValueError("--mean-coverage is required if not present in stats-file JSON")
-        self.n_bases_in_region = BedUtils().count_bases_in_bed_file(args.training_regions)
+        self.n_bases_in_region = _count_bases_in_interval_list(args.training_regions)
         logger.debug("Bases in training regions: %d", self.n_bases_in_region)
 
         # sanity-check: identical “quality/region” filters in the two random-sample stats files
