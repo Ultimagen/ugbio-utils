@@ -29,7 +29,6 @@ import xgboost as xgb
 from pandas.api.types import CategoricalDtype
 from sklearn.metrics import roc_auc_score
 from ugbio_core.logger import logger
-from ugbio_core.vcfbed.variant_annotation import get_cycle_skip_dataframe
 from ugbio_featuremap.filter_dataframe import (
     KEY_NAME,
     KEY_TYPE,
@@ -1090,21 +1089,3 @@ def add_is_mixed_to_featuremap_df(
     tags_handler.fill_nan_tags()
     tags_handler.add_is_mixed_to_featuremap_df()
     return tags_handler.featuremap_df
-
-
-def add_is_cycle_skip_to_featuremap_df(data_df: pd.DataFrame, flow_order: str = "TGCA") -> pd.DataFrame:
-    """Add is_cycle_skip column to featuremap_df"""
-    logger.info("Adding is_cycle_skip column to featuremap")
-    data_df = (
-        data_df.assign(
-            ref_motif=data_df[PREV1].astype(str) + data_df[REF].astype(str) + data_df[NEXT1].astype(str),
-            alt_motif=data_df[PREV1].astype(str) + data_df[ALT].astype(str) + data_df[NEXT1].astype(str),
-        )
-        .merge(
-            get_cycle_skip_dataframe(flow_order)[[IS_CYCLE_SKIP]],
-            left_on=["ref_motif", "alt_motif"],
-            right_index=True,
-        )
-        .drop(columns=["ref_motif", "alt_motif"])
-    )
-    return data_df

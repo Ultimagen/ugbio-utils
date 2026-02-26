@@ -29,11 +29,13 @@ import pandas as pd
 import polars as pl
 import xgboost as xgb
 from ugbio_core.logger import logger
+from ugbio_core.vcfbed.variant_annotation import get_cycle_skip_dataframe
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
 from ugbio_srsnv.srsnv_plotting_utils import SRSNVReport, create_srsnv_report_html
 from ugbio_srsnv.srsnv_utils import (
-    add_is_cycle_skip_to_featuremap_df,
+    ET,
+    ST,
     add_is_mixed_to_featuremap_df,
 )
 
@@ -68,6 +70,49 @@ EDIT_DIST_FEATURES = ["EDIST", "HAMDIST", "HAMDIST_FILT"]
 pl.enable_string_cache()
 
 
+def compute_is_cycle_skip_column(data_df: pd.DataFrame, flow_order: str = "TGCA") -> pd.Series:
+    """
+    Compute the is_cycle_skip column for a featuremap dataframe.
+
+    This function calculates whether each variant represents a cycle skip
+    based on the reference and alternate motifs (prev1 + ref/alt + next1).
+
+    Parameters
+    ----------
+    data_df : pd.DataFrame
+        DataFrame containing X_PREV1, REF, ALT, and X_NEXT1 columns.
+    flow_order : str, optional
+        Flow order string (default: "TGCA").
+
+    Returns
+    -------
+    pd.Series
+        Boolean series indicating cycle skip status for each variant.
+    """
+    logger.info("Computing is_cycle_skip column")
+
+    ref_motif = data_df[X_PREV1].astype(str) + data_df[REF].astype(str) + data_df[X_NEXT1].astype(str)
+    alt_motif = data_df[X_PREV1].astype(str) + data_df[ALT].astype(str) + data_df[X_NEXT1].astype(str)
+
+    cycle_skip_df = get_cycle_skip_dataframe(flow_order)[[IS_CYCLE_SKIP]]
+
+    motif_df = pd.DataFrame(
+        {"ref_motif": ref_motif, "alt_motif": alt_motif},
+        index=data_df.index,
+    )
+
+    result = motif_df.merge(
+        cycle_skip_df,
+        left_on=["ref_motif", "alt_motif"],
+        right_index=True,
+        how="left",
+    )[IS_CYCLE_SKIP]
+
+    result.index = data_df.index
+
+    return result
+
+
 def prepare_report(  # noqa: C901 PLR0915
     featuremap_df: str,  # Path to the featuremap dataframe parquet file
     srsnv_metadata: str,  # Path to the srsnv_metadata JSON file
@@ -75,6 +120,8 @@ def prepare_report(  # noqa: C901 PLR0915
     basename: str = "",
     models_prefix: str | None = None,
     random_seed: int | None = None,
+    *,
+    use_gpu_for_shap: bool = False,
 ) -> None:
     """
     Prepare the SNV report based on the provided featuremap dataframe and metadata.
@@ -86,6 +133,7 @@ def prepare_report(  # noqa: C901 PLR0915
         basename (str): Basename prefix for output files.
         models_prefix (str | None): Prefix for model JSON files.
         random_seed (int | None): Random seed for reproducibility.
+        use_gpu_for_shap (bool): Whether to use GPU for SHAP calculations if available.
     """
     logger.info("Preparing SNV report...")
 
@@ -183,8 +231,8 @@ def prepare_report(  # noqa: C901 PLR0915
     params["docker_image"] = user_meta.get("docker_image", None)
     params["pipeline_version"] = user_meta.get("pipeline_version", None)
     params["pre-filter"] = None
-    params["start_tag_col"] = "st"
-    params["end_tag_col"] = "et"
+    params["start_tag_col"] = ST
+    params["end_tag_col"] = ET
 
     # Add columns to featuremap_df
     data_df = add_is_mixed_to_featuremap_df(
@@ -192,7 +240,7 @@ def prepare_report(  # noqa: C901 PLR0915
         params["adapter_version"],
         params["categorical_features_names"],
     )
-    data_df = add_is_cycle_skip_to_featuremap_df(data_df)
+    data_df[IS_CYCLE_SKIP] = compute_is_cycle_skip_column(data_df)
 
     # Handle random seed
     rng = None
@@ -239,6 +287,7 @@ def prepare_report(  # noqa: C901 PLR0915
         statistics_json_file=statistics_json_file,
         srsnv_metadata=srsnv_metadata,
         rng=rng,
+        use_gpu_for_shap=use_gpu_for_shap,
     )
 
     # Run the report generation
@@ -271,6 +320,7 @@ def _cli() -> argparse.Namespace:
     )
     ap.add_argument("--random-seed", type=int, default=None)
     ap.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    ap.add_argument("--use-gpu-for-shap", action="store_true", help="Use GPU for SHAP calculations if available")
 
     args = ap.parse_args()
     return args
@@ -291,6 +341,7 @@ def main() -> None:
         basename=args.basename,
         models_prefix=args.models_prefix,
         random_seed=args.random_seed,
+        use_gpu_for_shap=args.use_gpu_for_shap,
     )
 
 
