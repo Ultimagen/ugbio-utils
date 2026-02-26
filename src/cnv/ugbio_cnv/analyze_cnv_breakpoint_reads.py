@@ -513,7 +513,7 @@ def _collect_reads_from_region(
     int,
     list[int],
     list[int],
-    set[str],
+    set[tuple[str, str]],
     list[tuple[pysam.AlignedSegment, str]],
     dict[str, list[pysam.AlignedSegment]],
 ]:
@@ -530,7 +530,7 @@ def _collect_reads_from_region(
     deletion_reads = 0
     dup_insert_sizes: list[int] = []
     del_insert_sizes: list[int] = []
-    processed_reads: set[str] = set()
+    processed_reads: set[tuple[str, str]] = set()  # Track (read_name, RG) pairs
     supporting_reads: list[tuple[pysam.AlignedSegment, str]] = []
     supplementary_reads: dict[str, list[pysam.AlignedSegment]] = {}
 
@@ -543,10 +543,20 @@ def _collect_reads_from_region(
             if read.is_supplementary:
                 continue
 
-            if _should_skip_read(read) or read.query_name in processed_reads:
+            if _should_skip_read(read):
                 continue
 
-            processed_reads.add(str(read.query_name))
+            # Get RG tag BEFORE deduplication check
+            try:
+                rg = read.get_tag("RG")
+            except KeyError:
+                rg = "UNKNOWN"
+
+            # Track (read_name, RG) pair for proper deduplication
+            read_rg_key = (read.query_name, rg)
+            if read_rg_key in processed_reads:
+                continue
+            processed_reads.add(read_rg_key)
 
             duplication_reads, deletion_reads = _process_primary_read_for_evidence(
                 read,
