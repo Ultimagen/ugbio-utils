@@ -36,9 +36,12 @@ def test_tensorization_shapes() -> None:
     assert item["read_base_idx"].shape[0] == 300
     assert item["ref_base_idx"].shape[0] == 300
     assert item["t0_idx"].shape[0] == 300
-    assert item["x_num"].shape == (12, 300)
+    assert item["x_num"].shape == (9, 300)
     assert item["mask"].shape[0] == 300
     assert item["label"].item() == 1.0
+    assert "tm_idx" in item
+    assert "st_idx" in item
+    assert "et_idx" in item
     # focus one-hot is preserved before pad.
     assert float(item["x_num"][3, :6].sum().item()) == 1.0
     # softclip mask channel index=4 is preserved before pad.

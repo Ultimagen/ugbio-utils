@@ -15,8 +15,11 @@ def _make_fake_cache(n: int = 40, length: int = 300) -> dict:
         "read_base_idx": torch.zeros(n, length, dtype=torch.int16),
         "ref_base_idx": torch.zeros(n, length, dtype=torch.int16),
         "t0_idx": torch.zeros(n, length, dtype=torch.int16),
+        "tm_idx": torch.randint(0, 9, (n,), dtype=torch.int8),
+        "st_idx": torch.randint(0, 5, (n,), dtype=torch.int8),
+        "et_idx": torch.randint(0, 5, (n,), dtype=torch.int8),
         "x_num_pos": torch.randn(n, 5, length).to(dtype=torch.float16),
-        "x_num_const": torch.randn(n, 7).to(dtype=torch.float16),
+        "x_num_const": torch.randn(n, 4).to(dtype=torch.float16),
         "mask": torch.ones(n, length, dtype=torch.uint8),
         "label": torch.tensor([i % 2 for i in range(n)], dtype=torch.uint8),
         "split_id": torch.tensor(split_ids, dtype=torch.int8),
@@ -52,9 +55,13 @@ def test_compact_collate_fn() -> None:
     result = compact_collate_fn(batch_raw, cache, include_meta=False)
     bs = len(batch_raw)
     assert result["read_base_idx"].shape == (bs, 300)
-    assert result["x_num"].shape == (bs, 12, 300)
+    assert result["x_num"].shape == (bs, 9, 300)
     assert result["label"].dtype == torch.float32
     assert result["mask"].dtype == torch.float32
+    assert "tm_idx" in result
+    assert result["tm_idx"].shape == (bs,)
+    assert result["st_idx"].shape == (bs,)
+    assert result["et_idx"].shape == (bs,)
 
 
 def test_compact_collate_fn_with_meta() -> None:
@@ -86,7 +93,8 @@ def test_data_module_setup_and_dataloaders() -> None:
     batch = next(iter(train_loader))
     assert "read_base_idx" in batch
     assert "label" in batch
-    assert batch["x_num"].shape[1] == 12
+    assert batch["x_num"].shape[1] == 9
+    assert "tm_idx" in batch
 
     dm.setup("predict")
     pred_loader = dm.predict_dataloader()
@@ -96,12 +104,12 @@ def test_data_module_setup_and_dataloaders() -> None:
     assert "rn" in pred_batch
 
 
-def test_data_module_batch_size_cap() -> None:
+def test_data_module_no_batch_size_cap() -> None:
     cache = _make_fake_cache(20)
     dm = SRSNVDataModule(
         full_cache=cache,
         train_split_ids={0},
         val_split_ids={1},
-        train_batch_size=1024,
+        train_batch_size=4096,
     )
-    assert dm.train_batch_size <= 512
+    assert dm.train_batch_size == 4096

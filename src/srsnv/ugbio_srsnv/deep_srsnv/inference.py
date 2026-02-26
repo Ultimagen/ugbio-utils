@@ -66,16 +66,44 @@ def load_dnn_model_from_state_dict(
         metadata = json.load(f)
     encoders = metadata["encoders"]
 
+    channel_order = metadata.get("channel_order", [])
+    numeric_channels = len(channel_order) if channel_order else 9
+
     model = CNNReadClassifier(
         base_vocab_size=len(encoders["base_vocab"]),
         t0_vocab_size=len(encoders["t0_vocab"]),
-        numeric_channels=12,
+        numeric_channels=numeric_channels,
+        tm_vocab_size=len(encoders.get("tm_vocab", {})) or 1,
+        st_vocab_size=len(encoders.get("st_vocab", {})) or 1,
+        et_vocab_size=len(encoders.get("et_vocab", {})) or 1,
     )
     state = torch.load(str(state_dict_path), map_location=map_location or "cpu", weights_only=True)
     model.load_state_dict(state)
     model.eval()
     logger.info("Loaded DNN model from state dict: %s", state_dict_path)
     return model
+
+
+def _model_kwargs_from_metadata(metadata: dict) -> dict:
+    """Extract CNNReadClassifier constructor kwargs from metadata."""
+    encoders = metadata["encoders"]
+    channel_order = metadata.get("channel_order", [])
+    training_params = metadata.get("training_parameters", {})
+    return {
+        "base_vocab_size": len(encoders["base_vocab"]),
+        "t0_vocab_size": len(encoders["t0_vocab"]),
+        "numeric_channels": len(channel_order) if channel_order else 9,
+        "tm_vocab_size": len(encoders.get("tm_vocab", {})) or 1,
+        "st_vocab_size": len(encoders.get("st_vocab", {})) or 1,
+        "et_vocab_size": len(encoders.get("et_vocab", {})) or 1,
+        "hidden_channels": training_params.get("hidden_channels", 128),
+        "n_blocks": training_params.get("n_blocks", 6),
+        "base_embed_dim": training_params.get("base_embed_dim", 16),
+        "ref_embed_dim": training_params.get("base_embed_dim", 16),
+        "t0_embed_dim": training_params.get("t0_embed_dim", 16),
+        "cat_embed_dim": training_params.get("cat_embed_dim", 4),
+        "dropout": training_params.get("dropout", 0.3),
+    }
 
 
 def load_dnn_models_from_metadata(
@@ -112,18 +140,14 @@ def load_dnn_models_from_metadata(
 
     training_results = metadata.get("training_results", [])
     model_dir = Path(metadata_path).parent
-    encoders = metadata["encoders"]
+    model_kwargs = _model_kwargs_from_metadata(metadata)
 
     models = []
     for fold_result in training_results:
         fold_idx = fold_result["fold"]
         pt_path = model_dir / f"dnn_model_fold_{fold_idx}.pt"
         if pt_path.exists():
-            model = CNNReadClassifier(
-                base_vocab_size=len(encoders["base_vocab"]),
-                t0_vocab_size=len(encoders["t0_vocab"]),
-                numeric_channels=12,
-            )
+            model = CNNReadClassifier(**model_kwargs)
             state = torch.load(str(pt_path), map_location=map_location or "cpu", weights_only=True)
             model.load_state_dict(state)
             model.eval()

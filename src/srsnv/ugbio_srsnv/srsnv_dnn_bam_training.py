@@ -20,7 +20,7 @@ from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
 
 from ugbio_srsnv.deep_srsnv.bam_schema import discover_bam_schema
-from ugbio_srsnv.deep_srsnv.data_module import MAX_BATCH_SIZE, SRSNVDataModule
+from ugbio_srsnv.deep_srsnv.data_module import SRSNVDataModule
 from ugbio_srsnv.deep_srsnv.data_prep import (
     build_encoders_from_schema,
     build_tensor_cache,
@@ -80,11 +80,20 @@ def _cli() -> argparse.Namespace:  # noqa: PLR0915
     ap.add_argument("--eval-batch-size", type=int, default=None)
     ap.add_argument("--predict-batch-size", type=int, default=None)
     ap.add_argument("--learning-rate", type=float, default=1e-3)
+    ap.add_argument("--weight-decay", type=float, default=1e-4, help="Weight decay for AdamW optimizer")
     ap.add_argument("--random-seed", type=int, default=1)
     ap.add_argument("--length", type=int, default=300)
 
+    # Architecture
+    ap.add_argument("--hidden-channels", type=int, default=128, help="Hidden channels in CNN residual blocks")
+    ap.add_argument("--n-blocks", type=int, default=6, help="Number of residual blocks")
+    ap.add_argument("--base-embed-dim", type=int, default=16, help="Read/ref base embedding dimension")
+    ap.add_argument("--t0-embed-dim", type=int, default=16, help="T0 token embedding dimension")
+    ap.add_argument("--cat-embed-dim", type=int, default=4, help="Categorical (tm/st/et) embedding dimension")
+    ap.add_argument("--dropout", type=float, default=0.3, help="Dropout rate in classification head")
+
     # LR scheduler
-    ap.add_argument("--lr-scheduler", choices=LR_SCHEDULER_CHOICES, default="none")
+    ap.add_argument("--lr-scheduler", choices=LR_SCHEDULER_CHOICES, default="onecycle")
     ap.add_argument("--lr-warmup-epochs", type=int, default=1)
     ap.add_argument("--lr-min", type=float, default=1e-6)
     ap.add_argument("--lr-step-size", type=int, default=5)
@@ -461,7 +470,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         len(encoders.st_vocab),
         len(encoders.et_vocab),
     )
-    numeric_channels = 12
+    numeric_channels = 9
 
     # ── Preprocessing (unchanged) ──
     preprocess_t0 = time.perf_counter()
@@ -569,7 +578,18 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             base_vocab_size=len(encoders.base_vocab),
             t0_vocab_size=len(encoders.t0_vocab),
             numeric_channels=numeric_channels,
+            tm_vocab_size=len(encoders.tm_vocab),
+            st_vocab_size=len(encoders.st_vocab),
+            et_vocab_size=len(encoders.et_vocab),
+            base_embed_dim=args.base_embed_dim,
+            ref_embed_dim=args.base_embed_dim,
+            t0_embed_dim=args.t0_embed_dim,
+            cat_embed_dim=args.cat_embed_dim,
+            hidden_channels=args.hidden_channels,
+            n_blocks=args.n_blocks,
+            dropout=args.dropout,
             learning_rate=args.learning_rate,
+            weight_decay=args.weight_decay,
             lr_scheduler=args.lr_scheduler,
             lr_warmup_epochs=args.lr_warmup_epochs,
             lr_min=args.lr_min,
@@ -595,8 +615,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             tuner = Tuner(trainer)
             if args.auto_scale_batch_size:
                 tuner.scale_batch_size(lit_model, datamodule=dm, mode="power", max_trials=10)
-                dm.train_batch_size = min(dm.train_batch_size, MAX_BATCH_SIZE)
-                logger.info("Batch size finder result (capped at %d): %d", MAX_BATCH_SIZE, dm.train_batch_size)
+                logger.info("Batch size finder result: %d", dm.train_batch_size)
             if args.auto_lr_find:
                 lr_result = tuner.lr_find(lit_model, datamodule=dm)
                 if lr_result and lr_result.suggestion():
@@ -724,9 +743,6 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             "strand",
             "mapq",
             "rq",
-            "tm",
-            "st",
-            "et",
             "mixed",
         ],
         "training_results": training_results,
@@ -752,6 +768,13 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             "eval_batch_size": args.eval_batch_size,
             "predict_batch_size": args.predict_batch_size,
             "learning_rate": args.learning_rate,
+            "weight_decay": args.weight_decay,
+            "hidden_channels": args.hidden_channels,
+            "n_blocks": args.n_blocks,
+            "base_embed_dim": args.base_embed_dim,
+            "t0_embed_dim": args.t0_embed_dim,
+            "cat_embed_dim": args.cat_embed_dim,
+            "dropout": args.dropout,
             "lr_scheduler": args.lr_scheduler,
             "swa": args.swa,
             "swa_lr": args.swa_lr if args.swa else None,

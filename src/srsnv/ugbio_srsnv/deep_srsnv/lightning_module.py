@@ -28,6 +28,8 @@ class SRSNVLightningModule(lightning.LightningModule):
         Number of numeric input channels.
     learning_rate
         Peak learning rate for the optimizer.
+    weight_decay
+        Weight decay for AdamW optimizer.
     lr_scheduler
         LR scheduler type. One of ``LR_SCHEDULER_CHOICES``.
     lr_warmup_epochs
@@ -42,13 +44,14 @@ class SRSNVLightningModule(lightning.LightningModule):
         Patience for ``reduce_on_plateau`` scheduler.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         base_vocab_size: int,
         t0_vocab_size: int,
-        numeric_channels: int = 12,
+        numeric_channels: int = 9,
         learning_rate: float = 1e-3,
-        lr_scheduler: str = "none",
+        weight_decay: float = 1e-4,
+        lr_scheduler: str = "onecycle",
         lr_warmup_epochs: int = 1,
         lr_min: float = 1e-6,
         lr_step_size: int = 5,
@@ -81,6 +84,9 @@ class SRSNVLightningModule(lightning.LightningModule):
             t0_idx=batch["t0_idx"],
             x_num=batch["x_num"],
             mask=batch["mask"],
+            tm_idx=batch.get("tm_idx"),
+            st_idx=batch.get("st_idx"),
+            et_idx=batch.get("et_idx"),
         )
 
     def training_step(self, batch: dict, batch_idx: int) -> torch.Tensor:
@@ -145,7 +151,23 @@ class SRSNVLightningModule(lightning.LightningModule):
         return result
 
     def configure_optimizers(self) -> dict:
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.hparams.learning_rate)
+        decay_params = []
+        no_decay_params = []
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            if "bn" in name or "bias" in name or "_emb" in name:
+                no_decay_params.append(param)
+            else:
+                decay_params.append(param)
+
+        optimizer = torch.optim.AdamW(
+            [
+                {"params": decay_params, "weight_decay": self.hparams.weight_decay},
+                {"params": no_decay_params, "weight_decay": 0.0},
+            ],
+            lr=self.hparams.learning_rate,
+        )
         config: dict[str, Any] = {"optimizer": optimizer}
 
         scheduler_name = self.hparams.lr_scheduler

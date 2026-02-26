@@ -146,7 +146,7 @@ def _build_cache_key(
     chrom_to_fold: dict[str, int],
     tensor_length: int,
     batch_rows: int,
-    cache_version: int = 4,
+    cache_version: int = 5,
 ) -> str:
     payload = {
         "cache_version": cache_version,
@@ -564,12 +564,15 @@ def _process_rows_shard_to_tensors(
     )
     if not records:
         empty_chunk = {
-            "cache_format_version": 3,
+            "cache_format_version": 4,
             "read_base_idx": torch.zeros(0, tensor_length, dtype=torch.int16),
             "ref_base_idx": torch.zeros(0, tensor_length, dtype=torch.int16),
             "t0_idx": torch.zeros(0, tensor_length, dtype=torch.int16),
+            "tm_idx": torch.zeros(0, dtype=torch.int8),
+            "st_idx": torch.zeros(0, dtype=torch.int8),
+            "et_idx": torch.zeros(0, dtype=torch.int8),
             "x_num_pos": torch.zeros(0, 5, tensor_length, dtype=torch.float16),
-            "x_num_const": torch.zeros(0, 7, dtype=torch.float16),
+            "x_num_const": torch.zeros(0, 4, dtype=torch.float16),
             "mask": torch.zeros(0, tensor_length, dtype=torch.uint8),
             "label": torch.zeros(0, dtype=torch.uint8),
             "split_id": torch.zeros(0, dtype=torch.int8),
@@ -584,6 +587,9 @@ def _process_rows_shard_to_tensors(
         "read_base_idx": [],
         "ref_base_idx": [],
         "t0_idx": [],
+        "tm_idx": [],
+        "st_idx": [],
+        "et_idx": [],
         "x_num_pos": [],
         "x_num_const": [],
         "mask": [],
@@ -600,6 +606,9 @@ def _process_rows_shard_to_tensors(
         payload["read_base_idx"].append(item["read_base_idx"].to(dtype=torch.int16))
         payload["ref_base_idx"].append(item["ref_base_idx"].to(dtype=torch.int16))
         payload["t0_idx"].append(item["t0_idx"].to(dtype=torch.int16))
+        payload["tm_idx"].append(int(item["tm_idx"].item()))
+        payload["st_idx"].append(int(item["st_idx"].item()))
+        payload["et_idx"].append(int(item["et_idx"].item()))
         payload["x_num_pos"].append(x_num[:5].to(dtype=torch.float16))
         payload["x_num_const"].append(x_num[5:, 0].to(dtype=torch.float16))
         payload["mask"].append(item["mask"].to(dtype=torch.uint8))
@@ -615,10 +624,13 @@ def _process_rows_shard_to_tensors(
         payload["rn"].append(str(rec["rn"]))
 
     chunk = {
-        "cache_format_version": 3,
+        "cache_format_version": 4,
         "read_base_idx": torch.stack(payload["read_base_idx"], dim=0).to(dtype=torch.int16),
         "ref_base_idx": torch.stack(payload["ref_base_idx"], dim=0).to(dtype=torch.int16),
         "t0_idx": torch.stack(payload["t0_idx"], dim=0).to(dtype=torch.int16),
+        "tm_idx": torch.tensor(payload["tm_idx"], dtype=torch.int8),
+        "st_idx": torch.tensor(payload["st_idx"], dtype=torch.int8),
+        "et_idx": torch.tensor(payload["et_idx"], dtype=torch.int8),
         "x_num_pos": torch.stack(payload["x_num_pos"], dim=0).to(dtype=torch.float16),
         "x_num_const": torch.stack(payload["x_num_const"], dim=0).to(dtype=torch.float16),
         "mask": torch.stack(payload["mask"], dim=0).to(dtype=torch.uint8),
@@ -1065,15 +1077,11 @@ class DeepSRSNVDataset(Dataset):
         rq = float(r["rq"])
         mixed = float(r.get("mixed", 0))
 
-        # Repeated constant channels to fit the requested "image-like" representation.
         const = np.stack(
             [
                 np.full(self.length, strand, dtype=np.float32),
                 np.full(self.length, mapq, dtype=np.float32),
                 np.full(self.length, rq, dtype=np.float32),
-                np.full(self.length, float(tm_id), dtype=np.float32),
-                np.full(self.length, float(st_id), dtype=np.float32),
-                np.full(self.length, float(et_id), dtype=np.float32),
                 np.full(self.length, mixed, dtype=np.float32),
             ],
             axis=0,
@@ -1085,6 +1093,9 @@ class DeepSRSNVDataset(Dataset):
             "read_base_idx": torch.tensor(read_base_idx, dtype=torch.long),
             "ref_base_idx": torch.tensor(ref_base_idx, dtype=torch.long),
             "t0_idx": torch.tensor(t0_idx, dtype=torch.long),
+            "tm_idx": torch.tensor(tm_id, dtype=torch.long),
+            "st_idx": torch.tensor(st_id, dtype=torch.long),
+            "et_idx": torch.tensor(et_id, dtype=torch.long),
             "x_num": torch.tensor(x_num, dtype=torch.float32),
             "mask": torch.tensor(mask, dtype=torch.float32),
             "label": torch.tensor(r["label"], dtype=torch.float32),
@@ -1104,7 +1115,7 @@ def iter_tensor_cache_chunks(tensor_cache_path: str):
                 break
 
 
-def load_full_tensor_cache(tensor_cache_path: str) -> dict:
+def load_full_tensor_cache(tensor_cache_path: str) -> dict:  # noqa: PLR0915
     """Load entire tensor cache into memory in compact form.
 
     Keeps the on-disk dtypes (int16, float16, uint8, int8) to minimize RAM.
@@ -1114,6 +1125,9 @@ def load_full_tensor_cache(tensor_cache_path: str) -> dict:
     all_read_base_idx: list[torch.Tensor] = []
     all_ref_base_idx: list[torch.Tensor] = []
     all_t0_idx: list[torch.Tensor] = []
+    all_tm_idx: list[torch.Tensor] = []
+    all_st_idx: list[torch.Tensor] = []
+    all_et_idx: list[torch.Tensor] = []
     all_x_num_pos: list[torch.Tensor] = []
     all_x_num_const: list[torch.Tensor] = []
     all_mask: list[torch.Tensor] = []
@@ -1132,6 +1146,11 @@ def load_full_tensor_cache(tensor_cache_path: str) -> dict:
         all_mask.append(chunk["mask"])
         all_label.append(chunk["label"])
         all_split_id.append(chunk["split_id"])
+
+        if "tm_idx" in chunk:
+            all_tm_idx.append(chunk["tm_idx"])
+            all_st_idx.append(chunk["st_idx"])
+            all_et_idx.append(chunk["et_idx"])
 
         if "x_num" in chunk:
             x = chunk["x_num"]
@@ -1164,6 +1183,11 @@ def load_full_tensor_cache(tensor_cache_path: str) -> dict:
         "pos": np.concatenate(all_pos),
         "rn": all_rn,
     }
+    if all_tm_idx:
+        result["tm_idx"] = torch.cat(all_tm_idx, dim=0)
+        result["st_idx"] = torch.cat(all_st_idx, dim=0)
+        result["et_idx"] = torch.cat(all_et_idx, dim=0)
+
     n_rows = int(result["label"].shape[0])
     mem_bytes = sum(t.element_size() * t.nelement() for t in result.values() if isinstance(t, torch.Tensor))
     logger.info(

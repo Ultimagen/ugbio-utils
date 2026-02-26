@@ -6,8 +6,6 @@ import lightning
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-MAX_BATCH_SIZE = 512
-
 
 class TensorMapDataset(Dataset):
     """Map-style dataset backed by a shared compact cache via index indirection.
@@ -63,6 +61,10 @@ def compact_collate_fn(batch: list[tuple], cache: dict, *, include_meta: bool) -
         "label": cache["label"][idx].to(dtype=torch.float32),
         "fold_id": cache["split_id"][idx].to(dtype=torch.long),
     }
+    if "tm_idx" in cache:
+        result["tm_idx"] = cache["tm_idx"][idx].to(dtype=torch.long)
+        result["st_idx"] = cache["st_idx"][idx].to(dtype=torch.long)
+        result["et_idx"] = cache["et_idx"][idx].to(dtype=torch.long)
     if include_meta:
         result["chrom"] = list(chroms)
         result["pos"] = torch.from_numpy(cache["pos"][torch.tensor(gis, dtype=torch.long).numpy()]).to(dtype=torch.long)
@@ -134,9 +136,9 @@ class SRSNVDataModule(lightning.LightningDataModule):
         self.train_split_ids = train_split_ids
         self.val_split_ids = val_split_ids
         self.test_split_ids = test_split_ids or {-1}
-        self.train_batch_size = min(train_batch_size, MAX_BATCH_SIZE)
-        self.eval_batch_size = min(eval_batch_size or train_batch_size * 2, MAX_BATCH_SIZE * 2)
-        self.predict_batch_size = min(predict_batch_size or self.eval_batch_size * 2, MAX_BATCH_SIZE * 4)
+        self.train_batch_size = train_batch_size
+        self.eval_batch_size = eval_batch_size or train_batch_size * 2
+        self.predict_batch_size = predict_batch_size or self.eval_batch_size * 2
         self.pin_memory = pin_memory
 
         self._train_ds: TensorMapDataset | None = None
