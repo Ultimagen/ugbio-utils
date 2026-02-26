@@ -48,7 +48,7 @@ MIN_SAMPLE_SIZE = 10
 MIN_SLICE_SIZE = 50
 TRINUC_LEN = 3
 MAX_TICK_LABELS_HORIZONTAL = 6
-SNVQ_THRESHOLDS = [0, 30, 40, 50, 60]
+SNVQ_THRESHOLDS = [0, 30, 40, 50, 60, 70]
 _LUT_PAIR_LEN = 2
 
 
@@ -592,6 +592,20 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
             axes[1, 1].legend()
             axes[1, 1].grid(visible=True, alpha=0.3)
 
+    # Share y-axis limits across XGBoost (col 0) and DNN (col 1)
+    for row in range(2):
+        all_ylims = []
+        for col in range(2):
+            yl = axes[row, col].get_ylim()
+            if yl != (0.0, 1.0) or axes[row, col].has_data():
+                all_ylims.append(yl)
+        if all_ylims:
+            ymin = min(y[0] for y in all_ylims)
+            ymax = max(y[1] for y in all_ylims)
+            margin = 0.02 * (ymax - ymin) if ymax > ymin else 0.01
+            for col in range(2):
+                axes[row, col].set_ylim(ymin - margin, ymax + margin)
+
     fig.suptitle("Training Progress", fontsize=14, y=1.01)
     fig.tight_layout()
     report["plots"]["training_progress"] = _fig_to_b64(fig)
@@ -756,6 +770,10 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     # ---- 16. SNVQ histogram by mixed status ----
     logger.info("Generating SNVQ histogram by mixed status")
     report["plots"]["snvq_mixed_hist"] = _compute_snvq_mixed_histogram(m_test, y_test, snvq_xgb_test, snvq_dnn_test)
+
+    # ---- 17. SNVQ by trinucleotide context ----
+    logger.info("Generating SNVQ by trinucleotide context")
+    report["plots"]["trinuc_snvq"] = _compute_trinuc_snvq_comparison(m_test, y_test, snvq_xgb_test, snvq_dnn_test)
 
     # ---- 13. Error analysis ----
     report["error_analysis"] = _compute_error_analysis(m_test, y_test)
@@ -1162,6 +1180,206 @@ def _compute_snvq_mixed_histogram(
     ax.legend(fontsize=9, ncol=2)
     ax.grid(visible=True, alpha=0.3)
     fig.tight_layout()
+    return _fig_to_b64(fig)
+
+
+def _compute_trinuc_snvq_comparison(  # noqa: C901, PLR0912, PLR0915
+    m_test: pd.DataFrame,
+    y_test: np.ndarray,
+    snvq_xgb: np.ndarray,
+    snvq_dnn: np.ndarray,
+    q1: float = 0.1,
+    q2: float = 0.9,
+) -> str:
+    """Plot median SNVQ by trinucleotide context for XGBoost vs DNN.
+
+    Two-row layout matching the original monitor report: each row has a SNVQ
+    panel (median + q1-q2 shading) on top and a density histogram (TP/FP) below.
+    Row 1 = forward trinucs (A>C .. G>T), Row 2 = complement (C>A .. T>G).
+    """
+    from matplotlib import gridspec  # noqa: PLC0415
+
+    from ugbio_srsnv.srsnv_utils import FLOW_ORDER, is_cycle_skip  # noqa: PLC0415
+
+    tp_mask = y_test == 1
+    if tp_mask.sum() == 0:
+        logger.warning("No TP reads for trinuc SNVQ comparison")
+        return ""
+
+    all_df = m_test.copy()
+    all_df["tcwa"] = (
+        all_df["X_PREV1"].astype(str)
+        + all_df["REF"].astype(str)
+        + all_df["X_NEXT1"].astype(str)
+        + all_df["ALT"].astype(str)
+    )
+    all_df["snvq_xgb"] = snvq_xgb
+    all_df["snvq_dnn"] = snvq_dnn
+    all_df["label"] = y_test
+
+    trinuc_ref_alt_fwd = [
+        c1 + r + c2 + a
+        for r, a in (("A", "C"), ("A", "G"), ("A", "T"), ("C", "G"), ("C", "T"), ("G", "T"))
+        for c1 in ("A", "C", "G", "T")
+        for c2 in ("A", "C", "G", "T")
+        if r != a
+    ]
+    trinuc_ref_alt_rev = [
+        c1 + r + c2 + a
+        for a, r in (("A", "C"), ("A", "G"), ("A", "T"), ("C", "G"), ("C", "T"), ("G", "T"))
+        for c1 in ("A", "C", "G", "T")
+        for c2 in ("A", "C", "G", "T")
+        if r != a
+    ]
+    trinuc_ref_alt = trinuc_ref_alt_fwd + trinuc_ref_alt_rev
+    trinuc_index = np.array([f"{t[0]}[{t[1]}>{t[3]}]{t[2]}" for t in trinuc_ref_alt])
+    trinuc_is_cycle_skip = np.array([is_cycle_skip(tcwa, flow_order=FLOW_ORDER) for tcwa in trinuc_ref_alt])
+    snv_labels = [" ".join(trinuc_index[i][2:5]) for i in range(0, 16 * 12, 16)]
+
+    tcwa_to_idx = {tcwa: i for i, tcwa in enumerate(trinuc_ref_alt)}
+    n_total = 192
+    n_panel = 96
+
+    all_df["tcwa_idx"] = all_df["tcwa"].map(tcwa_to_idx)
+    all_df = all_df.dropna(subset=["tcwa_idx"])
+    all_df["tcwa_idx"] = all_df["tcwa_idx"].astype(int)
+
+    tp_df = all_df[all_df["label"] == 1]
+
+    # -- per-context SNVQ stats (TP only) --
+    med_xgb = np.full(n_total, np.nan)
+    med_dnn = np.full(n_total, np.nan)
+    lo_xgb = np.full(n_total, np.nan)
+    hi_xgb = np.full(n_total, np.nan)
+    lo_dnn = np.full(n_total, np.nan)
+    hi_dnn = np.full(n_total, np.nan)
+
+    for idx, grp in tp_df.groupby("tcwa_idx"):
+        med_xgb[idx] = grp["snvq_xgb"].median()
+        med_dnn[idx] = grp["snvq_dnn"].median()
+        lo_xgb[idx] = grp["snvq_xgb"].quantile(q1)
+        hi_xgb[idx] = grp["snvq_xgb"].quantile(q2)
+        lo_dnn[idx] = grp["snvq_dnn"].quantile(q1)
+        hi_dnn[idx] = grp["snvq_dnn"].quantile(q2)
+
+    # -- per-context histogram (TP + FP) --
+    n_tp = int(tp_mask.sum())
+    n_fp = int((~tp_mask).sum())
+    hist_tp = np.zeros(n_total)
+    hist_fp = np.zeros(n_total)
+    for idx, grp in all_df.groupby("tcwa_idx"):
+        label_counts = grp["label"].value_counts()
+        hist_tp[idx] = label_counts.get(1, 0)
+        hist_fp[idx] = label_counts.get(0, 0)
+    if hist_tp.sum() > 0:
+        hist_tp = hist_tp / hist_tp.sum()
+    if hist_fp.sum() > 0:
+        hist_fp = hist_fp / hist_fp.sum()
+
+    x_vals = list(range(n_panel))
+    x_ext = [x_vals[0] - 0.5] + x_vals + [x_vals[-1] + 0.5]
+
+    def _extend(arr):
+        return np.concatenate([[arr[0]], arr, [arr[-1]]])
+
+    # -- figure layout: 2 rows × (SNVQ + Histogram) --
+    fig = plt.figure(figsize=(18, 14))
+    hspace = 0.12
+    height_ratios = [1, 2]
+    gs_top = gridspec.GridSpec(2, 1, height_ratios=height_ratios, hspace=0.0, top=0.92, bottom=0.55 + hspace / 2)
+    gs_bot = gridspec.GridSpec(2, 1, height_ratios=height_ratios, hspace=0.0, top=0.55 - hspace / 2, bottom=0.18)
+
+    snv_positions = [8, 24, 40, 56, 72, 88]
+
+    for panel_idx, gs in enumerate([gs_top, gs_bot]):
+        sl = slice(panel_idx * n_panel, (panel_idx + 1) * n_panel)
+        inds = np.arange(panel_idx * n_panel, (panel_idx + 1) * n_panel)
+
+        qual_ax = fig.add_subplot(gs[0])
+        hist_ax = fig.add_subplot(gs[1], sharex=qual_ax)
+
+        # -- SNVQ panel --
+        qual_ax.fill_between(x_ext, _extend(lo_xgb[sl]), _extend(hi_xgb[sl]), step="mid", color=COLOR_XGB, alpha=0.2)
+        qual_ax.step(x_ext, _extend(med_xgb[sl]), where="mid", color=COLOR_XGB, lw=1.5, label="XGBoost")
+        qual_ax.fill_between(x_ext, _extend(lo_dnn[sl]), _extend(hi_dnn[sl]), step="mid", color=COLOR_DNN, alpha=0.2)
+        qual_ax.step(
+            x_ext,
+            _extend(med_dnn[sl]),
+            where="mid",
+            color=COLOR_DNN,
+            lw=1.5,
+            linestyle="--",
+            label="DNN",
+        )
+        qual_ax.set_ylabel("SNVQ", fontsize=14)
+        qual_ax.set_xlim(-0.5, n_panel - 0.5)
+        qual_ax.grid(visible=True, axis="both", alpha=0.75, linestyle=":")
+
+        ylim_min, ylim_max = qual_ax.get_ylim()
+        for j in range(5):
+            qual_ax.plot([(j + 1) * 16 - 0.5] * 2, [ylim_min, ylim_max], "k--", lw=0.8)
+        for lbl, pos in zip(snv_labels[6 * panel_idx : 6 * panel_idx + 6], snv_positions, strict=False):
+            qual_ax.annotate(
+                lbl,
+                xy=(pos, qual_ax.get_ylim()[1]),
+                xytext=(-2, 6),
+                textcoords="offset points",
+                ha="center",
+                fontsize=12,
+                fontweight="bold",
+            )
+        qual_ax.set_xticklabels([])
+
+        # -- Histogram panel --
+        hist_ax.bar(x_vals, hist_tp[sl], width=1.0, alpha=0.5, color="tab:orange", label=f"TP ({n_tp})")
+        hist_ax.bar(x_vals, hist_fp[sl], width=1.0, alpha=0.5, color="tab:blue", label=f"FP ({n_fp})")
+        hist_ylim = 1.05 * max(hist_tp[sl].max(), hist_fp[sl].max()) if hist_tp[sl].max() > 0 else 1.0
+        for j in range(5):
+            hist_ax.plot([(j + 1) * 16 - 0.5] * 2, [0, hist_ylim], "k--", lw=0.8)
+        hist_ax.set_ylim(0, hist_ylim)
+        hist_ax.set_ylabel("Density", fontsize=14)
+        hist_ax.set_xlim(-0.5, n_panel - 0.5)
+        hist_ax.grid(visible=True, axis="both", alpha=0.75, linestyle=":")
+
+        hist_ax.set_xticks(x_vals)
+        hist_ax.set_xticklabels(trinuc_index[inds], rotation=90, fontsize=10)
+        tick_colors = ["green" if trinuc_is_cycle_skip[idx] else "red" for idx in inds]
+        for j in range(n_panel):
+            hist_ax.get_xticklabels()[j].set_color(tick_colors[j])
+        hist_ax.tick_params(axis="x", pad=-2)
+
+    # -- Bottom legend area --
+    fig.legend(
+        [
+            plt.Rectangle((0, 0), 1, 1, fc="tab:orange", alpha=0.5),
+            plt.Rectangle((0, 0), 1, 1, fc="tab:blue", alpha=0.5),
+        ],
+        [f"TP ({n_tp})", f"FP ({n_fp})"],
+        title="Histogram: Labels (# SNVs total)",
+        fontsize=14,
+        title_fontsize=14,
+        loc="lower center",
+        bbox_to_anchor=(0.24, 0.03),
+        ncol=1,
+        frameon=False,
+    )
+    fig.legend(
+        [plt.Line2D([0], [0], color=COLOR_XGB, lw=2), plt.Line2D([0], [0], color=COLOR_DNN, lw=2, linestyle="--")],
+        ["XGBoost", "DNN"],
+        title=f"SNVQ on TP (median + {int(q1 * 100)}%\u2013{int(q2 * 100)}% range)",
+        fontsize=14,
+        title_fontsize=14,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.03),
+        ncol=1,
+        frameon=False,
+    )
+    fig.text(0.7, 0.07, "Trinuc-SNV:", ha="left", fontsize=14, color="black")
+    fig.text(0.73, 0.04, "Green: Cycle skip", ha="left", fontsize=14, color="green")
+    fig.text(0.73, 0.01, "Red: No cycle skip", ha="left", fontsize=14, color="red")
+
+    fig.suptitle("Quality as function of trinuc context and alt", fontsize=20, y=0.96)
+
     return _fig_to_b64(fig)
 
 
