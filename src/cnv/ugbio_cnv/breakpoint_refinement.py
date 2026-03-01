@@ -1,44 +1,74 @@
 """
 CNV breakpoint refinement using windowed split-read analysis.
 
-BIOIN-2676: Refine CNV breakpoints by analyzing split reads (SA tags) from windowed
+BIOIN-2676: Refine CNV breakpoints by analyzing soft-clipped reads from windowed
 regions at CNV boundaries. Uses median position + max deviation for CIPOS estimation.
 """
 
+import argparse
+import sys
 from statistics import median
 
 import pysam
 from ugbio_cnv.analyze_cnv_breakpoint_reads import (
     _calculate_breakpoint_regions,
     _should_skip_read,
-    get_supplementary_alignments,
 )
+from ugbio_core.logger import logger
 
 # Constants for read filtering
 MIN_READS_PER_BREAKPOINT = 3  # Minimum reads required for reliable breakpoint estimation
+BAM_CSOFT_CLIP = 4  # CIGAR operation code for soft clipping
 
 
-def _extract_sa_positions(reads: list[pysam.AlignedSegment]) -> list[int]:
+def _extract_softclip_positions(reads: list[pysam.AlignedSegment]) -> list[int]:
     """
-    Extract supplementary alignment positions from SA tags.
+    Extract breakpoint positions from soft-clipped regions in reads.
+
+    For each read, identifies the reference position where soft clipping occurs.
+    If a read has soft clips on both ends, uses the position corresponding to
+    the longest soft clip.
 
     Parameters
     ----------
     reads : list[pysam.AlignedSegment]
-        Reads with SA tags
+        Reads with soft-clipped alignments
 
     Returns
     -------
     list[int]
-        List of 1-based positions extracted from SA tags
+        List of 1-based reference positions where soft clips occur
     """
     positions = []
     for read in reads:
-        # Use existing helper to parse SA tags robustly
-        supp_alns = get_supplementary_alignments(read)
-        for _chrom, pos, _end, _left_clip, _right_clip, _is_reverse in supp_alns:
-            # get_supplementary_alignments returns 0-based positions, convert to 1-based
-            positions.append(pos + 1)
+        if read.cigartuples is None:
+            continue
+
+        # Check for soft clips at start and end
+        left_clip = 0
+        right_clip = 0
+
+        # First operation
+        if read.cigartuples[0][0] == BAM_CSOFT_CLIP:
+            left_clip = read.cigartuples[0][1]
+
+        # Last operation
+        if read.cigartuples[-1][0] == BAM_CSOFT_CLIP:
+            right_clip = read.cigartuples[-1][1]
+
+        # Skip reads with no soft clipping
+        if left_clip == 0 and right_clip == 0:
+            continue
+
+        # Use position of longest soft clip
+        if left_clip >= right_clip:
+            # Breakpoint is at the start of alignment (1-based)
+            positions.append(read.reference_start + 1)
+        else:
+            # Breakpoint is at the end of alignment (1-based)
+            # reference_end is already exclusive (0-based), so it's the correct 1-based position
+            positions.append(read.reference_end)
+
     return positions
 
 
@@ -183,9 +213,9 @@ def estimate_refined_breakpoints(
     -------
     (refined_start, refined_end, refined_cipos) or None if not improved
     """
-    # Extract SA tag positions using helper function
-    left_positions = _extract_sa_positions(left_reads)
-    right_positions = _extract_sa_positions(right_reads)
+    # Extract breakpoint positions from soft-clipped reads
+    left_positions = _extract_softclip_positions(left_reads)
+    right_positions = _extract_softclip_positions(right_reads)
 
     # Need at least MIN_READS_PER_BREAKPOINT positions per breakpoint
     if len(left_positions) < MIN_READS_PER_BREAKPOINT or len(right_positions) < MIN_READS_PER_BREAKPOINT:
@@ -278,3 +308,89 @@ def refine_cnv_breakpoints_from_vcf(
 
     vcf_in.close()
     vcf_out.close()
+
+
+def get_parser(parser: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser:
+    """
+    Create or populate argument parser for CNV breakpoint refinement.
+
+    Parameters
+    ----------
+    parser : argparse.ArgumentParser, optional
+        Existing parser to add arguments to. If None, creates a new parser.
+
+    Returns
+    -------
+    argparse.ArgumentParser
+        Parser with all arguments added.
+    """
+    if parser is None:
+        parser = argparse.ArgumentParser(
+            description=__doc__,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+
+    parser.add_argument(
+        "--input-vcf",
+        required=True,
+        help="Input VCF file with CNV calls (must have CIPOS field)",
+    )
+    parser.add_argument(
+        "--bam-files",
+        required=True,
+        nargs="+",
+        help="One or more BAM file paths for evidence extraction",
+    )
+    parser.add_argument(
+        "--output-vcf",
+        required=True,
+        help="Output VCF file with refined breakpoints",
+    )
+    parser.add_argument(
+        "--cushion",
+        type=int,
+        default=2500,
+        help="Half-window size for read extraction (default: 2500 bp)",
+    )
+    parser.add_argument(
+        "--sv-vcf",
+        default=None,
+        help="SV calls VCF for integration (not yet implemented)",
+    )
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """
+    Main entry point for CNV breakpoint refinement CLI.
+
+    Parameters
+    ----------
+    argv : list[str], optional
+        Command line arguments. If None, uses sys.argv.
+
+    Returns
+    -------
+    int
+        Exit code: 0 for success, 1 for error.
+    """
+    parser = get_parser()
+    args = parser.parse_args(argv)
+
+    try:
+        refine_cnv_breakpoints_from_vcf(
+            input_vcf=args.input_vcf,
+            bam_files=args.bam_files,
+            output_vcf=args.output_vcf,
+            sv_vcf=args.sv_vcf,
+            cushion=args.cushion,
+        )
+        return 0
+    except Exception as e:
+        logger.error(f"Error refining CNV breakpoints: {e}")
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -154,27 +154,32 @@ def test_extract_reads_windowed_multi_bam(temp_bam_with_rg_tags, tmp_path):
 
 
 def test_estimate_refined_breakpoints_median_calculation():
-    """Test median and max deviation calculation from SA tags."""
-    # Create mock reads with SA tags at known positions
+    """Test median and max deviation calculation from soft-clipped reads."""
+    # Create mock reads with soft clips at known positions
+    # Left breakpoint reads: soft clip at start, positions [999950, 999955, 999960, 999965]
+    # median=999957.5 → 999958
     reads_left = []
-    for pos in [999950, 999955, 999960, 999965]:  # median=999957.5 → 999958
+    for pos in [999950, 999955, 999960, 999965]:
         read = pysam.AlignedSegment()
         read.query_name = f"read_{pos}"
-        read.set_tag("SA", f"chr1,{pos},+,50M50S,60,0;")
+        read.reference_start = pos - 1  # Convert 1-based to 0-based
+        read.cigartuples = [(4, 50), (0, 100)]  # 50S100M - left soft clip
         reads_left.append(read)
 
+    # Right breakpoint reads: soft clip at end, positions [1003050, 1003055, 1003060, 1003065]
+    # median=1003057.5 → 1003058
     reads_right = []
-    for pos in [1003050, 1003055, 1003060, 1003065]:  # median=1003057.5 → 1003058
+    for pos in [1003050, 1003055, 1003060, 1003065]:
         read = pysam.AlignedSegment()
         read.query_name = f"read_{pos}"
-        read.set_tag("SA", f"chr1,{pos},+,50M50S,60,0;")
+        read.reference_start = pos - 100  # Start 100bp before the breakpoint
+        read.cigartuples = [(0, 100), (4, 50)]  # 100M50S - right soft clip
+        # reference_end will be reference_start + 100 = pos
         reads_right.append(read)
 
     result = estimate_refined_breakpoints(
         left_reads=reads_left,
         right_reads=reads_right,
-        original_start=1000000,
-        original_end=1003000,
         original_cipos=(-500, 500),  # Interval size: 1000
     )
 
@@ -192,19 +197,22 @@ def test_estimate_refined_breakpoints_median_calculation():
 
 def test_estimate_refined_breakpoints_no_improvement():
     """Test returns None when refined CIPOS not tighter."""
+    # Create reads with wide spread - refined interval won't be tighter
     reads_left = []
     for pos in [999000, 999500, 1000000, 1000500]:  # Wide spread
         read = pysam.AlignedSegment()
-        read.set_tag("SA", f"chr1,{pos},+,50M50S,60,0;")
+        read.reference_start = pos - 1  # Convert 1-based to 0-based
+        read.cigartuples = [(4, 50), (0, 100)]  # 50S100M - left soft clip
         reads_left.append(read)
 
     reads_right = []
     for pos in [1003000, 1003500, 1004000, 1004500]:  # Wide spread
         read = pysam.AlignedSegment()
-        read.set_tag("SA", f"chr1,{pos},+,50M50S,60,0;")
+        read.reference_start = pos - 100  # Start 100bp before the breakpoint
+        read.cigartuples = [(0, 100), (4, 50)]  # 100M50S - right soft clip
         reads_right.append(read)
 
-    result = estimate_refined_breakpoints(reads_left, reads_right, 1000000, 1003000, original_cipos=(-100, 100))
+    result = estimate_refined_breakpoints(reads_left, reads_right, original_cipos=(-100, 100))
 
     # Should return None because refined interval (±750) > original interval (200)
     assert result is None
@@ -212,15 +220,25 @@ def test_estimate_refined_breakpoints_no_improvement():
 
 def test_estimate_refined_breakpoints_insufficient_reads():
     """Test returns None with <3 reads per breakpoint."""
-    reads_left = [pysam.AlignedSegment() for _ in range(2)]  # Only 2 reads
-    for i, read in enumerate(reads_left):
-        read.set_tag("SA", f"chr1,{1000000 + i * 10},+,50M50S,60,0;")
+    # Only 2 reads for left breakpoint (less than MIN_READS_PER_BREAKPOINT=3)
+    reads_left = []
+    for i in range(2):
+        read = pysam.AlignedSegment()
+        pos = 1000000 + i * 10
+        read.reference_start = pos - 1  # Convert 1-based to 0-based
+        read.cigartuples = [(4, 50), (0, 100)]  # 50S100M - left soft clip
+        reads_left.append(read)
 
-    reads_right = [pysam.AlignedSegment() for _ in range(4)]
-    for i, read in enumerate(reads_right):
-        read.set_tag("SA", f"chr1,{1003000 + i * 10},+,50M50S,60,0;")
+    # 4 reads for right breakpoint (enough)
+    reads_right = []
+    for i in range(4):
+        read = pysam.AlignedSegment()
+        pos = 1003000 + i * 10
+        read.reference_start = pos - 100
+        read.cigartuples = [(0, 100), (4, 50)]  # 100M50S - right soft clip
+        reads_right.append(read)
 
-    result = estimate_refined_breakpoints(reads_left, reads_right, 1000000, 1003000, (-500, 500))
+    result = estimate_refined_breakpoints(reads_left, reads_right, (-500, 500))
 
     # Should return None because left has <3 reads
     assert result is None
