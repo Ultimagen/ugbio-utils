@@ -8,6 +8,7 @@ import cyclopts
 import polars as pl
 import pysam
 import xgboost
+from ugbio_core.exec_utils import print_and_execute
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
 
@@ -23,7 +24,6 @@ from ugbio_featuremap.somatic_featuremap_utils import (
     TUMOR_PREFIX,
     XGB_PROBA_INFO_FIELD,
     _log_regions_bed_preview,
-    _run_shell_command,
     cleanup_intermediate_files,
     get_sample_names_from_vcf,
     write_vcf_info_header_file,
@@ -144,10 +144,10 @@ def _create_tr_annotation_file(
         f"sort -k1,1 -k2,2n | "
         f"bgzip -c"
     )
-    _run_shell_command(cmd, gz_tsv)
+    print_and_execute(cmd, output_file=str(gz_tsv), log_level=logging.DEBUG)
 
     cmd = f"tabix -s 1 -b 2 -e 2 {gz_tsv}"
-    _run_shell_command(cmd)
+    print_and_execute(cmd, log_level=logging.DEBUG)
 
     # Create header file for bcftools annotate
     hdr_file = tmpdir / "tr_hdr.txt"
@@ -608,10 +608,10 @@ def annotate_vcf_with_xgb_proba(
     logger.debug(f"Created annotation TSV with {len(annotation_df):,} records: {annotation_tsv}")
 
     # Compress with bgzip and index with tabix
-    _run_shell_command(f"bgzip -f {annotation_tsv}")
+    print_and_execute(f"bgzip -f {annotation_tsv}", log_level=logging.DEBUG)
     logger.debug(f"Compressed annotation file: {annotation_tsv_gz}")
 
-    _run_shell_command(f"tabix -s1 -b2 -e2 {annotation_tsv_gz}")
+    print_and_execute(f"tabix -s1 -b2 -e2 {annotation_tsv_gz}", log_level=logging.DEBUG)
     logger.debug(f"Indexed annotation file: {annotation_tsv_gz}.tbi")
 
     # Create header file with INFO field definition and optional tumor_sample header line
