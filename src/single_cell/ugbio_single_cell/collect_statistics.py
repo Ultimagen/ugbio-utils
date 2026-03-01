@@ -315,16 +315,23 @@ def extract_statistics_table(h5_file: Path):  # noqa: PLR0915
 def extract_cell_barcode_filter_data(stats, store):
     sorter_stats_json_df = store[H5Keys.SORTER_STATS_JSON.value]
     if "cell_barcode_filter" in sorter_stats_json_df:
-        cell_barcode_filter = sorter_stats_json_df["cell_barcode_filter"].iloc[0]  # get "cell_barcode_filter" dict
-        n_failed_cbcs = cell_barcode_filter["nr_failed_cbcs"]
+        cell_barcode_filter = sorter_stats_json_df["cell_barcode_filter"].iloc[0]
+        # "failed" was renamed to "suspicious" in sorter.  Supporting both.
+        n_suspicious_cbcs = cell_barcode_filter.get("nr_suspicious_cbcs", cell_barcode_filter.get("nr_failed_cbcs"))
         n_good_cbcs_above_thresh = cell_barcode_filter["nr_good_cbcs_above_threshold"]
-        n_failed_cbc_reads = cell_barcode_filter["nr_failed_reads"]
+        n_suspicious_cbc_reads = cell_barcode_filter.get(
+            "nr_suspicious_reads", cell_barcode_filter.get("nr_failed_reads")
+        )
         n_total_reads = sorter_stats_json_df["total_reads"].iloc[0]
 
-        if (n_failed_cbcs + n_good_cbcs_above_thresh) > 0:
-            percent_failed_cbcs_above_threshold = 100 * n_failed_cbcs / (n_failed_cbcs + n_good_cbcs_above_thresh)
-            stats["pct_failed_cbcs_above_threshold"] = percent_failed_cbcs_above_threshold
+        if (n_suspicious_cbcs + n_good_cbcs_above_thresh) > 0:
+            pct_suspicious_cbcs_above_threshold = (
+                100 * n_suspicious_cbcs / (n_suspicious_cbcs + n_good_cbcs_above_thresh)
+            )
+            stats["pct_suspicious_cbcs_above_threshold"] = pct_suspicious_cbcs_above_threshold
+            stats["pct_failed_cbcs_above_threshold"] = pct_suspicious_cbcs_above_threshold
 
         if n_total_reads > 0:
-            percent_cbc_filter_failed_reads = 100 * n_failed_cbc_reads / n_total_reads
-            stats["pct_cbc_filter_failed_reads"] = percent_cbc_filter_failed_reads
+            pct_cbc_filter_suspicious_reads = 100 * n_suspicious_cbc_reads / n_total_reads
+            stats["pct_cbc_filter_suspicious_reads"] = pct_cbc_filter_suspicious_reads
+            stats["pct_cbc_filter_failed_reads"] = pct_cbc_filter_suspicious_reads

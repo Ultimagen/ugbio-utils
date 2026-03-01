@@ -167,6 +167,11 @@ def test_extract_statistics_table_with_sorter_json(inputs_dir, output_path):
     with pd.HDFStore(h5_file, mode="r") as store:
         s = store[H5Keys.STATISTICS_SHORTLIST.value]
         assert "/" + H5Keys.STATISTICS_SHORTLIST.value in store.keys()
-        assert len(s) == 19
-        assert s["pct_failed_cbcs_above_threshold"] == 100 * 0.02311600563934775
-        assert s["pct_cbc_filter_failed_reads"] == 100 * 0.0018177121169518373
+        assert len(s) == 21
+        expected_pct_suspicious_cbcs = 100 * 0.02311600563934775
+        expected_pct_suspicious_reads = 100 * 0.0018177121169518373
+        assert s["pct_suspicious_cbcs_above_threshold"] == expected_pct_suspicious_cbcs
+        assert s["pct_cbc_filter_suspicious_reads"] == expected_pct_suspicious_reads
+        # backward-compatible keys
+        assert s["pct_failed_cbcs_above_threshold"] == expected_pct_suspicious_cbcs
+        assert s["pct_cbc_filter_failed_reads"] == expected_pct_suspicious_reads
