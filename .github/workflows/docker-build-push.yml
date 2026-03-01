@@ -88,23 +88,23 @@ jobs:
           repository: ${{ inputs.git-repo }}
           ref: ${{ inputs.git-ref }}
 
-      # - name: Run Trivy to scan Dockerfiles
-      #   uses: aquasecurity/trivy-action@0.32.0
-      #   with:
-      #     scan-type: 'config'
-      #     scan-ref: './'
-      #     format: 'table'
-      #     exit-code: '1'
-      #     severity: 'CRITICAL,HIGH'
+      - name: Run Trivy to scan Dockerfiles
+        uses: aquasecurity/trivy-action@0.34.1
+        with:
+          scan-type: 'config'
+          scan-ref: './'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
 
-      # - name: Run Trivy to scan fs
-      #   uses: aquasecurity/trivy-action@0.32.0
-      #   with:
-      #     scan-type: 'fs'
-      #     scan-ref: '.'
-      #     format: 'table'
-      #     exit-code: '1'
-      #     severity: 'CRITICAL,HIGH'
+      - name: Run Trivy to scan fs
+        uses: aquasecurity/trivy-action@0.34.1
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'
 
       - uses: actions/checkout@v4 # deep check out for docker build
         if: ${{ inputs.git-repo != 'Ultimagen/ugbio-utils' }}
