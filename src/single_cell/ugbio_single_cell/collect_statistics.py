@@ -315,10 +315,20 @@ def extract_statistics_table(h5_file: Path):  # noqa: PLR0915
 def _get_first_available(d: dict, *keys):
     """Return the value of the first key found in *d*.
 
-    Raises ``KeyError`` if none of the keys exist.
+    The first entry in *keys* is considered the canonical name.  If a
+    later (deprecated / mis-spelled) key matches instead, a
+    ``DeprecationWarning`` is emitted so callers are aware of the
+    fallback.  Raises ``KeyError`` if none of the keys exist.
     """
+    canonical = keys[0]
     for k in keys:
         if k in d:
+            if k != canonical:
+                warnings.warn(
+                    f"cell_barcode_filter key '{k}' is deprecated, expected '{canonical}'",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
             return d[k]
     raise KeyError(f"None of the expected keys {keys} found in {list(d.keys())}")
 
