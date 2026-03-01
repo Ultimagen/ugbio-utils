@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import subprocess
 
 from simppl.simple_pipeline import SimplePipeline
@@ -13,6 +14,7 @@ def print_and_execute(
     module_name: str | None = None,
     *,
     shell: bool = True,
+    log_level: int = logging.INFO,
 ):
     """
     Print and execute command through simple_pipeline or subprocess
@@ -28,14 +30,19 @@ def print_and_execute(
     module_name: str, optional
         optional module name to use for simple pipeline
     shell: bool, optional
-        whether to use shell for subprocess execution, default False, only relevant if simple_pipeline is None
+        whether to use shell for subprocess execution, default True, only relevant if simple_pipeline is None
+    log_level: int, optional
+        logging level for the command message, default logging.INFO
+
+    raises:
+    - subprocess.CalledProcessError: if the command fails
     """
     if simple_pipeline is None:
-        logger.info(command)
+        logger.log(log_level, command)
         cmd = command if shell else [x.strip() for x in command.strip().split(" ") if x]
         if output_file is not None:
             with open(output_file, "w", encoding="utf-8") as f:
-                subprocess.call(cmd, stdout=f, shell=shell)
+                subprocess.check_call(cmd, stdout=f, shell=shell)
         else:
             subprocess.check_call(cmd, shell=shell)
     elif output_file is not None:

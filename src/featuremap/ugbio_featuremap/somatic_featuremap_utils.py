@@ -1,4 +1,3 @@
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -127,20 +126,6 @@ def cleanup_intermediate_files(file_paths: list[Path]) -> None:
     for file_path in file_paths:
         file_path.unlink(missing_ok=True)
         logger.debug(f"Cleaned up intermediate file: {file_path}")
-
-
-def _run_shell_command(cmd: str, output_file: Path | None = None) -> None:
-    """Run a shell command, optionally redirecting stdout to a file.
-
-    Uses shell=True because commands may contain pipes (e.g., "bedtools ... | cut ...").
-    All command strings are constructed internally - no user input is passed directly.
-    """
-    logger.debug(f"Running: {cmd}")
-    if output_file:
-        with open(output_file, "w") as f:
-            subprocess.run(cmd, shell=True, check=True, stdout=f)  # noqa: S602
-    else:
-        subprocess.run(cmd, shell=True, check=True)  # noqa: S602
 
 
 def write_vcf_info_header_file(
