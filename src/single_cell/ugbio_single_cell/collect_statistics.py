@@ -351,9 +351,7 @@ def extract_cell_barcode_filter_data(stats, store):
                 100 * n_suspicious_cbcs / (n_suspicious_cbcs + n_good_cbcs_above_thresh)
             )
             stats["pct_suspicious_cbcs_above_threshold"] = pct_suspicious_cbcs_above_threshold
-            stats["pct_failed_cbcs_above_threshold"] = pct_suspicious_cbcs_above_threshold
 
         if n_total_reads > 0:
             pct_cbc_filter_suspicious_reads = 100 * n_suspicious_cbc_reads / n_total_reads
             stats["pct_cbc_filter_suspicious_reads"] = pct_cbc_filter_suspicious_reads
-            stats["pct_cbc_filter_failed_reads"] = pct_cbc_filter_suspicious_reads
