@@ -370,14 +370,21 @@ def _apply_null_handling_to_filters(
 
 
 def _log_filter_statistics(df_with_filters: pl.DataFrame, filter_cols: list[str]) -> None:
-    """Log per-filter statistics showing pass/fail counts."""
-    log.debug(f"Filter statistics for region (total rows: {df_with_filters.height:,}):")
+    """Log per-filter and combined statistics showing pass/fail counts."""
+    total = df_with_filters.height
+    log.debug(f"Filter statistics for region (total rows: {total:,}):")
     for col in filter_cols:
         if col in df_with_filters.columns:
             pass_count = df_with_filters[col].sum()
-            fail_count = df_with_filters.height - pass_count
-            pct = 100.0 * pass_count / df_with_filters.height if df_with_filters.height > 0 else 0
+            fail_count = total - pass_count
+            pct = 100.0 * pass_count / total if total > 0 else 0
             log.debug(f"  {col}: {pass_count:,} pass ({pct:.1f}%) / {fail_count:,} fail")
+
+    if "__filter_final" in df_with_filters.columns:
+        final_pass = df_with_filters["__filter_final"].sum()
+        final_fail = total - final_pass
+        pct = 100.0 * final_pass / total if total > 0 else 0
+        log.debug(f"  __filter_final (ALL COMBINED): {final_pass:,} pass ({pct:.1f}%) / {final_fail:,} fail")
 
 
 def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -> pl.DataFrame:
@@ -418,18 +425,10 @@ def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -
         log.debug(f"Created filter columns: {filter_cols}")
 
         lazy_frame = _apply_null_handling_to_filters(lazy_frame, filters_to_apply, filter_cols)
-
-        df_with_filters = lazy_frame.collect()
-        _log_filter_statistics(df_with_filters, filter_cols)
-
-        lazy_frame = df_with_filters.lazy()
         lazy_frame = _create_final_filter_column(lazy_frame, filter_cols, None)
 
         df_final = lazy_frame.collect()
-        final_pass = df_final["__filter_final"].sum()
-        final_fail = df_final.height - final_pass
-        pct = 100.0 * final_pass / df_final.height if df_final.height > 0 else 0
-        log.debug(f"  __filter_final (ALL COMBINED): {final_pass:,} pass ({pct:.1f}%) / {final_fail:,} fail")
+        _log_filter_statistics(df_final, filter_cols)
 
         filtered_frame = df_final.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$"))
 

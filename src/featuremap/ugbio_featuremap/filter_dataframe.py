@@ -28,6 +28,7 @@ KEY_DOWNSAMPLE = "downsample"
 KEY_SIZE = "size"
 KEY_METHOD = "method"
 KEY_SEED = "seed"
+KEY_NULL_VALUE = "null_value"
 
 # Filter types
 TYPE_QUALITY = "quality"
