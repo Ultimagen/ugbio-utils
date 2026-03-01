@@ -25,8 +25,8 @@ def test_end_to_end_training(tmp_path: Path) -> None:
 
     # ---------------------------------------------------------------- regions
     # Use the real hg38 calling regions shipped with the repository
-    bed_file = resources / "wgs_calling_regions.without_encode_blacklist.hg38.chr1_22.interval_list"
-    assert bed_file.is_file(), "Interval list file fixture missing"
+    interval_list_file = resources / "wgs_calling_regions.without_encode_blacklist.hg38.chr1_22.interval_list"
+    assert interval_list_file.is_file(), "Interval list file fixture missing"
 
     # ---------------------------------------------------------------- args
     # use env-provided directory if defined, otherwise fall back to tmp_path
@@ -37,7 +37,7 @@ def test_end_to_end_training(tmp_path: Path) -> None:
         negative=str(neg_file),
         stats_file=str(stats_file),
         mean_coverage=30.0,
-        training_regions=str(bed_file),
+        training_regions=str(interval_list_file),
         k_folds=2,
         model_params=(
             'n_estimators=2:max_depth=2:enable_categorical=true:eval_metric=["auc","logloss"]'
@@ -99,14 +99,14 @@ def test_trainer_initialization(tmp_path: Path) -> None:
     pos_file = resources / "402572-CL10377.random_sample.featuremap.filtered.parquet"
     neg_file = resources / "402572-CL10377.raw.featuremap.filtered.parquet"
     stats_file = resources / "402572-CL10377.model_filters_status.funnel.edited.json"
-    bed_file = resources / "wgs_calling_regions.without_encode_blacklist.hg38.chr1_22.interval_list"
+    interval_list_file = resources / "wgs_calling_regions.without_encode_blacklist.hg38.chr1_22.interval_list"
 
     args = argparse.Namespace(
         positive=str(pos_file),
         negative=str(neg_file),
         stats_file=str(stats_file),
         mean_coverage=30.0,
-        training_regions=str(bed_file),
+        training_regions=str(interval_list_file),
         k_folds=2,
         model_params=None,
         output=str(tmp_path),

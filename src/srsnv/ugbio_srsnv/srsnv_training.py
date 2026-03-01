@@ -153,14 +153,11 @@ def _parse_interval_list_file(path: str) -> tuple[dict[str, int], list[str]]:
                 continue
 
             chrom = fields[0]
-            try:
-                _ = int(fields[2])
-            except ValueError:
-                continue
 
             # Track chromosome order as they appear in the data
-            if chrom not in chroms_in_data:
-                chroms_in_data.append(chrom)
+            chroms_in_data.append(chrom)
+            if chrom not in chrom_sizes:
+                raise ValueError(f"{chrom} not found in size dict derived from header: {chrom_sizes}")
 
     if not chrom_sizes:
         raise ValueError(f"No @SQ headers found in interval list file {path}")
@@ -962,19 +959,7 @@ class SRSNVTrainer:
         model_paths: dict[int, str] = {}
         for fold_idx, model in enumerate(self.models):
             path = self.out_dir / f"{base}model_fold_{fold_idx}.json"
-            # Use get_booster().save_model() to avoid XGBoost 2.x compatibility issues
-            # NOTE:
-            #   In XGBoost 2.x the sklearn wrapper's save_model() interface and
-            #   behavior are not as stable as the core Booster API. In some
-            #   versions, calling model.save_model() on the sklearn estimator
-            #   can either be unavailable, change output format, or serialize
-            #   additional sklearn-specific state that is not expected by our
-            #   downstream consumers (which assume a plain Booster model in
-            #   JSON format).
-            #   To ensure consistent, forward-compatible serialization across
-            #   XGBoost 2.x releases, we explicitly serialize the underlying
-            #   Booster instead of the sklearn estimator itself.
-            model.get_booster().save_model(path)
+            model.save_model(path)
             model_paths[fold_idx] = str(path)
             logger.info("Saved model for fold %d → %s", fold_idx, path)
 

@@ -653,11 +653,7 @@ def filter_parquet(
     if out_path_full:
         logger.debug(f"Writing full output with filter columns to {out_path_full}")
         featuremap_dataframe.sink_parquet(out_path_full)
-
-        # Get row count for logging
-        full_rows = pl.scan_parquet(out_path_full).select(pl.len()).collect().item()
-        logger.debug(f"Wrote full data with filters: {full_rows:,} rows ({out_path_full})")
-        logger.debug(pl.read_parquet(out_path_full).select(f"^{COL_PREFIX_FILTER}.*$").sum())  # TODO remove this line
+        logger.debug(f"Wrote full data with filters to {out_path_full}")
 
     # Write statistics
     with open(stats_path, "w") as f:
