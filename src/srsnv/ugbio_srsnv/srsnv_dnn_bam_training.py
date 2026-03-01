@@ -227,21 +227,18 @@ def _summarize_chunk_prevalence(chunk_split_stats: list[dict] | None, split_id: 
     }
 
 
-def _build_callbacks(args: argparse.Namespace, out_dir: Path, base: str, fold_idx: int, *, n_devices: int = 1) -> list:
+def _build_callbacks(args: argparse.Namespace, out_dir: Path, base: str, fold_idx: int) -> list:
     callbacks = []
 
-    # EarlyStopping uses reduce_boolean_decision (NCCL all_reduce) which can
-    # desync ranks.  Skip it for multi-GPU; train for the full --epochs instead.
-    if n_devices <= 1:
-        callbacks.append(
-            EarlyStopping(
-                monitor="val_auc",
-                mode="max",
-                patience=args.patience,
-                min_delta=0.0,
-                verbose=True,
-            )
+    callbacks.append(
+        EarlyStopping(
+            monitor="val_auc",
+            mode="max",
+            patience=args.patience,
+            min_delta=0.0,
+            verbose=True,
         )
+    )
 
     callbacks.append(
         ModelCheckpoint(
@@ -303,7 +300,7 @@ def _build_trainer(
 
     csv_logger = CSVLogger(save_dir=out_dir, name=f"{base}lightning_logs", version=f"fold_{fold_idx}")
 
-    callbacks = _build_callbacks(args, out_dir, base, fold_idx, n_devices=n_devices)
+    callbacks = _build_callbacks(args, out_dir, base, fold_idx)
 
     trainer = lightning.Trainer(
         max_epochs=args.epochs,

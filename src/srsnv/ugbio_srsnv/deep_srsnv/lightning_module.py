@@ -103,10 +103,11 @@ class SRSNVLightningModule(lightning.LightningModule):
         return loss
 
     def on_train_epoch_end(self) -> None:
-        # torchmetrics .compute() already syncs via all_gather; do NOT add sync_dist=True
-        # which would issue a redundant all_reduce and desync ranks.
-        self.log("train_auc", self.train_auroc.compute(), prog_bar=True)
-        self.log("train_aupr", self.train_ap.compute(), prog_bar=True)
+        # sync_on_compute=False disables the torchmetrics all_gather, so
+        # sync_dist=True here is the single collective that ensures all
+        # ranks see identical metric values (needed for EarlyStopping).
+        self.log("train_auc", self.train_auroc.compute(), prog_bar=True, sync_dist=True)
+        self.log("train_aupr", self.train_ap.compute(), prog_bar=True, sync_dist=True)
         self.train_auroc.reset()
         self.train_ap.reset()
 
@@ -121,8 +122,8 @@ class SRSNVLightningModule(lightning.LightningModule):
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
 
     def on_validation_epoch_end(self) -> None:
-        self.log("val_auc", self.val_auroc.compute(), prog_bar=True)
-        self.log("val_aupr", self.val_ap.compute(), prog_bar=True)
+        self.log("val_auc", self.val_auroc.compute(), prog_bar=True, sync_dist=True)
+        self.log("val_aupr", self.val_ap.compute(), prog_bar=True, sync_dist=True)
         self.val_auroc.reset()
         self.val_ap.reset()
 
@@ -137,8 +138,8 @@ class SRSNVLightningModule(lightning.LightningModule):
         self.log("test_loss", loss, on_step=False, on_epoch=True, sync_dist=True)
 
     def on_test_epoch_end(self) -> None:
-        self.log("test_auc", self.test_auroc.compute())
-        self.log("test_aupr", self.test_ap.compute())
+        self.log("test_auc", self.test_auroc.compute(), sync_dist=True)
+        self.log("test_aupr", self.test_ap.compute(), sync_dist=True)
         self.test_auroc.reset()
         self.test_ap.reset()
 

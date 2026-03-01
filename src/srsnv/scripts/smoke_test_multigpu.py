@@ -96,15 +96,11 @@ def main():  # noqa: C901, PLR0912, PLR0915
 
     strategy = "ddp" if n_devices > 1 else "auto"
 
-    # For multi-GPU: skip EarlyStopping (its reduce_boolean_decision is
-    # an NCCL collective that can desync ranks).  ModelCheckpoint is safe
-    # because it only writes on rank 0 without collectives.
     callbacks = [
+        EarlyStopping(monitor="val_auc", mode="max", patience=5),
         ModelCheckpoint(dirpath=out_dir, monitor="val_auc", mode="max", save_top_k=1),
         LearningRateMonitor(logging_interval="epoch"),
     ]
-    if n_devices <= 1:
-        callbacks.insert(0, EarlyStopping(monitor="val_auc", mode="max", patience=5))
     csv_logger = CSVLogger(save_dir=out_dir, name="smoke_logs")
 
     trainer = lightning.Trainer(

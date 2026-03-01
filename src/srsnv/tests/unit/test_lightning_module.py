@@ -138,11 +138,13 @@ def test_lightning_module_without_cat_embeds() -> None:
     assert logits.shape == (4,)
 
 
-def test_torchmetrics_no_sync_dist() -> None:
-    """Torchmetrics-based logs must NOT use sync_dist=True (causes NCCL desync).
+def test_sync_dist_on_metric_logs() -> None:
+    """All self.log() calls for computed metrics must use sync_dist=True.
 
-    Only loss logs should use sync_dist=True; torchmetrics handles its own
-    distributed sync via sync_on_compute.
+    With sync_on_compute=False on torchmetrics, the only DDP collective for
+    metrics is sync_dist=True in self.log(). This ensures all ranks see
+    identical values, which is required for EarlyStopping's
+    reduce_boolean_decision to be consistent.
     """
     epoch_end_methods = [
         "on_train_epoch_end",
@@ -154,9 +156,7 @@ def test_torchmetrics_no_sync_dist() -> None:
         source = inspect.getsource(method)
         for line in source.split("\n"):
             if "self.log(" in line and ".compute()" in line:
-                assert (
-                    "sync_dist=True" not in line
-                ), f"sync_dist=True on torchmetrics log will desync DDP in {method_name}: {line.strip()}"
+                assert "sync_dist=True" in line, f"Missing sync_dist=True in {method_name}: {line.strip()}"
 
 
 def test_parse_devices_auto() -> None:
