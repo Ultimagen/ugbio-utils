@@ -70,12 +70,14 @@ class SRSNVLightningModule(lightning.LightningModule):
         )
         self.criterion = nn.BCEWithLogitsLoss()
 
-        self.train_auroc = torchmetrics.AUROC(task="binary")
-        self.train_ap = torchmetrics.AveragePrecision(task="binary")
-        self.val_auroc = torchmetrics.AUROC(task="binary")
-        self.val_ap = torchmetrics.AveragePrecision(task="binary")
-        self.test_auroc = torchmetrics.AUROC(task="binary")
-        self.test_ap = torchmetrics.AveragePrecision(task="binary")
+        # sync_on_compute=False: each rank computes metrics on its local data only.
+        # This avoids NCCL all_gather calls that can desync with DDP collectives.
+        self.train_auroc = torchmetrics.AUROC(task="binary", sync_on_compute=False)
+        self.train_ap = torchmetrics.AveragePrecision(task="binary", sync_on_compute=False)
+        self.val_auroc = torchmetrics.AUROC(task="binary", sync_on_compute=False)
+        self.val_ap = torchmetrics.AveragePrecision(task="binary", sync_on_compute=False)
+        self.test_auroc = torchmetrics.AUROC(task="binary", sync_on_compute=False)
+        self.test_ap = torchmetrics.AveragePrecision(task="binary", sync_on_compute=False)
 
     def _forward(self, batch: dict) -> torch.Tensor:
         return self.model(
@@ -97,10 +99,12 @@ class SRSNVLightningModule(lightning.LightningModule):
 
         self.train_auroc.update(preds, labels)
         self.train_ap.update(preds, labels)
-        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("train_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         return loss
 
     def on_train_epoch_end(self) -> None:
+        # torchmetrics .compute() already syncs via all_gather; do NOT add sync_dist=True
+        # which would issue a redundant all_reduce and desync ranks.
         self.log("train_auc", self.train_auroc.compute(), prog_bar=True)
         self.log("train_aupr", self.train_ap.compute(), prog_bar=True)
         self.train_auroc.reset()
@@ -114,7 +118,7 @@ class SRSNVLightningModule(lightning.LightningModule):
 
         self.val_auroc.update(preds, labels)
         self.val_ap.update(preds, labels)
-        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
 
     def on_validation_epoch_end(self) -> None:
         self.log("val_auc", self.val_auroc.compute(), prog_bar=True)
@@ -130,7 +134,7 @@ class SRSNVLightningModule(lightning.LightningModule):
 
         self.test_auroc.update(preds, labels)
         self.test_ap.update(preds, labels)
-        self.log("test_loss", loss, on_step=False, on_epoch=True)
+        self.log("test_loss", loss, on_step=False, on_epoch=True, sync_dist=True)
 
     def on_test_epoch_end(self) -> None:
         self.log("test_auc", self.test_auroc.compute())

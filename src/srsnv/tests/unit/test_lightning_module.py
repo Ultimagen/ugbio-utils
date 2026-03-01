@@ -1,5 +1,8 @@
+import inspect
+
 import torch
 from ugbio_srsnv.deep_srsnv.lightning_module import SRSNVLightningModule
+from ugbio_srsnv.srsnv_dnn_bam_training import _parse_devices, _resolve_n_devices
 
 
 def _make_batch(batch_size: int = 4, length: int = 300) -> dict:
@@ -133,3 +136,43 @@ def test_lightning_module_without_cat_embeds() -> None:
     del batch["et_idx"]
     logits = model._forward(batch)
     assert logits.shape == (4,)
+
+
+def test_torchmetrics_no_sync_dist() -> None:
+    """Torchmetrics-based logs must NOT use sync_dist=True (causes NCCL desync).
+
+    Only loss logs should use sync_dist=True; torchmetrics handles its own
+    distributed sync via sync_on_compute.
+    """
+    epoch_end_methods = [
+        "on_train_epoch_end",
+        "on_validation_epoch_end",
+        "on_test_epoch_end",
+    ]
+    for method_name in epoch_end_methods:
+        method = getattr(SRSNVLightningModule, method_name)
+        source = inspect.getsource(method)
+        for line in source.split("\n"):
+            if "self.log(" in line and ".compute()" in line:
+                assert (
+                    "sync_dist=True" not in line
+                ), f"sync_dist=True on torchmetrics log will desync DDP in {method_name}: {line.strip()}"
+
+
+def test_parse_devices_auto() -> None:
+    assert _parse_devices("auto") == "auto"
+
+
+def test_parse_devices_single_int() -> None:
+    assert _parse_devices("2") == 2
+
+
+def test_parse_devices_gpu_list() -> None:
+    assert _parse_devices("0,3") == [0, 3]
+    assert _parse_devices("0,1,2") == [0, 1, 2]
+
+
+def test_resolve_n_devices() -> None:
+    assert _resolve_n_devices([0, 3]) == 2
+    assert _resolve_n_devices(1) == 1
+    assert _resolve_n_devices(4) == 4

@@ -9,7 +9,7 @@ dependencies = [
     "numba>=0.60.0",
     "shap>=0.46.0",
     "statsmodels>=0.14.4",
-    "torch",
+    "torch>=2.1",
     "lightning>=2.0",
     "torchmetrics>=1.0",
 ]

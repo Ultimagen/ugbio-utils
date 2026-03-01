@@ -63,7 +63,6 @@ uv run srsnv_dnn_bam_training \
   --patience "${PATIENCE}" \
   --batch-size "${BATCH_SIZE}" \
   --lr-scheduler "${LR_SCHEDULER}" \
-  --use-amp \
   --use-tf32 \
   --basename dnn_shared_split \
   --output "${OUTPUT_DIR}" \

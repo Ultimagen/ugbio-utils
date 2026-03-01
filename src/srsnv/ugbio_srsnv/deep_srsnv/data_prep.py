@@ -1106,6 +1106,43 @@ class DeepSRSNVDataset(Dataset):
         }
 
 
+def save_cache_to_shm(cache: dict, shm_dir: str = "/dev/shm") -> Path:  # noqa: S108
+    """Save tensor cache to shared memory for DDP multi-GPU sharing.
+
+    Tensors are saved via torch.save so they can be memory-mapped on load.
+    Non-tensor metadata (chrom, rn) is saved as pickle separately.
+    """
+    shm_path = Path(shm_dir) / "deep_srsnv_shared_cache"
+    shm_path.mkdir(exist_ok=True)
+
+    tensors = {k: v for k, v in cache.items() if isinstance(v, torch.Tensor)}
+    tensors["pos"] = torch.from_numpy(cache["pos"])
+    torch.save(tensors, shm_path / "tensors.pt")
+
+    with (shm_path / "meta.pkl").open("wb") as f:
+        pickle.dump({"chrom": cache["chrom"], "rn": cache["rn"]}, f)
+
+    (shm_path / ".ready").touch()
+    logger.info("Saved tensor cache to /dev/shm (%d tensor keys)", len(tensors))
+    return shm_path
+
+
+def load_cache_from_shm(shm_path: Path | str) -> dict:
+    """Load tensor cache from shared memory using memory-mapped I/O.
+
+    Uses torch.load(mmap=True) so all DDP processes share the same
+    physical RAM pages through the OS page cache.
+    """
+    shm_path = Path(shm_path)
+    cache = dict(torch.load(shm_path / "tensors.pt", mmap=True, weights_only=True))  # noqa: S301
+    cache["pos"] = cache["pos"].numpy()
+
+    with (shm_path / "meta.pkl").open("rb") as f:
+        meta = pickle.load(f)  # noqa: S301
+    cache.update(meta)
+    return cache
+
+
 def iter_tensor_cache_chunks(tensor_cache_path: str):
     with Path(tensor_cache_path).open("rb") as handle:
         while True:

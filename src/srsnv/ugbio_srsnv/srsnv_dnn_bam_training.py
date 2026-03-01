@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -11,6 +13,7 @@ import lightning
 import numpy as np
 import polars as pl
 import torch
+import torch.distributed as dist
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint, StochasticWeightAveraging
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.tuner import Tuner
@@ -24,7 +27,9 @@ from ugbio_srsnv.deep_srsnv.data_module import SRSNVDataModule
 from ugbio_srsnv.deep_srsnv.data_prep import (
     build_encoders_from_schema,
     build_tensor_cache,
+    load_cache_from_shm,
     load_full_tensor_cache,
+    save_cache_to_shm,
 )
 from ugbio_srsnv.deep_srsnv.lightning_module import LR_SCHEDULER_CHOICES, SRSNVLightningModule
 from ugbio_srsnv.split_manifest import (
@@ -118,7 +123,9 @@ def _cli() -> argparse.Namespace:  # noqa: PLR0915
     ap.add_argument("--use-tf32", action="store_true")
     ap.add_argument("--gradient-clip-val", type=float, default=None)
     ap.add_argument("--accumulate-grad-batches", type=int, default=1)
-    ap.add_argument("--devices", type=int, default=1, help="Number of GPUs (or 'auto')")
+    ap.add_argument(
+        "--devices", type=str, default="auto", help="GPU devices: 'auto' (all), N (count), or '0,3' (specific IDs)"
+    )
     ap.add_argument("--strategy", default="auto", help="Lightning strategy (auto, ddp, etc.)")
 
     # Preprocessing
@@ -220,18 +227,21 @@ def _summarize_chunk_prevalence(chunk_split_stats: list[dict] | None, split_id: 
     }
 
 
-def _build_callbacks(args: argparse.Namespace, out_dir: Path, base: str, fold_idx: int) -> list:
+def _build_callbacks(args: argparse.Namespace, out_dir: Path, base: str, fold_idx: int, *, n_devices: int = 1) -> list:
     callbacks = []
 
-    callbacks.append(
-        EarlyStopping(
-            monitor="val_auc",
-            mode="max",
-            patience=args.patience,
-            min_delta=0.0,
-            verbose=True,
+    # EarlyStopping uses reduce_boolean_decision (NCCL all_reduce) which can
+    # desync ranks.  Skip it for multi-GPU; train for the full --epochs instead.
+    if n_devices <= 1:
+        callbacks.append(
+            EarlyStopping(
+                monitor="val_auc",
+                mode="max",
+                patience=args.patience,
+                min_delta=0.0,
+                verbose=True,
+            )
         )
-    )
 
     callbacks.append(
         ModelCheckpoint(
@@ -261,16 +271,39 @@ def _build_callbacks(args: argparse.Namespace, out_dir: Path, base: str, fold_id
     return callbacks
 
 
-def _build_trainer(args: argparse.Namespace, out_dir: Path, base: str, fold_idx: int) -> lightning.Trainer:
+def _parse_devices(devices_str: str):
+    """Parse --devices arg: 'auto', '2', or '0,3' (specific GPU IDs)."""
+    if devices_str == "auto":
+        return "auto"
+    if "," in devices_str:
+        return [int(x) for x in devices_str.split(",")]
+    return int(devices_str)
+
+
+def _resolve_n_devices(devices) -> int:
+    """Return the effective number of GPU devices."""
+    if isinstance(devices, list):
+        return len(devices)
+    if devices == "auto":
+        return torch.cuda.device_count() if torch.cuda.is_available() else 1
+    return int(devices)
+
+
+def _build_trainer(
+    args: argparse.Namespace, out_dir: Path, base: str, fold_idx: int, *, devices=None
+) -> lightning.Trainer:
+    """Build a Trainer for training (single or multi-GPU via DDP)."""
     precision = "16-mixed" if args.use_amp else "32-true"
 
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
-    devices = args.devices if accelerator == "gpu" else 1
-    strategy = args.strategy if devices > 1 else "auto"
+    if devices is None:
+        devices = _parse_devices(args.devices) if accelerator == "gpu" else 1
+    n_devices = _resolve_n_devices(devices) if accelerator == "gpu" else 1
+    strategy = "ddp" if n_devices > 1 else "auto"
 
     csv_logger = CSVLogger(save_dir=out_dir, name=f"{base}lightning_logs", version=f"fold_{fold_idx}")
 
-    callbacks = _build_callbacks(args, out_dir, base, fold_idx)
+    callbacks = _build_callbacks(args, out_dir, base, fold_idx, n_devices=n_devices)
 
     trainer = lightning.Trainer(
         max_epochs=args.epochs,
@@ -542,8 +575,28 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
                 "This can destabilize optimization and hurt validation."
             )
 
+    # ── Determine effective device count ──
+    n_devices = _resolve_n_devices(_parse_devices(args.devices)) if torch.cuda.is_available() else 1
+
     # ── Load tensor cache ──
-    full_cache = load_full_tensor_cache(tensor_cache_path)
+    # For multi-GPU: rank 0 loads once, saves to /dev/shm, then all ranks
+    # mmap from there so physical RAM pages are shared across processes.
+    is_rank_zero = int(os.environ.get("LOCAL_RANK", "0")) == 0
+    shm_cache_path = Path("/dev/shm/deep_srsnv_shared_cache")  # noqa: S108
+
+    if n_devices > 1:
+        if is_rank_zero:
+            full_cache = load_full_tensor_cache(tensor_cache_path)
+            save_cache_to_shm(full_cache)
+            del full_cache
+        full_cache = load_cache_from_shm(shm_cache_path)
+    else:
+        full_cache = load_full_tensor_cache(tensor_cache_path)
+
+    effective_lr = args.learning_rate
+    if n_devices > 1:
+        effective_lr = args.learning_rate * math.sqrt(n_devices)
+        logger.info("Multi-GPU LR scaling: %.6f -> %.6f (sqrt(%d) factor)", args.learning_rate, effective_lr, n_devices)
 
     # ── Training loop (per fold) ──
     n_models = 1 if single_model_split else args.k_folds
@@ -588,7 +641,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             hidden_channels=args.hidden_channels,
             n_blocks=args.n_blocks,
             dropout=args.dropout,
-            learning_rate=args.learning_rate,
+            learning_rate=effective_lr,
             weight_decay=args.weight_decay,
             lr_scheduler=args.lr_scheduler,
             lr_warmup_epochs=args.lr_warmup_epochs,
@@ -610,7 +663,6 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
 
         trainer = _build_trainer(args, out_dir, base, fold_idx)
 
-        # ── Tuner: LR finder / batch size finder ──
         if args.auto_lr_find or args.auto_scale_batch_size:
             tuner = Tuner(trainer)
             if args.auto_scale_batch_size:
@@ -626,12 +678,34 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
                     fig.savefig(out_dir / f"{base}lr_finder_fold_{fold_idx}.png", dpi=100)
                     logger.info("LR finder plot saved to %s", out_dir / f"{base}lr_finder_fold_{fold_idx}.png")
 
-        # ── Train ──
         trainer.fit(lit_model, datamodule=dm)
-        fold_results = _extract_training_results(trainer, fold_idx)
-        training_results.append(fold_results)
-        best_ckpt_paths.append(fold_results.get("best_model_path", ""))
 
+        fold_results = _extract_training_results(trainer, fold_idx)
+        best_path = fold_results.get("best_model_path")
+
+        # Predict on single GPU (rank 0 only for multi-GPU)
+        if trainer.global_rank == 0:
+            if n_devices > 1:
+                predict_trainer = lightning.Trainer(
+                    accelerator="gpu",
+                    devices=1,
+                    precision="16-mixed" if args.use_amp else "32-true",
+                    enable_progress_bar=True,
+                    default_root_dir=str(out_dir),
+                )
+                if best_path:
+                    lit_model = SRSNVLightningModule.load_from_checkpoint(best_path)
+                fold_predictions = predict_trainer.predict(lit_model, datamodule=dm)
+            elif best_path:
+                fold_predictions = trainer.predict(lit_model, datamodule=dm, ckpt_path=best_path)
+            else:
+                fold_predictions = trainer.predict(lit_model, datamodule=dm)
+        else:
+            fold_predictions = []
+
+        training_results.append(fold_results)
+        best_ckpt_paths.append(best_path or "")
+        all_predictions.append(fold_predictions)
         logger.info(
             "Fold %d complete in %.1fs (best_val_auc=%s stopped_early=%s best_ckpt=%s)",
             fold_idx,
@@ -641,13 +715,21 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             fold_results.get("best_model_path"),
         )
 
-        # ── Predict using best checkpoint ──
-        best_path = fold_results.get("best_model_path")
-        if best_path:
-            fold_predictions = trainer.predict(lit_model, datamodule=dm, ckpt_path=best_path)
-        else:
-            fold_predictions = trainer.predict(lit_model, datamodule=dm)
-        all_predictions.append(fold_predictions)
+    # Non-rank-0 processes: clean up DDP and exit (no predictions to process)
+    is_rank_zero = int(os.environ.get("LOCAL_RANK", "0")) == 0
+    if not is_rank_zero:
+        logger.info("Rank %s finished training. Cleaning up.", os.environ.get("LOCAL_RANK", "?"))
+        if dist.is_initialized():
+            dist.destroy_process_group()
+        return
+
+    # Rank 0: tear down DDP process group before single-GPU prediction
+    if dist.is_initialized():
+        dist.destroy_process_group()
+
+    if shm_cache_path.exists():
+        shutil.rmtree(shm_cache_path, ignore_errors=True)
+        logger.info("Cleaned up shared memory cache at %s", shm_cache_path)
 
     # ── Aggregate predictions ──
     logger.info("Prediction/export phase started")
@@ -675,8 +757,6 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         n_neg = int(np.sum(labels == 0))
         prior_train_error = n_neg / len(labels) if len(labels) > 0 else 0.5
 
-        # In single-model mode, build the LUT from validation data only
-        # to avoid overfitting bias from training-set predictions.
         lut_mask = (fold_ids == 1) if single_model_split else None
 
         snvq, x_lut, y_lut = recalibrate_snvq(
@@ -768,6 +848,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             "eval_batch_size": args.eval_batch_size,
             "predict_batch_size": args.predict_batch_size,
             "learning_rate": args.learning_rate,
+            "effective_learning_rate": effective_lr,
             "weight_decay": args.weight_decay,
             "hidden_channels": args.hidden_channels,
             "n_blocks": args.n_blocks,
@@ -787,7 +868,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             "use_amp": bool(args.use_amp),
             "use_tf32": bool(args.use_tf32),
             "devices": args.devices,
-            "strategy": args.strategy,
+            "strategy": "ddp" if n_devices > 1 else "auto",
             "auto_lr_find": args.auto_lr_find,
             "auto_scale_batch_size": args.auto_scale_batch_size,
         },
