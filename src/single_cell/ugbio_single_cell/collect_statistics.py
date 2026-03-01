@@ -312,15 +312,24 @@ def extract_statistics_table(h5_file: Path):  # noqa: PLR0915
     series.to_hdf(h5_file, key=H5Keys.STATISTICS_SHORTLIST.value)
 
 
+def _get_first_available(d: dict, *keys):
+    """Return the value of the first key found in *d*, or ``None``."""
+    for k in keys:
+        if k in d:
+            return d[k]
+    return None
+
+
 def extract_cell_barcode_filter_data(stats, store):
     sorter_stats_json_df = store[H5Keys.SORTER_STATS_JSON.value]
     if "cell_barcode_filter" in sorter_stats_json_df:
         cell_barcode_filter = sorter_stats_json_df["cell_barcode_filter"].iloc[0]
-        # "failed" was renamed to "suspicious" in sorter.  Supporting both.
-        n_suspicious_cbcs = cell_barcode_filter.get("nr_suspicious_cbcs", cell_barcode_filter.get("nr_failed_cbcs"))
+        n_suspicious_cbcs = _get_first_available(
+            cell_barcode_filter, "nr_suspicious_cbcs", "nr_suspicous_cbcs", "nr_failed_cbcs"
+        )
         n_good_cbcs_above_thresh = cell_barcode_filter["nr_good_cbcs_above_threshold"]
-        n_suspicious_cbc_reads = cell_barcode_filter.get(
-            "nr_suspicious_reads", cell_barcode_filter.get("nr_failed_reads")
+        n_suspicious_cbc_reads = _get_first_available(
+            cell_barcode_filter, "nr_suspicious_reads", "nr_suspicous_reads", "nr_failed_reads"
         )
         n_total_reads = sorter_stats_json_df["total_reads"].iloc[0]
 
