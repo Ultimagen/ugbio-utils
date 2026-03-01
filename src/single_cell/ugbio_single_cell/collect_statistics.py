@@ -312,19 +312,48 @@ def extract_statistics_table(h5_file: Path):  # noqa: PLR0915
     series.to_hdf(h5_file, key=H5Keys.STATISTICS_SHORTLIST.value)
 
 
+def _get_first_available(d: dict, *keys):
+    """Return the value of the first key found in *d*.
+
+    The first entry in *keys* is considered the canonical name.  If a
+    later (deprecated / mis-spelled) key matches instead, a
+    ``DeprecationWarning`` is emitted so callers are aware of the
+    fallback.  Raises ``KeyError`` if none of the keys exist.
+    """
+    canonical = keys[0]
+    for k in keys:
+        if k in d:
+            if k != canonical:
+                warnings.warn(
+                    f"cell_barcode_filter key '{k}' is deprecated, expected '{canonical}'",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+            return d[k]
+    raise KeyError(f"None of the expected keys {keys} found in {list(d.keys())}")
+
+
 def extract_cell_barcode_filter_data(stats, store):
     sorter_stats_json_df = store[H5Keys.SORTER_STATS_JSON.value]
     if "cell_barcode_filter" in sorter_stats_json_df:
-        cell_barcode_filter = sorter_stats_json_df["cell_barcode_filter"].iloc[0]  # get "cell_barcode_filter" dict
-        n_failed_cbcs = cell_barcode_filter["nr_failed_cbcs"]
+        cell_barcode_filter = sorter_stats_json_df["cell_barcode_filter"].iloc[0]
+        n_suspicious_cbcs = _get_first_available(
+            cell_barcode_filter, "nr_suspicious_cbcs", "nr_suspicous_cbcs", "nr_failed_cbcs"
+        )
         n_good_cbcs_above_thresh = cell_barcode_filter["nr_good_cbcs_above_threshold"]
-        n_failed_cbc_reads = cell_barcode_filter["nr_failed_reads"]
+        n_suspicious_cbc_reads = _get_first_available(
+            cell_barcode_filter, "nr_suspicious_reads", "nr_suspicous_reads", "nr_failed_reads"
+        )
         n_total_reads = sorter_stats_json_df["total_reads"].iloc[0]
 
-        if (n_failed_cbcs + n_good_cbcs_above_thresh) > 0:
-            percent_failed_cbcs_above_threshold = 100 * n_failed_cbcs / (n_failed_cbcs + n_good_cbcs_above_thresh)
-            stats["pct_failed_cbcs_above_threshold"] = percent_failed_cbcs_above_threshold
+        if (n_suspicious_cbcs + n_good_cbcs_above_thresh) > 0:
+            pct_suspicious_cbcs_above_threshold = (
+                100 * n_suspicious_cbcs / (n_suspicious_cbcs + n_good_cbcs_above_thresh)
+            )
+            stats["pct_suspicious_cbcs_above_threshold"] = pct_suspicious_cbcs_above_threshold
+            stats["pct_failed_cbcs_above_threshold"] = pct_suspicious_cbcs_above_threshold
 
         if n_total_reads > 0:
-            percent_cbc_filter_failed_reads = 100 * n_failed_cbc_reads / n_total_reads
-            stats["pct_cbc_filter_failed_reads"] = percent_cbc_filter_failed_reads
+            pct_cbc_filter_suspicious_reads = 100 * n_suspicious_cbc_reads / n_total_reads
+            stats["pct_cbc_filter_suspicious_reads"] = pct_cbc_filter_suspicious_reads
+            stats["pct_cbc_filter_failed_reads"] = pct_cbc_filter_suspicious_reads
