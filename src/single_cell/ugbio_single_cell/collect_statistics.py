@@ -313,11 +313,14 @@ def extract_statistics_table(h5_file: Path):  # noqa: PLR0915
 
 
 def _get_first_available(d: dict, *keys):
-    """Return the value of the first key found in *d*, or ``None``."""
+    """Return the value of the first key found in *d*.
+
+    Raises ``KeyError`` if none of the keys exist.
+    """
     for k in keys:
         if k in d:
             return d[k]
-    return None
+    raise KeyError(f"None of the expected keys {keys} found in {list(d.keys())}")
 
 
 def extract_cell_barcode_filter_data(stats, store):
