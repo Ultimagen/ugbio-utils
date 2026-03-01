@@ -77,6 +77,8 @@ from ugbio_featuremap.filter_dataframe import (
     TYPE_DOWNSAMPLE,
     TYPE_RAW,
     TYPE_REGION,
+    TYPE_UNKNOWN,
+    TYPE_UNNAMED,
     _create_filter_columns,
     _create_final_filter_column,
     validate_filter_config,
@@ -323,7 +325,7 @@ def _prepare_filter_config(read_filters: dict | list | None) -> list[dict]:
     log.debug(f"Filters to apply ({len(filters_to_apply)}):")
     for i, f in enumerate(filters_to_apply):
         log.debug(
-            f"  {i+1}. {f.get(KEY_NAME, 'unnamed')}: {f.get(KEY_FIELD)} {f.get(KEY_OP)} "
+            f"  {i+1}. {f.get(KEY_NAME, TYPE_UNNAMED)}: {f.get(KEY_FIELD)} {f.get(KEY_OP)} "
             f"{f.get(KEY_VALUE, f.get(KEY_VALUE_FIELD, 'N/A'))}"
         )
 
@@ -331,7 +333,7 @@ def _prepare_filter_config(read_filters: dict | list | None) -> list[dict]:
     try:
         validate_filter_config(filter_config)
     except Exception as e:
-        filter_names = [f.get(KEY_NAME, f.get(KEY_TYPE, "unnamed")) for f in filters_to_apply]
+        filter_names = [f.get(KEY_NAME, f.get(KEY_TYPE, TYPE_UNNAMED)) for f in filters_to_apply]
         log.error(f"FATAL: Filter validation failed. Filters: {filter_names}")
         log.error(f"Validation error: {e}")
         raise RuntimeError(f"Filter validation failed for filters {filter_names}: {e}") from e
@@ -376,51 +378,6 @@ def _log_filter_statistics(df_with_filters: pl.DataFrame, filter_cols: list[str]
             fail_count = df_with_filters.height - pass_count
             pct = 100.0 * pass_count / df_with_filters.height if df_with_filters.height > 0 else 0
             log.debug(f"  {col}: {pass_count:,} pass ({pct:.1f}%) / {fail_count:,} fail")
-
-
-def _execute_filters_with_diagnostics(
-    df_final: pl.DataFrame, filters_to_apply: list[dict], frame: pl.DataFrame
-) -> pl.DataFrame:
-    """
-    Execute final filtering with diagnostic error handling.
-
-    If filtering fails, test each filter individually to identify the problematic one.
-    """
-    try:
-        return df_final.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$"))
-    except Exception as e:
-        log.error(f"Error during filter execution: {e}")
-        log.error("Testing each filter individually to identify the problematic filter...")
-
-        problematic_filter = None
-        for i, f in enumerate(filters_to_apply):
-            filter_name = f.get(KEY_NAME, "unnamed")
-            filter_type = f.get(KEY_TYPE, "unknown")
-            try:
-                test_lazy = frame.lazy()
-                test_lazy, test_cols = _create_filter_columns(test_lazy, [f])
-                test_lazy = _create_final_filter_column(test_lazy, test_cols, None)
-                _ = test_lazy.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$")).collect()
-                log.debug(f"  Filter {i + 1}/{len(filters_to_apply)}: {filter_name} (type={filter_type}) - OK")
-            except Exception as filter_error:
-                problematic_filter = f
-                log.error(
-                    f"  Filter {i + 1}/{len(filters_to_apply)}: "
-                    f"{filter_name} (type={filter_type}) - EXECUTION FAILED"
-                )
-                log.error(f"    Error: {filter_error}")
-                log.error(f"    Filter configuration: {json.dumps(f, indent=2)}")
-                break
-
-        if problematic_filter:
-            filter_name = problematic_filter.get(KEY_NAME, "unnamed")
-            raise RuntimeError(
-                f"Filter '{filter_name}' execution failed. "
-                f"Configuration: {json.dumps(problematic_filter)}. "
-                f"Original error: {e}"
-            ) from e
-        else:
-            raise RuntimeError(f"Filter execution failed but could not identify specific filter. Error: {e}") from e
 
 
 def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -> pl.DataFrame:
@@ -474,7 +431,7 @@ def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -
         pct = 100.0 * final_pass / df_final.height if df_final.height > 0 else 0
         log.debug(f"  __filter_final (ALL COMBINED): {final_pass:,} pass ({pct:.1f}%) / {final_fail:,} fail")
 
-        filtered_frame = _execute_filters_with_diagnostics(df_final, filters_to_apply, frame)
+        filtered_frame = df_final.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$"))
 
         log.debug(f"Read filtering: {frame.height:,} → {filtered_frame.height:,} reads")
         return filtered_frame
@@ -484,7 +441,7 @@ def _apply_read_filters(frame: pl.DataFrame, read_filters: dict | list | None) -
         try:
             all_filters = read_filters if isinstance(read_filters, list) else read_filters.get("filters", [])
             for f in all_filters:
-                filter_summary.append(f.get(KEY_NAME, f.get(KEY_TYPE, "unnamed")))
+                filter_summary.append(f.get(KEY_NAME, f.get(KEY_TYPE, TYPE_UNNAMED)))
         except Exception:
             filter_summary = ["<error parsing filters>"]
 
@@ -1308,10 +1265,13 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
                 if read_filters:
                     log.error("")
                     log.error("Read filters were applied. Check if filters are too strict:")
-                    if isinstance(read_filters, dict) and "filters" in read_filters:
-                        for f in read_filters["filters"]:
-                            value_display = f.get("value", f.get("value_field", "N/A"))
-                            log.error(f"  - {f.get('name', 'unnamed')}: {f.get('field')} {f.get('op')} {value_display}")
+                    if isinstance(read_filters, dict) and KEY_FILTERS in read_filters:
+                        for f in read_filters[KEY_FILTERS]:
+                            value_display = f.get(KEY_VALUE, f.get(KEY_VALUE_FIELD, "N/A"))
+                            log.error(
+                                f"  - {f.get(KEY_NAME, TYPE_UNNAMED)}: {f.get(KEY_FIELD)} "
+                                f"{f.get(KEY_OP, TYPE_UNKNOWN)} {value_display}"
+                            )
                 raise RuntimeError(
                     "No Parquet part-files were produced – all regions empty or failed. "
                     "Check log for details. If using read filters, they may be filtering out all data."

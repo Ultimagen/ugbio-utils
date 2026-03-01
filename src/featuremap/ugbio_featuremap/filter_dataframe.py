@@ -38,6 +38,8 @@ TYPE_DOWNSAMPLE = "downsample"
 TYPE_RAW = "raw"
 TYPE_FUNNEL = "funnel"
 TYPE_PASS = "pass"  # noqa: S105
+TYPE_UNKNOWN = "unknown"
+TYPE_UNNAMED = "unnamed"
 
 # Annotation fields
 FIELD_GNOMAD_AF = "gnomAD_AF"
