@@ -1,5 +1,5 @@
 {
-  "filters": [
+  "filters_full_output": [
     {
       "name": "raw",
       "type": "raw"
@@ -95,7 +95,7 @@
       "seed": 0
     }
   ],
-  "f2_filters": [
+  "filters_random_sample": [
     {
       "name": "raw",
       "type": "raw"

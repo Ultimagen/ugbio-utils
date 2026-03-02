@@ -68,6 +68,20 @@ def test_extract_stats_from_unified_new_format(resources_dir):
     assert raw_filter_pos["type"] == "raw"
     assert raw_filter_neg["type"] == "raw"
 
+    # Verify combinations data is preserved
+    assert "combinations" in pos_stats, "Positive stats should contain 'combinations'"
+    assert "combinations" in neg_stats, "Negative stats should contain 'combinations'"
+    assert isinstance(pos_stats["combinations"], dict)
+    assert isinstance(neg_stats["combinations"], dict)
+    assert len(pos_stats["combinations"]) > 0
+    assert len(neg_stats["combinations"]) > 0
+
+    # Verify combinations_total is preserved
+    assert "combinations_total" in pos_stats, "Positive stats should contain 'combinations_total'"
+    assert "combinations_total" in neg_stats, "Negative stats should contain 'combinations_total'"
+    assert pos_stats["combinations_total"] == 2725
+    assert neg_stats["combinations_total"] == 62256269
+
 
 def test_extract_stats_from_unified_missing_section():
     """Test _extract_stats_from_unified with missing required sections."""
@@ -206,3 +220,11 @@ def test_downsample_segments_added_to_metadata(tmp_path: Path, resources_dir: Pa
     assert (
         neg_ds["funnel"] == trainer.n_neg
     ), f"Negative downsample rows ({neg_ds['funnel']}) don't match trainer.n_neg ({trainer.n_neg})"
+
+    # Verify combinations data is preserved in metadata output
+    assert "combinations" in pos_stats, "Positive stats in metadata should contain 'combinations'"
+    assert "combinations" in neg_stats, "Negative stats in metadata should contain 'combinations'"
+    assert isinstance(pos_stats["combinations"], dict)
+    assert isinstance(neg_stats["combinations"], dict)
+    assert "combinations_total" in pos_stats, "Positive stats in metadata should contain 'combinations_total'"
+    assert "combinations_total" in neg_stats, "Negative stats in metadata should contain 'combinations_total'"

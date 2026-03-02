@@ -328,13 +328,16 @@ def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, d
     - filtering_stats_full_output: Full dataset stats (negative/FP data)
     - filtering_stats_random_sample: Random sample stats (positive/TP data)
 
-    Each section contains a 'filters' subsection with the filter data.
+    Each section contains a 'filters' subsection with the filter data,
+    and optionally 'combinations' and 'combinations_total' subsections.
 
     Args:
         unified_stats_path: Path to the unified stats JSON file
 
     Returns:
-        Tuple of (positive_stats, negative_stats) in legacy format
+        Tuple of (positive_stats, negative_stats) in legacy format,
+        each containing 'filters' list and optionally 'combinations'
+        and 'combinations_total'
     """
     # Read the unified stats file directly
     with open(unified_stats_path, encoding="utf-8") as f:
@@ -377,6 +380,17 @@ def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, d
         "filters": _convert_filters_dict_to_list(unified_stats["filtering_stats_random_sample"]["filters"])
     }
     negative_stats = {"filters": _convert_filters_dict_to_list(unified_stats["filtering_stats_full_output"]["filters"])}
+
+    # Preserve combinations data if present
+    for section_key, stats_dict in [
+        ("filtering_stats_random_sample", positive_stats),
+        ("filtering_stats_full_output", negative_stats),
+    ]:
+        section = unified_stats[section_key]
+        if "combinations" in section:
+            stats_dict["combinations"] = section["combinations"]
+        if "combinations_total" in section:
+            stats_dict["combinations_total"] = section["combinations_total"]
 
     return positive_stats, negative_stats
 
@@ -1096,8 +1110,8 @@ def _cli() -> argparse.Namespace:
     ap.add_argument(
         "--stats-file",
         required=True,
-        help="JSON file with filtering stats containing positive (f2_filters),"
-        " and negative (filters). Obtanied from snvfind -S",
+        help="JSON file with filtering stats containing positive (filters_random_sample),"
+        " and negative (filters_full_output). Obtanied from snvfind -S",
     )
     ap.add_argument(
         "--mean-coverage",

@@ -12,7 +12,7 @@ def convert_legacy_to_unified_stats(pos_stats_path, neg_stats_path, raw_stats_pa
     """
     Convert legacy separate stats files to unified format.
     Args:
-        pos_stats_path: Path to positive stats JSON (will become f2_filters)
+        pos_stats_path: Path to positive stats JSON (will become filters_random_sample)
         neg_stats_path: Path to negative stats JSON (not used in new format)
         raw_stats_path: Path to raw featuremap stats JSON (will become filters)
         output_path: Path for output unified JSON
@@ -43,11 +43,11 @@ def convert_legacy_to_unified_stats(pos_stats_path, neg_stats_path, raw_stats_pa
             result[name] = filter_dict
         return result
 
-    # Create unified format - single section with f2_filters (positive) and filters (negative/FP)
+    # Create unified format - single section with filters_random_sample (positive) and filters_full_output (negative/FP)
     unified_stats = {
         "filtering_stats_random_sample": {
-            "f2_filters": convert_filters_to_dict(pos_stats["filters"]),
-            "filters": convert_filters_to_dict(raw_stats["filters"]),
+            "filters_random_sample": convert_filters_to_dict(pos_stats["filters"]),
+            "filters_full_output": convert_filters_to_dict(raw_stats["filters"]),
         }
     }
 
@@ -56,8 +56,8 @@ def convert_legacy_to_unified_stats(pos_stats_path, neg_stats_path, raw_stats_pa
         json.dump(unified_stats, f, indent=2)
 
     print(f"Created unified stats file: {output_path}")
-    print(f"- f2_filters (TP): {pos_stats_path}")
-    print(f"- filters (FP): {raw_stats_path}")
+    print(f"- filters_random_sample (TP): {pos_stats_path}")
+    print(f"- filters_full_output (FP): {raw_stats_path}")
 
 
 if __name__ == "__main__":

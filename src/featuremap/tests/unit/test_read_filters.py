@@ -13,6 +13,9 @@ from ugbio_featuremap.featuremap_to_dataframe import (
 TEST_FEATUREMAP = Path(__file__).parent.parent / "resources" / "23A03846_bc_30.head.featuremap.vcf.gz"
 TEST_FEATUREMAP_RANDOM = Path(__file__).parent.parent / "resources" / "23A03846_bc_30.head.random.featuremap.vcf.gz"
 TEST_FILTERS_JSON = Path(__file__).parent.parent / "resources" / "create_featuremap_read_filters_test.json"
+TEST_FILTERS_SIMPLE_JSON = (
+    Path(__file__).parent.parent / "resources" / "create_featuremap_read_filters_test.simple.json"
+)
 
 
 def test_load_read_filters_real_file():
@@ -42,6 +45,7 @@ def test_vcf_to_parquet_with_real_filters(tmp_path: Path):
         drop_format={"GT", "AD", "X_TCM"},
         jobs=2,
         read_filters_json=TEST_FILTERS_JSON,
+        read_filter_json_key="filters_full_output",
         chunk_bp=1_000_000,  # Smaller chunks for test
     )
 
@@ -169,50 +173,47 @@ def test_vcf_to_parquet_with_filter_key(tmp_path: Path):
     if not Path(TEST_FILTERS_JSON).exists():
         pytest.skip(f"Test filter file not found: {TEST_FILTERS_JSON}")
 
-    output_parquet = tmp_path / "filtered_output_f2.parquet"
+    output_parquet = tmp_path / "filtered_output_random_sample.parquet"
 
-    # Convert with read filters using 'f2_filters' key - should produce valid output
+    # Convert with read filters using 'filters_random_sample' key - should produce valid output
     vcf_to_parquet(
         vcf=TEST_FEATUREMAP_RANDOM,
         out=str(output_parquet),
         drop_format={"GT", "AD", "X_TCM"},
         jobs=2,
         read_filters_json=TEST_FILTERS_JSON,
-        read_filter_json_key="f2_filters",
+        read_filter_json_key="filters_random_sample",
         chunk_bp=1_000_000,  # Smaller chunks for test
     )
 
     # Verify the output exists and is not empty
     assert output_parquet.exists(), "Output Parquet file should exist"
     result_df = pl.read_parquet(output_parquet)
-    print(f"F2 filtered output shape: {result_df.shape}")
+    print(f"Random sample filtered output shape: {result_df.shape}")
 
     # Verify that we have some reads after filtering (not all filtered out)
-    assert result_df.height > 0, "F2 filtered output should not be empty - all reads were filtered out"
+    assert result_df.height > 0, "Random sample filtered output should not be empty - all reads were filtered out"
     assert "CHROM" in result_df.columns
     assert "POS" in result_df.columns
 
 
-def test_vcf_to_parquet_with_f2_filters(tmp_path: Path):
-    """Test VCF to Parquet conversion with f2_filters using the random featuremap."""
-    f2_input_vcf = "/data/Runs/SRSNV/251222_filters/23A03846_bc_30.head.random.featuremap.vcf.gz"
-    read_filters_json = "/data/Runs/SRSNV/251222_filters/create_featuremap_read_filters_test.json"
+def test_vcf_to_parquet_with_filters_random_sample(tmp_path: Path):
+    """Test VCF to Parquet conversion with filters_random_sample using the random featuremap."""
+    if not Path(TEST_FEATUREMAP_RANDOM).exists():
+        pytest.skip(f"Random sample test featuremap file not found: {TEST_FEATUREMAP_RANDOM}")
+    if not Path(TEST_FILTERS_SIMPLE_JSON).exists():
+        pytest.skip(f"Test filter file not found: {TEST_FILTERS_SIMPLE_JSON}")
 
-    if not Path(f2_input_vcf).exists():
-        pytest.skip(f"F2 test featuremap file not found: {f2_input_vcf}")
-    if not Path(read_filters_json).exists():
-        pytest.skip(f"Test filter file not found: {read_filters_json}")
+    output_parquet = tmp_path / "random_sample_filtered_output.parquet"
 
-    output_parquet = tmp_path / "f2_filtered_output.parquet"
-
-    # Convert with f2_filters
+    # Convert with filters_random_sample
     vcf_to_parquet(
-        vcf=f2_input_vcf,
+        vcf=TEST_FEATUREMAP_RANDOM,
         out=str(output_parquet),
         drop_format={"GT", "AD", "X_TCM"},
         jobs=2,
-        read_filters_json=read_filters_json,
-        read_filter_json_key="f2_filters",
+        read_filters_json=str(TEST_FILTERS_SIMPLE_JSON),
+        read_filter_json_key="filters_random_sample",
         chunk_bp=1_000_000,  # Smaller chunks for test
     )
 
@@ -220,10 +221,10 @@ def test_vcf_to_parquet_with_f2_filters(tmp_path: Path):
 
     # Read the output and verify it's not empty
     result_df = pl.read_parquet(output_parquet)
-    print(f"F2 filters with random featuremap output shape: {result_df.shape}")
+    print(f"Random sample filters with random featuremap output shape: {result_df.shape}")
 
     # Basic sanity checks
-    assert result_df.height > 0, "F2 filtered output should not be empty"
+    assert result_df.height > 0, "Filtered output with filters_random_sample should not be empty"
     assert "CHROM" in result_df.columns
     assert "POS" in result_df.columns
 
