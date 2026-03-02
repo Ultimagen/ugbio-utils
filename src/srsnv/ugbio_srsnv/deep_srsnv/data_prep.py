@@ -19,7 +19,12 @@ from torch.utils.data import Dataset
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
-from ugbio_srsnv.split_manifest import SPLIT_MODE_SINGLE_MODEL_READ_HASH, assign_single_model_read_hash_role
+from ugbio_srsnv.split_manifest import (
+    SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,
+    SPLIT_MODE_SINGLE_MODEL_READ_HASH,
+    assign_single_model_chrom_val_role,
+    assign_single_model_read_hash_role,
+)
 
 CHROM = FeatureMapFields.CHROM.value
 POS = FeatureMapFields.POS.value
@@ -232,8 +237,15 @@ def _estimate_shard_rows(
     return max(1000, min(requested_batch_rows, hard_cap_rows))
 
 
-def _row_split_id(row: dict, *, split_manifest: dict | None, chrom_to_fold: dict[str, int]) -> int:
+def _row_split_id(row: dict, *, split_manifest: dict | None, chrom_to_fold: dict[str, int]) -> int:  # noqa: PLR0911
     chrom_value = row.get(CHROM, row.get("chrom"))
+    if split_manifest and split_manifest.get("split_mode") == SPLIT_MODE_SINGLE_MODEL_CHROM_VAL:
+        role = assign_single_model_chrom_val_role(chrom=str(chrom_value), manifest=split_manifest)
+        if role == "test":
+            return -1
+        if role == "val":
+            return 1
+        return 0
     if split_manifest and split_manifest.get("split_mode") == SPLIT_MODE_SINGLE_MODEL_READ_HASH:
         role = assign_single_model_read_hash_role(
             chrom=str(chrom_value),

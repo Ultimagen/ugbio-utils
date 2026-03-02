@@ -7,7 +7,7 @@ WORKDIR="/data/Runs/perchik/ppmseq_data/srsnv_training_workspace"
 INPUTS_DIR="${WORKDIR}/inputs"
 OUTPUT_DIR="${WORKDIR}/output"
 
-SPLIT_MANIFEST="${OUTPUT_DIR}/chr21_chr22_split_manifest.json"
+SPLIT_MANIFEST="${OUTPUT_DIR}/chr20_val_split_manifest.json"
 XGB_PARAMS="${SCRIPT_DIR}/xgb_tuned_params.json"
 
 POS_PARQUET="${INPUTS_DIR}/positive.parquet"
@@ -24,7 +24,7 @@ EPOCHS="${EPOCHS:-30}"
 PATIENCE="${PATIENCE:-3}"
 LR_SCHEDULER="${LR_SCHEDULER:-cosine}"
 
-echo "[1/4] Train XGBoost (tuned params) with shared split manifest..."
+echo "[1/4] Train XGBoost (tuned params) with chromosome-based val split..."
 echo "  Using params: ${XGB_PARAMS}"
 uv run srsnv_training \
   --positive "${POS_PARQUET}" \
@@ -35,13 +35,12 @@ uv run srsnv_training \
   --stats-featuremap "${STATS_RAW}" \
   --mean-coverage 112 \
   --single-model-split \
-  --val-fraction 0.1 \
-  --split-hash-key RN \
+  --val-chromosomes "chr20" \
   --split-manifest-out "${SPLIT_MANIFEST}" \
   --holdout-chromosomes "chr21,chr22" \
   --model-params "${XGB_PARAMS}" \
   --features 'REF:ALT:X_HMER_REF:X_HMER_ALT:X_PREV1:X_NEXT1:X_PREV2:X_NEXT2:X_PREV3:X_NEXT3:BCSQ:BCSQCSS:RL:INDEX:DUP:REV:SCST:SCED:MAPQ:EDIST:SMQ_BEFORE:SMQ_AFTER:tm:rq:st:et' \
-  --basename xgb_shared_split \
+  --basename xgb_chrom_val \
   --output "${OUTPUT_DIR}"
 
 echo "[2/4] Train deep_srsnv CNN (Lightning) with same split manifest..."
@@ -57,14 +56,15 @@ uv run srsnv_dnn_bam_training \
   --mean-coverage 112 \
   --split-manifest-in "${SPLIT_MANIFEST}" \
   --single-model-split \
-  --val-fraction 0.1 \
-  --split-hash-key RN \
   --epochs "${EPOCHS}" \
   --patience "${PATIENCE}" \
   --batch-size "${BATCH_SIZE}" \
   --lr-scheduler "${LR_SCHEDULER}" \
   --use-tf32 \
-  --basename dnn_shared_split \
+  --swa \
+  --swa-epoch-start 6 \
+  --devices auto \
+  --basename dnn_chrom_val \
   --output "${OUTPUT_DIR}" \
   --verbose
 
@@ -77,15 +77,15 @@ from pathlib import Path
 from sklearn.metrics import roc_auc_score, log_loss, average_precision_score
 
 out = Path("/data/Runs/perchik/ppmseq_data/srsnv_training_workspace/output")
-xgb_df = pl.read_parquet(out / "xgb_shared_split.featuremap_df.parquet")
-dnn_df = pl.read_parquet(out / "dnn_shared_split.featuremap_df.parquet")
+xgb_df = pl.read_parquet(out / "xgb_chrom_val.featuremap_df.parquet")
+dnn_df = pl.read_parquet(out / "dnn_chrom_val.featuremap_df.parquet")
 
 splits = {
-    "val": {
+    "val (chr20)": {
         "xgb_mask": xgb_df["fold_id"] == 1,
         "dnn_mask": dnn_df["fold_id"] == 1,
     },
-    "test (holdout)": {
+    "test (chr21,chr22)": {
         "xgb_mask": xgb_df["fold_id"].is_null(),
         "dnn_mask": dnn_df["fold_id"] == -1,
     },
@@ -115,8 +115,8 @@ for split_name, masks in splits.items():
         print(f"{split_name:<18} {metric:<12} {xm[metric]:>12.6f} {dm[metric]:>12.6f} {dm[metric] - xm[metric]:>+12.6f} {len(x_y):>10} {len(d_y):>10}")
     print()
 
-xgb_meta = json.loads((out / "xgb_shared_split.srsnv_metadata.json").read_text())
-dnn_meta = json.loads((out / "dnn_shared_split.srsnv_dnn_metadata.json").read_text())
+xgb_meta = json.loads((out / "xgb_chrom_val.srsnv_metadata.json").read_text())
+dnn_meta = json.loads((out / "dnn_chrom_val.srsnv_dnn_metadata.json").read_text())
 
 print("=== XGBoost training summary ===")
 xgb_params = xgb_meta.get("model_params", {})
@@ -137,10 +137,10 @@ PY
 
 echo "[4/4] Generate HTML comparison report..."
 uv run python -m ugbio_srsnv.compare_models_report \
-  --xgb-parquet "${OUTPUT_DIR}/xgb_shared_split.featuremap_df.parquet" \
-  --dnn-parquet "${OUTPUT_DIR}/dnn_shared_split.featuremap_df.parquet" \
-  --xgb-metadata "${OUTPUT_DIR}/xgb_shared_split.srsnv_metadata.json" \
-  --dnn-metadata "${OUTPUT_DIR}/dnn_shared_split.srsnv_dnn_metadata.json" \
-  --output "${OUTPUT_DIR}/xgb_vs_dnn_lightning_comparison.html"
+  --xgb-parquet "${OUTPUT_DIR}/xgb_chrom_val.featuremap_df.parquet" \
+  --dnn-parquet "${OUTPUT_DIR}/dnn_chrom_val.featuremap_df.parquet" \
+  --xgb-metadata "${OUTPUT_DIR}/xgb_chrom_val.srsnv_metadata.json" \
+  --dnn-metadata "${OUTPUT_DIR}/dnn_chrom_val.srsnv_dnn_metadata.json" \
+  --output "${OUTPUT_DIR}/xgb_vs_dnn_chrom_val_comparison.html"
 
-echo "Done. Report: ${OUTPUT_DIR}/xgb_vs_dnn_lightning_comparison.html"
+echo "Done. Report: ${OUTPUT_DIR}/xgb_vs_dnn_chrom_val_comparison.html"

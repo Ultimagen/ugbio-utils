@@ -12,6 +12,7 @@ import pysam
 
 SPLIT_MODE_CHROM_KFOLD = "chromosome_kfold"
 SPLIT_MODE_SINGLE_MODEL_READ_HASH = "single_model_read_hash"
+SPLIT_MODE_SINGLE_MODEL_CHROM_VAL = "single_model_chrom_val"
 
 
 def _parse_interval_list_tabix(path: str) -> tuple[dict[str, int], list[str]]:
@@ -179,7 +180,60 @@ def assign_single_model_read_hash_role(chrom: str, rn: str, manifest: dict) -> s
     return "val" if _rn_hash_fraction(rn=rn, random_seed=random_seed) < val_fraction else "train"
 
 
-def validate_manifest_against_regions(manifest: dict, training_regions: str) -> None:  # noqa: C901, PLR0912
+def build_single_model_chrom_val_manifest(
+    training_regions: str,
+    holdout_chromosomes: list[str],
+    val_chromosomes: list[str],
+) -> dict:
+    """Build a manifest that uses entire chromosomes for train / val / test splits.
+
+    Unlike the read-hash variant, validation data comes from completely
+    different chromosomes than training, matching the held-out test setup.
+    """
+    _, chrom_list = parse_interval_list(training_regions)
+
+    if not holdout_chromosomes:
+        raise ValueError("holdout_chromosomes must be provided")
+    if not val_chromosomes:
+        raise ValueError("val_chromosomes must be provided")
+
+    test_set = set(holdout_chromosomes)
+    val_set = set(val_chromosomes)
+    overlap = test_set & val_set
+    if overlap:
+        raise ValueError(f"Test and val chromosomes overlap: {sorted(overlap)}")
+
+    all_special = test_set | val_set
+    for label, chroms in [("holdout", holdout_chromosomes), ("val", val_chromosomes)]:
+        missing = [c for c in chroms if c not in chrom_list]
+        if missing:
+            raise ValueError(f"{label} chromosome(s) not found in interval list: {missing}")
+
+    test_chromosomes = list(dict.fromkeys(holdout_chromosomes))
+    val_chromosomes_clean = list(dict.fromkeys(val_chromosomes))
+    train_chromosomes = [c for c in chrom_list if c not in all_special]
+
+    return {
+        "split_version": 1,
+        "split_mode": SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,
+        "training_regions": training_regions,
+        "holdout_chromosomes": test_chromosomes,
+        "test_chromosomes": sorted(test_chromosomes),
+        "val_chromosomes": sorted(val_chromosomes_clean),
+        "train_chromosomes": sorted(train_chromosomes),
+    }
+
+
+def assign_single_model_chrom_val_role(chrom: str, manifest: dict) -> str:
+    """Assign a sample's role based purely on its chromosome."""
+    if chrom in set(manifest.get("test_chromosomes", [])):
+        return "test"
+    if chrom in set(manifest.get("val_chromosomes", [])):
+        return "val"
+    return "train"
+
+
+def validate_manifest_against_regions(manifest: dict, training_regions: str) -> None:  # noqa: C901, PLR0912, PLR0915
     split_mode = manifest.get("split_mode", SPLIT_MODE_CHROM_KFOLD)
     if split_mode == SPLIT_MODE_CHROM_KFOLD:
         required = {
@@ -204,6 +258,17 @@ def validate_manifest_against_regions(manifest: dict, training_regions: str) -> 
             "train_val_chromosomes",
             "val_fraction",
             "hash_key",
+        }
+        missing_fields = sorted(required.difference(manifest))
+        if missing_fields:
+            raise ValueError(f"Missing required manifest field(s): {missing_fields}")
+    elif split_mode == SPLIT_MODE_SINGLE_MODEL_CHROM_VAL:
+        required = {
+            "split_version",
+            "holdout_chromosomes",
+            "test_chromosomes",
+            "val_chromosomes",
+            "train_chromosomes",
         }
         missing_fields = sorted(required.difference(manifest))
         if missing_fields:
@@ -236,7 +301,7 @@ def validate_manifest_against_regions(manifest: dict, training_regions: str) -> 
         invalid = sorted([f for f in fold_values if f < 0 or f >= k_folds])
         if invalid:
             raise ValueError(f"Manifest fold ids out of range [0, {k_folds - 1}]: {invalid}")
-    else:
+    elif split_mode == SPLIT_MODE_SINGLE_MODEL_READ_HASH:
         train_val_chroms = set(manifest["train_val_chromosomes"])
         unknown = sorted(train_val_chroms.difference(chrom_set))
         if unknown:
@@ -248,6 +313,19 @@ def validate_manifest_against_regions(manifest: dict, training_regions: str) -> 
             raise ValueError(f"Manifest val_fraction must be in (0,1), got {val_fraction}")
         if manifest.get("hash_key") != "RN":
             raise ValueError("Manifest hash_key must be 'RN'")
+    elif split_mode == SPLIT_MODE_SINGLE_MODEL_CHROM_VAL:
+        val_chroms = set(manifest["val_chromosomes"])
+        train_chroms = set(manifest["train_chromosomes"])
+        all_chroms = val_chroms | train_chroms | test_chroms
+        unknown = sorted(all_chroms.difference(chrom_set))
+        if unknown:
+            raise ValueError(f"Manifest contains chromosome(s) absent from interval list: {unknown}")
+        if test_chroms & val_chroms:
+            raise ValueError("Test and val chromosomes overlap in split manifest")
+        if test_chroms & train_chroms:
+            raise ValueError("Test and train chromosomes overlap in split manifest")
+        if val_chroms & train_chroms:
+            raise ValueError("Val and train chromosomes overlap in split manifest")
 
 
 def save_split_manifest(manifest: dict, path: str | Path) -> None:

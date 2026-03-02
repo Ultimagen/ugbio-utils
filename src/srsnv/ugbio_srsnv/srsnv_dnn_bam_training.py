@@ -33,7 +33,9 @@ from ugbio_srsnv.deep_srsnv.data_prep import (
 )
 from ugbio_srsnv.deep_srsnv.lightning_module import LR_SCHEDULER_CHOICES, SRSNVLightningModule
 from ugbio_srsnv.split_manifest import (
+    SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,
     SPLIT_MODE_SINGLE_MODEL_READ_HASH,
+    build_single_model_chrom_val_manifest,
     build_single_model_read_hash_manifest,
     build_split_manifest,
     load_split_manifest,
@@ -70,6 +72,12 @@ def _cli() -> argparse.Namespace:  # noqa: PLR0915
     ap.add_argument("--split-manifest-in", default=None)
     ap.add_argument("--split-manifest-out", default=None)
     ap.add_argument("--holdout-chromosomes", default="chr21,chr22")
+    ap.add_argument(
+        "--val-chromosomes",
+        default=None,
+        help="Comma-separated chromosomes for validation (e.g. chr20). "
+        "Uses chromosome-level holdout for val instead of read-hash split.",
+    )
     ap.add_argument("--single-model-split", action="store_true")
     ap.add_argument("--val-fraction", type=float, default=0.1)
     ap.add_argument("--split-hash-key", default="RN")
@@ -457,7 +465,14 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         validate_manifest_against_regions(split_manifest, args.training_regions)
     else:
         holdout_chromosomes = _parse_holdout(args.holdout_chromosomes) or ["chr21", "chr22"]
-        if requested_single_model:
+        val_chromosomes = _parse_holdout(args.val_chromosomes)
+        if requested_single_model and val_chromosomes:
+            split_manifest = build_single_model_chrom_val_manifest(
+                training_regions=args.training_regions,
+                holdout_chromosomes=holdout_chromosomes,
+                val_chromosomes=val_chromosomes,
+            )
+        elif requested_single_model:
             split_manifest = build_single_model_read_hash_manifest(
                 training_regions=args.training_regions,
                 random_seed=args.random_seed,
@@ -475,7 +490,8 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         if args.split_manifest_out:
             save_split_manifest(split_manifest, args.split_manifest_out)
 
-    single_model_split = split_manifest.get("split_mode") == SPLIT_MODE_SINGLE_MODEL_READ_HASH
+    split_mode = split_manifest.get("split_mode")
+    single_model_split = split_mode in (SPLIT_MODE_SINGLE_MODEL_READ_HASH, SPLIT_MODE_SINGLE_MODEL_CHROM_VAL)
     chrom_to_fold = {} if single_model_split else {k: int(v) for k, v in split_manifest["chrom_to_fold"].items()}
     logger.info(
         "Split manifest ready: mode=%s k_folds=%s holdout_chromosomes=%s",
@@ -681,6 +697,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         best_path = fold_results.get("best_model_path")
 
         # Predict on single GPU (rank 0 only for multi-GPU)
+        use_swa_for_predict = args.swa
         if trainer.global_rank == 0:
             if n_devices > 1:
                 predict_trainer = lightning.Trainer(
@@ -690,13 +707,21 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
                     enable_progress_bar=True,
                     default_root_dir=str(out_dir),
                 )
-                if best_path:
+                if use_swa_for_predict:
+                    fold_predictions = predict_trainer.predict(lit_model, datamodule=dm)
+                elif best_path:
                     lit_model = SRSNVLightningModule.load_from_checkpoint(best_path)
-                fold_predictions = predict_trainer.predict(lit_model, datamodule=dm)
+                    fold_predictions = predict_trainer.predict(lit_model, datamodule=dm)
+                else:
+                    fold_predictions = predict_trainer.predict(lit_model, datamodule=dm)
+            elif use_swa_for_predict:
+                fold_predictions = trainer.predict(lit_model, datamodule=dm)
             elif best_path:
                 fold_predictions = trainer.predict(lit_model, datamodule=dm, ckpt_path=best_path)
             else:
                 fold_predictions = trainer.predict(lit_model, datamodule=dm)
+            if use_swa_for_predict:
+                logger.info("Predictions generated using SWA-averaged model")
         else:
             fold_predictions = []
 
@@ -720,9 +745,20 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             dist.destroy_process_group()
         return
 
-    # Rank 0: tear down DDP process group before single-GPU prediction
+    # Rank 0: tear down DDP process group before post-processing
     if dist.is_initialized():
         dist.destroy_process_group()
+
+    # Save SWA checkpoint after DDP teardown (avoids collective sync issues)
+    swa_path = ""
+    if args.swa:
+        swa_path = str(out_dir / f"{base}dnn_model_fold_0_swa.ckpt")
+        torch.save(
+            {"state_dict": lit_model.state_dict(), "hyper_parameters": dict(lit_model.hparams)},
+            swa_path,
+        )
+        logger.info("Saved SWA-averaged checkpoint: %s", swa_path)
+    swa_ckpt_paths = [swa_path] if args.swa else []
 
     if shm_cache_path.exists():
         shutil.rmtree(shm_cache_path, ignore_errors=True)
@@ -829,6 +865,8 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         "model_architecture": model_arch_summary,
         "schema_path": str(schema_path),
         "best_checkpoint_paths": best_ckpt_paths,
+        "swa_checkpoint_paths": swa_ckpt_paths if args.swa else None,
+        "prediction_model": "swa" if args.swa else "best_checkpoint",
         "quality_recalibration_table": [x_lut.tolist(), y_lut.tolist()] if x_lut is not None else None,
         "data_paths": {
             "positive_bam": args.positive_bam,

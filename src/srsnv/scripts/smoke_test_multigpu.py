@@ -19,7 +19,12 @@ from pathlib import Path
 import lightning
 import torch
 import torch.distributed as dist
-from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint  # noqa: F401
+from lightning.pytorch.callbacks import (  # noqa: F401
+    EarlyStopping,
+    LearningRateMonitor,
+    ModelCheckpoint,
+    StochasticWeightAveraging,
+)
 from lightning.pytorch.loggers import CSVLogger
 from ugbio_core.logger import logger
 from ugbio_srsnv.deep_srsnv.data_module import SRSNVDataModule
@@ -34,6 +39,8 @@ def main():  # noqa: C901, PLR0912, PLR0915
     ap.add_argument("--devices", type=str, default="auto")
     ap.add_argument("--epochs", type=int, default=1)
     ap.add_argument("--batch-size", type=int, default=256)
+    ap.add_argument("--swa", action="store_true", help="Enable SWA")
+    ap.add_argument("--swa-epoch-start", type=int, default=0, help="Epoch to start SWA")
     ap.add_argument("--output", default="/tmp/smoke_test_output")  # noqa: S108
     args = ap.parse_args()
 
@@ -101,6 +108,8 @@ def main():  # noqa: C901, PLR0912, PLR0915
         ModelCheckpoint(dirpath=out_dir, monitor="val_auc", mode="max", save_top_k=1),
         LearningRateMonitor(logging_interval="epoch"),
     ]
+    if args.swa:
+        callbacks.append(StochasticWeightAveraging(swa_lrs=1e-4, swa_epoch_start=args.swa_epoch_start))
     csv_logger = CSVLogger(save_dir=out_dir, name="smoke_logs")
 
     trainer = lightning.Trainer(
@@ -143,6 +152,16 @@ def main():  # noqa: C901, PLR0912, PLR0915
         shutil.rmtree(shm_cache_path, ignore_errors=True)
         logger.info("Cleaned up shared memory cache at %s", shm_cache_path)
 
+    # Save SWA checkpoint after DDP teardown (same pattern as main training)
+    swa_ckpt = None
+    if args.swa:
+        swa_ckpt = str(out_dir / "smoke_swa_model.ckpt")
+        torch.save(
+            {"state_dict": lit_model.state_dict(), "hyper_parameters": dict(lit_model.hparams)},
+            swa_ckpt,
+        )
+        logger.info("Saved SWA-averaged checkpoint: %s", swa_ckpt)
+
     predict_trainer = lightning.Trainer(
         accelerator="gpu",
         devices=1,
@@ -152,7 +171,7 @@ def main():  # noqa: C901, PLR0912, PLR0915
     )
     predictions = predict_trainer.predict(lit_model, datamodule=dm)
     n_preds = sum(b["probs"].shape[0] for b in predictions)
-    logger.info("Predictions: %d samples", n_preds)
+    logger.info("Predictions: %d samples (using %s model)", n_preds, "SWA" if args.swa else "best-ckpt")
 
     summary = {
         "devices": str(args.devices),
@@ -165,11 +184,13 @@ def main():  # noqa: C901, PLR0912, PLR0915
         "train_loss": train_loss,
         "n_predictions": n_preds,
         "effective_lr": effective_lr,
+        "swa": args.swa,
+        "swa_checkpoint": swa_ckpt,
     }
     summary_path = out_dir / "smoke_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2))
     logger.info("Summary: %s", json.dumps(summary, indent=2))
-    print(f"\nSMOKE TEST PASSED (devices={args.devices}, n_devices={n_devices}, val_auc={val_auc:.4f})")
+    print(f"\nSMOKE TEST PASSED (devices={args.devices}, n_devices={n_devices}, val_auc={val_auc:.4f}, swa={args.swa})")
 
 
 if __name__ == "__main__":

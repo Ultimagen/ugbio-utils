@@ -120,6 +120,25 @@ def _safe_aupr(y: np.ndarray, p: np.ndarray) -> float | None:
     return float(average_precision_score(y, p))
 
 
+def _finite_hist_range(values: np.ndarray, *, min_floor: float = 0.0) -> tuple[float, float]:
+    """Return an x-range that includes the full finite tail with a small right pad."""
+    finite = np.asarray(values)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return min_floor, max(min_floor + 1.0, 1.0)
+
+    lo = float(np.nanmin(finite))
+    hi = float(np.nanmax(finite))
+    lo = max(min_floor, lo)
+    if hi <= lo:
+        hi = lo + 1.0
+
+    # Add a small margin so the right-most bin isn't flush/cut at the axis edge.
+    span = hi - lo
+    pad = max(span * 0.02, 0.5)
+    return lo, hi + pad
+
+
 def _safe_logloss(y: np.ndarray, p: np.ndarray) -> float | None:
     if len(np.unique(y)) < MIN_UNIQUE_LABELS or len(y) < MIN_SAMPLE_SIZE:
         return None
@@ -371,9 +390,8 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     logger.info("Generating score distributions (SNVQ from parquet)")
     tp_mask_global = y_test == 1
     all_snvq = np.concatenate([snvq_xgb_test, snvq_dnn_test])
-    all_snvq_finite = all_snvq[np.isfinite(all_snvq)]
-    snvq_xlim = float(np.percentile(all_snvq_finite, 99.5)) if len(all_snvq_finite) > 0 else 100.0
-    snvq_bins = np.linspace(0, snvq_xlim, 100)
+    snvq_xmin, snvq_xmax = _finite_hist_range(all_snvq, min_floor=0.0)
+    snvq_bins = np.linspace(snvq_xmin, snvq_xmax, 100)
 
     fig, ax = plt.subplots(figsize=(10, 6))
     for snvq, model, ls in [(snvq_xgb_test, "XGB", "-"), (snvq_dnn_test, "DNN", "--")]:
@@ -401,7 +419,7 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     ax.set_ylabel("Density")
     ax.set_title("SNVQ Distribution — Test Set (solid=XGB, dashed=DNN)")
     ax.set_yscale("log")
-    ax.set_xlim(0, snvq_xlim)
+    ax.set_xlim(snvq_xmin, snvq_xmax)
     ax.legend(fontsize=10)
     ax.grid(visible=True, alpha=0.3)
     fig.tight_layout()
@@ -499,9 +517,8 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     report["quality_percentiles"] = qual_rows
 
     all_mqual = np.concatenate([mqual_xgb_test, mqual_dnn_test])
-    all_mqual_finite = all_mqual[np.isfinite(all_mqual)]
-    mqual_xlim = float(np.percentile(all_mqual_finite, 99.5)) if len(all_mqual_finite) > 0 else 100.0
-    mqual_bins = np.linspace(0, mqual_xlim, 100)
+    mqual_xmin, mqual_xmax = _finite_hist_range(all_mqual, min_floor=0.0)
+    mqual_bins = np.linspace(mqual_xmin, mqual_xmax, 100)
 
     fig, ax = plt.subplots(figsize=(10, 6))
     for mqual_arr, model, ls in [(mqual_xgb_test, "XGB", "-"), (mqual_dnn_test, "DNN", "--")]:
@@ -532,7 +549,7 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     ax.set_ylabel("Density")
     ax.set_title("Quality Score Distribution — Test Set (solid=XGB, dashed=DNN)")
     ax.set_yscale("log")
-    ax.set_xlim(0, mqual_xlim)
+    ax.set_xlim(mqual_xmin, mqual_xmax)
     ax.legend(fontsize=10)
     ax.grid(visible=True, alpha=0.3)
     fig.tight_layout()
@@ -1090,9 +1107,7 @@ def _compute_logit_histogram(m_test: pd.DataFrame, y_test: np.ndarray) -> str:
     logits_dnn = prob_to_logit(m_test["prob_dnn"].to_numpy(), phred=True)
 
     all_finite = np.concatenate([logits_xgb, logits_dnn])
-    all_finite = all_finite[np.isfinite(all_finite)]
-    xlim_lo = float(np.percentile(all_finite, 0.5)) if len(all_finite) > 0 else -10
-    xlim_hi = float(np.percentile(all_finite, 99.5)) if len(all_finite) > 0 else 50
+    xlim_lo, xlim_hi = _finite_hist_range(all_finite, min_floor=-1e9)
     shared_bins = np.linspace(xlim_lo, xlim_hi, 100)
 
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -1146,9 +1161,8 @@ def _compute_snvq_mixed_histogram(
     both_ends = tp_mask & is_mixed_start & is_mixed_end
 
     all_snvq_tp = np.concatenate([snvq_xgb[tp_mask], snvq_dnn[tp_mask]])
-    all_finite = all_snvq_tp[np.isfinite(all_snvq_tp)]
-    xlim_max = float(np.percentile(all_finite, 99.5)) if len(all_finite) > 0 else 100.0
-    shared_bins = np.linspace(0, xlim_max, 100)
+    xlim_min, xlim_max = _finite_hist_range(all_snvq_tp, min_floor=0.0)
+    shared_bins = np.linspace(xlim_min, xlim_max, 100)
 
     categories = [
         (nonmixed, "non-mixed", "red"),
@@ -1176,7 +1190,7 @@ def _compute_snvq_mixed_histogram(
     ax.set_xlabel("SNVQ")
     ax.set_ylabel("Density")
     ax.set_title("SNVQ by Mixed Status — TP reads, Test Set (solid=XGB, dashed=DNN)")
-    ax.set_xlim(0, xlim_max)
+    ax.set_xlim(xlim_min, xlim_max)
     ax.legend(fontsize=9, ncol=2)
     ax.grid(visible=True, alpha=0.3)
     fig.tight_layout()

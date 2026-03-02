@@ -39,8 +39,11 @@ from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
 
 from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
 from ugbio_srsnv.split_manifest import (
+    SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,
     SPLIT_MODE_SINGLE_MODEL_READ_HASH,
+    assign_single_model_chrom_val_role,
     assign_single_model_read_hash_role,
+    build_single_model_chrom_val_manifest,
     build_single_model_read_hash_manifest,
     build_split_manifest,
     load_split_manifest,
@@ -494,13 +497,22 @@ class SRSNVTrainer:
         if self.single_model_split and not holdout_chromosomes:
             holdout_chromosomes = ["chr21", "chr22"]
 
+        val_chromosomes_raw = getattr(args, "val_chromosomes", None)
+        val_chromosomes = _parse_holdout_chromosomes(val_chromosomes_raw)
+
         if split_manifest_in:
             logger.info("Loading split manifest from %s", split_manifest_in)
             self.split_manifest = load_split_manifest(split_manifest_in)
             validate_manifest_against_regions(self.split_manifest, args.training_regions)
         else:
             logger.info("Building split manifest from training regions")
-            if self.single_model_split:
+            if self.single_model_split and val_chromosomes:
+                self.split_manifest = build_single_model_chrom_val_manifest(
+                    training_regions=args.training_regions,
+                    holdout_chromosomes=holdout_chromosomes or ["chr21", "chr22"],
+                    val_chromosomes=val_chromosomes,
+                )
+            elif self.single_model_split:
                 self.split_manifest = build_single_model_read_hash_manifest(
                     training_regions=args.training_regions,
                     random_seed=self.seed,
@@ -520,8 +532,39 @@ class SRSNVTrainer:
                 save_split_manifest(self.split_manifest, split_manifest_out)
                 logger.info("Saved split manifest to %s", split_manifest_out)
 
-        self.single_model_split = self.split_manifest.get("split_mode") == SPLIT_MODE_SINGLE_MODEL_READ_HASH
-        if self.single_model_split:
+        manifest_mode = self.split_manifest.get("split_mode")
+        self.single_model_split = manifest_mode in (
+            SPLIT_MODE_SINGLE_MODEL_READ_HASH,
+            SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,
+        )
+        if manifest_mode == SPLIT_MODE_SINGLE_MODEL_CHROM_VAL:
+            logger.info(
+                "Using single-model chrom-val split (train=%s, val=%s, test=%s)",
+                ",".join(self.split_manifest["train_chromosomes"]),
+                ",".join(self.split_manifest["val_chromosomes"]),
+                ",".join(self.split_manifest["test_chromosomes"]),
+            )
+            self.chrom_to_fold = {}
+            self.k_folds = 1
+            manifest_ref = self.split_manifest
+            self.data_frame = self.data_frame.with_columns(
+                pl.col(CHROM)
+                .map_elements(
+                    lambda c: assign_single_model_chrom_val_role(chrom=str(c), manifest=manifest_ref),
+                    return_dtype=pl.String,
+                )
+                .alias(SPLIT_ROLE_COL)
+            )
+            self.data_frame = self.data_frame.with_columns(
+                pl.when(pl.col(SPLIT_ROLE_COL) == "train")
+                .then(pl.lit(0))
+                .when(pl.col(SPLIT_ROLE_COL) == "val")
+                .then(pl.lit(1))
+                .otherwise(pl.lit(None))
+                .cast(pl.Int64)
+                .alias(FOLD_COL)
+            )
+        elif manifest_mode == SPLIT_MODE_SINGLE_MODEL_READ_HASH:
             if self.split_hash_key not in self.data_frame.columns:
                 raise ValueError(
                     f"single-model split requires hash key column '{self.split_hash_key}' in input dataframe"
@@ -1276,6 +1319,12 @@ def _cli() -> argparse.Namespace:
         "--holdout-chromosomes",
         default=None,
         help="Comma-separated holdout chromosomes (e.g. 'chr21,chr22'). If omitted, preserve legacy behavior.",
+    )
+    ap.add_argument(
+        "--val-chromosomes",
+        default=None,
+        help="Comma-separated chromosomes for validation (e.g. 'chr20'). "
+        "Uses chromosome-level holdout for val instead of read-hash split.",
     )
     ap.add_argument(
         "--single-model-split",
