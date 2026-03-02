@@ -406,7 +406,7 @@ class SRSNVTrainer:
         self.eps = 10 ** (-self.max_qual / 10)  # small value to avoid division by zero
 
         # RNG
-        self.seed = args.random_seed or int(datetime.now().timestamp())
+        self.seed = args.random_seed if args.random_seed is not None else int(datetime.now().timestamp())
         logger.debug("Using random seed: %d", self.seed)
         self.rng = np.random.default_rng(self.seed)
 
@@ -1017,7 +1017,7 @@ class SRSNVTrainer:
             "pass": n_pos,
             "type": TYPE_DOWNSAMPLE,
             "method": METHOD_RANDOM,
-            "seed": 0,
+            "seed": self.seed,
         }
         downsample_negative = {
             "name": "downsample",
@@ -1025,7 +1025,7 @@ class SRSNVTrainer:
             "pass": self.n_neg,
             "type": TYPE_DOWNSAMPLE,
             "method": METHOD_RANDOM,
-            "seed": 0,
+            "seed": self.seed,
         }
 
         # Remove existing downsample segments and append the new ones
@@ -1143,8 +1143,7 @@ def _cli() -> argparse.Namespace:
     ap.add_argument(
         "--use-kde-smoothing",
         action="store_true",
-        default=True,
-        help="Use adaptive KDE for quality score smoothing (default: True)",
+        help="Use adaptive KDE for quality score smoothing (default: False)",
     )
     return ap.parse_args()
 
