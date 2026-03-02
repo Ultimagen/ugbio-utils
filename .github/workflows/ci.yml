@@ -61,7 +61,7 @@ jobs:
         with:
           cache: true
           version: ${{ env.TRIVY_VERSION }}
-        
+
       - name: Run Trivy to scan Dockerfile
         uses: aquasecurity/trivy-action@0.34.1
         with:
@@ -71,7 +71,7 @@ jobs:
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
           skip-setup-trivy: true
-          
+
 
   Trivy-fs-scan:
     runs-on: ubuntu-latest
@@ -83,7 +83,7 @@ jobs:
         with:
           cache: true
           version: ${{ env.TRIVY_VERSION }}
-          
+
       - name: Run Trivy to scan fs
         uses: aquasecurity/trivy-action@0.34.1
         with:
@@ -93,6 +93,7 @@ jobs:
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
           skip-setup-trivy: true
+
 
   ugbio-utils-CI:
     runs-on: build-docker-4

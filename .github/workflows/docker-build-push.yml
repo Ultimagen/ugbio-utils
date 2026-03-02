@@ -78,7 +78,7 @@ env:
   GAR_REPO_SHARED: us-central1-docker.pkg.dev/ganymede-331016/ultimagen
   DOCKERHUB_ACCOUNT: ultimagenomics
   TRIVY_VERSION: v0.69.2
-  
+
 jobs:
   build:
     runs-on: ${{ inputs.runner }}
@@ -88,7 +88,7 @@ jobs:
         with:
           repository: ${{ inputs.git-repo }}
           ref: ${{ inputs.git-ref }}
-          
+
       - name: Trivy Setup
         uses: aquasecurity/setup-trivy@v0.2.0
         with:
@@ -104,6 +104,7 @@ jobs:
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
           skip-setup-trivy: true
+
 
       - name: Run Trivy to scan fs
         uses: aquasecurity/trivy-action@0.34.1
