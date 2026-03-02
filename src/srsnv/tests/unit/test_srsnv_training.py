@@ -3,133 +3,15 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from ugbio_srsnv.srsnv_training import _parse_model_params
+from ugbio_srsnv.srsnv_training import (
+    _extract_stats_from_unified,
+    _parse_model_params,
+)
 
 
 @pytest.fixture
 def resources_dir():
     return Path(__file__).parent.parent / "resources"
-
-
-# def __count_variants(vcf_file):
-#     counter = 0
-#     for _ in pysam.VariantFile(vcf_file):
-#         counter += 1
-#     return counter
-
-
-# def test_prepare_featuremap_for_model(tmpdir, resources_dir):
-#     """Test that downsampling training-set works as expected"""
-
-#     input_featuremap_vcf = pjoin(
-#         resources_dir,
-#         "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.vcf.gz",
-#     )
-#     rng = np.random.default_rng(0)
-#     downsampled_training_featuremap_vcf, _, _, _, _ = prepare_featuremap_for_model(
-#         workdir=tmpdir,
-#         input_featuremap_vcf=input_featuremap_vcf,
-#         train_set_size=12,
-#         test_set_size=3,
-#         balanced_sampling_info_fields=None,
-#         rng=rng,
-#     )
-
-#     # Since we use random downsampling the train_set_size might differ slightly from expected
-#     n_variants = __count_variants(downsampled_training_featuremap_vcf)
-#     assert n_variants >= 8 and n_variants <= 16
-
-
-# def test_prepare_featuremap_for_model_with_prefilter(tmpdir, resources_dir):
-#     """Test that downsampling training-set works as expected"""
-
-#     input_featuremap_vcf = pjoin(
-#         resources_dir,
-#         "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.vcf.gz",
-#     )
-#     rng = np.random.default_rng(0)
-#     pre_filter_bcftools_include = "(X_SCORE>4) && (X_EDIST<10)"
-#     (downsampled_training_featuremap_vcf, downsampled_test_featuremap_vcf, _, _, _) = prepare_featuremap_for_model(
-#         workdir=tmpdir,
-#         input_featuremap_vcf=input_featuremap_vcf,
-#         train_set_size=100,
-#         test_set_size=100,
-#         balanced_sampling_info_fields=None,
-#         pre_filter_bcftools_include=pre_filter_bcftools_include,
-#         rng=rng,
-#     )
-#     # In this scenario we are pre-filtering the test data so that only 4 FeatureMap entries pass:
-#     total_variants = int(
-#         subprocess.check_output(
-#             f"bcftools view -H {input_featuremap_vcf} -i '{pre_filter_bcftools_include}' | wc -l",
-#             shell=True,
-#         )
-#         .decode()
-#         .strip()
-#     )
-#     assert total_variants == 4
-#     # and since we are asking for more entries than are available, we should get all of them in equal ratios
-#     n_variants = __count_variants(downsampled_training_featuremap_vcf)
-#     assert n_variants == 2
-#     n_variants = __count_variants(downsampled_test_featuremap_vcf)
-#     assert n_variants == 2
-
-
-# def test_prepare_featuremap_for_model_with_motif_balancing(tmpdir, resources_dir):
-#     """Test that downsampling training-set works as expected"""
-
-#     input_featuremap_vcf = pjoin(
-#         resources_dir,
-#         "333_LuNgs_08.annotated_featuremap.vcf.gz",
-#     )
-#     balanced_sampling_info_fields = ["trinuc_context", "is_forward"]
-#     train_set_size = (4**3) * 10  # 10 variants per context
-#     for random_seed in range(2):
-#         rng = np.random.default_rng(random_seed)
-#         downsampled_training_featuremap_vcf, _, _, _, _ = prepare_featuremap_for_model(
-#             workdir=tmpdir,
-#             input_featuremap_vcf=input_featuremap_vcf,
-#             train_set_size=train_set_size,
-#             test_set_size=train_set_size,
-#             balanced_sampling_info_fields=balanced_sampling_info_fields,
-#             rng=rng,
-#         )
-#         assert __count_variants(downsampled_training_featuremap_vcf) == train_set_size
-
-#         balanced_sampling_info_fields_counter = defaultdict(int)
-#         with pysam.VariantFile(downsampled_training_featuremap_vcf) as fmap:
-#             for record in fmap.fetch():
-#                 balanced_sampling_info_fields_counter[
-#                     tuple(record.info.get(info_field) for info_field in balanced_sampling_info_fields)
-#                 ] += 1
-#         assert sum(balanced_sampling_info_fields_counter.values()) == train_set_size
-#         # T-test that the number of variants per context is in line with a uniform with to 99% confidence
-#         _, pvalue = ttest_1samp(
-#             list(balanced_sampling_info_fields_counter.values()),
-#             np.mean(list(balanced_sampling_info_fields_counter.values())),
-#         )
-#         assert pvalue > 0.01
-#         os.remove(downsampled_training_featuremap_vcf)
-#         os.remove(downsampled_training_featuremap_vcf + ".tbi")
-
-
-# def test_prepare_featuremap_for_model_training_and_test_sets(tmpdir, resources_dir):
-#     """Test that downsampling of training and test sets works as expected"""
-#     input_featuremap_vcf = pjoin(
-#         resources_dir,
-#         "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.vcf.gz",
-#     )
-#     rng = np.random.default_rng(0)
-#     (downsampled_training_featuremap_vcf, downsampled_test_featuremap_vcf, _, _, _) = prepare_featuremap_for_model(
-#         workdir=tmpdir,
-#         input_featuremap_vcf=input_featuremap_vcf,
-#         train_set_size=12,
-#         test_set_size=3,
-#         balanced_sampling_info_fields=None,
-#         rng=rng,
-#     )
-#     assert __count_variants(downsampled_training_featuremap_vcf) == 12
-#     assert __count_variants(downsampled_test_featuremap_vcf) == 2
 
 
 @pytest.mark.parametrize(
@@ -161,3 +43,188 @@ def test_parse_model_params_invalid() -> None:  # noqa: D103
         _parse_model_params("eta=0.1:max_depth")  # uneven tokens
     with pytest.raises(ValueError):
         _parse_model_params("eta")  # missing '='
+
+
+def test_extract_stats_from_unified_new_format(resources_dir):
+    """Test _extract_stats_from_unified with new format (filtering_stats sections)."""
+    stats_file = resources_dir / "402572-CL10377.model_filters_status.funnel.edited.json"
+    pos_stats, neg_stats = _extract_stats_from_unified(stats_file)
+
+    # Verify structure
+    assert "filters" in pos_stats
+    assert "filters" in neg_stats
+
+    # Verify some basic content
+    assert isinstance(pos_stats["filters"], list)
+    assert isinstance(neg_stats["filters"], list)
+    assert len(pos_stats["filters"]) > 0
+    assert len(neg_stats["filters"]) > 0
+
+    # Verify that raw filter is present
+    raw_filter_pos = next((f for f in pos_stats["filters"] if f["name"] == "raw"), None)
+    raw_filter_neg = next((f for f in neg_stats["filters"] if f["name"] == "raw"), None)
+    assert raw_filter_pos is not None
+    assert raw_filter_neg is not None
+    assert raw_filter_pos["type"] == "raw"
+    assert raw_filter_neg["type"] == "raw"
+
+    # Verify combinations data is preserved
+    assert "combinations" in pos_stats, "Positive stats should contain 'combinations'"
+    assert "combinations" in neg_stats, "Negative stats should contain 'combinations'"
+    assert isinstance(pos_stats["combinations"], dict)
+    assert isinstance(neg_stats["combinations"], dict)
+    assert len(pos_stats["combinations"]) > 0
+    assert len(neg_stats["combinations"]) > 0
+
+    # Verify combinations_total is preserved
+    assert "combinations_total" in pos_stats, "Positive stats should contain 'combinations_total'"
+    assert "combinations_total" in neg_stats, "Negative stats should contain 'combinations_total'"
+    assert pos_stats["combinations_total"] == 2725
+    assert neg_stats["combinations_total"] == 62256269
+
+
+def test_extract_stats_from_unified_missing_section():
+    """Test _extract_stats_from_unified with missing required sections."""
+    import tempfile
+
+    # Test missing filtering_stats_random_sample
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump({"filtering_stats_full_output": {"filters": {}}}, f)
+        temp_path = f.name
+
+    with pytest.raises(ValueError, match="missing 'filtering_stats_random_sample' section"):
+        _extract_stats_from_unified(temp_path)
+
+    # Clean up
+    Path(temp_path).unlink()
+
+    # Test missing filtering_stats_full_output
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump({"filtering_stats_random_sample": {"filters": {}}}, f)
+        temp_path = f.name
+
+    with pytest.raises(ValueError, match="missing 'filtering_stats_full_output' section"):
+        _extract_stats_from_unified(temp_path)
+
+    # Clean up
+    Path(temp_path).unlink()
+
+
+def test_downsample_segments_added_to_metadata(tmp_path: Path, resources_dir: Path) -> None:
+    """Test that downsample segments are added to positive and negative stats in metadata."""
+    import argparse
+
+    from ugbio_srsnv.srsnv_training import SRSNVTrainer
+
+    # Setup paths
+    pos_file = resources_dir / "402572-CL10377.random_sample.featuremap.filtered.parquet"
+    neg_file = resources_dir / "402572-CL10377.raw.featuremap.filtered.parquet"
+    stats_file = resources_dir / "402572-CL10377.model_filters_status.funnel.edited.json"
+    bed_file = resources_dir / "wgs_calling_regions.without_encode_blacklist.hg38.chr1_22.interval_list"
+
+    # Create args for trainer
+    args = argparse.Namespace(
+        positive=str(pos_file),
+        negative=str(neg_file),
+        stats_file=str(stats_file),
+        mean_coverage=30.0,
+        training_regions=str(bed_file),
+        k_folds=1,
+        model_params="n_estimators=2:max_depth=2:enable_categorical=true",
+        features="REF:ALT:X_HMER_REF:X_HMER_ALT",
+        output=str(tmp_path),
+        basename="test_downsample.",
+        random_seed=0,
+        verbose=False,
+        max_qual=100.0,
+        quality_lut_size=100,
+        metadata=None,
+        use_gpu=False,
+        use_float32=False,
+        use_kde_smoothing=False,
+    )
+
+    # Initialize and run trainer
+    trainer = SRSNVTrainer(args)
+    trainer.train()
+    trainer.save()
+
+    # Load metadata
+    metadata_path = tmp_path / "test_downsample.srsnv_metadata.json"
+    assert metadata_path.is_file(), "metadata file not created"
+
+    with metadata_path.open() as f:
+        metadata = json.load(f)
+
+    # Check that filtering_stats has positive and negative
+    assert "filtering_stats" in metadata
+    assert "positive" in metadata["filtering_stats"]
+    assert "negative" in metadata["filtering_stats"]
+
+    pos_stats = metadata["filtering_stats"]["positive"]
+    neg_stats = metadata["filtering_stats"]["negative"]
+
+    # Check that both have filters list
+    assert "filters" in pos_stats
+    assert "filters" in neg_stats
+
+    # Find all downsample segments
+    pos_downsample = [f for f in pos_stats["filters"] if f.get("type") == "downsample"]
+    neg_downsample = [f for f in neg_stats["filters"] if f.get("type") == "downsample"]
+
+    # Verify exactly one downsample segment exists in each
+    assert (
+        len(pos_downsample) == 1
+    ), f"Expected exactly one downsample segment in positive stats, found {len(pos_downsample)}"
+    assert (
+        len(neg_downsample) == 1
+    ), f"Expected exactly one downsample segment in negative stats, found {len(neg_downsample)}"
+
+    # Get the downsample segments
+    pos_ds = pos_downsample[0]
+    neg_ds = neg_downsample[0]
+
+    # Verify the downsample segment is the last filter
+    assert pos_stats["filters"][-1] == pos_ds, "Downsample segment should be the last filter in positive stats"
+    assert neg_stats["filters"][-1] == neg_ds, "Downsample segment should be the last filter in negative stats"
+    assert pos_ds["name"] == "downsample"
+    assert pos_ds["type"] == "downsample"
+    assert pos_ds["method"] == "random"
+    assert pos_ds["seed"] == 0
+    assert "funnel" in pos_ds
+    assert isinstance(pos_ds["funnel"], int)
+    assert pos_ds["funnel"] > 0
+    # Verify pass field is present and matches funnel for positive
+    assert "pass" in pos_ds, "pass field should be present in positive downsample segment"
+    assert pos_ds["pass"] == pos_ds["funnel"], "pass should equal funnel for positive downsample"
+
+    # Verify downsample segment structure for negative
+    assert neg_ds["name"] == "downsample"
+    assert neg_ds["type"] == "downsample"
+    assert neg_ds["method"] == "random"
+    assert neg_ds["seed"] == 0
+    assert "funnel" in neg_ds
+    assert isinstance(neg_ds["funnel"], int)
+    assert neg_ds["funnel"] > 0
+    # Verify pass field is present and matches funnel for negative
+    assert "pass" in neg_ds, "pass field should be present in negative downsample segment"
+    assert neg_ds["pass"] == neg_ds["funnel"], "pass should equal funnel for negative downsample"
+
+    # Verify that row counts match the actual data loaded from parquet files
+    # The trainer's data_frame should have total rows equal to pos + neg
+    expected_total = pos_ds["funnel"] + neg_ds["funnel"]
+    assert expected_total == trainer.data_frame.height, (
+        f"Downsample row counts ({pos_ds['funnel']} + {neg_ds['funnel']} = {expected_total}) "
+        f"don't match total data frame height ({trainer.data_frame.height})"
+    )
+    assert (
+        neg_ds["funnel"] == trainer.n_neg
+    ), f"Negative downsample rows ({neg_ds['funnel']}) don't match trainer.n_neg ({trainer.n_neg})"
+
+    # Verify combinations data is preserved in metadata output
+    assert "combinations" in pos_stats, "Positive stats in metadata should contain 'combinations'"
+    assert "combinations" in neg_stats, "Negative stats in metadata should contain 'combinations'"
+    assert isinstance(pos_stats["combinations"], dict)
+    assert isinstance(neg_stats["combinations"], dict)
+    assert "combinations_total" in pos_stats, "Positive stats in metadata should contain 'combinations_total'"
+    assert "combinations_total" in neg_stats, "Negative stats in metadata should contain 'combinations_total'"

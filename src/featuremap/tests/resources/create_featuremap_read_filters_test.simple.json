@@ -1,0 +1,38 @@
+{
+  "filters_full_output": [
+    {
+      "name": "raw",
+      "type": "raw"
+    },
+    {
+      "field": "BCSQ",
+      "op": "ge",
+      "value": 10,
+      "type": "quality",
+      "name": "bcsq_ge_10"
+    },
+    {
+      "field": "MAPQ",
+      "op": "ge",
+      "value": 0,
+      "type": "quality",
+      "name": "mapq_ge_0"
+    }
+  ],
+  "filters_random_sample": [
+    {
+      "field": "BCSQ",
+      "op": "ge",
+      "value": 15,
+      "type": "quality",
+      "name": "bcsq_ge_15"
+    },
+    {
+      "field": "MAPQ",
+      "op": "ge",
+      "value": 10,
+      "type": "quality",
+      "name": "mapq_ge_10"
+    }
+  ]
+}
