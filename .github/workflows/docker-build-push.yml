@@ -77,7 +77,8 @@ env:
   GAR_REPO_INTERNAL: us-central1-docker.pkg.dev/ultima-data-307918/ultimagen
   GAR_REPO_SHARED: us-central1-docker.pkg.dev/ganymede-331016/ultimagen
   DOCKERHUB_ACCOUNT: ultimagenomics
-
+  TRIVY_VERSION: v0.69.2
+  
 jobs:
   build:
     runs-on: ${{ inputs.runner }}
@@ -87,6 +88,12 @@ jobs:
         with:
           repository: ${{ inputs.git-repo }}
           ref: ${{ inputs.git-ref }}
+          
+      - name: Trivy Setup
+        uses: aquasecurity/setup-trivy@v0.2.0
+        with:
+          cache: true
+          version: ${{ env.TRIVY_VERSION }}
 
       - name: Run Trivy to scan Dockerfiles
         uses: aquasecurity/trivy-action@0.34.1
@@ -96,6 +103,7 @@ jobs:
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
+          skip-setup-trivy: true
 
       - name: Run Trivy to scan fs
         uses: aquasecurity/trivy-action@0.34.1
@@ -105,6 +113,7 @@ jobs:
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
+          skip-setup-trivy: true
 
       - uses: actions/checkout@v4 # deep check out for docker build
         if: ${{ inputs.git-repo != 'Ultimagen/ugbio-utils' }}
