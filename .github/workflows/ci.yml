@@ -19,6 +19,7 @@ env:
   INSTALL_BIO_PATH: ./install-bio
   INSTALL_BIO_REF: main
   INSTALL_BIO_SCRIPT: install-bio.sh
+  TRIVY_VERSION: v0.69.2
 
 jobs:
   get-members:
@@ -55,11 +56,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Manual Trivy Setup
+      - name: Trivy Setup
         uses: aquasecurity/setup-trivy@v0.2.0
         with:
           cache: true
-          version: v0.69.2
+          version: ${{ env.TRIVY_VERSION }}
         
       - name: Run Trivy to scan Dockerfile
         uses: aquasecurity/trivy-action@0.34.1
@@ -77,6 +78,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Trivy Setup
+        uses: aquasecurity/setup-trivy@v0.2.0
+        with:
+          cache: true
+          version: ${{ env.TRIVY_VERSION }}
+          
       - name: Run Trivy to scan fs
         uses: aquasecurity/trivy-action@0.34.1
         with:
@@ -85,6 +92,7 @@ jobs:
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
+          skip-setup-trivy: true
 
   ugbio-utils-CI:
     runs-on: build-docker-4
