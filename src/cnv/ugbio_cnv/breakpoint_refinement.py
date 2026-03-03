@@ -435,8 +435,8 @@ def _update_record_with_refinement(
     int
         CIPOS interval size reduction (bp)
     """
-    record.pos = best_bam.refined_start + 1
-    record.stop = best_bam.refined_end
+    record.pos = best_bam.refined_start
+    record.stop = best_bam.refined_end - 1
     record.info["CIPOS"] = best_bam.refined_cipos
     record.info["SVLEN"] = (record.stop - record.pos + 1,)
 
