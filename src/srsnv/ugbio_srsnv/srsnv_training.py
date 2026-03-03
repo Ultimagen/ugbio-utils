@@ -76,6 +76,9 @@ PROB_RECAL = "prob_recal"
 PROB_TRAIN = "prob_train"
 PROB_FOLD_TMPL = "prob_fold_{k}"
 
+FILTERS_FULL_OUTPUT = "filters_full_output"
+FILTERS_RANDOM_SAMPLE = "filters_random_sample"
+
 EDIT_DIST_FEATURES = [
     FeatureMapFields.EDIST.value,
     FeatureMapFields.HAMDIST.value,
@@ -325,8 +328,8 @@ def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, d
     Extract positive and negative stats from unified stats file.
 
     The unified stats file must contain sections:
-    - filtering_stats_full_output: Full dataset stats (negative/FP data)
-    - filtering_stats_random_sample: Random sample stats (positive/TP data)
+    - filters_full_output: Full dataset stats (negative/FP data)
+    - filters_random_sample: Random sample stats (positive/TP data)
 
     Each section contains a 'filters' subsection with the filter data,
     and optionally 'combinations' and 'combinations_total' subsections.
@@ -344,14 +347,14 @@ def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, d
         unified_stats = json.load(f)
 
     # Validate required sections
-    if "filtering_stats_random_sample" not in unified_stats:
-        raise ValueError("Unified stats file missing 'filtering_stats_random_sample' section")
+    if FILTERS_RANDOM_SAMPLE not in unified_stats:
+        raise ValueError(f"Unified stats file missing {FILTERS_RANDOM_SAMPLE} section")
 
-    if "filtering_stats_full_output" not in unified_stats:
-        raise ValueError("Unified stats file missing 'filtering_stats_full_output' section")
+    if FILTERS_FULL_OUTPUT not in unified_stats:
+        raise ValueError(f"Unified stats file missing {FILTERS_FULL_OUTPUT} section")
 
-    logger.info("Using filtering_stats_random_sample section as positive (true-positive) data")
-    logger.info("Using filtering_stats_full_output section as negative (false-positive) data")
+    logger.info(f"Using {FILTERS_RANDOM_SAMPLE} section as positive (true-positive) data")
+    logger.info(f"Using {FILTERS_FULL_OUTPUT} section as negative (false-positive) data")
 
     # Extract filters subsections and convert from dict to list format
     def _convert_filters_dict_to_list(filters_dict: dict) -> list[dict]:
@@ -376,15 +379,13 @@ def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, d
 
         return filters_list
 
-    positive_stats = {
-        "filters": _convert_filters_dict_to_list(unified_stats["filtering_stats_random_sample"]["filters"])
-    }
-    negative_stats = {"filters": _convert_filters_dict_to_list(unified_stats["filtering_stats_full_output"]["filters"])}
+    positive_stats = {KEY_FILTERS: _convert_filters_dict_to_list(unified_stats[FILTERS_RANDOM_SAMPLE][KEY_FILTERS])}
+    negative_stats = {KEY_FILTERS: _convert_filters_dict_to_list(unified_stats[FILTERS_FULL_OUTPUT][KEY_FILTERS])}
 
     # Preserve combinations data if present
     for section_key, stats_dict in [
-        ("filtering_stats_random_sample", positive_stats),
-        ("filtering_stats_full_output", negative_stats),
+        (FILTERS_RANDOM_SAMPLE, positive_stats),
+        (FILTERS_FULL_OUTPUT, negative_stats),
     ]:
         section = unified_stats[section_key]
         if "combinations" in section:
@@ -453,8 +454,8 @@ class SRSNVTrainer:
         if pos_qr != neg_qr:
             raise ValueError(
                 "Mismatch between quality/region filters of "
-                "positive (filtering_stats_full_output) and negative "
-                "(filtering_stats_random_sample) sections in stats-file:\n"
+                "negative (filters_full_output) and positive "
+                "(filters_random_sample) sections in stats-file:\n"
                 f" positive={pos_qr}\n negative={neg_qr}"
             )
 
