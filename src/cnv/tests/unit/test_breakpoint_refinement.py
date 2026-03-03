@@ -96,7 +96,7 @@ def temp_vcf_with_cipos(tmp_path):
 
 def test_extract_reads_windowed_rg_filtering(temp_bam_with_rg_tags):
     """Test RG filtering extracts only matching reads."""
-    left, right, seen = extract_reads_windowed(
+    per_bam_reads = extract_reads_windowed(
         bam_files=[str(temp_bam_with_rg_tags)],
         cnv_chrom="chr1",
         cnv_start=1000000,
@@ -104,6 +104,12 @@ def test_extract_reads_windowed_rg_filtering(temp_bam_with_rg_tags):
         cnv_type="DEL",
         cushion=2500,
     )
+
+    # Should have single BAM entry
+    assert len(per_bam_reads) == 1
+    assert 0 in per_bam_reads
+
+    left, right = per_bam_reads[0]
 
     # Should have 4 DEL reads in left window (read001 with RG=DEL + read002-004)
     assert len(left) == 4
@@ -114,24 +120,8 @@ def test_extract_reads_windowed_rg_filtering(temp_bam_with_rg_tags):
     assert all(read.get_tag("RG") == "DEL" for read in right)
 
 
-def test_extract_reads_windowed_deduplication(temp_bam_with_rg_tags):
-    """Test (read_name, RG) deduplication."""
-    _, _, seen = extract_reads_windowed(
-        bam_files=[str(temp_bam_with_rg_tags)],
-        cnv_chrom="chr1",
-        cnv_start=1000000,
-        cnv_end=1003000,
-        cnv_type="DEL",
-        cushion=2500,
-    )
-
-    # Should track (read_name, RG) pairs
-    assert ("read001", "DEL") in seen
-    # Should NOT have ("read001", "DUP") because we filtered by cnv_type="DEL"
-
-
 def test_extract_reads_windowed_multi_bam(temp_bam_with_rg_tags, tmp_path):
-    """Test merging reads from multiple BAMs."""
+    """Test separates reads by BAM file."""
     # Copy BAM to create second file
     bam2_path = tmp_path / "test2.bam"
     import shutil
@@ -139,7 +129,7 @@ def test_extract_reads_windowed_multi_bam(temp_bam_with_rg_tags, tmp_path):
     shutil.copy(temp_bam_with_rg_tags, bam2_path)
     pysam.index(str(bam2_path))
 
-    left, right, seen = extract_reads_windowed(
+    per_bam_reads = extract_reads_windowed(
         bam_files=[str(temp_bam_with_rg_tags), str(bam2_path)],
         cnv_chrom="chr1",
         cnv_start=1000000,
@@ -148,9 +138,18 @@ def test_extract_reads_windowed_multi_bam(temp_bam_with_rg_tags, tmp_path):
         cushion=2500,
     )
 
-    # With deduplication, should still have same counts (same reads in both BAMs)
-    assert len(left) == 4
-    assert len(right) == 3
+    # Should have 2 BAM entries
+    assert len(per_bam_reads) == 2
+    assert 0 in per_bam_reads and 1 in per_bam_reads
+
+    left0, right0 = per_bam_reads[0]
+    left1, right1 = per_bam_reads[1]
+
+    # Each BAM should have same reads (identical files)
+    assert len(left0) == 4
+    assert len(left1) == 4
+    assert len(right0) == 3
+    assert len(right1) == 3
 
 
 def test_estimate_refined_breakpoints_median_calculation():
@@ -302,3 +301,102 @@ def test_refine_cnv_breakpoints_from_vcf_sv_vcf_not_implemented(temp_vcf_with_ci
             output_vcf=str(output_vcf),
             sv_vcf="sv_calls.vcf",
         )
+
+
+def test_select_best_bam_smallest_ci():
+    """Test select_best_bam chooses BAM with smallest CI."""
+    from ugbio_cnv.breakpoint_refinement import BamRefinementResult, select_best_bam
+
+    results = [
+        BamRefinementResult(
+            bam_index=0,
+            bam_path="bam0.bam",
+            read_count=5,
+            refined_start=1000000,
+            refined_end=1003000,
+            refined_cipos=(-20, 20),
+            ci_size=40,
+        ),
+        BamRefinementResult(
+            bam_index=1,
+            bam_path="bam1.bam",
+            read_count=8,
+            refined_start=1000010,
+            refined_end=1003010,
+            refined_cipos=(-10, 10),
+            ci_size=20,  # SMALLEST
+        ),
+        BamRefinementResult(
+            bam_index=2,
+            bam_path="bam2.bam",
+            read_count=4,
+            refined_start=1000005,
+            refined_end=1003005,
+            refined_cipos=(-30, 30),
+            ci_size=60,
+        ),
+    ]
+
+    best = select_best_bam(results)
+    assert best is not None
+    assert best.bam_index == 1
+    assert best.ci_size == 20
+
+
+def test_select_best_bam_read_count_threshold():
+    """Test filters by MIN_READS_PER_BREAKPOINT threshold."""
+    from ugbio_cnv.breakpoint_refinement import BamRefinementResult, select_best_bam
+
+    results = [
+        BamRefinementResult(
+            bam_index=0,
+            bam_path="bam0.bam",
+            read_count=2,  # Below threshold
+            refined_start=1000000,
+            refined_end=1003000,
+            refined_cipos=(-5, 5),
+            ci_size=10,  # Smallest CI but insufficient reads
+        ),
+        BamRefinementResult(
+            bam_index=1,
+            bam_path="bam1.bam",
+            read_count=5,
+            refined_start=1000010,
+            refined_end=1003010,
+            refined_cipos=(-15, 15),
+            ci_size=30,
+        ),
+    ]
+
+    best = select_best_bam(results)
+    assert best is not None
+    assert best.bam_index == 1  # BAM0 excluded despite smaller CI
+
+
+def test_select_best_bam_no_qualifying_bams():
+    """Test returns None when no BAMs have enough reads."""
+    from ugbio_cnv.breakpoint_refinement import BamRefinementResult, select_best_bam
+
+    results = [
+        BamRefinementResult(
+            bam_index=0,
+            bam_path="bam0.bam",
+            read_count=1,
+            refined_start=1000000,
+            refined_end=1003000,
+            refined_cipos=(-5, 5),
+            ci_size=10,
+        ),
+        BamRefinementResult(
+            bam_index=1,
+            bam_path="bam1.bam",
+            read_count=2,
+            refined_start=1000010,
+            refined_end=1003010,
+            refined_cipos=(-10, 10),
+            ci_size=20,
+        ),
+    ]
+
+    best = select_best_bam(results)
+    assert best is None
