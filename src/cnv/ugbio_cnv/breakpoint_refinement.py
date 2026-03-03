@@ -435,9 +435,10 @@ def _update_record_with_refinement(
     int
         CIPOS interval size reduction (bp)
     """
-    record.pos = best_bam.refined_start
+    record.pos = best_bam.refined_start + 1
     record.stop = best_bam.refined_end
     record.info["CIPOS"] = best_bam.refined_cipos
+    record.info["SVLEN"] = (record.stop - record.pos + 1,)
 
     reduction = original_interval_size - best_bam.ci_size
     return reduction
@@ -574,7 +575,7 @@ def refine_cnv_breakpoints_from_vcf(
     }
 
     cipos_reductions = []  # Track interval size reductions
-    progress_interval = 100  # Log progress every N records
+    progress_interval = 500  # Log progress every N records
 
     for record in vcf_in:
         stats["total_cnvs"] += 1
