@@ -4,6 +4,8 @@ from typing import Any
 
 import pytest
 from ugbio_srsnv.srsnv_training import (
+    FILTERS_FULL_OUTPUT,
+    FILTERS_RANDOM_SAMPLE,
     _extract_stats_from_unified,
     _parse_model_params,
 )
@@ -87,23 +89,23 @@ def test_extract_stats_from_unified_missing_section():
     """Test _extract_stats_from_unified with missing required sections."""
     import tempfile
 
-    # Test missing filtering_stats_random_sample
+    # Test missing filters_random_sample
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        json.dump({"filtering_stats_full_output": {"filters": {}}}, f)
+        json.dump({FILTERS_FULL_OUTPUT: {"filters": {}}}, f)
         temp_path = f.name
 
-    with pytest.raises(ValueError, match="missing 'filtering_stats_random_sample' section"):
+    with pytest.raises(ValueError, match=f"missing {FILTERS_RANDOM_SAMPLE} section"):
         _extract_stats_from_unified(temp_path)
 
     # Clean up
     Path(temp_path).unlink()
 
-    # Test missing filtering_stats_full_output
+    # Test missing filters_full_output
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        json.dump({"filtering_stats_random_sample": {"filters": {}}}, f)
+        json.dump({FILTERS_RANDOM_SAMPLE: {"filters": {}}}, f)
         temp_path = f.name
 
-    with pytest.raises(ValueError, match="missing 'filtering_stats_full_output' section"):
+    with pytest.raises(ValueError, match=f"missing {FILTERS_FULL_OUTPUT} section"):
         _extract_stats_from_unified(temp_path)
 
     # Clean up

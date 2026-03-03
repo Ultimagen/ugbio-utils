@@ -1,5 +1,5 @@
 {
-    "filtering_stats_full_output": {
+    "filters_full_output": {
         "filters": {
             "raw": {
                 "funnel": 62256269
@@ -602,7 +602,7 @@
         },
         "combinations_total": 62256269
     },
-    "filtering_stats_random_sample": {
+    "filters_random_sample": {
         "filters": {
             "raw": {
                 "funnel": 2725
