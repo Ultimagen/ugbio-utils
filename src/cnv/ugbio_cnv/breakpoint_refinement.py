@@ -410,7 +410,7 @@ def _log_refinement_failure(
 
     position_info += f" original_CIPOS={cipos}"
 
-    logger.warning(f"{base_msg}: {position_info}")
+    logger.debug(f"{base_msg}: {position_info}")
 
 
 def _update_record_with_refinement(
@@ -627,20 +627,19 @@ def refine_cnv_breakpoints_from_vcf(
             # Extract JALIGN support info using helper
             jalign_del_reads, jalign_dup_reads, has_strong_jalign_support = _get_jalign_support_info(record)
 
-            # Log failure and categorize using helper
-            _log_refinement_failure(
-                record,
-                original_start,
-                original_end,
-                svtype,
-                cipos,
-                jalign_del_reads,
-                jalign_dup_reads,
-            )
-
             # Update counters based on category
             if has_strong_jalign_support:
                 stats["no_improvement"] += 1
+                _log_refinement_failure(
+                    record,
+                    original_start,
+                    original_end,
+                    svtype,
+                    cipos,
+                    jalign_del_reads,
+                    jalign_dup_reads,
+                )
+
             else:
                 stats["insufficient_evidence"] += 1
 
