@@ -106,14 +106,57 @@ def _model_kwargs_from_metadata(metadata: dict) -> dict:
     }
 
 
+def load_dnn_model_from_swa_checkpoint(
+    ckpt_path: str | Path,
+    metadata: dict,
+    *,
+    map_location: str | torch.device | None = None,
+) -> SRSNVLightningModule:
+    """Load a model from an SWA checkpoint (raw state-dict format).
+
+    SWA checkpoints are saved as ``{"state_dict": ..., "hyper_parameters": ...}``
+    rather than a full Lightning checkpoint, so we reconstruct the module from
+    metadata and load the state dict directly.
+
+    Parameters
+    ----------
+    ckpt_path
+        Path to the SWA ``.ckpt`` file.
+    metadata
+        Parsed metadata dict (for model constructor kwargs).
+    map_location
+        Device mapping for ``torch.load``.
+
+    Returns
+    -------
+    SRSNVLightningModule
+        The loaded Lightning module in eval mode.
+    """
+    model_kwargs = _model_kwargs_from_metadata(metadata)
+    training_params = metadata.get("training_parameters", {})
+    lit_model = SRSNVLightningModule(
+        learning_rate=training_params.get("learning_rate", 1e-3),
+        weight_decay=training_params.get("weight_decay", 1e-4),
+        lr_scheduler="none",
+        **model_kwargs,
+    )
+    raw = torch.load(str(ckpt_path), map_location=map_location or "cpu", weights_only=False)  # noqa: S301
+    lit_model.load_state_dict(raw["state_dict"])
+    lit_model.eval()
+    logger.info("Loaded DNN model from SWA checkpoint: %s", ckpt_path)
+    return lit_model
+
+
 def load_dnn_models_from_metadata(
     metadata_path: str | Path,
     *,
     map_location: str | torch.device | None = None,
+    prefer_swa: bool | None = None,
 ) -> list[SRSNVLightningModule | CNNReadClassifier]:
     """Load all fold models referenced in a metadata JSON.
 
-    Supports both Lightning ``.ckpt`` checkpoints and raw ``.pt`` state dicts.
+    Supports Lightning ``.ckpt`` checkpoints, raw ``.pt`` state dicts, and
+    SWA checkpoints.
 
     Parameters
     ----------
@@ -121,6 +164,10 @@ def load_dnn_models_from_metadata(
         Path to the ``srsnv_dnn_metadata.json``.
     map_location
         Device mapping for model loading.
+    prefer_swa
+        If ``True``, prefer SWA checkpoints over best checkpoints.
+        If ``None`` (default), auto-detect from ``prediction_model`` field
+        in the metadata.
 
     Returns
     -------
@@ -129,6 +176,19 @@ def load_dnn_models_from_metadata(
     """
     with open(metadata_path) as f:
         metadata = json.load(f)
+
+    use_swa = prefer_swa if prefer_swa is not None else (metadata.get("prediction_model") == "swa")
+
+    if use_swa:
+        swa_paths = metadata.get("swa_checkpoint_paths") or []
+        swa_paths = [p for p in swa_paths if p]
+        if swa_paths:
+            models = []
+            for swa_path in swa_paths:
+                lit_model = load_dnn_model_from_swa_checkpoint(swa_path, metadata, map_location=map_location)
+                models.append(lit_model)
+            return models
+        logger.warning("SWA checkpoints requested but not found in metadata; falling back to best checkpoints")
 
     ckpt_paths = metadata.get("best_checkpoint_paths", [])
     if ckpt_paths and all(ckpt_paths):
