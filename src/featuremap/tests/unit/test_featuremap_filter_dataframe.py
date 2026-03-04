@@ -14,7 +14,9 @@ from ugbio_featuremap.filter_dataframe import (
     validate_filter_config,
 )
 
-SAMPLE = Path(__file__).parent.parent / "resources" / "416119-L7402.raw.featuremap.head.vcf.gz"
+pl.enable_string_cache()
+
+SAMPLE = Path(__file__).parent.parent / "resources" / "23A03846_bc_30.head.featuremap.vcf.gz"
 
 
 def _parquet_from_sample(tmpdir: Path) -> Path:
@@ -35,7 +37,7 @@ def test_filter_pipeline(tmp_path: Path) -> None:
             {"field": "MAPQ", "op": "ge", "value": 60, "type": "quality"},
             {"name": f"bcsq_ge_{bcsq_filt}", "field": "BCSQ", "op": "gt", "value": bcsq_filt, "type": "quality"},
         ],
-        "downsample": {"method": "random", "size": 100, "seed": 42},
+        "downsample": {"method": "random", "size": 10, "seed": 42},
     }
     cfg_path = tmp_path / "cfg.json"
     with open(cfg_path, "w") as f:
