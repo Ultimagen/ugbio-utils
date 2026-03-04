@@ -1213,7 +1213,11 @@ def _compute_trinuc_snvq_comparison(  # noqa: C901, PLR0912, PLR0915
     """
     from matplotlib import gridspec  # noqa: PLC0415
 
-    from ugbio_srsnv.srsnv_utils import FLOW_ORDER, is_cycle_skip  # noqa: PLC0415
+    from ugbio_srsnv.srsnv_utils import (  # noqa: PLC0415
+        FLOW_ORDER,
+        get_trinuc_context_with_alt_fwd_vectorized,
+        is_cycle_skip,
+    )
 
     tp_mask = y_test == 1
     if tp_mask.sum() == 0:
@@ -1227,6 +1231,8 @@ def _compute_trinuc_snvq_comparison(  # noqa: C901, PLR0912, PLR0915
         + all_df["X_NEXT1"].astype(str)
         + all_df["ALT"].astype(str)
     )
+    is_forward = all_df["REV"].astype(int) != 1
+    all_df["tcwa"] = get_trinuc_context_with_alt_fwd_vectorized(all_df["tcwa"], is_forward)
     all_df["snvq_xgb"] = snvq_xgb
     all_df["snvq_dnn"] = snvq_dnn
     all_df["label"] = y_test

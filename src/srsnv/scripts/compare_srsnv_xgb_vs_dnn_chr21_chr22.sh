@@ -3,9 +3,19 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-WORKDIR="/data/Runs/perchik/ppmseq_data/srsnv_training_workspace"
+WORKDIR="${WORKDIR:-/data/Runs/perchik/ppmseq_data/srsnv_training_workspace}"
 INPUTS_DIR="${WORKDIR}/inputs"
 OUTPUT_DIR="${WORKDIR}/output"
+CONFIG_FILE="${INPUTS_DIR}/dataset_config.json"
+
+# Read mean coverage and basename from dataset_config.json if present
+if [[ -f "${CONFIG_FILE}" ]]; then
+  MEAN_COVERAGE="${MEAN_COVERAGE:-$(python3 -c "import json; print(json.load(open('${CONFIG_FILE}'))['mean_coverage'])")}"
+  CONFIG_BASENAME="$(python3 -c "import json; print(json.load(open('${CONFIG_FILE}'))['basename'])")"
+else
+  MEAN_COVERAGE="${MEAN_COVERAGE:-112}"
+  CONFIG_BASENAME="unknown"
+fi
 
 SPLIT_MANIFEST="${OUTPUT_DIR}/chr20_val_split_manifest.json"
 XGB_PARAMS="${SCRIPT_DIR}/xgb_tuned_params.json"
@@ -19,10 +29,19 @@ STATS_POS="${INPUTS_DIR}/stats_positive.json"
 STATS_NEG="${INPUTS_DIR}/stats_negative.json"
 STATS_RAW="${INPUTS_DIR}/stats_featuremap.json"
 
+XGB_BASENAME="${XGB_BASENAME:-xgb_chrom_val}"
+DNN_BASENAME="${DNN_BASENAME:-dnn_chrom_val}"
+
 BATCH_SIZE="${BATCH_SIZE:-1024}"
-EPOCHS="${EPOCHS:-30}"
+EPOCHS="${EPOCHS:-12}"
 PATIENCE="${PATIENCE:-3}"
 LR_SCHEDULER="${LR_SCHEDULER:-cosine}"
+
+echo "=== SRSNV XGBoost vs DNN comparison ==="
+echo "  Dataset:       ${CONFIG_BASENAME}"
+echo "  Mean coverage: ${MEAN_COVERAGE}"
+echo "  Workspace:     ${WORKDIR}"
+echo ""
 
 echo "[1/4] Train XGBoost (tuned params) with chromosome-based val split..."
 echo "  Using params: ${XGB_PARAMS}"
@@ -33,14 +52,14 @@ uv run srsnv_training \
   --stats-positive "${STATS_POS}" \
   --stats-negative "${STATS_NEG}" \
   --stats-featuremap "${STATS_RAW}" \
-  --mean-coverage 112 \
+  --mean-coverage "${MEAN_COVERAGE}" \
   --single-model-split \
   --val-chromosomes "chr20" \
   --split-manifest-out "${SPLIT_MANIFEST}" \
   --holdout-chromosomes "chr21,chr22" \
   --model-params "${XGB_PARAMS}" \
   --features 'REF:ALT:X_HMER_REF:X_HMER_ALT:X_PREV1:X_NEXT1:X_PREV2:X_NEXT2:X_PREV3:X_NEXT3:BCSQ:BCSQCSS:RL:INDEX:DUP:REV:SCST:SCED:MAPQ:EDIST:SMQ_BEFORE:SMQ_AFTER:tm:rq:st:et' \
-  --basename xgb_chrom_val \
+  --basename "${XGB_BASENAME}" \
   --output "${OUTPUT_DIR}"
 
 echo "[2/4] Train deep_srsnv CNN (Lightning) with same split manifest..."
@@ -53,7 +72,7 @@ uv run srsnv_dnn_bam_training \
   --stats-positive "${STATS_POS}" \
   --stats-negative "${STATS_NEG}" \
   --stats-featuremap "${STATS_RAW}" \
-  --mean-coverage 112 \
+  --mean-coverage "${MEAN_COVERAGE}" \
   --split-manifest-in "${SPLIT_MANIFEST}" \
   --single-model-split \
   --epochs "${EPOCHS}" \
@@ -64,21 +83,21 @@ uv run srsnv_dnn_bam_training \
   --swa \
   --swa-epoch-start 6 \
   --devices auto \
-  --basename dnn_chrom_val \
+  --basename "${DNN_BASENAME}" \
   --output "${OUTPUT_DIR}" \
   --verbose
 
 echo "[3/4] Compare metrics on val + holdout (test) sets..."
-uv run python - <<'PY'
+uv run python - <<PY
 import json
 import polars as pl
 import numpy as np
 from pathlib import Path
 from sklearn.metrics import roc_auc_score, log_loss, average_precision_score
 
-out = Path("/data/Runs/perchik/ppmseq_data/srsnv_training_workspace/output")
-xgb_df = pl.read_parquet(out / "xgb_chrom_val.featuremap_df.parquet")
-dnn_df = pl.read_parquet(out / "dnn_chrom_val.featuremap_df.parquet")
+out = Path("${OUTPUT_DIR}")
+xgb_df = pl.read_parquet(out / "${XGB_BASENAME}.featuremap_df.parquet")
+dnn_df = pl.read_parquet(out / "${DNN_BASENAME}.featuremap_df.parquet")
 
 splits = {
     "val (chr20)": {
@@ -115,8 +134,8 @@ for split_name, masks in splits.items():
         print(f"{split_name:<18} {metric:<12} {xm[metric]:>12.6f} {dm[metric]:>12.6f} {dm[metric] - xm[metric]:>+12.6f} {len(x_y):>10} {len(d_y):>10}")
     print()
 
-xgb_meta = json.loads((out / "xgb_chrom_val.srsnv_metadata.json").read_text())
-dnn_meta = json.loads((out / "dnn_chrom_val.srsnv_dnn_metadata.json").read_text())
+xgb_meta = json.loads((out / "${XGB_BASENAME}.srsnv_metadata.json").read_text())
+dnn_meta = json.loads((out / "${DNN_BASENAME}.srsnv_dnn_metadata.json").read_text())
 
 print("=== XGBoost training summary ===")
 xgb_params = xgb_meta.get("model_params", {})
@@ -137,10 +156,10 @@ PY
 
 echo "[4/4] Generate HTML comparison report..."
 uv run python -m ugbio_srsnv.compare_models_report \
-  --xgb-parquet "${OUTPUT_DIR}/xgb_chrom_val.featuremap_df.parquet" \
-  --dnn-parquet "${OUTPUT_DIR}/dnn_chrom_val.featuremap_df.parquet" \
-  --xgb-metadata "${OUTPUT_DIR}/xgb_chrom_val.srsnv_metadata.json" \
-  --dnn-metadata "${OUTPUT_DIR}/dnn_chrom_val.srsnv_dnn_metadata.json" \
+  --xgb-parquet "${OUTPUT_DIR}/${XGB_BASENAME}.featuremap_df.parquet" \
+  --dnn-parquet "${OUTPUT_DIR}/${DNN_BASENAME}.featuremap_df.parquet" \
+  --xgb-metadata "${OUTPUT_DIR}/${XGB_BASENAME}.srsnv_metadata.json" \
+  --dnn-metadata "${OUTPUT_DIR}/${DNN_BASENAME}.srsnv_dnn_metadata.json" \
   --output "${OUTPUT_DIR}/xgb_vs_dnn_chrom_val_comparison.html"
 
 echo "Done. Report: ${OUTPUT_DIR}/xgb_vs_dnn_chrom_val_comparison.html"
