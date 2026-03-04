@@ -10,7 +10,8 @@ import pysam
 import xgboost
 from ugbio_core.exec_utils import print_and_execute
 from ugbio_core.logger import logger
-from ugbio_core.vcf_utils import VcfUtils
+from ugbio_core.misc_utils import cleanup_temp_files
+from ugbio_core.vcf_utils import VcfUtils, get_vcf_sample_names, write_vcf_info_header_file
 
 from ugbio_featuremap import somatic_featuremap_inference_utils
 from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
@@ -24,9 +25,6 @@ from ugbio_featuremap.somatic_featuremap_utils import (
     TUMOR_PREFIX,
     XGB_PROBA_INFO_FIELD,
     _log_regions_bed_preview,
-    cleanup_intermediate_files,
-    get_sample_names_from_vcf,
-    write_vcf_info_header_file,
 )
 
 app = cyclopts.App(
@@ -449,7 +447,10 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
         DataFrame with renamed columns.
     """
     if vcf_path:
-        tumor_sample, normal_sample = get_sample_names_from_vcf(vcf_path)
+        samples_from_vcf = get_vcf_sample_names(vcf_path)
+        if len(samples) != 2:  # noqa: PLR2004
+            raise ValueError(f"Expected exactly 2 samples in VCF, found {len(samples)}: {samples}")
+        tumor_sample, normal_sample = samples_from_vcf[0], samples_from_vcf[1]
         if tumor_sample not in samples or normal_sample not in samples:
             raise ValueError(
                 f"The given samples ({samples}) do not match the sample names in the VCF file: "
@@ -640,7 +641,7 @@ def annotate_vcf_with_xgb_proba(
     logger.info(f"Annotated VCF with {FeatureMapFields.XGB_PROBA.value}: {output_vcf_path}")
 
     # Cleanup temporary files
-    cleanup_intermediate_files([annotation_tsv_gz, Path(str(annotation_tsv_gz) + ".tbi"), header_file])
+    cleanup_temp_files([annotation_tsv_gz, header_file])
 
 
 # =============================================================================
@@ -776,7 +777,10 @@ def somatic_featuremap_classifier(
         verbose=verbose,
     )
 
-    tumor_sample, normal_sample = get_sample_names_from_vcf(somatic_featuremap)
+    samples = get_vcf_sample_names(somatic_featuremap)
+    if len(samples) != 2:  # noqa: PLR2004
+        raise ValueError(f"Expected exactly 2 samples in VCF, found {len(samples)}: {samples}")
+    tumor_sample, normal_sample = samples[0], samples[1]
 
     logger.info(f"Processing samples: tumor={tumor_sample}, normal={normal_sample}")
 
@@ -820,7 +824,7 @@ def somatic_featuremap_classifier(
     logger.info(f"Output VCF written to: {output_vcf}")
 
     # Clean up intermediate files
-    cleanup_intermediate_files([sfm_filtered_with_tr, Path(str(sfm_filtered_with_tr) + ".tbi")])
+    cleanup_temp_files([sfm_filtered_with_tr])
 
     return output_vcf, output_parquet
 

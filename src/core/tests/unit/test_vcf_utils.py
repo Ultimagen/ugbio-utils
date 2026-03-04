@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pysam
 import pytest
 from simppl.simple_pipeline import SimplePipeline
-from ugbio_core.vcf_utils import VcfUtils
+from ugbio_core.vcf_utils import VcfInfoField, VcfUtils, get_vcf_sample_names, write_vcf_info_header_file
 
 
 @pytest.fixture
@@ -414,3 +414,95 @@ class TestVcfUtils:
 
         # Verify temporary file cleanup again
         mock_unlink.assert_called_once_with(removed_vcf_path)
+
+
+class TestVcfInfoField:
+    def test_create_info_field(self):
+        field = VcfInfoField(field_id="DP", number="1", field_type="Integer", description="Read depth")
+        assert field.field_id == "DP"
+        assert field.number == "1"
+        assert field.field_type == "Integer"
+        assert field.description == "Read depth"
+
+    def test_frozen_dataclass(self):
+        field = VcfInfoField(field_id="DP", number="1", field_type="Integer", description="Read depth")
+        with pytest.raises(AttributeError):
+            field.field_id = "AF"
+
+    def test_equality(self):
+        field1 = VcfInfoField(field_id="DP", number="1", field_type="Integer", description="Read depth")
+        field2 = VcfInfoField(field_id="DP", number="1", field_type="Integer", description="Read depth")
+        assert field1 == field2
+
+
+class TestWriteVcfInfoHeaderFile:
+    def test_write_single_field(self, tmp_path):
+        header_file = tmp_path / "header.txt"
+        fields = [VcfInfoField("DP", "1", "Integer", "Read depth")]
+        write_vcf_info_header_file(fields, header_file)
+
+        content = header_file.read_text()
+        assert "##INFO=<ID=DP,Number=1,Type=Integer,Description=" in content
+        assert "Read depth" in content
+
+    def test_write_multiple_fields(self, tmp_path):
+        header_file = tmp_path / "header.txt"
+        fields = [
+            VcfInfoField("DP", "1", "Integer", "Read depth"),
+            VcfInfoField("AF", "A", "Float", "Allele frequency"),
+        ]
+        write_vcf_info_header_file(fields, header_file)
+
+        content = header_file.read_text()
+        assert "ID=DP" in content
+        assert "ID=AF" in content
+
+    def test_write_with_additional_header_lines(self, tmp_path):
+        header_file = tmp_path / "header.txt"
+        fields = [VcfInfoField("DP", "1", "Integer", "Read depth")]
+        additional_lines = ["##tumor_sample=TUMOR1", "custom_key=custom_value"]
+        write_vcf_info_header_file(fields, header_file, additional_header_lines=additional_lines)
+
+        content = header_file.read_text()
+        assert "##tumor_sample=TUMOR1" in content
+        assert "##custom_key=custom_value" in content
+
+    def test_write_no_additional_lines(self, tmp_path):
+        header_file = tmp_path / "header.txt"
+        fields = [VcfInfoField("DP", "1", "Integer", "Read depth")]
+        write_vcf_info_header_file(fields, header_file)
+
+        content = header_file.read_text()
+        lines = [line for line in content.strip().splitlines() if line]
+        assert all(line.startswith("##") for line in lines)
+        assert any(line.startswith("##INFO=") for line in lines)
+
+
+class TestGetVcfSampleNames:
+    def test_get_samples_from_vcf(self, resources_dir):
+        vcf_path = resources_dir / "single_sample_example.vcf"
+        if not vcf_path.exists():
+            pytest.skip("Test resource not available")
+        samples = get_vcf_sample_names(vcf_path)
+        assert isinstance(samples, list)
+        assert len(samples) == 1
+        assert samples[0] == "HG00239"
+
+    def test_get_samples_accepts_str(self, resources_dir):
+        vcf_path = str(resources_dir / "single_sample_example.vcf")
+        samples = get_vcf_sample_names(vcf_path)
+        assert isinstance(samples, list)
+        assert len(samples) >= 1
+
+    def test_get_samples_from_multi_sample_vcf(self, tmp_path):
+        vcf_path = tmp_path / "multi_sample.vcf"
+        header = pysam.VariantHeader()
+        header.add_sample("TUMOR")
+        header.add_sample("NORMAL")
+        header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
+        header.add_line("##contig=<ID=chr1,length=248956422>")
+        with pysam.VariantFile(str(vcf_path), "w", header=header):
+            pass
+
+        samples = get_vcf_sample_names(vcf_path)
+        assert samples == ["TUMOR", "NORMAL"]
