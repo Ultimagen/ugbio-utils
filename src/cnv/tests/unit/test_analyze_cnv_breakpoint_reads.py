@@ -377,7 +377,8 @@ def test_collect_reads_from_region_uses_independent_fetch_iterators(monkeypatch)
         2100,
     )
 
-    assert processed_reads == {"start_read", "end_read"}
+    # processed_reads now contains (read_name, RG) tuples for deduplication
+    assert processed_reads == {("start_read", "UNKNOWN"), ("end_read", "UNKNOWN")}
 
 
 def test_analyze_cnv_breakpoints(temp_bam_file, temp_vcf_file, dummy_fasta_file):
