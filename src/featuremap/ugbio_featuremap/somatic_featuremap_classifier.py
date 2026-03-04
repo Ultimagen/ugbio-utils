@@ -448,8 +448,10 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
     """
     if vcf_path:
         samples_from_vcf = get_vcf_sample_names(vcf_path)
-        if len(samples) != 2:  # noqa: PLR2004
-            raise ValueError(f"Expected exactly 2 samples in VCF, found {len(samples)}: {samples}")
+        if len(samples_from_vcf) != 2:  # noqa: PLR2004
+            raise ValueError(
+                f"Expected exactly 2 samples in VCF, found {len(samples_from_vcf)}: {samples_from_vcf}"
+            )
         tumor_sample, normal_sample = samples_from_vcf[0], samples_from_vcf[1]
         if tumor_sample not in samples or normal_sample not in samples:
             raise ValueError(
