@@ -12,3 +12,4 @@ dist/
 extensions.txt
 uv.lock
 .claude/skills/
+.claude/settings.json
