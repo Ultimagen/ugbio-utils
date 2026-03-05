@@ -59,8 +59,8 @@ from io import StringIO
 from pathlib import Path
 
 import polars as pl
-import pysam
 from ugbio_core.logger import logger as log
+from ugbio_core.vcf_utils import get_vcf_sample_names
 
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import (
@@ -1469,8 +1469,7 @@ def _get_sample_list(vcf: str) -> list[str]:
         List of samples in the VCF
     """
     try:
-        with pysam.VariantFile(vcf) as h_vcf:
-            return list(h_vcf.header.samples)
+        return get_vcf_sample_names(vcf)
     except Exception as e:
         log.error(f"Could not determine sample list from VCF {vcf}: {e}.")
         raise RuntimeError(f"Could not determine sample list from VCF {vcf}: {e}.") from e

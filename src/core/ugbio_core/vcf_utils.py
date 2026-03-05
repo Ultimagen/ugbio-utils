@@ -1,8 +1,10 @@
 import logging
 import os
 import os.path
+from dataclasses import dataclass
 from os.path import dirname
 from os.path import join as pjoin
+from pathlib import Path
 
 import pysam
 from simppl.simple_pipeline import SimplePipeline
@@ -515,3 +517,71 @@ class VcfUtils:
                 tgt[k] = v
 
         return new_record
+
+
+@dataclass(frozen=True)
+class VcfInfoField:
+    """VCF INFO field definition class"""
+
+    field_id: str
+    number: str
+    field_type: str
+    description: str
+
+
+def write_vcf_info_header_file(
+    info_fields: list[VcfInfoField], header_file: Path, additional_header_lines: list[str] | None = None
+) -> None:
+    """Write a VCF header file with INFO field definitions and optional additional header lines.
+
+    Creates a header file suitable for use with bcftools annotate -h option.
+    Can include both INFO/FORMAT field definitions and arbitrary custom header lines.
+
+    Parameters
+    ----------
+    info_fields : list[VcfInfoField]
+        List of VcfInfoField objects defining the INFO fields to add.
+    header_file : Path
+        Path to the output header file.
+    additional_header_lines : list[str], optional
+        List of additional header lines to append (e.g., ["##tumor_sample=<sample_name>"]).
+        These lines will be written as-is after the INFO field definitions.
+    """
+    header = pysam.VariantHeader()
+    for field in info_fields:
+        header.add_meta(
+            "INFO",
+            items=[
+                ("ID", field.field_id),
+                ("Number", field.number),
+                ("Type", field.field_type),
+                ("Description", field.description),
+            ],
+        )
+
+    with open(header_file, "w") as f:
+        lines = str(header).splitlines()
+        for line in lines[1:-1]:
+            f.write(line + "\n")
+
+        if additional_header_lines:
+            for line in additional_header_lines:
+                formatted_line = line if line.startswith("##") else f"##{line}"
+                f.write(formatted_line + "\n")
+
+
+def get_vcf_sample_names(vcf_path: str | Path) -> list[str]:
+    """Get the list of sample names from a VCF file header.
+
+    Parameters
+    ----------
+    vcf_path : str | Path
+        Path to the VCF file.
+
+    Returns
+    -------
+    list[str]
+        List of sample names found in the VCF header.
+    """
+    with pysam.VariantFile(str(vcf_path)) as vcf:
+        return list(vcf.header.samples)

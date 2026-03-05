@@ -8,7 +8,7 @@ import polars as pl
 import pysam
 import pytest
 from conftest import NORMAL_SAMPLE, TUMOR_SAMPLE
-from ugbio_featuremap.featuremap_utils import FeatureMapFields, TandemRepeatFields
+from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.somatic_featuremap_classifier import (
     _get_xgb_proba_bcftools_columns,
     aggregated_df_post_processing,
@@ -24,6 +24,7 @@ from ugbio_featuremap.somatic_featuremap_utils import (
     PILEUP_CONFIG,
     REQUIRED_FORMAT_FIELDS,
     REQUIRED_INFO_FIELDS,
+    TandemRepeatFields,
 )
 
 
