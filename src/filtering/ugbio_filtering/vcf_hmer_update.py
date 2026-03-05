@@ -48,24 +48,36 @@ READS_QUALITY_THRESHOLD = 0
 MIN_MAPPING_QUALITY = 5
 
 
-def apply_variant(ref_fasta: Fasta, ref_pos: list[str | int], variant: list[int | str]) -> tuple[int, str | None]:
+def apply_variant(
+    ref_fasta: Fasta, ref_pos: list[str | int], variant: list[int | str], check_pos: int = None
+) -> tuple[int, str | None]:
     """Calculate hmer size at variant position.
 
     Args:
         ref_fasta: Reference FASTA file
-        ref_pos: [chromosome, position]
+        ref_pos: [chromosome, position] - position for context gathering
         variant: [position, ref, alt]
+        check_pos: Genome position where hmer should be checked. If None, uses ref_pos[1] (default behavior)
 
     Returns:
         Tuple of (hmer_size, sequence) or (-1, None) if invalid
     """
     try:
+        # Use ref_pos[1] as default check position if not specified
+        if check_pos is None:
+            check_pos = ref_pos[1]
+
         seq = (
-            str(ref_fasta[ref_pos[0]][ref_pos[1] - SEQUENCE_CONTEXT_SIZE : variant[0] - 1])
+            str(ref_fasta[ref_pos[0]][ref_pos[1] - SEQUENCE_CONTEXT_SIZE : variant[0]])
             + variant[2]
-            + str(ref_fasta[ref_pos[0]][variant[0] + len(variant[1]) - 1 : ref_pos[1] + SEQUENCE_CONTEXT_SIZE])
+            + str(ref_fasta[ref_pos[0]][variant[0] + len(variant[1]) : ref_pos[1] + SEQUENCE_CONTEXT_SIZE])
         )
-        pos = SEQUENCE_CONTEXT_SIZE
+
+        # Calculate position in sequence string where hmer should be checked
+        # The sequence starts at ref_pos[1] - SEQUENCE_CONTEXT_SIZE
+        seq_check_pos = check_pos - (ref_pos[1] - SEQUENCE_CONTEXT_SIZE)
+
+        pos = seq_check_pos
         size = 0
         nuc = seq[pos]
         while seq[pos] == nuc:
@@ -77,6 +89,43 @@ def apply_variant(ref_fasta: Fasta, ref_pos: list[str | int], variant: list[int 
         return size, seq
     except (IndexError, TypeError):
         return -1, None
+
+
+def get_ref_hmer_size(ref_fasta: Fasta, chrom: str, pos: int) -> int:
+    """Calculate hmer size at a position in the reference sequence.
+
+    Counts the homopolymer length of the nucleotide at the given position.
+
+    Args:
+        ref_fasta: Reference FASTA file
+        chrom: Chromosome name
+        pos: 0-based position in genome
+
+    Returns:
+        Hmer size at position, or -1 if error
+    """
+    try:
+        context_size = SEQUENCE_CONTEXT_SIZE
+        start = max(0, pos - context_size)
+        end = pos + 1 + context_size
+
+        seq = str(ref_fasta[chrom][start:end])
+        rel_pos = pos - start
+        nuc = seq[rel_pos]
+
+        # Count backwards
+        back_pos = rel_pos
+        while back_pos > 0 and seq[back_pos - 1] == nuc:
+            back_pos -= 1
+
+        # Count forwards
+        fwd_pos = rel_pos + 1
+        while fwd_pos < len(seq) and seq[fwd_pos] == nuc:
+            fwd_pos += 1
+
+        return fwd_pos - back_pos
+    except (IndexError, TypeError):
+        return -1
 
 
 def load_bed_intervals(bed_path: str) -> dict[str, list[tuple[int, int]]]:
@@ -641,11 +690,16 @@ def _get_variant_type(
     ref_allele: str,
     alt_allele: str,
     ref_hmer_size: int,
+    check_pos: int = None,
 ) -> str:
     """Determine variant type based on hmer effect.
 
     Compares the hmer size after variant is applied to the reference hmer size.
     If hmer increases, it's an insertion; if decreases, a deletion; otherwise SNP.
+
+    Counts the hmer of the alternate allele nucleotide. This correctly handles
+    all variant types (SNPs, indels) by counting how the changed nucleotide(s)
+    affect the homopolymer length after substitution.
 
     Args:
         ref_fasta: Reference FASTA file
@@ -654,13 +708,18 @@ def _get_variant_type(
         ref_allele: Reference allele
         alt_allele: Alternate allele
         ref_hmer_size: Reference hmer size at this position
+        check_pos: Genome position where hmer should be checked. If None, uses pos
 
     Returns:
         'deletion', 'insertion', or 'snp' based on hmer effect
     """
     try:
-        # Calculate hmer size after variant is applied
-        hmer_after, _ = apply_variant(ref_fasta, [chrom, pos], [pos, ref_allele, alt_allele])
+        # Use pos as default check position if not specified
+        if check_pos is None:
+            check_pos = pos
+
+        # Calculate hmer size after variant is applied (counts alt allele nucleotide hmer)
+        hmer_after, _ = apply_variant(ref_fasta, [chrom, pos], [pos, ref_allele, alt_allele], check_pos=check_pos)
 
         if hmer_after == -1:
             return "snp"
@@ -838,6 +897,9 @@ def _check_somatic_variants(
             if var.qual <= rec.qual:
                 continue
 
+            # Use the reference hmer size calculated at the offset position (passed as parameter)
+            # All nearby variants evaluate against the same reference hmer_size
+
             # Check each alternative allele of the nearby variant
             for alt in var.alts:
                 var_type = _get_variant_type(ref_fasta, chrom, var.pos, var.ref, alt, ref_hmer_size)
@@ -892,6 +954,9 @@ def _check_germline_variants(
             # Only consider variants with PASS filter
             if not is_pass(var):
                 continue
+
+            # Use the reference hmer size calculated at the offset position (passed as parameter)
+            # All nearby variants evaluate against the same reference hmer_size
 
             # Check each alternative allele of the nearby variant
             for alt in var.alts:
@@ -1603,7 +1668,9 @@ def _process_record(
 
     chrom = rec.contig
     pos = rec.pos + rec.info["X_HIL"][0] // 2
-    ref_hmer_size = apply_variant(ref_fasta, [chrom, pos], [rec.pos, "", ""])[0]
+
+    # Calculate ref_hmer_size at the center of the indel (offset position)
+    ref_hmer_size = get_ref_hmer_size(ref_fasta, chrom, pos)
 
     if config["verbose"]:
         rec.info["ref_hmer_size"] = ref_hmer_size
@@ -1618,13 +1685,13 @@ def _process_record(
         "rec": rec,
         "ref_fasta": ref_fasta,
         "chrom": chrom,
-        "pos": pos,
+        "pos": pos,  # Use offset position (rec.pos + X_HIL//2)
         "ref_hmer_size": ref_hmer_size,
         "vcf_file": vcf_file,
         "tumor_germline_handle": tumor_germline_handle,
     }
     other_variant = _check_other_variants(variant_context, config)
-    if config["verbose"]:
+    if config["verbose"] or other_variant:
         rec.info["other_variant"] = other_variant
     if other_variant:
         return None
