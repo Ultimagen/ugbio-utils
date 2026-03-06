@@ -203,6 +203,9 @@ def modify_features_based_on_vcf_type(  # noqa C901
     def cnv_source_encode_df(df):
         return pd.DataFrame(np.array(df["cnv_source"].apply(cnv_source_encode)).reshape(-1, 1), index=df.index)
 
+    def cipos_encode_df(df):
+        return pd.DataFrame(df.apply(lambda x: x[1] - x[0] - 1), index=df.index)
+
     default_filler = impute.SimpleImputer(strategy="constant", fill_value=0)
     tuple_filter = preprocessing.FunctionTransformer(tuple_encode_df)
     ins_del_encode_filter = preprocessing.FunctionTransformer(ins_del_encode_df)
@@ -218,6 +221,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
     region_annotation_encode_filter = preprocessing.FunctionTransformer(region_annotation_encode_df)
     copy_number_encode_filter = preprocessing.FunctionTransformer(copy_number_encode_df)
     cnv_source_encode_filter = preprocessing.FunctionTransformer(cnv_source_encode_df)
+    cilen_transformer = preprocessing.FunctionTransformer(cipos_encode_df)
     transform_list = [
         ("ad", tuple_encode_doublet_df_transformer, "ad"),
         ("gt", gt_filter, "gt"),
@@ -310,6 +314,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
             ("svlen", tuple_filter, "svlen"),
             ("copynumber", copy_number_encode_filter, ["cn", "copynumber"]),
             ("cnv_source", cnv_source_encode_filter, ["cnv_source"]),
+            ("cipos", cilen_transformer, "cipos"),
         ]
         features = [[x[2]] if isinstance(x[2], str) else x[2] for x in transform_list]
         features = sum(features, [])
