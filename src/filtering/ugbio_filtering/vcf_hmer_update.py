@@ -606,6 +606,8 @@ def _add_minimal_headers(f):
         f.header.info.add("mixture", number="A", type="Float", description="Average mixture across directions")
     if "tot_score" not in f.header.info:
         f.header.info.add("tot_score", number="A", type="Float", description="Combined ML score")
+    if "other_variant" not in f.header.info:
+        f.header.info.add("other_variant", number=1, type="Integer", description="Other variant")
 
 
 def _setup_vcf_headers(vcf_file, verbose):
@@ -676,7 +678,7 @@ def _check_normal_other_variants(
     germline_normal_vars = normal_germline.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
     for var in germline_normal_vars:
         if is_pass(var):
-            size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]])[0]
+            size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]], check_pos=pos)[0]
             if size != ref_hmer_size:
                 other_variant = 1
 
@@ -720,7 +722,6 @@ def _get_variant_type(
 
         # Calculate hmer size after variant is applied (counts alt allele nucleotide hmer)
         hmer_after, _ = apply_variant(ref_fasta, [chrom, pos], [pos, ref_allele, alt_allele], check_pos=check_pos)
-
         if hmer_after == -1:
             return "snp"
 
@@ -733,135 +734,6 @@ def _get_variant_type(
             return "snp"
     except Exception:
         return "snp"
-
-
-def _calculate_reference_hmer_at_position(ref_fasta: object, chrom: str, pos: int, indel_nuc: str = None) -> int:
-    """Calculate hmer size at a position in the true reference (no variants).
-
-    For h-indels, counts the hmer of the indel nucleotide **after** the insertion point.
-    This gives the size of the homopolymer that the indel will be inserted into/removed from.
-
-    Args:
-        ref_fasta: Reference FASTA file
-        chrom: Chromosome
-        pos: Position (0-based) - the position where the indel starts
-        indel_nuc: The nucleotide being inserted (for insertions) or affected (for deletions)
-
-    Returns:
-        Hmer size in the reference, or -1 if error
-    """
-    try:
-        # For h-indels, we want to count the nucleotides AFTER the insertion/deletion point
-        # e.g., for insertion C→CT at position pos, count T's starting from pos+1
-        if indel_nuc:
-            # Start counting from the position after the indel point
-            nuc = indel_nuc
-
-            # Count the indel nucleotide starting from position+1
-            # For insertion: counts nucleotides AFTER insertion point
-            # For deletion: counts nucleotides starting from deleted position
-            size = 0
-            check_pos = pos + 1
-            while check_pos < len(ref_fasta[chrom]) and str(ref_fasta[chrom][check_pos]) == nuc:
-                size += 1
-                check_pos += 1
-
-            return size
-        else:
-            # Non-indel case: count at the exact position
-            context_size = SEQUENCE_CONTEXT_SIZE
-            start_pos = max(0, pos - context_size)
-            end_pos = pos + 1 + context_size
-
-            seq = str(ref_fasta[chrom][start_pos:end_pos])
-            rel_pos = pos - start_pos
-            nuc = seq[rel_pos]
-
-            start = rel_pos
-            while start > 0 and seq[start - 1] == nuc:
-                start -= 1
-
-            end = rel_pos + 1
-            while end < len(seq) and seq[end] == nuc:
-                end += 1
-
-            size = end - start
-            return size
-    except (IndexError, TypeError):
-        return -1
-
-
-def _calculate_hmer_size_after_variant(
-    ref_fasta: object, chrom: str, var_pos: int, ref_allele: str, alt_allele: str, target_nuc: str = None
-) -> int:
-    """Calculate hmer size at variant position after variant is applied.
-
-    Args:
-        ref_fasta: Reference FASTA file
-        chrom: Chromosome
-        var_pos: Variant position (0-based)
-        ref_allele: Reference allele
-        alt_allele: Alternate allele
-        target_nuc: Optional nucleotide to calculate hmer for. If None, uses alt_allele[0]
-
-    Returns:
-        Hmer size at variant position after variant applied, or -1 if error
-    """
-    try:
-        # Build sequence context around variant
-        context_size = SEQUENCE_CONTEXT_SIZE
-        start_pos = max(0, var_pos - context_size)
-        end_pos = var_pos + len(ref_allele) + context_size
-
-        # Get reference sequence before variant
-        ref_before = str(ref_fasta[chrom][start_pos:var_pos])
-        # Get reference sequence after variant
-        ref_after = str(ref_fasta[chrom][var_pos + len(ref_allele) : end_pos])
-
-        # Build sequence with variant applied
-        seq = ref_before + alt_allele + ref_after
-
-        # Determine which nucleotide to calculate hmer for
-        if target_nuc is None:
-            # Default: use the nucleotide from the alt_allele
-            if alt_allele:  # If alt is not empty
-                nuc = alt_allele[0]
-            elif ref_after:
-                nuc = ref_after[0]
-            else:
-                return -1
-        else:
-            # Calculate hmer of the target nucleotide
-            nuc = target_nuc
-
-        # Find position to start counting from
-        # For SNPs and other variants, start from the alt position
-        # For deletions (empty alt), start from the position after deletion
-        alt_pos = len(ref_before)
-
-        # Count hmer backwards from position
-        start = alt_pos
-        while start > 0 and seq[start - 1] == nuc:
-            start -= 1
-
-        # Count hmer forwards from position
-        # When target_nuc is provided, we need to count from alt_pos (where target_nuc may be)
-        # When target_nuc is None, use original logic starting from alt_pos + len(alt_allele)
-        if target_nuc is not None:
-            # For target_nuc, start counting from alt_pos itself
-            end = alt_pos
-            while end < len(seq) and seq[end] == nuc:
-                end += 1
-        else:
-            # For default (alt_allele nucleotide), use original position
-            end = alt_pos + len(alt_allele)
-            while end < len(seq) and seq[end] == nuc:
-                end += 1
-
-        size = end - start
-        return size
-    except (IndexError, TypeError):
-        return -1
 
 
 def _check_somatic_variants(
@@ -902,8 +774,7 @@ def _check_somatic_variants(
 
             # Check each alternative allele of the nearby variant
             for alt in var.alts:
-                var_type = _get_variant_type(ref_fasta, chrom, var.pos, var.ref, alt, ref_hmer_size)
-
+                var_type = _get_variant_type(ref_fasta, chrom, var.pos, var.ref, alt, ref_hmer_size, check_pos=pos)
                 # Skip SNP for now - will handle separately if needed
                 if var_type == "snp":
                     continue
@@ -960,7 +831,7 @@ def _check_germline_variants(
 
             # Check each alternative allele of the nearby variant
             for alt in var.alts:
-                var_type = _get_variant_type(ref_fasta, chrom, var.pos, var.ref, alt, ref_hmer_size)
+                var_type = _get_variant_type(ref_fasta, chrom, var.pos, var.ref, alt, ref_hmer_size, check_pos=pos)
 
                 # Skip SNP for now - will handle separately if needed
                 if var_type == "snp":
@@ -980,7 +851,7 @@ def _check_germline_variants(
         return False
 
 
-def _check_other_variants(variant_context: dict, config: dict) -> int:
+def _check_other_variants(variant_context: dict, config: dict, alt_idx: int = 0) -> int:
     """Check if record has conflicting variants in the region.
 
     For insertions: skip test if there's an alternative insertion (higher QUAL somatic or PASS germline)
@@ -996,6 +867,7 @@ def _check_other_variants(variant_context: dict, config: dict) -> int:
             - vcf_file: Input VCF file for fetching variants
             - tumor_germline_handle: Tumor germline VCF (optional)
         config: Configuration dictionary
+        alt_idx: Index of the alternative allele to check (default: 0)
 
     Returns:
         1 if other conflicting variants found, 0 otherwise
@@ -1008,8 +880,15 @@ def _check_other_variants(variant_context: dict, config: dict) -> int:
     vcf_file = variant_context["vcf_file"]
     tumor_germline_handle = variant_context["tumor_germline_handle"]
 
-    # Determine the variant type of the current record
-    rec_type = _get_variant_type(ref_fasta, chrom, pos, rec.ref, rec.alts[0], ref_hmer_size)
+    # Check the specific alternative allele for conflicts
+    alt = rec.alts[alt_idx]
+    # Determine the variant type of this alternative allele
+    if len(alt) > len(rec.ref):
+        rec_type = "insertion"
+    elif len(alt) < len(rec.ref):
+        rec_type = "deletion"
+    else:
+        rec_type = "snp"
 
     # Check for conflicts in somatic or germline VCFs
     if _check_somatic_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, vcf_file, rec_type):
@@ -1077,31 +956,6 @@ def _collect_normal_pileup_data(normal_reads, chrom: str, pos: int):
     return [get_hmer_qualities_from_pileup_element(x) for x in normal_pileup.pileups]
 
 
-def get_results_per_normal_sort_value(direction_results: dict, mixture_bound: float) -> float:
-    """Calculate sorting value for normal results based on tot_score.
-
-    For each allele, calculate mixture as average of fw_mixture and bw_mixture.
-    If mixture is below mixture_bound, set tot_score to 0.
-    Return the maximum tot_score across all alleles.
-
-    Args:
-        direction_results: Dictionary of results for each direction and allele
-        mixture_bound: Mixture threshold for scoring
-
-    Returns:
-        Maximum tot_score across alleles (adjusted for mixture_bound)
-    """
-    return max(
-        (
-            0
-            if (direction_results[alt_idx][0]["mixture"] + direction_results[alt_idx][1]["mixture"]) / 2.0
-            < mixture_bound
-            else min(direction_results[alt_idx][0]["tot_score"], direction_results[alt_idx][1]["tot_score"])
-        )
-        for alt_idx in range(len(direction_results))
-    )
-
-
 def _process_multiple_normals_median(
     normal_reads_list,
     tumor_read_data,
@@ -1111,8 +965,9 @@ def _process_multiple_normals_median(
     ref_fasta,
     rec,
     config: dict,
+    alt_idx: int = 0,
 ) -> dict:
-    """Process multiple normal files and return median result by tot_score.
+    """Process multiple normal files and return median result by tot_score for a specific alternative allele.
 
     Args:
         normal_reads_list: List of normal sample reads file paths
@@ -1123,14 +978,20 @@ def _process_multiple_normals_median(
         ref_fasta: Reference FASTA file handle
         rec: VCF record for the variant being processed
         config: Configuration dictionary with parameters
+        alt_idx: Index of the alternative allele to process (default: 0)
 
     Returns:
-        Dictionary with median results
+        Dictionary with median results for the specified alternative allele
     """
     results_per_normal = []
     normal_germline_files = config["normal_germline_files"]
 
     ref_hmer_size = apply_variant(ref_fasta, [chrom, pos], [rec.pos, "", ""])[0]
+
+    # Get the specific alternative allele to process
+    alt = rec.alts[alt_idx]
+    exp_shift_tries = [len(alt) - len(rec.ref)]
+
     for normal_reads, normal_germline_file in zip(normal_reads_list, normal_germline_files, strict=False):
         try:
             normal_germline = pysam.VariantFile(normal_germline_file)
@@ -1159,54 +1020,46 @@ def _process_multiple_normals_median(
                 )
                 continue
 
-            # Process all alternative alleles for this normal
+            # Process the specific alternative allele for this normal
             direction_results = {}
-            for alt_idx, alt in enumerate(rec.alts):
-                exp_shift_tries = [len(alt) - len(rec.ref)]
-                direction_results[alt_idx] = {}
 
-                # Process both directions
-                for direction in range(NUM_DIRECTIONS):
-                    result = _process_direction_for_allele(
-                        direction,
-                        exp_shift_tries,
-                        rec.info.get("ref_hmer_size", -1)
-                        if "ref_hmer_size" in rec.info
-                        else apply_variant(ref_fasta, [chrom, pos], [rec.pos, "", ""])[0],
-                        normal_read_data,
-                        tumor_read_data,
-                        nuc,
-                        config["pseudocounts"],
-                    )
-                    direction_results[alt_idx][direction] = result
-
-                    # Calculate combined score
-                    is_ins = len(alt) > len(rec.ref)
-                    pval_score = result.get("ttest_score", -1)
-                    ttest_score = (
-                        pval_score
-                        if (is_ins ^ (result.get("tumor_exp", 0) < result.get("normal_exp", 0)))
-                        else -pval_score
-                    )
-
-                    combined_score = combine_scores(
-                        ttest_score,
-                        result.get("likely_score", -1),
-                        result.get("mixture", 0),
-                        result.get("normal_ml_score", -1),
-                        result.get("normal_ml_mixture", 0),
-                        result.get("tumor_ml_score", -1),
-                        result.get("tumor_ml_mixture", 0),
-                    )
-                    direction_results[alt_idx][direction]["tot_score"] = round(combined_score, 4)
-
-            # Calculate tot_score for this normal
-            tot_score = tuple(
-                min(
-                    direction_results[alt_idx][0]["tot_score"],
-                    direction_results[alt_idx][1]["tot_score"],
+            # Process both directions
+            for direction in range(NUM_DIRECTIONS):
+                result = _process_direction_for_allele(
+                    direction,
+                    exp_shift_tries,
+                    rec.info.get("ref_hmer_size", -1)
+                    if "ref_hmer_size" in rec.info
+                    else apply_variant(ref_fasta, [chrom, pos], [rec.pos, "", ""])[0],
+                    normal_read_data,
+                    tumor_read_data,
+                    nuc,
+                    config["pseudocounts"],
                 )
-                for alt_idx in range(len(rec.alts))
+                direction_results[direction] = result
+
+                # Calculate combined score
+                is_ins = len(alt) > len(rec.ref)
+                pval_score = result.get("ttest_score", -1)
+                ttest_score = (
+                    pval_score if (is_ins ^ (result.get("tumor_exp", 0) < result.get("normal_exp", 0))) else -pval_score
+                )
+
+                combined_score = combine_scores(
+                    ttest_score,
+                    result.get("likely_score", -1),
+                    result.get("mixture", 0),
+                    result.get("normal_ml_score", -1),
+                    result.get("normal_ml_mixture", 0),
+                    result.get("tumor_ml_score", -1),
+                    result.get("tumor_ml_mixture", 0),
+                )
+                direction_results[direction]["tot_score"] = round(combined_score, 4)
+
+            # Calculate tot_score for this normal (minimum across directions)
+            tot_score = min(
+                direction_results[0]["tot_score"],
+                direction_results[1]["tot_score"],
             )
 
             results_per_normal.append((tot_score, direction_results))
@@ -1217,8 +1070,17 @@ def _process_multiple_normals_median(
     if not results_per_normal:
         return None
 
-    # Sort by tot_score (use maximum score across alleles after mixture filtering)
-    results_per_normal.sort(key=lambda x: get_results_per_normal_sort_value(x[1], config["mixture_bound"]))
+    # Sort by tot_score (for a single allele, use the minimum tot_score across directions)
+    # If mixture is below mixture_bound, treat as score 0
+    def sort_value(item):
+        tot_score, direction_results = item
+        mixture_avg = (direction_results[0]["mixture"] + direction_results[1]["mixture"]) / 2.0
+        if mixture_avg < config["mixture_bound"]:
+            return 0
+        else:
+            return tot_score
+
+    results_per_normal.sort(key=sort_value)
 
     # Select median: for even count, select higher-scoring of the two middle elements
     num_normals = len(results_per_normal)
@@ -1574,12 +1436,16 @@ def _write_results_to_record(
 
     Args:
         rec: VCF record to update
-        all_direction_results: Dictionary with results for all directions and alleles
+        all_direction_results: Dictionary with results for each processed alternative allele
         verbose: If True, write all fields; if False, write only mixture and tot_score
         score_bound: Score threshold for PASS filter
         mixture_bound: Mixture threshold for PASS filter
     """
     prefixes = DIRECTION_PREFIXES
+
+    # Ensure we have results for all alternatives, if not skip writing results
+    if not all(alt_idx in all_direction_results for alt_idx in range(len(rec.alts))):
+        return
 
     if verbose:
         # Verbose mode: Write all fields for all alleles and directions
@@ -1644,8 +1510,9 @@ def _process_record(
     merged_intervals,
     config: dict,
     tumor_read_data=None,
+    alt_idx: int = 0,
 ) -> dict:
-    """Process a single VCF record and return results.
+    """Process a single VCF record and return results for a specific alternative allele.
 
     Args:
         rec: VCF record to process
@@ -1657,6 +1524,7 @@ def _process_record(
         merged_intervals: Merged BED intervals or None
         config: Configuration dictionary with all parameters
         tumor_read_data: Pre-collected tumor pileup data (optional)
+        alt_idx: Index of the alternative allele to process (default: 0)
 
     Returns:
         Dictionary with result or None if record should not be processed
@@ -1680,7 +1548,7 @@ def _process_record(
         if not pos_in_bed(merged_intervals, chrom, pos):
             return None
 
-    # Check for conflicting variants
+    # Check for conflicting variants for this alternative allele
     variant_context = {
         "rec": rec,
         "ref_fasta": ref_fasta,
@@ -1690,7 +1558,7 @@ def _process_record(
         "vcf_file": vcf_file,
         "tumor_germline_handle": tumor_germline_handle,
     }
-    other_variant = _check_other_variants(variant_context, config)
+    other_variant = _check_other_variants(variant_context, config, alt_idx=alt_idx)
     if config["verbose"] or other_variant:
         rec.info["other_variant"] = other_variant
     if other_variant:
@@ -1706,7 +1574,7 @@ def _process_record(
         # Extract nucleotide from pre-collected tumor data
         nuc = get_max_nuc([x[0] for x in tumor_read_data])
 
-    # Process multiple normals and select median by tot_score
+    # Process multiple normals and select median by tot_score for this alternative allele
     all_direction_results = _process_multiple_normals_median(
         normal_reads,
         tumor_read_data,
@@ -1716,6 +1584,7 @@ def _process_record(
         ref_fasta,
         rec,
         config,
+        alt_idx=alt_idx,
     )
 
     return all_direction_results
@@ -1793,31 +1662,38 @@ def _process_vcf_records(
 
             tumor_read_data, nuc = tumor_data
 
-            # Process record with pre-collected tumor data
-            all_direction_results = _process_record(
-                rec,
-                ref_fasta,
-                vcf_handle_for_queries,
-                normal_reads,
-                tumor_germline_handle,
-                tumor_reads,
-                merged_intervals,
-                config,
-                tumor_read_data=tumor_read_data,
-            )
+            # Process each alternative allele and collect results
+            all_direction_results = {}
+            for alt_idx, _alt in enumerate(rec.alts):
+                # Process this alternative allele with pre-collected tumor data
+                alt_direction_results = _process_record(
+                    rec,
+                    ref_fasta,
+                    vcf_handle_for_queries,
+                    normal_reads,
+                    tumor_germline_handle,
+                    tumor_reads,
+                    merged_intervals,
+                    config,
+                    tumor_read_data=tumor_read_data,
+                    alt_idx=alt_idx,
+                )
 
-            if all_direction_results is None or len(all_direction_results) == 0:
-                vcf_out_file_handle.write(rec)
-                continue
-            _write_results_to_record(
-                rec,
-                all_direction_results,
-                verbose=config["verbose"],
-                score_bound=config["score_bound"],
-                mixture_bound=config["mixture_bound"],
-            )
+                if alt_direction_results is not None and len(alt_direction_results) > 0:
+                    # Store results for this alternative allele
+                    all_direction_results[alt_idx] = alt_direction_results
 
-            # Write record after processing all alleles
+            # Write results for all alleles if any were processed successfully
+            if all_direction_results:
+                _write_results_to_record(
+                    rec,
+                    all_direction_results,
+                    verbose=config["verbose"],
+                    score_bound=config["score_bound"],
+                    mixture_bound=config["mixture_bound"],
+                )
+
+            # Write record after processing all alternative alleles
             vcf_out_file_handle.write(rec)
 
         except Exception as e:
