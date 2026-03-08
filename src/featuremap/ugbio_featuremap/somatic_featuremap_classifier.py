@@ -8,8 +8,10 @@ import cyclopts
 import polars as pl
 import pysam
 import xgboost
+from ugbio_core.exec_utils import print_and_execute
 from ugbio_core.logger import logger
-from ugbio_core.vcf_utils import VcfUtils
+from ugbio_core.misc_utils import cleanup_temp_files
+from ugbio_core.vcf_utils import VcfUtils, get_vcf_sample_names, write_vcf_info_header_file
 
 from ugbio_featuremap import somatic_featuremap_inference_utils
 from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
@@ -23,10 +25,6 @@ from ugbio_featuremap.somatic_featuremap_utils import (
     TUMOR_PREFIX,
     XGB_PROBA_INFO_FIELD,
     _log_regions_bed_preview,
-    _run_shell_command,
-    cleanup_intermediate_files,
-    get_sample_names_from_vcf,
-    write_vcf_info_header_file,
 )
 
 app = cyclopts.App(
@@ -144,10 +142,10 @@ def _create_tr_annotation_file(
         f"sort -k1,1 -k2,2n | "
         f"bgzip -c"
     )
-    _run_shell_command(cmd, gz_tsv)
+    print_and_execute(cmd, output_file=str(gz_tsv), log_level=logging.DEBUG)
 
     cmd = f"tabix -s 1 -b 2 -e 2 {gz_tsv}"
-    _run_shell_command(cmd)
+    print_and_execute(cmd, log_level=logging.DEBUG)
 
     # Create header file for bcftools annotate
     hdr_file = tmpdir / "tr_hdr.txt"
@@ -449,7 +447,10 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
         DataFrame with renamed columns.
     """
     if vcf_path:
-        tumor_sample, normal_sample = get_sample_names_from_vcf(vcf_path)
+        samples_from_vcf = get_vcf_sample_names(vcf_path)
+        if len(samples_from_vcf) != 2:  # noqa: PLR2004
+            raise ValueError(f"Expected exactly 2 samples in VCF, found {len(samples_from_vcf)}: {samples_from_vcf}")
+        tumor_sample, normal_sample = samples_from_vcf[0], samples_from_vcf[1]
         if tumor_sample not in samples or normal_sample not in samples:
             raise ValueError(
                 f"The given samples ({samples}) do not match the sample names in the VCF file: "
@@ -608,10 +609,10 @@ def annotate_vcf_with_xgb_proba(
     logger.debug(f"Created annotation TSV with {len(annotation_df):,} records: {annotation_tsv}")
 
     # Compress with bgzip and index with tabix
-    _run_shell_command(f"bgzip -f {annotation_tsv}")
+    print_and_execute(f"bgzip -f {annotation_tsv}", log_level=logging.DEBUG)
     logger.debug(f"Compressed annotation file: {annotation_tsv_gz}")
 
-    _run_shell_command(f"tabix -s1 -b2 -e2 {annotation_tsv_gz}")
+    print_and_execute(f"tabix -s1 -b2 -e2 {annotation_tsv_gz}", log_level=logging.DEBUG)
     logger.debug(f"Indexed annotation file: {annotation_tsv_gz}.tbi")
 
     # Create header file with INFO field definition and optional tumor_sample header line
@@ -640,7 +641,7 @@ def annotate_vcf_with_xgb_proba(
     logger.info(f"Annotated VCF with {FeatureMapFields.XGB_PROBA.value}: {output_vcf_path}")
 
     # Cleanup temporary files
-    cleanup_intermediate_files([annotation_tsv_gz, Path(str(annotation_tsv_gz) + ".tbi"), header_file])
+    cleanup_temp_files([annotation_tsv_gz, header_file])
 
 
 # =============================================================================
@@ -776,7 +777,10 @@ def somatic_featuremap_classifier(
         verbose=verbose,
     )
 
-    tumor_sample, normal_sample = get_sample_names_from_vcf(somatic_featuremap)
+    samples = get_vcf_sample_names(somatic_featuremap)
+    if len(samples) != 2:  # noqa: PLR2004
+        raise ValueError(f"Expected exactly 2 samples in VCF, found {len(samples)}: {samples}")
+    tumor_sample, normal_sample = samples[0], samples[1]
 
     logger.info(f"Processing samples: tumor={tumor_sample}, normal={normal_sample}")
 
@@ -820,7 +824,7 @@ def somatic_featuremap_classifier(
     logger.info(f"Output VCF written to: {output_vcf}")
 
     # Clean up intermediate files
-    cleanup_intermediate_files([sfm_filtered_with_tr, Path(str(sfm_filtered_with_tr) + ".tbi")])
+    cleanup_temp_files([sfm_filtered_with_tr])
 
     return output_vcf, output_parquet
 

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import itertools
-import os
-import os.path
 from collections import deque
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pysam
+from ugbio_core.logger import logger
 
 
 class BufferedFileIterator:
@@ -278,20 +278,23 @@ def idx_next_nz(inp: np.ndarray | list) -> np.ndarray:
     return result[::-1]
 
 
-def cleanup_temp_files(temp_files: list[str]) -> None:
+def cleanup_temp_files(temp_files: list[str] | list[Path]) -> None:
     """
     Remove temporary files and their indices.
 
     Parameters
     ----------
-    temp_files : list[str]
+    temp_files : list[str] | list[Path]
         List of temporary file paths to remove
     """
     for temp_file in temp_files:
-        if os.path.exists(temp_file):
-            os.unlink(temp_file)
+        file_path = Path(temp_file)
+        if file_path.exists():
+            file_path.unlink()
+            logger.debug(f"Cleaned up temporary file: {file_path}")
         # Also remove index files
         for ext in [".tbi", ".csi", ".idx", ".crai", ".bai"]:
-            index_file = temp_file + ext
-            if os.path.exists(index_file):
-                os.unlink(index_file)
+            index_file = Path(str(file_path) + ext)
+            if index_file.exists():
+                index_file.unlink()
+                logger.debug(f"Cleaned up index file: {index_file}")

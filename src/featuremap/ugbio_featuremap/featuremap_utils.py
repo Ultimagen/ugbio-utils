@@ -1,4 +1,3 @@
-from dataclasses import dataclass
 from enum import Enum
 
 from ugbio_core.consts import (
@@ -61,24 +60,3 @@ class FeatureMapFilters(Enum):
     SINGLE_READ = "SingleRead"
     PASS = "PASS"  # noqa: S105
     PRE_FILTERED = "PreFiltered"
-
-
-@dataclass(frozen=True)
-class VcfInfoField:
-    """VCF INFO field definition."""
-
-    field_id: str
-    number: str
-    field_type: str
-    description: str
-
-
-class TandemRepeatFields(Enum):
-    """Tandem Repeat INFO field names."""
-
-    TR_START = "TR_START"
-    TR_END = "TR_END"
-    TR_SEQ = "TR_SEQ"
-    TR_LENGTH = "TR_LENGTH"
-    TR_SEQ_UNIT_LENGTH = "TR_SEQ_UNIT_LENGTH"
-    TR_DISTANCE = "TR_DISTANCE"

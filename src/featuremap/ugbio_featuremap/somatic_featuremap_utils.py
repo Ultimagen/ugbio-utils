@@ -1,15 +1,22 @@
-import subprocess
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
-import pysam
 from ugbio_core.logger import logger
+from ugbio_core.vcf_utils import VcfInfoField
 
-from ugbio_featuremap.featuremap_utils import (
-    FeatureMapFields,
-    TandemRepeatFields,
-    VcfInfoField,
-)
+from ugbio_featuremap.featuremap_utils import FeatureMapFields
+
+
+class TandemRepeatFields(Enum):
+    """Tandem Repeat INFO field names."""
+
+    TR_START = "TR_START"
+    TR_END = "TR_END"
+    TR_SEQ = "TR_SEQ"
+    TR_LENGTH = "TR_LENGTH"
+    TR_SEQ_UNIT_LENGTH = "TR_SEQ_UNIT_LENGTH"
+    TR_DISTANCE = "TR_DISTANCE"
 
 
 # =============================================================================
@@ -120,90 +127,6 @@ def _log_regions_bed_preview(regions_bed_file: Path) -> None:
     if preview:
         msg = f"Regions BED preview (first {len(preview)} of {total} regions):"
         logger.debug(f"{msg}\n" + "\n".join(preview))
-
-
-def cleanup_intermediate_files(file_paths: list[Path]) -> None:
-    """Remove intermediate files if they exist, logging any errors."""
-    for file_path in file_paths:
-        file_path.unlink(missing_ok=True)
-        logger.debug(f"Cleaned up intermediate file: {file_path}")
-
-
-def _run_shell_command(cmd: str, output_file: Path | None = None) -> None:
-    """Run a shell command, optionally redirecting stdout to a file.
-
-    Uses shell=True because commands may contain pipes (e.g., "bedtools ... | cut ...").
-    All command strings are constructed internally - no user input is passed directly.
-    """
-    logger.debug(f"Running: {cmd}")
-    if output_file:
-        with open(output_file, "w") as f:
-            subprocess.run(cmd, shell=True, check=True, stdout=f)  # noqa: S602
-    else:
-        subprocess.run(cmd, shell=True, check=True)  # noqa: S602
-
-
-def write_vcf_info_header_file(
-    info_fields: list[VcfInfoField], header_file: Path, additional_header_lines: list[str] | None = None
-) -> None:
-    """Write a VCF header file with INFO field definitions and optional additional header lines.
-
-    Creates a header file suitable for use with bcftools annotate -h option.
-    Can include both INFO/FORMAT field definitions and arbitrary custom header lines.
-
-    Parameters
-    ----------
-    info_fields : list[VcfInfoField]
-        List of VcfInfoField objects defining the INFO fields to add.
-    header_file : Path
-        Path to the output header file.
-    additional_header_lines : list[str], optional
-        List of additional header lines to append (e.g., ["##tumor_sample=<sample_name>"]).
-        These lines will be written as-is after the INFO field definitions.
-    """
-    header = pysam.VariantHeader()
-    for field in info_fields:
-        header.add_meta(
-            "INFO",
-            items=[
-                ("ID", field.field_id),
-                ("Number", field.number),
-                ("Type", field.field_type),
-                ("Description", field.description),
-            ],
-        )
-
-    with open(header_file, "w") as f:
-        lines = str(header).splitlines()
-        for line in lines[1:-1]:
-            f.write(line + "\n")
-
-        if additional_header_lines:
-            for line in additional_header_lines:
-                formatted_line = line if line.startswith("##") else f"##{line}"
-                f.write(formatted_line + "\n")
-
-
-def get_sample_names_from_vcf(vcf_path: Path) -> tuple[str, str]:
-    """Get tumor and normal sample names from VCF file.
-
-    Convention: index 0 = tumor, index 1 = normal.
-
-    Parameters
-    ----------
-    vcf_path : Path
-        Path to the VCF file.
-
-    Returns
-    -------
-    tuple[str, str]
-        Tuple of (tumor_sample_name, normal_sample_name).
-    """
-    with pysam.VariantFile(str(vcf_path)) as vcf:
-        samples = list(vcf.header.samples)
-        if len(samples) < 2:  # noqa: PLR2004
-            raise ValueError(f"Expected at least 2 samples in VCF, found {len(samples)}: {samples}")
-        return samples[0], samples[1]
 
 
 # =============================================================================
