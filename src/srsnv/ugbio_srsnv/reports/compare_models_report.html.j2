@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SRSNV Model Comparison Report — XGBoost vs DNN</title>
+<title>SRSNV Multi-Model Comparison Report</title>
 <style>
   :root {
     --bg: #ffffff;
@@ -22,7 +22,7 @@
     font-size: 15px;
     color: var(--fg);
     background: var(--bg);
-    max-width: 1100px;
+    max-width: 1200px;
     margin: 0 auto;
     padding: 24px 32px 60px;
     line-height: 1.55;
@@ -80,8 +80,8 @@
 </head>
 <body>
 
-<h1>SRSNV Model Comparison Report</h1>
-<p class="subtitle">XGBoost vs Deep Neural Network (CNN) &mdash; Same data splits</p>
+<h1>SRSNV Multi-Model Comparison Report</h1>
+<p class="subtitle">{{ model_names | join(" vs ") }} &mdash; Same data splits</p>
 
 <nav class="toc">
   <strong>Contents</strong>
@@ -108,19 +108,24 @@
 
 <!-- ================================================================ -->
 <h2 id="summary">1. Executive Summary</h2>
-<p class="note">Relative Improvement shows the percentage of the remaining gap to perfection that DNN closes over XGBoost. Positive = DNN better. For logloss/brier, it shows the % reduction achieved by DNN.</p>
+<p class="note">Relative Improvement shows the percentage of the remaining gap to perfection that each model closes over the baseline (<strong>{{ baseline }}</strong>). Positive = model better. For logloss/brier, it shows the % reduction.</p>
 <table>
   <thead>
-    <tr><th>Split</th><th>Metric</th><th>XGBoost</th><th>DNN</th><th>Rel. Improvement (%)</th></tr>
+    <tr>
+      <th>Split</th><th>Metric</th>
+      {% for name in model_names %}<th>{{ name }}</th>{% endfor %}
+      {% for name in non_baseline %}<th>vs {{ baseline }} (%)</th>{% endfor %}
+    </tr>
   </thead>
   <tbody>
   {% for r in summary %}
     <tr>
       <td>{{ r.split }}</td>
       <td>{{ r.metric }}</td>
-      <td>{{ r.xgb }}</td>
-      <td>{{ r.dnn }}</td>
-      <td class="{{ r.rel_imp_class }}">{{ r.rel_imp }}%</td>
+      {% for name in model_names %}<td>{{ r.values[name] }}</td>{% endfor %}
+      {% for name in non_baseline %}
+      <td class="{{ r.rel_imps[name].cls }}">{{ r.rel_imps[name].val }}%</td>
+      {% endfor %}
     </tr>
   {% endfor %}
   </tbody>
@@ -143,10 +148,8 @@
   Mode: <code>{{ split_config.split_mode }}</code>
 </p>
 <p class="note">
-  XGBoost rows: {{ split_config.xgb_total | default("N/A") }} |
-  DNN rows: {{ split_config.dnn_total | default("N/A") }} |
-  Merged rows: {{ split_config.merged_total | default("N/A") }}
-  — all counts match, confirming identical splits.
+  {% for name in model_names %}{{ name }}: {{ split_config.model_totals[name] | default("N/A") }}{{ " | " if not loop.last }}{% endfor %} |
+  Merged: {{ split_config.merged_total | default("N/A") }}
 </p>
 
 <!-- ================================================================ -->
@@ -180,7 +183,7 @@
 <div class="plot-container"><img src="data:image/png;base64,{{ plots.quality_dist }}" alt="Quality distribution"></div>
 {% endif %}
 
-<h3>SNVQ Percentiles (Test Set)</h3>
+<h3>MQUAL Percentiles (Test Set)</h3>
 <table>
   <thead><tr><th>Model</th><th>Label</th><th>P5</th><th>P10</th><th>P25</th><th>P50</th><th>P75</th><th>P90</th><th>P95</th></tr></thead>
   <tbody>
@@ -210,13 +213,23 @@
 <h2 id="per-chrom">10. Per-Chromosome Performance</h2>
 {% if per_chrom %}
 <table>
-  <thead><tr><th>Chromosome</th><th>N</th><th>AUC XGB</th><th>AUC DNN</th><th>Rel. Imp. AUC (%)</th><th>AUPR XGB</th><th>AUPR DNN</th><th>Rel. Imp. AUPR (%)</th></tr></thead>
+  <thead>
+    <tr>
+      <th>Chromosome</th><th>N</th>
+      {% for name in model_names %}<th>AUC {{ name }}</th>{% endfor %}
+      {% for name in non_baseline %}<th>Rel. Imp. AUC (%)</th>{% endfor %}
+      {% for name in model_names %}<th>AUPR {{ name }}</th>{% endfor %}
+      {% for name in non_baseline %}<th>Rel. Imp. AUPR (%)</th>{% endfor %}
+    </tr>
+  </thead>
   <tbody>
   {% for r in per_chrom %}
     <tr>
       <td>{{ r.chrom }}</td><td>{{ r.n }}</td>
-      <td>{{ r.auc_xgb }}</td><td>{{ r.auc_dnn }}</td><td class="{{ r.ri_auc_class }}">{{ r.ri_auc }}%</td>
-      <td>{{ r.aupr_xgb }}</td><td>{{ r.aupr_dnn }}</td><td class="{{ r.ri_aupr_class }}">{{ r.ri_aupr }}%</td>
+      {% for name in model_names %}<td>{{ r.auc[name] }}</td>{% endfor %}
+      {% for name in non_baseline %}<td class="{{ r.ri_auc[name].cls }}">{{ r.ri_auc[name].val }}%</td>{% endfor %}
+      {% for name in model_names %}<td>{{ r.aupr[name] }}</td>{% endfor %}
+      {% for name in non_baseline %}<td class="{{ r.ri_aupr[name].cls }}">{{ r.ri_aupr[name].val }}%</td>{% endfor %}
     </tr>
   {% endfor %}
   </tbody>
@@ -228,47 +241,33 @@
 
 <!-- ================================================================ -->
 <h2 id="arch">11. Model Architecture Summary</h2>
-<h3>XGBoost</h3>
+{% for model_arch in arch %}
+<h3>{{ model_arch.name }}</h3>
 <table>
   <tr><th>Parameter</th><th>Value</th></tr>
-  <tr><td>n_estimators</td><td>{{ arch.xgb.n_estimators | default("N/A") }}</td></tr>
-  <tr><td>early_stopping_rounds</td><td>{{ arch.xgb.early_stopping_rounds | default("N/A") }}</td></tr>
-  <tr><td>eval_metric</td><td>{{ arch.xgb.eval_metric | default("N/A") }}</td></tr>
-  <tr><td>Number of features</td><td>{{ arch.xgb.n_features | default("N/A") }}</td></tr>
-  <tr><td>Best iteration</td><td>{{ arch.xgb.best_iteration | default("N/A") }}</td></tr>
+  {% for key, val in model_arch.params %}
+  <tr><td>{{ key }}</td><td>{{ val | default("N/A") }}</td></tr>
+  {% endfor %}
 </table>
+{% if model_arch.feature_names %}
 <details>
-  <summary>Feature list ({{ arch.xgb.n_features | default("?") }} features)</summary>
-  <p style="font-size:13px; word-break:break-all; padding:8px;">{{ arch.xgb.feature_names | default("N/A") }}</p>
+  <summary>Feature list ({{ model_arch.n_features }} features)</summary>
+  <p style="font-size:13px; word-break:break-all; padding:8px;">{{ model_arch.feature_names }}</p>
 </details>
-
-<h3>DNN (CNN)</h3>
-<table>
-  <tr><th>Parameter</th><th>Value</th></tr>
-  <tr><td>Architecture</td><td>{{ arch.dnn.class_name | default("N/A") }}</td></tr>
-  <tr><td>Trainable parameters</td><td>{{ arch.dnn.trainable_parameters | default("N/A") }}</td></tr>
-  <tr><td>Epochs (max)</td><td>{{ arch.dnn.epochs | default("N/A") }}</td></tr>
-  <tr><td>Best epoch</td><td>{{ arch.dnn.best_epoch | default("N/A") }}</td></tr>
-  <tr><td>Early stopped</td><td>{{ arch.dnn.stopped_early | default("N/A") }}</td></tr>
-  <tr><td>Patience</td><td>{{ arch.dnn.patience | default("N/A") }}</td></tr>
-  <tr><td>Batch size</td><td>{{ arch.dnn.batch_size | default("N/A") }}</td></tr>
-  <tr><td>Learning rate</td><td>{{ arch.dnn.learning_rate | default("N/A") }}</td></tr>
-  <tr><td>Mixed precision (AMP)</td><td>{{ arch.dnn.use_amp | default("N/A") }}</td></tr>
-</table>
+{% endif %}
+{% endfor %}
 
 <!-- ================================================================ -->
 <h2 id="snvq-recall">12. SNVQ Threshold Recall</h2>
 <p>Recall of TP reads at various SNVQ thresholds on the test (holdout) set. Higher recall means more TP reads pass the quality filter.</p>
 {% if snvq_recall %}
 <div class="kpi-row">
+  {% for name in model_names %}
   <div class="kpi-card">
-    <div class="kpi-value">{{ snvq_recall.median_snvq_xgb }}</div>
-    <div class="kpi-label">Median SNVQ (XGBoost TP)</div>
+    <div class="kpi-value">{{ snvq_recall.median_snvqs[name] }}</div>
+    <div class="kpi-label">Median SNVQ ({{ name }} TP)</div>
   </div>
-  <div class="kpi-card">
-    <div class="kpi-value">{{ snvq_recall.median_snvq_dnn }}</div>
-    <div class="kpi-label">Median SNVQ (DNN TP)</div>
-  </div>
+  {% endfor %}
   <div class="kpi-card">
     <div class="kpi-value">{{ snvq_recall.n_tp }}</div>
     <div class="kpi-label">Total TP Reads (Test)</div>
@@ -276,17 +275,23 @@
 </div>
 <table>
   <thead>
-    <tr><th>SNVQ Threshold</th><th>XGBoost Recall</th><th>XGBoost TP Count</th><th>DNN Recall</th><th>DNN TP Count</th><th>Rel. Improvement (%)</th></tr>
+    <tr>
+      <th>SNVQ Threshold</th>
+      {% for name in model_names %}<th>{{ name }} Recall</th><th>{{ name }} Count</th>{% endfor %}
+      {% for name in non_baseline %}<th>Rel. Imp. (%)</th>{% endfor %}
+    </tr>
   </thead>
   <tbody>
   {% for r in snvq_recall.rows %}
     <tr>
       <td>&ge; {{ r.threshold }}</td>
-      <td>{{ r.recall_xgb }}</td>
-      <td>{{ r.n_xgb }}</td>
-      <td>{{ r.recall_dnn }}</td>
-      <td>{{ r.n_dnn }}</td>
-      <td class="{{ r.ri_class }}">{{ r.ri }}%</td>
+      {% for name in model_names %}
+      <td>{{ r.recalls[name] }}</td>
+      <td>{{ r.counts[name] }}</td>
+      {% endfor %}
+      {% for name in non_baseline %}
+      <td class="{{ r.ri[name].cls }}">{{ r.ri[name].val }}%</td>
+      {% endfor %}
     </tr>
   {% endfor %}
   </tbody>
@@ -295,14 +300,14 @@
 
 <!-- ================================================================ -->
 <h2 id="snvq-tags">12b. SNVQ vs ppmSeq Tags</h2>
-<p>Median SNVQ per ppmSeq start/end tag combination for TP reads only (test set). Annotations show median SNVQ [% of total reads]. The delta heatmap shows DNN&minus;XGBoost (green = DNN assigns higher quality).</p>
+<p>Median SNVQ per ppmSeq start/end tag combination for TP reads only (test set). Annotations show median SNVQ [% of total reads].</p>
 {% if snvq_tags and snvq_tags.plot %}
 <div class="plot-container"><img src="data:image/png;base64,{{ snvq_tags.plot }}" alt="SNVQ vs ppmSeq tags"></div>
 {% endif %}
 
 <!-- ================================================================ -->
-<h2 id="error-analysis">13. Error Analysis &mdash; Where Does DNN Win/Lose?</h2>
-<p>All analyses below are on the <strong>test (holdout) set</strong>. For each feature slice we compute AUC for both models and show the relative improvement (% gap closed). <span class="better">Green</span> = DNN better, <span class="worse">Red</span> = XGBoost better.</p>
+<h2 id="error-analysis">13. Error Analysis &mdash; Where Do Models Differ?</h2>
+<p>All analyses below are on the <strong>test (holdout) set</strong>. For each feature slice we compute AUC for each model and show the relative improvement vs the baseline (<strong>{{ baseline }}</strong>). <span class="better">Green</span> = model better, <span class="worse">Red</span> = baseline better.</p>
 
 {% macro sliced_section(id, title, rows, plot_key) %}
 <h3 id="{{ id }}">{{ title }}</h3>
@@ -313,16 +318,27 @@
 <details>
   <summary>Data table ({{ rows | length }} slices)</summary>
   <table>
-    <thead><tr><th>Value</th><th>N</th><th>AUC XGB</th><th>AUC DNN</th><th>Rel. Imp. (%)</th>
-    {% if rows[0].aupr_xgb is defined %}<th>AUPR XGB</th><th>AUPR DNN</th>{% endif %}
-    </tr></thead>
+    <thead>
+      <tr>
+        <th>Value</th><th>N</th>
+        {% for name in model_names %}<th>AUC {{ name }}</th>{% endfor %}
+        {% for name in non_baseline %}<th>Rel. Imp. (%)</th>{% endfor %}
+        {% if rows[0].aupr is defined and rows[0].aupr | length > 0 %}
+        {% for name in model_names %}<th>AUPR {{ name }}</th>{% endfor %}
+        {% endif %}
+      </tr>
+    </thead>
     <tbody>
     {% for r in rows %}
       <tr>
         <td>{{ r.value }}</td><td>{{ r.n }}</td>
-        <td>{{ r.auc_xgb }}</td><td>{{ r.auc_dnn }}</td>
-        <td class="{{ r.ri_class }}">{{ r.ri_auc }}%</td>
-        {% if r.aupr_xgb is defined %}<td>{{ r.aupr_xgb }}</td><td>{{ r.aupr_dnn }}</td>{% endif %}
+        {% for name in model_names %}<td>{{ r.auc[name] }}</td>{% endfor %}
+        {% for name in non_baseline %}
+        <td class="{{ r.ri_auc[name].cls }}">{{ r.ri_auc[name].val }}%</td>
+        {% endfor %}
+        {% if r.aupr is defined and r.aupr | length > 0 %}
+        {% for name in model_names %}<td>{{ r.aupr[name] }}</td>{% endfor %}
+        {% endif %}
       </tr>
     {% endfor %}
     </tbody>
@@ -342,7 +358,7 @@
 {{ sliced_section("ea-rq", "13i. By Read Quality (rq)", error_analysis.rq_bin, "rq_bin_plot") }}
 
 <h3 id="ea-trinuc">13j. By Trinucleotide Context</h3>
-<p>Heatmap shows relative improvement % (gap closed by DNN) for each trinucleotide context. Green = DNN better.</p>
+<p>Heatmap shows relative improvement % (gap closed vs {{ baseline }}) for each trinucleotide context. Green = model better.</p>
 {% if error_analysis.trinuc_plot %}
 <div class="plot-container"><img src="data:image/png;base64,{{ error_analysis.trinuc_plot }}" alt="Trinuc heatmap"></div>
 {% endif %}
@@ -350,13 +366,21 @@
 <details>
   <summary>Data table ({{ error_analysis.trinuc | length }} trinucleotide contexts)</summary>
   <table>
-    <thead><tr><th>Trinuc</th><th>N</th><th>AUC XGB</th><th>AUC DNN</th><th>Rel. Imp. (%)</th></tr></thead>
+    <thead>
+      <tr>
+        <th>Trinuc</th><th>N</th>
+        {% for name in model_names %}<th>AUC {{ name }}</th>{% endfor %}
+        {% for name in non_baseline %}<th>Rel. Imp. (%)</th>{% endfor %}
+      </tr>
+    </thead>
     <tbody>
     {% for r in error_analysis.trinuc %}
       <tr>
         <td>{{ r.value }}</td><td>{{ r.n }}</td>
-        <td>{{ r.auc_xgb }}</td><td>{{ r.auc_dnn }}</td>
-        <td class="{{ r.ri_class }}">{{ r.ri_auc }}%</td>
+        {% for name in model_names %}<td>{{ r.auc[name] }}</td>{% endfor %}
+        {% for name in non_baseline %}
+        <td class="{{ r.ri_auc[name].cls }}">{{ r.ri_auc[name].val }}%</td>
+        {% endfor %}
       </tr>
     {% endfor %}
     </tbody>
@@ -365,7 +389,7 @@
 {% endif %}
 
 <h3 id="ea-agreement">13k. Error Agreement Analysis</h3>
-<p>How do the two models agree/disagree on individual reads at threshold&nbsp;=&nbsp;0.5?</p>
+<p>How do the models agree/disagree on individual reads at threshold&nbsp;=&nbsp;0.5?</p>
 {% if error_analysis.agreement %}
 {% if error_analysis.agreement.plot %}
 <div class="plot-container"><img src="data:image/png;base64,{{ error_analysis.agreement.plot }}" alt="Error agreement"></div>
@@ -396,7 +420,7 @@
 
 <!-- ================================================================ -->
 <h2 id="trinuc-snvq">16. SNVQ by Trinucleotide Context</h2>
-<p>Median SNVQ (with IQR shading) for each of the 96 trinucleotide contexts, computed on TP reads only. Green tick labels indicate cycle-skip contexts; red indicate non-cycle-skip.</p>
+<p>Median SNVQ (with shading) for each of the 96 trinucleotide contexts, computed on TP reads only. Green tick labels indicate cycle-skip contexts; red indicate non-cycle-skip.</p>
 {% if plots.trinuc_snvq %}
 <div class="plot-container"><img src="data:image/png;base64,{{ plots.trinuc_snvq }}" alt="SNVQ by trinuc context"></div>
 {% endif %}

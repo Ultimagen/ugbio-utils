@@ -97,6 +97,14 @@ def _cli() -> argparse.Namespace:  # noqa: PLR0915
     ap.add_argument("--weight-decay", type=float, default=1e-4, help="Weight decay for AdamW optimizer")
     ap.add_argument("--random-seed", type=int, default=1)
     ap.add_argument("--length", type=int, default=300)
+    ap.add_argument(
+        "--pretrained-checkpoint",
+        type=str,
+        default=None,
+        help="Path to a pretrained .ckpt file. Model weights will be loaded "
+        "before training (fine-tuning mode: fresh optimizer and LR schedule). "
+        "Supports both Lightning checkpoints and SWA checkpoints.",
+    )
 
     # Architecture
     ap.add_argument("--hidden-channels", type=int, default=128, help="Hidden channels in CNN residual blocks")
@@ -370,6 +378,82 @@ def _extract_training_results(trainer: lightning.Trainer, fold_idx: int) -> dict
         result["swa_val_auc"] = float(logged["swa_val_auc"])
         result["swa_val_aupr"] = float(logged.get("swa_val_aupr", 0))
     return result
+
+
+def _load_pretrained_weights(lit_model: SRSNVLightningModule, ckpt_path: str) -> None:
+    """Load model weights from a pretrained checkpoint (fine-tuning mode).
+
+    Only the model state_dict is loaded — optimizer, scheduler, and epoch
+    state are left fresh so training starts from epoch 0 with the configured
+    LR schedule.
+
+    Supports both Lightning checkpoints (``trainer.save_checkpoint``) and
+    SWA checkpoints (``{"state_dict": ..., "hyper_parameters": ...}``).
+
+    Parameters
+    ----------
+    lit_model
+        The freshly constructed ``SRSNVLightningModule`` to load weights into.
+    ckpt_path
+        Path to the ``.ckpt`` file.
+
+    Raises
+    ------
+    RuntimeError
+        If the checkpoint state_dict does not match the model architecture
+        (``strict=True``).
+    """
+    logger.info("Loading pretrained weights from: %s", ckpt_path)
+    raw = torch.load(ckpt_path, map_location="cpu", weights_only=False)  # noqa: S301
+
+    if isinstance(raw, dict) and "state_dict" in raw:
+        state_dict = raw["state_dict"]
+    else:
+        state_dict = raw
+
+    lit_model.load_state_dict(state_dict, strict=True)
+
+    n_params = sum(p.numel() for p in lit_model.parameters())
+    logger.info("Pretrained weights loaded successfully: %d parameters from %s", n_params, ckpt_path)
+
+
+@torch.no_grad()
+def _eval_before_training(lit_model: SRSNVLightningModule, dm: SRSNVDataModule) -> None:
+    """Run a quick validation pass before training to log initial metrics."""
+    logger.info("Running pre-training evaluation on validation set...")
+    lit_model.eval()
+    dm.setup("fit")
+    val_loader = dm.val_dataloader()
+
+    all_probs = []
+    all_labels = []
+    device = next(lit_model.parameters()).device
+
+    for batch in val_loader:
+        batch_dev = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+        logits = lit_model._forward(batch_dev)
+        probs = torch.sigmoid(logits).squeeze(-1)
+        all_probs.append(probs.cpu())
+        all_labels.append(batch_dev["label"].cpu())
+
+    probs_np = torch.cat(all_probs).numpy()
+    labels_np = torch.cat(all_labels).numpy().astype(int)
+
+    min_classes_for_metrics = 2
+    n_classes = len(set(labels_np))
+    if n_classes < min_classes_for_metrics:
+        logger.warning("Pre-training eval: only %d class(es) in val set — skipping metric computation.", n_classes)
+    else:
+        auc = float(roc_auc_score(labels_np, probs_np))
+        aupr = float(average_precision_score(labels_np, probs_np))
+        ll = float(log_loss(labels_np, probs_np, labels=[0, 1]))
+        logger.info(
+            "Pre-training val metrics (pretrained weights): AUC=%.4f  AUPR=%.4f  LogLoss=%.4f",
+            auc,
+            aupr,
+            ll,
+        )
+    lit_model.train()
 
 
 def _collect_predictions(  # noqa: C901, PLR0912
@@ -688,6 +772,10 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             lr_patience=args.lr_patience,
         )
 
+        if args.pretrained_checkpoint:
+            _load_pretrained_weights(lit_model, args.pretrained_checkpoint)
+            _eval_before_training(lit_model, dm)
+
         if fold_idx == 0:
             n_trainable_params = int(sum(p.numel() for p in lit_model.model.parameters() if p.requires_grad))
             model_arch_summary = {
@@ -960,6 +1048,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             "use_tf32": bool(args.use_tf32),
             "devices": args.devices,
             "strategy": "ddp" if n_devices > 1 else "auto",
+            "pretrained_checkpoint": args.pretrained_checkpoint,
             "auto_lr_find": args.auto_lr_find,
             "auto_scale_batch_size": args.auto_scale_batch_size,
         },

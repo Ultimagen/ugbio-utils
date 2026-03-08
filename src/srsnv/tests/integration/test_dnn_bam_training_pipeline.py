@@ -9,7 +9,7 @@ from ugbio_srsnv import srsnv_dnn_bam_training as dnn_train
 
 def _make_fake_tensor_cache(tmp_path: Path, n_rows: int = 80) -> str:
     """Create a minimal tensor cache on disk for testing."""
-    import pickle
+    import pickle  # noqa: PLC0415
 
     length = 300
     chroms = ["chr1", "chr2", "chr21", "chr22"]
@@ -26,8 +26,11 @@ def _make_fake_tensor_cache(tmp_path: Path, n_rows: int = 80) -> str:
         "read_base_idx": torch.zeros(n_rows, length, dtype=torch.int16),
         "ref_base_idx": torch.zeros(n_rows, length, dtype=torch.int16),
         "t0_idx": torch.zeros(n_rows, length, dtype=torch.int16),
+        "tm_idx": torch.ones(n_rows, dtype=torch.int8),
+        "st_idx": torch.ones(n_rows, dtype=torch.int8),
+        "et_idx": torch.ones(n_rows, dtype=torch.int8),
         "x_num_pos": torch.randn(n_rows, 5, length).to(dtype=torch.float16),
-        "x_num_const": torch.randn(n_rows, 7).to(dtype=torch.float16),
+        "x_num_const": torch.randn(n_rows, 4).to(dtype=torch.float16),
         "mask": torch.ones(n_rows, length, dtype=torch.uint8),
         "label": torch.tensor([int((i % 3) == 0) for i in range(n_rows)], dtype=torch.uint8),
         "split_id": torch.tensor(split_ids, dtype=torch.int8),
@@ -127,6 +130,19 @@ def test_dnn_lightning_training_pipeline(monkeypatch, tmp_path: Path) -> None:
             "loader_prefetch_factor": 2,
             "loader_pin_memory": False,
             "verbose": False,
+            "val_chromosomes": None,
+            "pretrained_checkpoint": None,
+            "weight_decay": 1e-4,
+            "hidden_channels": 128,
+            "n_blocks": 6,
+            "base_embed_dim": 16,
+            "t0_embed_dim": 16,
+            "cat_embed_dim": 4,
+            "dropout": 0.3,
+            "stats_positive": None,
+            "stats_negative": None,
+            "stats_featuremap": None,
+            "mean_coverage": None,
         },
     )()
     monkeypatch.setattr(dnn_train, "_cli", lambda: fake_args)
@@ -229,6 +245,19 @@ def test_dnn_lightning_single_model_split(monkeypatch, tmp_path: Path) -> None:
             "loader_prefetch_factor": 2,
             "loader_pin_memory": False,
             "verbose": False,
+            "val_chromosomes": None,
+            "pretrained_checkpoint": None,
+            "weight_decay": 1e-4,
+            "hidden_channels": 128,
+            "n_blocks": 6,
+            "base_embed_dim": 16,
+            "t0_embed_dim": 16,
+            "cat_embed_dim": 4,
+            "dropout": 0.3,
+            "stats_positive": None,
+            "stats_negative": None,
+            "stats_featuremap": None,
+            "mean_coverage": None,
         },
     )()
     monkeypatch.setattr(dnn_train, "_cli", lambda: fake_args)
@@ -239,3 +268,123 @@ def test_dnn_lightning_single_model_split(monkeypatch, tmp_path: Path) -> None:
     meta = json.loads((tmp_path / "single.srsnv_dnn_metadata.json").read_text())
     assert len(meta["training_results"]) == 1
     assert meta["training_parameters"]["lr_scheduler"] == "cosine"
+
+
+@pytest.mark.integration
+def test_dnn_pretrained_checkpoint_finetuning(monkeypatch, tmp_path: Path) -> None:
+    """Train a model, then fine-tune from its checkpoint and verify pre-training eval runs."""
+    resources = Path(__file__).parent.parent / "resources"
+    interval_list = resources / "wgs_calling_regions.without_encode_blacklist.hg38.interval_list.gz"
+
+    tensor_cache_path = _make_fake_tensor_cache(tmp_path, n_rows=80)
+
+    preprocess_index = {
+        "cache_key": "test_pretrained",
+        "cache_hit": False,
+        "total_shards": 1,
+        "total_output_rows": 80,
+        "tensor_cache_path": tensor_cache_path,
+        "split_counts": {
+            "0": {"rows": 14, "positives": 5, "negatives": 9},
+            "1": {"rows": 13, "positives": 4, "negatives": 9},
+            "2": {"rows": 13, "positives": 5, "negatives": 8},
+            "-1": {"rows": 40, "positives": 14, "negatives": 26},
+        },
+        "chunk_split_stats": [],
+    }
+
+    monkeypatch.setattr(dnn_train, "discover_bam_schema", lambda *a, **kw: {"schema_version": 1, "tag_counts": {}})
+    monkeypatch.setattr(dnn_train, "build_tensor_cache", lambda **kw: preprocess_index)
+
+    base_attrs = {
+        "positive_bam": "ignored.bam",
+        "negative_bam": "ignored.bam",
+        "positive_parquet": "ignored.parquet",
+        "negative_parquet": "ignored.parquet",
+        "training_regions": str(interval_list),
+        "output": str(tmp_path / "phase1"),
+        "basename": "base_model",
+        "k_folds": 3,
+        "split_manifest_in": None,
+        "split_manifest_out": None,
+        "holdout_chromosomes": "chr21,chr22",
+        "val_chromosomes": None,
+        "single_model_split": False,
+        "val_fraction": 0.1,
+        "split_hash_key": "RN",
+        "max_rows_per_class": None,
+        "epochs": 2,
+        "patience": 5,
+        "min_epochs": 1,
+        "batch_size": 16,
+        "eval_batch_size": None,
+        "predict_batch_size": None,
+        "learning_rate": 1e-3,
+        "weight_decay": 1e-4,
+        "random_seed": 1,
+        "length": 300,
+        "pretrained_checkpoint": None,
+        "hidden_channels": 128,
+        "n_blocks": 6,
+        "base_embed_dim": 16,
+        "t0_embed_dim": 16,
+        "cat_embed_dim": 4,
+        "dropout": 0.3,
+        "lr_scheduler": "none",
+        "lr_warmup_epochs": 1,
+        "lr_min": 1e-6,
+        "lr_step_size": 5,
+        "lr_gamma": 0.5,
+        "lr_patience": 3,
+        "swa": False,
+        "swa_lr": 1e-4,
+        "swa_epoch_start": 0.7,
+        "auto_lr_find": False,
+        "auto_scale_batch_size": False,
+        "use_amp": False,
+        "use_tf32": False,
+        "gradient_clip_val": None,
+        "accumulate_grad_batches": 1,
+        "devices": 1,
+        "strategy": "auto",
+        "preprocess_cache_dir": str(tmp_path / "cache"),
+        "preprocess_num_workers": 1,
+        "preprocess_max_ram_gb": 8.0,
+        "preprocess_batch_rows": 1024,
+        "preprocess_dry_run": False,
+        "loader_num_workers": 0,
+        "loader_prefetch_factor": 2,
+        "loader_pin_memory": False,
+        "verbose": False,
+        "stats_positive": None,
+        "stats_negative": None,
+        "stats_featuremap": None,
+        "mean_coverage": None,
+    }
+
+    # Phase 1: train a base model
+    (tmp_path / "phase1").mkdir()
+    base_args = type("Args", (), base_attrs)()
+    monkeypatch.setattr(dnn_train, "_cli", lambda: base_args)  # noqa: PLW0108
+    dnn_train.main()
+
+    # Find the checkpoint produced by phase 1
+    ckpt_files = list((tmp_path / "phase1").glob("*.ckpt"))
+    assert ckpt_files, "Phase 1 should produce at least one checkpoint"
+    ckpt_path = str(ckpt_files[0])
+
+    # Phase 2: fine-tune from that checkpoint
+    (tmp_path / "phase2").mkdir()
+    ft_attrs = {
+        **base_attrs,
+        "output": str(tmp_path / "phase2"),
+        "basename": "finetuned",
+        "pretrained_checkpoint": ckpt_path,
+    }
+    ft_args = type("Args", (), ft_attrs)()
+    monkeypatch.setattr(dnn_train, "_cli", lambda: ft_args)  # noqa: PLW0108
+    dnn_train.main()
+
+    assert (tmp_path / "phase2" / "finetuned.featuremap_df.parquet").is_file()
+    meta = json.loads((tmp_path / "phase2" / "finetuned.srsnv_dnn_metadata.json").read_text())
+    assert meta["training_parameters"]["pretrained_checkpoint"] == ckpt_path
