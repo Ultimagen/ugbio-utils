@@ -1,0 +1,7 @@
+{
+  "base_vocab": {"<PAD>": 0, "<GAP>": 1, "A": 2, "C": 3, "G": 4, "T": 5, "N": 6},
+  "t0_vocab": {"<PAD>": 0, "<MISSING>": 1, "<GAP>": 2, "-": 3, ":": 4, "A": 5, "C": 6, "D": 7, "G": 8, "N": 9, "T": 10},
+  "tm_vocab": {"<PAD>": 0, "<MISSING>": 1, "A": 2, "AQ": 3, "AQZ": 4, "AZ": 5, "Q": 6, "QZ": 7, "Z": 8},
+  "st_vocab": {"<PAD>": 0, "<MISSING>": 1, "MINUS": 2, "MIXED": 3, "PLUS": 4, "UNDETERMINED": 5},
+  "et_vocab": {"<PAD>": 0, "<MISSING>": 1, "MINUS": 2, "MIXED": 3, "PLUS": 4, "UNDETERMINED": 5}
+}

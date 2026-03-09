@@ -56,16 +56,47 @@ echo "  Mean coverage: ${MEAN_COVERAGE}"
 echo ""
 
 # ------------------------------------------------------------------
-# Step 2: Extract pos/neg BAMs from CRAM
+# Step 2: Build tensor caches directly from CRAM (replaces BAM extraction)
 # ------------------------------------------------------------------
-if [[ "${SKIP_BAM_EXTRACT}" == "1" ]]; then
-  echo ">>> Step 2/4: Skipping BAM extraction (SKIP_BAM_EXTRACT=1)"
+POS_PARQUET="${WORKDIR}/inputs/positive.parquet"
+NEG_PARQUET="${WORKDIR}/inputs/negative.parquet"
+SOURCE_CRAM="${WORKDIR}/inputs/source.cram"
+POS_CACHE="${WORKDIR}/tensor_cache/positive_cache"
+NEG_CACHE="${WORKDIR}/tensor_cache/negative_cache"
+FOLDS_DIR="${WORKDIR}/tensor_cache/folds"
+TRAINING_REGIONS="${WORKDIR}/inputs/training_regions.interval_list.gz"
+
+SKIP_TENSOR_CACHE="${SKIP_TENSOR_CACHE:-0}"
+if [[ "${SKIP_TENSOR_CACHE}" == "1" ]]; then
+  echo ">>> Step 2/4: Skipping tensor cache build (SKIP_TENSOR_CACHE=1)"
+elif [[ "${SKIP_BAM_EXTRACT}" == "1" ]]; then
+  echo ">>> Step 2/4: Skipping tensor cache build (SKIP_BAM_EXTRACT=1, legacy compat)"
 else
-  echo ">>> Step 2/4: Extracting positive/negative BAMs from CRAM..."
-  echo "  This may take several hours for large CRAMs."
+  echo ">>> Step 2/4: Building tensor caches from CRAM..."
   (
     cd "${REPO_ROOT}"
-    uv run python "${WORKSPACE_RUN_DIR}/extract_pos_neg_bams_from_cram.py" --workspace "${WORKDIR}"
+    echo "  [2a] Positive tensor cache..."
+    uv run cram_to_tensors \
+      --cram "${SOURCE_CRAM}" \
+      --parquet "${POS_PARQUET}" \
+      --label positive \
+      --output "${POS_CACHE}"
+
+    echo "  [2b] Negative tensor cache..."
+    uv run cram_to_tensors \
+      --cram "${SOURCE_CRAM}" \
+      --parquet "${NEG_PARQUET}" \
+      --label negative \
+      --output "${NEG_CACHE}"
+
+    echo "  [2c] Combine + split into folds..."
+    uv run combine_splits \
+      --positive "${POS_CACHE}" \
+      --negative "${NEG_CACHE}" \
+      --training-regions "${TRAINING_REGIONS}" \
+      --k-folds 3 \
+      --holdout-chromosomes "chr21,chr22" \
+      --output "${FOLDS_DIR}"
   )
 fi
 echo ""

@@ -8,21 +8,20 @@ from ugbio_srsnv import srsnv_dnn_bam_training as dnn_train
 
 
 def _make_fake_tensor_cache(tmp_path: Path, n_rows: int = 80) -> str:
-    """Create a minimal tensor cache on disk for testing."""
+    """Create a minimal tensor cache on disk for testing.
+
+    Uses diverse chromosomes (chr1-chr9 + chr21/chr22) so that the
+    DataModule can compute valid split_ids for any k-fold configuration.
+    The cache does NOT contain split_id — the DataModule computes it
+    from the chrom array and the split manifest.
+    """
     import pickle  # noqa: PLC0415
 
     length = 300
-    chroms = ["chr1", "chr2", "chr21", "chr22"]
-    split_ids = []
-    for i in range(n_rows):
-        chrom = chroms[i % len(chroms)]
-        if chrom in {"chr21", "chr22"}:
-            split_ids.append(-1)
-        else:
-            split_ids.append(i % 3)
+    chroms = ["chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9", "chr21", "chr22"]
 
     chunk = {
-        "cache_format_version": 3,
+        "cache_format_version": 5,
         "read_base_idx": torch.zeros(n_rows, length, dtype=torch.int16),
         "ref_base_idx": torch.zeros(n_rows, length, dtype=torch.int16),
         "t0_idx": torch.zeros(n_rows, length, dtype=torch.int16),
@@ -33,7 +32,6 @@ def _make_fake_tensor_cache(tmp_path: Path, n_rows: int = 80) -> str:
         "x_num_const": torch.randn(n_rows, 4).to(dtype=torch.float16),
         "mask": torch.ones(n_rows, length, dtype=torch.uint8),
         "label": torch.tensor([int((i % 3) == 0) for i in range(n_rows)], dtype=torch.uint8),
-        "split_id": torch.tensor(split_ids, dtype=torch.int8),
         "chrom": np.array([chroms[i % len(chroms)] for i in range(n_rows)], dtype=object),
         "pos": np.array([1000 + i for i in range(n_rows)], dtype=np.int32),
         "rn": np.array([f"read_{i}" for i in range(n_rows)], dtype=object),
@@ -61,13 +59,6 @@ def test_dnn_lightning_training_pipeline(monkeypatch, tmp_path: Path) -> None:
         "total_shards": 1,
         "total_output_rows": 80,
         "tensor_cache_path": tensor_cache_path,
-        "split_counts": {
-            "0": {"rows": 14, "positives": 5, "negatives": 9},
-            "1": {"rows": 13, "positives": 4, "negatives": 9},
-            "2": {"rows": 13, "positives": 5, "negatives": 8},
-            "-1": {"rows": 40, "positives": 14, "negatives": 26},
-        },
-        "chunk_split_stats": [],
     }
 
     def _fake_build_tensor_cache(**_kwargs):
@@ -180,12 +171,6 @@ def test_dnn_lightning_single_model_split(monkeypatch, tmp_path: Path) -> None:
         "total_shards": 1,
         "total_output_rows": 60,
         "tensor_cache_path": tensor_cache_path,
-        "split_counts": {
-            "0": {"rows": 20, "positives": 7, "negatives": 13},
-            "1": {"rows": 10, "positives": 3, "negatives": 7},
-            "-1": {"rows": 30, "positives": 10, "negatives": 20},
-        },
-        "chunk_split_stats": [],
     }
 
     monkeypatch.setattr(dnn_train, "discover_bam_schema", lambda *a, **kw: {"schema_version": 1, "tag_counts": {}})
@@ -284,13 +269,6 @@ def test_dnn_pretrained_checkpoint_finetuning(monkeypatch, tmp_path: Path) -> No
         "total_shards": 1,
         "total_output_rows": 80,
         "tensor_cache_path": tensor_cache_path,
-        "split_counts": {
-            "0": {"rows": 14, "positives": 5, "negatives": 9},
-            "1": {"rows": 13, "positives": 4, "negatives": 9},
-            "2": {"rows": 13, "positives": 5, "negatives": 8},
-            "-1": {"rows": 40, "positives": 14, "negatives": 26},
-        },
-        "chunk_split_stats": [],
     }
 
     monkeypatch.setattr(dnn_train, "discover_bam_schema", lambda *a, **kw: {"schema_version": 1, "tag_counts": {}})

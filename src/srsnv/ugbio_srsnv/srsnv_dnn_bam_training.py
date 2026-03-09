@@ -22,13 +22,12 @@ from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
 
-from ugbio_srsnv.deep_srsnv.bam_schema import discover_bam_schema
 from ugbio_srsnv.deep_srsnv.data_module import SRSNVDataModule
 from ugbio_srsnv.deep_srsnv.data_prep import (
-    build_encoders_from_schema,
     build_tensor_cache,
     load_cache_from_shm,
     load_full_tensor_cache,
+    load_vocab_config,
     save_cache_to_shm,
 )
 from ugbio_srsnv.deep_srsnv.lightning_module import LR_SCHEDULER_CHOICES, SRSNVLightningModule
@@ -53,13 +52,19 @@ def _cli() -> argparse.Namespace:  # noqa: PLR0915
     ap = argparse.ArgumentParser(description="Train BAM-native CNN for SRSNV (Lightning)")
 
     # Data / IO
-    ap.add_argument("--positive-bam", required=True)
-    ap.add_argument("--negative-bam", required=True)
-    ap.add_argument("--positive-parquet", required=True)
-    ap.add_argument("--negative-parquet", required=True)
-    ap.add_argument("--training-regions", required=True)
+    ap.add_argument("--positive-bam", default=None)
+    ap.add_argument("--negative-bam", default=None)
+    ap.add_argument("--positive-parquet", default=None)
+    ap.add_argument("--negative-parquet", default=None)
+    ap.add_argument("--training-regions", default=None)
     ap.add_argument("--output", required=True)
     ap.add_argument("--basename", default="")
+    ap.add_argument(
+        "--fold-dir",
+        default=None,
+        help="Pre-split fold directory (from combine_splits). "
+        "When provided, skips all preprocessing and split computation.",
+    )
 
     # SNVQ recalibration (optional; when all four are supplied, MQUAL→SNVQ
     # recalibration is applied, matching the XGBoost pipeline)
@@ -565,58 +570,72 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         torch.backends.cudnn.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
 
-    # ── Split manifest (same as original) ──
-    requested_single_model = bool(args.single_model_split)
-    if args.split_manifest_in:
-        split_manifest = load_split_manifest(args.split_manifest_in)
-        validate_manifest_against_regions(split_manifest, args.training_regions)
-    else:
-        holdout_chromosomes = _parse_holdout(args.holdout_chromosomes) or ["chr21", "chr22"]
-        val_chromosomes = _parse_holdout(args.val_chromosomes)
-        if requested_single_model and val_chromosomes:
-            split_manifest = build_single_model_chrom_val_manifest(
-                training_regions=args.training_regions,
-                holdout_chromosomes=holdout_chromosomes,
-                val_chromosomes=val_chromosomes,
-            )
-        elif requested_single_model:
-            split_manifest = build_single_model_read_hash_manifest(
-                training_regions=args.training_regions,
-                random_seed=args.random_seed,
-                holdout_chromosomes=holdout_chromosomes,
-                val_fraction=args.val_fraction,
-                hash_key=args.split_hash_key,
-            )
+    # ── Fold-dir shortcut: skip all preprocessing when a pre-split fold is provided ──
+    use_fold_dir = args.fold_dir is not None
+    if use_fold_dir:
+        logger.info("Using pre-split fold directory: %s", args.fold_dir)
+
+    # ── Split manifest ──
+    split_manifest = None
+    single_model_split = False
+    chrom_to_fold = {}
+
+    if not use_fold_dir:
+        requested_single_model = bool(args.single_model_split)
+        if args.split_manifest_in:
+            split_manifest = load_split_manifest(args.split_manifest_in)
+            validate_manifest_against_regions(split_manifest, args.training_regions)
         else:
-            split_manifest = build_split_manifest(
-                training_regions=args.training_regions,
-                k_folds=args.k_folds,
-                random_seed=args.random_seed,
-                holdout_chromosomes=holdout_chromosomes,
-            )
-        if args.split_manifest_out:
-            save_split_manifest(split_manifest, args.split_manifest_out)
+            holdout_chromosomes = _parse_holdout(args.holdout_chromosomes) or ["chr21", "chr22"]
+            val_chromosomes = _parse_holdout(args.val_chromosomes)
+            if requested_single_model and val_chromosomes:
+                split_manifest = build_single_model_chrom_val_manifest(
+                    training_regions=args.training_regions,
+                    holdout_chromosomes=holdout_chromosomes,
+                    val_chromosomes=val_chromosomes,
+                )
+            elif requested_single_model:
+                split_manifest = build_single_model_read_hash_manifest(
+                    training_regions=args.training_regions,
+                    random_seed=args.random_seed,
+                    holdout_chromosomes=holdout_chromosomes,
+                    val_fraction=args.val_fraction,
+                    hash_key=args.split_hash_key,
+                )
+            else:
+                split_manifest = build_split_manifest(
+                    training_regions=args.training_regions,
+                    k_folds=args.k_folds,
+                    random_seed=args.random_seed,
+                    holdout_chromosomes=holdout_chromosomes,
+                )
+            if args.split_manifest_out:
+                save_split_manifest(split_manifest, args.split_manifest_out)
 
-    split_mode = split_manifest.get("split_mode")
-    single_model_split = split_mode in (SPLIT_MODE_SINGLE_MODEL_READ_HASH, SPLIT_MODE_SINGLE_MODEL_CHROM_VAL)
-    chrom_to_fold = {} if single_model_split else {k: int(v) for k, v in split_manifest["chrom_to_fold"].items()}
+        split_mode = split_manifest.get("split_mode")
+        single_model_split = split_mode in (SPLIT_MODE_SINGLE_MODEL_READ_HASH, SPLIT_MODE_SINGLE_MODEL_CHROM_VAL)
+        chrom_to_fold = {} if single_model_split else {k: int(v) for k, v in split_manifest["chrom_to_fold"].items()}
+        logger.info(
+            "Split manifest ready: mode=%s k_folds=%s holdout_chromosomes=%s",
+            split_manifest.get("split_mode", "chromosome_kfold"),
+            split_manifest.get("k_folds", 1),
+            ",".join(split_manifest.get("test_chromosomes", [])),
+        )
+    else:
+        split_manifest_file = Path(args.fold_dir).parent / "split_manifest.json"
+        if split_manifest_file.exists():
+            split_manifest = load_split_manifest(str(split_manifest_file))
+            split_mode = split_manifest.get("split_mode")
+            single_model_split = split_mode in (SPLIT_MODE_SINGLE_MODEL_READ_HASH, SPLIT_MODE_SINGLE_MODEL_CHROM_VAL)
+            logger.info("Loaded split manifest from fold directory parent: %s", split_manifest_file)
+        else:
+            single_model_split = True
+            logger.info("No split manifest found; assuming single-model mode from fold directory")
+
+    # ── Encoders (static vocab config) ──
+    encoders = load_vocab_config()
     logger.info(
-        "Split manifest ready: mode=%s k_folds=%s holdout_chromosomes=%s",
-        split_manifest.get("split_mode", "chromosome_kfold"),
-        split_manifest.get("k_folds", 1),
-        ",".join(split_manifest.get("test_chromosomes", [])),
-    )
-
-    # ── BAM schema + encoders ──
-    schema_t0 = time.perf_counter()
-    schema = discover_bam_schema([args.positive_bam, args.negative_bam], sample_reads_per_bam=20000)
-    schema_path = out_dir / f"{base}feature_schema.json"
-    schema_path.write_text(json.dumps(schema, indent=2))
-    logger.info("BAM schema discovered and saved in %.1fs: %s", time.perf_counter() - schema_t0, schema_path)
-
-    encoders = build_encoders_from_schema(schema)
-    logger.info(
-        "Encoders built: base=%d t0=%d tm=%d st=%d et=%d",
+        "Encoders loaded from static vocab config: base=%d t0=%d tm=%d st=%d et=%d",
         len(encoders.base_vocab),
         len(encoders.t0_vocab),
         len(encoders.tm_vocab),
@@ -625,93 +644,94 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
     )
     numeric_channels = 9
 
-    # ── Preprocessing (unchanged) ──
-    preprocess_t0 = time.perf_counter()
-    preprocess_cache_dir = args.preprocess_cache_dir or str(out_dir / "deep_srsnv_cache")
-    logger.info("Preprocess phase started: cache_dir=%s", preprocess_cache_dir)
-    preprocess_index = build_tensor_cache(
-        positive_parquet=args.positive_parquet,
-        negative_parquet=args.negative_parquet,
-        positive_bam=args.positive_bam,
-        negative_bam=args.negative_bam,
-        chrom_to_fold=chrom_to_fold,
-        split_manifest=split_manifest,
-        encoders=encoders,
-        cache_dir=preprocess_cache_dir,
-        tensor_length=args.length,
-        max_rows_per_class=args.max_rows_per_class,
-        preprocess_num_workers=args.preprocess_num_workers,
-        preprocess_max_ram_gb=args.preprocess_max_ram_gb,
-        preprocess_batch_rows=args.preprocess_batch_rows,
-        preprocess_dry_run=args.preprocess_dry_run,
-    )
-    preprocess_wall_seconds = round(time.perf_counter() - preprocess_t0, 3)
-    logger.info(
-        "Preprocess phase finished in %.1fs (cache_hit=%s, shards=%d, rows=%d)",
-        preprocess_wall_seconds,
-        bool(preprocess_index.get("cache_hit", False)),
-        int(preprocess_index.get("total_shards", 0)),
-        int(preprocess_index.get("total_output_rows", 0)),
-    )
-    if args.preprocess_dry_run:
-        metadata_path = out_dir / f"{base}srsnv_dnn_metadata.json"
-        metadata_path.write_text(json.dumps({"preprocess": preprocess_index}, indent=2))
-        logger.info("Preprocess dry-run written to %s", metadata_path)
-        return
+    # ── Preprocessing / cache loading ──
+    preprocess_index = {}
+    preprocess_wall_seconds = 0.0
+    split_prevalence: dict = {}
+    train_chunk_mix = None
+    full_cache = None
 
-    tensor_cache_path = preprocess_index.get("tensor_cache_path")
-    if not tensor_cache_path:
-        raise ValueError("No tensor cache path was produced by preprocessing")
-
-    # ── Log split prevalence ──
-    split_prevalence = _normalize_split_counts(preprocess_index.get("split_counts"))
-    if split_prevalence:
-        logger.info("Split stats (pre-training):")
-        for split_name_key in ["train", "val", "test"]:
-            stats = split_prevalence.get(split_name_key)
-            if not stats:
-                continue
-            logger.info(
-                "  %s: rows=%d positives=%d negatives=%d prevalence=%s",
-                split_name_key,
-                stats["rows"],
-                stats["positives"],
-                stats["negatives"],
-                "n/a" if stats["prevalence"] is None else f"{stats['prevalence']:.6f}",
-            )
-    train_chunk_mix = _summarize_chunk_prevalence(preprocess_index.get("chunk_split_stats"), split_id=0)
-    if train_chunk_mix:
-        logger.info(
-            "Train chunk prevalence: chunks=%d min=%.4f median=%.4f max=%.4f near_pure_chunks=%d",
-            train_chunk_mix["n_chunks"],
-            train_chunk_mix["min"],
-            train_chunk_mix["median"],
-            train_chunk_mix["max"],
-            train_chunk_mix["near_pure_count"],
-        )
-        if int(train_chunk_mix["near_pure_count"]) > 0:
-            logger.warning(
-                "Detected near-pure train chunks (<1%% or >99%% positives). "
-                "This can destabilize optimization and hurt validation."
-            )
-
-    # ── Determine effective device count ──
     n_devices = _resolve_n_devices(_parse_devices(args.devices)) if torch.cuda.is_available() else 1
-
-    # ── Load tensor cache ──
-    # For multi-GPU: rank 0 loads once, saves to /dev/shm, then all ranks
-    # mmap from there so physical RAM pages are shared across processes.
     is_rank_zero = int(os.environ.get("LOCAL_RANK", "0")) == 0
     shm_cache_path = Path("/dev/shm/deep_srsnv_shared_cache")  # noqa: S108
 
-    if n_devices > 1:
-        if is_rank_zero:
-            full_cache = load_full_tensor_cache(tensor_cache_path)
-            save_cache_to_shm(full_cache)
-            del full_cache
-        full_cache = load_cache_from_shm(shm_cache_path)
+    if use_fold_dir:
+        logger.info("Skipping preprocessing — loading from fold directory: %s", args.fold_dir)
     else:
-        full_cache = load_full_tensor_cache(tensor_cache_path)
+        preprocess_t0 = time.perf_counter()
+        preprocess_cache_dir = args.preprocess_cache_dir or str(out_dir / "deep_srsnv_cache")
+        logger.info("Preprocess phase started: cache_dir=%s", preprocess_cache_dir)
+        preprocess_index = build_tensor_cache(
+            positive_parquet=args.positive_parquet,
+            negative_parquet=args.negative_parquet,
+            positive_bam=args.positive_bam,
+            negative_bam=args.negative_bam,
+            encoders=encoders,
+            cache_dir=preprocess_cache_dir,
+            tensor_length=args.length,
+            max_rows_per_class=args.max_rows_per_class,
+            preprocess_num_workers=args.preprocess_num_workers,
+            preprocess_max_ram_gb=args.preprocess_max_ram_gb,
+            preprocess_batch_rows=args.preprocess_batch_rows,
+            preprocess_dry_run=args.preprocess_dry_run,
+        )
+        preprocess_wall_seconds = round(time.perf_counter() - preprocess_t0, 3)
+        logger.info(
+            "Preprocess phase finished in %.1fs (cache_hit=%s, shards=%d, rows=%d)",
+            preprocess_wall_seconds,
+            bool(preprocess_index.get("cache_hit", False)),
+            int(preprocess_index.get("total_shards", 0)),
+            int(preprocess_index.get("total_output_rows", 0)),
+        )
+        if args.preprocess_dry_run:
+            metadata_path = out_dir / f"{base}srsnv_dnn_metadata.json"
+            metadata_path.write_text(json.dumps({"preprocess": preprocess_index}, indent=2))
+            logger.info("Preprocess dry-run written to %s", metadata_path)
+            return
+
+        tensor_cache_path = preprocess_index.get("tensor_cache_path")
+        if not tensor_cache_path:
+            raise ValueError("No tensor cache path was produced by preprocessing")
+
+        split_prevalence = _normalize_split_counts(preprocess_index.get("split_counts"))
+        if split_prevalence:
+            logger.info("Split stats (pre-training):")
+            for split_name_key in ["train", "val", "test"]:
+                stats = split_prevalence.get(split_name_key)
+                if not stats:
+                    continue
+                logger.info(
+                    "  %s: rows=%d positives=%d negatives=%d prevalence=%s",
+                    split_name_key,
+                    stats["rows"],
+                    stats["positives"],
+                    stats["negatives"],
+                    "n/a" if stats["prevalence"] is None else f"{stats['prevalence']:.6f}",
+                )
+        train_chunk_mix = _summarize_chunk_prevalence(preprocess_index.get("chunk_split_stats"), split_id=0)
+        if train_chunk_mix:
+            logger.info(
+                "Train chunk prevalence: chunks=%d min=%.4f median=%.4f max=%.4f near_pure_chunks=%d",
+                train_chunk_mix["n_chunks"],
+                train_chunk_mix["min"],
+                train_chunk_mix["median"],
+                train_chunk_mix["max"],
+                train_chunk_mix["near_pure_count"],
+            )
+            if int(train_chunk_mix["near_pure_count"]) > 0:
+                logger.warning(
+                    "Detected near-pure train chunks (<1%% or >99%% positives). "
+                    "This can destabilize optimization and hurt validation."
+                )
+
+        if n_devices > 1:
+            if is_rank_zero:
+                full_cache = load_full_tensor_cache(tensor_cache_path)
+                save_cache_to_shm(full_cache)
+                del full_cache
+            full_cache = load_cache_from_shm(shm_cache_path)
+        else:
+            full_cache = load_full_tensor_cache(tensor_cache_path)
 
     effective_lr = args.learning_rate
     if n_devices > 1:
@@ -719,7 +739,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         logger.info("Multi-GPU LR scaling: %.6f -> %.6f (sqrt(%d) factor)", args.learning_rate, effective_lr, n_devices)
 
     # ── Training loop (per fold) ──
-    n_models = 1 if single_model_split else args.k_folds
+    n_models = 1 if (single_model_split or use_fold_dir) else args.k_folds
     training_results: list[dict] = []
     all_predictions: list[list[dict]] = []
     all_best_ckpt_predictions: list[list[dict]] = []
@@ -730,23 +750,38 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         fold_t0 = time.perf_counter()
         logger.info("Fold %d/%d started", fold_idx + 1, n_models)
 
-        if single_model_split:
-            train_keep = {0}
-            val_keep = {1}
+        if use_fold_dir:
+            dm = SRSNVDataModule.from_fold_dir(
+                fold_dir=args.fold_dir,
+                train_batch_size=args.batch_size,
+                eval_batch_size=args.eval_batch_size,
+                predict_batch_size=args.predict_batch_size,
+                pin_memory=args.loader_pin_memory,
+                num_workers=args.loader_num_workers,
+                prefetch_factor=args.loader_prefetch_factor,
+            )
         else:
-            train_keep = {i for i in range(args.k_folds) if i != fold_idx}
-            val_keep = {fold_idx}
+            if single_model_split:
+                train_keep = {0}
+                val_keep = {1}
+            else:
+                train_keep = {i for i in range(args.k_folds) if i != fold_idx}
+                val_keep = {fold_idx}
 
-        dm = SRSNVDataModule(
-            full_cache=full_cache,
-            train_split_ids=train_keep,
-            val_split_ids=val_keep,
-            test_split_ids={-1},
-            train_batch_size=args.batch_size,
-            eval_batch_size=args.eval_batch_size,
-            predict_batch_size=args.predict_batch_size,
-            pin_memory=args.loader_pin_memory,
-        )
+            dm = SRSNVDataModule(
+                full_cache=full_cache,
+                train_split_ids=train_keep,
+                val_split_ids=val_keep,
+                test_split_ids={-1},
+                train_batch_size=args.batch_size,
+                eval_batch_size=args.eval_batch_size,
+                predict_batch_size=args.predict_batch_size,
+                pin_memory=args.loader_pin_memory,
+                split_manifest=split_manifest,
+                chrom_to_fold=chrom_to_fold,
+                num_workers=args.loader_num_workers,
+                prefetch_factor=args.loader_prefetch_factor,
+            )
 
         lit_model = SRSNVLightningModule(
             base_vocab_size=len(encoders.base_vocab),
@@ -1007,7 +1042,6 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         "split_prevalence": split_prevalence,
         "chunk_composition": {"train_chunk_prevalence": train_chunk_mix},
         "model_architecture": model_arch_summary,
-        "schema_path": str(schema_path),
         "best_checkpoint_paths": best_ckpt_paths,
         "swa_checkpoint_paths": swa_ckpt_paths if args.swa else None,
         "prediction_model": "swa" if args.swa else "best_checkpoint",

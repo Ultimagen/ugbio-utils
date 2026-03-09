@@ -22,12 +22,16 @@ XGB_PARAMS="${SCRIPT_DIR}/xgb_tuned_params.json"
 
 POS_PARQUET="${INPUTS_DIR}/positive.parquet"
 NEG_PARQUET="${INPUTS_DIR}/negative.parquet"
-POS_BAM="${INPUTS_DIR}/positive_reads.bam"
-NEG_BAM="${INPUTS_DIR}/negative_reads.bam"
+SOURCE_CRAM="${INPUTS_DIR}/source.cram"
 TRAINING_REGIONS="${INPUTS_DIR}/training_regions.interval_list.gz"
 STATS_POS="${INPUTS_DIR}/stats_positive.json"
 STATS_NEG="${INPUTS_DIR}/stats_negative.json"
 STATS_RAW="${INPUTS_DIR}/stats_featuremap.json"
+
+# Tensor cache paths for new pipeline
+POS_CACHE="${OUTPUT_DIR}/tensor_cache/positive_cache"
+NEG_CACHE="${OUTPUT_DIR}/tensor_cache/negative_cache"
+FOLDS_DIR="${OUTPUT_DIR}/tensor_cache/folds"
 
 XGB_BASENAME="${XGB_BASENAME:-xgb_chrom_val}"
 DNN_BASENAME="${DNN_BASENAME:-dnn_chrom_val}"
@@ -62,18 +66,36 @@ uv run srsnv_training \
   --basename "${XGB_BASENAME}" \
   --output "${OUTPUT_DIR}"
 
-echo "[2/4] Train deep_srsnv CNN (Lightning) with same split manifest..."
+echo "[2/4] Build tensor caches from CRAM and train deep_srsnv CNN..."
+echo "  [2a] Building positive tensor cache..."
+uv run cram_to_tensors \
+  --cram "${SOURCE_CRAM}" \
+  --parquet "${POS_PARQUET}" \
+  --label positive \
+  --output "${POS_CACHE}"
+
+echo "  [2b] Building negative tensor cache..."
+uv run cram_to_tensors \
+  --cram "${SOURCE_CRAM}" \
+  --parquet "${NEG_PARQUET}" \
+  --label negative \
+  --output "${NEG_CACHE}"
+
+echo "  [2c] Combining and splitting into folds..."
+uv run combine_splits \
+  --positive "${POS_CACHE}" \
+  --negative "${NEG_CACHE}" \
+  --split-manifest "${SPLIT_MANIFEST}" \
+  --single-model-split \
+  --output "${FOLDS_DIR}"
+
+echo "  [2d] Training DNN from fold directory..."
 uv run srsnv_dnn_bam_training \
-  --positive-bam "${POS_BAM}" \
-  --negative-bam "${NEG_BAM}" \
-  --positive-parquet "${POS_PARQUET}" \
-  --negative-parquet "${NEG_PARQUET}" \
-  --training-regions "${TRAINING_REGIONS}" \
+  --fold-dir "${FOLDS_DIR}/fold_0" \
   --stats-positive "${STATS_POS}" \
   --stats-negative "${STATS_NEG}" \
   --stats-featuremap "${STATS_RAW}" \
   --mean-coverage "${MEAN_COVERAGE}" \
-  --split-manifest-in "${SPLIT_MANIFEST}" \
   --single-model-split \
   --epochs "${EPOCHS}" \
   --patience "${PATIENCE}" \

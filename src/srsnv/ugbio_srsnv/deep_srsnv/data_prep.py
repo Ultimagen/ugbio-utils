@@ -43,24 +43,36 @@ class Encoders:
 
 
 _WORKER_STATE: dict[str, object] = {}
-_DEFAULT_T0_TOKENS = ["<GAP>", "D", ":", "-", "A", "C", "G", "T", "N"]
-_DEFAULT_TM_VALUES = ["A", "Q", "Z", "AQ", "AZ", "QZ", "AQZ"]
-_DEFAULT_ST_ET_VALUES = ["PLUS", "MINUS", "MIXED", "UNDETERMINED"]
+
+_VOCAB_CONFIG_PATH = Path(__file__).parent / "vocab_config.json"
 
 
-def _default_base_vocab() -> dict[str, int]:
-    return {"<PAD>": 0, "<GAP>": 1, "A": 2, "C": 3, "G": 4, "T": 5, "N": 6}
+def load_vocab_config(path: str | Path | None = None) -> Encoders:
+    """Load static vocabulary mappings from a JSON config file.
 
+    Falls back to the bundled ``vocab_config.json`` next to this module
+    when *path* is ``None``.
+    """
+    cfg_path = Path(path) if path is not None else _VOCAB_CONFIG_PATH
+    if not cfg_path.exists():
+        raise FileNotFoundError(f"Vocab config not found: {cfg_path}")
+    try:
+        raw = json.loads(cfg_path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid JSON in vocab config {cfg_path}: {exc}") from exc
 
-def _create_categorical_vocab(values: list[str], *, add_missing: bool = True) -> dict[str, int]:
-    uniq = sorted({v for v in values if v is not None and v != ""})
-    vocab = {"<PAD>": 0}
-    if add_missing:
-        vocab["<MISSING>"] = 1
-    offset = len(vocab)
-    for i, v in enumerate(uniq, start=offset):
-        vocab[v] = i
-    return vocab
+    required_keys = {"base_vocab", "t0_vocab", "tm_vocab", "st_vocab", "et_vocab"}
+    missing = required_keys - set(raw.keys())
+    if missing:
+        raise ValueError(f"Vocab config missing keys: {sorted(missing)}")
+
+    return Encoders(
+        base_vocab=raw["base_vocab"],
+        t0_vocab=raw["t0_vocab"],
+        tm_vocab=raw["tm_vocab"],
+        st_vocab=raw["st_vocab"],
+        et_vocab=raw["et_vocab"],
+    )
 
 
 def _record_tags(rec: pysam.AlignedSegment) -> dict:
@@ -83,6 +95,11 @@ def _get_worker_resources(positive_bam: str, negative_bam: str) -> dict[str, obj
     payload = {"bams": bams, "idx": idx}
     _WORKER_STATE[cache_key] = payload
     return payload
+
+
+def _init_worker(positive_bam: str, negative_bam: str) -> None:
+    """ProcessPoolExecutor initializer: pre-build IndexedReads to eliminate cold-start."""
+    _get_worker_resources(positive_bam, negative_bam)
 
 
 def _match_bam_read(
@@ -147,11 +164,9 @@ def _build_cache_key(
     negative_parquet: str,
     positive_bam: str,
     negative_bam: str,
-    split_manifest: dict | None,
-    chrom_to_fold: dict[str, int],
     tensor_length: int,
     batch_rows: int,
-    cache_version: int = 5,
+    cache_version: int = 6,
 ) -> str:
     payload = {
         "cache_version": cache_version,
@@ -163,8 +178,6 @@ def _build_cache_key(
         "negative_parquet_mtime_ns": os.stat(negative_parquet).st_mtime_ns,
         "positive_bam_mtime_ns": os.stat(positive_bam).st_mtime_ns,
         "negative_bam_mtime_ns": os.stat(negative_bam).st_mtime_ns,
-        "split_manifest": split_manifest or {},
-        "chrom_to_fold": chrom_to_fold,
         "tensor_spec": {
             "length": tensor_length,
             "channels": [
@@ -235,6 +248,48 @@ def _estimate_shard_rows(
     budget_per_worker_bytes = (preprocess_max_ram_gb * (1024**3)) / max(1, preprocess_num_workers)
     hard_cap_rows = int(max(1000, budget_per_worker_bytes / bytes_per_row))
     return max(1000, min(requested_batch_rows, hard_cap_rows))
+
+
+def _read_all_parquet_rows(
+    positive_parquet: str,
+    negative_parquet: str,
+    columns: list[str],
+    max_rows_per_class: int | None = None,
+) -> list[dict]:
+    """Read all rows from positive and negative parquets with labels.
+
+    Applies EDIST filtering on positives and optional row count limits.
+    Returns a shuffled list of row dicts.
+    """
+    max_edist = _compute_max_edist(positive_parquet)
+    edist_col = FeatureMapFields.EDIST.value
+    if max_edist is not None:
+        logger.info("Positive EDIST filter: dropping rows with EDIST == %s", max_edist)
+
+    all_rows: list[dict] = []
+    n_edist_dropped = 0
+
+    for label, parquet_path in ((True, positive_parquet), (False, negative_parquet)):
+        for batch_rows in _iter_parquet_rows(
+            parquet_path,
+            label=label,
+            columns=columns,
+            batch_rows=50_000,
+            max_rows=max_rows_per_class,
+        ):
+            for row in batch_rows:
+                if label and max_edist is not None and row.get(edist_col) == max_edist:
+                    n_edist_dropped += 1
+                    continue
+                all_rows.append(row)
+
+    if n_edist_dropped > 0:
+        logger.info("Dropped %d positive rows with EDIST == %s", n_edist_dropped, max_edist)
+
+    rng = np.random.default_rng(42)
+    rng.shuffle(all_rows)
+    logger.info("Read %d total rows from parquets (pos + neg)", len(all_rows))
+    return all_rows
 
 
 def _row_split_id(row: dict, *, split_manifest: dict | None, chrom_to_fold: dict[str, int]) -> int:  # noqa: PLR0911
@@ -655,14 +710,171 @@ def _process_rows_shard_to_tensors(
     return sid, chunk, stats
 
 
+def tensorize_rows(  # noqa: PLR0912, PLR0915
+    *,
+    shard_id: int,
+    rows: list[dict],
+    positive_bam: str,
+    negative_bam: str,
+    encoders: Encoders,
+    tensor_length: int,
+) -> tuple[int, dict, dict]:
+    """Core tensorization: BAM lookup + channel encoding for a batch of rows.
+
+    Reusable for both training (batch cache) and future streaming inference.
+    Does NOT compute split_id — that is done at DataModule level from CHROM.
+
+    Returns
+    -------
+    (shard_id, tensor_chunk_dict, stats_dict)
+    """
+    t_start = time.perf_counter()
+    resources = _get_worker_resources(positive_bam, negative_bam)
+    bams = resources["bams"]
+    idx = resources["idx"]
+
+    n = len(rows)
+    read_base_out = np.zeros((n, tensor_length), dtype=np.int16)
+    ref_base_out = np.zeros((n, tensor_length), dtype=np.int16)
+    t0_out = np.zeros((n, tensor_length), dtype=np.int16)
+    x_num_pos_out = np.zeros((n, 5, tensor_length), dtype=np.float16)
+    x_num_const_out = np.zeros((n, 4), dtype=np.float16)
+    mask_out = np.zeros((n, tensor_length), dtype=np.uint8)
+    label_out = np.zeros(n, dtype=np.uint8)
+    tm_out = np.zeros(n, dtype=np.int8)
+    st_out = np.zeros(n, dtype=np.int8)
+    et_out = np.zeros(n, dtype=np.int8)
+    pos_out = np.zeros(n, dtype=np.int32)
+    chrom_list: list[str] = []
+    rn_list: list[str] = []
+
+    base_vocab = encoders.base_vocab
+    base_default = base_vocab["N"]
+    t0_vocab = encoders.t0_vocab
+    t0_default = t0_vocab.get("<MISSING>", 0)
+    tm_vocab = encoders.tm_vocab
+    tm_default = tm_vocab.get("<MISSING>", 0)
+    st_vocab = encoders.st_vocab
+    st_default = st_vocab.get("<MISSING>", 0)
+    et_vocab = encoders.et_vocab
+    et_default = et_vocab.get("<MISSING>", 0)
+
+    missing = 0
+    out_i = 0
+
+    for row in rows:
+        label = bool(row["label"])
+        bam = bams[label]
+        rec = _match_bam_read(bam=bam, index=idx[label], chrom=row[CHROM], pos=int(row[POS]), rn=row["RN"])
+        if rec is None:
+            missing += 1
+            continue
+
+        tags = _record_tags(rec)
+        read_len = len(rec.query_sequence or "")
+        tp_raw = _to_numpy_tp(tags.get("tp"), read_len)
+        t0_raw = _to_string_t0(tags.get("t0"), read_len)
+        is_positive = int(label) == 1
+        positive_focus_ref_override = str(row.get(X_ALT) or "").upper() if is_positive else None
+
+        aligned = _build_gapped_channels(rec, int(row[POS]), tp_raw, t0_raw, positive_focus_ref_override)
+        aln_len = len(aligned["read_base_aln"])
+        valid = min(tensor_length, aln_len)
+
+        read_tokens = aligned["read_base_aln"][:valid]
+        ref_tokens = aligned["ref_base_aln"][:valid]
+        t0_tokens = aligned["t0_aln"][:valid]
+        read_base_out[out_i, :valid] = [base_vocab.get(t, base_default) for t in read_tokens]
+        ref_base_out[out_i, :valid] = [base_vocab.get(t, base_default) for t in ref_tokens]
+        t0_out[out_i, :valid] = [t0_vocab.get(t, t0_default) for t in t0_tokens]
+
+        q = aligned["qual_aln"][:valid]
+        x_num_pos_out[out_i, 0, :valid] = q / 50.0
+        x_num_pos_out[out_i, 1, :valid] = aligned["tp_aln"][:valid]
+        x_num_pos_out[out_i, 2, :valid] = 1.0
+        x_num_pos_out[out_i, 3, :valid] = aligned["focus_aln"][:valid]
+        x_num_pos_out[out_i, 4, :valid] = aligned["softclip_mask_aln"][:valid]
+        mask_out[out_i, :valid] = 1
+
+        st_value = tags.get("st", row.get("st", None))
+        et_value = tags.get("et", row.get("et", None))
+        mixed_flag = float((st_value == "MIXED") or (et_value == "MIXED"))
+        x_num_const_out[out_i, 0] = float(int(rec.is_reverse))
+        x_num_const_out[out_i, 1] = float(rec.mapping_quality) / 60.0
+        x_num_const_out[out_i, 2] = float(tags.get("rq", row.get("rq", 0.0) or 0.0))
+        x_num_const_out[out_i, 3] = mixed_flag
+
+        tm_out[out_i] = tm_vocab.get(tags.get("tm", row.get("tm")) or "<MISSING>", tm_default)
+        st_out[out_i] = st_vocab.get(st_value or "<MISSING>", st_default)
+        et_out[out_i] = et_vocab.get(et_value or "<MISSING>", et_default)
+
+        label_out[out_i] = int(label)
+        chrom_list.append(str(row[CHROM]))
+        pos_out[out_i] = int(row[POS])
+        rn_list.append(str(row["RN"]))
+        out_i += 1
+
+    chunk = {
+        "cache_format_version": 5,
+        "read_base_idx": torch.from_numpy(read_base_out[:out_i].copy()),
+        "ref_base_idx": torch.from_numpy(ref_base_out[:out_i].copy()),
+        "t0_idx": torch.from_numpy(t0_out[:out_i].copy()),
+        "tm_idx": torch.from_numpy(tm_out[:out_i].copy()),
+        "st_idx": torch.from_numpy(st_out[:out_i].copy()),
+        "et_idx": torch.from_numpy(et_out[:out_i].copy()),
+        "x_num_pos": torch.from_numpy(x_num_pos_out[:out_i].copy()),
+        "x_num_const": torch.from_numpy(x_num_const_out[:out_i].copy()),
+        "mask": torch.from_numpy(mask_out[:out_i].copy()),
+        "label": torch.from_numpy(label_out[:out_i].copy()),
+        "chrom": np.asarray(chrom_list, dtype=object),
+        "pos": pos_out[:out_i].copy(),
+        "rn": np.asarray(rn_list, dtype=object),
+    }
+    stats = {
+        "shard_id": shard_id,
+        "input_rows": len(rows),
+        "output_rows": out_i,
+        "missing_rows": missing,
+        "wall_seconds": round(time.perf_counter() - t_start, 4),
+    }
+    return shard_id, chunk, stats
+
+
+def compute_split_ids(
+    chroms: list[str] | np.ndarray,
+    rns: list[str] | np.ndarray | None,
+    split_manifest: dict | None,
+    chrom_to_fold: dict[str, int],
+) -> torch.Tensor:
+    """Compute split_id for each row based on CHROM (and optionally RN).
+
+    For chrom-based split modes, this is O(unique_chroms) — very fast.
+    For read-hash mode, it falls back to per-row computation.
+    """
+    n = len(chroms)
+    needs_per_row = split_manifest and split_manifest.get("split_mode") == SPLIT_MODE_SINGLE_MODEL_READ_HASH
+
+    if needs_per_row:
+        split_ids = torch.zeros(n, dtype=torch.int8)
+        for i in range(n):
+            row = {CHROM: chroms[i], "chrom": chroms[i], "RN": rns[i] if rns else ""}
+            split_ids[i] = _row_split_id(row, split_manifest=split_manifest, chrom_to_fold=chrom_to_fold)
+        return split_ids
+
+    unique_chroms = sorted({str(c) for c in chroms})
+    chrom_to_split: dict[str, int] = {}
+    for chrom in unique_chroms:
+        row = {CHROM: chrom, "chrom": chrom, "RN": ""}
+        chrom_to_split[chrom] = _row_split_id(row, split_manifest=split_manifest, chrom_to_fold=chrom_to_fold)
+    return torch.tensor([chrom_to_split[str(c)] for c in chroms], dtype=torch.int8)
+
+
 def build_tensor_cache(  # noqa: C901, PLR0913, PLR0915
     *,
     positive_parquet: str,
     negative_parquet: str,
     positive_bam: str,
     negative_bam: str,
-    chrom_to_fold: dict[str, int],
-    split_manifest: dict | None,
     encoders: Encoders,
     cache_dir: str | Path,
     tensor_length: int = 300,
@@ -672,7 +884,13 @@ def build_tensor_cache(  # noqa: C901, PLR0913, PLR0915
     preprocess_batch_rows: int = 25000,
     preprocess_dry_run: bool = False,
 ) -> dict:
-    """Single-step preprocessing: BAM reading + tensor encoding + cache write."""
+    """Single-step preprocessing: BAM reading + tensor encoding + cache write.
+
+    Split logic (split_id) is NOT computed here — it is deferred to the
+    DataModule, which computes splits from the stored CHROM array and a
+    split manifest at init time. This decouples the cache from any
+    particular split configuration.
+    """
     cache_root = Path(cache_dir)
     cache_root.mkdir(parents=True, exist_ok=True)
 
@@ -694,8 +912,6 @@ def build_tensor_cache(  # noqa: C901, PLR0913, PLR0915
         negative_parquet=negative_parquet,
         positive_bam=positive_bam,
         negative_bam=negative_bam,
-        split_manifest=split_manifest,
-        chrom_to_fold=chrom_to_fold,
         tensor_length=tensor_length,
         batch_rows=effective_batch_rows,
     )
@@ -745,36 +961,30 @@ def build_tensor_cache(  # noqa: C901, PLR0913, PLR0915
         "et",
         FeatureMapFields.EDIST.value,
     ]
-    random_seed = int((split_manifest or {}).get("random_seed", 1))
-    split_buckets = _build_split_buckets(
+    all_rows = _read_all_parquet_rows(
         positive_parquet=positive_parquet,
         negative_parquet=negative_parquet,
         columns=cols,
-        batch_rows=effective_batch_rows,
         max_rows_per_class=max_rows_per_class,
-        split_manifest=split_manifest,
-        chrom_to_fold=chrom_to_fold,
     )
-    shard_inputs, split_input_stats = _build_balanced_shard_inputs(
-        split_buckets=split_buckets,
-        batch_rows=effective_batch_rows,
-        random_seed=random_seed,
-    )
+    shard_inputs = [
+        (sid, all_rows[i : i + effective_batch_rows])
+        for sid, i in enumerate(range(0, len(all_rows), effective_batch_rows))
+    ]
+    total_shards = len(shard_inputs)
     logger.info(
-        "Preprocess planned: key=%s shards=%d effective_workers=%d effective_batch_rows=%d split_ids=%s",
+        "Preprocess planned: key=%s shards=%d effective_workers=%d effective_batch_rows=%d total_rows=%d",
         cache_key,
-        len(shard_inputs),
+        total_shards,
         effective_workers,
         effective_batch_rows,
-        ",".join(str(k) for k in sorted(split_buckets.keys())),
+        len(all_rows),
     )
+    del all_rows
 
     t_all = time.perf_counter()
     shard_stats: list[dict] = []
-    split_counts: dict[int, dict[str, int]] = {}
-    chunk_split_stats: list[dict] = []
     peak_rss_gb = _resource_rss_gb()
-    total_shards = len(shard_inputs)
     completed = 0
     input_rows_seen = 0
     output_rows_seen = 0
@@ -793,32 +1003,6 @@ def build_tensor_cache(  # noqa: C901, PLR0913, PLR0915
         output_rows_seen += int(stats["output_rows"])
         missing_rows_seen += int(stats["missing_rows"])
 
-        chunk_stats: dict[str, dict] = {}
-        labels = chunk["label"].numpy().tolist() if hasattr(chunk["label"], "numpy") else []
-        split_ids = chunk["split_id"].numpy().tolist() if hasattr(chunk["split_id"], "numpy") else []
-        for s_id, label in zip(split_ids, labels, strict=False):
-            key = int(s_id)
-            if key not in split_counts:
-                split_counts[key] = {"rows": 0, "positives": 0, "negatives": 0}
-            split_counts[key]["rows"] += 1
-            if int(label) == 1:
-                split_counts[key]["positives"] += 1
-            else:
-                split_counts[key]["negatives"] += 1
-            skey = str(key)
-            if skey not in chunk_stats:
-                chunk_stats[skey] = {"rows": 0, "positives": 0, "negatives": 0, "prevalence": None}
-            chunk_stats[skey]["rows"] = int(chunk_stats[skey]["rows"]) + 1
-            if int(label) == 1:
-                chunk_stats[skey]["positives"] = int(chunk_stats[skey]["positives"]) + 1
-            else:
-                chunk_stats[skey]["negatives"] = int(chunk_stats[skey]["negatives"]) + 1
-        for _skey, cstats in chunk_stats.items():
-            rows_count = int(cstats["rows"])
-            pos_count = int(cstats["positives"])
-            cstats["prevalence"] = (pos_count / rows_count) if rows_count > 0 else None
-        chunk_split_stats.append({"chunk_id": sid, "split_stats": chunk_stats})
-
         if completed == 1 or completed % 10 == 0 or completed == total_shards:
             logger.info(
                 "Preprocess progress: %d/%d shards, input_rows=%d output_rows=%d "
@@ -833,33 +1017,34 @@ def build_tensor_cache(  # noqa: C901, PLR0913, PLR0915
             )
 
     if effective_workers == 1:
-        for sid, rows, _sid_split in shard_inputs:
-            _sid_out, chunk, stats = _process_rows_shard_to_tensors(
+        _init_worker(positive_bam, negative_bam)
+        for sid, rows in shard_inputs:
+            _sid_out, chunk, stats = tensorize_rows(
                 shard_id=sid,
                 rows=rows,
                 positive_bam=positive_bam,
                 negative_bam=negative_bam,
-                chrom_to_fold=chrom_to_fold,
                 encoders=encoders,
                 tensor_length=tensor_length,
-                split_manifest=split_manifest,
             )
             _handle_result(sid, chunk, stats)
     else:
-        with ProcessPoolExecutor(max_workers=effective_workers) as pool:
+        with ProcessPoolExecutor(
+            max_workers=effective_workers,
+            initializer=_init_worker,
+            initargs=(positive_bam, negative_bam),
+        ) as pool:
             futures = [
                 pool.submit(
-                    _process_rows_shard_to_tensors,
+                    tensorize_rows,
                     shard_id=sid,
                     rows=rows,
                     positive_bam=positive_bam,
                     negative_bam=negative_bam,
-                    chrom_to_fold=chrom_to_fold,
                     encoders=encoders,
                     tensor_length=tensor_length,
-                    split_manifest=split_manifest,
                 )
-                for sid, rows, _sid_split in shard_inputs
+                for sid, rows in shard_inputs
             ]
             for fut in as_completed(futures):
                 sid, chunk, stats = fut.result()
@@ -870,7 +1055,7 @@ def build_tensor_cache(  # noqa: C901, PLR0913, PLR0915
     index = {
         "cache_key": cache_key,
         "cache_hit": False,
-        "cache_version": 4,
+        "cache_version": 5,
         "tensor_length": tensor_length,
         "batch_rows": effective_batch_rows,
         "num_workers": effective_workers,
@@ -883,9 +1068,6 @@ def build_tensor_cache(  # noqa: C901, PLR0913, PLR0915
         "total_missing_rows": int(sum(s["missing_rows"] for s in shard_stats)),
         "tensor_cache_path": str(tensor_cache_path),
         "shard_stats": shard_stats,
-        "split_input_stats": split_input_stats,
-        "split_counts": {str(k): v for k, v in sorted(split_counts.items(), key=lambda kv: kv[0])},
-        "chunk_split_stats": chunk_split_stats,
     }
     index_path.write_text(json.dumps(index, indent=2))
     logger.info(
@@ -898,30 +1080,6 @@ def build_tensor_cache(  # noqa: C901, PLR0913, PLR0915
         index["peak_rss_gb"],
     )
     return index
-
-
-def build_encoders_from_schema(schema: dict | None) -> Encoders:
-    categories = (schema or {}).get("category_values", {})
-    t0_values = categories.get("t0", []) or []
-    tm_values = categories.get("tm", []) or _DEFAULT_TM_VALUES
-    st_values = categories.get("st", []) or _DEFAULT_ST_ET_VALUES
-    et_values = categories.get("et", []) or _DEFAULT_ST_ET_VALUES
-
-    t0_seed = _DEFAULT_T0_TOKENS + list(t0_values)
-    logger.info(
-        "Building encoders from known vocab dicts (schema): t0_seed=%d tm_seed=%d st_seed=%d et_seed=%d",
-        len(t0_seed),
-        len(tm_values),
-        len(st_values),
-        len(et_values),
-    )
-    return Encoders(
-        base_vocab=_default_base_vocab(),
-        t0_vocab=_create_categorical_vocab(t0_seed),
-        tm_vocab=_create_categorical_vocab(tm_values),
-        st_vocab=_create_categorical_vocab(st_values),
-        et_vocab=_create_categorical_vocab(et_values),
-    )
 
 
 def build_training_records(
@@ -1012,25 +1170,6 @@ def build_training_records(
     if missing:
         print(f"[deep_srsnv] warning: {missing} rows had no BAM match and were dropped")
     return records
-
-
-def build_encoders(records: list[dict]) -> Encoders:
-    t0_tokens = []
-    tm_values = []
-    st_values = []
-    et_values = []
-    for r in records:
-        t0_tokens.extend(r["t0_aln"])
-        tm_values.append(r.get("tm"))
-        st_values.append(r.get("st"))
-        et_values.append(r.get("et"))
-    return Encoders(
-        base_vocab=_default_base_vocab(),
-        t0_vocab=_create_categorical_vocab(t0_tokens),
-        tm_vocab=_create_categorical_vocab(tm_values),
-        st_vocab=_create_categorical_vocab(st_values),
-        et_vocab=_create_categorical_vocab(et_values),
-    )
 
 
 class DeepSRSNVDataset(Dataset):
@@ -1168,7 +1307,10 @@ def load_full_tensor_cache(tensor_cache_path: str) -> dict:  # noqa: PLR0915
     """Load entire tensor cache into memory in compact form.
 
     Keeps the on-disk dtypes (int16, float16, uint8, int8) to minimize RAM.
-    Expansion to training dtypes happens per-sample in TensorMapDataset.__getitem__.
+    Expansion to training dtypes happens per-batch in ``compact_collate_fn``.
+
+    Handles caches with or without ``split_id`` (v4 vs v5+ format).
+    When ``split_id`` is absent, the DataModule computes it from CHROM.
     """
     t0 = time.perf_counter()
     all_read_base_idx: list[torch.Tensor] = []
@@ -1194,7 +1336,8 @@ def load_full_tensor_cache(tensor_cache_path: str) -> dict:  # noqa: PLR0915
         all_t0_idx.append(chunk["t0_idx"])
         all_mask.append(chunk["mask"])
         all_label.append(chunk["label"])
-        all_split_id.append(chunk["split_id"])
+        if "split_id" in chunk:
+            all_split_id.append(chunk["split_id"])
 
         if "tm_idx" in chunk:
             all_tm_idx.append(chunk["tm_idx"])
@@ -1227,11 +1370,12 @@ def load_full_tensor_cache(tensor_cache_path: str) -> dict:  # noqa: PLR0915
         "x_num_const": torch.cat(all_x_num_const, dim=0),
         "mask": torch.cat(all_mask, dim=0),
         "label": torch.cat(all_label, dim=0),
-        "split_id": torch.cat(all_split_id, dim=0),
         "chrom": all_chrom,
         "pos": np.concatenate(all_pos),
         "rn": all_rn,
     }
+    if all_split_id:
+        result["split_id"] = torch.cat(all_split_id, dim=0)
     if all_tm_idx:
         result["tm_idx"] = torch.cat(all_tm_idx, dim=0)
         result["st_idx"] = torch.cat(all_st_idx, dim=0)
