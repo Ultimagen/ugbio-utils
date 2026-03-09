@@ -406,6 +406,24 @@ def get_machine_likelihood(filtered_results: list, best: int, second: int) -> tu
     return h1_likely - h0_likely, pi
 
 
+def get_x_hil(rec: pysam.VariantRecord) -> int:
+    """Safely extract X_HIL value from VCF record, handling both scalar and tuple formats.
+
+    Args:
+        rec: VCF record
+
+    Returns:
+        X_HIL value as integer, or -1 if not found
+    """
+    if "X_HIL" not in rec.info:
+        return -1
+    x_hil = rec.info["X_HIL"]
+    # Handle both scalar (Number=1) and tuple (Number=A,R,.) formats
+    if isinstance(x_hil, list | tuple):
+        return x_hil[0]
+    return x_hil
+
+
 def is_pass(rec: pysam.VariantRecord) -> bool:
     """Check if variant record passes filters.
 
@@ -671,16 +689,34 @@ def _check_normal_other_variants(
     Returns:
         True if variant affecting hmer size found, False otherwise
     """
-    # Check normal germline variants
-    germline_normal_vars = normal_germline.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
-    for var in germline_normal_vars:
-        if is_pass(var):
-            # Check each alt allele of this variant
+    if not normal_germline:
+        return False
+
+    try:
+        # Fetch nearby variants from VCF
+        x_hil = get_x_hil(rec)
+        nearby_variants = normal_germline.fetch(chrom, rec.pos - 2, rec.pos + x_hil + 4)
+
+        for var in nearby_variants:
+            # Only consider variants with PASS filter
+            if not is_pass(var):
+                continue
+
+            # Check each alternative allele of the nearby variant
             for alt in var.alts:
-                if does_variant_affect_hmer_size(ref_fasta, chrom, var.pos, var.ref, alt, ref_hmer_size, check_pos=pos):
+                # Check if this alt affects hmer size
+                # Apply the same coordinate adjustment as in check_pass_variants_affect_hmer
+                variant_pos_0based = var.pos - 1 if var.pos > 0 else 0
+                if does_variant_affect_hmer_size(
+                    ref_fasta, chrom, variant_pos_0based, var.ref, alt, ref_hmer_size, check_pos=pos
+                ):
+                    # Found a variant that affects hmer size
                     return True
 
-    return False
+        return False
+    except Exception as e:
+        logger.debug(f"Error checking variants: {e}")
+        return False
 
 
 def does_variant_affect_hmer_size(
@@ -712,19 +748,37 @@ def does_variant_affect_hmer_size(
             check_pos = variant_pos
 
         # Calculate hmer size after variant is applied
-        hmer_after, _ = apply_variant(
+        hmer_after, seq_after = apply_variant(
             ref_fasta, [chrom, variant_pos], [variant_pos, ref_allele, alt_allele], check_pos=check_pos
         )
+
+        # Also get reference sequence for comparison
+        hmer_ref, seq_ref = apply_variant(ref_fasta, [chrom, check_pos], [check_pos, "X", "X"], check_pos=check_pos)
+
+        logger.debug(f"      does_variant_affect_hmer_size: {chrom}:{variant_pos} {ref_allele}->{alt_allele}")
+        logger.debug(f"        check_pos={check_pos}, ref_hmer={ref_hmer_size}")
+        if seq_ref:
+            logger.debug(f"        ref_seq around check_pos: ...{seq_ref[max(0,25-5):min(len(seq_ref),25+6)]}...")
+        if seq_after:
+            logger.debug(f"        alt_seq around check_pos: ...{seq_after[max(0,25-5):min(len(seq_after),25+6)]}...")
+        logger.debug(f"        hmer_after={hmer_after}")
+
         if hmer_after == -1:
             return False
 
         # Return True if hmer size changed, False if same
-        return hmer_after != ref_hmer_size
-    except Exception:
+        result = hmer_after != ref_hmer_size
+        logger.debug(f"        {hmer_after} != {ref_hmer_size} = {result}")
+        return result
+    except Exception as e:
+        logger.debug(f"      Exception in does_variant_affect_hmer_size: {e}")
+        import traceback
+
+        logger.debug(f"      {traceback.format_exc()}")
         return False
 
 
-def _check_somatic_variants(rec, ref_fasta: object, chrom: str, pos: int, ref_hmer_size: int, vcf_file) -> bool:
+def check_pass_variants_affect_hmer(rec, ref_fasta: object, chrom: str, pos: int, ref_hmer_size: int, vcf_file) -> bool:
     """Check for conflicting variants in VCF that affect hmer size.
 
     Args:
@@ -743,22 +797,45 @@ def _check_somatic_variants(rec, ref_fasta: object, chrom: str, pos: int, ref_hm
 
     try:
         # Fetch nearby variants from VCF
-        nearby_variants = vcf_file.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
+        x_hil = get_x_hil(rec)
+        fetch_start = rec.pos - 2
+        fetch_end = rec.pos + x_hil + 4
+        logger.debug(
+            f"Checking variants for {chrom}:{rec.pos+1} (0-base:{rec.pos}) X_HIL={x_hil}, "
+            f"ref_hmer={ref_hmer_size}, fetch_range=[{fetch_start},{fetch_end}), "
+            f"check_pos={pos+1} (0-base:{pos})"
+        )
+
+        nearby_variants = vcf_file.fetch(chrom, fetch_start, fetch_end)
 
         for var in nearby_variants:
             # Skip the test record itself
             if var.pos == rec.pos and var.ref == rec.ref and var.alts == rec.alts:
+                logger.debug(f"  Skipping self: {chrom}:{var.pos+1} (0-base:{var.pos})")
                 continue
 
+            variant_pass = is_pass(var)
+            logger.debug(
+                f"  Found nearby variant: {chrom}:{var.pos+1} (0-base:{var.pos}) "
+                f"{var.ref}->{var.alts}, passes={variant_pass}"
+            )
+
             # Only consider variants with PASS filter
-            if not is_pass(var):
+            if not variant_pass:
                 continue
 
             # Check each alternative allele of the nearby variant
             for alt in var.alts:
                 # Check if this alt affects hmer size
-                if does_variant_affect_hmer_size(ref_fasta, chrom, var.pos, var.ref, alt, ref_hmer_size, check_pos=pos):
-                    # Found a variant that affects hmer size
+                # Note: pysam stores VCF 1-based positions, which internally get read with an offset.
+                # We subtract 1 to ensure we're working with correct 0-based genomic coordinates
+                variant_pos_0based = var.pos - 1 if var.pos > 0 else 0
+                affects = does_variant_affect_hmer_size(
+                    ref_fasta, chrom, variant_pos_0based, var.ref, alt, ref_hmer_size, check_pos=pos
+                )
+                logger.debug(f"    Alt {alt}: affects_hmer={affects}")
+                if affects:
+                    logger.debug(f"      {chrom} variant at {var.pos} affects hmer at {pos}")
                     return True
 
         return False
@@ -797,11 +874,11 @@ def _check_other_variants(variant_context: dict, config: dict, alt_idx: int = 0)
     tumor_germline_handle = variant_context["tumor_germline_handle"]
 
     # Check for conflicts in somatic VCF (higher QUAL variants)
-    if _check_somatic_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, vcf_file):
+    if check_pass_variants_affect_hmer(rec, ref_fasta, chrom, pos, ref_hmer_size, vcf_file):
         return 1
 
     # Check for conflicts in germline VCF (all variants)
-    if _check_somatic_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, tumor_germline_handle):
+    if check_pass_variants_affect_hmer(rec, ref_fasta, chrom, pos, ref_hmer_size, tumor_germline_handle):
         return 1
 
     return 0
@@ -1331,7 +1408,7 @@ def _should_skip_record(rec, min_hmer: int, max_hmer: int) -> bool:
         logger.debug(f"Record at {rec.contig}:{rec.pos} missing required fields (VARIANT_TYPE or X_HIL). Skipping.")
         return True
 
-    hmer_size = rec.info["X_HIL"][0]
+    hmer_size = get_x_hil(rec)
     return rec.info["VARIANT_TYPE"] != "h-indel" or hmer_size < min_hmer or hmer_size > max_hmer or rec.qual == 0
 
 
@@ -1411,7 +1488,7 @@ def _write_results_to_record(
         rec.filter.add("PASS")
 
 
-def _process_record(  # noqa: C901
+def _process_record(  # noqa: C901, PLR0911, PLR0912
     rec,
     ref_fasta,
     vcf_file,
@@ -1441,12 +1518,25 @@ def _process_record(  # noqa: C901
         Dictionary with result or None if record should not be processed
     """
     # Validate required fields
-    if "X_HIL" not in rec.info:
-        logger.debug(f"Record at {rec.contig}:{rec.pos} missing X_HIL field. Skipping processing.")
+    x_hil = get_x_hil(rec)
+    if x_hil <= 0:
+        logger.debug(f"Record at {rec.contig}:{rec.pos} missing or invalid X_HIL field. Skipping processing.")
+        return None
+
+    # Skip if ref and alt have same length (substitution, not indel)
+    if len(rec.ref) == len(rec.alts[alt_idx]):
+        logger.debug(
+            f"Record at {rec.contig}:{rec.pos+1} is a substitution "
+            f"(ref_len={len(rec.ref)} == alt_len={len(rec.alts[alt_idx])}). Skipping."
+        )
         return None
 
     chrom = rec.contig
-    pos = rec.pos + rec.info["X_HIL"][0] // 2
+    pos = rec.pos + x_hil // 2
+
+    logger.debug(
+        f"Processing {chrom}:{rec.pos+1} (0-based: {rec.pos}), X_HIL={x_hil}, check_pos={pos+1} (0-based: {pos})"
+    )
 
     # Calculate ref_hmer_size at the center of the indel (offset position)
     ref_hmer_size = get_ref_hmer_size(ref_fasta, chrom, pos)
@@ -1473,6 +1563,7 @@ def _process_record(  # noqa: C901
     if config["verbose"] or other_variant:
         rec.info["other_variant"] = other_variant
     if other_variant:
+        logger.debug("  other_variant=1, skipping processing")
         return None
 
     # Collect tumor pileup data if not already provided
@@ -1523,7 +1614,8 @@ def _validate_and_collect_tumor_data(rec, tumor_reads, config: dict) -> tuple | 
     """
     # Calculate position for pileup
     chrom = rec.contig
-    pos = rec.pos + rec.info["X_HIL"][0] // 2
+    x_hil = get_x_hil(rec)
+    pos = rec.pos + x_hil // 2
 
     # Collect tumor pileup data
     tumor_pileup_data = _collect_tumor_pileup_data(tumor_reads, chrom, pos)
