@@ -364,6 +364,7 @@ def cnv_vcf_header():
     header.add_line('##INFO=<ID=CNMOPS_COHORT_MEAN,Number=1,Type=Float,Description="Cohort mean">')
     header.add_line('##INFO=<ID=CNMOPS_COHORT_STDEV,Number=1,Type=Float,Description="Cohort stdev">')
     header.add_line('##INFO=<ID=CopyNumber,Number=1,Type=Float,Description="Copy number">')
+    header.add_line('##INFO=<ID=CIPOS,Number=2,Type=Integer,Description="Confidence interval around POS">')
     header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
     header.add_line('##FORMAT=<ID=CN,Number=1,Type=Float,Description="Copy number">')
     header.add_sample("test_sample")
@@ -482,6 +483,7 @@ class TestMergeCnvsInVcf:
                 "cnmops_cohort_mean": [20.0, 20.5],
                 "cnmops_cohort_stdev": [3.5, 3.6],
                 "copynumber": [1.0, 1.1],
+                "cipos": [(-250, 251), (-250, 251)],
             }
         )
         mock_get_vcf_df.return_value = mock_df
@@ -503,6 +505,7 @@ class TestMergeCnvsInVcf:
             record.info["CNMOPS_COHORT_STDEV"] = 3.5
             record.info["CopyNumber"] = 1.0
             record.samples["test_sample"]["GT"] = (0, 1)
+            record.info["CIPOS"] = (-250, 251)
             vcf.write(record)
 
         # Create the sorted VCF file (copy of collapsed VCF for this test)
@@ -606,6 +609,7 @@ class TestMergeCnvsInVcf:
                 "cnmops_cohort_mean": [15.0, 25.0],
                 "cnmops_cohort_stdev": [2.0, 3.0],
                 "copynumber": [1.0, 2.0],
+                "cipos": [(-250, 251), (-250, 251)],
             }
         )
         mock_get_vcf_df.return_value = mock_df
@@ -626,6 +630,7 @@ class TestMergeCnvsInVcf:
             record.info["CNMOPS_COHORT_MEAN"] = 20.0
             record.info["CNMOPS_COHORT_STDEV"] = 2.5
             record.info["CopyNumber"] = 1.5
+            record.info["CIPOS"] = (-250, 251)
             record.samples["test_sample"]["GT"] = (0, 1)
             vcf.write(record)
 
@@ -675,8 +680,6 @@ class TestMergeCnvsInVcf:
         (shortest-width) interval across the merged records, rather
         than by taking an element-wise minimum.
         """
-        # Add CIPOS to header
-        cnv_vcf_header.add_line('##INFO=<ID=CIPOS,Number=2,Type=Integer,Description="Confidence interval around POS">')
 
         # Setup
         input_vcf = tmp_path / "input.vcf.gz"
@@ -750,6 +753,70 @@ class TestMergeCnvsInVcf:
             cipos = record.info["CIPOS"]
             assert cipos == (-200, 200), f"Expected CIPOS=(-200, 200), got {cipos}"
 
+    def test_select_breakpoints_by_cipos_window_prefers_tightest_interval(self, cnv_vcf_header, tmp_path):
+        """Test that breakpoint selection prefers records with the tightest CIPOS."""
+        cnv_vcf_header.add_line('##INFO=<ID=CIPOS,Number=2,Type=Integer,Description="Confidence interval around POS">')
+
+        test_vcf = tmp_path / "selection_test.vcf.gz"
+        with pysam.VariantFile(str(test_vcf), "w", header=cnv_vcf_header) as vcf:
+            record = vcf.new_record()
+            record.contig = "chr1"
+            record.pos = 1100
+            record.stop = 5100
+            record.alleles = ("N", "<DEL>")
+            record.info["SVLEN"] = (4000,)
+            record.info["SVTYPE"] = "DEL"
+            record.info["CIPOS"] = (-100, 100)
+
+            update_records = pd.DataFrame(
+                {
+                    "pos": [1000, 1200, 1300],
+                    "end": [5000, 4800, 5200],
+                    "cipos": [(-500, 500), (-10, 10), (-150, 150)],
+                }
+            )
+
+            new_start, new_end = combine_cnv_vcf_utils._select_breakpoints_by_cipos_window(
+                record,
+                update_records,
+                window=2500,
+            )
+
+        assert new_start == 1200
+        assert new_end == 4800
+
+    def test_select_breakpoints_by_cipos_window_tie_breaks_by_position(self, cnv_vcf_header, tmp_path):
+        """Test tie-breaks: lowest start and highest end when CIPOS lengths are equal."""
+        cnv_vcf_header.add_line('##INFO=<ID=CIPOS,Number=2,Type=Integer,Description="Confidence interval around POS">')
+
+        test_vcf = tmp_path / "selection_tie_test.vcf.gz"
+        with pysam.VariantFile(str(test_vcf), "w", header=cnv_vcf_header) as vcf:
+            record = vcf.new_record()
+            record.contig = "chr1"
+            record.pos = 1100
+            record.stop = 5100
+            record.alleles = ("N", "<DEL>")
+            record.info["SVLEN"] = (4000,)
+            record.info["SVTYPE"] = "DEL"
+            record.info["CIPOS"] = (-100, 100)
+
+            update_records = pd.DataFrame(
+                {
+                    "pos": [1000, 1200, 1300],
+                    "end": [5000, 5200, 4800],
+                    "cipos": [(-10, 10), (-20, 0), (-5, 15)],
+                }
+            )
+
+            new_start, new_end = combine_cnv_vcf_utils._select_breakpoints_by_cipos_window(
+                record,
+                update_records,
+                window=2500,
+            )
+
+        assert new_start == 1000
+        assert new_end == 5200
+
 
 def make_cnv_record(vcf, contig, pos, stop, record_id, svtype="DEL", svlen=None, qual=50.0, filter_val="PASS", **info):
     """
@@ -791,6 +858,7 @@ def make_cnv_record(vcf, contig, pos, stop, record_id, svtype="DEL", svlen=None,
     record.alleles = ("N", f"<{svtype}>")
     record.info["SVTYPE"] = svtype
     record.info["SVLEN"] = (svlen if svlen is not None else stop - pos,)
+    record.info["CIPOS"] = (-250, 251)  # Default CIPOS for testing
     record.qual = qual
     if filter_val:
         record.filter.add(filter_val)
@@ -929,6 +997,7 @@ class TestMergeCnvsInVcfTwoStage:
             record1.id = "CNV1"
             record1.alleles = ("N", "<DEL>")
             record1.info["SVLEN"] = (1000,)
+            record1.info["CIPOS"] = (-250, 251)
             record1.info["SVTYPE"] = "DEL"
             record1.qual = 50.0
             record1.filter.add("PASS")
@@ -943,6 +1012,7 @@ class TestMergeCnvsInVcfTwoStage:
             record2.id = "CNV2"
             record2.alleles = ("N", "<DEL>")
             record2.info["SVLEN"] = (1000,)
+            record2.info["CIPOS"] = (-250, 251)
             record2.info["SVTYPE"] = "DEL"
             record2.qual = 45.0
             record2.filter.add("PASS")
@@ -957,6 +1027,7 @@ class TestMergeCnvsInVcfTwoStage:
             record3.id = "CNV3"
             record3.alleles = ("N", "<DEL>")
             record3.info["SVLEN"] = (1000,)
+            record3.info["CIPOS"] = (-1, 1)
             record3.info["SVTYPE"] = "DEL"
             record3.qual = 20.0
             record3.filter.add("LowQual")
@@ -1100,6 +1171,7 @@ class TestMergeCnvsInVcfTwoStage:
             record1.id = "CNV1"
             record1.alleles = ("N", "<DEL>")
             record1.info["SVLEN"] = (1000,)
+            record1.info["CIPOS"] = (-250, 251)
             record1.info["SVTYPE"] = "DEL"
             record1.qual = 50.0
             record1.filter.add("PASS")
@@ -1115,6 +1187,7 @@ class TestMergeCnvsInVcfTwoStage:
             record2.alleles = ("N", "<DEL>")
             record2.info["SVLEN"] = (1000,)
             record2.info["SVTYPE"] = "DEL"
+            record2.info["CIPOS"] = (-250, 251)
             record2.qual = 45.0
             record2.filter.add("PASS")
             record2.samples["test_sample"]["GT"] = (0, 1)
@@ -1129,6 +1202,7 @@ class TestMergeCnvsInVcfTwoStage:
             record3.alleles = ("N", "<DEL>")
             record3.info["SVLEN"] = (1000,)
             record3.info["SVTYPE"] = "DEL"
+            record3.info["CIPOS"] = (-1, 1)
             record3.qual = 20.0
             record3.filter.add("LowQual")
             record3.samples["test_sample"]["GT"] = (0, 1)
