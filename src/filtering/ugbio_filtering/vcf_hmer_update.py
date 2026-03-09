@@ -845,21 +845,11 @@ def _check_other_variants(variant_context: dict, config: dict, alt_idx: int = 0)
     vcf_file = variant_context["vcf_file"]
     tumor_germline_handle = variant_context["tumor_germline_handle"]
 
-    # Check the specific alternative allele for conflicts
-    alt = rec.alts[alt_idx]
-    # Determine the variant type of this alternative allele
-    if len(alt) > len(rec.ref):
-        rec_type = "insertion"
-    elif len(alt) < len(rec.ref):
-        rec_type = "deletion"
-    else:
-        rec_type = "snp"
-
     # Check for conflicts in somatic or germline VCFs
-    if _check_somatic_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, vcf_file, rec_type):
+    if _check_somatic_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, vcf_file, ""):
         return 1
 
-    if _check_germline_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, tumor_germline_handle, rec_type):
+    if _check_germline_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, tumor_germline_handle, ""):
         return 1
 
     return 0
