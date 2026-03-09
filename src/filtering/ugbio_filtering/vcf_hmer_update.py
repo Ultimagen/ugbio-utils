@@ -724,9 +724,7 @@ def does_variant_affect_hmer_size(
         return False
 
 
-def _check_somatic_variants(
-    rec, ref_fasta: object, chrom: str, pos: int, ref_hmer_size: int, vcf_file, rec_type: str
-) -> bool:
+def _check_somatic_variants(rec, ref_fasta: object, chrom: str, pos: int, ref_hmer_size: int, vcf_file) -> bool:
     """Check for conflicting variants in somatic VCF with higher QUAL that affect hmer size.
 
     Args:
@@ -736,7 +734,6 @@ def _check_somatic_variants(
         pos: Position
         ref_hmer_size: Reference homopolymer size
         vcf_file: Input VCF file for fetching variants
-        rec_type: Variant type (insertion/deletion/snp)
 
     Returns:
         True if conflicting variant found, False otherwise
@@ -771,7 +768,7 @@ def _check_somatic_variants(
 
 
 def _check_germline_variants(
-    rec, ref_fasta: object, chrom: str, pos: int, ref_hmer_size: int, tumor_germline_handle, rec_type: str
+    rec, ref_fasta: object, chrom: str, pos: int, ref_hmer_size: int, tumor_germline_handle
 ) -> bool:
     """Check for conflicting variants in germline VCF with PASS filter that affect hmer size.
 
@@ -782,7 +779,6 @@ def _check_germline_variants(
         pos: Position
         ref_hmer_size: Reference homopolymer size
         tumor_germline_handle: Tumor germline VCF
-        rec_type: Variant type (insertion/deletion/snp)
 
     Returns:
         True if conflicting variant found, False otherwise
@@ -846,10 +842,10 @@ def _check_other_variants(variant_context: dict, config: dict, alt_idx: int = 0)
     tumor_germline_handle = variant_context["tumor_germline_handle"]
 
     # Check for conflicts in somatic or germline VCFs
-    if _check_somatic_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, vcf_file, ""):
+    if _check_somatic_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, vcf_file):
         return 1
 
-    if _check_germline_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, tumor_germline_handle, ""):
+    if _check_germline_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, tumor_germline_handle):
         return 1
 
     return 0
