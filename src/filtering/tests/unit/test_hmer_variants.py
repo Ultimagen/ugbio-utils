@@ -72,8 +72,8 @@ def test_variant_classification():
 
     # Import the functions we're testing
     from ugbio_filtering.vcf_hmer_update import (
-        _get_variant_type,
         apply_variant,
+        does_variant_affect_hmer_size,
         get_ref_hmer_size,
     )
 
@@ -125,26 +125,31 @@ def test_variant_classification():
         print(f"--- Variant {ref_allele}→{alt_allele} at position {test_pos} ---")
         print(f"  Reference at pos {test_pos}: {ref_seq[test_pos]}")
 
-        var_type = _get_variant_type(
+        affects_hmer = does_variant_affect_hmer_size(
             mock_fasta, "chr1", test_pos, ref_allele, alt_allele, hmer_at_offset, check_pos=offset_pos
         )
         hmer_after, seq = apply_variant(
             mock_fasta, ["chr1", test_pos], [test_pos, ref_allele, alt_allele], check_pos=offset_pos
         )
 
+        # Determine expected_affects_hmer based on expected_type
+        expected_affects_hmer = expected_type != "snp"
+
         print(f"  Variant: {ref_allele}→{alt_allele} at position {test_pos}")
         print(f"  Checked hmer at position {offset_pos} (offset)")
         print(f"  Ref hmer (at offset {offset_pos}): {hmer_at_offset}")
         print(f"  Hmer after at offset: {hmer_after}")
-        print(f"  Classification: {var_type} (expected: {expected_type})")
+        print(f"  Affects hmer: {affects_hmer} (expected: {expected_affects_hmer})")
 
         assert (
             hmer_after == expected_hmer
         ), f"Position {test_pos}: expected hmer_after={expected_hmer} but got {hmer_after}"
-        assert var_type == expected_type, f"Position {test_pos}: expected type={expected_type} but got {var_type}"
+        assert (
+            affects_hmer == expected_affects_hmer
+        ), f"Position {test_pos}: expected affects_hmer={expected_affects_hmer} but got {affects_hmer}"
         print("  ✓ PASS\n")
 
-        test_results.append((test_pos, var_type, hmer_at_offset, hmer_after))
+        test_results.append((test_pos, expected_type, hmer_at_offset, hmer_after))
 
     print("✓ All variants correctly classified\n")
 

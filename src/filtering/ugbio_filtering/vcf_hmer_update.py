@@ -657,8 +657,8 @@ def _check_normal_other_variants(
     pos: int,
     ref_hmer_size: int,
     normal_germline,
-) -> int:
-    """Check if record has conflicting variants in the region.
+) -> bool:
+    """Check if normal germline has variants that affect hmer size.
 
     Args:
         rec: VCF record
@@ -669,77 +669,65 @@ def _check_normal_other_variants(
         normal_germline: Normal germline VCF
 
     Returns:
-        1 if other conflicting variants found, 0 otherwise
+        True if variant affecting hmer size found, False otherwise
     """
-
-    other_variant = 0
-
     # Check normal germline variants
     germline_normal_vars = normal_germline.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
     for var in germline_normal_vars:
         if is_pass(var):
-            size = apply_variant(ref_fasta, [chrom, pos], [var.pos, var.ref, var.alts[0]], check_pos=pos)[0]
-            if size != ref_hmer_size:
-                other_variant = 1
+            # Check each alt allele of this variant
+            for alt in var.alts:
+                if does_variant_affect_hmer_size(ref_fasta, chrom, var.pos, var.ref, alt, ref_hmer_size, check_pos=pos):
+                    return True
 
-    return other_variant
+    return False
 
 
-def _get_variant_type(
+def does_variant_affect_hmer_size(
     ref_fasta: object,
     chrom: str,
-    pos: int,
+    variant_pos: int,
     ref_allele: str,
     alt_allele: str,
     ref_hmer_size: int,
     check_pos: int = None,
-) -> str:
-    """Determine variant type based on hmer effect.
-
-    Compares the hmer size after variant is applied to the reference hmer size.
-    If hmer increases, it's an insertion; if decreases, a deletion; otherwise SNP.
-
-    Counts the hmer of the alternate allele nucleotide. This correctly handles
-    all variant types (SNPs, indels) by counting how the changed nucleotide(s)
-    affect the homopolymer length after substitution.
+) -> bool:
+    """Check if variant changes the hmer size at check_pos compared to reference.
 
     Args:
         ref_fasta: Reference FASTA file
         chrom: Chromosome
-        pos: Variant position (0-based)
+        variant_pos: Position of the variant to apply (0-based)
         ref_allele: Reference allele
         alt_allele: Alternate allele
-        ref_hmer_size: Reference hmer size at this position
-        check_pos: Genome position where hmer should be checked. If None, uses pos
+        ref_hmer_size: Reference hmer size at check_pos
+        check_pos: Genome position where hmer should be checked. If None, uses variant_pos
 
     Returns:
-        'deletion', 'insertion', or 'snp' based on hmer effect
+        True if hmer_after != ref_hmer_size, False otherwise
     """
     try:
-        # Use pos as default check position if not specified
+        # Use variant_pos as default check position if not specified
         if check_pos is None:
-            check_pos = pos
+            check_pos = variant_pos
 
-        # Calculate hmer size after variant is applied (counts alt allele nucleotide hmer)
-        hmer_after, _ = apply_variant(ref_fasta, [chrom, pos], [pos, ref_allele, alt_allele], check_pos=check_pos)
+        # Calculate hmer size after variant is applied
+        hmer_after, _ = apply_variant(
+            ref_fasta, [chrom, variant_pos], [variant_pos, ref_allele, alt_allele], check_pos=check_pos
+        )
         if hmer_after == -1:
-            return "snp"
+            return False
 
-        # Compare to reference hmer
-        if hmer_after > ref_hmer_size:
-            return "insertion"
-        elif hmer_after < ref_hmer_size:
-            return "deletion"
-        else:
-            return "snp"
+        # Return True if hmer size changed, False if same
+        return hmer_after != ref_hmer_size
     except Exception:
-        return "snp"
+        return False
 
 
 def _check_somatic_variants(
     rec, ref_fasta: object, chrom: str, pos: int, ref_hmer_size: int, vcf_file, rec_type: str
 ) -> bool:
-    """Check for conflicting variants in somatic VCF with higher QUAL.
+    """Check for conflicting variants in somatic VCF with higher QUAL that affect hmer size.
 
     Args:
         rec: VCF record
@@ -769,22 +757,11 @@ def _check_somatic_variants(
             if var.qual <= rec.qual:
                 continue
 
-            # Use the reference hmer size calculated at the offset position (passed as parameter)
-            # All nearby variants evaluate against the same reference hmer_size
-
             # Check each alternative allele of the nearby variant
             for alt in var.alts:
-                var_type = _get_variant_type(ref_fasta, chrom, var.pos, var.ref, alt, ref_hmer_size, check_pos=pos)
-                # Skip SNP for now - will handle separately if needed
-                if var_type == "snp":
-                    continue
-
-                # Check if variant is effectively the same type as test record
-                if rec_type == "insertion" and var_type == "insertion":
-                    # Nearby variant is insertion-like
-                    return True
-                elif rec_type == "deletion" and var_type == "deletion":
-                    # Nearby variant is deletion-like
+                # Check if this alt affects hmer size
+                if does_variant_affect_hmer_size(ref_fasta, chrom, var.pos, var.ref, alt, ref_hmer_size, check_pos=pos):
+                    # Found a variant that affects hmer size
                     return True
 
         return False
@@ -796,7 +773,7 @@ def _check_somatic_variants(
 def _check_germline_variants(
     rec, ref_fasta: object, chrom: str, pos: int, ref_hmer_size: int, tumor_germline_handle, rec_type: str
 ) -> bool:
-    """Check for conflicting variants in germline VCF with PASS filter.
+    """Check for conflicting variants in germline VCF with PASS filter that affect hmer size.
 
     Args:
         rec: VCF record
@@ -826,23 +803,11 @@ def _check_germline_variants(
             if not is_pass(var):
                 continue
 
-            # Use the reference hmer size calculated at the offset position (passed as parameter)
-            # All nearby variants evaluate against the same reference hmer_size
-
             # Check each alternative allele of the nearby variant
             for alt in var.alts:
-                var_type = _get_variant_type(ref_fasta, chrom, var.pos, var.ref, alt, ref_hmer_size, check_pos=pos)
-
-                # Skip SNP for now - will handle separately if needed
-                if var_type == "snp":
-                    continue
-
-                # Check if variant is effectively the same type as test record
-                if rec_type == "insertion" and var_type == "insertion":
-                    # Nearby variant is insertion-like
-                    return True
-                elif rec_type == "deletion" and var_type == "deletion":
-                    # Nearby variant is deletion-like
+                # Check if this alt affects hmer size
+                if does_variant_affect_hmer_size(ref_fasta, chrom, var.pos, var.ref, alt, ref_hmer_size, check_pos=pos):
+                    # Found a variant that affects hmer size
                     return True
 
         return False
@@ -966,7 +931,7 @@ def _process_multiple_normals_median(
     rec,
     config: dict,
     alt_idx: int = 0,
-) -> dict:
+) -> tuple:
     """Process multiple normal files and return median result by tot_score for a specific alternative allele.
 
     Args:
@@ -981,7 +946,9 @@ def _process_multiple_normals_median(
         alt_idx: Index of the alternative allele to process (default: 0)
 
     Returns:
-        Dictionary with median results for the specified alternative allele
+        Tuple of (results_dict, all_normals_had_variants) where:
+        - results_dict: Dictionary with median results for the specified alternative allele, or None
+        - all_normals_had_variants: True if all normals were skipped due to variants affecting hmer_size
     """
     results_per_normal = []
     normal_germline_files = config["normal_germline_files"]
@@ -997,9 +964,9 @@ def _process_multiple_normals_median(
             normal_germline = pysam.VariantFile(normal_germline_file)
 
             # Check for conflicting variants with this specific normal_germline
-            other_variant = _check_normal_other_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, normal_germline)
+            has_variant = _check_normal_other_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, normal_germline)
 
-            if other_variant:
+            if has_variant:
                 logger.debug(f"Skipping normal file {normal_germline_file} due to conflicting variants")
                 normal_germline.close()
                 continue
@@ -1068,7 +1035,9 @@ def _process_multiple_normals_median(
             continue
 
     if not results_per_normal:
-        return None
+        # No results; check if it's because all normals had variants
+        all_normals_had_variants = len(normal_reads_list) > 0
+        return None, all_normals_had_variants
 
     # Sort by tot_score (for a single allele, use the minimum tot_score across directions)
     # If mixture is below mixture_bound, treat as score 0
@@ -1086,7 +1055,7 @@ def _process_multiple_normals_median(
     num_normals = len(results_per_normal)
     median_idx = num_normals // 2
 
-    return results_per_normal[median_idx][1]
+    return results_per_normal[median_idx][1], False
 
 
 def _validate_normal_data(ref_hmer_size: int, exp_shift_tries, normal_main_hmer: int) -> bool:
@@ -1500,7 +1469,7 @@ def _write_results_to_record(
         rec.filter.add("PASS")
 
 
-def _process_record(
+def _process_record(  # noqa: C901
     rec,
     ref_fasta,
     vcf_file,
@@ -1575,7 +1544,7 @@ def _process_record(
         nuc = get_max_nuc([x[0] for x in tumor_read_data])
 
     # Process multiple normals and select median by tot_score for this alternative allele
-    all_direction_results = _process_multiple_normals_median(
+    all_direction_results, all_normals_had_variants = _process_multiple_normals_median(
         normal_reads,
         tumor_read_data,
         nuc,
@@ -1586,6 +1555,13 @@ def _process_record(
         config,
         alt_idx=alt_idx,
     )
+
+    if all_direction_results is None:
+        if all_normals_had_variants:
+            # All normals were skipped due to variants affecting hmer_size
+            if config["verbose"] or not rec.info.get("other_variant", 0):
+                rec.info["other_variant"] = 1
+        return None
 
     return all_direction_results
 
