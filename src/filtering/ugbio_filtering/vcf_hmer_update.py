@@ -725,7 +725,7 @@ def does_variant_affect_hmer_size(
 
 
 def _check_somatic_variants(rec, ref_fasta: object, chrom: str, pos: int, ref_hmer_size: int, vcf_file) -> bool:
-    """Check for conflicting variants in somatic VCF with higher QUAL that affect hmer size.
+    """Check for conflicting variants in VCF that affect hmer size.
 
     Args:
         rec: VCF record
@@ -742,53 +742,8 @@ def _check_somatic_variants(rec, ref_fasta: object, chrom: str, pos: int, ref_hm
         return False
 
     try:
-        # Fetch nearby variants from input VCF
+        # Fetch nearby variants from VCF
         nearby_variants = vcf_file.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
-
-        for var in nearby_variants:
-            # Skip the test record itself
-            if var.pos == rec.pos and var.ref == rec.ref and var.alts == rec.alts:
-                continue
-
-            # Only consider variants with higher QUAL
-            if var.qual <= rec.qual:
-                continue
-
-            # Check each alternative allele of the nearby variant
-            for alt in var.alts:
-                # Check if this alt affects hmer size
-                if does_variant_affect_hmer_size(ref_fasta, chrom, var.pos, var.ref, alt, ref_hmer_size, check_pos=pos):
-                    # Found a variant that affects hmer size
-                    return True
-
-        return False
-    except Exception as e:
-        logger.debug(f"Error checking somatic variants: {e}")
-        return False
-
-
-def _check_germline_variants(
-    rec, ref_fasta: object, chrom: str, pos: int, ref_hmer_size: int, tumor_germline_handle
-) -> bool:
-    """Check for conflicting variants in germline VCF with PASS filter that affect hmer size.
-
-    Args:
-        rec: VCF record
-        ref_fasta: Reference FASTA
-        chrom: Chromosome
-        pos: Position
-        ref_hmer_size: Reference homopolymer size
-        tumor_germline_handle: Tumor germline VCF
-
-    Returns:
-        True if conflicting variant found, False otherwise
-    """
-    if not tumor_germline_handle:
-        return False
-
-    try:
-        # Fetch nearby variants from germline VCF
-        nearby_variants = tumor_germline_handle.fetch(chrom, rec.pos - 2, rec.pos + rec.info["X_HIL"][0] + 4)
 
         for var in nearby_variants:
             # Skip the test record itself
@@ -808,7 +763,7 @@ def _check_germline_variants(
 
         return False
     except Exception as e:
-        logger.debug(f"Error checking germline variants: {e}")
+        logger.debug(f"Error checking variants: {e}")
         return False
 
 
@@ -841,11 +796,12 @@ def _check_other_variants(variant_context: dict, config: dict, alt_idx: int = 0)
     vcf_file = variant_context["vcf_file"]
     tumor_germline_handle = variant_context["tumor_germline_handle"]
 
-    # Check for conflicts in somatic or germline VCFs
+    # Check for conflicts in somatic VCF (higher QUAL variants)
     if _check_somatic_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, vcf_file):
         return 1
 
-    if _check_germline_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, tumor_germline_handle):
+    # Check for conflicts in germline VCF (all variants)
+    if _check_somatic_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, tumor_germline_handle):
         return 1
 
     return 0
