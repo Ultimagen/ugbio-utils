@@ -25,6 +25,9 @@ authors = [
 ]
 readme = "README.srsnv.md"
 
+[project.optional-dependencies]
+trt = ["onnx", "tensorrt", "pycuda"]
+
 [project.license]
 text = "Apache-2.0"
 
@@ -37,6 +40,7 @@ srsnv_report = "ugbio_srsnv.srsnv_report:main"
 compare_models_report = "ugbio_srsnv.compare_models_report:main"
 cram_to_tensors = "ugbio_srsnv.deep_srsnv.cram_to_tensors:main"
 combine_splits = "ugbio_srsnv.deep_srsnv.combine_splits:main"
+dnn_vcf_inference = "ugbio_srsnv.deep_srsnv.inference.dnn_vcf_inference:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true

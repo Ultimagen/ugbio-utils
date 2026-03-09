@@ -1100,6 +1100,30 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             **preprocess_index,
         },
     }
+    # ── ONNX / TensorRT export ──
+    onnx_out = None
+    engine_out = None
+    try:
+        from ugbio_srsnv.deep_srsnv.inference.export import export_to_onnx, serialize_with_trtexec  # noqa: PLC0415
+
+        export_model = lit_model.model if hasattr(lit_model, "model") else lit_model
+        onnx_out = str(out_dir / f"{base}dnn_model.onnx")
+        export_to_onnx(export_model, onnx_out, tensor_length=args.length)
+        logger.info("ONNX model exported to %s", onnx_out)
+
+        engine_out_path = out_dir / f"{base}dnn_model.engine"
+        result = serialize_with_trtexec(onnx_out, str(engine_out_path), tensor_length=args.length)
+        if result is not None:
+            engine_out = str(result)
+            logger.info("TensorRT engine saved to %s", engine_out)
+        else:
+            logger.info("trtexec not available; TRT engine not created")
+    except Exception:
+        logger.warning("ONNX/TRT export failed (non-fatal); continuing", exc_info=True)
+
+    metadata["onnx_path"] = onnx_out
+    metadata["trt_engine_path"] = engine_out
+
     metadata_path = out_dir / f"{base}srsnv_dnn_metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2))
     logger.info("Saved metadata: %s", metadata_path)
