@@ -3,9 +3,9 @@ from enum import Enum
 from pathlib import Path
 
 from ugbio_core.logger import logger
-from ugbio_core.vcf_utils import VcfInfoField
+from ugbio_core.vcf_utils import VcfField, VcfMetaType
 
-from ugbio_featuremap.featuremap_utils import FeatureMapFields
+from ugbio_featuremap.featuremap_utils import FeatureMapFields, FeatureMapFilters
 
 
 class TandemRepeatFields(Enum):
@@ -30,13 +30,13 @@ class TandemRepeatConfig:
     This class provides VCF metadata (type, description) and helper methods.
     """
 
-    info_fields: tuple[VcfInfoField, ...] = (
-        VcfInfoField(TandemRepeatFields.TR_START.value, "1", "Integer", "Closest tandem Repeat Start"),
-        VcfInfoField(TandemRepeatFields.TR_END.value, "1", "Integer", "Closest Tandem Repeat End"),
-        VcfInfoField(TandemRepeatFields.TR_SEQ.value, "1", "String", "Closest Tandem Repeat Sequence"),
-        VcfInfoField(TandemRepeatFields.TR_LENGTH.value, "1", "Integer", "Closest Tandem Repeat total length"),
-        VcfInfoField(TandemRepeatFields.TR_SEQ_UNIT_LENGTH.value, "1", "Integer", "Closest Tandem Repeat unit length"),
-        VcfInfoField(TandemRepeatFields.TR_DISTANCE.value, "1", "Integer", "Closest Tandem Repeat Distance"),
+    info_fields: tuple[VcfField, ...] = (
+        VcfField(TandemRepeatFields.TR_START.value, "1", "Integer", "Closest tandem Repeat Start"),
+        VcfField(TandemRepeatFields.TR_END.value, "1", "Integer", "Closest Tandem Repeat End"),
+        VcfField(TandemRepeatFields.TR_SEQ.value, "1", "String", "Closest Tandem Repeat Sequence"),
+        VcfField(TandemRepeatFields.TR_LENGTH.value, "1", "Integer", "Closest Tandem Repeat total length"),
+        VcfField(TandemRepeatFields.TR_SEQ_UNIT_LENGTH.value, "1", "Integer", "Closest Tandem Repeat unit length"),
+        VcfField(TandemRepeatFields.TR_DISTANCE.value, "1", "Integer", "Closest Tandem Repeat Distance"),
     )
 
     def get_bcftools_annotate_columns(self) -> str:
@@ -44,7 +44,7 @@ class TandemRepeatConfig:
 
         Format: CHROM,POS,INFO/TR_START,INFO/TR_END,...
         """
-        info_cols = ",".join(f"INFO/{field.value}" for field in TandemRepeatFields)
+        info_cols = ",".join(f"{VcfMetaType.INFO.value}/{field.value}" for field in TandemRepeatFields)
         return f"{FeatureMapFields.CHROM.value},{FeatureMapFields.POS.value},{info_cols}"
 
 
@@ -172,7 +172,17 @@ REQUIRED_FORMAT_FIELDS: set[str] = {
 TUMOR_PREFIX = "t_"
 NORMAL_PREFIX = "n_"
 
-# XGBoost probability INFO field definition
-XGB_PROBA_INFO_FIELD = VcfInfoField(
-    FeatureMapFields.XGB_PROBA.value, "1", "Float", "XGBoost model predicted probability"
-)
+DEFAULT_XGB_PROBA_THRESHOLD = 0.6
+
+XGB_PROBA_INFO_FIELD = VcfField(FeatureMapFields.XGB_PROBA.value, "1", "Float", "XGBoost model predicted probability")
+
+GT_FORMAT_FIELD = VcfField(FeatureMapFields.GT.value, "1", "String", "Genotype", meta_type=VcfMetaType.FORMAT)
+
+
+def lowqual_filter_header_line(threshold: float) -> str:
+    """Generate the LowQual FILTER VCF header line for a given xgb_proba threshold."""
+    return (
+        f"##FILTER=<ID={FeatureMapFilters.LOW_QUAL.value},"
+        f'Description="Confidence in this variant being real '
+        f'is below calling threshold (xgb_proba<{threshold}).">'
+    )

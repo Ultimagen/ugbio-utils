@@ -11,12 +11,14 @@ import xgboost
 from ugbio_core.exec_utils import print_and_execute
 from ugbio_core.logger import logger
 from ugbio_core.misc_utils import cleanup_temp_files
-from ugbio_core.vcf_utils import VcfUtils, get_vcf_sample_names, write_vcf_info_header_file
+from ugbio_core.vcf_utils import VcfMetaType, VcfUtils, get_vcf_sample_names, write_vcf_header_file
 
 from ugbio_featuremap import somatic_featuremap_inference_utils
 from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
-from ugbio_featuremap.featuremap_utils import FeatureMapFields
+from ugbio_featuremap.featuremap_utils import FeatureMapFields, FeatureMapFilters
 from ugbio_featuremap.somatic_featuremap_utils import (
+    DEFAULT_XGB_PROBA_THRESHOLD,
+    GT_FORMAT_FIELD,
     NORMAL_PREFIX,
     PILEUP_CONFIG,
     REQUIRED_FORMAT_FIELDS,
@@ -25,6 +27,7 @@ from ugbio_featuremap.somatic_featuremap_utils import (
     TUMOR_PREFIX,
     XGB_PROBA_INFO_FIELD,
     _log_regions_bed_preview,
+    lowqual_filter_header_line,
 )
 
 app = cyclopts.App(
@@ -149,7 +152,7 @@ def _create_tr_annotation_file(
 
     # Create header file for bcftools annotate
     hdr_file = tmpdir / "tr_hdr.txt"
-    write_vcf_info_header_file(list(TR_CONFIG.info_fields), hdr_file)
+    write_vcf_header_file(list(TR_CONFIG.info_fields), hdr_file)
 
     return gz_tsv, hdr_file
 
@@ -547,32 +550,37 @@ def run_classifier(
 # =============================================================================
 
 
-def _get_xgb_proba_bcftools_columns() -> str:
-    """Return the columns string for bcftools annotate with XGB_PROBA.
+def _get_classification_bcftools_columns() -> str:
+    """Return the columns string for bcftools annotate with XGB_PROBA, FILTER, and GT.
 
-    Format: CHROM,POS,REF,ALT,INFO/XGB_PROBA
+    When annotating from a VCF source, only the fields to transfer are specified
+    (CHROM/POS/REF/ALT matching is implicit).
     """
     return (
-        f"{FeatureMapFields.CHROM.value},"
-        f"{FeatureMapFields.POS.value},"
-        f"{FeatureMapFields.REF.value},"
-        f"{FeatureMapFields.ALT.value},"
-        f"INFO/{FeatureMapFields.XGB_PROBA.value}"
+        f"{VcfMetaType.INFO.value}/{FeatureMapFields.XGB_PROBA.value},"
+        f"{FeatureMapFields.FILTER.value},"
+        f"{VcfMetaType.FORMAT.value}/{FeatureMapFields.GT.value}"
     )
 
 
-def annotate_vcf_with_xgb_proba(
+def annotate_and_classify_vcf(
     input_vcf_path: Path,
     output_vcf_path: Path,
     df_variants: pl.DataFrame,
-    tumor_sample: str | None = None,
+    tumor_sample: str,
+    normal_sample: str,
+    xgb_proba_threshold: float = DEFAULT_XGB_PROBA_THRESHOLD,
     n_threads: int = 1,
 ) -> None:
     """
-    Annotate VCF with XGBoost probability using bcftools annotate.
+    Annotate VCF with XGBoost probability, FILTER assignment, and GT using bcftools annotate.
 
-    Creates a tab-delimited annotation file from the DataFrame, compresses and indexes it,
-    then uses bcftools annotate to add the XGB_PROBA INFO field to the VCF.
+    Creates a VCF annotation file (bcftools requires GT from a VCF source) with
+    XGB_PROBA, FILTER, and per-sample GT, then uses bcftools annotate with `-x`
+    to remove old FILTER definitions.
+
+    PASS records get FILTER=PASS, tumor GT=0/1, normal GT=./. (missing).
+    Non-PASS records get FILTER=LowQual, tumor GT=./. (missing), normal GT=./. (missing).
 
     Parameters
     ----------
@@ -583,65 +591,110 @@ def annotate_vcf_with_xgb_proba(
     df_variants : pl.DataFrame
         Polars DataFrame containing variant information with xgb_proba column.
         Must have columns: CHROM, POS, REF, ALT, xgb_proba
-    tumor_sample : str, optional
-        Tumor sample name to add as header line (##tumor_sample=<sample_name>).
+    tumor_sample : str
+        Tumor sample name (for per-sample GT annotation and header line).
+    normal_sample : str
+        Normal sample name (for per-sample GT annotation).
+    xgb_proba_threshold : float, optional
+        Threshold for PASS/LowQual FILTER assignment. Defaults to DEFAULT_XGB_PROBA_THRESHOLD.
     n_threads : int, optional
         Number of threads for bcftools. Defaults to 1.
     """
     work_dir = output_vcf_path.parent
-    annotation_tsv = work_dir / "xgb_proba_annotations.tsv"
-    annotation_tsv_gz = work_dir / "xgb_proba_annotations.tsv.gz"
-    header_file = work_dir / "xgb_proba_header.txt"
+    annotation_vcf = work_dir / "classification_annotations.vcf"
+    annotation_vcf_gz = work_dir / "classification_annotations.vcf.gz"
+    header_file = work_dir / "classification_header.txt"
 
-    # Select columns for annotation TSV: CHROM, POS, REF, ALT, xgb_proba
+    xgb_col = FeatureMapFields.XGB_PROBA.value.lower()
+
+    # Build annotation DataFrame in VCF format (bcftools requires GT from a VCF source, not TSV)
     annotation_df = df_variants.select(
         [
-            pl.col(FeatureMapFields.CHROM.value),
-            pl.col(FeatureMapFields.POS.value),
-            pl.col(FeatureMapFields.REF.value),
-            pl.col(FeatureMapFields.ALT.value),
-            pl.col(FeatureMapFields.XGB_PROBA.value.lower()),
+            pl.col(FeatureMapFields.CHROM.value).alias("#CHROM"),
+            pl.col(FeatureMapFields.POS.value).alias("POS"),
+            pl.lit(".").alias("ID"),
+            pl.col(FeatureMapFields.REF.value).alias("REF"),
+            pl.col(FeatureMapFields.ALT.value).alias("ALT"),
+            pl.lit(".").alias("QUAL"),
+            pl.when(pl.col(xgb_col) >= xgb_proba_threshold)
+            .then(pl.lit(FeatureMapFilters.PASS.value))
+            .otherwise(pl.lit(FeatureMapFilters.LOW_QUAL.value))
+            .alias("FILTER"),
+            (pl.lit(f"{FeatureMapFields.XGB_PROBA.value}=") + pl.col(xgb_col).cast(pl.Utf8)).alias(
+                VcfMetaType.INFO.value
+            ),
+            pl.lit(FeatureMapFields.GT.value).alias(VcfMetaType.FORMAT.value),
+            pl.when(pl.col(xgb_col) >= xgb_proba_threshold)
+            .then(pl.lit("0/1"))
+            .otherwise(pl.lit("./."))
+            .alias(tumor_sample),
+            pl.lit("./.").alias(normal_sample),
         ]
-    ).sort([FeatureMapFields.CHROM.value, FeatureMapFields.POS.value])
+    ).sort(["#CHROM", "POS"])
 
-    # Write TSV without header (bcftools expects no header in annotation file)
-    annotation_df.write_csv(annotation_tsv, separator="\t", include_header=False)
-    logger.debug(f"Created annotation TSV with {len(annotation_df):,} records: {annotation_tsv}")
+    # Write annotation VCF: meta-header lines + column header + data rows
+    vcf_meta = (
+        "##fileformat=VCFv4.2\n"
+        f"{XGB_PROBA_INFO_FIELD.to_header_line()}\n"
+        f"{lowqual_filter_header_line(xgb_proba_threshold)}\n"
+        f"{GT_FORMAT_FIELD.to_header_line()}\n"
+    )
+    with open(annotation_vcf, "w") as f:
+        f.write(vcf_meta)
+        annotation_df.write_csv(f, separator="\t", include_header=True, quote_style="never")
+    logger.debug(f"Created annotation VCF with {len(annotation_df):,} records: {annotation_vcf}")
 
     # Compress with bgzip and index with tabix
-    print_and_execute(f"bgzip -f {annotation_tsv}", log_level=logging.DEBUG)
-    logger.debug(f"Compressed annotation file: {annotation_tsv_gz}")
+    print_and_execute(f"bgzip -f {annotation_vcf}", log_level=logging.DEBUG)
+    logger.debug(f"Compressed annotation file: {annotation_vcf_gz}")
 
-    print_and_execute(f"tabix -s1 -b2 -e2 {annotation_tsv_gz}", log_level=logging.DEBUG)
-    logger.debug(f"Indexed annotation file: {annotation_tsv_gz}.tbi")
+    print_and_execute(f"tabix -p vcf {annotation_vcf_gz}", log_level=logging.DEBUG)
+    logger.debug(f"Indexed annotation file: {annotation_vcf_gz}.tbi")
 
-    # Create header file with INFO field definition and optional tumor_sample header line
-    additional_header_lines = []
-    if tumor_sample:
-        additional_header_lines.append(f"##tumor_sample={tumor_sample}")
+    # Read input VCF header to determine which FILTER definitions to remove and whether GT exists
+    with pysam.VariantFile(str(input_vcf_path)) as vcf:
+        filters_to_remove = [f for f in vcf.header.filters if f != FeatureMapFilters.PASS.value]
+        has_gt = FeatureMapFields.GT.value in vcf.header.formats
+
+    # Create header file with additional lines (tumor_sample, command, LowQual FILTER, GT FORMAT)
+    additional_header_lines = [f"##tumor_sample={tumor_sample}"]
     try:
         command = " ".join(sys.argv[1:])
         additional_header_lines.append(f"##somatic_featuremap_classifier={command}")
-    except:  # noqa: E722
+    except Exception:
         logger.warning("Could not get command line arguments to add to header. skipping.")
 
-    write_vcf_info_header_file([XGB_PROBA_INFO_FIELD], header_file, additional_header_lines=additional_header_lines)
+    additional_header_lines.append(lowqual_filter_header_line(xgb_proba_threshold))
+    if not has_gt:
+        additional_header_lines.append(GT_FORMAT_FIELD.to_header_line())
+
+    write_vcf_header_file([XGB_PROBA_INFO_FIELD], header_file, additional_header_lines=additional_header_lines)
     logger.debug(f"Created header file: {header_file}")
 
-    # Annotate VCF using bcftools annotate
+    # Build extra_args: -x to remove old filter definitions
+    extra_args = ""
+    if filters_to_remove:
+        remove_str = ",".join(f"FILTER/{f}" for f in filters_to_remove)
+        extra_args = f"-x {remove_str}"
+
+    # Annotate VCF using bcftools annotate (VCF annotation source for GT support)
     vcf_utils = VcfUtils()
     vcf_utils.annotate_vcf(
         input_vcf=str(input_vcf_path),
         output_vcf=str(output_vcf_path),
-        annotation_file=str(annotation_tsv_gz),
+        annotation_file=str(annotation_vcf_gz),
         header_file=str(header_file),
-        columns=_get_xgb_proba_bcftools_columns(),
+        columns=_get_classification_bcftools_columns(),
         n_threads=n_threads,
+        extra_args=extra_args,
     )
-    logger.info(f"Annotated VCF with {FeatureMapFields.XGB_PROBA.value}: {output_vcf_path}")
+    logger.info(
+        f"Annotated VCF with {FeatureMapFields.XGB_PROBA.value}, "
+        f"{FeatureMapFields.FILTER.value}, and {FeatureMapFields.GT.value}: {output_vcf_path}"
+    )
 
     # Cleanup temporary files
-    cleanup_temp_files([annotation_tsv_gz, header_file])
+    cleanup_temp_files([annotation_vcf_gz, Path(f"{annotation_vcf_gz}.tbi"), header_file])
 
 
 # =============================================================================
@@ -708,7 +761,7 @@ def validate_inputs_and_prepare_output(
 
 
 @app.default
-def somatic_featuremap_classifier(
+def somatic_featuremap_classifier(  # noqa: PLR0913
     somatic_featuremap: Path,
     output_vcf: Path,
     genome_index_file: Path,
@@ -718,6 +771,7 @@ def somatic_featuremap_classifier(
     output_parquet: Path | None = None,
     filter_string: str = "PASS",
     regions_bed_file: Path | None = None,
+    xgb_proba_thresh: float = DEFAULT_XGB_PROBA_THRESHOLD,
     n_threads: int = 1,
     verbose: bool = False,
 ) -> tuple[Path, Path]:
@@ -751,6 +805,8 @@ def somatic_featuremap_classifier(
         Optional BED file specifying regions to process. When provided, only
         variants within these regions are processed. Useful for quick testing
         or targeted analysis on specific genomic regions.
+    xgb_proba_thresh
+        Threshold for PASS/LowQual FILTER assignment based on xgb_proba.
     n_threads
         Number of threads for parallel processing.
     verbose
@@ -817,9 +873,15 @@ def somatic_featuremap_classifier(
         aggregated_df.write_parquet(output_parquet)
         logger.debug(f"Saved debug parquet with all transformations and xgb_score: {output_parquet}")
 
-    logger.info("Step 4: Annotating VCF with XGBoost probability")
-    annotate_vcf_with_xgb_proba(
-        sfm_filtered_with_tr, output_vcf, aggregated_df, tumor_sample=tumor_sample, n_threads=n_threads
+    logger.info("Step 4: Annotating VCF with XGBoost probability, FILTER, and GT")
+    annotate_and_classify_vcf(
+        sfm_filtered_with_tr,
+        output_vcf,
+        aggregated_df,
+        tumor_sample=tumor_sample,
+        normal_sample=normal_sample,
+        xgb_proba_threshold=xgb_proba_thresh,
+        n_threads=n_threads,
     )
     logger.info(f"Output VCF written to: {output_vcf}")
 
