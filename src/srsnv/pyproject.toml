@@ -26,7 +26,7 @@ authors = [
 readme = "README.srsnv.md"
 
 [project.optional-dependencies]
-trt = ["onnx", "tensorrt", "pycuda"]
+trt = ["onnx", "onnxscript", "tensorrt", "pycuda"]
 
 [project.license]
 text = "Apache-2.0"

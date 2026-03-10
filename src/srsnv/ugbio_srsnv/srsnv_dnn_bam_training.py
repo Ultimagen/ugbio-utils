@@ -152,7 +152,7 @@ def _cli() -> argparse.Namespace:  # noqa: PLR0915
 
     # Preprocessing
     ap.add_argument("--preprocess-cache-dir", default=None)
-    ap.add_argument("--preprocess-num-workers", type=int, default=max(1, min((os.cpu_count() or 4) - 2, 16)))
+    ap.add_argument("--preprocess-num-workers", type=int, default=max(1, (os.cpu_count() or 4) - 4))
     ap.add_argument("--preprocess-max-ram-gb", type=float, default=48.0)
     ap.add_argument("--preprocess-batch-rows", type=int, default=25000)
     ap.add_argument("--loader-num-workers", type=int, default=max(1, min((os.cpu_count() or 4) // 2, 8)))
@@ -426,13 +426,14 @@ def _load_pretrained_weights(lit_model: SRSNVLightningModule, ckpt_path: str) ->
 def _eval_before_training(lit_model: SRSNVLightningModule, dm: SRSNVDataModule) -> None:
     """Run a quick validation pass before training to log initial metrics."""
     logger.info("Running pre-training evaluation on validation set...")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    lit_model.to(device)
     lit_model.eval()
     dm.setup("fit")
     val_loader = dm.val_dataloader()
 
     all_probs = []
     all_labels = []
-    device = next(lit_model.parameters()).device
 
     for batch in val_loader:
         batch_dev = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
@@ -458,6 +459,7 @@ def _eval_before_training(lit_model: SRSNVLightningModule, dm: SRSNVDataModule) 
             aupr,
             ll,
         )
+    lit_model.cpu()
     lit_model.train()
 
 
@@ -645,6 +647,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
     numeric_channels = 9
 
     # ── Preprocessing / cache loading ──
+    preprocess_cache_dir: str | None = None
     preprocess_index = {}
     preprocess_wall_seconds = 0.0
     split_prevalence: dict = {}
@@ -654,9 +657,27 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
     n_devices = _resolve_n_devices(_parse_devices(args.devices)) if torch.cuda.is_available() else 1
     is_rank_zero = int(os.environ.get("LOCAL_RANK", "0")) == 0
     shm_cache_path = Path("/dev/shm/deep_srsnv_shared_cache")  # noqa: S108
+    shm_fold_dir = Path("/dev/shm/deep_srsnv_fold_cache")  # noqa: S108
 
     if use_fold_dir:
-        logger.info("Skipping preprocessing — loading from fold directory: %s", args.fold_dir)
+        if n_devices > 1:
+            if is_rank_zero:
+                shm_fold_dir.mkdir(exist_ok=True)
+                for name in ("train.pt", "val.pt", "test.pt"):
+                    src = Path(args.fold_dir) / name
+                    if src.exists():
+                        shutil.copy2(src, shm_fold_dir / name)
+                (shm_fold_dir / ".ready").touch()
+                logger.info("Copied fold data to /dev/shm (%s)", shm_fold_dir)
+            else:
+                while not (shm_fold_dir / ".ready").exists():
+                    time.sleep(0.5)
+            fold_dir_for_dm = str(shm_fold_dir)
+            fold_use_mmap = True
+        else:
+            fold_dir_for_dm = args.fold_dir
+            fold_use_mmap = False
+        logger.info("Skipping preprocessing — loading from fold directory: %s", fold_dir_for_dm)
     else:
         preprocess_t0 = time.perf_counter()
         preprocess_cache_dir = args.preprocess_cache_dir or str(out_dir / "deep_srsnv_cache")
@@ -752,13 +773,14 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
 
         if use_fold_dir:
             dm = SRSNVDataModule.from_fold_dir(
-                fold_dir=args.fold_dir,
+                fold_dir=fold_dir_for_dm,
                 train_batch_size=args.batch_size,
                 eval_batch_size=args.eval_batch_size,
                 predict_batch_size=args.predict_batch_size,
                 pin_memory=args.loader_pin_memory,
                 num_workers=args.loader_num_workers,
                 prefetch_factor=args.loader_prefetch_factor,
+                use_mmap=fold_use_mmap,
             )
         else:
             if single_model_split:
@@ -809,7 +831,8 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
 
         if args.pretrained_checkpoint:
             _load_pretrained_weights(lit_model, args.pretrained_checkpoint)
-            _eval_before_training(lit_model, dm)
+            if is_rank_zero:
+                _eval_before_training(lit_model, dm)
 
         if fold_idx == 0:
             n_trainable_params = int(sum(p.numel() for p in lit_model.model.parameters() if p.requires_grad))
@@ -920,9 +943,10 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         logger.info("Saved SWA-averaged checkpoint: %s", swa_path)
     swa_ckpt_paths = [swa_path] if args.swa else []
 
-    if shm_cache_path.exists():
-        shutil.rmtree(shm_cache_path, ignore_errors=True)
-        logger.info("Cleaned up shared memory cache at %s", shm_cache_path)
+    for shm_dir in (shm_cache_path, shm_fold_dir):
+        if shm_dir.exists():
+            shutil.rmtree(shm_dir, ignore_errors=True)
+            logger.info("Cleaned up shared memory cache at %s", shm_dir)
 
     # ── Aggregate predictions ──
     logger.info("Prediction/export phase started")
@@ -1103,23 +1127,16 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
     # ── ONNX / TensorRT export ──
     onnx_out = None
     engine_out = None
-    try:
-        from ugbio_srsnv.deep_srsnv.inference.export import export_to_onnx, serialize_with_trtexec  # noqa: PLC0415
+    from ugbio_srsnv.deep_srsnv.inference.export import export_to_onnx, serialize_with_trtexec  # noqa: PLC0415
 
-        export_model = lit_model.model if hasattr(lit_model, "model") else lit_model
-        onnx_out = str(out_dir / f"{base}dnn_model.onnx")
-        export_to_onnx(export_model, onnx_out, tensor_length=args.length)
-        logger.info("ONNX model exported to %s", onnx_out)
+    export_model = lit_model.model if hasattr(lit_model, "model") else lit_model
+    onnx_out = str(out_dir / f"{base}dnn_model.onnx")
+    export_to_onnx(export_model, onnx_out, tensor_length=args.length)
+    logger.info("ONNX model exported to %s", onnx_out)
 
-        engine_out_path = out_dir / f"{base}dnn_model.engine"
-        result = serialize_with_trtexec(onnx_out, str(engine_out_path), tensor_length=args.length)
-        if result is not None:
-            engine_out = str(result)
-            logger.info("TensorRT engine saved to %s", engine_out)
-        else:
-            logger.info("trtexec not available; TRT engine not created")
-    except Exception:
-        logger.warning("ONNX/TRT export failed (non-fatal); continuing", exc_info=True)
+    engine_out_path = out_dir / f"{base}dnn_model.engine"
+    engine_out = str(serialize_with_trtexec(onnx_out, str(engine_out_path), tensor_length=args.length))
+    logger.info("TensorRT engine saved to %s", engine_out)
 
     metadata["onnx_path"] = onnx_out
     metadata["trt_engine_path"] = engine_out

@@ -156,17 +156,21 @@ def serialize_with_trtexec(
     opt_batch: int = 256,
     max_batch: int = 1024,
     fp16: bool = True,  # noqa: FBT001, FBT002
-) -> Path | None:
+) -> Path:
     """Run trtexec to convert an ONNX model to a TensorRT engine.
 
     Returns
     -------
-    Path or None
-        The engine path if successful, ``None`` if trtexec is not available.
+    Path
+        The engine path on success.
+
+    Raises
+    ------
+    RuntimeError
+        If ``trtexec`` is not found on PATH or if the conversion fails.
     """
     if not shutil.which("trtexec"):
-        logger.warning("trtexec not found on PATH; skipping TensorRT serialization")
-        return None
+        raise RuntimeError("trtexec not found on PATH. Install the TensorRT SDK or ensure trtexec is available.")
 
     cmd = build_trtexec_command(
         onnx_path,
