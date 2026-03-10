@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import functools
 import os
-import pickle
 from pathlib import Path
 
 import lightning
@@ -111,14 +110,15 @@ def _build_loader(
 _DEFAULT_LOADER_WORKERS = max(1, min((os.cpu_count() or 4) // 4, 8))
 
 
-def _load_fold_file(path: Path, split_id_value: int = 0) -> dict:
+def _load_fold_file(path: Path, split_id_value: int = 0, *, mmap: bool = False) -> dict:
     """Load a single fold file (train.pt, val.pt, or test.pt).
 
     Injects a ``split_id`` tensor so that ``compact_collate_fn`` works
     identically to the legacy path.
+    When ``mmap=True``, tensors are memory-mapped so DDP processes share
+    physical RAM pages.
     """
-    with path.open("rb") as f:
-        cache = pickle.load(f)  # noqa: S301
+    cache = dict(torch.load(path, map_location="cpu", weights_only=False, mmap=mmap))  # noqa: S301
     if isinstance(cache.get("chrom"), np.ndarray):
         cache["chrom"] = cache["chrom"].tolist()
     if isinstance(cache.get("rn"), np.ndarray):
@@ -158,6 +158,7 @@ class SRSNVDataModule(lightning.LightningDataModule):
         num_workers: int = 0,
         prefetch_factor: int = 4,
         fold_dir: str | Path | None = None,
+        use_mmap: bool = False,
     ):
         super().__init__()
 
@@ -170,7 +171,7 @@ class SRSNVDataModule(lightning.LightningDataModule):
             for name in ("train", "val", "test"):
                 fp = self._fold_dir / f"{name}.pt"
                 if fp.exists():
-                    self._fold_caches[name] = _load_fold_file(fp, split_id_value=split_id_map[name])
+                    self._fold_caches[name] = _load_fold_file(fp, split_id_value=split_id_map[name], mmap=use_mmap)
                     logger.info("Loaded %s: %d rows", fp, int(self._fold_caches[name]["label"].shape[0]))
             self.full_cache = None
             self.train_split_ids = None
@@ -208,6 +209,7 @@ class SRSNVDataModule(lightning.LightningDataModule):
         pin_memory: bool = False,
         num_workers: int = 0,
         prefetch_factor: int = 4,
+        use_mmap: bool = False,
     ) -> SRSNVDataModule:
         """Create a DataModule from a pre-split fold directory."""
         return cls(
@@ -218,6 +220,7 @@ class SRSNVDataModule(lightning.LightningDataModule):
             pin_memory=pin_memory,
             num_workers=num_workers,
             prefetch_factor=prefetch_factor,
+            use_mmap=use_mmap,
         )
 
     @staticmethod

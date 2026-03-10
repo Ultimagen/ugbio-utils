@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import pickle
 import time
 from dataclasses import asdict
 from pathlib import Path
@@ -43,7 +42,7 @@ def _load_shard_dir(shard_dir: str | Path) -> dict:
     if not index_path.exists():
         raise FileNotFoundError(f"No index.json found in {shard_path}")
 
-    shard_files = sorted(shard_path.glob("shard_*.pkl"))
+    shard_files = sorted(shard_path.glob("shard_*.pt"))
     if not shard_files:
         raise FileNotFoundError(f"No shard files found in {shard_path}")
 
@@ -64,8 +63,7 @@ def _load_shard_dir(shard_dir: str | Path) -> dict:
     }
 
     for sf in shard_files:
-        with sf.open("rb") as f:
-            chunk = pickle.load(f)  # noqa: S301
+        chunk = torch.load(sf, map_location="cpu", weights_only=False)  # noqa: S301
         for key in (
             "read_base_idx",
             "ref_base_idx",
@@ -136,8 +134,7 @@ def _save_fold_cache(cache: dict, indices: np.ndarray, path: Path) -> None:
     subset["rn"] = [cache["rn"][i] for i in idx]
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as f:
-        pickle.dump(subset, f, protocol=pickle.HIGHEST_PROTOCOL)
+    torch.save(subset, path)
 
 
 # ---------------------------------------------------------------------------

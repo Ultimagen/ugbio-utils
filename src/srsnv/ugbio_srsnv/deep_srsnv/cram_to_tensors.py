@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import pickle
 import resource
 import shutil
 import subprocess
@@ -560,9 +559,8 @@ def cram_to_tensor_cache(  # noqa: PLR0915
                 rows=shard_rows,
                 **shard_kwargs,
             )
-            shard_file = out_path / f"shard_{sid:05d}.pkl"
-            with shard_file.open("wb") as f:
-                pickle.dump(chunk, f, protocol=pickle.HIGHEST_PROTOCOL)
+            shard_file = out_path / f"shard_{sid:05d}.pt"
+            torch.save(chunk, shard_file)
             shard_stats.append(stats)
             completed += 1
             total_output += stats["output_rows"]
@@ -601,9 +599,8 @@ def cram_to_tensor_cache(  # noqa: PLR0915
             }
             for fut in as_completed(futures):
                 _sid, chunk, stats = fut.result()
-                shard_file = out_path / f"shard_{_sid:05d}.pkl"
-                with shard_file.open("wb") as f:
-                    pickle.dump(chunk, f, protocol=pickle.HIGHEST_PROTOCOL)
+                shard_file = out_path / f"shard_{_sid:05d}.pt"
+                torch.save(chunk, shard_file)
                 shard_stats.append(stats)
                 completed += 1
                 total_output += stats["output_rows"]
@@ -855,7 +852,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--reference", default=None, help="Reference FASTA for CRAM decoding")
     ap.add_argument("--vocab-config", default=None, help="Path to vocab_config.json (default: bundled)")
     ap.add_argument("--tensor-length", type=int, default=300)
-    ap.add_argument("--num-workers", type=int, default=max(1, min((os.cpu_count() or 4) - 2, 16)))
+    ap.add_argument("--num-workers", type=int, default=max(1, (os.cpu_count() or 4) - 4))
     ap.add_argument("--shard-size", type=int, default=25000)
     ap.add_argument(
         "--fetch-mode",
