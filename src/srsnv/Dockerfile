@@ -21,7 +21,7 @@ ARG OUT_DIR=/tmp/ugbio
 ARG DEBIAN_FRONTEND=noninteractive
 ARG BCFTOOLS_VERSION=1.20
 ARG SAMTOOLS_VERSION=1.20
-ARG BEDTOOLS_VERSION=2.31.0
+ARG BEDTOOLS_VERSION=2.31.1
 
 ENV PATH="/opt/tensorrt/bin:${PATH}"
 
@@ -40,6 +40,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
     liblzma-dev \
     libc6-dev \
     gcc \
+    libncurses-dev \
     procps \
     bzip2 \
     tabix \
@@ -74,7 +75,9 @@ RUN wget https://github.com/arq5x/bedtools2/releases/download/v${BEDTOOLS_VERSIO
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
 COPY --from=build ${OUT_DIR} ${OUT_DIR}
-RUN pip install ${OUT_DIR}/ugbio_srsnv*.whl[trt] ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
+RUN SRSNV_WHL=$(ls ${OUT_DIR}/ugbio_srsnv*.whl) && \
+    pip install "${SRSNV_WHL}[trt]" ${OUT_DIR}/*.whl && \
+    rm -rf ${OUT_DIR}
 
 USER ugbio
 
