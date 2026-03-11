@@ -607,6 +607,9 @@ def annotate_and_classify_vcf(
 
     xgb_col = FeatureMapFields.XGB_PROBA.value.lower()
 
+    # Round xgb_proba first so that FILTER, GT, and the displayed INFO value all use the same number
+    xgb_rounded = pl.col(xgb_col).round(3)
+
     # Build annotation DataFrame in VCF format (bcftools requires GT from a VCF source, not TSV)
     annotation_df = df_variants.select(
         [
@@ -616,15 +619,13 @@ def annotate_and_classify_vcf(
             pl.col(FeatureMapFields.REF.value).alias("REF"),
             pl.col(FeatureMapFields.ALT.value).alias("ALT"),
             pl.lit(".").alias("QUAL"),
-            pl.when(pl.col(xgb_col) >= xgb_proba_threshold)
+            pl.when(xgb_rounded >= xgb_proba_threshold)
             .then(pl.lit(FeatureMapFilters.PASS.value))
             .otherwise(pl.lit(FeatureMapFilters.LOW_QUAL.value))
             .alias("FILTER"),
-            (pl.lit(f"{FeatureMapFields.XGB_PROBA.value}=") + pl.col(xgb_col).round(3).cast(pl.Utf8)).alias(
-                VcfMetaType.INFO.value
-            ),
+            (pl.lit(f"{FeatureMapFields.XGB_PROBA.value}=") + xgb_rounded.cast(pl.Utf8)).alias(VcfMetaType.INFO.value),
             pl.lit(FeatureMapFields.GT.value).alias(VcfMetaType.FORMAT.value),
-            pl.when(pl.col(xgb_col) >= xgb_proba_threshold)
+            pl.when(xgb_rounded >= xgb_proba_threshold)
             .then(pl.lit("0/1"))
             .otherwise(pl.lit("./."))
             .alias(tumor_sample),
