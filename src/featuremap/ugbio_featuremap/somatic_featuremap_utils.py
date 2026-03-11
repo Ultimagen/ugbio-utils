@@ -183,6 +183,6 @@ def lowqual_filter_header_line(threshold: float) -> str:
     """Generate the LowQual FILTER VCF header line for a given xgb_proba threshold."""
     return (
         f"##FILTER=<ID={FeatureMapFilters.LOW_QUAL.value},"
-        f'Description="Confidence in this variant being real '
+        f'Description="Low confidence variant below calling threshold (xgb_proba<{threshold}).'
         f'is below calling threshold (xgb_proba<{threshold}).">'
     )
