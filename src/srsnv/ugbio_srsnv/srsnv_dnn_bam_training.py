@@ -20,7 +20,6 @@ from lightning.pytorch.tuner import Tuner
 from sklearn.metrics import average_precision_score, log_loss, roc_auc_score
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
-from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
 
 from ugbio_srsnv.deep_srsnv.data_module import SRSNVDataModule
 from ugbio_srsnv.deep_srsnv.data_prep import (
@@ -42,7 +41,7 @@ from ugbio_srsnv.split_manifest import (
     save_split_manifest,
     validate_manifest_against_regions,
 )
-from ugbio_srsnv.srsnv_utils import MAX_PHRED, prob_to_phred, recalibrate_snvq
+from ugbio_srsnv.srsnv_utils import MAX_PHRED, prob_to_phred
 
 CHROM = FeatureMapFields.CHROM.value
 POS = FeatureMapFields.POS.value
@@ -957,45 +956,9 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
 
     mqual = prob_to_phred(probs, max_value=MAX_PHRED)
 
-    # ── SNVQ recalibration (when stats are provided) ──
-    x_lut, y_lut = None, None
-    has_recal_args = all(
-        getattr(args, a, None) is not None
-        for a in ("stats_positive", "stats_negative", "stats_featuremap", "mean_coverage")
-    )
-    if has_recal_args:
-        from ugbio_srsnv.srsnv_training import count_bases_in_interval_list  # noqa: PLC0415
-
-        pos_stats = read_filtering_stats_json(args.stats_positive)
-        neg_stats = read_filtering_stats_json(args.stats_negative)
-        raw_stats = read_filtering_stats_json(args.stats_featuremap)
-        n_bases = count_bases_in_interval_list(args.training_regions, logger_fn=logger.debug)
-
-        n_neg = int(np.sum(labels == 0))
-        prior_train_error = n_neg / len(labels) if len(labels) > 0 else 0.5
-
-        lut_mask = (fold_ids == 1) if single_model_split else None
-
-        snvq, x_lut, y_lut = recalibrate_snvq(
-            mqual,
-            labels,
-            lut_mask=lut_mask,
-            pos_stats=pos_stats,
-            neg_stats=neg_stats,
-            raw_stats=raw_stats,
-            mean_coverage=args.mean_coverage,
-            n_bases_in_region=n_bases,
-            prior_train_error=prior_train_error,
-        )
-        logger.info(
-            "Applied MQUAL→SNVQ recalibration (LUT %d pts, SNVQ [%.1f, %.1f])",
-            len(x_lut),
-            y_lut.min(),
-            y_lut.max(),
-        )
-    else:
-        logger.warning("Stats/coverage args not provided; SNVQ = MQUAL (no recalibration)")
-        snvq = mqual.copy()
+    # SNVQ is computed post-hoc by recalibrate_dnn_folds using a shared
+    # LUT across all folds (matching XGBoost pipeline behaviour).
+    logger.info("Skipping per-fold SNVQ recalibration (deferred to recalibrate_dnn_folds)")
 
     df_out = pl.DataFrame(
         {
@@ -1006,7 +969,6 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             "fold_id": fold_ids.tolist(),
             "prob_orig": probs.tolist(),
             "MQUAL": mqual.tolist(),
-            "SNVQ": snvq.tolist(),
         }
     )
     df_path = out_dir / f"{base}featuremap_df.parquet"
@@ -1069,7 +1031,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         "best_checkpoint_paths": best_ckpt_paths,
         "swa_checkpoint_paths": swa_ckpt_paths if args.swa else None,
         "prediction_model": "swa" if args.swa else "best_checkpoint",
-        "quality_recalibration_table": [x_lut.tolist(), y_lut.tolist()] if x_lut is not None else None,
+        "quality_recalibration_table": None,
         "data_paths": {
             "positive_bam": args.positive_bam,
             "negative_bam": args.negative_bam,

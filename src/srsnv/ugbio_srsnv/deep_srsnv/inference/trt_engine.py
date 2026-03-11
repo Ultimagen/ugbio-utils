@@ -74,7 +74,6 @@ class TRTEngine:
 
     def __init__(self, engine_path: str, device_id: int = 0, max_batch_size: int = 1024):
         try:
-            import pycuda.autoinit  # noqa: F401, PLC0415
             import pycuda.driver as cuda  # noqa: PLC0415
             import tensorrt as trt  # noqa: PLC0415
         except ImportError as e:
@@ -82,8 +81,10 @@ class TRTEngine:
                 "tensorrt and pycuda are required for TRTEngine. " "Install with: pip install tensorrt pycuda"
             ) from e
 
+        cuda.init()
         self._cuda = cuda
         self._device_id = device_id
+        self._cuda_ctx = cuda.Device(device_id).make_context()
 
         trt_logger = trt.Logger(trt.Logger.WARNING)
         with open(engine_path, "rb") as f:
@@ -202,14 +203,28 @@ class TRTEngine:
 
         return _sigmoid(logits)
 
+    def push_context(self) -> None:
+        """Push CUDA context onto the current thread's stack (for multi-threaded use)."""
+        self._cuda_ctx.push()
+
+    def pop_context(self) -> None:
+        """Pop CUDA context from the current thread's stack."""
+        self._cuda_ctx.pop()
+
     def close(self) -> None:
-        """Release resources."""
+        """Release resources and detach the CUDA context."""
         self._host_inputs.clear()
         self._device_inputs.clear()
         self._host_output = None
         self._device_output = None
         self._context = None
         self._engine = None
+        if self._cuda_ctx is not None:
+            try:
+                self._cuda_ctx.detach()
+            except Exception:  # noqa: S110
+                pass
+            self._cuda_ctx = None
         logger.info("TRTEngine on GPU:%d closed", self._device_id)
 
 

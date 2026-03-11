@@ -30,6 +30,8 @@ import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
+from queue import Empty, Queue
+from threading import Event, Thread
 
 import numpy as np
 import pysam
@@ -147,20 +149,20 @@ def _build_quality_fn(metadata: dict) -> _QualityInterpolator | None:
 # ---------------------------------------------------------------------------
 
 
-def _run_inference(  # noqa: PLR0913, PLR0915
+def _run_inference(  # noqa: PLR0913
     cram_path: str,
     parquet_path: str,
     metadata: dict,
     engines: list,
     *,
     num_cram_workers: int = 4,
-    shard_size: int = 25000,
+    shard_size: int = 10000,
     batch_size: int = 512,
     tensor_length: int = 300,
     reference_path: str | None = None,
     fetch_mode: str = "samtools",
 ) -> dict[tuple[str, int, str], float]:
-    """Phase 2: parallel CRAM fetch + GPU inference, returns predictions dict."""
+    """Phase 2: pipelined CRAM fetch + multi-GPU inference, returns predictions dict."""
     encoders = load_vocab_config()
 
     pf = pq.ParquetFile(parquet_path)
@@ -187,39 +189,8 @@ def _run_inference(  # noqa: PLR0913, PLR0915
         "fetch_mode": fetch_mode,
     }
 
-    predictions: dict[tuple[str, int, str], float] = {}
-    completed = 0
     t_start = time.perf_counter()
-
-    effective_workers = max(1, num_cram_workers)
-
-    if effective_workers == 1:
-        for sid, shard_rows in shard_inputs:
-            _sid, chunk, stats = _process_shard(shard_id=sid, rows=shard_rows, **shard_kwargs)
-            _predict_shard(chunk, engines, completed, batch_size, predictions)
-            completed += 1
-            if completed == 1 or completed % 10 == 0 or completed == total_shards:
-                logger.info(
-                    "Inference progress: %d/%d shards (%.1fs)", completed, total_shards, time.perf_counter() - t_start
-                )
-    else:
-        with ProcessPoolExecutor(max_workers=effective_workers) as pool:
-            futures = {
-                pool.submit(_process_shard, shard_id=sid, rows=shard_rows, **shard_kwargs): sid
-                for sid, shard_rows in shard_inputs
-            }
-            for gpu_idx, future in enumerate(as_completed(futures)):
-                _sid, chunk, stats = future.result()
-                _predict_shard(chunk, engines, gpu_idx, batch_size, predictions)
-                completed += 1
-                if completed == 1 or completed % 10 == 0 or completed == total_shards:
-                    logger.info(
-                        "Inference progress: %d/%d shards (%.1fs)",
-                        completed,
-                        total_shards,
-                        time.perf_counter() - t_start,
-                    )
-
+    predictions = _pipelined_inference(shard_inputs, shard_kwargs, engines, batch_size, num_cram_workers)
     logger.info("Inference complete: %d predictions in %.1fs", len(predictions), time.perf_counter() - t_start)
     return predictions
 
@@ -255,6 +226,111 @@ def _predict_shard(
             idx = batch_start + j
             key = (str(chunk["chrom"][idx]), int(chunk["pos"][idx]), str(chunk["rn"][idx]))
             predictions[key] = float(probs[j])
+
+
+def _gpu_consumer_thread(
+    engine,
+    queue: Queue,
+    batch_size: int,
+    local_preds: dict[tuple[str, int, str], float],
+    done_event: Event,
+) -> None:
+    """Pull shard chunks from *queue* and run GPU inference until producers finish.
+
+    Pushes the engine's CUDA context onto this thread's stack so PyCUDA
+    operations target the correct GPU.
+    """
+    engine.push_context()
+    try:
+        while True:
+            try:
+                chunk = queue.get(timeout=1.0)
+            except Empty:
+                if done_event.is_set():
+                    break
+                continue
+            if chunk is None:
+                break
+            _predict_shard(chunk, [engine], 0, batch_size, local_preds)
+            queue.task_done()
+    finally:
+        engine.pop_context()
+
+
+def _pipelined_inference(
+    shard_inputs: list[tuple[int, list[dict]]],
+    shard_kwargs: dict,
+    engines: list,
+    batch_size: int,
+    num_cram_workers: int,
+) -> dict[tuple[str, int, str], float]:
+    """Run CPU shard processing and multi-GPU inference concurrently.
+
+    CPU workers produce tensor chunks via ``ProcessPoolExecutor`` and push them
+    into a ``Queue``.  Per-GPU consumer threads pull from the queue and run
+    ``predict_batch`` in parallel, giving true multi-GPU utilisation.
+    """
+    total_shards = len(shard_inputs)
+    effective_workers = max(1, num_cram_workers)
+
+    prefetch = len(engines) * 2
+    q: Queue = Queue(maxsize=prefetch)
+    done_event = Event()
+    local_preds: list[dict[tuple[str, int, str], float]] = [{} for _ in engines]
+
+    gpu_threads: list[Thread] = []
+    for i, engine in enumerate(engines):
+        t = Thread(
+            target=_gpu_consumer_thread,
+            args=(engine, q, batch_size, local_preds[i], done_event),
+            daemon=True,
+        )
+        t.start()
+        gpu_threads.append(t)
+
+    completed = 0
+    t_start = time.perf_counter()
+
+    try:
+        if effective_workers == 1:
+            for sid, shard_rows in shard_inputs:
+                _sid, chunk, _stats = _process_shard(shard_id=sid, rows=shard_rows, **shard_kwargs)
+                q.put(chunk)
+                completed += 1
+                if completed == 1 or completed % 10 == 0 or completed == total_shards:
+                    logger.info(
+                        "Inference progress: %d/%d shards (%.1fs)",
+                        completed,
+                        total_shards,
+                        time.perf_counter() - t_start,
+                    )
+        else:
+            with ProcessPoolExecutor(max_workers=effective_workers) as pool:
+                futures = {
+                    pool.submit(_process_shard, shard_id=sid, rows=shard_rows, **shard_kwargs): sid
+                    for sid, shard_rows in shard_inputs
+                }
+                for future in as_completed(futures):
+                    _sid, chunk, _stats = future.result()
+                    q.put(chunk)
+                    completed += 1
+                    if completed == 1 or completed % 10 == 0 or completed == total_shards:
+                        logger.info(
+                            "Inference progress: %d/%d shards (%.1fs)",
+                            completed,
+                            total_shards,
+                            time.perf_counter() - t_start,
+                        )
+    finally:
+        done_event.set()
+        for t in gpu_threads:
+            t.join()
+
+    predictions: dict[tuple[str, int, str], float] = {}
+    for lp in local_preds:
+        predictions.update(lp)
+
+    return predictions
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +429,7 @@ def _run_fold_inference(  # noqa: PLR0913
     engines: list,
     *,
     num_cram_workers: int = 4,
-    shard_size: int = 25000,
+    shard_size: int = 10000,
     batch_size: int = 512,
     tensor_length: int = 300,
     reference_path: str | None = None,
@@ -362,6 +438,7 @@ def _run_fold_inference(  # noqa: PLR0913
     """Run inference on a subset of rows using the provided engines.
 
     Like ``_run_inference`` but accepts pre-loaded rows instead of a parquet path.
+    Uses pipelined producer-consumer architecture with per-GPU threads.
     """
     if not rows:
         return {}
@@ -384,28 +461,10 @@ def _run_fold_inference(  # noqa: PLR0913
         "fetch_mode": fetch_mode,
     }
 
-    predictions: dict[tuple[str, int, str], float] = {}
-    completed = 0
     t_start = time.perf_counter()
-    effective_workers = max(1, num_cram_workers)
-
-    if effective_workers == 1:
-        for sid, shard_rows in shard_inputs:
-            _sid, chunk, stats = _process_shard(shard_id=sid, rows=shard_rows, **shard_kwargs)
-            _predict_shard(chunk, engines, completed, batch_size, predictions)
-            completed += 1
-    else:
-        with ProcessPoolExecutor(max_workers=effective_workers) as pool:
-            futures = {
-                pool.submit(_process_shard, shard_id=sid, rows=shard_rows, **shard_kwargs): sid
-                for sid, shard_rows in shard_inputs
-            }
-            for gpu_idx, future in enumerate(as_completed(futures)):
-                _sid, chunk, stats = future.result()
-                _predict_shard(chunk, engines, gpu_idx, batch_size, predictions)
-                completed += 1
-
+    predictions = _pipelined_inference(shard_inputs, shard_kwargs, engines, batch_size, num_cram_workers)
     elapsed = time.perf_counter() - t_start
+
     logger.info(
         "Fold inference: %d rows, %d shards, %d predictions in %.1fs",
         len(rows),
@@ -424,7 +483,7 @@ def _run_ensemble_inference(  # noqa: PLR0913, PLR0915
     backend: str = "pytorch",
     gpu_ids: list[int],
     num_cram_workers: int = 4,
-    shard_size: int = 25000,
+    shard_size: int = 10000,
     batch_size: int = 512,
     tensor_length: int = 300,
     reference_path: str | None = None,
@@ -519,11 +578,17 @@ def _create_engines(
     backend: str = "pytorch",
     gpu_ids: list[int],
 ) -> list:
-    """Load one inference engine per GPU for a given metadata file."""
+    """Load one inference engine per GPU for a given metadata file.
+
+    For TRT engines, each engine's CUDA context is popped after creation so it
+    can be pushed onto consumer threads later.
+    """
     engines = []
     for gid in gpu_ids:
         try:
             eng = load_inference_engine(metadata_path, backend=backend, device_id=gid)
+            if hasattr(eng, "pop_context"):
+                eng.pop_context()
             engines.append(eng)
         except Exception:
             logger.warning("Failed to create engine on GPU:%d for %s, skipping", gid, metadata_path, exc_info=True)
@@ -537,7 +602,7 @@ def _create_engines(
 # ---------------------------------------------------------------------------
 
 
-def run_inference_pipeline(  # noqa: PLR0913, C901
+def run_inference_pipeline(  # noqa: PLR0913, C901, PLR0912
     featuremap_vcf: str,
     cram_path: str,
     output_vcf: str,
@@ -550,7 +615,7 @@ def run_inference_pipeline(  # noqa: PLR0913, C901
     checkpoint_path: str | None = None,
     gpu_ids: list[int] | None = None,
     num_cram_workers: int = 4,
-    shard_size: int = 25000,
+    shard_size: int = 10000,
     batch_size: int = 512,
     tensor_length: int = 300,
     low_qual_threshold: float = 40.0,
@@ -625,6 +690,8 @@ def run_inference_pipeline(  # noqa: PLR0913, C901
                     engine_path=engine_path,
                     checkpoint_path=checkpoint_path,
                 )
+                if hasattr(eng, "pop_context"):
+                    eng.pop_context()
                 engines.append(eng)
             except Exception:
                 logger.warning("Failed to create engine on GPU:%d, skipping", gid, exc_info=True)
@@ -668,9 +735,9 @@ def run_inference_pipeline(  # noqa: PLR0913, C901
 def _vcf_to_parquet(vcf_path: str, parquet_path: str) -> None:
     """Lightweight VCF->parquet for inference (extracts CHROM, POS, RN, etc.)."""
     try:
-        from ugbio_featuremap.featuremap_to_dataframe import featuremap_to_dataframe  # noqa: PLC0415
+        from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet  # noqa: PLC0415
 
-        featuremap_to_dataframe(vcf_path, parquet_path)
+        vcf_to_parquet(vcf_path, parquet_path, drop_format={"AD"})
     except ImportError:
         raise ImportError("ugbio_featuremap is required for VCF-to-parquet conversion") from None
 
@@ -698,10 +765,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--checkpoint", default=None, help="Override model checkpoint path (single model only)")
     ap.add_argument("--backend", default="trt", choices=["trt", "pytorch"], help="Inference backend (default: trt)")
     ap.add_argument("--gpus", default=None, help="Comma-separated GPU IDs (default: all visible)")
-    ap.add_argument(
-        "--num-cram-workers", type=int, default=None, help="CPU workers for CRAM fetch (default: min(cpus, 8))"
-    )
-    ap.add_argument("--shard-size", type=int, default=25000, help="Rows per shard")
+    ap.add_argument("--num-cram-workers", type=int, default=None, help="CPU workers for CRAM fetch (default: all CPUs)")
+    ap.add_argument("--shard-size", type=int, default=10000, help="Rows per shard")
     ap.add_argument("--batch-size", type=int, default=512, help="GPU inference batch size")
     ap.add_argument("--tensor-length", type=int, default=300, help="Padded sequence length")
     ap.add_argument("--low-qual-threshold", type=float, default=40.0, help="SNVQ threshold for PASS filter")
@@ -720,7 +785,7 @@ def run(argv: list[str] | None = None) -> None:
 
     num_workers = args.num_cram_workers
     if num_workers is None:
-        num_workers = min(os.cpu_count() or 1, 8)
+        num_workers = os.cpu_count() or 1
 
     run_inference_pipeline(
         featuremap_vcf=args.featuremap_vcf,

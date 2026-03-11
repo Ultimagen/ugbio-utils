@@ -37,7 +37,6 @@ from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
 
-from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
 from ugbio_srsnv.split_manifest import (
     SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,
     SPLIT_MODE_SINGLE_MODEL_READ_HASH,
@@ -55,9 +54,7 @@ from ugbio_srsnv.srsnv_utils import (
     MAX_PHRED,
     all_models_predict_proba,
     get_filter_ratio,
-    phred_to_prob,
     polars_to_pandas_efficient,
-    prob_to_logit,
     prob_to_phred,
 )
 
@@ -819,90 +816,35 @@ class SRSNVTrainer:
     ) -> None:
         """
         Build an interpolation table that maps MQUAL → SNVQ using adaptive KDE for smoothing.
-        Uses the new smoothing_utils implementation with variable bandwidth kernel density estimation
-        to better estimate precision at high MQUAL values where there are fewer datapoints.
 
-        Parameters
-        ----------
-        mqual_cutoff_quantile : float, optional
-            Quantile for determining MQUAL cutoff if mqual_cutoff_type is 'fp' or 'tp'. By default 1 - 1e-6
-        mqual_cutoff_type : str, optional
-            Type of cutoff to use for determining maximum MQUAL for x_lut.
-            Options are 'fp' (false positive), 'tp' (true positive), or 'mp' (machine precision).
-        eps : float | None, optional
-            Small epsilon value for numerical stability, by default None (uses self.eps)
-        kde_config_overrides : dict[str, Any] | None, optional
-            Dictionary of parameter overrides for KDE configuration. Any parameters
-            provided will override the default values. Valid keys include:
-            - grid_size: int - Fine grid for high resolution
-            - num_bandwidth_levels: int - Number of adaptive bandwidth levels
-            - lowess_frac: float - LOWESS smoothing fraction for uncertainty
-            - enforce_monotonic: bool - Whether to enforce monotonicity
-            - truncation_mode: str - Tail truncation mode
-        lut_mask : array-like or None, optional
-            Boolean mask selecting rows to use for LUT construction.
+        Delegates to the standalone ``recalibrate_snvq_kde()`` in ``srsnv_utils``.
         """
         if eps is None:
             eps = self.eps
-        if kde_config_overrides is None:
-            kde_config_overrides = {}
-        self._validate_kde_args(transform_mode, mqual_cutoff_type)
+
+        from ugbio_srsnv.srsnv_utils import recalibrate_snvq_kde  # noqa: PLC0415
 
         pd_df = self.data_frame.to_pandas()
 
-        if lut_mask is not None:
-            pd_df = pd_df.loc[lut_mask].copy()
-            logger.info("_create_quality_lookup_table_kde: using lut_mask (%d rows)", len(pd_df))
-
-        if pd_df[LABEL_COL].sum() == 0 or (~pd_df[LABEL_COL]).sum() == 0:
-            logger.warning("Insufficient data for KDE, falling back to counting method")
-            self._create_quality_lookup_table_count(mqual_cutoff_quantile, eps, lut_mask=lut_mask)
-            return
-
-        # Use AdaptiveKDEPrecisionEstimator for precision estimation
-        try:
-            estimator = AdaptiveKDEPrecisionEstimator(transform_mode=transform_mode, **kde_config_overrides)
-
-            # Fit the estimator to the data
-            estimator.fit(pd_df, num_cv_folds=self.k_folds)
-
-        except Exception as e:
-            logger.warning("Adaptive KDE failed: %s. Falling back to counting method.", e)
-            self._create_quality_lookup_table_count(mqual_cutoff_quantile, eps, lut_mask=lut_mask)
-            return
-
-        # Create lookup table
-        # Find maximum MQUAL for x_lut based on either KDE-detected truncation or quantile cutoff
-        x_lut_max = self._determine_x_lut_max(estimator, pd_df, mqual_cutoff_type, mqual_cutoff_quantile)
-
-        # Define x_lut
-        if self.args.quality_lut_size is not None:
-            n_pts = self.args.quality_lut_size
-            self.x_lut = np.linspace(0.0, x_lut_max, n_pts)
-        else:  # if not provided, use integer points from 0 to floor(x_lut_max)
-            max_int = int(np.floor(x_lut_max))
-            self.x_lut = np.arange(0, max_int + 1, dtype=float)
-
-        # If needed, transform x_lut to grid space (for logit mode)
-        if transform_mode == "logit":
-            scores_lut = prob_to_logit(phred_to_prob(self.x_lut), phred=True)
-        else:
-            scores_lut = self.x_lut
-
-        # Interpolate FPR/TPR ratios to lookup table points using convenience methods
-        fpr_interp = estimator.get_fpr(scores_lut)
-        tpr_interp = estimator.get_tpr(scores_lut)
-        fp_interp = fpr_interp / tpr_interp
-
-        # Convert precision to SNVQ using the same formula as the original
-        snvq_prefactor = self._calculate_snvq_prefactor()
-        # error_rate = 1 - precision_interp
-        # self.y_lut = -10 * np.log10(np.clip(snvq_prefactor * error_rate / precision_interp, eps, 1))
-        self.y_lut = -10 * np.log10(np.clip(snvq_prefactor * fp_interp, eps, 1))
-        self.kde_estimator = estimator  # store for later inspection if needed
-
-        logger.debug("Created adaptive KDE MQUAL→SNVQ lookup table with %d points", len(self.x_lut))
-        logger.debug("SNVQ range: [%.2f, %.2f]", self.y_lut.min(), self.y_lut.max())
+        _, x_lut, y_lut = recalibrate_snvq_kde(
+            pd_df,
+            pos_stats=self.pos_stats,
+            neg_stats=self.neg_stats,
+            raw_stats=self.raw_stats,
+            mean_coverage=self.mean_coverage,
+            n_bases_in_region=self.n_bases_in_region,
+            k_folds=self.k_folds,
+            lut_mask=lut_mask,
+            transform_mode=transform_mode,
+            mqual_cutoff_quantile=mqual_cutoff_quantile,
+            mqual_cutoff_type=mqual_cutoff_type,
+            kde_config_overrides=kde_config_overrides,
+            quality_lut_size=getattr(self.args, "quality_lut_size", None),
+            max_qual=self.max_qual,
+            eps=eps,
+        )
+        self.x_lut = x_lut
+        self.y_lut = y_lut
 
     def _create_quality_lookup_table_count(
         self,

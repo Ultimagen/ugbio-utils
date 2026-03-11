@@ -236,6 +236,209 @@ def recalibrate_snvq(  # noqa: PLR0913
     return snvq, x_lut, y_lut
 
 
+def _compute_snvq_prefactor(
+    pos_stats: dict,
+    raw_stats: dict,
+    mean_coverage: float,
+    n_bases_in_region: int,
+) -> tuple[float, int]:
+    """Compute the SNVQ prefactor and raw_after_filter count.
+
+    Shared by both counting-based and KDE-based recalibration.
+    """
+
+    def _last_non_downsample_rows(stats: dict) -> int:
+        for f in reversed(stats["filters"]):
+            if f.get("type") != "downsample":
+                return f["rows"]
+        raise ValueError("stats JSON has no non-downsample filter entry")
+
+    raw_after_filter = _last_non_downsample_rows(raw_stats)
+    filtering_ratio = get_filter_ratio(pos_stats["filters"], numerator_type="label", denominator_type="raw")
+    effective_bases_covered = mean_coverage * n_bases_in_region * filtering_ratio
+    snvq_prefactor = raw_after_filter / effective_bases_covered
+    return snvq_prefactor, raw_after_filter
+
+
+def recalibrate_snvq_kde(  # noqa: PLR0913, PLR0912, C901
+    pd_df: pd.DataFrame,
+    *,
+    pos_stats: dict,
+    neg_stats: dict,
+    raw_stats: dict,
+    mean_coverage: float,
+    n_bases_in_region: int,
+    k_folds: int,
+    lut_mask: np.ndarray | None = None,
+    transform_mode: str = "logit",
+    mqual_cutoff_quantile: float = 1 - 1e-6,
+    mqual_cutoff_type: str = "fp",
+    kde_config_overrides: dict | None = None,
+    quality_lut_size: int | None = None,
+    max_qual: float = MAX_PHRED,
+    eps: float = EPS,
+    label_col: str = "label",
+    fold_col: str = "fold_id",
+    mqual_col: str = "MQUAL",
+    prob_orig_col: str = "prob_orig",
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Build an MQUAL-to-SNVQ lookup table using adaptive KDE smoothing.
+
+    Standalone equivalent of ``SRSNVTrainer._create_quality_lookup_table_kde``,
+    usable by both XGBoost and DNN pipelines.
+
+    Parameters
+    ----------
+    pd_df
+        DataFrame with at least ``label``, ``fold_id``, ``MQUAL``,
+        ``prob_orig``, and ``prob_fold_*`` columns.  The KDE uncertainty
+        function is built from rows where ``fold_id`` is NaN (test set)
+        using the ``prob_fold_*`` columns.
+    pos_stats, neg_stats, raw_stats
+        Filtering-stats JSON dicts.
+    mean_coverage
+        Mean sequencing coverage.
+    n_bases_in_region
+        Total bases covered by the training regions.
+    k_folds
+        Number of cross-validation folds (used by the KDE estimator).
+    lut_mask
+        Boolean mask selecting rows for LUT construction.
+        In single-model mode, pass a mask for validation rows only.
+    transform_mode
+        ``"mqual"`` or ``"logit"`` (default ``"logit"``).
+    mqual_cutoff_quantile
+        Upper quantile of FP MQUAL used to cap the LUT x-axis.
+    mqual_cutoff_type
+        ``"fp"``, ``"tp"``, or ``"mp"``.
+    kde_config_overrides
+        Overrides for ``AdaptiveKDEPrecisionEstimator`` init.
+    quality_lut_size
+        If given, use this many evenly-spaced LUT points instead of
+        integer-spaced points.
+    max_qual
+        Maximum Phred score for clipping.
+    eps
+        Small epsilon for numerical stability.
+
+    Returns
+    -------
+    snvq : np.ndarray
+        Recalibrated SNVQ scores (same length as the *full* MQUAL column).
+    x_lut : np.ndarray
+        MQUAL values of the lookup table.
+    y_lut : np.ndarray
+        Corresponding SNVQ values of the lookup table.
+    """
+    from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator  # noqa: PLC0415
+
+    if kde_config_overrides is None:
+        kde_config_overrides = {}
+
+    if transform_mode not in {"mqual", "logit"}:
+        raise ValueError(f"transform_mode must be 'mqual' or 'logit', got: {transform_mode}")
+    if mqual_cutoff_type not in {"fp", "tp", "mp"}:
+        raise ValueError(f"mqual_cutoff_type must be 'fp', 'tp', or 'mp', got: {mqual_cutoff_type}")
+
+    snvq_prefactor, _ = _compute_snvq_prefactor(pos_stats, raw_stats, mean_coverage, n_bases_in_region)
+
+    # Subset for LUT construction
+    df_for_kde = pd_df.loc[lut_mask].copy() if lut_mask is not None else pd_df.copy()
+    if lut_mask is not None:
+        _logger.info("recalibrate_snvq_kde: using lut_mask (%d / %d rows)", len(df_for_kde), len(pd_df))
+
+    if df_for_kde[label_col].sum() == 0 or (~df_for_kde[label_col]).sum() == 0:
+        _logger.warning("Insufficient data for KDE, falling back to counting method")
+        mqual_all = pd_df[mqual_col].to_numpy()
+        labels_all = pd_df[label_col].to_numpy()
+        return recalibrate_snvq(
+            np.clip(mqual_all, 0.0, max_qual),
+            labels_all,
+            pos_stats=pos_stats,
+            neg_stats=neg_stats,
+            raw_stats=raw_stats,
+            mean_coverage=mean_coverage,
+            n_bases_in_region=n_bases_in_region,
+            lut_mask=lut_mask,
+            max_qual=max_qual,
+            eps=eps,
+        )
+
+    try:
+        estimator = AdaptiveKDEPrecisionEstimator(transform_mode=transform_mode, **kde_config_overrides)
+        estimator.fit(
+            df_for_kde,
+            num_cv_folds=k_folds,
+            label_col=label_col,
+            fold_col=fold_col,
+            mqual_col=mqual_col,
+            prob_orig_col=prob_orig_col,
+        )
+    except Exception as e:
+        _logger.warning("Adaptive KDE failed: %s. Falling back to counting method.", e)
+        mqual_all = pd_df[mqual_col].to_numpy()
+        labels_all = pd_df[label_col].to_numpy()
+        return recalibrate_snvq(
+            np.clip(mqual_all, 0.0, max_qual),
+            labels_all,
+            pos_stats=pos_stats,
+            neg_stats=neg_stats,
+            raw_stats=raw_stats,
+            mean_coverage=mean_coverage,
+            n_bases_in_region=n_bases_in_region,
+            lut_mask=lut_mask,
+            max_qual=max_qual,
+            eps=eps,
+        )
+
+    # Determine x_lut_max
+    kde_metadata = getattr(estimator, "kde_metadata", None)
+    if mqual_cutoff_type == "mp":
+        false_trunc_idx = kde_metadata["rates"].get("false_truncation_idx", 0) if kde_metadata else 0
+        if kde_metadata and false_trunc_idx > 0:
+            x_lut_max = estimator.from_grid(false_trunc_idx - 1)
+        else:
+            x_lut_max = df_for_kde.loc[df_for_kde[label_col].astype(int) == 0, mqual_col].quantile(
+                mqual_cutoff_quantile
+            )
+    elif mqual_cutoff_type == "tp":
+        x_lut_max = df_for_kde.loc[df_for_kde[label_col].astype(int) == 1, mqual_col].quantile(mqual_cutoff_quantile)
+    else:
+        x_lut_max = df_for_kde.loc[df_for_kde[label_col].astype(int) == 0, mqual_col].quantile(mqual_cutoff_quantile)
+
+    # Build x_lut
+    if quality_lut_size is not None:
+        x_lut = np.linspace(0.0, x_lut_max, quality_lut_size)
+    else:
+        max_int = int(np.floor(x_lut_max))
+        x_lut = np.arange(0, max_int + 1, dtype=float)
+
+    # Transform to grid space for logit mode
+    if transform_mode == "logit":
+        scores_lut = prob_to_logit(phred_to_prob(x_lut), phred=True)
+    else:
+        scores_lut = x_lut
+
+    fpr_interp = estimator.get_fpr(scores_lut)
+    tpr_interp = estimator.get_tpr(scores_lut)
+    fp_interp = fpr_interp / tpr_interp
+
+    y_lut = -10 * np.log10(np.clip(snvq_prefactor * fp_interp, eps, 1))
+
+    _logger.info(
+        "recalibrate_snvq_kde: LUT has %d points, SNVQ range [%.2f, %.2f]",
+        len(x_lut),
+        y_lut.min(),
+        y_lut.max(),
+    )
+
+    # Interpolate SNVQ for every sample in the full DataFrame
+    mqual_all = np.clip(pd_df[mqual_col].to_numpy(), 0.0, max_qual)
+    snvq = np.interp(mqual_all, x_lut, y_lut)
+
+    return snvq, x_lut, y_lut
+
+
 def seq2key_common(Seq, start=0, *, flowOrder=FLOW_ORDER, iterative=True):  # noqa: N803
     if iterative:
         flow_iter = cycle(flowOrder)

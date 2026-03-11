@@ -274,8 +274,12 @@ class SRSNVDataModule(lightning.LightningDataModule):
             self._predict_ds = TensorMapDataset(self.full_cache, all_ids, include_meta=True)
 
     def _merge_fold_caches_for_predict(self) -> dict:
-        """Merge train/val/test caches into a single cache for predict phase."""
-        caches_to_merge = [self._fold_caches[k] for k in ("train", "val", "test") if k in self._fold_caches]
+        """Merge val/test caches into a single cache for predict phase.
+
+        Training data is excluded since predictions on it are not useful
+        for evaluation and would waste compute.
+        """
+        caches_to_merge = [self._fold_caches[k] for k in ("val", "test") if k in self._fold_caches]
         if len(caches_to_merge) == 1:
             return caches_to_merge[0]
 
@@ -306,12 +310,12 @@ class SRSNVDataModule(lightning.LightningDataModule):
         merged["pos"] = np.concatenate(pos_parts) if pos_parts else np.array([], dtype=np.int32)
 
         fold_ids = []
-        offset = 0
-        for split_name, cache in self._fold_caches.items():
-            cn = int(cache["label"].shape[0])
-            sid = {"train": 0, "val": 1, "test": -1}.get(split_name, 0)
+        for split_name in ("val", "test"):
+            if split_name not in self._fold_caches:
+                continue
+            cn = int(self._fold_caches[split_name]["label"].shape[0])
+            sid = {"val": 1, "test": -1}[split_name]
             fold_ids.extend([sid] * cn)
-            offset += cn
         merged["split_id"] = torch.tensor(fold_ids, dtype=torch.int8)
 
         return merged

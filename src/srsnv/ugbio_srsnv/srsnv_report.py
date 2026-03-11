@@ -130,7 +130,7 @@ def compute_is_cycle_skip_column(data_df: pd.DataFrame, flow_order: str = "TGCA"
     return result
 
 
-def prepare_report(  # noqa: C901 PLR0915
+def prepare_report(  # noqa: C901, PLR0915, PLR0912
     featuremap_df: str,  # Path to the featuremap dataframe parquet file
     srsnv_metadata: str,  # Path to the srsnv_metadata JSON file
     report_path: str,
@@ -178,7 +178,9 @@ def prepare_report(  # noqa: C901 PLR0915
             fold_idx += 1
     else:
         # Use model paths from metadata
-        for orig_model_path in metadata["model_paths"].values():
+        for orig_model_path in metadata.get("model_paths", {}).values():
+            if not orig_model_path:
+                continue
             model = xgb.XGBClassifier()
             # File existence + fallback check (refactored for lint compliance)
             path_to_load = orig_model_path
@@ -198,6 +200,18 @@ def prepare_report(  # noqa: C901 PLR0915
                     )
             model.load_model(path_to_load)
             models.append(model)
+
+    # Fallback: when no XGBoost models are available (e.g. DNN-only run),
+    # create dummy classifiers so the report can proceed. Model-dependent
+    # plots (SHAP, training progress) will be skipped via @exception_handler.
+    if not models:
+        from sklearn.dummy import DummyClassifier
+
+        num_folds = max(len(metadata.get("model_paths", {})), 1)
+        models = [DummyClassifier(strategy="constant", constant=0) for _ in range(num_folds)]
+        for m in models:
+            m.fit([[0], [1]], [0, 1])
+        logger.warning("No XGBoost models found; using dummy classifiers. SHAP/training plots will be skipped.")
 
     # Load training evaluation results
     training_results = metadata["training_results"]
