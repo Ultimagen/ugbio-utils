@@ -28,7 +28,17 @@ import polars as pl
 import xgboost as xgb
 from pandas.api.types import CategoricalDtype
 from sklearn.metrics import roc_auc_score
-from ugbio_core.logger import logger as _logger
+from ugbio_core.logger import logger
+from ugbio_featuremap.filter_dataframe import (
+    KEY_NAME,
+    KEY_TYPE,
+    STAT_ROWS,
+    TYPE_DOWNSAMPLE,
+    TYPE_FUNNEL,
+    TYPE_LABEL,
+    TYPE_QUALITY,
+    TYPE_RAW,
+)
 from ugbio_ppmseq.ppmSeq_utils import (
     MAX_TOTAL_HMER_LENGTHS_IN_LOOPS,
     MIN_TOTAL_HMER_LENGTHS_IN_LOOPS,
@@ -44,9 +54,13 @@ NEXT1 = "X_NEXT1"
 ALT = "ALT"
 REV = "REV"
 
+NUMERATOR = "numerator"
+DENOMINATOR = "denominator"
+
 IS_MIXED = "is_mixed"
 IS_MIXED_START = "is_mixed_start"
 IS_MIXED_END = "is_mixed_end"
+IS_CYCLE_SKIP = "is_cycle_skip"
 ST = "st"
 ET = "et"
 AS = "as"
@@ -180,7 +194,7 @@ def recalibrate_snvq(  # noqa: PLR0913
     effective_bases_covered = mean_coverage * n_bases_in_region * filtering_ratio
     snvq_prefactor = raw_after_filter / effective_bases_covered
 
-    _logger.info(
+    logger.info(
         "recalibrate_snvq: mean_coverage=%.1f, n_bases_in_region=%d, "
         "filtering_ratio=%.6f, raw_after_filter=%d, effective_bases_covered=%.0f, "
         "snvq_prefactor=%.6f, prior_train_error=%.6f, prior_real_error=%.6f",
@@ -200,7 +214,7 @@ def recalibrate_snvq(  # noqa: PLR0913
     if lut_mask is not None:
         mqual_for_lut = mqual_clipped[lut_mask]
         labels_for_lut = labels_bool[lut_mask]
-        _logger.info(
+        logger.info(
             "recalibrate_snvq: using lut_mask (%d / %d samples for LUT)",
             int(lut_mask.sum()),
             len(lut_mask),
@@ -226,7 +240,7 @@ def recalibrate_snvq(  # noqa: PLR0913
     # --- interpolate SNVQ for every sample --------------------------------
     snvq = np.interp(mqual_clipped, x_lut, y_lut)
 
-    _logger.info(
+    logger.info(
         "recalibrate_snvq: LUT has %d points, SNVQ range [%.2f, %.2f]",
         len(x_lut),
         y_lut.min(),
@@ -345,10 +359,10 @@ def recalibrate_snvq_kde(  # noqa: PLR0913, PLR0912, C901
     # Subset for LUT construction
     df_for_kde = pd_df.loc[lut_mask].copy() if lut_mask is not None else pd_df.copy()
     if lut_mask is not None:
-        _logger.info("recalibrate_snvq_kde: using lut_mask (%d / %d rows)", len(df_for_kde), len(pd_df))
+        logger.info("recalibrate_snvq_kde: using lut_mask (%d / %d rows)", len(df_for_kde), len(pd_df))
 
     if df_for_kde[label_col].sum() == 0 or (~df_for_kde[label_col]).sum() == 0:
-        _logger.warning("Insufficient data for KDE, falling back to counting method")
+        logger.warning("Insufficient data for KDE, falling back to counting method")
         mqual_all = pd_df[mqual_col].to_numpy()
         labels_all = pd_df[label_col].to_numpy()
         return recalibrate_snvq(
@@ -375,7 +389,7 @@ def recalibrate_snvq_kde(  # noqa: PLR0913, PLR0912, C901
             prob_orig_col=prob_orig_col,
         )
     except Exception as e:
-        _logger.warning("Adaptive KDE failed: %s. Falling back to counting method.", e)
+        logger.warning("Adaptive KDE failed: %s. Falling back to counting method.", e)
         mqual_all = pd_df[mqual_col].to_numpy()
         labels_all = pd_df[label_col].to_numpy()
         return recalibrate_snvq(
@@ -425,7 +439,7 @@ def recalibrate_snvq_kde(  # noqa: PLR0913, PLR0912, C901
 
     y_lut = -10 * np.log10(np.clip(snvq_prefactor * fp_interp, eps, 1))
 
-    _logger.info(
+    logger.info(
         "recalibrate_snvq_kde: LUT has %d points, SNVQ range [%.2f, %.2f]",
         len(x_lut),
         y_lut.min(),
@@ -861,7 +875,7 @@ def get_base_recall_from_filters(filters):
     Returns:
         float: Base recall value
     """
-    return get_filter_ratio(filters, denominator_type="quality", numerator_type="label")
+    return get_filter_ratio(filters, denominator_type=TYPE_QUALITY, numerator_type=TYPE_LABEL)
 
 
 def get_base_error_rate_from_filters(filters):
@@ -874,10 +888,10 @@ def get_base_error_rate_from_filters(filters):
     Returns:
         float: Base error rate of low VAF SNVs (rows before downsample / total raw rows)
     """
-    return get_filter_ratio(filters, numerator_filter="downsample", denominator_type="raw")
+    return get_filter_ratio(filters, numerator_filter=TYPE_DOWNSAMPLE, denominator_type=TYPE_RAW)
 
 
-def _find_filter_rows(filters, filter_spec, spec_type, filter_label="numerator"):
+def _find_filter_rows(filters, filter_spec, spec_type, filter_label=NUMERATOR):
     """Helper function to find the number of rows for a filter specification.
 
     Parameters
@@ -895,9 +909,10 @@ def _find_filter_rows(filters, filter_spec, spec_type, filter_label="numerator")
         Number of rows at the appropriate filter.
     """
     # Special case: "raw" means the first filter itself
-    if filter_spec == "raw":
-        if filters[0].get("type") == "raw" or filters[0].get("name") == "raw":
-            return filters[0]["rows"]
+    if filter_spec == TYPE_RAW:
+        if filters[0].get(KEY_TYPE) == TYPE_RAW or filters[0].get(KEY_NAME) == TYPE_RAW:
+            # Try funnel first (new format), then rows (old format)
+            return filters[0].get(TYPE_FUNNEL, filters[0].get(STAT_ROWS))
         raise ValueError(f"First filter is not 'raw' (for {filter_label})")
 
     # Find the target filter
@@ -913,15 +928,16 @@ def _find_filter_rows(filters, filter_spec, spec_type, filter_label="numerator")
     if target_index == 0:
         raise ValueError(f"Cannot get filter before '{filter_spec}' as it is the first filter (for {filter_label})")
 
-    return filters[target_index - 1]["rows"]
+    # Try funnel first (new format), then rows (old format)
+    return filters[target_index - 1].get(TYPE_FUNNEL, filters[target_index - 1].get(STAT_ROWS))
 
 
 def get_filter_ratio(
     filters,
     numerator_filter=None,
     denominator_filter=None,
-    numerator_type="label",
-    denominator_type="raw",
+    numerator_type=TYPE_LABEL,
+    denominator_type=TYPE_RAW,
 ):
     """Calculate the ratio of rows between two filters in a filtering pipeline.
 
@@ -986,15 +1002,15 @@ def get_filter_ratio(
 
     # Determine numerator rows
     if numerator_filter is not None:
-        numerator_rows = _find_filter_rows(filters, numerator_filter, "name", filter_label="numerator")
+        numerator_rows = _find_filter_rows(filters, numerator_filter, KEY_NAME, filter_label=NUMERATOR)
     else:
-        numerator_rows = _find_filter_rows(filters, numerator_type, "type", filter_label="numerator")
+        numerator_rows = _find_filter_rows(filters, numerator_type, KEY_TYPE, filter_label=NUMERATOR)
 
     # Determine denominator rows
     if denominator_filter is not None:
-        denominator_rows = _find_filter_rows(filters, denominator_filter, "name", filter_label="denominator")
+        denominator_rows = _find_filter_rows(filters, denominator_filter, KEY_NAME, filter_label=DENOMINATOR)
     else:
-        denominator_rows = _find_filter_rows(filters, denominator_type, "type", filter_label="denominator")
+        denominator_rows = _find_filter_rows(filters, denominator_type, KEY_TYPE, filter_label=DENOMINATOR)
 
     if denominator_rows == 0:
         raise ValueError("Denominator filter has 0 rows, cannot calculate ratio")
@@ -1428,3 +1444,24 @@ class HandlePPMSeqTagsInFeatureMapDataFrame:
         self.featuremap_df[IS_MIXED] = np.logical_and(
             self.featuremap_df[IS_MIXED_START], self.featuremap_df[IS_MIXED_END]
         )
+
+
+def add_is_mixed_to_featuremap_df(
+    data_df: pd.DataFrame,
+    adapter_version: str = None,  # Default to v1, can be overridden
+    categorical_features_names: list[str] | None = None,
+) -> pd.DataFrame:
+    """Add is_mixed columns to featuremap_df
+    NOTE: THIS FUNCTION IS A PATCH AND SHOULD BE REPLACED
+    """
+    logger.info("Adding is_mixed columns to featuremap")
+    # TODO: use the information from adapter_version instead of this patch
+    tags_handler = HandlePPMSeqTagsInFeatureMapDataFrame(
+        featuremap_df=data_df,
+        categorical_features_names=categorical_features_names or [],
+        ppmseq_adapter_version=adapter_version,  # This should be set based on the actual adapter version used
+        logger=logger,
+    )
+    tags_handler.fill_nan_tags()
+    tags_handler.add_is_mixed_to_featuremap_df()
+    return tags_handler.featuremap_df

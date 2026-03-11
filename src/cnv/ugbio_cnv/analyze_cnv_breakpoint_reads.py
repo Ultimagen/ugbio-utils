@@ -8,11 +8,13 @@ VCF with breakpoint evidence in INFO fields.
 """
 
 import argparse
+import itertools
 import sys
 from dataclasses import dataclass, field
 from statistics import median
 
 import pysam
+from ugbio_cnv.jalign import create_bam_header
 from ugbio_core.dna_sequence_utils import CIGAR_OPS, get_reference_alignment_end, parse_cigar_string
 from ugbio_core.logger import logger
 
@@ -32,6 +34,8 @@ class BreakpointEvidence:
     total_reads: int
     dup_insert_sizes: list[int] = field(default_factory=list)
     del_insert_sizes: list[int] = field(default_factory=list)
+    supporting_reads: list[tuple[pysam.AlignedSegment, str]] = field(default_factory=list)
+    supplementary_reads: dict[str, list[pysam.AlignedSegment]] = field(default_factory=dict)
 
     @property
     def dup_median_insert_size(self) -> float | None:
@@ -87,7 +91,6 @@ def has_left_soft_clip(cigar_tuples: list[tuple[int, int]] | None) -> bool:
 
 
 def get_supplementary_alignments(
-    alignment_file: pysam.AlignmentFile,
     read: pysam.AlignedSegment,
 ) -> list[tuple[str, int, int, bool, bool, bool]]:
     """
@@ -95,7 +98,6 @@ def get_supplementary_alignments(
 
     Parameters
     ----------
-    alignment_file : pysam.AlignmentFile
         Open BAM/CRAM file
     read : pysam.AlignedSegment
         The read to analyze
@@ -181,12 +183,6 @@ def _prepare_read_for_cnv_check(
     start_region_end = interval_start + cushion
     end_region_start = interval_end - cushion
     end_region_end = interval_end + cushion
-
-    primary_near_start = start_region_start <= primary_start <= start_region_end
-    primary_near_end = end_region_start <= primary_start <= end_region_end
-
-    if not (primary_near_start or primary_near_end):
-        return None
 
     return (
         primary_chrom,
@@ -373,39 +369,6 @@ def _should_skip_read(read: pysam.AlignedSegment) -> bool:
     return read.is_unmapped or read.is_secondary or read.is_supplementary or read.is_duplicate
 
 
-def _is_read_near_breakpoint(
-    read_start: int,
-    start_region_start: int,
-    start_region_end: int,
-    end_region_start: int,
-    end_region_end: int,
-) -> bool:
-    """
-    Check if read start position is near either breakpoint region.
-
-    Parameters
-    ----------
-    read_start : int
-        The reference start position of the read
-    start_region_start : int
-        Start of the interval start region
-    start_region_end : int
-        End of the interval start region
-    end_region_start : int
-        Start of the interval end region
-    end_region_end : int
-        End of the interval end region
-
-    Returns
-    -------
-    bool
-        True if read is near either breakpoint
-    """
-    near_start = start_region_start <= read_start <= start_region_end
-    near_end = end_region_start <= read_start <= end_region_end
-    return near_start or near_end
-
-
 def _process_read_for_cnv_evidence(
     read: pysam.AlignedSegment,
     alignment_file: pysam.AlignmentFile,
@@ -434,7 +397,7 @@ def _process_read_for_cnv_evidence(
     tuple[bool, bool, int | None]
         (is_duplication, is_deletion, insert_size)
     """
-    supplementary_alns = get_supplementary_alignments(alignment_file, read)
+    supplementary_alns = get_supplementary_alignments(read)
     return check_read_cnv_consistency(read, start, end, cushion, supplementary_alns)
 
 
@@ -465,6 +428,217 @@ def _calculate_breakpoint_regions(
     end_region_start = max(0, end - cushion)
     end_region_end = end + cushion
     return start_region_start, start_region_end, end_region_start, end_region_end
+
+
+def _annotate_vcf_record_with_evidence(record: pysam.VariantRecord, evidence: BreakpointEvidence) -> None:
+    """
+    Annotate a VCF record with CNV breakpoint evidence.
+
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        VCF record to annotate
+    evidence : BreakpointEvidence
+        Breakpoint evidence data to add to record
+    """
+    # Add new INFO fields directly to the record
+    record.info["CNV_DUP_READS"] = evidence.duplication_reads
+    record.info["CNV_DEL_READS"] = evidence.deletion_reads
+    record.info["CNV_TOTAL_READS"] = evidence.total_reads
+
+    if evidence.total_reads > 0:
+        record.info["CNV_DUP_FRAC"] = evidence.duplication_reads / evidence.total_reads
+        record.info["CNV_DEL_FRAC"] = evidence.deletion_reads / evidence.total_reads
+    else:
+        record.info["CNV_DUP_FRAC"] = 0.0
+        record.info["CNV_DEL_FRAC"] = 0.0
+
+    # Add insert size statistics (use 0.0 if None to ensure downstream processing)
+    record.info["DUP_READS_MEDIAN_INSERT_SIZE"] = (
+        evidence.dup_median_insert_size if evidence.dup_median_insert_size is not None else 0.0
+    )
+    record.info["DEL_READS_MEDIAN_INSERT_SIZE"] = (
+        evidence.del_median_insert_size if evidence.del_median_insert_size is not None else 0.0
+    )
+
+
+def _process_primary_read_for_evidence(
+    read: pysam.AlignedSegment,
+    alignment_file: pysam.AlignmentFile,
+    start: int,
+    end: int,
+    cushion: int,
+    duplication_reads: int,
+    deletion_reads: int,
+    dup_insert_sizes: list[int],
+    del_insert_sizes: list[int],
+    supporting_reads: list[tuple[pysam.AlignedSegment, str]],
+) -> tuple[int, int]:
+    """
+    Process a primary read for CNV evidence and update counters.
+
+    Returns
+    -------
+    tuple[int, int]
+        Updated (duplication_reads, deletion_reads) counts
+    """
+    is_dup, is_del, insert_size = _process_read_for_cnv_evidence(read, alignment_file, start, end, cushion)
+
+    if is_dup:
+        duplication_reads += 1
+        if insert_size is not None and insert_size > 0:
+            dup_insert_sizes.append(insert_size)
+        supporting_reads.append((read, "DUP"))
+    elif is_del:
+        deletion_reads += 1
+        if insert_size is not None and insert_size > 0:
+            del_insert_sizes.append(insert_size)
+        supporting_reads.append((read, "DEL"))
+
+    return duplication_reads, deletion_reads
+
+
+def _collect_reads_from_region(
+    alignment_file: pysam.AlignmentFile,
+    chrom: str,
+    start: int,
+    end: int,
+    cushion: int,
+    start_region_start: int,
+    start_region_end: int,
+    end_region_start: int,
+    end_region_end: int,
+) -> tuple[
+    int,
+    int,
+    list[int],
+    list[int],
+    set[str],
+    list[tuple[pysam.AlignedSegment, str]],
+    dict[str, list[pysam.AlignedSegment]],
+]:
+    """
+    Collect reads from breakpoint region and classify them as supporting duplication or deletion.
+
+    Returns
+    -------
+    tuple
+        (duplication_reads, deletion_reads, dup_insert_sizes, del_insert_sizes,
+         processed_reads, supporting_reads, supplementary_reads)
+    """
+    duplication_reads = 0
+    deletion_reads = 0
+    dup_insert_sizes: list[int] = []
+    del_insert_sizes: list[int] = []
+    processed_reads: set[str] = set()
+    supporting_reads: list[tuple[pysam.AlignedSegment, str]] = []
+    supplementary_reads: dict[str, list[pysam.AlignedSegment]] = {}
+
+    try:
+        for read in itertools.chain(
+            alignment_file.fetch(chrom, start_region_start, start_region_end, multiple_iterators=True),
+            alignment_file.fetch(chrom, end_region_start, end_region_end, multiple_iterators=True),
+        ):
+            # Skip supplementary reads in this phase - they'll be collected later
+            if read.is_supplementary:
+                continue
+
+            if _should_skip_read(read) or read.query_name in processed_reads:
+                continue
+
+            processed_reads.add(str(read.query_name))
+
+            duplication_reads, deletion_reads = _process_primary_read_for_evidence(
+                read,
+                alignment_file,
+                start,
+                end,
+                cushion,
+                duplication_reads,
+                deletion_reads,
+                dup_insert_sizes,
+                del_insert_sizes,
+                supporting_reads,
+            )
+
+    except Exception as e:
+        logger.warning(f"Error fetching reads for {chrom}:{start}-{end}: {e}")
+
+    return (
+        duplication_reads,
+        deletion_reads,
+        dup_insert_sizes,
+        del_insert_sizes,
+        processed_reads,
+        supporting_reads,
+        supplementary_reads,
+    )
+
+
+def _collect_supplementary_alignments_for_supporting_reads(
+    alignment_file: pysam.AlignmentFile,
+    chrom: str,
+    supporting_reads: list[tuple[pysam.AlignedSegment, str]],
+    start_region_start: int,
+    start_region_end: int,
+    end_region_start: int,
+    end_region_end: int,
+) -> dict[str, list[pysam.AlignedSegment]]:
+    """
+    Collect supplementary alignments ONLY for reads that are supporting CNV evidence.
+
+    This is much more efficient than collecting all supplementary reads in the interval,
+    since typically only 10-100 reads support CNV out of 1M+ total reads.
+
+    Parameters
+    ----------
+    alignment_file : pysam.AlignmentFile
+        Open BAM/CRAM file
+    chrom : str
+        Chromosome name
+    supporting_reads : list[tuple[pysam.AlignedSegment, str]]
+        List of (read, read_group) tuples for supporting reads
+    start_region_start : int
+        Start of search region
+    start_region_end: int
+        End of start breakpoint search region
+    end_region_start : int
+        Start of end breakpoint search region
+    end_region_end : int
+        End of search region
+
+    Returns
+    -------
+    dict[str, list[pysam.AlignedSegment]]
+        Dictionary mapping query_name to list of supplementary alignments
+    """
+    supplementary_reads: dict[str, list[pysam.AlignedSegment]] = {}
+
+    # Create set of query names we need supplementary alignments for
+    supporting_query_names = {str(read.query_name) for read, _ in supporting_reads}
+
+    if not supporting_query_names:
+        return supplementary_reads
+
+    try:
+        # Fetch supplementary alignments from the breakpoint regions
+        for read in itertools.chain(
+            alignment_file.fetch(chrom, start_region_start, start_region_end, multiple_iterators=True),
+            alignment_file.fetch(chrom, end_region_start, end_region_end, multiple_iterators=True),
+        ):
+            if not read.is_supplementary:
+                continue
+
+            query_name = str(read.query_name)
+            if query_name in supporting_query_names:
+                if query_name not in supplementary_reads:
+                    supplementary_reads[query_name] = []
+                supplementary_reads[query_name].append(read)
+
+    except Exception as e:
+        logger.warning(f"Error fetching supplementary reads: {e}")
+
+    return supplementary_reads
 
 
 def analyze_interval_breakpoints(
@@ -499,39 +673,38 @@ def analyze_interval_breakpoints(
     regions = _calculate_breakpoint_regions(start, end, cushion)
     start_region_start, start_region_end, end_region_start, end_region_end = regions
 
-    # Initialize counters and tracking
-    duplication_reads = 0
-    deletion_reads = 0
-    dup_insert_sizes: list[int] = []
-    del_insert_sizes: list[int] = []
-    processed_reads: set[str] = set()
+    # PHASE 1: Collect primary reads from the two breakpoint regions
+    (
+        duplication_reads,
+        deletion_reads,
+        dup_insert_sizes,
+        del_insert_sizes,
+        processed_reads,
+        supporting_reads,
+        _,  # supplementary_reads not populated in phase 1
+    ) = _collect_reads_from_region(
+        alignment_file,
+        chrom,
+        start,
+        end,
+        cushion,
+        start_region_start,
+        start_region_end,
+        end_region_start,
+        end_region_end,
+    )
 
-    try:
-        for read in alignment_file.fetch(chrom, start_region_start, end_region_end):
-            if _should_skip_read(read) or read.query_name in processed_reads:
-                continue
-
-            read_start = read.reference_start
-
-            if not _is_read_near_breakpoint(
-                read_start, start_region_start, start_region_end, end_region_start, end_region_end
-            ):
-                continue
-            processed_reads.add(read.query_name)
-
-            is_dup, is_del, insert_size = _process_read_for_cnv_evidence(read, alignment_file, start, end, cushion)
-
-            if is_dup:
-                duplication_reads += 1
-                if insert_size is not None and insert_size > 0:
-                    dup_insert_sizes.append(insert_size)
-            elif is_del:
-                deletion_reads += 1
-                if insert_size is not None and insert_size > 0:
-                    del_insert_sizes.append(insert_size)
-
-    except Exception as e:
-        logger.warning(f"Error fetching reads for {chrom}:{start}-{end}: {e}")
+    # PHASE 2: Collect supplementary alignments ONLY for supporting reads
+    # This is dramatically more efficient than collecting all supplementary reads
+    supplementary_reads = _collect_supplementary_alignments_for_supporting_reads(
+        alignment_file,
+        chrom,
+        supporting_reads,
+        start_region_start,
+        start_region_end,
+        end_region_start,
+        end_region_end,
+    )
 
     return BreakpointEvidence(
         chrom=chrom,
@@ -542,7 +715,84 @@ def analyze_interval_breakpoints(
         total_reads=len(processed_reads),
         dup_insert_sizes=dup_insert_sizes,
         del_insert_sizes=del_insert_sizes,
+        supporting_reads=supporting_reads,
+        supplementary_reads=supplementary_reads,
     )
+
+
+def _write_supporting_reads_to_bam(
+    bam_out: pysam.AlignmentFile,
+    evidence: BreakpointEvidence,
+) -> None:
+    """
+    Write supporting reads and their supplementary alignments to output BAM.
+
+    Parameters
+    ----------
+    bam_out : pysam.AlignmentFile
+        Output BAM file
+    evidence : BreakpointEvidence
+        Evidence containing supporting reads and supplementary alignments
+    """
+    for read, read_group in evidence.supporting_reads:
+        # Set read group tag on the primary read
+        read.set_tag("RG", read_group, value_type="Z")
+        bam_out.write(read)
+
+        # Write corresponding supplementary alignments with same read group
+        for supp_read in evidence.supplementary_reads.get(str(read.query_name), []):
+            supp_read.set_tag("RG", read_group, value_type="Z")
+            bam_out.write(supp_read)
+
+
+def _process_variants(
+    vcf_in: pysam.VariantFile,
+    vcf_out: pysam.VariantFile,
+    alignment_file: pysam.AlignmentFile,
+    cushion: int,
+    bam_out: pysam.AlignmentFile | None,
+) -> int:
+    """
+    Process all variants in input VCF and write annotated results.
+
+    Parameters
+    ----------
+    vcf_in : pysam.VariantFile
+        Input VCF file
+    vcf_out : pysam.VariantFile
+        Output VCF file
+    alignment_file : pysam.AlignmentFile
+        Alignment file for reading reads
+    cushion : int
+        Number of bases to extend search around breakpoints
+    bam_out : pysam.AlignmentFile | None
+        Optional output BAM file for supporting reads
+
+    Returns
+    -------
+    int
+        Number of variants processed
+    """
+    variant_count = 0
+    for record in vcf_in:
+        variant_count += 1
+        if variant_count % 100 == 0:
+            logger.info(f"Processing variant {variant_count}: {record.chrom}:{record.start}-{record.stop}")
+
+        # Analyze breakpoints for this variant
+        evidence = analyze_interval_breakpoints(alignment_file, record.chrom, record.start, record.stop, cushion)
+
+        # Annotate VCF record with evidence
+        _annotate_vcf_record_with_evidence(record, evidence)
+
+        # Write annotated record
+        vcf_out.write(record)
+
+        # Write supporting reads to BAM if requested
+        if bam_out:
+            _write_supporting_reads_to_bam(bam_out, evidence)
+
+    return variant_count
 
 
 def analyze_cnv_breakpoints(
@@ -551,6 +801,7 @@ def analyze_cnv_breakpoints(
     reference_fasta: str,
     cushion: int = 100,
     output_file: str | None = None,
+    output_bam: str | None = None,
 ) -> None:
     """
     Analyze all CNV intervals in a VCF file for breakpoint evidence.
@@ -567,6 +818,8 @@ def analyze_cnv_breakpoints(
         Path to output VCF file (default: None, writes to stdout)
     reference_fasta : str
         Path to reference FASTA file (required for CRAM files)
+    output_bam : str, optional
+        Path to output BAM file with split reads supporting CNV calls (default: None, no BAM output)
     """
     alignment_file = pysam.AlignmentFile(bam_file, "r", reference_filename=reference_fasta)
 
@@ -587,39 +840,18 @@ def analyze_cnv_breakpoints(
         else:
             vcf_out = pysam.VariantFile("-", "w", header=hdr)
 
-        # Process each variant
-        variant_count = 0
-        for record in vcf_in:
-            variant_count += 1
-            if variant_count % 100 == 0:
-                logger.info(f"Processing variant {variant_count}: {record.chrom}:{record.start}-{record.stop}")
+        # Open output BAM if requested
+        bam_out = None
+        if output_bam:
+            bam_header = create_bam_header(alignment_file.header)
+            bam_out = pysam.AlignmentFile(output_bam, "wb", header=bam_header)
 
-            # Analyze breakpoints for this variant
-            evidence = analyze_interval_breakpoints(alignment_file, record.chrom, record.start, record.stop, cushion)
-
-            # Add new INFO fields directly to the record
-            record.info["CNV_DUP_READS"] = evidence.duplication_reads
-            record.info["CNV_DEL_READS"] = evidence.deletion_reads
-            record.info["CNV_TOTAL_READS"] = evidence.total_reads
-
-            if evidence.total_reads > 0:
-                record.info["CNV_DUP_FRAC"] = evidence.duplication_reads / evidence.total_reads
-                record.info["CNV_DEL_FRAC"] = evidence.deletion_reads / evidence.total_reads
-            else:
-                record.info["CNV_DUP_FRAC"] = 0.0
-                record.info["CNV_DEL_FRAC"] = 0.0
-
-            # Add insert size statistics (use 0.0 if None to ensure downstream processing)
-            record.info["DUP_READS_MEDIAN_INSERT_SIZE"] = (
-                evidence.dup_median_insert_size if evidence.dup_median_insert_size is not None else 0.0
-            )
-            record.info["DEL_READS_MEDIAN_INSERT_SIZE"] = (
-                evidence.del_median_insert_size if evidence.del_median_insert_size is not None else 0.0
-            )
-            # Write annotated record
-            vcf_out.write(record)
+        # Process all variants
+        variant_count = _process_variants(vcf_in, vcf_out, alignment_file, cushion, bam_out)
 
         vcf_out.close()
+        if bam_out:
+            bam_out.close()
 
     # Close alignment file
     alignment_file.close()
@@ -627,6 +859,8 @@ def analyze_cnv_breakpoints(
     logger.info(f"Processed {variant_count} variants")
     if output_file:
         logger.info(f"Annotated VCF written to {output_file}")
+    if output_bam:
+        logger.info(f"Split reads BAM written to {output_bam}")
 
 
 def get_parser(parser: argparse.ArgumentParser | None = None) -> argparse.ArgumentParser:
@@ -674,6 +908,11 @@ def get_parser(parser: argparse.ArgumentParser | None = None) -> argparse.Argume
         required=True,
         help="Path to reference FASTA file",
     )
+    parser.add_argument(
+        "--output-bam",
+        default=None,
+        help="Path to output BAM file with split reads supporting CNV calls (default: None, no BAM output)",
+    )
     return parser
 
 
@@ -689,6 +928,7 @@ def main(argv: list[str] | None = None) -> int:
             reference_fasta=args.reference_fasta,
             cushion=args.cushion,
             output_file=args.output_file,
+            output_bam=args.output_bam,
         )
         return 0
     except Exception as e:

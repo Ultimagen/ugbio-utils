@@ -13,6 +13,12 @@ This file provides guidance for Claude Code and developers working with the ugbi
 - **Total Codebase:** 281 Python files, 99 test files
 - **Docker Registry:** AWS ECR + Docker Hub
 
+> **⚠️ IMPORTANT:** Always activate the UV virtual environment before running Python scripts:
+> ```bash
+> source .venv/bin/activate  # OR use: uv run python script.py
+> ```
+> See [Environment Setup](#important-always-activate-virtual-environment) for details.
+
 ## Architecture
 
 ### Workspace Structure
@@ -68,6 +74,45 @@ uv sync --all-extras --all-packages
 uv sync --package ugbio-core
 uv sync --package ugbio-filtering
 ```
+
+### IMPORTANT: Always Activate Virtual Environment
+
+**When working in ugbio_utils, ALWAYS activate the UV virtual environment first:**
+
+```bash
+# Navigate to ugbio_utils directory
+cd /path/to/BioinfoResearch/VariantCalling/ugbio_utils
+
+# Activate the virtual environment
+source .venv/bin/activate
+
+# Now run your Python scripts
+python script.py
+```
+
+**Why this matters:**
+- The `.venv` contains all installed bioinformatics packages (bcftools, samtools, pysam, etc.)
+- Without activation, Python scripts will fail with `ModuleNotFoundError`
+- All ugbio modules (ugbio_core, ugbio_filtering, ugbio_omics, etc.) are installed in this environment
+
+**Alternative: Use `uv run` (no activation needed):**
+```bash
+# UV automatically uses the virtual environment
+uv run python script.py
+uv run pytest src/core/tests/
+```
+
+**Rare: If packages are missing after activation:**
+```bash
+# Only needed if you encounter ImportError after activation
+# This reinstalls all packages (takes ~2-5 minutes)
+uv sync --all-extras --all-packages
+```
+
+**Common scenarios:**
+- ✓ `source .venv/bin/activate && python script.py` - Recommended
+- ✓ `uv run python script.py` - Alternative (no activation)
+- ✗ `python script.py` - Will fail without activation
 
 ### Testing
 
@@ -520,6 +565,22 @@ print_and_execute("bcftools view file.vcf")
 
 ## Troubleshooting
 
+### ModuleNotFoundError (Most Common)
+
+**Problem:** `ModuleNotFoundError: No module named 'ugbio_core'` or similar
+
+**Solution:** Activate the virtual environment first:
+```bash
+cd /path/to/BioinfoResearch/VariantCalling/ugbio_utils
+source .venv/bin/activate
+python your_script.py
+```
+
+**Alternative:** Use `uv run` instead:
+```bash
+uv run python your_script.py
+```
+
 ### UV Hardlink Issues
 ```bash
 rm -rf .venv
@@ -547,17 +608,25 @@ git lfs pull
 
 ### Commands
 ```bash
-# Setup
+# ALWAYS activate virtual environment first
+source .venv/bin/activate
+
+# Setup (rare - only if packages missing)
 uv sync --all-extras --all-packages
 
 # Test
 uv run pytest src/core/tests/
+# OR with activated environment:
+pytest src/core/tests/
 
 # Lint
 uv run pre-commit run --all-files
 
-# Run pipeline
+# Run pipeline (requires activated environment)
 python -m ugbio_filtering.train_models_pipeline --train_dfs file.h5 --test_dfs file2.h5 --output_file_prefix out
+
+# Alternative: Use uv run (no activation needed)
+uv run python -m ugbio_filtering.train_models_pipeline --train_dfs file.h5 --test_dfs file2.h5 --output_file_prefix out
 ```
 
 ### Module Imports

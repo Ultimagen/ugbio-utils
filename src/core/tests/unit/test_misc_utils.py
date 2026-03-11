@@ -1,6 +1,7 @@
 import os
 import tempfile
 from io import StringIO
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -333,3 +334,32 @@ class TestCleanupTempFiles:
         # Both should be removed
         assert not os.path.exists(temp_file)
         assert not os.path.exists(bai_file)
+
+    def test_cleanup_with_path_objects(self):
+        """Test cleanup accepts Path objects."""
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            temp_file = Path(tmp.name)
+            tmp.write(b"test content")
+
+        assert temp_file.exists()
+
+        cleanup_temp_files([temp_file])
+
+        assert not temp_file.exists()
+
+    def test_cleanup_with_path_objects_and_indices(self):
+        """Test cleanup of Path objects with index files."""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".vcf.gz") as tmp:
+            temp_file = Path(tmp.name)
+            tmp.write(b"test content")
+
+        tbi_file = Path(str(temp_file) + ".tbi")
+        tbi_file.write_text("index")
+
+        assert temp_file.exists()
+        assert tbi_file.exists()
+
+        cleanup_temp_files([temp_file])
+
+        assert not temp_file.exists()
+        assert not tbi_file.exists()

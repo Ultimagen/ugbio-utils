@@ -7,6 +7,7 @@ from pathlib import Path
 import pysam
 import pytest
 from ugbio_cnv.analyze_cnv_breakpoint_reads import (
+    _collect_reads_from_region,
     analyze_cnv_breakpoints,
     analyze_interval_breakpoints,
     check_read_cnv_consistency,
@@ -65,6 +66,13 @@ def temp_bam_file():
         # Read with deletion evidence: first part (right clip) BEFORE second part (left clip)
         # First part at position 950 (start region) with right clip, second part at position 2050
         # (end region) with left clip
+        # Write reads in coordinate-sorted order for proper BAM indexing
+        # Position 950: read2 (primary) and read1_supp (supplementary)
+        # Position 2050: read1 (primary) and read2_supp (supplementary)
+
+        # Read with deletion evidence: first part (right clip) BEFORE second part (left clip)
+        # First part at position 950 (start region) with right clip, second part at position 2050
+        # (end region) with left clip
         read2 = pysam.AlignedSegment()
         read2.query_name = "read2"
         read2.query_sequence = (
@@ -77,6 +85,21 @@ def temp_bam_file():
         # SA tag: second part at chr1:2051 (1-based), with left clip (30S50M)
         read2.set_tag("SA", "chr1,2051,+,30S50M,60,0;")
         outf.write(read2)
+
+        # Supplementary alignment for read1 (at position 950)
+        read1_supp = pysam.AlignedSegment()
+        read1_supp.query_name = "read1"
+        read1_supp.query_sequence = (
+            "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"  # 80 bases
+        )
+        read1_supp.reference_id = 0  # chr1
+        read1_supp.reference_start = 950
+        read1_supp.cigartuples = [(4, 30), (0, 50)]  # 30S50M - left soft clip (second part)
+        read1_supp.is_reverse = False
+        read1_supp.is_supplementary = True
+        # SA tag: pointing back to primary at chr1:2051 (1-based)
+        read1_supp.set_tag("SA", "chr1,2051,+,50M30S,60,0;")
+        outf.write(read1_supp)
 
         # Read with duplication evidence: first part (right clip) AFTER second part (left clip)
         # First part at position 2050 (end region) with right clip, second part at position 950
@@ -94,6 +117,21 @@ def temp_bam_file():
         read1.set_tag("SA", "chr1,951,+,30S50M,60,0;")
         outf.write(read1)
 
+        # Supplementary alignment for read2 (at position 2050)
+        read2_supp = pysam.AlignedSegment()
+        read2_supp.query_name = "read2"
+        read2_supp.query_sequence = (
+            "ACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT"  # 80 bases
+        )
+        read2_supp.reference_id = 0  # chr1
+        read2_supp.reference_start = 2050
+        read2_supp.cigartuples = [(4, 30), (0, 50)]  # 30S50M - left soft clip (second part)
+        read2_supp.is_reverse = False
+        read2_supp.is_supplementary = True
+        # SA tag: pointing back to primary at chr1:951 (1-based)
+        read2_supp.set_tag("SA", "chr1,951,+,50M30S,60,0;")
+        outf.write(read2_supp)
+
     # Index the BAM file
     pysam.index(temp_path)
 
@@ -109,8 +147,7 @@ def test_get_supplementary_alignments(temp_bam_file):
     read.set_tag("SA", "chr1,1000,+,50M30S,60,0;chr1,2000,-,30S50M,60,0;")
 
     # Open a real alignment file for the function signature
-    with pysam.AlignmentFile(temp_bam_file, "rb") as bam:
-        supp_alns = get_supplementary_alignments(bam, read)
+    supp_alns = get_supplementary_alignments(read)
 
     assert len(supp_alns) == 2
     # First: 50M means +50 on reference, 30S on right, + strand
@@ -203,6 +240,144 @@ def test_analyze_interval_breakpoints(temp_bam_file):
         assert evidence.total_reads == 2
         assert evidence.duplication_reads == 1
         assert evidence.deletion_reads == 1
+
+
+def test_analyze_interval_breakpoints_scans_both_breakpoint_windows():
+    """Regression test: ensure both breakpoint windows are scanned.
+
+    This catches a pysam iterator bug where chaining two ``fetch`` iterators from
+    the same handle can skip the first iterator unless independent iterators are
+    requested. The synthetic interval below has CNV-supporting SA evidence only
+    in the START breakpoint window.
+    """
+    with tempfile.NamedTemporaryFile(suffix=".bam", delete=False) as bam_f:
+        bam_path = bam_f.name
+
+    header = {
+        "HD": {"VN": "1.0"},
+        "SQ": [
+            {"SN": "chr1", "LN": 10000},
+        ],
+    }
+
+    try:
+        with pysam.AlignmentFile(bam_path, "wb", header=header) as bam_out:
+            # START window read with SA evidence into END window.
+            split_read = pysam.AlignedSegment()
+            split_read.query_name = "split_read"
+            split_read.query_sequence = (
+                "ACGTACGTACGTACGTACGTACGTACGTACGT" "ACGTACGTACGTACGTACGTACGTACGTACGT" "ACGTACGTACGTACGT"
+            )
+            split_read.reference_id = 0
+            split_read.reference_start = 950  # START window for interval 1000-2000, cushion=100
+            split_read.cigartuples = [(0, 50), (4, 30)]  # first part: right soft clip
+            split_read.is_reverse = False
+            split_read.set_tag("SA", "chr1,2051,+,30S50M,60,0;")
+            bam_out.write(split_read)
+
+            # Non-SA read in END window to ensure second window has content.
+            end_only_read = pysam.AlignedSegment()
+            end_only_read.query_name = "end_only_read"
+            end_only_read.query_sequence = "A" * 80
+            end_only_read.reference_id = 0
+            end_only_read.reference_start = 1950
+            end_only_read.cigartuples = [(0, 80)]
+            end_only_read.is_reverse = False
+            bam_out.write(end_only_read)
+
+        pysam.index(bam_path)
+
+        with pysam.AlignmentFile(bam_path, "rb") as bam_in:
+            evidence = analyze_interval_breakpoints(bam_in, "chr1", 1000, 2000, 100)
+
+        assert evidence.total_reads == 2
+        assert evidence.duplication_reads == 0
+        assert evidence.deletion_reads == 1
+    finally:
+        Path(bam_path).unlink(missing_ok=True)
+        Path(bam_path + ".bai").unlink(missing_ok=True)
+
+
+def test_collect_reads_from_region_uses_independent_fetch_iterators(monkeypatch):
+    """Regression test for fetch iterator invalidation between breakpoint windows."""
+
+    class FakeAlignmentFile:
+        """Fake alignment file that invalidates prior iterators unless multiple_iterators=True."""
+
+        def __init__(self, start_reads, end_reads):
+            self.start_reads = start_reads
+            self.end_reads = end_reads
+            self._active_state = None
+
+        def fetch(self, chrom, start, end, *, multiple_iterators=False):  # noqa: ARG002
+            reads = self.start_reads if start < 1500 else self.end_reads
+            if multiple_iterators:
+                return iter(reads)
+
+            state = object()
+            self._active_state = state
+
+            def _iter_reads():
+                if self._active_state is not state:
+                    return
+                yield from reads
+
+            return _iter_reads()
+
+    start_read = pysam.AlignedSegment()
+    start_read.query_name = "start_read"
+    start_read.reference_id = 0
+    start_read.reference_start = 950
+    start_read.cigartuples = [(0, 50), (4, 30)]
+
+    end_read = pysam.AlignedSegment()
+    end_read.query_name = "end_read"
+    end_read.reference_id = 0
+    end_read.reference_start = 1950
+    end_read.cigartuples = [(0, 80)]
+
+    fake_alignment_file = FakeAlignmentFile([start_read], [end_read])
+
+    def _fake_process_primary_read_for_evidence(  # noqa: PLR0913
+        read,
+        alignment_file,
+        start,
+        end,
+        cushion,
+        duplication_reads,
+        deletion_reads,
+        dup_insert_sizes,
+        del_insert_sizes,
+        supporting_reads,
+    ):
+        return duplication_reads, deletion_reads
+
+    monkeypatch.setattr(
+        "ugbio_cnv.analyze_cnv_breakpoint_reads._process_primary_read_for_evidence",
+        _fake_process_primary_read_for_evidence,
+    )
+
+    (
+        _,
+        _,
+        _,
+        _,
+        processed_reads,
+        _,
+        _,
+    ) = _collect_reads_from_region(
+        fake_alignment_file,
+        "chr1",
+        1000,
+        2000,
+        100,
+        900,
+        1100,
+        1900,
+        2100,
+    )
+
+    assert processed_reads == {"start_read", "end_read"}
 
 
 def test_analyze_cnv_breakpoints(temp_bam_file, temp_vcf_file, dummy_fasta_file):
@@ -464,3 +639,70 @@ def test_median_insert_size_none_values(temp_vcf_file, dummy_fasta_file):
         Path(empty_bam_path).unlink(missing_ok=True)
         Path(empty_bam_path + ".bai").unlink(missing_ok=True)
         Path(output_vcf_path).unlink(missing_ok=True)
+
+
+def test_analyze_cnv_breakpoints_with_bam_output(temp_bam_file, temp_vcf_file, dummy_fasta_file):
+    """Test that split reads BAM output is written correctly with proper read groups."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".vcf", delete=False) as output_f:
+        output_vcf_path = output_f.name
+
+    with tempfile.NamedTemporaryFile(suffix=".bam", delete=False) as bam_f:
+        output_bam_path = bam_f.name
+
+    try:
+        # Run analysis with BAM output
+        analyze_cnv_breakpoints(
+            bam_file=temp_bam_file,
+            vcf_file=temp_vcf_file,
+            reference_fasta=dummy_fasta_file,
+            cushion=100,
+            output_file=output_vcf_path,
+            output_bam=output_bam_path,
+        )
+
+        # Read and verify output BAM
+        with pysam.AlignmentFile(output_bam_path, "rb") as bam_out:
+            # Check that header has read groups
+            header_dict = bam_out.header.to_dict()
+            assert "RG" in header_dict
+            rg_ids = {rg["ID"] for rg in header_dict["RG"]}
+            # Should have DUP and DEL read groups at minimum
+            assert "DUP" in rg_ids
+            assert "DEL" in rg_ids
+
+            # Collect reads and their read groups
+            reads = list(bam_out)
+            assert len(reads) == 4  # Four reads: 2 primary + 2 supplementary
+
+            # Group reads by query_name
+            reads_by_name = {}
+            for read in reads:
+                if read.query_name not in reads_by_name:
+                    reads_by_name[read.query_name] = []
+                reads_by_name[read.query_name].append(read)
+
+            # Verify we have both read1 and read2
+            assert "read1" in reads_by_name
+            assert "read2" in reads_by_name
+
+            # Verify each read has both primary and supplementary
+            assert len(reads_by_name["read1"]) == 2  # Primary + supplementary
+            assert len(reads_by_name["read2"]) == 2  # Primary + supplementary
+
+            # Verify read groups and flags for each read
+            for read_name, read_list in reads_by_name.items():
+                primary_reads = [r for r in read_list if not r.is_supplementary]
+                supplementary_reads = [r for r in read_list if r.is_supplementary]
+
+                assert len(primary_reads) == 1, f"Expected 1 primary read for {read_name}"
+                assert len(supplementary_reads) == 1, f"Expected 1 supplementary read for {read_name}"
+
+                # Both primary and supplementary should have the same read group
+                primary_rg = primary_reads[0].get_tag("RG")
+                supp_rg = supplementary_reads[0].get_tag("RG")
+                assert primary_rg == supp_rg, f"Read group mismatch for {read_name}"
+                assert primary_rg in ("DUP", "DEL"), f"Invalid read group: {primary_rg}"
+
+    finally:
+        Path(output_vcf_path).unlink(missing_ok=True)
+        Path(output_bam_path).unlink(missing_ok=True)

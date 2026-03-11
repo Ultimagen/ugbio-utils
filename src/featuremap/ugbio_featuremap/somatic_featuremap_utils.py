@@ -1,124 +1,178 @@
-import os
-import tempfile
-from os.path import join as pjoin
+from dataclasses import dataclass
+from enum import Enum
+from pathlib import Path
 
-import pysam
-from simppl.simple_pipeline import SimplePipeline
-from ugbio_core.vcf_utils import VcfUtils
+from ugbio_core.logger import logger
+from ugbio_core.vcf_utils import VcfInfoField
 
-
-def _create_variant_bed(merged_vcf, bed_file):
-    """Create a BED file from VCF variants."""
-    sp = SimplePipeline(0, 1)
-    cmd_bcftools = f"bcftools query -f '%CHROM\t%POS0\t%END\n' {merged_vcf}"
-    sp.print_and_run(cmd_bcftools, out=bed_file)
+from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
 
-def _find_closest_tandem_repeats(bed1, bed2, genome_file, output_file):
-    """Find closest tandem repeats for each variant."""
-    sp = SimplePipeline(0, 2)
-    sorted_tandem_repeats_bed = pjoin(os.path.dirname(output_file), "tandem_repeats.sorted.bed")
-    cmd = f"bedtools sort -i {bed2} -g {genome_file}"
-    sp.print_and_run(cmd, out=sorted_tandem_repeats_bed)
-    cmd = f"bedtools closest -D ref -g {genome_file} -a {bed1} -b {sorted_tandem_repeats_bed} | cut -f1,3,5-10"
-    sp.print_and_run(cmd, out=output_file)
+class TandemRepeatFields(Enum):
+    """Tandem Repeat INFO field names."""
+
+    TR_START = "TR_START"
+    TR_END = "TR_END"
+    TR_SEQ = "TR_SEQ"
+    TR_LENGTH = "TR_LENGTH"
+    TR_SEQ_UNIT_LENGTH = "TR_SEQ_UNIT_LENGTH"
+    TR_DISTANCE = "TR_DISTANCE"
 
 
-def _prepare_annotation_files(tmpdir, tr_tsv_file):
-    """Prepare files for VCF annotation."""
-    sp = SimplePipeline(0, 3)
-    sorted_tsv = pjoin(tmpdir, "merged_vcf.tmp.TRdata.sorted.tsv")
-    cmd = f"sort -k1,1 -k2,2n {tr_tsv_file}"
-    sp.print_and_run(cmd, out=sorted_tsv)
+# =============================================================================
+# CONFIGURATIONS
+# =============================================================================
+@dataclass(frozen=True)
+class TandemRepeatConfig:
+    """Configuration for Tandem Repeat INFO fields added to VCF during TR annotation.
 
-    gz_tsv = sorted_tsv + ".gz"
-    cmd = f"bgzip -c {sorted_tsv}"
-    sp.print_and_run(cmd, out=gz_tsv)
-
-    cmd = f"tabix -s 1 -b 2 -e 2 {gz_tsv}"
-    sp.print_and_run(cmd)
-
-    header = pysam.VariantHeader()
-    info_fields = [
-        ("TR_START", "1", "Integer", "Closest tandem Repeat Start"),
-        ("TR_END", "1", "Integer", "Closest Tandem Repeat End"),
-        ("TR_SEQ", "1", "String", "Closest Tandem Repeat Sequence"),
-        ("TR_LENGTH", "1", "Integer", "Closest Tandem Repeat total length"),
-        ("TR_SEQ_UNIT_LENGTH", "1", "Integer", "Closest Tandem Repeat unit length"),
-        ("TR_DISTANCE", "1", "Integer", "Closest Tandem Repeat Distance"),
-    ]
-    for hdr_id, hdr_number, hdr_type, hdr_description in info_fields:
-        header.add_meta(
-            "INFO", items=[("ID", hdr_id), ("Number", hdr_number), ("Type", hdr_type), ("Description", hdr_description)]
-        )
-
-    hdr_file = pjoin(tmpdir, "tr_hdr.txt")
-    # Write the header into a plain text file
-    with open(hdr_file, "w") as f:
-        lines = str(header).splitlines()
-        for line in lines[1:-1]:
-            f.write(line + "\n")
-
-    return gz_tsv, hdr_file
-
-
-def integrate_tandem_repeat_features(merged_vcf, ref_tr_file, genome_file, out_dir):
+    Use TandemRepeatFields enum for field name access.
+    This class provides VCF metadata (type, description) and helper methods.
     """
-    Integrate tandem repeat features into a VCF file.
 
-    This function annotates variants in a VCF file with information about nearby tandem repeats,
-    including their start/end positions, sequences, distances, and lengths.
+    info_fields: tuple[VcfInfoField, ...] = (
+        VcfInfoField(TandemRepeatFields.TR_START.value, "1", "Integer", "Closest tandem Repeat Start"),
+        VcfInfoField(TandemRepeatFields.TR_END.value, "1", "Integer", "Closest Tandem Repeat End"),
+        VcfInfoField(TandemRepeatFields.TR_SEQ.value, "1", "String", "Closest Tandem Repeat Sequence"),
+        VcfInfoField(TandemRepeatFields.TR_LENGTH.value, "1", "Integer", "Closest Tandem Repeat total length"),
+        VcfInfoField(TandemRepeatFields.TR_SEQ_UNIT_LENGTH.value, "1", "Integer", "Closest Tandem Repeat unit length"),
+        VcfInfoField(TandemRepeatFields.TR_DISTANCE.value, "1", "Integer", "Closest Tandem Repeat Distance"),
+    )
 
-    Parameters
-    ----------
-    merged_vcf : str
-        Path to the input VCF file (gzipped) containing variants to be annotated.
-    ref_tr_file : str
-        Path to the reference tandem repeat BED file containing tandem repeat regions.
-    genome_file : str
-        Path to the reference genome FASTA index file (.fai).
-    out_dir : str
-        Output directory where the annotated VCF file and temporary files will be written.
+    def get_bcftools_annotate_columns(self) -> str:
+        """Return the columns string for bcftools annotate.
 
-    Returns
-    -------
-    str
-        Path to the output VCF file with tandem repeat annotations. The output file will be
-        gzipped and indexed, with '.tr_info.vcf.gz' suffix replacing the original '.vcf.gz'.
+        Format: CHROM,POS,INFO/TR_START,INFO/TR_END,...
+        """
+        info_cols = ",".join(f"INFO/{field.value}" for field in TandemRepeatFields)
+        return f"{FeatureMapFields.CHROM.value},{FeatureMapFields.POS.value},{info_cols}"
 
-    Notes
-    -----
-    The function adds the following INFO fields to the VCF:
-    - TR_START: Start position of the closest tandem repeat
-    - TR_END: End position of the closest tandem repeat
-    - TR_SEQ: Sequence of the tandem repeat unit
-    - TR_LENGTH: Total length of the tandem repeat region
-    - TR_SEQ_UNIT_LENGTH: Length of the tandem repeat unit
-    - TR_DISTANCE: Distance from variant to the closest tandem repeat
+
+@dataclass(frozen=True)
+class PileupConfig:
+    """Configuration for PILEUP-based ref/nonref calculations.
+
+    PILEUP position mapping: L2→ref0, L1→ref1, C→ref2, R1→ref3, R2→ref4
+    Reference column mapping: L2→X_PREV2, L1→X_PREV1, C→REF, R1→X_NEXT1, R2→X_NEXT2
     """
-    with tempfile.TemporaryDirectory(dir=out_dir) as tmpdir:
-        # Create variant BED file
-        bed1 = pjoin(tmpdir, "merged_vcf.tmp.bed")
-        _create_variant_bed(merged_vcf, bed1)
 
-        # Find closest tandem repeats
-        bed1_with_closest_tr_tsv = pjoin(tmpdir, "merged_vcf.tmp.TRdata.tsv")
-        _find_closest_tandem_repeats(bed1, ref_tr_file, genome_file, bed1_with_closest_tr_tsv)
+    positions: tuple[str, ...] = ("L2", "L1", "C", "R1", "R2")
+    bases: tuple[str, ...] = ("A", "C", "G", "T")
+    indels: tuple[str, ...] = ("DEL", "INS")
 
-        # Prepare annotation files
-        gz_tsv, hdr_file = _prepare_annotation_files(tmpdir, bed1_with_closest_tr_tsv)
+    def get_reference_column(self, position: str) -> str:
+        """Get the reference column name for a given position.
 
-        # Annotate VCF
-        merged_vcf_with_tr_info = pjoin(out_dir, os.path.basename(merged_vcf).replace(".vcf.gz", ".tr_info.vcf.gz"))
+        Parameters
+        ----------
+        position : str
+            PILEUP position (L2, L1, C, R1, or R2).
 
-        # Use VcfUtils to annotate the VCF
-        vcf_utils = VcfUtils()
-        vcf_utils.annotate_vcf(
-            input_vcf=merged_vcf,
-            output_vcf=merged_vcf_with_tr_info,
-            annotation_file=gz_tsv,
-            header_file=hdr_file,
-            columns="CHROM,POS,INFO/TR_START,INFO/TR_END,INFO/TR_SEQ,INFO/TR_LENGTH,INFO/TR_SEQ_UNIT_LENGTH,INFO/TR_DISTANCE",
-        )
+        Returns
+        -------
+        str
+            Reference column name (X_PREV2, X_PREV1, REF, X_NEXT1, or X_NEXT2).
 
-    return merged_vcf_with_tr_info
+        Raises
+        ------
+        ValueError
+            If position is not recognized.
+        """
+        position_to_ref_col = {
+            "L2": FeatureMapFields.X_PREV2.value,
+            "L1": FeatureMapFields.X_PREV1.value,
+            "C": FeatureMapFields.REF.value,
+            "R1": FeatureMapFields.X_NEXT1.value,
+            "R2": FeatureMapFields.X_NEXT2.value,
+        }
+        if position not in position_to_ref_col:
+            raise ValueError(f"Unknown position: {position}. Expected one of {self.positions}")
+        return position_to_ref_col[position]
+
+    def get_column_name(self, element: str, position: str, sample_suffix: str) -> str:
+        """Get the full PILEUP column name."""
+        return f"PILEUP_{element}_{position}{sample_suffix}"
+
+    def get_all_pileup_format_fields(self) -> set[str]:
+        """Get all PILEUP FORMAT field names (without sample suffix)."""
+        fields = set()
+        for pos in self.positions:
+            for base in self.bases:
+                fields.add(f"PILEUP_{base}_{pos}")
+            for indel in self.indels:
+                fields.add(f"PILEUP_{indel}_{pos}")
+        return fields
+
+
+# Singleton instances for use throughout the codebase
+TR_CONFIG = TandemRepeatConfig()
+PILEUP_CONFIG = PileupConfig()
+
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+_MAX_DEBUG_REGION_LINES = 10
+
+
+def _log_regions_bed_preview(regions_bed_file: Path) -> None:
+    """Log a limited preview of regions BED file for debug."""
+    preview: list[str] = []
+    total = 0
+    with open(regions_bed_file) as f:
+        for line in f:
+            total += 1
+            if len(preview) < _MAX_DEBUG_REGION_LINES:
+                preview.append(line.strip())
+    if preview:
+        msg = f"Regions BED preview (first {len(preview)} of {total} regions):"
+        logger.debug(f"{msg}\n" + "\n".join(preview))
+
+
+# =============================================================================
+# REQUIRED COLUMNS FOR ML INFERENCE
+# These are the columns needed from the VCF to compute the model's expected features.
+# =============================================================================
+
+# INFO fields required for inference (includes TR fields added by annotation step)
+# X_PREV1, X_PREV2, X_NEXT1, X_NEXT2 are needed for ref/nonref calculations
+REQUIRED_INFO_FIELDS: set[str] = {
+    TandemRepeatFields.TR_DISTANCE.value,
+    TandemRepeatFields.TR_LENGTH.value,
+    TandemRepeatFields.TR_SEQ_UNIT_LENGTH.value,
+    FeatureMapFields.X_PREV1.value,
+    FeatureMapFields.X_PREV2.value,
+    FeatureMapFields.X_NEXT1.value,
+    FeatureMapFields.X_NEXT2.value,
+}
+
+# FORMAT fields required for inference (per-sample fields)
+# These are used directly or for deriving aggregated features
+REQUIRED_FORMAT_FIELDS: set[str] = {
+    FeatureMapFields.DP.value,  # Read depth -> t_dp, n_dp
+    FeatureMapFields.DP_FILT.value,  # Read depth of reads that pass filters -> t_dp_filt, n_dp_filt
+    FeatureMapFields.VAF.value,  # Variant allele frequency -> t_vaf, n_vaf
+    FeatureMapFields.RAW_VAF.value,  # Raw VAF -> t_raw_vaf, n_raw_vaf
+    FeatureMapFields.AD.value,  # Allelic depths -> AD_1 for alt_reads
+    FeatureMapFields.MQUAL.value,  # Mapping quality per read -> mean/min/max aggregations
+    FeatureMapFields.SNVQ.value,  # SNV quality per read -> mean/min/max aggregations
+    FeatureMapFields.MAPQ.value,  # Mapping quality (for count_zero -> map0_count)
+    FeatureMapFields.EDIST.value,  # Edit distance -> mean/min/max aggregations
+    FeatureMapFields.RL.value,  # Read length -> mean/min/max aggregations
+    FeatureMapFields.DUP.value,  # Duplicate flag -> count_duplicate, count_non_duplicate
+    FeatureMapFields.REV.value,  # Reverse strand flag -> reverse_count, forward_count
+    FeatureMapFields.FILT.value,  # Filter flag -> pass_alt_reads (FILT count non-zero)
+    FeatureMapFields.SCST.value,  # Soft clip start -> scst_num_reads (count non-zero)
+    FeatureMapFields.SCED.value,  # Soft clip end -> sced_num_reads (count non-zero)
+    # PILEUP columns for ref0-4 / nonref0-4 calculations
+    *PILEUP_CONFIG.get_all_pileup_format_fields(),
+}
+
+# Sample prefixes for tumor (index 0) and normal (index 1)
+TUMOR_PREFIX = "t_"
+NORMAL_PREFIX = "n_"
+
+# XGBoost probability INFO field definition
+XGB_PROBA_INFO_FIELD = VcfInfoField(
+    FeatureMapFields.XGB_PROBA.value, "1", "Float", "XGBoost model predicted probability"
+)

@@ -18,6 +18,7 @@ class FeatureMapFields(Enum):
     QUAL = QUAL.upper()
     FILTER = FILTER.upper()
     ID = "ID"
+    XGB_PROBA = "XGB_PROBA"
     SAMPLE = "SAMPLE"
     X_ALT = "X_ALT"
     X_PREV1 = "X_PREV1"
@@ -51,6 +52,7 @@ class FeatureMapFields(Enum):
     MAPQ = "MAPQ"  # mapping quality of reads supporting the variant
     SCST = "SCST"  # soft clip start
     SCED = "SCED"  # soft clip end
+    AD = "AD"  # allelic depths
 
 
 class FeatureMapFilters(Enum):
