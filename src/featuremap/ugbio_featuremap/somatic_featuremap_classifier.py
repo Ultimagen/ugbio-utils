@@ -620,7 +620,7 @@ def annotate_and_classify_vcf(
             .then(pl.lit(FeatureMapFilters.PASS.value))
             .otherwise(pl.lit(FeatureMapFilters.LOW_QUAL.value))
             .alias("FILTER"),
-            (pl.lit(f"{FeatureMapFields.XGB_PROBA.value}=") + pl.col(xgb_col).cast(pl.Utf8)).alias(
+            (pl.lit(f"{FeatureMapFields.XGB_PROBA.value}=") + pl.col(xgb_col).round(3).cast(pl.Utf8)).alias(
                 VcfMetaType.INFO.value
             ),
             pl.lit(FeatureMapFields.GT.value).alias(VcfMetaType.FORMAT.value),
