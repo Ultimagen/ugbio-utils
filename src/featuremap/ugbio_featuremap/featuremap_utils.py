@@ -53,6 +53,7 @@ class FeatureMapFields(Enum):
     SCST = "SCST"  # soft clip start
     SCED = "SCED"  # soft clip end
     AD = "AD"  # allelic depths
+    GT = "GT"
 
 
 class FeatureMapFilters(Enum):

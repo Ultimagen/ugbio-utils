@@ -10,7 +10,7 @@ import pytest
 from conftest import NORMAL_SAMPLE, TUMOR_SAMPLE
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.somatic_featuremap_classifier import (
-    _get_xgb_proba_bcftools_columns,
+    _get_classification_bcftools_columns,
     aggregated_df_post_processing,
     calculate_ref_nonref_columns,
     filter_and_annotate_tr,
@@ -518,14 +518,14 @@ class TestRunClassifier:
         assert len(missing) == 0, f"DataFrame missing model features: {sorted(missing)}"
 
 
-class TestXgbProbaBcftoolsColumns:
+class TestClassificationBcftoolsColumns:
     """Test VCF annotation helper functions."""
 
-    def test_get_xgb_proba_bcftools_columns_format(self):
-        """Column string should follow bcftools annotate format."""
-        columns = _get_xgb_proba_bcftools_columns()
+    def test_get_classification_bcftools_columns_format(self):
+        """Column string should follow bcftools annotate format with FILTER and GT."""
+        columns = _get_classification_bcftools_columns()
 
-        assert columns == "CHROM,POS,REF,ALT,INFO/XGB_PROBA"
+        assert columns == "INFO/XGB_PROBA,FILTER,FORMAT/GT"
 
 
 class TestFilterStringValidation:
