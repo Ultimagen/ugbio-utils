@@ -19,37 +19,43 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 
-export UV_LINK_MODE=copy
+# Use "${RUN}" locally, call commands directly inside Docker
+if command -v uv &>/dev/null; then
+  export UV_LINK_MODE=copy
+  RUN="uv run"
+else
+  RUN=""
+fi
 
-# ── Paths ──────────────────────────────────────────────────────────
-WORKDIR="/data/Runs/perchik/ppmseq_data/srsnv_training_workspace"
-INPUTS="${WORKDIR}/inputs"
-OUTPUT="${WORKDIR}/output/e2e_dnn"
+# ── Paths (override via env vars for Docker / different datasets) ──
+WORKDIR="${WORKDIR:-/data/Runs/perchik/ppmseq_data/srsnv_training_workspace}"
+INPUTS="${INPUTS:-${WORKDIR}/inputs}"
+OUTPUT="${OUTPUT:-${WORKDIR}/output/e2e_dnn}"
 
-SOURCE_CRAM="${INPUTS}/source.cram"
-POS_PARQUET="${INPUTS}/positive.parquet"
-NEG_PARQUET="${INPUTS}/negative.parquet"
-TRAINING_REGIONS="${INPUTS}/training_regions.interval_list.gz"
-STATS_POS="${INPUTS}/stats_positive.json"
-STATS_NEG="${INPUTS}/stats_negative.json"
-STATS_RAW="${INPUTS}/stats_featuremap.json"
-MEAN_COVERAGE=112
+SOURCE_CRAM="${SOURCE_CRAM:-${INPUTS}/source.cram}"
+POS_PARQUET="${POS_PARQUET:-${INPUTS}/positive.parquet}"
+NEG_PARQUET="${NEG_PARQUET:-${INPUTS}/negative.parquet}"
+TRAINING_REGIONS="${TRAINING_REGIONS:-${INPUTS}/training_regions.interval_list.gz}"
+STATS_POS="${STATS_POS:-${INPUTS}/stats_positive.json}"
+STATS_NEG="${STATS_NEG:-${INPUTS}/stats_negative.json}"
+STATS_RAW="${STATS_RAW:-${INPUTS}/stats_featuremap.json}"
+MEAN_COVERAGE="${MEAN_COVERAGE:-112}"
 
-PRETRAINED_CKPT="${WORKDIR}/output/dnn_chrom_val.dnn_model_fold_0_swa.ckpt"
-FEATUREMAP_VCF="/data/Runs/perchik/ppmseq_data/23A03846_bc_90/featuremap_random_sample/23A03846_bc_90.random_sample.featuremap.vcf.gz"
+PRETRAINED_CKPT="${PRETRAINED_CKPT:-${WORKDIR}/output/dnn_chrom_val.dnn_model_fold_0_swa.ckpt}"
+FEATUREMAP_VCF="${FEATUREMAP_VCF:-/data/Runs/perchik/ppmseq_data/23A03846_bc_90/featuremap_random_sample/23A03846_bc_90.random_sample.featuremap.vcf.gz}"
 
 POS_CACHE="${OUTPUT}/tensor_cache/positive_cache"
 NEG_CACHE="${OUTPUT}/tensor_cache/negative_cache"
 FOLDS_DIR="${OUTPUT}/tensor_cache/folds"
 
-K_FOLDS=3
-EPOCHS=1
-BATCH_SIZE=1024
-BASENAME="e2e"
+K_FOLDS="${K_FOLDS:-3}"
+EPOCHS="${EPOCHS:-1}"
+BATCH_SIZE="${BATCH_SIZE:-1024}"
+BASENAME="${BASENAME:-e2e}"
 
 # XGB parquet for report (must be from same sample as DNN training)
-XGB_PARQUET="${WORKDIR}/output/xgb_shared_split.featuremap_df.parquet"
-XGB_METADATA="${WORKDIR}/output/xgb_shared_split.srsnv_metadata.json"
+XGB_PARQUET="${XGB_PARQUET:-${WORKDIR}/output/xgb_shared_split.featuremap_df.parquet}"
+XGB_METADATA="${XGB_METADATA:-${WORKDIR}/output/xgb_shared_split.srsnv_metadata.json}"
 DNN_REPORT_BASENAME="${BASENAME}_dnn"
 
 # ── Skip flags ─────────────────────────────────────────────────────
@@ -83,7 +89,7 @@ if [[ "${SKIP_TENSOR_CACHE}" == "1" ]]; then
   echo "[1/7] Skipping positive tensor cache (SKIP_TENSOR_CACHE=1)"
 else
   echo "[1/7] Building positive tensor cache... ($(elapsed))"
-  uv run cram_to_tensors \
+  ${RUN} cram_to_tensors \
     --cram "${SOURCE_CRAM}" \
     --parquet "${POS_PARQUET}" \
     --label positive \
@@ -99,7 +105,7 @@ if [[ "${SKIP_TENSOR_CACHE}" == "1" ]]; then
   echo "[2/7] Skipping negative tensor cache (SKIP_TENSOR_CACHE=1)"
 else
   echo "[2/7] Building negative tensor cache... ($(elapsed))"
-  uv run cram_to_tensors \
+  ${RUN} cram_to_tensors \
     --cram "${SOURCE_CRAM}" \
     --parquet "${NEG_PARQUET}" \
     --label negative \
@@ -119,7 +125,7 @@ if [[ "${SKIP_COMBINE}" == "1" || "${SKIP_TENSOR_CACHE}" == "1" ]]; then
   fi
 else
   echo "[3/7] Combining caches and splitting into ${K_FOLDS} folds... ($(elapsed))"
-  uv run combine_splits \
+  ${RUN} combine_splits \
     --positive "${POS_CACHE}" \
     --negative "${NEG_CACHE}" \
     --training-regions "${TRAINING_REGIONS}" \
@@ -138,7 +144,7 @@ if [[ "${SKIP_TRAINING}" == "1" ]]; then
 else
   for i in $(seq 0 $((K_FOLDS - 1))); do
     echo "[4/7] Training fold ${i}/${K_FOLDS}... ($(elapsed))"
-    uv run srsnv_dnn_bam_training \
+    ${RUN} srsnv_dnn_bam_training \
       --fold-dir "${FOLDS_DIR}/fold_${i}" \
       --pretrained-checkpoint "${PRETRAINED_CKPT}" \
       --training-regions "${TRAINING_REGIONS}" \
@@ -177,7 +183,7 @@ else
     FOLD_METADATA="${FOLD_METADATA} ${OUTPUT}/${BASENAME}_fold_${i}.srsnv_dnn_metadata.json"
   done
 
-  uv run recalibrate_dnn_folds \
+  ${RUN} recalibrate_dnn_folds \
     --fold-parquets ${FOLD_PARQUETS} \
     --fold-metadata ${FOLD_METADATA} \
     --stats-positive "${STATS_POS}" \
@@ -204,7 +210,7 @@ else
   echo "[6/7] Building ensemble manifest and running inference... ($(elapsed))"
 
   # 6a: Build ensemble manifest from fold metadata + split manifest
-  uv run python3 -c "
+  ${RUN} python3 -c "
 import json
 from pathlib import Path
 
@@ -249,7 +255,7 @@ print(f'Ensemble manifest written: {manifest_path}')
 
   # 6c: Run inference
   echo "  Running DNN inference (backend=${BACKEND})..."
-  uv run dnn_vcf_inference \
+  ${RUN} dnn_vcf_inference \
     --featuremap-vcf "${FEATUREMAP_VCF}" \
     --cram "${SOURCE_CRAM}" \
     --ensemble-manifest "${ENSEMBLE_MANIFEST}" \
@@ -271,7 +277,7 @@ for i in $(seq 0 $((K_FOLDS - 1))); do
   DNN_FOLD_META="${DNN_FOLD_META} ${OUTPUT}/${BASENAME}_fold_${i}.srsnv_dnn_metadata.json"
 done
 
-uv run prepare_dnn_report \
+${RUN} prepare_dnn_report \
   --xgb-parquet "${XGB_PARQUET}" \
   --dnn-parquet "${OUTPUT}/${BASENAME}.featuremap_df.parquet" \
   --xgb-metadata "${XGB_METADATA}" \
@@ -281,7 +287,7 @@ uv run prepare_dnn_report \
   --basename "${DNN_REPORT_BASENAME}"
 
 # 7b: Generate the standard srsnv_report HTML
-uv run srsnv_report \
+${RUN} srsnv_report \
   --featuremap-df "${OUTPUT}/${DNN_REPORT_BASENAME}.featuremap_df.parquet" \
   --srsnv-metadata "${OUTPUT}/${DNN_REPORT_BASENAME}.srsnv_metadata.json" \
   --report-path "${OUTPUT}" \
