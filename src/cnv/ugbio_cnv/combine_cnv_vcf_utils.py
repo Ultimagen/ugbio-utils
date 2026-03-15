@@ -489,7 +489,7 @@ def _verify_unique_ids(vcf_path: str) -> None:
                 seen_ids.add(variant_id)
 
 
-def merge_cnvs_in_vcf(
+def merge_cnvs_in_vcf(  # noqa: PLR0915
     input_vcf: str,
     output_vcf: str,
     distance: int = 1000,
@@ -497,17 +497,43 @@ def merge_cnvs_in_vcf(
     ignore_sv_type: bool = False,
     ignore_filter: bool = True,
     pick_best: bool = False,
+    enable_smoothing: bool = False,
+    max_gap_absolute: int = 50000,
+    gap_scale_fraction: float = 0.05,
+    cipos_threshold: int = 50,
 ) -> None:
     """
     Merge CNV variants in a VCF file that are within a specified distance.
 
-    This function performs a two-stage merge process:
+    This function performs a multi-stage merge process:
+
+    **Standard Mode (enable_smoothing=False):**
     1. Collapse overlapping variants using VcfUtils.collapse_vcf, which groups variants
        within the specified distance into single representative records.
     2. Aggregate INFO fields from collapsed variants using weighted averaging (for means/stdevs),
        max (for quality/support scores), or concatenation (for sources).
     3. Adjust variant boundaries based on the minimum start and maximum end positions
        of all variants in each collapsed group.
+
+    **Smoothing Mode (enable_smoothing=True):**
+    Adds additional post-collapse smoothing using size-scaled gap rules:
+    1. Stage 1: Standard distance-based collapse (as above)
+    2. Stage 1.5: Sort the collapsed VCF
+    3. Stage 2: Identify additional smoothing candidates based on size-scaled gaps
+    4. Stage 3: Merge smoothing candidates
+    5. Stage 4: Final sort
+
+    Size-scaled smoothing uses the formula: gap_threshold = min(max_gap_absolute, gap_scale_fraction × smaller_CNV)
+    This allows large CNVs (>1 Mb) to merge across small gaps (<10 kb) while preventing inappropriate
+    merging of small CNVs.
+
+    Smoothing Criteria (all must be satisfied):
+    - Same chromosome
+    - Same SVTYPE (unless ignore_sv_type=True)
+    - CIPOS exists for both CNVs (crashes if missing - fail-fast validation)
+    - CIPOS length >= cipos_threshold for both CNVs (prevents merging high-confidence breakpoints)
+    - Gap between CNVs <= size-scaled threshold
+    - FILTER status compatible (if ignore_filter=False, only PASS CNVs considered)
 
     Variants are considered for merging based on:
     - Reference distance: Variants within `distance` bp are candidates for merging
@@ -537,6 +563,20 @@ def merge_cnvs_in_vcf(
         are also removed in a second-stage filtering step.
     pick_best : bool, optional
         Whether to pick the best variant (by QUAL) among those being merged (or the first: False), by default False.
+    enable_smoothing : bool, optional
+        Enable size-scaled gap smoothing (BIOIN-2622), by default False.
+        When True, performs additional post-collapse smoothing based on CNV size.
+    max_gap_absolute : int, optional
+        Absolute maximum gap for merging CNVs in smoothing mode (bp), by default 50000.
+        This caps the maximum gap regardless of CNV size.
+    gap_scale_fraction : float, optional
+        Gap as fraction of smaller CNV length for smoothing, by default 0.05 (5%).
+        Formula: gap_threshold = min(max_gap_absolute, gap_scale_fraction × smaller_CNV)
+    cipos_threshold : int, optional
+        Minimum CIPOS length required for smoothing (bp), by default 50.
+        CNVs with CIPOS length < threshold have high-confidence breakpoints and won't be
+        smoothed. CIPOS length = max - min (e.g., (-50, 50) → 100 bp).
+
     Returns
     -------
     None
@@ -546,19 +586,100 @@ def merge_cnvs_in_vcf(
     ------
     ValueError
         If the input VCF contains duplicate variant IDs
+        If enable_smoothing=True and any CNV is missing CIPOS values
+
+    Examples
+    --------
+    >>> # Standard merge (backward compatible)
+    >>> merge_cnvs_in_vcf("input.vcf.gz", "output.vcf.gz", distance=1000)
+
+    >>> # Size-scaled gap smoothing
+    >>> merge_cnvs_in_vcf(
+    ...     "input.vcf.gz",
+    ...     "output.vcf.gz",
+    ...     distance=1000,
+    ...     enable_smoothing=True,
+    ...     max_gap_absolute=50000,
+    ...     gap_scale_fraction=0.05,
+    ...     cipos_threshold=50,
+    ... )
+
+    Notes
+    -----
+    - Smoothing is opt-in via enable_smoothing flag for backward compatibility
+    - CIPOS field is required when enable_smoothing=True
+    - Copy number compatibility is NOT checked - only SVTYPE matters for smoothing
+    - Smoothing operates transparently - no new VCF INFO fields added
     """
     # Validate that all IDs are unique before merging
     logger.info(f"Validating unique variant IDs in {input_vcf}")
     _verify_unique_ids(input_vcf)
 
-    # Stage 1: Collapse overlapping variants
-    output_vcf_collapse = output_vcf + ".collapse.tmp.vcf.gz"
-    temporary_files = [output_vcf_collapse]
-
     vu = VcfUtils()
+
+    # Backward compatibility: Use existing logic if smoothing disabled
+    if not enable_smoothing:
+        logger.info("Using standard merge (enable_smoothing=False)")
+
+        # Stage 1: Collapse overlapping variants
+        output_vcf_collapse = output_vcf + ".collapse.tmp.vcf.gz"
+        temporary_files = [output_vcf_collapse]
+
+        removed_vcf = vu.collapse_vcf(
+            vcf=input_vcf,
+            output_vcf=output_vcf_collapse,
+            refdist=distance,
+            pctseq=0.0,
+            pctsize=0.0,
+            maxsize=-1,
+            ignore_filter=ignore_filter,
+            ignore_sv_type=ignore_sv_type,
+            pick_best=pick_best,
+            erase_removed=False,
+        )
+        temporary_files.extend([str(removed_vcf), output_vcf_collapse])
+
+        # Stage 2: Prepare dataframe and aggregate INFO fields
+        all_fields = sum(CNV_AGGREGATION_ACTIONS.values(), [])
+        update_df = _prepare_update_dataframe(str(removed_vcf), all_fields, ignore_filter=ignore_filter)
+
+        output_vcf_unsorted = output_vcf.replace(".vcf.gz", ".unsorted.vcf.gz")
+        temporary_files.append(output_vcf_unsorted)
+
+        _aggregate_collapsed_vcf(output_vcf_collapse, output_vcf_unsorted, update_df, CNV_AGGREGATION_ACTIONS)
+
+        # Stage 3: Remove overlapping filtered variants (if applicable)
+        if not ignore_filter:
+            output_vcf_unsorted = _remove_overlapping_filtered_variants(
+                input_vcf,
+                output_vcf_unsorted,
+                output_vcf,
+                distance=distance,
+                ignore_sv_type=ignore_sv_type,
+                pick_best=pick_best,
+            )
+            temporary_files.append(output_vcf_unsorted)
+
+        # Stage 4: Sort and cleanup
+        vu.sort_vcf(output_vcf_unsorted, output_vcf)
+        mu.cleanup_temp_files(temporary_files)
+        return
+
+    # Smoothing enabled - multi-stage approach
+    logger.info(
+        f"Using size-scaled gap smoothing (max_gap={max_gap_absolute}bp, "
+        f"scale={gap_scale_fraction}, cipos_threshold={cipos_threshold}bp)"
+    )
+    temporary_files = []
+
+    # Stage 1: Standard distance-based collapse
+    logger.info(f"Stage 1: Distance-based collapse (distance={distance}bp)")
+    output_vcf_distance_merge = output_vcf + ".distance_merge.tmp.vcf.gz"
+    temporary_files.append(output_vcf_distance_merge)
+
     removed_vcf = vu.collapse_vcf(
         vcf=input_vcf,
-        output_vcf=output_vcf_collapse,
+        output_vcf=output_vcf_distance_merge,
         refdist=distance,
         pctseq=0.0,
         pctsize=0.0,
@@ -568,30 +689,77 @@ def merge_cnvs_in_vcf(
         pick_best=pick_best,
         erase_removed=False,
     )
-    temporary_files.extend([str(removed_vcf), output_vcf_collapse])
+    temporary_files.append(str(removed_vcf))
 
-    # Stage 2: Prepare dataframe and aggregate INFO fields
+    # Apply standard aggregation
     all_fields = sum(CNV_AGGREGATION_ACTIONS.values(), [])
     update_df = _prepare_update_dataframe(str(removed_vcf), all_fields, ignore_filter=ignore_filter)
 
-    output_vcf_unsorted = output_vcf.replace(".vcf.gz", ".unsorted.vcf.gz")
-    temporary_files.append(output_vcf_unsorted)
+    output_vcf_after_stage1_unsorted = output_vcf + ".stage1.unsorted.vcf.gz"
+    temporary_files.append(output_vcf_after_stage1_unsorted)
 
-    _aggregate_collapsed_vcf(output_vcf_collapse, output_vcf_unsorted, update_df, CNV_AGGREGATION_ACTIONS)
+    _aggregate_collapsed_vcf(
+        output_vcf_distance_merge, output_vcf_after_stage1_unsorted, update_df, CNV_AGGREGATION_ACTIONS
+    )
 
-    # Stage 3: Remove overlapping filtered variants (if applicable)
+    # Remove overlapping filtered variants if applicable
     if not ignore_filter:
-        output_vcf_unsorted = _remove_overlapping_filtered_variants(
+        output_vcf_after_stage1_unsorted = _remove_overlapping_filtered_variants(
             input_vcf,
-            output_vcf_unsorted,
+            output_vcf_after_stage1_unsorted,
             output_vcf,
             distance=distance,
             ignore_sv_type=ignore_sv_type,
             pick_best=pick_best,
         )
-        temporary_files.append(output_vcf_unsorted)
+        temporary_files.append(output_vcf_after_stage1_unsorted)
 
-    # Stage 4: Sort and cleanup
+    # Stage 1.5: SORT after collapse (critical for Stage 2)
+    logger.info("Stage 1.5: Sorting collapsed VCF")
+    output_vcf_after_stage1 = output_vcf + ".stage1.sorted.vcf.gz"
+    temporary_files.append(output_vcf_after_stage1)
+    vu.sort_vcf(output_vcf_after_stage1_unsorted, output_vcf_after_stage1)
+
+    # Stage 2: Identify additional smoothing candidates (POST-COLLAPSE)
+    logger.info("Stage 2: Identifying size-scaled gap smoothing candidates")
+    smoothing_candidates = identify_smoothing_candidates(
+        output_vcf_after_stage1,  # Use SORTED merged VCF from Stage 1
+        max_gap_absolute,
+        gap_scale_fraction,
+        ignore_sv_type,
+        ignore_filter,  # Respect FILTER tags
+        cipos_threshold,  # Breakpoint confidence threshold
+    )
+
+    if not smoothing_candidates:
+        # No additional smoothing needed - Stage 1 output is already sorted
+        logger.info("No smoothing candidates found - using Stage 1 output")
+        # Just copy to final output location (no second sort!)
+        import shutil
+
+        shutil.copy(output_vcf_after_stage1, output_vcf)
+        shutil.copy(output_vcf_after_stage1 + ".tbi", output_vcf + ".tbi")
+        mu.cleanup_temp_files(temporary_files)
+        return
+
+    # Stage 3: Apply smoothing (direct merge of candidates)
+    logger.info(f"Stage 3: Applying smoothing to {len(smoothing_candidates)} candidate pairs")
+    # Group candidates into connected components (A-B, B-C → A-B-C is one group)
+    smoothing_groups = _group_candidates_transitively(smoothing_candidates)
+
+    # Manually merge each group using existing aggregation logic
+    output_vcf_unsorted = output_vcf + ".smoothed.unsorted.vcf.gz"
+    temporary_files.append(output_vcf_unsorted)
+
+    _apply_smoothing_merges(
+        output_vcf_after_stage1,
+        output_vcf_unsorted,
+        smoothing_groups,
+        CNV_AGGREGATION_ACTIONS,
+    )
+
+    # Stage 4: Final sort and cleanup
+    logger.info("Stage 4: Final sort")
     vu.sort_vcf(output_vcf_unsorted, output_vcf)
     mu.cleanup_temp_files(temporary_files)
 
@@ -778,3 +946,475 @@ def _value_aggregator(
         _aggregate_set(record, field, values)
     else:
         raise ValueError(f"Unsupported aggregation action: {action}")
+
+
+def calculate_size_scaled_gap_threshold(
+    cnv1_length: int,
+    cnv2_length: int,
+    max_gap_absolute: int,
+    gap_scale_fraction: float,
+) -> int:
+    """
+    Calculate size-scaled maximum gap between two CNVs for smoothing.
+
+    This function implements the size-scaled gap rule for CNV smoothing, which allows
+    larger CNVs to be merged across larger gaps while preventing inappropriate merging
+    of smaller CNVs.
+
+    Formula: min(max_gap_absolute, gap_scale_fraction × min(L1, L2))
+
+    The threshold is based on the smaller of the two CNVs to avoid merging small CNVs
+    separated by large gaps that would be inappropriate for their size scale.
+
+    Parameters
+    ----------
+    cnv1_length : int
+        Length of the first CNV in base pairs
+    cnv2_length : int
+        Length of the second CNV in base pairs
+    max_gap_absolute : int
+        Absolute maximum gap allowed regardless of CNV size (cap), in base pairs
+    gap_scale_fraction : float
+        Fraction of the smaller CNV length to use as the gap threshold (e.g., 0.05 for 5%)
+
+    Returns
+    -------
+    int
+        Maximum gap threshold in base pairs
+
+    Examples
+    --------
+    >>> # Two 2 Mb CNVs - hits absolute cap
+    >>> calculate_size_scaled_gap_threshold(2_000_000, 2_000_000, 50_000, 0.05)
+    50000
+
+    >>> # Two 20 kb CNVs - uses 5% of smaller CNV
+    >>> calculate_size_scaled_gap_threshold(20_000, 20_000, 50_000, 0.05)
+    1000
+
+    >>> # Mixed sizes (1 Mb and 20 kb) - uses smaller CNV
+    >>> calculate_size_scaled_gap_threshold(1_000_000, 20_000, 50_000, 0.05)
+    1000
+
+    >>> # Very small CNVs
+    >>> calculate_size_scaled_gap_threshold(1_000, 1_000, 50_000, 0.05)
+    50
+    """
+    smaller_length = min(cnv1_length, cnv2_length)
+    scaled_gap = int(gap_scale_fraction * smaller_length)
+    return min(max_gap_absolute, scaled_gap)
+
+
+def identify_smoothing_candidates(  # noqa: PLR0912, PLR0915, C901
+    vcf_path: str,
+    max_gap_absolute: int,
+    gap_scale_fraction: float,
+    ignore_sv_type: bool,  # noqa: FBT001
+    ignore_filter: bool,  # noqa: FBT001
+    cipos_threshold: int,
+) -> set[tuple[str, str]]:
+    """
+    Identify pairs of CNVs that should be merged based on size-scaled gap criteria.
+
+    This function is called AFTER standard distance-based merge AND sorting to identify
+    additional CNV pairs that should be merged based on size-scaled gap rules. It iterates
+    through adjacent CNV pairs in the sorted VCF and checks if they meet the smoothing criteria.
+
+    IMPORTANT: Assumes vcf_path is already sorted by chromosome and position.
+
+    Smoothing Criteria (all must be satisfied):
+    1. Same chromosome
+    2. Same SVTYPE (unless ignore_sv_type=True)
+    3. CIPOS exists for both CNVs (crashes if missing - fail-fast validation)
+    4. CIPOS length >= cipos_threshold for both CNVs (prevents merging high-confidence breakpoints)
+    5. Gap between CNVs <= size-scaled threshold
+    6. FILTER status compatible (if ignore_filter=False, only PASS CNVs considered)
+
+    Parameters
+    ----------
+    vcf_path : str
+        Path to VCF file (MUST be sorted by chromosome and position)
+    max_gap_absolute : int
+        Absolute maximum gap for merging CNVs (bp), used as cap in size-scaled formula
+    gap_scale_fraction : float
+        Gap as fraction of smaller CNV length (e.g., 0.05 for 5%)
+    ignore_sv_type : bool
+        If False, only CNVs with the same SVTYPE are considered for merging
+    ignore_filter : bool
+        If False, only PASS CNVs are considered for smoothing.
+        Filtered CNVs are excluded from smoothing candidates.
+    cipos_threshold : int
+        Minimum CIPOS length required for merging (bp). If either CNV has
+        CIPOS length < threshold, the pair won't be merged due to high-confidence
+        breakpoint. CIPOS length = max - min (e.g., (-50, 50) → 100 bp).
+
+    Returns
+    -------
+    set[tuple[str, str]]
+        Set of (cnv1_id, cnv2_id) tuples representing CNV pairs to merge.
+        Empty set if no candidates found.
+
+    Raises
+    ------
+    ValueError
+        If any CNV is missing valid CIPOS values (CIPOS is required for smoothing)
+
+    Examples
+    --------
+    >>> # Large CNVs with small gap
+    >>> candidates = identify_smoothing_candidates(
+    ...     "large_cnvs.vcf.gz",
+    ...     max_gap_absolute=50_000,
+    ...     gap_scale_fraction=0.05,
+    ...     ignore_sv_type=False,
+    ...     ignore_filter=True,
+    ...     cipos_threshold=50,
+    ... )
+    >>> # Returns pairs like: {('del1', 'del2'), ('dup3', 'dup4')}
+
+    Notes
+    -----
+    - The function assumes the input VCF is already sorted. If unsorted, adjacent CNVs
+      in the genome may not be adjacent in the iteration, causing missed smoothing.
+    - Copy number compatibility is NOT checked - only SVTYPE matters.
+    - CIPOS validation is strict - missing CIPOS values will raise ValueError.
+    """
+    candidates = set()
+
+    # Load VCF as DataFrame (assumes already sorted)
+    # Must explicitly request CIPOS field
+    df = vcftools.get_vcf_df(vcf_path, custom_info_fields=["CIPOS", "SVLEN", "SVTYPE"])  # noqa: PD901
+
+    if df.empty:
+        logger.info("No CNVs found in VCF for smoothing")
+        return candidates
+
+    # Filter by FILTER status if ignore_filter=False
+    if not ignore_filter:
+        # Only consider PASS variants for smoothing
+        # Treat NaN, empty string, ".", and "PASS" as not filtered
+        pass_mask = pd.isna(df["filter"]) | (df["filter"] == "PASS") | (df["filter"] == "") | (df["filter"] == ".")
+        df = df[pass_mask].copy()  # noqa: PD901
+        logger.info(f"Smoothing with ignore_filter=False: considering {len(df)} PASS CNVs")
+
+    if len(df) < 2:  # noqa: PLR2004
+        logger.info(f"Only {len(df)} CNV(s) after filtering - no smoothing candidates")
+        return candidates
+
+    # Iterate through adjacent pairs
+    for i in range(len(df) - 1):
+        cnv1 = df.iloc[i]
+        cnv2 = df.iloc[i + 1]
+
+        # Check same chromosome
+        if cnv1["chrom"] != cnv2["chrom"]:
+            continue
+
+        # Check same SVTYPE (unless ignored)
+        if not ignore_sv_type:
+            svtype1 = cnv1.get("svtype")
+            svtype2 = cnv2.get("svtype")
+            if svtype1 != svtype2:
+                logger.debug(
+                    f"Skipping smoothing: Different SVTYPE {cnv1['id']} ({svtype1}) vs {cnv2['id']} ({svtype2})"
+                )
+                continue
+
+        # Validate CIPOS exists (REQUIRED - crash if missing)
+        cipos1 = cnv1.get("cipos", None)
+        cipos2 = cnv2.get("cipos", None)
+
+        if cipos1 is None or not isinstance(cipos1, tuple) or len(cipos1) != 2:  # noqa: PLR2004
+            raise ValueError(
+                f"CNV {cnv1['id']} is missing valid CIPOS values. "
+                f"CIPOS is required for smoothing (found: {cipos1}). "
+                f"Ensure all CNVs have CIPOS INFO field defined."
+            )
+        if cipos2 is None or not isinstance(cipos2, tuple) or len(cipos2) != 2:  # noqa: PLR2004
+            raise ValueError(
+                f"CNV {cnv2['id']} is missing valid CIPOS values. "
+                f"CIPOS is required for smoothing (found: {cipos2}). "
+                f"Ensure all CNVs have CIPOS INFO field defined."
+            )
+
+        # Check CIPOS confidence - if high confidence breakpoints, don't merge
+        has_high_confidence_breakpoint = False
+        for cnv_id, cipos in [(cnv1["id"], cipos1), (cnv2["id"], cipos2)]:
+            cipos_length = abs(cipos[1] - cipos[0])
+            if cipos_length < cipos_threshold:
+                logger.debug(
+                    f"Skipping smoothing: High-confidence breakpoint {cnv_id} "
+                    f"CIPOS={cipos} (length={cipos_length} < {cipos_threshold})"
+                )
+                has_high_confidence_breakpoint = True
+                break
+
+        if has_high_confidence_breakpoint:
+            continue
+
+        # Calculate gap (only reached if no high-confidence breakpoints and CIPOS validation passed)
+        # Extract SVLEN from tuple format
+        cnv1_len = cnv1["svlen"][0] if isinstance(cnv1["svlen"], tuple) else cnv1["svlen"]
+        cnv2_len = cnv2["svlen"][0] if isinstance(cnv2["svlen"], tuple) else cnv2["svlen"]
+
+        cnv1_end = cnv1["pos"] + cnv1_len
+        gap = cnv2["pos"] - cnv1_end
+
+        if gap < 0:
+            # Overlapping CNVs - should have been caught by Stage 1, skip
+            logger.debug(f"Overlapping CNVs {cnv1['id']}-{cnv2['id']} in post-collapse, skipping")
+            continue
+
+        if gap == 0:
+            # Adjacent with no gap - always smooth if compatible
+            candidates.add((cnv1["id"], cnv2["id"]))
+            logger.info(f"Smoothing adjacent CNVs: {cnv1['id']} - {cnv2['id']} (gap=0)")
+            continue
+
+        # Calculate size-scaled threshold
+        max_gap = calculate_size_scaled_gap_threshold(cnv1_len, cnv2_len, max_gap_absolute, gap_scale_fraction)
+
+        # Check if within size-scaled threshold
+        if gap <= max_gap:
+            candidates.add((cnv1["id"], cnv2["id"]))
+            logger.info(
+                f"Smoothing candidate: {cnv1['id']} - {cnv2['id']} "
+                f"(gap={gap}bp, threshold={max_gap}bp, CNV_sizes={cnv1_len}bp,{cnv2_len}bp)"
+            )
+
+    logger.info(f"Identified {len(candidates)} smoothing candidate pairs")
+    return candidates
+
+
+def _group_candidates_transitively(candidates: set[tuple[str, str]]) -> list[set[str]]:
+    """
+    Group candidate pairs into connected components using depth-first search.
+
+    If (A, B) and (B, C) are candidates, they form a connected component {A, B, C}
+    that should be merged as a single group. This function identifies all such
+    transitive relationships using a graph traversal approach.
+
+    Parameters
+    ----------
+    candidates : set[tuple[str, str]]
+        Set of CNV ID pairs that are candidates for merging
+
+    Returns
+    -------
+    list[set[str]]
+        List of groups, where each group is a set of CNV IDs to merge together.
+        Empty list if no candidates provided.
+
+    Examples
+    --------
+    >>> # Simple chain: A-B, B-C → {A, B, C}
+    >>> candidates = {('A', 'B'), ('B', 'C')}
+    >>> groups = _group_candidates_transitively(candidates)
+    >>> assert {'A', 'B', 'C'} in groups
+    >>> assert len(groups) == 1
+
+    >>> # Two separate groups
+    >>> candidates = {('A', 'B'), ('C', 'D')}
+    >>> groups = _group_candidates_transitively(candidates)
+    >>> assert len(groups) == 2
+
+    Notes
+    -----
+    - Uses adjacency list representation and DFS for connected component detection
+    - Time complexity: O(V + E) where V = unique CNV IDs, E = candidate pairs
+    - Space complexity: O(V + E) for adjacency list and visited set
+    """
+    from collections import defaultdict
+
+    if not candidates:
+        return []
+
+    # Build adjacency list from candidate pairs
+    adjacency = defaultdict(set)
+    for id1, id2 in candidates:
+        adjacency[id1].add(id2)
+        adjacency[id2].add(id1)
+
+    # Find connected components using DFS
+    visited = set()
+    groups = []
+
+    for cnv_id in adjacency:
+        if cnv_id in visited:
+            continue
+
+        # DFS to find all connected CNVs
+        group = set()
+        stack = [cnv_id]
+        while stack:
+            current = stack.pop()
+            if current in visited:
+                continue
+            visited.add(current)
+            group.add(current)
+            # Add unvisited neighbors to stack
+            for neighbor in adjacency[current]:
+                if neighbor not in visited:
+                    stack.append(neighbor)
+
+        groups.append(group)
+
+    logger.info(f"Grouped {len(candidates)} candidate pairs into {len(groups)} transitive groups")
+    return groups
+
+
+def _apply_smoothing_merges(
+    input_vcf: str,
+    output_vcf: str,
+    smoothing_groups: list[set[str]],
+    aggregation_actions: dict[str, list[str]],
+) -> None:
+    """
+    Merge CNVs in each smoothing group and write to output VCF.
+
+    For each smoothing group:
+    - Load all CNV records in the group
+    - Merge boundaries (min start, max end)
+    - Aggregate INFO fields using aggregation_actions
+    - Write merged record with the ID of the first CNV in the group
+
+    CNVs not in any group are written unchanged to preserve all variants.
+
+    Parameters
+    ----------
+    input_vcf : str
+        Path to input VCF file (post-Stage 1 collapse, sorted)
+    output_vcf : str
+        Path to output VCF file where smoothed variants will be written
+    smoothing_groups : list[set[str]]
+        List of CNV ID groups to merge, each group is a set of CNV IDs
+    aggregation_actions : dict[str, list[str]]
+        Dictionary mapping aggregation action to list of INFO field names
+        (e.g., {"weighted_avg": ["CopyNumber"], "max": ["TREE_SCORE"]})
+
+    Notes
+    -----
+    - Uses existing aggregation logic from CNV_AGGREGATION_ACTIONS
+    - Preserves VCF header from input
+    - CNVs are merged in the order they appear in the input VCF
+    - The first CNV ID in each group (by file order) is used for the merged record ID
+    """
+    # Create ID-to-group mapping for fast lookup
+    id_to_group = {}
+    for group in smoothing_groups:
+        for cnv_id in group:
+            id_to_group[cnv_id] = group
+
+    # Track which groups have been processed
+    processed_groups = set()
+
+    with pysam.VariantFile(input_vcf) as vcf_in:
+        header = vcf_in.header
+
+        with pysam.VariantFile(output_vcf, "w", header=header) as vcf_out:
+            # Collect all records by ID for grouping
+            all_records = {}
+            for record in vcf_in:
+                all_records[record.id] = record
+
+            # Process records in input order
+            for record_id, record in all_records.items():
+                # Check if this record is part of a smoothing group
+                if record_id in id_to_group:
+                    group = id_to_group[record_id]
+                    group_key = frozenset(group)
+
+                    # Only process each group once (first CNV in group wins)
+                    if group_key in processed_groups:
+                        continue
+                    processed_groups.add(group_key)
+
+                    # Collect all records in the group
+                    group_records = [all_records[cnv_id] for cnv_id in sorted(group) if cnv_id in all_records]
+
+                    if len(group_records) == 1:
+                        # Single CNV in group - write unchanged
+                        vcf_out.write(group_records[0])
+                        continue
+
+                    # Merge the group
+                    merged_record = _merge_cnv_group(group_records, header, aggregation_actions)
+                    vcf_out.write(merged_record)
+
+                else:
+                    # Not in any group - write unchanged
+                    vcf_out.write(record)
+
+    logger.info(f"Applied smoothing: merged {len(smoothing_groups)} groups")
+
+
+def _merge_cnv_group(
+    records: list[pysam.VariantRecord],
+    header: pysam.VariantHeader,
+    aggregation_actions: dict[str, list[str]],
+) -> pysam.VariantRecord:
+    """
+    Merge a group of CNV records into a single record.
+
+    Parameters
+    ----------
+    records : list[pysam.VariantRecord]
+        List of CNV records to merge (sorted by position)
+    header : pysam.VariantHeader
+        VCF header for creating new record
+    aggregation_actions : dict[str, list[str]]
+        Dictionary mapping aggregation action to list of INFO field names
+
+    Returns
+    -------
+    pysam.VariantRecord
+        Merged CNV record with aggregated INFO fields
+
+    Notes
+    -----
+    - Uses the first record as template
+    - Merges boundaries: min(start), max(stop)
+    - Aggregates INFO fields using specified actions
+    - Updates SVLEN to match new boundaries
+    """
+    if not records:
+        raise ValueError("Cannot merge empty list of records")
+
+    # Use first record as template
+    merged = records[0].copy()
+
+    # Calculate merged boundaries
+    merged.start = min(r.start for r in records)
+    merged.stop = max(r.stop for r in records)
+
+    # Create DataFrame for aggregation (similar to _prepare_update_dataframe)
+    records_data = []
+    for record in records:
+        records_data.append(
+            {
+                "pos": record.start,
+                "end": record.stop,
+                "svlen": record.info.get("SVLEN", (record.stop - record.start,)),
+                **{field.lower(): record.info.get(field) for field in sum(aggregation_actions.values(), [])},
+            }
+        )
+
+    update_df = pd.DataFrame(records_data)
+
+    # Aggregate INFO fields
+    for action, fields in aggregation_actions.items():
+        for field in fields:
+            if field in header.info:
+                _value_aggregator(
+                    merged,
+                    update_df,
+                    field,
+                    action,
+                    header.info[field].number,
+                    header.info[field].type,
+                )
+
+    # Update SVLEN to match new boundaries
+    merged.info["SVLEN"] = (merged.stop - merged.start,)
+
+    return merged

@@ -101,6 +101,35 @@ def __parse_args_merge_records(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=0,
     )
+    parser.add_argument(
+        "--enable_smoothing",
+        help="Enable size-scaled gap CNV smoothing (BIOIN-2622). When enabled, large CNVs can be merged "
+        "across larger gaps while preventing inappropriate merging of small CNVs. Requires CIPOS INFO field.",
+        action="store_true",
+        default=False,
+    )
+    parser.add_argument(
+        "--max_gap_absolute",
+        help="Absolute maximum gap for merging CNVs in smoothing mode (bp). "
+        "This caps the maximum gap regardless of CNV size. Default: 50000 (50kb)",
+        type=int,
+        default=50000,
+    )
+    parser.add_argument(
+        "--gap_scale_fraction",
+        help="Gap as fraction of smaller CNV length for smoothing. "
+        "Formula: gap_threshold = min(max_gap_absolute, gap_scale_fraction × smaller_CNV). "
+        "Default: 0.05 (5%%)",
+        type=float,
+        default=0.05,
+    )
+    parser.add_argument(
+        "--cipos_threshold",
+        help="Minimum CIPOS length for smoothing (bp). CNVs with CIPOS length < threshold have "
+        "high-confidence breakpoints and won't be smoothed. CIPOS length = max - min. Default: 50",
+        type=int,
+        default=50,
+    )
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
@@ -532,6 +561,10 @@ def run(argv: list[str]):
             ignore_filter=False,
             ignore_sv_type=True,
             pick_best=True,
+            enable_smoothing=args.enable_smoothing,
+            max_gap_absolute=args.max_gap_absolute,
+            gap_scale_fraction=args.gap_scale_fraction,
+            cipos_threshold=args.cipos_threshold,
         )
     elif args.tool == "analyze_breakpoint_reads":
         analyze_cnv_breakpoints(
