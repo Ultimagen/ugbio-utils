@@ -810,7 +810,7 @@ def check_pass_variants_affect_hmer(rec, ref_fasta: object, chrom: str, pos: int
 
         for var in nearby_variants:
             # Skip the test record itself
-            if var.pos == rec.pos and var.ref == rec.ref and var.alts == rec.alts:
+            if var.pos == rec.pos and len(var.ref) != len(var.alts[0]):
                 logger.debug(f"  Skipping self: {chrom}:{var.pos+1} (0-base:{var.pos})")
                 continue
 
@@ -1476,15 +1476,35 @@ def _write_results_to_record(
     )
     rec.info["mixture"] = mixture_values
 
-    # Check if all alleles pass the score and mixture bounds
-    all_pass = all(
-        tot_score_values[alt_idx] > score_bound and mixture_values[alt_idx] > mixture_bound
+    # Check which alleles pass the score and mixture bounds (individually)
+    passing_alleles = [
+        alt_idx + 1  # 1-based index (0=ref, 1=first alt, 2=second alt, etc.)
         for alt_idx in range(len(rec.alts))
-    )
+        if tot_score_values[alt_idx] > score_bound and mixture_values[alt_idx] > mixture_bound
+    ]
 
     # Set PASS filter if all alleles pass bounds
-    if all_pass:
+    all_pass = len(passing_alleles) == len(rec.alts)
+    was_pass = "PASS" in rec.filter or len(rec.filter) == 0
+
+    if all_pass and not was_pass:
+        # Only update GT if rec is changing from non-PASS to PASS
         rec.filter.clear()  # Clear any existing filters
+        rec.filter.add("PASS")
+
+        # Update GT field to indicate passing alleles
+        # If 1 allele passes: GT = (0, allele_index), e.g., (0, 1) or (0, 2)
+        # If 2+ alleles pass: GT = (allele_index, allele_index, ...), e.g., (1, 2)
+        if len(passing_alleles) == 1:
+            gt_alleles = tuple([0] + passing_alleles)
+        else:
+            gt_alleles = tuple(passing_alleles)
+
+        for sample_name in rec.header.samples:
+            rec.samples[sample_name]["GT"] = gt_alleles
+    elif all_pass and was_pass:
+        # Already PASS, just ensure PASS filter is set
+        rec.filter.clear()
         rec.filter.add("PASS")
 
 
