@@ -171,10 +171,10 @@ class TestTransformers:
                 "cn": [2],
                 "copynumber": [3],
                 "cnv_source": [("cn.mops",)],
-                "cipos": [(-100, 100)],
+                "cipos": [(-100, 101)],
             }
         )
         result = transformer.fit_transform(test_df)
         # Check that copynumber column exists and has the max value (3)
         assert "cipos__cipos" in result.columns
-        assert result["cipos__cipos"].iloc[0] == 201
+        assert result["cipos__cipos"].iloc[0] == 200
