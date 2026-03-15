@@ -602,6 +602,10 @@ def test_main_merge_records_calls_with_pick_best_true():
                 ignore_filter=False,
                 pick_best=True,
                 ignore_sv_type=True,
+                enable_smoothing=False,
+                max_gap_absolute=50000,
+                gap_scale_fraction=0.05,
+                cipos_threshold=50,
             )
 
 
