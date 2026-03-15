@@ -32,7 +32,7 @@ class BamRefinementResult:
     ci_size: int  # refined_cipos[1] - refined_cipos[0]
 
 
-def _extract_softclip_positions(reads: list[pysam.AlignedSegment]) -> list[int]:
+def _extract_softclip_positions(reads: list[pysam.AlignedSegment]) -> list[int | None]:
     """
     Extract breakpoint positions from soft-clipped regions in reads.
 
@@ -47,8 +47,8 @@ def _extract_softclip_positions(reads: list[pysam.AlignedSegment]) -> list[int]:
 
     Returns
     -------
-    list[int]
-        List of 1-based reference positions where soft clips occur
+    list[int | None]
+        List of 1-based reference positions where soft clips occur (None if nowhere)
     """
     positions = []
     for read in reads:
@@ -103,8 +103,6 @@ def _process_reads_from_window(
         Window end
     cnv_type : str
         CNV type for RG filtering ("DEL" or "DUP")
-    seen_pairs : set[tuple[str, str, int]]
-        Set of seen (read_name, RG, position) tuples for deduplication
 
     Returns
     -------
@@ -132,8 +130,8 @@ def _process_reads_from_window(
         if rg != cnv_type:
             continue
 
-        # Deduplication: track (read_name, RG, position) tuples to distinguish alignments
-        # This allows both primary and supplementary alignments from the same read
+        # Deduplication: track (read_name, RG, flag (the primary and the supplementary alignment
+        # are considered different)) tuples to distinguish alignments
         read_key = (read.query_name, rg, read.flag)
         if read_key in seen_pairs:
             continue
@@ -203,7 +201,8 @@ def estimate_refined_breakpoints(
     original_cipos: tuple[int, int],
 ) -> tuple[int, int, tuple[int, int]] | None:
     """
-    Estimate refined breakpoints using median + max deviation from SA tags.
+    Estimate refined breakpoints using median + max deviation from the primary - supplementary pairs.
+    The primary and the supplementary pairs should be in the left_reads and right_reads (or vice versa)
 
     Only returns refined values if CIPOS interval size < original interval size.
 
@@ -513,15 +512,15 @@ def match_reads(
         Matched reads from right window
     """
 
-    def key(read):
+    def _read_key(read):
         return (read.query_name, read.get_tag("RG"))
 
     matches = []
     right_reads_lookup = {}
     for read in right_reads:
-        right_reads_lookup[key(read)] = right_reads_lookup.get(key(read), []) + [read]
+        right_reads_lookup[_read_key(read)] = right_reads_lookup.get(_read_key(read), []) + [read]
     for read in left_reads:
-        for other_read in right_reads_lookup.get(key(read), []):
+        for other_read in right_reads_lookup.get(_read_key(read), []):
             if other_read.flag != read.flag:
                 matches.append((read, other_read))
     return ([match[0] for match in matches], [match[1] for match in matches])
@@ -591,7 +590,7 @@ def refine_cnv_breakpoints_from_vcf(
         cipos = record.info["CIPOS"]
         original_start = record.pos
         original_end = record.stop
-        original_interval_size = cipos[1] - cipos[0]
+        original_interval_size = cipos[1] - cipos[0] + 1
 
         # Get CNV type from SVTYPE
         svtype = record.info.get("SVTYPE", "").upper()

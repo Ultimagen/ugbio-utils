@@ -2,12 +2,16 @@
 Unit tests for CNV breakpoint refinement module.
 """
 
+import shutil
+
 import pysam
 import pytest
 from ugbio_cnv.breakpoint_refinement import (
+    BamRefinementResult,
     estimate_refined_breakpoints,
     extract_reads_windowed,
     refine_cnv_breakpoints_from_vcf,
+    select_best_bam,
 )
 
 
@@ -28,7 +32,7 @@ def temp_bam_with_rg_tags(tmp_path):
         read1.reference_id = 0
         read1.reference_start = 999900  # Near start boundary (1000000)
         read1.query_sequence = "A" * 100
-        read1.cigarstring = "100M"
+        read1.cigarstring = "50S50M"
         read1.set_tag("RG", "DEL")
         read1.set_tag("SA", "chr1,999950,+,50M50S,60,0;")
         bam.write(read1)
@@ -39,7 +43,7 @@ def temp_bam_with_rg_tags(tmp_path):
         read2.reference_id = 0
         read2.reference_start = 999900
         read2.query_sequence = "A" * 100
-        read2.cigarstring = "100M"
+        read2.cigarstring = "50S50M"
         read2.set_tag("RG", "DUP")
         read2.set_tag("SA", "chr1,999960,+,50M50S,60,0;")
         bam.write(read2)
@@ -51,9 +55,9 @@ def temp_bam_with_rg_tags(tmp_path):
             read.reference_id = 0
             read.reference_start = 999900 + i * 10
             read.query_sequence = "A" * 100
-            read.cigarstring = "100M"
+            read.cigarstring = "50M50S"
             read.set_tag("RG", "DEL")
-            read.set_tag("SA", f"chr1,{999950 + i * 5},+,50M50S,60,0;")
+            read.set_tag("SA", f"chr1,{999950 + i * 5},+,50S50M,60,0;")
             bam.write(read)
 
         # Right window reads
@@ -63,9 +67,9 @@ def temp_bam_with_rg_tags(tmp_path):
             read.reference_id = 0
             read.reference_start = 1002900 + i * 10
             read.query_sequence = "A" * 100
-            read.cigarstring = "100M"
+            read.cigarstring = "50M50S"
             read.set_tag("RG", "DEL")
-            read.set_tag("SA", f"chr1,{1003050 + i * 5},+,50M50S,60,0;")
+            read.set_tag("SA", f"chr1,{1003050 + i * 5},+,50S50M,60,0;")
             bam.write(read)
 
     pysam.index(str(bam_path))
@@ -124,7 +128,6 @@ def test_extract_reads_windowed_multi_bam(temp_bam_with_rg_tags, tmp_path):
     """Test separates reads by BAM file."""
     # Copy BAM to create second file
     bam2_path = tmp_path / "test2.bam"
-    import shutil
 
     shutil.copy(temp_bam_with_rg_tags, bam2_path)
     pysam.index(str(bam2_path))
@@ -305,7 +308,6 @@ def test_refine_cnv_breakpoints_from_vcf_sv_vcf_not_implemented(temp_vcf_with_ci
 
 def test_select_best_bam_smallest_ci():
     """Test select_best_bam chooses BAM with smallest CI."""
-    from ugbio_cnv.breakpoint_refinement import BamRefinementResult, select_best_bam
 
     results = [
         BamRefinementResult(
@@ -345,7 +347,6 @@ def test_select_best_bam_smallest_ci():
 
 def test_select_best_bam_read_count_threshold():
     """Test filters by MIN_READS_PER_BREAKPOINT threshold."""
-    from ugbio_cnv.breakpoint_refinement import BamRefinementResult, select_best_bam
 
     results = [
         BamRefinementResult(
@@ -375,7 +376,6 @@ def test_select_best_bam_read_count_threshold():
 
 def test_select_best_bam_no_qualifying_bams():
     """Test returns None when no BAMs have enough reads."""
-    from ugbio_cnv.breakpoint_refinement import BamRefinementResult, select_best_bam
 
     results = [
         BamRefinementResult(

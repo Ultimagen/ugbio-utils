@@ -396,7 +396,7 @@ def _select_breakpoints_by_cipos_window(
 ) -> tuple[int, int]:
     """Select start/end breakpoints near current boundaries using tightest CIPOS."""
     candidates = update_records[["pos", "end", "cipos"]].copy()
-    candidates.loc[len(candidates)] = [record.start, record.stop, record.info["CIPOS"]]
+    candidates.iloc[len(candidates)] = [record.pos, record.stop, record.info["CIPOS"]]
 
     def _best_breakpoint(df: pd.DataFrame, boundary_col: str, target: int) -> int:
         nearby = df[(df[boundary_col] - target).abs() <= window]
