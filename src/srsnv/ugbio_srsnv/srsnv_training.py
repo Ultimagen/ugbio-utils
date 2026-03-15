@@ -206,9 +206,12 @@ def _count_bases_in_interval_list(path: str) -> int:
     if not os.path.exists(path):
         raise FileNotFoundError(f"File not found: {path}")
 
+    import gzip  # noqa: PLC0415
+
     n_bases = 0
     number_of_fields = 3  # chrom, start, end
-    with open(path, encoding="utf-8") as fh:
+    opener = gzip.open if path.endswith(".gz") else open
+    with opener(path, mode="rt", encoding="utf-8") as fh:
         for line in fh:
             if line.startswith(("@", "#")) or not line.strip():
                 continue

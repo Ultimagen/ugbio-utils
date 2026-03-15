@@ -176,7 +176,7 @@ def recalibrate_snvq(  # noqa: PLR0913
     def _last_non_downsample_rows(stats: dict) -> int:
         for f in reversed(stats["filters"]):
             if f.get("type") != "downsample":
-                return f["rows"]
+                return f.get(TYPE_FUNNEL, f.get(STAT_ROWS))
         raise ValueError("stats JSON has no non-downsample filter entry")
 
     pos_after_filter = _last_non_downsample_rows(pos_stats)
@@ -264,7 +264,7 @@ def _compute_snvq_prefactor(
     def _last_non_downsample_rows(stats: dict) -> int:
         for f in reversed(stats["filters"]):
             if f.get("type") != "downsample":
-                return f["rows"]
+                return f.get(TYPE_FUNNEL, f.get(STAT_ROWS))
         raise ValueError("stats JSON has no non-downsample filter entry")
 
     raw_after_filter = _last_non_downsample_rows(raw_stats)

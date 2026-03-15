@@ -15,7 +15,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/featuremap
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
-FROM nvcr.io/nvidia/tensorrt:25.08-py3
+FROM nvcr.io/nvidia/tensorrt:25.03-py3
 
 ARG OUT_DIR=/tmp/ugbio
 ARG DEBIAN_FRONTEND=noninteractive

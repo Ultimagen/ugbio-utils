@@ -196,12 +196,12 @@ def _recalibrate(args, mqual, labels):
         logger.warning("Stats/coverage not provided; SNVQ = MQUAL (no recalibration)")
         return mqual.copy(), None, None
 
-    from ugbio_srsnv.srsnv_training import count_bases_in_interval_list  # noqa: PLC0415
+    from ugbio_srsnv.srsnv_training import _count_bases_in_interval_list  # noqa: PLC0415
 
     pos_stats = read_filtering_stats_json(args.stats_positive)
     neg_stats = read_filtering_stats_json(args.stats_negative)
     raw_stats = read_filtering_stats_json(args.stats_featuremap)
-    n_bases = count_bases_in_interval_list(args.training_regions, logger_fn=logger.debug)
+    n_bases = _count_bases_in_interval_list(args.training_regions)
     n_neg = int(np.sum(labels == 0))
     prior_train_error = n_neg / len(labels) if len(labels) > 0 else 0.5
 

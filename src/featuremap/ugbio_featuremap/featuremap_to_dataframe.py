@@ -530,7 +530,7 @@ def _cast_expr(col: str, meta: dict) -> pl.Expr:
     # ---- categorical handling -------------------------------------------
     if meta["cat"]:
         cats = meta["cat"] + ([] if "" in meta["cat"] else [""])
-        return base.fill_null(value="").cast(pl.Enum(cats), strict=True).alias(col)
+        return base.fill_null(value="").str.to_uppercase().cast(pl.Enum(cats), strict=True).alias(col)
     elif meta["type"] == "Flag":
         return base.fill_null(value=False).cast(pl.Boolean, strict=True).alias(col)
     elif meta["type"] in _POLARS_DTYPE:

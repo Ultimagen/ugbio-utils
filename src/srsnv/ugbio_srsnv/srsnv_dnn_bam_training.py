@@ -65,11 +65,13 @@ def _cli() -> argparse.Namespace:  # noqa: PLR0915
         "When provided, skips all preprocessing and split computation.",
     )
 
-    # SNVQ recalibration (optional; when all four are supplied, MQUAL→SNVQ
-    # recalibration is applied, matching the XGBoost pipeline)
-    ap.add_argument("--stats-positive", default=None, help="Path to positive filtering-stats JSON")
-    ap.add_argument("--stats-negative", default=None, help="Path to negative filtering-stats JSON")
-    ap.add_argument("--stats-featuremap", default=None, help="Path to raw featuremap filtering-stats JSON")
+    # SNVQ recalibration (optional; when both --stats-file and --mean-coverage
+    # are supplied, MQUAL→SNVQ recalibration is applied, matching the XGBoost pipeline)
+    ap.add_argument(
+        "--stats-file",
+        default=None,
+        help="Unified stats JSON from snvfind -S (enables MQUAL→SNVQ recalibration with --mean-coverage)",
+    )
     ap.add_argument("--mean-coverage", type=float, default=None, help="Mean sequencing coverage")
 
     # Split / CV
@@ -1073,12 +1075,12 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             "auto_scale_batch_size": args.auto_scale_batch_size,
         },
         "split_summary": {
-            "split_mode": split_manifest.get("split_mode", "chromosome_kfold"),
+            "split_mode": split_manifest.get("split_mode", "chromosome_kfold") if split_manifest else None,
             "n_train": int(np.sum(fold_ids == 0)),
             "n_val": int(np.sum(fold_ids == 1)) if single_model_split else None,
             "n_test": int(np.sum(fold_ids == -1)),
-            "val_fraction": split_manifest.get("val_fraction"),
-            "hash_key": split_manifest.get("hash_key"),
+            "val_fraction": split_manifest.get("val_fraction") if split_manifest else None,
+            "hash_key": split_manifest.get("hash_key") if split_manifest else None,
         },
         "preprocess": {
             "cache_dir": preprocess_cache_dir,

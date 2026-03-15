@@ -21,8 +21,8 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 from ugbio_core.logger import logger
-from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
 
+from ugbio_srsnv.srsnv_training import _extract_stats_from_unified
 from ugbio_srsnv.srsnv_utils import MAX_PHRED, prob_to_phred, recalibrate_snvq, recalibrate_snvq_kde
 
 
@@ -114,9 +114,7 @@ def _build_combined_dataframe(
 def recalibrate_dnn_folds(  # noqa: PLR0913
     fold_parquets: list[str],
     fold_metadata_paths: list[str],
-    stats_positive: str,
-    stats_negative: str,
-    stats_featuremap: str,
+    stats_file: str,
     training_regions: str,
     mean_coverage: float,
     output_dir: str,
@@ -132,7 +130,7 @@ def recalibrate_dnn_folds(  # noqa: PLR0913
     tuple[Path, Path]
         Paths to the combined parquet and combined metadata JSON.
     """
-    from ugbio_srsnv.srsnv_training import count_bases_in_interval_list  # noqa: PLC0415
+    from ugbio_srsnv.srsnv_training import _count_bases_in_interval_list  # noqa: PLC0415
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -147,11 +145,10 @@ def recalibrate_dnn_folds(  # noqa: PLR0913
     mqual = prob_to_phred(prob_orig, max_value=MAX_PHRED)
     combined = combined.with_columns(pl.Series("MQUAL", mqual))
 
-    # -- Load stats --
-    pos_stats = read_filtering_stats_json(stats_positive)
-    neg_stats = read_filtering_stats_json(stats_negative)
-    raw_stats = read_filtering_stats_json(stats_featuremap)
-    n_bases = count_bases_in_interval_list(training_regions, logger_fn=logger.debug)
+    # -- Load stats from unified JSON --
+    pos_stats, neg_stats = _extract_stats_from_unified(stats_file)
+    raw_stats = neg_stats
+    n_bases = _count_bases_in_interval_list(training_regions)
 
     labels = combined["label"].to_numpy().astype(bool)
 
@@ -199,8 +196,9 @@ def recalibrate_dnn_folds(  # noqa: PLR0913
         if mp.exists():
             meta = json.loads(mp.read_text())
             meta["quality_recalibration_table"] = shared_lut
-            mp.write_text(json.dumps(meta, indent=2))
-            logger.info("Updated metadata with shared LUT: %s", mp)
+            out_mp = out / mp.name
+            out_mp.write_text(json.dumps(meta, indent=2))
+            logger.info("Updated metadata with shared LUT: %s", out_mp)
         else:
             logger.warning("Metadata file not found, skipping: %s", mp)
 
@@ -237,9 +235,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         required=True,
         help="Per-fold srsnv_dnn_metadata.json files (will be updated in-place with shared LUT)",
     )
-    ap.add_argument("--stats-positive", required=True, help="Path to positive filtering-stats JSON")
-    ap.add_argument("--stats-negative", required=True, help="Path to negative filtering-stats JSON")
-    ap.add_argument("--stats-featuremap", required=True, help="Path to raw featuremap filtering-stats JSON")
+    ap.add_argument("--stats-file", required=True, help="Unified stats JSON from snvfind -S")
     ap.add_argument("--training-regions", required=True, help="Training regions interval list")
     ap.add_argument("--mean-coverage", type=float, required=True, help="Mean sequencing coverage")
     ap.add_argument("--output-dir", required=True, help="Output directory")
@@ -257,9 +253,7 @@ def run(argv: list[str]) -> None:
     parquet_path, meta_path = recalibrate_dnn_folds(
         fold_parquets=args.fold_parquets,
         fold_metadata_paths=args.fold_metadata,
-        stats_positive=args.stats_positive,
-        stats_negative=args.stats_negative,
-        stats_featuremap=args.stats_featuremap,
+        stats_file=args.stats_file,
         training_regions=args.training_regions,
         mean_coverage=args.mean_coverage,
         output_dir=args.output_dir,
