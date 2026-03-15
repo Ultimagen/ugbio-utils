@@ -449,8 +449,8 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
     pl.DataFrame
         DataFrame with renamed columns.
     """
-    logger.debug(f"Renaming columns for model inference")
-    logger.debug(f"Validateing sample names against VCF file")
+    logger.debug("Renaming columns for model inference")
+    logger.debug("Validating sample names against VCF file")
     if vcf_path:
         samples_from_vcf = get_vcf_sample_names(vcf_path)
         if len(samples_from_vcf) != 2:  # noqa: PLR2004
@@ -462,7 +462,7 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
                 f"{tumor_sample}, {normal_sample}"
             )
 
-    logger.debug(f"Building rename map")
+    logger.debug("Building rename map")
     rename_map = {}
 
     # Non-sample columns (no sample suffix)
