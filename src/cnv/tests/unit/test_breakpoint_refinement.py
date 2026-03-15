@@ -182,7 +182,7 @@ def test_estimate_refined_breakpoints_median_calculation():
     result = estimate_refined_breakpoints(
         left_reads=reads_left,
         right_reads=reads_right,
-        original_cipos=(-500, 500),  # Interval size: 1000
+        original_cipos=(-500, 501),  # Interval size: 1000
     )
 
     assert result is not None
@@ -194,7 +194,7 @@ def test_estimate_refined_breakpoints_median_calculation():
 
     # Max deviation from median: max(|999950-999958|, |999965-999958|) = 8
     # CIPOS should be (-8, 8) → interval size: 16
-    assert refined_cipos == (-8, 8)
+    assert refined_cipos == (-8, 9)
 
 
 def test_estimate_refined_breakpoints_no_improvement():
@@ -214,7 +214,7 @@ def test_estimate_refined_breakpoints_no_improvement():
         read.cigartuples = [(0, 100), (4, 50)]  # 100M50S - right soft clip
         reads_right.append(read)
 
-    result = estimate_refined_breakpoints(reads_left, reads_right, original_cipos=(-100, 100))
+    result = estimate_refined_breakpoints(reads_left, reads_right, original_cipos=(-100, 101))
 
     # Should return None because refined interval (±750) > original interval (200)
     assert result is None
@@ -316,7 +316,7 @@ def test_select_best_bam_smallest_ci():
             read_count=5,
             refined_start=1000000,
             refined_end=1003000,
-            refined_cipos=(-20, 20),
+            refined_cipos=(-20, 21),
             ci_size=40,
         ),
         BamRefinementResult(
@@ -325,7 +325,7 @@ def test_select_best_bam_smallest_ci():
             read_count=8,
             refined_start=1000010,
             refined_end=1003010,
-            refined_cipos=(-10, 10),
+            refined_cipos=(-10, 11),
             ci_size=20,  # SMALLEST
         ),
         BamRefinementResult(
@@ -334,7 +334,7 @@ def test_select_best_bam_smallest_ci():
             read_count=4,
             refined_start=1000005,
             refined_end=1003005,
-            refined_cipos=(-30, 30),
+            refined_cipos=(-30, 31),
             ci_size=60,
         ),
     ]
@@ -355,7 +355,7 @@ def test_select_best_bam_read_count_threshold():
             read_count=2,  # Below threshold
             refined_start=1000000,
             refined_end=1003000,
-            refined_cipos=(-5, 5),
+            refined_cipos=(-5, 6),
             ci_size=10,  # Smallest CI but insufficient reads
         ),
         BamRefinementResult(
@@ -364,7 +364,7 @@ def test_select_best_bam_read_count_threshold():
             read_count=5,
             refined_start=1000010,
             refined_end=1003010,
-            refined_cipos=(-15, 15),
+            refined_cipos=(-15, 16),
             ci_size=30,
         ),
     ]
@@ -384,7 +384,7 @@ def test_select_best_bam_no_qualifying_bams():
             read_count=1,
             refined_start=1000000,
             refined_end=1003000,
-            refined_cipos=(-5, 5),
+            refined_cipos=(-5, 6),
             ci_size=10,
         ),
         BamRefinementResult(
@@ -393,7 +393,7 @@ def test_select_best_bam_no_qualifying_bams():
             read_count=2,
             refined_start=1000010,
             refined_end=1003010,
-            refined_cipos=(-10, 10),
+            refined_cipos=(-10, 11),
             ci_size=20,
         ),
     ]

@@ -204,7 +204,7 @@ def modify_features_based_on_vcf_type(  # noqa C901
         return pd.DataFrame(np.array(df["cnv_source"].apply(cnv_source_encode)).reshape(-1, 1), index=df.index)
 
     def cipos_encode_df(df):
-        return pd.DataFrame(df.apply(lambda x: x[1] - x[0] + 1), index=df.index)
+        return pd.DataFrame(df.apply(lambda x: x[1] - x[0] - 1), index=df.index)
 
     default_filler = impute.SimpleImputer(strategy="constant", fill_value=0)
     tuple_filter = preprocessing.FunctionTransformer(tuple_encode_df)

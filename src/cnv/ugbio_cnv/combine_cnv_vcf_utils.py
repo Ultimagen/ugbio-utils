@@ -364,7 +364,7 @@ def _aggregate_record_info_fields(
     header : pysam.VariantHeader
         VCF header containing INFO field definitions
     """
-    record.start, record.stop = _select_breakpoints_by_cipos_window(record, update_records)
+    record.pos, record.stop = _select_breakpoints_by_cipos_window(record, update_records)
 
     # Aggregate INFO fields based on defined actions
     for action, fields in aggregation_actions.items():
@@ -396,11 +396,15 @@ def _select_breakpoints_by_cipos_window(
 ) -> tuple[int, int]:
     """Select start/end breakpoints near current boundaries using tightest CIPOS."""
     candidates = update_records[["pos", "end", "cipos"]].copy()
-    candidates.iloc[len(candidates)] = [record.pos, record.stop, record.info["CIPOS"]]
+
+    candidates = pd.concat(
+        [candidates, pd.DataFrame([[record.pos, record.stop, record.info["CIPOS"]]], columns=["pos", "end", "cipos"])],
+        ignore_index=True,
+    )
 
     def _best_breakpoint(df: pd.DataFrame, boundary_col: str, target: int) -> int:
         nearby = df[(df[boundary_col] - target).abs() <= window]
-        cipos_lengths = nearby["cipos"].apply(lambda x: x[1] - x[0]).astype(float)
+        cipos_lengths = nearby["cipos"].apply(lambda x: x[1] - x[0] - 1).astype(float)
         min_len = cipos_lengths.min()
         tied = nearby[cipos_lengths == min_len]
         if boundary_col == "pos":

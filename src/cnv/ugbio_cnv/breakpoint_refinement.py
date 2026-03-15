@@ -29,7 +29,7 @@ class BamRefinementResult:
     refined_start: int
     refined_end: int
     refined_cipos: tuple[int, int]
-    ci_size: int  # refined_cipos[1] - refined_cipos[0]
+    ci_size: int  # refined_cipos[1] - refined_cipos[0] - 1
 
 
 def _extract_softclip_positions(reads: list[pysam.AlignedSegment]) -> list[int | None]:
@@ -226,7 +226,9 @@ def estimate_refined_breakpoints(
     matching_positions = [
         (left_positions[i], right_positions[i])
         for i in range(len(left_positions))
-        if left_positions[i] is not None and right_positions[i] is not None and left_positions[i] < right_positions[i]
+        if (left_positions[i] is not None)
+        and (right_positions[i] is not None)
+        and (left_positions[i] < right_positions[i])  # type: ignore
     ]
     left_positions = [x[0] for x in matching_positions]
     right_positions = [x[1] for x in matching_positions]
@@ -236,18 +238,18 @@ def estimate_refined_breakpoints(
         return None
 
     # Calculate median and max deviation
-    left_median = round(statistics.median(left_positions))
-    right_median = round(statistics.median(right_positions))
+    left_median = round(statistics.median([x for x in left_positions if x is not None]))
+    right_median = round(statistics.median([x for x in right_positions if x is not None]))
 
-    left_max_dev = max(abs(pos - left_median) for pos in left_positions)
-    right_max_dev = max(abs(pos - right_median) for pos in right_positions)
+    left_max_dev = max(abs(pos - left_median) for pos in left_positions if pos is not None)
+    right_max_dev = max(abs(pos - right_median) for pos in right_positions if pos is not None)
 
     # Refined CIPOS: symmetric (-max_dev, +max_dev)
-    refined_cipos = (-max(left_max_dev, right_max_dev), max(left_max_dev, right_max_dev))
+    refined_cipos = (-max(left_max_dev, right_max_dev), max(left_max_dev, right_max_dev) + 1)
 
     # Only update if refined interval is tighter than original
-    original_interval_size = original_cipos[1] - original_cipos[0]
-    refined_interval_size = refined_cipos[1] - refined_cipos[0]
+    original_interval_size = original_cipos[1] - original_cipos[0] - 1
+    refined_interval_size = refined_cipos[1] - refined_cipos[0] - 1
 
     if refined_interval_size >= original_interval_size:
         return None
@@ -358,7 +360,7 @@ def _process_bam_refinement(
         return None
 
     refined_start, refined_end, refined_cipos = refinement_result
-    ci_size = refined_cipos[1] - refined_cipos[0]
+    ci_size = refined_cipos[1] - refined_cipos[0] - 1
 
     return BamRefinementResult(
         bam_index=bam_idx,
@@ -590,7 +592,7 @@ def refine_cnv_breakpoints_from_vcf(
         cipos = record.info["CIPOS"]
         original_start = record.pos
         original_end = record.stop
-        original_interval_size = cipos[1] - cipos[0] + 1
+        original_interval_size = cipos[1] - cipos[0] - 1
 
         # Get CNV type from SVTYPE
         svtype = record.info.get("SVTYPE", "").upper()
