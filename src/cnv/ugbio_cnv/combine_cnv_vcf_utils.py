@@ -489,7 +489,7 @@ def _verify_unique_ids(vcf_path: str) -> None:
                 seen_ids.add(variant_id)
 
 
-def merge_cnvs_in_vcf(  # noqa: PLR0915
+def merge_cnvs_in_vcf(
     input_vcf: str,
     output_vcf: str,
     distance: int = 1000,
@@ -611,75 +611,28 @@ def merge_cnvs_in_vcf(  # noqa: PLR0915
     - Copy number compatibility is NOT checked - only SVTYPE matters for smoothing
     - Smoothing operates transparently - no new VCF INFO fields added
     """
-    # Validate that all IDs are unique before merging
     logger.info(f"Validating unique variant IDs in {input_vcf}")
     _verify_unique_ids(input_vcf)
 
-    vu = VcfUtils()
-
-    # Backward compatibility: Use existing logic if smoothing disabled
-    if not enable_smoothing:
+    # Log mode selection
+    if enable_smoothing:
+        logger.info(
+            f"Using size-scaled gap smoothing (max_gap={max_gap_absolute}bp, "
+            f"scale={gap_scale_fraction}, cipos_threshold={cipos_threshold}bp)"
+        )
+    else:
         logger.info("Using standard merge (enable_smoothing=False)")
 
-        # Stage 1: Collapse overlapping variants
-        output_vcf_collapse = output_vcf + ".collapse.tmp.vcf.gz"
-        temporary_files = [output_vcf_collapse]
-
-        removed_vcf = vu.collapse_vcf(
-            vcf=input_vcf,
-            output_vcf=output_vcf_collapse,
-            refdist=distance,
-            pctseq=0.0,
-            pctsize=0.0,
-            maxsize=-1,
-            ignore_filter=ignore_filter,
-            ignore_sv_type=ignore_sv_type,
-            pick_best=pick_best,
-            erase_removed=False,
-        )
-        temporary_files.extend([str(removed_vcf), output_vcf_collapse])
-
-        # Stage 2: Prepare dataframe and aggregate INFO fields
-        all_fields = sum(CNV_AGGREGATION_ACTIONS.values(), [])
-        update_df = _prepare_update_dataframe(str(removed_vcf), all_fields, ignore_filter=ignore_filter)
-
-        output_vcf_unsorted = output_vcf.replace(".vcf.gz", ".unsorted.vcf.gz")
-        temporary_files.append(output_vcf_unsorted)
-
-        _aggregate_collapsed_vcf(output_vcf_collapse, output_vcf_unsorted, update_df, CNV_AGGREGATION_ACTIONS)
-
-        # Stage 3: Remove overlapping filtered variants (if applicable)
-        if not ignore_filter:
-            output_vcf_unsorted = _remove_overlapping_filtered_variants(
-                input_vcf,
-                output_vcf_unsorted,
-                output_vcf,
-                distance=distance,
-                ignore_sv_type=ignore_sv_type,
-                pick_best=pick_best,
-            )
-            temporary_files.append(output_vcf_unsorted)
-
-        # Stage 4: Sort and cleanup
-        vu.sort_vcf(output_vcf_unsorted, output_vcf)
-        mu.cleanup_temp_files(temporary_files)
-        return
-
-    # Smoothing enabled - multi-stage approach
-    logger.info(
-        f"Using size-scaled gap smoothing (max_gap={max_gap_absolute}bp, "
-        f"scale={gap_scale_fraction}, cipos_threshold={cipos_threshold}bp)"
-    )
+    # Stage 1: Distance-based collapse and aggregation (common to both modes)
+    vu = VcfUtils()
     temporary_files = []
 
-    # Stage 1: Standard distance-based collapse
-    logger.info(f"Stage 1: Distance-based collapse (distance={distance}bp)")
-    output_vcf_distance_merge = output_vcf + ".distance_merge.tmp.vcf.gz"
-    temporary_files.append(output_vcf_distance_merge)
+    output_vcf_collapse = output_vcf + (".distance_merge.tmp.vcf.gz" if enable_smoothing else ".collapse.tmp.vcf.gz")
+    temporary_files.append(output_vcf_collapse)
 
     removed_vcf = vu.collapse_vcf(
         vcf=input_vcf,
-        output_vcf=output_vcf_distance_merge,
+        output_vcf=output_vcf_collapse,
         refdist=distance,
         pctseq=0.0,
         pctsize=0.0,
@@ -691,76 +644,66 @@ def merge_cnvs_in_vcf(  # noqa: PLR0915
     )
     temporary_files.append(str(removed_vcf))
 
-    # Apply standard aggregation
+    # Stage 2: Aggregate INFO fields (common to both modes)
     all_fields = sum(CNV_AGGREGATION_ACTIONS.values(), [])
     update_df = _prepare_update_dataframe(str(removed_vcf), all_fields, ignore_filter=ignore_filter)
 
-    output_vcf_after_stage1_unsorted = output_vcf + ".stage1.unsorted.vcf.gz"
-    temporary_files.append(output_vcf_after_stage1_unsorted)
+    output_vcf_unsorted = output_vcf.replace(".vcf.gz", ".unsorted.vcf.gz")
+    temporary_files.append(output_vcf_unsorted)
 
-    _aggregate_collapsed_vcf(
-        output_vcf_distance_merge, output_vcf_after_stage1_unsorted, update_df, CNV_AGGREGATION_ACTIONS
-    )
+    _aggregate_collapsed_vcf(output_vcf_collapse, output_vcf_unsorted, update_df, CNV_AGGREGATION_ACTIONS)
 
-    # Remove overlapping filtered variants if applicable
+    # Stage 3: Remove overlapping filtered variants if applicable (common to both modes)
     if not ignore_filter:
-        output_vcf_after_stage1_unsorted = _remove_overlapping_filtered_variants(
+        output_vcf_unsorted = _remove_overlapping_filtered_variants(
             input_vcf,
-            output_vcf_after_stage1_unsorted,
+            output_vcf_unsorted,
             output_vcf,
             distance=distance,
             ignore_sv_type=ignore_sv_type,
             pick_best=pick_best,
         )
-        temporary_files.append(output_vcf_after_stage1_unsorted)
+        temporary_files.append(output_vcf_unsorted)
 
-    # Stage 1.5: SORT after collapse (critical for Stage 2)
-    logger.info("Stage 1.5: Sorting collapsed VCF")
-    output_vcf_after_stage1 = output_vcf + ".stage1.sorted.vcf.gz"
-    temporary_files.append(output_vcf_after_stage1)
-    vu.sort_vcf(output_vcf_after_stage1_unsorted, output_vcf_after_stage1)
-
-    # Stage 2: Identify additional smoothing candidates (POST-COLLAPSE)
-    logger.info("Stage 2: Identifying size-scaled gap smoothing candidates")
-    smoothing_candidates = identify_smoothing_candidates(
-        output_vcf_after_stage1,  # Use SORTED merged VCF from Stage 1
-        max_gap_absolute,
-        gap_scale_fraction,
-        ignore_sv_type,
-        ignore_filter,  # Respect FILTER tags
-        cipos_threshold,  # Breakpoint confidence threshold
-    )
-
-    if not smoothing_candidates:
-        # No additional smoothing needed - Stage 1 output is already sorted
-        logger.info("No smoothing candidates found - using Stage 1 output")
-        # Just copy to final output location (no second sort!)
-        import shutil
-
-        shutil.copy(output_vcf_after_stage1, output_vcf)
-        shutil.copy(output_vcf_after_stage1 + ".tbi", output_vcf + ".tbi")
+    # Standard mode: sort and finish
+    if not enable_smoothing:
+        vu.sort_vcf(output_vcf_unsorted, output_vcf)
         mu.cleanup_temp_files(temporary_files)
         return
 
-    # Stage 3: Apply smoothing (direct merge of candidates)
+    # Smoothing mode: additional processing stages
+    # Stage 1.5: Sort after collapse (required for smoothing candidate identification)
+    logger.info("Stage 1.5: Sorting collapsed VCF")
+    output_vcf_sorted = output_vcf + ".stage1.sorted.vcf.gz"
+    temporary_files.append(output_vcf_sorted)
+    vu.sort_vcf(output_vcf_unsorted, output_vcf_sorted)
+
+    # Stage 2: Identify size-scaled gap smoothing candidates
+    logger.info("Stage 2: Identifying size-scaled gap smoothing candidates")
+    smoothing_candidates = identify_smoothing_candidates(
+        output_vcf_sorted, max_gap_absolute, gap_scale_fraction, ignore_sv_type, ignore_filter, cipos_threshold
+    )
+
+    if not smoothing_candidates:
+        logger.info("No smoothing candidates found - using Stage 1 output")
+        import shutil
+
+        shutil.copy(output_vcf_sorted, output_vcf)
+        shutil.copy(output_vcf_sorted + ".tbi", output_vcf + ".tbi")
+        mu.cleanup_temp_files(temporary_files)
+        return
+
+    # Stage 3: Apply smoothing
     logger.info(f"Stage 3: Applying smoothing to {len(smoothing_candidates)} candidate pairs")
-    # Group candidates into connected components (A-B, B-C → A-B-C is one group)
     smoothing_groups = _group_candidates_transitively(smoothing_candidates)
 
-    # Manually merge each group using existing aggregation logic
-    output_vcf_unsorted = output_vcf + ".smoothed.unsorted.vcf.gz"
-    temporary_files.append(output_vcf_unsorted)
-
-    _apply_smoothing_merges(
-        output_vcf_after_stage1,
-        output_vcf_unsorted,
-        smoothing_groups,
-        CNV_AGGREGATION_ACTIONS,
-    )
+    output_vcf_smoothed = output_vcf + ".smoothed.unsorted.vcf.gz"
+    temporary_files.append(output_vcf_smoothed)
+    _apply_smoothing_merges(output_vcf_sorted, output_vcf_smoothed, smoothing_groups, CNV_AGGREGATION_ACTIONS)
 
     # Stage 4: Final sort and cleanup
     logger.info("Stage 4: Final sort")
-    vu.sort_vcf(output_vcf_unsorted, output_vcf)
+    vu.sort_vcf(output_vcf_smoothed, output_vcf)
     mu.cleanup_temp_files(temporary_files)
 
 
