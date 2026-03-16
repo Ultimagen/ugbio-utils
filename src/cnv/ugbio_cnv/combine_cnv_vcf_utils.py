@@ -676,7 +676,12 @@ def merge_cnvs_in_vcf(
     # Stage 2: Identify size-scaled gap smoothing candidates
     logger.info("Stage 2: Identifying size-scaled gap smoothing candidates")
     smoothing_candidates = identify_smoothing_candidates(
-        output_vcf_sorted, max_gap_absolute, gap_scale_fraction, ignore_sv_type, ignore_filter, cipos_threshold
+        output_vcf_sorted,
+        max_gap_absolute,
+        gap_scale_fraction,
+        ignore_sv_type=ignore_sv_type,
+        ignore_filter=ignore_filter,
+        cipos_threshold=cipos_threshold,
     )
 
     if not smoothing_candidates:
@@ -963,8 +968,8 @@ def _find_candidate_pairs(
     for i in range(n):
         cnv1 = chrom_df.iloc[i]
 
-        # Define search window (conservative upper bound)
-        window_end = cnv1["end"] + max_gap_absolute + int(gap_scale_fraction * cnv1["svlen_int"])
+        # Define search window
+        window_end = cnv1["end"] + max_gap_absolute
 
         # Get CNVs in window using boolean indexing
         window_df = chrom_df[(chrom_df["pos"] >= cnv1["end"]) & (chrom_df["pos"] <= window_end) & (chrom_df.index > i)]
@@ -979,14 +984,9 @@ def _find_candidate_pairs(
                 continue
 
             gap = cnv2["pos"] - cnv1["end"]
-
-            if gap < 0:
-                logger.debug(f"Overlapping CNVs {cnv1['id']}-{cnv2['id']}, skipping")
-                continue
-
-            if gap == 0:
+            if gap <= 0:
                 pairs.add((cnv1["id"], cnv2["id"]))
-                logger.info(f"Smoothing adjacent CNVs: {cnv1['id']} - {cnv2['id']} (gap=0)")
+                logger.debug(f"Smoothing adjacent CNVs: {cnv1['id']} - {cnv2['id']} (gap={gap})")
                 continue
 
             # Size-scaled threshold check
@@ -996,7 +996,7 @@ def _find_candidate_pairs(
 
             if gap <= max_gap:
                 pairs.add((cnv1["id"], cnv2["id"]))
-                logger.info(
+                logger.debug(
                     f"Smoothing candidate: {cnv1['id']} - {cnv2['id']} "
                     f"(gap={gap}bp, threshold={max_gap}bp, CNV_sizes={cnv1['svlen_int']}bp,{cnv2['svlen_int']}bp)"
                 )
@@ -1009,8 +1009,8 @@ def identify_smoothing_candidates(
     max_gap_absolute: int,
     gap_scale_fraction: float,
     *,
-    ignore_sv_type: bool,  # noqa: FBT001
-    ignore_filter: bool,  # noqa: FBT001
+    ignore_sv_type: bool,
+    ignore_filter: bool,
     cipos_threshold: int,
 ) -> set[tuple[str, str]]:
     """
@@ -1081,8 +1081,7 @@ def identify_smoothing_candidates(
         return set()
 
     # Expand CIPOS tuple into columns for vectorized operations
-    df[["cipos_min", "cipos_max"]] = pd.DataFrame(df["cipos"].tolist(), index=df.index)
-    df["cipos_length"] = df["cipos_max"] - df["cipos_min"] - 1
+    df["cipos_length"] = df["cipos"].apply(lambda x: x[1] - x[0] - 1)
 
     # Extract SVLEN (handle tuple format)
     df["svlen_int"] = df["svlen"].apply(lambda x: x[0])
@@ -1133,24 +1132,6 @@ def _group_candidates_transitively(candidates: set[tuple[str, str]]) -> list[set
         List of groups, where each group is a set of CNV IDs to merge together.
         Empty list if no candidates provided.
 
-    Examples
-    --------
-    >>> # Simple chain: A-B, B-C → {A, B, C}
-    >>> candidates = {('A', 'B'), ('B', 'C')}
-    >>> groups = _group_candidates_transitively(candidates)
-    >>> assert {'A', 'B', 'C'} in groups
-    >>> assert len(groups) == 1
-
-    >>> # Two separate groups
-    >>> candidates = {('A', 'B'), ('C', 'D')}
-    >>> groups = _group_candidates_transitively(candidates)
-    >>> assert len(groups) == 2
-
-    Notes
-    -----
-    - Uses scipy.sparse.csgraph.connected_components for efficient graph processing
-    - Time complexity: O(V + E) where V = unique CNV IDs, E = candidate pairs
-    - Space complexity: O(V + E) for sparse adjacency matrix
     """
     if not candidates:
         return []
