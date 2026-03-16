@@ -3,7 +3,7 @@ from os.path import join as pjoin
 from pathlib import Path
 
 import pytest
-from ugbio_cnv import combine_cnmops_cnvpytor_cnv_calls
+from ugbio_cnv import combine_cnmops_cnvpytor_cnv_calls, combine_cnv_vcf_utils
 from ugbio_core.test_utils import compare_vcfs
 
 
@@ -73,3 +73,20 @@ class TestCombineCnmopsCnvpytorCnvCalls:
 
         # Compare output with expected output for consistency
         compare_vcfs(output_vcf, expected_output_vcf)
+
+
+class TestMergeCnvsInVcfIntegration:
+    """Integration tests for merge_cnvs_in_vcf using real data."""
+
+    def test_merge_cnvs_real_data(self, resources_dir, tmp_path):
+        """Test merge_cnvs_in_vcf with real HG002 data files."""
+        # Input and expected output files
+        input_vcf = resources_dir / "merge_cnv_input.vcf.gz"
+        expected_output_vcf = resources_dir / "merge_cnv_output.vcf.gz"
+
+        # Create output file in tmp directory
+        output_vcf = tmp_path / "test_output.vcf.gz"
+
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1500)
+        # Verify output matches expected
+        compare_vcfs(str(expected_output_vcf), str(output_vcf))
