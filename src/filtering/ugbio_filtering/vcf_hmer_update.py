@@ -612,6 +612,8 @@ def _add_verbose_headers(f, base_fields):
         f.header.info.add("ref_hmer_size", number=1, type="Integer", description="Reference hmer size")
     if "other_variant" not in f.header.info:
         f.header.info.add("other_variant", number=1, type="Integer", description="Other variant")
+    if "insufficient_cvg" not in f.header.info:
+        f.header.info.add("insufficient_cvg", number=1, type="Integer", description="Insufficient coverage")
 
 
 def _add_minimal_headers(f):
@@ -626,6 +628,8 @@ def _add_minimal_headers(f):
         f.header.info.add("tot_score", number="A", type="Float", description="Combined ML score")
     if "other_variant" not in f.header.info:
         f.header.info.add("other_variant", number=1, type="Integer", description="Other variant")
+    if "insufficient_cvg" not in f.header.info:
+        f.header.info.add("insufficient_cvg", number=1, type="Integer", description="Insufficient coverage")
 
 
 def _setup_vcf_headers(vcf_file, verbose):
@@ -809,7 +813,7 @@ def check_pass_variants_affect_hmer(rec, ref_fasta: object, chrom: str, pos: int
         nearby_variants = vcf_file.fetch(chrom, fetch_start, fetch_end)
 
         for var in nearby_variants:
-            # Skip the test record itself
+            # Skip indel record at same position of original record
             if var.pos == rec.pos and len(var.ref) != len(var.alts[0]):
                 logger.debug(f"  Skipping self: {chrom}:{var.pos+1} (0-base:{var.pos})")
                 continue
@@ -965,12 +969,13 @@ def _process_multiple_normals_median(
         alt_idx: Index of the alternative allele to process (default: 0)
 
     Returns:
-        Tuple of (results_dict, all_normals_had_variants) where:
+        Tuple of (results_dict, insufficient_cvg) where:
         - results_dict: Dictionary with median results for the specified alternative allele, or None
-        - all_normals_had_variants: True if all normals were skipped due to variants affecting hmer_size
+        - insufficient_cvg: 1 if any normal was skipped due to low coverage, 0 otherwise
     """
     results_per_normal = []
     normal_germline_files = config["normal_germline_files"]
+    insufficient_cvg = 0  # Track if any normal was skipped due to low coverage
 
     ref_hmer_size = apply_variant(ref_fasta, [chrom, pos], [rec.pos, "", ""])[0]
 
@@ -1004,6 +1009,7 @@ def _process_multiple_normals_median(
                     f"Skipping normal file {normal_reads} due to low coverage:\n"
                     f"  {normal_cvg} < {min_normal_cvg_threshold}"
                 )
+                insufficient_cvg = 1  # Mark that we skipped due to low coverage
                 continue
 
             # Process the specific alternative allele for this normal
@@ -1054,9 +1060,8 @@ def _process_multiple_normals_median(
             continue
 
     if not results_per_normal:
-        # No results; check if it's because all normals had variants
-        all_normals_had_variants = len(normal_reads_list) > 0
-        return None, all_normals_had_variants
+        # No results; return insufficient_cvg flag
+        return None, insufficient_cvg
 
     # Sort by tot_score (for a single allele, use the minimum tot_score across directions)
     # If mixture is below mixture_bound, treat as score 0
@@ -1074,7 +1079,7 @@ def _process_multiple_normals_median(
     num_normals = len(results_per_normal)
     median_idx = num_normals // 2
 
-    return results_per_normal[median_idx][1], False
+    return results_per_normal[median_idx][1], insufficient_cvg
 
 
 def _validate_normal_data(ref_hmer_size: int, exp_shift_tries, normal_main_hmer: int) -> bool:
@@ -1597,7 +1602,7 @@ def _process_record(  # noqa: C901, PLR0911, PLR0912
         nuc = get_max_nuc([x[0] for x in tumor_read_data])
 
     # Process multiple normals and select median by tot_score for this alternative allele
-    all_direction_results, all_normals_had_variants = _process_multiple_normals_median(
+    all_direction_results, insufficient_cvg_normal = _process_multiple_normals_median(
         normal_reads,
         tumor_read_data,
         nuc,
@@ -1610,8 +1615,12 @@ def _process_record(  # noqa: C901, PLR0911, PLR0912
     )
 
     if all_direction_results is None:
-        if all_normals_had_variants:
-            # All normals were skipped due to variants affecting hmer_size
+        if insufficient_cvg_normal:
+            # Normal was skipped due to low coverage, not conflicting variants
+            # Don't set other_variant=1 in this case
+            rec.info["insufficient_cvg"] = 1
+        elif other_variant:
+            # Normal was skipped due to conflicting variants
             if config["verbose"] or not rec.info.get("other_variant", 0):
                 rec.info["other_variant"] = 1
         return None
@@ -1630,7 +1639,8 @@ def _validate_and_collect_tumor_data(rec, tumor_reads, config: dict) -> tuple | 
         config: Configuration dictionary with min_tumor_cvg parameter
 
     Returns:
-        Tuple of (tumor_read_data, nuc) if valid, None if record should be skipped
+        Tuple of (tumor_read_data, nuc, insufficient_cvg) if processed, None if record should be skipped
+        insufficient_cvg: 1 if skipped due to low coverage, 0 if valid
     """
     # Calculate position for pileup
     chrom = rec.contig
@@ -1648,9 +1658,9 @@ def _validate_and_collect_tumor_data(rec, tumor_reads, config: dict) -> tuple | 
     min_tumor_cvg_threshold = config["min_tumor_cvg"]
     tumor_cvg = len(tumor_read_data)
     if min_tumor_cvg_threshold > 0 and tumor_cvg < min_tumor_cvg_threshold:
-        return None
+        return (None, nuc, 1)  # insufficient_cvg=1
 
-    return tumor_read_data, nuc
+    return (tumor_read_data, nuc, 0)  # insufficient_cvg=0
 
 
 def _process_vcf_records(
@@ -1686,11 +1696,14 @@ def _process_vcf_records(
 
             # Validate and collect tumor data (includes coverage check)
             tumor_data = _validate_and_collect_tumor_data(rec, tumor_reads, config)
+            insufficient_cvg = 0  # Track if insufficient coverage occurred
             if tumor_data is None:
                 vcf_out_file_handle.write(rec)
                 continue
 
-            tumor_read_data, nuc = tumor_data
+            # Unpack tumor data and insufficient_cvg flag
+            tumor_read_data, nuc, insufficient_cvg_tumor = tumor_data
+            insufficient_cvg = insufficient_cvg_tumor
 
             # Process each alternative allele and collect results
             all_direction_results = {}
@@ -1722,6 +1735,10 @@ def _process_vcf_records(
                     score_bound=config["score_bound"],
                     mixture_bound=config["mixture_bound"],
                 )
+
+            # Write insufficient_cvg if needed
+            if insufficient_cvg == 1 or config["verbose"]:
+                rec.info["insufficient_cvg"] = max(insufficient_cvg, rec.info.get("insufficient_cvg", 0))
 
             # Write record after processing all alternative alleles
             vcf_out_file_handle.write(rec)
