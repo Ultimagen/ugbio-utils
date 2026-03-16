@@ -364,9 +364,7 @@ def _aggregate_record_info_fields(
     header : pysam.VariantHeader
         VCF header containing INFO field definitions
     """
-    # Update boundaries to span all collapsed variants
-    record.start = min(update_records["pos"].min(), record.start)
-    record.stop = max(update_records["end"].max(), record.stop)
+    record.pos, record.stop = _select_breakpoints_by_cipos_window(record, update_records)
 
     # Aggregate INFO fields based on defined actions
     for action, fields in aggregation_actions.items():
@@ -389,6 +387,33 @@ def _aggregate_record_info_fields(
     for field_name in collapse_info_fields:
         if field_name in record.info:
             del record.info[field_name]
+
+
+def _select_breakpoints_by_cipos_window(
+    record: pysam.VariantRecord,
+    update_records: pd.DataFrame,
+    window: int = 2500,
+) -> tuple[int, int]:
+    """Select start/end breakpoints near current boundaries using tightest CIPOS."""
+    candidates = update_records[["pos", "end", "cipos"]].copy()
+
+    candidates = pd.concat(
+        [candidates, pd.DataFrame([[record.pos, record.stop, record.info["CIPOS"]]], columns=["pos", "end", "cipos"])],
+        ignore_index=True,
+    )
+
+    def _best_breakpoint(df: pd.DataFrame, boundary_col: str, target: int) -> int:
+        nearby = df[(df[boundary_col] - target).abs() <= window]
+        cipos_lengths = nearby["cipos"].apply(lambda x: x[1] - x[0] - 1).astype(float)
+        min_len = cipos_lengths.min()
+        tied = nearby[cipos_lengths == min_len]
+        if boundary_col == "pos":
+            return int(tied[boundary_col].min())
+        return int(tied[boundary_col].max())
+
+    new_start = _best_breakpoint(candidates, "pos", candidates["pos"].min())
+    new_stop = _best_breakpoint(candidates, "end", candidates["end"].max())
+    return new_start, new_stop
 
 
 def _aggregate_collapsed_vcf(

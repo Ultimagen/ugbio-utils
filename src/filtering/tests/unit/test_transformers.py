@@ -131,9 +131,50 @@ class TestTransformers:
                 "cn": [2],
                 "copynumber": [3],
                 "cnv_source": [("cn.mops",)],
+                "cipos": [(-100, 100)],
             }
         )
         result = transformer.fit_transform(test_df)
         # Check that copynumber column exists and has the max value (3)
         assert "copynumber__0" in result.columns
         assert result["copynumber__0"].iloc[0] == 3
+
+    def test_cipos_transformer(self):
+        # Test copy number encoding through CNV transformer
+        # The copy_number_encode_df function takes max of CN and CopyNumber columns
+        transformer = get_transformer(VcfType.CNV)
+        test_df = pd.DataFrame(
+            {
+                "svtype": ["DEL"],
+                "region_annotations": [()],
+                "cnmops_sample_stdev": [1.0],
+                "cnmops_sample_mean": [2.0],
+                "cnmops_cohort_stdev": [1.5],
+                "cnmops_cohort_mean": [2.5],
+                "pytorq0": [0.1],
+                "pytorp2": [0.2],
+                "pytorrd": [0.3],
+                "pytorp1": [0.4],
+                "pytorp3": [0.5],
+                "gap_percentage": [0.01],
+                "cnv_dup_reads": [10],
+                "cnv_del_reads": [5],
+                "cnv_dup_frac": [0.6],
+                "cnv_del_frac": [0.3],
+                "del_reads_median_insert_size": [100.0],
+                "dup_reads_median_insert_size": [200.0],
+                "jalign_dup_support": [8],
+                "jalign_del_support": [4],
+                "jalign_dup_support_strong": [6],
+                "jalign_del_support_strong": [3],
+                "svlen": [(1000,)],
+                "cn": [2],
+                "copynumber": [3],
+                "cnv_source": [("cn.mops",)],
+                "cipos": [(-100, 101)],
+            }
+        )
+        result = transformer.fit_transform(test_df)
+        # Check that copynumber column exists and has the max value (3)
+        assert "cipos__cipos" in result.columns
+        assert result["cipos__cipos"].iloc[0] == 200
