@@ -1,4 +1,5 @@
 # utilities for combining VCFs
+import shutil
 from os.path import join as pjoin
 from pathlib import Path
 
@@ -515,26 +516,6 @@ def merge_cnvs_in_vcf(
     3. Adjust variant boundaries based on the minimum start and maximum end positions
        of all variants in each collapsed group.
 
-    **Smoothing Mode (enable_smoothing=True):**
-    Adds additional post-collapse smoothing using size-scaled gap rules:
-    1. Stage 1: Standard distance-based collapse (as above)
-    2. Stage 1.5: Sort the collapsed VCF
-    3. Stage 2: Identify additional smoothing candidates based on size-scaled gaps
-    4. Stage 3: Merge smoothing candidates
-    5. Stage 4: Final sort
-
-    Size-scaled smoothing uses the formula: gap_threshold = min(max_gap_absolute, gap_scale_fraction × smaller_CNV)
-    This allows large CNVs (>1 Mb) to merge across small gaps (<10 kb) while preventing inappropriate
-    merging of small CNVs.
-
-    Smoothing Criteria (all must be satisfied):
-    - Same chromosome
-    - Same SVTYPE (unless ignore_sv_type=True)
-    - CIPOS exists for both CNVs (crashes if missing - fail-fast validation)
-    - CIPOS length >= cipos_threshold for both CNVs (prevents merging high-confidence breakpoints)
-    - Gap between CNVs <= size-scaled threshold
-    - FILTER status compatible (if ignore_filter=False, only PASS CNVs considered)
-
     Variants are considered for merging based on:
     - Reference distance: Variants within `distance` bp are candidates for merging
     - SV type matching: Unless `ignore_sv_type=True`, only variants with the same SVTYPE merge
@@ -545,6 +526,24 @@ def merge_cnvs_in_vcf(
     When `ignore_filter=False`, the function performs an additional filtering pass to remove
     any filtered variants that overlap with PASS variants, ensuring that high-confidence
     calls take precedence over low-confidence calls.
+
+    **Smoothing Mode (enable_smoothing=True):**
+    Adds additional post-collapse smoothing using size-scaled gap rules:
+    1. Stage 1-3: Standard distance-based collapse (as above)
+    3. Stage 4: Identify additional smoothing candidates based on size-scaled gaps
+    4. Stage 5: Merge smoothing candidates
+    5. Stage 6: Final sort
+
+    Size-scaled smoothing uses the formula: gap_threshold = min(max_gap_absolute, gap_scale_fraction × larger_CNV)
+    This allows large CNVs (>1 Mb) to merge across proportionally larger gaps while the absolute cap
+    prevents over-merging of small CNVs.
+
+    Smoothing Criteria (all must be satisfied):
+    - Same SVTYPE (unless ignore_sv_type=True)
+    - CIPOS length >= cipos_threshold for both CNVs (prevents merging high-confidence breakpoints)
+    - Gap between CNVs <= size-scaled threshold
+    - FILTER status compatible (if ignore_filter=False, only PASS CNVs considered)
+
 
     Parameters
     ----------
@@ -570,8 +569,8 @@ def merge_cnvs_in_vcf(
         Absolute maximum gap for merging CNVs in smoothing mode (bp), by default 50000.
         This caps the maximum gap regardless of CNV size.
     gap_scale_fraction : float, optional
-        Gap as fraction of smaller CNV length for smoothing, by default 0.05 (5%).
-        Formula: gap_threshold = min(max_gap_absolute, gap_scale_fraction × smaller_CNV)
+        Gap as fraction of larger CNV length for smoothing, by default 0.05 (5%).
+        Formula: gap_threshold = min(max_gap_absolute, gap_scale_fraction × larger_CNV)
     cipos_threshold : int, optional
         Minimum CIPOS length required for smoothing (bp), by default 50.
         CNVs with CIPOS length < threshold have high-confidence breakpoints and won't be
@@ -603,14 +602,8 @@ def merge_cnvs_in_vcf(
     ...     gap_scale_fraction=0.05,
     ...     cipos_threshold=50,
     ... )
-
-    Notes
-    -----
-    - Smoothing is opt-in via enable_smoothing flag for backward compatibility
-    - CIPOS field is required when enable_smoothing=True
-    - Copy number compatibility is NOT checked - only SVTYPE matters for smoothing
-    - Smoothing operates transparently - no new VCF INFO fields added
     """
+
     logger.info(f"Validating unique variant IDs in {input_vcf}")
     _verify_unique_ids(input_vcf)
 
@@ -686,7 +679,6 @@ def merge_cnvs_in_vcf(
 
     if not smoothing_candidates:
         logger.info("No smoothing candidates found - using Stage 1 output")
-        import shutil
 
         shutil.copy(output_vcf_sorted, output_vcf)
         shutil.copy(output_vcf_sorted + ".tbi", output_vcf + ".tbi")
@@ -904,10 +896,10 @@ def calculate_size_scaled_gap_threshold(
     larger CNVs to be merged across larger gaps while preventing inappropriate merging
     of smaller CNVs.
 
-    Formula: min(max_gap_absolute, gap_scale_fraction × min(L1, L2))
+    Formula: min(max_gap_absolute, gap_scale_fraction × max(L1, L2))
 
-    The threshold is based on the smaller of the two CNVs to avoid merging small CNVs
-    separated by large gaps that would be inappropriate for their size scale.
+    The threshold is based on the larger of the two CNVs to allow merging of CNVs
+    of different sizes when the gap is proportional to the larger CNV.
 
     Parameters
     ----------
@@ -918,7 +910,7 @@ def calculate_size_scaled_gap_threshold(
     max_gap_absolute : int
         Absolute maximum gap allowed regardless of CNV size (cap), in base pairs
     gap_scale_fraction : float
-        Fraction of the smaller CNV length to use as the gap threshold (e.g., 0.05 for 5%)
+        Fraction of the larger CNV length to use as the gap threshold (e.g., 0.05 for 5%)
 
     Returns
     -------
@@ -931,20 +923,20 @@ def calculate_size_scaled_gap_threshold(
     >>> calculate_size_scaled_gap_threshold(2_000_000, 2_000_000, 50_000, 0.05)
     50000
 
-    >>> # Two 20 kb CNVs - uses 5% of smaller CNV
+    >>> # Two 20 kb CNVs - uses 5% of larger CNV
     >>> calculate_size_scaled_gap_threshold(20_000, 20_000, 50_000, 0.05)
     1000
 
-    >>> # Mixed sizes (1 Mb and 20 kb) - uses smaller CNV
+    >>> # Mixed sizes (1 Mb and 20 kb) - uses larger CNV
     >>> calculate_size_scaled_gap_threshold(1_000_000, 20_000, 50_000, 0.05)
-    1000
+    50000
 
     >>> # Very small CNVs
     >>> calculate_size_scaled_gap_threshold(1_000, 1_000, 50_000, 0.05)
     50
     """
-    smaller_length = min(cnv1_length, cnv2_length)
-    scaled_gap = int(gap_scale_fraction * smaller_length)
+    larger_length = max(cnv1_length, cnv2_length)
+    scaled_gap = int(gap_scale_fraction * larger_length)
     return min(max_gap_absolute, scaled_gap)
 
 
