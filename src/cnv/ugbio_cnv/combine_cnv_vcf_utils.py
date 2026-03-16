@@ -1075,34 +1075,28 @@ def identify_smoothing_candidates(
     - Uses windowed search for efficiency: only compares CNVs within max possible gap distance.
     """
     # Load VCF as DataFrame (assumes already sorted)
-    df = vcftools.get_vcf_df(vcf_path, custom_info_fields=["CIPOS", "SVLEN", "SVTYPE"])  # noqa: PD901
-
-    if df.empty or len(df) == 1:
-        return set()
+    cnv_df = vcftools.get_vcf_df(vcf_path, custom_info_fields=["CIPOS", "SVLEN", "SVTYPE"])
 
     # Expand CIPOS tuple into columns for vectorized operations
-    df["cipos_length"] = df["cipos"].apply(lambda x: x[1] - x[0] - 1)
+    cnv_df["cipos_length"] = cnv_df["cipos"].apply(lambda x: x[1] - x[0] - 1)
 
     # Extract SVLEN (handle tuple format)
-    df["svlen_int"] = df["svlen"].apply(lambda x: x[0])
-    df["end"] = df["pos"] + df["svlen_int"]
+    cnv_df["svlen_int"] = cnv_df["svlen"].apply(lambda x: x[0])
+    cnv_df["end"] = cnv_df["pos"] + cnv_df["svlen_int"]
 
     # Filter by FILTER status
     if not ignore_filter:
-        pass_mask = pd.isna(df["filter"]) | df["filter"].isin(["PASS", ".", ""])
-        df = df[pass_mask].copy()  # noqa: PD901
-        logger.info(f"Smoothing with ignore_filter=False: considering {len(df)} PASS CNVs")
+        pass_mask = pd.isna(cnv_df["filter"]) | cnv_df["filter"].isin(["PASS", ".", ""])
+        cnv_df = cnv_df[pass_mask].copy()
+        logger.info(f"Smoothing with ignore_filter=False: considering {len(cnv_df)} PASS CNVs")
 
     # Filter out high-confidence breakpoints
-    df = df[df["cipos_length"] >= cipos_threshold].copy()  # noqa: PD901
-    logger.info(f"After CIPOS filter (>={cipos_threshold}bp): {len(df)} CNVs remain")
-
-    if len(df) < 2:  # noqa: PLR2004
-        return set()
+    cnv_df = cnv_df[cnv_df["cipos_length"] >= cipos_threshold].copy()
+    logger.info(f"After CIPOS filter (>={cipos_threshold}bp): {len(cnv_df)} CNVs remain")
 
     # Process by chromosome (natural blocking)
     candidates = set()
-    for _, chrom_df in df.groupby("chrom", sort=False):
+    for _, chrom_df in cnv_df.groupby("chrom", sort=False):
         chrom_df_sorted = chrom_df.sort_values("pos").reset_index(drop=True)
         pairs = _find_candidate_pairs(
             chrom_df_sorted, max_gap_absolute, gap_scale_fraction, ignore_sv_type=ignore_sv_type

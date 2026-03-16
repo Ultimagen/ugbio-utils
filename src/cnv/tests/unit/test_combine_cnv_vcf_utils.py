@@ -1334,7 +1334,9 @@ class TestIdentifySmoothingCandidates:
 
         pysam.tabix_index(str(vcf_path), preset="vcf", force=True)
 
-        candidates = combine_cnv_vcf_utils.identify_smoothing_candidates(str(vcf_path), 50000, 0.05, False, True, 50)  # noqa: FBT003
+        candidates = combine_cnv_vcf_utils.identify_smoothing_candidates(
+            str(vcf_path), 50000, 0.05, ignore_sv_type=False, ignore_filter=True, cipos_threshold=50
+        )
         assert candidates == set()
 
     def test_different_chromosomes(self, tmp_path):
@@ -1379,7 +1381,9 @@ class TestIdentifySmoothingCandidates:
 
         pysam.tabix_index(str(vcf_path), preset="vcf", force=True)
 
-        candidates = combine_cnv_vcf_utils.identify_smoothing_candidates(str(vcf_path), 50000, 0.05, False, True, 50)  # noqa: FBT003
+        candidates = combine_cnv_vcf_utils.identify_smoothing_candidates(
+            str(vcf_path), 50000, 0.05, ignore_sv_type=False, ignore_filter=True, cipos_threshold=50
+        )
         # Should be empty (different chromosomes)
         assert candidates == set()
 
@@ -1424,7 +1428,9 @@ class TestIdentifySmoothingCandidates:
 
         pysam.tabix_index(str(vcf_path), preset="vcf", force=True)
 
-        candidates = combine_cnv_vcf_utils.identify_smoothing_candidates(str(vcf_path), 50000, 0.05, False, True, 50)  # noqa: FBT003
+        candidates = combine_cnv_vcf_utils.identify_smoothing_candidates(
+            str(vcf_path), 50000, 0.05, ignore_sv_type=False, ignore_filter=True, cipos_threshold=50
+        )
         # Should be empty (different SVTYPEs with ignore_sv_type=False)
         assert candidates == set()
 
@@ -1469,7 +1475,9 @@ class TestIdentifySmoothingCandidates:
 
         pysam.tabix_index(str(vcf_path), preset="vcf", force=True)
 
-        candidates = combine_cnv_vcf_utils.identify_smoothing_candidates(str(vcf_path), 50000, 0.05, False, True, 50)  # noqa: FBT003
+        candidates = combine_cnv_vcf_utils.identify_smoothing_candidates(
+            str(vcf_path), 50000, 0.05, ignore_sv_type=False, ignore_filter=True, cipos_threshold=50
+        )
         # Should be empty (high-confidence breakpoints filtered)
         assert candidates == set()
 
@@ -1545,7 +1553,9 @@ class TestIdentifySmoothingCandidates:
 
         pysam.tabix_index(str(vcf_path), preset="vcf", force=True)
 
-        candidates = combine_cnv_vcf_utils.identify_smoothing_candidates(str(vcf_path), 50000, 0.05, False, True, 50)  # noqa: FBT003
+        candidates = combine_cnv_vcf_utils.identify_smoothing_candidates(
+            str(vcf_path), 50000, 0.05, ignore_sv_type=False, ignore_filter=True, cipos_threshold=50
+        )
         # Should contain only the large CNV pair
         assert len(candidates) == 1
         assert ("CNV_LARGE_1", "CNV_LARGE_2") in candidates
