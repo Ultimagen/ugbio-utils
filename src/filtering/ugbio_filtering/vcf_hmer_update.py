@@ -11,9 +11,7 @@ import statsmodels.api as sm
 import ugbio_core.flow_format.flow_based_read as fbr
 import ugbio_core.math_utils as phred
 from pyfaidx import Fasta
-
-# Logger setup
-logger = logging.getLogger(__name__)
+from ugbio_core.logger import logger
 
 # Global constants
 BAM_CSOFT_CLIP = 4
@@ -46,6 +44,8 @@ SET_RANGE_START = 1
 SET_RANGE_END = 4
 READS_QUALITY_THRESHOLD = 0
 MIN_MAPPING_QUALITY = 5
+
+logger.setLevel(logging.INFO)
 
 
 def apply_variant(
@@ -1771,7 +1771,7 @@ def _initialize_files(
         for normal_reads_file in normal_reads_files
     ]
     # Load reference FASTA
-    ref_fasta = Fasta(ref_fasta_path)
+    ref_fasta = Fasta(ref_fasta_path, rebuild=False)
 
     # Open output VCF file
     vcf_out_handle = pysam.VariantFile(vcf_out_file, "wz", header=vcf_handle.header.copy())
@@ -1989,6 +1989,8 @@ def main() -> None:
     else:
         normal_germline_files_list = [None] * len(normal_reads_files_list)
 
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
     # Create config dictionary with all parameters
     config = {
         "vcf_file": args.input_vcf,
