@@ -576,7 +576,7 @@ def merge_cnvs_in_vcf(
     cipos_threshold : int, optional
         Minimum CIPOS length required for smoothing (bp), by default 50.
         CNVs with CIPOS length < threshold have high-confidence breakpoints and won't be
-        smoothed. CIPOS length = max - min (e.g., (-50, 50) → 100 bp).
+        smoothed. CIPOS length = max - min - 1(e.g., (-50, 51) → 100 bp).
 
     Returns
     -------
@@ -690,6 +690,15 @@ def merge_cnvs_in_vcf(
     # Stage 3: Apply smoothing
     logger.info(f"Stage 3: Applying smoothing to {len(smoothing_candidates)} candidate pairs")
     smoothing_groups = _group_candidates_transitively(smoothing_candidates)
+
+    # Log smoothing statistics
+    cnvs_before_smoothing = sum(1 for _ in pysam.VariantFile(output_vcf_sorted))
+    total_cnvs_in_groups = sum(len(group) for group in smoothing_groups)
+    cnvs_after_smoothing = cnvs_before_smoothing - total_cnvs_in_groups + len(smoothing_groups)
+    logger.info(
+        f"Smoothing will merge {total_cnvs_in_groups} CNVs into {len(smoothing_groups)} groups "
+        f"(reducing {cnvs_before_smoothing} → {cnvs_after_smoothing} CNVs)"
+    )
 
     output_vcf_smoothed = output_vcf + ".smoothed.unsorted.vcf.gz"
     temporary_files.append(output_vcf_smoothed)
@@ -919,23 +928,6 @@ def calculate_size_scaled_gap_threshold(
     int
         Maximum gap threshold in base pairs
 
-    Examples
-    --------
-    >>> # Two 2 Mb CNVs - hits absolute cap
-    >>> calculate_size_scaled_gap_threshold(2_000_000, 2_000_000, 50_000, 0.05)
-    50000
-
-    >>> # Two 20 kb CNVs - uses 5% of larger CNV
-    >>> calculate_size_scaled_gap_threshold(20_000, 20_000, 50_000, 0.05)
-    1000
-
-    >>> # Mixed sizes (1 Mb and 20 kb) - uses larger CNV
-    >>> calculate_size_scaled_gap_threshold(1_000_000, 20_000, 50_000, 0.05)
-    50000
-
-    >>> # Very small CNVs
-    >>> calculate_size_scaled_gap_threshold(1_000, 1_000, 50_000, 0.05)
-    50
     """
     larger_length = max(cnv1_length, cnv2_length)
     scaled_gap = int(gap_scale_fraction * larger_length)
@@ -943,10 +935,7 @@ def calculate_size_scaled_gap_threshold(
 
 
 def _find_candidate_pairs(
-    chrom_df: pd.DataFrame,
-    max_gap_absolute: int,
-    gap_scale_fraction: float,
-    ignore_sv_type: bool,  # noqa: FBT001
+    chrom_df: pd.DataFrame, max_gap_absolute: int, gap_scale_fraction: float, *, ignore_sv_type: bool
 ) -> set[tuple[str, str]]:
     """
     Find candidate pairs within a chromosome using windowed search.
@@ -1019,6 +1008,7 @@ def identify_smoothing_candidates(
     vcf_path: str,
     max_gap_absolute: int,
     gap_scale_fraction: float,
+    *,
     ignore_sv_type: bool,  # noqa: FBT001
     ignore_filter: bool,  # noqa: FBT001
     cipos_threshold: int,
@@ -1113,9 +1103,11 @@ def identify_smoothing_candidates(
 
     # Process by chromosome (natural blocking)
     candidates = set()
-    for _chrom, chrom_df in df.groupby("chrom", sort=False):
+    for _, chrom_df in df.groupby("chrom", sort=False):
         chrom_df_sorted = chrom_df.sort_values("pos").reset_index(drop=True)
-        pairs = _find_candidate_pairs(chrom_df_sorted, max_gap_absolute, gap_scale_fraction, ignore_sv_type)
+        pairs = _find_candidate_pairs(
+            chrom_df_sorted, max_gap_absolute, gap_scale_fraction, ignore_sv_type=ignore_sv_type
+        )
         candidates.update(pairs)
 
     logger.info(f"Identified {len(candidates)} smoothing candidate pairs")
@@ -1270,7 +1262,11 @@ def _apply_smoothing_merges(
                     # Not in any group - write unchanged
                     vcf_out.write(record)
 
-    logger.info(f"Applied smoothing: merged {len(smoothing_groups)} groups")
+    total_cnvs_merged = sum(len(group) for group in smoothing_groups)
+    logger.info(
+        f"Applied smoothing: merged {total_cnvs_merged} CNVs into {len(smoothing_groups)} groups "
+        f"(net reduction: {total_cnvs_merged - len(smoothing_groups)} CNVs)"
+    )
 
 
 def _merge_cnv_group(
@@ -1319,7 +1315,7 @@ def _merge_cnv_group(
             {
                 "pos": record.start,
                 "end": record.stop,
-                "svlen": record.info.get("SVLEN", (record.stop - record.start,)),
+                "svlen": record.info["SVLEN"],
                 **{field.lower(): record.info.get(field) for field in sum(aggregation_actions.values(), [])},
             }
         )
