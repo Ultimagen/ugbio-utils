@@ -944,7 +944,7 @@ def _collect_normal_pileup_data(normal_reads, chrom: str, pos: int):
     return [get_hmer_qualities_from_pileup_element(x) for x in normal_pileup.pileups]
 
 
-def _process_multiple_normals_median(
+def _process_multiple_normals_median(  # noqa: C901
     normal_reads_list,
     tumor_read_data,
     nuc,
@@ -985,16 +985,17 @@ def _process_multiple_normals_median(
 
     for normal_reads, normal_germline_file in zip(normal_reads_list, normal_germline_files, strict=False):
         try:
-            normal_germline = pysam.VariantFile(normal_germline_file)
+            if normal_germline_file is not None:
+                normal_germline = pysam.VariantFile(normal_germline_file)
 
-            # Check for conflicting variants with this specific normal_germline
-            has_variant = _check_normal_other_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, normal_germline)
+                # Check for conflicting variants with this specific normal_germline
+                has_variant = _check_normal_other_variants(rec, ref_fasta, chrom, pos, ref_hmer_size, normal_germline)
 
-            if has_variant:
-                logger.debug(f"Skipping normal file {normal_germline_file} due to conflicting variants")
+                if has_variant:
+                    logger.debug(f"Skipping normal file {normal_germline_file} due to conflicting variants")
+                    normal_germline.close()
+                    continue
                 normal_germline.close()
-                continue
-            normal_germline.close()
 
             # Collect pileup data for this normal
             normal_read_data = _collect_normal_pileup_data(normal_reads, chrom, pos)
@@ -1980,14 +1981,14 @@ def main() -> None:
         "--tumor_germline",
         type=str,
         default=None,
+        required=True,
         help="Tumor germline VCF file path",
     )
     parser.add_argument(
         "--normal_germline",
         type=str,
-        default="/data/Runs/cloud_sync/s3/"
-        "genomics-pipeline-concordanz-us-east-1/test/germline/"
-        "417309-TN20-126568-Z0280-CGCACAATGCGAGAT.vcf.gz",
+        default=None,
+        required=False,
         help="Comma-separated normal germline VCF file paths or single path (default: provided path)",
     )
     parser.add_argument(
