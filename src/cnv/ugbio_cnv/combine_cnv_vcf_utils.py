@@ -955,7 +955,7 @@ def _find_candidate_pairs(
     ----------
     chrom_df : pd.DataFrame
         DataFrame of CNVs on a single chromosome, sorted by position.
-        Must have columns: id, pos, end, svlen_val, svtype (optional)
+        Must have columns: id, pos, end, svlen_int, svtype (optional)
     max_gap_absolute : int
         Absolute maximum gap for merging CNVs (bp)
     gap_scale_fraction : float
@@ -975,7 +975,7 @@ def _find_candidate_pairs(
         cnv1 = chrom_df.iloc[i]
 
         # Define search window (conservative upper bound)
-        window_end = cnv1["end"] + max_gap_absolute + int(gap_scale_fraction * cnv1["svlen_val"])
+        window_end = cnv1["end"] + max_gap_absolute + int(gap_scale_fraction * cnv1["svlen_int"])
 
         # Get CNVs in window using boolean indexing
         window_df = chrom_df[(chrom_df["pos"] >= cnv1["end"]) & (chrom_df["pos"] <= window_end) & (chrom_df.index > i)]
@@ -1002,14 +1002,14 @@ def _find_candidate_pairs(
 
             # Size-scaled threshold check
             max_gap = calculate_size_scaled_gap_threshold(
-                cnv1["svlen_val"], cnv2["svlen_val"], max_gap_absolute, gap_scale_fraction
+                cnv1["svlen_int"], cnv2["svlen_int"], max_gap_absolute, gap_scale_fraction
             )
 
             if gap <= max_gap:
                 pairs.add((cnv1["id"], cnv2["id"]))
                 logger.info(
                     f"Smoothing candidate: {cnv1['id']} - {cnv2['id']} "
-                    f"(gap={gap}bp, threshold={max_gap}bp, CNV_sizes={cnv1['svlen_val']}bp,{cnv2['svlen_val']}bp)"
+                    f"(gap={gap}bp, threshold={max_gap}bp, CNV_sizes={cnv1['svlen_int']}bp,{cnv2['svlen_int']}bp)"
                 )
 
     return pairs
@@ -1087,8 +1087,7 @@ def identify_smoothing_candidates(
     # Load VCF as DataFrame (assumes already sorted)
     df = vcftools.get_vcf_df(vcf_path, custom_info_fields=["CIPOS", "SVLEN", "SVTYPE"])  # noqa: PD901
 
-    if df.empty or len(df) < 2:  # noqa: PLR2004
-        logger.info("No CNVs found for smoothing")
+    if df.empty or len(df) == 1:
         return set()
 
     # Expand CIPOS tuple into columns for vectorized operations
@@ -1096,8 +1095,8 @@ def identify_smoothing_candidates(
     df["cipos_length"] = df["cipos_max"] - df["cipos_min"] - 1
 
     # Extract SVLEN (handle tuple format)
-    df["svlen_val"] = df["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x)
-    df["end"] = df["pos"] + df["svlen_val"]
+    df["svlen_int"] = df["svlen"].apply(lambda x: x[0])
+    df["end"] = df["pos"] + df["svlen_int"]
 
     # Filter by FILTER status
     if not ignore_filter:
