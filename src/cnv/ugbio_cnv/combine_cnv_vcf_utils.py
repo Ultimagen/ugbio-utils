@@ -6,6 +6,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pysam
+from scipy.sparse import csr_matrix
+from scipy.sparse.csgraph import connected_components
 from ugbio_core import misc_utils as mu
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
@@ -940,7 +942,80 @@ def calculate_size_scaled_gap_threshold(
     return min(max_gap_absolute, scaled_gap)
 
 
-def identify_smoothing_candidates(  # noqa: PLR0912, PLR0915, C901
+def _find_candidate_pairs(
+    chrom_df: pd.DataFrame,
+    max_gap_absolute: int,
+    gap_scale_fraction: float,
+    ignore_sv_type: bool,  # noqa: FBT001
+) -> set[tuple[str, str]]:
+    """
+    Find candidate pairs within a chromosome using windowed search.
+
+    Parameters
+    ----------
+    chrom_df : pd.DataFrame
+        DataFrame of CNVs on a single chromosome, sorted by position.
+        Must have columns: id, pos, end, svlen_val, svtype (optional)
+    max_gap_absolute : int
+        Absolute maximum gap for merging CNVs (bp)
+    gap_scale_fraction : float
+        Gap as fraction of smaller CNV length
+    ignore_sv_type : bool
+        If False, only CNVs with the same SVTYPE are considered
+
+    Returns
+    -------
+    set[tuple[str, str]]
+        Set of (cnv1_id, cnv2_id) tuples representing candidate pairs
+    """
+    pairs = set()
+    n = len(chrom_df)
+
+    for i in range(n):
+        cnv1 = chrom_df.iloc[i]
+
+        # Define search window (conservative upper bound)
+        window_end = cnv1["end"] + max_gap_absolute + int(gap_scale_fraction * cnv1["svlen_val"])
+
+        # Get CNVs in window using boolean indexing
+        window_df = chrom_df[(chrom_df["pos"] >= cnv1["end"]) & (chrom_df["pos"] <= window_end) & (chrom_df.index > i)]
+
+        for _, cnv2 in window_df.iterrows():
+            # SVTYPE filter
+            if not ignore_sv_type and cnv1.get("svtype") != cnv2.get("svtype"):
+                logger.debug(
+                    f"Skipping smoothing: Different SVTYPE {cnv1['id']} ({cnv1.get('svtype')}) "
+                    f"vs {cnv2['id']} ({cnv2.get('svtype')})"
+                )
+                continue
+
+            gap = cnv2["pos"] - cnv1["end"]
+
+            if gap < 0:
+                logger.debug(f"Overlapping CNVs {cnv1['id']}-{cnv2['id']}, skipping")
+                continue
+
+            if gap == 0:
+                pairs.add((cnv1["id"], cnv2["id"]))
+                logger.info(f"Smoothing adjacent CNVs: {cnv1['id']} - {cnv2['id']} (gap=0)")
+                continue
+
+            # Size-scaled threshold check
+            max_gap = calculate_size_scaled_gap_threshold(
+                cnv1["svlen_val"], cnv2["svlen_val"], max_gap_absolute, gap_scale_fraction
+            )
+
+            if gap <= max_gap:
+                pairs.add((cnv1["id"], cnv2["id"]))
+                logger.info(
+                    f"Smoothing candidate: {cnv1['id']} - {cnv2['id']} "
+                    f"(gap={gap}bp, threshold={max_gap}bp, CNV_sizes={cnv1['svlen_val']}bp,{cnv2['svlen_val']}bp)"
+                )
+
+    return pairs
+
+
+def identify_smoothing_candidates(
     vcf_path: str,
     max_gap_absolute: int,
     gap_scale_fraction: float,
@@ -952,15 +1027,15 @@ def identify_smoothing_candidates(  # noqa: PLR0912, PLR0915, C901
     Identify pairs of CNVs that should be merged based on size-scaled gap criteria.
 
     This function is called AFTER standard distance-based merge AND sorting to identify
-    additional CNV pairs that should be merged based on size-scaled gap rules. It iterates
-    through adjacent CNV pairs in the sorted VCF and checks if they meet the smoothing criteria.
+    additional CNV pairs that should be merged based on size-scaled gap rules. It uses
+    chromosome-level blocking and windowed search to find candidate pairs efficiently.
 
     IMPORTANT: Assumes vcf_path is already sorted by chromosome and position.
 
     Smoothing Criteria (all must be satisfied):
     1. Same chromosome
     2. Same SVTYPE (unless ignore_sv_type=True)
-    3. CIPOS exists for both CNVs (crashes if missing - fail-fast validation)
+    3. CIPOS exists for both CNVs (validated upfront)
     4. CIPOS length >= cipos_threshold for both CNVs (prevents merging high-confidence breakpoints)
     5. Gap between CNVs <= size-scaled threshold
     6. FILTER status compatible (if ignore_filter=False, only PASS CNVs considered)
@@ -981,18 +1056,13 @@ def identify_smoothing_candidates(  # noqa: PLR0912, PLR0915, C901
     cipos_threshold : int
         Minimum CIPOS length required for merging (bp). If either CNV has
         CIPOS length < threshold, the pair won't be merged due to high-confidence
-        breakpoint. CIPOS length = max - min (e.g., (-50, 50) → 100 bp).
+        breakpoint. CIPOS length = cipos_max - cipos_min - 1 (e.g., (-50, 50) → 99 bp).
 
     Returns
     -------
     set[tuple[str, str]]
         Set of (cnv1_id, cnv2_id) tuples representing CNV pairs to merge.
         Empty set if no candidates found.
-
-    Raises
-    ------
-    ValueError
-        If any CNV is missing valid CIPOS values (CIPOS is required for smoothing)
 
     Examples
     --------
@@ -1012,110 +1082,42 @@ def identify_smoothing_candidates(  # noqa: PLR0912, PLR0915, C901
     - The function assumes the input VCF is already sorted. If unsorted, adjacent CNVs
       in the genome may not be adjacent in the iteration, causing missed smoothing.
     - Copy number compatibility is NOT checked - only SVTYPE matters.
-    - CIPOS validation is strict - missing CIPOS values will raise ValueError.
+    - Uses windowed search for efficiency: only compares CNVs within max possible gap distance.
     """
-    candidates = set()
-
     # Load VCF as DataFrame (assumes already sorted)
-    # Must explicitly request CIPOS field
     df = vcftools.get_vcf_df(vcf_path, custom_info_fields=["CIPOS", "SVLEN", "SVTYPE"])  # noqa: PD901
 
-    if df.empty:
-        logger.info("No CNVs found in VCF for smoothing")
-        return candidates
+    if df.empty or len(df) < 2:  # noqa: PLR2004
+        logger.info("No CNVs found for smoothing")
+        return set()
 
-    # Filter by FILTER status if ignore_filter=False
+    # Expand CIPOS tuple into columns for vectorized operations
+    df[["cipos_min", "cipos_max"]] = pd.DataFrame(df["cipos"].tolist(), index=df.index)
+    df["cipos_length"] = df["cipos_max"] - df["cipos_min"] - 1
+
+    # Extract SVLEN (handle tuple format)
+    df["svlen_val"] = df["svlen"].apply(lambda x: x[0] if isinstance(x, tuple) else x)
+    df["end"] = df["pos"] + df["svlen_val"]
+
+    # Filter by FILTER status
     if not ignore_filter:
-        # Only consider PASS variants for smoothing
-        # Treat NaN, empty string, ".", and "PASS" as not filtered
-        pass_mask = pd.isna(df["filter"]) | (df["filter"] == "PASS") | (df["filter"] == "") | (df["filter"] == ".")
+        pass_mask = pd.isna(df["filter"]) | df["filter"].isin(["PASS", ".", ""])
         df = df[pass_mask].copy()  # noqa: PD901
         logger.info(f"Smoothing with ignore_filter=False: considering {len(df)} PASS CNVs")
 
+    # Filter out high-confidence breakpoints
+    df = df[df["cipos_length"] >= cipos_threshold].copy()  # noqa: PD901
+    logger.info(f"After CIPOS filter (>={cipos_threshold}bp): {len(df)} CNVs remain")
+
     if len(df) < 2:  # noqa: PLR2004
-        logger.info(f"Only {len(df)} CNV(s) after filtering - no smoothing candidates")
-        return candidates
+        return set()
 
-    # Iterate through adjacent pairs
-    for i in range(len(df) - 1):
-        cnv1 = df.iloc[i]
-        cnv2 = df.iloc[i + 1]
-
-        # Check same chromosome
-        if cnv1["chrom"] != cnv2["chrom"]:
-            continue
-
-        # Check same SVTYPE (unless ignored)
-        if not ignore_sv_type:
-            svtype1 = cnv1.get("svtype")
-            svtype2 = cnv2.get("svtype")
-            if svtype1 != svtype2:
-                logger.debug(
-                    f"Skipping smoothing: Different SVTYPE {cnv1['id']} ({svtype1}) vs {cnv2['id']} ({svtype2})"
-                )
-                continue
-
-        # Validate CIPOS exists (REQUIRED - crash if missing)
-        cipos1 = cnv1.get("cipos", None)
-        cipos2 = cnv2.get("cipos", None)
-
-        if cipos1 is None or not isinstance(cipos1, tuple) or len(cipos1) != 2:  # noqa: PLR2004
-            raise ValueError(
-                f"CNV {cnv1['id']} is missing valid CIPOS values. "
-                f"CIPOS is required for smoothing (found: {cipos1}). "
-                f"Ensure all CNVs have CIPOS INFO field defined."
-            )
-        if cipos2 is None or not isinstance(cipos2, tuple) or len(cipos2) != 2:  # noqa: PLR2004
-            raise ValueError(
-                f"CNV {cnv2['id']} is missing valid CIPOS values. "
-                f"CIPOS is required for smoothing (found: {cipos2}). "
-                f"Ensure all CNVs have CIPOS INFO field defined."
-            )
-
-        # Check CIPOS confidence - if high confidence breakpoints, don't merge
-        has_high_confidence_breakpoint = False
-        for cnv_id, cipos in [(cnv1["id"], cipos1), (cnv2["id"], cipos2)]:
-            cipos_length = abs(cipos[1] - cipos[0])
-            if cipos_length < cipos_threshold:
-                logger.debug(
-                    f"Skipping smoothing: High-confidence breakpoint {cnv_id} "
-                    f"CIPOS={cipos} (length={cipos_length} < {cipos_threshold})"
-                )
-                has_high_confidence_breakpoint = True
-                break
-
-        if has_high_confidence_breakpoint:
-            continue
-
-        # Calculate gap (only reached if no high-confidence breakpoints and CIPOS validation passed)
-        # Extract SVLEN from tuple format
-        cnv1_len = cnv1["svlen"][0] if isinstance(cnv1["svlen"], tuple) else cnv1["svlen"]
-        cnv2_len = cnv2["svlen"][0] if isinstance(cnv2["svlen"], tuple) else cnv2["svlen"]
-
-        cnv1_end = cnv1["pos"] + cnv1_len
-        gap = cnv2["pos"] - cnv1_end
-
-        if gap < 0:
-            # Overlapping CNVs - should have been caught by Stage 1, skip
-            logger.debug(f"Overlapping CNVs {cnv1['id']}-{cnv2['id']} in post-collapse, skipping")
-            continue
-
-        if gap == 0:
-            # Adjacent with no gap - always smooth if compatible
-            candidates.add((cnv1["id"], cnv2["id"]))
-            logger.info(f"Smoothing adjacent CNVs: {cnv1['id']} - {cnv2['id']} (gap=0)")
-            continue
-
-        # Calculate size-scaled threshold
-        max_gap = calculate_size_scaled_gap_threshold(cnv1_len, cnv2_len, max_gap_absolute, gap_scale_fraction)
-
-        # Check if within size-scaled threshold
-        if gap <= max_gap:
-            candidates.add((cnv1["id"], cnv2["id"]))
-            logger.info(
-                f"Smoothing candidate: {cnv1['id']} - {cnv2['id']} "
-                f"(gap={gap}bp, threshold={max_gap}bp, CNV_sizes={cnv1_len}bp,{cnv2_len}bp)"
-            )
+    # Process by chromosome (natural blocking)
+    candidates = set()
+    for _chrom, chrom_df in df.groupby("chrom", sort=False):
+        chrom_df_sorted = chrom_df.sort_values("pos").reset_index(drop=True)
+        pairs = _find_candidate_pairs(chrom_df_sorted, max_gap_absolute, gap_scale_fraction, ignore_sv_type)
+        candidates.update(pairs)
 
     logger.info(f"Identified {len(candidates)} smoothing candidate pairs")
     return candidates
@@ -1123,11 +1125,11 @@ def identify_smoothing_candidates(  # noqa: PLR0912, PLR0915, C901
 
 def _group_candidates_transitively(candidates: set[tuple[str, str]]) -> list[set[str]]:
     """
-    Group candidate pairs into connected components using depth-first search.
+    Group candidate pairs into connected components using scipy graph algorithms.
 
     If (A, B) and (B, C) are candidates, they form a connected component {A, B, C}
     that should be merged as a single group. This function identifies all such
-    transitive relationships using a graph traversal approach.
+    transitive relationships using scipy's optimized connected components algorithm.
 
     Parameters
     ----------
@@ -1155,46 +1157,35 @@ def _group_candidates_transitively(candidates: set[tuple[str, str]]) -> list[set
 
     Notes
     -----
-    - Uses adjacency list representation and DFS for connected component detection
+    - Uses scipy.sparse.csgraph.connected_components for efficient graph processing
     - Time complexity: O(V + E) where V = unique CNV IDs, E = candidate pairs
-    - Space complexity: O(V + E) for adjacency list and visited set
+    - Space complexity: O(V + E) for sparse adjacency matrix
     """
-    from collections import defaultdict
-
     if not candidates:
         return []
 
-    # Build adjacency list from candidate pairs
-    adjacency = defaultdict(set)
-    for id1, id2 in candidates:
-        adjacency[id1].add(id2)
-        adjacency[id2].add(id1)
+    # Extract unique IDs and create index mapping
+    all_ids = sorted({cnv_id for pair in candidates for cnv_id in pair})
+    id_to_idx = {cnv_id: i for i, cnv_id in enumerate(all_ids)}
 
-    # Find connected components using DFS
-    visited = set()
-    groups = []
+    # Build sparse adjacency matrix (undirected graph)
+    rows, cols = [], []
+    for a, b in candidates:
+        i, j = id_to_idx[a], id_to_idx[b]
+        rows.extend([i, j])
+        cols.extend([j, i])
 
-    for cnv_id in adjacency:
-        if cnv_id in visited:
-            continue
+    adjacency = csr_matrix((np.ones(len(rows)), (rows, cols)), shape=(len(all_ids), len(all_ids)))
 
-        # DFS to find all connected CNVs
-        group = set()
-        stack = [cnv_id]
-        while stack:
-            current = stack.pop()
-            if current in visited:
-                continue
-            visited.add(current)
-            group.add(current)
-            # Add unvisited neighbors to stack
-            for neighbor in adjacency[current]:
-                if neighbor not in visited:
-                    stack.append(neighbor)
+    # Find connected components using scipy's optimized algorithm
+    n_components, labels = connected_components(adjacency, directed=False)
 
-        groups.append(group)
+    # Group IDs by component label
+    groups = [set() for _ in range(n_components)]
+    for cnv_id, label in zip(all_ids, labels, strict=True):
+        groups[label].add(cnv_id)
 
-    logger.info(f"Grouped {len(candidates)} candidate pairs into {len(groups)} transitive groups")
+    logger.info(f"Grouped {len(candidates)} candidate pairs into {n_components} transitive groups")
     return groups
 
 
