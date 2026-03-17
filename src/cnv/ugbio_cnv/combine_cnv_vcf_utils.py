@@ -1300,15 +1300,18 @@ def _merge_cnv_group(
 
     # Create DataFrame for aggregation (similar to _prepare_update_dataframe)
     records_data = []
+    all_fields = sum(aggregation_actions.values(), [])
     for record in records:
-        records_data.append(
-            {
-                "pos": record.start,
-                "end": record.stop,
-                "svlen": record.info["SVLEN"],
-                **{field.lower(): record.info.get(field) for field in sum(aggregation_actions.values(), [])},
-            }
-        )
+        record_data = {
+            "pos": record.start,
+            "end": record.stop,
+            "svlen": record.info["SVLEN"],
+        }
+        # Only add fields that exist in the header
+        for field in all_fields:
+            if field in header.info:
+                record_data[field.lower()] = record.info.get(field)
+        records_data.append(record_data)
 
     update_df = pd.DataFrame(records_data)
 
