@@ -354,6 +354,12 @@ class TestRenameColsForModel:
             "REF": ["A"],
             "ALT": ["T"],
             "TR_DISTANCE": [100],
+            "TR_LENGTH": [10],
+            "TR_SEQ_UNIT_LENGTH": [2],
+            "X_PREV1": ["A"],
+            "X_PREV2": ["G"],
+            "X_NEXT1": ["C"],
+            "X_NEXT2": ["T"],
         }
 
         for sample, prefix in [(TUMOR_SAMPLE, "t_"), (NORMAL_SAMPLE, "n_")]:
@@ -431,8 +437,8 @@ class TestRenameColsForModel:
         assert "t_tr_distance" in result.columns
         assert result["t_tr_distance"][0] == 100
 
-    def test_rename_missing_columns_handled_gracefully(self):
-        """Missing columns should not cause errors (only existing columns are renamed)."""
+    def test_rename_missing_columns_raises_error(self):
+        """Missing columns should raise ValueError with the list of missing columns."""
         minimal_df = pl.DataFrame(
             {
                 "CHROM": ["chr19"],
@@ -442,9 +448,8 @@ class TestRenameColsForModel:
             }
         )
 
-        # Should not raise, even though most expected columns are missing
-        result = rename_cols_for_model(minimal_df, [TUMOR_SAMPLE, NORMAL_SAMPLE])
-        assert "ref_allele" in result.columns
+        with pytest.raises(ValueError, match="Columns intended for renaming are missing from the dataframe"):
+            rename_cols_for_model(minimal_df, [TUMOR_SAMPLE, NORMAL_SAMPLE])
 
 
 class TestRunClassifier:

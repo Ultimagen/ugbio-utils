@@ -449,6 +449,8 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
     pl.DataFrame
         DataFrame with renamed columns.
     """
+    logger.debug("Renaming columns for model inference")
+    logger.debug("Validating sample names against VCF file")
     if vcf_path:
         samples_from_vcf = get_vcf_sample_names(vcf_path)
         if len(samples_from_vcf) != 2:  # noqa: PLR2004
@@ -460,6 +462,7 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
                 f"{tumor_sample}, {normal_sample}"
             )
 
+    logger.debug("Building rename map")
     rename_map = {}
 
     # Non-sample columns (no sample suffix)
@@ -505,9 +508,12 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
     # Lowercase all target names
     rename_map = {k: v.lower() for k, v in rename_map.items()}
 
-    # Rename columns that exist
-    existing_rename = {k: v for k, v in rename_map.items() if k in variants_df.columns}
-    variants_df = variants_df.rename(existing_rename)
+    missing_cols = set(rename_map.keys()) - set(variants_df.columns)
+    if missing_cols:
+        logger.error(f"Columns intended for renaming are missing from the dataframe: {sorted(missing_cols)}")
+        raise ValueError(f"Columns intended for renaming are missing from the dataframe: {sorted(missing_cols)}")
+
+    variants_df = variants_df.rename(rename_map)
 
     return variants_df
 
