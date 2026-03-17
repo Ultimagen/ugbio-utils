@@ -818,7 +818,8 @@ def check_pass_variants_affect_hmer(rec, ref_fasta: object, chrom: str, pos: int
                 logger.debug(f"  Skipping self: {chrom}:{var.pos+1} (0-base:{var.pos})")
                 continue
 
-            variant_pass = is_pass(var)
+            # if variant is snp and LowAFRatioToBackground it is considered as pass
+            variant_pass = is_pass(var) or ("LowAFRatioToBackground" in var.filter and len(var.ref) == len(var.alts[0]))
             logger.debug(
                 f"  Found nearby variant: {chrom}:{var.pos+1} (0-base:{var.pos}) "
                 f"{var.ref}->{var.alts}, passes={variant_pass}"
