@@ -639,7 +639,7 @@ def merge_cnvs_in_vcf(
     )
     temporary_files.append(str(removed_vcf))
 
-    # Stage 2: Aggregate INFO fields (common to both modes)
+    # Stage 1.25: Aggregate INFO fields (common to both modes)
     all_fields = sum(CNV_AGGREGATION_ACTIONS.values(), [])
     update_df = _prepare_update_dataframe(str(removed_vcf), all_fields, ignore_filter=ignore_filter)
 
@@ -648,12 +648,11 @@ def merge_cnvs_in_vcf(
 
     _aggregate_collapsed_vcf(output_vcf_collapse, output_vcf_unsorted, update_df, CNV_AGGREGATION_ACTIONS)
 
-    # Stage 3: Remove overlapping filtered variants if applicable (common to both modes)
+    # Stage 1.5: Remove overlapping filtered variants if applicable
     if not ignore_filter:
         output_vcf_unsorted = _remove_overlapping_filtered_variants(
             input_vcf,
             output_vcf_unsorted,
-            output_vcf,
             distance=distance,
             ignore_sv_type=ignore_sv_type,
             pick_best=pick_best,
@@ -661,17 +660,14 @@ def merge_cnvs_in_vcf(
         temporary_files.append(output_vcf_unsorted)
 
     # Standard mode: sort and finish
+    logger.info("Stage 1.5: Sorting collapsed VCF")
+    output_vcf_sorted = output_vcf if not enable_smoothing else output_vcf + ".stage1.sorted.vcf.gz"
+    vu.sort_vcf(output_vcf_unsorted, output_vcf_sorted)
     if not enable_smoothing:
-        vu.sort_vcf(output_vcf_unsorted, output_vcf)
         mu.cleanup_temp_files(temporary_files)
         return
-
-    # Smoothing mode: additional processing stages
-    # Stage 1.5: Sort after collapse (required for smoothing candidate identification)
-    logger.info("Stage 1.5: Sorting collapsed VCF")
-    output_vcf_sorted = output_vcf + ".stage1.sorted.vcf.gz"
-    temporary_files.append(output_vcf_sorted)
-    vu.sort_vcf(output_vcf_unsorted, output_vcf_sorted)
+    else:
+        temporary_files.append(output_vcf_sorted)
 
     # Stage 2: Identify size-scaled gap smoothing candidates
     logger.info("Stage 2: Identifying size-scaled gap smoothing candidates")
@@ -686,7 +682,6 @@ def merge_cnvs_in_vcf(
 
     if not smoothing_candidates:
         logger.info("No smoothing candidates found - using Stage 1 output")
-
         shutil.copy(output_vcf_sorted, output_vcf)
         shutil.copy(output_vcf_sorted + ".tbi", output_vcf + ".tbi")
         mu.cleanup_temp_files(temporary_files)
@@ -707,7 +702,20 @@ def merge_cnvs_in_vcf(
 
     output_vcf_smoothed = output_vcf + ".smoothed.unsorted.vcf.gz"
     temporary_files.append(output_vcf_smoothed)
-    _apply_smoothing_merges(output_vcf_sorted, output_vcf_smoothed, smoothing_groups, CNV_AGGREGATION_ACTIONS)
+    _apply_smoothing_merges(
+        output_vcf_sorted, output_vcf_smoothed, smoothing_groups, CNV_AGGREGATION_ACTIONS, ignore_filter=ignore_filter
+    )
+
+    # Stage 4: Remove overlapping filtered variants again
+    if not ignore_filter:
+        output_vcf_smoothed = _remove_overlapping_filtered_variants(
+            output_vcf_sorted,
+            output_vcf_smoothed,
+            distance=distance,
+            ignore_sv_type=ignore_sv_type,
+            pick_best=pick_best,
+        )
+        temporary_files.append(output_vcf_smoothed)
 
     # Stage 4: Final sort and cleanup
     logger.info("Stage 4: Final sort")
@@ -716,7 +724,7 @@ def merge_cnvs_in_vcf(
 
 
 def _remove_overlapping_filtered_variants(
-    original_vcf: str, merged_vcf: str, output_vcf: str, distance: int, *, ignore_sv_type: bool, pick_best: bool
+    original_vcf: str, merged_vcf: str, distance: int, *, ignore_sv_type: bool, pick_best: bool
 ) -> str:
     """
     Remove merged records that overlap variants filtered by a second pass.
@@ -726,7 +734,7 @@ def _remove_overlapping_filtered_variants(
     original input VCF to identify overlapping variants and their filters,
     then removes the corresponding records from the already merged VCF.
     """
-    output_vcf_collapse = output_vcf + ".collapse.tmp.2.vcf.gz"
+    output_vcf_collapse = merged_vcf + ".collapse.tmp.2.vcf.gz"
     vu = VcfUtils()
     removed_vcf = vu.collapse_vcf(
         vcf=original_vcf,
@@ -1160,6 +1168,8 @@ def _apply_smoothing_merges(
     output_vcf: str,
     smoothing_groups: list[set[str]],
     aggregation_actions: dict[str, list[str]],
+    *,
+    ignore_filter: bool,
 ) -> None:
     """
     Merge CNVs in each smoothing group and write to output VCF.
@@ -1183,6 +1193,8 @@ def _apply_smoothing_merges(
     aggregation_actions : dict[str, list[str]]
         Dictionary mapping aggregation action to list of INFO field names
         (e.g., {"weighted_avg": ["CopyNumber"], "max": ["TREE_SCORE"]})
+    ignore_filter : bool
+        Should the PASS filter be ignored (otherwise only PASS variants will be output)
 
     Notes
     -----
@@ -1207,6 +1219,9 @@ def _apply_smoothing_merges(
             # Collect all records by ID for grouping
             all_records = {}
             for record in vcf_in:
+                # skip non-PASS records
+                if not ignore_filter and not vcftools.is_pass_record(record):
+                    continue
                 all_records[record.id] = record
 
             # Process records in input order
