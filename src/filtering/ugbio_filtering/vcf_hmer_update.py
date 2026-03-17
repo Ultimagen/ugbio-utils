@@ -1494,11 +1494,8 @@ def _write_results_to_record(
     all_pass = len(passing_alleles) == len(rec.alts)
     was_pass = "PASS" in rec.filter or len(rec.filter) == 0
 
-    if all_pass and not was_pass:
-        # Only update GT if rec is changing from non-PASS to PASS
-        rec.filter.clear()  # Clear any existing filters
-        rec.filter.add("PASS")
-
+    # Update GT field based on passing alleles
+    if passing_alleles:
         # Update GT field to indicate passing alleles
         # If 1 allele passes: GT = (0, allele_index), e.g., (0, 1) or (0, 2)
         # If 2+ alleles pass: GT = (allele_index, allele_index, ...), e.g., (1, 2)
@@ -1509,6 +1506,12 @@ def _write_results_to_record(
 
         for sample_name in rec.header.samples:
             rec.samples[sample_name]["GT"] = gt_alleles
+
+    # Set PASS filter only if all alleles pass bounds
+    if all_pass and not was_pass:
+        # Update filter only if rec is changing from non-PASS to PASS
+        rec.filter.clear()  # Clear any existing filters
+        rec.filter.add("PASS")
     elif all_pass and was_pass:
         # Already PASS, just ensure PASS filter is set
         rec.filter.clear()
