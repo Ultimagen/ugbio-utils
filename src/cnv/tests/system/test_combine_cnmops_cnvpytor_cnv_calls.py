@@ -90,3 +90,28 @@ class TestMergeCnvsInVcfIntegration:
         combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=1500)
         # Verify output matches expected
         compare_vcfs(str(expected_output_vcf), str(output_vcf))
+
+    def test_merge_cnvs_with_smoothing(self, resources_dir, tmp_path):
+        """Test merge_cnvs_in_vcf with smoothing enabled on real HG002 data."""
+        # Input and expected output files
+        input_vcf = resources_dir / "merge_cnv_input.vcf.gz"
+        expected_output_vcf = resources_dir / "merge_cnv_output_smoothed.vcf.gz"
+
+        # Create output file in tmp directory
+        output_vcf = tmp_path / "test_output_smoothed.vcf.gz"
+
+        # Run merge with smoothing enabled
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(
+            str(input_vcf),
+            str(output_vcf),
+            distance=1500,
+            enable_smoothing=True,
+            max_gap_absolute=50000,
+            gap_scale_fraction=0.05,
+            cipos_threshold=50,
+            ignore_sv_type=False,
+            ignore_filter=True,
+        )
+
+        # Verify output matches expected baseline
+        compare_vcfs(str(expected_output_vcf), str(output_vcf))
