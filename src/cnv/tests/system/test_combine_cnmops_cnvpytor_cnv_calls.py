@@ -115,3 +115,26 @@ class TestMergeCnvsInVcfIntegration:
 
         # Verify output matches expected baseline
         compare_vcfs(str(expected_output_vcf), str(output_vcf))
+
+    def test_merge_cnvs_with_smoothing_filter_enabled(self, resources_dir, tmp_path):
+        """Test merge with smoothing and filter checking enabled (ignore_filter=False)."""
+        input_vcf = resources_dir / "merge_cnv_input.vcf.gz"
+        output_vcf = tmp_path / "test_output_smoothed_filtered.vcf.gz"
+
+        # This should NOT crash - tests the code path that failed in omics
+        # The key difference from test_merge_cnvs_with_smoothing is ignore_filter=False
+        # which triggers _remove_overlapping_filtered_variants() requiring indexed VCF
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(
+            str(input_vcf),
+            str(output_vcf),
+            distance=1500,
+            enable_smoothing=True,
+            max_gap_absolute=50000,
+            gap_scale_fraction=0.05,
+            cipos_threshold=50,
+            ignore_sv_type=False,
+            ignore_filter=False,  # Key difference from existing test
+        )
+
+        # Verify output exists (no crash from missing index)
+        assert output_vcf.exists()

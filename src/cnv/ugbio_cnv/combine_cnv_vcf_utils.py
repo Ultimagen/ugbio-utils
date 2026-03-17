@@ -492,7 +492,7 @@ def _verify_unique_ids(vcf_path: str) -> None:
                 seen_ids.add(variant_id)
 
 
-def merge_cnvs_in_vcf(
+def merge_cnvs_in_vcf(  # noqa: PLR0915
     input_vcf: str,
     output_vcf: str,
     distance: int = 1000,
@@ -663,6 +663,7 @@ def merge_cnvs_in_vcf(
     logger.info("Stage 1.5: Sorting collapsed VCF")
     output_vcf_sorted = output_vcf if not enable_smoothing else output_vcf + ".stage1.sorted.vcf.gz"
     vu.sort_vcf(output_vcf_unsorted, output_vcf_sorted)
+    vu.index_vcf(output_vcf_sorted)
     if not enable_smoothing:
         mu.cleanup_temp_files(temporary_files)
         return
