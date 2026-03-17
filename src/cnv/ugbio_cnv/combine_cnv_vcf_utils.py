@@ -669,6 +669,7 @@ def merge_cnvs_in_vcf(  # noqa: PLR0915
         return
     else:
         temporary_files.append(output_vcf_sorted)
+        temporary_files.append(output_vcf_sorted + ".tbi")
 
     # Stage 2: Identify size-scaled gap smoothing candidates
     logger.info("Stage 2: Identifying size-scaled gap smoothing candidates")
@@ -721,6 +722,7 @@ def merge_cnvs_in_vcf(  # noqa: PLR0915
     # Stage 4: Final sort and cleanup
     logger.info("Stage 4: Final sort")
     vu.sort_vcf(output_vcf_smoothed, output_vcf)
+    vu.index_vcf(output_vcf)
     mu.cleanup_temp_files(temporary_files)
 
 
