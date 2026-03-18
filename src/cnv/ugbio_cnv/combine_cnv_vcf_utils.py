@@ -1608,9 +1608,8 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
     cnv_vcf: str,
     sv_vcf: str,
     output_vcf: str,
-    fasta_index: str,
-    length_threshold: int = 1000,
-    max_length_threshold: int | None = 5000000,
+    min_sv_length: int = 1000,
+    max_sv_length: int | None = 5000000,
     min_sv_qual: float = 0,
     distance: int = 0,
     pctsize: float = 0.5,
@@ -1619,11 +1618,10 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
     """
     Merge CNV VCF with filtered SV VCF, replacing overlapping CNVs with SV calls.
 
-    This function implements a 4-stage pipeline:
-    1. Filter SV VCF for PASS DEL/DUP calls with length_threshold <= |SVLEN| <= max_length_threshold
-    2. Update headers and combine VCFs with source annotation
-    3. Sort combined VCF
-    4. Collapse overlaps using pick_best=True (SV wins due to higher QUAL)
+    This function implements a 3-stage pipeline:
+    1. Filter SV VCF for PASS DEL/DUP calls with min_sv_length <= |SVLEN| <= max_sv_length
+    2. Combine VCFs with source annotation
+    3. Sort and collapse overlaps using pick_best=True (SV wins due to higher QUAL)
 
     The key insight: SV calls from tools like GRIDSS have QUAL scores 10-100x higher
     than CNV calls from CNVpytor/cn.mops. Using collapse_vcf with pick_best=True
@@ -1638,11 +1636,9 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
         Path to SV VCF file (e.g., from GRIDSS)
     output_vcf : str
         Path for output merged VCF file
-    fasta_index : str
-        Path to reference genome FASTA index (.fai) for header updates
-    length_threshold : int, optional
+    min_sv_length : int, optional
         Minimum absolute SVLEN for SV calls to include, by default 1000
-    max_length_threshold : int, optional
+    max_sv_length : int, optional
         Maximum absolute SVLEN for SV calls to include, by default 5000000 (5Mb).
         Useful for excluding very large SVs that may have low specificity.
     min_sv_qual : float, optional
@@ -1655,6 +1651,7 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
         Prevents giant SVs (e.g., 68Mb) from replacing many small CNVs they happen to overlap.
     output_directory : str, optional
         Directory for temporary files. If None, uses output_vcf directory.
+        If provided, must already exist.
 
     Returns
     -------
@@ -1664,7 +1661,9 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
     Raises
     ------
     FileNotFoundError
-        If input VCF files or FASTA index do not exist
+        If input VCF files do not exist
+    ValueError
+        If output_directory is provided but does not exist
     RuntimeError
         If VCF processing fails
 
@@ -1675,7 +1674,7 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
     ...     sv_vcf="gridss_output.vcf.gz",
     ...     output_vcf="merged_cnv_sv.vcf.gz",
     ...     fasta_index="hg38.fa.fai",
-    ...     length_threshold=1000,
+    ...     min_sv_length=1000,
     ...     distance=0
     ... )
 
@@ -1687,15 +1686,18 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
     - Non-overlapping CNV calls are preserved in the output
     - All INFO fields from both VCFs are preserved in the merged header
     """
-    # Create output directory if needed
+    # Set output directory (require it exists if provided)
     if output_directory is None:
         output_directory = os.path.dirname(os.path.abspath(output_vcf))
-    os.makedirs(output_directory, exist_ok=True)
+        os.makedirs(output_directory, exist_ok=True)
+    elif not os.path.isdir(output_directory):
+        # User provided output_directory - require it exists
+        raise ValueError(f"Output directory does not exist: {output_directory}")
 
     logger.info(f"Starting CNV+SV merge: CNV={cnv_vcf}, SV={sv_vcf}")
-    max_len_msg = f" to {max_length_threshold}bp" if max_length_threshold else ""
+    max_len_msg = f" to {max_sv_length}bp" if max_sv_length else ""
     qual_msg = f", Min QUAL: {min_sv_qual}" if min_sv_qual > 0 else ""
-    logger.info(f"Length threshold: {length_threshold}bp{max_len_msg}{qual_msg}, Distance: {distance}bp")
+    logger.info(f"Length threshold: {min_sv_length}bp{max_len_msg}{qual_msg}, Distance: {distance}bp")
 
     vcf_utils = VcfUtils()
     temporary_files = []
@@ -1703,9 +1705,9 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
     # Stage 1: Filter SV VCF for PASS DEL/DUP with length and quality constraints
     logger.info("Stage 1: Filtering SV VCF for PASS DEL/DUP calls")
     filtered_sv_vcf = pjoin(output_directory, "filtered_sv.vcf.gz")
-    filter_expr = f'(SVTYPE="DEL" | SVTYPE="DUP") & abs(SVLEN) >= {length_threshold}'
-    if max_length_threshold is not None:
-        filter_expr += f" & abs(SVLEN) <= {max_length_threshold}"
+    filter_expr = f'(SVTYPE="DEL" | SVTYPE="DUP") & abs(SVLEN) >= {min_sv_length}'
+    if max_sv_length is not None:
+        filter_expr += f" & abs(SVLEN) <= {max_sv_length}"
     if min_sv_qual > 0:
         filter_expr += f" & QUAL >= {min_sv_qual}"
     vcf_utils.view_vcf(
@@ -1719,21 +1721,16 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
     # Log filtered SV count
     with pysam.VariantFile(filtered_sv_vcf) as vcf_in:
         sv_count = sum(1 for _ in vcf_in)
-    length_range = f">= {length_threshold}bp"
-    if max_length_threshold is not None:
-        length_range = f"between {length_threshold}bp and {max_length_threshold}bp"
+    length_range = f">= {min_sv_length}bp"
+    if max_sv_length is not None:
+        length_range = f"between {min_sv_length}bp and {max_sv_length}bp"
     qual_suffix = f" with QUAL >= {min_sv_qual}" if min_sv_qual > 0 else ""
     logger.info(f"Filtered SV VCF contains {sv_count} PASS DEL/DUP calls {length_range}{qual_suffix}")
 
-    # Stage 2: Update headers and combine VCFs
-    logger.info("Stage 2: Updating VCF headers to match reference")
-    updated_cnv_vcf = update_vcf_contig(vcf_utils, cnv_vcf, fasta_index, output_directory, index=0)
-    updated_sv_vcf = update_vcf_contig(vcf_utils, filtered_sv_vcf, fasta_index, output_directory, index=1)
-    temporary_files.extend([updated_cnv_vcf, updated_sv_vcf])
-
-    logger.info("Combining VCF headers")
-    vcf_cnv = pysam.VariantFile(updated_cnv_vcf)
-    vcf_sv = pysam.VariantFile(updated_sv_vcf)
+    # Stage 2: Combine VCF headers
+    logger.info("Stage 2: Combining VCF headers")
+    vcf_cnv = pysam.VariantFile(cnv_vcf)
+    vcf_sv = pysam.VariantFile(filtered_sv_vcf)
 
     # Merge headers with keep_filters=True to preserve GRIDSS filter definitions
     combined_header = combine_vcf_headers_for_cnv(
@@ -1757,7 +1754,7 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
 
         # Extract existing CNV_SOURCE from CNV VCF (cn.mops, cnvpytor, or combined)
         vcf_cnv.close()
-        vcf_cnv = pysam.VariantFile(updated_cnv_vcf)  # Reopen after iteration
+        vcf_cnv = pysam.VariantFile(cnv_vcf)  # Reopen after iteration
         cnv_source = "unknown"
         for record in vcf_cnv:
             if "CNV_SOURCE" in record.info:
@@ -1766,7 +1763,7 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
 
         # Write CNV records with original source
         vcf_cnv.close()
-        vcf_cnv = pysam.VariantFile(updated_cnv_vcf)
+        vcf_cnv = pysam.VariantFile(cnv_vcf)
         write_vcf_records_with_source(
             vcf_cnv, vcf_out, combined_header, cnv_source, make_ids_unique=True, seen_ids=seen_ids
         )

@@ -138,16 +138,15 @@ def __parse_args_merge_cnv_sv(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--cnv_vcf", help="Input CNV VCF file", required=True, type=str)
     parser.add_argument("--sv_vcf", help="Input SV VCF file (e.g., from GRIDSS)", required=True, type=str)
     parser.add_argument("--output_vcf", help="Output merged VCF file", required=True, type=str)
-    parser.add_argument("--fasta_index", help="Reference genome FASTA index (.fai)", required=True, type=str)
     parser.add_argument(
-        "--length_threshold",
+        "--min_sv_length",
         help="Minimum absolute SVLEN for SV calls to include (default: 1000)",
         required=False,
         type=int,
         default=1000,
     )
     parser.add_argument(
-        "--max_length_threshold",
+        "--max_sv_length",
         help="Maximum absolute SVLEN for SV calls to include (default: 5000000, 5Mb)",
         required=False,
         type=int,
@@ -633,9 +632,8 @@ def run(argv: list[str]):
             cnv_vcf=args.cnv_vcf,
             sv_vcf=args.sv_vcf,
             output_vcf=args.output_vcf,
-            fasta_index=args.fasta_index,
-            length_threshold=args.length_threshold,
-            max_length_threshold=args.max_length_threshold,
+            min_sv_length=args.min_sv_length,
+            max_sv_length=args.max_sv_length,
             min_sv_qual=args.min_sv_qual,
             distance=args.distance,
             pctsize=args.pctsize,

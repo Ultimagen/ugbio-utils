@@ -109,6 +109,71 @@ class TestCombineCnmopsCnvpytorCnvCalls:
         # Compare output with expected output for consistency
         compare_vcfs(output_vcf, expected_output_vcf)
 
+    def test_merge_cnv_sv_integration(self, tmpdir, resources_dir):
+        """Integration test for merge_cnv_sv with real CNV and SV data."""
+        import pysam
+
+        # Input files (using renamed CNV VCF to match SV sample name)
+        input_cnv_vcf = pjoin(resources_dir, "HG002_cnv_renamed_NA24385.vcf.gz")
+        input_sv_vcf = pjoin(resources_dir, "gridss_sv_example.vcf.gz")
+        output_vcf = pjoin(tmpdir, "merged_cnv_sv.vcf.gz")
+        expected_output_vcf = pjoin(resources_dir, "expected_merged_cnv_sv.vcf.gz")
+
+        # Run merge_cnv_sv command
+        combine_cnmops_cnvpytor_cnv_calls.run(
+            [
+                "cnv_results_to_vcf",
+                "merge_cnv_sv",
+                "--cnv_vcf",
+                input_cnv_vcf,
+                "--sv_vcf",
+                input_sv_vcf,
+                "--output_vcf",
+                output_vcf,
+                "--min_sv_length",
+                "1000",
+                "--max_sv_length",
+                "5000000",
+                "--min_sv_qual",
+                "600",
+                "--distance",
+                "0",
+                "--pctsize",
+                "0.5",
+                "--out_directory",
+                str(tmpdir),
+            ]
+        )
+
+        # Verify output files created
+        assert os.path.exists(output_vcf)
+        assert os.path.exists(f"{output_vcf}.tbi")
+
+        # Verify output structure
+        with pysam.VariantFile(output_vcf) as vcf:
+            records = list(vcf)
+
+            # Check CNV_SOURCE field in header
+            assert "CNV_SOURCE" in vcf.header.info
+            assert "CNV_ID" in vcf.header.info
+
+            # Check records have CNV_SOURCE
+            sources = [r.info.get("CNV_SOURCE") for r in records if "CNV_SOURCE" in r.info]
+            assert len(sources) > 0
+
+            # Verify we have both CNV and SV sources
+            all_sources = set()
+            for s in sources:
+                if isinstance(s, tuple | list):
+                    all_sources.update(s)
+                else:
+                    all_sources.add(s)
+            assert "gridss" in all_sources  # SV source present
+            assert len(all_sources) > 1  # At least one CNV source too
+
+        # Compare with expected golden file
+        compare_vcfs(output_vcf, expected_output_vcf)
+
 
 class TestMergeCnvsInVcfIntegration:
     """Integration tests for merge_cnvs_in_vcf using real data."""
