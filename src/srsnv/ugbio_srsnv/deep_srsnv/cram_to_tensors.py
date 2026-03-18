@@ -426,16 +426,16 @@ def _process_shard(  # noqa: PLR0915
 
     chunk = {
         "cache_format_version": 5,
-        "read_base_idx": torch.from_numpy(read_base_out[:out_i].copy()),
-        "ref_base_idx": torch.from_numpy(ref_base_out[:out_i].copy()),
-        "t0_idx": torch.from_numpy(t0_out[:out_i].copy()),
-        "tm_idx": torch.from_numpy(tm_arr[:out_i].copy()),
-        "st_idx": torch.from_numpy(st_arr[:out_i].copy()),
-        "et_idx": torch.from_numpy(et_arr[:out_i].copy()),
-        "x_num_pos": torch.from_numpy(x_num_pos_out[:out_i].copy()),
-        "x_num_const": torch.from_numpy(x_num_const_out[:out_i].copy()),
-        "mask": torch.from_numpy(mask_out[:out_i].copy()),
-        "label": torch.from_numpy(label_out[:out_i].copy()),
+        "read_base_idx": read_base_out[:out_i].copy(),
+        "ref_base_idx": ref_base_out[:out_i].copy(),
+        "t0_idx": t0_out[:out_i].copy(),
+        "tm_idx": tm_arr[:out_i].copy(),
+        "st_idx": st_arr[:out_i].copy(),
+        "et_idx": et_arr[:out_i].copy(),
+        "x_num_pos": x_num_pos_out[:out_i].copy(),
+        "x_num_const": x_num_const_out[:out_i].copy(),
+        "mask": mask_out[:out_i].copy(),
+        "label": label_out[:out_i].copy(),
         "chrom": np.asarray(chrom_list, dtype=object),
         "pos": pos_out[:out_i].copy(),
         "rn": np.asarray(rn_list, dtype=object),
@@ -454,6 +454,29 @@ def _process_shard(  # noqa: PLR0915
         "fetch_windows": n_windows,
     }
     return shard_id, chunk, stats
+
+
+_TORCH_TENSOR_KEYS = frozenset(
+    {
+        "read_base_idx",
+        "ref_base_idx",
+        "t0_idx",
+        "tm_idx",
+        "st_idx",
+        "et_idx",
+        "x_num_pos",
+        "x_num_const",
+        "mask",
+        "label",
+    }
+)
+
+
+def _numpy_chunk_to_torch(chunk: dict) -> None:
+    """Convert numpy arrays in a shard chunk to torch tensors in-place (for torch.save)."""
+    for key in _TORCH_TENSOR_KEYS:
+        if key in chunk and isinstance(chunk[key], np.ndarray):
+            chunk[key] = torch.from_numpy(chunk[key])
 
 
 # ---------------------------------------------------------------------------
@@ -572,6 +595,7 @@ def cram_to_tensor_cache(  # noqa: PLR0915
                 rows=shard_rows,
                 **shard_kwargs,
             )
+            _numpy_chunk_to_torch(chunk)
             shard_file = out_path / f"shard_{sid:05d}.pt"
             torch.save(chunk, shard_file)
             shard_stats.append(stats)
@@ -612,6 +636,7 @@ def cram_to_tensor_cache(  # noqa: PLR0915
             }
             for fut in as_completed(futures):
                 _sid, chunk, stats = fut.result()
+                _numpy_chunk_to_torch(chunk)
                 shard_file = out_path / f"shard_{_sid:05d}.pt"
                 torch.save(chunk, shard_file)
                 shard_stats.append(stats)
