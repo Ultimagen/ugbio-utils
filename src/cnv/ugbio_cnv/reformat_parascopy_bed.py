@@ -1,4 +1,4 @@
-# Copyright 2022 Ultima Genomics Inc.
+# Copyright 2026 Ultima Genomics Inc.
 #
 #    Licensed under the Apache License, Version 2.0 (the "License");
 #    you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 #    Reformat parascopy CNV BED files to 4-column BED with GFF3-style tags for IGV
 
 import argparse
+import gzip
 import logging
 import sys
 from pathlib import Path
@@ -23,8 +24,10 @@ from urllib.parse import quote
 import pandas as pd
 from ugbio_core.logger import logger
 
+INFO_COLUMNS_START = 3  # Columns after chrom, start, end are considered info columns
 
-def run(argv):  # noqa: C901
+
+def run(argv):
     parser = argparse.ArgumentParser(
         prog="reformat_parascopy_bed",
         description="Convert parascopy CNV BED files to 4-column BED with GFF3-style tags for IGV",
@@ -41,8 +44,6 @@ def run(argv):  # noqa: C901
 
     # Read BED file, skipping only ## comment lines (not #chrom header)
     # Find the header line index (starts with #chrom)
-    import gzip
-
     open_func = gzip.open if args.input_bed.endswith(".gz") else open
     with open_func(args.input_bed, "rt") as f:
         skip_rows = 0
@@ -54,19 +55,6 @@ def run(argv):  # noqa: C901
 
     bed_df = pd.read_csv(args.input_bed, sep="\t", compression="infer", skiprows=skip_rows)
     bed_df.columns = bed_df.columns.str.lstrip("#")  # Remove leading # from chrom column
-    if len(bed_df.columns) < 3:  # noqa: PLR2004
-        raise ValueError(f"BED file must have at least 3 columns, found {len(bed_df.columns)}")
-
-    # Identify info column by name (typically "info")
-    info_col = None
-    for col in bed_df.columns[3:]:  # noqa: PLR2004
-        if col.lower() == "info":
-            info_col = col
-            break
-
-    logger.info(f"Processing {len(bed_df)} regions from {args.input_bed}")
-    if info_col:
-        logger.info(f"Detected info column: {info_col}")
 
     # Write output
     with open(args.output_bed, "w") as out:
@@ -76,12 +64,12 @@ def run(argv):  # noqa: C901
             tags = []
             for col in bed_df.columns[3:]:  # noqa: PLR2004
                 val = str(row[col])
-                if col == info_col and ";" in val:
+                if col.lower() == "info" and ";" in val:
                     # Expand info column tags
                     tags.extend(val.split(";"))
                 else:
                     # Regular column: escape only ; and =
-                    val_escaped = val.replace(";", quote(";")).replace("=", quote("=")).replace(" ", "_")
+                    val_escaped = val.replace(";", quote(";")).replace("=", quote("="))
                     tags.append(f"{col}={val_escaped}")
             out.write(f"{chrom}\t{start}\t{end}\t{';'.join(tags)}\n")
 
