@@ -1606,3 +1606,136 @@ class TestGroupCandidatesTransitively:
         assert {"A", "B", "C", "D"} in groups
         assert {"E", "F"} in groups
         assert {"G", "H", "I"} in groups
+
+
+class TestWeightedMajorityVoting:
+    """Tests for SVLEN-weighted majority voting for SVTYPE."""
+
+    def test_aggregate_weighted_majority_del_wins(self):
+        """Test that DEL wins when total DEL length > DUP length."""
+        # Create mock record and DataFrame
+        header = pysam.VariantHeader()
+        header.add_line("##contig=<ID=chr1>")
+        header.info.add("SVLEN", ".", "Integer", "Length")
+        header.info.add("SVTYPE", "1", "String", "Type")
+        header.add_sample("test_sample")
+
+        record = header.new_record()
+        record.contig = "chr1"
+        record.pos = 1000
+        record.info["SVLEN"] = (1000,)
+        record.info["SVTYPE"] = "DEL"
+
+        # DataFrame with collapsed variants: 2 more DELs + 1 DUP
+        update_df = pd.DataFrame({"svlen": [(1000,), (500,), (200,)], "svtype": ["DEL", "DEL", "DUP"]})
+
+        # Values list (from _value_aggregator)
+        values = ["DEL", "DEL", "DUP", "DEL"]  # Record + update_df
+
+        # Call aggregation
+        combine_cnv_vcf_utils._aggregate_weighted_majority(record, update_df, "SVTYPE", values)
+
+        # Verify DEL won: 1000+1000+500 = 2500 > 200
+        assert record.info["SVTYPE"] == "DEL"
+
+    def test_aggregate_weighted_majority_dup_wins(self):
+        """Test that DUP wins when total DUP length > DEL length."""
+        header = pysam.VariantHeader()
+        header.add_line("##contig=<ID=chr1>")
+        header.info.add("SVLEN", ".", "Integer", "Length")
+        header.info.add("SVTYPE", "1", "String", "Type")
+        header.add_sample("test_sample")
+
+        record = header.new_record()
+        record.contig = "chr1"
+        record.pos = 1000
+        record.info["SVLEN"] = (100,)
+        record.info["SVTYPE"] = "DEL"
+
+        # DataFrame: 2 DUPs with larger total length
+        update_df = pd.DataFrame({"svlen": [(800,), (800,)], "svtype": ["DUP", "DUP"]})
+
+        values = ["DUP", "DUP", "DEL"]
+
+        combine_cnv_vcf_utils._aggregate_weighted_majority(record, update_df, "SVTYPE", values)
+
+        # Verify DUP won: 800+800 = 1600 > 100
+        assert record.info["SVTYPE"] == "DUP"
+
+    def test_aggregate_weighted_majority_all_same(self):
+        """Test that same SVTYPE is preserved when all are identical."""
+        header = pysam.VariantHeader()
+        header.add_line("##contig=<ID=chr1>")
+        header.info.add("SVLEN", ".", "Integer", "Length")
+        header.info.add("SVTYPE", "1", "String", "Type")
+
+        record = header.new_record()
+        record.contig = "chr1"
+        record.pos = 1000
+        record.info["SVLEN"] = (1000,)
+        record.info["SVTYPE"] = "DEL"
+
+        update_df = pd.DataFrame({"svlen": [(500,), (300,)], "svtype": ["DEL", "DEL"]})
+
+        values = ["DEL", "DEL", "DEL"]
+
+        combine_cnv_vcf_utils._aggregate_weighted_majority(record, update_df, "SVTYPE", values)
+
+        assert record.info["SVTYPE"] == "DEL"
+
+    def test_update_genotype_from_svtype_del(self):
+        """Test that DEL SVTYPE sets GT to (0,1)."""
+        header = pysam.VariantHeader()
+        header.add_line("##contig=<ID=chr1>")
+        header.info.add("SVTYPE", "1", "String", "Type")
+        header.formats.add("GT", "1", "String", "Genotype")
+        header.add_sample("test_sample")
+
+        record = header.new_record()
+        record.contig = "chr1"
+        record.pos = 1000
+        record.alleles = ("N", "<DEL>")  # Need to set alleles before GT
+        record.info["SVTYPE"] = "DEL"
+        record.samples["test_sample"]["GT"] = (None, 1)  # Initial GT
+
+        combine_cnv_vcf_utils._update_genotype_from_svtype(record)
+
+        assert record.samples["test_sample"]["GT"] == (0, 1)
+
+    def test_update_genotype_from_svtype_dup(self):
+        """Test that DUP SVTYPE sets GT to (None,1)."""
+        header = pysam.VariantHeader()
+        header.add_line("##contig=<ID=chr1>")
+        header.info.add("SVTYPE", "1", "String", "Type")
+        header.formats.add("GT", "1", "String", "Genotype")
+        header.add_sample("test_sample")
+
+        record = header.new_record()
+        record.contig = "chr1"
+        record.pos = 1000
+        record.alleles = ("N", "<DUP>")  # Need to set alleles before GT
+        record.info["SVTYPE"] = "DUP"
+        record.samples["test_sample"]["GT"] = (0, 1)  # Initial GT
+
+        combine_cnv_vcf_utils._update_genotype_from_svtype(record)
+
+        assert record.samples["test_sample"]["GT"] == (None, 1)
+
+    def test_update_genotype_no_svtype(self):
+        """Test that missing SVTYPE doesn't crash."""
+        header = pysam.VariantHeader()
+        header.add_line("##contig=<ID=chr1>")
+        header.formats.add("GT", "1", "String", "Genotype")
+        header.add_sample("test_sample")
+
+        record = header.new_record()
+        record.contig = "chr1"
+        record.pos = 1000
+        record.alleles = ("N", "<DEL>")  # Need to set alleles before GT
+        record.samples["test_sample"]["GT"] = (0, 1)
+
+        # Should not crash
+        combine_cnv_vcf_utils._update_genotype_from_svtype(record)
+
+        # GT should be unchanged
+        assert record.samples["test_sample"]["GT"] == (0, 1)

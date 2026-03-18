@@ -1,5 +1,6 @@
 # utilities for combining VCFs
 import shutil
+from collections import defaultdict
 from os.path import join as pjoin
 from pathlib import Path
 
@@ -32,6 +33,7 @@ CNV_AGGREGATION_ACTIONS = {
     ],
     "aggregate": ["CNV_SOURCE"],
     "minlength": ["CIPOS"],
+    "weighted_majority": ["SVTYPE"],
 }
 
 
@@ -384,6 +386,9 @@ def _aggregate_record_info_fields(
 
     # Update SVLEN to match new boundaries
     record.info["SVLEN"] = (record.stop - record.start,)
+
+    # Update genotype to match aggregated SVTYPE
+    _update_genotype_from_svtype(record)
 
     # Clean up collapse metadata fields
     collapse_info_fields = ["CollapseId", "NumCollapsed", "NumConsolidated"]
@@ -856,6 +861,116 @@ def _aggregate_set(
     record.info[field] = tuple(set(values))
 
 
+def _aggregate_weighted_majority(
+    record: pysam.VariantRecord,
+    update_records: pd.DataFrame,
+    field: str,
+    values: list,
+) -> None:
+    """
+    Aggregate field using SVLEN-weighted majority vote.
+
+    For SVTYPE: computes total SVLEN for each SVTYPE value and selects
+    the SVTYPE with the highest cumulative length.
+
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        VCF record to update
+    update_records : pd.DataFrame
+        DataFrame containing records to aggregate
+    field : str
+        INFO field name to aggregate
+    values : list
+        List of field values from all records being merged
+    """
+    # Collect SVLEN values from update_records and current record
+    lengths = list(update_records["svlen"].apply(lambda x: x[0])) + [record.info["SVLEN"][0]]
+
+    # Filter out None values
+    valid_pairs = [
+        (v, abs(length)) for v, length in zip(values, lengths, strict=True) if v is not None and not pd.isna(v)
+    ]
+
+    if not valid_pairs:
+        return
+
+    # Group by field value and sum absolute SVLENs
+    value_weights = defaultdict(int)
+    for value, length in valid_pairs:
+        value_weights[value] += length
+
+    # Select value with highest total SVLEN
+    majority_value = max(value_weights.items(), key=lambda x: x[1])[0]
+    record.info[field] = majority_value
+
+
+def _update_genotype_from_svtype(record: pysam.VariantRecord) -> None:
+    """
+    Update genotype (GT) field based on SVTYPE.
+
+    - DEL → GT=(0,1) heterozygous deletion
+    - DUP → GT=(None,1) duplication
+
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        VCF record to update genotype for
+    """
+    if "SVTYPE" not in record.info or not record.samples:
+        return
+
+    svtype = record.info["SVTYPE"]
+    sample_name = list(record.samples.keys())[0]  # CNV records have single sample
+
+    if svtype == "DEL":
+        record.samples[sample_name]["GT"] = (0, 1)
+    elif svtype == "DUP":
+        record.samples[sample_name]["GT"] = (None, 1)
+
+
+def _collect_field_values(
+    record: pysam.VariantRecord,
+    update_records: pd.DataFrame,
+    field: str,
+    val_number: str | None,
+) -> list:
+    """Collect field values from records based on field number specification."""
+    if val_number == 1:
+        return list(update_records[field.lower()]) + [record.info.get(field, np.nan)]
+    if str(val_number) == ".":
+        values = list(update_records[field.lower()]) + [record.info.get(field, (None,))]
+        return [item for sublist in values for item in sublist if item is not None]
+    if isinstance(val_number, int) and val_number > 1:
+        return list(update_records[field.lower()]) + [record.info.get(field, None)]
+    raise ValueError(f"Unsupported value number for aggregation: {val_number}")
+
+
+def _dispatch_aggregation(
+    action: str,
+    record: pysam.VariantRecord,
+    update_records: pd.DataFrame,
+    field: str,
+    values: list,
+    val_type: str | None,
+):
+    """Dispatch to appropriate aggregation function based on action."""
+    if action == "weighted_avg":
+        _aggregate_weighted_avg(record, update_records, field, values)
+    elif action == "max":
+        _aggregate_max(record, field, values, val_type)
+    elif action == "min":
+        _aggregate_min(record, field, values, val_type)
+    elif action == "minlength":
+        _aggregate_minlength(record, field, values, val_type)
+    elif action == "aggregate":
+        _aggregate_set(record, field, values)
+    elif action == "weighted_majority":
+        _aggregate_weighted_majority(record, update_records, field, values)
+    else:
+        raise ValueError(f"Unsupported aggregation action: {action}")
+
+
 def _value_aggregator(
     record: pysam.VariantRecord,
     update_records: pd.DataFrame,
@@ -885,31 +1000,8 @@ def _value_aggregator(
     if field.lower() not in update_records.columns:
         return
 
-    # Collect values based on field number specification
-    values = []
-    if val_number == 1:
-        values = list(update_records[field.lower()]) + [record.info.get(field, np.nan)]
-    elif str(val_number) == ".":
-        values = list(update_records[field.lower()]) + [record.info.get(field, (None,))]
-        values = [item for sublist in values for item in sublist if item is not None]
-    elif isinstance(val_number, int) and val_number > 1:
-        values = list(update_records[field.lower()]) + [record.info.get(field, None)]
-    else:
-        raise ValueError(f"Unsupported value number for aggregation: {val_number}")
-
-    # Dispatch to appropriate aggregation function
-    if action == "weighted_avg":
-        _aggregate_weighted_avg(record, update_records, field, values)
-    elif action == "max":
-        _aggregate_max(record, field, values, val_type)
-    elif action == "min":
-        _aggregate_min(record, field, values, val_type)
-    elif action == "minlength":
-        _aggregate_minlength(record, field, values, val_type)
-    elif action == "aggregate":
-        _aggregate_set(record, field, values)
-    else:
-        raise ValueError(f"Unsupported aggregation action: {action}")
+    values = _collect_field_values(record, update_records, field, val_number)
+    _dispatch_aggregation(action, record, update_records, field, values, val_type)
 
 
 def calculate_size_scaled_gap_threshold(
@@ -1335,5 +1427,8 @@ def _merge_cnv_group(
 
     # Update SVLEN to match new boundaries
     merged.info["SVLEN"] = (merged.stop - merged.start,)
+
+    # Update genotype to match aggregated SVTYPE
+    _update_genotype_from_svtype(merged)
 
     return merged

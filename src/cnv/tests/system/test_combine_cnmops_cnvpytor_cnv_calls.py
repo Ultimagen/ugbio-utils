@@ -138,3 +138,67 @@ class TestMergeCnvsInVcfIntegration:
 
         # Verify output exists (no crash from missing index)
         assert output_vcf.exists()
+
+    def test_merge_cnvs_weighted_majority_voting(self, tmp_path):
+        """Test that merged SVTYPE is determined by SVLEN-weighted majority vote."""
+        import pysam
+
+        # Create test VCF with mixed SVTYPEs that will merge
+        vcf_path = tmp_path / "mixed_svtype.vcf.gz"
+
+        header = pysam.VariantHeader()
+        header.add_line("##fileformat=VCFv4.2")
+        header.add_line("##contig=<ID=chr1,length=248956422>")
+        header.add_line('##INFO=<ID=SVLEN,Number=.,Type=Integer,Description="Length">')
+        header.add_line('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type">')
+        header.add_line('##INFO=<ID=CNV_SOURCE,Number=.,Type=String,Description="Source">')
+        header.add_line('##INFO=<ID=CIPOS,Number=2,Type=Integer,Description="Confidence interval">')
+        header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
+        header.add_sample("test_sample")
+
+        with pysam.VariantFile(str(vcf_path), "w", header=header) as vcf:
+            # Two DELs: 1000bp + 1000bp = 2000bp total
+            r1 = vcf.new_record(contig="chr1", start=1000, alleles=("N", "<DEL>"), id="DEL1")
+            r1.stop = 2000
+            r1.info["SVLEN"] = (1000,)
+            r1.info["SVTYPE"] = "DEL"
+            r1.info["CNV_SOURCE"] = ("test",)
+            r1.info["CIPOS"] = (-50, 50)
+            r1.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(r1)
+
+            r2 = vcf.new_record(contig="chr1", start=1500, alleles=("N", "<DEL>"), id="DEL2")
+            r2.stop = 2500
+            r2.info["SVLEN"] = (1000,)
+            r2.info["SVTYPE"] = "DEL"
+            r2.info["CNV_SOURCE"] = ("test",)
+            r2.info["CIPOS"] = (-50, 50)
+            r2.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(r2)
+
+            # One DUP: 200bp total
+            r3 = vcf.new_record(contig="chr1", start=2000, alleles=("N", "<DUP>"), id="DUP1")
+            r3.stop = 2200
+            r3.info["SVLEN"] = (200,)
+            r3.info["SVTYPE"] = "DUP"
+            r3.info["CNV_SOURCE"] = ("test",)
+            r3.info["CIPOS"] = (-50, 50)
+            r3.samples["test_sample"]["GT"] = (None, 1)
+            vcf.write(r3)
+
+        pysam.tabix_index(str(vcf_path), preset="vcf", force=True)
+
+        # Merge with large distance to force merging
+        output_vcf = tmp_path / "merged.vcf.gz"
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(vcf_path), str(output_vcf), distance=10000, ignore_sv_type=True)
+
+        # Verify merged output
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = list(vcf)
+            assert len(records) == 1  # Should merge into 1
+
+            merged = records[0]
+            # DEL should win: 2000bp > 200bp
+            assert merged.info["SVTYPE"] == "DEL"
+            # Genotype should match DEL
+            assert merged.samples["test_sample"]["GT"] == (0, 1)
