@@ -13,6 +13,7 @@
 #    limitations under the License.
 # DESCRIPTION
 #    Reformat parascopy CNV BED files to 4-column BED with GFF3-style tags for IGV
+#    See added tests for the details
 
 import argparse
 import gzip
