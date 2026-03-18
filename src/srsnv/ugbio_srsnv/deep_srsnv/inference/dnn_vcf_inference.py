@@ -844,9 +844,10 @@ def _parse_fold_args(argv: list[str] | None = None) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
-def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915
+def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901, PLR0912
     """Run inference for a single fold's chromosomes and write predictions parquet."""
     import pyarrow as pa  # noqa: PLC0415
+    import pyarrow.compute  # noqa: PLC0415
     import torch.multiprocessing  # noqa: PLC0415
 
     torch.multiprocessing.set_sharing_strategy("file_system")
@@ -891,26 +892,50 @@ def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915
         manifest = json.load(f)
     chrom_to_fold: dict[str, int] = manifest.get("chrom_to_fold", {})
 
-    # Read parquet and filter to this fold's chromosomes
+    # Read parquet and filter to this fold's chromosomes (memory-efficient)
     import pyarrow.parquet as pq_mod  # noqa: PLC0415
 
     pf = pq_mod.ParquetFile(parquet_path)
     available_cols = [c for c in _PARQUET_COLUMNS if c in (pf.schema.names or [])]
-    table = pf.read(columns=available_cols)
-    chrom_col = table.column(CHROM).to_pylist()
 
-    my_mask = [chrom_to_fold.get(c) == fold_idx for c in chrom_col]
+    # Build set of chromosomes belonging to this fold
+    my_chroms: set[str] = set()
+    test_chroms: set[str] = set()
+    for chrom, fid in chrom_to_fold.items():
+        if fid == fold_idx:
+            my_chroms.add(chrom)
+    # Fold 0 also handles test chromosomes (not in chrom_to_fold)
     if fold_idx == 0:
-        # Fold 0 also handles test chromosomes (not in chrom_to_fold)
-        my_mask = [my_mask[i] or chrom_col[i] not in chrom_to_fold for i in range(len(my_mask))]
+        # Read just the CHROM column to discover test chroms
+        chrom_col_arr = pf.read(columns=[CHROM]).column(CHROM)
+        all_chroms_in_data = set(chrom_col_arr.to_pylist())
+        test_chroms = all_chroms_in_data - set(chrom_to_fold.keys())
+        del chrom_col_arr
+    target_chroms = my_chroms | test_chroms
 
-    filtered = table.filter(pa.array(my_mask))
+    # Read only rows matching target chromosomes using row-group filtering
+    total_rows = pf.metadata.num_rows
+    batches = []
+    for batch in pf.iter_batches(batch_size=500_000, columns=available_cols):
+        chrom_arr = batch.column(CHROM)
+        mask = pa.compute.is_in(chrom_arr, value_set=pa.array(list(target_chroms)))
+        filtered_batch = batch.filter(mask)
+        if len(filtered_batch) > 0:
+            batches.append(filtered_batch)
+    if batches:
+        filtered = pa.concat_tables([pa.Table.from_batches([b]) for b in batches])
+    else:
+        filtered = pa.table({c: [] for c in available_cols})
+    del batches
+
     col_dict = filtered.to_pydict()
     n_rows = len(col_dict[available_cols[0]]) if available_cols else 0
+    del filtered
     rows = [{k: col_dict[k][i] for k in col_dict} for i in range(n_rows)]
+    del col_dict
     rows.sort(key=lambda r: (str(r.get(CHROM, "")), int(r.get(POS, 0))))
 
-    logger.info("Fold %d: %d rows (total %d, filtered %d)", fold_idx, n_rows, len(chrom_col), n_rows)
+    logger.info("Fold %d: %d rows (total %d, filtered %d)", fold_idx, n_rows, total_rows, n_rows)
 
     if not rows:
         logger.info("Fold %d: no rows, writing empty predictions", fold_idx)
