@@ -45,6 +45,7 @@ from ugbio_srsnv.deep_srsnv.cram_to_tensors import (
     POS,
     _process_shard,
     _samtools_available,
+    _worker_init,
 )
 from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
 from ugbio_srsnv.deep_srsnv.inference.trt_engine import load_inference_engine
@@ -305,7 +306,7 @@ def _pipelined_inference(
                         time.perf_counter() - t_start,
                     )
         else:
-            with ProcessPoolExecutor(max_workers=effective_workers) as pool:
+            with ProcessPoolExecutor(max_workers=effective_workers, initializer=_worker_init) as pool:
                 futures = {
                     pool.submit(_process_shard, shard_id=sid, rows=shard_rows, **shard_kwargs): sid
                     for sid, shard_rows in shard_inputs
@@ -633,6 +634,10 @@ def run_inference_pipeline(  # noqa: PLR0913, C901, PLR0912
     if not metadata_path and not ensemble_manifest_path:
         raise ValueError("Either metadata_path or ensemble_manifest_path must be provided")
 
+    import torch.multiprocessing  # noqa: PLC0415
+
+    torch.multiprocessing.set_sharing_strategy("file_system")
+
     t0 = time.perf_counter()
 
     # ── Phase 1: setup ──
@@ -810,6 +815,208 @@ def run(argv: list[str] | None = None) -> None:
 
 def main() -> None:
     run()
+
+
+# ---------------------------------------------------------------------------
+# Per-fold inference CLI  (dnn_fold_inference)
+# ---------------------------------------------------------------------------
+
+
+def _parse_fold_args(argv: list[str] | None = None) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(
+        description="DNN single-fold inference: predict one fold's chromosomes",
+    )
+    ap.add_argument("--featuremap-vcf", required=True, help="Input featuremap VCF")
+    ap.add_argument("--cram", required=True, help="Source CRAM file")
+    ap.add_argument("--reference", default=None, help="Reference FASTA for CRAM decoding")
+    ap.add_argument("--fold-metadata", required=True, help="Path to this fold's srsnv_dnn_metadata.json")
+    ap.add_argument("--split-manifest", required=True, help="Path to split_manifest.json (chrom->fold mapping)")
+    ap.add_argument("--fold-idx", type=int, required=True, help="Fold index (0-based)")
+    ap.add_argument("--output", required=True, help="Output predictions parquet path")
+    ap.add_argument("--parquet", default=None, help="Pre-computed featuremap parquet (skip VCF conversion)")
+    ap.add_argument("--backend", default="trt", choices=["trt", "pytorch"], help="Inference backend")
+    ap.add_argument("--gpus", default=None, help="Comma-separated GPU IDs (default: all visible)")
+    ap.add_argument("--num-cram-workers", type=int, default=None, help="CPU workers for CRAM fetch")
+    ap.add_argument("--shard-size", type=int, default=10000)
+    ap.add_argument("--batch-size", type=int, default=512)
+    ap.add_argument("--tensor-length", type=int, default=300)
+    ap.add_argument("--fetch-mode", default="samtools", choices=["samtools", "pysam"])
+    return ap.parse_args(argv)
+
+
+def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915
+    """Run inference for a single fold's chromosomes and write predictions parquet."""
+    import pyarrow as pa  # noqa: PLC0415
+    import torch.multiprocessing  # noqa: PLC0415
+
+    torch.multiprocessing.set_sharing_strategy("file_system")
+
+    if argv is None:
+        argv = sys.argv[1:]
+    args = _parse_fold_args(argv)
+
+    fold_idx = args.fold_idx
+    t0 = time.perf_counter()
+
+    # GPU setup
+    gpu_ids = None
+    if args.gpus:
+        gpu_ids = [int(g.strip()) for g in args.gpus.split(",")]
+    if gpu_ids is None:
+        import torch  # noqa: PLC0415
+
+        gpu_ids = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else [0]
+
+    num_workers = args.num_cram_workers
+    if num_workers is None:
+        num_workers = max(1, (os.cpu_count() or 4) - 2)
+
+    fetch_mode = args.fetch_mode
+    if fetch_mode == "samtools" and not _samtools_available():
+        logger.warning("samtools not found; falling back to pysam fetch mode")
+        fetch_mode = "pysam"
+
+    # Parquet preparation
+    parquet_path = args.parquet
+    if parquet_path is None:
+        import tempfile  # noqa: PLC0415
+
+        tmp_dir = tempfile.mkdtemp(prefix="dnn_fold_")
+        parquet_path = str(Path(tmp_dir) / "featuremap.parquet")
+        logger.info("Converting featuremap VCF to parquet: %s", parquet_path)
+        _vcf_to_parquet(args.featuremap_vcf, parquet_path)
+
+    # Read split manifest
+    with open(args.split_manifest) as f:
+        manifest = json.load(f)
+    chrom_to_fold: dict[str, int] = manifest.get("chrom_to_fold", {})
+
+    # Read parquet and filter to this fold's chromosomes
+    import pyarrow.parquet as pq_mod  # noqa: PLC0415
+
+    pf = pq_mod.ParquetFile(parquet_path)
+    available_cols = [c for c in _PARQUET_COLUMNS if c in (pf.schema.names or [])]
+    table = pf.read(columns=available_cols)
+    chrom_col = table.column(CHROM).to_pylist()
+
+    my_mask = [chrom_to_fold.get(c) == fold_idx for c in chrom_col]
+    if fold_idx == 0:
+        # Fold 0 also handles test chromosomes (not in chrom_to_fold)
+        my_mask = [my_mask[i] or chrom_col[i] not in chrom_to_fold for i in range(len(my_mask))]
+
+    filtered = table.filter(pa.array(my_mask))
+    col_dict = filtered.to_pydict()
+    n_rows = len(col_dict[available_cols[0]]) if available_cols else 0
+    rows = [{k: col_dict[k][i] for k in col_dict} for i in range(n_rows)]
+    rows.sort(key=lambda r: (str(r.get(CHROM, "")), int(r.get(POS, 0))))
+
+    logger.info("Fold %d: %d rows (total %d, filtered %d)", fold_idx, n_rows, len(chrom_col), n_rows)
+
+    if not rows:
+        logger.info("Fold %d: no rows, writing empty predictions", fold_idx)
+        empty_table = pa.table({"chrom": [], "pos": [], "rn": [], "prob": []})
+        pq_mod.write_table(empty_table, args.output)
+        return
+
+    # Load engines
+    engines = _create_engines(args.fold_metadata, backend=args.backend, gpu_ids=gpu_ids)
+    logger.info("Fold %d: %d %s engine(s) on GPUs %s", fold_idx, len(engines), args.backend, gpu_ids[: len(engines)])
+
+    try:
+        predictions = _run_fold_inference(
+            cram_path=args.cram,
+            rows=rows,
+            engines=engines,
+            num_cram_workers=num_workers,
+            shard_size=args.shard_size,
+            batch_size=args.batch_size,
+            tensor_length=args.tensor_length,
+            reference_path=args.reference,
+            fetch_mode=fetch_mode,
+        )
+    finally:
+        for eng in engines:
+            eng.close()
+
+    # Write predictions parquet
+    chroms = [k[0] for k in predictions]
+    poss = [k[1] for k in predictions]
+    rns = [k[2] for k in predictions]
+    probs = [predictions[k] for k in predictions]
+    out_table = pa.table({"chrom": chroms, "pos": poss, "rn": rns, "prob": probs})
+    pq_mod.write_table(out_table, args.output)
+
+    elapsed = time.perf_counter() - t0
+    logger.info("Fold %d: wrote %d predictions to %s in %.1fs", fold_idx, len(predictions), args.output, elapsed)
+
+
+def main_fold() -> None:
+    run_fold()
+
+
+# ---------------------------------------------------------------------------
+# Merge + annotate CLI  (dnn_merge_and_annotate)
+# ---------------------------------------------------------------------------
+
+
+def _parse_merge_args(argv: list[str] | None = None) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(
+        description="Merge per-fold DNN predictions and annotate VCF",
+    )
+    ap.add_argument("--featuremap-vcf", required=True, help="Input featuremap VCF to annotate")
+    ap.add_argument("--fold-predictions", nargs="+", required=True, help="Per-fold prediction parquet files")
+    ap.add_argument("--fold-metadata", required=True, help="Fold 0 metadata JSON (for quality recalibration LUT)")
+    ap.add_argument("--output", required=True, help="Output annotated VCF path")
+    ap.add_argument("--low-qual-threshold", type=float, default=40.0, help="SNVQ threshold for PASS filter")
+    ap.add_argument("--process-number", type=int, default=-2, help="Parallel processes for VCF annotation")
+    return ap.parse_args(argv)
+
+
+def run_merge(argv: list[str] | None = None) -> None:
+    """Merge per-fold predictions and annotate the featuremap VCF."""
+    if argv is None:
+        argv = sys.argv[1:]
+    args = _parse_merge_args(argv)
+
+    t0 = time.perf_counter()
+
+    # Load all fold predictions into a unified dict
+    predictions: dict[tuple[str, int, str], float] = {}
+    for pred_path in args.fold_predictions:
+        pred_table = pq.read_table(pred_path)
+        chroms = pred_table.column("chrom").to_pylist()
+        poss = pred_table.column("pos").to_pylist()
+        rns = pred_table.column("rn").to_pylist()
+        probs = pred_table.column("prob").to_pylist()
+        for c, p, r, prob in zip(chroms, poss, rns, probs, strict=False):
+            predictions[(str(c), int(p), str(r))] = float(prob)
+
+    logger.info("Loaded %d predictions from %d fold files", len(predictions), len(args.fold_predictions))
+
+    # Build quality recalibration function from fold metadata
+    with open(args.fold_metadata) as f:
+        metadata = json.load(f)
+    quality_fn = _build_quality_fn(metadata)
+
+    # Annotate VCF
+    annotator = DNNQualAnnotator(
+        predictions=predictions,
+        quality_interpolation_fn=quality_fn,
+        low_qual_threshold=args.low_qual_threshold,
+    )
+    VcfAnnotator.process_vcf(
+        annotators=[annotator],
+        input_path=args.featuremap_vcf,
+        output_path=args.output,
+        process_number=args.process_number,
+    )
+
+    elapsed = time.perf_counter() - t0
+    logger.info("Merge + annotate complete: %d predictions -> %s in %.1fs", len(predictions), args.output, elapsed)
+
+
+def main_merge() -> None:
+    run_merge()
 
 
 if __name__ == "__main__":

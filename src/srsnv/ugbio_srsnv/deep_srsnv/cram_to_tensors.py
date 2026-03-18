@@ -270,6 +270,19 @@ def _compute_max_edist(parquet_path: str) -> int | None:
 # Per-shard tensorization (runs in worker processes)
 # ---------------------------------------------------------------------------
 
+
+def _worker_init():
+    """Set torch multiprocessing sharing strategy to file_system.
+
+    This avoids /dev/shm size limits on platforms like AWS HealthOmics
+    where shared memory is restricted.  Must be called as a
+    ``ProcessPoolExecutor`` initializer.
+    """
+    import torch.multiprocessing  # noqa: PLC0415
+
+    torch.multiprocessing.set_sharing_strategy("file_system")
+
+
 _WORKER_CRAM: pysam.AlignmentFile | None = None
 
 
