@@ -649,6 +649,8 @@ def merge_cnvs_in_vcf(  # noqa: PLR0915
     _aggregate_collapsed_vcf(output_vcf_collapse, output_vcf_unsorted, update_df, CNV_AGGREGATION_ACTIONS)
 
     # Stage 1.5: Remove overlapping filtered variants if applicable
+    # TODO [BIOIN-2745]: it should be actually possible to do _remove_overlapping_filtered_variants only once.
+    # Need to refactor the code
     if not ignore_filter:
         output_vcf_unsorted = _remove_overlapping_filtered_variants(
             input_vcf,
