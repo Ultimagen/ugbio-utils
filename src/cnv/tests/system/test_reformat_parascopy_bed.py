@@ -22,7 +22,7 @@ class TestReformatParascopyBed:
         run(["prog", "--input_bed", input_file, "--output_bed", output_file])
 
         # Verify output matches expected
-        assert filecmp.cmp(output_file, expected_output), "Output does not match expected"
+        assert filecmp.cmp(output_file, expected_output, shallow=False), "Output does not match expected"
 
         # Verify info column was expanded (not nested)
         with open(output_file) as f:
@@ -44,4 +44,4 @@ class TestReformatParascopyBed:
         run(["prog", "--input_bed", input_file, "--output_bed", output_file])
 
         # Verify output matches expected
-        assert filecmp.cmp(output_file, expected_output), "Output does not match expected"
+        assert filecmp.cmp(output_file, expected_output, shallow=False), "Output does not match expected"

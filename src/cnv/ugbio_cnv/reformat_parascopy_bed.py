@@ -63,7 +63,7 @@ def run(argv):
         for _, row in bed_df.iterrows():
             chrom, start, end = row.iloc[0], row.iloc[1], row.iloc[2]
             tags = []
-            for col in bed_df.columns[3:]:  # noqa: PLR2004
+            for col in bed_df.columns[INFO_COLUMNS_START:]:
                 val = str(row[col])
                 if col.lower() == "info" and ";" in val:
                     # Expand info column tags
