@@ -15,6 +15,7 @@ from ugbio_cnv.cnv_vcf_consts import INFO_TAG_REGISTRY
 from ugbio_cnv.combine_cnv_vcf_utils import (
     cnv_vcf_to_bed,
     combine_vcf_headers_for_cnv,
+    merge_cnv_sv_vcfs,
     merge_cnvs_in_vcf,
     update_vcf_contig,
     write_vcf_records_with_source,
@@ -132,6 +133,50 @@ def __parse_args_merge_records(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def __parse_args_merge_cnv_sv(parser: argparse.ArgumentParser) -> None:
+    """Add arguments for the merge_cnv_sv tool."""
+    parser.add_argument("--cnv_vcf", help="Input CNV VCF file", required=True, type=str)
+    parser.add_argument("--sv_vcf", help="Input SV VCF file (e.g., from GRIDSS)", required=True, type=str)
+    parser.add_argument("--output_vcf", help="Output merged VCF file", required=True, type=str)
+    parser.add_argument("--fasta_index", help="Reference genome FASTA index (.fai)", required=True, type=str)
+    parser.add_argument(
+        "--length_threshold",
+        help="Minimum absolute SVLEN for SV calls to include (default: 1000)",
+        required=False,
+        type=int,
+        default=1000,
+    )
+    parser.add_argument(
+        "--max_length_threshold",
+        help="Maximum absolute SVLEN for SV calls to include (default: 5000000, 5Mb)",
+        required=False,
+        type=int,
+        default=5000000,
+    )
+    parser.add_argument(
+        "--min_sv_qual",
+        help="Minimum QUAL score for SV calls to include (default: 0, no minimum)",
+        required=False,
+        type=float,
+        default=0,
+    )
+    parser.add_argument(
+        "--distance",
+        help="Distance threshold for collapsing overlapping variants (default: 0, exact overlaps only)",
+        required=False,
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--pctsize",
+        help="Minimum size similarity (0.0-1.0) for collapsing (default: 0.5, require 50%% match)",
+        required=False,
+        type=float,
+        default=0.5,
+    )
+    parser.add_argument("--out_directory", help="Output directory for temporary files", required=False, type=str)
+
+
 def __parse_args(argv: list[str]) -> argparse.Namespace:
     """
     Parse command-line arguments using subparsers for different tools.
@@ -193,6 +238,14 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     )
     # Reuse argument definitions from analyze_cnv_breakpoint_reads module
     get_breakpoint_parser(analyze_breakpoints_parser)
+
+    merge_cnv_sv_parser = subparsers.add_parser(
+        "merge_cnv_sv",
+        help="Merge CNV VCF with filtered SV VCF, replacing overlapping CNVs with SV calls",
+        description="Filters SV VCF for PASS DEL/DUP calls above length threshold, "
+        "then merges with CNV VCF, replacing overlapping CNV calls with higher-quality SV calls.",
+    )
+    __parse_args_merge_cnv_sv(merge_cnv_sv_parser)
 
     return parser.parse_args(argv[1:])
 
@@ -575,6 +628,19 @@ def run(argv: list[str]):
             reference_fasta=args.reference_fasta,
             output_bam=args.output_bam,
         )
+    elif args.tool == "merge_cnv_sv":
+        merge_cnv_sv_vcfs(
+            cnv_vcf=args.cnv_vcf,
+            sv_vcf=args.sv_vcf,
+            output_vcf=args.output_vcf,
+            fasta_index=args.fasta_index,
+            length_threshold=args.length_threshold,
+            max_length_threshold=args.max_length_threshold,
+            min_sv_qual=args.min_sv_qual,
+            distance=args.distance,
+            pctsize=args.pctsize,
+            output_directory=args.out_directory,
+        )
     else:
         raise ValueError(f"Unknown tool: {args.tool}")
 
@@ -655,6 +721,21 @@ def main_analyze_breakpoints():
     """
     # Insert 'analyze_breakpoint_reads' as the tool argument
     argv = [sys.argv[0], "analyze_breakpoint_reads"] + sys.argv[1:]
+    run(argv)
+
+
+def main_merge_cnv_sv():
+    """
+    Entry point for standalone merge_cnv_sv script.
+
+    This allows running merge_cnv_sv directly:
+    merge_cnv_sv --cnv_vcf ... --sv_vcf ... --output_vcf ...
+
+    Instead of:
+    combine_cnmops_cnvpytor_cnv_calls merge_cnv_sv --cnv_vcf ... --sv_vcf ...
+    """
+    # Insert 'merge_cnv_sv' as the tool argument
+    argv = [sys.argv[0], "merge_cnv_sv"] + sys.argv[1:]
     run(argv)
 
 

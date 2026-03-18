@@ -1,4 +1,5 @@
 # utilities for combining VCFs
+import os
 import shutil
 from collections import defaultdict
 from os.path import join as pjoin
@@ -7,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pysam
+from ugbio_cnv.cnv_vcf_consts import INFO_TAG_REGISTRY
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
 from ugbio_core import misc_utils as mu
@@ -1455,3 +1457,363 @@ def _merge_cnv_group(
     _aggregate_record_info_fields(merged, df_all, aggregation_actions, header)
 
     return merged
+
+
+def _postprocess_collapsed_vcf(  # noqa: C901, PLR0912, PLR0915
+    collapsed_vcf: str,
+    removed_vcf: str,
+    output_vcf: str,
+) -> None:
+    """
+    Post-process collapsed VCF to merge CNV_SOURCE from removed variants and add CNV_ID.
+
+    This function:
+    1. Reads removed variants into a list (indexed by position)
+    2. For each variant in collapsed VCF that has NumCollapsed > 0:
+       - Finds overlapping removed variants
+       - Merges CNV_SOURCE from removed variants
+       - Adds CNV_ID with IDs of removed variants
+       - Removes truvari tags (NumCollapsed, NumConsolidated, CollapseId)
+
+    Parameters
+    ----------
+    collapsed_vcf : str
+        Path to collapsed VCF from truvari
+    removed_vcf : str
+        Path to removed variants VCF from truvari
+    output_vcf : str
+        Path to output post-processed VCF
+    """
+    # Read all removed variants into a list for overlap detection
+    removed_variants = []
+    with pysam.VariantFile(removed_vcf) as vcf_in:
+        for record in vcf_in:
+            removed_variants.append(
+                {
+                    "chrom": record.chrom,
+                    "start": record.start,
+                    "stop": record.stop,
+                    "id": record.id,
+                    "cnv_source": record.info.get("CNV_SOURCE", []),
+                    "svtype": record.info.get("SVTYPE", ""),
+                }
+            )
+    logger.info(f"Read {len(removed_variants)} removed variants")
+
+    # Process collapsed VCF
+    collapsed_count = 0
+    num_collapsed_count = 0
+    updated_count = 0
+
+    # First pass: collect records to update
+    records_to_process = []
+    with pysam.VariantFile(collapsed_vcf) as vcf_in:
+        header = vcf_in.header.copy()
+
+        # Add CNV_ID tag if not present
+        if "CNV_ID" not in header.info:
+            header.info.add(*INFO_TAG_REGISTRY["CNV_ID"][:-1])
+
+        # Read all records
+        for record in vcf_in:
+            records_to_process.append(record)
+
+    # Second pass: write updated records
+    with pysam.VariantFile(output_vcf, "w", header=header) as vcf_out:
+        for old_record in records_to_process:
+            collapsed_count += 1
+
+            # Create new record with updated header
+            record = vcf_out.new_record()
+            record.chrom = old_record.chrom
+            record.pos = old_record.pos
+            record.id = old_record.id
+            record.ref = old_record.ref
+            record.alts = old_record.alts
+            record.qual = old_record.qual
+            if old_record.filter:
+                record.filter.add(*old_record.filter)
+            # Copy all INFO fields from old record
+            for key in old_record.info:
+                record.info[key] = old_record.info[key]
+            # Explicitly set stop from old_record to preserve END coordinate
+            record.stop = old_record.stop
+            # Copy samples
+            for sample in old_record.samples:
+                for key in old_record.samples[sample]:
+                    record.samples[sample][key] = old_record.samples[sample][key]
+
+            # Check if this variant has NumCollapsed > 0 (meaning it replaced others)
+            num_collapsed = record.info.get("NumCollapsed", 0)
+            if num_collapsed > 0:
+                num_collapsed_count += 1
+
+                # Find overlapping removed variants (same chrom, overlap in position, same SVTYPE)
+                record_chrom = record.chrom
+                record_start = record.start
+                record_stop = record.stop
+                record_svtype = record.info.get("SVTYPE", "")
+
+                overlapping = []
+                for removed in removed_variants:
+                    if (
+                        removed["chrom"] == record_chrom
+                        and removed["svtype"] == record_svtype
+                        and removed["start"] < record_stop
+                        and removed["stop"] > record_start
+                    ):
+                        overlapping.append(removed)
+
+                if overlapping:
+                    updated_count += 1
+
+                    # Collect CNV_SOURCE values
+                    all_sources = set()
+                    current_sources = record.info.get("CNV_SOURCE", [])
+                    if isinstance(current_sources, str):
+                        all_sources.add(current_sources)
+                    else:
+                        all_sources.update(current_sources)
+
+                    for removed in overlapping:
+                        removed_sources = removed["cnv_source"]
+                        if isinstance(removed_sources, str):
+                            all_sources.add(removed_sources)
+                        else:
+                            all_sources.update(removed_sources)
+
+                    # Update CNV_SOURCE
+                    record.info["CNV_SOURCE"] = sorted(all_sources)
+
+                    # Add CNV_ID with removed variant IDs
+                    removed_ids = [v["id"] for v in overlapping if v["id"]]
+                    if removed_ids:
+                        record.info["CNV_ID"] = removed_ids
+
+            # Remove truvari tags
+            for tag in ["NumCollapsed", "NumConsolidated", "CollapseId"]:
+                if tag in record.info:
+                    del record.info[tag]
+
+            vcf_out.write(record)
+
+    logger.info(
+        f"Post-processing complete: {collapsed_count} total variants, "
+        f"{num_collapsed_count} with NumCollapsed>0, "
+        f"{updated_count} updated with CNV_ID"
+    )
+
+
+def merge_cnv_sv_vcfs(  # noqa: PLR0915
+    cnv_vcf: str,
+    sv_vcf: str,
+    output_vcf: str,
+    fasta_index: str,
+    length_threshold: int = 1000,
+    max_length_threshold: int | None = 5000000,
+    min_sv_qual: float = 0,
+    distance: int = 0,
+    pctsize: float = 0.5,
+    output_directory: str | None = None,
+) -> str:
+    """
+    Merge CNV VCF with filtered SV VCF, replacing overlapping CNVs with SV calls.
+
+    This function implements a 4-stage pipeline:
+    1. Filter SV VCF for PASS DEL/DUP calls with length_threshold <= |SVLEN| <= max_length_threshold
+    2. Update headers and combine VCFs with source annotation
+    3. Sort combined VCF
+    4. Collapse overlaps using pick_best=True (SV wins due to higher QUAL)
+
+    The key insight: SV calls from tools like GRIDSS have QUAL scores 10-100x higher
+    than CNV calls from CNVpytor/cn.mops. Using collapse_vcf with pick_best=True
+    automatically selects the SV call in overlapping regions, effectively "replacing"
+    the lower-quality CNV call.
+
+    Parameters
+    ----------
+    cnv_vcf : str
+        Path to CNV VCF file (from cn.mops, CNVpytor, or combined)
+    sv_vcf : str
+        Path to SV VCF file (e.g., from GRIDSS)
+    output_vcf : str
+        Path for output merged VCF file
+    fasta_index : str
+        Path to reference genome FASTA index (.fai) for header updates
+    length_threshold : int, optional
+        Minimum absolute SVLEN for SV calls to include, by default 1000
+    max_length_threshold : int, optional
+        Maximum absolute SVLEN for SV calls to include, by default 5000000 (5Mb).
+        Useful for excluding very large SVs that may have low specificity.
+    min_sv_qual : float, optional
+        Minimum QUAL score for SV calls to include, by default 0 (no minimum).
+        Useful for filtering low-quality SV calls.
+    distance : int, optional
+        Distance threshold for collapsing overlapping variants, by default 0 (exact overlaps only)
+    pctsize : float, optional
+        Minimum size similarity (0.0-1.0) required for collapsing, by default 0.5 (50% match).
+        Prevents giant SVs (e.g., 68Mb) from replacing many small CNVs they happen to overlap.
+    output_directory : str, optional
+        Directory for temporary files. If None, uses output_vcf directory.
+
+    Returns
+    -------
+    str
+        Path to final merged VCF file
+
+    Raises
+    ------
+    FileNotFoundError
+        If input VCF files or FASTA index do not exist
+    RuntimeError
+        If VCF processing fails
+
+    Examples
+    --------
+    >>> merge_cnv_sv_vcfs(
+    ...     cnv_vcf="combined_cnv.vcf.gz",
+    ...     sv_vcf="gridss_output.vcf.gz",
+    ...     output_vcf="merged_cnv_sv.vcf.gz",
+    ...     fasta_index="hg38.fa.fai",
+    ...     length_threshold=1000,
+    ...     distance=0
+    ... )
+
+    Notes
+    -----
+    - Only PASS variants from SV VCF are included
+    - Only DEL and DUP SVTYPE values are selected from SV VCF
+    - SV calls automatically replace overlapping CNV calls due to higher QUAL scores
+    - Non-overlapping CNV calls are preserved in the output
+    - All INFO fields from both VCFs are preserved in the merged header
+    """
+    # Create output directory if needed
+    if output_directory is None:
+        output_directory = os.path.dirname(os.path.abspath(output_vcf))
+    os.makedirs(output_directory, exist_ok=True)
+
+    logger.info(f"Starting CNV+SV merge: CNV={cnv_vcf}, SV={sv_vcf}")
+    max_len_msg = f" to {max_length_threshold}bp" if max_length_threshold else ""
+    qual_msg = f", Min QUAL: {min_sv_qual}" if min_sv_qual > 0 else ""
+    logger.info(f"Length threshold: {length_threshold}bp{max_len_msg}{qual_msg}, Distance: {distance}bp")
+
+    vcf_utils = VcfUtils()
+    temporary_files = []
+
+    # Stage 1: Filter SV VCF for PASS DEL/DUP with length and quality constraints
+    logger.info("Stage 1: Filtering SV VCF for PASS DEL/DUP calls")
+    filtered_sv_vcf = pjoin(output_directory, "filtered_sv.vcf.gz")
+    filter_expr = f'(SVTYPE="DEL" | SVTYPE="DUP") & abs(SVLEN) >= {length_threshold}'
+    if max_length_threshold is not None:
+        filter_expr += f" & abs(SVLEN) <= {max_length_threshold}"
+    if min_sv_qual > 0:
+        filter_expr += f" & QUAL >= {min_sv_qual}"
+    vcf_utils.view_vcf(
+        input_vcf=sv_vcf,
+        output_vcf=filtered_sv_vcf,
+        extra_args=f"-f PASS -i '{filter_expr}'",
+    )
+    vcf_utils.index_vcf(filtered_sv_vcf)
+    temporary_files.append(filtered_sv_vcf)
+
+    # Log filtered SV count
+    with pysam.VariantFile(filtered_sv_vcf) as vcf_in:
+        sv_count = sum(1 for _ in vcf_in)
+    length_range = f">= {length_threshold}bp"
+    if max_length_threshold is not None:
+        length_range = f"between {length_threshold}bp and {max_length_threshold}bp"
+    qual_suffix = f" with QUAL >= {min_sv_qual}" if min_sv_qual > 0 else ""
+    logger.info(f"Filtered SV VCF contains {sv_count} PASS DEL/DUP calls {length_range}{qual_suffix}")
+
+    # Stage 2: Update headers and combine VCFs
+    logger.info("Stage 2: Updating VCF headers to match reference")
+    updated_cnv_vcf = update_vcf_contig(vcf_utils, cnv_vcf, fasta_index, output_directory, index=0)
+    updated_sv_vcf = update_vcf_contig(vcf_utils, filtered_sv_vcf, fasta_index, output_directory, index=1)
+    temporary_files.extend([updated_cnv_vcf, updated_sv_vcf])
+
+    logger.info("Combining VCF headers")
+    vcf_cnv = pysam.VariantFile(updated_cnv_vcf)
+    vcf_sv = pysam.VariantFile(updated_sv_vcf)
+
+    # Merge headers with keep_filters=True to preserve GRIDSS filter definitions
+    combined_header = combine_vcf_headers_for_cnv(
+        vcf_cnv.header,
+        vcf_sv.header,
+        keep_filters=True,
+    )
+
+    # Ensure CNV_SOURCE tag exists
+    if "CNV_SOURCE" not in combined_header.info:
+        combined_header.info.add(*INFO_TAG_REGISTRY["CNV_SOURCE"][:-1])
+
+    # Write combined records with source annotation
+    logger.info("Writing combined VCF with source annotations")
+    temp_combined_vcf = pjoin(output_directory, "temp_combined.vcf.gz")
+    with pysam.VariantFile(temp_combined_vcf, "w", header=combined_header) as vcf_out:
+        # Write SV records with "gridss" source
+        seen_ids = write_vcf_records_with_source(
+            vcf_sv, vcf_out, combined_header, "gridss", make_ids_unique=True, seen_ids=set()
+        )
+
+        # Extract existing CNV_SOURCE from CNV VCF (cn.mops, cnvpytor, or combined)
+        vcf_cnv.close()
+        vcf_cnv = pysam.VariantFile(updated_cnv_vcf)  # Reopen after iteration
+        cnv_source = "unknown"
+        for record in vcf_cnv:
+            if "CNV_SOURCE" in record.info:
+                cnv_source = record.info["CNV_SOURCE"][0]
+            break
+
+        # Write CNV records with original source
+        vcf_cnv.close()
+        vcf_cnv = pysam.VariantFile(updated_cnv_vcf)
+        write_vcf_records_with_source(
+            vcf_cnv, vcf_out, combined_header, cnv_source, make_ids_unique=True, seen_ids=seen_ids
+        )
+
+    vcf_cnv.close()
+    vcf_sv.close()
+    temporary_files.append(temp_combined_vcf)
+
+    # Stage 3: Sort combined VCF
+    logger.info("Stage 3: Sorting combined VCF")
+    temp_sorted_vcf = pjoin(output_directory, "temp_sorted.vcf.gz")
+    vcf_utils.sort_vcf(temp_combined_vcf, temp_sorted_vcf)
+    vcf_utils.index_vcf(temp_sorted_vcf)
+    temporary_files.append(temp_sorted_vcf)
+
+    # Stage 4: Collapse overlaps with pick_best=True and size filtering
+    logger.info("Stage 4: Collapsing overlapping variants (SV replaces CNV via QUAL)")
+    logger.info(f"Collapse parameters: refdist={distance}bp, pctsize={pctsize * 100}%")
+
+    # Call collapse_vcf directly for better control over parameters
+    collapsed_vcf_tmp = pjoin(output_directory, "collapsed_tmp.vcf.gz")
+    removed_vcf = vcf_utils.collapse_vcf(
+        vcf=temp_sorted_vcf,
+        output_vcf=collapsed_vcf_tmp,
+        refdist=distance,
+        pctseq=0.0,  # Don't require sequence similarity
+        pctsize=pctsize,  # Require size similarity (default 50%)
+        maxsize=-1,  # No size limit
+        ignore_filter=False,  # Only PASS variants
+        ignore_sv_type=False,  # Only merge same SVTYPE (DEL with DEL, DUP with DUP)
+        pick_best=True,  # Choose by QUAL → SV wins
+        erase_removed=False,  # Keep removed VCF for post-processing
+    )
+    temporary_files.extend([collapsed_vcf_tmp, removed_vcf])
+
+    # Post-process: merge CNV_SOURCE from removed variants and add CNV_ID
+    logger.info("Post-processing: merging CNV_SOURCE and adding CNV_ID from removed variants")
+    postprocessed_vcf = pjoin(output_directory, "postprocessed.vcf.gz")
+    _postprocess_collapsed_vcf(collapsed_vcf_tmp, removed_vcf, postprocessed_vcf)
+    temporary_files.append(postprocessed_vcf)
+
+    # Sort final output
+    vcf_utils.sort_vcf(postprocessed_vcf, output_vcf)
+    vcf_utils.index_vcf(output_vcf)
+
+    # Cleanup temporary files
+    mu.cleanup_temp_files(temporary_files)
+    logger.info(f"Successfully created merged CNV+SV VCF: {output_vcf}")
+
+    return output_vcf

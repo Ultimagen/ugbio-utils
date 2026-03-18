@@ -31,6 +31,7 @@ combine_cnmops_cnvpytor_cnv_calls = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls
 combine_cnv_vcfs = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_concat"
 annotate_vcf_with_regions = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_annotate_regions"
 analyze_cnv_breakpoint_reads = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_analyze_breakpoints"
+merge_cnv_sv = "ugbio_cnv.combine_cnmops_cnvpytor_cnv_calls:main_merge_cnv_sv"
 run_jalign = "ugbio_cnv.run_jalign:main"
 add_cipos_to_vcf = "ugbio_cnv.add_cipos:main"
 refine_cnv_breakpoints = "ugbio_cnv.breakpoint_refinement:main"
