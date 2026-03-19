@@ -1082,66 +1082,39 @@ class TestMergeCnvsInVcf:
             gt = record.samples["test_sample"]["GT"]
             assert gt == (None, 1), f"Expected GT=(None, 1) for DUP, got {gt}"
 
-    def test_select_breakpoints_by_cipos_window_prefers_tightest_interval(self, cnv_vcf_header, tmp_path):
+    def test_select_breakpoints_by_cipos_window_prefers_tightest_interval(self):
         """Test that breakpoint selection prefers records with the tightest CIPOS."""
-        cnv_vcf_header.add_line('##INFO=<ID=CIPOS,Number=2,Type=Integer,Description="Confidence interval around POS">')
 
-        test_vcf = tmp_path / "selection_test.vcf.gz"
-        with pysam.VariantFile(str(test_vcf), "w", header=cnv_vcf_header) as vcf:
-            record = vcf.new_record()
-            record.contig = "chr1"
-            record.pos = 1100
-            record.stop = 5100
-            record.alleles = ("N", "<DEL>")
-            record.info["SVLEN"] = (4000,)
-            record.info["SVTYPE"] = "DEL"
-            record.info["CIPOS"] = (-100, 100)
+        update_records = pd.DataFrame(
+            {
+                "pos": [1000, 1200, 1300],
+                "end": [5000, 4800, 5200],
+                "cipos": [(-500, 500), (-10, 10), (-150, 150)],
+            }
+        )
 
-            update_records = pd.DataFrame(
-                {
-                    "pos": [1000, 1200, 1300],
-                    "end": [5000, 4800, 5200],
-                    "cipos": [(-500, 500), (-10, 10), (-150, 150)],
-                }
-            )
-
-            new_start, new_end = combine_cnv_vcf_utils._select_breakpoints_by_cipos_window(
-                record,
-                update_records,
-                window=2500,
-            )
+        new_start, new_end = combine_cnv_vcf_utils._select_breakpoints_by_cipos_window(
+            update_records,
+            window=2500,
+        )
 
         assert new_start == 1200
         assert new_end == 4800
 
-    def test_select_breakpoints_by_cipos_window_tie_breaks_by_position(self, cnv_vcf_header, tmp_path):
+    def test_select_breakpoints_by_cipos_window_tie_breaks_by_position(self):
         """Test tie-breaks: lowest start and highest end when CIPOS lengths are equal."""
-        cnv_vcf_header.add_line('##INFO=<ID=CIPOS,Number=2,Type=Integer,Description="Confidence interval around POS">')
+        update_records = pd.DataFrame(
+            {
+                "pos": [1000, 1200, 1300],
+                "end": [5000, 5200, 4800],
+                "cipos": [(-10, 10), (-20, 0), (-5, 15)],
+            }
+        )
 
-        test_vcf = tmp_path / "selection_tie_test.vcf.gz"
-        with pysam.VariantFile(str(test_vcf), "w", header=cnv_vcf_header) as vcf:
-            record = vcf.new_record()
-            record.contig = "chr1"
-            record.pos = 1100
-            record.stop = 5100
-            record.alleles = ("N", "<DEL>")
-            record.info["SVLEN"] = (4000,)
-            record.info["SVTYPE"] = "DEL"
-            record.info["CIPOS"] = (-100, 100)
-
-            update_records = pd.DataFrame(
-                {
-                    "pos": [1000, 1200, 1300],
-                    "end": [5000, 5200, 4800],
-                    "cipos": [(-10, 10), (-20, 0), (-5, 15)],
-                }
-            )
-
-            new_start, new_end = combine_cnv_vcf_utils._select_breakpoints_by_cipos_window(
-                record,
-                update_records,
-                window=2500,
-            )
+        new_start, new_end = combine_cnv_vcf_utils._select_breakpoints_by_cipos_window(
+            update_records,
+            window=2500,
+        )
 
         assert new_start == 1000
         assert new_end == 5200
@@ -1554,6 +1527,70 @@ class TestMergeCnvsInVcfTwoStage:
             # Verify the filtered record is at position 5000
             filtered_record = [rec for rec in records if rec.filter.keys() == ["LowQual"]][0]
             assert filtered_record.pos == 5000
+
+    def test_remove_overlapping_filtered_variants_keeps_non_overlapping_filtered(self, tmp_path, cnv_vcf_header):
+        """Test second-stage filter keeps a filtered record when no PASS overlap exists."""
+        original_vcf = tmp_path / "original.vcf.gz"
+        merged_vcf = tmp_path / "merged.vcf.gz"
+
+        # Add FILTER line to header
+        cnv_vcf_header.add_line('##FILTER=<ID=LowQual,Description="Low quality">')
+
+        with pysam.VariantFile(str(original_vcf), "w", header=cnv_vcf_header) as vcf:
+            # PASS record
+            pass_record = vcf.new_record()
+            pass_record.contig = "chr1"
+            pass_record.pos = 1000
+            pass_record.stop = 2000
+            pass_record.id = "PASS1"
+            pass_record.alleles = ("N", "<DEL>")
+            pass_record.info["SVLEN"] = (1000,)
+            pass_record.info["SVTYPE"] = "DEL"
+            pass_record.info["CIPOS"] = (-250, 251)
+            pass_record.filter.add("PASS")
+            pass_record.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(pass_record)
+
+            # Non-overlapping filtered record
+            filtered_record = vcf.new_record()
+            filtered_record.contig = "chr1"
+            filtered_record.pos = 10000
+            filtered_record.stop = 11000
+            filtered_record.id = "LOW1"
+            filtered_record.alleles = ("N", "<DEL>")
+            filtered_record.info["SVLEN"] = (1000,)
+            filtered_record.info["SVTYPE"] = "DEL"
+            filtered_record.info["CIPOS"] = (-250, 251)
+            filtered_record.filter.add("LowQual")
+            filtered_record.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(filtered_record)
+
+        # Use identical content as merged input for direct helper validation
+        with (
+            pysam.VariantFile(str(original_vcf)) as vcf_in,
+            pysam.VariantFile(str(merged_vcf), "w", header=vcf_in.header) as vcf_out,
+        ):
+            for rec in vcf_in:
+                vcf_out.write(rec)
+
+        pysam.tabix_index(str(original_vcf), preset="vcf", force=True)
+        pysam.tabix_index(str(merged_vcf), preset="vcf", force=True)
+
+        filtered_merged_vcf = combine_cnv_vcf_utils._remove_overlapping_filtered_variants(
+            original_vcf=str(original_vcf),
+            merged_vcf=str(merged_vcf),
+            distance=1000,
+            ignore_sv_type=False,
+            pick_best=False,
+        )
+
+        with pysam.VariantFile(str(filtered_merged_vcf)) as vcf:
+            records = list(vcf)
+
+        assert len(records) == 2
+        record_ids = {rec.id for rec in records}
+        assert "PASS1" in record_ids
+        assert "LOW1" in record_ids
 
     def test_two_stage_empty_vcf(self, tmp_path, cnv_vcf_header):
         """Test two-stage merge with empty VCF."""

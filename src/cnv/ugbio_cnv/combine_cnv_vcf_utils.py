@@ -1378,6 +1378,7 @@ def _apply_smoothing_merges(
             for record in vcf_in:
                 # skip non-PASS records
                 if not ignore_filter and not vcftools.is_pass_record(record):
+                    vcf_out.write(record)
                     continue
                 all_records[record.id] = record
 

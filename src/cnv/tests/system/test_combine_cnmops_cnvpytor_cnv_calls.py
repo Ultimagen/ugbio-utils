@@ -152,30 +152,16 @@ class TestMergeCnvsInVcfIntegration:
         compare_vcfs(str(expected_output_vcf), str(output_vcf))
 
     def test_merge_cnvs_with_smoothing_filter_enabled(self, resources_dir, tmp_path):
-        """Test merge with smoothing and filter checking enabled (ignore_filter=False)."""
-        source_vcf = resources_dir / "merge_cnv_input.vcf.gz"
-        input_vcf = tmp_path / "merge_cnv_input.low_score.vcf.gz"
-        baseline_output_vcf = tmp_path / "test_output_smoothed_ignore_filter.vcf.gz"
+        """Test merge with smoothing and filter checking enabled (ignore_filter=False).
+
+        Uses pre-generated VCF with 80% LOW_SCORE variants (8974 LOW_SCORE, 2244 PASS).
+        Expects LOW_SCORE variants to be filtered out when ignore_filter=False.
+        """
+        input_vcf = resources_dir / "merge_cnv_input_with_low_score.vcf.gz"
+        expected_output_vcf = resources_dir / "merge_cnv_output_smoothed_filtered.vcf.gz"
         output_vcf = tmp_path / "test_output_smoothed_filtered.vcf.gz"
-        filtered_input_ids = create_low_score_input_vcf(source_vcf, input_vcf)
 
-        assert filtered_input_ids, "Expected at least one LOW_SCORE input variant"
-
-        combine_cnv_vcf_utils.merge_cnvs_in_vcf(
-            str(input_vcf),
-            str(baseline_output_vcf),
-            distance=1500,
-            enable_smoothing=True,
-            max_gap_absolute=50000,
-            gap_scale_fraction=0.05,
-            cipos_threshold=50,
-            ignore_sv_type=False,
-            ignore_filter=True,
-        )
-
-        # This should NOT crash - tests the code path that failed in omics
-        # The key difference from test_merge_cnvs_with_smoothing is ignore_filter=False
-        # which triggers _remove_overlapping_filtered_variants() requiring indexed VCF
+        # Run merge with smoothing enabled and ignore_filter=False
         combine_cnv_vcf_utils.merge_cnvs_in_vcf(
             str(input_vcf),
             str(output_vcf),
@@ -185,22 +171,20 @@ class TestMergeCnvsInVcfIntegration:
             gap_scale_fraction=0.05,
             cipos_threshold=50,
             ignore_sv_type=False,
-            ignore_filter=False,  # Key difference from existing test
+            ignore_filter=False,  # Triggers _remove_overlapping_filtered_variants()
         )
 
-        # Verify output exists (no crash from missing index)
+        # Verify output was created successfully (no crash from missing index)
         assert output_vcf.exists()
 
-        with pysam.VariantFile(str(baseline_output_vcf)) as vcf_in:
-            baseline_low_score_ids = {record.id for record in vcf_in if "LOW_SCORE" in record.filter.keys()}
+        # Compare with golden file
+        compare_vcfs(str(expected_output_vcf), str(output_vcf))
 
+        # Check LOW_SCORE variants in output
         with pysam.VariantFile(str(output_vcf)) as vcf_in:
-            output_ids = {record.id for record in vcf_in}
+            low_score_count = sum(1 for record in vcf_in if "LOW_SCORE" in record.filter.keys())
 
-        removed_filtered_ids = filtered_input_ids - output_ids
-
-        assert len(baseline_low_score_ids) >= 100, "Expected at least 100 LOW_SCORE variants to survive"
-        assert removed_filtered_ids, "Expected at least one LOW_SCORE variant to be filtered out"
+        assert low_score_count >= 100, f"Expected at least 100 LOW_SCORE variants in output; got {low_score_count}"
 
     def test_merge_cnvs_weighted_majority_voting(self, tmp_path):
         """Test that merged SVTYPE is determined by SVLEN-weighted majority vote."""
