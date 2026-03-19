@@ -1633,11 +1633,12 @@ class TestWeightedMajorityVoting:
         record.info["SVLEN"] = (1000,)
         record.info["SVTYPE"] = "DEL"
 
-        # DataFrame with collapsed variants: 2 more DELs + 1 DUP
-        update_df = pd.DataFrame({"svlen": [(1000,), (500,), (200,)], "svtype": ["DEL", "DEL", "DUP"]})
+        # DataFrame includes collapsed record (SVLEN=1000, SVTYPE=DEL) + removed records
+        # Collapsed: DEL 1000, Removed: DEL 1000, DEL 500, DUP 200
+        update_df = pd.DataFrame({"svlen": [(1000,), (1000,), (500,), (200,)], "svtype": ["DEL", "DEL", "DEL", "DUP"]})
 
-        # Values list (from _value_aggregator)
-        values = ["DEL", "DEL", "DUP", "DEL"]  # Record + update_df
+        # Values list (from _collect_field_values - all from update_df)
+        values = ["DEL", "DEL", "DEL", "DUP"]
 
         # Call aggregation
         combine_cnv_vcf_utils._aggregate_weighted_majority(record, update_df, "SVTYPE", values)
@@ -1659,10 +1660,11 @@ class TestWeightedMajorityVoting:
         record.info["SVLEN"] = (100,)
         record.info["SVTYPE"] = "DEL"
 
-        # DataFrame: 2 DUPs with larger total length
-        update_df = pd.DataFrame({"svlen": [(800,), (800,)], "svtype": ["DUP", "DUP"]})
+        # DataFrame includes collapsed record (SVLEN=100, SVTYPE=DEL) + removed records
+        # Collapsed: DEL 100, Removed: DUP 800, DUP 800
+        update_df = pd.DataFrame({"svlen": [(100,), (800,), (800,)], "svtype": ["DEL", "DUP", "DUP"]})
 
-        values = ["DUP", "DUP", "DEL"]
+        values = ["DEL", "DUP", "DUP"]
 
         combine_cnv_vcf_utils._aggregate_weighted_majority(record, update_df, "SVTYPE", values)
 
@@ -1682,7 +1684,9 @@ class TestWeightedMajorityVoting:
         record.info["SVLEN"] = (1000,)
         record.info["SVTYPE"] = "DEL"
 
-        update_df = pd.DataFrame({"svlen": [(500,), (300,)], "svtype": ["DEL", "DEL"]})
+        # DataFrame includes collapsed record (SVLEN=1000, SVTYPE=DEL) + removed records
+        # Collapsed: DEL 1000, Removed: DEL 500, DEL 300
+        update_df = pd.DataFrame({"svlen": [(1000,), (500,), (300,)], "svtype": ["DEL", "DEL", "DEL"]})
 
         values = ["DEL", "DEL", "DEL"]
 
