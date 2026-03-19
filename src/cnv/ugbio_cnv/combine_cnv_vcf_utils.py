@@ -853,17 +853,9 @@ def _aggregate_minlength(
 
     # For CIPOS field, apply window filtering
     if field == "CIPOS":
-        # Create candidates DataFrame with pos, end, and cipos from update_records
+        # Create candidates DataFrame with pos, end, and cipos from update_records only
+        # Do NOT include current record's CIPOS - it was inherited from a different position
         candidates = update_records[["pos", "end", "cipos"]].copy()
-
-        # Add current record's values
-        candidates = pd.concat(
-            [
-                candidates,
-                pd.DataFrame([[record.pos, record.stop, record.info.get("CIPOS")]], columns=["pos", "end", "cipos"]),
-            ],
-            ignore_index=True,
-        )
 
         # Filter to only breakpoints within window of current boundaries
         # A record is included if either its start OR end is within window
