@@ -696,7 +696,7 @@ class TestMergeCnvsInVcf:
             assert abs(record.info["CNMOPS_SAMPLE_MEAN"] - round(expected_mean, 3)) < 0.001
 
             # Verify SVLEN was updated to record.stop - record.start
-            assert record.info["SVLEN"] == (record.stop - record.start,)
+            assert record.info["SVLEN"] == (record.stop - record.start - 1,)
 
             # Verify END was updated to max of merged records
             # Removed: pos=1000 (end=1999), pos=2000 (end=3999)

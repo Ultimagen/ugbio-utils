@@ -331,10 +331,10 @@ def _prepare_update_dataframe(
     collapsed_df = vcftools.get_vcf_df(str(collapsed_vcf), custom_info_fields=aggregation_fields + ["SVLEN", "MatchId"])
 
     update_df["matchid"] = update_df["matchid"].apply(lambda x: x[0]).astype(float)
-    update_df["end"] = update_df["pos"] + update_df["svlen"].apply(lambda x: x[0]) - 1
+    update_df["end"] = update_df["pos"] + update_df["svlen"].apply(lambda x: x[0])
 
     # Process collapsed_df - only need "end" column, not matchid (we use index instead)
-    collapsed_df["end"] = collapsed_df["pos"] + collapsed_df["svlen"].apply(lambda x: x[0]) - 1
+    collapsed_df["end"] = collapsed_df["pos"] + collapsed_df["svlen"].apply(lambda x: x[0])
 
     # When ignore_filter=False, exclude filtered variants from aggregation/boundary adjustment.
     # Treat NaN, empty string, ".", and "PASS" as not filtered, to match
@@ -400,7 +400,7 @@ def _aggregate_record_info_fields(
                 )
 
     # Update SVLEN to match new boundaries
-    record.info["SVLEN"] = (record.stop - record.start,)
+    record.info["SVLEN"] = (record.stop - record.start - 1,)
 
     # Update genotype to match aggregated SVTYPE
     _update_genotype_from_svtype(record)
@@ -419,11 +419,6 @@ def _select_breakpoints_by_cipos_window(
 ) -> tuple[int, int]:
     """Select start/end breakpoints near current boundaries using tightest CIPOS."""
     candidates = update_records[["pos", "end", "cipos"]].copy()
-
-    candidates = pd.concat(
-        [candidates, pd.DataFrame([[record.pos, record.stop, record.info["CIPOS"]]], columns=["pos", "end", "cipos"])],
-        ignore_index=True,
-    )
 
     def _best_breakpoint(df: pd.DataFrame, boundary_col: str, target: int) -> int:
         nearby = df[(df[boundary_col] - target).abs() <= window]
@@ -1455,7 +1450,7 @@ def _merge_cnv_group(
     df_all = vcftools.get_vcf_df((header, records), custom_info_fields=all_fields + ["SVLEN"])
 
     # Calculate 'end' column (same logic as _prepare_update_dataframe)
-    df_all["end"] = df_all["pos"] + df_all["svlen"].apply(lambda x: x[0]) - 1
+    df_all["end"] = df_all["pos"] + df_all["svlen"].apply(lambda x: x[0])
 
     # Reuse the same aggregation logic as distance-based collapse
     _aggregate_record_info_fields(merged, df_all, aggregation_actions, header)
