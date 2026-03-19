@@ -835,15 +835,59 @@ def _aggregate_min(
 
 def _aggregate_minlength(
     record: pysam.VariantRecord,
+    update_records: pd.DataFrame,
     field: str,
     values: list,
     val_type: str | None,
+    window: int = 2500,
 ) -> None:
-    """Aggregate field by selecting tuple with minimum interval length (x[1] - x[0])."""
+    """
+    Aggregate field by selecting tuple with minimum interval length from breakpoints within window.
+
+    For CIPOS aggregation, only considers breakpoints that are within the specified window
+    of the current record's boundaries (after they have been updated by _select_breakpoints_by_cipos_window).
+    """
     valid_values = [v for v in values if v is not None and not (isinstance(v, float) and pd.isna(v))]
     if not valid_values:
         return
-    min_tuple = min(valid_values, key=lambda x: x[1] - x[0])
+
+    # For CIPOS field, apply window filtering
+    if field == "CIPOS":
+        # Create candidates DataFrame with pos, end, and cipos from update_records
+        candidates = update_records[["pos", "end", "cipos"]].copy()
+
+        # Add current record's values
+        candidates = pd.concat(
+            [
+                candidates,
+                pd.DataFrame([[record.pos, record.stop, record.info.get("CIPOS")]], columns=["pos", "end", "cipos"]),
+            ],
+            ignore_index=True,
+        )
+
+        # Filter to only breakpoints within window of current boundaries
+        # A record is included if either its start OR end is within window
+        near_start = (candidates["pos"] - record.pos).abs() <= window
+        near_end = (candidates["end"] - record.stop).abs() <= window
+        filtered_candidates = candidates[near_start | near_end]
+
+        # Select CIPOS with minimum length from filtered candidates
+        if not filtered_candidates.empty:
+            valid_cipos = [
+                c for c in filtered_candidates["cipos"] if c is not None and not (isinstance(c, float) and pd.isna(c))
+            ]
+            if valid_cipos:
+                min_tuple = min(valid_cipos, key=lambda x: x[1] - x[0])
+            else:
+                # Fallback if no valid CIPOS in filtered candidates
+                min_tuple = min(valid_values, key=lambda x: x[1] - x[0])
+        else:
+            # Fallback if no candidates in window
+            min_tuple = min(valid_values, key=lambda x: x[1] - x[0])
+    else:
+        # For non-CIPOS fields, use original behavior
+        min_tuple = min(valid_values, key=lambda x: x[1] - x[0])
+
     if str(val_type) == "Float":
         record.info[field] = tuple([float(x) for x in min_tuple])
     elif str(val_type) == "Integer":
@@ -924,8 +968,10 @@ def _update_genotype_from_svtype(record: pysam.VariantRecord) -> None:
     sample_name = list(record.samples.keys())[0]  # CNV records have single sample
 
     if svtype == "DEL":
+        record.alts = ("<DEL>",)
         record.samples[sample_name]["GT"] = (0, 1)
     elif svtype == "DUP":
+        record.alts = ("<DUP>",)
         record.samples[sample_name]["GT"] = (None, 1)
 
 
@@ -962,7 +1008,7 @@ def _dispatch_aggregation(
     elif action == "min":
         _aggregate_min(record, field, values, val_type)
     elif action == "minlength":
-        _aggregate_minlength(record, field, values, val_type)
+        _aggregate_minlength(record, update_records, field, values, val_type)
     elif action == "aggregate":
         _aggregate_set(record, field, values)
     elif action == "weighted_majority":

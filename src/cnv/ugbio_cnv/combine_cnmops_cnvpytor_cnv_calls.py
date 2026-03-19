@@ -118,7 +118,7 @@ def __parse_args_merge_records(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--gap_scale_fraction",
         help="Gap as fraction of smaller CNV length for smoothing. "
-        "Formula: gap_threshold = min(max_gap_absolute, gap_scale_fraction × smaller_CNV). "
+        "Formula: gap_threshold = min(max_gap_absolute, gap_scale_fraction × larger_CNV). "
         "Default: 0.05 (5%%)",
         type=float,
         default=0.05,

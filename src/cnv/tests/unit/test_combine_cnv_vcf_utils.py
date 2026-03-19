@@ -549,6 +549,7 @@ class TestMergeCnvsInVcf:
             "TREE_SCORE",
             "CNV_SOURCE",
             "CIPOS",
+            "SVTYPE",
             "SVLEN",
             "MatchId",
         ]
@@ -751,6 +752,270 @@ class TestMergeCnvsInVcf:
             assert "CIPOS" in record.info, "CIPOS should be present in merged record"
             cipos = record.info["CIPOS"]
             assert cipos == (-200, 200), f"Expected CIPOS=(-200, 200), got {cipos}"
+
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.mu.cleanup_temp_files")
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.vcftools.get_vcf_df")
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.VcfUtils")
+    def test_merge_cnvs_cipos_aggregation_large_vs_small_outside_window(
+        self, mock_vcf_utils_class, mock_get_vcf_df, mock_cleanup, tmp_path, cnv_vcf_header
+    ):
+        """Test CIPOS aggregation when small deletion is outside window of boundaries.
+
+        When a small deletion with tight CIPOS is far from both boundaries (>2500bp),
+        it should be filtered out and not contribute to CIPOS aggregation.
+        """
+        # Setup
+        input_vcf = tmp_path / "input.vcf.gz"
+        output_vcf = tmp_path / "output.vcf.gz"
+        collapse_vcf = tmp_path / "output.vcf.gz.collapse.tmp.vcf.gz"
+        removed_vcf = tmp_path / "removed.vcf.gz"
+
+        # Create mock VcfUtils instance
+        mock_vu = MagicMock()
+        mock_vu.collapse_vcf.return_value = removed_vcf
+
+        def mock_sort_vcf(input_path, output_path):
+            with pysam.VariantFile(str(input_path), "r") as vcf_in:
+                with pysam.VariantFile(str(output_path), "w", header=vcf_in.header) as vcf_out:
+                    for record in vcf_in:
+                        vcf_out.write(record)
+
+        mock_vu.sort_vcf.side_effect = mock_sort_vcf
+        mock_vcf_utils_class.return_value = mock_vu
+
+        # Create mock dataframe with two overlapping records:
+        # Record 1: Large deletion (1000-100000) with wide CIPOS (-200, 200), length = 400
+        # Record 2: Small deletion (50000-50100) with tight CIPOS (-1, 1), length = 2
+        # The small deletion is >2500bp from both boundaries (pos=1000, stop=100000)
+        # so it will be filtered out by the window check
+        mock_df = pd.DataFrame(
+            {
+                "chrom": ["chr1", "chr1"],
+                "pos": [1000, 50000],
+                "end": [100000, 50100],
+                "svlen": [(99000,), (100,)],
+                "matchid": [(1.0,), (1.0,)],
+                "cipos": [(-200, 200), (-1, 1)],
+                "cnmops_sample_mean": [10.0, 11.0],
+            }
+        )
+        mock_get_vcf_df.return_value = mock_df
+
+        # Create collapsed VCF with placeholder CIPOS
+        with pysam.VariantFile(str(collapse_vcf), "w", header=cnv_vcf_header) as vcf:
+            record = vcf.new_record()
+            record.contig = "chr1"
+            record.pos = 1000
+            record.stop = 100000
+            record.alleles = ("N", "<DEL>")
+            record.info["CollapseId"] = "1.0"
+            record.info["SVLEN"] = (99000,)
+            record.info["SVTYPE"] = "DEL"
+            record.info["CIPOS"] = (-100, 100)  # Length = 200
+            record.info["CNMOPS_SAMPLE_MEAN"] = 10.5
+            record.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record)
+
+        # Create dummy input file
+        with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
+            pass
+
+        # Execute
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=50000)
+
+        # Read output and verify CIPOS aggregation
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = list(vcf)
+            assert len(records) == 1
+
+            record = records[0]
+
+            # Verify CIPOS was aggregated from records within window
+            # Candidates within window: collapsed record (pos=1000, CIPOS=(-100,100))
+            #                          update record 1 (pos=1000, CIPOS=(-200,200))
+            # Filtered out: update record 2 (pos=50000, too far from boundaries)
+            # Expected: (-100, 100) (tightest of the two candidates in window)
+            assert "CIPOS" in record.info, "CIPOS should be present in merged record"
+            cipos = record.info["CIPOS"]
+            assert cipos == (-100, 100), f"Expected CIPOS=(-100, 100), got {cipos}"
+
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.mu.cleanup_temp_files")
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.vcftools.get_vcf_df")
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.VcfUtils")
+    def test_merge_cnvs_cipos_aggregation_large_vs_small_within_window(
+        self, mock_vcf_utils_class, mock_get_vcf_df, mock_cleanup, tmp_path, cnv_vcf_header
+    ):
+        """Test CIPOS aggregation when small deletion is within window of start boundary.
+
+        When a small deletion with tight CIPOS is within 2500bp of a boundary,
+        its tight CIPOS should be selected.
+        """
+        # Setup
+        input_vcf = tmp_path / "input.vcf.gz"
+        output_vcf = tmp_path / "output.vcf.gz"
+        collapse_vcf = tmp_path / "output.vcf.gz.collapse.tmp.vcf.gz"
+        removed_vcf = tmp_path / "removed.vcf.gz"
+
+        # Create mock VcfUtils instance
+        mock_vu = MagicMock()
+        mock_vu.collapse_vcf.return_value = removed_vcf
+
+        def mock_sort_vcf(input_path, output_path):
+            with pysam.VariantFile(str(input_path), "r") as vcf_in:
+                with pysam.VariantFile(str(output_path), "w", header=vcf_in.header) as vcf_out:
+                    for record in vcf_in:
+                        vcf_out.write(record)
+
+        mock_vu.sort_vcf.side_effect = mock_sort_vcf
+        mock_vcf_utils_class.return_value = mock_vu
+
+        # Create mock dataframe with two overlapping records:
+        # Record 1: Large deletion (1000-100000) with wide CIPOS (-200, 200), length = 400
+        # Record 2: Small deletion (2000-2100) with tight CIPOS (-1, 1), length = 2
+        # The small deletion is within 2500bp of the start boundary (1000)
+        mock_df = pd.DataFrame(
+            {
+                "chrom": ["chr1", "chr1"],
+                "pos": [1000, 2000],
+                "end": [100000, 2100],
+                "svlen": [(99000,), (100,)],
+                "matchid": [(1.0,), (1.0,)],
+                "cipos": [(-200, 200), (-1, 1)],
+                "cnmops_sample_mean": [10.0, 11.0],
+            }
+        )
+        mock_get_vcf_df.return_value = mock_df
+
+        # Create collapsed VCF with placeholder CIPOS
+        with pysam.VariantFile(str(collapse_vcf), "w", header=cnv_vcf_header) as vcf:
+            record = vcf.new_record()
+            record.contig = "chr1"
+            record.pos = 1000
+            record.stop = 100000
+            record.alleles = ("N", "<DEL>")
+            record.info["CollapseId"] = "1.0"
+            record.info["SVLEN"] = (99000,)
+            record.info["SVTYPE"] = "DEL"
+            record.info["CIPOS"] = (-100, 100)  # Length = 200
+            record.info["CNMOPS_SAMPLE_MEAN"] = 10.5
+            record.samples["test_sample"]["GT"] = (0, 1)
+            vcf.write(record)
+
+        # Create dummy input file
+        with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
+            pass
+
+        # Execute
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=50000)
+
+        # Read output and verify CIPOS aggregation
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = list(vcf)
+            assert len(records) == 1
+
+            record = records[0]
+
+            # Verify CIPOS was aggregated from records within window
+            # Candidates within window of start (pos=1000):
+            #   - collapsed record (pos=1000, CIPOS=(-100,100), length=200)
+            #   - update record 1 (pos=1000, CIPOS=(-200,200), length=400)
+            #   - update record 2 (pos=2000, CIPOS=(-1,1), length=2) ← within 2500bp
+            # Expected: (-1, 1) (tightest interval)
+            assert "CIPOS" in record.info, "CIPOS should be present in merged record"
+            cipos = record.info["CIPOS"]
+            assert cipos == (-1, 1), f"Expected CIPOS=(-1, 1), got {cipos}"
+
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.mu.cleanup_temp_files")
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.vcftools.get_vcf_df")
+    @patch("ugbio_cnv.combine_cnv_vcf_utils.VcfUtils")
+    def test_merge_cnvs_svtype_and_alt_allele_consistency(
+        self, mock_vcf_utils_class, mock_get_vcf_df, mock_cleanup, tmp_path, cnv_vcf_header
+    ):
+        """Test that ALT allele is updated to match aggregated SVTYPE.
+
+        When SVTYPE changes due to weighted majority voting, the ALT allele
+        and genotype should be updated to match the new SVTYPE.
+        """
+        # Setup
+        input_vcf = tmp_path / "input.vcf.gz"
+        output_vcf = tmp_path / "output.vcf.gz"
+        collapse_vcf = tmp_path / "output.vcf.gz.collapse.tmp.vcf.gz"
+        removed_vcf = tmp_path / "removed.vcf.gz"
+
+        # Create mock VcfUtils instance
+        mock_vu = MagicMock()
+        mock_vu.collapse_vcf.return_value = removed_vcf
+
+        def mock_sort_vcf(input_path, output_path):
+            with pysam.VariantFile(str(input_path), "r") as vcf_in:
+                with pysam.VariantFile(str(output_path), "w", header=vcf_in.header) as vcf_out:
+                    for record in vcf_in:
+                        vcf_out.write(record)
+
+        mock_vu.sort_vcf.side_effect = mock_sort_vcf
+        mock_vcf_utils_class.return_value = mock_vu
+
+        # Create mock dataframe with mixed SVTYPEs:
+        # Record 1: DEL with SVLEN=500
+        # Record 2: DUP with SVLEN=2000 (DUP wins with weighted majority)
+        # Record 3: DUP with SVLEN=1500
+        # Total: DUP=3500 > DEL=1000 (500 from update + 500 from collapsed)
+        mock_df = pd.DataFrame(
+            {
+                "chrom": ["chr1", "chr1", "chr1"],
+                "pos": [1000, 1500, 2000],
+                "end": [1500, 3500, 3500],
+                "svlen": [(500,), (2000,), (1500,)],
+                "svtype": ["DEL", "DUP", "DUP"],
+                "matchid": [(1.0,), (1.0,), (1.0,)],
+                "cipos": [(-100, 100), (-50, 50), (-50, 50)],
+                "cnmops_sample_mean": [10.0, 11.0, 12.0],
+            }
+        )
+        mock_get_vcf_df.return_value = mock_df
+
+        # Create collapsed VCF with initial SVTYPE=DEL and ALT=<DEL>
+        with pysam.VariantFile(str(collapse_vcf), "w", header=cnv_vcf_header) as vcf:
+            record = vcf.new_record()
+            record.contig = "chr1"
+            record.pos = 1000
+            record.stop = 1500
+            record.alleles = ("N", "<DEL>")  # Initial ALT is DEL
+            record.info["CollapseId"] = "1.0"
+            record.info["SVLEN"] = (500,)  # Collapsed record has SVLEN=500
+            record.info["SVTYPE"] = "DEL"  # Initial SVTYPE is DEL
+            record.info["CIPOS"] = (-100, 100)
+            record.info["CNMOPS_SAMPLE_MEAN"] = 10.5
+            record.samples["test_sample"]["GT"] = (0, 1)  # Initial GT for DEL
+            vcf.write(record)
+
+        # Create dummy input file
+        with pysam.VariantFile(str(input_vcf), "w", header=cnv_vcf_header) as vcf:
+            pass
+
+        # Execute
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(str(input_vcf), str(output_vcf), distance=5000)
+
+        # Read output and verify SVTYPE, ALT allele, and genotype consistency
+        with pysam.VariantFile(str(output_vcf)) as vcf:
+            records = list(vcf)
+            assert len(records) == 1
+
+            record = records[0]
+
+            # Verify SVTYPE changed to DUP (weighted majority: 3500 > 1000)
+            assert "SVTYPE" in record.info, "SVTYPE should be present in merged record"
+            assert record.info["SVTYPE"] == "DUP", f"Expected SVTYPE=DUP, got {record.info['SVTYPE']}"
+
+            # Verify ALT allele was updated to match SVTYPE
+            assert record.alts is not None, "ALT alleles should be present"
+            assert len(record.alts) == 1, f"Expected 1 ALT allele, got {len(record.alts)}"
+            assert record.alts[0] == "<DUP>", f"Expected ALT=<DUP>, got {record.alts[0]}"
+
+            # Verify genotype was updated to match DUP
+            assert "test_sample" in record.samples, "Sample should be present"
+            gt = record.samples["test_sample"]["GT"]
+            assert gt == (None, 1), f"Expected GT=(None, 1) for DUP, got {gt}"
 
     def test_select_breakpoints_by_cipos_window_prefers_tightest_interval(self, cnv_vcf_header, tmp_path):
         """Test that breakpoint selection prefers records with the tightest CIPOS."""
