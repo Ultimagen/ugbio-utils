@@ -1,15 +1,50 @@
 import os
+import random
 from os.path import join as pjoin
 from pathlib import Path
 
+import pysam
 import pytest
 from ugbio_cnv import combine_cnmops_cnvpytor_cnv_calls, combine_cnv_vcf_utils
 from ugbio_core.test_utils import compare_vcfs
+from ugbio_core.vcf_utils import VcfUtils
 
 
 @pytest.fixture
 def resources_dir():
     return Path(__file__).parent.parent / "resources"
+
+
+def create_low_score_input_vcf(input_vcf: Path, output_vcf: Path, seed: int = 7) -> set[str]:
+    """Create a deterministic test VCF with half the variants marked LOW_SCORE."""
+    random_generator = random.Random(seed)
+
+    with pysam.VariantFile(str(input_vcf)) as vcf_in:
+        header = vcf_in.header.copy()
+        if "LOW_SCORE" not in header.filters:
+            header.add_line('##FILTER=<ID=LOW_SCORE,Description="Synthetic low-score filter for integration testing">')
+
+        records = list(vcf_in)
+        filtered_indices = set(random_generator.sample(range(len(records)), k=len(records) // 2))
+        filtered_ids = {
+            record_id
+            for index in filtered_indices
+            for record_id in [records[index].id]
+            if record_id is not None and record_id != "."
+        }
+
+        with pysam.VariantFile(str(output_vcf), "w", header=header) as vcf_out:
+            for index, record in enumerate(records):
+                new_record = VcfUtils.copy_vcf_record(record, header)
+                new_record.filter.clear()
+                if index in filtered_indices:
+                    new_record.filter.add("LOW_SCORE")
+                else:
+                    new_record.filter.add("PASS")
+                vcf_out.write(new_record)
+
+    pysam.tabix_index(str(output_vcf), preset="vcf", force=True)
+    return filtered_ids
 
 
 class TestCombineCnmopsCnvpytorCnvCalls:
@@ -118,8 +153,25 @@ class TestMergeCnvsInVcfIntegration:
 
     def test_merge_cnvs_with_smoothing_filter_enabled(self, resources_dir, tmp_path):
         """Test merge with smoothing and filter checking enabled (ignore_filter=False)."""
-        input_vcf = resources_dir / "merge_cnv_input.vcf.gz"
+        source_vcf = resources_dir / "merge_cnv_input.vcf.gz"
+        input_vcf = tmp_path / "merge_cnv_input.low_score.vcf.gz"
+        baseline_output_vcf = tmp_path / "test_output_smoothed_ignore_filter.vcf.gz"
         output_vcf = tmp_path / "test_output_smoothed_filtered.vcf.gz"
+        filtered_input_ids = create_low_score_input_vcf(source_vcf, input_vcf)
+
+        assert filtered_input_ids, "Expected at least one LOW_SCORE input variant"
+
+        combine_cnv_vcf_utils.merge_cnvs_in_vcf(
+            str(input_vcf),
+            str(baseline_output_vcf),
+            distance=1500,
+            enable_smoothing=True,
+            max_gap_absolute=50000,
+            gap_scale_fraction=0.05,
+            cipos_threshold=50,
+            ignore_sv_type=False,
+            ignore_filter=True,
+        )
 
         # This should NOT crash - tests the code path that failed in omics
         # The key difference from test_merge_cnvs_with_smoothing is ignore_filter=False
@@ -139,10 +191,19 @@ class TestMergeCnvsInVcfIntegration:
         # Verify output exists (no crash from missing index)
         assert output_vcf.exists()
 
+        with pysam.VariantFile(str(baseline_output_vcf)) as vcf_in:
+            baseline_low_score_ids = {record.id for record in vcf_in if "LOW_SCORE" in record.filter.keys()}
+
+        with pysam.VariantFile(str(output_vcf)) as vcf_in:
+            output_ids = {record.id for record in vcf_in}
+
+        removed_filtered_ids = filtered_input_ids - output_ids
+
+        assert len(baseline_low_score_ids) >= 100, "Expected at least 100 LOW_SCORE variants to survive"
+        assert removed_filtered_ids, "Expected at least one LOW_SCORE variant to be filtered out"
+
     def test_merge_cnvs_weighted_majority_voting(self, tmp_path):
         """Test that merged SVTYPE is determined by SVLEN-weighted majority vote."""
-        import pysam
-
         # Create test VCF with mixed SVTYPEs that will merge
         vcf_path = tmp_path / "mixed_svtype.vcf.gz"
 
