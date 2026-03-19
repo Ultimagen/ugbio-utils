@@ -44,6 +44,7 @@ from ugbio_srsnv.deep_srsnv.cram_to_tensors import (
     CHROM,
     POS,
     _process_shard,
+    _process_shard_from_parquet,
     _samtools_available,
     _worker_init,
 )
@@ -174,13 +175,7 @@ def _run_inference(  # noqa: PLR0913
     rows = [{k: col_dict[k][i] for k in col_dict} for i in range(n_rows)]
     rows.sort(key=lambda r: (str(r.get(CHROM, "")), int(r.get(POS, 0))))
 
-    shard_inputs = [(sid, rows[i : i + shard_size]) for sid, i in enumerate(range(0, len(rows), shard_size))]
-    total_shards = len(shard_inputs)
-    logger.info(
-        "Inference: %d rows -> %d shards (%d workers, %d GPUs)", n_rows, total_shards, num_cram_workers, len(engines)
-    )
-
-    shard_kwargs = {
+    shard_common = {
         "cram_path": cram_path,
         "reference_path": reference_path,
         "encoders": encoders,
@@ -189,9 +184,17 @@ def _run_inference(  # noqa: PLR0913
         "max_edist": None,
         "fetch_mode": fetch_mode,
     }
+    shard_args_list = [
+        {"shard_id": sid, "rows": rows[i : i + shard_size], **shard_common}
+        for sid, i in enumerate(range(0, len(rows), shard_size))
+    ]
+    total_shards = len(shard_args_list)
+    logger.info(
+        "Inference: %d rows -> %d shards (%d workers, %d GPUs)", n_rows, total_shards, num_cram_workers, len(engines)
+    )
 
     t_start = time.perf_counter()
-    predictions = _pipelined_inference(shard_inputs, shard_kwargs, engines, batch_size, num_cram_workers)
+    predictions = _pipelined_inference(shard_args_list, engines, batch_size, num_cram_workers)
     logger.info("Inference complete: %d predictions in %.1fs", len(predictions), time.perf_counter() - t_start)
     return predictions
 
@@ -259,19 +262,28 @@ def _gpu_consumer_thread(
 
 
 def _pipelined_inference(
-    shard_inputs: list[tuple[int, list[dict]]],
-    shard_kwargs: dict,
+    shard_args_list: list[dict],
     engines: list,
     batch_size: int,
     num_cram_workers: int,
+    process_fn=None,
 ) -> dict[tuple[str, int, str], float]:
     """Run CPU shard processing and multi-GPU inference concurrently.
 
     CPU workers produce tensor chunks via ``ProcessPoolExecutor`` and push them
     into a ``Queue``.  Per-GPU consumer threads pull from the queue and run
     ``predict_batch`` in parallel, giving true multi-GPU utilisation.
+
+    Parameters
+    ----------
+    shard_args_list
+        List of keyword-argument dicts, one per shard.  Each dict is unpacked
+        as ``process_fn(**shard_args)``.
+    process_fn
+        Callable that processes a shard.  Defaults to ``_process_shard``.
     """
-    total_shards = len(shard_inputs)
+    fn = process_fn or _process_shard
+    total_shards = len(shard_args_list)
     effective_workers = max(1, num_cram_workers)
 
     prefetch = len(engines) * 2
@@ -294,8 +306,8 @@ def _pipelined_inference(
 
     try:
         if effective_workers == 1:
-            for sid, shard_rows in shard_inputs:
-                _sid, chunk, _stats = _process_shard(shard_id=sid, rows=shard_rows, **shard_kwargs)
+            for shard_args in shard_args_list:
+                _sid, chunk, _stats = fn(**shard_args)
                 q.put(chunk)
                 completed += 1
                 if completed == 1 or completed % 10 == 0 or completed == total_shards:
@@ -307,10 +319,7 @@ def _pipelined_inference(
                     )
         else:
             with ProcessPoolExecutor(max_workers=effective_workers, initializer=_worker_init) as pool:
-                futures = {
-                    pool.submit(_process_shard, shard_id=sid, rows=shard_rows, **shard_kwargs): sid
-                    for sid, shard_rows in shard_inputs
-                }
+                futures = {pool.submit(fn, **shard_args): shard_args for shard_args in shard_args_list}
                 for future in as_completed(futures):
                     _sid, chunk, _stats = future.result()
                     q.put(chunk)
@@ -426,6 +435,70 @@ def aggregate_fold_probabilities(prob_matrix: np.ndarray) -> np.ndarray:
 
 def _run_fold_inference(  # noqa: PLR0913
     cram_path: str,
+    parquet_path: str,
+    n_rows: int,
+    columns: list[str],
+    engines: list,
+    *,
+    num_cram_workers: int = 4,
+    batch_size: int = 512,
+    tensor_length: int = 300,
+    reference_path: str | None = None,
+    fetch_mode: str = "samtools",
+) -> dict[tuple[str, int, str], float]:
+    """Run inference from a pre-sorted parquet file with row-group-per-shard layout.
+
+    Each worker reads its own row group from disk — no row dicts in the main process.
+    """
+    if n_rows == 0:
+        return {}
+
+    encoders = load_vocab_config()
+
+    pf = pq.ParquetFile(parquet_path)
+    total_shards = pf.metadata.num_row_groups
+
+    shard_common = {
+        "cram_path": cram_path,
+        "reference_path": reference_path,
+        "encoders": encoders,
+        "tensor_length": tensor_length,
+        "label": False,
+        "max_edist": None,
+        "fetch_mode": fetch_mode,
+    }
+
+    shard_args_list = [
+        {"shard_id": rg, "parquet_path": parquet_path, "row_group_id": rg, "columns": columns, **shard_common}
+        for rg in range(total_shards)
+    ]
+
+    logger.info(
+        "Fold inference: %d rows -> %d row-group shards (%d workers, %d GPUs)",
+        n_rows,
+        total_shards,
+        num_cram_workers,
+        len(engines),
+    )
+
+    t_start = time.perf_counter()
+    predictions = _pipelined_inference(
+        shard_args_list, engines, batch_size, num_cram_workers, process_fn=_process_shard_from_parquet
+    )
+    elapsed = time.perf_counter() - t_start
+
+    logger.info(
+        "Fold inference: %d rows, %d shards, %d predictions in %.1fs",
+        n_rows,
+        total_shards,
+        len(predictions),
+        elapsed,
+    )
+    return predictions
+
+
+def _run_fold_inference_from_rows(  # noqa: PLR0913
+    cram_path: str,
     rows: list[dict],
     engines: list,
     *,
@@ -436,10 +509,9 @@ def _run_fold_inference(  # noqa: PLR0913
     reference_path: str | None = None,
     fetch_mode: str = "samtools",
 ) -> dict[tuple[str, int, str], float]:
-    """Run inference on a subset of rows using the provided engines.
+    """Run inference on pre-loaded rows (used by ensemble path).
 
-    Like ``_run_inference`` but accepts pre-loaded rows instead of a parquet path.
-    Uses pipelined producer-consumer architecture with per-GPU threads.
+    Like ``_run_fold_inference`` but accepts in-memory rows instead of a parquet path.
     """
     if not rows:
         return {}
@@ -447,12 +519,7 @@ def _run_fold_inference(  # noqa: PLR0913
     encoders = load_vocab_config()
 
     rows_sorted = sorted(rows, key=lambda r: (str(r.get(CHROM, "")), int(r.get(POS, 0))))
-    shard_inputs = [
-        (sid, rows_sorted[i : i + shard_size]) for sid, i in enumerate(range(0, len(rows_sorted), shard_size))
-    ]
-    total_shards = len(shard_inputs)
-
-    shard_kwargs = {
+    shard_common = {
         "cram_path": cram_path,
         "reference_path": reference_path,
         "encoders": encoders,
@@ -461,9 +528,14 @@ def _run_fold_inference(  # noqa: PLR0913
         "max_edist": None,
         "fetch_mode": fetch_mode,
     }
+    shard_args_list = [
+        {"shard_id": sid, "rows": rows_sorted[i : i + shard_size], **shard_common}
+        for sid, i in enumerate(range(0, len(rows_sorted), shard_size))
+    ]
+    total_shards = len(shard_args_list)
 
     t_start = time.perf_counter()
-    predictions = _pipelined_inference(shard_inputs, shard_kwargs, engines, batch_size, num_cram_workers)
+    predictions = _pipelined_inference(shard_args_list, engines, batch_size, num_cram_workers)
     elapsed = time.perf_counter() - t_start
 
     logger.info(
@@ -536,7 +608,7 @@ def _run_ensemble_inference(  # noqa: PLR0913, PLR0915
         logger.info("Fold %d: loading model from %s (%d reads)", fold_k, meta_path, len(rows_k))
         engines = _create_engines(meta_path, backend=backend, gpu_ids=gpu_ids)
         try:
-            fold_preds = _run_fold_inference(rows=rows_k, engines=engines, **infer_kwargs)
+            fold_preds = _run_fold_inference_from_rows(rows=rows_k, engines=engines, **infer_kwargs)
             all_predictions.update(fold_preds)
         finally:
             for eng in engines:
@@ -556,7 +628,7 @@ def _run_ensemble_inference(  # noqa: PLR0913, PLR0915
             logger.info("Test reads: predicting with fold %d model", fold_k)
             engines = _create_engines(meta_path, backend=backend, gpu_ids=gpu_ids)
             try:
-                test_preds = _run_fold_inference(rows=test_rows, engines=engines, **infer_kwargs)
+                test_preds = _run_fold_inference_from_rows(rows=test_rows, engines=engines, **infer_kwargs)
                 for j, key in enumerate(test_keys):
                     prob_matrix[fold_k, j] = test_preds.get(key, 0.5)
             finally:
@@ -928,20 +1000,25 @@ def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901, PLR
         filtered = pa.table({c: [] for c in available_cols})
     del batches
 
-    col_dict = filtered.to_pydict()
-    n_rows = len(col_dict[available_cols[0]]) if available_cols else 0
-    del filtered
-    rows = [{k: col_dict[k][i] for k in col_dict} for i in range(n_rows)]
-    del col_dict
-    rows.sort(key=lambda r: (str(r.get(CHROM, "")), int(r.get(POS, 0))))
-
+    # Sort by chrom, pos using Arrow (no Python dicts)
+    n_rows = len(filtered)
     logger.info("Fold %d: %d rows (total %d, filtered %d)", fold_idx, n_rows, total_rows, n_rows)
 
-    if not rows:
+    if n_rows == 0:
         logger.info("Fold %d: no rows, writing empty predictions", fold_idx)
         empty_table = pa.table({"chrom": [], "pos": [], "rn": [], "prob": []})
         pq_mod.write_table(empty_table, args.output)
         return
+
+    sort_indices = pa.compute.sort_indices(filtered, sort_keys=[(CHROM, "ascending"), (POS, "ascending")])
+    sorted_table = filtered.take(sort_indices)
+    del filtered, sort_indices
+
+    # Write to temp parquet with row_group_size = shard_size for per-worker reading
+    fold_parquet = str(Path(args.output).parent / f"fold_{fold_idx}_sorted.parquet")
+    available_cols_final = [c for c in available_cols if c in sorted_table.column_names]
+    pq_mod.write_table(sorted_table, fold_parquet, row_group_size=args.shard_size)
+    del sorted_table
 
     # Load engines
     engines = _create_engines(args.fold_metadata, backend=args.backend, gpu_ids=gpu_ids)
@@ -950,10 +1027,11 @@ def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901, PLR
     try:
         predictions = _run_fold_inference(
             cram_path=args.cram,
-            rows=rows,
+            parquet_path=fold_parquet,
+            n_rows=n_rows,
+            columns=available_cols_final,
             engines=engines,
             num_cram_workers=num_workers,
-            shard_size=args.shard_size,
             batch_size=args.batch_size,
             tensor_length=args.tensor_length,
             reference_path=args.reference,

@@ -104,7 +104,7 @@ class PrepProfile:
             f"{self.total_output_rows:,}",
             self.missing_rows,
             f"{self.rows_per_second:,.0f}" if self.rows_per_second else "N/A",
-            f"{self.bytes_written / (1024 ** 3):.2f} GB" if self.bytes_written > 0 else "0",
+            f"{self.bytes_written / (1024**3):.2f} GB" if self.bytes_written > 0 else "0",
         )
 
 
@@ -454,6 +454,25 @@ def _process_shard(  # noqa: PLR0915
         "fetch_windows": n_windows,
     }
     return shard_id, chunk, stats
+
+
+def _process_shard_from_parquet(
+    *,
+    shard_id: int,
+    parquet_path: str,
+    row_group_id: int,
+    columns: list[str],
+    **shard_kwargs,
+) -> tuple[int, dict, dict]:
+    """Read one row group from parquet, convert to list-of-dicts, then process as shard."""
+    import pyarrow.parquet as pq_rg  # noqa: PLC0415
+
+    pf = pq_rg.ParquetFile(parquet_path)
+    table = pf.read_row_group(row_group_id, columns=columns)
+    col_dict = table.to_pydict()
+    rows = [{k: col_dict[k][i] for k in col_dict} for i in range(len(table))]
+    del table, col_dict
+    return _process_shard(shard_id=shard_id, rows=rows, **shard_kwargs)
 
 
 _TORCH_TENSOR_KEYS = frozenset(
