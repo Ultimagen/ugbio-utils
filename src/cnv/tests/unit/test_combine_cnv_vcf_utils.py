@@ -700,34 +700,33 @@ class TestMergeCnvsInVcf:
         mock_vu.sort_vcf.side_effect = mock_sort_vcf
         mock_vcf_utils_class.return_value = mock_vu
 
-        # Create mock dataframe with two records from removed_vcf that have CIPOS values
-        # Record 1: CIPOS=(-250, 251) with length = 251 - (-250) = 501
-        # Record 2: CIPOS=(-300, 301) with length = 301 - (-300) = 601
-        # Expected merged CIPOS: tuple with min length = (-250, 251)
-        # Note: Collapsed record's CIPOS is NOT included in aggregation
+        # Mock dataframe represents removed.vcf - contains only one removed record
+        # The other record (at pos=2500) is the representative in collapsed.vcf
+        # This removed record has CIPOS=(-250, 251) with length = 501
         mock_df = pd.DataFrame(
             {
-                "chrom": ["chr1", "chr1"],
-                "pos": [1000, 2500],
-                "svlen": [(1000,), (1000,)],
-                "matchid": [(1.0,), (1.0,)],
-                "cipos": [(-250, 251), (-300, 301)],
-                "cnmops_sample_mean": [10.0, 11.0],
+                "chrom": ["chr1"],
+                "pos": [1000],
+                "svlen": [(1000,)],
+                "matchid": [(1.0,)],
+                "cipos": [(-250, 251)],
+                "cnmops_sample_mean": [10.0],
             }
         )
         mock_get_vcf_df.return_value = mock_df
 
-        # Create collapsed VCF with CIPOS (inherited from original position, will be replaced)
+        # Collapsed VCF contains representative (another record at pos=2500)
+        # After boundary update, this will be widened to include the removed record
         with pysam.VariantFile(str(collapse_vcf), "w", header=cnv_vcf_header) as vcf:
             record = vcf.new_record()
             record.contig = "chr1"
-            record.pos = 1000
+            record.pos = 2500  # Representative starts at pos=2500
             record.stop = 3500
             record.alleles = ("N", "<DEL>")
             record.info["CollapseId"] = "1.0"
-            record.info["SVLEN"] = (2500,)
+            record.info["SVLEN"] = (1000,)
             record.info["SVTYPE"] = "DEL"
-            record.info["CIPOS"] = (-200, 200)  # From original position (will be replaced)
+            record.info["CIPOS"] = (-300, 301)  # Will be replaced with tighter (-250, 251)
             record.info["CNMOPS_SAMPLE_MEAN"] = 10.5
             record.samples["test_sample"]["GT"] = (0, 1)
             vcf.write(record)
@@ -746,11 +745,11 @@ class TestMergeCnvsInVcf:
 
             record = records[0]
 
-            # Verify CIPOS was aggregated correctly using minlength
-            # Candidates from update_records: [(-250, 251), (-300, 301)]
-            # Lengths: [501, 601]
-            # Expected: tuple with min length = (-250, 251)
-            # Note: Collapsed record's CIPOS is NOT included (it's from original position)
+            # Verification:
+            # 1. Boundary update: 2500-3500 → 1000-3500 (widened to include removed record)
+            # 2. CIPOS candidates from removed.vcf: Record at pos=1000 with CIPOS=(-250,251)
+            # 3. Window filter: |1000-1000|=0 ≤ 2500 → INCLUDED
+            # 4. Result: CIPOS=(-250,251) - the only candidate (tighter than representative's)
             assert "CIPOS" in record.info, "CIPOS should be present in merged record"
             cipos = record.info["CIPOS"]
             assert cipos == (-250, 251), f"Expected CIPOS=(-250, 251), got {cipos}"
@@ -785,38 +784,35 @@ class TestMergeCnvsInVcf:
         mock_vu.sort_vcf.side_effect = mock_sort_vcf
         mock_vcf_utils_class.return_value = mock_vu
 
-        # Create mock dataframe with two records from removed_vcf:
-        # Record 1 (removed): Large deletion (1000-100000) with CIPOS (-200, 200), QUAL=3
-        # Record 2 (removed): Small deletion (50000-50100) with CIPOS (-1, 1), QUAL=300
-        # Note: Record 2 is kept as representative in collapsed VCF (higher QUAL)
-        # The small deletion is >2500bp from final boundaries (1000-100000)
-        # so it will be filtered out by the window check
+        # Mock dataframe represents removed.vcf - contains ONLY the large deletion
+        # The small deletion (QUAL=300) was chosen as representative by collapse_vcf
+        # and is in collapsed.vcf, NOT in removed.vcf
         mock_df = pd.DataFrame(
             {
-                "chrom": ["chr1", "chr1"],
-                "pos": [1000, 50000],
-                "end": [100000, 50100],
-                "qual": [3, 300],
-                "svlen": [(99000,), (100,)],
-                "matchid": [(1.0,), (1.0,)],
-                "cipos": [(-200, 200), (-1, 1)],
-                "cnmops_sample_mean": [10.0, 11.0],
+                "chrom": ["chr1"],
+                "pos": [1000],
+                "end": [100000],
+                "qual": [3],
+                "svlen": [(99000,)],
+                "matchid": [(1.0,)],
+                "cipos": [(-200, 200)],
+                "cnmops_sample_mean": [10.0],
             }
         )
         mock_get_vcf_df.return_value = mock_df
 
-        # Create collapsed VCF - higher QUAL record (pos=50000) is kept as representative
+        # Collapsed VCF contains representative (small deletion with higher QUAL=300)
         with pysam.VariantFile(str(collapse_vcf), "w", header=cnv_vcf_header) as vcf:
             record = vcf.new_record()
             record.contig = "chr1"
-            record.pos = 50000  # Representative is at pos=50000
+            record.pos = 50000  # Representative starts at small deletion position
             record.stop = 50100
             record.alleles = ("N", "<DEL>")
             record.info["CollapseId"] = "1.0"
-            record.info["SVLEN"] = (100,)  # Original length before boundary update
+            record.info["SVLEN"] = (100,)
             record.info["SVTYPE"] = "DEL"
-            record.qual = 300
-            record.info["CIPOS"] = (-1, 1)  # From original pos=50000 (will be replaced)
+            record.qual = 300  # Higher QUAL - why it was chosen as representative
+            record.info["CIPOS"] = (-1, 1)  # Will be replaced during aggregation
             record.info["CNMOPS_SAMPLE_MEAN"] = 10.5
             record.samples["test_sample"]["GT"] = (0, 1)
             vcf.write(record)
@@ -835,11 +831,11 @@ class TestMergeCnvsInVcf:
 
             record = records[0]
 
-            # After boundary update: pos=1000, stop=100000 (from Record 1)
-            # CIPOS aggregation candidates within 2500bp window:
-            #   - Record 1 (pos=1000, end=100000, CIPOS=(-200,200)) ✓ within window
-            #   - Record 2 (pos=50000, end=50100, CIPOS=(-1,1)) ✗ 49000bp from boundaries
-            # Expected: (-200, 200) from Record 1
+            # Verification:
+            # 1. Boundary update: 50000-50100 → 1000-100000 (widened to removed record's bounds)
+            # 2. CIPOS candidates from removed.vcf: Large deletion at pos=1000, CIPOS=(-200,200)
+            # 3. Window filter: |1000-1000|=0 ≤ 2500 → INCLUDED
+            # 4. Result: CIPOS=(-200,200) - the only candidate within window
             assert "CIPOS" in record.info, "CIPOS should be present in merged record"
             cipos = record.info["CIPOS"]
             assert cipos == (-200, 200), f"Expected CIPOS=(-200, 200), got {cipos}"
@@ -874,37 +870,35 @@ class TestMergeCnvsInVcf:
         mock_vu.sort_vcf.side_effect = mock_sort_vcf
         mock_vcf_utils_class.return_value = mock_vu
 
-        # Create mock dataframe with two records from removed_vcf:
-        # Record 1 (removed): Large deletion (1000-100000) with CIPOS (-200, 200), QUAL=3
-        # Record 2 (removed): Small deletion (2000-2100) with CIPOS (-1, 1), QUAL=300
-        # Note: Record 1 is kept as representative in collapsed VCF (first record)
-        # The small deletion is within 2500bp of start boundary (1000bp away)
+        # Mock dataframe represents removed.vcf - contains ONLY the small deletion
+        # The large deletion (QUAL=3) was chosen as representative by collapse_vcf
+        # and is in collapsed.vcf, NOT in removed.vcf
         mock_df = pd.DataFrame(
             {
-                "chrom": ["chr1", "chr1"],
-                "pos": [1000, 2000],
-                "end": [100000, 2100],
-                "qual": [3, 300],
-                "svlen": [(99000,), (100,)],
-                "matchid": [(1.0,), (1.0,)],
-                "cipos": [(-200, 200), (-1, 1)],
-                "cnmops_sample_mean": [10.0, 11.0],
+                "chrom": ["chr1"],
+                "pos": [2000],
+                "end": [2100],
+                "qual": [300],
+                "svlen": [(100,)],
+                "matchid": [(1.0,)],
+                "cipos": [(-1, 1)],
+                "cnmops_sample_mean": [11.0],
             }
         )
         mock_get_vcf_df.return_value = mock_df
 
-        # Create collapsed VCF - Record 1 is kept as representative
+        # Collapsed VCF contains representative (large deletion at pos=1000)
         with pysam.VariantFile(str(collapse_vcf), "w", header=cnv_vcf_header) as vcf:
             record = vcf.new_record()
             record.contig = "chr1"
-            record.pos = 1000  # Representative is at pos=1000
+            record.pos = 1000  # Representative starts at large deletion position
             record.stop = 100000
             record.alleles = ("N", "<DEL>")
             record.info["CollapseId"] = "1.0"
-            record.info["SVLEN"] = (99000,)  # Original length
+            record.info["SVLEN"] = (99000,)
             record.info["SVTYPE"] = "DEL"
-            record.qual = 3
-            record.info["CIPOS"] = (-200, 200)  # From original pos=1000 (will be replaced)
+            record.qual = 3  # Lower QUAL but was chosen as representative
+            record.info["CIPOS"] = (-200, 200)  # Will be replaced during aggregation
             record.info["CNMOPS_SAMPLE_MEAN"] = 10.5
             record.samples["test_sample"]["GT"] = (0, 1)
             vcf.write(record)
@@ -923,11 +917,11 @@ class TestMergeCnvsInVcf:
 
             record = records[0]
 
-            # After boundary update: pos=1000, stop=100000 (boundaries unchanged)
-            # CIPOS aggregation candidates within 2500bp window:
-            #   - Record 1 (pos=1000, end=100000, CIPOS=(-200,200)) ✓ at start boundary
-            #   - Record 2 (pos=2000, end=2100, CIPOS=(-1,1)) ✓ 1000bp from start
-            # Expected: (-1, 1) from Record 2 (tightest interval)
+            # Verification:
+            # 1. Boundary update: 1000-100000 → 1000-100000 (no change, already at widest)
+            # 2. CIPOS candidates from removed.vcf: Small deletion at pos=2000, CIPOS=(-1,1)
+            # 3. Window filter: |2000-1000|=1000 ≤ 2500 → INCLUDED (within window of start)
+            # 4. Result: CIPOS=(-1,1) - tightest interval from the only candidate
             assert "CIPOS" in record.info, "CIPOS should be present in merged record"
             cipos = record.info["CIPOS"]
             assert cipos == (-1, 1), f"Expected CIPOS=(-1, 1), got {cipos}"
