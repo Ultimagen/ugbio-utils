@@ -384,7 +384,7 @@ def _aggregate_record_info_fields(
     header : pysam.VariantHeader
         VCF header containing INFO field definitions
     """
-    record.pos, record.stop = _select_breakpoints_by_cipos_window(record, update_records)
+    record.pos, record.stop = _select_breakpoints_by_cipos_window(update_records)
 
     # Aggregate INFO fields based on defined actions
     for action, fields in aggregation_actions.items():
@@ -413,7 +413,6 @@ def _aggregate_record_info_fields(
 
 
 def _select_breakpoints_by_cipos_window(
-    record: pysam.VariantRecord,
     update_records: pd.DataFrame,
     window: int = 2500,
 ) -> tuple[int, int]:
@@ -722,7 +721,8 @@ def merge_cnvs_in_vcf(  # noqa: PLR0915
     smoothing_groups = _group_candidates_transitively(smoothing_candidates)
 
     # Log smoothing statistics
-    cnvs_before_smoothing = sum(1 for _ in pysam.VariantFile(output_vcf_sorted))
+    with pysam.VariantFile(output_vcf_sorted) as vcf_in:
+        cnvs_before_smoothing = sum(1 for _ in vcf_in)
     total_cnvs_in_groups = sum(len(group) for group in smoothing_groups)
     cnvs_after_smoothing = cnvs_before_smoothing - total_cnvs_in_groups + len(smoothing_groups)
     logger.info(
@@ -992,7 +992,6 @@ def _update_genotype_from_svtype(record: pysam.VariantRecord) -> None:
 
 
 def _collect_field_values(
-    record: pysam.VariantRecord,
     update_records: pd.DataFrame,
     field: str,
     val_number: str | None,
@@ -1062,7 +1061,7 @@ def _value_aggregator(
     if field.lower() not in update_records.columns:
         return
 
-    values = _collect_field_values(record, update_records, field, val_number)
+    values = _collect_field_values(update_records, field, val_number)
     _dispatch_aggregation(action, record, update_records, field, values, val_type)
 
 
@@ -1120,7 +1119,7 @@ def _find_candidate_pairs(
     max_gap_absolute : int
         Absolute maximum gap for merging CNVs (bp)
     gap_scale_fraction : float
-        Gap as fraction of smaller CNV length
+        Gap as fraction of larger CNV length
     ignore_sv_type : bool
         If False, only CNVs with the same SVTYPE are considered
 
@@ -1192,7 +1191,6 @@ def identify_smoothing_candidates(
     Smoothing Criteria (all must be satisfied):
     1. Same chromosome
     2. Same SVTYPE (unless ignore_sv_type=True)
-    3. CIPOS exists for both CNVs (validated upfront)
     4. CIPOS length >= cipos_threshold for both CNVs (prevents merging high-confidence breakpoints)
     5. Gap between CNVs <= size-scaled threshold
     6. FILTER status compatible (if ignore_filter=False, only PASS CNVs considered)

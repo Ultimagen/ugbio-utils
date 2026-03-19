@@ -820,10 +820,10 @@ class TestMergeCnvsInVcf:
         mock_vu.sort_vcf.side_effect = mock_sort_vcf
         mock_vcf_utils_class.return_value = mock_vu
 
-        # Mock dataframe represents removed.vcf - contains ONLY the large deletion
-        # The small deletion (QUAL=300) was chosen as representative by collapse_vcf
-        # and is in collapsed.vcf, NOT in removed.vcf
-        mock_df = pd.DataFrame(
+        # Mock dataframe for removed.vcf - contains ONLY the large deletion.
+        # The representative record (small deletion) is loaded separately from
+        # collapsed.vcf in _prepare_update_dataframe.
+        removed_df = pd.DataFrame(
             {
                 "chrom": ["chr1"],
                 "pos": [1000],
@@ -835,7 +835,21 @@ class TestMergeCnvsInVcf:
                 "cnmops_sample_mean": [10.0],
             }
         )
-        mock_get_vcf_df.return_value = mock_df
+
+        # Mock dataframe for collapsed.vcf - contains ONLY the representative.
+        collapsed_df = pd.DataFrame(
+            {
+                "chrom": ["chr1"],
+                "pos": [50000],
+                "end": [50100],
+                "qual": [300],
+                "svlen": [(100,)],
+                "matchid": [(1.0,)],
+                "cipos": [(-1, 1)],
+                "cnmops_sample_mean": [10.5],
+            }
+        )
+        mock_get_vcf_df.side_effect = [removed_df, collapsed_df]
 
         # Collapsed VCF contains representative (small deletion with higher QUAL=300)
         with pysam.VariantFile(str(collapse_vcf), "w", header=cnv_vcf_header) as vcf:
@@ -906,10 +920,10 @@ class TestMergeCnvsInVcf:
         mock_vu.sort_vcf.side_effect = mock_sort_vcf
         mock_vcf_utils_class.return_value = mock_vu
 
-        # Mock dataframe represents removed.vcf - contains ONLY the small deletion
-        # The large deletion (QUAL=3) was chosen as representative by collapse_vcf
-        # and is in collapsed.vcf, NOT in removed.vcf
-        mock_df = pd.DataFrame(
+        # Mock dataframe for removed.vcf - contains ONLY the small deletion.
+        # The representative record (large deletion) is loaded separately from
+        # collapsed.vcf in _prepare_update_dataframe.
+        removed_df = pd.DataFrame(
             {
                 "chrom": ["chr1"],
                 "pos": [2000],
@@ -921,7 +935,21 @@ class TestMergeCnvsInVcf:
                 "cnmops_sample_mean": [11.0],
             }
         )
-        mock_get_vcf_df.return_value = mock_df
+
+        # Mock dataframe for collapsed.vcf - contains ONLY the representative.
+        collapsed_df = pd.DataFrame(
+            {
+                "chrom": ["chr1"],
+                "pos": [1000],
+                "end": [100000],
+                "qual": [3],
+                "svlen": [(99000,)],
+                "matchid": [(1.0,)],
+                "cipos": [(-200, 200)],
+                "cnmops_sample_mean": [10.5],
+            }
+        )
+        mock_get_vcf_df.side_effect = [removed_df, collapsed_df]
 
         # Collapsed VCF contains representative (large deletion at pos=1000)
         with pysam.VariantFile(str(collapse_vcf), "w", header=cnv_vcf_header) as vcf:

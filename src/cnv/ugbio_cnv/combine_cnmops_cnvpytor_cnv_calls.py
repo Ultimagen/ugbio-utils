@@ -126,7 +126,7 @@ def __parse_args_merge_records(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--cipos_threshold",
         help="Minimum CIPOS length for smoothing (bp). CNVs with CIPOS length < threshold have "
-        "high-confidence breakpoints and won't be smoothed. CIPOS length = max - min. Default: 50",
+        "high-confidence breakpoints and won't be smoothed. CIPOS length = max - min - 1. Default: 50",
         type=int,
         default=50,
     )
