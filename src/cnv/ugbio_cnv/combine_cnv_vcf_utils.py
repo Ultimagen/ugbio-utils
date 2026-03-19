@@ -803,8 +803,6 @@ def _aggregate_weighted_avg(
     values: list,
 ) -> None:
     """Aggregate field using weighted average based on SVLEN."""
-    # Note: update_records now includes collapsed record's original SVLEN
-    # (added in _aggregate_collapsed_vcf), so don't add record.info["SVLEN"] again
     lengths = np.array(list(update_records["svlen"].apply(lambda x: x[0])))
     values_array = np.array(values)
     if all(pd.isna(x) for x in values):
