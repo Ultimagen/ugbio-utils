@@ -200,6 +200,7 @@ def write_vcf_records_with_source(
 
             new_record.id = unique_id
             seen_ids.add(unique_id)
+
         # Note: When make_ids_unique is False, IDs are not tracked and duplicates are allowed
         # This preserves the original behavior where duplicate IDs may exist
 
@@ -357,20 +358,27 @@ def _aggregate_record_info_fields(
     header: pysam.VariantHeader,
 ) -> None:
     """
-    Aggregate INFO fields for a single record based on collapsed variants.
+    Aggregate INFO fields for a single record based on collapsed/merged variants.
+
+    Used by both distance-based collapse (Stage 1) and size-scaled gap smoothing (Stage 3).
+    The CIPOS-based boundary selection works correctly for both overlapping CNVs (collapse)
+    and non-overlapping CNVs (smoothing) because the 2500bp window captures all relevant
+    candidates in both scenarios.
 
     Modifies the record in-place by:
-    1. Updating start/stop boundaries to span all collapsed variants
+    1. Updating start/stop boundaries using CIPOS window selection
     2. Aggregating INFO field values using specified actions
     3. Updating SVLEN based on new boundaries
-    4. Removing collapse metadata fields
+    4. Removing collapse metadata fields (no-op for smoothing records)
 
     Parameters
     ----------
     record : pysam.VariantRecord
-        The variant record to update
+        The variant record to update (used as template for merged result)
     update_records : pd.DataFrame
-        Dataframe containing collapsed variants for this record
+        Dataframe containing variants to aggregate into this record.
+        For collapse: includes removed records + collapsed record's original position
+        For smoothing: includes all records in the smoothing group
     aggregation_actions : dict[str, list[str]]
         Dictionary mapping aggregation action to list of INFO field names
     header : pysam.VariantHeader
@@ -1437,57 +1445,19 @@ def _merge_cnv_group(
     pysam.VariantRecord
         Merged CNV record with aggregated INFO fields
 
-    Notes
-    -----
-    - Uses the first record as template
-    - Merges boundaries: min(start), max(stop)
-    - Aggregates INFO fields using specified actions
-    - Updates SVLEN to match new boundaries
     """
-    if not records:
-        raise ValueError("Cannot merge empty list of records")
-
     # Use first record as template
     merged = records[0].copy()
 
-    # Calculate merged boundaries
-    merged.start = min(r.start for r in records)
-    merged.stop = max(r.stop for r in records)
-
-    # Create DataFrame for aggregation (similar to _prepare_update_dataframe)
-    records_data = []
+    # Create DataFrame using get_vcf_df with tuple input (header, records)
+    # This ensures exact format consistency with _prepare_update_dataframe
     all_fields = sum(aggregation_actions.values(), [])
-    for record in records:
-        record_data = {
-            "pos": record.start,
-            "end": record.stop,
-            "svlen": record.info["SVLEN"],
-        }
-        # Only add fields that exist in the header
-        for field in all_fields:
-            if field in header.info:
-                record_data[field.lower()] = record.info.get(field)
-        records_data.append(record_data)
+    df_all = vcftools.get_vcf_df((header, records), custom_info_fields=all_fields + ["SVLEN"])
 
-    update_df = pd.DataFrame(records_data)
+    # Calculate 'end' column (same logic as _prepare_update_dataframe)
+    df_all["end"] = df_all["pos"] + df_all["svlen"].apply(lambda x: x[0]) - 1
 
-    # Aggregate INFO fields
-    for action, fields in aggregation_actions.items():
-        for field in fields:
-            if field in header.info:
-                _value_aggregator(
-                    merged,
-                    update_df,
-                    field,
-                    action,
-                    header.info[field].number,
-                    header.info[field].type,
-                )
-
-    # Update SVLEN to match new boundaries
-    merged.info["SVLEN"] = (merged.stop - merged.start,)
-
-    # Update genotype to match aggregated SVTYPE
-    _update_genotype_from_svtype(merged)
+    # Reuse the same aggregation logic as distance-based collapse
+    _aggregate_record_info_fields(merged, df_all, aggregation_actions, header)
 
     return merged

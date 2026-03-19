@@ -14,7 +14,7 @@ import pysam
 
 
 def get_vcf_df(  # noqa: PLR0912, C901
-    variant_calls: str | pysam.VariantFile,
+    variant_calls: str | pysam.VariantFile | tuple,
     sample_id: int = 0,
     sample_name: str | None = None,
     chromosome: str | None = None,
@@ -26,8 +26,8 @@ def get_vcf_df(  # noqa: PLR0912, C901
 
     Parameters
     ----------
-    variant_calls: str | pysam.VariantFile
-        VCF file
+    variant_calls: str | pysam.VariantFile | tuple
+        VCF file or tuple of (pysam.VariantHeader, list[VariantRecord]) to read from
     sample_id: int
         Index of sample to fetch (default: 0)
     sample_name: str
@@ -59,6 +59,11 @@ def get_vcf_df(  # noqa: PLR0912, C901
             pass
         else:
             variant_file = variant_calls.fetch(chromosome)
+    elif isinstance(variant_calls, tuple):
+        # If the input is a tuple, assume it's (header, variant_file)
+        header, variant_file = variant_calls
+        if chromosome is not None:
+            raise RuntimeError("Chromosome filtering is not supported when input is a tuple of (header, variant_file)")
     else:
         header = pysam.VariantFile(variant_calls).header
         if chromosome is None:
