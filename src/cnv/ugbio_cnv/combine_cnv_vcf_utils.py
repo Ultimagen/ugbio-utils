@@ -303,14 +303,18 @@ def cnv_vcf_to_bed(input_vcf: str, output_bed: str, *, assign_id=True) -> None:
                 bed_out.write(f"{record.contig}\t{record.start}\t{record.stop}\n")
 
 
-def _prepare_update_dataframe(removed_vcf: str, aggregation_fields: list[str], *, ignore_filter: bool) -> pd.DataFrame:
+def _prepare_update_dataframe(
+    removed_vcf: str, collapsed_vcf: str, aggregation_fields: list[str], *, ignore_filter: bool
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Load and prepare dataframe of collapsed variants for aggregation.
 
     Parameters
     ----------
     removed_vcf : str
-        Path to the VCF file containing removed/collapsed variants
+        Path to the VCF file containing removed variants from collapsing
+    collapsed_vcf : str
+        Path to the VCF file containing collapsed variants
     aggregation_fields : list[str]
         List of INFO field names to include in the dataframe
     ignore_filter : bool
@@ -318,15 +322,18 @@ def _prepare_update_dataframe(removed_vcf: str, aggregation_fields: list[str], *
 
     Returns
     -------
-    pd.DataFrame
-        Filtered dataframe with matchid, pos, end columns ready for aggregation
+    pd.DataFrame, pd.DataFrame
+        Filtered dataframe with matchid, pos, end columns ready for aggregation,
+        collapsed_df in the same format
     """
-    update_df = vcftools.get_vcf_df(
-        str(removed_vcf), custom_info_fields=aggregation_fields + ["SVLEN", "MatchId"]
-    ).sort_index()
+    update_df = vcftools.get_vcf_df(str(removed_vcf), custom_info_fields=aggregation_fields + ["SVLEN", "MatchId"])
+    collapsed_df = vcftools.get_vcf_df(str(collapsed_vcf), custom_info_fields=aggregation_fields + ["SVLEN", "MatchId"])
 
     update_df["matchid"] = update_df["matchid"].apply(lambda x: x[0]).astype(float)
     update_df["end"] = update_df["pos"] + update_df["svlen"].apply(lambda x: x[0]) - 1
+
+    # Process collapsed_df - only need "end" column, not matchid (we use index instead)
+    collapsed_df["end"] = collapsed_df["pos"] + collapsed_df["svlen"].apply(lambda x: x[0]) - 1
 
     # When ignore_filter=False, exclude filtered variants from aggregation/boundary adjustment.
     # Treat NaN, empty string, ".", and "PASS" as not filtered, to match
@@ -340,7 +347,7 @@ def _prepare_update_dataframe(removed_vcf: str, aggregation_fields: list[str], *
         )
         update_df = update_df.loc[~unselect]
 
-    return update_df
+    return update_df, collapsed_df
 
 
 def _aggregate_record_info_fields(
@@ -427,6 +434,7 @@ def _select_breakpoints_by_cipos_window(
 def _aggregate_collapsed_vcf(
     input_vcf_path: str,
     output_vcf_path: str,
+    collapse_df: pd.DataFrame,
     update_df: pd.DataFrame,
     aggregation_actions: dict[str, list[str]],
 ) -> None:
@@ -439,6 +447,8 @@ def _aggregate_collapsed_vcf(
         Path to the collapsed VCF file to read
     output_vcf_path : str
         Path where aggregated VCF will be written
+    collapse_df: pd.DataFrame
+        input_vcf in dataframe form, needed for the aggregation
     update_df : pd.DataFrame
         Dataframe containing collapsed variant information for aggregation
     aggregation_actions : dict[str, list[str]]
@@ -447,12 +457,18 @@ def _aggregate_collapsed_vcf(
     with pysam.VariantFile(input_vcf_path) as vcf_in:
         header = vcf_in.header
         with pysam.VariantFile(output_vcf_path, "w", header=header) as vcf_out:
-            for record in vcf_in:
+            for i, record in enumerate(vcf_in):
                 if "CollapseId" in record.info:
                     cid = float(record.info["CollapseId"])
                     update_records = update_df[update_df["matchid"] == cid]
                     if not update_records.empty:
-                        _aggregate_record_info_fields(record, update_records, aggregation_actions, header)
+                        # Concatenate update_records with collapsed record's original position
+                        update_records_with_collapsed = pd.concat(
+                            (update_records, collapse_df.iloc[[i]]), ignore_index=True
+                        )
+                        _aggregate_record_info_fields(
+                            record, update_records_with_collapsed, aggregation_actions, header
+                        )
                 vcf_out.write(record)
 
 
@@ -646,12 +662,14 @@ def merge_cnvs_in_vcf(  # noqa: PLR0915
 
     # Stage 1.25: Aggregate INFO fields (common to both modes)
     all_fields = sum(CNV_AGGREGATION_ACTIONS.values(), [])
-    update_df = _prepare_update_dataframe(str(removed_vcf), all_fields, ignore_filter=ignore_filter)
+    update_df, collapsed_df = _prepare_update_dataframe(
+        str(removed_vcf), output_vcf_collapse, all_fields, ignore_filter=ignore_filter
+    )
 
     output_vcf_unsorted = output_vcf.replace(".vcf.gz", ".unsorted.vcf.gz")
     temporary_files.append(output_vcf_unsorted)
 
-    _aggregate_collapsed_vcf(output_vcf_collapse, output_vcf_unsorted, update_df, CNV_AGGREGATION_ACTIONS)
+    _aggregate_collapsed_vcf(output_vcf_collapse, output_vcf_unsorted, collapsed_df, update_df, CNV_AGGREGATION_ACTIONS)
 
     # Stage 1.5: Remove overlapping filtered variants if applicable
     # TODO [BIOIN-2745]: it should be actually possible to do _remove_overlapping_filtered_variants only once.
@@ -785,7 +803,9 @@ def _aggregate_weighted_avg(
     values: list,
 ) -> None:
     """Aggregate field using weighted average based on SVLEN."""
-    lengths = np.array(list(update_records["svlen"].apply(lambda x: x[0])) + [record.info["SVLEN"][0]])
+    # Note: update_records now includes collapsed record's original SVLEN
+    # (added in _aggregate_collapsed_vcf), so don't add record.info["SVLEN"] again
+    lengths = np.array(list(update_records["svlen"].apply(lambda x: x[0])))
     values_array = np.array(values)
     if all(pd.isna(x) for x in values):
         return
@@ -853,8 +873,9 @@ def _aggregate_minlength(
 
     # For CIPOS field, apply window filtering
     if field == "CIPOS":
-        # Create candidates DataFrame with pos, end, and cipos from update_records only
-        # Do NOT include current record's CIPOS - it was inherited from a different position
+        # Create candidates DataFrame with pos, end, and cipos from update_records
+        # Note: update_records now includes the collapsed record's ORIGINAL position
+        # (from collapse_df added in _aggregate_collapsed_vcf before boundary update)
         candidates = update_records[["pos", "end", "cipos"]].copy()
 
         # Filter to only breakpoints within window of current boundaries
@@ -920,8 +941,10 @@ def _aggregate_weighted_majority(
     values : list
         List of field values from all records being merged
     """
-    # Collect SVLEN values from update_records and current record
-    lengths = list(update_records["svlen"].apply(lambda x: x[0])) + [record.info["SVLEN"][0]]
+    # Collect SVLEN values from update_records
+    # Note: update_records now includes collapsed record's original SVLEN
+    # (added in _aggregate_collapsed_vcf), so don't add record.info["SVLEN"] again
+    lengths = list(update_records["svlen"].apply(lambda x: x[0]))
 
     # Filter out None values
     valid_pairs = [
@@ -975,12 +998,12 @@ def _collect_field_values(
 ) -> list:
     """Collect field values from records based on field number specification."""
     if val_number == 1:
-        return list(update_records[field.lower()]) + [record.info.get(field, np.nan)]
+        return list(update_records[field.lower()])
     if str(val_number) == ".":
-        values = list(update_records[field.lower()]) + [record.info.get(field, (None,))]
+        values = list(update_records[field.lower()])
         return [item for sublist in values for item in sublist if item is not None]
     if isinstance(val_number, int) and val_number > 1:
-        return list(update_records[field.lower()]) + [record.info.get(field, None)]
+        return list(update_records[field.lower()])
     raise ValueError(f"Unsupported value number for aggregation: {val_number}")
 
 

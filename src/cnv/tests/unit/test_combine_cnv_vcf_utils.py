@@ -469,40 +469,66 @@ class TestMergeCnvsInVcf:
         mock_vu.sort_vcf.side_effect = mock_sort_vcf
         mock_vcf_utils_class.return_value = mock_vu
 
-        # Create mock dataframe for removed records
-        mock_df = pd.DataFrame(
+        # Create mock dataframes - one for removed.vcf, one for collapsed.vcf
+        # removed.vcf contains ONLY the record at pos=1000 (not the representative)
+        removed_df = pd.DataFrame(
             {
-                "chrom": ["chr1", "chr1"],
-                "pos": [1000, 2500],
-                "svlen": [(1000,), (1000,)],
-                "filter": ["PASS", "PASS"],
-                "matchid": [(1.0,), (1.0,)],  # Same matchid means they were collapsed together
-                "cnmops_sample_mean": [10.5, 11.0],
-                "cnmops_sample_stdev": [2.1, 2.3],
-                "cnmops_cohort_mean": [20.0, 20.5],
-                "cnmops_cohort_stdev": [3.5, 3.6],
-                "copynumber": [1.0, 1.1],
-                "cipos": [(-250, 251), (-250, 251)],
+                "chrom": ["chr1"],
+                "pos": [1000],
+                "svlen": [(1000,)],
+                "filter": ["PASS"],
+                "matchid": [(1.0,)],
+                "cnmops_sample_mean": [10.5],
+                "cnmops_sample_stdev": [2.1],
+                "cnmops_cohort_mean": [20.0],
+                "cnmops_cohort_stdev": [3.5],
+                "copynumber": [1.0],
+                "cipos": [(-250, 251)],
             }
         )
-        mock_get_vcf_df.return_value = mock_df
 
-        # Create a mock collapsed VCF file using the fixture header
+        # collapsed.vcf contains the representative at pos=2500
+        collapsed_df = pd.DataFrame(
+            {
+                "chrom": ["chr1"],
+                "pos": [2500],
+                "svlen": [(1000,)],
+                "filter": ["PASS"],
+                "matchid": [(1.0,)],
+                "cnmops_sample_mean": [11.0],
+                "cnmops_sample_stdev": [2.3],
+                "cnmops_cohort_mean": [20.5],
+                "cnmops_cohort_stdev": [3.6],
+                "copynumber": [1.1],
+                "cipos": [(-250, 251)],
+            }
+        )
+
+        # Return different DataFrames based on which file is being read
+        def mock_get_vcf_df_side_effect(path, **kwargs):
+            if "removed" in str(path):
+                return removed_df
+            else:  # collapsed.vcf
+                return collapsed_df
+
+        mock_get_vcf_df.side_effect = mock_get_vcf_df_side_effect
+
+        # Create a mock collapsed VCF file - representative is at pos=2500
         with pysam.VariantFile(str(collapse_vcf), "w", header=cnv_vcf_header) as vcf:
-            # Merged record with CollapseId
+            # Merged record with CollapseId (representative at pos=2500)
             record = vcf.new_record()
             record.contig = "chr1"
-            record.pos = 1000
+            record.pos = 2500
             record.stop = 3500
             record.alleles = ("N", "<DEL>")
             record.info["CollapseId"] = "1"
-            record.info["SVLEN"] = (2500,)
+            record.info["SVLEN"] = (1000,)
             record.info["SVTYPE"] = "DEL"
-            record.info["CNMOPS_SAMPLE_MEAN"] = 10.5
-            record.info["CNMOPS_SAMPLE_STDEV"] = 2.1
-            record.info["CNMOPS_COHORT_MEAN"] = 20.0
-            record.info["CNMOPS_COHORT_STDEV"] = 3.5
-            record.info["CopyNumber"] = 1.0
+            record.info["CNMOPS_SAMPLE_MEAN"] = 11.0
+            record.info["CNMOPS_SAMPLE_STDEV"] = 2.3
+            record.info["CNMOPS_COHORT_MEAN"] = 20.5
+            record.info["CNMOPS_COHORT_STDEV"] = 3.6
+            record.info["CopyNumber"] = 1.1
             record.samples["test_sample"]["GT"] = (0, 1)
             record.info["CIPOS"] = (-250, 251)
             vcf.write(record)
@@ -534,26 +560,8 @@ class TestMergeCnvsInVcf:
             erase_removed=False,
         )
 
-        # Verify get_vcf_df was called
-        expected_fields = [
-            "CNMOPS_SAMPLE_MEAN",
-            "CNMOPS_SAMPLE_STDEV",
-            "CNMOPS_COHORT_MEAN",
-            "CNMOPS_COHORT_STDEV",
-            "CopyNumber",
-            "GAP_PERCENTAGE",
-            "JALIGN_DEL_SUPPORT",
-            "JALIGN_DUP_SUPPORT",
-            "JALIGN_DEL_SUPPORT_STRONG",
-            "JALIGN_DUP_SUPPORT_STRONG",
-            "TREE_SCORE",
-            "CNV_SOURCE",
-            "CIPOS",
-            "SVTYPE",
-            "SVLEN",
-            "MatchId",
-        ]
-        mock_get_vcf_df.assert_called_once_with(str(removed_vcf), custom_info_fields=expected_fields)
+        # Verify get_vcf_df was called (twice: once for removed.vcf, once for collapsed.vcf)
+        assert mock_get_vcf_df.call_count == 2
 
         # Verify cleanup was called
         mock_cleanup.assert_called_once()
@@ -593,14 +601,14 @@ class TestMergeCnvsInVcf:
         mock_vu.sort_vcf.side_effect = mock_sort_vcf
         mock_vcf_utils_class.return_value = mock_vu
 
-        # Create mock dataframe with two records that were merged
-        # Record 1: pos=1000, length 1000, end=1999 (1000+1000-1), value 10.0
-        # Record 2: pos=2500, length 2000, end=4499 (2500+2000-1), value 20.0
-        # Expected weighted average: (10*1000 + 20*2000) / (1000+2000) = 50000/3000 = 16.667
-        mock_df = pd.DataFrame(
+        # Create mock dataframes - one for removed.vcf, one for collapsed.vcf
+        # removed.vcf contains records at pos=1000 and pos=2000 (NOT pos=2500)
+        # Record 1: pos=1000, length 1000, value 10.0
+        # Record 2: pos=2000, length 2000, value 20.0
+        removed_df = pd.DataFrame(
             {
                 "chrom": ["chr1", "chr1"],
-                "pos": [1000, 2500],
+                "pos": [1000, 2000],
                 "svlen": [(1000,), (2000,)],
                 "filter": ["PASS", "PASS"],
                 "matchid": [(1.0,), (1.0,)],
@@ -612,20 +620,46 @@ class TestMergeCnvsInVcf:
                 "cipos": [(-250, 251), (-250, 251)],
             }
         )
-        mock_get_vcf_df.return_value = mock_df
 
-        # Create collapsed VCF with a merged record using the fixture header
+        # collapsed.vcf contains the representative at pos=2500
+        # Record 3: pos=2500, length 1500, value 15.0
+        collapsed_df = pd.DataFrame(
+            {
+                "chrom": ["chr1"],
+                "pos": [2500],
+                "svlen": [(1500,)],
+                "filter": ["PASS"],
+                "matchid": [(1.0,)],
+                "cnmops_sample_mean": [15.0],
+                "cnmops_sample_stdev": [1.5],
+                "cnmops_cohort_mean": [20.0],
+                "cnmops_cohort_stdev": [2.5],
+                "copynumber": [1.5],
+                "cipos": [(-250, 251)],
+            }
+        )
+
+        # Return different DataFrames based on which file is being read
+        def mock_get_vcf_df_side_effect(path, **kwargs):
+            if "removed" in str(path):
+                return removed_df
+            else:  # collapsed.vcf
+                return collapsed_df
+
+        mock_get_vcf_df.side_effect = mock_get_vcf_df_side_effect
+
+        # Create collapsed VCF - representative is at pos=2500
         with pysam.VariantFile(str(collapse_vcf), "w", header=cnv_vcf_header) as vcf:
             record = vcf.new_record()
             record.contig = "chr1"
-            record.pos = 1000
-            record.stop = 3500
+            record.pos = 2500
+            record.stop = 4000
             record.alleles = ("N", "<DEL>")
             record.info["CollapseId"] = "1"
-            record.info["SVLEN"] = (1500,)  # Original merged length
+            record.info["SVLEN"] = (1500,)
             record.info["SVTYPE"] = "DEL"
             record.filter.add("PASS")
-            record.info["CNMOPS_SAMPLE_MEAN"] = 15.0  # Will be replaced by weighted avg
+            record.info["CNMOPS_SAMPLE_MEAN"] = 15.0
             record.info["CNMOPS_SAMPLE_STDEV"] = 1.5
             record.info["CNMOPS_COHORT_MEAN"] = 20.0
             record.info["CNMOPS_COHORT_STDEV"] = 2.5
@@ -655,8 +689,8 @@ class TestMergeCnvsInVcf:
             record = records[0]
 
             # Calculate expected weighted average for CNMOPS_SAMPLE_MEAN
-            # Values: [10.0, 20.0, 15.0] (from removed records + collapsed record)
-            # Lengths: [1000, 2000, 1500]
+            # Removed records: pos=1000 (val=10.0, len=1000), pos=2000 (val=20.0, len=2000)
+            # Collapsed record: pos=2500 (val=15.0, len=1500)
             # Weighted avg = (10*1000 + 20*2000 + 15*1500) / (1000+2000+1500) = 72500/4500 = 16.111
             expected_mean = (10.0 * 1000 + 20.0 * 2000 + 15.0 * 1500) / (1000 + 2000 + 1500)
             assert abs(record.info["CNMOPS_SAMPLE_MEAN"] - round(expected_mean, 3)) < 0.001
@@ -665,8 +699,10 @@ class TestMergeCnvsInVcf:
             assert record.info["SVLEN"] == (record.stop - record.start,)
 
             # Verify END was updated to max of merged records
-            # max end = 4499 (from pos=2500 + svlen=2000 - 1)
-            assert record.stop == 4499
+            # Removed: pos=1000 (end=1999), pos=2000 (end=3999)
+            # Collapsed: pos=2500 (end=3999)
+            # max end = 3999, so record.stop (END+1, exclusive) = 4000
+            assert record.stop == 4000
 
     @patch("ugbio_cnv.combine_cnv_vcf_utils.mu.cleanup_temp_files")
     @patch("ugbio_cnv.combine_cnv_vcf_utils.vcftools.get_vcf_df")
