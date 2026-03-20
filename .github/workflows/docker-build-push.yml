@@ -90,13 +90,13 @@ jobs:
           ref: ${{ inputs.git-ref }}
 
       - name: Trivy Setup
-        uses: aquasecurity/setup-trivy@v0.2.0
+        uses: aquasecurity/setup-trivy@v0.2.6
         with:
           cache: true
           version: ${{ env.TRIVY_VERSION }}
 
       - name: Run Trivy to scan Dockerfiles
-        uses: aquasecurity/trivy-action@0.34.1
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           scan-type: 'config'
           scan-ref: './'
@@ -107,7 +107,7 @@ jobs:
 
 
       - name: Run Trivy to scan fs
-        uses: aquasecurity/trivy-action@0.34.1
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
