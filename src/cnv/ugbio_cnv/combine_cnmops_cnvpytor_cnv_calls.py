@@ -15,11 +15,11 @@ from ugbio_cnv.cnv_vcf_consts import INFO_TAG_REGISTRY
 from ugbio_cnv.combine_cnv_vcf_utils import (
     cnv_vcf_to_bed,
     combine_vcf_headers_for_cnv,
-    merge_cnv_sv_vcfs,
     merge_cnvs_in_vcf,
     update_vcf_contig,
     write_vcf_records_with_source,
 )
+from ugbio_cnv.merge_cnv_sv import merge_cnv_sv_vcfs
 from ugbio_core.bed_utils import BedUtils
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
