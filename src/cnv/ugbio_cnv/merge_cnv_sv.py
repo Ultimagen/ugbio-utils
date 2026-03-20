@@ -114,6 +114,64 @@ def _postprocess_collapsed_vcf(  # noqa: C901, PLR0912, PLR0915
     )
 
 
+def _filter_large_svs_without_cnv_overlap(
+    input_vcf: str,
+    output_vcf: str,
+    max_sv_length: int,
+) -> tuple[int, int]:
+    """
+    Filter out large SVs that don't have CNV overlap.
+
+    SVs with abs(SVLEN) > max_sv_length are only kept if they have CNV_SOURCE
+    indicating overlap with CNV calls (i.e., CNV_SOURCE contains sources other than "gridss").
+
+    Parameters
+    ----------
+    input_vcf : str
+        Input VCF file path
+    output_vcf : str
+        Output VCF file path
+    max_sv_length : int
+        Maximum SV length threshold
+
+    Returns
+    -------
+    tuple[int, int]
+        (total_variants, filtered_variants)
+    """
+    total = 0
+    filtered = 0
+
+    with pysam.VariantFile(input_vcf) as vcf_in:
+        header = vcf_in.header.copy()
+
+        with pysam.VariantFile(output_vcf, "w", header=header) as vcf_out:
+            for record in vcf_in:
+                total += 1
+                # SVLEN is a tuple in VCF INFO fields
+                svlen_raw = record.info.get("SVLEN", (0,))
+                svlen = abs(svlen_raw[0] if isinstance(svlen_raw, tuple) else svlen_raw)
+
+                # Keep all variants <= max_sv_length
+                if svlen <= max_sv_length:
+                    vcf_out.write(record)
+                    continue
+
+                # For large variants, check CNV overlap via CNV_SOURCE
+                cnv_sources = record.info.get("CNV_SOURCE", [])
+                if isinstance(cnv_sources, str):
+                    cnv_sources = [cnv_sources]
+
+                # Keep if merged with CNV (has non-gridss sources)
+                has_cnv_source = any(src != "gridss" for src in cnv_sources)
+                if has_cnv_source:
+                    vcf_out.write(record)
+                else:
+                    filtered += 1
+
+    return total, filtered
+
+
 def merge_cnv_sv_vcfs(  # noqa: PLR0915
     cnv_vcf: str,
     sv_vcf: str,
@@ -125,7 +183,12 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
     pctsize: float = 0.5,
     output_directory: str | None = None,
 ) -> str:
-    """Merge CNV and SV VCF files, preferring higher-quality SV calls on overlap."""
+    """
+    Merge CNV and SV VCF files, preferring higher-quality SV calls on overlap.
+
+    Large SVs (>max_sv_length) are only retained if they overlap with CNV calls
+    by at least pctsize; otherwise they are filtered out.
+    """
     if output_directory is None:
         output_directory = os.path.dirname(os.path.abspath(output_vcf))
         os.makedirs(output_directory, exist_ok=True)
@@ -133,9 +196,9 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
         raise ValueError(f"Output directory does not exist: {output_directory}")
 
     logger.info(f"Starting CNV+SV merge: CNV={cnv_vcf}, SV={sv_vcf}")
-    max_len_msg = f" to {max_sv_length}bp" if max_sv_length else ""
+    max_len_msg = f" (large SVs >{max_sv_length}bp kept only if overlapping CNV)" if max_sv_length else ""
     qual_msg = f", Min QUAL: {min_sv_qual}" if min_sv_qual > 0 else ""
-    logger.info(f"Length threshold: {min_sv_length}bp{max_len_msg}{qual_msg}, Distance: {distance}bp")
+    logger.info(f"Length threshold: >={min_sv_length}bp{max_len_msg}{qual_msg}, Distance: {distance}bp")
 
     vcf_utils = VcfUtils()
     temporary_files = []
@@ -143,8 +206,7 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
     logger.info("Stage 1: Filtering SV VCF for PASS DEL/DUP calls")
     filtered_sv_vcf = pjoin(output_directory, "filtered_sv.vcf.gz")
     filter_expr = f'(SVTYPE="DEL" | SVTYPE="DUP") & abs(SVLEN) >= {min_sv_length}'
-    if max_sv_length is not None:
-        filter_expr += f" & abs(SVLEN) <= {max_sv_length}"
+    # Note: max_sv_length filtering happens post-collapse (large SVs kept only if overlapping CNV)
     if min_sv_qual > 0:
         filter_expr += f" & QUAL >= {min_sv_qual}"
     vcf_utils.view_vcf(
@@ -158,10 +220,9 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
     with pysam.VariantFile(filtered_sv_vcf) as vcf_in:
         sv_count = sum(1 for _ in vcf_in)
     length_range = f">= {min_sv_length}bp"
-    if max_sv_length is not None:
-        length_range = f"between {min_sv_length}bp and {max_sv_length}bp"
     qual_suffix = f" with QUAL >= {min_sv_qual}" if min_sv_qual > 0 else ""
-    logger.info(f"Filtered SV VCF contains {sv_count} PASS DEL/DUP calls {length_range}{qual_suffix}")
+    max_len_note = f" (large SVs >{max_sv_length}bp will be filtered unless they overlap CNVs)" if max_sv_length else ""
+    logger.info(f"Filtered SV VCF contains {sv_count} PASS DEL/DUP calls {length_range}{qual_suffix}{max_len_note}")
 
     logger.info("Stage 2: Combining VCF headers")
     vcf_cnv = pysam.VariantFile(cnv_vcf)
@@ -235,7 +296,21 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
     _postprocess_collapsed_vcf(collapsed_vcf_tmp, removed_vcf, postprocessed_vcf)
     temporary_files.append(postprocessed_vcf)
 
-    vcf_utils.sort_vcf(postprocessed_vcf, output_vcf)
+    # Apply max_sv_length filtering to large SVs without CNV overlap
+    if max_sv_length is not None:
+        logger.info(f"Stage 5: Filtering large SVs (>{max_sv_length}bp) without CNV overlap")
+        filtered_large_sv_vcf = pjoin(output_directory, "filtered_large_sv.vcf.gz")
+        total, filtered = _filter_large_svs_without_cnv_overlap(
+            postprocessed_vcf,
+            filtered_large_sv_vcf,
+            max_sv_length,
+        )
+        logger.info(f"Filtered {filtered}/{total} large SVs without CNV overlap " f"(kept large SVs with CNV overlap)")
+        temporary_files.append(filtered_large_sv_vcf)
+        vcf_utils.sort_vcf(filtered_large_sv_vcf, output_vcf)
+    else:
+        vcf_utils.sort_vcf(postprocessed_vcf, output_vcf)
+
     vcf_utils.index_vcf(output_vcf)
 
     mu.cleanup_temp_files(temporary_files)
