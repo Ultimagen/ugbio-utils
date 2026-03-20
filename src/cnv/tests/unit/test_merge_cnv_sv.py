@@ -110,17 +110,17 @@ class TestMergeCnvSvVcfs:
             # SV3 passes all filters (qual >= 600, size OK) - participates in merge
             assert "SV3" in record_ids
 
-            # SV1 is PASS but too short (800bp < 1000bp min) - NOT included (filtered by threshold)
-            assert "SV1" not in record_ids, "SV1 should NOT be in output (PASS but below size threshold)"
+            # SV1 is PASS but too short (800bp < 1000bp min) - included as small DEL/DUP
+            assert "SV1" in record_ids, "SV1 should be in output (PASS but below size threshold)"
 
-            # SV2 is PASS but low quality (qual=500 < 600) - NOT included (filtered by threshold)
-            assert "SV2" not in record_ids, "SV2 should NOT be in output (PASS but below quality threshold)"
+            # SV2 is PASS, size OK (1500bp >= 1000bp) but low quality (qual=500 < 600) - NOT included
+            assert "SV2" not in record_ids, "SV2 should NOT be in output (meets size but not quality threshold)"
 
             # SV4 filtered by max_sv_length (6Mb > 5Mb) and no CNV overlap - still excluded
             assert "SV4" not in record_ids, "SV4 should not be in output (too large, no CNV overlap)"
 
-            # Total: 3 CNVs + 1 SV (SV3) = 4 variants
-            assert len(records) == 4
+            # Total: 3 CNVs + 2 SVs (SV1, SV3) = 5 variants
+            assert len(records) == 5
 
     def test_large_sv_with_cnv_overlap(self, tmp_path, cnv_vcf_header):
         """Test that large SVs are kept if they overlap with CNV calls."""
@@ -229,7 +229,7 @@ class TestMergeCnvSvVcfs:
             assert "CNV2" in record_ids
 
     def test_excluded_svs_in_output(self, tmp_path, cnv_vcf_header):
-        """Test that excluded SVs (non-DEL/DUP excluding BND, non-PASS DEL/DUP) are included in output."""
+        """Test that excluded SVs (non-DEL/DUP excl. BND, non-PASS DEL/DUP, small PASS DEL/DUP) are in output."""
         # Create CNV VCF (non-overlapping with SV_DEL_PASS)
         cnv_vcf_path = tmp_path / "test_cnv_excluded.vcf.gz"
         with pysam.VariantFile(str(cnv_vcf_path), "w", header=cnv_vcf_header) as vcf:
@@ -262,7 +262,7 @@ class TestMergeCnvSvVcfs:
             )
             vcf.write(low_qual_del)
 
-            # Short PASS DEL below min_sv_length - should NOT be included (PASS but below threshold)
+            # Short PASS DEL below min_sv_length - should be included as small PASS DEL/DUP
             short_del = make_cnv_record(vcf, "chr1", 20000, 20500, "SV_DEL_SHORT", "DEL", qual=700.0)
             vcf.write(short_del)
         pysam.tabix_index(str(sv_vcf_path), preset="vcf", force=True)
@@ -301,12 +301,12 @@ class TestMergeCnvSvVcfs:
             # Failed filter DEL should be present (excluded but added back)
             assert "SV_DEL_LOWQUAL" in record_ids, "Non-PASS DEL should be in output"
 
-            # Short PASS DEL should NOT be present (PASS but below size threshold)
-            assert "SV_DEL_SHORT" not in record_ids, "PASS DEL below threshold should NOT be in output"
+            # Short PASS DEL should be present (small PASS DEL/DUP added back)
+            assert "SV_DEL_SHORT" in record_ids, "Small PASS DEL should be in output"
 
             # Verify filter values are preserved
             for record in records:
                 if record.id == "SV_DEL_LOWQUAL":
                     assert "LowQual" in record.filter, "Filter value should be preserved"
-                if record.id == "SV_INV":
+                if record.id in ["SV_INV", "SV_DEL_SHORT"]:
                     assert "PASS" in record.filter, "PASS filter should be preserved"

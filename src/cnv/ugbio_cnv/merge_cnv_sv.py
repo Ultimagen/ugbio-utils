@@ -187,9 +187,12 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
     Merge CNV and SV VCF files, preferring higher-quality SV calls on overlap.
 
     Only PASS DEL/DUP SVs above thresholds participate in the merge/collapse operation.
-    Non-DEL/DUP types (INV, INS, but excluding BND) and non-PASS DEL/DUP are preserved
-    in the final output with their original FILTER values. PASS DEL/DUP below size/quality
-    thresholds and BND variants are excluded from output.
+    All other SVs are preserved in the final output with their original FILTER values:
+    - Non-DEL/DUP types (INV, INS, but excluding BND)
+    - Non-PASS DEL/DUP (failed filters in original VCF)
+    - PASS DEL/DUP below size threshold (too small for merge)
+
+    BND variants are excluded completely from output.
 
     Large SVs (>max_sv_length) are only retained if they overlap with CNV calls
     by at least pctsize; otherwise they are filtered out.
@@ -230,7 +233,7 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
     logger.info(f"Filtered SV VCF contains {sv_count} PASS DEL/DUP calls {length_range}{qual_suffix}{max_len_note}")
 
     # Stage 1b: Extract excluded SVs to preserve in final output
-    logger.info("Stage 1b: Extracting excluded SVs (non-DEL/DUP excluding BND, and non-PASS DEL/DUP)")
+    logger.info("Stage 1b: Extracting excluded SVs (non-DEL/DUP, non-PASS DEL/DUP, small PASS DEL/DUP)")
 
     # Extract non-DEL/DUP SVs (INV, INS, etc., but excluding BND)
     non_deldip_vcf = pjoin(output_directory, "non_deldip_sv.vcf.gz")
@@ -243,7 +246,6 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
     temporary_files.append(non_deldip_vcf)
 
     # Extract non-PASS DEL/DUP SVs (failed filters in original VCF)
-    # Note: PASS DEL/DUP that fail size/qual thresholds are NOT included
     filtered_deldip_expr = '(SVTYPE="DEL" | SVTYPE="DUP") & FILTER!="PASS"'
 
     filtered_deldip_vcf = pjoin(output_directory, "filtered_deldip_sv.vcf.gz")
@@ -255,11 +257,25 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
     vcf_utils.index_vcf(filtered_deldip_vcf)
     temporary_files.append(filtered_deldip_vcf)
 
+    # Extract PASS DEL/DUP below size threshold (too small for merge)
+    small_deldip_expr = f'(SVTYPE="DEL" | SVTYPE="DUP") & FILTER="PASS" & abs(SVLEN) < {min_sv_length}'
+
+    small_deldip_vcf = pjoin(output_directory, "small_deldip_sv.vcf.gz")
+    vcf_utils.view_vcf(
+        input_vcf=sv_vcf,
+        output_vcf=small_deldip_vcf,
+        extra_args=f"-i '{small_deldip_expr}' -O z",
+    )
+    vcf_utils.index_vcf(small_deldip_vcf)
+    temporary_files.append(small_deldip_vcf)
+
     # Check counts before concatenating
     with pysam.VariantFile(non_deldip_vcf) as vcf_in:
         non_deldip_count = sum(1 for _ in vcf_in)
     with pysam.VariantFile(filtered_deldip_vcf) as vcf_in:
         filtered_deldip_count = sum(1 for _ in vcf_in)
+    with pysam.VariantFile(small_deldip_vcf) as vcf_in:
+        small_deldip_count = sum(1 for _ in vcf_in)
 
     # Concatenate non-empty VCFs into single excluded VCF
     excluded_sv_vcf = pjoin(output_directory, "excluded_sv.vcf.gz")
@@ -268,6 +284,8 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
         vcfs_to_concat.append(non_deldip_vcf)
     if filtered_deldip_count > 0:
         vcfs_to_concat.append(filtered_deldip_vcf)
+    if small_deldip_count > 0:
+        vcfs_to_concat.append(small_deldip_vcf)
 
     if len(vcfs_to_concat) > 1:
         vcf_utils.concat_vcf(vcfs_to_concat, excluded_sv_vcf)
@@ -288,8 +306,12 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
     temporary_files.append(excluded_sv_vcf)
 
     # Log count of excluded SVs
-    excluded_count = non_deldip_count + filtered_deldip_count
-    logger.info(f"Extracted {excluded_count} excluded SVs (non-DEL/DUP excluding BND + non-PASS DEL/DUP)")
+    excluded_count = non_deldip_count + filtered_deldip_count + small_deldip_count
+    logger.info(
+        f"Extracted {excluded_count} excluded SVs "
+        f"(non-DEL/DUP={non_deldip_count}, non-PASS DEL/DUP={filtered_deldip_count}, "
+        f"small PASS DEL/DUP={small_deldip_count})"
+    )
 
     logger.info("Stage 2: Combining VCF headers")
     vcf_cnv = pysam.VariantFile(cnv_vcf)
