@@ -229,7 +229,7 @@ class TestMergeCnvSvVcfs:
             assert "CNV2" in record_ids
 
     def test_excluded_svs_in_output(self, tmp_path, cnv_vcf_header):
-        """Test that excluded SVs (non-DEL/DUP, non-PASS DEL/DUP) are included in output."""
+        """Test that excluded SVs (non-DEL/DUP excluding BND, non-PASS DEL/DUP) are included in output."""
         # Create CNV VCF (non-overlapping with SV_DEL_PASS)
         cnv_vcf_path = tmp_path / "test_cnv_excluded.vcf.gz"
         with pysam.VariantFile(str(cnv_vcf_path), "w", header=cnv_vcf_header) as vcf:
@@ -246,11 +246,12 @@ class TestMergeCnvSvVcfs:
             # PASS DEL - should be merged (not overlapping with CNV1)
             vcf.write(make_cnv_record(vcf, "chr1", 1200, 3200, "SV_DEL_PASS", "DEL", qual=700.0))
 
-            # Non-DEL/DUP types - should be excluded from merge but included in output
+            # INV type - should be excluded from merge but included in output
             inv_rec = make_cnv_record(vcf, "chr1", 5000, 7000, "SV_INV", "INV", qual=800.0)
             inv_rec.info["SVTYPE"] = "INV"
             vcf.write(inv_rec)
 
+            # BND type - should be excluded completely (not in output)
             bnd_rec = make_cnv_record(vcf, "chr1", 10000, 12000, "SV_BND", "BND", qual=750.0)
             bnd_rec.info["SVTYPE"] = "BND"
             vcf.write(bnd_rec)
@@ -291,9 +292,11 @@ class TestMergeCnvSvVcfs:
             # PASS DEL should be present (merged)
             assert "SV_DEL_PASS" in record_ids
 
-            # Non-DEL/DUP should be present (excluded but added back)
+            # INV should be present (excluded but added back)
             assert "SV_INV" in record_ids, "INV should be in output"
-            assert "SV_BND" in record_ids, "BND should be in output"
+
+            # BND should NOT be present (excluded completely)
+            assert "SV_BND" not in record_ids, "BND should NOT be in output"
 
             # Failed filter DEL should be present (excluded but added back)
             assert "SV_DEL_LOWQUAL" in record_ids, "Non-PASS DEL should be in output"
@@ -305,5 +308,5 @@ class TestMergeCnvSvVcfs:
             for record in records:
                 if record.id == "SV_DEL_LOWQUAL":
                     assert "LowQual" in record.filter, "Filter value should be preserved"
-                if record.id in ["SV_INV", "SV_BND"]:
+                if record.id == "SV_INV":
                     assert "PASS" in record.filter, "PASS filter should be preserved"
