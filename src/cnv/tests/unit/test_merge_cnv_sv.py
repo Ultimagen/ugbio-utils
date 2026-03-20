@@ -107,16 +107,20 @@ class TestMergeCnvSvVcfs:
             assert "CNV2" in record_ids
             assert "CNV3" in record_ids
 
-            # SV3 passes all filters (qual >= 600, size OK)
+            # SV3 passes all filters (qual >= 600, size OK) - participates in merge
             assert "SV3" in record_ids
-            # SV1 filtered by overlapping higher-quality CNV or quality
-            assert "SV1" not in record_ids
-            # SV2 filtered by min_sv_qual (qual=500 < 600)
-            assert "SV2" not in record_ids
-            # SV4 filtered by max_sv_length (6Mb > 5Mb) and no CNV overlap
-            assert "SV4" not in record_ids
 
-            assert len(records) == 4
+            # SV1 is too short (800bp < 1000bp min) - now included as excluded SV
+            assert "SV1" in record_ids, "SV1 should be in output as excluded SV"
+
+            # SV2 has low quality (qual=500 < 600) - now included as excluded SV
+            assert "SV2" in record_ids, "SV2 should be in output as excluded SV"
+
+            # SV4 filtered by max_sv_length (6Mb > 5Mb) and no CNV overlap - still excluded
+            assert "SV4" not in record_ids, "SV4 should not be in output (too large, no CNV overlap)"
+
+            # Total: 3 CNVs + 3 SVs (SV1, SV2, SV3) = 6 variants
+            assert len(records) == 6
 
     def test_large_sv_with_cnv_overlap(self, tmp_path, cnv_vcf_header):
         """Test that large SVs are kept if they overlap with CNV calls."""
@@ -223,3 +227,83 @@ class TestMergeCnvSvVcfs:
             # CNVs should still be present
             assert "CNV1" in record_ids
             assert "CNV2" in record_ids
+
+    def test_excluded_svs_in_output(self, tmp_path, cnv_vcf_header):
+        """Test that excluded SVs (non-DEL/DUP, failed filters) are included in output."""
+        # Create CNV VCF (non-overlapping with SV_DEL_PASS)
+        cnv_vcf_path = tmp_path / "test_cnv_excluded.vcf.gz"
+        with pysam.VariantFile(str(cnv_vcf_path), "w", header=cnv_vcf_header) as vcf:
+            vcf.write(make_cnv_record(vcf, "chr1", 25000, 26000, "CNV1", "DEL", qual=35.0))
+        pysam.tabix_index(str(cnv_vcf_path), preset="vcf", force=True)
+
+        # Create SV VCF with mixed SV types and filter statuses
+        sv_vcf_header = cnv_vcf_header.copy()
+        sv_vcf_header.filters.add("LowQual", None, None, "Low quality")
+
+        sv_vcf_path = tmp_path / "test_sv_mixed.vcf.gz"
+        with pysam.VariantFile(str(sv_vcf_path), "w", header=sv_vcf_header) as vcf:
+            # Write in sorted order by position
+            # PASS DEL - should be merged (not overlapping with CNV1)
+            vcf.write(make_cnv_record(vcf, "chr1", 1200, 3200, "SV_DEL_PASS", "DEL", qual=700.0))
+
+            # Non-DEL/DUP types - should be excluded from merge but included in output
+            inv_rec = make_cnv_record(vcf, "chr1", 5000, 7000, "SV_INV", "INV", qual=800.0)
+            inv_rec.info["SVTYPE"] = "INV"
+            vcf.write(inv_rec)
+
+            bnd_rec = make_cnv_record(vcf, "chr1", 10000, 12000, "SV_BND", "BND", qual=750.0)
+            bnd_rec.info["SVTYPE"] = "BND"
+            vcf.write(bnd_rec)
+
+            # DEL with failed filter - should be excluded from merge but included in output
+            low_qual_del = make_cnv_record(
+                vcf, "chr1", 15000, 17000, "SV_DEL_LOWQUAL", "DEL", qual=300.0, filter_val="LowQual"
+            )
+            vcf.write(low_qual_del)
+
+            # Short DEL below min_sv_length - should be excluded from merge but included in output
+            short_del = make_cnv_record(vcf, "chr1", 20000, 20500, "SV_DEL_SHORT", "DEL", qual=700.0)
+            vcf.write(short_del)
+        pysam.tabix_index(str(sv_vcf_path), preset="vcf", force=True)
+
+        output_vcf = tmp_path / "merged_with_excluded.vcf.gz"
+
+        result_vcf = merge_cnv_sv_vcfs(
+            cnv_vcf=str(cnv_vcf_path),
+            sv_vcf=str(sv_vcf_path),
+            output_vcf=str(output_vcf),
+            min_sv_length=1000,
+            min_sv_qual=600,
+            pctsize=0.5,
+            distance=0,
+            output_directory=str(tmp_path),
+        )
+
+        assert Path(result_vcf).exists()
+
+        with pysam.VariantFile(result_vcf) as vcf:
+            records = list(vcf)
+            record_ids = [record.id for record in records]
+
+            # CNV should be present
+            assert "CNV1" in record_ids
+
+            # PASS DEL should be present (merged)
+            assert "SV_DEL_PASS" in record_ids
+
+            # Non-DEL/DUP should be present (excluded but added back)
+            assert "SV_INV" in record_ids, "INV should be in output"
+            assert "SV_BND" in record_ids, "BND should be in output"
+
+            # Failed filter DEL should be present (excluded but added back)
+            assert "SV_DEL_LOWQUAL" in record_ids, "Low quality DEL should be in output"
+
+            # Short DEL should be present (excluded but added back)
+            assert "SV_DEL_SHORT" in record_ids, "Short DEL should be in output"
+
+            # Verify filter values are preserved
+            for record in records:
+                if record.id == "SV_DEL_LOWQUAL":
+                    assert "LowQual" in record.filter, "Filter value should be preserved"
+                if record.id in ["SV_INV", "SV_BND", "SV_DEL_SHORT"]:
+                    assert "PASS" in record.filter, "PASS filter should be preserved"
