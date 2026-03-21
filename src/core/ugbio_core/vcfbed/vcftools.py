@@ -14,7 +14,7 @@ import pysam
 
 
 def get_vcf_df(  # noqa: PLR0912, C901
-    variant_calls: str | pysam.VariantFile,
+    variant_calls: str | pysam.VariantFile | tuple,
     sample_id: int = 0,
     sample_name: str | None = None,
     chromosome: str | None = None,
@@ -26,8 +26,8 @@ def get_vcf_df(  # noqa: PLR0912, C901
 
     Parameters
     ----------
-    variant_calls: str | pysam.VariantFile
-        VCF file
+    variant_calls: str | pysam.VariantFile | tuple
+        VCF file or tuple of (pysam.VariantHeader, list[VariantRecord]) to read from
     sample_id: int
         Index of sample to fetch (default: 0)
     sample_name: str
@@ -59,6 +59,11 @@ def get_vcf_df(  # noqa: PLR0912, C901
             pass
         else:
             variant_file = variant_calls.fetch(chromosome)
+    elif isinstance(variant_calls, tuple):
+        # If the input is a tuple, assume it's (header, variant_file)
+        header, variant_file = variant_calls
+        if chromosome is not None:
+            raise RuntimeError("Chromosome filtering is not supported when input is a tuple of (header, variant_file)")
     else:
         header = pysam.VariantFile(variant_calls).header
         if chromosome is None:
@@ -778,7 +783,7 @@ def subsample_to_alleles(field: tuple, number: str, alleles: tuple) -> tuple:
     return result
 
 
-def get_vcf_fields_name(vcf_file: str) -> set[str]:
+def get_vcf_fields_name(vcf_file: str) -> tuple[set[str], set[str], set[str]]:
     """
     Extract field names from VCF file header.
     Parameters
@@ -799,3 +804,26 @@ def get_vcf_fields_name(vcf_file: str) -> set[str]:
     format_fields = set(vcf.header.formats.keys())
     custom_info_fields = info_fields | format_fields
     return info_fields, format_fields, custom_info_fields
+
+
+def is_pass_record(record: pysam.VariantRecord) -> bool:
+    """
+    Check if a VCF record has a FILTER value of "PASS".
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        A single VCF record.
+    Returns
+    -------
+    bool
+        True if the record's FILTER is "PASS", False otherwise.
+    """
+    if len(record.filter.keys()) == 0:
+        return True
+    if "PASS" in record.filter.keys() and len(record.filter.keys()) == 1:
+        return True
+    if "." in record.filter.keys() and len(record.filter.keys()) == 1:
+        return True
+    if "" in record.filter.keys() and len(record.filter.keys()) == 1:
+        return True
+    return False

@@ -5,6 +5,7 @@ from os.path import join as pjoin
 from pathlib import Path
 
 import pandas as pd
+import pysam
 import pytest
 from ugbio_core.vcfbed import vcftools
 
@@ -12,6 +13,32 @@ from ugbio_core.vcfbed import vcftools
 @pytest.fixture
 def resources_dir():
     return Path(__file__).parent.parent.parent / "resources"
+
+
+@pytest.fixture
+def five_filter_records(tmp_path):
+    vcf_path = tmp_path / "five_filter_records.vcf"
+    vcf_path.write_text(
+        "\n".join(
+            [
+                "##fileformat=VCFv4.2",
+                "##contig=<ID=chr1,length=1000>",
+                "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO",
+                "chr1\t1\t.\tA\tC\t60\tPASS\t.",
+                "chr1\t2\t.\tA\tC\t60\t.\t.",
+                "chr1\t3\t.\tA\tC\t60\t\t.",
+                "chr1\t4\t.\tA\tC\t60\tq10\t.",
+                "chr1\t5\t.\tA\tC\t60\tPASS;q10\t.",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pysam.VariantFile(str(vcf_path)) as vcf_in:
+        records = list(vcf_in)
+
+    return records
 
 
 def test_snp_bed_files_output(resources_dir):
@@ -105,6 +132,11 @@ def test_get_region_around_variant():
     vpos = 100
     vlocs = []
     assert vcftools.get_region_around_variant(vpos, vlocs, 10) == (95, 105)
+
+
+def test_is_pass_record(five_filter_records):
+    expected = [True, True, True, False, False]
+    assert [vcftools.is_pass_record(record) for record in five_filter_records] == expected
 
 
 class TestGetVcfDf:
