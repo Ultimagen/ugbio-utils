@@ -1,4 +1,4 @@
-"""Unit tests for somatic_featuremap_classifier transformation logic.
+"""Unit tests for somatic_snvfind_classifier transformation logic.
 
 These tests validate individual pipeline steps with real tools (no mocking of ugbio_core).
 Each step is tested independently using minimal test data.
@@ -9,7 +9,7 @@ import pysam
 import pytest
 from conftest import NORMAL_SAMPLE, TUMOR_SAMPLE
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
-from ugbio_featuremap.somatic_featuremap_classifier import (
+from ugbio_featuremap.somatic_snvfind_classifier import (
     _get_classification_bcftools_columns,
     aggregated_df_post_processing,
     calculate_ref_nonref_columns,
@@ -18,9 +18,9 @@ from ugbio_featuremap.somatic_featuremap_classifier import (
     read_vcf_with_aggregation,
     rename_cols_for_model,
     run_classifier,
-    somatic_featuremap_classifier,
+    somatic_snvfind_classifier,
 )
-from ugbio_featuremap.somatic_featuremap_utils import (
+from ugbio_featuremap.somatic_snvfind_utils import (
     PILEUP_CONFIG,
     REQUIRED_FORMAT_FIELDS,
     REQUIRED_INFO_FIELDS,
@@ -491,7 +491,7 @@ class TestRunClassifier:
 
     def test_model_feature_compatibility(self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_fresh_frozen):
         """DataFrame columns after renaming should include all model features."""
-        from ugbio_featuremap import somatic_featuremap_inference_utils
+        from ugbio_featuremap import somatic_snvfind_inference_utils
 
         # Run pipeline steps
         filtered_vcf = filter_and_annotate_tr(
@@ -515,7 +515,7 @@ class TestRunClassifier:
         renamed_df = rename_cols_for_model(aggregated_df, [TUMOR_SAMPLE, NORMAL_SAMPLE])
 
         # Load model and check features
-        xgb_clf = somatic_featuremap_inference_utils.load_xgb_model(xgb_model_fresh_frozen)
+        xgb_clf = somatic_snvfind_inference_utils.load_xgb_model(xgb_model_fresh_frozen)
         model_features = set(xgb_clf.get_booster().feature_names)
         df_features = set(renamed_df.columns)
 
@@ -534,7 +534,7 @@ class TestClassificationBcftoolsColumns:
 
 
 class TestFilterStringValidation:
-    """Test filter_string validation in somatic_featuremap_classifier."""
+    """Test filter_string validation in somatic_snvfind_classifier."""
 
     def test_invalid_filter_string_with_space_raises(
         self, tmp_path, mini_somatic_vcf, tr_bed, genome_fai, xgb_model_fresh_frozen
@@ -542,8 +542,8 @@ class TestFilterStringValidation:
         """filter_string with spaces raises ValueError."""
         output_vcf = tmp_path / "output.vcf.gz"
         with pytest.raises(ValueError, match="filter_string must contain only"):
-            somatic_featuremap_classifier(
-                somatic_featuremap=mini_somatic_vcf,
+            somatic_snvfind_classifier(
+                somatic_snvfind=mini_somatic_vcf,
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=tr_bed,
@@ -557,8 +557,8 @@ class TestFilterStringValidation:
         """filter_string with non-standard characters raises ValueError."""
         output_vcf = tmp_path / "output.vcf.gz"
         with pytest.raises(ValueError, match="filter_string must contain only"):
-            somatic_featuremap_classifier(
-                somatic_featuremap=mini_somatic_vcf,
+            somatic_snvfind_classifier(
+                somatic_snvfind=mini_somatic_vcf,
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=tr_bed,
@@ -570,13 +570,13 @@ class TestFilterStringValidation:
 class TestInputFileValidation:
     """Test input file existence validation in initialization."""
 
-    def test_missing_somatic_featuremap_raises(self, tmp_path, tr_bed, genome_fai, xgb_model_fresh_frozen):
-        """Missing somatic_featuremap raises FileNotFoundError."""
+    def test_missing_somatic_snvfind_raises(self, tmp_path, tr_bed, genome_fai, xgb_model_fresh_frozen):
+        """Missing somatic_snvfind raises FileNotFoundError."""
         output_vcf = tmp_path / "output.vcf.gz"
         missing_vcf = tmp_path / "nonexistent.vcf.gz"
         with pytest.raises(FileNotFoundError, match="Input file does not exist"):
-            somatic_featuremap_classifier(
-                somatic_featuremap=missing_vcf,
+            somatic_snvfind_classifier(
+                somatic_snvfind=missing_vcf,
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=tr_bed,
@@ -588,8 +588,8 @@ class TestInputFileValidation:
         output_vcf = tmp_path / "output.vcf.gz"
         missing_fai = tmp_path / "nonexistent.fai"
         with pytest.raises(FileNotFoundError, match="Input file does not exist"):
-            somatic_featuremap_classifier(
-                somatic_featuremap=mini_somatic_vcf,
+            somatic_snvfind_classifier(
+                somatic_snvfind=mini_somatic_vcf,
                 output_vcf=output_vcf,
                 genome_index_file=missing_fai,
                 tandem_repeats_bed=tr_bed,
@@ -601,8 +601,8 @@ class TestInputFileValidation:
         output_vcf = tmp_path / "output.vcf.gz"
         missing_bed = tmp_path / "nonexistent.bed"
         with pytest.raises(FileNotFoundError, match="Input file does not exist"):
-            somatic_featuremap_classifier(
-                somatic_featuremap=mini_somatic_vcf,
+            somatic_snvfind_classifier(
+                somatic_snvfind=mini_somatic_vcf,
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=missing_bed,
@@ -614,8 +614,8 @@ class TestInputFileValidation:
         output_vcf = tmp_path / "output.vcf.gz"
         missing_model = tmp_path / "nonexistent.json"
         with pytest.raises(FileNotFoundError, match="Input file does not exist"):
-            somatic_featuremap_classifier(
-                somatic_featuremap=mini_somatic_vcf,
+            somatic_snvfind_classifier(
+                somatic_snvfind=mini_somatic_vcf,
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=tr_bed,
@@ -627,8 +627,8 @@ class TestInputFileValidation:
         output_vcf = tmp_path / "output.vcf.gz"
         missing_bed = tmp_path / "nonexistent.bed"
         with pytest.raises(FileNotFoundError, match="Input file does not exist"):
-            somatic_featuremap_classifier(
-                somatic_featuremap=mini_somatic_vcf,
+            somatic_snvfind_classifier(
+                somatic_snvfind=mini_somatic_vcf,
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=tr_bed,
