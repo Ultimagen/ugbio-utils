@@ -1,4 +1,4 @@
-"""Integration tests for somatic_featuremap_classifier pipeline.
+"""Integration tests for somatic_snvfind_classifier pipeline.
 
 These tests run the full pipeline with real bioinformatics tools (bcftools, bedtools, tabix).
 NO mocking of ugbio_core or external tools - tests validate full integration.
@@ -13,10 +13,10 @@ from conftest import (
     validate_output_vcf,
 )
 from ugbio_featuremap.featuremap_utils import FeatureMapFilters
-from ugbio_featuremap.somatic_featuremap_classifier import (
-    somatic_featuremap_classifier,
+from ugbio_featuremap.somatic_snvfind_classifier import (
+    somatic_snvfind_classifier,
 )
-from ugbio_featuremap.somatic_featuremap_utils import DEFAULT_XGB_PROBA_THRESHOLD, PILEUP_CONFIG
+from ugbio_featuremap.somatic_snvfind_utils import DEFAULT_XGB_PROBA_THRESHOLD, PILEUP_CONFIG
 
 
 class TestFullPipeline:
@@ -27,8 +27,8 @@ class TestFullPipeline:
         output_vcf = tmp_path / "output.vcf.gz"
         output_parquet = tmp_path / "output.parquet"
 
-        result_vcf, result_parquet = somatic_featuremap_classifier(
-            somatic_featuremap=mini_somatic_vcf,
+        result_vcf, result_parquet = somatic_snvfind_classifier(
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
@@ -57,8 +57,8 @@ class TestFullPipeline:
         output_vcf = tmp_path / "output.vcf.gz"
         output_parquet = tmp_path / "output.parquet"
 
-        result_vcf, result_parquet = somatic_featuremap_classifier(
-            somatic_featuremap=mini_somatic_vcf,
+        result_vcf, result_parquet = somatic_snvfind_classifier(
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
@@ -86,8 +86,8 @@ class TestFullPipeline:
         output_vcf = tmp_path / "output.vcf.gz"
         output_parquet = tmp_path / "output.parquet"
 
-        somatic_featuremap_classifier(
-            somatic_featuremap=mini_somatic_vcf,
+        somatic_snvfind_classifier(
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
@@ -113,8 +113,8 @@ class TestOutputValidation:
         self.output_vcf = tmp_path / "output.vcf.gz"
         self.output_parquet = tmp_path / "output.parquet"
 
-        self.result_vcf, self.result_parquet = somatic_featuremap_classifier(
-            somatic_featuremap=mini_somatic_vcf,
+        self.result_vcf, self.result_parquet = somatic_snvfind_classifier(
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=self.output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
@@ -258,8 +258,8 @@ class TestFilterVariations:
         """Test pipeline without filter (all variants processed)."""
         output_vcf = tmp_path / "output.vcf.gz"
 
-        result_vcf, _ = somatic_featuremap_classifier(
-            somatic_featuremap=mini_somatic_vcf,
+        result_vcf, _ = somatic_snvfind_classifier(
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,

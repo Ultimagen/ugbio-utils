@@ -13,10 +13,10 @@ from ugbio_core.logger import logger
 from ugbio_core.misc_utils import cleanup_temp_files
 from ugbio_core.vcf_utils import VcfMetaType, VcfUtils, get_vcf_sample_names, write_vcf_header_file
 
-from ugbio_featuremap import somatic_featuremap_inference_utils
+from ugbio_featuremap import somatic_snvfind_inference_utils
 from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
 from ugbio_featuremap.featuremap_utils import FeatureMapFields, FeatureMapFilters
-from ugbio_featuremap.somatic_featuremap_utils import (
+from ugbio_featuremap.somatic_snvfind_utils import (
     DEFAULT_XGB_PROBA_THRESHOLD,
     GT_FORMAT_FIELD,
     NORMAL_PREFIX,
@@ -31,7 +31,7 @@ from ugbio_featuremap.somatic_featuremap_utils import (
 )
 
 app = cyclopts.App(
-    help="Classify somatic featuremap variants using XGBoost model.",
+    help="Classify somatic snvfind variants using XGBoost model.",
 )
 
 
@@ -545,7 +545,7 @@ def run_classifier(
     model_features = xgb_clf.get_booster().feature_names
     logger.debug(f"Model features: {model_features}")
 
-    predictions = somatic_featuremap_inference_utils.predict(xgb_clf, df_variants_pandas)
+    predictions = somatic_snvfind_inference_utils.predict(xgb_clf, df_variants_pandas)
     logger.info(f"Classified {len(predictions):,} variants with XGBoost model")
 
     return pl.Series(FeatureMapFields.XGB_PROBA.value.lower(), predictions)
@@ -667,7 +667,7 @@ def annotate_and_classify_vcf(
     additional_header_lines = [f"##tumor_sample={tumor_sample}"]
     try:
         command = " ".join(sys.argv[1:])
-        additional_header_lines.append(f"##somatic_featuremap_classifier={command}")
+        additional_header_lines.append(f"##somatic_snvfind_classifier={command}")
     except Exception:
         logger.warning("Could not get command line arguments to add to header. skipping.")
 
@@ -711,7 +711,7 @@ def validate_inputs_and_prepare_output(
     output_vcf: Path,
     filter_string: str,
     *,
-    somatic_featuremap: Path,
+    somatic_snvfind_vcf: Path,
     genome_index_file: Path,
     tandem_repeats_bed: Path,
     xgb_model_json: Path,
@@ -745,7 +745,7 @@ def validate_inputs_and_prepare_output(
             f"filter_string must contain only alphanumeric characters, underscores, and hyphens; got: {filter_string!r}"
         )
 
-    input_files = [somatic_featuremap, genome_index_file, tandem_repeats_bed, xgb_model_json]
+    input_files = [somatic_snvfind_vcf, genome_index_file, tandem_repeats_bed, xgb_model_json]
     if regions_bed_file is not None:
         input_files.append(regions_bed_file)
     if not all(path.exists() for path in input_files):
@@ -768,8 +768,8 @@ def validate_inputs_and_prepare_output(
 
 
 @app.default
-def somatic_featuremap_classifier(  # noqa: PLR0913
-    somatic_featuremap: Path,
+def somatic_snvfind_classifier(  # noqa: PLR0913
+    somatic_snvfind_vcf: Path,
     output_vcf: Path,
     genome_index_file: Path,
     tandem_repeats_bed: Path,
@@ -783,7 +783,7 @@ def somatic_featuremap_classifier(  # noqa: PLR0913
     verbose: bool = False,
 ) -> tuple[Path, Path]:
     """
-    Classify somatic featuremap variants using XGBoost model.
+    Classify somatic snvfind variants using XGBoost model.
 
     Steps:
     1. Filter VCF and add TR annotations
@@ -794,8 +794,8 @@ def somatic_featuremap_classifier(  # noqa: PLR0913
 
     Parameters
     ----------
-    somatic_featuremap
-        Somatic featuremap VCF file (gzipped, indexed).
+    somatic_snvfind_vcf
+        Somatic snvfind VCF file (gzipped, indexed).
     output_vcf
         Output VCF file path.
     genome_index_file
@@ -821,18 +821,18 @@ def somatic_featuremap_classifier(  # noqa: PLR0913
 
     Examples
     --------
-    $ somatic_featuremap_fields_transformation input.vcf.gz -o output.vcf.gz \\
+    $ somatic_snvfind_classifier input.vcf.gz -o output.vcf.gz \\
         --genome-file genome.fa.fai --tandem-repeats-bed tandem_repeats.bed \\
         --xgb-model-json model.json
 
-    $ somatic_featuremap_fields_transformation input.vcf.gz -o output.vcf.gz \\
+    $ somatic_snvfind_classifier input.vcf.gz -o output.vcf.gz \\
         --genome-file genome.fa.fai --tandem-repeats-bed tandem_repeats.bed \\
         --xgb-model-json model.json --regions-bed-file chr1_test.bed
     """
     output_vcf, out_dir = validate_inputs_and_prepare_output(
         output_vcf,
         filter_string,
-        somatic_featuremap=somatic_featuremap,
+        somatic_snvfind_vcf=somatic_snvfind_vcf,
         genome_index_file=genome_index_file,
         tandem_repeats_bed=tandem_repeats_bed,
         xgb_model_json=xgb_model_json,
@@ -840,7 +840,7 @@ def somatic_featuremap_classifier(  # noqa: PLR0913
         verbose=verbose,
     )
 
-    samples = get_vcf_sample_names(somatic_featuremap)
+    samples = get_vcf_sample_names(somatic_snvfind_vcf)
     if len(samples) != 2:  # noqa: PLR2004
         raise ValueError(f"Expected exactly 2 samples in VCF, found {len(samples)}: {samples}")
     tumor_sample, normal_sample = samples[0], samples[1]
@@ -848,8 +848,8 @@ def somatic_featuremap_classifier(  # noqa: PLR0913
     logger.info(f"Processing samples: tumor={tumor_sample}, normal={normal_sample}")
 
     logger.info("Step 1: Filtering VCF and adding TR annotations")
-    sfm_filtered_with_tr = filter_and_annotate_tr(
-        somatic_featuremap,
+    snvfind_filtered_with_tr = filter_and_annotate_tr(
+        somatic_snvfind_vcf,
         tandem_repeats_bed,
         genome_index_file,
         out_dir,
@@ -860,10 +860,10 @@ def somatic_featuremap_classifier(  # noqa: PLR0913
 
     logger.info("Step 2: Converting VCF to dataframe and adding transformations")
     if output_parquet is None:
-        output_parquet = output_vcf.with_name(output_vcf.name.replace(".vcf.gz", "_featuremap.parquet"))
+        output_parquet = output_vcf.with_name(output_vcf.name.replace(".vcf.gz", "_snvfind.parquet"))
     logger.info(f"Output Parquet file: {output_parquet}")
     aggregated_df = read_vcf_with_aggregation(
-        sfm_filtered_with_tr, output_parquet, tumor_sample, normal_sample, n_threads=n_threads
+        snvfind_filtered_with_tr, output_parquet, tumor_sample, normal_sample, n_threads=n_threads
     )
 
     logger.info("Step 3: Running the classifier")
@@ -882,7 +882,7 @@ def somatic_featuremap_classifier(  # noqa: PLR0913
 
     logger.info("Step 4: Annotating VCF with XGBoost probability, FILTER, and GT")
     annotate_and_classify_vcf(
-        sfm_filtered_with_tr,
+        snvfind_filtered_with_tr,
         output_vcf,
         aggregated_df,
         tumor_sample=tumor_sample,
@@ -893,7 +893,7 @@ def somatic_featuremap_classifier(  # noqa: PLR0913
     logger.info(f"Output VCF written to: {output_vcf}")
 
     # Clean up intermediate files
-    cleanup_temp_files([sfm_filtered_with_tr])
+    cleanup_temp_files([snvfind_filtered_with_tr])
 
     return output_vcf, output_parquet
 

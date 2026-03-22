@@ -28,7 +28,7 @@ src/
 ├── core/         (74 files) ugbio_core         - Foundation (ALL depend on this)
 ├── cnv/          (41 files) ugbio_cnv          - CNV calling (JALIGN, CNVpytor, FREEC)
 ├── comparison/   (11 files) ugbio_comparison   - Variant comparison (Truvari)
-├── featuremap/   (21 files) ugbio_featuremap   - Feature extraction (VCF→Parquet)
+├── featuremap/   (13 py) ugbio_featuremap     - FeatureMap VCF→Parquet, Parquet filters, somatic SNVfind
 ├── filtering/    (50 files) ugbio_filtering    - ML filtering, SEC, training
 ├── mrd/          (6 files)  ugbio_mrd          - Minimal residual disease
 ├── ppmseq/       (6 files)  ugbio_ppmseq       - PPMSeq QC analysis
@@ -281,18 +281,30 @@ gh run view <run-id>
 **Entry Points:** 8
 - `train_models_pipeline`, `training_prep_pipeline`, `training_prep_cnv_pipeline`, `filter_variants_pipeline`, `error_correction_training`, `merge_conditional_allele_distributions`, `assess_sec_concordance`, `correct_systematic_errors`
 
-### ugbio_featuremap - Feature Extraction & Pileup
+### ugbio_featuremap - FeatureMap VCF, Parquet tooling, somatic SNVfind
 
-**Purpose:** Convert VCFs to feature maps for machine learning.
+**Purpose:** Turn Ultima **FeatureMap** VCFs into analysis-ready **Parquet** (per-read or aggregated), apply **JSON-driven filters** to those tables, and run the **somatic SNVfind classifier** on tumor/normal FeatureMap VCFs (tandem-repeat context, PILEUP-derived features, XGBoost scores, VCF re-annotation).
 
-**Key Modules:**
-- `featuremap_to_dataframe.py` - Main VCF→Parquet with multi-sample support (DATA-8973)
-- `featuremap_xgb_prediction.py` - XGBoost integration
-- `create_somatic_featuremap.py` - Somatic feature maps
-- `integrate_mpileup_to_sfm.py` - Mpileup integration
+**Stack:** `ugbio_core[vcfbed,ml]`, `ugbio_ppmseq`, Polars, Cyclopts (CLIs). Package data includes `explode_lists.awk` for the VCF→Parquet path.
 
-**Entry Points:** 7
-- `featuremap_to_dataframe`, `filter_featuremap`, `add_aggregate_params_and_xgb_score_to_pileup_featuremap`, `create_somatic_featuremap`, `integrate_mpileup_to_sfm`, `somatic_featuremap_fields_transformation`
+**Modules (`src/featuremap/ugbio_featuremap/`):**
+
+| Module | Role |
+|--------|------|
+| `featuremap_to_dataframe.py` | **VCF→Parquet** (`featuremap_to_dataframe`): bcftools header/query pipeline, Polars ingest, list explode vs **aggregate** multi-sample mode, optional downsampling. |
+| `filter_dataframe.py` | **Parquet filters** (`filter_featuremap`): declarative rules (quality, region, field predicates, downsample). |
+| `featuremap_utils.py` | Shared enums/constants (`FeatureMapFields`, filter IDs, etc.). |
+| `somatic_snvfind_classifier.py` | **Classifier CLI** (`somatic_snvfind_classifier`): filter/region subset, TR BED annotation, aggregated Parquet + PILEUP ref/nonref features, XGBoost, bcftools annotate (`XGB_PROBA`, FILTER, GT). |
+| `somatic_snvfind_utils.py` | TR + PILEUP config and required INFO/FORMAT columns for the classifier. |
+| `somatic_snvfind_inference_utils.py` | XGBoost load/predict helpers (pandas) used by the classifier. |
+
+**Entry points:** 3 CLIs (+ `run_tests` in `src/featuremap/pyproject.toml`)
+
+- `featuremap_to_dataframe` — FeatureMap VCF → Parquet
+- `filter_featuremap` — filter / downsample Parquet feature tables
+- `somatic_snvfind_classifier` — somatic paired-sample SNVfind scoring and annotated VCF output
+
+**Tests:** `uv run pytest src/featuremap/tests/` — unit tests for conversion, filter JSON, and classifier steps; system tests exercise the full classifier against real bcftools/bedtools/tabix.
 
 ### ugbio_cnv - Copy Number Variation
 
@@ -407,7 +419,7 @@ pip install ugbio_core[reports] # Report generation
 - **filtering:** 15 test files
 - **cnv:** 17 test files
 - **omics:** 10 test files
-- **featuremap:** 8 test files
+- **featuremap:** 6 pytest modules (5 unit + 1 system) plus `conftest.py`
 - **srsnv:** 8 test files
 - **comparison:** 5 test files
 - **Others:** 10 test files combined
@@ -557,7 +569,10 @@ print_and_execute("bcftools view file.vcf")
 | `src/cnv/ugbio_cnv/cnv_bed_format_utils.py` | CNV VCF writing utilities |
 | `src/cnv/ugbio_cnv/combine_cnv_vcf_utils.py` | CNV VCF merging and aggregation |
 | `src/cnv/ugbio_cnv/cnv_vcf_consts.py` | CNV VCF field definitions |
-| `src/featuremap/ugbio_featuremap/featuremap_to_dataframe.py` | Feature extraction |
+| `src/featuremap/ugbio_featuremap/featuremap_to_dataframe.py` | FeatureMap VCF→Parquet (per-read / aggregate) |
+| `src/featuremap/ugbio_featuremap/filter_dataframe.py` | `filter_featuremap` Parquet filters |
+| `src/featuremap/ugbio_featuremap/somatic_snvfind_classifier.py` | Somatic SNVfind XGBoost pipeline + VCF output |
+| `src/featuremap/ugbio_featuremap/featuremap_utils.py` | FeatureMap field / filter constants |
 | `pyproject.toml` | Root workspace config |
 | `.ruff.toml` | Linting rules |
 | `.pre-commit-config.yaml` | Pre-commit hooks |
