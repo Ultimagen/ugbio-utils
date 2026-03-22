@@ -89,12 +89,6 @@ jobs:
           repository: ${{ inputs.git-repo }}
           ref: ${{ inputs.git-ref }}
 
-      - name: Trivy Setup
-        uses: aquasecurity/setup-trivy@v0.2.6
-        with:
-          cache: true
-          version: ${{ env.TRIVY_VERSION }}
-
       - name: Run Trivy to scan Dockerfiles
         uses: aquasecurity/trivy-action@0.35.0
         with:
@@ -103,7 +97,6 @@ jobs:
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
-          skip-setup-trivy: true
 
 
       - name: Run Trivy to scan fs
@@ -114,7 +107,6 @@ jobs:
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
-          skip-setup-trivy: true
 
       - uses: actions/checkout@v4 # deep check out for docker build
         if: ${{ inputs.git-repo != 'Ultimagen/ugbio-utils' }}
