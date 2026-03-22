@@ -394,10 +394,14 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
             filtered_large_sv_vcf,
             max_sv_length,
         )
+        filtered_large_sorted_sv_vcf = pjoin(output_directory, "filtered_large_sorted_sv.vcf.gz")
+        vcf_utils.sort_vcf(filtered_large_sv_vcf, filtered_large_sorted_sv_vcf)
         logger.info(f"Filtered {filtered}/{total} large SVs without CNV overlap " f"(kept large SVs with CNV overlap)")
-        vcf_utils.index_vcf(filtered_large_sv_vcf)
-        temporary_files.append(filtered_large_sv_vcf)
-        merged_vcf = filtered_large_sv_vcf
+        vcf_utils.index_vcf(filtered_large_sorted_sv_vcf)
+        temporary_files.append(filtered_large_sorted_sv_vcf)
+        temporary_files.append(filtered_large_sorted_sv_vcf + ".tbi")
+        temporary_files.append(filtered_large_sv_vcf + ".tbi")
+        merged_vcf = filtered_large_sorted_sv_vcf
     else:
         merged_vcf = postprocessed_vcf
 
