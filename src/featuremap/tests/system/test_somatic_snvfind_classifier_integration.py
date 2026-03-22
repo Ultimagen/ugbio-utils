@@ -28,7 +28,7 @@ class TestFullPipeline:
         output_parquet = tmp_path / "output.parquet"
 
         result_vcf, result_parquet = somatic_snvfind_classifier(
-            somatic_snvfind=mini_somatic_vcf,
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
@@ -58,7 +58,7 @@ class TestFullPipeline:
         output_parquet = tmp_path / "output.parquet"
 
         result_vcf, result_parquet = somatic_snvfind_classifier(
-            somatic_snvfind=mini_somatic_vcf,
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
@@ -87,7 +87,7 @@ class TestFullPipeline:
         output_parquet = tmp_path / "output.parquet"
 
         somatic_snvfind_classifier(
-            somatic_snvfind=mini_somatic_vcf,
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
@@ -114,7 +114,7 @@ class TestOutputValidation:
         self.output_parquet = tmp_path / "output.parquet"
 
         self.result_vcf, self.result_parquet = somatic_snvfind_classifier(
-            somatic_snvfind=mini_somatic_vcf,
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=self.output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
@@ -259,7 +259,7 @@ class TestFilterVariations:
         output_vcf = tmp_path / "output.vcf.gz"
 
         result_vcf, _ = somatic_snvfind_classifier(
-            somatic_snvfind=mini_somatic_vcf,
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,

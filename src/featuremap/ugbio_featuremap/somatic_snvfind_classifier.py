@@ -711,7 +711,7 @@ def validate_inputs_and_prepare_output(
     output_vcf: Path,
     filter_string: str,
     *,
-    somatic_snvfind: Path,
+    somatic_snvfind_vcf: Path,
     genome_index_file: Path,
     tandem_repeats_bed: Path,
     xgb_model_json: Path,
@@ -745,7 +745,7 @@ def validate_inputs_and_prepare_output(
             f"filter_string must contain only alphanumeric characters, underscores, and hyphens; got: {filter_string!r}"
         )
 
-    input_files = [somatic_snvfind, genome_index_file, tandem_repeats_bed, xgb_model_json]
+    input_files = [somatic_snvfind_vcf, genome_index_file, tandem_repeats_bed, xgb_model_json]
     if regions_bed_file is not None:
         input_files.append(regions_bed_file)
     if not all(path.exists() for path in input_files):
@@ -769,7 +769,7 @@ def validate_inputs_and_prepare_output(
 
 @app.default
 def somatic_snvfind_classifier(  # noqa: PLR0913
-    somatic_snvfind: Path,
+    somatic_snvfind_vcf: Path,
     output_vcf: Path,
     genome_index_file: Path,
     tandem_repeats_bed: Path,
@@ -794,7 +794,7 @@ def somatic_snvfind_classifier(  # noqa: PLR0913
 
     Parameters
     ----------
-    somatic_snvfind
+    somatic_snvfind_vcf
         Somatic snvfind VCF file (gzipped, indexed).
     output_vcf
         Output VCF file path.
@@ -832,7 +832,7 @@ def somatic_snvfind_classifier(  # noqa: PLR0913
     output_vcf, out_dir = validate_inputs_and_prepare_output(
         output_vcf,
         filter_string,
-        somatic_snvfind=somatic_snvfind,
+        somatic_snvfind_vcf=somatic_snvfind_vcf,
         genome_index_file=genome_index_file,
         tandem_repeats_bed=tandem_repeats_bed,
         xgb_model_json=xgb_model_json,
@@ -840,7 +840,7 @@ def somatic_snvfind_classifier(  # noqa: PLR0913
         verbose=verbose,
     )
 
-    samples = get_vcf_sample_names(somatic_snvfind)
+    samples = get_vcf_sample_names(somatic_snvfind_vcf)
     if len(samples) != 2:  # noqa: PLR2004
         raise ValueError(f"Expected exactly 2 samples in VCF, found {len(samples)}: {samples}")
     tumor_sample, normal_sample = samples[0], samples[1]
@@ -849,7 +849,7 @@ def somatic_snvfind_classifier(  # noqa: PLR0913
 
     logger.info("Step 1: Filtering VCF and adding TR annotations")
     snvfind_filtered_with_tr = filter_and_annotate_tr(
-        somatic_snvfind,
+        somatic_snvfind_vcf,
         tandem_repeats_bed,
         genome_index_file,
         out_dir,

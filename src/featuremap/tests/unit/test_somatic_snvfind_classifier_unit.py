@@ -543,7 +543,7 @@ class TestFilterStringValidation:
         output_vcf = tmp_path / "output.vcf.gz"
         with pytest.raises(ValueError, match="filter_string must contain only"):
             somatic_snvfind_classifier(
-                somatic_snvfind=mini_somatic_vcf,
+                somatic_snvfind_vcf=mini_somatic_vcf,
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=tr_bed,
@@ -558,7 +558,7 @@ class TestFilterStringValidation:
         output_vcf = tmp_path / "output.vcf.gz"
         with pytest.raises(ValueError, match="filter_string must contain only"):
             somatic_snvfind_classifier(
-                somatic_snvfind=mini_somatic_vcf,
+                somatic_snvfind_vcf=mini_somatic_vcf,
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=tr_bed,
@@ -570,13 +570,13 @@ class TestFilterStringValidation:
 class TestInputFileValidation:
     """Test input file existence validation in initialization."""
 
-    def test_missing_somatic_snvfind_raises(self, tmp_path, tr_bed, genome_fai, xgb_model_fresh_frozen):
-        """Missing somatic_snvfind raises FileNotFoundError."""
+    def test_missing_somatic_snvfind_vcf_raises(self, tmp_path, tr_bed, genome_fai, xgb_model_fresh_frozen):
+        """Missing somatic_snvfind_vcf raises FileNotFoundError."""
         output_vcf = tmp_path / "output.vcf.gz"
         missing_vcf = tmp_path / "nonexistent.vcf.gz"
         with pytest.raises(FileNotFoundError, match="Input file does not exist"):
             somatic_snvfind_classifier(
-                somatic_snvfind=missing_vcf,
+                somatic_snvfind_vcf=missing_vcf,
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=tr_bed,
@@ -589,7 +589,7 @@ class TestInputFileValidation:
         missing_fai = tmp_path / "nonexistent.fai"
         with pytest.raises(FileNotFoundError, match="Input file does not exist"):
             somatic_snvfind_classifier(
-                somatic_snvfind=mini_somatic_vcf,
+                somatic_snvfind_vcf=mini_somatic_vcf,
                 output_vcf=output_vcf,
                 genome_index_file=missing_fai,
                 tandem_repeats_bed=tr_bed,
@@ -602,7 +602,7 @@ class TestInputFileValidation:
         missing_bed = tmp_path / "nonexistent.bed"
         with pytest.raises(FileNotFoundError, match="Input file does not exist"):
             somatic_snvfind_classifier(
-                somatic_snvfind=mini_somatic_vcf,
+                somatic_snvfind_vcf=mini_somatic_vcf,
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=missing_bed,
@@ -615,7 +615,7 @@ class TestInputFileValidation:
         missing_model = tmp_path / "nonexistent.json"
         with pytest.raises(FileNotFoundError, match="Input file does not exist"):
             somatic_snvfind_classifier(
-                somatic_snvfind=mini_somatic_vcf,
+                somatic_snvfind_vcf=mini_somatic_vcf,
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=tr_bed,
@@ -628,7 +628,7 @@ class TestInputFileValidation:
         missing_bed = tmp_path / "nonexistent.bed"
         with pytest.raises(FileNotFoundError, match="Input file does not exist"):
             somatic_snvfind_classifier(
-                somatic_snvfind=mini_somatic_vcf,
+                somatic_snvfind_vcf=mini_somatic_vcf,
                 output_vcf=output_vcf,
                 genome_index_file=genome_fai,
                 tandem_repeats_bed=tr_bed,
