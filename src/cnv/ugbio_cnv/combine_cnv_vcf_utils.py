@@ -146,12 +146,10 @@ def write_vcf_records_with_source(
     *,
     make_ids_unique: bool = False,
     seen_ids: set | None = None,
+    clear_filters: bool = True,
 ) -> set[str]:
     """
     Write VCF records to output file with CNV_SOURCE annotation.
-
-    Note: This function clears all FILTER values from input records since
-    FILTER definitions are not included in the combined header.
 
     Parameters
     ----------
@@ -167,6 +165,8 @@ def write_vcf_records_with_source(
         If True, ensure all IDs are unique by appending suffixes (default: False)
     seen_ids : set, optional
         Set of already-seen IDs for tracking uniqueness (default: None, creates new set)
+    clear_filters : bool, optional
+        If True, clear all FILTER values and set to PASS (default: True for backward compatibility)
 
     Returns
     -------
@@ -178,9 +178,10 @@ def write_vcf_records_with_source(
         seen_ids = set()
 
     for record in vcf_in:
-        # Clear filters - we remove filters imposed by the previous pipelines
-        record.filter.clear()
-        record.filter.add("PASS")
+        if clear_filters:
+            # Clear filters - we remove filters imposed by the previous pipelines
+            record.filter.clear()
+            record.filter.add("PASS")
         # Create new record with combined header
         new_record = VcfUtils.copy_vcf_record(record, combined_header)
 

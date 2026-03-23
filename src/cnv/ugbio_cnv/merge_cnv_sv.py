@@ -186,11 +186,16 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
     """
     Merge CNV and SV VCF files, preferring higher-quality SV calls on overlap.
 
-    Only PASS DEL/DUP SVs above thresholds participate in the merge/collapse operation.
-    All other SVs are preserved in the final output with their original FILTER values:
+    Only PASS CNVs and PASS DEL/DUP SVs above thresholds participate in the merge/collapse operation.
+    All other variants are preserved in the final output with their original FILTER values:
+
+    SVs excluded from merge:
     - Non-DEL/DUP types (INV, INS, but excluding BND)
     - Non-PASS DEL/DUP (failed filters in original VCF)
     - PASS DEL/DUP below size threshold (too small for merge)
+
+    CNVs excluded from merge:
+    - Non-PASS CNVs (failed filters in original VCF)
 
     BND variants are excluded completely from output.
 
@@ -231,6 +236,21 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
     qual_suffix = f" with QUAL >= {min_sv_qual}" if min_sv_qual > 0 else ""
     max_len_note = f" (large SVs >{max_sv_length}bp will be filtered unless they overlap CNVs)" if max_sv_length else ""
     logger.info(f"Filtered SV VCF contains {sv_count} PASS DEL/DUP calls {length_range}{qual_suffix}{max_len_note}")
+
+    # Stage 1a: Filter CNV VCF for PASS calls only
+    logger.info("Stage 1a: Filtering CNV VCF for PASS calls")
+    filtered_cnv_vcf = pjoin(output_directory, "filtered_cnv.vcf.gz")
+    vcf_utils.view_vcf(
+        input_vcf=cnv_vcf,
+        output_vcf=filtered_cnv_vcf,
+        extra_args="-f PASS",
+    )
+    vcf_utils.index_vcf(filtered_cnv_vcf)
+    temporary_files.append(filtered_cnv_vcf)
+
+    with pysam.VariantFile(filtered_cnv_vcf) as vcf_in:
+        cnv_pass_count = sum(1 for _ in vcf_in)
+    logger.info(f"Filtered CNV VCF contains {cnv_pass_count} PASS calls")
 
     # Stage 1b: Extract excluded SVs to preserve in final output
     logger.info("Stage 1b: Extracting excluded SVs (non-DEL/DUP, non-PASS DEL/DUP, small PASS DEL/DUP)")
@@ -313,8 +333,23 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
         f"small PASS DEL/DUP={small_deldip_count})"
     )
 
+    # Stage 1c: Extract non-PASS CNVs to preserve in final output
+    logger.info("Stage 1c: Extracting non-PASS CNVs")
+    excluded_cnv_vcf = pjoin(output_directory, "excluded_cnv.vcf.gz")
+    vcf_utils.view_vcf(
+        input_vcf=cnv_vcf,
+        output_vcf=excluded_cnv_vcf,
+        extra_args="-e 'FILTER=\"PASS\"'",  # Exclude PASS (i.e., get non-PASS)
+    )
+    vcf_utils.index_vcf(excluded_cnv_vcf)
+    temporary_files.append(excluded_cnv_vcf)
+
+    with pysam.VariantFile(excluded_cnv_vcf) as vcf_in:
+        excluded_cnv_count = sum(1 for _ in vcf_in)
+    logger.info(f"Extracted {excluded_cnv_count} non-PASS CNVs")
+
     logger.info("Stage 2: Combining VCF headers")
-    vcf_cnv = pysam.VariantFile(cnv_vcf)
+    vcf_cnv = pysam.VariantFile(filtered_cnv_vcf)  # Use filtered CNV VCF instead of original
     vcf_sv = pysam.VariantFile(filtered_sv_vcf)
     combined_header = combine_vcf_headers_for_cnv(vcf_cnv.header, vcf_sv.header, keep_filters=True)
 
@@ -331,10 +366,11 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
             "gridss",
             make_ids_unique=True,
             seen_ids=set(),
+            clear_filters=False,  # SVs are already filtered to PASS, preserve PASS
         )
 
         vcf_cnv.close()
-        vcf_cnv = pysam.VariantFile(cnv_vcf)
+        vcf_cnv = pysam.VariantFile(filtered_cnv_vcf)  # Use filtered CNV VCF
         cnv_source = "unknown"
         for record in vcf_cnv:
             if "CNV_SOURCE" in record.info:
@@ -342,7 +378,7 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
             break
 
         vcf_cnv.close()
-        vcf_cnv = pysam.VariantFile(cnv_vcf)
+        vcf_cnv = pysam.VariantFile(filtered_cnv_vcf)  # Use filtered CNV VCF
         write_vcf_records_with_source(
             vcf_cnv,
             vcf_out,
@@ -350,6 +386,7 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
             cnv_source,
             make_ids_unique=True,
             seen_ids=seen_ids,
+            clear_filters=False,  # CNVs are already filtered to PASS, preserve PASS
         )
 
     vcf_cnv.close()
@@ -405,26 +442,32 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
     else:
         merged_vcf = postprocessed_vcf
 
-    # Stage 6: Concatenate excluded SVs with merged output
-    logger.info("Stage 6: Adding excluded SVs to final output")
+    # Stage 6: Concatenate excluded SVs and CNVs with merged output
+    logger.info("Stage 6: Adding excluded SVs and CNVs to final output")
 
-    # Check if there are any excluded SVs
+    # Check if there are any excluded SVs or CNVs
     with pysam.VariantFile(excluded_sv_vcf) as vcf_in:
-        excluded_count = sum(1 for _ in vcf_in)
+        excluded_sv_count = sum(1 for _ in vcf_in)
 
-    if excluded_count > 0:
-        # Concatenate merged results with excluded SVs
+    vcfs_to_concat = [merged_vcf]
+    if excluded_sv_count > 0:
+        vcfs_to_concat.append(excluded_sv_vcf)
+    if excluded_cnv_count > 0:
+        vcfs_to_concat.append(excluded_cnv_vcf)
+
+    if len(vcfs_to_concat) > 1:
+        # Concatenate merged results with excluded variants
         temp_concat_vcf = pjoin(output_directory, "temp_with_excluded.vcf.gz")
-        vcf_utils.concat_vcf([merged_vcf, excluded_sv_vcf], temp_concat_vcf)
+        vcf_utils.concat_vcf(vcfs_to_concat, temp_concat_vcf)
         temporary_files.append(temp_concat_vcf)
 
         # Sort and index final output
         vcf_utils.sort_vcf(temp_concat_vcf, output_vcf)
-        logger.info(f"Added {excluded_count} excluded SVs to final output")
+        logger.info(f"Added {excluded_sv_count} excluded SVs and {excluded_cnv_count} excluded CNVs to final output")
     else:
-        # No excluded SVs, just sort the merged output
+        # No excluded variants, just sort the merged output
         vcf_utils.sort_vcf(merged_vcf, output_vcf)
-        logger.info("No excluded SVs to add (all SVs passed Stage 1 filters)")
+        logger.info("No excluded variants to add (all SVs and CNVs passed filters)")
 
     vcf_utils.index_vcf(output_vcf)
 
