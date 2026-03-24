@@ -347,6 +347,99 @@ class TestWriteVcfRecordsWithSource:
                 assert "CNV_SOURCE" in record.info
                 assert record.info["CNV_SOURCE"] == ("TestCaller",)
 
+    def test_write_vcf_records_with_source_preserves_filters_when_clear_filters_false(self, tmp_path):
+        """Test that write_vcf_records_with_source preserves FILTER values when clear_filters=False."""
+        # Create a test VCF with various filter values
+        input_header = pysam.VariantHeader()
+        input_header.add_line("##fileformat=VCFv4.2")
+        input_header.add_line("##contig=<ID=chr1,length=248956422>")
+        input_header.add_line('##FILTER=<ID=PASS,Description="All filters passed">')
+        input_header.add_line('##FILTER=<ID=LowQual,Description="Low quality">')
+        input_header.add_line('##FILTER=<ID=HighCoverage,Description="High coverage">')
+        input_header.add_line('##INFO=<ID=END,Number=1,Type=Integer,Description="End position">')
+        input_header.add_line('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="SV type">')
+        input_header.add_line('##INFO=<ID=CNV_SOURCE,Number=.,Type=String,Description="Source of CNV call">')
+        input_header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
+        input_header.add_sample("test_sample")
+
+        # Create combined header that includes all FILTER definitions
+        combined_header = pysam.VariantHeader()
+        combined_header.add_line("##fileformat=VCFv4.2")
+        combined_header.add_line("##contig=<ID=chr1,length=248956422>")
+        combined_header.add_line('##FILTER=<ID=PASS,Description="All filters passed">')
+        combined_header.add_line('##FILTER=<ID=LowQual,Description="Low quality">')
+        combined_header.add_line('##FILTER=<ID=HighCoverage,Description="High coverage">')
+        combined_header.add_line('##INFO=<ID=END,Number=1,Type=Integer,Description="End position">')
+        combined_header.add_line('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="SV type">')
+        combined_header.add_line('##INFO=<ID=CNV_SOURCE,Number=.,Type=String,Description="Source of CNV call">')
+        combined_header.add_line('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">')
+        combined_header.add_sample("test_sample")
+
+        # Create input VCF with various filter states
+        input_vcf_path = tmp_path / "input_with_filters.vcf.gz"
+        with pysam.VariantFile(str(input_vcf_path), "w", header=input_header) as vcf_in:
+            # Record with PASS filter
+            record1 = vcf_in.new_record()
+            record1.contig = "chr1"
+            record1.pos = 1000
+            record1.stop = 2000
+            record1.alleles = ("N", "<DEL>")
+            record1.info["SVTYPE"] = "DEL"
+            record1.filter.add("PASS")
+            record1.samples["test_sample"]["GT"] = (1, 1)
+            vcf_in.write(record1)
+
+            # Record with LowQual filter
+            record2 = vcf_in.new_record()
+            record2.contig = "chr1"
+            record2.pos = 5000
+            record2.stop = 6000
+            record2.alleles = ("N", "<DUP>")
+            record2.info["SVTYPE"] = "DUP"
+            record2.filter.add("LowQual")
+            record2.samples["test_sample"]["GT"] = (0, 1)
+            vcf_in.write(record2)
+
+            # Record with multiple filters
+            record3 = vcf_in.new_record()
+            record3.contig = "chr1"
+            record3.pos = 10000
+            record3.stop = 11000
+            record3.alleles = ("N", "<DEL>")
+            record3.info["SVTYPE"] = "DEL"
+            record3.filter.add("LowQual")
+            record3.filter.add("HighCoverage")
+            record3.samples["test_sample"]["GT"] = (1, 1)
+            vcf_in.write(record3)
+
+        # Process the file with clear_filters=False
+        output_vcf_path = tmp_path / "output_preserved_filters.vcf.gz"
+        with pysam.VariantFile(str(input_vcf_path), "r") as vcf_in:
+            with pysam.VariantFile(str(output_vcf_path), "w", header=combined_header) as vcf_out:
+                combine_cnv_vcf_utils.write_vcf_records_with_source(
+                    vcf_in, vcf_out, combined_header, "TestCaller", clear_filters=False
+                )
+
+        # Verify that all filters are preserved
+        with pysam.VariantFile(str(output_vcf_path), "r") as vcf_result:
+            records = list(vcf_result)
+            assert len(records) == 3
+
+            # Record 1: Should have PASS filter preserved
+            assert records[0].filter.keys() == ["PASS"]
+            assert "CNV_SOURCE" in records[0].info
+            assert records[0].info["CNV_SOURCE"] == ("TestCaller",)
+
+            # Record 2: Should have LowQual filter preserved
+            assert records[1].filter.keys() == ["LowQual"]
+            assert "CNV_SOURCE" in records[1].info
+            assert records[1].info["CNV_SOURCE"] == ("TestCaller",)
+
+            # Record 3: Should have both LowQual and HighCoverage filters preserved
+            assert set(records[2].filter.keys()) == {"LowQual", "HighCoverage"}
+            assert "CNV_SOURCE" in records[2].info
+            assert records[2].info["CNV_SOURCE"] == ("TestCaller",)
+
 
 @pytest.fixture
 def cnv_vcf_header():

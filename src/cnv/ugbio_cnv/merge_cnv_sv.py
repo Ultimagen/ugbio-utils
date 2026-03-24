@@ -335,18 +335,32 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915, PLR0912, C901
 
     # Stage 1c: Extract non-PASS CNVs to preserve in final output
     logger.info("Stage 1c: Extracting non-PASS CNVs")
-    excluded_cnv_vcf = pjoin(output_directory, "excluded_cnv.vcf.gz")
+    excluded_cnv_tmp_vcf = pjoin(output_directory, "excluded_cnv_tmp.vcf.gz")
     vcf_utils.view_vcf(
         input_vcf=cnv_vcf,
-        output_vcf=excluded_cnv_vcf,
+        output_vcf=excluded_cnv_tmp_vcf,
         extra_args="-e 'FILTER=\"PASS\"'",  # Exclude PASS (i.e., get non-PASS)
     )
+    temporary_files.append(excluded_cnv_tmp_vcf)
+
+    # Remove CNV_SOURCE and CNV_ID from excluded CNVs (they didn't participate in merge)
+    excluded_cnv_vcf = pjoin(output_directory, "excluded_cnv.vcf.gz")
+    with pysam.VariantFile(excluded_cnv_tmp_vcf) as vcf_in:
+        header = vcf_in.header.copy()
+        with pysam.VariantFile(excluded_cnv_vcf, "w", header=header) as vcf_out:
+            excluded_cnv_count = 0
+            for record in vcf_in:
+                # Remove CNV_SOURCE and CNV_ID if present
+                if "CNV_SOURCE" in record.info:
+                    del record.info["CNV_SOURCE"]
+                if "CNV_ID" in record.info:
+                    del record.info["CNV_ID"]
+                vcf_out.write(record)
+                excluded_cnv_count += 1
+
     vcf_utils.index_vcf(excluded_cnv_vcf)
     temporary_files.append(excluded_cnv_vcf)
-
-    with pysam.VariantFile(excluded_cnv_vcf) as vcf_in:
-        excluded_cnv_count = sum(1 for _ in vcf_in)
-    logger.info(f"Extracted {excluded_cnv_count} non-PASS CNVs")
+    logger.info(f"Extracted {excluded_cnv_count} non-PASS CNVs (CNV_SOURCE removed)")
 
     logger.info("Stage 2: Combining VCF headers")
     vcf_cnv = pysam.VariantFile(filtered_cnv_vcf)  # Use filtered CNV VCF instead of original
