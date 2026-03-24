@@ -44,6 +44,7 @@ SET_RANGE_START = 1
 SET_RANGE_END = 4
 READS_QUALITY_THRESHOLD = 0
 MIN_MAPPING_QUALITY = 5
+BOUNDARY_SNP_THRESHOLD = 5.0
 
 logger.setLevel(logging.INFO)
 
@@ -819,7 +820,10 @@ def check_pass_variants_affect_hmer(rec, ref_fasta: object, chrom: str, pos: int
                 continue
 
             # if variant is snp and LowAFRatioToBackground it is considered as pass
-            variant_pass = is_pass(var) or ("LowAFRatioToBackground" in var.filter and len(var.ref) == len(var.alts[0]))
+            variant_pass = is_pass(var) or (
+                ("LowAFRatioToBackground" in var.filter or var.qual >= BOUNDARY_SNP_THRESHOLD)
+                and len(var.ref) == len(var.alts[0])
+            )
             logger.debug(
                 f"  Found nearby variant: {chrom}:{var.pos+1} (0-base:{var.pos}) "
                 f"{var.ref}->{var.alts}, passes={variant_pass}"
@@ -1529,7 +1533,7 @@ def _process_record(  # noqa: C901, PLR0911, PLR0912
     config: dict,
     tumor_read_data=None,
     alt_idx: int = 0,
-) -> dict:
+) -> dict | None:
     """Process a single VCF record and return results for a specific alternative allele.
 
     Args:
@@ -1709,27 +1713,30 @@ def _process_vcf_records(
             # Unpack tumor data and insufficient_cvg flag
             tumor_read_data, nuc, insufficient_cvg_tumor = tumor_data
             insufficient_cvg = insufficient_cvg_tumor
+            if insufficient_cvg:
+                rec.info["insufficient_cvg"] = 1
+                all_direction_results = None
+                # Process each alternative allele and collect results
+            else:
+                all_direction_results = {}
+                for alt_idx, _alt in enumerate(rec.alts):
+                    # Process this alternative allele with pre-collected tumor data
+                    alt_direction_results = _process_record(
+                        rec,
+                        ref_fasta,
+                        vcf_handle_for_queries,
+                        normal_reads,
+                        tumor_germline_handle,
+                        tumor_reads,
+                        merged_intervals,
+                        config,
+                        tumor_read_data=tumor_read_data,
+                        alt_idx=alt_idx,
+                    )
 
-            # Process each alternative allele and collect results
-            all_direction_results = {}
-            for alt_idx, _alt in enumerate(rec.alts):
-                # Process this alternative allele with pre-collected tumor data
-                alt_direction_results = _process_record(
-                    rec,
-                    ref_fasta,
-                    vcf_handle_for_queries,
-                    normal_reads,
-                    tumor_germline_handle,
-                    tumor_reads,
-                    merged_intervals,
-                    config,
-                    tumor_read_data=tumor_read_data,
-                    alt_idx=alt_idx,
-                )
-
-                if alt_direction_results is not None and len(alt_direction_results) > 0:
-                    # Store results for this alternative allele
-                    all_direction_results[alt_idx] = alt_direction_results
+                    if alt_direction_results is not None and len(alt_direction_results) > 0:
+                        # Store results for this alternative allele
+                        all_direction_results[alt_idx] = alt_direction_results
 
             # Write results for all alleles if any were processed successfully
             if all_direction_results:
@@ -1740,10 +1747,6 @@ def _process_vcf_records(
                     score_bound=config["score_bound"],
                     mixture_bound=config["mixture_bound"],
                 )
-
-            # Write insufficient_cvg if needed
-            if insufficient_cvg == 1 or config["verbose"]:
-                rec.info["insufficient_cvg"] = max(insufficient_cvg, rec.info.get("insufficient_cvg", 0))
 
             # Write record after processing all alternative alleles
             vcf_out_file_handle.write(rec)
