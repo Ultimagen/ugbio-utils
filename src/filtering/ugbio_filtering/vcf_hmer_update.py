@@ -1486,6 +1486,7 @@ def _write_results_to_record(
         for alt_idx in range(len(rec.alts))
     )
     rec.info["mixture"] = mixture_values
+    rec.samples[0]["VAF"] = mixture_values
 
     # Check which alleles pass the score and mixture bounds (individually)
     passing_alleles = [
