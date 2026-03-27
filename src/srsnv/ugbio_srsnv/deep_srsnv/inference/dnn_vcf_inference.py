@@ -31,7 +31,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 from queue import Empty, Queue
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 
 import numpy as np
 import pysam
@@ -232,17 +232,43 @@ def _predict_shard(
             predictions[key] = float(probs[j])
 
 
+def _flush_preds_to_writer(
+    preds: dict[tuple[str, int, str], float],
+    writer,
+    lock: Lock,
+) -> None:
+    """Flush accumulated predictions to a ParquetWriter under a lock."""
+    import pyarrow as pa  # noqa: PLC0415
+
+    table = pa.table(
+        {
+            "chrom": [k[0] for k in preds],
+            "pos": [k[1] for k in preds],
+            "rn": [k[2] for k in preds],
+            "prob": [preds[k] for k in preds],
+        }
+    )
+    with lock:
+        writer.write_table(table)
+
+
 def _gpu_consumer_thread(
     engine,
     queue: Queue,
     batch_size: int,
     local_preds: dict[tuple[str, int, str], float],
     done_event: Event,
+    writer=None,
+    write_lock: Lock | None = None,
+    pred_count: list[int] | None = None,
 ) -> None:
     """Pull shard chunks from *queue* and run GPU inference until producers finish.
 
     Pushes the engine's CUDA context onto this thread's stack so PyCUDA
     operations target the correct GPU.
+
+    When *writer* is provided, predictions are flushed to parquet after each
+    shard and the local dict is cleared, keeping memory bounded.
     """
     engine.push_context()
     try:
@@ -256,18 +282,24 @@ def _gpu_consumer_thread(
             if chunk is None:
                 break
             _predict_shard(chunk, [engine], 0, batch_size, local_preds)
+            if writer is not None and local_preds:
+                _flush_preds_to_writer(local_preds, writer, write_lock)
+                if pred_count is not None:
+                    pred_count[0] += len(local_preds)
+                local_preds.clear()
             queue.task_done()
     finally:
         engine.pop_context()
 
 
-def _pipelined_inference(
+def _pipelined_inference(  # noqa: PLR0912, PLR0913, C901
     shard_args_list: list[dict],
     engines: list,
     batch_size: int,
     num_cram_workers: int,
     process_fn=None,
-) -> dict[tuple[str, int, str], float]:
+    output_path: str | None = None,
+) -> dict[tuple[str, int, str], float] | int:
     """Run CPU shard processing and multi-GPU inference concurrently.
 
     CPU workers produce tensor chunks via ``ProcessPoolExecutor`` and push them
@@ -281,7 +313,14 @@ def _pipelined_inference(
         as ``process_fn(**shard_args)``.
     process_fn
         Callable that processes a shard.  Defaults to ``_process_shard``.
+    output_path
+        If provided, predictions are written incrementally to this parquet file
+        (one row group per shard) and the total count is returned instead of a
+        dict.  This keeps memory bounded to one shard per GPU thread.
     """
+    import pyarrow as pa  # noqa: PLC0415
+    import pyarrow.parquet as pq_mod  # noqa: PLC0415
+
     fn = process_fn or _process_shard
     total_shards = len(shard_args_list)
     effective_workers = max(1, num_cram_workers)
@@ -291,11 +330,32 @@ def _pipelined_inference(
     done_event = Event()
     local_preds: list[dict[tuple[str, int, str], float]] = [{} for _ in engines]
 
+    streaming = output_path is not None
+    writer = None
+    write_lock = Lock() if streaming else None
+    pred_counts: list[list[int]] = [[0] for _ in engines] if streaming else []
+
+    if streaming:
+        schema = pa.schema(
+            [
+                ("chrom", pa.string()),
+                ("pos", pa.int64()),
+                ("rn", pa.string()),
+                ("prob", pa.float64()),
+            ]
+        )
+        writer = pq_mod.ParquetWriter(output_path, schema)
+
     gpu_threads: list[Thread] = []
     for i, engine in enumerate(engines):
         t = Thread(
             target=_gpu_consumer_thread,
             args=(engine, q, batch_size, local_preds[i], done_event),
+            kwargs={
+                "writer": writer,
+                "write_lock": write_lock,
+                "pred_count": pred_counts[i] if streaming else None,
+            },
             daemon=True,
         )
         t.start()
@@ -335,6 +395,11 @@ def _pipelined_inference(
         done_event.set()
         for t in gpu_threads:
             t.join()
+        if writer is not None:
+            writer.close()
+
+    if streaming:
+        return sum(c[0] for c in pred_counts)
 
     predictions: dict[tuple[str, int, str], float] = {}
     for lp in local_preds:
@@ -445,13 +510,17 @@ def _run_fold_inference(  # noqa: PLR0913
     tensor_length: int = 300,
     reference_path: str | None = None,
     fetch_mode: str = "samtools",
-) -> dict[tuple[str, int, str], float]:
+    output_path: str | None = None,
+) -> dict[tuple[str, int, str], float] | int:
     """Run inference from a pre-sorted parquet file with row-group-per-shard layout.
 
     Each worker reads its own row group from disk — no row dicts in the main process.
+
+    When *output_path* is provided, predictions are streamed to parquet
+    incrementally and the total count is returned instead of a dict.
     """
     if n_rows == 0:
-        return {}
+        return 0 if output_path is not None else {}
 
     encoders = load_vocab_config()
 
@@ -482,19 +551,25 @@ def _run_fold_inference(  # noqa: PLR0913
     )
 
     t_start = time.perf_counter()
-    predictions = _pipelined_inference(
-        shard_args_list, engines, batch_size, num_cram_workers, process_fn=_process_shard_from_parquet
+    result = _pipelined_inference(
+        shard_args_list,
+        engines,
+        batch_size,
+        num_cram_workers,
+        process_fn=_process_shard_from_parquet,
+        output_path=output_path,
     )
     elapsed = time.perf_counter() - t_start
 
+    n_preds = result if isinstance(result, int) else len(result)
     logger.info(
         "Fold inference: %d rows, %d shards, %d predictions in %.1fs",
         n_rows,
         total_shards,
-        len(predictions),
+        n_preds,
         elapsed,
     )
-    return predictions
+    return result
 
 
 def _run_fold_inference_from_rows(  # noqa: PLR0913
@@ -1025,7 +1100,7 @@ def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901, PLR
     logger.info("Fold %d: %d %s engine(s) on GPUs %s", fold_idx, len(engines), args.backend, gpu_ids[: len(engines)])
 
     try:
-        predictions = _run_fold_inference(
+        n_preds = _run_fold_inference(
             cram_path=args.cram,
             parquet_path=fold_parquet,
             n_rows=n_rows,
@@ -1036,21 +1111,14 @@ def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901, PLR
             tensor_length=args.tensor_length,
             reference_path=args.reference,
             fetch_mode=fetch_mode,
+            output_path=args.output,
         )
     finally:
         for eng in engines:
             eng.close()
 
-    # Write predictions parquet
-    chroms = [k[0] for k in predictions]
-    poss = [k[1] for k in predictions]
-    rns = [k[2] for k in predictions]
-    probs = [predictions[k] for k in predictions]
-    out_table = pa.table({"chrom": chroms, "pos": poss, "rn": rns, "prob": probs})
-    pq_mod.write_table(out_table, args.output)
-
     elapsed = time.perf_counter() - t0
-    logger.info("Fold %d: wrote %d predictions to %s in %.1fs", fold_idx, len(predictions), args.output, elapsed)
+    logger.info("Fold %d: wrote %d predictions to %s in %.1fs", fold_idx, n_preds, args.output, elapsed)
 
 
 def main_fold() -> None:
