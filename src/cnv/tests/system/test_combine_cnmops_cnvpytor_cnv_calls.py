@@ -111,7 +111,6 @@ class TestCombineCnmopsCnvpytorCnvCalls:
 
     def test_merge_cnv_sv_integration(self, tmpdir, resources_dir):
         """Integration test for merge_cnv_sv with real CNV and SV data."""
-        import pysam
 
         # Input files (using renamed CNV VCF to match SV sample name)
         input_cnv_vcf = pjoin(resources_dir, "HG002_cnv_renamed_NA24385.vcf.gz")
@@ -130,6 +129,8 @@ class TestCombineCnmopsCnvpytorCnvCalls:
                 input_sv_vcf,
                 "--output_vcf",
                 output_vcf,
+                "--fasta_index",
+                pjoin(resources_dir, "Homo_sapiens_assembly38.fasta.fai"),
                 "--min_sv_length",
                 "1000",
                 "--max_sv_length",

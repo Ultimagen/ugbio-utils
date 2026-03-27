@@ -1,6 +1,7 @@
 """Utilities for merging CNV and SV VCF files."""
 
 import os
+import shutil
 from os.path import join as pjoin
 
 import pysam
@@ -259,7 +260,7 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
         extra_args=f"-f PASS -i '{filter_expr}'",
     )
     vcf_utils.index_vcf(filtered_sv_vcf)
-    temporary_files.append(filtered_sv_vcf)
+    temporary_files.extend([filtered_sv_vcf, filtered_sv_vcf + ".tbi"])
 
     with pysam.VariantFile(filtered_sv_vcf) as vcf_in:
         sv_count = sum(1 for _ in vcf_in)
@@ -267,11 +268,6 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
     qual_suffix = f" with QUAL >= {min_sv_qual}" if min_sv_qual > 0 else ""
     max_len_note = f" (large SVs >{max_sv_length}bp will be filtered unless they overlap CNVs)" if max_sv_length else ""
     logger.info(f"Filtered SV VCF contains {sv_count} PASS DEL/DUP calls {length_range}{qual_suffix}{max_len_note}")
-
-    # Stage 1a: Use CNV VCF directly (no PASS filtering)
-    # Non-PASS CNVs will pass through collapse unchanged via truvari's --passonly behavior
-    logger.info("Stage 1a: Using CNV VCF (all variants, collapse will handle PASS filtering)")
-    filtered_cnv_vcf = cnv_vcf
 
     # Stage 1b: Extract excluded SVs to preserve in final output
     logger.info("Stage 1b: Extracting excluded SVs (non-DEL/DUP, non-PASS DEL/DUP, small PASS DEL/DUP)")
@@ -291,26 +287,26 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
         extra_args=f"-i '{excluded_sv_expr}'",
     )
     vcf_utils.index_vcf(excluded_sv_vcf)
-    temporary_files.append(excluded_sv_vcf)
+    temporary_files.extend([excluded_sv_vcf, excluded_sv_vcf + ".tbi"])
 
     with pysam.VariantFile(excluded_sv_vcf) as vcf_in:
         excluded_sv_count = sum(1 for _ in vcf_in)
     logger.info(f"Extracted {excluded_sv_count} excluded SVs")
 
-    # Stage 2-3: Combine CNV and SV VCFs with source annotations
-    logger.info("Stage 2-3: Combining CNV and SV VCFs")
+    # Stage 2: Combine CNV and SV VCFs with source annotations
+    logger.info("Stage 2: Combining CNV and SV VCFs")
     temp_sorted_vcf = pjoin(output_directory, "temp_sorted.vcf.gz")
     combine_cnv_or_sv_vcf_files(
-        vcf_files=[(filtered_sv_vcf, "gridss"), (filtered_cnv_vcf, None)],
+        vcf_files=[(filtered_sv_vcf, "gridss"), (cnv_vcf, None)],
         output_vcf=temp_sorted_vcf,
         fasta_index=fasta_index,
         preserve_filters=True,  # Keep FILTER fields and values
         make_ids_unique=True,
         output_directory=output_directory,
     )
-    temporary_files.append(temp_sorted_vcf)
+    temporary_files.extend([temp_sorted_vcf, temp_sorted_vcf + ".tbi"])
 
-    logger.info("Stage 4: Collapsing overlapping variants (SV replaces CNV via QUAL)")
+    logger.info("Stage 3: Collapsing overlapping variants (SV replaces CNV via QUAL)")
     logger.info(f"Collapse parameters: refdist={distance}bp, pctsize={pctsize * 100}%")
 
     collapsed_vcf_tmp = pjoin(output_directory, "collapsed_tmp.vcf.gz")
@@ -335,7 +331,7 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
 
     # Apply max_sv_length filtering to large SVs without CNV overlap
     if max_sv_length is not None:
-        logger.info(f"Stage 5: Filtering large SVs (>{max_sv_length}bp) without CNV overlap")
+        logger.info(f"Stage 4: Filtering large SVs (>{max_sv_length}bp) without CNV overlap")
         filtered_large_sv_vcf = pjoin(output_directory, "filtered_large_sv.vcf.gz")
         total, filtered = _filter_large_svs_without_cnv_overlap(
             postprocessed_vcf,
@@ -344,19 +340,18 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
         )
         filtered_large_sorted_sv_vcf = pjoin(output_directory, "filtered_large_sorted_sv.vcf.gz")
         vcf_utils.sort_vcf(filtered_large_sv_vcf, filtered_large_sorted_sv_vcf)
-        logger.info(f"Filtered {filtered}/{total} large SVs without CNV overlap " f"(kept large SVs with CNV overlap)")
+        logger.info(f"Filtered {filtered}/{total} large SVs without CNV overlap (kept large SVs with CNV overlap)")
         vcf_utils.index_vcf(filtered_large_sorted_sv_vcf)
         temporary_files.extend(
-            [filtered_large_sorted_sv_vcf, filtered_large_sorted_sv_vcf + ".tbi", filtered_large_sv_vcf + ".tbi"]
+            [filtered_large_sv_vcf, filtered_large_sorted_sv_vcf, filtered_large_sorted_sv_vcf + ".tbi"]
         )
         merged_vcf = filtered_large_sorted_sv_vcf
-
     else:
         merged_vcf = postprocessed_vcf
 
-    # Stage 6: Add excluded SVs to final output
+    # Stage 5: Add excluded SVs to final output
     # (Non-PASS CNVs already in merged_vcf via pass-through)
-    logger.info("Stage 6: Adding excluded SVs to final output")
+    logger.info("Stage 5: Adding excluded SVs to final output")
 
     with pysam.VariantFile(excluded_sv_vcf) as vcf_in:
         excluded_sv_count = sum(1 for _ in vcf_in)
@@ -371,10 +366,7 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
         vcf_utils.sort_vcf(temp_concat_vcf, output_vcf)
         logger.info(f"Added {excluded_sv_count} excluded SVs to final output")
     else:
-        # No excluded SVs, just sort the merged output
-        vcf_utils.sort_vcf(merged_vcf, output_vcf)
-        logger.info("No excluded SVs to add")
-
+        shutil.copy(merged_vcf, output_vcf)
     vcf_utils.index_vcf(output_vcf)
 
     with pysam.VariantFile(output_vcf) as vcf_in:
