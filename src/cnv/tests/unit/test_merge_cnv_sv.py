@@ -5,6 +5,12 @@ import pytest
 from ugbio_cnv.merge_cnv_sv import merge_cnv_sv_vcfs
 
 
+@pytest.fixture
+def fasta_index():
+    """Path to dummy FASTA index file."""
+    return str(Path(__file__).parent.parent / "resources" / "dummy.fasta.fai")
+
+
 def make_cnv_record(
     vcf,
     contig,
@@ -15,6 +21,7 @@ def make_cnv_record(
     svlen=None,
     qual=50.0,
     filter_val="PASS",
+    cnv_source=None,
     **info,
 ):
     """Create a simple CNV-style record for merge tests."""
@@ -27,6 +34,8 @@ def make_cnv_record(
     record.info["SVTYPE"] = svtype
     record.info["SVLEN"] = (svlen if svlen is not None else stop - pos,)
     record.info["CIPOS"] = (-250, 251)
+    if cnv_source is not None:
+        record.info["CNV_SOURCE"] = (cnv_source,)
     record.qual = qual
     if filter_val:
         record.filter.add(filter_val)
@@ -62,9 +71,9 @@ class TestMergeCnvSvVcfs:
         """Create simple CNV VCF with non-overlapping variants."""
         vcf_path = tmp_path / "test_cnv.vcf.gz"
         with pysam.VariantFile(str(vcf_path), "w", header=cnv_vcf_header) as vcf:
-            vcf.write(make_cnv_record(vcf, "chr1", 1000, 2000, "CNV1", "DEL", qual=35.0))
-            vcf.write(make_cnv_record(vcf, "chr1", 8000, 9000, "CNV2", "DUP", qual=38.0))
-            vcf.write(make_cnv_record(vcf, "chr1", 10000, 15000, "CNV3", "DEL", qual=32.0))
+            vcf.write(make_cnv_record(vcf, "chr1", 1000, 2000, "CNV1", "DEL", qual=35.0, cnv_source="cnvpytor"))
+            vcf.write(make_cnv_record(vcf, "chr1", 8000, 9000, "CNV2", "DUP", qual=38.0, cnv_source="cnvpytor"))
+            vcf.write(make_cnv_record(vcf, "chr1", 10000, 15000, "CNV3", "DEL", qual=32.0, cnv_source="cnvpytor"))
         pysam.tabix_index(str(vcf_path), preset="vcf", force=True)
         return vcf_path
 
@@ -80,7 +89,7 @@ class TestMergeCnvSvVcfs:
         pysam.tabix_index(str(vcf_path), preset="vcf", force=True)
         return vcf_path
 
-    def test_parameter_filtering(self, tmp_path, simple_cnv_vcf, simple_sv_vcf):
+    def test_parameter_filtering(self, tmp_path, simple_cnv_vcf, simple_sv_vcf, fasta_index):
         """Verify min_sv_length, max_sv_length, and min_sv_qual filtering."""
         output_vcf = tmp_path / "merged_output.vcf.gz"
 
@@ -88,6 +97,7 @@ class TestMergeCnvSvVcfs:
             cnv_vcf=str(simple_cnv_vcf),
             sv_vcf=str(simple_sv_vcf),
             output_vcf=str(output_vcf),
+            fasta_index=fasta_index,
             min_sv_length=1000,
             max_sv_length=5000000,
             min_sv_qual=600,
@@ -122,17 +132,19 @@ class TestMergeCnvSvVcfs:
             # Total: 3 CNVs + 2 SVs (SV1, SV3) = 5 variants
             assert len(records) == 5
 
-    def test_large_sv_with_cnv_overlap(self, tmp_path, cnv_vcf_header):
+    def test_large_sv_with_cnv_overlap(self, tmp_path, cnv_vcf_header, fasta_index):
         """Test that large SVs are kept if they overlap with CNV calls."""
         # Create CNV VCF with a variant that will overlap with large SV
         cnv_vcf_path = tmp_path / "cnv_with_large_region.vcf.gz"
         with pysam.VariantFile(str(cnv_vcf_path), "w", header=cnv_vcf_header) as vcf:
             # Write in sorted order (by position)
             # Another non-overlapping CNV
-            vcf.write(make_cnv_record(vcf, "chr1", 10000, 15000, "CNV_SMALL", "DUP", qual=38.0))
+            vcf.write(make_cnv_record(vcf, "chr1", 10000, 15000, "CNV_SMALL", "DUP", qual=38.0, cnv_source="cnvpytor"))
             # Large CNV (5Mb) that will overlap substantially with the large SV
             # This ensures >50% reciprocal overlap for collapse to occur
-            vcf.write(make_cnv_record(vcf, "chr1", 1000000, 6000000, "CNV_LARGE", "DEL", qual=35.0))
+            vcf.write(
+                make_cnv_record(vcf, "chr1", 1000000, 6000000, "CNV_LARGE", "DEL", qual=35.0, cnv_source="cnvpytor")
+            )
         pysam.tabix_index(str(cnv_vcf_path), preset="vcf", force=True)
 
         # Create SV VCF with a large SV (7Mb) that overlaps with CNV_LARGE
@@ -152,6 +164,7 @@ class TestMergeCnvSvVcfs:
             cnv_vcf=str(cnv_vcf_path),
             sv_vcf=str(sv_vcf_path),
             output_vcf=str(output_vcf),
+            fasta_index=fasta_index,
             min_sv_length=1000,
             max_sv_length=5000000,  # 5Mb limit
             min_sv_qual=0,
@@ -179,13 +192,13 @@ class TestMergeCnvSvVcfs:
             assert len(cnv_sources) > 1, "Large SV should have multiple CNV_SOURCE entries"
             assert any(src != "gridss" for src in cnv_sources), "Large SV should have non-gridss CNV_SOURCE"
 
-    def test_large_sv_without_cnv_overlap(self, tmp_path, cnv_vcf_header):
+    def test_large_sv_without_cnv_overlap(self, tmp_path, cnv_vcf_header, fasta_index):
         """Test that large SVs without CNV overlap are filtered out."""
         # Create CNV VCF with variants that DON'T overlap with large SV
         cnv_vcf_path = tmp_path / "cnv_no_overlap.vcf.gz"
         with pysam.VariantFile(str(cnv_vcf_path), "w", header=cnv_vcf_header) as vcf:
-            vcf.write(make_cnv_record(vcf, "chr1", 1000, 2000, "CNV1", "DEL", qual=35.0))
-            vcf.write(make_cnv_record(vcf, "chr1", 10000, 15000, "CNV2", "DUP", qual=38.0))
+            vcf.write(make_cnv_record(vcf, "chr1", 1000, 2000, "CNV1", "DEL", qual=35.0, cnv_source="cnvpytor"))
+            vcf.write(make_cnv_record(vcf, "chr1", 10000, 15000, "CNV2", "DUP", qual=38.0, cnv_source="cnvpytor"))
         pysam.tabix_index(str(cnv_vcf_path), preset="vcf", force=True)
 
         # Create SV VCF with a large SV (7Mb) that does NOT overlap with any CNV
@@ -204,6 +217,7 @@ class TestMergeCnvSvVcfs:
             cnv_vcf=str(cnv_vcf_path),
             sv_vcf=str(sv_vcf_path),
             output_vcf=str(output_vcf),
+            fasta_index=fasta_index,
             min_sv_length=1000,
             max_sv_length=5000000,  # 5Mb limit
             min_sv_qual=0,
@@ -228,12 +242,12 @@ class TestMergeCnvSvVcfs:
             assert "CNV1" in record_ids
             assert "CNV2" in record_ids
 
-    def test_excluded_svs_in_output(self, tmp_path, cnv_vcf_header):
+    def test_excluded_svs_in_output(self, tmp_path, cnv_vcf_header, fasta_index):
         """Test that excluded SVs (non-DEL/DUP excl. BND, non-PASS DEL/DUP, small PASS DEL/DUP) are in output."""
         # Create CNV VCF (non-overlapping with SV_DEL_PASS)
         cnv_vcf_path = tmp_path / "test_cnv_excluded.vcf.gz"
         with pysam.VariantFile(str(cnv_vcf_path), "w", header=cnv_vcf_header) as vcf:
-            vcf.write(make_cnv_record(vcf, "chr1", 25000, 26000, "CNV1", "DEL", qual=35.0))
+            vcf.write(make_cnv_record(vcf, "chr1", 25000, 26000, "CNV1", "DEL", qual=35.0, cnv_source="cnvpytor"))
         pysam.tabix_index(str(cnv_vcf_path), preset="vcf", force=True)
 
         # Create SV VCF with mixed SV types and filter statuses
@@ -273,6 +287,7 @@ class TestMergeCnvSvVcfs:
             cnv_vcf=str(cnv_vcf_path),
             sv_vcf=str(sv_vcf_path),
             output_vcf=str(output_vcf),
+            fasta_index=fasta_index,
             min_sv_length=1000,
             min_sv_qual=600,
             pctsize=0.5,
@@ -310,3 +325,97 @@ class TestMergeCnvSvVcfs:
                     assert "LowQual" in record.filter, "Filter value should be preserved"
                 if record.id in ["SV_INV", "SV_DEL_SHORT"]:
                     assert "PASS" in record.filter, "PASS filter should be preserved"
+
+    def test_excluded_cnvs_lack_merge_metadata(self, tmp_path, cnv_vcf_header, fasta_index):
+        """Verify excluded (non-PASS) CNVs have CNV_SOURCE but lack CNV_ID.
+
+        Non-PASS CNVs pass through the combine step (so they get CNV_SOURCE)
+        but don't participate in collapse/merge (so they lack CNV_ID).
+        """
+        # Add LowQual filter to header
+        cnv_header_with_filter = cnv_vcf_header.copy()
+        cnv_header_with_filter.filters.add("LowQual", None, None, "Low quality CNV")
+
+        # Create CNV VCF with PASS and non-PASS variants
+        cnv_vcf_path = tmp_path / "cnv_mixed_filters.vcf.gz"
+        with pysam.VariantFile(str(cnv_vcf_path), "w", header=cnv_header_with_filter) as vcf:
+            # PASS CNV - will participate in merge
+            vcf.write(
+                make_cnv_record(
+                    vcf, "chr1", 1000, 3000, "CNV_PASS", "DEL", qual=40.0, filter_val="PASS", cnv_source="cnvpytor"
+                )
+            )
+            # Non-PASS CNV - will be excluded from merge
+            vcf.write(
+                make_cnv_record(
+                    vcf,
+                    "chr1",
+                    5000,
+                    7000,
+                    "CNV_LOWQUAL",
+                    "DEL",
+                    qual=25.0,
+                    filter_val="LowQual",
+                    cnv_source="cnvpytor",
+                )
+            )
+            # Another PASS CNV - non-overlapping
+            vcf.write(
+                make_cnv_record(
+                    vcf, "chr1", 10000, 12000, "CNV_PASS2", "DUP", qual=45.0, filter_val="PASS", cnv_source="cnvpytor"
+                )
+            )
+        pysam.tabix_index(str(cnv_vcf_path), preset="vcf", force=True)
+
+        # Create SV VCF with variants
+        sv_vcf_path = tmp_path / "sv_simple.vcf.gz"
+        with pysam.VariantFile(str(sv_vcf_path), "w", header=cnv_vcf_header) as vcf:
+            # Overlaps CNV_PASS - will merge
+            vcf.write(make_cnv_record(vcf, "chr1", 1500, 2500, "SV_OVERLAP", "DEL", qual=800.0))
+            # Non-overlapping - regular variant
+            vcf.write(make_cnv_record(vcf, "chr1", 20000, 22000, "SV_NO_OVERLAP", "DUP", qual=750.0))
+        pysam.tabix_index(str(sv_vcf_path), preset="vcf", force=True)
+
+        output_vcf = tmp_path / "merged_test_excluded_cnv.vcf.gz"
+
+        result_vcf = merge_cnv_sv_vcfs(
+            cnv_vcf=str(cnv_vcf_path),
+            sv_vcf=str(sv_vcf_path),
+            output_vcf=str(output_vcf),
+            fasta_index=fasta_index,
+            min_sv_length=1000,
+            min_sv_qual=0,
+            pctsize=0.5,
+            distance=0,
+            output_directory=str(tmp_path),
+        )
+
+        assert Path(result_vcf).exists()
+
+        with pysam.VariantFile(result_vcf) as vcf:
+            records = list(vcf)
+            record_dict = {r.id: r for r in records}
+
+            # Verify excluded CNV is present
+            assert "CNV_LOWQUAL" in record_dict, "Non-PASS CNV should be in output"
+
+            # Verify excluded CNV HAS CNV_SOURCE (from combine step) but LACKS CNV_ID
+            excluded_cnv = record_dict["CNV_LOWQUAL"]
+            assert "CNV_SOURCE" in excluded_cnv.info, "Non-PASS CNV should have CNV_SOURCE (went through combine step)"
+            assert (
+                "CNV_ID" not in excluded_cnv.info
+            ), "Non-PASS CNV should NOT have CNV_ID (didn't participate in collapse/merge)"
+
+            # Verify filter is preserved
+            assert "LowQual" in excluded_cnv.filter, "Filter should be preserved"
+
+            # Verify merged variant HAS CNV_SOURCE and CNV_ID (positive control)
+            merged_sv = record_dict["SV_OVERLAP"]
+            cnv_sources = merged_sv.info.get("CNV_SOURCE", [])
+            assert len(cnv_sources) > 1, "Merged SV should have multiple CNV_SOURCE entries"
+            assert "CNV_ID" in merged_sv.info, "Merged SV should have CNV_ID from collapse"
+
+            # Verify non-merged PASS CNV has CNV_SOURCE but no CNV_ID
+            pass_cnv = record_dict["CNV_PASS2"]
+            assert "CNV_SOURCE" in pass_cnv.info, "PASS CNV should have CNV_SOURCE from combine"
+            assert "CNV_ID" not in pass_cnv.info, "Non-merged PASS CNV should not have CNV_ID"
