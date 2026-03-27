@@ -171,7 +171,6 @@ def __parse_args_merge_cnv_sv(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=0.5,
     )
-    parser.add_argument("--out_directory", help="Output directory for temporary files", required=False, type=str)
 
 
 def __parse_args(argv: list[str]) -> argparse.Namespace:
@@ -583,7 +582,6 @@ def run(argv: list[str]):
             min_sv_qual=args.min_sv_qual,
             distance=args.distance,
             pctsize=args.pctsize,
-            output_directory=args.out_directory,
         )
     else:
         raise ValueError(f"Unknown tool: {args.tool}")

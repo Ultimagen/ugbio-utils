@@ -183,7 +183,6 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
     min_sv_qual: float = 0,
     distance: int = 0,
     pctsize: float = 0.5,
-    output_directory: str | None = None,
 ) -> str:
     """
     Merge CNV and SV VCF files, preferring higher-quality SV calls on overlap.
@@ -226,19 +225,14 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
         Distance threshold for collapsing overlapping variants (default: 0, exact overlaps)
     pctsize : float, optional
         Minimum overlap fraction for collapsing variants (default: 0.5, 50%)
-    output_directory : str | None, optional
-        Directory for temporary files. If None, uses directory of output_vcf (default: None)
 
     Returns
     -------
     str
         Path to the output merged VCF file
     """
-    if output_directory is None:
-        output_directory = os.path.dirname(os.path.abspath(output_vcf))
-        os.makedirs(output_directory, exist_ok=True)
-    elif not os.path.isdir(output_directory):
-        raise ValueError(f"Output directory does not exist: {output_directory}")
+
+    output_directory = os.path.dirname(os.path.abspath(output_vcf))
 
     logger.info(f"Starting CNV+SV merge: CNV={cnv_vcf}, SV={sv_vcf}")
     max_len_msg = f" (large SVs >{max_sv_length}bp kept only if overlapping CNV)" if max_sv_length else ""
@@ -307,7 +301,6 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
     temporary_files.extend([temp_sorted_vcf, temp_sorted_vcf + ".tbi"])
 
     logger.info("Stage 3: Collapsing overlapping variants (SV replaces CNV via QUAL)")
-    logger.info(f"Collapse parameters: refdist={distance}bp, pctsize={pctsize * 100}%")
 
     collapsed_vcf_tmp = pjoin(output_directory, "collapsed_tmp.vcf.gz")
     removed_vcf = vcf_utils.collapse_vcf(
@@ -358,15 +351,12 @@ def merge_cnv_sv_vcfs(  # noqa: PLR0915
 
     if excluded_sv_count > 0:
         # Concatenate merged results with excluded SVs
-        temp_concat_vcf = pjoin(output_directory, "temp_with_excluded.vcf.gz")
-        vcf_utils.concat_vcf([merged_vcf, excluded_sv_vcf], temp_concat_vcf)
-        temporary_files.append(temp_concat_vcf)
+        vcf_utils.concat_vcf([merged_vcf, excluded_sv_vcf], output_vcf)
 
-        # Sort and index final output
-        vcf_utils.sort_vcf(temp_concat_vcf, output_vcf)
         logger.info(f"Added {excluded_sv_count} excluded SVs to final output")
     else:
         shutil.copy(merged_vcf, output_vcf)
+
     vcf_utils.index_vcf(output_vcf)
 
     with pysam.VariantFile(output_vcf) as vcf_in:

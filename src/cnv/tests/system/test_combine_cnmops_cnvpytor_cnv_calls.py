@@ -141,8 +141,6 @@ class TestCombineCnmopsCnvpytorCnvCalls:
                 "0",
                 "--pctsize",
                 "0.5",
-                "--out_directory",
-                str(tmpdir),
             ]
         )
 

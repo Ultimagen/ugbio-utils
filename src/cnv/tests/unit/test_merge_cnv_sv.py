@@ -103,7 +103,6 @@ class TestMergeCnvSvVcfs:
             min_sv_qual=600,
             distance=0,
             pctsize=0.5,
-            output_directory=str(tmp_path),
         )
 
         assert Path(result_vcf).exists()
@@ -170,7 +169,6 @@ class TestMergeCnvSvVcfs:
             min_sv_qual=0,
             pctsize=0.5,
             distance=0,
-            output_directory=str(tmp_path),
         )
 
         assert Path(result_vcf).exists()
@@ -223,7 +221,6 @@ class TestMergeCnvSvVcfs:
             min_sv_qual=0,
             pctsize=0.5,
             distance=0,
-            output_directory=str(tmp_path),
         )
 
         assert Path(result_vcf).exists()
@@ -292,7 +289,6 @@ class TestMergeCnvSvVcfs:
             min_sv_qual=600,
             pctsize=0.5,
             distance=0,
-            output_directory=str(tmp_path),
         )
 
         assert Path(result_vcf).exists()
@@ -387,7 +383,6 @@ class TestMergeCnvSvVcfs:
             min_sv_qual=0,
             pctsize=0.5,
             distance=0,
-            output_directory=str(tmp_path),
         )
 
         assert Path(result_vcf).exists()
