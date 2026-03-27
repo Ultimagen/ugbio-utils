@@ -75,6 +75,9 @@ RUN wget https://github.com/arq5x/bedtools2/releases/download/v${BEDTOOLS_VERSIO
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
 COPY --from=build ${OUT_DIR} ${OUT_DIR}
+# Install torch from PyTorch cu128 index to match HealthOmics g5 CUDA 12.8 driver.
+# Default PyPI torch is compiled for CUDA 13.0 which is incompatible.
+RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 RUN SRSNV_WHL=$(ls ${OUT_DIR}/ugbio_srsnv*.whl) && \
     pip install "${SRSNV_WHL}[trt]" ${OUT_DIR}/*.whl && \
     rm -rf ${OUT_DIR}
