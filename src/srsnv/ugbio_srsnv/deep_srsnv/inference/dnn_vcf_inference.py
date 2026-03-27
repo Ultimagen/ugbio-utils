@@ -24,11 +24,12 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
@@ -292,7 +293,7 @@ def _gpu_consumer_thread(
         engine.pop_context()
 
 
-def _pipelined_inference(  # noqa: PLR0912, PLR0913, C901
+def _pipelined_inference(  # noqa: PLR0912, PLR0913, PLR0915, C901
     shard_args_list: list[dict],
     engines: list,
     batch_size: int,
@@ -379,18 +380,24 @@ def _pipelined_inference(  # noqa: PLR0912, PLR0913, C901
                     )
         else:
             with ProcessPoolExecutor(max_workers=effective_workers, initializer=_worker_init) as pool:
-                futures = {pool.submit(fn, **shard_args): shard_args for shard_args in shard_args_list}
-                for future in as_completed(futures):
-                    _sid, chunk, _stats = future.result()
-                    q.put(chunk)
-                    completed += 1
-                    if completed == 1 or completed % 10 == 0 or completed == total_shards:
-                        logger.info(
-                            "Inference progress: %d/%d shards (%.1fs)",
-                            completed,
-                            total_shards,
-                            time.perf_counter() - t_start,
-                        )
+                max_pending = effective_workers * 2
+                shard_iter = iter(shard_args_list)
+                pending = {pool.submit(fn, **sa) for sa in itertools.islice(shard_iter, max_pending)}
+                while pending:
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        _sid, chunk, _stats = future.result()
+                        q.put(chunk)
+                        completed += 1
+                        if completed == 1 or completed % 10 == 0 or completed == total_shards:
+                            logger.info(
+                                "Inference progress: %d/%d shards (%.1fs)",
+                                completed,
+                                total_shards,
+                                time.perf_counter() - t_start,
+                            )
+                    for sa in itertools.islice(shard_iter, len(done)):
+                        pending.add(pool.submit(fn, **sa))
     finally:
         done_event.set()
         for t in gpu_threads:
