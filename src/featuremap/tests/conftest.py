@@ -1,4 +1,4 @@
-"""Shared fixtures and utilities for somatic featuremap classifier tests."""
+"""Shared fixtures and utilities for somatic snvfind classifier tests."""
 
 from pathlib import Path
 
@@ -23,7 +23,7 @@ def resources_dir():
 
 @pytest.fixture
 def mini_somatic_vcf():
-    """Minimal somatic featuremap VCF (~28 variants) for fast tests.
+    """Minimal somatic snvfind VCF (~28 variants) for fast tests.
 
     Contains:
     - 13 PASS variants (low / medium / high VAF)
@@ -32,7 +32,7 @@ def mini_somatic_vcf():
     - 1 multi-allelic site (3 records at chr19:1023622)
     - 2 samples: Pa_46_FreshFrozen (tumor), Pa_46_Buffycoat (normal)
     """
-    path = RESOURCES_DIR / "somatic_featuremap_input.vcf.gz"
+    path = RESOURCES_DIR / "somatic_snvfind_input.vcf.gz"
     assert path.exists(), f"Test VCF not found: {path}"
     return path
 

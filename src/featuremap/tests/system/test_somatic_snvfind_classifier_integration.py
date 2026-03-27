@@ -1,4 +1,4 @@
-"""Integration tests for somatic_featuremap_classifier pipeline.
+"""Integration tests for somatic_snvfind_classifier pipeline.
 
 These tests run the full pipeline with real bioinformatics tools (bcftools, bedtools, tabix).
 NO mocking of ugbio_core or external tools - tests validate full integration.
@@ -12,10 +12,11 @@ from conftest import (
     TUMOR_SAMPLE,
     validate_output_vcf,
 )
-from ugbio_featuremap.somatic_featuremap_classifier import (
-    somatic_featuremap_classifier,
+from ugbio_featuremap.featuremap_utils import FeatureMapFilters
+from ugbio_featuremap.somatic_snvfind_classifier import (
+    somatic_snvfind_classifier,
 )
-from ugbio_featuremap.somatic_featuremap_utils import PILEUP_CONFIG
+from ugbio_featuremap.somatic_snvfind_utils import DEFAULT_XGB_PROBA_THRESHOLD, PILEUP_CONFIG
 
 
 class TestFullPipeline:
@@ -26,8 +27,8 @@ class TestFullPipeline:
         output_vcf = tmp_path / "output.vcf.gz"
         output_parquet = tmp_path / "output.parquet"
 
-        result_vcf, result_parquet = somatic_featuremap_classifier(
-            somatic_featuremap=mini_somatic_vcf,
+        result_vcf, result_parquet = somatic_snvfind_classifier(
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
@@ -56,8 +57,8 @@ class TestFullPipeline:
         output_vcf = tmp_path / "output.vcf.gz"
         output_parquet = tmp_path / "output.parquet"
 
-        result_vcf, result_parquet = somatic_featuremap_classifier(
-            somatic_featuremap=mini_somatic_vcf,
+        result_vcf, result_parquet = somatic_snvfind_classifier(
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
@@ -85,8 +86,8 @@ class TestFullPipeline:
         output_vcf = tmp_path / "output.vcf.gz"
         output_parquet = tmp_path / "output.parquet"
 
-        somatic_featuremap_classifier(
-            somatic_featuremap=mini_somatic_vcf,
+        somatic_snvfind_classifier(
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
@@ -112,8 +113,8 @@ class TestOutputValidation:
         self.output_vcf = tmp_path / "output.vcf.gz"
         self.output_parquet = tmp_path / "output.parquet"
 
-        self.result_vcf, self.result_parquet = somatic_featuremap_classifier(
-            somatic_featuremap=mini_somatic_vcf,
+        self.result_vcf, self.result_parquet = somatic_snvfind_classifier(
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=self.output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
@@ -143,13 +144,62 @@ class TestOutputValidation:
             for rec in vcf:
                 assert "XGB_PROBA" in rec.info, f"Missing XGB_PROBA at {rec.chrom}:{rec.pos}"
 
-    def test_output_vcf_only_pass_variants(self):
-        """When filter_string='PASS', output should only contain PASS variants."""
+    def test_output_vcf_filter_assignment(self):
+        """Output records should have PASS or LowQual filter based on xgb_proba threshold."""
+        allowed_filters = {FeatureMapFilters.PASS.value, FeatureMapFilters.LOW_QUAL.value}
         with pysam.VariantFile(str(self.result_vcf)) as vcf:
             for rec in vcf:
-                assert (
-                    "PASS" in rec.filter
-                ), f"Non-PASS variant in output: {rec.chrom}:{rec.pos} filter={list(rec.filter)}"
+                record_filters = set(rec.filter)
+                assert record_filters.issubset(
+                    allowed_filters
+                ), f"Unexpected filter at {rec.chrom}:{rec.pos}: {record_filters}"
+
+    def test_filter_matches_xgb_proba_threshold(self):
+        """PASS records should have xgb_proba >= threshold, LowQual should have < threshold."""
+        with pysam.VariantFile(str(self.result_vcf)) as vcf:
+            for rec in vcf:
+                xgb_proba = rec.info.get("XGB_PROBA")
+                if xgb_proba is not None:
+                    if FeatureMapFilters.PASS.value in rec.filter:
+                        assert xgb_proba >= DEFAULT_XGB_PROBA_THRESHOLD, (
+                            f"PASS record has xgb_proba={xgb_proba} < {DEFAULT_XGB_PROBA_THRESHOLD} "
+                            f"at {rec.chrom}:{rec.pos}"
+                        )
+                    elif FeatureMapFilters.LOW_QUAL.value in rec.filter:
+                        assert xgb_proba < DEFAULT_XGB_PROBA_THRESHOLD, (
+                            f"LowQual record has xgb_proba={xgb_proba} >= {DEFAULT_XGB_PROBA_THRESHOLD} "
+                            f"at {rec.chrom}:{rec.pos}"
+                        )
+
+    def test_gt_values(self):
+        """PASS tumor records get GT=0/1, LowQual tumor and all normal get missing GT."""
+        with pysam.VariantFile(str(self.result_vcf)) as vcf:
+            for rec in vcf:
+                tumor_gt = rec.samples[TUMOR_SAMPLE].get("GT")
+                normal_gt = rec.samples[NORMAL_SAMPLE].get("GT")
+
+                if FeatureMapFilters.PASS.value in rec.filter:
+                    assert tumor_gt == (0, 1), f"PASS tumor GT should be (0,1), got {tumor_gt} at {rec.chrom}:{rec.pos}"
+                else:
+                    assert tumor_gt is None or all(
+                        a is None for a in tumor_gt
+                    ), f"Non-PASS tumor GT should be missing, got {tumor_gt} at {rec.chrom}:{rec.pos}"
+
+                assert normal_gt is None or all(
+                    a is None for a in normal_gt
+                ), f"Normal GT should always be missing, got {normal_gt} at {rec.chrom}:{rec.pos}"
+
+    def test_header_filter_definitions(self):
+        """LowQual FILTER should be in header; PreFiltered and SingleRead should be removed."""
+        with pysam.VariantFile(str(self.result_vcf)) as vcf:
+            header_filters = set(vcf.header.filters)
+            assert FeatureMapFilters.LOW_QUAL.value in header_filters, "LowQual FILTER missing from header"
+            assert (
+                FeatureMapFilters.PRE_FILTERED.value not in header_filters
+            ), "PreFiltered FILTER should be removed from header"
+            assert (
+                FeatureMapFilters.SINGLE_READ.value not in header_filters
+            ), "SingleRead FILTER should be removed from header"
 
     def test_output_parquet_has_required_columns(self):
         """Parquet output should have core variant columns and xgb_proba."""
@@ -208,8 +258,8 @@ class TestFilterVariations:
         """Test pipeline without filter (all variants processed)."""
         output_vcf = tmp_path / "output.vcf.gz"
 
-        result_vcf, _ = somatic_featuremap_classifier(
-            somatic_featuremap=mini_somatic_vcf,
+        result_vcf, _ = somatic_snvfind_classifier(
+            somatic_snvfind_vcf=mini_somatic_vcf,
             output_vcf=output_vcf,
             genome_index_file=genome_fai,
             tandem_repeats_bed=tr_bed,
@@ -226,3 +276,26 @@ class TestFilterVariations:
         assert (
             len(records) == total_in_input
         ), f"Without filter, expected all {total_in_input} variants, got {len(records)}"
+
+        # Validate FILTER and GT are assigned correctly even without pre-filtering
+        allowed_filters = {FeatureMapFilters.PASS.value, FeatureMapFilters.LOW_QUAL.value}
+        with pysam.VariantFile(str(result_vcf)) as vcf:
+            for rec in vcf:
+                record_filters = set(rec.filter)
+                assert record_filters.issubset(
+                    allowed_filters
+                ), f"Unexpected filter at {rec.chrom}:{rec.pos}: {record_filters}"
+
+                tumor_gt = rec.samples[TUMOR_SAMPLE].get("GT")
+                normal_gt = rec.samples[NORMAL_SAMPLE].get("GT")
+
+                if FeatureMapFilters.PASS.value in rec.filter:
+                    assert tumor_gt == (0, 1), f"PASS tumor GT should be (0,1), got {tumor_gt} at {rec.chrom}:{rec.pos}"
+                else:
+                    assert tumor_gt is None or all(
+                        a is None for a in tumor_gt
+                    ), f"Non-PASS tumor GT should be missing, got {tumor_gt} at {rec.chrom}:{rec.pos}"
+
+                assert normal_gt is None or all(
+                    a is None for a in normal_gt
+                ), f"Normal GT should always be missing, got {normal_gt} at {rec.chrom}:{rec.pos}"

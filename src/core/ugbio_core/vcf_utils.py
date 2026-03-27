@@ -1,7 +1,8 @@
 import logging
 import os
 import os.path
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 from os.path import dirname
 from os.path import join as pjoin
 from pathlib import Path
@@ -519,50 +520,73 @@ class VcfUtils:
         return new_record
 
 
+class VcfMetaType(str, Enum):
+    """VCF header meta types for structured field definitions."""
+
+    INFO = "INFO"
+    FORMAT = "FORMAT"
+
+
 @dataclass(frozen=True)
-class VcfInfoField:
-    """VCF INFO field definition class"""
+class VcfField:
+    """VCF field definition for INFO or FORMAT header lines.
+
+    Parameters
+    ----------
+    field_id : str
+        Field identifier (e.g. ``"DP"``, ``"GT"``).
+    number : str
+        VCF Number attribute (e.g. ``"1"``, ``"A"``, ``"."``, ``"G"``).
+    field_type : str
+        VCF Type attribute (e.g. ``"Integer"``, ``"Float"``, ``"String"``).
+    description : str
+        Human-readable description.
+    meta_type : VcfMetaType
+        Whether this is an INFO or FORMAT field. Defaults to ``VcfMetaType.INFO``.
+    """
 
     field_id: str
     number: str
     field_type: str
     description: str
+    meta_type: VcfMetaType = field(default=VcfMetaType.INFO)
+
+    def to_header_line(self) -> str:
+        """Render as a VCF header line string.
+
+        Returns
+        -------
+        str
+            A complete VCF header line, e.g.
+            ``##INFO=<ID=DP,Number=1,Type=Integer,Description="Read depth">``.
+        """
+        return (
+            f"##{self.meta_type.value}=<ID={self.field_id},Number={self.number},"
+            f'Type={self.field_type},Description="{self.description}">'
+        )
 
 
-def write_vcf_info_header_file(
-    info_fields: list[VcfInfoField], header_file: Path, additional_header_lines: list[str] | None = None
+def write_vcf_header_file(
+    fields: list[VcfField], header_file: Path, additional_header_lines: list[str] | None = None
 ) -> None:
-    """Write a VCF header file with INFO field definitions and optional additional header lines.
+    """Write a VCF header file with field definitions and optional additional header lines.
 
     Creates a header file suitable for use with bcftools annotate -h option.
-    Can include both INFO/FORMAT field definitions and arbitrary custom header lines.
+    Each field's ``meta_type`` determines whether it is rendered as ``##INFO=`` or ``##FORMAT=``.
 
     Parameters
     ----------
-    info_fields : list[VcfInfoField]
-        List of VcfInfoField objects defining the INFO fields to add.
+    fields : list[VcfField]
+        List of VcfField objects defining the fields to add.
     header_file : Path
         Path to the output header file.
     additional_header_lines : list[str], optional
         List of additional header lines to append (e.g., ["##tumor_sample=<sample_name>"]).
-        These lines will be written as-is after the INFO field definitions.
+        These lines will be written as-is after the field definitions.
     """
-    header = pysam.VariantHeader()
-    for field in info_fields:
-        header.add_meta(
-            "INFO",
-            items=[
-                ("ID", field.field_id),
-                ("Number", field.number),
-                ("Type", field.field_type),
-                ("Description", field.description),
-            ],
-        )
-
     with open(header_file, "w") as f:
-        lines = str(header).splitlines()
-        for line in lines[1:-1]:
-            f.write(line + "\n")
+        for fld in fields:
+            f.write(fld.to_header_line() + "\n")
 
         if additional_header_lines:
             for line in additional_header_lines:

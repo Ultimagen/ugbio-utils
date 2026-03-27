@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pysam
 import pytest
 from simppl.simple_pipeline import SimplePipeline
-from ugbio_core.vcf_utils import VcfInfoField, VcfUtils, get_vcf_sample_names, write_vcf_info_header_file
+from ugbio_core.vcf_utils import VcfField, VcfMetaType, VcfUtils, get_vcf_sample_names, write_vcf_header_file
 
 
 @pytest.fixture
@@ -416,30 +416,51 @@ class TestVcfUtils:
         mock_unlink.assert_called_once_with(removed_vcf_path)
 
 
-class TestVcfInfoField:
+class TestVcfField:
     def test_create_info_field(self):
-        field = VcfInfoField(field_id="DP", number="1", field_type="Integer", description="Read depth")
+        field = VcfField(field_id="DP", number="1", field_type="Integer", description="Read depth")
         assert field.field_id == "DP"
         assert field.number == "1"
         assert field.field_type == "Integer"
         assert field.description == "Read depth"
+        assert field.meta_type == VcfMetaType.INFO
+
+    def test_create_format_field(self):
+        field = VcfField(
+            field_id="GT", number="1", field_type="String", description="Genotype", meta_type=VcfMetaType.FORMAT
+        )
+        assert field.field_id == "GT"
+        assert field.meta_type == VcfMetaType.FORMAT
+
+    def test_info_header_line(self):
+        field = VcfField("DP", "1", "Integer", "Read depth")
+        assert field.to_header_line() == '##INFO=<ID=DP,Number=1,Type=Integer,Description="Read depth">'
+
+    def test_format_header_line(self):
+        field = VcfField("GT", "1", "String", "Genotype", meta_type=VcfMetaType.FORMAT)
+        assert field.to_header_line() == '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">'
 
     def test_frozen_dataclass(self):
-        field = VcfInfoField(field_id="DP", number="1", field_type="Integer", description="Read depth")
+        field = VcfField(field_id="DP", number="1", field_type="Integer", description="Read depth")
         with pytest.raises(AttributeError):
             field.field_id = "AF"
 
     def test_equality(self):
-        field1 = VcfInfoField(field_id="DP", number="1", field_type="Integer", description="Read depth")
-        field2 = VcfInfoField(field_id="DP", number="1", field_type="Integer", description="Read depth")
+        field1 = VcfField(field_id="DP", number="1", field_type="Integer", description="Read depth")
+        field2 = VcfField(field_id="DP", number="1", field_type="Integer", description="Read depth")
         assert field1 == field2
 
+    def test_different_meta_type_not_equal(self):
+        info_field = VcfField("DP", "1", "Integer", "Read depth", meta_type=VcfMetaType.INFO)
+        format_field = VcfField("DP", "1", "Integer", "Read depth", meta_type=VcfMetaType.FORMAT)
+        assert info_field != format_field
 
-class TestWriteVcfInfoHeaderFile:
+
+class TestWriteVcfHeaderFile:
     def test_write_single_field(self, tmp_path):
         header_file = tmp_path / "header.txt"
-        fields = [VcfInfoField("DP", "1", "Integer", "Read depth")]
-        write_vcf_info_header_file(fields, header_file)
+        fields = [VcfField("DP", "1", "Integer", "Read depth")]
+        write_vcf_header_file(fields, header_file)
 
         content = header_file.read_text()
         assert "##INFO=<ID=DP,Number=1,Type=Integer,Description=" in content
@@ -448,20 +469,32 @@ class TestWriteVcfInfoHeaderFile:
     def test_write_multiple_fields(self, tmp_path):
         header_file = tmp_path / "header.txt"
         fields = [
-            VcfInfoField("DP", "1", "Integer", "Read depth"),
-            VcfInfoField("AF", "A", "Float", "Allele frequency"),
+            VcfField("DP", "1", "Integer", "Read depth"),
+            VcfField("AF", "A", "Float", "Allele frequency"),
         ]
-        write_vcf_info_header_file(fields, header_file)
+        write_vcf_header_file(fields, header_file)
 
         content = header_file.read_text()
         assert "ID=DP" in content
         assert "ID=AF" in content
 
+    def test_write_mixed_info_and_format_fields(self, tmp_path):
+        header_file = tmp_path / "header.txt"
+        fields = [
+            VcfField("DP", "1", "Integer", "Read depth"),
+            VcfField("GT", "1", "String", "Genotype", meta_type=VcfMetaType.FORMAT),
+        ]
+        write_vcf_header_file(fields, header_file)
+
+        content = header_file.read_text()
+        assert "##INFO=<ID=DP" in content
+        assert "##FORMAT=<ID=GT" in content
+
     def test_write_with_additional_header_lines(self, tmp_path):
         header_file = tmp_path / "header.txt"
-        fields = [VcfInfoField("DP", "1", "Integer", "Read depth")]
+        fields = [VcfField("DP", "1", "Integer", "Read depth")]
         additional_lines = ["##tumor_sample=TUMOR1", "custom_key=custom_value"]
-        write_vcf_info_header_file(fields, header_file, additional_header_lines=additional_lines)
+        write_vcf_header_file(fields, header_file, additional_header_lines=additional_lines)
 
         content = header_file.read_text()
         assert "##tumor_sample=TUMOR1" in content
@@ -469,8 +502,8 @@ class TestWriteVcfInfoHeaderFile:
 
     def test_write_no_additional_lines(self, tmp_path):
         header_file = tmp_path / "header.txt"
-        fields = [VcfInfoField("DP", "1", "Integer", "Read depth")]
-        write_vcf_info_header_file(fields, header_file)
+        fields = [VcfField("DP", "1", "Integer", "Read depth")]
+        write_vcf_header_file(fields, header_file)
 
         content = header_file.read_text()
         lines = [line for line in content.strip().splitlines() if line]
