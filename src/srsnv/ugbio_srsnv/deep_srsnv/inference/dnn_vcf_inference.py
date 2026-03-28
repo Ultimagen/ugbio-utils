@@ -1150,8 +1150,12 @@ def _parse_merge_args(argv: list[str] | None = None) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
-def run_merge(argv: list[str] | None = None) -> None:
-    """Merge per-fold predictions and annotate the featuremap VCF."""
+def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
+    """Merge per-fold predictions and annotate the featuremap VCF.
+
+    Annotation runs in-process (no subprocess) to avoid doubling memory
+    via pickle serialization of the large predictions dict.
+    """
     if argv is None:
         argv = sys.argv[1:]
     args = _parse_merge_args(argv)
@@ -1176,18 +1180,43 @@ def run_merge(argv: list[str] | None = None) -> None:
         metadata = json.load(f)
     quality_fn = _build_quality_fn(metadata)
 
-    # Annotate VCF
+    # Annotate VCF in-process to avoid pickle-based subprocess OOM.
+    # VcfAnnotator.process_vcf pickles annotators and spawns annotate_contig
+    # subprocesses that unpickle the full predictions dict, doubling memory.
+    # Instead, iterate contigs and call process_contig directly.
     annotator = DNNQualAnnotator(
         predictions=predictions,
         quality_interpolation_fn=quality_fn,
         low_qual_threshold=args.low_qual_threshold,
     )
-    VcfAnnotator.process_vcf(
-        annotators=[annotator],
-        input_path=args.featuremap_vcf,
-        output_path=args.output,
-        process_number=args.process_number,
-    )
+    annotators = [annotator]
+    out_dir = os.path.dirname(args.output) or "."
+
+    with pysam.VariantFile(args.featuremap_vcf) as input_vcf:
+        contigs = list(input_vcf.header.contigs)
+        tmp_output_paths = []
+        skipped = 0
+        for contig in contigs:
+            try:
+                next(input_vcf.fetch(contig))
+            except StopIteration:
+                skipped += 1
+                continue
+            out_per_contig = os.path.join(out_dir, contig + ".vcf.gz")
+            tmp_output_paths.append(out_per_contig)
+            VcfAnnotator.process_contig(
+                vcf_in=args.featuremap_vcf,
+                vcf_out=out_per_contig,
+                annotators=annotators,
+                contig=contig,
+                chunk_size=10000,
+            )
+            logger.info("Annotated contig %s", contig)
+
+    if skipped:
+        logger.info("Skipped %d empty contigs", skipped)
+
+    VcfAnnotator.merge_temp_files(tmp_output_paths, args.output, process_number=1)
 
     elapsed = time.perf_counter() - t0
     logger.info("Merge + annotate complete: %d predictions -> %s in %.1fs", len(predictions), args.output, elapsed)
