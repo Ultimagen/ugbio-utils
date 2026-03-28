@@ -9,108 +9,149 @@ from ugbio_cnv.combine_cnv_vcf_utils import combine_cnv_or_sv_vcf_files
 from ugbio_core import misc_utils as mu
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
+from ugbio_core.vcfbed import vcftools
 
 
-def _postprocess_collapsed_vcf(  # noqa: C901, PLR0912, PLR0915
+def _flatten_cnv_sources(sources_series):
+    """
+    Flatten and deduplicate CNV_SOURCE values from multiple variants.
+
+    CNV_SOURCE can be a string, list, or tuple. This function:
+    1. Converts all to lists
+    2. Flattens into a single list
+    3. Removes duplicates and sorts
+
+    Example: ["cn.mops", ["cnvpytor", "gridss"]] -> ["cn.mops", "cnvpytor", "gridss"]
+    """
+    all_sources = []
+    for source in sources_series:
+        if not source:  # Skip None/empty
+            continue
+        if isinstance(source, list | tuple):
+            all_sources.extend(source)
+        else:
+            all_sources.append(source)
+    return sorted(set(all_sources))
+
+
+def _collect_variant_ids(ids_series):
+    """
+    Collect non-empty variant IDs.
+
+    Filters out None, empty strings, and "." (VCF's missing value indicator).
+    """
+    return [variant_id for variant_id in ids_series if variant_id and variant_id != "."]
+
+
+def _aggregate_removed_variants(removed_vcf: str) -> dict[float, dict]:
+    """
+    Load removed variants and aggregate their metadata by CollapseId.
+
+    When truvari collapses overlapping variants:
+    - Kept variants get a CollapseId field
+    - Removed variants get a MatchId field pointing to the CollapseId
+
+    This function groups removed variants by MatchId and aggregates:
+    - CNV_SOURCE: All source tools (cn.mops, cnvpytor, gridss, etc.)
+    - IDs: All variant IDs that were removed
+
+    Parameters
+    ----------
+    removed_vcf : str
+        Path to VCF file containing removed/merged variants
+
+    Returns
+    -------
+    dict[float, dict]
+        Dictionary mapping CollapseId -> {cnv_source: [...], id: [...]}
+        Example: {1.0: {"cnv_source": ["cn.mops", "gridss"], "id": ["CNV_1", "CNV_2"]}}
+    """
+    # Load removed variants with CNV_SOURCE and MatchId fields
+    removed_df = vcftools.get_vcf_df(removed_vcf, custom_info_fields=["CNV_SOURCE", "MatchId"])
+    logger.info(f"Read {len(removed_df)} removed variants")
+
+    if removed_df.empty or "matchid" not in removed_df.columns:
+        return {}
+
+    # Extract MatchId value (stored as tuple in VCF) and convert to float
+    removed_df["matchid"] = removed_df["matchid"].apply(lambda x: x[0] if x else None).astype(float)
+
+    # Group by MatchId (=CollapseId) and aggregate CNV sources and IDs
+    aggregated = removed_df.groupby("matchid").agg(
+        {
+            "cnv_source": _flatten_cnv_sources,
+            "id": _collect_variant_ids,
+        }
+    )
+
+    # Convert to dict for O(1) lookup: {CollapseId: {cnv_source: [...], id: [...]}}
+    return aggregated.to_dict(orient="index")
+
+
+def _merge_cnv_metadata(record: pysam.VariantRecord, agg_data: dict) -> None:
+    """
+    Merge CNV_SOURCE and CNV_ID from aggregated data into a record.
+
+    Parameters
+    ----------
+    record : pysam.VariantRecord
+        The record to update
+    agg_data : dict
+        Aggregated data containing cnv_source and id lists
+    """
+    # Merge CNV_SOURCE from removed variants
+    all_sources = set()
+    current_sources = record.info.get("CNV_SOURCE", [])
+    if isinstance(current_sources, str):
+        all_sources.add(current_sources)
+    else:
+        all_sources.update(current_sources)
+
+    if agg_data.get("cnv_source"):
+        all_sources.update(agg_data["cnv_source"])
+
+    record.info["CNV_SOURCE"] = sorted(all_sources)
+
+    # Add CNV_ID from removed variants
+    removed_ids = agg_data.get("id", [])
+    if removed_ids:
+        record.info["CNV_ID"] = removed_ids
+
+
+def _postprocess_collapsed_vcf(
     collapsed_vcf: str,
     removed_vcf: str,
     output_vcf: str,
 ) -> None:
     """Merge CNV source metadata from removed variants into collapsed variants."""
-    removed_variants = []
-    with pysam.VariantFile(removed_vcf) as vcf_in:
-        for record in vcf_in:
-            removed_variants.append(
-                {
-                    "chrom": record.chrom,
-                    "start": record.start,
-                    "stop": record.stop,
-                    "id": record.id,
-                    "cnv_source": record.info.get("CNV_SOURCE", []),
-                    "svtype": record.info.get("SVTYPE", ""),
-                }
-            )
-    logger.info(f"Read {len(removed_variants)} removed variants")
+    aggregated = _aggregate_removed_variants(removed_vcf)
 
     collapsed_count = 0
-    num_collapsed_count = 0
     updated_count = 0
 
-    records_to_process = []
     with pysam.VariantFile(collapsed_vcf) as vcf_in:
-        header = vcf_in.header.copy()
-        if "CNV_ID" not in header.info:
-            header.info.add(*INFO_TAG_REGISTRY["CNV_ID"][:-1])
+        # Add CNV_ID to input header so records can use it
+        if "CNV_ID" not in vcf_in.header.info:
+            vcf_in.header.info.add(*INFO_TAG_REGISTRY["CNV_ID"][:-1])
 
-        for record in vcf_in:
-            records_to_process.append(record)
+        with pysam.VariantFile(output_vcf, "w", header=vcf_in.header) as vcf_out:
+            for record in vcf_in:
+                collapsed_count += 1
 
-    with pysam.VariantFile(output_vcf, "w", header=header) as vcf_out:
-        for old_record in records_to_process:
-            collapsed_count += 1
-
-            record = vcf_out.new_record()
-            record.chrom = old_record.chrom
-            record.pos = old_record.pos
-            record.id = old_record.id
-            record.ref = old_record.ref
-            record.alts = old_record.alts
-            record.qual = old_record.qual
-            if old_record.filter:
-                record.filter.add(*old_record.filter)
-            for key in old_record.info:
-                record.info[key] = old_record.info[key]
-            record.stop = old_record.stop
-            for sample in old_record.samples:
-                for key in old_record.samples[sample]:
-                    record.samples[sample][key] = old_record.samples[sample][key]
-
-            num_collapsed = record.info.get("NumCollapsed", 0)
-            if num_collapsed > 0:
-                num_collapsed_count += 1
-
-                overlapping = []
-                for removed in removed_variants:
-                    if (
-                        removed["chrom"] == record.chrom
-                        and removed["svtype"] == record.info.get("SVTYPE", "")
-                        and removed["start"] < record.stop
-                        and removed["stop"] > record.start
-                    ):
-                        overlapping.append(removed)
-
-                if overlapping:
+                # Check if this record has CollapseId (indicating variants were merged)
+                if "CollapseId" in record.info and (agg_data := aggregated.get(float(record.info["CollapseId"]))):
                     updated_count += 1
-                    all_sources = set()
-                    current_sources = record.info.get("CNV_SOURCE", [])
-                    if isinstance(current_sources, str):
-                        all_sources.add(current_sources)
-                    else:
-                        all_sources.update(current_sources)
+                    _merge_cnv_metadata(record, agg_data)
 
-                    for removed in overlapping:
-                        removed_sources = removed["cnv_source"]
-                        if isinstance(removed_sources, str):
-                            all_sources.add(removed_sources)
-                        else:
-                            all_sources.update(removed_sources)
+                # Remove temporary collapse metadata tags
+                for tag in ["NumCollapsed", "NumConsolidated", "CollapseId"]:
+                    if tag in record.info:
+                        del record.info[tag]
 
-                    record.info["CNV_SOURCE"] = sorted(all_sources)
-
-                    removed_ids = [variant["id"] for variant in overlapping if variant["id"]]
-                    if removed_ids:
-                        record.info["CNV_ID"] = removed_ids
-
-            for tag in ["NumCollapsed", "NumConsolidated", "CollapseId"]:
-                if tag in record.info:
-                    del record.info[tag]
-
-            vcf_out.write(record)
+                vcf_out.write(record)
 
     logger.info(
-        f"Post-processing complete: {collapsed_count} total variants, "
-        f"{num_collapsed_count} with NumCollapsed>0, "
-        f"{updated_count} updated with CNV_ID"
+        f"Post-processing complete: {collapsed_count} total variants, " f"{updated_count} updated with CNV metadata"
     )
 
 
