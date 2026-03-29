@@ -35,7 +35,7 @@ def test_prepare_report_with_mock_data(tmpdir):
         "X_NEXT1": ["C"] * 100,
         "MQUAL": rng.uniform(10, 50, 100),
         "SNVQ": rng.uniform(10, 50, 100),
-        "is_mixed": [True] * 50 + [False] * 50,
+        "is_mixed": [True] * 60 + [False] * 40,
         "is_mixed_start": [True] * 60 + [False] * 40,
         "is_mixed_end": [False] * 40 + [True] * 60,
         "label": [1] * 60 + [0] * 40,  # 60 True positives, 40 False positives
