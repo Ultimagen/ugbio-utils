@@ -323,7 +323,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     #########################
 
     # load & normalize coverage
-    df_germline_cov = pd.read_csv(args.germline_coverage, header=None, sep="\t")
+    df_germline_cov = pd.read_csv(args.germline_coverage, header=None, sep="\t", dtype={0: str})
     df_germline_cov.columns = ["chr", "start", "end", "cov"]
     df_germline_cov["norm_cov"] = df_germline_cov["cov"] / df_germline_cov["cov"].median()
     df_germline_cov["log_norm_cov"] = np.log2(df_germline_cov["norm_cov"])
@@ -336,6 +336,8 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
             "start_fig": df_germline_cov_norm_100k.groupby(["chr"])["start_fig"].max().to_numpy(),
         }
     )
+    # Convert chr column to string to handle both "chr9" and "9" formats
+    df_chr_graphic["chr"] = df_chr_graphic["chr"].astype(str)
     df_chr_graphic["chr_num"] = df_chr_graphic["chr"].str.replace("chr", "", regex=True)
     df_chr_graphic["chr_num"] = df_chr_graphic["chr_num"].str.replace("X", "23", regex=True)
     df_chr_graphic["chr_num"] = df_chr_graphic["chr_num"].str.replace("Y", "24", regex=True)
@@ -343,7 +345,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     df_chr_graphic = df_chr_graphic.sort_values(by=["chr_num"])
 
     if is_somatic:
-        df_tumor_cov = pd.read_csv(args.tumor_coverage, header=None, sep="\t")
+        df_tumor_cov = pd.read_csv(args.tumor_coverage, header=None, sep="\t", dtype={0: str})
         df_tumor_cov.columns = ["chr", "start", "end", "cov"]
         df_tumor_cov["norm_cov"] = df_tumor_cov["cov"] / df_tumor_cov["cov"].median()
         df_tumor_cov["log_norm_cov"] = np.log2(df_tumor_cov["norm_cov"])
@@ -375,7 +377,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
 
     if args.duplication_cnv_calls:
         if os.path.getsize(args.duplication_cnv_calls) > 0:
-            df_dup = pd.read_csv(args.duplication_cnv_calls, sep="\t", header=None)
+            df_dup = pd.read_csv(args.duplication_cnv_calls, sep="\t", header=None, dtype={0: str})
             if args.vcf_like:
                 df_dup.columns = ["chr", "start", "end", "info"]
                 df_dup["copy-number"] = df_dup["info"].apply(extract_copy_number)
@@ -390,7 +392,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
 
     if args.deletion_cnv_calls:
         if os.path.getsize(args.deletion_cnv_calls) > 0:
-            df_del = pd.read_csv(args.deletion_cnv_calls, sep="\t", header=None)
+            df_del = pd.read_csv(args.deletion_cnv_calls, sep="\t", header=None, dtype={0: str})
             if args.vcf_like:
                 df_del.columns = ["chr", "start", "end", "info"]
                 df_del["copy-number"] = df_del["info"].apply(extract_copy_number)
@@ -406,7 +408,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
 
     if args.gt_duplication_cnv_calls:
         if os.path.getsize(args.gt_duplication_cnv_calls) > 0:
-            df_gt_dup = pd.read_csv(args.gt_duplication_cnv_calls, sep="\t", header=None)
+            df_gt_dup = pd.read_csv(args.gt_duplication_cnv_calls, sep="\t", header=None, dtype={0: str})
             df_gt_dup.columns = ["chr", "start", "end", "copy-number"]
             df_gt_dup = get_x_location_for_fig(df_gt_dup, df_germline_cov_norm_100k)
         else:
@@ -417,7 +419,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
 
     if args.gt_deletion_cnv_calls:
         if os.path.getsize(args.gt_deletion_cnv_calls) > 0:
-            df_gt_del = pd.read_csv(args.gt_deletion_cnv_calls, sep="\t", header=None)
+            df_gt_del = pd.read_csv(args.gt_deletion_cnv_calls, sep="\t", header=None, dtype={0: str})
             df_gt_del.columns = ["chr", "start", "end", "copy-number"]
             df_gt_del = get_x_location_for_fig(df_gt_del, df_germline_cov_norm_100k)
         else:
