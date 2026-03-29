@@ -182,9 +182,9 @@ def test_calc_tumor_fraction_denominator_ratio(tmpdir, resources_dir):
     assert isinstance(read_filter_non_filt, float | np.floating)
 
     # Verify values
-    assert np.isclose(filt_ratio, 0.7100585107278435)
-    assert np.isclose(read_filter_non_filt, 0.6822598056854984)
-    assert np.isclose(denom_ratio, 0.4844443815545129)
+    assert np.isclose(filt_ratio, 0.7012110035188417)
+    assert np.isclose(read_filter_non_filt, 0.658410138248848)
+    assert np.isclose(denom_ratio, 0.461684433768454)
 
     # Verify the calculation: denom_ratio = filt_ratio * read_filter_non_filt
     assert np.isclose(denom_ratio, filt_ratio * read_filter_non_filt)

@@ -1122,9 +1122,9 @@ def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadat
     tp_filtering = tp_filtering.drop(
         index=tp_filtering[tp_filtering["type"] == "downsample"].index
     )  # remove downsampling step
-    filt_denom = tp_filtering.loc[tp_filtering.query('type == "region"').index[-1], "rows"]  # last region step
+    filt_denom = tp_filtering.loc[tp_filtering.query('type == "region"').index[-1], "funnel"]  # last region step
     filt_numer = tp_filtering.loc[
-        tp_filtering.index[-1], "rows"
+        tp_filtering.index[-1], "funnel"
     ]  # final number of true positives (before downsampling)
     filt_ratio = filt_numer / filt_denom
 
