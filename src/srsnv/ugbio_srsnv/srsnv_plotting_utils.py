@@ -2866,7 +2866,6 @@ class SRSNVReport:
             [
                 "mean_abs_SHAP_scores",
                 "ppmseq_category_quality_table",
-                "ppmseq_category_quantity_table",
                 "roc_auc_table",
                 "run_quality_summary_table",
                 "run_quality_table",
