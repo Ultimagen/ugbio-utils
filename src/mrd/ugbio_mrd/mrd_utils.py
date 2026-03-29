@@ -1084,7 +1084,8 @@ def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadat
     featuremap_df_file: str
         featuremap df file (parquet file), training dataframe for single_read_snv
     srsnv_metadata_json: str
-        single_read_snv metadata json file, includes true-positive filtering funnel
+        single_read_snv metadata json file, includes true-positive filtering
+        counts in either a "funnel" or "rows" field
     read_filter_query: str
         query to filter the dataframe
     Returns
@@ -1122,9 +1123,22 @@ def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadat
     tp_filtering = tp_filtering.drop(
         index=tp_filtering[tp_filtering["type"] == "downsample"].index
     )  # remove downsampling step
-    filt_denom = tp_filtering.loc[tp_filtering.query('type == "region"').index[-1], "funnel"]  # last region step
+    if "funnel" in tp_filtering.columns:
+        filtering_count_column = "funnel"
+    elif "rows" in tp_filtering.columns:
+        filtering_count_column = "rows"
+    else:
+        raise ValueError(
+            "Could not find filtering count column in metadata filters. " "Expected either 'funnel' or 'rows'."
+        )
+
+    region_indices = tp_filtering.query('type == "region"').index
+    if len(region_indices) == 0:
+        raise ValueError("Could not find a 'region' filter step in metadata filters")
+
+    filt_denom = tp_filtering.loc[region_indices[-1], filtering_count_column]  # last region step
     filt_numer = tp_filtering.loc[
-        tp_filtering.index[-1], "funnel"
+        tp_filtering.index[-1], filtering_count_column
     ]  # final number of true positives (before downsampling)
     filt_ratio = filt_numer / filt_denom
 
