@@ -63,10 +63,11 @@ if (args$intervals_only) {
 } else if (!args$mean) {
   # Export all samples
   sample_names <- colnames(mcols(gr))
-  for (sample in sample_names) {
+  for (i in seq_along(sample_names)) {
+    sample <- sample_names[i]
     gr_sample <- gr
     mcols(gr_sample) <- NULL
-    mcols(gr_sample)$score <- mcols(gr)[[make.names(sample)]]
+    mcols(gr_sample)$score <- mcols(gr)[[i]]
     export.bed(gr_sample, paste0(sample, ".cov.bed"))
   }
 } else {
