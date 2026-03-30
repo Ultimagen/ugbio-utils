@@ -111,7 +111,7 @@ def _build_combined_dataframe(
     return combined
 
 
-def recalibrate_dnn_folds(  # noqa: PLR0913
+def recalibrate_dnn_folds(  # noqa: PLR0913, PLR0915
     fold_parquets: list[str],
     fold_metadata_paths: list[str],
     stats_file: str,
@@ -122,7 +122,7 @@ def recalibrate_dnn_folds(  # noqa: PLR0913
     *,
     use_kde: bool = False,
     kde_config_overrides: dict | None = None,
-    featuremap_parquet: str | None = None,
+    featuremap_parquets: list[str] | None = None,
 ) -> tuple[Path, Path]:
     """Main entry point: combine folds, build shared LUT, write outputs.
 
@@ -185,9 +185,11 @@ def recalibrate_dnn_folds(  # noqa: PLR0913
 
     combined = combined.with_columns(pl.Series("SNVQ", snvq))
 
-    # -- Enrich with VCF feature columns from training featuremap parquet --
-    if featuremap_parquet is not None:
-        fm_df = pl.read_parquet(featuremap_parquet)
+    # -- Enrich with VCF feature columns from training featuremap parquets --
+    if featuremap_parquets:
+        fm_frames = [pl.read_parquet(p) for p in featuremap_parquets]
+        fm_df = pl.concat(fm_frames, how="diagonal_relaxed")
+        logger.info("Loaded %d featuremap parquets: %d total rows", len(fm_frames), len(fm_df))
         # Drop columns that already exist in combined (except join keys)
         join_keys = ["CHROM", "POS", "RN"]
         existing_cols = set(combined.columns) - set(join_keys)
@@ -195,9 +197,9 @@ def recalibrate_dnn_folds(  # noqa: PLR0913
         fm_df = fm_df.select(fm_cols_to_add)
         combined = combined.join(fm_df, on=join_keys, how="left")
         logger.info(
-            "Enriched combined_featuremap_df with %d columns from %s",
+            "Enriched combined_featuremap_df with %d columns from %d parquets",
             len(fm_cols_to_add) - len(join_keys),
-            featuremap_parquet,
+            len(featuremap_parquets),
         )
 
     # -- Write combined parquet --
@@ -262,9 +264,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Use KDE-based smoothing (default: counting-based, matching XGBoost default)",
     )
     ap.add_argument(
-        "--featuremap-parquet",
+        "--featuremap-parquets",
+        nargs="+",
         default=None,
-        help="Training featuremap parquet with VCF feature columns. "
+        help="Training featuremap parquets (positive + negative) with VCF feature columns. "
         "When provided, enriches the combined output with all VCF features for MRD compatibility.",
     )
     return ap.parse_args(argv)
@@ -281,7 +284,7 @@ def run(argv: list[str]) -> None:
         output_dir=args.output_dir,
         basename=args.basename,
         use_kde=args.use_kde,
-        featuremap_parquet=args.featuremap_parquet,
+        featuremap_parquets=args.featuremap_parquets,
     )
     logger.info("Done. Combined parquet: %s, LUT metadata: %s", parquet_path, meta_path)
 
