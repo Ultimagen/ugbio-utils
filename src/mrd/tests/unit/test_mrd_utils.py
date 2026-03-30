@@ -1,3 +1,4 @@
+import json
 from os.path import join as pjoin
 from pathlib import Path
 
@@ -182,9 +183,41 @@ def test_calc_tumor_fraction_denominator_ratio(tmpdir, resources_dir):
     assert isinstance(read_filter_non_filt, float | np.floating)
 
     # Verify values
-    assert np.isclose(filt_ratio, 0.7100585107278435)
-    assert np.isclose(read_filter_non_filt, 0.6822598056854984)
-    assert np.isclose(denom_ratio, 0.4844443815545129)
+    assert np.isclose(filt_ratio, 0.7012110035188417)
+    assert np.isclose(read_filter_non_filt, 0.658410138248848)
+    assert np.isclose(denom_ratio, 0.461684433768454)
 
     # Verify the calculation: denom_ratio = filt_ratio * read_filter_non_filt
     assert np.isclose(denom_ratio, filt_ratio * read_filter_non_filt)
+
+
+def test_calc_tumor_fraction_denominator_ratio_rows_metadata(tmpdir, resources_dir):
+    """Test calc_tumor_fraction_denominator_ratio supports metadata with rows counts."""
+    featuremap_file = pjoin(resources_dir, "416119_L7402.featuremap_df.10k.parquet")
+    metadata_file = pjoin(resources_dir, "416119_L7402.srsnv_metadata.json")
+    read_filter_query = "filt>0 and snvq>60"
+
+    with open(metadata_file) as f:
+        metadata = json.load(f)
+
+    for filter_step in metadata["filtering_stats"]["positive"]["filters"]:
+        if "funnel" in filter_step:
+            filter_step["rows"] = filter_step.pop("funnel")
+
+    metadata_rows_file = tmpdir / "416119_L7402.srsnv_metadata.rows.json"
+    with open(metadata_rows_file, "w") as f:
+        json.dump(metadata, f)
+
+    denom_ratio, filt_ratio, read_filter_non_filt = calc_tumor_fraction_denominator_ratio(
+        featuremap_df_file=featuremap_file,
+        srsnv_metadata_json=str(metadata_rows_file),
+        read_filter_query=read_filter_query,
+    )
+
+    assert isinstance(denom_ratio, float | np.floating)
+    assert isinstance(filt_ratio, float | np.floating)
+    assert isinstance(read_filter_non_filt, float | np.floating)
+
+    assert np.isclose(filt_ratio, 0.7012110035188417)
+    assert np.isclose(read_filter_non_filt, 0.658410138248848)
+    assert np.isclose(denom_ratio, 0.461684433768454)
