@@ -223,6 +223,10 @@ def recalibrate_dnn_folds(  # noqa: PLR0913, PLR0915
     # -- Write standalone combined metadata --
     combined_meta = {
         "quality_recalibration_table": shared_lut,
+        "filtering_stats": {
+            "negative": neg_stats,
+            "positive": pos_stats,
+        },
         "k_folds": k_folds,
         "lut_method": "kde" if use_kde else "counting",
         "lut_points": len(x_lut),
