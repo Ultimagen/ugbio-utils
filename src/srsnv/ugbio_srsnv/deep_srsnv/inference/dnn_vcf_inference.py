@@ -62,7 +62,12 @@ ML_QUAL = "ML_QUAL"
 
 
 class DNNQualAnnotator(VcfAnnotator):
-    """VCF annotator that stamps pre-computed DNN predictions as ML_QUAL / SNVQ."""
+    """VCF annotator that stamps pre-computed DNN predictions as per-read FORMAT/MQUAL and FORMAT/SNVQ.
+
+    Matches the behaviour of the snvqual C tool used in the XGBoost pipeline:
+    each read gets its own MQUAL (Phred-scaled raw quality) and SNVQ (recalibrated),
+    and the variant-level QUAL is set to the max per-read SNVQ.
+    """
 
     def __init__(  # noqa: PLR0913
         self,
@@ -79,49 +84,76 @@ class DNNQualAnnotator(VcfAnnotator):
         self.rn_info_key = rn_info_key
 
     def edit_vcf_header(self, header: pysam.VariantHeader) -> pysam.VariantHeader:
-        header.info.add(ML_QUAL, "1", "Float", "DNN ML quality score (Phred-scaled)")
-        header.info.add("SNVQ", "1", "Float", "Recalibrated SNV quality score")
-        header.filters.add("LowQual", None, None, "ML_QUAL below quality threshold")
+        # FORMAT/MQUAL and FORMAT/SNVQ are already defined in the VCF from snvfind.
+        # Only add the LowQual filter definition.
+        header.filters.add("LowQual", None, None, "SNVQ below quality threshold")
         return header
 
     def process_records(self, records: list[pysam.VariantRecord]) -> list[pysam.VariantRecord]:
         for rec in records:
-            rn = self._extract_rn(rec)
-            if rn is None:
-                continue
-            key = (rec.chrom, rec.pos, rn)
-            prob = self.predictions.get(key)
-            if prob is None:
+            rns = self._extract_rns(rec)
+            if not rns:
                 continue
 
-            ml_qual = float(prob_to_phred(np.array([prob]), max_value=MAX_PHRED)[0])
-            rec.info[ML_QUAL] = ml_qual
-
-            if self.quality_fn is not None:
-                snvq = float(np.around(self.quality_fn(ml_qual), decimals=2))
-                rec.qual = snvq
-                rec.info["SNVQ"] = snvq
-                if snvq >= self.threshold:
-                    rec.filter.add("PASS")
+            # Compute per-read MQUAL and SNVQ
+            mquals: list[float] = []
+            snvqs: list[float] = []
+            for rn in rns:
+                key = (rec.chrom, rec.pos, rn)
+                prob = self.predictions.get(key)
+                if prob is not None and prob > 0:
+                    mq = float(prob_to_phred(np.array([prob]), max_value=MAX_PHRED)[0])
                 else:
-                    rec.filter.add("LowQual")
+                    mq = 0.0
+                mquals.append(round(mq, 2))
+
+                if self.quality_fn is not None:
+                    sq = float(np.around(self.quality_fn(mq), decimals=2))
+                else:
+                    sq = mq
+                snvqs.append(round(sq, 2))
+
+            if not mquals:
+                continue
+
+            # Write per-read FORMAT fields (matching snvqual C tool)
+            rec.samples[0]["MQUAL"] = tuple(mquals)
+            rec.samples[0]["SNVQ"] = tuple(snvqs)
+
+            # Variant-level QUAL = max per-read SNVQ (matching snvqual)
+            max_snvq = max(snvqs)
+            rec.qual = max_snvq
+
+            if max_snvq >= self.threshold:
+                rec.filter.add("PASS")
+            else:
+                rec.filter.add("LowQual")
         return records
 
-    def _extract_rn(self, rec: pysam.VariantRecord) -> str | None:
-        """Get read name from FORMAT/RN or INFO field."""
+    def _extract_rns(self, rec: pysam.VariantRecord) -> list[str]:
+        """Get all read names from FORMAT/RN or INFO field.
+
+        pysam returns tuples for multi-value FORMAT fields, so we must
+        iterate the tuple elements rather than stringify the whole tuple.
+        """
         try:
             if rec.samples and self.rn_format_key:
                 val = rec.samples[0].get(self.rn_format_key)
                 if val is not None:
-                    return str(val)
+                    if isinstance(val, tuple):
+                        return [str(v) for v in val]
+                    return [str(val)]
         except (KeyError, IndexError):
             pass
         if self.rn_info_key:
             try:
-                return str(rec.info[self.rn_info_key])
+                val = rec.info[self.rn_info_key]
+                if isinstance(val, tuple):
+                    return [str(v) for v in val]
+                return [str(val)]
             except KeyError:
                 pass
-        return None
+        return []
 
 
 # ---------------------------------------------------------------------------
