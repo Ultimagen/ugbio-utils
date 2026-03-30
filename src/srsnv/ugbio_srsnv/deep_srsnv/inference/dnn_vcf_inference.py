@@ -80,6 +80,7 @@ class DNNQualAnnotator(VcfAnnotator):
 
     def edit_vcf_header(self, header: pysam.VariantHeader) -> pysam.VariantHeader:
         header.info.add(ML_QUAL, "1", "Float", "DNN ML quality score (Phred-scaled)")
+        header.info.add("SNVQ", "1", "Float", "Recalibrated SNV quality score")
         header.filters.add("LowQual", None, None, "ML_QUAL below quality threshold")
         return header
 
@@ -99,6 +100,7 @@ class DNNQualAnnotator(VcfAnnotator):
             if self.quality_fn is not None:
                 snvq = float(np.around(self.quality_fn(ml_qual), decimals=2))
                 rec.qual = snvq
+                rec.info["SNVQ"] = snvq
                 if snvq >= self.threshold:
                     rec.filter.add("PASS")
                 else:
