@@ -122,6 +122,7 @@ def recalibrate_dnn_folds(  # noqa: PLR0913
     *,
     use_kde: bool = False,
     kde_config_overrides: dict | None = None,
+    featuremap_parquet: str | None = None,
 ) -> tuple[Path, Path]:
     """Main entry point: combine folds, build shared LUT, write outputs.
 
@@ -184,6 +185,21 @@ def recalibrate_dnn_folds(  # noqa: PLR0913
 
     combined = combined.with_columns(pl.Series("SNVQ", snvq))
 
+    # -- Enrich with VCF feature columns from training featuremap parquet --
+    if featuremap_parquet is not None:
+        fm_df = pl.read_parquet(featuremap_parquet)
+        # Drop columns that already exist in combined (except join keys)
+        join_keys = ["CHROM", "POS", "RN"]
+        existing_cols = set(combined.columns) - set(join_keys)
+        fm_cols_to_add = [c for c in fm_df.columns if c not in existing_cols]
+        fm_df = fm_df.select(fm_cols_to_add)
+        combined = combined.join(fm_df, on=join_keys, how="left")
+        logger.info(
+            "Enriched combined_featuremap_df with %d columns from %s",
+            len(fm_cols_to_add) - len(join_keys),
+            featuremap_parquet,
+        )
+
     # -- Write combined parquet --
     parquet_path = out / f"{suffix}featuremap_df.parquet"
     combined.write_parquet(parquet_path)
@@ -245,6 +261,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="Use KDE-based smoothing (default: counting-based, matching XGBoost default)",
     )
+    ap.add_argument(
+        "--featuremap-parquet",
+        default=None,
+        help="Training featuremap parquet with VCF feature columns. "
+        "When provided, enriches the combined output with all VCF features for MRD compatibility.",
+    )
     return ap.parse_args(argv)
 
 
@@ -259,6 +281,7 @@ def run(argv: list[str]) -> None:
         output_dir=args.output_dir,
         basename=args.basename,
         use_kde=args.use_kde,
+        featuremap_parquet=args.featuremap_parquet,
     )
     logger.info("Done. Combined parquet: %s, LUT metadata: %s", parquet_path, meta_path)
 

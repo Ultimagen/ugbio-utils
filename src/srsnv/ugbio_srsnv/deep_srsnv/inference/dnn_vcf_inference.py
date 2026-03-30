@@ -1147,17 +1147,6 @@ def _parse_merge_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--output", required=True, help="Output annotated VCF path")
     ap.add_argument("--low-qual-threshold", type=float, default=40.0, help="SNVQ threshold for PASS filter")
     ap.add_argument("--process-number", type=int, default=-2, help="Parallel processes for VCF annotation")
-    ap.add_argument(
-        "--featuremap-parquet",
-        default=None,
-        help="Featuremap parquet from DNNVcfToParquet (all VCF feature columns). "
-        "When provided, produces a DNN featuremap_df.parquet with all VCF features + DNN quality scores.",
-    )
-    ap.add_argument(
-        "--output-parquet",
-        default=None,
-        help="Output path for DNN featuremap_df.parquet (requires --featuremap-parquet)",
-    )
     return ap.parse_args(argv)
 
 
@@ -1231,64 +1220,6 @@ def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
 
     elapsed = time.perf_counter() - t0
     logger.info("Merge + annotate complete: %d predictions -> %s in %.1fs", len(predictions), args.output, elapsed)
-
-    # -- Optionally produce DNN featuremap_df.parquet --
-    if args.featuremap_parquet and args.output_parquet:
-        _build_dnn_featuremap_df(predictions, quality_fn, args.featuremap_parquet, args.output_parquet)
-
-
-def _build_dnn_featuremap_df(
-    predictions: dict[tuple[str, int, str], float],
-    quality_fn,
-    featuremap_parquet_path: str,
-    output_parquet_path: str,
-) -> None:
-    """Build a full DNN featuremap_df by joining DNN scores onto the featuremap parquet.
-
-    Takes the featuremap parquet (all VCF feature columns from DNNVcfToParquet)
-    and adds DNN-derived prob_orig, MQUAL, and SNVQ columns.
-    """
-    import polars as pl  # noqa: PLC0415
-
-    logger.info("Building DNN featuremap_df from %s", featuremap_parquet_path)
-    base = pl.read_parquet(featuremap_parquet_path)
-    logger.info("  Featuremap parquet: %d rows, %d columns", len(base), len(base.columns))
-
-    # Build predictions DataFrame
-    chroms, poss, rns, probs = [], [], [], []
-    for (c, p, r), prob in predictions.items():
-        chroms.append(c)
-        poss.append(p)
-        rns.append(r)
-        probs.append(prob)
-
-    prob_arr = np.array(probs, dtype=np.float64)
-    mqual_arr = prob_to_phred(prob_arr, max_value=MAX_PHRED)
-    snvq_arr = quality_fn(mqual_arr) if quality_fn is not None else mqual_arr
-
-    pred_df = pl.DataFrame(
-        {
-            "CHROM": chroms,
-            "POS": poss,
-            "RN": rns,
-            "prob_orig": probs,
-            "MQUAL": mqual_arr.tolist(),
-            "SNVQ": np.around(snvq_arr, decimals=2).tolist(),
-        }
-    )
-
-    # Join predictions onto base featuremap
-    merged = base.join(pred_df, on=["CHROM", "POS", "RN"], how="inner")
-    logger.info("  Matched rows: %d / %d base, %d predictions", len(merged), len(base), len(pred_df))
-
-    drop_pct = (1 - len(merged) / len(base)) * 100
-    if drop_pct > 10:  # noqa: PLR2004
-        logger.warning("%.1f%% of featuremap rows dropped during join", drop_pct)
-
-    merged.write_parquet(output_parquet_path)
-    logger.info(
-        "DNN featuremap_df written: %s (%d rows, %d columns)", output_parquet_path, len(merged), len(merged.columns)
-    )
 
 
 def main_merge() -> None:
