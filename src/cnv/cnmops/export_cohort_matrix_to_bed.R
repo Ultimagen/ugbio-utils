@@ -51,7 +51,8 @@ if (args$intervals_only) {
   sample_names <- colnames(mcols(gr))
   gr_sample <- gr
   mcols(gr_sample) <- NULL
-  mcols(gr_sample)$score <- mcols(gr)[[make.names(args$sample_name)]]
+  loc = which(sample_names == args$sample_name)
+  mcols(gr_sample)$score <- mcols(gr)[[loc]]
   export.bed(gr_sample, paste0(args$sample_name, ".cov.bed"))
 } else if (!args$mean) {
   # Export all samples
