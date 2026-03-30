@@ -52,6 +52,12 @@ if (args$intervals_only) {
   gr_sample <- gr
   mcols(gr_sample) <- NULL
   loc = which(sample_names == args$sample_name)
+
+  if (length(loc) != 1) {
+    stop(sprintf("Expected exactly 1 match for sample '%s', got %d",
+                 args$sample_name, length(loc)))
+  }
+
   mcols(gr_sample)$score <- mcols(gr)[[loc]]
   export.bed(gr_sample, paste0(args$sample_name, ".cov.bed"))
 } else if (!args$mean) {
