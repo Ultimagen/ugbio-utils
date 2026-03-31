@@ -134,7 +134,7 @@ def _postprocess_collapsed_vcf(
         if "CNV_ID" not in vcf_in.header.info:
             vcf_in.header.info.add(*INFO_TAG_REGISTRY["CNV_ID"][:-1])
 
-        with pysam.VariantFile(output_vcf, "w", header=vcf_in.header) as vcf_out:
+        with pysam.VariantFile(output_vcf + ".tmp.vcf.gz", "w", header=vcf_in.header) as vcf_out:
             for record in vcf_in:
                 collapsed_count += 1
 
@@ -149,7 +149,8 @@ def _postprocess_collapsed_vcf(
                         del record.info[tag]
 
                 vcf_out.write(record)
-
+    VcfUtils().sort_vcf(output_vcf + ".tmp.vcf.gz", output_vcf)
+    os.unlink(output_vcf + ".tmp.vcf.gz")
     logger.info(
         f"Post-processing complete: {collapsed_count} total variants, " f"{updated_count} updated with CNV metadata"
     )
