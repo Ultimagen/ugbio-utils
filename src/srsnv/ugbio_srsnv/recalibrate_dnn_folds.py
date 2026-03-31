@@ -203,6 +203,8 @@ def recalibrate_dnn_folds(  # noqa: PLR0913, PLR0915
         )
 
     # -- Write combined parquet --
+    # Ensure label is boolean (MRD's calc_tumor_fraction_denominator_ratio uses .query('label'))
+    combined = combined.with_columns(pl.col("label").cast(pl.Boolean))
     parquet_path = out / f"{suffix}featuremap_df.parquet"
     combined.write_parquet(parquet_path)
     logger.info("Combined parquet: %s (%d rows)", parquet_path, len(combined))
