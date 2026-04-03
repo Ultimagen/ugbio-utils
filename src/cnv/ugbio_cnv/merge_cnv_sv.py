@@ -276,7 +276,9 @@ def merge_cnv_sv_vcfs(
     output_directory = os.path.dirname(os.path.abspath(output_vcf))
 
     logger.info(f"Starting CNV+SV merge: CNV={cnv_vcf}, SV={sv_vcf}")
-    max_len_msg = f" (large SVs >{max_sv_length}bp kept only if overlapping CNV)" if max_sv_length else ""
+    max_len_msg = (
+        f" (large SVs >{max_sv_length}bp kept only if at least {pctsize} overlapping CNV)" if max_sv_length else ""
+    )
     qual_msg = f", Min QUAL: {min_sv_qual}" if min_sv_qual > 0 else ""
     length_range = f">= {min_sv_length}bp"
 
@@ -295,7 +297,7 @@ def merge_cnv_sv_vcfs(
     temporary_files.extend([filtered_sv_vcf, filtered_sv_vcf + ".tbi"])
 
     logger.info(
-        f"Filtered SV VCF contains {_get_vcf_count(filtered_sv_vcf)} \
+        f"Filtered SV VCF contains {vcf_utils.get_vcf_count(filtered_sv_vcf)} \
             PASS DEL/DUP calls {length_range}{qual_msg}{max_len_msg}"
     )
 
@@ -319,7 +321,7 @@ def merge_cnv_sv_vcfs(
     vcf_utils.index_vcf(excluded_sv_vcf)
     temporary_files.extend([excluded_sv_vcf, excluded_sv_vcf + ".tbi"])
 
-    logger.info(f"Extracted {_get_vcf_count(excluded_sv_vcf)} excluded SVs")
+    logger.info(f"Extracted {vcf_utils.get_vcf_count(excluded_sv_vcf)} excluded SVs")
 
     # Stage 2: Combine CNV and SV VCFs with source annotations
     logger.info("Stage 2: Combining CNV and SV VCFs")
@@ -376,15 +378,9 @@ def merge_cnv_sv_vcfs(
     logger.info("Stage 5: Adding excluded SVs to final output")
     # Concatenate merged results with excluded SVs
     vcf_utils.concat_vcf([merged_vcf, excluded_sv_vcf], output_vcf)
-    logger.info(f"Final VCF contains {_get_vcf_count(output_vcf)} total variants")
+    logger.info(f"Final VCF contains {vcf_utils.get_vcf_count(output_vcf)} total variants")
 
     mu.cleanup_temp_files(temporary_files)
     logger.info(f"Successfully created merged CNV+SV VCF: {output_vcf}")
 
     return output_vcf
-
-
-def _get_vcf_count(vcf_path: str) -> int:
-    """Utility function to count variants in a VCF file."""
-    with pysam.VariantFile(vcf_path) as vcf_in:
-        return sum(1 for _ in vcf_in)

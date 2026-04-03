@@ -163,7 +163,7 @@ class TestCombineCnmopsCnvpytorCnvCalls:
             # Verify we have both CNV and SV sources
             all_sources = set()
             for s in sources:
-                if isinstance(s, tuple | list):
+                if isinstance(s, (tuple | list)):
                     all_sources.update(s)
                 else:
                     all_sources.add(s)

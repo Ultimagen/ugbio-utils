@@ -20,6 +20,60 @@ def resources_dir():
 
 
 class TestVcfUtils:
+    @staticmethod
+    def _write_test_count_vcf(vcf_path: Path) -> None:
+        """Create a small VCF with PASS and non-PASS records for counting tests."""
+        header = pysam.VariantHeader()
+        header.add_line("##fileformat=VCFv4.2")
+        header.add_line("##contig=<ID=chr1,length=248956422>")
+        header.add_line('##FILTER=<ID=PASS,Description="All filters passed">')
+        header.add_line('##FILTER=<ID=LowQual,Description="Low quality">')
+
+        with pysam.VariantFile(str(vcf_path), "w", header=header) as vcf_out:
+            pass_record = vcf_out.new_record(contig="chr1", start=1000, stop=1001, alleles=("A", "T"))
+            pass_record.filter.add("PASS")
+            vcf_out.write(pass_record)
+
+            lowqual_record = vcf_out.new_record(contig="chr1", start=2000, stop=2001, alleles=("G", "C"))
+            lowqual_record.filter.add("LowQual")
+            vcf_out.write(lowqual_record)
+
+            pass_record_2 = vcf_out.new_record(contig="chr1", start=3000, stop=3001, alleles=("T", "G"))
+            pass_record_2.filter.add("PASS")
+            vcf_out.write(pass_record_2)
+
+    def test_get_vcf_count_all_records(self, tmp_path):
+        """Count all variants when pass_only=False."""
+        vcf_path = tmp_path / "count_test.vcf"
+        self._write_test_count_vcf(vcf_path)
+
+        vcf_utils = VcfUtils()
+        assert vcf_utils.get_vcf_count(str(vcf_path)) == 3
+
+    def test_get_vcf_count_pass_only(self, tmp_path):
+        """Count only PASS variants when pass_only=True."""
+        vcf_path = tmp_path / "count_test.vcf"
+        self._write_test_count_vcf(vcf_path)
+
+        vcf_utils = VcfUtils()
+        assert vcf_utils.get_vcf_count(str(vcf_path), pass_only=True) == 2
+
+    def test_get_vcf_count_pass_only_no_pass_variants(self, tmp_path):
+        """Return zero for pass_only=True when no variants pass."""
+        vcf_path = tmp_path / "count_test_no_pass.vcf"
+        header = pysam.VariantHeader()
+        header.add_line("##fileformat=VCFv4.2")
+        header.add_line("##contig=<ID=chr1,length=248956422>")
+        header.add_line('##FILTER=<ID=LowQual,Description="Low quality">')
+
+        with pysam.VariantFile(str(vcf_path), "w", header=header) as vcf_out:
+            lowqual_record = vcf_out.new_record(contig="chr1", start=1000, stop=1001, alleles=("A", "T"))
+            lowqual_record.filter.add("LowQual")
+            vcf_out.write(lowqual_record)
+
+        vcf_utils = VcfUtils()
+        assert vcf_utils.get_vcf_count(str(vcf_path), pass_only=True) == 0
+
     @patch("ugbio_core.vcf_utils.VcfUtils._VcfUtils__execute")
     def test_filter_vcf_with_include_expression(self, mock_execute, tmp_path):
         """Test filter_vcf with include expression"""
