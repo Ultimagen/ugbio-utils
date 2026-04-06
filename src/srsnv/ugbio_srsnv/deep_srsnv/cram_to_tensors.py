@@ -12,6 +12,7 @@ Two entry points:
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import resource
@@ -20,7 +21,7 @@ import subprocess
 import tempfile
 import time
 from collections.abc import Iterator
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -650,26 +651,34 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
                     time.perf_counter() - t_process,
                 )
     else:
+        max_pending = effective_workers * 2
+        shard_iter = iter(shard_args_list)
         with ProcessPoolExecutor(max_workers=effective_workers, initializer=_worker_init) as pool:
-            futures = {pool.submit(_process_shard_from_parquet, **sa): sa["shard_id"] for sa in shard_args_list}
-            for fut in as_completed(futures):
-                _sid, chunk, stats = fut.result()
-                _numpy_chunk_to_torch(chunk)
-                torch.save(chunk, out_path / f"shard_{_sid:05d}.pt")
-                shard_stats.append(stats)
-                completed += 1
-                total_output += stats["output_rows"]
-                total_missing += stats["missing_rows"]
-                peak_rss = max(peak_rss, _resource_rss_gb())
-                if completed == 1 or completed % 10 == 0 or completed == total_shards:
-                    logger.info(
-                        "Progress: %d/%d shards, output=%d missing=%d elapsed=%.1fs",
-                        completed,
-                        total_shards,
-                        total_output,
-                        total_missing,
-                        time.perf_counter() - t_process,
-                    )
+            pending = {
+                pool.submit(_process_shard_from_parquet, **sa) for sa in itertools.islice(shard_iter, max_pending)
+            }
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for fut in done:
+                    _sid, chunk, stats = fut.result()
+                    _numpy_chunk_to_torch(chunk)
+                    torch.save(chunk, out_path / f"shard_{_sid:05d}.pt")
+                    shard_stats.append(stats)
+                    completed += 1
+                    total_output += stats["output_rows"]
+                    total_missing += stats["missing_rows"]
+                    peak_rss = max(peak_rss, _resource_rss_gb())
+                    if completed == 1 or completed % 10 == 0 or completed == total_shards:
+                        logger.info(
+                            "Progress: %d/%d shards, output=%d missing=%d elapsed=%.1fs",
+                            completed,
+                            total_shards,
+                            total_output,
+                            total_missing,
+                            time.perf_counter() - t_process,
+                        )
+                for sa in itertools.islice(shard_iter, len(done)):
+                    pending.add(pool.submit(_process_shard_from_parquet, **sa))
 
     # Cleanup temp sharded parquet
     sharded_parquet.unlink(missing_ok=True)
