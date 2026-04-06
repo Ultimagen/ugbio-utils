@@ -563,46 +563,42 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    # Phase 1: read and sort parquet rows
+    # Phase 1: read parquet, filter by chromosomes, sort, and write sharded parquet
+    # Workers will read individual row groups from the sharded file — no full dataset in memory.
     t_parquet = time.perf_counter()
     import pyarrow.compute as pc  # noqa: PLC0415
 
     pf = pq.ParquetFile(parquet_path)
     available_cols = [c for c in _PARQUET_COLUMNS if c in (pf.schema.names or [])]
 
-    # Push chromosome filter into the parquet read to avoid loading all rows into memory
+    table = pf.read(columns=available_cols)
     if chromosomes is not None and CHROM in available_cols:
         chrom_set = set(chromosomes)
-        table = pf.read(columns=available_cols)
-        chrom_col = table.column(CHROM)
-        mask = pc.is_in(chrom_col, value_set=pa.array(list(chrom_set)))
+        mask = pc.is_in(table.column(CHROM), value_set=pa.array(list(chrom_set)))
         table = table.filter(mask)
         logger.info("Filtered parquet to chromosomes %s: %d rows", ", ".join(sorted(chrom_set)), len(table))
-    else:
-        table = pf.read(columns=available_cols)
 
-    col_dict = table.to_pydict()
-    n_rows = len(col_dict[available_cols[0]])
-    rows = [{k: col_dict[k][i] for k in col_dict} for i in range(n_rows)]
-    del table, col_dict  # Free memory immediately
-    rows.sort(key=lambda r: (str(r.get(CHROM, "")), int(r.get(POS, 0))))
+    sort_indices = pc.sort_indices(table, sort_keys=[(CHROM, "ascending"), (POS, "ascending")])
+    table = table.take(sort_indices)
+    n_rows = len(table)
+
+    sharded_parquet = out_path / "_sharded_input.parquet"
+    with pq.ParquetWriter(str(sharded_parquet), table.schema) as pw:
+        for i in range(0, n_rows, shard_size):
+            pw.write_table(table.slice(i, min(shard_size, n_rows - i)))
+    del table, sort_indices  # Free pyarrow memory
+
+    total_shards = pq.ParquetFile(str(sharded_parquet)).metadata.num_row_groups
     parquet_read_seconds = round(time.perf_counter() - t_parquet, 4)
-    logger.info("Read %d rows from parquet in %.1fs", n_rows, parquet_read_seconds)
+    logger.info(
+        "Prepared %d shards (%d rows) in %.1fs -> %s", total_shards, n_rows, parquet_read_seconds, sharded_parquet
+    )
 
     max_edist = _compute_max_edist(parquet_path) if label else None
     if max_edist is not None:
         logger.info("Positive EDIST filter: will drop rows with EDIST == %s", max_edist)
 
-    # Phase 2: shard and process
-    shard_inputs = [(sid, rows[i : i + shard_size]) for sid, i in enumerate(range(0, len(rows), shard_size))]
-    total_shards = len(shard_inputs)
-    logger.info(
-        "Processing %d shards (%d rows each, %d workers)",
-        total_shards,
-        shard_size,
-        num_workers,
-    )
-
+    # Phase 2: process shards — workers read row groups from disk (low memory)
     shard_stats: list[dict] = []
     completed = 0
     total_output = 0
@@ -622,21 +618,23 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
         "fetch_mode": fetch_mode,
     }
 
-    if effective_workers == 1:
-        if fetch_mode == "pysam":
-            cram = pysam.AlignmentFile(cram_path, "rc", reference_filename=reference_path)
-            global _WORKER_CRAM  # noqa: PLW0603
-            _WORKER_CRAM = cram
+    shard_args_list = [
+        {
+            "shard_id": rg,
+            "parquet_path": str(sharded_parquet),
+            "row_group_id": rg,
+            "columns": available_cols,
+            **shard_kwargs,
+        }
+        for rg in range(total_shards)
+    ]
+    logger.info("Processing %d shards (%d rows each, %d workers)", total_shards, shard_size, effective_workers)
 
-        for sid, shard_rows in shard_inputs:
-            _sid, chunk, stats = _process_shard(
-                shard_id=sid,
-                rows=shard_rows,
-                **shard_kwargs,
-            )
+    if effective_workers == 1:
+        for shard_args in shard_args_list:
+            _sid, chunk, stats = _process_shard_from_parquet(**shard_args)
             _numpy_chunk_to_torch(chunk)
-            shard_file = out_path / f"shard_{sid:05d}.pt"
-            torch.save(chunk, shard_file)
+            torch.save(chunk, out_path / f"shard_{_sid:05d}.pt")
             shard_stats.append(stats)
             completed += 1
             total_output += stats["output_rows"]
@@ -651,33 +649,13 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
                     total_missing,
                     time.perf_counter() - t_process,
                 )
-
-        if fetch_mode == "pysam":
-            _WORKER_CRAM = None
-            cram.close()
     else:
-        pool_init = _init_cram_worker if fetch_mode == "pysam" else None
-        pool_initargs = (cram_path, reference_path) if fetch_mode == "pysam" else ()
-
-        with ProcessPoolExecutor(
-            max_workers=effective_workers,
-            initializer=pool_init,
-            initargs=pool_initargs,
-        ) as pool:
-            futures = {
-                pool.submit(
-                    _process_shard,
-                    shard_id=sid,
-                    rows=shard_rows,
-                    **shard_kwargs,
-                ): sid
-                for sid, shard_rows in shard_inputs
-            }
+        with ProcessPoolExecutor(max_workers=effective_workers, initializer=_worker_init) as pool:
+            futures = {pool.submit(_process_shard_from_parquet, **sa): sa["shard_id"] for sa in shard_args_list}
             for fut in as_completed(futures):
                 _sid, chunk, stats = fut.result()
                 _numpy_chunk_to_torch(chunk)
-                shard_file = out_path / f"shard_{_sid:05d}.pt"
-                torch.save(chunk, shard_file)
+                torch.save(chunk, out_path / f"shard_{_sid:05d}.pt")
                 shard_stats.append(stats)
                 completed += 1
                 total_output += stats["output_rows"]
@@ -692,6 +670,9 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
                         total_missing,
                         time.perf_counter() - t_process,
                     )
+
+    # Cleanup temp sharded parquet
+    sharded_parquet.unlink(missing_ok=True)
 
     process_seconds = round(time.perf_counter() - t_process, 4)
     shard_stats.sort(key=lambda s: s["shard_id"])
