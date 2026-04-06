@@ -1306,64 +1306,29 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
     collected = 0
     predictions: dict[tuple[str, int, str], float] = {}
 
-    try:
-        # Stage 1: loader threads feed raw_queue
+    # Dedicated loader thread — feeds raw_queue without polling
+    def _loader_thread():
         with ThreadPoolExecutor(max_workers=num_loader_threads) as loader_pool:
             max_pending = raw_queue.maxsize
             shard_iter = iter(shard_files)
             pending_loads = {
                 loader_pool.submit(_load_tensor_shard, str(p)) for p in itertools.islice(shard_iter, max_pending)
             }
+            while pending_loads:
+                done_loads, pending_loads = wait(pending_loads, return_when=FIRST_COMPLETED)
+                for fut in done_loads:
+                    raw_queue.put(fut.result())  # blocks if raw_queue full — natural backpressure
+                for p in itertools.islice(shard_iter, len(done_loads)):
+                    pending_loads.add(loader_pool.submit(_load_tensor_shard, str(p)))
+        raw_queue.put(None)  # signal CPU prep thread to finish
 
-            while collected < total_shards:
-                # Feed loaded shards to CPU prep thread
-                if pending_loads:
-                    done_loads, pending_loads = wait(pending_loads, timeout=0.01, return_when=FIRST_COMPLETED)
-                    for fut in done_loads:
-                        raw_queue.put(fut.result())
-                    for p in itertools.islice(shard_iter, len(done_loads)):
-                        pending_loads.add(loader_pool.submit(_load_tensor_shard, str(p)))
+    loader_t = Thread(target=_loader_thread, daemon=True)
+    loader_t.start()
 
-                # Collect GPU results (non-blocking)
-                while not result_queue.empty():
-                    item = result_queue.get()
-                    if item is None:
-                        break
-                    chroms, positions, rns, probs = item
-                    n = len(probs)
-                    if streaming:
-                        table = pa.table(
-                            {
-                                "chrom": chroms[:n].tolist() if hasattr(chroms, "tolist") else list(chroms[:n]),
-                                "pos": positions[:n].tolist() if hasattr(positions, "tolist") else list(positions[:n]),
-                                "rn": rns[:n].tolist() if hasattr(rns, "tolist") else list(rns[:n]),
-                                "prob": probs.tolist(),
-                            }
-                        )
-                        writer.write_table(table)
-                    else:
-                        for j in range(n):
-                            predictions[(str(chroms[j]), int(positions[j]), str(rns[j]))] = float(probs[j])
-                    total_preds += n
-                    collected += 1
-                    if collected == 1 or collected % 10 == 0 or collected == total_shards:
-                        logger.info(
-                            "Cache inference progress: %d/%d shards (%.1fs)",
-                            collected,
-                            total_shards,
-                            time.perf_counter() - t_start,
-                        )
-
-            # Signal CPU prep thread to finish
-            raw_queue.put(None)
-
-        # Wait for pipeline to drain
-        prep_thread.join()
-        gpu_thread.join()
-
-        # Collect any remaining results
-        while not result_queue.empty():
-            item = result_queue.get()
+    try:
+        # Main thread: collect results from GPU (blocking get — no polling)
+        while collected < total_shards:
+            item = result_queue.get()  # blocks until GPU produces a result
             if item is None:
                 break
             chroms, positions, rns, probs = item
@@ -1383,6 +1348,18 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
                     predictions[(str(chroms[j]), int(positions[j]), str(rns[j]))] = float(probs[j])
             total_preds += n
             collected += 1
+            if collected == 1 or collected % 10 == 0 or collected == total_shards:
+                logger.info(
+                    "Cache inference progress: %d/%d shards (%.1fs)",
+                    collected,
+                    total_shards,
+                    time.perf_counter() - t_start,
+                )
+
+        # Wait for all threads to finish
+        loader_t.join()
+        prep_thread.join()
+        gpu_thread.join()
     finally:
         if writer is not None:
             writer.close()
