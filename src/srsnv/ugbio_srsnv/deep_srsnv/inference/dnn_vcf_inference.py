@@ -1185,11 +1185,12 @@ def _load_tensor_shard(shard_path: str) -> dict:
     return result
 
 
-def _run_fold_inference_from_cache(
+def _run_fold_inference_from_cache(  # noqa: PLR0915, C901
     cache_dir: str,
     engines: list,
     batch_size: int = 512,
     output_path: str | None = None,
+    num_loader_threads: int = 4,
 ) -> dict[tuple[str, int, str], float] | int:
     """Run GPU inference from pre-computed tensor cache shards.
 
@@ -1197,8 +1198,13 @@ def _run_fold_inference_from_cache(
     GPU engines.  No CRAM access or tensorization needed — all heavy
     CPU work was done during the tensor cache creation step.
 
+    Uses a thread pool to prefetch shards from disk while GPUs process
+    current ones, overlapping I/O with computation.
+
     Returns predictions dict or count (if *output_path* streaming).
     """
+    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
     import pyarrow as pa  # noqa: PLC0415
     import pyarrow.parquet as pq_mod  # noqa: PLC0415
 
@@ -1208,7 +1214,7 @@ def _run_fold_inference_from_cache(
         raise FileNotFoundError(f"No shard_*.pt files found in {cache_dir}")
 
     total_shards = len(shard_files)
-    logger.info("Loading %d tensor shards from %s", total_shards, cache_dir)
+    logger.info("Loading %d tensor shards from %s (%d loader threads)", total_shards, cache_dir, num_loader_threads)
 
     prefetch = len(engines) * 2
     q: Queue = Queue(maxsize=prefetch)
@@ -1236,19 +1242,31 @@ def _run_fold_inference_from_cache(
         t.start()
         gpu_threads.append(t)
 
-    # Producer: load shards from disk and push to queue
+    # Producer: prefetch shards from disk with thread pool, push to GPU queue
     t_start = time.perf_counter()
+    completed = 0
     try:
-        for completed, shard_path in enumerate(shard_files, 1):
-            chunk = _load_tensor_shard(str(shard_path))
-            q.put(chunk)
-            if completed == 1 or completed % 10 == 0 or completed == total_shards:
-                logger.info(
-                    "Cache inference progress: %d/%d shards (%.1fs)",
-                    completed,
-                    total_shards,
-                    time.perf_counter() - t_start,
-                )
+        with ThreadPoolExecutor(max_workers=num_loader_threads) as loader_pool:
+            max_pending = prefetch + num_loader_threads
+            shard_iter = iter(shard_files)
+            pending = {
+                loader_pool.submit(_load_tensor_shard, str(p)) for p in itertools.islice(shard_iter, max_pending)
+            }
+            while pending:
+                done_futures, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for fut in done_futures:
+                    chunk = fut.result()
+                    q.put(chunk)
+                    completed += 1
+                    if completed == 1 or completed % 10 == 0 or completed == total_shards:
+                        logger.info(
+                            "Cache inference progress: %d/%d shards (%.1fs)",
+                            completed,
+                            total_shards,
+                            time.perf_counter() - t_start,
+                        )
+                for p in itertools.islice(shard_iter, len(done_futures)):
+                    pending.add(loader_pool.submit(_load_tensor_shard, str(p)))
     finally:
         done_event.set()
         for t in gpu_threads:
