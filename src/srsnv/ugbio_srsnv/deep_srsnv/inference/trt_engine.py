@@ -203,6 +203,43 @@ class TRTEngine:
 
         return _sigmoid(logits)
 
+    def predict_batch_prepared(self, batch: dict) -> np.ndarray:
+        """Run inference on a pre-prepared batch (x_num already composed, dtypes already converted).
+
+        Skips ``_compose_x_num`` and dtype conversions — the caller is responsible
+        for providing arrays in the correct dtype (int64 for indices, float32 for x_num/mask).
+        """
+        cuda = self._cuda
+        actual_batch = batch["x_num"].shape[0]
+        self._ensure_buffers(actual_batch)
+
+        stream = self._streams[self._active_stream]
+
+        for name in self._input_names:
+            if name not in batch:
+                continue
+            arr = batch[name]
+            host_buf = self._host_inputs[name]
+            host_buf[:actual_batch] = arr[:actual_batch]
+
+            shape = (actual_batch,) + arr.shape[1:]
+            self._context.set_input_shape(name, shape)
+            cuda.memcpy_htod_async(self._device_inputs[name], host_buf[:actual_batch], stream)
+            self._context.set_tensor_address(name, int(self._device_inputs[name]))
+
+        for out_name in self._output_names:
+            self._context.set_tensor_address(out_name, int(self._device_output))
+
+        self._context.execute_async_v3(stream_handle=stream.handle)
+
+        cuda.memcpy_dtoh_async(self._host_output[:actual_batch], self._device_output, stream)
+        stream.synchronize()
+
+        logits = self._host_output[:actual_batch].copy()
+        self._active_stream = 1 - self._active_stream
+
+        return _sigmoid(logits)
+
     def push_context(self) -> None:
         """Push CUDA context onto the current thread's stack (for multi-threaded use)."""
         self._cuda_ctx.push()

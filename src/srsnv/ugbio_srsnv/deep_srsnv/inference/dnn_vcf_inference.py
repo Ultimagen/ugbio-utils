@@ -1185,7 +1185,7 @@ def _load_tensor_shard(shard_path: str) -> dict:
     return result
 
 
-def _run_fold_inference_from_cache(  # noqa: PLR0915, C901
+def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
     cache_dir: str,
     engines: list,
     batch_size: int = 512,
@@ -1216,76 +1216,180 @@ def _run_fold_inference_from_cache(  # noqa: PLR0915, C901
     total_shards = len(shard_files)
     logger.info("Loading %d tensor shards from %s (%d loader threads)", total_shards, cache_dir, num_loader_threads)
 
-    prefetch = len(engines) * 2
-    q: Queue = Queue(maxsize=prefetch)
-    done_event = Event()
+    # 3-stage pipeline:
+    #   Stage 1 (loader threads): torch.load → raw_queue
+    #   Stage 2 (CPU prep thread): _compose_x_num + dtype conversions → gpu_queue
+    #   Stage 3 (GPU thread): H2D + kernel + D2H only → result_queue
+    #   Main thread: collect results, build dict/parquet
 
+    from ugbio_srsnv.deep_srsnv.inference.trt_engine import _compose_x_num, _to_numpy, _to_numpy_long  # noqa: PLC0415
+
+    raw_queue: Queue = Queue(maxsize=num_loader_threads * 2)
+    gpu_queue: Queue = Queue(maxsize=len(engines) * 2)
+    result_queue: Queue = Queue()
+
+    engine = engines[0]
+
+    def _cpu_prep_worker():
+        """Stage 2: prepare GPU-ready arrays from raw tensor chunks."""
+        while True:
+            chunk = raw_queue.get()
+            if chunk is None:
+                break
+            x_num = _compose_x_num(chunk)
+            prepared = {
+                "read_base_idx": _to_numpy_long(chunk["read_base_idx"]),
+                "ref_base_idx": _to_numpy_long(chunk["ref_base_idx"]),
+                "t0_idx": _to_numpy_long(chunk["t0_idx"]),
+                "x_num": x_num,
+                "mask": _to_numpy(chunk["mask"]),
+            }
+            if "tm_idx" in chunk:
+                prepared["tm_idx"] = _to_numpy_long(chunk["tm_idx"])
+            if "st_idx" in chunk:
+                prepared["st_idx"] = _to_numpy_long(chunk["st_idx"])
+            if "et_idx" in chunk:
+                prepared["et_idx"] = _to_numpy_long(chunk["et_idx"])
+            prepared["_chrom"] = chunk["chrom"]
+            prepared["_pos"] = chunk["pos"]
+            prepared["_rn"] = chunk["rn"]
+            gpu_queue.put(prepared)
+        gpu_queue.put(None)
+
+    def _gpu_worker():
+        """Stage 3: GPU inference only — no CPU prep work."""
+        engine.push_context()
+        try:
+            while True:
+                prepared = gpu_queue.get()
+                if prepared is None:
+                    break
+                n = prepared["x_num"].shape[0]
+                all_probs = []
+                for batch_start in range(0, n, batch_size):
+                    s = slice(batch_start, min(batch_start + batch_size, n))
+                    batch = {
+                        "read_base_idx": prepared["read_base_idx"][s],
+                        "ref_base_idx": prepared["ref_base_idx"][s],
+                        "t0_idx": prepared["t0_idx"][s],
+                        "x_num": prepared["x_num"][s],
+                        "mask": prepared["mask"][s],
+                    }
+                    if "tm_idx" in prepared:
+                        batch["tm_idx"] = prepared["tm_idx"][s]
+                    if "st_idx" in prepared:
+                        batch["st_idx"] = prepared["st_idx"][s]
+                    if "et_idx" in prepared:
+                        batch["et_idx"] = prepared["et_idx"][s]
+                    all_probs.append(engine.predict_batch_prepared(batch))
+                result_queue.put((prepared["_chrom"], prepared["_pos"], prepared["_rn"], np.concatenate(all_probs)))
+                gpu_queue.task_done()
+        finally:
+            engine.pop_context()
+        result_queue.put(None)
+
+    # Start Stage 2 + Stage 3 threads
+    prep_thread = Thread(target=_cpu_prep_worker, daemon=True)
+    prep_thread.start()
+    gpu_thread = Thread(target=_gpu_worker, daemon=True)
+    gpu_thread.start()
+
+    # Streaming output setup
     streaming = output_path is not None
     writer = None
-    write_lock = Lock() if streaming else None
-    local_preds: list[dict[tuple[str, int, str], float]] = [{} for _ in engines]
-    pred_counts: list[list[int]] = [[0] for _ in engines] if streaming else []
-
     if streaming:
         schema = pa.schema([("chrom", pa.string()), ("pos", pa.int64()), ("rn", pa.string()), ("prob", pa.float64())])
         writer = pq_mod.ParquetWriter(output_path, schema)
 
-    # Start GPU consumer threads
-    gpu_threads: list[Thread] = []
-    for i, engine in enumerate(engines):
-        t = Thread(
-            target=_gpu_consumer_thread,
-            args=(engine, q, batch_size, local_preds[i], done_event),
-            kwargs={"writer": writer, "write_lock": write_lock, "pred_count": pred_counts[i] if streaming else None},
-            daemon=True,
-        )
-        t.start()
-        gpu_threads.append(t)
-
-    # Producer: prefetch shards from disk with thread pool, push to GPU queue
     t_start = time.perf_counter()
-    completed = 0
+    total_preds = 0
+    collected = 0
+    predictions: dict[tuple[str, int, str], float] = {}
+
     try:
+        # Stage 1: loader threads feed raw_queue
         with ThreadPoolExecutor(max_workers=num_loader_threads) as loader_pool:
-            max_pending = prefetch + num_loader_threads
+            max_pending = raw_queue.maxsize
             shard_iter = iter(shard_files)
-            pending = {
+            pending_loads = {
                 loader_pool.submit(_load_tensor_shard, str(p)) for p in itertools.islice(shard_iter, max_pending)
             }
-            while pending:
-                done_futures, pending = wait(pending, return_when=FIRST_COMPLETED)
-                for fut in done_futures:
-                    chunk = fut.result()
-                    q.put(chunk)
-                    completed += 1
-                    if completed == 1 or completed % 10 == 0 or completed == total_shards:
+
+            while collected < total_shards:
+                # Feed loaded shards to CPU prep thread
+                if pending_loads:
+                    done_loads, pending_loads = wait(pending_loads, timeout=0.01, return_when=FIRST_COMPLETED)
+                    for fut in done_loads:
+                        raw_queue.put(fut.result())
+                    for p in itertools.islice(shard_iter, len(done_loads)):
+                        pending_loads.add(loader_pool.submit(_load_tensor_shard, str(p)))
+
+                # Collect GPU results (non-blocking)
+                while not result_queue.empty():
+                    item = result_queue.get()
+                    if item is None:
+                        break
+                    chroms, positions, rns, probs = item
+                    n = len(probs)
+                    if streaming:
+                        table = pa.table(
+                            {
+                                "chrom": chroms[:n].tolist() if hasattr(chroms, "tolist") else list(chroms[:n]),
+                                "pos": positions[:n].tolist() if hasattr(positions, "tolist") else list(positions[:n]),
+                                "rn": rns[:n].tolist() if hasattr(rns, "tolist") else list(rns[:n]),
+                                "prob": probs.tolist(),
+                            }
+                        )
+                        writer.write_table(table)
+                    else:
+                        for j in range(n):
+                            predictions[(str(chroms[j]), int(positions[j]), str(rns[j]))] = float(probs[j])
+                    total_preds += n
+                    collected += 1
+                    if collected == 1 or collected % 10 == 0 or collected == total_shards:
                         logger.info(
                             "Cache inference progress: %d/%d shards (%.1fs)",
-                            completed,
+                            collected,
                             total_shards,
                             time.perf_counter() - t_start,
                         )
-                for p in itertools.islice(shard_iter, len(done_futures)):
-                    pending.add(loader_pool.submit(_load_tensor_shard, str(p)))
+
+            # Signal CPU prep thread to finish
+            raw_queue.put(None)
+
+        # Wait for pipeline to drain
+        prep_thread.join()
+        gpu_thread.join()
+
+        # Collect any remaining results
+        while not result_queue.empty():
+            item = result_queue.get()
+            if item is None:
+                break
+            chroms, positions, rns, probs = item
+            n = len(probs)
+            if streaming:
+                table = pa.table(
+                    {
+                        "chrom": chroms[:n].tolist() if hasattr(chroms, "tolist") else list(chroms[:n]),
+                        "pos": positions[:n].tolist() if hasattr(positions, "tolist") else list(positions[:n]),
+                        "rn": rns[:n].tolist() if hasattr(rns, "tolist") else list(rns[:n]),
+                        "prob": probs.tolist(),
+                    }
+                )
+                writer.write_table(table)
+            else:
+                for j in range(n):
+                    predictions[(str(chroms[j]), int(positions[j]), str(rns[j]))] = float(probs[j])
+            total_preds += n
+            collected += 1
     finally:
-        done_event.set()
-        for t in gpu_threads:
-            t.join()
         if writer is not None:
             writer.close()
 
     elapsed = time.perf_counter() - t_start
-
-    if streaming:
-        total = sum(c[0] for c in pred_counts)
-        logger.info("Cache inference complete: %d predictions in %.1fs", total, elapsed)
-        return total
-
-    predictions: dict[tuple[str, int, str], float] = {}
-    for lp in local_preds:
-        predictions.update(lp)
-    logger.info("Cache inference complete: %d predictions in %.1fs", len(predictions), elapsed)
-    return predictions
+    logger.info("Cache inference complete: %d predictions in %.1fs", total_preds, elapsed)
+    return total_preds if streaming else predictions
 
 
 def _parse_fold_cache_args(argv: list[str] | None = None) -> argparse.Namespace:
