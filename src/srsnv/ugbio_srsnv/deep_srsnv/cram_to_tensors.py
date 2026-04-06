@@ -503,7 +503,7 @@ def _numpy_chunk_to_torch(chunk: dict) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cram_to_tensor_cache(  # noqa: PLR0915
+def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
     cram_path: str,
     parquet_path: str,
     encoders: Encoders,
@@ -514,6 +514,7 @@ def cram_to_tensor_cache(  # noqa: PLR0915
     num_workers: int = 1,
     shard_size: int = 25000,
     fetch_mode: str = "samtools",
+    chromosomes: list[str] | None = None,
 ) -> dict:
     """Read parquet rows, fetch each read from CRAM, tensorize, and write sharded cache.
 
@@ -541,6 +542,10 @@ def cram_to_tensor_cache(  # noqa: PLR0915
         ``"samtools"`` (default) delegates read filtering to a
         ``samtools view -N`` subprocess.  ``"pysam"`` uses pure-pysam
         region iteration as a fallback.
+    chromosomes
+        Optional list of chromosomes to include.  If provided, only rows
+        whose CHROM is in this list are tensorized.  Used for per-fold
+        inference tensorization.
 
     Returns
     -------
@@ -568,6 +573,13 @@ def cram_to_tensor_cache(  # noqa: PLR0915
     rows.sort(key=lambda r: (str(r.get(CHROM, "")), int(r.get(POS, 0))))
     parquet_read_seconds = round(time.perf_counter() - t_parquet, 4)
     logger.info("Read %d rows from parquet in %.1fs", n_rows, parquet_read_seconds)
+
+    # Filter by chromosomes if specified (used for per-fold inference tensorization)
+    if chromosomes is not None:
+        chrom_set = set(chromosomes)
+        rows = [r for r in rows if str(r.get(CHROM, "")) in chrom_set]
+        n_rows = len(rows)
+        logger.info("Filtered to %d rows on chromosomes: %s", n_rows, ", ".join(sorted(chrom_set)))
 
     max_edist = _compute_max_edist(parquet_path) if label else None
     if max_edist is not None:
@@ -904,7 +916,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="CRAM + parquet -> tensor cache")
     ap.add_argument("--cram", required=True, help="Path to source CRAM file")
     ap.add_argument("--parquet", required=True, help="Path to feature map parquet")
-    ap.add_argument("--label", required=True, choices=["positive", "negative"])
+    ap.add_argument("--label", required=True, choices=["positive", "negative", "inference"])
     ap.add_argument("--output", required=True, help="Output directory for tensor cache shards")
     ap.add_argument("--reference", default=None, help="Reference FASTA for CRAM decoding")
     ap.add_argument("--vocab-config", default=None, help="Path to vocab_config.json (default: bundled)")
@@ -917,12 +929,52 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="samtools",
         help="Read fetch backend: 'samtools' (default) uses samtools -N pipe, 'pysam' uses pure-pysam iteration",
     )
+    ap.add_argument("--chromosomes", nargs="*", default=None, help="Only tensorize these chromosomes")
+
+    # Fold-based chromosome selection (alternative to --chromosomes)
+    fold_group = ap.add_argument_group("fold-based chromosome selection")
+    fold_group.add_argument("--fold-idx", type=int, default=None, help="Fold index for per-fold tensorization")
+    fold_group.add_argument("--training-regions", default=None, help="Interval list for fold→chrom mapping")
+    fold_group.add_argument("--num-folds", type=int, default=3, help="Number of cross-validation folds")
+    fold_group.add_argument("--random-seed", type=int, default=0, help="Random seed for fold splitting")
+    fold_group.add_argument(
+        "--holdout-chromosomes", default=None, help="Comma-separated holdout chromosomes (e.g. chr21,chr22)"
+    )
     return ap.parse_args(argv)
+
+
+def _resolve_chromosomes(args: argparse.Namespace) -> list[str] | None:
+    """Resolve the chromosome list from --chromosomes or --fold-idx arguments."""
+    if args.chromosomes is not None:
+        return args.chromosomes
+
+    if args.fold_idx is not None:
+        if args.training_regions is None:
+            raise ValueError("--training-regions is required when --fold-idx is specified")
+        from ugbio_srsnv.split_manifest import build_split_manifest  # noqa: PLC0415
+
+        holdout = args.holdout_chromosomes.split(",") if args.holdout_chromosomes else None
+        manifest = build_split_manifest(
+            training_regions=args.training_regions,
+            k_folds=args.num_folds,
+            random_seed=args.random_seed,
+            holdout_chromosomes=holdout,
+        )
+        chrom_to_fold = manifest["chrom_to_fold"]
+        fold_chroms = [c for c, f in chrom_to_fold.items() if f == args.fold_idx]
+        # Fold 0 also includes holdout/test chromosomes
+        if args.fold_idx == 0 and manifest.get("test_chromosomes"):
+            fold_chroms.extend(manifest["test_chromosomes"])
+        logger.info("Fold %d chromosomes: %s", args.fold_idx, ", ".join(sorted(fold_chroms)))
+        return fold_chroms
+
+    return None
 
 
 def run(argv: list[str] | None = None) -> dict:
     args = _parse_args(argv)
     encoders = load_vocab_config(args.vocab_config)
+    chromosomes = _resolve_chromosomes(args)
     return cram_to_tensor_cache(
         cram_path=args.cram,
         parquet_path=args.parquet,
@@ -934,6 +986,7 @@ def run(argv: list[str] | None = None) -> dict:
         num_workers=args.num_workers,
         shard_size=args.shard_size,
         fetch_mode=args.fetch_mode,
+        chromosomes=chromosomes,
     )
 
 

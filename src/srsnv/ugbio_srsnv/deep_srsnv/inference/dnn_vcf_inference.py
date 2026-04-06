@@ -1167,6 +1167,168 @@ def main_fold() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Fold inference from pre-computed tensor cache  (dnn_fold_inference_from_cache)
+# ---------------------------------------------------------------------------
+
+
+def _load_tensor_shard(shard_path: str) -> dict:
+    """Load a single tensor shard and convert torch tensors back to numpy for GPU inference."""
+    import torch  # noqa: PLC0415
+
+    chunk = torch.load(shard_path, map_location="cpu", weights_only=False)
+    result = {}
+    for key, val in chunk.items():
+        if isinstance(val, torch.Tensor):
+            result[key] = val.numpy()
+        else:
+            result[key] = val
+    return result
+
+
+def _run_fold_inference_from_cache(
+    cache_dir: str,
+    engines: list,
+    batch_size: int = 512,
+    output_path: str | None = None,
+) -> dict[tuple[str, int, str], float] | int:
+    """Run GPU inference from pre-computed tensor cache shards.
+
+    Reads shard_*.pt files from *cache_dir* and feeds them directly to
+    GPU engines.  No CRAM access or tensorization needed — all heavy
+    CPU work was done during the tensor cache creation step.
+
+    Returns predictions dict or count (if *output_path* streaming).
+    """
+    import pyarrow as pa  # noqa: PLC0415
+    import pyarrow.parquet as pq_mod  # noqa: PLC0415
+
+    cache_path = Path(cache_dir)
+    shard_files = sorted(cache_path.glob("shard_*.pt"))
+    if not shard_files:
+        raise FileNotFoundError(f"No shard_*.pt files found in {cache_dir}")
+
+    total_shards = len(shard_files)
+    logger.info("Loading %d tensor shards from %s", total_shards, cache_dir)
+
+    prefetch = len(engines) * 2
+    q: Queue = Queue(maxsize=prefetch)
+    done_event = Event()
+
+    streaming = output_path is not None
+    writer = None
+    write_lock = Lock() if streaming else None
+    local_preds: list[dict[tuple[str, int, str], float]] = [{} for _ in engines]
+    pred_counts: list[list[int]] = [[0] for _ in engines] if streaming else []
+
+    if streaming:
+        schema = pa.schema([("chrom", pa.string()), ("pos", pa.int64()), ("rn", pa.string()), ("prob", pa.float64())])
+        writer = pq_mod.ParquetWriter(output_path, schema)
+
+    # Start GPU consumer threads
+    gpu_threads: list[Thread] = []
+    for i, engine in enumerate(engines):
+        t = Thread(
+            target=_gpu_consumer_thread,
+            args=(engine, q, batch_size, local_preds[i], done_event),
+            kwargs={"writer": writer, "write_lock": write_lock, "pred_count": pred_counts[i] if streaming else None},
+            daemon=True,
+        )
+        t.start()
+        gpu_threads.append(t)
+
+    # Producer: load shards from disk and push to queue
+    t_start = time.perf_counter()
+    try:
+        for completed, shard_path in enumerate(shard_files, 1):
+            chunk = _load_tensor_shard(str(shard_path))
+            q.put(chunk)
+            if completed == 1 or completed % 10 == 0 or completed == total_shards:
+                logger.info(
+                    "Cache inference progress: %d/%d shards (%.1fs)",
+                    completed,
+                    total_shards,
+                    time.perf_counter() - t_start,
+                )
+    finally:
+        done_event.set()
+        for t in gpu_threads:
+            t.join()
+        if writer is not None:
+            writer.close()
+
+    elapsed = time.perf_counter() - t_start
+
+    if streaming:
+        total = sum(c[0] for c in pred_counts)
+        logger.info("Cache inference complete: %d predictions in %.1fs", total, elapsed)
+        return total
+
+    predictions: dict[tuple[str, int, str], float] = {}
+    for lp in local_preds:
+        predictions.update(lp)
+    logger.info("Cache inference complete: %d predictions in %.1fs", len(predictions), elapsed)
+    return predictions
+
+
+def _parse_fold_cache_args(argv: list[str] | None = None) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(
+        description="DNN fold inference from pre-computed tensor cache (no CRAM access needed)",
+    )
+    ap.add_argument("--tensor-cache", required=True, help="Directory with shard_*.pt files")
+    ap.add_argument("--fold-metadata", required=True, help="Path to this fold's srsnv_dnn_metadata.json")
+    ap.add_argument("--output", required=True, help="Output predictions parquet path")
+    ap.add_argument("--backend", default="trt", choices=["trt", "pytorch"], help="Inference backend")
+    ap.add_argument("--gpus", default=None, help="Comma-separated GPU IDs (default: all visible)")
+    ap.add_argument("--batch-size", type=int, default=512)
+    return ap.parse_args(argv)
+
+
+def run_fold_from_cache(argv: list[str] | None = None) -> None:
+    """Run inference for a single fold from a pre-computed tensor cache."""
+    import torch.multiprocessing  # noqa: PLC0415
+
+    torch.multiprocessing.set_sharing_strategy("file_system")
+
+    if argv is None:
+        argv = sys.argv[1:]
+    args = _parse_fold_cache_args(argv)
+
+    t0 = time.perf_counter()
+
+    # GPU setup
+    gpu_ids = None
+    if args.gpus:
+        gpu_ids = [int(g.strip()) for g in args.gpus.split(",")]
+
+    if gpu_ids is None:
+        import torch  # noqa: PLC0415
+
+        gpu_ids = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else [0]
+
+    # Load model engines
+    engines = _create_engines(args.fold_metadata, backend=args.backend, gpu_ids=gpu_ids)
+    logger.info("Loaded %d %s engine(s)", len(engines), args.backend)
+
+    try:
+        n_preds = _run_fold_inference_from_cache(
+            cache_dir=args.tensor_cache,
+            engines=engines,
+            batch_size=args.batch_size,
+            output_path=args.output,
+        )
+    finally:
+        for eng in engines:
+            eng.close()
+
+    elapsed = time.perf_counter() - t0
+    logger.info("Fold from cache: wrote %d predictions to %s in %.1fs", n_preds, args.output, elapsed)
+
+
+def main_fold_from_cache() -> None:
+    run_fold_from_cache()
+
+
+# ---------------------------------------------------------------------------
 # Merge + annotate CLI  (dnn_merge_and_annotate)
 # ---------------------------------------------------------------------------
 
