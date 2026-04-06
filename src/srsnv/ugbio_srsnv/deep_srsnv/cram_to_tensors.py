@@ -25,6 +25,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
+import pyarrow as pa
 import pysam
 import torch
 from pyarrow import parquet as pq
@@ -564,22 +565,29 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
 
     # Phase 1: read and sort parquet rows
     t_parquet = time.perf_counter()
+    import pyarrow.compute as pc  # noqa: PLC0415
+
     pf = pq.ParquetFile(parquet_path)
     available_cols = [c for c in _PARQUET_COLUMNS if c in (pf.schema.names or [])]
-    table = pf.read(columns=available_cols)
+
+    # Push chromosome filter into the parquet read to avoid loading all rows into memory
+    if chromosomes is not None and CHROM in available_cols:
+        chrom_set = set(chromosomes)
+        table = pf.read(columns=available_cols)
+        chrom_col = table.column(CHROM)
+        mask = pc.is_in(chrom_col, value_set=pa.array(list(chrom_set)))
+        table = table.filter(mask)
+        logger.info("Filtered parquet to chromosomes %s: %d rows", ", ".join(sorted(chrom_set)), len(table))
+    else:
+        table = pf.read(columns=available_cols)
+
     col_dict = table.to_pydict()
     n_rows = len(col_dict[available_cols[0]])
     rows = [{k: col_dict[k][i] for k in col_dict} for i in range(n_rows)]
+    del table, col_dict  # Free memory immediately
     rows.sort(key=lambda r: (str(r.get(CHROM, "")), int(r.get(POS, 0))))
     parquet_read_seconds = round(time.perf_counter() - t_parquet, 4)
     logger.info("Read %d rows from parquet in %.1fs", n_rows, parquet_read_seconds)
-
-    # Filter by chromosomes if specified (used for per-fold inference tensorization)
-    if chromosomes is not None:
-        chrom_set = set(chromosomes)
-        rows = [r for r in rows if str(r.get(CHROM, "")) in chrom_set]
-        n_rows = len(rows)
-        logger.info("Filtered to %d rows on chromosomes: %s", n_rows, ", ".join(sorted(chrom_set)))
 
     max_edist = _compute_max_edist(parquet_path) if label else None
     if max_edist is not None:
