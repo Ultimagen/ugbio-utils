@@ -1495,8 +1495,8 @@ def _write_results_to_record(
         if tot_score_values[alt_idx] > score_bound and mixture_values[alt_idx] > mixture_bound
     ]
 
-    # Set PASS filter if all alleles pass bounds
-    all_pass = len(passing_alleles) == len(rec.alts)
+    # Set PASS filter if any allele passes bounds
+    any_pass = len(passing_alleles) > 0
     was_pass = "PASS" in rec.filter or len(rec.filter) == 0
 
     # Update GT field based on passing alleles
@@ -1513,11 +1513,11 @@ def _write_results_to_record(
             rec.samples[sample_name]["GT"] = gt_alleles
 
     # Set PASS filter only if all alleles pass bounds
-    if all_pass and not was_pass:
+    if any_pass and not was_pass:
         # Update filter only if rec is changing from non-PASS to PASS
         rec.filter.clear()  # Clear any existing filters
         rec.filter.add("PASS")
-    elif all_pass and was_pass:
+    elif any_pass and was_pass:
         # Already PASS, just ensure PASS filter is set
         rec.filter.clear()
         rec.filter.add("PASS")
