@@ -476,6 +476,35 @@ class VcfUtils:
             annotation = f"FILTER/{','.join(filters_to_remove)}"
         self.__execute(f"bcftools annotate -x {annotation} -o {output_vcf} {input_vcf}")
 
+    def get_vcf_count(self, vcf_path: str, *, pass_only: bool = False) -> int:
+        """Count variants in a VCF file.
+
+        Parameters
+        ----------
+        vcf_path : str
+            Path to the VCF/BCF file.
+        pass_only : bool, optional
+            If True, count only PASS variants. Variants with an empty FILTER field
+            are treated as PASS. Defaults to False.
+
+        Returns
+        -------
+        int
+            Number of variants matching the requested criteria.
+        """
+        count = 0
+        with pysam.VariantFile(vcf_path) as vcf_in:
+            for record in vcf_in:
+                if not pass_only:
+                    count += 1
+                    continue
+
+                filters = set(record.filter.keys())
+                if not filters or filters == {"PASS"}:
+                    count += 1
+
+        return count
+
     @staticmethod
     def copy_vcf_record(rec: pysam.VariantRecord, new_header: pysam.VariantHeader) -> pysam.VariantRecord:
         """

@@ -1,4 +1,5 @@
 # utilities for combining VCFs
+import os
 import shutil
 from collections import defaultdict
 from os.path import join as pjoin
@@ -9,6 +10,7 @@ import pandas as pd
 import pysam
 from scipy.sparse import csr_matrix
 from scipy.sparse.csgraph import connected_components
+from ugbio_cnv.cnv_vcf_consts import INFO_TAG_REGISTRY
 from ugbio_core import misc_utils as mu
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
@@ -142,16 +144,14 @@ def write_vcf_records_with_source(
     vcf_in: pysam.VariantFile,
     vcf_out: pysam.VariantFile,
     combined_header: pysam.VariantHeader,
-    source_name: str,
+    source_name: str | None,
     *,
     make_ids_unique: bool = False,
     seen_ids: set | None = None,
+    clear_filters: bool = True,
 ) -> set[str]:
     """
     Write VCF records to output file with CNV_SOURCE annotation.
-
-    Note: This function clears all FILTER values from input records since
-    FILTER definitions are not included in the combined header.
 
     Parameters
     ----------
@@ -161,26 +161,31 @@ def write_vcf_records_with_source(
         Output VCF file to write records to
     combined_header : pysam.VariantHeader
         Combined header for creating new records
-    source_name : str
-        Source name to add to CNV_SOURCE INFO field
+    source_name : str | None
+        Source name to add to CNV_SOURCE INFO field. If None, preserves existing
+        CNV_SOURCE values from the input records without modification.
     make_ids_unique : bool, optional
         If True, ensure all IDs are unique by appending suffixes (default: False)
     seen_ids : set, optional
         Set of already-seen IDs for tracking uniqueness (default: None, creates new set)
+    clear_filters : bool, optional
+        If True, clear all FILTER values and set to PASS (default: True for backward compatibility)
 
     Returns
     -------
     set
         The updated set of seen IDs
     """
-    logger.info(f"Writing records from {source_name} VCF")
+    source_desc = source_name if source_name is not None else "VCF (preserving existing CNV_SOURCE)"
+    logger.info(f"Writing records from {source_desc}")
     if seen_ids is None:
         seen_ids = set()
 
     for record in vcf_in:
-        # Clear filters - we remove filters imposed by the previous pipelines
-        record.filter.clear()
-        record.filter.add("PASS")
+        if clear_filters:
+            # Clear filters - we remove filters imposed by the previous pipelines
+            record.filter.clear()
+            record.filter.add("PASS")
         # Create new record with combined header
         new_record = VcfUtils.copy_vcf_record(record, combined_header)
 
@@ -204,9 +209,11 @@ def write_vcf_records_with_source(
         # Note: When make_ids_unique is False, IDs are not tracked and duplicates are allowed
         # This preserves the original behavior where duplicate IDs may exist
 
-        # Add source tag if not already present
-        if "CNV_SOURCE" not in new_record.info:
+        # Add source tag if source_name is provided and tag not already present
+        if source_name is not None and "CNV_SOURCE" not in new_record.info:
             new_record.info["CNV_SOURCE"] = (source_name,)
+        # If source_name is None, preserve existing CNV_SOURCE value from record
+
         vcf_out.write(new_record)
 
     return seen_ids
@@ -290,6 +297,168 @@ def combine_vcf_headers_for_cnv(
         combined_header.add_sample(sample)
 
     return combined_header
+
+
+def combine_cnv_or_sv_vcf_files(
+    vcf_files: list[tuple[str, str | None]],
+    output_vcf: str,
+    fasta_index: str,
+    *,
+    preserve_filters: bool = False,
+    make_ids_unique: bool = False,
+    output_directory: str | None = None,
+) -> str:
+    """
+    Combine multiple CNV or SV VCF files with source annotations into a single sorted VCF.
+
+    This is a general-purpose VCF combination function that:
+    - Updates all VCF headers to match the FASTA index contigs
+    - Combines headers from all input VCFs
+    - Annotates each variant with its source caller via CNV_SOURCE tag
+    - Optionally preserves or clears FILTER fields
+    - Ensures unique variant IDs across all files if requested
+    - Produces a sorted and indexed output VCF
+
+    Parameters
+    ----------
+    vcf_files : list[tuple[str, str | None]]
+        List of (vcf_path, source_name) tuples. If source_name is not None, it will be
+        added to the CNV_SOURCE INFO field for all variants from that VCF. If source_name
+        is None, existing CNV_SOURCE values from the input records are preserved without
+        modification.
+        Example: [("cnv.vcf.gz", "cn.mops"), ("sv.vcf.gz", "gridss"), ("merged.vcf.gz", None)]
+    output_vcf : str
+        Path to output combined VCF file (.vcf.gz)
+    fasta_index : str
+        Path to reference genome FASTA index (.fai). All VCF headers will be
+        updated to match the contigs from this index to ensure consistency
+        across samples and prevent downstream processing errors.
+    preserve_filters : bool, optional
+        If True, preserve FILTER field definitions in the combined header and
+        maintain original FILTER values in all variant records.
+        If False, exclude FILTER definitions from the combined header and reset
+        all variant FILTER values to PASS. (default: False)
+    make_ids_unique : bool, optional
+        If True, ensure all variant IDs are unique across all input VCFs by
+        appending numeric suffixes (e.g., ID_1, ID_2) when duplicates are found.
+        (default: False)
+    output_directory : str, optional
+        Directory for storing temporary files during processing. If None, uses
+        the directory of output_vcf. (default: None)
+
+    Returns
+    -------
+    str
+        Path to the final sorted and indexed combined VCF file
+
+    Raises
+    ------
+    ValueError
+        If vcf_files is empty
+    FileNotFoundError
+        If any input VCF or the FASTA index file does not exist
+    RuntimeError
+        If VCF headers have incompatible INFO/FORMAT field definitions
+
+    Examples
+    --------
+    Combine CNV and SV VCFs for merge/collapse preparation (preserve filters):
+
+    >>> combine_vcf_files(
+    ...     vcf_files=[("cnv.vcf.gz", "cn.mops"), ("sv.vcf.gz", "gridss")],
+    ...     output_vcf="combined.vcf.gz",
+    ...     fasta_index="genome.fa.fai",
+    ...     preserve_filters=True,
+    ...     make_ids_unique=True,
+    ... )
+
+    Consolidate multiple CNV caller outputs (clear filters to PASS):
+
+    >>> combine_vcf_files(
+    ...     vcf_files=[
+    ...         ("sample1_cnmops.vcf.gz", "cn.mops"),
+    ...         ("sample1_cnvpytor.vcf.gz", "cnvpytor"),
+    ...     ],
+    ...     output_vcf="combined_cnv.vcf.gz",
+    ...     fasta_index="genome.fa.fai",
+    ...     preserve_filters=False,
+    ...     make_ids_unique=True,
+    ... )
+
+    See Also
+    --------
+    combine_vcf_headers_for_cnv : Combines VCF headers with configurable filter handling
+    write_vcf_records_with_source : Writes VCF records with source annotation
+    update_vcf_contig : Updates VCF header to match FASTA index contigs
+    """
+    if not vcf_files:
+        raise ValueError("vcf_files must contain at least one VCF")
+
+    # Setup output directory
+    if output_directory is None:
+        output_directory = os.path.dirname(os.path.abspath(output_vcf))
+    if output_directory:
+        os.makedirs(output_directory, exist_ok=True)
+
+    vcf_utils = VcfUtils()
+    temporary_files = []
+
+    # Step 1: Update headers to match FASTA index contigs
+    logger.info("Updating VCF headers to match FASTA index contigs")
+    updated_vcf_files = []
+    for idx, (vcf_path, source_name) in enumerate(vcf_files):
+        updated_vcf = update_vcf_contig(vcf_utils, vcf_path, fasta_index, output_directory, index=idx)
+        temporary_files.append(updated_vcf)
+        updated_vcf_files.append((updated_vcf, source_name))
+    vcf_files = updated_vcf_files
+
+    # Step 2: Open VCF files and combine headers
+    logger.info("Combining VCF headers")
+    vcf_handles = [pysam.VariantFile(vcf_path) for vcf_path, _ in vcf_files]
+
+    try:
+        # Combine all headers
+        combined_header = vcf_handles[0].header.copy()
+        for vcf_handle in vcf_handles[1:]:
+            combined_header = combine_vcf_headers_for_cnv(
+                combined_header, vcf_handle.header, keep_filters=preserve_filters
+            )
+
+        # Add CNV_SOURCE INFO tag if not present
+        if "CNV_SOURCE" not in combined_header.info:
+            combined_header.info.add(*INFO_TAG_REGISTRY["CNV_SOURCE"][:-1])
+
+        # Step 3: Write records from all VCFs with source annotations
+        logger.info(f"Writing records from {len(vcf_handles)} VCF files")
+        temp_combined_vcf = pjoin(output_directory, "temp_combined.vcf.gz")
+        temporary_files.append(temp_combined_vcf)
+
+        with pysam.VariantFile(temp_combined_vcf, "w", header=combined_header) as vcf_out:
+            seen_ids = set()
+            for vcf_handle, (_, source_name) in zip(vcf_handles, vcf_files, strict=False):
+                seen_ids = write_vcf_records_with_source(
+                    vcf_handle,
+                    vcf_out,
+                    combined_header,
+                    source_name,
+                    make_ids_unique=make_ids_unique,
+                    seen_ids=seen_ids,
+                    clear_filters=not preserve_filters,  # Inverse of preserve
+                )
+    finally:
+        for vcf_handle in vcf_handles:
+            vcf_handle.close()
+
+    # Step 4: Sort and index
+    logger.info("Sorting and indexing combined VCF")
+    vcf_utils.sort_vcf(temp_combined_vcf, output_vcf)
+    vcf_utils.index_vcf(output_vcf)
+
+    # Cleanup temporary files
+    mu.cleanup_temp_files(temporary_files)
+
+    logger.info(f"Successfully created combined VCF: {output_vcf}")
+    return output_vcf
 
 
 def cnv_vcf_to_bed(input_vcf: str, output_bed: str, *, assign_id=True) -> None:

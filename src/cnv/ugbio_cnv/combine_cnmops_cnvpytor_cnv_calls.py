@@ -7,18 +7,16 @@ import tempfile
 from os.path import join as pjoin
 
 import pysam
-import ugbio_core.misc_utils as mu
 from pyfaidx import Fasta
 from ugbio_cnv.analyze_cnv_breakpoint_reads import analyze_cnv_breakpoints
 from ugbio_cnv.analyze_cnv_breakpoint_reads import get_parser as get_breakpoint_parser
 from ugbio_cnv.cnv_vcf_consts import INFO_TAG_REGISTRY
 from ugbio_cnv.combine_cnv_vcf_utils import (
     cnv_vcf_to_bed,
-    combine_vcf_headers_for_cnv,
+    combine_cnv_or_sv_vcf_files,
     merge_cnvs_in_vcf,
-    update_vcf_contig,
-    write_vcf_records_with_source,
 )
+from ugbio_cnv.merge_cnv_sv import merge_cnv_sv_vcfs
 from ugbio_core.bed_utils import BedUtils
 from ugbio_core.logger import logger
 from ugbio_core.vcf_utils import VcfUtils
@@ -132,6 +130,49 @@ def __parse_args_merge_records(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def __parse_args_merge_cnv_sv(parser: argparse.ArgumentParser) -> None:
+    """Add arguments for the merge_cnv_sv tool."""
+    parser.add_argument("--cnv_vcf", help="Input CNV VCF file", required=True, type=str)
+    parser.add_argument("--sv_vcf", help="Input SV VCF file (e.g., from GRIDSS)", required=True, type=str)
+    parser.add_argument("--output_vcf", help="Output merged VCF file", required=True, type=str)
+    parser.add_argument("--fasta_index", help="Reference genome FASTA index (.fai) file", required=True, type=str)
+    parser.add_argument(
+        "--min_sv_length",
+        help="Minimum absolute SVLEN for SV calls to include (default: 1000)",
+        required=False,
+        type=int,
+        default=1000,
+    )
+    parser.add_argument(
+        "--max_sv_length",
+        help="Maximum absolute SVLEN for SV calls to include (default: 5000000, 5Mb)",
+        required=False,
+        type=int,
+        default=5000000,
+    )
+    parser.add_argument(
+        "--min_sv_qual",
+        help="Minimum QUAL score for SV calls to include (default: 0, no minimum)",
+        required=False,
+        type=float,
+        default=0,
+    )
+    parser.add_argument(
+        "--distance",
+        help="Distance threshold for collapsing overlapping variants (default: 0, exact overlaps only)",
+        required=False,
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--pctsize",
+        help="Minimum size similarity (0.0-1.0) for collapsing (default: 0.5, require 50%% match)",
+        required=False,
+        type=float,
+        default=0.5,
+    )
+
+
 def __parse_args(argv: list[str]) -> argparse.Namespace:
     """
     Parse command-line arguments using subparsers for different tools.
@@ -193,6 +234,14 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
     )
     # Reuse argument definitions from analyze_cnv_breakpoint_reads module
     get_breakpoint_parser(analyze_breakpoints_parser)
+
+    merge_cnv_sv_parser = subparsers.add_parser(
+        "merge_cnv_sv",
+        help="Merge CNV VCF with filtered SV VCF, replacing overlapping CNVs with SV calls",
+        description="Filters SV VCF for PASS DEL/DUP calls above length threshold, "
+        "then merges with CNV VCF, replacing overlapping CNV calls with higher-quality SV calls.",
+    )
+    __parse_args_merge_cnv_sv(merge_cnv_sv_parser)
 
     return parser.parse_args(argv[1:])
 
@@ -426,80 +475,27 @@ def combine_cnv_vcfs(
     ...     output_directory="/tmp/cnv_combine",
     ...     make_ids_unique=True
     ... )
+
+    See Also
+    --------
+    combine_cnv_or_sv_vcf_files : More flexible VCF combination accepting list of tuples
     """
     # Validate that at least one VCF list is not empty
     if not cnmops_vcf and not cnvpytor_vcf:
         raise ValueError("At least one of cnmops_vcf or cnvpytor_vcf must be non-empty")
 
-    # Create output directory if it doesn't exist
-    if output_directory is None:
-        output_directory = os.path.dirname(os.path.abspath(output_vcf))
-    if output_directory:  # file with no directory evaluates to ""
-        os.makedirs(output_directory, exist_ok=True)
+    # Build list of (vcf_path, source_name) tuples
+    vcf_files = [(vcf, "cn.mops") for vcf in cnmops_vcf] + [(vcf, "cnvpytor") for vcf in cnvpytor_vcf]
 
-    vcf_utils = VcfUtils()
-
-    # Step 1: Update headers to contain same contigs from FASTA index
-    logger.info("Updating VCF headers to match FASTA index contigs")
-    updated_vcfs = []
-    vcf_metadata = []  # List of (updated_path, source_name) tuples
-
-    # Collect all VCF files with their source labels
-    all_vcf_sources = [(vcf, "cn.mops") for vcf in cnmops_vcf] + [(vcf, "cnvpytor") for vcf in cnvpytor_vcf]
-
-    # Update headers for all VCFs
-    for idx, (vcf_file, source) in enumerate(all_vcf_sources):
-        updated_vcf = update_vcf_contig(vcf_utils, vcf_file, fasta_index, output_directory, index=idx)
-        updated_vcfs.append(updated_vcf)
-        vcf_metadata.append((updated_vcf, source))
-
-    # Step 2: Open updated VCF files, combine headers (excluding FILTER fields), and add CNV_SOURCE tag
-    logger.info("Combining VCF headers and adding CNV_SOURCE INFO tag")
-
-    # Open all VCF files
-    vcf_handles = [pysam.VariantFile(vcf_path) for vcf_path, _ in vcf_metadata]
-
-    try:
-        # Combine headers from all files
-        combined_header = vcf_handles[0].header.copy()
-        for vcf_handle in vcf_handles[1:]:
-            combined_header = combine_vcf_headers_for_cnv(combined_header, vcf_handle.header)
-
-        # Add INFO tag for source if not already present
-        if "CNV_SOURCE" not in combined_header.info:
-            combined_header.info.add(*INFO_TAG_REGISTRY["CNV_SOURCE"][:-1])
-
-        # Step 3: Write records from all VCF files
-        logger.info(f"Writing records from {len(vcf_handles)} VCF files to temporary combined VCF")
-        temp_combined_vcf = pjoin(output_directory, "temp_combined.vcf.gz")
-
-        with pysam.VariantFile(temp_combined_vcf, "w", header=combined_header) as vcf_out:
-            # Write records from each VCF with appropriate source annotation
-            seen_ids = set()
-            for vcf_handle, (_, source_name) in zip(vcf_handles, vcf_metadata, strict=False):
-                seen_ids = write_vcf_records_with_source(
-                    vcf_handle,
-                    vcf_out,
-                    combined_header,
-                    source_name,
-                    make_ids_unique=make_ids_unique,
-                    seen_ids=seen_ids,
-                )
-    finally:
-        # Close all VCF handles
-        for vcf_handle in vcf_handles:
-            vcf_handle.close()
-
-    # Step 4: Sort and index the VCF
-    logger.info("Sorting and indexing the combined VCF")
-    vcf_utils.sort_vcf(temp_combined_vcf, output_vcf)
-    vcf_utils.index_vcf(output_vcf)
-
-    # Clean up temporary files
-    mu.cleanup_temp_files(updated_vcfs + [temp_combined_vcf])
-
-    logger.info(f"Successfully created combined VCF: {output_vcf}")
-    return output_vcf
+    # Call unified function
+    return combine_cnv_or_sv_vcf_files(
+        vcf_files=vcf_files,
+        output_vcf=output_vcf,
+        fasta_index=fasta_index,
+        preserve_filters=False,  # Clear filters to PASS (from what the sub-pipelines may be setting)
+        make_ids_unique=make_ids_unique,
+        output_directory=output_directory,
+    )
 
 
 def run(argv: list[str]):
@@ -574,6 +570,18 @@ def run(argv: list[str]):
             output_file=args.output_file,
             reference_fasta=args.reference_fasta,
             output_bam=args.output_bam,
+        )
+    elif args.tool == "merge_cnv_sv":
+        merge_cnv_sv_vcfs(
+            cnv_vcf=args.cnv_vcf,
+            sv_vcf=args.sv_vcf,
+            output_vcf=args.output_vcf,
+            fasta_index=args.fasta_index,
+            min_sv_length=args.min_sv_length,
+            max_sv_length=args.max_sv_length,
+            min_sv_qual=args.min_sv_qual,
+            distance=args.distance,
+            pctsize=args.pctsize,
         )
     else:
         raise ValueError(f"Unknown tool: {args.tool}")
@@ -655,6 +663,21 @@ def main_analyze_breakpoints():
     """
     # Insert 'analyze_breakpoint_reads' as the tool argument
     argv = [sys.argv[0], "analyze_breakpoint_reads"] + sys.argv[1:]
+    run(argv)
+
+
+def main_merge_cnv_sv():
+    """
+    Entry point for standalone merge_cnv_sv script.
+
+    This allows running merge_cnv_sv directly:
+    merge_cnv_sv --cnv_vcf ... --sv_vcf ... --output_vcf ...
+
+    Instead of:
+    combine_cnmops_cnvpytor_cnv_calls merge_cnv_sv --cnv_vcf ... --sv_vcf ...
+    """
+    # Insert 'merge_cnv_sv' as the tool argument
+    argv = [sys.argv[0], "merge_cnv_sv"] + sys.argv[1:]
     run(argv)
 
 
