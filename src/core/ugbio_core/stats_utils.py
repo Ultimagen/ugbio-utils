@@ -157,7 +157,7 @@ def get_aucpr(precisions: np.ndarray, recalls: np.ndarray) -> float:
     if len(recalls) <= 1:
         return 0.0
     # Sort by recall to ensure proper integration order
-    sorted_indices = np.argsort(recalls)
+    sorted_indices = np.argsort(recalls, kind="stable")
     sorted_recalls = recalls[sorted_indices]
     sorted_precisions = precisions[sorted_indices]
     return float(np.trapz(sorted_precisions, sorted_recalls))  # noqa: NPY201 not switching to numpy 2.0
