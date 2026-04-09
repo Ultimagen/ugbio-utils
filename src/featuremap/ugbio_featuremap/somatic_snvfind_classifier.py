@@ -471,8 +471,19 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
     rename_map[FeatureMapFields.REF.value] = "ref_allele"
     rename_map[FeatureMapFields.ALT.value] = "alt_allele"
 
+    # INFO fields that should NOT get tumor prefix (variant-level, not sample-specific)
+    variant_level_info_fields = {
+        FeatureMapFields.X_HMER_REF.value,
+        FeatureMapFields.X_HMER_ALT.value,
+    }
+
+    # INFO fields with tumor prefix (sample-context INFO fields like TR)
     for info_field in REQUIRED_INFO_FIELDS:
-        rename_map[info_field] = f"{TUMOR_PREFIX}{info_field}"
+        if info_field in variant_level_info_fields:
+            # Keep variant-level fields as-is (will not be lowercased later)
+            rename_map[info_field] = info_field
+        else:
+            rename_map[info_field] = f"{TUMOR_PREFIX}{info_field}"
 
     # Sample specific columns
     sample_prefix_tuples = [(samples[0], TUMOR_PREFIX), (samples[1], NORMAL_PREFIX)]
@@ -505,8 +516,8 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
             rename_map[f"REF_{pos}{s}"] = f"{prefix}ref{i}"
             rename_map[f"NON_REF_{pos}{s}"] = f"{prefix}nonref{i}"
 
-    # Lowercase all target names
-    rename_map = {k: v.lower() for k, v in rename_map.items()}
+    # Lowercase all target names except variant-level INFO fields (which stay uppercase)
+    rename_map = {k: v.lower() if v not in variant_level_info_fields else v for k, v in rename_map.items()}
 
     missing_cols = set(rename_map.keys()) - set(variants_df.columns)
     if missing_cols:
