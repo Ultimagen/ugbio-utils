@@ -51,15 +51,23 @@ if (args$intervals_only) {
   sample_names <- colnames(mcols(gr))
   gr_sample <- gr
   mcols(gr_sample) <- NULL
-  mcols(gr_sample)$score <- mcols(gr)[[make.names(args$sample_name)]]
+  loc = which(sample_names == args$sample_name)
+
+  if (length(loc) != 1) {
+    stop(sprintf("Expected exactly 1 match for sample '%s', got %d",
+                 args$sample_name, length(loc)))
+  }
+
+  mcols(gr_sample)$score <- mcols(gr)[[loc]]
   export.bed(gr_sample, paste0(args$sample_name, ".cov.bed"))
 } else if (!args$mean) {
   # Export all samples
   sample_names <- colnames(mcols(gr))
-  for (sample in sample_names) {
+  for (i in seq_along(sample_names)) {
+    sample <- sample_names[i]
     gr_sample <- gr
     mcols(gr_sample) <- NULL
-    mcols(gr_sample)$score <- mcols(gr)[[make.names(sample)]]
+    mcols(gr_sample)$score <- mcols(gr)[[i]]
     export.bed(gr_sample, paste0(sample, ".cov.bed"))
   }
 } else {
