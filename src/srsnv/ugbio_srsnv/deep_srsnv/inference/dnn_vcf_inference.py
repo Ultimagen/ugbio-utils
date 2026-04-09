@@ -1489,7 +1489,7 @@ def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
 
     with pysam.VariantFile(args.featuremap_vcf) as input_vcf:
         contigs = list(input_vcf.header.contigs)
-        tmp_output_paths = []
+        contig_tasks = []
         skipped = 0
         for contig in contigs:
             try:
@@ -1498,18 +1498,34 @@ def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
                 skipped += 1
                 continue
             out_per_contig = os.path.join(out_dir, contig + ".vcf.gz")
-            tmp_output_paths.append(out_per_contig)
-            VcfAnnotator.process_contig(
-                vcf_in=args.featuremap_vcf,
-                vcf_out=out_per_contig,
-                annotators=annotators,
-                contig=contig,
-                chunk_size=10000,
-            )
-            logger.info("Annotated contig %s", contig)
+            contig_tasks.append((contig, out_per_contig))
 
     if skipped:
         logger.info("Skipped %d empty contigs", skipped)
+
+    # Parallelize contig annotation — predictions dict is read-only, thread-safe.
+    # Each thread opens its own VCF reader and writes to a separate output file.
+    num_threads = min(8, max(1, len(contig_tasks)))
+    logger.info("Annotating %d contigs with %d threads", len(contig_tasks), num_threads)
+
+    from concurrent.futures import ThreadPoolExecutor as _ThreadPool  # noqa: PLC0415
+
+    def _annotate_contig(contig_out: tuple[str, str]) -> str:
+        contig, out_path = contig_out
+        VcfAnnotator.process_contig(
+            vcf_in=args.featuremap_vcf,
+            vcf_out=out_path,
+            annotators=annotators,
+            contig=contig,
+            chunk_size=10000,
+        )
+        logger.info("Annotated contig %s", contig)
+        return out_path
+
+    tmp_output_paths = []
+    with _ThreadPool(max_workers=num_threads) as pool:
+        for path in pool.map(_annotate_contig, contig_tasks):
+            tmp_output_paths.append(path)
 
     VcfAnnotator.merge_temp_files(tmp_output_paths, args.output, process_number=1)
 
