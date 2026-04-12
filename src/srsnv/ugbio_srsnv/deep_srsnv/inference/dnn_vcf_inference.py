@@ -1172,10 +1172,21 @@ def main_fold() -> None:
 
 
 def _load_tensor_shard(shard_path: str) -> dict:
-    """Load a single tensor shard and convert torch tensors back to numpy for GPU inference."""
+    """Load a single tensor shard and convert torch tensors back to numpy for GPU inference.
+
+    Supports both uncompressed ``.pt`` and gzip-compressed ``.pt.gz`` files.
+    """
+    import io  # noqa: PLC0415
+
     import torch  # noqa: PLC0415
 
-    chunk = torch.load(shard_path, map_location="cpu", weights_only=False)
+    if shard_path.endswith(".gz"):
+        import gzip  # noqa: PLC0415
+
+        with gzip.open(shard_path, "rb") as f:
+            chunk = torch.load(io.BytesIO(f.read()), map_location="cpu", weights_only=False)
+    else:
+        chunk = torch.load(shard_path, map_location="cpu", weights_only=False)
     result = {}
     for key, val in chunk.items():
         if isinstance(val, torch.Tensor):
@@ -1209,7 +1220,7 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
     import pyarrow.parquet as pq_mod  # noqa: PLC0415
 
     cache_path = Path(cache_dir)
-    shard_files = sorted(cache_path.glob("shard_*.pt"))
+    shard_files = sorted(cache_path.glob("shard_*.pt.gz")) or sorted(cache_path.glob("shard_*.pt"))
     if not shard_files:
         raise FileNotFoundError(f"No shard_*.pt files found in {cache_dir}")
 

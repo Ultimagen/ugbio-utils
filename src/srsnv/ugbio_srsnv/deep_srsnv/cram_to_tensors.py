@@ -500,6 +500,21 @@ def _numpy_chunk_to_torch(chunk: dict) -> None:
             chunk[key] = torch.from_numpy(chunk[key])
 
 
+def _save_shard(chunk: dict, path: Path, *, compress: bool = False) -> None:
+    """Save a tensor shard to disk, optionally gzip-compressed."""
+    if compress:
+        import gzip  # noqa: PLC0415
+        import io  # noqa: PLC0415
+
+        buf = io.BytesIO()
+        torch.save(chunk, buf)
+        gz_path = path.with_suffix(".pt.gz") if not str(path).endswith(".gz") else path
+        with gzip.open(gz_path, "wb", compresslevel=1) as f:
+            f.write(buf.getvalue())
+    else:
+        torch.save(chunk, path)
+
+
 # ---------------------------------------------------------------------------
 # Main cache builder
 # ---------------------------------------------------------------------------
@@ -513,6 +528,7 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
     label: bool,  # noqa: FBT001
     tensor_length: int = 300,
     reference_path: str | None = None,
+    compress: bool = False,  # noqa: FBT001, FBT002
     num_workers: int = 1,
     shard_size: int = 25000,
     fetch_mode: str = "samtools",
@@ -635,7 +651,7 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
         for shard_args in shard_args_list:
             _sid, chunk, stats = _process_shard_from_parquet(**shard_args)
             _numpy_chunk_to_torch(chunk)
-            torch.save(chunk, out_path / f"shard_{_sid:05d}.pt")
+            _save_shard(chunk, out_path / f"shard_{_sid:05d}.pt", compress=compress)
             shard_stats.append(stats)
             completed += 1
             total_output += stats["output_rows"]
@@ -662,7 +678,7 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
                 for fut in done:
                     _sid, chunk, stats = fut.result()
                     _numpy_chunk_to_torch(chunk)
-                    torch.save(chunk, out_path / f"shard_{_sid:05d}.pt")
+                    _save_shard(chunk, out_path / f"shard_{_sid:05d}.pt", compress=compress)
                     shard_stats.append(stats)
                     completed += 1
                     total_output += stats["output_rows"]
@@ -717,6 +733,7 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
 
     index = {
         "cache_version": 5,
+        "compressed": compress,
         "label": bool(label),
         "tensor_length": tensor_length,
         "cram_path": str(cram_path),
@@ -938,6 +955,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     fold_group.add_argument(
         "--holdout-chromosomes", default=None, help="Comma-separated holdout chromosomes (e.g. chr21,chr22)"
     )
+    ap.add_argument("--compress", action="store_true", default=False, help="Gzip-compress output shards (.pt.gz)")
     return ap.parse_args(argv)
 
 
@@ -985,6 +1003,7 @@ def run(argv: list[str] | None = None) -> dict:
         shard_size=args.shard_size,
         fetch_mode=args.fetch_mode,
         chromosomes=chromosomes,
+        compress=args.compress,
     )
 
 
