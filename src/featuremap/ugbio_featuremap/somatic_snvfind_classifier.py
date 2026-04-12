@@ -480,7 +480,7 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
     # INFO fields with tumor prefix (sample-context INFO fields like TR)
     for info_field in REQUIRED_INFO_FIELDS:
         if info_field in variant_level_info_fields:
-            # Keep variant-level fields as-is (will not be lowercased later)
+            # Keep variant-level fields without prefix (will be lowercased)
             rename_map[info_field] = info_field
         else:
             rename_map[info_field] = f"{TUMOR_PREFIX}{info_field}"
@@ -516,8 +516,8 @@ def rename_cols_for_model(variants_df: pl.DataFrame, samples: list[str], vcf_pat
             rename_map[f"REF_{pos}{s}"] = f"{prefix}ref{i}"
             rename_map[f"NON_REF_{pos}{s}"] = f"{prefix}nonref{i}"
 
-    # Lowercase all target names except variant-level INFO fields (which stay uppercase)
-    rename_map = {k: v.lower() if v not in variant_level_info_fields else v for k, v in rename_map.items()}
+    # Lowercase all target names
+    rename_map = {k: v.lower() for k, v in rename_map.items()}
 
     missing_cols = set(rename_map.keys()) - set(variants_df.columns)
     if missing_cols:
