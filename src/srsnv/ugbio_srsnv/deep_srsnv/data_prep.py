@@ -32,6 +32,13 @@ REF = FeatureMapFields.REF.value
 ALT = FeatureMapFields.ALT.value
 X_ALT = FeatureMapFields.X_ALT.value
 
+# Canonical channel order for x_num — positional channels first, then per-read constants.
+# The model sees len(NUM_CHANNELS_POS) + len(NUM_CHANNELS_CONST) = NUMERIC_CHANNELS total.
+NUM_CHANNELS_POS: list[str] = ["qual", "tp", "mask", "focus", "softclip_mask", "t0"]
+NUM_CHANNELS_CONST: list[str] = ["strand", "mapq", "rq", "mixed"]
+CHANNEL_ORDER: list[str] = NUM_CHANNELS_POS + NUM_CHANNELS_CONST
+NUMERIC_CHANNELS: int = len(CHANNEL_ORDER)
+
 
 @dataclass
 class Encoders:
@@ -636,8 +643,8 @@ def _process_rows_shard_to_tensors(
             "tm_idx": torch.zeros(0, dtype=torch.int8),
             "st_idx": torch.zeros(0, dtype=torch.int8),
             "et_idx": torch.zeros(0, dtype=torch.int8),
-            "x_num_pos": torch.zeros(0, 6, tensor_length, dtype=torch.float16),
-            "x_num_const": torch.zeros(0, 4, dtype=torch.float16),
+            "x_num_pos": torch.zeros(0, len(NUM_CHANNELS_POS), tensor_length, dtype=torch.float16),
+            "x_num_const": torch.zeros(0, len(NUM_CHANNELS_CONST), dtype=torch.float16),
             "mask": torch.zeros(0, tensor_length, dtype=torch.uint8),
             "label": torch.zeros(0, dtype=torch.uint8),
             "split_id": torch.zeros(0, dtype=torch.int8),

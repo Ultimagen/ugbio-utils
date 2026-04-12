@@ -32,6 +32,8 @@ from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
 from ugbio_srsnv.deep_srsnv.data_prep import (
+    NUM_CHANNELS_CONST,
+    NUM_CHANNELS_POS,
     Encoders,
     _build_gapped_channels,
     _to_numpy_tp,
@@ -352,8 +354,8 @@ def _process_shard(  # noqa: PLR0915
     n = len(kept_rows)
     read_base_out = np.zeros((n, tensor_length), dtype=np.int16)
     ref_base_out = np.zeros((n, tensor_length), dtype=np.int16)
-    x_num_pos_out = np.zeros((n, 6, tensor_length), dtype=np.float16)
-    x_num_const_out = np.zeros((n, 4), dtype=np.float16)
+    x_num_pos_out = np.zeros((n, len(NUM_CHANNELS_POS), tensor_length), dtype=np.float16)
+    x_num_const_out = np.zeros((n, len(NUM_CHANNELS_CONST)), dtype=np.float16)
     mask_out = np.zeros((n, tensor_length), dtype=np.uint8)
     label_out = np.zeros(n, dtype=np.uint8)
     tm_arr = np.zeros(n, dtype=np.int8)

@@ -23,6 +23,8 @@ from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
 from ugbio_srsnv.deep_srsnv.data_module import SRSNVDataModule
 from ugbio_srsnv.deep_srsnv.data_prep import (
+    CHANNEL_ORDER,
+    NUMERIC_CHANNELS,
     build_tensor_cache,
     load_cache_from_shm,
     load_full_tensor_cache,
@@ -644,7 +646,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         len(encoders.st_vocab),
         len(encoders.et_vocab),
     )
-    numeric_channels = 9
+    numeric_channels = NUMERIC_CHANNELS
 
     # ── Preprocessing / cache loading ──
     preprocess_cache_dir: str | None = None
@@ -1010,18 +1012,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             "st_vocab": encoders.st_vocab,
             "et_vocab": encoders.et_vocab,
         },
-        "channel_order": [
-            "qual",
-            "tp",
-            "mask",
-            "focus",
-            "softclip_mask",
-            "t0",
-            "strand",
-            "mapq",
-            "rq",
-            "mixed",
-        ],
+        "channel_order": CHANNEL_ORDER,
         "training_results": training_results,
         "holdout_metrics": holdout_metrics,
         "best_ckpt_holdout_metrics": best_ckpt_holdout_metrics if args.swa else None,
