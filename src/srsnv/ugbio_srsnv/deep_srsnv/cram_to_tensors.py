@@ -503,8 +503,12 @@ def _numpy_chunk_to_torch(chunk: dict) -> None:
 def _save_shard(chunk: dict, path: Path, *, compress: bool = False) -> None:
     """Save a tensor shard to disk, optionally gzip-compressed."""
     if compress:
-        import gzip  # noqa: PLC0415
         import io  # noqa: PLC0415
+
+        try:
+            from isal import igzip as gzip  # noqa: PLC0415
+        except ImportError:
+            import gzip  # noqa: PLC0415
 
         buf = io.BytesIO()
         torch.save(chunk, buf)

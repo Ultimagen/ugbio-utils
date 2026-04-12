@@ -1175,16 +1175,32 @@ def _load_tensor_shard(shard_path: str) -> dict:
     """Load a single tensor shard and convert torch tensors back to numpy for GPU inference.
 
     Supports both uncompressed ``.pt`` and gzip-compressed ``.pt.gz`` files.
+    For .pt.gz files, decompresses to a temporary file so torch.load can mmap
+    instead of deserializing from an in-memory BytesIO buffer.
     """
-    import io  # noqa: PLC0415
+    import os  # noqa: PLC0415
+    import tempfile  # noqa: PLC0415
 
     import torch  # noqa: PLC0415
 
     if shard_path.endswith(".gz"):
-        import gzip  # noqa: PLC0415
+        try:
+            from isal import igzip as gzip  # noqa: PLC0415
+        except ImportError:
+            import gzip  # noqa: PLC0415
 
-        with gzip.open(shard_path, "rb") as f:
-            chunk = torch.load(io.BytesIO(f.read()), map_location="cpu", weights_only=False)
+        fd, tmp_path = tempfile.mkstemp(suffix=".pt")
+        try:
+            with gzip.open(shard_path, "rb") as gz_f, os.fdopen(fd, "wb") as tmp_f:
+                # Stream in 4MB chunks to avoid peak memory spike
+                while True:
+                    block = gz_f.read(4 * 1024 * 1024)
+                    if not block:
+                        break
+                    tmp_f.write(block)
+            chunk = torch.load(tmp_path, map_location="cpu", weights_only=False)
+        finally:
+            os.unlink(tmp_path)
     else:
         chunk = torch.load(shard_path, map_location="cpu", weights_only=False)
     result = {}

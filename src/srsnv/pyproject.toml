@@ -12,6 +12,7 @@ dependencies = [
     "torch>=2.1",
     "lightning>=2.0",
     "torchmetrics>=1.0",
+    "isal>=1.0",
 ]
 description = "Ultima Genomics SRSNV utils"
 authors = [
