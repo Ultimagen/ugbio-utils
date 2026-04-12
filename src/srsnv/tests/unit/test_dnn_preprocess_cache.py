@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 from ugbio_srsnv.deep_srsnv import data_prep
 
 
@@ -28,7 +29,7 @@ def test_build_cached_shards_cache_miss_then_hit(monkeypatch, tmp_path: Path) ->
                 "ref_base_aln": ["A"],
                 "qual_aln": [30.0],
                 "tp_aln": [0.0],
-                "t0_aln": ["D"],
+                "t0_aln": np.array([35.0], dtype=np.float32),
                 "focus_aln": [1.0],
                 "softclip_mask_aln": [0.0],
                 "strand": 0,
@@ -51,7 +52,7 @@ def test_build_cached_shards_cache_miss_then_hit(monkeypatch, tmp_path: Path) ->
                 "ref_base_aln": ["C"],
                 "qual_aln": [31.0],
                 "tp_aln": [1.0],
-                "t0_aln": ["D"],
+                "t0_aln": np.array([35.0], dtype=np.float32),
                 "focus_aln": [0.0],
                 "softclip_mask_aln": [0.0],
                 "strand": 1,

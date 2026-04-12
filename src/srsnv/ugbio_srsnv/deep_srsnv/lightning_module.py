@@ -22,8 +22,6 @@ class SRSNVLightningModule(lightning.LightningModule):
     ----------
     base_vocab_size
         Size of the base vocabulary for the embedding layer.
-    t0_vocab_size
-        Size of the t0 vocabulary for the embedding layer.
     numeric_channels
         Number of numeric input channels.
     learning_rate
@@ -47,8 +45,7 @@ class SRSNVLightningModule(lightning.LightningModule):
     def __init__(  # noqa: PLR0913
         self,
         base_vocab_size: int,
-        t0_vocab_size: int,
-        numeric_channels: int = 9,
+        numeric_channels: int = 10,
         learning_rate: float = 1e-3,
         weight_decay: float = 1e-4,
         lr_scheduler: str = "onecycle",
@@ -64,7 +61,6 @@ class SRSNVLightningModule(lightning.LightningModule):
 
         self.model = CNNReadClassifier(
             base_vocab_size=base_vocab_size,
-            t0_vocab_size=t0_vocab_size,
             numeric_channels=numeric_channels,
             **model_kwargs,
         )
@@ -83,7 +79,6 @@ class SRSNVLightningModule(lightning.LightningModule):
         return self.model(
             read_base_idx=batch["read_base_idx"],
             ref_base_idx=batch["ref_base_idx"],
-            t0_idx=batch["t0_idx"],
             x_num=batch["x_num"],
             mask=batch["mask"],
             tm_idx=batch.get("tm_idx"),

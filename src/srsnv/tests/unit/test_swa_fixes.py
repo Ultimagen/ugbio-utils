@@ -33,8 +33,7 @@ def _make_args(**overrides) -> argparse.Namespace:
 def _small_model_kwargs():
     return {
         "base_vocab_size": 8,
-        "t0_vocab_size": 12,
-        "numeric_channels": 9,
+        "numeric_channels": 10,
         "tm_vocab_size": 9,
         "st_vocab_size": 5,
         "et_vocab_size": 5,
@@ -47,11 +46,10 @@ def _make_batch(batch_size: int = 8, length: int = 50) -> dict:
     return {
         "read_base_idx": torch.randint(0, 7, (batch_size, length)),
         "ref_base_idx": torch.randint(0, 7, (batch_size, length)),
-        "t0_idx": torch.randint(0, 10, (batch_size, length)),
         "tm_idx": torch.randint(0, 9, (batch_size,)),
         "st_idx": torch.randint(0, 5, (batch_size,)),
         "et_idx": torch.randint(0, 5, (batch_size,)),
-        "x_num": torch.randn(batch_size, 9, length),
+        "x_num": torch.randn(batch_size, 10, length),
         "mask": torch.ones(batch_size, length),
         "label": torch.randint(0, 2, (batch_size,)).float(),
         "fold_id": torch.zeros(batch_size, dtype=torch.long),
@@ -163,7 +161,7 @@ class TestSWACheckpointLoading:
                 "st_vocab": {str(i): i for i in range(5)},
                 "et_vocab": {str(i): i for i in range(5)},
             },
-            "channel_order": ["qual", "tp", "mask", "focus", "softclip_mask", "strand", "mapq", "rq", "mixed"],
+            "channel_order": ["qual", "tp", "mask", "focus", "softclip_mask", "t0", "strand", "mapq", "rq", "mixed"],
             "training_parameters": {
                 "hidden_channels": 16,
                 "n_blocks": 2,
@@ -200,7 +198,7 @@ class TestSWACheckpointLoading:
                 "st_vocab": {str(i): i for i in range(5)},
                 "et_vocab": {str(i): i for i in range(5)},
             },
-            "channel_order": ["qual", "tp", "mask", "focus", "softclip_mask", "strand", "mapq", "rq", "mixed"],
+            "channel_order": ["qual", "tp", "mask", "focus", "softclip_mask", "t0", "strand", "mapq", "rq", "mixed"],
             "training_parameters": {
                 "hidden_channels": 16,
                 "n_blocks": 2,
@@ -261,7 +259,7 @@ class TestSWACheckpointLoading:
                 "st_vocab": {str(i): i for i in range(5)},
                 "et_vocab": {str(i): i for i in range(5)},
             },
-            "channel_order": ["qual", "tp", "mask", "focus", "softclip_mask", "strand", "mapq", "rq", "mixed"],
+            "channel_order": ["qual", "tp", "mask", "focus", "softclip_mask", "t0", "strand", "mapq", "rq", "mixed"],
             "training_parameters": {
                 "hidden_channels": 16,
                 "n_blocks": 2,

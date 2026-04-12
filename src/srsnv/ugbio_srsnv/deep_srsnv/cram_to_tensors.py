@@ -342,8 +342,6 @@ def _process_shard(  # noqa: PLR0915
 
     base_vocab = encoders.base_vocab
     base_default = base_vocab["N"]
-    t0_vocab = encoders.t0_vocab
-    t0_default = t0_vocab.get("<MISSING>", 0)
     tm_vocab = encoders.tm_vocab
     tm_default = tm_vocab.get("<MISSING>", 0)
     st_vocab = encoders.st_vocab
@@ -354,8 +352,7 @@ def _process_shard(  # noqa: PLR0915
     n = len(kept_rows)
     read_base_out = np.zeros((n, tensor_length), dtype=np.int16)
     ref_base_out = np.zeros((n, tensor_length), dtype=np.int16)
-    t0_out = np.zeros((n, tensor_length), dtype=np.int16)
-    x_num_pos_out = np.zeros((n, 5, tensor_length), dtype=np.float16)
+    x_num_pos_out = np.zeros((n, 6, tensor_length), dtype=np.float16)
     x_num_const_out = np.zeros((n, 4), dtype=np.float16)
     mask_out = np.zeros((n, tensor_length), dtype=np.uint8)
     label_out = np.zeros(n, dtype=np.uint8)
@@ -391,17 +388,16 @@ def _process_shard(  # noqa: PLR0915
 
         read_tokens = aligned["read_base_aln"][:valid]
         ref_tokens = aligned["ref_base_aln"][:valid]
-        t0_tokens = aligned["t0_aln"][:valid]
         read_base_out[out_i, :valid] = [base_vocab.get(t, base_default) for t in read_tokens]
         ref_base_out[out_i, :valid] = [base_vocab.get(t, base_default) for t in ref_tokens]
-        t0_out[out_i, :valid] = [t0_vocab.get(t, t0_default) for t in t0_tokens]
 
         q = aligned["qual_aln"][:valid]
-        x_num_pos_out[out_i, 0, :valid] = q / 50.0
+        x_num_pos_out[out_i, 0, :valid] = q / 10.0
         x_num_pos_out[out_i, 1, :valid] = aligned["tp_aln"][:valid]
         x_num_pos_out[out_i, 2, :valid] = 1.0
         x_num_pos_out[out_i, 3, :valid] = aligned["focus_aln"][:valid]
         x_num_pos_out[out_i, 4, :valid] = aligned["softclip_mask_aln"][:valid]
+        x_num_pos_out[out_i, 5, :valid] = aligned["t0_aln"][:valid] / 10.0
         mask_out[out_i, :valid] = 1
 
         st_value = tags.get("st", row.get("st", None))
@@ -425,10 +421,9 @@ def _process_shard(  # noqa: PLR0915
     t_tensorize = time.perf_counter() - t_t0
 
     chunk = {
-        "cache_format_version": 5,
+        "cache_format_version": 6,
         "read_base_idx": read_base_out[:out_i].copy(),
         "ref_base_idx": ref_base_out[:out_i].copy(),
-        "t0_idx": t0_out[:out_i].copy(),
         "tm_idx": tm_arr[:out_i].copy(),
         "st_idx": st_arr[:out_i].copy(),
         "et_idx": et_arr[:out_i].copy(),
@@ -479,7 +474,6 @@ _TORCH_TENSOR_KEYS = frozenset(
     {
         "read_base_idx",
         "ref_base_idx",
-        "t0_idx",
         "tm_idx",
         "st_idx",
         "et_idx",
@@ -756,8 +750,6 @@ def stream_cram_to_tensors(  # noqa: PLR0915
 
     base_vocab = encoders.base_vocab
     base_default = base_vocab["N"]
-    t0_vocab = encoders.t0_vocab
-    t0_default = t0_vocab.get("<MISSING>", 0)
     tm_vocab = encoders.tm_vocab
     tm_default = tm_vocab.get("<MISSING>", 0)
     st_vocab = encoders.st_vocab
@@ -771,8 +763,7 @@ def stream_cram_to_tensors(  # noqa: PLR0915
         n = len(buf)
         rb = np.zeros((n, tensor_length), dtype=np.int16)
         rfb = np.zeros((n, tensor_length), dtype=np.int16)
-        t0 = np.zeros((n, tensor_length), dtype=np.int16)
-        xp = np.zeros((n, 5, tensor_length), dtype=np.float16)
+        xp = np.zeros((n, 6, tensor_length), dtype=np.float16)
         xc = np.zeros((n, 4), dtype=np.float16)
         mk = np.zeros((n, tensor_length), dtype=np.uint8)
         lb = np.zeros(n, dtype=np.uint8)
@@ -786,7 +777,6 @@ def stream_cram_to_tensors(  # noqa: PLR0915
         for i, item in enumerate(buf):
             rb[i] = item["read_base_idx"]
             rfb[i] = item["ref_base_idx"]
-            t0[i] = item["t0_idx"]
             xp[i] = item["x_num_pos"]
             xc[i] = item["x_num_const"]
             mk[i] = item["mask"]
@@ -801,7 +791,6 @@ def stream_cram_to_tensors(  # noqa: PLR0915
         return {
             "read_base_idx": torch.from_numpy(rb),
             "ref_base_idx": torch.from_numpy(rfb),
-            "t0_idx": torch.from_numpy(t0),
             "tm_idx": torch.from_numpy(tm_arr),
             "st_idx": torch.from_numpy(st_arr),
             "et_idx": torch.from_numpy(et_arr),
@@ -838,18 +827,17 @@ def stream_cram_to_tensors(  # noqa: PLR0915
 
             read_arr = np.zeros(tensor_length, dtype=np.int16)
             ref_arr = np.zeros(tensor_length, dtype=np.int16)
-            t0_arr = np.zeros(tensor_length, dtype=np.int16)
             read_arr[:valid] = [base_vocab.get(t, base_default) for t in aligned["read_base_aln"][:valid]]
             ref_arr[:valid] = [base_vocab.get(t, base_default) for t in aligned["ref_base_aln"][:valid]]
-            t0_arr[:valid] = [t0_vocab.get(t, t0_default) for t in aligned["t0_aln"][:valid]]
 
-            xp_row = np.zeros((5, tensor_length), dtype=np.float16)
+            xp_row = np.zeros((6, tensor_length), dtype=np.float16)
             q = aligned["qual_aln"][:valid]
-            xp_row[0, :valid] = q / 50.0
+            xp_row[0, :valid] = q / 10.0
             xp_row[1, :valid] = aligned["tp_aln"][:valid]
             xp_row[2, :valid] = 1.0
             xp_row[3, :valid] = aligned["focus_aln"][:valid]
             xp_row[4, :valid] = aligned["softclip_mask_aln"][:valid]
+            xp_row[5, :valid] = aligned["t0_aln"][:valid] / 10.0
 
             mask_row = np.zeros(tensor_length, dtype=np.uint8)
             mask_row[:valid] = 1
@@ -871,7 +859,6 @@ def stream_cram_to_tensors(  # noqa: PLR0915
                 {
                     "read_base_idx": read_arr,
                     "ref_base_idx": ref_arr,
-                    "t0_idx": t0_arr,
                     "tm_idx": tm_vocab.get(tags.get("tm", row.get("tm")) or "<MISSING>", tm_default),
                     "st_idx": st_vocab.get(st_value or "<MISSING>", st_default),
                     "et_idx": et_vocab.get(et_value or "<MISSING>", et_default),

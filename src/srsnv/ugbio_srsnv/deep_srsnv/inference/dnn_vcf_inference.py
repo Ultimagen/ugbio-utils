@@ -252,7 +252,6 @@ def _predict_shard(
         batch = {
             "read_base_idx": chunk["read_base_idx"][s],
             "ref_base_idx": chunk["ref_base_idx"][s],
-            "t0_idx": chunk["t0_idx"][s],
             "tm_idx": chunk["tm_idx"][s],
             "st_idx": chunk["st_idx"][s],
             "et_idx": chunk["et_idx"][s],

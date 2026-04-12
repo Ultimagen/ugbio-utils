@@ -92,8 +92,7 @@ def _build_dummy_inputs(
     inputs: dict[str, torch.Tensor] = {
         "read_base_idx": torch.zeros(batch_size, tensor_length, dtype=torch.long),
         "ref_base_idx": torch.zeros(batch_size, tensor_length, dtype=torch.long),
-        "t0_idx": torch.zeros(batch_size, tensor_length, dtype=torch.long),
-        "x_num": torch.zeros(batch_size, 9, tensor_length, dtype=torch.float32),
+        "x_num": torch.zeros(batch_size, 10, tensor_length, dtype=torch.float32),
         "mask": torch.ones(batch_size, tensor_length, dtype=torch.float32),
     }
     if hasattr(model, "tm_emb"):
@@ -121,8 +120,7 @@ def build_trtexec_command(
     seq_shapes = {
         "read_base_idx": f"{{B}}x{tensor_length}",
         "ref_base_idx": f"{{B}}x{tensor_length}",
-        "t0_idx": f"{{B}}x{tensor_length}",
-        "x_num": f"{{B}}x9x{tensor_length}",
+        "x_num": f"{{B}}x10x{tensor_length}",
         "mask": f"{{B}}x{tensor_length}",
         "tm_idx": "{B}",
         "st_idx": "{B}",

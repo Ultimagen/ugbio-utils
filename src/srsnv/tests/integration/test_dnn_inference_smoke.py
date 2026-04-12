@@ -125,8 +125,7 @@ def inference_data(tmp_path):
 
     lit_model = SRSNVLightningModule(
         base_vocab_size=7,
-        t0_vocab_size=11,
-        numeric_channels=9,
+        numeric_channels=10,
         tm_vocab_size=6,
         st_vocab_size=6,
         et_vocab_size=6,
@@ -173,7 +172,7 @@ def inference_data(tmp_path):
             "st_vocab": {"<PAD>": 0, "<MISSING>": 1, "MINUS": 2, "MIXED": 3, "PLUS": 4, "UNDETERMINED": 5},
             "et_vocab": {"<PAD>": 0, "<MISSING>": 1, "MINUS": 2, "MIXED": 3, "PLUS": 4, "UNDETERMINED": 5},
         },
-        "channel_order": ["qual", "tp", "mask", "focus", "softclip_mask", "strand", "mapq", "rq", "mixed"],
+        "channel_order": ["qual", "tp", "mask", "focus", "softclip_mask", "t0", "strand", "mapq", "rq", "mixed"],
         "training_parameters": {
             "hidden_channels": 32,
             "n_blocks": 2,
@@ -281,8 +280,7 @@ class TestDNNInferenceSmokeE2E:
 
         lit_model = SRSNVLightningModule(
             base_vocab_size=7,
-            t0_vocab_size=11,
-            numeric_channels=9,
+            numeric_channels=10,
             tm_vocab_size=6,
             st_vocab_size=6,
             et_vocab_size=6,
@@ -384,7 +382,7 @@ def _make_fold_metadata(tmp_path, fold_idx, ckpt_path):
             "st_vocab": {"<PAD>": 0, "<MISSING>": 1, "MINUS": 2, "MIXED": 3, "PLUS": 4, "UNDETERMINED": 5},
             "et_vocab": {"<PAD>": 0, "<MISSING>": 1, "MINUS": 2, "MIXED": 3, "PLUS": 4, "UNDETERMINED": 5},
         },
-        "channel_order": ["qual", "tp", "mask", "focus", "softclip_mask", "strand", "mapq", "rq", "mixed"],
+        "channel_order": ["qual", "tp", "mask", "focus", "softclip_mask", "t0", "strand", "mapq", "rq", "mixed"],
         "training_parameters": {
             "hidden_channels": 32,
             "n_blocks": 2,
@@ -415,8 +413,7 @@ def ensemble_data(tmp_path):
 
     model_kwargs = {
         "base_vocab_size": 7,
-        "t0_vocab_size": 11,
-        "numeric_channels": 9,
+        "numeric_channels": 10,
         "tm_vocab_size": 6,
         "st_vocab_size": 6,
         "et_vocab_size": 6,
