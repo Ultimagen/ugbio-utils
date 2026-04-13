@@ -1175,11 +1175,9 @@ def _load_tensor_shard(shard_path: str) -> dict:
     """Load a single tensor shard and convert torch tensors back to numpy for GPU inference.
 
     Supports both uncompressed ``.pt`` and gzip-compressed ``.pt.gz`` files.
-    For .pt.gz files, decompresses to a temporary file so torch.load can mmap
-    instead of deserializing from an in-memory BytesIO buffer.
+    Uses isal (ISA-L) for fast gzip decompression when available.
     """
-    import os  # noqa: PLC0415
-    import tempfile  # noqa: PLC0415
+    import io  # noqa: PLC0415
 
     import torch  # noqa: PLC0415
 
@@ -1189,18 +1187,8 @@ def _load_tensor_shard(shard_path: str) -> dict:
         except ImportError:
             import gzip  # noqa: PLC0415
 
-        fd, tmp_path = tempfile.mkstemp(suffix=".pt")
-        try:
-            with gzip.open(shard_path, "rb") as gz_f, os.fdopen(fd, "wb") as tmp_f:
-                # Stream in 4MB chunks to avoid peak memory spike
-                while True:
-                    block = gz_f.read(4 * 1024 * 1024)
-                    if not block:
-                        break
-                    tmp_f.write(block)
-            chunk = torch.load(tmp_path, map_location="cpu", weights_only=False)
-        finally:
-            os.unlink(tmp_path)
+        with gzip.open(shard_path, "rb") as f:
+            chunk = torch.load(io.BytesIO(f.read()), map_location="cpu", weights_only=False)
     else:
         chunk = torch.load(shard_path, map_location="cpu", weights_only=False)
     result = {}
@@ -1251,7 +1239,7 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
 
     from ugbio_srsnv.deep_srsnv.inference.trt_engine import _compose_x_num, _to_numpy, _to_numpy_long  # noqa: PLC0415
 
-    raw_queue: Queue = Queue(maxsize=num_loader_threads * 2)
+    raw_queue: Queue = Queue(maxsize=num_loader_threads + 1)
     gpu_queue: Queue = Queue(maxsize=len(engines) * 2)
     result_queue: Queue = Queue()
 
