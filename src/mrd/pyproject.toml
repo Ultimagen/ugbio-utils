@@ -6,6 +6,9 @@ dependencies = [
     "ugbio_core[vcfbed,reports]",
     "ugbio_ppmseq",
     "ugbio_featuremap",
+    "musical",
+    "polars",
+    "seaborn",
 ]
 description = "Ultima Genomics MRD utils"
 authors = [
@@ -22,6 +25,9 @@ text = "Apache-2.0"
 run_tests = "pytest:main"
 generate_synthetic_signatures = "ugbio_mrd.generate_synthetic_signatures:main"
 generate_report = "ugbio_mrd.generate_mrd_report:main"
+mrd_split_by_vaf = "ugbio_mrd.split_by_vaf:main"
+mrd_signature_deconv = "ugbio_mrd.signature_deconv:main"
+mrd_tumor_agnostic_report = "ugbio_mrd.generate_tumor_agnostic_report:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true
