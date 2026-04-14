@@ -524,7 +524,7 @@ def _save_shard(chunk: dict, path: Path, *, compress: bool = False) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
+def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, PLR0912, C901
     cram_path: str,
     parquet_path: str,
     encoders: Encoders,
@@ -673,6 +673,31 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
     else:
         max_pending = effective_workers * 2
         shard_iter = iter(shard_args_list)
+
+        # Background writer thread pool for non-blocking shard saves (especially gzip)
+        from queue import Queue as _Queue  # noqa: PLC0415
+
+        write_queue: _Queue = _Queue(maxsize=4)
+        write_errors: list[Exception] = []
+
+        def _writer_loop() -> None:
+            """Drain write_queue and save shards (possibly with gzip) off the main loop."""
+            while True:
+                item = write_queue.get()
+                if item is None:
+                    break
+                _chunk, _path, _compress = item
+                try:
+                    _save_shard(_chunk, _path, compress=_compress)
+                except Exception as exc:  # noqa: BLE001
+                    write_errors.append(exc)
+                    logger.exception("Background shard write failed: %s", _path)
+
+        from threading import Thread as _Thread  # noqa: PLC0415
+
+        writer_thread = _Thread(target=_writer_loop, daemon=True)
+        writer_thread.start()
+
         with ProcessPoolExecutor(max_workers=effective_workers, initializer=_worker_init) as pool:
             pending = {
                 pool.submit(_process_shard_from_parquet, **sa) for sa in itertools.islice(shard_iter, max_pending)
@@ -682,7 +707,7 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
                 for fut in done:
                     _sid, chunk, stats = fut.result()
                     _numpy_chunk_to_torch(chunk)
-                    _save_shard(chunk, out_path / f"shard_{_sid:05d}.pt", compress=compress)
+                    write_queue.put((chunk, out_path / f"shard_{_sid:05d}.pt", compress))
                     shard_stats.append(stats)
                     completed += 1
                     total_output += stats["output_rows"]
@@ -699,6 +724,12 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, C901
                         )
                 for sa in itertools.islice(shard_iter, len(done)):
                     pending.add(pool.submit(_process_shard_from_parquet, **sa))
+
+        # Signal writer thread to finish and wait for it
+        write_queue.put(None)
+        writer_thread.join()
+        if write_errors:
+            raise write_errors[0]
 
     # Cleanup temp sharded parquet
     sharded_parquet.unlink(missing_ok=True)

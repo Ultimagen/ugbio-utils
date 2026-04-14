@@ -71,17 +71,19 @@ class DNNQualAnnotator(VcfAnnotator):
 
     def __init__(  # noqa: PLR0913
         self,
-        predictions: dict[tuple[str, int, str], float],
+        predictions: dict,
         quality_interpolation_fn=None,
         low_qual_threshold: float = 40.0,
         rn_format_key: str = "RN",
         rn_info_key: str | None = None,
+        _per_contig: bool = False,  # noqa: FBT001, FBT002
     ):
         self.predictions = predictions
         self.quality_fn = quality_interpolation_fn
         self.threshold = low_qual_threshold
         self.rn_format_key = rn_format_key
         self.rn_info_key = rn_info_key
+        self._per_contig = _per_contig
 
     def edit_vcf_header(self, header: pysam.VariantHeader) -> pysam.VariantHeader:
         # FORMAT/MQUAL and FORMAT/SNVQ are already defined in the VCF from snvfind.
@@ -99,7 +101,7 @@ class DNNQualAnnotator(VcfAnnotator):
             mquals: list[float] = []
             snvqs: list[float] = []
             for rn in rns:
-                key = (rec.chrom, rec.pos, rn)
+                key = (rec.pos, rn) if self._per_contig else (rec.chrom, rec.pos, rn)
                 prob = self.predictions.get(key)
                 if prob is not None and prob > 0:
                     mq = float(prob_to_phred(np.array([prob]), max_value=MAX_PHRED)[0])
@@ -1460,11 +1462,40 @@ def _parse_merge_args(argv: list[str] | None = None) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
-def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
+def _annotate_contig_worker(  # noqa: PLR0913
+    contig: str,
+    vcf_in: str,
+    vcf_out: str,
+    predictions: dict[tuple[int, str], float],
+    quality_fn: _QualityInterpolator | None,
+    low_qual_threshold: float,
+) -> str:
+    """Worker function for per-contig annotation in a subprocess.
+
+    Receives only the predictions for *this* contig (keyed by ``(pos, rn)``),
+    keeping memory low and avoiding GIL contention.
+    """
+    annotator = DNNQualAnnotator(
+        predictions=predictions,
+        quality_interpolation_fn=quality_fn,
+        low_qual_threshold=low_qual_threshold,
+        _per_contig=True,
+    )
+    VcfAnnotator.process_contig(
+        vcf_in=vcf_in,
+        vcf_out=vcf_out,
+        annotators=[annotator],
+        contig=contig,
+        chunk_size=10000,
+    )
+    return vcf_out
+
+
+def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901
     """Merge per-fold predictions and annotate the featuremap VCF.
 
-    Annotation runs in-process (no subprocess) to avoid doubling memory
-    via pickle serialization of the large predictions dict.
+    Loads predictions per-contig (not all at once) and uses multiprocessing
+    for true parallelism without GIL contention.
     """
     if argv is None:
         argv = sys.argv[1:]
@@ -1472,8 +1503,9 @@ def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
 
     t0 = time.perf_counter()
 
-    # Load all fold predictions into a unified dict
-    predictions: dict[tuple[str, int, str], float] = {}
+    # Load predictions grouped by contig — avoids 47+ GiB global dict
+    contig_predictions: dict[str, dict[tuple[int, str], float]] = {}
+    total_preds = 0
     for pred_path in args.fold_predictions:
         pred_table = pq.read_table(pred_path)
         chroms = pred_table.column("chrom").to_pylist()
@@ -1481,25 +1513,25 @@ def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
         rns = pred_table.column("rn").to_pylist()
         probs = pred_table.column("prob").to_pylist()
         for c, p, r, prob in zip(chroms, poss, rns, probs, strict=False):
-            predictions[(str(c), int(p), str(r))] = float(prob)
+            chrom = str(c)
+            if chrom not in contig_predictions:
+                contig_predictions[chrom] = {}
+            contig_predictions[chrom][(int(p), str(r))] = float(prob)
+            total_preds += 1
 
-    logger.info("Loaded %d predictions from %d fold files", len(predictions), len(args.fold_predictions))
+    logger.info(
+        "Loaded %d predictions across %d contigs from %d fold files",
+        total_preds,
+        len(contig_predictions),
+        len(args.fold_predictions),
+    )
 
     # Build quality recalibration function from fold metadata
     with open(args.fold_metadata) as f:
         metadata = json.load(f)
     quality_fn = _build_quality_fn(metadata)
 
-    # Annotate VCF in-process to avoid pickle-based subprocess OOM.
-    # VcfAnnotator.process_vcf pickles annotators and spawns annotate_contig
-    # subprocesses that unpickle the full predictions dict, doubling memory.
-    # Instead, iterate contigs and call process_contig directly.
-    annotator = DNNQualAnnotator(
-        predictions=predictions,
-        quality_interpolation_fn=quality_fn,
-        low_qual_threshold=args.low_qual_threshold,
-    )
-    annotators = [annotator]
+    # Find non-empty contigs
     out_dir = os.path.dirname(args.output) or "."
 
     with pysam.VariantFile(args.featuremap_vcf) as input_vcf:
@@ -1507,45 +1539,61 @@ def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
         contig_tasks = []
         skipped = 0
         for contig in contigs:
+            if contig not in contig_predictions:
+                skipped += 1
+                continue
             try:
                 next(input_vcf.fetch(contig))
             except StopIteration:
                 skipped += 1
                 continue
-            out_per_contig = os.path.join(out_dir, contig + ".vcf.gz")
-            contig_tasks.append((contig, out_per_contig))
+            contig_tasks.append(contig)
 
     if skipped:
         logger.info("Skipped %d empty contigs", skipped)
 
-    # Parallelize contig annotation — predictions dict is read-only, thread-safe.
-    # Each thread opens its own VCF reader and writes to a separate output file.
-    num_threads = min(8, max(1, len(contig_tasks)))
-    logger.info("Annotating %d contigs with %d threads", len(contig_tasks), num_threads)
+    # Schedule largest contigs first for better load balancing
+    contig_tasks.sort(key=lambda c: len(contig_predictions.get(c, {})), reverse=True)
 
-    from concurrent.futures import ThreadPoolExecutor as _ThreadPool  # noqa: PLC0415
+    num_workers = min(8, max(1, len(contig_tasks)))
+    logger.info(
+        "Annotating %d contigs with %d processes (largest: %s with %d predictions)",
+        len(contig_tasks),
+        num_workers,
+        contig_tasks[0] if contig_tasks else "?",
+        len(contig_predictions.get(contig_tasks[0], {})) if contig_tasks else 0,
+    )
 
-    def _annotate_contig(contig_out: tuple[str, str]) -> str:
-        contig, out_path = contig_out
-        VcfAnnotator.process_contig(
-            vcf_in=args.featuremap_vcf,
-            vcf_out=out_path,
-            annotators=annotators,
-            contig=contig,
-            chunk_size=10000,
-        )
-        logger.info("Annotated contig %s", contig)
-        return out_path
+    # Use ProcessPoolExecutor — each subprocess gets only its contig's predictions
+    # (small enough to pickle, avoids GIL, true parallelism)
+    from concurrent.futures import ProcessPoolExecutor as _ProcPool  # noqa: PLC0415
 
     tmp_output_paths = []
-    with _ThreadPool(max_workers=num_threads) as pool:
-        for path in pool.map(_annotate_contig, contig_tasks):
-            tmp_output_paths.append(path)
+    with _ProcPool(max_workers=num_workers) as pool:
+        futures = {}
+        for contig in contig_tasks:
+            out_path = os.path.join(out_dir, contig + ".vcf.gz")
+            fut = pool.submit(
+                _annotate_contig_worker,
+                contig=contig,
+                vcf_in=args.featuremap_vcf,
+                vcf_out=out_path,
+                predictions=contig_predictions.pop(contig),  # pop to free memory
+                quality_fn=quality_fn,
+                low_qual_threshold=args.low_qual_threshold,
+            )
+            futures[fut] = (contig, out_path)
+
+        for fut in futures:
+            out_path = fut.result()
+            contig = futures[fut][0]
+            tmp_output_paths.append(out_path)
+            logger.info("Annotated contig %s", contig)
 
     VcfAnnotator.merge_temp_files(tmp_output_paths, args.output, process_number=1)
 
     elapsed = time.perf_counter() - t0
-    logger.info("Merge + annotate complete: %d predictions -> %s in %.1fs", len(predictions), args.output, elapsed)
+    logger.info("Merge + annotate complete: %d predictions -> %s in %.1fs", total_preds, args.output, elapsed)
 
 
 def main_merge() -> None:

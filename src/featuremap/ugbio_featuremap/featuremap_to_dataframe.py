@@ -759,8 +759,9 @@ def _merge_parquet_files_lazy(  # noqa: PLR0912
 
     lazy_frames = [pl.scan_parquet(f) for f in parquet_files]
 
-    lazy_frames_size = [frame.select(pl.len()).collect().item() for frame in lazy_frames]
-    log.debug(f"Individual Parquet file sizes (rows): {', '.join(map(str, lazy_frames_size))}")
+    if log.isEnabledFor(logging.DEBUG):
+        lazy_frames_size = [frame.select(pl.len()).collect().item() for frame in lazy_frames]
+        log.debug(f"Individual Parquet file sizes (rows): {', '.join(map(str, lazy_frames_size))}")
 
     merged_lazy = pl.concat(lazy_frames, how="vertical")
 
