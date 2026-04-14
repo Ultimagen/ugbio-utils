@@ -1462,40 +1462,162 @@ def _parse_merge_args(argv: list[str] | None = None) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
-def _annotate_contig_worker(  # noqa: PLR0913
+def _merge_contig_worker(  # noqa: PLR0913, PLR0912, PLR0915, C901
     contig: str,
     vcf_in: str,
     vcf_out: str,
-    predictions: dict[tuple[int, str], float],
-    quality_fn: _QualityInterpolator | None,
+    pred_paths: list[str],
+    quality_lut_x: list[float] | None,
+    quality_lut_y: list[float] | None,
     low_qual_threshold: float,
 ) -> str:
-    """Worker function for per-contig annotation in a subprocess.
+    """Annotate one contig using streaming merge-join.
 
-    Receives only the predictions for *this* contig (keyed by ``(pos, rn)``),
-    keeping memory low and avoiding GIL contention.
+    Each worker independently reads its predictions from parquet (predicate
+    pushdown) and streams VCF records.  Both sources are sorted by position,
+    enabling an O(N+M) merge cursor instead of hash-table lookups.
+
+    No shared state with the parent — fully independent, picklable args only.
     """
-    annotator = DNNQualAnnotator(
-        predictions=predictions,
-        quality_interpolation_fn=quality_fn,
-        low_qual_threshold=low_qual_threshold,
-        _per_contig=True,
-    )
-    VcfAnnotator.process_contig(
-        vcf_in=vcf_in,
-        vcf_out=vcf_out,
-        annotators=[annotator],
-        contig=contig,
-        chunk_size=10000,
-    )
+    import math  # noqa: PLC0415
+
+    # 1. Load predictions for this contig from all folds
+    all_pos: list[np.ndarray] = []
+    all_rn: list[str] = []
+    all_prob: list[np.ndarray] = []
+    for path in pred_paths:
+        table = pq.read_table(path, filters=[("chrom", "==", contig)])
+        if table.num_rows == 0:
+            continue
+        all_pos.append(table.column("pos").to_numpy())
+        all_rn.extend(table.column("rn").to_pylist())
+        all_prob.append(table.column("prob").to_numpy())
+
+    if not all_pos:
+        # No predictions for this contig — copy records through without annotation
+        with pysam.VariantFile(vcf_in) as inp:
+            try:
+                inp.header.add_line('##FILTER=<ID=LowQual,Description="SNVQ below quality threshold">')
+            except ValueError:
+                pass
+            with pysam.VariantFile(vcf_out, "w", header=inp.header) as out:
+                for rec in inp.fetch(contig):
+                    out.write(rec)
+        pysam.tabix_index(vcf_out, preset="vcf", force=True)
+        return vcf_out
+
+    pos_arr = np.concatenate(all_pos)
+    prob_arr = np.concatenate(all_prob)
+    del all_pos, all_prob
+
+    # Sort combined arrays by position (stable to keep per-fold order)
+    order = np.argsort(pos_arr, kind="stable")
+    pos_arr = pos_arr[order]
+    prob_list = prob_arr[order].tolist()  # pre-convert to Python float list (faster per-element access)
+    rn_list = [all_rn[i] for i in order]
+    del all_rn, prob_arr, order
+
+    n_preds = len(pos_arr)
+    has_quality_lut = quality_lut_x is not None and quality_lut_y is not None
+    max_phred = float(MAX_PHRED)
+    min_prob_error = 10.0 ** (-max_phred / 10.0)
+
+    # Pre-compute MQUAL→SNVQ lookup table as a dict keyed by int(mqual*100).
+    # This replaces per-read np.interp calls (3x faster, bit-exact for rounded mqual).
+    snvq_lut: dict[int, float] = {}
+    if has_quality_lut:
+        _lut_x = np.asarray(quality_lut_x, dtype=np.float64)
+        _lut_y = np.asarray(quality_lut_y, dtype=np.float64)
+        _right = float(_lut_y[-1])
+        for mq_cent in range(int(max_phred * 100) + 1):
+            sq = float(np.interp(mq_cent / 100.0, _lut_x, _lut_y, left=0.0, right=_right))
+            snvq_lut[mq_cent] = round(sq, 2)
+        del _lut_x, _lut_y
+
+    # 2. Stream VCF records with merge cursor
+    cursor = 0
+
+    with pysam.VariantFile(vcf_in) as inp:
+        # Add LowQual filter to input header so records inherit it
+        try:
+            inp.header.add_line('##FILTER=<ID=LowQual,Description="SNVQ below quality threshold">')
+        except ValueError:
+            pass
+
+        with pysam.VariantFile(vcf_out, "w", header=inp.header) as out:
+            for rec in inp.fetch(contig):
+                pos = rec.pos
+
+                # Advance cursor past positions before this record
+                while cursor < n_preds and pos_arr[cursor] < pos:
+                    cursor += 1
+
+                # Collect predictions at this position into a small dict
+                preds_at_pos: dict[str, float] = {}
+                i = cursor
+                while i < n_preds and pos_arr[i] == pos:
+                    preds_at_pos[rn_list[i]] = prob_list[i]
+                    i += 1
+
+                # Extract read names directly from pysam (avoid str() overhead)
+                try:
+                    rn_val = rec.samples[0].get("RN")
+                except (KeyError, IndexError):
+                    rn_val = None
+
+                if not rn_val or not preds_at_pos:
+                    out.write(rec)
+                    continue
+
+                rns = rn_val if isinstance(rn_val, tuple) else (rn_val,)
+
+                # Vectorized annotation: batch all reads at this position
+                matched_probs = []
+                for rn in rns:
+                    prob = preds_at_pos.get(rn if isinstance(rn, str) else str(rn))
+                    matched_probs.append(prob if prob is not None and prob > 0 else 0.0)
+
+                # Compute MQUAL: -10 * log10(1 - prob), clamped to MAX_PHRED
+                mquals = []
+                for prob in matched_probs:
+                    if prob > 0:
+                        mq = -10.0 * math.log10(max(1.0 - prob, min_prob_error))
+                        mq = min(mq, max_phred)
+                    else:
+                        mq = 0.0
+                    mquals.append(round(mq, 2))
+
+                # Compute SNVQ via pre-computed LUT dict (avoids np.interp overhead)
+                if snvq_lut:
+                    snvqs = [snvq_lut.get(int(mq * 100), mq) for mq in mquals]
+                else:
+                    snvqs = list(mquals)
+
+                rec.samples[0]["MQUAL"] = tuple(mquals)
+                rec.samples[0]["SNVQ"] = tuple(snvqs)
+
+                max_snvq = max(snvqs)
+                rec.qual = max_snvq
+                if max_snvq >= low_qual_threshold:
+                    rec.filter.add("PASS")
+                else:
+                    rec.filter.add("LowQual")
+
+                out.write(rec)
+
+    pysam.tabix_index(vcf_out, preset="vcf", force=True)
     return vcf_out
 
 
-def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901
+def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
     """Merge per-fold predictions and annotate the featuremap VCF.
 
-    Loads predictions per-contig (not all at once) and uses multiprocessing
-    for true parallelism without GIL contention.
+    Uses a streaming merge-join approach: each contig is processed by an
+    independent subprocess that reads its own predictions from parquet
+    (with predicate pushdown) and streams VCF records.  Both are sorted
+    by position, enabling an O(N+M) merge cursor.
+
+    No data sharing between processes — each worker is fully self-contained.
     """
     if argv is None:
         argv = sys.argv[1:]
@@ -1503,43 +1625,41 @@ def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901
 
     t0 = time.perf_counter()
 
-    # Load predictions grouped by contig — avoids 47+ GiB global dict
-    contig_predictions: dict[str, dict[tuple[int, str], float]] = {}
+    # Extract quality LUT as plain lists (picklable, tiny)
+    with open(args.fold_metadata) as f:
+        metadata = json.load(f)
+    lut = metadata.get("quality_recalibration_table")
+    min_lut_entries = 2
+    quality_lut_x = lut[0] if lut and len(lut) >= min_lut_entries else None
+    quality_lut_y = lut[1] if lut and len(lut) >= min_lut_entries else None
+
+    # Quick scan: count predictions per contig (chrom column only — fast)
+    import pyarrow.compute as pc  # noqa: PLC0415
+
+    contig_counts: dict[str, int] = {}
     total_preds = 0
     for pred_path in args.fold_predictions:
-        pred_table = pq.read_table(pred_path)
-        chroms = pred_table.column("chrom").to_pylist()
-        poss = pred_table.column("pos").to_pylist()
-        rns = pred_table.column("rn").to_pylist()
-        probs = pred_table.column("prob").to_pylist()
-        for c, p, r, prob in zip(chroms, poss, rns, probs, strict=False):
-            chrom = str(c)
-            if chrom not in contig_predictions:
-                contig_predictions[chrom] = {}
-            contig_predictions[chrom][(int(p), str(r))] = float(prob)
-            total_preds += 1
+        chrom_col = pq.read_table(pred_path, columns=["chrom"]).column("chrom")
+        for entry in pc.value_counts(chrom_col).to_pylist():
+            c = str(entry["values"])
+            contig_counts[c] = contig_counts.get(c, 0) + entry["counts"]
+            total_preds += entry["counts"]
 
     logger.info(
-        "Loaded %d predictions across %d contigs from %d fold files",
+        "Found %d predictions across %d contigs from %d fold files",
         total_preds,
-        len(contig_predictions),
+        len(contig_counts),
         len(args.fold_predictions),
     )
 
-    # Build quality recalibration function from fold metadata
-    with open(args.fold_metadata) as f:
-        metadata = json.load(f)
-    quality_fn = _build_quality_fn(metadata)
-
-    # Find non-empty contigs
+    # Find non-empty contigs in VCF
     out_dir = os.path.dirname(args.output) or "."
 
     with pysam.VariantFile(args.featuremap_vcf) as input_vcf:
-        contigs = list(input_vcf.header.contigs)
         contig_tasks = []
         skipped = 0
-        for contig in contigs:
-            if contig not in contig_predictions:
+        for contig in input_vcf.header.contigs:
+            if contig not in contig_counts:
                 skipped += 1
                 continue
             try:
@@ -1553,40 +1673,41 @@ def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901
         logger.info("Skipped %d empty contigs", skipped)
 
     # Schedule largest contigs first for better load balancing
-    contig_tasks.sort(key=lambda c: len(contig_predictions.get(c, {})), reverse=True)
+    contig_tasks.sort(key=lambda c: contig_counts.get(c, 0), reverse=True)
 
-    num_workers = min(8, max(1, len(contig_tasks)))
+    max_cpus = args.process_number if args.process_number > 0 else (os.cpu_count() or 4)
+    num_workers = min(max_cpus, max(1, len(contig_tasks)))
     logger.info(
         "Annotating %d contigs with %d processes (largest: %s with %d predictions)",
         len(contig_tasks),
         num_workers,
         contig_tasks[0] if contig_tasks else "?",
-        len(contig_predictions.get(contig_tasks[0], {})) if contig_tasks else 0,
+        contig_counts.get(contig_tasks[0], 0) if contig_tasks else 0,
     )
 
-    # Use ProcessPoolExecutor — each subprocess gets only its contig's predictions
-    # (small enough to pickle, avoids GIL, true parallelism)
+    # Each worker independently reads parquet + VCF — no shared state, no pickle of
+    # large data, no COW issues.  Only small picklable args are sent to each worker.
     from concurrent.futures import ProcessPoolExecutor as _ProcPool  # noqa: PLC0415
 
-    tmp_output_paths = []
+    tmp_output_paths: list[str] = []
     with _ProcPool(max_workers=num_workers) as pool:
         futures = {}
         for contig in contig_tasks:
             out_path = os.path.join(out_dir, contig + ".vcf.gz")
             fut = pool.submit(
-                _annotate_contig_worker,
+                _merge_contig_worker,
                 contig=contig,
                 vcf_in=args.featuremap_vcf,
                 vcf_out=out_path,
-                predictions=contig_predictions.pop(contig),  # pop to free memory
-                quality_fn=quality_fn,
+                pred_paths=list(args.fold_predictions),
+                quality_lut_x=quality_lut_x,
+                quality_lut_y=quality_lut_y,
                 low_qual_threshold=args.low_qual_threshold,
             )
             futures[fut] = (contig, out_path)
 
-        for fut in futures:
-            out_path = fut.result()
-            contig = futures[fut][0]
+        for fut, (contig, out_path) in futures.items():
+            fut.result()  # raise on error
             tmp_output_paths.append(out_path)
             logger.info("Annotated contig %s", contig)
 
