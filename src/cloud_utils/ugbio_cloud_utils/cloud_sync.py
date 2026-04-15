@@ -32,7 +32,7 @@ def download_from_gs(bucket_name, source_blob_name, destination_file_name):
 
 
 def download_from_s3(bucket_name, object_name, destination_file_name):
-    client = boto3.Session(profile_name="default").client("s3")
+    client = boto3.Session(profile_name="v1").client("s3")
     client.download_file(bucket_name, object_name, destination_file_name)
 
 
