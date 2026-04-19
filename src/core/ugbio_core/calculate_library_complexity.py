@@ -101,8 +101,6 @@ def estimate_library_size(n, c):
         fx = f(x, n, c)
         dfx = df(x, n)
 
-        print(f"Iteration {i}: X={x}, f(X)={fx}, df(X)={dfx}")
-
         if dfx == 0:
             print("Derivative is zero, stopping.")
             break
@@ -206,6 +204,14 @@ def main():
 
     print(f"N = {n}")
     print(f"C = {c}")
+    if n < c:
+        raise ValueError(
+            f"Invalid input: N (total reads) must be greater than C (non-duplicate reads). Got N={n}, C={c}."
+        )
+    if n == c:
+        raise ValueError(
+            f"Invalid input: N (total reads) cannot be equal to C (non-duplicate reads). Got N={n}, C={c}."
+        )
 
     x = estimate_library_size(n, c)
     print(f"Estimated library size X = {x}")
