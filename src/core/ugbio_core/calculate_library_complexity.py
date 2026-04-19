@@ -5,28 +5,41 @@ import math
 import os
 import subprocess
 
+import pandas as pd
 import polars as pl
 
-# -----------------------------
-# Argument parsing
-# -----------------------------
-parser = argparse.ArgumentParser(description="Calculate library complexity")
-parser.add_argument("--cram", help="Path to CRAM file (optional)")
-parser.add_argument("--tsv", help="Path to TSV file with MI_Z data")
-parser.add_argument("--N", type=int, help="Total number of reads (optional if TSV provided)")
-parser.add_argument("--C", type=int, help="Number of non-duplicate reads (optional if TSV provided)")
-args = parser.parse_args()
 
-# -----------------------------
-# Validate input
-# -----------------------------
-if not (args.tsv or args.cram or (args.N is not None and args.C is not None)):
-    parser.error("You must provide either --tsv OR --cram OR both --N and --C")
-
-if args.tsv and (args.cram or args.N or args.C):
-    print("⚠️ Multiple input modes provided — TSV will be used")
-elif args.cram and (args.N or args.C):
-    print("⚠️ CRAM + N/C provided — CRAM will be used")
+def parse_args():
+    # -----------------------------
+    # Argument parsing
+    # -----------------------------
+    parser = argparse.ArgumentParser(description="Calculate library complexity")
+    parser.add_argument("--cram", help="Path to CRAM file (optional)")
+    parser.add_argument("--N", type=int, help="Total number of reads (optional if csv is provided)")
+    parser.add_argument("--C", type=int, help="Number of non-duplicate reads (optional if csv is provided)")
+    parser.add_argument("--csv", help="Path to sorter CSV file (optional if N,C or N,pct_dup are provided)")
+    parser.add_argument("--PF_Barcode_reads", type=float, help="Total PF barcode reads")
+    parser.add_argument("--PCT_PF_Reads_aligned", type=float, help="Percent aligned reads (0–100)")
+    parser.add_argument("--pct_duplication", type=float, help="Duplication percentage (0–100)")
+    args = parser.parse_args()
+    # -----------------------------
+    # Validate input
+    # -----------------------------
+    if not (
+        args.cram
+        or args.csv
+        or (args.N is not None and args.C is not None)
+        or (
+            args.PF_Barcode_reads is not None
+            and args.PCT_PF_Reads_aligned is not None
+            and args.pct_duplication is not None
+        )
+    ):
+        parser.error(
+            "Provide one of: --cram | --csv | (--N and --C) | "
+            "(--PF_Barcode_reads and --PCT_PF_Reads_aligned and --pct_duplication)"
+        )
+    return args
 
 
 # -----------------------------
@@ -61,90 +74,151 @@ def extract_tsv_from_cram(cram_path, output_tsv, threads=16):
     print(f"TSV written to: {output_tsv}")
 
 
-# -----------------------------
-# Compute N and C
-# -----------------------------
-if args.tsv:
-    tsv_path = args.tsv
+def estimate_library_size(n, c):
+    # -----------------------------
+    # Newton's method
+    # -----------------------------
+    print("Calculating library size X using Newton’s method")
 
-elif args.cram:
-    tsv_path_1 = args.cram.replace(".cram", "_MI_Z.tsv")
-    tsv_path_2 = args.cram.replace(".cram", "_read_name_duplicate_mapped_secondary_supplementary_flag_MI_Z_tag.tsv")
+    def f(x, n, c):
+        return x * (1 - math.exp(-n / x)) - c
 
-    # Avoid regenerating TSV if it already exists:
-    if not os.path.exists(tsv_path_1) and not os.path.exists(tsv_path_2):
-        tsv_path = tsv_path_1
-        extract_tsv_from_cram(args.cram, tsv_path)
-    else:
-        if os.path.exists(tsv_path_1):
-            tsv_path = tsv_path_1
-        if os.path.exists(tsv_path_2):
-            tsv_path = tsv_path_2
-        print(f"TSV already exists, skipping extraction: {tsv_path}")
+    def df(x, n):
+        return (1 - math.exp(-n / x)) - (n / x) * math.exp(-n / x)
 
-else:
-    print("Using provided N and C values")
-    n = args.N
-    c = args.C
+    # initial guess
+    x = max(c, n * 0.1)
 
-# -----------------------------
-# If we have a TSV → compute N and C
-# -----------------------------
-if args.tsv or args.cram:
-    print(f"Loading TSV: {tsv_path}")
+    for i in range(50):
+        fx = f(x, n, c)
+        dfx = df(x, n)
 
-    MI_Z_df = pl.scan_csv(
-        tsv_path,
-        separator="\t",
-        has_header=False,
-        new_columns=["read_name", "dup", "MI_Z", "is_unmapped", "is_secondary", "is_supplementary"],
-    ).collect()
+        print(f"Iteration {i}: X={x}, f(X)={fx}, df(X)={dfx}")
 
-    filtered = MI_Z_df.filter(
-        (pl.col("is_unmapped") == 0) & (pl.col("is_secondary") == 0) & (pl.col("is_supplementary") == 0)
-    )
+        if dfx == 0:
+            print("Derivative is zero, stopping.")
+            break
 
-    n = filtered.shape[0]
+        x_new = x - fx / dfx
 
-    c = filtered.filter(pl.col("dup") == 0).shape[0]
+        if abs(x_new - x) < 1e-6 * x:
+            x = x_new
+            print(f"Converged at iteration {i}")
+            break
 
-print(f"N = {n}")
-print(f"C = {c}")
-
-# -----------------------------
-# Newton's method
-# -----------------------------
-print("Calculating library size X using Newton’s method")
-
-
-def f(x, n, c):
-    return x * (1 - math.exp(-n / x)) - c
-
-
-def df(x, n):
-    return (1 - math.exp(-n / x)) - (n / x) * math.exp(-n / x)
-
-
-# initial guess
-x = max(c, n * 0.1)
-
-for i in range(50):
-    fx = f(x, n, c)
-    dfx = df(x, n)
-
-    print(f"Iteration {i}: X={x}, f(X)={fx}, df(X)={dfx}")
-
-    if dfx == 0:
-        print("Derivative is zero, stopping.")
-        break
-
-    x_new = x - fx / dfx
-
-    if abs(x_new - x) < 1e-6 * x:
         x = x_new
-        print(f"Converged at iteration {i}")
-        break
+    return int(x)
 
-    x = x_new
 
-print(f"Estimated library size X = {x}")
+def determine_mode(args):
+    # -----------------------------
+    # input mode (priority logic)
+    # -----------------------------
+    if args.csv:
+        if any([args.cram, args.N is not None, args.C is not None, args.PF_Barcode_reads is not None]):
+            print("Multiple input modes provided — CSV will be used")
+        mode = "csv"
+
+    elif (
+        args.PF_Barcode_reads is not None and args.PCT_PF_Reads_aligned is not None and args.pct_duplication is not None
+    ):
+        if not (0 <= args.PCT_PF_Reads_aligned <= 100):  # noqa: PLR2004
+            raise ValueError("PCT_PF_Reads_aligned must be between 0 and 100")
+
+        if not (0 <= args.pct_duplication <= 100):  # noqa: PLR2004
+            raise ValueError("pct_duplication must be between 0 and 100")
+
+        mode = "pf_metrics"
+
+    elif args.N is not None and args.C is not None:
+        mode = "n_c"
+
+    elif args.cram:
+        mode = "cram"
+
+    else:
+        raise ValueError(
+            "Provide one of: --cram | --csv | (--N and --C) | "
+            "(--PF_Barcode_reads --PCT_PF_Reads_aligned --pct_duplication)"
+        )
+
+    return mode
+
+
+def main():
+    args = parse_args()
+    mode = determine_mode(args)
+
+    # -----------------------------
+    # Compute N and C
+    # -----------------------------
+    if mode == "csv":
+        print(f"Processing CSV: {args.csv}")
+
+        sorter_csv = pd.read_csv(args.csv, header=None, names=["metric", "value"])
+
+        pf_barcode_reads = sorter_csv.loc[sorter_csv["metric"] == "PF_Barcode_reads", "value"].to_numpy()[0]
+        print(f"PF_Barcode_reads {pf_barcode_reads}")
+
+        pct_pf_reads_aligned = sorter_csv.loc[sorter_csv["metric"] == "PCT_PF_Reads_aligned", "value"].to_numpy()[0]
+        print(f"PCT_PF_Reads_aligned {pct_pf_reads_aligned}")
+
+        pct_duplication = sorter_csv.loc[sorter_csv["metric"] == "% duplicates", "value"].to_numpy()[0]
+        print(f"pct_duplication {pct_duplication}")
+
+        n = int(pf_barcode_reads * (pct_pf_reads_aligned / 100))
+        d = int((pct_duplication / 100) * n)
+        c = n - d
+        print(f"N={n}, D={d}, C={c}")
+
+    elif mode == "pf_metrics":
+        print("Using PF metrics to compute N and C")
+
+        pf_barcode_reads = args.PF_Barcode_reads
+        pct_pf_reads_aligned = args.PCT_PF_Reads_aligned
+        pct_duplication = args.pct_duplication
+
+        n = int(pf_barcode_reads * (pct_pf_reads_aligned / 100))
+        d = int((pct_duplication / 100) * n)
+        c = n - d
+
+    elif mode == "n_c":
+        print("Using provided N and C")
+
+        n = args.N
+        c = args.C
+
+    elif mode == "cram":
+        print(f"Processing CRAM: {args.cram}")
+
+        tsv_path = args.cram.replace(".cram", "_MI_Z.tsv")
+
+        if not os.path.exists(tsv_path):
+            extract_tsv_from_cram(args.cram, tsv_path)
+        else:
+            print(f"TSV already exists: {tsv_path}")
+
+        mi_z_df = pl.scan_csv(
+            tsv_path,
+            separator="\t",
+            has_header=False,
+            new_columns=["read_name", "dup", "MI_Z", "is_unmapped", "is_secondary", "is_supplementary"],
+        ).collect()
+
+        filtered = mi_z_df.filter(
+            (pl.col("is_unmapped") == 0) & (pl.col("is_secondary") == 0) & (pl.col("is_supplementary") == 0)
+        )
+
+        n = filtered.shape[0]
+        c = filtered.filter(pl.col("dup") == 0).shape[0]
+    else:
+        raise ValueError(
+            "Invalid parameters provided. Provide one of: --cram | --csv | (--N and --C) | "
+            "(--PF_Barcode_reads and --PCT_PF_Reads_aligned and --pct_duplication)"
+        )
+
+    print(f"N = {n}")
+    print(f"C = {c}")
+
+    x = estimate_library_size(n, c)
+    print(f"Estimated library size X = {x}")
