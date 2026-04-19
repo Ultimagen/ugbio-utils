@@ -9,36 +9,56 @@ import pandas as pd
 import polars as pl
 
 
-def parse_args():
-    # -----------------------------
-    # Argument parsing
-    # -----------------------------
-    parser = argparse.ArgumentParser(description="Calculate library complexity")
-    parser.add_argument("--cram", help="Path to CRAM file (optional)")
-    parser.add_argument("--N", type=int, help="Total number of reads (optional if csv is provided)")
-    parser.add_argument("--C", type=int, help="Number of non-duplicate reads (optional if csv is provided)")
-    parser.add_argument("--csv", help="Path to sorter CSV file (optional if N,C or N,pct_dup are provided)")
+def parse_args() -> argparse.Namespace:
+    """Parse CLI args and enforce exactly one supported input mode."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Calculate library complexity. Provide exactly one mode: "
+            "--cram OR --csv OR (--N and --C) OR "
+            "(--PF_Barcode_reads --PCT_PF_Reads_aligned --pct_duplication)."
+        )
+    )
+    parser.add_argument("--cram", help="Path to CRAM file")
+    parser.add_argument("--csv", help="Path to sorter CSV file")
+    parser.add_argument("--N", type=int, help="Total number of reads (must be used with --C)")
+    parser.add_argument("--C", type=int, help="Number of non-duplicate reads (must be used with --N)")
     parser.add_argument("--PF_Barcode_reads", type=float, help="Total PF barcode reads")
-    parser.add_argument("--PCT_PF_Reads_aligned", type=float, help="Percent aligned reads (0–100)")
-    parser.add_argument("--pct_duplication", type=float, help="Duplication percentage (0–100)")
+    parser.add_argument("--PCT_PF_Reads_aligned", type=float, help="Percent aligned reads (0-100)")
+    parser.add_argument("--pct_duplication", type=float, help="Duplication percentage (0-100)")
     args = parser.parse_args()
-    # -----------------------------
-    # Validate input
-    # -----------------------------
-    if not (
-        args.cram
-        or args.csv
-        or (args.N is not None and args.C is not None)
-        or (
-            args.PF_Barcode_reads is not None
-            and args.PCT_PF_Reads_aligned is not None
-            and args.pct_duplication is not None
-        )
-    ):
+
+    has_cram = bool(args.cram)
+    has_csv = bool(args.csv)
+    has_nc = args.N is not None or args.C is not None
+    has_pf = (
+        args.PF_Barcode_reads is not None or args.PCT_PF_Reads_aligned is not None or args.pct_duplication is not None
+    )
+
+    selected_modes = sum([has_cram, has_csv, has_nc, has_pf])
+    if selected_modes == 0:
         parser.error(
-            "Provide one of: --cram | --csv | (--N and --C) | "
-            "(--PF_Barcode_reads and --PCT_PF_Reads_aligned and --pct_duplication)"
+            "No input mode selected. Provide exactly one mode: --cram OR --csv OR "
+            "(--N and --C) OR (--PF_Barcode_reads --PCT_PF_Reads_aligned --pct_duplication)."
         )
+    if selected_modes > 1:
+        parser.error(
+            "Multiple input modes were provided. Choose exactly one: --cram OR --csv OR "
+            "(--N and --C) OR (--PF_Barcode_reads --PCT_PF_Reads_aligned --pct_duplication)."
+        )
+
+    if args.N is not None and args.C is None:
+        parser.error("The N/C mode requires both --N and --C.")
+    if args.N is None and args.C is not None:
+        parser.error("--C can only be used with --N.")
+
+    if args.PF_Barcode_reads is not None and (args.PCT_PF_Reads_aligned is None or args.pct_duplication is None):
+        parser.error(
+            "The PF metrics mode requires all three parameters: --PF_Barcode_reads "
+            "--PCT_PF_Reads_aligned --pct_duplication."
+        )
+    if args.PF_Barcode_reads is None and (args.PCT_PF_Reads_aligned is not None or args.pct_duplication is not None):
+        parser.error("--PCT_PF_Reads_aligned and --pct_duplication can only be used with --PF_Barcode_reads.")
+
     return args
 
 
@@ -51,7 +71,7 @@ def extract_tsv_from_cram(cram_path, output_tsv, threads=16):
     cmd = ["samtools", "view", "-@", str(threads), cram_path]
 
     with subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True) as proc, open(output_tsv, "w") as out:
-        for line in proc.stdout:
+        for line in proc.stdout or []:
             fields = line.strip().split("\t")
 
             read_name = fields[0]
@@ -115,8 +135,6 @@ def determine_mode(args):
     # input mode (priority logic)
     # -----------------------------
     if args.csv:
-        if any([args.cram, args.N is not None, args.C is not None, args.PF_Barcode_reads is not None]):
-            print("Multiple input modes provided — CSV will be used")
         mode = "csv"
 
     elif (
