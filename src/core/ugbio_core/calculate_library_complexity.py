@@ -2,11 +2,10 @@
 
 import argparse
 import math
-import os
 import subprocess
 
 import pandas as pd
-import polars as pl
+import tqdm
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,36 +61,25 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-# -----------------------------
-# Extract tsv from cram file function
-# -----------------------------
-def extract_tsv_from_cram(cram_path, output_tsv, threads=16):
+def extract_n_c_from_cram(cram_path, threads=16):
     print(f"Extracting TSV from CRAM: {cram_path}")
 
     cmd = ["samtools", "view", "-@", str(threads), cram_path]
-
-    with subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True) as proc, open(output_tsv, "w") as out:
-        for line in proc.stdout or []:
+    n = 0
+    c = 0
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, text=True) as proc:
+        for line in tqdm.tqdm(proc.stdout):
             fields = line.strip().split("\t")
-
-            read_name = fields[0]
             flag = int(fields[1])
-
-            # extract MI:Z tag
-            mi = "NA"
-            for f in fields[11:]:
-                if f.startswith("MI:Z:"):
-                    mi = f[5:]
-                    break
-
             dup = 1 if (flag & 1024) else 0
             is_unmapped = 1 if (flag & 4) else 0
             is_secondary = 1 if (flag & 256) else 0
             is_supplementary = 1 if (flag & 2048) else 0
-
-            out.write(f"{read_name}\t{dup}\t{mi}\t" f"{is_unmapped}\t{is_secondary}\t{is_supplementary}\n")
-
-    print(f"TSV written to: {output_tsv}")
+            if not is_unmapped and not is_secondary and not is_supplementary:
+                n += 1
+                if dup == 0:
+                    c += 1
+    return n, c
 
 
 def estimate_library_size(n, c):
@@ -209,26 +197,7 @@ def main():
     elif mode == "cram":
         print(f"Processing CRAM: {args.cram}")
 
-        tsv_path = args.cram.replace(".cram", "_MI_Z.tsv")
-
-        if not os.path.exists(tsv_path):
-            extract_tsv_from_cram(args.cram, tsv_path)
-        else:
-            print(f"TSV already exists: {tsv_path}")
-
-        mi_z_df = pl.scan_csv(
-            tsv_path,
-            separator="\t",
-            has_header=False,
-            new_columns=["read_name", "dup", "MI_Z", "is_unmapped", "is_secondary", "is_supplementary"],
-        ).collect()
-
-        filtered = mi_z_df.filter(
-            (pl.col("is_unmapped") == 0) & (pl.col("is_secondary") == 0) & (pl.col("is_supplementary") == 0)
-        )
-
-        n = filtered.shape[0]
-        c = filtered.filter(pl.col("dup") == 0).shape[0]
+        n, c = extract_n_c_from_cram(args.cram)
     else:
         raise ValueError(
             "Invalid parameters provided. Provide one of: --cram | --csv | (--N and --C) | "
