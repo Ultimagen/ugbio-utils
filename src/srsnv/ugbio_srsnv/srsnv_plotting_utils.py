@@ -35,8 +35,6 @@ from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions, PpmseqCategories
 from ugbio_srsnv.shap_plotting import SHAPPlotter
 from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
 from ugbio_srsnv.srsnv_utils import (
-    ET,
-    ET_FILLNA,
     MAX_PHRED,
     ST,
     ST_FILLNA,
@@ -1550,7 +1548,7 @@ class SRSNVReport:
 
         # Add is_mixed columns if they don't exist
         if IS_MIXED not in self.data_df.columns:
-            logger.info(f"Adding {IS_MIXED}, {IS_MIXED_START}, and {IS_MIXED_END} columns to data_df")
+            logger.info(f"Adding {IS_MIXED}, {IS_MIXED_START} columns to data_df")
 
             adapter_version = self.params.get("adapter_version", None)
             categorical_features = [f["name"] for f in self.srsnv_metadata["features"] if f.get("type") == "c"]
@@ -1770,12 +1768,9 @@ class SRSNVReport:
         conditions = {
             "all reads": None,
         }
-        if IS_MIXED in self.data_df.columns:
-            if self.data_df[IS_MIXED].any():
-                conditions["mixed both ends"] = self.data_df[IS_MIXED]
         if IS_MIXED_START in self.data_df.columns:
             if self.data_df[IS_MIXED_START].any():
-                conditions["mixed start"] = self.data_df[IS_MIXED_START]
+                conditions["mixed"] = self.data_df[IS_MIXED_START]
 
         if only_calculate:
             for label, condition in conditions.items():
@@ -1871,8 +1866,8 @@ class SRSNVReport:
         """Calculate run_info_table, a table with general run information."""
         # Generate Run Info table
         logger.info("Generating Run Info table")
-        TP_mixed_percent = (self.data_df[IS_MIXED] & self.data_df[LABEL]).sum() / (self.data_df[LABEL].sum())  # noqa: N806
-        FP_mixed_percent = (self.data_df[IS_MIXED] & ~self.data_df[LABEL]).sum() / ((~self.data_df[LABEL]).sum())  # noqa: N806
+        TP_mixed_percent = (self.data_df[IS_MIXED_START] & self.data_df[LABEL]).sum() / (self.data_df[LABEL].sum())  # noqa: N806
+        FP_mixed_percent = (self.data_df[IS_MIXED_START] & ~self.data_df[LABEL]).sum() / ((~self.data_df[LABEL]).sum())  # noqa: N806
         general_info = {
             ("Sample name", ""): self.base_name[:-1],
             ("Median training read length", ""): np.median(self.data_df[LENGTH]),
@@ -1888,23 +1883,17 @@ class SRSNVReport:
             ): f"{signif(100*FP_mixed_percent, 3)}%",
         }
         # Performance info
-        mixed_df = self.data_df[self.data_df[IS_MIXED]]
-        mixed_start_df = self.data_df[self.data_df[IS_MIXED_START]]
+        mixed_df = self.data_df[self.data_df[IS_MIXED_START]]
         tp_df = self.data_df[self.data_df[LABEL]]
-        tp_mixed_df = tp_df[tp_df[IS_MIXED]]
-        tp_mixed_start_df = tp_df[tp_df[IS_MIXED_START]]
+        tp_mixed_df = tp_df[tp_df[IS_MIXED_START]]
         median_qual = tp_df[QUAL].median()
         median_qual_mixed = tp_mixed_df[QUAL].median()
-        median_qual_mixed_start = tp_mixed_start_df[QUAL].median()
         recall_at_0 = self._get_recall_at_snvq(snvq=0)
-        recall_at_0_mixed = self._get_recall_at_snvq(snvq=0, condition=self.data_df[IS_MIXED])
-        recall_at_0_mixed_start = self._get_recall_at_snvq(snvq=0, condition=self.data_df[IS_MIXED_START])
+        recall_at_0_mixed = self._get_recall_at_snvq(snvq=0, condition=self.data_df[IS_MIXED_START])
         recall_at_50 = self._get_recall_at_snvq(snvq=50)
-        recall_at_50_mixed = self._get_recall_at_snvq(snvq=50, condition=self.data_df[IS_MIXED])
-        recall_at_50_mixed_start = self._get_recall_at_snvq(snvq=50, condition=self.data_df[IS_MIXED_START])
+        recall_at_50_mixed = self._get_recall_at_snvq(snvq=50, condition=self.data_df[IS_MIXED_START])
         recall_at_60 = self._get_recall_at_snvq(snvq=60)
-        recall_at_60_mixed = self._get_recall_at_snvq(snvq=60, condition=self.data_df[IS_MIXED])
-        recall_at_60_mixed_start = self._get_recall_at_snvq(snvq=60, condition=self.data_df[IS_MIXED_START])
+        recall_at_60_mixed = self._get_recall_at_snvq(snvq=60, condition=self.data_df[IS_MIXED_START])
         roc_auc_phred = prob_to_phred(
             self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name="run info total"),
             max_value=self.max_qual,
@@ -1913,30 +1902,17 @@ class SRSNVReport:
             self._safe_roc_auc(mixed_df[LABEL], mixed_df[ML_PROB_1_TEST], name="run info mixed"),
             max_value=self.max_qual,
         )
-        roc_auc_phred_mixed_start = prob_to_phred(
-            self._safe_roc_auc(mixed_start_df[LABEL], mixed_start_df[ML_PROB_1_TEST], name="run info mixed"),
-            max_value=self.max_qual,
-        )
         performance_info = {
             ("Median SNVQ", "All reads"): signif(median_qual, SIG_DIGITS),
-            ("Median SNVQ", "Mixed, start"): signif(median_qual_mixed_start, SIG_DIGITS),
-            ("Median SNVQ", "Mixed, both ends"): signif(median_qual_mixed, SIG_DIGITS),
+            ("Median SNVQ", "Mixed"): signif(median_qual_mixed, SIG_DIGITS),
             ("Recall at SNVQ=50", "All reads"): signif(recall_at_50 / recall_at_0, SIG_DIGITS),
-            ("Recall at SNVQ=50", "Mixed, start"): signif(
-                recall_at_50_mixed_start / recall_at_0_mixed_start, SIG_DIGITS
-            ),
-            ("Recall at SNVQ=50", "Mixed, both ends"): signif(recall_at_50_mixed / recall_at_0_mixed, SIG_DIGITS),
+            ("Recall at SNVQ=50", "Mixed"): signif(recall_at_50_mixed / recall_at_0_mixed, SIG_DIGITS),
             ("Recall at SNVQ=60", "All reads"): signif(recall_at_60 / recall_at_0, SIG_DIGITS),
-            ("Recall at SNVQ=60", "Mixed, start"): signif(
-                recall_at_60_mixed_start / recall_at_0_mixed_start, SIG_DIGITS
-            ),
-            ("Recall at SNVQ=60", "Mixed, both ends"): signif(recall_at_60_mixed / recall_at_0_mixed, SIG_DIGITS),
+            ("Recall at SNVQ=60", "Mixed"): signif(recall_at_60_mixed / recall_at_0_mixed, SIG_DIGITS),
             ("Pre-filter Recall", "All reads"): signif(recall_at_0, SIG_DIGITS),
-            ("Pre-filter Recall", "Mixed, start"): signif(recall_at_0_mixed_start, SIG_DIGITS),
-            ("Pre-filter Recall", "Mixed, both ends"): signif(recall_at_0_mixed, SIG_DIGITS),
+            ("Pre-filter Recall", "Mixed"): signif(recall_at_0_mixed, SIG_DIGITS),
             ("ROC AUC (Phred)", "All reads"): signif(roc_auc_phred, SIG_DIGITS),
-            ("ROC AUC (Phred)", "Mixed, start"): signif(roc_auc_phred_mixed_start, SIG_DIGITS),
-            ("ROC AUC (Phred)", "Mixed, both ends"): signif(roc_auc_phred_mixed, SIG_DIGITS),
+            ("ROC AUC (Phred)", "Mixed"): signif(roc_auc_phred_mixed, SIG_DIGITS),
         }
         # Info about versions
         version_info = {
@@ -2079,7 +2055,7 @@ class SRSNVReport:
         auc_total = prob_to_phred(
             self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name="total"), max_value=self.max_qual
         )
-        mix_cond = self.data_df[IS_MIXED]
+        mix_cond = self.data_df[IS_MIXED_START]
         auc_mixed = prob_to_phred(
             self._safe_roc_auc(
                 self.data_df.loc[mix_cond, LABEL], self.data_df.loc[mix_cond, ML_PROB_1_TEST], name="mixed"
@@ -2104,8 +2080,8 @@ class SRSNVReport:
 
         for k in range(num_cv_folds):
             fold_cond = self.data_df[FOLD_ID] == k
-            mix_fold_cond = (self.data_df[FOLD_ID] == k) & (self.data_df[IS_MIXED])
-            nonmix_fold_cond = (self.data_df[FOLD_ID] == k) & (~self.data_df[IS_MIXED])
+            mix_fold_cond = (self.data_df[FOLD_ID] == k) & (self.data_df[IS_MIXED_START])
+            nonmix_fold_cond = (self.data_df[FOLD_ID] == k) & (~self.data_df[IS_MIXED_START])
             auc_per_fold.append(
                 prob_to_phred(
                     self._safe_roc_auc(
@@ -2153,8 +2129,8 @@ class SRSNVReport:
                 else:
                     auc_on_holdout.append(np.nan)
 
-                mix_holdout_fold_cond = self.data_df[FOLD_ID].isna() & (self.data_df[IS_MIXED])
-                nonmix_holdout_fold_cond = self.data_df[FOLD_ID].isna() & (~self.data_df[IS_MIXED])
+                mix_holdout_fold_cond = self.data_df[FOLD_ID].isna() & (self.data_df[IS_MIXED_START])
+                nonmix_holdout_fold_cond = self.data_df[FOLD_ID].isna() & (~self.data_df[IS_MIXED_START])
                 if "mixed" not in error_on_holdout:
                     preds = self.data_df.loc[mix_holdout_fold_cond, f"prob_fold_{k}"]
                     auc_on_holdout_mixed.append(
@@ -2278,85 +2254,64 @@ class SRSNVReport:
 
     @exception_handler
     def quality_per_ppmseq_tags(self, output_filename: str = None):
-        """Generate tables of median quality and data quantity per start and end ppmseq tags."""
+        """Generate table of median quality and data quantity per start ppmseq tag."""
         data_df_tp = self.data_df[self.data_df[LABEL]].copy()
-        # By default, use ST_FILLNA and ET_FILLNA if they are in the data
-        ppmseq_fillna_tags_in_data = ST_FILLNA in data_df_tp.columns and ET_FILLNA in data_df_tp.columns
+        # Determine start tag column
+        ppmseq_fillna_tags_in_data = ST_FILLNA in data_df_tp.columns
         if ppmseq_fillna_tags_in_data:
-            start_tag_col, end_tag_col = (ST_FILLNA, ET_FILLNA)
+            start_tag_col = ST_FILLNA
+        elif self.start_tag_col is not None and self.start_tag_col in data_df_tp.columns:
+            start_tag_col = self.start_tag_col
         else:
-            # Otherwise, use user-specified columns or ST and ET if not specified
-            if self.start_tag_col is None or self.end_tag_col is None:
-                logger.warning("ppmSeq tag columns not specified.")
-                start_tag_col, end_tag_col = (ST, ET)
-            else:
-                start_tag_col, end_tag_col = (self.start_tag_col, self.end_tag_col)
-            # Check if the specified columns are in the data, otherwise create them with NaNs
-            ppmseq_tags_in_data = start_tag_col in data_df_tp.columns and end_tag_col in data_df_tp.columns
-            if not ppmseq_tags_in_data:
+            logger.warning("ppmSeq start tag column not found in data.")
+            start_tag_col = ST
+            if start_tag_col not in data_df_tp.columns:
                 data_df_tp[start_tag_col] = np.nan
-                data_df_tp[end_tag_col] = np.nan
         # If there are NaNs in the tags, convert to string to avoid issues with groupby
-        if data_df_tp[start_tag_col].isna().any() or data_df_tp[end_tag_col].isna().any():
-            data_df_tp = data_df_tp.astype({start_tag_col: str, end_tag_col: str})
-        ppmseq_category_quality_table = (
-            data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)[QUAL].median().unstack()  # noqa PD010
-        )
-        if PpmseqCategories.END_UNREACHED.value in ppmseq_category_quality_table.index:
-            ppmseq_category_quality_table = ppmseq_category_quality_table.drop(
-                index=PpmseqCategories.END_UNREACHED.value
-            )
-        ppmseq_category_quantity_table = (
-            data_df_tp.groupby([start_tag_col, end_tag_col], dropna=False)[QUAL].count().unstack()  # noqa PD010
-        )
-        if PpmseqCategories.END_UNREACHED.value in ppmseq_category_quantity_table.index:
-            ppmseq_category_quantity_table = ppmseq_category_quantity_table.drop(
-                index=PpmseqCategories.END_UNREACHED.value
-            )
-        ppmseq_category_quantity_table = (
-            ppmseq_category_quantity_table / ppmseq_category_quantity_table.to_numpy().sum()
-        ) * 100
-        # Convert index and columns from categorical to string
-        ppmseq_category_quality_table.index = ppmseq_category_quality_table.index.astype(str)
-        ppmseq_category_quality_table.columns = ppmseq_category_quality_table.columns.astype(str)
-        ppmseq_category_quantity_table.index = ppmseq_category_quantity_table.index.astype(str)
-        ppmseq_category_quantity_table.columns = ppmseq_category_quantity_table.columns.astype(str)
+        if data_df_tp[start_tag_col].isna().any():
+            data_df_tp[start_tag_col] = data_df_tp[start_tag_col].astype(str)
+        # Group by start tag only
+        total_count = len(data_df_tp)
+        grouped = data_df_tp.groupby(start_tag_col, dropna=False)[QUAL]
+        median_qual = grouped.median()
+        counts = grouped.count()
+        pct_reads = (counts / total_count) * 100
+        # Filter out END_UNREACHED if present
+        if PpmseqCategories.END_UNREACHED.value in median_qual.index:
+            median_qual = median_qual.drop(index=PpmseqCategories.END_UNREACHED.value)
+            pct_reads = pct_reads.drop(index=PpmseqCategories.END_UNREACHED.value)
+        # Build summary table
+        summary_df = pd.DataFrame({"Median SNVQ": median_qual, "% of reads": pct_reads})
+        summary_df.index = summary_df.index.astype(str)
+        summary_df.index.name = "ppmSeq tag"
+        summary_df["Median SNVQ"] = summary_df["Median SNVQ"].apply(lambda x: signif(x, 3))
+        summary_df["% of reads"] = summary_df["% of reads"].apply(lambda x: signif(x, 2))
 
         # Save to hdf5
-        ppmseq_category_quality_table_for_h5 = ppmseq_category_quality_table.T.unstack(level=0)  # noqa PD010
-        ppmseq_category_quantity_table_for_h5 = ppmseq_category_quantity_table.T.unstack(level=0)  # noqa PD010
-        ppmseq_category_quality_table_for_h5.to_hdf(
-            self.output_h5_filename, key="ppmseq_category_quality_table", mode="a"
-        )
-        ppmseq_category_quantity_table_for_h5.to_hdf(
-            self.output_h5_filename, key="ppmseq_category_quantity_table", mode="a"
-        )
-        # Generate heatmap
-        ppmseq_category_combined_table = (
-            ppmseq_category_quality_table.apply(lambda x: signif(x, 3)).astype(str)
-            + "\n["
-            + ppmseq_category_quantity_table.apply(lambda x: signif(x, 2)).astype(str)
-            + "%]"
-        )
-        fig, ax = plt.subplots(figsize=(8, 5))
-        sns.heatmap(
-            ppmseq_category_quality_table,
-            annot=ppmseq_category_combined_table,
-            fmt="",
-            cmap="inferno",
-            cbar=False,
-            linewidths=1,
-            linecolor="black",
-            annot_kws={"size": 12},
-            square=True,
-            ax=ax,
-        )
+        summary_df.to_hdf(self.output_h5_filename, key="ppmseq_category_quality_table", mode="a")
 
-        # Customization to make it more readable
-        plt.yticks(rotation=0, fontsize=12)
-        plt.xticks(rotation=45, fontsize=12)
-        plt.xlabel("ppmSeq tag end", fontsize=14)
-        plt.ylabel("ppmSeq tag start", fontsize=14)
+        # Render as a table figure
+        fig, ax = plt.subplots(figsize=(6, max(2, 0.6 * len(summary_df) + 1)))
+        ax.axis("off")
+        table = ax.table(
+            cellText=summary_df.values,
+            rowLabels=summary_df.index,
+            colLabels=summary_df.columns,
+            cellLoc="center",
+            rowLoc="center",
+            loc="center",
+        )
+        _disable_auto_fontsize = False
+        table.auto_set_font_size(_disable_auto_fontsize)
+        table.set_fontsize(12)
+        table.scale(1.2, 1.8)
+        # Style header row
+        for j in range(len(summary_df.columns)):
+            table[0, j].set_facecolor("#4472C4")
+            table[0, j].set_text_props(color="white", fontweight="bold")
+        # Style row labels
+        for i in range(len(summary_df)):
+            table[i + 1, -1].set_facecolor("#D9E2F3")
         self._save_plt(output_filename, fig=fig)
 
     @exception_handler
@@ -2730,14 +2685,12 @@ class SRSNVReport:
 
         plot_df = self.data_df[self.data_df[LABEL]]
         plot_df["ppmSeq tags"] = "non-mixed"
-        plot_df.loc[plot_df[IS_MIXED_START] ^ plot_df[IS_MIXED_END], "ppmSeq tags"] = "mixed, exactly one end"
-        plot_df.loc[plot_df[IS_MIXED_START] & plot_df[IS_MIXED_END], "ppmSeq tags"] = "mixed, both ends"
+        plot_df.loc[plot_df[IS_MIXED_START], "ppmSeq tags"] = "mixed"
         g = sns.histplot(
             data=plot_df,
             x=QUAL,
-            # bins=50,
             hue="ppmSeq tags",
-            hue_order=["non-mixed", "mixed, exactly one end", "mixed, both ends"],
+            hue_order=["non-mixed", "mixed"],
             element="step",
             stat="density",
             common_norm=False,
@@ -2745,7 +2698,7 @@ class SRSNVReport:
             kde_kws={"bw_adjust": 3},
             linewidth=1,
             ax=ax,
-            palette={"non-mixed": "red", "mixed, exactly one end": "blue", "mixed, both ends": "green"},
+            palette={"non-mixed": "red", "mixed": "blue"},
         )
         sns.move_legend(
             ax,
