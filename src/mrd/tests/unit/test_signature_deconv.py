@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from ugbio_mrd.signature_deconv import signature_deconv
-from ugbio_mrd.split_by_vaf import TRINUC_ORDER, VAF_BINS
+from ugbio_mrd.split_by_vaf import FIRST_BIN_SINGLE_READ_LABEL, TRINUC_ORDER, get_vaf_bin_labels
 
 
 @pytest.fixture
@@ -17,7 +17,7 @@ def tmp_output(tmp_path):
 @pytest.fixture
 def trinuc_counts_csv(tmp_path):
     """Create a synthetic trinuc counts CSV matching the split_by_vaf output format."""
-    bin_labels = [label for _, _, label in VAF_BINS]
+    bin_labels = get_vaf_bin_labels()
     rng = np.random.default_rng(42)
     data = {"trinuc_substitution": TRINUC_ORDER}
     for label in bin_labels:
@@ -58,7 +58,7 @@ class TestSignatureDeconv:
 
         # Verify weights CSV structure
         df_weights = pd.read_csv(weights_csv, index_col=0)
-        assert set(df_weights.columns).issubset({"SBS1", "SBS5", "SBS40"} | {label for _, _, label in VAF_BINS})
+        assert set(df_weights.columns).issubset({"SBS1", "SBS5", "SBS40"} | set(get_vaf_bin_labels()))
         assert len(df_weights) > 0
 
     def test_output_filenames(self, trinuc_counts_csv, cosmic_signatures_file, tmp_output):
@@ -101,7 +101,7 @@ class TestSignatureDeconv:
         """Works with a single VAF bin column."""
         data = {"trinuc_substitution": TRINUC_ORDER}
         rng = np.random.default_rng(42)
-        data["0-0.5%"] = rng.integers(0, 50, size=len(TRINUC_ORDER))
+        data[FIRST_BIN_SINGLE_READ_LABEL] = rng.integers(0, 50, size=len(TRINUC_ORDER))
         single_bin_df = pd.DataFrame(data)
         csv_path = tmp_path / "single_bin.csv"
         single_bin_df.to_csv(csv_path, index=False)

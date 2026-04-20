@@ -6,12 +6,15 @@ import pandas as pd
 import polars as pl
 import pytest
 from ugbio_mrd.split_by_vaf import (
+    FIRST_BIN_MULTI_READ_LABEL,
+    FIRST_BIN_SINGLE_READ_LABEL,
     SUBSTITUTION_ORDER,
     TRINUC_ORDER,
     VAF_BINS,
     _assign_vaf_bin,
     _canonical_trinuc_change,
     _revcomp,
+    get_vaf_bin_labels,
     split_by_vaf,
 )
 
@@ -97,6 +100,12 @@ class TestAssignVafBin:
     def test_zero_vaf(self):
         assert _assign_vaf_bin(0.0) == "0-0.5%"
 
+    def test_zero_vaf_single_read(self):
+        assert _assign_vaf_bin(0.0, supporting_read_count=1) == FIRST_BIN_SINGLE_READ_LABEL
+
+    def test_zero_vaf_multi_read(self):
+        assert _assign_vaf_bin(0.0, supporting_read_count=2) == FIRST_BIN_MULTI_READ_LABEL
+
     def test_mid_vaf(self):
         assert _assign_vaf_bin(0.25) == "10-30%"
 
@@ -134,7 +143,7 @@ class TestSplitByVaf:
         # Verify CSV structure
         counts_df = pd.read_csv(counts_csv)
         assert "trinuc_substitution" in counts_df.columns
-        bin_labels = [label for _, _, label in VAF_BINS]
+        bin_labels = get_vaf_bin_labels()
         for label in bin_labels:
             assert label in counts_df.columns
 
@@ -169,11 +178,80 @@ class TestSplitByVaf:
 
         df_loose = pd.read_csv(counts_csv_loose)
         df_strict = pd.read_csv(counts_csv_strict)
-        bin_labels = [label for _, _, label in VAF_BINS]
+        bin_labels = get_vaf_bin_labels()
 
         total_loose = df_loose[bin_labels].sum().sum()
         total_strict = df_strict[bin_labels].sum().sum()
         assert total_strict <= total_loose
+
+    def test_first_vaf_bin_is_split_by_supporting_read_count(self, tmp_path):
+        """First VAF bin should separate single-read and multi-read variants."""
+        variant_rows = [
+            {
+                "CHROM": "chr1",
+                "POS": 100,
+                "REF": "C",
+                "ALT": "A",
+                "X_PREV1": "A",
+                "X_NEXT1": "G",
+                "VAF": 0.001,
+                "SNVQ": 80.0,
+                "FILT": 1,
+                "MAPQ": 70,
+            },
+            {
+                "CHROM": "chr1",
+                "POS": 200,
+                "REF": "C",
+                "ALT": "T",
+                "X_PREV1": "T",
+                "X_NEXT1": "A",
+                "VAF": 0.003,
+                "SNVQ": 80.0,
+                "FILT": 1,
+                "MAPQ": 70,
+            },
+            {
+                "CHROM": "chr1",
+                "POS": 200,
+                "REF": "C",
+                "ALT": "T",
+                "X_PREV1": "T",
+                "X_NEXT1": "A",
+                "VAF": 0.003,
+                "SNVQ": 80.0,
+                "FILT": 1,
+                "MAPQ": 70,
+            },
+            {
+                "CHROM": "chr1",
+                "POS": 300,
+                "REF": "T",
+                "ALT": "G",
+                "X_PREV1": "G",
+                "X_NEXT1": "C",
+                "VAF": 0.02,
+                "SNVQ": 80.0,
+                "FILT": 1,
+                "MAPQ": 70,
+            },
+        ]
+        parquet_path = tmp_path / "split_first_bin.parquet"
+        pl.DataFrame(variant_rows).write_parquet(parquet_path)
+
+        counts_csv, _ = split_by_vaf(
+            input_parquet=str(parquet_path),
+            output_dir=str(tmp_path),
+            basename="split_case",
+        )
+
+        counts_df = pd.read_csv(counts_csv).set_index("trinuc_substitution")
+        assert counts_df[FIRST_BIN_SINGLE_READ_LABEL].sum() == 1
+        assert counts_df[FIRST_BIN_MULTI_READ_LABEL].sum() == 2
+        assert counts_df["0.5-5%"].sum() == 1
+        assert counts_df.loc["A[C>A]G", FIRST_BIN_SINGLE_READ_LABEL] == 1
+        assert counts_df.loc["T[C>T]A", FIRST_BIN_MULTI_READ_LABEL] == 2
+        assert counts_df.loc["G[T>G]C", "0.5-5%"] == 1
 
     def test_missing_columns_raises(self, tmp_path):
         """Parquet missing required columns should raise ValueError."""

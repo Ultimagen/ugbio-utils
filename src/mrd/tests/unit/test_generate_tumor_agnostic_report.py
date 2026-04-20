@@ -11,7 +11,7 @@ from ugbio_mrd.generate_tumor_agnostic_report import (
     TEMPLATE_NOTEBOOK,
     generate_tumor_agnostic_report,
 )
-from ugbio_mrd.split_by_vaf import TRINUC_ORDER, VAF_BINS
+from ugbio_mrd.split_by_vaf import FIRST_BIN_SINGLE_READ_LABEL, TRINUC_ORDER, get_vaf_bin_labels
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def sample_inputs(tmp_path):
     plt.close(fig)
 
     # Create trinuc counts CSV
-    bin_labels = [label for _, _, label in VAF_BINS]
+    bin_labels = get_vaf_bin_labels()
     rng = np.random.default_rng(42)
     data = {"trinuc_substitution": TRINUC_ORDER}
     for label in bin_labels:
@@ -46,7 +46,7 @@ def sample_inputs(tmp_path):
     weights_csv = str(tmp_path / "test.signature_weights.csv")
     pd.DataFrame(
         {"SBS1": [0.3, 0.4], "SBS5": [0.7, 0.6]},
-        index=["0-0.5%", "0.5-5%"],
+        index=[FIRST_BIN_SINGLE_READ_LABEL, "0.5-5%"],
     ).to_csv(weights_csv)
 
     return {

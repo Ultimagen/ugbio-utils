@@ -9,7 +9,7 @@ import pandas as pd
 import seaborn as sns
 from ugbio_core.logger import logger
 
-from ugbio_mrd.split_by_vaf import VAF_BINS
+from ugbio_mrd.split_by_vaf import get_vaf_bin_labels
 
 
 def signature_deconv(
@@ -59,7 +59,7 @@ def signature_deconv(
     df_counts = df_counts.set_index("Type").reindex(cosmic_catalog.index)
 
     # Drop non-VAF-bin columns if present (e.g. 'substitution')
-    bin_labels = [label for _, _, label in VAF_BINS]
+    bin_labels = get_vaf_bin_labels()
     cols_to_keep = [c for c in df_counts.columns if c in bin_labels]
     df_counts = df_counts[cols_to_keep].fillna(0).astype(int)
 

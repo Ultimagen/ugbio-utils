@@ -18,6 +18,10 @@ VAF_BINS = [
     (0.50, 1.0000001, "50-100%"),
 ]
 
+FIRST_BIN_SINGLE_READ_LABEL = "0-0.5% (1 read)"
+FIRST_BIN_MULTI_READ_LABEL = "0-0.5% (>1 reads)"
+VARIANT_KEY_COLUMNS = ["CHROM", "POS", "REF", "ALT"]
+
 SUBSTITUTION_ORDER = ["C>A", "C>G", "C>T", "T>A", "T>C", "T>G"]
 TRINUC_ORDER = [f"{left}[{sub}]{right}" for sub in SUBSTITUTION_ORDER for left in "ACGT" for right in "ACGT"]
 
@@ -43,9 +47,23 @@ def _canonical_trinuc_change(left: str, ref: str, right: str, alt: str) -> str |
     return f"{context[0]}[{context[1]}>{alt}]{context[2]}"
 
 
-def _assign_vaf_bin(vaf: float) -> str | None:
-    for lower, upper, label in VAF_BINS:
+def get_vaf_bin_labels() -> list[str]:
+    """Return output bin labels, with the first VAF bin split by read support."""
+    return [
+        FIRST_BIN_SINGLE_READ_LABEL,
+        FIRST_BIN_MULTI_READ_LABEL,
+        *[label for _, _, label in VAF_BINS[1:]],
+    ]
+
+
+def _assign_vaf_bin(vaf: float, supporting_read_count: int | None = None) -> str | None:
+    """Assign a VAF bin, splitting the first bin by supporting read count."""
+    for index, (lower, upper, label) in enumerate(VAF_BINS):
         if lower <= vaf < upper:
+            if index == 0 and supporting_read_count is not None:
+                if supporting_read_count <= 1:
+                    return FIRST_BIN_SINGLE_READ_LABEL
+                return FIRST_BIN_MULTI_READ_LABEL
             return label
     return None
 
@@ -79,18 +97,33 @@ def split_by_vaf(
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    logger.info(f"Reading parquet: {input_parquet}")
-    df_region = pl.read_parquet(input_parquet)
-    logger.info(f"Input shape: {df_region.shape}")
+    required_columns = [
+        "CHROM",
+        "POS",
+        "REF",
+        "ALT",
+        "X_PREV1",
+        "X_NEXT1",
+        "VAF",
+        "SNVQ",
+        "FILT",
+        "MAPQ",
+    ]
 
-    required_columns = ["CHROM", "POS", "REF", "ALT", "X_PREV1", "X_NEXT1", "VAF", "SNVQ", "FILT", "MAPQ"]
-    missing = [c for c in required_columns if c not in df_region.columns]
+    # Check for missing columns first by reading schema
+    logger.info(f"Reading parquet: {input_parquet}")
+    schema = pl.read_parquet_schema(input_parquet)
+    missing = [c for c in required_columns if c not in schema]
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
 
-    df_plot = (
-        df_region.select(required_columns)
-        .with_columns(
+    # Read only required columns from parquet to save memory
+    df_region = pl.read_parquet(input_parquet, columns=required_columns)
+    logger.info(f"Input shape: {df_region.shape}")
+
+    # Quality filtering in Polars (lazy evaluation)
+    df_filtered = (
+        df_region.with_columns(
             [
                 pl.col("REF").cast(pl.Utf8).str.to_uppercase(),
                 pl.col("ALT").cast(pl.Utf8).str.to_uppercase(),
@@ -112,32 +145,51 @@ def split_by_vaf(
             pl.col("MAPQ") >= mapq_threshold,
         )
         .filter((pl.col("vaf") >= 0) & (pl.col("vaf") <= 1))
-        .to_pandas()
     )
 
-    logger.info(f"After quality filtering: {len(df_plot):,} rows")
+    # Compute supporting read count per variant in Polars
+    df_with_counts = df_filtered.with_columns(
+        pl.col("POS").count().over(["CHROM", "POS", "REF", "ALT"]).alias("supporting_read_count")
+    )
+
+    logger.info(f"After quality filtering: {df_with_counts.height:,} rows")
+
+    # Convert to pandas only after filtering and aggregations
+    df_plot = df_with_counts.to_pandas()
 
     # Compute canonical trinucleotide substitution
     df_plot["trinuc_substitution"] = [
         _canonical_trinuc_change(left, ref, right, alt)
         for left, ref, right, alt in zip(
-            df_plot["X_PREV1"], df_plot["REF"], df_plot["X_NEXT1"], df_plot["ALT"], strict=False
+            df_plot["X_PREV1"],
+            df_plot["REF"],
+            df_plot["X_NEXT1"],
+            df_plot["ALT"],
+            strict=False,
         )
     ]
-    df_plot = df_plot.dropna(subset=["trinuc_substitution"]).copy()
+    df_plot = df_plot.dropna(subset=["trinuc_substitution"])
 
-    # Assign VAF bin
-    df_plot["vaf_bin"] = df_plot["vaf"].map(_assign_vaf_bin)
-    df_plot = df_plot.dropna(subset=["vaf_bin"]).copy()
     if len(df_plot) > 0:
         df_plot["substitution"] = df_plot["trinuc_substitution"].str.extract(r"\[([CT]>[ACGT])\]", expand=False)
     else:
         df_plot["substitution"] = pd.Series(dtype=str)
 
+    # Assign VAF bin using supporting_read_count that's already in the dataframe
+    df_plot["vaf_bin"] = [
+        _assign_vaf_bin(vaf, supporting_read_count)
+        for vaf, supporting_read_count in zip(
+            df_plot["vaf"],
+            df_plot["supporting_read_count"],
+            strict=False,
+        )
+    ]
+    df_plot = df_plot.dropna(subset=["vaf_bin"])
+
     logger.info(f"Rows with usable context: {len(df_plot):,}")
 
     # Build profile table
-    bin_labels = [label for _, _, label in VAF_BINS]
+    bin_labels = get_vaf_bin_labels()
     profile_table = (
         df_plot.groupby(["vaf_bin", "trinuc_substitution"])
         .size()
@@ -155,19 +207,26 @@ def split_by_vaf(
     profile_table.to_csv(counts_csv, index=False)
     logger.info(f"Wrote trinuc counts: {counts_csv}")
 
-    # Plot trinucleotide histogram
-    palette = dict(zip(SUBSTITUTION_ORDER, sns.color_palette("Set2", n_colors=len(SUBSTITUTION_ORDER)), strict=False))
+    # Build histogram from profile_table to reduce memory footprint
+    palette = dict(
+        zip(
+            SUBSTITUTION_ORDER,
+            sns.color_palette("Set2", n_colors=len(SUBSTITUTION_ORDER)),
+            strict=False,
+        )
+    )
     fig, axes = plt.subplots(len(bin_labels), 1, figsize=(24, 2.8 * len(bin_labels)), sharex=True)
     if len(bin_labels) == 1:
         axes = [axes]
 
     for ax, label in zip(axes, bin_labels, strict=False):
-        subset = df_plot.loc[df_plot["vaf_bin"] == label]
-        counts = subset["trinuc_substitution"].value_counts().reindex(TRINUC_ORDER, fill_value=0)
+        # Count variants per trinuc from profile_table instead of subsetting large dataframe
+        counts = profile_table.set_index("trinuc_substitution")[label].reindex(TRINUC_ORDER, fill_value=0)
         colors = [palette[item[2:5]] for item in counts.index]
+        total = counts.sum()
         ax.bar(range(len(counts)), counts.values, color=colors, width=0.9)
         ax.set_ylabel(label)
-        ax.set_title(f"{label} VAF (n={len(subset):,} reads)", loc="left")
+        ax.set_title(f"{label} VAF (n={int(total):,} reads)", loc="left")
         ax.grid(axis="y", alpha=0.2)
 
     axes[-1].set_xticks(range(len(TRINUC_ORDER)))
