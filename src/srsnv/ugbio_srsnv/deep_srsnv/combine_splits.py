@@ -328,9 +328,19 @@ def combine_and_split(  # noqa: PLR0913, PLR0912, PLR0915, C901
     test_path_fold0: Path | None = None
 
     for fold_idx in range(effective_k):
-        if split_mode == SPLIT_MODE_CHROM_KFOLD:
+        if split_mode == SPLIT_MODE_CHROM_KFOLD and effective_k >= 2:  # noqa: PLR2004
             val_mask = fold_id_arr == fold_idx
             train_mask = (~val_mask) & (~np.isnan(fold_id_arr))
+        elif split_mode == SPLIT_MODE_CHROM_KFOLD and effective_k == 1:
+            # k_folds=1: all chroms in fold 0 → use random 80/20 train/val split
+            non_test = ~np.isnan(fold_id_arr)
+            non_test_idx = np.where(non_test)[0]
+            shuffled = rng.permutation(non_test_idx)
+            val_count = max(1, len(shuffled) // 5)  # 20% validation
+            val_set = set(shuffled[:val_count].tolist())
+            val_mask = np.array([i in val_set for i in range(len(fold_id_arr))])
+            train_mask = non_test & (~val_mask)
+            logger.info("k_folds=1: random 80/20 split — train=%d val=%d", train_mask.sum(), val_mask.sum())
         else:
             val_mask = fold_id_arr == 1.0
             train_mask = fold_id_arr == 0.0

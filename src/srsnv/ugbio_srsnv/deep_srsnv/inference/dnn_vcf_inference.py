@@ -71,17 +71,19 @@ class DNNQualAnnotator(VcfAnnotator):
 
     def __init__(  # noqa: PLR0913
         self,
-        predictions: dict[tuple[str, int, str], float],
+        predictions: dict,
         quality_interpolation_fn=None,
         low_qual_threshold: float = 40.0,
         rn_format_key: str = "RN",
         rn_info_key: str | None = None,
+        _per_contig: bool = False,  # noqa: FBT001, FBT002
     ):
         self.predictions = predictions
         self.quality_fn = quality_interpolation_fn
         self.threshold = low_qual_threshold
         self.rn_format_key = rn_format_key
         self.rn_info_key = rn_info_key
+        self._per_contig = _per_contig
 
     def edit_vcf_header(self, header: pysam.VariantHeader) -> pysam.VariantHeader:
         # FORMAT/MQUAL and FORMAT/SNVQ are already defined in the VCF from snvfind.
@@ -99,7 +101,7 @@ class DNNQualAnnotator(VcfAnnotator):
             mquals: list[float] = []
             snvqs: list[float] = []
             for rn in rns:
-                key = (rec.chrom, rec.pos, rn)
+                key = (rec.pos, rn) if self._per_contig else (rec.chrom, rec.pos, rn)
                 prob = self.predictions.get(key)
                 if prob is not None and prob > 0:
                     mq = float(prob_to_phred(np.array([prob]), max_value=MAX_PHRED)[0])
@@ -1166,6 +1168,282 @@ def main_fold() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Fold inference from pre-computed tensor cache  (dnn_fold_inference_from_cache)
+# ---------------------------------------------------------------------------
+
+
+def _load_tensor_shard(shard_path: str) -> dict:
+    """Load a single tensor shard and convert torch tensors back to numpy for GPU inference.
+
+    Supports both uncompressed ``.pt`` and gzip-compressed ``.pt.gz`` files.
+    Uses isal (ISA-L) for fast gzip decompression when available.
+    """
+    import io  # noqa: PLC0415
+
+    import torch  # noqa: PLC0415
+
+    if shard_path.endswith(".gz"):
+        try:
+            from isal import igzip as gzip  # noqa: PLC0415
+        except ImportError:
+            import gzip  # noqa: PLC0415
+
+        with gzip.open(shard_path, "rb") as f:
+            chunk = torch.load(io.BytesIO(f.read()), map_location="cpu", weights_only=False)
+    else:
+        chunk = torch.load(shard_path, map_location="cpu", weights_only=False)
+    result = {}
+    for key, val in chunk.items():
+        if isinstance(val, torch.Tensor):
+            result[key] = val.numpy()
+        else:
+            result[key] = val
+    return result
+
+
+def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
+    cache_dir: str,
+    engines: list,
+    batch_size: int = 512,
+    output_path: str | None = None,
+    num_loader_threads: int = 4,
+) -> dict[tuple[str, int, str], float] | int:
+    """Run GPU inference from pre-computed tensor cache shards.
+
+    Reads shard_*.pt files from *cache_dir* and feeds them directly to
+    GPU engines.  No CRAM access or tensorization needed — all heavy
+    CPU work was done during the tensor cache creation step.
+
+    Uses a thread pool to prefetch shards from disk while GPUs process
+    current ones, overlapping I/O with computation.
+
+    Returns predictions dict or count (if *output_path* streaming).
+    """
+    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
+
+    import pyarrow as pa  # noqa: PLC0415
+    import pyarrow.parquet as pq_mod  # noqa: PLC0415
+
+    cache_path = Path(cache_dir)
+    shard_files = sorted(cache_path.glob("shard_*.pt.gz")) or sorted(cache_path.glob("shard_*.pt"))
+    if not shard_files:
+        raise FileNotFoundError(f"No shard_*.pt files found in {cache_dir}")
+
+    total_shards = len(shard_files)
+    logger.info("Loading %d tensor shards from %s (%d loader threads)", total_shards, cache_dir, num_loader_threads)
+
+    # 3-stage pipeline:
+    #   Stage 1 (loader threads): torch.load → raw_queue
+    #   Stage 2 (CPU prep thread): _compose_x_num + dtype conversions → gpu_queue
+    #   Stage 3 (GPU thread): H2D + kernel + D2H only → result_queue
+    #   Main thread: collect results, build dict/parquet
+
+    from ugbio_srsnv.deep_srsnv.inference.trt_engine import _compose_x_num, _to_numpy, _to_numpy_long  # noqa: PLC0415
+
+    raw_queue: Queue = Queue(maxsize=num_loader_threads + 1)
+    gpu_queue: Queue = Queue(maxsize=len(engines) * 2)
+    result_queue: Queue = Queue()
+
+    engine = engines[0]
+
+    def _cpu_prep_worker():
+        """Stage 2: prepare GPU-ready arrays from raw tensor chunks."""
+        while True:
+            chunk = raw_queue.get()
+            if chunk is None:
+                break
+            x_num = _compose_x_num(chunk)
+            prepared = {
+                "read_base_idx": _to_numpy_long(chunk["read_base_idx"]),
+                "ref_base_idx": _to_numpy_long(chunk["ref_base_idx"]),
+                "t0_idx": _to_numpy_long(chunk["t0_idx"]),
+                "x_num": x_num,
+                "mask": _to_numpy(chunk["mask"]),
+            }
+            if "tm_idx" in chunk:
+                prepared["tm_idx"] = _to_numpy_long(chunk["tm_idx"])
+            if "st_idx" in chunk:
+                prepared["st_idx"] = _to_numpy_long(chunk["st_idx"])
+            if "et_idx" in chunk:
+                prepared["et_idx"] = _to_numpy_long(chunk["et_idx"])
+            prepared["_chrom"] = chunk["chrom"]
+            prepared["_pos"] = chunk["pos"]
+            prepared["_rn"] = chunk["rn"]
+            gpu_queue.put(prepared)
+        gpu_queue.put(None)
+
+    def _gpu_worker():
+        """Stage 3: GPU inference only — no CPU prep work."""
+        engine.push_context()
+        try:
+            while True:
+                prepared = gpu_queue.get()
+                if prepared is None:
+                    break
+                n = prepared["x_num"].shape[0]
+                all_probs = []
+                for batch_start in range(0, n, batch_size):
+                    s = slice(batch_start, min(batch_start + batch_size, n))
+                    batch = {
+                        "read_base_idx": prepared["read_base_idx"][s],
+                        "ref_base_idx": prepared["ref_base_idx"][s],
+                        "t0_idx": prepared["t0_idx"][s],
+                        "x_num": prepared["x_num"][s],
+                        "mask": prepared["mask"][s],
+                    }
+                    if "tm_idx" in prepared:
+                        batch["tm_idx"] = prepared["tm_idx"][s]
+                    if "st_idx" in prepared:
+                        batch["st_idx"] = prepared["st_idx"][s]
+                    if "et_idx" in prepared:
+                        batch["et_idx"] = prepared["et_idx"][s]
+                    all_probs.append(engine.predict_batch_prepared(batch))
+                result_queue.put((prepared["_chrom"], prepared["_pos"], prepared["_rn"], np.concatenate(all_probs)))
+                gpu_queue.task_done()
+        finally:
+            engine.pop_context()
+        result_queue.put(None)
+
+    # Start Stage 2 + Stage 3 threads
+    prep_thread = Thread(target=_cpu_prep_worker, daemon=True)
+    prep_thread.start()
+    gpu_thread = Thread(target=_gpu_worker, daemon=True)
+    gpu_thread.start()
+
+    # Streaming output setup
+    streaming = output_path is not None
+    writer = None
+    if streaming:
+        schema = pa.schema([("chrom", pa.string()), ("pos", pa.int64()), ("rn", pa.string()), ("prob", pa.float64())])
+        writer = pq_mod.ParquetWriter(output_path, schema)
+
+    t_start = time.perf_counter()
+    total_preds = 0
+    collected = 0
+    predictions: dict[tuple[str, int, str], float] = {}
+
+    # Dedicated loader thread — feeds raw_queue without polling
+    def _loader_thread():
+        with ThreadPoolExecutor(max_workers=num_loader_threads) as loader_pool:
+            max_pending = raw_queue.maxsize
+            shard_iter = iter(shard_files)
+            pending_loads = {
+                loader_pool.submit(_load_tensor_shard, str(p)) for p in itertools.islice(shard_iter, max_pending)
+            }
+            while pending_loads:
+                done_loads, pending_loads = wait(pending_loads, return_when=FIRST_COMPLETED)
+                for fut in done_loads:
+                    raw_queue.put(fut.result())  # blocks if raw_queue full — natural backpressure
+                for p in itertools.islice(shard_iter, len(done_loads)):
+                    pending_loads.add(loader_pool.submit(_load_tensor_shard, str(p)))
+        raw_queue.put(None)  # signal CPU prep thread to finish
+
+    loader_t = Thread(target=_loader_thread, daemon=True)
+    loader_t.start()
+
+    try:
+        # Main thread: collect results from GPU (blocking get — no polling)
+        while collected < total_shards:
+            item = result_queue.get()  # blocks until GPU produces a result
+            if item is None:
+                break
+            chroms, positions, rns, probs = item
+            n = len(probs)
+            if streaming:
+                table = pa.table(
+                    {
+                        "chrom": chroms[:n].tolist() if hasattr(chroms, "tolist") else list(chroms[:n]),
+                        "pos": positions[:n].tolist() if hasattr(positions, "tolist") else list(positions[:n]),
+                        "rn": rns[:n].tolist() if hasattr(rns, "tolist") else list(rns[:n]),
+                        "prob": probs.tolist(),
+                    }
+                )
+                writer.write_table(table)
+            else:
+                for j in range(n):
+                    predictions[(str(chroms[j]), int(positions[j]), str(rns[j]))] = float(probs[j])
+            total_preds += n
+            collected += 1
+            if collected == 1 or collected % 10 == 0 or collected == total_shards:
+                logger.info(
+                    "Cache inference progress: %d/%d shards (%.1fs)",
+                    collected,
+                    total_shards,
+                    time.perf_counter() - t_start,
+                )
+
+        # Wait for all threads to finish
+        loader_t.join()
+        prep_thread.join()
+        gpu_thread.join()
+    finally:
+        if writer is not None:
+            writer.close()
+
+    elapsed = time.perf_counter() - t_start
+    logger.info("Cache inference complete: %d predictions in %.1fs", total_preds, elapsed)
+    return total_preds if streaming else predictions
+
+
+def _parse_fold_cache_args(argv: list[str] | None = None) -> argparse.Namespace:
+    ap = argparse.ArgumentParser(
+        description="DNN fold inference from pre-computed tensor cache (no CRAM access needed)",
+    )
+    ap.add_argument("--tensor-cache", required=True, help="Directory with shard_*.pt files")
+    ap.add_argument("--fold-metadata", required=True, help="Path to this fold's srsnv_dnn_metadata.json")
+    ap.add_argument("--output", required=True, help="Output predictions parquet path")
+    ap.add_argument("--backend", default="trt", choices=["trt", "pytorch"], help="Inference backend")
+    ap.add_argument("--gpus", default=None, help="Comma-separated GPU IDs (default: all visible)")
+    ap.add_argument("--batch-size", type=int, default=512)
+    return ap.parse_args(argv)
+
+
+def run_fold_from_cache(argv: list[str] | None = None) -> None:
+    """Run inference for a single fold from a pre-computed tensor cache."""
+    import torch.multiprocessing  # noqa: PLC0415
+
+    torch.multiprocessing.set_sharing_strategy("file_system")
+
+    if argv is None:
+        argv = sys.argv[1:]
+    args = _parse_fold_cache_args(argv)
+
+    t0 = time.perf_counter()
+
+    # GPU setup
+    gpu_ids = None
+    if args.gpus:
+        gpu_ids = [int(g.strip()) for g in args.gpus.split(",")]
+
+    if gpu_ids is None:
+        import torch  # noqa: PLC0415
+
+        gpu_ids = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else [0]
+
+    # Load model engines
+    engines = _create_engines(args.fold_metadata, backend=args.backend, gpu_ids=gpu_ids)
+    logger.info("Loaded %d %s engine(s)", len(engines), args.backend)
+
+    try:
+        n_preds = _run_fold_inference_from_cache(
+            cache_dir=args.tensor_cache,
+            engines=engines,
+            batch_size=args.batch_size,
+            output_path=args.output,
+        )
+    finally:
+        for eng in engines:
+            eng.close()
+
+    elapsed = time.perf_counter() - t0
+    logger.info("Fold from cache: wrote %d predictions to %s in %.1fs", n_preds, args.output, elapsed)
+
+
+def main_fold_from_cache() -> None:
+    run_fold_from_cache()
+
+
+# ---------------------------------------------------------------------------
 # Merge + annotate CLI  (dnn_merge_and_annotate)
 # ---------------------------------------------------------------------------
 
@@ -1183,11 +1461,162 @@ def _parse_merge_args(argv: list[str] | None = None) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
+def _merge_contig_worker(  # noqa: PLR0913, PLR0912, PLR0915, C901
+    contig: str,
+    vcf_in: str,
+    vcf_out: str,
+    pred_paths: list[str],
+    quality_lut_x: list[float] | None,
+    quality_lut_y: list[float] | None,
+    low_qual_threshold: float,
+) -> str:
+    """Annotate one contig using streaming merge-join.
+
+    Each worker independently reads its predictions from parquet (predicate
+    pushdown) and streams VCF records.  Both sources are sorted by position,
+    enabling an O(N+M) merge cursor instead of hash-table lookups.
+
+    No shared state with the parent — fully independent, picklable args only.
+    """
+    import math  # noqa: PLC0415
+
+    # 1. Load predictions for this contig from all folds
+    all_pos: list[np.ndarray] = []
+    all_rn: list[str] = []
+    all_prob: list[np.ndarray] = []
+    for path in pred_paths:
+        table = pq.read_table(path, filters=[("chrom", "==", contig)])
+        if table.num_rows == 0:
+            continue
+        all_pos.append(table.column("pos").to_numpy())
+        all_rn.extend(table.column("rn").to_pylist())
+        all_prob.append(table.column("prob").to_numpy())
+
+    if not all_pos:
+        # No predictions for this contig — copy records through without annotation
+        with pysam.VariantFile(vcf_in) as inp:
+            try:
+                inp.header.add_line('##FILTER=<ID=LowQual,Description="SNVQ below quality threshold">')
+            except ValueError:
+                pass
+            with pysam.VariantFile(vcf_out, "w", header=inp.header) as out:
+                for rec in inp.fetch(contig):
+                    out.write(rec)
+        pysam.tabix_index(vcf_out, preset="vcf", force=True)
+        return vcf_out
+
+    pos_arr = np.concatenate(all_pos)
+    prob_arr = np.concatenate(all_prob)
+    del all_pos, all_prob
+
+    # Sort combined arrays by position (stable to keep per-fold order)
+    order = np.argsort(pos_arr, kind="stable")
+    pos_arr = pos_arr[order]
+    prob_list = prob_arr[order].tolist()  # pre-convert to Python float list (faster per-element access)
+    rn_list = [all_rn[i] for i in order]
+    del all_rn, prob_arr, order
+
+    n_preds = len(pos_arr)
+    has_quality_lut = quality_lut_x is not None and quality_lut_y is not None
+    max_phred = float(MAX_PHRED)
+    min_prob_error = 10.0 ** (-max_phred / 10.0)
+
+    # Pre-compute MQUAL→SNVQ lookup table as a dict keyed by int(mqual*100).
+    # This replaces per-read np.interp calls (3x faster, bit-exact for rounded mqual).
+    snvq_lut: dict[int, float] = {}
+    if has_quality_lut:
+        _lut_x = np.asarray(quality_lut_x, dtype=np.float64)
+        _lut_y = np.asarray(quality_lut_y, dtype=np.float64)
+        _right = float(_lut_y[-1])
+        for mq_cent in range(int(max_phred * 100) + 1):
+            sq = float(np.interp(mq_cent / 100.0, _lut_x, _lut_y, left=0.0, right=_right))
+            snvq_lut[mq_cent] = round(sq, 2)
+        del _lut_x, _lut_y
+
+    # 2. Stream VCF records with merge cursor
+    cursor = 0
+
+    with pysam.VariantFile(vcf_in) as inp:
+        # Add LowQual filter to input header so records inherit it
+        try:
+            inp.header.add_line('##FILTER=<ID=LowQual,Description="SNVQ below quality threshold">')
+        except ValueError:
+            pass
+
+        with pysam.VariantFile(vcf_out, "w", header=inp.header) as out:
+            for rec in inp.fetch(contig):
+                pos = rec.pos
+
+                # Advance cursor past positions before this record
+                while cursor < n_preds and pos_arr[cursor] < pos:
+                    cursor += 1
+
+                # Collect predictions at this position into a small dict
+                preds_at_pos: dict[str, float] = {}
+                i = cursor
+                while i < n_preds and pos_arr[i] == pos:
+                    preds_at_pos[rn_list[i]] = prob_list[i]
+                    i += 1
+
+                # Extract read names directly from pysam (avoid str() overhead)
+                try:
+                    rn_val = rec.samples[0].get("RN")
+                except (KeyError, IndexError):
+                    rn_val = None
+
+                if not rn_val or not preds_at_pos:
+                    out.write(rec)
+                    continue
+
+                rns = rn_val if isinstance(rn_val, tuple) else (rn_val,)
+
+                # Vectorized annotation: batch all reads at this position
+                matched_probs = []
+                for rn in rns:
+                    prob = preds_at_pos.get(rn if isinstance(rn, str) else str(rn))
+                    matched_probs.append(prob if prob is not None and prob > 0 else 0.0)
+
+                # Compute MQUAL: -10 * log10(1 - prob), clamped to MAX_PHRED
+                mquals = []
+                for prob in matched_probs:
+                    if prob > 0:
+                        mq = -10.0 * math.log10(max(1.0 - prob, min_prob_error))
+                        mq = min(mq, max_phred)
+                    else:
+                        mq = 0.0
+                    mquals.append(round(mq, 2))
+
+                # Compute SNVQ via pre-computed LUT dict (avoids np.interp overhead)
+                if snvq_lut:
+                    snvqs = [snvq_lut.get(int(mq * 100), mq) for mq in mquals]
+                else:
+                    snvqs = list(mquals)
+
+                rec.samples[0]["MQUAL"] = tuple(mquals)
+                rec.samples[0]["SNVQ"] = tuple(snvqs)
+
+                max_snvq = max(snvqs)
+                rec.qual = max_snvq
+                if max_snvq >= low_qual_threshold:
+                    rec.filter.add("PASS")
+                else:
+                    rec.filter.add("LowQual")
+
+                out.write(rec)
+
+    pysam.tabix_index(vcf_out, preset="vcf", force=True)
+    return vcf_out
+
+
 def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
     """Merge per-fold predictions and annotate the featuremap VCF.
 
-    Annotation runs in-process (no subprocess) to avoid doubling memory
-    via pickle serialization of the large predictions dict.
+    Uses a streaming merge-join approach: each contig is processed by an
+    independent subprocess that reads its own predictions from parquet
+    (with predicate pushdown) and streams VCF records.  Both are sorted
+    by position, enabling an O(N+M) merge cursor.
+
+    No data sharing between processes — each worker is fully self-contained.
     """
     if argv is None:
         argv = sys.argv[1:]
@@ -1195,64 +1624,96 @@ def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
 
     t0 = time.perf_counter()
 
-    # Load all fold predictions into a unified dict
-    predictions: dict[tuple[str, int, str], float] = {}
-    for pred_path in args.fold_predictions:
-        pred_table = pq.read_table(pred_path)
-        chroms = pred_table.column("chrom").to_pylist()
-        poss = pred_table.column("pos").to_pylist()
-        rns = pred_table.column("rn").to_pylist()
-        probs = pred_table.column("prob").to_pylist()
-        for c, p, r, prob in zip(chroms, poss, rns, probs, strict=False):
-            predictions[(str(c), int(p), str(r))] = float(prob)
-
-    logger.info("Loaded %d predictions from %d fold files", len(predictions), len(args.fold_predictions))
-
-    # Build quality recalibration function from fold metadata
+    # Extract quality LUT as plain lists (picklable, tiny)
     with open(args.fold_metadata) as f:
         metadata = json.load(f)
-    quality_fn = _build_quality_fn(metadata)
+    lut = metadata.get("quality_recalibration_table")
+    min_lut_entries = 2
+    quality_lut_x = lut[0] if lut and len(lut) >= min_lut_entries else None
+    quality_lut_y = lut[1] if lut and len(lut) >= min_lut_entries else None
 
-    # Annotate VCF in-process to avoid pickle-based subprocess OOM.
-    # VcfAnnotator.process_vcf pickles annotators and spawns annotate_contig
-    # subprocesses that unpickle the full predictions dict, doubling memory.
-    # Instead, iterate contigs and call process_contig directly.
-    annotator = DNNQualAnnotator(
-        predictions=predictions,
-        quality_interpolation_fn=quality_fn,
-        low_qual_threshold=args.low_qual_threshold,
+    # Quick scan: count predictions per contig (chrom column only — fast)
+    import pyarrow.compute as pc  # noqa: PLC0415
+
+    contig_counts: dict[str, int] = {}
+    total_preds = 0
+    for pred_path in args.fold_predictions:
+        chrom_col = pq.read_table(pred_path, columns=["chrom"]).column("chrom")
+        for entry in pc.value_counts(chrom_col).to_pylist():
+            c = str(entry["values"])
+            contig_counts[c] = contig_counts.get(c, 0) + entry["counts"]
+            total_preds += entry["counts"]
+
+    logger.info(
+        "Found %d predictions across %d contigs from %d fold files",
+        total_preds,
+        len(contig_counts),
+        len(args.fold_predictions),
     )
-    annotators = [annotator]
+
+    # Find non-empty contigs in VCF
     out_dir = os.path.dirname(args.output) or "."
 
     with pysam.VariantFile(args.featuremap_vcf) as input_vcf:
-        contigs = list(input_vcf.header.contigs)
-        tmp_output_paths = []
+        contig_tasks = []
         skipped = 0
-        for contig in contigs:
+        for contig in input_vcf.header.contigs:
+            if contig not in contig_counts:
+                skipped += 1
+                continue
             try:
                 next(input_vcf.fetch(contig))
             except StopIteration:
                 skipped += 1
                 continue
-            out_per_contig = os.path.join(out_dir, contig + ".vcf.gz")
-            tmp_output_paths.append(out_per_contig)
-            VcfAnnotator.process_contig(
-                vcf_in=args.featuremap_vcf,
-                vcf_out=out_per_contig,
-                annotators=annotators,
-                contig=contig,
-                chunk_size=10000,
-            )
-            logger.info("Annotated contig %s", contig)
+            contig_tasks.append(contig)
 
     if skipped:
         logger.info("Skipped %d empty contigs", skipped)
 
+    # Schedule largest contigs first for better load balancing
+    contig_tasks.sort(key=lambda c: contig_counts.get(c, 0), reverse=True)
+
+    max_cpus = args.process_number if args.process_number > 0 else (os.cpu_count() or 4)
+    num_workers = min(max_cpus, max(1, len(contig_tasks)))
+    logger.info(
+        "Annotating %d contigs with %d processes (largest: %s with %d predictions)",
+        len(contig_tasks),
+        num_workers,
+        contig_tasks[0] if contig_tasks else "?",
+        contig_counts.get(contig_tasks[0], 0) if contig_tasks else 0,
+    )
+
+    # Each worker independently reads parquet + VCF — no shared state, no pickle of
+    # large data, no COW issues.  Only small picklable args are sent to each worker.
+    from concurrent.futures import ProcessPoolExecutor as _ProcPool  # noqa: PLC0415
+
+    tmp_output_paths: list[str] = []
+    with _ProcPool(max_workers=num_workers) as pool:
+        futures = {}
+        for contig in contig_tasks:
+            out_path = os.path.join(out_dir, contig + ".vcf.gz")
+            fut = pool.submit(
+                _merge_contig_worker,
+                contig=contig,
+                vcf_in=args.featuremap_vcf,
+                vcf_out=out_path,
+                pred_paths=list(args.fold_predictions),
+                quality_lut_x=quality_lut_x,
+                quality_lut_y=quality_lut_y,
+                low_qual_threshold=args.low_qual_threshold,
+            )
+            futures[fut] = (contig, out_path)
+
+        for fut, (contig, out_path) in futures.items():
+            fut.result()  # raise on error
+            tmp_output_paths.append(out_path)
+            logger.info("Annotated contig %s", contig)
+
     VcfAnnotator.merge_temp_files(tmp_output_paths, args.output, process_number=1)
 
     elapsed = time.perf_counter() - t0
-    logger.info("Merge + annotate complete: %d predictions -> %s in %.1fs", len(predictions), args.output, elapsed)
+    logger.info("Merge + annotate complete: %d predictions -> %s in %.1fs", total_preds, args.output, elapsed)
 
 
 def main_merge() -> None:

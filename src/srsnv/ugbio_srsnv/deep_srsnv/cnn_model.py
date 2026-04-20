@@ -132,4 +132,6 @@ class CNNReadClassifier(nn.Module):
 
         pooled = torch.cat([attn_pooled, focus_feat], dim=1)
         logits = self.head(pooled).squeeze(1)
-        return logits
+        # Ensure logits are float32 for precise sigmoid, even under AMP autocast.
+        # Without this, float16 logits clip probabilities near 0/1.
+        return logits.float()

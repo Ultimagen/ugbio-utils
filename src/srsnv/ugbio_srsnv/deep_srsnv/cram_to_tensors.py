@@ -12,6 +12,7 @@ Two entry points:
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import os
 import resource
@@ -20,11 +21,12 @@ import subprocess
 import tempfile
 import time
 from collections.abc import Iterator
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
+import pyarrow as pa
 import pysam
 import torch
 from pyarrow import parquet as pq
@@ -494,12 +496,31 @@ def _numpy_chunk_to_torch(chunk: dict) -> None:
             chunk[key] = torch.from_numpy(chunk[key])
 
 
+def _save_shard(chunk: dict, path: Path, *, compress: bool = False) -> None:
+    """Save a tensor shard to disk, optionally gzip-compressed."""
+    if compress:
+        import io  # noqa: PLC0415
+
+        try:
+            from isal import igzip as gzip  # noqa: PLC0415
+        except ImportError:
+            import gzip  # noqa: PLC0415
+
+        buf = io.BytesIO()
+        torch.save(chunk, buf)
+        gz_path = path.with_suffix(".pt.gz") if not str(path).endswith(".gz") else path
+        with gzip.open(gz_path, "wb", compresslevel=1) as f:
+            f.write(buf.getvalue())
+    else:
+        torch.save(chunk, path)
+
+
 # ---------------------------------------------------------------------------
 # Main cache builder
 # ---------------------------------------------------------------------------
 
 
-def cram_to_tensor_cache(  # noqa: PLR0915
+def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, PLR0912, C901
     cram_path: str,
     parquet_path: str,
     encoders: Encoders,
@@ -507,9 +528,11 @@ def cram_to_tensor_cache(  # noqa: PLR0915
     label: bool,  # noqa: FBT001
     tensor_length: int = 300,
     reference_path: str | None = None,
+    compress: bool = False,  # noqa: FBT001, FBT002
     num_workers: int = 1,
     shard_size: int = 25000,
     fetch_mode: str = "samtools",
+    chromosomes: list[str] | None = None,
 ) -> dict:
     """Read parquet rows, fetch each read from CRAM, tensorize, and write sharded cache.
 
@@ -537,6 +560,10 @@ def cram_to_tensor_cache(  # noqa: PLR0915
         ``"samtools"`` (default) delegates read filtering to a
         ``samtools view -N`` subprocess.  ``"pysam"`` uses pure-pysam
         region iteration as a fallback.
+    chromosomes
+        Optional list of chromosomes to include.  If provided, only rows
+        whose CHROM is in this list are tensorized.  Used for per-fold
+        inference tensorization.
 
     Returns
     -------
@@ -553,32 +580,42 @@ def cram_to_tensor_cache(  # noqa: PLR0915
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    # Phase 1: read and sort parquet rows
+    # Phase 1: read parquet, filter by chromosomes, sort, and write sharded parquet
+    # Workers will read individual row groups from the sharded file — no full dataset in memory.
     t_parquet = time.perf_counter()
+    import pyarrow.compute as pc  # noqa: PLC0415
+
     pf = pq.ParquetFile(parquet_path)
     available_cols = [c for c in _PARQUET_COLUMNS if c in (pf.schema.names or [])]
+
     table = pf.read(columns=available_cols)
-    col_dict = table.to_pydict()
-    n_rows = len(col_dict[available_cols[0]])
-    rows = [{k: col_dict[k][i] for k in col_dict} for i in range(n_rows)]
-    rows.sort(key=lambda r: (str(r.get(CHROM, "")), int(r.get(POS, 0))))
+    if chromosomes is not None and CHROM in available_cols:
+        chrom_set = set(chromosomes)
+        mask = pc.is_in(table.column(CHROM), value_set=pa.array(list(chrom_set)))
+        table = table.filter(mask)
+        logger.info("Filtered parquet to chromosomes %s: %d rows", ", ".join(sorted(chrom_set)), len(table))
+
+    sort_indices = pc.sort_indices(table, sort_keys=[(CHROM, "ascending"), (POS, "ascending")])
+    table = table.take(sort_indices)
+    n_rows = len(table)
+
+    sharded_parquet = out_path / "_sharded_input.parquet"
+    with pq.ParquetWriter(str(sharded_parquet), table.schema) as pw:
+        for i in range(0, n_rows, shard_size):
+            pw.write_table(table.slice(i, min(shard_size, n_rows - i)))
+    del table, sort_indices  # Free pyarrow memory
+
+    total_shards = pq.ParquetFile(str(sharded_parquet)).metadata.num_row_groups
     parquet_read_seconds = round(time.perf_counter() - t_parquet, 4)
-    logger.info("Read %d rows from parquet in %.1fs", n_rows, parquet_read_seconds)
+    logger.info(
+        "Prepared %d shards (%d rows) in %.1fs -> %s", total_shards, n_rows, parquet_read_seconds, sharded_parquet
+    )
 
     max_edist = _compute_max_edist(parquet_path) if label else None
     if max_edist is not None:
         logger.info("Positive EDIST filter: will drop rows with EDIST == %s", max_edist)
 
-    # Phase 2: shard and process
-    shard_inputs = [(sid, rows[i : i + shard_size]) for sid, i in enumerate(range(0, len(rows), shard_size))]
-    total_shards = len(shard_inputs)
-    logger.info(
-        "Processing %d shards (%d rows each, %d workers)",
-        total_shards,
-        shard_size,
-        num_workers,
-    )
-
+    # Phase 2: process shards — workers read row groups from disk (low memory)
     shard_stats: list[dict] = []
     completed = 0
     total_output = 0
@@ -598,21 +635,23 @@ def cram_to_tensor_cache(  # noqa: PLR0915
         "fetch_mode": fetch_mode,
     }
 
-    if effective_workers == 1:
-        if fetch_mode == "pysam":
-            cram = pysam.AlignmentFile(cram_path, "rc", reference_filename=reference_path)
-            global _WORKER_CRAM  # noqa: PLW0603
-            _WORKER_CRAM = cram
+    shard_args_list = [
+        {
+            "shard_id": rg,
+            "parquet_path": str(sharded_parquet),
+            "row_group_id": rg,
+            "columns": available_cols,
+            **shard_kwargs,
+        }
+        for rg in range(total_shards)
+    ]
+    logger.info("Processing %d shards (%d rows each, %d workers)", total_shards, shard_size, effective_workers)
 
-        for sid, shard_rows in shard_inputs:
-            _sid, chunk, stats = _process_shard(
-                shard_id=sid,
-                rows=shard_rows,
-                **shard_kwargs,
-            )
+    if effective_workers == 1:
+        for shard_args in shard_args_list:
+            _sid, chunk, stats = _process_shard_from_parquet(**shard_args)
             _numpy_chunk_to_torch(chunk)
-            shard_file = out_path / f"shard_{sid:05d}.pt"
-            torch.save(chunk, shard_file)
+            _save_shard(chunk, out_path / f"shard_{_sid:05d}.pt", compress=compress)
             shard_stats.append(stats)
             completed += 1
             total_output += stats["output_rows"]
@@ -627,47 +666,69 @@ def cram_to_tensor_cache(  # noqa: PLR0915
                     total_missing,
                     time.perf_counter() - t_process,
                 )
-
-        if fetch_mode == "pysam":
-            _WORKER_CRAM = None
-            cram.close()
     else:
-        pool_init = _init_cram_worker if fetch_mode == "pysam" else None
-        pool_initargs = (cram_path, reference_path) if fetch_mode == "pysam" else ()
+        max_pending = effective_workers * 2
+        shard_iter = iter(shard_args_list)
 
-        with ProcessPoolExecutor(
-            max_workers=effective_workers,
-            initializer=pool_init,
-            initargs=pool_initargs,
-        ) as pool:
-            futures = {
-                pool.submit(
-                    _process_shard,
-                    shard_id=sid,
-                    rows=shard_rows,
-                    **shard_kwargs,
-                ): sid
-                for sid, shard_rows in shard_inputs
+        # Background writer thread pool for non-blocking shard saves (especially gzip)
+        from queue import Queue as _Queue  # noqa: PLC0415
+
+        write_queue: _Queue = _Queue(maxsize=4)
+        write_errors: list[Exception] = []
+
+        def _writer_loop() -> None:
+            """Drain write_queue and save shards (possibly with gzip) off the main loop."""
+            while True:
+                item = write_queue.get()
+                if item is None:
+                    break
+                _chunk, _path, _compress = item
+                try:
+                    _save_shard(_chunk, _path, compress=_compress)
+                except Exception as exc:  # noqa: BLE001
+                    write_errors.append(exc)
+                    logger.exception("Background shard write failed: %s", _path)
+
+        from threading import Thread as _Thread  # noqa: PLC0415
+
+        writer_thread = _Thread(target=_writer_loop, daemon=True)
+        writer_thread.start()
+
+        with ProcessPoolExecutor(max_workers=effective_workers, initializer=_worker_init) as pool:
+            pending = {
+                pool.submit(_process_shard_from_parquet, **sa) for sa in itertools.islice(shard_iter, max_pending)
             }
-            for fut in as_completed(futures):
-                _sid, chunk, stats = fut.result()
-                _numpy_chunk_to_torch(chunk)
-                shard_file = out_path / f"shard_{_sid:05d}.pt"
-                torch.save(chunk, shard_file)
-                shard_stats.append(stats)
-                completed += 1
-                total_output += stats["output_rows"]
-                total_missing += stats["missing_rows"]
-                peak_rss = max(peak_rss, _resource_rss_gb())
-                if completed == 1 or completed % 10 == 0 or completed == total_shards:
-                    logger.info(
-                        "Progress: %d/%d shards, output=%d missing=%d elapsed=%.1fs",
-                        completed,
-                        total_shards,
-                        total_output,
-                        total_missing,
-                        time.perf_counter() - t_process,
-                    )
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for fut in done:
+                    _sid, chunk, stats = fut.result()
+                    _numpy_chunk_to_torch(chunk)
+                    write_queue.put((chunk, out_path / f"shard_{_sid:05d}.pt", compress))
+                    shard_stats.append(stats)
+                    completed += 1
+                    total_output += stats["output_rows"]
+                    total_missing += stats["missing_rows"]
+                    peak_rss = max(peak_rss, _resource_rss_gb())
+                    if completed == 1 or completed % 10 == 0 or completed == total_shards:
+                        logger.info(
+                            "Progress: %d/%d shards, output=%d missing=%d elapsed=%.1fs",
+                            completed,
+                            total_shards,
+                            total_output,
+                            total_missing,
+                            time.perf_counter() - t_process,
+                        )
+                for sa in itertools.islice(shard_iter, len(done)):
+                    pending.add(pool.submit(_process_shard_from_parquet, **sa))
+
+        # Signal writer thread to finish and wait for it
+        write_queue.put(None)
+        writer_thread.join()
+        if write_errors:
+            raise write_errors[0]
+
+    # Cleanup temp sharded parquet
+    sharded_parquet.unlink(missing_ok=True)
 
     process_seconds = round(time.perf_counter() - t_process, 4)
     shard_stats.sort(key=lambda s: s["shard_id"])
@@ -703,6 +764,7 @@ def cram_to_tensor_cache(  # noqa: PLR0915
 
     index = {
         "cache_version": 5,
+        "compressed": compress,
         "label": bool(label),
         "tensor_length": tensor_length,
         "cram_path": str(cram_path),
@@ -893,7 +955,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="CRAM + parquet -> tensor cache")
     ap.add_argument("--cram", required=True, help="Path to source CRAM file")
     ap.add_argument("--parquet", required=True, help="Path to feature map parquet")
-    ap.add_argument("--label", required=True, choices=["positive", "negative"])
+    ap.add_argument("--label", required=True, choices=["positive", "negative", "inference"])
     ap.add_argument("--output", required=True, help="Output directory for tensor cache shards")
     ap.add_argument("--reference", default=None, help="Reference FASTA for CRAM decoding")
     ap.add_argument("--vocab-config", default=None, help="Path to vocab_config.json (default: bundled)")
@@ -906,12 +968,53 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="samtools",
         help="Read fetch backend: 'samtools' (default) uses samtools -N pipe, 'pysam' uses pure-pysam iteration",
     )
+    ap.add_argument("--chromosomes", nargs="*", default=None, help="Only tensorize these chromosomes")
+
+    # Fold-based chromosome selection (alternative to --chromosomes)
+    fold_group = ap.add_argument_group("fold-based chromosome selection")
+    fold_group.add_argument("--fold-idx", type=int, default=None, help="Fold index for per-fold tensorization")
+    fold_group.add_argument("--training-regions", default=None, help="Interval list for fold→chrom mapping")
+    fold_group.add_argument("--num-folds", type=int, default=3, help="Number of cross-validation folds")
+    fold_group.add_argument("--random-seed", type=int, default=0, help="Random seed for fold splitting")
+    fold_group.add_argument(
+        "--holdout-chromosomes", default=None, help="Comma-separated holdout chromosomes (e.g. chr21,chr22)"
+    )
+    ap.add_argument("--compress", action="store_true", default=False, help="Gzip-compress output shards (.pt.gz)")
     return ap.parse_args(argv)
+
+
+def _resolve_chromosomes(args: argparse.Namespace) -> list[str] | None:
+    """Resolve the chromosome list from --chromosomes or --fold-idx arguments."""
+    if args.chromosomes is not None:
+        return args.chromosomes
+
+    if args.fold_idx is not None:
+        if args.training_regions is None:
+            raise ValueError("--training-regions is required when --fold-idx is specified")
+        from ugbio_srsnv.split_manifest import build_split_manifest  # noqa: PLC0415
+
+        holdout = args.holdout_chromosomes.split(",") if args.holdout_chromosomes else None
+        manifest = build_split_manifest(
+            training_regions=args.training_regions,
+            k_folds=args.num_folds,
+            random_seed=args.random_seed,
+            holdout_chromosomes=holdout,
+        )
+        chrom_to_fold = manifest["chrom_to_fold"]
+        fold_chroms = [c for c, f in chrom_to_fold.items() if f == args.fold_idx]
+        # Fold 0 also includes holdout/test chromosomes
+        if args.fold_idx == 0 and manifest.get("test_chromosomes"):
+            fold_chroms.extend(manifest["test_chromosomes"])
+        logger.info("Fold %d chromosomes: %s", args.fold_idx, ", ".join(sorted(fold_chroms)))
+        return fold_chroms
+
+    return None
 
 
 def run(argv: list[str] | None = None) -> dict:
     args = _parse_args(argv)
     encoders = load_vocab_config(args.vocab_config)
+    chromosomes = _resolve_chromosomes(args)
     return cram_to_tensor_cache(
         cram_path=args.cram,
         parquet_path=args.parquet,
@@ -923,6 +1026,8 @@ def run(argv: list[str] | None = None) -> dict:
         num_workers=args.num_workers,
         shard_size=args.shard_size,
         fetch_mode=args.fetch_mode,
+        chromosomes=chromosomes,
+        compress=args.compress,
     )
 
 
