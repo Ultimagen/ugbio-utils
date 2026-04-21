@@ -18,11 +18,10 @@ def _make_fake_cache(n: int = 40, length: int = 300) -> dict:
     return {
         "read_base_idx": torch.zeros(n, length, dtype=torch.int16),
         "ref_base_idx": torch.zeros(n, length, dtype=torch.int16),
-        "t0_idx": torch.zeros(n, length, dtype=torch.int16),
         "tm_idx": torch.randint(0, 9, (n,), dtype=torch.int8),
         "st_idx": torch.randint(0, 5, (n,), dtype=torch.int8),
         "et_idx": torch.randint(0, 5, (n,), dtype=torch.int8),
-        "x_num_pos": torch.randn(n, 5, length).to(dtype=torch.float16),
+        "x_num_pos": torch.randn(n, 6, length).to(dtype=torch.float16),
         "x_num_const": torch.randn(n, 4).to(dtype=torch.float16),
         "mask": torch.ones(n, length, dtype=torch.uint8),
         "label": torch.tensor([i % 2 for i in range(n)], dtype=torch.uint8),
@@ -59,7 +58,7 @@ def test_compact_collate_fn() -> None:
     result = compact_collate_fn(batch_raw, cache, include_meta=False)
     bs = len(batch_raw)
     assert result["read_base_idx"].shape == (bs, 300)
-    assert result["x_num"].shape == (bs, 9, 300)
+    assert result["x_num"].shape == (bs, 10, 300)
     assert result["label"].dtype == torch.float32
     assert result["mask"].dtype == torch.float32
     assert "tm_idx" in result
@@ -97,7 +96,7 @@ def test_data_module_setup_and_dataloaders() -> None:
     batch = next(iter(train_loader))
     assert "read_base_idx" in batch
     assert "label" in batch
-    assert batch["x_num"].shape[1] == 9
+    assert batch["x_num"].shape[1] == 10
     assert "tm_idx" in batch
 
     dm.setup("predict")
@@ -136,7 +135,6 @@ def test_save_load_cache_shm_roundtrip(tmp_path: Path) -> None:
         for key in [
             "read_base_idx",
             "ref_base_idx",
-            "t0_idx",
             "tm_idx",
             "st_idx",
             "et_idx",

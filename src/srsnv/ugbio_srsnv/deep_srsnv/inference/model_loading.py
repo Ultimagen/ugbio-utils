@@ -9,6 +9,7 @@ import torch
 from ugbio_core.logger import logger
 
 from ugbio_srsnv.deep_srsnv.cnn_model import CNNReadClassifier
+from ugbio_srsnv.deep_srsnv.data_prep import NUMERIC_CHANNELS
 from ugbio_srsnv.deep_srsnv.lightning_module import SRSNVLightningModule
 
 
@@ -67,11 +68,10 @@ def load_dnn_model_from_state_dict(
     encoders = metadata["encoders"]
 
     channel_order = metadata.get("channel_order", [])
-    numeric_channels = len(channel_order) if channel_order else 9
+    numeric_channels = len(channel_order) if channel_order else NUMERIC_CHANNELS
 
     model = CNNReadClassifier(
         base_vocab_size=len(encoders["base_vocab"]),
-        t0_vocab_size=len(encoders["t0_vocab"]),
         numeric_channels=numeric_channels,
         tm_vocab_size=len(encoders.get("tm_vocab", {})) or 1,
         st_vocab_size=len(encoders.get("st_vocab", {})) or 1,
@@ -91,8 +91,7 @@ def _model_kwargs_from_metadata(metadata: dict) -> dict:
     training_params = metadata.get("training_parameters", {})
     return {
         "base_vocab_size": len(encoders["base_vocab"]),
-        "t0_vocab_size": len(encoders["t0_vocab"]),
-        "numeric_channels": len(channel_order) if channel_order else 9,
+        "numeric_channels": len(channel_order) if channel_order else NUMERIC_CHANNELS,
         "tm_vocab_size": len(encoders.get("tm_vocab", {})) or 1,
         "st_vocab_size": len(encoders.get("st_vocab", {})) or 1,
         "et_vocab_size": len(encoders.get("et_vocab", {})) or 1,
@@ -100,7 +99,6 @@ def _model_kwargs_from_metadata(metadata: dict) -> dict:
         "n_blocks": training_params.get("n_blocks", 6),
         "base_embed_dim": training_params.get("base_embed_dim", 16),
         "ref_embed_dim": training_params.get("base_embed_dim", 16),
-        "t0_embed_dim": training_params.get("t0_embed_dim", 16),
         "cat_embed_dim": training_params.get("cat_embed_dim", 4),
         "dropout": training_params.get("dropout", 0.3),
     }

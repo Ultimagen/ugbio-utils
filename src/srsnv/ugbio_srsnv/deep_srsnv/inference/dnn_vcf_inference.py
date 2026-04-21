@@ -254,7 +254,6 @@ def _predict_shard(
         batch = {
             "read_base_idx": chunk["read_base_idx"][s],
             "ref_base_idx": chunk["ref_base_idx"][s],
-            "t0_idx": chunk["t0_idx"][s],
             "tm_idx": chunk["tm_idx"][s],
             "st_idx": chunk["st_idx"][s],
             "et_idx": chunk["et_idx"][s],
@@ -1245,33 +1244,41 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
     gpu_queue: Queue = Queue(maxsize=len(engines) * 2)
     result_queue: Queue = Queue()
 
+    error_event = Event()
+    error_holder: list[BaseException] = []
+
     engine = engines[0]
 
     def _cpu_prep_worker():
         """Stage 2: prepare GPU-ready arrays from raw tensor chunks."""
-        while True:
-            chunk = raw_queue.get()
-            if chunk is None:
-                break
-            x_num = _compose_x_num(chunk)
-            prepared = {
-                "read_base_idx": _to_numpy_long(chunk["read_base_idx"]),
-                "ref_base_idx": _to_numpy_long(chunk["ref_base_idx"]),
-                "t0_idx": _to_numpy_long(chunk["t0_idx"]),
-                "x_num": x_num,
-                "mask": _to_numpy(chunk["mask"]),
-            }
-            if "tm_idx" in chunk:
-                prepared["tm_idx"] = _to_numpy_long(chunk["tm_idx"])
-            if "st_idx" in chunk:
-                prepared["st_idx"] = _to_numpy_long(chunk["st_idx"])
-            if "et_idx" in chunk:
-                prepared["et_idx"] = _to_numpy_long(chunk["et_idx"])
-            prepared["_chrom"] = chunk["chrom"]
-            prepared["_pos"] = chunk["pos"]
-            prepared["_rn"] = chunk["rn"]
-            gpu_queue.put(prepared)
-        gpu_queue.put(None)
+        try:
+            while True:
+                chunk = raw_queue.get()
+                if chunk is None:
+                    break
+                x_num = _compose_x_num(chunk)
+                prepared = {
+                    "read_base_idx": _to_numpy_long(chunk["read_base_idx"]),
+                    "ref_base_idx": _to_numpy_long(chunk["ref_base_idx"]),
+                    "x_num": x_num,
+                    "mask": _to_numpy(chunk["mask"]),
+                }
+                if "tm_idx" in chunk:
+                    prepared["tm_idx"] = _to_numpy_long(chunk["tm_idx"])
+                if "st_idx" in chunk:
+                    prepared["st_idx"] = _to_numpy_long(chunk["st_idx"])
+                if "et_idx" in chunk:
+                    prepared["et_idx"] = _to_numpy_long(chunk["et_idx"])
+                prepared["_chrom"] = chunk["chrom"]
+                prepared["_pos"] = chunk["pos"]
+                prepared["_rn"] = chunk["rn"]
+                gpu_queue.put(prepared)
+        except Exception as exc:
+            logger.error("_cpu_prep_worker failed: %s", exc, exc_info=True)
+            error_holder.append(exc)
+            error_event.set()
+        finally:
+            gpu_queue.put(None)
 
     def _gpu_worker():
         """Stage 3: GPU inference only — no CPU prep work."""
@@ -1288,7 +1295,6 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
                     batch = {
                         "read_base_idx": prepared["read_base_idx"][s],
                         "ref_base_idx": prepared["ref_base_idx"][s],
-                        "t0_idx": prepared["t0_idx"][s],
                         "x_num": prepared["x_num"][s],
                         "mask": prepared["mask"][s],
                     }
@@ -1301,9 +1307,13 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
                     all_probs.append(engine.predict_batch_prepared(batch))
                 result_queue.put((prepared["_chrom"], prepared["_pos"], prepared["_rn"], np.concatenate(all_probs)))
                 gpu_queue.task_done()
+        except Exception as exc:
+            logger.error("_gpu_worker failed: %s", exc, exc_info=True)
+            error_holder.append(exc)
+            error_event.set()
         finally:
             engine.pop_context()
-        result_queue.put(None)
+            result_queue.put(None)
 
     # Start Stage 2 + Stage 3 threads
     prep_thread = Thread(target=_cpu_prep_worker, daemon=True)
@@ -1325,27 +1335,38 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
 
     # Dedicated loader thread — feeds raw_queue without polling
     def _loader_thread():
-        with ThreadPoolExecutor(max_workers=num_loader_threads) as loader_pool:
-            max_pending = raw_queue.maxsize
-            shard_iter = iter(shard_files)
-            pending_loads = {
-                loader_pool.submit(_load_tensor_shard, str(p)) for p in itertools.islice(shard_iter, max_pending)
-            }
-            while pending_loads:
-                done_loads, pending_loads = wait(pending_loads, return_when=FIRST_COMPLETED)
-                for fut in done_loads:
-                    raw_queue.put(fut.result())  # blocks if raw_queue full — natural backpressure
-                for p in itertools.islice(shard_iter, len(done_loads)):
-                    pending_loads.add(loader_pool.submit(_load_tensor_shard, str(p)))
-        raw_queue.put(None)  # signal CPU prep thread to finish
+        try:
+            with ThreadPoolExecutor(max_workers=num_loader_threads) as loader_pool:
+                max_pending = raw_queue.maxsize
+                shard_iter = iter(shard_files)
+                pending_loads = {
+                    loader_pool.submit(_load_tensor_shard, str(p)) for p in itertools.islice(shard_iter, max_pending)
+                }
+                while pending_loads:
+                    done_loads, pending_loads = wait(pending_loads, return_when=FIRST_COMPLETED)
+                    for fut in done_loads:
+                        raw_queue.put(fut.result())  # blocks if raw_queue full — natural backpressure
+                    for p in itertools.islice(shard_iter, len(done_loads)):
+                        pending_loads.add(loader_pool.submit(_load_tensor_shard, str(p)))
+        except Exception as exc:
+            logger.error("_loader_thread failed: %s", exc, exc_info=True)
+            error_holder.append(exc)
+            error_event.set()
+        finally:
+            raw_queue.put(None)  # always unblock cpu_prep_worker
 
     loader_t = Thread(target=_loader_thread, daemon=True)
     loader_t.start()
 
     try:
-        # Main thread: collect results from GPU (blocking get — no polling)
+        # Main thread: collect results from GPU
         while collected < total_shards:
-            item = result_queue.get()  # blocks until GPU produces a result
+            try:
+                item = result_queue.get(timeout=5.0)
+            except Empty:
+                if error_event.is_set():
+                    break
+                continue
             if item is None:
                 break
             chroms, positions, rns, probs = item
@@ -1373,10 +1394,13 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
                     time.perf_counter() - t_start,
                 )
 
+        if error_event.is_set() and error_holder:
+            raise RuntimeError(f"Worker thread failed: {error_holder[0]}") from error_holder[0]
+
         # Wait for all threads to finish
-        loader_t.join()
-        prep_thread.join()
-        gpu_thread.join()
+        loader_t.join(timeout=30.0)
+        prep_thread.join(timeout=30.0)
+        gpu_thread.join(timeout=30.0)
     finally:
         if writer is not None:
             writer.close()

@@ -65,7 +65,6 @@ def compact_collate_fn(batch: list[tuple], cache: dict, *, include_meta: bool) -
     result = {
         "read_base_idx": cache["read_base_idx"][idx].to(dtype=torch.long),
         "ref_base_idx": cache["ref_base_idx"][idx].to(dtype=torch.long),
-        "t0_idx": cache["t0_idx"][idx].to(dtype=torch.long),
         "x_num": x_num,
         "mask": cache["mask"][idx].to(dtype=torch.float32),
         "label": cache["label"][idx].to(dtype=torch.float32),
@@ -287,7 +286,6 @@ class SRSNVDataModule(lightning.LightningDataModule):
         for key in (
             "read_base_idx",
             "ref_base_idx",
-            "t0_idx",
             "tm_idx",
             "st_idx",
             "et_idx",

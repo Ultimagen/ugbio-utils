@@ -28,14 +28,12 @@ class CNNReadClassifier(nn.Module):
     def __init__(  # noqa: PLR0913
         self,
         base_vocab_size: int,
-        t0_vocab_size: int,
         numeric_channels: int,
         tm_vocab_size: int = 1,
         st_vocab_size: int = 1,
         et_vocab_size: int = 1,
         base_embed_dim: int = 16,
         ref_embed_dim: int = 16,
-        t0_embed_dim: int = 16,
         cat_embed_dim: int = 4,
         hidden_channels: int = 128,
         n_blocks: int = 6,
@@ -45,7 +43,6 @@ class CNNReadClassifier(nn.Module):
         super().__init__()
         self.read_base_emb = nn.Embedding(base_vocab_size, base_embed_dim, padding_idx=0)
         self.ref_base_emb = nn.Embedding(base_vocab_size, ref_embed_dim, padding_idx=0)
-        self.t0_emb = nn.Embedding(t0_vocab_size, t0_embed_dim, padding_idx=0)
 
         cat_ch = 0
         self.has_cat_embeds = tm_vocab_size > 1 or st_vocab_size > 1 or et_vocab_size > 1
@@ -59,7 +56,7 @@ class CNNReadClassifier(nn.Module):
             self.et_emb = nn.Embedding(et_vocab_size, cat_embed_dim, padding_idx=0)
             cat_ch += cat_embed_dim
 
-        in_ch = base_embed_dim + ref_embed_dim + t0_embed_dim + numeric_channels + cat_ch
+        in_ch = base_embed_dim + ref_embed_dim + numeric_channels + cat_ch
 
         self.stem = nn.Sequential(
             nn.Conv1d(in_ch, hidden_channels, kernel_size=7, padding=3),
@@ -94,7 +91,6 @@ class CNNReadClassifier(nn.Module):
         self,
         read_base_idx: torch.Tensor,
         ref_base_idx: torch.Tensor,
-        t0_idx: torch.Tensor,
         x_num: torch.Tensor,
         mask: torch.Tensor,
         tm_idx: torch.Tensor | None = None,
@@ -106,9 +102,8 @@ class CNNReadClassifier(nn.Module):
 
         read_e = self.read_base_emb(read_base_idx).transpose(1, 2)
         ref_e = self.ref_base_emb(ref_base_idx).transpose(1, 2)
-        t0_e = self.t0_emb(t0_idx).transpose(1, 2)
 
-        parts = [read_e, ref_e, t0_e, x_num]
+        parts = [read_e, ref_e, x_num]
 
         if self.has_cat_embeds:
             if tm_idx is not None and hasattr(self, "tm_emb"):

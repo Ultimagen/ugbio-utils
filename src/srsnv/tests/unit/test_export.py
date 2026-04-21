@@ -22,8 +22,7 @@ def small_model():
     """A small CNNReadClassifier for fast tests."""
     return CNNReadClassifier(
         base_vocab_size=7,
-        t0_vocab_size=11,
-        numeric_channels=9,
+        numeric_channels=10,
         tm_vocab_size=6,
         st_vocab_size=6,
         et_vocab_size=6,
@@ -40,11 +39,10 @@ def dummy_batch():
     return {
         "read_base_idx": torch.randint(0, 7, (b, l_), dtype=torch.int16),
         "ref_base_idx": torch.randint(0, 7, (b, l_), dtype=torch.int16),
-        "t0_idx": torch.randint(0, 11, (b, l_), dtype=torch.int16),
         "tm_idx": torch.randint(0, 6, (b,), dtype=torch.int8),
         "st_idx": torch.randint(0, 6, (b,), dtype=torch.int8),
         "et_idx": torch.randint(0, 6, (b,), dtype=torch.int8),
-        "x_num_pos": torch.randn(b, 5, l_, dtype=torch.float16),
+        "x_num_pos": torch.randn(b, 6, l_, dtype=torch.float16),
         "x_num_const": torch.randn(b, 4, dtype=torch.float16),
         "mask": torch.ones(b, l_, dtype=torch.uint8),
     }
@@ -57,8 +55,7 @@ def metadata_json(tmp_path, small_model):
 
     lit_model = SRSNVLightningModule(
         base_vocab_size=7,
-        t0_vocab_size=11,
-        numeric_channels=9,
+        numeric_channels=10,
         tm_vocab_size=6,
         st_vocab_size=6,
         et_vocab_size=6,
@@ -89,12 +86,11 @@ def metadata_json(tmp_path, small_model):
             "st_vocab": {str(i): i for i in range(6)},
             "et_vocab": {str(i): i for i in range(6)},
         },
-        "channel_order": ["qual", "tp", "mask", "focus", "softclip_mask", "strand", "mapq", "rq", "mixed"],
+        "channel_order": ["qual", "tp", "mask", "focus", "softclip_mask", "t0", "strand", "mapq", "rq", "mixed"],
         "training_parameters": {
             "hidden_channels": 32,
             "n_blocks": 2,
             "base_embed_dim": 16,
-            "t0_embed_dim": 16,
             "cat_embed_dim": 4,
             "dropout": 0.0,
             "learning_rate": 1e-3,
@@ -137,8 +133,7 @@ class TestExportToOnnx:
             feeds = {
                 "read_base_idx": np.zeros((batch, 64), dtype=np.int64),
                 "ref_base_idx": np.zeros((batch, 64), dtype=np.int64),
-                "t0_idx": np.zeros((batch, 64), dtype=np.int64),
-                "x_num": np.zeros((batch, 9, 64), dtype=np.float32),
+                "x_num": np.zeros((batch, 10, 64), dtype=np.float32),
                 "mask": np.ones((batch, 64), dtype=np.float32),
                 "tm_idx": np.zeros((batch,), dtype=np.int64),
                 "st_idx": np.zeros((batch,), dtype=np.int64),
@@ -164,8 +159,7 @@ class TestOnnxMatchesPytorch:
         inputs_pt = {
             "read_base_idx": torch.randint(0, 7, (batch, 64), dtype=torch.long),
             "ref_base_idx": torch.randint(0, 7, (batch, 64), dtype=torch.long),
-            "t0_idx": torch.randint(0, 11, (batch, 64), dtype=torch.long),
-            "x_num": torch.randn(batch, 9, 64),
+            "x_num": torch.randn(batch, 10, 64),
             "mask": torch.ones(batch, 64),
             "tm_idx": torch.randint(0, 6, (batch,)),
             "st_idx": torch.randint(0, 6, (batch,)),
@@ -233,7 +227,6 @@ class TestPyTorchEngine:
             logits = small_model(
                 read_base_idx=dummy_batch["read_base_idx"].long(),
                 ref_base_idx=dummy_batch["ref_base_idx"].long(),
-                t0_idx=dummy_batch["t0_idx"].long(),
                 x_num=x_num,
                 mask=dummy_batch["mask"].float(),
                 tm_idx=dummy_batch["tm_idx"].long(),
@@ -290,11 +283,10 @@ class TestMultiGPURoundRobin:
         chunk = {
             "read_base_idx": torch.zeros(2, 10, dtype=torch.int16),
             "ref_base_idx": torch.zeros(2, 10, dtype=torch.int16),
-            "t0_idx": torch.zeros(2, 10, dtype=torch.int16),
             "tm_idx": torch.zeros(2, dtype=torch.int8),
             "st_idx": torch.zeros(2, dtype=torch.int8),
             "et_idx": torch.zeros(2, dtype=torch.int8),
-            "x_num_pos": torch.zeros(2, 5, 10, dtype=torch.float16),
+            "x_num_pos": torch.zeros(2, 6, 10, dtype=torch.float16),
             "x_num_const": torch.zeros(2, 4, dtype=torch.float16),
             "mask": torch.ones(2, 10, dtype=torch.uint8),
             "chrom": np.array(["chr1", "chr1"], dtype=object),
@@ -374,23 +366,23 @@ class TestComposeXNum:
         from ugbio_srsnv.deep_srsnv.inference.trt_engine import _compose_x_num
 
         batch = {
-            "x_num_pos": np.zeros((3, 5, 64), dtype=np.float16),
+            "x_num_pos": np.zeros((3, 6, 64), dtype=np.float16),
             "x_num_const": np.zeros((3, 4), dtype=np.float16),
         }
         result = _compose_x_num(batch)
-        assert result.shape == (3, 9, 64)
+        assert result.shape == (3, 10, 64)
         assert result.dtype == np.float32
 
     def test_torch_tensors(self):
         from ugbio_srsnv.deep_srsnv.inference.trt_engine import _compose_x_num
 
         batch = {
-            "x_num_pos": torch.zeros(2, 5, 32, dtype=torch.float16),
+            "x_num_pos": torch.zeros(2, 6, 32, dtype=torch.float16),
             "x_num_const": torch.ones(2, 4, dtype=torch.float16),
         }
         result = _compose_x_num(batch)
-        assert result.shape == (2, 9, 32)
-        assert np.all(result[:, 5:, :] == 1.0)
+        assert result.shape == (2, 10, 32)
+        assert np.all(result[:, 6:, :] == 1.0)
 
 
 # ---------------------------------------------------------------------------

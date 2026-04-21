@@ -23,6 +23,8 @@ from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
 from ugbio_srsnv.deep_srsnv.data_module import SRSNVDataModule
 from ugbio_srsnv.deep_srsnv.data_prep import (
+    CHANNEL_ORDER,
+    NUMERIC_CHANNELS,
     build_tensor_cache,
     load_cache_from_shm,
     load_full_tensor_cache,
@@ -116,7 +118,6 @@ def _cli() -> argparse.Namespace:  # noqa: PLR0915
     ap.add_argument("--hidden-channels", type=int, default=128, help="Hidden channels in CNN residual blocks")
     ap.add_argument("--n-blocks", type=int, default=6, help="Number of residual blocks")
     ap.add_argument("--base-embed-dim", type=int, default=16, help="Read/ref base embedding dimension")
-    ap.add_argument("--t0-embed-dim", type=int, default=16, help="T0 token embedding dimension")
     ap.add_argument("--cat-embed-dim", type=int, default=4, help="Categorical (tm/st/et) embedding dimension")
     ap.add_argument("--dropout", type=float, default=0.3, help="Dropout rate in classification head")
 
@@ -645,7 +646,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
         len(encoders.st_vocab),
         len(encoders.et_vocab),
     )
-    numeric_channels = 9
+    numeric_channels = NUMERIC_CHANNELS
 
     # ── Preprocessing / cache loading ──
     preprocess_cache_dir: str | None = None
@@ -808,14 +809,12 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
 
         lit_model = SRSNVLightningModule(
             base_vocab_size=len(encoders.base_vocab),
-            t0_vocab_size=len(encoders.t0_vocab),
             numeric_channels=numeric_channels,
             tm_vocab_size=len(encoders.tm_vocab),
             st_vocab_size=len(encoders.st_vocab),
             et_vocab_size=len(encoders.et_vocab),
             base_embed_dim=args.base_embed_dim,
             ref_embed_dim=args.base_embed_dim,
-            t0_embed_dim=args.t0_embed_dim,
             cat_embed_dim=args.cat_embed_dim,
             hidden_channels=args.hidden_channels,
             n_blocks=args.n_blocks,
@@ -1013,17 +1012,7 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             "st_vocab": encoders.st_vocab,
             "et_vocab": encoders.et_vocab,
         },
-        "channel_order": [
-            "qual",
-            "tp",
-            "mask",
-            "focus",
-            "softclip_mask",
-            "strand",
-            "mapq",
-            "rq",
-            "mixed",
-        ],
+        "channel_order": CHANNEL_ORDER,
         "training_results": training_results,
         "holdout_metrics": holdout_metrics,
         "best_ckpt_holdout_metrics": best_ckpt_holdout_metrics if args.swa else None,
@@ -1054,7 +1043,6 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
             "hidden_channels": args.hidden_channels,
             "n_blocks": args.n_blocks,
             "base_embed_dim": args.base_embed_dim,
-            "t0_embed_dim": args.t0_embed_dim,
             "cat_embed_dim": args.cat_embed_dim,
             "dropout": args.dropout,
             "lr_scheduler": args.lr_scheduler,

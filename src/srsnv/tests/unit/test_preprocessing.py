@@ -364,7 +364,7 @@ class TestTensorEncoding:
         read_base_out = np.zeros((1, tensor_length), dtype=np.int16)
         ref_base_out = np.zeros((1, tensor_length), dtype=np.int16)
         mask_out = np.zeros((1, tensor_length), dtype=np.uint8)
-        x_num_pos_out = np.zeros((1, 5, tensor_length), dtype=np.float16)
+        x_num_pos_out = np.zeros((1, 6, tensor_length), dtype=np.float16)
         x_num_const_out = np.zeros((1, 4), dtype=np.float16)
 
         tokens = ["A", "C", "G", "T"]
@@ -374,7 +374,7 @@ class TestTensorEncoding:
 
         assert read_base_out.shape == (1, tensor_length)
         assert ref_base_out.shape == (1, tensor_length)
-        assert x_num_pos_out.shape == (1, 5, tensor_length)
+        assert x_num_pos_out.shape == (1, 6, tensor_length)
         assert x_num_const_out.shape == (1, 4)
         assert mask_out.shape == (1, tensor_length)
 

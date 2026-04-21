@@ -49,7 +49,6 @@ def _load_shard_dir(shard_dir: str | Path) -> dict:
     all_chunks: dict[str, list] = {
         "read_base_idx": [],
         "ref_base_idx": [],
-        "t0_idx": [],
         "tm_idx": [],
         "st_idx": [],
         "et_idx": [],
@@ -67,7 +66,6 @@ def _load_shard_dir(shard_dir: str | Path) -> dict:
         for key in (
             "read_base_idx",
             "ref_base_idx",
-            "t0_idx",
             "tm_idx",
             "st_idx",
             "et_idx",
@@ -92,7 +90,6 @@ def _load_shard_dir(shard_dir: str | Path) -> dict:
     for key in (
         "read_base_idx",
         "ref_base_idx",
-        "t0_idx",
         "tm_idx",
         "st_idx",
         "et_idx",
@@ -118,7 +115,6 @@ def _save_fold_cache(cache: dict, indices: np.ndarray, path: Path) -> None:
     for key in (
         "read_base_idx",
         "ref_base_idx",
-        "t0_idx",
         "x_num_pos",
         "x_num_const",
         "mask",
@@ -260,7 +256,6 @@ def combine_and_split(  # noqa: PLR0913, PLR0912, PLR0915, C901
     for key in (
         "read_base_idx",
         "ref_base_idx",
-        "t0_idx",
         "tm_idx",
         "st_idx",
         "et_idx",

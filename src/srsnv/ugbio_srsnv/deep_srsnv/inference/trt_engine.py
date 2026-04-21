@@ -165,7 +165,6 @@ class TRTEngine:
         inputs_np = {
             "read_base_idx": _to_numpy_long(batch["read_base_idx"]),
             "ref_base_idx": _to_numpy_long(batch["ref_base_idx"]),
-            "t0_idx": _to_numpy_long(batch["t0_idx"]),
             "x_num": x_num,
             "mask": _to_numpy(batch["mask"]),
         }
@@ -289,7 +288,6 @@ class PyTorchEngine:
         inputs = {
             "read_base_idx": torch.as_tensor(_to_numpy_long(batch["read_base_idx"])).to(self.device),
             "ref_base_idx": torch.as_tensor(_to_numpy_long(batch["ref_base_idx"])).to(self.device),
-            "t0_idx": torch.as_tensor(_to_numpy_long(batch["t0_idx"])).to(self.device),
             "x_num": x_num,
             "mask": torch.from_numpy(_to_numpy(batch["mask"])).to(self.device),
         }

@@ -32,6 +32,13 @@ REF = FeatureMapFields.REF.value
 ALT = FeatureMapFields.ALT.value
 X_ALT = FeatureMapFields.X_ALT.value
 
+# Canonical channel order for x_num — positional channels first, then per-read constants.
+# The model sees len(NUM_CHANNELS_POS) + len(NUM_CHANNELS_CONST) = NUMERIC_CHANNELS total.
+NUM_CHANNELS_POS: list[str] = ["qual", "tp", "mask", "focus", "softclip_mask", "t0"]
+NUM_CHANNELS_CONST: list[str] = ["strand", "mapq", "rq", "mixed"]
+CHANNEL_ORDER: list[str] = NUM_CHANNELS_POS + NUM_CHANNELS_CONST
+NUMERIC_CHANNELS: int = len(CHANNEL_ORDER)
+
 
 @dataclass
 class Encoders:
@@ -166,7 +173,7 @@ def _build_cache_key(
     negative_bam: str,
     tensor_length: int,
     batch_rows: int,
-    cache_version: int = 6,
+    cache_version: int = 7,
 ) -> str:
     payload = {
         "cache_version": cache_version,
@@ -183,7 +190,6 @@ def _build_cache_key(
             "channels": [
                 "read_base_idx",
                 "ref_base_idx",
-                "t0_idx",
                 "qual",
                 "tp",
                 "mask",
@@ -465,7 +471,7 @@ def _build_gapped_channels(  # noqa: C901, PLR0912, PLR0915
     ref_base_aln: list[str] = []
     qual_aln: list[float] = []
     tp_aln: list[float] = []
-    t0_aln: list[str] = []
+    t0_aln: list[float] = []
     focus_aln: list[float] = []
     softclip_mask_aln: list[float] = []
     focus_indices: list[int] = []
@@ -476,12 +482,12 @@ def _build_gapped_channels(  # noqa: C901, PLR0912, PLR0915
             read_base = "<GAP>"
             qual = 0.0
             tp_val = 0.0
-            t0_token = "<GAP>"  # noqa: S105
+            t0_val = 0.0
         else:
             read_base = read_seq[qpos].upper() if qpos < len(read_seq) else "N"
             qual = float(read_quals[qpos]) if qpos < len(read_quals) else 0.0
             tp_val = float(tp_raw[qpos]) if qpos < len(tp_raw) else 0.0
-            t0_token = t0_raw[qpos] if qpos < len(t0_raw) else "<MISSING>"
+            t0_val = max(0.0, ord(t0_raw[qpos]) - 33) if qpos < len(t0_raw) else 0.0
 
         # Ref channel follows aligned reference (or gap on insertion).
         if rpos is None:
@@ -503,7 +509,7 @@ def _build_gapped_channels(  # noqa: C901, PLR0912, PLR0915
         ref_base_aln.append(ref_base)
         qual_aln.append(qual)
         tp_aln.append(tp_val)
-        t0_aln.append(t0_token)
+        t0_aln.append(t0_val)
         focus_aln.append(is_focus)
         softclip_mask_aln.append(is_softclip)
 
@@ -519,7 +525,7 @@ def _build_gapped_channels(  # noqa: C901, PLR0912, PLR0915
         "ref_base_aln": ref_base_aln,
         "qual_aln": np.asarray(qual_aln, dtype=np.float32),
         "tp_aln": np.asarray(tp_aln, dtype=np.float32),
-        "t0_aln": t0_aln,
+        "t0_aln": np.asarray(t0_aln, dtype=np.float32),
         "focus_aln": np.asarray(focus_aln, dtype=np.float32),
         "softclip_mask_aln": np.asarray(softclip_mask_aln, dtype=np.float32),
     }
@@ -634,12 +640,11 @@ def _process_rows_shard_to_tensors(
             "cache_format_version": 4,
             "read_base_idx": torch.zeros(0, tensor_length, dtype=torch.int16),
             "ref_base_idx": torch.zeros(0, tensor_length, dtype=torch.int16),
-            "t0_idx": torch.zeros(0, tensor_length, dtype=torch.int16),
             "tm_idx": torch.zeros(0, dtype=torch.int8),
             "st_idx": torch.zeros(0, dtype=torch.int8),
             "et_idx": torch.zeros(0, dtype=torch.int8),
-            "x_num_pos": torch.zeros(0, 5, tensor_length, dtype=torch.float16),
-            "x_num_const": torch.zeros(0, 4, dtype=torch.float16),
+            "x_num_pos": torch.zeros(0, len(NUM_CHANNELS_POS), tensor_length, dtype=torch.float16),
+            "x_num_const": torch.zeros(0, len(NUM_CHANNELS_CONST), dtype=torch.float16),
             "mask": torch.zeros(0, tensor_length, dtype=torch.uint8),
             "label": torch.zeros(0, dtype=torch.uint8),
             "split_id": torch.zeros(0, dtype=torch.int8),
@@ -653,7 +658,6 @@ def _process_rows_shard_to_tensors(
     payload: dict[str, list] = {
         "read_base_idx": [],
         "ref_base_idx": [],
-        "t0_idx": [],
         "tm_idx": [],
         "st_idx": [],
         "et_idx": [],
@@ -672,12 +676,11 @@ def _process_rows_shard_to_tensors(
         x_num = item["x_num"]
         payload["read_base_idx"].append(item["read_base_idx"].to(dtype=torch.int16))
         payload["ref_base_idx"].append(item["ref_base_idx"].to(dtype=torch.int16))
-        payload["t0_idx"].append(item["t0_idx"].to(dtype=torch.int16))
         payload["tm_idx"].append(int(item["tm_idx"].item()))
         payload["st_idx"].append(int(item["st_idx"].item()))
         payload["et_idx"].append(int(item["et_idx"].item()))
-        payload["x_num_pos"].append(x_num[:5].to(dtype=torch.float16))
-        payload["x_num_const"].append(x_num[5:, 0].to(dtype=torch.float16))
+        payload["x_num_pos"].append(x_num[:6].to(dtype=torch.float16))
+        payload["x_num_const"].append(x_num[6:, 0].to(dtype=torch.float16))
         payload["mask"].append(item["mask"].to(dtype=torch.uint8))
         payload["label"].append(int(item["label"].item()))
         split_id = _row_split_id(
@@ -694,7 +697,6 @@ def _process_rows_shard_to_tensors(
         "cache_format_version": 4,
         "read_base_idx": torch.stack(payload["read_base_idx"], dim=0).to(dtype=torch.int16),
         "ref_base_idx": torch.stack(payload["ref_base_idx"], dim=0).to(dtype=torch.int16),
-        "t0_idx": torch.stack(payload["t0_idx"], dim=0).to(dtype=torch.int16),
         "tm_idx": torch.tensor(payload["tm_idx"], dtype=torch.int8),
         "st_idx": torch.tensor(payload["st_idx"], dtype=torch.int8),
         "et_idx": torch.tensor(payload["et_idx"], dtype=torch.int8),
@@ -736,8 +738,7 @@ def tensorize_rows(  # noqa: PLR0912, PLR0915
     n = len(rows)
     read_base_out = np.zeros((n, tensor_length), dtype=np.int16)
     ref_base_out = np.zeros((n, tensor_length), dtype=np.int16)
-    t0_out = np.zeros((n, tensor_length), dtype=np.int16)
-    x_num_pos_out = np.zeros((n, 5, tensor_length), dtype=np.float16)
+    x_num_pos_out = np.zeros((n, 6, tensor_length), dtype=np.float16)
     x_num_const_out = np.zeros((n, 4), dtype=np.float16)
     mask_out = np.zeros((n, tensor_length), dtype=np.uint8)
     label_out = np.zeros(n, dtype=np.uint8)
@@ -750,8 +751,6 @@ def tensorize_rows(  # noqa: PLR0912, PLR0915
 
     base_vocab = encoders.base_vocab
     base_default = base_vocab["N"]
-    t0_vocab = encoders.t0_vocab
-    t0_default = t0_vocab.get("<MISSING>", 0)
     tm_vocab = encoders.tm_vocab
     tm_default = tm_vocab.get("<MISSING>", 0)
     st_vocab = encoders.st_vocab
@@ -783,17 +782,16 @@ def tensorize_rows(  # noqa: PLR0912, PLR0915
 
         read_tokens = aligned["read_base_aln"][:valid]
         ref_tokens = aligned["ref_base_aln"][:valid]
-        t0_tokens = aligned["t0_aln"][:valid]
         read_base_out[out_i, :valid] = [base_vocab.get(t, base_default) for t in read_tokens]
         ref_base_out[out_i, :valid] = [base_vocab.get(t, base_default) for t in ref_tokens]
-        t0_out[out_i, :valid] = [t0_vocab.get(t, t0_default) for t in t0_tokens]
 
         q = aligned["qual_aln"][:valid]
-        x_num_pos_out[out_i, 0, :valid] = q / 50.0
+        x_num_pos_out[out_i, 0, :valid] = q / 10.0
         x_num_pos_out[out_i, 1, :valid] = aligned["tp_aln"][:valid]
         x_num_pos_out[out_i, 2, :valid] = 1.0
         x_num_pos_out[out_i, 3, :valid] = aligned["focus_aln"][:valid]
         x_num_pos_out[out_i, 4, :valid] = aligned["softclip_mask_aln"][:valid]
+        x_num_pos_out[out_i, 5, :valid] = aligned["t0_aln"][:valid] / 10.0
         mask_out[out_i, :valid] = 1
 
         st_value = tags.get("st", row.get("st", None))
@@ -815,10 +813,9 @@ def tensorize_rows(  # noqa: PLR0912, PLR0915
         out_i += 1
 
     chunk = {
-        "cache_format_version": 5,
+        "cache_format_version": 6,
         "read_base_idx": torch.from_numpy(read_base_out[:out_i].copy()),
         "ref_base_idx": torch.from_numpy(ref_base_out[:out_i].copy()),
-        "t0_idx": torch.from_numpy(t0_out[:out_i].copy()),
         "tm_idx": torch.from_numpy(tm_out[:out_i].copy()),
         "st_idx": torch.from_numpy(st_out[:out_i].copy()),
         "et_idx": torch.from_numpy(et_out[:out_i].copy()),
@@ -1188,17 +1185,6 @@ class DeepSRSNVDataset(Dataset):
             arr[i] = self.encoders.base_vocab.get(seq_tokens[i], self.encoders.base_vocab["N"])
         return arr
 
-    def _encode_t0(self, t0_tokens: list[str]) -> np.ndarray:
-        arr = np.zeros(self.length, dtype=np.int64)
-        miss = self.encoders.t0_vocab.get("<MISSING>", 0)
-        n = min(self.length, len(t0_tokens))
-        for i in range(self.length):
-            if i < n:
-                arr[i] = self.encoders.t0_vocab.get(t0_tokens[i], miss)
-            else:
-                arr[i] = 0
-        return arr
-
     def _pad_float(self, values: np.ndarray, fill: float = 0.0) -> np.ndarray:
         out = np.full(self.length, fill, dtype=np.float32)
         n = min(self.length, len(values))
@@ -1214,11 +1200,11 @@ class DeepSRSNVDataset(Dataset):
 
         read_base_idx = self._encode_seq(r["read_base_aln"])
         ref_base_idx = self._encode_seq(r["ref_base_aln"])
-        t0_idx = self._encode_t0(r["t0_aln"])
-        qual = self._pad_float(r["qual_aln"], fill=0.0) / 50.0
+        qual = self._pad_float(r["qual_aln"], fill=0.0) / 10.0
         tp = self._pad_float(r["tp_aln"], fill=0.0)
         focus = self._pad_float(r["focus_aln"], fill=0.0)
         softclip_mask = self._pad_float(r["softclip_mask_aln"], fill=0.0)
+        t0 = self._pad_float(r["t0_aln"], fill=0.0) / 10.0
 
         tm_id = self.encoders.tm_vocab.get(r.get("tm") or "<MISSING>", self.encoders.tm_vocab.get("<MISSING>", 0))
         st_id = self.encoders.st_vocab.get(r.get("st") or "<MISSING>", self.encoders.st_vocab.get("<MISSING>", 0))
@@ -1237,13 +1223,12 @@ class DeepSRSNVDataset(Dataset):
             ],
             axis=0,
         )
-        numeric = np.stack([qual, tp, mask, focus, softclip_mask], axis=0)
+        numeric = np.stack([qual, tp, mask, focus, softclip_mask, t0], axis=0)
         x_num = np.concatenate([numeric, const], axis=0)
 
         return {
             "read_base_idx": torch.tensor(read_base_idx, dtype=torch.long),
             "ref_base_idx": torch.tensor(ref_base_idx, dtype=torch.long),
-            "t0_idx": torch.tensor(t0_idx, dtype=torch.long),
             "tm_idx": torch.tensor(tm_id, dtype=torch.long),
             "st_idx": torch.tensor(st_id, dtype=torch.long),
             "et_idx": torch.tensor(et_id, dtype=torch.long),
@@ -1315,7 +1300,6 @@ def load_full_tensor_cache(tensor_cache_path: str) -> dict:  # noqa: PLR0915
     t0 = time.perf_counter()
     all_read_base_idx: list[torch.Tensor] = []
     all_ref_base_idx: list[torch.Tensor] = []
-    all_t0_idx: list[torch.Tensor] = []
     all_tm_idx: list[torch.Tensor] = []
     all_st_idx: list[torch.Tensor] = []
     all_et_idx: list[torch.Tensor] = []
@@ -1333,7 +1317,6 @@ def load_full_tensor_cache(tensor_cache_path: str) -> dict:  # noqa: PLR0915
         n_chunks += 1
         all_read_base_idx.append(chunk["read_base_idx"])
         all_ref_base_idx.append(chunk["ref_base_idx"])
-        all_t0_idx.append(chunk["t0_idx"])
         all_mask.append(chunk["mask"])
         all_label.append(chunk["label"])
         if "split_id" in chunk:
@@ -1365,7 +1348,6 @@ def load_full_tensor_cache(tensor_cache_path: str) -> dict:  # noqa: PLR0915
     result = {
         "read_base_idx": torch.cat(all_read_base_idx, dim=0),
         "ref_base_idx": torch.cat(all_ref_base_idx, dim=0),
-        "t0_idx": torch.cat(all_t0_idx, dim=0),
         "x_num_pos": torch.cat(all_x_num_pos, dim=0),
         "x_num_const": torch.cat(all_x_num_const, dim=0),
         "mask": torch.cat(all_mask, dim=0),
