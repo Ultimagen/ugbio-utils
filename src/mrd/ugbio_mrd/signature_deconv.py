@@ -15,7 +15,7 @@ from ugbio_core.logger import logger
 from ugbio_mrd.split_by_vaf import get_vaf_bin_labels
 
 
-def signature_deconv(
+def signature_deconv(  # noqa: PLR0915
     trinuc_counts_csv: str,
     cosmic_signatures_file: str,
     signatures_to_include: list[str],
@@ -74,30 +74,52 @@ def signature_deconv(
     if not available_sigs:
         raise ValueError(f"None of the requested signatures found in catalog: {signatures_to_include}")
 
+    # Identify empty bins (all zeros) — skip them from refit to avoid crashes
+    nonempty_cols = [c for c in cols_to_keep if df_counts[c].sum() > 0]
+    empty_cols = [c for c in cols_to_keep if c not in nonempty_cols]
+    if empty_cols:
+        logger.warning(f"Skipping empty (all-zero) VAF bins: {empty_cols}")
+
     logger.info(f"Running MuSiCal refit with method={method}, threshold={threshold}, signatures={available_sigs}")
     sig_matrix = cosmic_catalog[available_sigs]
-    exposures, _model = musical.refit.refit(df_counts, W=sig_matrix, method=method, thresh=threshold)
+
+    if nonempty_cols:
+        exposures, _model = musical.refit.refit(df_counts[nonempty_cols], W=sig_matrix, method=method, thresh=threshold)
+    else:
+        exposures = pd.DataFrame(index=available_sigs, columns=cols_to_keep, dtype=float)
+
+    # Fill NaN for empty bins
+    for c in empty_cols:
+        exposures[c] = float("nan")
+
+    # Reorder columns to match original order
+    exposures = exposures[[c for c in cols_to_keep if c in exposures.columns]]
 
     # Save signature weights
     weights_csv = os.path.join(output_dir, f"{basename}.signature_weights.csv")
     exposures.to_csv(weights_csv)
     logger.info(f"Wrote signature weights: {weights_csv}")
 
-    # Plot signature contributions per VAF bin
-    fig, axes = plt.subplots(len(cols_to_keep), 1, figsize=(6, 1.5 * len(cols_to_keep)), sharex=True)
-    if len(cols_to_keep) == 1:
-        axes = [axes]
+    # Plot signature contributions per VAF bin (only non-empty bins)
+    if nonempty_cols:
+        fig, axes = plt.subplots(len(nonempty_cols), 1, figsize=(6, 1.5 * len(nonempty_cols)), sharex=True)
+        if len(nonempty_cols) == 1:
+            axes = [axes]
 
-    for i, bin_label in enumerate(cols_to_keep):
-        sns.barplot(data=exposures, x=exposures.index, y=exposures[bin_label], ax=axes[i])
-        axes[i].set_title(f"VAF bin: {bin_label}", fontsize=14)
-        axes[i].set_ylabel("")
-        if i == len(cols_to_keep) - 1:
-            axes[i].set_xlabel("Signature")
-        else:
-            axes[i].set_xlabel("")
-        axes[i].tick_params(axis="x", rotation=45)
-    fig.tight_layout()
+        for i, bin_label in enumerate(nonempty_cols):
+            sns.barplot(data=exposures, x=exposures.index, y=exposures[bin_label], ax=axes[i])
+            axes[i].set_title(f"VAF bin: {bin_label}", fontsize=14)
+            axes[i].set_ylabel("")
+            if i == len(nonempty_cols) - 1:
+                axes[i].set_xlabel("Signature")
+            else:
+                axes[i].set_xlabel("")
+            axes[i].tick_params(axis="x", rotation=45)
+        fig.tight_layout()
+    else:
+        fig, ax = plt.subplots(1, 1, figsize=(6, 2))
+        ax.text(0.5, 0.5, "All VAF bins are empty", ha="center", va="center", fontsize=14)
+        ax.set_axis_off()
 
     plot_png = os.path.join(output_dir, f"{basename}.signature_deconv.png")
     fig.savefig(plot_png, dpi=150, bbox_inches="tight")

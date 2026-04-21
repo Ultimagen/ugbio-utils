@@ -127,3 +127,58 @@ class TestSignatureDeconv:
         )
         df_weights = pd.read_csv(weights_csv, index_col=0)
         assert (df_weights.to_numpy() >= 0).all()
+
+    def test_all_zeros_returns_nan(self, tmp_path, cosmic_signatures_file, tmp_output):
+        """When all trinuc counts are zero, weights should be NaN and plot should still be produced."""
+        bin_labels = get_vaf_bin_labels()
+        data = {"trinuc_substitution": TRINUC_ORDER}
+        for label in bin_labels:
+            data[label] = [0] * len(TRINUC_ORDER)
+        counts_df = pd.DataFrame(data)
+        csv_path = tmp_path / "all_zeros.csv"
+        counts_df.to_csv(csv_path, index=False)
+
+        weights_csv, plot_png = signature_deconv(
+            trinuc_counts_csv=str(csv_path),
+            cosmic_signatures_file=cosmic_signatures_file,
+            signatures_to_include=["SBS1", "SBS5"],
+            output_dir=str(tmp_output),
+            basename="all_zeros",
+        )
+        assert Path(weights_csv).exists()
+        assert Path(plot_png).exists()
+
+        df_weights = pd.read_csv(weights_csv, index_col=0)
+        # All columns should be NaN since every bin was empty
+        assert df_weights.isna().all().all()
+
+    def test_partial_zeros_returns_nan_for_empty_bins(self, tmp_path, cosmic_signatures_file, tmp_output):
+        """When some bins are all-zero, those bins get NaN weights; others are computed normally."""
+        bin_labels = get_vaf_bin_labels()
+        rng = np.random.default_rng(42)
+        data = {"trinuc_substitution": TRINUC_ORDER}
+        # First bin has real counts, rest are zero
+        data[bin_labels[0]] = rng.integers(1, 100, size=len(TRINUC_ORDER))
+        for label in bin_labels[1:]:
+            data[label] = [0] * len(TRINUC_ORDER)
+        counts_df = pd.DataFrame(data)
+        csv_path = tmp_path / "partial_zeros.csv"
+        counts_df.to_csv(csv_path, index=False)
+
+        weights_csv, plot_png = signature_deconv(
+            trinuc_counts_csv=str(csv_path),
+            cosmic_signatures_file=cosmic_signatures_file,
+            signatures_to_include=["SBS1", "SBS5"],
+            output_dir=str(tmp_output),
+            basename="partial_zeros",
+        )
+        assert Path(weights_csv).exists()
+        assert Path(plot_png).exists()
+
+        df_weights = pd.read_csv(weights_csv, index_col=0)
+        # First bin should have real values
+        assert df_weights[bin_labels[0]].notna().all()
+        assert (df_weights[bin_labels[0]] >= 0).all()
+        # Remaining bins should be NaN
+        for label in bin_labels[1:]:
+            assert df_weights[label].isna().all()
