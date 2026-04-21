@@ -91,7 +91,6 @@ def metadata_json(tmp_path, small_model):
             "hidden_channels": 32,
             "n_blocks": 2,
             "base_embed_dim": 16,
-            "t0_embed_dim": 16,
             "cat_embed_dim": 4,
             "dropout": 0.0,
             "learning_rate": 1e-3,

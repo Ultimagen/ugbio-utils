@@ -89,8 +89,7 @@ def main():  # noqa: C901, PLR0912, PLR0915
 
     lit_model = SRSNVLightningModule(
         base_vocab_size=7,
-        t0_vocab_size=11,
-        numeric_channels=9,
+        numeric_channels=10,
         tm_vocab_size=9,
         st_vocab_size=5,
         et_vocab_size=5,
