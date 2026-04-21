@@ -63,7 +63,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap_var.add_argument("--input_chg", help="MethylDackel mergeContext CHG context file", type=str, required=True)
     ap_var.add_argument("--input_chh", help="MethylDackel mergeContext CHH context file", type=str, required=True)
     ap_var.add_argument("--output", help="Output file basename", type=str, required=True)
-    ap_var.add_argument("--taps", help="Indicate if input is TAPS data", action="store_true", default=False)
 
     return ap_var.parse_args(argv[1:])
 
@@ -84,10 +83,10 @@ def run(argv: list[str] | None = None):
         # import input files
         # ====================================================================
         # import CHG file
-        df_chg_input = read_merge_context_file(args.input_chg, is_taps=args.taps)
+        df_chg_input = read_merge_context_file(args.input_chg)
 
         # import CHG file
-        df_chh_input = read_merge_context_file(args.input_chh, is_taps=args.taps)
+        df_chh_input = read_merge_context_file(args.input_chh)
 
         pat = r"[^Lambda_NEB|pUC19]"  # limit to the human genome chromosomes
         idx_chg = df_chg_input.chr.str.contains(pat)
