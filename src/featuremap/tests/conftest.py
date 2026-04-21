@@ -55,9 +55,9 @@ def genome_fai():
 
 @pytest.fixture
 def xgb_model_fresh_frozen():
-    """XGBoost model V1.15 for Fresh/Frozen samples."""
-    path = RESOURCES_DIR / "HG006_HG003.v1.25.WG.t_alt_readsGT1.V1.15.json"
-    assert path.exists(), f"XGB model V1.15 not found: {path}"
+    """XGBoost model V1.21 for Fresh/Frozen samples."""
+    path = RESOURCES_DIR / "somatic_snvfind.xgb_model.UGSB4v1.21_FreshFrozen.json"
+    assert path.exists(), f"XGB model V1.21 not found: {path}"
     return path
 
 
