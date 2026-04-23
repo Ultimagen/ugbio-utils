@@ -1386,7 +1386,13 @@ def _process_region_to_parquet(
                     log.debug(f"Region {region}: all rows filtered out")
                     return ""
 
+            rows_before_annot = frame.height
             frame = _apply_annotation_filters(frame, job_cfg, region)
+            if frame.height < rows_before_annot:
+                log.info(
+                    f"Region {region}: annotation filter removed {rows_before_annot - frame.height:,} "
+                    f"additional rows ({rows_before_annot:,} -> {frame.height:,})"
+                )
             if frame.is_empty():
                 return ""
 
@@ -1557,8 +1563,8 @@ def _convert_sample_frames_to_polars(
                 rows_before = frame.height
                 frame = _apply_read_filters(frame, job_cfg.read_filters)
                 log.debug(f"Sample {sample}, region {region}: {rows_before:,} -> {frame.height:,} rows after filtering")
-            if not frame.is_empty():
-                frame = _apply_annotation_filters(frame, job_cfg, region)
+                if not frame.is_empty():
+                    frame = _apply_annotation_filters(frame, job_cfg, region)
             if not frame.is_empty():
                 frames[sample] = frame
 
