@@ -1313,12 +1313,15 @@ def _apply_annotation_filters(frame: pl.DataFrame, job_cfg: VCFJobConfig, region
         if missing_fields:
             log.warning(f"Region {region}: include fields {missing_fields} not found in columns, skipping them")
         if present_fields:
+            before = frame.height
+            for field_name in present_fields:
+                count = frame.filter(pl.col(field_name).is_not_null()).height
+                log.info(f"Region {region}: include field '{field_name}' matches {count:,} / {before:,} rows")
             include_mask = pl.col(present_fields[0]).is_not_null()
             for field_name in present_fields[1:]:
                 include_mask = include_mask | pl.col(field_name).is_not_null()
-            before = frame.height
             frame = frame.filter(include_mask)
-            log.info(f"Region {region}: include filter {present_fields}: {before:,} -> {frame.height:,}")
+            log.info(f"Region {region}: include filter (union): {before:,} -> {frame.height:,}")
     return frame
 
 
