@@ -8,6 +8,7 @@ import argparse
 import logging
 import multiprocessing as mp
 import os
+import random
 import shutil
 import sys
 import time
@@ -17,8 +18,326 @@ from pathlib import Path
 import pandas as pd
 import pyfaidx
 import pysam
+from ugbio_cnv import jalign as jalign_module
 from ugbio_cnv.jalign import JAlignConfig, create_bam_header, process_cnv
 from ugbio_core.logger import logger
+
+
+# Worker-process-local file handles (opened once per worker via Pool initializer)
+_worker_reads_file: pysam.AlignmentFile | None = None
+_worker_reference: pyfaidx.Fasta | None = None
+_worker_bam_header: pysam.AlignmentHeader | None = None
+_worker_open_counts: dict[str, int] = {}
+
+
+def _worker_init(
+    input_cram: str,
+    ref_fasta: str,
+    verbosity: str,
+) -> None:
+    """Pool initializer: open CRAM and FASTA once per worker process."""
+    global _worker_reads_file, _worker_reference, _worker_bam_header, _worker_open_counts  # noqa: PLW0603
+    logger.setLevel(getattr(logging, verbosity, logging.INFO))
+    if not logger.handlers:
+        handler = logging.StreamHandler(stream=sys.stderr)
+        formatter = logging.Formatter("%(asctime)s - %(module)s - %(levelname)s - %(message)s")
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    _worker_reads_file = pysam.AlignmentFile(input_cram, "rb", reference_filename=ref_fasta)
+    _worker_reference = pyfaidx.Fasta(ref_fasta, rebuild=False)
+    _worker_bam_header = create_bam_header(_worker_reads_file.header)
+    _worker_open_counts = {
+        "cram_opens": 1,
+        "fasta_opens": 1,
+        "bam_write_opens": 0,
+        "bam_read_opens": 0,
+    }
+
+
+def _chunk_records(records: list[tuple], chunk_size: int) -> list[list[tuple]]:
+    """Split records into fixed-size groups."""
+    return [records[i : i + chunk_size] for i in range(0, len(records), chunk_size)]
+
+
+def _create_bam_records_from_df(
+    alignment_df: pd.DataFrame,
+    reads_in_order: list[pysam.AlignedSegment],
+    chrom: str,
+    ref1_start: int,
+    ref2_start: int,
+    header: pysam.AlignmentHeader,
+    config: JAlignConfig,
+) -> list[pysam.AlignedSegment]:
+    """Create BAM records directly from an alignment DataFrame for a single CNV."""
+    best_alignments = jalign_module.determine_best_alignments(alignment_df, config)
+    read_map = {read.query_name: read for read in reads_in_order}
+    alignment_types = ["align1", "align2", "jump_forward", "jump_backward"]
+    bam_records = []
+
+    for _, row in alignment_df.iterrows():
+        qname = row.get("qname")
+        if not qname or qname not in read_map:
+            continue
+
+        read = read_map[qname]
+        seq = read.query_sequence
+
+        if config.output_all_alignments:
+            for idx, alignment_type in enumerate(alignment_types, start=1):
+                score_field = f"{alignment_type}.score"
+                if pd.notna(row.get(score_field)) and int(row.get(score_field, 0)) > 0:
+                    records = jalign_module._create_bam_records_for_alignment_type(
+                        alignment_type=alignment_type,
+                        row=row,
+                        qname=f"{qname}/{idx}",
+                        seq=seq,
+                        chrom=chrom,
+                        ref1_start=ref1_start,
+                        ref2_start=ref2_start,
+                        header=header,
+                    )
+                    bam_records.extend(records)
+        else:
+            best_alignment_type = best_alignments.get(qname)
+            if not best_alignment_type:
+                continue
+
+            records = jalign_module._create_bam_records_for_alignment_type(
+                alignment_type=best_alignment_type,
+                row=row,
+                qname=qname,
+                seq=seq,
+                chrom=chrom,
+                ref1_start=ref1_start,
+                ref2_start=ref2_start,
+                header=header,
+            )
+            bam_records.extend(records)
+
+    return bam_records
+
+
+def process_cnv_group(
+    rec_group_data: list[tuple[int, str, int, int]],
+    input_cram: str,
+    ref_fasta: str,
+    config: JAlignConfig,
+    temp_dir: Path,
+    verbosity: str = "INFO",
+    *,
+    use_worker_handles: bool = False,
+) -> tuple[list[tuple], float, float, float, dict[str, int]]:
+    """Process a group of CNVs with one C++ tool invocation.
+
+    Returns
+    -------
+    tuple
+        - Per-CNV results list with one entry per input record
+        - Group total time
+        - Group C++ tool time
+        - Group Python time
+        - Open counters for this group
+    """
+    default_result = lambda rec, err=None: (
+        rec[0],
+        rec[1],
+        rec[2],
+        rec[3],
+        0,
+        0,
+        0,
+        0,
+        pd.DataFrame(),
+        None,
+        0.0,
+        0.0,
+        0.0,
+        err is None,
+        err,
+    )
+
+    try:
+        logger.setLevel(getattr(logging, verbosity, logging.INFO))
+        if not logger.handlers:
+            handler = logging.StreamHandler(stream=sys.stderr)
+            formatter = logging.Formatter("%(asctime)s - %(module)s - %(levelname)s - %(message)s")
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+
+        open_counts: dict[str, int]
+        if use_worker_handles:
+            reads_file = _worker_reads_file
+            reference = _worker_reference
+            bam_header = _worker_bam_header
+            open_counts = {"cram_opens": 0, "fasta_opens": 0, "bam_write_opens": 0, "bam_read_opens": 0}
+        else:
+            reads_file = pysam.AlignmentFile(input_cram, "rb", reference_filename=ref_fasta)
+            reference = pyfaidx.Fasta(ref_fasta, rebuild=False)
+            bam_header = create_bam_header(reads_file.header)
+            open_counts = {"cram_opens": 1, "fasta_opens": 1, "bam_write_opens": 0, "bam_read_opens": 0}
+
+        cycle_start_time = time.time()
+
+        cnv_meta = []
+        input_file = temp_dir / (
+            f"jalign_group_{os.getpid()}_{rec_group_data[0][0]}_{rec_group_data[-1][0]}.txt"
+        )
+        output_file = temp_dir / (
+            f"jalign_group_{os.getpid()}_{rec_group_data[0][0]}_{rec_group_data[-1][0]}_output.json"
+        )
+
+        with open(input_file, "w") as f:
+            for rec in rec_group_data:
+                idx, chrom, start, end = rec
+                reads, refs_extents = jalign_module._fetch_reads_at_breakpoints(chrom, start, end, reads_file, config)
+                if not reads:
+                    cnv_meta.append(
+                        {
+                            "rec": rec,
+                            "reads_in_order": [],
+                            "ref1_start": 0,
+                            "ref2_start": 0,
+                            "row_count": 0,
+                        }
+                    )
+                    continue
+
+                refs = jalign_module._extract_references(chrom, refs_extents, reference)
+
+                subsample_ratio = 1.0
+                if len(reads) > config.max_reads_per_cnv:
+                    subsample_ratio = config.max_reads_per_cnv / len(reads)
+
+                reads_in_order = []
+                ref_emitted = False
+                for read in reads.values():
+                    if random.random() > subsample_ratio:  # noqa: S311
+                        continue
+
+                    reads_in_order.append(read)
+                    if not ref_emitted:
+                        line = f"{read.query_name}\t{read.query_sequence}\t{refs[0][1]}\t{refs[1][1]}\n"
+                        ref_emitted = True
+                    else:
+                        line = f"{read.query_name}\t{read.query_sequence}\t=\n"
+                    f.write(line)
+
+                cnv_meta.append(
+                    {
+                        "rec": rec,
+                        "reads_in_order": reads_in_order,
+                        "ref1_start": refs[0][0],
+                        "ref2_start": refs[1][0],
+                        "row_count": len(reads_in_order),
+                    }
+                )
+
+        cpp_time = 0.0
+        grouped_df = pd.DataFrame()
+        if any(meta["row_count"] > 0 for meta in cnv_meta):
+            cpp_start_time = time.time()
+            alignment_cmd = config.build_alignment_command(input_file, output_file)
+            jalign_module.run_alignment_tool(alignment_cmd, None)
+            cpp_time = time.time() - cpp_start_time
+            grouped_df = jalign_module._parse_alignment_results(output_file)
+
+        result_rows = []
+        cursor = 0
+
+        for meta in cnv_meta:
+            rec = meta["rec"]
+            idx, chrom, start, end = rec
+            row_count = meta["row_count"]
+
+            if row_count == 0:
+                result_rows.append(default_result(rec))
+                continue
+
+            cnv_df = grouped_df.iloc[cursor : cursor + row_count].copy()
+            cursor += row_count
+
+            if "qname" not in cnv_df.columns:
+                result_rows.append(default_result(rec, "Missing qname column in grouped alignment output"))
+                continue
+
+            counts = jalign_module._count_supporting_alignments(cnv_df, config)
+            bam_records = _create_bam_records_from_df(
+                alignment_df=cnv_df,
+                reads_in_order=meta["reads_in_order"],
+                chrom=chrom,
+                ref1_start=meta["ref1_start"],
+                ref2_start=meta["ref2_start"],
+                header=bam_header,
+                config=config,
+            )
+
+            temp_bam_file = None
+            if bam_records:
+                temp_bam_file = temp_dir / f"jalign_realigned_{chrom}_{start}_{end}_{os.getpid()}_{idx}.bam"
+                with pysam.AlignmentFile(str(temp_bam_file), "wb", header=bam_header) as temp_bam:
+                    open_counts["bam_write_opens"] += 1
+                    for read in bam_records:
+                        temp_bam.write(read)
+
+            cnv_df["chrom"] = chrom
+            cnv_df["start"] = start
+            cnv_df["end"] = end
+
+            result_rows.append(
+                (
+                    idx,
+                    chrom,
+                    start,
+                    end,
+                    counts[0],
+                    counts[1],
+                    counts[2],
+                    counts[3],
+                    cnv_df,
+                    temp_bam_file,
+                    0.0,
+                    0.0,
+                    0.0,
+                    True,
+                    None,
+                )
+            )
+
+        cycle_time = time.time() - cycle_start_time
+        python_time = cycle_time - cpp_time
+
+        # Distribute group timings uniformly across successful CNVs for per-CNV logs.
+        successful_results = [r for r in result_rows if r[13]]
+        if successful_results:
+            per_cnv_cycle = cycle_time / len(successful_results)
+            per_cnv_cpp = cpp_time / len(successful_results)
+            per_cnv_python = python_time / len(successful_results)
+            updated_results = []
+            for r in result_rows:
+                if r[13]:
+                    updated_results.append((*r[:10], per_cnv_cycle, per_cnv_cpp, per_cnv_python, r[13], r[14]))
+                else:
+                    updated_results.append(r)
+            result_rows = updated_results
+
+        if not use_worker_handles:
+            reads_file.close()
+            reference.close()
+
+        if input_file.exists():
+            input_file.unlink()
+        if output_file.exists():
+            output_file.unlink()
+
+        return result_rows, cycle_time, cpp_time, python_time, open_counts
+    except Exception as e:
+        logger.error(f"Worker {os.getpid()} failed group: {e}")
+        return [default_result(rec, str(e)) for rec in rec_group_data], 0.0, 0.0, 0.0, {
+            "cram_opens": 0,
+            "fasta_opens": 0,
+            "bam_write_opens": 0,
+            "bam_read_opens": 0,
+        }
 
 
 def process_single_cnv(
@@ -293,6 +612,12 @@ def get_parser() -> argparse.ArgumentParser:
         help="Number of parallel threads for processing CNVs (default: 1 for sequential processing)",
     )
     runtime_group.add_argument(
+        "--cnvs-per-invocation",
+        type=int,
+        default=8,
+        help="Number of CNVs to group into a single C++ tool invocation",
+    )
+    runtime_group.add_argument(
         "--temp-dir",
         type=str,
         default=None,
@@ -413,6 +738,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                 cnv_records.append((rec, rec_data))
 
         logger.info(f"Processing {len(cnv_records)} CNV regions...")
+        logger.info(f"Grouping {args.cnvs_per_invocation} CNVs per C++ invocation")
+
+        if args.cnvs_per_invocation < 1:
+            raise ValueError("--cnvs-per-invocation must be >= 1")
+
+        rec_groups = _chunk_records([rec_data for _, rec_data in cnv_records], args.cnvs_per_invocation)
+        logger.info(f"Created {len(rec_groups)} CNV groups for processing")
 
         # Process CNVs in parallel or sequentially
         processing_start_time = time.perf_counter()
@@ -420,29 +752,41 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
             logger.info(f"Using {args.threads} parallel threads")
             # Create partial function with fixed arguments
             worker_func = partial(
-                process_single_cnv,
+                process_cnv_group,
                 input_cram=args.input_cram,
                 ref_fasta=args.ref_fasta,
                 config=config,
                 temp_dir=temp_dir,
+                verbosity=args.verbosity,
+                use_worker_handles=True,
             )
 
             # Process in parallel using multiprocessing
-            with mp.Pool(processes=args.threads) as pool:
-                processing_results = pool.map(worker_func, [rec_data for _, rec_data in cnv_records])
+            # _worker_init opens CRAM/FASTA once per worker process
+            # chunksize=1 ensures dynamic dispatch: workers pull the next group only
+            # when they are idle, preventing fast workers from sitting unused while
+            # slow workers work through a pre-assigned batch.
+            with mp.Pool(
+                processes=args.threads,
+                initializer=_worker_init,
+                initargs=(args.input_cram, args.ref_fasta, args.verbosity),
+            ) as pool:
+                group_processing_results = list(pool.imap_unordered(worker_func, rec_groups, chunksize=1))
         else:
             logger.info("Processing sequentially (single thread)")
             # Process CNVs sequentially
-            processing_results = []
-            for _, rec_data in cnv_records:
-                result = process_single_cnv(
-                    rec_data,
+            group_processing_results = []
+            for rec_group in rec_groups:
+                result = process_cnv_group(
+                    rec_group,
                     args.input_cram,
                     args.ref_fasta,
                     config,
                     temp_dir,
+                    args.verbosity,
+                    use_worker_handles=False,
                 )
-                processing_results.append(result)
+                group_processing_results.append(result)
         processing_wall_time = time.perf_counter() - processing_start_time
 
         # Write results
@@ -454,10 +798,37 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
         total_cpp_time = 0.0
         total_python_time = 0.0
         total_cycle_time = 0.0
+        # Main process CRAM/FASTA opens: 1 for header read; workers account for theirs separately
+        # In threaded mode workers open via initializer (1 per worker), not reported here per-group
+        total_cram_opens = 1 + (args.threads if args.threads > 1 else 0)
+        total_fasta_opens = 1 + (args.threads if args.threads > 1 else 0)
+        total_bam_write_opens = 0
+        total_bam_read_opens = 0
+
+        processing_results_by_idx = {}
+        for group_results, group_cycle_time, group_cpp_time, group_python_time, group_open_counts in group_processing_results:
+            total_cycle_time += group_cycle_time
+            total_cpp_time += group_cpp_time
+            total_python_time += group_python_time
+            total_cram_opens += group_open_counts.get("cram_opens", 0)
+            total_fasta_opens += group_open_counts.get("fasta_opens", 0)
+            total_bam_write_opens += group_open_counts.get("bam_write_opens", 0)
+            total_bam_read_opens += group_open_counts.get("bam_read_opens", 0)
+            for result in group_results:
+                processing_results_by_idx[result[0]] = result
 
         with pysam.VariantFile(output_vcf, "w", header=vcf_header) as out_vcf:
             with pysam.AlignmentFile(realigned_bam, "wb", header=bam_header) as realigned_bam_file:
-                for (rec, _), result in zip(cnv_records, processing_results, strict=False):
+                total_bam_write_opens += 1
+                for rec, rec_data in cnv_records:
+                    result = processing_results_by_idx.get(rec_data[0])
+                    if result is None:
+                        failed_count += 1
+                        logger.error(
+                            f"Error processing {rec_data[1]}:{rec_data[2]}-{rec_data[3]}: missing processing result"
+                        )
+                        continue
+
                     (
                         idx,
                         chrom,
@@ -476,10 +847,6 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                         error_msg,
                     ) = result
 
-                    total_cpp_time += cpp_time
-                    total_python_time += python_time
-                    total_cycle_time += cycle_time
-
                     if success:
                         # Update VCF record
                         rec.info["JALIGN_DUP_SUPPORT"] = rev_better
@@ -491,6 +858,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                         read_count = 0
                         if temp_bam_file and temp_bam_file.exists():
                             with pysam.AlignmentFile(temp_bam_file, "rb") as temp_bam:
+                                total_bam_read_opens += 1
                                 for read in temp_bam:
                                     realigned_bam_file.write(read)
                                     read_count += 1
@@ -554,6 +922,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
         logger.info(
             "JALIGN_TIMING_SUMMARY | Non-CNV overhead estimate - "
             f"Main wall time minus summed per-CNV time: {non_cnv_overhead:.3f}s"
+        )
+        logger.info(
+            "JALIGN_OPEN_SUMMARY | "
+            f"CRAM opens: {total_cram_opens}, "
+            f"FASTA opens: {total_fasta_opens}, "
+            f"BAM write opens: {total_bam_write_opens}, "
+            f"BAM read opens: {total_bam_read_opens}, "
+            f"BAM total opens: {total_bam_write_opens + total_bam_read_opens}"
         )
         return 0
 
