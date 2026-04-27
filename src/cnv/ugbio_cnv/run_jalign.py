@@ -237,7 +237,15 @@ def process_cnv_group(
         if any(meta["row_count"] > 0 for meta in cnv_meta):
             cpp_start_time = time.time()
             alignment_cmd = config.build_alignment_command(input_file, output_file)
-            jalign_module.run_alignment_tool(alignment_cmd, None)
+            prev_no_cigars = os.environ.get("NO_CIGARS")
+            os.environ["NO_CIGARS"] = "1"
+            try:
+                jalign_module.run_alignment_tool(alignment_cmd, None)
+            finally:
+                if prev_no_cigars is None:
+                    os.environ.pop("NO_CIGARS", None)
+                else:
+                    os.environ["NO_CIGARS"] = prev_no_cigars
             cpp_time = time.time() - cpp_start_time
             grouped_df = jalign_module._parse_alignment_results(output_file)
 
