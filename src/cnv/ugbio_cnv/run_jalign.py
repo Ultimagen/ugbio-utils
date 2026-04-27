@@ -49,7 +49,7 @@ def process_single_cnv(
 
     Returns
     -------
-    tuple of (int, str, int, int, int, int, int, int, pd.DataFrame or None, Path or None, float, bool, str or None)
+    tuple of (int, str, int, int, int, int, int, int, pd.DataFrame or None, Path or None, float, float, float, bool, str or None)
         Results tuple containing:
         - idx : int - CNV record index
         - chrom : str - Chromosome name
@@ -61,7 +61,9 @@ def process_single_cnv(
         - rev_strong_better : int - Number of reads strongly supporting duplication
         - alignment_results : pd.DataFrame or None - Detailed alignment statistics
         - temp_bam_file : Path or None - Path to temporary BAM file with realigned reads
-        - cycle_time : float - Processing time in seconds
+        - cycle_time : float - Total processing time in seconds
+        - cpp_time : float - Time spent in C++ jalign tool
+        - python_time : float - Time spent in Python code around C++ call
         - success : bool - Whether processing succeeded
         - error_msg : str or None - Error message if processing failed, None otherwise
 
@@ -84,6 +86,8 @@ def process_single_cnv(
 
         cycle_start_time = time.time()
 
+        # Measure time spent in C++ jalign tool
+        cpp_start_time = time.time()
         (
             (
                 fwd_better,
@@ -105,8 +109,7 @@ def process_single_cnv(
             None,  # No log file in parallel mode
             bam_header,
         )
-
-        cycle_time = time.time() - cycle_start_time
+        cpp_time = time.time() - cpp_start_time
 
         # Write realigned reads to temporary BAM file
         temp_bam_file = None
@@ -115,6 +118,13 @@ def process_single_cnv(
             with pysam.AlignmentFile(str(temp_bam_file), "wb", header=bam_header) as temp_bam:
                 for read in realigned_reads:
                     temp_bam.write(read)
+
+        cycle_time = time.time() - cycle_start_time
+        python_time = cycle_time - cpp_time
+
+        logger.info(
+            f"{chrom}:{start}-{end} timing - C++ tool: {cpp_time:.3f}s, Python overhead: {python_time:.3f}s, Total: {cycle_time:.3f}s"
+        )
 
         # Close files
         reads_file.close()
@@ -131,12 +141,14 @@ def process_single_cnv(
             alignment_results,
             temp_bam_file,
             cycle_time,
+            cpp_time,
+            python_time,
             True,
             None,
         )
 
     except Exception as e:
-        return (idx, chrom, start, end, 0, 0, 0, 0, None, None, 0.0, False, str(e))
+        return (idx, chrom, start, end, 0, 0, 0, 0, None, None, 0.0, 0.0, 0.0, False, str(e))
 
 
 def get_parser() -> argparse.ArgumentParser:
@@ -310,11 +322,18 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
     int
         Exit code (0 for success, non-zero for errors)
     """
+    main_start_time = time.perf_counter()
     parser = get_parser()
     args = parser.parse_args(argv)
 
     # Configure logging
     logger.setLevel(getattr(logging, args.verbosity))
+    # Ensure handler exists for multiprocessing compatibility
+    if not logger.handlers:
+        handler = logging.StreamHandler(stream=sys.stderr)
+        formatter = logging.Formatter("%(asctime)s - %(module)s - %(levelname)s - %(message)s")
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
 
     try:
         # Create configuration
@@ -396,6 +415,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
         logger.info(f"Processing {len(cnv_records)} CNV regions...")
 
         # Process CNVs in parallel or sequentially
+        processing_start_time = time.perf_counter()
         if args.threads > 1:
             logger.info(f"Using {args.threads} parallel threads")
             # Create partial function with fixed arguments
@@ -423,6 +443,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                     temp_dir,
                 )
                 processing_results.append(result)
+        processing_wall_time = time.perf_counter() - processing_start_time
 
         # Write results
         logger.info("Writing results...")
@@ -430,6 +451,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
         failed_count = 0
         alignment_results_list = []
         temp_bam_files = []
+        total_cpp_time = 0.0
+        total_python_time = 0.0
+        total_cycle_time = 0.0
 
         with pysam.VariantFile(output_vcf, "w", header=vcf_header) as out_vcf:
             with pysam.AlignmentFile(realigned_bam, "wb", header=bam_header) as realigned_bam_file:
@@ -446,9 +470,15 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
                         alignment_results,
                         temp_bam_file,
                         cycle_time,
+                        cpp_time,
+                        python_time,
                         success,
                         error_msg,
                     ) = result
+
+                    total_cpp_time += cpp_time
+                    total_python_time += python_time
+                    total_cycle_time += cycle_time
 
                     if success:
                         # Update VCF record
@@ -498,6 +528,33 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
         logger.info(f"Successfully processed {cnv_count} CNV regions")
         if failed_count > 0:
             logger.warning(f"Failed to process {failed_count} CNV regions")
+
+        main_wall_time = time.perf_counter() - main_start_time
+        non_cnv_overhead = main_wall_time - total_cycle_time
+        cnv_vs_processing_delta = total_cycle_time - processing_wall_time
+
+        logger.info(
+            "JALIGN_TIMING_SUMMARY | Total timing across run - "
+            f"C++ tool: {total_cpp_time:.3f}s, "
+            f"Python overhead: {total_python_time:.3f}s, "
+            f"Total: {total_cycle_time:.3f}s"
+        )
+        logger.info(
+            "JALIGN_TIMING_SUMMARY | Wall-clock reconciliation - "
+            f"Main wall time: {main_wall_time:.3f}s, "
+            f"CNV processing wall time: {processing_wall_time:.3f}s, "
+            f"Summed per-CNV time: {total_cycle_time:.3f}s"
+        )
+        if args.threads > 1:
+            logger.info(
+                "Multithread timing note - "
+                f"Summed per-CNV minus CNV wall time: {cnv_vs_processing_delta:.3f}s "
+                "(positive is expected with parallel workers)"
+            )
+        logger.info(
+            "JALIGN_TIMING_SUMMARY | Non-CNV overhead estimate - "
+            f"Main wall time minus summed per-CNV time: {non_cnv_overhead:.3f}s"
+        )
         return 0
 
     except Exception as e:
