@@ -3,12 +3,13 @@
 import argparse
 import math
 import subprocess
+import sys
 
-import pandas as pd
 import tqdm
+from ugbio_core import sorter_utils
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI args and enforce exactly one supported input mode."""
     parser = argparse.ArgumentParser(
         description=(
@@ -22,7 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--PF_Barcode_reads", type=int, help="Total PF barcode reads")
     parser.add_argument("--PCT_PF_Reads_aligned", type=float, help="Percent aligned reads (0-100)")
     parser.add_argument("--pct_duplication", type=float, help="Duplication percentage (0-100)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     return args
 
 
@@ -109,8 +110,9 @@ def determine_mode(args):
     return mode
 
 
-def main():
-    args = parse_args()
+def run(argv):
+    """Calculate library complexity from various input sources."""
+    args = parse_args(argv[1:])
     mode = determine_mode(args)
 
     # -----------------------------
@@ -119,15 +121,21 @@ def main():
     if mode == "csv":
         print(f"Processing CSV: {args.csv}")
 
-        sorter_csv = pd.read_csv(args.csv, header=None, names=["metric", "value"])
+        sorter_csv = sorter_utils.read_and_parse_sorter_statistics_csv(args.csv)
 
-        pf_barcode_reads = sorter_csv.loc[sorter_csv["metric"] == "PF_Barcode_reads", "value"].to_numpy()[0]
+        pf_barcode_reads = sorter_csv["PF_Barcode_reads"]
         print(f"PF_Barcode_reads {pf_barcode_reads}")
 
-        pct_pf_reads_aligned = sorter_csv.loc[sorter_csv["metric"] == "PCT_PF_Reads_aligned", "value"].to_numpy()[0]
+        pct_pf_reads_aligned = sorter_csv["PCT_PF_Reads_aligned"]
         print(f"PCT_PF_Reads_aligned {pct_pf_reads_aligned}")
 
-        pct_duplication = sorter_csv.loc[sorter_csv["metric"] == "% duplicates", "value"].to_numpy()[0]
+        # Handle both possible names for duplication metric
+        if "% duplicates" in sorter_csv.index:
+            pct_duplication = sorter_csv["% duplicates"]
+        elif "PCT_duplicates" in sorter_csv.index:
+            pct_duplication = sorter_csv["PCT_duplicates"]
+        else:
+            raise ValueError("Could not find duplication metric (% duplicates or PCT_duplicates) in CSV")
         print(f"pct_duplication {pct_duplication}")
 
         n = int(pf_barcode_reads * (pct_pf_reads_aligned / 100))
@@ -151,7 +159,7 @@ def main():
         n, c = extract_n_c_from_cram(args.cram)
     else:
         raise ValueError(
-            "Invalid parameters provided. Provide one of: --cram | --csv "
+            "Invalid parameters provided. Provide one of: --cram | --csv |"
             "(--PF_Barcode_reads and --PCT_PF_Reads_aligned and --pct_duplication)"
         )
 
@@ -168,3 +176,7 @@ def main():
 
     x = estimate_library_size(n, c)
     print(f"Estimated library size X = {x}")
+
+
+def main():
+    run(sys.argv)
