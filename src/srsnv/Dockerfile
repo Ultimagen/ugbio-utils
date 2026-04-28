@@ -18,6 +18,9 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 ##################################################################
 FROM $BASE_IMAGE
 
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
 ARG OUT_DIR
 
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
