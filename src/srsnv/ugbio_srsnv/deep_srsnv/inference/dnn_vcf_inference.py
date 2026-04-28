@@ -55,6 +55,17 @@ from ugbio_srsnv.srsnv_utils import MAX_PHRED, prob_to_phred
 
 ML_QUAL = "ML_QUAL"
 
+# INFO fields added by snvfind for multi-VCF training/inference filtering.
+# Not needed downstream after DNN merge; stripping them prevents BCF
+# dictionary overflow from orphaned rsID keys in the record data.
+_ANNOTATION_INFO_FIELDS_TO_STRIP: frozenset[str] = frozenset(
+    {
+        "EXCLUDE_TRAINING",
+        "INCLUDE_INFERENCE",
+        "PCAWG",
+    }
+)
+
 
 # ---------------------------------------------------------------------------
 # DNNQualAnnotator
@@ -93,6 +104,12 @@ class DNNQualAnnotator(VcfAnnotator):
 
     def process_records(self, records: list[pysam.VariantRecord]) -> list[pysam.VariantRecord]:
         for rec in records:
+            for field in _ANNOTATION_INFO_FIELDS_TO_STRIP:
+                try:
+                    del rec.info[field]
+                except KeyError:
+                    pass
+
             rns = self._extract_rns(rec)
             if not rns:
                 continue
@@ -1462,6 +1479,21 @@ def _parse_merge_args(argv: list[str] | None = None) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
+def _strip_unwanted_info(
+    rec: pysam.VariantRecord,
+    known_info_keys: frozenset[str],
+    fields_to_strip: frozenset[str],
+) -> None:
+    """Remove annotation and undeclared INFO fields from a record in-place.
+
+    Prevents BCF dictionary overflow when records contain fields not in the
+    output header snapshot (orphaned rsID keys or annotation fields).
+    """
+    keys_to_del = [k for k in rec.info if k in fields_to_strip or k not in known_info_keys]
+    for k in keys_to_del:
+        del rec.info[k]
+
+
 def _merge_contig_worker(  # noqa: PLR0913, PLR0912, PLR0915, C901
     contig: str,
     vcf_in: str,
@@ -1496,12 +1528,14 @@ def _merge_contig_worker(  # noqa: PLR0913, PLR0912, PLR0915, C901
     if not all_pos:
         # No predictions for this contig — copy records through without annotation
         with pysam.VariantFile(vcf_in) as inp:
+            known_info_keys = frozenset(inp.header.info)
             try:
                 inp.header.add_line('##FILTER=<ID=LowQual,Description="SNVQ below quality threshold">')
             except ValueError:
                 pass
             with pysam.VariantFile(vcf_out, "w", header=inp.header) as out:
                 for rec in inp.fetch(contig):
+                    _strip_unwanted_info(rec, known_info_keys, _ANNOTATION_INFO_FIELDS_TO_STRIP)
                     out.write(rec)
         pysam.tabix_index(vcf_out, preset="vcf", force=True)
         return vcf_out
@@ -1538,6 +1572,8 @@ def _merge_contig_worker(  # noqa: PLR0913, PLR0912, PLR0915, C901
     cursor = 0
 
     with pysam.VariantFile(vcf_in) as inp:
+        known_info_keys = frozenset(inp.header.info)
+
         # Add LowQual filter to input header so records inherit it
         try:
             inp.header.add_line('##FILTER=<ID=LowQual,Description="SNVQ below quality threshold">')
@@ -1546,6 +1582,7 @@ def _merge_contig_worker(  # noqa: PLR0913, PLR0912, PLR0915, C901
 
         with pysam.VariantFile(vcf_out, "w", header=inp.header) as out:
             for rec in inp.fetch(contig):
+                _strip_unwanted_info(rec, known_info_keys, _ANNOTATION_INFO_FIELDS_TO_STRIP)
                 pos = rec.pos
 
                 # Advance cursor past positions before this record
