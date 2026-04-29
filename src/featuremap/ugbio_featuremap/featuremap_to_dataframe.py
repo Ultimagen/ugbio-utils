@@ -167,6 +167,8 @@ class VCFJobConfig:
     sample_list: list[str]
     log_level: int
     read_filters: dict | None = None
+    exclude_if_annotated: list[str] | None = None
+    include_only_annotated: list[str] | None = None
 
 
 # ───────────────── header helpers ────────────────────────────────────────────
@@ -1067,6 +1069,8 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
     read_filter_json_key: str | None = None,
     downsample_reads: int | None = None,
     downsample_seed: int | None = None,
+    exclude_if_annotated: list[str] | None = None,
+    include_only_annotated: list[str] | None = None,
 ) -> None:
     """
     Convert VCF to Parquet using region-based parallel processing.
@@ -1113,6 +1117,10 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
     log.info(f"Input: {vcf}")
     log.info(f"Output: {out}")
     log.info(f"List mode: {list_mode}")
+    if exclude_if_annotated:
+        log.info(f"Exclude-if-annotated fields: {exclude_if_annotated}")
+    if include_only_annotated:
+        log.info(f"Include-only-annotated fields: {include_only_annotated}")
 
     _assert_vcf_index_exists(vcf)
     log.debug("VCF index found")
@@ -1240,6 +1248,8 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
             sample_list=sample_list,
             log_level=log_level,
             read_filters=read_filters,
+            exclude_if_annotated=exclude_if_annotated,
+            include_only_annotated=include_only_annotated,
         )
 
         # Temporary directory for ordered part-files
@@ -1279,7 +1289,40 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
 
             _merge_parquet_files_lazy(part_files, out, downsample_reads, downsample_seed)
 
-        log.info(f"Conversion completed: {out}")
+        final_row_count = pl.scan_parquet(out).select(pl.len()).collect().item()
+        log.info(f"Conversion completed: {out} ({final_row_count:,} rows)")
+        if exclude_if_annotated:
+            log.info(f"Annotation exclude filter was active for fields: {exclude_if_annotated}")
+        if include_only_annotated:
+            log.info(f"Annotation include filter was active for fields: {include_only_annotated}")
+
+
+def _apply_annotation_filters(frame: pl.DataFrame, job_cfg: VCFJobConfig, region: str) -> pl.DataFrame:
+    """Apply annotation-based exclude/include filters to a DataFrame."""
+    if job_cfg.exclude_if_annotated:
+        for field_name in job_cfg.exclude_if_annotated:
+            if field_name in frame.columns:
+                before = frame.height
+                frame = frame.filter(pl.col(field_name).is_null())
+                log.info(f"Region {region}: exclude filter '{field_name}': {before:,} -> {frame.height:,}")
+            else:
+                log.warning(f"Region {region}: exclude field '{field_name}' not found in columns, skipping")
+    if job_cfg.include_only_annotated:
+        present_fields = [f for f in job_cfg.include_only_annotated if f in frame.columns]
+        missing_fields = [f for f in job_cfg.include_only_annotated if f not in frame.columns]
+        if missing_fields:
+            log.warning(f"Region {region}: include fields {missing_fields} not found in columns, skipping them")
+        if present_fields:
+            before = frame.height
+            for field_name in present_fields:
+                count = frame.filter(pl.col(field_name).is_not_null()).height
+                log.info(f"Region {region}: include field '{field_name}' matches {count:,} / {before:,} rows")
+            include_mask = pl.col(present_fields[0]).is_not_null()
+            for field_name in present_fields[1:]:
+                include_mask = include_mask | pl.col(field_name).is_not_null()
+            frame = frame.filter(include_mask)
+            log.info(f"Region {region}: include filter (union): {before:,} -> {frame.height:,}")
+    return frame
 
 
 def _process_region_to_parquet(
@@ -1345,6 +1388,16 @@ def _process_region_to_parquet(
                 if frame.is_empty():
                     log.debug(f"Region {region}: all rows filtered out")
                     return ""
+
+            rows_before_annot = frame.height
+            frame = _apply_annotation_filters(frame, job_cfg, region)
+            if frame.height < rows_before_annot:
+                log.info(
+                    f"Region {region}: annotation filter removed {rows_before_annot - frame.height:,} "
+                    f"additional rows ({rows_before_annot:,} -> {frame.height:,})"
+                )
+            if frame.is_empty():
+                return ""
 
             log.debug(f"Region {region}: writing {frame.height} rows to {output_file}")
             frame.write_parquet(output_file)
@@ -1513,6 +1566,8 @@ def _convert_sample_frames_to_polars(
                 rows_before = frame.height
                 frame = _apply_read_filters(frame, job_cfg.read_filters)
                 log.debug(f"Sample {sample}, region {region}: {rows_before:,} -> {frame.height:,} rows after filtering")
+                if not frame.is_empty():
+                    frame = _apply_annotation_filters(frame, job_cfg, region)
             if not frame.is_empty():
                 frames[sample] = frame
 
@@ -1694,6 +1749,18 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Random seed for reproducible downsampling",
     )
+    parser.add_argument(
+        "--exclude-if-annotated",
+        nargs="*",
+        default=None,
+        help="Exclude rows where any of these INFO fields has a non-null value",
+    )
+    parser.add_argument(
+        "--include-only-annotated",
+        nargs="*",
+        default=None,
+        help="Include only rows where at least one of these INFO fields has a non-null value",
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     args = parser.parse_args(argv)
 
@@ -1728,6 +1795,8 @@ def main(argv: list[str] | None = None) -> None:
         read_filter_json_key=args.read_filter_json_key,
         downsample_reads=args.downsample_reads,
         downsample_seed=args.downsample_seed,
+        exclude_if_annotated=args.exclude_if_annotated,
+        include_only_annotated=args.include_only_annotated,
     )
 
 
