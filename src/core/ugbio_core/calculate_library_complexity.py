@@ -130,12 +130,7 @@ def run(argv):
         print(f"PCT_PF_Reads_aligned {pct_pf_reads_aligned}")
 
         # Handle both possible names for duplication metric
-        if "% duplicates" in sorter_csv.index:
-            pct_duplication = sorter_csv["% duplicates"]
-        elif "PCT_duplicates" in sorter_csv.index:
-            pct_duplication = sorter_csv["PCT_duplicates"]
-        else:
-            raise ValueError("Could not find duplication metric (% duplicates or PCT_duplicates) in CSV")
+        pct_duplication = sorter_csv["PCT_duplicates"]
         print(f"pct_duplication {pct_duplication}")
 
         n = int(pf_barcode_reads * (pct_pf_reads_aligned / 100))
