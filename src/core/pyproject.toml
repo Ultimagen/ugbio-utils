@@ -16,13 +16,13 @@ dependencies = [
     "pyfaidx>=0.8.1,<1.0.0",
     "h5py>=3.11.0,<4.0.0",
     "scipy>=1.14.0,<2.0.0",
+    "tqdm>=4.66.4,<5.0.0",
 ]
 
 [project.optional-dependencies]
 vcfbed = [
     "pybigwig>=0.3.18,<0.4.0",
     "biopython>=1.73",
-    "tqdm>=4.66.4,<5.0.0",
     "bgzip>=0.5.0,<0.6.0",
     "intervaltree<=3.1.0",
     "truvari>=5.4.0,<6.0.0",
@@ -56,7 +56,7 @@ sorter_to_h5 = "ugbio_core.sorter_to_h5:main"
 convert_h5_to_json = "ugbio_core.convert_h5_to_json:main"
 collect_existing_metrics = "ugbio_core.collect_existing_metrics:main"
 generate_report = "ugbio_core.reports.report_utils:main"
-
+calculate_library_complexity = "ugbio_core.calculate_library_complexity:main"
 [tool.setuptools.package-data]
 "*" = [
     "**/reports/*",
