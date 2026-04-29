@@ -20,8 +20,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--cram", help="Path to CRAM file")
     parser.add_argument("--csv", help="Path to sorter CSV file")
-    parser.add_argument("--PF_Barcode_reads", type=int, help="Total PF barcode reads")
-    parser.add_argument("--PCT_PF_Reads_aligned", type=float, help="Percent aligned reads (0-100)")
+    parser.add_argument("--PF_Barcode_reads", type=int, help="Total Pass-Filter barcode reads")
+    parser.add_argument("--PCT_PF_Reads_aligned", type=float, help="Percent Pass-Filter aligned reads (0-100)")
     parser.add_argument("--pct_duplication", type=float, help="Duplication percentage (0-100)")
     args = parser.parse_args(argv)
     return args
@@ -49,9 +49,6 @@ def extract_n_c_from_cram(cram_path, threads=16):
 
 
 def estimate_library_size(n, c):
-    # -----------------------------
-    # Newton's method
-    # -----------------------------
     print("Calculating library size X using Newton’s method")
 
     def f(x, n, c):
