@@ -95,6 +95,23 @@ def test_generate_key_from_sequence_empty_sequence(flow_order):
     assert np.array_equal(result, expected)
 
 
+def test_generate_key_from_sequence_terminated(flow_order):
+    sequence = "AAGGTTCC"
+    result = fbr.generate_key_from_sequence(sequence, flow_order, terminated=True)
+
+    assert set(np.unique(result)).issubset({0, 1})
+    assert result.sum() == len(sequence)
+
+    expected = np.array([1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 0, 1, 0, 0, 0, 1, 0])
+    assert np.array_equal(result, expected)
+
+
+def test_generate_key_from_sequence_terminated_and_truncate_raises(flow_order):
+    sequence = "AAGGTTCC"
+    with pytest.raises(ValueError):
+        fbr.generate_key_from_sequence(sequence, flow_order, truncate=1, terminated=True)
+
+
 def test_get_flow_matrix_column_for_base(resources_dir):
     data = list(pysam.AlignmentFile(pjoin(resources_dir, "chr9.sample.bam")))
     fbrs = [

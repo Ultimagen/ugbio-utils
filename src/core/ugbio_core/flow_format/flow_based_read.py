@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import re
 from enum import Enum
+from itertools import cycle
 
 import numpy as np
 import pandas as pd
@@ -53,7 +54,12 @@ def key2base(key: np.ndarray) -> np.ndarray:
 
 
 def generate_key_from_sequence(
-    sequence: str, flow_order: str, truncate: int | None = None, *, non_standard_as_a: bool = False
+    sequence: str,
+    flow_order: str,
+    truncate: int | None = None,
+    *,
+    non_standard_as_a: bool = False,
+    terminated: bool = False,
 ) -> np.ndarray:
     """Converts bases to flow order
 
@@ -67,6 +73,9 @@ def generate_key_from_sequence(
         maximal hmer to read
     non_standard_as_a: bool, optional
         Replace non-standard nucleotides with A (default: false)
+    terminated: bool, optional
+        If True, stop counting each hmer after the first base so that the
+        maximal value in the output key is 1 (default: false).
 
     Returns
     -------
@@ -76,8 +85,12 @@ def generate_key_from_sequence(
     Raises
     ------
     ValueError
-        When  there are non-standard nucleotides
+        When  there are non-standard nucleotides, or when both ``truncate`` and
+        ``terminated`` are provided.
     """
+    if terminated and truncate:
+        raise ValueError("`terminated` and `truncate` cannot both be set")
+
     # sanitize input
     sequence = sequence.upper()
     if bool(re.compile(r"[^ACGT]").search(sequence)):
@@ -89,15 +102,17 @@ def generate_key_from_sequence(
             )
 
     # process
-    flow = flow_order * len(sequence)
-
-    key = []
+    key: list[int] = []
+    if not sequence:
+        return np.array(key)
     pos = 0
-    for base in flow:
+    for base in cycle(flow_order):
         hcount = 0
         for i in range(pos, len(sequence)):
             if sequence[i] == base:
                 hcount += 1
+                if terminated:
+                    break
             else:
                 break
         else:
