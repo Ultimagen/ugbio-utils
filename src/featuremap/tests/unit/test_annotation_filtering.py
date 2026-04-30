@@ -1,19 +1,5 @@
 import polars as pl
-from ugbio_featuremap.featuremap_to_dataframe import VCFJobConfig, _apply_annotation_filters
-
-
-def _make_job_cfg(**kwargs) -> VCFJobConfig:
-    defaults = {
-        "bcftools_path": "bcftools",
-        "awk_script": "",
-        "columns": [],
-        "schema": {},
-        "column_config": None,
-        "sample_list": ["S1"],
-        "log_level": 20,
-    }
-    defaults.update(kwargs)
-    return VCFJobConfig(**defaults)
+from ugbio_featuremap.filter_dataframe import _create_filter_columns, _create_final_filter_column, _mask_for_rule
 
 
 def _sample_frame() -> pl.DataFrame:
@@ -28,73 +14,94 @@ def _sample_frame() -> pl.DataFrame:
     )
 
 
-def test_exclude_single_field():
-    cfg = _make_job_cfg(exclude_if_annotated=["PCAWG"])
-    result = _apply_annotation_filters(_sample_frame(), cfg, "test")
+def _apply_filters(frame: pl.DataFrame, filters: list[dict]) -> pl.DataFrame:
+    lazy = frame.lazy()
+    lazy, filter_cols = _create_filter_columns(lazy, filters)
+    lazy = _create_final_filter_column(lazy, filter_cols, None)
+    result = lazy.collect()
+    return result.filter(pl.col("__filter_final")).select(pl.exclude("^__filter_.*$"))
+
+
+def test_is_null_excludes_annotated():
+    filters = [{"name": "not_pcawg", "type": "region", "field": "PCAWG", "op": "is_null"}]
+    result = _apply_filters(_sample_frame(), filters)
     assert result.height == 2
     assert result["POS"].to_list() == [200, 400]
 
 
-def test_exclude_multiple_fields():
-    cfg = _make_job_cfg(exclude_if_annotated=["PCAWG", "EXCLUDE_TRAINING"])
-    result = _apply_annotation_filters(_sample_frame(), cfg, "test")
-    assert result.height == 0
-
-
-def test_include_single_field():
-    cfg = _make_job_cfg(include_only_annotated=["INCLUDE_INFERENCE"])
-    result = _apply_annotation_filters(_sample_frame(), cfg, "test")
+def test_is_not_null_includes_annotated():
+    filters = [{"name": "has_include", "type": "region", "field": "INCLUDE_INFERENCE", "op": "is_not_null"}]
+    result = _apply_filters(_sample_frame(), filters)
     assert result.height == 2
     assert result["POS"].to_list() == [100, 500]
 
 
-def test_include_multiple_fields_or_logic():
-    cfg = _make_job_cfg(include_only_annotated=["INCLUDE_INFERENCE", "PCAWG"])
-    result = _apply_annotation_filters(_sample_frame(), cfg, "test")
+def test_is_null_multiple_fields_and_logic():
+    filters = [
+        {"name": "not_pcawg", "type": "region", "field": "PCAWG", "op": "is_null"},
+        {"name": "not_excluded", "type": "region", "field": "EXCLUDE_TRAINING", "op": "is_null"},
+    ]
+    result = _apply_filters(_sample_frame(), filters)
+    assert result.height == 0
+
+
+def test_any_not_null_or_logic():
+    filters = [
+        {"name": "in_inference", "type": "region", "op": "any_not_null", "fields": ["INCLUDE_INFERENCE", "PCAWG"]}
+    ]
+    result = _apply_filters(_sample_frame(), filters)
     assert result.height == 3
     assert result["POS"].to_list() == [100, 300, 500]
 
 
-def test_missing_column_no_op():
-    cfg = _make_job_cfg(exclude_if_annotated=["NONEXISTENT_FIELD"])
-    frame = _sample_frame()
-    result = _apply_annotation_filters(frame, cfg, "test")
-    assert result.height == frame.height
-
-
-def test_include_missing_column_no_op():
-    cfg = _make_job_cfg(include_only_annotated=["NONEXISTENT_FIELD"])
-    frame = _sample_frame()
-    result = _apply_annotation_filters(frame, cfg, "test")
-    assert result.height == frame.height
-
-
-def test_no_filters_no_op():
-    cfg = _make_job_cfg()
-    frame = _sample_frame()
-    result = _apply_annotation_filters(frame, cfg, "test")
-    assert result.height == frame.height
-
-
-def test_exclude_and_include_combined():
-    cfg = _make_job_cfg(
-        exclude_if_annotated=["EXCLUDE_TRAINING"],
-        include_only_annotated=["PCAWG"],
-    )
-    result = _apply_annotation_filters(_sample_frame(), cfg, "test")
+def test_any_not_null_single_field():
+    filters = [{"name": "has_pcawg", "type": "region", "op": "any_not_null", "fields": ["PCAWG"]}]
+    result = _apply_filters(_sample_frame(), filters)
     assert result.height == 3
     assert result["POS"].to_list() == [100, 300, 500]
 
 
-def test_exclude_all_rows():
-    frame = pl.DataFrame({"CHROM": ["chr1", "chr1"], "POS": [1, 2], "PCAWG": ["a", "b"]})
-    cfg = _make_job_cfg(exclude_if_annotated=["PCAWG"])
-    result = _apply_annotation_filters(frame, cfg, "test")
+def test_is_null_combined_with_any_not_null():
+    filters = [
+        {"name": "not_excluded", "type": "region", "field": "EXCLUDE_TRAINING", "op": "is_null"},
+        {"name": "in_inference", "type": "region", "op": "any_not_null", "fields": ["INCLUDE_INFERENCE", "PCAWG"]},
+    ]
+    result = _apply_filters(_sample_frame(), filters)
+    assert result.height == 3
+    assert result["POS"].to_list() == [100, 300, 500]
+
+
+def test_no_filters_returns_all():
+    frame = _sample_frame()
+    lazy = frame.lazy()
+    lazy, filter_cols = _create_filter_columns(lazy, [])
+    assert filter_cols == []
+    assert lazy.collect().height == 5
+
+
+def test_is_null_all_null_column():
+    frame = pl.DataFrame({"POS": [1, 2], "FIELD": [None, None]})
+    filters = [{"name": "test", "type": "region", "field": "FIELD", "op": "is_null"}]
+    result = _apply_filters(frame, filters)
+    assert result.height == 2
+
+
+def test_is_not_null_all_null_column():
+    frame = pl.DataFrame({"POS": [1, 2], "FIELD": [None, None]})
+    filters = [{"name": "test", "type": "region", "field": "FIELD", "op": "is_not_null"}]
+    result = _apply_filters(frame, filters)
     assert result.height == 0
 
 
-def test_include_filters_empty_when_no_match():
-    frame = pl.DataFrame({"CHROM": ["chr1", "chr1"], "POS": [1, 2], "PCAWG": [None, None]})
-    cfg = _make_job_cfg(include_only_annotated=["PCAWG"])
-    result = _apply_annotation_filters(frame, cfg, "test")
-    assert result.height == 0
+def test_mask_for_rule_is_null():
+    expr = _mask_for_rule({"field": "X", "op": "is_null", "type": "region"})
+    frame = pl.DataFrame({"X": ["a", None, "b"]})
+    result = frame.select(expr.alias("mask"))["mask"].to_list()
+    assert result == [False, True, False]
+
+
+def test_mask_for_rule_any_not_null():
+    expr = _mask_for_rule({"op": "any_not_null", "type": "region", "fields": ["A", "B"]})
+    frame = pl.DataFrame({"A": [None, "x", None], "B": [None, None, "y"]})
+    result = frame.select(expr.alias("mask"))["mask"].to_list()
+    assert result == [False, True, True]
