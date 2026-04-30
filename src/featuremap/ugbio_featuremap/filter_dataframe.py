@@ -84,34 +84,44 @@ _OPS = {
     "ge": lambda c, v: c >= v,
     "in": lambda c, v: c.is_in(v),
     "not_in": lambda c, v: ~c.is_in(v),
+    "is_null": lambda c, v: c.is_null(),
+    "is_not_null": lambda c, v: c.is_not_null(),
 }
+
+_UNARY_OPS = {"is_null", "is_not_null", "any_not_null"}
+
+
+def _validate_filter_op(rule: dict[str, Any], index: int) -> None:
+    """Validate operator and its required value keys."""
+    op = rule[KEY_OP]
+    all_ops = {*_OPS, *_UNARY_OPS}
+    if op not in all_ops:
+        raise ValueError(f"Filter {index} has unsupported operator: {op}")
+    if op not in _UNARY_OPS:
+        if KEY_VALUE not in rule and KEY_VALUES not in rule and KEY_VALUE_FIELD not in rule:
+            raise ValueError(f"Filter {index} must have either '{KEY_VALUE}', '{KEY_VALUES}', or '{KEY_VALUE_FIELD}'")
 
 
 def _validate_filter(rule: dict[str, Any], index: int) -> None:
     """Validate a single filter rule."""
     if not isinstance(rule, dict):
         raise ValueError(f"Filter {index} must be a dictionary")
-
-    # Check required fields
-    if KEY_FIELD not in rule:
-        raise ValueError(f"Filter {index} missing required '{KEY_FIELD}' key")
     if KEY_OP not in rule:
         raise ValueError(f"Filter {index} missing required '{KEY_OP}' key")
     if KEY_TYPE not in rule:
         raise ValueError(f"Filter {index} missing required '{KEY_TYPE}' key")
 
-    # Check operator
-    if rule[KEY_OP] not in _OPS:
-        raise ValueError(f"Filter {index} has unsupported operator: {rule[KEY_OP]}")
-
-    # Check type
     valid_types = {TYPE_QUALITY, TYPE_REGION, TYPE_MAPPING, TYPE_LABEL}
     if rule[KEY_TYPE] not in valid_types:
         raise ValueError(f"Filter {index} has invalid type '{rule[KEY_TYPE]}'. Must be one of: {valid_types}")
 
-    # Check value/value_field
-    if KEY_VALUE not in rule and KEY_VALUES not in rule and KEY_VALUE_FIELD not in rule:
-        raise ValueError(f"Filter {index} must have either '{KEY_VALUE}', '{KEY_VALUES}', or '{KEY_VALUE_FIELD}'")
+    if rule[KEY_OP] == "any_not_null":
+        if "fields" not in rule or not isinstance(rule["fields"], list):
+            raise ValueError(f"Filter {index} with 'any_not_null' op requires a 'fields' list")
+    elif KEY_FIELD not in rule:
+        raise ValueError(f"Filter {index} missing required '{KEY_FIELD}' key")
+
+    _validate_filter_op(rule, index)
 
 
 def _validate_downsample(ds: dict[str, Any]) -> None:
@@ -296,8 +306,20 @@ def validate_filter_config(cfg: dict[str, Any]) -> None:
 
 def _mask_for_rule(rule: dict[str, Any]) -> pl.Expr:
     """Return a boolean expression for a single rule."""
-    field = rule[KEY_FIELD]
     op = rule[KEY_OP]
+
+    if op == "any_not_null":
+        fields = rule["fields"]
+        expr = pl.col(fields[0]).is_not_null()
+        for f in fields[1:]:
+            expr = expr | pl.col(f).is_not_null()
+        return expr
+
+    field = rule[KEY_FIELD]
+
+    if op in _UNARY_OPS:
+        return _OPS[op](pl.col(field), None)
+
     if op not in _OPS:
         raise ValueError(f"Unsupported op: {op}")
 
