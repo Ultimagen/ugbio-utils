@@ -268,7 +268,8 @@ class VcfComparisonUtils:
 
         # Step1 - bcftools norm
 
-        self.__execute(f"bcftools norm -c x -f {ref} -m+any -o {tempdir}/step1.vcf.gz -O z {input_vcf}")
+        self.__execute(f"bcftools norm -c x -f {ref} -m+any -o {tempdir}/step0.5.vcf.gz -O z {input_vcf}")
+        self.vu.sort_vcf(f"{tempdir}/step0.5.vcf.gz", f"{tempdir}/step1.vcf.gz")
         self.vu.index_vcf(f"{tempdir}/step1.vcf.gz")
         self.__execute(
             f"bcftools annotate -a {input_vcf} -c CHROM,POS,CALL,BASE -Oz \
@@ -316,7 +317,7 @@ class VcfComparisonUtils:
                 -Oz -o {output_vcf} {tempdir}/step4.vcf.gz"
         )
         self.vu.index_vcf(output_vcf)
-        # shutil.rmtree(tempdir)
+        shutil.rmtree(tempdir)
 
     def fix_vcf_format(self, output_prefix: str):
         """Legacy function to fix the PS field format in the old GIAB truth sets. The function overwrites the input file
