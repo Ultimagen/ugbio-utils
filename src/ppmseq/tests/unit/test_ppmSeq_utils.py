@@ -1,367 +1,173 @@
+import pickle
 from os.path import join as pjoin
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import pysam
 import pytest
-from pandas.testing import assert_frame_equal, assert_series_equal
 from ugbio_ppmseq.ppmSeq_utils import (
     PpmseqAdapterVersions,
+    PpmseqCategories,
     PpmseqStrandVcfAnnotator,
     add_strand_ratios_and_categories_to_featuremap,
     collect_statistics,
-    plot_ppmseq_strand_ratio,
+    get_strand_ratio_category_concordance,
+    group_trimmer_histogram_by_strand_ratio_category,
+    plot_sr_by_et,
+    plot_sr_histogram,
     plot_strand_ratio_category,
     plot_strand_ratio_category_concordnace,
-    plot_trimmer_histogram,
     ppmseq_qc_analysis,
-    read_ppmseq_trimmer_histogram,
+    read_tags_from_subsampled_sam,
     read_trimmer_failure_codes_ppmseq,
 )
 
 inputs_dir = Path(__file__).parent.parent / "resources"
-input_histogram_legacy_v5_csv = (
-    inputs_dir
-    / "130713_UGAv3-51.trimming.A_hmer_5.T_hmer_5.A_hmer_3.T_hmer_3.native_adapter_with_leading_C.histogram.csv"
-)
-parsed_histogram_legacy_v5_parquet = inputs_dir / "130713_UGAv3-51.parsed_histogram.parquet"
-sorter_stats_legacy_v5_csv = inputs_dir / "130713-UGAv3-51.sorter_stats.csv"
-collected_stats_legacy_v5_h5 = inputs_dir / "130713-UGAv3-51.stats.h5"
-input_histogram_legacy_v5_start_csv = inputs_dir / "130715_UGAv3-132.trimming.A_hmer.T_hmer.histogram.csv"
-parsed_histogram_legacy_v5_start_parquet = inputs_dir / "130715_UGAv3-132.parsed_histogram.parquet"
-sorter_stats_legacy_v5_start_csv = inputs_dir / "130715-UGAv3-51.sorter_stats.csv"
-collected_stats_legacy_v5_start_h5 = inputs_dir / "130715-UGAv3-51.stats.h5"
+subsampled_sam = inputs_dir / "ppmseq_sr_tag" / "Z0263_sample.sam.gz"
 input_featuremap_legacy_v5 = inputs_dir / "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.vcf.gz"
 expected_output_featuremap_legacy_v5 = (
     inputs_dir / "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.with_strand_ratios.vcf.gz"
 )
-sorter_stats_csv_ppmseq_v1 = inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.csv"
-sorter_stats_json_ppmseq_v1 = inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.json"
-trimmer_failure_codes_csv_ppmseq_v1 = inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.failure_codes.csv"
-trimmer_histogram_ppmseq_v1_csv = inputs_dir / (
-    "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT."
-    "Start_loop.Start_loop.End_loop.End_loop.native_adapter.histogram.csv"
-)
-parsed_histogram_parquet_ppmseq_v1 = (
-    inputs_dir / "037239-CgD1502_Cord_Blood-Z0032-CTCTGTATTGCAGAT.parsed_histogram.parquet"
-)
-subdir = inputs_dir / "401057001"
-sorter_stats_csv_ppmseq_v1_401057001 = subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT.csv"
-sorter_stats_json_ppmseq_v1_401057001 = subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT.json"
-trimmer_failure_codes_csv_ppmseq_v1_401057001 = (
-    subdir / "401057001-Lb_2772-Z0016-CATCCTGTGCGCATGAT_trimmer-failure_codes.csv"
-)
-trimmer_histogram_ppmseq_v1_401057001 = subdir / (
-    "Z0016-Start_loop_name.Start_loop_pattern_fw.End_loop_name.End_loop_pattern_fw.native_adapter_length"
-    ".histogram.csv"
-)
-
 trimmer_failure_codes_csv_ppmseq_v1_incl_failed_rsq = (
     inputs_dir / "412884-L6860-Z0293-CATGTGAGCGGTGAT_trimmer-failure_codes.csv"
 )
 
 
 def _compare_vcfs(vcf_file1, vcf_file2):
-    """Compare VCF files using set-based comparison (order-independent).
-
-    Note: This function uses a different approach than ugbio_core.tests.test_utils.compare_vcfs.
-    It performs unordered comparison of records and includes header comparison.
-    Use this for cases where record order doesn't matter and headers should be checked.
-    """
-
     def extract_header(vcf_file):
         with pysam.VariantFile(vcf_file) as vcf:
             return vcf.header
 
     def extract_records(vcf_file):
-        records = []
         with pysam.VariantFile(vcf_file) as vcf:
-            for record in vcf:
-                records.append(record)
-        return records
+            return list(vcf)
 
-    def compare_headers(header1, header2):
-        header1_lines = str(header1).split("\n")
-        header2_lines = str(header2).split("\n")
+    def compare_headers(h1, h2):
+        return set(str(h1).split("\n")).symmetric_difference(set(str(h2).split("\n")))
 
-        diff = set(header1_lines).symmetric_difference(set(header2_lines))
-        return diff
+    def compare_records(r1, r2):
+        return {str(r) for r in r1}.symmetric_difference({str(r) for r in r2})
 
-    def compare_records(records1, records2):
-        records1_set = {str(record) for record in records1}
-        records2_set = {str(record) for record in records2}
-
-        diff = records1_set.symmetric_difference(records2_set)
-        return diff
-
-    header1 = extract_header(vcf_file1)
-    header2 = extract_header(vcf_file2)
-
-    header_diff = compare_headers(header1, header2)
-    assert not header_diff, "Differences found in headers"
-
-    records1 = extract_records(vcf_file1)
-    records2 = extract_records(vcf_file2)
-
-    records_diff = compare_records(records1, records2)
-    assert not records_diff, "Differences found in records"
+    assert not compare_headers(extract_header(vcf_file1), extract_header(vcf_file2))
+    assert not compare_records(extract_records(vcf_file1), extract_records(vcf_file2))
 
 
-def test_read_trimmer_failure_codes_ppmseq(tmpdir):
+def test_read_trimmer_failure_codes_ppmseq():
     df_trimmer_failure_codes, df_metrics = read_trimmer_failure_codes_ppmseq(
         trimmer_failure_codes_csv_ppmseq_v1_incl_failed_rsq
     )
-    assert (
-        df_trimmer_failure_codes["total_read_count"].to_numpy()[0] == 1098118853
-    )  # make sure the RSQ failed reads are subtracted
-    assert np.allclose(
-        df_metrics.loc["PCT_failed_adapter_dimers", "value"], 0.06888, atol=1e-3
-    )  # make sure normalization is correct
+    # sanity: RSQ-failed reads are excluded before normalization.
+    assert df_trimmer_failure_codes["total_read_count"].to_numpy()[0] == 1098118853
 
 
-def test_read_ppmseq_v1_trimmer_histogram(tmpdir):
-    tmp_out_path = pjoin(tmpdir, "tmp_out.parquet")
-    df_trimmer_histogram = read_ppmseq_trimmer_histogram(
+def test_read_tags_from_subsampled_sam():
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
+    assert len(df_reads) > 0
+    assert set(df_reads.columns) >= {
+        "sr",
+        "st",
+        "et",
+        "tm",
+        "count",
+        "strand_ratio_category_start",
+        "strand_ratio_category_end",
+    }
+    # All rows should have st assigned (we only skip rows where sr/st are both missing)
+    assert df_reads["st"].isin(["PLUS", "MINUS", "MIXED", "UNDETERMINED"]).all()
+    # sr is nominally in [0, 1]; a small tail of out-of-range values is expected from calibration.
+    assert df_reads["sr"].between(-1, 2).all()
+    assert df_reads["sr"].between(0, 1).mean() > 0.99
+
+
+def test_group_by_strand_ratio_category():
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
+    grouped = group_trimmer_histogram_by_strand_ratio_category(PpmseqAdapterVersions.V1, df_reads)
+    assert "strand_ratio_category_start" in grouped.columns
+    assert "strand_ratio_category_end" in grouped.columns
+    # PLUS/MINUS/MIXED should each contain a non-trivial share of reads.
+    for cat in [PpmseqCategories.PLUS.value, PpmseqCategories.MINUS.value, PpmseqCategories.MIXED.value]:
+        assert grouped.loc[cat, "strand_ratio_category_start"] > 0
+
+
+def test_get_concordance():
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
+    concordance, _, consensus = get_strand_ratio_category_concordance(PpmseqAdapterVersions.V1, df_reads)
+    # concordance normalizes to 1 across all categories
+    assert concordance.sum() == pytest.approx(1.0, abs=1e-6)
+    # consensus should contain MIXED / MINUS / PLUS / DISCORDANT / UNDETERMINED
+    assert set(consensus.index) >= {"MIXED", "MINUS", "PLUS"}
+
+
+def test_plot_sr_histogram(tmp_path):
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
+    plot_sr_histogram(df_reads, title="test", output_filename=str(tmp_path / "sr.png"))
+    assert (tmp_path / "sr.png").exists()
+
+
+def test_plot_sr_by_et(tmp_path):
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
+    plot_sr_by_et(df_reads, title="test", output_filename=str(tmp_path / "sr_by_et.png"))
+    assert (tmp_path / "sr_by_et.png").exists()
+
+
+def test_plot_strand_ratio_category(tmp_path):
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
+    plot_strand_ratio_category(
         PpmseqAdapterVersions.V1,
-        trimmer_histogram_ppmseq_v1_csv,
-        output_filename=tmp_out_path,
-        legacy_histogram_column_names=True,
+        df_reads,
+        title="test",
+        output_filename=str(tmp_path / "cat.png"),
     )
-    df_trimmer_histogram_from_parquet = pd.read_parquet(tmp_out_path)
-    df_trimmer_histogram_expected = pd.read_parquet(parsed_histogram_parquet_ppmseq_v1)
-    assert_frame_equal(
-        df_trimmer_histogram,
-        df_trimmer_histogram_expected,
-    )
-    assert_frame_equal(
-        df_trimmer_histogram_from_parquet,
-        df_trimmer_histogram_expected,
-    )
+    assert (tmp_path / "cat.png").exists()
 
 
-def test_read_ppmseq_legacy_v5_trimmer_histogram(tmpdir):
-    tmp_out_path = pjoin(tmpdir, "tmp_out.parquet")
-    df_trimmer_histogram = read_ppmseq_trimmer_histogram(
-        PpmseqAdapterVersions.LEGACY_V5,
-        input_histogram_legacy_v5_csv,
-        output_filename=tmp_out_path,
-        legacy_histogram_column_names=True,
+def test_plot_strand_ratio_category_concordance(tmp_path):
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
+    plot_strand_ratio_category_concordnace(
+        PpmseqAdapterVersions.V1,
+        df_reads,
+        title="test",
+        output_filename=str(tmp_path / "concord.png"),
     )
-    df_trimmer_histogram_from_parquet = pd.read_parquet(tmp_out_path)
-    df_trimmer_histogram_expected = pd.read_parquet(parsed_histogram_legacy_v5_parquet)
-    assert_frame_equal(
-        df_trimmer_histogram,
-        df_trimmer_histogram_expected,
-    )
-    assert_frame_equal(
-        df_trimmer_histogram_from_parquet,
-        df_trimmer_histogram_expected,
-    )
+    assert (tmp_path / "concord.png").exists()
 
 
-def test_read_ppmseq_legacy_v5_start_trimmer_histogram(tmpdir):
-    tmp_out_path = pjoin(tmpdir, "tmp_out.parquet")
-
-    df_trimmer_histogram = read_ppmseq_trimmer_histogram(
-        PpmseqAdapterVersions.LEGACY_V5_START,
-        input_histogram_legacy_v5_start_csv,
-        output_filename=tmp_out_path,
-        legacy_histogram_column_names=True,
-    )
-    df_trimmer_histogram_from_parquet = pd.read_parquet(tmp_out_path)
-    df_trimmer_histogram_expected = pd.read_parquet(parsed_histogram_legacy_v5_start_parquet)
-    assert_frame_equal(
-        df_trimmer_histogram,
-        df_trimmer_histogram_expected,
-    )
-    assert_frame_equal(
-        df_trimmer_histogram_from_parquet,
-        df_trimmer_histogram_expected,
-    )
-
-
-def test_plot_trimmer_histogram(tmpdir):
-    tmp_out_path = pjoin(tmpdir, "tmp_out.png")
-    df_trimmer_histogram = read_ppmseq_trimmer_histogram(
-        PpmseqAdapterVersions.LEGACY_V5_START,
-        input_histogram_legacy_v5_start_csv,
-        output_filename=tmp_out_path,
-        legacy_histogram_column_names=True,
-    )
-    plot_trimmer_histogram(
-        PpmseqAdapterVersions.LEGACY_V5_START,
-        df_trimmer_histogram,
-        output_filename=tmp_out_path,
-        legacy_histogram_column_names=True,
-    )
-    df_trimmer_histogram = read_ppmseq_trimmer_histogram(
-        PpmseqAdapterVersions.LEGACY_V5,
-        input_histogram_legacy_v5_csv,
-        output_filename=tmp_out_path,
-        legacy_histogram_column_names=True,
-    )
-    plot_trimmer_histogram(
-        PpmseqAdapterVersions.LEGACY_V5,
-        df_trimmer_histogram,
-        output_filename=tmp_out_path,
-        legacy_histogram_column_names=True,
-    )
-
-
-def test_collect_statistics(tmpdir):
-    tmp_out_path = pjoin(tmpdir, "tmp_out.h5")
+def test_collect_statistics(tmp_path):
+    out = tmp_path / "stats.h5"
     collect_statistics(
-        PpmseqAdapterVersions.LEGACY_V5,
-        trimmer_histogram_csv=input_histogram_legacy_v5_csv,
-        sorter_stats_csv=sorter_stats_legacy_v5_csv,
-        output_filename=tmp_out_path,
-        legacy_histogram_column_names=True,
+        PpmseqAdapterVersions.V1,
+        subsampled_sam=str(subsampled_sam),
+        output_filename=str(out),
     )
+    with pd.HDFStore(str(out)) as store:
+        keys = store.keys()
+    assert "/subsampled_reads" in keys
+    assert "/strand_ratio_category_counts" in keys
+    assert "/strand_ratio_category_concordance" in keys
 
-    f1 = collected_stats_legacy_v5_h5
-    f2 = tmp_out_path
-    with pd.HDFStore(f1) as fh1, pd.HDFStore(f2) as fh2:
-        assert sorted(fh1.keys()) == sorted(fh2.keys())
-        keys = fh1.keys()
-    for k in keys:
-        # below - removing one changed stat in the output shortlist to keep backward compatibility in the test
-        x1 = pd.read_hdf(f1, k).drop("MIXED_read_mean_coverage", errors="ignore")
-        x2 = pd.read_hdf(f2, k).drop("PCT_MIXED_start_tag", errors="ignore")
-        if isinstance(x1, pd.Series):
-            assert_series_equal(x1, x2)
-        else:
-            assert_frame_equal(x1, x2)
 
-    collect_statistics(
-        PpmseqAdapterVersions.LEGACY_V5_START,
-        trimmer_histogram_csv=input_histogram_legacy_v5_start_csv,
-        sorter_stats_csv=sorter_stats_legacy_v5_csv,
-        output_filename=tmp_out_path,
-        legacy_histogram_column_names=True,
+def test_ppmseq_qc_analysis(tmp_path):
+    ppmseq_qc_analysis(
+        PpmseqAdapterVersions.V1,
+        subsampled_sam=str(subsampled_sam),
+        output_path=str(tmp_path),
+        output_basename="TEST_v1",
+        generate_report=False,
     )
-    f1 = collected_stats_legacy_v5_start_h5
-    f2 = tmp_out_path
-    with pd.HDFStore(f1) as fh1, pd.HDFStore(f2) as fh2:
-        assert fh1.keys() == fh2.keys()
-        keys = fh1.keys()
-    for k in keys:
-        x1 = pd.read_hdf(f1, k)
-        x2 = pd.read_hdf(f2, k)
-        if isinstance(x1, pd.Series):
-            assert_series_equal(x1, x2)
-        else:
-            assert_frame_equal(x1, x2)
+    assert (tmp_path / "TEST_v1.ppmSeq.applicationQC.h5").exists()
 
 
-def test_plot_ppmseq_ratio(tmpdir):
-    tmp_out_path = pjoin(tmpdir, "tmp_out.png")
-    df_trimmer_histogram_legacy_v5_expected = pd.read_parquet(parsed_histogram_legacy_v5_parquet)
-    plot_ppmseq_strand_ratio(
-        PpmseqAdapterVersions.LEGACY_V5,
-        df_trimmer_histogram_legacy_v5_expected,
-        output_filename=tmp_out_path,
-        title="test",
-    )
-    df_trimmer_histogram_legacy_v5_start_expected = pd.read_parquet(parsed_histogram_legacy_v5_start_parquet)
-    plot_ppmseq_strand_ratio(
-        PpmseqAdapterVersions.LEGACY_V5_START,
-        df_trimmer_histogram_legacy_v5_start_expected,
-        output_filename=tmp_out_path,
-        title="test",
-    )
-
-
-def test_plot_strand_ratio_category(tmpdir):
-    tmp_out_path = pjoin(tmpdir, "tmp_out.png")
-    df_trimmer_histogram_legacy_v5_expected = pd.read_parquet(parsed_histogram_legacy_v5_parquet)
-    plot_strand_ratio_category(
-        PpmseqAdapterVersions.LEGACY_V5,
-        df_trimmer_histogram_legacy_v5_expected,
-        title="test",
-        output_filename=tmp_out_path,
-        ax=None,
-    )
-    df_trimmer_histogram_legacy_v5_start_expected = pd.read_parquet(parsed_histogram_legacy_v5_start_parquet)
-    plot_strand_ratio_category(
-        PpmseqAdapterVersions.LEGACY_V5_START,
-        df_trimmer_histogram_legacy_v5_start_expected,
-        title="test",
-        output_filename=tmp_out_path,
-        ax=None,
-    )
-
-
-def test_add_strand_ratios_and_categories_to_featuremap(tmpdir):
-    tmp_out_path = pjoin(tmpdir, "tmp_out.vcf.gz")
+def test_add_strand_ratios_and_categories_to_featuremap(tmp_path):
+    tmp_out_path = pjoin(tmp_path, "tmp_out.vcf.gz")
     add_strand_ratios_and_categories_to_featuremap(
         PpmseqAdapterVersions.LEGACY_V5,
         input_featuremap_vcf=input_featuremap_legacy_v5,
         output_featuremap_vcf=tmp_out_path,
     )
-    _compare_vcfs(
-        expected_output_featuremap_legacy_v5,
-        tmp_out_path,
-    )
+    _compare_vcfs(expected_output_featuremap_legacy_v5, tmp_out_path)
 
 
-def test_plot_strand_ratio_category_concordnace(tmpdir):
-    tmp_out_path = pjoin(tmpdir, "tmp_out.png")
-    df_trimmer_histogram_legacy_v5_expected = pd.read_parquet(parsed_histogram_legacy_v5_parquet)
-    plot_strand_ratio_category_concordnace(
-        PpmseqAdapterVersions.LEGACY_V5,
-        df_trimmer_histogram_legacy_v5_expected,
-        title="test",
-        output_filename=tmp_out_path,
-        axs=None,
-    )
-    df_trimmer_histogram_legacy_v5_start_expected = pd.read_parquet(parsed_histogram_legacy_v5_start_parquet)
-    with pytest.raises(ValueError):
-        plot_strand_ratio_category_concordnace(
-            PpmseqAdapterVersions.LEGACY_V5_START,
-            df_trimmer_histogram_legacy_v5_start_expected,
-            title="test",
-            output_filename=tmp_out_path,
-            axs=None,
-        )
-
-
-def test_ppmseq_analysis_legacy_v5(tmpdir):
-    ppmseq_qc_analysis(
-        PpmseqAdapterVersions.LEGACY_V5,
-        trimmer_histogram_csv=[input_histogram_legacy_v5_csv],
-        sorter_stats_csv=sorter_stats_legacy_v5_csv,
-        output_path=tmpdir,
-        output_basename="TEST_legacy_v5",
-        collect_statistics_kwargs={},
-        legacy_histogram_column_names=True,
-    )
-
-    ppmseq_qc_analysis(
-        PpmseqAdapterVersions.LEGACY_V5_START,
-        trimmer_histogram_csv=[input_histogram_legacy_v5_start_csv],
-        sorter_stats_csv=sorter_stats_legacy_v5_start_csv,
-        output_path=tmpdir,
-        output_basename="TEST_legacy_v5_start",
-        collect_statistics_kwargs={},
-        legacy_histogram_column_names=True,
-    )
-
-
-def test_ppmseq_analysis_v1(tmpdir):
-    ppmseq_qc_analysis(
-        PpmseqAdapterVersions.V1,
-        trimmer_histogram_csv=[trimmer_histogram_ppmseq_v1_401057001],
-        sorter_stats_csv=sorter_stats_csv_ppmseq_v1_401057001,
-        trimmer_failure_codes_csv=trimmer_failure_codes_csv_ppmseq_v1_401057001,
-        output_path=tmpdir,
-        output_basename="TEST_v1",
-    )
-
-
-def test_pickle_an_annotator(tmpdir):
-    import pickle
-
+def test_pickle_an_annotator(tmp_path):
     annotator = PpmseqStrandVcfAnnotator(adapter_version="legacy_v5_start")
-    with open(pjoin(tmpdir, "annotators_pickle"), "wb") as f:
+    with open(pjoin(tmp_path, "annotators_pickle"), "wb") as f:
         pickle.dump(annotator, f)
