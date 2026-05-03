@@ -992,6 +992,11 @@ def plot_strand_ratio_category_concordnace(
 
 
 _SR_BIN_EDGES = np.arange(0.0, 1.01, 0.01)
+_SR_TITLE_FONTSIZE = 28
+_SR_AXIS_LABEL_FONTSIZE = 20
+
+# Vertical lines at the sr thresholds used by the Solaris-2 --compare cascade (MIXED band edges).
+_SR_THRESHOLD_LINES = (0.2, 0.8)
 
 # Colors for sr-by-et facets; one per end-tag category so the per-category panels read at a glance.
 _SR_CATEGORY_COLORS = {
@@ -1004,15 +1009,19 @@ _SR_CATEGORY_COLORS = {
 
 
 def _plot_sr_hist_on_ax(ax: plt.Axes, sr_values: pd.Series, color: str) -> None:
-    """Shared helper: draw an sr histogram on the given ax with 0.01-wide bins expressed
-    as a frequency (count / total) so facets are directly comparable."""
+    """Draw an sr histogram on the given ax, expressed as a percentage so facets are directly
+    comparable. Values outside [0, 1] are clipped (np.clip-style) so the outlier mass lands
+    in the edge bins rather than being discarded."""
     n = len(sr_values)
     if n == 0:
         ax.text(0.5, 0.5, "no reads", transform=ax.transAxes, ha="center", va="center")
         return
+    clipped = sr_values.clip(lower=_SR_BIN_EDGES[0], upper=_SR_BIN_EDGES[-1])
     weights = np.full(n, 100.0 / n)  # percent per bin
-    ax.hist(sr_values, bins=_SR_BIN_EDGES, weights=weights, color=color)
+    ax.hist(clipped, bins=_SR_BIN_EDGES, weights=weights, color=color)
     ax.set_xlim(_SR_BIN_EDGES[0], _SR_BIN_EDGES[-1])
+    for x in _SR_THRESHOLD_LINES:
+        ax.axvline(x, color="xkcd:dark grey", linestyle="--", linewidth=1.2)
 
 
 def plot_sr_histogram(
@@ -1022,7 +1031,10 @@ def plot_sr_histogram(
     ax: plt.Axes = None,
 ) -> plt.Axes:
     """
-    Plot the overall strand-ratio histogram across all reads, in 0.01-wide bins, as a percentage.
+    Plot the overall strand-ratio histogram across all reads. Bins are 0.01 wide and the
+    y-axis is a percentage of total reads. Reads with sr outside [0, 1] are clipped to the
+    edge bins so they remain visible. Two dashed guide lines at 0.2 and 0.8 mark the
+    thresholds used by the Solaris-2 ``--compare`` cascade.
 
     Parameters
     ----------
@@ -1041,28 +1053,11 @@ def plot_sr_histogram(
         ax = plt.gca()
     else:
         plt.sca(ax)
-    # sr is nominally in [0, 1]; calibration can produce a small tail outside that.
-    # The user-visible histogram keeps only in-range values (the plot domain is [0, 1]),
-    # but we don't clip via `range=` — values outside are simply not counted, and we note
-    # the count on the plot so the discrepancy is explicit.
-    sr_all = df_reads[SR_TAG].dropna()
-    in_range = sr_all.between(_SR_BIN_EDGES[0], _SR_BIN_EDGES[-1])
-    _plot_sr_hist_on_ax(ax, sr_all[in_range], "xkcd:royal blue")
-    n_outliers = int((~in_range).sum())
-    if n_outliers:
-        ax.text(
-            0.98,
-            0.95,
-            f"{n_outliers} reads with sr outside [0, 1] not shown",
-            transform=ax.transAxes,
-            ha="right",
-            va="top",
-            fontsize=10,
-            color="xkcd:grey",
-        )
-    ax.set_xlabel(STRAND_RATIO_AXIS_LABEL)
-    ax.set_ylabel("Frequency (%)")
-    title_handle = plt.title(title, fontsize=20)
+    sr_values = df_reads[SR_TAG].dropna()
+    _plot_sr_hist_on_ax(ax, sr_values, "xkcd:royal blue")
+    ax.set_xlabel(STRAND_RATIO_AXIS_LABEL, fontsize=_SR_AXIS_LABEL_FONTSIZE)
+    ax.set_ylabel("Frequency (%)", fontsize=_SR_AXIS_LABEL_FONTSIZE)
+    title_handle = plt.title(title, fontsize=_SR_TITLE_FONTSIZE)
     if output_filename is not None:
         if not output_filename.endswith(".png"):
             output_filename += ".png"
@@ -1082,10 +1077,10 @@ def plot_sr_by_et(
     output_filename: str = None,
 ) -> plt.Figure:
     """
-    Plot strand-ratio histograms faceted by the end-loop category, as a 4x1 grid (one
-    panel per fixed category: PLUS / MINUS / MIXED / UNDETERMINED). Values are expressed
-    as a percentage of reads within each panel. Restricted to reads whose end was reached
-    (``tm`` tag contains ``A``).
+    Plot strand-ratio histograms faceted by the end-loop category, as a vertically stacked
+    4x1 grid (one panel per category: PLUS / MINUS / MIXED / UNDETERMINED). Values are a
+    percentage of reads within each panel. Restricted to reads whose read end was reached.
+    Reads with sr outside [0, 1] are clipped (np.clip-style) so they remain visible.
 
     Parameters
     ----------
@@ -1101,24 +1096,22 @@ def plot_sr_by_et(
     # whose et tag was missing show up under UNDETERMINED instead of being silently dropped.
     category_col = HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value
     df_endreached = df_reads[df_reads[TM_TAG].str.contains("A", na=False)]
-    # Fixed panel order so the grid is always 4x1 with consistent layout.
     et_categories = [
         PpmseqCategories.PLUS.value,
         PpmseqCategories.MINUS.value,
         PpmseqCategories.MIXED.value,
         PpmseqCategories.UNDETERMINED.value,
     ]
-    # Each panel the same size as the overall (plot_sr_histogram) plot: (12, 4).
-    fig, axs = plt.subplots(1, len(et_categories), figsize=(12 * len(et_categories), 4), sharey=True)
+    # Vertical stack: each panel the same size as the overall plot (width 12, height 4).
+    fig, axs = plt.subplots(len(et_categories), 1, figsize=(12, 4 * len(et_categories)), sharex=True)
     for ax, et_val in zip(axs, et_categories, strict=True):
         subset = df_endreached[df_endreached[category_col] == et_val]
         sr_values = subset[SR_TAG].dropna()
-        in_range = sr_values.between(_SR_BIN_EDGES[0], _SR_BIN_EDGES[-1])
-        _plot_sr_hist_on_ax(ax, sr_values[in_range], _SR_CATEGORY_COLORS[et_val])
-        ax.set_title(f"et={et_val}", fontsize=20)
-        ax.set_xlabel(STRAND_RATIO_AXIS_LABEL)
-    axs[0].set_ylabel("Frequency (%)")
-    title_handle = fig.suptitle(title, fontsize=20)
+        _plot_sr_hist_on_ax(ax, sr_values, _SR_CATEGORY_COLORS[et_val])
+        ax.set_title(f"et={et_val}", fontsize=_SR_TITLE_FONTSIZE)
+        ax.set_ylabel("Frequency (%)", fontsize=_SR_AXIS_LABEL_FONTSIZE)
+    axs[-1].set_xlabel(STRAND_RATIO_AXIS_LABEL, fontsize=_SR_AXIS_LABEL_FONTSIZE)
+    title_handle = fig.suptitle(title, fontsize=_SR_TITLE_FONTSIZE)
     fig.tight_layout()
     if output_filename is not None:
         if not output_filename.endswith(".png"):
