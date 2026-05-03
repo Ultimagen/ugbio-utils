@@ -27,10 +27,12 @@ from ugbio_ppmseq.ppmSeq_consts import STRAND_RATIO_AXIS_LABEL
 
 # Supported adapter versions
 class PpmseqAdapterVersions(Enum):
-    LEGACY_V5_START = "legacy_v5_start"
     LEGACY_V5 = "legacy_v5"
-    LEGACY_V5_END = "legacy_v5_end"
+    # Solaris-1 and Solaris-2 are the current chemistries; `v1` is a backwards-compat alias
+    # for Solaris-1 callers that still pass "v1" to the CLI.
     V1 = "v1"
+    SOLARIS_1 = "Solaris_1"
+    SOLARIS_2 = "Solaris_2"
 
 
 # Trimmer segment labels and tags
@@ -74,6 +76,12 @@ class HistogramColumnNames(Enum):
     ST = "st"  # STRAND_RATIO_CATEGORY_START in ppmSeq V1
     ET = "et"  # STRAND_RATIO_CATEGORY_END in ppmSeq V1
 
+
+# Per-read ppmSeq tag names expected in the subsampled SAM.
+SR_TAG = "sr"  # strand ratio (float, from raw signal)
+ST_TAG = "st"  # start-loop category (MINUS / PLUS / MIXED / UNDETERMINED)
+ET_TAG = "et"  # end-loop category
+TM_TAG = "tm"  # trimming reasons; contains "A" when the adapter was seen (end reached)
 
 # Input parameter defaults for the legacy featuremap annotator path
 STRAND_RATIO_LOWER_THRESH = 0.27
@@ -177,10 +185,7 @@ class PpmseqStrandVcfAnnotator(VcfAnnotator):
                 if x in record.info:
                     ppmseq_tags[x] = int(record.info.get(x))
             # add the start strand ratio and strand ratio category columns to the VCF record
-            if self.adapter_version in (
-                PpmseqAdapterVersions.LEGACY_V5.value,
-                PpmseqAdapterVersions.LEGACY_V5_START.value,
-            ):  # legacy_v5_start has start tags only
+            if self.adapter_version == PpmseqAdapterVersions.LEGACY_V5.value:
                 # assign to simple variables for readability
                 t_hmer_start = ppmseq_tags[TrimmerSegmentTags.T_HMER_START.value]
                 a_hmer_start = ppmseq_tags[TrimmerSegmentTags.A_HMER_START.value]
@@ -197,11 +202,6 @@ class PpmseqStrandVcfAnnotator(VcfAnnotator):
                     self.sr_lower,
                     self.sr_upper,
                 )
-            if self.adapter_version in (
-                PpmseqAdapterVersions.LEGACY_V5.value,
-                PpmseqAdapterVersions.LEGACY_V5_END.value,
-            ):  # legacy_v5_end has end tags only
-                # assign to simple variables for readability
                 t_hmer_end = ppmseq_tags[TrimmerSegmentTags.T_HMER_END.value]
                 a_hmer_end = ppmseq_tags[TrimmerSegmentTags.A_HMER_END.value]
                 # determine ratio and category
@@ -226,7 +226,7 @@ class PpmseqStrandVcfAnnotator(VcfAnnotator):
                         self.sr_lower,
                         self.sr_upper,
                     )  # this works for nan values as well - returns UNDETERMINED
-            if self.adapter_version in (PpmseqAdapterVersions.V1.value,):  # legacy_v5_start has start tags only
+            else:  # v1 / Solaris_1 / Solaris_2 — st/et tags already carry the category
                 record.info[HistogramColumnNames.ST.value] = record.info.get(
                     HistogramColumnNames.ST.value, PpmseqCategories.UNDETERMINED.value
                 )
@@ -307,15 +307,15 @@ def read_tags_from_subsampled_sam(
     output_filename: str = None,
 ) -> pd.DataFrame:
     """
-    Read per-read ppmSeq tags (sr, st, et, tm) from the subsampled SAM produced by sorter.
+    Read per-read ppmSeq tags (sr, st, et, tm) from the subsampled SAM/BAM/CRAM produced by sorter.
 
     Parameters
     ----------
     sam_path : str
-        Path to the sample.sam.gz (or any SAM/BAM/CRAM) emitted by sorter when demux was
-        called with ``--sample-nr-reads=N``.
+        Path to the subsampled SAM/BAM/CRAM emitted by sorter when demux was called with
+        ``--sample-nr-reads=N``. Pysam autodetects the format from the extension.
     sample_name : str, optional
-        Sample name to use as index name, by default "".
+        Sample name to use as the dataframe index name.
     output_filename : str, optional
         If provided, save the dataframe as parquet.
 
@@ -324,54 +324,55 @@ def read_tags_from_subsampled_sam(
     pd.DataFrame
         One row per read with columns:
           - ``sr`` (float): strand ratio from raw signal.
-          - ``st`` (str): start-tag category (MINUS / PLUS / MIXED / UNDETERMINED).
-          - ``et`` (str): end-tag category; empty string when the tag is absent.
-          - ``tm`` (str): trimming-reason string (e.g. "A", "AQZ").
-          - ``count``: always 1 — lets downstream code that groups/aggregates on it work unchanged.
+          - ``st`` (str): start-loop category (MINUS / PLUS / MIXED / UNDETERMINED).
+          - ``et`` (str): end-loop category; empty string when the ``et`` tag is absent.
+          - ``tm`` (str): trimming-reason string (e.g. ``A``, ``AQZ``). Empty string when
+            absent, which means the adapter was not reached — mapped to END_UNREACHED below.
+          - ``count``: always 1 — lets downstream code that aggregates on it work unchanged.
           - ``strand_ratio_category_start`` / ``strand_ratio_category_end``:
             copies of ``st`` / ``et`` with END_UNREACHED substituted on rows where ``tm`` has no ``A``.
 
-    Reads missing any of sr/st are skipped. Missing et is kept (coerced to empty string) so
-    END_UNREACHED can be reconstructed from tm.
+    Raises
+    ------
+    KeyError
+        If any read is missing the ``sr`` or ``st`` tag. These are required on every
+        ppmSeq read produced by the current pipeline; a missing tag is a fixture/pipeline
+        bug rather than a normal case.
     """
     rows = []
-    skipped = 0
     with pysam.AlignmentFile(sam_path, check_sq=False) as fh:
         for rec in fh:
+            sr = rec.get_tag(SR_TAG)  # KeyError if absent — sr is required
+            st = rec.get_tag(ST_TAG)  # KeyError if absent — st is required
             try:
-                sr = rec.get_tag("sr")
-                st = rec.get_tag("st")
-            except KeyError:
-                skipped += 1
-                continue
-            try:
-                et = rec.get_tag("et")
+                et = rec.get_tag(ET_TAG)
             except KeyError:
                 et = ""
             try:
-                tm = rec.get_tag("tm")
+                tm = rec.get_tag(TM_TAG)
             except KeyError:
+                # A missing tm tag means the adapter was not reached (== END_UNREACHED
+                # downstream), not "undetermined". See Ken's comment on PR #307.
                 tm = ""
             rows.append((float(sr), str(st), str(et), str(tm)))
 
-    df_reads = pd.DataFrame(rows, columns=["sr", "st", "et", "tm"])
+    df_reads = pd.DataFrame(rows, columns=[SR_TAG, ST_TAG, ET_TAG, TM_TAG])
     df_reads[HistogramColumnNames.COUNT.value] = 1
-    is_end_reached = df_reads["tm"].str.contains("A", na=False)
+    is_end_reached = df_reads[TM_TAG].str.contains("A", na=False)
     undetermined = PpmseqCategories.UNDETERMINED.value
     end_unreached = PpmseqCategories.END_UNREACHED.value
-    df_reads[HistogramColumnNames.STRAND_RATIO_CATEGORY_START.value] = df_reads["st"].replace("", undetermined)
+    df_reads[HistogramColumnNames.STRAND_RATIO_CATEGORY_START.value] = df_reads[ST_TAG].replace("", undetermined)
     df_reads[HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value] = (
-        df_reads["et"].where(is_end_reached, end_unreached).replace("", undetermined)
+        df_reads[ET_TAG].where(is_end_reached, end_unreached).replace("", undetermined)
     )
-    # Expose sr under START / END continuous columns too for any downstream plotter that
-    # groups by those. For post-RAMP data both directions share the single per-read sr value.
-    df_reads[HistogramColumnNames.STRAND_RATIO_START.value] = df_reads["sr"].round(2)
-    df_reads[HistogramColumnNames.STRAND_RATIO_END.value] = df_reads["sr"].where(is_end_reached).round(2)
+    # Expose sr under STRAND_RATIO_{START,END} columns for downstream plotters that group
+    # by those. Post-RAMP reads have a single sr per read; STRAND_RATIO_END is masked on
+    # reads where the end was not reached.
+    df_reads[HistogramColumnNames.STRAND_RATIO_START.value] = df_reads[SR_TAG].round(2)
+    df_reads[HistogramColumnNames.STRAND_RATIO_END.value] = df_reads[SR_TAG].where(is_end_reached).round(2)
     df_reads[HistogramColumnNames.COUNT_NORM.value] = 1.0 / max(len(df_reads), 1)
     if sample_name:
         df_reads.index.name = sample_name
-    if skipped:
-        df_reads.attrs["skipped_reads"] = skipped
     if output_filename is not None:
         df_reads.to_parquet(output_filename)
     return df_reads
@@ -458,23 +459,8 @@ def get_strand_ratio_category_concordance(
         reads where the end was unreached
 
 
-    Raises
-    ------
-    ValueError
-        If the adapter version is not legacy_v5_start and the end tag is missing
-
     """
     _assert_adapter_version_supported(adapter_version)
-    if adapter_version in (
-        PpmseqAdapterVersions.LEGACY_V5_START,
-        PpmseqAdapterVersions.LEGACY_V5_START.value,
-        PpmseqAdapterVersions.LEGACY_V5_END,
-        PpmseqAdapterVersions.LEGACY_V5_END.value,
-    ):
-        raise ValueError(
-            f"Adapter version {adapter_version} does not have tags on both ends. "
-            "Cannot calculate strand tag category concordance."
-        )
     # create concordance dataframe
     df_category_concordance = (
         df_trimmer_histogram.groupby(
@@ -584,85 +570,51 @@ def read_trimmer_tags_dataframe(
     pd.DataFrame
         dataframe with strand ratio category columns as index and strand ratio category columns as columns
 
-    Raises
-    ------
-    ValueError
-        If the adapter version is not legacy_v5_end and the end tag is missing
-
     """
-    if adapter_version in (
-        PpmseqAdapterVersions.LEGACY_V5_START,
-        PpmseqAdapterVersions.LEGACY_V5_START.value,
-    ):
-        df_tags = df_strand_ratio_category.drop(PpmseqCategories.END_UNREACHED.value, errors="ignore")[
-            [HistogramColumnNames.STRAND_RATIO_CATEGORY_START.value]
-        ]
-        df_tags.index = [f"PCT_{x}_reads" for x in df_tags.index]
-        df_tags.columns = ["value"]
-        df_tags = df_tags * 100 / df_tags.sum()
-        df_tags = df_tags["value"]
-    elif adapter_version in (
-        PpmseqAdapterVersions.LEGACY_V5_END,
-        PpmseqAdapterVersions.LEGACY_V5_END.value,
-    ):
-        df_tags = df_strand_ratio_category[[HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value]]
-        df_tags.index = [f"PCT_{x}_reads" for x in df_tags.index]
-        df_tags.columns = ["value"]
-        df_tags = df_tags * 100 / df_tags.sum()
-        df_tags = df_tags["value"]
-    elif adapter_version in (
-        PpmseqAdapterVersions.LEGACY_V5,
-        PpmseqAdapterVersions.LEGACY_V5.value,
-        PpmseqAdapterVersions.V1,
-        PpmseqAdapterVersions.V1.value,
-    ):
-        df_tags = df_category_consensus * 100
-        undetermined = PpmseqCategoriesConsensus.UNDETERMINED.value
-        df_tags = df_tags.rename(
-            {
-                **{
-                    x: f"PCT_{x}_both_tags_where_endreached"
-                    for x in (
-                        PpmseqCategories.MIXED.value,
-                        PpmseqCategories.MINUS.value,
-                        PpmseqCategories.PLUS.value,
-                    )
-                },
-                undetermined: f"PCT_{undetermined}_either_tag",
-                PpmseqCategoriesConsensus.DISCORDANT.value: f"PCT_{PpmseqCategoriesConsensus.DISCORDANT.value}",
-            }
-        )
-        df_tags.name = "value"
-        df_strand_ratio_category_norm = (
-            df_strand_ratio_category.loc[
-                [PpmseqCategories.END_UNREACHED.value],
-                HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value,
-            ]
-            * 100
-            / df_strand_ratio_category[HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value].sum()
-        ).T.to_frame()
-        df_strand_ratio_category_norm.index = ["PCT_read_end_unreached"]
-        df_strand_ratio_category_norm.columns = ["value"]
-        df_tags = pd.concat((df_tags, df_strand_ratio_category_norm["value"])).rename(
-            {
-                HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value: "PCT_read_end_unreached",
-            }
-        )
-        # Calculate mixed reads of total (including end unreached) and mixed read coverage
-        mixed_tot = df_category_concordance.loc[(PpmseqCategories.MIXED.value, PpmseqCategories.MIXED.value),]
-        mixed_start = df_category_concordance.loc[(PpmseqCategories.MIXED.value, slice(None)),].sum()
-        df_mixed_cov = pd.DataFrame(
-            {
-                "PCT_MIXED_start_tag": mixed_start * 100,
-                "PCT_MIXED_both_tags": mixed_tot * 100,
+    _assert_adapter_version_supported(adapter_version)
+    df_tags = df_category_consensus * 100
+    undetermined = PpmseqCategoriesConsensus.UNDETERMINED.value
+    df_tags = df_tags.rename(
+        {
+            **{
+                x: f"PCT_{x}_both_tags_where_endreached"
+                for x in (
+                    PpmseqCategories.MIXED.value,
+                    PpmseqCategories.MINUS.value,
+                    PpmseqCategories.PLUS.value,
+                )
             },
-            index=["value"],
-        ).T["value"]
-        df_tags = pd.concat((df_mixed_cov, df_tags))
-    else:
-        raise ValueError(
-            f"Unknown adapter version: {adapter_version if isinstance(adapter_version, str) else adapter_version.value}"
-        )
+            undetermined: f"PCT_{undetermined}_either_tag",
+            PpmseqCategoriesConsensus.DISCORDANT.value: f"PCT_{PpmseqCategoriesConsensus.DISCORDANT.value}",
+        }
+    )
+    df_tags.name = "value"
+    df_strand_ratio_category_norm = (
+        df_strand_ratio_category.loc[
+            [PpmseqCategories.END_UNREACHED.value],
+            HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value,
+        ]
+        * 100
+        / df_strand_ratio_category[HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value].sum()
+    ).T.to_frame()
+    df_strand_ratio_category_norm.index = ["PCT_read_end_unreached"]
+    df_strand_ratio_category_norm.columns = ["value"]
+    df_tags = pd.concat((df_tags, df_strand_ratio_category_norm["value"])).rename(
+        {
+            HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value: "PCT_read_end_unreached",
+        }
+    )
+    # Calculate mixed reads of total (including end unreached) and mixed read coverage
+    mixed_tot = df_category_concordance.loc[(PpmseqCategories.MIXED.value, PpmseqCategories.MIXED.value),]
+    mixed_start = df_category_concordance.loc[(PpmseqCategories.MIXED.value, slice(None)),].sum()
+    df_mixed_cov = pd.DataFrame(
+        {
+            "PCT_MIXED_start_tag": mixed_start * 100,
+            "PCT_MIXED_both_tags": mixed_tot * 100,
+        },
+        index=["value"],
+    ).T["value"]
+    df_tags = pd.concat((df_mixed_cov, df_tags))
 
     df_tags.index.name = "metric"
     return df_tags
@@ -753,19 +705,7 @@ def collect_statistics(
     _assert_adapter_version_supported(adapter_version)
     df_reads = read_tags_from_subsampled_sam(subsampled_sam)
     df_strand_ratio_category = group_trimmer_histogram_by_strand_ratio_category(adapter_version, df_reads)
-    adapter_in_both_ends = adapter_version in (
-        PpmseqAdapterVersions.LEGACY_V5,
-        PpmseqAdapterVersions.LEGACY_V5.value,
-        PpmseqAdapterVersions.V1,
-        PpmseqAdapterVersions.V1.value,
-    )
-    if adapter_in_both_ends:
-        df_category_concordance, _, df_category_consensus = get_strand_ratio_category_concordance(
-            adapter_version, df_reads
-        )
-    else:
-        df_category_concordance = None
-        df_category_consensus = None
+    df_category_concordance, _, df_category_consensus = get_strand_ratio_category_concordance(adapter_version, df_reads)
 
     if sorter_stats_csv:
         sorter_stats = read_and_parse_sorter_statistics_csv(sorter_stats_csv)
@@ -787,6 +727,9 @@ def collect_statistics(
         df_trimmer_failure_codes, df_failure_codes_metrics = read_trimmer_failure_codes_ppmseq(
             trimmer_failure_codes_csv
         )
+        # The adapter-dimer / unrecognized-stem / unrecognized-start-loop / total percentages
+        # from the Trimmer failure codes are a critical part of the QC — merge into the
+        # shortlist so they appear in the HTML report's main stats table.
         df_stats_shortlist = pd.concat((df_stats_shortlist, df_failure_codes_metrics["value"]))
 
     if not output_filename.endswith(".h5"):
@@ -797,22 +740,20 @@ def collect_statistics(
             "sorter_stats",
             "strand_ratio_category_counts",
             "strand_ratio_category_norm",
+            "strand_ratio_category_concordance",
+            "strand_ratio_category_consensus",
         ]
         store["stats_shortlist"] = df_stats_shortlist
         store["sorter_stats"] = sorter_stats
         store["subsampled_reads"] = df_reads
         store["strand_ratio_category_counts"] = df_strand_ratio_category
         store["strand_ratio_category_norm"] = df_strand_ratio_category / df_strand_ratio_category.sum()
-        if adapter_in_both_ends:
-            store["strand_ratio_category_concordance"] = df_category_concordance
-            store["strand_ratio_category_consensus"] = df_category_consensus
-            keys_to_convert += [
-                "strand_ratio_category_concordance",
-                "strand_ratio_category_consensus",
-            ]
+        store["strand_ratio_category_concordance"] = df_category_concordance
+        store["strand_ratio_category_consensus"] = df_category_consensus
         if trimmer_failure_codes_csv:
             store["trimmer_failure_codes"] = df_trimmer_failure_codes
-            keys_to_convert += ["trimmer_failure_codes"]
+            store["failure_codes_metrics"] = df_failure_codes_metrics
+            keys_to_convert += ["trimmer_failure_codes", "failure_codes_metrics"]
         store["keys_to_convert"] = pd.Series(keys_to_convert)
 
 
@@ -1050,18 +991,42 @@ def plot_strand_ratio_category_concordnace(
     return axs
 
 
+_SR_BIN_EDGES = np.arange(0.0, 1.01, 0.01)
+
+# Colors for sr-by-et facets; one per end-tag category so the per-category panels read at a glance.
+_SR_CATEGORY_COLORS = {
+    PpmseqCategories.PLUS.value: "xkcd:royal blue",
+    PpmseqCategories.MINUS.value: "xkcd:red orange",
+    PpmseqCategories.MIXED.value: "xkcd:green",
+    PpmseqCategories.UNDETERMINED.value: "xkcd:grey",
+    PpmseqCategories.END_UNREACHED.value: "xkcd:black",
+}
+
+
+def _plot_sr_hist_on_ax(ax: plt.Axes, sr_values: pd.Series, color: str) -> None:
+    """Shared helper: draw an sr histogram on the given ax with 0.01-wide bins expressed
+    as a frequency (count / total) so facets are directly comparable."""
+    n = len(sr_values)
+    if n == 0:
+        ax.text(0.5, 0.5, "no reads", transform=ax.transAxes, ha="center", va="center")
+        return
+    weights = np.full(n, 100.0 / n)  # percent per bin
+    ax.hist(sr_values, bins=_SR_BIN_EDGES, weights=weights, color=color)
+    ax.set_xlim(_SR_BIN_EDGES[0], _SR_BIN_EDGES[-1])
+
+
 def plot_sr_histogram(
-    df: pd.DataFrame,
+    df_reads: pd.DataFrame,
     title: str = "",
     output_filename: str = None,
     ax: plt.Axes = None,
 ) -> plt.Axes:
     """
-    Plot the overall `sr` (strand ratio) histogram across all reads.
+    Plot the overall strand-ratio histogram across all reads, in 0.01-wide bins, as a percentage.
 
     Parameters
     ----------
-    df : pd.DataFrame
+    df_reads : pd.DataFrame
         Per-read tag dataframe from :func:`read_tags_from_subsampled_sam`.
     title : str, optional
         plot title.
@@ -1076,10 +1041,27 @@ def plot_sr_histogram(
         ax = plt.gca()
     else:
         plt.sca(ax)
-    sr = df["sr"].dropna()
-    ax.hist(sr, bins=50, range=(0, 1), color="xkcd:royal blue")
+    # sr is nominally in [0, 1]; calibration can produce a small tail outside that.
+    # The user-visible histogram keeps only in-range values (the plot domain is [0, 1]),
+    # but we don't clip via `range=` — values outside are simply not counted, and we note
+    # the count on the plot so the discrepancy is explicit.
+    sr_all = df_reads[SR_TAG].dropna()
+    in_range = sr_all.between(_SR_BIN_EDGES[0], _SR_BIN_EDGES[-1])
+    _plot_sr_hist_on_ax(ax, sr_all[in_range], "xkcd:royal blue")
+    n_outliers = int((~in_range).sum())
+    if n_outliers:
+        ax.text(
+            0.98,
+            0.95,
+            f"{n_outliers} reads with sr outside [0, 1] not shown",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=10,
+            color="xkcd:grey",
+        )
     ax.set_xlabel(STRAND_RATIO_AXIS_LABEL)
-    ax.set_ylabel("Read count")
+    ax.set_ylabel("Frequency (%)")
     title_handle = plt.title(title, fontsize=20)
     if output_filename is not None:
         if not output_filename.endswith(".png"):
@@ -1095,17 +1077,19 @@ def plot_sr_histogram(
 
 
 def plot_sr_by_et(
-    df: pd.DataFrame,
+    df_reads: pd.DataFrame,
     title: str = "",
     output_filename: str = None,
 ) -> plt.Figure:
     """
-    Plot ``sr`` histograms faceted by ``et`` category, restricted to reads whose ``tm`` tag
-    contains ``A`` (i.e. read end was reached).
+    Plot strand-ratio histograms faceted by the end-loop category, as a 4x1 grid (one
+    panel per fixed category: PLUS / MINUS / MIXED / UNDETERMINED). Values are expressed
+    as a percentage of reads within each panel. Restricted to reads whose end was reached
+    (``tm`` tag contains ``A``).
 
     Parameters
     ----------
-    df : pd.DataFrame
+    df_reads : pd.DataFrame
         Per-read tag dataframe from :func:`read_tags_from_subsampled_sam`.
     title : str, optional
         plot title.
@@ -1113,18 +1097,27 @@ def plot_sr_by_et(
         if provided, save the plot.
     """
     set_pyplot_defaults()
-    df_endreached = df[df["tm"].str.contains("A", na=False)]
-    et_values = sorted(v for v in df_endreached["et"].unique() if v)
-    n = max(len(et_values), 1)
-    fig, axs = plt.subplots(1, n, figsize=(5 * n, 4), sharey=True)
-    if n == 1:
-        axs = [axs]
-    for ax, et_val in zip(axs, et_values, strict=False):
-        subset = df_endreached[df_endreached["et"] == et_val]["sr"].dropna()
-        ax.hist(subset, bins=50, range=(0, 1), color="xkcd:red orange")
-        ax.set_title(f"et={et_val}  (n={len(subset)})", fontsize=14)
+    # Use the filled strand_ratio_category_end column so reads whose end was reached but
+    # whose et tag was missing show up under UNDETERMINED instead of being silently dropped.
+    category_col = HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value
+    df_endreached = df_reads[df_reads[TM_TAG].str.contains("A", na=False)]
+    # Fixed panel order so the grid is always 4x1 with consistent layout.
+    et_categories = [
+        PpmseqCategories.PLUS.value,
+        PpmseqCategories.MINUS.value,
+        PpmseqCategories.MIXED.value,
+        PpmseqCategories.UNDETERMINED.value,
+    ]
+    # Each panel the same size as the overall (plot_sr_histogram) plot: (12, 4).
+    fig, axs = plt.subplots(1, len(et_categories), figsize=(12 * len(et_categories), 4), sharey=True)
+    for ax, et_val in zip(axs, et_categories, strict=True):
+        subset = df_endreached[df_endreached[category_col] == et_val]
+        sr_values = subset[SR_TAG].dropna()
+        in_range = sr_values.between(_SR_BIN_EDGES[0], _SR_BIN_EDGES[-1])
+        _plot_sr_hist_on_ax(ax, sr_values[in_range], _SR_CATEGORY_COLORS[et_val])
+        ax.set_title(f"et={et_val}", fontsize=20)
         ax.set_xlabel(STRAND_RATIO_AXIS_LABEL)
-    axs[0].set_ylabel("Read count")
+    axs[0].set_ylabel("Frequency (%)")
     title_handle = fig.suptitle(title, fontsize=20)
     fig.tight_layout()
     if output_filename is not None:
@@ -1210,7 +1203,7 @@ def convert_h5_to_papyrus_json(h5_file: str, output_json: str) -> str:
         json.dump(new_json_dict, f, indent=2)
 
 
-def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915
+def ppmseq_qc_analysis(
     adapter_version: str | PpmseqAdapterVersions,
     subsampled_sam: str,
     output_path: str,
@@ -1220,8 +1213,6 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915
     trimmer_failure_codes_csv: str = None,
     generate_report: bool = True,  # noqa: FBT001, FBT002
     keep_temp_visualization_files: bool = False,  # noqa: FBT001, FBT002
-    sr_lower: float = STRAND_RATIO_LOWER_THRESH,
-    sr_upper: float = STRAND_RATIO_UPPER_THRESH,
     qc_filename_suffix: str = ".ppmSeq.applicationQC",
 ):
     """
@@ -1232,7 +1223,8 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915
     adapter_version : str | PpmseqAdapterVersions
         adapter version.
     subsampled_sam : str
-        Path to the sorter-produced subsampled sam.gz (needs demux --sample-nr-reads=N).
+        Path to the sorter-produced subsampled sam, bam, or cram file (requires demux
+        --sample-nr-reads=N). Pysam picks the format from the extension.
     output_path : str
         output folder for h5, json, and html.
     output_basename : str, optional
@@ -1247,10 +1239,6 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915
         if True, generate an html + jupyter report.
     keep_temp_visualization_files : bool, optional
         if True, keep temporary png/ipynb files.
-    sr_lower : float, optional
-        lower strand-ratio threshold used by downstream annotators (default 0.27).
-    sr_upper : float, optional
-        upper strand-ratio threshold used by downstream annotators (default 0.73).
     qc_filename_suffix : str, optional
         suffix for the output statistics file immediately after output_basename.
     """
@@ -1299,26 +1287,20 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915
         title=f"{output_basename} strand ratio category",
         output_filename=output_strand_ratio_category_plot,
     )
-    if adapter_version in (
-        PpmseqAdapterVersions.LEGACY_V5,
-        PpmseqAdapterVersions.LEGACY_V5.value,
-        PpmseqAdapterVersions.V1,
-        PpmseqAdapterVersions.V1.value,
-    ):
-        plot_strand_ratio_category_concordnace(
-            adapter_version,
-            df_reads,
-            title=f"{output_basename} strand ratio category concordance",
-            output_filename=output_strand_ratio_category_concordance_plot,
-        )
+    plot_strand_ratio_category_concordnace(
+        adapter_version,
+        df_reads,
+        title=f"{output_basename} strand ratio category concordance",
+        output_filename=output_strand_ratio_category_concordance_plot,
+    )
     plot_sr_histogram(
         df_reads,
-        title=f"{output_basename} sr histogram",
+        title=f"{output_basename} strand ratio",
         output_filename=output_sr_hist_plot,
     )
     plot_sr_by_et(
         df_reads,
-        title=f"{output_basename} sr by et (end reached)",
+        title=f"{output_basename} strand ratio by et (end reached)",
         output_filename=output_sr_by_et_plot,
     )
     if sorter_stats_json:
@@ -1330,35 +1312,24 @@ def ppmseq_qc_analysis(  # noqa: C901, PLR0912, PLR0913, PLR0915
 
     if generate_report:
         template_notebook = BASE_PATH / REPORTS_DIR / "ppmSeq_qc_report.ipynb"
-        illustration_file = (
+        adapter_value = adapter_version if isinstance(adapter_version, str) else adapter_version.value
+        illustration_name = (
             "ppmSeq_legacy_v5_illustration.png"
-            if adapter_version
-            in (
-                PpmseqAdapterVersions.LEGACY_V5_START.value,
-                PpmseqAdapterVersions.LEGACY_V5.value,
-                PpmseqAdapterVersions.LEGACY_V5_END.value,
-            )
-            else "reports/ppmSeq_v1_illustration.png"
+            if adapter_value == PpmseqAdapterVersions.LEGACY_V5.value
+            else "ppmSeq_v1_illustration.png"
         )
-        illustration_path = BASE_PATH / REPORTS_DIR / illustration_file
+        illustration_path = BASE_PATH / REPORTS_DIR / illustration_name
         parameters = {
-            "adapter_version": (adapter_version if isinstance(adapter_version, str) else adapter_version.value),
+            "adapter_version": adapter_value,
             "statistics_h5": output_statistics_h5,
             "strand_ratio_category_png": output_strand_ratio_category_plot,
+            "strand_ratio_category_concordance_png": output_strand_ratio_category_concordance_plot,
             "sr_hist_png": output_sr_hist_plot,
             "sr_by_et_png": output_sr_by_et_plot,
-            "sr_lower": sr_lower,
-            "sr_upper": sr_upper,
-            "illustration_file": illustration_path,
+            "illustration_file": str(illustration_path),
             "trimmer_failure_codes_csv": trimmer_failure_codes_csv,
+            "sorter_stats_csv": sorter_stats_csv,
         }
-        if adapter_version in (
-            PpmseqAdapterVersions.LEGACY_V5,
-            PpmseqAdapterVersions.LEGACY_V5.value,
-            PpmseqAdapterVersions.V1,
-            PpmseqAdapterVersions.V1.value,
-        ):
-            parameters["strand_ratio_category_concordance_png"] = output_strand_ratio_category_concordance_plot
         if sorter_stats_json:
             parameters["output_read_length_histogram_plot"] = output_read_length_histogram_plot
 

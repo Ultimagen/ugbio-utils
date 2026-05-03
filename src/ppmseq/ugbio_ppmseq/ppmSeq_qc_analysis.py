@@ -13,13 +13,11 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 # DESCRIPTION
-#    Run the ppmSeq QC analysis pipeline on the subsampled SAM produced by sorter.
+#    Run the ppmSeq QC analysis pipeline on the subsampled SAM / BAM / CRAM produced by sorter.
 import argparse
 import sys
 
 from ugbio_ppmseq.ppmSeq_utils import (
-    STRAND_RATIO_LOWER_THRESH,
-    STRAND_RATIO_UPPER_THRESH,
     ppmseq_qc_analysis,
     supported_adapter_versions,
 )
@@ -36,37 +34,41 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         "--subsampled-sam",
         type=str,
         required=True,
-        help="path to the subsampled sam.gz emitted by sorter (requires demux --sample-nr-reads=N)",
+        help=(
+            "Path to the subsampled reads file emitted by sorter (requires demux "
+            "--sample-nr-reads=N). Accepts .sam / .sam.gz / .bam / .cram — pysam detects "
+            "the format from the file extension."
+        ),
     )
     parser.add_argument(
         "--trimmer-failure-codes-csv",
         type=str,
         required=False,
-        help="Trimmer failure codes csv file",
+        help="Trimmer failure codes csv file (optional; enables failure-rate metrics in the report)",
     )
     parser.add_argument(
         "--sorter-stats-csv",
         type=str,
         required=False,
-        help="path to a Sorter stats csv file",
+        help="Sorter stats csv file (optional; merged into the main stats shortlist)",
     )
     parser.add_argument(
         "--sorter-stats-json",
         type=str,
         required=False,
-        help="path to a Sorter stats json file",
+        help="Sorter stats json file (optional; enables the read-length histogram in the report)",
     )
     parser.add_argument(
         "--output-path",
         type=str,
         default=None,
-        help="path (folder) to which data and report will be written to",
+        help="Path (folder) to which data and report will be written",
     )
     parser.add_argument(
         "--output-basename",
         type=str,
         default=None,
-        help="basename for output files",
+        help="Basename for output files",
     )
     parser.add_argument(
         "--input-material-ng",
@@ -76,23 +78,11 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         help="Optional - input material in ng, will be included in statistics and report",
     )
     parser.add_argument(
-        "--sr-lower",
-        type=float,
-        default=STRAND_RATIO_LOWER_THRESH,
-        help="lower strand ratio threshold for determining strand ratio category",
-    )
-    parser.add_argument(
-        "--sr-upper",
-        type=float,
-        default=STRAND_RATIO_UPPER_THRESH,
-        help="upper strand ratio threshold for determining strand ratio category",
-    )
-    parser.add_argument(
         "--generate-report",
         type=bool,
         required=False,
         default=True,
-        help="""generate an html + jupyter report""",
+        help="Generate an html + jupyter report",
     )
     return parser.parse_args(argv[1:])
 
@@ -110,8 +100,6 @@ def run(argv):
         output_path=args_in.output_path,
         output_basename=args_in.output_basename,
         generate_report=args_in.generate_report,
-        sr_lower=args_in.sr_lower,
-        sr_upper=args_in.sr_upper,
     )
 
 

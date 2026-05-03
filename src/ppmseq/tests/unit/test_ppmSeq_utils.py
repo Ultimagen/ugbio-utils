@@ -2,10 +2,15 @@ import pickle
 from os.path import join as pjoin
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pysam
 import pytest
 from ugbio_ppmseq.ppmSeq_utils import (
+    ET_TAG,
+    SR_TAG,
+    ST_TAG,
+    TM_TAG,
     PpmseqAdapterVersions,
     PpmseqCategories,
     PpmseqStrandVcfAnnotator,
@@ -31,6 +36,7 @@ expected_output_featuremap_legacy_v5 = (
 trimmer_failure_codes_csv_ppmseq_v1_incl_failed_rsq = (
     inputs_dir / "412884-L6860-Z0293-CATGTGAGCGGTGAT_trimmer-failure_codes.csv"
 )
+sorter_stats_csv_legacy_v5 = inputs_dir / "130713-UGAv3-51.sorter_stats.csv"
 
 
 def _compare_vcfs(vcf_file1, vcf_file2):
@@ -56,27 +62,48 @@ def test_read_trimmer_failure_codes_ppmseq():
     df_trimmer_failure_codes, df_metrics = read_trimmer_failure_codes_ppmseq(
         trimmer_failure_codes_csv_ppmseq_v1_incl_failed_rsq
     )
-    # sanity: RSQ-failed reads are excluded before normalization.
+    # sanity: RSQ-failed reads are excluded from the read total before normalization.
     assert df_trimmer_failure_codes["total_read_count"].to_numpy()[0] == 1098118853
+    # Regression: normalization of the per-category PCT columns (adapter-dimer fraction
+    # is a critical QC metric per the review).
+    assert np.isclose(df_metrics.loc["PCT_failed_adapter_dimers", "value"], 0.068886, atol=1e-4)
 
 
 def test_read_tags_from_subsampled_sam():
     df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
     assert len(df_reads) > 0
     assert set(df_reads.columns) >= {
-        "sr",
-        "st",
-        "et",
-        "tm",
+        SR_TAG,
+        ST_TAG,
+        ET_TAG,
+        TM_TAG,
         "count",
         "strand_ratio_category_start",
         "strand_ratio_category_end",
     }
-    # All rows should have st assigned (we only skip rows where sr/st are both missing)
-    assert df_reads["st"].isin(["PLUS", "MINUS", "MIXED", "UNDETERMINED"]).all()
-    # sr is nominally in [0, 1]; a small tail of out-of-range values is expected from calibration.
-    assert df_reads["sr"].between(-1, 2).all()
-    assert df_reads["sr"].between(0, 1).mean() > 0.99
+    # Every ppmSeq read produced by the current pipeline carries an st tag; the reader
+    # raises KeyError on anything that doesn't, so here we only see valid categories.
+    assert df_reads[ST_TAG].isin(["PLUS", "MINUS", "MIXED", "UNDETERMINED"]).all()
+    # sr is nominally in [0, 1]; calibration can produce a small out-of-range tail.
+    assert df_reads[SR_TAG].between(-1, 2).all()
+    assert df_reads[SR_TAG].between(0, 1).mean() > 0.99
+
+
+def test_read_tags_raises_on_missing_st_tag(tmp_path):
+    # Build a 2-record SAM where one record is missing both sr and st.
+    sam_content = (
+        "@HD\tVN:1.6\n"
+        "@SQ\tSN:chr1\tLN:100\n"
+        "@RG\tID:test\n"
+        # good read: has sr, st
+        "r1\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:test\tsr:f:0.5\tst:Z:MIXED\n"
+        # bad read: no sr, no st
+        "r2\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:test\n"
+    )
+    sam_file = tmp_path / "bad.sam"
+    sam_file.write_text(sam_content)
+    with pytest.raises(KeyError):
+        read_tags_from_subsampled_sam(str(sam_file))
 
 
 def test_group_by_strand_ratio_category():
@@ -84,17 +111,21 @@ def test_group_by_strand_ratio_category():
     grouped = group_trimmer_histogram_by_strand_ratio_category(PpmseqAdapterVersions.V1, df_reads)
     assert "strand_ratio_category_start" in grouped.columns
     assert "strand_ratio_category_end" in grouped.columns
+    # Counts across category columns equal the total number of reads.
+    assert int(grouped["strand_ratio_category_start"].sum()) == len(df_reads)
     # PLUS/MINUS/MIXED should each contain a non-trivial share of reads.
     for cat in [PpmseqCategories.PLUS.value, PpmseqCategories.MINUS.value, PpmseqCategories.MIXED.value]:
         assert grouped.loc[cat, "strand_ratio_category_start"] > 0
 
 
-def test_get_concordance():
+def test_get_concordance_sums_to_one():
     df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
-    concordance, _, consensus = get_strand_ratio_category_concordance(PpmseqAdapterVersions.V1, df_reads)
-    # concordance normalizes to 1 across all categories
+    concordance, _concordance_no_unreached, consensus = get_strand_ratio_category_concordance(
+        PpmseqAdapterVersions.V1, df_reads
+    )
+    # Both concordance and consensus series normalize to 1 across all cells.
     assert concordance.sum() == pytest.approx(1.0, abs=1e-6)
-    # consensus should contain MIXED / MINUS / PLUS / DISCORDANT / UNDETERMINED
+    assert consensus.sum() == pytest.approx(1.0, abs=1e-6)
     assert set(consensus.index) >= {"MIXED", "MINUS", "PLUS"}
 
 
@@ -140,10 +171,36 @@ def test_collect_statistics(tmp_path):
         output_filename=str(out),
     )
     with pd.HDFStore(str(out)) as store:
-        keys = store.keys()
+        keys = set(store.keys())
+        shortlist = store["stats_shortlist"]
+        concordance = store["strand_ratio_category_concordance"]
     assert "/subsampled_reads" in keys
     assert "/strand_ratio_category_counts" in keys
     assert "/strand_ratio_category_concordance" in keys
+    # The consensus percentages are part of the shortlist and the per-strand-ratio
+    # category totals should match the number of reads we loaded.
+    assert "PCT_MIXED_both_tags" in shortlist.index
+    assert concordance.sum() == pytest.approx(1.0, abs=1e-6)
+
+
+def test_collect_statistics_with_sorter_stats(tmp_path):
+    """Review feedback: make sure the sorter_csv input path still works and metrics land
+    in the stats shortlist."""
+    out = tmp_path / "stats_with_sorter.h5"
+    collect_statistics(
+        PpmseqAdapterVersions.V1,
+        subsampled_sam=str(subsampled_sam),
+        sorter_stats_csv=str(sorter_stats_csv_legacy_v5),
+        output_filename=str(out),
+    )
+    with pd.HDFStore(str(out)) as store:
+        sorter_stats = store["sorter_stats"]
+        shortlist = store["stats_shortlist"]
+    # At least one metric from the sorter csv should land in the sorter_stats series.
+    assert len(sorter_stats) > 0
+    # The shortlist should have both ppmSeq metrics and sorter metrics.
+    assert "PCT_MIXED_both_tags" in shortlist.index
+    assert sorter_stats.index[0] in shortlist.index
 
 
 def test_ppmseq_qc_analysis(tmp_path):
@@ -168,6 +225,6 @@ def test_add_strand_ratios_and_categories_to_featuremap(tmp_path):
 
 
 def test_pickle_an_annotator(tmp_path):
-    annotator = PpmseqStrandVcfAnnotator(adapter_version="legacy_v5_start")
+    annotator = PpmseqStrandVcfAnnotator(adapter_version="legacy_v5")
     with open(pjoin(tmp_path, "annotators_pickle"), "wb") as f:
         pickle.dump(annotator, f)
