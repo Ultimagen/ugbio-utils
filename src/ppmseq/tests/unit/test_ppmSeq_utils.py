@@ -18,6 +18,8 @@ from ugbio_ppmseq.ppmSeq_utils import (
     collect_statistics,
     get_strand_ratio_category_concordance,
     group_trimmer_histogram_by_strand_ratio_category,
+    plot_read_length_by_st,
+    plot_read_length_overall,
     plot_sr_by_et,
     plot_sr_histogram,
     plot_strand_ratio_category,
@@ -152,6 +154,18 @@ def test_plot_strand_ratio_category(tmp_path):
     assert (tmp_path / "cat.png").exists()
 
 
+def test_plot_read_length_overall(tmp_path):
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
+    plot_read_length_overall(df_reads, title="test", output_filename=str(tmp_path / "rl.png"))
+    assert (tmp_path / "rl.png").exists()
+
+
+def test_plot_read_length_by_st(tmp_path):
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
+    plot_read_length_by_st(df_reads, title="test", output_filename=str(tmp_path / "rl_by_st.png"))
+    assert (tmp_path / "rl_by_st.png").exists()
+
+
 def test_plot_strand_ratio_category_concordance(tmp_path):
     df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
     plot_strand_ratio_category_concordnace(
@@ -184,8 +198,8 @@ def test_collect_statistics(tmp_path):
 
 
 def test_collect_statistics_with_sorter_stats(tmp_path):
-    """Review feedback: make sure the sorter_csv input path still works and metrics land
-    in the stats shortlist."""
+    """Sorter stats must be stored under /sorter_stats but must NOT be concat'd into
+    /stats_shortlist — the report shows them in a dedicated section."""
     out = tmp_path / "stats_with_sorter.h5"
     collect_statistics(
         PpmseqAdapterVersions.V1,
@@ -196,11 +210,14 @@ def test_collect_statistics_with_sorter_stats(tmp_path):
     with pd.HDFStore(str(out)) as store:
         sorter_stats = store["sorter_stats"]
         shortlist = store["stats_shortlist"]
-    # At least one metric from the sorter csv should land in the sorter_stats series.
     assert len(sorter_stats) > 0
-    # The shortlist should have both ppmSeq metrics and sorter metrics.
     assert "PCT_MIXED_both_tags" in shortlist.index
-    assert sorter_stats.index[0] in shortlist.index
+    # Sorter metric names should NOT leak into the mixed-reads shortlist.
+    shortlist_indices = set(shortlist.index)
+    for sorter_metric in sorter_stats.index:
+        assert (
+            sorter_metric not in shortlist_indices
+        ), f"sorter metric {sorter_metric!r} should not appear in stats_shortlist"
 
 
 def test_ppmseq_qc_analysis(tmp_path):

@@ -354,9 +354,10 @@ def read_tags_from_subsampled_sam(
                 # A missing tm tag means the adapter was not reached (== END_UNREACHED
                 # downstream), not "undetermined". See Ken's comment on PR #307.
                 tm = ""
-            rows.append((float(sr), str(st), str(et), str(tm)))
+            read_len = rec.query_length or 0
+            rows.append((float(sr), str(st), str(et), str(tm), int(read_len)))
 
-    df_reads = pd.DataFrame(rows, columns=[SR_TAG, ST_TAG, ET_TAG, TM_TAG])
+    df_reads = pd.DataFrame(rows, columns=[SR_TAG, ST_TAG, ET_TAG, TM_TAG, "read_length"])
     df_reads[HistogramColumnNames.COUNT.value] = 1
     is_end_reached = df_reads[TM_TAG].str.contains("A", na=False)
     undetermined = PpmseqCategories.UNDETERMINED.value
@@ -721,16 +722,16 @@ def collect_statistics(
         df_category_concordance=df_category_concordance,
     )
 
-    df_stats_shortlist = pd.concat((df_tags, sorter_stats))
+    # stats_shortlist holds the ppmSeq-specific metrics (MIXED coverage / strand-ratio
+    # category percentages). Sorter stats are stored under a separate /sorter_stats key
+    # so the report can show them in a dedicated table and users asking for "mixed reads
+    # stats" aren't buried under the sorter aggregates.
+    df_stats_shortlist = df_tags
 
     if trimmer_failure_codes_csv:
         df_trimmer_failure_codes, df_failure_codes_metrics = read_trimmer_failure_codes_ppmseq(
             trimmer_failure_codes_csv
         )
-        # The adapter-dimer / unrecognized-stem / unrecognized-start-loop / total percentages
-        # from the Trimmer failure codes are a critical part of the QC — merge into the
-        # shortlist so they appear in the HTML report's main stats table.
-        df_stats_shortlist = pd.concat((df_stats_shortlist, df_failure_codes_metrics["value"]))
 
     if not output_filename.endswith(".h5"):
         output_filename += ".h5"
@@ -1009,16 +1010,18 @@ _SR_CATEGORY_COLORS = {
 
 
 def _plot_sr_hist_on_ax(ax: plt.Axes, sr_values: pd.Series, color: str) -> None:
-    """Draw an sr histogram on the given ax, expressed as a percentage so facets are directly
-    comparable. Values outside [0, 1] are clipped (np.clip-style) so the outlier mass lands
-    in the edge bins rather than being discarded."""
+    """Draw an sr histogram on the given ax as a line plot over bin centers, expressed as a
+    percentage so facets are directly comparable. Values outside [0, 1] are clipped
+    (np.clip-style) so the outlier mass lands in the edge bins rather than being discarded."""
     n = len(sr_values)
     if n == 0:
         ax.text(0.5, 0.5, "no reads", transform=ax.transAxes, ha="center", va="center")
         return
     clipped = sr_values.clip(lower=_SR_BIN_EDGES[0], upper=_SR_BIN_EDGES[-1])
-    weights = np.full(n, 100.0 / n)  # percent per bin
-    ax.hist(clipped, bins=_SR_BIN_EDGES, weights=weights, color=color)
+    counts, _ = np.histogram(clipped, bins=_SR_BIN_EDGES)
+    percent_per_bin = 100.0 * counts / n
+    centers = 0.5 * (_SR_BIN_EDGES[:-1] + _SR_BIN_EDGES[1:])
+    ax.plot(centers, percent_per_bin, color=color, linewidth=2)
     ax.set_xlim(_SR_BIN_EDGES[0], _SR_BIN_EDGES[-1])
     for x in _SR_THRESHOLD_LINES:
         ax.axvline(x, color="xkcd:dark grey", linestyle="--", linewidth=1.2)
@@ -1124,6 +1127,126 @@ def plot_sr_by_et(
             bbox_extra_artists=[title_handle],
         )
     return fig
+
+
+def plot_read_length_by_st(
+    df_reads: pd.DataFrame,
+    title: str = "",
+    output_filename: str = None,
+) -> plt.Figure:
+    """
+    Plot per-read read-length distributions faceted by the start-loop category as a vertically
+    stacked 4x1 grid. Values are a percentage of reads within each panel. One color per
+    category (shared with plot_sr_by_et).
+
+    Parameters
+    ----------
+    df_reads : pd.DataFrame
+        Per-read tag dataframe from :func:`read_tags_from_subsampled_sam`; must have a
+        ``read_length`` column.
+    title : str, optional
+        plot title.
+    output_filename : str, optional
+        if provided, save the plot.
+    """
+    set_pyplot_defaults()
+    category_col = HistogramColumnNames.STRAND_RATIO_CATEGORY_START.value
+    st_categories = [
+        PpmseqCategories.PLUS.value,
+        PpmseqCategories.MINUS.value,
+        PpmseqCategories.MIXED.value,
+        PpmseqCategories.UNDETERMINED.value,
+    ]
+    # Shared x range so facets are directly comparable. 99th percentile trims the long tail.
+    lengths_all = df_reads["read_length"].dropna()
+    x_max = int(np.ceil(lengths_all.quantile(0.995))) if len(lengths_all) else 1
+    x_max = max(x_max, 10)
+    bin_edges = np.linspace(0, x_max, 61)  # ~60 bins
+    centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+    fig, axs = plt.subplots(len(st_categories), 1, figsize=(12, 4 * len(st_categories)), sharex=True)
+    for ax, st_val in zip(axs, st_categories, strict=True):
+        subset = df_reads[df_reads[category_col] == st_val]
+        lengths = subset["read_length"].dropna()
+        n = len(lengths)
+        if n == 0:
+            ax.text(0.5, 0.5, "no reads", transform=ax.transAxes, ha="center", va="center")
+        else:
+            clipped = lengths.clip(lower=0, upper=x_max)
+            counts, _ = np.histogram(clipped, bins=bin_edges)
+            percent_per_bin = 100.0 * counts / n
+            ax.plot(centers, percent_per_bin, color=_SR_CATEGORY_COLORS[st_val], linewidth=2)
+        ax.set_xlim(0, x_max)
+        ax.set_title(f"st={st_val}", fontsize=_SR_TITLE_FONTSIZE)
+        ax.set_ylabel("Frequency (%)", fontsize=_SR_AXIS_LABEL_FONTSIZE)
+    axs[-1].set_xlabel("Read length (bp)", fontsize=_SR_AXIS_LABEL_FONTSIZE)
+    title_handle = fig.suptitle(title, fontsize=_SR_TITLE_FONTSIZE)
+    fig.tight_layout()
+    if output_filename is not None:
+        if not output_filename.endswith(".png"):
+            output_filename += ".png"
+        fig.savefig(
+            output_filename,
+            facecolor="w",
+            dpi=300,
+            bbox_inches="tight",
+            bbox_extra_artists=[title_handle],
+        )
+    return fig
+
+
+def plot_read_length_overall(
+    df_reads: pd.DataFrame,
+    title: str = "",
+    output_filename: str = None,
+    ax: plt.Axes = None,
+) -> plt.Axes:
+    """
+    Plot the overall read-length histogram as a line plot over bin centers.
+
+    Parameters
+    ----------
+    df_reads : pd.DataFrame
+        Per-read tag dataframe from :func:`read_tags_from_subsampled_sam`; must have a
+        ``read_length`` column.
+    title : str, optional
+        plot title.
+    output_filename : str, optional
+        if provided, save the plot.
+    ax : matplotlib.axes.Axes, optional
+        axes to plot on.
+    """
+    set_pyplot_defaults()
+    if ax is None:
+        plt.figure(figsize=(12, 4))
+        ax = plt.gca()
+    else:
+        plt.sca(ax)
+    lengths = df_reads["read_length"].dropna()
+    n = len(lengths)
+    x_max = int(np.ceil(lengths.quantile(0.995))) if n else 1
+    x_max = max(x_max, 10)
+    bin_edges = np.linspace(0, x_max, 61)
+    centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    if n:
+        clipped = lengths.clip(lower=0, upper=x_max)
+        counts, _ = np.histogram(clipped, bins=bin_edges)
+        ax.plot(centers, 100.0 * counts / n, color="xkcd:royal blue", linewidth=2)
+    ax.set_xlim(0, x_max)
+    ax.set_xlabel("Read length (bp)", fontsize=_SR_AXIS_LABEL_FONTSIZE)
+    ax.set_ylabel("Frequency (%)", fontsize=_SR_AXIS_LABEL_FONTSIZE)
+    title_handle = plt.title(title, fontsize=_SR_TITLE_FONTSIZE)
+    if output_filename is not None:
+        if not output_filename.endswith(".png"):
+            output_filename += ".png"
+        plt.savefig(
+            output_filename,
+            facecolor="w",
+            dpi=300,
+            bbox_inches="tight",
+            bbox_extra_artists=[title_handle],
+        )
+    return ax
 
 
 def flatten_strand_ratio_category(h5_file: str, key: str) -> pd.DataFrame:
@@ -1253,14 +1376,18 @@ def ppmseq_qc_analysis(
     )
     output_sr_hist_plot = os.path.join(output_path, f"{output_basename}.sr_hist.png")
     output_sr_by_et_plot = os.path.join(output_path, f"{output_basename}.sr_by_et.png")
-    output_read_length_histogram_plot = os.path.join(output_path, f"{output_basename}.read_length_histogram.png")
+    output_read_length_plot = os.path.join(output_path, f"{output_basename}.read_length.png")
+    output_read_length_by_st_plot = os.path.join(output_path, f"{output_basename}.read_length_by_st.png")
+    output_sorter_read_length_plot = os.path.join(output_path, f"{output_basename}.sorter_read_length.png")
     output_visualization_files = [
         output_report_ipynb,
         output_strand_ratio_category_plot,
         output_strand_ratio_category_concordance_plot,
         output_sr_hist_plot,
         output_sr_by_et_plot,
-        output_read_length_histogram_plot,
+        output_read_length_plot,
+        output_read_length_by_st_plot,
+        output_sorter_read_length_plot,
     ]
 
     collect_statistics(
@@ -1296,11 +1423,21 @@ def ppmseq_qc_analysis(
         title=f"{output_basename} strand ratio by et (end reached)",
         output_filename=output_sr_by_et_plot,
     )
+    plot_read_length_overall(
+        df_reads,
+        title=f"{output_basename} read length",
+        output_filename=output_read_length_plot,
+    )
+    plot_read_length_by_st(
+        df_reads,
+        title=f"{output_basename} read length by st",
+        output_filename=output_read_length_by_st_plot,
+    )
     if sorter_stats_json:
         plot_read_length_histogram(
             sorter_stats_json,
             title=f"{output_basename}",
-            output_filename=output_read_length_histogram_plot,
+            output_filename=output_sorter_read_length_plot,
         )
 
     if generate_report:
@@ -1312,19 +1449,24 @@ def ppmseq_qc_analysis(
             else "ppmSeq_v1_illustration.png"
         )
         illustration_path = BASE_PATH / REPORTS_DIR / illustration_name
+        logo_path = BASE_PATH / REPORTS_DIR / "ug_logo.b64"
         parameters = {
+            "sample_name": output_basename,
             "adapter_version": adapter_value,
             "statistics_h5": output_statistics_h5,
             "strand_ratio_category_png": output_strand_ratio_category_plot,
             "strand_ratio_category_concordance_png": output_strand_ratio_category_concordance_plot,
             "sr_hist_png": output_sr_hist_plot,
             "sr_by_et_png": output_sr_by_et_plot,
+            "read_length_png": output_read_length_plot,
+            "read_length_by_st_png": output_read_length_by_st_plot,
             "illustration_file": str(illustration_path),
+            "logo_file": str(logo_path),
             "trimmer_failure_codes_csv": trimmer_failure_codes_csv,
             "sorter_stats_csv": sorter_stats_csv,
         }
         if sorter_stats_json:
-            parameters["output_read_length_histogram_plot"] = output_read_length_histogram_plot
+            parameters["sorter_read_length_png"] = output_sorter_read_length_plot
 
         if not keep_temp_visualization_files:
             tmp_files = [Path(file) for file in output_visualization_files]
