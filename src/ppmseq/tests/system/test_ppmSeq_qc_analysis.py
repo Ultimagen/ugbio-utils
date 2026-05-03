@@ -61,7 +61,8 @@ def test_ppmseq_qc_analysis_with_report(tmp_path, subsampled_sam):
 
 
 def test_ppmseq_qc_analysis_with_sorter_csv(tmp_path, resources_dir, subsampled_sam):
-    """Per reviewer: make sure the sorter_csv input is still exercised end-to-end."""
+    """End-to-end run with sorter stats + failure codes + a free-form --extra-arg
+    surfaced in the report header."""
     sorter_csv = resources_dir / "130713-UGAv3-51.sorter_stats.csv"
     trimmer_failure_codes = resources_dir / "412884-L6860-Z0293-CATGTGAGCGGTGAT_trimmer-failure_codes.csv"
     ppmSeq_qc_analysis.run(
@@ -75,6 +76,8 @@ def test_ppmseq_qc_analysis_with_sorter_csv(tmp_path, resources_dir, subsampled_
             str(sorter_csv),
             "--trimmer-failure-codes-csv",
             str(trimmer_failure_codes),
+            "--extra-arg",
+            "version=1.2.3.4",
             "--output-path",
             str(tmp_path),
             "--output-basename",
@@ -83,3 +86,7 @@ def test_ppmseq_qc_analysis_with_sorter_csv(tmp_path, resources_dir, subsampled_
     )
     html = tmp_path / "ppmseq_sr_tag_full.ppmSeq.applicationQC.html"
     assert html.exists()
+    # The --extra-arg key/value should appear in the rendered report body.
+    html_text = html.read_text()
+    assert "version" in html_text
+    assert "1.2.3.4" in html_text

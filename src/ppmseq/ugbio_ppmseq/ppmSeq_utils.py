@@ -13,10 +13,7 @@ import pysam
 import seaborn as sns
 from ugbio_core.plotting_utils import set_pyplot_defaults
 from ugbio_core.reports.report_utils import generate_report as generate_report_func
-from ugbio_core.sorter_utils import (
-    plot_read_length_histogram,
-    read_and_parse_sorter_statistics_csv,
-)
+from ugbio_core.sorter_utils import read_and_parse_sorter_statistics_csv
 from ugbio_core.trimmer_utils import (
     read_trimmer_failure_codes,
 )
@@ -1136,8 +1133,9 @@ def plot_read_length_by_st(
 ) -> plt.Figure:
     """
     Plot per-read read-length distributions faceted by the start-loop category as a vertically
-    stacked 4x1 grid. Values are a percentage of reads within each panel. One color per
-    category (shared with plot_sr_by_et).
+    stacked 3x1 grid (PLUS / MINUS / MIXED). Values are a percentage of reads within each panel.
+    One color per category (shared with plot_sr_by_et). UNDETERMINED reads are excluded because
+    in practice almost no reads carry that category at this point in the pipeline.
 
     Parameters
     ----------
@@ -1155,7 +1153,6 @@ def plot_read_length_by_st(
         PpmseqCategories.PLUS.value,
         PpmseqCategories.MINUS.value,
         PpmseqCategories.MIXED.value,
-        PpmseqCategories.UNDETERMINED.value,
     ]
     # Shared x range so facets are directly comparable. 99th percentile trims the long tail.
     lengths_all = df_reads["read_length"].dropna()
@@ -1319,7 +1316,7 @@ def convert_h5_to_papyrus_json(h5_file: str, output_json: str) -> str:
         json.dump(new_json_dict, f, indent=2)
 
 
-def ppmseq_qc_analysis(
+def ppmseq_qc_analysis(  # noqa: PLR0913
     adapter_version: str | PpmseqAdapterVersions,
     subsampled_sam: str,
     output_path: str,
@@ -1330,6 +1327,7 @@ def ppmseq_qc_analysis(
     generate_report: bool = True,  # noqa: FBT001, FBT002
     keep_temp_visualization_files: bool = False,  # noqa: FBT001, FBT002
     qc_filename_suffix: str = ".ppmSeq.applicationQC",
+    extra_info: dict = None,
 ):
     """
     Run the ppmSeq QC analysis pipeline on the subsampled SAM produced by sorter.
@@ -1348,7 +1346,9 @@ def ppmseq_qc_analysis(
     sorter_stats_csv : str, optional
         path to a Sorter stats csv file.
     sorter_stats_json : str, optional
-        path to a Sorter stats JSON file. If provided, read-length histogram is added to the report.
+        accepted for backwards compat; currently unused (the sorter-reported read length
+        plot was removed because the per-read read-length plots in Section 3 are
+        authoritative for this report).
     trimmer_failure_codes_csv : str, optional
         path to a Trimmer failure codes csv file. If provided, failure-rate metrics are added.
     generate_report : bool, optional
@@ -1357,7 +1357,12 @@ def ppmseq_qc_analysis(
         if True, keep temporary png/ipynb files.
     qc_filename_suffix : str, optional
         suffix for the output statistics file immediately after output_basename.
+    extra_info : dict, optional
+        Free-form key/value pairs to surface at the top of the HTML report (e.g.
+        ``{"version": "1.2.3.4"}``). Rendered as a small table between the sample
+        header and the table of contents.
     """
+    del sorter_stats_json  # retained in signature for backwards compat; no longer rendered
     _assert_adapter_version_supported(adapter_version)
     if not os.path.isfile(subsampled_sam):
         raise FileNotFoundError(f"{subsampled_sam} not found")
@@ -1378,7 +1383,6 @@ def ppmseq_qc_analysis(
     output_sr_by_et_plot = os.path.join(output_path, f"{output_basename}.sr_by_et.png")
     output_read_length_plot = os.path.join(output_path, f"{output_basename}.read_length.png")
     output_read_length_by_st_plot = os.path.join(output_path, f"{output_basename}.read_length_by_st.png")
-    output_sorter_read_length_plot = os.path.join(output_path, f"{output_basename}.sorter_read_length.png")
     output_visualization_files = [
         output_report_ipynb,
         output_strand_ratio_category_plot,
@@ -1387,7 +1391,6 @@ def ppmseq_qc_analysis(
         output_sr_by_et_plot,
         output_read_length_plot,
         output_read_length_by_st_plot,
-        output_sorter_read_length_plot,
     ]
 
     collect_statistics(
@@ -1433,12 +1436,6 @@ def ppmseq_qc_analysis(
         title=f"{output_basename} read length by st",
         output_filename=output_read_length_by_st_plot,
     )
-    if sorter_stats_json:
-        plot_read_length_histogram(
-            sorter_stats_json,
-            title=f"{output_basename}",
-            output_filename=output_sorter_read_length_plot,
-        )
 
     if generate_report:
         template_notebook = BASE_PATH / REPORTS_DIR / "ppmSeq_qc_report.ipynb"
@@ -1464,9 +1461,8 @@ def ppmseq_qc_analysis(
             "logo_file": str(logo_path),
             "trimmer_failure_codes_csv": trimmer_failure_codes_csv,
             "sorter_stats_csv": sorter_stats_csv,
+            "extra_info": dict(extra_info) if extra_info else {},
         }
-        if sorter_stats_json:
-            parameters["sorter_read_length_png"] = output_sorter_read_length_plot
 
         if not keep_temp_visualization_files:
             tmp_files = [Path(file) for file in output_visualization_files]
