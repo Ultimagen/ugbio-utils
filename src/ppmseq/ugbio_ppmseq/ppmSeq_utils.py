@@ -91,7 +91,10 @@ SORTER_STATS_KEYS_TO_SHOW = (
     "Indel_Rate",
 )
 
-# Input parameter defaults for the legacy featuremap annotator path
+# NOTE: these are legacy parameters used ONLY by the featuremap annotator path
+# (PpmseqStrandVcfAnnotator / add_strand_ratios_and_categories_to_featuremap). The SAM-based
+# QC report does not read or surface them. Treat them as configuration for the legacy
+# featuremap annotator only.
 STRAND_RATIO_LOWER_THRESH = 0.27
 STRAND_RATIO_UPPER_THRESH = 0.73
 MIN_TOTAL_HMER_LENGTHS_IN_LOOPS = 4
@@ -406,8 +409,24 @@ def read_tags_from_subsampled_sam(
 
 
 def has_sr_tag(df_reads: pd.DataFrame) -> bool:
-    """Return True if at least one read in the per-read dataframe carries a non-NaN sr value."""
+    """Return True if at least one read in the per-read dataframe carries a non-NaN sr value.
+
+    Used to decide whether the sr-dependent report sections (Figure 3 "Overall strand-ratio
+    distribution" and Figure 4 "Strand-ratio by end-tag category") should be rendered at all.
+    """
     return df_reads[SR_TAG].notna().any()
+
+
+def all_reads_have_sr_tag(df_reads: pd.DataFrame) -> bool:
+    """Return True only when every read in the per-read dataframe has a non-NaN sr value.
+
+    Used to decide whether the start-axis UNDETERMINED category can be safely suppressed in
+    the category / concordance plots. When sr is present on every read the Trimmer --compare
+    cascade guarantees st ∈ {MIXED, PLUS, MINUS}; hiding UNDETERMINED is correct. If even
+    one read is missing sr, st could still legitimately be UNDETERMINED for that read, so we
+    keep the bar/row.
+    """
+    return len(df_reads) > 0 and df_reads[SR_TAG].notna().all()
 
 
 def group_trimmer_histogram_by_strand_ratio_category(
@@ -577,10 +596,10 @@ def get_strand_ratio_category_concordance(
 
 def read_trimmer_tags_dataframe(
     adapter_version: str | PpmseqAdapterVersions,
-    df_strand_ratio_category: str,
-    df_category_consensus: str,
-    df_sorter_stats: str,
-    df_category_concordance: str = None,
+    df_strand_ratio_category: pd.DataFrame,
+    df_category_consensus: pd.Series,
+    df_sorter_stats: pd.DataFrame,
+    df_category_concordance: pd.Series = None,
 ) -> pd.DataFrame:
     """
     Read the trimmer tags dataframe
@@ -810,6 +829,9 @@ def collect_statistics(
             store["trimmer_failure_codes"] = df_trimmer_failure_codes
             store["failure_codes_metrics"] = df_failure_codes_metrics
             keys_to_convert += ["trimmer_failure_codes", "failure_codes_metrics"]
+        # keys_to_convert is consumed by convert_h5_to_papyrus_json to decide which HDF keys
+        # to flatten into the shareable Papyrus JSON. Kept in the HDF for downstream tools
+        # that need the same list (analytics DB ingestion, etc.).
         store["keys_to_convert"] = pd.Series(keys_to_convert)
 
 
@@ -898,11 +920,12 @@ def plot_strand_ratio_category(
     ax : matplotlib.axes.Axes, optional
         axes to plot on, by default None (new figure created)
     sr_present : bool, optional
-        When True, drop the UNDETERMINED bar from the Start-tag axis — when sr is
-        available on every read the Trimmer --compare cascade only emits
-        MIXED / PLUS / MINUS, so UNDETERMINED on the start axis is by construction
-        empty and showing it is misleading. The end-tag axis still keeps UNDETERMINED
-        because et comes from base calling regardless of sr.
+        Pass True only when *every* read has sr (see :func:`all_reads_have_sr_tag`). When
+        that holds, the Trimmer --compare cascade only emits MIXED / PLUS / MINUS on the
+        start axis so UNDETERMINED is dropped from the Start-tag bars. If sr is only
+        partially present, pass False: some reads may legitimately still carry
+        st=UNDETERMINED and hiding their bar would be misleading. The end-tag axis keeps
+        UNDETERMINED regardless because et is base-called.
 
     Returns
     -------
@@ -998,9 +1021,10 @@ def plot_strand_ratio_category_concordnace(
     axs : matplotlib.axes.Axes, optional
         axes to plot on, by default None (new figure created)
     sr_present : bool, optional
-        When True, drop the UNDETERMINED row from the start-tag axis — see
-        plot_strand_ratio_category for rationale. The end-tag (column) axis still
-        keeps UNDETERMINED.
+        Pass True only when *every* read has sr (see :func:`all_reads_have_sr_tag`). When
+        that holds, the UNDETERMINED row on the start-tag axis is dropped — see
+        plot_strand_ratio_category for the full rationale. The end-tag (column) axis
+        keeps UNDETERMINED regardless.
 
     Returns
     -------
@@ -1018,7 +1042,10 @@ def plot_strand_ratio_category_concordnace(
     if axs is None:
         fig, axs = plt.subplots(2, 1, figsize=(10, 12))
         fig.subplots_adjust(hspace=0.7)
-    plt.suptitle(title)
+    # Assign title_handle up front so the savefig call below has a valid reference even
+    # if every subplot ends up empty (which would otherwise raise NameError).
+    suptitle_handle = plt.suptitle(title)
+    bbox_extras = [suptitle_handle]
     # Start-axis categories. UNDETERMINED is dropped when sr is present because the
     # sr-based cascade never emits UNDETERMINED on the start axis.
     start_categories = [v for v in ppmseq_category_list if v != PpmseqCategories.END_UNREACHED.value]
@@ -1056,7 +1083,7 @@ def plot_strand_ratio_category_concordnace(
         ax.grid(visible=False)
         plt.sca(ax)
         plt.xticks(rotation=20)
-        title_handle = ax.set_title(subtitle, fontsize=20)
+        bbox_extras.append(ax.set_title(subtitle, fontsize=20))
     if output_filename is not None:
         if not output_filename.endswith(".png"):
             output_filename += ".png"
@@ -1065,7 +1092,7 @@ def plot_strand_ratio_category_concordnace(
             facecolor="w",
             dpi=300,
             bbox_inches="tight",
-            bbox_extra_artists=[title_handle],
+            bbox_extra_artists=bbox_extras,
         )
     return axs
 
@@ -1159,9 +1186,11 @@ def plot_sr_by_et(
 ) -> plt.Figure:
     """
     Plot strand-ratio histograms faceted by the end-loop category, as a vertically stacked
-    4x1 grid (one panel per category: PLUS / MINUS / MIXED / UNDETERMINED). Values are a
-    percentage of reads within each panel. Restricted to reads whose read end was reached.
-    Reads with sr outside [0, 1] are clipped (np.clip-style) so they remain visible.
+    3x1 grid (one panel per category: MIXED / PLUS / MINUS). Values are a percentage of
+    reads within each panel. Restricted to reads whose read end was reached. UNDETERMINED
+    reads are excluded — at this point in the pipeline they're effectively never present
+    and leaving the panel in adds noise. Reads with sr outside [0, 1] are clipped
+    (np.clip-style) so they remain visible.
 
     Parameters
     ----------
@@ -1401,13 +1430,12 @@ def convert_h5_to_papyrus_json(h5_file: str, output_json: str) -> str:
         json.dump(new_json_dict, f, indent=2)
 
 
-def ppmseq_qc_analysis(  # noqa: PLR0913
+def ppmseq_qc_analysis(
     adapter_version: str | PpmseqAdapterVersions,
     subsampled_sam: str,
     output_path: str,
     output_basename: str = None,
     sorter_stats_csv: str = None,
-    sorter_stats_json: str = None,
     trimmer_failure_codes_csv: str = None,
     generate_report: bool = True,  # noqa: FBT001, FBT002
     keep_temp_visualization_files: bool = False,  # noqa: FBT001, FBT002
@@ -1417,10 +1445,15 @@ def ppmseq_qc_analysis(  # noqa: PLR0913
     """
     Run the ppmSeq QC analysis pipeline on the subsampled SAM produced by sorter.
 
+    All per-read QC (Sections 1, 3) is derived from the SAM. ``adapter_version`` is
+    validated but no longer branches any logic — all supported versions share the same
+    SAM-based path. It's retained in the signature because existing WDL callers still
+    pass it.
+
     Parameters
     ----------
     adapter_version : str | PpmseqAdapterVersions
-        adapter version.
+        adapter version; validated but no longer affects QC content.
     subsampled_sam : str
         Path to the sorter-produced subsampled sam, bam, or cram file (requires demux
         --sample-nr-reads=N). Pysam picks the format from the extension.
@@ -1429,11 +1462,7 @@ def ppmseq_qc_analysis(  # noqa: PLR0913
     output_basename : str, optional
         basename for output files; defaults to the SAM file basename.
     sorter_stats_csv : str, optional
-        path to a Sorter stats csv file.
-    sorter_stats_json : str, optional
-        accepted for backwards compat; currently unused (the sorter-reported read length
-        plot was removed because the per-read read-length plots in Section 3 are
-        authoritative for this report).
+        path to a Sorter stats csv file; whitelisted metrics land in Section 3 of the report.
     trimmer_failure_codes_csv : str, optional
         path to a Trimmer failure codes csv file. If provided, failure-rate metrics are added.
     generate_report : bool, optional
@@ -1447,7 +1476,6 @@ def ppmseq_qc_analysis(  # noqa: PLR0913
         ``{"version": "1.2.3.4"}``). Rendered as a small table between the sample
         header and the table of contents.
     """
-    del sorter_stats_json  # retained in signature for backwards compat; no longer rendered
     _assert_adapter_version_supported(adapter_version)
     if not os.path.isfile(subsampled_sam):
         raise FileNotFoundError(f"{subsampled_sam} not found")
@@ -1486,23 +1514,30 @@ def ppmseq_qc_analysis(  # noqa: PLR0913
 
     df_reads = pd.read_hdf(output_statistics_h5, "subsampled_reads")
     convert_h5_to_papyrus_json(output_statistics_h5, output_statistics_json)
-    sr_present = has_sr_tag(df_reads)
+    # Two different semantics here:
+    # - any_sr governs whether to generate the sr-only figures (3/4) at all.
+    # - all_sr governs whether it is safe to suppress the UNDETERMINED start-axis bar/row
+    #   in the category + concordance plots. We only do that when every read has sr —
+    #   otherwise some reads could legitimately still have st=UNDETERMINED and we'd hide
+    #   real data.
+    any_sr = has_sr_tag(df_reads)
+    all_sr = all_reads_have_sr_tag(df_reads)
 
     plot_strand_ratio_category(
         adapter_version,
         df_reads,
         title=f"{output_basename} strand ratio category",
         output_filename=output_strand_ratio_category_plot,
-        sr_present=sr_present,
+        sr_present=all_sr,
     )
     plot_strand_ratio_category_concordnace(
         adapter_version,
         df_reads,
         title=f"{output_basename} strand ratio category concordance",
         output_filename=output_strand_ratio_category_concordance_plot,
-        sr_present=sr_present,
+        sr_present=all_sr,
     )
-    if sr_present:
+    if any_sr:
         plot_sr_histogram(
             df_reads,
             title=f"{output_basename} strand ratio",
@@ -1539,8 +1574,8 @@ def ppmseq_qc_analysis(  # noqa: PLR0913
             "strand_ratio_category_concordance_png": output_strand_ratio_category_concordance_plot,
             # When sr is absent the sr-dependent sections (1.4 and 1.5) are dropped from the
             # report. Passing None here signals the notebook to skip them.
-            "sr_hist_png": output_sr_hist_plot if sr_present else None,
-            "sr_by_et_png": output_sr_by_et_plot if sr_present else None,
+            "sr_hist_png": output_sr_hist_plot if any_sr else None,
+            "sr_by_et_png": output_sr_by_et_plot if any_sr else None,
             "read_length_png": output_read_length_plot,
             "read_length_by_st_png": output_read_length_by_st_plot,
             "logo_file": str(logo_path),

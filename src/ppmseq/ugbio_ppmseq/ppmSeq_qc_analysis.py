@@ -50,13 +50,7 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         "--sorter-stats-csv",
         type=str,
         required=False,
-        help="Sorter stats csv file (optional; merged into the main stats shortlist)",
-    )
-    parser.add_argument(
-        "--sorter-stats-json",
-        type=str,
-        required=False,
-        help="Sorter stats json file (optional; enables the read-length histogram in the report)",
+        help="Sorter stats csv file (optional; selected metrics land in Section 3 of the report)",
     )
     parser.add_argument(
         "--output-path",
@@ -71,18 +65,10 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         help="Basename for output files",
     )
     parser.add_argument(
-        "--input-material-ng",
-        type=float,
-        required=False,
-        default=None,
-        help="Optional - input material in ng, will be included in statistics and report",
-    )
-    parser.add_argument(
         "--generate-report",
-        type=bool,
-        required=False,
+        action=argparse.BooleanOptionalAction,
         default=True,
-        help="Generate an html + jupyter report",
+        help=("Generate an html + jupyter report (default: --generate-report). " "Use --no-generate-report to skip."),
     )
     parser.add_argument(
         "--extra-arg",
@@ -119,7 +105,6 @@ def run(argv):
         adapter_version=args_in.adapter_version,
         subsampled_sam=args_in.subsampled_sam,
         sorter_stats_csv=args_in.sorter_stats_csv,
-        sorter_stats_json=args_in.sorter_stats_json,
         trimmer_failure_codes_csv=args_in.trimmer_failure_codes_csv,
         output_path=args_in.output_path,
         output_basename=args_in.output_basename,

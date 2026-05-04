@@ -17,6 +17,7 @@ from ugbio_ppmseq.ppmSeq_utils import (
     PpmseqCategories,
     PpmseqStrandVcfAnnotator,
     add_strand_ratios_and_categories_to_featuremap,
+    all_reads_have_sr_tag,
     collect_statistics,
     get_strand_ratio_category_concordance,
     group_trimmer_histogram_by_strand_ratio_category,
@@ -111,6 +112,20 @@ def test_has_sr_tag_true_on_full_fixture():
     assert has_sr_tag(df_reads)
 
 
+def test_has_sr_tag_vs_all_reads_have_sr_tag():
+    """has_sr_tag == any; all_reads_have_sr_tag == every. A partially-populated sr column
+    must return True for the former and False for the latter — that's the whole point of
+    splitting the two booleans."""
+    df_full = read_tags_from_subsampled_sam(str(subsampled_sam))
+    df_none = read_tags_from_subsampled_sam(str(subsampled_sam_no_sr))
+    # Build a partial dataframe by zeroing sr on one row.
+    df_partial = df_full.copy()
+    df_partial.loc[df_partial.index[0], SR_TAG] = float("nan")
+    assert has_sr_tag(df_full) and all_reads_have_sr_tag(df_full)
+    assert not has_sr_tag(df_none) and not all_reads_have_sr_tag(df_none)
+    assert has_sr_tag(df_partial) and not all_reads_have_sr_tag(df_partial)
+
+
 def test_read_tags_drops_unmatched_reads(tmp_path):
     """Reads with RG=unmatched (Trimmer failures routed to the unmatched read group) must
     be filtered out before any QC is computed. They never received ppmSeq tag calls so
@@ -145,7 +160,9 @@ def test_read_tags_raises_on_missing_st_tag(tmp_path):
     )
     sam_file = tmp_path / "bad.sam"
     sam_file.write_text(sam_content)
-    with pytest.raises(KeyError):
+    # Pin the error to the st tag specifically so a future pysam change that swaps error
+    # text to e.g. "sr" doesn't silently let this test keep passing.
+    with pytest.raises(KeyError, match="st"):
         read_tags_from_subsampled_sam(str(sam_file))
 
 

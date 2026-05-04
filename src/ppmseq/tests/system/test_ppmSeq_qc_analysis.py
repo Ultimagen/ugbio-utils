@@ -17,7 +17,8 @@ def subsampled_sam(resources_dir):
 
 @pytest.mark.parametrize("adapter_version", ["v1", "legacy_v5"])
 def test_ppmseq_qc_analysis_runs(tmp_path, subsampled_sam, adapter_version):
-    """Smoke-test the SAM-only happy path across every supported adapter version."""
+    """Smoke-test the SAM-only happy path across every supported adapter version, with
+    report generation disabled (skips the jupyter execution path so this is pure-Python)."""
     ppmSeq_qc_analysis.run(
         [
             "ppmSeq_qc_analysis",
@@ -29,8 +30,7 @@ def test_ppmseq_qc_analysis_runs(tmp_path, subsampled_sam, adapter_version):
             str(tmp_path),
             "--output-basename",
             f"ppmseq_sr_tag_{adapter_version}",
-            "--generate-report",
-            "",
+            "--no-generate-report",
         ]
     )
     h5 = tmp_path / f"ppmseq_sr_tag_{adapter_version}.ppmSeq.applicationQC.h5"
@@ -120,5 +120,6 @@ def test_ppmseq_qc_analysis_with_sorter_csv(tmp_path, resources_dir, subsampled_
     assert html.exists()
     # The --extra-arg key/value should appear in the rendered report body.
     html_text = html.read_text()
-    assert "version" in html_text
+    # The raw string "version" is a generic word that can appear incidentally in any HTML
+    # file, so assert only on the uniquely-identifying value.
     assert "1.2.3.4" in html_text
