@@ -95,7 +95,7 @@ def test_ppmseq_qc_analysis_no_sr(tmp_path, resources_dir):
 def test_ppmseq_qc_analysis_with_sorter_csv(tmp_path, resources_dir, subsampled_sam):
     """End-to-end run with sorter stats + failure codes + a free-form --extra-arg
     surfaced in the report header."""
-    sorter_csv = resources_dir / "130713-UGAv3-51.sorter_stats.csv"
+    sorter_csv = resources_dir / "ppmseq_sr_tag" / "Z0263_sorter_stats.csv"
     trimmer_failure_codes = resources_dir / "412884-L6860-Z0293-CATGTGAGCGGTGAT_trimmer-failure_codes.csv"
     ppmSeq_qc_analysis.run(
         [

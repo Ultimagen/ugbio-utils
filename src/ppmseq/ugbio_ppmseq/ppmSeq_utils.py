@@ -13,7 +13,6 @@ import pysam
 import seaborn as sns
 from ugbio_core.plotting_utils import set_pyplot_defaults
 from ugbio_core.reports.report_utils import generate_report as generate_report_func
-from ugbio_core.sorter_utils import read_and_parse_sorter_statistics_csv
 from ugbio_core.trimmer_utils import (
     read_trimmer_failure_codes,
 )
@@ -75,6 +74,22 @@ SR_TAG = "sr"  # strand ratio (float, from raw signal)
 ST_TAG = "st"  # start-loop category (MINUS / PLUS / MIXED / UNDETERMINED)
 ET_TAG = "et"  # end-loop category
 TM_TAG = "tm"  # trimming reasons; contains "A" when the adapter was seen (end reached)
+
+# Subset of sorter-stats metrics to surface in the report's Table 4 "Sorter stats" section.
+# The raw CSV has ~40 rows; Ken asked for just the ones below. Missing keys are silently
+# skipped so older sorter versions / partial CSVs still work.
+SORTER_STATS_KEYS_TO_SHOW = (
+    "PF_Barcode_reads",
+    "PCT_PF_Reads_aligned",
+    "PCT_PF_Q30_bases",
+    "PCT_SOFTCLIPPED_bases",
+    "Mean_Read_Length",
+    "Mean_cvg",
+    "PCT_Quality_Trimmed_Reads",
+    "PCT_Adapter_Reached",
+    "PCT_Chimeras",
+    "Indel_Rate",
+)
 
 # Input parameter defaults for the legacy featuremap annotator path
 STRAND_RATIO_LOWER_THRESH = 0.27
@@ -336,6 +351,17 @@ def read_tags_from_subsampled_sam(
     for_sr_nan = float("nan")
     with pysam.AlignmentFile(sam_path, check_sq=False) as fh:
         for rec in fh:
+            # Skip reads that Trimmer couldn't match. Sorter tags them with RG="unmatched"
+            # (configurable via TrimmerParameters.failure_read_group, but "unmatched" is the
+            # standard value used by our WDL templates). These reads never received ppmSeq
+            # tag calls so including them would either raise KeyError on st or skew Section 1
+            # denominators; they're accounted for separately in the Trimmer failure-codes
+            # section.
+            try:
+                if rec.get_tag("RG") == "unmatched":
+                    continue
+            except KeyError:
+                pass
             st = rec.get_tag(ST_TAG)  # KeyError if absent — st is required
             try:
                 sr = float(rec.get_tag(SR_TAG))
@@ -724,7 +750,21 @@ def collect_statistics(
     df_category_concordance, _, df_category_consensus = get_strand_ratio_category_concordance(adapter_version, df_reads)
 
     if sorter_stats_csv:
-        sorter_stats = read_and_parse_sorter_statistics_csv(sorter_stats_csv)
+        # Read the raw two-column CSV directly instead of going through
+        # read_and_parse_sorter_statistics_csv, which silently filters to a fixed set of
+        # ~7 metrics and would drop several of the rows we want to show
+        # (e.g. PCT_SOFTCLIPPED_bases, PCT_Adapter_Reached).
+        raw = pd.read_csv(sorter_stats_csv, header=None, names=["metric", "value"])
+        raw = raw.dropna(subset=["metric"]).set_index("metric")["value"]
+        # Coerce to float; any value that fails (e.g. F80@30x's "(1.43)" strings) becomes NaN
+        # and is then dropped — we only care about the numeric allow-listed keys.
+        raw = pd.to_numeric(raw, errors="coerce").dropna()
+        # Keep only the allow-listed keys, silently drop anything else. Preserve the
+        # canonical order so the report table reads top-to-bottom in the expected layout.
+        present = [k for k in SORTER_STATS_KEYS_TO_SHOW if k in raw.index]
+        sorter_stats = raw.reindex(present)
+        sorter_stats.name = "value"
+        sorter_stats.index.name = "metric"
     else:
         sorter_stats = pd.Series(dtype=float, name="value")
         sorter_stats.index.name = "metric"

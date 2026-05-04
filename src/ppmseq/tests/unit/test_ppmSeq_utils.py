@@ -9,6 +9,7 @@ import pysam
 import pytest
 from ugbio_ppmseq.ppmSeq_utils import (
     ET_TAG,
+    SORTER_STATS_KEYS_TO_SHOW,
     SR_TAG,
     ST_TAG,
     TM_TAG,
@@ -41,7 +42,7 @@ expected_output_featuremap_legacy_v5 = (
 trimmer_failure_codes_csv_ppmseq_v1_incl_failed_rsq = (
     inputs_dir / "412884-L6860-Z0293-CATGTGAGCGGTGAT_trimmer-failure_codes.csv"
 )
-sorter_stats_csv_legacy_v5 = inputs_dir / "130713-UGAv3-51.sorter_stats.csv"
+sorter_stats_csv = inputs_dir / "ppmseq_sr_tag" / "Z0263_sorter_stats.csv"
 
 
 def _compare_vcfs(vcf_file1, vcf_file2):
@@ -108,6 +109,27 @@ def test_read_tags_from_subsampled_sam_no_sr():
 def test_has_sr_tag_true_on_full_fixture():
     df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
     assert has_sr_tag(df_reads)
+
+
+def test_read_tags_drops_unmatched_reads(tmp_path):
+    """Reads with RG=unmatched (Trimmer failures routed to the unmatched read group) must
+    be filtered out before any QC is computed. They never received ppmSeq tag calls so
+    leaving them in would either raise KeyError on st or skew Section 1 denominators."""
+    sam_content = (
+        "@HD\tVN:1.6\n"
+        "@SQ\tSN:chr1\tLN:100\n"
+        "@RG\tID:Z0263\n"
+        "@RG\tID:unmatched\n"
+        # Matched read with full tags.
+        "r1\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:Z0263\tsr:f:0.5\tst:Z:MIXED\n"
+        # Unmatched read — no ppmSeq tags. Must be skipped, not raise KeyError on st.
+        "r2\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:unmatched\n"
+    )
+    sam_file = tmp_path / "mixed.sam"
+    sam_file.write_text(sam_content)
+    df_reads = read_tags_from_subsampled_sam(str(sam_file))
+    assert len(df_reads) == 1
+    assert df_reads.iloc[0][ST_TAG] == "MIXED"
 
 
 def test_read_tags_raises_on_missing_st_tag(tmp_path):
@@ -282,12 +304,13 @@ def test_collect_statistics(tmp_path):
 
 def test_collect_statistics_with_sorter_stats(tmp_path):
     """Sorter stats must be stored under /sorter_stats but must NOT be concat'd into
-    /stats_shortlist — the report shows them in a dedicated section."""
+    /stats_shortlist — the report shows them in a dedicated section. Only the allow-listed
+    keys from SORTER_STATS_KEYS_TO_SHOW should appear, in that order."""
     out = tmp_path / "stats_with_sorter.h5"
     collect_statistics(
         PpmseqAdapterVersions.V1,
         subsampled_sam=str(subsampled_sam),
-        sorter_stats_csv=str(sorter_stats_csv_legacy_v5),
+        sorter_stats_csv=str(sorter_stats_csv),
         output_filename=str(out),
     )
     with pd.HDFStore(str(out)) as store:
@@ -301,6 +324,13 @@ def test_collect_statistics_with_sorter_stats(tmp_path):
         assert (
             sorter_metric not in shortlist_indices
         ), f"sorter metric {sorter_metric!r} should not appear in stats_shortlist"
+    # All rows in sorter_stats are whitelisted keys; any row that isn't in the allow-list
+    # must have been dropped.
+    assert set(sorter_stats.index).issubset(set(SORTER_STATS_KEYS_TO_SHOW))
+    # Rows appear in the order defined in SORTER_STATS_KEYS_TO_SHOW (filtered to those
+    # present in the CSV).
+    expected_order = [k for k in SORTER_STATS_KEYS_TO_SHOW if k in sorter_stats.index]
+    assert list(sorter_stats.index) == expected_order
 
 
 def test_ppmseq_qc_analysis(tmp_path):
