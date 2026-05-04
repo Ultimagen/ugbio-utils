@@ -2,6 +2,7 @@ import pickle
 from os.path import join as pjoin
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import pysam
@@ -170,6 +171,70 @@ def test_plot_strand_ratio_category(tmp_path):
         output_filename=str(tmp_path / "cat.png"),
     )
     assert (tmp_path / "cat.png").exists()
+
+
+def _category_bar_xticks(ax):
+    """Return the x-axis tick labels actually rendered on a seaborn barplot."""
+    return [t.get_text() for t in ax.get_xticklabels()]
+
+
+def test_plot_strand_ratio_category_sr_present_drops_start_undetermined(tmp_path):
+    """When sr is known to be present on every read, the sr cascade only emits
+    MIXED/PLUS/MINUS on the start axis, so the start bars for UNDETERMINED should
+    be suppressed. We force a row into the fixture where st=UNDETERMINED and
+    verify the `sr_present=True` plot drops it."""
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
+    # Inject a visible UNDETERMINED start row so the suppression is observable.
+    df_reads.loc[df_reads.index[0], "strand_ratio_category_start"] = PpmseqCategories.UNDETERMINED.value
+
+    fig, (ax_off, ax_on) = plt.subplots(2, 1, figsize=(12, 6))
+    plot_strand_ratio_category(PpmseqAdapterVersions.V1, df_reads, ax=ax_off, sr_present=False)
+    plot_strand_ratio_category(PpmseqAdapterVersions.V1, df_reads, ax=ax_on, sr_present=True)
+    fig.savefig(tmp_path / "cat_sr.png")
+
+    # sr_present=False: UNDETERMINED still appears somewhere in the rendered bars.
+    # sr_present=True: the Start-tag series for UNDETERMINED is masked, so seaborn only
+    # draws the end-tag bar on the UNDETERMINED slot. We inspect each hue container directly.
+    def _find_container(ax, hue_substring):
+        legend = ax.get_legend()
+        texts = [t.get_text() for t in legend.get_texts()] if legend is not None else []
+        for cont, lbl in zip(ax.containers, texts, strict=False):
+            if hue_substring.lower() in lbl.lower():
+                return cont
+        return None
+
+    start_off = _find_container(ax_off, "Start")
+    start_on = _find_container(ax_on, "Start")
+    assert start_off is not None and start_on is not None
+    # When sr is not claimed to be present, UNDETERMINED on start should be one bar
+    # (possibly small but > 0 since we injected one row above).
+    assert len(start_off) > len(start_on), (
+        f"sr_present=True should drop at least one start-tag bar " f"(got {len(start_off)} off vs {len(start_on)} on)"
+    )
+
+
+def test_plot_strand_ratio_category_concordance_sr_present_drops_start_undetermined(tmp_path):
+    """Same idea for the concordance heatmap: the start-axis (row index) UNDETERMINED
+    row is dropped when sr_present=True, while the end-axis (column index) keeps it."""
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
+    # Make sure at least one read has st=UNDETERMINED so the base plot actually has a row
+    # to drop.
+    df_reads.loc[df_reads.index[0], "strand_ratio_category_start"] = PpmseqCategories.UNDETERMINED.value
+
+    fig, (ax_off_a, ax_off_b, ax_on_a, ax_on_b) = plt.subplots(4, 1, figsize=(10, 20))
+    plot_strand_ratio_category_concordnace(
+        PpmseqAdapterVersions.V1, df_reads, axs=[ax_off_a, ax_off_b], sr_present=False
+    )
+    plot_strand_ratio_category_concordnace(PpmseqAdapterVersions.V1, df_reads, axs=[ax_on_a, ax_on_b], sr_present=True)
+    fig.savefig(tmp_path / "concord_sr.png")
+    # Each heatmap axes has y-tick labels that are the row categories.
+    off_rows = [t.get_text() for t in ax_off_a.get_yticklabels()]
+    on_rows = [t.get_text() for t in ax_on_a.get_yticklabels()]
+    assert PpmseqCategories.UNDETERMINED.value in off_rows
+    assert PpmseqCategories.UNDETERMINED.value not in on_rows
+    # Columns (end-tag axis) still include UNDETERMINED regardless.
+    on_cols = [t.get_text() for t in ax_on_a.get_xticklabels()]
+    assert PpmseqCategories.UNDETERMINED.value in on_cols
 
 
 def test_plot_read_length_overall(tmp_path):

@@ -839,6 +839,8 @@ def plot_strand_ratio_category(
     title: str = "",
     output_filename: str = None,
     ax: plt.Axes = None,
+    *,
+    sr_present: bool = False,
 ) -> plt.Axes:
     """
     Plot the strand ratio category histogram
@@ -855,6 +857,12 @@ def plot_strand_ratio_category(
         path to save the plot to, by default None (not saved)
     ax : matplotlib.axes.Axes, optional
         axes to plot on, by default None (new figure created)
+    sr_present : bool, optional
+        When True, drop the UNDETERMINED bar from the Start-tag axis — when sr is
+        available on every read the Trimmer --compare cascade only emits
+        MIXED / PLUS / MINUS, so UNDETERMINED on the start axis is by construction
+        empty and showing it is misleading. The end-tag axis still keeps UNDETERMINED
+        because et comes from base calling regardless of sr.
 
     Returns
     -------
@@ -886,11 +894,15 @@ def plot_strand_ratio_category(
             }
         )
     )
-    df_plot = (
-        (df_trimmer_histogram_by_strand_ratio_category / df_trimmer_histogram_by_strand_ratio_category.sum())
-        .reset_index()
-        .melt(id_vars="index", var_name="")
-    )
+    normalized = df_trimmer_histogram_by_strand_ratio_category / df_trimmer_histogram_by_strand_ratio_category.sum()
+    if sr_present:
+        # Zero out UNDETERMINED on the Start-tag column only (if present); leave the End-tag
+        # column untouched because et can still be UNDETERMINED when sr is present.
+        start_col = "Start tag strand ratio category"
+        undetermined = PpmseqCategories.UNDETERMINED.value
+        if start_col in normalized.columns and undetermined in normalized.index:
+            normalized.loc[undetermined, start_col] = float("nan")
+    df_plot = normalized.reset_index().melt(id_vars="index", var_name="").dropna(subset=["value"])
     # plot
     sns.barplot(
         data=df_plot,
@@ -927,6 +939,8 @@ def plot_strand_ratio_category_concordnace(
     title: str = "",
     output_filename: str = None,
     axs: list[plt.Axes] = None,
+    *,
+    sr_present: bool = False,
 ) -> list[plt.Axes]:
     """
     Plot the strand ratio category concordance heatmap
@@ -943,6 +957,10 @@ def plot_strand_ratio_category_concordnace(
         path to save the plot to, by default None (not saved)
     axs : matplotlib.axes.Axes, optional
         axes to plot on, by default None (new figure created)
+    sr_present : bool, optional
+        When True, drop the UNDETERMINED row from the start-tag axis — see
+        plot_strand_ratio_category for rationale. The end-tag (column) axis still
+        keeps UNDETERMINED.
 
     Returns
     -------
@@ -961,6 +979,11 @@ def plot_strand_ratio_category_concordnace(
         fig, axs = plt.subplots(2, 1, figsize=(10, 12))
         fig.subplots_adjust(hspace=0.7)
     plt.suptitle(title)
+    # Start-axis categories. UNDETERMINED is dropped when sr is present because the
+    # sr-based cascade never emits UNDETERMINED on the start axis.
+    start_categories = [v for v in ppmseq_category_list if v != PpmseqCategories.END_UNREACHED.value]
+    if sr_present:
+        start_categories = [v for v in start_categories if v != PpmseqCategories.UNDETERMINED.value]
     # plot
     for ax, subtitle, df_plot in zip(
         axs,
@@ -970,7 +993,7 @@ def plot_strand_ratio_category_concordnace(
     ):
         df_plot = df_plot.to_frame().unstack().droplevel(0, axis=1)  # noqa: PD010, PLW2901
         df_plot = df_plot.loc[  # noqa: PLW2901
-            [v for v in ppmseq_category_list if v != PpmseqCategories.END_UNREACHED.value],
+            [v for v in start_categories if v in df_plot.index],
             [v for v in ppmseq_category_list if v in df_plot.columns],
         ].fillna(0)
         df_plot.index.name = "Start tag category"
@@ -1427,12 +1450,14 @@ def ppmseq_qc_analysis(  # noqa: PLR0913
         df_reads,
         title=f"{output_basename} strand ratio category",
         output_filename=output_strand_ratio_category_plot,
+        sr_present=sr_present,
     )
     plot_strand_ratio_category_concordnace(
         adapter_version,
         df_reads,
         title=f"{output_basename} strand ratio category concordance",
         output_filename=output_strand_ratio_category_concordance_plot,
+        sr_present=sr_present,
     )
     if sr_present:
         plot_sr_histogram(
