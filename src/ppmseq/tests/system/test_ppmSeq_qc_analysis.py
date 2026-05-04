@@ -15,7 +15,7 @@ def subsampled_sam(resources_dir):
     return resources_dir / "ppmseq_sr_tag" / "Z0263_sample.sam.gz"
 
 
-@pytest.mark.parametrize("adapter_version", ["v1", "legacy_v5", "Solaris_1", "Solaris_2"])
+@pytest.mark.parametrize("adapter_version", ["v1", "legacy_v5"])
 def test_ppmseq_qc_analysis_runs(tmp_path, subsampled_sam, adapter_version):
     """Smoke-test the SAM-only happy path across every supported adapter version."""
     ppmSeq_qc_analysis.run(

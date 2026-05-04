@@ -25,11 +25,7 @@ from ugbio_ppmseq.ppmSeq_consts import STRAND_RATIO_AXIS_LABEL
 # Supported adapter versions
 class PpmseqAdapterVersions(Enum):
     LEGACY_V5 = "legacy_v5"
-    # Solaris-1 and Solaris-2 are the current chemistries; `v1` is a backwards-compat alias
-    # for Solaris-1 callers that still pass "v1" to the CLI.
     V1 = "v1"
-    SOLARIS_1 = "Solaris_1"
-    SOLARIS_2 = "Solaris_2"
 
 
 # Trimmer segment labels and tags
@@ -223,7 +219,7 @@ class PpmseqStrandVcfAnnotator(VcfAnnotator):
                         self.sr_lower,
                         self.sr_upper,
                     )  # this works for nan values as well - returns UNDETERMINED
-            else:  # v1 / Solaris_1 / Solaris_2 — st/et tags already carry the category
+            else:  # v1 — st/et tags already carry the category
                 record.info[HistogramColumnNames.ST.value] = record.info.get(
                     HistogramColumnNames.ST.value, PpmseqCategories.UNDETERMINED.value
                 )
@@ -582,7 +578,10 @@ def read_trimmer_tags_dataframe(
                     PpmseqCategories.PLUS.value,
                 )
             },
-            undetermined: f"PCT_{undetermined}_either_tag",
+            # Keep the previous name for the consensus Series but expose it to the
+            # shortlist as PCT_UNDETERMINED_end_tag (reviewer asked for the more
+            # accurate name).
+            undetermined: "PCT_UNDETERMINED_end_tag",
             PpmseqCategoriesConsensus.DISCORDANT.value: f"PCT_{PpmseqCategoriesConsensus.DISCORDANT.value}",
         }
     )
@@ -613,6 +612,13 @@ def read_trimmer_tags_dataframe(
         index=["value"],
     ).T["value"]
     df_tags = pd.concat((df_mixed_cov, df_tags))
+
+    # Drop noise metrics from the headline table at the top of the report — kenissur
+    # asked for these two to be removed from the shortlist. They stay available via the
+    # /strand_ratio_category_consensus HDF5 key for downstream tooling / Papyrus.
+    for drop_metric in ("PCT_UNDETERMINED_end_tag", "PCT_DISCORDANT"):
+        if drop_metric in df_tags.index:
+            df_tags = df_tags.drop(drop_metric)
 
     df_tags.index.name = "metric"
     return df_tags
@@ -1440,15 +1446,11 @@ def ppmseq_qc_analysis(  # noqa: PLR0913
     if generate_report:
         template_notebook = BASE_PATH / REPORTS_DIR / "ppmSeq_qc_report.ipynb"
         adapter_value = adapter_version if isinstance(adapter_version, str) else adapter_version.value
-        illustration_name = (
-            "ppmSeq_legacy_v5_illustration.png"
-            if adapter_value == PpmseqAdapterVersions.LEGACY_V5.value
-            else "ppmSeq_v1_illustration.png"
-        )
-        illustration_path = BASE_PATH / REPORTS_DIR / illustration_name
         logo_path = BASE_PATH / REPORTS_DIR / "ug_logo.b64"
         parameters = {
             "sample_name": output_basename,
+            # The notebook still validates that adapter_version is supported so we keep
+            # passing it through, but the report itself never displays it.
             "adapter_version": adapter_value,
             "statistics_h5": output_statistics_h5,
             "strand_ratio_category_png": output_strand_ratio_category_plot,
@@ -1457,7 +1459,6 @@ def ppmseq_qc_analysis(  # noqa: PLR0913
             "sr_by_et_png": output_sr_by_et_plot,
             "read_length_png": output_read_length_plot,
             "read_length_by_st_png": output_read_length_by_st_plot,
-            "illustration_file": str(illustration_path),
             "logo_file": str(logo_path),
             "trimmer_failure_codes_csv": trimmer_failure_codes_csv,
             "sorter_stats_csv": sorter_stats_csv,
