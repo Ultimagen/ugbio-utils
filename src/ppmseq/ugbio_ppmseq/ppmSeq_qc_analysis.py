@@ -13,17 +13,11 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 # DESCRIPTION
-#    Converts featuremap VCF-like file to dataframe
-# CHANGELOG in reverse chronological order
+#    Run the ppmSeq QC analysis pipeline on the subsampled SAM / BAM / CRAM produced by sorter.
 import argparse
 import sys
 
 from ugbio_ppmseq.ppmSeq_utils import (
-    MAX_TOTAL_HMER_LENGTHS_IN_LOOPS,
-    MIN_STEM_END_MATCHED_LENGTH,
-    MIN_TOTAL_HMER_LENGTHS_IN_LOOPS,
-    STRAND_RATIO_LOWER_THRESH,
-    STRAND_RATIO_UPPER_THRESH,
     ppmseq_qc_analysis,
     supported_adapter_versions,
 )
@@ -37,100 +31,70 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         help="Library adapter version",
     )
     parser.add_argument(
-        "--trimmer-histogram-csv",
+        "--subsampled-sam",
         type=str,
         required=True,
-        nargs="+",
-        help="path to a ppmSeq Trimmer histogram file",
-    )
-    parser.add_argument(
-        "--trimmer-histogram-extra-csv",
-        type=str,
-        required=False,
-        nargs="+",
-        help="path to a an extra ppmSeq Trimmer histogram file that is used in some cases",
+        help=(
+            "Path to the subsampled reads file emitted by sorter (requires demux "
+            "--sample-nr-reads=N). Accepts .sam / .sam.gz / .bam / .cram — pysam detects "
+            "the format from the file extension."
+        ),
     )
     parser.add_argument(
         "--trimmer-failure-codes-csv",
         type=str,
         required=False,
-        help="Trimmer failure codes csv file",
+        help="Trimmer failure codes csv file (optional; enables failure-rate metrics in the report)",
     )
     parser.add_argument(
         "--sorter-stats-csv",
         type=str,
-        help="path to a Sorter stats csv file",
-    )
-    parser.add_argument(
-        "--sorter-stats-json",
-        type=str,
         required=False,
-        help="path to a Sorter stats json file",
+        help="Sorter stats csv file (optional; selected metrics land in Section 3 of the report)",
     )
     parser.add_argument(
         "--output-path",
         type=str,
         default=None,
-        help="path (folder) to which data and report will be written to",
+        help="Path (folder) to which data and report will be written",
     )
     parser.add_argument(
         "--output-basename",
         type=str,
         default=None,
-        help="basename for output files",
-    )
-    parser.add_argument(
-        "--input-material-ng",
-        type=float,
-        required=False,
-        default=None,
-        help="Optional - input material in ng, will be included in statistics and report",
-    )
-    parser.add_argument(
-        "--sr-lower",
-        type=float,
-        default=STRAND_RATIO_LOWER_THRESH,
-        help="lower strand ratio threshold for determining strand ratio category",
-    )
-    parser.add_argument(
-        "--sr-upper",
-        type=float,
-        default=STRAND_RATIO_UPPER_THRESH,
-        help="upper strand ratio threshold for determining strand ratio category",
-    )
-    parser.add_argument(
-        "--min-tot-hmer",
-        type=int,
-        default=MIN_TOTAL_HMER_LENGTHS_IN_LOOPS,
-        help="minimum total hmer lengths in tags for determining strand ratio category",
-    )
-    parser.add_argument(
-        "--max-tot-hmer",
-        type=int,
-        default=MAX_TOTAL_HMER_LENGTHS_IN_LOOPS,
-        help="maximum total hmer lengths in tags for determining strand ratio category",
-    )
-    parser.add_argument(
-        "--min-stem-length",
-        type=int,
-        default=MIN_STEM_END_MATCHED_LENGTH,
-        help="minimum length of stem end matched to determine the read end was reached",
+        help="Basename for output files",
     )
     parser.add_argument(
         "--generate-report",
-        type=bool,
-        required=False,
+        action=argparse.BooleanOptionalAction,
         default=True,
-        help="""generate an html + jupyter report""",
+        help=("Generate an html + jupyter report (default: --generate-report). " "Use --no-generate-report to skip."),
     )
     parser.add_argument(
-        "--legacy-histogram-column-names",
-        required=False,
-        default=False,
-        action="store_true",
-        help="""use legacy histogram column names without suffixes""",
+        "--extra-arg",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help=(
+            "Free-form KEY=VALUE pair to surface at the top of the HTML report (e.g. "
+            "'--extra-arg version=1.2.3.4'). May be given multiple times."
+        ),
     )
     return parser.parse_args(argv[1:])
+
+
+def _parse_extra_args(items: list[str]) -> dict[str, str]:
+    """Parse ``KEY=VALUE`` strings from ``--extra-arg`` into a dict."""
+    out: dict[str, str] = {}
+    for item in items:
+        if "=" not in item:
+            raise ValueError(f"--extra-arg expects KEY=VALUE, got {item!r}")
+        key, _, value = item.partition("=")
+        key = key.strip()
+        if not key:
+            raise ValueError(f"--extra-arg KEY cannot be empty: {item!r}")
+        out[key] = value.strip()
+    return out
 
 
 def run(argv):
@@ -139,20 +103,13 @@ def run(argv):
 
     ppmseq_qc_analysis(
         adapter_version=args_in.adapter_version,
-        trimmer_histogram_csv=args_in.trimmer_histogram_csv,
-        trimmer_histogram_extra_csv=args_in.trimmer_histogram_extra_csv,
-        trimmer_failure_codes_csv=args_in.trimmer_failure_codes_csv,
+        subsampled_sam=args_in.subsampled_sam,
         sorter_stats_csv=args_in.sorter_stats_csv,
-        sorter_stats_json=args_in.sorter_stats_json,
+        trimmer_failure_codes_csv=args_in.trimmer_failure_codes_csv,
         output_path=args_in.output_path,
         output_basename=args_in.output_basename,
         generate_report=args_in.generate_report,
-        sr_lower=args_in.sr_lower,
-        sr_upper=args_in.sr_upper,
-        min_total_hmer_lengths_in_tags=args_in.min_tot_hmer,
-        max_total_hmer_lengths_in_tags=args_in.max_tot_hmer,
-        min_stem_end_matched_length=args_in.min_stem_length,
-        legacy_histogram_column_names=args_in.legacy_histogram_column_names,
+        extra_info=_parse_extra_args(args_in.extra_arg),
     )
 
 

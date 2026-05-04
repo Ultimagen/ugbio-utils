@@ -17,4 +17,4 @@ class HistogramColumnNames(Enum):
 
 
 # Display defaults
-STRAND_RATIO_AXIS_LABEL = "MINUS strand ratio"
+STRAND_RATIO_AXIS_LABEL = "Strand Ratio"
