@@ -316,7 +316,8 @@ def read_tags_from_subsampled_sam(
     -------
     pd.DataFrame
         One row per read with columns:
-          - ``sr`` (float): strand ratio from raw signal.
+          - ``sr`` (float): strand ratio from raw signal. NaN on reads whose sr tag is
+            absent; the report's sr-dependent sections are skipped when every read lacks it.
           - ``st`` (str): start-loop category (MINUS / PLUS / MIXED / UNDETERMINED).
           - ``et`` (str): end-loop category; empty string when the ``et`` tag is absent.
           - ``tm`` (str): trimming-reason string (e.g. ``A``, ``AQZ``). Empty string when
@@ -328,15 +329,21 @@ def read_tags_from_subsampled_sam(
     Raises
     ------
     KeyError
-        If any read is missing the ``sr`` or ``st`` tag. These are required on every
-        ppmSeq read produced by the current pipeline; a missing tag is a fixture/pipeline
-        bug rather than a normal case.
+        If any read is missing the ``st`` tag. The ``st`` tag is required on every ppmSeq
+        read produced by the current pipeline; a missing one is a fixture/pipeline bug.
     """
     rows = []
+    for_sr_nan = float("nan")
     with pysam.AlignmentFile(sam_path, check_sq=False) as fh:
         for rec in fh:
-            sr = rec.get_tag(SR_TAG)  # KeyError if absent — sr is required
             st = rec.get_tag(ST_TAG)  # KeyError if absent — st is required
+            try:
+                sr = float(rec.get_tag(SR_TAG))
+            except KeyError:
+                # sr is optional: libraries that don't carry it (e.g. legacy_v5 chemistries
+                # without strand-ratio calibration) still produce a useful QC report, just
+                # without the sr-based sections.
+                sr = for_sr_nan
             try:
                 et = rec.get_tag(ET_TAG)
             except KeyError:
@@ -348,7 +355,7 @@ def read_tags_from_subsampled_sam(
                 # downstream), not "undetermined". See Ken's comment on PR #307.
                 tm = ""
             read_len = rec.query_length or 0
-            rows.append((float(sr), str(st), str(et), str(tm), int(read_len)))
+            rows.append((sr, str(st), str(et), str(tm), int(read_len)))
 
     df_reads = pd.DataFrame(rows, columns=[SR_TAG, ST_TAG, ET_TAG, TM_TAG, "read_length"])
     df_reads[HistogramColumnNames.COUNT.value] = 1
@@ -370,6 +377,11 @@ def read_tags_from_subsampled_sam(
     if output_filename is not None:
         df_reads.to_parquet(output_filename)
     return df_reads
+
+
+def has_sr_tag(df_reads: pd.DataFrame) -> bool:
+    """Return True if at least one read in the per-read dataframe carries a non-NaN sr value."""
+    return df_reads[SR_TAG].notna().any()
 
 
 def group_trimmer_histogram_by_strand_ratio_category(
@@ -1100,13 +1112,14 @@ def plot_sr_by_et(
     set_pyplot_defaults()
     # Use the filled strand_ratio_category_end column so reads whose end was reached but
     # whose et tag was missing show up under UNDETERMINED instead of being silently dropped.
+    # UNDETERMINED reads are excluded from the panels (the reviewer asked for it, and in
+    # practice end-reached reads with UNDETERMINED end-tag are rare).
     category_col = HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value
     df_endreached = df_reads[df_reads[TM_TAG].str.contains("A", na=False)]
     et_categories = [
+        PpmseqCategories.MIXED.value,
         PpmseqCategories.PLUS.value,
         PpmseqCategories.MINUS.value,
-        PpmseqCategories.MIXED.value,
-        PpmseqCategories.UNDETERMINED.value,
     ]
     # Vertical stack: each panel the same size as the overall plot (width 12, height 4).
     fig, axs = plt.subplots(len(et_categories), 1, figsize=(12, 4 * len(et_categories)), sharex=True)
@@ -1156,9 +1169,9 @@ def plot_read_length_by_st(
     set_pyplot_defaults()
     category_col = HistogramColumnNames.STRAND_RATIO_CATEGORY_START.value
     st_categories = [
+        PpmseqCategories.MIXED.value,
         PpmseqCategories.PLUS.value,
         PpmseqCategories.MINUS.value,
-        PpmseqCategories.MIXED.value,
     ]
     # Shared x range so facets are directly comparable. 99th percentile trims the long tail.
     lengths_all = df_reads["read_length"].dropna()
@@ -1393,8 +1406,6 @@ def ppmseq_qc_analysis(  # noqa: PLR0913
         output_report_ipynb,
         output_strand_ratio_category_plot,
         output_strand_ratio_category_concordance_plot,
-        output_sr_hist_plot,
-        output_sr_by_et_plot,
         output_read_length_plot,
         output_read_length_by_st_plot,
     ]
@@ -1409,6 +1420,7 @@ def ppmseq_qc_analysis(  # noqa: PLR0913
 
     df_reads = pd.read_hdf(output_statistics_h5, "subsampled_reads")
     convert_h5_to_papyrus_json(output_statistics_h5, output_statistics_json)
+    sr_present = has_sr_tag(df_reads)
 
     plot_strand_ratio_category(
         adapter_version,
@@ -1422,16 +1434,18 @@ def ppmseq_qc_analysis(  # noqa: PLR0913
         title=f"{output_basename} strand ratio category concordance",
         output_filename=output_strand_ratio_category_concordance_plot,
     )
-    plot_sr_histogram(
-        df_reads,
-        title=f"{output_basename} strand ratio",
-        output_filename=output_sr_hist_plot,
-    )
-    plot_sr_by_et(
-        df_reads,
-        title=f"{output_basename} strand ratio by et (end reached)",
-        output_filename=output_sr_by_et_plot,
-    )
+    if sr_present:
+        plot_sr_histogram(
+            df_reads,
+            title=f"{output_basename} strand ratio",
+            output_filename=output_sr_hist_plot,
+        )
+        plot_sr_by_et(
+            df_reads,
+            title=f"{output_basename} strand ratio by et (end reached)",
+            output_filename=output_sr_by_et_plot,
+        )
+        output_visualization_files.extend([output_sr_hist_plot, output_sr_by_et_plot])
     plot_read_length_overall(
         df_reads,
         title=f"{output_basename} read length",
@@ -1455,8 +1469,10 @@ def ppmseq_qc_analysis(  # noqa: PLR0913
             "statistics_h5": output_statistics_h5,
             "strand_ratio_category_png": output_strand_ratio_category_plot,
             "strand_ratio_category_concordance_png": output_strand_ratio_category_concordance_plot,
-            "sr_hist_png": output_sr_hist_plot,
-            "sr_by_et_png": output_sr_by_et_plot,
+            # When sr is absent the sr-dependent sections (1.4 and 1.5) are dropped from the
+            # report. Passing None here signals the notebook to skip them.
+            "sr_hist_png": output_sr_hist_plot if sr_present else None,
+            "sr_by_et_png": output_sr_by_et_plot if sr_present else None,
             "read_length_png": output_read_length_plot,
             "read_length_by_st_png": output_read_length_by_st_plot,
             "logo_file": str(logo_path),

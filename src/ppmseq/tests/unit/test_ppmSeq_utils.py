@@ -18,6 +18,7 @@ from ugbio_ppmseq.ppmSeq_utils import (
     collect_statistics,
     get_strand_ratio_category_concordance,
     group_trimmer_histogram_by_strand_ratio_category,
+    has_sr_tag,
     plot_read_length_by_st,
     plot_read_length_overall,
     plot_sr_by_et,
@@ -31,6 +32,7 @@ from ugbio_ppmseq.ppmSeq_utils import (
 
 inputs_dir = Path(__file__).parent.parent / "resources"
 subsampled_sam = inputs_dir / "ppmseq_sr_tag" / "Z0263_sample.sam.gz"
+subsampled_sam_no_sr = inputs_dir / "ppmseq_sr_tag" / "Z0263_sample_no_sr.sam.gz"
 input_featuremap_legacy_v5 = inputs_dir / "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.vcf.gz"
 expected_output_featuremap_legacy_v5 = (
     inputs_dir / "333_CRCs_39_legacy_v5.featuremap.single_substitutions.subsample.with_strand_ratios.vcf.gz"
@@ -89,6 +91,22 @@ def test_read_tags_from_subsampled_sam():
     # sr is nominally in [0, 1]; calibration can produce a small out-of-range tail.
     assert df_reads[SR_TAG].between(-1, 2).all()
     assert df_reads[SR_TAG].between(0, 1).mean() > 0.99
+
+
+def test_read_tags_from_subsampled_sam_no_sr():
+    """Fixture identical to Z0263_sample.sam.gz but with every sr tag stripped — the reader
+    must still succeed, leave sr as NaN, and has_sr_tag() must return False."""
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam_no_sr))
+    assert len(df_reads) > 0
+    assert df_reads[SR_TAG].isna().all()
+    assert not has_sr_tag(df_reads)
+    # The non-sr tags should still be populated exactly like the source fixture.
+    assert df_reads[ST_TAG].isin(["PLUS", "MINUS", "MIXED", "UNDETERMINED"]).all()
+
+
+def test_has_sr_tag_true_on_full_fixture():
+    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
+    assert has_sr_tag(df_reads)
 
 
 def test_read_tags_raises_on_missing_st_tag(tmp_path):

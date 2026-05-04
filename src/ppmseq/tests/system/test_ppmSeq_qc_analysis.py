@@ -60,6 +60,38 @@ def test_ppmseq_qc_analysis_with_report(tmp_path, subsampled_sam):
     assert html.exists()
 
 
+def test_ppmseq_qc_analysis_no_sr(tmp_path, resources_dir):
+    """When no read in the subsampled SAM carries an sr tag, sections 1.4 and 1.5 (and the
+    associated plots) must be omitted from the rendered report — everything else still
+    renders normally."""
+    sam_no_sr = resources_dir / "ppmseq_sr_tag" / "Z0263_sample_no_sr.sam.gz"
+    ppmSeq_qc_analysis.run(
+        [
+            "ppmSeq_qc_analysis",
+            "--adapter-version",
+            "v1",
+            "--subsampled-sam",
+            str(sam_no_sr),
+            "--output-path",
+            str(tmp_path),
+            "--output-basename",
+            "ppmseq_no_sr",
+        ]
+    )
+    html = tmp_path / "ppmseq_no_sr.ppmSeq.applicationQC.html"
+    assert html.exists()
+    text = html.read_text()
+    # Sections 1.1 / 1.2 / 1.3 / 2.x / 3.x / 4.x should all still be there.
+    assert "1.1 Strand-ratio category percentages" in text
+    assert "1.3 Start / end tag concordance" in text
+    assert "3.2 Read-length distribution" in text
+    # The sr-only sections and figures must be gone.
+    assert "1.4 Overall strand-ratio distribution" not in text
+    assert "1.5 Strand-ratio by end-tag category" not in text
+    assert "Figure 1.3." not in text  # the sr-hist caption
+    assert "Figure 1.4." not in text  # the sr-by-et caption
+
+
 def test_ppmseq_qc_analysis_with_sorter_csv(tmp_path, resources_dir, subsampled_sam):
     """End-to-end run with sorter stats + failure codes + a free-form --extra-arg
     surfaced in the report header."""
