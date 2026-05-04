@@ -1200,7 +1200,10 @@ def plot_read_length_by_st(
     lengths_all = df_reads["read_length"].dropna()
     x_max = int(np.ceil(lengths_all.quantile(0.995))) if len(lengths_all) else 1
     x_max = max(x_max, 10)
-    bin_edges = np.linspace(0, x_max, 61)  # ~60 bins
+    # 1 bp bins centered on integer read lengths — with edges at .5 offsets each bin
+    # covers exactly one integer bp value, so the centers land on N (not N + 0.5) and
+    # every bin holds exactly one read-length value (no zig-zag).
+    bin_edges = np.arange(-0.5, x_max + 0.5, 1.0)
     centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
 
     fig, axs = plt.subplots(len(st_categories), 1, figsize=(12, 4 * len(st_categories)), sharex=True)
@@ -1265,7 +1268,7 @@ def plot_read_length_overall(
     n = len(lengths)
     x_max = int(np.ceil(lengths.quantile(0.995))) if n else 1
     x_max = max(x_max, 10)
-    bin_edges = np.linspace(0, x_max, 61)
+    bin_edges = np.arange(-0.5, x_max + 0.5, 1.0)
     centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
     if n:
         clipped = lengths.clip(lower=0, upper=x_max)
