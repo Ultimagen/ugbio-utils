@@ -176,6 +176,8 @@ _QUOTED_VALUE = r'"((?:[^"\\]|\\.)*)'
 INFO_RE = re.compile(rf"##INFO=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description={_QUOTED_VALUE}")
 FORMAT_RE = re.compile(rf"##FORMAT=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description={_QUOTED_VALUE}")
 
+# Flag→Utf8: bcftools query outputs "1"/"."; Polars can't parse "1" as Boolean.
+# With Utf8, "." becomes null (via null_values) and "1" is non-null — is_null()/is_not_null() works.
 _POLARS_DTYPE = {"Integer": pl.Int64, "Float": pl.Float64, "Flag": pl.Utf8}
 # VCF column names – imported from FeatureMapFields for consistency
 CHROM = FeatureMapFields.CHROM.value
