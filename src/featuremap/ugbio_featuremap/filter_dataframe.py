@@ -29,6 +29,12 @@ KEY_SIZE = "size"
 KEY_METHOD = "method"
 KEY_SEED = "seed"
 KEY_NULL_VALUE = "null_value"
+KEY_FIELDS = "fields"
+
+# Operators
+OP_IS_NULL = "is_null"
+OP_IS_NOT_NULL = "is_not_null"
+OP_ANY_NOT_NULL = "any_not_null"
 
 # Filter types
 TYPE_QUALITY = "quality"
@@ -84,34 +90,44 @@ _OPS = {
     "ge": lambda c, v: c >= v,
     "in": lambda c, v: c.is_in(v),
     "not_in": lambda c, v: ~c.is_in(v),
+    OP_IS_NULL: lambda c, v: c.is_null(),
+    OP_IS_NOT_NULL: lambda c, v: c.is_not_null(),
 }
+
+_UNARY_OPS = {OP_IS_NULL, OP_IS_NOT_NULL, OP_ANY_NOT_NULL}
+
+
+def _validate_filter_op(rule: dict[str, Any], index: int) -> None:
+    """Validate operator and its required value keys."""
+    op = rule[KEY_OP]
+    all_ops = {*_OPS, *_UNARY_OPS}
+    if op not in all_ops:
+        raise ValueError(f"Filter {index} has unsupported operator: {op}")
+    if op not in _UNARY_OPS:
+        if KEY_VALUE not in rule and KEY_VALUES not in rule and KEY_VALUE_FIELD not in rule:
+            raise ValueError(f"Filter {index} must have either '{KEY_VALUE}', '{KEY_VALUES}', or '{KEY_VALUE_FIELD}'")
 
 
 def _validate_filter(rule: dict[str, Any], index: int) -> None:
     """Validate a single filter rule."""
     if not isinstance(rule, dict):
         raise ValueError(f"Filter {index} must be a dictionary")
-
-    # Check required fields
-    if KEY_FIELD not in rule:
-        raise ValueError(f"Filter {index} missing required '{KEY_FIELD}' key")
     if KEY_OP not in rule:
         raise ValueError(f"Filter {index} missing required '{KEY_OP}' key")
     if KEY_TYPE not in rule:
         raise ValueError(f"Filter {index} missing required '{KEY_TYPE}' key")
 
-    # Check operator
-    if rule[KEY_OP] not in _OPS:
-        raise ValueError(f"Filter {index} has unsupported operator: {rule[KEY_OP]}")
-
-    # Check type
     valid_types = {TYPE_QUALITY, TYPE_REGION, TYPE_MAPPING, TYPE_LABEL}
     if rule[KEY_TYPE] not in valid_types:
         raise ValueError(f"Filter {index} has invalid type '{rule[KEY_TYPE]}'. Must be one of: {valid_types}")
 
-    # Check value/value_field
-    if KEY_VALUE not in rule and KEY_VALUES not in rule and KEY_VALUE_FIELD not in rule:
-        raise ValueError(f"Filter {index} must have either '{KEY_VALUE}', '{KEY_VALUES}', or '{KEY_VALUE_FIELD}'")
+    if rule[KEY_OP] == OP_ANY_NOT_NULL:
+        if KEY_FIELDS not in rule or not isinstance(rule[KEY_FIELDS], list) or len(rule[KEY_FIELDS]) == 0:
+            raise ValueError(f"Filter {index} with '{OP_ANY_NOT_NULL}' op requires a non-empty '{KEY_FIELDS}' list")
+    elif KEY_FIELD not in rule:
+        raise ValueError(f"Filter {index} missing required '{KEY_FIELD}' key")
+
+    _validate_filter_op(rule, index)
 
 
 def _validate_downsample(ds: dict[str, Any]) -> None:
@@ -296,8 +312,20 @@ def validate_filter_config(cfg: dict[str, Any]) -> None:
 
 def _mask_for_rule(rule: dict[str, Any]) -> pl.Expr:
     """Return a boolean expression for a single rule."""
-    field = rule[KEY_FIELD]
     op = rule[KEY_OP]
+
+    if op == OP_ANY_NOT_NULL:
+        fields = rule[KEY_FIELDS]
+        expr = pl.col(fields[0]).is_not_null()
+        for f in fields[1:]:
+            expr = expr | pl.col(f).is_not_null()
+        return expr
+
+    field = rule[KEY_FIELD]
+
+    if op in _UNARY_OPS:
+        return _OPS[op](pl.col(field), None)
+
     if op not in _OPS:
         raise ValueError(f"Unsupported op: {op}")
 
@@ -332,7 +360,7 @@ def _create_filter_columns(
     logger.debug(f"Creating binary columns for {len(filters)} filters")
 
     for rule in filters:
-        name = rule.get(KEY_NAME) or f"{rule[KEY_FIELD]}_{rule[KEY_OP]}"
+        name = rule.get(KEY_NAME) or f"{rule.get(KEY_FIELD, '_'.join(rule.get(KEY_FIELDS, [])))}_{rule[KEY_OP]}"
         col_name = f"{COL_PREFIX_FILTER}{name}"
         filter_cols.append(col_name)
 
@@ -433,7 +461,7 @@ def _calculate_statistics(
     # Calculate cumulative filter effects
     cumulative_mask = pl.lit(value=True)
     for _i, (col, rule) in enumerate(zip(filter_cols, filters, strict=False)):
-        name = rule.get(KEY_NAME) or f"{rule[KEY_FIELD]}_{rule[KEY_OP]}"
+        name = rule.get(KEY_NAME) or f"{rule.get(KEY_FIELD, '_'.join(rule.get(KEY_FIELDS, [])))}_{rule[KEY_OP]}"
         cumulative_mask = cumulative_mask & pl.col(col)
         count = featuremap_dataframe.select(cumulative_mask.sum()).collect().item()
         funnel.append((name, count))
@@ -449,7 +477,7 @@ def _calculate_statistics(
     # Single effect statistics
     single_effect = {}
     for col, rule in zip(filter_cols, filters, strict=False):
-        name = rule.get(KEY_NAME) or f"{rule[KEY_FIELD]}_{rule[KEY_OP]}"
+        name = rule.get(KEY_NAME) or f"{rule.get(KEY_FIELD, '_'.join(rule.get(KEY_FIELDS, [])))}_{rule[KEY_OP]}"
         count = featuremap_dataframe.select(pl.col(col).sum()).collect().item()
         single_effect[name] = count
 

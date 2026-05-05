@@ -24,6 +24,7 @@ run_tests = "pytest:main"
 featuremap_to_dataframe = "ugbio_featuremap.featuremap_to_dataframe:main"
 filter_featuremap = "ugbio_featuremap.filter_dataframe:main"
 somatic_snvfind_classifier = "ugbio_featuremap.somatic_snvfind_classifier:main"
+prepare_annotation_vcfs = "ugbio_featuremap.prepare_annotation_vcfs:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true
