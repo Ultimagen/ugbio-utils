@@ -58,6 +58,17 @@ def _create_inference_filters(fields: list[str], output_path: str) -> None:
     logger.info(f"Created {output_path} with any_not_null on {fields}")
 
 
+def _update_coverage_threshold(filters_json: dict, coverage_threshold: int) -> dict:
+    """Update coverage_le_max filter value in both filter sets."""
+    for key in ("filters_full_output", "filters_random_sample"):
+        if key in filters_json:
+            for entry in filters_json[key]:
+                if entry.get("name") == "coverage_le_max":
+                    entry["value"] = coverage_threshold
+    logger.info(f"Updated coverage_le_max threshold to {coverage_threshold}")
+    return filters_json
+
+
 def run(argv: list[str] | None = None) -> None:
     """Main entry point."""
     args = _parse_args(argv)
@@ -68,6 +79,8 @@ def run(argv: list[str] | None = None) -> None:
     if args.read_filters:
         with open(args.read_filters) as f:
             read_filters = json.load(f)
+        if args.coverage_threshold is not None:
+            read_filters = _update_coverage_threshold(read_filters, args.coverage_threshold)
 
     inference_fields: list[str] = []
 
@@ -107,6 +120,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pcawg-vcf", help="PCAWG annotation VCF")
     parser.add_argument("--pcawg-field", default="PCAWG", help="Field name for PCAWG flag")
     parser.add_argument("--read-filters", help="Input read_filters JSON to augment with exclusion filters")
+    parser.add_argument(
+        "--coverage-threshold", type=int, default=None, help="Coverage threshold to update in read_filters"
+    )
     parser.add_argument("--output-dir", default=".", help="Output directory for BCF files and JSON")
     return parser.parse_args(argv)
 
