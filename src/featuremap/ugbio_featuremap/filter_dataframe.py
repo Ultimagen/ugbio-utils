@@ -122,8 +122,8 @@ def _validate_filter(rule: dict[str, Any], index: int) -> None:
         raise ValueError(f"Filter {index} has invalid type '{rule[KEY_TYPE]}'. Must be one of: {valid_types}")
 
     if rule[KEY_OP] == OP_ANY_NOT_NULL:
-        if KEY_FIELDS not in rule or not isinstance(rule[KEY_FIELDS], list):
-            raise ValueError(f"Filter {index} with '{OP_ANY_NOT_NULL}' op requires a '{KEY_FIELDS}' list")
+        if KEY_FIELDS not in rule or not isinstance(rule[KEY_FIELDS], list) or len(rule[KEY_FIELDS]) == 0:
+            raise ValueError(f"Filter {index} with '{OP_ANY_NOT_NULL}' op requires a non-empty '{KEY_FIELDS}' list")
     elif KEY_FIELD not in rule:
         raise ValueError(f"Filter {index} missing required '{KEY_FIELD}' key")
 
