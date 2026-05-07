@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_core"
-version = "1.24.2-0"
+version = "1.24.2"
 requires-python = ">=3.11"
 description = "Ultima Genomics core bioinfo utils"
 authors = [
@@ -57,6 +57,7 @@ convert_h5_to_json = "ugbio_core.convert_h5_to_json:main"
 collect_existing_metrics = "ugbio_core.collect_existing_metrics:main"
 generate_report = "ugbio_core.reports.report_utils:main"
 calculate_library_complexity = "ugbio_core.calculate_library_complexity:main"
+
 [tool.setuptools.package-data]
 "*" = [
     "**/reports/*",
