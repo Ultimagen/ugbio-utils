@@ -81,7 +81,7 @@ def test_ppmseq_qc_analysis_no_sr(tmp_path, resources_dir):
     assert html.exists()
     text = html.read_text()
     # Always-present sections from the flat numbering.
-    assert "1. Headline metrics" in text
+    assert "1. Key metrics" in text
     assert "3. Start / end tag concordance" in text
     assert "6. Read-length distribution" in text
     # The sr-only section headers must be absent entirely.

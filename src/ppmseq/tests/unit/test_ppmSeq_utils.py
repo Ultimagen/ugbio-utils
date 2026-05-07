@@ -353,20 +353,27 @@ def test_collect_statistics(tmp_path):
     with pd.HDFStore(str(out)) as store:
         keys = set(store.keys())
         shortlist = store["stats_shortlist"]
+        mixed_reads_stats = store["mixed_reads_stats"]
         concordance = store["strand_ratio_category_concordance"]
     assert "/subsampled_reads" in keys
     assert "/strand_ratio_category_counts" in keys
     assert "/strand_ratio_category_concordance" in keys
-    # The consensus percentages are part of the shortlist and the per-strand-ratio
-    # category totals should match the number of reads we loaded.
-    assert "PCT_MIXED_both_tags" in shortlist.index
+    assert "/mixed_reads_stats" in keys
+    # /stats_shortlist is the headline "Key metrics" Series — always leads with
+    # PCT_MIXED_start_tag (and, when failure codes / sorter CSV are provided, appends
+    # PCT_failed_adapter_dimers + the SORTER_STATS_KEYS_TO_SHOW rows).
+    assert shortlist.index[0] == "PCT_MIXED_start_tag"
+    # /mixed_reads_stats holds the full ppmSeq mixed-read metrics (PCT_MIXED_both_tags etc.),
+    # which §7 of the report renders.
+    assert "PCT_MIXED_both_tags" in mixed_reads_stats.index
     assert concordance.sum() == pytest.approx(1.0, abs=1e-6)
 
 
 def test_collect_statistics_with_sorter_stats(tmp_path):
-    """Sorter stats must be stored under /sorter_stats but must NOT be concat'd into
-    /stats_shortlist — the report shows them in a dedicated section. Only the allow-listed
-    keys from SORTER_STATS_KEYS_TO_SHOW should appear, in that order."""
+    """Sorter stats must be stored under /sorter_stats. Only the allow-listed keys from
+    SORTER_STATS_KEYS_TO_SHOW should appear, in that order. /stats_shortlist is the
+    headline Key-metrics Series: PCT_MIXED_start_tag, then the whitelisted sorter rows
+    (in canonical order) when a sorter CSV is provided."""
     out = tmp_path / "stats_with_sorter.h5"
     collect_statistics(
         PpmseqAdapterVersions.V1,
@@ -377,14 +384,17 @@ def test_collect_statistics_with_sorter_stats(tmp_path):
     with pd.HDFStore(str(out)) as store:
         sorter_stats = store["sorter_stats"]
         shortlist = store["stats_shortlist"]
+        mixed_reads_stats = store["mixed_reads_stats"]
     assert len(sorter_stats) > 0
-    assert "PCT_MIXED_both_tags" in shortlist.index
-    # Sorter metric names should NOT leak into the mixed-reads shortlist.
-    shortlist_indices = set(shortlist.index)
+    # /stats_shortlist leads with PCT_MIXED_start_tag; the full mixed-reads metrics live
+    # in /mixed_reads_stats so §7 can display them without reformatting.
+    assert shortlist.index[0] == "PCT_MIXED_start_tag"
+    assert "PCT_MIXED_both_tags" in mixed_reads_stats.index
+    # Sorter rows DO appear in /stats_shortlist when a sorter CSV is supplied (they are
+    # part of the Key-metrics table).
+    shortlist_indices = list(shortlist.index)
     for sorter_metric in sorter_stats.index:
-        assert (
-            sorter_metric not in shortlist_indices
-        ), f"sorter metric {sorter_metric!r} should not appear in stats_shortlist"
+        assert sorter_metric in shortlist_indices
     # All rows in sorter_stats are whitelisted keys; any row that isn't in the allow-list
     # must have been dropped.
     assert set(sorter_stats.index).issubset(set(SORTER_STATS_KEYS_TO_SHOW))
@@ -392,6 +402,10 @@ def test_collect_statistics_with_sorter_stats(tmp_path):
     # present in the CSV).
     expected_order = [k for k in SORTER_STATS_KEYS_TO_SHOW if k in sorter_stats.index]
     assert list(sorter_stats.index) == expected_order
+    # Sorter rows in /stats_shortlist preserve SORTER_STATS_KEYS_TO_SHOW order, after
+    # the leading PCT_MIXED_start_tag row.
+    sorter_tail = [m for m in shortlist_indices if m in set(SORTER_STATS_KEYS_TO_SHOW)]
+    assert sorter_tail == expected_order
 
 
 def test_ppmseq_qc_analysis(tmp_path):

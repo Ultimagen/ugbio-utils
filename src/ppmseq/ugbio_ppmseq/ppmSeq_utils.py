@@ -840,22 +840,46 @@ def collect_statistics(
         df_category_concordance=df_category_concordance,
     )
 
-    # stats_shortlist holds the ppmSeq-specific metrics (MIXED coverage / strand-ratio
-    # category percentages). Sorter stats are stored under a separate /sorter_stats key
-    # so the report can show them in a dedicated table and users asking for "mixed reads
-    # stats" aren't buried under the sorter aggregates.
-    df_stats_shortlist = df_tags
+    # The full ppmSeq mixed-read metrics (MIXED coverage, per-category percentages,
+    # read-end-unreached fraction) live under /mixed_reads_stats. /stats_shortlist
+    # stores the concise headline Key-metrics Series (one PCT_MIXED_start_tag row,
+    # one PCT_failed_adapter_dimers row when available, then the whitelisted sorter
+    # rows in SORTER_STATS_KEYS_TO_SHOW order) — this is the table the report's
+    # Section 1 "Key metrics" displays.
+    df_mixed_reads_stats = df_tags
 
     if trimmer_failure_codes_csv:
         df_trimmer_failure_codes, df_failure_codes_metrics = read_trimmer_failure_codes_ppmseq(
             trimmer_failure_codes_csv
         )
 
+    # Assemble the Key-metrics Series in display order. Rows missing from the inputs
+    # (e.g. no failure codes CSV, sorter CSV lacking a metric) are silently skipped.
+    key_metrics_rows: list[tuple[str, float]] = []
+    if "PCT_MIXED_start_tag" in df_mixed_reads_stats.index:
+        key_metrics_rows.append(("PCT_MIXED_start_tag", float(df_mixed_reads_stats.loc["PCT_MIXED_start_tag"])))
+    if trimmer_failure_codes_csv and "PCT_failed_adapter_dimers" in df_failure_codes_metrics.index:
+        key_metrics_rows.append(
+            (
+                "PCT_failed_adapter_dimers",
+                float(df_failure_codes_metrics.loc["PCT_failed_adapter_dimers", "value"]),
+            )
+        )
+    for key in SORTER_STATS_KEYS_TO_SHOW:
+        if key in sorter_stats.index:
+            key_metrics_rows.append((key, float(sorter_stats.loc[key])))
+    df_stats_shortlist = pd.Series(dict(key_metrics_rows), dtype=float, name="value")
+    df_stats_shortlist.index.name = "metric"
+    # Preserve row order.
+    if key_metrics_rows:
+        df_stats_shortlist = df_stats_shortlist.loc[[n for n, _ in key_metrics_rows]]
+
     if not output_filename.endswith(".h5"):
         output_filename += ".h5"
     with pd.HDFStore(output_filename, "w") as store:
         keys_to_convert = [
             "stats_shortlist",
+            "mixed_reads_stats",
             "sorter_stats",
             "strand_ratio_category_counts",
             "strand_ratio_category_norm",
@@ -863,6 +887,7 @@ def collect_statistics(
             "strand_ratio_category_consensus",
         ]
         store["stats_shortlist"] = df_stats_shortlist
+        store["mixed_reads_stats"] = df_mixed_reads_stats
         store["sorter_stats"] = sorter_stats
         store["subsampled_reads"] = df_reads
         store["strand_ratio_category_counts"] = df_strand_ratio_category
@@ -1373,49 +1398,22 @@ def plot_read_length_overall(
     return ax
 
 
-def build_headline_table(statistics_h5: str) -> pd.Series:  # noqa: C901
-    """Assemble the headline "Table 1" Series for the report.
+def build_headline_table(statistics_h5: str) -> pd.Series:
+    """Load the headline "Key metrics" Series (Section 1 of the report) from the HDF5.
 
-    Rows, in order (missing ones are skipped so partial runs still work):
+    This is the same Series ``collect_statistics`` writes under ``/stats_shortlist``:
 
-    1. ``PCT_MIXED_start_tag`` — from ``/stats_shortlist``
-    2. ``PCT_failed_adapter_dimers`` — from ``/failure_codes_metrics`` (may be absent
-       when no trimmer failure codes CSV was supplied)
-    3. each row of ``/sorter_stats`` that is present, in ``SORTER_STATS_KEYS_TO_SHOW``
-       order (may be empty when no sorter stats CSV was supplied)
+    1. ``PCT_MIXED_start_tag`` — from ``/mixed_reads_stats``
+    2. ``PCT_failed_adapter_dimers`` — from ``/failure_codes_metrics`` (when available)
+    3. each whitelisted row from ``/sorter_stats`` in ``SORTER_STATS_KEYS_TO_SHOW`` order
 
     The notebook applies :data:`TABLE1_PPMSEQ_FORMATS` / :data:`SORTER_STATS_FORMATS` to
     the returned Series to format each value with the right units.
     """
-    rows: list[tuple[str, float]] = []
-    with pd.HDFStore(statistics_h5) as store:
-        available = set(store.keys())
-        if "/stats_shortlist" in available:
-            shortlist = store["stats_shortlist"]
-            if isinstance(shortlist, pd.DataFrame):
-                shortlist = shortlist.iloc[:, 0]
-            if "PCT_MIXED_start_tag" in shortlist.index:
-                rows.append(("PCT_MIXED_start_tag", float(shortlist.loc["PCT_MIXED_start_tag"])))
-        if "/failure_codes_metrics" in available:
-            fc = store["failure_codes_metrics"]
-            if isinstance(fc, pd.DataFrame) and "value" in fc.columns:
-                fc = fc["value"]
-            if "PCT_failed_adapter_dimers" in fc.index:
-                rows.append(
-                    ("PCT_failed_adapter_dimers", float(fc.loc["PCT_failed_adapter_dimers"])),
-                )
-        if "/sorter_stats" in available:
-            ss = store["sorter_stats"]
-            if isinstance(ss, pd.DataFrame):
-                ss = ss.iloc[:, 0]
-            for key in SORTER_STATS_KEYS_TO_SHOW:
-                if key in ss.index:
-                    rows.append((key, float(ss.loc[key])))
-    out = pd.Series(dict(rows), dtype=float, name="value")
-    out.index.name = "metric"
-    # Preserve row order.
-    out = out.loc[[name for name, _ in rows]]
-    return out
+    shortlist = pd.read_hdf(statistics_h5, key="stats_shortlist")
+    if isinstance(shortlist, pd.DataFrame):
+        shortlist = shortlist.iloc[:, 0]
+    return shortlist
 
 
 def flatten_strand_ratio_category(h5_file: str, key: str) -> pd.DataFrame:
@@ -1464,6 +1462,7 @@ def convert_h5_to_papyrus_json(h5_file: str, output_json: str) -> str:
     # flatten 1D dataframes
     keys_to_convert = [
         "stats_shortlist",
+        "mixed_reads_stats",
         "sorter_stats",
         "strand_ratio_category_consensus",
     ]
