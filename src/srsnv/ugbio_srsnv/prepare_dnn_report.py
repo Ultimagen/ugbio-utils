@@ -13,8 +13,11 @@ import json
 import sys
 from pathlib import Path
 
+import pandas as pd
 import polars as pl
 from ugbio_core.logger import logger
+
+MAX_ACCEPTABLE_DROP_PCT = 10
 
 
 def _build_dnn_training_results(fold_metadata_paths: list[str]) -> list[dict] | None:  # noqa: C901
@@ -25,8 +28,6 @@ def _build_dnn_training_results(fold_metadata_paths: list[str]) -> list[dict] | 
         {"validation_0": {"logloss": [...], "auc": [...]},   # train
          "validation_1": {"logloss": [...], "auc": [...]}}    # val
     """
-    import pandas as pd  # noqa: PLC0415
-
     results: list[dict] = []
     for meta_path in fold_metadata_paths:
         mp = Path(meta_path)
@@ -56,7 +57,7 @@ def _build_dnn_training_results(fold_metadata_paths: list[str]) -> list[dict] | 
 
         try:
             metrics_df = pd.read_csv(csv_path)
-        except Exception:  # noqa: BLE001
+        except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
             logger.warning("Failed to read CSV: %s", csv_path)
             continue
 
@@ -176,7 +177,7 @@ def prepare_dnn_report_data(  # noqa: PLR0913, C901, PLR0915
     logger.info("  Matched rows: %d / %d XGB, %d DNN", len(merged), len(xgb), len(dnn))
 
     drop_pct = (1 - len(merged) / len(xgb)) * 100
-    if drop_pct > 10:  # noqa: PLR2004
+    if drop_pct > MAX_ACCEPTABLE_DROP_PCT:
         logger.warning(
             "%.1f%% of XGBoost rows dropped during join – " "ensure both pipelines trained on the same sample data.",
             drop_pct,

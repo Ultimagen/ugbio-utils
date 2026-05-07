@@ -23,12 +23,16 @@ from ugbio_srsnv.split_manifest import (
     SPLIT_MODE_CHROM_KFOLD,
     SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,
     SPLIT_MODE_SINGLE_MODEL_READ_HASH,
+    assign_single_model_chrom_val_role,
+    assign_single_model_read_hash_role,
     build_single_model_chrom_val_manifest,
     build_single_model_read_hash_manifest,
     build_split_manifest,
     load_split_manifest,
     save_split_manifest,
 )
+
+MIN_K_FOR_KFOLD = 2
 
 # ---------------------------------------------------------------------------
 # Shard loading
@@ -147,11 +151,6 @@ def _assign_fold_ids(  # noqa: C901
 
     Returns an array of float64 where NaN indicates holdout/test rows.
     """
-    from ugbio_srsnv.split_manifest import (  # noqa: PLC0415
-        assign_single_model_chrom_val_role,
-        assign_single_model_read_hash_role,
-    )
-
     n = len(chroms)
     fold_ids = np.full(n, np.nan, dtype=np.float64)
     split_mode = split_manifest.get("split_mode", SPLIT_MODE_CHROM_KFOLD)
@@ -328,7 +327,7 @@ def combine_and_split(  # noqa: PLR0913, PLR0912, PLR0915, C901
     test_path_fold0: Path | None = None
 
     for fold_idx in range(effective_k):
-        if split_mode == SPLIT_MODE_CHROM_KFOLD and effective_k >= 2:  # noqa: PLR2004
+        if split_mode == SPLIT_MODE_CHROM_KFOLD and effective_k >= MIN_K_FOR_KFOLD:
             val_mask = fold_id_arr == fold_idx
             train_mask = (~val_mask) & (~np.isnan(fold_id_arr))
         elif split_mode == SPLIT_MODE_CHROM_KFOLD and effective_k == 1:

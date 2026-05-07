@@ -22,7 +22,7 @@ import numpy as np
 import polars as pl
 from ugbio_core.logger import logger
 
-from ugbio_srsnv.srsnv_training import _extract_stats_from_unified
+from ugbio_srsnv.srsnv_training import _count_bases_in_interval_list, _extract_stats_from_unified
 from ugbio_srsnv.srsnv_utils import MAX_PHRED, prob_to_phred, recalibrate_snvq, recalibrate_snvq_kde
 
 
@@ -131,8 +131,6 @@ def recalibrate_dnn_folds(  # noqa: PLR0913, PLR0915
     tuple[Path, Path]
         Paths to the combined parquet and combined metadata JSON.
     """
-    from ugbio_srsnv.srsnv_training import _count_bases_in_interval_list  # noqa: PLC0415
-
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     suffix = f"{basename}." if basename and not basename.endswith(".") else basename

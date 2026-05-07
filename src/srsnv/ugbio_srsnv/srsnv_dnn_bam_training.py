@@ -23,6 +23,7 @@ from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
 from ugbio_srsnv.deep_srsnv.data_module import SRSNVDataModule
 from ugbio_srsnv.deep_srsnv.data_prep import (
+    _DEFAULT_SHM_DIR,
     CHANNEL_ORDER,
     NUMERIC_CHANNELS,
     build_tensor_cache,
@@ -31,6 +32,7 @@ from ugbio_srsnv.deep_srsnv.data_prep import (
     load_vocab_config,
     save_cache_to_shm,
 )
+from ugbio_srsnv.deep_srsnv.inference.export import export_to_onnx, serialize_with_trtexec
 from ugbio_srsnv.deep_srsnv.lightning_module import LR_SCHEDULER_CHOICES, SRSNVLightningModule
 from ugbio_srsnv.deep_srsnv.swa_validation_tracker import SWAValidationTracker
 from ugbio_srsnv.split_manifest import (
@@ -47,6 +49,10 @@ from ugbio_srsnv.srsnv_utils import MAX_PHRED, prob_to_phred
 
 CHROM = FeatureMapFields.CHROM.value
 POS = FeatureMapFields.POS.value
+
+MIN_CLASSES_FOR_BINARY_METRICS = 2
+NEAR_PURE_LOWER = 0.01
+NEAR_PURE_UPPER = 0.99
 
 
 def _cli() -> argparse.Namespace:  # noqa: PLR0915
@@ -185,7 +191,7 @@ def _safe_binary_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> dict:
     metrics = {}
     if len(y_true) == 0:
         return {"auc": None, "aupr": None, "logloss": None}
-    if len(np.unique(y_true)) >= 2:  # noqa: PLR2004
+    if len(np.unique(y_true)) >= MIN_CLASSES_FOR_BINARY_METRICS:
         metrics["auc"] = float(roc_auc_score(y_true, y_prob))
         metrics["aupr"] = float(average_precision_score(y_true, y_prob))
     else:
@@ -247,7 +253,7 @@ def _summarize_chunk_prevalence(chunk_split_stats: list[dict] | None, split_id: 
         "min": float(np.min(arr)),
         "median": float(np.median(arr)),
         "max": float(np.max(arr)),
-        "near_pure_count": int(np.sum((arr < 0.01) | (arr > 0.99))),  # noqa: PLR2004
+        "near_pure_count": int(np.sum((arr < NEAR_PURE_LOWER) | (arr > NEAR_PURE_UPPER))),
     }
 
 
@@ -658,8 +664,9 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
 
     n_devices = _resolve_n_devices(_parse_devices(args.devices)) if torch.cuda.is_available() else 1
     is_rank_zero = int(os.environ.get("LOCAL_RANK", "0")) == 0
-    shm_cache_path = Path("/dev/shm/deep_srsnv_shared_cache")  # noqa: S108
-    shm_fold_dir = Path("/dev/shm/deep_srsnv_fold_cache")  # noqa: S108
+    _shm_base = Path(_DEFAULT_SHM_DIR)
+    shm_cache_path = _shm_base / "deep_srsnv_shared_cache"
+    shm_fold_dir = _shm_base / "deep_srsnv_fold_cache"
 
     if use_fold_dir:
         if n_devices > 1:
@@ -1079,8 +1086,6 @@ def main() -> None:  # noqa: C901, PLR0912, PLR0915
     # ── ONNX / TensorRT export ──
     onnx_out = None
     engine_out = None
-    from ugbio_srsnv.deep_srsnv.inference.export import export_to_onnx, serialize_with_trtexec  # noqa: PLC0415
-
     export_model = lit_model.model if hasattr(lit_model, "model") else lit_model
     onnx_out = str(out_dir / f"{base}dnn_model.onnx")
     export_to_onnx(export_model, onnx_out, tensor_length=args.length)

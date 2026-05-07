@@ -21,6 +21,8 @@ import json
 import sys
 from pathlib import Path
 
+import pandas as pd
+
 WORKSPACE_DEFAULT = Path("/data/Runs/perchik/ppmseq_data/srsnv_training_workspace")
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[2]
@@ -61,8 +63,6 @@ def detect_mean_coverage(dataset_dir: Path, basename: str) -> float:
     h5_path = dataset_dir / "application_qc_h5" / f"{basename}.single_read_snv.applicationQC.h5"
     if not h5_path.exists():
         raise FileNotFoundError(f"Application QC H5 not found: {h5_path}")
-
-    import pandas as pd  # noqa: PLC0415
 
     with pd.HDFStore(str(h5_path), "r") as store:
         info = store["run_info_table"]

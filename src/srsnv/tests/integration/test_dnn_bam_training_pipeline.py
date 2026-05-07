@@ -1,4 +1,5 @@
 import json
+import pickle
 from pathlib import Path
 
 import numpy as np
@@ -15,8 +16,6 @@ def _make_fake_tensor_cache(tmp_path: Path, n_rows: int = 80) -> str:
     The cache does NOT contain split_id — the DataModule computes it
     from the chrom array and the split manifest.
     """
-    import pickle  # noqa: PLC0415
-
     length = 300
     chroms = ["chr1", "chr2", "chr3", "chr4", "chr5", "chr6", "chr7", "chr8", "chr9", "chr21", "chr22"]
 
@@ -339,7 +338,11 @@ def test_dnn_pretrained_checkpoint_finetuning(monkeypatch, tmp_path: Path) -> No
     # Phase 1: train a base model
     (tmp_path / "phase1").mkdir()
     base_args = type("Args", (), base_attrs)()
-    monkeypatch.setattr(dnn_train, "_cli", lambda: base_args)  # noqa: PLW0108
+
+    def _mock_cli_base():
+        return base_args
+
+    monkeypatch.setattr(dnn_train, "_cli", _mock_cli_base)
     dnn_train.main()
 
     # Find the checkpoint produced by phase 1
@@ -356,7 +359,11 @@ def test_dnn_pretrained_checkpoint_finetuning(monkeypatch, tmp_path: Path) -> No
         "pretrained_checkpoint": ckpt_path,
     }
     ft_args = type("Args", (), ft_attrs)()
-    monkeypatch.setattr(dnn_train, "_cli", lambda: ft_args)  # noqa: PLW0108
+
+    def _mock_cli_ft():
+        return ft_args
+
+    monkeypatch.setattr(dnn_train, "_cli", _mock_cli_ft)
     dnn_train.main()
 
     assert (tmp_path / "phase2" / "finetuned.featuremap_df.parquet").is_file()

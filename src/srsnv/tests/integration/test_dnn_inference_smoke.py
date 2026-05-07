@@ -270,10 +270,7 @@ class TestDNNInferenceSmokeE2E:
 
     def test_trt_vs_pytorch_equivalence(self, inference_data):
         """If TRT is available, compare outputs against PyTorch backend."""
-        try:
-            import tensorrt  # noqa: F401
-        except ImportError:
-            pytest.skip("TensorRT not available")
+        pytest.importorskip("tensorrt")
 
         from ugbio_srsnv.deep_srsnv.inference.export import export_to_onnx, serialize_with_trtexec
 
@@ -290,7 +287,7 @@ class TestDNNInferenceSmokeE2E:
             weight_decay=1e-4,
             lr_scheduler="none",
         )
-        raw = torch.load(inference_data["ckpt_path"], weights_only=False)  # noqa: S301
+        raw = torch.load(inference_data["ckpt_path"], weights_only=False)
         lit_model.load_state_dict(raw["state_dict"])
 
         onnx_path = str(inference_data["tmp_path"] / "model.onnx")

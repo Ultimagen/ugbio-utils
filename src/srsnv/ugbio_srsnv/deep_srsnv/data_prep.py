@@ -32,6 +32,9 @@ REF = FeatureMapFields.REF.value
 ALT = FeatureMapFields.ALT.value
 X_ALT = FeatureMapFields.X_ALT.value
 
+CIGAR_SOFT_CLIP = 4
+_DEFAULT_SHM_DIR = os.environ.get("SHM_DIR", "/dev/shm")  # noqa: S108
+
 # Canonical channel order for x_num — positional channels first, then per-read constants.
 # The model sees len(NUM_CHANNELS_POS) + len(NUM_CHANNELS_CONST) = NUMERIC_CHANNELS total.
 NUM_CHANNELS_POS: list[str] = ["qual", "tp", "mask", "focus", "softclip_mask", "t0"]
@@ -298,26 +301,22 @@ def _read_all_parquet_rows(
     return all_rows
 
 
-def _row_split_id(row: dict, *, split_manifest: dict | None, chrom_to_fold: dict[str, int]) -> int:  # noqa: PLR0911
+_ROLE_TO_SPLIT_ID = {"test": -1, "val": 1}
+
+
+def _row_split_id(row: dict, *, split_manifest: dict | None, chrom_to_fold: dict[str, int]) -> int:
     chrom_value = row.get(CHROM, row.get("chrom"))
+    role: str | None = None
     if split_manifest and split_manifest.get("split_mode") == SPLIT_MODE_SINGLE_MODEL_CHROM_VAL:
         role = assign_single_model_chrom_val_role(chrom=str(chrom_value), manifest=split_manifest)
-        if role == "test":
-            return -1
-        if role == "val":
-            return 1
-        return 0
-    if split_manifest and split_manifest.get("split_mode") == SPLIT_MODE_SINGLE_MODEL_READ_HASH:
+    elif split_manifest and split_manifest.get("split_mode") == SPLIT_MODE_SINGLE_MODEL_READ_HASH:
         role = assign_single_model_read_hash_role(
             chrom=str(chrom_value),
             rn=str(row["RN"]),
             manifest=split_manifest,
         )
-        if role == "test":
-            return -1
-        if role == "val":
-            return 1
-        return 0
+    if role is not None:
+        return _ROLE_TO_SPLIT_ID.get(role, 0)
     fold_id = chrom_to_fold.get(str(chrom_value))
     return -1 if fold_id is None else int(fold_id)
 
@@ -458,7 +457,7 @@ def _build_gapped_channels(  # noqa: C901, PLR0912, PLR0915
     softclip_query_positions: set[int] = set()
     q_cursor = 0
     for op, length in cigar:
-        if op == 4:  # S  # noqa: PLR2004
+        if op == CIGAR_SOFT_CLIP:
             softclip_query_positions.update(range(q_cursor, q_cursor + length))
             q_cursor += length
         elif op in {0, 1, 7, 8}:  # M, I, =, X consume query
@@ -1242,12 +1241,14 @@ class DeepSRSNVDataset(Dataset):
         }
 
 
-def save_cache_to_shm(cache: dict, shm_dir: str = "/dev/shm") -> Path:  # noqa: S108
+def save_cache_to_shm(cache: dict, shm_dir: str | None = None) -> Path:
     """Save tensor cache to shared memory for DDP multi-GPU sharing.
 
     Tensors are saved via torch.save so they can be memory-mapped on load.
     Non-tensor metadata (chrom, rn) is saved as pickle separately.
     """
+    if shm_dir is None:
+        shm_dir = _DEFAULT_SHM_DIR
     shm_path = Path(shm_dir) / "deep_srsnv_shared_cache"
     shm_path.mkdir(exist_ok=True)
 

@@ -24,21 +24,28 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import io
 import itertools
 import json
+import math
 import os
 import sys
+import tempfile
 import time
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.compute as pc
 import pysam
+from isal import igzip
 from pyarrow import parquet as pq
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed.variant_annotation import VcfAnnotator
+from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
 
 from ugbio_srsnv.deep_srsnv.cram_to_tensors import (
     _PARQUET_COLUMNS,
@@ -50,7 +57,12 @@ from ugbio_srsnv.deep_srsnv.cram_to_tensors import (
     _worker_init,
 )
 from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
-from ugbio_srsnv.deep_srsnv.inference.trt_engine import load_inference_engine
+from ugbio_srsnv.deep_srsnv.inference.trt_engine import (
+    _compose_x_num,
+    _to_numpy,
+    _to_numpy_long,
+    load_inference_engine,
+)
 from ugbio_srsnv.srsnv_utils import MAX_PHRED, prob_to_phred
 
 ML_QUAL = "ML_QUAL"
@@ -274,8 +286,6 @@ def _flush_preds_to_writer(
     lock: Lock,
 ) -> None:
     """Flush accumulated predictions to a ParquetWriter under a lock."""
-    import pyarrow as pa  # noqa: PLC0415
-
     table = pa.table(
         {
             "chrom": [k[0] for k in preds],
@@ -354,8 +364,6 @@ def _pipelined_inference(  # noqa: PLR0912, PLR0913, PLR0915, C901
         (one row group per shard) and the total count is returned instead of a
         dict.  This keeps memory bounded to one shard per GPU thread.
     """
-    import pyarrow as pa  # noqa: PLC0415
-    import pyarrow.parquet as pq_mod  # noqa: PLC0415
 
     fn = process_fn or _process_shard
     total_shards = len(shard_args_list)
@@ -380,7 +388,7 @@ def _pipelined_inference(  # noqa: PLR0912, PLR0913, PLR0915, C901
                 ("prob", pa.float64()),
             ]
         )
-        writer = pq_mod.ParquetWriter(output_path, schema)
+        writer = pq.ParquetWriter(output_path, schema)
 
     gpu_threads: list[Thread] = []
     for i, engine in enumerate(engines):
@@ -844,8 +852,6 @@ def run_inference_pipeline(  # noqa: PLR0913, C901, PLR0912
 
     # ── Parquet preparation ──
     if parquet_path is None:
-        import tempfile  # noqa: PLC0415
-
         tmp_dir = tempfile.mkdtemp(prefix="dnn_infer_")
         parquet_path = str(Path(tmp_dir) / "featuremap.parquet")
         logger.info("Converting featuremap VCF to parquet: %s", parquet_path)
@@ -928,12 +934,7 @@ def run_inference_pipeline(  # noqa: PLR0913, C901, PLR0912
 
 def _vcf_to_parquet(vcf_path: str, parquet_path: str) -> None:
     """Lightweight VCF->parquet for inference (extracts CHROM, POS, RN, etc.)."""
-    try:
-        from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet  # noqa: PLC0415
-
-        vcf_to_parquet(vcf_path, parquet_path, drop_format={"AD"})
-    except ImportError:
-        raise ImportError("ugbio_featuremap is required for VCF-to-parquet conversion") from None
+    vcf_to_parquet(vcf_path, parquet_path, drop_format={"AD"})
 
 
 # ---------------------------------------------------------------------------
@@ -1035,8 +1036,6 @@ def _parse_fold_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901, PLR0912
     """Run inference for a single fold's chromosomes and write predictions parquet."""
-    import pyarrow as pa  # noqa: PLC0415
-    import pyarrow.compute  # noqa: PLC0415
     import torch.multiprocessing  # noqa: PLC0415
 
     torch.multiprocessing.set_sharing_strategy("file_system")
@@ -1069,8 +1068,6 @@ def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901, PLR
     # Parquet preparation
     parquet_path = args.parquet
     if parquet_path is None:
-        import tempfile  # noqa: PLC0415
-
         tmp_dir = tempfile.mkdtemp(prefix="dnn_fold_")
         parquet_path = str(Path(tmp_dir) / "featuremap.parquet")
         logger.info("Converting featuremap VCF to parquet: %s", parquet_path)
@@ -1082,9 +1079,8 @@ def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901, PLR
     chrom_to_fold: dict[str, int] = manifest.get("chrom_to_fold", {})
 
     # Read parquet and filter to this fold's chromosomes (memory-efficient)
-    import pyarrow.parquet as pq_mod  # noqa: PLC0415
 
-    pf = pq_mod.ParquetFile(parquet_path)
+    pf = pq.ParquetFile(parquet_path)
     available_cols = [c for c in _PARQUET_COLUMNS if c in (pf.schema.names or [])]
 
     # Build set of chromosomes belonging to this fold
@@ -1124,7 +1120,7 @@ def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901, PLR
     if n_rows == 0:
         logger.info("Fold %d: no rows, writing empty predictions", fold_idx)
         empty_table = pa.table({"chrom": [], "pos": [], "rn": [], "prob": []})
-        pq_mod.write_table(empty_table, args.output)
+        pq.write_table(empty_table, args.output)
         return
 
     sort_indices = pa.compute.sort_indices(filtered, sort_keys=[(CHROM, "ascending"), (POS, "ascending")])
@@ -1134,7 +1130,7 @@ def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901, PLR
     # Write to temp parquet with row_group_size = shard_size for per-worker reading
     fold_parquet = str(Path(args.output).parent / f"fold_{fold_idx}_sorted.parquet")
     available_cols_final = [c for c in available_cols if c in sorted_table.column_names]
-    pq_mod.write_table(sorted_table, fold_parquet, row_group_size=args.shard_size)
+    pq.write_table(sorted_table, fold_parquet, row_group_size=args.shard_size)
     del sorted_table
 
     # Load engines
@@ -1178,17 +1174,10 @@ def _load_tensor_shard(shard_path: str) -> dict:
     Supports both uncompressed ``.pt`` and gzip-compressed ``.pt.gz`` files.
     Uses isal (ISA-L) for fast gzip decompression when available.
     """
-    import io  # noqa: PLC0415
-
     import torch  # noqa: PLC0415
 
     if shard_path.endswith(".gz"):
-        try:
-            from isal import igzip as gzip  # noqa: PLC0415
-        except ImportError:
-            import gzip  # noqa: PLC0415
-
-        with gzip.open(shard_path, "rb") as f:
+        with igzip.open(shard_path, "rb") as f:
             chunk = torch.load(io.BytesIO(f.read()), map_location="cpu", weights_only=False)
     else:
         chunk = torch.load(shard_path, map_location="cpu", weights_only=False)
@@ -1219,11 +1208,6 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
 
     Returns predictions dict or count (if *output_path* streaming).
     """
-    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
-
-    import pyarrow as pa  # noqa: PLC0415
-    import pyarrow.parquet as pq_mod  # noqa: PLC0415
-
     cache_path = Path(cache_dir)
     shard_files = sorted(cache_path.glob("shard_*.pt.gz")) or sorted(cache_path.glob("shard_*.pt"))
     if not shard_files:
@@ -1237,8 +1221,6 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
     #   Stage 2 (CPU prep thread): _compose_x_num + dtype conversions → gpu_queue
     #   Stage 3 (GPU thread): H2D + kernel + D2H only → result_queue
     #   Main thread: collect results, build dict/parquet
-
-    from ugbio_srsnv.deep_srsnv.inference.trt_engine import _compose_x_num, _to_numpy, _to_numpy_long  # noqa: PLC0415
 
     raw_queue: Queue = Queue(maxsize=num_loader_threads + 1)
     gpu_queue: Queue = Queue(maxsize=len(engines) * 2)
@@ -1326,7 +1308,7 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
     writer = None
     if streaming:
         schema = pa.schema([("chrom", pa.string()), ("pos", pa.int64()), ("rn", pa.string()), ("prob", pa.float64())])
-        writer = pq_mod.ParquetWriter(output_path, schema)
+        writer = pq.ParquetWriter(output_path, schema)
 
     t_start = time.perf_counter()
     total_preds = 0
@@ -1503,8 +1485,6 @@ def _merge_contig_worker(  # noqa: PLR0913, PLR0912, PLR0915, C901
 
     No shared state with the parent — fully independent, picklable args only.
     """
-    import math  # noqa: PLC0415
-
     # 1. Load predictions for this contig from all folds
     all_pos: list[np.ndarray] = []
     all_rn: list[str] = []
@@ -1658,8 +1638,6 @@ def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
     quality_lut_y = lut[1] if lut and len(lut) >= min_lut_entries else None
 
     # Quick scan: count predictions per contig (chrom column only — fast)
-    import pyarrow.compute as pc  # noqa: PLC0415
-
     contig_counts: dict[str, int] = {}
     total_preds = 0
     for pred_path in args.fold_predictions:
@@ -1711,10 +1689,8 @@ def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
 
     # Each worker independently reads parquet + VCF — no shared state, no pickle of
     # large data, no COW issues.  Only small picklable args are sent to each worker.
-    from concurrent.futures import ProcessPoolExecutor as _ProcPool  # noqa: PLC0415
-
     tmp_output_paths: list[str] = []
-    with _ProcPool(max_workers=num_workers) as pool:
+    with ProcessPoolExecutor(max_workers=num_workers) as pool:
         futures = {}
         for contig in contig_tasks:
             out_path = os.path.join(out_dir, contig + ".vcf.gz")

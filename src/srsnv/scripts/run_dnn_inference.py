@@ -44,10 +44,13 @@ from ugbio_srsnv.deep_srsnv.data_module import SRSNVDataModule
 from ugbio_srsnv.deep_srsnv.data_prep import build_encoders_from_schema, build_tensor_cache, load_full_tensor_cache
 from ugbio_srsnv.deep_srsnv.inference import load_dnn_model_from_swa_checkpoint
 from ugbio_srsnv.deep_srsnv.lightning_module import SRSNVLightningModule
+from ugbio_srsnv.srsnv_training import _count_bases_in_interval_list
 from ugbio_srsnv.srsnv_utils import MAX_PHRED, prob_to_phred, recalibrate_snvq
 
 CHROM = FeatureMapFields.CHROM.value
 POS = FeatureMapFields.POS.value
+
+MIN_CLASSES_FOR_BINARY_METRICS = 2
 
 
 def _cli() -> argparse.Namespace:
@@ -88,7 +91,7 @@ def _safe_binary_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> dict:
     metrics = {}
     if len(y_true) == 0:
         return {"auc": None, "aupr": None, "logloss": None}
-    if len(np.unique(y_true)) >= 2:  # noqa: PLR2004
+    if len(np.unique(y_true)) >= MIN_CLASSES_FOR_BINARY_METRICS:
         metrics["auc"] = float(roc_auc_score(y_true, y_prob))
         metrics["aupr"] = float(average_precision_score(y_true, y_prob))
     else:
@@ -195,8 +198,6 @@ def _recalibrate(args, mqual, labels):
     if not has_recal:
         logger.warning("Stats/coverage not provided; SNVQ = MQUAL (no recalibration)")
         return mqual.copy(), None, None
-
-    from ugbio_srsnv.srsnv_training import _count_bases_in_interval_list  # noqa: PLC0415
 
     pos_stats = read_filtering_stats_json(args.stats_positive)
     neg_stats = read_filtering_stats_json(args.stats_negative)

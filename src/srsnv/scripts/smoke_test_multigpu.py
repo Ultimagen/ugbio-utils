@@ -13,13 +13,14 @@ import json
 import math
 import os
 import shutil
+import tempfile
 import time
 from pathlib import Path
 
 import lightning
 import torch
 import torch.distributed as dist
-from lightning.pytorch.callbacks import (  # noqa: F401
+from lightning.pytorch.callbacks import (
     EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
@@ -28,20 +29,25 @@ from lightning.pytorch.callbacks import (  # noqa: F401
 from lightning.pytorch.loggers import CSVLogger
 from ugbio_core.logger import logger
 from ugbio_srsnv.deep_srsnv.data_module import SRSNVDataModule
-from ugbio_srsnv.deep_srsnv.data_prep import load_cache_from_shm, load_full_tensor_cache, save_cache_to_shm
+from ugbio_srsnv.deep_srsnv.data_prep import (
+    _DEFAULT_SHM_DIR,
+    load_cache_from_shm,
+    load_full_tensor_cache,
+    save_cache_to_shm,
+)
 from ugbio_srsnv.deep_srsnv.lightning_module import SRSNVLightningModule
 from ugbio_srsnv.srsnv_dnn_bam_training import _parse_devices, _resolve_n_devices
 
 
 def main():  # noqa: C901, PLR0912, PLR0915
     ap = argparse.ArgumentParser(description="Multi-GPU smoke test")
-    ap.add_argument("--cache", default="/tmp/small_cache/tensor_cache.pkl")  # noqa: S108
+    ap.add_argument("--cache", default=os.path.join(tempfile.gettempdir(), "small_cache/tensor_cache.pkl"))
     ap.add_argument("--devices", type=str, default="auto")
     ap.add_argument("--epochs", type=int, default=1)
     ap.add_argument("--batch-size", type=int, default=256)
     ap.add_argument("--swa", action="store_true", help="Enable SWA")
     ap.add_argument("--swa-epoch-start", type=int, default=0, help="Epoch to start SWA")
-    ap.add_argument("--output", default="/tmp/smoke_test_output")  # noqa: S108
+    ap.add_argument("--output", default=os.path.join(tempfile.gettempdir(), "smoke_test_output"))
     args = ap.parse_args()
 
     import logging
@@ -68,7 +74,7 @@ def main():  # noqa: C901, PLR0912, PLR0915
     if n_devices > 1:
         logger.info("LR scaling: %.6f -> %.6f (sqrt(%d))", base_lr, effective_lr, n_devices)
 
-    shm_cache_path = Path("/dev/shm/deep_srsnv_shared_cache")  # noqa: S108
+    shm_cache_path = Path(_DEFAULT_SHM_DIR) / "deep_srsnv_shared_cache"
     if n_devices > 1:
         is_rank_zero = int(os.environ.get("LOCAL_RANK", "0")) == 0
         if is_rank_zero:

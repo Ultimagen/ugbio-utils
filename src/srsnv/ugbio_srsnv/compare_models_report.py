@@ -19,7 +19,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from matplotlib import gridspec
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
     average_precision_score,
@@ -32,6 +33,13 @@ from sklearn.metrics import (
     roc_curve,
 )
 from ugbio_core.logger import logger
+
+from ugbio_srsnv.srsnv_utils import (
+    FLOW_ORDER,
+    get_trinuc_context_with_alt_fwd_vectorized,
+    is_cycle_skip,
+    prob_to_logit,
+)
 
 matplotlib.use("Agg")
 
@@ -241,7 +249,7 @@ def _load_dnn_epoch_metrics(meta: dict) -> pd.DataFrame | None:
             metrics_df = pd.read_csv(csv_file)
             if "epoch" in metrics_df.columns:
                 frames.append(metrics_df.groupby("epoch").first().reset_index())
-        except Exception:  # noqa: BLE001, S112
+        except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError, KeyError):
             continue
 
     if not frames:
@@ -1156,8 +1164,6 @@ def _compute_logit_histogram(
     model_descs: list[dict],
 ) -> str:
     """Plot logit histograms split by FP / TP mixed / TP non-mixed for all models."""
-    from ugbio_srsnv.srsnv_utils import prob_to_logit  # noqa: PLC0415
-
     tp_mask = y_test == 1
     st_vals = m_test["st"].astype(str).to_numpy() if "st" in m_test.columns else np.full(len(y_test), "")
     et_vals = m_test["et"].astype(str).to_numpy() if "et" in m_test.columns else np.full(len(y_test), "")
@@ -1272,14 +1278,6 @@ def _compute_trinuc_snvq_comparison(  # noqa: C901, PLR0912, PLR0915
     Two-row layout: each row has a SNVQ panel on top and a density histogram below.
     Row 1 = forward trinucs (A>C .. G>T), Row 2 = complement (C>A .. T>G).
     """
-    from matplotlib import gridspec  # noqa: PLC0415
-
-    from ugbio_srsnv.srsnv_utils import (  # noqa: PLC0415
-        FLOW_ORDER,
-        get_trinuc_context_with_alt_fwd_vectorized,
-        is_cycle_skip,
-    )
-
     tp_mask = y_test == 1
     if tp_mask.sum() == 0:
         return ""
@@ -1584,7 +1582,7 @@ def render_html(report: dict, output_path: Path) -> None:
     """Render the HTML report from the Jinja2 template."""
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
-        autoescape=False,  # noqa: S701
+        autoescape=select_autoescape(default_for_string=False, default=False),
     )
     template = env.get_template(REPORT_TEMPLATE)
     html = template.render(**report)

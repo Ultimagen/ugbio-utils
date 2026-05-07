@@ -13,6 +13,10 @@ from ugbio_srsnv.deep_srsnv.data_prep import NUMERIC_CHANNELS
 from ugbio_srsnv.deep_srsnv.lightning_module import SRSNVLightningModule
 
 
+def _torch_load_checkpoint(path: str | Path, *, map_location: str | torch.device | None = "cpu") -> dict:
+    return torch.load(str(path), map_location=map_location, weights_only=False)  # noqa: S301
+
+
 def load_dnn_model_from_checkpoint(
     ckpt_path: str | Path,
     *,
@@ -138,7 +142,7 @@ def load_dnn_model_from_swa_checkpoint(
         lr_scheduler="none",
         **model_kwargs,
     )
-    raw = torch.load(str(ckpt_path), map_location=map_location or "cpu", weights_only=False)  # noqa: S301
+    raw = _torch_load_checkpoint(ckpt_path, map_location=map_location or "cpu")
     lit_model.load_state_dict(raw["state_dict"])
     lit_model.eval()
     logger.info("Loaded DNN model from SWA checkpoint: %s", ckpt_path)

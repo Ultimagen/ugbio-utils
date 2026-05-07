@@ -68,6 +68,7 @@ from ugbio_srsnv.srsnv_utils import (
     get_filter_ratio,
     polars_to_pandas_efficient,
     prob_to_phred,
+    recalibrate_snvq_kde,
 )
 
 FOLD_COL = "fold_id"
@@ -205,8 +206,6 @@ def _count_bases_in_interval_list(path: str) -> int:
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"File not found: {path}")
-
-    import gzip  # noqa: PLC0415
 
     n_bases = 0
     number_of_fields = 3  # chrom, start, end
@@ -369,14 +368,7 @@ def _parse_interval_list_manual(path: str) -> tuple[dict[str, int], list[str]]:
     chrom_sizes: dict[str, int] = {}
     chroms_in_data: list[str] = []
 
-    is_gzipped = path.endswith(".gz")
-
-    if is_gzipped:
-        fh = gzip.open(path, "rt", encoding="utf-8")
-    else:
-        fh = open(path, encoding="utf-8")  # noqa: SIM115
-
-    try:
+    with gzip.open(path, "rt", encoding="utf-8") if path.endswith(".gz") else Path(path).open(encoding="utf-8") as fh:
         for line in fh:
             if line.startswith("@SQ"):
                 chrom_name = None
@@ -390,8 +382,6 @@ def _parse_interval_list_manual(path: str) -> tuple[dict[str, int], list[str]]:
                 chrom = line.split("\t", 1)[0]
                 if chrom and chrom not in chroms_in_data:
                     chroms_in_data.append(chrom)
-    finally:
-        fh.close()
 
     missing = [c for c in chroms_in_data if c not in chrom_sizes]
     if missing:
@@ -686,7 +676,7 @@ class SRSNVTrainer:
             logger.debug("Assigning folds to data")
             ctf = self.chrom_to_fold
             self.data_frame = self.data_frame.with_columns(
-                pl.col(CHROM).map_elements(lambda c: ctf.get(c), return_dtype=pl.Int64).alias(FOLD_COL)  # noqa: PLW0108
+                pl.col(CHROM).map_elements(ctf.get, return_dtype=pl.Int64).alias(FOLD_COL)
             )
             logger.debug("Fold assignment complete")
 
@@ -903,8 +893,6 @@ class SRSNVTrainer:
 
         Delegates to the shared ``recalibrate_snvq_kde`` utility in ``srsnv_utils``.
         """
-        from ugbio_srsnv.srsnv_utils import recalibrate_snvq_kde  # noqa: PLC0415
-
         if eps is None:
             eps = self.eps
         if kde_config_overrides is None:

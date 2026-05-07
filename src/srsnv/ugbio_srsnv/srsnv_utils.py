@@ -47,6 +47,8 @@ from ugbio_ppmseq.ppmSeq_utils import (
     PpmseqCategories,
 )
 
+from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
+
 # Column name constants
 PREV1 = "X_PREV1"
 REF = "REF"
@@ -344,8 +346,6 @@ def recalibrate_snvq_kde(  # noqa: PLR0913, PLR0912, C901
     y_lut : np.ndarray
         Corresponding SNVQ values of the lookup table.
     """
-    from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator  # noqa: PLC0415
-
     if kde_config_overrides is None:
         kde_config_overrides = {}
 
