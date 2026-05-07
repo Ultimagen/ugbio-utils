@@ -71,7 +71,7 @@ def _assign_vaf_bin(vaf: float, supporting_read_count: int | None = None) -> str
     return None
 
 
-def split_by_vaf(
+def split_by_vaf(  # noqa: PLR0915
     input_parquet: str,
     output_dir: str,
     basename: str,
@@ -120,13 +120,14 @@ def split_by_vaf(
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
 
-    # Read only required columns from parquet to save memory
+    # Read only required columns and convert to lazy for the computation pipeline
     df_region = pl.read_parquet(input_parquet, columns=required_columns)
     logger.info(f"Input shape: {df_region.shape}")
+    lf = df_region.lazy()
 
-    # Quality filtering in Polars (lazy evaluation)
-    df_filtered = (
-        df_region.with_columns(
+    # Quality filtering with predicate pushdown
+    lf = (
+        lf.with_columns(
             [
                 pl.col("REF").cast(pl.Utf8).str.to_uppercase(),
                 pl.col("ALT").cast(pl.Utf8).str.to_uppercase(),
@@ -151,60 +152,90 @@ def split_by_vaf(
     )
 
     # Compute supporting read count per variant in Polars
-    df_with_counts = df_filtered.with_columns(
-        pl.col("POS").count().over(["CHROM", "POS", "REF", "ALT"]).alias("supporting_read_count")
+    lf = lf.with_columns(pl.col("POS").count().over(["CHROM", "POS", "REF", "ALT"]).alias("supporting_read_count"))
+
+    # Compute canonical trinucleotide substitution entirely in Polars
+    # Logic: if ref is purine (A/G), reverse-complement context and alt
+    is_purine = pl.col("REF").is_in(["A", "G"])
+
+    def _complement_expr(col_name):
+        """Build a Polars expression that complements a single-base column."""
+        expr = pl.col(col_name)
+        # Use temporary lowercase to avoid double-substitution
+        for orig, comp in [("A", "t"), ("T", "a"), ("C", "g"), ("G", "c")]:
+            expr = expr.str.replace(orig, comp, literal=True)
+        return expr.str.to_uppercase()
+
+    lf = lf.with_columns(
+        [
+            pl.when(is_purine).then(_complement_expr("X_NEXT1")).otherwise(pl.col("X_PREV1")).alias("ctx_left"),
+            pl.when(is_purine).then(_complement_expr("REF")).otherwise(pl.col("REF")).alias("ctx_ref"),
+            pl.when(is_purine).then(_complement_expr("X_PREV1")).otherwise(pl.col("X_NEXT1")).alias("ctx_right"),
+            pl.when(is_purine).then(_complement_expr("ALT")).otherwise(pl.col("ALT")).alias("canon_alt"),
+        ]
     )
 
-    logger.info(f"After quality filtering: {df_with_counts.height:,} rows")
+    # Build the canonical trinuc string: "X[Y>Z]W"
+    lf = lf.with_columns(
+        (
+            pl.col("ctx_left")
+            + pl.lit("[")
+            + pl.col("ctx_ref")
+            + pl.lit(">")
+            + pl.col("canon_alt")
+            + pl.lit("]")
+            + pl.col("ctx_right")
+        ).alias("trinuc_substitution")
+    )
 
-    # Convert to pandas only after filtering and aggregations
-    df_plot = df_with_counts.to_pandas()
+    # Filter to valid trinuc substitutions and exclude ref==alt (already canonical)
+    valid_trinucs = set(TRINUC_ORDER)
+    lf = lf.filter(pl.col("trinuc_substitution").is_in(valid_trinucs))
 
-    # Compute canonical trinucleotide substitution
-    df_plot["trinuc_substitution"] = [
-        _canonical_trinuc_change(left, ref, right, alt)
-        for left, ref, right, alt in zip(
-            df_plot["X_PREV1"],
-            df_plot["REF"],
-            df_plot["X_NEXT1"],
-            df_plot["ALT"],
-            strict=False,
-        )
-    ]
-    df_plot = df_plot.dropna(subset=["trinuc_substitution"])
+    # Assign VAF bins in Polars
+    vaf_col = pl.col("vaf")
+    src_col = pl.col("supporting_read_count")
 
-    if len(df_plot) > 0:
-        df_plot["substitution"] = df_plot["trinuc_substitution"].str.extract(r"\[([CT]>[ACGT])\]", expand=False)
-    else:
-        df_plot["substitution"] = pd.Series(dtype=str)
+    # Build a chained when/then for VAF bin assignment
+    # First bin is special: split by supporting_read_count
+    first_lower, first_upper, _ = VAF_BINS[0]
+    vaf_bin_expr = (
+        pl.when((vaf_col >= first_lower) & (vaf_col < first_upper) & (src_col <= 1))
+        .then(pl.lit(FIRST_BIN_SINGLE_READ_LABEL))
+        .when((vaf_col >= first_lower) & (vaf_col < first_upper) & (src_col > 1))
+        .then(pl.lit(FIRST_BIN_MULTI_READ_LABEL))
+    )
+    for lower, upper, label in VAF_BINS[1:]:
+        vaf_bin_expr = vaf_bin_expr.when((vaf_col >= lower) & (vaf_col < upper)).then(pl.lit(label))
+    vaf_bin_expr = vaf_bin_expr.otherwise(pl.lit(None)).alias("vaf_bin")
 
-    # Assign VAF bin using supporting_read_count that's already in the dataframe
-    df_plot["vaf_bin"] = [
-        _assign_vaf_bin(vaf, supporting_read_count)
-        for vaf, supporting_read_count in zip(
-            df_plot["vaf"],
-            df_plot["supporting_read_count"],
-            strict=False,
-        )
-    ]
-    df_plot = df_plot.dropna(subset=["vaf_bin"])
+    lf = lf.with_columns(vaf_bin_expr).filter(pl.col("vaf_bin").is_not_null())
 
-    logger.info(f"Rows with usable context: {len(df_plot):,}")
+    # Collect the final result
+    logger.info("Collecting filtered and annotated data...")
+    df_with_counts = lf.collect()
+    logger.info(f"After quality filtering and trinuc computation: {df_with_counts.height:,} rows")
 
-    # Build profile table
+    # Build profile table directly in Polars
     bin_labels = get_vaf_bin_labels()
-    profile_table = (
-        df_plot.groupby(["vaf_bin", "trinuc_substitution"])
-        .size()
-        .rename("count")
-        .reset_index()
-        .pivot_table(index="trinuc_substitution", columns="vaf_bin", values="count")
-        .reindex(TRINUC_ORDER)
-        .fillna(0)
-        .astype(int)
-        .reindex(columns=bin_labels, fill_value=0)
-        .reset_index()
-    )
+
+    if df_with_counts.height > 0:
+        grouped = df_with_counts.group_by(["vaf_bin", "trinuc_substitution"]).len()
+        profile_polars = grouped.pivot(  # noqa: PD010
+            on="vaf_bin", index="trinuc_substitution", values="len"
+        ).sort("trinuc_substitution")
+        profile_table = profile_polars.to_pandas().set_index("trinuc_substitution")
+        profile_table = (
+            profile_table.reindex(TRINUC_ORDER)
+            .fillna(0)
+            .astype(int)
+            .reindex(columns=bin_labels, fill_value=0)
+            .reset_index()
+        )
+    else:
+        profile_table = pd.DataFrame({"trinuc_substitution": TRINUC_ORDER})
+        for label in bin_labels:
+            profile_table[label] = 0
 
     counts_csv = os.path.join(output_dir, f"{basename}.trinuc_counts.csv")
     profile_table.to_csv(counts_csv, index=False)
