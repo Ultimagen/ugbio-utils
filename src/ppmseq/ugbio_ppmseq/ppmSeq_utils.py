@@ -2,6 +2,7 @@
 import itertools
 import json
 import os
+import warnings
 from collections import defaultdict
 from enum import Enum
 from pathlib import Path
@@ -715,9 +716,10 @@ def read_trimmer_tags_dataframe(
     ).T["value"]
     df_tags = pd.concat((df_mixed_cov, df_tags))
 
-    # Drop noise metrics from the headline table at the top of the report — kenissur
-    # asked for these two to be removed from the shortlist. They stay available via the
-    # /strand_ratio_category_consensus HDF5 key for downstream tooling / Papyrus.
+    # Drop noise metrics from the full mixed-reads dump (§7 in the report, stored under
+    # /mixed_reads_stats) — kenissur asked for these two to be removed. They stay
+    # available via the /strand_ratio_category_consensus HDF5 key for downstream
+    # tooling / Papyrus.
     for drop_metric in ("PCT_UNDETERMINED_end_tag", "PCT_DISCORDANT"):
         if drop_metric in df_tags.index:
             df_tags = df_tags.drop(drop_metric)
@@ -785,6 +787,37 @@ def read_trimmer_failure_codes_ppmseq(trimmer_failure_codes_csv: str):
     return df_trimmer_failure_codes, df_metrics
 
 
+def _load_whitelisted_sorter_stats(sorter_stats_csv: str) -> pd.Series:
+    """Load a sorter-stats CSV, keep only the whitelisted numeric rows.
+
+    Reads the raw two-column CSV directly instead of going through
+    ``read_and_parse_sorter_statistics_csv``, which silently filters to a fixed set
+    of ~7 metrics and would drop several of the rows we want to show (e.g.
+    ``PCT_SOFTCLIPPED_bases``, ``PCT_Adapter_Reached``). Rows that don't parse to a
+    float are dropped; if any whitelisted key was present but unparseable, emit a
+    warning so future sorter versions that start emitting wrapped values
+    (``"(1.43)"``) or ``"N/A"`` don't silently vanish from the Key-metrics table.
+    """
+    raw = pd.read_csv(sorter_stats_csv, header=None, names=["metric", "value"])
+    raw = raw.dropna(subset=["metric"]).set_index("metric")["value"]
+    raw_numeric = pd.to_numeric(raw, errors="coerce")
+    coerced_out = [k for k in SORTER_STATS_KEYS_TO_SHOW if k in raw.index and pd.isna(raw_numeric.loc[k])]
+    if coerced_out:
+        warnings.warn(
+            f"Sorter-stats CSV has non-numeric values for whitelisted keys "
+            f"{coerced_out}; those rows will be missing from the Key-metrics table.",
+            stacklevel=2,
+        )
+    raw = raw_numeric.dropna()
+    # Preserve the canonical SORTER_STATS_KEYS_TO_SHOW order so the report table
+    # reads top-to-bottom in the expected layout.
+    present = [k for k in SORTER_STATS_KEYS_TO_SHOW if k in raw.index]
+    sorter_stats = raw.reindex(present)
+    sorter_stats.name = "value"
+    sorter_stats.index.name = "metric"
+    return sorter_stats
+
+
 def collect_statistics(
     adapter_version: str | PpmseqAdapterVersions,
     subsampled_sam: str,
@@ -804,9 +837,15 @@ def collect_statistics(
     output_filename : str
         path to save dataframe to in hdf format (should end with .h5).
     sorter_stats_csv : str, optional
-        path to a Sorter stats file; when present, its metrics are merged into the stats shortlist.
+        path to a Sorter stats file. When present, the whitelisted rows
+        (``SORTER_STATS_KEYS_TO_SHOW``) are appended to ``/stats_shortlist`` — the
+        Key-metrics Series rendered in Section 1. The full filtered series is also
+        stored under ``/sorter_stats``.
     trimmer_failure_codes_csv : str, optional
-        path to a Trimmer failure codes file; when present, failure-rate metrics are appended.
+        path to a Trimmer failure codes file. When present, the headline
+        ``PCT_failed_adapter_dimers`` row is appended to ``/stats_shortlist``;
+        the rest of the per-code failure-rate metrics are stored under
+        ``/failure_codes_metrics`` for the Section 8 table.
     """
     _assert_adapter_version_supported(adapter_version)
     df_reads = read_tags_from_subsampled_sam(subsampled_sam)
@@ -814,21 +853,7 @@ def collect_statistics(
     df_category_concordance, _, df_category_consensus = get_strand_ratio_category_concordance(adapter_version, df_reads)
 
     if sorter_stats_csv:
-        # Read the raw two-column CSV directly instead of going through
-        # read_and_parse_sorter_statistics_csv, which silently filters to a fixed set of
-        # ~7 metrics and would drop several of the rows we want to show
-        # (e.g. PCT_SOFTCLIPPED_bases, PCT_Adapter_Reached).
-        raw = pd.read_csv(sorter_stats_csv, header=None, names=["metric", "value"])
-        raw = raw.dropna(subset=["metric"]).set_index("metric")["value"]
-        # Coerce to float; any value that fails (e.g. F80@30x's "(1.43)" strings) becomes NaN
-        # and is then dropped — we only care about the numeric allow-listed keys.
-        raw = pd.to_numeric(raw, errors="coerce").dropna()
-        # Keep only the allow-listed keys, silently drop anything else. Preserve the
-        # canonical order so the report table reads top-to-bottom in the expected layout.
-        present = [k for k in SORTER_STATS_KEYS_TO_SHOW if k in raw.index]
-        sorter_stats = raw.reindex(present)
-        sorter_stats.name = "value"
-        sorter_stats.index.name = "metric"
+        sorter_stats = _load_whitelisted_sorter_stats(sorter_stats_csv)
     else:
         sorter_stats = pd.Series(dtype=float, name="value")
         sorter_stats.index.name = "metric"
@@ -1502,10 +1527,11 @@ def ppmseq_qc_analysis(
     """
     Run the ppmSeq QC analysis pipeline on the subsampled SAM produced by sorter.
 
-    All per-read QC (Sections 1, 3) is derived from the SAM. ``adapter_version`` is
-    validated but no longer branches any logic — all supported versions share the same
-    SAM-based path. It's retained in the signature because existing WDL callers still
-    pass it.
+    All per-read QC — including the strand-ratio category plots, the concordance
+    heatmap, the sr/sr-by-et histograms, and the aligned-vs-unaligned read-length
+    plot — is derived from the SAM. ``adapter_version`` is validated but no longer
+    branches any logic; all supported versions share the same SAM-based path. It's
+    retained in the signature because existing WDL callers still pass it.
 
     Parameters
     ----------
@@ -1519,7 +1545,8 @@ def ppmseq_qc_analysis(
     output_basename : str, optional
         basename for output files; defaults to the SAM file basename.
     sorter_stats_csv : str, optional
-        path to a Sorter stats csv file; whitelisted metrics land in Section 3 of the report.
+        path to a Sorter stats csv file; whitelisted metrics are appended to the
+        Key-metrics table in Section 1 of the report.
     trimmer_failure_codes_csv : str, optional
         path to a Trimmer failure codes csv file. If provided, failure-rate metrics are added.
     generate_report : bool, optional

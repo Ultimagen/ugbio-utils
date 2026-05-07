@@ -50,7 +50,10 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         "--sorter-stats-csv",
         type=str,
         required=False,
-        help="Sorter stats csv file (optional; selected metrics land in Section 3 of the report)",
+        help=(
+            "Sorter stats csv file (optional; whitelisted metrics are appended to the "
+            "Key-metrics table in Section 1 of the report)"
+        ),
     )
     parser.add_argument(
         "--output-path",
