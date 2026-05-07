@@ -75,8 +75,8 @@ ST_TAG = "st"  # start-loop category (MINUS / PLUS / MIXED / UNDETERMINED)
 ET_TAG = "et"  # end-loop category
 TM_TAG = "tm"  # trimming reasons; contains "A" when the adapter was seen (end reached)
 
-# Subset of sorter-stats metrics to surface in the report's Table 4 "Sorter stats" section.
-# The raw CSV has ~40 rows; Ken asked for just the ones below. Missing keys are silently
+# Subset of sorter-stats metrics to surface in the report's headline Table 1.
+# The raw CSV has ~40 rows; we only want the ones below. Missing keys are silently
 # skipped so older sorter versions / partial CSVs still work.
 SORTER_STATS_KEYS_TO_SHOW = (
     "PF_Barcode_reads",
@@ -90,6 +90,46 @@ SORTER_STATS_KEYS_TO_SHOW = (
     "PCT_Chimeras",
     "Indel_Rate",
 )
+
+
+# Per-metric formatters used by the headline "Table 1" in the report. The mix of units
+# (integer counts, sub-1 percent, 0-100 percent, plain float) means a single table-wide
+# format string would be wrong for at least some rows; keep it as a dict here so the
+# notebook can reference one source of truth.
+#
+# Scales (verified against Z0263 HDF, see VERIFICATION.md):
+#   PF_Barcode_reads           — integer count, e.g. 194,932,881
+#   PCT_PF_Reads_aligned       — 0-100 scale (e.g. 99.83 means 99.83%)
+#   PCT_PF_Q30_bases           — 0-100 scale
+#   PCT_SOFTCLIPPED_bases      — 0-100 scale (small values, e.g. 0.90)
+#   Mean_Read_Length           — plain float (bp)
+#   Mean_cvg                   — plain float (x coverage)
+#   PCT_Quality_Trimmed_Reads  — 0-100 scale
+#   PCT_Adapter_Reached        — 0-100 scale
+#   PCT_Chimeras               — 0-100 scale (small values, e.g. 0.53)
+#   Indel_Rate                 — plain float (rate, e.g. 0.29)
+SORTER_STATS_FORMATS: dict[str, object] = {
+    "PF_Barcode_reads": lambda v: f"{int(v):,}",
+    "PCT_PF_Reads_aligned": "{:.2f}%".format,
+    "PCT_PF_Q30_bases": "{:.2f}%".format,
+    "PCT_SOFTCLIPPED_bases": "{:.2f}%".format,
+    "Mean_Read_Length": lambda v: f"{v:.1f}",
+    "Mean_cvg": lambda v: f"{v:.1f}",
+    "PCT_Quality_Trimmed_Reads": "{:.2f}%".format,
+    "PCT_Adapter_Reached": "{:.2f}%".format,
+    "PCT_Chimeras": "{:.2f}%".format,
+    "Indel_Rate": lambda v: f"{v:.2f}",
+}
+
+
+# Formatters for the two ppmSeq rows that lead Table 1. PCT_MIXED_start_tag is stored
+# on the 0-100 scale (stats_shortlist value ~32 means 32%); PCT_failed_adapter_dimers
+# is also stored on the 0-100 scale but its natural values are sub-1 (~0.07),
+# so we want a high-precision percent after dividing by 100.
+TABLE1_PPMSEQ_FORMATS: dict[str, object] = {
+    "PCT_MIXED_start_tag": "{:.2f}%".format,
+    "PCT_failed_adapter_dimers": lambda v: f"{v / 100:.4%}",
+}
 
 # NOTE: these are legacy parameters used ONLY by the featuremap annotator path
 # (PpmseqStrandVcfAnnotator / add_strand_ratios_and_categories_to_featuremap). The SAM-based
@@ -341,6 +381,8 @@ def read_tags_from_subsampled_sam(
           - ``tm`` (str): trimming-reason string (e.g. ``A``, ``AQZ``). Empty string when
             absent, which means the adapter was not reached — mapped to END_UNREACHED below.
           - ``count``: always 1 — lets downstream code that aggregates on it work unchanged.
+          - ``is_aligned`` (bool): ``not rec.is_unmapped``. Used by the read-length plot to
+            split aligned vs unaligned reads into two normalized lines.
           - ``strand_ratio_category_start`` / ``strand_ratio_category_end``:
             copies of ``st`` / ``et`` with END_UNREACHED substituted on rows where ``tm`` has no ``A``.
 
@@ -362,8 +404,12 @@ def read_tags_from_subsampled_sam(
             # section.
             try:
                 if rec.get_tag("RG") == "unmatched":
+                    # Trimmer routed this read to the unmatched read group — it has no
+                    # ppmSeq tag calls, so skip before querying st below.
                     continue
             except KeyError:
+                # No RG tag at all — treat as matched. Production reads always carry an
+                # RG, but handcrafted test fixtures sometimes omit it.
                 pass
             st = rec.get_tag(ST_TAG)  # KeyError if absent — st is required
             try:
@@ -384,9 +430,11 @@ def read_tags_from_subsampled_sam(
                 # downstream), not "undetermined". See Ken's comment on PR #307.
                 tm = ""
             read_len = rec.query_length or 0
-            rows.append((sr, str(st), str(et), str(tm), int(read_len)))
+            rows.append(
+                (sr, str(st), str(et), str(tm), int(read_len), not rec.is_unmapped),
+            )
 
-    df_reads = pd.DataFrame(rows, columns=[SR_TAG, ST_TAG, ET_TAG, TM_TAG, "read_length"])
+    df_reads = pd.DataFrame(rows, columns=[SR_TAG, ST_TAG, ET_TAG, TM_TAG, "read_length", "is_aligned"])
     df_reads[HistogramColumnNames.COUNT.value] = 1
     is_end_reached = df_reads[TM_TAG].str.contains("A", na=False)
     undetermined = PpmseqCategories.UNDETERMINED.value
@@ -598,7 +646,6 @@ def read_trimmer_tags_dataframe(
     adapter_version: str | PpmseqAdapterVersions,
     df_strand_ratio_category: pd.DataFrame,
     df_category_consensus: pd.Series,
-    df_sorter_stats: pd.DataFrame,
     df_category_concordance: pd.Series = None,
 ) -> pd.DataFrame:
     """
@@ -610,11 +657,9 @@ def read_trimmer_tags_dataframe(
         adapter version to check
     df_strand_ratio_category : pd.DataFrame
 
-    df_category_consensus : pd.DataFrame
+    df_category_consensus : pd.Series
 
-    df_sorter_stats : pd.DataFrame
-
-    df_category_concordance : pd.DataFrame, optional
+    df_category_concordance : pd.Series, optional
 
     Returns
     -------
@@ -792,7 +837,6 @@ def collect_statistics(
         adapter_version=adapter_version,
         df_strand_ratio_category=df_strand_ratio_category,
         df_category_consensus=df_category_consensus,
-        df_sorter_stats=sorter_stats.to_frame(),
         df_category_concordance=df_category_concordance,
     )
 
@@ -957,7 +1001,10 @@ def plot_strand_ratio_category(
             }
         )
     )
-    normalized = df_trimmer_histogram_by_strand_ratio_category / df_trimmer_histogram_by_strand_ratio_category.sum()
+    # Fractions 0-1; multiply by 100 so the axis + bar labels read as percent.
+    normalized = (
+        100 * df_trimmer_histogram_by_strand_ratio_category / df_trimmer_histogram_by_strand_ratio_category.sum()
+    )
     if sr_present:
         # Zero out UNDETERMINED on the Start-tag column only (if present); leave the End-tag
         # column untouched because et can still be UNDETERMINED when sr is present.
@@ -975,12 +1022,12 @@ def plot_strand_ratio_category(
         ax=ax,
     )
     for cont in ax.containers:
-        ax.bar_label(cont, labels=[f"{x:.1%}" for x in cont.datavalues], label_type="edge")
+        ax.bar_label(cont, labels=[f"{x:.1f}%" for x in cont.datavalues], label_type="edge")
     plt.xticks(rotation=10, ha="center")
     plt.xlabel("")
-    plt.ylabel("Relative abundance", fontsize=22)
+    plt.ylabel("Relative abundance (%)", fontsize=22)
     ylim = ax.get_ylim()
-    ax.set_ylim(ylim[0], ylim[1] + 0.04)
+    ax.set_ylim(ylim[0], ylim[1] * 1.05)
     legend_handle = plt.legend(bbox_to_anchor=(1.01, 1), fontsize=14, framealpha=0.95)
     title_handle = plt.title(title)
     if output_filename is not None:
@@ -1237,75 +1284,6 @@ def plot_sr_by_et(
     return fig
 
 
-def plot_read_length_by_st(
-    df_reads: pd.DataFrame,
-    title: str = "",
-    output_filename: str = None,
-) -> plt.Figure:
-    """
-    Plot per-read read-length distributions faceted by the start-loop category as a vertically
-    stacked 3x1 grid (PLUS / MINUS / MIXED). Values are a percentage of reads within each panel.
-    One color per category (shared with plot_sr_by_et). UNDETERMINED reads are excluded because
-    in practice almost no reads carry that category at this point in the pipeline.
-
-    Parameters
-    ----------
-    df_reads : pd.DataFrame
-        Per-read tag dataframe from :func:`read_tags_from_subsampled_sam`; must have a
-        ``read_length`` column.
-    title : str, optional
-        plot title.
-    output_filename : str, optional
-        if provided, save the plot.
-    """
-    set_pyplot_defaults()
-    category_col = HistogramColumnNames.STRAND_RATIO_CATEGORY_START.value
-    st_categories = [
-        PpmseqCategories.MIXED.value,
-        PpmseqCategories.PLUS.value,
-        PpmseqCategories.MINUS.value,
-    ]
-    # Shared x range so facets are directly comparable. 99th percentile trims the long tail.
-    lengths_all = df_reads["read_length"].dropna()
-    x_max = int(np.ceil(lengths_all.quantile(0.995))) if len(lengths_all) else 1
-    x_max = max(x_max, 10)
-    # 1 bp bins centered on integer read lengths — with edges at .5 offsets each bin
-    # covers exactly one integer bp value, so the centers land on N (not N + 0.5) and
-    # every bin holds exactly one read-length value (no zig-zag).
-    bin_edges = np.arange(-0.5, x_max + 0.5, 1.0)
-    centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-
-    fig, axs = plt.subplots(len(st_categories), 1, figsize=(12, 4 * len(st_categories)), sharex=True)
-    for ax, st_val in zip(axs, st_categories, strict=True):
-        subset = df_reads[df_reads[category_col] == st_val]
-        lengths = subset["read_length"].dropna()
-        n = len(lengths)
-        if n == 0:
-            ax.text(0.5, 0.5, "no reads", transform=ax.transAxes, ha="center", va="center")
-        else:
-            clipped = lengths.clip(lower=0, upper=x_max)
-            counts, _ = np.histogram(clipped, bins=bin_edges)
-            percent_per_bin = 100.0 * counts / n
-            ax.plot(centers, percent_per_bin, color=_SR_CATEGORY_COLORS[st_val], linewidth=2)
-        ax.set_xlim(0, x_max)
-        ax.set_title(f"st={st_val}", fontsize=_SR_TITLE_FONTSIZE)
-        ax.set_ylabel("Frequency (%)", fontsize=_SR_AXIS_LABEL_FONTSIZE)
-    axs[-1].set_xlabel("Read length (bp)", fontsize=_SR_AXIS_LABEL_FONTSIZE)
-    title_handle = fig.suptitle(title, fontsize=_SR_TITLE_FONTSIZE)
-    fig.tight_layout()
-    if output_filename is not None:
-        if not output_filename.endswith(".png"):
-            output_filename += ".png"
-        fig.savefig(
-            output_filename,
-            facecolor="w",
-            dpi=300,
-            bbox_inches="tight",
-            bbox_extra_artists=[title_handle],
-        )
-    return fig
-
-
 def plot_read_length_overall(
     df_reads: pd.DataFrame,
     title: str = "",
@@ -1313,13 +1291,21 @@ def plot_read_length_overall(
     ax: plt.Axes = None,
 ) -> plt.Axes:
     """
-    Plot the overall read-length histogram as a line plot over bin centers.
+    Plot the per-read read-length distribution as two lines on a single axes:
+    one for aligned reads, one for unaligned reads. Each line is normalized to 1
+    within its own group so the two can be read as PDFs of independent populations
+    rather than fractions of the combined total.
+
+    The legend shows each group's share of the subsampled population plus its median
+    length, so the reader can tell at a glance whether the aligned vs unaligned split
+    is extreme (e.g. aligned 99%, unaligned 1%) and whether their length distributions
+    differ.
 
     Parameters
     ----------
     df_reads : pd.DataFrame
-        Per-read tag dataframe from :func:`read_tags_from_subsampled_sam`; must have a
-        ``read_length`` column.
+        Per-read tag dataframe from :func:`read_tags_from_subsampled_sam`. Must carry
+        ``read_length`` and ``is_aligned`` columns.
     title : str, optional
         plot title.
     output_filename : str, optional
@@ -1333,19 +1319,46 @@ def plot_read_length_overall(
         ax = plt.gca()
     else:
         plt.sca(ax)
-    lengths = df_reads["read_length"].dropna()
-    n = len(lengths)
-    x_max = int(np.ceil(lengths.quantile(0.995))) if n else 1
+
+    lengths_all = df_reads["read_length"].dropna()
+    n_total = max(len(lengths_all), 1)
+    x_max = int(np.ceil(lengths_all.quantile(0.995))) if len(lengths_all) else 1
     x_max = max(x_max, 10)
+    # 1 bp bins centered on integer read lengths so centers are N (not N + 0.5) and
+    # each bin holds exactly one read-length value (no aliasing / zig-zag).
     bin_edges = np.arange(-0.5, x_max + 0.5, 1.0)
     centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-    if n:
+
+    groups = [
+        ("Aligned", df_reads[df_reads["is_aligned"]], "xkcd:royal blue", "-"),
+        ("Unaligned", df_reads[~df_reads["is_aligned"]], "xkcd:red orange", "--"),
+    ]
+    handles_drawn = False
+    for label, subset, color, linestyle in groups:
+        lengths = subset["read_length"].dropna()
+        n = len(lengths)
+        if n == 0:
+            continue
         clipped = lengths.clip(lower=0, upper=x_max)
         counts, _ = np.histogram(clipped, bins=bin_edges)
-        ax.plot(centers, 100.0 * counts / n, color="xkcd:royal blue", linewidth=2)
+        # Independently-normalized PDF per group (fraction of the group, not of the total).
+        pdf = counts / n
+        pct_of_total = 100.0 * n / n_total
+        median = int(lengths.median())
+        ax.plot(
+            centers,
+            pdf,
+            color=color,
+            linestyle=linestyle,
+            linewidth=2,
+            label=f"{label} ({pct_of_total:.1f}%), median={median} bp",
+        )
+        handles_drawn = True
+    if handles_drawn:
+        ax.legend(loc="upper right", fontsize=12, framealpha=0.95)
     ax.set_xlim(0, x_max)
     ax.set_xlabel("Read length (bp)", fontsize=_SR_AXIS_LABEL_FONTSIZE)
-    ax.set_ylabel("Frequency (%)", fontsize=_SR_AXIS_LABEL_FONTSIZE)
+    ax.set_ylabel("Fraction of reads in group", fontsize=_SR_AXIS_LABEL_FONTSIZE)
     title_handle = plt.title(title, fontsize=_SR_TITLE_FONTSIZE)
     if output_filename is not None:
         if not output_filename.endswith(".png"):
@@ -1358,6 +1371,51 @@ def plot_read_length_overall(
             bbox_extra_artists=[title_handle],
         )
     return ax
+
+
+def build_headline_table(statistics_h5: str) -> pd.Series:  # noqa: C901
+    """Assemble the headline "Table 1" Series for the report.
+
+    Rows, in order (missing ones are skipped so partial runs still work):
+
+    1. ``PCT_MIXED_start_tag`` — from ``/stats_shortlist``
+    2. ``PCT_failed_adapter_dimers`` — from ``/failure_codes_metrics`` (may be absent
+       when no trimmer failure codes CSV was supplied)
+    3. each row of ``/sorter_stats`` that is present, in ``SORTER_STATS_KEYS_TO_SHOW``
+       order (may be empty when no sorter stats CSV was supplied)
+
+    The notebook applies :data:`TABLE1_PPMSEQ_FORMATS` / :data:`SORTER_STATS_FORMATS` to
+    the returned Series to format each value with the right units.
+    """
+    rows: list[tuple[str, float]] = []
+    with pd.HDFStore(statistics_h5) as store:
+        available = set(store.keys())
+        if "/stats_shortlist" in available:
+            shortlist = store["stats_shortlist"]
+            if isinstance(shortlist, pd.DataFrame):
+                shortlist = shortlist.iloc[:, 0]
+            if "PCT_MIXED_start_tag" in shortlist.index:
+                rows.append(("PCT_MIXED_start_tag", float(shortlist.loc["PCT_MIXED_start_tag"])))
+        if "/failure_codes_metrics" in available:
+            fc = store["failure_codes_metrics"]
+            if isinstance(fc, pd.DataFrame) and "value" in fc.columns:
+                fc = fc["value"]
+            if "PCT_failed_adapter_dimers" in fc.index:
+                rows.append(
+                    ("PCT_failed_adapter_dimers", float(fc.loc["PCT_failed_adapter_dimers"])),
+                )
+        if "/sorter_stats" in available:
+            ss = store["sorter_stats"]
+            if isinstance(ss, pd.DataFrame):
+                ss = ss.iloc[:, 0]
+            for key in SORTER_STATS_KEYS_TO_SHOW:
+                if key in ss.index:
+                    rows.append((key, float(ss.loc[key])))
+    out = pd.Series(dict(rows), dtype=float, name="value")
+    out.index.name = "metric"
+    # Preserve row order.
+    out = out.loc[[name for name, _ in rows]]
+    return out
 
 
 def flatten_strand_ratio_category(h5_file: str, key: str) -> pd.DataFrame:
@@ -1495,13 +1553,11 @@ def ppmseq_qc_analysis(
     output_sr_hist_plot = os.path.join(output_path, f"{output_basename}.sr_hist.png")
     output_sr_by_et_plot = os.path.join(output_path, f"{output_basename}.sr_by_et.png")
     output_read_length_plot = os.path.join(output_path, f"{output_basename}.read_length.png")
-    output_read_length_by_st_plot = os.path.join(output_path, f"{output_basename}.read_length_by_st.png")
     output_visualization_files = [
         output_report_ipynb,
         output_strand_ratio_category_plot,
         output_strand_ratio_category_concordance_plot,
         output_read_length_plot,
-        output_read_length_by_st_plot,
     ]
 
     collect_statistics(
@@ -1554,16 +1610,12 @@ def ppmseq_qc_analysis(
         title=f"{output_basename} read length",
         output_filename=output_read_length_plot,
     )
-    plot_read_length_by_st(
-        df_reads,
-        title=f"{output_basename} read length by st",
-        output_filename=output_read_length_by_st_plot,
-    )
 
     if generate_report:
         template_notebook = BASE_PATH / REPORTS_DIR / "ppmSeq_qc_report.ipynb"
         adapter_value = adapter_version if isinstance(adapter_version, str) else adapter_version.value
         logo_path = BASE_PATH / REPORTS_DIR / "ug_logo.b64"
+        illustration_path = BASE_PATH / REPORTS_DIR / "ppmSeq_v1_illustration.png"
         parameters = {
             "sample_name": output_basename,
             # The notebook still validates that adapter_version is supported so we keep
@@ -1572,13 +1624,13 @@ def ppmseq_qc_analysis(
             "statistics_h5": output_statistics_h5,
             "strand_ratio_category_png": output_strand_ratio_category_plot,
             "strand_ratio_category_concordance_png": output_strand_ratio_category_concordance_plot,
-            # When sr is absent the sr-dependent sections (1.4 and 1.5) are dropped from the
-            # report. Passing None here signals the notebook to skip them.
+            # When sr is absent the sr-dependent sections are dropped from the report.
+            # Passing None here signals the notebook to skip them.
             "sr_hist_png": output_sr_hist_plot if any_sr else None,
             "sr_by_et_png": output_sr_by_et_plot if any_sr else None,
             "read_length_png": output_read_length_plot,
-            "read_length_by_st_png": output_read_length_by_st_plot,
             "logo_file": str(logo_path),
+            "illustration_file": str(illustration_path),
             "trimmer_failure_codes_csv": trimmer_failure_codes_csv,
             "sorter_stats_csv": sorter_stats_csv,
             "extra_info": dict(extra_info) if extra_info else {},

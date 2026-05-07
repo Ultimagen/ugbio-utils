@@ -18,11 +18,11 @@ from ugbio_ppmseq.ppmSeq_utils import (
     PpmseqStrandVcfAnnotator,
     add_strand_ratios_and_categories_to_featuremap,
     all_reads_have_sr_tag,
+    build_headline_table,
     collect_statistics,
     get_strand_ratio_category_concordance,
     group_trimmer_histogram_by_strand_ratio_category,
     has_sr_tag,
-    plot_read_length_by_st,
     plot_read_length_overall,
     plot_sr_by_et,
     plot_sr_histogram,
@@ -85,6 +85,7 @@ def test_read_tags_from_subsampled_sam():
         ET_TAG,
         TM_TAG,
         "count",
+        "is_aligned",
         "strand_ratio_category_start",
         "strand_ratio_category_end",
     }
@@ -94,6 +95,31 @@ def test_read_tags_from_subsampled_sam():
     # sr is nominally in [0, 1]; calibration can produce a small out-of-range tail.
     assert df_reads[SR_TAG].between(-1, 2).all()
     assert df_reads[SR_TAG].between(0, 1).mean() > 0.99
+    # Fixture contains both aligned and unaligned reads — the new read-length plot
+    # relies on this split.
+    assert df_reads["is_aligned"].any()
+    assert (~df_reads["is_aligned"]).any()
+
+
+def test_read_tags_is_aligned_column(tmp_path):
+    """Build a tiny SAM with one mapped and one unmapped record and assert the is_aligned
+    column reflects the flag correctly."""
+    sam_content = (
+        "@HD\tVN:1.6\n"
+        "@SQ\tSN:chr1\tLN:100\n"
+        "@RG\tID:test\n"
+        # Mapped read (flag 0x00): aligned.
+        "r1\t0\tchr1\t1\t60\t4M\t*\t0\t0\tAAAA\t!!!!\tRG:Z:test\tsr:f:0.5\tst:Z:MIXED\n"
+        # Unmapped read (flag 0x04): unaligned.
+        "r2\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:test\tsr:f:0.1\tst:Z:MINUS\n"
+    )
+    sam_file = tmp_path / "two_reads.sam"
+    sam_file.write_text(sam_content)
+    df_reads = read_tags_from_subsampled_sam(str(sam_file))
+    assert len(df_reads) == 2
+    # Preserve the order of records in the SAM.
+    assert df_reads.iloc[0]["is_aligned"] is np.True_ or df_reads.iloc[0]["is_aligned"] is True
+    assert df_reads.iloc[1]["is_aligned"] is np.False_ or df_reads.iloc[1]["is_aligned"] is False
 
 
 def test_read_tags_from_subsampled_sam_no_sr():
@@ -278,14 +304,32 @@ def test_plot_strand_ratio_category_concordance_sr_present_drops_start_undetermi
 
 def test_plot_read_length_overall(tmp_path):
     df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
-    plot_read_length_overall(df_reads, title="test", output_filename=str(tmp_path / "rl.png"))
-    assert (tmp_path / "rl.png").exists()
+    out = tmp_path / "rl.png"
+    plot_read_length_overall(df_reads, title="test", output_filename=str(out))
+    assert out.exists()
+    # The file is the two-line aligned/unaligned plot; confirm the PNG isn't empty.
+    assert out.stat().st_size > 10000
 
 
-def test_plot_read_length_by_st(tmp_path):
-    df_reads = read_tags_from_subsampled_sam(str(subsampled_sam))
-    plot_read_length_by_st(df_reads, title="test", output_filename=str(tmp_path / "rl_by_st.png"))
-    assert (tmp_path / "rl_by_st.png").exists()
+def test_build_headline_table_contains_expected_rows(tmp_path):
+    """End-to-end: collect_statistics writes the h5, build_headline_table assembles the
+    row-ordered series with PCT_MIXED_start_tag first, PCT_failed_adapter_dimers next,
+    and the sorter rows last (in SORTER_STATS_KEYS_TO_SHOW order)."""
+    h5 = tmp_path / "stats.h5"
+    collect_statistics(
+        PpmseqAdapterVersions.V1,
+        subsampled_sam=str(subsampled_sam),
+        sorter_stats_csv=str(sorter_stats_csv),
+        trimmer_failure_codes_csv=str(trimmer_failure_codes_csv_ppmseq_v1_incl_failed_rsq),
+        output_filename=str(h5),
+    )
+    headline = build_headline_table(str(h5))
+    assert headline.index[0] == "PCT_MIXED_start_tag"
+    assert headline.index[1] == "PCT_failed_adapter_dimers"
+    # Remaining rows are sorter keys, in canonical order (those present in the CSV).
+    tail = list(headline.index[2:])
+    expected_tail_order = [k for k in SORTER_STATS_KEYS_TO_SHOW if k in tail]
+    assert tail == expected_tail_order
 
 
 def test_plot_strand_ratio_category_concordance(tmp_path):
