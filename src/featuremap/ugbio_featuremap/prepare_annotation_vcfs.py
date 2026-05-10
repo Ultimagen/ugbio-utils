@@ -1,12 +1,18 @@
-"""Prepare annotation VCFs for snvfind: add Flag fields, convert to BCF, create filter JSONs.
+"""Prepare read_filters JSON and inference_filters JSON for annotation-based filtering.
+
+Handles:
+- Coverage threshold update in read_filters JSON
+- Annotation exclusion filter injection (is_null for EXCLUDE_TRAINING, PCAWG)
+- Inference inclusion filter creation (any_not_null for INCLUDE_INFERENCE, PCAWG)
 
 Usage::
 
     prepare_annotation_vcfs \
-        --exclude-vcf exclude.vcf.gz --exclude-field EXCLUDE_TRAINING \
-        --include-vcf include.vcf.gz --include-field INCLUDE_INFERENCE \
-        --pcawg-vcf pcawg.vcf.gz --pcawg-field PCAWG \
+        --exclude-field EXCLUDE_TRAINING \
+        --include-field INCLUDE_INFERENCE \
+        --pcawg-field PCAWG \
         --read-filters read_filters.json \
+        --coverage-threshold 42 \
         --output-dir .
 """
 
@@ -17,25 +23,18 @@ import json
 import sys
 from pathlib import Path
 
-from ugbio_core.exec_utils import print_and_execute
 from ugbio_core.logger import logger
 
 
-def _add_flag_and_convert_to_bcf(vcf_path: str, field_name: str, output_bcf: str) -> None:
-    """Add a Flag INFO field to every record in a VCF and convert to indexed BCF."""
-    logger.info(f"Converting {vcf_path} to BCF with Flag field '{field_name}'")
-
-    cmd = (
-        f"(bcftools view -h {vcf_path} | grep -v '^#CHROM';"
-        f" echo '##INFO=<ID={field_name},Number=0,Type=Flag,Description=\"{field_name} annotation flag\">';"
-        f" bcftools view -h {vcf_path} | grep '^#CHROM';"
-        f" bcftools view -H {vcf_path} | awk -F'\\t' -v OFS='\\t'"
-        f' \'{{if($8==".") $8="{field_name}"; else $8=$8";{field_name}"; print}}\''
-        f") | bcftools view -Ob -o {output_bcf}"
-    )
-    print_and_execute(cmd)
-    print_and_execute(f"bcftools index {output_bcf}")
-    logger.info(f"Created {output_bcf}")
+def _update_coverage_threshold(filters_json: dict, coverage_threshold: int) -> dict:
+    """Update coverage_le_max filter value in both filter sets."""
+    for key in ("filters_full_output", "filters_random_sample"):
+        if key in filters_json:
+            for entry in filters_json[key]:
+                if entry.get("name") == "coverage_le_max":
+                    entry["value"] = coverage_threshold
+    logger.info(f"Updated coverage_le_max threshold to {coverage_threshold}")
+    return filters_json
 
 
 def _inject_exclusion_filter(filters_json: dict, field_name: str) -> dict:
@@ -58,17 +57,6 @@ def _create_inference_filters(fields: list[str], output_path: str) -> None:
     logger.info(f"Created {output_path} with any_not_null on {fields}")
 
 
-def _update_coverage_threshold(filters_json: dict, coverage_threshold: int) -> dict:
-    """Update coverage_le_max filter value in both filter sets."""
-    for key in ("filters_full_output", "filters_random_sample"):
-        if key in filters_json:
-            for entry in filters_json[key]:
-                if entry.get("name") == "coverage_le_max":
-                    entry["value"] = coverage_threshold
-    logger.info(f"Updated coverage_le_max threshold to {coverage_threshold}")
-    return filters_json
-
-
 def run(argv: list[str] | None = None) -> None:
     """Main entry point."""
     args = _parse_args(argv)
@@ -84,20 +72,14 @@ def run(argv: list[str] | None = None) -> None:
 
     inference_fields: list[str] = []
 
-    if args.exclude_vcf:
-        bcf_path = str(output_dir / "exclude_annot.bcf")
-        _add_flag_and_convert_to_bcf(args.exclude_vcf, args.exclude_field, bcf_path)
+    if args.exclude_field:
         if read_filters:
             read_filters = _inject_exclusion_filter(read_filters, args.exclude_field)
 
-    if args.include_vcf:
-        bcf_path = str(output_dir / "include_annot.bcf")
-        _add_flag_and_convert_to_bcf(args.include_vcf, args.include_field, bcf_path)
+    if args.include_field:
         inference_fields.append(args.include_field)
 
-    if args.pcawg_vcf:
-        bcf_path = str(output_dir / "pcawg_annot.bcf")
-        _add_flag_and_convert_to_bcf(args.pcawg_vcf, args.pcawg_field, bcf_path)
+    if args.pcawg_field:
         if read_filters:
             read_filters = _inject_exclusion_filter(read_filters, args.pcawg_field)
         inference_fields.append(args.pcawg_field)
@@ -112,18 +94,15 @@ def run(argv: list[str] | None = None) -> None:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Prepare annotation VCFs for snvfind")
-    parser.add_argument("--exclude-vcf", help="Exclude-from-training annotation VCF")
-    parser.add_argument("--exclude-field", default="EXCLUDE_TRAINING", help="Field name for exclusion flag")
-    parser.add_argument("--include-vcf", help="Include-in-inference annotation VCF")
-    parser.add_argument("--include-field", default="INCLUDE_INFERENCE", help="Field name for inclusion flag")
-    parser.add_argument("--pcawg-vcf", help="PCAWG annotation VCF")
-    parser.add_argument("--pcawg-field", default="PCAWG", help="Field name for PCAWG flag")
-    parser.add_argument("--read-filters", help="Input read_filters JSON to augment with exclusion filters")
+    parser = argparse.ArgumentParser(description="Prepare filter JSONs for annotation-based filtering")
+    parser.add_argument("--exclude-field", default=None, help="Field name for training exclusion (inject is_null)")
+    parser.add_argument("--include-field", default=None, help="Field name for inference inclusion")
+    parser.add_argument("--pcawg-field", default=None, help="Field name for PCAWG (exclude + include)")
+    parser.add_argument("--read-filters", help="Input read_filters JSON to augment")
     parser.add_argument(
         "--coverage-threshold", type=int, default=None, help="Coverage threshold to update in read_filters"
     )
-    parser.add_argument("--output-dir", default=".", help="Output directory for BCF files and JSON")
+    parser.add_argument("--output-dir", default=".", help="Output directory for JSON files")
     return parser.parse_args(argv)
 
 
