@@ -339,7 +339,8 @@ def combine_and_split(  # noqa: PLR0913
     k_folds: int = 3,
     holdout_chromosomes: list[str] | None = None,
     val_chromosomes: list[str] | None = None,
-    single_model_split: bool = False,  # noqa: FBT001, FBT002
+    *,
+    single_model_split: bool = False,
     random_seed: int = 42,
     val_fraction: float = 0.1,
     output_dir: str = "folds",

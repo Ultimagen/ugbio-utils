@@ -108,7 +108,8 @@ def build_trtexec_command(
     min_batch: int = 1,
     opt_batch: int = 256,
     max_batch: int = 1024,
-    fp16: bool = True,  # noqa: FBT001, FBT002
+    *,
+    fp16: bool = True,
 ) -> list[str]:
     """Build the trtexec CLI command for serializing an ONNX model.
 
@@ -150,7 +151,8 @@ def serialize_with_trtexec(
     min_batch: int = 1,
     opt_batch: int = 256,
     max_batch: int = 1024,
-    fp16: bool = True,  # noqa: FBT001, FBT002
+    *,
+    fp16: bool = True,
 ) -> Path:
     """Run trtexec to convert an ONNX model to a TensorRT engine.
 
