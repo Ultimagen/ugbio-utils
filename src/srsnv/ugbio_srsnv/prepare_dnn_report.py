@@ -20,7 +20,38 @@ from ugbio_core.logger import logger
 MAX_ACCEPTABLE_DROP_PCT = 10
 
 
-def _build_dnn_training_results(fold_metadata_paths: list[str]) -> list[dict] | None:  # noqa: C901
+def _load_fold_csv_metrics(meta_path: Path) -> pd.DataFrame | None:
+    """Load per-epoch metrics from a fold's Lightning CSV output."""
+    meta = json.loads(meta_path.read_text())
+    ckpt_paths = meta.get("best_checkpoint_paths", [])
+    if not ckpt_paths:
+        return None
+
+    ckpt = Path(ckpt_paths[0])
+    prefix = ckpt.name.split(".dnn_model_fold_")[0]
+    logs_dir = ckpt.parent / f"{prefix}.lightning_logs"
+    if not logs_dir.is_dir():
+        candidates = list(ckpt.parent.glob("*.lightning_logs"))
+        logs_dir = candidates[0] if candidates else None
+    if logs_dir is None or not logs_dir.is_dir():
+        return None
+
+    csvs = sorted(logs_dir.glob("fold_*/metrics.csv"))
+    if not csvs:
+        return None
+
+    try:
+        metrics_df = pd.read_csv(csvs[0])
+    except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
+        return None
+
+    if "epoch" not in metrics_df.columns:
+        return None
+
+    return metrics_df.groupby("epoch").first().reset_index().sort_values("epoch")
+
+
+def _build_dnn_training_results(fold_metadata_paths: list[str]) -> list[dict] | None:
     """Read per-fold Lightning CSV metrics and convert to XGBoost evals_result format.
 
     Returns a list of dicts (one per fold), each shaped like::
@@ -34,38 +65,11 @@ def _build_dnn_training_results(fold_metadata_paths: list[str]) -> list[dict] | 
         if not mp.exists():
             logger.warning("Fold metadata not found, skipping: %s", mp)
             continue
-        meta = json.loads(mp.read_text())
 
-        # Derive lightning_logs directory from checkpoint path
-        ckpt_paths = meta.get("best_checkpoint_paths", [])
-        csv_path = None
-        if ckpt_paths:
-            ckpt = Path(ckpt_paths[0])
-            prefix = ckpt.name.split(".dnn_model_fold_")[0]
-            logs_dir = ckpt.parent / f"{prefix}.lightning_logs"
-            if not logs_dir.is_dir():
-                candidates = list(ckpt.parent.glob("*.lightning_logs"))
-                logs_dir = candidates[0] if candidates else None
-            if logs_dir and logs_dir.is_dir():
-                csvs = sorted(logs_dir.glob("fold_*/metrics.csv"))
-                if csvs:
-                    csv_path = csvs[0]
-
-        if csv_path is None:
-            logger.warning("No Lightning CSV found for %s", mp)
+        epoch_df = _load_fold_csv_metrics(mp)
+        if epoch_df is None:
+            logger.warning("No Lightning CSV metrics found for %s", mp)
             continue
-
-        try:
-            metrics_df = pd.read_csv(csv_path)
-        except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
-            logger.warning("Failed to read CSV: %s", csv_path)
-            continue
-
-        if "epoch" not in metrics_df.columns:
-            logger.warning("No 'epoch' column in %s", csv_path)
-            continue
-
-        epoch_df = metrics_df.groupby("epoch").first().reset_index().sort_values("epoch")
 
         train_loss = epoch_df["train_loss"].dropna().tolist() if "train_loss" in epoch_df else []
         train_auc = epoch_df["train_auc"].dropna().tolist() if "train_auc" in epoch_df else []
@@ -73,7 +77,7 @@ def _build_dnn_training_results(fold_metadata_paths: list[str]) -> list[dict] | 
         val_auc = epoch_df["val_auc"].dropna().tolist() if "val_auc" in epoch_df else []
 
         if not train_loss and not val_loss:
-            logger.warning("No loss metrics in %s", csv_path)
+            logger.warning("No loss metrics in epoch_df for %s", mp)
             continue
 
         results.append(
@@ -82,7 +86,7 @@ def _build_dnn_training_results(fold_metadata_paths: list[str]) -> list[dict] | 
                 "validation_1": {"logloss": val_loss, "auc": val_auc},
             }
         )
-        logger.info("Loaded training metrics from %s: %d epochs", csv_path, len(epoch_df))
+        logger.info("Loaded training metrics from %s: %d epochs", mp, len(epoch_df))
 
     return results if results else None
 
@@ -97,7 +101,65 @@ def _detect_k_folds(metadata: dict) -> int:
     return 1
 
 
-def prepare_dnn_report_data(  # noqa: PLR0913, C901, PLR0915
+def _merge_dnn_into_xgb(xgb: pl.DataFrame, dnn: pl.DataFrame) -> tuple[pl.DataFrame, list[str]]:
+    """Join DNN prediction columns onto the XGBoost base DataFrame.
+
+    Returns the merged DataFrame and list of DNN prob_fold_* column names.
+    """
+    # Normalise DNN fold_id: -1 -> null to match XGBoost convention
+    if "fold_id" in dnn.columns:
+        dnn = dnn.with_columns(
+            pl.when(pl.col("fold_id") == -1).then(None).otherwise(pl.col("fold_id")).alias("fold_id")
+        )
+
+    # De-duplicate test rows that appear in every fold
+    test_mask = dnn["fold_id"].is_null()
+    if test_mask.any():
+        test_deduped = dnn.filter(test_mask).unique(subset=["CHROM", "POS", "RN"], keep="first")
+        dnn = pl.concat([dnn.filter(~test_mask), test_deduped])
+        logger.info("  After de-duplication: %d rows", len(dnn))
+
+    # Carry over: prob_orig, MQUAL, SNVQ, fold_id, and any prob_fold_* columns
+    dnn_join_cols = ["CHROM", "POS", "RN"]
+    dnn_score_cols = [
+        pl.col("prob_orig").alias("prob_orig_dnn"),
+        pl.col("MQUAL").alias("MQUAL_dnn"),
+        pl.col("SNVQ").alias("SNVQ_dnn"),
+        pl.col("fold_id").alias("fold_id_dnn"),
+    ]
+    dnn_prob_fold_cols = sorted(c for c in dnn.columns if c.startswith("prob_fold_"))
+    for c in dnn_prob_fold_cols:
+        dnn_score_cols.append(pl.col(c).alias(f"{c}_dnn"))
+
+    dnn_scores = dnn.select(dnn_join_cols + dnn_score_cols)
+    merged = xgb.join(dnn_scores, on=["CHROM", "POS", "RN"], how="inner")
+    logger.info("  Matched rows: %d / %d XGB, %d DNN", len(merged), len(xgb), len(dnn))
+
+    drop_pct = (1 - len(merged) / len(xgb)) * 100
+    if drop_pct > MAX_ACCEPTABLE_DROP_PCT:
+        logger.warning(
+            "%.1f%% of XGBoost rows dropped during join – " "ensure both pipelines trained on the same sample data.",
+            drop_pct,
+        )
+
+    # Replace XGBoost quality columns and fold_id with DNN values
+    cols_to_drop = [c for c in ("prob_orig", "MQUAL", "SNVQ", "fold_id") if c in merged.columns]
+    merged = merged.drop(cols_to_drop)
+    merged = merged.rename(
+        {"prob_orig_dnn": "prob_orig", "MQUAL_dnn": "MQUAL", "SNVQ_dnn": "SNVQ", "fold_id_dnn": "fold_id"}
+    )
+
+    # Replace XGBoost prob_fold_* columns with DNN ones
+    old_prob_fold_cols = [c for c in merged.columns if c.startswith("prob_fold_") and not c.endswith("_dnn")]
+    if old_prob_fold_cols:
+        merged = merged.drop(old_prob_fold_cols)
+    for c in dnn_prob_fold_cols:
+        merged = merged.rename({f"{c}_dnn": c})
+
+    return merged, dnn_prob_fold_cols
+
+
+def prepare_dnn_report_data(
     xgb_parquet: str,
     dnn_parquet: str,
     xgb_metadata_path: str,
@@ -145,62 +207,8 @@ def prepare_dnn_report_data(  # noqa: PLR0913, C901, PLR0915
     dnn = pl.read_parquet(dnn_parquet)
     logger.info("  DNN rows=%d", len(dnn))
 
-    # Normalise DNN fold_id: -1 → null to match XGBoost convention
-    if "fold_id" in dnn.columns:
-        dnn = dnn.with_columns(
-            pl.when(pl.col("fold_id") == -1).then(None).otherwise(pl.col("fold_id")).alias("fold_id")
-        )
-
-    # De-duplicate test rows that appear in every fold
-    test_mask = dnn["fold_id"].is_null()
-    if test_mask.any():
-        test_deduped = dnn.filter(test_mask).unique(subset=["CHROM", "POS", "RN"], keep="first")
-        dnn = pl.concat([dnn.filter(~test_mask), test_deduped])
-        logger.info("  After de-duplication: %d rows", len(dnn))
-
     # ── Join DNN scores onto XGBoost base ───────────────────────────
-    # Carry over: prob_orig, MQUAL, SNVQ, fold_id, and any prob_fold_* columns
-    dnn_join_cols = ["CHROM", "POS", "RN"]
-    dnn_score_cols = [
-        pl.col("prob_orig").alias("prob_orig_dnn"),
-        pl.col("MQUAL").alias("MQUAL_dnn"),
-        pl.col("SNVQ").alias("SNVQ_dnn"),
-        pl.col("fold_id").alias("fold_id_dnn"),
-    ]
-    dnn_prob_fold_cols = sorted(c for c in dnn.columns if c.startswith("prob_fold_"))
-    for c in dnn_prob_fold_cols:
-        dnn_score_cols.append(pl.col(c).alias(f"{c}_dnn"))
-
-    dnn_scores = dnn.select(dnn_join_cols + dnn_score_cols)
-
-    merged = xgb.join(dnn_scores, on=["CHROM", "POS", "RN"], how="inner")
-    logger.info("  Matched rows: %d / %d XGB, %d DNN", len(merged), len(xgb), len(dnn))
-
-    drop_pct = (1 - len(merged) / len(xgb)) * 100
-    if drop_pct > MAX_ACCEPTABLE_DROP_PCT:
-        logger.warning(
-            "%.1f%% of XGBoost rows dropped during join – " "ensure both pipelines trained on the same sample data.",
-            drop_pct,
-        )
-
-    # Replace XGBoost quality columns and fold_id with DNN values
-    cols_to_drop = [c for c in ("prob_orig", "MQUAL", "SNVQ", "fold_id") if c in merged.columns]
-    merged = merged.drop(cols_to_drop)
-    merged = merged.rename(
-        {
-            "prob_orig_dnn": "prob_orig",
-            "MQUAL_dnn": "MQUAL",
-            "SNVQ_dnn": "SNVQ",
-            "fold_id_dnn": "fold_id",
-        }
-    )
-
-    # Replace XGBoost prob_fold_* columns with DNN ones
-    old_prob_fold_cols = [c for c in merged.columns if c.startswith("prob_fold_") and not c.endswith("_dnn")]
-    if old_prob_fold_cols:
-        merged = merged.drop(old_prob_fold_cols)
-    for c in dnn_prob_fold_cols:
-        merged = merged.rename({f"{c}_dnn": c})
+    merged, dnn_prob_fold_cols = _merge_dnn_into_xgb(xgb, dnn)
 
     with open(xgb_metadata_path) as f:
         xgb_metadata = json.load(f)

@@ -142,7 +142,7 @@ def _save_fold_cache(cache: dict, indices: np.ndarray, path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _assign_fold_ids(  # noqa: C901
+def _assign_fold_ids(
     chroms: list[str],
     rns: list[str],
     split_manifest: dict,
@@ -156,31 +156,42 @@ def _assign_fold_ids(  # noqa: C901
     split_mode = split_manifest.get("split_mode", SPLIT_MODE_CHROM_KFOLD)
 
     if split_mode == SPLIT_MODE_CHROM_KFOLD:
-        chrom_to_fold = {str(k): int(v) for k, v in split_manifest["chrom_to_fold"].items()}
-        for i in range(n):
-            fid = chrom_to_fold.get(str(chroms[i]))
-            if fid is not None:
-                fold_ids[i] = float(fid)
-
+        _assign_chrom_kfold(fold_ids, chroms, split_manifest)
     elif split_mode == SPLIT_MODE_SINGLE_MODEL_CHROM_VAL:
-        for i in range(n):
-            role = assign_single_model_chrom_val_role(str(chroms[i]), split_manifest)
-            if role == "train":
-                fold_ids[i] = 0.0
-            elif role == "val":
-                fold_ids[i] = 1.0
-            # test -> stays NaN
-
+        _assign_single_model_chrom_val(fold_ids, chroms, split_manifest)
     elif split_mode == SPLIT_MODE_SINGLE_MODEL_READ_HASH:
-        for i in range(n):
-            role = assign_single_model_read_hash_role(str(chroms[i]), str(rns[i]), split_manifest)
-            if role == "train":
-                fold_ids[i] = 0.0
-            elif role == "val":
-                fold_ids[i] = 1.0
-            # test -> stays NaN
+        _assign_single_model_read_hash(fold_ids, chroms, rns, split_manifest)
 
     return fold_ids
+
+
+def _assign_chrom_kfold(fold_ids: np.ndarray, chroms: list[str], split_manifest: dict) -> None:
+    """Assign fold IDs using chromosome k-fold mapping."""
+    chrom_to_fold = {str(k): int(v) for k, v in split_manifest["chrom_to_fold"].items()}
+    for i in range(len(chroms)):
+        fid = chrom_to_fold.get(str(chroms[i]))
+        if fid is not None:
+            fold_ids[i] = float(fid)
+
+
+def _assign_single_model_chrom_val(fold_ids: np.ndarray, chroms: list[str], split_manifest: dict) -> None:
+    """Assign fold IDs using single-model chrom-val role mapping."""
+    role_to_fold = {"train": 0.0, "val": 1.0}
+    for i in range(len(chroms)):
+        role = assign_single_model_chrom_val_role(str(chroms[i]), split_manifest)
+        if role in role_to_fold:
+            fold_ids[i] = role_to_fold[role]
+
+
+def _assign_single_model_read_hash(
+    fold_ids: np.ndarray, chroms: list[str], rns: list[str], split_manifest: dict
+) -> None:
+    """Assign fold IDs using single-model read-hash role mapping."""
+    role_to_fold = {"train": 0.0, "val": 1.0}
+    for i in range(len(chroms)):
+        role = assign_single_model_read_hash_role(str(chroms[i]), str(rns[i]), split_manifest)
+        if role in role_to_fold:
+            fold_ids[i] = role_to_fold[role]
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +199,139 @@ def _assign_fold_ids(  # noqa: C901
 # ---------------------------------------------------------------------------
 
 
-def combine_and_split(  # noqa: PLR0913, PLR0912, PLR0915, C901
+def _resolve_split_manifest(
+    split_manifest_path: str | None,
+    training_regions: str | None,
+    *,
+    single_model_split: bool,
+    val_chromosomes: list[str] | None,
+    holdout_chromosomes: list[str] | None,
+    k_folds: int,
+    random_seed: int,
+    val_fraction: float,
+) -> dict:
+    """Resolve or build the split manifest from provided parameters."""
+    if split_manifest_path:
+        split_manifest = load_split_manifest(split_manifest_path)
+        logger.info("Loaded split manifest from %s", split_manifest_path)
+        return split_manifest
+    if training_regions is None:
+        raise ValueError("Either --split-manifest or --training-regions must be provided")
+    if single_model_split and val_chromosomes:
+        return build_single_model_chrom_val_manifest(
+            training_regions=training_regions,
+            holdout_chromosomes=holdout_chromosomes or [],
+            val_chromosomes=val_chromosomes,
+        )
+    if single_model_split:
+        return build_single_model_read_hash_manifest(
+            training_regions=training_regions,
+            random_seed=random_seed,
+            holdout_chromosomes=holdout_chromosomes or [],
+            val_fraction=val_fraction,
+        )
+    return build_split_manifest(
+        training_regions=training_regions,
+        k_folds=k_folds,
+        random_seed=random_seed,
+        holdout_chromosomes=holdout_chromosomes,
+    )
+
+
+def _write_fold_files(
+    combined: dict,
+    fold_id_arr: np.ndarray,
+    *,
+    split_mode: str,
+    effective_k: int,
+    random_seed: int,
+    out_root: Path,
+) -> list[dict]:
+    """Write per-fold train/val/test files and return fold summaries."""
+    rng = np.random.default_rng(random_seed)
+    fold_summary: list[dict] = []
+    test_path_fold0: Path | None = None
+
+    for fold_idx in range(effective_k):
+        train_mask, val_mask = _compute_fold_masks(fold_id_arr, fold_idx, split_mode, effective_k, rng)
+        test_mask = np.isnan(fold_id_arr)
+
+        train_indices = rng.permutation(np.where(train_mask)[0])
+        val_indices = rng.permutation(np.where(val_mask)[0])
+        test_indices = rng.permutation(np.where(test_mask)[0])
+
+        fold_dir = out_root / f"fold_{fold_idx}"
+        fold_dir.mkdir(parents=True, exist_ok=True)
+
+        _save_fold_cache(combined, train_indices, fold_dir / "train.pt")
+        _save_fold_cache(combined, val_indices, fold_dir / "val.pt")
+
+        if fold_idx == 0:
+            _save_fold_cache(combined, test_indices, fold_dir / "test.pt")
+            test_path_fold0 = fold_dir / "test.pt"
+        else:
+            test_target = fold_dir / "test.pt"
+            if test_path_fold0 and not test_target.exists():
+                try:
+                    test_target.symlink_to(os.path.relpath(test_path_fold0, fold_dir))
+                except OSError:
+                    _save_fold_cache(combined, test_indices, test_target)
+
+        train_labels = combined["label"][torch.from_numpy(train_indices.astype(np.int64))].numpy()
+        val_labels = combined["label"][torch.from_numpy(val_indices.astype(np.int64))].numpy()
+        test_labels = combined["label"][torch.from_numpy(test_indices.astype(np.int64))].numpy()
+
+        fold_info = {
+            "fold": fold_idx,
+            "train_rows": int(len(train_indices)),
+            "val_rows": int(len(val_indices)),
+            "test_rows": int(len(test_indices)),
+            "train_positives": int(np.sum(train_labels)),
+            "val_positives": int(np.sum(val_labels)),
+            "test_positives": int(np.sum(test_labels)),
+        }
+        fold_summary.append(fold_info)
+        logger.info(
+            "Fold %d: train=%d (pos=%d) val=%d (pos=%d) test=%d (pos=%d)",
+            fold_idx,
+            fold_info["train_rows"],
+            fold_info["train_positives"],
+            fold_info["val_rows"],
+            fold_info["val_positives"],
+            fold_info["test_rows"],
+            fold_info["test_positives"],
+        )
+
+    return fold_summary
+
+
+def _compute_fold_masks(
+    fold_id_arr: np.ndarray,
+    fold_idx: int,
+    split_mode: str,
+    effective_k: int,
+    rng: np.random.Generator,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Compute train and val boolean masks for a given fold index."""
+    if split_mode == SPLIT_MODE_CHROM_KFOLD and effective_k >= MIN_K_FOR_KFOLD:
+        val_mask = fold_id_arr == fold_idx
+        train_mask = (~val_mask) & (~np.isnan(fold_id_arr))
+    elif split_mode == SPLIT_MODE_CHROM_KFOLD and effective_k == 1:
+        non_test = ~np.isnan(fold_id_arr)
+        non_test_idx = np.where(non_test)[0]
+        shuffled = rng.permutation(non_test_idx)
+        val_count = max(1, len(shuffled) // 5)
+        val_set = set(shuffled[:val_count].tolist())
+        val_mask = np.array([i in val_set for i in range(len(fold_id_arr))])
+        train_mask = non_test & (~val_mask)
+        logger.info("k_folds=1: random 80/20 split — train=%d val=%d", train_mask.sum(), val_mask.sum())
+    else:
+        val_mask = fold_id_arr == 1.0
+        train_mask = fold_id_arr == 0.0
+    return train_mask, val_mask
+
+
+def combine_and_split(  # noqa: PLR0913
     positive_cache_dir: str,
     negative_cache_dir: str,
     split_manifest_path: str | None = None,
@@ -274,31 +417,16 @@ def combine_and_split(  # noqa: PLR0913, PLR0912, PLR0915, C901
 
     # Phase 2: build or load split manifest
     t_fold = time.perf_counter()
-    if split_manifest_path:
-        split_manifest = load_split_manifest(split_manifest_path)
-        logger.info("Loaded split manifest from %s", split_manifest_path)
-    elif training_regions is None:
-        raise ValueError("Either --split-manifest or --training-regions must be provided")
-    elif single_model_split and val_chromosomes:
-        split_manifest = build_single_model_chrom_val_manifest(
-            training_regions=training_regions,
-            holdout_chromosomes=holdout_chromosomes or [],
-            val_chromosomes=val_chromosomes,
-        )
-    elif single_model_split:
-        split_manifest = build_single_model_read_hash_manifest(
-            training_regions=training_regions,
-            random_seed=random_seed,
-            holdout_chromosomes=holdout_chromosomes or [],
-            val_fraction=val_fraction,
-        )
-    else:
-        split_manifest = build_split_manifest(
-            training_regions=training_regions,
-            k_folds=k_folds,
-            random_seed=random_seed,
-            holdout_chromosomes=holdout_chromosomes,
-        )
+    split_manifest = _resolve_split_manifest(
+        split_manifest_path,
+        training_regions,
+        single_model_split=single_model_split,
+        val_chromosomes=val_chromosomes,
+        holdout_chromosomes=holdout_chromosomes,
+        k_folds=k_folds,
+        random_seed=random_seed,
+        val_fraction=val_fraction,
+    )
 
     save_split_manifest(split_manifest, out_root / "split_manifest.json")
 
@@ -321,76 +449,14 @@ def combine_and_split(  # noqa: PLR0913, PLR0912, PLR0915, C901
 
     # Phase 3: shuffle and write per-fold files
     t_shuffle = time.perf_counter()
-    rng = np.random.default_rng(random_seed)
-
-    fold_summary: list[dict] = []
-    test_path_fold0: Path | None = None
-
-    for fold_idx in range(effective_k):
-        if split_mode == SPLIT_MODE_CHROM_KFOLD and effective_k >= MIN_K_FOR_KFOLD:
-            val_mask = fold_id_arr == fold_idx
-            train_mask = (~val_mask) & (~np.isnan(fold_id_arr))
-        elif split_mode == SPLIT_MODE_CHROM_KFOLD and effective_k == 1:
-            # k_folds=1: all chroms in fold 0 → use random 80/20 train/val split
-            non_test = ~np.isnan(fold_id_arr)
-            non_test_idx = np.where(non_test)[0]
-            shuffled = rng.permutation(non_test_idx)
-            val_count = max(1, len(shuffled) // 5)  # 20% validation
-            val_set = set(shuffled[:val_count].tolist())
-            val_mask = np.array([i in val_set for i in range(len(fold_id_arr))])
-            train_mask = non_test & (~val_mask)
-            logger.info("k_folds=1: random 80/20 split — train=%d val=%d", train_mask.sum(), val_mask.sum())
-        else:
-            val_mask = fold_id_arr == 1.0
-            train_mask = fold_id_arr == 0.0
-        test_mask = np.isnan(fold_id_arr)
-
-        train_indices = rng.permutation(np.where(train_mask)[0])
-        val_indices = rng.permutation(np.where(val_mask)[0])
-        test_indices = rng.permutation(np.where(test_mask)[0])
-
-        fold_dir = out_root / f"fold_{fold_idx}"
-        fold_dir.mkdir(parents=True, exist_ok=True)
-
-        _save_fold_cache(combined, train_indices, fold_dir / "train.pt")
-        _save_fold_cache(combined, val_indices, fold_dir / "val.pt")
-
-        if fold_idx == 0:
-            _save_fold_cache(combined, test_indices, fold_dir / "test.pt")
-            test_path_fold0 = fold_dir / "test.pt"
-        else:
-            test_target = fold_dir / "test.pt"
-            if test_path_fold0 and not test_target.exists():
-                try:
-                    test_target.symlink_to(os.path.relpath(test_path_fold0, fold_dir))
-                except OSError:
-                    _save_fold_cache(combined, test_indices, test_target)
-
-        train_labels = combined["label"][torch.from_numpy(train_indices.astype(np.int64))].numpy()
-        val_labels = combined["label"][torch.from_numpy(val_indices.astype(np.int64))].numpy()
-        test_labels = combined["label"][torch.from_numpy(test_indices.astype(np.int64))].numpy()
-
-        fold_info = {
-            "fold": fold_idx,
-            "train_rows": int(len(train_indices)),
-            "val_rows": int(len(val_indices)),
-            "test_rows": int(len(test_indices)),
-            "train_positives": int(np.sum(train_labels)),
-            "val_positives": int(np.sum(val_labels)),
-            "test_positives": int(np.sum(test_labels)),
-        }
-        fold_summary.append(fold_info)
-        logger.info(
-            "Fold %d: train=%d (pos=%d) val=%d (pos=%d) test=%d (pos=%d)",
-            fold_idx,
-            fold_info["train_rows"],
-            fold_info["train_positives"],
-            fold_info["val_rows"],
-            fold_info["val_positives"],
-            fold_info["test_rows"],
-            fold_info["test_positives"],
-        )
-
+    fold_summary = _write_fold_files(
+        combined,
+        fold_id_arr,
+        split_mode=split_mode,
+        effective_k=effective_k,
+        random_seed=random_seed,
+        out_root=out_root,
+    )
     shuffle_write_seconds = round(time.perf_counter() - t_shuffle, 4)
     peak_rss = max(peak_rss, _resource_rss_gb())
 
