@@ -188,13 +188,17 @@ def main():
     # --- Step 3: Combine + split ---
     logger.info("\n>>> STEP 3/3: Combining caches and splitting into %d folds...", K_FOLDS)
     step3_t0 = time.perf_counter()
+    from ugbio_srsnv.deep_srsnv.combine_splits import SplitConfig
+
     folds_index = combine_and_split(
         positive_cache_dir=POS_CACHE,
         negative_cache_dir=NEG_CACHE,
         training_regions=TRAINING_REGIONS,
-        k_folds=K_FOLDS,
-        holdout_chromosomes=HOLDOUT_CHROMS,
-        random_seed=42,
+        split_config=SplitConfig(
+            k_folds=K_FOLDS,
+            holdout_chromosomes=HOLDOUT_CHROMS,
+            random_seed=42,
+        ),
         output_dir=FOLDS_DIR,
     )
     step3_wall = time.perf_counter() - step3_t0

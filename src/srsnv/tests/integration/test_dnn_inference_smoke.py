@@ -205,23 +205,26 @@ def inference_data(tmp_path):
 class TestDNNInferenceSmokeE2E:
     def test_pytorch_backend_e2e(self, inference_data):
         """Full pipeline with PyTorch backend produces annotated VCF."""
-        from ugbio_srsnv.deep_srsnv.inference.dnn_vcf_inference import run_inference_pipeline
+        from ugbio_srsnv.deep_srsnv.inference.dnn_vcf_inference import InferenceConfig, run_inference_pipeline
 
         output_vcf = str(inference_data["tmp_path"] / "output_pytorch.vcf")
-        run_inference_pipeline(
-            featuremap_vcf=inference_data["vcf_path"],
+        config = InferenceConfig(
             cram_path=inference_data["bam_path"],
-            metadata_path=inference_data["metadata_path"],
-            output_vcf=output_vcf,
-            backend="pytorch",
-            checkpoint_path=inference_data["ckpt_path"],
-            gpu_ids=[0] if torch.cuda.is_available() else None,
             num_cram_workers=1,
             shard_size=100,
             batch_size=64,
             tensor_length=64,
-            parquet_path=inference_data["parquet_path"],
             fetch_mode="pysam",
+            gpu_ids=[0],
+            backend="pytorch",
+            checkpoint_path=inference_data["ckpt_path"],
+        )
+        run_inference_pipeline(
+            featuremap_vcf=inference_data["vcf_path"],
+            config=config,
+            output_vcf=output_vcf,
+            metadata_path=inference_data["metadata_path"],
+            parquet_path=inference_data["parquet_path"],
         )
 
         assert Path(output_vcf).exists()
@@ -240,25 +243,28 @@ class TestDNNInferenceSmokeE2E:
 
     def test_predictions_are_deterministic(self, inference_data):
         """Two runs with the same inputs produce identical predictions."""
-        from ugbio_srsnv.deep_srsnv.inference.dnn_vcf_inference import run_inference_pipeline
+        from ugbio_srsnv.deep_srsnv.inference.dnn_vcf_inference import InferenceConfig, run_inference_pipeline
 
+        config = InferenceConfig(
+            cram_path=inference_data["bam_path"],
+            num_cram_workers=1,
+            shard_size=100,
+            batch_size=64,
+            tensor_length=64,
+            fetch_mode="pysam",
+            gpu_ids=[0],
+            backend="pytorch",
+            checkpoint_path=inference_data["ckpt_path"],
+        )
         outputs = []
         for run_idx in range(2):
             out = str(inference_data["tmp_path"] / f"output_det_{run_idx}.vcf")
             run_inference_pipeline(
                 featuremap_vcf=inference_data["vcf_path"],
-                cram_path=inference_data["bam_path"],
-                metadata_path=inference_data["metadata_path"],
+                config=config,
                 output_vcf=out,
-                backend="pytorch",
-                checkpoint_path=inference_data["ckpt_path"],
-                gpu_ids=[0] if torch.cuda.is_available() else None,
-                num_cram_workers=1,
-                shard_size=100,
-                batch_size=64,
-                tensor_length=64,
+                metadata_path=inference_data["metadata_path"],
                 parquet_path=inference_data["parquet_path"],
-                fetch_mode="pysam",
             )
             with pysam.VariantFile(out) as vcf:
                 outputs.append(list(vcf))
@@ -304,7 +310,7 @@ class TestDNNInferenceSmokeE2E:
         meta_trt = str(inference_data["tmp_path"] / "metadata_trt.json")
         Path(meta_trt).write_text(json.dumps(meta))
 
-        from ugbio_srsnv.deep_srsnv.inference.dnn_vcf_inference import run_inference_pipeline
+        from ugbio_srsnv.deep_srsnv.inference.dnn_vcf_inference import InferenceConfig, run_inference_pipeline
 
         out_pt = str(inference_data["tmp_path"] / "out_pytorch.vcf")
         out_trt = str(inference_data["tmp_path"] / "out_trt.vcf")
@@ -313,20 +319,23 @@ class TestDNNInferenceSmokeE2E:
             (out_pt, "pytorch", inference_data["metadata_path"]),
             (out_trt, "trt", meta_trt),
         ]:
-            run_inference_pipeline(
-                featuremap_vcf=inference_data["vcf_path"],
+            config = InferenceConfig(
                 cram_path=inference_data["bam_path"],
-                metadata_path=meta_path,
-                output_vcf=out_path,
-                backend=backend,
-                checkpoint_path=inference_data["ckpt_path"] if backend == "pytorch" else None,
-                gpu_ids=[0],
                 num_cram_workers=1,
                 shard_size=100,
                 batch_size=64,
                 tensor_length=64,
-                parquet_path=inference_data["parquet_path"],
                 fetch_mode="pysam",
+                gpu_ids=[0],
+                backend=backend,
+                checkpoint_path=inference_data["ckpt_path"] if backend == "pytorch" else None,
+            )
+            run_inference_pipeline(
+                featuremap_vcf=inference_data["vcf_path"],
+                config=config,
+                output_vcf=out_path,
+                metadata_path=meta_path,
+                parquet_path=inference_data["parquet_path"],
             )
 
         with pysam.VariantFile(out_pt) as vcf:
@@ -462,22 +471,25 @@ def ensemble_data(tmp_path):
 class TestEnsembleInferenceSmokeE2E:
     def test_ensemble_produces_annotated_vcf(self, ensemble_data):
         """Ensemble inference with k=2 folds produces annotated VCF."""
-        from ugbio_srsnv.deep_srsnv.inference.dnn_vcf_inference import run_inference_pipeline
+        from ugbio_srsnv.deep_srsnv.inference.dnn_vcf_inference import InferenceConfig, run_inference_pipeline
 
         output_vcf = str(ensemble_data["tmp_path"] / "output_ensemble.vcf")
-        run_inference_pipeline(
-            featuremap_vcf=ensemble_data["vcf_path"],
+        config = InferenceConfig(
             cram_path=ensemble_data["bam_path"],
-            ensemble_manifest_path=ensemble_data["manifest_path"],
-            output_vcf=output_vcf,
-            backend="pytorch",
-            gpu_ids=[0] if torch.cuda.is_available() else None,
             num_cram_workers=1,
             shard_size=100,
             batch_size=64,
             tensor_length=64,
-            parquet_path=ensemble_data["parquet_path"],
             fetch_mode="pysam",
+            gpu_ids=[0],
+            backend="pytorch",
+        )
+        run_inference_pipeline(
+            featuremap_vcf=ensemble_data["vcf_path"],
+            config=config,
+            output_vcf=output_vcf,
+            ensemble_manifest_path=ensemble_data["manifest_path"],
+            parquet_path=ensemble_data["parquet_path"],
         )
 
         assert Path(output_vcf).exists()
@@ -495,24 +507,27 @@ class TestEnsembleInferenceSmokeE2E:
 
     def test_ensemble_predictions_are_deterministic(self, ensemble_data):
         """Two ensemble runs produce identical predictions."""
-        from ugbio_srsnv.deep_srsnv.inference.dnn_vcf_inference import run_inference_pipeline
+        from ugbio_srsnv.deep_srsnv.inference.dnn_vcf_inference import InferenceConfig, run_inference_pipeline
 
+        config = InferenceConfig(
+            cram_path=ensemble_data["bam_path"],
+            num_cram_workers=1,
+            shard_size=100,
+            batch_size=64,
+            tensor_length=64,
+            fetch_mode="pysam",
+            gpu_ids=[0],
+            backend="pytorch",
+        )
         outputs = []
         for run_idx in range(2):
             out = str(ensemble_data["tmp_path"] / f"output_ens_det_{run_idx}.vcf")
             run_inference_pipeline(
                 featuremap_vcf=ensemble_data["vcf_path"],
-                cram_path=ensemble_data["bam_path"],
-                ensemble_manifest_path=ensemble_data["manifest_path"],
+                config=config,
                 output_vcf=out,
-                backend="pytorch",
-                gpu_ids=[0] if torch.cuda.is_available() else None,
-                num_cram_workers=1,
-                shard_size=100,
-                batch_size=64,
-                tensor_length=64,
+                ensemble_manifest_path=ensemble_data["manifest_path"],
                 parquet_path=ensemble_data["parquet_path"],
-                fetch_mode="pysam",
             )
             with pysam.VariantFile(out) as vcf:
                 outputs.append(list(vcf))
@@ -524,7 +539,7 @@ class TestEnsembleInferenceSmokeE2E:
 
     def test_ensemble_matches_single_model_when_k1(self, inference_data):
         """With k=1 ensemble, results match single-model inference."""
-        from ugbio_srsnv.deep_srsnv.inference.dnn_vcf_inference import run_inference_pipeline
+        from ugbio_srsnv.deep_srsnv.inference.dnn_vcf_inference import InferenceConfig, run_inference_pipeline
 
         manifest = {
             "k_folds": 1,
@@ -538,37 +553,43 @@ class TestEnsembleInferenceSmokeE2E:
         manifest_path = str(inference_data["tmp_path"] / "k1_manifest.json")
         Path(manifest_path).write_text(json.dumps(manifest))
 
+        config_single = InferenceConfig(
+            cram_path=inference_data["bam_path"],
+            num_cram_workers=1,
+            shard_size=100,
+            batch_size=64,
+            tensor_length=64,
+            fetch_mode="pysam",
+            gpu_ids=[0],
+            backend="pytorch",
+            checkpoint_path=inference_data["ckpt_path"],
+        )
         out_single = str(inference_data["tmp_path"] / "output_single.vcf")
         run_inference_pipeline(
             featuremap_vcf=inference_data["vcf_path"],
-            cram_path=inference_data["bam_path"],
-            metadata_path=inference_data["metadata_path"],
+            config=config_single,
             output_vcf=out_single,
-            backend="pytorch",
-            checkpoint_path=inference_data["ckpt_path"],
-            gpu_ids=[0] if torch.cuda.is_available() else None,
+            metadata_path=inference_data["metadata_path"],
+            parquet_path=inference_data["parquet_path"],
+        )
+
+        config_ensemble = InferenceConfig(
+            cram_path=inference_data["bam_path"],
             num_cram_workers=1,
             shard_size=100,
             batch_size=64,
             tensor_length=64,
-            parquet_path=inference_data["parquet_path"],
             fetch_mode="pysam",
+            gpu_ids=[0],
+            backend="pytorch",
         )
-
         out_ensemble = str(inference_data["tmp_path"] / "output_k1_ensemble.vcf")
         run_inference_pipeline(
             featuremap_vcf=inference_data["vcf_path"],
-            cram_path=inference_data["bam_path"],
-            ensemble_manifest_path=manifest_path,
+            config=config_ensemble,
             output_vcf=out_ensemble,
-            backend="pytorch",
-            gpu_ids=[0] if torch.cuda.is_available() else None,
-            num_cram_workers=1,
-            shard_size=100,
-            batch_size=64,
-            tensor_length=64,
+            ensemble_manifest_path=manifest_path,
             parquet_path=inference_data["parquet_path"],
-            fetch_mode="pysam",
         )
 
         with pysam.VariantFile(out_single) as vcf:

@@ -178,12 +178,14 @@ def main():
 
     full_cache, shm_cache_path = _load_cache(args, n_devices)
 
+    from ugbio_srsnv.deep_srsnv.data_module import DataModuleConfig
+
     dm = SRSNVDataModule(
         full_cache=full_cache,
         train_split_ids={0},
         val_split_ids={1},
         test_split_ids={-1},
-        train_batch_size=args.batch_size,
+        loader_config=DataModuleConfig(train_batch_size=args.batch_size),
     )
 
     lit_model = SRSNVLightningModule(

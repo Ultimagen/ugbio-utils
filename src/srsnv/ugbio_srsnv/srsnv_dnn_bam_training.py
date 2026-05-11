@@ -21,7 +21,7 @@ from sklearn.metrics import average_precision_score, log_loss, roc_auc_score
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
-from ugbio_srsnv.deep_srsnv.data_module import SRSNVDataModule
+from ugbio_srsnv.deep_srsnv.data_module import DataModuleConfig, SRSNVDataModule
 from ugbio_srsnv.deep_srsnv.data_prep import (
     _DEFAULT_SHM_DIR,
     CHANNEL_ORDER,
@@ -53,6 +53,36 @@ POS = FeatureMapFields.POS.value
 MIN_CLASSES_FOR_BINARY_METRICS = 2
 NEAR_PURE_LOWER = 0.01
 NEAR_PURE_UPPER = 0.99
+
+
+from dataclasses import dataclass, field  # noqa: E402
+
+
+@dataclass
+class TrainingOutputs:
+    """Collected outputs from training loop for metadata assembly."""
+
+    training_results: list[dict] = field(default_factory=list)
+    holdout_metrics: dict = field(default_factory=dict)
+    best_ckpt_holdout_metrics: dict = field(default_factory=dict)
+    split_prevalence: dict = field(default_factory=dict)
+    train_chunk_mix: dict | None = None
+    model_arch_summary: dict | None = None
+    best_ckpt_paths: list[str] = field(default_factory=list)
+    swa_ckpt_paths: list[str] = field(default_factory=list)
+    fold_ids: np.ndarray | None = None
+    n_models: int = 1
+    n_devices: int = 1
+    effective_lr: float = 1e-3
+
+
+@dataclass
+class PreprocessInfo:
+    """Preprocessing metadata for metadata assembly."""
+
+    cache_dir: str | None = None
+    wall_seconds: float = 0.0
+    index: dict = field(default_factory=dict)
 
 
 def _add_data_args(ap: argparse.ArgumentParser) -> None:
@@ -784,8 +814,7 @@ def _log_train_chunk_mix(train_chunk_mix: dict | None) -> None:
 
 def _create_data_module_from_fold_dir(args: argparse.Namespace, fold_dir_for_dm: str, *, fold_use_mmap: bool):
     """Create SRSNVDataModule from a pre-split fold directory."""
-    return SRSNVDataModule.from_fold_dir(
-        fold_dir=fold_dir_for_dm,
+    loader_cfg = DataModuleConfig(
         train_batch_size=args.batch_size,
         eval_batch_size=args.eval_batch_size,
         predict_batch_size=args.predict_batch_size,
@@ -793,6 +822,10 @@ def _create_data_module_from_fold_dir(args: argparse.Namespace, fold_dir_for_dm:
         num_workers=args.loader_num_workers,
         prefetch_factor=args.loader_prefetch_factor,
         use_mmap=fold_use_mmap,
+    )
+    return SRSNVDataModule.from_fold_dir(
+        fold_dir=fold_dir_for_dm,
+        loader_config=loader_cfg,
     )
 
 
@@ -813,19 +846,22 @@ def _create_data_module_from_cache(
         train_keep = {i for i in range(args.k_folds) if i != fold_idx}
         val_keep = {fold_idx}
 
+    loader_cfg = DataModuleConfig(
+        train_batch_size=args.batch_size,
+        eval_batch_size=args.eval_batch_size,
+        predict_batch_size=args.predict_batch_size,
+        pin_memory=args.loader_pin_memory,
+        num_workers=args.loader_num_workers,
+        prefetch_factor=args.loader_prefetch_factor,
+    )
     return SRSNVDataModule(
         full_cache=full_cache,
         train_split_ids=train_keep,
         val_split_ids=val_keep,
         test_split_ids={-1},
-        train_batch_size=args.batch_size,
-        eval_batch_size=args.eval_batch_size,
-        predict_batch_size=args.predict_batch_size,
-        pin_memory=args.loader_pin_memory,
+        loader_config=loader_cfg,
         split_manifest=split_manifest,
         chrom_to_fold=chrom_to_fold,
-        num_workers=args.loader_num_workers,
-        prefetch_factor=args.loader_prefetch_factor,
     )
 
 
@@ -1034,29 +1070,31 @@ def _aggregate_predictions(
     return holdout_metrics, best_ckpt_holdout_metrics, fold_ids
 
 
-def _build_metadata(  # noqa: PLR0913
+def _build_metadata(
     args: argparse.Namespace,
     split_manifest: dict | None,
     encoders,
-    training_results: list[dict],
-    holdout_metrics: dict,
-    best_ckpt_holdout_metrics: dict,
-    split_prevalence: dict,
-    train_chunk_mix: dict | None,
-    model_arch_summary: dict | None,
-    best_ckpt_paths: list[str],
-    swa_ckpt_paths: list[str],
-    fold_ids: np.ndarray,
-    n_models: int,
-    n_devices: int,
-    effective_lr: float,
-    preprocess_cache_dir: str | None,
-    preprocess_wall_seconds: float,
-    preprocess_index: dict,
+    outputs: TrainingOutputs,
+    preprocess: PreprocessInfo,
     *,
     single_model_split: bool,
 ) -> dict:
     """Build the final metadata dictionary."""
+    training_results = outputs.training_results
+    holdout_metrics = outputs.holdout_metrics
+    best_ckpt_holdout_metrics = outputs.best_ckpt_holdout_metrics
+    split_prevalence = outputs.split_prevalence
+    train_chunk_mix = outputs.train_chunk_mix
+    model_arch_summary = outputs.model_arch_summary
+    best_ckpt_paths = outputs.best_ckpt_paths
+    swa_ckpt_paths = outputs.swa_ckpt_paths
+    fold_ids = outputs.fold_ids
+    n_models = outputs.n_models
+    n_devices = outputs.n_devices
+    effective_lr = outputs.effective_lr
+    preprocess_cache_dir = preprocess.cache_dir
+    preprocess_wall_seconds = preprocess.wall_seconds
+    preprocess_index = preprocess.index
     return {
         "model_type": "deep_srsnv_cnn_lightning",
         "split_manifest": split_manifest,
@@ -1150,7 +1188,20 @@ def _export_onnx_trt(lit_model: SRSNVLightningModule, out_dir: Path, base: str, 
     return onnx_out, engine_out
 
 
-def _training_loop(  # noqa: PLR0913
+@dataclass
+class _TrainingDataContext:
+    """Groups data-source parameters for the training loop."""
+
+    split_manifest: dict | None
+    chrom_to_fold: dict
+    full_cache: object
+    fold_dir_for_dm: str | None
+    single_model_split: bool
+    use_fold_dir: bool
+    fold_use_mmap: bool
+
+
+def _training_loop(
     args: argparse.Namespace,
     out_dir: Path,
     base: str,
@@ -1158,20 +1209,20 @@ def _training_loop(  # noqa: PLR0913
     effective_lr: float,
     n_models: int,
     n_devices: int,
-    split_manifest: dict | None,
-    chrom_to_fold: dict,
-    full_cache,
-    fold_dir_for_dm: str | None,
-    *,
-    single_model_split: bool,
-    use_fold_dir: bool,
-    fold_use_mmap: bool,
+    data_ctx: _TrainingDataContext,
 ) -> tuple[list[dict], list[list[dict]], list[list[dict]], dict | None, list[str], SRSNVLightningModule]:
     """Run the training loop over all folds.
 
     Returns (training_results, all_predictions, all_best_ckpt_predictions,
     model_arch_summary, best_ckpt_paths, lit_model).
     """
+    split_manifest = data_ctx.split_manifest
+    chrom_to_fold = data_ctx.chrom_to_fold
+    full_cache = data_ctx.full_cache
+    fold_dir_for_dm = data_ctx.fold_dir_for_dm
+    single_model_split = data_ctx.single_model_split
+    use_fold_dir = data_ctx.use_fold_dir
+    fold_use_mmap = data_ctx.fold_use_mmap
     is_rank_zero = int(os.environ.get("LOCAL_RANK", "0")) == 0
     training_results: list[dict] = []
     all_predictions: list[list[dict]] = []
@@ -1399,6 +1450,15 @@ def main() -> None:
     # ── Training loop (per fold) ──
     n_models = 1 if (single_model_split or use_fold_dir) else args.k_folds
 
+    data_ctx = _TrainingDataContext(
+        split_manifest=split_manifest,
+        chrom_to_fold=chrom_to_fold,
+        full_cache=prep["full_cache"],
+        fold_dir_for_dm=prep["fold_dir_for_dm"],
+        single_model_split=single_model_split,
+        use_fold_dir=use_fold_dir,
+        fold_use_mmap=prep["fold_use_mmap"],
+    )
     training_results, all_predictions, all_best_ckpt_predictions, model_arch_summary, best_ckpt_paths, lit_model = (
         _training_loop(
             args,
@@ -1408,13 +1468,7 @@ def main() -> None:
             effective_lr,
             n_models,
             n_devices,
-            split_manifest,
-            chrom_to_fold,
-            prep["full_cache"],
-            prep["fold_dir_for_dm"],
-            single_model_split=single_model_split,
-            use_fold_dir=use_fold_dir,
-            fold_use_mmap=prep["fold_use_mmap"],
+            data_ctx,
         )
     )
 
@@ -1440,25 +1494,31 @@ def main() -> None:
     )
 
     # ── Metadata ──
+    training_outputs = TrainingOutputs(
+        training_results=training_results,
+        holdout_metrics=holdout_metrics,
+        best_ckpt_holdout_metrics=best_ckpt_holdout_metrics,
+        split_prevalence=prep["split_prevalence"],
+        train_chunk_mix=prep["train_chunk_mix"],
+        model_arch_summary=model_arch_summary,
+        best_ckpt_paths=best_ckpt_paths,
+        swa_ckpt_paths=swa_ckpt_paths,
+        fold_ids=fold_ids,
+        n_models=n_models,
+        n_devices=n_devices,
+        effective_lr=effective_lr,
+    )
+    preprocess_info = PreprocessInfo(
+        cache_dir=prep["preprocess_cache_dir"],
+        wall_seconds=prep["preprocess_wall_seconds"],
+        index=prep["preprocess_index"],
+    )
     metadata = _build_metadata(
         args,
         split_manifest,
         encoders,
-        training_results,
-        holdout_metrics,
-        best_ckpt_holdout_metrics,
-        prep["split_prevalence"],
-        prep["train_chunk_mix"],
-        model_arch_summary,
-        best_ckpt_paths,
-        swa_ckpt_paths,
-        fold_ids,
-        n_models,
-        n_devices,
-        effective_lr,
-        prep["preprocess_cache_dir"],
-        prep["preprocess_wall_seconds"],
-        prep["preprocess_index"],
+        training_outputs,
+        preprocess_info,
         single_model_split=single_model_split,
     )
 

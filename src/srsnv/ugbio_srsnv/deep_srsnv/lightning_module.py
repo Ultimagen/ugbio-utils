@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import lightning
@@ -10,6 +11,18 @@ from torch import nn
 from ugbio_srsnv.deep_srsnv.cnn_model import CNNReadClassifier
 
 LR_SCHEDULER_CHOICES = ("none", "cosine", "step", "onecycle", "reduce_on_plateau")
+
+
+@dataclass
+class LRSchedulerConfig:
+    """LR scheduler hyperparameters for SRSNVLightningModule."""
+
+    lr_scheduler: str = "onecycle"
+    lr_warmup_epochs: int = 1
+    lr_min: float = 1e-6
+    lr_step_size: int = 5
+    lr_gamma: float = 0.5
+    lr_patience: int = 3
 
 
 class SRSNVLightningModule(lightning.LightningModule):
@@ -42,22 +55,44 @@ class SRSNVLightningModule(lightning.LightningModule):
         Patience for ``reduce_on_plateau`` scheduler.
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         base_vocab_size: int,
         numeric_channels: int = 10,
         learning_rate: float = 1e-3,
         weight_decay: float = 1e-4,
-        lr_scheduler: str = "onecycle",
-        lr_warmup_epochs: int = 1,
-        lr_min: float = 1e-6,
-        lr_step_size: int = 5,
-        lr_gamma: float = 0.5,
-        lr_patience: int = 3,
+        lr_config: LRSchedulerConfig | None = None,
         **model_kwargs: Any,
     ):
         super().__init__()
-        self.save_hyperparameters()
+        if lr_config is None:
+            # Support backward-compatible kwargs for LR scheduler params
+            lr_config = LRSchedulerConfig(
+                lr_scheduler=model_kwargs.pop("lr_scheduler", "onecycle"),
+                lr_warmup_epochs=model_kwargs.pop("lr_warmup_epochs", 1),
+                lr_min=model_kwargs.pop("lr_min", 1e-6),
+                lr_step_size=model_kwargs.pop("lr_step_size", 5),
+                lr_gamma=model_kwargs.pop("lr_gamma", 0.5),
+                lr_patience=model_kwargs.pop("lr_patience", 3),
+            )
+        # Flatten lr_config fields into hparams for checkpoint compatibility
+        self.save_hyperparameters(
+            "base_vocab_size",
+            "numeric_channels",
+            "learning_rate",
+            "weight_decay",
+        )
+        self.hparams.update(
+            {
+                "lr_scheduler": lr_config.lr_scheduler,
+                "lr_warmup_epochs": lr_config.lr_warmup_epochs,
+                "lr_min": lr_config.lr_min,
+                "lr_step_size": lr_config.lr_step_size,
+                "lr_gamma": lr_config.lr_gamma,
+                "lr_patience": lr_config.lr_patience,
+            }
+        )
+        self.hparams.update(model_kwargs)
 
         self.model = CNNReadClassifier(
             base_vocab_size=base_vocab_size,

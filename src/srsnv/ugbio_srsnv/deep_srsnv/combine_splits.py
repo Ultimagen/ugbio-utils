@@ -11,7 +11,7 @@ import argparse
 import json
 import os
 import time
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +31,19 @@ from ugbio_srsnv.split_manifest import (
     load_split_manifest,
     save_split_manifest,
 )
+
+
+@dataclass
+class SplitConfig:
+    """Configuration for how to split data into train/val/test folds."""
+
+    k_folds: int = 3
+    holdout_chromosomes: list[str] | None = None
+    val_chromosomes: list[str] | None = None
+    single_model_split: bool = False
+    random_seed: int = 42
+    val_fraction: float = 0.1
+
 
 MIN_K_FOR_KFOLD = 2
 
@@ -331,70 +344,16 @@ def _compute_fold_masks(
     return train_mask, val_mask
 
 
-def combine_and_split(  # noqa: PLR0913
-    positive_cache_dir: str,
-    negative_cache_dir: str,
-    split_manifest_path: str | None = None,
-    training_regions: str | None = None,
-    k_folds: int = 3,
-    holdout_chromosomes: list[str] | None = None,
-    val_chromosomes: list[str] | None = None,
-    *,
-    single_model_split: bool = False,
-    random_seed: int = 42,
-    val_fraction: float = 0.1,
-    output_dir: str = "folds",
-) -> dict:
-    """Combine positive/negative caches and write per-fold train/val/test files.
-
-    Parameters
-    ----------
-    positive_cache_dir, negative_cache_dir
-        Directories produced by ``cram_to_tensor_cache``.
-    split_manifest_path
-        Path to a pre-built split manifest JSON. If ``None``, one is built
-        from ``training_regions`` and the other split parameters.
-    training_regions
-        Path to training regions interval list (required when building a manifest).
-    k_folds
-        Number of cross-validation folds (chrom k-fold mode).
-    holdout_chromosomes
-        Chromosomes to hold out as the test set.
-    val_chromosomes
-        Chromosomes for validation (single-model chrom-val mode).
-    single_model_split
-        If True, use single-model split (hash or chrom-val).
-    random_seed
-        Seed for deterministic shuffling.
-    val_fraction
-        Fraction of reads for validation in read-hash mode.
-    output_dir
-        Root directory for fold output files.
-
-    Returns
-    -------
-    dict
-        Summary metadata including profiling.
-    """
-    cpu_u0, cpu_s0 = _cpu_times()
-    t_wall_start = time.perf_counter()
-    peak_rss = _resource_rss_gb()
-    out_root = Path(output_dir)
-    out_root.mkdir(parents=True, exist_ok=True)
-
-    # Phase 1: load caches
-    t_load = time.perf_counter()
+def _load_and_concatenate_caches(positive_cache_dir: str, negative_cache_dir: str) -> tuple[dict, int, int]:
+    """Load positive and negative shard caches and concatenate them."""
     logger.info("Loading positive cache from %s", positive_cache_dir)
     pos_cache = _load_shard_dir(positive_cache_dir)
     n_pos = int(pos_cache["label"].shape[0])
     logger.info("Loading negative cache from %s", negative_cache_dir)
     neg_cache = _load_shard_dir(negative_cache_dir)
     n_neg = int(neg_cache["label"].shape[0])
-    load_seconds = round(time.perf_counter() - t_load, 4)
-    logger.info("Loaded %d positive + %d negative = %d total rows in %.1fs", n_pos, n_neg, n_pos + n_neg, load_seconds)
-    peak_rss = max(peak_rss, _resource_rss_gb())
+    logger.info("Loaded %d positive + %d negative = %d total rows", n_pos, n_neg, n_pos + n_neg)
 
-    # Concatenate
     combined: dict = {}
     for key in (
         "read_base_idx",
@@ -413,6 +372,58 @@ def combine_and_split(  # noqa: PLR0913
     combined["pos"] = np.concatenate([pos_cache["pos"], neg_cache["pos"]])
     combined["rn"] = pos_cache["rn"] + neg_cache["rn"]
     del pos_cache, neg_cache
+    return combined, n_pos, n_neg
+
+
+def combine_and_split(
+    positive_cache_dir: str,
+    negative_cache_dir: str,
+    split_manifest_path: str | None = None,
+    training_regions: str | None = None,
+    split_config: SplitConfig | None = None,
+    *,
+    output_dir: str = "folds",
+) -> dict:
+    """Combine positive/negative caches and write per-fold train/val/test files.
+
+    Parameters
+    ----------
+    positive_cache_dir, negative_cache_dir
+        Directories produced by ``cram_to_tensor_cache``.
+    split_manifest_path
+        Path to a pre-built split manifest JSON. If ``None``, one is built
+        from ``training_regions`` and the other split parameters.
+    training_regions
+        Path to training regions interval list (required when building a manifest).
+    split_config
+        Configuration for data splitting (folds, chromosomes, etc.).
+    output_dir
+        Root directory for fold output files.
+
+    Returns
+    -------
+    dict
+        Summary metadata including profiling.
+    """
+    if split_config is None:
+        split_config = SplitConfig()
+    k_folds = split_config.k_folds
+    holdout_chromosomes = split_config.holdout_chromosomes
+    val_chromosomes = split_config.val_chromosomes
+    single_model_split = split_config.single_model_split
+    random_seed = split_config.random_seed
+    val_fraction = split_config.val_fraction
+    cpu_u0, cpu_s0 = _cpu_times()
+    t_wall_start = time.perf_counter()
+    peak_rss = _resource_rss_gb()
+    out_root = Path(output_dir)
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    # Phase 1: load caches
+    t_load = time.perf_counter()
+    combined, n_pos, n_neg = _load_and_concatenate_caches(positive_cache_dir, negative_cache_dir)
+    load_seconds = round(time.perf_counter() - t_load, 4)
+    peak_rss = max(peak_rss, _resource_rss_gb())
 
     n_total = int(combined["label"].shape[0])
 
@@ -534,12 +545,14 @@ def run(argv: list[str] | None = None) -> dict:
         negative_cache_dir=args.negative,
         split_manifest_path=args.split_manifest,
         training_regions=args.training_regions,
-        k_folds=args.k_folds,
-        holdout_chromosomes=holdout,
-        val_chromosomes=val_chroms,
-        single_model_split=args.single_model_split,
-        random_seed=args.random_seed,
-        val_fraction=args.val_fraction,
+        split_config=SplitConfig(
+            k_folds=args.k_folds,
+            holdout_chromosomes=holdout,
+            val_chromosomes=val_chroms,
+            single_model_split=args.single_model_split,
+            random_seed=args.random_seed,
+            val_fraction=args.val_fraction,
+        ),
         output_dir=args.output,
     )
 

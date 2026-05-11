@@ -284,14 +284,18 @@ class TestCombineAndSplitSmokeKfold:
             shard_size=100,
         )
 
+        from ugbio_srsnv.deep_srsnv.combine_splits import SplitConfig
+
         folds_dir = str(tmp / "folds_kfold")
         index = combine_and_split(
             positive_cache_dir=pos_dir,
             negative_cache_dir=neg_dir,
             training_regions=synthetic_data["interval_list"],
-            k_folds=2,
-            holdout_chromosomes=["chr21"],
-            random_seed=42,
+            split_config=SplitConfig(
+                k_folds=2,
+                holdout_chromosomes=["chr21"],
+                random_seed=42,
+            ),
             output_dir=folds_dir,
         )
 
@@ -347,15 +351,19 @@ class TestCombineAndSplitSmokeSingleModel:
             shard_size=100,
         )
 
+        from ugbio_srsnv.deep_srsnv.combine_splits import SplitConfig
+
         folds_dir = str(tmp / "folds_sm")
         combine_and_split(
             positive_cache_dir=pos_dir,
             negative_cache_dir=neg_dir,
             training_regions=synthetic_data["interval_list"],
-            holdout_chromosomes=["chr21"],
-            val_chromosomes=["chr2"],
-            single_model_split=True,
-            random_seed=42,
+            split_config=SplitConfig(
+                holdout_chromosomes=["chr21"],
+                val_chromosomes=["chr2"],
+                single_model_split=True,
+                random_seed=42,
+            ),
             output_dir=folds_dir,
         )
 
@@ -415,20 +423,26 @@ class TestEndToEndDataModuleSmoke:
             shard_size=100,
         )
 
+        from ugbio_srsnv.deep_srsnv.combine_splits import SplitConfig
+
         folds_dir = str(tmp / "folds_e2e")
         combine_and_split(
             positive_cache_dir=pos_dir,
             negative_cache_dir=neg_dir,
             training_regions=synthetic_data["interval_list"],
-            k_folds=2,
-            holdout_chromosomes=["chr21"],
-            random_seed=42,
+            split_config=SplitConfig(
+                k_folds=2,
+                holdout_chromosomes=["chr21"],
+                random_seed=42,
+            ),
             output_dir=folds_dir,
         )
 
+        from ugbio_srsnv.deep_srsnv.data_module import DataModuleConfig
+
         dm = SRSNVDataModule.from_fold_dir(
             fold_dir=str(Path(folds_dir) / "fold_0"),
-            train_batch_size=8,
+            loader_config=DataModuleConfig(train_batch_size=8),
         )
         dm.setup("fit")
 

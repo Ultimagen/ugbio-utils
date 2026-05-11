@@ -129,7 +129,7 @@ def _enrich_with_featuremap_columns(combined: pl.DataFrame, featuremap_parquets:
     return combined
 
 
-def recalibrate_dnn_folds(  # noqa: PLR0913
+def recalibrate_dnn_folds(
     fold_parquets: list[str],
     fold_metadata_paths: list[str],
     stats_file: str,

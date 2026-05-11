@@ -1,10 +1,28 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import torch
 from torch import nn
 from torch.nn import functional as f_nn
 
 FOCUS_CHANNEL_IDX = 3
+
+
+@dataclass
+class CNNArchConfig:
+    """Architecture hyperparameters for CNNReadClassifier."""
+
+    tm_vocab_size: int = 1
+    st_vocab_size: int = 1
+    et_vocab_size: int = 1
+    base_embed_dim: int = 16
+    ref_embed_dim: int = 16
+    cat_embed_dim: int = 4
+    hidden_channels: int = 128
+    n_blocks: int = 6
+    dropout: float = 0.3
+    dilations: list[int] | None = None
 
 
 class ResidualBlock1D(nn.Module):
@@ -25,22 +43,27 @@ class ResidualBlock1D(nn.Module):
 
 
 class CNNReadClassifier(nn.Module):
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         base_vocab_size: int,
         numeric_channels: int,
-        tm_vocab_size: int = 1,
-        st_vocab_size: int = 1,
-        et_vocab_size: int = 1,
-        base_embed_dim: int = 16,
-        ref_embed_dim: int = 16,
-        cat_embed_dim: int = 4,
-        hidden_channels: int = 128,
-        n_blocks: int = 6,
-        dropout: float = 0.3,
-        dilations: list[int] | None = None,
+        arch: CNNArchConfig | None = None,
+        **kwargs,
     ):
         super().__init__()
+        if arch is None:
+            arch = CNNArchConfig(**{k: v for k, v in kwargs.items() if k in CNNArchConfig.__dataclass_fields__})
+        base_embed_dim = arch.base_embed_dim
+        ref_embed_dim = arch.ref_embed_dim
+        cat_embed_dim = arch.cat_embed_dim
+        hidden_channels = arch.hidden_channels
+        n_blocks = arch.n_blocks
+        dropout = arch.dropout
+        dilations = arch.dilations
+        tm_vocab_size = arch.tm_vocab_size
+        st_vocab_size = arch.st_vocab_size
+        et_vocab_size = arch.et_vocab_size
+
         self.read_base_emb = nn.Embedding(base_vocab_size, base_embed_dim, padding_idx=0)
         self.ref_base_emb = nn.Embedding(base_vocab_size, ref_embed_dim, padding_idx=0)
 

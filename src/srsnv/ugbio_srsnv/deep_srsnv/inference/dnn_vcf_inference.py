@@ -33,6 +33,7 @@ import sys
 import tempfile
 import time
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
+from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
@@ -69,6 +70,28 @@ ML_QUAL = "ML_QUAL"
 
 
 # ---------------------------------------------------------------------------
+# Inference configuration
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class InferenceConfig:
+    """Shared configuration for DNN inference pipeline functions."""
+
+    cram_path: str
+    reference_path: str | None = None
+    num_cram_workers: int = 4
+    shard_size: int = 10000
+    batch_size: int = 512
+    tensor_length: int = 300
+    fetch_mode: str = "samtools"
+    gpu_ids: list[int] | None = None
+    backend: str = "trt"
+    engine_path: str | None = None
+    checkpoint_path: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # DNNQualAnnotator
 # ---------------------------------------------------------------------------
 
@@ -81,7 +104,7 @@ class DNNQualAnnotator(VcfAnnotator):
     and the variant-level QUAL is set to the max per-read SNVQ.
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         predictions: dict,
         quality_interpolation_fn=None,
@@ -201,7 +224,7 @@ def _build_quality_fn(metadata: dict) -> _QualityInterpolator | None:
 # ---------------------------------------------------------------------------
 
 
-def _run_inference(  # noqa: PLR0913
+def _run_inference(
     cram_path: str,
     parquet_path: str,
     metadata: dict,
@@ -420,7 +443,7 @@ def _start_gpu_consumers(
     return gpu_threads
 
 
-def _pipelined_inference(  # noqa: PLR0913
+def _pipelined_inference(
     shard_args_list: list[dict],
     engines: list,
     batch_size: int,
@@ -597,18 +620,13 @@ def aggregate_fold_probabilities(prob_matrix: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def _run_fold_inference(  # noqa: PLR0913
-    cram_path: str,
+def _run_fold_inference(
+    config: InferenceConfig,
     parquet_path: str,
     n_rows: int,
     columns: list[str],
     engines: list,
     *,
-    num_cram_workers: int = 4,
-    batch_size: int = 512,
-    tensor_length: int = 300,
-    reference_path: str | None = None,
-    fetch_mode: str = "samtools",
     output_path: str | None = None,
 ) -> dict[tuple[str, int, str], float] | int:
     """Run inference from a pre-sorted parquet file with row-group-per-shard layout.
@@ -627,13 +645,13 @@ def _run_fold_inference(  # noqa: PLR0913
     total_shards = pf.metadata.num_row_groups
 
     shard_common = {
-        "cram_path": cram_path,
-        "reference_path": reference_path,
+        "cram_path": config.cram_path,
+        "reference_path": config.reference_path,
         "encoders": encoders,
-        "tensor_length": tensor_length,
+        "tensor_length": config.tensor_length,
         "label": False,
         "max_edist": None,
-        "fetch_mode": fetch_mode,
+        "fetch_mode": config.fetch_mode,
     }
 
     shard_args_list = [
@@ -645,7 +663,7 @@ def _run_fold_inference(  # noqa: PLR0913
         "Fold inference: %d rows -> %d row-group shards (%d workers, %d GPUs)",
         n_rows,
         total_shards,
-        num_cram_workers,
+        config.num_cram_workers,
         len(engines),
     )
 
@@ -653,8 +671,8 @@ def _run_fold_inference(  # noqa: PLR0913
     result = _pipelined_inference(
         shard_args_list,
         engines,
-        batch_size,
-        num_cram_workers,
+        config.batch_size,
+        config.num_cram_workers,
         process_fn=_process_shard_from_parquet,
         output_path=output_path,
     )
@@ -671,7 +689,7 @@ def _run_fold_inference(  # noqa: PLR0913
     return result
 
 
-def _run_fold_inference_from_rows(  # noqa: PLR0913
+def _run_fold_inference_from_rows(
     cram_path: str,
     rows: list[dict],
     engines: list,
@@ -722,19 +740,10 @@ def _run_fold_inference_from_rows(  # noqa: PLR0913
     return predictions
 
 
-def _run_ensemble_inference(  # noqa: PLR0913
+def _run_ensemble_inference(
     manifest: dict,
-    cram_path: str,
+    config: InferenceConfig,
     parquet_path: str,
-    *,
-    backend: str = "pytorch",
-    gpu_ids: list[int],
-    num_cram_workers: int = 4,
-    shard_size: int = 10000,
-    batch_size: int = 512,
-    tensor_length: int = 300,
-    reference_path: str | None = None,
-    fetch_mode: str = "samtools",
 ) -> dict[tuple[str, int, str], float]:
     """Fold-aware inference: iterate folds sequentially, all GPUs data-parallel per fold."""
 
@@ -762,13 +771,13 @@ def _run_ensemble_inference(  # noqa: PLR0913
     t_start = time.perf_counter()
 
     infer_kwargs = {
-        "cram_path": cram_path,
-        "num_cram_workers": num_cram_workers,
-        "shard_size": shard_size,
-        "batch_size": batch_size,
-        "tensor_length": tensor_length,
-        "reference_path": reference_path,
-        "fetch_mode": fetch_mode,
+        "cram_path": config.cram_path,
+        "num_cram_workers": config.num_cram_workers,
+        "shard_size": config.shard_size,
+        "batch_size": config.batch_size,
+        "tensor_length": config.tensor_length,
+        "reference_path": config.reference_path,
+        "fetch_mode": config.fetch_mode,
     }
 
     for fold_entry in fold_entries:
@@ -780,7 +789,7 @@ def _run_ensemble_inference(  # noqa: PLR0913
             continue
 
         logger.info("Fold %d: loading model from %s (%d reads)", fold_k, meta_path, len(rows_k))
-        engines = _create_engines(meta_path, backend=backend, gpu_ids=gpu_ids)
+        engines = _create_engines(meta_path, backend=config.backend, gpu_ids=config.gpu_ids)
         try:
             fold_preds = _run_fold_inference_from_rows(rows=rows_k, engines=engines, **infer_kwargs)
             all_predictions.update(fold_preds)
@@ -800,7 +809,7 @@ def _run_ensemble_inference(  # noqa: PLR0913
             fold_k = fold_entry["fold_idx"]
             meta_path = fold_entry["metadata_path"]
             logger.info("Test reads: predicting with fold %d model", fold_k)
-            engines = _create_engines(meta_path, backend=backend, gpu_ids=gpu_ids)
+            engines = _create_engines(meta_path, backend=config.backend, gpu_ids=config.gpu_ids)
             try:
                 test_preds = _run_fold_inference_from_rows(rows=test_rows, engines=engines, **infer_kwargs)
                 for j, key in enumerate(test_keys):
@@ -879,21 +888,10 @@ def _ensure_parquet(featuremap_vcf: str, parquet_path: str | None) -> str:
     return out_path
 
 
-def _run_single_model_inference(  # noqa: PLR0913
+def _run_single_model_inference(
     metadata_path: str,
-    cram_path: str,
+    config: InferenceConfig,
     parquet_path: str,
-    *,
-    backend: str,
-    engine_path: str | None,
-    checkpoint_path: str | None,
-    gpu_ids: list[int],
-    num_cram_workers: int,
-    shard_size: int,
-    batch_size: int,
-    tensor_length: int,
-    reference_path: str | None,
-    fetch_mode: str,
 ) -> tuple[dict[tuple[str, int, str], float], _QualityInterpolator | None]:
     """Load a single model, run inference, return predictions and quality fn."""
     with open(metadata_path) as f:
@@ -901,14 +899,14 @@ def _run_single_model_inference(  # noqa: PLR0913
     quality_fn = _build_quality_fn(metadata)
 
     engines = []
-    for gid in gpu_ids:
+    for gid in config.gpu_ids:
         try:
             eng = load_inference_engine(
                 metadata_path,
-                backend=backend,
+                backend=config.backend,
                 device_id=gid,
-                engine_path=engine_path,
-                checkpoint_path=checkpoint_path,
+                engine_path=config.engine_path,
+                checkpoint_path=config.checkpoint_path,
             )
             if hasattr(eng, "pop_context"):
                 eng.pop_context()
@@ -917,20 +915,20 @@ def _run_single_model_inference(  # noqa: PLR0913
             logger.warning("Failed to create engine on GPU:%d, skipping", gid, exc_info=True)
     if not engines:
         raise RuntimeError("No inference engines could be created")
-    logger.info("Created %d %s engine(s) on GPUs %s", len(engines), backend, gpu_ids[: len(engines)])
+    logger.info("Created %d %s engine(s) on GPUs %s", len(engines), config.backend, config.gpu_ids[: len(engines)])
 
     try:
         predictions = _run_inference(
-            cram_path=cram_path,
+            cram_path=config.cram_path,
             parquet_path=parquet_path,
             metadata=metadata,
             engines=engines,
-            num_cram_workers=num_cram_workers,
-            shard_size=shard_size,
-            batch_size=batch_size,
-            tensor_length=tensor_length,
-            reference_path=reference_path,
-            fetch_mode=fetch_mode,
+            num_cram_workers=config.num_cram_workers,
+            shard_size=config.shard_size,
+            batch_size=config.batch_size,
+            tensor_length=config.tensor_length,
+            reference_path=config.reference_path,
+            fetch_mode=config.fetch_mode,
         )
     finally:
         for eng in engines:
@@ -939,25 +937,15 @@ def _run_single_model_inference(  # noqa: PLR0913
     return predictions, quality_fn
 
 
-def run_inference_pipeline(  # noqa: PLR0913
+def run_inference_pipeline(
     featuremap_vcf: str,
-    cram_path: str,
+    config: InferenceConfig,
     output_vcf: str,
     *,
     metadata_path: str | None = None,
     ensemble_manifest_path: str | None = None,
-    reference_path: str | None = None,
-    backend: str = "trt",
-    engine_path: str | None = None,
-    checkpoint_path: str | None = None,
-    gpu_ids: list[int] | None = None,
-    num_cram_workers: int = 4,
-    shard_size: int = 10000,
-    batch_size: int = 512,
-    tensor_length: int = 300,
     low_qual_threshold: float = 40.0,
     parquet_path: str | None = None,
-    fetch_mode: str = "samtools",
 ) -> str:
     """Run the full DNN VCF inference pipeline.
 
@@ -976,8 +964,19 @@ def run_inference_pipeline(  # noqa: PLR0913
 
     t0 = time.perf_counter()
 
-    fetch_mode = _resolve_fetch_mode(fetch_mode)
-    gpu_ids = _resolve_gpu_ids(gpu_ids)
+    config = InferenceConfig(
+        cram_path=config.cram_path,
+        reference_path=config.reference_path,
+        num_cram_workers=config.num_cram_workers,
+        shard_size=config.shard_size,
+        batch_size=config.batch_size,
+        tensor_length=config.tensor_length,
+        fetch_mode=_resolve_fetch_mode(config.fetch_mode),
+        gpu_ids=_resolve_gpu_ids(config.gpu_ids),
+        backend=config.backend,
+        engine_path=config.engine_path,
+        checkpoint_path=config.checkpoint_path,
+    )
     parquet_path = _ensure_parquet(featuremap_vcf, parquet_path)
 
     # ── Dispatch: single model vs k-fold ensemble ──
@@ -986,32 +985,14 @@ def run_inference_pipeline(  # noqa: PLR0913
         quality_fn = _build_quality_fn(manifest)
         predictions = _run_ensemble_inference(
             manifest=manifest,
-            cram_path=cram_path,
+            config=config,
             parquet_path=parquet_path,
-            backend=backend,
-            gpu_ids=gpu_ids,
-            num_cram_workers=num_cram_workers,
-            shard_size=shard_size,
-            batch_size=batch_size,
-            tensor_length=tensor_length,
-            reference_path=reference_path,
-            fetch_mode=fetch_mode,
         )
     else:
         predictions, quality_fn = _run_single_model_inference(
             metadata_path,
-            cram_path,
+            config,
             parquet_path,
-            backend=backend,
-            engine_path=engine_path,
-            checkpoint_path=checkpoint_path,
-            gpu_ids=gpu_ids,
-            num_cram_workers=num_cram_workers,
-            shard_size=shard_size,
-            batch_size=batch_size,
-            tensor_length=tensor_length,
-            reference_path=reference_path,
-            fetch_mode=fetch_mode,
         )
 
     # ── Phase 3: VCF annotation ──
@@ -1081,24 +1062,28 @@ def run(argv: list[str] | None = None) -> None:
     if num_workers is None:
         num_workers = os.cpu_count() or 1
 
-    run_inference_pipeline(
-        featuremap_vcf=args.featuremap_vcf,
+    config = InferenceConfig(
         cram_path=args.cram,
-        metadata_path=args.metadata,
-        ensemble_manifest_path=args.ensemble_manifest,
-        output_vcf=args.output,
         reference_path=args.reference,
-        backend=args.backend,
-        engine_path=args.engine_path,
-        checkpoint_path=args.checkpoint,
-        gpu_ids=gpu_ids,
         num_cram_workers=num_workers,
         shard_size=args.shard_size,
         batch_size=args.batch_size,
         tensor_length=args.tensor_length,
+        fetch_mode=args.fetch_mode,
+        gpu_ids=gpu_ids,
+        backend=args.backend,
+        engine_path=args.engine_path,
+        checkpoint_path=args.checkpoint,
+    )
+
+    run_inference_pipeline(
+        featuremap_vcf=args.featuremap_vcf,
+        config=config,
+        output_vcf=args.output,
+        metadata_path=args.metadata,
+        ensemble_manifest_path=args.ensemble_manifest,
         low_qual_threshold=args.low_qual_threshold,
         parquet_path=args.parquet,
-        fetch_mode=args.fetch_mode,
     )
 
 
@@ -1229,18 +1214,25 @@ def run_fold(argv: list[str] | None = None) -> None:
     engines = _create_engines(args.fold_metadata, backend=args.backend, gpu_ids=gpu_ids)
     logger.info("Fold %d: %d %s engine(s) on GPUs %s", fold_idx, len(engines), args.backend, gpu_ids[: len(engines)])
 
+    fold_config = InferenceConfig(
+        cram_path=args.cram,
+        reference_path=args.reference,
+        num_cram_workers=num_workers,
+        shard_size=args.shard_size,
+        batch_size=args.batch_size,
+        tensor_length=args.tensor_length,
+        fetch_mode=fetch_mode,
+        gpu_ids=gpu_ids,
+        backend=args.backend,
+    )
+
     try:
         n_preds = _run_fold_inference(
-            cram_path=args.cram,
+            config=fold_config,
             parquet_path=fold_parquet,
             n_rows=n_rows,
             columns=available_cols_final,
             engines=engines,
-            num_cram_workers=num_workers,
-            batch_size=args.batch_size,
-            tensor_length=args.tensor_length,
-            reference_path=args.reference,
-            fetch_mode=fetch_mode,
             output_path=args.output,
         )
     finally:
@@ -1715,7 +1707,7 @@ def _copy_contig_records(vcf_in: str, vcf_out: str, contig: str) -> str:
     return vcf_out
 
 
-def _merge_contig_worker(  # noqa: PLR0913
+def _merge_contig_worker(
     contig: str,
     vcf_in: str,
     vcf_out: str,

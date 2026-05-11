@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import functools
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 import lightning
@@ -11,6 +12,19 @@ from torch.utils.data import DataLoader, Dataset
 from ugbio_core.logger import logger
 
 from ugbio_srsnv.deep_srsnv.data_prep import compute_split_ids
+
+
+@dataclass
+class DataModuleConfig:
+    """Configuration for SRSNVDataModule loader and splitting behaviour."""
+
+    train_batch_size: int = 128
+    eval_batch_size: int | None = None
+    predict_batch_size: int | None = None
+    pin_memory: bool = False
+    num_workers: int = 0
+    prefetch_factor: int = 4
+    use_mmap: bool = False
 
 
 class TensorMapDataset(Dataset):
@@ -141,25 +155,22 @@ class SRSNVDataModule(lightning.LightningDataModule):
        by ``combine_and_split``. No split computation needed.
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         full_cache: dict | None = None,
         train_split_ids: set[int] | None = None,
         val_split_ids: set[int] | None = None,
         test_split_ids: set[int] | None = None,
-        train_batch_size: int = 128,
-        eval_batch_size: int | None = None,
-        predict_batch_size: int | None = None,
         *,
-        pin_memory: bool = False,
+        loader_config: DataModuleConfig | None = None,
         split_manifest: dict | None = None,
         chrom_to_fold: dict[str, int] | None = None,
-        num_workers: int = 0,
-        prefetch_factor: int = 4,
         fold_dir: str | Path | None = None,
-        use_mmap: bool = False,
     ):
         super().__init__()
+
+        if loader_config is None:
+            loader_config = DataModuleConfig()
 
         self._fold_dir = Path(fold_dir) if fold_dir else None
         self._fold_caches: dict[str, dict] | None = None
@@ -170,7 +181,9 @@ class SRSNVDataModule(lightning.LightningDataModule):
             for name in ("train", "val", "test"):
                 fp = self._fold_dir / f"{name}.pt"
                 if fp.exists():
-                    self._fold_caches[name] = _load_fold_file(fp, split_id_value=split_id_map[name], mmap=use_mmap)
+                    self._fold_caches[name] = _load_fold_file(
+                        fp, split_id_value=split_id_map[name], mmap=loader_config.use_mmap
+                    )
                     logger.info("Loaded %s: %d rows", fp, int(self._fold_caches[name]["label"].shape[0]))
             self.full_cache = None
             self.train_split_ids = None
@@ -185,12 +198,12 @@ class SRSNVDataModule(lightning.LightningDataModule):
             self.val_split_ids = val_split_ids or set()
             self.test_split_ids = test_split_ids or {-1}
 
-        self.train_batch_size = train_batch_size
-        self.eval_batch_size = eval_batch_size or train_batch_size * 2
-        self.predict_batch_size = predict_batch_size or self.eval_batch_size * 2
-        self.pin_memory = pin_memory
-        self.num_workers = num_workers
-        self.prefetch_factor = prefetch_factor
+        self.train_batch_size = loader_config.train_batch_size
+        self.eval_batch_size = loader_config.eval_batch_size or loader_config.train_batch_size * 2
+        self.predict_batch_size = loader_config.predict_batch_size or self.eval_batch_size * 2
+        self.pin_memory = loader_config.pin_memory
+        self.num_workers = loader_config.num_workers
+        self.prefetch_factor = loader_config.prefetch_factor
 
         self._train_ds: TensorMapDataset | None = None
         self._val_ds: TensorMapDataset | None = None
@@ -201,25 +214,12 @@ class SRSNVDataModule(lightning.LightningDataModule):
     def from_fold_dir(
         cls,
         fold_dir: str | Path,
-        train_batch_size: int = 128,
-        eval_batch_size: int | None = None,
-        predict_batch_size: int | None = None,
-        *,
-        pin_memory: bool = False,
-        num_workers: int = 0,
-        prefetch_factor: int = 4,
-        use_mmap: bool = False,
+        loader_config: DataModuleConfig | None = None,
     ) -> SRSNVDataModule:
         """Create a DataModule from a pre-split fold directory."""
         return cls(
             fold_dir=fold_dir,
-            train_batch_size=train_batch_size,
-            eval_batch_size=eval_batch_size,
-            predict_batch_size=predict_batch_size,
-            pin_memory=pin_memory,
-            num_workers=num_workers,
-            prefetch_factor=prefetch_factor,
-            use_mmap=use_mmap,
+            loader_config=loader_config,
         )
 
     @staticmethod
