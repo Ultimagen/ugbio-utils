@@ -7,6 +7,7 @@ import math
 import os
 import shutil
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import lightning
@@ -53,9 +54,6 @@ POS = FeatureMapFields.POS.value
 MIN_CLASSES_FOR_BINARY_METRICS = 2
 NEAR_PURE_LOWER = 0.01
 NEAR_PURE_UPPER = 0.99
-
-
-from dataclasses import dataclass, field  # noqa: E402
 
 
 @dataclass
