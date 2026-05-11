@@ -18,9 +18,14 @@
 
 from __future__ import annotations
 
+import importlib
 import warnings
 from functools import partial
 from itertools import cycle
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
 
 import numpy as np
 import pandas as pd
@@ -46,8 +51,6 @@ from ugbio_ppmseq.ppmSeq_utils import (
     STRAND_RATIO_UPPER_THRESH,
     PpmseqCategories,
 )
-
-from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
 
 # Column name constants
 PREV1 = "X_PREV1"
@@ -440,7 +443,8 @@ def recalibrate_snvq_kde(pd_df: pd.DataFrame, **kwargs) -> tuple[np.ndarray, np.
         return _kde_counting_fallback(**fallback_kwargs)
 
     try:
-        estimator = AdaptiveKDEPrecisionEstimator(transform_mode=transform_mode, **kde_config_overrides)
+        _smoothing = importlib.import_module("ugbio_srsnv.smoothing_utils")
+        estimator = _smoothing.AdaptiveKDEPrecisionEstimator(transform_mode=transform_mode, **kde_config_overrides)
         estimator.fit(
             df_for_kde,
             num_cv_folds=k_folds,

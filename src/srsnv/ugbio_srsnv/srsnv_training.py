@@ -578,7 +578,7 @@ class SRSNVTrainer:
         self.rng = np.random.default_rng(self.seed)
 
         # GPU / CPU
-        self.use_gpu = self._init_gpu(args.use_gpu)
+        self.use_gpu = self._init_gpu(use_gpu=args.use_gpu)
         self.downcast_float = args.use_float32
 
         # Stats, coverage, data
