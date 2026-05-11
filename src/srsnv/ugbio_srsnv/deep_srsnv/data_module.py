@@ -131,7 +131,7 @@ def _load_fold_file(path: Path, split_id_value: int = 0, *, mmap: bool = False) 
     When ``mmap=True``, tensors are memory-mapped so DDP processes share
     physical RAM pages.
     """
-    cache = dict(torch.load(path, map_location="cpu", weights_only=False, mmap=mmap))  # noqa: S301
+    cache = dict(torch.load(path, map_location="cpu", weights_only=False, mmap=mmap))
     if isinstance(cache.get("chrom"), np.ndarray):
         cache["chrom"] = cache["chrom"].tolist()
     if isinstance(cache.get("rn"), np.ndarray):

@@ -79,7 +79,7 @@ def _load_shard_dir(shard_dir: str | Path) -> dict:
     }
 
     for sf in shard_files:
-        chunk = torch.load(sf, map_location="cpu", weights_only=False)  # noqa: S301
+        chunk = torch.load(sf, map_location="cpu", weights_only=False)
         for key in (
             "read_base_idx",
             "ref_base_idx",

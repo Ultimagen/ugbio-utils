@@ -14,7 +14,7 @@ from ugbio_srsnv.deep_srsnv.lightning_module import SRSNVLightningModule
 
 
 def _torch_load_checkpoint(path: str | Path, *, map_location: str | torch.device | None = "cpu") -> dict:
-    return torch.load(str(path), map_location=map_location, weights_only=False)  # noqa: S301
+    return torch.load(str(path), map_location=map_location, weights_only=False)
 
 
 def load_dnn_model_from_checkpoint(

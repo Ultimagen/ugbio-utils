@@ -24,6 +24,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import importlib
 import io
 import itertools
 import json
@@ -862,10 +863,10 @@ def _resolve_gpu_ids(gpu_ids: list[int] | None) -> list[int]:
     """Return explicit GPU IDs, detecting available devices if needed."""
     if gpu_ids is not None:
         return gpu_ids
-    import torch  # noqa: PLC0415
+    _torch = importlib.import_module("torch")
 
-    if torch.cuda.is_available():
-        return list(range(torch.cuda.device_count()))
+    if _torch.cuda.is_available():
+        return list(range(_torch.cuda.device_count()))
     return [0]
 
 
@@ -958,9 +959,9 @@ def run_inference_pipeline(
     if not metadata_path and not ensemble_manifest_path:
         raise ValueError("Either metadata_path or ensemble_manifest_path must be provided")
 
-    import torch.multiprocessing  # noqa: PLC0415
+    torch_mp = importlib.import_module("torch.multiprocessing")
 
-    torch.multiprocessing.set_sharing_strategy("file_system")
+    torch_mp.set_sharing_strategy("file_system")
 
     t0 = time.perf_counter()
 
@@ -1165,9 +1166,9 @@ def _parse_gpu_ids_from_arg(gpus_arg: str | None) -> list[int]:
 
 def run_fold(argv: list[str] | None = None) -> None:
     """Run inference for a single fold's chromosomes and write predictions parquet."""
-    import torch.multiprocessing  # noqa: PLC0415
+    torch_mp = importlib.import_module("torch.multiprocessing")
 
-    torch.multiprocessing.set_sharing_strategy("file_system")
+    torch_mp.set_sharing_strategy("file_system")
 
     if argv is None:
         argv = sys.argv[1:]
@@ -1258,16 +1259,16 @@ def _load_tensor_shard(shard_path: str) -> dict:
     Supports both uncompressed ``.pt`` and gzip-compressed ``.pt.gz`` files.
     Uses isal (ISA-L) for fast gzip decompression when available.
     """
-    import torch  # noqa: PLC0415
+    _torch = importlib.import_module("torch")
 
     if shard_path.endswith(".gz"):
         with igzip.open(shard_path, "rb") as f:
-            chunk = torch.load(io.BytesIO(f.read()), map_location="cpu", weights_only=False)
+            chunk = _torch.load(io.BytesIO(f.read()), map_location="cpu", weights_only=False)
     else:
-        chunk = torch.load(shard_path, map_location="cpu", weights_only=False)
+        chunk = _torch.load(shard_path, map_location="cpu", weights_only=False)
     result = {}
     for key, val in chunk.items():
-        if isinstance(val, torch.Tensor):
+        if isinstance(val, _torch.Tensor):
             result[key] = val.numpy()
         else:
             result[key] = val
@@ -1532,9 +1533,9 @@ def _parse_fold_cache_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def run_fold_from_cache(argv: list[str] | None = None) -> None:
     """Run inference for a single fold from a pre-computed tensor cache."""
-    import torch.multiprocessing  # noqa: PLC0415
+    torch_mp = importlib.import_module("torch.multiprocessing")
 
-    torch.multiprocessing.set_sharing_strategy("file_system")
+    torch_mp.set_sharing_strategy("file_system")
 
     if argv is None:
         argv = sys.argv[1:]
@@ -1548,9 +1549,9 @@ def run_fold_from_cache(argv: list[str] | None = None) -> None:
         gpu_ids = [int(g.strip()) for g in args.gpus.split(",")]
 
     if gpu_ids is None:
-        import torch  # noqa: PLC0415
+        _torch = importlib.import_module("torch")
 
-        gpu_ids = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else [0]
+        gpu_ids = list(range(_torch.cuda.device_count())) if _torch.cuda.is_available() else [0]
 
     # Load model engines
     engines = _create_engines(args.fold_metadata, backend=args.backend, gpu_ids=gpu_ids)

@@ -363,7 +363,7 @@ def load_inference_engine(
         if not ckpt:
             raise FileNotFoundError("No checkpoint found in metadata for PyTorch backend")
 
-        raw = torch.load(str(ckpt), map_location="cpu", weights_only=False)  # noqa: S301
+        raw = torch.load(str(ckpt), map_location="cpu", weights_only=False)
         is_swa_format = isinstance(raw, dict) and "state_dict" in raw and "pytorch-lightning_version" not in raw
         if is_swa_format:
             lit_model = load_dnn_model_from_swa_checkpoint(ckpt, metadata, map_location=device)

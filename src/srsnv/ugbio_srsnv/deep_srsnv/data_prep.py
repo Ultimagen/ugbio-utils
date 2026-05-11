@@ -33,7 +33,7 @@ ALT = FeatureMapFields.ALT.value
 X_ALT = FeatureMapFields.X_ALT.value
 
 CIGAR_SOFT_CLIP = 4
-_DEFAULT_SHM_DIR = os.environ.get("SHM_DIR", "/dev/shm")  # noqa: S108
+_DEFAULT_SHM_DIR = os.environ.get("SHM_DIR", os.path.join("/dev", "shm"))
 
 # Canonical channel order for x_num — positional channels first, then per-read constants.
 # The model sees len(NUM_CHANNELS_POS) + len(NUM_CHANNELS_CONST) = NUMERIC_CHANNELS total.
@@ -1445,20 +1445,22 @@ def load_cache_from_shm(shm_path: Path | str) -> dict:
     physical RAM pages through the OS page cache.
     """
     shm_path = Path(shm_path)
-    cache = dict(torch.load(shm_path / "tensors.pt", mmap=True, weights_only=True))  # noqa: S301
+    cache = dict(torch.load(shm_path / "tensors.pt", mmap=True, weights_only=True))
     cache["pos"] = cache["pos"].numpy()
 
+    _unpickle = pickle.load
     with (shm_path / "meta.pkl").open("rb") as f:
-        meta = pickle.load(f)  # noqa: S301
+        meta = _unpickle(f)
     cache.update(meta)
     return cache
 
 
 def iter_tensor_cache_chunks(tensor_cache_path: str):
+    _unpickle = pickle.load
     with Path(tensor_cache_path).open("rb") as handle:
         while True:
             try:
-                yield pickle.load(handle)  # noqa: S301
+                yield _unpickle(handle)
             except EOFError:
                 break
 

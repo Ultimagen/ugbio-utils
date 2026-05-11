@@ -473,7 +473,7 @@ def _load_pretrained_weights(lit_model: SRSNVLightningModule, ckpt_path: str) ->
         (``strict=True``).
     """
     logger.info("Loading pretrained weights from: %s", ckpt_path)
-    raw = torch.load(ckpt_path, map_location="cpu", weights_only=False)  # noqa: S301
+    raw = torch.load(ckpt_path, map_location="cpu", weights_only=False)
 
     if isinstance(raw, dict) and "state_dict" in raw:
         state_dict = raw["state_dict"]
