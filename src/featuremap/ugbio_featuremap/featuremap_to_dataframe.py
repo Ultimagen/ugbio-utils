@@ -176,7 +176,9 @@ _QUOTED_VALUE = r'"((?:[^"\\]|\\.)*)'
 INFO_RE = re.compile(rf"##INFO=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description={_QUOTED_VALUE}")
 FORMAT_RE = re.compile(rf"##FORMAT=<ID=([^,]+),Number=([^,]+),Type=([^,]+),Description={_QUOTED_VALUE}")
 
-_POLARS_DTYPE = {"Integer": pl.Int64, "Float": pl.Float64, "Flag": pl.Boolean}
+# Flag→Utf8: bcftools query outputs "1"/"."; Polars can't parse "1" as Boolean.
+# With Utf8, "." becomes null (via null_values) and "1" is non-null — is_null()/is_not_null() works.
+_POLARS_DTYPE = {"Integer": pl.Int64, "Float": pl.Float64, "Flag": pl.Utf8}
 # VCF column names – imported from FeatureMapFields for consistency
 CHROM = FeatureMapFields.CHROM.value
 POS = FeatureMapFields.POS.value
@@ -532,7 +534,7 @@ def _cast_expr(col: str, meta: dict) -> pl.Expr:
         cats = meta["cat"] + ([] if "" in meta["cat"] else [""])
         return base.fill_null(value="").str.to_uppercase().cast(pl.Enum(cats), strict=True).alias(col)
     elif meta["type"] == "Flag":
-        return base.fill_null(value=False).cast(pl.Boolean, strict=True).alias(col)
+        return base.alias(col)
     elif meta["type"] in _POLARS_DTYPE:
         return base.fill_null(value=0).cast(_POLARS_DTYPE[meta["type"]], strict=True).alias(col)
 
@@ -1279,7 +1281,8 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
 
             _merge_parquet_files_lazy(part_files, out, downsample_reads, downsample_seed)
 
-        log.info(f"Conversion completed: {out}")
+        final_row_count = pl.scan_parquet(out).select(pl.len()).collect().item()
+        log.info(f"Conversion completed: {out} ({final_row_count:,} rows)")
 
 
 def _process_region_to_parquet(
