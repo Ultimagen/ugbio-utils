@@ -57,6 +57,17 @@ def _create_inference_filters(fields: list[str], output_path: str) -> None:
     logger.info(f"Created {output_path} with any_not_null on {fields}")
 
 
+def _build_inference_fields(include_field: str | None, pcawg_field: str | None) -> list[str]:
+    """Build the list of fields for inference inclusion filtering."""
+    fields: list[str] = []
+    if include_field:
+        fields.append(include_field)
+        # PCAWG contributes to inference inclusion only when include VCFs are also provided
+        if pcawg_field:
+            fields.append(pcawg_field)
+    return fields
+
+
 def run(argv: list[str] | None = None) -> None:
     """Main entry point."""
     args = _parse_args(argv)
@@ -70,25 +81,18 @@ def run(argv: list[str] | None = None) -> None:
         if args.coverage_threshold is not None:
             read_filters = _update_coverage_threshold(read_filters, args.coverage_threshold)
 
-    inference_fields: list[str] = []
+    if args.exclude_field and read_filters:
+        read_filters = _inject_exclusion_filter(read_filters, args.exclude_field)
 
-    if args.exclude_field:
-        if read_filters:
-            read_filters = _inject_exclusion_filter(read_filters, args.exclude_field)
-
-    if args.include_field:
-        inference_fields.append(args.include_field)
-
-    if args.pcawg_field:
-        if read_filters:
-            read_filters = _inject_exclusion_filter(read_filters, args.pcawg_field)
-        inference_fields.append(args.pcawg_field)
+    if args.pcawg_field and read_filters:
+        read_filters = _inject_exclusion_filter(read_filters, args.pcawg_field)
 
     if read_filters:
         out_json = str(output_dir / "read_filters_with_max_coverage.json")
         Path(out_json).write_text(json.dumps(read_filters, indent=2) + "\n")
         logger.info(f"Written augmented read_filters to {out_json}")
 
+    inference_fields = _build_inference_fields(args.include_field, args.pcawg_field)
     if inference_fields:
         _create_inference_filters(inference_fields, str(output_dir / "inference_filters.json"))
 
