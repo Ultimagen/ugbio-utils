@@ -32,8 +32,8 @@ class TestLoadVocabConfig:
         assert enc.t0_vocab["<MISSING>"] == 1
         assert len(enc.t0_vocab) == 11
         assert len(enc.tm_vocab) == 9
-        assert len(enc.st_vocab) == 6
-        assert len(enc.et_vocab) == 6
+        assert len(enc.st_vocab) == 5
+        assert len(enc.et_vocab) == 5
 
     def test_load_from_path(self, tmp_path):
         from ugbio_srsnv.deep_srsnv.utils.vocab import load_vocab_config
