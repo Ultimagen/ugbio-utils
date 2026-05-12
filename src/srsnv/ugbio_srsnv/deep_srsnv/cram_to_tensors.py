@@ -303,6 +303,52 @@ def _init_cram_worker(cram_path: str, reference_path: str | None) -> None:
     )
 
 
+def _fill_positional_channels(
+    out: np.ndarray,
+    row_idx: int,
+    valid: int,
+    channels: list[str],
+    aligned: dict,
+) -> None:
+    """Fill positional channel tensor for one row."""
+    q = aligned["qual_aln"][:valid]
+    for ch_i, ch_name in enumerate(channels):
+        if ch_name == "qual":
+            out[row_idx, ch_i, :valid] = q / 10.0
+        elif ch_name == "tp":
+            out[row_idx, ch_i, :valid] = aligned["tp_aln"][:valid]
+        elif ch_name == "mask":
+            out[row_idx, ch_i, :valid] = 1.0
+        elif ch_name == "focus":
+            out[row_idx, ch_i, :valid] = aligned["focus_aln"][:valid]
+        elif ch_name == "softclip_mask":
+            out[row_idx, ch_i, :valid] = aligned["softclip_mask_aln"][:valid]
+        elif ch_name == "t0":
+            out[row_idx, ch_i, :valid] = aligned["t0_aln"][:valid] / 10.0
+
+
+def _fill_constant_channels(
+    out: np.ndarray,
+    row_idx: int,
+    channels: list[str],
+    *,
+    is_reverse: bool,
+    mapq: int,
+    rq: float,
+    mixed_flag: float,
+) -> None:
+    """Fill constant channel tensor for one row."""
+    for ch_i, ch_name in enumerate(channels):
+        if ch_name == "strand":
+            out[row_idx, ch_i] = float(int(is_reverse))
+        elif ch_name == "mapq":
+            out[row_idx, ch_i] = float(mapq) / 60.0
+        elif ch_name == "rq":
+            out[row_idx, ch_i] = rq
+        elif ch_name == "mixed":
+            out[row_idx, ch_i] = mixed_flag
+
+
 def _process_shard(  # noqa: PLR0915
     *,
     shard_id: int,
@@ -314,6 +360,7 @@ def _process_shard(  # noqa: PLR0915
     label: bool,  # noqa: FBT001
     max_edist: int | None,
     fetch_mode: str = "samtools",
+    channels: tuple[list[str], list[str]] | None = None,
 ) -> tuple[int, dict, dict]:
     """Process a shard of parquet rows into a tensor chunk.
 
@@ -324,6 +371,11 @@ def _process_shard(  # noqa: PLR0915
         for C-level name filtering.  ``"pysam"`` falls back to pure-pysam
         region iteration.
     """
+    if channels is not None:
+        positional_channels, constant_channels = channels
+    else:
+        positional_channels, constant_channels = NUM_CHANNELS_POS, NUM_CHANNELS_CONST
+
     t_start = time.perf_counter()
 
     edist_col = FeatureMapFields.EDIST.value
@@ -360,8 +412,8 @@ def _process_shard(  # noqa: PLR0915
     n = len(kept_rows)
     read_base_out = np.zeros((n, tensor_length), dtype=np.int16)
     ref_base_out = np.zeros((n, tensor_length), dtype=np.int16)
-    x_num_pos_out = np.zeros((n, len(NUM_CHANNELS_POS), tensor_length), dtype=np.float16)
-    x_num_const_out = np.zeros((n, len(NUM_CHANNELS_CONST)), dtype=np.float16)
+    x_num_pos_out = np.zeros((n, len(positional_channels), tensor_length), dtype=np.float16)
+    x_num_const_out = np.zeros((n, len(constant_channels)), dtype=np.float16)
     mask_out = np.zeros((n, tensor_length), dtype=np.uint8)
     label_out = np.zeros(n, dtype=np.uint8)
     tm_arr = np.zeros(n, dtype=np.int8)
@@ -399,22 +451,21 @@ def _process_shard(  # noqa: PLR0915
         read_base_out[out_i, :valid] = [base_vocab.get(t, base_default) for t in read_tokens]
         ref_base_out[out_i, :valid] = [base_vocab.get(t, base_default) for t in ref_tokens]
 
-        q = aligned["qual_aln"][:valid]
-        x_num_pos_out[out_i, 0, :valid] = q / 10.0
-        x_num_pos_out[out_i, 1, :valid] = aligned["tp_aln"][:valid]
-        x_num_pos_out[out_i, 2, :valid] = 1.0
-        x_num_pos_out[out_i, 3, :valid] = aligned["focus_aln"][:valid]
-        x_num_pos_out[out_i, 4, :valid] = aligned["softclip_mask_aln"][:valid]
-        x_num_pos_out[out_i, 5, :valid] = aligned["t0_aln"][:valid] / 10.0
-        mask_out[out_i, :valid] = 1
-
         st_value = tags.get("st", row.get("st", None))
         et_value = tags.get("et", row.get("et", None))
         mixed_flag = float((st_value == "MIXED") or (et_value == "MIXED"))
-        x_num_const_out[out_i, 0] = float(int(rec.is_reverse))
-        x_num_const_out[out_i, 1] = float(rec.mapping_quality) / 60.0
-        x_num_const_out[out_i, 2] = float(tags.get("rq", row.get("rq", 0.0) or 0.0))
-        x_num_const_out[out_i, 3] = mixed_flag
+
+        _fill_positional_channels(x_num_pos_out, out_i, valid, positional_channels, aligned)
+        _fill_constant_channels(
+            x_num_const_out,
+            out_i,
+            constant_channels,
+            is_reverse=rec.is_reverse,
+            mapq=rec.mapping_quality,
+            rq=float(tags.get("rq", row.get("rq", 0.0) or 0.0)),
+            mixed_flag=mixed_flag,
+        )
+        mask_out[out_i, :valid] = 1
 
         tm_arr[out_i] = tm_vocab.get(tags.get("tm", row.get("tm")) or "<MISSING>", tm_default)
         st_arr[out_i] = st_vocab.get(st_value or "<MISSING>", st_default)
@@ -528,6 +579,8 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, PLR0912, C901
     shard_size: int = 25000,
     fetch_mode: str = "samtools",
     chromosomes: list[str] | None = None,
+    positional_channels: list[str] | None = None,
+    constant_channels: list[str] | None = None,
 ) -> dict:
     """Read parquet rows, fetch each read from CRAM, tensorize, and write sharded cache.
 
@@ -618,6 +671,9 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, PLR0912, C901
 
     effective_workers = max(1, int(num_workers))
 
+    resolved_pos = positional_channels if positional_channels is not None else NUM_CHANNELS_POS
+    resolved_const = constant_channels if constant_channels is not None else NUM_CHANNELS_CONST
+
     shard_kwargs = {
         "cram_path": cram_path,
         "reference_path": reference_path,
@@ -626,6 +682,7 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, PLR0912, C901
         "label": label,
         "max_edist": max_edist,
         "fetch_mode": fetch_mode,
+        "channels": (resolved_pos, resolved_const),
     }
 
     shard_args_list = [
@@ -762,6 +819,8 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, PLR0912, C901
         "shard_size": shard_size,
         "num_workers": effective_workers,
         "fetch_mode": fetch_mode,
+        "positional_channels": resolved_pos,
+        "constant_channels": resolved_const,
         "total_input_rows": n_rows,
         "total_output_rows": total_output,
         "total_missing_rows": total_missing,
@@ -969,6 +1028,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--holdout-chromosomes", default=None, help="Comma-separated holdout chromosomes (e.g. chr21,chr22)"
     )
     ap.add_argument("--compress", action="store_true", default=False, help="Gzip-compress output shards (.pt.gz)")
+    ap.add_argument(
+        "--channels",
+        default=None,
+        help="Channel spec: 'pos_ch1:pos_ch2:...|const_ch1:const_ch2:...' "
+        "(e.g. 'qual:tp:mask:focus:softclip_mask:t0|strand:mapq:rq:mixed'). "
+        "Default uses built-in channel order.",
+    )
     return ap.parse_args(argv)
 
 
@@ -998,10 +1064,21 @@ def _resolve_chromosomes(args: argparse.Namespace) -> list[str] | None:
     return None
 
 
+def _parse_channels(channels_arg: str | None) -> tuple[list[str] | None, list[str] | None]:
+    """Parse --channels 'pos1:pos2:...|const1:const2:...' into two lists."""
+    if channels_arg is None:
+        return None, None
+    parts = channels_arg.split("|")
+    pos_channels = parts[0].split(":") if parts[0] else None
+    const_channels = parts[1].split(":") if len(parts) > 1 and parts[1] else None
+    return pos_channels, const_channels
+
+
 def run(argv: list[str] | None = None) -> dict:
     args = _parse_args(argv)
     encoders = load_vocab_config(args.vocab_config)
     chromosomes = _resolve_chromosomes(args)
+    positional_channels, constant_channels = _parse_channels(args.channels)
     return cram_to_tensor_cache(
         cram_path=args.cram,
         parquet_path=args.parquet,
@@ -1015,6 +1092,8 @@ def run(argv: list[str] | None = None) -> dict:
         fetch_mode=args.fetch_mode,
         chromosomes=chromosomes,
         compress=args.compress,
+        positional_channels=positional_channels,
+        constant_channels=constant_channels,
     )
 
 

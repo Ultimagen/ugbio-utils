@@ -1,7 +1,7 @@
 """Build an ensemble manifest JSON for DNN k-fold inference.
 
 Combines per-fold metadata JSONs with a split manifest (from combine_splits)
-into the format expected by ``dnn_vcf_inference.py:load_ensemble_manifest()``.
+into the ensemble manifest JSON format used by the DNN inference pipeline.
 """
 
 from __future__ import annotations
