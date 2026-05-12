@@ -45,49 +45,6 @@ def load_dnn_model_from_checkpoint(
     return lit_model
 
 
-def load_dnn_model_from_state_dict(
-    state_dict_path: str | Path,
-    metadata_path: str | Path,
-    *,
-    map_location: str | torch.device | None = None,
-) -> CNNReadClassifier:
-    """Load a CNNReadClassifier from a raw ``.pt`` state dict file.
-
-    Parameters
-    ----------
-    state_dict_path
-        Path to the ``.pt`` state dict file.
-    metadata_path
-        Path to the ``srsnv_dnn_metadata.json`` for encoder vocab sizes.
-    map_location
-        Device mapping for ``torch.load``.
-
-    Returns
-    -------
-    CNNReadClassifier
-        The loaded model in eval mode.
-    """
-    with open(metadata_path) as f:
-        metadata = json.load(f)
-    encoders = metadata["encoders"]
-
-    channel_order = metadata.get("channel_order", [])
-    numeric_channels = len(channel_order) if channel_order else NUMERIC_CHANNELS
-
-    model = CNNReadClassifier(
-        base_vocab_size=len(encoders["base_vocab"]),
-        numeric_channels=numeric_channels,
-        tm_vocab_size=len(encoders.get("tm_vocab", {})) or 1,
-        st_vocab_size=len(encoders.get("st_vocab", {})) or 1,
-        et_vocab_size=len(encoders.get("et_vocab", {})) or 1,
-    )
-    state = torch.load(str(state_dict_path), map_location=map_location or "cpu", weights_only=True)
-    model.load_state_dict(state)
-    model.eval()
-    logger.info("Loaded DNN model from state dict: %s", state_dict_path)
-    return model
-
-
 def _model_kwargs_from_metadata(metadata: dict) -> dict:
     """Extract CNNReadClassifier constructor kwargs from metadata."""
     encoders = metadata["encoders"]
