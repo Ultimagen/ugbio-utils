@@ -11,8 +11,15 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
+import pycuda.driver as cuda
+import tensorrt as trt
 import torch
 from ugbio_core.logger import logger
+
+from ugbio_srsnv.deep_srsnv.inference.model_loading import (
+    load_dnn_model_from_checkpoint,
+    load_dnn_model_from_swa_checkpoint,
+)
 
 if TYPE_CHECKING:
     from torch import nn
@@ -73,14 +80,6 @@ class TRTEngine:
     """
 
     def __init__(self, engine_path: str, device_id: int = 0, max_batch_size: int = 1024):
-        try:
-            import pycuda.driver as cuda  # noqa: PLC0415
-            import tensorrt as trt  # noqa: PLC0415
-        except ImportError as e:
-            raise ImportError(
-                "tensorrt and pycuda are required for TRTEngine. " "Install with: pip install tensorrt pycuda"
-            ) from e
-
         cuda.init()
         self._cuda = cuda
         self._device_id = device_id
@@ -258,8 +257,8 @@ class TRTEngine:
         if self._cuda_ctx is not None:
             try:
                 self._cuda_ctx.detach()
-            except Exception:  # noqa: S110
-                pass
+            except (RuntimeError, OSError):
+                logger.debug("CUDA context detach raised during cleanup", exc_info=True)
             self._cuda_ctx = None
         logger.info("TRTEngine on GPU:%d closed", self._device_id)
 
@@ -350,11 +349,6 @@ def load_inference_engine(
         return TRTEngine(str(path), device_id=device_id, max_batch_size=max_batch_size)
 
     if backend == "pytorch":
-        from ugbio_srsnv.deep_srsnv.inference.model_loading import (  # noqa: PLC0415
-            load_dnn_model_from_checkpoint,
-            load_dnn_model_from_swa_checkpoint,
-        )
-
         device = f"cuda:{device_id}" if torch.cuda.is_available() else "cpu"
 
         ckpt = checkpoint_path
@@ -369,7 +363,7 @@ def load_inference_engine(
         if not ckpt:
             raise FileNotFoundError("No checkpoint found in metadata for PyTorch backend")
 
-        raw = torch.load(str(ckpt), map_location="cpu", weights_only=False)  # noqa: S301
+        raw = torch.load(str(ckpt), map_location="cpu", weights_only=False)
         is_swa_format = isinstance(raw, dict) and "state_dict" in raw and "pytorch-lightning_version" not in raw
         if is_swa_format:
             lit_model = load_dnn_model_from_swa_checkpoint(ckpt, metadata, map_location=device)

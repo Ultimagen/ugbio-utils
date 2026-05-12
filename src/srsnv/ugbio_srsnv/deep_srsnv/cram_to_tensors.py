@@ -12,6 +12,7 @@ Two entry points:
 from __future__ import annotations
 
 import argparse
+import io
 import itertools
 import json
 import os
@@ -23,12 +24,17 @@ import time
 from collections.abc import Iterator
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import asdict, dataclass, field
+from itertools import groupby
 from pathlib import Path
+from queue import Queue
+from threading import Thread
 
 import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 import pysam
 import torch
+from isal import igzip
 from pyarrow import parquet as pq
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
@@ -42,6 +48,7 @@ from ugbio_srsnv.deep_srsnv.data_prep import (
     _to_string_t0,
     load_vocab_config,
 )
+from ugbio_srsnv.split_manifest import build_split_manifest
 
 CHROM = FeatureMapFields.CHROM.value
 POS = FeatureMapFields.POS.value
@@ -166,7 +173,6 @@ def _fetch_reads_by_region(
     instead of once per row, eliminating redundant index lookups and
     slice re-decompression.
     """
-    from itertools import groupby  # noqa: PLC0415
 
     matched: dict[str, pysam.AlignedSegment] = {}
 
@@ -201,7 +207,6 @@ def _fetch_reads_samtools_pipe(
     This avoids creating ~9.3M Python AlignedSegment objects per shard
     and instead creates objects only for the ~25K matches.
     """
-    from itertools import groupby  # noqa: PLC0415
 
     if not rows:
         return {}
@@ -287,12 +292,11 @@ def _worker_init():
     torch.multiprocessing.set_sharing_strategy("file_system")
 
 
-_WORKER_CRAM: pysam.AlignmentFile | None = None
+_WORKER_CRAM: dict[str, pysam.AlignmentFile | None] = {"handle": None}
 
 
 def _init_cram_worker(cram_path: str, reference_path: str | None) -> None:
-    global _WORKER_CRAM  # noqa: PLW0603
-    _WORKER_CRAM = pysam.AlignmentFile(
+    _WORKER_CRAM["handle"] = pysam.AlignmentFile(
         cram_path,
         "rc",
         reference_filename=reference_path,
@@ -335,7 +339,7 @@ def _process_shard(  # noqa: PLR0915
     if fetch_mode == "samtools":
         rn_to_rec = _fetch_reads_samtools_pipe(cram_path, reference_path, kept_rows)
     else:
-        cram = _WORKER_CRAM
+        cram = _WORKER_CRAM["handle"]
         if cram is None:
             cram = pysam.AlignmentFile(cram_path, "rc", reference_filename=reference_path)
         rn_to_rec = _fetch_reads_by_region(cram, kept_rows)
@@ -464,9 +468,7 @@ def _process_shard_from_parquet(
     **shard_kwargs,
 ) -> tuple[int, dict, dict]:
     """Read one row group from parquet, convert to list-of-dicts, then process as shard."""
-    import pyarrow.parquet as pq_rg  # noqa: PLC0415
-
-    pf = pq_rg.ParquetFile(parquet_path)
+    pf = pq.ParquetFile(parquet_path)
     table = pf.read_row_group(row_group_id, columns=columns)
     col_dict = table.to_pydict()
     rows = [{k: col_dict[k][i] for k in col_dict} for i in range(len(table))]
@@ -499,17 +501,10 @@ def _numpy_chunk_to_torch(chunk: dict) -> None:
 def _save_shard(chunk: dict, path: Path, *, compress: bool = False) -> None:
     """Save a tensor shard to disk, optionally gzip-compressed."""
     if compress:
-        import io  # noqa: PLC0415
-
-        try:
-            from isal import igzip as gzip  # noqa: PLC0415
-        except ImportError:
-            import gzip  # noqa: PLC0415
-
         buf = io.BytesIO()
         torch.save(chunk, buf)
         gz_path = path.with_suffix(".pt.gz") if not str(path).endswith(".gz") else path
-        with gzip.open(gz_path, "wb", compresslevel=1) as f:
+        with igzip.open(gz_path, "wb", compresslevel=1) as f:
             f.write(buf.getvalue())
     else:
         torch.save(chunk, path)
@@ -583,8 +578,6 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, PLR0912, C901
     # Phase 1: read parquet, filter by chromosomes, sort, and write sharded parquet
     # Workers will read individual row groups from the sharded file — no full dataset in memory.
     t_parquet = time.perf_counter()
-    import pyarrow.compute as pc  # noqa: PLC0415
-
     pf = pq.ParquetFile(parquet_path)
     available_cols = [c for c in _PARQUET_COLUMNS if c in (pf.schema.names or [])]
 
@@ -671,9 +664,7 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, PLR0912, C901
         shard_iter = iter(shard_args_list)
 
         # Background writer thread pool for non-blocking shard saves (especially gzip)
-        from queue import Queue as _Queue  # noqa: PLC0415
-
-        write_queue: _Queue = _Queue(maxsize=4)
+        write_queue: Queue = Queue(maxsize=4)
         write_errors: list[Exception] = []
 
         def _writer_loop() -> None:
@@ -685,13 +676,11 @@ def cram_to_tensor_cache(  # noqa: PLR0913, PLR0915, PLR0912, C901
                 _chunk, _path, _compress = item
                 try:
                     _save_shard(_chunk, _path, compress=_compress)
-                except Exception as exc:  # noqa: BLE001
+                except (OSError, RuntimeError, ValueError) as exc:
                     write_errors.append(exc)
                     logger.exception("Background shard write failed: %s", _path)
 
-        from threading import Thread as _Thread  # noqa: PLC0415
-
-        writer_thread = _Thread(target=_writer_loop, daemon=True)
+        writer_thread = Thread(target=_writer_loop, daemon=True)
         writer_thread.start()
 
         with ProcessPoolExecutor(max_workers=effective_workers, initializer=_worker_init) as pool:
@@ -991,8 +980,6 @@ def _resolve_chromosomes(args: argparse.Namespace) -> list[str] | None:
     if args.fold_idx is not None:
         if args.training_regions is None:
             raise ValueError("--training-regions is required when --fold-idx is specified")
-        from ugbio_srsnv.split_manifest import build_split_manifest  # noqa: PLC0415
-
         holdout = args.holdout_chromosomes.split(",") if args.holdout_chromosomes else None
         manifest = build_split_manifest(
             training_regions=args.training_regions,

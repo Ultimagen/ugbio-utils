@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import onnx
 import torch
 from ugbio_core.logger import logger
 
@@ -68,14 +69,10 @@ def export_to_onnx(
         )
 
     try:
-        import onnx  # noqa: PLC0415
-
         onnx_model = onnx.load(str(output_path))
         onnx.checker.check_model(onnx_model)
         logger.info("ONNX model validated successfully: %s", output_path)
-    except ImportError:
-        logger.warning("onnx package not installed; skipping ONNX validation")
-    except Exception:
+    except onnx.checker.ValidationError:
         logger.exception("ONNX validation failed")
         raise
 
@@ -111,7 +108,8 @@ def build_trtexec_command(
     min_batch: int = 1,
     opt_batch: int = 256,
     max_batch: int = 1024,
-    fp16: bool = True,  # noqa: FBT001, FBT002
+    *,
+    fp16: bool = True,
 ) -> list[str]:
     """Build the trtexec CLI command for serializing an ONNX model.
 
@@ -153,7 +151,8 @@ def serialize_with_trtexec(
     min_batch: int = 1,
     opt_batch: int = 256,
     max_batch: int = 1024,
-    fp16: bool = True,  # noqa: FBT001, FBT002
+    *,
+    fp16: bool = True,
 ) -> Path:
     """Run trtexec to convert an ONNX model to a TensorRT engine.
 
@@ -181,7 +180,7 @@ def serialize_with_trtexec(
     )
     logger.info("Running trtexec: %s", " ".join(cmd))
 
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)  # noqa: S603
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
         logger.error("trtexec failed (rc=%d):\nstdout: %s\nstderr: %s", result.returncode, result.stdout, result.stderr)
         raise RuntimeError(f"trtexec failed with return code {result.returncode}")

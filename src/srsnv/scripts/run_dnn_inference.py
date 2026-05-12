@@ -29,6 +29,7 @@ import argparse
 import json
 import os
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import lightning
@@ -40,14 +41,17 @@ from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_featuremap.filter_dataframe import read_filtering_stats_json
 from ugbio_srsnv.deep_srsnv.bam_schema import discover_bam_schema
-from ugbio_srsnv.deep_srsnv.data_module import SRSNVDataModule
+from ugbio_srsnv.deep_srsnv.data_module import DataModuleConfig, SRSNVDataModule
 from ugbio_srsnv.deep_srsnv.data_prep import build_encoders_from_schema, build_tensor_cache, load_full_tensor_cache
 from ugbio_srsnv.deep_srsnv.inference import load_dnn_model_from_swa_checkpoint
 from ugbio_srsnv.deep_srsnv.lightning_module import SRSNVLightningModule
+from ugbio_srsnv.srsnv_training import _count_bases_in_interval_list
 from ugbio_srsnv.srsnv_utils import MAX_PHRED, prob_to_phred, recalibrate_snvq
 
 CHROM = FeatureMapFields.CHROM.value
 POS = FeatureMapFields.POS.value
+
+MIN_CLASSES_FOR_BINARY_METRICS = 2
 
 
 def _cli() -> argparse.Namespace:
@@ -88,7 +92,7 @@ def _safe_binary_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> dict:
     metrics = {}
     if len(y_true) == 0:
         return {"auc": None, "aupr": None, "logloss": None}
-    if len(np.unique(y_true)) >= 2:  # noqa: PLR2004
+    if len(np.unique(y_true)) >= MIN_CLASSES_FOR_BINARY_METRICS:
         metrics["auc"] = float(roc_auc_score(y_true, y_prob))
         metrics["aupr"] = float(average_precision_score(y_true, y_prob))
     else:
@@ -173,15 +177,18 @@ def _preprocess_data(args, out_dir, basename, split_manifest):
         raise ValueError("No tensor cache path produced by preprocessing")
 
     full_cache = load_full_tensor_cache(tensor_cache_path)
+    loader_cfg = DataModuleConfig(
+        train_batch_size=args.predict_batch_size,
+        eval_batch_size=args.predict_batch_size,
+        predict_batch_size=args.predict_batch_size,
+        pin_memory=False,
+    )
     dm = SRSNVDataModule(
         full_cache=full_cache,
         train_split_ids=set(),
         val_split_ids=set(),
         test_split_ids={-1, 0, 1},
-        train_batch_size=args.predict_batch_size,
-        eval_batch_size=args.predict_batch_size,
-        predict_batch_size=args.predict_batch_size,
-        pin_memory=False,
+        loader_config=loader_cfg,
     )
     return dm, preprocess_index, preprocess_wall, preprocess_cache_dir
 
@@ -195,8 +202,6 @@ def _recalibrate(args, mqual, labels):
     if not has_recal:
         logger.warning("Stats/coverage not provided; SNVQ = MQUAL (no recalibration)")
         return mqual.copy(), None, None
-
-    from ugbio_srsnv.srsnv_training import _count_bases_in_interval_list  # noqa: PLC0415
 
     pos_stats = read_filtering_stats_json(args.stats_positive)
     neg_stats = read_filtering_stats_json(args.stats_negative)
@@ -220,7 +225,20 @@ def _recalibrate(args, mqual, labels):
     return snvq, x_lut, y_lut
 
 
-def _save_results(  # noqa: PLR0913
+@dataclass
+class _InferenceContext:
+    """Groups metadata and preprocessing info for _save_results."""
+
+    orig_metadata: dict
+    split_manifest: dict | None
+    is_swa: bool
+    preprocess_cache_dir: str | None
+    preprocess_wall: float
+    preprocess_index: dict = field(default_factory=dict)
+    predict_wall: float = 0.0
+
+
+def _save_results(
     args,
     out_dir,
     basename,
@@ -229,13 +247,7 @@ def _save_results(  # noqa: PLR0913
     mqual,
     x_lut,
     y_lut,
-    orig_metadata,
-    split_manifest,
-    is_swa,
-    preprocess_cache_dir,
-    preprocess_wall,
-    preprocess_index,
-    predict_wall,
+    ctx: _InferenceContext,
 ):
     """Write the output parquet and metadata JSON."""
     probs, labels, fold_ids = collected["probs"], collected["labels"], collected["fold_ids"]
@@ -272,24 +284,28 @@ def _save_results(  # noqa: PLR0913
         "inference_mode": "cross_sample",
         "source_checkpoint": str(args.checkpoint),
         "source_metadata": str(args.metadata),
-        "split_manifest": split_manifest,
-        "encoders": orig_metadata.get("encoders", {}),
-        "channel_order": orig_metadata.get("channel_order", []),
-        "training_parameters": orig_metadata.get("training_parameters", {}),
+        "split_manifest": ctx.split_manifest,
+        "encoders": ctx.orig_metadata.get("encoders", {}),
+        "channel_order": ctx.orig_metadata.get("channel_order", []),
+        "training_parameters": ctx.orig_metadata.get("training_parameters", {}),
         "holdout_metrics": holdout_metrics,
         "all_data_metrics": all_metrics,
-        "prediction_model": orig_metadata.get("prediction_model", "unknown"),
+        "prediction_model": ctx.orig_metadata.get("prediction_model", "unknown"),
         "quality_recalibration_table": [x_lut.tolist(), y_lut.tolist()] if x_lut is not None else None,
-        "swa_checkpoint_paths": [str(args.checkpoint)] if is_swa else None,
-        "best_checkpoint_paths": [] if is_swa else [str(args.checkpoint)],
+        "swa_checkpoint_paths": [str(args.checkpoint)] if ctx.is_swa else None,
+        "best_checkpoint_paths": [] if ctx.is_swa else [str(args.checkpoint)],
         "data_paths": {
             "positive_bam": args.positive_bam,
             "negative_bam": args.negative_bam,
             "positive_parquet": args.positive_parquet,
             "negative_parquet": args.negative_parquet,
         },
-        "preprocess": {"cache_dir": preprocess_cache_dir, "wall_seconds": preprocess_wall, **preprocess_index},
-        "predict_wall_seconds": predict_wall,
+        "preprocess": {
+            "cache_dir": ctx.preprocess_cache_dir,
+            "wall_seconds": ctx.preprocess_wall,
+            **ctx.preprocess_index,
+        },
+        "predict_wall_seconds": ctx.predict_wall,
     }
     metadata_path = out_dir / f"{basename}srsnv_dnn_metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2))
@@ -363,6 +379,15 @@ def main() -> None:
     mqual = prob_to_phred(probs, max_value=MAX_PHRED)
     snvq, x_lut, y_lut = _recalibrate(args, mqual, labels)
 
+    ctx = _InferenceContext(
+        orig_metadata=orig_metadata,
+        split_manifest=split_manifest,
+        is_swa=is_swa,
+        preprocess_cache_dir=preprocess_cache_dir,
+        preprocess_wall=preprocess_wall,
+        preprocess_index=preprocess_index,
+        predict_wall=predict_wall,
+    )
     _save_results(
         args,
         out_dir,
@@ -372,13 +397,7 @@ def main() -> None:
         mqual,
         x_lut,
         y_lut,
-        orig_metadata,
-        split_manifest,
-        is_swa,
-        preprocess_cache_dir,
-        preprocess_wall,
-        preprocess_index,
-        predict_wall,
+        ctx,
     )
     logger.info("DNN cross-inference complete.")
 

@@ -44,13 +44,8 @@ def _rss_gb() -> float:
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024.0 * 1024.0)
 
 
-def main():  # noqa: PLR0915
-    from ugbio_srsnv.deep_srsnv.combine_splits import combine_and_split
-    from ugbio_srsnv.deep_srsnv.cram_to_tensors import cram_to_tensor_cache
-    from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
-
-    Path(OUTPUT_ROOT).mkdir(parents=True, exist_ok=True)
-
+def _log_run_config() -> None:
+    """Log the profiling run configuration header."""
     logger.info("=" * 72)
     logger.info("DNN PREPROCESSING PROFILING RUN")
     logger.info("=" * 72)
@@ -65,6 +60,91 @@ def main():  # noqa: PLR0915
     logger.info("  K-folds:         %d", K_FOLDS)
     logger.info("  CPUs available:  %d", os.cpu_count() or 0)
     logger.info("=" * 72)
+
+
+def _log_profiling_summary(
+    step1_wall: float,
+    step2_wall: float,
+    step3_wall: float,
+    overall_wall: float,
+    pos_index: dict,
+    neg_index: dict,
+    folds_index: dict,
+) -> None:
+    """Log the profiling summary table."""
+    logger.info("\n" + "=" * 72)
+    logger.info("PROFILING SUMMARY")
+    logger.info("=" * 72)
+    logger.info(
+        "  Step 1 (positive cache):    %8.1fs  (%d -> %d rows, %d missing)",
+        step1_wall,
+        pos_index["total_input_rows"],
+        pos_index["total_output_rows"],
+        pos_index["total_missing_rows"],
+    )
+    logger.info(
+        "  Step 2 (negative cache):    %8.1fs  (%d -> %d rows, %d missing)",
+        step2_wall,
+        neg_index["total_input_rows"],
+        neg_index["total_output_rows"],
+        neg_index["total_missing_rows"],
+    )
+    logger.info("  Step 3 (combine + split):   %8.1fs  (%d total rows)", step3_wall, folds_index["total_rows"])
+    logger.info("  TOTAL:                      %8.1fs", overall_wall)
+    logger.info("")
+    logger.info("  Positive throughput:  %s rows/sec", f"{pos_index['profile']['rows_per_second']:,.0f}")
+    logger.info("  Negative throughput:  %s rows/sec", f"{neg_index['profile']['rows_per_second']:,.0f}")
+    logger.info("  Positive CPU util:    %.1f%%", pos_index["profile"]["cpu_utilization"] * 100)
+    logger.info("  Negative CPU util:    %.1f%%", neg_index["profile"]["cpu_utilization"] * 100)
+    logger.info("  Peak RSS:             %.2f GB", _rss_gb())
+    logger.info("")
+    logger.info("  Fold summary:")
+    for f in folds_index["fold_summary"]:
+        logger.info(
+            "    Fold %d: train=%d val=%d test=%d  (pos: %d/%d/%d)",
+            f["fold"],
+            f["train_rows"],
+            f["val_rows"],
+            f["test_rows"],
+            f["train_positives"],
+            f["val_positives"],
+            f["test_positives"],
+        )
+    logger.info("=" * 72)
+
+
+def _write_profiling_summary(
+    step1_wall: float,
+    step2_wall: float,
+    step3_wall: float,
+    overall_wall: float,
+    pos_index: dict,
+    neg_index: dict,
+    folds_index: dict,
+) -> None:
+    """Write the JSON profiling summary to disk."""
+    summary_path = Path(OUTPUT_ROOT) / "profiling_summary.json"
+    summary = {
+        "steps": {
+            "positive_cache": {"wall_seconds": round(step1_wall, 1), **pos_index["profile"]},
+            "negative_cache": {"wall_seconds": round(step2_wall, 1), **neg_index["profile"]},
+            "combine_split": {"wall_seconds": round(step3_wall, 1), **folds_index["profile"]},
+        },
+        "total_wall_seconds": round(overall_wall, 1),
+        "peak_rss_gb": round(_rss_gb(), 2),
+        "fold_summary": folds_index["fold_summary"],
+    }
+    summary_path.write_text(json.dumps(summary, indent=2))
+    logger.info("Profiling summary written to %s", summary_path)
+
+
+def main():
+    from ugbio_srsnv.deep_srsnv.combine_splits import combine_and_split
+    from ugbio_srsnv.deep_srsnv.cram_to_tensors import cram_to_tensor_cache
+    from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
+
+    Path(OUTPUT_ROOT).mkdir(parents=True, exist_ok=True)
+    _log_run_config()
 
     overall_t0 = time.perf_counter()
     encoders = load_vocab_config()
@@ -108,13 +188,17 @@ def main():  # noqa: PLR0915
     # --- Step 3: Combine + split ---
     logger.info("\n>>> STEP 3/3: Combining caches and splitting into %d folds...", K_FOLDS)
     step3_t0 = time.perf_counter()
+    from ugbio_srsnv.deep_srsnv.combine_splits import SplitConfig
+
     folds_index = combine_and_split(
         positive_cache_dir=POS_CACHE,
         negative_cache_dir=NEG_CACHE,
         training_regions=TRAINING_REGIONS,
-        k_folds=K_FOLDS,
-        holdout_chromosomes=HOLDOUT_CHROMS,
-        random_seed=42,
+        split_config=SplitConfig(
+            k_folds=K_FOLDS,
+            holdout_chromosomes=HOLDOUT_CHROMS,
+            random_seed=42,
+        ),
         output_dir=FOLDS_DIR,
     )
     step3_wall = time.perf_counter() - step3_t0
@@ -123,59 +207,8 @@ def main():  # noqa: PLR0915
     overall_wall = time.perf_counter() - overall_t0
 
     # --- Summary ---
-    logger.info("\n" + "=" * 72)
-    logger.info("PROFILING SUMMARY")
-    logger.info("=" * 72)
-    logger.info(
-        "  Step 1 (positive cache):    %8.1fs  (%d -> %d rows, %d missing)",
-        step1_wall,
-        pos_index["total_input_rows"],
-        pos_index["total_output_rows"],
-        pos_index["total_missing_rows"],
-    )
-    logger.info(
-        "  Step 2 (negative cache):    %8.1fs  (%d -> %d rows, %d missing)",
-        step2_wall,
-        neg_index["total_input_rows"],
-        neg_index["total_output_rows"],
-        neg_index["total_missing_rows"],
-    )
-    logger.info("  Step 3 (combine + split):   %8.1fs  (%d total rows)", step3_wall, folds_index["total_rows"])
-    logger.info("  TOTAL:                      %8.1fs", overall_wall)
-    logger.info("")
-    logger.info("  Positive throughput:  %s rows/sec", f"{pos_index['profile']['rows_per_second']:,.0f}")
-    logger.info("  Negative throughput:  %s rows/sec", f"{neg_index['profile']['rows_per_second']:,.0f}")
-    logger.info("  Positive CPU util:    %.1f%%", pos_index["profile"]["cpu_utilization"] * 100)
-    logger.info("  Negative CPU util:    %.1f%%", neg_index["profile"]["cpu_utilization"] * 100)
-    logger.info("  Peak RSS:             %.2f GB", _rss_gb())
-    logger.info("")
-    logger.info("  Fold summary:")
-    for f in folds_index["fold_summary"]:
-        logger.info(
-            "    Fold %d: train=%d val=%d test=%d  (pos: %d/%d/%d)",
-            f["fold"],
-            f["train_rows"],
-            f["val_rows"],
-            f["test_rows"],
-            f["train_positives"],
-            f["val_positives"],
-            f["test_positives"],
-        )
-    logger.info("=" * 72)
-
-    summary_path = Path(OUTPUT_ROOT) / "profiling_summary.json"
-    summary = {
-        "steps": {
-            "positive_cache": {"wall_seconds": round(step1_wall, 1), **pos_index["profile"]},
-            "negative_cache": {"wall_seconds": round(step2_wall, 1), **neg_index["profile"]},
-            "combine_split": {"wall_seconds": round(step3_wall, 1), **folds_index["profile"]},
-        },
-        "total_wall_seconds": round(overall_wall, 1),
-        "peak_rss_gb": round(_rss_gb(), 2),
-        "fold_summary": folds_index["fold_summary"],
-    }
-    summary_path.write_text(json.dumps(summary, indent=2))
-    logger.info("Profiling summary written to %s", summary_path)
+    _log_profiling_summary(step1_wall, step2_wall, step3_wall, overall_wall, pos_index, neg_index, folds_index)
+    _write_profiling_summary(step1_wall, step2_wall, step3_wall, overall_wall, pos_index, neg_index, folds_index)
 
 
 if __name__ == "__main__":

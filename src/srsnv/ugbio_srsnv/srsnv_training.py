@@ -68,6 +68,7 @@ from ugbio_srsnv.srsnv_utils import (
     get_filter_ratio,
     polars_to_pandas_efficient,
     prob_to_phred,
+    recalibrate_snvq_kde,
 )
 
 FOLD_COL = "fold_id"
@@ -205,8 +206,6 @@ def _count_bases_in_interval_list(path: str) -> int:
     """
     if not os.path.exists(path):
         raise FileNotFoundError(f"File not found: {path}")
-
-    import gzip  # noqa: PLC0415
 
     n_bases = 0
     number_of_fields = 3  # chrom, start, end
@@ -369,14 +368,7 @@ def _parse_interval_list_manual(path: str) -> tuple[dict[str, int], list[str]]:
     chrom_sizes: dict[str, int] = {}
     chroms_in_data: list[str] = []
 
-    is_gzipped = path.endswith(".gz")
-
-    if is_gzipped:
-        fh = gzip.open(path, "rt", encoding="utf-8")
-    else:
-        fh = open(path, encoding="utf-8")  # noqa: SIM115
-
-    try:
+    with gzip.open(path, "rt", encoding="utf-8") if path.endswith(".gz") else Path(path).open(encoding="utf-8") as fh:
         for line in fh:
             if line.startswith("@SQ"):
                 chrom_name = None
@@ -390,8 +382,6 @@ def _parse_interval_list_manual(path: str) -> tuple[dict[str, int], list[str]]:
                 chrom = line.split("\t", 1)[0]
                 if chrom and chrom not in chroms_in_data:
                     chroms_in_data.append(chrom)
-    finally:
-        fh.close()
 
     missing = [c for c in chroms_in_data if c not in chrom_sizes]
     if missing:
@@ -481,9 +471,100 @@ def _extract_stats_from_unified(unified_stats_path: str | Path) -> tuple[dict, d
     return positive_stats, negative_stats
 
 
+def _validate_quality_region_filters(pos_stats: dict, neg_stats: dict) -> None:
+    """Sanity-check that quality/region filters are identical between pos and neg stats."""
+
+    def _quality_region_filters(st):
+        filters = []
+        for f in st["filters"]:
+            if f.get(KEY_TYPE) in {TYPE_QUALITY, TYPE_REGION}:
+                filter_def = {k: v for k, v in f.items() if k not in {TYPE_FUNNEL, TYPE_PASS}}
+                filters.append(filter_def)
+        return filters
+
+    pos_qr = _quality_region_filters(pos_stats)
+    neg_qr = _quality_region_filters(neg_stats)
+    if pos_qr != neg_qr:
+        raise ValueError(
+            "Mismatch between quality/region filters of "
+            "negative (filters_full_output) and positive "
+            "(filters_random_sample) sections in stats-file:\n"
+            f" positive={pos_qr}\n negative={neg_qr}"
+        )
+
+
+def _last_non_downsample_funnel(stats: dict) -> int:
+    """Return the funnel value of the last non-downsample filter entry."""
+    for f in reversed(stats[KEY_FILTERS]):
+        if f.get(KEY_TYPE) != TYPE_DOWNSAMPLE:
+            return f.get(TYPE_FUNNEL)
+    raise ValueError("stats JSON has no non-downsample filter entry")
+
+
+def _build_new_split_manifest(
+    *,
+    args: argparse.Namespace,
+    single_model_split: bool,
+    val_chromosomes: list[str],
+    holdout_chromosomes: list[str],
+    seed: int,
+    k_folds: int,
+    val_fraction: float,
+    split_hash_key: str,
+) -> dict:
+    """Build a new split manifest from training regions."""
+    logger.info("Building split manifest from training regions")
+    if single_model_split and val_chromosomes:
+        return build_single_model_chrom_val_manifest(
+            training_regions=args.training_regions,
+            holdout_chromosomes=holdout_chromosomes or ["chr21", "chr22"],
+            val_chromosomes=val_chromosomes,
+        )
+    if single_model_split:
+        return build_single_model_read_hash_manifest(
+            training_regions=args.training_regions,
+            random_seed=seed,
+            holdout_chromosomes=holdout_chromosomes or ["chr21", "chr22"],
+            val_fraction=val_fraction,
+            hash_key=split_hash_key,
+        )
+    return build_split_manifest(
+        training_regions=args.training_regions,
+        k_folds=k_folds,
+        random_seed=seed,
+        holdout_chromosomes=holdout_chromosomes,
+        n_chroms_leave_out=1,
+    )
+
+
+def _configure_xgb_device(model_params: dict, *, use_gpu: bool) -> None:
+    """Configure XGBoost model params for GPU or CPU."""
+    if use_gpu:
+        model_params["device"] = "cuda"
+        model_params["sampling_method"] = "gradient_based"
+        model_params.pop("nthread", None)
+        model_params.pop("n_jobs", None)
+    else:
+        model_params["device"] = "cpu"
+        if "n_jobs" not in model_params:
+            model_params["n_jobs"] = -1
+        model_params.pop("nthread", None)
+
+
+def _parse_user_metadata(metadata_tokens: list[str] | None) -> dict[str, str]:
+    """Parse --metadata key=value tokens into a dict."""
+    result: dict[str, str] = {}
+    for token in metadata_tokens or []:
+        if token.count("=") != 1:
+            raise ValueError(f"--metadata token '{token}' must contain exactly one '=' (key=value)")
+        k, v = token.split("=", 1)
+        result[k] = v
+    return result
+
+
 # ───────────────────────── core logic ─────────────────────────────────────
 class SRSNVTrainer:
-    def __init__(self, args: argparse.Namespace):  # noqa: PLR0915, C901, PLR0912
+    def __init__(self, args: argparse.Namespace):
         logger.debug("Initializing SRSNVTrainer")
         self.args = args
         self.out_dir = Path(args.output)
@@ -497,223 +578,18 @@ class SRSNVTrainer:
         self.rng = np.random.default_rng(self.seed)
 
         # GPU / CPU
-        self.use_gpu = args.use_gpu
-        if self.use_gpu:
-            logger.debug("GPU usage requested for training")
-            try:
-                gpu_test_model = xgb.XGBClassifier(tree_method="hist", device="cuda")
-                gpu_test_model.fit(np.array([[0], [1]]), np.array([0, 1]))
-                logger.info("Using GPU for XGBoost training")
-            except Exception as e:
-                logger.warning(
-                    "GPU support for XGBoost is not available or not working. "
-                    "Falling back to CPU. Error details: %s",
-                    str(e),
-                )
-                self.use_gpu = False
-        else:
-            logger.info("Using CPU for XGBoost training")
-
+        self.use_gpu = self._init_gpu(use_gpu=args.use_gpu)
         self.downcast_float = args.use_float32
 
-        # ─────────── read filtering-stats JSONs & compute priors ───────────
-        self.pos_stats, self.neg_stats = _extract_stats_from_unified(args.stats_file)
-        self.mean_coverage = args.mean_coverage
-        if self.mean_coverage is None:
-            raise ValueError("--mean-coverage is required if not present in stats-file JSON")
-        self.n_bases_in_region = _count_bases_in_interval_list(args.training_regions)
-        logger.debug("Bases in training regions: %d", self.n_bases_in_region)
-
-        # sanity-check: identical “quality/region” filters in the two random-sample stats files
-        def _quality_region_filters(st):
-            filters = []
-            for f in st["filters"]:
-                if f.get(KEY_TYPE) in {TYPE_QUALITY, TYPE_REGION}:
-                    # Create filter definition without row counts for comparison
-                    filter_def = {k: v for k, v in f.items() if k not in {TYPE_FUNNEL, TYPE_PASS}}
-                    filters.append(filter_def)
-            return filters
-
-        pos_qr = _quality_region_filters(self.pos_stats)
-        neg_qr = _quality_region_filters(self.neg_stats)
-        if pos_qr != neg_qr:
-            raise ValueError(
-                "Mismatch between quality/region filters of "
-                "negative (filters_full_output) and positive "
-                "(filters_random_sample) sections in stats-file:\n"
-                f" positive={pos_qr}\n negative={neg_qr}"
-            )
-
-        # helper: last entry that is *not* a down-sample operation
-        def _last_non_downsample_funnel(stats: dict) -> int:
-            for f in reversed(stats[KEY_FILTERS]):
-                if f.get(KEY_TYPE) != TYPE_DOWNSAMPLE:
-                    return f.get(TYPE_FUNNEL)
-            raise ValueError("stats JSON has no non-downsample filter entry")
-
-        # Calculate raw_featuremap_size_filtered
-        neg_after_filter = _last_non_downsample_funnel(self.neg_stats)
-        self.raw_featuremap_size_filtered = neg_after_filter
-
-        # Data
-        logger.debug(
-            "Loading data from positive=%s and negative=%s",
-            args.positive,
-            args.negative,
-        )
-        self.data_frame = self._load_data(args.positive, args.negative)
-        logger.debug("Data loaded. Shape: %s", self.data_frame.shape)
-
-        # training-set prior
-        self.n_neg = self.data_frame.filter(~pl.col(LABEL_COL)).height
-        self.prior_train_error = self.n_neg / self.data_frame.height
-
-        self.k_folds = max(1, args.k_folds)
-        self.single_model_split = bool(getattr(args, "single_model_split", False))
-        self.val_fraction = float(getattr(args, "val_fraction", 0.1))
-        self.split_hash_key = getattr(args, "split_hash_key", "RN")
+        # Stats, coverage, data
+        self._init_stats_and_data(args)
 
         # Folds / split manifest
-        split_manifest_in = getattr(args, "split_manifest_in", None)
-        split_manifest_out = getattr(args, "split_manifest_out", None)
-        holdout_chromosomes_raw = getattr(args, "holdout_chromosomes", None)
-        holdout_chromosomes = _parse_holdout_chromosomes(holdout_chromosomes_raw)
-        if self.single_model_split and not holdout_chromosomes:
-            holdout_chromosomes = ["chr21", "chr22"]
-
-        val_chromosomes_raw = getattr(args, "val_chromosomes", None)
-        val_chromosomes = _parse_holdout_chromosomes(val_chromosomes_raw)
-
-        if split_manifest_in:
-            logger.info("Loading split manifest from %s", split_manifest_in)
-            self.split_manifest = load_split_manifest(split_manifest_in)
-            validate_manifest_against_regions(self.split_manifest, args.training_regions)
-        else:
-            logger.info("Building split manifest from training regions")
-            if self.single_model_split and val_chromosomes:
-                self.split_manifest = build_single_model_chrom_val_manifest(
-                    training_regions=args.training_regions,
-                    holdout_chromosomes=holdout_chromosomes or ["chr21", "chr22"],
-                    val_chromosomes=val_chromosomes,
-                )
-            elif self.single_model_split:
-                self.split_manifest = build_single_model_read_hash_manifest(
-                    training_regions=args.training_regions,
-                    random_seed=self.seed,
-                    holdout_chromosomes=holdout_chromosomes or ["chr21", "chr22"],
-                    val_fraction=self.val_fraction,
-                    hash_key=self.split_hash_key,
-                )
-            else:
-                self.split_manifest = build_split_manifest(
-                    training_regions=args.training_regions,
-                    k_folds=self.k_folds,
-                    random_seed=self.seed,
-                    holdout_chromosomes=holdout_chromosomes,
-                    n_chroms_leave_out=1,
-                )
-            if split_manifest_out:
-                save_split_manifest(self.split_manifest, split_manifest_out)
-                logger.info("Saved split manifest to %s", split_manifest_out)
-
-        manifest_mode = self.split_manifest.get("split_mode")
-        self.single_model_split = manifest_mode in (
-            SPLIT_MODE_SINGLE_MODEL_READ_HASH,
-            SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,
-        )
-        if manifest_mode == SPLIT_MODE_SINGLE_MODEL_CHROM_VAL:
-            logger.info(
-                "Using single-model chrom-val split (train=%s, val=%s, test=%s)",
-                ",".join(self.split_manifest["train_chromosomes"]),
-                ",".join(self.split_manifest["val_chromosomes"]),
-                ",".join(self.split_manifest["test_chromosomes"]),
-            )
-            self.chrom_to_fold = {}
-            self.k_folds = 1
-            manifest_ref = self.split_manifest
-            self.data_frame = self.data_frame.with_columns(
-                pl.col(CHROM)
-                .map_elements(
-                    lambda c: assign_single_model_chrom_val_role(chrom=str(c), manifest=manifest_ref),
-                    return_dtype=pl.String,
-                )
-                .alias(SPLIT_ROLE_COL)
-            )
-            self.data_frame = self.data_frame.with_columns(
-                pl.when(pl.col(SPLIT_ROLE_COL) == "train")
-                .then(pl.lit(0))
-                .when(pl.col(SPLIT_ROLE_COL) == "val")
-                .then(pl.lit(1))
-                .otherwise(pl.lit(None))
-                .cast(pl.Int64)
-                .alias(FOLD_COL)
-            )
-        elif manifest_mode == SPLIT_MODE_SINGLE_MODEL_READ_HASH:
-            if self.split_hash_key not in self.data_frame.columns:
-                raise ValueError(
-                    f"single-model split requires hash key column '{self.split_hash_key}' in input dataframe"
-                )
-            logger.info(
-                "Using single-model RN-hash split (holdout=%s, val_fraction=%.3f)",
-                ",".join(self.split_manifest["test_chromosomes"]),
-                float(self.split_manifest["val_fraction"]),
-            )
-            self.chrom_to_fold = {}
-            self.k_folds = 1
-            self.data_frame = self.data_frame.with_columns(
-                pl.struct([pl.col(CHROM), pl.col(self.split_hash_key)])
-                .map_elements(
-                    lambda s: assign_single_model_read_hash_role(
-                        chrom=str(s[CHROM]),
-                        rn=str(s[self.split_hash_key]),
-                        manifest=self.split_manifest,
-                    ),
-                    return_dtype=pl.String,
-                )
-                .alias(SPLIT_ROLE_COL)
-            )
-            self.data_frame = self.data_frame.with_columns(
-                pl.when(pl.col(SPLIT_ROLE_COL) == "train")
-                .then(pl.lit(0))
-                .when(pl.col(SPLIT_ROLE_COL) == "val")
-                .then(pl.lit(1))
-                .otherwise(pl.lit(None))
-                .cast(pl.Int64)
-                .alias(FOLD_COL)
-            )
-        else:
-            self.chrom_to_fold = {chrom: int(fold) for chrom, fold in self.split_manifest["chrom_to_fold"].items()}
-            logger.debug("Assigning folds to data")
-            ctf = self.chrom_to_fold
-            self.data_frame = self.data_frame.with_columns(
-                pl.col(CHROM).map_elements(lambda c: ctf.get(c), return_dtype=pl.Int64).alias(FOLD_COL)  # noqa: PLW0108
-            )
-            logger.debug("Fold assignment complete")
+        self._init_split_manifest(args)
+        self._assign_fold_columns()
 
         # Models
-        logger.debug("Parsing model parameters from: %s", args.model_params)
-        self.model_params = _parse_model_params(args.model_params)
-        logger.debug(
-            "Initializing %d XGBClassifier models with params: %s",
-            self.k_folds,
-            self.model_params,
-        )
-        # Set GPU/CPU parameters for XGBoost
-        if self.use_gpu:
-            self.model_params["device"] = "cuda"
-            self.model_params["sampling_method"] = "gradient_based"
-            self.model_params.pop("nthread", None)
-            self.model_params.pop("n_jobs", None)
-        else:
-            self.model_params["device"] = "cpu"
-            if "n_jobs" not in self.model_params:
-                self.model_params["n_jobs"] = -1
-            self.model_params.pop("nthread", None)
-        if "early_stopping_rounds" not in self.model_params:
-            self.model_params["early_stopping_rounds"] = 10
-        if "n_estimators" not in self.model_params:
-            self.model_params["n_estimators"] = 2000
-        self.models = [xgb.XGBClassifier(**self.model_params) for _ in range(self.k_folds)]
+        self._init_models(args)
 
         # optional user-supplied feature subset
         self.feature_list: list[str] | None = args.features.split(":") if args.features else None
@@ -723,15 +599,185 @@ class SRSNVTrainer:
         self.categorical_encodings: dict[str, dict[str, int]] = {}
         self.feature_dtypes: dict[str, str] = {}
 
-        # ─────────── user-supplied metadata ───────────
-        self.user_metadata: dict[str, str] = {}
-        for token in args.metadata or []:
-            # Require exactly one '=' so that key and value are unambiguous
-            if token.count("=") != 1:
-                raise ValueError(f"--metadata token '{token}' must contain exactly one '=' (key=value)")
-            k, v = token.split("=", 1)
-            self.user_metadata[k] = v
+        # user-supplied metadata
+        self.user_metadata = _parse_user_metadata(args.metadata)
         logger.debug("Parsed user metadata: %s", self.user_metadata)
+
+    def _init_gpu(self, *, use_gpu: bool) -> bool:
+        """Test GPU availability and return whether to use GPU."""
+        if not use_gpu:
+            logger.info("Using CPU for XGBoost training")
+            return False
+        logger.debug("GPU usage requested for training")
+        try:
+            gpu_test_model = xgb.XGBClassifier(tree_method="hist", device="cuda")
+            gpu_test_model.fit(np.array([[0], [1]]), np.array([0, 1]))
+            logger.info("Using GPU for XGBoost training")
+            return True
+        except Exception as e:
+            logger.warning(
+                "GPU support for XGBoost is not available or not working. " "Falling back to CPU. Error details: %s",
+                str(e),
+            )
+            return False
+
+    def _init_stats_and_data(self, args: argparse.Namespace) -> None:
+        """Load stats JSONs, validate filters, and load training data."""
+        self.pos_stats, self.neg_stats = _extract_stats_from_unified(args.stats_file)
+        self.mean_coverage = args.mean_coverage
+        if self.mean_coverage is None:
+            raise ValueError("--mean-coverage is required if not present in stats-file JSON")
+        self.n_bases_in_region = _count_bases_in_interval_list(args.training_regions)
+        logger.debug("Bases in training regions: %d", self.n_bases_in_region)
+
+        _validate_quality_region_filters(self.pos_stats, self.neg_stats)
+
+        neg_after_filter = _last_non_downsample_funnel(self.neg_stats)
+        self.raw_featuremap_size_filtered = neg_after_filter
+
+        logger.debug("Loading data from positive=%s and negative=%s", args.positive, args.negative)
+        self.data_frame = self._load_data(args.positive, args.negative)
+        logger.debug("Data loaded. Shape: %s", self.data_frame.shape)
+
+        self.n_neg = self.data_frame.filter(~pl.col(LABEL_COL)).height
+        self.prior_train_error = self.n_neg / self.data_frame.height
+
+    def _init_split_manifest(self, args: argparse.Namespace) -> None:
+        """Build or load the split manifest."""
+        self.k_folds = max(1, args.k_folds)
+        self.single_model_split = bool(getattr(args, "single_model_split", False))
+        self.val_fraction = float(getattr(args, "val_fraction", 0.1))
+        self.split_hash_key = getattr(args, "split_hash_key", "RN")
+
+        split_manifest_in = getattr(args, "split_manifest_in", None)
+        split_manifest_out = getattr(args, "split_manifest_out", None)
+        holdout_chromosomes = _parse_holdout_chromosomes(getattr(args, "holdout_chromosomes", None))
+        if self.single_model_split and not holdout_chromosomes:
+            holdout_chromosomes = ["chr21", "chr22"]
+        val_chromosomes = _parse_holdout_chromosomes(getattr(args, "val_chromosomes", None))
+
+        if split_manifest_in:
+            logger.info("Loading split manifest from %s", split_manifest_in)
+            self.split_manifest = load_split_manifest(split_manifest_in)
+            validate_manifest_against_regions(self.split_manifest, args.training_regions)
+        else:
+            self.split_manifest = _build_new_split_manifest(
+                args=args,
+                single_model_split=self.single_model_split,
+                val_chromosomes=val_chromosomes,
+                holdout_chromosomes=holdout_chromosomes,
+                seed=self.seed,
+                k_folds=self.k_folds,
+                val_fraction=self.val_fraction,
+                split_hash_key=self.split_hash_key,
+            )
+            if split_manifest_out:
+                save_split_manifest(self.split_manifest, split_manifest_out)
+                logger.info("Saved split manifest to %s", split_manifest_out)
+
+        manifest_mode = self.split_manifest.get("split_mode")
+        self.single_model_split = manifest_mode in (
+            SPLIT_MODE_SINGLE_MODEL_READ_HASH,
+            SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,
+        )
+
+    def _assign_fold_columns(self) -> None:
+        """Assign fold_id column to data_frame based on split manifest mode."""
+        manifest_mode = self.split_manifest.get("split_mode")
+        if manifest_mode == SPLIT_MODE_SINGLE_MODEL_CHROM_VAL:
+            self._assign_chrom_val_folds()
+        elif manifest_mode == SPLIT_MODE_SINGLE_MODEL_READ_HASH:
+            self._assign_read_hash_folds()
+        else:
+            self._assign_kfold_folds()
+
+    def _assign_chrom_val_folds(self) -> None:
+        """Assign folds for chrom-val split mode."""
+        logger.info(
+            "Using single-model chrom-val split (train=%s, val=%s, test=%s)",
+            ",".join(self.split_manifest["train_chromosomes"]),
+            ",".join(self.split_manifest["val_chromosomes"]),
+            ",".join(self.split_manifest["test_chromosomes"]),
+        )
+        self.chrom_to_fold = {}
+        self.k_folds = 1
+        manifest_ref = self.split_manifest
+        self.data_frame = self.data_frame.with_columns(
+            pl.col(CHROM)
+            .map_elements(
+                lambda c: assign_single_model_chrom_val_role(chrom=str(c), manifest=manifest_ref),
+                return_dtype=pl.String,
+            )
+            .alias(SPLIT_ROLE_COL)
+        )
+        self.data_frame = self.data_frame.with_columns(
+            pl.when(pl.col(SPLIT_ROLE_COL) == "train")
+            .then(pl.lit(0))
+            .when(pl.col(SPLIT_ROLE_COL) == "val")
+            .then(pl.lit(1))
+            .otherwise(pl.lit(None))
+            .cast(pl.Int64)
+            .alias(FOLD_COL)
+        )
+
+    def _assign_read_hash_folds(self) -> None:
+        """Assign folds for read-hash split mode."""
+        if self.split_hash_key not in self.data_frame.columns:
+            raise ValueError(f"single-model split requires hash key column '{self.split_hash_key}' in input dataframe")
+        logger.info(
+            "Using single-model RN-hash split (holdout=%s, val_fraction=%.3f)",
+            ",".join(self.split_manifest["test_chromosomes"]),
+            float(self.split_manifest["val_fraction"]),
+        )
+        self.chrom_to_fold = {}
+        self.k_folds = 1
+        self.data_frame = self.data_frame.with_columns(
+            pl.struct([pl.col(CHROM), pl.col(self.split_hash_key)])
+            .map_elements(
+                lambda s: assign_single_model_read_hash_role(
+                    chrom=str(s[CHROM]),
+                    rn=str(s[self.split_hash_key]),
+                    manifest=self.split_manifest,
+                ),
+                return_dtype=pl.String,
+            )
+            .alias(SPLIT_ROLE_COL)
+        )
+        self.data_frame = self.data_frame.with_columns(
+            pl.when(pl.col(SPLIT_ROLE_COL) == "train")
+            .then(pl.lit(0))
+            .when(pl.col(SPLIT_ROLE_COL) == "val")
+            .then(pl.lit(1))
+            .otherwise(pl.lit(None))
+            .cast(pl.Int64)
+            .alias(FOLD_COL)
+        )
+
+    def _assign_kfold_folds(self) -> None:
+        """Assign folds for standard k-fold split mode."""
+        self.chrom_to_fold = {chrom: int(fold) for chrom, fold in self.split_manifest["chrom_to_fold"].items()}
+        logger.debug("Assigning folds to data")
+        ctf = self.chrom_to_fold
+        self.data_frame = self.data_frame.with_columns(
+            pl.col(CHROM).map_elements(ctf.get, return_dtype=pl.Int64).alias(FOLD_COL)
+        )
+        logger.debug("Fold assignment complete")
+
+    def _init_models(self, args: argparse.Namespace) -> None:
+        """Parse model params, configure GPU/CPU, and create XGBoost models."""
+        logger.debug("Parsing model parameters from: %s", args.model_params)
+        self.model_params = _parse_model_params(args.model_params)
+        logger.debug(
+            "Initializing %d XGBClassifier models with params: %s",
+            self.k_folds,
+            self.model_params,
+        )
+        _configure_xgb_device(self.model_params, use_gpu=self.use_gpu)
+        if "early_stopping_rounds" not in self.model_params:
+            self.model_params["early_stopping_rounds"] = 10
+        if "n_estimators" not in self.model_params:
+            self.model_params["n_estimators"] = 2000
+        self.models = [xgb.XGBClassifier(**self.model_params) for _ in range(self.k_folds)]
 
     # ─────────────────────── data-loading helpers ───────────────────────
     def _read_positive_df(self, pos_path: str) -> pl.DataFrame:
@@ -903,8 +949,6 @@ class SRSNVTrainer:
 
         Delegates to the shared ``recalibrate_snvq_kde`` utility in ``srsnv_utils``.
         """
-        from ugbio_srsnv.srsnv_utils import recalibrate_snvq_kde  # noqa: PLC0415
-
         if eps is None:
             eps = self.eps
         if kde_config_overrides is None:

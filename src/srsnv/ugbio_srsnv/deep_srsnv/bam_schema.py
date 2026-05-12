@@ -4,6 +4,8 @@ from collections import Counter, defaultdict
 
 import pysam
 
+MAX_CATEGORICAL_TAG_LENGTH = 10
+
 
 def discover_bam_schema(bam_paths: list[str], sample_reads_per_bam: int = 20000) -> dict:
     tag_counts = Counter()
@@ -24,7 +26,7 @@ def discover_bam_schema(bam_paths: list[str], sample_reads_per_bam: int = 20000)
             for tag, value in rec.get_tags(with_value_type=False):
                 tag_counts[tag] += 1
                 tag_types[tag][type(value).__name__] += 1
-                if isinstance(value, str) and len(value) <= 10:  # noqa: PLR2004
+                if isinstance(value, str) and len(value) <= MAX_CATEGORICAL_TAG_LENGTH:
                     category_values[tag][value] += 1
             if n >= sample_reads_per_bam:
                 break

@@ -24,21 +24,30 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import importlib
+import io
 import itertools
 import json
+import math
 import os
 import sys
+import tempfile
 import time
-from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
+from dataclasses import dataclass
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.compute as pc
 import pysam
+from isal import igzip
 from pyarrow import parquet as pq
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed.variant_annotation import VcfAnnotator
+from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet
 
 from ugbio_srsnv.deep_srsnv.cram_to_tensors import (
     _PARQUET_COLUMNS,
@@ -50,10 +59,37 @@ from ugbio_srsnv.deep_srsnv.cram_to_tensors import (
     _worker_init,
 )
 from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
-from ugbio_srsnv.deep_srsnv.inference.trt_engine import load_inference_engine
+from ugbio_srsnv.deep_srsnv.inference.trt_engine import (
+    _compose_x_num,
+    _to_numpy,
+    _to_numpy_long,
+    load_inference_engine,
+)
 from ugbio_srsnv.srsnv_utils import MAX_PHRED, prob_to_phred
 
 ML_QUAL = "ML_QUAL"
+
+
+# ---------------------------------------------------------------------------
+# Inference configuration
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class InferenceConfig:
+    """Shared configuration for DNN inference pipeline functions."""
+
+    cram_path: str
+    reference_path: str | None = None
+    num_cram_workers: int = 4
+    shard_size: int = 10000
+    batch_size: int = 512
+    tensor_length: int = 300
+    fetch_mode: str = "samtools"
+    gpu_ids: list[int] | None = None
+    backend: str = "trt"
+    engine_path: str | None = None
+    checkpoint_path: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -69,14 +105,15 @@ class DNNQualAnnotator(VcfAnnotator):
     and the variant-level QUAL is set to the max per-read SNVQ.
     """
 
-    def __init__(  # noqa: PLR0913
+    def __init__(
         self,
         predictions: dict,
         quality_interpolation_fn=None,
         low_qual_threshold: float = 40.0,
         rn_format_key: str = "RN",
         rn_info_key: str | None = None,
-        _per_contig: bool = False,  # noqa: FBT001, FBT002
+        *,
+        _per_contig: bool = False,
     ):
         self.predictions = predictions
         self.quality_fn = quality_interpolation_fn
@@ -188,7 +225,7 @@ def _build_quality_fn(metadata: dict) -> _QualityInterpolator | None:
 # ---------------------------------------------------------------------------
 
 
-def _run_inference(  # noqa: PLR0913
+def _run_inference(
     cram_path: str,
     parquet_path: str,
     metadata: dict,
@@ -274,8 +311,6 @@ def _flush_preds_to_writer(
     lock: Lock,
 ) -> None:
     """Flush accumulated predictions to a ParquetWriter under a lock."""
-    import pyarrow as pa  # noqa: PLC0415
-
     table = pa.table(
         {
             "chrom": [k[0] for k in preds],
@@ -328,7 +363,88 @@ def _gpu_consumer_thread(
         engine.pop_context()
 
 
-def _pipelined_inference(  # noqa: PLR0912, PLR0913, PLR0915, C901
+def _produce_shards_serial(
+    shard_args_list: list[dict],
+    fn,
+    q: Queue,
+    total_shards: int,
+    t_start: float,
+) -> None:
+    """Feed shard chunks into *q* sequentially (single-worker mode)."""
+    for completed, shard_args in enumerate(shard_args_list, 1):
+        _sid, chunk, _stats = fn(**shard_args)
+        q.put(chunk)
+        if completed == 1 or completed % 10 == 0 or completed == total_shards:
+            logger.info(
+                "Inference progress: %d/%d shards (%.1fs)",
+                completed,
+                total_shards,
+                time.perf_counter() - t_start,
+            )
+
+
+def _produce_shards_parallel(
+    shard_args_list: list[dict],
+    fn,
+    q: Queue,
+    total_shards: int,
+    effective_workers: int,
+    t_start: float,
+) -> None:
+    """Feed shard chunks into *q* using a process pool."""
+    completed = 0
+    with ProcessPoolExecutor(max_workers=effective_workers, initializer=_worker_init) as pool:
+        max_pending = effective_workers * 2
+        shard_iter = iter(shard_args_list)
+        pending = {pool.submit(fn, **sa) for sa in itertools.islice(shard_iter, max_pending)}
+        while pending:
+            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+            for future in done:
+                _sid, chunk, _stats = future.result()
+                q.put(chunk)
+                completed += 1
+                if completed == 1 or completed % 10 == 0 or completed == total_shards:
+                    logger.info(
+                        "Inference progress: %d/%d shards (%.1fs)",
+                        completed,
+                        total_shards,
+                        time.perf_counter() - t_start,
+                    )
+            for sa in itertools.islice(shard_iter, len(done)):
+                pending.add(pool.submit(fn, **sa))
+
+
+def _start_gpu_consumers(
+    engines: list,
+    q: Queue,
+    batch_size: int,
+    done_event: Event,
+    local_preds: list[dict],
+    *,
+    writer=None,
+    write_lock: Lock | None = None,
+    pred_counts: list[list[int]] | None = None,
+) -> list[Thread]:
+    """Start one GPU consumer thread per engine and return thread handles."""
+    gpu_threads: list[Thread] = []
+    streaming = writer is not None
+    for i, engine in enumerate(engines):
+        t = Thread(
+            target=_gpu_consumer_thread,
+            args=(engine, q, batch_size, local_preds[i], done_event),
+            kwargs={
+                "writer": writer,
+                "write_lock": write_lock,
+                "pred_count": pred_counts[i] if streaming else None,
+            },
+            daemon=True,
+        )
+        t.start()
+        gpu_threads.append(t)
+    return gpu_threads
+
+
+def _pipelined_inference(
     shard_args_list: list[dict],
     engines: list,
     batch_size: int,
@@ -354,8 +470,6 @@ def _pipelined_inference(  # noqa: PLR0912, PLR0913, PLR0915, C901
         (one row group per shard) and the total count is returned instead of a
         dict.  This keeps memory bounded to one shard per GPU thread.
     """
-    import pyarrow as pa  # noqa: PLC0415
-    import pyarrow.parquet as pq_mod  # noqa: PLC0415
 
     fn = process_fn or _process_shard
     total_shards = len(shard_args_list)
@@ -380,59 +494,26 @@ def _pipelined_inference(  # noqa: PLR0912, PLR0913, PLR0915, C901
                 ("prob", pa.float64()),
             ]
         )
-        writer = pq_mod.ParquetWriter(output_path, schema)
+        writer = pq.ParquetWriter(output_path, schema)
 
-    gpu_threads: list[Thread] = []
-    for i, engine in enumerate(engines):
-        t = Thread(
-            target=_gpu_consumer_thread,
-            args=(engine, q, batch_size, local_preds[i], done_event),
-            kwargs={
-                "writer": writer,
-                "write_lock": write_lock,
-                "pred_count": pred_counts[i] if streaming else None,
-            },
-            daemon=True,
-        )
-        t.start()
-        gpu_threads.append(t)
+    gpu_threads = _start_gpu_consumers(
+        engines,
+        q,
+        batch_size,
+        done_event,
+        local_preds,
+        writer=writer,
+        write_lock=write_lock,
+        pred_counts=pred_counts if streaming else None,
+    )
 
-    completed = 0
     t_start = time.perf_counter()
 
     try:
         if effective_workers == 1:
-            for shard_args in shard_args_list:
-                _sid, chunk, _stats = fn(**shard_args)
-                q.put(chunk)
-                completed += 1
-                if completed == 1 or completed % 10 == 0 or completed == total_shards:
-                    logger.info(
-                        "Inference progress: %d/%d shards (%.1fs)",
-                        completed,
-                        total_shards,
-                        time.perf_counter() - t_start,
-                    )
+            _produce_shards_serial(shard_args_list, fn, q, total_shards, t_start)
         else:
-            with ProcessPoolExecutor(max_workers=effective_workers, initializer=_worker_init) as pool:
-                max_pending = effective_workers * 2
-                shard_iter = iter(shard_args_list)
-                pending = {pool.submit(fn, **sa) for sa in itertools.islice(shard_iter, max_pending)}
-                while pending:
-                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
-                    for future in done:
-                        _sid, chunk, _stats = future.result()
-                        q.put(chunk)
-                        completed += 1
-                        if completed == 1 or completed % 10 == 0 or completed == total_shards:
-                            logger.info(
-                                "Inference progress: %d/%d shards (%.1fs)",
-                                completed,
-                                total_shards,
-                                time.perf_counter() - t_start,
-                            )
-                    for sa in itertools.islice(shard_iter, len(done)):
-                        pending.add(pool.submit(fn, **sa))
+            _produce_shards_parallel(shard_args_list, fn, q, total_shards, effective_workers, t_start)
     finally:
         done_event.set()
         for t in gpu_threads:
@@ -540,18 +621,13 @@ def aggregate_fold_probabilities(prob_matrix: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 
-def _run_fold_inference(  # noqa: PLR0913
-    cram_path: str,
+def _run_fold_inference(
+    config: InferenceConfig,
     parquet_path: str,
     n_rows: int,
     columns: list[str],
     engines: list,
     *,
-    num_cram_workers: int = 4,
-    batch_size: int = 512,
-    tensor_length: int = 300,
-    reference_path: str | None = None,
-    fetch_mode: str = "samtools",
     output_path: str | None = None,
 ) -> dict[tuple[str, int, str], float] | int:
     """Run inference from a pre-sorted parquet file with row-group-per-shard layout.
@@ -570,13 +646,13 @@ def _run_fold_inference(  # noqa: PLR0913
     total_shards = pf.metadata.num_row_groups
 
     shard_common = {
-        "cram_path": cram_path,
-        "reference_path": reference_path,
+        "cram_path": config.cram_path,
+        "reference_path": config.reference_path,
         "encoders": encoders,
-        "tensor_length": tensor_length,
+        "tensor_length": config.tensor_length,
         "label": False,
         "max_edist": None,
-        "fetch_mode": fetch_mode,
+        "fetch_mode": config.fetch_mode,
     }
 
     shard_args_list = [
@@ -588,7 +664,7 @@ def _run_fold_inference(  # noqa: PLR0913
         "Fold inference: %d rows -> %d row-group shards (%d workers, %d GPUs)",
         n_rows,
         total_shards,
-        num_cram_workers,
+        config.num_cram_workers,
         len(engines),
     )
 
@@ -596,8 +672,8 @@ def _run_fold_inference(  # noqa: PLR0913
     result = _pipelined_inference(
         shard_args_list,
         engines,
-        batch_size,
-        num_cram_workers,
+        config.batch_size,
+        config.num_cram_workers,
         process_fn=_process_shard_from_parquet,
         output_path=output_path,
     )
@@ -614,7 +690,7 @@ def _run_fold_inference(  # noqa: PLR0913
     return result
 
 
-def _run_fold_inference_from_rows(  # noqa: PLR0913
+def _run_fold_inference_from_rows(
     cram_path: str,
     rows: list[dict],
     engines: list,
@@ -665,19 +741,10 @@ def _run_fold_inference_from_rows(  # noqa: PLR0913
     return predictions
 
 
-def _run_ensemble_inference(  # noqa: PLR0913, PLR0915
+def _run_ensemble_inference(
     manifest: dict,
-    cram_path: str,
+    config: InferenceConfig,
     parquet_path: str,
-    *,
-    backend: str = "pytorch",
-    gpu_ids: list[int],
-    num_cram_workers: int = 4,
-    shard_size: int = 10000,
-    batch_size: int = 512,
-    tensor_length: int = 300,
-    reference_path: str | None = None,
-    fetch_mode: str = "samtools",
 ) -> dict[tuple[str, int, str], float]:
     """Fold-aware inference: iterate folds sequentially, all GPUs data-parallel per fold."""
 
@@ -705,13 +772,13 @@ def _run_ensemble_inference(  # noqa: PLR0913, PLR0915
     t_start = time.perf_counter()
 
     infer_kwargs = {
-        "cram_path": cram_path,
-        "num_cram_workers": num_cram_workers,
-        "shard_size": shard_size,
-        "batch_size": batch_size,
-        "tensor_length": tensor_length,
-        "reference_path": reference_path,
-        "fetch_mode": fetch_mode,
+        "cram_path": config.cram_path,
+        "num_cram_workers": config.num_cram_workers,
+        "shard_size": config.shard_size,
+        "batch_size": config.batch_size,
+        "tensor_length": config.tensor_length,
+        "reference_path": config.reference_path,
+        "fetch_mode": config.fetch_mode,
     }
 
     for fold_entry in fold_entries:
@@ -723,7 +790,7 @@ def _run_ensemble_inference(  # noqa: PLR0913, PLR0915
             continue
 
         logger.info("Fold %d: loading model from %s (%d reads)", fold_k, meta_path, len(rows_k))
-        engines = _create_engines(meta_path, backend=backend, gpu_ids=gpu_ids)
+        engines = _create_engines(meta_path, backend=config.backend, gpu_ids=config.gpu_ids)
         try:
             fold_preds = _run_fold_inference_from_rows(rows=rows_k, engines=engines, **infer_kwargs)
             all_predictions.update(fold_preds)
@@ -743,7 +810,7 @@ def _run_ensemble_inference(  # noqa: PLR0913, PLR0915
             fold_k = fold_entry["fold_idx"]
             meta_path = fold_entry["metadata_path"]
             logger.info("Test reads: predicting with fold %d model", fold_k)
-            engines = _create_engines(meta_path, backend=backend, gpu_ids=gpu_ids)
+            engines = _create_engines(meta_path, backend=config.backend, gpu_ids=config.gpu_ids)
             try:
                 test_preds = _run_fold_inference_from_rows(rows=test_rows, engines=engines, **infer_kwargs)
                 for j, key in enumerate(test_keys):
@@ -792,25 +859,94 @@ def _create_engines(
 # ---------------------------------------------------------------------------
 
 
-def run_inference_pipeline(  # noqa: PLR0913, C901, PLR0912
+def _resolve_gpu_ids(gpu_ids: list[int] | None) -> list[int]:
+    """Return explicit GPU IDs, detecting available devices if needed."""
+    if gpu_ids is not None:
+        return gpu_ids
+    _torch = importlib.import_module("torch")
+
+    if _torch.cuda.is_available():
+        return list(range(_torch.cuda.device_count()))
+    return [0]
+
+
+def _resolve_fetch_mode(fetch_mode: str) -> str:
+    """Validate fetch_mode, falling back to pysam if samtools is unavailable."""
+    if fetch_mode == "samtools" and not _samtools_available():
+        logger.warning("samtools not found; falling back to pysam fetch mode")
+        return "pysam"
+    return fetch_mode
+
+
+def _ensure_parquet(featuremap_vcf: str, parquet_path: str | None) -> str:
+    """Return an existing parquet path or convert the VCF to a new one."""
+    if parquet_path is not None:
+        return parquet_path
+    tmp_dir = tempfile.mkdtemp(prefix="dnn_infer_")
+    out_path = str(Path(tmp_dir) / "featuremap.parquet")
+    logger.info("Converting featuremap VCF to parquet: %s", out_path)
+    _vcf_to_parquet(featuremap_vcf, out_path)
+    return out_path
+
+
+def _run_single_model_inference(
+    metadata_path: str,
+    config: InferenceConfig,
+    parquet_path: str,
+) -> tuple[dict[tuple[str, int, str], float], _QualityInterpolator | None]:
+    """Load a single model, run inference, return predictions and quality fn."""
+    with open(metadata_path) as f:
+        metadata = json.load(f)
+    quality_fn = _build_quality_fn(metadata)
+
+    engines = []
+    for gid in config.gpu_ids:
+        try:
+            eng = load_inference_engine(
+                metadata_path,
+                backend=config.backend,
+                device_id=gid,
+                engine_path=config.engine_path,
+                checkpoint_path=config.checkpoint_path,
+            )
+            if hasattr(eng, "pop_context"):
+                eng.pop_context()
+            engines.append(eng)
+        except Exception:
+            logger.warning("Failed to create engine on GPU:%d, skipping", gid, exc_info=True)
+    if not engines:
+        raise RuntimeError("No inference engines could be created")
+    logger.info("Created %d %s engine(s) on GPUs %s", len(engines), config.backend, config.gpu_ids[: len(engines)])
+
+    try:
+        predictions = _run_inference(
+            cram_path=config.cram_path,
+            parquet_path=parquet_path,
+            metadata=metadata,
+            engines=engines,
+            num_cram_workers=config.num_cram_workers,
+            shard_size=config.shard_size,
+            batch_size=config.batch_size,
+            tensor_length=config.tensor_length,
+            reference_path=config.reference_path,
+            fetch_mode=config.fetch_mode,
+        )
+    finally:
+        for eng in engines:
+            eng.close()
+
+    return predictions, quality_fn
+
+
+def run_inference_pipeline(
     featuremap_vcf: str,
-    cram_path: str,
+    config: InferenceConfig,
     output_vcf: str,
     *,
     metadata_path: str | None = None,
     ensemble_manifest_path: str | None = None,
-    reference_path: str | None = None,
-    backend: str = "trt",
-    engine_path: str | None = None,
-    checkpoint_path: str | None = None,
-    gpu_ids: list[int] | None = None,
-    num_cram_workers: int = 4,
-    shard_size: int = 10000,
-    batch_size: int = 512,
-    tensor_length: int = 300,
     low_qual_threshold: float = 40.0,
     parquet_path: str | None = None,
-    fetch_mode: str = "samtools",
 ) -> str:
     """Run the full DNN VCF inference pipeline.
 
@@ -823,91 +959,42 @@ def run_inference_pipeline(  # noqa: PLR0913, C901, PLR0912
     if not metadata_path and not ensemble_manifest_path:
         raise ValueError("Either metadata_path or ensemble_manifest_path must be provided")
 
-    import torch.multiprocessing  # noqa: PLC0415
+    torch_mp = importlib.import_module("torch.multiprocessing")
 
-    torch.multiprocessing.set_sharing_strategy("file_system")
+    torch_mp.set_sharing_strategy("file_system")
 
     t0 = time.perf_counter()
 
-    # ── Phase 1: setup ──
-    if fetch_mode == "samtools" and not _samtools_available():
-        logger.warning("samtools not found; falling back to pysam fetch mode")
-        fetch_mode = "pysam"
-
-    if gpu_ids is None:
-        import torch  # noqa: PLC0415
-
-        if torch.cuda.is_available():
-            gpu_ids = list(range(torch.cuda.device_count()))
-        else:
-            gpu_ids = [0]
-
-    # ── Parquet preparation ──
-    if parquet_path is None:
-        import tempfile  # noqa: PLC0415
-
-        tmp_dir = tempfile.mkdtemp(prefix="dnn_infer_")
-        parquet_path = str(Path(tmp_dir) / "featuremap.parquet")
-        logger.info("Converting featuremap VCF to parquet: %s", parquet_path)
-        _vcf_to_parquet(featuremap_vcf, parquet_path)
+    config = InferenceConfig(
+        cram_path=config.cram_path,
+        reference_path=config.reference_path,
+        num_cram_workers=config.num_cram_workers,
+        shard_size=config.shard_size,
+        batch_size=config.batch_size,
+        tensor_length=config.tensor_length,
+        fetch_mode=_resolve_fetch_mode(config.fetch_mode),
+        gpu_ids=_resolve_gpu_ids(config.gpu_ids),
+        backend=config.backend,
+        engine_path=config.engine_path,
+        checkpoint_path=config.checkpoint_path,
+    )
+    parquet_path = _ensure_parquet(featuremap_vcf, parquet_path)
 
     # ── Dispatch: single model vs k-fold ensemble ──
     if ensemble_manifest_path:
         manifest = load_ensemble_manifest(ensemble_manifest_path)
         quality_fn = _build_quality_fn(manifest)
-
         predictions = _run_ensemble_inference(
             manifest=manifest,
-            cram_path=cram_path,
+            config=config,
             parquet_path=parquet_path,
-            backend=backend,
-            gpu_ids=gpu_ids,
-            num_cram_workers=num_cram_workers,
-            shard_size=shard_size,
-            batch_size=batch_size,
-            tensor_length=tensor_length,
-            reference_path=reference_path,
-            fetch_mode=fetch_mode,
         )
     else:
-        with open(metadata_path) as f:
-            metadata = json.load(f)
-        quality_fn = _build_quality_fn(metadata)
-
-        engines = []
-        for gid in gpu_ids:
-            try:
-                eng = load_inference_engine(
-                    metadata_path,
-                    backend=backend,
-                    device_id=gid,
-                    engine_path=engine_path,
-                    checkpoint_path=checkpoint_path,
-                )
-                if hasattr(eng, "pop_context"):
-                    eng.pop_context()
-                engines.append(eng)
-            except Exception:
-                logger.warning("Failed to create engine on GPU:%d, skipping", gid, exc_info=True)
-        if not engines:
-            raise RuntimeError("No inference engines could be created")
-        logger.info("Created %d %s engine(s) on GPUs %s", len(engines), backend, gpu_ids[: len(engines)])
-
-        predictions = _run_inference(
-            cram_path=cram_path,
-            parquet_path=parquet_path,
-            metadata=metadata,
-            engines=engines,
-            num_cram_workers=num_cram_workers,
-            shard_size=shard_size,
-            batch_size=batch_size,
-            tensor_length=tensor_length,
-            reference_path=reference_path,
-            fetch_mode=fetch_mode,
+        predictions, quality_fn = _run_single_model_inference(
+            metadata_path,
+            config,
+            parquet_path,
         )
-
-        for eng in engines:
-            eng.close()
 
     # ── Phase 3: VCF annotation ──
     annotator = DNNQualAnnotator(
@@ -928,12 +1015,7 @@ def run_inference_pipeline(  # noqa: PLR0913, C901, PLR0912
 
 def _vcf_to_parquet(vcf_path: str, parquet_path: str) -> None:
     """Lightweight VCF->parquet for inference (extracts CHROM, POS, RN, etc.)."""
-    try:
-        from ugbio_featuremap.featuremap_to_dataframe import vcf_to_parquet  # noqa: PLC0415
-
-        vcf_to_parquet(vcf_path, parquet_path, drop_format={"AD"})
-    except ImportError:
-        raise ImportError("ugbio_featuremap is required for VCF-to-parquet conversion") from None
+    vcf_to_parquet(vcf_path, parquet_path, drop_format={"AD"})
 
 
 # ---------------------------------------------------------------------------
@@ -981,24 +1063,28 @@ def run(argv: list[str] | None = None) -> None:
     if num_workers is None:
         num_workers = os.cpu_count() or 1
 
-    run_inference_pipeline(
-        featuremap_vcf=args.featuremap_vcf,
+    config = InferenceConfig(
         cram_path=args.cram,
-        metadata_path=args.metadata,
-        ensemble_manifest_path=args.ensemble_manifest,
-        output_vcf=args.output,
         reference_path=args.reference,
-        backend=args.backend,
-        engine_path=args.engine_path,
-        checkpoint_path=args.checkpoint,
-        gpu_ids=gpu_ids,
         num_cram_workers=num_workers,
         shard_size=args.shard_size,
         batch_size=args.batch_size,
         tensor_length=args.tensor_length,
+        fetch_mode=args.fetch_mode,
+        gpu_ids=gpu_ids,
+        backend=args.backend,
+        engine_path=args.engine_path,
+        checkpoint_path=args.checkpoint,
+    )
+
+    run_inference_pipeline(
+        featuremap_vcf=args.featuremap_vcf,
+        config=config,
+        output_vcf=args.output,
+        metadata_path=args.metadata,
+        ensemble_manifest_path=args.ensemble_manifest,
         low_qual_threshold=args.low_qual_threshold,
         parquet_path=args.parquet,
-        fetch_mode=args.fetch_mode,
     )
 
 
@@ -1033,13 +1119,56 @@ def _parse_fold_args(argv: list[str] | None = None) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
-def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901, PLR0912
-    """Run inference for a single fold's chromosomes and write predictions parquet."""
-    import pyarrow as pa  # noqa: PLC0415
-    import pyarrow.compute  # noqa: PLC0415
-    import torch.multiprocessing  # noqa: PLC0415
+def _resolve_fold_target_chroms(
+    parquet_file: pq.ParquetFile,
+    chrom_to_fold: dict[str, int],
+    fold_idx: int,
+) -> set[str]:
+    """Determine which chromosomes this fold should process.
 
-    torch.multiprocessing.set_sharing_strategy("file_system")
+    Includes fold-assigned chroms plus (for fold 0) any chroms not in
+    the mapping (test chromosomes).
+    """
+    my_chroms: set[str] = {chrom for chrom, fid in chrom_to_fold.items() if fid == fold_idx}
+    test_chroms: set[str] = set()
+    if fold_idx == 0:
+        chrom_col_arr = parquet_file.read(columns=[CHROM]).column(CHROM)
+        all_chroms_in_data = set(chrom_col_arr.to_pylist())
+        test_chroms = all_chroms_in_data - set(chrom_to_fold.keys())
+        del chrom_col_arr
+    return my_chroms | test_chroms
+
+
+def _filter_parquet_by_chroms(
+    parquet_file: pq.ParquetFile,
+    available_cols: list[str],
+    target_chroms: set[str],
+) -> pa.Table:
+    """Read parquet row-groups and return only rows matching *target_chroms*."""
+    batches = []
+    for batch in parquet_file.iter_batches(batch_size=500_000, columns=available_cols):
+        chrom_arr = batch.column(CHROM)
+        mask = pa.compute.is_in(chrom_arr, value_set=pa.array(list(target_chroms)))
+        filtered_batch = batch.filter(mask)
+        if len(filtered_batch) > 0:
+            batches.append(filtered_batch)
+    if batches:
+        return pa.concat_tables([pa.Table.from_batches([b]) for b in batches])
+    return pa.table({c: [] for c in available_cols})
+
+
+def _parse_gpu_ids_from_arg(gpus_arg: str | None) -> list[int]:
+    """Parse a comma-separated GPU IDs string or auto-detect available GPUs."""
+    if gpus_arg:
+        return [int(g.strip()) for g in gpus_arg.split(",")]
+    return _resolve_gpu_ids(None)
+
+
+def run_fold(argv: list[str] | None = None) -> None:
+    """Run inference for a single fold's chromosomes and write predictions parquet."""
+    torch_mp = importlib.import_module("torch.multiprocessing")
+
+    torch_mp.set_sharing_strategy("file_system")
 
     if argv is None:
         argv = sys.argv[1:]
@@ -1048,111 +1177,63 @@ def run_fold(argv: list[str] | None = None) -> None:  # noqa: PLR0915, C901, PLR
     fold_idx = args.fold_idx
     t0 = time.perf_counter()
 
-    # GPU setup
-    gpu_ids = None
-    if args.gpus:
-        gpu_ids = [int(g.strip()) for g in args.gpus.split(",")]
-    if gpu_ids is None:
-        import torch  # noqa: PLC0415
-
-        gpu_ids = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else [0]
-
-    num_workers = args.num_cram_workers
-    if num_workers is None:
-        num_workers = max(1, (os.cpu_count() or 4) - 2)
-
-    fetch_mode = args.fetch_mode
-    if fetch_mode == "samtools" and not _samtools_available():
-        logger.warning("samtools not found; falling back to pysam fetch mode")
-        fetch_mode = "pysam"
-
-    # Parquet preparation
-    parquet_path = args.parquet
-    if parquet_path is None:
-        import tempfile  # noqa: PLC0415
-
-        tmp_dir = tempfile.mkdtemp(prefix="dnn_fold_")
-        parquet_path = str(Path(tmp_dir) / "featuremap.parquet")
-        logger.info("Converting featuremap VCF to parquet: %s", parquet_path)
-        _vcf_to_parquet(args.featuremap_vcf, parquet_path)
+    gpu_ids = _parse_gpu_ids_from_arg(args.gpus)
+    num_workers = args.num_cram_workers if args.num_cram_workers is not None else max(1, (os.cpu_count() or 4) - 2)
+    fetch_mode = _resolve_fetch_mode(args.fetch_mode)
+    parquet_path = _ensure_parquet(args.featuremap_vcf, args.parquet)
 
     # Read split manifest
     with open(args.split_manifest) as f:
         manifest = json.load(f)
     chrom_to_fold: dict[str, int] = manifest.get("chrom_to_fold", {})
 
-    # Read parquet and filter to this fold's chromosomes (memory-efficient)
-    import pyarrow.parquet as pq_mod  # noqa: PLC0415
-
-    pf = pq_mod.ParquetFile(parquet_path)
+    # Filter parquet to this fold's chromosomes
+    pf = pq.ParquetFile(parquet_path)
     available_cols = [c for c in _PARQUET_COLUMNS if c in (pf.schema.names or [])]
+    target_chroms = _resolve_fold_target_chroms(pf, chrom_to_fold, fold_idx)
+    filtered = _filter_parquet_by_chroms(pf, available_cols, target_chroms)
 
-    # Build set of chromosomes belonging to this fold
-    my_chroms: set[str] = set()
-    test_chroms: set[str] = set()
-    for chrom, fid in chrom_to_fold.items():
-        if fid == fold_idx:
-            my_chroms.add(chrom)
-    # Fold 0 also handles test chromosomes (not in chrom_to_fold)
-    if fold_idx == 0:
-        # Read just the CHROM column to discover test chroms
-        chrom_col_arr = pf.read(columns=[CHROM]).column(CHROM)
-        all_chroms_in_data = set(chrom_col_arr.to_pylist())
-        test_chroms = all_chroms_in_data - set(chrom_to_fold.keys())
-        del chrom_col_arr
-    target_chroms = my_chroms | test_chroms
-
-    # Read only rows matching target chromosomes using row-group filtering
-    total_rows = pf.metadata.num_rows
-    batches = []
-    for batch in pf.iter_batches(batch_size=500_000, columns=available_cols):
-        chrom_arr = batch.column(CHROM)
-        mask = pa.compute.is_in(chrom_arr, value_set=pa.array(list(target_chroms)))
-        filtered_batch = batch.filter(mask)
-        if len(filtered_batch) > 0:
-            batches.append(filtered_batch)
-    if batches:
-        filtered = pa.concat_tables([pa.Table.from_batches([b]) for b in batches])
-    else:
-        filtered = pa.table({c: [] for c in available_cols})
-    del batches
-
-    # Sort by chrom, pos using Arrow (no Python dicts)
     n_rows = len(filtered)
-    logger.info("Fold %d: %d rows (total %d, filtered %d)", fold_idx, n_rows, total_rows, n_rows)
+    logger.info("Fold %d: %d rows (total %d, filtered %d)", fold_idx, n_rows, pf.metadata.num_rows, n_rows)
 
     if n_rows == 0:
         logger.info("Fold %d: no rows, writing empty predictions", fold_idx)
-        empty_table = pa.table({"chrom": [], "pos": [], "rn": [], "prob": []})
-        pq_mod.write_table(empty_table, args.output)
+        pq.write_table(pa.table({"chrom": [], "pos": [], "rn": [], "prob": []}), args.output)
         return
 
+    # Sort and write to sharded parquet
     sort_indices = pa.compute.sort_indices(filtered, sort_keys=[(CHROM, "ascending"), (POS, "ascending")])
     sorted_table = filtered.take(sort_indices)
     del filtered, sort_indices
 
-    # Write to temp parquet with row_group_size = shard_size for per-worker reading
     fold_parquet = str(Path(args.output).parent / f"fold_{fold_idx}_sorted.parquet")
     available_cols_final = [c for c in available_cols if c in sorted_table.column_names]
-    pq_mod.write_table(sorted_table, fold_parquet, row_group_size=args.shard_size)
+    pq.write_table(sorted_table, fold_parquet, row_group_size=args.shard_size)
     del sorted_table
 
-    # Load engines
+    # Run inference
     engines = _create_engines(args.fold_metadata, backend=args.backend, gpu_ids=gpu_ids)
     logger.info("Fold %d: %d %s engine(s) on GPUs %s", fold_idx, len(engines), args.backend, gpu_ids[: len(engines)])
 
+    fold_config = InferenceConfig(
+        cram_path=args.cram,
+        reference_path=args.reference,
+        num_cram_workers=num_workers,
+        shard_size=args.shard_size,
+        batch_size=args.batch_size,
+        tensor_length=args.tensor_length,
+        fetch_mode=fetch_mode,
+        gpu_ids=gpu_ids,
+        backend=args.backend,
+    )
+
     try:
         n_preds = _run_fold_inference(
-            cram_path=args.cram,
+            config=fold_config,
             parquet_path=fold_parquet,
             n_rows=n_rows,
             columns=available_cols_final,
             engines=engines,
-            num_cram_workers=num_workers,
-            batch_size=args.batch_size,
-            tensor_length=args.tensor_length,
-            reference_path=args.reference,
-            fetch_mode=fetch_mode,
             output_path=args.output,
         )
     finally:
@@ -1178,30 +1259,175 @@ def _load_tensor_shard(shard_path: str) -> dict:
     Supports both uncompressed ``.pt`` and gzip-compressed ``.pt.gz`` files.
     Uses isal (ISA-L) for fast gzip decompression when available.
     """
-    import io  # noqa: PLC0415
-
-    import torch  # noqa: PLC0415
+    _torch = importlib.import_module("torch")
 
     if shard_path.endswith(".gz"):
-        try:
-            from isal import igzip as gzip  # noqa: PLC0415
-        except ImportError:
-            import gzip  # noqa: PLC0415
-
-        with gzip.open(shard_path, "rb") as f:
-            chunk = torch.load(io.BytesIO(f.read()), map_location="cpu", weights_only=False)
+        with igzip.open(shard_path, "rb") as f:
+            chunk = _torch.load(io.BytesIO(f.read()), map_location="cpu", weights_only=False)
     else:
-        chunk = torch.load(shard_path, map_location="cpu", weights_only=False)
+        chunk = _torch.load(shard_path, map_location="cpu", weights_only=False)
     result = {}
     for key, val in chunk.items():
-        if isinstance(val, torch.Tensor):
+        if isinstance(val, _torch.Tensor):
             result[key] = val.numpy()
         else:
             result[key] = val
     return result
 
 
-def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
+def _cpu_prep_worker_fn(
+    raw_queue: Queue,
+    gpu_queue: Queue,
+    error_event: Event,
+    error_holder: list[BaseException],
+) -> None:
+    """Stage 2: prepare GPU-ready arrays from raw tensor chunks."""
+    try:
+        while True:
+            chunk = raw_queue.get()
+            if chunk is None:
+                break
+            x_num = _compose_x_num(chunk)
+            prepared = {
+                "read_base_idx": _to_numpy_long(chunk["read_base_idx"]),
+                "ref_base_idx": _to_numpy_long(chunk["ref_base_idx"]),
+                "x_num": x_num,
+                "mask": _to_numpy(chunk["mask"]),
+            }
+            for key in ("tm_idx", "st_idx", "et_idx"):
+                if key in chunk:
+                    prepared[key] = _to_numpy_long(chunk[key])
+            prepared["_chrom"] = chunk["chrom"]
+            prepared["_pos"] = chunk["pos"]
+            prepared["_rn"] = chunk["rn"]
+            gpu_queue.put(prepared)
+    except Exception as exc:
+        logger.error("_cpu_prep_worker failed: %s", exc, exc_info=True)
+        error_holder.append(exc)
+        error_event.set()
+    finally:
+        gpu_queue.put(None)
+
+
+def _gpu_worker_fn(
+    engine,
+    gpu_queue: Queue,
+    result_queue: Queue,
+    batch_size: int,
+    error_event: Event,
+    error_holder: list[BaseException],
+) -> None:
+    """Stage 3: GPU inference only -- no CPU prep work."""
+    engine.push_context()
+    try:
+        while True:
+            prepared = gpu_queue.get()
+            if prepared is None:
+                break
+            n = prepared["x_num"].shape[0]
+            all_probs = []
+            for batch_start in range(0, n, batch_size):
+                s = slice(batch_start, min(batch_start + batch_size, n))
+                batch = {
+                    "read_base_idx": prepared["read_base_idx"][s],
+                    "ref_base_idx": prepared["ref_base_idx"][s],
+                    "x_num": prepared["x_num"][s],
+                    "mask": prepared["mask"][s],
+                }
+                for key in ("tm_idx", "st_idx", "et_idx"):
+                    if key in prepared:
+                        batch[key] = prepared[key][s]
+                all_probs.append(engine.predict_batch_prepared(batch))
+            result_queue.put((prepared["_chrom"], prepared["_pos"], prepared["_rn"], np.concatenate(all_probs)))
+            gpu_queue.task_done()
+    except Exception as exc:
+        logger.error("_gpu_worker failed: %s", exc, exc_info=True)
+        error_holder.append(exc)
+        error_event.set()
+    finally:
+        engine.pop_context()
+        result_queue.put(None)
+
+
+def _shard_loader_thread_fn(
+    shard_files: list,
+    raw_queue: Queue,
+    num_loader_threads: int,
+    error_event: Event,
+    error_holder: list[BaseException],
+) -> None:
+    """Stage 1: load tensor shards from disk into *raw_queue*."""
+    try:
+        with ThreadPoolExecutor(max_workers=num_loader_threads) as loader_pool:
+            max_pending = raw_queue.maxsize
+            shard_iter = iter(shard_files)
+            pending_loads = {
+                loader_pool.submit(_load_tensor_shard, str(p)) for p in itertools.islice(shard_iter, max_pending)
+            }
+            while pending_loads:
+                done_loads, pending_loads = wait(pending_loads, return_when=FIRST_COMPLETED)
+                for fut in done_loads:
+                    raw_queue.put(fut.result())
+                for p in itertools.islice(shard_iter, len(done_loads)):
+                    pending_loads.add(loader_pool.submit(_load_tensor_shard, str(p)))
+    except Exception as exc:
+        logger.error("_loader_thread failed: %s", exc, exc_info=True)
+        error_holder.append(exc)
+        error_event.set()
+    finally:
+        raw_queue.put(None)
+
+
+def _collect_cache_results(
+    result_queue: Queue,
+    total_shards: int,
+    error_event: Event,
+    t_start: float,
+    *,
+    streaming: bool,
+    writer=None,
+    predictions: dict[tuple[str, int, str], float] | None = None,
+) -> tuple[int, int]:
+    """Collect GPU results from *result_queue*, returning (total_preds, collected)."""
+    total_preds = 0
+    collected = 0
+    while collected < total_shards:
+        try:
+            item = result_queue.get(timeout=5.0)
+        except Empty:
+            if error_event.is_set():
+                break
+            continue
+        if item is None:
+            break
+        chroms, positions, rns, probs = item
+        n = len(probs)
+        if streaming:
+            table = pa.table(
+                {
+                    "chrom": chroms[:n].tolist() if hasattr(chroms, "tolist") else list(chroms[:n]),
+                    "pos": positions[:n].tolist() if hasattr(positions, "tolist") else list(positions[:n]),
+                    "rn": rns[:n].tolist() if hasattr(rns, "tolist") else list(rns[:n]),
+                    "prob": probs.tolist(),
+                }
+            )
+            writer.write_table(table)
+        else:
+            for j in range(n):
+                predictions[(str(chroms[j]), int(positions[j]), str(rns[j]))] = float(probs[j])
+        total_preds += n
+        collected += 1
+        if collected == 1 or collected % 10 == 0 or collected == total_shards:
+            logger.info(
+                "Cache inference progress: %d/%d shards (%.1fs)",
+                collected,
+                total_shards,
+                time.perf_counter() - t_start,
+            )
+    return total_preds, collected
+
+
+def _run_fold_inference_from_cache(
     cache_dir: str,
     engines: list,
     batch_size: int = 512,
@@ -1211,7 +1437,7 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
     """Run GPU inference from pre-computed tensor cache shards.
 
     Reads shard_*.pt files from *cache_dir* and feeds them directly to
-    GPU engines.  No CRAM access or tensorization needed — all heavy
+    GPU engines.  No CRAM access or tensorization needed -- all heavy
     CPU work was done during the tensor cache creation step.
 
     Uses a thread pool to prefetch shards from disk while GPUs process
@@ -1219,11 +1445,6 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
 
     Returns predictions dict or count (if *output_path* streaming).
     """
-    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
-
-    import pyarrow as pa  # noqa: PLC0415
-    import pyarrow.parquet as pq_mod  # noqa: PLC0415
-
     cache_path = Path(cache_dir)
     shard_files = sorted(cache_path.glob("shard_*.pt.gz")) or sorted(cache_path.glob("shard_*.pt"))
     if not shard_files:
@@ -1232,172 +1453,59 @@ def _run_fold_inference_from_cache(  # noqa: PLR0912, PLR0915, C901
     total_shards = len(shard_files)
     logger.info("Loading %d tensor shards from %s (%d loader threads)", total_shards, cache_dir, num_loader_threads)
 
-    # 3-stage pipeline:
-    #   Stage 1 (loader threads): torch.load → raw_queue
-    #   Stage 2 (CPU prep thread): _compose_x_num + dtype conversions → gpu_queue
-    #   Stage 3 (GPU thread): H2D + kernel + D2H only → result_queue
-    #   Main thread: collect results, build dict/parquet
-
-    from ugbio_srsnv.deep_srsnv.inference.trt_engine import _compose_x_num, _to_numpy, _to_numpy_long  # noqa: PLC0415
-
+    # 3-stage pipeline queues and error tracking
     raw_queue: Queue = Queue(maxsize=num_loader_threads + 1)
     gpu_queue: Queue = Queue(maxsize=len(engines) * 2)
     result_queue: Queue = Queue()
-
     error_event = Event()
     error_holder: list[BaseException] = []
 
     engine = engines[0]
 
-    def _cpu_prep_worker():
-        """Stage 2: prepare GPU-ready arrays from raw tensor chunks."""
-        try:
-            while True:
-                chunk = raw_queue.get()
-                if chunk is None:
-                    break
-                x_num = _compose_x_num(chunk)
-                prepared = {
-                    "read_base_idx": _to_numpy_long(chunk["read_base_idx"]),
-                    "ref_base_idx": _to_numpy_long(chunk["ref_base_idx"]),
-                    "x_num": x_num,
-                    "mask": _to_numpy(chunk["mask"]),
-                }
-                if "tm_idx" in chunk:
-                    prepared["tm_idx"] = _to_numpy_long(chunk["tm_idx"])
-                if "st_idx" in chunk:
-                    prepared["st_idx"] = _to_numpy_long(chunk["st_idx"])
-                if "et_idx" in chunk:
-                    prepared["et_idx"] = _to_numpy_long(chunk["et_idx"])
-                prepared["_chrom"] = chunk["chrom"]
-                prepared["_pos"] = chunk["pos"]
-                prepared["_rn"] = chunk["rn"]
-                gpu_queue.put(prepared)
-        except Exception as exc:
-            logger.error("_cpu_prep_worker failed: %s", exc, exc_info=True)
-            error_holder.append(exc)
-            error_event.set()
-        finally:
-            gpu_queue.put(None)
-
-    def _gpu_worker():
-        """Stage 3: GPU inference only — no CPU prep work."""
-        engine.push_context()
-        try:
-            while True:
-                prepared = gpu_queue.get()
-                if prepared is None:
-                    break
-                n = prepared["x_num"].shape[0]
-                all_probs = []
-                for batch_start in range(0, n, batch_size):
-                    s = slice(batch_start, min(batch_start + batch_size, n))
-                    batch = {
-                        "read_base_idx": prepared["read_base_idx"][s],
-                        "ref_base_idx": prepared["ref_base_idx"][s],
-                        "x_num": prepared["x_num"][s],
-                        "mask": prepared["mask"][s],
-                    }
-                    if "tm_idx" in prepared:
-                        batch["tm_idx"] = prepared["tm_idx"][s]
-                    if "st_idx" in prepared:
-                        batch["st_idx"] = prepared["st_idx"][s]
-                    if "et_idx" in prepared:
-                        batch["et_idx"] = prepared["et_idx"][s]
-                    all_probs.append(engine.predict_batch_prepared(batch))
-                result_queue.put((prepared["_chrom"], prepared["_pos"], prepared["_rn"], np.concatenate(all_probs)))
-                gpu_queue.task_done()
-        except Exception as exc:
-            logger.error("_gpu_worker failed: %s", exc, exc_info=True)
-            error_holder.append(exc)
-            error_event.set()
-        finally:
-            engine.pop_context()
-            result_queue.put(None)
-
-    # Start Stage 2 + Stage 3 threads
-    prep_thread = Thread(target=_cpu_prep_worker, daemon=True)
+    # Start pipeline threads
+    prep_thread = Thread(
+        target=_cpu_prep_worker_fn, args=(raw_queue, gpu_queue, error_event, error_holder), daemon=True
+    )
     prep_thread.start()
-    gpu_thread = Thread(target=_gpu_worker, daemon=True)
+
+    gpu_thread = Thread(
+        target=_gpu_worker_fn,
+        args=(engine, gpu_queue, result_queue, batch_size, error_event, error_holder),
+        daemon=True,
+    )
     gpu_thread.start()
+
+    loader_t = Thread(
+        target=_shard_loader_thread_fn,
+        args=(shard_files, raw_queue, num_loader_threads, error_event, error_holder),
+        daemon=True,
+    )
+    loader_t.start()
 
     # Streaming output setup
     streaming = output_path is not None
     writer = None
     if streaming:
         schema = pa.schema([("chrom", pa.string()), ("pos", pa.int64()), ("rn", pa.string()), ("prob", pa.float64())])
-        writer = pq_mod.ParquetWriter(output_path, schema)
+        writer = pq.ParquetWriter(output_path, schema)
 
-    t_start = time.perf_counter()
-    total_preds = 0
-    collected = 0
     predictions: dict[tuple[str, int, str], float] = {}
-
-    # Dedicated loader thread — feeds raw_queue without polling
-    def _loader_thread():
-        try:
-            with ThreadPoolExecutor(max_workers=num_loader_threads) as loader_pool:
-                max_pending = raw_queue.maxsize
-                shard_iter = iter(shard_files)
-                pending_loads = {
-                    loader_pool.submit(_load_tensor_shard, str(p)) for p in itertools.islice(shard_iter, max_pending)
-                }
-                while pending_loads:
-                    done_loads, pending_loads = wait(pending_loads, return_when=FIRST_COMPLETED)
-                    for fut in done_loads:
-                        raw_queue.put(fut.result())  # blocks if raw_queue full — natural backpressure
-                    for p in itertools.islice(shard_iter, len(done_loads)):
-                        pending_loads.add(loader_pool.submit(_load_tensor_shard, str(p)))
-        except Exception as exc:
-            logger.error("_loader_thread failed: %s", exc, exc_info=True)
-            error_holder.append(exc)
-            error_event.set()
-        finally:
-            raw_queue.put(None)  # always unblock cpu_prep_worker
-
-    loader_t = Thread(target=_loader_thread, daemon=True)
-    loader_t.start()
+    t_start = time.perf_counter()
 
     try:
-        # Main thread: collect results from GPU
-        while collected < total_shards:
-            try:
-                item = result_queue.get(timeout=5.0)
-            except Empty:
-                if error_event.is_set():
-                    break
-                continue
-            if item is None:
-                break
-            chroms, positions, rns, probs = item
-            n = len(probs)
-            if streaming:
-                table = pa.table(
-                    {
-                        "chrom": chroms[:n].tolist() if hasattr(chroms, "tolist") else list(chroms[:n]),
-                        "pos": positions[:n].tolist() if hasattr(positions, "tolist") else list(positions[:n]),
-                        "rn": rns[:n].tolist() if hasattr(rns, "tolist") else list(rns[:n]),
-                        "prob": probs.tolist(),
-                    }
-                )
-                writer.write_table(table)
-            else:
-                for j in range(n):
-                    predictions[(str(chroms[j]), int(positions[j]), str(rns[j]))] = float(probs[j])
-            total_preds += n
-            collected += 1
-            if collected == 1 or collected % 10 == 0 or collected == total_shards:
-                logger.info(
-                    "Cache inference progress: %d/%d shards (%.1fs)",
-                    collected,
-                    total_shards,
-                    time.perf_counter() - t_start,
-                )
+        total_preds, _collected = _collect_cache_results(
+            result_queue,
+            total_shards,
+            error_event,
+            t_start,
+            streaming=streaming,
+            writer=writer,
+            predictions=predictions,
+        )
 
         if error_event.is_set() and error_holder:
             raise RuntimeError(f"Worker thread failed: {error_holder[0]}") from error_holder[0]
 
-        # Wait for all threads to finish
         loader_t.join(timeout=30.0)
         prep_thread.join(timeout=30.0)
         gpu_thread.join(timeout=30.0)
@@ -1425,9 +1533,9 @@ def _parse_fold_cache_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def run_fold_from_cache(argv: list[str] | None = None) -> None:
     """Run inference for a single fold from a pre-computed tensor cache."""
-    import torch.multiprocessing  # noqa: PLC0415
+    torch_mp = importlib.import_module("torch.multiprocessing")
 
-    torch.multiprocessing.set_sharing_strategy("file_system")
+    torch_mp.set_sharing_strategy("file_system")
 
     if argv is None:
         argv = sys.argv[1:]
@@ -1441,9 +1549,9 @@ def run_fold_from_cache(argv: list[str] | None = None) -> None:
         gpu_ids = [int(g.strip()) for g in args.gpus.split(",")]
 
     if gpu_ids is None:
-        import torch  # noqa: PLC0415
+        _torch = importlib.import_module("torch")
 
-        gpu_ids = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else [0]
+        gpu_ids = list(range(_torch.cuda.device_count())) if _torch.cuda.is_available() else [0]
 
     # Load model engines
     engines = _create_engines(args.fold_metadata, backend=args.backend, gpu_ids=gpu_ids)
@@ -1486,7 +1594,121 @@ def _parse_merge_args(argv: list[str] | None = None) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
-def _merge_contig_worker(  # noqa: PLR0913, PLR0912, PLR0915, C901
+def _load_contig_predictions(
+    contig: str,
+    pred_paths: list[str],
+) -> tuple[np.ndarray, list[str], list[float]] | None:
+    """Load and sort predictions for one contig from all fold parquet files.
+
+    Returns ``(pos_arr, rn_list, prob_list)`` sorted by position, or *None*
+    if no predictions exist for *contig*.
+    """
+    all_pos: list[np.ndarray] = []
+    all_rn: list[str] = []
+    all_prob: list[np.ndarray] = []
+    for path in pred_paths:
+        table = pq.read_table(path, filters=[("chrom", "==", contig)])
+        if table.num_rows == 0:
+            continue
+        all_pos.append(table.column("pos").to_numpy())
+        all_rn.extend(table.column("rn").to_pylist())
+        all_prob.append(table.column("prob").to_numpy())
+
+    if not all_pos:
+        return None
+
+    pos_arr = np.concatenate(all_pos)
+    prob_arr = np.concatenate(all_prob)
+    del all_pos, all_prob
+
+    order = np.argsort(pos_arr, kind="stable")
+    pos_arr = pos_arr[order]
+    prob_list = prob_arr[order].tolist()
+    rn_list = [all_rn[i] for i in order]
+    return pos_arr, rn_list, prob_list
+
+
+def _build_snvq_lut(
+    quality_lut_x: list[float] | None,
+    quality_lut_y: list[float] | None,
+    max_phred: float,
+) -> dict[int, float]:
+    """Pre-compute MQUAL->SNVQ lookup dict keyed by int(mqual*100)."""
+    if quality_lut_x is None or quality_lut_y is None:
+        return {}
+    lut_x = np.asarray(quality_lut_x, dtype=np.float64)
+    lut_y = np.asarray(quality_lut_y, dtype=np.float64)
+    right = float(lut_y[-1])
+    snvq_lut: dict[int, float] = {}
+    for mq_cent in range(int(max_phred * 100) + 1):
+        sq = float(np.interp(mq_cent / 100.0, lut_x, lut_y, left=0.0, right=right))
+        snvq_lut[mq_cent] = round(sq, 2)
+    return snvq_lut
+
+
+def _annotate_record(
+    rec: pysam.VariantRecord,
+    preds_at_pos: dict[str, float],
+    snvq_lut: dict[int, float],
+    max_phred: float,
+    min_prob_error: float,
+    low_qual_threshold: float,
+) -> None:
+    """Annotate a single VCF record with MQUAL/SNVQ from matched predictions."""
+    try:
+        rn_val = rec.samples[0].get("RN")
+    except (KeyError, IndexError):
+        rn_val = None
+
+    if not rn_val or not preds_at_pos:
+        return
+
+    rns = rn_val if isinstance(rn_val, tuple) else (rn_val,)
+
+    # Compute per-read MQUAL
+    mquals = []
+    for rn in rns:
+        prob = preds_at_pos.get(rn if isinstance(rn, str) else str(rn))
+        prob = prob if prob is not None and prob > 0 else 0.0
+        if prob > 0:
+            mq = -10.0 * math.log10(max(1.0 - prob, min_prob_error))
+            mq = min(mq, max_phred)
+        else:
+            mq = 0.0
+        mquals.append(round(mq, 2))
+
+    # Compute SNVQ
+    if snvq_lut:
+        snvqs = [snvq_lut.get(int(mq * 100), mq) for mq in mquals]
+    else:
+        snvqs = list(mquals)
+
+    rec.samples[0]["MQUAL"] = tuple(mquals)
+    rec.samples[0]["SNVQ"] = tuple(snvqs)
+
+    max_snvq = max(snvqs)
+    rec.qual = max_snvq
+    if max_snvq >= low_qual_threshold:
+        rec.filter.add("PASS")
+    else:
+        rec.filter.add("LowQual")
+
+
+def _copy_contig_records(vcf_in: str, vcf_out: str, contig: str) -> str:
+    """Copy contig records through without annotation (no predictions available)."""
+    with pysam.VariantFile(vcf_in) as inp:
+        try:
+            inp.header.add_line('##FILTER=<ID=LowQual,Description="SNVQ below quality threshold">')
+        except ValueError:
+            pass
+        with pysam.VariantFile(vcf_out, "w", header=inp.header) as out:
+            for rec in inp.fetch(contig):
+                out.write(rec)
+    pysam.tabix_index(vcf_out, preset="vcf", force=True)
+    return vcf_out
+
+
+def _merge_contig_worker(
     contig: str,
     vcf_in: str,
     vcf_out: str,
@@ -1501,68 +1723,21 @@ def _merge_contig_worker(  # noqa: PLR0913, PLR0912, PLR0915, C901
     pushdown) and streams VCF records.  Both sources are sorted by position,
     enabling an O(N+M) merge cursor instead of hash-table lookups.
 
-    No shared state with the parent — fully independent, picklable args only.
+    No shared state with the parent -- fully independent, picklable args only.
     """
-    import math  # noqa: PLC0415
+    loaded = _load_contig_predictions(contig, pred_paths)
+    if loaded is None:
+        return _copy_contig_records(vcf_in, vcf_out, contig)
 
-    # 1. Load predictions for this contig from all folds
-    all_pos: list[np.ndarray] = []
-    all_rn: list[str] = []
-    all_prob: list[np.ndarray] = []
-    for path in pred_paths:
-        table = pq.read_table(path, filters=[("chrom", "==", contig)])
-        if table.num_rows == 0:
-            continue
-        all_pos.append(table.column("pos").to_numpy())
-        all_rn.extend(table.column("rn").to_pylist())
-        all_prob.append(table.column("prob").to_numpy())
-
-    if not all_pos:
-        # No predictions for this contig — copy records through without annotation
-        with pysam.VariantFile(vcf_in) as inp:
-            try:
-                inp.header.add_line('##FILTER=<ID=LowQual,Description="SNVQ below quality threshold">')
-            except ValueError:
-                pass
-            with pysam.VariantFile(vcf_out, "w", header=inp.header) as out:
-                for rec in inp.fetch(contig):
-                    out.write(rec)
-        pysam.tabix_index(vcf_out, preset="vcf", force=True)
-        return vcf_out
-
-    pos_arr = np.concatenate(all_pos)
-    prob_arr = np.concatenate(all_prob)
-    del all_pos, all_prob
-
-    # Sort combined arrays by position (stable to keep per-fold order)
-    order = np.argsort(pos_arr, kind="stable")
-    pos_arr = pos_arr[order]
-    prob_list = prob_arr[order].tolist()  # pre-convert to Python float list (faster per-element access)
-    rn_list = [all_rn[i] for i in order]
-    del all_rn, prob_arr, order
-
+    pos_arr, rn_list, prob_list = loaded
     n_preds = len(pos_arr)
-    has_quality_lut = quality_lut_x is not None and quality_lut_y is not None
     max_phred = float(MAX_PHRED)
     min_prob_error = 10.0 ** (-max_phred / 10.0)
+    snvq_lut = _build_snvq_lut(quality_lut_x, quality_lut_y, max_phred)
 
-    # Pre-compute MQUAL→SNVQ lookup table as a dict keyed by int(mqual*100).
-    # This replaces per-read np.interp calls (3x faster, bit-exact for rounded mqual).
-    snvq_lut: dict[int, float] = {}
-    if has_quality_lut:
-        _lut_x = np.asarray(quality_lut_x, dtype=np.float64)
-        _lut_y = np.asarray(quality_lut_y, dtype=np.float64)
-        _right = float(_lut_y[-1])
-        for mq_cent in range(int(max_phred * 100) + 1):
-            sq = float(np.interp(mq_cent / 100.0, _lut_x, _lut_y, left=0.0, right=_right))
-            snvq_lut[mq_cent] = round(sq, 2)
-        del _lut_x, _lut_y
-
-    # 2. Stream VCF records with merge cursor
+    # Stream VCF records with merge cursor
     cursor = 0
-
     with pysam.VariantFile(vcf_in) as inp:
-        # Add LowQual filter to input header so records inherit it
         try:
             inp.header.add_line('##FILTER=<ID=LowQual,Description="SNVQ below quality threshold">')
         except ValueError:
@@ -1572,68 +1747,23 @@ def _merge_contig_worker(  # noqa: PLR0913, PLR0912, PLR0915, C901
             for rec in inp.fetch(contig):
                 pos = rec.pos
 
-                # Advance cursor past positions before this record
                 while cursor < n_preds and pos_arr[cursor] < pos:
                     cursor += 1
 
-                # Collect predictions at this position into a small dict
                 preds_at_pos: dict[str, float] = {}
                 i = cursor
                 while i < n_preds and pos_arr[i] == pos:
                     preds_at_pos[rn_list[i]] = prob_list[i]
                     i += 1
 
-                # Extract read names directly from pysam (avoid str() overhead)
-                try:
-                    rn_val = rec.samples[0].get("RN")
-                except (KeyError, IndexError):
-                    rn_val = None
-
-                if not rn_val or not preds_at_pos:
-                    out.write(rec)
-                    continue
-
-                rns = rn_val if isinstance(rn_val, tuple) else (rn_val,)
-
-                # Vectorized annotation: batch all reads at this position
-                matched_probs = []
-                for rn in rns:
-                    prob = preds_at_pos.get(rn if isinstance(rn, str) else str(rn))
-                    matched_probs.append(prob if prob is not None and prob > 0 else 0.0)
-
-                # Compute MQUAL: -10 * log10(1 - prob), clamped to MAX_PHRED
-                mquals = []
-                for prob in matched_probs:
-                    if prob > 0:
-                        mq = -10.0 * math.log10(max(1.0 - prob, min_prob_error))
-                        mq = min(mq, max_phred)
-                    else:
-                        mq = 0.0
-                    mquals.append(round(mq, 2))
-
-                # Compute SNVQ via pre-computed LUT dict (avoids np.interp overhead)
-                if snvq_lut:
-                    snvqs = [snvq_lut.get(int(mq * 100), mq) for mq in mquals]
-                else:
-                    snvqs = list(mquals)
-
-                rec.samples[0]["MQUAL"] = tuple(mquals)
-                rec.samples[0]["SNVQ"] = tuple(snvqs)
-
-                max_snvq = max(snvqs)
-                rec.qual = max_snvq
-                if max_snvq >= low_qual_threshold:
-                    rec.filter.add("PASS")
-                else:
-                    rec.filter.add("LowQual")
-
+                _annotate_record(rec, preds_at_pos, snvq_lut, max_phred, min_prob_error, low_qual_threshold)
                 out.write(rec)
 
     pysam.tabix_index(vcf_out, preset="vcf", force=True)
     return vcf_out
 
 
-def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
+def run_merge(argv: list[str] | None = None) -> None:
     """Merge per-fold predictions and annotate the featuremap VCF.
 
     Uses a streaming merge-join approach: each contig is processed by an
@@ -1658,8 +1788,6 @@ def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
     quality_lut_y = lut[1] if lut and len(lut) >= min_lut_entries else None
 
     # Quick scan: count predictions per contig (chrom column only — fast)
-    import pyarrow.compute as pc  # noqa: PLC0415
-
     contig_counts: dict[str, int] = {}
     total_preds = 0
     for pred_path in args.fold_predictions:
@@ -1711,10 +1839,8 @@ def run_merge(argv: list[str] | None = None) -> None:  # noqa: PLR0915
 
     # Each worker independently reads parquet + VCF — no shared state, no pickle of
     # large data, no COW issues.  Only small picklable args are sent to each worker.
-    from concurrent.futures import ProcessPoolExecutor as _ProcPool  # noqa: PLC0415
-
     tmp_output_paths: list[str] = []
-    with _ProcPool(max_workers=num_workers) as pool:
+    with ProcessPoolExecutor(max_workers=num_workers) as pool:
         futures = {}
         for contig in contig_tasks:
             out_path = os.path.join(out_dir, contig + ".vcf.gz")

@@ -113,7 +113,124 @@ def compute_is_cycle_skip_column(data_df: pd.DataFrame, flow_order: str = "TGCA"
     return result
 
 
-def prepare_report(  # noqa: C901, PLR0915, PLR0912
+class _ModelWithTrainingResults:
+    """Wrapper that delegates to an XGBoost model but overrides evals_result."""
+
+    def __init__(self, model, training_result=None):
+        self.model = model
+        self._training_result = training_result or {}
+        # Delegate all other attributes to the underlying model
+        for attr in dir(model):
+            if not attr.startswith("_") and attr != "evals_result" and hasattr(model, attr):
+                setattr(self, attr, getattr(model, attr))
+
+    def evals_result(self):
+        return self._training_result
+
+    def __getattr__(self, name):
+        return getattr(self.model, name)
+
+
+def _load_models_from_prefix(models_prefix: str) -> list:
+    """Load XGBoost models from numbered JSON files matching *prefix*<N>.json."""
+    models = []
+    fold_idx = 0
+    while True:
+        model_path = f"{models_prefix}{fold_idx}.json"
+        if not os.path.exists(model_path):
+            break
+        model = xgb.XGBClassifier()
+        model.load_model(model_path)
+        models.append(model)
+        fold_idx += 1
+    return models
+
+
+def _resolve_model_path(orig_model_path: str) -> str:
+    """Resolve a model path, falling back to CWD if the original doesn't exist."""
+    if os.path.exists(orig_model_path):
+        return orig_model_path
+    alt_path = os.path.join(os.getcwd(), os.path.basename(orig_model_path))
+    logger.debug(
+        "Model file not found at '%s'. Trying CWD path '%s'.",
+        orig_model_path,
+        alt_path,
+    )
+    if os.path.exists(alt_path):
+        return alt_path
+    raise FileNotFoundError(
+        "Expected model file not found. Looked for: "
+        f"'{orig_model_path}' and '{alt_path}'. Neither location contains the model file."
+    )
+
+
+def _load_models_from_metadata(metadata: dict) -> list:
+    """Load XGBoost models using paths stored in metadata."""
+    models = []
+    for orig_model_path in metadata.get("model_paths", {}).values():
+        if not orig_model_path:
+            continue
+        model = xgb.XGBClassifier()
+        path_to_load = _resolve_model_path(orig_model_path)
+        model.load_model(path_to_load)
+        models.append(model)
+    return models
+
+
+def _fallback_dummy_models(metadata: dict) -> list:
+    """Create dummy classifiers when no XGBoost models are available."""
+    from sklearn.dummy import DummyClassifier
+
+    num_folds = max(len(metadata.get("model_paths", {})), 1)
+    models = [DummyClassifier(strategy="constant", constant=0) for _ in range(num_folds)]
+    for m in models:
+        m.fit([[0], [1]], [0, 1])
+    logger.warning("No XGBoost models found; using dummy classifiers. SHAP/training plots will be skipped.")
+    return models
+
+
+def _wrap_models_with_training_results(models: list, training_results) -> list:
+    """Wrap models with training evaluation results for report consumption."""
+    if training_results is not None:
+        return [
+            _ModelWithTrainingResults(model, training_results[i] if i < len(training_results) else {})
+            for i, model in enumerate(models)
+        ]
+    return [_ModelWithTrainingResults(model) for model in models]
+
+
+def _build_params(metadata: dict, user_meta: dict, num_models: int) -> dict:
+    """Build the params dictionary from metadata features and user settings."""
+    categorical_features = [f for f in metadata["features"] if f["type"] == "c"]
+    numerical_features = [f for f in metadata["features"] if f["type"] != "c"]
+
+    return {
+        "categorical_features_names": [f["name"] for f in categorical_features],
+        "categorical_features_dict": {f["name"]: list(f["values"].keys()) for f in categorical_features},
+        "numerical_features": [f["name"] for f in numerical_features],
+        "fp_regions_bed_file": 1,
+        "num_CV_folds": num_models,
+        "adapter_version": user_meta.get("adapter_version", None),
+        "docker_image": user_meta.get("docker_image", None),
+        "pipeline_version": user_meta.get("pipeline_version", None),
+        "pre-filter": None,
+        "start_tag_col": ST,
+        "end_tag_col": ET,
+    }
+
+
+def _make_qual_interpolating_function(quality_table: list):
+    """Create a quality interpolation function from the recalibration table."""
+    x_values = np.array(quality_table[0])
+    y_values = np.array(quality_table[1])
+
+    def _interpolate(x):
+        return np.interp(x, x_values, y_values, left=0, right=y_values[-1])
+
+    return _interpolate
+
+
+def prepare_report(
     featuremap_df: str,  # Path to the featuremap dataframe parquet file
     srsnv_metadata: str,  # Path to the srsnv_metadata JSON file
     report_path: str,
@@ -146,107 +263,19 @@ def prepare_report(  # noqa: C901, PLR0915, PLR0912
     user_meta = metadata.get("metadata", {})
 
     # Load models
-    models = []
     if models_prefix is not None:
-        # Use provided prefix to construct model paths
-        # Try to read as many models as possible until file doesn't exist
-        fold_idx = 0
-        while True:
-            model_path = f"{models_prefix}{fold_idx}.json"
-            if not os.path.exists(model_path):
-                break
-            model = xgb.XGBClassifier()
-            model.load_model(model_path)
-            models.append(model)
-            fold_idx += 1
+        models = _load_models_from_prefix(models_prefix)
     else:
-        # Use model paths from metadata
-        for orig_model_path in metadata.get("model_paths", {}).values():
-            if not orig_model_path:
-                continue
-            model = xgb.XGBClassifier()
-            # File existence + fallback check (refactored for lint compliance)
-            path_to_load = orig_model_path
-            if not os.path.exists(path_to_load):
-                _alt_model_path = os.path.join(os.getcwd(), os.path.basename(path_to_load))
-                logger.debug(
-                    "Model file not found at '%s'. Trying CWD path '%s'.",
-                    path_to_load,
-                    _alt_model_path,
-                )
-                if os.path.exists(_alt_model_path):
-                    path_to_load = _alt_model_path
-                else:
-                    raise FileNotFoundError(
-                        "Expected model file not found. Looked for: "
-                        f"'{path_to_load}' and '{_alt_model_path}'. Neither location contains the model file."
-                    )
-            model.load_model(path_to_load)
-            models.append(model)
+        models = _load_models_from_metadata(metadata)
 
-    # Fallback: when no XGBoost models are available (e.g. DNN-only run),
-    # create dummy classifiers so the report can proceed. Model-dependent
-    # plots (SHAP, training progress) will be skipped via @exception_handler.
     if not models:
-        from sklearn.dummy import DummyClassifier
-
-        num_folds = max(len(metadata.get("model_paths", {})), 1)
-        models = [DummyClassifier(strategy="constant", constant=0) for _ in range(num_folds)]
-        for m in models:
-            m.fit([[0], [1]], [0, 1])
-        logger.warning("No XGBoost models found; using dummy classifiers. SHAP/training plots will be skipped.")
-
-    # Load training evaluation results
-    training_results = metadata["training_results"]
-
-    # Create a wrapper class for models that includes training results
-    class ModelWithTrainingResults:
-        def __init__(self, model, training_result=None):
-            self.model = model
-            self._training_result = training_result or {}
-            # Delegate all other attributes to the underlying model
-            for attr in dir(model):
-                if not attr.startswith("_") and attr != "evals_result" and hasattr(model, attr):
-                    setattr(self, attr, getattr(model, attr))
-
-        def evals_result(self):
-            return self._training_result
-
-        def __getattr__(self, name):
-            return getattr(self.model, name)
+        models = _fallback_dummy_models(metadata)
 
     # Wrap models with training results
-    if training_results is not None:
-        models = [
-            ModelWithTrainingResults(model, training_results[i] if i < len(training_results) else {})
-            for i, model in enumerate(models)
-        ]
-    else:
-        models = [ModelWithTrainingResults(model) for model in models]
+    models = _wrap_models_with_training_results(models, metadata["training_results"])
 
-    # Create params dictionary
-    params = {}
-
-    # Extract categorical and numerical features from metadata
-    categorical_features = [feature for feature in metadata["features"] if feature["type"] == "c"]
-    numerical_features = [feature for feature in metadata["features"] if feature["type"] != "c"]
-
-    params["categorical_features_names"] = [feature["name"] for feature in categorical_features]
-    params["categorical_features_dict"] = {
-        feature["name"]: list(feature["values"].keys()) for feature in categorical_features
-    }
-    params["numerical_features"] = [feature["name"] for feature in numerical_features]
-    params["fp_regions_bed_file"] = 1
-    params["num_CV_folds"] = len(models)
-
-    # Placeholder for params that will be fixed later TODO: fix these later
-    # prefer nested metadata values, fall back to legacy root-level keys
-    params["adapter_version"] = user_meta.get("adapter_version", None)
-    params["docker_image"] = user_meta.get("docker_image", None)
-    params["pipeline_version"] = user_meta.get("pipeline_version", None)
-    params["pre-filter"] = None
-    params["start_tag_col"] = ST
-    params["end_tag_col"] = ET
+    # Build params dictionary from metadata
+    params = _build_params(metadata, user_meta, len(models))
 
     # Add columns to featuremap_df
     data_df = add_is_mixed_to_featuremap_df(
@@ -257,30 +286,12 @@ def prepare_report(  # noqa: C901, PLR0915, PLR0912
     data_df[IS_CYCLE_SKIP] = compute_is_cycle_skip_column(data_df)
 
     # Handle random seed
-    rng = None
-    if random_seed is not None:
-        rng = np.random.default_rng(random_seed)
+    rng = np.random.default_rng(random_seed) if random_seed is not None else None
 
     # Create quality interpolating function from quality_recalibration_table
-    quality_table = metadata["quality_recalibration_table"]
-    x_values = np.array(quality_table[0])
-    y_values = np.array(quality_table[1])
-
-    def qual_interpolating_function(x):
-        # Use np.interp with left=0 for x < x_values[0] and right=y_values[-1] for x > x_values[-1]
-        return np.interp(x, x_values, y_values, left=0, right=y_values[-1])
-
-    # Missing arguments - initialize to None for now
-    # These will be fixed later
-    lod_filters = None
-    lod_label = None
-    c_lod = "LoD"
-    df_mrd_simulation = None
-    statistics_h5_file = None  # str(os.path.join(report_path, f"{basename}.statistics_h5_file.h5"))
-    statistics_json_file = None  # str(os.path.join(report_path, f"{basename}.statistics_json_file.json"))
+    qual_interpolating_function = _make_qual_interpolating_function(metadata["quality_recalibration_table"])
 
     # Ensure basename has consistent format for the SRSNVReport
-    # The create_srsnv_report_html function will add a dot if basename is not empty and doesn't end with one
     report_base_name = basename
     if len(basename) > 0 and not basename.endswith("."):
         report_base_name += "."
@@ -292,13 +303,13 @@ def prepare_report(  # noqa: C901, PLR0915, PLR0912
         params=params,
         out_path=report_path,
         base_name=report_base_name,
-        lod_filters=lod_filters,
-        lod_label=lod_label,
-        c_lod=c_lod,
-        df_mrd_simulation=df_mrd_simulation,
+        lod_filters=None,
+        lod_label=None,
+        c_lod="LoD",
+        df_mrd_simulation=None,
         ml_qual_to_qual_fn=qual_interpolating_function,
-        statistics_h5_file=statistics_h5_file,
-        statistics_json_file=statistics_json_file,
+        statistics_h5_file=None,
+        statistics_json_file=None,
         srsnv_metadata=srsnv_metadata,
         rng=rng,
         use_gpu_for_shap=use_gpu_for_shap,

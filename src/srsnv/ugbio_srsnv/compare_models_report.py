@@ -19,7 +19,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from matplotlib import gridspec
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
     average_precision_score,
@@ -32,6 +33,13 @@ from sklearn.metrics import (
     roc_curve,
 )
 from ugbio_core.logger import logger
+
+from ugbio_srsnv.srsnv_utils import (
+    FLOW_ORDER,
+    get_trinuc_context_with_alt_fwd_vectorized,
+    is_cycle_skip,
+    prob_to_logit,
+)
 
 matplotlib.use("Agg")
 
@@ -241,7 +249,7 @@ def _load_dnn_epoch_metrics(meta: dict) -> pd.DataFrame | None:
             metrics_df = pd.read_csv(csv_file)
             if "epoch" in metrics_df.columns:
                 frames.append(metrics_df.groupby("epoch").first().reset_index())
-        except Exception:  # noqa: BLE001, S112
+        except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError, KeyError):
             continue
 
     if not frames:
@@ -282,42 +290,10 @@ def _get_training_curves(meta: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 
 
-def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
-    """Compute all metrics, tables, and plots for the N-model comparison report."""
-    merged = data["merged"]
-    model_names = data["model_names"]
-    model_descs = data["models"]
-    model_metas = data["model_metas"]
-    model_dfs = data["model_dfs"]
-    baseline = model_names[0]
-    non_baseline = model_names[1:]
-    n_models = len(model_names)
-
-    m_test = merged[merged["fold_id"].isna()]
-    m_val = merged[merged["fold_id"] == 1]
-    y_test = m_test["label"].astype(int).to_numpy()
-    y_val = m_val["label"].astype(int).to_numpy()
-
-    probs_test = {n: m_test[f"prob_{n}"].to_numpy() for n in model_names}
-    probs_val = {n: m_val[f"prob_{n}"].to_numpy() for n in model_names}
-    snvqs_test = {n: m_test[f"snvq_{n}"].to_numpy() for n in model_names}
-    mquals_test = {n: m_test[f"mqual_{n}"].to_numpy() for n in model_names}
-
-    report: dict = {
-        "plots": {},
-        "models": model_descs,
-        "model_names": model_names,
-        "baseline": baseline,
-        "non_baseline": non_baseline,
-    }
-
-    # ---- 1. Executive summary ----
-    logger.info("Computing executive summary metrics")
+def _compute_executive_summary(y_val, y_test, probs_val, probs_test, model_names, baseline, non_baseline):
+    """Compute executive summary metrics for all models."""
     summary_rows = []
-    for split_name, y, split_probs in [
-        ("Validation", y_val, probs_val),
-        ("Test (holdout)", y_test, probs_test),
-    ]:
+    for split_name, y, split_probs in [("Validation", y_val, probs_val), ("Test (holdout)", y_test, probs_test)]:
         all_m = {n: _calc_metrics(y, split_probs[n]) for n in model_names}
         base_m = all_m[baseline]
         for metric in ["auc", "aupr", "logloss", "brier"]:
@@ -327,10 +303,11 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
                 ri = _relative_improvement(base_m[metric], all_m[n][metric], metric)
                 rel_imps[n] = {"val": _fmt(ri, 1) if ri is not None else "N/A", "cls": _improvement_class(ri)}
             summary_rows.append({"split": split_name, "metric": metric.upper(), "values": values, "rel_imps": rel_imps})
-    report["summary"] = summary_rows
+    return summary_rows
 
-    # ---- 2. Dataset overview ----
-    logger.info("Computing dataset overview")
+
+def _compute_dataset_overview(model_metas, model_names, model_dfs, merged):
+    """Compute dataset overview and split configuration."""
     first_meta = model_metas[model_names[0]]
     split_info = first_meta.get("split_prevalence", {})
     dataset_rows = []
@@ -345,11 +322,9 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
                 "prevalence": _fmt(info.get("prevalence"), 4),
             }
         )
-    report["dataset"] = dataset_rows
-
     manifest = first_meta.get("split_manifest", {})
     model_totals = {n: len(model_dfs[n]) for n in model_names}
-    report["split_config"] = {
+    split_config = {
         "holdout_chromosomes": ", ".join(manifest.get("holdout_chromosomes", [])),
         "val_fraction": manifest.get("val_fraction"),
         "hash_key": manifest.get("hash_key"),
@@ -357,9 +332,11 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
         "model_totals": model_totals,
         "merged_total": len(merged),
     }
+    return dataset_rows, split_config
 
-    # ---- 3. ROC curves ----
-    logger.info("Generating ROC curves")
+
+def _compute_roc_pr_plots(y_val, y_test, probs_val, probs_test, model_descs):
+    """Generate ROC and PR curve plots."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     for ax, split_name, y, split_probs in [
         (axes[0], "Validation", y_val, probs_val),
@@ -369,9 +346,8 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
             p = split_probs[m["name"]]
             fpr, tpr, _ = roc_curve(y, p)
             auc_val = roc_auc_score(y, p)
-            ax.plot(
-                fpr, tpr, color=m["color"], lw=2, linestyle=m["linestyle"], label=f"{m['name']} (AUC={auc_val:.4f})"
-            )
+            lbl = f"{m['name']} (AUC={auc_val:.4f})"
+            ax.plot(fpr, tpr, color=m["color"], lw=2, linestyle=m["linestyle"], label=lbl)
         ax.plot([0, 1], [0, 1], "k--", lw=1, alpha=0.4)
         ax.set_xlabel("False Positive Rate")
         ax.set_ylabel("True Positive Rate")
@@ -379,10 +355,8 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
         ax.legend(loc="lower right", fontsize=9)
         ax.grid(visible=True, alpha=0.3)
     fig.tight_layout()
-    report["plots"]["roc"] = _fig_to_b64(fig)
+    roc_b64 = _fig_to_b64(fig)
 
-    # ---- 4. Precision-Recall curves ----
-    logger.info("Generating PR curves")
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     for ax, split_name, y, split_probs in [
         (axes[0], "Validation", y_val, probs_val),
@@ -401,10 +375,12 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
         ax.legend(loc="lower left", fontsize=9)
         ax.grid(visible=True, alpha=0.3)
     fig.tight_layout()
-    report["plots"]["pr"] = _fig_to_b64(fig)
+    pr_b64 = _fig_to_b64(fig)
+    return roc_b64, pr_b64
 
-    # ---- 5. Score distribution (SNVQ / Phred-scaled) ----
-    logger.info("Generating score distributions")
+
+def _compute_score_dist_plot(y_test, snvqs_test, model_names, model_descs, n_models):
+    """Generate SNVQ score distribution plot."""
     tp_mask_global = y_test == 1
     all_snvq = np.concatenate([snvqs_test[n] for n in model_names])
     snvq_xmin, snvq_xmax = _finite_hist_range(all_snvq, min_floor=0.0)
@@ -441,10 +417,11 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     ax.legend(fontsize=9, ncol=max(1, n_models // 2))
     ax.grid(visible=True, alpha=0.3)
     fig.tight_layout()
-    report["plots"]["score_dist"] = _fig_to_b64(fig)
+    return _fig_to_b64(fig)
 
-    # ---- 6. Calibration + SNVQ-MQUAL mapping ----
-    logger.info("Generating calibration & SNVQ-MQUAL mapping")
+
+def _compute_calibration_plot(y_test, probs_test, mquals_test, model_names, model_descs, model_metas):
+    """Generate calibration and SNVQ-MQUAL mapping plot."""
     fig, (ax_cal, ax_lut, ax_hist) = plt.subplots(3, 1, figsize=(9, 14), gridspec_kw={"height_ratios": [3, 2, 1]})
     for m in model_descs:
         p = probs_test[m["name"]]
@@ -464,7 +441,7 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
         if lut is not None and len(lut) == _LUT_PAIR_LEN:
             x_lut, y_lut = np.array(lut[0]), np.array(lut[1])
             ax_lut.plot(
-                x_lut, y_lut, color=m["color"], linestyle=m["linestyle"], lw=2, label=f"{m['name']}: MQUAL→SNVQ"
+                x_lut, y_lut, color=m["color"], linestyle=m["linestyle"], lw=2, label=f"{m['name']}: MQUAL->SNVQ"
             )
 
     ax_lut_twin = ax_lut.twinx()
@@ -489,7 +466,7 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     ax_lut.set_xlabel("MQUAL")
     ax_lut.set_ylabel("SNVQ")
     ax_lut.set_xlim(0, mq_max)
-    ax_lut.set_title("MQUAL → SNVQ Mapping")
+    ax_lut.set_title("MQUAL -> SNVQ Mapping")
     ax_lut.legend(loc="upper left", fontsize=8)
     ax_lut_twin.set_ylabel("Density")
     ax_lut_twin.legend(loc="upper right", fontsize=7)
@@ -513,10 +490,11 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     ax_hist.legend(fontsize=9)
     ax_hist.grid(visible=True, alpha=0.3)
     fig.tight_layout()
-    report["plots"]["calibration"] = _fig_to_b64(fig)
+    return _fig_to_b64(fig)
 
-    # ---- 7. Quality score distribution (MQUAL from parquet) ----
-    logger.info("Computing quality score distributions")
+
+def _compute_quality_dist(y_test, mquals_test, model_names, model_descs, n_models):
+    """Compute quality percentiles and distribution plot."""
     percentiles = [5, 10, 25, 50, 75, 90, 95]
     qual_rows = []
     for name in model_names:
@@ -528,7 +506,6 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
             for p in percentiles:
                 row[f"p{p}"] = _fmt(float(np.percentile(vals, p)), 1) if len(vals) > 0 else "N/A"
             qual_rows.append(row)
-    report["quality_percentiles"] = qual_rows
 
     all_mqual = np.concatenate([mquals_test[n] for n in model_names])
     mqual_xmin, mqual_xmax = _finite_hist_range(all_mqual, min_floor=0.0)
@@ -566,10 +543,11 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     ax.legend(fontsize=9, ncol=max(1, n_models // 2))
     ax.grid(visible=True, alpha=0.3)
     fig.tight_layout()
-    report["plots"]["quality_dist"] = _fig_to_b64(fig)
+    return qual_rows, _fig_to_b64(fig)
 
-    # ---- 8. Training progress ----
-    logger.info("Generating training progress curves")
+
+def _compute_training_progress_plot(model_metas, model_descs, n_models):
+    """Generate training progress curves plot."""
     fig, axes = plt.subplots(2, n_models, figsize=(8 * n_models, 10), squeeze=False)
     for col, m in enumerate(model_descs):
         curves = _get_training_curves(model_metas[m["name"]])
@@ -609,10 +587,11 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
                 axes[row, c].set_ylim(ymin - margin, ymax + margin)
     fig.suptitle("Training Progress", fontsize=14, y=1.01)
     fig.tight_layout()
-    report["plots"]["training_progress"] = _fig_to_b64(fig)
+    return _fig_to_b64(fig)
 
-    # ---- 9. Confusion matrices ----
-    logger.info("Generating confusion matrices")
+
+def _compute_confusion_plot(y_test, probs_test, model_descs, n_models):
+    """Generate confusion matrices plot."""
     fig, axes_cm = plt.subplots(1, n_models, figsize=(6 * n_models, 5), squeeze=False)
     threshold = 0.5
     for idx, m in enumerate(model_descs):
@@ -639,10 +618,11 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
         ax.set_title(f"{m['name']} (thr={threshold}, F1={f1:.4f})")
     fig.suptitle("Confusion Matrix — Test Set", fontsize=13)
     fig.tight_layout()
-    report["plots"]["confusion"] = _fig_to_b64(fig)
+    return _fig_to_b64(fig)
 
-    # ---- 10. Per-chromosome performance ----
-    logger.info("Computing per-chromosome performance")
+
+def _compute_per_chrom(m_test, model_names, model_descs, baseline, n_models):
+    """Compute per-chromosome performance metrics and optional plot."""
     chroms_in_test = sorted(m_test["CHROM"].unique())
     chrom_rows = []
     for chrom in chroms_in_test:
@@ -670,8 +650,8 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
                     "cls": _improvement_class(ri_ap),
                 }
         chrom_rows.append(crow)
-    report["per_chrom"] = chrom_rows
 
+    plot_b64 = None
     if len(chroms_in_test) > 1:
         fig, axes_pc = plt.subplots(1, 2, figsize=(12, 5))
         x_pos = np.arange(len(chroms_in_test))
@@ -688,67 +668,79 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
             ax.legend(fontsize=9)
             ax.grid(visible=True, alpha=0.3, axis="y")
         fig.tight_layout()
-        report["plots"]["per_chrom"] = _fig_to_b64(fig)
+        plot_b64 = _fig_to_b64(fig)
+    return chrom_rows, plot_b64
 
-    # ---- 11. Model architecture summary ----
-    logger.info("Building model architecture summary")
+
+def _compute_arch_summary(model_names, model_metas):
+    """Build model architecture summary list."""
     arch_list = []
     for name in model_names:
         meta = model_metas[name]
         info: dict = {"name": name, "params": [], "feature_names": None, "n_features": None}
-
-        mp = meta.get("model_params", {})
-        if mp.get("n_estimators"):
-            info["params"].append(("n_estimators", mp["n_estimators"]))
-        if mp.get("early_stopping_rounds"):
-            info["params"].append(("early_stopping_rounds", mp["early_stopping_rounds"]))
-        em = mp.get("eval_metric", [])
-        if em:
-            info["params"].append(("eval_metric", ", ".join(em)))
-
-        features = meta.get("features", [])
-        if features:
-            info["n_features"] = len(features)
-            info["params"].append(("Number of features", len(features)))
-            info["feature_names"] = ", ".join(
-                f.get("name", str(f)) if isinstance(f, dict) else str(f) for f in features
-            )
-
-        ss = meta.get("split_summary", {})
-        if ss.get("best_iteration") is not None:
-            info["params"].append(("Best iteration", ss["best_iteration"]))
-
-        dnn_arch = meta.get("model_architecture", {})
-        if dnn_arch.get("class_name"):
-            info["params"].append(("Architecture", dnn_arch["class_name"]))
-        if dnn_arch.get("trainable_parameters") is not None:
-            info["params"].append(("Trainable parameters", f"{dnn_arch['trainable_parameters']:,}"))
-
-        tp = meta.get("training_parameters", {})
-        param_map = [
-            ("epochs", "Epochs (max)"),
-            ("patience", "Patience"),
-            ("batch_size", "Batch size"),
-            ("learning_rate", "Learning rate"),
-            ("use_amp", "Mixed precision (AMP)"),
-        ]
-        for key, label in param_map:
-            if tp.get(key) is not None:
-                info["params"].append((label, tp[key]))
-
-        tr = meta.get("training_results", [])
-        if isinstance(tr, list) and tr:
-            fold0 = tr[0]
-            if fold0.get("best_epoch") is not None:
-                info["params"].append(("Best epoch", fold0["best_epoch"]))
-            if fold0.get("stopped_early") is not None:
-                info["params"].append(("Early stopped", fold0["stopped_early"]))
-
+        _populate_arch_info(info, meta)
         arch_list.append(info)
-    report["arch"] = arch_list
+    return arch_list
 
-    # ---- 12. SNVQ threshold recall ----
-    logger.info("Computing SNVQ threshold recall")
+
+def _populate_arch_xgb_params(info: dict, meta: dict) -> None:
+    """Add XGBoost-specific params to arch info."""
+    mp = meta.get("model_params", {})
+    if mp.get("n_estimators"):
+        info["params"].append(("n_estimators", mp["n_estimators"]))
+    if mp.get("early_stopping_rounds"):
+        info["params"].append(("early_stopping_rounds", mp["early_stopping_rounds"]))
+    em = mp.get("eval_metric", [])
+    if em:
+        info["params"].append(("eval_metric", ", ".join(em)))
+
+    features = meta.get("features", [])
+    if features:
+        info["n_features"] = len(features)
+        info["params"].append(("Number of features", len(features)))
+        info["feature_names"] = ", ".join(f.get("name", str(f)) if isinstance(f, dict) else str(f) for f in features)
+
+    ss = meta.get("split_summary", {})
+    if ss.get("best_iteration") is not None:
+        info["params"].append(("Best iteration", ss["best_iteration"]))
+
+
+def _populate_arch_dnn_params(info: dict, meta: dict) -> None:
+    """Add DNN-specific params to arch info."""
+    dnn_arch = meta.get("model_architecture", {})
+    if dnn_arch.get("class_name"):
+        info["params"].append(("Architecture", dnn_arch["class_name"]))
+    if dnn_arch.get("trainable_parameters") is not None:
+        info["params"].append(("Trainable parameters", f"{dnn_arch['trainable_parameters']:,}"))
+
+    tp = meta.get("training_parameters", {})
+    for key, label in [
+        ("epochs", "Epochs (max)"),
+        ("patience", "Patience"),
+        ("batch_size", "Batch size"),
+        ("learning_rate", "Learning rate"),
+        ("use_amp", "Mixed precision (AMP)"),
+    ]:
+        if tp.get(key) is not None:
+            info["params"].append((label, tp[key]))
+
+    tr = meta.get("training_results", [])
+    if isinstance(tr, list) and tr:
+        fold0 = tr[0]
+        if fold0.get("best_epoch") is not None:
+            info["params"].append(("Best epoch", fold0["best_epoch"]))
+        if fold0.get("stopped_early") is not None:
+            info["params"].append(("Early stopped", fold0["stopped_early"]))
+
+
+def _populate_arch_info(info: dict, meta: dict) -> None:
+    """Fill architecture info dict from model metadata."""
+    _populate_arch_xgb_params(info, meta)
+    _populate_arch_dnn_params(info, meta)
+
+
+def _compute_snvq_recall(y_test, snvqs_test, model_names, baseline):
+    """Compute SNVQ threshold recall data."""
     n_tp_test = int(y_test.sum())
     tp_mask_test = y_test == 1
     median_snvqs = {n: float(np.median(snvqs_test[n][tp_mask_test])) for n in model_names}
@@ -768,22 +760,118 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
                 ri = _relative_improvement(base_recall, recall, "auc")
                 row_r["ri"][name] = {"val": _fmt(ri, 1) if ri is not None else "N/A", "cls": _improvement_class(ri)}
         snvq_recall_rows.append(row_r)
-
-    report["snvq_recall"] = {
+    return {
         "rows": snvq_recall_rows,
         "median_snvqs": {n: _fmt(median_snvqs[n], 1) for n in model_names},
         "n_tp": f"{n_tp_test:,}",
+    }, tp_mask_test
+
+
+def compute_report_data(data: dict) -> dict:
+    """Compute all metrics, tables, and plots for the N-model comparison report."""
+    merged, model_names = data["merged"], data["model_names"]
+    model_descs, model_metas, model_dfs = data["models"], data["model_metas"], data["model_dfs"]
+    baseline = model_names[0]
+    non_baseline = model_names[1:]
+    n_models = len(model_names)
+
+    m_test = merged[merged["fold_id"].isna()]
+    m_val = merged[merged["fold_id"] == 1]
+    y_test = m_test["label"].astype(int).to_numpy()
+    y_val = m_val["label"].astype(int).to_numpy()
+
+    probs_test = {n: m_test[f"prob_{n}"].to_numpy() for n in model_names}
+    probs_val = {n: m_val[f"prob_{n}"].to_numpy() for n in model_names}
+    snvqs_test = {n: m_test[f"snvq_{n}"].to_numpy() for n in model_names}
+    mquals_test = {n: m_test[f"mqual_{n}"].to_numpy() for n in model_names}
+
+    report: dict = {
+        "plots": {},
+        "models": model_descs,
+        "model_names": model_names,
+        "baseline": baseline,
+        "non_baseline": non_baseline,
     }
 
-    # ---- 12b. SNVQ vs ppmSeq tags ----
-    logger.info("Computing SNVQ vs ppmSeq tag heatmaps")
-    report["snvq_tags"] = _compute_snvq_vs_ppmseq_tags(m_test, tp_mask_test, snvqs_test, model_names, model_descs)
+    logger.info("Computing executive summary metrics")
+    report["summary"] = _compute_executive_summary(
+        y_val,
+        y_test,
+        probs_val,
+        probs_test,
+        model_names,
+        baseline,
+        non_baseline,
+    )
 
-    # ---- 15. Logit histogram ----
+    logger.info("Computing dataset overview")
+    report["dataset"], report["split_config"] = _compute_dataset_overview(
+        model_metas,
+        model_names,
+        model_dfs,
+        merged,
+    )
+
+    logger.info("Generating ROC and PR curves")
+    report["plots"]["roc"], report["plots"]["pr"] = _compute_roc_pr_plots(
+        y_val,
+        y_test,
+        probs_val,
+        probs_test,
+        model_descs,
+    )
+
+    logger.info("Generating score distributions")
+    report["plots"]["score_dist"] = _compute_score_dist_plot(y_test, snvqs_test, model_names, model_descs, n_models)
+
+    logger.info("Generating calibration & SNVQ-MQUAL mapping")
+    report["plots"]["calibration"] = _compute_calibration_plot(
+        y_test,
+        probs_test,
+        mquals_test,
+        model_names,
+        model_descs,
+        model_metas,
+    )
+
+    logger.info("Computing quality score distributions")
+    report["quality_percentiles"], report["plots"]["quality_dist"] = _compute_quality_dist(
+        y_test,
+        mquals_test,
+        model_names,
+        model_descs,
+        n_models,
+    )
+
+    logger.info("Generating training progress curves")
+    report["plots"]["training_progress"] = _compute_training_progress_plot(model_metas, model_descs, n_models)
+
+    logger.info("Generating confusion matrices")
+    report["plots"]["confusion"] = _compute_confusion_plot(y_test, probs_test, model_descs, n_models)
+
+    logger.info("Computing per-chromosome performance")
+    report["per_chrom"], per_chrom_plot = _compute_per_chrom(m_test, model_names, model_descs, baseline, n_models)
+    if per_chrom_plot:
+        report["plots"]["per_chrom"] = per_chrom_plot
+
+    logger.info("Building model architecture summary")
+    report["arch"] = _compute_arch_summary(model_names, model_metas)
+
+    logger.info("Computing SNVQ threshold recall")
+    report["snvq_recall"], tp_mask_test = _compute_snvq_recall(y_test, snvqs_test, model_names, baseline)
+
+    logger.info("Computing SNVQ vs ppmSeq tag heatmaps")
+    report["snvq_tags"] = _compute_snvq_vs_ppmseq_tags(
+        m_test,
+        tp_mask_test,
+        snvqs_test,
+        model_names,
+        model_descs,
+    )
+
     logger.info("Generating logit histogram")
     report["plots"]["logit_hist"] = _compute_logit_histogram(m_test, y_test, model_names, model_descs)
 
-    # ---- 16. SNVQ histogram by mixed status ----
     logger.info("Generating SNVQ histogram by mixed status")
     report["plots"]["snvq_mixed_hist"] = _compute_snvq_mixed_histogram(
         m_test,
@@ -793,7 +881,6 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
         model_descs,
     )
 
-    # ---- 17. SNVQ by trinucleotide context ----
     logger.info("Generating SNVQ by trinucleotide context")
     report["plots"]["trinuc_snvq"] = _compute_trinuc_snvq_comparison(
         m_test,
@@ -803,9 +890,7 @@ def compute_report_data(data: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
         model_descs,
     )
 
-    # ---- 13. Error analysis ----
     report["error_analysis"] = _compute_error_analysis(m_test, y_test, model_names, baseline, model_descs)
-
     return report
 
 
@@ -1064,28 +1149,8 @@ def _compute_error_agreement(
 # ---------------------------------------------------------------------------
 
 
-def _compute_snvq_vs_ppmseq_tags(  # noqa: PLR0915
-    m_test: pd.DataFrame,
-    tp_mask: np.ndarray,
-    snvqs: dict[str, np.ndarray],
-    model_names: list[str],
-    model_descs: list[dict],
-) -> dict:
-    """Compute median SNVQ per ppmSeq start/end tag combination for all models."""
-    result: dict = {}
-    df_tp = m_test.loc[tp_mask].copy()
-
-    st_col = "st" if "st" in df_tp.columns else None
-    et_col = "et" if "et" in df_tp.columns else None
-    if st_col is None or et_col is None:
-        logger.warning("ppmSeq tag columns (st, et) not found — skipping SNVQ vs tags section")
-        return result
-
-    for name in model_names:
-        df_tp[f"snvq_{name}"] = snvqs[name][tp_mask]
-    df_tp[st_col] = df_tp[st_col].astype(str).replace({"": "(empty)", "nan": "(empty)"})
-    df_tp[et_col] = df_tp[et_col].astype(str).replace({"": "(empty)", "nan": "(empty)"})
-
+def _build_tag_pivots(df_tp, model_names, st_col, et_col):
+    """Build pivots and count/pct tables for ppmSeq tag analysis."""
     pivots: dict[str, pd.DataFrame] = {}
     for name in model_names:
         pivots[name] = df_tp.pivot_table(
@@ -1094,7 +1159,6 @@ def _compute_snvq_vs_ppmseq_tags(  # noqa: PLR0915
     count_pivot = df_tp.pivot_table(
         index=st_col, columns=et_col, values=f"snvq_{model_names[0]}", aggfunc="count", dropna=False
     )
-
     preferred_order = ["MIXED", "MINUS", "PLUS", "(empty)"]
     all_st_raw: set = set()
     all_et_raw: set = set()
@@ -1103,11 +1167,15 @@ def _compute_snvq_vs_ppmseq_tags(  # noqa: PLR0915
         all_et_raw |= set(p.columns)
     all_st = [t for t in preferred_order if t in all_st_raw] + sorted(all_st_raw - set(preferred_order))
     all_et = [t for t in preferred_order if t in all_et_raw] + sorted(all_et_raw - set(preferred_order))
-
     for name in model_names:
         pivots[name] = pivots[name].reindex(index=all_st, columns=all_et)
     count_pivot = count_pivot.reindex(index=all_st, columns=all_et).fillna(0)
     pct_pivot = (count_pivot / count_pivot.to_numpy().sum()) * 100
+    return pivots, pct_pivot
+
+
+def _render_tag_heatmap(pivots, pct_pivot, model_names, model_descs):
+    """Render ppmSeq tag heatmap figure and return base64."""
 
     def _annot_table(val_df, pct_df):
         annot = val_df.copy().astype(object)
@@ -1120,7 +1188,6 @@ def _compute_snvq_vs_ppmseq_tags(  # noqa: PLR0915
 
     n_panels = len(model_names)
     fig, axes_h = plt.subplots(1, n_panels, figsize=(10 * n_panels, 10), squeeze=False)
-
     for idx, m in enumerate(model_descs):
         ax = axes_h[0, idx]
         pivot = pivots[m["name"]]
@@ -1142,10 +1209,35 @@ def _compute_snvq_vs_ppmseq_tags(  # noqa: PLR0915
         ax.set_title(f"{m['name']} — Median SNVQ")
         ax.tick_params(axis="x", rotation=45)
         ax.tick_params(axis="y", rotation=0)
-
     fig.suptitle("SNVQ vs ppmSeq Start/End Tags (TP reads only, Test Set)", fontsize=14, y=1.02)
     fig.tight_layout()
-    result["plot"] = _fig_to_b64(fig)
+    return _fig_to_b64(fig)
+
+
+def _compute_snvq_vs_ppmseq_tags(
+    m_test: pd.DataFrame,
+    tp_mask: np.ndarray,
+    snvqs: dict[str, np.ndarray],
+    model_names: list[str],
+    model_descs: list[dict],
+) -> dict:
+    """Compute median SNVQ per ppmSeq start/end tag combination for all models."""
+    result: dict = {}
+    df_tp = m_test.loc[tp_mask].copy()
+
+    st_col = "st" if "st" in df_tp.columns else None
+    et_col = "et" if "et" in df_tp.columns else None
+    if st_col is None or et_col is None:
+        logger.warning("ppmSeq tag columns (st, et) not found — skipping SNVQ vs tags section")
+        return result
+
+    for name in model_names:
+        df_tp[f"snvq_{name}"] = snvqs[name][tp_mask]
+    df_tp[st_col] = df_tp[st_col].astype(str).replace({"": "(empty)", "nan": "(empty)"})
+    df_tp[et_col] = df_tp[et_col].astype(str).replace({"": "(empty)", "nan": "(empty)"})
+
+    pivots, pct_pivot = _build_tag_pivots(df_tp, model_names, st_col, et_col)
+    result["plot"] = _render_tag_heatmap(pivots, pct_pivot, model_names, model_descs)
     return result
 
 
@@ -1156,8 +1248,6 @@ def _compute_logit_histogram(
     model_descs: list[dict],
 ) -> str:
     """Plot logit histograms split by FP / TP mixed / TP non-mixed for all models."""
-    from ugbio_srsnv.srsnv_utils import prob_to_logit  # noqa: PLC0415
-
     tp_mask = y_test == 1
     st_vals = m_test["st"].astype(str).to_numpy() if "st" in m_test.columns else np.full(len(y_test), "")
     et_vals = m_test["et"].astype(str).to_numpy() if "et" in m_test.columns else np.full(len(y_test), "")
@@ -1258,32 +1348,8 @@ def _compute_snvq_mixed_histogram(
     return _fig_to_b64(fig)
 
 
-def _compute_trinuc_snvq_comparison(  # noqa: C901, PLR0912, PLR0915
-    m_test: pd.DataFrame,
-    y_test: np.ndarray,
-    snvqs: dict[str, np.ndarray],
-    model_names: list[str],
-    model_descs: list[dict],
-    q1: float = 0.1,
-    q2: float = 0.9,
-) -> str:
-    """Plot median SNVQ by trinucleotide context for all models.
-
-    Two-row layout: each row has a SNVQ panel on top and a density histogram below.
-    Row 1 = forward trinucs (A>C .. G>T), Row 2 = complement (C>A .. T>G).
-    """
-    from matplotlib import gridspec  # noqa: PLC0415
-
-    from ugbio_srsnv.srsnv_utils import (  # noqa: PLC0415
-        FLOW_ORDER,
-        get_trinuc_context_with_alt_fwd_vectorized,
-        is_cycle_skip,
-    )
-
-    tp_mask = y_test == 1
-    if tp_mask.sum() == 0:
-        return ""
-
+def _prepare_trinuc_data(m_test, y_test, snvqs, model_names):
+    """Prepare trinucleotide context dataframe and reference arrays."""
     all_df = m_test.copy()
     all_df["tcwa"] = (
         all_df["X_PREV1"].astype(str)
@@ -1317,14 +1383,16 @@ def _compute_trinuc_snvq_comparison(  # noqa: C901, PLR0912, PLR0915
     snv_labels = [" ".join(trinuc_index[i][2:5]) for i in range(0, 16 * 12, 16)]
 
     tcwa_to_idx = {tcwa: i for i, tcwa in enumerate(trinuc_ref_alt)}
-    n_total_ctx = 192
-    n_panel = 96
-
     all_df["tcwa_idx"] = all_df["tcwa"].map(tcwa_to_idx)
     all_df = all_df.dropna(subset=["tcwa_idx"])
     all_df["tcwa_idx"] = all_df["tcwa_idx"].astype(int)
-    tp_df = all_df[all_df["label"] == 1]
+    return all_df, trinuc_index, trinuc_is_cycle_skip, snv_labels
 
+
+def _compute_trinuc_stats(all_df, tp_mask, model_names, q1, q2):
+    """Compute per-trinuc-context median/quantile SNVQ and density histograms."""
+    n_total_ctx = 192
+    tp_df = all_df[all_df["label"] == 1]
     med: dict[str, np.ndarray] = {}
     lo: dict[str, np.ndarray] = {}
     hi: dict[str, np.ndarray] = {}
@@ -1332,7 +1400,6 @@ def _compute_trinuc_snvq_comparison(  # noqa: C901, PLR0912, PLR0915
         med[name] = np.full(n_total_ctx, np.nan)
         lo[name] = np.full(n_total_ctx, np.nan)
         hi[name] = np.full(n_total_ctx, np.nan)
-
     for idx, grp in tp_df.groupby("tcwa_idx"):
         for name in model_names:
             col = f"snvq_{name}"
@@ -1340,8 +1407,7 @@ def _compute_trinuc_snvq_comparison(  # noqa: C901, PLR0912, PLR0915
             lo[name][idx] = grp[col].quantile(q1)
             hi[name][idx] = grp[col].quantile(q2)
 
-    n_tp = int(tp_mask.sum())
-    n_fp = int((~tp_mask).sum())
+    n_tp, n_fp = int(tp_mask.sum()), int((~tp_mask).sum())
     hist_tp = np.zeros(n_total_ctx)
     hist_fp = np.zeros(n_total_ctx)
     for idx, grp in all_df.groupby("tcwa_idx"):
@@ -1352,12 +1418,100 @@ def _compute_trinuc_snvq_comparison(  # noqa: C901, PLR0912, PLR0915
         hist_tp = hist_tp / hist_tp.sum()
     if hist_fp.sum() > 0:
         hist_fp = hist_fp / hist_fp.sum()
+    return med, lo, hi, hist_tp, hist_fp, n_tp, n_fp
 
+
+def _render_trinuc_panel(fig, gs, panel_idx, stats, model_descs, trinuc_meta):
+    """Render one panel (top=qual, bottom=hist) for trinuc plot."""
+    med, lo, hi, hist_tp, hist_fp, n_tp, n_fp = (
+        stats["med"],
+        stats["lo"],
+        stats["hi"],
+        stats["hist_tp"],
+        stats["hist_fp"],
+        stats["n_tp"],
+        stats["n_fp"],
+    )
+    trinuc_index, trinuc_is_cycle_skip, snv_labels = trinuc_meta
+    n_panel = 96
+    sl = slice(panel_idx * n_panel, (panel_idx + 1) * n_panel)
+    inds = np.arange(panel_idx * n_panel, (panel_idx + 1) * n_panel)
     x_vals = list(range(n_panel))
     x_ext = [x_vals[0] - 0.5] + x_vals + [x_vals[-1] + 0.5]
 
     def _extend(arr):
         return np.concatenate([[arr[0]], arr, [arr[-1]]])
+
+    qual_ax = fig.add_subplot(gs[0])
+    hist_ax = fig.add_subplot(gs[1], sharex=qual_ax)
+    snv_positions = [8, 24, 40, 56, 72, 88]
+
+    for m in model_descs:
+        name = m["name"]
+        qual_ax.fill_between(
+            x_ext, _extend(lo[name][sl]), _extend(hi[name][sl]), step="mid", color=m["color"], alpha=0.15
+        )
+        qual_ax.step(
+            x_ext,
+            _extend(med[name][sl]),
+            where="mid",
+            color=m["color"],
+            lw=1.5,
+            linestyle=m["linestyle"],
+            label=m["name"],
+        )
+
+    qual_ax.set_ylabel("SNVQ", fontsize=14)
+    qual_ax.set_xlim(-0.5, n_panel - 0.5)
+    qual_ax.grid(visible=True, axis="both", alpha=0.75, linestyle=":")
+    ylim_min, ylim_max = qual_ax.get_ylim()
+    for j in range(5):
+        qual_ax.plot([(j + 1) * 16 - 0.5] * 2, [ylim_min, ylim_max], "k--", lw=0.8)
+    for lbl, pos in zip(snv_labels[6 * panel_idx : 6 * panel_idx + 6], snv_positions, strict=False):
+        qual_ax.annotate(
+            lbl,
+            xy=(pos, qual_ax.get_ylim()[1]),
+            xytext=(-2, 6),
+            textcoords="offset points",
+            ha="center",
+            fontsize=12,
+            fontweight="bold",
+        )
+    qual_ax.set_xticklabels([])
+
+    hist_ax.bar(x_vals, hist_tp[sl], width=1.0, alpha=0.5, color="tab:orange", label=f"TP ({n_tp})")
+    hist_ax.bar(x_vals, hist_fp[sl], width=1.0, alpha=0.5, color="tab:blue", label=f"FP ({n_fp})")
+    hist_ylim = 1.05 * max(hist_tp[sl].max(), hist_fp[sl].max()) if hist_tp[sl].max() > 0 else 1.0
+    for j in range(5):
+        hist_ax.plot([(j + 1) * 16 - 0.5] * 2, [0, hist_ylim], "k--", lw=0.8)
+    hist_ax.set_ylim(0, hist_ylim)
+    hist_ax.set_ylabel("Density", fontsize=14)
+    hist_ax.set_xlim(-0.5, n_panel - 0.5)
+    hist_ax.grid(visible=True, axis="both", alpha=0.75, linestyle=":")
+    hist_ax.set_xticks(x_vals)
+    hist_ax.set_xticklabels(trinuc_index[inds], rotation=90, fontsize=10)
+    tick_colors = ["green" if trinuc_is_cycle_skip[idx] else "red" for idx in inds]
+    for j in range(n_panel):
+        hist_ax.get_xticklabels()[j].set_color(tick_colors[j])
+    hist_ax.tick_params(axis="x", pad=-2)
+
+
+def _compute_trinuc_snvq_comparison(
+    m_test: pd.DataFrame,
+    y_test: np.ndarray,
+    snvqs: dict[str, np.ndarray],
+    model_names: list[str],
+    model_descs: list[dict],
+    q1: float = 0.1,
+    q2: float = 0.9,
+) -> str:
+    """Plot median SNVQ by trinucleotide context for all models."""
+    tp_mask = y_test == 1
+    if tp_mask.sum() == 0:
+        return ""
+
+    all_df, trinuc_index, trinuc_is_cycle_skip, snv_labels = _prepare_trinuc_data(m_test, y_test, snvqs, model_names)
+    med, lo, hi, hist_tp, hist_fp, n_tp, n_fp = _compute_trinuc_stats(all_df, tp_mask, model_names, q1, q2)
 
     fig = plt.figure(figsize=(18, 14))
     hspace = 0.12
@@ -1365,64 +1519,10 @@ def _compute_trinuc_snvq_comparison(  # noqa: C901, PLR0912, PLR0915
     gs_top = gridspec.GridSpec(2, 1, height_ratios=height_ratios, hspace=0.0, top=0.92, bottom=0.55 + hspace / 2)
     gs_bot = gridspec.GridSpec(2, 1, height_ratios=height_ratios, hspace=0.0, top=0.55 - hspace / 2, bottom=0.18)
 
-    snv_positions = [8, 24, 40, 56, 72, 88]
-
+    stats = {"med": med, "lo": lo, "hi": hi, "hist_tp": hist_tp, "hist_fp": hist_fp, "n_tp": n_tp, "n_fp": n_fp}
+    trinuc_meta = (trinuc_index, trinuc_is_cycle_skip, snv_labels)
     for panel_idx, gs in enumerate([gs_top, gs_bot]):
-        sl = slice(panel_idx * n_panel, (panel_idx + 1) * n_panel)
-        inds = np.arange(panel_idx * n_panel, (panel_idx + 1) * n_panel)
-
-        qual_ax = fig.add_subplot(gs[0])
-        hist_ax = fig.add_subplot(gs[1], sharex=qual_ax)
-
-        for m in model_descs:
-            name = m["name"]
-            qual_ax.fill_between(
-                x_ext, _extend(lo[name][sl]), _extend(hi[name][sl]), step="mid", color=m["color"], alpha=0.15
-            )
-            qual_ax.step(
-                x_ext,
-                _extend(med[name][sl]),
-                where="mid",
-                color=m["color"],
-                lw=1.5,
-                linestyle=m["linestyle"],
-                label=m["name"],
-            )
-
-        qual_ax.set_ylabel("SNVQ", fontsize=14)
-        qual_ax.set_xlim(-0.5, n_panel - 0.5)
-        qual_ax.grid(visible=True, axis="both", alpha=0.75, linestyle=":")
-
-        ylim_min, ylim_max = qual_ax.get_ylim()
-        for j in range(5):
-            qual_ax.plot([(j + 1) * 16 - 0.5] * 2, [ylim_min, ylim_max], "k--", lw=0.8)
-        for lbl, pos in zip(snv_labels[6 * panel_idx : 6 * panel_idx + 6], snv_positions, strict=False):
-            qual_ax.annotate(
-                lbl,
-                xy=(pos, qual_ax.get_ylim()[1]),
-                xytext=(-2, 6),
-                textcoords="offset points",
-                ha="center",
-                fontsize=12,
-                fontweight="bold",
-            )
-        qual_ax.set_xticklabels([])
-
-        hist_ax.bar(x_vals, hist_tp[sl], width=1.0, alpha=0.5, color="tab:orange", label=f"TP ({n_tp})")
-        hist_ax.bar(x_vals, hist_fp[sl], width=1.0, alpha=0.5, color="tab:blue", label=f"FP ({n_fp})")
-        hist_ylim = 1.05 * max(hist_tp[sl].max(), hist_fp[sl].max()) if hist_tp[sl].max() > 0 else 1.0
-        for j in range(5):
-            hist_ax.plot([(j + 1) * 16 - 0.5] * 2, [0, hist_ylim], "k--", lw=0.8)
-        hist_ax.set_ylim(0, hist_ylim)
-        hist_ax.set_ylabel("Density", fontsize=14)
-        hist_ax.set_xlim(-0.5, n_panel - 0.5)
-        hist_ax.grid(visible=True, axis="both", alpha=0.75, linestyle=":")
-        hist_ax.set_xticks(x_vals)
-        hist_ax.set_xticklabels(trinuc_index[inds], rotation=90, fontsize=10)
-        tick_colors = ["green" if trinuc_is_cycle_skip[idx] else "red" for idx in inds]
-        for j in range(n_panel):
-            hist_ax.get_xticklabels()[j].set_color(tick_colors[j])
-        hist_ax.tick_params(axis="x", pad=-2)
+        _render_trinuc_panel(fig, gs, panel_idx, stats, model_descs, trinuc_meta)
 
     fig.legend(
         [
@@ -1454,96 +1554,12 @@ def _compute_trinuc_snvq_comparison(  # noqa: C901, PLR0912, PLR0915
     fig.text(0.73, 0.04, "Green: Cycle skip", ha="left", fontsize=14, color="green")
     fig.text(0.73, 0.01, "Red: No cycle skip", ha="left", fontsize=14, color="red")
     fig.suptitle("Quality as function of trinuc context and alt", fontsize=20, y=0.96)
-
     return _fig_to_b64(fig)
 
 
-def _compute_error_analysis(  # noqa: PLR0915, C901
-    m_test: pd.DataFrame,
-    y_test: np.ndarray,
-    model_names: list[str],
-    baseline: str,
-    model_descs: list[dict],
-) -> dict:
-    """Run all error analysis sub-sections."""
-    ea: dict = {}
-    m_test = m_test.copy()
-    non_baseline = [n for n in model_names if n != baseline]
-
-    sliced_sections = [
-        (
-            "sub_type",
-            "sub_type_plot",
-            "AUC by Substitution Type",
-            "Substitution",
-            lambda df: df.__setitem__("sub_type", df["REF"].astype(str) + ">" + df["ALT"].astype(str)) or "sub_type",
-        ),
-        (
-            "mixed_st",
-            "mixed_st_plot",
-            "AUC by ppmSeq Start Tag (st)",
-            "Start Tag",
-            lambda df: df.__setitem__(
-                "st_filled",
-                df["st"].astype(str).replace("", "(empty)").replace("nan", "(empty)"),
-            )
-            or "st_filled",
-        ),
-        (
-            "end_tag",
-            "end_tag_plot",
-            "AUC by ppmSeq End Tag (et)",
-            "End Tag",
-            lambda df: df.__setitem__(
-                "et_filled",
-                df["et"].astype(str).replace("", "(empty)").replace("nan", "(empty)"),
-            )
-            or "et_filled",
-        ),
-        (
-            "tm_tag",
-            "tm_tag_plot",
-            "AUC by ppmSeq Combined Tag (tm)",
-            "Tag",
-            lambda df: df.__setitem__(
-                "tm_filled",
-                df["tm"].astype(str).replace("", "(empty)").replace("nan", "(empty)"),
-            )
-            or "tm_filled",
-        ),
-    ]
-
-    for ea_key, plot_key, title, xlabel, col_fn in sliced_sections:
-        col = col_fn(m_test)
-        ea[ea_key] = _sliced_auc(m_test, y_test, col, model_names, baseline)
-        ea[plot_key] = _make_grouped_bar(ea[ea_key], title, model_names, model_descs, xlabel)
-
-    ea["hmer"] = _sliced_auc(m_test, y_test, "X_HMER_REF", model_names, baseline)
-    ea["hmer_plot"] = _make_grouped_bar(
-        ea["hmer"], "AUC by Homopolymer Length (X_HMER_REF)", model_names, model_descs, "Homopolymer Length"
-    )
-
-    ea["edist"] = _sliced_auc(m_test, y_test, "EDIST", model_names, baseline)
-    ea["edist_plot"] = _make_grouped_bar(ea["edist"], "AUC by Edit Distance", model_names, model_descs, "Edit Distance")
-
-    ea["index_bin"] = _sliced_auc_numeric_bins(m_test, y_test, "INDEX", model_names, baseline, n_bins=10)
-    ea["index_bin_plot"] = _make_grouped_bar(
-        ea["index_bin"], "AUC by Read Position (INDEX)", model_names, model_descs, "Position Bin"
-    )
-
-    ea["strand"] = _sliced_auc(m_test, y_test, "REV", model_names, baseline)
-    for r in ea["strand"]:
-        r["value"] = "Reverse" if r["value"] == "1" else "Forward"
-    ea["strand_plot"] = _make_grouped_bar(ea["strand"], "AUC by Strand", model_names, model_descs, "Strand")
-
-    ea["rq_bin"] = _sliced_auc_numeric_bins(m_test, y_test, "rq", model_names, baseline, n_bins=10)
-    ea["rq_bin_plot"] = _make_grouped_bar(ea["rq_bin"], "AUC by Read Quality (rq)", model_names, model_descs, "rq Bin")
-
-    ea["trinuc_plot"], ea["trinuc"] = _make_trinuc_heatmap(m_test, y_test, model_names, baseline, model_descs)
-    ea["agreement"] = _compute_error_agreement(m_test, y_test, model_names, model_descs)
-
-    # Format numeric values for template display
-    for key in [
+def _format_ea_values(ea: dict, model_names: list[str], non_baseline: list[str]) -> None:
+    """Format numeric values in error analysis dict for template display."""
+    format_keys = [
         "sub_type",
         "mixed_st",
         "end_tag",
@@ -1554,7 +1570,8 @@ def _compute_error_analysis(  # noqa: PLR0915, C901
         "strand",
         "rq_bin",
         "trinuc",
-    ]:
+    ]
+    for key in format_keys:
         if key not in ea or not isinstance(ea[key], list):
             continue
         for r in ea[key]:
@@ -1572,6 +1589,105 @@ def _compute_error_analysis(  # noqa: PLR0915, C901
                             "cls": _improvement_class(v) if v is not None else "",
                         }
 
+
+def _compute_sliced_ea_sections(ea, m_test, y_test, model_names, baseline, model_descs):
+    """Compute categorical sliced AUC sections for error analysis."""
+    sliced_sections = [
+        (
+            "sub_type",
+            "sub_type_plot",
+            "AUC by Substitution Type",
+            "Substitution",
+            lambda df: df.__setitem__("sub_type", df["REF"].astype(str) + ">" + df["ALT"].astype(str)) or "sub_type",
+        ),
+        (
+            "mixed_st",
+            "mixed_st_plot",
+            "AUC by ppmSeq Start Tag (st)",
+            "Start Tag",
+            lambda df: df.__setitem__(
+                "st_filled", df["st"].astype(str).replace("", "(empty)").replace("nan", "(empty)")
+            )
+            or "st_filled",
+        ),
+        (
+            "end_tag",
+            "end_tag_plot",
+            "AUC by ppmSeq End Tag (et)",
+            "End Tag",
+            lambda df: df.__setitem__(
+                "et_filled", df["et"].astype(str).replace("", "(empty)").replace("nan", "(empty)")
+            )
+            or "et_filled",
+        ),
+        (
+            "tm_tag",
+            "tm_tag_plot",
+            "AUC by ppmSeq Combined Tag (tm)",
+            "Tag",
+            lambda df: df.__setitem__(
+                "tm_filled", df["tm"].astype(str).replace("", "(empty)").replace("nan", "(empty)")
+            )
+            or "tm_filled",
+        ),
+    ]
+    for ea_key, plot_key, title, xlabel, col_fn in sliced_sections:
+        col = col_fn(m_test)
+        ea[ea_key] = _sliced_auc(m_test, y_test, col, model_names, baseline)
+        ea[plot_key] = _make_grouped_bar(ea[ea_key], title, model_names, model_descs, xlabel)
+
+
+def _compute_numeric_ea_sections(ea, m_test, y_test, model_names, baseline, model_descs):
+    """Compute numeric/binned sliced AUC sections for error analysis."""
+    ea["hmer"] = _sliced_auc(m_test, y_test, "X_HMER_REF", model_names, baseline)
+    ea["hmer_plot"] = _make_grouped_bar(
+        ea["hmer"],
+        "AUC by Homopolymer Length (X_HMER_REF)",
+        model_names,
+        model_descs,
+        "Homopolymer Length",
+    )
+
+    ea["edist"] = _sliced_auc(m_test, y_test, "EDIST", model_names, baseline)
+    ea["edist_plot"] = _make_grouped_bar(ea["edist"], "AUC by Edit Distance", model_names, model_descs, "Edit Distance")
+
+    ea["index_bin"] = _sliced_auc_numeric_bins(m_test, y_test, "INDEX", model_names, baseline, n_bins=10)
+    ea["index_bin_plot"] = _make_grouped_bar(
+        ea["index_bin"],
+        "AUC by Read Position (INDEX)",
+        model_names,
+        model_descs,
+        "Position Bin",
+    )
+
+    ea["strand"] = _sliced_auc(m_test, y_test, "REV", model_names, baseline)
+    for r in ea["strand"]:
+        r["value"] = "Reverse" if r["value"] == "1" else "Forward"
+    ea["strand_plot"] = _make_grouped_bar(ea["strand"], "AUC by Strand", model_names, model_descs, "Strand")
+
+    ea["rq_bin"] = _sliced_auc_numeric_bins(m_test, y_test, "rq", model_names, baseline, n_bins=10)
+    ea["rq_bin_plot"] = _make_grouped_bar(ea["rq_bin"], "AUC by Read Quality (rq)", model_names, model_descs, "rq Bin")
+
+
+def _compute_error_analysis(
+    m_test: pd.DataFrame,
+    y_test: np.ndarray,
+    model_names: list[str],
+    baseline: str,
+    model_descs: list[dict],
+) -> dict:
+    """Run all error analysis sub-sections."""
+    ea: dict = {}
+    m_test = m_test.copy()
+    non_baseline = [n for n in model_names if n != baseline]
+
+    _compute_sliced_ea_sections(ea, m_test, y_test, model_names, baseline, model_descs)
+    _compute_numeric_ea_sections(ea, m_test, y_test, model_names, baseline, model_descs)
+
+    ea["trinuc_plot"], ea["trinuc"] = _make_trinuc_heatmap(m_test, y_test, model_names, baseline, model_descs)
+    ea["agreement"] = _compute_error_agreement(m_test, y_test, model_names, model_descs)
+
+    _format_ea_values(ea, model_names, non_baseline)
     return ea
 
 
@@ -1584,7 +1700,7 @@ def render_html(report: dict, output_path: Path) -> None:
     """Render the HTML report from the Jinja2 template."""
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
-        autoescape=False,  # noqa: S701
+        autoescape=select_autoescape(default_for_string=False, default=False),
     )
     template = env.get_template(REPORT_TEMPLATE)
     html = template.render(**report)
