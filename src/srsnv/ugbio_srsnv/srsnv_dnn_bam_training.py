@@ -15,7 +15,7 @@ import numpy as np
 import polars as pl
 import torch
 import torch.distributed as dist
-from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint, StochasticWeightAveraging
+from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers import CSVLogger
 from lightning.pytorch.tuner import Tuner
 from sklearn.metrics import average_precision_score, log_loss, roc_auc_score
@@ -25,7 +25,6 @@ from ugbio_featuremap.featuremap_utils import FeatureMapFields
 from ugbio_srsnv.deep_srsnv.inference.export import export_to_onnx, serialize_with_trtexec
 from ugbio_srsnv.deep_srsnv.training.data_module import DataModuleConfig, SRSNVDataModule
 from ugbio_srsnv.deep_srsnv.training.lightning_module import LR_SCHEDULER_CHOICES, SRSNVLightningModule
-from ugbio_srsnv.deep_srsnv.training.swa_validation_tracker import SWAValidationTracker
 from ugbio_srsnv.deep_srsnv.utils.vocab import CHANNEL_ORDER, NUMERIC_CHANNELS, load_vocab_config
 from ugbio_srsnv.split_manifest import (
     SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,
@@ -46,12 +45,10 @@ class TrainingOutputs:
 
     training_results: list[dict] = field(default_factory=list)
     holdout_metrics: dict = field(default_factory=dict)
-    best_ckpt_holdout_metrics: dict = field(default_factory=dict)
     split_prevalence: dict = field(default_factory=dict)
     train_chunk_mix: dict | None = None
     model_arch_summary: dict | None = None
     best_ckpt_paths: list[str] = field(default_factory=list)
-    swa_ckpt_paths: list[str] = field(default_factory=list)
     fold_ids: np.ndarray | None = None
     n_models: int = 1
     n_devices: int = 1
@@ -112,8 +109,7 @@ def _add_training_args(ap: argparse.ArgumentParser) -> None:
         type=str,
         default=None,
         help="Path to a pretrained .ckpt file. Model weights will be loaded "
-        "before training (fine-tuning mode: fresh optimizer and LR schedule). "
-        "Supports both Lightning checkpoints and SWA checkpoints.",
+        "before training (fine-tuning mode: fresh optimizer and LR schedule).",
     )
 
 
@@ -134,15 +130,6 @@ def _add_lr_scheduler_args(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--lr-step-size", type=int, default=5)
     ap.add_argument("--lr-gamma", type=float, default=0.5)
     ap.add_argument("--lr-patience", type=int, default=3)
-
-
-def _add_swa_args(ap: argparse.ArgumentParser) -> None:
-    """Add SWA arguments."""
-    ap.add_argument("--swa", action="store_true", help="Enable Stochastic Weight Averaging")
-    ap.add_argument("--swa-lr", type=float, default=1e-4)
-    ap.add_argument(
-        "--swa-epoch-start", type=float, default=0.7, help="Fraction of epochs or absolute epoch to start SWA"
-    )
 
 
 def _add_tuner_args(ap: argparse.ArgumentParser) -> None:
@@ -184,7 +171,6 @@ def _cli() -> argparse.Namespace:
     _add_training_args(ap)
     _add_architecture_args(ap)
     _add_lr_scheduler_args(ap)
-    _add_swa_args(ap)
     _add_tuner_args(ap)
     _add_hardware_args(ap)
     _add_loader_args(ap)
@@ -215,21 +201,15 @@ def _safe_binary_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> dict:
 def _build_callbacks(args: argparse.Namespace, out_dir: Path, base: str, fold_idx: int) -> list:
     callbacks = []
 
-    # EarlyStopping is incompatible with SWA: during SWA the training model's
-    # val_auc may degrade (expected behaviour), and if EarlyStopping triggers
-    # the SWA callback never transfers the averaged weights into the model.
-    if not args.swa:
-        callbacks.append(
-            EarlyStopping(
-                monitor="val_auc",
-                mode="max",
-                patience=args.patience,
-                min_delta=0.0,
-                verbose=True,
-            )
+    callbacks.append(
+        EarlyStopping(
+            monitor="val_auc",
+            mode="max",
+            patience=args.patience,
+            min_delta=0.0,
+            verbose=True,
         )
-    else:
-        logger.info("SWA enabled: EarlyStopping disabled (SWA requires full training run)")
+    )
 
     callbacks.append(
         ModelCheckpoint(
@@ -245,19 +225,7 @@ def _build_callbacks(args: argparse.Namespace, out_dir: Path, base: str, fold_id
 
     callbacks.append(LearningRateMonitor(logging_interval="epoch"))
 
-    swa_callback = None
-    if args.swa:
-        swa_epoch_start_val = args.swa_epoch_start
-        if 0 < swa_epoch_start_val < 1:
-            swa_epoch_start_val = max(1, int(swa_epoch_start_val * args.epochs))
-        swa_callback = StochasticWeightAveraging(
-            swa_lrs=args.swa_lr,
-            swa_epoch_start=int(swa_epoch_start_val),
-        )
-        callbacks.append(swa_callback)
-        callbacks.append(SWAValidationTracker(swa_callback))
-
-    return callbacks, swa_callback
+    return callbacks
 
 
 def _parse_devices(devices_str: str):
@@ -280,11 +248,8 @@ def _resolve_n_devices(devices) -> int:
 
 def _build_trainer(
     args: argparse.Namespace, out_dir: Path, base: str, fold_idx: int, *, devices=None
-) -> tuple[lightning.Trainer, StochasticWeightAveraging | None]:
-    """Build a Trainer for training (single or multi-GPU via DDP).
-
-    Returns the Trainer and the SWA callback (if SWA is enabled).
-    """
+) -> lightning.Trainer:
+    """Build a Trainer for training (single or multi-GPU via DDP)."""
     precision = "16-mixed" if args.use_amp else "32-true"
 
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
@@ -295,7 +260,7 @@ def _build_trainer(
 
     csv_logger = CSVLogger(save_dir=out_dir, name=f"{base}lightning_logs", version=f"fold_{fold_idx}")
 
-    callbacks, swa_callback = _build_callbacks(args, out_dir, base, fold_idx)
+    callbacks = _build_callbacks(args, out_dir, base, fold_idx)
 
     trainer = lightning.Trainer(
         max_epochs=args.epochs,
@@ -313,7 +278,7 @@ def _build_trainer(
         log_every_n_steps=50,
         default_root_dir=str(out_dir),
     )
-    return trainer, swa_callback
+    return trainer
 
 
 def _extract_training_results(trainer: lightning.Trainer, fold_idx: int) -> dict:
@@ -342,9 +307,6 @@ def _extract_training_results(trainer: lightning.Trainer, fold_idx: int) -> dict
         "train_loss": float(logged.get("train_loss", 0)),
         "best_model_path": str(ckpt_callback.best_model_path) if ckpt_callback else None,
     }
-    if "swa_val_auc" in logged:
-        result["swa_val_auc"] = float(logged["swa_val_auc"])
-        result["swa_val_aupr"] = float(logged.get("swa_val_aupr", 0))
     return result
 
 
@@ -355,8 +317,7 @@ def _load_pretrained_weights(lit_model: SRSNVLightningModule, ckpt_path: str) ->
     state are left fresh so training starts from epoch 0 with the configured
     LR schedule.
 
-    Supports both Lightning checkpoints (``trainer.save_checkpoint``) and
-    SWA checkpoints (``{"state_dict": ..., "hyper_parameters": ...}``).
+    Supports Lightning checkpoints (``trainer.save_checkpoint``).
 
     Parameters
     ----------
@@ -627,29 +588,20 @@ def _generate_fold_predictions(
     out_dir: Path,
     best_path: str | None,
     n_devices: int,
-) -> tuple[list[dict], list[dict]]:
-    """Generate predictions for a fold (handles SWA and multi-GPU logic).
+) -> list[dict]:
+    """Generate predictions for a fold using the best checkpoint.
 
-    Returns (fold_predictions, best_ckpt_fold_predictions).
+    Returns fold_predictions.
     """
-    use_swa_for_predict = args.swa
-    best_ckpt_fold_predictions: list[dict] = []
-
     if trainer.global_rank != 0:
-        return [], []
+        return []
 
     if n_devices > 1:
-        fold_predictions, best_ckpt_fold_predictions = _predict_multi_gpu(
-            args, lit_model, dm, out_dir, best_path, use_swa_for_predict=use_swa_for_predict
-        )
+        fold_predictions = _predict_multi_gpu(args, lit_model, dm, out_dir, best_path)
     else:
-        fold_predictions, best_ckpt_fold_predictions = _predict_single_gpu(
-            args, trainer, lit_model, dm, best_path, use_swa_for_predict=use_swa_for_predict
-        )
+        fold_predictions = _predict_single_gpu(args, trainer, lit_model, dm, best_path)
 
-    if use_swa_for_predict:
-        logger.info("Predictions generated using SWA-averaged model (+ best checkpoint for comparison)")
-    return fold_predictions, best_ckpt_fold_predictions
+    return fold_predictions
 
 
 def _predict_multi_gpu(
@@ -658,9 +610,7 @@ def _predict_multi_gpu(
     dm: SRSNVDataModule,
     out_dir: Path,
     best_path: str | None,
-    *,
-    use_swa_for_predict: bool,
-) -> tuple[list[dict], list[dict]]:
+) -> list[dict]:
     """Generate predictions using a single-GPU predict trainer (multi-GPU training case)."""
     predict_trainer = lightning.Trainer(
         accelerator="gpu",
@@ -669,19 +619,10 @@ def _predict_multi_gpu(
         enable_progress_bar=True,
         default_root_dir=str(out_dir),
     )
-    best_ckpt_fold_predictions: list[dict] = []
-    if use_swa_for_predict:
-        fold_predictions = predict_trainer.predict(lit_model, datamodule=dm)
-        if best_path:
-            best_ckpt_model = SRSNVLightningModule.load_from_checkpoint(best_path)
-            best_ckpt_fold_predictions = predict_trainer.predict(best_ckpt_model, datamodule=dm)
-            del best_ckpt_model
-    elif best_path:
+    if best_path:
         lit_model = SRSNVLightningModule.load_from_checkpoint(best_path)
-        fold_predictions = predict_trainer.predict(lit_model, datamodule=dm)
-    else:
-        fold_predictions = predict_trainer.predict(lit_model, datamodule=dm)
-    return fold_predictions, best_ckpt_fold_predictions
+    fold_predictions = predict_trainer.predict(lit_model, datamodule=dm)
+    return fold_predictions
 
 
 def _predict_single_gpu(
@@ -690,35 +631,26 @@ def _predict_single_gpu(
     lit_model: SRSNVLightningModule,
     dm: SRSNVDataModule,
     best_path: str | None,
-    *,
-    use_swa_for_predict: bool,
-) -> tuple[list[dict], list[dict]]:
+) -> list[dict]:
     """Generate predictions using the training trainer (single-GPU case)."""
-    best_ckpt_fold_predictions: list[dict] = []
-    if use_swa_for_predict:
-        fold_predictions = trainer.predict(lit_model, datamodule=dm)
-        if best_path:
-            best_ckpt_fold_predictions = trainer.predict(lit_model, datamodule=dm, ckpt_path=best_path)
-    elif best_path:
+    if best_path:
         fold_predictions = trainer.predict(lit_model, datamodule=dm, ckpt_path=best_path)
     else:
         fold_predictions = trainer.predict(lit_model, datamodule=dm)
-    return fold_predictions, best_ckpt_fold_predictions
+    return fold_predictions
 
 
 def _aggregate_predictions(
-    args: argparse.Namespace,
     all_predictions: list[list[dict]],
-    all_best_ckpt_predictions: list[list[dict]],
     out_dir: Path,
     base: str,
     n_models: int,
     *,
     single_model_split: bool,
-) -> tuple[dict, dict, np.ndarray]:
+) -> tuple[dict, np.ndarray]:
     """Aggregate predictions, save parquet, compute holdout metrics.
 
-    Returns (holdout_metrics, best_ckpt_holdout_metrics, fold_ids).
+    Returns (holdout_metrics, fold_ids).
     """
     logger.info("Prediction/export phase started")
     collected = _collect_predictions(all_predictions, single_model_split=single_model_split, n_models=n_models)
@@ -747,31 +679,12 @@ def _aggregate_predictions(
     df_out.write_parquet(df_path)
     logger.info("Saved prediction dataframe: %s", df_path)
 
-    # Holdout metrics (primary model: SWA when enabled, otherwise best checkpoint)
     holdout_mask = fold_ids == -1
     holdout_metrics = {}
     if holdout_mask.any():
         holdout_metrics = _safe_binary_metrics(labels[holdout_mask], probs[holdout_mask])
 
-    # Dual evaluation: compute best-checkpoint holdout metrics alongside SWA
-    best_ckpt_holdout_metrics = {}
-    if args.swa and all_best_ckpt_predictions:
-        best_ckpt_collected = _collect_predictions(
-            all_best_ckpt_predictions, single_model_split=single_model_split, n_models=n_models
-        )
-        bc_labels = best_ckpt_collected["labels"]
-        bc_probs = best_ckpt_collected["probs"]
-        bc_fold_ids = best_ckpt_collected["fold_ids"]
-        bc_holdout = bc_fold_ids == -1
-        if bc_holdout.any():
-            best_ckpt_holdout_metrics = _safe_binary_metrics(bc_labels[bc_holdout], bc_probs[bc_holdout])
-        logger.info(
-            "Dual evaluation — SWA holdout: %s | Best-ckpt holdout: %s",
-            {k: f"{v:.6f}" if v is not None else "N/A" for k, v in holdout_metrics.items()},
-            {k: f"{v:.6f}" if v is not None else "N/A" for k, v in best_ckpt_holdout_metrics.items()},
-        )
-
-    return holdout_metrics, best_ckpt_holdout_metrics, fold_ids
+    return holdout_metrics, fold_ids
 
 
 def _build_metadata(
@@ -786,12 +699,10 @@ def _build_metadata(
     """Build the final metadata dictionary."""
     training_results = outputs.training_results
     holdout_metrics = outputs.holdout_metrics
-    best_ckpt_holdout_metrics = outputs.best_ckpt_holdout_metrics
     split_prevalence = outputs.split_prevalence
     train_chunk_mix = outputs.train_chunk_mix
     model_arch_summary = outputs.model_arch_summary
     best_ckpt_paths = outputs.best_ckpt_paths
-    swa_ckpt_paths = outputs.swa_ckpt_paths
     fold_ids = outputs.fold_ids
     n_models = outputs.n_models
     n_devices = outputs.n_devices
@@ -813,13 +724,11 @@ def _build_metadata(
         "channel_order": CHANNEL_ORDER,
         "training_results": training_results,
         "holdout_metrics": holdout_metrics,
-        "best_ckpt_holdout_metrics": best_ckpt_holdout_metrics if args.swa else None,
         "split_prevalence": split_prevalence,
         "chunk_composition": {"train_chunk_prevalence": train_chunk_mix},
         "model_architecture": model_arch_summary,
         "best_checkpoint_paths": best_ckpt_paths,
-        "swa_checkpoint_paths": swa_ckpt_paths if args.swa else None,
-        "prediction_model": "swa" if args.swa else "best_checkpoint",
+        "prediction_model": "best_checkpoint",
         "quality_recalibration_table": None,
         "data_paths": {
             "fold_dir": args.fold_dir,
@@ -841,9 +750,6 @@ def _build_metadata(
             "cat_embed_dim": args.cat_embed_dim,
             "dropout": args.dropout,
             "lr_scheduler": args.lr_scheduler,
-            "swa": args.swa,
-            "swa_lr": args.swa_lr if args.swa else None,
-            "swa_epoch_start": args.swa_epoch_start if args.swa else None,
             "gradient_clip_val": args.gradient_clip_val,
             "accumulate_grad_batches": args.accumulate_grad_batches,
             "length": args.length,
@@ -908,18 +814,16 @@ def _training_loop(
     n_models: int,
     n_devices: int,
     data_ctx: _TrainingDataContext,
-) -> tuple[list[dict], list[list[dict]], list[list[dict]], dict | None, list[str], SRSNVLightningModule]:
+) -> tuple[list[dict], list[list[dict]], dict | None, list[str], SRSNVLightningModule]:
     """Run the training loop over all folds.
 
-    Returns (training_results, all_predictions, all_best_ckpt_predictions,
-    model_arch_summary, best_ckpt_paths, lit_model).
+    Returns (training_results, all_predictions, model_arch_summary, best_ckpt_paths, lit_model).
     """
     fold_dir_for_dm = data_ctx.fold_dir_for_dm
     fold_use_mmap = data_ctx.fold_use_mmap
     is_rank_zero = int(os.environ.get("LOCAL_RANK", "0")) == 0
     training_results: list[dict] = []
     all_predictions: list[list[dict]] = []
-    all_best_ckpt_predictions: list[list[dict]] = []
     model_arch_summary: dict | None = None
     best_ckpt_paths: list[str] = []
     lit_model = None
@@ -940,7 +844,7 @@ def _training_loop(
         if fold_idx == 0:
             model_arch_summary = _log_model_arch(lit_model)
 
-        trainer, _swa_callback = _build_trainer(args, out_dir, base, fold_idx)
+        trainer = _build_trainer(args, out_dir, base, fold_idx)
 
         if args.auto_lr_find or args.auto_scale_batch_size:
             _run_tuner(args, trainer, lit_model, dm, out_dir, base, fold_idx)
@@ -950,15 +854,11 @@ def _training_loop(
         fold_results = _extract_training_results(trainer, fold_idx)
         best_path = fold_results.get("best_model_path")
 
-        fold_predictions, best_ckpt_fold_predictions = _generate_fold_predictions(
-            args, trainer, lit_model, dm, out_dir, best_path, n_devices
-        )
+        fold_predictions = _generate_fold_predictions(args, trainer, lit_model, dm, out_dir, best_path, n_devices)
 
         training_results.append(fold_results)
         best_ckpt_paths.append(best_path or "")
         all_predictions.append(fold_predictions)
-        if best_ckpt_fold_predictions:
-            all_best_ckpt_predictions.append(best_ckpt_fold_predictions)
         logger.info(
             "Fold %d complete in %.1fs (best_val_auc=%s stopped_early=%s best_ckpt=%s)",
             fold_idx,
@@ -968,7 +868,7 @@ def _training_loop(
             fold_results.get("best_model_path"),
         )
 
-    return training_results, all_predictions, all_best_ckpt_predictions, model_arch_summary, best_ckpt_paths, lit_model
+    return training_results, all_predictions, model_arch_summary, best_ckpt_paths, lit_model
 
 
 def _log_model_arch(lit_model: SRSNVLightningModule) -> dict:
@@ -994,12 +894,6 @@ def _configure_logging(args: argparse.Namespace) -> None:
 
 def _validate_args(args: argparse.Namespace) -> None:
     """Validate argument combinations and emit warnings."""
-    if args.swa and args.lr_scheduler == "onecycle":
-        logger.warning(
-            "OneCycleLR is a step-level scheduler that SWA replaces mid-training. "
-            "This disrupts the OneCycleLR cycle and may hurt convergence. "
-            "Consider using --lr-scheduler cosine or --lr-scheduler step with SWA."
-        )
 
 
 def _configure_tf32() -> None:
@@ -1011,38 +905,18 @@ def _configure_tf32() -> None:
 
 
 def _post_training_cleanup(
-    args: argparse.Namespace,
-    lit_model: SRSNVLightningModule,
-    out_dir: Path,
-    base: str,
     shm_cache_path: Path,
     shm_fold_dir: Path,
-) -> list[str]:
-    """Handle DDP teardown, SWA checkpoint save, and shm cleanup.
-
-    Returns swa_ckpt_paths.
-    """
+) -> None:
+    """Handle DDP teardown and shm cleanup."""
     # Rank 0: tear down DDP process group before post-processing
     if dist.is_initialized():
         dist.destroy_process_group()
-
-    # Save SWA checkpoint after DDP teardown (avoids collective sync issues)
-    swa_path = ""
-    if args.swa:
-        swa_path = str(out_dir / f"{base}dnn_model_fold_0_swa.ckpt")
-        torch.save(
-            {"state_dict": lit_model.state_dict(), "hyper_parameters": dict(lit_model.hparams)},
-            swa_path,
-        )
-        logger.info("Saved SWA-averaged checkpoint: %s", swa_path)
-    swa_ckpt_paths = [swa_path] if args.swa else []
 
     for shm_dir in (shm_cache_path, shm_fold_dir):
         if shm_dir.exists():
             shutil.rmtree(shm_dir, ignore_errors=True)
             logger.info("Cleaned up shared memory cache at %s", shm_dir)
-
-    return swa_ckpt_paths
 
 
 def main() -> None:
@@ -1097,17 +971,15 @@ def main() -> None:
         single_model_split=single_model_split,
         fold_use_mmap=fold_use_mmap,
     )
-    training_results, all_predictions, all_best_ckpt_predictions, model_arch_summary, best_ckpt_paths, lit_model = (
-        _training_loop(
-            args,
-            out_dir,
-            base,
-            encoders,
-            effective_lr,
-            n_models,
-            n_devices,
-            data_ctx,
-        )
+    training_results, all_predictions, model_arch_summary, best_ckpt_paths, lit_model = _training_loop(
+        args,
+        out_dir,
+        base,
+        encoders,
+        effective_lr,
+        n_models,
+        n_devices,
+        data_ctx,
     )
 
     # Non-rank-0 processes: clean up DDP and exit (no predictions to process)
@@ -1118,13 +990,11 @@ def main() -> None:
             dist.destroy_process_group()
         return
 
-    swa_ckpt_paths = _post_training_cleanup(args, lit_model, out_dir, base, shm_cache_path, shm_fold_dir)
+    _post_training_cleanup(shm_cache_path, shm_fold_dir)
 
     # ── Aggregate predictions ──
-    holdout_metrics, best_ckpt_holdout_metrics, fold_ids = _aggregate_predictions(
-        args,
+    holdout_metrics, fold_ids = _aggregate_predictions(
         all_predictions,
-        all_best_ckpt_predictions,
         out_dir,
         base,
         n_models,
@@ -1135,12 +1005,10 @@ def main() -> None:
     training_outputs = TrainingOutputs(
         training_results=training_results,
         holdout_metrics=holdout_metrics,
-        best_ckpt_holdout_metrics=best_ckpt_holdout_metrics,
         split_prevalence={},
         train_chunk_mix=None,
         model_arch_summary=model_arch_summary,
         best_ckpt_paths=best_ckpt_paths,
-        swa_ckpt_paths=swa_ckpt_paths,
         fold_ids=fold_ids,
         n_models=n_models,
         n_devices=n_devices,

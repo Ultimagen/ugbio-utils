@@ -66,15 +66,19 @@ def metadata_json(tmp_path, small_model):
         lr_scheduler="none",
     )
     ckpt_path = str(tmp_path / "model.ckpt")
+    # Save as a Lightning-compatible checkpoint (includes pytorch-lightning_version key)
     torch.save(
-        {"state_dict": lit_model.state_dict(), "hyper_parameters": dict(lit_model.hparams)},
+        {
+            "state_dict": lit_model.state_dict(),
+            "hyper_parameters": dict(lit_model.hparams),
+            "pytorch-lightning_version": "2.0.0",
+        },
         ckpt_path,
     )
     metadata = {
         "model_type": "deep_srsnv_cnn_lightning",
-        "prediction_model": "swa",
-        "swa_checkpoint_paths": [ckpt_path],
-        "best_checkpoint_paths": [],
+        "prediction_model": "best_checkpoint",
+        "best_checkpoint_paths": [ckpt_path],
         "onnx_path": None,
         "trt_engine_path": None,
         "quality_recalibration_table": [[0, 10, 20, 30], [0, 8, 18, 28]],
