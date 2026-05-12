@@ -39,13 +39,15 @@ from pyarrow import parquet as pq
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
-from ugbio_srsnv.deep_srsnv.data_prep import (
-    NUM_CHANNELS_CONST,
-    NUM_CHANNELS_POS,
-    Encoders,
+from ugbio_srsnv.deep_srsnv.utils.alignment import (
     _build_gapped_channels,
     _to_numpy_tp,
     _to_string_t0,
+)
+from ugbio_srsnv.deep_srsnv.utils.vocab import (
+    NUM_CHANNELS_CONST,
+    NUM_CHANNELS_POS,
+    Encoders,
     load_vocab_config,
 )
 from ugbio_srsnv.split_manifest import build_split_manifest

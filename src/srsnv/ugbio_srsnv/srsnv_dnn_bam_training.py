@@ -22,20 +22,18 @@ from sklearn.metrics import average_precision_score, log_loss, roc_auc_score
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
-from ugbio_srsnv.deep_srsnv.data_module import DataModuleConfig, SRSNVDataModule
 from ugbio_srsnv.deep_srsnv.data_prep import (
     _DEFAULT_SHM_DIR,
-    CHANNEL_ORDER,
-    NUMERIC_CHANNELS,
     build_tensor_cache,
     load_cache_from_shm,
     load_full_tensor_cache,
-    load_vocab_config,
     save_cache_to_shm,
 )
 from ugbio_srsnv.deep_srsnv.inference.export import export_to_onnx, serialize_with_trtexec
-from ugbio_srsnv.deep_srsnv.lightning_module import LR_SCHEDULER_CHOICES, SRSNVLightningModule
-from ugbio_srsnv.deep_srsnv.swa_validation_tracker import SWAValidationTracker
+from ugbio_srsnv.deep_srsnv.training.data_module import DataModuleConfig, SRSNVDataModule
+from ugbio_srsnv.deep_srsnv.training.lightning_module import LR_SCHEDULER_CHOICES, SRSNVLightningModule
+from ugbio_srsnv.deep_srsnv.training.swa_validation_tracker import SWAValidationTracker
+from ugbio_srsnv.deep_srsnv.utils.vocab import CHANNEL_ORDER, NUMERIC_CHANNELS, load_vocab_config
 from ugbio_srsnv.split_manifest import (
     SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,
     SPLIT_MODE_SINGLE_MODEL_READ_HASH,

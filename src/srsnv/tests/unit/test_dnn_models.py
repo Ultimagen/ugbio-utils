@@ -1,5 +1,5 @@
 import torch
-from ugbio_srsnv.deep_srsnv.cnn_model import CNNReadClassifier
+from ugbio_srsnv.deep_srsnv.training.cnn_model import CNNReadClassifier
 
 
 def test_cnn_forward_shape() -> None:

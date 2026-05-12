@@ -1,5 +1,6 @@
 import numpy as np
-from ugbio_srsnv.deep_srsnv.data_prep import DeepSRSNVDataset, load_vocab_config
+from ugbio_srsnv.deep_srsnv.data_prep import DeepSRSNVDataset
+from ugbio_srsnv.deep_srsnv.utils.vocab import load_vocab_config
 
 
 def test_tensorization_shapes() -> None:

@@ -1,3 +1,11 @@
+"""Data preparation: tensor cache building, BAM reading, and dataset classes.
+
+Vocabulary, alignment, and split utilities have been extracted to:
+- ``utils.vocab`` — Encoders, load_vocab_config, channel constants
+- ``utils.alignment`` — _to_numpy_tp, _to_string_t0, _build_gapped_channels
+- ``utils.split_utils`` — _row_split_id, compute_split_ids
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -19,11 +27,26 @@ from torch.utils.data import Dataset
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
 
-from ugbio_srsnv.split_manifest import (
-    SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,
-    SPLIT_MODE_SINGLE_MODEL_READ_HASH,
-    assign_single_model_chrom_val_role,
-    assign_single_model_read_hash_role,
+# Re-export extracted utilities for backward compatibility
+from ugbio_srsnv.deep_srsnv.utils.alignment import (  # noqa: F401
+    CIGAR_SOFT_CLIP,
+    _build_gapped_channels,
+    _compute_softclip_positions,
+    _process_aligned_pair,
+    _to_numpy_tp,
+    _to_string_t0,
+)
+from ugbio_srsnv.deep_srsnv.utils.split_utils import (  # noqa: F401
+    _row_split_id,
+    compute_split_ids,
+)
+from ugbio_srsnv.deep_srsnv.utils.vocab import (  # noqa: F401
+    CHANNEL_ORDER,
+    NUM_CHANNELS_CONST,
+    NUM_CHANNELS_POS,
+    NUMERIC_CHANNELS,
+    Encoders,
+    load_vocab_config,
 )
 
 CHROM = FeatureMapFields.CHROM.value
@@ -32,57 +55,9 @@ REF = FeatureMapFields.REF.value
 ALT = FeatureMapFields.ALT.value
 X_ALT = FeatureMapFields.X_ALT.value
 
-CIGAR_SOFT_CLIP = 4
 _DEFAULT_SHM_DIR = os.environ.get("SHM_DIR", os.path.join("/dev", "shm"))
 
-# Canonical channel order for x_num — positional channels first, then per-read constants.
-# The model sees len(NUM_CHANNELS_POS) + len(NUM_CHANNELS_CONST) = NUMERIC_CHANNELS total.
-NUM_CHANNELS_POS: list[str] = ["qual", "tp", "mask", "focus", "softclip_mask", "t0"]
-NUM_CHANNELS_CONST: list[str] = ["strand", "mapq", "rq", "mixed"]
-CHANNEL_ORDER: list[str] = NUM_CHANNELS_POS + NUM_CHANNELS_CONST
-NUMERIC_CHANNELS: int = len(CHANNEL_ORDER)
-
-
-@dataclass
-class Encoders:
-    base_vocab: dict[str, int]
-    t0_vocab: dict[str, int]
-    tm_vocab: dict[str, int]
-    st_vocab: dict[str, int]
-    et_vocab: dict[str, int]
-
-
 _WORKER_STATE: dict[str, object] = {}
-
-_VOCAB_CONFIG_PATH = Path(__file__).parent / "vocab_config.json"
-
-
-def load_vocab_config(path: str | Path | None = None) -> Encoders:
-    """Load static vocabulary mappings from a JSON config file.
-
-    Falls back to the bundled ``vocab_config.json`` next to this module
-    when *path* is ``None``.
-    """
-    cfg_path = Path(path) if path is not None else _VOCAB_CONFIG_PATH
-    if not cfg_path.exists():
-        raise FileNotFoundError(f"Vocab config not found: {cfg_path}")
-    try:
-        raw = json.loads(cfg_path.read_text())
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid JSON in vocab config {cfg_path}: {exc}") from exc
-
-    required_keys = {"base_vocab", "t0_vocab", "tm_vocab", "st_vocab", "et_vocab"}
-    missing = required_keys - set(raw.keys())
-    if missing:
-        raise ValueError(f"Vocab config missing keys: {sorted(missing)}")
-
-    return Encoders(
-        base_vocab=raw["base_vocab"],
-        t0_vocab=raw["t0_vocab"],
-        tm_vocab=raw["tm_vocab"],
-        st_vocab=raw["st_vocab"],
-        et_vocab=raw["et_vocab"],
-    )
 
 
 def _record_tags(rec: pysam.AlignedSegment) -> dict:
@@ -135,22 +110,6 @@ def _match_bam_read(
         return overlap[0]
     # Fallback: closest start coordinate.
     return sorted(same_chrom, key=lambda r: abs((r.reference_start + 1) - pos))[0]
-
-
-def _to_numpy_tp(tp_value, read_len: int) -> np.ndarray:
-    arr = np.zeros(read_len, dtype=np.float32)
-    if tp_value is None:
-        return arr
-    src = list(tp_value)
-    n = min(read_len, len(src))
-    arr[:n] = np.asarray(src[:n], dtype=np.float32)
-    return arr
-
-
-def _to_string_t0(t0_value, read_len: int) -> str:
-    if not t0_value:
-        return ""
-    return str(t0_value)[:read_len]
 
 
 def _load_labeled_df(
@@ -301,26 +260,6 @@ def _read_all_parquet_rows(
     return all_rows
 
 
-_ROLE_TO_SPLIT_ID = {"test": -1, "val": 1}
-
-
-def _row_split_id(row: dict, *, split_manifest: dict | None, chrom_to_fold: dict[str, int]) -> int:
-    chrom_value = row.get(CHROM, row.get("chrom"))
-    role: str | None = None
-    if split_manifest and split_manifest.get("split_mode") == SPLIT_MODE_SINGLE_MODEL_CHROM_VAL:
-        role = assign_single_model_chrom_val_role(chrom=str(chrom_value), manifest=split_manifest)
-    elif split_manifest and split_manifest.get("split_mode") == SPLIT_MODE_SINGLE_MODEL_READ_HASH:
-        role = assign_single_model_read_hash_role(
-            chrom=str(chrom_value),
-            rn=str(row["RN"]),
-            manifest=split_manifest,
-        )
-    if role is not None:
-        return _ROLE_TO_SPLIT_ID.get(role, 0)
-    fold_id = chrom_to_fold.get(str(chrom_value))
-    return -1 if fold_id is None else int(fold_id)
-
-
 def _compute_max_edist(parquet_path: str) -> int | None:
     edist_col = FeatureMapFields.EDIST.value
     pf = pq.ParquetFile(parquet_path)
@@ -334,126 +273,6 @@ def _compute_max_edist(parquet_path: str) -> int | None:
         if max_val is None or local_max > max_val:
             max_val = local_max
     return max_val
-
-
-def _compute_softclip_positions(cigar: list[tuple[int, int]]) -> set[int]:
-    """Identify query positions that belong to soft-clipped CIGAR segments."""
-    softclip_query_positions: set[int] = set()
-    q_cursor = 0
-    for op, length in cigar:
-        if op == CIGAR_SOFT_CLIP:
-            softclip_query_positions.update(range(q_cursor, q_cursor + length))
-            q_cursor += length
-        elif op in {0, 1, 7, 8}:  # M, I, =, X consume query
-            q_cursor += length
-        # D, N, H, P do not consume query
-    return softclip_query_positions
-
-
-def _process_aligned_pair(
-    qpos,
-    rpos,
-    rbase,
-    *,
-    read_seq: str,
-    read_quals,
-    tp_raw: np.ndarray,
-    t0_raw: str,
-    snv_pos_1based: int,
-    softclip_query_positions: set[int],
-) -> tuple[str, str, float, float, float, float, float]:
-    """Process a single aligned pair and return channel values.
-
-    Returns (read_base, ref_base, qual, tp_val, t0_val, is_focus, is_softclip).
-    """
-    if qpos is None:
-        read_base = "<GAP>"
-        qual = 0.0
-        tp_val = 0.0
-        t0_val = 0.0
-    else:
-        read_base = read_seq[qpos].upper() if qpos < len(read_seq) else "N"
-        qual = float(read_quals[qpos]) if qpos < len(read_quals) else 0.0
-        tp_val = float(tp_raw[qpos]) if qpos < len(tp_raw) else 0.0
-        t0_val = max(0.0, ord(t0_raw[qpos]) - 33) if qpos < len(t0_raw) else 0.0
-
-    if rpos is None:
-        ref_base = "<GAP>"
-    elif rbase is None:
-        ref_base = "N"
-    else:
-        ref_base = str(rbase).upper()
-        if ref_base not in {"A", "C", "G", "T", "N"}:
-            ref_base = "N"
-
-    is_focus = 1.0 if (rpos is not None and (rpos + 1) == snv_pos_1based) else 0.0
-    is_softclip = 1.0 if (qpos is not None and qpos in softclip_query_positions) else 0.0
-
-    return read_base, ref_base, qual, tp_val, t0_val, is_focus, is_softclip
-
-
-def _build_gapped_channels(
-    rec: pysam.AlignedSegment,
-    snv_pos_1based: int,
-    tp_raw: np.ndarray,
-    t0_raw: str,
-    positive_focus_ref_override: str | None,
-) -> dict:
-    read_seq = rec.query_sequence or ""
-    read_quals = rec.query_qualities if rec.query_qualities is not None else []
-    aligned_pairs = rec.get_aligned_pairs(matches_only=False, with_seq=True)
-    cigar = rec.cigartuples or []
-
-    softclip_query_positions = _compute_softclip_positions(cigar)
-
-    read_base_aln: list[str] = []
-    ref_base_aln: list[str] = []
-    qual_aln: list[float] = []
-    tp_aln: list[float] = []
-    t0_aln: list[float] = []
-    focus_aln: list[float] = []
-    softclip_mask_aln: list[float] = []
-    focus_indices: list[int] = []
-
-    for qpos, rpos, rbase in aligned_pairs:
-        read_base, ref_base, qual, tp_val, t0_val, is_focus, is_softclip = _process_aligned_pair(
-            qpos,
-            rpos,
-            rbase,
-            read_seq=read_seq,
-            read_quals=read_quals,
-            tp_raw=tp_raw,
-            t0_raw=t0_raw,
-            snv_pos_1based=snv_pos_1based,
-            softclip_query_positions=softclip_query_positions,
-        )
-        if is_focus == 1.0:
-            focus_indices.append(len(focus_aln))
-
-        read_base_aln.append(read_base)
-        ref_base_aln.append(ref_base)
-        qual_aln.append(qual)
-        tp_aln.append(tp_val)
-        t0_aln.append(t0_val)
-        focus_aln.append(is_focus)
-        softclip_mask_aln.append(is_softclip)
-
-    # If the SNV position was not present on aligned reference positions, keep focus all-zero.
-    # For positive records, mimic xgboost semantics by using X_ALT as the effective ref base at focus.
-    if positive_focus_ref_override and focus_indices:
-        focus_ref = positive_focus_ref_override.upper()
-        if focus_ref in {"A", "C", "G", "T", "N"}:
-            ref_base_aln[focus_indices[0]] = focus_ref
-
-    return {
-        "read_base_aln": read_base_aln,
-        "ref_base_aln": ref_base_aln,
-        "qual_aln": np.asarray(qual_aln, dtype=np.float32),
-        "tp_aln": np.asarray(tp_aln, dtype=np.float32),
-        "t0_aln": np.asarray(t0_aln, dtype=np.float32),
-        "focus_aln": np.asarray(focus_aln, dtype=np.float32),
-        "softclip_mask_aln": np.asarray(softclip_mask_aln, dtype=np.float32),
-    }
 
 
 def _process_rows_shard(
@@ -616,7 +435,7 @@ def tensorize_rows(
     """Core tensorization: BAM lookup + channel encoding for a batch of rows.
 
     Reusable for both training (batch cache) and future streaming inference.
-    Does NOT compute split_id — that is done at DataModule level from CHROM.
+    Does NOT compute split_id -- that is done at DataModule level from CHROM.
 
     Returns
     -------
@@ -688,35 +507,6 @@ def tensorize_rows(
         "wall_seconds": round(time.perf_counter() - t_start, 4),
     }
     return shard_id, chunk, stats
-
-
-def compute_split_ids(
-    chroms: list[str] | np.ndarray,
-    rns: list[str] | np.ndarray | None,
-    split_manifest: dict | None,
-    chrom_to_fold: dict[str, int],
-) -> torch.Tensor:
-    """Compute split_id for each row based on CHROM (and optionally RN).
-
-    For chrom-based split modes, this is O(unique_chroms) — very fast.
-    For read-hash mode, it falls back to per-row computation.
-    """
-    n = len(chroms)
-    needs_per_row = split_manifest and split_manifest.get("split_mode") == SPLIT_MODE_SINGLE_MODEL_READ_HASH
-
-    if needs_per_row:
-        split_ids = torch.zeros(n, dtype=torch.int8)
-        for i in range(n):
-            row = {CHROM: chroms[i], "chrom": chroms[i], "RN": rns[i] if rns else ""}
-            split_ids[i] = _row_split_id(row, split_manifest=split_manifest, chrom_to_fold=chrom_to_fold)
-        return split_ids
-
-    unique_chroms = sorted({str(c) for c in chroms})
-    chrom_to_split: dict[str, int] = {}
-    for chrom in unique_chroms:
-        row = {CHROM: chrom, "chrom": chrom, "RN": ""}
-        chrom_to_split[chrom] = _row_split_id(row, split_manifest=split_manifest, chrom_to_fold=chrom_to_fold)
-    return torch.tensor([chrom_to_split[str(c)] for c in chroms], dtype=torch.int8)
 
 
 @dataclass
@@ -838,7 +628,7 @@ def _execute_tensorize_shards(
 def build_tensor_cache(**kwargs) -> dict:
     """Single-step preprocessing: BAM reading + tensor encoding + cache write.
 
-    Split logic (split_id) is NOT computed here — it is deferred to the
+    Split logic (split_id) is NOT computed here -- it is deferred to the
     DataModule, which computes splits from the stored CHROM array and a
     split manifest at init time. This decouples the cache from any
     particular split configuration.

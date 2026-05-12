@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from ugbio_core.logger import logger
 
-from ugbio_srsnv.deep_srsnv.data_prep import compute_split_ids
+from ugbio_srsnv.deep_srsnv.utils.split_utils import compute_split_ids
 
 
 @dataclass

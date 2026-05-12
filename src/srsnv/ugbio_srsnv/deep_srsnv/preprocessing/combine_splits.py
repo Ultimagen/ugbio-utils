@@ -18,7 +18,7 @@ import numpy as np
 import torch
 from ugbio_core.logger import logger
 
-from ugbio_srsnv.deep_srsnv.cram_to_tensors import PrepProfile, _cpu_times, _resource_rss_gb
+from ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors import PrepProfile, _cpu_times, _resource_rss_gb
 from ugbio_srsnv.split_manifest import (
     SPLIT_MODE_CHROM_KFOLD,
     SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,

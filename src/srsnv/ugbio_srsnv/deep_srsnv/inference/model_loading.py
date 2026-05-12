@@ -8,9 +8,9 @@ from pathlib import Path
 import torch
 from ugbio_core.logger import logger
 
-from ugbio_srsnv.deep_srsnv.cnn_model import CNNReadClassifier
-from ugbio_srsnv.deep_srsnv.data_prep import NUMERIC_CHANNELS
-from ugbio_srsnv.deep_srsnv.lightning_module import SRSNVLightningModule
+from ugbio_srsnv.deep_srsnv.training.cnn_model import CNNReadClassifier
+from ugbio_srsnv.deep_srsnv.training.lightning_module import SRSNVLightningModule
+from ugbio_srsnv.deep_srsnv.utils.vocab import NUMERIC_CHANNELS
 
 
 def _torch_load_checkpoint(path: str | Path, *, map_location: str | torch.device | None = "cpu") -> dict:

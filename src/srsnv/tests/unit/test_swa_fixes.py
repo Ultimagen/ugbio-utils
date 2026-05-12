@@ -13,8 +13,8 @@ from ugbio_srsnv.deep_srsnv.inference import (
     load_dnn_model_from_swa_checkpoint,
     load_dnn_models_from_metadata,
 )
-from ugbio_srsnv.deep_srsnv.lightning_module import SRSNVLightningModule
-from ugbio_srsnv.deep_srsnv.swa_validation_tracker import SWAValidationTracker
+from ugbio_srsnv.deep_srsnv.training.lightning_module import SRSNVLightningModule
+from ugbio_srsnv.deep_srsnv.training.swa_validation_tracker import SWAValidationTracker
 from ugbio_srsnv.srsnv_dnn_bam_training import _build_callbacks
 
 

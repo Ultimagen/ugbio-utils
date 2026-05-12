@@ -8,7 +8,7 @@ import torch
 import torchmetrics
 from torch import nn
 
-from ugbio_srsnv.deep_srsnv.cnn_model import CNNReadClassifier
+from ugbio_srsnv.deep_srsnv.training.cnn_model import CNNReadClassifier
 
 LR_SCHEDULER_CHOICES = ("none", "cosine", "step", "onecycle", "reduce_on_plateau")
 

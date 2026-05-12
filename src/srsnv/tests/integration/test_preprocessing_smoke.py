@@ -213,8 +213,8 @@ def synthetic_data(tmp_path):
 
 class TestCramToTensorCacheSmoke:
     def test_basic(self, synthetic_data):
-        from ugbio_srsnv.deep_srsnv.cram_to_tensors import cram_to_tensor_cache
-        from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
+        from ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors import cram_to_tensor_cache
+        from ugbio_srsnv.deep_srsnv.utils.vocab import load_vocab_config
 
         enc = load_vocab_config()
         out_dir = str(synthetic_data["tmp_path"] / "pos_cache")
@@ -255,9 +255,9 @@ class TestCramToTensorCacheSmoke:
 
 class TestCombineAndSplitSmokeKfold:
     def test_kfold(self, synthetic_data):
-        from ugbio_srsnv.deep_srsnv.combine_splits import combine_and_split
-        from ugbio_srsnv.deep_srsnv.cram_to_tensors import cram_to_tensor_cache
-        from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
+        from ugbio_srsnv.deep_srsnv.preprocessing.combine_splits import combine_and_split
+        from ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors import cram_to_tensor_cache
+        from ugbio_srsnv.deep_srsnv.utils.vocab import load_vocab_config
 
         enc = load_vocab_config()
         tmp = synthetic_data["tmp_path"]
@@ -284,7 +284,7 @@ class TestCombineAndSplitSmokeKfold:
             shard_size=100,
         )
 
-        from ugbio_srsnv.deep_srsnv.combine_splits import SplitConfig
+        from ugbio_srsnv.deep_srsnv.preprocessing.combine_splits import SplitConfig
 
         folds_dir = str(tmp / "folds_kfold")
         index = combine_and_split(
@@ -322,9 +322,9 @@ class TestCombineAndSplitSmokeKfold:
 
 class TestCombineAndSplitSmokeSingleModel:
     def test_single_model(self, synthetic_data):
-        from ugbio_srsnv.deep_srsnv.combine_splits import combine_and_split
-        from ugbio_srsnv.deep_srsnv.cram_to_tensors import cram_to_tensor_cache
-        from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
+        from ugbio_srsnv.deep_srsnv.preprocessing.combine_splits import combine_and_split
+        from ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors import cram_to_tensor_cache
+        from ugbio_srsnv.deep_srsnv.utils.vocab import load_vocab_config
 
         enc = load_vocab_config()
         tmp = synthetic_data["tmp_path"]
@@ -351,7 +351,7 @@ class TestCombineAndSplitSmokeSingleModel:
             shard_size=100,
         )
 
-        from ugbio_srsnv.deep_srsnv.combine_splits import SplitConfig
+        from ugbio_srsnv.deep_srsnv.preprocessing.combine_splits import SplitConfig
 
         folds_dir = str(tmp / "folds_sm")
         combine_and_split(
@@ -393,10 +393,10 @@ class TestCombineAndSplitSmokeSingleModel:
 
 class TestEndToEndDataModuleSmoke:
     def test_datamodule_from_fold_dir(self, synthetic_data):
-        from ugbio_srsnv.deep_srsnv.combine_splits import combine_and_split
-        from ugbio_srsnv.deep_srsnv.cram_to_tensors import cram_to_tensor_cache
-        from ugbio_srsnv.deep_srsnv.data_module import SRSNVDataModule
-        from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
+        from ugbio_srsnv.deep_srsnv.preprocessing.combine_splits import combine_and_split
+        from ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors import cram_to_tensor_cache
+        from ugbio_srsnv.deep_srsnv.training.data_module import SRSNVDataModule
+        from ugbio_srsnv.deep_srsnv.utils.vocab import load_vocab_config
 
         enc = load_vocab_config()
         tmp = synthetic_data["tmp_path"]
@@ -423,7 +423,7 @@ class TestEndToEndDataModuleSmoke:
             shard_size=100,
         )
 
-        from ugbio_srsnv.deep_srsnv.combine_splits import SplitConfig
+        from ugbio_srsnv.deep_srsnv.preprocessing.combine_splits import SplitConfig
 
         folds_dir = str(tmp / "folds_e2e")
         combine_and_split(
@@ -438,7 +438,7 @@ class TestEndToEndDataModuleSmoke:
             output_dir=folds_dir,
         )
 
-        from ugbio_srsnv.deep_srsnv.data_module import DataModuleConfig
+        from ugbio_srsnv.deep_srsnv.training.data_module import DataModuleConfig
 
         dm = SRSNVDataModule.from_fold_dir(
             fold_dir=str(Path(folds_dir) / "fold_0"),

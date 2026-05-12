@@ -3,8 +3,8 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from ugbio_srsnv.deep_srsnv.data_module import SRSNVDataModule, TensorMapDataset, compact_collate_fn
 from ugbio_srsnv.deep_srsnv.data_prep import load_cache_from_shm, save_cache_to_shm
+from ugbio_srsnv.deep_srsnv.training.data_module import SRSNVDataModule, TensorMapDataset, compact_collate_fn
 
 
 def _make_fake_cache(n: int = 40, length: int = 300) -> dict:

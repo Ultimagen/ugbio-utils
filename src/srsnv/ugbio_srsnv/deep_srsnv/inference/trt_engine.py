@@ -343,8 +343,7 @@ def load_inference_engine(
         path = engine_path or metadata.get("trt_engine_path")
         if not path or not Path(path).exists():
             raise FileNotFoundError(
-                f"TRT engine not found at {path}. Run training with ONNX/TRT export, "
-                f"or pass --engine-path explicitly."
+                f"TRT engine not found at {path}. Run training with ONNX/TRT export, or pass --engine-path explicitly."
             )
         return TRTEngine(str(path), device_id=device_id, max_batch_size=max_batch_size)
 

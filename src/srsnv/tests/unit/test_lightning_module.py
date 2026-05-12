@@ -1,7 +1,7 @@
 import inspect
 
 import torch
-from ugbio_srsnv.deep_srsnv.lightning_module import SRSNVLightningModule
+from ugbio_srsnv.deep_srsnv.training.lightning_module import SRSNVLightningModule
 from ugbio_srsnv.srsnv_dnn_bam_training import _parse_devices, _resolve_n_devices
 
 

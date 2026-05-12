@@ -9,7 +9,7 @@ import numpy as np
 import pysam
 import pytest
 import torch
-from ugbio_srsnv.deep_srsnv.cnn_model import CNNReadClassifier
+from ugbio_srsnv.deep_srsnv.training.cnn_model import CNNReadClassifier
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -50,7 +50,7 @@ def dummy_batch():
 @pytest.fixture()
 def metadata_json(tmp_path, small_model):
     """Write a minimal metadata JSON and a checkpoint, return (metadata_path, ckpt_path)."""
-    from ugbio_srsnv.deep_srsnv.lightning_module import SRSNVLightningModule
+    from ugbio_srsnv.deep_srsnv.training.lightning_module import SRSNVLightningModule
 
     lit_model = SRSNVLightningModule(
         base_vocab_size=7,
@@ -304,8 +304,8 @@ class TestProcessShardInference:
         """Verify _process_shard returns tensors in memory (no disk writes)."""
         import array as _array
 
-        from ugbio_srsnv.deep_srsnv.cram_to_tensors import _process_shard
-        from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
+        from ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors import _process_shard
+        from ugbio_srsnv.deep_srsnv.utils.vocab import load_vocab_config
 
         header = pysam.AlignmentHeader.from_dict(
             {"HD": {"VN": "1.6", "SO": "coordinate"}, "SQ": [{"SN": "chr1", "LN": 10000}]}
