@@ -91,6 +91,25 @@ def _build_dnn_training_results(fold_metadata_paths: list[str]) -> list[dict] | 
     return results if results else None
 
 
+def _extract_features_from_parquet(parquet: pl.DataFrame) -> list[dict]:
+    """Extract feature schema from parquet columns when XGBoost metadata is unavailable."""
+    skip_cols = {"label", "CHROM", "POS", "RN", "chrom", "pos", "rn", "fold", "prob", "MQUAL", "SNVQ", "prob_orig"}
+    features_meta = []
+    for col in parquet.columns:
+        if col in skip_cols or col.startswith("prob_fold_"):
+            continue
+        dtype = parquet[col].dtype
+        if dtype in (pl.Categorical, pl.Utf8, pl.String):
+            unique_vals = sorted(parquet[col].drop_nulls().unique().to_list())
+            encoding = {str(v): i for i, v in enumerate(unique_vals)}
+            features_meta.append({"name": col, "type": "c", "values": encoding})
+        elif dtype in (pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64):
+            features_meta.append({"name": col, "type": "int"})
+        else:
+            features_meta.append({"name": col, "type": "float"})
+    return features_meta
+
+
 def _detect_k_folds(metadata: dict) -> int:
     """Infer the number of CV folds from XGBoost metadata."""
     if "model_paths" in metadata:
@@ -138,7 +157,7 @@ def _merge_dnn_into_xgb(xgb: pl.DataFrame, dnn: pl.DataFrame) -> tuple[pl.DataFr
     drop_pct = (1 - len(merged) / len(xgb)) * 100
     if drop_pct > MAX_ACCEPTABLE_DROP_PCT:
         logger.warning(
-            "%.1f%% of XGBoost rows dropped during join – " "ensure both pipelines trained on the same sample data.",
+            "%.1f%% of XGBoost rows dropped during join – ensure both pipelines trained on the same sample data.",
             drop_pct,
         )
 
@@ -212,6 +231,11 @@ def prepare_dnn_report_data(
 
     with open(xgb_metadata_path) as f:
         xgb_metadata = json.load(f)
+
+    if "features" not in xgb_metadata:
+        logger.info("No 'features' in metadata — extracting schema from parquet columns")
+        xgb_metadata["features"] = _extract_features_from_parquet(xgb)
+
     k_folds = _detect_k_folds(xgb_metadata)
 
     # If DNN didn't provide prob_fold_* columns, create them from prob_orig
