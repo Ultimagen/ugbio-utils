@@ -158,6 +158,26 @@ Another option is to build the image locally using `docker build . -f <dockerfil
     - If you are trying to select the correct Python interpreter but things are still stuck, close and re-open the container. Sometimes VSCode needs to reload itself.
 - Make sure that the `devcontainer.json`'s `mount` key does not contain directories that are missing in your setup. In my case it was `/data` that was missing.
 
+## Base Image Version
+
+The default base image (`ugbio_base`) version is intentionally duplicated in two workflow files:
+
+| File | Variable |
+|------|----------|
+| `.github/workflows/ci.yml` | `UGBIO_BASE_IMAGE_NAME` |
+| `.github/workflows/build-workspace-docker.yml` | `DEFAULT_BASE_IMAGE` |
+
+When upgrading the base image, update **both** values in the same PR. Each file includes a comment pointing to the other.
+
+Members that require a custom base image (e.g. `deep_srsnv` which uses `ugbio_deep_srsnv_base`) declare it as an `ARG` default in their `Dockerfile`:
+
+```dockerfile
+ARG BASE_IMAGE=ugbio_deep_srsnv_base:1.0.0
+FROM ${BASE_IMAGE}
+```
+
+`build-workspace-docker.yml` reads this default at build time and prepends the ECR registry automatically. When no default is present, `DEFAULT_BASE_IMAGE` is used as the fallback.
+
 ## Run Tests
 It is recommended to run tests in the relevant dev container. See the section above for more details on how to open the dev container. Once you are running inside the dev container, you can run tests using VSCode or with `uv run pytest <tests path>`.
 
