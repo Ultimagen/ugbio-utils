@@ -17,6 +17,8 @@ import pandas as pd
 import polars as pl
 from ugbio_core.logger import logger
 
+from ugbio_srsnv.srsnv_utils import MAX_PHRED
+
 MAX_ACCEPTABLE_DROP_PCT = 10
 
 
@@ -91,17 +93,46 @@ def _build_dnn_training_results(fold_metadata_paths: list[str]) -> list[dict] | 
     return results if results else None
 
 
-def _extract_features_from_parquet(parquet: pl.DataFrame) -> list[dict]:
-    """Extract feature schema from parquet columns when XGBoost metadata is unavailable."""
-    skip_cols = {"label", "CHROM", "POS", "RN", "chrom", "pos", "rn", "fold", "prob", "MQUAL", "SNVQ", "prob_orig"}
+def _extract_features_from_parquet(parquet: pl.DataFrame, feature_names: list[str] | None = None) -> list[dict]:
+    """Extract feature schema from parquet columns.
+
+    If *feature_names* is provided, only those columns are included.
+    Otherwise falls back to scanning all parquet columns (excluding known non-feature columns).
+    """
+    if feature_names:
+        cols_to_check = [c for c in feature_names if c in parquet.columns]
+    else:
+        skip_cols = {
+            "label",
+            "CHROM",
+            "POS",
+            "RN",
+            "chrom",
+            "pos",
+            "rn",
+            "fold",
+            "fold_id",
+            "prob",
+            "prob_orig",
+            "MQUAL",
+            "SNVQ",
+            "ID",
+            "QUAL",
+            "FILT_BITMAP",
+            "MI",
+            "X_ALT",
+        }
+        cols_to_check = [c for c in parquet.columns if c not in skip_cols and not c.startswith("prob_fold_")]
+
     features_meta = []
-    for col in parquet.columns:
-        if col in skip_cols or col.startswith("prob_fold_"):
+    for col in cols_to_check:
+        if parquet[col].drop_nulls().n_unique() <= 1:
+            logger.debug("Skipping constant column: %s", col)
             continue
         dtype = parquet[col].dtype
-        if dtype in (pl.Categorical, pl.Utf8, pl.String):
-            unique_vals = sorted(parquet[col].drop_nulls().unique().to_list())
-            encoding = {str(v): i for i, v in enumerate(unique_vals)}
+        if dtype in (pl.Categorical, pl.Utf8, pl.String) or isinstance(dtype, pl.Enum):
+            unique_vals = sorted(str(v) for v in parquet[col].drop_nulls().unique().to_list())
+            encoding = {v: i for i, v in enumerate(unique_vals)}
             features_meta.append({"name": col, "type": "c", "values": encoding})
         elif dtype in (pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64):
             features_meta.append({"name": col, "type": "int"})
@@ -121,7 +152,12 @@ def _detect_k_folds(metadata: dict) -> int:
 
 
 def _merge_dnn_into_training(training_df: pl.DataFrame, dnn: pl.DataFrame) -> tuple[pl.DataFrame, list[str]]:
-    """Join DNN prediction columns onto the XGBoost base DataFrame.
+    """Join feature columns from training onto the DNN base DataFrame.
+
+    The DNN parquet is used as the LEFT (base) table because it contains both
+    TP and FP labels, prob_fold_* columns, MQUAL, SNVQ, etc.  Feature columns
+    from the training parquet are joined onto it so the report can plot per-feature
+    quality distributions.
 
     Returns the merged DataFrame and list of DNN prob_fold_* column names.
     """
@@ -138,49 +174,32 @@ def _merge_dnn_into_training(training_df: pl.DataFrame, dnn: pl.DataFrame) -> tu
         dnn = pl.concat([dnn.filter(~test_mask), test_deduped])
         logger.info("  After de-duplication: %d rows", len(dnn))
 
-    # Carry over: prob_orig, MQUAL, SNVQ, fold_id, and any prob_fold_* columns
-    dnn_join_cols = ["CHROM", "POS", "RN"]
-    dnn_score_cols = [
-        pl.col("prob_orig").alias("prob_orig_dnn"),
-        pl.col("MQUAL").alias("MQUAL_dnn"),
-        pl.col("SNVQ").alias("SNVQ_dnn"),
-        pl.col("fold_id").alias("fold_id_dnn"),
-    ]
     dnn_prob_fold_cols = sorted(c for c in dnn.columns if c.startswith("prob_fold_"))
-    for c in dnn_prob_fold_cols:
-        dnn_score_cols.append(pl.col(c).alias(f"{c}_dnn"))
-    if "label" in dnn.columns:
-        dnn_score_cols.append(pl.col("label"))
 
-    dnn_scores = dnn.select(dnn_join_cols + dnn_score_cols)
-    merged = training_df.join(dnn_scores, on=["CHROM", "POS", "RN"], how="inner")
-    logger.info("  Matched rows: %d / %d XGB, %d DNN", len(merged), len(training_df), len(dnn))
+    # Select feature columns from training_df (everything except join keys
+    # and columns already present in the DNN parquet)
+    join_keys = ["CHROM", "POS", "RN"]
+    dnn_existing_cols = set(dnn.columns)
+    feature_cols = [c for c in training_df.columns if c not in dnn_existing_cols and c not in join_keys]
 
-    drop_pct = (1 - len(merged) / len(training_df)) * 100
-    if drop_pct > MAX_ACCEPTABLE_DROP_PCT:
-        logger.warning(
-            "%.1f%% of XGBoost rows dropped during join – ensure both pipelines trained on the same sample data.",
-            drop_pct,
+    if feature_cols:
+        training_features = training_df.select(join_keys + feature_cols)
+        merged = dnn.join(training_features, on=join_keys, how="left")
+        n_matched = merged.filter(pl.col(feature_cols[0]).is_not_null()).height
+        logger.info(
+            "  DNN rows: %d, matched features from training: %d / %d",
+            len(dnn),
+            n_matched,
+            len(training_df),
         )
-
-    # Replace XGBoost quality columns and fold_id with DNN values
-    cols_to_drop = [c for c in ("prob_orig", "MQUAL", "SNVQ", "fold_id") if c in merged.columns]
-    merged = merged.drop(cols_to_drop)
-    merged = merged.rename(
-        {"prob_orig_dnn": "prob_orig", "MQUAL_dnn": "MQUAL", "SNVQ_dnn": "SNVQ", "fold_id_dnn": "fold_id"}
-    )
-
-    # Replace XGBoost prob_fold_* columns with DNN ones
-    old_prob_fold_cols = [c for c in merged.columns if c.startswith("prob_fold_") and not c.endswith("_dnn")]
-    if old_prob_fold_cols:
-        merged = merged.drop(old_prob_fold_cols)
-    for c in dnn_prob_fold_cols:
-        merged = merged.rename({f"{c}_dnn": c})
+    else:
+        merged = dnn
+        logger.info("  No additional feature columns to join from training parquet")
 
     return merged, dnn_prob_fold_cols
 
 
-def prepare_dnn_report_data(
+def prepare_dnn_report_data(  # noqa: C901, PLR0912, PLR0915
     training_parquet: str,
     dnn_parquet: str,
     training_metadata_path: str,
@@ -188,6 +207,8 @@ def prepare_dnn_report_data(
     output_dir: str,
     basename: str = "",
     dnn_fold_metadata_paths: list[str] | None = None,
+    negative_parquet: str | None = None,
+    feature_names: list[str] | None = None,
 ) -> tuple[Path, Path]:
     """Merge DNN predictions into an XGBoost parquet for srsnv_report.
 
@@ -220,9 +241,37 @@ def prepare_dnn_report_data(
     suffix = f"{basename}." if basename and not basename.endswith(".") else basename
 
     # ── Load parquets ───────────────────────────────────────────────
-    logger.info("Loading XGBoost parquet: %s", training_parquet)
-    training_df = pl.read_parquet(training_parquet)
-    logger.info("  XGBoost rows=%d, columns=%d", len(training_df), len(training_df.columns))
+    logger.info("Loading positive training parquet: %s", training_parquet)
+    pos_df = pl.read_parquet(training_parquet)
+    logger.info("  Positive rows=%d, columns=%d", len(pos_df), len(pos_df.columns))
+
+    # For positive (reference) reads, apply the same transformations as
+    # XGBoost srsnv_training: swap REF/X_ALT, swap hmers, filter max EDIST,
+    # and increment edit distance features
+    if "X_ALT" in pos_df.columns:
+        ref_dtype = pos_df["REF"].dtype
+        pos_df = pos_df.with_columns(pl.col("X_ALT").cast(ref_dtype).alias("REF")).drop("X_ALT")
+        if {"X_HMER_REF", "X_HMER_ALT"} <= set(pos_df.columns):
+            pos_df = pos_df.rename({"X_HMER_REF": "__tmp_hmer", "X_HMER_ALT": "X_HMER_REF"}).rename(
+                {"__tmp_hmer": "X_HMER_ALT"}
+            )
+        if "EDIST" in pos_df.columns:
+            max_edist = pos_df.select(pl.max("EDIST")).item()
+            pos_df = pos_df.filter(pl.col("EDIST") != max_edist)
+        for feat in ("EDIST", "HAMDIST", "HAMDIST_FILT"):
+            if feat in pos_df.columns:
+                pos_df = pos_df.with_columns((pl.col(feat) + 1).alias(feat))
+        logger.info("  Applied X_ALT→REF swap + edit distance adjustments for positive reads")
+
+    training_df = pos_df
+    if negative_parquet:
+        logger.info("Loading negative training parquet: %s", negative_parquet)
+        neg_df = pl.read_parquet(negative_parquet)
+        if "X_ALT" in neg_df.columns:
+            neg_df = neg_df.drop("X_ALT")
+        logger.info("  Negative rows=%d", len(neg_df))
+        training_df = pl.concat([training_df, neg_df], how="diagonal")
+        logger.info("  Combined training rows=%d", len(training_df))
 
     logger.info("Loading DNN parquet: %s", dnn_parquet)
     dnn = pl.read_parquet(dnn_parquet)
@@ -236,7 +285,7 @@ def prepare_dnn_report_data(
 
     if "features" not in training_metadata:
         logger.info("No 'features' in metadata — extracting schema from parquet columns")
-        training_metadata["features"] = _extract_features_from_parquet(training_df)
+        training_metadata["features"] = _extract_features_from_parquet(training_df, feature_names=feature_names)
 
     k_folds = _detect_k_folds(training_metadata)
 
@@ -244,6 +293,14 @@ def prepare_dnn_report_data(
     if not dnn_prob_fold_cols:
         for k in range(k_folds):
             merged = merged.with_columns(pl.col("prob_orig").alias(f"prob_fold_{k}"))
+        dnn_prob_fold_cols = [f"prob_fold_{k}" for k in range(k_folds)]
+
+    # ── Create ML_qual_* columns from prob_fold_* ──────────────────
+    for c in dnn_prob_fold_cols:
+        fold_idx = c.replace("prob_fold_", "")
+        merged = merged.with_columns(
+            (-10.0 * (1.0 - pl.col(c)).log(base=10)).clip(0, MAX_PHRED).alias(f"ML_qual_{fold_idx}")
+        )
 
     # ── Write merged parquet ────────────────────────────────────────
     parquet_path = out / f"{suffix}featuremap_df.parquet"
@@ -295,7 +352,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description="Prepare DNN training outputs for srsnv_report",
     )
-    ap.add_argument("--training-parquet", required=True, help="Training featuremap_df.parquet path")
+    ap.add_argument("--training-parquet", required=True, help="Positive training featuremap_df.parquet path")
+    ap.add_argument("--negative-parquet", default=None, help="Negative training featuremap_df.parquet path")
     ap.add_argument("--dnn-parquet", required=True, help="DNN featuremap_df.parquet path")
     ap.add_argument("--training-metadata", required=True, help="Training metadata JSON path")
     ap.add_argument("--dnn-metadata", required=True, help="DNN srsnv_dnn_metadata.json path")
@@ -307,11 +365,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     ap.add_argument("--output-dir", required=True, help="Output directory")
     ap.add_argument("--basename", default="", help="Basename prefix for output files")
+    ap.add_argument("--features", default=None, help="Colon-separated feature names for report plots")
     return ap.parse_args(argv)
 
 
 def run(argv: list[str]) -> None:
     args = parse_args(argv[1:])
+    feature_names = args.features.split(":") if args.features else None
     parquet_path, metadata_path = prepare_dnn_report_data(
         training_parquet=args.training_parquet,
         dnn_parquet=args.dnn_parquet,
@@ -320,6 +380,8 @@ def run(argv: list[str]) -> None:
         output_dir=args.output_dir,
         basename=args.basename,
         dnn_fold_metadata_paths=args.dnn_fold_metadata,
+        negative_parquet=args.negative_parquet,
+        feature_names=feature_names,
     )
     logger.info("Done. Use with srsnv_report:")
     logger.info(

@@ -430,6 +430,8 @@ def calc_trinuc_stats(  # noqa: C901, PLR0912, PLR0913, PLR0915
             # Store all data stats with 'all' prefix
             stat_mapping = {q1: "q1_qual", 0.5: "median_qual", q2: "q2_qual"}
             for q_val, stat_name in stat_mapping.items():
+                if q_val not in all_qual_stats.columns:
+                    continue
                 stat_array = all_qual_stats[q_val].to_numpy()
                 if collapsed:
                     stat_array = (stat_array[:TRINUC_FORWARD_COUNT] + stat_array[TRINUC_FORWARD_COUNT:]) / 2
@@ -461,6 +463,8 @@ def calc_trinuc_stats(  # noqa: C901, PLR0912, PLR0913, PLR0915
 
                         # Store mixed-specific stats
                         for q_val, stat_name in stat_mapping.items():
+                            if q_val not in mixed_qual_stats.columns:
+                                continue
                             stat_array = mixed_qual_stats[q_val].to_numpy()
                             if collapsed:
                                 stat_array = (stat_array[:TRINUC_FORWARD_COUNT] + stat_array[TRINUC_FORWARD_COUNT:]) / 2
@@ -693,7 +697,7 @@ def plot_trinuc_hist_and_qual_panels(  # noqa: C901, PLR0912, PLR0913, PLR0915
     fig.legend(
         handles_qual,
         labels_qual,
-        title=f"SNVQ on TP (median + {int(q1*100)}%-{int(q2*100)}% range)",
+        title=f"SNVQ on TP (median + {int(q1 * 100)}%-{int(q2 * 100)}% range)",
         fontsize=14,
         title_fontsize=14,
         loc="lower center",

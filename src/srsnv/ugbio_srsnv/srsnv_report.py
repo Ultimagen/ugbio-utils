@@ -272,7 +272,7 @@ def prepare_report(
         models = _fallback_dummy_models(metadata)
 
     # Wrap models with training results
-    models = _wrap_models_with_training_results(models, metadata["training_results"])
+    models = _wrap_models_with_training_results(models, metadata.get("training_results"))
 
     # Build params dictionary from metadata
     params = _build_params(metadata, user_meta, len(models))
