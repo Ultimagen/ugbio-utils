@@ -1,4 +1,5 @@
-ARG BASE_IMAGE=ugbio_base
+# BASE_IMAGE is injected by build-workspace-docker.yml (defaults to DEFAULT_BASE_IMAGE)
+ARG BASE_IMAGE
 ARG OUT_DIR=/tmp/ugbio
 FROM python:3.11-bullseye AS build
 
