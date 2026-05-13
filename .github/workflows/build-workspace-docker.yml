@@ -28,6 +28,11 @@ on:
         type: string
         default: ""
         required: false
+      runner:
+        description: "Runner type passed to docker-build-push.yml (default: ubuntu-latest)"
+        required: false
+        type: string
+        default: ubuntu-latest
 
 permissions:
   id-token: write # Required for assuming an AWS role
@@ -107,3 +112,4 @@ jobs:
          docker-context: ${{ inputs.docker-context }}
          project-version: ${{ needs.pre-build.outputs.project-version }}
          docker-build-args: BASE_IMAGE=${{ needs.pre-build.outputs.ecr-registry }}/${{ needs.pre-build.outputs.base-image }}
+         runner: ${{ inputs.runner }}
