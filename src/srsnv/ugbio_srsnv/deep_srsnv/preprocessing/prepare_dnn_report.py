@@ -199,7 +199,7 @@ def _merge_dnn_into_training(training_df: pl.DataFrame, dnn: pl.DataFrame) -> tu
     return merged, dnn_prob_fold_cols
 
 
-def prepare_dnn_report_data(  # noqa: C901, PLR0912, PLR0915
+def prepare_dnn_report_data(  # noqa: C901, PLR0912, PLR0913, PLR0915
     training_parquet: str,
     dnn_parquet: str,
     training_metadata_path: str,
@@ -209,6 +209,8 @@ def prepare_dnn_report_data(  # noqa: C901, PLR0912, PLR0915
     dnn_fold_metadata_paths: list[str] | None = None,
     negative_parquet: str | None = None,
     feature_names: list[str] | None = None,
+    pipeline_version: str | None = None,
+    docker_image: str | None = None,
 ) -> tuple[Path, Path]:
     """Merge DNN predictions into an XGBoost parquet for srsnv_report.
 
@@ -335,6 +337,10 @@ def prepare_dnn_report_data(  # noqa: C901, PLR0912, PLR0915
     user_meta = metadata.setdefault("metadata", {})
     user_meta["model_type"] = "dnn"
     user_meta["dnn_metadata_path"] = str(dnn_metadata_path)
+    if pipeline_version:
+        user_meta["pipeline_version"] = pipeline_version
+    if docker_image:
+        user_meta["docker_image"] = docker_image
 
     # Copy DNN holdout metrics if available
     holdout = dnn_metadata.get("holdout_metrics")
@@ -366,6 +372,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--output-dir", required=True, help="Output directory")
     ap.add_argument("--basename", default="", help="Basename prefix for output files")
     ap.add_argument("--features", default=None, help="Colon-separated feature names for report plots")
+    ap.add_argument("--pipeline-version", default=None, help="Pipeline version string for report metadata")
+    ap.add_argument("--docker-image", default=None, help="Docker image name for report metadata")
     return ap.parse_args(argv)
 
 
@@ -382,6 +390,8 @@ def run(argv: list[str]) -> None:
         dnn_fold_metadata_paths=args.dnn_fold_metadata,
         negative_parquet=args.negative_parquet,
         feature_names=feature_names,
+        pipeline_version=args.pipeline_version,
+        docker_image=args.docker_image,
     )
     logger.info("Done. Use with srsnv_report:")
     logger.info(
