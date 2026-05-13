@@ -149,6 +149,8 @@ def _merge_dnn_into_training(training_df: pl.DataFrame, dnn: pl.DataFrame) -> tu
     dnn_prob_fold_cols = sorted(c for c in dnn.columns if c.startswith("prob_fold_"))
     for c in dnn_prob_fold_cols:
         dnn_score_cols.append(pl.col(c).alias(f"{c}_dnn"))
+    if "label" in dnn.columns:
+        dnn_score_cols.append(pl.col("label"))
 
     dnn_scores = dnn.select(dnn_join_cols + dnn_score_cols)
     merged = training_df.join(dnn_scores, on=["CHROM", "POS", "RN"], how="inner")

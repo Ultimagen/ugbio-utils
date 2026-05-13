@@ -219,6 +219,7 @@ def recalibrate_dnn_folds(
         if mp.exists():
             meta = json.loads(mp.read_text())
             meta["quality_recalibration_table"] = shared_lut
+            meta["filtering_stats"] = {"negative": neg_stats, "positive": pos_stats}
             out_mp = out / mp.name
             out_mp.write_text(json.dumps(meta, indent=2))
             logger.info("Updated metadata with shared LUT: %s", out_mp)
