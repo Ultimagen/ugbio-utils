@@ -245,6 +245,7 @@ def prepare_dnn_report_data(  # noqa: C901, PLR0912, PLR0913, PLR0915
     # ── Load parquets ───────────────────────────────────────────────
     logger.info("Loading positive training parquet: %s", training_parquet)
     pos_df = pl.read_parquet(training_parquet)
+    n_pos_after_downsample = len(pos_df)
     logger.info("  Positive rows=%d, columns=%d", len(pos_df), len(pos_df.columns))
 
     # For positive (reference) reads, apply the same transformations as
@@ -266,9 +267,11 @@ def prepare_dnn_report_data(  # noqa: C901, PLR0912, PLR0913, PLR0915
         logger.info("  Applied X_ALT→REF swap + edit distance adjustments for positive reads")
 
     training_df = pos_df
+    n_neg_after_downsample = 0
     if negative_parquet:
         logger.info("Loading negative training parquet: %s", negative_parquet)
         neg_df = pl.read_parquet(negative_parquet)
+        n_neg_after_downsample = len(neg_df)
         if "X_ALT" in neg_df.columns:
             neg_df = neg_df.drop("X_ALT")
         logger.info("  Negative rows=%d", len(neg_df))
@@ -314,6 +317,30 @@ def prepare_dnn_report_data(  # noqa: C901, PLR0912, PLR0913, PLR0915
         dnn_metadata = json.load(f)
 
     metadata = copy.deepcopy(training_metadata)
+
+    # Add downsample entries to filtering_stats (matching XGBoost behavior)
+    if "filtering_stats" in metadata:
+        fs = metadata["filtering_stats"]
+        ds_pos = {
+            "name": "downsample",
+            "funnel": n_pos_after_downsample,
+            "pass": n_pos_after_downsample,
+            "type": "downsample",
+        }
+        ds_neg = {
+            "name": "downsample",
+            "funnel": n_neg_after_downsample,
+            "pass": n_neg_after_downsample,
+            "type": "downsample",
+        }
+        if "positive" in fs:
+            fs["positive"]["filters"] = [
+                f for f in fs["positive"].get("filters", []) if f.get("type") != "downsample"
+            ] + [ds_pos]
+        if "negative" in fs:
+            fs["negative"]["filters"] = [
+                f for f in fs["negative"].get("filters", []) if f.get("type") != "downsample"
+            ] + [ds_neg]
 
     # Use DNN quality recalibration table
     dnn_recal = dnn_metadata.get("quality_recalibration_table")
