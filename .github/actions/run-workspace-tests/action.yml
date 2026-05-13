@@ -22,7 +22,7 @@ inputs:
     description: "AWS role name"
     required: true
   ugbio_base_image:
-      description: "Fallback base image (image:tag) when the Dockerfile has no ARG BASE_IMAGE default. Should be set to DEFAULT_BASE_IMAGE in the calling workflow."
+      description: "Fallback base image (image:tag) when the Dockerfile has no ARG BASE_IMAGE default."
       required: false
   github-token:
       description: "GitHub token for private repository access"
