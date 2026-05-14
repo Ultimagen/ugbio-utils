@@ -23,7 +23,13 @@ import polars as pl
 from ugbio_core.logger import logger
 
 from ugbio_srsnv.srsnv_training import _count_bases_in_interval_list, _extract_stats_from_unified
-from ugbio_srsnv.srsnv_utils import MAX_PHRED, prob_to_phred, recalibrate_snvq, recalibrate_snvq_kde
+from ugbio_srsnv.srsnv_utils import (
+    MAX_PHRED,
+    _compute_snvq_prefactor,
+    prob_to_phred,
+    recalibrate_snvq,
+    recalibrate_snvq_kde,
+)
 
 
 def _load_fold_parquets(
@@ -129,7 +135,7 @@ def _enrich_with_featuremap_columns(combined: pl.DataFrame, featuremap_parquets:
     return combined
 
 
-def recalibrate_dnn_folds(
+def recalibrate_dnn_folds(  # noqa: PLR0915
     fold_parquets: list[str],
     fold_metadata_paths: list[str],
     stats_file: str,
@@ -212,6 +218,15 @@ def recalibrate_dnn_folds(
     combined.write_parquet(parquet_path)
     logger.info("Combined parquet: %s (%d rows)", parquet_path, len(combined))
 
+    # -- Compute training parameters for report --
+    snvq_prefactor, _ = _compute_snvq_prefactor(
+        pos_stats=pos_stats, raw_stats=raw_stats, mean_coverage=mean_coverage, n_bases_in_region=n_bases
+    )
+    from ugbio_srsnv.srsnv_utils import get_filter_ratio
+
+    filtering_ratio = get_filter_ratio(pos_stats["filters"], numerator_type="label", denominator_type="raw")
+    effective_bases_covered = mean_coverage * n_bases * filtering_ratio
+
     # -- Update per-fold metadata with shared LUT --
     shared_lut = [x_lut.tolist(), y_lut.tolist()]
     for meta_path in fold_metadata_paths:
@@ -219,6 +234,14 @@ def recalibrate_dnn_folds(
         if mp.exists():
             meta = json.loads(mp.read_text())
             meta["quality_recalibration_table"] = shared_lut
+            meta["filtering_stats"] = {"negative": neg_stats, "positive": pos_stats}
+            meta.setdefault("training_parameters", {}).update(
+                {
+                    "max_qual": MAX_PHRED,
+                    "effective_bases_covered": effective_bases_covered,
+                    "snvq_prefactor": snvq_prefactor,
+                }
+            )
             out_mp = out / mp.name
             out_mp.write_text(json.dumps(meta, indent=2))
             logger.info("Updated metadata with shared LUT: %s", out_mp)

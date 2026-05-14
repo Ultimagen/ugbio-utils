@@ -16,10 +16,7 @@ import tensorrt as trt
 import torch
 from ugbio_core.logger import logger
 
-from ugbio_srsnv.deep_srsnv.inference.model_loading import (
-    load_dnn_model_from_checkpoint,
-    load_dnn_model_from_swa_checkpoint,
-)
+from ugbio_srsnv.deep_srsnv.inference.model_loading import load_dnn_model_from_checkpoint
 
 if TYPE_CHECKING:
     from torch import nn
@@ -343,8 +340,7 @@ def load_inference_engine(
         path = engine_path or metadata.get("trt_engine_path")
         if not path or not Path(path).exists():
             raise FileNotFoundError(
-                f"TRT engine not found at {path}. Run training with ONNX/TRT export, "
-                f"or pass --engine-path explicitly."
+                f"TRT engine not found at {path}. Run training with ONNX/TRT export, or pass --engine-path explicitly."
             )
         return TRTEngine(str(path), device_id=device_id, max_batch_size=max_batch_size)
 
@@ -352,23 +348,13 @@ def load_inference_engine(
         device = f"cuda:{device_id}" if torch.cuda.is_available() else "cpu"
 
         ckpt = checkpoint_path
-        prefer_swa = metadata.get("prediction_model") == "swa"
         if not ckpt:
-            if prefer_swa:
-                swa_paths = metadata.get("swa_checkpoint_paths") or []
-                ckpt = swa_paths[0] if swa_paths else None
-            if not ckpt:
-                best_paths = metadata.get("best_checkpoint_paths") or []
-                ckpt = best_paths[0] if best_paths else None
+            best_paths = metadata.get("best_checkpoint_paths") or []
+            ckpt = best_paths[0] if best_paths else None
         if not ckpt:
             raise FileNotFoundError("No checkpoint found in metadata for PyTorch backend")
 
-        raw = torch.load(str(ckpt), map_location="cpu", weights_only=False)
-        is_swa_format = isinstance(raw, dict) and "state_dict" in raw and "pytorch-lightning_version" not in raw
-        if is_swa_format:
-            lit_model = load_dnn_model_from_swa_checkpoint(ckpt, metadata, map_location=device)
-        else:
-            lit_model = load_dnn_model_from_checkpoint(ckpt, map_location=device)
+        lit_model = load_dnn_model_from_checkpoint(ckpt, map_location=device)
 
         return PyTorchEngine(lit_model.model, device=device)
 

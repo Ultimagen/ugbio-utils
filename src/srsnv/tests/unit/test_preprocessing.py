@@ -20,7 +20,7 @@ import pytest
 
 class TestLoadVocabConfig:
     def test_load_default(self):
-        from ugbio_srsnv.deep_srsnv.data_prep import Encoders, load_vocab_config
+        from ugbio_srsnv.deep_srsnv.utils.vocab import Encoders, load_vocab_config
 
         enc = load_vocab_config()
         assert isinstance(enc, Encoders)
@@ -32,11 +32,11 @@ class TestLoadVocabConfig:
         assert enc.t0_vocab["<MISSING>"] == 1
         assert len(enc.t0_vocab) == 11
         assert len(enc.tm_vocab) == 9
-        assert len(enc.st_vocab) == 6
-        assert len(enc.et_vocab) == 6
+        assert len(enc.st_vocab) == 5
+        assert len(enc.et_vocab) == 5
 
     def test_load_from_path(self, tmp_path):
-        from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
+        from ugbio_srsnv.deep_srsnv.utils.vocab import load_vocab_config
 
         cfg = {
             "base_vocab": {"<PAD>": 0, "A": 1},
@@ -52,13 +52,13 @@ class TestLoadVocabConfig:
         assert enc.base_vocab == {"<PAD>": 0, "A": 1}
 
     def test_missing_file(self, tmp_path):
-        from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
+        from ugbio_srsnv.deep_srsnv.utils.vocab import load_vocab_config
 
         with pytest.raises(FileNotFoundError):
             load_vocab_config(tmp_path / "nonexistent.json")
 
     def test_invalid_json(self, tmp_path):
-        from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
+        from ugbio_srsnv.deep_srsnv.utils.vocab import load_vocab_config
 
         bad_file = tmp_path / "bad.json"
         bad_file.write_text("{not valid json!")
@@ -66,7 +66,7 @@ class TestLoadVocabConfig:
             load_vocab_config(bad_file)
 
     def test_missing_keys(self, tmp_path):
-        from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
+        from ugbio_srsnv.deep_srsnv.utils.vocab import load_vocab_config
 
         cfg = {"base_vocab": {"<PAD>": 0}}
         cfg_path = tmp_path / "incomplete.json"
@@ -150,7 +150,7 @@ def small_bam(tmp_path):
 
 class TestCramFetch:
     def test_found(self, small_bam):
-        from ugbio_srsnv.deep_srsnv.cram_to_tensors import _fetch_read_from_cram
+        from ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors import _fetch_read_from_cram
 
         cram = pysam.AlignmentFile(small_bam, "rb")
         rec = _fetch_read_from_cram(cram, "chr1", 100, "read_A")
@@ -159,7 +159,7 @@ class TestCramFetch:
         cram.close()
 
     def test_missing_rn(self, small_bam):
-        from ugbio_srsnv.deep_srsnv.cram_to_tensors import _fetch_read_from_cram
+        from ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors import _fetch_read_from_cram
 
         cram = pysam.AlignmentFile(small_bam, "rb")
         rec = _fetch_read_from_cram(cram, "chr1", 100, "no_such_read")
@@ -167,7 +167,7 @@ class TestCramFetch:
         cram.close()
 
     def test_wrong_chrom(self, small_bam):
-        from ugbio_srsnv.deep_srsnv.cram_to_tensors import _fetch_read_from_cram
+        from ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors import _fetch_read_from_cram
 
         cram = pysam.AlignmentFile(small_bam, "rb")
         rec = _fetch_read_from_cram(cram, "chr2", 100, "read_A")
@@ -184,7 +184,7 @@ class TestSamtoolsPipeFetch:
     """Tests for ``_fetch_reads_samtools_pipe`` which delegates filtering to samtools."""
 
     def test_basic_fetch(self, small_bam):
-        from ugbio_srsnv.deep_srsnv.cram_to_tensors import _fetch_reads_samtools_pipe
+        from ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors import _fetch_reads_samtools_pipe
 
         rows = [
             {"CHROM": "chr1", "POS": 100, "RN": "read_A"},
@@ -199,7 +199,7 @@ class TestSamtoolsPipeFetch:
         assert matched["read_B"].query_name == "read_B"
 
     def test_multi_chrom(self, small_bam):
-        from ugbio_srsnv.deep_srsnv.cram_to_tensors import _fetch_reads_samtools_pipe
+        from ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors import _fetch_reads_samtools_pipe
 
         rows = [
             {"CHROM": "chr1", "POS": 100, "RN": "read_A"},
@@ -212,7 +212,7 @@ class TestSamtoolsPipeFetch:
         assert set(matched.keys()) == {"read_A", "read_C", "read_D"}
 
     def test_nonexistent_name(self, small_bam):
-        from ugbio_srsnv.deep_srsnv.cram_to_tensors import _fetch_reads_samtools_pipe
+        from ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors import _fetch_reads_samtools_pipe
 
         rows = [
             {"CHROM": "chr1", "POS": 100, "RN": "read_A"},
@@ -224,14 +224,14 @@ class TestSamtoolsPipeFetch:
         assert "no_such_read" not in matched
 
     def test_empty_rows(self, small_bam):
-        from ugbio_srsnv.deep_srsnv.cram_to_tensors import _fetch_reads_samtools_pipe
+        from ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors import _fetch_reads_samtools_pipe
 
         matched = _fetch_reads_samtools_pipe(small_bam, None, [])
         assert matched == {}
 
     def test_matches_pysam_fetch(self, small_bam):
         """Verify samtools pipe returns the same reads as pure-pysam fetch."""
-        from ugbio_srsnv.deep_srsnv.cram_to_tensors import (
+        from ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors import (
             _fetch_reads_by_region,
             _fetch_reads_samtools_pipe,
         )
@@ -287,7 +287,7 @@ def bam_header():
 
 class TestBuildGappedChannels:
     def test_match(self, bam_header):
-        from ugbio_srsnv.deep_srsnv.data_prep import _build_gapped_channels
+        from ugbio_srsnv.deep_srsnv.utils.alignment import _build_gapped_channels
 
         rec = _make_aligned_segment(bam_header, seq="ACGT", pos=100, cigar=[(0, 4)])
         tp_raw = np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32)
@@ -300,7 +300,7 @@ class TestBuildGappedChannels:
         assert len(result["focus_aln"]) == 4
 
     def test_insertion(self, bam_header):
-        from ugbio_srsnv.deep_srsnv.data_prep import _build_gapped_channels
+        from ugbio_srsnv.deep_srsnv.utils.alignment import _build_gapped_channels
 
         # 2M1I2M: read=ACGGT, ref has gap at position of insertion
         rec = _make_aligned_segment(bam_header, seq="ACGGT", pos=100, cigar=[(0, 2), (1, 1), (0, 2)], md="4")
@@ -311,7 +311,7 @@ class TestBuildGappedChannels:
         assert "<GAP>" not in result["read_base_aln"]
 
     def test_deletion(self, bam_header):
-        from ugbio_srsnv.deep_srsnv.data_prep import _build_gapped_channels
+        from ugbio_srsnv.deep_srsnv.utils.alignment import _build_gapped_channels
 
         # 2M1D2M: read=ACGT, ref has extra base at deletion
         rec = _make_aligned_segment(bam_header, seq="ACGT", pos=100, cigar=[(0, 2), (2, 1), (0, 2)], md="2^N2")
@@ -322,7 +322,7 @@ class TestBuildGappedChannels:
         assert "<GAP>" not in result["ref_base_aln"]
 
     def test_softclip(self, bam_header):
-        from ugbio_srsnv.deep_srsnv.data_prep import _build_gapped_channels
+        from ugbio_srsnv.deep_srsnv.utils.alignment import _build_gapped_channels
 
         # 1S4M: first base is soft-clipped
         rec = _make_aligned_segment(bam_header, seq="AACGT", pos=100, cigar=[(4, 1), (0, 4)], md="4")
@@ -332,7 +332,7 @@ class TestBuildGappedChannels:
         assert result["softclip_mask_aln"][0] == 1.0
 
     def test_focus(self, bam_header):
-        from ugbio_srsnv.deep_srsnv.data_prep import _build_gapped_channels
+        from ugbio_srsnv.deep_srsnv.utils.alignment import _build_gapped_channels
 
         rec = _make_aligned_segment(bam_header, seq="ACGT", pos=100, cigar=[(0, 4)])
         tp_raw = np.zeros(4, dtype=np.float32)
@@ -344,7 +344,7 @@ class TestBuildGappedChannels:
         assert focus_arr[np.argmax(focus_arr)] == 1.0
 
     def test_positive_ref_override(self, bam_header):
-        from ugbio_srsnv.deep_srsnv.data_prep import _build_gapped_channels
+        from ugbio_srsnv.deep_srsnv.utils.alignment import _build_gapped_channels
 
         rec = _make_aligned_segment(bam_header, seq="ACGT", pos=100, cigar=[(0, 4)])
         tp_raw = np.zeros(4, dtype=np.float32)
@@ -356,7 +356,7 @@ class TestBuildGappedChannels:
 
 class TestTensorEncoding:
     def test_shapes(self):
-        from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
+        from ugbio_srsnv.deep_srsnv.utils.vocab import load_vocab_config
 
         enc = load_vocab_config()
         tensor_length = 50
@@ -379,7 +379,7 @@ class TestTensorEncoding:
         assert mask_out.shape == (1, tensor_length)
 
     def test_padding(self):
-        from ugbio_srsnv.deep_srsnv.data_prep import load_vocab_config
+        from ugbio_srsnv.deep_srsnv.utils.vocab import load_vocab_config
 
         enc = load_vocab_config()
         tensor_length = 10
@@ -403,7 +403,7 @@ class TestTensorEncoding:
 
 class TestFoldAssignment:
     def test_chrom_kfold(self):
-        from ugbio_srsnv.deep_srsnv.combine_splits import _assign_fold_ids
+        from ugbio_srsnv.deep_srsnv.preprocessing.combine_splits import _assign_fold_ids
 
         manifest = {
             "split_mode": "chromosome_kfold",
@@ -421,7 +421,7 @@ class TestFoldAssignment:
         assert fold_ids[4] == 0.0
 
     def test_holdout_is_nan(self):
-        from ugbio_srsnv.deep_srsnv.combine_splits import _assign_fold_ids
+        from ugbio_srsnv.deep_srsnv.preprocessing.combine_splits import _assign_fold_ids
 
         manifest = {
             "split_mode": "chromosome_kfold",
@@ -435,7 +435,7 @@ class TestFoldAssignment:
         assert np.all(np.isnan(fold_ids))
 
     def test_single_model_chrom_val(self):
-        from ugbio_srsnv.deep_srsnv.combine_splits import _assign_fold_ids
+        from ugbio_srsnv.deep_srsnv.preprocessing.combine_splits import _assign_fold_ids
 
         manifest = {
             "split_mode": "single_model_chrom_val",
@@ -453,7 +453,7 @@ class TestFoldAssignment:
         assert fold_ids[3] == 0.0  # train
 
     def test_single_model_read_hash_deterministic(self):
-        from ugbio_srsnv.deep_srsnv.combine_splits import _assign_fold_ids
+        from ugbio_srsnv.deep_srsnv.preprocessing.combine_splits import _assign_fold_ids
 
         manifest = {
             "split_mode": "single_model_read_hash",
