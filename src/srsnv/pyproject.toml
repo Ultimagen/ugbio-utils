@@ -9,10 +9,6 @@ dependencies = [
     "numba>=0.60.0",
     "shap>=0.46.0",
     "statsmodels>=0.14.4",
-    "torch>=2.1",
-    "lightning>=2.0",
-    "torchmetrics>=1.0",
-    "isal>=1.0",
 ]
 description = "Ultima Genomics SRSNV utils"
 authors = [
@@ -26,9 +22,6 @@ authors = [
 ]
 readme = "README.srsnv.md"
 
-[project.optional-dependencies]
-trt = ["onnx", "onnxscript", "tensorrt", "pycuda"]
-
 [project.license]
 text = "Apache-2.0"
 
@@ -36,14 +29,7 @@ text = "Apache-2.0"
 run_tests = "pytest:main"
 srsnv_inference = "ugbio_srsnv.srsnv_inference:main"
 srsnv_training = "ugbio_srsnv.srsnv_training:main"
-srsnv_dnn_bam_training = "ugbio_srsnv.srsnv_dnn_bam_training:main"
 srsnv_report = "ugbio_srsnv.srsnv_report:main"
-cram_to_tensors = "ugbio_srsnv.deep_srsnv.preprocessing.cram_to_tensors:main"
-combine_splits = "ugbio_srsnv.deep_srsnv.preprocessing.combine_splits:main"
-dnn_fold_inference_from_cache = "ugbio_srsnv.deep_srsnv.inference.dnn_fold_inference:main_fold_from_cache"
-dnn_merge_and_annotate = "ugbio_srsnv.deep_srsnv.inference.dnn_merge_annotate:main"
-prepare_dnn_report = "ugbio_srsnv.deep_srsnv.preprocessing.prepare_dnn_report:main"
-recalibrate_dnn_folds = "ugbio_srsnv.deep_srsnv.preprocessing.recalibrate_dnn_folds:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true
@@ -57,7 +43,6 @@ workspace = true
 [tool.setuptools.package-data]
 "*" = [
     "**/reports/*",
-    "**/deep_srsnv/*.json",
 ]
 
 [build-system]
