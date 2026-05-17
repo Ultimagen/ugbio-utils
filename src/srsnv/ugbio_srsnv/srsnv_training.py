@@ -62,7 +62,6 @@ from ugbio_srsnv.split_manifest import (
     validate_manifest_against_regions,
 )
 from ugbio_srsnv.srsnv_utils import (
-    EPS,
     MAX_PHRED,
     all_models_predict_proba,
     get_filter_ratio,
@@ -251,40 +250,6 @@ def _parse_model_params(mp: str | None) -> dict[str, Any]:
 
 
 # ───────────────────────── auxiliary functions ──────────────────────────────
-
-
-def _probability_rescaling(
-    prob: np.ndarray,
-    sample_prior: float,
-    target_prior: float,
-    eps: float = EPS,
-) -> np.ndarray:
-    """
-    Rescale probabilities from the training prior to the real-data prior.
-
-    Formula (odds space, no logs):
-        odds_row       =  p / (1-p)
-        odds_sample    =  π_s / (1-π_s)
-        odds_target    =  π_t / (1-π_t)
-        odds_rescaled  =  odds_row * (odds_target / odds_sample)
-        p_rescaled     =  odds_rescaled / (1.0 + odds_rescaled)
-    """
-    sample_prior = np.clip(sample_prior, eps, 1 - eps)
-    target_prior = np.clip(target_prior, eps, 1 - eps)
-
-    odds_sample = sample_prior / (1.0 - sample_prior)
-    odds_target = target_prior / (1.0 - target_prior)
-
-    p = np.clip(prob, eps, 1 - eps)
-    odds_row = p / (1.0 - p)
-
-    odds_rescaled = odds_row * (odds_target / odds_sample)
-    p_rescaled = odds_rescaled / (1.0 + odds_rescaled)
-    # dividing by 3 to get SNVQ score - we are counting all 3 possible errors per base but we want an SNVQ score
-    # per specific substitution error
-    p_rescaled_snvq = 1 - ((1 - p_rescaled) / 3)
-
-    return p_rescaled_snvq
 
 
 def partition_into_folds(series_of_sizes, k_folds, alg="greedy", n_chroms_leave_out=1):
