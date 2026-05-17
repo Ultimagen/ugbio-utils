@@ -1,8 +1,0 @@
-.venv
-.git
-.github
-.cursor
-.ruff_cache
-__pycache__
-*.pyc
-*.egg-info
