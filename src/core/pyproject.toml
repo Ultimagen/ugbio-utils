@@ -17,6 +17,7 @@ dependencies = [
     "h5py>=3.11.0,<4.0.0",
     "scipy>=1.14.0,<2.0.0",
     "tqdm>=4.66.4,<5.0.0",
+    "plotly>=5.18.0,<6.0.0",
 ]
 
 [project.optional-dependencies]
@@ -57,6 +58,7 @@ convert_h5_to_json = "ugbio_core.convert_h5_to_json:main"
 collect_existing_metrics = "ugbio_core.collect_existing_metrics:main"
 generate_report = "ugbio_core.reports.report_utils:main"
 calculate_library_complexity = "ugbio_core.calculate_library_complexity:main"
+sorter_stats_report = "ugbio_core.sorter_stats_report:main"
 
 [tool.setuptools.package-data]
 "*" = [
