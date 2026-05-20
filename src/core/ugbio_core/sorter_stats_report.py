@@ -1,4 +1,4 @@
-"""Generate a self-contained HTML QC report from sorter statistics JSON and CSV files."""
+"""Generate an HTML QC report from sorter statistics JSON and CSV files."""
 
 from __future__ import annotations
 
@@ -24,6 +24,8 @@ _UNIQUE_GROUP = ["Unique", "Non-unique"]
 
 def _add_percentile_lines(fig: go.Figure, data: np.ndarray, x_cap: int, *, show_mean: bool = True) -> None:
     """Add vertical percentile and mean lines to a figure."""
+    if data.size == 0:
+        return
     cumsum = np.cumsum(data)
     total = cumsum[-1]
     if total == 0:
@@ -97,10 +99,10 @@ def _build_summary_table_html(csv_df: pd.DataFrame, basename: str) -> str:
     )
 
 
-def _build_coverage_boxplot(stats_json: dict, csv_df: pd.DataFrame, basename: str) -> go.Figure:
+def _build_coverage_boxplot(base_coverage: dict, csv_df: pd.DataFrame, basename: str) -> go.Figure:
     """Build the base coverage boxplot normalized by median coverage."""
     median_cvg = float(csv_df.loc[csv_df["metric"] == "median_cvg", "value"].iloc[0])
-    bc = stats_json["base_coverage"]
+    bc = base_coverage
 
     gc_keys = sorted(k for k in bc if k.startswith("GC "))
     known = {"Genome"} | set(_EXOME_GROUP) | set(_UNIQUE_GROUP) | set(gc_keys)
@@ -260,10 +262,15 @@ def _build_read_length_plot(stats_json: dict, basename: str) -> go.Figure:
     keys = [k for k in stats_json if "read_length" in k and isinstance(stats_json[k], list)]
 
     fig = go.Figure()
+    plotted_keys = []
     for idx, key in enumerate(keys):
         data = np.array(stats_json[key], dtype=float)
+        if data.size == 0:
+            continue
         cumsum = np.cumsum(data)
         total = cumsum[-1]
+        if total == 0:
+            continue
         p99_bin = int(np.searchsorted(cumsum, 0.99 * total))
         bins = np.arange(p99_bin + 1)
         data_capped = data[: p99_bin + 1]
@@ -277,11 +284,12 @@ def _build_read_length_plot(stats_json: dict, basename: str) -> go.Figure:
                 name=key,
             )
         )
+        plotted_keys.append(key)
 
-        if idx == 0:
+        if len(plotted_keys) == 1:
             _add_percentile_lines(fig, data, p99_bin)
 
-    caption_key = keys[0] if keys else "read_length"
+    caption_key = plotted_keys[0] if plotted_keys else "read_length"
     fig.update_layout(
         title={"text": basename, "font": {"size": 24}},
         xaxis_title="Read Length",
@@ -315,8 +323,11 @@ def _build_bqual_plot(stats_json: dict, basename: str) -> go.Figure:
     keys = [k for k in stats_json if "bqual" in k and isinstance(stats_json[k], list)]
 
     fig = go.Figure()
+    plotted_keys = []
     for idx, key in enumerate(keys):
         data = np.array(stats_json[key], dtype=float)
+        if data.size == 0:
+            continue
         bins = np.arange(len(data))
 
         fig.add_trace(
@@ -328,11 +339,12 @@ def _build_bqual_plot(stats_json: dict, basename: str) -> go.Figure:
                 name=key,
             )
         )
+        plotted_keys.append(key)
 
-        if idx == 0:
+        if len(plotted_keys) == 1:
             _add_percentile_lines(fig, data, len(data) - 1)
 
-    caption_key = keys[0] if keys else "bqual"
+    caption_key = plotted_keys[0] if plotted_keys else "bqual"
     fig.update_layout(
         title={"text": basename, "font": {"size": 24}},
         xaxis_title="Base Quality",
@@ -455,8 +467,12 @@ def generate_sorter_stats_report(json_path: Path, csv_path: Path, output_html: P
         Path to the generated HTML report.
 
     """
+    from ugbio_core.sorter_utils import read_sorter_statistics_csv  # noqa: PLC0415
+
     logger.info(f"Reading sorter stats from {json_path} and {csv_path}")
-    csv_df = pd.read_csv(csv_path, header=None, names=["metric", "value"])
+    csv_series = read_sorter_statistics_csv(str(csv_path), edit_metric_names=False)
+    csv_df = csv_series.reset_index()
+    csv_df.columns = ["metric", "value"]
     with open(json_path, encoding="utf-8") as f:
         stats_json = json.load(f)
 
@@ -465,7 +481,7 @@ def generate_sorter_stats_report(json_path: Path, csv_path: Path, output_html: P
     logger.info("Building report figures")
     table_html = _build_summary_table_html(csv_df, basename)
     figures = [
-        _build_coverage_boxplot(stats_json, csv_df, basename),
+        _build_coverage_boxplot(stats_json.get("base_coverage", {}), csv_df, basename),
         _build_cvg_histogram(stats_json, basename),
         _build_read_length_plot(stats_json, basename),
         _build_bqual_plot(stats_json, basename),
@@ -480,12 +496,33 @@ def generate_sorter_stats_report(json_path: Path, csv_path: Path, output_html: P
     return output_html
 
 
-def _find_cram_basename(files: list[str]) -> str:
-    """Find the main CRAM basename (excludes _unmatched) from a file listing."""
+def _find_sorter_basename(files: list[str]) -> str:
+    """Find the main sample basename from a file listing.
+
+    Strategy:
+    1. Look for the main CRAM file (excludes _unmatched).
+    2. If no CRAM found, find JSON files that have a matching CSV (excludes ppmSeq/unmatched).
+    """
     cram_files = [f for f in files if f.endswith(".cram") and "_unmatched" not in f and not f.endswith(".crai")]
-    if len(cram_files) != 1:
-        raise ValueError(f"Expected exactly 1 main CRAM file, found {len(cram_files)}: {cram_files}")
-    return cram_files[0].removesuffix(".cram")
+    if len(cram_files) == 1:
+        return cram_files[0].removesuffix(".cram")
+
+    json_files = [
+        f
+        for f in files
+        if f.endswith(".json") and "ppmSeq" not in f and "_unmatched" not in f and not f.startswith(".")
+    ]
+    csv_files = {f.removesuffix(".csv") for f in files if f.endswith(".csv")}
+    matched = [f.removesuffix(".json") for f in json_files if f.removesuffix(".json") in csv_files]
+
+    if len(matched) == 1:
+        return matched[0]
+    if len(matched) > 1:
+        raise ValueError(f"Multiple JSON+CSV pairs found, cannot auto-detect basename: {matched}")
+    raise ValueError(
+        f"Could not determine sample basename. No CRAM found ({len(cram_files)} candidates) "
+        f"and no matching JSON+CSV pair found in: {files}"
+    )
 
 
 def _resolve_paths(args) -> tuple[Path, Path, Path]:
@@ -496,11 +533,14 @@ def _resolve_paths(args) -> tuple[Path, Path, Path]:
     elif args.input_dir:
         input_dir = args.input_dir
         if input_dir.startswith("s3://"):
-            from ugbio_cloud_utils.cloud_sync import cloud_sync  # noqa: PLC0415
+            try:
+                from ugbio_cloud_utils.cloud_sync import cloud_sync  # noqa: PLC0415
+            except ImportError:
+                raise RuntimeError("No S3 access from this environment") from None  # noqa: B904
 
             logger.info(f"Fetching files from {input_dir}")
             all_files = _list_s3_dir(input_dir)
-            basename = _find_cram_basename(all_files)
+            basename = _find_sorter_basename(all_files)
             json_name = f"{basename}.json"
             csv_name = f"{basename}.csv"
             if json_name not in all_files or csv_name not in all_files:
@@ -510,7 +550,7 @@ def _resolve_paths(args) -> tuple[Path, Path, Path]:
         else:
             dir_path = Path(input_dir)
             all_files = [f.name for f in dir_path.iterdir() if f.is_file()]
-            basename = _find_cram_basename(all_files)
+            basename = _find_sorter_basename(all_files)
             json_path = dir_path / f"{basename}.json"
             csv_path = dir_path / f"{basename}.csv"
             if not json_path.exists() or not csv_path.exists():
@@ -527,21 +567,25 @@ def _resolve_paths(args) -> tuple[Path, Path, Path]:
 
 
 def _list_s3_dir(s3_uri: str) -> list[str]:
-    """List filenames in an S3 directory."""
-    import subprocess  # noqa: PLC0415
+    """List filenames in an S3 directory using boto3."""
+    try:
+        import boto3  # noqa: PLC0415
+    except ImportError:
+        raise RuntimeError("No S3 access from this environment") from None  # noqa: B904
 
-    result = subprocess.run(
-        ["aws", "s3", "ls", s3_uri.rstrip("/") + "/"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    parts = s3_uri.replace("s3://", "").split("/", 1)
+    bucket = parts[0]
+    prefix = parts[1].rstrip("/") + "/" if len(parts) > 1 else ""
+
+    s3 = boto3.client("s3")
+    paginator = s3.get_paginator("list_objects_v2")
     files = []
-    for line in result.stdout.strip().split("\n"):
-        if line.strip():
-            parts = line.split()
-            if len(parts) >= 4:  # noqa: PLR2004
-                files.append(parts[-1])
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/"):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            filename = key[len(prefix) :]
+            if filename:
+                files.append(filename)
     return files
 
 
