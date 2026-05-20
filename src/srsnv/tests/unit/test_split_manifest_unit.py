@@ -393,10 +393,44 @@ class TestValidation:
         # Should not raise
         _validate_required_fields(manifest, SPLIT_MODE_CHROM_KFOLD)
 
+    def test_validate_required_fields_read_hash(self):
+        manifest = {
+            "split_version": 1,
+            "random_seed": 42,
+            "holdout_chromosomes": [],
+            "test_chromosomes": [],
+            "train_val_chromosomes": [],
+            "val_fraction": 0.1,
+            "hash_key": "RN",
+        }
+        # Should not raise
+        _validate_required_fields(manifest, SPLIT_MODE_SINGLE_MODEL_READ_HASH)
+
+    def test_validate_required_fields_chrom_val(self):
+        manifest = {
+            "split_version": 1,
+            "holdout_chromosomes": [],
+            "test_chromosomes": [],
+            "val_chromosomes": [],
+            "train_chromosomes": [],
+        }
+        # Should not raise
+        _validate_required_fields(manifest, SPLIT_MODE_SINGLE_MODEL_CHROM_VAL)
+
     def test_validate_required_fields_missing(self):
         manifest = {"split_version": 1}
         with pytest.raises(ValueError, match="Missing required manifest field"):
             _validate_required_fields(manifest, SPLIT_MODE_CHROM_KFOLD)
+
+    def test_validate_required_fields_read_hash_missing(self):
+        manifest = {"split_version": 1, "random_seed": 42}
+        with pytest.raises(ValueError, match="Missing required manifest field"):
+            _validate_required_fields(manifest, SPLIT_MODE_SINGLE_MODEL_READ_HASH)
+
+    def test_validate_required_fields_chrom_val_missing(self):
+        manifest = {"split_version": 1}
+        with pytest.raises(ValueError, match="Missing required manifest field"):
+            _validate_required_fields(manifest, SPLIT_MODE_SINGLE_MODEL_CHROM_VAL)
 
     def test_validate_unknown_mode(self):
         with pytest.raises(ValueError, match="Unknown split_mode"):
@@ -423,6 +457,109 @@ class TestValidation:
         )
         manifest["test_chromosomes"] = ["chrX"]
         with pytest.raises(ValueError, match="absent from interval list"):
+            validate_manifest_against_regions(manifest, path)
+
+    def test_validate_read_hash_manifest(self, interval_list_file):
+        """validate_manifest_against_regions works for read-hash mode."""
+        path, _, _ = interval_list_file
+        manifest = build_single_model_read_hash_manifest(
+            training_regions=path,
+            random_seed=42,
+            holdout_chromosomes=["chr5"],
+            val_fraction=0.1,
+        )
+        # Should not raise
+        validate_manifest_against_regions(manifest, path)
+
+    def test_validate_chrom_val_manifest(self, interval_list_file):
+        """validate_manifest_against_regions works for chrom-val mode."""
+        path, _, _ = interval_list_file
+        manifest = build_single_model_chrom_val_manifest(
+            training_regions=path,
+            holdout_chromosomes=["chr5"],
+            val_chromosomes=["chr4"],
+        )
+        # Should not raise
+        validate_manifest_against_regions(manifest, path)
+
+    def test_validate_kfold_invalid_fold_ids(self, interval_list_file):
+        """Fold IDs out of range should fail validation."""
+        path, _, _ = interval_list_file
+        manifest = build_split_manifest(
+            training_regions=path,
+            k_folds=2,
+            random_seed=42,
+            holdout_chromosomes=["chr5"],
+        )
+        # Corrupt fold ids
+        for chrom in manifest["chrom_to_fold"]:
+            manifest["chrom_to_fold"][chrom] = 99  # out of range
+        with pytest.raises(ValueError, match="fold ids out of range"):
+            validate_manifest_against_regions(manifest, path)
+
+    def test_validate_kfold_test_train_overlap(self, interval_list_file):
+        """Test and train chromosomes overlapping should fail."""
+        path, _, _ = interval_list_file
+        manifest = build_split_manifest(
+            training_regions=path,
+            k_folds=2,
+            random_seed=42,
+            holdout_chromosomes=["chr5"],
+        )
+        # Add test chromosome to train list
+        manifest["train_chromosomes"].append("chr5")
+        with pytest.raises(ValueError, match="overlap"):
+            validate_manifest_against_regions(manifest, path)
+
+    def test_validate_read_hash_bad_val_fraction(self, interval_list_file):
+        """Invalid val_fraction in manifest should fail validation."""
+        path, _, _ = interval_list_file
+        manifest = build_single_model_read_hash_manifest(
+            training_regions=path,
+            random_seed=42,
+            holdout_chromosomes=["chr5"],
+            val_fraction=0.1,
+        )
+        manifest["val_fraction"] = 1.5  # invalid
+        with pytest.raises(ValueError, match="val_fraction must be in"):
+            validate_manifest_against_regions(manifest, path)
+
+    def test_validate_read_hash_bad_hash_key(self, interval_list_file):
+        """Invalid hash_key in manifest should fail validation."""
+        path, _, _ = interval_list_file
+        manifest = build_single_model_read_hash_manifest(
+            training_regions=path,
+            random_seed=42,
+            holdout_chromosomes=["chr5"],
+            val_fraction=0.1,
+        )
+        manifest["hash_key"] = "XX"
+        with pytest.raises(ValueError, match="hash_key must be 'RN'"):
+            validate_manifest_against_regions(manifest, path)
+
+    def test_validate_read_hash_overlap_test_train(self, interval_list_file):
+        """Overlapping test and train_val chromosomes should fail."""
+        path, _, _ = interval_list_file
+        manifest = build_single_model_read_hash_manifest(
+            training_regions=path,
+            random_seed=42,
+            holdout_chromosomes=["chr5"],
+            val_fraction=0.1,
+        )
+        manifest["train_val_chromosomes"].append("chr5")
+        with pytest.raises(ValueError, match="overlap"):
+            validate_manifest_against_regions(manifest, path)
+
+    def test_validate_chrom_val_val_train_overlap(self, interval_list_file):
+        """Overlapping val and train chromosomes should fail."""
+        path, _, _ = interval_list_file
+        manifest = build_single_model_chrom_val_manifest(
+            training_regions=path,
+            holdout_chromosomes=["chr5"],
+            val_chromosomes=["chr4"],
+        )
+        manifest["train_chromosomes"].append("chr4")
+        with pytest.raises(ValueError, match="overlap"):
             validate_manifest_against_regions(manifest, path)
 
 
