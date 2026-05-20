@@ -200,27 +200,6 @@ def plot_read_length_histogram(
         )
 
 
-def get_base_coverage_from_sorter(sorter_stats_json: str) -> dict[str, pd.Series]:
-    """
-    Read base coverage histograms (per-region) from sorter JSON file.
-
-    Parameters
-    ----------
-    sorter_stats_json : str
-        Path to Sorter statistics JSON file.
-
-    Returns
-    -------
-    dict[str, pd.Series]
-        Dictionary mapping region name to its coverage histogram as a pandas Series.
-
-    """
-    with open(sorter_stats_json, encoding="utf-8") as fh:
-        sorter_stats = json.load(fh)
-    base_coverage = sorter_stats.get("base_coverage", {})
-    return {region: pd.Series(hist, name="count") for region, hist in base_coverage.items()}
-
-
 def get_histogram_from_sorter(sorter_stats_json: str, histogram_key: str) -> pd.DataFrame:
     """
     Read histogram from sorter JSON file.
