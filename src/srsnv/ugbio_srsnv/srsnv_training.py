@@ -31,7 +31,6 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import polars as pl
-import pysam
 import xgboost as xgb
 from ugbio_core.logger import logger
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
@@ -102,83 +101,6 @@ pl.enable_string_cache()
 
 
 # ───────────────────────── parsers ────────────────────────────
-def _parse_sq_header(line: str) -> tuple[str | None, int | None]:
-    """
-    Parse an @SQ header line to extract chromosome name and length.
-
-    Parameters
-    ----------
-    line : str
-        An @SQ header line from an interval list file.
-
-    Returns
-    -------
-    tuple[str | None, int | None]
-        chrom_name: Chromosome name from SN tag, or None if not found.
-        chrom_length: Chromosome length from LN tag, or None if not found.
-    """
-    fields = line.strip().split("\t")
-    chrom_name = None
-    chrom_length = None
-    for field in fields[1:]:  # Skip @SQ itself
-        if field.startswith("SN:"):
-            chrom_name = field[3:]
-        elif field.startswith("LN:"):
-            chrom_length = int(field[3:])
-    return chrom_name, chrom_length
-
-
-def _parse_interval_list_file(path: str) -> tuple[dict[str, int], list[str]]:
-    """
-    Parse an interval list file to extract chromosome sizes and order.
-
-    Chromosome sizes are extracted from @SQ header lines (SN and LN tags).
-    Chromosome order is determined by the order they appear in the data section.
-
-    Parameters
-    ----------
-    path : str
-        Path to the interval list file (.interval_list).
-
-    Returns
-    -------
-    tuple[dict[str, int], list[str]]
-        chrom_sizes: Dictionary mapping chromosome names to their lengths from @SQ headers.
-        chroms_in_data: List of chromosomes in the order they first appear in the data.
-    """
-    chrom_sizes: dict[str, int] = {}
-    chroms_in_data: list[str] = []
-
-    min_fields = 3  # Interval list format requires at least chrom, start, end
-
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            # Parse @SQ header lines to get chromosome lengths
-            if line.startswith("@SQ"):
-                chrom_name, chrom_length = _parse_sq_header(line)
-                if chrom_name and chrom_length:
-                    chrom_sizes[chrom_name] = chrom_length
-                continue
-
-            # Skip other header/comment lines
-            if line.startswith(("#", "@")) or not line.strip():
-                continue
-
-            fields = line.strip().split("\t")
-            if len(fields) < min_fields:
-                continue
-
-            chrom = fields[0]
-
-            # Track chromosome order as they appear in the data
-            chroms_in_data.append(chrom)
-            if chrom not in chrom_sizes:
-                raise ValueError(f"{chrom} not found in size dict derived from header: {chrom_sizes}")
-
-    if not chrom_sizes:
-        raise ValueError(f"No @SQ headers found in interval list file {path}")
-
-    return chrom_sizes, chroms_in_data
 
 
 def _count_bases_in_interval_list(path: str) -> int:
@@ -301,57 +223,6 @@ def _probability_recalibration(prob_orig: np.ndarray, y_all: np.ndarray) -> np.n
     """
     # Simply return the input probabilities unchanged
     return prob_orig.copy()
-
-
-def _parse_interval_list_tabix(path: str) -> tuple[dict[str, int], list[str]]:
-    chrom_sizes = {}
-    with pysam.TabixFile(path) as tbx:
-        for line in tbx.header:
-            if line.startswith("@SQ"):
-                chrom_name = None
-                for field in line.strip().split("\t")[1:]:
-                    key, val = field.split(":", 1)
-                    if key == "SN":
-                        chrom_name = val
-                    elif key == "LN" and chrom_name is not None:
-                        chrom_sizes[chrom_name] = int(val)
-        chroms_in_data = list(tbx.contigs)
-    missing = [c for c in chroms_in_data if c not in chrom_sizes]
-    if missing:
-        raise ValueError(f"Missing @SQ header for contigs: {missing}")
-    return chrom_sizes, chroms_in_data
-
-
-def _parse_interval_list_manual(path: str) -> tuple[dict[str, int], list[str]]:
-    """
-    Picard/Broad interval-list:
-    header lines: '@SQ\\tSN:chr1\\tLN:248956422'
-    data  lines:  'chr1   100  200  +  region1'
-
-    Supports both plain text and gzipped files (detected by .gz extension).
-    """
-    chrom_sizes: dict[str, int] = {}
-    chroms_in_data: list[str] = []
-
-    with gzip.open(path, "rt", encoding="utf-8") if path.endswith(".gz") else Path(path).open(encoding="utf-8") as fh:
-        for line in fh:
-            if line.startswith("@SQ"):
-                chrom_name = None
-                for field in line.strip().split("\t")[1:]:
-                    key, val = field.split(":", 1)
-                    if key == "SN":
-                        chrom_name = val
-                    elif key == "LN" and chrom_name is not None:
-                        chrom_sizes[chrom_name] = int(val)
-            elif not line.startswith("@") and line.strip():
-                chrom = line.split("\t", 1)[0]
-                if chrom and chrom not in chroms_in_data:
-                    chroms_in_data.append(chrom)
-
-    missing = [c for c in chroms_in_data if c not in chrom_sizes]
-    if missing:
-        raise ValueError(f"Missing @SQ header for contigs: {missing}")
-    return chrom_sizes, chroms_in_data
 
 
 def _parse_holdout_chromosomes(raw: str | None) -> list[str] | None:
@@ -930,11 +801,12 @@ class SRSNVTrainer:
         try:
             snvq, x_lut, y_lut = recalibrate_snvq_kde(
                 pd_df,
-                stats_positive=self.pos_stats,
-                stats_negative=self.neg_stats,
+                pos_stats=self.pos_stats,
+                neg_stats=self.neg_stats,
+                raw_stats=self.neg_stats,
                 k_folds=self.k_folds,
                 mean_coverage=self.mean_coverage,
-                training_regions=self.args.training_regions,
+                n_bases_in_region=self.n_bases_in_region,
                 quality_lut_size=getattr(self.args, "quality_lut_size", None),
                 transform_mode=transform_mode,
                 mqual_cutoff_quantile=mqual_cutoff_quantile,

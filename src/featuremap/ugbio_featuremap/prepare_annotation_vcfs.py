@@ -76,7 +76,7 @@ def run(argv: list[str] | None = None) -> None:
 
     read_filters = None
     if args.read_filters:
-        with open(args.read_filters) as f:
+        with open(args.read_filters, encoding="utf-8") as f:
             read_filters = json.load(f)
         if args.coverage_threshold is not None:
             read_filters = _update_coverage_threshold(read_filters, args.coverage_threshold)
