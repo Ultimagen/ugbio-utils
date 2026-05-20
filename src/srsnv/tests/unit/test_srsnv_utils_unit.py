@@ -11,6 +11,12 @@ Covers:
 - safe_roc_auc
 - polars_to_pandas_efficient
 - split_validation_training_preds
+- construct_trinuc_context_with_alt
+- get_trinuc_context_with_alt_fwd_vectorized
+- set_featuremap_df_dtypes
+- k_fold_predict_proba
+- _compute_snvq_prefactor
+- _find_filter_rows
 """
 
 from __future__ import annotations
@@ -23,9 +29,17 @@ import polars as pl
 import pytest
 from ugbio_srsnv.srsnv_utils import (
     _aggregate_probabilities_from_folds,
+    _compute_snvq_prefactor,
+    _find_filter_rows,
     _probability_rescaling,
+    construct_trinuc_context_with_alt,
+    get_base_error_rate_from_filters,
+    get_base_recall_from_filters,
+    get_filter_ratio,
+    get_trinuc_context_with_alt_fwd_vectorized,
     is_cycle_skip,
     is_possible_cycle_skip,
+    k_fold_predict_proba,
     key2seq,
     logit_to_prob,
     phred_to_prob,
@@ -36,6 +50,7 @@ from ugbio_srsnv.srsnv_utils import (
     recalibrate_snvq_kde,
     safe_roc_auc,
     seq2key,
+    set_featuremap_df_dtypes,
     split_validation_training_preds,
 )
 
@@ -582,3 +597,377 @@ class TestSplitValidationTrainingPreds:
         # But train preds should be aggregated from all models
         assert np.isfinite(preds_train[0])
         assert np.isfinite(preds_train[1])
+
+
+# ──────────────────────── get_filter_ratio / get_base_recall / get_base_error_rate ──
+
+
+class TestGetFilterRatio:
+    """Test get_filter_ratio and its helper _find_filter_rows."""
+
+    @pytest.fixture
+    def sample_filters(self):
+        return [
+            {"name": "raw", "type": "raw", "funnel": 100000, "rows": 100000},
+            {"name": "coverage", "type": "region", "funnel": 90000, "rows": 90000},
+            {"name": "quality_filter", "type": "quality", "funnel": 80000, "rows": 80000},
+            {"name": "label_filter", "type": "label", "funnel": 50000, "rows": 50000},
+            {"name": "downsample", "type": "downsample", "funnel": 10000, "rows": 10000},
+        ]
+
+    def test_default_label_over_raw(self, sample_filters):
+        """Default: numerator_type=label, denominator_type=raw."""
+        ratio = get_filter_ratio(sample_filters)
+        # Before label_filter (index=3): rows at index 2 = 80000
+        # Raw (type=raw): rows at index 0 = 100000
+        assert ratio == pytest.approx(80000 / 100000)
+
+    def test_numerator_filter_by_name(self, sample_filters):
+        """Using numerator_filter by name."""
+        ratio = get_filter_ratio(sample_filters, numerator_filter="downsample", denominator_type="raw")
+        # Before downsample (index=4): rows at index 3 = 50000
+        # Raw = 100000
+        assert ratio == pytest.approx(50000 / 100000)
+
+    def test_denominator_filter_by_name(self, sample_filters):
+        """Using denominator_filter by name."""
+        ratio = get_filter_ratio(sample_filters, numerator_type="label", denominator_filter="quality_filter")
+        # Numerator: before label = 80000
+        # Denominator: before quality_filter (index=2) = 90000
+        assert ratio == pytest.approx(80000 / 90000)
+
+    def test_empty_filters_raises(self):
+        with pytest.raises(ValueError, match="Filter list is empty"):
+            get_filter_ratio([])
+
+    def test_filter_not_found_raises(self, sample_filters):
+        with pytest.raises(ValueError, match="not found"):
+            get_filter_ratio(sample_filters, numerator_type="nonexistent")
+
+    def test_filter_at_index_zero_raises(self):
+        """Cannot get 'before' if the target is the first filter."""
+        filters = [
+            {"name": "raw", "type": "raw", "funnel": 100, "rows": 100},
+        ]
+        # Trying to use quality type which does not exist:
+        with pytest.raises(ValueError, match="not found"):
+            get_filter_ratio(filters, numerator_type="quality")
+
+    def test_raw_denominator_type(self, sample_filters):
+        """Using raw as denominator_type returns the raw row count."""
+        ratio = get_filter_ratio(sample_filters, numerator_type="label", denominator_type="raw")
+        assert ratio == pytest.approx(80000 / 100000)
+
+    def test_old_format_rows_key(self):
+        """Test fallback from funnel to rows key."""
+        filters = [
+            {"name": "raw", "type": "raw", "rows": 5000},
+            {"name": "qual", "type": "quality", "rows": 4000},
+            {"name": "label_f", "type": "label", "rows": 3000},
+        ]
+        ratio = get_filter_ratio(filters)
+        # numerator: before label (index 2) -> filters[1]["rows"] = 4000
+        # denominator: raw -> filters[0]["rows"] = 5000
+        assert ratio == pytest.approx(4000 / 5000)
+
+    def test_denominator_zero_raises(self):
+        filters = [
+            {"name": "raw", "type": "raw", "funnel": 0, "rows": 0},
+            {"name": "qual", "type": "quality", "funnel": 0, "rows": 0},
+            {"name": "label_f", "type": "label", "funnel": 0, "rows": 0},
+        ]
+        with pytest.raises(ValueError, match="Denominator filter has 0 rows"):
+            get_filter_ratio(filters)
+
+
+class TestGetBaseRecallFromFilters:
+    def test_basic(self):
+        filters = [
+            {"name": "raw", "type": "raw", "funnel": 10000, "rows": 10000},
+            {"name": "q1", "type": "quality", "funnel": 8000, "rows": 8000},
+            {"name": "lbl", "type": "label", "funnel": 6000, "rows": 6000},
+        ]
+        # recall = before_label / before_quality = 8000 / 10000
+        result = get_base_recall_from_filters(filters)
+        assert result == pytest.approx(8000 / 10000)
+
+
+class TestGetBaseErrorRateFromFilters:
+    def test_basic(self):
+        filters = [
+            {"name": "raw", "type": "raw", "funnel": 100000, "rows": 100000},
+            {"name": "q1", "type": "quality", "funnel": 80000, "rows": 80000},
+            {"name": "downsample", "type": "downsample", "funnel": 10000, "rows": 10000},
+        ]
+        # error_rate = before_downsample / raw = 80000 / 100000
+        result = get_base_error_rate_from_filters(filters)
+        assert result == pytest.approx(80000 / 100000)
+
+
+class TestFindFilterRows:
+    def test_raw_special_case_with_type(self):
+        filters = [
+            {"name": "raw", "type": "raw", "funnel": 5000, "rows": 5000},
+            {"name": "q", "type": "quality", "funnel": 3000, "rows": 3000},
+        ]
+        result = _find_filter_rows(filters, "raw", "type")
+        assert result == 5000
+
+    def test_raw_special_case_with_name(self):
+        filters = [
+            {"name": "raw", "type": "raw", "funnel": 7000, "rows": 7000},
+            {"name": "q", "type": "quality", "funnel": 3000, "rows": 3000},
+        ]
+        result = _find_filter_rows(filters, "raw", "name")
+        assert result == 7000
+
+    def test_first_filter_not_raw_raises(self):
+        filters = [
+            {"name": "not_raw", "type": "quality", "funnel": 5000, "rows": 5000},
+        ]
+        with pytest.raises(ValueError, match="First filter is not 'raw'"):
+            _find_filter_rows(filters, "raw", "type")
+
+    def test_target_is_first_raises(self):
+        """Cannot get filter before the first filter for non-raw."""
+        filters2 = [
+            {"name": "quality", "type": "quality", "funnel": 100, "rows": 100},
+            {"name": "label", "type": "label", "funnel": 50, "rows": 50},
+        ]
+        with pytest.raises(ValueError, match="Cannot get filter before"):
+            _find_filter_rows(filters2, "quality", "name")
+
+
+# ──────────────────────── _compute_snvq_prefactor ──────────────────────
+
+
+class TestComputeSnvqPrefactor:
+    def test_basic(self):
+        pos_stats = {
+            "filters": [
+                {"name": "raw", "type": "raw", "funnel": 10000, "rows": 10000},
+                {"name": "label_filter", "type": "label", "funnel": 5000, "rows": 5000},
+            ]
+        }
+        raw_stats = {
+            "filters": [
+                {"name": "raw", "type": "raw", "funnel": 1000000, "rows": 1000000},
+                {"name": "label_filter", "type": "label", "funnel": 500000, "rows": 500000},
+            ]
+        }
+        prefactor, raw_after = _compute_snvq_prefactor(pos_stats, raw_stats, mean_coverage=30.0, n_bases_in_region=1000)
+        assert raw_after == 500000
+        # filtering_ratio = before_label / raw for pos_stats = 10000 / 10000 = 1.0
+        # effective_bases = 30.0 * 1000 * 1.0 = 30000
+        # prefactor = 500000 / 30000
+        assert prefactor == pytest.approx(500000 / 30000)
+
+    def test_raises_on_all_downsample(self):
+        """If all filters are downsample, should raise."""
+        raw_stats = {
+            "filters": [
+                {"name": "ds1", "type": "downsample", "funnel": 100, "rows": 100},
+            ]
+        }
+        pos_stats = {
+            "filters": [
+                {"name": "raw", "type": "raw", "funnel": 10000, "rows": 10000},
+                {"name": "label_filter", "type": "label", "funnel": 5000, "rows": 5000},
+            ]
+        }
+        with pytest.raises(ValueError, match="no non-downsample filter entry"):
+            _compute_snvq_prefactor(pos_stats, raw_stats, mean_coverage=30.0, n_bases_in_region=1000)
+
+
+# ──────────────────────── construct_trinuc_context_with_alt ──────────────
+
+
+class TestConstructTrinucContextWithAlt:
+    def test_basic(self):
+        frame = pd.DataFrame(
+            {
+                "X_PREV1": ["A", "T", "G"],
+                "REF": ["C", "G", "A"],
+                "X_NEXT1": ["G", "C", "T"],
+                "ALT": ["T", "A", "C"],
+            }
+        )
+        result = construct_trinuc_context_with_alt(frame)
+        assert list(result) == ["ACGT", "TGCA", "GATC"]
+
+    def test_custom_column_names(self):
+        frame = pd.DataFrame(
+            {
+                "p": ["A"],
+                "r": ["C"],
+                "n": ["G"],
+                "a": ["T"],
+            }
+        )
+        result = construct_trinuc_context_with_alt(frame, prev1="p", ref="r", next1="n", alt="a")
+        assert list(result) == ["ACGT"]
+
+    def test_missing_columns_raises(self):
+        frame = pd.DataFrame({"X_PREV1": ["A"], "REF": ["C"]})
+        with pytest.raises(ValueError, match="Missing required columns"):
+            construct_trinuc_context_with_alt(frame)
+
+    def test_categorical_columns(self):
+        frame = pd.DataFrame(
+            {
+                "X_PREV1": pd.Categorical(["A", "T"]),
+                "REF": pd.Categorical(["C", "G"]),
+                "X_NEXT1": pd.Categorical(["G", "C"]),
+                "ALT": pd.Categorical(["T", "A"]),
+            }
+        )
+        result = construct_trinuc_context_with_alt(frame)
+        assert list(result) == ["ACGT", "TGCA"]
+
+
+# ──────────────────────── get_trinuc_context_with_alt_fwd_vectorized ────
+
+
+class TestGetTrinucContextWithAltFwdVectorized:
+    def test_forward_unchanged(self):
+        tcwa = pd.Series(["ACGT", "TGCA"])
+        is_fwd = pd.Series([True, True])
+        result = get_trinuc_context_with_alt_fwd_vectorized(tcwa, is_fwd)
+        assert list(result) == ["ACGT", "TGCA"]
+
+    def test_reverse_complement(self):
+        tcwa = pd.Series(["ACGT"])
+        is_fwd = pd.Series([False])
+        result = get_trinuc_context_with_alt_fwd_vectorized(tcwa, is_fwd)
+        # Original: A C G T  -> prv=A, ref=C, nxt=G, alt=T
+        # Complement: T G C A
+        # Rev comp: nxt_comp + ref_comp + prv_comp + alt_comp = C + G + T + A = "CGTA"
+        assert result[0] == "CGTA"
+
+    def test_mixed_forward_reverse(self):
+        tcwa = pd.Series(["ACGT", "ACGT"])
+        is_fwd = pd.Series([True, False])
+        result = get_trinuc_context_with_alt_fwd_vectorized(tcwa, is_fwd)
+        assert result[0] == "ACGT"
+        assert result[1] == "CGTA"
+
+
+# ──────────────────────── set_featuremap_df_dtypes ──────────────────────
+
+
+class TestSetFeaturemapDfDtypes:
+    def test_categorical_dtype(self):
+        frame = pd.DataFrame({"color": ["red", "blue", "red", "green"]})
+        feature_dtypes = [
+            {"name": "color", "type": "c", "values": {"red": 0, "blue": 1, "green": 2}},
+        ]
+        result = set_featuremap_df_dtypes(frame, feature_dtypes)
+        assert result["color"].dtype.name == "category"
+        assert list(result["color"].cat.categories) == ["red", "blue", "green"]
+
+    def test_int_dtype(self):
+        frame = pd.DataFrame({"count": [1.0, 2.0, 3.0]})
+        feature_dtypes = [{"name": "count", "type": "int"}]
+        result = set_featuremap_df_dtypes(frame, feature_dtypes)
+        assert result["count"].dtype == np.int64
+
+    def test_float_dtype(self):
+        frame = pd.DataFrame({"score": [1, 2, 3]})
+        feature_dtypes = [{"name": "score", "type": "float"}]
+        result = set_featuremap_df_dtypes(frame, feature_dtypes)
+        assert result["score"].dtype == np.float64
+
+    def test_mixed_dtypes(self):
+        frame = pd.DataFrame(
+            {
+                "cat_col": ["a", "b", "a"],
+                "int_col": [1.0, 2.0, 3.0],
+                "float_col": [10, 20, 30],
+            }
+        )
+        feature_dtypes = [
+            {"name": "cat_col", "type": "c", "values": {"a": 0, "b": 1}},
+            {"name": "int_col", "type": "int"},
+            {"name": "float_col", "type": "float"},
+        ]
+        result = set_featuremap_df_dtypes(frame, feature_dtypes)
+        assert result["cat_col"].dtype.name == "category"
+        assert result["int_col"].dtype == np.int64
+        assert result["float_col"].dtype == np.float64
+
+    def test_does_not_modify_original(self):
+        frame = pd.DataFrame({"x": [1, 2, 3]})
+        feature_dtypes = [{"name": "x", "type": "float"}]
+        set_featuremap_df_dtypes(frame, feature_dtypes)
+        # Original should still be int
+        assert frame["x"].dtype != np.float64
+
+
+# ──────────────────────── k_fold_predict_proba ──────────────────────
+
+
+class TestKFoldPredictProba:
+    def test_basic_prediction(self):
+        """Test that k_fold_predict_proba routes predictions correctly."""
+        model_0 = MagicMock()
+        model_0.predict_proba = MagicMock(return_value=np.array([[0.2, 0.8], [0.3, 0.7]]))
+        model_1 = MagicMock()
+        model_1.predict_proba = MagicMock(return_value=np.array([[0.6, 0.4]]))
+
+        x_all = pd.DataFrame({"feat": [1, 2, 3]})
+        fold_arr = np.array([0, 0, 1], dtype=float)
+
+        preds = k_fold_predict_proba([model_0, model_1], x_all, fold_arr)
+
+        assert preds.shape == (3,)
+        np.testing.assert_allclose(preds[0], 0.8)
+        np.testing.assert_allclose(preds[1], 0.7)
+        np.testing.assert_allclose(preds[2], 0.4)
+
+    def test_nan_fold_aggregates_all_models(self):
+        """Test rows should aggregate predictions from all models."""
+        model_0 = MagicMock()
+        model_1 = MagicMock()
+
+        # For test rows, both models predict
+        model_0.predict_proba = MagicMock(return_value=np.array([[0.3, 0.7]]))
+        model_1.predict_proba = MagicMock(return_value=np.array([[0.4, 0.6]]))
+
+        x_all = pd.DataFrame({"feat": [1]})
+        fold_arr = np.array([np.nan])
+
+        preds = k_fold_predict_proba([model_0, model_1], x_all, fold_arr)
+
+        assert preds.shape == (1,)
+        assert np.isfinite(preds[0])
+        # Should be aggregation of 0.7 and 0.6
+
+    def test_invalid_fold_returns_nan(self):
+        """Rows with invalid fold assignment get nan."""
+        model_0 = MagicMock()
+        model_0.predict_proba = MagicMock(return_value=np.array([[0.3, 0.7]]))
+
+        x_all = pd.DataFrame({"feat": [1]})
+        fold_arr = np.array([-1.0])  # invalid
+
+        preds = k_fold_predict_proba([model_0], x_all, fold_arr)
+        assert np.isnan(preds[0])
+
+
+# ──────────────────────── polars_to_pandas_efficient (more paths) ────────
+
+
+class TestPolarsToPandasMorePaths:
+    def test_downcast_non_float_columns_unchanged(self):
+        """Non-float64 columns are left unchanged when downcast_float=True."""
+        frame = pl.DataFrame({"a": [1, 2, 3], "b": [1.0, 2.0, 3.0]})
+        result = polars_to_pandas_efficient(frame, columns=["a", "b"], downcast_float=True)
+        assert result["a"].dtype == np.int64
+        assert result["b"].dtype == np.float32
+
+    def test_frame_with_downcast_and_int(self):
+        """DataFrame with mixed float and int columns, downcast enabled."""
+        frame = pl.DataFrame({"x": [1.5, 2.5], "y": [10, 20]})
+        result = polars_to_pandas_efficient(frame, columns=["x", "y"], downcast_float=True)
+        assert result["x"].dtype == np.float32
+        assert len(result) == 2
