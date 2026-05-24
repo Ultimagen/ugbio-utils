@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from ugbio_core.logger import logger
+from ugbio_core.sorter_utils import get_base_coverage_from_sorter, read_sorter_statistics_csv
 
 _PERCENTILE_COLORS = ["red", "orange", "green", "orange", "red"]
 _PERCENTILE_LABELS = ["P5", "P25", "P50", "P75", "P95"]
@@ -467,21 +468,20 @@ def generate_sorter_stats_report(json_path: Path, csv_path: Path, output_html: P
         Path to the generated HTML report.
 
     """
-    from ugbio_core.sorter_utils import read_sorter_statistics_csv  # noqa: PLC0415
-
     logger.info(f"Reading sorter stats from {json_path} and {csv_path}")
     csv_series = read_sorter_statistics_csv(str(csv_path), edit_metric_names=False)
     csv_df = csv_series.reset_index()
     csv_df.columns = ["metric", "value"]
     with open(json_path, encoding="utf-8") as f:
         stats_json = json.load(f)
+    base_coverage = get_base_coverage_from_sorter(str(json_path))
 
     basename = json_path.stem
 
     logger.info("Building report figures")
     table_html = _build_summary_table_html(csv_df, basename)
     figures = [
-        _build_coverage_boxplot(stats_json.get("base_coverage", {}), csv_df, basename),
+        _build_coverage_boxplot(base_coverage, csv_df, basename),
         _build_cvg_histogram(stats_json, basename),
         _build_read_length_plot(stats_json, basename),
         _build_bqual_plot(stats_json, basename),
