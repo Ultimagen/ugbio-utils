@@ -59,6 +59,7 @@ collect_existing_metrics = "ugbio_core.collect_existing_metrics:main"
 generate_report = "ugbio_core.reports.report_utils:main"
 calculate_library_complexity = "ugbio_core.calculate_library_complexity:main"
 sorter_stats_report = "ugbio_core.sorter_stats_report:main"
+sorter_multi_sample_report = "ugbio_core.sorter_multi_sample_report:main"
 
 [tool.setuptools.package-data]
 "*" = [
