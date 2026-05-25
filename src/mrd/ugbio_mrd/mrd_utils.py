@@ -1122,10 +1122,14 @@ def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadat
     tp_filtering = tp_filtering.drop(
         index=tp_filtering[tp_filtering["type"] == "downsample"].index
     )  # remove downsampling step
-    filt_denom = tp_filtering.loc[tp_filtering.query('type == "region"').index[-1], "rows"]  # last region step
-    filt_numer = tp_filtering.loc[
-        tp_filtering.index[-1], "rows"
-    ]  # final number of true positives (before downsampling)
+    # Exclude annotation-based filters (e.g. EXCLUDE_TRAINING, PCAWG, INCLUDE_INFERENCE) from the
+    # "last region" search — these are training-specific exclusions, not genomic region boundaries
+    annotation_fields = {"EXCLUDE_TRAINING", "PCAWG", "INCLUDE_INFERENCE"}
+    region_filters = tp_filtering[
+        (tp_filtering["type"] == "region") & (~tp_filtering.get("field", pd.Series(dtype=str)).isin(annotation_fields))
+    ]
+    filt_denom = region_filters.iloc[-1]["funnel"]  # last genomic region step
+    filt_numer = tp_filtering.iloc[-1]["funnel"]  # final number of true positives (before downsampling)
     filt_ratio = filt_numer / filt_denom
 
     denom_ratio = filt_ratio * read_filter_non_filt
