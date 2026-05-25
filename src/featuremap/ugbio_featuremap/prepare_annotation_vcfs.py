@@ -43,7 +43,7 @@ def _inject_exclusion_filter(filters_json: dict, field_name: str) -> dict:
     if "filters_full_output" in filters_json:
         filters_json["filters_full_output"].append(entry)
     if "filters_random_sample" in filters_json:
-        filters_json["filters_random_sample"].append(entry)
+        filters_json["filters_random_sample"].append(entry.copy())
     logger.info(f"Injected is_null filter for '{field_name}' into read_filters JSON")
     return filters_json
 
