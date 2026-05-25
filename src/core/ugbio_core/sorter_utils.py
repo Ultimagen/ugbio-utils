@@ -6,7 +6,9 @@ from scipy.interpolate import interp1d
 from ugbio_core.plotting_utils import set_pyplot_defaults
 
 
-def read_sorter_statistics_csv(sorter_stats_csv: str, *, edit_metric_names: bool = True) -> pd.Series:
+def read_sorter_statistics_csv(
+    sorter_stats_csv: str, *, edit_metric_names: bool = True, as_dataframe: bool = False
+) -> pd.Series | pd.DataFrame:
     """
     Collect sorter statistics from csv
 
@@ -16,11 +18,13 @@ def read_sorter_statistics_csv(sorter_stats_csv: str, *, edit_metric_names: bool
         path to a Sorter stats file
     edit_metric_names: bool
         if True, edit the metric names to be consistent in the naming of percentages
+    as_dataframe: bool
+        if True, return a DataFrame with columns ["metric", "value"] instead of a Series
 
     Returns
     -------
-    pd.Series
-        Series with sorter statistics
+    pd.Series | pd.DataFrame
+        Series with sorter statistics, or DataFrame if as_dataframe=True
     """
 
     # read Sorter stats
@@ -45,6 +49,11 @@ def read_sorter_statistics_csv(sorter_stats_csv: str, *, edit_metric_names: bool
     if edit_metric_names:
         # rename metrics to uniform convention
         df_sorter_stats = df_sorter_stats.rename({c: c.replace("% ", "PCT_") for c in df_sorter_stats.index})
+
+    if as_dataframe:
+        result = df_sorter_stats.reset_index()
+        result.columns = ["metric", "value"]
+        return result
     return df_sorter_stats["value"]
 
 
