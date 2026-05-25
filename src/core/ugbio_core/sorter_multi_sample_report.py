@@ -243,20 +243,27 @@ def _resolve_and_load_samples(args) -> list[SampleData]:
 def _build_multi_summary_table_html(samples: list[SampleData]) -> str:
     all_metrics = samples[0].csv_df["metric"].tolist()
 
-    header_cells = (
-        "<th style='background:#1a73e8; color:white; padding:10px 12px; "
-        "text-align:left; font-size:18px;'>Metric</th>"
+    th_style = (
+        "background:#1a73e8; color:white; padding:10px 12px; "
+        "text-align:right; font-size:16px; position:sticky; top:0; z-index:1;"
     )
-    for s in samples:
-        header_cells += (
-            f"<th style='background:#1a73e8; color:white; padding:10px 12px; "
-            f"text-align:right; font-size:18px;'>{s.label}</th>"
-        )
+    th_corner_style = (
+        "background:#1a73e8; color:white; padding:10px 12px; "
+        "text-align:left; font-size:16px; position:sticky; top:0; left:0; z-index:2;"
+    )
+    td_sticky_style = (
+        "background:#e8f0fe; font-weight:600; padding:8px 12px; "
+        "font-size:16px; position:sticky; left:0; z-index:1; white-space:nowrap;"
+    )
+
+    header_cells = f"<th style='{th_corner_style}'>Sample</th>"
+    for metric in all_metrics:
+        header_cells += f"<th style='{th_style}'>{metric}</th>"
 
     body_rows = ""
-    for metric in all_metrics:
-        cells = f"<td style='background:#e8f0fe; font-weight:600; padding:8px 12px; " f"font-size:18px;'>{metric}</td>"
-        for s in samples:
+    for s in samples:
+        cells = f"<td style='{td_sticky_style}'>{s.label}</td>"
+        for metric in all_metrics:
             row = s.csv_df.loc[s.csv_df["metric"] == metric]
             val = row["value"].iloc[0] if len(row) > 0 else "N/A"
             if isinstance(val, float):
@@ -264,12 +271,12 @@ def _build_multi_summary_table_html(samples: list[SampleData]) -> str:
                     val = f"{int(val):,}"
                 else:
                     val = f"{val:g}"
-            cells += f"<td style='padding:8px 12px; text-align:right; font-size:18px;'>{val}</td>"
+            cells += f"<td style='padding:8px 12px; text-align:right; font-size:16px;'>{val}</td>"
         body_rows += f"<tr>{cells}</tr>"
 
     return (
-        "<div style='overflow-x:auto; margin:20px 0;'>"
-        f"<table style='border-collapse:collapse; width:100%;'>"
+        "<div style='overflow:auto; margin:20px 0; max-height:600px;'>"
+        "<table style='border-collapse:collapse;'>"
         f"<thead><tr>{header_cells}</tr></thead>"
         f"<tbody>{body_rows}</tbody></table></div>"
     )
