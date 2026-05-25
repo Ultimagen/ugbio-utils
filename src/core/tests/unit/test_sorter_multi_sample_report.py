@@ -2,14 +2,17 @@ from pathlib import Path
 
 import pytest
 from ugbio_core.sorter_multi_sample_report import (
+    _build_multi_summary_table_html,
+    generate_multi_sample_report,
+    run,
+)
+from ugbio_core.sorter_sample_discovery import (
     SampleData,
     _derive_sample_label,
     _discover_samples_local,
     _has_named_sample,
     _load_sample,
     _parse_library_info_xml,
-    generate_multi_sample_report,
-    run,
 )
 
 
@@ -54,7 +57,7 @@ def run_dir_with_samples(tmp_path, sample_1_json, sample_1_csv, sample_2_json, s
 
 
 @pytest.fixture
-def run_dir_with_xml(tmp_path, sample_1_json, sample_1_csv, sample_2_json, sample_2_csv):
+def run_dir_with_xml(tmp_path, sample_1_json, sample_1_csv):
     """Run dir with a LibraryInfo XML that only lists sample 1."""
     d1 = tmp_path / "603559-L13064-Z0152-CATGCAACACTAGAT"
     d1.mkdir()
@@ -117,6 +120,12 @@ class TestParseLibraryInfoXml:
         assert "L13064-Z0152-CATGCAACACTAGAT" in suffixes
         assert len(suffixes) == 1
 
+    def test_handles_invalid_xml(self, tmp_path):
+        bad_xml = tmp_path / "bad_LibraryInfo.xml"
+        bad_xml.write_text("not valid xml <<<<")
+        suffixes = _parse_library_info_xml(bad_xml)
+        assert suffixes == set()
+
 
 class TestDiscoverSamplesLocal:
     def test_finds_named_samples(self, run_dir_with_samples):
@@ -168,15 +177,11 @@ class TestLoadSample:
 
 class TestSummaryTable:
     def test_table_contains_sample_labels(self, two_samples):
-        from ugbio_core.sorter_multi_sample_report import _build_multi_summary_table_html
-
         html = _build_multi_summary_table_html(two_samples)
         for s in two_samples:
             assert s.label in html
 
-    def test_table_has_metrics_as_rows(self, two_samples):
-        from ugbio_core.sorter_multi_sample_report import _build_multi_summary_table_html
-
+    def test_table_has_metrics_as_columns(self, two_samples):
         html = _build_multi_summary_table_html(two_samples)
         assert "Mean_cvg" in html
         assert "PF_Barcode_reads" in html
