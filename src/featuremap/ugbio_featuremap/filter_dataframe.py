@@ -97,7 +97,7 @@ _OPS = {
 _UNARY_OPS = {OP_IS_NULL, OP_IS_NOT_NULL, OP_ANY_NOT_NULL}
 
 
-def _default_filter_name(rule: dict[str, Any]) -> str:
+def _get_filter_name(rule: dict[str, Any]) -> str:
     """Derive a filter name from a rule, falling back to field/op if no explicit name."""
     return rule.get(KEY_NAME) or f"{rule.get(KEY_FIELD, '_'.join(rule.get(KEY_FIELDS, [])))}_{rule[KEY_OP]}"
 
@@ -365,7 +365,7 @@ def _create_filter_columns(
     logger.debug(f"Creating binary columns for {len(filters)} filters")
 
     for rule in filters:
-        name = _default_filter_name(rule)
+        name = _get_filter_name(rule)
         col_name = f"{COL_PREFIX_FILTER}{name}"
         filter_cols.append(col_name)
 
@@ -466,7 +466,7 @@ def _calculate_statistics(
     # Calculate cumulative filter effects
     cumulative_mask = pl.lit(value=True)
     for _i, (col, rule) in enumerate(zip(filter_cols, filters, strict=False)):
-        name = _default_filter_name(rule)
+        name = _get_filter_name(rule)
         cumulative_mask = cumulative_mask & pl.col(col)
         count = featuremap_dataframe.select(cumulative_mask.sum()).collect().item()
         funnel.append((name, count))
@@ -482,7 +482,7 @@ def _calculate_statistics(
     # Single effect statistics
     single_effect = {}
     for col, rule in zip(filter_cols, filters, strict=False):
-        name = _default_filter_name(rule)
+        name = _get_filter_name(rule)
         count = featuremap_dataframe.select(pl.col(col).sum()).collect().item()
         single_effect[name] = count
 
@@ -536,7 +536,7 @@ def _calculate_statistics(
             filters_with_types.append(entry)
         else:
             rule = next(
-                (r for r in filters if _default_filter_name(r) == name),
+                (r for r in filters if _get_filter_name(r) == name),
                 {},
             )
             entry = {

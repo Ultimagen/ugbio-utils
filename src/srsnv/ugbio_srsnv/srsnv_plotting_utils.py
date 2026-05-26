@@ -18,6 +18,7 @@ from matplotlib import colors
 from matplotlib import lines as mlines
 from scipy.interpolate import interp1d
 from scipy.stats import binom
+from sklearn.dummy import DummyClassifier
 from sklearn.metrics import (
     confusion_matrix,
     precision_score,
@@ -2483,8 +2484,6 @@ class SRSNVReport:
         beeswarm_kws: dict = None,
     ):
         """Calculate and plot SHAP values for the model."""
-        from sklearn.dummy import DummyClassifier
-
         # Skip SHAP for dummy classifiers (no real model available)
         model_to_check = self.models[0]
         underlying = getattr(model_to_check, "model", model_to_check)

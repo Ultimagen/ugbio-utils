@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import xgboost as xgb
+from sklearn.dummy import DummyClassifier
 from ugbio_core.logger import logger
 from ugbio_core.vcfbed.variant_annotation import get_cycle_skip_dataframe
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
@@ -179,8 +180,6 @@ def _load_models_from_metadata(metadata: dict) -> list:
 
 def _fallback_dummy_models(metadata: dict) -> list:
     """Create dummy classifiers when no XGBoost models are available."""
-    from sklearn.dummy import DummyClassifier
-
     num_folds = max(len(metadata.get("model_paths", {})), 1)
     models = [DummyClassifier(strategy="constant", constant=0) for _ in range(num_folds)]
     for m in models:

@@ -25,6 +25,17 @@ from pathlib import Path
 
 from ugbio_core.logger import logger
 
+from ugbio_featuremap.filter_dataframe import (
+    KEY_FIELD,
+    KEY_FIELDS,
+    KEY_NAME,
+    KEY_OP,
+    KEY_TYPE,
+    OP_ANY_NOT_NULL,
+    OP_IS_NULL,
+    TYPE_REGION,
+)
+
 
 def _update_coverage_threshold(filters_json: dict, coverage_threshold: int) -> dict:
     """Update coverage_le_max filter value in both filter sets."""
@@ -39,7 +50,7 @@ def _update_coverage_threshold(filters_json: dict, coverage_threshold: int) -> d
 
 def _inject_exclusion_filter(filters_json: dict, field_name: str) -> dict:
     """Add an is_null exclusion filter for the given field to both filter sets."""
-    entry = {"name": f"not_in_{field_name}", "type": "region", "field": field_name, "op": "is_null"}
+    entry = {KEY_NAME: f"not_in_{field_name}", KEY_TYPE: TYPE_REGION, KEY_FIELD: field_name, KEY_OP: OP_IS_NULL}
     if "filters_full_output" in filters_json:
         filters_json["filters_full_output"].append(entry)
     if "filters_random_sample" in filters_json:
@@ -51,7 +62,9 @@ def _inject_exclusion_filter(filters_json: dict, field_name: str) -> dict:
 def _create_inference_filters(fields: list[str], output_path: str) -> None:
     """Create inference_filters.json with any_not_null for the given fields."""
     filters = {
-        "filters_inference": [{"name": "in_inference_set", "type": "region", "op": "any_not_null", "fields": fields}]
+        "filters_inference": [
+            {KEY_NAME: "in_inference_set", KEY_TYPE: TYPE_REGION, KEY_OP: OP_ANY_NOT_NULL, KEY_FIELDS: fields}
+        ]
     }
     Path(output_path).write_text(json.dumps(filters, indent=2) + "\n")
     logger.info(f"Created {output_path} with any_not_null on {fields}")

@@ -1,7 +1,7 @@
 """Unit tests for filter_dataframe module - pure logic tests without file I/O.
 
 Covers:
-- _default_filter_name: name derivation from rule structures (regression for U5)
+- _get_filter_name: name derivation from rule structures (regression for U5)
 - _mask_for_rule: all operators including is_null, is_not_null, any_not_null
 - _create_filter_columns: filter pipeline
 - _create_downsample_column: head and random downsampling
@@ -49,7 +49,7 @@ from ugbio_featuremap.filter_dataframe import (
     _create_downsample_column,
     _create_filter_columns,
     _create_final_filter_column,
-    _default_filter_name,
+    _get_filter_name,
     _mask_for_rule,
     _merge_config_and_cli,
     _parse_cli_downsample,
@@ -64,45 +64,45 @@ from ugbio_featuremap.filter_dataframe import (
 pl.enable_string_cache()
 
 
-# ──────────────────────── _default_filter_name ──────────────────────
+# ──────────────────────── _get_filter_name ──────────────────────
 
 
-class TestDefaultFilterName:
+class TestGetFilterName:
     """Test name derivation from filter rule structures (regression for U5)."""
 
     def test_explicit_name_used(self):
         rule = {KEY_NAME: "my_filter", KEY_FIELD: "QUAL", KEY_OP: "gt", KEY_VALUE: 30}
-        assert _default_filter_name(rule) == "my_filter"
+        assert _get_filter_name(rule) == "my_filter"
 
     def test_fallback_to_field_op(self):
         rule = {KEY_FIELD: "QUAL", KEY_OP: "gt", KEY_VALUE: 30}
-        assert _default_filter_name(rule) == "QUAL_gt"
+        assert _get_filter_name(rule) == "QUAL_gt"
 
     def test_any_not_null_uses_fields(self):
         """Regression U5: any_not_null rules use KEY_FIELDS, not KEY_FIELD."""
         rule = {KEY_OP: OP_ANY_NOT_NULL, KEY_FIELDS: ["gnomAD_AF", "PCAWG"], KEY_TYPE: TYPE_REGION}
-        name = _default_filter_name(rule)
+        name = _get_filter_name(rule)
         # Should join fields with underscore
         assert name == "gnomAD_AF_PCAWG_any_not_null"
 
     def test_single_field_in_fields_list(self):
         rule = {KEY_OP: OP_IS_NULL, KEY_FIELDS: ["my_col"], KEY_TYPE: TYPE_REGION}
-        name = _default_filter_name(rule)
+        name = _get_filter_name(rule)
         assert name == "my_col_is_null"
 
     def test_empty_name_string_falls_back(self):
         rule = {KEY_NAME: "", KEY_FIELD: "DP", KEY_OP: "ge"}
         # Empty string is falsy, should fall back
-        assert _default_filter_name(rule) == "DP_ge"
+        assert _get_filter_name(rule) == "DP_ge"
 
     def test_none_name_falls_back(self):
         rule = {KEY_NAME: None, KEY_FIELD: "DP", KEY_OP: "le"}
-        assert _default_filter_name(rule) == "DP_le"
+        assert _get_filter_name(rule) == "DP_le"
 
     def test_no_field_no_fields(self):
         """Edge case: rule with no field/fields key."""
         rule = {KEY_OP: "gt", KEY_VALUE: 10}
-        name = _default_filter_name(rule)
+        name = _get_filter_name(rule)
         # Should use empty join of KEY_FIELDS default (empty list)
         assert name == "_gt"
 
@@ -340,7 +340,7 @@ class TestCalculateStatistics:
         # any_not_null: rows where at least one field is not null
         # field_a: [1,None,3,None,5], field_b: [None,2,None,None,5]
         # OR: [True, True, True, False, True] => 4 pass
-        filter_name = _default_filter_name(filters[0])
+        filter_name = _get_filter_name(filters[0])
         assert stats[KEY_FILTERS][1]["rows"] == 4
         assert stats["single_effect"][filter_name] == 4
 
