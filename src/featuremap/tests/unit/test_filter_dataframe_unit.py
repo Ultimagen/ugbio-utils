@@ -963,3 +963,273 @@ class TestParseCliFilterAdditional:
     def test_in_op_parses_list(self):
         result = _parse_cli_filter("name=f:field=X:op=in:value=a,b,c:type=quality")
         assert result[KEY_VALUE] == ["a", "b", "c"]
+
+
+# ──────────────────────── additional _validate_downsample tests ──────────
+
+
+class TestValidateDownsampleAdditional:
+    """Additional validation tests for downsample configuration."""
+
+    def test_downsample_not_dict_raises(self):
+        cfg = {KEY_FILTERS: [], KEY_DOWNSAMPLE: "not_a_dict"}
+        with pytest.raises(ValueError, match="must be a dictionary"):
+            validate_filter_config(cfg)
+
+    def test_downsample_missing_size_raises(self):
+        cfg = {KEY_FILTERS: [], KEY_DOWNSAMPLE: {KEY_METHOD: METHOD_RANDOM}}
+        with pytest.raises(ValueError, match="must have 'size' key"):
+            validate_filter_config(cfg)
+
+    def test_downsample_size_zero_raises(self):
+        cfg = {KEY_FILTERS: [], KEY_DOWNSAMPLE: {KEY_SIZE: 0}}
+        with pytest.raises(ValueError, match="positive integer"):
+            validate_filter_config(cfg)
+
+    def test_downsample_size_string_raises(self):
+        cfg = {KEY_FILTERS: [], KEY_DOWNSAMPLE: {KEY_SIZE: "100"}}
+        with pytest.raises(ValueError, match="positive integer"):
+            validate_filter_config(cfg)
+
+    def test_downsample_head_method_valid(self):
+        cfg = {
+            KEY_FILTERS: [{KEY_FIELD: "X", KEY_OP: "gt", KEY_VALUE: 1, KEY_TYPE: TYPE_QUALITY}],
+            KEY_DOWNSAMPLE: {KEY_SIZE: 100, KEY_METHOD: METHOD_HEAD},
+        }
+        validate_filter_config(cfg)  # Should not raise
+
+
+# ──────────────────────── additional _try_to_convert tests ──────────────
+
+
+class TestTryToConvertAdditional:
+    """Additional tests for value conversion edge cases."""
+
+    def test_negative_int(self):
+        assert _parse_value_based_on_operation("-5", "eq") == -5
+
+    def test_negative_float(self):
+        assert _parse_value_based_on_operation("-1.5", "lt") == pytest.approx(-1.5)
+
+    def test_empty_string(self):
+        assert _parse_value_based_on_operation("", "eq") == ""
+
+    def test_mixed_list(self):
+        """In/not_in with mixed types in list."""
+        result = _parse_value_based_on_operation("1,hello,3.14,true", "in")
+        assert result == [1, "hello", pytest.approx(3.14), True]
+
+    def test_false_variants(self):
+        assert _parse_value_based_on_operation("FALSE", "eq") is False
+
+
+# ──────────────────────── combination stats skip ──────────────────────────
+
+
+class TestCalculateStatisticsAdditional:
+    """Tests for skipping combination stats when too many filters."""
+
+    def test_many_filters_skips_combinations(self):
+        """When >MAX_COMBINATION_FILTERS filters, combinations should be empty."""
+        from ugbio_featuremap.filter_dataframe import MAX_COMBINATION_FILTERS
+
+        lf = pl.DataFrame({"score": list(range(10))}).lazy()
+
+        # Create more than MAX_COMBINATION_FILTERS filters
+        filters = []
+        for i in range(MAX_COMBINATION_FILTERS + 1):
+            filters.append({KEY_NAME: f"f{i}", KEY_FIELD: "score", KEY_OP: "ge", KEY_VALUE: 0, KEY_TYPE: TYPE_QUALITY})
+
+        lf, filter_cols = _create_filter_columns(lf, filters)
+        cfg = {KEY_FILTERS: filters}
+
+        stats = _calculate_statistics(lf, filter_cols, None, filters, total_rows=10, cfg=cfg)
+
+        # With >MAX_COMBINATION_FILTERS filters, combinations should be empty dict
+        assert stats["combinations"] == {}
+
+    def test_zero_filters_empty_combinations(self):
+        """When no filters, combinations should be empty."""
+        lf = pl.DataFrame({"score": [1, 2, 3]}).lazy()
+        cfg = {KEY_FILTERS: []}
+
+        stats = _calculate_statistics(lf, [], None, [], total_rows=3, cfg=cfg)
+        assert stats["combinations"] == {}
+
+
+# ──────────────────────── filter_parquet additional tests ──────────────────
+
+
+class TestFilterParquetAdditional:
+    """Additional integration tests for filter_parquet."""
+
+    def test_filter_with_random_downsample(self, tmp_path):
+        """Test filtering with random downsample and seed."""
+        in_frame = pl.DataFrame({"val": list(range(100))})
+        in_path = str(tmp_path / "input.parquet")
+        in_frame.write_parquet(in_path)
+
+        cfg = {
+            KEY_FILTERS: [
+                {KEY_NAME: "all", KEY_FIELD: "val", KEY_OP: "ge", KEY_VALUE: 0, KEY_TYPE: TYPE_QUALITY},
+            ],
+            KEY_DOWNSAMPLE: {KEY_SIZE: 25, KEY_METHOD: METHOD_RANDOM, KEY_SEED: 42},
+        }
+        cfg_path = str(tmp_path / "config.json")
+        Path(cfg_path).write_text(json.dumps(cfg))
+
+        out_path = str(tmp_path / "output.parquet")
+        stats_path = str(tmp_path / "stats.json")
+
+        filter_parquet(in_path, out_path, None, cfg_path, stats_path)
+
+        result = pl.read_parquet(out_path)
+        assert len(result) == 25
+
+        # Verify determinism: same seed same output
+        out_path2 = str(tmp_path / "output2.parquet")
+        stats_path2 = str(tmp_path / "stats2.json")
+        filter_parquet(in_path, out_path2, None, cfg_path, stats_path2)
+        result2 = pl.read_parquet(out_path2)
+        assert result["val"].to_list() == result2["val"].to_list()
+
+    def test_filter_multiple_filters(self, tmp_path):
+        """Test with multiple filters applied together."""
+        in_frame = pl.DataFrame(
+            {
+                "score": [10, 20, 30, 40, 50],
+                "category": ["A", "B", "A", "B", "A"],
+            }
+        )
+        in_path = str(tmp_path / "input.parquet")
+        in_frame.write_parquet(in_path)
+
+        cfg = {
+            KEY_FILTERS: [
+                {KEY_NAME: "high", KEY_FIELD: "score", KEY_OP: "gt", KEY_VALUE: 15, KEY_TYPE: TYPE_QUALITY},
+                {KEY_NAME: "cat_a", KEY_FIELD: "category", KEY_OP: "eq", KEY_VALUE: "A", KEY_TYPE: TYPE_LABEL},
+            ]
+        }
+        cfg_path = str(tmp_path / "config.json")
+        Path(cfg_path).write_text(json.dumps(cfg))
+
+        out_path = str(tmp_path / "output.parquet")
+        stats_path = str(tmp_path / "stats.json")
+
+        filter_parquet(in_path, out_path, None, cfg_path, stats_path)
+
+        result = pl.read_parquet(out_path)
+        # score > 15 AND category == "A": rows with (30, A) and (50, A)
+        assert len(result) == 2
+        assert list(result["score"]) == [30, 50]
+
+    def test_filter_cli_downsample(self, tmp_path):
+        """Test CLI downsample overrides config."""
+        in_frame = pl.DataFrame({"val": list(range(50))})
+        in_path = str(tmp_path / "input.parquet")
+        in_frame.write_parquet(in_path)
+
+        out_path = str(tmp_path / "output.parquet")
+        stats_path = str(tmp_path / "stats.json")
+
+        cli_filters = ["name=all:field=val:op=ge:value=0:type=quality"]
+        filter_parquet(in_path, out_path, None, None, stats_path, cli_filters=cli_filters, cli_downsample="head:10")
+
+        result = pl.read_parquet(out_path)
+        assert len(result) == 10
+
+    def test_filter_value_field_comparison(self, tmp_path):
+        """Test filter comparing two columns with value_field."""
+        in_frame = pl.DataFrame(
+            {
+                "ref": ["A", "C", "G", "T", "A"],
+                "alt": ["A", "G", "G", "C", "T"],
+            }
+        )
+        in_path = str(tmp_path / "input.parquet")
+        in_frame.write_parquet(in_path)
+
+        cfg = {
+            KEY_FILTERS: [
+                {KEY_NAME: "ref_ne_alt", KEY_FIELD: "ref", KEY_OP: "ne", KEY_VALUE_FIELD: "alt", KEY_TYPE: TYPE_LABEL},
+            ]
+        }
+        cfg_path = str(tmp_path / "config.json")
+        Path(cfg_path).write_text(json.dumps(cfg))
+
+        out_path = str(tmp_path / "output.parquet")
+        stats_path = str(tmp_path / "stats.json")
+
+        filter_parquet(in_path, out_path, None, cfg_path, stats_path)
+
+        result = pl.read_parquet(out_path)
+        # ref != alt: rows 1(C!=G), 3(T!=C), 4(A!=T) = 3 rows
+        assert len(result) == 3
+
+    def test_both_outputs(self, tmp_path):
+        """Test writing both filtered and full outputs."""
+        in_frame = pl.DataFrame({"x": [1, 2, 3, 4, 5]})
+        in_path = str(tmp_path / "input.parquet")
+        in_frame.write_parquet(in_path)
+
+        cfg = {
+            KEY_FILTERS: [
+                {KEY_NAME: "big", KEY_FIELD: "x", KEY_OP: "gt", KEY_VALUE: 3, KEY_TYPE: TYPE_QUALITY},
+            ]
+        }
+        cfg_path = str(tmp_path / "config.json")
+        Path(cfg_path).write_text(json.dumps(cfg))
+
+        out_path = str(tmp_path / "output.parquet")
+        out_full_path = str(tmp_path / "full.parquet")
+        stats_path = str(tmp_path / "stats.json")
+
+        filter_parquet(in_path, out_path, out_full_path, cfg_path, stats_path)
+
+        # Filtered output: only rows passing filter
+        filtered = pl.read_parquet(out_path)
+        assert len(filtered) == 2
+
+        # Full output: all rows with filter columns
+        full = pl.read_parquet(out_full_path)
+        assert len(full) == 5
+        assert any(col.startswith(COL_PREFIX_FILTER) for col in full.columns)
+
+
+# ──────────────────────── _validate_stats_dict additional tests ───────────
+
+
+class TestValidateStatsDictAdditional:
+    """Additional edge case tests for stats validation."""
+
+    def test_single_effect_float_value_fails(self):
+        data = {
+            "filters": [{"name": "raw", "rows": 100}],
+            "single_effect": {"f1": 5.5},
+            "combinations": {},
+        }
+        with pytest.raises(ValueError, match="non-negative integers"):
+            _validate_stats_dict(data, where="")
+
+    def test_valid_empty_combinations(self):
+        """Empty combinations dict should be valid."""
+        data = {
+            "filters": [{"name": "raw", "rows": 100}],
+            "single_effect": {},
+            "combinations": {},
+        }
+        _validate_stats_dict(data, where=" (test)")  # Should not raise
+
+    def test_valid_multiple_filters(self):
+        """Stats with multiple valid filters."""
+        data = {
+            "filters": [
+                {"name": "raw", "rows": 1000, "type": "raw"},
+                {"name": "coverage", "rows": 900, "type": "region"},
+                {"name": "qual", "rows": 700, "type": "quality"},
+                {"name": "label", "rows": 500, "type": "label"},
+            ],
+            "single_effect": {"coverage": 900, "qual": 700, "label": 500},
+            "combinations": {"111": 500, "110": 200, "100": 100, "000": 100, "101": 50, "010": 30, "011": 20},
+        }
+        _validate_stats_dict(data, where="")  # Should not raise

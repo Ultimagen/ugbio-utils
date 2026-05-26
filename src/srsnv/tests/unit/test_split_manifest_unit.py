@@ -586,3 +586,153 @@ class TestSaveLoad:
         assert out_path.exists()
         loaded = json.loads(out_path.read_text())
         assert loaded == {"test": 1}
+
+
+# ──────────────────────── additional validation tests ──────────────────────
+
+
+class TestValidationAdditional:
+    """Additional tests to cover edge cases in validation functions."""
+
+    def test_validate_chrom_val_test_train_overlap(self, interval_list_file):
+        """Overlapping test and train chromosomes should fail for chrom_val."""
+        path, _, _ = interval_list_file
+        manifest = build_single_model_chrom_val_manifest(
+            training_regions=path,
+            holdout_chromosomes=["chr5"],
+            val_chromosomes=["chr4"],
+        )
+        manifest["train_chromosomes"].append("chr5")
+        with pytest.raises(ValueError, match="overlap"):
+            validate_manifest_against_regions(manifest, path)
+
+    def test_validate_chrom_val_unknown_chromosome(self, interval_list_file):
+        """Unknown chromosomes in chrom_val manifest should fail."""
+        path, _, _ = interval_list_file
+        manifest = build_single_model_chrom_val_manifest(
+            training_regions=path,
+            holdout_chromosomes=["chr5"],
+            val_chromosomes=["chr4"],
+        )
+        manifest["train_chromosomes"].append("chrX")
+        with pytest.raises(ValueError, match="absent from interval list"):
+            validate_manifest_against_regions(manifest, path)
+
+    def test_validate_read_hash_unknown_chromosome(self, interval_list_file):
+        """Unknown chromosomes in read_hash train_val_chromosomes should fail."""
+        path, _, _ = interval_list_file
+        manifest = build_single_model_read_hash_manifest(
+            training_regions=path,
+            random_seed=42,
+            holdout_chromosomes=["chr5"],
+            val_fraction=0.1,
+        )
+        manifest["train_val_chromosomes"].append("chrUnknown")
+        with pytest.raises(ValueError, match="absent from interval list"):
+            validate_manifest_against_regions(manifest, path)
+
+    def test_validate_kfold_val_test_overlap(self, interval_list_file):
+        """Overlapping test and validation chromosomes should fail for kfold."""
+        path, _, _ = interval_list_file
+        manifest = build_split_manifest(
+            training_regions=path,
+            k_folds=2,
+            random_seed=42,
+            holdout_chromosomes=["chr5"],
+        )
+        # Add test chromosome to chrom_to_fold
+        manifest["chrom_to_fold"]["chr5"] = 0
+        with pytest.raises(ValueError, match="overlap"):
+            validate_manifest_against_regions(manifest, path)
+
+    def test_validate_kfold_unknown_train_chromosome(self, interval_list_file):
+        """Unknown chromosomes in kfold train_chromosomes should fail."""
+        path, _, _ = interval_list_file
+        manifest = build_split_manifest(
+            training_regions=path,
+            k_folds=2,
+            random_seed=42,
+            holdout_chromosomes=["chr5"],
+        )
+        manifest["train_chromosomes"].append("chrUnknown")
+        with pytest.raises(ValueError, match="absent from interval list"):
+            validate_manifest_against_regions(manifest, path)
+
+
+# ──────────────────────── additional build tests ──────────────────────────
+
+
+class TestBuildManifestAdditional:
+    """Additional tests for manifest building edge cases."""
+
+    def test_build_single_model_read_hash_missing_holdout_in_data(self, interval_list_file):
+        """Holdout chromosomes not in interval list should raise."""
+        path, _, _ = interval_list_file
+        with pytest.raises(ValueError, match="not found in interval list"):
+            build_single_model_read_hash_manifest(
+                training_regions=path,
+                random_seed=42,
+                holdout_chromosomes=["chrMissing"],
+                val_fraction=0.1,
+            )
+
+    def test_build_chrom_val_missing_val_in_data(self, interval_list_file):
+        """Val chromosomes not in interval list should raise."""
+        path, _, _ = interval_list_file
+        with pytest.raises(ValueError, match="not found in interval list"):
+            build_single_model_chrom_val_manifest(
+                training_regions=path,
+                holdout_chromosomes=["chr5"],
+                val_chromosomes=["chrMissing"],
+            )
+
+    def test_build_chrom_val_missing_holdout_in_data(self, interval_list_file):
+        """Holdout chromosomes not in interval list should raise."""
+        path, _, _ = interval_list_file
+        with pytest.raises(ValueError, match="not found in interval list"):
+            build_single_model_chrom_val_manifest(
+                training_regions=path,
+                holdout_chromosomes=["chrMissing"],
+                val_chromosomes=["chr4"],
+            )
+
+    def test_partition_many_chroms(self):
+        """Test greedy partition with many chromosomes."""
+        chrom_sizes = {f"chr{i}": (100 - i) * 10 for i in range(1, 23)}
+        chromosomes = list(chrom_sizes.keys())
+        result = partition_chromosomes_greedy(chrom_sizes, chromosomes, k_folds=5)
+        assert set(result.keys()) == set(chromosomes)
+        assert all(0 <= v < 5 for v in result.values())
+        # Check balance: no fold should have dramatically more
+        fold_sizes = [0] * 5
+        for chrom, fold_id in result.items():
+            fold_sizes[fold_id] += chrom_sizes[chrom]
+        max_size = max(fold_sizes)
+        min_size = min(fold_sizes)
+        # Greedy should balance reasonably well
+        assert max_size / min_size < 1.5
+
+    def test_build_split_manifest_no_holdout(self, interval_list_file):
+        """When no holdout is specified, smallest chroms are used."""
+        path, chrom_sizes, _ = interval_list_file
+        manifest = build_split_manifest(
+            training_regions=path,
+            k_folds=2,
+            random_seed=42,
+        )
+        # The smallest chromosome(s) should be holdout
+        assert "chr5" in manifest["test_chromosomes"]  # chr5 has size 200, smallest
+
+    def test_assign_read_hash_consistency(self):
+        """Same read always gets same role assignment."""
+        manifest = {
+            "test_chromosomes": ["chr5"],
+            "val_fraction": 0.15,
+            "random_seed": 123,
+        }
+        for _ in range(10):
+            role = assign_single_model_read_hash_role("chr1", "my_read_name", manifest)
+            assert role in {"train", "val"}
+        # All calls with same input should give same result
+        roles = {assign_single_model_read_hash_role("chr1", "my_read_name", manifest) for _ in range(100)}
+        assert len(roles) == 1
