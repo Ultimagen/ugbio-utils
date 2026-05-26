@@ -1,20 +1,4 @@
-"""Prepare read_filters JSON and inference_filters JSON for annotation-based filtering.
-
-Handles:
-- Coverage threshold update in read_filters JSON
-- Annotation exclusion filter injection (is_null for EXCLUDE_TRAINING, PCAWG)
-- Inference inclusion filter creation (any_not_null for INCLUDE_INFERENCE, PCAWG)
-
-Usage::
-
-    prepare_annotation_vcfs \
-        --exclude-field EXCLUDE_TRAINING \
-        --include-field INCLUDE_INFERENCE \
-        --pcawg-field PCAWG \
-        --read-filters read_filters.json \
-        --coverage-threshold 42 \
-        --output-dir .
-"""
+"""Prepare read_filters JSON and inference_filters JSON for annotation-based filtering."""
 
 from __future__ import annotations
 
@@ -111,7 +95,14 @@ def run(argv: list[str] | None = None) -> None:
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Prepare filter JSONs for annotation-based filtering")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Prepare read_filters and inference_filters JSONs for annotation-based filtering. "
+            "Handles: coverage threshold update, annotation exclusion filter injection "
+            "(is_null for EXCLUDE_TRAINING, PCAWG), and inference inclusion filter creation "
+            "(any_not_null for INCLUDE_INFERENCE, PCAWG)."
+        ),
+    )
     parser.add_argument("--exclude-field", default=None, help="Field name for training exclusion (inject is_null)")
     parser.add_argument("--include-field", default=None, help="Field name for inference inclusion")
     parser.add_argument("--pcawg-field", default=None, help="Field name for PCAWG (exclude + include)")
