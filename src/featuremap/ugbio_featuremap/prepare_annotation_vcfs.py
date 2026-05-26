@@ -108,7 +108,10 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pcawg-field", default=None, help="Field name for PCAWG (exclude + include)")
     parser.add_argument("--read-filters", help="Input read_filters JSON to augment")
     parser.add_argument(
-        "--coverage-threshold", type=int, default=None, help="Coverage threshold to update in read_filters"
+        "--coverage-threshold",
+        type=int,
+        default=None,
+        help="Max coverage threshold — reads above this are excluded (coverage_le_max)",
     )
     parser.add_argument("--output-dir", default=".", help="Output directory for JSON files")
     return parser.parse_args(argv)
