@@ -508,13 +508,19 @@ def read_intersection_dataframes(
     if isinstance(intersected_featuremaps_parquet, str):
         intersected_featuremaps_parquet = [intersected_featuremaps_parquet]
     logger.debug(f"Reading {len(intersected_featuremaps_parquet)} intersection featuremaps")
+    non_empty_files = [f for f in intersected_featuremaps_parquet if os.path.getsize(f) > 0]
+    if len(non_empty_files) < len(intersected_featuremaps_parquet):
+        logger.warning(
+            f"Skipping {len(intersected_featuremaps_parquet) - len(non_empty_files)} empty parquet file(s) "
+            f"(empty intersection)"
+        )
     df_int = pd.concat(
         pd.read_parquet(f, engine="fastparquet").assign(
             cfdna=_get_sample_name_from_file_name(f, split_position=0),
             signature=_get_sample_name_from_file_name(f, split_position=1),
             signature_type=_get_sample_name_from_file_name(f, split_position=2),
         )
-        for f in intersected_featuremaps_parquet
+        for f in non_empty_files
     )
     if output_parquet is not None:
         df_int.reset_index().to_parquet(output_parquet)
