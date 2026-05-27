@@ -145,6 +145,26 @@ def test_read_intersection_dataframes(tmpdir, resources_dir):
     )
 
 
+def test_read_intersection_dataframes_skips_empty_parquets(tmpdir, resources_dir):
+    valid_parquet = pjoin(resources_dir, f"{intersection_file_basename}.expected_output.parquet")
+    empty_parquet = str(tmpdir / "sample.sig2.db_control.intersection.parquet")
+    open(empty_parquet, "w").close()
+
+    result = read_intersection_dataframes([valid_parquet, empty_parquet], return_dataframes=True)
+    assert not result.empty
+    assert len(result) > 0
+
+
+def test_read_intersection_dataframes_all_empty(tmpdir):
+    empty1 = str(tmpdir / "sample.sig1.control.intersection.parquet")
+    empty2 = str(tmpdir / "sample.sig2.db_control.intersection.parquet")
+    open(empty1, "w").close()
+    open(empty2, "w").close()
+
+    result = read_intersection_dataframes([empty1, empty2], return_dataframes=True)
+    assert result.empty
+
+
 def test_generate_synthetic_signatures(tmpdir, resources_dir):
     signature_file = pjoin(resources_dir, "mutect_mrd_signature_test.vcf.gz")
     db_file = pjoin(

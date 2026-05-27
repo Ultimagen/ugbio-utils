@@ -514,14 +514,21 @@ def read_intersection_dataframes(
             f"Skipping {len(intersected_featuremaps_parquet) - len(non_empty_files)} empty parquet file(s) "
             f"(empty intersection)"
         )
-    df_int = pd.concat(
-        pd.read_parquet(f, engine="fastparquet").assign(
-            cfdna=_get_sample_name_from_file_name(f, split_position=0),
-            signature=_get_sample_name_from_file_name(f, split_position=1),
-            signature_type=_get_sample_name_from_file_name(f, split_position=2),
+    if not non_empty_files:
+        logger.warning(
+            f"All {len(intersected_featuremaps_parquet)} intersected featuremap parquet file(s) are empty — "
+            f"no variants overlap between the featuremap and any signature"
         )
-        for f in non_empty_files
-    )
+        df_int = pd.DataFrame()
+    else:
+        df_int = pd.concat(
+            pd.read_parquet(f, engine="fastparquet").assign(
+                cfdna=_get_sample_name_from_file_name(f, split_position=0),
+                signature=_get_sample_name_from_file_name(f, split_position=1),
+                signature_type=_get_sample_name_from_file_name(f, split_position=2),
+            )
+            for f in non_empty_files
+        )
     if output_parquet is not None:
         df_int.reset_index().to_parquet(output_parquet)
     if return_dataframes:
