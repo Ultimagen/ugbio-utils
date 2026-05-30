@@ -508,14 +508,27 @@ def read_intersection_dataframes(
     if isinstance(intersected_featuremaps_parquet, str):
         intersected_featuremaps_parquet = [intersected_featuremaps_parquet]
     logger.debug(f"Reading {len(intersected_featuremaps_parquet)} intersection featuremaps")
-    df_int = pd.concat(
-        pd.read_parquet(f, engine="fastparquet").assign(
-            cfdna=_get_sample_name_from_file_name(f, split_position=0),
-            signature=_get_sample_name_from_file_name(f, split_position=1),
-            signature_type=_get_sample_name_from_file_name(f, split_position=2),
+    non_empty_files = [f for f in intersected_featuremaps_parquet if os.path.getsize(f) > 0]
+    if len(non_empty_files) < len(intersected_featuremaps_parquet):
+        logger.warning(
+            f"Skipping {len(intersected_featuremaps_parquet) - len(non_empty_files)} empty parquet file(s) "
+            f"(empty intersection)"
         )
-        for f in intersected_featuremaps_parquet
-    )
+    if not non_empty_files:
+        logger.warning(
+            f"All {len(intersected_featuremaps_parquet)} intersected featuremap parquet file(s) are empty — "
+            f"no variants overlap between the featuremap and any signature"
+        )
+        df_int = pd.DataFrame()
+    else:
+        df_int = pd.concat(
+            pd.read_parquet(f, engine="fastparquet").assign(
+                cfdna=_get_sample_name_from_file_name(f, split_position=0),
+                signature=_get_sample_name_from_file_name(f, split_position=1),
+                signature_type=_get_sample_name_from_file_name(f, split_position=2),
+            )
+            for f in non_empty_files
+        )
     if output_parquet is not None:
         df_int.reset_index().to_parquet(output_parquet)
     if return_dataframes:
