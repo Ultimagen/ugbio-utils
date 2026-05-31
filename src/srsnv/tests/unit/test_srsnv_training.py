@@ -1,13 +1,27 @@
+import argparse
+import gzip
 import json
+import tempfile
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+import pandas as pd
 import pytest
 from ugbio_srsnv.srsnv_training import (
     FILTERS_FULL_OUTPUT,
     FILTERS_RANDOM_SAMPLE,
+    SRSNVTrainer,
+    _configure_xgb_device,
+    _count_bases_in_interval_list,
     _extract_stats_from_unified,
+    _last_non_downsample_funnel,
+    _parse_holdout_chromosomes,
     _parse_model_params,
+    _parse_user_metadata,
+    _probability_recalibration,
+    _validate_quality_region_filters,
+    partition_into_folds,
 )
 
 
@@ -87,7 +101,6 @@ def test_extract_stats_from_unified_new_format(resources_dir):
 
 def test_extract_stats_from_unified_missing_section():
     """Test _extract_stats_from_unified with missing required sections."""
-    import tempfile
 
     # Test missing filters_random_sample
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
@@ -114,10 +127,6 @@ def test_extract_stats_from_unified_missing_section():
 
 def test_downsample_segments_added_to_metadata(tmp_path: Path, resources_dir: Path) -> None:
     """Test that downsample segments are added to positive and negative stats in metadata."""
-    import argparse
-
-    from ugbio_srsnv.srsnv_training import SRSNVTrainer
-
     # Setup paths
     pos_file = resources_dir / "402572-CL10377.random_sample.featuremap.filtered.parquet"
     neg_file = resources_dir / "402572-CL10377.raw.featuremap.filtered.parquet"
@@ -230,3 +239,405 @@ def test_downsample_segments_added_to_metadata(tmp_path: Path, resources_dir: Pa
     assert isinstance(neg_stats["combinations"], dict)
     assert "combinations_total" in pos_stats, "Positive stats in metadata should contain 'combinations_total'"
     assert "combinations_total" in neg_stats, "Negative stats in metadata should contain 'combinations_total'"
+
+
+# ──────────────────────── _parse_holdout_chromosomes ──────────────────────
+
+
+class TestParseHoldoutChromosomes:
+    """Tests for _parse_holdout_chromosomes."""
+
+    def test_none_returns_none(self):
+        assert _parse_holdout_chromosomes(None) is None
+
+    def test_empty_string_returns_none(self):
+        assert _parse_holdout_chromosomes("") is None
+
+    def test_whitespace_only_returns_none(self):
+        assert _parse_holdout_chromosomes("  ,  , ") is None
+
+    def test_single_chromosome(self):
+        result = _parse_holdout_chromosomes("chr21")
+        assert result == ["chr21"]
+
+    def test_multiple_chromosomes(self):
+        result = _parse_holdout_chromosomes("chr21,chr22,chrX")
+        assert result == ["chr21", "chr22", "chrX"]
+
+    def test_strips_whitespace(self):
+        result = _parse_holdout_chromosomes(" chr21 , chr22 ")
+        assert result == ["chr21", "chr22"]
+
+    def test_deduplicates_preserving_order(self):
+        result = _parse_holdout_chromosomes("chr21,chr22,chr21,chrX,chr22")
+        assert result == ["chr21", "chr22", "chrX"]
+
+    def test_single_comma(self):
+        result = _parse_holdout_chromosomes(",")
+        assert result is None
+
+
+# ──────────────────────── _validate_quality_region_filters ──────────────
+
+
+class TestValidateQualityRegionFilters:
+    """Tests for _validate_quality_region_filters."""
+
+    def test_matching_filters_pass(self):
+        """Identical quality/region filters should not raise."""
+        pos_stats = {
+            "filters": [
+                {"name": "raw", "type": "raw", "funnel": 1000, "pass": 1000},
+                {"name": "qual_filter", "type": "quality", "threshold": 30},
+                {"name": "region_filter", "type": "region", "bed_file": "regions.bed"},
+                {"name": "downsample", "type": "downsample", "funnel": 100, "pass": 100},
+            ]
+        }
+        neg_stats = {
+            "filters": [
+                {"name": "raw", "type": "raw", "funnel": 5000, "pass": 5000},
+                {"name": "qual_filter", "type": "quality", "threshold": 30},
+                {"name": "region_filter", "type": "region", "bed_file": "regions.bed"},
+                {"name": "downsample", "type": "downsample", "funnel": 500, "pass": 500},
+            ]
+        }
+        # Should not raise
+        _validate_quality_region_filters(pos_stats, neg_stats)
+
+    def test_mismatched_quality_filter_raises(self):
+        """Different quality filters should raise ValueError."""
+        pos_stats = {
+            "filters": [
+                {"name": "qual_filter", "type": "quality", "threshold": 30},
+            ]
+        }
+        neg_stats = {
+            "filters": [
+                {"name": "qual_filter", "type": "quality", "threshold": 20},
+            ]
+        }
+        with pytest.raises(ValueError, match="Mismatch between quality/region filters"):
+            _validate_quality_region_filters(pos_stats, neg_stats)
+
+    def test_mismatched_region_filter_raises(self):
+        """Different region filters should raise ValueError."""
+        pos_stats = {
+            "filters": [
+                {"name": "region_filter", "type": "region", "bed_file": "regions_a.bed"},
+            ]
+        }
+        neg_stats = {
+            "filters": [
+                {"name": "region_filter", "type": "region", "bed_file": "regions_b.bed"},
+            ]
+        }
+        with pytest.raises(ValueError, match="Mismatch between quality/region filters"):
+            _validate_quality_region_filters(pos_stats, neg_stats)
+
+    def test_no_quality_region_filters_is_ok(self):
+        """Both sides having no quality/region filters should pass."""
+        pos_stats = {
+            "filters": [
+                {"name": "raw", "type": "raw", "funnel": 1000, "pass": 1000},
+                {"name": "downsample", "type": "downsample", "funnel": 100, "pass": 100},
+            ]
+        }
+        neg_stats = {
+            "filters": [
+                {"name": "raw", "type": "raw", "funnel": 5000, "pass": 5000},
+                {"name": "downsample", "type": "downsample", "funnel": 500, "pass": 500},
+            ]
+        }
+        # Should not raise
+        _validate_quality_region_filters(pos_stats, neg_stats)
+
+    def test_ignores_funnel_pass_in_comparison(self):
+        """funnel and pass fields should be excluded from comparison."""
+        pos_stats = {
+            "filters": [
+                {"name": "qual_filter", "type": "quality", "threshold": 30, "funnel": 100, "pass": 90},
+            ]
+        }
+        neg_stats = {
+            "filters": [
+                {"name": "qual_filter", "type": "quality", "threshold": 30, "funnel": 5000, "pass": 4500},
+            ]
+        }
+        # Should not raise (funnel and pass are excluded from comparison)
+        _validate_quality_region_filters(pos_stats, neg_stats)
+
+
+# ──────────────────────── _last_non_downsample_funnel ──────────────────────
+
+
+class TestLastNonDownsampleFunnel:
+    """Tests for _last_non_downsample_funnel."""
+
+    def test_returns_last_non_downsample_funnel(self):
+        """Should return the funnel value of the last non-downsample filter."""
+        stats = {
+            "filters": [
+                {"name": "raw", "type": "raw", "funnel": 10000},
+                {"name": "quality", "type": "quality", "funnel": 5000},
+                {"name": "region", "type": "region", "funnel": 3000},
+                {"name": "downsample", "type": "downsample", "funnel": 1000},
+            ]
+        }
+        result = _last_non_downsample_funnel(stats)
+        assert result == 3000
+
+    def test_no_downsample_returns_last_entry(self):
+        """When there are no downsample entries, return the last filter's funnel."""
+        stats = {
+            "filters": [
+                {"name": "raw", "type": "raw", "funnel": 10000},
+                {"name": "quality", "type": "quality", "funnel": 7000},
+            ]
+        }
+        result = _last_non_downsample_funnel(stats)
+        assert result == 7000
+
+    def test_multiple_downsample_at_end(self):
+        """Should skip all downsample entries at the end."""
+        stats = {
+            "filters": [
+                {"name": "raw", "type": "raw", "funnel": 10000},
+                {"name": "region", "type": "region", "funnel": 4000},
+                {"name": "downsample1", "type": "downsample", "funnel": 2000},
+                {"name": "downsample2", "type": "downsample", "funnel": 500},
+            ]
+        }
+        result = _last_non_downsample_funnel(stats)
+        assert result == 4000
+
+    def test_all_downsample_raises(self):
+        """When all filters are downsample, should raise ValueError."""
+        stats = {
+            "filters": [
+                {"name": "downsample1", "type": "downsample", "funnel": 1000},
+                {"name": "downsample2", "type": "downsample", "funnel": 500},
+            ]
+        }
+        with pytest.raises(ValueError, match="no non-downsample filter entry"):
+            _last_non_downsample_funnel(stats)
+
+    def test_single_non_downsample_entry(self):
+        """Should work with a single non-downsample entry."""
+        stats = {
+            "filters": [
+                {"name": "raw", "type": "raw", "funnel": 42},
+            ]
+        }
+        result = _last_non_downsample_funnel(stats)
+        assert result == 42
+
+
+# ──────────────────────── _count_bases_in_interval_list ──────────────────────
+
+
+class TestCountBasesInIntervalList:
+    """Tests for _count_bases_in_interval_list."""
+
+    def test_basic_counting(self, tmp_path):
+        """Should count bases correctly from a simple interval list."""
+        interval_file = tmp_path / "test.interval_list"
+        # Write a simple interval_list: 1-based closed coordinates
+        # Each interval contributes end - start + 1 bases
+        content = (
+            "@SQ\tSN:chr1\tLN:1000\n"
+            "chr1\t1\t100\t+\tinterval1\n"  # 100 bases
+            "chr1\t200\t300\t+\tinterval2\n"  # 101 bases
+        )
+        interval_file.write_text(content)
+        result = _count_bases_in_interval_list(str(interval_file))
+        assert result == 100 + 101  # 201 total
+
+    def test_skips_header_lines(self, tmp_path):
+        """Should skip @-prefixed and #-prefixed header lines."""
+        interval_file = tmp_path / "test.interval_list"
+        content = (
+            "@HD\tVN:1.6\n" "@SQ\tSN:chr1\tLN:1000\n" "# comment line\n" "chr1\t10\t20\t+\tinterval1\n"  # 11 bases
+        )
+        interval_file.write_text(content)
+        result = _count_bases_in_interval_list(str(interval_file))
+        assert result == 11
+
+    def test_skips_empty_lines(self, tmp_path):
+        """Should skip empty lines."""
+        interval_file = tmp_path / "test.interval_list"
+        content = "chr1\t1\t50\t+\tinterval1\n\nchr1\t100\t150\t+\tinterval2\n"
+        interval_file.write_text(content)
+        result = _count_bases_in_interval_list(str(interval_file))
+        assert result == 50 + 51  # 101 total
+
+    def test_file_not_found_raises(self):
+        """Should raise FileNotFoundError for nonexistent file."""
+        with pytest.raises(FileNotFoundError, match="File not found"):
+            _count_bases_in_interval_list("/nonexistent/path/file.interval_list")
+
+    def test_gzipped_file(self, tmp_path):
+        """Should handle gzipped interval list files."""
+        interval_file = tmp_path / "test.interval_list.gz"
+        content = "chr1\t1\t100\t+\tinterval1\n"
+        with gzip.open(interval_file, "wt", encoding="utf-8") as fh:
+            fh.write(content)
+        result = _count_bases_in_interval_list(str(interval_file))
+        assert result == 100
+
+    def test_fewer_than_three_fields_skipped(self, tmp_path):
+        """Lines with fewer than 3 fields should be skipped."""
+        interval_file = tmp_path / "test.interval_list"
+        content = (
+            "chr1\t1\n"  # only 2 fields, should be skipped
+            "chr1\t10\t20\t+\tinterval1\n"  # 11 bases
+        )
+        interval_file.write_text(content)
+        result = _count_bases_in_interval_list(str(interval_file))
+        assert result == 11
+
+
+# ──────────────────────── _configure_xgb_device ──────────────────────
+
+
+class TestConfigureXgbDevice:
+    """Tests for _configure_xgb_device."""
+
+    def test_cpu_config(self):
+        """Should set device=cpu and n_jobs=-1."""
+        params = {}
+        _configure_xgb_device(params, use_gpu=False)
+        assert params["device"] == "cpu"
+        assert params["n_jobs"] == -1
+        assert "nthread" not in params
+
+    def test_cpu_preserves_n_jobs(self):
+        """Should not override existing n_jobs when using CPU."""
+        params = {"n_jobs": 4}
+        _configure_xgb_device(params, use_gpu=False)
+        assert params["device"] == "cpu"
+        assert params["n_jobs"] == 4
+
+    def test_gpu_config(self):
+        """Should set device=cuda and sampling_method for GPU."""
+        params = {"nthread": 8, "n_jobs": 4}
+        _configure_xgb_device(params, use_gpu=True)
+        assert params["device"] == "cuda"
+        assert params["sampling_method"] == "gradient_based"
+        assert "nthread" not in params
+        assert "n_jobs" not in params
+
+    def test_cpu_removes_nthread(self):
+        """Should remove nthread when using CPU."""
+        params = {"nthread": 8}
+        _configure_xgb_device(params, use_gpu=False)
+        assert "nthread" not in params
+
+
+# ──────────────────────── _parse_user_metadata ──────────────────────
+
+
+class TestParseUserMetadata:
+    """Tests for _parse_user_metadata."""
+
+    def test_none_returns_empty(self):
+        assert _parse_user_metadata(None) == {}
+
+    def test_empty_list_returns_empty(self):
+        assert _parse_user_metadata([]) == {}
+
+    def test_single_token(self):
+        result = _parse_user_metadata(["key=value"])
+        assert result == {"key": "value"}
+
+    def test_multiple_tokens(self):
+        result = _parse_user_metadata(["adapter_version=v2", "docker_image=img:latest"])
+        assert result == {"adapter_version": "v2", "docker_image": "img:latest"}
+
+    def test_invalid_token_no_equals_raises(self):
+        """Tokens without '=' should raise ValueError."""
+        with pytest.raises(ValueError, match="must contain exactly one '='"):
+            _parse_user_metadata(["no_equals_sign"])
+
+    def test_too_many_equals_raises(self):
+        """Tokens with more than one '=' should raise ValueError."""
+        with pytest.raises(ValueError, match="must contain exactly one '='"):
+            _parse_user_metadata(["a=b=c"])
+
+
+# ──────────────────────── partition_into_folds ──────────────────────
+
+
+class TestPartitionIntoFolds:
+    """Tests for partition_into_folds."""
+
+    def test_basic_partitioning(self):
+        """Should partition chromosomes into balanced folds."""
+        sizes = pd.Series(
+            {"chr1": 100, "chr2": 80, "chr3": 60, "chr4": 40, "chr5": 20},
+        )
+        result = partition_into_folds(sizes, k_folds=2, n_chroms_leave_out=1)
+        # chr5 (smallest) should be excluded
+        assert "chr5" not in result
+        # All remaining chroms should have fold assignments
+        assert set(result.keys()) == {"chr1", "chr2", "chr3", "chr4"}
+        assert all(v in (0, 1) for v in result.values())
+
+    def test_single_fold(self):
+        """With k_folds=1, all should go to fold 0."""
+        sizes = pd.Series({"chr1": 100, "chr2": 50, "chr3": 30})
+        result = partition_into_folds(sizes, k_folds=1, n_chroms_leave_out=1)
+        # Smallest (chr3) excluded
+        assert "chr3" not in result
+        assert all(v == 0 for v in result.values())
+
+    def test_no_chroms_leave_out(self):
+        """With n_chroms_leave_out=0, all chromosomes should be assigned."""
+        sizes = pd.Series({"chr1": 100, "chr2": 50})
+        result = partition_into_folds(sizes, k_folds=2, n_chroms_leave_out=0)
+        assert set(result.keys()) == {"chr1", "chr2"}
+
+    def test_balanced_result(self):
+        """Greedy algorithm should produce roughly balanced folds."""
+        sizes = pd.Series({f"chr{i}": (22 - i) * 10 for i in range(1, 11)})
+        result = partition_into_folds(sizes, k_folds=3, n_chroms_leave_out=1)
+        # Count total size per fold
+        fold_sizes = [0, 0, 0]
+        for chrom, fold in result.items():
+            fold_sizes[fold] += sizes[chrom]
+        # Max fold should not be more than 2x min fold
+        assert max(fold_sizes) / max(min(fold_sizes), 1) < 2.0
+
+    def test_invalid_algorithm_raises(self):
+        """Should raise ValueError for unsupported algorithm."""
+        sizes = pd.Series({"chr1": 100})
+        with pytest.raises(ValueError, match="Only greedy algorithm"):
+            partition_into_folds(sizes, k_folds=2, alg="random")
+
+
+# ──────────────────────── _probability_recalibration ──────────────────────
+
+
+class TestProbabilityRecalibration:
+    """Tests for _probability_recalibration (identity mapping)."""
+
+    def test_returns_copy_of_input(self):
+        """Should return an identical copy of the probabilities."""
+        prob_orig = np.array([0.1, 0.5, 0.9])
+        y_all = np.array([0, 1, 1])
+        result = _probability_recalibration(prob_orig, y_all)
+        np.testing.assert_array_equal(result, prob_orig)
+
+    def test_returns_new_array(self):
+        """Should return a new array, not the same object."""
+        prob_orig = np.array([0.1, 0.5, 0.9])
+        y_all = np.array([0, 1, 1])
+        result = _probability_recalibration(prob_orig, y_all)
+        assert result is not prob_orig
+
+    def test_modifications_dont_affect_original(self):
+        """Modifying result should not affect original."""
+        prob_orig = np.array([0.1, 0.5, 0.9])
+        y_all = np.array([0, 1, 1])
+        result = _probability_recalibration(prob_orig, y_all)
+        result[0] = 999.0
+        assert prob_orig[0] == 0.1
