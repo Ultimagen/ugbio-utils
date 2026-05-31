@@ -10,7 +10,12 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import pytest
+import xgboost as xgb
 from ugbio_featuremap.featuremap_utils import FeatureMapFields
+from ugbio_srsnv.split_manifest import (
+    SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,
+    SPLIT_MODE_SINGLE_MODEL_READ_HASH,
+)
 from ugbio_srsnv.srsnv_training import (
     CHROM,
     FILTERS_FULL_OUTPUT,
@@ -19,7 +24,9 @@ from ugbio_srsnv.srsnv_training import (
     LABEL_COL,
     MQUAL,
     POS,
+    PROB_ORIG,
     REF,
+    SNVQ,
     X_ALT,
     X_HMER_ALT,
     X_HMER_REF,
@@ -1679,3 +1686,327 @@ class TestInitGpu:
             mock_xgb.return_value.fit.side_effect = RuntimeError("No CUDA")
             result = trainer._init_gpu(use_gpu=True)
         assert result is False
+
+
+# ──────────────────────── _determine_x_lut_max ──────────────────────
+
+
+class TestDetermineXLutMax:
+    def _make_trainer(self):
+        return object.__new__(SRSNVTrainer)
+
+    def test_fp_cutoff_type(self):
+        """mqual_cutoff_type='fp' uses label==0 quantile."""
+        trainer = self._make_trainer()
+        pd_df = pd.DataFrame({LABEL_COL: [True, True, False, False, False], MQUAL: [50.0, 60.0, 10.0, 20.0, 30.0]})
+        result = trainer._determine_x_lut_max(None, pd_df, "fp", 1.0)
+        assert result == 30.0
+
+    def test_tp_cutoff_type(self):
+        """mqual_cutoff_type='tp' uses label==1 quantile."""
+        trainer = self._make_trainer()
+        pd_df = pd.DataFrame({LABEL_COL: [True, True, False, False], MQUAL: [50.0, 60.0, 10.0, 20.0]})
+        result = trainer._determine_x_lut_max(None, pd_df, "tp", 1.0)
+        assert result == 60.0
+
+    def test_mp_with_kde_metadata(self):
+        """mqual_cutoff_type='mp' uses KDE truncation if available."""
+        trainer = self._make_trainer()
+        pd_df = pd.DataFrame({LABEL_COL: [True, False], MQUAL: [50.0, 10.0]})
+
+        class MockEstimator:
+            kde_metadata = {"rates": {"false_truncation_idx": 3}}
+
+            def from_grid(self, idx):
+                return 42.0
+
+        result = trainer._determine_x_lut_max(MockEstimator(), pd_df, "mp", 1.0)
+        assert result == 42.0
+
+    def test_mp_without_truncation(self):
+        """mqual_cutoff_type='mp' falls back to quantile when no truncation."""
+        trainer = self._make_trainer()
+        pd_df = pd.DataFrame({LABEL_COL: [True, False, False], MQUAL: [50.0, 10.0, 20.0]})
+
+        class MockEstimator:
+            kde_metadata = {"rates": {"false_truncation_idx": 0}}
+
+        result = trainer._determine_x_lut_max(MockEstimator(), pd_df, "mp", 1.0)
+        assert result == 20.0
+
+
+# ──────────────────────── _create_quality_lookup_table_count ──────────────────────
+
+
+class TestCreateQualityLookupTableCount:
+    def _make_trainer(self):
+        trainer = object.__new__(SRSNVTrainer)
+        trainer.eps = 1e-6
+        trainer.pos_stats = {
+            "filters": [{"type": "raw", "funnel": 1000, "pass": 1000}, {"type": "label", "funnel": 1000, "pass": 50}]
+        }
+        trainer.mean_coverage = 30.0
+        trainer.n_bases_in_region = 1000
+        trainer.raw_featuremap_size_filtered = 500
+        trainer.args = argparse.Namespace(quality_lut_size=None)
+        return trainer
+
+    def test_creates_lut_arrays(self):
+        """Should create x_lut and y_lut numpy arrays."""
+        trainer = self._make_trainer()
+        trainer.data_frame = pl.DataFrame(
+            {LABEL_COL: [True, True, True, False, False, False], MQUAL: [10.0, 20.0, 30.0, 5.0, 15.0, 25.0]}
+        )
+        trainer._create_quality_lookup_table_count()
+        assert hasattr(trainer, "x_lut")
+        assert hasattr(trainer, "y_lut")
+        assert len(trainer.x_lut) > 0
+        assert len(trainer.x_lut) == len(trainer.y_lut)
+
+    def test_custom_lut_size(self):
+        """quality_lut_size overrides default."""
+        trainer = self._make_trainer()
+        trainer.args.quality_lut_size = 10
+        trainer.data_frame = pl.DataFrame({LABEL_COL: [True, True, False, False], MQUAL: [10.0, 20.0, 5.0, 15.0]})
+        trainer._create_quality_lookup_table_count()
+        assert len(trainer.x_lut) == 10
+
+
+# ──────────────────────── _create_quality_lookup_table_kde ──────────────────────
+
+
+class TestCreateQualityLookupTableKde:
+    def _make_trainer(self):
+        trainer = object.__new__(SRSNVTrainer)
+        trainer.eps = 1e-6
+        trainer.pos_stats = {
+            "filters": [{"type": "raw", "funnel": 1000, "pass": 1000}, {"type": "label", "funnel": 1000, "pass": 50}]
+        }
+        trainer.neg_stats = {"filters": [{"type": "quality", "funnel": 1000, "pass": 500}]}
+        trainer.mean_coverage = 30.0
+        trainer.n_bases_in_region = 1000
+        trainer.k_folds = 2
+        trainer.raw_featuremap_size_filtered = 500
+        trainer.args = argparse.Namespace(quality_lut_size=None)
+        return trainer
+
+    def test_successful_kde(self):
+        """When recalibrate_snvq_kde succeeds, should set x_lut and y_lut."""
+        trainer = self._make_trainer()
+        trainer.data_frame = pl.DataFrame({LABEL_COL: [True, True, False, False], MQUAL: [10.0, 20.0, 5.0, 15.0]})
+        mock_x = np.array([0.0, 10.0, 20.0])
+        mock_y = np.array([0.0, 30.0, 60.0])
+        with patch("ugbio_srsnv.srsnv_training.recalibrate_snvq_kde", return_value=(None, mock_x, mock_y)):
+            trainer._create_quality_lookup_table_kde()
+        np.testing.assert_array_equal(trainer.x_lut, mock_x)
+        np.testing.assert_array_equal(trainer.y_lut, mock_y)
+
+    def test_kde_failure_falls_back(self):
+        """When recalibrate_snvq_kde raises, should fallback to count method."""
+        trainer = self._make_trainer()
+        trainer.data_frame = pl.DataFrame({LABEL_COL: [True, True, False, False], MQUAL: [10.0, 20.0, 5.0, 15.0]})
+        with patch("ugbio_srsnv.srsnv_training.recalibrate_snvq_kde", side_effect=ValueError("KDE failed")):
+            trainer._create_quality_lookup_table_kde()
+        assert hasattr(trainer, "x_lut")
+        assert hasattr(trainer, "y_lut")
+
+    def test_insufficient_data_falls_back(self):
+        """When all labels are same, should call the count fallback."""
+        trainer = self._make_trainer()
+        trainer.data_frame = pl.DataFrame({LABEL_COL: [True, True, True, True], MQUAL: [10.0, 20.0, 30.0, 40.0]})
+        with patch.object(trainer, "_create_quality_lookup_table_count") as mock_count:
+            trainer._create_quality_lookup_table_kde()
+        mock_count.assert_called_once()
+
+
+# ──────────────────────── _create_quality_lookup_table ──────────────────────
+
+
+class TestCreateQualityLookupTableDispatcher:
+    def _make_trainer(self):
+        trainer = object.__new__(SRSNVTrainer)
+        trainer.eps = 1e-6
+        trainer.pos_stats = {
+            "filters": [{"type": "raw", "funnel": 1000, "pass": 1000}, {"type": "label", "funnel": 1000, "pass": 50}]
+        }
+        trainer.neg_stats = {"filters": [{"type": "quality", "funnel": 1000, "pass": 500}]}
+        trainer.mean_coverage = 30.0
+        trainer.n_bases_in_region = 1000
+        trainer.k_folds = 2
+        trainer.raw_featuremap_size_filtered = 500
+        trainer.args = argparse.Namespace(quality_lut_size=None)
+        trainer.data_frame = pl.DataFrame({LABEL_COL: [True, True, False, False], MQUAL: [10.0, 20.0, 5.0, 15.0]})
+        return trainer
+
+    def test_use_kde_true(self):
+        """use_kde=True calls the KDE path."""
+        trainer = self._make_trainer()
+        mock_x = np.array([0.0, 10.0])
+        mock_y = np.array([0.0, 50.0])
+        with patch("ugbio_srsnv.srsnv_training.recalibrate_snvq_kde", return_value=(None, mock_x, mock_y)):
+            trainer._create_quality_lookup_table(use_kde=True)
+        np.testing.assert_array_equal(trainer.x_lut, mock_x)
+
+    def test_use_kde_false(self):
+        """use_kde=False calls the count path."""
+        trainer = self._make_trainer()
+        trainer._create_quality_lookup_table(use_kde=False)
+        assert hasattr(trainer, "x_lut")
+
+
+# ──────────────────────── _assign_chrom_val_folds / _assign_read_hash_folds ──────
+
+
+class TestAssignFoldMethods:
+    def test_assign_chrom_val_folds(self):
+        """Should assign fold_id based on chromosome role in manifest."""
+        trainer = object.__new__(SRSNVTrainer)
+        trainer.split_manifest = {
+            "split_mode": SPLIT_MODE_SINGLE_MODEL_CHROM_VAL,
+            "train_chromosomes": ["chr1", "chr2"],
+            "val_chromosomes": ["chr3"],
+            "test_chromosomes": ["chr21"],
+        }
+        trainer.data_frame = pl.DataFrame(
+            {CHROM: ["chr1", "chr2", "chr3", "chr21"], POS: [1, 2, 3, 4], LABEL_COL: [True, False, True, False]}
+        )
+        trainer._assign_chrom_val_folds()
+
+        assert trainer.k_folds == 1
+        fold_col = trainer.data_frame[FOLD_COL].to_list()
+        assert fold_col[0] == 0  # chr1 -> train
+        assert fold_col[1] == 0  # chr2 -> train
+        assert fold_col[2] == 1  # chr3 -> val
+        assert fold_col[3] is None  # chr21 -> test
+
+    def test_assign_read_hash_folds(self):
+        """Should assign fold_id based on read hash."""
+        trainer = object.__new__(SRSNVTrainer)
+        trainer.split_hash_key = "RN"
+        trainer.split_manifest = {
+            "split_mode": SPLIT_MODE_SINGLE_MODEL_READ_HASH,
+            "train_chromosomes": ["chr1", "chr2"],
+            "test_chromosomes": ["chr21"],
+            "val_fraction": 0.2,
+            "random_seed": 42,
+            "hash_key": "RN",
+        }
+        trainer.data_frame = pl.DataFrame(
+            {
+                CHROM: ["chr1", "chr1", "chr1", "chr21"],
+                POS: [1, 2, 3, 4],
+                "RN": ["read_a", "read_b", "read_c", "read_d"],
+                LABEL_COL: [True, False, True, False],
+            }
+        )
+        trainer._assign_read_hash_folds()
+
+        assert trainer.k_folds == 1
+        fold_col = trainer.data_frame[FOLD_COL].to_list()
+        assert fold_col[3] is None  # chr21 -> test
+        assert all(val in (0, 1, None) for val in fold_col)
+
+    def test_assign_read_hash_missing_column_raises(self):
+        """Should raise ValueError if hash key column is missing."""
+        trainer = object.__new__(SRSNVTrainer)
+        trainer.split_hash_key = "RN"
+        trainer.split_manifest = {"split_mode": SPLIT_MODE_SINGLE_MODEL_READ_HASH, "test_chromosomes": ["chr21"]}
+        trainer.data_frame = pl.DataFrame({CHROM: ["chr1"], POS: [1], LABEL_COL: [True]})
+        with pytest.raises(ValueError, match="hash key column"):
+            trainer._assign_read_hash_folds()
+
+
+# ──────────────────────── _init_split_manifest ──────────────────────
+
+
+class TestInitSplitManifestMethod:
+    def test_loads_existing_manifest(self, tmp_path):
+        """Should load manifest from file."""
+        manifest = {"split_mode": "k_fold", "chrom_to_fold": {"chr1": 0}, "k_folds": 2}
+        manifest_file = tmp_path / "manifest.json"
+        manifest_file.write_text(json.dumps(manifest))
+
+        trainer = object.__new__(SRSNVTrainer)
+        trainer.seed = 42
+        args = argparse.Namespace(
+            training_regions=str(tmp_path / "regions.bed"),
+            k_folds=2,
+            split_manifest_in=str(manifest_file),
+            split_manifest_out=None,
+            holdout_chromosomes=None,
+            val_chromosomes=None,
+            single_model_split=False,
+            val_fraction=0.1,
+            split_hash_key="RN",
+        )
+        with patch("ugbio_srsnv.srsnv_training.validate_manifest_against_regions"):
+            trainer._init_split_manifest(args)
+        assert trainer.split_manifest == manifest
+
+    def test_saves_manifest(self, tmp_path):
+        """Should save manifest when split_manifest_out given."""
+        trainer = object.__new__(SRSNVTrainer)
+        trainer.seed = 42
+        manifest_out = str(tmp_path / "out.json")
+        args = argparse.Namespace(
+            training_regions=str(tmp_path / "regions.bed"),
+            k_folds=2,
+            split_manifest_in=None,
+            split_manifest_out=manifest_out,
+            holdout_chromosomes=None,
+            val_chromosomes=None,
+            single_model_split=False,
+            val_fraction=0.1,
+            split_hash_key="RN",
+        )
+        mock_manifest = {"split_mode": "k_fold", "chrom_to_fold": {"chr1": 0}}
+        with (
+            patch("ugbio_srsnv.srsnv_training._build_new_split_manifest", return_value=mock_manifest),
+            patch("ugbio_srsnv.srsnv_training.save_split_manifest") as mock_save,
+        ):
+            trainer._init_split_manifest(args)
+        mock_save.assert_called_once_with(mock_manifest, manifest_out)
+
+
+# ──────────────────────── train() integration ──────────────────────
+
+
+class TestTrainIntegration:
+    def test_train_with_synthetic_data(self):
+        """Full train() with tiny synthetic data, 1 fold."""
+        trainer = object.__new__(SRSNVTrainer)
+        trainer.k_folds = 1
+        trainer.downcast_float = False
+        trainer.args = argparse.Namespace(verbose=False, use_kde_smoothing=False, quality_lut_size=5)
+        trainer.pos_stats = {
+            "filters": [{"type": "raw", "funnel": 1000, "pass": 1000}, {"type": "label", "funnel": 1000, "pass": 50}]
+        }
+        trainer.neg_stats = {"filters": [{"type": "quality", "funnel": 1000, "pass": 500}]}
+        trainer.mean_coverage = 30.0
+        trainer.n_bases_in_region = 1000
+        trainer.raw_featuremap_size_filtered = 500
+        trainer.max_qual = 60.0
+        trainer.eps = 1e-6
+        trainer.feature_list = None
+
+        rng = np.random.default_rng(42)
+        n_samples = 40
+        trainer.data_frame = pl.DataFrame(
+            {
+                CHROM: ["chr1"] * n_samples,
+                POS: list(range(n_samples)),
+                "feat1": rng.normal(0, 1, n_samples).tolist(),
+                "feat2": rng.normal(0, 1, n_samples).tolist(),
+                LABEL_COL: ([True] * 20) + ([False] * 20),
+                FOLD_COL: [0] * n_samples,
+            }
+        )
+        trainer.models = [xgb.XGBClassifier(n_estimators=5, max_depth=2, eval_metric="auc", early_stopping_rounds=3)]
+
+        trainer.train()
+
+        assert hasattr(trainer, "x_lut")
+        assert hasattr(trainer, "y_lut")
+        assert MQUAL in trainer.data_frame.columns
+        assert SNVQ in trainer.data_frame.columns
+        assert PROB_ORIG in trainer.data_frame.columns
