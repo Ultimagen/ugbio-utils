@@ -360,6 +360,8 @@ class TestRenameColsForModel:
             "X_PREV2": ["G"],
             "X_NEXT1": ["C"],
             "X_NEXT2": ["T"],
+            "X_HMER_REF": [3],
+            "X_HMER_ALT": [1],
         }
 
         for sample, prefix in [(TUMOR_SAMPLE, "t_"), (NORMAL_SAMPLE, "n_")]:
@@ -436,6 +438,15 @@ class TestRenameColsForModel:
 
         assert "t_tr_distance" in result.columns
         assert result["t_tr_distance"][0] == 100
+
+    def test_rename_adds_hmer_fields(self, sample_df_for_rename):
+        """HMER fields should be lowercase variant-level features (no sample prefix)."""
+        result = rename_cols_for_model(sample_df_for_rename, [TUMOR_SAMPLE, NORMAL_SAMPLE])
+
+        assert "x_hmer_ref" in result.columns
+        assert "x_hmer_alt" in result.columns
+        assert result["x_hmer_ref"][0] == 3
+        assert result["x_hmer_alt"][0] == 1
 
     def test_rename_missing_columns_raises_error(self):
         """Missing columns should raise ValueError with the list of missing columns."""

@@ -255,7 +255,10 @@ class PerReadStatsSection(ReportSection):
     """Handles per-read statistics section."""
 
     def generate(self):
-        """Generate per-read statistics."""
+        """Generate per-read statistics. Returns None if per-read data is not available."""
+        available_tables = self.data_processor.get_available_tables()
+        if "/per_read_desc" not in available_tables:
+            return None
         df_per_read = self.data_processor.load_table("per_read_desc")
         df_per_read = df_per_read.drop(columns=["detail"])
         df_per_read = self.formatter.format_metric_names(df_per_read)
@@ -452,6 +455,9 @@ class MethylationQCReportGenerator:
     def generate_per_read_stats(self):
         """Generate and display per-read statistics."""
         stats_df = self.per_read_stats.generate()
+        if stats_df is None:
+            display(HTML("<i>Per-read statistics not available (ProcessMethylDackelPerRead was skipped).</i>"))
+            return
         display(stats_df)
 
     def generate_non_cpg_stats(self):

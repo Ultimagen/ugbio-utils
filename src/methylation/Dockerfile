@@ -36,7 +36,7 @@ RUN git clone https://github.com/dpryan79/libBigWig.git && \
     make install && \
     cp libBigWig.a /usr/local/lib/
 
-RUN git clone https://github.com/dpryan79/MethylDackel.git && \
+RUN git clone https://github.com/Ultimagen/MethylDackel.git && \
     cd MethylDackel && \
     make LIBBIGWIG="/usr/local/lib/libBigWig.a" && \
     mkdir -p /app/bin && \

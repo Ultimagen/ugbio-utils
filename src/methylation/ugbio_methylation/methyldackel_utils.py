@@ -365,7 +365,7 @@ def calc_distrib_per_strand(data_frame: pd.DataFrame):
     return df_distrib
 
 
-def read_merge_context_file(in_file_name: str, is_taps: bool = False) -> pd.DataFrame:  # noqa: FBT001, FBT002
+def read_merge_context_file(in_file_name: str) -> pd.DataFrame:
     """
     Goal: Function for reading MethylDackel mergeContext file
 
@@ -373,8 +373,6 @@ def read_merge_context_file(in_file_name: str, is_taps: bool = False) -> pd.Data
     ----------
     in_file_name: str
         Input MethylDackel mergeContext file name
-    is_taps: bool
-        Indicate if input is TAPS data
 
     Returns
     -------
@@ -384,11 +382,5 @@ def read_merge_context_file(in_file_name: str, is_taps: bool = False) -> pd.Data
     """
     col_names = ["chr", "start", "end", "PercentMethylation", "coverage_methylated", "coverage_unmethylated"]
     df_in_report = pd.read_csv(in_file_name, sep="\t", header=0, names=col_names)
-    if is_taps:
-        df_in_report["PercentMethylation"] = 100 - df_in_report["PercentMethylation"]
-        df_in_report["coverage_methylated"], df_in_report["coverage_unmethylated"] = (
-            df_in_report["coverage_unmethylated"],
-            df_in_report["coverage_methylated"],
-        )
     df_in_report["Coverage"] = df_in_report["coverage_methylated"] + df_in_report["coverage_unmethylated"]
     return df_in_report

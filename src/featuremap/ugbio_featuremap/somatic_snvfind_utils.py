@@ -136,6 +136,7 @@ def _log_regions_bed_preview(regions_bed_file: Path) -> None:
 
 # INFO fields required for inference (includes TR fields added by annotation step)
 # X_PREV1, X_PREV2, X_NEXT1, X_NEXT2 are needed for ref/nonref calculations
+# X_HMER_REF, X_HMER_ALT are homopolymer length features for model inference
 REQUIRED_INFO_FIELDS: set[str] = {
     TandemRepeatFields.TR_DISTANCE.value,
     TandemRepeatFields.TR_LENGTH.value,
@@ -144,6 +145,8 @@ REQUIRED_INFO_FIELDS: set[str] = {
     FeatureMapFields.X_PREV2.value,
     FeatureMapFields.X_NEXT1.value,
     FeatureMapFields.X_NEXT2.value,
+    FeatureMapFields.X_HMER_REF.value,
+    FeatureMapFields.X_HMER_ALT.value,
 }
 
 # FORMAT fields required for inference (per-sample fields)

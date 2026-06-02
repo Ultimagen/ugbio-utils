@@ -70,7 +70,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Full workspace with all packages and extras
 uv sync --all-extras --all-packages
 
-# Specific module only
+# Specific module only (please do not do that, or, after selecting specific module, revert back to all packages and extras)
 uv sync --package ugbio-core
 uv sync --package ugbio-filtering
 ```

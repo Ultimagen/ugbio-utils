@@ -14,7 +14,7 @@ runs:
   - id: list_members
     shell: bash
     run: |
-      matrix=$(python3 ${GITHUB_WORKSPACE}/.github/utils/ugbio_members_matrix.py)
+      matrix=$(python3 ${{ github.action_path }}/../../utils/ugbio_members_matrix.py)
       {
         echo 'matrix<<EOF'
         echo ${matrix}

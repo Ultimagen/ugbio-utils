@@ -28,6 +28,11 @@ on:
         type: string
         default: ""
         required: false
+      runner:
+        description: "Runner type passed to docker-build-push.yml (default: ubuntu-latest)"
+        required: false
+        type: string
+        default: ubuntu-latest
 
 permissions:
   id-token: write # Required for assuming an AWS role
@@ -37,6 +42,9 @@ env:
   AWS_REGION: us-east-1
   AWS_ROLE_NAME: github-actions-ecr
   AWS_ACCOUNT: 337532070941
+  # Default base image used when the Dockerfile does not declare an ARG BASE_IMAGE default.
+  # If you update this version, also update UGBIO_BASE_IMAGE_NAME in ci.yml.
+  DEFAULT_BASE_IMAGE: ugbio_base:1.7.0
 
 jobs:
   pre-build:
@@ -44,11 +52,21 @@ jobs:
     outputs:
       ecr-registry: ${{ steps.ecr-login.outputs.registry }}
       project-version: ${{ steps.extract-version.outputs.project_version }}
+      base-image: ${{ steps.extract-base-image.outputs.base_image }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit-sha }}
           lfs: true
+
+      - name: Extract BASE_IMAGE from Dockerfile
+        id: extract-base-image
+        run: |
+          BASE=$(grep -oP '(?<=ARG BASE_IMAGE=)\S+' ${{ inputs.docker-file }} || true)
+          if [ -z "$BASE" ]; then
+            BASE="${{ env.DEFAULT_BASE_IMAGE }}"
+          fi
+          echo "base_image=${BASE}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -93,4 +111,5 @@ jobs:
          docker-tag: ${{ inputs.docker-tag }}
          docker-context: ${{ inputs.docker-context }}
          project-version: ${{ needs.pre-build.outputs.project-version }}
-         docker-build-args: BASE_IMAGE=${{ needs.pre-build.outputs.ecr-registry }}/ugbio_base:1.7.0
+         docker-build-args: BASE_IMAGE=${{ needs.pre-build.outputs.ecr-registry }}/${{ needs.pre-build.outputs.base-image }}
+         runner: ${{ inputs.runner }}

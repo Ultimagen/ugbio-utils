@@ -66,7 +66,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     ap_var.add_argument("--input", help="MethylDackel mergeContext file", type=str, required=True)
     ap_var.add_argument("--output", help="Output file basename", type=str, required=True)
-    ap_var.add_argument("--taps", help="Indicate if input is TAPS data", action="store_true", default=False)
 
     return ap_var.parse_args(argv[1:])
 
@@ -86,7 +85,7 @@ def run(argv: list[str] | None = None):
         # import input files
         # ============================================================================
         in_file_name = args.input
-        df_in_report = read_merge_context_file(in_file_name, is_taps=args.taps)
+        df_in_report = read_merge_context_file(in_file_name)
 
         # Get chromosomes and genomes from MethylDackel mergeContext file
         # ===================================================================

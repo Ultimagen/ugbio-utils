@@ -178,47 +178,46 @@ def plot_cnv_calls(
     neutral_ploidy: int = 2,
 ) -> str:
     """plot the copy number along the genome"""
-    if df_dup is None and df_del is None:
-        return None
-    else:
-        df_calls = pd.concat([df_dup, df_del])
+    plt.figure(figsize=(20, 2))
+
+    # Plot CNV calls if available
+    if df_dup is not None or df_del is not None:
+        df_calls = pd.concat([df for df in [df_dup, df_del] if df is not None])
         get_x_location_for_fig(df_calls, df_germline_cov_norm_100k)
         df_calls["width"] = df_calls["end"] - df_calls["start"]
         df_calls["width_fig"] = df_calls["end_fig"] - df_calls["start_fig"]
-
-        plt.figure(figsize=(20, 2))
 
         plt.plot(
             (df_calls["start_fig"], df_calls["end_fig"]), (df_calls["copy-number"], df_calls["copy-number"]), "black"
         )
 
-        previous = 0
-        xticks = []
-        xticks_labels = []
-        for _, row in df_chr_graphic.iterrows():
-            chr_name = row["chr"]
-            chr_index = row["start_fig"]
-            plt.axvline(x=chr_index, color="black", alpha=0.5)
-            xticks.append(previous + (chr_index - previous) / 2)
-            xticks_labels.append(chr_name)
-            previous = chr_index
-        plt.axvline(x=0, color="black", alpha=0.5)
+    previous = 0
+    xticks = []
+    xticks_labels = []
+    for _, row in df_chr_graphic.iterrows():
+        chr_name = row["chr"]
+        chr_index = row["start_fig"]
+        plt.axvline(x=chr_index, color="black", alpha=0.5)
+        xticks.append(previous + (chr_index - previous) / 2)
+        xticks_labels.append(chr_name)
+        previous = chr_index
+    plt.axvline(x=0, color="black", alpha=0.5)
 
-        plt.axhline(y=neutral_ploidy, color="grey", alpha=0.5)
+    plt.axhline(y=neutral_ploidy, color="grey", alpha=0.5)
 
-        plt.xticks(xticks, xticks_labels, rotation=60)
-        plt.yticks([0, 1, 2, 3, 4, 5, 6, 7, 8], [0, 1, 2, 3, 4, 5, 6, 7, 8])
-        plt.xlabel("location on genome")
-        plt.ylabel("copy-number")
+    plt.xticks(xticks, xticks_labels, rotation=60)
+    plt.yticks([0, 1, 2, 3, 4, 5, 6, 7, 8], [0, 1, 2, 3, 4, 5, 6, 7, 8])
+    plt.xlabel("location on genome")
+    plt.ylabel("copy-number")
 
-        handles = [Rectangle((0, 0), 0.5, 0.5, color=c, ec="k") for c in ["black"]]
-        labels = ["copy-number"]
-        plt.legend(handles, labels, loc="center left", bbox_to_anchor=(1, 0.5))
+    handles = [Rectangle((0, 0), 0.5, 0.5, color=c, ec="k") for c in ["black"]]
+    labels = ["copy-number"]
+    plt.legend(handles, labels, loc="center left", bbox_to_anchor=(1, 0.5))
 
-        # plt.ylim([0,8])
-        out_calls_figure = pjoin(out_directory, sample_name + ".CNV.calls.jpeg")
-        plt.savefig(out_calls_figure, dpi=300, bbox_inches="tight")
-        return out_calls_figure
+    # plt.ylim([0,8])
+    out_calls_figure = pjoin(out_directory, sample_name + ".CNV.calls.jpeg")
+    plt.savefig(out_calls_figure, dpi=300, bbox_inches="tight")
+    return out_calls_figure
 
 
 def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
@@ -324,7 +323,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     #########################
 
     # load & normalize coverage
-    df_germline_cov = pd.read_csv(args.germline_coverage, header=None, sep="\t")
+    df_germline_cov = pd.read_csv(args.germline_coverage, header=None, sep="\t", dtype={0: str})
     df_germline_cov.columns = ["chr", "start", "end", "cov"]
     df_germline_cov["norm_cov"] = df_germline_cov["cov"] / df_germline_cov["cov"].median()
     df_germline_cov["log_norm_cov"] = np.log2(df_germline_cov["norm_cov"])
@@ -337,6 +336,8 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
             "start_fig": df_germline_cov_norm_100k.groupby(["chr"])["start_fig"].max().to_numpy(),
         }
     )
+    # Convert chr column to string to handle both "chr9" and "9" formats
+    df_chr_graphic["chr"] = df_chr_graphic["chr"].astype(str)
     df_chr_graphic["chr_num"] = df_chr_graphic["chr"].str.replace("chr", "", regex=True)
     df_chr_graphic["chr_num"] = df_chr_graphic["chr_num"].str.replace("X", "23", regex=True)
     df_chr_graphic["chr_num"] = df_chr_graphic["chr_num"].str.replace("Y", "24", regex=True)
@@ -344,7 +345,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
     df_chr_graphic = df_chr_graphic.sort_values(by=["chr_num"])
 
     if is_somatic:
-        df_tumor_cov = pd.read_csv(args.tumor_coverage, header=None, sep="\t")
+        df_tumor_cov = pd.read_csv(args.tumor_coverage, header=None, sep="\t", dtype={0: str})
         df_tumor_cov.columns = ["chr", "start", "end", "cov"]
         df_tumor_cov["norm_cov"] = df_tumor_cov["cov"] / df_tumor_cov["cov"].median()
         df_tumor_cov["log_norm_cov"] = np.log2(df_tumor_cov["norm_cov"])
@@ -376,7 +377,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
 
     if args.duplication_cnv_calls:
         if os.path.getsize(args.duplication_cnv_calls) > 0:
-            df_dup = pd.read_csv(args.duplication_cnv_calls, sep="\t", header=None)
+            df_dup = pd.read_csv(args.duplication_cnv_calls, sep="\t", header=None, dtype={0: str})
             if args.vcf_like:
                 df_dup.columns = ["chr", "start", "end", "info"]
                 df_dup["copy-number"] = df_dup["info"].apply(extract_copy_number)
@@ -391,7 +392,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
 
     if args.deletion_cnv_calls:
         if os.path.getsize(args.deletion_cnv_calls) > 0:
-            df_del = pd.read_csv(args.deletion_cnv_calls, sep="\t", header=None)
+            df_del = pd.read_csv(args.deletion_cnv_calls, sep="\t", header=None, dtype={0: str})
             if args.vcf_like:
                 df_del.columns = ["chr", "start", "end", "info"]
                 df_del["copy-number"] = df_del["info"].apply(extract_copy_number)
@@ -407,7 +408,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
 
     if args.gt_duplication_cnv_calls:
         if os.path.getsize(args.gt_duplication_cnv_calls) > 0:
-            df_gt_dup = pd.read_csv(args.gt_duplication_cnv_calls, sep="\t", header=None)
+            df_gt_dup = pd.read_csv(args.gt_duplication_cnv_calls, sep="\t", header=None, dtype={0: str})
             df_gt_dup.columns = ["chr", "start", "end", "copy-number"]
             df_gt_dup = get_x_location_for_fig(df_gt_dup, df_germline_cov_norm_100k)
         else:
@@ -418,7 +419,7 @@ def run(argv):  # noqa: C901, PLR0912, PLR0915 # TODO: refactor
 
     if args.gt_deletion_cnv_calls:
         if os.path.getsize(args.gt_deletion_cnv_calls) > 0:
-            df_gt_del = pd.read_csv(args.gt_deletion_cnv_calls, sep="\t", header=None)
+            df_gt_del = pd.read_csv(args.gt_deletion_cnv_calls, sep="\t", header=None, dtype={0: str})
             df_gt_del.columns = ["chr", "start", "end", "copy-number"]
             df_gt_del = get_x_location_for_fig(df_gt_del, df_germline_cov_norm_100k)
         else:

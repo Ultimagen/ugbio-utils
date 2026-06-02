@@ -508,14 +508,27 @@ def read_intersection_dataframes(
     if isinstance(intersected_featuremaps_parquet, str):
         intersected_featuremaps_parquet = [intersected_featuremaps_parquet]
     logger.debug(f"Reading {len(intersected_featuremaps_parquet)} intersection featuremaps")
-    df_int = pd.concat(
-        pd.read_parquet(f, engine="fastparquet").assign(
-            cfdna=_get_sample_name_from_file_name(f, split_position=0),
-            signature=_get_sample_name_from_file_name(f, split_position=1),
-            signature_type=_get_sample_name_from_file_name(f, split_position=2),
+    non_empty_files = [f for f in intersected_featuremaps_parquet if os.path.getsize(f) > 0]
+    if len(non_empty_files) < len(intersected_featuremaps_parquet):
+        logger.warning(
+            f"Skipping {len(intersected_featuremaps_parquet) - len(non_empty_files)} empty parquet file(s) "
+            f"(empty intersection)"
         )
-        for f in intersected_featuremaps_parquet
-    )
+    if not non_empty_files:
+        logger.warning(
+            f"All {len(intersected_featuremaps_parquet)} intersected featuremap parquet file(s) are empty — "
+            f"no variants overlap between the featuremap and any signature"
+        )
+        df_int = pd.DataFrame()
+    else:
+        df_int = pd.concat(
+            pd.read_parquet(f, engine="fastparquet").assign(
+                cfdna=_get_sample_name_from_file_name(f, split_position=0),
+                signature=_get_sample_name_from_file_name(f, split_position=1),
+                signature_type=_get_sample_name_from_file_name(f, split_position=2),
+            )
+            for f in non_empty_files
+        )
     if output_parquet is not None:
         df_int.reset_index().to_parquet(output_parquet)
     if return_dataframes:
@@ -1084,7 +1097,8 @@ def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadat
     featuremap_df_file: str
         featuremap df file (parquet file), training dataframe for single_read_snv
     srsnv_metadata_json: str
-        single_read_snv metadata json file, includes true-positive filtering funnel
+        single_read_snv metadata json file, includes true-positive filtering
+        counts in either a "funnel" or "rows" field
     read_filter_query: str
         query to filter the dataframe
     Returns
@@ -1122,14 +1136,26 @@ def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadat
     tp_filtering = tp_filtering.drop(
         index=tp_filtering[tp_filtering["type"] == "downsample"].index
     )  # remove downsampling step
+    if "funnel" in tp_filtering.columns:
+        filtering_count_column = "funnel"
+    elif "rows" in tp_filtering.columns:
+        filtering_count_column = "rows"
+    else:
+        raise ValueError(
+            "Could not find filtering count column in metadata filters. " "Expected either 'funnel' or 'rows'."
+        )
+
     # Exclude annotation-based filters (e.g. EXCLUDE_TRAINING, PCAWG, INCLUDE_INFERENCE) from the
     # "last region" search — these are training-specific exclusions, not genomic region boundaries
     annotation_fields = {"EXCLUDE_TRAINING", "PCAWG", "INCLUDE_INFERENCE"}
     region_filters = tp_filtering[
         (tp_filtering["type"] == "region") & (~tp_filtering.get("field", pd.Series(dtype=str)).isin(annotation_fields))
     ]
-    filt_denom = region_filters.iloc[-1]["funnel"]  # last genomic region step
-    filt_numer = tp_filtering.iloc[-1]["funnel"]  # final number of true positives (before downsampling)
+    if len(region_filters) == 0:
+        raise ValueError("Could not find a 'region' filter step in metadata filters")
+
+    filt_denom = region_filters.iloc[-1][filtering_count_column]  # last genomic region step
+    filt_numer = tp_filtering.iloc[-1][filtering_count_column]  # final number of true positives (before downsampling)
     filt_ratio = filt_numer / filt_denom
 
     denom_ratio = filt_ratio * read_filter_non_filt
