@@ -821,6 +821,7 @@ class SRSNVTrainer:
 
         self.x_lut = x_lut
         self.y_lut = y_lut
+        self._calculate_snvq_prefactor()
 
     def _create_quality_lookup_table_count(self, fp_mqual_cutoff_quantile=1 - 1e-6, eps=None) -> None:
         """
