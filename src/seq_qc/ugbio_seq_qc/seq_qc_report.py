@@ -1,4 +1,4 @@
-"""Generate an HTML QC report from sorter statistics JSON and CSV files."""
+"""Generate an HTML QC report from sequencing (Sorter) statistics JSON and CSV files."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ import pandas as pd
 import plotly.graph_objects as go
 from ugbio_core.logger import logger
 from ugbio_core.sorter_utils import get_base_coverage_from_sorter, read_sorter_statistics_csv
+
+from ugbio_seq_qc.file_resolution import resolve_sample_files
 
 _PERCENTILE_COLORS = ["red", "orange", "green", "orange", "red"]
 _PERCENTILE_LABELS = ["P5", "P25", "P50", "P75", "P95"]
@@ -100,7 +102,7 @@ def _build_summary_table_html(csv_df: pd.DataFrame, basename: str) -> str:
     )
 
 
-def _build_coverage_boxplot(base_coverage: dict, csv_df: pd.DataFrame, basename: str) -> go.Figure:
+def build_coverage_boxplot(base_coverage: dict, csv_df: pd.DataFrame, basename: str) -> go.Figure:
     """Build the base coverage boxplot normalized by median coverage."""
     median_cvg = float(csv_df.loc[csv_df["metric"] == "median_cvg", "value"].iloc[0])
     bc = base_coverage
@@ -208,7 +210,7 @@ def _build_coverage_boxplot(base_coverage: dict, csv_df: pd.DataFrame, basename:
     return fig
 
 
-def _build_cvg_histogram(stats_json: dict, basename: str) -> go.Figure:
+def build_cvg_histogram(stats_json: dict, basename: str) -> go.Figure:
     """Build the coverage histogram capped at 99th percentile."""
     data = np.array(stats_json["cvg"], dtype=float)
     cumsum = np.cumsum(data)
@@ -258,7 +260,7 @@ def _build_cvg_histogram(stats_json: dict, basename: str) -> go.Figure:
     return fig
 
 
-def _build_read_length_plot(stats_json: dict, basename: str) -> go.Figure:
+def build_read_length_plot(stats_json: dict, basename: str) -> go.Figure:
     """Build overlaid read length distributions capped at 99th percentile."""
     keys = [k for k in stats_json if "read_length" in k and isinstance(stats_json[k], list)]
 
@@ -319,7 +321,7 @@ def _build_read_length_plot(stats_json: dict, basename: str) -> go.Figure:
     return fig
 
 
-def _build_bqual_plot(stats_json: dict, basename: str) -> go.Figure:
+def build_bqual_plot(stats_json: dict, basename: str) -> go.Figure:
     """Build overlaid base quality distributions."""
     keys = [k for k in stats_json if "bqual" in k and isinstance(stats_json[k], list)]
 
@@ -374,7 +376,7 @@ def _build_bqual_plot(stats_json: dict, basename: str) -> go.Figure:
     return fig
 
 
-def _build_mapq_plot(stats_json: dict, basename: str) -> go.Figure:
+def build_mapq_plot(stats_json: dict, basename: str) -> go.Figure:
     """Build MAPQ bar plot with percentage labels."""
     data = np.array(stats_json["mapq"], dtype=float)
     total = data.sum()
@@ -449,9 +451,9 @@ def _assemble_html(basename: str, table_html: str, figures: list[go.Figure]) -> 
     return "\n".join(parts)
 
 
-def generate_sorter_stats_report(json_path: Path, csv_path: Path, output_html: Path) -> Path:
+def generate_seq_qc_report(json_path: Path, csv_path: Path, output_html: Path) -> Path:
     """
-    Generate an HTML QC report from sorter stats files.
+    Generate an HTML QC report from sequencing (Sorter) stats files.
 
     Parameters
     ----------
@@ -468,10 +470,8 @@ def generate_sorter_stats_report(json_path: Path, csv_path: Path, output_html: P
         Path to the generated HTML report.
 
     """
-    logger.info(f"Reading sorter stats from {json_path} and {csv_path}")
-    csv_series = read_sorter_statistics_csv(str(csv_path), edit_metric_names=False)
-    csv_df = csv_series.reset_index()
-    csv_df.columns = ["metric", "value"]
+    logger.info(f"Reading sequencing stats from {json_path} and {csv_path}")
+    csv_df = read_sorter_statistics_csv(str(csv_path), edit_metric_names=False, as_dataframe=True)
     with open(json_path, encoding="utf-8") as f:
         stats_json = json.load(f)
     base_coverage = get_base_coverage_from_sorter(str(json_path))
@@ -481,11 +481,11 @@ def generate_sorter_stats_report(json_path: Path, csv_path: Path, output_html: P
     logger.info("Building report figures")
     table_html = _build_summary_table_html(csv_df, basename)
     figures = [
-        _build_coverage_boxplot(base_coverage, csv_df, basename),
-        _build_cvg_histogram(stats_json, basename),
-        _build_read_length_plot(stats_json, basename),
-        _build_bqual_plot(stats_json, basename),
-        _build_mapq_plot(stats_json, basename),
+        build_coverage_boxplot(base_coverage, csv_df, basename),
+        build_cvg_histogram(stats_json, basename),
+        build_read_length_plot(stats_json, basename),
+        build_bqual_plot(stats_json, basename),
+        build_mapq_plot(stats_json, basename),
     ]
 
     html_content = _assemble_html(basename, table_html, figures)
@@ -496,102 +496,24 @@ def generate_sorter_stats_report(json_path: Path, csv_path: Path, output_html: P
     return output_html
 
 
-def _find_sorter_basename(files: list[str]) -> str:
-    """Find the main sample basename from a file listing.
-
-    Strategy:
-    1. Look for the main CRAM file (excludes _unmatched).
-    2. If no CRAM found, find JSON files that have a matching CSV (excludes ppmSeq/unmatched).
-    """
-    cram_files = [f for f in files if f.endswith(".cram") and "_unmatched" not in f and not f.endswith(".crai")]
-    if len(cram_files) == 1:
-        return cram_files[0].removesuffix(".cram")
-
-    json_files = [
-        f
-        for f in files
-        if f.endswith(".json") and "ppmSeq" not in f and "_unmatched" not in f and not f.startswith(".")
-    ]
-    csv_files = {f.removesuffix(".csv") for f in files if f.endswith(".csv")}
-    matched = [f.removesuffix(".json") for f in json_files if f.removesuffix(".json") in csv_files]
-
-    if len(matched) == 1:
-        return matched[0]
-    if len(matched) > 1:
-        raise ValueError(f"Multiple JSON+CSV pairs found, cannot auto-detect basename: {matched}")
-    raise ValueError(
-        f"Could not determine sample basename. No CRAM found ({len(cram_files)} candidates) "
-        f"and no matching JSON+CSV pair found in: {files}"
-    )
-
-
 def _resolve_paths(args) -> tuple[Path, Path, Path]:
-    """Resolve JSON/CSV paths from arguments, fetching from S3 if needed."""
+    """Resolve JSON/CSV/output paths from arguments, fetching from S3 if needed."""
     if args.json and args.csv:
         json_path = Path(args.json)
         csv_path = Path(args.csv)
     elif args.input_dir:
-        input_dir = args.input_dir
-        if input_dir.startswith("s3://"):
-            try:
-                from ugbio_cloud_utils.cloud_sync import cloud_sync  # noqa: PLC0415
-            except ImportError:
-                raise RuntimeError("No S3 access from this environment") from None  # noqa: B904
-
-            logger.info(f"Fetching files from {input_dir}")
-            all_files = _list_s3_dir(input_dir)
-            basename = _find_sorter_basename(all_files)
-            json_name = f"{basename}.json"
-            csv_name = f"{basename}.csv"
-            if json_name not in all_files or csv_name not in all_files:
-                raise ValueError(f"Could not find {json_name} and/or {csv_name} in {input_dir}")
-            json_path = Path(cloud_sync(f"{input_dir.rstrip('/')}/{json_name}"))
-            csv_path = Path(cloud_sync(f"{input_dir.rstrip('/')}/{csv_name}"))
-        else:
-            dir_path = Path(input_dir)
-            all_files = [f.name for f in dir_path.iterdir() if f.is_file()]
-            basename = _find_sorter_basename(all_files)
-            json_path = dir_path / f"{basename}.json"
-            csv_path = dir_path / f"{basename}.csv"
-            if not json_path.exists() or not csv_path.exists():
-                raise ValueError(f"Could not find {json_path} and/or {csv_path}")
+        logger.info(f"Resolving sample files from {args.input_dir}")
+        json_path, csv_path, _ = resolve_sample_files(args.input_dir)
     else:
         raise ValueError("Either --input-dir or both --json and --csv must be provided")
 
-    if args.output:
-        output_html = Path(args.output)
-    else:
-        output_html = json_path.with_suffix(".html")
-
+    output_html = Path(args.output) if args.output else json_path.with_suffix(".html")
     return json_path, csv_path, output_html
-
-
-def _list_s3_dir(s3_uri: str) -> list[str]:
-    """List filenames in an S3 directory using boto3."""
-    try:
-        import boto3  # noqa: PLC0415
-    except ImportError:
-        raise RuntimeError("No S3 access from this environment") from None  # noqa: B904
-
-    parts = s3_uri.replace("s3://", "").split("/", 1)
-    bucket = parts[0]
-    prefix = parts[1].rstrip("/") + "/" if len(parts) > 1 else ""
-
-    s3 = boto3.client("s3")
-    paginator = s3.get_paginator("list_objects_v2")
-    files = []
-    for page in paginator.paginate(Bucket=bucket, Prefix=prefix, Delimiter="/"):
-        for obj in page.get("Contents", []):
-            key = obj["Key"]
-            filename = key[len(prefix) :]
-            if filename:
-                files.append(filename)
-    return files
 
 
 def parse_args(argv: list[str]):
     """Parse command-line arguments."""
-    parser = ArgumentParser(description="Generate HTML QC report from sorter stats files")
+    parser = ArgumentParser(description="Generate HTML QC report from sequencing stats files")
     parser.add_argument(
         "--input-dir",
         help="Directory (local or s3://) containing the JSON and CSV sorter stats files",
@@ -603,10 +525,10 @@ def parse_args(argv: list[str]):
 
 
 def run(argv: list[str]) -> None:
-    """Main entry point for the sorter stats report CLI."""
+    """Main entry point for the sequencing QC report CLI."""
     args = parse_args(argv[1:])
     json_path, csv_path, output_html = _resolve_paths(args)
-    generate_sorter_stats_report(json_path, csv_path, output_html)
+    generate_seq_qc_report(json_path, csv_path, output_html)
 
 
 def main():

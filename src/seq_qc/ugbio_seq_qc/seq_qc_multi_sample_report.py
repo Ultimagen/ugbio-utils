@@ -1,4 +1,4 @@
-"""Generate an HTML QC report comparing sorter statistics across multiple samples."""
+"""Generate an HTML QC report comparing sequencing statistics across multiple samples."""
 
 from __future__ import annotations
 
@@ -7,13 +7,14 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 from ugbio_core.logger import logger
-from ugbio_core.sorter_sample_discovery import SampleData, resolve_and_load_samples
-from ugbio_core.sorter_stats_report import (
-    _build_bqual_plot,
-    _build_coverage_boxplot,
-    _build_cvg_histogram,
-    _build_mapq_plot,
-    _build_read_length_plot,
+
+from ugbio_seq_qc.sample_discovery import SampleData, resolve_and_load_samples
+from ugbio_seq_qc.seq_qc_report import (
+    build_bqual_plot,
+    build_coverage_boxplot,
+    build_cvg_histogram,
+    build_mapq_plot,
+    build_read_length_plot,
 )
 
 _LARGE_VALUE_THRESHOLD = 100
@@ -33,6 +34,15 @@ _SECTION_IDS = [
     "base-quality",
     "mapq",
 ]
+
+
+def _format_value(val) -> str:
+    """Format a metric value for display in the comparison table."""
+    if isinstance(val, float):
+        if val == int(val) and abs(val) > _LARGE_VALUE_THRESHOLD:
+            return f"{int(val):,}"
+        return f"{val:g}"
+    return str(val)
 
 
 def _build_multi_summary_table_html(samples: list[SampleData]) -> str:
@@ -60,12 +70,7 @@ def _build_multi_summary_table_html(samples: list[SampleData]) -> str:
         cells = f"<td style='{td_sticky_style}'>{s.label}</td>"
         for metric in all_metrics:
             row = s.csv_df.loc[s.csv_df["metric"] == metric]
-            val = row["value"].iloc[0] if len(row) > 0 else "N/A"
-            if isinstance(val, float):
-                if val == int(val) and abs(val) > _LARGE_VALUE_THRESHOLD:
-                    val = f"{int(val):,}"
-                else:
-                    val = f"{val:g}"
+            val = _format_value(row["value"].iloc[0]) if len(row) > 0 else "N/A"
             cells += f"<td style='padding:8px 12px; text-align:right; font-size:16px;'>{val}</td>"
         body_rows += f"<tr>{cells}</tr>"
 
@@ -114,11 +119,11 @@ def generate_multi_sample_report(samples: list[SampleData], output_html: Path, t
     first_figure = True
 
     for build_fn, needs_bc in [
-        (_build_coverage_boxplot, True),
-        (_build_cvg_histogram, False),
-        (_build_read_length_plot, False),
-        (_build_bqual_plot, False),
-        (_build_mapq_plot, False),
+        (build_coverage_boxplot, True),
+        (build_cvg_histogram, False),
+        (build_read_length_plot, False),
+        (build_bqual_plot, False),
+        (build_mapq_plot, False),
     ]:
         group = []
         for s in samples:
@@ -140,7 +145,7 @@ def generate_multi_sample_report(samples: list[SampleData], output_html: Path, t
 
 
 def parse_args(argv: list[str]):
-    parser = ArgumentParser(description="Generate multi-sample HTML QC report from sorter stats")
+    parser = ArgumentParser(description="Generate multi-sample HTML QC report from sequencing stats")
     parser.add_argument(
         "--run-dir",
         help="Run directory (local or s3://) to auto-discover sample subdirectories",
@@ -155,6 +160,24 @@ def parse_args(argv: list[str]):
     return parser.parse_args(argv)
 
 
+def _resolve_title(args) -> str:
+    if args.title:
+        return args.title
+    if args.run_dir:
+        run_name = Path(args.run_dir.rstrip("/")).name
+        parts = run_name.split("-", 1)
+        return f"Run {parts[0]}" if parts[0].isdigit() else run_name
+    return "Multi-Sample Report"
+
+
+def _resolve_output(args) -> Path:
+    if args.output:
+        return Path(args.output)
+    if args.run_dir and not args.run_dir.startswith("s3://"):
+        return Path(args.run_dir) / "multi_sample_report.html"
+    return Path("multi_sample_report.html")
+
+
 def run(argv: list[str]) -> None:
     args = parse_args(argv[1:])
 
@@ -162,24 +185,7 @@ def run(argv: list[str]) -> None:
         raise ValueError("At least one of --run-dir or --input-dir must be provided.")
 
     samples = resolve_and_load_samples(args.run_dir, args.input_dir)
-
-    if args.title:
-        title = args.title
-    elif args.run_dir:
-        run_name = Path(args.run_dir.rstrip("/")).name
-        parts = run_name.split("-", 1)
-        title = f"Run {parts[0]}" if parts[0].isdigit() else run_name
-    else:
-        title = "Multi-Sample Report"
-
-    if args.output:
-        output_html = Path(args.output)
-    elif args.run_dir and not args.run_dir.startswith("s3://"):
-        output_html = Path(args.run_dir) / "multi_sample_report.html"
-    else:
-        output_html = Path("multi_sample_report.html")
-
-    generate_multi_sample_report(samples, output_html, title)
+    generate_multi_sample_report(samples, _resolve_output(args), _resolve_title(args))
 
 
 def main():
