@@ -9,8 +9,6 @@ Covers:
 - save/load manifest
 """
 
-from __future__ import annotations
-
 import gzip
 import json
 from pathlib import Path
