@@ -1,18 +1,18 @@
 from pathlib import Path
 
 import pytest
-from ugbio_core.sorter_multi_sample_report import (
+from ugbio_seq_qc.sample_discovery import (
+    SampleData,
+    derive_sample_label,
+    discover_samples_local,
+    has_named_sample,
+    load_sample,
+    parse_library_info_xml,
+)
+from ugbio_seq_qc.seq_qc_multi_sample_report import (
     _build_multi_summary_table_html,
     generate_multi_sample_report,
     run,
-)
-from ugbio_core.sorter_sample_discovery import (
-    SampleData,
-    _derive_sample_label,
-    _discover_samples_local,
-    _has_named_sample,
-    _load_sample,
-    _parse_library_info_xml,
 )
 
 
@@ -85,7 +85,7 @@ def two_samples(run_dir_with_samples):
     samples = []
     for d in sorted(run_dir_with_samples.iterdir()):
         if d.is_dir():
-            s = _load_sample(d)
+            s = load_sample(d)
             if s is not None:
                 samples.append(s)
     return samples
@@ -93,47 +93,47 @@ def two_samples(run_dir_with_samples):
 
 class TestDeriveLabel:
     def test_strips_run_id_prefix(self):
-        assert _derive_sample_label("603559-L13064-Z0152-CATGCAACACTAGAT") == "L13064-Z0152-CATGCAACACTAGAT"
+        assert derive_sample_label("603559-L13064-Z0152-CATGCAACACTAGAT") == "L13064-Z0152-CATGCAACACTAGAT"
 
     def test_no_prefix(self):
-        assert _derive_sample_label("sample_only") == "sample_only"
+        assert derive_sample_label("sample_only") == "sample_only"
 
 
 class TestHasNamedSample:
     def test_named_sample(self):
-        assert _has_named_sample("603559-L13064-Z0152-CATGCAACACTAGAT") is True
+        assert has_named_sample("603559-L13064-Z0152-CATGCAACACTAGAT") is True
 
     def test_junk_barcode(self):
-        assert _has_named_sample("603559-UGAv3-1000-CGTGCAATGCGCATGAT") is True
+        assert has_named_sample("603559-UGAv3-1000-CGTGCAATGCGCATGAT") is True
 
     def test_barcode_only(self):
-        assert _has_named_sample("603559-Z0152-CATGCAACACTAGAT") is False
+        assert has_named_sample("603559-Z0152-CATGCAACACTAGAT") is False
 
     def test_special_tt(self):
-        assert _has_named_sample("603559-TT-TT") is False
+        assert has_named_sample("603559-TT-TT") is False
 
 
 class TestParseLibraryInfoXml:
     def test_parses_samples(self, run_dir_with_xml):
         xml_path = run_dir_with_xml / "603559_LibraryInfo.xml"
-        suffixes = _parse_library_info_xml(xml_path)
+        suffixes = parse_library_info_xml(xml_path)
         assert "L13064-Z0152-CATGCAACACTAGAT" in suffixes
         assert len(suffixes) == 1
 
     def test_handles_invalid_xml(self, tmp_path):
         bad_xml = tmp_path / "bad_LibraryInfo.xml"
         bad_xml.write_text("not valid xml <<<<")
-        suffixes = _parse_library_info_xml(bad_xml)
+        suffixes = parse_library_info_xml(bad_xml)
         assert suffixes == set()
 
 
 class TestDiscoverSamplesLocal:
     def test_finds_named_samples(self, run_dir_with_samples):
-        found = _discover_samples_local(run_dir_with_samples)
+        found = discover_samples_local(run_dir_with_samples)
         assert len(found) == 2
 
     def test_filters_by_xml(self, run_dir_with_xml):
-        found = _discover_samples_local(run_dir_with_xml)
+        found = discover_samples_local(run_dir_with_xml)
         assert len(found) == 1
         assert "L13064" in found[0].name
 
@@ -142,24 +142,24 @@ class TestDiscoverSamplesLocal:
         junk.mkdir()
         (junk / sample_1_json.name).symlink_to(sample_1_json)
         (junk / sample_1_csv.name).symlink_to(sample_1_csv)
-        found = _discover_samples_local(tmp_path)
+        found = discover_samples_local(tmp_path)
         assert len(found) == 0
 
     def test_skips_empty_dirs(self, tmp_path):
         (tmp_path / "603559-L13064-Z0152-CATGCAACACTAGAT").mkdir()
-        found = _discover_samples_local(tmp_path)
+        found = discover_samples_local(tmp_path)
         assert len(found) == 0
 
     def test_skips_files(self, tmp_path):
         (tmp_path / "file.txt").write_text("hello")
-        found = _discover_samples_local(tmp_path)
+        found = discover_samples_local(tmp_path)
         assert len(found) == 0
 
 
 class TestLoadSample:
     def test_loads_valid_sample(self, run_dir_with_samples):
         sample_dir = sorted(run_dir_with_samples.iterdir())[0]
-        sample = _load_sample(sample_dir)
+        sample = load_sample(sample_dir)
         assert sample is not None
         assert isinstance(sample, SampleData)
         assert sample.label
@@ -172,7 +172,7 @@ class TestLoadSample:
     def test_returns_none_for_empty_dir(self, tmp_path):
         empty = tmp_path / "empty"
         empty.mkdir()
-        assert _load_sample(empty) is None
+        assert load_sample(empty) is None
 
 
 class TestSummaryTable:
@@ -210,7 +210,7 @@ class TestGenerateReport:
 class TestCLI:
     def test_run_with_run_dir(self, run_dir_with_samples):
         output = run_dir_with_samples / "multi_sample_report.html"
-        run(["sorter_multi_sample_report", "--run-dir", str(run_dir_with_samples)])
+        run(["seq_qc_multi_sample_report", "--run-dir", str(run_dir_with_samples)])
         assert output.exists()
         content = output.read_text()
         assert "Multi-Sample QC Report" in content
@@ -220,7 +220,7 @@ class TestCLI:
         output = tmp_path / "out.html"
         run(
             [
-                "sorter_multi_sample_report",
+                "seq_qc_multi_sample_report",
                 "--input-dir",
                 str(sample_dirs[0]),
                 "--input-dir",
@@ -237,4 +237,4 @@ class TestCLI:
 
     def test_run_no_args_raises(self):
         with pytest.raises(ValueError, match="At least one"):
-            run(["sorter_multi_sample_report"])
+            run(["seq_qc_multi_sample_report"])
