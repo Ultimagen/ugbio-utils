@@ -18,9 +18,14 @@
 
 from __future__ import annotations
 
+import importlib
 import warnings
 from functools import partial
 from itertools import cycle
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
 
 import numpy as np
 import pandas as pd
@@ -74,7 +79,411 @@ ET_FILLNA = "et_fillna"  # end tag with NAs filled in
 FLOW_ORDER = ["T", "G", "C", "A"]
 
 MAX_PHRED = 100  # Default maximum Phred score for clipping
-EPS = 10 ** (-MAX_PHRED / 10)  # Small epsilon value for numerical stability in log calculations
+EPS = 1e-12  # Small epsilon value for numerical stability in log calculations
+
+
+def _probability_rescaling(
+    prob: np.ndarray,
+    sample_prior: float,
+    target_prior: float,
+    eps: float = EPS,
+) -> np.ndarray:
+    """
+    Rescale probabilities from the training prior to the real-data prior.
+
+    Formula (odds space, no logs):
+        odds_row       =  p / (1-p)
+        odds_sample    =  π_s / (1-π_s)
+        odds_target    =  π_t / (1-π_t)
+        odds_rescaled  =  odds_row * (odds_target / odds_sample)
+        p_rescaled     =  odds_rescaled / (1.0 + odds_rescaled)
+
+    The error component is divided by 3 (one substitution type out of three).
+    """
+    sample_prior = np.clip(sample_prior, eps, 1 - eps)
+    target_prior = np.clip(target_prior, eps, 1 - eps)
+
+    odds_sample = sample_prior / (1.0 - sample_prior)
+    odds_target = target_prior / (1.0 - target_prior)
+
+    p = np.clip(prob, eps, 1 - eps)
+    odds_row = p / (1.0 - p)
+
+    odds_rescaled = odds_row * (odds_target / odds_sample)
+    p_rescaled = odds_rescaled / (1.0 + odds_rescaled)
+    p_rescaled_snvq = 1 - ((1 - p_rescaled) / 3)
+
+    return p_rescaled_snvq
+
+
+def recalibrate_snvq(
+    mqual: np.ndarray,
+    labels: np.ndarray,
+    **kwargs,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Build an MQUAL-to-SNVQ lookup table and return recalibrated SNVQ values.
+
+    This replicates the counting-based recalibration from ``SRSNVTrainer`` so
+    that any model (XGBoost **or** DNN) can produce calibrated SNVQ scores
+    given the same external statistics.
+
+    Parameters
+    ----------
+    mqual : np.ndarray
+        Raw Phred-scaled quality scores (``-10 * log10(1-p)``).
+    labels : np.ndarray
+        Binary labels (True/1 = true positive, False/0 = false positive).
+    pos_stats, neg_stats, raw_stats : dict
+        Filtering-stats JSON dicts for positive, negative, and raw featuremap.
+    mean_coverage : float
+        Mean sequencing coverage.
+    n_bases_in_region : int
+        Total bases covered by the training regions interval list.
+    lut_mask : np.ndarray | None
+        Boolean mask selecting which samples to use for building the LUT.
+        When *None*, all samples are used.  In single-model mode, pass a
+        mask that selects only validation data to avoid training-set
+        overfitting bias.
+    prior_train_error : float | None
+        Fraction of negatives in the training set.  When *None*, it is
+        estimated from *labels*.
+    fp_mqual_cutoff_quantile : float
+        Upper quantile of the FP MQUAL distribution used to cap the LUT
+        x-axis.
+    max_qual : float
+        Maximum Phred score for clipping.
+    eps : float
+        Small epsilon for numerical stability.
+
+    Returns
+    -------
+    snvq : np.ndarray
+        Recalibrated SNVQ scores (same length as *mqual*).
+    x_lut : np.ndarray
+        MQUAL values of the lookup table.
+    y_lut : np.ndarray
+        Corresponding SNVQ values of the lookup table.
+    """
+
+    pos_stats = kwargs["pos_stats"]
+    neg_stats = kwargs["neg_stats"]
+    raw_stats = kwargs["raw_stats"]
+    mean_coverage = kwargs["mean_coverage"]
+    n_bases_in_region = kwargs["n_bases_in_region"]
+    lut_mask = kwargs.get("lut_mask")
+    prior_train_error = kwargs.get("prior_train_error")
+    fp_mqual_cutoff_quantile = kwargs.get("fp_mqual_cutoff_quantile", 1 - 1e-6)
+    max_qual = kwargs.get("max_qual", MAX_PHRED)
+    eps = kwargs.get("eps", EPS)
+
+    labels_bool = np.asarray(labels, dtype=bool)
+
+    # --- priors -----------------------------------------------------------
+    def _last_non_downsample_rows(stats: dict) -> int:
+        for f in reversed(stats["filters"]):
+            if f.get("type") != "downsample":
+                return f.get(TYPE_FUNNEL, f.get(STAT_ROWS))
+        raise ValueError("stats JSON has no non-downsample filter entry")
+
+    pos_after_filter = _last_non_downsample_rows(pos_stats)
+    neg_after_filter = _last_non_downsample_rows(neg_stats)
+    raw_after_filter = _last_non_downsample_rows(raw_stats)
+
+    prior_real_error = max(eps, min(1.0 - eps, neg_after_filter / (neg_after_filter + pos_after_filter)))
+
+    if prior_train_error is None:
+        n_neg = int((~labels_bool).sum())
+        prior_train_error = n_neg / len(labels_bool) if len(labels_bool) > 0 else 0.5
+
+    # --- snvq_prefactor ---------------------------------------------------
+    filtering_ratio = get_filter_ratio(pos_stats["filters"], numerator_type="label", denominator_type="raw")
+    effective_bases_covered = mean_coverage * n_bases_in_region * filtering_ratio
+    snvq_prefactor = raw_after_filter / effective_bases_covered
+
+    logger.info(
+        "recalibrate_snvq: mean_coverage=%.1f, n_bases_in_region=%d, "
+        "filtering_ratio=%.6f, raw_after_filter=%d, effective_bases_covered=%.0f, "
+        "snvq_prefactor=%.6f, prior_train_error=%.6f, prior_real_error=%.6f",
+        mean_coverage,
+        n_bases_in_region,
+        filtering_ratio,
+        raw_after_filter,
+        effective_bases_covered,
+        snvq_prefactor,
+        prior_train_error,
+        prior_real_error,
+    )
+
+    # --- counting-based lookup table (same logic as SRSNVTrainer) ---------
+    mqual_clipped = np.clip(mqual, 0.0, max_qual)
+
+    if lut_mask is not None:
+        mqual_for_lut = mqual_clipped[lut_mask]
+        labels_for_lut = labels_bool[lut_mask]
+        logger.info(
+            "recalibrate_snvq: using lut_mask (%d / %d samples for LUT)",
+            int(lut_mask.sum()),
+            len(lut_mask),
+        )
+    else:
+        mqual_for_lut = mqual_clipped
+        labels_for_lut = labels_bool
+
+    lut_df = pd.DataFrame({"label": labels_for_lut, "MQUAL": mqual_for_lut})
+    mqual_fp_max = lut_df.loc[lut_df["label"].astype(int) == 0, "MQUAL"].quantile(fp_mqual_cutoff_quantile)
+
+    max_int = int(np.floor(mqual_fp_max))
+    x_lut = np.arange(0, max_int + 1, dtype=float)
+
+    mqual_t = lut_df.loc[lut_df["label"], "MQUAL"]
+    mqual_f = lut_df.loc[~lut_df["label"], "MQUAL"]
+
+    tpr = np.array([(mqual_t >= m_).mean() for m_ in x_lut])
+    fpr = np.array([(mqual_f >= m_).mean() for m_ in x_lut])
+
+    y_lut = -10 * np.log10(np.clip(snvq_prefactor * (fpr / tpr), eps, 1))
+
+    # --- interpolate SNVQ for every sample --------------------------------
+    snvq = np.interp(mqual_clipped, x_lut, y_lut)
+
+    logger.info(
+        "recalibrate_snvq: LUT has %d points, SNVQ range [%.2f, %.2f]",
+        len(x_lut),
+        y_lut.min(),
+        y_lut.max(),
+    )
+
+    return snvq, x_lut, y_lut
+
+
+def _compute_snvq_prefactor(
+    pos_stats: dict,
+    raw_stats: dict,
+    mean_coverage: float,
+    n_bases_in_region: int,
+) -> tuple[float, int]:
+    """Compute the SNVQ prefactor and raw_after_filter count.
+
+    Shared by both counting-based and KDE-based recalibration.
+    """
+
+    def _last_non_downsample_rows(stats: dict) -> int:
+        for f in reversed(stats["filters"]):
+            if f.get("type") != "downsample":
+                return f.get(TYPE_FUNNEL, f.get(STAT_ROWS))
+        raise ValueError("stats JSON has no non-downsample filter entry")
+
+    raw_after_filter = _last_non_downsample_rows(raw_stats)
+    filtering_ratio = get_filter_ratio(pos_stats["filters"], numerator_type="label", denominator_type="raw")
+    effective_bases_covered = mean_coverage * n_bases_in_region * filtering_ratio
+    snvq_prefactor = raw_after_filter / effective_bases_covered
+    return snvq_prefactor, raw_after_filter
+
+
+def _kde_counting_fallback(**kwargs) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Fall back to counting-based SNVQ recalibration."""
+    pd_df = kwargs["pd_df"]
+    mqual_col = kwargs["mqual_col"]
+    label_col = kwargs["label_col"]
+    max_qual = kwargs["max_qual"]
+    mqual_all = pd_df[mqual_col].to_numpy()
+    labels_all = pd_df[label_col].to_numpy()
+    return recalibrate_snvq(
+        np.clip(mqual_all, 0.0, max_qual),
+        labels_all,
+        pos_stats=kwargs["pos_stats"],
+        neg_stats=kwargs["neg_stats"],
+        raw_stats=kwargs["raw_stats"],
+        mean_coverage=kwargs["mean_coverage"],
+        n_bases_in_region=kwargs["n_bases_in_region"],
+        lut_mask=kwargs["lut_mask"],
+        max_qual=max_qual,
+        eps=kwargs["eps"],
+    )
+
+
+def _determine_x_lut_max(
+    *,
+    mqual_cutoff_type: str,
+    estimator: AdaptiveKDEPrecisionEstimator,
+    df_for_kde: pd.DataFrame,
+    label_col: str,
+    mqual_col: str,
+    mqual_cutoff_quantile: float,
+) -> float:
+    """Determine the maximum x-axis value for the LUT based on cutoff type."""
+    kde_metadata = getattr(estimator, "kde_metadata", None)
+    if mqual_cutoff_type == "mp":
+        false_trunc_idx = kde_metadata["rates"].get("false_truncation_idx", 0) if kde_metadata else 0
+        if kde_metadata and false_trunc_idx > 0:
+            return estimator.from_grid(false_trunc_idx - 1)
+        return df_for_kde.loc[df_for_kde[label_col].astype(int) == 0, mqual_col].quantile(mqual_cutoff_quantile)
+    if mqual_cutoff_type == "tp":
+        return df_for_kde.loc[df_for_kde[label_col].astype(int) == 1, mqual_col].quantile(mqual_cutoff_quantile)
+    return df_for_kde.loc[df_for_kde[label_col].astype(int) == 0, mqual_col].quantile(mqual_cutoff_quantile)
+
+
+def _build_snvq_lut_from_estimator(
+    *,
+    estimator: AdaptiveKDEPrecisionEstimator,
+    x_lut_max: float,
+    quality_lut_size: int | None,
+    transform_mode: str,
+    snvq_prefactor: float,
+    eps: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build the x_lut and y_lut arrays from a fitted KDE estimator."""
+    if quality_lut_size is not None:
+        x_lut = np.linspace(0.0, x_lut_max, quality_lut_size)
+    else:
+        max_int = int(np.floor(x_lut_max))
+        x_lut = np.arange(0, max_int + 1, dtype=float)
+
+    scores_lut = prob_to_logit(phred_to_prob(x_lut), phred=True) if transform_mode == "logit" else x_lut
+
+    fpr_interp = estimator.get_fpr(scores_lut)
+    tpr_interp = estimator.get_tpr(scores_lut)
+    fp_interp = fpr_interp / tpr_interp
+    y_lut = -10 * np.log10(np.clip(snvq_prefactor * fp_interp, eps, 1))
+    return x_lut, y_lut
+
+
+def recalibrate_snvq_kde(pd_df: pd.DataFrame, **kwargs) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Build an MQUAL-to-SNVQ lookup table using adaptive KDE smoothing.
+
+    Standalone equivalent of ``SRSNVTrainer._create_quality_lookup_table_kde``,
+    usable by both XGBoost and DNN pipelines.
+
+    Parameters
+    ----------
+    pd_df
+        DataFrame with at least ``label``, ``fold_id``, ``MQUAL``,
+        ``prob_orig``, and ``prob_fold_*`` columns.
+    pos_stats, neg_stats, raw_stats
+        Filtering-stats JSON dicts.
+    mean_coverage
+        Mean sequencing coverage.
+    n_bases_in_region
+        Total bases covered by the training regions.
+    k_folds
+        Number of cross-validation folds (used by the KDE estimator).
+    lut_mask
+        Boolean mask selecting rows for LUT construction.
+    transform_mode
+        ``"mqual"`` or ``"logit"`` (default ``"logit"``).
+    mqual_cutoff_quantile
+        Upper quantile of FP MQUAL used to cap the LUT x-axis.
+    mqual_cutoff_type
+        ``"fp"``, ``"tp"``, or ``"mp"``.
+    kde_config_overrides
+        Overrides for ``AdaptiveKDEPrecisionEstimator`` init.
+    quality_lut_size
+        If given, use this many evenly-spaced LUT points.
+    max_qual
+        Maximum Phred score for clipping.
+    eps
+        Small epsilon for numerical stability.
+
+    Returns
+    -------
+    snvq : np.ndarray
+        Recalibrated SNVQ scores (same length as the *full* MQUAL column).
+    x_lut : np.ndarray
+        MQUAL values of the lookup table.
+    y_lut : np.ndarray
+        Corresponding SNVQ values of the lookup table.
+    """
+    pos_stats = kwargs["pos_stats"]
+    neg_stats = kwargs["neg_stats"]
+    raw_stats = kwargs["raw_stats"]
+    mean_coverage = kwargs["mean_coverage"]
+    n_bases_in_region = kwargs["n_bases_in_region"]
+    k_folds = kwargs["k_folds"]
+    lut_mask = kwargs.get("lut_mask")
+    transform_mode = kwargs.get("transform_mode", "logit")
+    mqual_cutoff_quantile = kwargs.get("mqual_cutoff_quantile", 1 - 1e-6)
+    mqual_cutoff_type = kwargs.get("mqual_cutoff_type", "fp")
+    kde_config_overrides = kwargs.get("kde_config_overrides") or {}
+    quality_lut_size = kwargs.get("quality_lut_size")
+    max_qual = kwargs.get("max_qual", MAX_PHRED)
+    eps = kwargs.get("eps", EPS)
+    label_col = kwargs.get("label_col", "label")
+    fold_col = kwargs.get("fold_col", "fold_id")
+    mqual_col = kwargs.get("mqual_col", "MQUAL")
+    prob_orig_col = kwargs.get("prob_orig_col", "prob_orig")
+
+    if transform_mode not in {"mqual", "logit"}:
+        raise ValueError(f"transform_mode must be 'mqual' or 'logit', got: {transform_mode}")
+    if mqual_cutoff_type not in {"fp", "tp", "mp"}:
+        raise ValueError(f"mqual_cutoff_type must be 'fp', 'tp', or 'mp', got: {mqual_cutoff_type}")
+
+    snvq_prefactor, _ = _compute_snvq_prefactor(pos_stats, raw_stats, mean_coverage, n_bases_in_region)
+
+    # Subset for LUT construction
+    df_for_kde = pd_df.loc[lut_mask].copy() if lut_mask is not None else pd_df.copy()
+    if lut_mask is not None:
+        logger.info("recalibrate_snvq_kde: using lut_mask (%d / %d rows)", len(df_for_kde), len(pd_df))
+
+    fallback_kwargs = {
+        "pd_df": pd_df,
+        "pos_stats": pos_stats,
+        "neg_stats": neg_stats,
+        "raw_stats": raw_stats,
+        "mean_coverage": mean_coverage,
+        "n_bases_in_region": n_bases_in_region,
+        "lut_mask": lut_mask,
+        "max_qual": max_qual,
+        "eps": eps,
+        "mqual_col": mqual_col,
+        "label_col": label_col,
+    }
+
+    if df_for_kde[label_col].sum() == 0 or (~df_for_kde[label_col]).sum() == 0:
+        logger.warning("Insufficient data for KDE, falling back to counting method")
+        return _kde_counting_fallback(**fallback_kwargs)
+
+    try:
+        _smoothing = importlib.import_module("ugbio_srsnv.smoothing_utils")
+        estimator = _smoothing.AdaptiveKDEPrecisionEstimator(transform_mode=transform_mode, **kde_config_overrides)
+        estimator.fit(
+            df_for_kde,
+            num_cv_folds=k_folds,
+            label_col=label_col,
+            fold_col=fold_col,
+            mqual_col=mqual_col,
+            prob_orig_col=prob_orig_col,
+        )
+    except Exception as e:
+        logger.warning("Adaptive KDE failed: %s. Falling back to counting method.", e)
+        return _kde_counting_fallback(**fallback_kwargs)
+
+    x_lut_max = _determine_x_lut_max(
+        mqual_cutoff_type=mqual_cutoff_type,
+        estimator=estimator,
+        df_for_kde=df_for_kde,
+        label_col=label_col,
+        mqual_col=mqual_col,
+        mqual_cutoff_quantile=mqual_cutoff_quantile,
+    )
+    x_lut, y_lut = _build_snvq_lut_from_estimator(
+        estimator=estimator,
+        x_lut_max=x_lut_max,
+        quality_lut_size=quality_lut_size,
+        transform_mode=transform_mode,
+        snvq_prefactor=snvq_prefactor,
+        eps=eps,
+    )
+
+    logger.info(
+        "recalibrate_snvq_kde: LUT has %d points, SNVQ range [%.2f, %.2f]",
+        len(x_lut),
+        y_lut.min(),
+        y_lut.max(),
+    )
+
+    mqual_all = np.clip(pd_df[mqual_col].to_numpy(), 0.0, max_qual)
+    snvq = np.interp(mqual_all, x_lut, y_lut)
+    return snvq, x_lut, y_lut
 
 
 def seq2key_common(Seq, start=0, *, flowOrder=FLOW_ORDER, iterative=True):  # noqa: N803

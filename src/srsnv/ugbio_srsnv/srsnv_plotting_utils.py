@@ -18,6 +18,7 @@ from matplotlib import colors
 from matplotlib import lines as mlines
 from scipy.interpolate import interp1d
 from scipy.stats import binom
+from sklearn.dummy import DummyClassifier
 from sklearn.metrics import (
     confusion_matrix,
     precision_score,
@@ -74,7 +75,7 @@ TRINUC_CONTEXT_WITH_ALT = "trinuc_context_with_alt"
 edist_filter = f"{EDIST} <= 5"
 HQ_SNV_filter = f"{SCORE} >= 79"
 CSKP_SNV_filter = f"{SCORE} >= 100"
-read_end_filter = f"{INDEX} > 12 and " f"{INDEX} < ({LENGTH} - 12)"
+read_end_filter = f"{INDEX} > 12 and {INDEX} < ({LENGTH} - 12)"
 mixed_read_filter = IS_MIXED  # TODO use adapter_version
 default_LoD_filters = {  # noqa: N816
     "no_filter": f"{SCORE} >= 0",
@@ -531,7 +532,7 @@ def retention_noise_and_mrd_lod_simulation(  # noqa: PLR0913
     # (1-sensitivity), for a range of tumor frequencies (tf_sim). The lowest tumor fraction that passes the prescribed
     # minimum number of reads for detection is the LoD.
     tf_sim = np.logspace(-8, 0, 500)
-    c_lod = f"LoD_{sensitivity_at_lod*100:.0f}"
+    c_lod = f"LoD_{sensitivity_at_lod * 100:.0f}"
     df_mrd_simulation = df_mrd_simulation.join(
         df_mrd_simulation.apply(
             lambda row: tf_sim[
@@ -548,8 +549,8 @@ def retention_noise_and_mrd_lod_simulation(  # noqa: PLR0913
         ).rename(c_lod)
     )
 
-    lod_label = f"LoD @ {specificity_at_lod*100:.0f}% specificity, \
-    {sensitivity_at_lod*100:.0f}% sensitivity (estimated)\
+    lod_label = f"LoD @ {specificity_at_lod * 100:.0f}% specificity, \
+    {sensitivity_at_lod * 100:.0f}% sensitivity (estimated)\
     \nsignature size {simulated_signature_size}, \
     {simulated_coverage}x coverage"
 
@@ -1835,35 +1836,25 @@ class SRSNVReport:
                 dataset_sizes[("% TPs", "other")] = signif(
                     (other_fold_ids_cond & self.data_df[LABEL]).sum() / (other_fold_ids_cond).sum() * 100, SIG_DIGITS
                 )
-        else:  # Train/test split
+        else:  # Single fold: val (fold_id=0) + test (fold_id=NaN)
+            val_cond = self.data_df[FOLD_ID] == 0
+            test_cond = self.data_df[FOLD_ID].isna()
             dataset_sizes = {
-                ("All", "train"): (self.data_df[FOLD_ID] == -1).sum(),
-                ("TPs", "train"): ((self.data_df[FOLD_ID] == -1) & (self.data_df[LABEL])).sum(),
-                ("FPs", "train"): ((self.data_df[FOLD_ID] == -1) & (~self.data_df[LABEL])).sum(),
-                ("% TPs", "train"): signif(
-                    ((self.data_df[FOLD_ID] == -1) & (self.data_df[LABEL])).sum()
-                    / ((self.data_df[FOLD_ID] == -1).sum())
-                    * 100,
+                ("All", "val"): val_cond.sum(),
+                ("TPs", "val"): (val_cond & self.data_df[LABEL]).sum(),
+                ("FPs", "val"): (val_cond & ~self.data_df[LABEL]).sum(),
+                ("% TPs", "val"): signif(
+                    (val_cond & self.data_df[LABEL]).sum() / val_cond.sum() * 100,
                     SIG_DIGITS,
                 ),
-                ("All", "test"): (self.data_df[FOLD_ID] == 0).sum(),
-                ("TPs", "test"): ((self.data_df[FOLD_ID] == 0) & (self.data_df[LABEL])).sum(),
-                ("FPs", "test"): ((self.data_df[FOLD_ID] == 0) & (~self.data_df[LABEL])).sum(),
+                ("All", "test"): test_cond.sum(),
+                ("TPs", "test"): (test_cond & self.data_df[LABEL]).sum(),
+                ("FPs", "test"): (test_cond & ~self.data_df[LABEL]).sum(),
                 ("% TPs", "test"): signif(
-                    ((self.data_df[FOLD_ID] == 0) & (self.data_df[LABEL])).sum()
-                    / ((self.data_df[FOLD_ID] == 0).sum())
-                    * 100,
+                    (test_cond & self.data_df[LABEL]).sum() / test_cond.sum() * 100,
                     SIG_DIGITS,
                 ),
             }
-            other_fold_ids_cond = ~self.data_df[FOLD_ID].isin([-1, 0])
-            if other_fold_ids_cond.any():
-                dataset_sizes[("All", "other")] = other_fold_ids_cond.sum()
-                dataset_sizes[("TPs", "other")] = (other_fold_ids_cond & (self.data_df[LABEL])).sum()
-                dataset_sizes[("FPs", "other")] = (other_fold_ids_cond & (~self.data_df[LABEL])).sum()
-                dataset_sizes[("% TPs", "other")] = signif(
-                    (other_fold_ids_cond & self.data_df[LABEL]).sum() / (other_fold_ids_cond).sum() * 100, SIG_DIGITS
-                )
         return dataset_sizes
 
     @exception_handler
@@ -1881,11 +1872,11 @@ class SRSNVReport:
             (
                 "Mixed training reads",
                 "% of TP",
-            ): f"{signif(100*TP_mixed_percent, 3)}%",
+            ): f"{signif(100 * TP_mixed_percent, 3)}%",
             (
                 "Mixed training reads",
                 "% of FP",
-            ): f"{signif(100*FP_mixed_percent, 3)}%",
+            ): f"{signif(100 * FP_mixed_percent, 3)}%",
         }
         # Performance info
         mixed_df = self.data_df[self.data_df[IS_MIXED]]
@@ -2373,6 +2364,11 @@ class SRSNVReport:
         training_results = [clf.evals_result() for clf in self.models]
         num_folds = len(training_results)
 
+        # Skip if no training results available (e.g. DNN dummy models with no metrics)
+        if not training_results or not training_results[0] or "validation_0" not in training_results[0]:
+            logger.info("No training results available — skipping training progress plot")
+            return
+
         # Determine which logloss metric is available (logloss for binary, mlogloss for multiclass)
         # Check the first model's results to determine the metric name
         logloss_key = None
@@ -2478,6 +2474,13 @@ class SRSNVReport:
         beeswarm_kws: dict = None,
     ):
         """Calculate and plot SHAP values for the model."""
+        # Skip SHAP for dummy classifiers (no real model available)
+        model_to_check = self.models[0]
+        underlying = getattr(model_to_check, "model", model_to_check)
+        if isinstance(underlying, DummyClassifier):
+            logger.info("Skipping SHAP: no real model available (DummyClassifier)")
+            return
+
         feature_importance_kws = feature_importance_kws or {}
         beeswarm_kws = beeswarm_kws or {}
 
@@ -2621,13 +2624,16 @@ class SRSNVReport:
         if self.data_df[col].isna().all():
             logger.warning(f"Column {col} contains only NaN values. Skipping plot.")
             return
-        is_discrete = (
-            (self.data_df[col] - np.round(self.data_df[col])).abs().max() < 0.05  # noqa: PLR2004
-            or (
-                self.data_df.loc[self.data_df[col].notna(), col]
-                == self.data_df.loc[self.data_df[col].notna(), col].iloc[0]
-            ).all()  # A constant column
-        )
+        if hasattr(self.data_df[col], "cat") or self.data_df[col].dtype.name in ("category", "object"):
+            is_discrete = True
+        else:
+            is_discrete = (
+                (self.data_df[col] - np.round(self.data_df[col])).abs().max() < 0.05  # noqa: PLR2004
+                or (
+                    self.data_df.loc[self.data_df[col].notna(), col]
+                    == self.data_df.loc[self.data_df[col].notna(), col].iloc[0]
+                ).all()  # A constant column
+            )
         if is_discrete:
             bin_edges = None
         else:
