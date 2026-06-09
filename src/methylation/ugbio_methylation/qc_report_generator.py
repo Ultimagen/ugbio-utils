@@ -342,7 +342,10 @@ class ControlGenomeSection(ReportSection):
 
     def check_control_genomes_exist(self, control_genomes: list[str]) -> bool:
         """Check if control genomes exist in the data."""
-        df_per_position = self.data_processor.load_table("merge_context_per_position")
+        try:
+            df_per_position = self.data_processor.load_table("merge_context_per_position")
+        except KeyError:
+            return False
         available_genomes = list(set(df_per_position["detail"]))
         return all(genome in available_genomes for genome in control_genomes)
 
