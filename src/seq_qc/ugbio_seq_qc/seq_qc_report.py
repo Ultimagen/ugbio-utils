@@ -105,6 +105,14 @@ def _build_summary_table_html(csv_df: pd.DataFrame, basename: str) -> str:
 def build_coverage_boxplot(base_coverage: dict, csv_df: pd.DataFrame, basename: str) -> go.Figure:
     """Build the base coverage boxplot normalized by median coverage."""
     median_cvg = float(csv_df.loc[csv_df["metric"] == "median_cvg", "value"].iloc[0])
+    if median_cvg == 0:
+        fig = go.Figure()
+        fig.update_layout(
+            title={"text": f"{basename} (no coverage data)", "font": {"size": 24}},
+            template="plotly_white",
+            height=200,
+        )
+        return fig
     bc = base_coverage
 
     gc_keys = sorted(k for k in bc if k.startswith("GC "))
