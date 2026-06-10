@@ -817,15 +817,19 @@ def plot_signature_mutation_types(df_signatures_in: pd.DataFrame, signature_filt
         plt.sca(ax)
         plt.bar(range(6), x, color=["b", "g", "r", "y", "m", "c"])
         for px, py in zip(range(6), x, strict=False):
-            plt.text(px, py + 0.01, f"{py:.1%}", ha="center", fontsize=16)
+            plt.text(px, py + 0.01, f"{py:.1%}", ha="center", fontsize=11)
         plt.ylim(0, ax.get_ylim()[1] + 0.03)
         plt.yticks([])
-        plt.xticks(range(6), x.index.values, fontsize=20, rotation=90)
-        plt.title(f"{column}, total={tot_mutations:,}", fontsize=28)
+        plt.xticks(range(6), x.index.values, fontsize=10, rotation=90)
+        plt.title(f"{column}, total={tot_mutations:,}", fontsize=12)
     plt.show()
 
 
-def plot_signature_allele_fractions(df_signatures_in: pd.DataFrame, signature_filter_query_in: pd.DataFrame):
+def plot_signature_allele_fractions(
+    df_signatures_in: pd.DataFrame,
+    signature_filter_query_in: pd.DataFrame,
+    panel: str | None = None,
+):
     """
     Plot allele fraction histograms for a signature dataframe
 
@@ -835,20 +839,26 @@ def plot_signature_allele_fractions(df_signatures_in: pd.DataFrame, signature_fi
         signature dataframe
     signature_filter_query_in: pd.DataFrame
         query to filter the dataframe
+    panel: str or None
+        Which panel(s) to show. None shows both. "unfiltered" shows only the
+        unfiltered panel; "filtered" shows only the filtered panel.
     """
+    all_panels = [
+        ("Unfiltered", df_signatures_in),
+        ("Filtered", df_signatures_in.query(signature_filter_query_in)),
+    ]
+    if panel == "unfiltered":
+        all_panels = all_panels[:1]
+    elif panel == "filtered":
+        all_panels = all_panels[1:]
+    n_panels = len(all_panels)
     bins = np.linspace(0, 1, 100)
-    fig, axs = plt.subplots(1, 2, figsize=(18, 4), sharey=True)
-    fig.suptitle(",".join(df_signatures_in["signature"].unique()), y=1.13)
-    for ax, column, df_plot in zip(
-        axs.flatten(),
-        [
-            "Unfiltered",
-            "Filtered",
-        ],
-        [
-            df_signatures_in,
-            df_signatures_in.query(signature_filter_query_in),
-        ],
+    fig, axs = plt.subplots(1, n_panels, figsize=(9 * n_panels, 4), sharey=n_panels > 1)
+    if n_panels == 1:
+        axs = [axs]
+    for ax, (column, df_plot) in zip(
+        axs,
+        all_panels,
         strict=False,
     ):
         plt.sca(ax)
@@ -866,7 +876,7 @@ def plot_signature_allele_fractions(df_signatures_in: pd.DataFrame, signature_fi
         plt.xlim(0, 1)
         plt.ylim(-1, ax.get_ylim()[1])
         plt.xlabel("AF")
-        plt.title(f"{column}, total={tot_mutations:,}", fontsize=28)
+        plt.title(f"{column}, total={tot_mutations:,}", fontsize=12)
     plt.show()
 
 
@@ -908,7 +918,7 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3
 
     plt.figure(figsize=(8, 12))
     if title:
-        plt.title(title, y=1.02, fontsize=28)
+        plt.title(title, y=1.02, fontsize=12)
 
     if df_tf_matched.notna().any():
         x = 0.2 * np.ones(df_tf_matched.shape[0])
@@ -1011,7 +1021,7 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3
                 ha="right",
                 va="center",
                 color="b",
-                fontsize=16,
+                fontsize=11,
             )  # draw above, centered
     for line in hbp2["medians"]:
         # get position data for median line
@@ -1025,7 +1035,7 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3
                 ha="right",
                 va="center",
                 color="g",
-                fontsize=16,
+                fontsize=11,
             )  # draw above, centered
 
 
@@ -1087,7 +1097,7 @@ def plot_vaf_matched_unmatched(
     queries = {
         "all variants": df_supporting_reads_per_locus.index,
         "matched variants": df_supporting_reads_per_locus.query("signature_type == 'matched'").index,
-        "control vairants": df_supporting_reads_per_locus.query("signature_type != 'matched'").index,
+        "control variants": df_supporting_reads_per_locus.query("signature_type != 'matched'").index,
     }
 
     colors = ["blue", "red", "green"]

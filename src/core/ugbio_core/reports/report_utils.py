@@ -47,6 +47,27 @@ def modify_jupyter_notebook_html(
       font-family: {font_family};
       text-align: left;
     }}
+    /* Report page styling */
+    body.jp-Notebook {{
+      background: #eceff1 !important;
+      max-width: 100% !important;
+      margin: 0 !important;
+    }}
+    main {{
+      max-width: 980px;
+      margin: 28px auto;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.13);
+      padding: 0 0 32px;
+      overflow: hidden;
+    }}
+    .jp-Cell {{
+      padding: 0 !important;
+    }}
+    .jp-Cell-outputWrapper {{
+      margin: 0 4px !important;
+    }}
     """
 
     # Read the HTML file.

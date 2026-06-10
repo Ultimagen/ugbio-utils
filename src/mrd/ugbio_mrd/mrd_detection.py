@@ -45,6 +45,10 @@ class DetectionResult:
     # Personal LOD (95% power)
     personal_lod: float | None  # TF at which detection power >= 95%
 
+    # Null distribution (raw supporting read counts for each synthetic control)
+    null_reads: np.ndarray  # shape (n_synthetic_controls,), dtype int
+    fitted_p_value: float | None  # Poisson-fitted p-value (MLE lambda)
+
     # Assay metrics
     signature_size: int  # number of loci in filtered signature
     mean_coverage: float  # mean coverage at signature loci
@@ -207,6 +211,8 @@ def run_detection_analysis(  # noqa: PLR0912
             null_median_reads=0.0,
             null_max_reads=0,
             n_synthetic_controls=0,
+            null_reads=np.array([], dtype=int),
+            fitted_p_value=None,
             personal_lod=None,
             signature_size=0,
             mean_coverage=0.0,
@@ -236,6 +242,18 @@ def run_detection_analysis(  # noqa: PLR0912
 
     # Compute empirical p-value
     p_value = compute_empirical_pvalue(matched_reads, null_reads)
+
+    # Compute Poisson-fitted p-value (MLE: lambda = mean of null reads)
+    if len(null_reads) > 0:
+        from scipy.stats import poisson as _poisson
+
+        lambda_hat = float(np.mean(null_reads))
+        if lambda_hat > 0:
+            fitted_p_value: float | None = float(_poisson.sf(matched_reads - 1, lambda_hat))
+        else:
+            fitted_p_value = float(_poisson.sf(matched_reads - 1, 1e-9))  # near-zero lambda
+    else:
+        fitted_p_value = None
 
     # Detection call
     if len(null_reads) == 0:
@@ -286,11 +304,112 @@ def run_detection_analysis(  # noqa: PLR0912
         null_median_reads=float(np.median(null_reads)) if len(null_reads) > 0 else 0.0,
         null_max_reads=int(np.max(null_reads)) if len(null_reads) > 0 else 0,
         n_synthetic_controls=len(null_reads),
+        null_reads=null_reads,
+        fitted_p_value=fitted_p_value,
         personal_lod=personal_lod,
         signature_size=signature_size,
         mean_coverage=mean_coverage,
         corrected_coverage=corrected_coverage,
     )
+
+
+def plot_null_distribution(
+    detection: "DetectionResult",
+    df_tf: pd.DataFrame,
+    ax=None,
+):
+    """
+    Plot the null distribution of supporting reads with patient and control values.
+
+    Shows a histogram of synthetic control (db_control) supporting read counts,
+    a vertical line for the matched patient signal, and scatter points for any
+    individual (non-db) controls. Directly visualises what the p-value measures.
+
+    Parameters
+    ----------
+    detection : DetectionResult
+        Result from run_detection_analysis().
+    df_tf : pd.DataFrame
+        Tumor fraction dataframe (index: signature_type, signature).
+    ax : matplotlib.axes.Axes, optional
+        Axes to draw on. Creates a new figure if None.
+    """
+    import matplotlib.pyplot as plt
+    from scipy.stats import poisson as _poisson
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(8, 4))
+
+    null = detection.null_reads
+    obs = detection.matched_supporting_reads
+
+    # --- Null histogram ---
+    if len(null) > 0:
+        max_val = max(int(null.max()), obs, 1)
+        bins = np.arange(-0.5, max_val + 2.5, 1)
+        ax.hist(
+            null,
+            bins=bins,
+            color="#3a9ad9",
+            alpha=0.6,
+            edgecolor="white",
+            linewidth=0.4,
+            label=f"Synthetic controls (n={len(null)})",
+            zorder=2,
+        )
+
+        # --- Poisson fit ---
+        lambda_hat = float(np.mean(null))
+        x_fit = np.arange(0, max_val + 3)
+        y_fit = _poisson.pmf(x_fit, max(lambda_hat, 1e-9)) * len(null)
+        ax.plot(
+            x_fit, y_fit,
+            color="#1a3a5c", linewidth=1, linestyle="-",
+            label=f"Synthetic control fit — Poisson(λ={lambda_hat:.2f})",
+            zorder=3,
+        )
+
+    # --- Individual cohort controls (non-db, non-matched) ---
+    try:
+        ctrl_data = df_tf.loc["control"]["supporting_reads"]
+        if isinstance(ctrl_data, (int, float, np.integer)):
+            ctrl_data = pd.Series([ctrl_data])
+        for v in ctrl_data.values:
+            ax.axvline(v, color="#e67e22", linewidth=1.5, linestyle="--", alpha=0.8, zorder=4)
+        ax.axvline(np.nan, color="#e67e22", linewidth=1.5, linestyle="--", label="Cohort control")
+    except KeyError:
+        pass
+
+    # --- Matched patient signal ---
+    ax.axvline(
+        obs, color="#c0392b", linewidth=2.5, linestyle="-",
+        label=f"Patient signal ({obs} reads)", zorder=5,
+    )
+
+    # --- Detection threshold ---
+    if len(null) > 0:
+        threshold = int(null.max()) + 1
+        ax.axvline(
+            threshold - 0.5, color="#7f8c8d", linewidth=1.2,
+            linestyle=":", alpha=0.7, label=f"Detection threshold ({threshold})",
+            zorder=4,
+        )
+
+    # --- Title: call status + both p-values ---
+    emp_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"
+    if detection.fitted_p_value is not None:
+        fit_str = f"{detection.fitted_p_value:.3f}" if detection.fitted_p_value >= 0.001 else f"{detection.fitted_p_value:.2e}"
+        title = f"{detection.call}  (p_empirical={emp_str},  p_Poisson={fit_str})"
+    else:
+        title = f"{detection.call}  (p={emp_str})"
+
+    ax.set_xlabel("Supporting reads (test statistic)", fontsize=11)
+    ax.set_ylabel("Count", fontsize=11)
+    ax.set_title(title, fontsize=11, fontweight="bold")
+    ax.legend(fontsize=9, framealpha=0.85)
+    ax.set_xlim(left=-0.5)
+    ax.yaxis.get_major_locator().set_params(integer=True)
+    ax.xaxis.get_major_locator().set_params(integer=True)
 
 
 def format_scientific(value: float, precision: int = 1) -> str:
