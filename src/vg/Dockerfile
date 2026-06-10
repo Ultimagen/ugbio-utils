@@ -55,7 +55,6 @@ RUN mkdir -p /usr/gitc /opt \
 FROM --platform=linux/amd64 ubuntu:24.04
 
 ARG DEBIAN_FRONTEND=noninteractive
-ARG picard
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -64,7 +63,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /usr/gitc
-COPY ${picard} /usr/gitc/
 
 COPY --from=builder /usr/local/bin/kmc /usr/local/bin/kmc
 COPY --from=builder /usr/local/bin/kmc_tools /usr/local/bin/kmc_tools
