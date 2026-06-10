@@ -744,15 +744,33 @@ def read_and_filter_signatures_parquet(
     )
     nunique.value_counts().rename("count").to_frame().join(nunique.value_counts(normalize=True).rename("norm"))
 
-    x = df_signatures.filter(regex="coverage").sum(axis=1)
-    norm_coverage = (x / x.median()).rename("norm_coverage").reset_index().drop_duplicates().set_index(["chrom", "pos"])
+    # Normalise coverage per-signature: each locus is divided by its signature's
+    # median depth. In production the coverage_bed is generated at the union of all
+    # signature loci (matched + control + db_control), so every position has a real
+    # depth value. Using per-signature medians avoids index misalignment when multiple
+    # signatures share the same (chrom, pos) index entries.
+    x = df_signatures["coverage"]
+
+    # Raise if a signature has >50% positions missing coverage — this usually means
+    # the coverage_bed was not generated at that signature's loci.
+    missing_frac = x.isna().groupby(df_signatures["signature"]).mean()
+    bad_sigs = missing_frac[missing_frac > 0.5]
+    if not bad_sigs.empty:
+        details = ", ".join(f"{sig} ({frac*100:.0f}%)" for sig, frac in bad_sigs.items())
+        raise ValueError(
+            f"The following signatures have >50% positions without coverage in the coverage_bed: {details}. "
+            "Ensure mosdepth was run at the union of all signature loci (matched + control + db_control)."
+        )
+
+    sig_median = x.groupby(df_signatures["signature"]).transform("median")
+    norm_coverage = (x / sig_median.replace(0, np.nan)).rename("norm_coverage")
     df_signatures = (
         df_signatures.join(nunique)
         .join(
             filtering_ratio,
             how="left",
         )
-        .join(norm_coverage, how="left")
+        .assign(norm_coverage=norm_coverage)
         .fillna({"filtering_ratio": 1})
     )
 
