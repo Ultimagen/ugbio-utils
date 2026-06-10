@@ -37,6 +37,12 @@ workspace = true
     "**/reports/*",
 ]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (run with pytest -m slow)",
+]
+
 [build-system]
 requires = [
     "setuptools>=61.0",
