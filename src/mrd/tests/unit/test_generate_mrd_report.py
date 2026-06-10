@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -15,8 +16,9 @@ def output_path(tmpdir):
     return Path(tmpdir)
 
 
-def test_generate_mrd_report(output_path, resources_dir):
-    mrd_report_inputs = MrdReportInputs(
+@pytest.fixture
+def mrd_report_inputs(output_path, resources_dir):
+    return MrdReportInputs(
         intersected_featuremaps_parquet=[
             str(resources_dir / "Pa_46_333_LuNgs_08.Pa_46_FreshFrozen.matched.intersection.parquet"),
             str(resources_dir / "Pa_46_333_LuNgs_08.Pa_67_FFPE.control.intersection.parquet"),
@@ -36,7 +38,6 @@ def test_generate_mrd_report(output_path, resources_dir):
             str(resources_dir / "syn4_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
         ],
         coverage_bed=str(resources_dir / "Pa_46_333_LuNgs_08.regions.bed.gz"),
-        # tumor_sample=args_in.tumor_sample,
         output_dir=output_path,
         output_basename="test_report",
         featuremap_file=str(resources_dir / "Pa_46_333_LuNgs_08.featuremap_df.10k.parquet"),
@@ -45,6 +46,8 @@ def test_generate_mrd_report(output_path, resources_dir):
         srsnv_metadata_json=str(resources_dir / "Pa_46_333_LuNgs_08.srsnv_metadata.json"),
     )
 
+
+def test_generate_mrd_report(output_path, resources_dir, mrd_report_inputs):
     output_report_html = generate_mrd_report(mrd_report_inputs)
 
     # assert report_html exists
@@ -67,3 +70,75 @@ def test_generate_mrd_report(output_path, resources_dir):
     # assert h5 output values are as expected
     for key in h5_keys:
         pd.testing.assert_frame_equal(pd.read_hdf(h5_output, key), pd.read_hdf(h5_expected, key))
+
+
+def test_generate_mrd_report_detection_output(output_path, mrd_report_inputs):
+    """Test that report generates detection result JSON with expected fields."""
+    output_report_html = generate_mrd_report(mrd_report_inputs)
+
+    # Verify detection JSON was created
+    detection_json_path = output_path / "test_report.detection_result.json"
+    assert detection_json_path.exists(), "Detection result JSON not generated"
+
+    # Load and validate detection results
+    with open(detection_json_path) as f:
+        detection = json.load(f)
+
+    # Verify all expected fields are present
+    expected_fields = [
+        "call",
+        "detected",
+        "p_value",
+        "matched_supporting_reads",
+        "matched_ctdna_vaf",
+        "null_median_reads",
+        "null_max_reads",
+        "n_synthetic_controls",
+        "personal_lod",
+        "signature_size",
+        "mean_coverage",
+        "corrected_coverage",
+        "alpha",
+    ]
+    for field in expected_fields:
+        assert field in detection, f"Missing field: {field}"
+
+    # Verify detection call is one of valid values
+    assert detection["call"] in ("MRD Detected", "MRD Not Detected", "Indeterminate")
+
+    # Verify p-value is in valid range [0, 1]
+    assert 0 < detection["p_value"] <= 1.0
+
+    # Verify we used 5 synthetic controls from the test data
+    assert detection["n_synthetic_controls"] == 5
+
+    # Verify supporting reads is non-negative integer
+    assert detection["matched_supporting_reads"] >= 0
+    assert isinstance(detection["matched_supporting_reads"], int)
+
+    # Verify signature size > 0 (we have real data)
+    assert detection["signature_size"] > 0
+
+    # Verify mean coverage is reasonable
+    assert detection["mean_coverage"] > 0
+
+
+def test_generate_mrd_report_html_contains_detection_banner(output_path, mrd_report_inputs):
+    """Test that the generated HTML report contains the detection result banner."""
+    output_report_html = generate_mrd_report(mrd_report_inputs)
+
+    html_content = output_report_html.read_text()
+
+    # Report should contain the detection call
+    assert any(
+        call in html_content for call in ("MRD Detected", "MRD Not Detected", "Indeterminate")
+    ), "Detection call not found in HTML report"
+
+    # Report should contain key metrics
+    assert "p-value" in html_content.lower() or "p_value" in html_content.lower()
+    assert "Personal LOD" in html_content or "personal_lod" in html_content.lower()
+    assert "Supporting Reads" in html_content
+
+    # Report should contain the assay metrics section
+    assert "Signature Size" in html_content
+    assert "Mean Coverage" in html_content
