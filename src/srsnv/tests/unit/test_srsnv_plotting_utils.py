@@ -356,6 +356,18 @@ def test_calc_run_info_table_content_validation(test_resources_calc_run_info, re
         assert isinstance(quality_summary, pd.Series), "run_quality_summary_table should be a Series"
         assert len(quality_summary) > 0, "run_quality_summary_table should not be empty"
 
+        # Validate that recall@SNVQ metrics are present (including SNVQ=70)
+        expected_quality_keys = [
+            ("Recall at SNVQ=50", "All reads"),
+            ("Recall at SNVQ=60", "All reads"),
+            ("Recall at SNVQ=70", "All reads"),
+            ("Recall at SNVQ=50", "Mixed, start"),
+            ("Recall at SNVQ=60", "Mixed, start"),
+            ("Recall at SNVQ=70", "Mixed, start"),
+        ]
+        for key in expected_quality_keys:
+            assert key in quality_summary.index, f"Expected key {key} not found in run_quality_summary_table"
+
         # Validate training_info_table structure
         training_info = pd.read_hdf(h5_file, key="training_info_table")
 
