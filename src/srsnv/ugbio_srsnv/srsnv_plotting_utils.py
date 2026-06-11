@@ -1911,6 +1911,9 @@ class SRSNVReport:
         recall_at_60 = self._get_recall_at_snvq(snvq=60)
         recall_at_60_mixed_start = self._get_recall_at_snvq(snvq=60, condition=self.data_df[IS_MIXED_START])
         recall_at_60_mixed_both = self._get_recall_at_snvq(snvq=60, condition=self.data_df[IS_MIXED])
+        recall_at_70 = self._get_recall_at_snvq(snvq=70)
+        recall_at_70_mixed_start = self._get_recall_at_snvq(snvq=70, condition=self.data_df[IS_MIXED_START])
+        recall_at_70_mixed_both = self._get_recall_at_snvq(snvq=70, condition=self.data_df[IS_MIXED])
         roc_auc_phred = prob_to_phred(
             self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name="run info total"),
             max_value=self.max_qual,
@@ -1931,6 +1934,8 @@ class SRSNVReport:
             ("Recall at SNVQ=50", "Mixed"): signif(recall_at_50_mixed_start / recall_at_0_mixed_start, SIG_DIGITS),
             ("Recall at SNVQ=60", "All reads"): signif(recall_at_60 / recall_at_0, SIG_DIGITS),
             ("Recall at SNVQ=60", "Mixed"): signif(recall_at_60_mixed_start / recall_at_0_mixed_start, SIG_DIGITS),
+            ("Recall at SNVQ=70", "All reads"): signif(recall_at_70 / recall_at_0, SIG_DIGITS),
+            ("Recall at SNVQ=70", "Mixed"): signif(recall_at_70_mixed_start / recall_at_0_mixed_start, SIG_DIGITS),
             ("Pre-filter Recall", "All reads"): signif(recall_at_0, SIG_DIGITS),
             ("Pre-filter Recall", "Mixed"): signif(recall_at_0_mixed_start, SIG_DIGITS),
             ("ROC AUC (Phred)", "All reads"): signif(roc_auc_phred, SIG_DIGITS),
@@ -1954,6 +1959,13 @@ class SRSNVReport:
             ),
             ("Recall at SNVQ=60", "Mixed, both ends"): signif(
                 recall_at_60_mixed_both / recall_at_0_mixed_both, SIG_DIGITS
+            ),
+            ("Recall at SNVQ=70", "All reads"): signif(recall_at_70 / recall_at_0, SIG_DIGITS),
+            ("Recall at SNVQ=70", "Mixed, start"): signif(
+                recall_at_70_mixed_start / recall_at_0_mixed_start, SIG_DIGITS
+            ),
+            ("Recall at SNVQ=70", "Mixed, both ends"): signif(
+                recall_at_70_mixed_both / recall_at_0_mixed_both, SIG_DIGITS
             ),
             ("Pre-filter Recall", "All reads"): signif(recall_at_0, SIG_DIGITS),
             ("Pre-filter Recall", "Mixed, start"): signif(recall_at_0_mixed_start, SIG_DIGITS),
