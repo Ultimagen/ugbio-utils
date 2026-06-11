@@ -698,6 +698,35 @@ def create_uncertainty_function_pipeline_fast(  # noqa: PLR0913, PLR0915, C901
     if len(available_cols) == 0:
         raise ValueError("No probability columns found")
 
+    if len(available_cols) < MIN_FOLDS_FOR_STD:
+        logger.warning(
+            f"Insufficient folds for uncertainty estimation: {len(available_cols)} < {MIN_FOLDS_FOR_STD}. "
+            f"Using constant std = 1.0 as fallback."
+        )
+
+        def get_score_std(score: float | np.ndarray) -> float | np.ndarray:
+            score_arr = np.asarray(score)
+            is_scalar = score_arr.ndim == 0
+            if is_scalar:
+                return 1.0
+            else:
+                return np.ones_like(score_arr, dtype=float)
+
+        fallback_metadata = {
+            "pipeline_version": "1.0-fast",
+            "transform_mode": transform_mode,
+            "validation_size": int(val_mask.sum()),
+            "folds_used": len(available_cols),
+            "score_range": [0.0, 0.0],
+            "std_range": [1.0, 1.0],
+            "grid_size": 0,
+            "fallback_used": True,
+            "fallback_reason": f"Insufficient folds for std: {len(available_cols)} < {MIN_FOLDS_FOR_STD}",
+            "constant_std_value": 1.0,
+        }
+
+        return get_score_std, fallback_metadata
+
     # Convert probabilities to scores efficiently
     if transform_mode == "mqual":
         score_fn = prob_to_phred_fn
