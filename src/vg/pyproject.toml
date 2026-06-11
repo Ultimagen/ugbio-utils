@@ -1,6 +1,6 @@
 [project]
-name = "ugbio_vg"
-version = "1.20.0-0"
+name = "giraffe"
+version = "1.75.0-r1"
 description = "vg/Giraffe"
 authors = [
     { name = "Gil Hornung", email = "gil.hornung@ultimagen.com" },
