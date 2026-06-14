@@ -47,12 +47,62 @@ class DetectionResult:
 
     # Null distribution (raw supporting read counts for each synthetic control)
     null_reads: np.ndarray  # shape (n_synthetic_controls,), dtype int
-    fitted_p_value: float | None  # Poisson-fitted p-value (MLE lambda)
+    fitted_p_value: float | None  # distribution-fitted p-value
+    fitted_distribution: str  # "Poisson" or "NegativeBinomial"
+    null_fit_params: dict  # distribution parameters used for the fit
 
     # Assay metrics
     signature_size: int  # number of loci in filtered signature
     mean_coverage: float  # mean coverage at signature loci
     corrected_coverage: float  # total corrected coverage
+
+
+def _fit_null_distribution(null_reads: np.ndarray) -> tuple[str, dict]:
+    """
+    Fit the best count distribution to null_reads.
+
+    Uses Poisson when the data is not significantly overdispersed
+    (variance/mean <= 1.5), and Negative Binomial by method-of-moments
+    otherwise.  The NB has a heavier tail and yields a more conservative
+    (larger) p-value when the noise is overdispersed.
+
+    Parameters
+    ----------
+    null_reads : np.ndarray
+        Array of supporting read counts from synthetic controls.
+
+    Returns
+    -------
+    dist_name : str
+        "Poisson" or "NegativeBinomial"
+    params : dict
+        For Poisson: {"lambda": float}
+        For NB: {"r": float, "p": float, "mu": float}
+    """
+    if len(null_reads) == 0:
+        return "Poisson", {"lambda": 0.0}
+
+    mu = float(np.mean(null_reads))
+    if mu < 1e-9 or len(null_reads) < 3:
+        return "Poisson", {"lambda": mu}
+
+    var = float(np.var(null_reads, ddof=1))
+    disp_index = var / mu  # = 1 for Poisson; > 1 means overdispersed
+
+    if disp_index <= 1.5:
+        return "Poisson", {"lambda": mu}
+
+    # Overdispersed: fit Negative Binomial by method of moments
+    # var = mu + mu**2/r  =>  r = mu**2 / (var - mu)
+    r_hat = max(mu**2 / (var - mu), 0.1)  # numerical safety floor
+    p_hat = float(np.clip(r_hat / (r_hat + mu), 1e-9, 1 - 1e-9))
+    logger.debug(
+        "Overdispersed null (var/mean=%.2f): fitting NegativeBinomial(r=%.2f, p=%.4f)",
+        disp_index,
+        r_hat,
+        p_hat,
+    )
+    return "NegativeBinomial", {"r": r_hat, "p": p_hat, "mu": mu}
 
 
 def compute_empirical_pvalue(
@@ -142,8 +192,9 @@ def compute_personal_lod(
     rng = np.random.default_rng(random_seed)
     total_corrected_coverage = signature_size * mean_coverage * denom_ratio
 
-    # Log-spaced TF grid from 1e-7 to 1e-3 (50 points)
-    tf_grid = np.logspace(-7, -3, 50)
+    # Log-spaced TF grid from 1e-7 to 0.1 (80 points)
+    # Upper bound 0.1 handles cases where threshold is very high (e.g. unfiltered)
+    tf_grid = np.logspace(-7, -1, 80)
 
     for tf in tf_grid:
         # Expected number of supporting reads at this TF
@@ -155,13 +206,14 @@ def compute_personal_lod(
         if power >= target_power:
             return float(tf)
 
-    # Could not achieve target power even at TF=1e-3
-    logger.warning(
-        "Personal LOD could not be determined — "
-        "detection power < 95% even at TF=1e-3. "
-        f"signature_size={signature_size}, "
-        f"mean_coverage={mean_coverage}, "
-        f"threshold={detection_threshold}"
+    # Could not achieve target power even at TF=0.1 — expected for unfiltered
+    logger.debug(
+        "Personal LOD could not be determined "
+        "(detection power < 95%% even at TF=0.1; "
+        "signature_size=%d, mean_coverage=%.1f, threshold=%d)",
+        signature_size,
+        mean_coverage,
+        detection_threshold,
     )
     return None
 
@@ -213,6 +265,8 @@ def run_detection_analysis(  # noqa: PLR0912
             n_synthetic_controls=0,
             null_reads=np.array([], dtype=int),
             fitted_p_value=None,
+            fitted_distribution="Poisson",
+            null_fit_params={},
             personal_lod=None,
             signature_size=0,
             mean_coverage=0.0,
@@ -243,17 +297,22 @@ def run_detection_analysis(  # noqa: PLR0912
     # Compute empirical p-value
     p_value = compute_empirical_pvalue(matched_reads, null_reads)
 
-    # Compute Poisson-fitted p-value (MLE: lambda = mean of null reads)
+    # Fit null distribution (Poisson or Negative Binomial if overdispersed)
     if len(null_reads) > 0:
+        from scipy.stats import nbinom as _nbinom
         from scipy.stats import poisson as _poisson
 
-        lambda_hat = float(np.mean(null_reads))
-        if lambda_hat > 0:
-            fitted_p_value: float | None = float(_poisson.sf(matched_reads - 1, lambda_hat))
+        fitted_distribution, null_fit_params = _fit_null_distribution(null_reads)
+        if fitted_distribution == "NegativeBinomial":
+            r_fit, p_fit = null_fit_params["r"], null_fit_params["p"]
+            fitted_p_value: float | None = float(_nbinom.sf(matched_reads - 1, r_fit, p_fit))
         else:
-            fitted_p_value = float(_poisson.sf(matched_reads - 1, 1e-9))  # near-zero lambda
+            lam = max(null_fit_params["lambda"], 1e-9)
+            fitted_p_value = float(_poisson.sf(matched_reads - 1, lam))
     else:
         fitted_p_value = None
+        fitted_distribution = "Poisson"
+        null_fit_params: dict = {}
 
     # Detection call
     if len(null_reads) == 0:
@@ -306,6 +365,8 @@ def run_detection_analysis(  # noqa: PLR0912
         n_synthetic_controls=len(null_reads),
         null_reads=null_reads,
         fitted_p_value=fitted_p_value,
+        fitted_distribution=fitted_distribution,
+        null_fit_params=null_fit_params,
         personal_lod=personal_lod,
         signature_size=signature_size,
         mean_coverage=mean_coverage,
@@ -358,14 +419,26 @@ def plot_null_distribution(
             zorder=2,
         )
 
-        # --- Poisson fit ---
-        lambda_hat = float(np.mean(null))
+        # --- Distribution fit (Poisson or Negative Binomial) ---
         x_fit = np.arange(0, max_val + 3)
-        y_fit = _poisson.pmf(x_fit, max(lambda_hat, 1e-9)) * len(null)
+        dist_name = getattr(detection, "fitted_distribution", "Poisson")
+        fit_params = getattr(detection, "null_fit_params", {})
+        if dist_name == "NegativeBinomial":
+            from scipy.stats import nbinom as _nbinom
+            r_fit, p_fit = fit_params["r"], fit_params["p"]
+            mu_fit = fit_params["mu"]
+            y_fit = _nbinom.pmf(x_fit, r_fit, p_fit) * len(null)
+            fit_label = f"NB fit (μ={mu_fit:.2f}, r={r_fit:.1f})"
+            fit_color = "#7b2d8b"
+        else:
+            lambda_hat = fit_params.get("lambda", float(np.mean(null)))
+            y_fit = _poisson.pmf(x_fit, max(lambda_hat, 1e-9)) * len(null)
+            fit_label = f"Poisson fit (λ={lambda_hat:.2f})"
+            fit_color = "#1a3a5c"
         ax.plot(
             x_fit, y_fit,
-            color="#1a3a5c", linewidth=1, linestyle="-",
-            label=f"Synthetic control fit — Poisson(λ={lambda_hat:.2f})",
+            color=fit_color, linewidth=1, linestyle="-",
+            label=fit_label,
             zorder=3,
         )
 
@@ -399,7 +472,8 @@ def plot_null_distribution(
     emp_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"
     if detection.fitted_p_value is not None:
         fit_str = f"{detection.fitted_p_value:.3f}" if detection.fitted_p_value >= 0.001 else f"{detection.fitted_p_value:.2e}"
-        title = f"{detection.call}  (p_empirical={emp_str},  p_Poisson={fit_str})"
+        dist_short = "NB" if detection.fitted_distribution == "NegativeBinomial" else "Poisson"
+        title = f"{detection.call}  (p_empirical={emp_str},  p_{dist_short}={fit_str})"
     else:
         title = f"{detection.call}  (p={emp_str})"
 
