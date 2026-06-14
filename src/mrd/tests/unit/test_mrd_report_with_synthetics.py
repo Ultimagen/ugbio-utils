@@ -4,11 +4,12 @@ This test uses pre-generated test resources (synthetic signature VCFs and
 intersection parquets from bcftools isec) to run the full report pipeline
 and verify detection statistics are meaningful.
 
-Marked as slow. Run with:
-    pytest -m slow src/mrd/tests/unit/test_mrd_report_with_synthetics.py
-
 Parametrized over [5, 20, 100] synthetic controls. With N>=100 controls,
 p-value resolution reaches < 0.01 (full statistical power).
+
+The N=100 case is marked @pytest.mark.slow and excluded from the default
+pytest run (CI). Run it explicitly with:
+    pytest -m slow src/mrd/tests/unit/test_mrd_report_with_synthetics.py
 """
 
 import json
@@ -23,8 +24,7 @@ def resources_dir():
     return Path(__file__).parent.parent / "resources" / "report"
 
 
-@pytest.mark.slow
-@pytest.mark.parametrize("n_controls", [5, 20, 100])
+@pytest.mark.parametrize("n_controls", [5, 20, pytest.param(100, marks=pytest.mark.slow)])
 def test_generate_report_with_synthetics(resources_dir, tmp_path_factory, n_controls):
     """Full report generation with N synthetic controls.
 

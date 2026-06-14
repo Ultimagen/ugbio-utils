@@ -866,6 +866,8 @@ def plot_signature_allele_fractions(
         tot_mutations = df_plot.shape[0]
         h, bin_edges = np.histogram(x, bins=bins)
         bin_centers = (bin_edges[1:] + bin_edges[:-1]) / 2
+        ax.set_axisbelow(True)
+        ax.yaxis.grid(True, zorder=0, alpha=0.4, linewidth=0.7)
         plt.fill_between(
             bin_centers,
             -10,
