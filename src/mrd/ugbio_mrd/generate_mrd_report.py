@@ -11,9 +11,11 @@ from ugbio_core.reports.report_utils import generate_report
 
 from ugbio_mrd.mrd_utils import read_intersection_dataframes, read_signature
 
-HTML_REPORT = ".mrd_data_analysis.html"
+RESULTS_HTML_REPORT = ".mrd_results_report.html"
+QC_HTML_REPORT = ".mrd_qc_report.html"
 BASE_PATH = Path(__file__).parent  # should be: src/mrd/ugbio_mrd
-TEMPLATE_NOTEBOOK = BASE_PATH / "reports" / "mrd_automatic_data_analysis.ipynb"
+RESULTS_TEMPLATE_NOTEBOOK = BASE_PATH / "reports" / "mrd_results_report.ipynb"
+QC_TEMPLATE_NOTEBOOK = BASE_PATH / "reports" / "mrd_qc_report.ipynb"
 
 
 @dataclass
@@ -34,7 +36,15 @@ class MrdReportInputs:
     read_filter_query: str = None
 
 
-def generate_mrd_report(mrd_report_inputs: MrdReportInputs):
+def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:
+    """
+    Generate both the MRD results report (primary analysis) and the MRD QC report.
+
+    Returns
+    -------
+    tuple[Path, Path]
+        Paths to the results HTML report and the QC HTML report.
+    """
     signatures_path, intersection_path = prepare_data_from_mrd_pipeline(mrd_report_inputs)
 
     parameters = {
@@ -47,14 +57,27 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs):
         "output_dir": mrd_report_inputs.output_dir,
         "basename": mrd_report_inputs.output_basename,
     }
-    output_report_html_path = Path(mrd_report_inputs.output_dir) / Path(mrd_report_inputs.output_basename + HTML_REPORT)
 
-    logger.info(f"Generating MRD report. {parameters=}, {output_report_html_path=}")
-
-    generate_report(
-        template_notebook_path=TEMPLATE_NOTEBOOK, parameters=parameters, output_report_html_path=output_report_html_path
+    results_html_path = (
+        Path(mrd_report_inputs.output_dir) / (mrd_report_inputs.output_basename + RESULTS_HTML_REPORT)
     )
-    return output_report_html_path
+    qc_html_path = Path(mrd_report_inputs.output_dir) / (mrd_report_inputs.output_basename + QC_HTML_REPORT)
+
+    logger.info(f"Generating MRD results report. {parameters=}, {results_html_path=}")
+    generate_report(
+        template_notebook_path=RESULTS_TEMPLATE_NOTEBOOK,
+        parameters=parameters,
+        output_report_html_path=results_html_path,
+    )
+
+    logger.info(f"Generating MRD QC report. {qc_html_path=}")
+    generate_report(
+        template_notebook_path=QC_TEMPLATE_NOTEBOOK,
+        parameters=parameters,
+        output_report_html_path=qc_html_path,
+    )
+
+    return results_html_path, qc_html_path
 
 
 def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return_dataframes=False):
@@ -261,7 +284,8 @@ def main(argv: list[str] | None = None):
         read_filter_query=args_in.read_filter_query,
     )
 
-    generate_mrd_report(mrd_report_inputs)
+    results_html, qc_html = generate_mrd_report(mrd_report_inputs)
+    logger.info(f"Reports generated: {results_html=}, {qc_html=}")
 
 
 if __name__ == "__main__":

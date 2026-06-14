@@ -48,15 +48,15 @@ def mrd_report_inputs(output_path, resources_dir):
 
 
 def test_generate_mrd_report(output_path, resources_dir, mrd_report_inputs):
-    output_report_html = generate_mrd_report(mrd_report_inputs)
+    results_html, qc_html = generate_mrd_report(mrd_report_inputs)
 
-    # assert report_html exists
-    assert output_report_html.exists()
+    # assert both report HTMLs exist and are non-empty
+    assert results_html.exists()
+    assert results_html.stat().st_size > 0
+    assert qc_html.exists()
+    assert qc_html.stat().st_size > 0
 
-    # assert report_html is not empty
-    assert output_report_html.stat().st_size > 0
-
-    # test h5 output
+    # test h5 output — results report writes primary keys, QC report appends secondary keys
     h5_output = str(output_path / "test_report.ctdna_vaf.h5")
     h5_expected = str(resources_dir / "test_report.ctdna_vaf.expected_output.h5")
     with pd.HDFStore(h5_expected) as store:
@@ -73,8 +73,8 @@ def test_generate_mrd_report(output_path, resources_dir, mrd_report_inputs):
 
 
 def test_generate_mrd_report_detection_output(output_path, mrd_report_inputs):
-    """Test that report generates detection result JSON with expected fields."""
-    output_report_html = generate_mrd_report(mrd_report_inputs)
+    """Test that results report generates detection result JSON with expected fields."""
+    results_html, _qc_html = generate_mrd_report(mrd_report_inputs)
 
     # Verify detection JSON was created
     detection_json_path = output_path / "test_report.detection_result.json"
@@ -124,10 +124,10 @@ def test_generate_mrd_report_detection_output(output_path, mrd_report_inputs):
 
 
 def test_generate_mrd_report_html_contains_detection_banner(output_path, mrd_report_inputs):
-    """Test that the generated HTML report contains the detection result banner."""
-    output_report_html = generate_mrd_report(mrd_report_inputs)
+    """Test that the results HTML report contains the detection result banner."""
+    results_html, _qc_html = generate_mrd_report(mrd_report_inputs)
 
-    html_content = output_report_html.read_text()
+    html_content = results_html.read_text()
 
     # Report should contain the detection call
     assert any(
