@@ -62,10 +62,10 @@ def test_generate_report_with_synthetics(resources_dir, tmp_path_factory, n_cont
         srsnv_metadata_json=str(resources_dir / "Pa_46_333_LuNgs_08.srsnv_metadata.json"),
     )
 
-    output_report_html = generate_mrd_report(mrd_report_inputs)
+    results_html, _qc_html = generate_mrd_report(mrd_report_inputs)
 
-    assert output_report_html.exists()
-    assert output_report_html.stat().st_size > 0
+    assert results_html.exists()
+    assert results_html.stat().st_size > 0
 
     detection_json_path = output_path / f"test_{n_controls}syn.detection_result.json"
     assert detection_json_path.exists()
