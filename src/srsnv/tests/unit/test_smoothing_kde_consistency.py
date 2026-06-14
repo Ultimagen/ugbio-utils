@@ -36,6 +36,7 @@ from ugbio_core.logger import logger
 from ugbio_srsnv.smoothing_utils import (
     AdaptiveKDEPrecisionEstimator,
     bin_data_to_grid,
+    create_uncertainty_function_pipeline_fast,
     make_grid_and_transform,
 )
 
@@ -728,3 +729,58 @@ def test_kde_transforms_consistency():
 
 #     except Exception as e:
 #         pytest.fail(f"KDE failed with imbalanced data: {e}")
+
+
+class TestSingleFoldFallback:
+    """Tests for the single-fold (num_cv_folds=1) fallback in uncertainty estimation."""
+
+    def test_create_uncertainty_function_single_fold_returns_constant(self):
+        """With only 1 fold, create_uncertainty_function_pipeline_fast should return constant std=1.0."""
+        rng = np.random.default_rng(42)
+        n = 10000
+
+        data = {
+            "label": rng.choice([True, False], size=n),
+            "fold_id": np.full(n, np.nan),
+            "prob_fold_0": rng.uniform(0.01, 0.99, size=n),
+        }
+        single_fold_df = pd.DataFrame(data)
+
+        get_score_std, metadata = create_uncertainty_function_pipeline_fast(
+            pd_df=single_fold_df,
+            fold_col="fold_id",
+            label_col="label",
+            num_cv_folds=1,
+        )
+
+        assert metadata["fallback_used"] is True
+        assert metadata["folds_used"] == 1
+        assert get_score_std(5.0) == 1.0
+        assert np.all(get_score_std(np.array([1.0, 2.0, 3.0])) == 1.0)
+
+    def test_adaptive_kde_estimator_single_fold_produces_valid_curves(self):
+        """AdaptiveKDEPrecisionEstimator.fit() should succeed with num_cv_folds=1."""
+        rng = np.random.default_rng(42)
+        n = 10000
+
+        mqual_true = rng.gamma(shape=10, scale=2.5, size=n // 2)
+        mqual_false = rng.gamma(shape=4, scale=3, size=n // 2)
+        labels = np.concatenate([np.ones(n // 2, dtype=bool), np.zeros(n // 2, dtype=bool)])
+        mqual_all = np.concatenate([mqual_true, mqual_false])
+
+        data = {
+            "label": labels,
+            "fold_id": np.full(n, np.nan),
+            "prob_fold_0": 1 - 10 ** (-mqual_all / 10),
+            "prob_orig": 1 - 10 ** (-mqual_all / 10),
+            "mqual": mqual_all,
+        }
+        single_fold_df = pd.DataFrame(data)
+
+        estimator = AdaptiveKDEPrecisionEstimator()
+        estimator.fit(single_fold_df, num_cv_folds=1)
+
+        assert estimator.tpr is not None
+        assert estimator.fpr is not None
+        assert estimator.precision_grid is not None
+        assert np.all(np.diff(estimator.tpr) <= 1e-10)

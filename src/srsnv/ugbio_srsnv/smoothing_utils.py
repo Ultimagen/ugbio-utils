@@ -604,6 +604,33 @@ def build_score_std_interpolator(
     return get_score_std, metadata
 
 
+def _constant_std_fallback(
+    reason: str, transform_mode: str, *, validation_size: int, folds_used: int
+) -> tuple[Callable[[float | np.ndarray], float | np.ndarray], dict[str, Any]]:
+    """Return a constant std=1.0 uncertainty function when proper estimation is not possible."""
+
+    def get_score_std(score: float | np.ndarray) -> float | np.ndarray:
+        score_arr = np.asarray(score)
+        if score_arr.ndim == 0:
+            return 1.0
+        return np.ones_like(score_arr, dtype=float)
+
+    fallback_metadata = {
+        "pipeline_version": "1.0-fast",
+        "transform_mode": transform_mode,
+        "validation_size": validation_size,
+        "folds_used": folds_used,
+        "score_range": [0.0, 0.0],
+        "std_range": [1.0, 1.0],
+        "grid_size": 0,
+        "fallback_used": True,
+        "fallback_reason": reason,
+        "constant_std_value": 1.0,
+    }
+
+    return get_score_std, fallback_metadata
+
+
 def create_uncertainty_function_pipeline_fast(  # noqa: PLR0913, PLR0915, C901
     pd_df: pd.DataFrame,
     fold_col: str,
@@ -658,36 +685,9 @@ def create_uncertainty_function_pipeline_fast(  # noqa: PLR0913, PLR0915, C901
     # Step 1: Extract validation data (minimal)
     val_mask = pd_df[fold_col].isna()
     if val_mask.sum() < min_val_size:
-        logger.warning(
-            f"Insufficient validation data: {val_mask.sum()} < {min_val_size}. "
-            f"Using constant std = 1.0 as fallback."
-        )
-
-        # Return constant function that always returns 1.0
-        def get_score_std(score: float | np.ndarray) -> float | np.ndarray:
-            score_arr = np.asarray(score)
-            is_scalar = score_arr.ndim == 0
-
-            if is_scalar:
-                return 1.0
-            else:
-                return np.ones_like(score_arr, dtype=float)
-
-        # Fallback metadata
-        fallback_metadata = {
-            "pipeline_version": "1.0-fast",
-            "transform_mode": transform_mode,
-            "validation_size": val_mask.sum(),
-            "folds_used": 0,
-            "score_range": [0.0, 0.0],
-            "std_range": [1.0, 1.0],
-            "grid_size": 0,
-            "fallback_used": True,
-            "fallback_reason": f"Insufficient validation data: {val_mask.sum()} < {min_val_size}",
-            "constant_std_value": 1.0,
-        }
-
-        return get_score_std, fallback_metadata
+        reason = f"Insufficient validation data: {val_mask.sum()} < {min_val_size}"
+        logger.warning(f"{reason}. Using constant std = 1.0 as fallback.")
+        return _constant_std_fallback(reason, transform_mode, validation_size=int(val_mask.sum()), folds_used=0)
 
     val_df = pd_df.loc[val_mask].copy()
 
@@ -697,6 +697,13 @@ def create_uncertainty_function_pipeline_fast(  # noqa: PLR0913, PLR0915, C901
 
     if len(available_cols) == 0:
         raise ValueError("No probability columns found")
+
+    if len(available_cols) < MIN_FOLDS_FOR_STD:
+        reason = f"Insufficient folds for std: {len(available_cols)} < {MIN_FOLDS_FOR_STD}"
+        logger.warning(f"{reason}. Using constant std = 1.0 as fallback.")
+        return _constant_std_fallback(
+            reason, transform_mode, validation_size=int(val_mask.sum()), folds_used=len(available_cols)
+        )
 
     # Convert probabilities to scores efficiently
     if transform_mode == "mqual":
