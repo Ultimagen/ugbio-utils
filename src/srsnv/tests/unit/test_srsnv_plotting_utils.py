@@ -356,8 +356,8 @@ def test_calc_run_info_table_content_validation(test_resources_calc_run_info, re
         assert isinstance(quality_summary, pd.Series), "run_quality_summary_table should be a Series"
         assert len(quality_summary) > 0, "run_quality_summary_table should not be empty"
 
-        # Validate that recall@SNVQ metrics are present (including SNVQ=70)
-        expected_quality_keys = [
+        # Validate that recall@SNVQ metrics are present in legacy table (including SNVQ=70)
+        expected_legacy_keys = [
             ("Recall at SNVQ=50", "All reads"),
             ("Recall at SNVQ=60", "All reads"),
             ("Recall at SNVQ=70", "All reads"),
@@ -365,8 +365,23 @@ def test_calc_run_info_table_content_validation(test_resources_calc_run_info, re
             ("Recall at SNVQ=60", "Mixed, start"),
             ("Recall at SNVQ=70", "Mixed, start"),
         ]
-        for key in expected_quality_keys:
+        for key in expected_legacy_keys:
             assert key in quality_summary.index, f"Expected key {key} not found in run_quality_summary_table"
+
+        # Validate modern table (run_quality_summary_table_mixed_start) also has SNVQ=70
+        quality_summary_modern = pd.read_hdf(h5_file, key="run_quality_summary_table_mixed_start")
+        expected_modern_keys = [
+            ("Recall at SNVQ=50", "All reads"),
+            ("Recall at SNVQ=60", "All reads"),
+            ("Recall at SNVQ=70", "All reads"),
+            ("Recall at SNVQ=50", "Mixed"),
+            ("Recall at SNVQ=60", "Mixed"),
+            ("Recall at SNVQ=70", "Mixed"),
+        ]
+        for key in expected_modern_keys:
+            assert (
+                key in quality_summary_modern.index
+            ), f"Expected key {key} not found in run_quality_summary_table_mixed_start"
 
         # Validate training_info_table structure
         training_info = pd.read_hdf(h5_file, key="training_info_table")
