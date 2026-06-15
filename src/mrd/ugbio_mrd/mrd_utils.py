@@ -829,6 +829,7 @@ def plot_signature_allele_fractions(
     df_signatures_in: pd.DataFrame,
     signature_filter_query_in: pd.DataFrame,
     panel: str | None = None,
+    ax=None,
 ):
     """
     Plot allele fraction histograms for a signature dataframe
@@ -842,6 +843,10 @@ def plot_signature_allele_fractions(
     panel: str or None
         Which panel(s) to show. None shows both. "unfiltered" shows only the
         unfiltered panel; "filtered" shows only the filtered panel.
+    ax: matplotlib.axes.Axes, optional
+        Axes to draw into. Only used when the result is a single panel
+        (i.e. panel is "filtered" or "unfiltered"). When provided, no new
+        figure is created and plt.show() is not called.
     """
     all_panels = [
         ("Unfiltered", df_signatures_in),
@@ -853,9 +858,13 @@ def plot_signature_allele_fractions(
         all_panels = all_panels[1:]
     n_panels = len(all_panels)
     bins = np.linspace(0, 1, 100)
-    fig, axs = plt.subplots(1, n_panels, figsize=(9 * n_panels, 4), sharey=n_panels > 1)
-    if n_panels == 1:
-        axs = [axs]
+    _external_ax = ax is not None and n_panels == 1
+    if _external_ax:
+        axs = [ax]
+    else:
+        fig, axs = plt.subplots(1, n_panels, figsize=(9 * n_panels, 4), sharey=n_panels > 1)
+        if n_panels == 1:
+            axs = [axs]
     for ax, (column, df_plot) in zip(
         axs,
         all_panels,
@@ -879,7 +888,8 @@ def plot_signature_allele_fractions(
         plt.ylim(-1, ax.get_ylim()[1])
         plt.xlabel("AF")
         plt.title(f"{column}, total={tot_mutations:,}", fontsize=12)
-    plt.show()
+    if not _external_ax:
+        plt.show()
 
 
 def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3456):  # noqa: C901, PLR0912, PLR0915
@@ -1091,11 +1101,12 @@ def get_tf_from_filtered_data(
 def plot_vaf_matched_unmatched(
     df_supporting_reads_per_locus: pd.DataFrame,
     df_signatures: pd.DataFrame,
+    figsize: tuple[float, float] = (7, 6),
 ):
     """
     Plot histogram of allele frequencies of all, plasma-matched and unmatched variants
     """
-    fig, ax = plt.subplots(3, 1, figsize=(10, 8))
+    fig, ax = plt.subplots(3, 1, figsize=figsize)
     queries = {
         "all variants": df_supporting_reads_per_locus.index,
         "matched variants": df_supporting_reads_per_locus.query("signature_type == 'matched'").index,
