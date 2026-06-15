@@ -82,8 +82,13 @@ def _fit_null_distribution(null_reads: np.ndarray) -> tuple[str, dict]:
     if len(null_reads) == 0:
         return "Poisson", {"lambda": 0.0}
 
-    mu = float(np.mean(null_reads))
-    if mu < 1e-9 or len(null_reads) < 3:
+    n = len(null_reads)
+    # Jeffreys-prior Bayes estimate for Poisson rate: (sum + 0.5) / (n + 0.5).
+    # When all controls have 0 reads, this gives 0.5/n rather than 0, which is
+    # the principled non-informative-prior estimate. It avoids p_value=0 without
+    # inflating the rate, and is strictly more conservative than adding 1 count.
+    mu = float((np.sum(null_reads) + 0.5) / (n + 0.5))
+    if n < 3:
         return "Poisson", {"lambda": mu}
 
     var = float(np.var(null_reads, ddof=1))
@@ -307,7 +312,7 @@ def run_detection_analysis(  # noqa: PLR0912
             r_fit, p_fit = null_fit_params["r"], null_fit_params["p"]
             fitted_p_value: float | None = float(_nbinom.sf(matched_reads - 1, r_fit, p_fit))
         else:
-            lam = max(null_fit_params["lambda"], 1e-9)
+            lam = null_fit_params["lambda"]  # Jeffreys-prior estimate, always > 0
             fitted_p_value = float(_poisson.sf(matched_reads - 1, lam))
     else:
         fitted_p_value = None
@@ -380,11 +385,21 @@ def plot_null_distribution(
     ax=None,
 ):
     """
-    Plot the null distribution of supporting reads with patient and control values.
+    Vertical strip/violin plot: signal vs. noise for MRD detection.
 
-    Shows a histogram of synthetic control (db_control) supporting read counts,
-    a vertical line for the matched patient signal, and scatter points for any
-    individual (non-db) controls. Directly visualises what the p-value measures.
+    Y-axis (left):  cfDNA reads supporting signature (log scale).
+    Y-axis (right): cfDNA fraction = reads / corrected_coverage.
+    X-positions:    0=empirical synthetics, 0.55=fitted-null samples,
+                    1.4=cohort controls, 2.2=patient signal.
+
+    For synthetic controls two side-by-side violins are drawn:
+    - Empirical (blue):  the actual supporting read counts.
+    - Fitted null (purple): samples from the fitted Poisson/NB distribution,
+      showing how well the parametric model matches the empirical data.
+
+    Detection threshold: set at max(synthetic controls) + 1. This is the
+    minimum number of reads needed so that the empirical p-value falls
+    below 1/(N+1), i.e. the patient signal exceeds all N synthetic controls.
 
     Parameters
     ----------
@@ -396,94 +411,145 @@ def plot_null_distribution(
         Axes to draw on. Creates a new figure if None.
     """
     import matplotlib.pyplot as plt
-    from scipy.stats import poisson as _poisson
+    import matplotlib.ticker as mticker
 
     if ax is None:
-        _, ax = plt.subplots(figsize=(8, 4))
+        _, ax = plt.subplots(figsize=(5, 6))
 
     null = detection.null_reads
     obs = detection.matched_supporting_reads
+    corr_cov = detection.corrected_coverage
 
-    # --- Null histogram ---
+    # Floor: map 0 reads to 1e-7 fraction on the log scale.
+    # Computed from coverage so the fraction axis sits at 1e-7 for zero-read points.
+    _fraction_floor = 1e-7
+    _floor = max(_fraction_floor * corr_cov, 0.01) if corr_cov > 0 else 0.01
+
+    def _safe(v):
+        """Map 0 → _floor so log scale is well-defined."""
+        return max(float(v), _floor)
+
+    # --- Empirical synthetic controls: violin + jittered scatter ---
+    x_emp = 0.0
+    x_fit = 0.55
     if len(null) > 0:
-        max_val = max(int(null.max()), obs, 1)
-        bins = np.arange(-0.5, max_val + 2.5, 1)
-        ax.hist(
-            null,
-            bins=bins,
-            color="#3a9ad9",
-            alpha=0.6,
-            edgecolor="white",
-            linewidth=0.4,
-            label=f"Synthetic controls (n={len(null)})",
-            zorder=2,
-        )
+        null_plot = np.array([_safe(v) for v in null])
+        if len(null) >= 5:
+            parts = ax.violinplot(null_plot, positions=[x_emp], widths=0.45,
+                                  showmedians=False, showextrema=False)
+            for pc in parts["bodies"]:
+                pc.set_facecolor("#3a9ad9")
+                pc.set_alpha(0.35)
+        rng = np.random.default_rng(42)
+        jitter = rng.uniform(-0.14, 0.14, size=len(null))
+        ax.scatter(x_emp + jitter, null_plot, color="#3a9ad9", s=30,
+                   alpha=0.85, zorder=4, label=f"Synthetic controls – empirical (n={len(null)})")
 
-        # --- Distribution fit (Poisson or Negative Binomial) ---
-        x_fit = np.arange(0, max_val + 3)
+        # --- Fitted-null violin: sample from parametric fit ---
         dist_name = getattr(detection, "fitted_distribution", "Poisson")
         fit_params = getattr(detection, "null_fit_params", {})
-        if dist_name == "NegativeBinomial":
-            from scipy.stats import nbinom as _nbinom
-            r_fit, p_fit = fit_params["r"], fit_params["p"]
-            mu_fit = fit_params["mu"]
-            y_fit = _nbinom.pmf(x_fit, r_fit, p_fit) * len(null)
-            fit_label = f"NB fit (μ={mu_fit:.2f}, r={r_fit:.1f})"
-            fit_color = "#7b2d8b"
+        n_samples = max(len(null) * 20, 500)
+        rng2 = np.random.default_rng(7)
+        if dist_name == "NegativeBinomial" and fit_params:
+            from scipy.stats import nbinom as _nbinom_s
+            r_f, p_f = fit_params["r"], fit_params["p"]
+            mu_f = fit_params["mu"]
+            fit_samples = _nbinom_s.rvs(r_f, p_f, size=n_samples, random_state=rng2)
+            fit_label = f"Fitted null – NB (μ={mu_f:.2f})"
         else:
-            lambda_hat = fit_params.get("lambda", float(np.mean(null)))
-            y_fit = _poisson.pmf(x_fit, max(lambda_hat, 1e-9)) * len(null)
-            fit_label = f"Poisson fit (λ={lambda_hat:.2f})"
-            fit_color = "#1a3a5c"
-        ax.plot(
-            x_fit, y_fit,
-            color=fit_color, linewidth=1, linestyle="-",
-            label=fit_label,
-            zorder=3,
-        )
+            lam = fit_params.get("lambda", float(np.mean(null)))
+            from scipy.stats import poisson as _poisson_s
+            fit_samples = _poisson_s.rvs(lam, size=n_samples, random_state=rng2)
+            # Note whether Jeffreys prior was applied (all-zero controls give λ=0.5/N)
+            all_zero = bool(np.all(null == 0))
+            jeffreys_note = " †" if all_zero else ""
+            fit_label = f"Fitted null – Poisson (λ={lam:.2f}{jeffreys_note})"
+        fit_plot = np.array([_safe(v) for v in fit_samples])
+        if n_samples >= 5:
+            parts2 = ax.violinplot(fit_plot, positions=[x_fit], widths=0.45,
+                                   showmedians=False, showextrema=False)
+            for pc in parts2["bodies"]:
+                pc.set_facecolor("#7b2d8b")
+                pc.set_alpha(0.30)
+        # small jittered scatter for a few samples to show the distribution
+        idx = rng2.choice(len(fit_samples), size=min(len(null), 60), replace=False)
+        jitter2 = rng2.uniform(-0.14, 0.14, size=len(idx))
+        ax.scatter(x_fit + jitter2, fit_plot[idx], color="#7b2d8b", s=20,
+                   alpha=0.55, zorder=3, label=fit_label)
 
-    # --- Individual cohort controls (non-db, non-matched) ---
+    # --- Cohort controls ---
+    x_cohort = 1.4
     try:
         ctrl_data = df_tf.loc["control"]["supporting_reads"]
         if isinstance(ctrl_data, (int, float, np.integer)):
             ctrl_data = pd.Series([ctrl_data])
-        for v in ctrl_data.values:
-            ax.axvline(v, color="#e67e22", linewidth=1.5, linestyle="--", alpha=0.8, zorder=4)
-        ax.axvline(np.nan, color="#e67e22", linewidth=1.5, linestyle="--", label="Cohort control")
+        for i, v in enumerate(ctrl_data.values):
+            ax.scatter([x_cohort], [_safe(v)], color="#e67e22", s=80,
+                       marker="D", zorder=5, alpha=0.9,
+                       label="Cohort control" if i == 0 else "_nolegend_")
     except KeyError:
         pass
 
-    # --- Matched patient signal ---
-    ax.axvline(
-        obs, color="#c0392b", linewidth=2.5, linestyle="-",
-        label=f"Patient signal ({obs} reads)", zorder=5,
-    )
+    # --- Patient signal ---
+    x_patient = 2.2
+    ax.scatter([x_patient], [_safe(obs)], color="#c0392b", s=160,
+               marker="*", zorder=6, label=f"Patient signal ({obs} reads)")
 
     # --- Detection threshold ---
+    threshold = None
     if len(null) > 0:
         threshold = int(null.max()) + 1
-        ax.axvline(
-            threshold - 0.5, color="#7f8c8d", linewidth=1.2,
-            linestyle=":", alpha=0.7, label=f"Detection threshold ({threshold})",
-            zorder=4,
-        )
+        ax.axhline(_safe(threshold), color="#7f8c8d", linewidth=1.5,
+                   linestyle=":", alpha=0.8, zorder=4,
+                   label=f"Detection threshold ({threshold} reads)\n"
+                         f"= max(synthetic) + 1 → p < 1/(N+1)")
 
-    # --- Title: call status + both p-values ---
+    # --- Log scale + y limits ---
+    ax.set_yscale("log")
+    y_top = max(_safe(obs),
+                float(null.max()) if len(null) > 0 else 1,
+                threshold or 1) * 6
+    ax.set_ylim(_floor * 0.6, y_top)
+
+    # --- Grid behind all data ---
+    ax.set_axisbelow(True)
+    ax.yaxis.grid(True, which="both", linestyle=":", linewidth=0.6, color="#dde1e7", alpha=0.9)
+    ax.set_facecolor("#f4f6f8")
+
+    # --- Primary Y-axis label ---
+    ax.set_ylabel("cfDNA reads supporting signature", fontsize=10)
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(
+        lambda y, _: f"{int(round(y))}" if y >= 0.9 else "0"
+    ))
+
+    # --- Secondary Y-axis: cfDNA fraction ---
+    if corr_cov > 0:
+        ax2 = ax.twinx()
+        ax2.set_yscale("log")
+        ax2.set_ylim(_floor * 0.6 / corr_cov, y_top / corr_cov)
+        ax2.set_ylabel("cfDNA fraction", fontsize=10)
+        ax2.yaxis.set_major_formatter(mticker.FuncFormatter(
+            lambda y, _: format_scientific(y) if y > 0 else "0"
+        ))
+
+    # --- X-axis labels ---
+    ax.set_xlim(-0.4, 2.8)
+    ax.set_xticks([0.275, 1.4, 2.2])
+    ax.set_xticklabels(["Synthetic\ncontrols", "Cohort\ncontrols", "Patient\nsignal"])
+
+    # --- Title ---
     emp_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"
     if detection.fitted_p_value is not None:
-        fit_str = f"{detection.fitted_p_value:.3f}" if detection.fitted_p_value >= 0.001 else f"{detection.fitted_p_value:.2e}"
+        fit_str = (f"{detection.fitted_p_value:.3f}"
+                   if detection.fitted_p_value >= 0.001 else f"{detection.fitted_p_value:.2e}")
         dist_short = "NB" if detection.fitted_distribution == "NegativeBinomial" else "Poisson"
         title = f"{detection.call}  (p_empirical={emp_str},  p_{dist_short}={fit_str})"
     else:
         title = f"{detection.call}  (p={emp_str})"
-
-    ax.set_xlabel("Supporting reads (test statistic)", fontsize=11)
-    ax.set_ylabel("Count", fontsize=11)
     ax.set_title(title, fontsize=11, fontweight="bold")
-    ax.legend(fontsize=9, framealpha=0.85)
-    ax.set_xlim(left=-0.5)
-    ax.yaxis.get_major_locator().set_params(integer=True)
-    ax.xaxis.get_major_locator().set_params(integer=True)
+    ax.legend(fontsize=7, framealpha=0.85, loc="upper left",
+              bbox_to_anchor=(1.02, 1), borderaxespad=0)
+    ax.spines["top"].set_visible(False)
 
 
 def format_scientific(value: float, precision: int = 1) -> str:

@@ -11,10 +11,10 @@ from ugbio_core.reports.report_utils import generate_report
 
 from ugbio_mrd.mrd_utils import read_intersection_dataframes, read_signature
 
-RESULTS_HTML_REPORT = ".mrd_results_report.html"
+RESULTS_HTML_REPORT = ".mrd_analysis_report.html"
 QC_HTML_REPORT = ".mrd_qc_report.html"
 BASE_PATH = Path(__file__).parent  # should be: src/mrd/ugbio_mrd
-RESULTS_TEMPLATE_NOTEBOOK = BASE_PATH / "reports" / "mrd_results_report.ipynb"
+RESULTS_TEMPLATE_NOTEBOOK = BASE_PATH / "reports" / "mrd_analysis_report.ipynb"
 QC_TEMPLATE_NOTEBOOK = BASE_PATH / "reports" / "mrd_qc_report.ipynb"
 
 
@@ -63,7 +63,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     )
     qc_html_path = Path(mrd_report_inputs.output_dir) / (mrd_report_inputs.output_basename + QC_HTML_REPORT)
 
-    logger.info(f"Generating MRD results report. {parameters=}, {results_html_path=}")
+    logger.info(f"Generating MRD analysis report. {parameters=}, {results_html_path=}")
     generate_report(
         template_notebook_path=RESULTS_TEMPLATE_NOTEBOOK,
         parameters=parameters,

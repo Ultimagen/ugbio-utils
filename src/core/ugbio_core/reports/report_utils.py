@@ -66,7 +66,7 @@ def modify_jupyter_notebook_html(
       padding: 0 !important;
     }}
     .jp-Cell-outputWrapper {{
-      margin: 0 4px !important;
+      margin: 0 !important;
     }}
     """
 
