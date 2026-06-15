@@ -5,6 +5,9 @@ from dataclasses import dataclass
 from os.path import join as pjoin
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
+
 from ugbio_core.consts import FileExtension
 from ugbio_core.logger import logger
 from ugbio_core.reports.report_utils import generate_report
@@ -14,7 +17,6 @@ from ugbio_mrd.mrd_utils import read_intersection_dataframes, read_signature
 RESULTS_HTML_REPORT = ".mrd_analysis_report.html"
 QC_HTML_REPORT = ".mrd_qc_report.html"
 BASE_PATH = Path(__file__).parent  # should be: src/mrd/ugbio_mrd
-RESULTS_TEMPLATE_NOTEBOOK = BASE_PATH / "reports" / "mrd_analysis_report.ipynb"
 QC_TEMPLATE_NOTEBOOK = BASE_PATH / "reports" / "mrd_qc_report.ipynb"
 
 
@@ -38,15 +40,137 @@ class MrdReportInputs:
 
 def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:
     """
-    Generate both the MRD results report (primary analysis) and the MRD QC report.
+    Generate both the MRD analysis report (Jinja2 HTML) and the MRD QC report (notebook).
 
     Returns
     -------
     tuple[Path, Path]
-        Paths to the results HTML report and the QC HTML report.
+        Paths to the analysis HTML report and the QC HTML report.
     """
+    import matplotlib.pyplot as plt
+
+    import ugbio_mrd.mrd_utils as mrd
+    from ugbio_mrd.mrd_detection import run_detection_analysis
+    from ugbio_mrd.mrd_report_renderer import render_analysis_report
+
     signatures_path, intersection_path = prepare_data_from_mrd_pipeline(mrd_report_inputs)
 
+    results_html_path = (
+        Path(mrd_report_inputs.output_dir) / (mrd_report_inputs.output_basename + RESULTS_HTML_REPORT)
+    )
+    qc_html_path = Path(mrd_report_inputs.output_dir) / (mrd_report_inputs.output_basename + QC_HTML_REPORT)
+
+    # ── Analysis report: compute in Python, render via Jinja2 ──
+    logger.info(f"Generating MRD analysis report (Jinja2). {results_html_path=}")
+
+    signature_filter_query = mrd_report_inputs.signature_filter_query or "(norm_coverage <= 2.5) and (norm_coverage >= 0.6)"
+    read_filter_query = mrd_report_inputs.read_filter_query or "filt>0 and snvq>60 and mapq>=60"
+
+    # 1. Load data
+    df_features, df_features_filt, filtering_ratio = mrd.read_and_filter_features_parquet(
+        intersection_path, read_filter_query
+    )
+    df_signatures, df_signatures_filt = mrd.read_and_filter_signatures_parquet(
+        signatures_path, signature_filter_query, filtering_ratio
+    )
+    denom_ratio, filt_ratio, _ = mrd.calc_tumor_fraction_denominator_ratio(
+        mrd_report_inputs.featuremap_file, mrd_report_inputs.srsnv_metadata_json, read_filter_query
+    )
+    df_tf_filt, df_supporting_reads_per_locus_filt = mrd.get_tf_from_filtered_data(
+        df_features_filt, df_signatures_filt, plot_results=False,
+        title="Filtered reads and signatures", denom_ratio=denom_ratio,
+    )
+
+    # 2. Run detection
+    detection = run_detection_analysis(
+        df_tf=df_tf_filt, df_signatures_filt=df_signatures_filt, denom_ratio=denom_ratio,
+    )
+
+    # 3. Build applied filters
+    filter_descriptions = {
+        "ug_hcr": "In UG High Confidence Region",
+        "giab_hcr": "In GIAB (HG001-007) High Confidence Region",
+        "ug_mrd_blacklist": "Not in UG MRD Blacklist",
+    }
+    all_cols = list(df_signatures_filt.reset_index().columns) + list(df_signatures_filt.columns)
+    applied_filters = {k: v for k, v in filter_descriptions.items() if k in all_cols}
+    applied_filters["norm_coverage"] = signature_filter_query
+    applied_filters["Read filter"] = read_filter_query
+
+    # 4. SBS plot helper
+    _SBS_TYPES = ["C>A", "C>G", "C>T", "T>A", "T>C", "T>G"]
+    _SBS_COLORS = ["#85c7e8", "#6b6b6b", "#e88585", "#d6d6d6", "#b5d98a", "#f4d0cd"]
+
+    def plot_sbs_profile(df_sig, title="", ax=None, query=None):
+        df = df_sig if query is None else df_sig.query(query)
+        _all_muts = ["C->A", "C->G", "C->T", "T->A", "T->C", "T->G"]
+        counts = df["mutation_type"].value_counts(normalize=True).reindex(_all_muts, fill_value=0)
+        if ax is None:
+            _, ax = plt.subplots(figsize=(6, 2.4))
+        bars = ax.barh(range(6), counts.values[::-1], color=list(reversed(_SBS_COLORS)),
+                       height=0.65, linewidth=0)
+        ax.set_yticks(range(6))
+        ax.set_yticklabels([m.replace("->", ">") for m in reversed(_all_muts)], fontsize=9, fontweight="bold")
+        for j, (bar, val) in enumerate(zip(bars, counts.values[::-1])):
+            ax.text(val + 0.003, bar.get_y() + bar.get_height() / 2,
+                    f"{val:.1%}", va="center", fontsize=8, color="#555")
+        ax.set_xlim(0, max(counts.values) * 1.25 + 0.02)
+        ax.set_xlabel("Fraction", fontsize=8)
+        ax.set_title(title, fontsize=10, fontweight="bold")
+        ax.text(0.99, 0.02, f"n = {len(df):,}", transform=ax.transAxes,
+                ha="right", va="bottom", fontsize=8, color="#7f8c8d")
+        ax.spines[["top", "right"]].set_visible(False)
+        return ax
+
+    # 5. Render HTML
+    html = render_analysis_report(
+        detection=detection,
+        df_tf=df_tf_filt,
+        df_signatures=df_signatures,
+        df_signatures_filt=df_signatures_filt,
+        df_supporting_reads_per_locus=df_supporting_reads_per_locus_filt,
+        basename=mrd_report_inputs.output_basename,
+        signature_filter_query=signature_filter_query,
+        read_filter_query=read_filter_query,
+        denom_ratio=denom_ratio,
+        filt_ratio=filt_ratio,
+        plot_sbs_fn=plot_sbs_profile,
+        plot_af_fn=mrd.plot_signature_allele_fractions,
+        applied_filters=applied_filters,
+    )
+    results_html_path.write_text(html)
+
+    # 6. Save detection JSON
+    import json
+    detection_json = {
+        "call": detection.call,
+        "detected": detection.detected,
+        "p_value": detection.p_value,
+        "fitted_p_value": detection.fitted_p_value,
+        "fitted_distribution": detection.fitted_distribution,
+        "matched_supporting_reads": detection.matched_supporting_reads,
+        "matched_ctdna_vaf": detection.matched_ctdna_vaf,
+        "null_median_reads": detection.null_median_reads,
+        "null_max_reads": detection.null_max_reads,
+        "n_synthetic_controls": detection.n_synthetic_controls,
+        "personal_lod": detection.personal_lod,
+        "signature_size": detection.signature_size,
+        "mean_coverage": detection.mean_coverage,
+        "corrected_coverage": detection.corrected_coverage,
+        "alpha": 0.01,
+    }
+    detection_json_path = Path(mrd_report_inputs.output_dir) / f"{mrd_report_inputs.output_basename}.detection_result.json"
+    with open(detection_json_path, "w") as f:
+        json.dump(detection_json, f, indent=2, default=str)
+
+    # 7. Save HDF5 tables
+    output_h5_file = str(Path(mrd_report_inputs.output_dir) / f"{mrd_report_inputs.output_basename}.ctdna_vaf.h5")
+    df_tf_filt.to_hdf(output_h5_file, key="df_ctdna_vaf_filt_signature_filt_featuremap", mode="w")
+    df_supporting_reads_per_locus_filt.to_hdf(
+        output_h5_file, key="df_supporting_reads_per_locus_filt_signature_filt_featuremap", mode="a"
+    )
+
+    # ── QC report: still uses notebook ──
     parameters = {
         "features_file_parquet": intersection_path,
         "signatures_file_parquet": signatures_path,
@@ -57,19 +181,6 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         "output_dir": mrd_report_inputs.output_dir,
         "basename": mrd_report_inputs.output_basename,
     }
-
-    results_html_path = (
-        Path(mrd_report_inputs.output_dir) / (mrd_report_inputs.output_basename + RESULTS_HTML_REPORT)
-    )
-    qc_html_path = Path(mrd_report_inputs.output_dir) / (mrd_report_inputs.output_basename + QC_HTML_REPORT)
-
-    logger.info(f"Generating MRD analysis report. {parameters=}, {results_html_path=}")
-    generate_report(
-        template_notebook_path=RESULTS_TEMPLATE_NOTEBOOK,
-        parameters=parameters,
-        output_report_html_path=results_html_path,
-    )
-
     logger.info(f"Generating MRD QC report. {qc_html_path=}")
     generate_report(
         template_notebook_path=QC_TEMPLATE_NOTEBOOK,

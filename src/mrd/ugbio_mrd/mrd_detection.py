@@ -414,7 +414,7 @@ def plot_null_distribution(
     import matplotlib.ticker as mticker
 
     if ax is None:
-        _, ax = plt.subplots(figsize=(5, 6))
+        _, ax = plt.subplots(figsize=(8, 6))
 
     null = detection.null_reads
     obs = detection.matched_supporting_reads
@@ -429,23 +429,17 @@ def plot_null_distribution(
         """Map 0 → _floor so log scale is well-defined."""
         return max(float(v), _floor)
 
-    # --- Empirical synthetic controls: violin + jittered scatter ---
+    # --- Empirical synthetic controls: jittered scatter only ---
     x_emp = 0.0
-    x_fit = 0.55
+    x_fit = 0.6
     if len(null) > 0:
         null_plot = np.array([_safe(v) for v in null])
-        if len(null) >= 5:
-            parts = ax.violinplot(null_plot, positions=[x_emp], widths=0.45,
-                                  showmedians=False, showextrema=False)
-            for pc in parts["bodies"]:
-                pc.set_facecolor("#3a9ad9")
-                pc.set_alpha(0.35)
         rng = np.random.default_rng(42)
         jitter = rng.uniform(-0.14, 0.14, size=len(null))
         ax.scatter(x_emp + jitter, null_plot, color="#3a9ad9", s=30,
-                   alpha=0.85, zorder=4, label=f"Synthetic controls – empirical (n={len(null)})")
+                   alpha=0.85, zorder=4, label=f"Synthetic controls (n={len(null)})")
 
-        # --- Fitted-null violin: sample from parametric fit ---
+        # --- Fitted synthetic controls distribution: boxplot ---
         dist_name = getattr(detection, "fitted_distribution", "Poisson")
         fit_params = getattr(detection, "null_fit_params", {})
         n_samples = max(len(null) * 20, 500)
@@ -455,43 +449,44 @@ def plot_null_distribution(
             r_f, p_f = fit_params["r"], fit_params["p"]
             mu_f = fit_params["mu"]
             fit_samples = _nbinom_s.rvs(r_f, p_f, size=n_samples, random_state=rng2)
-            fit_label = f"Fitted null – NB (μ={mu_f:.2f})"
+            fit_label = f"Fitted distribution – NB (μ={mu_f:.2f})"
         else:
             lam = fit_params.get("lambda", float(np.mean(null)))
             from scipy.stats import poisson as _poisson_s
             fit_samples = _poisson_s.rvs(lam, size=n_samples, random_state=rng2)
-            # Note whether Jeffreys prior was applied (all-zero controls give λ=0.5/N)
             all_zero = bool(np.all(null == 0))
             jeffreys_note = " †" if all_zero else ""
-            fit_label = f"Fitted null – Poisson (λ={lam:.2f}{jeffreys_note})"
+            fit_label = f"Fitted distribution – Poisson (λ={lam:.2f}{jeffreys_note})"
         fit_plot = np.array([_safe(v) for v in fit_samples])
-        if n_samples >= 5:
-            parts2 = ax.violinplot(fit_plot, positions=[x_fit], widths=0.45,
-                                   showmedians=False, showextrema=False)
-            for pc in parts2["bodies"]:
-                pc.set_facecolor("#7b2d8b")
-                pc.set_alpha(0.30)
-        # small jittered scatter for a few samples to show the distribution
-        idx = rng2.choice(len(fit_samples), size=min(len(null), 60), replace=False)
-        jitter2 = rng2.uniform(-0.14, 0.14, size=len(idx))
-        ax.scatter(x_fit + jitter2, fit_plot[idx], color="#7b2d8b", s=20,
-                   alpha=0.55, zorder=3, label=fit_label)
+        bp = ax.boxplot(fit_plot, positions=[x_fit], widths=0.35,
+                        patch_artist=True, manage_ticks=False,
+                        medianprops={"color": "#4a0e5c", "linewidth": 1.5},
+                        flierprops={"marker": ""},
+                        whiskerprops={"color": "#7b2d8b"},
+                        capprops={"color": "#7b2d8b"})
+        for patch in bp["boxes"]:
+            patch.set_facecolor("#7b2d8b")
+            patch.set_alpha(0.25)
+        # Invisible scatter for legend entry
+        ax.scatter([], [], color="#7b2d8b", s=30, alpha=0.6, marker="s", label=fit_label)
 
     # --- Cohort controls ---
-    x_cohort = 1.4
+    x_cohort = 1.5
     try:
         ctrl_data = df_tf.loc["control"]["supporting_reads"]
         if isinstance(ctrl_data, (int, float, np.integer)):
             ctrl_data = pd.Series([ctrl_data])
+        rng3 = np.random.default_rng(99)
+        jitter_c = rng3.uniform(-0.14, 0.14, size=len(ctrl_data))
         for i, v in enumerate(ctrl_data.values):
-            ax.scatter([x_cohort], [_safe(v)], color="#e67e22", s=80,
+            ax.scatter([x_cohort + jitter_c[i]], [_safe(v)], color="#e67e22", s=30,
                        marker="D", zorder=5, alpha=0.9,
                        label="Cohort control" if i == 0 else "_nolegend_")
     except KeyError:
         pass
 
     # --- Patient signal ---
-    x_patient = 2.2
+    x_patient = 2.3
     ax.scatter([x_patient], [_safe(obs)], color="#c0392b", s=160,
                marker="*", zorder=6, label=f"Patient signal ({obs} reads)")
 
@@ -522,19 +517,21 @@ def plot_null_distribution(
         lambda y, _: f"{int(round(y))}" if y >= 0.9 else "0"
     ))
 
-    # --- Secondary Y-axis: cfDNA fraction ---
+    # --- Secondary Y-axis: ctDNA VAF ---
     if corr_cov > 0:
         ax2 = ax.twinx()
         ax2.set_yscale("log")
         ax2.set_ylim(_floor * 0.6 / corr_cov, y_top / corr_cov)
-        ax2.set_ylabel("cfDNA fraction", fontsize=10)
+        ax2.set_ylabel("ctDNA VAF", fontsize=10)
         ax2.yaxis.set_major_formatter(mticker.FuncFormatter(
             lambda y, _: format_scientific(y) if y > 0 else "0"
         ))
+        # Move secondary y-axis label inward so legend has space
+        ax2.yaxis.set_label_coords(1.08, 0.5)
 
     # --- X-axis labels ---
-    ax.set_xlim(-0.4, 2.8)
-    ax.set_xticks([0.275, 1.4, 2.2])
+    ax.set_xlim(-0.5, 3.0)
+    ax.set_xticks([0.3, 1.5, 2.3])
     ax.set_xticklabels(["Synthetic\ncontrols", "Cohort\ncontrols", "Patient\nsignal"])
 
     # --- Title ---
@@ -548,7 +545,7 @@ def plot_null_distribution(
         title = f"{detection.call}  (p={emp_str})"
     ax.set_title(title, fontsize=11, fontweight="bold")
     ax.legend(fontsize=7, framealpha=0.85, loc="upper left",
-              bbox_to_anchor=(1.02, 1), borderaxespad=0)
+              bbox_to_anchor=(1.18, 1), borderaxespad=0)
     ax.spines["top"].set_visible(False)
 
 
