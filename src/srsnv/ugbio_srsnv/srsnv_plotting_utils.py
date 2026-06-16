@@ -1867,7 +1867,7 @@ class SRSNVReport:
         return dataset_sizes
 
     @exception_handler
-    def calc_run_info_table(self):
+    def calc_run_info_table(self):  # noqa: PLR0915
         """Calculate run_info_table, a table with general run information."""
         # Generate Run Info table
         logger.info("Generating Run Info table")
@@ -1925,53 +1925,46 @@ class SRSNVReport:
             self._safe_roc_auc(mixed_both_df[LABEL], mixed_both_df[ML_PROB_1_TEST], name="run info mixed both"),
             max_value=self.max_qual,
         )
-        # Simplified performance info for display (uses IS_MIXED_START only)
+        # Note: entry order matters — unstack(sort=False) in the report notebook relies on
+        # each metric having all its categories together before the next metric appears.
         performance_info = {
             ("Median SNVQ", "All reads"): signif(median_qual, SIG_DIGITS),
             ("Median SNVQ", "Mixed"): signif(median_qual_mixed_start, SIG_DIGITS),
-            **{
-                (f"Recall at SNVQ={snvq}", "All reads"): signif(recalls[snvq]["all"] / recall_at_0, SIG_DIGITS)
-                for snvq in snvq_thresholds
-            },
-            **{
-                (f"Recall at SNVQ={snvq}", "Mixed"): signif(
-                    recalls[snvq]["mixed_start"] / recall_at_0_mixed_start, SIG_DIGITS
-                )
-                for snvq in snvq_thresholds
-            },
-            ("Pre-filter Recall", "All reads"): signif(recall_at_0, SIG_DIGITS),
-            ("Pre-filter Recall", "Mixed"): signif(recall_at_0_mixed_start, SIG_DIGITS),
-            ("ROC AUC (Phred)", "All reads"): signif(roc_auc_phred, SIG_DIGITS),
-            ("ROC AUC (Phred)", "Mixed"): signif(roc_auc_phred_mixed_start, SIG_DIGITS),
         }
+        for snvq in snvq_thresholds:
+            performance_info[(f"Recall at SNVQ={snvq}", "All reads")] = signif(
+                recalls[snvq]["all"] / recall_at_0, SIG_DIGITS
+            )
+            performance_info[(f"Recall at SNVQ={snvq}", "Mixed")] = signif(
+                recalls[snvq]["mixed_start"] / recall_at_0_mixed_start, SIG_DIGITS
+            )
+        performance_info[("Pre-filter Recall", "All reads")] = signif(recall_at_0, SIG_DIGITS)
+        performance_info[("Pre-filter Recall", "Mixed")] = signif(recall_at_0_mixed_start, SIG_DIGITS)
+        performance_info[("ROC AUC (Phred)", "All reads")] = signif(roc_auc_phred, SIG_DIGITS)
+        performance_info[("ROC AUC (Phred)", "Mixed")] = signif(roc_auc_phred_mixed_start, SIG_DIGITS)
+
         # Legacy performance info with 3-way split for backward-compatible h5 storage
         performance_info_legacy = {
             ("Median SNVQ", "All reads"): signif(median_qual, SIG_DIGITS),
             ("Median SNVQ", "Mixed, start"): signif(median_qual_mixed_start, SIG_DIGITS),
             ("Median SNVQ", "Mixed, both ends"): signif(median_qual_mixed_both, SIG_DIGITS),
-            **{
-                (f"Recall at SNVQ={snvq}", "All reads"): signif(recalls[snvq]["all"] / recall_at_0, SIG_DIGITS)
-                for snvq in snvq_thresholds
-            },
-            **{
-                (f"Recall at SNVQ={snvq}", "Mixed, start"): signif(
-                    recalls[snvq]["mixed_start"] / recall_at_0_mixed_start, SIG_DIGITS
-                )
-                for snvq in snvq_thresholds
-            },
-            **{
-                (f"Recall at SNVQ={snvq}", "Mixed, both ends"): signif(
-                    recalls[snvq]["mixed_both"] / recall_at_0_mixed_both, SIG_DIGITS
-                )
-                for snvq in snvq_thresholds
-            },
-            ("Pre-filter Recall", "All reads"): signif(recall_at_0, SIG_DIGITS),
-            ("Pre-filter Recall", "Mixed, start"): signif(recall_at_0_mixed_start, SIG_DIGITS),
-            ("Pre-filter Recall", "Mixed, both ends"): signif(recall_at_0_mixed_both, SIG_DIGITS),
-            ("ROC AUC (Phred)", "All reads"): signif(roc_auc_phred, SIG_DIGITS),
-            ("ROC AUC (Phred)", "Mixed, start"): signif(roc_auc_phred_mixed_start, SIG_DIGITS),
-            ("ROC AUC (Phred)", "Mixed, both ends"): signif(roc_auc_phred_mixed_both, SIG_DIGITS),
         }
+        for snvq in snvq_thresholds:
+            performance_info_legacy[(f"Recall at SNVQ={snvq}", "All reads")] = signif(
+                recalls[snvq]["all"] / recall_at_0, SIG_DIGITS
+            )
+            performance_info_legacy[(f"Recall at SNVQ={snvq}", "Mixed, start")] = signif(
+                recalls[snvq]["mixed_start"] / recall_at_0_mixed_start, SIG_DIGITS
+            )
+            performance_info_legacy[(f"Recall at SNVQ={snvq}", "Mixed, both ends")] = signif(
+                recalls[snvq]["mixed_both"] / recall_at_0_mixed_both, SIG_DIGITS
+            )
+        performance_info_legacy[("Pre-filter Recall", "All reads")] = signif(recall_at_0, SIG_DIGITS)
+        performance_info_legacy[("Pre-filter Recall", "Mixed, start")] = signif(recall_at_0_mixed_start, SIG_DIGITS)
+        performance_info_legacy[("Pre-filter Recall", "Mixed, both ends")] = signif(recall_at_0_mixed_both, SIG_DIGITS)
+        performance_info_legacy[("ROC AUC (Phred)", "All reads")] = signif(roc_auc_phred, SIG_DIGITS)
+        performance_info_legacy[("ROC AUC (Phred)", "Mixed, start")] = signif(roc_auc_phred_mixed_start, SIG_DIGITS)
+        performance_info_legacy[("ROC AUC (Phred)", "Mixed, both ends")] = signif(roc_auc_phred_mixed_both, SIG_DIGITS)
         # Info about versions
         version_info = {
             ("Pipeline version", ""): (self.params.get("pipeline_version", None)),
