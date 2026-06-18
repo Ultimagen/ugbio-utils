@@ -36,6 +36,7 @@ run_jalign = "ugbio_cnv.run_jalign:main"
 add_cipos_to_vcf = "ugbio_cnv.add_cipos:main"
 refine_cnv_breakpoints = "ugbio_cnv.breakpoint_refinement:main"
 reformat_parascopy_bed = "ugbio_cnv.reformat_parascopy_bed:main"
+lpa_caller = "ugbio_cnv.lpa_caller:main"
 
 [tool.uv.sources.ugbio_core]
 workspace = true
