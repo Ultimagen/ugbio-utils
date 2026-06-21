@@ -9,9 +9,7 @@
 # DESCRIPTION
 #    LPA Caller for Ultima Genomics WGS data.
 #
-#    Re-implementation of the Illumina DRAGEN LPA targeted caller
-#    (https://help.dragen.illumina.com/dragen-v4.5/product-guides/dragen-v4.5/
-#     dragen-dna-pipeline/targeted-caller/lpa-calling) on a single CRAM/BAM.
+#    Targeted caller for the LPA KIV-2 VNTR on a single CRAM/BAM.
 #
 #    Three steps:
 #      1. Estimate the total LPA KIV-2 VNTR unit copy number from depth in the
@@ -25,13 +23,9 @@
 #         likelihood across all possible ALT copy-number values bounded by the
 #         total KIV-2 copy number.
 #
-#    Outputs <prefix>.targeted.json and <prefix>.targeted.vcf(.gz), restricted
-#    to the LPA section (DRAGEN packs PGx star-allele + LPA + HBA + RH into the
-#    same files; here we emit LPA only).
+#    Outputs <prefix>.targeted.json and <prefix>.targeted.vcf(.gz) containing
+#    the LPA results only.
 #
-#    Default constants (hg38 coordinates, repeat unit length, marker variants)
-#    are taken from public DRAGEN documentation example output and the LPA
-#    literature. Any can be overridden from the command line.
 
 from __future__ import annotations
 
@@ -56,7 +50,7 @@ logger = logging.getLogger("lpa_caller")
 # Defaults (hg38). All overridable via CLI.
 # ----------------------------------------------------------------------------
 
-# DRAGEN anchors the reference KIV-2 array at chr6:160613491-160646997
+# Reference KIV-2 array on hg38: chr6:160613491-160646997
 # (33507 bp, 6 repeat units of ~5552 bp).
 DEFAULT_KIV2_CHROM = "chr6"
 DEFAULT_KIV2_START = 160613491  # 1-based, inclusive
@@ -82,11 +76,11 @@ DEFAULT_MARKER_VARIANTS = [
     },
 ]
 
-# Small variant sites in the KIV-2 repeat (DRAGEN's two reported LPA variants).
+# Small variant sites in the KIV-2 repeat (the two reported LPA variants).
 # REF/ALT are genome-strand (LPA gene is on minus strand, hence the C/T pair
-# for variants DRAGEN labels "G>A"). Per-repeat positions are explicit because
-# the small-variant region uses a slightly different per-repeat spacing than
-# the marker region, and DRAGEN omits repeat 4 of LPA:4925G>A.
+# for variants labeled "G>A"). Per-repeat positions are explicit because the
+# small-variant region uses a slightly different per-repeat spacing than the
+# marker region, and repeat 4 of LPA:4925G>A is omitted.
 DEFAULT_SMALL_VARIANTS = [
     {
         "hgvs": "LPA:4925G>A",
@@ -120,8 +114,8 @@ GC_BIN_SIZE = 1000
 # GC bucket width (fraction): 0.05 -> 20 buckets between 0 and 1.
 GC_BUCKET_WIDTH = 0.05
 
-# Variant filter thresholds, matching the spirit of DRAGEN's TargetedLowQual /
-# TargetedRepeatConflict tags.
+# Variant filter thresholds for the TargetedLowQual / TargetedRepeatConflict
+# tags emitted on the small-variant rows.
 LOW_QUAL_THRESHOLD = 10.0
 # Residual ALT-count fraction above which the integer copy partition is flagged
 # as inconsistent and the TargetedRepeatConflict filter is applied.
@@ -136,8 +130,8 @@ HET_MARKER_ALT_FRACTION_MAX = 0.90
 MIN_BASE_QUALITY = 20
 MIN_MAPPING_QUALITY = 10
 # KIV-2 is a 6-copy VNTR: ~90% of reads have MAPQ=0 because they multi-map
-# across the reference repeat units. DRAGEN's targeted caller does not filter
-# them out; doing so collapses observed KIV-2 depth ~10x and breaks total CN.
+# across the reference repeat units. They must not be filtered out; doing so
+# collapses observed KIV-2 depth ~10x and breaks total CN.
 KIV2_MIN_MAPPING_QUALITY = 0
 
 # Per-base noise floor for small-variant calling: combined sequencing error and
@@ -147,10 +141,9 @@ KIV2_MIN_MAPPING_QUALITY = 0
 #
 # Calibrated separately for SNPs and indels because UG flow chemistry has very
 # different error spectra: SNP substitution errors are rare (~0.1-0.3% per base,
-# matching DRAGEN's implicit ~0.15% scale on this dataset), while indel errors
-# in homopolymer/short-tandem-repeat contexts can reach ~1%. Using a single
-# 1% floor crushes SNP QUAL by ~5x relative to DRAGEN; using 0.1% for indels
-# would re-admit homopolymer-driven false positives.
+# ~0.15% on this dataset), while indel errors in homopolymer/short-tandem-repeat
+# contexts can reach ~1%. Using a single 1% floor crushes SNP QUAL by ~5x;
+# using 0.1% for indels would re-admit homopolymer-driven false positives.
 LPA_VARIANT_NOISE_FLOOR_SNP = 0.003
 LPA_VARIANT_NOISE_FLOOR_INDEL = 0.01
 # Standard VCF QUAL cap.
@@ -358,8 +351,8 @@ def _estimate_total_kiv2_copy_number(
     Returned value is the per-cell (diploid) repeat-unit count.
 
     If ``mean_coverage_override`` is given, that value is used as the diploid
-    baseline and the panel-based estimation is skipped (use it to feed in
-    DRAGEN-style genome-wide mean coverage from external metrics).
+    baseline and the panel-based estimation is skipped (use it to feed in a
+    genome-wide mean coverage from external metrics).
     """
     if mean_coverage_override is not None:
         if mean_coverage_override <= 0:
@@ -560,8 +553,8 @@ def _call_small_variant(
 
     # QUAL is the Phred-scaled posterior that a variant IS present, i.e.
     # -10*log10(P(alt_cn=0)). When the best call IS alt_cn=0, P(alt_cn=0)
-    # ~= 1 and that formula collapses to ~0, which is misleading. Match the
-    # standard VCF convention (and DRAGEN) by reporting 0.0 in that case.
+    # ~= 1 and that formula collapses to ~0, which is misleading. Follow the
+    # standard VCF convention and report 0.0 in that case.
     if best == 0:
         qual = 0.0
     else:
@@ -772,9 +765,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--mean-coverage",
         type=float,
         default=None,
-        help="Override the autosomal diploid baseline depth (e.g. DRAGEN-style "
-        "genome-wide mean coverage from external metrics). When set, the panel-"
-        "based normalization is skipped, which is faster and avoids panel bias.",
+        help="Override the autosomal diploid baseline depth (e.g. a genome-wide "
+        "mean coverage from external metrics). When set, the panel-based "
+        "normalization is skipped, which is faster and avoids panel bias.",
     )
     ap.add_argument(
         "--no-vcf",
