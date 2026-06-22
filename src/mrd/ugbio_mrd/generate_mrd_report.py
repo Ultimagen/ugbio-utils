@@ -97,7 +97,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
 
     # 4. SBS plot helper
     _SBS_TYPES = ["C>A", "C>G", "C>T", "T>A", "T>C", "T>G"]
-    _SBS_COLORS = ["#85c7e8", "#6b6b6b", "#e88585", "#d6d6d6", "#b5d98a", "#f4d0cd"]
+    _SBS_COLORS = ["#1EBFF0", "#050708", "#E62725", "#CBCACB", "#A1C935", "#ECC6C5"]
 
     def plot_sbs_profile(df_sig, title="", ax=None, query=None):
         df = df_sig if query is None else df_sig.query(query)
@@ -121,6 +121,21 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         return ax
 
     # 5. Render HTML
+    def _fmt_files(files):
+        if not files:
+            return "—"
+        return ", ".join(Path(f).name for f in files)
+
+    inputs_info = {
+        "Sample": mrd_report_inputs.output_basename or "N/A",
+        "Matched signature VCFs": _fmt_files(mrd_report_inputs.matched_signatures_vcf_files),
+        "Control signature VCFs": _fmt_files(mrd_report_inputs.control_signatures_vcf_files),
+        "Featuremap file": Path(mrd_report_inputs.featuremap_file).name if mrd_report_inputs.featuremap_file else "—",
+        "Coverage BED": Path(mrd_report_inputs.coverage_bed).name if mrd_report_inputs.coverage_bed else "—",
+        "Signature filter": signature_filter_query,
+        "Read filter": read_filter_query,
+    }
+
     html = render_analysis_report(
         detection=detection,
         df_tf=df_tf_filt,
@@ -135,7 +150,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         plot_sbs_fn=plot_sbs_profile,
         plot_af_fn=mrd.plot_signature_allele_fractions,
         applied_filters=applied_filters,
+        df_features=df_features,
         df_features_filt=df_features_filt,
+        inputs_info=inputs_info,
     )
     results_html_path.write_text(html)
 
