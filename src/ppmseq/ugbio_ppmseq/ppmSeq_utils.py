@@ -77,8 +77,11 @@ ST_TAG = "st"  # start-loop category (MINUS / PLUS / MIXED / UNDETERMINED)
 ET_TAG = "et"  # end-loop category
 TM_TAG = "tm"  # trimming reasons; contains "A" when the adapter was seen (end reached)
 
-# Read group Trimmer assigns to reads it could not match. These legitimately carry no st
-# tag and are skipped. See read_tags_from_subsampled_sam.
+# Per-read read-group tag (lowercase) written by demux; Trimmer sets it to the failure
+# read group for reads it could not match (--failure-field=rg:Z:unmatched).
+RG_TAG = "rg"
+# Value of RG_TAG for reads Trimmer could not match. These legitimately carry no st tag
+# and are skipped. See read_tags_from_subsampled_sam.
 UNMATCHED_READ_GROUP = "unmatched"
 # Cap on how many missing-st warnings are logged individually before switching to a count.
 MAX_MISSING_ST_WARNINGS = 5
@@ -416,17 +419,17 @@ def read_tags_from_subsampled_sam(
     missing_st_count = 0
     with pysam.AlignmentFile(sam_path, check_sq=False) as fh:
         for rec in fh:
-            # Skip reads that Trimmer couldn't match. Sorter tags them with RG="unmatched"
+            # Skip reads that Trimmer couldn't match. Trimmer tags them with rg="unmatched"
             # (configurable via TrimmerParameters.failure_read_group, but "unmatched" is the
             # standard value used by our WDL templates). These reads never received ppmSeq
             # tag calls so including them would either raise KeyError on st or skew Section 1
             # denominators; they're accounted for separately in the Trimmer failure-codes
             # section.
             try:
-                read_group = rec.get_tag("RG")
+                read_group = rec.get_tag(RG_TAG)
             except KeyError:
-                # No RG tag at all — treat as matched. Production reads always carry an
-                # RG, but handcrafted test fixtures sometimes omit it.
+                # No rg tag at all — treat as matched. Production reads always carry an
+                # rg, but handcrafted test fixtures sometimes omit it.
                 read_group = None
             if read_group == UNMATCHED_READ_GROUP:
                 # Trimmer routed this read to the unmatched read group — it has no
@@ -455,7 +458,7 @@ def read_tags_from_subsampled_sam(
             sr = float(sr_tag) if sr_tag is not None else for_sr_nan
             et = _get_optional_tag(rec, ET_TAG, default="")
             # A missing tm tag means the adapter was not reached (== END_UNREACHED
-            # downstream), not "undetermined". See Ken's comment on PR #307.
+            # downstream), not "undetermined".
             tm = _get_optional_tag(rec, TM_TAG, default="")
             read_len = rec.query_length or 0
             rows.append(

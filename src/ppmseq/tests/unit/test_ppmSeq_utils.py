@@ -155,18 +155,19 @@ def test_has_sr_tag_vs_all_reads_have_sr_tag():
 
 
 def test_read_tags_drops_unmatched_reads(tmp_path):
-    """Reads with RG=unmatched (Trimmer failures routed to the unmatched read group) must
+    """Reads with rg=unmatched (Trimmer failures routed to the unmatched read group) must
     be filtered out before any QC is computed. They never received ppmSeq tag calls so
-    leaving them in would either raise KeyError on st or skew Section 1 denominators."""
+    leaving them in would either raise KeyError on st or skew Section 1 denominators. Note
+    the failure read group is the lowercase rg tag set by Trimmer, distinct from the SAM
+    RG read group."""
     sam_content = (
         "@HD\tVN:1.6\n"
         "@SQ\tSN:chr1\tLN:100\n"
         "@RG\tID:Z0263\n"
-        "@RG\tID:unmatched\n"
         # Matched read with full tags.
-        "r1\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:Z0263\tsr:f:0.5\tst:Z:MIXED\n"
+        "r1\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:Z0263\trg:Z:Z0263\tsr:f:0.5\tst:Z:MIXED\n"
         # Unmatched read — no ppmSeq tags. Must be skipped, not raise KeyError on st.
-        "r2\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:unmatched\n"
+        "r2\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:Z0263\trg:Z:unmatched\n"
     )
     sam_file = tmp_path / "mixed.sam"
     sam_file.write_text(sam_content)
@@ -222,10 +223,9 @@ def test_read_tags_no_missing_st_emits_no_warning(tmp_path, caplog):
         "@HD\tVN:1.6\n"
         "@SQ\tSN:chr1\tLN:100\n"
         "@RG\tID:test\n"
-        "@RG\tID:unmatched\n"
-        "r1\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:test\tsr:f:0.5\tst:Z:MIXED\n"
+        "r1\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:test\trg:Z:test\tsr:f:0.5\tst:Z:MIXED\n"
         # unmatched read legitimately has no st — must not trigger a warning
-        "r2\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:unmatched\n"
+        "r2\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:test\trg:Z:unmatched\n"
     )
     sam_file = tmp_path / "all_st.sam"
     sam_file.write_text(sam_content)
