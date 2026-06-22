@@ -573,7 +573,7 @@ def plot_null_distribution(
             n_th_vaf = n_th_plot / n_eff_plot if n_eff_plot > 0 else 0.0
             ax.axhline(_safe(n_th_plot), color="#e67e22", linewidth=1.8,
                        linestyle="--", alpha=0.9, zorder=4,
-                       label=f"Detection threshold (VAF={format_scientific(n_th_vaf)}) | 5% FPR")
+                       label=f"Detection threshold ({format_scientific(n_th_vaf)}) | 5% FPR")
             if lod_tf_plot is not None:
                 lod_str = format_scientific(lod_tf_plot)
                 # LOD line: expected reads at the LOD TF (n_eff × (p_err + LOD_TF))
