@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 
@@ -96,3 +98,15 @@ def unphred_str(strq: str) -> np.ndarray:
     """
     q = [ord(x) - 33 for x in strq]
     return unphred(q)
+
+
+def log_binomial(n: int, k: int, p: float) -> float:
+    """Log-likelihood of observing k successes in n Bernoulli(p) trials.
+
+    Probability is clamped to [1e-9, 1 - 1e-9] to avoid -inf at the boundaries.
+    Returns 0.0 when n == 0.
+    """
+    if n == 0:
+        return 0.0
+    p = min(max(p, 1e-9), 1 - 1e-9)
+    return math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1) + k * math.log(p) + (n - k) * math.log1p(-p)

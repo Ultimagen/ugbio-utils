@@ -30,21 +30,21 @@
 from __future__ import annotations
 
 import argparse
-import gzip
 import json
-import math
 import sys
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+import pyfaidx
 import pysam
 from ugbio_core.logger import logger
-
+from ugbio_core.math_utils import log_binomial
+from ugbio_core.math_utils import phred as core_phred
 
 # ----------------------------------------------------------------------------
-# Defaults (hg38). All overridable via CLI.
+# LPA caller defaults (hg38). All overridable via CLI.
 # ----------------------------------------------------------------------------
 
 # Reference KIV-2 array on hg38: chr6:160613491-160646997
@@ -142,13 +142,10 @@ LPA_VARIANT_NOISE_FLOOR = 0.003
 # Standard VCF QUAL cap.
 MAX_PHRED_QUAL = 99.0
 
-# Trim this fraction from each tail when estimating the autosomal baseline
-# depth. Drops mappability gaps (near-zero bins, e.g. chr7 telomere/repeat
-# clusters) and any bins that overlap copy-number outliers. With ~12k bins
-# across the 6 default 2 Mb regions, 10% per tail discards ~2400 bins each side
-# and leaves the central ~9600 for a robust mean. The median was previously
-# used but it is biased high on bimodal panels (some bins ~0, some bins ~50),
-# producing a systematic ~6-7% CN underestimate on this dataset.
+# Trim this fraction from each tail of the per-bin depth distribution when
+# estimating the autosomal baseline. Drops mappability gaps (near-zero bins)
+# and CN outliers. Using the median instead biased the baseline ~6-7% high on
+# this dataset because the panel is bimodal (some bins ~0, most ~30x).
 NORM_TRIM_FRACTION = 0.10
 
 
@@ -223,19 +220,9 @@ def _build_marker(spec: dict, kiv2_start: int, unit_len: int, n_repeats: int) ->
     return MarkerSpec(hgvs=spec["hgvs"], ref=spec["ref"], alt=spec["alt"], positions=positions)
 
 
-def _open_alignment(path: str, reference: str | None) -> pysam.AlignmentFile:
-    mode = "rc" if path.endswith(".cram") else "rb"
-    if mode == "rc" and not reference:
-        raise ValueError("CRAM input requires a reference FASTA (--reference)")
-    kwargs = {}
-    if reference:
-        kwargs["reference_filename"] = reference
-    return pysam.AlignmentFile(path, mode, **kwargs)
-
-
-def _gc_fraction(fasta: pysam.FastaFile, chrom: str, start: int, end: int) -> float:
+def _gc_fraction(fasta: pyfaidx.Fasta, chrom: str, start: int, end: int) -> float:
     """GC fraction in [start, end] (1-based, inclusive)."""
-    seq = fasta.fetch(chrom, start - 1, end).upper()
+    seq = str(fasta[chrom][start - 1 : end]).upper()
     if not seq:
         return 0.0
     # str.count is C-level and ~30x faster than a Python generator sum.
@@ -249,12 +236,14 @@ def _gc_fraction(fasta: pysam.FastaFile, chrom: str, start: int, end: int) -> fl
 
 def _bucket_gc(gc: float) -> float:
     """Round GC fraction down to the nearest bucket midpoint."""
-    idx = int(gc / GC_BUCKET_WIDTH)
+    # Clamp so GC exactly == 1.0 lands in the top bucket instead of one past it.
+    n_buckets = int(round(1.0 / GC_BUCKET_WIDTH))
+    idx = min(int(gc / GC_BUCKET_WIDTH), n_buckets - 1)
     return (idx + 0.5) * GC_BUCKET_WIDTH
 
 
 def _validate_marker_positions(
-    fasta: pysam.FastaFile,
+    fasta: pyfaidx.Fasta,
     chrom: str,
     markers: list[MarkerSpec],
     genome_build: str,
@@ -265,11 +254,8 @@ def _validate_marker_positions(
     different reference build is supplied without overriding the positions on
     the CLI, the caller would otherwise silently call against the wrong sites.
     """
-    try:
-        contigs = set(fasta.references)
-    except Exception:  # pragma: no cover - older pysam without .references
-        contigs = set()
-    if contigs and chrom not in contigs:
+    contigs = set(fasta.keys())
+    if chrom not in contigs:
         raise RuntimeError(
             f"Reference FASTA does not contain contig {chrom!r}. "
             f"If your reference is not {genome_build}, override --kiv2-chrom and the "
@@ -279,7 +265,7 @@ def _validate_marker_positions(
     mismatches: list[str] = []
     for m in markers:
         for pos in m.positions:
-            base = fasta.fetch(chrom, pos - 1, pos).upper()
+            base = str(fasta[chrom][pos - 1 : pos]).upper()
             if base != m.ref.upper():
                 mismatches.append(f"{m.hgvs} {chrom}:{pos} expected {m.ref} got {base or 'N/A'}")
 
@@ -302,7 +288,7 @@ def _validate_marker_positions(
 
 def _mean_depth_over_bins(
     bam: pysam.AlignmentFile,
-    fasta: pysam.FastaFile,
+    fasta: pyfaidx.Fasta,
     regions: Iterable[tuple[str, int, int]],
     bin_size: int = GC_BIN_SIZE,
     min_mapq: int = MIN_MAPPING_QUALITY,
@@ -370,7 +356,7 @@ def _trimmed_mean(values: list[float] | np.ndarray, trim: float = NORM_TRIM_FRAC
 
 def _estimate_total_kiv2_copy_number(
     bam: pysam.AlignmentFile,
-    fasta: pysam.FastaFile,
+    fasta: pyfaidx.Fasta,
     kiv2_chrom: str,
     kiv2_start: int,
     kiv2_end: int,
@@ -440,7 +426,6 @@ def _estimate_total_kiv2_copy_number(
 
 def _count_alleles_at_positions(
     bam: pysam.AlignmentFile,
-    fasta: pysam.FastaFile,
     chrom: str,
     positions: list[int],
     ref_allele: str,
@@ -463,7 +448,6 @@ def _count_alleles_at_positions(
         min_mapping_quality=KIV2_MIN_MAPPING_QUALITY,
         ignore_overlaps=True,
         stepper="samtools",
-        fastafile=fasta,
     ):
         ref_pos_1based = column.reference_pos + 1
         if ref_pos_1based not in pos_set:
@@ -471,7 +455,13 @@ def _count_alleles_at_positions(
         for read in column.pileups:
             if read.is_del or read.is_refskip or read.indel != 0:
                 continue
-            base = read.alignment.query_sequence[read.query_position]
+            aln = read.alignment
+            # Match the depth-side read filtering. The pysam "samtools" stepper
+            # already drops these by default, but make it explicit so the count
+            # stays correct if the stepper / pileup options ever change.
+            if aln.is_secondary or aln.is_supplementary or aln.is_duplicate or aln.is_qcfail or aln.is_unmapped:
+                continue
+            base = aln.query_sequence[read.query_position]
             if base == ref_allele:
                 counts.ref += 1
             elif base == alt_allele:
@@ -488,7 +478,6 @@ def _count_alleles_at_positions(
 
 def _call_heterozygous_markers(
     bam: pysam.AlignmentFile,
-    fasta: pysam.FastaFile,
     chrom: str,
     markers: list[MarkerSpec],
     kiv2_copy_number: float,
@@ -497,7 +486,7 @@ def _call_heterozygous_markers(
     Use the linked marker sites to split kiv2_copy_number into REF/ALT haplotype
     unit copy numbers. Returns (ref_cn, alt_cn, call_type, per_marker_counts).
     """
-    per_marker_counts = [_count_alleles_at_positions(bam, fasta, chrom, m.positions, m.ref, m.alt) for m in markers]
+    per_marker_counts = [_count_alleles_at_positions(bam, chrom, m.positions, m.ref, m.alt) for m in markers]
     total_alt = sum(c.alt for c in per_marker_counts)
     total_informative = sum(c.informative for c in per_marker_counts)
     if total_informative == 0:
@@ -521,15 +510,16 @@ def _call_heterozygous_markers(
 
 
 def _log_binomial(n: int, k: int, p: float) -> float:
-    if n == 0:
-        return 0.0
-    p = min(max(p, 1e-9), 1 - 1e-9)
-    return math.lgamma(n + 1) - math.lgamma(k + 1) - math.lgamma(n - k + 1) + k * math.log(p) + (n - k) * math.log1p(-p)
+    # Thin module-local alias for ugbio_core.math_utils.log_binomial; kept so
+    # existing unit tests under the _log_binomial name continue to work.
+    return log_binomial(n, k, p)
 
 
 def _phred(p: float) -> float:
+    # Thin wrapper around ugbio_core.math_utils.phred that clamps to a finite
+    # Phred range (the core helper returns +/- inf for p in {0, 1}).
     p = max(min(p, 1 - 1e-15), 1e-15)
-    return min(-10.0 * math.log10(p), MAX_PHRED_QUAL)
+    return min(float(core_phred([p])[0]), MAX_PHRED_QUAL)
 
 
 def _call_small_variant(
@@ -641,29 +631,32 @@ def _format_dup_record(
     call: LpaCall,
     n_ref_repeats: int,
 ) -> str:
-    """One <DUP>,<DUP> SV record summarizing both haplotype copy numbers."""
-    sv_len = end - start
+    """Single <DUP> SV record summarizing total + per-haplotype KIV-2 copy numbers.
+
+    A single symbolic ALT (<DUP>) is used instead of <DUP>,<DUP> because the
+    duplicate-ALT form is ambiguous to common VCF parsers. SVTYPE=DUP keeps
+    the record compatible with downstream merge logic that filters on
+    SVTYPE in {DEL,DUP}. Per-haplotype unit counts are reported via
+    FORMAT/REPCN, total via FORMAT/CN and INFO/TOTAL_CN.
+    """
+    # start/end are 1-based inclusive (KIV-2: chr6:160613491-160646997 = 33507 bp).
+    sv_len = end - start + 1
     total_cn = call.kiv2_copy_number
     if call.ref_marker_allele_copy_number is not None and call.alt_marker_allele_copy_number is not None:
-        # Per-haplotype copy ratio (vs. the n_ref_repeats reference baseline).
         cn1 = call.ref_marker_allele_copy_number / n_ref_repeats
         cn2 = call.alt_marker_allele_copy_number / n_ref_repeats
-        cn_field = f"{cn1:.6f},{cn2:.6f}"
-        gt = "1|2"
+        cn_info = f"{cn1:.6f},{cn2:.6f}"
         repcn = f"{int(round(call.ref_marker_allele_copy_number))}|{int(round(call.alt_marker_allele_copy_number))}"
-        alt = "<DUP>,<DUP>"
     else:
-        cn_field = ".,."
-        gt = "1|2"
+        cn_info = "."
         repcn = ".|."
-        alt = "<DUP>,<CNV>"
     info = (
-        f"SVCLAIM=D,D;END={end};SVLEN={sv_len},{sv_len};CN={cn_field};"
-        f"EVENT=LPA:KIV2,.;EVENTTYPE=VNTR,.;TOTAL_CN={total_cn:.6f}"
+        f"SVTYPE=DUP;SVCLAIM=D;END={end};SVLEN={sv_len};CN={cn_info};"
+        f"EVENT=LPA:KIV2;EVENTTYPE=VNTR;TOTAL_CN={total_cn:.6f}"
     )
     fmt = "GT:CN:REPCN:PS"
-    sample_field = f"{gt}:{total_cn / n_ref_repeats:.6f}:{repcn}:{start}"
-    return f"{chrom}\t{start}\t.\t{ref_base}\t{alt}\t.\tPASS\t{info}\t{fmt}\t{sample_field}"
+    sample_field = f"0/1:{total_cn / n_ref_repeats:.6f}:{repcn}:{start}"
+    return f"{chrom}\t{start}\t.\t{ref_base}\t<DUP>\t.\tPASS\t{info}\t{fmt}\t{sample_field}"
 
 
 def _format_small_variant_record(
@@ -697,8 +690,8 @@ def _format_small_variant_record(
     info = f"EVENT={v.hgvs};EVENTTYPE=VARIANT_IN_HOMOLOGY_REGION"
 
     for pos in v.positions:
-        fmt = "GT:GQ"
-        sample_field = f"{gt}:{int(round(v.alt_copy_number_quality))}"
+        fmt = "GT:GQ:PS"
+        sample_field = f"{gt}:{int(round(v.alt_copy_number_quality))}:{phase_set}"
         lines.append(
             f"{chrom}\t{pos}\t.\t{v.ref_allele}\t{v.alt_allele}\t{qual_field}\t{filter_field}\t{info}\t{fmt}\t{sample_field}"
         )
@@ -713,23 +706,23 @@ def _write_vcf(
     kiv2_start: int,
     kiv2_end: int,
     n_ref_repeats: int,
-    fasta: pysam.FastaFile,
+    fasta: pyfaidx.Fasta,
     contigs: list[tuple[str, int]],
 ) -> None:
-    ref_base = fasta.fetch(chrom, kiv2_start - 1, kiv2_start).upper() or "N"
+    ref_base = str(fasta[chrom][kiv2_start - 1 : kiv2_start]).upper() or "N"
     header = [
         "##fileformat=VCFv4.2",
         "##source=ugbio_cnv.lpa_caller",
-        '##ALT=<ID=DUP,Description="Duplication">',
-        '##ALT=<ID=CNV,Description="Copy number variant">',
+        '##ALT=<ID=DUP,Description="Duplication relative to the reference">',
         '##FILTER=<ID=TargetedLowQual,Description="Variant quality below threshold">',
         '##FILTER=<ID=TargetedRepeatConflict,Description="Read counts inconsistent with an integer copy partition">',
         '##INFO=<ID=END,Number=1,Type=Integer,Description="End position">',
-        '##INFO=<ID=SVLEN,Number=.,Type=Integer,Description="Length of structural variant">',
-        '##INFO=<ID=SVCLAIM,Number=.,Type=String,Description="Claims supported for the structural variant">',
+        '##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">',
+        '##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="Length of structural variant">',
+        '##INFO=<ID=SVCLAIM,Number=1,Type=String,Description="Claims supported for the structural variant (D=depth)">',
         '##INFO=<ID=CN,Number=.,Type=Float,Description="Per-haplotype copy number ratio vs reference">',
-        '##INFO=<ID=EVENT,Number=.,Type=String,Description="Event name">',
-        '##INFO=<ID=EVENTTYPE,Number=.,Type=String,Description="Event type">',
+        '##INFO=<ID=EVENT,Number=1,Type=String,Description="Event name">',
+        '##INFO=<ID=EVENTTYPE,Number=1,Type=String,Description="Event type">',
         '##INFO=<ID=TOTAL_CN,Number=1,Type=Float,Description="Total LPA KIV-2 unit copy number (diploid)">',
         '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
         '##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype quality">',
@@ -743,13 +736,22 @@ def _write_vcf(
 
     rows = [_format_dup_record(chrom, kiv2_start, kiv2_end, ref_base, sample_id, call, n_ref_repeats)]
     total_cn_int = max(1, int(round(call.kiv2_copy_number)))
+    small_rows = []
     for v in call.variants:
-        rows.extend(_format_small_variant_record(chrom, v, total_cn_int, kiv2_start))
+        small_rows.extend(_format_small_variant_record(chrom, v, total_cn_int, kiv2_start))
+    # Per-repeat rows are emitted per-variant, not by position; sort so the
+    # contig stays coordinate-ordered for tabix indexing.
+    small_rows.sort(key=lambda line: int(line.split("\t", 2)[1]))
+    rows.extend(small_rows)
 
     text = "\n".join(header + rows) + "\n"
-    opener = gzip.open if str(out_path).endswith(".gz") else open
-    with opener(out_path, "wt") as f:
-        f.write(text)
+    # .vcf.gz must be BGZF (not plain gzip) for bcftools/tabix to index/read it.
+    if str(out_path).endswith(".gz"):
+        with pysam.BGZFile(str(out_path), "w") as f:
+            f.write(text.encode())
+    else:
+        with open(out_path, "w") as f:
+            f.write(text)
 
 
 # ----------------------------------------------------------------------------
@@ -809,8 +811,9 @@ def run(argv: list[str]) -> None:
 
     norm_regions = _parse_norm_regions(args.norm_regions) if args.norm_regions else DEFAULT_NORM_REGIONS
 
-    bam = _open_alignment(args.cram, args.reference)
-    fasta = pysam.FastaFile(args.reference)
+    mode = "rc" if args.cram.endswith(".cram") else "rb"
+    bam = pysam.AlignmentFile(args.cram, mode, reference_filename=args.reference)
+    fasta = pyfaidx.Fasta(args.reference)
 
     try:
         markers = [
@@ -836,12 +839,12 @@ def run(argv: list[str]) -> None:
         )
         logger.info("Total KIV-2 copy number (diploid): %.3f", kiv2_cn)
 
-        ref_cn, alt_cn, call_type, _ = _call_heterozygous_markers(bam, fasta, args.kiv2_chrom, markers, kiv2_cn)
+        ref_cn, alt_cn, call_type, _ = _call_heterozygous_markers(bam, args.kiv2_chrom, markers, kiv2_cn)
         logger.info("Marker call: %s (ref=%s, alt=%s)", call_type, ref_cn, alt_cn)
 
         variant_calls = []
         for var in small_variants:
-            counts = _count_alleles_at_positions(bam, fasta, args.kiv2_chrom, var.positions, var.ref, var.alt)
+            counts = _count_alleles_at_positions(bam, args.kiv2_chrom, var.positions, var.ref, var.alt)
             call = _call_small_variant(
                 counts,
                 kiv2_cn,
