@@ -64,6 +64,16 @@
     border-bottom: 1px solid var(--border);
   }
 
+  .subtitle {
+    margin: 0 0 18px;
+    padding: 10px 28px 8px;
+    background: var(--light-gray);
+    border-left: 4px solid var(--ug-teal);
+    font-size: 12px;
+    color: #5d6d7e;
+  }
+  .subtitle strong { color: var(--ug-blue); }
+
   /* ── Detection banner ── */
   .status-banner {
     border-radius: 6px;
@@ -144,28 +154,14 @@
     text-align: left;
     padding: 0 4px;
   }
-
-  /* ── Applied filters table ── */
-  .filter-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 12px;
+  .chart-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #5d6d7e;
+    margin: 10px 0 4px;
+    padding: 3px 0;
+    border-bottom: 1px solid #eaeef2;
   }
-  .filter-table th {
-    text-align: left;
-    padding: 8px 10px;
-    background: var(--light-gray);
-    border-bottom: 1px solid var(--border);
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--muted);
-  }
-  .filter-table td {
-    padding: 6px 10px;
-    border-bottom: 1px solid var(--border);
-  }
-  .filter-table tr:last-child td { border-bottom: none; }
 
   /* ── Footer ── */
   .footer {
@@ -179,7 +175,6 @@
     color: var(--muted);
   }
 
-  /* ── Helpers ── */
   .note {
     font-size: 11px;
     color: var(--muted);
@@ -209,6 +204,12 @@
   </div>
 
   <div class="body">
+
+    <!-- ── SUBTITLE ── -->
+    <div class="subtitle">
+      <strong>MRD QC Report</strong> &mdash; Quality control diagnostics:
+      impact of signature and read filters on ctDNA detection.
+    </div>
 
     <!-- ── DETECTION RESULT ── -->
     <div class="section">
@@ -283,81 +284,80 @@
       </div>
     </div>
 
-    <!-- ── SIGNAL VS. NOISE ── -->
+    <!-- ── CONTROL SIGNATURE PROFILES ── -->
+    {% if control_profiles %}
     <div class="section">
-      <div class="section-title">Patient Signal vs. Controls</div>
+      <div class="section-title">Control Signature Profiles</div>
+      {% for profile in control_profiles %}
+      <div class="chart-label">{{ profile.label }}</div>
       <div class="chart-container">
-        <img src="data:image/png;base64,{{ signal_noise_img }}" alt="Signal vs. Noise distribution">
-      </div>
-      <div class="chart-description">
-        Blue dots: empirical synthetic control read counts. Purple boxplot: Binomial null Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }}).
-        Orange diamonds: cohort controls. Dashed orange line: detection threshold (min reads for p&nbsp;&lt;&nbsp;5%) —
-        controls above this line are the ~5% expected false positives; the LOD TF is the minimum tumor fraction
-        where 95% of patients exceed this threshold.
-      </div>
-    </div>
-
-
-
-    <!-- ── APPLIED FILTERS ── -->
-    {% if applied_filters %}
-    <div class="section">
-      <div class="section-title">Applied Filters</div>
-      <table class="filter-table">
-        <tr><th>Filter</th><th>Description</th></tr>
-        {% for name, desc in applied_filters.items() %}
-        <tr><td><strong>{{ name }}</strong></td><td>{{ desc }}</td></tr>
-        {% endfor %}
-      </table>
-    </div>
-    {% endif %}
-
-    <!-- ── SIGNATURE MUTATIONAL PROFILE + VAF (side by side) ── -->
-    {% if sbs_vaf_plots %}
-    <div class="section">
-      <div class="section-title">Signature Profile &amp; VAF</div>
-      {% for img in sbs_vaf_plots %}
-      <div class="chart-container">
-        <img src="data:image/png;base64,{{ img }}" alt="SBS profile and VAF distribution">
+        <img src="data:image/png;base64,{{ profile.img_b64 }}" alt="{{ profile.label }} SBS profile">
       </div>
       {% endfor %}
     </div>
     {% endif %}
 
-    <!-- ── cfDNA INTERSECTION AF ── -->
-    {% if intersection_af_img %}
+    <!-- ── FRAGMENT LENGTH DISTRIBUTIONS ── -->
+    {% if fragment_length_img %}
     <div class="section">
-      <div class="section-title">cfDNA Intersection Allele Fraction</div>
+      <div class="section-title">cfDNA Fragment Length Distributions</div>
       <div class="chart-container">
-        <img src="data:image/png;base64,{{ intersection_af_img }}" alt="cfDNA Intersection AF">
-        <div class="chart-description">
-          Allele-fraction distribution at signature loci with ≥1 supporting cfDNA read.
-          Red: matched (tumor) signature loci (signal). Blue: control signature loci (noise).
-        </div>
+        <img src="data:image/png;base64,{{ fragment_length_img }}" alt="Fragment length distributions">
       </div>
     </div>
     {% endif %}
 
-    <!-- ── cfDNA INTERSECTION SNVQ ── -->
-    {% if intersection_snvq_img %}
+    <!-- ── QC ANALYSIS: UNFILTERED SIGNATURE ── -->
     <div class="section">
-      <div class="section-title">cfDNA Intersection SNVQ Distribution</div>
-      <div class="chart-container">
-        <img src="data:image/png;base64,{{ intersection_snvq_img }}" alt="cfDNA Intersection SNVQ">
-        <div class="chart-description">
-          SNVQ score distribution of cfDNA reads at signature loci (after read filter).
-          Red: matched (tumor) signature loci. Blue: control signature loci.
-          Higher SNVQ indicates higher confidence in the SNV call.
-        </div>
+      <div class="section-title">QC Analysis — Unfiltered Signature</div>
+      <div class="chart-description" style="margin-bottom:10px;">
+        Filtered reads + unfiltered signatures: assesses the impact of signature QC filters.
       </div>
+      {% if unfilt_sig_signal_noise_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_sig_signal_noise_img }}" alt="Signal vs Noise (unfiltered sig)">
+      </div>
+      {% endif %}
+      {% if unfilt_sig_sbs_vaf_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_sig_sbs_vaf_img }}" alt="SBS + VAF (unfiltered sig)">
+      </div>
+      {% endif %}
+      {% if unfilt_sig_intersection_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_sig_intersection_img }}" alt="Intersection AF (unfiltered sig)">
+      </div>
+      {% endif %}
     </div>
-    {% endif %}
+
+    <!-- ── QC ANALYSIS: UNFILTERED READS ── -->
+    <div class="section">
+      <div class="section-title">QC Analysis — Unfiltered Reads</div>
+      <div class="chart-description" style="margin-bottom:10px;">
+        Unfiltered reads + filtered signatures: assesses the impact of read-level QC filters.
+      </div>
+      {% if unfilt_reads_signal_noise_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_reads_signal_noise_img }}" alt="Signal vs Noise (unfiltered reads)">
+      </div>
+      {% endif %}
+      {% if unfilt_reads_sbs_vaf_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_reads_sbs_vaf_img }}" alt="SBS + VAF (unfiltered reads)">
+      </div>
+      {% endif %}
+      {% if unfilt_reads_intersection_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_reads_intersection_img }}" alt="Intersection AF (unfiltered reads)">
+      </div>
+      {% endif %}
+    </div>
 
   </div>
 
   <!-- ── FOOTER ── -->
   <div class="footer">
-    <span>Ultima Genomics &middot; MRD Analysis Pipeline</span>
+    <span>Ultima Genomics &middot; MRD QC Pipeline</span>
     <span>Generated {{ report_date }}</span>
   </div>
 
