@@ -32,7 +32,6 @@ from __future__ import annotations
 import argparse
 import gzip
 import json
-import logging
 import math
 import sys
 from collections.abc import Iterable
@@ -41,9 +40,7 @@ from pathlib import Path
 
 import numpy as np
 import pysam
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("lpa_caller")
+from ugbio_core.logger import logger
 
 
 # ----------------------------------------------------------------------------
