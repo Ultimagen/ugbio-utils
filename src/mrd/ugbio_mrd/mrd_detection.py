@@ -60,6 +60,7 @@ class DetectionResult:
     # Binomial model fields
     noise_rate: float             # background error rate from db_control (p_err)
     n_effective: int              # N = sig_size × mean_cov × denom_ratio for Binomial
+    jeffreys_prior_applied: bool  # True when no db_control reads observed (p_err floor via prior)
 
 
 def _fit_null_distribution(null_reads: np.ndarray) -> tuple[str, dict]:
@@ -210,7 +211,10 @@ def compute_personal_lod(
 
     # Step 1: analytic detection threshold at the given FPR under the null
     # n_th = smallest k s.t. binom.sf(k-1, n, p_err) < fpr
-    k_range = np.arange(0, min(n + 1, 10000))
+    # Use ppf to set the search upper bound dynamically (avoids missing n_th
+    # when n*p_err is large and the 95th percentile exceeds a fixed cap).
+    k_max = int(_binom.ppf(0.9999, n, max(p_err, 1e-12))) + 10
+    k_range = np.arange(0, k_max + 1)
     sf_values = _binom.sf(k_range - 1, n, p_err)
     hits = np.where(sf_values < fpr)[0]
     if len(hits) == 0:
@@ -305,6 +309,7 @@ def run_detection_analysis(  # noqa: PLR0912
             detection_threshold=0,
             noise_rate=0.0,
             n_effective=0,
+            jeffreys_prior_applied=False,
         )
 
     # Handle single or multiple matched signatures (take first)
@@ -329,11 +334,13 @@ def run_detection_analysis(  # noqa: PLR0912
             db_total_reads = float(db_control_data["supporting_reads"].sum())
             db_total_cov = float(db_control_data["corrected_coverage"].sum())
         # Jeffreys prior: (k + 0.5) / (N + 1) — avoids p_err=0 when no reads observed
+        raw_reads_zero = db_total_reads == 0
         p_err = (db_total_reads + 0.5) / (db_total_cov + 1) if db_total_cov > 0 else 0.0
     except KeyError:
         logger.warning("No db_control (synthetic) signatures found in df_tf. Cannot compute p-value.")
         null_reads = np.array([])
         p_err = 0.0
+        raw_reads_zero = False
 
     # Fit null distribution (Poisson or Negative Binomial — kept for scatter plot)
     if len(null_reads) > 0:
@@ -426,6 +433,7 @@ def run_detection_analysis(  # noqa: PLR0912
         detection_threshold=detection_threshold,
         noise_rate=p_err,
         n_effective=n_effective,
+        jeffreys_prior_applied=raw_reads_zero,
     )
 
 
@@ -538,20 +546,40 @@ def plot_null_distribution(
     ax.scatter([x_patient], [_safe(obs)], color="#c0392b", s=160,
                marker="*", zorder=6, label=f"Patient signal ({obs} reads)")
 
-    # --- LOD line: convert TF → expected reads = LOD_TF × n_effective ---
-    lod_reads = None
-    if detection.personal_lod is not None and detection.n_effective > 0:
-        lod_reads = detection.personal_lod * detection.n_effective
-        lod_str = format_scientific(detection.personal_lod)
-        ax.axhline(_safe(lod_reads), color="#e67e22", linewidth=1.8,
-                   linestyle="--", alpha=0.9, zorder=4,
-                   label=f"LOD 95% (TF={lod_str}, {lod_reads:.1f} reads)")
+    # --- Detection threshold / LOD line ---
+    # n_th: smallest k s.t. P(X >= k | n_eff, p_err) < 5% (95th percentile of null).
+    # k_max is set dynamically via ppf to avoid missing the percentile when
+    # n_eff*p_err is large (fixed caps like 10000 fail for unfiltered reads panels).
+    n_th_plot = None
+    lod_tf_plot = None
+    n_eff_plot = getattr(detection, "n_effective", 0)
+    p_err_plot = getattr(detection, "noise_rate", 0.0)
+    _fpr = 0.05
+    if n_eff_plot > 0:
+        from scipy.stats import binom as _binom_lod
+        k_max = int(_binom_lod.ppf(0.9999, n_eff_plot, max(p_err_plot, 1e-12))) + 10
+        k_range = np.arange(0, k_max + 1)
+        sf_vals = _binom_lod.sf(k_range - 1, n_eff_plot, p_err_plot)
+        hits = np.where(sf_vals < _fpr)[0]
+        if len(hits) > 0:
+            n_th_plot = int(hits[0])
+            lod_tf_plot = compute_personal_lod(
+                signature_size=1,
+                mean_coverage=float(n_eff_plot),
+                denom_ratio=1.0,
+                p_err=p_err_plot,
+            )
+            if lod_tf_plot is not None:
+                lod_str = format_scientific(lod_tf_plot)
+                ax.axhline(_safe(n_th_plot), color="#e67e22", linewidth=1.8,
+                           linestyle="--", alpha=0.9, zorder=4,
+                           label=f"Detection threshold ({n_th_plot} reads)\nLOD={lod_str} | 95% power, 5% FPR")
 
     # --- Log scale + y limits ---
     ax.set_yscale("log")
     y_top = max(_safe(obs),
                 float(null.max()) if len(null) > 0 else 1,
-                lod_reads if lod_reads else 1) * 6
+                n_th_plot if n_th_plot else 1) * 6
     ax.set_ylim(_floor * 0.6, y_top)
 
     # --- Grid behind all data ---
@@ -584,7 +612,7 @@ def plot_null_distribution(
 
     # --- Title ---
     binom_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"
-    title = f"{detection.call}  (p_binomial={binom_str})"
+    title = f"Patient signal vs. controls  (p={binom_str})"
     ax.set_title(title, fontsize=11, fontweight="bold")
     ax.legend(fontsize=7, framealpha=0.85, loc="upper left",
               bbox_to_anchor=(1.18, 1), borderaxespad=0)
