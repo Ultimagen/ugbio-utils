@@ -10,14 +10,12 @@ import pandas as pd
 
 from ugbio_core.consts import FileExtension
 from ugbio_core.logger import logger
-from ugbio_core.reports.report_utils import generate_report
 
 from ugbio_mrd.mrd_utils import read_intersection_dataframes, read_signature
 
 RESULTS_HTML_REPORT = ".mrd_analysis_report.html"
 QC_HTML_REPORT = ".mrd_qc_report.html"
 BASE_PATH = Path(__file__).parent  # should be: src/mrd/ugbio_mrd
-QC_TEMPLATE_NOTEBOOK = BASE_PATH / "reports" / "mrd_qc_report.ipynb"
 
 
 @dataclass
@@ -137,6 +135,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         plot_sbs_fn=plot_sbs_profile,
         plot_af_fn=mrd.plot_signature_allele_fractions,
         applied_filters=applied_filters,
+        df_features_filt=df_features_filt,
     )
     results_html_path.write_text(html)
 
@@ -153,6 +152,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         "null_median_reads": detection.null_median_reads,
         "null_max_reads": detection.null_max_reads,
         "n_synthetic_controls": detection.n_synthetic_controls,
+        "detection_threshold": detection.detection_threshold,
         "personal_lod": detection.personal_lod,
         "signature_size": detection.signature_size,
         "mean_coverage": detection.mean_coverage,
@@ -163,30 +163,68 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     with open(detection_json_path, "w") as f:
         json.dump(detection_json, f, indent=2, default=str)
 
-    # 7. Save HDF5 tables
+    # 7. Save HDF5 tables (primary)
     output_h5_file = str(Path(mrd_report_inputs.output_dir) / f"{mrd_report_inputs.output_basename}.ctdna_vaf.h5")
     df_tf_filt.to_hdf(output_h5_file, key="df_ctdna_vaf_filt_signature_filt_featuremap", mode="w")
     df_supporting_reads_per_locus_filt.to_hdf(
         output_h5_file, key="df_supporting_reads_per_locus_filt_signature_filt_featuremap", mode="a"
     )
 
-    # ── QC report: still uses notebook ──
-    parameters = {
-        "features_file_parquet": intersection_path,
-        "signatures_file_parquet": signatures_path,
-        "featuremap_df_file": mrd_report_inputs.featuremap_file,
-        "srsnv_metadata_json": mrd_report_inputs.srsnv_metadata_json,
-        "signature_filter_query": mrd_report_inputs.signature_filter_query,
-        "read_filter_query": mrd_report_inputs.read_filter_query,
-        "output_dir": mrd_report_inputs.output_dir,
-        "basename": mrd_report_inputs.output_basename,
-    }
-    logger.info(f"Generating MRD QC report. {qc_html_path=}")
-    generate_report(
-        template_notebook_path=QC_TEMPLATE_NOTEBOOK,
-        parameters=parameters,
-        output_report_html_path=qc_html_path,
+    # ── QC report: compute secondary analyses, render via Jinja2 ──
+    logger.info(f"Generating MRD QC report (Jinja2). {qc_html_path=}")
+
+    from ugbio_mrd.mrd_report_renderer import render_qc_report
+
+    # Secondary analysis 1: filtered reads + unfiltered signatures
+    df_tf_unfilt, df_supporting_reads_per_locus_unfilt = mrd.get_tf_from_filtered_data(
+        df_features_filt, df_signatures, plot_results=False,
+        title="Filtered reads, unfiltered signatures", denom_ratio=denom_ratio,
     )
+    detection_unfilt = run_detection_analysis(
+        df_tf=df_tf_unfilt, df_signatures_filt=df_signatures, denom_ratio=denom_ratio,
+    )
+
+    # Secondary analysis 2: unfiltered reads + filtered signatures
+    df_tf_unfilt2, df_supporting_reads_per_locus_unfilt2 = mrd.get_tf_from_filtered_data(
+        df_features, df_signatures_filt, plot_results=False,
+        title="Unfiltered reads, filtered signatures", denom_ratio=1,
+    )
+    detection_unfilt2 = run_detection_analysis(
+        df_tf=df_tf_unfilt2, df_signatures_filt=df_signatures_filt, denom_ratio=1,
+    )
+
+    # Save HDF5 tables (secondary)
+    for key, val in {
+        "df_ctdna_vaf_unfilt_signature_filt_featuremap": df_tf_unfilt,
+        "df_ctdna_vaf_filt_signature_unfilt_featuremap": df_tf_unfilt2,
+        "df_supporting_reads_per_locus_unfilt_signature_filt_featuremap": df_supporting_reads_per_locus_unfilt,
+        "df_supporting_reads_per_locus_filt_signature_unfilt_featuremap": df_supporting_reads_per_locus_unfilt2,
+    }.items():
+        val.to_hdf(output_h5_file, key=key, mode="a")
+
+    # Render QC HTML
+    qc_html = render_qc_report(
+        detection=detection,
+        detection_unfilt=detection_unfilt,
+        detection_unfilt2=detection_unfilt2,
+        df_tf_filt=df_tf_filt,
+        df_tf_unfilt=df_tf_unfilt,
+        df_tf_unfilt2=df_tf_unfilt2,
+        df_signatures=df_signatures,
+        df_signatures_filt=df_signatures_filt,
+        df_features=df_features,
+        df_features_filt=df_features_filt,
+        df_supporting_reads_per_locus_unfilt=df_supporting_reads_per_locus_unfilt,
+        df_supporting_reads_per_locus_unfilt2=df_supporting_reads_per_locus_unfilt2,
+        basename=mrd_report_inputs.output_basename,
+        signature_filter_query=signature_filter_query,
+        read_filter_query=read_filter_query,
+        denom_ratio=denom_ratio,
+        filt_ratio=filt_ratio,
+        plot_sbs_fn=plot_sbs_profile,
+        plot_af_fn=mrd.plot_signature_allele_fractions,
+    )
+    qc_html_path.write_text(qc_html)
 
     return results_html_path, qc_html_path
 

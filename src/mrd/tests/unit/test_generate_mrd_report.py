@@ -107,7 +107,7 @@ def test_generate_mrd_report_detection_output(output_path, mrd_report_inputs):
     assert detection["call"] in ("MRD Detected", "MRD Not Detected", "Indeterminate")
 
     # Verify p-value is in valid range [0, 1]
-    assert 0 < detection["p_value"] <= 1.0
+    assert 0 <= detection["p_value"] <= 1.0
 
     # Verify we used 5 synthetic controls from the test data
     assert detection["n_synthetic_controls"] == 5

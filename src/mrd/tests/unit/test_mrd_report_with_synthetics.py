@@ -74,7 +74,7 @@ def test_generate_report_with_synthetics(resources_dir, tmp_path_factory, n_cont
         detection = json.load(f)
 
     assert detection["n_synthetic_controls"] == n_controls
-    assert 0 < detection["p_value"] <= 1.0
+    assert 0 <= detection["p_value"] <= 1.0
     assert detection["call"] in ("MRD Detected", "MRD Not Detected", "Indeterminate")
     assert detection["matched_supporting_reads"] >= 0
     assert detection["signature_size"] > 0

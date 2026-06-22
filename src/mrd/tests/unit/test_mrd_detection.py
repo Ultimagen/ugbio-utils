@@ -66,24 +66,24 @@ class TestComputePersonalLod:
             signature_size=1000,
             mean_coverage=40.0,
             denom_ratio=0.5,
-            detection_threshold=2,
+            p_err=1e-6,
         )
         assert lod is not None
         assert 1e-7 < lod < 1e-3
 
-    def test_higher_threshold_higher_lod(self):
-        """Higher detection threshold should yield higher LOD."""
+    def test_higher_perr_higher_lod(self):
+        """Higher background error rate should yield higher LOD."""
         lod_low = compute_personal_lod(
             signature_size=1000,
             mean_coverage=40.0,
             denom_ratio=0.5,
-            detection_threshold=1,
+            p_err=1e-7,
         )
         lod_high = compute_personal_lod(
             signature_size=1000,
             mean_coverage=40.0,
             denom_ratio=0.5,
-            detection_threshold=5,
+            p_err=1e-5,
         )
         assert lod_low < lod_high
 
@@ -93,13 +93,13 @@ class TestComputePersonalLod:
             signature_size=500,
             mean_coverage=40.0,
             denom_ratio=0.5,
-            detection_threshold=2,
+            p_err=1e-6,
         )
         lod_large = compute_personal_lod(
             signature_size=5000,
             mean_coverage=40.0,
             denom_ratio=0.5,
-            detection_threshold=2,
+            p_err=1e-6,
         )
         assert lod_small is not None
         assert lod_large is not None
@@ -111,7 +111,7 @@ class TestComputePersonalLod:
             signature_size=0,
             mean_coverage=40.0,
             denom_ratio=0.5,
-            detection_threshold=2,
+            p_err=1e-6,
         )
         assert lod is None
 
@@ -121,13 +121,11 @@ class TestComputePersonalLod:
             signature_size=1000,
             mean_coverage=0.0,
             denom_ratio=0.5,
-            detection_threshold=2,
+            p_err=1e-6,
         )
         assert lod is None
 
 
-class TestRunDetectionAnalysis:
-    """Tests for the full detection analysis pipeline."""
 
     @pytest.fixture
     def mock_df_tf_detected(self):
