@@ -569,17 +569,26 @@ def plot_null_distribution(
                 denom_ratio=1.0,
                 p_err=p_err_plot,
             )
+            # Detection threshold line: minimum reads to call a positive (5% FPR)
+            n_th_vaf = n_th_plot / n_eff_plot if n_eff_plot > 0 else 0.0
+            ax.axhline(_safe(n_th_plot), color="#e67e22", linewidth=1.8,
+                       linestyle="--", alpha=0.9, zorder=4,
+                       label=f"Detection threshold (VAF={format_scientific(n_th_vaf)}) | 5% FPR")
             if lod_tf_plot is not None:
                 lod_str = format_scientific(lod_tf_plot)
-                ax.axhline(_safe(n_th_plot), color="#e67e22", linewidth=1.8,
-                           linestyle="--", alpha=0.9, zorder=4,
-                           label=f"Detection threshold ({n_th_plot} reads)\nLOD={lod_str} | 95% power, 5% FPR")
+                # LOD line: expected reads at the LOD TF (n_eff × (p_err + LOD_TF))
+                n_lod = float(n_eff_plot) * (p_err_plot + lod_tf_plot)
+                ax.axhline(_safe(n_lod), color="#8e44ad", linewidth=1.8,
+                           linestyle="-.", alpha=0.9, zorder=4,
+                           label=f"LOD signal ({n_lod:.1f} reads) = {lod_str} | 95% power")
 
     # --- Log scale + y limits ---
     ax.set_yscale("log")
+    n_lod_top = float(n_eff_plot) * (p_err_plot + lod_tf_plot) if (lod_tf_plot and n_eff_plot) else 1
     y_top = max(_safe(obs),
                 float(null.max()) if len(null) > 0 else 1,
-                n_th_plot if n_th_plot else 1) * 6
+                n_th_plot if n_th_plot else 1,
+                n_lod_top) * 6
     ax.set_ylim(_floor * 0.6, y_top)
 
     # --- Grid behind all data ---
