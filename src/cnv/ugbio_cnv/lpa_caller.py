@@ -139,13 +139,9 @@ KIV2_MIN_MAPPING_QUALITY = 0
 # this, the binomial P(alt|alt_cn=0) collapses to ~1e-85 for any real signal
 # and QUAL pins at the Phred floor.
 #
-# Calibrated separately for SNPs and indels because UG flow chemistry has very
-# different error spectra: SNP substitution errors are rare (~0.1-0.3% per base,
-# ~0.15% on this dataset), while indel errors in homopolymer/short-tandem-repeat
-# contexts can reach ~1%. Using a single 1% floor crushes SNP QUAL by ~5x;
-# using 0.1% for indels would re-admit homopolymer-driven false positives.
-LPA_VARIANT_NOISE_FLOOR_SNP = 0.003
-LPA_VARIANT_NOISE_FLOOR_INDEL = 0.01
+# Calibrated for UG flow chemistry SNP substitution errors (~0.1-0.3% per base,
+# ~0.15% on this dataset). All currently configured small variants are SNVs.
+LPA_VARIANT_NOISE_FLOOR = 0.003
 # Standard VCF QUAL cap.
 MAX_PHRED_QUAL = 99.0
 
@@ -258,6 +254,48 @@ def _bucket_gc(gc: float) -> float:
     """Round GC fraction down to the nearest bucket midpoint."""
     idx = int(gc / GC_BUCKET_WIDTH)
     return (idx + 0.5) * GC_BUCKET_WIDTH
+
+
+def _validate_marker_positions(
+    fasta: pysam.FastaFile,
+    chrom: str,
+    markers: list[MarkerSpec],
+    genome_build: str,
+) -> None:
+    """Fail fast if the configured REF base does not match the reference FASTA.
+
+    The default marker / small-variant positions are hg38 coordinates. If a
+    different reference build is supplied without overriding the positions on
+    the CLI, the caller would otherwise silently call against the wrong sites.
+    """
+    try:
+        contigs = set(fasta.references)
+    except Exception:  # pragma: no cover - older pysam without .references
+        contigs = set()
+    if contigs and chrom not in contigs:
+        raise RuntimeError(
+            f"Reference FASTA does not contain contig {chrom!r}. "
+            f"If your reference is not {genome_build}, override --kiv2-chrom and the "
+            "marker / small-variant positions on the command line."
+        )
+
+    mismatches: list[str] = []
+    for m in markers:
+        for pos in m.positions:
+            base = fasta.fetch(chrom, pos - 1, pos).upper()
+            if base != m.ref.upper():
+                mismatches.append(f"{m.hgvs} {chrom}:{pos} expected {m.ref} got {base or 'N/A'}")
+
+    if mismatches:
+        max_preview = 5
+        preview = "; ".join(mismatches[:max_preview])
+        more = f" (+{len(mismatches) - max_preview} more)" if len(mismatches) > max_preview else ""
+        raise RuntimeError(
+            "Marker REF bases do not match the reference FASTA — the configured "
+            f"positions are {genome_build} coordinates and look wrong for this reference. "
+            "Override --kiv2-chrom / --kiv2-start / --kiv2-end / --kiv2-unit-length, or "
+            f"supply a {genome_build} reference. Mismatches: {preview}{more}"
+        )
 
 
 # ----------------------------------------------------------------------------
@@ -497,14 +535,6 @@ def _phred(p: float) -> float:
     return min(-10.0 * math.log10(p), MAX_PHRED_QUAL)
 
 
-def _noise_floor_for(ref_allele: str, alt_allele: str) -> float:
-    """SNP vs indel noise floor selector. Anything that isn't a single-base
-    substitution is treated as indel-like."""
-    if len(ref_allele) == 1 and len(alt_allele) == 1:
-        return LPA_VARIANT_NOISE_FLOOR_SNP
-    return LPA_VARIANT_NOISE_FLOOR_INDEL
-
-
 def _call_small_variant(
     counts: AlleleCounts,
     kiv2_copy_number: float,
@@ -533,7 +563,7 @@ def _call_small_variant(
             alt_allele=alt_allele,
         )
 
-    noise = _noise_floor_for(ref_allele, alt_allele)
+    noise = LPA_VARIANT_NOISE_FLOOR
     log_liks = []
     for alt_cn in range(total_cn + 1):
         # Mix the ideal alt fraction with a flat noise floor so the alt_cn=0
@@ -794,6 +824,8 @@ def run(argv: list[str]) -> None:
             _build_marker(spec, args.kiv2_start, args.kiv2_unit_length, args.kiv2_repeat_count)
             for spec in DEFAULT_SMALL_VARIANTS
         ]
+
+        _validate_marker_positions(fasta, args.kiv2_chrom, markers + small_variants, args.genome_build)
 
         kiv2_cn = _estimate_total_kiv2_copy_number(
             bam,
