@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import pysam
 import seaborn as sns
+from ugbio_core.logger import logger
 from ugbio_core.plotting_utils import set_pyplot_defaults
 from ugbio_core.reports.report_utils import generate_report as generate_report_func
 from ugbio_core.trimmer_utils import (
@@ -75,6 +76,12 @@ SR_TAG = "sr"  # strand ratio (float, from raw signal)
 ST_TAG = "st"  # start-loop category (MINUS / PLUS / MIXED / UNDETERMINED)
 ET_TAG = "et"  # end-loop category
 TM_TAG = "tm"  # trimming reasons; contains "A" when the adapter was seen (end reached)
+
+# Read group Trimmer assigns to reads it could not match. These legitimately carry no st
+# tag and are skipped. See read_tags_from_subsampled_sam.
+UNMATCHED_READ_GROUP = "unmatched"
+# Cap on how many missing-st warnings are logged individually before switching to a count.
+MAX_MISSING_ST_WARNINGS = 5
 
 # Subset of sorter-stats metrics to surface in the report's headline Table 1.
 # The raw CSV has ~40 rows; we only want the ones below. Missing keys are silently
@@ -353,6 +360,14 @@ def get_strand_ratio_category(strand_ratio, sr_lower, sr_upper) -> str:
     return PpmseqCategories.UNDETERMINED.value
 
 
+def _get_optional_tag(rec, tag, default=None):
+    """Return ``rec``'s ``tag`` value, or ``default`` if the tag is absent."""
+    try:
+        return rec.get_tag(tag)
+    except KeyError:
+        return default
+
+
 def read_tags_from_subsampled_sam(
     sam_path: str,
     sample_name: str = "",
@@ -387,14 +402,18 @@ def read_tags_from_subsampled_sam(
           - ``strand_ratio_category_start`` / ``strand_ratio_category_end``:
             copies of ``st`` / ``et`` with END_UNREACHED substituted on rows where ``tm`` has no ``A``.
 
-    Raises
-    ------
-    KeyError
-        If any read is missing the ``st`` tag. The ``st`` tag is required on every ppmSeq
-        read produced by the current pipeline; a missing one is a fixture/pipeline bug.
+    Notes
+    -----
+    A matched read (RG != ``unmatched``) missing the ``st`` tag is a pipeline anomaly
+    (see DATA-9834). Rather than aborting the whole report, such reads are assigned
+    ``st = UNDETERMINED``: the first ``MAX_MISSING_ST_WARNINGS`` are logged individually,
+    the rest are counted and a single summary warning is logged at the end. Reads in the
+    ``unmatched`` read group legitimately have no ``st`` and are skipped silently.
     """
     rows = []
     for_sr_nan = float("nan")
+    undetermined = PpmseqCategories.UNDETERMINED.value
+    missing_st_count = 0
     with pysam.AlignmentFile(sam_path, check_sq=False) as fh:
         for rec in fh:
             # Skip reads that Trimmer couldn't match. Sorter tags them with RG="unmatched"
@@ -404,41 +423,57 @@ def read_tags_from_subsampled_sam(
             # denominators; they're accounted for separately in the Trimmer failure-codes
             # section.
             try:
-                if rec.get_tag("RG") == "unmatched":
-                    # Trimmer routed this read to the unmatched read group — it has no
-                    # ppmSeq tag calls, so skip before querying st below.
-                    continue
+                read_group = rec.get_tag("RG")
             except KeyError:
                 # No RG tag at all — treat as matched. Production reads always carry an
                 # RG, but handcrafted test fixtures sometimes omit it.
-                pass
-            st = rec.get_tag(ST_TAG)  # KeyError if absent — st is required
+                read_group = None
+            if read_group == UNMATCHED_READ_GROUP:
+                # Trimmer routed this read to the unmatched read group — it has no
+                # ppmSeq tag calls, so skip before querying st below.
+                continue
             try:
-                sr = float(rec.get_tag(SR_TAG))
+                st = rec.get_tag(ST_TAG)
             except KeyError:
-                # sr is optional: libraries that don't carry it (e.g. legacy_v5 chemistries
-                # without strand-ratio calibration) still produce a useful QC report, just
-                # without the sr-based sections.
-                sr = for_sr_nan
-            try:
-                et = rec.get_tag(ET_TAG)
-            except KeyError:
-                et = ""
-            try:
-                tm = rec.get_tag(TM_TAG)
-            except KeyError:
-                # A missing tm tag means the adapter was not reached (== END_UNREACHED
-                # downstream), not "undetermined". See Ken's comment on PR #307.
-                tm = ""
+                # A matched read with no st is a pipeline anomaly (DATA-9834), not the
+                # benign unmatched case handled above. Don't abort the report: fall back to
+                # UNDETERMINED, warn for the first few, then just keep counting.
+                st = undetermined
+                missing_st_count += 1
+                if missing_st_count <= MAX_MISSING_ST_WARNINGS:
+                    logger.warning(
+                        "Read %s (RG=%s) is missing the st tag but is not in the "
+                        "'%s' read group; treating st as UNDETERMINED.",
+                        rec.query_name,
+                        read_group,
+                        UNMATCHED_READ_GROUP,
+                    )
+            # sr is optional: libraries that don't carry it (e.g. legacy_v5 chemistries
+            # without strand-ratio calibration) still produce a useful QC report, just
+            # without the sr-based sections.
+            sr_tag = _get_optional_tag(rec, SR_TAG)
+            sr = float(sr_tag) if sr_tag is not None else for_sr_nan
+            et = _get_optional_tag(rec, ET_TAG, default="")
+            # A missing tm tag means the adapter was not reached (== END_UNREACHED
+            # downstream), not "undetermined". See Ken's comment on PR #307.
+            tm = _get_optional_tag(rec, TM_TAG, default="")
             read_len = rec.query_length or 0
             rows.append(
                 (sr, str(st), str(et), str(tm), int(read_len), not rec.is_unmapped),
             )
 
+    if missing_st_count > MAX_MISSING_ST_WARNINGS:
+        logger.warning(
+            "%d matched reads were missing the st tag and were treated as UNDETERMINED "
+            "(%d warned individually above). This indicates an upstream Trimmer anomaly "
+            "(DATA-9834).",
+            missing_st_count,
+            MAX_MISSING_ST_WARNINGS,
+        )
+
     df_reads = pd.DataFrame(rows, columns=[SR_TAG, ST_TAG, ET_TAG, TM_TAG, "read_length", "is_aligned"])
     df_reads[HistogramColumnNames.COUNT.value] = 1
     is_end_reached = df_reads[TM_TAG].str.contains("A", na=False)
-    undetermined = PpmseqCategories.UNDETERMINED.value
     end_unreached = PpmseqCategories.END_UNREACHED.value
     df_reads[HistogramColumnNames.STRAND_RATIO_CATEGORY_START.value] = df_reads[ST_TAG].replace("", undetermined)
     df_reads[HistogramColumnNames.STRAND_RATIO_CATEGORY_END.value] = (

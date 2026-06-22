@@ -9,6 +9,7 @@ import pysam
 import pytest
 from ugbio_ppmseq.ppmSeq_utils import (
     ET_TAG,
+    MAX_MISSING_ST_WARNINGS,
     SORTER_STATS_KEYS_TO_SHOW,
     SR_TAG,
     ST_TAG,
@@ -89,8 +90,9 @@ def test_read_tags_from_subsampled_sam():
         "strand_ratio_category_start",
         "strand_ratio_category_end",
     }
-    # Every ppmSeq read produced by the current pipeline carries an st tag; the reader
-    # raises KeyError on anything that doesn't, so here we only see valid categories.
+    # Every ppmSeq read produced by the current pipeline carries an st tag; matched reads
+    # missing it fall back to UNDETERMINED (see read_tags_from_subsampled_sam), so here we
+    # only see valid categories.
     assert df_reads[ST_TAG].isin(["PLUS", "MINUS", "MIXED", "UNDETERMINED"]).all()
     # sr is nominally in [0, 1]; calibration can produce a small out-of-range tail.
     assert df_reads[SR_TAG].between(-1, 2).all()
@@ -173,23 +175,63 @@ def test_read_tags_drops_unmatched_reads(tmp_path):
     assert df_reads.iloc[0][ST_TAG] == "MIXED"
 
 
-def test_read_tags_raises_on_missing_st_tag(tmp_path):
-    # Build a 2-record SAM where one record is missing both sr and st.
+def test_read_tags_matched_read_missing_st_is_undetermined_not_fatal(tmp_path, caplog):
+    """A matched read (RG != unmatched) missing st must NOT abort the report (DATA-9835).
+    It is kept with st=UNDETERMINED and a warning is logged."""
     sam_content = (
         "@HD\tVN:1.6\n"
         "@SQ\tSN:chr1\tLN:100\n"
         "@RG\tID:test\n"
         # good read: has sr, st
         "r1\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:test\tsr:f:0.5\tst:Z:MIXED\n"
-        # bad read: no sr, no st
-        "r2\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:test\n"
+        # anomalous matched read: has sr but no st (DATA-9834 leak)
+        "r2\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:test\tsr:f:0.7\n"
     )
-    sam_file = tmp_path / "bad.sam"
+    sam_file = tmp_path / "missing_st.sam"
     sam_file.write_text(sam_content)
-    # Pin the error to the st tag specifically so a future pysam change that swaps error
-    # text to e.g. "sr" doesn't silently let this test keep passing.
-    with pytest.raises(KeyError, match="st"):
+    with caplog.at_level("WARNING"):
+        df_reads = read_tags_from_subsampled_sam(str(sam_file))
+    # Both reads are kept; the anomalous one becomes UNDETERMINED.
+    assert len(df_reads) == 2
+    assert sorted(df_reads[ST_TAG]) == ["MIXED", PpmseqCategories.UNDETERMINED.value]
+    assert any("missing the st tag" in r.message for r in caplog.records)
+
+
+def test_read_tags_missing_st_summary_warning_above_cap(tmp_path, caplog):
+    """Beyond MAX_MISSING_ST_WARNINGS individual warnings, a single summary warning with the
+    total count is emitted (DATA-9835)."""
+    header = "@HD\tVN:1.6\n@SQ\tSN:chr1\tLN:100\n@RG\tID:test\n"
+    n_missing = MAX_MISSING_ST_WARNINGS + 3
+    reads = "".join(f"r{i}\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:test\tsr:f:0.5\n" for i in range(n_missing))
+    sam_file = tmp_path / "many_missing_st.sam"
+    sam_file.write_text(header + reads)
+    with caplog.at_level("WARNING"):
+        df_reads = read_tags_from_subsampled_sam(str(sam_file))
+    assert len(df_reads) == n_missing
+    assert (df_reads[ST_TAG] == PpmseqCategories.UNDETERMINED.value).all()
+    # Exactly MAX_MISSING_ST_WARNINGS per-read warnings + 1 summary warning.
+    per_read = [r for r in caplog.records if "is missing the st tag" in r.message]
+    summary = [r for r in caplog.records if f"{n_missing} matched reads were missing" in r.message]
+    assert len(per_read) == MAX_MISSING_ST_WARNINGS
+    assert len(summary) == 1
+
+
+def test_read_tags_no_missing_st_emits_no_warning(tmp_path, caplog):
+    """When every matched read has st, nothing is warned (DATA-9835)."""
+    sam_content = (
+        "@HD\tVN:1.6\n"
+        "@SQ\tSN:chr1\tLN:100\n"
+        "@RG\tID:test\n"
+        "@RG\tID:unmatched\n"
+        "r1\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:test\tsr:f:0.5\tst:Z:MIXED\n"
+        # unmatched read legitimately has no st — must not trigger a warning
+        "r2\t4\t*\t0\t0\t*\t*\t0\t0\tAAAA\t!!!!\tRG:Z:unmatched\n"
+    )
+    sam_file = tmp_path / "all_st.sam"
+    sam_file.write_text(sam_content)
+    with caplog.at_level("WARNING"):
         read_tags_from_subsampled_sam(str(sam_file))
+    assert not any("st tag" in r.message for r in caplog.records)
 
 
 def test_group_by_strand_ratio_category():
