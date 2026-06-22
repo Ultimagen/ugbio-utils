@@ -53,6 +53,20 @@
   .body { padding: 28px 32px; }
 
   .section { margin-bottom: 28px; }
+  .subsection {
+    background: var(--light-gray);
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin-top: 16px;
+  }
+  .subsection-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
   .section-title {
     font-size: 11px;
     font-weight: 700;
@@ -312,15 +326,26 @@
     </div>
     {% endif %}
 
-    <!-- ── SIGNATURE MUTATIONAL PROFILE + VAF (side by side) ── -->
-    {% if sbs_vaf_plots %}
+    <!-- ── SUBSTITUTION TYPES + VAF + SBS96 ── -->
+    {% if sbs6_vaf_plots or sbs96_plots %}
     <div class="section">
       <div class="section-title">Signature Profile &amp; VAF</div>
-      {% for img in sbs_vaf_plots %}
+      {% for img in sbs6_vaf_plots %}
       <div class="chart-container">
         <img src="data:image/png;base64,{{ img }}" alt="SBS profile and VAF distribution">
       </div>
       {% endfor %}
+      {% if sbs96_plots %}
+      {% for img in sbs96_plots %}
+      <div style="margin-bottom:8px;">
+        <img src="data:image/png;base64,{{ img }}" alt="SBS96 mutational profile" style="max-width:100%;">
+        <div class="chart-description" style="margin-top:6px;">
+          COSMIC-format SBS96 profile from all filtered signature variants.
+          96 trinucleotide channels grouped by substitution type, normalised to pyrimidine strand.
+        </div>
+      </div>
+      {% endfor %}
+      {% endif %}
     </div>
     {% endif %}
 

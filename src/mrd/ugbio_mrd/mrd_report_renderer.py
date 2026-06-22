@@ -256,7 +256,7 @@ def render_vaf_plot(df_signatures: pd.DataFrame, signature_filter_query: str, pl
     fig.patch.set_facecolor("#f4f6f8")
     plot_af_fn(df_signatures, signature_filter_query, panel="filtered", ax=ax)
     n_filt = df_signatures.query(signature_filter_query).shape[0]
-    ax.set_title(f"Signature VAF (filtered, n={n_filt:,})", fontsize=10)
+    ax.set_title(f"Signature VAF (filtered, n={n_filt:,})", fontsize=10, fontweight="bold")
     plt.tight_layout()
     return _fig_to_base64(fig)
 
@@ -321,7 +321,7 @@ def render_sbs_vaf_combined(
     fig2.patch.set_facecolor("#f4f6f8")
     plot_sbs_fn(df_for_sbs6, title="Substitution Types", ax=ax_sbs6, query=sbs6_query)
     plot_af_fn(df_signatures, signature_filter_query, panel="filtered", ax=ax_vaf)
-    ax_vaf.set_title(f"VAF Distribution (n={df_filt.shape[0]:,})", fontsize=10)
+    ax_vaf.set_title(f"VAF Distribution (n={df_filt.shape[0]:,})", fontsize=10, fontweight="bold")
     plt.tight_layout()
     sbs6_vaf_img = _fig_to_base64(fig2)
 
