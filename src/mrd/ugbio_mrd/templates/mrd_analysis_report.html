@@ -229,17 +229,10 @@
             <span class="stat-value">{{ vaf_str }}</span>
           </div>
           <div class="stat">
-            <span class="stat-label">p-value (empirical)</span>
-            <span class="stat-value">{{ emp_p_str }}</span>
-            <span class="stat-sub">{{ detection.n_synthetic_controls }} synthetic controls</span>
+            <span class="stat-label">p-value (Binomial)</span>
+            <span class="stat-value">{{ binom_p_str }}</span>
+            <span class="stat-sub">Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }})</span>
           </div>
-          {% if fit_p_str %}
-          <div class="stat">
-            <span class="stat-label">p-value ({{ detection.fitted_distribution }} fit)</span>
-            <span class="stat-value">{{ fit_p_str }}</span>
-            <span class="stat-sub">{{ detection.fitted_distribution }}-fitted null</span>
-          </div>
-          {% endif %}
           <div class="stat">
             <span class="stat-label">Personal LOD (95%)</span>
             <span class="stat-value">{{ lod_str }}</span>
@@ -248,7 +241,7 @@
           <div class="stat">
             <span class="stat-label">Supporting Reads</span>
             <span class="stat-value">{{ detection.matched_supporting_reads }}</span>
-            <span class="stat-sub">noise median: {{ "%.1f"|format(detection.null_median_reads) }}</span>
+            <span class="stat-sub">noise rate: {{ noise_rate_str }}</span>
           </div>
         </div>
       </div>
@@ -293,11 +286,13 @@
         <img src="data:image/png;base64,{{ signal_noise_img }}" alt="Signal vs. Noise distribution">
       </div>
       <div class="chart-description">
-        Each dot is one synthetic control. Blue: empirical read counts. Purple: samples from the fitted
-        parametric null. Cohort controls (orange) are real cfDNA samples with unrelated signatures.
-        Detection threshold = max(synthetic) + 1: the minimum reads for p &lt; 1/(N+1).
+        Blue dots: empirical synthetic control read counts. Purple boxplot: Binomial null Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }}).
+        Orange diamonds: cohort controls (real cfDNA, unrelated signatures).
+        Dashed orange line: LOD at 95% power (TF={{ lod_str }}). Red star: patient signal.
       </div>
     </div>
+
+
 
     <!-- ── APPLIED FILTERS ── -->
     {% if applied_filters %}
@@ -333,6 +328,21 @@
         <div class="chart-description">
           Allele-fraction distribution at signature loci with ≥1 supporting cfDNA read.
           Red: matched (tumor) signature loci (signal). Blue: control signature loci (noise).
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- ── cfDNA INTERSECTION SNVQ ── -->
+    {% if intersection_snvq_img %}
+    <div class="section">
+      <div class="section-title">cfDNA Intersection SNVQ Distribution</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ intersection_snvq_img }}" alt="cfDNA Intersection SNVQ">
+        <div class="chart-description">
+          SNVQ score distribution of cfDNA reads at signature loci (after read filter).
+          Red: matched (tumor) signature loci. Blue: control signature loci.
+          Higher SNVQ indicates higher confidence in the SNV call.
         </div>
       </div>
     </div>

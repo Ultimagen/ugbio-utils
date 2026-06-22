@@ -55,6 +55,11 @@ class DetectionResult:
     signature_size: int  # number of loci in filtered signature
     mean_coverage: float  # mean coverage at signature loci
     corrected_coverage: float  # total corrected coverage
+    detection_threshold: int  # minimum reads for p < alpha from fitted null
+
+    # Binomial model fields
+    noise_rate: float             # background error rate from db_control (p_err)
+    n_effective: int              # N = sig_size × mean_cov × denom_ratio for Binomial
 
 
 def _fit_null_distribution(null_reads: np.ndarray) -> tuple[str, dict]:
@@ -150,23 +155,26 @@ def compute_personal_lod(
     signature_size: int,
     mean_coverage: float,
     denom_ratio: float,
-    detection_threshold: int,
-    n_simulations: int = 10000,
+    p_err: float,
     target_power: float = 0.95,
-    random_seed: int = 42,
+    fpr: float = 0.05,
 ) -> float | None:
     """
-    Estimate personal LOD via Poisson simulation.
+    Estimate personal LOD via analytical Binomial model.
 
-    For a grid of tumor fractions, simulate the expected number of
-    supporting reads given the patient's signature size and coverage,
-    then find the smallest TF at which detection power >= target.
+    Mirrors the notebook's ``find_lod_at_tpr`` approach:
 
-    The model assumes reads arrive as Poisson(TF * corrected_coverage)
-    across the full signature. This is conservative because:
-    - It ignores SNVQ weighting (all reads counted equally)
-    - It uses total coverage, not per-locus (averaging over loci)
-    - No parametric fit to the null — uses the empirical threshold
+    1. Compute total corrected coverage N = signature_size * mean_coverage * denom_ratio.
+    2. Derive the detection threshold ``n_th`` as the smallest k such that
+       Binomial.sf(k-1, N, p_err) < fpr  (analytic FPR control on the null).
+    3. Find the smallest TF where detection power >= target_power, i.e.
+       Binomial.sf(n_th-1, N, p_err + TF) >= target_power,
+       solved exactly with scipy.optimize.fsolve.
+
+    Unlike the original Poisson simulation the noise floor (p_err) is
+    included in the power calculation, so the returned LOD is the TF that
+    must be *added on top of the background error rate* to reach the target
+    sensitivity.
 
     Parameters
     ----------
@@ -176,51 +184,69 @@ def compute_personal_lod(
         Mean corrected coverage per locus.
     denom_ratio : float
         Denominator correction ratio.
-    detection_threshold : int
-        Minimum supporting reads to call detected (from null).
-    n_simulations : int
-        Number of Monte Carlo simulations per TF level.
+    p_err : float
+        Background error rate estimated from db_control synthetic controls
+        (total supporting reads / total corrected coverage).
     target_power : float
         Required detection probability (default 0.95).
-    random_seed : int
-        Random seed for reproducibility.
+    fpr : float
+        False-positive rate used to set the detection threshold (default 0.05).
 
     Returns
     -------
     float or None
-        Personal LOD (tumor fraction) or None if not computable.
+        Personal LOD (tumor fraction above background) or None if not computable.
     """
+    from scipy.optimize import fsolve
+    from scipy.stats import binom as _binom
+
     if signature_size <= 0 or mean_coverage <= 0:
         logger.warning(f"Cannot compute personal LOD: signature_size={signature_size}, mean_coverage={mean_coverage}")
         return None
 
-    rng = np.random.default_rng(random_seed)
-    total_corrected_coverage = signature_size * mean_coverage * denom_ratio
+    n = int(signature_size * mean_coverage * denom_ratio)
+    if n <= 0:
+        return None
 
-    # Log-spaced TF grid from 1e-7 to 0.1 (80 points)
-    # Upper bound 0.1 handles cases where threshold is very high (e.g. unfiltered)
-    tf_grid = np.logspace(-7, -1, 80)
+    # Step 1: analytic detection threshold at the given FPR under the null
+    # n_th = smallest k s.t. binom.sf(k-1, n, p_err) < fpr
+    k_range = np.arange(0, min(n + 1, 10000))
+    sf_values = _binom.sf(k_range - 1, n, p_err)
+    hits = np.where(sf_values < fpr)[0]
+    if len(hits) == 0:
+        logger.debug(
+            "Personal LOD: no threshold satisfies FPR<%.3f "
+            "(N=%d, p_err=%.2e) — LOD indeterminate",
+            fpr,
+            n,
+            p_err,
+        )
+        return None
+    n_th = int(hits[0])
 
-    for tf in tf_grid:
-        # Expected number of supporting reads at this TF
-        expected_reads = tf * total_corrected_coverage
-        # Simulate Poisson draws
-        simulated_reads = rng.poisson(expected_reads, size=n_simulations)
-        # Power = fraction of simulations exceeding threshold
-        power = np.mean(simulated_reads >= detection_threshold)
-        if power >= target_power:
-            return float(tf)
+    # Step 2: exact solve for the smallest TF where power >= target_power
+    # power(tf) = binom.sf(n_th - 1, n, p_err + tf) - target_power = 0
+    def _power_residual(tf):
+        return np.abs(_binom.sf(n_th - 1, n, p_err + tf[0]) - target_power)
 
-    # Could not achieve target power even at TF=0.1 — expected for unfiltered
-    logger.debug(
-        "Personal LOD could not be determined "
-        "(detection power < 95%% even at TF=0.1; "
-        "signature_size=%d, mean_coverage=%.1f, threshold=%d)",
-        signature_size,
-        mean_coverage,
-        detection_threshold,
-    )
-    return None
+    try:
+        result = fsolve(_power_residual, x0=[1e-6], full_output=True)
+        lod_tf = float(result[0][0])
+        if lod_tf < 0 or lod_tf > 1:
+            logger.debug(
+                "Personal LOD fsolve returned out-of-range value %.2e; "
+                "n=%d, p_err=%.2e, n_th=%d",
+                lod_tf,
+                n,
+                p_err,
+                n_th,
+            )
+            return None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Personal LOD fsolve failed: %s", exc)
+        return None
+
+    return lod_tf
 
 
 def run_detection_analysis(  # noqa: PLR0912
@@ -276,6 +302,9 @@ def run_detection_analysis(  # noqa: PLR0912
             signature_size=0,
             mean_coverage=0.0,
             corrected_coverage=0.0,
+            detection_threshold=0,
+            noise_rate=0.0,
+            n_effective=0,
         )
 
     # Handle single or multiple matched signatures (take first)
@@ -288,21 +317,25 @@ def run_detection_analysis(  # noqa: PLR0912
     matched_vaf = float(matched_row["ctdna_vaf"])
     corrected_coverage = float(matched_row["corrected_coverage"])
 
-    # Extract synthetic control (db_control) supporting reads
+    # Extract synthetic control (db_control) supporting reads + background error rate
     try:
         db_control_data = df_tf.loc["db_control"]
         if isinstance(db_control_data, pd.Series):
             null_reads = np.array([int(db_control_data["supporting_reads"])])
+            db_total_reads = float(db_control_data["supporting_reads"])
+            db_total_cov = float(db_control_data["corrected_coverage"])
         else:
             null_reads = db_control_data["supporting_reads"].to_numpy().astype(int)
+            db_total_reads = float(db_control_data["supporting_reads"].sum())
+            db_total_cov = float(db_control_data["corrected_coverage"].sum())
+        # Jeffreys prior: (k + 0.5) / (N + 1) — avoids p_err=0 when no reads observed
+        p_err = (db_total_reads + 0.5) / (db_total_cov + 1) if db_total_cov > 0 else 0.0
     except KeyError:
-        logger.warning("No db_control (synthetic) signatures found in df_tf. Cannot compute empirical p-value.")
+        logger.warning("No db_control (synthetic) signatures found in df_tf. Cannot compute p-value.")
         null_reads = np.array([])
+        p_err = 0.0
 
-    # Compute empirical p-value
-    p_value = compute_empirical_pvalue(matched_reads, null_reads)
-
-    # Fit null distribution (Poisson or Negative Binomial if overdispersed)
+    # Fit null distribution (Poisson or Negative Binomial — kept for scatter plot)
     if len(null_reads) > 0:
         from scipy.stats import nbinom as _nbinom
         from scipy.stats import poisson as _poisson
@@ -312,12 +345,34 @@ def run_detection_analysis(  # noqa: PLR0912
             r_fit, p_fit = null_fit_params["r"], null_fit_params["p"]
             fitted_p_value: float | None = float(_nbinom.sf(matched_reads - 1, r_fit, p_fit))
         else:
-            lam = null_fit_params["lambda"]  # Jeffreys-prior estimate, always > 0
+            lam = null_fit_params["lambda"]
             fitted_p_value = float(_poisson.sf(matched_reads - 1, lam))
     else:
         fitted_p_value = None
         fitted_distribution = "Poisson"
         null_fit_params: dict = {}
+
+    # Assay metrics from filtered matched signature
+    matched_sig_mask = df_signatures_filt["signature_type"] == "matched"
+    if "signature_type" not in df_signatures_filt.columns:
+        matched_sig_loci = df_signatures_filt
+    else:
+        matched_sig_loci = df_signatures_filt[matched_sig_mask]
+    signature_size = len(matched_sig_loci)
+    mean_coverage = (
+        float(matched_sig_loci["coverage"].mean())
+        if "coverage" in matched_sig_loci.columns and len(matched_sig_loci) > 0
+        else 0.0
+    )
+
+    # Binomial p-value: P(X >= observed | N, p_err) under null Binom(n_effective, p_err)
+    n_effective = int(signature_size * mean_coverage * denom_ratio)
+    if len(null_reads) == 0 or n_effective == 0:
+        p_value = 1.0
+    else:
+        from scipy.stats import binom as _binom
+
+        p_value = float(_binom.sf(matched_reads - 1, n_effective, p_err))
 
     # Detection call
     if len(null_reads) == 0:
@@ -330,33 +385,25 @@ def run_detection_analysis(  # noqa: PLR0912
         detected = False
         call = "MRD Not Detected"
 
-    # Assay metrics from filtered matched signature
-    matched_sig_mask = df_signatures_filt["signature_type"] == "matched"
-    if "signature_type" not in df_signatures_filt.columns:
-        # signature_type may be in index or as column depending on context
-        matched_sig_loci = df_signatures_filt
-    else:
-        matched_sig_loci = df_signatures_filt[matched_sig_mask]
-    signature_size = len(matched_sig_loci)
-    mean_coverage = (
-        float(matched_sig_loci["coverage"].mean())
-        if "coverage" in matched_sig_loci.columns and len(matched_sig_loci) > 0
-        else 0.0
-    )
-
-    # Detection threshold for LOD: use (max of null + 1) as conservative
-    # This is the minimum reads needed to achieve p < 1/(S+1)
+    # Detection threshold from fitted null: reads needed for p < alpha (kept for scatter plot)
     if len(null_reads) > 0:
-        detection_threshold = int(np.max(null_reads)) + 1
+        from scipy.stats import nbinom as _nbinom_t
+        from scipy.stats import poisson as _poisson_t
+
+        if fitted_distribution == "NegativeBinomial":
+            detection_threshold = int(_nbinom_t.ppf(1 - alpha, null_fit_params["r"], null_fit_params["p"])) + 1
+        else:
+            lam_t = null_fit_params["lambda"]
+            detection_threshold = int(_poisson_t.ppf(1 - alpha, lam_t)) + 1
     else:
         detection_threshold = 1
 
-    # Personal LOD
+    # Personal LOD (Binomial model with noise floor, analytic threshold at FPR=5%)
     personal_lod = compute_personal_lod(
         signature_size=signature_size,
         mean_coverage=mean_coverage,
         denom_ratio=denom_ratio,
-        detection_threshold=detection_threshold,
+        p_err=p_err,
     )
 
     return DetectionResult(
@@ -376,6 +423,9 @@ def run_detection_analysis(  # noqa: PLR0912
         signature_size=signature_size,
         mean_coverage=mean_coverage,
         corrected_coverage=corrected_coverage,
+        detection_threshold=detection_threshold,
+        noise_rate=p_err,
+        n_effective=n_effective,
     )
 
 
@@ -439,24 +489,22 @@ def plot_null_distribution(
         ax.scatter(x_emp + jitter, null_plot, color="#3a9ad9", s=30,
                    alpha=0.85, zorder=4, label=f"Synthetic controls (n={len(null)})")
 
-        # --- Fitted synthetic controls distribution: boxplot ---
-        dist_name = getattr(detection, "fitted_distribution", "Poisson")
-        fit_params = getattr(detection, "null_fit_params", {})
+        # --- Binomial null distribution: boxplot ---
+        n_eff = getattr(detection, "n_effective", 0)
+        p_err_val = getattr(detection, "noise_rate", 0.0)
         n_samples = max(len(null) * 20, 500)
         rng2 = np.random.default_rng(7)
-        if dist_name == "NegativeBinomial" and fit_params:
-            from scipy.stats import nbinom as _nbinom_s
-            r_f, p_f = fit_params["r"], fit_params["p"]
-            mu_f = fit_params["mu"]
-            fit_samples = _nbinom_s.rvs(r_f, p_f, size=n_samples, random_state=rng2)
-            fit_label = f"Fitted distribution – NB (μ={mu_f:.2f})"
+        if n_eff > 0:
+            from scipy.stats import binom as _binom_s
+            fit_samples = _binom_s.rvs(n_eff, p_err_val, size=n_samples, random_state=rng2)
+            p_err_str = format_scientific(p_err_val) if p_err_val > 0 else "0"
+            fit_label = f"Binomial null (N={n_eff:,}, p_err={p_err_str})"
         else:
-            lam = fit_params.get("lambda", float(np.mean(null)))
+            # Fallback: Poisson from empirical null mean
+            lam = float(np.mean(null)) if len(null) > 0 else 0.01
             from scipy.stats import poisson as _poisson_s
-            fit_samples = _poisson_s.rvs(lam, size=n_samples, random_state=rng2)
-            all_zero = bool(np.all(null == 0))
-            jeffreys_note = " †" if all_zero else ""
-            fit_label = f"Fitted distribution – Poisson (λ={lam:.2f}{jeffreys_note})"
+            fit_samples = _poisson_s.rvs(max(lam, 1e-9), size=n_samples, random_state=rng2)
+            fit_label = f"Poisson fallback (λ={lam:.2f})"
         fit_plot = np.array([_safe(v) for v in fit_samples])
         bp = ax.boxplot(fit_plot, positions=[x_fit], widths=0.35,
                         patch_artist=True, manage_ticks=False,
@@ -490,20 +538,20 @@ def plot_null_distribution(
     ax.scatter([x_patient], [_safe(obs)], color="#c0392b", s=160,
                marker="*", zorder=6, label=f"Patient signal ({obs} reads)")
 
-    # --- Detection threshold ---
-    threshold = None
-    if len(null) > 0:
-        threshold = int(null.max()) + 1
-        ax.axhline(_safe(threshold), color="#7f8c8d", linewidth=1.5,
-                   linestyle=":", alpha=0.8, zorder=4,
-                   label=f"Detection threshold ({threshold} reads)\n"
-                         f"= max(synthetic) + 1 → p < 1/(N+1)")
+    # --- LOD line: convert TF → expected reads = LOD_TF × n_effective ---
+    lod_reads = None
+    if detection.personal_lod is not None and detection.n_effective > 0:
+        lod_reads = detection.personal_lod * detection.n_effective
+        lod_str = format_scientific(detection.personal_lod)
+        ax.axhline(_safe(lod_reads), color="#e67e22", linewidth=1.8,
+                   linestyle="--", alpha=0.9, zorder=4,
+                   label=f"LOD 95% (TF={lod_str}, {lod_reads:.1f} reads)")
 
     # --- Log scale + y limits ---
     ax.set_yscale("log")
     y_top = max(_safe(obs),
                 float(null.max()) if len(null) > 0 else 1,
-                threshold or 1) * 6
+                lod_reads if lod_reads else 1) * 6
     ax.set_ylim(_floor * 0.6, y_top)
 
     # --- Grid behind all data ---
@@ -535,14 +583,8 @@ def plot_null_distribution(
     ax.set_xticklabels(["Synthetic\ncontrols", "Cohort\ncontrols", "Patient\nsignal"])
 
     # --- Title ---
-    emp_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"
-    if detection.fitted_p_value is not None:
-        fit_str = (f"{detection.fitted_p_value:.3f}"
-                   if detection.fitted_p_value >= 0.001 else f"{detection.fitted_p_value:.2e}")
-        dist_short = "NB" if detection.fitted_distribution == "NegativeBinomial" else "Poisson"
-        title = f"{detection.call}  (p_empirical={emp_str},  p_{dist_short}={fit_str})"
-    else:
-        title = f"{detection.call}  (p={emp_str})"
+    binom_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"
+    title = f"{detection.call}  (p_binomial={binom_str})"
     ax.set_title(title, fontsize=11, fontweight="bold")
     ax.legend(fontsize=7, framealpha=0.85, loc="upper left",
               bbox_to_anchor=(1.18, 1), borderaxespad=0)
