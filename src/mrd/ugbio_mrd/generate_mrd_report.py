@@ -1,16 +1,18 @@
 import argparse
+import json
 import os
 import sys
 from dataclasses import dataclass
 from os.path import join as pjoin
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
-
+import matplotlib.pyplot as plt
 from ugbio_core.consts import FileExtension
 from ugbio_core.logger import logger
 
+import ugbio_mrd.mrd_utils as mrd
+from ugbio_mrd.mrd_detection import run_detection_analysis
+from ugbio_mrd.mrd_report_renderer import render_analysis_report, render_qc_report
 from ugbio_mrd.mrd_utils import read_intersection_dataframes, read_signature
 
 RESULTS_HTML_REPORT = ".mrd_analysis_report.html"
@@ -36,7 +38,7 @@ class MrdReportInputs:
     read_filter_query: str = None
 
 
-def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:
+def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:  # noqa: PLR0915
     """
     Generate both the MRD analysis report (Jinja2 HTML) and the MRD QC report (notebook).
 
@@ -45,23 +47,17 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     tuple[Path, Path]
         Paths to the analysis HTML report and the QC HTML report.
     """
-    import matplotlib.pyplot as plt
-
-    import ugbio_mrd.mrd_utils as mrd
-    from ugbio_mrd.mrd_detection import run_detection_analysis
-    from ugbio_mrd.mrd_report_renderer import render_analysis_report
-
     signatures_path, intersection_path = prepare_data_from_mrd_pipeline(mrd_report_inputs)
 
-    results_html_path = (
-        Path(mrd_report_inputs.output_dir) / (mrd_report_inputs.output_basename + RESULTS_HTML_REPORT)
-    )
+    results_html_path = Path(mrd_report_inputs.output_dir) / (mrd_report_inputs.output_basename + RESULTS_HTML_REPORT)
     qc_html_path = Path(mrd_report_inputs.output_dir) / (mrd_report_inputs.output_basename + QC_HTML_REPORT)
 
     # ── Analysis report: compute in Python, render via Jinja2 ──
     logger.info(f"Generating MRD analysis report (Jinja2). {results_html_path=}")
 
-    signature_filter_query = mrd_report_inputs.signature_filter_query or "(norm_coverage <= 2.5) and (norm_coverage >= 0.6)"
+    signature_filter_query = (
+        mrd_report_inputs.signature_filter_query or "(norm_coverage <= 2.5) and (norm_coverage >= 0.6)"
+    )
     read_filter_query = mrd_report_inputs.read_filter_query or "filt>0 and snvq>60 and mapq>=60"
 
     # 1. Load data
@@ -75,13 +71,18 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         mrd_report_inputs.featuremap_file, mrd_report_inputs.srsnv_metadata_json, read_filter_query
     )
     df_tf_filt, df_supporting_reads_per_locus_filt = mrd.get_tf_from_filtered_data(
-        df_features_filt, df_signatures_filt, plot_results=False,
-        title="Filtered reads and signatures", denom_ratio=denom_ratio,
+        df_features_filt,
+        df_signatures_filt,
+        plot_results=False,
+        title="Filtered reads and signatures",
+        denom_ratio=denom_ratio,
     )
 
     # 2. Run detection
     detection = run_detection_analysis(
-        df_tf=df_tf_filt, df_signatures_filt=df_signatures_filt, denom_ratio=denom_ratio,
+        df_tf=df_tf_filt,
+        df_signatures_filt=df_signatures_filt,
+        denom_ratio=denom_ratio,
     )
 
     # 3. Build applied filters
@@ -96,8 +97,8 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     applied_filters["Read filter"] = read_filter_query
 
     # 4. SBS plot helper
-    _SBS_TYPES = ["C>A", "C>G", "C>T", "T>A", "T>C", "T>G"]
-    _SBS_COLORS = ["#1EBFF0", "#050708", "#E62725", "#CBCACB", "#A1C935", "#ECC6C5"]
+    _sbs_types = ["C>A", "C>G", "C>T", "T>A", "T>C", "T>G"]  # noqa: F841
+    _sbs_colors = ["#1EBFF0", "#050708", "#E62725", "#CBCACB", "#A1C935", "#ECC6C5"]
 
     def plot_sbs_profile(df_sig, title="", ax=None, query=None):
         df = df_sig if query is None else df_sig.query(query)
@@ -105,18 +106,19 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         counts = df["mutation_type"].value_counts(normalize=True).reindex(_all_muts, fill_value=0)
         if ax is None:
             _, ax = plt.subplots(figsize=(6, 2.4))
-        bars = ax.barh(range(6), counts.values[::-1], color=list(reversed(_SBS_COLORS)),
-                       height=0.65, linewidth=0)
+        bars = ax.barh(range(6), counts.to_numpy()[::-1], color=list(reversed(_sbs_colors)), height=0.65, linewidth=0)
         ax.set_yticks(range(6))
         ax.set_yticklabels([m.replace("->", ">") for m in reversed(_all_muts)], fontsize=9, fontweight="bold")
-        for j, (bar, val) in enumerate(zip(bars, counts.values[::-1])):
-            ax.text(val + 0.003, bar.get_y() + bar.get_height() / 2,
-                    f"{val:.1%}", va="center", fontsize=8, color="#555")
-        ax.set_xlim(0, max(counts.values) * 1.25 + 0.02)
+        for _j, (bar, val) in enumerate(zip(bars, counts.to_numpy()[::-1], strict=False)):
+            ax.text(
+                val + 0.003, bar.get_y() + bar.get_height() / 2, f"{val:.1%}", va="center", fontsize=8, color="#555"
+            )
+        ax.set_xlim(0, max(counts.to_numpy()) * 1.25 + 0.02)
         ax.set_xlabel("Fraction", fontsize=8)
         ax.set_title(title, fontsize=10, fontweight="bold")
-        ax.text(0.99, 0.02, f"n = {len(df):,}", transform=ax.transAxes,
-                ha="right", va="bottom", fontsize=8, color="#7f8c8d")
+        ax.text(
+            0.99, 0.02, f"n = {len(df):,}", transform=ax.transAxes, ha="right", va="bottom", fontsize=8, color="#7f8c8d"
+        )
         ax.spines[["top", "right"]].set_visible(False)
         return ax
 
@@ -157,7 +159,6 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     results_html_path.write_text(html)
 
     # 6. Save detection JSON
-    import json
     detection_json = {
         "call": detection.call,
         "detected": detection.detected,
@@ -176,7 +177,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         "corrected_coverage": detection.corrected_coverage,
         "alpha": 0.01,
     }
-    detection_json_path = Path(mrd_report_inputs.output_dir) / f"{mrd_report_inputs.output_basename}.detection_result.json"
+    detection_json_path = (
+        Path(mrd_report_inputs.output_dir) / f"{mrd_report_inputs.output_basename}.detection_result.json"
+    )
     with open(detection_json_path, "w") as f:
         json.dump(detection_json, f, indent=2, default=str)
 
@@ -190,24 +193,32 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     # ── QC report: compute secondary analyses, render via Jinja2 ──
     logger.info(f"Generating MRD QC report (Jinja2). {qc_html_path=}")
 
-    from ugbio_mrd.mrd_report_renderer import render_qc_report
-
     # Secondary analysis 1: filtered reads + unfiltered signatures
     df_tf_unfilt, df_supporting_reads_per_locus_unfilt = mrd.get_tf_from_filtered_data(
-        df_features_filt, df_signatures, plot_results=False,
-        title="Filtered reads, unfiltered signatures", denom_ratio=denom_ratio,
+        df_features_filt,
+        df_signatures,
+        plot_results=False,
+        title="Filtered reads, unfiltered signatures",
+        denom_ratio=denom_ratio,
     )
     detection_unfilt = run_detection_analysis(
-        df_tf=df_tf_unfilt, df_signatures_filt=df_signatures, denom_ratio=denom_ratio,
+        df_tf=df_tf_unfilt,
+        df_signatures_filt=df_signatures,
+        denom_ratio=denom_ratio,
     )
 
     # Secondary analysis 2: unfiltered reads + filtered signatures
     df_tf_unfilt2, df_supporting_reads_per_locus_unfilt2 = mrd.get_tf_from_filtered_data(
-        df_features, df_signatures_filt, plot_results=False,
-        title="Unfiltered reads, filtered signatures", denom_ratio=1,
+        df_features,
+        df_signatures_filt,
+        plot_results=False,
+        title="Unfiltered reads, filtered signatures",
+        denom_ratio=1,
     )
     detection_unfilt2 = run_detection_analysis(
-        df_tf=df_tf_unfilt2, df_signatures_filt=df_signatures_filt, denom_ratio=1,
+        df_tf=df_tf_unfilt2,
+        df_signatures_filt=df_signatures_filt,
+        denom_ratio=1,
     )
 
     # Save HDF5 tables (secondary)

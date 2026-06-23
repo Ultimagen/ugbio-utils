@@ -80,8 +80,6 @@ class TestComputePersonalLod:
         )
         assert lod is None
 
-
-
     @pytest.fixture
     def mock_df_tf_detected(self):
         """Create a df_tf where matched signal clearly exceeds noise.
@@ -284,7 +282,7 @@ class TestFitNullDistribution:
 
     def test_nb_fitted_pvalue_more_conservative(self):
         """NB p-value should be >= Poisson p-value for the same overdispersed null."""
-        from scipy.stats import nbinom, poisson
+        from scipy.stats import nbinom, poisson  # noqa: PLC0415
 
         rng = np.random.default_rng(2)
         null = rng.negative_binomial(1, 0.5, size=200)
