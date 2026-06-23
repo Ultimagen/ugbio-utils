@@ -84,6 +84,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         df_tf=df_tf_filt,
         df_signatures_filt=df_signatures_filt,
         denom_ratio=denom_ratio,
+        df_supporting_reads_per_locus=df_supporting_reads_per_locus_filt,
     )
 
     # 3. Build applied filters
@@ -131,7 +132,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
 
     inputs_info = {
         "Sample": mrd_report_inputs.output_basename or "N/A",
-        "Matched signature VCFs": _fmt_files(mrd_report_inputs.matched_signatures_vcf_files),
+        "Patient signature VCFs": _fmt_files(mrd_report_inputs.matched_signatures_vcf_files),
         "Control signature VCFs": _fmt_files(mrd_report_inputs.control_signatures_vcf_files),
         "Featuremap file": Path(mrd_report_inputs.featuremap_file).name if mrd_report_inputs.featuremap_file else "—",
         "Coverage BED": Path(mrd_report_inputs.coverage_bed).name if mrd_report_inputs.coverage_bed else "—",
@@ -176,6 +177,10 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         "signature_size": detection.signature_size,
         "mean_coverage": detection.mean_coverage,
         "corrected_coverage": detection.corrected_coverage,
+        "qc_checks": [
+            {"label": c.label, "value": c.value_str, "threshold": c.threshold_str, "passed": c.passed}
+            for c in detection.qc_checks
+        ],
         "alpha": 0.01,
     }
     detection_json_path = (
@@ -211,7 +216,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         "noise_rate": detection.noise_rate,
         "n_effective": detection.n_effective,
         "jeffreys_prior_applied": detection.jeffreys_prior_applied,
-        "qc_flags": "; ".join(detection.qc_flags) if detection.qc_flags else "",
+        "qc_checks": "; ".join(
+            f"{c.label}: {c.value_str} ({'PASS' if c.passed else 'FAIL'})" for c in detection.qc_checks
+        ),
         "alpha": 0.01,
     }
     pd.DataFrame([detection_record]).to_hdf(output_h5_file, key="detection_result", mode="a")

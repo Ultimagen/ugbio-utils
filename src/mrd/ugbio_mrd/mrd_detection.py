@@ -24,10 +24,54 @@ from ugbio_core.logger import logger
 # detection, LOD, and threshold calculations in this module.
 DEFAULT_FPR: float = 0.05
 
-# QC thresholds — results are called Indeterminate when any of these fail
+# QC thresholds — displayed as checkboxes in the report
 MIN_SIGNATURE_SIZE: int = 500  # minimum filtered signature loci
 MIN_MEAN_COVERAGE: float = 15.0  # minimum mean coverage at signature loci
-MIN_SYNTHETIC_CONTROLS: int = 2  # minimum db_control replicates for reliable null
+MIN_SYNTHETIC_CONTROLS: int = 20  # minimum db_control replicates for reliable null
+# For multi-read QC: flag warning when P(X ≥ observed | Binom(sig_size, expected)) < threshold
+# i.e., the observed count is significantly higher than the Poisson expectation at the measured TF
+MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD: float = 0.01
+
+
+@dataclass
+class QcCheck:
+    """Single QC check result shown as a pass/fail checkbox in the report."""
+
+    label: str
+    value_str: str  # formatted observed value
+    threshold_str: str  # formatted threshold for display
+    passed: bool
+
+
+def _expected_multi_read_fraction(mean_coverage: float, tumor_vaf: float) -> float:
+    """Expected fraction of loci with ≥2 supporting reads via Poisson approximation.
+
+    Given λ = mean_coverage × tumor_vaf (expected reads per locus),
+    P(X ≥ 2) = 1 − (1 + λ) · exp(−λ).
+    """
+    lam = mean_coverage * tumor_vaf
+    if lam <= 0:
+        return 0.0
+    return float(1.0 - (1.0 + lam) * np.exp(-lam))
+
+
+def _multi_read_enrichment_pvalue(n_multi: int, signature_size: int, mean_coverage: float, tumor_vaf: float) -> float:
+    """Binomial right-tail p-value for multi-read loci enrichment.
+
+    Returns P(X ≥ n_multi | Binom(signature_size, p_expected)) where
+    p_expected = P(locus has ≥2 reads) under a Poisson model at the measured TF.
+    A small p-value means the observed count is significantly higher than expected,
+    indicating unexplained multi-read enrichment.
+    """
+    from scipy.stats import binom as _binom  # noqa: PLC0415
+
+    p_expected = _expected_multi_read_fraction(mean_coverage, tumor_vaf)
+    if signature_size <= 0:
+        return 1.0
+    if p_expected <= 0:
+        # expected is 0 — any positive observation is enriched, but p-value is exactly 0
+        return 0.0 if n_multi > 0 else 1.0
+    return float(_binom.sf(n_multi - 1, signature_size, p_expected))
 
 
 @dataclass
@@ -70,8 +114,8 @@ class DetectionResult:
     n_effective: int  # N = sig_size × mean_cov × denom_ratio for Binomial
     jeffreys_prior_applied: bool  # True when no db_control reads observed (p_err floor via prior)
 
-    # QC flags
-    qc_flags: list = field(default_factory=list)  # non-empty ⇒ Indeterminate call
+    # QC checks (shown as pass/fail checkboxes in the report)
+    qc_checks: list = field(default_factory=list)  # list[QcCheck]
 
 
 def _fit_null_distribution(null_reads: np.ndarray) -> tuple[str, dict]:
@@ -231,6 +275,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     df_signatures_filt: pd.DataFrame,
     denom_ratio: float,
     alpha: float = 0.01,
+    df_supporting_reads_per_locus: pd.DataFrame | None = None,
 ) -> DetectionResult:
     """
     Run the full MRD detection analysis.
@@ -284,7 +329,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             noise_rate=0.0,
             n_effective=0,
             jeffreys_prior_applied=False,
-            qc_flags=["No matched signature found in df_tf"],
+            qc_checks=[],
         )
 
     # Handle single or multiple matched signatures (take first)
@@ -356,26 +401,54 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
 
         p_value = float(_binom.sf(matched_reads - 1, n_effective, p_err))
 
-    # QC checks — any failure forces Indeterminate
-    qc_flags = []
-    if signature_size < MIN_SIGNATURE_SIZE:  # noqa: PLR2004
-        qc_flags.append(
-            f"Signature too small: {signature_size} loci (minimum {MIN_SIGNATURE_SIZE})"
-        )
-    if mean_coverage < MIN_MEAN_COVERAGE:  # noqa: PLR2004
-        qc_flags.append(
-            f"Low mean coverage: {mean_coverage:.1f}x (minimum {MIN_MEAN_COVERAGE:.0f}x)"
-        )
-    if len(null_reads) < MIN_SYNTHETIC_CONTROLS:  # noqa: PLR2004
-        qc_flags.append(
-            f"Insufficient synthetic controls: {len(null_reads)} (minimum {MIN_SYNTHETIC_CONTROLS})"
-        )
+    # QC checks — displayed as pass/fail checkboxes; do NOT force Indeterminate
+    qc_checks: list[QcCheck] = [
+        QcCheck(
+            label="Signature size",
+            value_str=f"{signature_size:,} loci",
+            threshold_str=f"≥ {MIN_SIGNATURE_SIZE:,} loci",
+            passed=signature_size >= MIN_SIGNATURE_SIZE,  # noqa: PLR2004
+        ),
+        QcCheck(
+            label="Mean coverage",
+            value_str=f"{mean_coverage:.1f}×",
+            threshold_str=f"≥ {MIN_MEAN_COVERAGE:.0f}×",
+            passed=mean_coverage >= MIN_MEAN_COVERAGE,  # noqa: PLR2004
+        ),
+        QcCheck(
+            label="Synthetic controls",
+            value_str=str(len(null_reads)),
+            threshold_str=f"≥ {MIN_SYNTHETIC_CONTROLS}",
+            passed=len(null_reads) >= MIN_SYNTHETIC_CONTROLS,  # noqa: PLR2004
+        ),
+    ]
+    if df_supporting_reads_per_locus is not None and signature_size > 0:
+        try:
+            matched_per_locus = df_supporting_reads_per_locus.query("signature_type == 'matched'")
+            n_multi = int((matched_per_locus["supporting_reads"] >= 2).sum())  # noqa: PLR2004
+            pct_multi = n_multi / signature_size
+            expected_pct = _expected_multi_read_fraction(mean_coverage, matched_vaf)
+            pvalue_enrich = _multi_read_enrichment_pvalue(n_multi, signature_size, mean_coverage, matched_vaf)
+            tf_str = f"{matched_vaf:.2%}" if matched_vaf >= 1e-4 else f"{matched_vaf:.2e}"  # noqa: PLR2004
+            qc_checks.append(
+                QcCheck(
+                    label="No multiple read support enrichment",
+                    value_str=(
+                        f"{pct_multi:.1%} ({n_multi:,}/{signature_size:,} loci), "
+                        f"p={pvalue_enrich:.3f}"
+                    ),
+                    threshold_str=(
+                        f"Enrichment prob \u2265 {MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD:.0%} "
+                        f"(expected {expected_pct:.1%} at TF={tf_str})"
+                    ),
+                    passed=pvalue_enrich >= MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Could not compute pct_multi_read QC check: %s", exc)
 
     # Detection call
-    if qc_flags:
-        detected = None
-        call = "Indeterminate"
-    elif len(null_reads) == 0:
+    if len(null_reads) == 0:
         detected = None
         call = "Indeterminate"
     elif p_value <= alpha:
@@ -427,7 +500,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         noise_rate=p_err,
         n_effective=n_effective,
         jeffreys_prior_applied=raw_reads_zero,
-        qc_flags=qc_flags,
+        qc_checks=qc_checks,
     )
 
 
@@ -558,7 +631,7 @@ def plot_null_distribution(  # noqa: PLR0915, C901
     # --- Patient signal ---
     x_patient = 2.3
     ax.scatter(
-        [x_patient], [_safe(obs)], color="#c0392b", s=160, marker="*", zorder=6, label=f"Patient signal ({obs} reads)"
+        [x_patient], [_safe(obs)], color="#c0392b", s=160, marker="*", zorder=6, label=f"Patient ({obs} reads)"
     )
 
     # --- Detection threshold / LOD line ---
@@ -606,7 +679,7 @@ def plot_null_distribution(  # noqa: PLR0915, C901
                     linestyle="-.",
                     alpha=0.9,
                     zorder=4,
-                    label=f"LOD signal ({n_lod:.1f} reads) = {lod_str} | 95% recall",
+                    label=f"LOD ({n_lod:.1f} reads) = {lod_str} | 95% recall",
                 )
 
     # --- Log scale + y limits ---
@@ -637,11 +710,11 @@ def plot_null_distribution(  # noqa: PLR0915, C901
     # --- X-axis labels ---
     ax.set_xlim(-0.5, 3.0)
     ax.set_xticks([0.3, 1.5, 2.3])
-    ax.set_xticklabels(["Synthetic\ncontrols", "Cohort\ncontrols", "Patient\nsignal"])
+    ax.set_xticklabels(["Synthetic\ncontrols", "Cohort\ncontrols", "Patient"])
 
     # --- Title ---
     binom_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
-    title = f"Patient signal vs. controls  (p={binom_str})"
+    title = f"Patient vs. controls  (p={binom_str})"
     ax.set_title(title, fontsize=11, fontweight="bold")
     ax.legend(fontsize=7, framealpha=0.85, loc="upper left", bbox_to_anchor=(1.18, 1), borderaxespad=0)
     ax.spines["top"].set_visible(False)
