@@ -45,8 +45,8 @@ class DetectionResult:
     null_max_reads: int
     n_synthetic_controls: int
 
-    # Personal LOD (95% power)
-    personal_lod: float | None  # TF at which detection power >= 95%
+    # Personal LOD (95% recall)
+    personal_lod: float | None  # TF at which recall >= 95%
 
     # Null distribution (raw supporting read counts for each synthetic control)
     null_reads: np.ndarray  # shape (n_synthetic_controls,), dtype int
@@ -124,7 +124,7 @@ def compute_personal_lod(
     mean_coverage: float,
     denom_ratio: float,
     p_err: float,
-    target_power: float = 0.95,
+    target_recall: float = 0.95,
     fpr: float = DEFAULT_FPR,
 ) -> float | None:
     """
@@ -135,12 +135,12 @@ def compute_personal_lod(
     1. Compute total corrected coverage N = signature_size * mean_coverage * denom_ratio.
     2. Derive the detection threshold ``n_th`` as the smallest k such that
        Binomial.sf(k-1, N, p_err) < fpr  (analytic FPR control on the null).
-    3. Find the smallest TF where detection power >= target_power, i.e.
-       Binomial.sf(n_th-1, N, p_err + TF) >= target_power,
+    3. Find the smallest TF where recall >= target_recall, i.e.
+       Binomial.sf(n_th-1, N, p_err + TF) >= target_recall,
        solved exactly with scipy.optimize.fsolve.
 
     Unlike the original Poisson simulation the noise floor (p_err) is
-    included in the power calculation, so the returned LOD is the TF that
+    included in the recall calculation, so the returned LOD is the TF that
     must be *added on top of the background error rate* to reach the target
     sensitivity.
 
@@ -155,7 +155,7 @@ def compute_personal_lod(
     p_err : float
         Background error rate estimated from db_control synthetic controls
         (total supporting reads / total corrected coverage).
-    target_power : float
+    target_recall : float
         Required detection probability (default 0.95).
     fpr : float
         False-positive rate used to set the detection threshold (default 0.05).
@@ -194,13 +194,13 @@ def compute_personal_lod(
         return None
     n_th = int(hits[0])
 
-    # Step 2: exact solve for the smallest TF where power >= target_power
-    # power(tf) = binom.sf(n_th - 1, n, p_err + tf) - target_power = 0
-    def _power_residual(tf):
-        return np.abs(_binom.sf(n_th - 1, n, p_err + tf[0]) - target_power)
+    # Step 2: exact solve for the smallest TF where recall >= target_recall
+    # recall(tf) = binom.sf(n_th - 1, n, p_err + tf) - target_recall = 0
+    def _recall_residual(tf):
+        return np.abs(_binom.sf(n_th - 1, n, p_err + tf[0]) - target_recall)
 
     try:
-        result = fsolve(_power_residual, x0=[1e-6], full_output=True)
+        result = fsolve(_recall_residual, x0=[1e-6], full_output=True)
         lod_tf = float(result[0][0])
         if lod_tf < 0 or lod_tf > 1:
             logger.debug(
@@ -578,7 +578,7 @@ def plot_null_distribution(  # noqa: PLR0915, C901
                     linestyle="-.",
                     alpha=0.9,
                     zorder=4,
-                    label=f"LOD signal ({n_lod:.1f} reads) = {lod_str} | 95% power",
+                    label=f"LOD signal ({n_lod:.1f} reads) = {lod_str} | 95% recall",
                 )
 
     # --- Log scale + y limits ---
