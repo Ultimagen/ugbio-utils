@@ -593,6 +593,85 @@ def render_intersection_af_combined(
     return _fig_to_base64(fig)
 
 
+def render_supporting_reads_histogram(
+    df_supporting_reads_per_locus: pd.DataFrame,
+    signature_size: int,
+) -> str:
+    """
+    Histogram of alt-supporting read counts per variant locus.
+
+    Shows how many signature loci have 1, 2, 3, ... alt-supporting reads
+    in the cfDNA intersection, separately for matched (signal) and control
+    (noise) loci.  Loci with zero supporting reads are annotated but not
+    plotted (they dominate and would compress the axis).
+    """
+    matched = df_supporting_reads_per_locus.query("signature_type == 'matched'")["supporting_reads"]
+    control = df_supporting_reads_per_locus.query("signature_type != 'matched'")["supporting_reads"]
+
+    if len(matched) == 0 and len(control) == 0:
+        return ""
+
+    max_reads = max(
+        matched.max() if len(matched) > 0 else 1,
+        control.max() if len(control) > 0 else 1,
+    )
+    x_cap = min(int(max_reads) + 1, 20)  # cap display at 20 reads
+    bins = list(range(1, x_cap + 2))  # edges: 1, 2, ..., x_cap+1
+
+    fig, ax = plt.subplots(figsize=(8, 3))
+    fig.patch.set_facecolor("#f4f6f8")
+    ax.set_facecolor("#f4f6f8")
+
+    n_ctrl_with_reads = len(control)
+    n_matched_with_reads = len(matched)
+    n_matched_zero = max(0, signature_size - n_matched_with_reads)
+
+    if n_ctrl_with_reads > 0:
+        ax.hist(
+            control.clip(upper=x_cap),
+            bins=bins,
+            color="#3498db",
+            alpha=0.65,
+            label=f"Control (n={n_ctrl_with_reads:,} loci with reads)",
+            align="left",
+        )
+    if n_matched_with_reads > 0:
+        ax.hist(
+            matched.clip(upper=x_cap),
+            bins=bins,
+            color="#c0392b",
+            alpha=0.7,
+            label=f"Matched (n={n_matched_with_reads:,}/{signature_size:,} loci with reads)",
+            align="left",
+        )
+
+    if n_matched_zero > 0:
+        ax.text(
+            0.97,
+            0.96,
+            f"{n_matched_zero:,} matched loci have 0 reads (not shown)",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=8,
+            color="#7f8c8d",
+            style="italic",
+        )
+
+    ax.set_xlabel("Alt-supporting reads per variant locus", fontsize=10)
+    ax.set_ylabel("Number of loci", fontsize=10)
+    ax.set_title("Alt-Supporting Reads per Variant Locus", fontsize=11, fontweight="bold")
+    ax.legend(fontsize=9, framealpha=0.85)
+    ax.set_xticks(bins[:-1])
+    ax.set_axisbelow(True)
+    ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")  # noqa: FBT003
+    ax.spines[["top", "right"]].set_visible(False)
+    plt.tight_layout()
+    img = _fig_to_base64(fig)
+    plt.close(fig)
+    return img
+
+
 def render_analysis_report(  # noqa: PLR0913
     detection: DetectionResult,
     df_tf: pd.DataFrame,
@@ -673,6 +752,11 @@ def render_analysis_report(  # noqa: PLR0913
     # Intersection AF — single combined plot
     intersection_af_img = render_intersection_af_combined(df_supporting_reads_per_locus, df_signatures_filt)
 
+    # Supporting reads per locus histogram
+    supporting_reads_hist_img = render_supporting_reads_histogram(
+        df_supporting_reads_per_locus, detection.signature_size
+    )
+
     # SNVQ distribution
     intersection_snvq_img = render_intersection_snvq_combined(df_features_filt) if df_features_filt is not None else ""
 
@@ -693,6 +777,7 @@ def render_analysis_report(  # noqa: PLR0913
         "sbs96_plots": sbs96_plots,
         "sbs6_vaf_plots": sbs6_vaf_plots,
         "intersection_af_img": intersection_af_img,
+        "supporting_reads_hist_img": supporting_reads_hist_img,
         "intersection_snvq_img": intersection_snvq_img,
         "signature_filter_query": signature_filter_query,
         "read_filter_query": read_filter_query,

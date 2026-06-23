@@ -267,8 +267,15 @@
       <div class="note">
         &#9888; Only {{ detection.n_synthetic_controls }} synthetic controls — p-value reliability is reduced.
       </div>
-      {% endif %}
-    </div>
+      {% endif %}      {% if detection.qc_flags %}
+      <div style="margin-top:10px;">
+        {% for flag in detection.qc_flags %}
+        <div class="note" style="background:#fff3cd;border-left:4px solid #f0ad4e;">
+          &#9888; QC: {{ flag }}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}    </div>
 
     <!-- ── ASSAY METRICS ── -->
     <div class="section">
@@ -310,21 +317,6 @@
         where 95% of patients exceed this threshold.
       </div>
     </div>
-
-
-
-    <!-- ── APPLIED FILTERS ── -->
-    {% if applied_filters %}
-    <div class="section">
-      <div class="section-title">Applied Filters</div>
-      <table class="filter-table">
-        <tr><th>Filter</th><th>Description</th></tr>
-        {% for name, desc in applied_filters.items() %}
-        <tr><td><strong>{{ name }}</strong></td><td>{{ desc }}</td></tr>
-        {% endfor %}
-      </table>
-    </div>
-    {% endif %}
 
     <!-- ── SUBSTITUTION TYPES + VAF + SBS96 ── -->
     {% if sbs6_vaf_plots or sbs96_plots %}
@@ -375,6 +367,34 @@
           Higher SNVQ indicates higher confidence in the SNV call.
         </div>
       </div>
+    </div>
+    {% endif %}
+
+    <!-- ── ALT-SUPPORTING READS HISTOGRAM ── -->
+    {% if supporting_reads_hist_img %}
+    <div class="section">
+      <div class="section-title">Alt-Supporting Reads per Variant Locus</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ supporting_reads_hist_img }}" alt="Alt-supporting reads histogram">
+        <div class="chart-description">
+          Distribution of alt-supporting cfDNA read counts per signature locus (after read filter).
+          Red: matched (tumor) loci — signal. Blue: control loci — noise baseline.
+          Loci with zero supporting reads are not shown; their count is annotated in the plot.
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- ── APPLIED FILTERS ── -->
+    {% if applied_filters %}
+    <div class="section">
+      <div class="section-title">Applied Filters</div>
+      <table class="filter-table">
+        <tr><th>Filter</th><th>Description</th></tr>
+        {% for name, desc in applied_filters.items() %}
+        <tr><td><strong>{{ name }}</strong></td><td>{{ desc }}</td></tr>
+        {% endfor %}
+      </table>
     </div>
     {% endif %}
 
