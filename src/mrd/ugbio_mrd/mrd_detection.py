@@ -25,7 +25,7 @@ from ugbio_core.logger import logger
 DEFAULT_FPR: float = 0.05
 
 # QC thresholds — results are called Indeterminate when any of these fail
-MIN_SIGNATURE_SIZE: int = 30  # minimum filtered signature loci
+MIN_SIGNATURE_SIZE: int = 500  # minimum filtered signature loci
 MIN_MEAN_COVERAGE: float = 15.0  # minimum mean coverage at signature loci
 MIN_SYNTHETIC_CONTROLS: int = 2  # minimum db_control replicates for reliable null
 
