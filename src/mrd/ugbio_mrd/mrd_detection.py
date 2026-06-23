@@ -1,16 +1,15 @@
 """
 MRD statistical detection framework.
 
-Implements Phase 1 of the MRD algorithmic improvement plan:
-- Empirical p-value from synthetic control distribution
+Implements the MRD detection procedure:
+- Binomial p-value under a background noise model derived from db_control signatures
 - Detection call (MRD Detected / Not Detected / Indeterminate)
-- Personal LOD estimation via Poisson simulation
+- Personal LOD estimation via analytical Binomial model
 
 The test statistic is the count of supporting reads passing quality
 filters (SNVQ >= 60, MAPQ >= 60, filt > 0) — the same metric already
-computed by the existing pipeline. The null distribution is derived
-empirically from S synthetic control signatures processed through
-the same cfDNA sample.
+computed by the existing pipeline. The noise rate (p_err) is estimated
+from the db_control synthetic signatures via Jeffreys-prior Bayes estimate.
 
 Reference: bfx-read-the-docs/docs/tumor-informed-mrd/mrd_dev_plan_analysis.md
 """
@@ -21,6 +20,10 @@ import numpy as np
 import pandas as pd
 from ugbio_core.logger import logger
 
+# Uniform false-positive rate / significance threshold used throughout all
+# detection, LOD, and threshold calculations in this module.
+DEFAULT_FPR: float = 0.05
+
 
 @dataclass
 class DetectionResult:
@@ -30,7 +33,7 @@ class DetectionResult:
     detected: bool | None  # True/False/None (indeterminate)
     call: str  # "MRD Detected" / "MRD Not Detected" / "Indeterminate"
 
-    # Empirical p-value
+    # Binomial p-value: P(X >= matched_reads | n_effective, noise_rate)
     p_value: float
 
     # Observed signal
@@ -116,49 +119,13 @@ def _fit_null_distribution(null_reads: np.ndarray) -> tuple[str, dict]:
     return "NegativeBinomial", {"r": r_hat, "p": p_hat, "mu": mu}
 
 
-def compute_empirical_pvalue(
-    observed_reads: int,
-    null_reads: np.ndarray,
-) -> float:
-    """
-    Compute one-sided empirical p-value.
-
-    p-value = (# synthetics with reads >= observed + 1) / (S + 1)
-
-    The +1 in numerator and denominator is the conservative correction
-    (Phipson & Smyth, 2010) that accounts for the observed sample itself
-    being a draw from the null when H0 is true. This avoids p-values of
-    exactly 0 and ensures valid type-I error control.
-
-    Parameters
-    ----------
-    observed_reads : int
-        Number of supporting reads for the matched signature.
-    null_reads : np.ndarray
-        Array of supporting read counts from synthetic control signatures.
-
-    Returns
-    -------
-    float
-        Empirical p-value in range [1/(S+1), 1].
-    """
-    s = len(null_reads)
-    if s == 0:
-        logger.warning("No synthetic controls available for p-value computation")
-        return 1.0
-    n_ge = np.sum(null_reads >= observed_reads)
-    # Conservative correction (Phipson & Smyth, 2010)
-    p_value = (n_ge + 1) / (s + 1)
-    return float(p_value)
-
-
 def compute_personal_lod(
     signature_size: int,
     mean_coverage: float,
     denom_ratio: float,
     p_err: float,
     target_power: float = 0.95,
-    fpr: float = 0.05,
+    fpr: float = DEFAULT_FPR,
 ) -> float | None:
     """
     Estimate personal LOD via analytical Binomial model.
@@ -263,8 +230,9 @@ def run_detection_analysis(  # noqa: PLR0912
     Run the full MRD detection analysis.
 
     Extracts matched and synthetic control supporting read counts from
-    the existing df_tf dataframe, computes the empirical p-value,
-    makes a detection call, and estimates personal LOD.
+    the existing df_tf dataframe, computes a Binomial p-value against
+    a noise model derived from db_control signatures, makes a detection
+    call, and estimates personal LOD.
 
     Parameters
     ----------
@@ -455,9 +423,8 @@ def plot_null_distribution(
     - Fitted null (purple): samples from the fitted Poisson/NB distribution,
       showing how well the parametric model matches the empirical data.
 
-    Detection threshold: set at max(synthetic controls) + 1. This is the
-    minimum number of reads needed so that the empirical p-value falls
-    below 1/(N+1), i.e. the patient signal exceeds all N synthetic controls.
+    Detection threshold: minimum reads needed for Binomial p-value < alpha
+    under the fitted Poisson/NB null (used only for scatter-plot annotation).
 
     Parameters
     ----------
@@ -554,13 +521,12 @@ def plot_null_distribution(
     lod_tf_plot = None
     n_eff_plot = getattr(detection, "n_effective", 0)
     p_err_plot = getattr(detection, "noise_rate", 0.0)
-    _fpr = 0.05
     if n_eff_plot > 0:
         from scipy.stats import binom as _binom_lod
         k_max = int(_binom_lod.ppf(0.9999, n_eff_plot, max(p_err_plot, 1e-12))) + 10
         k_range = np.arange(0, k_max + 1)
         sf_vals = _binom_lod.sf(k_range - 1, n_eff_plot, p_err_plot)
-        hits = np.where(sf_vals < _fpr)[0]
+        hits = np.where(sf_vals < DEFAULT_FPR)[0]
         if len(hits) > 0:
             n_th_plot = int(hits[0])
             lod_tf_plot = compute_personal_lod(
@@ -569,11 +535,11 @@ def plot_null_distribution(
                 denom_ratio=1.0,
                 p_err=p_err_plot,
             )
-            # Detection threshold line: minimum reads to call a positive (5% FPR)
+            # Detection threshold line: minimum reads to call a positive (DEFAULT_FPR)
             n_th_vaf = n_th_plot / n_eff_plot if n_eff_plot > 0 else 0.0
             ax.axhline(_safe(n_th_plot), color="#e67e22", linewidth=1.8,
                        linestyle="--", alpha=0.9, zorder=4,
-                       label=f"Detection threshold ({format_scientific(n_th_vaf)}) | 5% FPR")
+                       label=f"Detection threshold ({format_scientific(n_th_vaf)}) | {DEFAULT_FPR*100:.0f}% FPR")
             if lod_tf_plot is not None:
                 lod_str = format_scientific(lod_tf_plot)
                 # LOD line: expected reads at the LOD TF (n_eff × (p_err + LOD_TF))
@@ -611,8 +577,8 @@ def plot_null_distribution(
         ax2.yaxis.set_major_formatter(mticker.FuncFormatter(
             lambda y, _: format_scientific(y) if y > 0 else "0"
         ))
-        # Move secondary y-axis label inward so legend has space
-        ax2.yaxis.set_label_coords(1.08, 0.5)
+        # Move secondary y-axis label further out to avoid overlap with tick labels
+        ax2.yaxis.set_label_coords(1.18, 0.5)
 
     # --- X-axis labels ---
     ax.set_xlim(-0.5, 3.0)
