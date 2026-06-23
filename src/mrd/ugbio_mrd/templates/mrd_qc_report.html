@@ -254,15 +254,25 @@
       <div class="note">
         &#9888; Only {{ detection.n_synthetic_controls }} synthetic controls — p-value reliability is reduced.
       </div>
-      {% endif %}      {% if detection.qc_flags %}
-      <div style="margin-top:10px;">
-        {% for flag in detection.qc_flags %}
-        <div class="note" style="background:#fff3cd;border-left:4px solid #f0ad4e;">
-          &#9888; QC: {{ flag }}
+      {% endif %}
+    </div>
+
+    <!-- ── QC CHECKS ── -->
+    {% if detection.qc_checks %}
+    <div class="section">
+      <div class="section-title">QC Checks</div>
+      <div style="display:flex; flex-direction:column; gap:6px;">
+        {% for check in detection.qc_checks %}
+        <div style="display:flex; align-items:center; gap:10px; padding:8px 14px; background:{% if check.passed %}#eafaf1{% else %}#fff8e1{% endif %}; border-radius:6px; border-left:4px solid {% if check.passed %}#2ecc71{% else %}#f0ad4e{% endif %};">
+          <span style="font-size:17px; line-height:1;">{% if check.passed %}✅{% else %}⚠️{% endif %}</span>
+          <span style="font-weight:600; min-width:220px; font-size:13px;">{{ check.label }}</span>
+          <span style="font-family:monospace; font-size:13px;">{{ check.value_str }}</span>
+          <span style="color:#7f8c8d; font-size:11px; margin-left:6px;">threshold: {{ check.threshold_str }}</span>
         </div>
         {% endfor %}
       </div>
-      {% endif %}    </div>
+    </div>
+    {% endif %}
 
     <!-- ── ASSAY METRICS ── -->
     <div class="section">

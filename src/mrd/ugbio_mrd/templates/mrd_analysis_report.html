@@ -267,15 +267,25 @@
       <div class="note">
         &#9888; Only {{ detection.n_synthetic_controls }} synthetic controls — p-value reliability is reduced.
       </div>
-      {% endif %}      {% if detection.qc_flags %}
-      <div style="margin-top:10px;">
-        {% for flag in detection.qc_flags %}
-        <div class="note" style="background:#fff3cd;border-left:4px solid #f0ad4e;">
-          &#9888; QC: {{ flag }}
+      {% endif %}
+    </div>
+
+    <!-- ── QC CHECKS ── -->
+    {% if detection.qc_checks %}
+    <div class="section">
+      <div class="section-title">QC Checks</div>
+      <div style="display:flex; flex-direction:column; gap:6px;">
+        {% for check in detection.qc_checks %}
+        <div style="display:flex; align-items:center; gap:10px; padding:8px 14px; background:{% if check.passed %}#eafaf1{% else %}#fff8e1{% endif %}; border-radius:6px; border-left:4px solid {% if check.passed %}#2ecc71{% else %}#f0ad4e{% endif %};">
+          <span style="font-size:17px; line-height:1;">{% if check.passed %}✅{% else %}⚠️{% endif %}</span>
+          <span style="font-weight:600; min-width:220px; font-size:13px;">{{ check.label }}</span>
+          <span style="font-family:monospace; font-size:13px;">{{ check.value_str }}</span>
+          <span style="color:#7f8c8d; font-size:11px; margin-left:6px;">threshold: {{ check.threshold_str }}</span>
         </div>
         {% endfor %}
       </div>
-      {% endif %}    </div>
+    </div>
+    {% endif %}
 
     <!-- ── ASSAY METRICS ── -->
     <div class="section">
@@ -306,7 +316,7 @@
 
     <!-- ── SIGNAL VS. NOISE ── -->
     <div class="section">
-      <div class="section-title">Patient Signal vs. Controls</div>
+      <div class="section-title">Patient vs. Controls</div>
       <div class="chart-container">
         <img src="data:image/png;base64,{{ signal_noise_img }}" alt="Signal vs. Noise distribution">
       </div>
@@ -349,7 +359,7 @@
         <img src="data:image/png;base64,{{ intersection_af_img }}" alt="cfDNA Intersection AF">
         <div class="chart-description">
           Allele-fraction distribution at signature loci with ≥1 supporting cfDNA read.
-          Red: matched (tumor) signature loci (signal). Blue: control signature loci (noise).
+          Red: patient signature loci (signal). Blue: control signature loci (noise).
         </div>
       </div>
     </div>
@@ -363,7 +373,7 @@
         <img src="data:image/png;base64,{{ intersection_snvq_img }}" alt="cfDNA Intersection SNVQ">
         <div class="chart-description">
           SNVQ score distribution of cfDNA reads at signature loci (after read filter).
-          Red: matched (tumor) signature loci. Blue: control signature loci.
+          Red: patient signature loci. Blue: control signature loci.
           Higher SNVQ indicates higher confidence in the SNV call.
         </div>
       </div>
@@ -378,7 +388,7 @@
         <img src="data:image/png;base64,{{ supporting_reads_hist_img }}" alt="Alt-supporting reads histogram">
         <div class="chart-description">
           Distribution of alt-supporting cfDNA read counts per signature locus (after read filter).
-          Red: matched (tumor) loci — signal. Blue: control loci — noise baseline.
+          Red: patient loci — signal. Blue: control loci — noise baseline.
           Loci with zero supporting reads are not shown; their count is annotated in the plot.
         </div>
       </div>

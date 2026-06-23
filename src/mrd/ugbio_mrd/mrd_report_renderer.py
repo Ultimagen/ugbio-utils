@@ -367,7 +367,7 @@ def render_intersection_af(
     from scipy.stats import gaussian_kde  # noqa: PLC0415
 
     queries = [
-        ("Matched", "Loci from the matched (tumor) signature — signal", "signature_type == 'matched'"),
+        ("Patient", "Loci from the patient (tumor) signature — signal", "signature_type == 'matched'"),
         ("Control", "Loci from control signature(s) — noise baseline", "signature_type != 'matched'"),
     ]
     bar_colors = {"Matched": "#c0392b", "Control": "#3498db"}
@@ -477,7 +477,7 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
             alpha=0.7,
             edgecolor="white",
             linewidth=0.5,
-            label=f"Matched signature (n={len(matched):,})",
+            label=f"Patient signature (n={len(matched):,})",
             density=True,
         )
         if len(matched) >= 5:  # noqa: PLR2004
@@ -564,7 +564,7 @@ def render_intersection_af_combined(
             alpha=0.65,
             edgecolor="white",
             linewidth=0.5,
-            label=f"Matched signature (n={len(matched_af):,})",
+            label=f"Patient signature (n={len(matched_af):,})",
         )
         if len(matched_af) >= 5:  # noqa: PLR2004
             try:
@@ -641,7 +641,7 @@ def render_supporting_reads_histogram(
             bins=bins,
             color="#c0392b",
             alpha=0.7,
-            label=f"Matched (n={n_matched_with_reads:,}/{signature_size:,} loci with reads)",
+            label=f"Patient signature (n={n_matched_with_reads:,}/{signature_size:,} loci with reads)",
             align="left",
         )
 

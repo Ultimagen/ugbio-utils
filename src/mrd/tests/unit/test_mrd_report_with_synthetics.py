@@ -73,4 +73,3 @@ def test_generate_report_with_synthetics(resources_dir, tmp_path_factory, n_cont
     assert detection["matched_supporting_reads"] >= 0
     assert detection["signature_size"] > 0
     assert detection["mean_coverage"] > 0
-
