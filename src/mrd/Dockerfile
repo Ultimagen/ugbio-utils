@@ -47,5 +47,3 @@ RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
 USER ugbio
 
 WORKDIR /home/ugbio
-
-COPY --from=build ./src/mrd/ugbio_mrd/reports ./src/mrd/ugbio_mrd/reports

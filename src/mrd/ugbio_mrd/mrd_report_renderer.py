@@ -724,9 +724,8 @@ def render_qc_report(
     unfilt_sig_sbs_vaf_parts = []
     for sig in matched_sigs:
         sig_df = df_signatures.query(f"signature == '{sig}'")
-        unfilt_sig_sbs_vaf_parts.append(
-            render_sbs_vaf_combined(sig_df, signature_filter_query, plot_sbs_fn, plot_af_fn)
-        )
+        _sbs96, sbs6_vaf = render_sbs_vaf_combined(sig_df, signature_filter_query, plot_sbs_fn, plot_af_fn)
+        unfilt_sig_sbs_vaf_parts.append(sbs6_vaf)
     unfilt_sig_sbs_vaf_img = unfilt_sig_sbs_vaf_parts[0] if unfilt_sig_sbs_vaf_parts else None
 
     unfilt_sig_intersection_img = render_intersection_af_combined(
@@ -740,9 +739,8 @@ def render_qc_report(
     for sig in matched_sigs:
         sig_df = df_signatures_filt.query(f"signature == '{sig}'")
         if len(sig_df) > 0:
-            unfilt_reads_sbs_vaf_parts.append(
-                render_sbs_vaf_combined(sig_df, signature_filter_query, plot_sbs_fn, plot_af_fn)
-            )
+            _sbs96, sbs6_vaf = render_sbs_vaf_combined(sig_df, signature_filter_query, plot_sbs_fn, plot_af_fn)
+            unfilt_reads_sbs_vaf_parts.append(sbs6_vaf)
     unfilt_reads_sbs_vaf_img = unfilt_reads_sbs_vaf_parts[0] if unfilt_reads_sbs_vaf_parts else None
 
     unfilt_reads_intersection_img = render_intersection_af_combined(
