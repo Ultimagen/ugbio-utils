@@ -41,16 +41,15 @@ _COSMIC_COLORS_SBS = {
     "T>G": "#ECC6C5",
 }
 _COSMIC_LABEL_TEXT_COLORS = {
-    "C>A": "#1EBFF0", "C>G": "#555555", "C>T": "#E62725",
-    "T>A": "#999999", "T>C": "#A1C935", "T>G": "#e8a0a0",
+    "C>A": "#1EBFF0",
+    "C>G": "#555555",
+    "C>T": "#E62725",
+    "T>A": "#999999",
+    "T>C": "#A1C935",
+    "T>G": "#e8a0a0",
 }
 _FLANKS = ["A", "C", "G", "T"]
-_SBS96_CHANNELS = [
-    f"{f5}[{mt}]{f3}"
-    for mt in _COSMIC_MUT_TYPES
-    for f5 in _FLANKS
-    for f3 in _FLANKS
-]
+_SBS96_CHANNELS = [f"{f5}[{mt}]{f3}" for mt in _COSMIC_MUT_TYPES for f5 in _FLANKS for f3 in _FLANKS]
 _RC = str.maketrans("ACGT", "TGCA")
 
 
@@ -80,9 +79,11 @@ def _count_sbs96(df: pd.DataFrame) -> pd.Series | None:
         v[col] = v[col].astype(str).str.upper()
     valid = set("ACGT")
     mask = (
-        v["ref"].isin(valid) & v["alt"].isin(valid) &
-        v["x_prev1"].isin(valid) & v["x_next1"].isin(valid) &
-        (v["ref"] != v["alt"])
+        v["ref"].isin(valid)
+        & v["alt"].isin(valid)
+        & v["x_prev1"].isin(valid)
+        & v["x_next1"].isin(valid)
+        & (v["ref"] != v["alt"])
     )
     v = v[mask]
     if v.empty:
@@ -99,8 +100,8 @@ def _count_sbs96(df: pd.DataFrame) -> pd.Series | None:
 
     ref[needs_flip] = _comp(v["ref"][needs_flip])
     alt[needs_flip] = _comp(v["alt"][needs_flip])
-    f5[needs_flip] = _comp(v["x_next1"][needs_flip])   # 5' ← former 3' after RC
-    f3[needs_flip] = _comp(v["x_prev1"][needs_flip])   # 3' ← former 5' after RC
+    f5[needs_flip] = _comp(v["x_next1"][needs_flip])  # 5' ← former 3' after RC
+    f3[needs_flip] = _comp(v["x_prev1"][needs_flip])  # 3' ← former 5' after RC
 
     labels = f5 + "[" + ref + ">" + alt + "]" + f3
     counts = labels.value_counts()
@@ -133,21 +134,29 @@ def render_sbs96_profile(df_features_filt: pd.DataFrame) -> str:
     ax.set_facecolor("white")
 
     x = np.arange(96)
-    bar_colors = [_COSMIC_COLORS_SBS[ch[ch.index("[") + 1: ch.index("]")]] for ch in _SBS96_CHANNELS]
-    ax.bar(x, fracs.values, color=bar_colors, width=0.9, linewidth=0, zorder=2)
+    bar_colors = [_COSMIC_COLORS_SBS[ch[ch.index("[") + 1 : ch.index("]")]] for ch in _SBS96_CHANNELS]
+    ax.bar(x, fracs.to_numpy(), color=bar_colors, width=0.9, linewidth=0, zorder=2)
 
     # Vertical separators between mutation-type groups
     for i in range(1, 6):
         ax.axvline(i * 16 - 0.5, color="#cccccc", linewidth=1.0, zorder=3)
 
     # Mutation-type header labels above each group
-    y_max = fracs.values.max() if fracs.values.max() > 0 else 0.01
+    y_max = fracs.to_numpy().max() if fracs.to_numpy().max() > 0 else 0.01
     ax.set_ylim(0, y_max * 1.25)
     for i, mt in enumerate(_COSMIC_MUT_TYPES):
         cx = i * 16 + 7.5
         col = _COSMIC_COLORS_SBS[mt]
-        ax.text(cx, y_max * 1.18, mt, ha="center", va="top", fontsize=9,
-                fontweight="bold", color=col if mt != "C>G" else "#444444")
+        ax.text(
+            cx,
+            y_max * 1.18,
+            mt,
+            ha="center",
+            va="top",
+            fontsize=9,
+            fontweight="bold",
+            color=col if mt != "C>G" else "#444444",
+        )
 
     # X-axis: show 5'-base labels (16 per group × 6 groups)
     tick_labels = [f"{ch[0]}{ch[ch.index('[') + 1]}{ch[-1]}" for ch in _SBS96_CHANNELS]  # trinucleotide context
@@ -157,7 +166,7 @@ def render_sbs96_profile(df_features_filt: pd.DataFrame) -> str:
     ax.set_ylabel("Fraction", fontsize=9)
     ax.set_title(f"Mutational Profile — matched cfDNA reads (n={total:,})", fontsize=11, fontweight="bold")
     ax.spines[["top", "right"]].set_visible(False)
-    ax.yaxis.grid(True, linestyle=":", linewidth=0.5, alpha=0.6, zorder=0)
+    ax.yaxis.grid(True, linestyle=":", linewidth=0.5, alpha=0.6, zorder=0)  # noqa: FBT003
     ax.set_axisbelow(True)
     plt.tight_layout()
     return _fig_to_base64(fig)
@@ -165,7 +174,7 @@ def render_sbs96_profile(df_features_filt: pd.DataFrame) -> str:
 
 def render_binomial_distribution(detection: DetectionResult, alpha: float = 0.01) -> str:
     """Render Binomial null distribution PMF with observed reads and detection threshold marked."""
-    from scipy.stats import binom as _binom
+    from scipy.stats import binom as _binom  # noqa: PLC0415
 
     n = detection.n_effective
     p = detection.noise_rate
@@ -195,7 +204,11 @@ def render_binomial_distribution(detection: DetectionResult, alpha: float = 0.01
         ax.bar(x[below], pmf[below], color="#3a9ad9", alpha=0.75, width=0.7, label="Null (not significant)")
     if any(above):
         ax.bar(
-            x[above], pmf[above], color="#e74c3c", alpha=0.75, width=0.7,
+            x[above],
+            pmf[above],
+            color="#e74c3c",
+            alpha=0.75,
+            width=0.7,
             label=f"Detected region (\u2265{n_th} reads, p < {alpha})",
         )
 
@@ -203,7 +216,10 @@ def render_binomial_distribution(detection: DetectionResult, alpha: float = 0.01
     if 0 <= obs <= x_max:
         p_str = f"{detection.p_value:.2e}"
         ax.axvline(
-            obs, color="#2c3e50", linewidth=2.5, linestyle="--",
+            obs,
+            color="#2c3e50",
+            linewidth=2.5,
+            linestyle="--",
             label=f"Observed ({obs} reads, p={p_str})",
         )
     elif obs > x_max:
@@ -213,7 +229,8 @@ def render_binomial_distribution(detection: DetectionResult, alpha: float = 0.01
             xy=(x_max, pmf[x_max] if x_max < len(pmf) else 0),
             xytext=(x_max - 2, max(pmf) * 0.6),
             arrowprops={"arrowstyle": "->", "color": "#2c3e50"},
-            color="#2c3e50", fontsize=9,
+            color="#2c3e50",
+            fontsize=9,
         )
 
     noise_label = format_scientific(p) if p > 0 else "0"
@@ -221,10 +238,11 @@ def render_binomial_distribution(detection: DetectionResult, alpha: float = 0.01
     ax.set_ylabel("Probability", fontsize=10)
     ax.set_title(
         f"Binomial null  (N={n:,}, noise rate={noise_label})",
-        fontsize=11, fontweight="bold",
+        fontsize=11,
+        fontweight="bold",
     )
     ax.set_axisbelow(True)
-    ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")
+    ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")  # noqa: FBT003
     ax.legend(fontsize=8, framealpha=0.85)
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -289,29 +307,42 @@ def render_sbs_vaf_combined(
         total = int(counts.sum())
         fracs = counts / total
         x = np.arange(96)
-        bar_colors = [_COSMIC_COLORS_SBS[ch[ch.index("[") + 1: ch.index("]")]] for ch in _SBS96_CHANNELS]
-        ax96.bar(x, fracs.values, color=bar_colors, width=0.9, linewidth=0, zorder=2)
+        bar_colors = [_COSMIC_COLORS_SBS[ch[ch.index("[") + 1 : ch.index("]")]] for ch in _SBS96_CHANNELS]
+        ax96.bar(x, fracs.to_numpy(), color=bar_colors, width=0.9, linewidth=0, zorder=2)
         for i in range(1, 6):
             ax96.axvline(i * 16 - 0.5, color="#cccccc", linewidth=1.0, zorder=3)
-        y_max = fracs.values.max() if fracs.values.max() > 0 else 0.01
+        y_max = fracs.to_numpy().max() if fracs.to_numpy().max() > 0 else 0.01
         ax96.set_ylim(0, y_max * 1.30)
         for i, mt in enumerate(_COSMIC_MUT_TYPES):
-            ax96.text(i * 16 + 7.5, y_max * 1.22, mt, ha="center", va="top",
-                      fontsize=9, fontweight="bold",
-                      color=_COSMIC_COLORS_SBS[mt] if mt != "C>G" else "#444444")
+            ax96.text(
+                i * 16 + 7.5,
+                y_max * 1.22,
+                mt,
+                ha="center",
+                va="top",
+                fontsize=9,
+                fontweight="bold",
+                color=_COSMIC_COLORS_SBS[mt] if mt != "C>G" else "#444444",
+            )
         tick_labels = [f"{ch[0]}{ch[ch.index('[') + 1]}{ch[-1]}" for ch in _SBS96_CHANNELS]
         ax96.set_xticks(x)
         ax96.set_xticklabels(tick_labels, fontsize=5.5, rotation=90)
         ax96.set_xlim(-0.5, 95.5)
         ax96.set_ylabel("Fraction", fontsize=9)
-        ax96.set_title(f"Mutational Profile (SBS96) — {total:,} signature variants",
-                       fontsize=10, fontweight="bold")
+        ax96.set_title(f"Mutational Profile (SBS96) — {total:,} signature variants", fontsize=10, fontweight="bold")
         ax96.spines[["top", "right"]].set_visible(False)
-        ax96.yaxis.grid(True, linestyle=":", linewidth=0.5, alpha=0.6, zorder=0)
+        ax96.yaxis.grid(True, linestyle=":", linewidth=0.5, alpha=0.6, zorder=0)  # noqa: FBT003
         ax96.set_axisbelow(True)
     else:
-        ax96.text(0.5, 0.5, "Insufficient trinucleotide context data for SBS96",
-                  ha="center", va="center", transform=ax96.transAxes, color="#999")
+        ax96.text(
+            0.5,
+            0.5,
+            "Insufficient trinucleotide context data for SBS96",
+            ha="center",
+            va="center",
+            transform=ax96.transAxes,
+            color="#999",
+        )
         ax96.set_axis_off()
     plt.tight_layout()
     sbs96_img = _fig_to_base64(fig96)
@@ -333,7 +364,7 @@ def render_intersection_af(
     df_signatures: pd.DataFrame,
 ) -> list[dict]:
     """Render individual cfDNA intersection AF histograms, return list of {label, description, img_b64}."""
-    from scipy.stats import gaussian_kde
+    from scipy.stats import gaussian_kde  # noqa: PLC0415
 
     queries = [
         ("Matched", "Loci from the matched (tumor) signature — signal", "signature_type == 'matched'"),
@@ -354,19 +385,28 @@ def render_intersection_af(
         fig, ax = plt.subplots(figsize=(7, 2))
         fig.patch.set_facecolor("#f4f6f8")
         counts, bin_edges, _ = ax.hist(
-            af_data, bins=50, range=(0, 1),
-            color=bar_colors[label], alpha=0.65, edgecolor="white", linewidth=0.5,
+            af_data,
+            bins=50,
+            range=(0, 1),
+            color=bar_colors[label],
+            alpha=0.65,
+            edgecolor="white",
+            linewidth=0.5,
         )
         # Smoothed KDE line scaled to histogram counts
-        if len(af_data) >= 5:
+        if len(af_data) >= 5:  # noqa: PLR2004
             try:
-                from matplotlib import patheffects
+                from matplotlib import patheffects  # noqa: PLC0415
+
                 kde = gaussian_kde(af_data, bw_method=0.3)
                 x_kde = np.linspace(0, 1, 500)
                 bin_width = bin_edges[1] - bin_edges[0]
                 ax.plot(
-                    x_kde, kde(x_kde) * len(af_data) * bin_width,
-                    color=kde_colors[label], linewidth=1.2, zorder=4,
+                    x_kde,
+                    kde(x_kde) * len(af_data) * bin_width,
+                    color=kde_colors[label],
+                    linewidth=1.2,
+                    zorder=4,
                     label="KDE",
                     path_effects=[
                         patheffects.withStroke(linewidth=2.5, foreground="white"),
@@ -380,7 +420,7 @@ def render_intersection_af(
         ax.set_xlabel("Allele Fraction (AF)")
         ax.set_ylabel("Count")
         ax.set_axisbelow(True)
-        ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")
+        ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")  # noqa: FBT003
         ax.set_facecolor("#f4f6f8")
         plt.tight_layout()
         results.append({"label": label, "description": desc, "img_b64": _fig_to_base64(fig)})
@@ -393,8 +433,8 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
     if "snvq" not in df_features_filt.columns:
         return ""
 
-    from matplotlib import patheffects
-    from scipy.stats import gaussian_kde
+    from matplotlib import patheffects  # noqa: PLC0415
+    from scipy.stats import gaussian_kde  # noqa: PLC0415
 
     matched = df_features_filt.query("signature_type == 'matched'")["snvq"].dropna()
     control = df_features_filt.query("signature_type != 'matched'")["snvq"].dropna()
@@ -403,35 +443,56 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
     fig.patch.set_facecolor("#f4f6f8")
 
     bins = np.arange(0, 101, 2)
-    bin_width = bins[1] - bins[0]
     if len(control) > 0:
-        ax.hist(control, bins=bins, color="#3498db", alpha=0.6,
-                edgecolor="white", linewidth=0.5, label=f"Other signatures (n={len(control):,})",
-                density=True)
-        if len(control) >= 5:
+        ax.hist(
+            control,
+            bins=bins,
+            color="#3498db",
+            alpha=0.6,
+            edgecolor="white",
+            linewidth=0.5,
+            label=f"Other signatures (n={len(control):,})",
+            density=True,
+        )
+        if len(control) >= 5:  # noqa: PLR2004
             try:
                 kde = gaussian_kde(control, bw_method=0.3)
                 x_kde = np.linspace(0, 100, 1000)
-                ax.plot(x_kde, kde(x_kde),
-                        color="#1a5276", linewidth=1.2, zorder=4,
-                        label="KDE (other)",
-                        path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"),
-                                      patheffects.Normal()])
+                ax.plot(
+                    x_kde,
+                    kde(x_kde),
+                    color="#1a5276",
+                    linewidth=1.2,
+                    zorder=4,
+                    label="KDE (other)",
+                    path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"), patheffects.Normal()],
+                )
             except Exception as e:  # noqa: BLE001
                 logger.debug("KDE line skipped (control snvq): %s", e)
     if len(matched) > 0:
-        ax.hist(matched, bins=bins, color="#c0392b", alpha=0.7,
-                edgecolor="white", linewidth=0.5, label=f"Matched signature (n={len(matched):,})",
-                density=True)
-        if len(matched) >= 5:
+        ax.hist(
+            matched,
+            bins=bins,
+            color="#c0392b",
+            alpha=0.7,
+            edgecolor="white",
+            linewidth=0.5,
+            label=f"Matched signature (n={len(matched):,})",
+            density=True,
+        )
+        if len(matched) >= 5:  # noqa: PLR2004
             try:
                 kde = gaussian_kde(matched, bw_method=0.3)
                 x_kde = np.linspace(0, 100, 1000)
-                ax.plot(x_kde, kde(x_kde),
-                        color="#7b241c", linewidth=1.2, zorder=4,
-                        label="KDE (matched)",
-                        path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"),
-                                      patheffects.Normal()])
+                ax.plot(
+                    x_kde,
+                    kde(x_kde),
+                    color="#7b241c",
+                    linewidth=1.2,
+                    zorder=4,
+                    label="KDE (matched)",
+                    path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"), patheffects.Normal()],
+                )
             except Exception as e:  # noqa: BLE001
                 logger.debug("KDE line skipped (matched snvq): %s", e)
 
@@ -441,7 +502,7 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
     ax.legend(fontsize=9, framealpha=0.85)
     ax.set_xlim(0, 100)
     ax.set_axisbelow(True)
-    ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")
+    ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")  # noqa: FBT003
     ax.set_facecolor("#f4f6f8")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -454,8 +515,8 @@ def render_intersection_af_combined(
     df_signatures: pd.DataFrame,
 ) -> str:
     """Render a single combined AF histogram: matched (blue) vs control (red) with KDE lines and legend."""
-    from matplotlib import patheffects
-    from scipy.stats import gaussian_kde
+    from matplotlib import patheffects  # noqa: PLC0415
+    from scipy.stats import gaussian_kde  # noqa: PLC0415
 
     matched_idx = df_supporting_reads_per_locus.query("signature_type == 'matched'").index
     control_idx = df_supporting_reads_per_locus.query("signature_type != 'matched'").index
@@ -470,32 +531,54 @@ def render_intersection_af_combined(
     bin_width = bin_edges[1] - bin_edges[0]
 
     if len(control_af) > 0:
-        ax.hist(control_af, bins=bin_edges, color="#3498db", alpha=0.55,
-                edgecolor="white", linewidth=0.5, label=f"Other signatures (n={len(control_af):,})")
-        if len(control_af) >= 5:
+        ax.hist(
+            control_af,
+            bins=bin_edges,
+            color="#3498db",
+            alpha=0.55,
+            edgecolor="white",
+            linewidth=0.5,
+            label=f"Other signatures (n={len(control_af):,})",
+        )
+        if len(control_af) >= 5:  # noqa: PLR2004
             try:
                 kde = gaussian_kde(control_af, bw_method=0.3)
                 x_kde = np.linspace(0, 1, 500)
-                ax.plot(x_kde, kde(x_kde) * len(control_af) * bin_width,
-                        color="#1a5276", linewidth=1.2, zorder=4,
-                        label="KDE (other)",
-                        path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"),
-                                      patheffects.Normal()])
+                ax.plot(
+                    x_kde,
+                    kde(x_kde) * len(control_af) * bin_width,
+                    color="#1a5276",
+                    linewidth=1.2,
+                    zorder=4,
+                    label="KDE (other)",
+                    path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"), patheffects.Normal()],
+                )
             except Exception as e:  # noqa: BLE001
                 logger.debug("KDE line skipped (control): %s", e)
 
     if len(matched_af) > 0:
-        ax.hist(matched_af, bins=bin_edges, color="#c0392b", alpha=0.65,
-                edgecolor="white", linewidth=0.5, label=f"Matched signature (n={len(matched_af):,})")
-        if len(matched_af) >= 5:
+        ax.hist(
+            matched_af,
+            bins=bin_edges,
+            color="#c0392b",
+            alpha=0.65,
+            edgecolor="white",
+            linewidth=0.5,
+            label=f"Matched signature (n={len(matched_af):,})",
+        )
+        if len(matched_af) >= 5:  # noqa: PLR2004
             try:
                 kde = gaussian_kde(matched_af, bw_method=0.3)
                 x_kde = np.linspace(0, 1, 500)
-                ax.plot(x_kde, kde(x_kde) * len(matched_af) * bin_width,
-                        color="#7b241c", linewidth=1.2, zorder=4,
-                        label="KDE (matched)",
-                        path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"),
-                                      patheffects.Normal()])
+                ax.plot(
+                    x_kde,
+                    kde(x_kde) * len(matched_af) * bin_width,
+                    color="#7b241c",
+                    linewidth=1.2,
+                    zorder=4,
+                    label="KDE (matched)",
+                    path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"), patheffects.Normal()],
+                )
             except Exception as e:  # noqa: BLE001
                 logger.debug("KDE line skipped (matched): %s", e)
 
@@ -504,13 +587,13 @@ def render_intersection_af_combined(
     ax.set_title("cfDNA Intersection Allele Fraction", fontsize=11, fontweight="bold")
     ax.legend(fontsize=9, framealpha=0.85)
     ax.set_axisbelow(True)
-    ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")
+    ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")  # noqa: FBT003
     ax.set_facecolor("#f4f6f8")
     plt.tight_layout()
     return _fig_to_base64(fig)
 
 
-def render_analysis_report(
+def render_analysis_report(  # noqa: PLR0913
     detection: DetectionResult,
     df_tf: pd.DataFrame,
     df_signatures: pd.DataFrame,
@@ -576,9 +659,14 @@ def render_analysis_report(
     sbs6_vaf_plots = []
     for sig in matched_sigs:
         sig_df = df_signatures.query(f"signature == '{sig}'")
-        sbs96_img, sbs6_vaf_img = render_sbs_vaf_combined(sig_df, signature_filter_query, plot_sbs_fn, plot_af_fn,
-                                                           df_features=df_features,
-                                                           df_features_filt=df_features_filt)
+        sbs96_img, sbs6_vaf_img = render_sbs_vaf_combined(
+            sig_df,
+            signature_filter_query,
+            plot_sbs_fn,
+            plot_af_fn,
+            df_features=df_features,
+            df_features_filt=df_features_filt,
+        )
         sbs96_plots.append(sbs96_img)
         sbs6_vaf_plots.append(sbs6_vaf_img)
 
@@ -589,7 +677,7 @@ def render_analysis_report(
     intersection_snvq_img = render_intersection_snvq_combined(df_features_filt) if df_features_filt is not None else ""
 
     # Format values for template
-    binom_p_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"
+    binom_p_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
     noise_rate_str = format_scientific(detection.noise_rate) if detection.noise_rate > 0 else "0"
 
     context = {
@@ -619,7 +707,7 @@ def render_analysis_report(
     return template.render(**context)
 
 
-def render_qc_report(
+def render_qc_report(  # noqa: PLR0913
     detection: DetectionResult,
     detection_unfilt: DetectionResult,
     detection_unfilt2: DetectionResult,
@@ -703,12 +791,17 @@ def render_qc_report(
             ("Matched reads\nunfiltered", df_features.query("signature_type=='matched'")["rl"]),
             ("Matched reads\nfiltered", df_features.query(f"signature_type=='matched' and {read_filter_query}")["rl"]),
             ("Unmatched reads\nunfiltered", df_features.query("signature_type!='matched'")["rl"]),
-            ("Unmatched reads\nfiltered", df_features.query(f"signature_type!='matched' and {read_filter_query}")["rl"]),
+            (
+                "Unmatched reads\nfiltered",
+                df_features.query(f"signature_type!='matched' and {read_filter_query}")["rl"],
+            ),
         ]
         max_val = max(s.max() for _, s in panels if len(s) > 0) if any(len(s) > 0 for _, s in panels) else 250
-        for ax, (title, data) in zip(axs.flatten(), panels):
+        for ax, (title, data) in zip(axs.flatten(), panels, strict=False):
             if len(data) > 0:
-                ax.hist(data, bins=range(int(max_val) + 1), color="#3a9ad9", alpha=0.7, edgecolor="white", linewidth=0.3)
+                ax.hist(
+                    data, bins=range(int(max_val) + 1), color="#3a9ad9", alpha=0.7, edgecolor="white", linewidth=0.3
+                )
             ax.set_title(title, fontsize=9, fontweight="bold")
             ax.set_facecolor("#f4f6f8")
         for ax in axs[-1, :]:
@@ -728,9 +821,7 @@ def render_qc_report(
         unfilt_sig_sbs_vaf_parts.append(sbs6_vaf)
     unfilt_sig_sbs_vaf_img = unfilt_sig_sbs_vaf_parts[0] if unfilt_sig_sbs_vaf_parts else None
 
-    unfilt_sig_intersection_img = render_intersection_af_combined(
-        df_supporting_reads_per_locus_unfilt, df_signatures
-    )
+    unfilt_sig_intersection_img = render_intersection_af_combined(df_supporting_reads_per_locus_unfilt, df_signatures)
 
     # ── QC Analysis — Unfiltered Reads ──
     unfilt_reads_signal_noise_img = _render_signal_noise_internal(detection_unfilt2, df_tf_unfilt2)
@@ -748,7 +839,7 @@ def render_qc_report(
     )
 
     # ── Format values ──
-    binom_p_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"
+    binom_p_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
     noise_rate_str = format_scientific(detection.noise_rate) if detection.noise_rate > 0 else "0"
 
     context = {

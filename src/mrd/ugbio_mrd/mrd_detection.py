@@ -61,8 +61,8 @@ class DetectionResult:
     detection_threshold: int  # minimum reads for p < alpha from fitted null
 
     # Binomial model fields
-    noise_rate: float             # background error rate from db_control (p_err)
-    n_effective: int              # N = sig_size × mean_cov × denom_ratio for Binomial
+    noise_rate: float  # background error rate from db_control (p_err)
+    n_effective: int  # N = sig_size × mean_cov × denom_ratio for Binomial
     jeffreys_prior_applied: bool  # True when no db_control reads observed (p_err floor via prior)
 
 
@@ -97,13 +97,13 @@ def _fit_null_distribution(null_reads: np.ndarray) -> tuple[str, dict]:
     # the principled non-informative-prior estimate. It avoids p_value=0 without
     # inflating the rate, and is strictly more conservative than adding 1 count.
     mu = float((np.sum(null_reads) + 0.5) / (n + 0.5))
-    if n < 3:
+    if n < 3:  # noqa: PLR2004
         return "Poisson", {"lambda": mu}
 
     var = float(np.var(null_reads, ddof=1))
     disp_index = var / mu  # = 1 for Poisson; > 1 means overdispersed
 
-    if disp_index <= 1.5:
+    if disp_index <= 1.5:  # noqa: PLR2004
         return "Poisson", {"lambda": mu}
 
     # Overdispersed: fit Negative Binomial by method of moments
@@ -165,8 +165,8 @@ def compute_personal_lod(
     float or None
         Personal LOD (tumor fraction above background) or None if not computable.
     """
-    from scipy.optimize import fsolve
-    from scipy.stats import binom as _binom
+    from scipy.optimize import fsolve  # noqa: PLC0415
+    from scipy.stats import binom as _binom  # noqa: PLC0415
 
     if signature_size <= 0 or mean_coverage <= 0:
         logger.warning(f"Cannot compute personal LOD: signature_size={signature_size}, mean_coverage={mean_coverage}")
@@ -186,8 +186,7 @@ def compute_personal_lod(
     hits = np.where(sf_values < fpr)[0]
     if len(hits) == 0:
         logger.debug(
-            "Personal LOD: no threshold satisfies FPR<%.3f "
-            "(N=%d, p_err=%.2e) — LOD indeterminate",
+            "Personal LOD: no threshold satisfies FPR<%.3f (N=%d, p_err=%.2e) — LOD indeterminate",
             fpr,
             n,
             p_err,
@@ -205,8 +204,7 @@ def compute_personal_lod(
         lod_tf = float(result[0][0])
         if lod_tf < 0 or lod_tf > 1:
             logger.debug(
-                "Personal LOD fsolve returned out-of-range value %.2e; "
-                "n=%d, p_err=%.2e, n_th=%d",
+                "Personal LOD fsolve returned out-of-range value %.2e; n=%d, p_err=%.2e, n_th=%d",
                 lod_tf,
                 n,
                 p_err,
@@ -220,7 +218,7 @@ def compute_personal_lod(
     return lod_tf
 
 
-def run_detection_analysis(  # noqa: PLR0912
+def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     df_tf: pd.DataFrame,
     df_signatures_filt: pd.DataFrame,
     denom_ratio: float,
@@ -312,8 +310,8 @@ def run_detection_analysis(  # noqa: PLR0912
 
     # Fit null distribution (Poisson or Negative Binomial — kept for scatter plot)
     if len(null_reads) > 0:
-        from scipy.stats import nbinom as _nbinom
-        from scipy.stats import poisson as _poisson
+        from scipy.stats import nbinom as _nbinom  # noqa: PLC0415
+        from scipy.stats import poisson as _poisson  # noqa: PLC0415
 
         fitted_distribution, null_fit_params = _fit_null_distribution(null_reads)
         if fitted_distribution == "NegativeBinomial":
@@ -345,7 +343,7 @@ def run_detection_analysis(  # noqa: PLR0912
     if len(null_reads) == 0 or n_effective == 0:
         p_value = 1.0
     else:
-        from scipy.stats import binom as _binom
+        from scipy.stats import binom as _binom  # noqa: PLC0415
 
         p_value = float(_binom.sf(matched_reads - 1, n_effective, p_err))
 
@@ -362,8 +360,8 @@ def run_detection_analysis(  # noqa: PLR0912
 
     # Detection threshold from fitted null: reads needed for p < alpha (kept for scatter plot)
     if len(null_reads) > 0:
-        from scipy.stats import nbinom as _nbinom_t
-        from scipy.stats import poisson as _poisson_t
+        from scipy.stats import nbinom as _nbinom_t  # noqa: PLC0415
+        from scipy.stats import poisson as _poisson_t  # noqa: PLC0415
 
         if fitted_distribution == "NegativeBinomial":
             detection_threshold = int(_nbinom_t.ppf(1 - alpha, null_fit_params["r"], null_fit_params["p"])) + 1
@@ -405,7 +403,7 @@ def run_detection_analysis(  # noqa: PLR0912
     )
 
 
-def plot_null_distribution(
+def plot_null_distribution(  # noqa: PLR0915, C901
     detection: "DetectionResult",
     df_tf: pd.DataFrame,
     ax=None,
@@ -435,8 +433,8 @@ def plot_null_distribution(
     ax : matplotlib.axes.Axes, optional
         Axes to draw on. Creates a new figure if None.
     """
-    import matplotlib.pyplot as plt
-    import matplotlib.ticker as mticker
+    import matplotlib.pyplot as plt  # noqa: PLC0415
+    import matplotlib.ticker as mticker  # noqa: PLC0415
 
     if ax is None:
         _, ax = plt.subplots(figsize=(8, 6))
@@ -461,8 +459,15 @@ def plot_null_distribution(
         null_plot = np.array([_safe(v) for v in null])
         rng = np.random.default_rng(42)
         jitter = rng.uniform(-0.14, 0.14, size=len(null))
-        ax.scatter(x_emp + jitter, null_plot, color="#3a9ad9", s=30,
-                   alpha=0.85, zorder=4, label=f"Synthetic controls (n={len(null)})")
+        ax.scatter(
+            x_emp + jitter,
+            null_plot,
+            color="#3a9ad9",
+            s=30,
+            alpha=0.85,
+            zorder=4,
+            label=f"Synthetic controls (n={len(null)})",
+        )
 
         # --- Binomial null distribution: boxplot ---
         n_eff = getattr(detection, "n_effective", 0)
@@ -470,23 +475,30 @@ def plot_null_distribution(
         n_samples = max(len(null) * 20, 500)
         rng2 = np.random.default_rng(7)
         if n_eff > 0:
-            from scipy.stats import binom as _binom_s
+            from scipy.stats import binom as _binom_s  # noqa: PLC0415
+
             fit_samples = _binom_s.rvs(n_eff, p_err_val, size=n_samples, random_state=rng2)
             p_err_str = format_scientific(p_err_val) if p_err_val > 0 else "0"
             fit_label = f"Binomial null (N={n_eff:,}, p_err={p_err_str})"
         else:
             # Fallback: Poisson from empirical null mean
             lam = float(np.mean(null)) if len(null) > 0 else 0.01
-            from scipy.stats import poisson as _poisson_s
+            from scipy.stats import poisson as _poisson_s  # noqa: PLC0415
+
             fit_samples = _poisson_s.rvs(max(lam, 1e-9), size=n_samples, random_state=rng2)
             fit_label = f"Poisson fallback (λ={lam:.2f})"
         fit_plot = np.array([_safe(v) for v in fit_samples])
-        bp = ax.boxplot(fit_plot, positions=[x_fit], widths=0.35,
-                        patch_artist=True, manage_ticks=False,
-                        medianprops={"color": "#4a0e5c", "linewidth": 1.5},
-                        flierprops={"marker": ""},
-                        whiskerprops={"color": "#7b2d8b"},
-                        capprops={"color": "#7b2d8b"})
+        bp = ax.boxplot(
+            fit_plot,
+            positions=[x_fit],
+            widths=0.35,
+            patch_artist=True,
+            manage_ticks=False,
+            medianprops={"color": "#4a0e5c", "linewidth": 1.5},
+            flierprops={"marker": ""},
+            whiskerprops={"color": "#7b2d8b"},
+            capprops={"color": "#7b2d8b"},
+        )
         for patch in bp["boxes"]:
             patch.set_facecolor("#7b2d8b")
             patch.set_alpha(0.25)
@@ -502,16 +514,24 @@ def plot_null_distribution(
         rng3 = np.random.default_rng(99)
         jitter_c = rng3.uniform(-0.14, 0.14, size=len(ctrl_data))
         for i, v in enumerate(ctrl_data.values):
-            ax.scatter([x_cohort + jitter_c[i]], [_safe(v)], color="#e67e22", s=30,
-                       marker="D", zorder=5, alpha=0.9,
-                       label="Cohort control" if i == 0 else "_nolegend_")
+            ax.scatter(
+                [x_cohort + jitter_c[i]],
+                [_safe(v)],
+                color="#e67e22",
+                s=30,
+                marker="D",
+                zorder=5,
+                alpha=0.9,
+                label="Cohort control" if i == 0 else "_nolegend_",
+            )
     except KeyError:
         pass
 
     # --- Patient signal ---
     x_patient = 2.3
-    ax.scatter([x_patient], [_safe(obs)], color="#c0392b", s=160,
-               marker="*", zorder=6, label=f"Patient signal ({obs} reads)")
+    ax.scatter(
+        [x_patient], [_safe(obs)], color="#c0392b", s=160, marker="*", zorder=6, label=f"Patient signal ({obs} reads)"
+    )
 
     # --- Detection threshold / LOD line ---
     # n_th: smallest k s.t. P(X >= k | n_eff, p_err) < 5% (95th percentile of null).
@@ -522,7 +542,8 @@ def plot_null_distribution(
     n_eff_plot = getattr(detection, "n_effective", 0)
     p_err_plot = getattr(detection, "noise_rate", 0.0)
     if n_eff_plot > 0:
-        from scipy.stats import binom as _binom_lod
+        from scipy.stats import binom as _binom_lod  # noqa: PLC0415
+
         k_max = int(_binom_lod.ppf(0.9999, n_eff_plot, max(p_err_plot, 1e-12))) + 10
         k_range = np.arange(0, k_max + 1)
         sf_vals = _binom_lod.sf(k_range - 1, n_eff_plot, p_err_plot)
@@ -537,36 +558,43 @@ def plot_null_distribution(
             )
             # Detection threshold line: minimum reads to call a positive (DEFAULT_FPR)
             n_th_vaf = n_th_plot / n_eff_plot if n_eff_plot > 0 else 0.0
-            ax.axhline(_safe(n_th_plot), color="#e67e22", linewidth=1.8,
-                       linestyle="--", alpha=0.9, zorder=4,
-                       label=f"Detection threshold ({format_scientific(n_th_vaf)}) | {DEFAULT_FPR*100:.0f}% FPR")
+            ax.axhline(
+                _safe(n_th_plot),
+                color="#e67e22",
+                linewidth=1.8,
+                linestyle="--",
+                alpha=0.9,
+                zorder=4,
+                label=f"Detection threshold ({format_scientific(n_th_vaf)}) | {DEFAULT_FPR * 100:.0f}% FPR",
+            )
             if lod_tf_plot is not None:
                 lod_str = format_scientific(lod_tf_plot)
                 # LOD line: expected reads at the LOD TF (n_eff × (p_err + LOD_TF))
                 n_lod = float(n_eff_plot) * (p_err_plot + lod_tf_plot)
-                ax.axhline(_safe(n_lod), color="#8e44ad", linewidth=1.8,
-                           linestyle="-.", alpha=0.9, zorder=4,
-                           label=f"LOD signal ({n_lod:.1f} reads) = {lod_str} | 95% power")
+                ax.axhline(
+                    _safe(n_lod),
+                    color="#8e44ad",
+                    linewidth=1.8,
+                    linestyle="-.",
+                    alpha=0.9,
+                    zorder=4,
+                    label=f"LOD signal ({n_lod:.1f} reads) = {lod_str} | 95% power",
+                )
 
     # --- Log scale + y limits ---
     ax.set_yscale("log")
     n_lod_top = float(n_eff_plot) * (p_err_plot + lod_tf_plot) if (lod_tf_plot and n_eff_plot) else 1
-    y_top = max(_safe(obs),
-                float(null.max()) if len(null) > 0 else 1,
-                n_th_plot if n_th_plot else 1,
-                n_lod_top) * 6
+    y_top = max(_safe(obs), float(null.max()) if len(null) > 0 else 1, n_th_plot if n_th_plot else 1, n_lod_top) * 6
     ax.set_ylim(_floor * 0.6, y_top)
 
     # --- Grid behind all data ---
     ax.set_axisbelow(True)
-    ax.yaxis.grid(True, which="both", linestyle=":", linewidth=0.6, color="#dde1e7", alpha=0.9)
+    ax.yaxis.grid(True, which="both", linestyle=":", linewidth=0.6, color="#dde1e7", alpha=0.9)  # noqa: FBT003
     ax.set_facecolor("#f4f6f8")
 
     # --- Primary Y-axis label ---
     ax.set_ylabel("cfDNA reads supporting signature", fontsize=10)
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(
-        lambda y, _: f"{int(round(y))}" if y >= 0.9 else "0"
-    ))
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y, _: f"{int(round(y))}" if y >= 0.9 else "0"))  # noqa: PLR2004
 
     # --- Secondary Y-axis: ctDNA VAF ---
     if corr_cov > 0:
@@ -574,9 +602,7 @@ def plot_null_distribution(
         ax2.set_yscale("log")
         ax2.set_ylim(_floor * 0.6 / corr_cov, y_top / corr_cov)
         ax2.set_ylabel("ctDNA VAF", fontsize=10)
-        ax2.yaxis.set_major_formatter(mticker.FuncFormatter(
-            lambda y, _: format_scientific(y) if y > 0 else "0"
-        ))
+        ax2.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y, _: format_scientific(y) if y > 0 else "0"))
         # Move secondary y-axis label further out to avoid overlap with tick labels
         ax2.yaxis.set_label_coords(1.18, 0.5)
 
@@ -586,11 +612,10 @@ def plot_null_distribution(
     ax.set_xticklabels(["Synthetic\ncontrols", "Cohort\ncontrols", "Patient\nsignal"])
 
     # --- Title ---
-    binom_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"
+    binom_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
     title = f"Patient signal vs. controls  (p={binom_str})"
     ax.set_title(title, fontsize=11, fontweight="bold")
-    ax.legend(fontsize=7, framealpha=0.85, loc="upper left",
-              bbox_to_anchor=(1.18, 1), borderaxespad=0)
+    ax.legend(fontsize=7, framealpha=0.85, loc="upper left", bbox_to_anchor=(1.18, 1), borderaxespad=0)
     ax.spines["top"].set_visible(False)
 
 
