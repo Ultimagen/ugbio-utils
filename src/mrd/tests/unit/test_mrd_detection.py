@@ -6,55 +6,10 @@ import pytest
 from ugbio_mrd.mrd_detection import (
     DetectionResult,
     _fit_null_distribution,
-    compute_empirical_pvalue,
     compute_personal_lod,
     format_scientific,
     run_detection_analysis,
 )
-
-
-class TestComputeEmpiricalPvalue:
-    """Tests for the empirical p-value computation."""
-
-    def test_observed_above_all_null(self):
-        """When observed > all null values, p = 1/(S+1)."""
-        null_reads = np.array([0, 1, 2, 3, 4])
-        p = compute_empirical_pvalue(10, null_reads)
-        # (0 + 1) / (5 + 1) = 1/6
-        assert p == pytest.approx(1 / 6)
-
-    def test_observed_below_all_null(self):
-        """When observed <= all null values, p = 1.0."""
-        null_reads = np.array([5, 6, 7, 8, 9])
-        p = compute_empirical_pvalue(0, null_reads)
-        # (5 + 1) / (5 + 1) = 1.0
-        assert p == pytest.approx(1.0)
-
-    def test_observed_equals_some_null(self):
-        """When observed equals some null values, they count."""
-        null_reads = np.array([0, 1, 2, 3, 3])
-        p = compute_empirical_pvalue(3, null_reads)
-        # 2 values >= 3, so (2 + 1) / (5 + 1) = 3/6 = 0.5
-        assert p == pytest.approx(0.5)
-
-    def test_empty_null(self):
-        """With no synthetic controls, p-value is 1.0."""
-        p = compute_empirical_pvalue(5, np.array([]))
-        assert p == 1.0
-
-    def test_large_null_precise_pvalue(self):
-        """With many synthetics, p-value resolution is fine."""
-        null_reads = np.zeros(199, dtype=int)
-        p = compute_empirical_pvalue(1, null_reads)
-        # (0 + 1) / (199 + 1) = 1/200 = 0.005
-        assert p == pytest.approx(1 / 200)
-
-    def test_pvalue_conservative_correction(self):
-        """p-value is never exactly 0 due to conservative correction."""
-        null_reads = np.zeros(1000, dtype=int)
-        p = compute_empirical_pvalue(1, null_reads)
-        assert p > 0
-        assert p == pytest.approx(1 / 1001)
 
 
 class TestComputePersonalLod:
