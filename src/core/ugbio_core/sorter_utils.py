@@ -31,13 +31,13 @@ def read_sorter_statistics_csv(
     df_sorter_stats = pd.read_csv(sorter_stats_csv, header=None, names=["metric", "value"]).set_index("metric")
     # replace '(' and ')' in values (legacy format for F95)
     df_sorter_stats = df_sorter_stats.assign(
-        value=df_sorter_stats["value"]
-        .astype(str)
-        .str.replace("(", "", regex=False)
-        .str.replace(")", "", regex=False)
-        .astype(float)
-        .values
+        value=pd.to_numeric(
+            df_sorter_stats["value"].astype(str).str.replace("(", "", regex=False).str.replace(")", "", regex=False),
+            errors="coerce",
+        ).values
     )
+    # drop non-numeric rows (e.g. CATEGORY row with PAIRED/UNPAIRED values)
+    df_sorter_stats = df_sorter_stats.dropna(subset=["value"])
     # add convenient metric
     if "Failed_QC_reads" in df_sorter_stats.index and "PF_Barcode_reads" in df_sorter_stats.index:
         df_sorter_stats.loc["PCT_Failed_QC_reads"] = (

@@ -57,3 +57,17 @@ def test_read_sorter_statistics_csv_dataframe_matches_series(sorter_csv):
     result = read_sorter_statistics_csv(sorter_csv, edit_metric_names=False, as_dataframe=True)
     assert result["metric"].tolist() == series.index.tolist()
     assert result["value"].tolist() == series.tolist()
+
+
+def test_read_sorter_statistics_csv_with_category_row(tmp_path):
+    csv_content = "PF_Barcode_reads,1000000\nMean_cvg,30.5\nCATEGORY,PAIRED\nMean_Read_Length,150.0\n"
+    csv_file = tmp_path / "sorter_stats.csv"
+    csv_file.write_text(csv_content)
+
+    result = read_sorter_statistics_csv(str(csv_file))
+
+    assert isinstance(result, pd.Series)
+    assert "CATEGORY" not in result.index
+    assert result["PF_Barcode_reads"] == 1000000
+    assert result["Mean_cvg"] == 30.5
+    assert result["Mean_Read_Length"] == 150.0
