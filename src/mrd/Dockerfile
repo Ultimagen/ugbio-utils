@@ -53,5 +53,3 @@ ENV PATH="/opt/venv/bin:$PATH"
 USER ugbio
 
 WORKDIR /home/ugbio
-
-COPY --from=build ./src/mrd/ugbio_mrd/reports ./src/mrd/ugbio_mrd/reports
