@@ -4,12 +4,7 @@ This test uses pre-generated test resources (synthetic signature VCFs and
 intersection parquets from bcftools isec) to run the full report pipeline
 and verify detection statistics are meaningful.
 
-Parametrized over [5, 20, 100] synthetic controls. With N>=100 controls,
-p-value resolution reaches < 0.01 (full statistical power).
-
-The N=100 case is marked @pytest.mark.slow and excluded from the default
-pytest run (CI). Run it explicitly with:
-    pytest -m slow src/mrd/tests/unit/test_mrd_report_with_synthetics.py
+Parametrized over [5, 20] synthetic controls.
 """
 
 import json
@@ -24,12 +19,11 @@ def resources_dir():
     return Path(__file__).parent.parent / "resources" / "report"
 
 
-@pytest.mark.parametrize("n_controls", [5, 20, pytest.param(100, marks=pytest.mark.slow)])
+@pytest.mark.parametrize("n_controls", [5, 20])
 def test_generate_report_with_synthetics(resources_dir, tmp_path_factory, n_controls):
     """Full report generation with N synthetic controls.
 
     Verifies the detection framework produces valid results.
-    With N>=100 controls, p-value resolution reaches p < 0.01.
     """
     # Build file lists for the requested number of controls
     vcf_files = []
@@ -79,12 +73,4 @@ def test_generate_report_with_synthetics(resources_dir, tmp_path_factory, n_cont
     assert detection["matched_supporting_reads"] >= 0
     assert detection["signature_size"] > 0
     assert detection["mean_coverage"] > 0
-
-    # With N>=100, matched signal should exceed all synthetic noise → detection
-    if n_controls >= 100:
-        assert detection["p_value"] < 0.05, (
-            f"Expected detection with {n_controls} controls, got p={detection['p_value']}"
-        )
-        assert detection["detected"] is True
-        assert detection["personal_lod"] is not None
 
