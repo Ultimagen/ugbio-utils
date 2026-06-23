@@ -14,7 +14,7 @@ from the db_control synthetic signatures via Jeffreys-prior Bayes estimate.
 Reference: bfx-read-the-docs/docs/tumor-informed-mrd/mrd_dev_plan_analysis.md
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -23,6 +23,11 @@ from ugbio_core.logger import logger
 # Uniform false-positive rate / significance threshold used throughout all
 # detection, LOD, and threshold calculations in this module.
 DEFAULT_FPR: float = 0.05
+
+# QC thresholds — results are called Indeterminate when any of these fail
+MIN_SIGNATURE_SIZE: int = 30  # minimum filtered signature loci
+MIN_MEAN_COVERAGE: float = 15.0  # minimum mean coverage at signature loci
+MIN_SYNTHETIC_CONTROLS: int = 2  # minimum db_control replicates for reliable null
 
 
 @dataclass
@@ -64,6 +69,9 @@ class DetectionResult:
     noise_rate: float  # background error rate from db_control (p_err)
     n_effective: int  # N = sig_size × mean_cov × denom_ratio for Binomial
     jeffreys_prior_applied: bool  # True when no db_control reads observed (p_err floor via prior)
+
+    # QC flags
+    qc_flags: list = field(default_factory=list)  # non-empty ⇒ Indeterminate call
 
 
 def _fit_null_distribution(null_reads: np.ndarray) -> tuple[str, dict]:
@@ -276,6 +284,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             noise_rate=0.0,
             n_effective=0,
             jeffreys_prior_applied=False,
+            qc_flags=["No matched signature found in df_tf"],
         )
 
     # Handle single or multiple matched signatures (take first)
@@ -347,8 +356,26 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
 
         p_value = float(_binom.sf(matched_reads - 1, n_effective, p_err))
 
+    # QC checks — any failure forces Indeterminate
+    qc_flags = []
+    if signature_size < MIN_SIGNATURE_SIZE:  # noqa: PLR2004
+        qc_flags.append(
+            f"Signature too small: {signature_size} loci (minimum {MIN_SIGNATURE_SIZE})"
+        )
+    if mean_coverage < MIN_MEAN_COVERAGE:  # noqa: PLR2004
+        qc_flags.append(
+            f"Low mean coverage: {mean_coverage:.1f}x (minimum {MIN_MEAN_COVERAGE:.0f}x)"
+        )
+    if len(null_reads) < MIN_SYNTHETIC_CONTROLS:  # noqa: PLR2004
+        qc_flags.append(
+            f"Insufficient synthetic controls: {len(null_reads)} (minimum {MIN_SYNTHETIC_CONTROLS})"
+        )
+
     # Detection call
-    if len(null_reads) == 0:
+    if qc_flags:
+        detected = None
+        call = "Indeterminate"
+    elif len(null_reads) == 0:
         detected = None
         call = "Indeterminate"
     elif p_value <= alpha:
@@ -400,6 +427,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         noise_rate=p_err,
         n_effective=n_effective,
         jeffreys_prior_applied=raw_reads_zero,
+        qc_flags=qc_flags,
     )
 
 

@@ -254,8 +254,15 @@
       <div class="note">
         &#9888; Only {{ detection.n_synthetic_controls }} synthetic controls — p-value reliability is reduced.
       </div>
-      {% endif %}
-    </div>
+      {% endif %}      {% if detection.qc_flags %}
+      <div style="margin-top:10px;">
+        {% for flag in detection.qc_flags %}
+        <div class="note" style="background:#fff3cd;border-left:4px solid #f0ad4e;">
+          &#9888; QC: {{ flag }}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}    </div>
 
     <!-- ── ASSAY METRICS ── -->
     <div class="section">

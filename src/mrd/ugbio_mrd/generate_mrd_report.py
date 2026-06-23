@@ -7,6 +7,7 @@ from os.path import join as pjoin
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import pandas as pd
 from ugbio_core.consts import FileExtension
 from ugbio_core.logger import logger
 
@@ -188,6 +189,36 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     df_tf_filt.to_hdf(output_h5_file, key="df_ctdna_vaf_filt_signature_filt_featuremap", mode="w")
     df_supporting_reads_per_locus_filt.to_hdf(
         output_h5_file, key="df_supporting_reads_per_locus_filt_signature_filt_featuremap", mode="a"
+    )
+
+    # Save detection result as a single-row DataFrame
+    detection_record = {
+        "call": detection.call,
+        "detected": detection.detected,
+        "p_value": detection.p_value,
+        "fitted_p_value": detection.fitted_p_value,
+        "fitted_distribution": detection.fitted_distribution,
+        "matched_supporting_reads": detection.matched_supporting_reads,
+        "matched_ctdna_vaf": detection.matched_ctdna_vaf,
+        "null_median_reads": detection.null_median_reads,
+        "null_max_reads": detection.null_max_reads,
+        "n_synthetic_controls": detection.n_synthetic_controls,
+        "detection_threshold": detection.detection_threshold,
+        "personal_lod": detection.personal_lod,
+        "signature_size": detection.signature_size,
+        "mean_coverage": detection.mean_coverage,
+        "corrected_coverage": detection.corrected_coverage,
+        "noise_rate": detection.noise_rate,
+        "n_effective": detection.n_effective,
+        "jeffreys_prior_applied": detection.jeffreys_prior_applied,
+        "qc_flags": "; ".join(detection.qc_flags) if detection.qc_flags else "",
+        "alpha": 0.01,
+    }
+    pd.DataFrame([detection_record]).to_hdf(output_h5_file, key="detection_result", mode="a")
+
+    # Save null reads (synthetic control supporting read counts) as a Series
+    pd.Series(detection.null_reads, name="null_reads", dtype=int).to_frame().to_hdf(
+        output_h5_file, key="null_reads", mode="a"
     )
 
     # ── QC report: compute secondary analyses, render via Jinja2 ──
