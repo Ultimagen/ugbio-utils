@@ -99,9 +99,6 @@ class DetectionResult:
 
     # Null distribution (raw supporting read counts for each synthetic control)
     null_reads: np.ndarray  # shape (n_synthetic_controls,), dtype int
-    fitted_p_value: float | None  # distribution-fitted p-value
-    fitted_distribution: str  # "Poisson" or "NegativeBinomial"
-    null_fit_params: dict  # distribution parameters used for the fit
 
     # Assay metrics
     signature_size: int  # number of loci in filtered signature
@@ -117,58 +114,6 @@ class DetectionResult:
     # QC checks (shown as pass/fail checkboxes in the report)
     qc_checks: list = field(default_factory=list)  # list[QcCheck]
 
-
-def _fit_null_distribution(null_reads: np.ndarray) -> tuple[str, dict]:
-    """
-    Fit the best count distribution to null_reads.
-
-    Uses Poisson when the data is not significantly overdispersed
-    (variance/mean <= 1.5), and Negative Binomial by method-of-moments
-    otherwise.  The NB has a heavier tail and yields a more conservative
-    (larger) p-value when the noise is overdispersed.
-
-    Parameters
-    ----------
-    null_reads : np.ndarray
-        Array of supporting read counts from synthetic controls.
-
-    Returns
-    -------
-    dist_name : str
-        "Poisson" or "NegativeBinomial"
-    params : dict
-        For Poisson: {"lambda": float}
-        For NB: {"r": float, "p": float, "mu": float}
-    """
-    if len(null_reads) == 0:
-        return "Poisson", {"lambda": 0.0}
-
-    n = len(null_reads)
-    # Jeffreys-prior Bayes estimate for Poisson rate: (sum + 0.5) / (n + 0.5).
-    # When all controls have 0 reads, this gives 0.5/n rather than 0, which is
-    # the principled non-informative-prior estimate. It avoids p_value=0 without
-    # inflating the rate, and is strictly more conservative than adding 1 count.
-    mu = float((np.sum(null_reads) + 0.5) / (n + 0.5))
-    if n < 3:  # noqa: PLR2004
-        return "Poisson", {"lambda": mu}
-
-    var = float(np.var(null_reads, ddof=1))
-    disp_index = var / mu  # = 1 for Poisson; > 1 means overdispersed
-
-    if disp_index <= 1.5:  # noqa: PLR2004
-        return "Poisson", {"lambda": mu}
-
-    # Overdispersed: fit Negative Binomial by method of moments
-    # var = mu + mu**2/r  =>  r = mu**2 / (var - mu)
-    r_hat = max(mu**2 / (var - mu), 0.1)  # numerical safety floor
-    p_hat = float(np.clip(r_hat / (r_hat + mu), 1e-9, 1 - 1e-9))
-    logger.debug(
-        "Overdispersed null (var/mean=%.2f): fitting NegativeBinomial(r=%.2f, p=%.4f)",
-        disp_index,
-        r_hat,
-        p_hat,
-    )
-    return "NegativeBinomial", {"r": r_hat, "p": p_hat, "mu": mu}
 
 
 def compute_personal_lod(
@@ -318,9 +263,6 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             null_max_reads=0,
             n_synthetic_controls=0,
             null_reads=np.array([], dtype=int),
-            fitted_p_value=None,
-            fitted_distribution="Poisson",
-            null_fit_params={},
             personal_lod=None,
             signature_size=0,
             mean_coverage=0.0,
@@ -361,23 +303,6 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         null_reads = np.array([])
         p_err = 0.0
         raw_reads_zero = False
-
-    # Fit null distribution (Poisson or Negative Binomial — kept for scatter plot)
-    if len(null_reads) > 0:
-        from scipy.stats import nbinom as _nbinom  # noqa: PLC0415
-        from scipy.stats import poisson as _poisson  # noqa: PLC0415
-
-        fitted_distribution, null_fit_params = _fit_null_distribution(null_reads)
-        if fitted_distribution == "NegativeBinomial":
-            r_fit, p_fit = null_fit_params["r"], null_fit_params["p"]
-            fitted_p_value: float | None = float(_nbinom.sf(matched_reads - 1, r_fit, p_fit))
-        else:
-            lam = null_fit_params["lambda"]
-            fitted_p_value = float(_poisson.sf(matched_reads - 1, lam))
-    else:
-        fitted_p_value = None
-        fitted_distribution = "Poisson"
-        null_fit_params: dict = {}
 
     # Assay metrics from filtered matched signature
     matched_sig_mask = df_signatures_filt["signature_type"] == "matched"
@@ -458,16 +383,14 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         detected = False
         call = "MRD Not Detected"
 
-    # Detection threshold from fitted null: reads needed for p < alpha (kept for scatter plot)
-    if len(null_reads) > 0:
-        from scipy.stats import nbinom as _nbinom_t  # noqa: PLC0415
-        from scipy.stats import poisson as _poisson_t  # noqa: PLC0415
+    # Detection threshold from Binomial model: smallest k s.t. Binom.sf(k-1, n_effective, p_err) < alpha
+    if n_effective > 0 and p_err > 0:
+        from scipy.stats import binom as _binom_t  # noqa: PLC0415
 
-        if fitted_distribution == "NegativeBinomial":
-            detection_threshold = int(_nbinom_t.ppf(1 - alpha, null_fit_params["r"], null_fit_params["p"])) + 1
-        else:
-            lam_t = null_fit_params["lambda"]
-            detection_threshold = int(_poisson_t.ppf(1 - alpha, lam_t)) + 1
+        k_max = int(_binom_t.ppf(0.9999, n_effective, p_err)) + 10
+        sf_vals = _binom_t.sf(np.arange(k_max + 1) - 1, n_effective, p_err)
+        hits = np.where(sf_vals < alpha)[0]
+        detection_threshold = int(hits[0]) if len(hits) > 0 else k_max
     else:
         detection_threshold = 1
 
@@ -489,9 +412,6 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         null_max_reads=int(np.max(null_reads)) if len(null_reads) > 0 else 0,
         n_synthetic_controls=len(null_reads),
         null_reads=null_reads,
-        fitted_p_value=fitted_p_value,
-        fitted_distribution=fitted_distribution,
-        null_fit_params=null_fit_params,
         personal_lod=personal_lod,
         signature_size=signature_size,
         mean_coverage=mean_coverage,
