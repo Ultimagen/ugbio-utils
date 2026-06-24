@@ -365,6 +365,21 @@
     </div>
     {% endif %}
 
+    <!-- ── READ LENGTH HISTOGRAM ── -->
+    {% if read_length_img %}
+    <div class="section">
+      <div class="section-title">Read Length Distribution</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ read_length_img }}" alt="Read length distribution">
+        <div class="chart-description">
+          Read length distribution of cfDNA reads at signature loci (after read filter).
+          Red: patient signature loci. Blue: control signature loci.
+          Shorter fragment lengths are enriched in ctDNA due to nucleosomal positioning.
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
     <!-- ── cfDNA INTERSECTION SNVQ ── -->
     {% if intersection_snvq_img %}
     <div class="section">

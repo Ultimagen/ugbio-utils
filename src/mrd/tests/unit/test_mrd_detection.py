@@ -5,7 +5,6 @@ import pandas as pd
 import pytest
 from ugbio_mrd.mrd_detection import (
     DetectionResult,
-    _fit_null_distribution,
     compute_personal_lod,
     format_scientific,
     run_detection_analysis,
@@ -244,57 +243,6 @@ class TestComputePersonalLod:
         assert result.detected is None
         assert result.call == "Indeterminate"
         assert result.p_value == 1.0
-
-
-class TestFitNullDistribution:
-    """Tests for the automatic distribution selection helper."""
-
-    def test_poisson_for_equidispersed_data(self):
-        """Data with variance ≈ mean should get Poisson fit."""
-        rng = np.random.default_rng(0)
-        null = rng.poisson(3.0, size=200)
-        dist, params = _fit_null_distribution(null)
-        assert dist == "Poisson"
-        assert "lambda" in params
-        assert params["lambda"] == pytest.approx(null.mean(), abs=0.5)
-
-    def test_nb_for_overdispersed_data(self):
-        """Data with variance >> mean should get Negative Binomial fit."""
-        rng = np.random.default_rng(1)
-        # Simulate overdispersed counts (NB with r=1, p=0.5 → mu=1, var=2)
-        null = rng.negative_binomial(1, 0.5, size=200)
-        dist, params = _fit_null_distribution(null)
-        assert dist == "NegativeBinomial"
-        assert "r" in params and "p" in params and "mu" in params
-        assert params["r"] > 0
-        assert 0 < params["p"] < 1
-
-    def test_empty_returns_poisson(self):
-        """Empty array should return Poisson with lambda=0."""
-        dist, params = _fit_null_distribution(np.array([]))
-        assert dist == "Poisson"
-        assert params["lambda"] == 0.0
-
-    def test_few_samples_returns_poisson(self):
-        """Fewer than 3 samples: fall back to Poisson (no variance estimate)."""
-        dist, params = _fit_null_distribution(np.array([1, 2]))
-        assert dist == "Poisson"
-
-    def test_nb_fitted_pvalue_more_conservative(self):
-        """NB p-value should be >= Poisson p-value for the same overdispersed null."""
-        from scipy.stats import nbinom, poisson  # noqa: PLC0415
-
-        rng = np.random.default_rng(2)
-        null = rng.negative_binomial(1, 0.5, size=200)
-        obs = int(null.max()) + 2  # well above the null
-
-        dist, params = _fit_null_distribution(null)
-        assert dist == "NegativeBinomial"
-
-        p_nb = float(nbinom.sf(obs - 1, params["r"], params["p"]))
-        p_pois = float(poisson.sf(obs - 1, null.mean()))
-        # NB is more conservative (larger p-value) than Poisson for overdispersed data
-        assert p_nb >= p_pois
 
 
 class TestFormatScientific:

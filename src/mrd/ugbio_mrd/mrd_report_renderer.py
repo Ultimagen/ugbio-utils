@@ -510,6 +510,103 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
     return _fig_to_base64(fig)
 
 
+def render_read_length_histogram(df_features_filt: pd.DataFrame) -> str:
+    """Render read length histogram: patient signature (red) vs controls (blue) with KDE lines."""
+    if "X_LENGTH" not in df_features_filt.columns:
+        return ""
+
+    from matplotlib import patheffects  # noqa: PLC0415
+    from scipy.stats import gaussian_kde  # noqa: PLC0415
+
+    matched = df_features_filt.query("signature_type == 'matched'")["X_LENGTH"].dropna()
+    control = df_features_filt.query("signature_type != 'matched'")["X_LENGTH"].dropna()
+
+    if len(matched) == 0 and len(control) == 0:
+        return ""
+
+    all_lengths = pd.concat([matched, control])
+    x_min = max(0, int(all_lengths.min()) - 5)
+    x_max = min(600, int(all_lengths.max()) + 5)  # cap at 600 bp
+    bins = np.arange(x_min, x_max + 2, 2)
+
+    fig, ax = plt.subplots(figsize=(8, 3))
+    fig.patch.set_facecolor("#f4f6f8")
+    ax.set_facecolor("#f4f6f8")
+
+    if len(control) > 0:
+        ax.hist(
+            control.clip(upper=x_max),
+            bins=bins,
+            color="#3498db",
+            alpha=0.6,
+            edgecolor="white",
+            linewidth=0.5,
+            label=f"Other signatures (n={len(control):,})",
+            density=True,
+        )
+        if len(control) >= 5:  # noqa: PLR2004
+            try:
+                kde = gaussian_kde(control.clip(upper=x_max), bw_method=0.15)
+                x_kde = np.linspace(x_min, x_max, 1000)
+                ax.plot(
+                    x_kde,
+                    kde(x_kde),
+                    color="#1a5276",
+                    linewidth=1.2,
+                    zorder=4,
+                    label="KDE (other)",
+                    path_effects=[
+                        patheffects.withStroke(linewidth=2.5, foreground="white"),
+                        patheffects.Normal(),
+                    ],
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.debug("KDE line skipped (control read length): %s", e)
+    if len(matched) > 0:
+        ax.hist(
+            matched.clip(upper=x_max),
+            bins=bins,
+            color="#c0392b",
+            alpha=0.7,
+            edgecolor="white",
+            linewidth=0.5,
+            label=f"Patient signature (n={len(matched):,})",
+            density=True,
+        )
+        if len(matched) >= 5:  # noqa: PLR2004
+            try:
+                kde = gaussian_kde(matched.clip(upper=x_max), bw_method=0.15)
+                x_kde = np.linspace(x_min, x_max, 1000)
+                ax.plot(
+                    x_kde,
+                    kde(x_kde),
+                    color="#7b241c",
+                    linewidth=1.2,
+                    zorder=4,
+                    label="KDE (matched)",
+                    path_effects=[
+                        patheffects.withStroke(linewidth=2.5, foreground="white"),
+                        patheffects.Normal(),
+                    ],
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.debug("KDE line skipped (matched read length): %s", e)
+
+    ax.set_xlabel("Read length (bp)", fontsize=10)
+    ax.set_ylabel("Density", fontsize=10)
+    ax.set_title("Read Length Distribution", fontsize=11, fontweight="bold")
+    ax.legend(fontsize=9, framealpha=0.85)
+    ax.set_xlim(x_min, x_max)
+    ax.set_axisbelow(True)
+    ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")  # noqa: FBT003
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    plt.tight_layout()
+    img = _fig_to_base64(fig)
+    plt.close(fig)
+    return img
+
+
 def render_intersection_af_combined(
     df_supporting_reads_per_locus: pd.DataFrame,
     df_signatures: pd.DataFrame,
@@ -757,6 +854,9 @@ def render_analysis_report(  # noqa: PLR0913
         df_supporting_reads_per_locus, detection.signature_size
     )
 
+    # Read length histogram
+    read_length_img = render_read_length_histogram(df_features_filt) if df_features_filt is not None else ""
+
     # SNVQ distribution
     intersection_snvq_img = render_intersection_snvq_combined(df_features_filt) if df_features_filt is not None else ""
 
@@ -778,6 +878,7 @@ def render_analysis_report(  # noqa: PLR0913
         "sbs6_vaf_plots": sbs6_vaf_plots,
         "intersection_af_img": intersection_af_img,
         "supporting_reads_hist_img": supporting_reads_hist_img,
+        "read_length_img": read_length_img,
         "intersection_snvq_img": intersection_snvq_img,
         "signature_filter_query": signature_filter_query,
         "read_filter_query": read_filter_query,
