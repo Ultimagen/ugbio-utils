@@ -21,7 +21,7 @@ import argparse
 import logging
 import sys
 
-from ugbio_core import logger
+from ugbio_core.logger import logger
 
 from ugbio_filtering import tprep_constants, training_prep
 
@@ -106,8 +106,8 @@ def handle_exact_gt(args: argparse.Namespace):
         args.base_vcf,
         args.hcr,
         args.reference,
-        args.reference_sdf,
         args.output_prefix + ".h5",
+        args.reference_sdf,
         args.contigs_to_read,
         args.contig_for_test,
         custom_info_fields=args.custom_annotations,
