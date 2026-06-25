@@ -168,13 +168,14 @@ def render_sbs96_profile(df_features_filt: pd.DataFrame) -> str:
     return _fig_to_base64(fig)
 
 
-def render_binomial_distribution(detection: DetectionResult, alpha: float = 0.01) -> str:
+def render_binomial_distribution(detection: DetectionResult) -> str:
     """Render Binomial null distribution PMF with observed reads and detection threshold marked."""
     from scipy.stats import binom as _binom  # noqa: PLC0415
 
     n = detection.n_effective
     p = detection.noise_rate
     obs = detection.matched_supporting_reads
+    alpha = getattr(detection, "alpha", 0.01)
 
     if n <= 0:
         return ""
