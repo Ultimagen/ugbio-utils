@@ -274,6 +274,44 @@ class TestComputePersonalLod:
         assert result.call == "Indeterminate"
         assert result.p_value == 1.0
 
+    def test_zero_corrected_coverage_is_indeterminate(self, mock_df_signatures_filt):
+        """Controls present but corrected_coverage==0 must yield Indeterminate, not a false detection.
+
+        Regression: previously p_err was forced to 0.0 in this branch, causing
+        binom.sf(obs-1, n, 0) == 0 for any positive obs -> spurious 'MRD Detected'.
+        """
+        matched_data = {
+            "supporting_reads": [10],
+            "coverage": [50000],
+            "corrected_coverage": [25000],
+            "ctdna_vaf": [4e-4],
+        }
+        # Synthetic controls present but with zero corrected_coverage
+        syn_data = {
+            "supporting_reads": [0, 0, 1],
+            "coverage": [0, 0, 0],
+            "corrected_coverage": [0, 0, 0],  # <- invalid depth
+            "ctdna_vaf": [0.0, 0.0, 0.0],
+        }
+        index_matched = pd.MultiIndex.from_tuples(
+            [("matched", "patient_sig")], names=["signature_type", "signature"]
+        )
+        index_syn = pd.MultiIndex.from_tuples(
+            [("db_control", f"syn{i}") for i in range(3)], names=["signature_type", "signature"]
+        )
+        df_tf = pd.concat([
+            pd.DataFrame(matched_data, index=index_matched),
+            pd.DataFrame(syn_data, index=index_syn),
+        ])
+        result = run_detection_analysis(
+            df_tf=df_tf,
+            df_signatures_filt=mock_df_signatures_filt,
+            denom_ratio=0.5,
+        )
+        assert result.call == "Indeterminate", (
+            f"Expected Indeterminate when db_control coverage=0, got {result.call}"
+        )
+
 
 class TestFormatScientific:
     """Tests for scientific notation formatting."""
