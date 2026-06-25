@@ -133,8 +133,9 @@ def compute_personal_lod(
     2. Derive the detection threshold ``n_th`` as the smallest k such that
        Binomial.sf(k-1, N, p_err) < fpr  (analytic FPR control on the null).
     3. Find the smallest TF where recall >= target_recall, i.e.
-       Binomial.sf(n_th-1, N, p_err + TF) >= target_recall,
-       solved exactly with scipy.optimize.fsolve.
+       Binomial.sf(n_th-1, N, p_err + TF) = target_recall.
+       Since recall is monotone increasing in TF, the root is bracketed on
+       [0, 1 - p_err] and solved with ``scipy.optimize.brentq``.
 
     Unlike the original Poisson simulation the noise floor (p_err) is
     included in the recall calculation, so the returned LOD is the TF that
@@ -162,7 +163,7 @@ def compute_personal_lod(
     float or None
         Personal LOD (tumor fraction above background) or None if not computable.
     """
-    from scipy.optimize import fsolve  # noqa: PLC0415
+    from scipy.optimize import brentq  # noqa: PLC0415
     from scipy.stats import binom as _binom  # noqa: PLC0415
 
     if signature_size <= 0 or mean_coverage <= 0:
@@ -191,28 +192,33 @@ def compute_personal_lod(
         return None
     n_th = int(hits[0])
 
-    # Step 2: exact solve for the smallest TF where recall >= target_recall
-    # recall(tf) = binom.sf(n_th - 1, n, p_err + tf) - target_recall = 0
+    # Step 2: find the smallest TF where recall >= target_recall.
+    # recall(tf) = binom.sf(n_th - 1, n, p_err + tf) is monotone increasing in tf.
+    # Use brentq on the signed residual over the bracket [0, 1 - p_err]:
+    #   at tf=0  recall = binom.sf(n_th-1, n, p_err) < fpr <= target_recall → residual < 0
+    #   at tf=1-p_err  p=1  recall=1 >= target_recall                        → residual > 0
     def _recall_residual(tf):
-        return np.abs(_binom.sf(n_th - 1, n, p_err + tf[0]) - target_recall)
+        return _binom.sf(n_th - 1, n, p_err + tf) - target_recall
 
+    tf_lo, tf_hi = 0.0, 1.0 - p_err
     try:
-        result = fsolve(_recall_residual, x0=[1e-6], full_output=True)
-        lod_tf = float(result[0][0])
-        if lod_tf < 0 or lod_tf > 1:
+        if _recall_residual(tf_lo) >= 0:
+            # recall is already >= target_recall with no tumor fraction
+            return 0.0
+        if _recall_residual(tf_hi) < 0:
             logger.debug(
-                "Personal LOD fsolve returned out-of-range value %.2e; n=%d, p_err=%.2e, n_th=%d",
-                lod_tf,
+                "Personal LOD: cannot reach target recall even at tf=1; n=%d, p_err=%.2e, n_th=%d",
                 n,
                 p_err,
                 n_th,
             )
             return None
+        lod_tf = brentq(_recall_residual, tf_lo, tf_hi, xtol=1e-10, rtol=1e-8)
     except Exception as exc:  # noqa: BLE001
-        logger.debug("Personal LOD fsolve failed: %s", exc)
+        logger.debug("Personal LOD brentq failed: %s", exc)
         return None
 
-    return lod_tf
+    return float(lod_tf)
 
 
 def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
