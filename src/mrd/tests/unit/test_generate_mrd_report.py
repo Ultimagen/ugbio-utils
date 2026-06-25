@@ -74,7 +74,7 @@ def test_generate_mrd_report(output_path, resources_dir, mrd_report_inputs):
 
 def test_generate_mrd_report_detection_output(output_path, mrd_report_inputs):
     """Test that results report generates detection result JSON with expected fields."""
-    results_html, _qc_html = generate_mrd_report(mrd_report_inputs)
+    generate_mrd_report(mrd_report_inputs)
 
     # Verify detection JSON was created
     detection_json_path = output_path / "test_report.detection_result.json"

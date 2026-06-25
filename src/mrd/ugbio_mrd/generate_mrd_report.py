@@ -14,7 +14,6 @@ from ugbio_core.logger import logger
 import ugbio_mrd.mrd_utils as mrd
 from ugbio_mrd.mrd_detection import run_detection_analysis
 from ugbio_mrd.mrd_report_renderer import render_analysis_report, render_qc_report
-from ugbio_mrd.mrd_utils import read_intersection_dataframes, read_signature
 
 RESULTS_HTML_REPORT = ".mrd_analysis_report.html"
 QC_HTML_REPORT = ".mrd_qc_report.html"
@@ -41,7 +40,7 @@ class MrdReportInputs:
 
 def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:  # noqa: PLR0915
     """
-    Generate both the MRD analysis report (Jinja2 HTML) and the MRD QC report (notebook).
+    Generate both the MRD analysis report (Jinja2 HTML) and the MRD QC report (Jinja2 HTML).
 
     Returns
     -------
@@ -99,7 +98,6 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     applied_filters["Read filter"] = read_filter_query
 
     # 4. SBS plot helper
-    _sbs_types = ["C>A", "C>G", "C>T", "T>A", "T>C", "T>G"]  # noqa: F841
     _sbs_colors = ["#1EBFF0", "#050708", "#E62725", "#CBCACB", "#A1C935", "#ECC6C5"]
 
     def plot_sbs_profile(df_sig, title="", ax=None, query=None):
@@ -359,13 +357,13 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
         else None
     )
 
-    intersection_dataframe = read_intersection_dataframes(
+    intersection_dataframe = mrd.read_intersection_dataframes(
         mrd_report_inputs.intersected_featuremaps_parquet,
         output_parquet=intersection_dataframe_fname,
         return_dataframes=True,
     )
     if matched_exists:
-        signature_dataframe = read_signature(
+        signature_dataframe = mrd.read_signature(
             mrd_report_inputs.matched_signatures_vcf_files,
             coverage_bed=mrd_report_inputs.coverage_bed,
             output_parquet=signatures_dataframe_fname,
@@ -376,7 +374,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
         )
     if control_exists:
         concat_to_existing_output_parquet = bool(matched_exists)
-        signature_dataframe = read_signature(
+        signature_dataframe = mrd.read_signature(
             mrd_report_inputs.control_signatures_vcf_files,
             coverage_bed=mrd_report_inputs.coverage_bed,
             output_parquet=signatures_dataframe_fname,
@@ -386,7 +384,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
         )
     if db_control_exists:
         concat_to_existing_output_parquet = bool(matched_exists or control_exists)
-        signature_dataframe = read_signature(
+        signature_dataframe = mrd.read_signature(
             mrd_report_inputs.db_control_signatures_vcf_files,
             coverage_bed=mrd_report_inputs.coverage_bed,
             output_parquet=signatures_dataframe_fname,
@@ -396,7 +394,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
             concat_to_existing_output_parquet=concat_to_existing_output_parquet,
         )
 
-    intersection_dataframe = read_intersection_dataframes(
+    intersection_dataframe = mrd.read_intersection_dataframes(
         mrd_report_inputs.intersected_featuremaps_parquet,
         output_parquet=intersection_dataframe_fname,
         return_dataframes=return_dataframes,
