@@ -754,7 +754,7 @@ def read_and_filter_signatures_parquet(
     # Raise if a signature has >50% positions missing coverage — this usually means
     # the coverage_bed was not generated at that signature's loci.
     missing_frac = x.isna().groupby(df_signatures["signature"]).mean()
-    bad_sigs = missing_frac[missing_frac > 0.5]
+    bad_sigs = missing_frac[missing_frac > 0.5]  # noqa: PLR2004
     if not bad_sigs.empty:
         details = ", ".join(f"{sig} ({frac*100:.0f}%)" for sig, frac in bad_sigs.items())
         raise ValueError(
@@ -865,7 +865,7 @@ def plot_signature_allele_fractions(
         fig, axs = plt.subplots(1, n_panels, figsize=(9 * n_panels, 4), sharey=n_panels > 1)
         if n_panels == 1:
             axs = [axs]
-    for ax, (column, df_plot) in zip(
+    for ax, (column, df_plot) in zip(  # noqa: PLR1704
         axs,
         all_panels,
         strict=False,
@@ -876,7 +876,7 @@ def plot_signature_allele_fractions(
         h, bin_edges = np.histogram(x, bins=bins)
         bin_centers = (bin_edges[1:] + bin_edges[:-1]) / 2
         ax.set_axisbelow(True)
-        ax.yaxis.grid(True, zorder=0, alpha=0.4, linewidth=0.7)
+        ax.yaxis.grid(True, zorder=0, alpha=0.4, linewidth=0.7)  # noqa: FBT003
         plt.fill_between(
             bin_centers,
             -10,

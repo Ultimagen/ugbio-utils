@@ -1,9 +1,11 @@
 import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 from ugbio_mrd.generate_mrd_report import MrdReportInputs, generate_mrd_report
+from ugbio_mrd.mrd_report_renderer import render_read_length_histogram
 
 
 @pytest.fixture
@@ -148,7 +150,7 @@ class TestRenderReadLengthHistogram:
     """Tests for render_read_length_histogram column-name normalisation."""
 
     def _make_df(self, col_name: str) -> pd.DataFrame:
-        rng = pd.np.random.default_rng(0) if hasattr(pd, "np") else __import__("numpy").random.default_rng(0)
+        rng = np.random.default_rng(0)
         n = 50
         return pd.DataFrame(
             {
@@ -159,24 +161,18 @@ class TestRenderReadLengthHistogram:
 
     def test_lowercase_x_length_column(self):
         """x_length (lowercased by read_and_filter_features_parquet) must produce a histogram."""
-        from ugbio_mrd.mrd_report_renderer import render_read_length_histogram
-
         df = self._make_df("x_length")
         result = render_read_length_histogram(df)
         assert result != "", "Expected non-empty base64 image for x_length column"
 
-    def test_uppercase_X_LENGTH_column(self):
+    def test_uppercase_x_length_column(self):
         """X_LENGTH (original casing) must also produce a histogram."""
-        from ugbio_mrd.mrd_report_renderer import render_read_length_histogram
-
         df = self._make_df("X_LENGTH")
         result = render_read_length_histogram(df)
         assert result != "", "Expected non-empty base64 image for X_LENGTH column"
 
     def test_missing_length_column_returns_empty(self):
         """DataFrame without any length column must return empty string."""
-        from ugbio_mrd.mrd_report_renderer import render_read_length_histogram
-
         df = pd.DataFrame({"signature_type": ["matched", "control"]})
         result = render_read_length_histogram(df)
         assert result == ""
