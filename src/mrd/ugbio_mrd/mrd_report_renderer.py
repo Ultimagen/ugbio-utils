@@ -13,12 +13,16 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from jinja2 import Template
+from jinja2 import Environment, FileSystemLoader
 from ugbio_core.logger import logger
 
 from ugbio_mrd.mrd_detection import DetectionResult, format_scientific, plot_null_distribution
 
 TEMPLATE_DIR = Path(__file__).parent / "templates"
+_JINJA_ENV = Environment(  # noqa: S701  (autoescape disabled: values are pre-sanitised base64/numbers/safe HTML fragments)
+    loader=FileSystemLoader(str(TEMPLATE_DIR)),
+    autoescape=False,  # noqa: S701
+)
 
 
 def _fig_to_base64(fig, dpi=120) -> str:
@@ -39,14 +43,6 @@ _COSMIC_COLORS_SBS = {
     "T>A": "#CBCACB",
     "T>C": "#A1C935",
     "T>G": "#ECC6C5",
-}
-_COSMIC_LABEL_TEXT_COLORS = {
-    "C>A": "#1EBFF0",
-    "C>G": "#555555",
-    "C>T": "#E62725",
-    "T>A": "#999999",
-    "T>C": "#A1C935",
-    "T>G": "#e8a0a0",
 }
 _FLANKS = ["A", "C", "G", "T"]
 _SBS96_CHANNELS = [f"{f5}[{mt}]{f3}" for mt in _COSMIC_MUT_TYPES for f5 in _FLANKS for f3 in _FLANKS]
@@ -888,8 +884,7 @@ def render_analysis_report(  # noqa: PLR0913
         "inputs_info": inputs_info or {},
     }
 
-    template_path = TEMPLATE_DIR / "mrd_analysis_report.html"
-    template = Template(template_path.read_text())
+    template = _JINJA_ENV.get_template("mrd_analysis_report.html")
     return template.render(**context)
 
 
@@ -1048,8 +1043,7 @@ def render_qc_report(  # noqa: PLR0913
         "unfilt_reads_intersection_img": unfilt_reads_intersection_img,
     }
 
-    template_path = TEMPLATE_DIR / "mrd_qc_report.html"
-    template = Template(template_path.read_text())
+    template = _JINJA_ENV.get_template("mrd_qc_report.html")
     return template.render(**context)
 
 

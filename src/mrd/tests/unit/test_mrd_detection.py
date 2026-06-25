@@ -257,7 +257,8 @@ class TestFormatScientific:
     def test_small_value(self):
         result = format_scientific(3.2e-5)
         assert "10" in result
-        assert "5" in result
+        assert "\u207b" in result  # superscript minus
+        assert "3.2" in result
 
     def test_power_of_ten(self):
         result = format_scientific(1e-6)

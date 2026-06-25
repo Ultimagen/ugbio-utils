@@ -827,7 +827,7 @@ def plot_signature_mutation_types(df_signatures_in: pd.DataFrame, signature_filt
 
 def plot_signature_allele_fractions(
     df_signatures_in: pd.DataFrame,
-    signature_filter_query_in: pd.DataFrame,
+    signature_filter_query_in: str,
     panel: str | None = None,
     ax=None,
 ):
@@ -838,8 +838,8 @@ def plot_signature_allele_fractions(
     ----------
     df_signatures_in: pd.DataFrame
         signature dataframe
-    signature_filter_query_in: pd.DataFrame
-        query to filter the dataframe
+    signature_filter_query_in: str
+        query string to filter the dataframe
     panel: str or None
         Which panel(s) to show. None shows both. "unfiltered" shows only the
         unfiltered panel; "filtered" shows only the filtered panel.

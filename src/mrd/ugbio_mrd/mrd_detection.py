@@ -305,11 +305,10 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         raw_reads_zero = False
 
     # Assay metrics from filtered matched signature
-    matched_sig_mask = df_signatures_filt["signature_type"] == "matched"
     if "signature_type" not in df_signatures_filt.columns:
         matched_sig_loci = df_signatures_filt
     else:
-        matched_sig_loci = df_signatures_filt[matched_sig_mask]
+        matched_sig_loci = df_signatures_filt[df_signatures_filt["signature_type"] == "matched"]
     signature_size = len(matched_sig_loci)
     mean_coverage = (
         float(matched_sig_loci["coverage"].mean())
@@ -373,7 +372,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             logger.debug("Could not compute pct_multi_read QC check: %s", exc)
 
     # Detection call
-    if len(null_reads) == 0:
+    if len(null_reads) == 0 or n_effective == 0:
         detected = None
         call = "Indeterminate"
     elif p_value <= alpha:
@@ -546,7 +545,7 @@ def plot_null_distribution(  # noqa: PLR0915, C901
                 label="Cohort control" if i == 0 else "_nolegend_",
             )
     except KeyError:
-        pass
+        logger.debug("Cohort control data not found in df_tf; plotting without cohort controls.")
 
     # --- Patient signal ---
     x_patient = 2.3
@@ -578,7 +577,7 @@ def plot_null_distribution(  # noqa: PLR0915, C901
                 p_err=p_err_plot,
             )
             # Detection threshold line: minimum reads to call a positive (DEFAULT_FPR)
-            n_th_vaf = n_th_plot / n_eff_plot if n_eff_plot > 0 else 0.0
+            n_th_vaf = n_th_plot / n_eff_plot
             ax.axhline(
                 _safe(n_th_plot),
                 color="#e67e22",
@@ -640,15 +639,20 @@ def plot_null_distribution(  # noqa: PLR0915, C901
     ax.spines["top"].set_visible(False)
 
 
+_SUPERSCRIPT_MINUS = "\u207b"
+_SUPERSCRIPT_DIGITS = str.maketrans("0123456789", "\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079")
+
+
 def format_scientific(value: float, precision: int = 1) -> str:
-    """Format a float in scientific notation for display."""
-    if value == 0:
-        return "0"
+    """Format a float in scientific notation with correct sign on the exponent."""
     if value is None:
         return "N/A"
-    mantissa_near_one_tol = 0.05
+    if value == 0:
+        return "0"
     exp = int(np.floor(np.log10(abs(value))))
     mantissa = value / 10**exp
-    if abs(mantissa - 1.0) < mantissa_near_one_tol:
-        return f"10\u207b{abs(exp)}"
-    return f"{mantissa:.{precision}f} \u00d7 10\u207b{abs(exp)}"
+    exp_str = str(abs(exp)).translate(_SUPERSCRIPT_DIGITS)
+    sign_str = _SUPERSCRIPT_MINUS if exp < 0 else "+"
+    if abs(mantissa - 1.0) < 0.05:  # noqa: PLR2004
+        return f"10{sign_str}{exp_str}"
+    return f"{mantissa:.{precision}f} \u00d7 10{sign_str}{exp_str}"
