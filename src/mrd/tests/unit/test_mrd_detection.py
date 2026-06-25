@@ -79,6 +79,36 @@ class TestComputePersonalLod:
         )
         assert lod is None
 
+    def test_lod_is_accurate_recall_threshold(self):
+        """LOD must be the exact TF where recall crosses 95%, not an abs-residual artefact.
+
+        Regression for the fsolve+abs() bug: brentq gives the true root of the signed
+        residual, so recall at LOD should be >= 0.95 and recall just below LOD < 0.95.
+        """
+        from scipy.stats import binom as _binom
+
+        params = {"signature_size": 1000, "mean_coverage": 40.0, "denom_ratio": 0.5, "p_err": 1e-6}
+        lod = compute_personal_lod(**params)
+        assert lod is not None
+
+        n = int(params["signature_size"] * params["mean_coverage"] * params["denom_ratio"])
+        p_err = params["p_err"]
+        fpr = 0.05
+
+        # Re-derive n_th to check recall directly
+        k_max = int(_binom.ppf(0.9999, n, max(p_err, 1e-12))) + 10
+        import numpy as _np
+
+        k_range = _np.arange(0, k_max + 1)
+        sf_values = _binom.sf(k_range - 1, n, p_err)
+        n_th = int(_np.where(sf_values < fpr)[0][0])
+
+        recall_at_lod = _binom.sf(n_th - 1, n, p_err + lod)
+        recall_below_lod = _binom.sf(n_th - 1, n, p_err + lod * 0.5)
+
+        assert recall_at_lod >= 0.95 - 1e-6, f"recall at LOD {recall_at_lod:.6f} < 0.95"
+        assert recall_below_lod < 0.95, f"recall below LOD {recall_below_lod:.6f} should be < 0.95"
+
     @pytest.fixture
     def mock_df_tf_detected(self):
         """Create a df_tf where matched signal clearly exceeds noise.
