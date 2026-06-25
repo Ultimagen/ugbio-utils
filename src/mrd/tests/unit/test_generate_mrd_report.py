@@ -142,3 +142,41 @@ def test_generate_mrd_report_html_contains_detection_banner(output_path, mrd_rep
     # Report should contain the assay metrics section
     assert "Signature Size" in html_content
     assert "Mean Coverage" in html_content
+
+
+class TestRenderReadLengthHistogram:
+    """Tests for render_read_length_histogram column-name normalisation."""
+
+    def _make_df(self, col_name: str) -> pd.DataFrame:
+        rng = pd.np.random.default_rng(0) if hasattr(pd, "np") else __import__("numpy").random.default_rng(0)
+        n = 50
+        return pd.DataFrame(
+            {
+                col_name: rng.integers(100, 300, size=n),
+                "signature_type": (["matched"] * (n // 2)) + (["control"] * (n // 2)),
+            }
+        )
+
+    def test_lowercase_x_length_column(self):
+        """x_length (lowercased by read_and_filter_features_parquet) must produce a histogram."""
+        from ugbio_mrd.mrd_report_renderer import render_read_length_histogram
+
+        df = self._make_df("x_length")
+        result = render_read_length_histogram(df)
+        assert result != "", "Expected non-empty base64 image for x_length column"
+
+    def test_uppercase_X_LENGTH_column(self):
+        """X_LENGTH (original casing) must also produce a histogram."""
+        from ugbio_mrd.mrd_report_renderer import render_read_length_histogram
+
+        df = self._make_df("X_LENGTH")
+        result = render_read_length_histogram(df)
+        assert result != "", "Expected non-empty base64 image for X_LENGTH column"
+
+    def test_missing_length_column_returns_empty(self):
+        """DataFrame without any length column must return empty string."""
+        from ugbio_mrd.mrd_report_renderer import render_read_length_histogram
+
+        df = pd.DataFrame({"signature_type": ["matched", "control"]})
+        result = render_read_length_histogram(df)
+        assert result == ""

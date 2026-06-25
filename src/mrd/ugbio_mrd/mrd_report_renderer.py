@@ -508,14 +508,17 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
 
 def render_read_length_histogram(df_features_filt: pd.DataFrame) -> str:
     """Render read length histogram: patient signature (red) vs controls (blue) with KDE lines."""
-    if "X_LENGTH" not in df_features_filt.columns:
+    # Column is lowercased by read_and_filter_features_parquet (X_LENGTH -> x_length).
+    # Older parquets may store the same field as 'rl'.
+    length_col = next((c for c in ("x_length", "X_LENGTH", "rl") if c in df_features_filt.columns), None)
+    if length_col is None:
         return ""
 
     from matplotlib import patheffects  # noqa: PLC0415
     from scipy.stats import gaussian_kde  # noqa: PLC0415
 
-    matched = df_features_filt.query("signature_type == 'matched'")["X_LENGTH"].dropna()
-    control = df_features_filt.query("signature_type != 'matched'")["X_LENGTH"].dropna()
+    matched = df_features_filt.query("signature_type == 'matched'")[length_col].dropna()
+    control = df_features_filt.query("signature_type != 'matched'")[length_col].dropna()
 
     if len(matched) == 0 and len(control) == 0:
         return ""
@@ -963,18 +966,21 @@ def render_qc_report(  # noqa: PLR0913
         control_profiles.append({"label": label, "img_b64": _fig_to_base64(fig)})
 
     # ── Fragment length distributions (2x2 grid) ──
+    # Column is lowercased by read_and_filter_features_parquet (X_LENGTH -> x_length);
+    # also accept legacy 'rl' column name.
     fragment_length_img = None
-    if "rl" in df_features.columns:
+    _rl_col = next((c for c in ("x_length", "X_LENGTH", "rl") if c in df_features.columns), None)
+    if _rl_col is not None:
         fig, axs = plt.subplots(2, 2, figsize=(8, 5), sharex=True)
         fig.patch.set_facecolor("#f4f6f8")
         fig.subplots_adjust(hspace=0.4, wspace=0.3)
         panels = [
-            ("Matched reads\nunfiltered", df_features.query("signature_type=='matched'")["rl"]),
-            ("Matched reads\nfiltered", df_features.query(f"signature_type=='matched' and {read_filter_query}")["rl"]),
-            ("Unmatched reads\nunfiltered", df_features.query("signature_type!='matched'")["rl"]),
+            ("Matched reads\nunfiltered", df_features.query("signature_type=='matched'")[_rl_col]),
+            ("Matched reads\nfiltered", df_features.query(f"signature_type=='matched' and {read_filter_query}")[_rl_col]),
+            ("Unmatched reads\nunfiltered", df_features.query("signature_type!='matched'")[_rl_col]),
             (
                 "Unmatched reads\nfiltered",
-                df_features.query(f"signature_type!='matched' and {read_filter_query}")["rl"],
+                df_features.query(f"signature_type!='matched' and {read_filter_query}")[_rl_col],
             ),
         ]
         max_val = max(s.max() for _, s in panels if len(s) > 0) if any(len(s) > 0 for _, s in panels) else 250
