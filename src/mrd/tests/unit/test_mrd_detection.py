@@ -3,6 +3,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from scipy.stats import binom
 from ugbio_mrd.mrd_detection import (
     DetectionResult,
     compute_personal_lod,
@@ -85,8 +86,6 @@ class TestComputePersonalLod:
         Regression for the fsolve+abs() bug: brentq gives the true root of the signed
         residual, so recall at LOD should be >= 0.95 and recall just below LOD < 0.95.
         """
-        from scipy.stats import binom as _binom
-
         params = {"signature_size": 1000, "mean_coverage": 40.0, "denom_ratio": 0.5, "p_err": 1e-6}
         lod = compute_personal_lod(**params)
         assert lod is not None
@@ -96,15 +95,13 @@ class TestComputePersonalLod:
         fpr = 0.05
 
         # Re-derive n_th to check recall directly
-        k_max = int(_binom.ppf(0.9999, n, max(p_err, 1e-12))) + 10
-        import numpy as _np
+        k_max = int(binom.ppf(0.9999, n, max(p_err, 1e-12))) + 10
+        k_range = np.arange(0, k_max + 1)
+        sf_values = binom.sf(k_range - 1, n, p_err)
+        n_th = int(np.where(sf_values < fpr)[0][0])
 
-        k_range = _np.arange(0, k_max + 1)
-        sf_values = _binom.sf(k_range - 1, n, p_err)
-        n_th = int(_np.where(sf_values < fpr)[0][0])
-
-        recall_at_lod = _binom.sf(n_th - 1, n, p_err + lod)
-        recall_below_lod = _binom.sf(n_th - 1, n, p_err + lod * 0.5)
+        recall_at_lod = binom.sf(n_th - 1, n, p_err + lod)
+        recall_below_lod = binom.sf(n_th - 1, n, p_err + lod * 0.5)
 
         assert recall_at_lod >= 0.95 - 1e-6, f"recall at LOD {recall_at_lod:.6f} < 0.95"
         assert recall_below_lod < 0.95, f"recall below LOD {recall_below_lod:.6f} should be < 0.95"
@@ -293,24 +290,22 @@ class TestComputePersonalLod:
             "corrected_coverage": [0, 0, 0],  # <- invalid depth
             "ctdna_vaf": [0.0, 0.0, 0.0],
         }
-        index_matched = pd.MultiIndex.from_tuples(
-            [("matched", "patient_sig")], names=["signature_type", "signature"]
-        )
+        index_matched = pd.MultiIndex.from_tuples([("matched", "patient_sig")], names=["signature_type", "signature"])
         index_syn = pd.MultiIndex.from_tuples(
             [("db_control", f"syn{i}") for i in range(3)], names=["signature_type", "signature"]
         )
-        df_tf = pd.concat([
-            pd.DataFrame(matched_data, index=index_matched),
-            pd.DataFrame(syn_data, index=index_syn),
-        ])
+        df_tf = pd.concat(
+            [
+                pd.DataFrame(matched_data, index=index_matched),
+                pd.DataFrame(syn_data, index=index_syn),
+            ]
+        )
         result = run_detection_analysis(
             df_tf=df_tf,
             df_signatures_filt=mock_df_signatures_filt,
             denom_ratio=0.5,
         )
-        assert result.call == "Indeterminate", (
-            f"Expected Indeterminate when db_control coverage=0, got {result.call}"
-        )
+        assert result.call == "Indeterminate", f"Expected Indeterminate when db_control coverage=0, got {result.call}"
 
 
 class TestFormatScientific:

@@ -123,8 +123,7 @@ class DetectionResult:
     alpha: float = DEFAULT_ALPHA
 
 
-
-def compute_personal_lod(
+def compute_personal_lod(  # noqa: PLR0911
     signature_size: int,
     mean_coverage: float,
     denom_ratio: float,
@@ -383,10 +382,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             qc_checks.append(
                 QcCheck(
                     label="No multiple read support enrichment",
-                    value_str=(
-                        f"{pct_multi:.1%} ({n_multi:,}/{signature_size:,} loci), "
-                        f"p={pvalue_enrich:.3f}"
-                    ),
+                    value_str=(f"{pct_multi:.1%} ({n_multi:,}/{signature_size:,} loci), p={pvalue_enrich:.3f}"),
                     threshold_str=(
                         f"Enrichment prob \u2265 {MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD:.0%} "
                         f"(expected {expected_pct:.1%} at TF={tf_str})"
@@ -578,9 +574,7 @@ def plot_null_distribution(  # noqa: PLR0915, C901
 
     # --- Patient signal ---
     x_patient = 2.3
-    ax.scatter(
-        [x_patient], [_safe(obs)], color="#c0392b", s=160, marker="*", zorder=6, label=f"Patient ({obs} reads)"
-    )
+    ax.scatter([x_patient], [_safe(obs)], color="#c0392b", s=160, marker="*", zorder=6, label=f"Patient ({obs} reads)")
 
     # --- Detection threshold / LOD line ---
     # n_th: smallest k s.t. P(X >= k | n_eff, p_err) < detection.alpha.

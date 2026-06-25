@@ -908,7 +908,10 @@ def render_qc_report(  # noqa: PLR0913
         fig.subplots_adjust(hspace=0.4, wspace=0.3)
         panels = [
             ("Matched reads\nunfiltered", df_features.query("signature_type=='matched'")[_rl_col]),
-            ("Matched reads\nfiltered", df_features.query(f"signature_type=='matched' and {read_filter_query}")[_rl_col]),
+            (
+                "Matched reads\nfiltered",
+                df_features.query(f"signature_type=='matched' and {read_filter_query}")[_rl_col],
+            ),
             ("Unmatched reads\nunfiltered", df_features.query("signature_type!='matched'")[_rl_col]),
             (
                 "Unmatched reads\nfiltered",
