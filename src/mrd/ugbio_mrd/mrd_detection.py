@@ -20,9 +20,14 @@ import numpy as np
 import pandas as pd
 from ugbio_core.logger import logger
 
-# Uniform false-positive rate / significance threshold used throughout all
-# detection, LOD, and threshold calculations in this module.
-DEFAULT_FPR: float = 0.05
+# Significance threshold (alpha) for the MRD detection call.
+# The call is made by comparing the Binomial p-value to this value.
+DEFAULT_ALPHA: float = 0.01
+
+# FPR used *only* for personal LOD estimation (kept at 5% to match the
+# recall-threshold approach: LOD is the TF that achieves 95% recall at
+# the 5th-percentile detection boundary, independent of the call alpha).
+DEFAULT_LOD_FPR: float = 0.05
 
 # QC thresholds — displayed as checkboxes in the report
 MIN_SIGNATURE_SIZE: int = 500  # minimum filtered signature loci
@@ -114,6 +119,9 @@ class DetectionResult:
     # QC checks (shown as pass/fail checkboxes in the report)
     qc_checks: list = field(default_factory=list)  # list[QcCheck]
 
+    # Significance threshold used for this detection call (stored for plot labels)
+    alpha: float = DEFAULT_ALPHA
+
 
 
 def compute_personal_lod(
@@ -122,7 +130,7 @@ def compute_personal_lod(
     denom_ratio: float,
     p_err: float,
     target_recall: float = 0.95,
-    fpr: float = DEFAULT_FPR,
+    fpr: float = DEFAULT_LOD_FPR,
 ) -> float | None:
     """
     Estimate personal LOD via analytical Binomial model.
@@ -225,7 +233,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     df_tf: pd.DataFrame,
     df_signatures_filt: pd.DataFrame,
     denom_ratio: float,
-    alpha: float = 0.01,
+    alpha: float = DEFAULT_ALPHA,
     df_supporting_reads_per_locus: pd.DataFrame | None = None,
 ) -> DetectionResult:
     """
@@ -247,7 +255,8 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     denom_ratio : float
         Denominator correction ratio from SRSNV training data.
     alpha : float
-        Significance threshold for detection call (default 0.01).
+        Significance threshold for detection call (default ``DEFAULT_ALPHA`` = 0.01).
+        Personal LOD always uses ``DEFAULT_LOD_FPR`` (5%) independently of this.
 
     Returns
     -------
@@ -399,12 +408,13 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     else:
         detection_threshold = 1
 
-    # Personal LOD (Binomial model with noise floor, analytic threshold at FPR=5%)
+    # Personal LOD — always at DEFAULT_LOD_FPR (5%), independent of detection alpha
     personal_lod = compute_personal_lod(
         signature_size=signature_size,
         mean_coverage=mean_coverage,
         denom_ratio=denom_ratio,
         p_err=p_err,
+        fpr=DEFAULT_LOD_FPR,
     )
 
     return DetectionResult(
@@ -426,6 +436,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         n_effective=n_effective,
         jeffreys_prior_applied=raw_reads_zero,
         qc_checks=qc_checks,
+        alpha=alpha,
     )
 
 
@@ -448,7 +459,8 @@ def plot_null_distribution(  # noqa: PLR0915, C901
       showing how well the parametric model matches the empirical data.
 
     Detection threshold: minimum reads needed for Binomial p-value < alpha
-    under the fitted Poisson/NB null (used only for scatter-plot annotation).
+    (read from detection.alpha) drawn as a dashed line on the scatter plot.
+    LOD line uses DEFAULT_LOD_FPR (5%) regardless of detection alpha.
 
     Parameters
     ----------
@@ -560,7 +572,8 @@ def plot_null_distribution(  # noqa: PLR0915, C901
     )
 
     # --- Detection threshold / LOD line ---
-    # n_th: smallest k s.t. P(X >= k | n_eff, p_err) < 5% (95th percentile of null).
+    # n_th: smallest k s.t. P(X >= k | n_eff, p_err) < detection.alpha.
+    # LOD uses DEFAULT_LOD_FPR (5%) independently.
     # k_max is set dynamically via ppf to avoid missing the percentile when
     # n_eff*p_err is large (fixed caps like 10000 fail for unfiltered reads panels).
     n_th_plot = None
@@ -573,7 +586,8 @@ def plot_null_distribution(  # noqa: PLR0915, C901
         k_max = int(_binom_lod.ppf(0.9999, n_eff_plot, max(p_err_plot, 1e-12))) + 10
         k_range = np.arange(0, k_max + 1)
         sf_vals = _binom_lod.sf(k_range - 1, n_eff_plot, p_err_plot)
-        hits = np.where(sf_vals < DEFAULT_FPR)[0]
+        _alpha_plot = getattr(detection, "alpha", DEFAULT_ALPHA)
+        hits = np.where(sf_vals < _alpha_plot)[0]
         if len(hits) > 0:
             n_th_plot = int(hits[0])
             lod_tf_plot = compute_personal_lod(
@@ -581,8 +595,9 @@ def plot_null_distribution(  # noqa: PLR0915, C901
                 mean_coverage=float(n_eff_plot),
                 denom_ratio=1.0,
                 p_err=p_err_plot,
+                fpr=DEFAULT_LOD_FPR,
             )
-            # Detection threshold line: minimum reads to call a positive (DEFAULT_FPR)
+            # Detection threshold line: minimum reads to call a positive (alpha)
             n_th_vaf = n_th_plot / n_eff_plot
             ax.axhline(
                 _safe(n_th_plot),
@@ -591,7 +606,7 @@ def plot_null_distribution(  # noqa: PLR0915, C901
                 linestyle="--",
                 alpha=0.9,
                 zorder=4,
-                label=f"Detection threshold ({format_scientific(n_th_vaf)}) | {DEFAULT_FPR * 100:.0f}% FPR",
+                label=f"Detection threshold ({format_scientific(n_th_vaf)}) | α={_alpha_plot * 100:.0f}%",
             )
             if lod_tf_plot is not None:
                 lod_str = format_scientific(lod_tf_plot)
