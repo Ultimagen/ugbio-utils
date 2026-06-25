@@ -310,9 +310,20 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             null_reads = db_control_data["supporting_reads"].to_numpy().astype(int)
             db_total_reads = float(db_control_data["supporting_reads"].sum())
             db_total_cov = float(db_control_data["corrected_coverage"].sum())
-        # Jeffreys prior: (k + 0.5) / (N + 1) — avoids p_err=0 when no reads observed
+        # Jeffreys prior: (k + 0.5) / (N + 1) — avoids p_err=0 when no reads observed.
+        # If total corrected coverage is zero the null model has no depth; treat as
+        # missing controls (p_err=0.0 + null_reads kept empty) so the call is Indeterminate.
         raw_reads_zero = db_total_reads == 0
-        p_err = (db_total_reads + 0.5) / (db_total_cov + 1) if db_total_cov > 0 else 0.0
+        if db_total_cov > 0:
+            p_err = (db_total_reads + 0.5) / (db_total_cov + 1)
+        else:
+            logger.warning(
+                "db_control corrected_coverage is zero despite %d synthetic control(s) present — "
+                "null model depth invalid; setting call to Indeterminate.",
+                len(null_reads),
+            )
+            null_reads = np.array([])  # force Indeterminate path
+            p_err = 0.0
     except KeyError:
         logger.warning("No db_control (synthetic) signatures found in df_tf. Cannot compute p-value.")
         null_reads = np.array([])
