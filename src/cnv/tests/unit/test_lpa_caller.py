@@ -730,6 +730,10 @@ class TestFormatDupRecord:
         assert info["SVLEN"] == "101"
         assert info["CN"] == "1.000000,1.333333"
         assert info["TOTAL_CN"] == "14.000000"
+        # FORMAT/CN now reports diploid repeat-unit copy number, identical to
+        # INFO/TOTAL_CN, matching the repo CNV VCF convention.
+        sample_subfields = fields[9].split(":")
+        assert sample_subfields[1] == "14.000000"
 
     def test_missing_marker_allele_falls_back(self):
         call = LpaCall(
