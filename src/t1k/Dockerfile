@@ -52,6 +52,10 @@ RUN ln -s /T1K/run-t1k /usr/local/bin/run-t1k \
 # Clean up build dependencies (keep runtime libraries)
 RUN apt --yes remove git make build-essential autoconf automake libtool && apt --yes autoremove && apt clean
 
+# Create a script to run tests from docker CI
+RUN echo '#!/bin/sh\necho "No tests to run"' > /usr/local/bin/run_tests \
+            && chmod +x /usr/local/bin/run_tests
+
 # Non-root user (following terra_pipeline conventions)
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 USER ugbio
