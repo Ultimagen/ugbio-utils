@@ -26,9 +26,14 @@ RUN git clone https://github.com/mourisl/T1K.git /T1K \
 
 # Build T1K with CRAM support
 # htslib=1 tells T1K to build bundled htslib-1.15.1 (includes CRAM support)
-# The Makefile will automatically build htslib if libhts.a doesn't exist
-# We add compression library flags to LINKFLAGS for proper linking
+# First we need to download and build htslib with submodules, then build T1K
 RUN cd /T1K \
+    && git clone --depth 1 --branch 1.15.1 --recurse-submodules https://github.com/samtools/htslib.git htslib-1.15.1 \
+    && cd htslib-1.15.1 \
+    && autoreconf -i \
+    && ./configure \
+    && make -j $(nproc) \
+    && cd .. \
     && make htslib=1 LINKFLAGS="-lpthread -lz -ldeflate -llzma -lbz2 -lcurl -lssl -lcrypto" -j $(nproc)
 
 # Symlink executables to PATH
