@@ -818,7 +818,7 @@ def run(argv: list[str]) -> None:
 
     norm_regions = _parse_norm_regions(args.norm_regions) if args.norm_regions else DEFAULT_NORM_REGIONS
 
-    mode = "rc" if args.cram.endswith(".cram") else "rb"
+    mode = "rc" if args.cram.lower().endswith(".cram") else "rb"
     bam = pysam.AlignmentFile(args.cram, mode, reference_filename=args.reference)
     fasta = pyfaidx.Fasta(args.reference)
 
