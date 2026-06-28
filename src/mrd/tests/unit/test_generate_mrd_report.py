@@ -132,9 +132,9 @@ def test_generate_mrd_report_html_contains_detection_banner(output_path, mrd_rep
     html_content = results_html.read_text()
 
     # Report should contain the detection call
-    assert any(call in html_content for call in ("MRD Detected", "MRD Not Detected", "Indeterminate")), (
-        "Detection call not found in HTML report"
-    )
+    assert any(
+        call in html_content for call in ("MRD Detected", "MRD Not Detected", "Indeterminate")
+    ), "Detection call not found in HTML report"
 
     # Report should contain key metrics
     assert "p-value" in html_content.lower() or "p_value" in html_content.lower()
