@@ -748,6 +748,16 @@ class TestFormatDupRecord:
         assert fields[4] == "<DUP>"
         assert "CN=." in fields[7]
 
+    def test_deletion_when_total_cn_below_baseline(self):
+        # n_ref_repeats=6 -> diploid baseline = 12. total_cn=8 < 12 -> <DEL>.
+        call = _make_lpa_call(ref_cn=4.0, alt_cn=4.0)
+        row = _format_dup_record("chr6", 100, 200, "A", "S1", call, n_ref_repeats=6)
+        fields = row.split("\t")
+        assert fields[4] == "<DEL>"
+        info = dict(kv.split("=", 1) for kv in fields[7].split(";") if "=" in kv)
+        assert info["SVTYPE"] == "DEL"
+        assert info["TOTAL_CN"] == "8.000000"
+
 
 class TestFormatSmallVariantRecord:
     def _make_call(self, alt_cn, ref_count, alt_count, qual=40.0):

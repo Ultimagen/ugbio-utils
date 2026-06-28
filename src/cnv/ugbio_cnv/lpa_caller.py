@@ -615,17 +615,26 @@ def _format_dup_record(
     call: LpaCall,
     n_ref_repeats: int,
 ) -> str:
-    """Single <DUP> SV record summarizing total + per-haplotype KIV-2 copy numbers.
+    """Single symbolic SV record summarizing total + per-haplotype KIV-2 copy numbers.
 
-    A single symbolic ALT (<DUP>) is used instead of <DUP>,<DUP> because the
-    duplicate-ALT form is ambiguous to common VCF parsers. SVTYPE=DUP keeps
-    the record compatible with downstream merge logic that filters on
-    SVTYPE in {DEL,DUP}. Per-haplotype unit counts are reported via
-    FORMAT/REPCN, total via FORMAT/CN and INFO/TOTAL_CN.
+    SVTYPE/ALT are chosen relative to the diploid reference baseline
+    (``2 * n_ref_repeats``): a sample with fewer total KIV-2 units than the
+    reference is emitted as ``<DEL>`` (``SVTYPE=DEL``), more units as ``<DUP>``
+    (``SVTYPE=DUP``). A single symbolic ALT is used instead of duplicated ALTs
+    because the duplicate-ALT form is ambiguous to common VCF parsers.
+    Per-haplotype unit counts are reported via FORMAT/REPCN, total via
+    FORMAT/CN and INFO/TOTAL_CN.
     """
     # start/end are 1-based inclusive (KIV-2: chr6:160613491-160646997 = 33507 bp).
     sv_len = end - start + 1
     total_cn = call.kiv2_copy_number
+    diploid_baseline = 2 * n_ref_repeats
+    if total_cn < diploid_baseline:
+        svtype = "DEL"
+        alt = "<DEL>"
+    else:
+        svtype = "DUP"
+        alt = "<DUP>"
     if call.ref_marker_allele_copy_number is not None and call.alt_marker_allele_copy_number is not None:
         cn1 = call.ref_marker_allele_copy_number / n_ref_repeats
         cn2 = call.alt_marker_allele_copy_number / n_ref_repeats
@@ -635,12 +644,12 @@ def _format_dup_record(
         cn_info = "."
         repcn = ".|."
     info = (
-        f"SVTYPE=DUP;SVCLAIM=D;END={end};SVLEN={sv_len};CN={cn_info};"
+        f"SVTYPE={svtype};SVCLAIM=D;END={end};SVLEN={sv_len};CN={cn_info};"
         f"EVENT=LPA:KIV2;EVENTTYPE=VNTR;TOTAL_CN={total_cn:.6f}"
     )
     fmt = "GT:CN:REPCN:PS"
     sample_field = f"0/1:{total_cn:.6f}:{repcn}:{start}"
-    return f"{chrom}\t{start}\t.\t{ref_base}\t<DUP>\t.\tPASS\t{info}\t{fmt}\t{sample_field}"
+    return f"{chrom}\t{start}\t.\t{ref_base}\t{alt}\t.\tPASS\t{info}\t{fmt}\t{sample_field}"
 
 
 def _format_small_variant_record(
@@ -698,6 +707,7 @@ def _write_vcf(
         "##fileformat=VCFv4.2",
         "##source=ugbio_cnv.lpa_caller",
         '##ALT=<ID=DUP,Description="Duplication relative to the reference">',
+        '##ALT=<ID=DEL,Description="Deletion relative to the reference">',
         '##FILTER=<ID=TargetedLowQual,Description="Variant quality below threshold">',
         '##FILTER=<ID=TargetedRepeatConflict,Description="Read counts inconsistent with an integer copy partition">',
         '##INFO=<ID=END,Number=1,Type=Integer,Description="End position">',
