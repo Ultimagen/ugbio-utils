@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_seq_qc"
-version = "1.27.0"
+version = "1.27.1"
 requires-python = ">=3.11"
 description = "Ultima Genomics sequencing QC HTML reports"
 authors = [
