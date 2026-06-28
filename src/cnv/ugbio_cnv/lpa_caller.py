@@ -375,7 +375,7 @@ def _estimate_total_kiv2_copy_number(
     norm_by_gc = _mean_depth_over_bins(bam, fasta, norm_regions)
     # Per-GC-bucket baseline uses a trimmed mean too, for the same reason
     # the overall baseline does.
-    gc_medians = {gc: _trimmed_mean(depths) for gc, depths in norm_by_gc.items() if depths}
+    gc_baselines = {gc: _trimmed_mean(depths) for gc, depths in norm_by_gc.items() if depths}
     all_depths = [d for depths in norm_by_gc.values() for d in depths]
     overall_baseline = _trimmed_mean(all_depths)
     if overall_baseline <= 0:
@@ -393,7 +393,7 @@ def _estimate_total_kiv2_copy_number(
     )
     corrected = []
     for gc, depths in kiv2_by_gc.items():
-        baseline = gc_medians.get(gc, overall_baseline)
+        baseline = gc_baselines.get(gc, overall_baseline)
         if baseline <= 0:
             baseline = overall_baseline
         scale = overall_baseline / baseline
