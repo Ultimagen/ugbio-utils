@@ -639,7 +639,7 @@ def _format_dup_record(
         f"EVENT=LPA:KIV2;EVENTTYPE=VNTR;TOTAL_CN={total_cn:.6f}"
     )
     fmt = "GT:CN:REPCN:PS"
-    sample_field = f"0/1:{total_cn / n_ref_repeats:.6f}:{repcn}:{start}"
+    sample_field = f"0/1:{total_cn:.6f}:{repcn}:{start}"
     return f"{chrom}\t{start}\t.\t{ref_base}\t<DUP>\t.\tPASS\t{info}\t{fmt}\t{sample_field}"
 
 
@@ -710,7 +710,7 @@ def _write_vcf(
         '##INFO=<ID=TOTAL_CN,Number=1,Type=Float,Description="Total LPA KIV-2 unit copy number (diploid)">',
         '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
         '##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype quality">',
-        '##FORMAT=<ID=CN,Number=1,Type=Float,Description="Total copy-number ratio">',
+        '##FORMAT=<ID=CN,Number=1,Type=Float,Description="Total LPA KIV-2 unit copy number (diploid)">',
         '##FORMAT=<ID=REPCN,Number=1,Type=String,Description="Per-haplotype repeat unit copy number">',
         '##FORMAT=<ID=PS,Number=1,Type=Integer,Description="Phase set">',
     ]
