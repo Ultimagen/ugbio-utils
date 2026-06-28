@@ -132,9 +132,9 @@ def test_generate_mrd_report_html_contains_detection_banner(output_path, mrd_rep
     html_content = results_html.read_text()
 
     # Report should contain the detection call
-    assert any(
-        call in html_content for call in ("MRD Detected", "MRD Not Detected", "Indeterminate")
-    ), "Detection call not found in HTML report"
+    assert any(call in html_content for call in ("MRD Detected", "MRD Not Detected", "Indeterminate")), (
+        "Detection call not found in HTML report"
+    )
 
     # Report should contain key metrics
     assert "p-value" in html_content.lower() or "p_value" in html_content.lower()
@@ -161,18 +161,18 @@ class TestRenderReadLengthHistogram:
 
     def test_lowercase_x_length_column(self):
         """x_length (lowercased by read_and_filter_features_parquet) must produce a histogram."""
-        df = self._make_df("x_length")
-        result = render_read_length_histogram(df)
+        df_features = self._make_df("x_length")
+        result = render_read_length_histogram(df_features)
         assert result != "", "Expected non-empty base64 image for x_length column"
 
     def test_uppercase_x_length_column(self):
         """X_LENGTH (original casing) must also produce a histogram."""
-        df = self._make_df("X_LENGTH")
-        result = render_read_length_histogram(df)
+        df_features = self._make_df("X_LENGTH")
+        result = render_read_length_histogram(df_features)
         assert result != "", "Expected non-empty base64 image for X_LENGTH column"
 
     def test_missing_length_column_returns_empty(self):
         """DataFrame without any length column must return empty string."""
-        df = pd.DataFrame({"signature_type": ["matched", "control"]})
-        result = render_read_length_histogram(df)
+        df_features = pd.DataFrame({"signature_type": ["matched", "control"]})
+        result = render_read_length_histogram(df_features)
         assert result == ""

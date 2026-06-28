@@ -101,9 +101,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     _sbs_colors = ["#1EBFF0", "#050708", "#E62725", "#CBCACB", "#A1C935", "#ECC6C5"]
 
     def plot_sbs_profile(df_sig, title="", ax=None, query=None):
-        df = df_sig if query is None else df_sig.query(query)
+        df_plot = df_sig if query is None else df_sig.query(query)
         _all_muts = ["C->A", "C->G", "C->T", "T->A", "T->C", "T->G"]
-        counts = df["mutation_type"].value_counts(normalize=True).reindex(_all_muts, fill_value=0)
+        counts = df_plot["mutation_type"].value_counts(normalize=True).reindex(_all_muts, fill_value=0)
         if ax is None:
             _, ax = plt.subplots(figsize=(6, 2.4))
         bars = ax.barh(range(6), counts.to_numpy()[::-1], color=list(reversed(_sbs_colors)), height=0.65, linewidth=0)
@@ -117,7 +117,14 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         ax.set_xlabel("Fraction", fontsize=8)
         ax.set_title(title, fontsize=10, fontweight="bold")
         ax.text(
-            0.99, 0.02, f"n = {len(df):,}", transform=ax.transAxes, ha="right", va="bottom", fontsize=8, color="#7f8c8d"
+            0.99,
+            0.02,
+            f"n = {len(df_plot):,}",
+            transform=ax.transAxes,
+            ha="right",
+            va="bottom",
+            fontsize=8,
+            color="#7f8c8d",
         )
         ax.spines[["top", "right"]].set_visible(False)
         return ax
