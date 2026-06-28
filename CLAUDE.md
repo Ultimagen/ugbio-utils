@@ -38,7 +38,8 @@ src/
 ├── cloud_utils/  (4 files)  ugbio_cloud_utils  - AWS/GCS integration
 ├── omics/        (25 files) ugbio_omics        - AWS HealthOmics workflows
 ├── freec/        (2 files)  ugbio_freec        - FREEC CNV config
-└── pypgx/        (0 files)  ugbio_pypgx        - Pharmacogenomics (stub)
+├── pypgx/        (0 files)  ugbio_pypgx        - Pharmacogenomics (stub)
+└── t1k/          (0 files)  ugbio_t1k          - T1K HLA/KIR genotyping (stub)
 ```
 
 ### Module Dependency Hierarchy
@@ -231,7 +232,7 @@ gh run list --workflow build-ugbio-member-docker.yml --limit 5
 gh run view <run-id>
 ```
 
-**Available modules**: `core`, `cnv`, `comparison`, `featuremap`, `filtering`, `mrd`, `ppmseq`, `srsnv`, `methylation`, `single_cell`, `cloud_utils`, `omics`, `freec`
+**Available modules**: `core`, `cnv`, `comparison`, `featuremap`, `filtering`, `mrd`, `ppmseq`, `srsnv`, `methylation`, `single_cell`, `cloud_utils`, `omics`, `freec`, `pypgx`, `t1k`
 
 **Docker registries**:
 - **AWS ECR** (internal): `337532070941.dkr.ecr.us-east-1.amazonaws.com/ugbio_<module>:<tag>`
@@ -344,6 +345,76 @@ gh run view <run-id>
 **ugbio_methylation, ugbio_single_cell, ugbio_ppmseq, ugbio_cloud_utils, ugbio_freec**:
 - Specialized analysis domains
 - See pyproject.toml for entry points
+
+**Docker-only stub modules (ugbio_pypgx, ugbio_t1k)**:
+- No Python source — just a `Dockerfile`, `pyproject.toml`, and `README`
+- The Docker image bundles an external bioinformatics tool for use in pipelines
+- The `run_tests` script in the image prints "No tests to run"
+- See [Adding a Docker-only stub module](#adding-a-docker-only-stub-module) for how to create one
+
+## Adding a Docker-only Stub Module
+
+Use this pattern when you want to package an external tool (e.g. T1K, PyPGx) as an ugbio Docker image without adding any Python code to the workspace.
+
+### Step 1 — Create the module directory
+
+```
+src/<name>/
+├── Dockerfile        # Builds the tool from source or installs it
+├── pyproject.toml    # Minimal UV workspace member declaration
+└── README_<name>.md  # One-line description + link to upstream tool
+```
+
+### Step 2 — Minimal `pyproject.toml`
+
+```toml
+[project]
+name = "ugbio_<name>"
+version = "1.27.0"           # Keep in sync with workspace version
+description = "<Tool name>"
+authors = [
+    { name = "Your Name", email = "you@ultimagen.com" },
+]
+readme = "README_<name>.md"
+
+[project.license]
+text = "Apache-2.0"
+```
+
+### Step 3 — Dockerfile conventions
+
+- Base on an appropriate image (e.g. `ubuntu:22.04` or `python:3.12-slim`)
+- Build/install the external tool
+- Add a no-op `run_tests` script so CI passes:
+  ```dockerfile
+  RUN echo '#!/bin/sh\necho "No tests to run"' > /usr/local/bin/run_tests \
+  && chmod +x /usr/local/bin/run_tests
+  ```
+- Drop privileges at the end:
+  ```dockerfile
+  RUN groupadd ugbio && useradd -m ugbio -g ugbio
+  USER ugbio
+  WORKDIR /home/ugbio
+  ```
+
+### Step 4 — Register in the manual Docker build workflow
+
+Add the module name to the `options` list in `.github/workflows/build-ugbio-member-docker.yml`:
+
+```yaml
+        options:
+          - "cnv"
+          ...
+          - "<name>"    # ← add here
+```
+
+The CI matrix (`ugbio_members_matrix.py`) auto-discovers all non-`__` directories under `src/`, so no other changes are needed for the automated test/build matrix.
+
+### Step 5 — Build the Docker image
+
+```bash
+gh workflow run "build-ugbio-member-docker.yml" --ref <branch-name> -f member=<name>
+```
 
 ## Architectural Patterns
 

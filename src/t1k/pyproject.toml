@@ -1,0 +1,11 @@
+[project]
+name = "ugbio_t1k"
+version = "1.27.0"
+description = "T1K - HLA and KIR genotyping"
+authors = [
+    { name = "Ilya Soifer", email = "ilya.soifer@ultimagen.com" },
+]
+readme = "README_t1k.md"
+
+[project.license]
+text = "Apache-2.0"
