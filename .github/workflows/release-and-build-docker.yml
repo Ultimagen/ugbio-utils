@@ -99,6 +99,14 @@ jobs:
           draft: false
           prerelease: false
 
+      - name: Update action summary
+        run: |
+          VERSION=${{ steps.bump-semver.outputs.new_version }}
+          REPO=${{ github.repository }}
+          echo "### Release" >> ${GITHUB_STEP_SUMMARY}
+          echo "- **Version:** ${VERSION}" >> ${GITHUB_STEP_SUMMARY}
+          echo "- **Tag:** [${VERSION}](https://github.com/${REPO}/releases/tag/${VERSION})" >> ${GITHUB_STEP_SUMMARY}
+
   build-docker:
     needs: [release]
     uses: ./.github/workflows/docker-build-push.yml
