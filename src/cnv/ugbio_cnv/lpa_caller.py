@@ -40,11 +40,12 @@ import numpy as np
 import pyfaidx
 import pysam
 from ugbio_core.logger import logger
-from ugbio_core.math_utils import log_binomial
-from ugbio_core.math_utils import phred as core_phred
+from ugbio_core.math_utils import log_binomial, phred
 
 # ----------------------------------------------------------------------------
-# LPA caller defaults (hg38). All overridable via CLI.
+# LPA caller defaults (hg38). The KIV-2 array coordinates and the autosomal
+# normalization regions are overridable via CLI; the marker and small-variant
+# site lists are hg38-specific and hard-coded (no CLI override).
 # ----------------------------------------------------------------------------
 
 # Reference KIV-2 array on hg38: chr6:160613491-160646997
@@ -250,16 +251,16 @@ def _validate_marker_positions(
 ) -> None:
     """Fail fast if the configured REF base does not match the reference FASTA.
 
-    The default marker / small-variant positions are hg38 coordinates. If a
-    different reference build is supplied without overriding the positions on
-    the CLI, the caller would otherwise silently call against the wrong sites.
+    The marker / small-variant positions are hard-coded hg38 coordinates and
+    are not overridable on the CLI. If a different reference build is supplied,
+    the caller would otherwise silently call against the wrong sites.
     """
     contigs = set(fasta.keys())
     if chrom not in contigs:
         raise RuntimeError(
             f"Reference FASTA does not contain contig {chrom!r}. "
-            f"If your reference is not {genome_build}, override --kiv2-chrom and the "
-            "marker / small-variant positions on the command line."
+            f"The marker / small-variant positions are hard-coded {genome_build} coordinates; "
+            f"supply a {genome_build} reference."
         )
 
     mismatches: list[str] = []
@@ -274,10 +275,9 @@ def _validate_marker_positions(
         preview = "; ".join(mismatches[:max_preview])
         more = f" (+{len(mismatches) - max_preview} more)" if len(mismatches) > max_preview else ""
         raise RuntimeError(
-            "Marker REF bases do not match the reference FASTA — the configured "
+            "Marker REF bases do not match the reference FASTA — the hard-coded "
             f"positions are {genome_build} coordinates and look wrong for this reference. "
-            "Override --kiv2-chrom / --kiv2-start / --kiv2-end / --kiv2-unit-length, or "
-            f"supply a {genome_build} reference. Mismatches: {preview}{more}"
+            f"Supply a {genome_build} reference. Mismatches: {preview}{more}"
         )
 
 
@@ -319,6 +319,7 @@ def _mean_depth_over_bins(
                 or read.is_secondary
                 or read.is_supplementary
                 or read.is_duplicate
+                or read.is_qcfail
                 or read.mapping_quality < min_mapq
             ):
                 continue
@@ -362,7 +363,6 @@ def _estimate_total_kiv2_copy_number(
     kiv2_end: int,
     n_ref_repeats: int,
     norm_regions: list[tuple[str, int, int]],
-    mean_coverage_override: float | None = None,
 ) -> float:
     """
     Total LPA KIV-2 VNTR unit copy number, summed over the two haplotypes.
@@ -370,32 +370,21 @@ def _estimate_total_kiv2_copy_number(
     With 6 reference repeat units and a perfectly diploid reference call, KIV-2
     bin depth equals the autosomal mean depth and the returned value is 2*6=12.
     Returned value is the per-cell (diploid) repeat-unit count.
-
-    If ``mean_coverage_override`` is given, that value is used as the diploid
-    baseline and the panel-based estimation is skipped (use it to feed in a
-    genome-wide mean coverage from external metrics).
     """
-    if mean_coverage_override is not None:
-        if mean_coverage_override <= 0:
-            raise ValueError("mean_coverage_override must be positive")
-        overall_baseline = float(mean_coverage_override)
-        gc_medians: dict[float, float] = {}
-        logger.info("Using user-supplied autosomal mean coverage: %.2f", overall_baseline)
-    else:
-        logger.info("Estimating GC-bias profile from %d normalization regions", len(norm_regions))
-        norm_by_gc = _mean_depth_over_bins(bam, fasta, norm_regions)
-        # Per-GC-bucket baseline uses a trimmed mean too, for the same reason
-        # the overall baseline does.
-        gc_medians = {gc: _trimmed_mean(depths) for gc, depths in norm_by_gc.items() if depths}
-        all_depths = [d for depths in norm_by_gc.values() for d in depths]
-        overall_baseline = _trimmed_mean(all_depths)
-        if overall_baseline <= 0:
-            raise RuntimeError("Normalization regions have zero coverage; check input/reference")
-        logger.info(
-            "Autosomal trimmed-mean depth (drop %.0f%% each tail): %.2f",
-            100 * NORM_TRIM_FRACTION,
-            overall_baseline,
-        )
+    logger.info("Estimating GC-bias profile from %d normalization regions", len(norm_regions))
+    norm_by_gc = _mean_depth_over_bins(bam, fasta, norm_regions)
+    # Per-GC-bucket baseline uses a trimmed mean too, for the same reason
+    # the overall baseline does.
+    gc_medians = {gc: _trimmed_mean(depths) for gc, depths in norm_by_gc.items() if depths}
+    all_depths = [d for depths in norm_by_gc.values() for d in depths]
+    overall_baseline = _trimmed_mean(all_depths)
+    if overall_baseline <= 0:
+        raise RuntimeError("Normalization regions have zero coverage; check input/reference")
+    logger.info(
+        "Autosomal trimmed-mean depth (drop %.0f%% each tail): %.2f",
+        100 * NORM_TRIM_FRACTION,
+        overall_baseline,
+    )
 
     # KIV-2 binned depth, GC-corrected against the normalization profile.
     # MAPQ filter is dropped here: most KIV-2 reads multi-map (MAPQ=0).
@@ -438,6 +427,10 @@ def _count_alleles_at_positions(
     start = min(positions) - 1
     end = max(positions)
     pos_set = set(positions)
+    # Normalize to uppercase so lowercase query bases (soft-masked reference,
+    # some aligners) match the configured REF/ALT and don't fall into 'other'.
+    ref_upper = ref_allele.upper()
+    alt_upper = alt_allele.upper()
     # KIV-2 reads multi-map -> use the KIV-2 MAPQ floor, not the autosomal one.
     for column in bam.pileup(
         chrom,
@@ -461,10 +454,10 @@ def _count_alleles_at_positions(
             # stays correct if the stepper / pileup options ever change.
             if aln.is_secondary or aln.is_supplementary or aln.is_duplicate or aln.is_qcfail or aln.is_unmapped:
                 continue
-            base = aln.query_sequence[read.query_position]
-            if base == ref_allele:
+            base = aln.query_sequence[read.query_position].upper()
+            if base == ref_upper:
                 counts.ref += 1
-            elif base == alt_allele:
+            elif base == alt_upper:
                 counts.alt += 1
             else:
                 counts.other += 1
@@ -509,19 +502,6 @@ def _call_heterozygous_markers(
 # ----------------------------------------------------------------------------
 
 
-def _log_binomial(n: int, k: int, p: float) -> float:
-    # Thin module-local alias for ugbio_core.math_utils.log_binomial; kept so
-    # existing unit tests under the _log_binomial name continue to work.
-    return log_binomial(n, k, p)
-
-
-def _phred(p: float) -> float:
-    # Thin wrapper around ugbio_core.math_utils.phred that clamps to a finite
-    # Phred range (the core helper returns +/- inf for p in {0, 1}).
-    p = max(min(p, 1 - 1e-15), 1e-15)
-    return min(float(core_phred([p])[0]), MAX_PHRED_QUAL)
-
-
 def _call_small_variant(
     counts: AlleleCounts,
     kiv2_copy_number: float,
@@ -558,7 +538,7 @@ def _call_small_variant(
         # being assigned probability 0.
         ideal = alt_cn / total_cn
         p_alt = ideal * (1.0 - noise) + (1.0 - ideal) * noise
-        log_liks.append(_log_binomial(n, counts.alt, p_alt))
+        log_liks.append(log_binomial(n, counts.alt, p_alt))
 
     log_liks = np.array(log_liks)
     # Posterior under uniform prior.
@@ -575,9 +555,13 @@ def _call_small_variant(
     if best == 0:
         qual = 0.0
     else:
-        qual = _phred(float(post[0]))
+        # Clamp p away from 0 so phred() does not return +inf, then cap at
+        # the VCF QUAL ceiling.
+        p0 = min(max(float(post[0]), 1e-15), 1 - 1e-15)
+        qual = min(float(phred([p0])[0]), MAX_PHRED_QUAL)
 
-    alt_cn_quality = _phred(1.0 - best_post)
+    p_resid = min(max(1.0 - best_post, 1e-15), 1 - 1e-15)
+    alt_cn_quality = min(float(phred([p_resid])[0]), MAX_PHRED_QUAL)
 
     return SmallVariantCall(
         hgvs=hgvs,
@@ -791,14 +775,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "Default: 6 x 2 Mb stable regions hardcoded in the module.",
     )
     ap.add_argument(
-        "--mean-coverage",
-        type=float,
-        default=None,
-        help="Override the autosomal diploid baseline depth (e.g. a genome-wide "
-        "mean coverage from external metrics). When set, the panel-based "
-        "normalization is skipped, which is faster and avoids panel bias.",
-    )
-    ap.add_argument(
         "--no-vcf",
         action="store_true",
         help="Skip writing the VCF (JSON only).",
@@ -835,7 +811,6 @@ def run(argv: list[str]) -> None:
             args.kiv2_end,
             args.kiv2_repeat_count,
             norm_regions,
-            mean_coverage_override=args.mean_coverage,
         )
         logger.info("Total KIV-2 copy number (diploid): %.3f", kiv2_cn)
 

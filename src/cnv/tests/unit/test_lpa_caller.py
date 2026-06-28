@@ -14,10 +14,12 @@ from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
+from ugbio_cnv import lpa_caller as lpa_caller_mod
 from ugbio_cnv.lpa_caller import (
     DEFAULT_KIV2_REPEAT_COUNT,
     DEFAULT_KIV2_START,
     DEFAULT_KIV2_UNIT_LEN,
+    GC_BIN_SIZE,
     GC_BUCKET_WIDTH,
     HET_MARKER_ALT_FRACTION_MAX,
     HET_MARKER_ALT_FRACTION_MIN,
@@ -30,12 +32,13 @@ from ugbio_cnv.lpa_caller import (
     _build_marker,
     _call_heterozygous_markers,
     _call_small_variant,
+    _count_alleles_at_positions,
+    _estimate_total_kiv2_copy_number,
     _format_dup_record,
     _format_small_variant_record,
     _gc_fraction,
-    _log_binomial,
+    _mean_depth_over_bins,
     _parse_norm_regions,
-    _phred,
     _trimmed_mean,
     _validate_marker_positions,
     _write_json,
@@ -235,35 +238,250 @@ class TestTrimmedMean:
 
 
 # ----------------------------------------------------------------------------
-# Binomial / Phred math
+# Depth estimation (mocked pysam fetch)
 # ----------------------------------------------------------------------------
 
 
-class TestBinomialAndPhred:
-    def test_log_binomial_zero_n_is_zero(self):
-        assert _log_binomial(0, 0, 0.5) == 0.0
+class _FakeRead:
+    """Minimal pysam AlignedSegment stand-in for _mean_depth_over_bins."""
 
-    def test_log_binomial_known_value(self):
-        # log(C(4,2) * 0.5^4) = log(6/16)
-        import math
+    def __init__(
+        self,
+        reference_start: int,
+        reference_end: int,
+        mapping_quality: int = 60,
+        *,
+        is_unmapped: bool = False,
+        is_secondary: bool = False,
+        is_supplementary: bool = False,
+        is_duplicate: bool = False,
+        is_qcfail: bool = False,
+    ):
+        self.reference_start = reference_start
+        self.reference_end = reference_end
+        self.mapping_quality = mapping_quality
+        self.is_unmapped = is_unmapped
+        self.is_secondary = is_secondary
+        self.is_supplementary = is_supplementary
+        self.is_duplicate = is_duplicate
+        self.is_qcfail = is_qcfail
 
-        assert _log_binomial(4, 2, 0.5) == pytest.approx(math.log(6 / 16))
 
-    def test_log_binomial_clamps_extremes(self):
-        # p=0 would log(0) without clamping; should be finite
-        val = _log_binomial(10, 0, 0.0)
-        assert np.isfinite(val)
-        val = _log_binomial(10, 10, 1.0)
-        assert np.isfinite(val)
+def _make_bam_with_reads(reads_by_region):
+    """Return a MagicMock bam whose ``fetch(chrom, start, end)`` yields the reads
+    pre-staged under the matching (chrom, start, end) key. Other arg shapes
+    default to an empty iterator.
+    """
+    bam = MagicMock()
 
-    def test_phred_caps_at_max(self):
-        assert _phred(1e-50) == pytest.approx(MAX_PHRED_QUAL)
+    def fetch(chrom, start, end):
+        return iter(reads_by_region.get((chrom, start, end), []))
 
-    def test_phred_near_one_is_small(self):
-        assert _phred(0.999999) < 1.0
+    bam.fetch.side_effect = fetch
+    return bam
 
-    def test_phred_half_is_three(self):
-        assert _phred(0.5) == pytest.approx(3.0103, abs=1e-3)
+
+def _uniform_reads(start0: int, length: int, depth: int, read_len: int = 100):
+    """Generate reads so every base in [start0, start0+length) is covered by
+    exactly ``depth`` reads. Reads are tiled with step == read_len and ``depth``
+    copies are stacked at each offset.
+    """
+    reads = []
+    for offset in range(0, length, read_len):
+        rs = start0 + offset
+        re = min(start0 + length, rs + read_len)
+        for _ in range(depth):
+            reads.append(_FakeRead(rs, re))
+    return reads
+
+
+class TestMeanDepthOverBins:
+    def test_empty_bam_returns_no_buckets(self):
+        bam = _make_bam_with_reads({})
+        # Use a GC-50% sequence so bucket lookup is deterministic if any depth
+        # appears (here none does).
+        seq_len = 3 * GC_BIN_SIZE
+        fasta = _FakeFasta({"chr1": "GC" * (seq_len // 2)})
+        out = _mean_depth_over_bins(bam, fasta, [("chr1", 1, seq_len)])
+        # Bins exist but each has zero depth -> still recorded as 0.0.
+        assert sum(len(v) for v in out.values()) == 3
+        for depths in out.values():
+            assert all(d == 0.0 for d in depths)
+
+    def test_region_smaller_than_bin_skipped(self):
+        bam = _make_bam_with_reads({})
+        fasta = _FakeFasta({"chr1": "A" * 100})
+        # Region length < GC_BIN_SIZE -> no bins emitted.
+        out = _mean_depth_over_bins(bam, fasta, [("chr1", 1, 100)])
+        assert out == {}
+
+    def test_uniform_depth_recovered(self):
+        region_len = 2 * GC_BIN_SIZE
+        reads = _uniform_reads(start0=0, length=region_len, depth=5, read_len=100)
+        bam = _make_bam_with_reads({("chr1", 0, region_len): reads})
+        fasta = _FakeFasta({"chr1": "GC" * (region_len // 2)})
+        out = _mean_depth_over_bins(bam, fasta, [("chr1", 1, region_len)])
+        all_depths = [d for depths in out.values() for d in depths]
+        assert len(all_depths) == 2
+        # Allow a small tolerance for tiling edge effects.
+        for d in all_depths:
+            assert d == pytest.approx(5.0, rel=0.05)
+
+    def test_low_mapq_reads_filtered_out(self):
+        region_len = GC_BIN_SIZE
+        good = _uniform_reads(0, region_len, depth=3, read_len=100)
+        bad = [_FakeRead(0, 100, mapping_quality=0) for _ in range(50)]
+        bam = _make_bam_with_reads({("chr1", 0, region_len): good + bad})
+        fasta = _FakeFasta({"chr1": "GC" * (region_len // 2)})
+        out = _mean_depth_over_bins(bam, fasta, [("chr1", 1, region_len)], min_mapq=10)
+        depths = [d for depths in out.values() for d in depths]
+        assert len(depths) == 1
+        # Only the MAPQ-passing reads contribute.
+        assert depths[0] == pytest.approx(3.0, rel=0.05)
+
+    def test_duplicate_and_secondary_reads_filtered_out(self):
+        region_len = GC_BIN_SIZE
+        good = _uniform_reads(0, region_len, depth=3, read_len=100)
+        junk = [
+            _FakeRead(0, 100, is_duplicate=True),
+            _FakeRead(0, 100, is_secondary=True),
+            _FakeRead(0, 100, is_supplementary=True),
+            _FakeRead(0, 100, is_unmapped=True),
+            _FakeRead(0, 100, is_qcfail=True),
+        ] * 20
+        bam = _make_bam_with_reads({("chr1", 0, region_len): good + junk})
+        fasta = _FakeFasta({"chr1": "GC" * (region_len // 2)})
+        out = _mean_depth_over_bins(bam, fasta, [("chr1", 1, region_len)])
+        depths = [d for depths in out.values() for d in depths]
+        assert depths[0] == pytest.approx(3.0, rel=0.05)
+
+
+class TestEstimateTotalKiv2CopyNumber:
+    """Drive the end-to-end depth-CN math via _mean_depth_over_bins monkeypatch.
+
+    Patching ``_mean_depth_over_bins`` is cleaner than handcrafting reads for
+    both the norm and KIV-2 regions; the GC-correction code path is exercised
+    by feeding compatible buckets.
+    """
+
+    @staticmethod
+    def _patch_depths(monkeypatch, depths_by_region):
+        def fake(bam, fasta, regions, **_kwargs):
+            out: dict[float, list[float]] = {}
+            for r in regions:
+                for gc, depths in depths_by_region.get(tuple(r), {}).items():
+                    out.setdefault(gc, []).extend(depths)
+            return out
+
+        monkeypatch.setattr(lpa_caller_mod, "_mean_depth_over_bins", fake)
+
+    def test_diploid_call_when_kiv2_matches_baseline(self, monkeypatch):
+        # KIV-2 depth == autosomal baseline -> CN = 2 * n_ref_repeats = 12.
+        baseline = {("chr1", 1, 1000): {0.5: [30.0] * 20}}
+        kiv2 = {("chr6", 100, 200): {0.5: [30.0] * 4}}
+        self._patch_depths(monkeypatch, {**baseline, **kiv2})
+        bam = MagicMock()
+        fasta = MagicMock()
+        cn = _estimate_total_kiv2_copy_number(
+            bam, fasta, "chr6", 100, 200, n_ref_repeats=6, norm_regions=[("chr1", 1, 1000)]
+        )
+        assert cn == pytest.approx(12.0)
+
+    def test_amplified_kiv2_scales_linearly(self, monkeypatch):
+        # KIV-2 depth 1.5x baseline -> CN = 1.5 * 2 * 6 = 18.
+        baseline = {("chr1", 1, 1000): {0.5: [30.0] * 20}}
+        kiv2 = {("chr6", 100, 200): {0.5: [45.0] * 4}}
+        self._patch_depths(monkeypatch, {**baseline, **kiv2})
+        cn = _estimate_total_kiv2_copy_number(
+            MagicMock(), MagicMock(), "chr6", 100, 200, n_ref_repeats=6, norm_regions=[("chr1", 1, 1000)]
+        )
+        assert cn == pytest.approx(18.0)
+
+    def test_gc_correction_uses_matching_bucket(self, monkeypatch):
+        # Baseline depth differs between two GC buckets; KIV-2 sits entirely in
+        # the high-GC bucket. After GC scaling the KIV-2 mean is normalized
+        # against the same-bucket baseline, not the overall mean.
+        baseline = {
+            ("chr1", 1, 1000): {
+                0.45: [20.0] * 20,
+                0.55: [40.0] * 20,
+            }
+        }
+        # KIV-2 depth = 60 in the 0.55 bucket -> 60/40 = 1.5x same-bucket baseline.
+        kiv2 = {("chr6", 100, 200): {0.55: [60.0] * 4}}
+        self._patch_depths(monkeypatch, {**baseline, **kiv2})
+        cn = _estimate_total_kiv2_copy_number(
+            MagicMock(), MagicMock(), "chr6", 100, 200, n_ref_repeats=6, norm_regions=[("chr1", 1, 1000)]
+        )
+        assert cn == pytest.approx(18.0)
+
+    def test_zero_baseline_raises(self, monkeypatch):
+        # All baseline bins return zero -> trimmed mean is 0 -> RuntimeError.
+        self._patch_depths(monkeypatch, {("chr1", 1, 1000): {0.5: [0.0] * 20}})
+        with pytest.raises(RuntimeError, match="Normalization regions have zero coverage"):
+            _estimate_total_kiv2_copy_number(
+                MagicMock(), MagicMock(), "chr6", 100, 200, n_ref_repeats=6, norm_regions=[("chr1", 1, 1000)]
+            )
+
+    def test_no_kiv2_bins_raises(self, monkeypatch):
+        baseline = {("chr1", 1, 1000): {0.5: [30.0] * 20}}
+        # No depth recorded for the KIV-2 region.
+        self._patch_depths(monkeypatch, {**baseline, ("chr6", 100, 200): {}})
+        with pytest.raises(RuntimeError, match="No KIV-2 depth bins"):
+            _estimate_total_kiv2_copy_number(
+                MagicMock(), MagicMock(), "chr6", 100, 200, n_ref_repeats=6, norm_regions=[("chr1", 1, 1000)]
+            )
+
+
+# ----------------------------------------------------------------------------
+# Allele counting at pileup positions
+# ----------------------------------------------------------------------------
+
+
+class _FakePileupRead:
+    def __init__(self, base, *, is_del=False, is_refskip=False, indel=0):
+        self.is_del = is_del
+        self.is_refskip = is_refskip
+        self.indel = indel
+        self.query_position = 0
+        aln = MagicMock()
+        aln.is_secondary = False
+        aln.is_supplementary = False
+        aln.is_duplicate = False
+        aln.is_qcfail = False
+        aln.is_unmapped = False
+        aln.query_sequence = base
+        self.alignment = aln
+
+
+class _FakePileupColumn:
+    def __init__(self, reference_pos, reads):
+        self.reference_pos = reference_pos
+        self.pileups = reads
+
+
+class TestCountAllelesAtPositions:
+    def test_case_insensitive_allele_matching(self):
+        # Lowercase query bases (e.g. soft-masked reference, some aligners)
+        # must match the configured uppercase REF/ALT, not fall through to
+        # `other` and bias the allele fraction.
+        bam = MagicMock()
+        bam.pileup.return_value = [
+            _FakePileupColumn(
+                reference_pos=99,
+                reads=(
+                    [_FakePileupRead("a")] * 3
+                    + [_FakePileupRead("A")] * 2
+                    + [_FakePileupRead("g")] * 4
+                    + [_FakePileupRead("G")] * 1
+                    + [_FakePileupRead("c")]  # 'other'
+                ),
+            )
+        ]
+        counts = _count_alleles_at_positions(bam, "chr6", [100], ref_allele="A", alt_allele="G")
+        assert counts.ref == 5
+        assert counts.alt == 5
+        assert counts.other == 1
 
 
 # ----------------------------------------------------------------------------
@@ -330,6 +548,50 @@ class TestCallSmallVariant:
         assert call.alt_copy_number == 12
         assert call.qual == pytest.approx(MAX_PHRED_QUAL)
 
+    def test_low_coverage_a_few_alt_reads_kept_at_alt_cn_zero(self):
+        # 2 alt out of 100 informative reads sits at/below the noise floor
+        # (LPA_VARIANT_NOISE_FLOOR = 0.003) -> should call REF, not flap to
+        # the lowest non-zero ALT-CN.
+        counts = AlleleCounts(ref=98, alt=2)
+        call = _call_small_variant(
+            counts,
+            kiv2_copy_number=12.0,
+            hgvs="LPA:4733G>A",
+            ref_allele="C",
+            alt_allele="T",
+            positions=[1],
+        )
+        assert call.alt_copy_number == 0
+        assert call.qual == 0.0
+
+    def test_extreme_high_cn_alt_cn_is_proportional(self):
+        # Total CN ~40 with ~25% ALT -> best alt_cn ~ 10.
+        counts = AlleleCounts(ref=300, alt=100)
+        call = _call_small_variant(
+            counts,
+            kiv2_copy_number=40.0,
+            hgvs="LPA:4733G>A",
+            ref_allele="C",
+            alt_allele="T",
+            positions=[1],
+        )
+        assert call.alt_copy_number == 10
+        assert 0 < call.qual <= MAX_PHRED_QUAL
+
+    def test_zero_kiv2_cn_floors_to_one(self):
+        # kiv2_copy_number == 0 would otherwise blow up the binomial loop;
+        # the code floors total_cn to max(1, ...) so the call still returns.
+        counts = AlleleCounts(ref=10, alt=10)
+        call = _call_small_variant(
+            counts,
+            kiv2_copy_number=0.0,
+            hgvs="LPA:4733G>A",
+            ref_allele="C",
+            alt_allele="T",
+            positions=[1],
+        )
+        assert call.alt_copy_number in (0, 1)
+
 
 # ----------------------------------------------------------------------------
 # Heterozygous marker calling
@@ -338,8 +600,6 @@ class TestCallSmallVariant:
 
 def _make_marker_call(per_marker_counts):
     """Run _call_heterozygous_markers with mocked allele counting."""
-    from ugbio_cnv import lpa_caller
-
     markers = [
         _build_marker(
             {"hgvs": "LPA:1A>C", "ref": "A", "alt": "C", "first_pos": 100},
@@ -355,12 +615,12 @@ def _make_marker_call(per_marker_counts):
         return next(counts_iter)
 
     bam = MagicMock()
-    original = lpa_caller._count_alleles_at_positions
-    lpa_caller._count_alleles_at_positions = fake_count
+    original = lpa_caller_mod._count_alleles_at_positions
+    lpa_caller_mod._count_alleles_at_positions = fake_count
     try:
         return _call_heterozygous_markers(bam, "chr6", markers, kiv2_copy_number=12.0)
     finally:
-        lpa_caller._count_alleles_at_positions = original
+        lpa_caller_mod._count_alleles_at_positions = original
 
 
 class TestHeterozygousMarkerCalling:
@@ -398,6 +658,16 @@ class TestHeterozygousMarkerCalling:
         ref_cn, alt_cn, call_type, _ = _make_marker_call([AlleleCounts(ref=100, alt=9)])
         assert call_type == "Homozygous REF markers call"
         assert ref_cn is None and alt_cn is None
+
+    def test_only_other_bases_is_no_coverage(self):
+        # All reads carry a non-REF, non-ALT base -> informative count is 0 and
+        # we fall back to the "no coverage" branch instead of splitting CN.
+        ref_cn, alt_cn, call_type, _ = _make_marker_call(
+            [AlleleCounts(ref=0, alt=0, other=100), AlleleCounts(ref=0, alt=0, other=100)]
+        )
+        assert ref_cn is None
+        assert alt_cn is None
+        assert "No coverage" in call_type
 
 
 # ----------------------------------------------------------------------------
