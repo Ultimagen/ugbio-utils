@@ -53,6 +53,8 @@ RUN curl -SLO https://github.com/RealTimeGenomics/rtg-tools/releases/download/${
 
 ARG OUT_DIR
 
+ENV HDF5_USE_FILE_LOCKING=FALSE
+
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
 COPY --from=build ${OUT_DIR} ${OUT_DIR}
