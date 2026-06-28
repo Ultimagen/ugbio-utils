@@ -26,7 +26,7 @@ def test_log_binomial_zero_n_zero_k_is_zero():
 
 def test_log_binomial_known_value():
     # log(C(4,2) * 0.5^4) = log(6/16)
-    assert math_utils.log_binomial(4, 2, 0.5) == math.log(6 / 16)
+    assert math.isclose(math_utils.log_binomial(4, 2, 0.5), math.log(6 / 16), rel_tol=1e-12)
 
 
 def test_log_binomial_clamps_extreme_p():
