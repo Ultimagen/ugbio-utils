@@ -756,7 +756,7 @@ def read_and_filter_signatures_parquet(
     missing_frac = x.isna().groupby(df_signatures["signature"]).mean()
     bad_sigs = missing_frac[missing_frac > 0.5]  # noqa: PLR2004
     if not bad_sigs.empty:
-        details = ", ".join(f"{sig} ({frac*100:.0f}%)" for sig, frac in bad_sigs.items())
+        details = ", ".join(f"{sig} ({frac * 100:.0f}%)" for sig, frac in bad_sigs.items())
         raise ValueError(
             f"The following signatures have >50% positions without coverage in the coverage_bed: {details}. "
             "Ensure mosdepth was run at the union of all signature loci (matched + control + db_control)."
@@ -1183,7 +1183,7 @@ def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadat
         filtering_count_column = "rows"
     else:
         raise ValueError(
-            "Could not find filtering count column in metadata filters. " "Expected either 'funnel' or 'rows'."
+            "Could not find filtering count column in metadata filters. Expected either 'funnel' or 'rows'."
         )
 
     # Exclude annotation-based filters (e.g. EXCLUDE_TRAINING, PCAWG, INCLUDE_INFERENCE) from the

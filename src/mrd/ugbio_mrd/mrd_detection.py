@@ -554,7 +554,7 @@ def plot_null_distribution(  # noqa: PLR0915, C901
     x_cohort = 1.5
     try:
         ctrl_data = df_tf.loc["control"]["supporting_reads"]
-        if isinstance(ctrl_data, (int, float, np.integer)):
+        if isinstance(ctrl_data, int | float | np.integer):
             ctrl_data = pd.Series([ctrl_data])
         rng3 = np.random.default_rng(99)
         jitter_c = rng3.uniform(-0.14, 0.14, size=len(ctrl_data))
