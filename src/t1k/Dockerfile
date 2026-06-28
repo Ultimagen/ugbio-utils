@@ -36,6 +36,14 @@ RUN cd /T1K \
     && cd .. \
     && make htslib=1 LINKFLAGS="-lpthread -lz -ldeflate -llzma -lbz2 -lcurl -lssl -lcrypto" -j $(nproc)
 
+# After building T1K
+RUN cd /T1K \
+      && make htslib=1 LINKFLAGS="-lpthread -lz -ldeflate -llzma -lbz2 -lcurl -lssl -lcrypto" -j $(nproc)
+
+# Install htslib shared library
+RUN cp /T1K/htslib-1.15.1/libhts.so.3 /usr/local/lib/ \
+      && ldconfig
+
 # Symlink executables to PATH
 RUN ln -s /T1K/run-t1k /usr/local/bin/run-t1k \
     && ln -s /T1K/t1k-build.pl /usr/local/bin/t1k-build.pl \
