@@ -10,7 +10,7 @@ on:
         default: false
 
 env:
-  UV_VERSION: '0.4.17'
+  UV_VERSION: '0.5.20'
   MAIN_BRANCH: main
   VERSION_LEVEL: >
     ${{ fromJson('{
