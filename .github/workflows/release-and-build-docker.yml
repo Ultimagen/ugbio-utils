@@ -1,0 +1,117 @@
+name: "Common workflow - release and build docker"
+run-name: "Release and build ${{ inputs.docker-image }} triggered by @${{ github.actor }}"
+
+on:
+  workflow_call:
+    inputs:
+      minor-release:
+        description: "If true, bump patch version; otherwise bump minor"
+        type: boolean
+        required: false
+        default: false
+      create-release:
+        description: "If true, also create a GitHub Release (not just a tag)"
+        type: boolean
+        required: false
+        default: false
+      docker-image:
+        description: "Docker image name"
+        type: string
+        required: true
+      docker-file:
+        description: "Dockerfile path (from repository root)"
+        required: false
+        type: string
+        default: "Dockerfile"
+      docker-context:
+        description: "Docker build context"
+        required: false
+        default: "."
+        type: string
+      docker-target:
+        description: "Docker target stage"
+        required: false
+        type: string
+      docker-build-args:
+        description: "Additional docker build args"
+        required: false
+        type: string
+        default: ""
+      base-branch:
+        description: "Base branch (defaults to main)"
+        required: false
+        default: "main"
+        type: string
+      runner:
+        description: "Runner type (default: ubuntu-latest)"
+        required: false
+        type: string
+        default: "ubuntu-latest"
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    outputs:
+      new_version: ${{ steps.bump-semver.outputs.new_version }}
+      docker_tag: ${{ steps.bump-semver.outputs.new_version }}_${{ steps.short-sha.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
+      - uses: actions-ecosystem/action-get-latest-tag@v1
+        id: get-latest-tag
+        with:
+          semver_only: true
+          initial_version: "1.0.0"
+
+      - uses: actions-ecosystem/action-bump-semver@v1
+        id: bump-semver
+        with:
+          current_version: ${{ steps.get-latest-tag.outputs.tag }}
+          level: ${{ inputs.minor-release && 'patch' || 'minor' }}
+
+      - uses: benjlevesque/short-sha@v2.2
+        id: short-sha
+        with:
+          length: 7
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag ${{ steps.bump-semver.outputs.new_version }}
+          git push origin ${{ steps.bump-semver.outputs.new_version }}
+
+      - name: Create GitHub Release
+        if: ${{ inputs.create-release }}
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+        with:
+          tag_name: ${{ steps.bump-semver.outputs.new_version }}
+          release_name: Release ${{ steps.bump-semver.outputs.new_version }}
+          draft: false
+          prerelease: false
+
+  build-docker:
+    needs: [release]
+    uses: ./.github/workflows/docker-build-push.yml
+    secrets: inherit
+    with:
+      git-repo: ${{ github.repository }}
+      git-ref: ${{ needs.release.outputs.new_version }}
+      docker-image: ${{ inputs.docker-image }}
+      docker-file: ${{ inputs.docker-file }}
+      docker-tag: ${{ needs.release.outputs.docker_tag }}
+      docker-context: ${{ inputs.docker-context }}
+      docker-target: ${{ inputs.docker-target }}
+      docker-build-args: ${{ inputs.docker-build-args }}
+      base-branch: ${{ inputs.base-branch }}
+      project-version: ${{ needs.release.outputs.new_version }}
+      runner: ${{ inputs.runner }}
