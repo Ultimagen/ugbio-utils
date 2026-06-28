@@ -20,6 +20,7 @@ on:
           - "single_cell"
           - "srsnv"
           - "pypgx"
+          - "t1k"
         required: true
         default: ""
 
