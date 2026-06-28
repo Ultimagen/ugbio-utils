@@ -1,11 +1,11 @@
 FROM python:3.12-slim
 
-ARG PYPGX_BRANCH=0.27.0
-ARG PYPGX_BUNDLE_BRANCH=0.27.0
+ARG PYPGX_BRANCH=0.26.0
+ARG PYPGX_BUNDLE_BRANCH=0.26.0
 
 # Install dependencies and create venv
 RUN apt-get update && \
-    apt-get install --no-install-recommends -y default-jre-headless git build-essential wget unzip bcftools
+    apt-get install --no-install-recommends -y default-jre-headless git build-essential wget unzip bcftools free
 
 # Install pypgx
 RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
