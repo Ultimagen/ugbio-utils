@@ -754,14 +754,35 @@ def _write_vcf(
 
 
 def _parse_norm_regions(text: str) -> list[tuple[str, int, int]]:
+    """Parse a comma-separated ``chrom:start-end`` region list with clear errors.
+
+    Raises ``argparse.ArgumentTypeError`` so argparse renders a user-friendly
+    message (without a traceback) on malformed input.
+    """
     out = []
     for raw in text.split(","):
         token = raw.strip()
         if not token:
             continue
-        chrom, rng = token.split(":")
-        start, end = rng.split("-")
-        out.append((chrom, int(start), int(end)))
+        if ":" not in token or "-" not in token.split(":", 1)[1]:
+            raise argparse.ArgumentTypeError(
+                f"invalid region '{token}': expected 'chrom:start-end' (e.g. chr1:50000000-52000000)"
+            )
+        chrom, rng = token.split(":", 1)
+        start_str, end_str = rng.split("-", 1)
+        try:
+            start, end = int(start_str), int(end_str)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(f"invalid region '{token}': start/end must be integers") from exc
+        if start < 1 or end < 1:
+            raise argparse.ArgumentTypeError(
+                f"invalid region '{token}': start/end must be positive 1-based coordinates"
+            )
+        if start > end:
+            raise argparse.ArgumentTypeError(f"invalid region '{token}': start ({start}) must be <= end ({end})")
+        out.append((chrom, start, end))
+    if not out:
+        raise argparse.ArgumentTypeError("no regions parsed from --norm-regions")
     return out
 
 

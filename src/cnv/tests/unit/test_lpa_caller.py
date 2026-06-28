@@ -8,6 +8,7 @@ are exercised via mocked ``pysam`` objects.
 
 from __future__ import annotations
 
+import argparse
 import gzip
 import json
 from unittest.mock import MagicMock
@@ -685,6 +686,22 @@ class TestParseNormRegions:
 
     def test_empty_tokens_skipped(self):
         assert _parse_norm_regions(",chr1:1-2,, ,") == [("chr1", 1, 2)]
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "chr1",  # missing ':'
+            "chr1:100",  # missing '-'
+            "chr1:abc-200",  # non-integer start
+            "chr1:100-xyz",  # non-integer end
+            "chr1:200-100",  # start > end
+            "chr1:0-100",  # non-positive coordinate
+            "",  # nothing parsed
+        ],
+    )
+    def test_invalid_input_raises_argument_type_error(self, bad):
+        with pytest.raises(argparse.ArgumentTypeError):
+            _parse_norm_regions(bad)
 
 
 # ----------------------------------------------------------------------------
