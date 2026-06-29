@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -113,8 +114,50 @@ def merge_snvfind_stats(input_files: list[str | Path], output_file: str | Path) 
     logger.info("Merged %d stats files into %s", len(all_data), output_path)
 
 
+def merge_trinuc_freq(input_files: list[str | Path], output_file: str | Path) -> None:
+    """
+    Merge per-shard trinucleotide frequency CSVs.
+
+    Each CSV is tab-separated with columns: trinuc_context, ref_freq, count, observed_freq, ratio.
+    Merge sums the count column and recomputes observed_freq and ratio.
+
+    Parameters
+    ----------
+    input_files
+        Paths to per-shard trinuc freq CSV files
+    output_file
+        Path to write merged CSV
+    """
+    counts: dict[str, int] = defaultdict(int)
+    ref_freqs: dict[str, float] = {}
+
+    for f in input_files:
+        with open(f, encoding="utf-8") as fh:
+            for raw_line in fh:
+                stripped = raw_line.strip()
+                if not stripped:
+                    continue
+                parts = stripped.split("\t")
+                trinuc = parts[0]
+                ref_freq = float(parts[1])
+                count = int(parts[2])
+                counts[trinuc] += count
+                ref_freqs[trinuc] = ref_freq
+
+    total_count = sum(counts.values())
+    output_path = Path(output_file)
+    with output_path.open("w", encoding="utf-8") as fh:
+        for trinuc, ref_freq in ref_freqs.items():
+            count = counts[trinuc]
+            observed_freq = count / total_count if total_count > 0 else 0.0
+            ratio = observed_freq / ref_freq if ref_freq > 0 else 0.0
+            fh.write(f"{trinuc}\t{ref_freq:.10f}\t{count}\t{observed_freq:.10f}\t{ratio:.10f}\n")
+
+    logger.info("Merged %d trinuc freq files into %s", len(input_files), output_path)
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Merge per-shard snvfind stats JSONs")
+    parser = argparse.ArgumentParser(description="Merge per-shard snvfind stats JSONs and trinuc freq CSVs")
     parser.add_argument(
         "--input",
         required=True,
@@ -123,12 +166,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Input stats JSON file (repeat for each shard)",
     )
     parser.add_argument("--output", required=True, help="Output merged JSON file path")
+    parser.add_argument(
+        "--trinuc-freq-input",
+        action="append",
+        dest="trinuc_freq_inputs",
+        help="Input trinuc freq CSV file (repeat for each shard, optional)",
+    )
+    parser.add_argument("--trinuc-freq-output", dest="trinuc_freq_output", help="Output merged trinuc freq CSV path")
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     merge_snvfind_stats(args.inputs, args.output)
+    if args.trinuc_freq_inputs and args.trinuc_freq_output:
+        merge_trinuc_freq(args.trinuc_freq_inputs, args.trinuc_freq_output)
 
 
 if __name__ == "__main__":

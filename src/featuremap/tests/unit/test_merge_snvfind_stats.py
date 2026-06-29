@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from ugbio_featuremap.merge_snvfind_stats import merge_snvfind_stats
+from ugbio_featuremap.merge_snvfind_stats import merge_snvfind_stats, merge_trinuc_freq
 
 
 @pytest.fixture
@@ -314,3 +314,47 @@ def test_merge_combinations_with_new_keys(tmp_path):
     assert result["combinations"]["10"] == 20
     assert result["combinations"]["11"] == 40
     assert result["combinations_total"] == 180
+
+
+def test_merge_trinuc_freq(tmp_path):
+    shard1 = tmp_path / "shard1.csv"
+    shard1.write_text(
+        "A[A>C]A\t0.0121235971\t4383\t0.0091489761\t0.7546420497\n"
+        "A[A>G]A\t0.0121235971\t5176\t0.0108042666\t0.8911766482\n"
+        "A[A>T]A\t0.0121235971\t3736\t0.0077984428\t0.6432449686\n"
+    )
+
+    shard2 = tmp_path / "shard2.csv"
+    shard2.write_text(
+        "A[A>C]A\t0.0121235971\t4000\t0.0090000000\t0.7400000000\n"
+        "A[A>G]A\t0.0121235971\t5000\t0.0110000000\t0.9000000000\n"
+        "A[A>T]A\t0.0121235971\t3500\t0.0080000000\t0.6500000000\n"
+    )
+
+    output = tmp_path / "merged.csv"
+    merge_trinuc_freq([shard1, shard2], output)
+
+    lines = output.read_text().strip().split("\n")
+    assert len(lines) == 3
+
+    parts = lines[0].split("\t")
+    assert parts[0] == "A[A>C]A"
+    assert int(parts[2]) == 8383  # 4383 + 4000
+    total = 8383 + 10176 + 7236  # sum of all counts
+    expected_freq = 8383 / total
+    assert abs(float(parts[3]) - expected_freq) < 1e-6
+
+
+def test_merge_trinuc_freq_single_shard(tmp_path):
+    shard1 = tmp_path / "shard1.csv"
+    shard1.write_text("A[A>C]A\t0.0121235971\t4383\t0.0091489761\t0.7546420497\n")
+
+    output = tmp_path / "merged.csv"
+    merge_trinuc_freq([shard1], output)
+
+    lines = output.read_text().strip().split("\n")
+    assert len(lines) == 1
+    parts = lines[0].split("\t")
+    assert parts[0] == "A[A>C]A"
+    assert int(parts[2]) == 4383
+    assert abs(float(parts[3]) - 1.0) < 1e-6  # single trinuc = freq 1.0
