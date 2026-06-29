@@ -9,7 +9,8 @@ Implements the MRD detection procedure:
 The test statistic is the count of supporting reads passing quality
 filters (SNVQ >= 60, MAPQ >= 60, filt > 0) — the same metric already
 computed by the existing pipeline. The noise rate (p_err) is estimated
-from the db_control synthetic signatures via Jeffreys-prior Bayes estimate.
+from the db_control synthetic signatures via MLE; a Jeffreys-prior floor is applied
+only when zero background reads are observed to avoid a degenerate null distribution.
 """
 
 from dataclasses import dataclass, field
@@ -73,7 +74,8 @@ def _binom_detection_threshold(n: int, p_err: float, alpha: float) -> int | None
     n : int
         Effective number of trials (signature_size × mean_coverage × denom_ratio).
     p_err : float
-        Per-locus background noise rate (Jeffreys-prior Bayes estimate from db_control signatures).
+        Per-locus background noise rate (MLE from db_control signatures, or Jeffreys-prior floor
+        when zero background reads were observed).
     alpha : float
         Significance level; the caller supplies either the detection alpha or the LOD FPR.
 
@@ -334,12 +336,18 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             null_reads = db_control_data["supporting_reads"].to_numpy().astype(int)
             db_total_reads = float(db_control_data["supporting_reads"].sum())
             db_total_cov = float(db_control_data["corrected_coverage"].sum())
-        # Jeffreys prior: (k + 0.5) / (N + 1) — avoids p_err=0 when no reads observed.
+        # Noise rate estimation:
+        # - When background reads are observed, use MLE: p_err = k / N.
+        # - When zero reads are observed, apply Jeffreys prior: p_err = 0.5 / (N + 1)
+        #   to avoid a hard zero that would make the null Binomial degenerate.
         # If total corrected coverage is zero the null model has no depth; treat as
         # missing controls (p_err=0.0 + null_reads kept empty) so the call is Indeterminate.
         raw_reads_zero = db_total_reads == 0
         if db_total_cov > 0:
-            p_err = (db_total_reads + 0.5) / (db_total_cov + 1)
+            if raw_reads_zero:
+                p_err = 0.5 / (db_total_cov + 1)  # Jeffreys prior floor
+            else:
+                p_err = db_total_reads / db_total_cov  # MLE
         else:
             logger.warning(
                 "db_control corrected_coverage is zero despite %d synthetic control(s) present — "
