@@ -10,8 +10,6 @@ The test statistic is the count of supporting reads passing quality
 filters (SNVQ >= 60, MAPQ >= 60, filt > 0) — the same metric already
 computed by the existing pipeline. The noise rate (p_err) is estimated
 from the db_control synthetic signatures via Jeffreys-prior Bayes estimate.
-
-Reference: bfx-read-the-docs/docs/tumor-informed-mrd/mrd_dev_plan_analysis.md
 """
 
 from dataclasses import dataclass, field
@@ -58,6 +56,39 @@ def _expected_multi_read_fraction(mean_coverage: float, tumor_vaf: float) -> flo
     if lam <= 0:
         return 0.0
     return float(1.0 - (1.0 + lam) * np.exp(-lam))
+
+
+def _binom_detection_threshold(n: int, p_err: float, alpha: float) -> int | None:
+    """Return the smallest read count k at which the Binomial right-tail probability falls below *alpha*.
+
+    Formally, returns ``min{k : P(X ≥ k | Binom(n, p_err)) < alpha}``, i.e., the minimum number of
+    supporting reads required to reject the noise-only null hypothesis at significance level *alpha*.
+
+    The search range upper bound is set dynamically via the Binomial PPF at the 99.99th percentile
+    plus a small safety buffer of 10, so the function remains correct even when ``n * p_err`` is large
+    (a fixed cap would miss the true threshold in high-coverage or high-noise-rate regimes).
+
+    Parameters
+    ----------
+    n : int
+        Effective number of trials (signature_size × mean_coverage × denom_ratio).
+    p_err : float
+        Per-locus background noise rate (Jeffreys-prior Bayes estimate from db_control signatures).
+    alpha : float
+        Significance level; the caller supplies either the detection alpha or the LOD FPR.
+
+    Returns
+    -------
+    int or None
+        Detection threshold k, or ``None`` when no k satisfies the criterion (meaning the noise
+        distribution is so diffuse that significance cannot be achieved at the given alpha).
+    """
+    from scipy.stats import binom as _binom  # noqa: PLC0415
+
+    k_max = int(_binom.ppf(0.9999, n, max(p_err, 1e-12))) + 10
+    sf_vals = _binom.sf(np.arange(k_max + 1) - 1, n, p_err)
+    hits = np.where(sf_vals < alpha)[0]
+    return int(hits[0]) if len(hits) > 0 else None
 
 
 def _multi_read_enrichment_pvalue(n_multi: int, signature_size: int, mean_coverage: float, tumor_vaf: float) -> float:
@@ -181,15 +212,10 @@ def compute_personal_lod(  # noqa: PLR0911
     if n <= 0:
         return None
 
-    # Step 1: analytic detection threshold at the given FPR under the null
-    # n_th = smallest k s.t. binom.sf(k-1, n, p_err) < fpr
-    # Use ppf to set the search upper bound dynamically (avoids missing n_th
-    # when n*p_err is large and the 95th percentile exceeds a fixed cap).
-    k_max = int(_binom.ppf(0.9999, n, max(p_err, 1e-12))) + 10
-    k_range = np.arange(0, k_max + 1)
-    sf_values = _binom.sf(k_range - 1, n, p_err)
-    hits = np.where(sf_values < fpr)[0]
-    if len(hits) == 0:
+    # Step 1: analytic detection threshold at the given FPR under the null.
+    # n_th = smallest k s.t. P(X >= k | Binom(n, p_err)) < fpr
+    n_th = _binom_detection_threshold(n, p_err, fpr)
+    if n_th is None:
         logger.debug(
             "Personal LOD: no threshold satisfies FPR<%.3f (N=%d, p_err=%.2e) — LOD indeterminate",
             fpr,
@@ -197,7 +223,6 @@ def compute_personal_lod(  # noqa: PLR0911
             p_err,
         )
         return None
-    n_th = int(hits[0])
 
     # Step 2: find the smallest TF where recall >= target_recall.
     # recall(tf) = binom.sf(n_th - 1, n, p_err + tf) is monotone increasing in tf.
@@ -406,12 +431,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
 
     # Detection threshold from Binomial model: smallest k s.t. Binom.sf(k-1, n_effective, p_err) < alpha
     if n_effective > 0 and p_err > 0:
-        from scipy.stats import binom as _binom_t  # noqa: PLC0415
-
-        k_max = int(_binom_t.ppf(0.9999, n_effective, p_err)) + 10
-        sf_vals = _binom_t.sf(np.arange(k_max + 1) - 1, n_effective, p_err)
-        hits = np.where(sf_vals < alpha)[0]
-        detection_threshold = int(hits[0]) if len(hits) > 0 else k_max
+        detection_threshold = _binom_detection_threshold(n_effective, p_err, alpha) or 1
     else:
         detection_threshold = 1
 
@@ -577,24 +597,16 @@ def plot_null_distribution(  # noqa: PLR0915, C901
     ax.scatter([x_patient], [_safe(obs)], color="#c0392b", s=160, marker="*", zorder=6, label=f"Patient ({obs} reads)")
 
     # --- Detection threshold / LOD line ---
-    # n_th: smallest k s.t. P(X >= k | n_eff, p_err) < detection.alpha.
+    # n_th: smallest k s.t. P(X >= k | n_eff, p_err) < detection.alpha (via _binom_detection_threshold).
     # LOD uses DEFAULT_LOD_FPR (5%) independently.
-    # k_max is set dynamically via ppf to avoid missing the percentile when
-    # n_eff*p_err is large (fixed caps like 10000 fail for unfiltered reads panels).
     n_th_plot = None
     lod_tf_plot = None
     n_eff_plot = getattr(detection, "n_effective", 0)
     p_err_plot = getattr(detection, "noise_rate", 0.0)
     if n_eff_plot > 0:
-        from scipy.stats import binom as _binom_lod  # noqa: PLC0415
-
-        k_max = int(_binom_lod.ppf(0.9999, n_eff_plot, max(p_err_plot, 1e-12))) + 10
-        k_range = np.arange(0, k_max + 1)
-        sf_vals = _binom_lod.sf(k_range - 1, n_eff_plot, p_err_plot)
         _alpha_plot = getattr(detection, "alpha", DEFAULT_ALPHA)
-        hits = np.where(sf_vals < _alpha_plot)[0]
-        if len(hits) > 0:
-            n_th_plot = int(hits[0])
+        n_th_plot = _binom_detection_threshold(n_eff_plot, p_err_plot, _alpha_plot)
+        if n_th_plot is not None:
             lod_tf_plot = compute_personal_lod(
                 signature_size=1,
                 mean_coverage=float(n_eff_plot),
