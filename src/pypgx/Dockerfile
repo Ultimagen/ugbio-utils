@@ -1,18 +1,20 @@
 FROM python:3.12-slim
 
-ARG PYPGX_BRANCH=0.26.0
-ARG PYPGX_BUNDLE_BRANCH=0.26.0
+ARG PYPGX_BRANCH=0.27.0
+ARG PYPGX_BUNDLE_BRANCH=0.27.0
 
 # Install dependencies and create venv
 RUN apt-get update && \
-    apt-get install --no-install-recommends -y default-jre-headless git build-essential wget unzip
+    apt-get install --no-install-recommends -y default-jre-headless git build-essential wget unzip bcftools procps
 
 # Install pypgx
 RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
     cd /opt/pypgx && \
     git checkout ${PYPGX_BRANCH} && \
     pip install . && \
-    rm -rf /opt/pypgx
+    cd / && \
+    rm -rf /opt/pypgx && \
+    pip install pandas==2.3.3
 
 # Clone the pypgx-bundle repository at the corresponding version
 RUN git clone --branch ${PYPGX_BUNDLE_BRANCH} --depth 1 https://github.com/sbslee/pypgx-bundle /opt/pypgx-bundle
