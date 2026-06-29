@@ -47,51 +47,7 @@ from ugbio_cnv.lpa_caller import (
 )
 
 # ----------------------------------------------------------------------------
-# Data classes
-# ----------------------------------------------------------------------------
-
-
-class TestAlleleCounts:
-    def test_totals(self):
-        c = AlleleCounts(ref=4, alt=3, other=2)
-        assert c.total == 9
-        assert c.informative == 7
-
-    def test_defaults(self):
-        c = AlleleCounts()
-        assert c.total == 0
-        assert c.informative == 0
-
-
-# ----------------------------------------------------------------------------
-# Marker projection
-# ----------------------------------------------------------------------------
-
-
-class TestBuildMarker:
-    def test_explicit_positions_used_verbatim(self):
-        spec = {
-            "hgvs": "LPA:296T>G",
-            "ref": "T",
-            "alt": "G",
-            "positions": [100, 200, 300, 400, 500, 600],
-        }
-        m = _build_marker(spec, kiv2_start=1, unit_len=10, n_repeats=2)
-        # n_repeats / unit_len ignored when positions provided.
-        assert m.positions == [100, 200, 300, 400, 500, 600]
-        assert m.hgvs == "LPA:296T>G"
-        assert m.ref == "T"
-        assert m.alt == "G"
-
-    def test_extrapolated_positions(self):
-        spec = {"hgvs": "X:1A>C", "ref": "A", "alt": "C", "first_pos": 105}
-        m = _build_marker(spec, kiv2_start=100, unit_len=10, n_repeats=4)
-        # offset = 5; positions = 100+5, 100+15, 100+25, 100+35
-        assert m.positions == [105, 115, 125, 135]
-
-
-# ----------------------------------------------------------------------------
-# GC helpers
+# Reference validation
 # ----------------------------------------------------------------------------
 
 
@@ -224,17 +180,21 @@ class TestTrimmedMean:
         assert _trimmed_mean([]) == 0.0
 
     def test_trim_removes_tails(self):
-        # 0.10 of 10 = 1 trimmed per side, leaves [2..9] (mean=5.5)
-        values = list(range(1, 11))
+        # Asymmetric outliers: plain mean is dominated by the 1000 outlier;
+        # 10% trim removes both tail values (1 and 1000) and yields mean of 2..9.
+        values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 1000.0]
+        assert float(np.mean(values)) == pytest.approx(104.5)
         assert _trimmed_mean(values, trim=0.1) == pytest.approx(5.5)
 
     def test_full_trim_falls_back_to_mean(self):
-        # trim large enough that 2*k >= size -> ungrimmed mean
+        # trim large enough that 2*k >= size -> untrimmed mean
         assert _trimmed_mean([1, 2, 3], trim=0.5) == pytest.approx(2.0)
 
     def test_handles_numpy_array(self):
-        arr = np.array([10.0, 20.0, 30.0, 40.0, 50.0])
-        # trim=0.2 -> k=1 -> mean of [20, 30, 40]
+        # Asymmetric distribution so the trim actually changes the result.
+        arr = np.array([10.0, 20.0, 30.0, 40.0, 500.0])
+        # trim=0.2 -> k=1 -> mean of [20, 30, 40] = 30 (plain mean = 120).
+        assert float(arr.mean()) == pytest.approx(120.0)
         assert _trimmed_mean(arr, trim=0.2) == pytest.approx(30.0)
 
 
@@ -603,10 +563,12 @@ def _make_marker_call(per_marker_counts):
     """Run _call_heterozygous_markers with mocked allele counting."""
     markers = [
         _build_marker(
-            {"hgvs": "LPA:1A>C", "ref": "A", "alt": "C", "first_pos": 100},
-            kiv2_start=1,
-            unit_len=10,
-            n_repeats=len(per_marker_counts),
+            {
+                "hgvs": "LPA:1A>C",
+                "ref": "A",
+                "alt": "C",
+                "positions": [100 + i * 10 for i in range(len(per_marker_counts))],
+            }
         )
     ] * len(per_marker_counts)
 

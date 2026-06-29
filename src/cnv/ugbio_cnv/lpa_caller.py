@@ -56,9 +56,13 @@ DEFAULT_KIV2_END = 160646997  # 1-based, inclusive
 DEFAULT_KIV2_REPEAT_COUNT = 6
 DEFAULT_KIV2_UNIT_LEN = 5552
 
-# Heterozygous-marker SNV pair (linked across every repeat copy of a haplotype).
-# Per-repeat spacing is irregular (~5543-5552 bp) so explicit positions are used
-# instead of uniform extrapolation.
+# Two heterozygous-marker SNVs (linked across every KIV-2 repeat copy of a
+# haplotype) used ONLY to split the total KIV-2 copy number into the two
+# haplotypes (ref-haplotype-allele copies vs alt-haplotype-allele copies).
+# They are not the LPA "variants of interest" — they're convenient SNPs
+# whose REF/ALT genotype labels which repeat unit belongs to which haplotype.
+# Per-repeat spacing is irregular (~5543-5552 bp) so explicit positions are
+# used instead of uniform extrapolation.
 DEFAULT_MARKER_VARIANTS = [
     {
         "hgvs": "LPA:296T>G",
@@ -74,7 +78,10 @@ DEFAULT_MARKER_VARIANTS = [
     },
 ]
 
-# Small variant sites in the KIV-2 repeat (the two reported LPA variants).
+# Small variant sites in the KIV-2 repeat — the LPA variants we actually want
+# to call (clinically relevant SNVs that contribute to LPA expression). For
+# each site we infer an ALT copy number in [0, total_cn] across the whole
+# KIV-2 array via a binomial fit on the per-site REF/ALT pileup.
 # REF/ALT are genome-strand (LPA gene is on minus strand, hence the C/T pair
 # for variants labeled "G>A"). Per-repeat positions are explicit because the
 # small-variant region uses a slightly different per-repeat spacing than the
@@ -205,20 +212,19 @@ class LpaCall:
 # ----------------------------------------------------------------------------
 
 
-def _build_marker(spec: dict, kiv2_start: int, unit_len: int, n_repeats: int) -> MarkerSpec:
-    """Project a marker onto every repeat copy.
+def _build_marker(spec: dict) -> MarkerSpec:
+    """Build a MarkerSpec from an explicit per-repeat ``positions`` list.
 
-    If the spec provides an explicit ``positions`` list, use it as-is
-    (small variants need this because their per-repeat spacing is not the
-    uniform ``unit_len`` of the marker region). Otherwise extrapolate from
-    ``first_pos`` at fixed ``unit_len`` spacing.
+    The KIV-2 per-repeat spacing is not exactly uniform (~5543-5552 bp), so
+    every marker / small-variant spec must list its positions explicitly
+    — uniform extrapolation from a single ``first_pos`` is not reliable.
     """
-    if "positions" in spec:
-        positions = list(spec["positions"])
-    else:
-        offset = spec["first_pos"] - kiv2_start
-        positions = [kiv2_start + offset + i * unit_len for i in range(n_repeats)]
-    return MarkerSpec(hgvs=spec["hgvs"], ref=spec["ref"], alt=spec["alt"], positions=positions)
+    return MarkerSpec(
+        hgvs=spec["hgvs"],
+        ref=spec["ref"],
+        alt=spec["alt"],
+        positions=list(spec["positions"]),
+    )
 
 
 def _gc_fraction(fasta: pyfaidx.Fasta, chrom: str, start: int, end: int) -> float:
@@ -363,6 +369,7 @@ def _estimate_total_kiv2_copy_number(
     kiv2_end: int,
     n_ref_repeats: int,
     norm_regions: list[tuple[str, int, int]],
+    min_mapq: int = MIN_MAPPING_QUALITY,
 ) -> float:
     """
     Total LPA KIV-2 VNTR unit copy number, summed over the two haplotypes.
@@ -372,7 +379,7 @@ def _estimate_total_kiv2_copy_number(
     Returned value is the per-cell (diploid) repeat-unit count.
     """
     logger.info("Estimating GC-bias profile from %d normalization regions", len(norm_regions))
-    norm_by_gc = _mean_depth_over_bins(bam, fasta, norm_regions)
+    norm_by_gc = _mean_depth_over_bins(bam, fasta, norm_regions, min_mapq=min_mapq)
     # Per-GC-bucket baseline uses a trimmed mean too, for the same reason
     # the overall baseline does.
     gc_baselines = {gc: _trimmed_mean(depths) for gc, depths in norm_by_gc.items() if depths}
@@ -400,8 +407,10 @@ def _estimate_total_kiv2_copy_number(
         corrected.extend(d * scale for d in depths)
     if not corrected:
         raise RuntimeError("No KIV-2 depth bins computed")
-    kiv2_mean = float(np.mean(corrected))
-    logger.info("GC-corrected KIV-2 mean depth: %.2f", kiv2_mean)
+    # Trimmed mean (same fraction as the baseline) drops mappability outliers
+    # near the KIV-2 boundaries / segdup edges, matching the autosomal panel.
+    kiv2_mean = _trimmed_mean(corrected)
+    logger.info("GC-corrected KIV-2 trimmed-mean depth: %.2f", kiv2_mean)
 
     # Ratio * 2 (haplotype copies) * n_ref_repeats (per-allele baseline).
     copy_number = (kiv2_mean / overall_baseline) * 2.0 * n_ref_repeats
@@ -800,10 +809,20 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--kiv2-unit-length", type=int, default=DEFAULT_KIV2_UNIT_LEN)
     ap.add_argument(
         "--norm-regions",
-        type=str,
-        default=None,
+        type=_parse_norm_regions,
+        default=DEFAULT_NORM_REGIONS,
         help="Comma-separated chrom:start-end regions used as the autosomal depth baseline. "
         "Default: 6 x 2 Mb stable regions hardcoded in the module.",
+    )
+    ap.add_argument(
+        "--min-mapq",
+        type=int,
+        default=MIN_MAPPING_QUALITY,
+        help=(
+            f"Min MAPQ for the autosomal depth panel (default {MIN_MAPPING_QUALITY}). "
+            "KIV-2 bins always use MAPQ=0 (most reads multi-map). "
+            "UG flow data may benefit from a lower autosomal threshold."
+        ),
     )
     ap.add_argument(
         "--no-vcf",
@@ -816,91 +835,100 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def run(argv: list[str]) -> None:
     args = _parse_args(argv)
 
-    norm_regions = _parse_norm_regions(args.norm_regions) if args.norm_regions else DEFAULT_NORM_REGIONS
+    # argparse normalizes --norm-regions via _parse_norm_regions (clean CLI
+    # error on bad input); a missing flag yields the DEFAULT_NORM_REGIONS list.
+    norm_regions = args.norm_regions
 
     mode = "rc" if args.cram.lower().endswith(".cram") else "rb"
+    # Open both handles inside try/finally so a pyfaidx failure does not leak
+    # the BAM handle (and vice versa).
     bam = pysam.AlignmentFile(args.cram, mode, reference_filename=args.reference)
-    fasta = pyfaidx.Fasta(args.reference)
-
     try:
-        markers = [
-            _build_marker(spec, args.kiv2_start, args.kiv2_unit_length, args.kiv2_repeat_count)
-            for spec in DEFAULT_MARKER_VARIANTS
-        ]
-        small_variants = [
-            _build_marker(spec, args.kiv2_start, args.kiv2_unit_length, args.kiv2_repeat_count)
-            for spec in DEFAULT_SMALL_VARIANTS
-        ]
+        fasta = pyfaidx.Fasta(args.reference)
+        try:
+            markers = [_build_marker(spec) for spec in DEFAULT_MARKER_VARIANTS]
+            small_variants = [_build_marker(spec) for spec in DEFAULT_SMALL_VARIANTS]
 
-        _validate_marker_positions(fasta, args.kiv2_chrom, markers + small_variants, args.genome_build)
+            _validate_marker_positions(fasta, args.kiv2_chrom, markers + small_variants, args.genome_build)
 
-        kiv2_cn = _estimate_total_kiv2_copy_number(
-            bam,
-            fasta,
-            args.kiv2_chrom,
-            args.kiv2_start,
-            args.kiv2_end,
-            args.kiv2_repeat_count,
-            norm_regions,
-        )
-        logger.info("Total KIV-2 copy number (diploid): %.3f", kiv2_cn)
-
-        ref_cn, alt_cn, call_type, _ = _call_heterozygous_markers(bam, args.kiv2_chrom, markers, kiv2_cn)
-        logger.info("Marker call: %s (ref=%s, alt=%s)", call_type, ref_cn, alt_cn)
-
-        variant_calls = []
-        for var in small_variants:
-            counts = _count_alleles_at_positions(bam, args.kiv2_chrom, var.positions, var.ref, var.alt)
-            call = _call_small_variant(
-                counts,
-                kiv2_cn,
-                hgvs=var.hgvs,
-                ref_allele=var.ref,
-                alt_allele=var.alt,
-                positions=var.positions,
-            )
-            variant_calls.append(call)
-            logger.info(
-                "Variant %s: alt_cn=%d qual=%.2f (ref=%d alt=%d)",
-                var.hgvs,
-                call.alt_copy_number,
-                call.qual,
-                counts.ref,
-                counts.alt,
-            )
-
-        result = LpaCall(
-            kiv2_copy_number=kiv2_cn,
-            ref_marker_allele_copy_number=ref_cn,
-            alt_marker_allele_copy_number=alt_cn,
-            call_type=call_type,
-            variants=variant_calls,
-        )
-
-        out_prefix = Path(args.output_prefix)
-        out_prefix.parent.mkdir(parents=True, exist_ok=True)
-        json_path = Path(str(out_prefix) + ".targeted.json")
-        _write_json(json_path, args.sample_id, result, args.genome_build)
-        logger.info("Wrote %s", json_path)
-
-        if not args.no_vcf:
-            contigs = list(zip(bam.references, bam.lengths, strict=False))
-            vcf_path = Path(str(out_prefix) + ".targeted.vcf.gz")
-            _write_vcf(
-                vcf_path,
-                args.sample_id,
-                result,
+            # Stage 1: total KIV-2 unit copy number from GC-corrected depth.
+            kiv2_cn = _estimate_total_kiv2_copy_number(
+                bam,
+                fasta,
                 args.kiv2_chrom,
                 args.kiv2_start,
                 args.kiv2_end,
                 args.kiv2_repeat_count,
-                fasta,
-                contigs,
+                norm_regions,
+                min_mapq=args.min_mapq,
             )
-            logger.info("Wrote %s", vcf_path)
+            logger.info("Total KIV-2 copy number (diploid): %.3f", kiv2_cn)
+
+            # Stage 2: split total CN between the two haplotypes using the
+            # heterozygous-marker SNVs (their ALT fraction tells us what share
+            # of the array carries the alternate haplotype). Output ref/alt CN
+            # are *haplotype* unit counts — not variant calls themselves.
+            ref_cn, alt_cn, call_type, _ = _call_heterozygous_markers(bam, args.kiv2_chrom, markers, kiv2_cn)
+            logger.info("Marker call: %s (ref=%s, alt=%s)", call_type, ref_cn, alt_cn)
+
+            # Stage 3: for each clinically-relevant small variant, count
+            # REF/ALT reads at its per-repeat positions and infer its ALT
+            # copy number in [0, kiv2_cn] via a binomial fit. These are the
+            # actual LPA variant calls emitted in the VCF.
+            variant_calls = []
+            for var in small_variants:
+                counts = _count_alleles_at_positions(bam, args.kiv2_chrom, var.positions, var.ref, var.alt)
+                call = _call_small_variant(
+                    counts,
+                    kiv2_cn,
+                    hgvs=var.hgvs,
+                    ref_allele=var.ref,
+                    alt_allele=var.alt,
+                    positions=var.positions,
+                )
+                variant_calls.append(call)
+                logger.info(
+                    "Variant %s: alt_cn=%d qual=%.2f (ref=%d alt=%d)",
+                    var.hgvs,
+                    call.alt_copy_number,
+                    call.qual,
+                    counts.ref,
+                    counts.alt,
+                )
+
+            result = LpaCall(
+                kiv2_copy_number=kiv2_cn,
+                ref_marker_allele_copy_number=ref_cn,
+                alt_marker_allele_copy_number=alt_cn,
+                call_type=call_type,
+                variants=variant_calls,
+            )
+
+            out_prefix = Path(args.output_prefix)
+            out_prefix.parent.mkdir(parents=True, exist_ok=True)
+            json_path = Path(str(out_prefix) + ".targeted.json")
+            _write_json(json_path, args.sample_id, result, args.genome_build)
+            logger.info("Wrote %s", json_path)
+
+            if not args.no_vcf:
+                contigs = list(zip(bam.references, bam.lengths, strict=False))
+                vcf_path = Path(str(out_prefix) + ".targeted.vcf.gz")
+                _write_vcf(
+                    vcf_path,
+                    args.sample_id,
+                    result,
+                    args.kiv2_chrom,
+                    args.kiv2_start,
+                    args.kiv2_end,
+                    args.kiv2_repeat_count,
+                    fasta,
+                    contigs,
+                )
+                logger.info("Wrote %s", vcf_path)
+        finally:
+            fasta.close()
     finally:
         bam.close()
-        fasta.close()
 
 
 def main() -> None:
