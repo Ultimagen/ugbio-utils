@@ -407,10 +407,8 @@ def _estimate_total_kiv2_copy_number(
         corrected.extend(d * scale for d in depths)
     if not corrected:
         raise RuntimeError("No KIV-2 depth bins computed")
-    # Trimmed mean (same fraction as the baseline) drops mappability outliers
-    # near the KIV-2 boundaries / segdup edges, matching the autosomal panel.
-    kiv2_mean = _trimmed_mean(corrected)
-    logger.info("GC-corrected KIV-2 trimmed-mean depth: %.2f", kiv2_mean)
+    kiv2_mean = float(np.mean(corrected))
+    logger.info("GC-corrected KIV-2 mean depth: %.2f", kiv2_mean)
 
     # Ratio * 2 (haplotype copies) * n_ref_repeats (per-allele baseline).
     copy_number = (kiv2_mean / overall_baseline) * 2.0 * n_ref_repeats
