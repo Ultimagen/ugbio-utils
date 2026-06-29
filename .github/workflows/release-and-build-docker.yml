@@ -37,6 +37,11 @@ on:
         required: false
         type: string
         default: ""
+      artifact-name:
+        description: "Artifact name to download before building (passed to docker-build-push). If omitted, no artifact is downloaded"
+        required: false
+        type: string
+        default: ""
       base-branch:
         description: "Base branch (defaults to main)"
         required: false
@@ -120,6 +125,7 @@ jobs:
       docker-context: ${{ inputs.docker-context }}
       docker-target: ${{ inputs.docker-target }}
       docker-build-args: ${{ inputs.docker-build-args }}
+      artifact-name: ${{ inputs.artifact-name }}
       base-branch: ${{ inputs.base-branch }}
       project-version: ${{ needs.release.outputs.new_version }}
       runner: ${{ inputs.runner }}
