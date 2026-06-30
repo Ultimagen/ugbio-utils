@@ -36,6 +36,8 @@ class MrdReportInputs:
     tumor_sample: str = None
     signature_filter_query: str = None
     read_filter_query: str = None
+    thresh_noise_lq_reads: int | None = None
+    thresh_noise_hq_exemption: int = 3
 
 
 def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:  # noqa: PLR0915
@@ -62,7 +64,10 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
 
     # 1. Load data
     df_features, df_features_filt, filtering_ratio = mrd.read_and_filter_features_parquet(
-        intersection_path, read_filter_query
+        intersection_path,
+        read_filter_query,
+        thresh_noise_lq_reads=mrd_report_inputs.thresh_noise_lq_reads,
+        thresh_noise_hq_exemption=mrd_report_inputs.thresh_noise_hq_exemption,
     )
     df_signatures, df_signatures_filt = mrd.read_and_filter_signatures_parquet(
         signatures_path, signature_filter_query, filtering_ratio
@@ -95,6 +100,11 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     applied_filters = {k: v for k, v in filter_descriptions.items() if k in all_cols}
     applied_filters["norm_coverage"] = signature_filter_query
     applied_filters["Read filter"] = read_filter_query
+    if mrd_report_inputs.thresh_noise_lq_reads is not None:
+        applied_filters["Noise locus filter"] = (
+            f"n_lq_reads >= {mrd_report_inputs.thresh_noise_lq_reads}; "
+            f"exempt if n_hq_reads >= {mrd_report_inputs.thresh_noise_hq_exemption}"
+        )
 
     # 4. SBS plot helper
     _sbs_colors = ["#1EBFF0", "#050708", "#E62725", "#CBCACB", "#A1C935", "#ECC6C5"]
@@ -231,6 +241,25 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     # ── QC report: compute secondary analyses, render via Jinja2 ──
     logger.info(f"Generating MRD QC report (Jinja2). {qc_html_path=}")
 
+    # Secondary analysis 0 (noise filter only): filtered reads without noise locus filter
+    detection_no_noise = None
+    df_tf_no_noise = None
+    thresh_noise_lq_reads = mrd_report_inputs.thresh_noise_lq_reads
+    if thresh_noise_lq_reads is not None:
+        # Reuse df_features (already has n_lq/n_hq columns); apply only read_filter_query
+        df_features_filt_no_noise = df_features.query(read_filter_query)
+        df_tf_no_noise, _ = mrd.get_tf_from_filtered_data(
+            df_features_filt_no_noise,
+            df_signatures_filt,
+            plot_results=False,
+            title="Filtered reads (no noise locus filter)",
+            denom_ratio=denom_ratio,
+        )
+        detection_no_noise = run_detection_analysis(
+            df_tf=df_tf_no_noise,
+            df_signatures_filt=df_signatures_filt,
+        )
+
     # Secondary analysis 1: filtered reads + unfiltered signatures
     df_tf_unfilt, df_supporting_reads_per_locus_unfilt = mrd.get_tf_from_filtered_data(
         df_features_filt,
@@ -266,6 +295,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     }.items():
         val.to_hdf(output_h5_file, key=key, mode="a")
 
+    if df_tf_no_noise is not None:
+        df_tf_no_noise.to_hdf(output_h5_file, key="df_ctdna_vaf_filt_signature_filt_no_noise_filter", mode="a")
+
     # Render QC HTML
     qc_html = render_qc_report(
         detection=detection,
@@ -287,6 +319,10 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         filt_ratio=filt_ratio,
         plot_sbs_fn=plot_sbs_profile,
         plot_af_fn=mrd.plot_signature_allele_fractions,
+        detection_no_noise=detection_no_noise,
+        df_tf_no_noise=df_tf_no_noise,
+        thresh_noise_lq_reads=thresh_noise_lq_reads,
+        thresh_noise_hq_exemption=mrd_report_inputs.thresh_noise_hq_exemption,
     )
     qc_html_path.write_text(qc_html)
 
@@ -469,6 +505,27 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--read-filter-query", type=str, default=None, help="Filter query for reads")
     parser.add_argument("--featuremap-file", type=str, default=None, help="Path to featuremap_df_file")
     parser.add_argument("--srsnv-metadata-json", type=str, default=None, help="Path to srsnv metadata json file")
+    parser.add_argument(
+        "--thresh-noise-lq-reads",
+        type=int,
+        default=None,
+        help=(
+            "Enable noise locus filter: remove loci where the number of low-quality "
+            "(failing read-filter-query) featuremap reads is at least this value, "
+            "unless the locus also has >= thresh-noise-hq-exemption high-quality reads. "
+            "Default: None (disabled)."
+        ),
+    )
+    parser.add_argument(
+        "--thresh-noise-hq-exemption",
+        type=int,
+        default=3,
+        help=(
+            "Minimum high-quality read count at a locus to exempt it from the noise "
+            "locus filter (germline-like loci). Only used when --thresh-noise-lq-reads "
+            "is set. Default: 3."
+        ),
+    )
     return parser.parse_args(argv[1:])
 
 
@@ -490,6 +547,8 @@ def main(argv: list[str] | None = None):
         srsnv_metadata_json=args_in.srsnv_metadata_json,
         signature_filter_query=args_in.signature_filter_query,
         read_filter_query=args_in.read_filter_query,
+        thresh_noise_lq_reads=args_in.thresh_noise_lq_reads,
+        thresh_noise_hq_exemption=args_in.thresh_noise_hq_exemption,
     )
 
     results_html, qc_html = generate_mrd_report(mrd_report_inputs)

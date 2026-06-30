@@ -823,7 +823,7 @@ def render_analysis_report(  # noqa: PLR0913
     return template.render(**context)
 
 
-def render_qc_report(  # noqa: PLR0913
+def render_qc_report(  # noqa: PLR0913, C901, PLR0915
     detection: DetectionResult,
     detection_unfilt: DetectionResult,
     detection_unfilt2: DetectionResult,
@@ -843,6 +843,10 @@ def render_qc_report(  # noqa: PLR0913
     filt_ratio: float,
     plot_sbs_fn,
     plot_af_fn,
+    detection_no_noise=None,
+    df_tf_no_noise=None,
+    thresh_noise_lq_reads=None,
+    thresh_noise_hq_exemption=None,
 ) -> str:
     """
     Render the MRD QC report as a self-contained HTML string.
@@ -863,6 +867,14 @@ def render_qc_report(  # noqa: PLR0913
         Full and filtered features dataframes.
     df_supporting_reads_per_locus_unfilt, df_supporting_reads_per_locus_unfilt2 : pd.DataFrame
         Per-locus supporting reads for the two unfiltered analyses.
+    detection_no_noise : DetectionResult, optional
+        Detection result computed without the noise locus filter (for QC comparison).
+    df_tf_no_noise : pd.DataFrame, optional
+        Tumor fraction table without noise locus filter.
+    thresh_noise_lq_reads : int or None
+        LQ-read threshold used for the noise filter (None if filter was not active).
+    thresh_noise_hq_exemption : int or None
+        HQ-read exemption threshold for the noise filter.
     basename : str
         Sample basename.
     signature_filter_query, read_filter_query : str
@@ -960,6 +972,35 @@ def render_qc_report(  # noqa: PLR0913
         df_supporting_reads_per_locus_unfilt2, df_signatures_filt
     )
 
+    # ── Noise filter comparison (optional) ──
+    noise_filter_comparison = None
+    if detection_no_noise is not None and df_tf_no_noise is not None:
+
+        def _det_summary(det: DetectionResult, label: str) -> dict:
+            """Build a compact summary dict for one detection result."""
+            p_str = f"{det.p_value:.3f}" if det.p_value >= 0.001 else f"{det.p_value:.2e}"  # noqa: PLR2004
+            vaf_str = format_scientific(det.matched_ctdna_vaf) if det.matched_ctdna_vaf > 0 else "0"
+            call_class = (
+                "detected" if det.detected is True else ("not-detected" if det.detected is False else "indeterminate")
+            )
+            return {
+                "label": label,
+                "call": det.call,
+                "call_class": call_class,
+                "p_str": p_str,
+                "supporting_reads": det.matched_supporting_reads,
+                "vaf_str": vaf_str,
+            }
+
+        no_noise_signal_img = _render_signal_noise_internal(detection_no_noise, df_tf_no_noise)
+        noise_filter_comparison = {
+            "thresh_lq": thresh_noise_lq_reads,
+            "thresh_hq_exempt": thresh_noise_hq_exemption,
+            "with_filter": _det_summary(detection, "With noise filter (primary)"),
+            "without_filter": _det_summary(detection_no_noise, "Without noise filter"),
+            "no_noise_signal_img": no_noise_signal_img,
+        }
+
     # ── Format values ──
     binom_p_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
     noise_rate_str = format_scientific(detection.noise_rate) if detection.noise_rate > 0 else "0"
@@ -982,6 +1023,7 @@ def render_qc_report(  # noqa: PLR0913
         "unfilt_reads_signal_noise_img": unfilt_reads_signal_noise_img,
         "unfilt_reads_sbs_vaf_img": unfilt_reads_sbs_vaf_img,
         "unfilt_reads_intersection_img": unfilt_reads_intersection_img,
+        "noise_filter_comparison": noise_filter_comparison,
     }
 
     template = _JINJA_ENV.get_template("mrd_qc_report.html")

@@ -370,6 +370,52 @@
       {% endif %}
     </div>
 
+    <!-- ── QC ANALYSIS: NOISE LOCUS FILTER SENSITIVITY ── -->
+    {% if noise_filter_comparison %}
+    <div class="section">
+      <div class="section-title">QC Analysis — Noise Locus Filter Sensitivity</div>
+      <div class="chart-description" style="margin-bottom:10px;">
+        Impact of the noise locus filter
+        (n_lq_reads &ge; {{ noise_filter_comparison.thresh_lq }};
+        exempt if n_hq_reads &ge; {{ noise_filter_comparison.thresh_hq_exempt }})
+        on detection. Loci with at least {{ noise_filter_comparison.thresh_lq }}
+        low-quality read(s) are excluded from the primary result unless
+        {{ noise_filter_comparison.thresh_hq_exempt }}+ high-quality reads are also present.
+      </div>
+      <table style="width:100%; border-collapse:collapse; margin-bottom:16px; font-size:13px;">
+        <thead>
+          <tr style="background:var(--light-gray); text-align:left;">
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Analysis</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Call</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">p-value</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Supporting Reads</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">ctDNA VAF</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in [noise_filter_comparison.with_filter, noise_filter_comparison.without_filter] %}
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px 12px; font-weight:600;">{{ row.label }}</td>
+            <td style="padding:8px 12px;">
+              <span class="status-badge {{ row.call_class }}" style="font-size:11px; padding:3px 8px;">{{ row.call }}</span>
+            </td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.p_str }}</td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.supporting_reads }}</td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.vaf_str }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if noise_filter_comparison.no_noise_signal_img %}
+      <div class="chart-label">Signal vs Noise — Without noise filter</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ noise_filter_comparison.no_noise_signal_img }}"
+             alt="Signal vs Noise (no noise filter)">
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
   </div>
 
   <!-- ── FOOTER ── -->

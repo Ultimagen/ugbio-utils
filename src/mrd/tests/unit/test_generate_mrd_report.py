@@ -176,3 +176,56 @@ class TestRenderReadLengthHistogram:
         df_features = pd.DataFrame({"signature_type": ["matched", "control"]})
         result = render_read_length_histogram(df_features)
         assert result == ""
+
+
+def test_generate_mrd_report_with_noise_filter(output_path, resources_dir):
+    """
+    Verify generate_mrd_report works end-to-end with the noise locus filter enabled,
+    and that the no-noise secondary H5 key is present in the output.
+    """
+    import os
+
+    out_dir = str(output_path / "noise_test")
+    os.makedirs(out_dir, exist_ok=True)
+    noise_inputs = MrdReportInputs(
+        intersected_featuremaps_parquet=[
+            str(resources_dir / "Pa_46_333_LuNgs_08.Pa_46_FreshFrozen.matched.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.Pa_67_FFPE.control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn0_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn1_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn2_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn3_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn4_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+        ],
+        matched_signatures_vcf_files=[str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf.gz")],
+        control_signatures_vcf_files=[str(resources_dir / "Pa_67_FFPE.ann.chr20.filtered.vcf.gz")],
+        db_control_signatures_vcf_files=[
+            str(resources_dir / "syn0_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn1_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn2_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn3_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn4_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+        ],
+        coverage_bed=str(resources_dir / "Pa_46_333_LuNgs_08.regions.bed.gz"),
+        output_dir=out_dir,
+        output_basename="noise_test",
+        featuremap_file=str(resources_dir / "Pa_46_333_LuNgs_08.featuremap_df.10k.parquet"),
+        signature_filter_query="(norm_coverage <= 2.5) and (norm_coverage >= 0.6)",
+        read_filter_query="filt>0 and snvq>60 and mapq>=60",
+        srsnv_metadata_json=str(resources_dir / "Pa_46_333_LuNgs_08.srsnv_metadata.json"),
+        thresh_noise_lq_reads=1,
+        thresh_noise_hq_exemption=3,
+    )
+
+    results_html, qc_html = generate_mrd_report(noise_inputs)
+
+    assert results_html.exists() and results_html.stat().st_size > 0
+    assert qc_html.exists() and qc_html.stat().st_size > 0
+
+    h5_path = str(Path(out_dir) / "noise_test.ctdna_vaf.h5")
+    with pd.HDFStore(h5_path) as store:
+        h5_keys = store.keys()
+    assert "/df_ctdna_vaf_filt_signature_filt_no_noise_filter" in h5_keys
+
+    qc_content = qc_html.read_text()
+    assert "Noise Locus Filter" in qc_content

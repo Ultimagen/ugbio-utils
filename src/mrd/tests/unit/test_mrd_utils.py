@@ -241,3 +241,112 @@ def test_calc_tumor_fraction_denominator_ratio_rows_metadata(tmpdir, resources_d
     assert np.isclose(filt_ratio, 0.7012110035188417)
     assert np.isclose(read_filter_non_filt, 0.658410138248848)
     assert np.isclose(denom_ratio, 0.461684433768454)
+
+
+def test_read_and_filter_features_parquet_noise_filter(tmp_path):
+    """
+    Verify the noise locus filter flags/removes the correct loci.
+
+    Scenario (read_filter_query = "filt>0 and snvq>60 and mapq>=60"):
+    - Locus A (pos=100): 1 HQ + 2 LQ reads  -> NOISY  (n_lq=2>=1, n_hq=1<3)
+    - Locus B (pos=200): 5 HQ + 1 LQ reads  -> EXEMPT (n_hq=5>=3)
+    - Locus C (pos=300): 3 HQ + 0 LQ reads  -> CLEAN  (n_lq=0<1)
+    """
+    from ugbio_mrd.mrd_utils import read_and_filter_features_parquet
+
+    read_filter_query = "filt>0 and snvq>60 and mapq>=60"
+    loci = [(100, 1, 2), (200, 5, 1), (300, 3, 0)]
+    rows = []
+    counter = 0
+    for pos, n_hq, n_lq in loci:
+        for snvq in [80] * n_hq + [40] * n_lq:
+            rows.append(
+                {
+                    "chrom": "chr1",
+                    "pos": pos,
+                    "signature": "sig1",
+                    "signature_type": "matched",
+                    "ref": "A",
+                    "alt": "T",
+                    "filt": 1,
+                    "snvq": snvq,
+                    "mapq": 60,
+                    "ad_a": 100,
+                    "ad_c": 5,
+                    "ad_g": 3,
+                    "ad_t": 10,
+                    "dp": 118,
+                    "dp_filt": 100,
+                    "mi": None,
+                    "rn": f"read_{pos}_{counter}",
+                    "ad_del": 2,
+                    "ad_ins": 1,
+                }
+            )
+            counter += 1
+
+    df_features_raw = pd.DataFrame(rows)
+    parquet_path = str(tmp_path / "test_features.parquet")
+    df_features_raw.to_parquet(parquet_path, engine="fastparquet", index=False)
+
+    df_features, df_features_filt, _ = read_and_filter_features_parquet(
+        parquet_path,
+        read_filter_query,
+        thresh_noise_lq_reads=1,
+        thresh_noise_hq_exemption=3,
+    )
+
+    assert "locus_filter_noise" in df_features.columns
+    assert "n_lq_reads_per_locus" in df_features.columns
+    assert "n_hq_reads_per_locus" in df_features.columns
+
+    pos_idx = df_features.index.get_level_values("pos")
+
+    assert df_features.loc[pos_idx == 100, "locus_filter_noise"].all(), "Locus A should be noisy"
+    assert (df_features.loc[pos_idx == 100, "n_lq_reads_per_locus"] == 2).all()
+    assert (df_features.loc[pos_idx == 100, "n_hq_reads_per_locus"] == 1).all()
+    assert not df_features.loc[pos_idx == 200, "locus_filter_noise"].any(), "Locus B should be exempt"
+    assert not df_features.loc[pos_idx == 300, "locus_filter_noise"].any(), "Locus C should be clean"
+
+    filt_pos = df_features_filt.index.get_level_values("pos")
+    assert 100 not in filt_pos, "Locus A should be removed from df_features_filt"
+    assert 200 in filt_pos, "Locus B HQ reads should remain"
+    assert 300 in filt_pos, "Locus C HQ reads should remain"
+
+
+def test_read_and_filter_features_parquet_noise_filter_disabled(tmp_path):
+    """When thresh_noise_lq_reads=None the noise filter columns must not appear."""
+    from ugbio_mrd.mrd_utils import read_and_filter_features_parquet
+
+    read_filter_query = "filt>0 and snvq>60 and mapq>=60"
+    df_features_raw = pd.DataFrame(
+        [
+            {
+                "chrom": "chr1",
+                "pos": 100,
+                "signature": "sig1",
+                "signature_type": "matched",
+                "ref": "A",
+                "alt": "T",
+                "filt": 1,
+                "snvq": 40,
+                "mapq": 60,
+                "ad_a": 100,
+                "ad_c": 5,
+                "ad_g": 3,
+                "ad_t": 10,
+                "dp": 118,
+                "dp_filt": 100,
+                "mi": None,
+                "rn": "read_0",
+                "ad_del": 2,
+                "ad_ins": 1,
+            }
+        ]
+    )
+    parquet_path = str(tmp_path / "test_features_disabled.parquet")
+    df_features_raw.to_parquet(parquet_path, engine="fastparquet", index=False)
+
+    df_features, _, _ = read_and_filter_features_parquet(parquet_path, read_filter_query, thresh_noise_lq_reads=None)
+    assert "locus_filter_noise" not in df_features.columns
+    assert "n_lq_reads_per_locus" not in df_features.columns

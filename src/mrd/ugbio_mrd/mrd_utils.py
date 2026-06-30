@@ -629,6 +629,8 @@ def read_and_filter_features_parquet(
     thresh_locus_filter_many_alt_reads: int = 2,
     thresh_locus_filter_many_non_ref_alt_reads: int = 2,
     thresh_locus_filter_many_indels: int = 4,
+    thresh_noise_lq_reads: int | None = None,
+    thresh_noise_hq_exemption: int = 3,
 ):
     """
     Read featuremap parquet file and filter by query
@@ -640,12 +642,23 @@ def read_and_filter_features_parquet(
     read_filter_query: str
         query to filter the dataframe
 
+    Parameters (noise filter)
+    -------------------------
+    thresh_noise_lq_reads: int or None
+        When set, enables the noise locus filter. Loci where the number of
+        low-quality (failing ``read_filter_query``) featuremap reads is at
+        least this value are flagged as noisy and removed from
+        ``df_features_filt``.  ``None`` (default) disables the filter.
+    thresh_noise_hq_exemption: int
+        Minimum number of high-quality featuremap reads at a locus required
+        to exempt it from the noise filter (germline-like loci).  Default 3.
+
     Returns
     -------
     df_features: pd.DataFrame
         original dataframe
     df_features_filt: pd.DataFrame
-        filtered dataframe
+        filtered dataframe, with noisy loci removed when noise filter is active
     filtering_ratio: pd.DataFrame
         A dataframe that includes the ratio of filtered to total reads per variant
     """
@@ -706,11 +719,46 @@ def read_and_filter_features_parquet(
     )
     df_features = df_features.assign(locus_filter=df_features.filter(regex="locus_filter_.*").all(axis=1))
 
+    # Noise locus filter: flag loci that have low-quality alt-supporting reads
+    # (indicating sequencing artifacts), unless many high-quality reads are also
+    # present at the same locus (germline-like signal, exempt from noise filter).
+    if thresh_noise_lq_reads is not None:
+        lq_counts = (
+            df_features.reset_index()
+            .query(f"not ({read_filter_query})")
+            .groupby(["chrom", "pos", "signature"])
+            .size()
+            .rename("n_lq_reads_per_locus")
+        )
+        hq_counts = (
+            df_features.reset_index()
+            .query(read_filter_query)
+            .groupby(["chrom", "pos", "signature"])
+            .size()
+            .rename("n_hq_reads_per_locus")
+        )
+        df_features = (
+            df_features.reset_index()
+            .set_index(["chrom", "pos", "signature"])
+            .join(lq_counts, how="left")
+            .join(hq_counts, how="left")
+        ).reset_index(level="signature")
+        df_features = df_features.assign(
+            n_lq_reads_per_locus=df_features["n_lq_reads_per_locus"].fillna(0).astype(int),
+            n_hq_reads_per_locus=df_features["n_hq_reads_per_locus"].fillna(0).astype(int),
+        )
+        df_features = df_features.assign(
+            locus_filter_noise=(df_features["n_lq_reads_per_locus"] >= thresh_noise_lq_reads)
+            & (df_features["n_hq_reads_per_locus"] < thresh_noise_hq_exemption),
+        )
+
     # kept for backwards compatibility - filtering ratio per locus
     filtering_ratio = (
         df_features.query("signature_type=='matched'").groupby(level=["chrom", "pos"]).agg({"filtering_ratio": "first"})
     )
     df_features_filt = df_features.query(read_filter_query)
+    if thresh_noise_lq_reads is not None:
+        df_features_filt = df_features_filt[~df_features_filt["locus_filter_noise"]]
     return df_features, df_features_filt, filtering_ratio
 
 
@@ -857,7 +905,7 @@ def plot_signature_allele_fractions(
     elif panel == "filtered":
         all_panels = all_panels[1:]
     n_panels = len(all_panels)
-    bins = np.linspace(0, 1, 100)
+    bins = np.linspace(0, 1, 21)  # 20 bins of width 5%
     _external_ax = ax is not None and n_panels == 1
     if _external_ax:
         axs = [ax]
