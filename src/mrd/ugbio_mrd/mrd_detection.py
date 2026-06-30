@@ -41,6 +41,14 @@ MIN_SYNTHETIC_CONTROLS: int = 30  # minimum db_control replicates for reliable n
 # i.e., its read count is a significant outlier (e.g. a germline variant).
 MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD: float = 0.01
 
+# Minimum supporting-read count to flag a locus as a QC outlier.
+# Mirrors _MIN_READS_TO_FILTER in mrd_utils.apply_multi_read_locus_filter: loci with
+# only one supporting read are indistinguishable from background noise and are never
+# removed by the filter, so the QC check must not count them as outliers either.
+# At very low estimated TF (λ → 0) the Poisson p-value for a single read would
+# otherwise fall below the Bonferroni threshold even though the filter never acts on it.
+_MIN_READS_TO_QC: int = 2
+
 
 @dataclass
 class QcCheck:
@@ -251,9 +259,9 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     alpha : float
         Significance threshold for detection call (default ``DEFAULT_ALPHA`` = 0.01).
     lod_fpr : float
-        FPR used for the LOD calculation (default ``DEFAULT_LOD_FPR`` = 0.05).
+        FPR used for the personal LOD calculation (default ``DEFAULT_LOD_FPR`` = 0.05).
     lod_recall : float
-        Target recall used for the LOD calculation (default 0.95).
+        Target recall used for the personal LOD calculation (default 0.95).
 
     Returns
     -------
@@ -385,8 +393,16 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             if lam > 0 and len(reads_arr) > 0:
                 # Per-locus outlier detection: Bonferroni-corrected Poisson right-tail test.
                 # Flags loci with significantly more reads than expected at the measured TF.
+                # Guard: require >= _MIN_READS_TO_QC reads so that single-read loci are never
+                # counted as outliers — consistent with apply_multi_read_locus_filter which
+                # also never removes loci with fewer than _MIN_READS_TO_FILTER supporting reads.
                 per_locus_pvals = poisson.sf(reads_arr - 1, lam)
-                n_outliers = int((per_locus_pvals * signature_size < MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD).sum())
+                n_outliers = int(
+                    (
+                        (per_locus_pvals * signature_size < MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD)
+                        & (reads_arr >= _MIN_READS_TO_QC)
+                    ).sum()
+                )
                 max_reads = int(reads_arr.max())
                 min_pval_corrected = float(per_locus_pvals.min()) * signature_size
             else:
@@ -413,26 +429,45 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
 
         # --- Checks: control outlier detection (synthetic and cohort, when present) ---
         lam_ctrl = mean_coverage * p_err  # expected reads per locus at background noise rate
+        ctrl_sig_sizes = (
+            df_signatures_filt.groupby(["signature_type", "signature"]).size()
+            if "signature_type" in df_signatures_filt.columns
+            else df_signatures_filt.groupby(level="signature").size()
+        )
         for ctrl_type, ctrl_label in [("db_control", "synthetic controls"), ("control", "cohort controls")]:
             try:
                 ctrl_per_locus = df_supporting_reads_per_locus.query(f"signature_type == '{ctrl_type}'")
                 if len(ctrl_per_locus) == 0 or lam_ctrl <= 0:
                     continue
-                # Take max reads per unique locus across all control signatures of this type
-                ctrl_max_per_locus = (
-                    ctrl_per_locus.reset_index().groupby(["chrom", "pos"])["supporting_reads"].max().to_numpy()
-                )
-                n_ctrl_loci = len(ctrl_max_per_locus)
-                ctrl_pvals = poisson.sf(ctrl_max_per_locus - 1, lam_ctrl)
-                n_ctrl_outliers = int((ctrl_pvals * n_ctrl_loci < MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD).sum())
-                max_ctrl_reads = int(ctrl_max_per_locus.max())
-                min_ctrl_pval = float(ctrl_pvals.min()) * n_ctrl_loci
+                # Per-signature Bonferroni: each signature is corrected by its own locus count.
+                # A locus is flagged as an outlier if any single signature's test fires.
+                all_reads = ctrl_per_locus.reset_index()[["chrom", "pos", "signature", "supporting_reads"]]
+                outlier_locus_set: set = set()
+                min_corrected_pval = 1.0
+                max_ctrl_reads = 0
+                for sig_name, sig_df in all_reads.groupby("signature"):
+                    try:
+                        n_sig = int(ctrl_sig_sizes.loc[ctrl_type, sig_name])
+                    except (KeyError, TypeError):
+                        n_sig = len(sig_df)
+                    reads_arr = sig_df["supporting_reads"].to_numpy()
+                    raw_pvals = poisson.sf(reads_arr - 1, lam_ctrl)
+                    bonf_pvals = raw_pvals * n_sig
+                    outlier_mask = (bonf_pvals < MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD) & (
+                        reads_arr >= _MIN_READS_TO_QC
+                    )
+                    outlier_locus_set.update(
+                        zip(sig_df.loc[outlier_mask, "chrom"], sig_df.loc[outlier_mask, "pos"], strict=False)
+                    )
+                    min_corrected_pval = min(min_corrected_pval, float(bonf_pvals.min()))
+                    max_ctrl_reads = max(max_ctrl_reads, int(reads_arr.max()))
+                n_ctrl_outliers = len(outlier_locus_set)
                 qc_checks.append(
                     QcCheck(
                         label=f"Expected multi-read support distribution ({ctrl_label})",
                         value_str=(
                             f"{n_ctrl_outliers} outlier {'locus' if n_ctrl_outliers == 1 else 'loci'}"
-                            f" (max {max_ctrl_reads} reads/locus, Bonferroni p={min_ctrl_pval:.3f})"
+                            f" (max {max_ctrl_reads} reads/locus, Bonferroni p={min_corrected_pval:.3f})"
                         ),
                         threshold_str=(
                             f"0 outlier loci"
@@ -592,23 +627,29 @@ def plot_null_distribution(  # noqa: PLR0915, PLR0912, C901
         ax.scatter([], [], color="#3a9ad9", s=30, alpha=0.4, marker="s", label=fit_label)
 
     # --- Cohort controls ---
+    # Plotted at their own ctDNA VAF scaled by the patient's corrected_coverage so that
+    # the right (VAF) axis gives the correct per-control value.  Raw supporting-read
+    # counts are intentionally NOT used: cohort-control signatures cover different loci
+    # at different depths from the patient signature, so their read counts are not
+    # comparable to the patient's on the same axis.
     x_cohort = 1.5
     try:
-        ctrl_data = df_tf.loc["control"]["supporting_reads"]
-        if isinstance(ctrl_data, int | float | np.integer):
-            ctrl_data = pd.Series([ctrl_data])
+        ctrl_vafs = df_tf.loc["control"]["ctdna_vaf"]
+        if isinstance(ctrl_vafs, int | float | np.integer | np.floating):
+            ctrl_vafs = pd.Series([ctrl_vafs])
         rng3 = np.random.default_rng(99)
-        jitter_c = rng3.uniform(-0.14, 0.14, size=len(ctrl_data))
-        for i, v in enumerate(ctrl_data.values):
+        jitter_c = rng3.uniform(-0.14, 0.14, size=len(ctrl_vafs))
+        for i, vaf in enumerate(ctrl_vafs.values):
+            y = _safe(float(vaf) * corr_cov) if corr_cov > 0 else _safe(float(vaf))
             ax.scatter(
                 [x_cohort + jitter_c[i]],
-                [_safe(v)],
+                [y],
                 color="#9b59b6",
                 s=30,
                 marker="D",
                 zorder=5,
                 alpha=0.8,
-                label="Cohort control" if i == 0 else "_nolegend_",
+                label="Cohort controls" if i == 0 else "_nolegend_",
             )
     except KeyError:
         logger.debug("Cohort control data not found in df_tf; plotting without cohort controls.")

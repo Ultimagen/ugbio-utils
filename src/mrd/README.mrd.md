@@ -29,29 +29,39 @@ The LOD decreases (improves) with larger signature size, higher coverage, or low
 
 ## QC Checks
 
-Four QC checks are displayed above the Assay Metrics in the report. They do not force an Indeterminate call — they are informational flags.
+Up to six QC checks are displayed above the Assay Metrics in the report. They do not force an Indeterminate call — they are informational flags.
 
 | Check | Threshold | Rationale |
 |---|---|---|
 | Signature size | ≥ 500 loci | Too few loci reduce statistical power |
 | Mean coverage | ≥ 15× | Low coverage inflates noise rate variance |
 | Synthetic controls | ≥ 20 | Fewer controls make null distribution unreliable |
-| No multiple read support enrichment | Enrichment prob ≥ 1% | See below |
+| Expected multi-read support distribution (matched) | 0 outlier loci (Bonferroni-corrected p ≥ 1%) | See below |
+| Expected multi-read support distribution (synthetic controls) | 0 outlier loci (Bonferroni-corrected p ≥ 1%) | See below — only shown when synthetic controls are present |
+| Expected multi-read support distribution (cohort controls) | 0 outlier loci (Bonferroni-corrected p ≥ 1%) | See below — only shown when cohort controls are present |
 
-### No Multiple Read Support Enrichment
+### Expected Multi-Read Support Distribution
 
-This check detects unexpectedly high multi-read loci counts, which may indicate contamination, index hopping, or signature artefacts unrelated to true ctDNA signal.
+These checks detect loci with a significantly higher read count than expected under the respective Poisson model. A flagged check may indicate germline variants (matched), contamination, or somatic variants leaking into control signatures.
 
-**Step 1 — per-locus expectation (Poisson):**
+**Per-locus Poisson test:**
 
-Each locus independently receives λ = `mean_coverage × tumor_vaf` reads on average. The probability a single locus has ≥ 2 supporting reads is:
+For each locus with `k` observed supporting reads, the right-tail p-value is:
 
-$$p = 1 - (1 + \lambda)\,e^{-\lambda}$$
+$$p_i = P(X \geq k_i \mid \mathrm{Poisson}(\lambda))$$
 
-**Step 2 — across-loci test (Binomial):**
+The expected rate λ differs by check:
 
-The count of loci with ≥ 2 reads out of `signature_size` total loci follows `Binom(n = signature_size, p = p_above)`. The enrichment p-value is:
+| Check | λ per locus |
+|---|---|
+| Matched signature | `mean_coverage × matched_vaf` (measured tumor fraction) |
+| Synthetic controls | `mean_coverage × p_err` (background noise rate) |
+| Cohort controls | `mean_coverage × p_err` (background noise rate) |
 
-$$P(X \geq n_{obs}) = \mathrm{Binom.sf}(n_{obs} - 1,\ n = \mathrm{sig\_size},\ p)$$
+**Bonferroni correction for outliers:**
 
-The check is flagged (⚠️) when this right-tail p-value < 1%, meaning the observed multi-read count is significantly higher than expected given the measured tumor fraction.
+A locus is declared an outlier when its p-value falls below the Bonferroni-corrected threshold:
+
+$$p_i < \frac{\alpha}{N}$$
+
+where α = 1% and $N$ is the number of unique loci being tested.  For the matched signature, $N$ is the matched signature size.  For control signatures, each signature is tested independently using its own locus count as $N$; a locus is declared an outlier if the test fires for any single signature.  This per-signature correction is necessary because cohort control signatures vary widely in size — a shared $N$ derived from the matched signature would under-correct large cohort signatures.  The check is flagged (⚠️) when at least one outlier locus is found.
