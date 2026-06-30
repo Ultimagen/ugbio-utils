@@ -361,11 +361,6 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
         else None
     )
 
-    intersection_dataframe = mrd.read_intersection_dataframes(
-        mrd_report_inputs.intersected_featuremaps_parquet,
-        output_parquet=intersection_dataframe_fname,
-        return_dataframes=True,
-    )
     if matched_exists:
         signature_dataframe = mrd.read_signature(
             mrd_report_inputs.matched_signatures_vcf_files,
