@@ -212,7 +212,7 @@
   <!-- ── HEADER ── -->
   <div class="header">
     <div class="header-left">
-      <div class="logo">ULTIMA GENOMICS</div>
+      <img src="data:image/webp;base64,{{ logo_b64 }}" alt="Ultima Genomics" style="height:30px; margin-bottom:6px; display:block;">
       <h1>{{ report_title }}</h1>
       <p>Tumor-Informed Minimal Residual Disease Detection &middot; Whole Genome Sequencing</p>
     </div>
@@ -321,10 +321,16 @@
         <img src="data:image/png;base64,{{ signal_noise_img }}" alt="Signal vs. Noise distribution">
       </div>
       <div class="chart-description">
-        Blue dots: empirical synthetic control read counts. Purple boxplot: Binomial null Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }}).
-        Orange diamonds: cohort controls. Dashed orange line: detection threshold (min reads for p&nbsp;&lt;&nbsp;5%) —
-        controls above this line are the ~5% expected false positives; the LOD TF is the minimum tumor fraction
-        where 95% of patients exceed this threshold.
+        <strong>Left axis:</strong> cfDNA reads supporting signature (log scale).
+        <strong>Right axis:</strong> ctDNA VAF (reads &divide; corrected coverage).<br>
+        <span style="color:#3a9ad9;">&#9679;</span> Blue dots: synthetic control read counts (db_control signatures sampled from a population panel).
+        Blue violin: fitted Binomial null Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }}).<br>
+        <span style="color:#9b59b6;">&#9670;</span> Purple diamonds: cohort controls &mdash; other patients&rsquo; signatures evaluated on <em>this</em> patient&rsquo;s
+        plasma. Because their signatures cover different loci at different depths, their raw read counts
+        are not comparable to the patient&rsquo;s; they are therefore plotted at their own ctDNA VAF (right axis).<br>
+        Orange dashed line: detection threshold (min reads for p&nbsp;&lt;&nbsp;{{ "%.0f"|format(detection.alpha * 100) }}%,
+        Binomial test). Green dash-dot line: LOD (95% recall at 5% FPR).
+        <span style="color:#c0392b;">&#9733;</span> Red star: patient signal.
       </div>
     </div>
 

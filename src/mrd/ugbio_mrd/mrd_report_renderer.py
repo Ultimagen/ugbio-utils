@@ -23,6 +23,7 @@ _JINJA_ENV = Environment(  # noqa: S701  (autoescape disabled: values are pre-sa
     loader=FileSystemLoader(str(TEMPLATE_DIR)),
     autoescape=False,  # noqa: S701
 )
+_LOGO_B64: str = base64.b64encode((TEMPLATE_DIR / "ug_logo.webp").read_bytes()).decode("ascii")
 
 
 def _fig_to_base64(fig, dpi=120) -> str:
@@ -365,64 +366,53 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
     from scipy.stats import gaussian_kde  # noqa: PLC0415
 
     matched = df_features_filt.query("signature_type == 'matched'")["snvq"].dropna()
-    cohort = df_features_filt.query("signature_type == 'control'")["snvq"].dropna()
-    db_ctrl = df_features_filt.query("signature_type == 'db_control'")["snvq"].dropna()
-
-    all_vals = pd.concat([s for s in [matched, cohort, db_ctrl] if len(s) > 0])
-    if len(all_vals) == 0:
-        return ""
-    x_min = max(0, int(all_vals.min()) - 5)
-    x_max = min(100, int(all_vals.max()) + 5)
-    bins = np.arange(x_min, x_max + 2, 1)
+    control = df_features_filt.query("signature_type != 'matched'")["snvq"].dropna()
 
     fig, ax = plt.subplots(figsize=(8, 3))
     fig.patch.set_facecolor("#f4f6f8")
 
-    for data, color, kde_color, label_prefix, kde_tag in [
-        (db_ctrl, "#3498db", "#1a5276", "Synthetic controls", "db_ctrl"),
-        (cohort, "#9b59b6", "#6c3483", "Cohort control", "cohort"),
-    ]:
-        if len(data) > 0:
-            ax.hist(
-                data,
-                bins=bins,
-                color=color,
-                alpha=0.4,
-                edgecolor="white",
-                linewidth=0.5,
-                label=f"{label_prefix} (n={len(data):,})",
-                density=True,
-            )
-            if len(data) >= 2:  # noqa: PLR2004
-                try:
-                    kde = gaussian_kde(data, bw_method=0.3)
-                    x_kde = np.linspace(x_min, x_max, 1000)
-                    ax.plot(
-                        x_kde,
-                        kde(x_kde),
-                        color=kde_color,
-                        linewidth=1.2,
-                        zorder=4,
-                        label=f"KDE ({kde_tag})",
-                        path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"), patheffects.Normal()],
-                    )
-                except Exception as e:  # noqa: BLE001
-                    logger.debug("KDE line skipped (%s snvq): %s", kde_tag, e)
+    bins = np.arange(0, 101, 2)
+    if len(control) > 0:
+        ax.hist(
+            control,
+            bins=bins,
+            color="#3498db",
+            alpha=0.6,
+            edgecolor="white",
+            linewidth=0.5,
+            label=f"Other signatures (n={len(control):,})",
+            density=True,
+        )
+        if len(control) >= 5:  # noqa: PLR2004
+            try:
+                kde = gaussian_kde(control, bw_method=0.3)
+                x_kde = np.linspace(0, 100, 1000)
+                ax.plot(
+                    x_kde,
+                    kde(x_kde),
+                    color="#1a5276",
+                    linewidth=1.2,
+                    zorder=4,
+                    label="KDE (other)",
+                    path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"), patheffects.Normal()],
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.debug("KDE line skipped (control snvq): %s", e)
     if len(matched) > 0:
         ax.hist(
             matched,
             bins=bins,
             color="#c0392b",
-            alpha=0.55,
+            alpha=0.7,
             edgecolor="white",
             linewidth=0.5,
             label=f"Patient signature (n={len(matched):,})",
             density=True,
         )
-        if len(matched) >= 2:  # noqa: PLR2004
+        if len(matched) >= 5:  # noqa: PLR2004
             try:
                 kde = gaussian_kde(matched, bw_method=0.3)
-                x_kde = np.linspace(x_min, x_max, 1000)
+                x_kde = np.linspace(0, 100, 1000)
                 ax.plot(
                     x_kde,
                     kde(x_kde),
@@ -439,7 +429,7 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
     ax.set_ylabel("Density", fontsize=10)
     ax.set_title("cfDNA Intersection SNVQ Distribution", fontsize=11, fontweight="bold")
     ax.legend(fontsize=9, framealpha=0.85)
-    ax.set_xlim(x_min, x_max)
+    ax.set_xlim(0, 100)
     ax.set_axisbelow(True)
     ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")  # noqa: FBT003
     ax.set_facecolor("#f4f6f8")
@@ -461,13 +451,12 @@ def render_read_length_histogram(df_features_filt: pd.DataFrame) -> str:
     from scipy.stats import gaussian_kde  # noqa: PLC0415
 
     matched = df_features_filt.query("signature_type == 'matched'")[length_col].dropna()
-    cohort = df_features_filt.query("signature_type == 'control'")[length_col].dropna()
-    db_ctrl = df_features_filt.query("signature_type == 'db_control'")[length_col].dropna()
+    control = df_features_filt.query("signature_type != 'matched'")[length_col].dropna()
 
-    if len(matched) == 0 and len(cohort) == 0 and len(db_ctrl) == 0:
+    if len(matched) == 0 and len(control) == 0:
         return ""
 
-    all_lengths = pd.concat([s for s in [matched, cohort, db_ctrl] if len(s) > 0])
+    all_lengths = pd.concat([matched, control])
     x_min = max(0, int(all_lengths.min()) - 5)
     x_max = min(600, int(all_lengths.max()) + 5)  # cap at 600 bp
     bins = np.arange(x_min, x_max + 2, 2)
@@ -476,51 +465,47 @@ def render_read_length_histogram(df_features_filt: pd.DataFrame) -> str:
     fig.patch.set_facecolor("#f4f6f8")
     ax.set_facecolor("#f4f6f8")
 
-    for data, color, kde_color, label_prefix, kde_tag in [
-        (db_ctrl, "#3498db", "#1a5276", "Synthetic controls", "db_ctrl"),
-        (cohort, "#9b59b6", "#6c3483", "Cohort control", "cohort"),
-    ]:
-        if len(data) > 0:
-            ax.hist(
-                data.clip(upper=x_max),
-                bins=bins,
-                color=color,
-                alpha=0.4,
-                edgecolor="white",
-                linewidth=0.5,
-                label=f"{label_prefix} (n={len(data):,})",
-                density=True,
-            )
-            if len(data) >= 2:  # noqa: PLR2004
-                try:
-                    kde = gaussian_kde(data.clip(upper=x_max), bw_method=0.15)
-                    x_kde = np.linspace(x_min, x_max, 1000)
-                    ax.plot(
-                        x_kde,
-                        kde(x_kde),
-                        color=kde_color,
-                        linewidth=1.2,
-                        zorder=4,
-                        label=f"KDE ({kde_tag})",
-                        path_effects=[
-                            patheffects.withStroke(linewidth=2.5, foreground="white"),
-                            patheffects.Normal(),
-                        ],
-                    )
-                except Exception as e:  # noqa: BLE001
-                    logger.debug("KDE line skipped (%s read length): %s", kde_tag, e)
+    if len(control) > 0:
+        ax.hist(
+            control.clip(upper=x_max),
+            bins=bins,
+            color="#3498db",
+            alpha=0.6,
+            edgecolor="white",
+            linewidth=0.5,
+            label=f"Other signatures (n={len(control):,})",
+            density=True,
+        )
+        if len(control) >= 5:  # noqa: PLR2004
+            try:
+                kde = gaussian_kde(control.clip(upper=x_max), bw_method=0.15)
+                x_kde = np.linspace(x_min, x_max, 1000)
+                ax.plot(
+                    x_kde,
+                    kde(x_kde),
+                    color="#1a5276",
+                    linewidth=1.2,
+                    zorder=4,
+                    label="KDE (other)",
+                    path_effects=[
+                        patheffects.withStroke(linewidth=2.5, foreground="white"),
+                        patheffects.Normal(),
+                    ],
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.debug("KDE line skipped (control read length): %s", e)
     if len(matched) > 0:
         ax.hist(
             matched.clip(upper=x_max),
             bins=bins,
             color="#c0392b",
-            alpha=0.55,
+            alpha=0.7,
             edgecolor="white",
             linewidth=0.5,
             label=f"Patient signature (n={len(matched):,})",
             density=True,
         )
-        if len(matched) >= 2:  # noqa: PLR2004
+        if len(matched) >= 5:  # noqa: PLR2004
             try:
                 kde = gaussian_kde(matched.clip(upper=x_max), bw_method=0.15)
                 x_kde = np.linspace(x_min, x_max, 1000)
@@ -563,61 +548,55 @@ def render_intersection_af_combined(
     from scipy.stats import gaussian_kde  # noqa: PLC0415
 
     matched_idx = df_supporting_reads_per_locus.query("signature_type == 'matched'").index
-    cohort_idx = df_supporting_reads_per_locus.query("signature_type == 'control'").index
-    db_ctrl_idx = df_supporting_reads_per_locus.query("signature_type == 'db_control'").index
+    control_idx = df_supporting_reads_per_locus.query("signature_type != 'matched'").index
 
     matched_af = df_signatures.loc[matched_idx.intersection(df_signatures.index)]["af"].dropna()
-    cohort_af = df_signatures.loc[cohort_idx.intersection(df_signatures.index)]["af"].dropna()
-    db_ctrl_af = df_signatures.loc[db_ctrl_idx.intersection(df_signatures.index)]["af"].dropna()
+    control_af = df_signatures.loc[control_idx.intersection(df_signatures.index)]["af"].dropna()
 
     fig, ax = plt.subplots(figsize=(8, 3))
     fig.patch.set_facecolor("#f4f6f8")
 
     bin_edges = np.linspace(0, 1, 51)
 
-    for af_data, color, kde_color, label_prefix, kde_tag in [
-        (db_ctrl_af, "#3498db", "#1a5276", "Synthetic controls", "db_ctrl"),
-        (cohort_af, "#9b59b6", "#6c3483", "Cohort control", "cohort"),
-    ]:
-        if len(af_data) > 0:
-            ax.hist(
-                af_data,
-                bins=bin_edges,
-                color=color,
-                alpha=0.4,
-                edgecolor="white",
-                linewidth=0.5,
-                density=True,
-                label=f"{label_prefix} (n={len(af_data):,})",
-            )
-            if len(af_data) >= 2:  # noqa: PLR2004
-                try:
-                    kde = gaussian_kde(af_data, bw_method=0.3)
-                    x_kde = np.linspace(0, 1, 500)
-                    ax.plot(
-                        x_kde,
-                        kde(x_kde),
-                        color=kde_color,
-                        linewidth=1.2,
-                        zorder=4,
-                        label=f"KDE ({kde_tag})",
-                        path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"), patheffects.Normal()],
-                    )
-                except Exception as e:  # noqa: BLE001
-                    logger.debug("KDE line skipped (%s): %s", kde_tag, e)
+    if len(control_af) > 0:
+        ax.hist(
+            control_af,
+            bins=bin_edges,
+            color="#3498db",
+            alpha=0.55,
+            edgecolor="white",
+            linewidth=0.5,
+            density=True,
+            label=f"Other signatures (n={len(control_af):,})",
+        )
+        if len(control_af) >= 5:  # noqa: PLR2004
+            try:
+                kde = gaussian_kde(control_af, bw_method=0.3)
+                x_kde = np.linspace(0, 1, 500)
+                ax.plot(
+                    x_kde,
+                    kde(x_kde),
+                    color="#1a5276",
+                    linewidth=1.2,
+                    zorder=4,
+                    label="KDE (other)",
+                    path_effects=[patheffects.withStroke(linewidth=2.5, foreground="white"), patheffects.Normal()],
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.debug("KDE line skipped (control): %s", e)
 
     if len(matched_af) > 0:
         ax.hist(
             matched_af,
             bins=bin_edges,
             color="#c0392b",
-            alpha=0.5,
+            alpha=0.65,
             edgecolor="white",
             linewidth=0.5,
             density=True,
             label=f"Patient signature (n={len(matched_af):,})",
         )
-        if len(matched_af) >= 2:  # noqa: PLR2004
+        if len(matched_af) >= 5:  # noqa: PLR2004
             try:
                 kde = gaussian_kde(matched_af, bw_method=0.3)
                 x_kde = np.linspace(0, 1, 500)
@@ -647,67 +626,83 @@ def render_intersection_af_combined(
 def render_supporting_reads_histogram(
     df_supporting_reads_per_locus: pd.DataFrame,
     signature_size: int,
-    cohort_signature_size: int,
-    db_control_signature_size: int,
+    control_signature_size: int,
 ) -> str:
     """
     Histogram of alt-supporting read counts per variant locus.
 
     Shows how many signature loci have 1, 2, 3, ... alt-supporting reads
-    in the cfDNA intersection, separately for matched (signal), cohort control,
-    and synthetic (db_control) loci.  Y-axis shows fraction of total loci
-    (normalised by the respective signature size) so that groups with very
-    different locus counts are comparable.  Absolute counts are printed above
-    each bar.  Loci with zero supporting reads are annotated but not plotted.
+    in the cfDNA intersection, separately for matched (signal) and control
+    (noise) loci.  Y-axis shows fraction of total loci (normalised by
+    signature_size / control_signature_size respectively) so that groups
+    with very different locus counts are comparable.  Absolute counts are
+    printed above each bar.  Loci with zero supporting reads are annotated
+    but not plotted (they dominate and would compress the axis).
     """
     matched = df_supporting_reads_per_locus.query("signature_type == 'matched'")["supporting_reads"]
-    cohort = df_supporting_reads_per_locus.query("signature_type == 'control'")["supporting_reads"]
-    db_ctrl = df_supporting_reads_per_locus.query("signature_type == 'db_control'")["supporting_reads"]
+    control = df_supporting_reads_per_locus.query("signature_type != 'matched'")["supporting_reads"]
 
-    if len(matched) == 0 and len(cohort) == 0 and len(db_ctrl) == 0:
+    if len(matched) == 0 and len(control) == 0:
         return ""
 
-    all_reads = pd.concat([s for s in [matched, cohort, db_ctrl] if len(s) > 0])
-    max_reads = int(all_reads.max())
-    x_cap = min(max_reads + 1, 20)  # cap display at 20 reads
+    max_reads = max(
+        matched.max() if len(matched) > 0 else 1,
+        control.max() if len(control) > 0 else 1,
+    )
+    x_cap = min(int(max_reads) + 1, 20)  # cap display at 20 reads
     bins = list(range(1, x_cap + 2))  # edges: 1, 2, ..., x_cap+1
     bar_positions = np.array(bins[:-1], dtype=float)
 
+    n_ctrl_with_reads = len(control)
     n_matched_with_reads = len(matched)
     n_matched_zero = max(0, signature_size - n_matched_with_reads)
 
-    # Build list of active groups in draw order (back to front)
-    active_groups = []
-    for data, sig_size, color, text_color, alpha, label_prefix in [
-        (db_ctrl, db_control_signature_size, "#3498db", "#1a5276", 0.55, "Synthetic controls"),
-        (cohort, cohort_signature_size, "#9b59b6", "#6c3483", 0.55, "Cohort control"),
-        (matched, signature_size, "#c0392b", "#7b241c", 0.6, "Patient signature"),
-    ]:
-        if len(data) > 0 and sig_size > 0:
-            active_groups.append((data, sig_size, color, text_color, alpha, label_prefix))
-
-    n_active = len(active_groups)
-    bar_width = 0.28 if n_active == 3 else (0.38 if n_active == 2 else 0.55)  # noqa: PLR2004
-    offsets = np.linspace(-(n_active - 1) / 2 * bar_width, (n_active - 1) / 2 * bar_width, n_active)
+    has_both = n_ctrl_with_reads > 0 and n_matched_with_reads > 0
+    bar_width = 0.38 if has_both else 0.55
+    offset = bar_width / 2 if has_both else 0.0
 
     fig, ax = plt.subplots(figsize=(max(8, x_cap * 0.65), 3.5))
     fig.patch.set_facecolor("#f4f6f8")
     ax.set_facecolor("#f4f6f8")
 
-    for (data, sig_size, color, text_color, alpha, label_prefix), offset in zip(active_groups, offsets, strict=False):
-        counts, _ = np.histogram(data.clip(upper=x_cap), bins=bins)
-        fracs = counts / sig_size
-        ax.bar(
-            bar_positions + offset,
-            fracs,
-            width=bar_width,
-            color=color,
-            alpha=alpha,
-            label=label_prefix,
+    if n_ctrl_with_reads > 0:
+        ctrl_counts, _ = np.histogram(control.clip(upper=x_cap), bins=bins)
+        # Fall back to loci-with-reads when all control signatures were filtered out
+        # (control_signature_size == 0) to avoid ZeroDivisionError.
+        ctrl_norm = control_signature_size if control_signature_size > 0 else n_ctrl_with_reads
+        ctrl_fracs = ctrl_counts / ctrl_norm
+        ctrl_label = (
+            f"Control (n={n_ctrl_with_reads:,}/{control_signature_size:,} loci with reads)"
+            if control_signature_size > 0
+            else f"Control (n={n_ctrl_with_reads:,} loci with reads; signature size unknown)"
         )
-        for pos, cnt, frac in zip(bar_positions + offset, counts, fracs, strict=False):
+        ax.bar(
+            bar_positions - offset,
+            ctrl_fracs,
+            width=bar_width,
+            color="#3498db",
+            alpha=0.75,
+            label=ctrl_label,
+        )
+        for pos, cnt, frac in zip(bar_positions - offset, ctrl_counts, ctrl_fracs, strict=False):
             if cnt > 0:
-                ax.text(pos, frac, f"{cnt:,}", ha="center", va="bottom", fontsize=7, color=text_color)
+                ax.text(pos, frac, f"{cnt:,}", ha="center", va="bottom", fontsize=7, color="#1a5276")
+
+    if n_matched_with_reads > 0:
+        matched_counts, _ = np.histogram(matched.clip(upper=x_cap), bins=bins)
+        matched_fracs = matched_counts / signature_size
+        matched_bar_x = bar_positions + offset if has_both else bar_positions
+        ax.bar(
+            matched_bar_x,
+            matched_fracs,
+            width=bar_width,
+            color="#c0392b",
+            alpha=0.8,
+            label=f"Patient signature (n={n_matched_with_reads:,}/{signature_size:,} loci with reads)",
+        )
+        for pos, cnt, frac in zip(matched_bar_x, matched_counts, matched_fracs, strict=False):
+            if cnt > 0:
+                ax.text(pos, frac, f"{cnt:,}", ha="center", va="bottom", fontsize=7, color="#7b241c")
 
     if n_matched_zero > 0:
         ax.text(
@@ -723,7 +718,7 @@ def render_supporting_reads_histogram(
         )
 
     ax.set_xlabel("Alt-supporting reads per variant locus", fontsize=10)
-    ax.set_ylabel("Density", fontsize=10)
+    ax.set_ylabel("Fraction of loci", fontsize=10)
     ax.set_title("Alt-Supporting Reads per Variant Locus", fontsize=11, fontweight="bold")
     ax.legend(fontsize=9, framealpha=0.85)
     ax.set_xticks(bar_positions)
@@ -818,10 +813,9 @@ def render_analysis_report(  # noqa: PLR0913
     intersection_af_img = render_intersection_af_combined(df_supporting_reads_per_locus, df_signatures_filt)
 
     # Supporting reads per locus histogram
-    cohort_signature_size = len(df_signatures_filt[df_signatures_filt["signature_type"] == "control"])
-    db_control_signature_size = len(df_signatures_filt[df_signatures_filt["signature_type"] == "db_control"])
+    control_signature_size = len(df_signatures_filt[df_signatures_filt["signature_type"] != "matched"])
     supporting_reads_hist_img = render_supporting_reads_histogram(
-        df_supporting_reads_per_locus, detection.signature_size, cohort_signature_size, db_control_signature_size
+        df_supporting_reads_per_locus, detection.signature_size, control_signature_size
     )
 
     # Read length histogram
@@ -838,6 +832,7 @@ def render_analysis_report(  # noqa: PLR0913
         "report_title": "MRD Analysis Report",
         "report_date": datetime.date.today().isoformat(),
         "basename": basename or "N/A",
+        "logo_b64": _LOGO_B64,
         "detection": detection,
         "binom_p_str": binom_p_str,
         "noise_rate_str": noise_rate_str,
@@ -862,7 +857,7 @@ def render_analysis_report(  # noqa: PLR0913
     return template.render(**context)
 
 
-def render_qc_report(  # noqa: PLR0913
+def render_qc_report(  # noqa: PLR0913, PLR0915, C901
     detection: DetectionResult,
     detection_unfilt: DetectionResult,
     detection_unfilt2: DetectionResult,
@@ -882,6 +877,15 @@ def render_qc_report(  # noqa: PLR0913
     filt_ratio: float,
     plot_sbs_fn,
     plot_af_fn,
+    df_supporting_reads_per_locus_filt: pd.DataFrame | None = None,
+    applied_filters: dict | None = None,
+    inputs_info: dict | None = None,
+    detection_no_noise: DetectionResult | None = None,
+    df_tf_no_noise: pd.DataFrame | None = None,
+    thresh_noise_lq_reads: int | None = None,
+    detection_pre_multi_read: DetectionResult | None = None,
+    df_tf_pre_multi_read: pd.DataFrame | None = None,
+    thresh_multi_read_pvalue: float | None = None,
 ) -> str:
     """
     Render the MRD QC report as a self-contained HTML string.
@@ -999,6 +1003,82 @@ def render_qc_report(  # noqa: PLR0913
         df_supporting_reads_per_locus_unfilt2, df_signatures_filt
     )
 
+    # ── Analysis-section plots (same as analysis report) ──
+    signal_noise_img = render_signal_vs_noise(detection, df_tf_filt)
+
+    sbs96_plots: list[str] = []
+    sbs6_vaf_plots: list[str] = []
+    for sig in matched_sigs:
+        sig_df = df_signatures_filt.query(f"signature == '{sig}'")
+        if len(sig_df) == 0:
+            sig_df = df_signatures.query(f"signature == '{sig}'")
+        sbs96_img, sbs6_vaf_img = render_sbs_vaf_combined(
+            sig_df,
+            signature_filter_query,
+            plot_sbs_fn,
+            plot_af_fn,
+            df_features=df_features,
+            df_features_filt=df_features_filt,
+        )
+        sbs96_plots.append(sbs96_img)
+        sbs6_vaf_plots.append(sbs6_vaf_img)
+
+    _df_splocus = (
+        df_supporting_reads_per_locus_filt if df_supporting_reads_per_locus_filt is not None else pd.DataFrame()
+    )
+    intersection_af_img = (
+        render_intersection_af_combined(_df_splocus, df_signatures_filt) if not _df_splocus.empty else ""
+    )
+    _ctrl_size = (
+        len(df_signatures_filt[df_signatures_filt["signature_type"] != "matched"])
+        if not df_signatures_filt.empty
+        else 0
+    )
+    supporting_reads_hist_img = (
+        render_supporting_reads_histogram(_df_splocus, detection.signature_size, _ctrl_size)
+        if not _df_splocus.empty
+        else ""
+    )
+    read_length_img = render_read_length_histogram(df_features_filt) if df_features_filt is not None else ""
+    intersection_snvq_img = render_intersection_snvq_combined(df_features_filt) if df_features_filt is not None else ""
+
+    # ── Noisy loci filter comparison ──
+    def _call_class(det: DetectionResult) -> str:
+        if det.detected is True:
+            return "detected"
+        if det.detected is False:
+            return "not-detected"
+        return "indeterminate"
+
+    def _det_row(det: DetectionResult, label: str) -> dict:
+        p = det.p_value
+        return {
+            "label": label,
+            "call": det.call,
+            "call_class": _call_class(det),
+            "p_str": f"{p:.3f}" if p >= 0.001 else f"{p:.2e}",  # noqa: PLR2004
+            "supporting_reads": det.matched_supporting_reads,
+            "vaf_str": format_scientific(det.matched_ctdna_vaf) if det.matched_ctdna_vaf > 0 else "0",
+        }
+
+    noise_filter_comparison = None
+    if detection_no_noise is not None and thresh_noise_lq_reads is not None:
+        noise_filter_comparison = {
+            "thresh_lq": thresh_noise_lq_reads,
+            "with_filter": _det_row(detection, "With noisy loci filter (primary result)"),
+            "without_filter": _det_row(detection_no_noise, "Without noisy loci filter"),
+            "no_noise_signal_img": _render_signal_noise_internal(detection_no_noise, df_tf_no_noise),
+        }
+
+    multi_read_filter_comparison = None
+    if detection_pre_multi_read is not None and thresh_multi_read_pvalue is not None:
+        multi_read_filter_comparison = {
+            "thresh_pvalue": thresh_multi_read_pvalue,
+            "with_filter": _det_row(detection, "With multi-read filter (primary result)"),
+            "without_filter": _det_row(detection_pre_multi_read, "Without multi-read filter"),
+            "pre_filter_signal_img": _render_signal_noise_internal(detection_pre_multi_read, df_tf_pre_multi_read),
+        }
+
     # ── Format values ──
     binom_p_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
     noise_rate_str = format_scientific(detection.noise_rate) if detection.noise_rate > 0 else "0"
@@ -1007,12 +1087,22 @@ def render_qc_report(  # noqa: PLR0913
         "report_title": "MRD QC Report",
         "report_date": datetime.date.today().isoformat(),
         "basename": basename or "N/A",
+        "logo_b64": _LOGO_B64,
         "detection": detection,
         "binom_p_str": binom_p_str,
         "noise_rate_str": noise_rate_str,
         "vaf_str": format_scientific(detection.matched_ctdna_vaf) if detection.matched_ctdna_vaf > 0 else "0",
         "lod_str": format_scientific(detection.personal_lod) if detection.personal_lod else "N/A",
         "filt_ratio": filt_ratio,
+        "signal_noise_img": signal_noise_img,
+        "sbs96_plots": sbs96_plots,
+        "sbs6_vaf_plots": sbs6_vaf_plots,
+        "intersection_af_img": intersection_af_img,
+        "supporting_reads_hist_img": supporting_reads_hist_img,
+        "read_length_img": read_length_img,
+        "intersection_snvq_img": intersection_snvq_img,
+        "applied_filters": applied_filters or {},
+        "inputs_info": inputs_info or {},
         "control_profiles": control_profiles,
         "fragment_length_img": fragment_length_img,
         "unfilt_sig_signal_noise_img": unfilt_sig_signal_noise_img,
@@ -1021,6 +1111,8 @@ def render_qc_report(  # noqa: PLR0913
         "unfilt_reads_signal_noise_img": unfilt_reads_signal_noise_img,
         "unfilt_reads_sbs_vaf_img": unfilt_reads_sbs_vaf_img,
         "unfilt_reads_intersection_img": unfilt_reads_intersection_img,
+        "noise_filter_comparison": noise_filter_comparison,
+        "multi_read_filter_comparison": multi_read_filter_comparison,
     }
 
     template = _JINJA_ENV.get_template("mrd_qc_report.html")
