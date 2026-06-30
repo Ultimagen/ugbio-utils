@@ -15,8 +15,12 @@ only when zero background reads are observed to avoid a degenerate null distribu
 
 from dataclasses import dataclass, field
 
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
+from scipy.optimize import brentq
+from scipy.stats import binom, poisson
 from ugbio_core.logger import logger
 
 # Significance threshold (alpha) for the MRD detection call.
@@ -85,10 +89,8 @@ def _binom_detection_threshold(n: int, p_err: float, alpha: float) -> int | None
         Detection threshold k, or ``None`` when no k satisfies the criterion (meaning the noise
         distribution is so diffuse that significance cannot be achieved at the given alpha).
     """
-    from scipy.stats import binom as _binom  # noqa: PLC0415
-
-    k_max = int(_binom.ppf(0.9999, n, max(p_err, 1e-12))) + 10
-    sf_vals = _binom.sf(np.arange(k_max + 1) - 1, n, p_err)
+    k_max = int(binom.ppf(0.9999, n, max(p_err, 1e-12))) + 10
+    sf_vals = binom.sf(np.arange(k_max + 1) - 1, n, p_err)
     hits = np.where(sf_vals < alpha)[0]
     return int(hits[0]) if len(hits) > 0 else None
 
@@ -101,15 +103,13 @@ def _multi_read_enrichment_pvalue(n_multi: int, signature_size: int, mean_covera
     A small p-value means the observed count is significantly higher than expected,
     indicating unexplained multi-read enrichment.
     """
-    from scipy.stats import binom as _binom  # noqa: PLC0415
-
     p_expected = _expected_multi_read_fraction(mean_coverage, tumor_vaf)
     if signature_size <= 0:
         return 1.0
     if p_expected <= 0:
         # expected is 0 — any positive observation is enriched, but p-value is exactly 0
         return 0.0 if n_multi > 0 else 1.0
-    return float(_binom.sf(n_multi - 1, signature_size, p_expected))
+    return float(binom.sf(n_multi - 1, signature_size, p_expected))
 
 
 @dataclass
@@ -201,9 +201,6 @@ def compute_personal_lod(  # noqa: PLR0911
     float or None
         Personal LOD (tumor fraction above background) or None if not computable.
     """
-    from scipy.optimize import brentq  # noqa: PLC0415
-    from scipy.stats import binom as _binom  # noqa: PLC0415
-
     if n <= 0:
         logger.warning("Cannot compute personal LOD: n=%d", n)
         return None
@@ -226,7 +223,7 @@ def compute_personal_lod(  # noqa: PLR0911
     #   at tf=0  recall = binom.sf(n_th-1, n, p_err) < fpr <= target_recall → residual < 0
     #   at tf=1-p_err  p=1  recall=1 >= target_recall                        → residual > 0
     def _recall_residual(tf):
-        return _binom.sf(n_th - 1, n, p_err + tf) - target_recall
+        return binom.sf(n_th - 1, n, p_err + tf) - target_recall
 
     tf_lo, tf_hi = 0.0, 1.0 - p_err
     try:
@@ -376,9 +373,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     if len(null_reads) == 0 or n_effective == 0:
         p_value = 1.0
     else:
-        from scipy.stats import binom as _binom  # noqa: PLC0415
-
-        p_value = float(_binom.sf(matched_reads - 1, n_effective, p_err))
+        p_value = float(binom.sf(matched_reads - 1, n_effective, p_err))
 
     # QC checks — displayed as pass/fail checkboxes; do NOT force Indeterminate
     qc_checks: list[QcCheck] = [
@@ -502,9 +497,6 @@ def plot_null_distribution(  # noqa: PLR0915, C901
     ax : matplotlib.axes.Axes, optional
         Axes to draw on. Creates a new figure if None.
     """
-    import matplotlib.pyplot as plt  # noqa: PLC0415
-    import matplotlib.ticker as mticker  # noqa: PLC0415
-
     if ax is None:
         _, ax = plt.subplots(figsize=(8, 6))
 
@@ -544,17 +536,13 @@ def plot_null_distribution(  # noqa: PLR0915, C901
         n_samples = max(len(null) * 20, 500)
         rng2 = np.random.default_rng(7)
         if n_eff > 0:
-            from scipy.stats import binom as _binom_s  # noqa: PLC0415
-
-            fit_samples = _binom_s.rvs(n_eff, p_err_val, size=n_samples, random_state=rng2)
+            fit_samples = binom.rvs(n_eff, p_err_val, size=n_samples, random_state=rng2)
             p_err_str = format_scientific(p_err_val) if p_err_val > 0 else "0"
             fit_label = f"Binomial null (N={n_eff:,}, p_err={p_err_str})"
         else:
             # Fallback: Poisson from empirical null mean
             lam = float(np.mean(null)) if len(null) > 0 else 0.01
-            from scipy.stats import poisson as _poisson_s  # noqa: PLC0415
-
-            fit_samples = _poisson_s.rvs(max(lam, 1e-9), size=n_samples, random_state=rng2)
+            fit_samples = poisson.rvs(max(lam, 1e-9), size=n_samples, random_state=rng2)
             fit_label = f"Poisson fallback (λ={lam:.2f})"
         fit_plot = np.array([_safe(v) for v in fit_samples])
         bp = ax.boxplot(
