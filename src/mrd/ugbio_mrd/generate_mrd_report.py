@@ -82,7 +82,6 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     detection = run_detection_analysis(
         df_tf=df_tf_filt,
         df_signatures_filt=df_signatures_filt,
-        denom_ratio=denom_ratio,
         df_supporting_reads_per_locus=df_supporting_reads_per_locus_filt,
     )
 
@@ -243,7 +242,6 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     detection_unfilt = run_detection_analysis(
         df_tf=df_tf_unfilt,
         df_signatures_filt=df_signatures,
-        denom_ratio=denom_ratio,
     )
 
     # Secondary analysis 2: unfiltered reads + filtered signatures
@@ -257,7 +255,6 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     detection_unfilt2 = run_detection_analysis(
         df_tf=df_tf_unfilt2,
         df_signatures_filt=df_signatures_filt,
-        denom_ratio=1,
     )
 
     # Save HDF5 tables (secondary)

@@ -157,9 +157,7 @@ class DetectionResult:
 
 
 def compute_personal_lod(  # noqa: PLR0911
-    signature_size: int,
-    mean_coverage: float,
-    denom_ratio: float,
+    n: int,
     p_err: float,
     target_recall: float = 0.95,
     fpr: float = DEFAULT_LOD_FPR,
@@ -169,7 +167,7 @@ def compute_personal_lod(  # noqa: PLR0911
 
     Mirrors the notebook's ``find_lod_at_tpr`` approach:
 
-    1. Compute total corrected coverage N = signature_size * mean_coverage * denom_ratio.
+    1. Use the pre-computed effective trial count N (= corrected_coverage for the matched signature).
     2. Derive the detection threshold ``n_th`` as the smallest k such that
        Binomial.sf(k-1, N, p_err) < fpr  (analytic FPR control on the null).
     3. Find the smallest TF where recall >= target_recall, i.e.
@@ -184,12 +182,12 @@ def compute_personal_lod(  # noqa: PLR0911
 
     Parameters
     ----------
-    signature_size : int
-        Number of loci in the filtered signature.
-    mean_coverage : float
-        Mean corrected coverage per locus.
-    denom_ratio : float
-        Denominator correction ratio.
+    n : int
+        Effective number of Binomial trials.  Callers should pass the
+        ``corrected_coverage`` value already computed by
+        ``get_tf_from_filtered_data`` (= ceil(sum(coverage) * denom_ratio))
+        so that the LOD and the reported ctDNA VAF share exactly the same
+        denominator.
     p_err : float
         Background error rate estimated from db_control synthetic controls
         (total supporting reads / total corrected coverage).
@@ -206,12 +204,8 @@ def compute_personal_lod(  # noqa: PLR0911
     from scipy.optimize import brentq  # noqa: PLC0415
     from scipy.stats import binom as _binom  # noqa: PLC0415
 
-    if signature_size <= 0 or mean_coverage <= 0:
-        logger.warning(f"Cannot compute personal LOD: signature_size={signature_size}, mean_coverage={mean_coverage}")
-        return None
-
-    n = int(signature_size * mean_coverage * denom_ratio)
     if n <= 0:
+        logger.warning("Cannot compute personal LOD: n=%d", n)
         return None
 
     # Step 1: analytic detection threshold at the given FPR under the null.
@@ -258,7 +252,6 @@ def compute_personal_lod(  # noqa: PLR0911
 def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     df_tf: pd.DataFrame,
     df_signatures_filt: pd.DataFrame,
-    denom_ratio: float,
     alpha: float = DEFAULT_ALPHA,
     df_supporting_reads_per_locus: pd.DataFrame | None = None,
 ) -> DetectionResult:
@@ -276,10 +269,12 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         Tumor fraction dataframe as produced by get_tf_from_filtered_data.
         Index: (signature_type, signature).
         Columns: supporting_reads, coverage, corrected_coverage, ctdna_vaf.
+        The ``corrected_coverage`` column is the single authoritative Binomial
+        trial count (= ceil(sum(coverage) * denom_ratio)) and is used directly
+        for the p-value, detection threshold, and LOD calculations so that all
+        three share exactly the same denominator as the reported ctDNA VAF.
     df_signatures_filt : pd.DataFrame
-        Filtered signature dataframe with coverage per locus.
-    denom_ratio : float
-        Denominator correction ratio from SRSNV training data.
+        Filtered signature dataframe with per-locus coverage (used for QC metrics).
     alpha : float
         Significance threshold for detection call (default ``DEFAULT_ALPHA`` = 0.01).
         Personal LOD always uses ``DEFAULT_LOD_FPR`` (5%) independently of this.
@@ -374,8 +369,10 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         else 0.0
     )
 
-    # Binomial p-value: P(X >= observed | N, p_err) under null Binom(n_effective, p_err)
-    n_effective = int(signature_size * mean_coverage * denom_ratio)
+    # Binomial p-value: P(X >= observed | N, p_err) under null Binom(n_effective, p_err).
+    # n_effective comes directly from df_tf corrected_coverage, which is the same denominator
+    # used to compute ctdna_vaf — ensuring p-value, LOD, and VAF all share a single N.
+    n_effective = int(corrected_coverage)
     if len(null_reads) == 0 or n_effective == 0:
         p_value = 1.0
     else:
@@ -443,11 +440,10 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     else:
         detection_threshold = 1
 
-    # Personal LOD — always at DEFAULT_LOD_FPR (5%), independent of detection alpha
+    # Personal LOD — always at DEFAULT_LOD_FPR (5%), independent of detection alpha.
+    # Uses the same n_effective as the p-value and detection threshold.
     personal_lod = compute_personal_lod(
-        signature_size=signature_size,
-        mean_coverage=mean_coverage,
-        denom_ratio=denom_ratio,
+        n=n_effective,
         p_err=p_err,
         fpr=DEFAULT_LOD_FPR,
     )
@@ -616,9 +612,7 @@ def plot_null_distribution(  # noqa: PLR0915, C901
         n_th_plot = _binom_detection_threshold(n_eff_plot, p_err_plot, _alpha_plot)
         if n_th_plot is not None:
             lod_tf_plot = compute_personal_lod(
-                signature_size=1,
-                mean_coverage=float(n_eff_plot),
-                denom_ratio=1.0,
+                n=int(n_eff_plot),
                 p_err=p_err_plot,
                 fpr=DEFAULT_LOD_FPR,
             )

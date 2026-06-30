@@ -18,9 +18,7 @@ class TestComputePersonalLod:
     def test_basic_lod_computation(self):
         """LOD should be computable for reasonable parameters."""
         lod = compute_personal_lod(
-            signature_size=1000,
-            mean_coverage=40.0,
-            denom_ratio=0.5,
+            n=int(1000 * 40.0 * 0.5),
             p_err=1e-6,
         )
         assert lod is not None
@@ -29,15 +27,11 @@ class TestComputePersonalLod:
     def test_higher_perr_higher_lod(self):
         """Higher background error rate should yield higher LOD."""
         lod_low = compute_personal_lod(
-            signature_size=1000,
-            mean_coverage=40.0,
-            denom_ratio=0.5,
+            n=int(1000 * 40.0 * 0.5),
             p_err=1e-7,
         )
         lod_high = compute_personal_lod(
-            signature_size=1000,
-            mean_coverage=40.0,
-            denom_ratio=0.5,
+            n=int(1000 * 40.0 * 0.5),
             p_err=1e-5,
         )
         assert lod_low < lod_high
@@ -45,15 +39,11 @@ class TestComputePersonalLod:
     def test_larger_signature_lower_lod(self):
         """Larger signature should yield lower (better) LOD."""
         lod_small = compute_personal_lod(
-            signature_size=500,
-            mean_coverage=40.0,
-            denom_ratio=0.5,
+            n=int(500 * 40.0 * 0.5),
             p_err=1e-6,
         )
         lod_large = compute_personal_lod(
-            signature_size=5000,
-            mean_coverage=40.0,
-            denom_ratio=0.5,
+            n=int(5000 * 40.0 * 0.5),
             p_err=1e-6,
         )
         assert lod_small is not None
@@ -61,21 +51,17 @@ class TestComputePersonalLod:
         assert lod_large < lod_small
 
     def test_zero_signature_returns_none(self):
-        """Zero signature size returns None."""
+        """Zero n returns None."""
         lod = compute_personal_lod(
-            signature_size=0,
-            mean_coverage=40.0,
-            denom_ratio=0.5,
+            n=0,
             p_err=1e-6,
         )
         assert lod is None
 
     def test_zero_coverage_returns_none(self):
-        """Zero coverage returns None."""
+        """Negative n (guard) returns None."""
         lod = compute_personal_lod(
-            signature_size=1000,
-            mean_coverage=0.0,
-            denom_ratio=0.5,
+            n=-1,
             p_err=1e-6,
         )
         assert lod is None
@@ -86,13 +72,11 @@ class TestComputePersonalLod:
         Regression for the fsolve+abs() bug: brentq gives the true root of the signed
         residual, so recall at LOD should be >= 0.95 and recall just below LOD < 0.95.
         """
-        params = {"signature_size": 1000, "mean_coverage": 40.0, "denom_ratio": 0.5, "p_err": 1e-6}
-        lod = compute_personal_lod(**params)
-        assert lod is not None
-
-        n = int(params["signature_size"] * params["mean_coverage"] * params["denom_ratio"])
-        p_err = params["p_err"]
+        n = int(1000 * 40.0 * 0.5)
+        p_err = 1e-6
         fpr = 0.05
+        lod = compute_personal_lod(n=n, p_err=p_err)
+        assert lod is not None
 
         # Re-derive n_th to check recall directly
         k_max = int(binom.ppf(0.9999, n, max(p_err, 1e-12))) + 10
@@ -198,7 +182,6 @@ class TestComputePersonalLod:
         result = run_detection_analysis(
             df_tf=mock_df_tf_detected,
             df_signatures_filt=mock_df_signatures_filt,
-            denom_ratio=0.5,
         )
         assert isinstance(result, DetectionResult)
         assert result.detected is True
@@ -211,7 +194,6 @@ class TestComputePersonalLod:
         result = run_detection_analysis(
             df_tf=mock_df_tf_not_detected,
             df_signatures_filt=mock_df_signatures_filt,
-            denom_ratio=0.5,
         )
         assert isinstance(result, DetectionResult)
         assert result.detected is False
@@ -223,7 +205,6 @@ class TestComputePersonalLod:
         result = run_detection_analysis(
             df_tf=mock_df_tf_detected,
             df_signatures_filt=mock_df_signatures_filt,
-            denom_ratio=0.5,
         )
         assert result.personal_lod is not None
         assert 1e-7 < result.personal_lod < 1e-3
@@ -244,7 +225,6 @@ class TestComputePersonalLod:
         result = run_detection_analysis(
             df_tf=df_tf,
             df_signatures_filt=mock_df_signatures_filt,
-            denom_ratio=0.5,
         )
         assert result.detected is None
         assert result.call == "Indeterminate"
@@ -265,7 +245,6 @@ class TestComputePersonalLod:
         result = run_detection_analysis(
             df_tf=df_tf,
             df_signatures_filt=mock_df_signatures_filt,
-            denom_ratio=0.5,
         )
         assert result.detected is None
         assert result.call == "Indeterminate"
@@ -303,7 +282,6 @@ class TestComputePersonalLod:
         result = run_detection_analysis(
             df_tf=df_tf,
             df_signatures_filt=mock_df_signatures_filt,
-            denom_ratio=0.5,
         )
         assert result.call == "Indeterminate", f"Expected Indeterminate when db_control coverage=0, got {result.call}"
 
