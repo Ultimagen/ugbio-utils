@@ -19,6 +19,12 @@ RESULTS_HTML_REPORT = ".mrd_analysis_report.html"
 QC_HTML_REPORT = ".mrd_qc_report.html"
 BASE_PATH = Path(__file__).parent  # should be: src/mrd/ugbio_mrd
 
+# Default thresholds for optional locus filters.
+# Both filters are enabled by default when using the CLI.
+# Pass None explicitly via MrdReportInputs to disable programmatically.
+DEFAULT_THRESH_NOISE_LQ_READS: int = 2
+DEFAULT_THRESH_MULTI_READ_PVALUE: float = 0.05
+
 
 @dataclass
 class MrdReportInputs:
@@ -39,9 +45,11 @@ class MrdReportInputs:
     alpha: float = DEFAULT_ALPHA
     lod_fpr: float = DEFAULT_LOD_FPR
     lod_recall: float = 0.95
+    thresh_noise_lq_reads: int | None = None
+    thresh_multi_read_pvalue: float | None = None
 
 
-def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:  # noqa: PLR0915
+def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:  # noqa: PLR0915, C901
     """
     Generate both the MRD analysis report (Jinja2 HTML) and the MRD QC report (Jinja2 HTML).
 
@@ -65,7 +73,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
 
     # 1. Load data
     df_features, df_features_filt, filtering_ratio = mrd.read_and_filter_features_parquet(
-        intersection_path, read_filter_query
+        intersection_path,
+        read_filter_query,
+        thresh_noise_lq_reads=mrd_report_inputs.thresh_noise_lq_reads,
     )
     df_signatures, df_signatures_filt = mrd.read_and_filter_signatures_parquet(
         signatures_path, signature_filter_query, filtering_ratio
@@ -73,6 +83,35 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     denom_ratio, filt_ratio, _ = mrd.calc_tumor_fraction_denominator_ratio(
         mrd_report_inputs.featuremap_file, mrd_report_inputs.srsnv_metadata_json, read_filter_query
     )
+    # 1.5. Multi-read locus filter: remove matched loci with unexpectedly many HQ reads
+    # (e.g. germline / mosaic variants). Calibrated to the TF estimate from the current
+    # df_features_filt; the pre-filter detection is saved for QC comparison.
+    detection_pre_multi_read = None
+    df_tf_pre_multi_read = None
+    thresh_multi_read_pvalue = mrd_report_inputs.thresh_multi_read_pvalue
+    if thresh_multi_read_pvalue is not None:
+        df_tf_pre_multi_read, df_supporting_pre_multi = mrd.get_tf_from_filtered_data(
+            df_features_filt,
+            df_signatures_filt,
+            plot_results=False,
+            title="Filtered reads (before multi-read filter)",
+            denom_ratio=denom_ratio,
+        )
+        detection_pre_multi_read = run_detection_analysis(
+            df_tf=df_tf_pre_multi_read,
+            df_signatures_filt=df_signatures_filt,
+            alpha=mrd_report_inputs.alpha,
+            lod_fpr=mrd_report_inputs.lod_fpr,
+            lod_recall=mrd_report_inputs.lod_recall,
+            df_supporting_reads_per_locus=df_supporting_pre_multi,
+        )
+        df_features_filt, multi_read_info = mrd.apply_multi_read_locus_filter(
+            df_features_filt,
+            df_tf_pre_multi_read,
+            df_signatures_filt,
+            thresh_multi_read_pvalue,
+        )
+
     df_tf_filt, df_supporting_reads_per_locus_filt = mrd.get_tf_from_filtered_data(
         df_features_filt,
         df_signatures_filt,
@@ -82,13 +121,17 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     )
 
     # 2. Run detection
+    # When the multi-read filter is active the outlier loci have already been removed,
+    # so the per-locus QC checks would trivially pass and add no information.
+    # Pass None so run_detection_analysis skips those checks entirely.
+    detection_per_locus = None if thresh_multi_read_pvalue is not None else df_supporting_reads_per_locus_filt
     detection = run_detection_analysis(
         df_tf=df_tf_filt,
         df_signatures_filt=df_signatures_filt,
         alpha=mrd_report_inputs.alpha,
         lod_fpr=mrd_report_inputs.lod_fpr,
         lod_recall=mrd_report_inputs.lod_recall,
-        df_supporting_reads_per_locus=df_supporting_reads_per_locus_filt,
+        df_supporting_reads_per_locus=detection_per_locus,
     )
 
     # 3. Build applied filters
@@ -101,6 +144,21 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     applied_filters = {k: v for k, v in filter_descriptions.items() if k in all_cols}
     applied_filters["norm_coverage"] = signature_filter_query
     applied_filters["Read filter"] = read_filter_query
+    if mrd_report_inputs.thresh_noise_lq_reads is not None:
+        applied_filters["Noisy loci"] = (
+            f"n_lq_reads >= {mrd_report_inputs.thresh_noise_lq_reads}"
+        )
+    if thresh_multi_read_pvalue is not None:
+        _dataset_keys = [
+            ("matched", "max_reads_per_locus"),
+            ("control", "max_reads_per_locus_control"),
+            ("db_control", "max_reads_per_locus_db_control"),
+        ]
+        _max_per_locus = ", ".join(f"{ds}={multi_read_info.get(key, 1)}" for ds, key in _dataset_keys)
+        applied_filters["Multi-read locus filter"] = (
+            f"Poisson outlier test; Bonferroni-corrected p < {thresh_multi_read_pvalue}; "
+            f"max reads/locus: {_max_per_locus}"
+        )
 
     # 4. SBS plot helper
     _sbs_colors = ["#1EBFF0", "#050708", "#E62725", "#CBCACB", "#A1C935", "#ECC6C5"]
@@ -237,6 +295,28 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     # ── QC report: compute secondary analyses, render via Jinja2 ──
     logger.info(f"Generating MRD QC report (Jinja2). {qc_html_path=}")
 
+    # Secondary analysis 0 (noisy loci filter only): filtered reads without noisy loci filter
+    detection_no_noise = None
+    df_tf_no_noise = None
+    thresh_noise_lq_reads = mrd_report_inputs.thresh_noise_lq_reads
+    if thresh_noise_lq_reads is not None:
+        # Reuse df_features (already has n_lq/n_hq columns); apply only read_filter_query
+        df_features_filt_no_noise = df_features.query(read_filter_query)
+        df_tf_no_noise, _ = mrd.get_tf_from_filtered_data(
+            df_features_filt_no_noise,
+            df_signatures_filt,
+            plot_results=False,
+            title="Filtered reads (no noisy loci filter)",
+            denom_ratio=denom_ratio,
+        )
+        detection_no_noise = run_detection_analysis(
+            df_tf=df_tf_no_noise,
+            df_signatures_filt=df_signatures_filt,
+            alpha=mrd_report_inputs.alpha,
+            lod_fpr=mrd_report_inputs.lod_fpr,
+            lod_recall=mrd_report_inputs.lod_recall,
+        )
+
     # Secondary analysis 1: filtered reads + unfiltered signatures
     df_tf_unfilt, df_supporting_reads_per_locus_unfilt = mrd.get_tf_from_filtered_data(
         df_features_filt,
@@ -278,6 +358,14 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     }.items():
         val.to_hdf(output_h5_file, key=key, mode="a")
 
+    if df_tf_no_noise is not None:
+        df_tf_no_noise.to_hdf(output_h5_file, key="df_ctdna_vaf_filt_signature_filt_no_noise_filter", mode="a")
+
+    if df_tf_pre_multi_read is not None:
+        df_tf_pre_multi_read.to_hdf(
+            output_h5_file, key="df_ctdna_vaf_filt_signature_filt_no_multi_read_filter", mode="a"
+        )
+
     # Render QC HTML
     qc_html = render_qc_report(
         detection=detection,
@@ -299,6 +387,15 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         filt_ratio=filt_ratio,
         plot_sbs_fn=plot_sbs_profile,
         plot_af_fn=mrd.plot_signature_allele_fractions,
+        df_supporting_reads_per_locus_filt=df_supporting_reads_per_locus_filt,
+        applied_filters=applied_filters,
+        inputs_info=inputs_info,
+        detection_no_noise=detection_no_noise,
+        df_tf_no_noise=df_tf_no_noise,
+        thresh_noise_lq_reads=thresh_noise_lq_reads,
+        detection_pre_multi_read=detection_pre_multi_read,
+        df_tf_pre_multi_read=df_tf_pre_multi_read,
+        thresh_multi_read_pvalue=thresh_multi_read_pvalue,
     )
     qc_html_path.write_text(qc_html)
 
@@ -481,7 +578,53 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--read-filter-query", type=str, default=None, help="Filter query for reads")
     parser.add_argument("--featuremap-file", type=str, default=None, help="Path to featuremap_df_file")
     parser.add_argument("--srsnv-metadata-json", type=str, default=None, help="Path to srsnv metadata json file")
-    return parser.parse_args(argv[1:])
+    parser.add_argument(
+        "--thresh-noise-lq-reads",
+        type=int,
+        default=DEFAULT_THRESH_NOISE_LQ_READS,
+        help=(
+            "Noisy loci filter: remove loci with at least this many low-quality "
+            "(failing read-filter-query) featuremap reads. "
+            f"Must be a positive integer. Default: {DEFAULT_THRESH_NOISE_LQ_READS}. "
+            "Omit the flag (or pass no value) to disable."
+        ),
+    )
+    parser.add_argument(
+        "--thresh-multi-read-pvalue",
+        type=float,
+        default=DEFAULT_THRESH_MULTI_READ_PVALUE,
+        help=(
+            "Multi-read locus filter: remove matched loci whose Bonferroni-corrected "
+            "Poisson p-value (P(X >= k | Poisson(TF * mean_coverage)) * signature_size) "
+            "falls below this threshold. Targets germline/mosaic variants with unexpectedly "
+            f"many supporting reads. Must be a positive float. Default: {DEFAULT_THRESH_MULTI_READ_PVALUE}. "
+            "Omit the flag (or pass no value) to disable."
+        ),
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=DEFAULT_ALPHA,
+        help=("Significance threshold (alpha) for the MRD detection call. " f"Default: {DEFAULT_ALPHA}."),
+    )
+    parser.add_argument(
+        "--lod-fpr",
+        type=float,
+        default=DEFAULT_LOD_FPR,
+        help=("False-positive rate used for personal LOD estimation. " f"Default: {DEFAULT_LOD_FPR}."),
+    )
+    parser.add_argument(
+        "--lod-recall",
+        type=float,
+        default=0.95,
+        help=("Target recall used for personal LOD estimation. " "Default: 0.95."),
+    )
+    args = parser.parse_args(argv[1:])
+    if args.thresh_noise_lq_reads is not None and args.thresh_noise_lq_reads <= 0:
+        parser.error("--thresh-noise-lq-reads must be a positive integer; omit the flag to disable the filter")
+    if args.thresh_multi_read_pvalue is not None and args.thresh_multi_read_pvalue <= 0:
+        parser.error("--thresh-multi-read-pvalue must be a positive float; omit the flag to disable the filter")
+    return args
 
 
 def main(argv: list[str] | None = None):
@@ -502,6 +645,11 @@ def main(argv: list[str] | None = None):
         srsnv_metadata_json=args_in.srsnv_metadata_json,
         signature_filter_query=args_in.signature_filter_query,
         read_filter_query=args_in.read_filter_query,
+        alpha=args_in.alpha,
+        lod_fpr=args_in.lod_fpr,
+        lod_recall=args_in.lod_recall,
+        thresh_noise_lq_reads=args_in.thresh_noise_lq_reads,
+        thresh_multi_read_pvalue=args_in.thresh_multi_read_pvalue,
     )
 
     results_html, qc_html = generate_mrd_report(mrd_report_inputs)

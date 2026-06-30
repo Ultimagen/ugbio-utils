@@ -13,3 +13,8 @@ extensions.txt
 uv.lock
 .claude/skills/
 .claude/settings.json
+# MRD report temp outputs
+*.mrd_analysis_report.html
+*.mrd_qc_report.html
+*.ctdna_vaf.h5
+*.detection_result.json
