@@ -286,6 +286,231 @@ class TestComputePersonalLod:
         assert result.call == "Indeterminate", f"Expected Indeterminate when db_control coverage=0, got {result.call}"
 
 
+class TestMultiReadSupportQcCheck:
+    """Tests for the per-locus outlier detection QC checks (matched + controls)."""
+
+    @pytest.fixture
+    def base_df_tf(self):
+        """Minimal df_tf with matched signal and enough synthetic controls to pass other QC checks."""
+        n_synthetics = 25
+        rng = np.random.default_rng(0)
+        syn_reads = rng.integers(0, 2, size=n_synthetics)
+        index_matched = pd.MultiIndex.from_tuples(
+            [("matched", "patient_sig")], names=["signature_type", "signature"]
+        )
+        index_syn = pd.MultiIndex.from_tuples(
+            [("db_control", f"syn{i}") for i in range(n_synthetics)],
+            names=["signature_type", "signature"],
+        )
+        df_matched = pd.DataFrame(
+            {"supporting_reads": [5], "coverage": [50000], "corrected_coverage": [25000], "ctdna_vaf": [2e-4]},
+            index=index_matched,
+        )
+        df_syn = pd.DataFrame(
+            {
+                "supporting_reads": syn_reads.tolist(),
+                "coverage": [50000] * n_synthetics,
+                "corrected_coverage": [25000] * n_synthetics,
+                "ctdna_vaf": (syn_reads / 25000).tolist(),
+            },
+            index=index_syn,
+        )
+        return pd.concat([df_matched, df_syn])
+
+    @pytest.fixture
+    def base_df_signatures_filt(self):
+        """Mock signature with 1000 loci and 30× mean coverage."""
+        n_loci = 1000
+        index = pd.MultiIndex.from_arrays(
+            [
+                [f"chr{i % 22 + 1}" for i in range(n_loci)],
+                list(range(1000, 1000 + n_loci)),
+            ],
+            names=["chrom", "pos"],
+        )
+        return pd.DataFrame(
+            {
+                "signature_type": ["matched"] * n_loci,
+                "signature": ["patient_sig"] * n_loci,
+                "coverage": [30] * n_loci,
+            },
+            index=index,
+        )
+
+    def _make_per_locus_df(self, reads_list: list[int], sig_type: str = "matched", sig_name: str = "sig0"):
+        """Build a df_supporting_reads_per_locus fragment with a (chrom, pos) MultiIndex."""
+        n = len(reads_list)
+        index = pd.MultiIndex.from_arrays(
+            [[f"chr{i % 22 + 1}" for i in range(n)], list(range(1000, 1000 + n))],
+            names=["chrom", "pos"],
+        )
+        return pd.DataFrame(
+            {
+                "signature": [sig_name] * n,
+                "signature_type": [sig_type] * n,
+                "supporting_reads": reads_list,
+            },
+            index=index,
+        )
+
+    def _get_matched_qc(self, result):
+        """Extract the matched multi-read support QC check."""
+        matches = [c for c in result.qc_checks if c.label == "Expected multi-read support distribution (matched)"]
+        assert len(matches) == 1, f"Expected 1 matched multi-read QC check, got {len(matches)}"
+        return matches[0]
+
+    def _get_control_qc(self, result, ctrl_label: str):
+        """Extract a control multi-read support QC check by control label."""
+        matches = [c for c in result.qc_checks if ctrl_label in c.label]
+        assert len(matches) == 1, f"Expected 1 '{ctrl_label}' QC check, got {len(matches)}"
+        return matches[0]
+
+    # ── matched signature checks ──────────────────────────────────────────────
+
+    def test_no_outliers_passes(self, base_df_tf, base_df_signatures_filt):
+        """All loci with 1 read at low TF should produce no Bonferroni outliers."""
+        per_locus = self._make_per_locus_df([1] * 1000)
+        result = run_detection_analysis(
+            df_tf=base_df_tf,
+            df_signatures_filt=base_df_signatures_filt,
+            df_supporting_reads_per_locus=per_locus,
+        )
+        qc = self._get_matched_qc(result)
+        assert qc.passed is True
+        assert "0 outlier loci" in qc.value_str
+
+    def test_germline_outlier_fails(self, base_df_tf, base_df_signatures_filt):
+        """A single locus with many reads (germline-like) should be flagged as outlier."""
+        reads = [0] * 999 + [15]
+        per_locus = self._make_per_locus_df(reads)
+        result = run_detection_analysis(
+            df_tf=base_df_tf,
+            df_signatures_filt=base_df_signatures_filt,
+            df_supporting_reads_per_locus=per_locus,
+        )
+        qc = self._get_matched_qc(result)
+        assert qc.passed is False
+        assert "1 outlier locus" in qc.value_str
+
+    def test_multiple_outliers_fail(self, base_df_tf, base_df_signatures_filt):
+        """Multiple high-support loci should each be counted as outliers."""
+        reads = [0] * 995 + [12, 14, 11, 13, 10]
+        per_locus = self._make_per_locus_df(reads)
+        result = run_detection_analysis(
+            df_tf=base_df_tf,
+            df_signatures_filt=base_df_signatures_filt,
+            df_supporting_reads_per_locus=per_locus,
+        )
+        qc = self._get_matched_qc(result)
+        assert qc.passed is False
+        assert "outlier loci" in qc.value_str
+
+    def test_matched_label(self, base_df_tf, base_df_signatures_filt):
+        """Matched QC check label must include '(matched)'."""
+        per_locus = self._make_per_locus_df([1] * 1000)
+        result = run_detection_analysis(
+            df_tf=base_df_tf,
+            df_signatures_filt=base_df_signatures_filt,
+            df_supporting_reads_per_locus=per_locus,
+        )
+        qc = self._get_matched_qc(result)
+        assert qc.label == "Expected multi-read support distribution (matched)"
+
+    def test_no_per_locus_df_skips_all_checks(self, base_df_tf, base_df_signatures_filt):
+        """When df_supporting_reads_per_locus is None all multi-read QC checks are absent."""
+        result = run_detection_analysis(
+            df_tf=base_df_tf,
+            df_signatures_filt=base_df_signatures_filt,
+            df_supporting_reads_per_locus=None,
+        )
+        matches = [c for c in result.qc_checks if "multi-read" in c.label.lower()]
+        assert len(matches) == 0
+
+    # ── control checks ────────────────────────────────────────────────────────
+
+    def test_db_control_no_outliers_passes(self, base_df_tf, base_df_signatures_filt):
+        """db_control loci with 0 reads should pass the synthetic-controls check."""
+        matched_loci = self._make_per_locus_df([1] * 1000, sig_type="matched")
+        ctrl_loci = self._make_per_locus_df([0] * 1000, sig_type="db_control", sig_name="syn0")
+        per_locus = pd.concat([matched_loci, ctrl_loci])
+        result = run_detection_analysis(
+            df_tf=base_df_tf,
+            df_signatures_filt=base_df_signatures_filt,
+            df_supporting_reads_per_locus=per_locus,
+        )
+        qc = self._get_control_qc(result, "synthetic controls")
+        assert qc.passed is True
+
+    def test_db_control_outlier_fails(self, base_df_tf, base_df_signatures_filt):
+        """A single db_control locus with many reads should fail the synthetic-controls check."""
+        matched_loci = self._make_per_locus_df([0] * 1000, sig_type="matched")
+        ctrl_reads = [0] * 999 + [12]
+        ctrl_loci = self._make_per_locus_df(ctrl_reads, sig_type="db_control", sig_name="syn0")
+        per_locus = pd.concat([matched_loci, ctrl_loci])
+        result = run_detection_analysis(
+            df_tf=base_df_tf,
+            df_signatures_filt=base_df_signatures_filt,
+            df_supporting_reads_per_locus=per_locus,
+        )
+        qc = self._get_control_qc(result, "synthetic controls")
+        assert qc.passed is False
+
+    def test_cohort_control_outlier_fails(self, base_df_tf, base_df_signatures_filt):
+        """A cohort control locus with many reads should fail the cohort-controls check."""
+        matched_loci = self._make_per_locus_df([0] * 1000, sig_type="matched")
+        cohort_reads = [0] * 998 + [10, 11]
+        cohort_loci = self._make_per_locus_df(cohort_reads, sig_type="control", sig_name="cohort0")
+        per_locus = pd.concat([matched_loci, cohort_loci])
+        result = run_detection_analysis(
+            df_tf=base_df_tf,
+            df_signatures_filt=base_df_signatures_filt,
+            df_supporting_reads_per_locus=per_locus,
+        )
+        qc = self._get_control_qc(result, "cohort controls")
+        assert qc.passed is False
+
+    def test_cohort_control_no_outliers_passes(self, base_df_tf, base_df_signatures_filt):
+        """Cohort control loci with 0 reads should pass the cohort-controls check."""
+        matched_loci = self._make_per_locus_df([1] * 1000, sig_type="matched")
+        cohort_loci = self._make_per_locus_df([0] * 1000, sig_type="control", sig_name="cohort0")
+        per_locus = pd.concat([matched_loci, cohort_loci])
+        result = run_detection_analysis(
+            df_tf=base_df_tf,
+            df_signatures_filt=base_df_signatures_filt,
+            df_supporting_reads_per_locus=per_locus,
+        )
+        qc = self._get_control_qc(result, "cohort controls")
+        assert qc.passed is True
+        assert "0 outlier loci" in qc.value_str
+
+    def test_cohort_control_absent_skips_check(self, base_df_tf, base_df_signatures_filt):
+        """When no cohort control loci are present the cohort QC check is absent."""
+        per_locus = self._make_per_locus_df([1] * 1000, sig_type="matched")
+        result = run_detection_analysis(
+            df_tf=base_df_tf,
+            df_signatures_filt=base_df_signatures_filt,
+            df_supporting_reads_per_locus=per_locus,
+        )
+        matches = [c for c in result.qc_checks if "cohort controls" in c.label]
+        assert len(matches) == 0
+
+    def test_control_check_uses_max_across_signatures(self, base_df_tf, base_df_signatures_filt):
+        """For db_control with multiple signatures, the worst locus (max reads) drives the check."""
+        matched_loci = self._make_per_locus_df([0] * 1000, sig_type="matched")
+        # Same 1000 loci, two synthetic signatures: one clean, one with a single high-count locus
+        ctrl_clean = self._make_per_locus_df([0] * 1000, sig_type="db_control", sig_name="syn0")
+        ctrl_hot = self._make_per_locus_df([0] * 999 + [15], sig_type="db_control", sig_name="syn1")
+        per_locus = pd.concat([matched_loci, ctrl_clean, ctrl_hot])
+        result = run_detection_analysis(
+            df_tf=base_df_tf,
+            df_signatures_filt=base_df_signatures_filt,
+            df_supporting_reads_per_locus=per_locus,
+        )
+        qc = self._get_control_qc(result, "synthetic controls")
+        assert qc.passed is False
+
+
+
 class TestFormatScientific:
     """Tests for scientific notation formatting."""
 

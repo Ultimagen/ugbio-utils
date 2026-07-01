@@ -36,8 +36,9 @@ DEFAULT_LOD_FPR: float = 0.05
 MIN_SIGNATURE_SIZE: int = 500  # minimum filtered signature loci
 MIN_MEAN_COVERAGE: float = 15.0  # minimum mean coverage at signature loci
 MIN_SYNTHETIC_CONTROLS: int = 20  # minimum db_control replicates for reliable null
-# For multi-read QC: flag warning when P(X ≥ observed | Binom(sig_size, expected)) < threshold
-# i.e., the observed count is significantly higher than the Poisson expectation at the measured TF
+# For multi-read QC: Bonferroni family-wise error rate for per-locus outlier detection.
+# The check fails when any locus has Poisson p-value < threshold / signature_size,
+# i.e., its read count is a significant outlier (e.g. a germline variant).
 MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD: float = 0.01
 
 
@@ -49,18 +50,6 @@ class QcCheck:
     value_str: str  # formatted observed value
     threshold_str: str  # formatted threshold for display
     passed: bool
-
-
-def _expected_multi_read_fraction(mean_coverage: float, tumor_vaf: float) -> float:
-    """Expected fraction of loci with ≥2 supporting reads via Poisson approximation.
-
-    Given λ = mean_coverage × tumor_vaf (expected reads per locus),
-    P(X ≥ 2) = 1 − (1 + λ) · exp(−λ).
-    """
-    lam = mean_coverage * tumor_vaf
-    if lam <= 0:
-        return 0.0
-    return float(1.0 - (1.0 + lam) * np.exp(-lam))
 
 
 def _binom_detection_threshold(n: int, p_err: float, alpha: float) -> int | None:
@@ -93,23 +82,6 @@ def _binom_detection_threshold(n: int, p_err: float, alpha: float) -> int | None
     sf_vals = binom.sf(np.arange(k_max + 1) - 1, n, p_err)
     hits = np.where(sf_vals < alpha)[0]
     return int(hits[0]) if len(hits) > 0 else None
-
-
-def _multi_read_enrichment_pvalue(n_multi: int, signature_size: int, mean_coverage: float, tumor_vaf: float) -> float:
-    """Binomial right-tail p-value for multi-read loci enrichment.
-
-    Returns P(X ≥ n_multi | Binom(signature_size, p_expected)) where
-    p_expected = P(locus has ≥2 reads) under a Poisson model at the measured TF.
-    A small p-value means the observed count is significantly higher than expected,
-    indicating unexplained multi-read enrichment.
-    """
-    p_expected = _expected_multi_read_fraction(mean_coverage, tumor_vaf)
-    if signature_size <= 0:
-        return 1.0
-    if p_expected <= 0:
-        # expected is 0 — any positive observation is enriched, but p-value is exactly 0
-        return 0.0 if n_multi > 0 else 1.0
-    return float(binom.sf(n_multi - 1, signature_size, p_expected))
 
 
 @dataclass
@@ -397,26 +369,77 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         ),
     ]
     if df_supporting_reads_per_locus is not None and signature_size > 0:
+        # --- Check: matched signature outlier detection ---
         try:
             matched_per_locus = df_supporting_reads_per_locus.query("signature_type == 'matched'")
-            n_multi = int((matched_per_locus["supporting_reads"] >= 2).sum())  # noqa: PLR2004
-            pct_multi = n_multi / signature_size
-            expected_pct = _expected_multi_read_fraction(mean_coverage, matched_vaf)
-            pvalue_enrich = _multi_read_enrichment_pvalue(n_multi, signature_size, mean_coverage, matched_vaf)
+            lam = mean_coverage * matched_vaf  # expected reads per locus under MRD model
             tf_str = f"{matched_vaf:.2%}" if matched_vaf >= 1e-4 else f"{matched_vaf:.2e}"  # noqa: PLR2004
+            reads_arr = matched_per_locus["supporting_reads"].to_numpy()
+            if lam > 0 and len(reads_arr) > 0:
+                # Per-locus outlier detection: Bonferroni-corrected Poisson right-tail test.
+                # Flags loci with significantly more reads than expected at the measured TF.
+                per_locus_pvals = poisson.sf(reads_arr - 1, lam)
+                n_outliers = int((per_locus_pvals * signature_size < MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD).sum())
+                max_reads = int(reads_arr.max())
+                min_pval_corrected = float(per_locus_pvals.min()) * signature_size
+            else:
+                n_outliers = 0
+                max_reads = int(reads_arr.max()) if len(reads_arr) > 0 else 0
+                min_pval_corrected = 1.0
             qc_checks.append(
                 QcCheck(
-                    label="No multiple read support enrichment",
-                    value_str=(f"{pct_multi:.1%} ({n_multi:,}/{signature_size:,} loci), p={pvalue_enrich:.3f}"),
-                    threshold_str=(
-                        f"Enrichment prob \u2265 {MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD:.0%} "
-                        f"(expected {expected_pct:.1%} at TF={tf_str})"
+                    label="Expected multi-read support distribution (matched)",
+                    value_str=(
+                        f"{n_outliers} outlier {'locus' if n_outliers == 1 else 'loci'}"
+                        f" (max {max_reads} reads/locus, Bonferroni p={min_pval_corrected:.3f})"
                     ),
-                    passed=pvalue_enrich >= MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD,
+                    threshold_str=(
+                        f"0 outlier loci"
+                        f" (Bonferroni-corrected p \u2265 {MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD:.0%},"
+                        f" expected \u03bb={lam:.3f} reads/locus at TF={tf_str})"
+                    ),
+                    passed=n_outliers == 0,
                 )
             )
         except Exception as exc:  # noqa: BLE001
-            logger.debug("Could not compute pct_multi_read QC check: %s", exc)
+            logger.debug("Could not compute matched multi-read support QC check: %s", exc)
+
+        # --- Checks: control outlier detection (synthetic and cohort, when present) ---
+        lam_ctrl = mean_coverage * p_err  # expected reads per locus at background noise rate
+        for ctrl_type, ctrl_label in [("db_control", "synthetic controls"), ("control", "cohort controls")]:
+            try:
+                ctrl_per_locus = df_supporting_reads_per_locus.query(f"signature_type == '{ctrl_type}'")
+                if len(ctrl_per_locus) == 0 or lam_ctrl <= 0:
+                    continue
+                # Take max reads per unique locus across all control signatures of this type
+                ctrl_max_per_locus = (
+                    ctrl_per_locus.reset_index()
+                    .groupby(["chrom", "pos"])["supporting_reads"]
+                    .max()
+                    .to_numpy()
+                )
+                n_ctrl_loci = len(ctrl_max_per_locus)
+                ctrl_pvals = poisson.sf(ctrl_max_per_locus - 1, lam_ctrl)
+                n_ctrl_outliers = int((ctrl_pvals * n_ctrl_loci < MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD).sum())
+                max_ctrl_reads = int(ctrl_max_per_locus.max())
+                min_ctrl_pval = float(ctrl_pvals.min()) * n_ctrl_loci
+                qc_checks.append(
+                    QcCheck(
+                        label=f"Expected multi-read support distribution ({ctrl_label})",
+                        value_str=(
+                            f"{n_ctrl_outliers} outlier {'locus' if n_ctrl_outliers == 1 else 'loci'}"
+                            f" (max {max_ctrl_reads} reads/locus, Bonferroni p={min_ctrl_pval:.3f})"
+                        ),
+                        threshold_str=(
+                            f"0 outlier loci"
+                            f" (Bonferroni-corrected p \u2265 {MULTI_READ_ENRICHMENT_PVALUE_THRESHOLD:.0%},"
+                            f" expected \u03bb={lam_ctrl:.3f} reads/locus at noise rate)"
+                        ),
+                        passed=n_ctrl_outliers == 0,
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Could not compute %s multi-read support QC check: %s", ctrl_type, exc)
 
     # Detection call
     if len(null_reads) == 0 or n_effective == 0:
@@ -466,7 +489,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     )
 
 
-def plot_null_distribution(  # noqa: PLR0915, C901
+def plot_null_distribution(  # noqa: PLR0915, PLR0912, C901
     detection: "DetectionResult",
     df_tf: pd.DataFrame,
     ax=None,
@@ -525,7 +548,7 @@ def plot_null_distribution(  # noqa: PLR0915, C901
             null_plot,
             color="#3a9ad9",
             s=30,
-            alpha=0.85,
+            alpha=0.8,
             zorder=4,
             label=f"Synthetic controls (n={len(null)})",
         )
@@ -545,22 +568,22 @@ def plot_null_distribution(  # noqa: PLR0915, C901
             fit_samples = poisson.rvs(max(lam, 1e-9), size=n_samples, random_state=rng2)
             fit_label = f"Poisson fallback (λ={lam:.2f})"
         fit_plot = np.array([_safe(v) for v in fit_samples])
-        bp = ax.boxplot(
+        vp = ax.violinplot(
             fit_plot,
             positions=[x_fit],
             widths=0.35,
-            patch_artist=True,
-            manage_ticks=False,
-            medianprops={"color": "#4a0e5c", "linewidth": 1.5},
-            flierprops={"marker": ""},
-            whiskerprops={"color": "#7b2d8b"},
-            capprops={"color": "#7b2d8b"},
+            showmedians=True,
+            showextrema=True,
         )
-        for patch in bp["boxes"]:
-            patch.set_facecolor("#7b2d8b")
-            patch.set_alpha(0.25)
+        for body in vp["bodies"]:
+            body.set_facecolor("#3a9ad9")
+            body.set_edgecolor("#3a9ad9")
+            body.set_alpha(0.4)
+        for part in ("cbars", "cmins", "cmaxes"):
+            vp[part].set_color("#3a9ad9")
+        vp["cmedians"].set_color("#1e6e9e")
         # Invisible scatter for legend entry
-        ax.scatter([], [], color="#7b2d8b", s=30, alpha=0.6, marker="s", label=fit_label)
+        ax.scatter([], [], color="#3a9ad9", s=30, alpha=0.4, marker="s", label=fit_label)
 
     # --- Cohort controls ---
     x_cohort = 1.5
@@ -574,11 +597,11 @@ def plot_null_distribution(  # noqa: PLR0915, C901
             ax.scatter(
                 [x_cohort + jitter_c[i]],
                 [_safe(v)],
-                color="#e67e22",
+                color="#9b59b6",
                 s=30,
                 marker="D",
                 zorder=5,
-                alpha=0.9,
+                alpha=0.8,
                 label="Cohort control" if i == 0 else "_nolegend_",
             )
     except KeyError:
@@ -621,7 +644,7 @@ def plot_null_distribution(  # noqa: PLR0915, C901
                 n_lod = float(n_eff_plot) * (p_err_plot + lod_tf_plot)
                 ax.axhline(
                     _safe(n_lod),
-                    color="#8e44ad",
+                    color="#27ae60",
                     linewidth=1.8,
                     linestyle="-.",
                     alpha=0.9,

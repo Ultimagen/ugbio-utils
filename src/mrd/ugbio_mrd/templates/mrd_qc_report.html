@@ -416,6 +416,51 @@
     </div>
     {% endif %}
 
+    <!-- ── QC ANALYSIS: MULTI-READ LOCUS FILTER SENSITIVITY ── -->
+    {% if multi_read_filter_comparison %}
+    <div class="section">
+      <div class="section-title">QC Analysis — Multi-Read Locus Filter Sensitivity</div>
+      <div class="chart-description" style="margin-bottom:10px;">
+        Impact of the multi-read locus filter (Poisson Bonferroni-corrected p &lt;
+        {{ multi_read_filter_comparison.thresh_pvalue }}) on detection.
+        Matched loci whose per-locus HQ supporting-read count is unexpectedly high
+        given the estimated tumour fraction (&lambda; = TF &times; mean coverage)
+        are removed as likely germline or artifact variants.
+      </div>
+      <table style="width:100%; border-collapse:collapse; margin-bottom:16px; font-size:13px;">
+        <thead>
+          <tr style="background:var(--light-gray); text-align:left;">
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Analysis</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Call</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">p-value</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Supporting Reads</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">ctDNA VAF</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in [multi_read_filter_comparison.with_filter, multi_read_filter_comparison.without_filter] %}
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px 12px; font-weight:600;">{{ row.label }}</td>
+            <td style="padding:8px 12px;">
+              <span class="status-badge {{ row.call_class }}" style="font-size:11px; padding:3px 8px;">{{ row.call }}</span>
+            </td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.p_str }}</td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.supporting_reads }}</td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.vaf_str }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if multi_read_filter_comparison.pre_filter_signal_img %}
+      <div class="chart-label">Signal vs Noise — Without multi-read filter</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ multi_read_filter_comparison.pre_filter_signal_img }}"
+             alt="Signal vs Noise (no multi-read filter)">
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
   </div>
 
   <!-- ── FOOTER ── -->

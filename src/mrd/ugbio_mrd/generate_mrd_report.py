@@ -38,9 +38,10 @@ class MrdReportInputs:
     read_filter_query: str = None
     thresh_noise_lq_reads: int | None = None
     thresh_noise_hq_exemption: int = 3
+    thresh_multi_read_pvalue: float | None = None
 
 
-def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:  # noqa: PLR0915
+def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:  # noqa: PLR0915, C901
     """
     Generate both the MRD analysis report (Jinja2 HTML) and the MRD QC report (Jinja2 HTML).
 
@@ -75,6 +76,32 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     denom_ratio, filt_ratio, _ = mrd.calc_tumor_fraction_denominator_ratio(
         mrd_report_inputs.featuremap_file, mrd_report_inputs.srsnv_metadata_json, read_filter_query
     )
+    # 1.5. Multi-read locus filter: remove matched loci with unexpectedly many HQ reads
+    # (e.g. germline / mosaic variants). Calibrated to the TF estimate from the current
+    # df_features_filt; the pre-filter detection is saved for QC comparison.
+    detection_pre_multi_read = None
+    df_tf_pre_multi_read = None
+    thresh_multi_read_pvalue = mrd_report_inputs.thresh_multi_read_pvalue
+    if thresh_multi_read_pvalue is not None:
+        df_tf_pre_multi_read, df_supporting_pre_multi = mrd.get_tf_from_filtered_data(
+            df_features_filt,
+            df_signatures_filt,
+            plot_results=False,
+            title="Filtered reads (before multi-read filter)",
+            denom_ratio=denom_ratio,
+        )
+        detection_pre_multi_read = run_detection_analysis(
+            df_tf=df_tf_pre_multi_read,
+            df_signatures_filt=df_signatures_filt,
+            df_supporting_reads_per_locus=df_supporting_pre_multi,
+        )
+        df_features_filt, _multi_read_info = mrd.apply_multi_read_locus_filter(
+            df_features_filt,
+            df_tf_pre_multi_read,
+            df_signatures_filt,
+            thresh_multi_read_pvalue,
+        )
+
     df_tf_filt, df_supporting_reads_per_locus_filt = mrd.get_tf_from_filtered_data(
         df_features_filt,
         df_signatures_filt,
@@ -104,6 +131,10 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         applied_filters["Noise locus filter"] = (
             f"n_lq_reads >= {mrd_report_inputs.thresh_noise_lq_reads}; "
             f"exempt if n_hq_reads >= {mrd_report_inputs.thresh_noise_hq_exemption}"
+        )
+    if thresh_multi_read_pvalue is not None:
+        applied_filters["Multi-read locus filter"] = (
+            f"Poisson outlier test; Bonferroni-corrected p < {thresh_multi_read_pvalue}"
         )
 
     # 4. SBS plot helper
@@ -298,6 +329,11 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     if df_tf_no_noise is not None:
         df_tf_no_noise.to_hdf(output_h5_file, key="df_ctdna_vaf_filt_signature_filt_no_noise_filter", mode="a")
 
+    if df_tf_pre_multi_read is not None:
+        df_tf_pre_multi_read.to_hdf(
+            output_h5_file, key="df_ctdna_vaf_filt_signature_filt_no_multi_read_filter", mode="a"
+        )
+
     # Render QC HTML
     qc_html = render_qc_report(
         detection=detection,
@@ -323,6 +359,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         df_tf_no_noise=df_tf_no_noise,
         thresh_noise_lq_reads=thresh_noise_lq_reads,
         thresh_noise_hq_exemption=mrd_report_inputs.thresh_noise_hq_exemption,
+        detection_pre_multi_read=detection_pre_multi_read,
+        df_tf_pre_multi_read=df_tf_pre_multi_read,
+        thresh_multi_read_pvalue=thresh_multi_read_pvalue,
     )
     qc_html_path.write_text(qc_html)
 
@@ -526,6 +565,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "is set. Default: 3."
         ),
     )
+    parser.add_argument(
+        "--thresh-multi-read-pvalue",
+        type=float,
+        default=None,
+        help=(
+            "Enable multi-read locus filter: remove matched loci whose Bonferroni-corrected "
+            "Poisson p-value (P(X >= k | Poisson(TF * mean_coverage)) * signature_size) "
+            "falls below this threshold. Targets germline/mosaic variants with unexpectedly "
+            "many supporting reads. Default: None (disabled)."
+        ),
+    )
     return parser.parse_args(argv[1:])
 
 
@@ -549,6 +599,7 @@ def main(argv: list[str] | None = None):
         read_filter_query=args_in.read_filter_query,
         thresh_noise_lq_reads=args_in.thresh_noise_lq_reads,
         thresh_noise_hq_exemption=args_in.thresh_noise_hq_exemption,
+        thresh_multi_read_pvalue=args_in.thresh_multi_read_pvalue,
     )
 
     results_html, qc_html = generate_mrd_report(mrd_report_inputs)

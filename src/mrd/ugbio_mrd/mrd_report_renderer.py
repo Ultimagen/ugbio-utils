@@ -847,6 +847,9 @@ def render_qc_report(  # noqa: PLR0913, C901, PLR0915
     df_tf_no_noise=None,
     thresh_noise_lq_reads=None,
     thresh_noise_hq_exemption=None,
+    detection_pre_multi_read=None,
+    df_tf_pre_multi_read=None,
+    thresh_multi_read_pvalue=None,
 ) -> str:
     """
     Render the MRD QC report as a self-contained HTML string.
@@ -1001,6 +1004,33 @@ def render_qc_report(  # noqa: PLR0913, C901, PLR0915
             "no_noise_signal_img": no_noise_signal_img,
         }
 
+    # ── Multi-read filter comparison (optional) ──
+    multi_read_filter_comparison = None
+    if detection_pre_multi_read is not None and df_tf_pre_multi_read is not None:
+
+        def _det_summary_mr(det: DetectionResult, label: str) -> dict:
+            p_str = f"{det.p_value:.3f}" if det.p_value >= 0.001 else f"{det.p_value:.2e}"  # noqa: PLR2004
+            vaf_str = format_scientific(det.matched_ctdna_vaf) if det.matched_ctdna_vaf > 0 else "0"
+            call_class = (
+                "detected" if det.detected is True else ("not-detected" if det.detected is False else "indeterminate")
+            )
+            return {
+                "label": label,
+                "call": det.call,
+                "call_class": call_class,
+                "p_str": p_str,
+                "supporting_reads": det.matched_supporting_reads,
+                "vaf_str": vaf_str,
+            }
+
+        pre_filter_signal_img = _render_signal_noise_internal(detection_pre_multi_read, df_tf_pre_multi_read)
+        multi_read_filter_comparison = {
+            "thresh_pvalue": thresh_multi_read_pvalue,
+            "with_filter": _det_summary_mr(detection, "With multi-read filter (primary)"),
+            "without_filter": _det_summary_mr(detection_pre_multi_read, "Without multi-read filter"),
+            "pre_filter_signal_img": pre_filter_signal_img,
+        }
+
     # ── Format values ──
     binom_p_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
     noise_rate_str = format_scientific(detection.noise_rate) if detection.noise_rate > 0 else "0"
@@ -1024,6 +1054,7 @@ def render_qc_report(  # noqa: PLR0913, C901, PLR0915
         "unfilt_reads_sbs_vaf_img": unfilt_reads_sbs_vaf_img,
         "unfilt_reads_intersection_img": unfilt_reads_intersection_img,
         "noise_filter_comparison": noise_filter_comparison,
+        "multi_read_filter_comparison": multi_read_filter_comparison,
     }
 
     template = _JINJA_ENV.get_template("mrd_qc_report.html")

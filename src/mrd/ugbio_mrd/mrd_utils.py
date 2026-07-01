@@ -14,6 +14,7 @@ import pandas as pd
 import pyBigWig as bw  # noqa: N813
 import pysam
 import seaborn as sns
+from scipy.stats import poisson
 from tqdm import tqdm
 from ugbio_core.dna_sequence_utils import revcomp
 from ugbio_core.logger import logger
@@ -1097,6 +1098,139 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3
                 color="g",
                 fontsize=11,
             )  # draw above, centered
+
+
+def apply_multi_read_locus_filter(
+    df_features_filt: pd.DataFrame,
+    df_tf: pd.DataFrame,
+    df_signatures_filt: pd.DataFrame,
+    thresh_multi_read_pvalue: float,
+) -> tuple[pd.DataFrame, dict]:
+    """
+    Remove matched-signature loci whose HQ supporting-read count is unexpectedly
+    high given the estimated tumour fraction.
+
+    For each matched locus with *k* HQ supporting reads the right-tail probability
+    P(X ≥ k | Poisson(λ)) is computed, where λ = matched_ctdna_vaf × mean_coverage.
+    A Bonferroni correction (multiply by matched signature size) is applied so that
+    the family-wise error rate is controlled at ``thresh_multi_read_pvalue``.  Loci
+    whose corrected p-value falls below the threshold are removed from the matched
+    rows of *df_features_filt* (non-matched rows are unaffected).
+
+    Parameters
+    ----------
+    df_features_filt : pd.DataFrame
+        Per-read featuremap rows passing the read quality filter.  Index (chrom, pos);
+        must contain a ``signature_type`` column.
+    df_tf : pd.DataFrame
+        Tumour-fraction table as returned by ``get_tf_from_filtered_data``.
+        Index (signature_type, signature); must contain a ``ctdna_vaf`` column.
+    df_signatures_filt : pd.DataFrame
+        Filtered signature dataframe with per-locus ``coverage`` column.
+    thresh_multi_read_pvalue : float
+        Bonferroni-corrected p-value threshold.  Matched loci with corrected
+        p-value < threshold are removed.
+
+    Returns
+    -------
+    df_features_filt_out : pd.DataFrame
+        Copy of *df_features_filt* with outlier matched loci removed.
+    filter_info : dict
+        Summary statistics:
+        ``n_filtered_loci`` – number of removed matched loci,
+        ``n_filtered_reads`` – total featuremap rows removed,
+        ``poisson_lambda`` – Poisson λ used for the test,
+        ``min_bonferroni_pval`` – minimum corrected p-value observed,
+        ``max_reads_per_locus`` – maximum observed per-locus read count.
+    """
+    empty_info: dict = {
+        "n_filtered_loci": 0,
+        "n_filtered_reads": 0,
+        "poisson_lambda": 0.0,
+        "min_bonferroni_pval": 1.0,
+        "max_reads_per_locus": 0,
+    }
+
+    # --- Retrieve matched TF estimate ---
+    try:
+        matched_data = df_tf.loc["matched"]
+        matched_vaf = float(
+            matched_data["ctdna_vaf"].iloc[0] if isinstance(matched_data, pd.DataFrame) else matched_data["ctdna_vaf"]
+        )
+    except KeyError:
+        logger.warning("apply_multi_read_locus_filter: no matched TF estimate found — skipping filter")
+        return df_features_filt, empty_info
+
+    if matched_vaf <= 0:
+        logger.debug("apply_multi_read_locus_filter: matched_vaf <= 0 — skipping filter")
+        return df_features_filt, empty_info
+
+    # --- Signature metrics ---
+    if "signature_type" in df_signatures_filt.columns:
+        matched_sig = df_signatures_filt[df_signatures_filt["signature_type"] == "matched"]
+    else:
+        matched_sig = df_signatures_filt
+    signature_size = len(matched_sig)
+    mean_coverage = (
+        float(matched_sig["coverage"].mean()) if "coverage" in matched_sig.columns and signature_size > 0 else 0.0
+    )
+    if signature_size == 0 or mean_coverage <= 0:
+        logger.debug(
+            "apply_multi_read_locus_filter: signature_size=%d, mean_coverage=%.2f — skipping",
+            signature_size,
+            mean_coverage,
+        )
+        return df_features_filt, empty_info
+
+    lam = matched_vaf * mean_coverage  # expected reads per locus under MRD model
+
+    # --- Per-locus HQ read counts for matched signature ---
+    matched_rows = df_features_filt.query("signature_type == 'matched'")
+    if len(matched_rows) == 0:
+        return df_features_filt, {**empty_info, "poisson_lambda": lam}
+
+    per_locus_counts = matched_rows.groupby(level=["chrom", "pos"]).size()
+    max_reads = int(per_locus_counts.max())
+
+    # --- Bonferroni-corrected Poisson right-tail test ---
+    raw_pvals = poisson.sf(per_locus_counts.to_numpy() - 1, lam)
+    bonferroni_pvals = raw_pvals * signature_size
+    outlier_mask = bonferroni_pvals < thresh_multi_read_pvalue
+    min_bonf = float(bonferroni_pvals.min())
+
+    outlier_loci = per_locus_counts.index[outlier_mask]
+    n_filtered_loci = len(outlier_loci)
+
+    if n_filtered_loci == 0:
+        logger.debug("apply_multi_read_locus_filter: no outlier loci found (min Bonferroni p=%.4f)", min_bonf)
+        return df_features_filt, {
+            "n_filtered_loci": 0,
+            "n_filtered_reads": 0,
+            "poisson_lambda": lam,
+            "min_bonferroni_pval": min_bonf,
+            "max_reads_per_locus": max_reads,
+        }
+
+    # Remove outlier loci from matched rows only; keep all non-matched rows intact
+    is_matched_row = df_features_filt["signature_type"] == "matched"
+    is_outlier_locus = df_features_filt.index.isin(outlier_loci)
+    df_features_filt_out = df_features_filt[~(is_matched_row & is_outlier_locus)]
+    n_filtered_reads = len(df_features_filt) - len(df_features_filt_out)
+
+    logger.info(
+        "apply_multi_read_locus_filter: removed %d loci (%d reads); λ=%.4f, min Bonferroni p=%.4e",
+        n_filtered_loci,
+        n_filtered_reads,
+        lam,
+        min_bonf,
+    )
+    return df_features_filt_out, {
+        "n_filtered_loci": n_filtered_loci,
+        "n_filtered_reads": n_filtered_reads,
+        "poisson_lambda": lam,
+        "min_bonferroni_pval": min_bonf,
+        "max_reads_per_locus": max_reads,
+    }
 
 
 def get_tf_from_filtered_data(
