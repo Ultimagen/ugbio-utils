@@ -744,15 +744,33 @@ def read_and_filter_signatures_parquet(
     )
     nunique.value_counts().rename("count").to_frame().join(nunique.value_counts(normalize=True).rename("norm"))
 
-    x = df_signatures.filter(regex="coverage").sum(axis=1)
-    norm_coverage = (x / x.median()).rename("norm_coverage").reset_index().drop_duplicates().set_index(["chrom", "pos"])
+    # Normalise coverage per-signature: each locus is divided by its signature's
+    # median depth. In production the coverage_bed is generated at the union of all
+    # signature loci (matched + control + db_control), so every position has a real
+    # depth value. Using per-signature medians avoids index misalignment when multiple
+    # signatures share the same (chrom, pos) index entries.
+    x = df_signatures["coverage"]
+
+    # Raise if a signature has >50% positions missing coverage — this usually means
+    # the coverage_bed was not generated at that signature's loci.
+    missing_frac = x.isna().groupby(df_signatures["signature"]).mean()
+    bad_sigs = missing_frac[missing_frac > 0.5]  # noqa: PLR2004
+    if not bad_sigs.empty:
+        details = ", ".join(f"{sig} ({frac * 100:.0f}%)" for sig, frac in bad_sigs.items())
+        raise ValueError(
+            f"The following signatures have >50% positions without coverage in the coverage_bed: {details}. "
+            "Ensure mosdepth was run at the union of all signature loci (matched + control + db_control)."
+        )
+
+    sig_median = x.groupby(df_signatures["signature"]).transform("median")
+    norm_coverage = (x / sig_median.replace(0, np.nan)).rename("norm_coverage")
     df_signatures = (
         df_signatures.join(nunique)
         .join(
             filtering_ratio,
             how="left",
         )
-        .join(norm_coverage, how="left")
+        .assign(norm_coverage=norm_coverage)
         .fillna({"filtering_ratio": 1})
     )
 
@@ -799,15 +817,20 @@ def plot_signature_mutation_types(df_signatures_in: pd.DataFrame, signature_filt
         plt.sca(ax)
         plt.bar(range(6), x, color=["b", "g", "r", "y", "m", "c"])
         for px, py in zip(range(6), x, strict=False):
-            plt.text(px, py + 0.01, f"{py:.1%}", ha="center", fontsize=16)
+            plt.text(px, py + 0.01, f"{py:.1%}", ha="center", fontsize=11)
         plt.ylim(0, ax.get_ylim()[1] + 0.03)
         plt.yticks([])
-        plt.xticks(range(6), x.index.values, fontsize=20, rotation=90)
-        plt.title(f"{column}, total={tot_mutations:,}", fontsize=28)
+        plt.xticks(range(6), x.index.values, fontsize=10, rotation=90)
+        plt.title(f"{column}, total={tot_mutations:,}", fontsize=12)
     plt.show()
 
 
-def plot_signature_allele_fractions(df_signatures_in: pd.DataFrame, signature_filter_query_in: pd.DataFrame):
+def plot_signature_allele_fractions(
+    df_signatures_in: pd.DataFrame,
+    signature_filter_query_in: str,
+    panel: str | None = None,
+    ax=None,
+):
     """
     Plot allele fraction histograms for a signature dataframe
 
@@ -815,22 +838,36 @@ def plot_signature_allele_fractions(df_signatures_in: pd.DataFrame, signature_fi
     ----------
     df_signatures_in: pd.DataFrame
         signature dataframe
-    signature_filter_query_in: pd.DataFrame
-        query to filter the dataframe
+    signature_filter_query_in: str
+        query string to filter the dataframe
+    panel: str or None
+        Which panel(s) to show. None shows both. "unfiltered" shows only the
+        unfiltered panel; "filtered" shows only the filtered panel.
+    ax: matplotlib.axes.Axes, optional
+        Axes to draw into. Only used when the result is a single panel
+        (i.e. panel is "filtered" or "unfiltered"). When provided, no new
+        figure is created and plt.show() is not called.
     """
+    all_panels = [
+        ("Unfiltered", df_signatures_in),
+        ("Filtered", df_signatures_in.query(signature_filter_query_in)),
+    ]
+    if panel == "unfiltered":
+        all_panels = all_panels[:1]
+    elif panel == "filtered":
+        all_panels = all_panels[1:]
+    n_panels = len(all_panels)
     bins = np.linspace(0, 1, 100)
-    fig, axs = plt.subplots(1, 2, figsize=(18, 4), sharey=True)
-    fig.suptitle(",".join(df_signatures_in["signature"].unique()), y=1.13)
-    for ax, column, df_plot in zip(
-        axs.flatten(),
-        [
-            "Unfiltered",
-            "Filtered",
-        ],
-        [
-            df_signatures_in,
-            df_signatures_in.query(signature_filter_query_in),
-        ],
+    _external_ax = ax is not None and n_panels == 1
+    if _external_ax:
+        axs = [ax]
+    else:
+        fig, axs = plt.subplots(1, n_panels, figsize=(9 * n_panels, 4), sharey=n_panels > 1)
+        if n_panels == 1:
+            axs = [axs]
+    for ax, (column, df_plot) in zip(  # noqa: PLR1704
+        axs,
+        all_panels,
         strict=False,
     ):
         plt.sca(ax)
@@ -838,6 +875,8 @@ def plot_signature_allele_fractions(df_signatures_in: pd.DataFrame, signature_fi
         tot_mutations = df_plot.shape[0]
         h, bin_edges = np.histogram(x, bins=bins)
         bin_centers = (bin_edges[1:] + bin_edges[:-1]) / 2
+        ax.set_axisbelow(True)
+        ax.yaxis.grid(True, zorder=0, alpha=0.4, linewidth=0.7)  # noqa: FBT003
         plt.fill_between(
             bin_centers,
             -10,
@@ -848,8 +887,9 @@ def plot_signature_allele_fractions(df_signatures_in: pd.DataFrame, signature_fi
         plt.xlim(0, 1)
         plt.ylim(-1, ax.get_ylim()[1])
         plt.xlabel("AF")
-        plt.title(f"{column}, total={tot_mutations:,}", fontsize=28)
-    plt.show()
+        plt.title(f"{column}, total={tot_mutations:,}", fontsize=12)
+    if not _external_ax:
+        plt.show()
 
 
 def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3456):  # noqa: C901, PLR0912, PLR0915
@@ -890,7 +930,7 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3
 
     plt.figure(figsize=(8, 12))
     if title:
-        plt.title(title, y=1.02, fontsize=28)
+        plt.title(title, y=1.02, fontsize=12)
 
     if df_tf_matched.notna().any():
         x = 0.2 * np.ones(df_tf_matched.shape[0])
@@ -993,7 +1033,7 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3
                 ha="right",
                 va="center",
                 color="b",
-                fontsize=16,
+                fontsize=11,
             )  # draw above, centered
     for line in hbp2["medians"]:
         # get position data for median line
@@ -1007,7 +1047,7 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3
                 ha="right",
                 va="center",
                 color="g",
-                fontsize=16,
+                fontsize=11,
             )  # draw above, centered
 
 
@@ -1061,15 +1101,16 @@ def get_tf_from_filtered_data(
 def plot_vaf_matched_unmatched(
     df_supporting_reads_per_locus: pd.DataFrame,
     df_signatures: pd.DataFrame,
+    figsize: tuple[float, float] = (7, 6),
 ):
     """
     Plot histogram of allele frequencies of all, plasma-matched and unmatched variants
     """
-    fig, ax = plt.subplots(3, 1, figsize=(10, 8))
+    fig, ax = plt.subplots(3, 1, figsize=figsize)
     queries = {
         "all variants": df_supporting_reads_per_locus.index,
         "matched variants": df_supporting_reads_per_locus.query("signature_type == 'matched'").index,
-        "control vairants": df_supporting_reads_per_locus.query("signature_type != 'matched'").index,
+        "control variants": df_supporting_reads_per_locus.query("signature_type != 'matched'").index,
     }
 
     colors = ["blue", "red", "green"]
@@ -1142,7 +1183,7 @@ def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadat
         filtering_count_column = "rows"
     else:
         raise ValueError(
-            "Could not find filtering count column in metadata filters. " "Expected either 'funnel' or 'rows'."
+            "Could not find filtering count column in metadata filters. Expected either 'funnel' or 'rows'."
         )
 
     # Exclude annotation-based filters (e.g. EXCLUDE_TRAINING, PCAWG, INCLUDE_INFERENCE) from the
