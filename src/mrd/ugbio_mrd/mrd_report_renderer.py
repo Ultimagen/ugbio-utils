@@ -556,7 +556,6 @@ def render_intersection_af_combined(
     fig.patch.set_facecolor("#f4f6f8")
 
     bin_edges = np.linspace(0, 1, 51)
-    bin_width = bin_edges[1] - bin_edges[0]
 
     if len(control_af) > 0:
         ax.hist(
@@ -566,6 +565,7 @@ def render_intersection_af_combined(
             alpha=0.55,
             edgecolor="white",
             linewidth=0.5,
+            density=True,
             label=f"Other signatures (n={len(control_af):,})",
         )
         if len(control_af) >= 5:  # noqa: PLR2004
@@ -574,7 +574,7 @@ def render_intersection_af_combined(
                 x_kde = np.linspace(0, 1, 500)
                 ax.plot(
                     x_kde,
-                    kde(x_kde) * len(control_af) * bin_width,
+                    kde(x_kde),
                     color="#1a5276",
                     linewidth=1.2,
                     zorder=4,
@@ -592,6 +592,7 @@ def render_intersection_af_combined(
             alpha=0.65,
             edgecolor="white",
             linewidth=0.5,
+            density=True,
             label=f"Patient signature (n={len(matched_af):,})",
         )
         if len(matched_af) >= 5:  # noqa: PLR2004
@@ -600,7 +601,7 @@ def render_intersection_af_combined(
                 x_kde = np.linspace(0, 1, 500)
                 ax.plot(
                     x_kde,
-                    kde(x_kde) * len(matched_af) * bin_width,
+                    kde(x_kde),
                     color="#7b241c",
                     linewidth=1.2,
                     zorder=4,
@@ -611,7 +612,7 @@ def render_intersection_af_combined(
                 logger.debug("KDE line skipped (matched): %s", e)
 
     ax.set_xlabel("Allele Fraction (AF)", fontsize=10)
-    ax.set_ylabel("Count", fontsize=10)
+    ax.set_ylabel("Density", fontsize=10)
     ax.set_title("cfDNA Intersection Allele Fraction", fontsize=11, fontweight="bold")
     ax.legend(fontsize=9, framealpha=0.85)
     ax.set_axisbelow(True)
@@ -624,14 +625,18 @@ def render_intersection_af_combined(
 def render_supporting_reads_histogram(
     df_supporting_reads_per_locus: pd.DataFrame,
     signature_size: int,
+    control_signature_size: int,
 ) -> str:
     """
     Histogram of alt-supporting read counts per variant locus.
 
     Shows how many signature loci have 1, 2, 3, ... alt-supporting reads
     in the cfDNA intersection, separately for matched (signal) and control
-    (noise) loci.  Loci with zero supporting reads are annotated but not
-    plotted (they dominate and would compress the axis).
+    (noise) loci.  Y-axis shows fraction of total loci (normalised by
+    signature_size / control_signature_size respectively) so that groups
+    with very different locus counts are comparable.  Absolute counts are
+    printed above each bar.  Loci with zero supporting reads are annotated
+    but not plotted (they dominate and would compress the axis).
     """
     matched = df_supporting_reads_per_locus.query("signature_type == 'matched'")["supporting_reads"]
     control = df_supporting_reads_per_locus.query("signature_type != 'matched'")["supporting_reads"]
@@ -645,33 +650,50 @@ def render_supporting_reads_histogram(
     )
     x_cap = min(int(max_reads) + 1, 20)  # cap display at 20 reads
     bins = list(range(1, x_cap + 2))  # edges: 1, 2, ..., x_cap+1
-
-    fig, ax = plt.subplots(figsize=(8, 3))
-    fig.patch.set_facecolor("#f4f6f8")
-    ax.set_facecolor("#f4f6f8")
+    bar_positions = np.array(bins[:-1], dtype=float)
 
     n_ctrl_with_reads = len(control)
     n_matched_with_reads = len(matched)
     n_matched_zero = max(0, signature_size - n_matched_with_reads)
 
+    has_both = n_ctrl_with_reads > 0 and n_matched_with_reads > 0
+    bar_width = 0.38 if has_both else 0.55
+    offset = bar_width / 2 if has_both else 0.0
+
+    fig, ax = plt.subplots(figsize=(max(8, x_cap * 0.65), 3.5))
+    fig.patch.set_facecolor("#f4f6f8")
+    ax.set_facecolor("#f4f6f8")
+
     if n_ctrl_with_reads > 0:
-        ax.hist(
-            control.clip(upper=x_cap),
-            bins=bins,
+        ctrl_counts, _ = np.histogram(control.clip(upper=x_cap), bins=bins)
+        ctrl_fracs = ctrl_counts / control_signature_size
+        ax.bar(
+            bar_positions - offset,
+            ctrl_fracs,
+            width=bar_width,
             color="#3498db",
-            alpha=0.65,
-            label=f"Control (n={n_ctrl_with_reads:,} loci with reads)",
-            align="left",
+            alpha=0.75,
+            label=f"Control (n={n_ctrl_with_reads:,}/{control_signature_size:,} loci with reads)",
         )
+        for pos, cnt, frac in zip(bar_positions - offset, ctrl_counts, ctrl_fracs, strict=False):
+            if cnt > 0:
+                ax.text(pos, frac, f"{cnt:,}", ha="center", va="bottom", fontsize=7, color="#1a5276")
+
     if n_matched_with_reads > 0:
-        ax.hist(
-            matched.clip(upper=x_cap),
-            bins=bins,
+        matched_counts, _ = np.histogram(matched.clip(upper=x_cap), bins=bins)
+        matched_fracs = matched_counts / signature_size
+        matched_bar_x = bar_positions + offset if has_both else bar_positions
+        ax.bar(
+            matched_bar_x,
+            matched_fracs,
+            width=bar_width,
             color="#c0392b",
-            alpha=0.7,
+            alpha=0.8,
             label=f"Patient signature (n={n_matched_with_reads:,}/{signature_size:,} loci with reads)",
-            align="left",
         )
+        for pos, cnt, frac in zip(matched_bar_x, matched_counts, matched_fracs, strict=False):
+            if cnt > 0:
+                ax.text(pos, frac, f"{cnt:,}", ha="center", va="bottom", fontsize=7, color="#7b241c")
 
     if n_matched_zero > 0:
         ax.text(
@@ -687,10 +709,11 @@ def render_supporting_reads_histogram(
         )
 
     ax.set_xlabel("Alt-supporting reads per variant locus", fontsize=10)
-    ax.set_ylabel("Number of loci", fontsize=10)
+    ax.set_ylabel("Fraction of loci", fontsize=10)
     ax.set_title("Alt-Supporting Reads per Variant Locus", fontsize=11, fontweight="bold")
     ax.legend(fontsize=9, framealpha=0.85)
-    ax.set_xticks(bins[:-1])
+    ax.set_xticks(bar_positions)
+    ax.set_xticklabels([str(b) for b in bins[:-1]])
     ax.set_axisbelow(True)
     ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")  # noqa: FBT003
     ax.spines[["top", "right"]].set_visible(False)
@@ -781,8 +804,9 @@ def render_analysis_report(  # noqa: PLR0913
     intersection_af_img = render_intersection_af_combined(df_supporting_reads_per_locus, df_signatures_filt)
 
     # Supporting reads per locus histogram
+    control_signature_size = len(df_signatures_filt[df_signatures_filt["signature_type"] != "matched"])
     supporting_reads_hist_img = render_supporting_reads_histogram(
-        df_supporting_reads_per_locus, detection.signature_size
+        df_supporting_reads_per_locus, detection.signature_size, control_signature_size
     )
 
     # Read length histogram
