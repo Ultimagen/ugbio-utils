@@ -413,10 +413,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
                     continue
                 # Take max reads per unique locus across all control signatures of this type
                 ctrl_max_per_locus = (
-                    ctrl_per_locus.reset_index()
-                    .groupby(["chrom", "pos"])["supporting_reads"]
-                    .max()
-                    .to_numpy()
+                    ctrl_per_locus.reset_index().groupby(["chrom", "pos"])["supporting_reads"].max().to_numpy()
                 )
                 n_ctrl_loci = len(ctrl_max_per_locus)
                 ctrl_pvals = poisson.sf(ctrl_max_per_locus - 1, lam_ctrl)
