@@ -368,10 +368,16 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
     cohort = df_features_filt.query("signature_type == 'control'")["snvq"].dropna()
     db_ctrl = df_features_filt.query("signature_type == 'db_control'")["snvq"].dropna()
 
+    all_vals = pd.concat([s for s in [matched, cohort, db_ctrl] if len(s) > 0])
+    if len(all_vals) == 0:
+        return ""
+    x_min = max(0, int(all_vals.min()) - 5)
+    x_max = min(100, int(all_vals.max()) + 5)
+    bins = np.arange(x_min, x_max + 2, 1)
+
     fig, ax = plt.subplots(figsize=(8, 3))
     fig.patch.set_facecolor("#f4f6f8")
 
-    bins = np.arange(0, 101, 2)
     for data, color, kde_color, label_prefix, kde_tag in [
         (db_ctrl, "#3498db", "#1a5276", "Synthetic controls", "db_ctrl"),
         (cohort, "#9b59b6", "#6c3483", "Cohort control", "cohort"),
@@ -390,7 +396,7 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
             if len(data) >= 2:  # noqa: PLR2004
                 try:
                     kde = gaussian_kde(data, bw_method=0.3)
-                    x_kde = np.linspace(0, 100, 1000)
+                    x_kde = np.linspace(x_min, x_max, 1000)
                     ax.plot(
                         x_kde,
                         kde(x_kde),
@@ -416,7 +422,7 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
         if len(matched) >= 2:  # noqa: PLR2004
             try:
                 kde = gaussian_kde(matched, bw_method=0.3)
-                x_kde = np.linspace(0, 100, 1000)
+                x_kde = np.linspace(x_min, x_max, 1000)
                 ax.plot(
                     x_kde,
                     kde(x_kde),
@@ -433,7 +439,7 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
     ax.set_ylabel("Density", fontsize=10)
     ax.set_title("cfDNA Intersection SNVQ Distribution", fontsize=11, fontweight="bold")
     ax.legend(fontsize=9, framealpha=0.85)
-    ax.set_xlim(0, 100)
+    ax.set_xlim(x_min, x_max)
     ax.set_axisbelow(True)
     ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")  # noqa: FBT003
     ax.set_facecolor("#f4f6f8")
@@ -678,7 +684,7 @@ def render_supporting_reads_histogram(
         (matched, signature_size, "#c0392b", "#7b241c", 0.6, "Patient signature"),
     ]:
         if len(data) > 0 and sig_size > 0:
-            active_groups.append((data, sig_size, color, text_color, alpha, label_prefix, len(data)))
+            active_groups.append((data, sig_size, color, text_color, alpha, label_prefix))
 
     n_active = len(active_groups)
     bar_width = 0.28 if n_active == 3 else (0.38 if n_active == 2 else 0.55)  # noqa: PLR2004
@@ -688,9 +694,7 @@ def render_supporting_reads_histogram(
     fig.patch.set_facecolor("#f4f6f8")
     ax.set_facecolor("#f4f6f8")
 
-    for (data, sig_size, color, text_color, alpha, label_prefix, n_with_reads), offset in zip(
-        active_groups, offsets, strict=False
-    ):
+    for (data, sig_size, color, text_color, alpha, label_prefix), offset in zip(active_groups, offsets, strict=False):
         counts, _ = np.histogram(data.clip(upper=x_cap), bins=bins)
         fracs = counts / sig_size
         ax.bar(
@@ -699,7 +703,7 @@ def render_supporting_reads_histogram(
             width=bar_width,
             color=color,
             alpha=alpha,
-            label=f"{label_prefix} (n={n_with_reads:,}/{sig_size:,} loci with reads)",
+            label=label_prefix,
         )
         for pos, cnt, frac in zip(bar_positions + offset, counts, fracs, strict=False):
             if cnt > 0:
