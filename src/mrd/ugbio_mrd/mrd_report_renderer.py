@@ -709,7 +709,7 @@ def render_supporting_reads_histogram(
         )
 
     ax.set_xlabel("Alt-supporting reads per variant locus", fontsize=10)
-    ax.set_ylabel("Fraction of loci", fontsize=10)
+    ax.set_ylabel("Density", fontsize=10)
     ax.set_title("Alt-Supporting Reads per Variant Locus", fontsize=11, fontweight="bold")
     ax.legend(fontsize=9, framealpha=0.85)
     ax.set_xticks(bar_positions)
