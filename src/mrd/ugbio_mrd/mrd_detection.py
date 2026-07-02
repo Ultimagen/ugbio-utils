@@ -35,7 +35,7 @@ DEFAULT_LOD_FPR: float = 0.05
 # QC thresholds — displayed as checkboxes in the report
 MIN_SIGNATURE_SIZE: int = 500  # minimum filtered signature loci
 MIN_MEAN_COVERAGE: float = 15.0  # minimum mean coverage at signature loci
-MIN_SYNTHETIC_CONTROLS: int = 20  # minimum db_control replicates for reliable null
+MIN_SYNTHETIC_CONTROLS: int = 30  # minimum db_control replicates for reliable null
 # For multi-read QC: Bonferroni family-wise error rate for per-locus outlier detection.
 # The check fails when any locus has Poisson p-value < threshold / signature_size,
 # i.e., its read count is a significant outlier (e.g. a germline variant).
