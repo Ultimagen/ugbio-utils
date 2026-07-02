@@ -466,7 +466,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     )
 
 
-def plot_null_distribution(  # noqa: PLR0915, C901
+def plot_null_distribution(  # noqa: PLR0915, PLR0912, C901
     detection: "DetectionResult",
     df_tf: pd.DataFrame,
     ax=None,
@@ -525,7 +525,7 @@ def plot_null_distribution(  # noqa: PLR0915, C901
             null_plot,
             color="#3a9ad9",
             s=30,
-            alpha=0.85,
+            alpha=0.8,
             zorder=4,
             label=f"Synthetic controls (n={len(null)})",
         )
@@ -545,22 +545,22 @@ def plot_null_distribution(  # noqa: PLR0915, C901
             fit_samples = poisson.rvs(max(lam, 1e-9), size=n_samples, random_state=rng2)
             fit_label = f"Poisson fallback (λ={lam:.2f})"
         fit_plot = np.array([_safe(v) for v in fit_samples])
-        bp = ax.boxplot(
+        vp = ax.violinplot(
             fit_plot,
             positions=[x_fit],
             widths=0.35,
-            patch_artist=True,
-            manage_ticks=False,
-            medianprops={"color": "#4a0e5c", "linewidth": 1.5},
-            flierprops={"marker": ""},
-            whiskerprops={"color": "#7b2d8b"},
-            capprops={"color": "#7b2d8b"},
+            showmedians=True,
+            showextrema=True,
         )
-        for patch in bp["boxes"]:
-            patch.set_facecolor("#7b2d8b")
-            patch.set_alpha(0.25)
+        for body in vp["bodies"]:
+            body.set_facecolor("#3a9ad9")
+            body.set_edgecolor("#3a9ad9")
+            body.set_alpha(0.4)
+        for part in ("cbars", "cmins", "cmaxes"):
+            vp[part].set_color("#3a9ad9")
+        vp["cmedians"].set_color("#1e6e9e")
         # Invisible scatter for legend entry
-        ax.scatter([], [], color="#7b2d8b", s=30, alpha=0.6, marker="s", label=fit_label)
+        ax.scatter([], [], color="#3a9ad9", s=30, alpha=0.4, marker="s", label=fit_label)
 
     # --- Cohort controls ---
     x_cohort = 1.5
@@ -574,11 +574,11 @@ def plot_null_distribution(  # noqa: PLR0915, C901
             ax.scatter(
                 [x_cohort + jitter_c[i]],
                 [_safe(v)],
-                color="#e67e22",
+                color="#9b59b6",
                 s=30,
                 marker="D",
                 zorder=5,
-                alpha=0.9,
+                alpha=0.8,
                 label="Cohort control" if i == 0 else "_nolegend_",
             )
     except KeyError:
@@ -621,7 +621,7 @@ def plot_null_distribution(  # noqa: PLR0915, C901
                 n_lod = float(n_eff_plot) * (p_err_plot + lod_tf_plot)
                 ax.axhline(
                     _safe(n_lod),
-                    color="#8e44ad",
+                    color="#27ae60",
                     linewidth=1.8,
                     linestyle="-.",
                     alpha=0.9,
