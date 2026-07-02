@@ -183,7 +183,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             {"label": c.label, "value": c.value_str, "threshold": c.threshold_str, "passed": c.passed}
             for c in detection.qc_checks
         ],
-        "alpha": 0.01,
+        "alpha": detection.alpha,
     }
     detection_json_path = (
         Path(mrd_report_inputs.output_dir) / f"{mrd_report_inputs.output_basename}.detection_result.json"
@@ -219,7 +219,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         "qc_checks": "; ".join(
             f"{c.label}: {c.value_str} ({'PASS' if c.passed else 'FAIL'})" for c in detection.qc_checks
         ),
-        "alpha": 0.01,
+        "alpha": detection.alpha,
     }
     pd.DataFrame([detection_record]).to_hdf(output_h5_file, key="detection_result", mode="a")
 
