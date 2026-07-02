@@ -126,6 +126,8 @@ class DetectionResult:
 
     # Significance threshold used for this detection call (stored for plot labels)
     alpha: float = DEFAULT_ALPHA
+    lod_fpr: float = DEFAULT_LOD_FPR
+    lod_recall: float = 0.95
 
 
 def compute_personal_lod(  # noqa: PLR0911
@@ -222,6 +224,8 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     df_tf: pd.DataFrame,
     df_signatures_filt: pd.DataFrame,
     alpha: float = DEFAULT_ALPHA,
+    lod_fpr: float = DEFAULT_LOD_FPR,
+    lod_recall: float = 0.95,
     df_supporting_reads_per_locus: pd.DataFrame | None = None,
 ) -> DetectionResult:
     """
@@ -246,7 +250,10 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         Filtered signature dataframe with per-locus coverage (used for QC metrics).
     alpha : float
         Significance threshold for detection call (default ``DEFAULT_ALPHA`` = 0.01).
-        Personal LOD always uses ``DEFAULT_LOD_FPR`` (5%) independently of this.
+    lod_fpr : float
+        FPR used for the LOD calculation (default ``DEFAULT_LOD_FPR`` = 0.05).
+    lod_recall : float
+        Target recall used for the LOD calculation (default 0.95).
 
     Returns
     -------
@@ -455,12 +462,12 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     else:
         detection_threshold = 1
 
-    # Personal LOD — always at DEFAULT_LOD_FPR (5%), independent of detection alpha.
-    # Uses the same n_effective as the p-value and detection threshold.
+    # Personal LOD: smallest TF where recall >= lod_recall, at FPR = lod_fpr.
     personal_lod = compute_personal_lod(
         n=n_effective,
         p_err=p_err,
-        fpr=DEFAULT_LOD_FPR,
+        target_recall=lod_recall,
+        fpr=lod_fpr,
     )
 
     return DetectionResult(
@@ -483,6 +490,8 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         jeffreys_prior_applied=raw_reads_zero,
         qc_checks=qc_checks,
         alpha=alpha,
+        lod_fpr=lod_fpr,
+        lod_recall=lod_recall,
     )
 
 
@@ -619,10 +628,13 @@ def plot_null_distribution(  # noqa: PLR0915, PLR0912, C901
         _alpha_plot = getattr(detection, "alpha", DEFAULT_ALPHA)
         n_th_plot = _binom_detection_threshold(n_eff_plot, p_err_plot, _alpha_plot)
         if n_th_plot is not None:
+            _lod_fpr_plot = getattr(detection, "lod_fpr", DEFAULT_LOD_FPR)
+            _lod_recall_plot = getattr(detection, "lod_recall", 0.95)
             lod_tf_plot = compute_personal_lod(
                 n=int(n_eff_plot),
                 p_err=p_err_plot,
-                fpr=DEFAULT_LOD_FPR,
+                target_recall=_lod_recall_plot,
+                fpr=_lod_fpr_plot,
             )
             # Detection threshold line: minimum reads to call a positive (alpha)
             n_th_vaf = n_th_plot / n_eff_plot
