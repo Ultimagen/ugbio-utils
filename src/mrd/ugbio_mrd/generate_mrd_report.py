@@ -12,7 +12,7 @@ from ugbio_core.consts import FileExtension
 from ugbio_core.logger import logger
 
 import ugbio_mrd.mrd_utils as mrd
-from ugbio_mrd.mrd_detection import run_detection_analysis
+from ugbio_mrd.mrd_detection import DEFAULT_ALPHA, DEFAULT_LOD_FPR, run_detection_analysis
 from ugbio_mrd.mrd_report_renderer import render_analysis_report, render_qc_report
 
 RESULTS_HTML_REPORT = ".mrd_analysis_report.html"
@@ -36,6 +36,9 @@ class MrdReportInputs:
     tumor_sample: str = None
     signature_filter_query: str = None
     read_filter_query: str = None
+    alpha: float = DEFAULT_ALPHA
+    lod_fpr: float = DEFAULT_LOD_FPR
+    lod_recall: float = 0.95
 
 
 def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:  # noqa: PLR0915
@@ -82,6 +85,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     detection = run_detection_analysis(
         df_tf=df_tf_filt,
         df_signatures_filt=df_signatures_filt,
+        alpha=mrd_report_inputs.alpha,
+        lod_fpr=mrd_report_inputs.lod_fpr,
+        lod_recall=mrd_report_inputs.lod_recall,
         df_supporting_reads_per_locus=df_supporting_reads_per_locus_filt,
     )
 
@@ -242,6 +248,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     detection_unfilt = run_detection_analysis(
         df_tf=df_tf_unfilt,
         df_signatures_filt=df_signatures,
+        alpha=mrd_report_inputs.alpha,
+        lod_fpr=mrd_report_inputs.lod_fpr,
+        lod_recall=mrd_report_inputs.lod_recall,
     )
 
     # Secondary analysis 2: unfiltered reads + filtered signatures
@@ -255,6 +264,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     detection_unfilt2 = run_detection_analysis(
         df_tf=df_tf_unfilt2,
         df_signatures_filt=df_signatures_filt,
+        alpha=mrd_report_inputs.alpha,
+        lod_fpr=mrd_report_inputs.lod_fpr,
+        lod_recall=mrd_report_inputs.lod_recall,
     )
 
     # Save HDF5 tables (secondary)
