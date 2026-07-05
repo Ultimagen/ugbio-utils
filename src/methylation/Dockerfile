@@ -1,4 +1,4 @@
-FROM python:3.11-bullseye AS build
+FROM python:3.11-bookworm AS build
 
 ARG OUT_DIR=/tmp/ugbio
 ARG MODULE_DIR=methylation
@@ -12,7 +12,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
-FROM python:3.11-slim-bullseye
+FROM python:3.11-slim-bookworm
 
 RUN apt-get update && apt-get upgrade -y && apt-get install --no-install-recommends -y \
     openjdk-17-jre-headless `# for gatk` \

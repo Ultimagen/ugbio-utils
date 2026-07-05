@@ -1,5 +1,5 @@
 ARG OUT_DIR=/tmp/ugbio
-FROM python:3.11-bullseye AS build
+FROM python:3.11-bookworm AS build
 
 ARG OUT_DIR
 ARG MODULE_DIR=cloud_utils
