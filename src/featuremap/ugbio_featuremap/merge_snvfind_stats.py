@@ -10,27 +10,37 @@ from typing import Any
 
 from ugbio_core.logger import logger
 
+from ugbio_featuremap.filter_dataframe import KEY_FILTERS, TYPE_FUNNEL, TYPE_PASS
+
+KEY_COMBINATIONS = "combinations"
+KEY_COMBINATIONS_TOTAL = "combinations_total"
+
+
+def _has_pass_in_any_shard(sections: list[dict[str, Any]], name: str) -> bool:
+    """Check if any shard has a 'pass' field for a given filter."""
+    return any(TYPE_PASS in section[KEY_FILTERS][name] for section in sections)
+
 
 def _sum_filters(sections: list[dict[str, Any]], filter_names: list[str]) -> dict[str, dict[str, Any]]:
     """Sum funnel/pass values across shards for each filter."""
     merged: dict[str, dict[str, Any]] = {}
     for name in filter_names:
-        entry = dict(sections[0]["filters"][name])
-        entry["funnel"] = 0
-        if "pass" in entry:
-            entry["pass"] = 0
+        entry = dict(sections[0][KEY_FILTERS][name])
+        entry[TYPE_FUNNEL] = 0
+        if _has_pass_in_any_shard(sections, name):
+            entry[TYPE_PASS] = 0
         merged[name] = entry
 
     for section in sections:
-        section_filters = section["filters"]
+        section_filters = section[KEY_FILTERS]
         if list(section_filters.keys()) != filter_names:
             raise ValueError(
                 f"Filter mismatch across shards: expected {filter_names}, got {list(section_filters.keys())}"
             )
         for name in filter_names:
-            merged[name]["funnel"] += section_filters[name]["funnel"]
-            if "pass" in section_filters[name]:
-                merged[name]["pass"] += section_filters[name]["pass"]
+            merged[name][TYPE_FUNNEL] += section_filters[name][TYPE_FUNNEL]
+            if TYPE_PASS in merged[name]:
+                merged[name][TYPE_PASS] += section_filters[name].get(TYPE_PASS, 0)
 
     return merged
 
@@ -40,11 +50,11 @@ def _sum_combinations(sections: list[dict[str, Any]]) -> tuple[dict[str, int], i
     merged: dict[str, int] = {}
     total = 0
     for section in sections:
-        if "combinations" in section:
-            for pattern, count in section["combinations"].items():
+        if KEY_COMBINATIONS in section:
+            for pattern, count in section[KEY_COMBINATIONS].items():
                 merged[pattern] = merged.get(pattern, 0) + count
-        if "combinations_total" in section:
-            total += section["combinations_total"]
+        if KEY_COMBINATIONS_TOTAL in section:
+            total += section[KEY_COMBINATIONS_TOTAL]
     return merged, total
 
 
@@ -60,16 +70,15 @@ def _merge_stats_section(sections: list[dict[str, Any]]) -> dict[str, Any]:
     if not sections:
         raise ValueError("No sections to merge")
 
-    filter_names = list(sections[0]["filters"].keys())
+    filter_names = list(sections[0][KEY_FILTERS].keys())
     merged_filters = _sum_filters(sections, filter_names)
     merged_combinations, merged_total = _sum_combinations(sections)
 
-    result: dict[str, Any] = {"filters": merged_filters}
-    if merged_combinations:
-        result["combinations"] = merged_combinations
-        result["combinations_total"] = merged_total
-
-    return result
+    return {
+        KEY_FILTERS: merged_filters,
+        KEY_COMBINATIONS: merged_combinations,
+        KEY_COMBINATIONS_TOTAL: merged_total,
+    }
 
 
 def merge_snvfind_stats(input_files: list[str | Path], output_file: str | Path) -> None:
