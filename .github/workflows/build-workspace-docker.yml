@@ -44,7 +44,7 @@ env:
   AWS_ACCOUNT: 337532070941
   # Default base image used when the Dockerfile does not declare an ARG BASE_IMAGE default.
   # If you update this version, also update UGBIO_BASE_IMAGE_NAME in ci.yml.
-  DEFAULT_BASE_IMAGE: ugbio_base:1.7.0
+  DEFAULT_BASE_IMAGE: ugbio_base:1.8.0
 
 jobs:
   pre-build:

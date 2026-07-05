@@ -488,7 +488,7 @@ uv run pre-commit run --all-files
 
 ### Docker Architecture
 
-**Base Image:** `ugbio_base:1.7.0`
+**Base Image:** `ugbio_base:1.8.0`
 - Python 3.11-bullseye
 - Pre-installed: bcftools, samtools, bedtools, bedops
 
