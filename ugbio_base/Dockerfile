@@ -77,7 +77,7 @@ RUN git clone https://github.com/bedops/bedops.git && \
 # Remove ImageMagick: transitive dependency of python:3.11-bullseye, unused by any ugbio code,
 # and the source of a large share of CRITICAL CVEs (CVE-2026-26284, -25987, -25986, -25983,
 # -25971, -25968, -25898, -25897, -23876, CVE-2025-53014, -53101, -57807).
-RUN apt-get update && apt-get purge -y --auto-remove \
+RUN apt-get purge -y --auto-remove \
     imagemagick* libmagickcore* libmagickwand* \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
