@@ -76,7 +76,10 @@ def test_small_variants_hg01046_negative(hg01046_bam: Path, hgvs: str) -> None:
     call = _call_small_variant(counts, HG01046_KIV2_CN, sv.hgvs, sv.ref, sv.alt, sv.positions)
 
     assert counts.informative > 100
-    assert counts.alt == 0
+    # A handful of low-quality noise ALT bases can slip in at MIN_BASE_QUALITY=1;
+    # the binomial fit still assigns alt_cn=0 because the observed alt fraction
+    # is well below LPA_VARIANT_NOISE_FLOOR.
+    assert counts.alt / counts.informative < 0.005
     assert call.alt_copy_number == 0
     assert call.qual == 0.0
 

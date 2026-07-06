@@ -132,7 +132,7 @@ REPEAT_CONFLICT_RESIDUAL = 0.05
 HET_MARKER_ALT_FRACTION_MIN = 0.10
 HET_MARKER_ALT_FRACTION_MAX = 0.90
 
-MIN_BASE_QUALITY = 20
+MIN_BASE_QUALITY = 1
 MIN_MAPPING_QUALITY = 10
 # KIV-2 is a 6-copy VNTR: ~90% of reads have MAPQ=0 because they multi-map
 # across the reference repeat units. They must not be filtered out; doing so
