@@ -492,13 +492,28 @@ def _call_heterozygous_markers(
     if total_informative == 0:
         return None, None, "No coverage at marker sites", per_marker_counts
 
-    alt_fraction = total_alt / total_informative
-    # ALT-allele evidence threshold (>=10% reads supports a heterozygous call).
-    if alt_fraction < HET_MARKER_ALT_FRACTION_MIN:
+    # Classify each informative marker independently so that a
+    # hom-REF / hom-ALT combination does not silently average into a false
+    # heterozygous split (pooling would give ~0.5 ALT fraction).
+    def _classify(f: float) -> str:
+        if f < HET_MARKER_ALT_FRACTION_MIN:
+            return "hom_ref"
+        if f > HET_MARKER_ALT_FRACTION_MAX:
+            return "hom_alt"
+        return "het"
+
+    per_marker_states = [_classify(c.alt / c.informative) for c in per_marker_counts if c.informative > 0]
+    unique_states = set(per_marker_states)
+    if len(unique_states) > 1:
+        return None, None, "Marker sites disagree", per_marker_counts
+
+    (state,) = unique_states
+    if state == "hom_ref":
         return None, None, "Homozygous REF markers call", per_marker_counts
-    if alt_fraction > HET_MARKER_ALT_FRACTION_MAX:
+    if state == "hom_alt":
         return None, None, "Homozygous ALT markers call", per_marker_counts
 
+    alt_fraction = total_alt / total_informative
     alt_cn = kiv2_copy_number * alt_fraction
     ref_cn = kiv2_copy_number - alt_cn
     return ref_cn, alt_cn, "Heterozygous markers call", per_marker_counts
@@ -804,7 +819,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--kiv2-start", type=int, default=DEFAULT_KIV2_START)
     ap.add_argument("--kiv2-end", type=int, default=DEFAULT_KIV2_END)
     ap.add_argument("--kiv2-repeat-count", type=int, default=DEFAULT_KIV2_REPEAT_COUNT)
-    ap.add_argument("--kiv2-unit-length", type=int, default=DEFAULT_KIV2_UNIT_LEN)
     ap.add_argument(
         "--norm-regions",
         type=_parse_norm_regions,

@@ -632,6 +632,22 @@ class TestHeterozygousMarkerCalling:
         assert alt_cn is None
         assert "No coverage" in call_type
 
+    def test_disagreeing_markers_flagged(self):
+        # One marker is homozygous REF, the other homozygous ALT. Pooling would
+        # give ~50% ALT and falsely emit a heterozygous split; the per-marker
+        # classifier must instead flag the disagreement.
+        ref_cn, alt_cn, call_type, _ = _make_marker_call([AlleleCounts(ref=100, alt=1), AlleleCounts(ref=1, alt=100)])
+        assert ref_cn is None
+        assert alt_cn is None
+        assert call_type == "Marker sites disagree"
+
+    def test_one_het_one_homref_flagged(self):
+        # Mixed het + hom-REF: still a disagreement; do not emit a het split.
+        ref_cn, alt_cn, call_type, _ = _make_marker_call([AlleleCounts(ref=50, alt=50), AlleleCounts(ref=100, alt=1)])
+        assert ref_cn is None
+        assert alt_cn is None
+        assert call_type == "Marker sites disagree"
+
 
 # ----------------------------------------------------------------------------
 # CLI region parser
