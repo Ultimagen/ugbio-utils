@@ -13,7 +13,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
 
 ##################################################################
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 ARG OUT_DIR=/tmp/ugbio
 ARG USERNAME=app
