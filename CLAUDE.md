@@ -488,8 +488,8 @@ uv run pre-commit run --all-files
 
 ### Docker Architecture
 
-**Base Image:** `ugbio_base:1.8.1`
-- Python 3.11-bookworm
+**Base Image:** `ugbio_base:1.8.2`
+- Python 3.11-slim-bookworm
 - Pre-installed: bcftools, samtools, bedtools, bedops
 
 **Module Images:**
