@@ -51,16 +51,21 @@ echo "Extracting GATK fat JAR..."
 cd "$WORK_DIR"
 unzip -q "$GATK_JAR"
 
-echo "Replacing netty classes..."
+echo "Replacing netty classes and metadata..."
 rm -rf io/netty/
+rm -rf META-INF/maven/io.netty/
+rm -rf META-INF/native-image/io.netty/
 for module in "${NETTY_MODULES[@]}"; do
     unzip -qo "${DOWNLOAD_DIR}/${module}-${NETTY_VERSION}.jar" "io/*" -d . 2>/dev/null || true
+    unzip -qo "${DOWNLOAD_DIR}/${module}-${NETTY_VERSION}.jar" "META-INF/maven/*" -d . 2>/dev/null || true
     unzip -qo "${DOWNLOAD_DIR}/${module}-${NETTY_VERSION}.jar" "META-INF/native-image/*" -d . 2>/dev/null || true
 done
 
-echo "Replacing zookeeper classes..."
+echo "Replacing zookeeper classes and metadata..."
 rm -rf org/apache/zookeeper/
+rm -rf META-INF/maven/org.apache.zookeeper/
 unzip -qo "${DOWNLOAD_DIR}/zookeeper-${ZOOKEEPER_VERSION}.jar" "org/apache/zookeeper/*" -d .
+unzip -qo "${DOWNLOAD_DIR}/zookeeper-${ZOOKEEPER_VERSION}.jar" "META-INF/maven/*" -d . 2>/dev/null || true
 
 echo "Repacking GATK fat JAR..."
 rm "$GATK_JAR"
