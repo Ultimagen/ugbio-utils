@@ -45,8 +45,8 @@ class MrdReportInputs:
     alpha: float = DEFAULT_ALPHA
     lod_fpr: float = DEFAULT_LOD_FPR
     lod_recall: float = 0.95
-    thresh_noise_lq_reads: int | None = None
-    thresh_multi_read_pvalue: float | None = None
+    thresh_noise_lq_reads: int | None = DEFAULT_THRESH_NOISE_LQ_READS
+    thresh_multi_read_pvalue: float | None = DEFAULT_THRESH_MULTI_READ_PVALUE
 
 
 def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:  # noqa: PLR0915, C901
@@ -198,8 +198,35 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             return "—"
         return ", ".join(Path(f).name for f in files)
 
+    try:
+        import importlib.metadata
+        import os
+        import subprocess
+
+        _pkg_version = importlib.metadata.version("ugbio-mrd")
+        # Priority: GIT_COMMIT env var → git rev-parse (dev) → UGBIO_IMAGE_TAG
+        # (baked into Docker image at build time) → plain package version.
+        _commit = os.environ.get("GIT_COMMIT", "")
+        if not _commit:
+            try:
+                _commit = subprocess.check_output(
+                    ["git", "rev-parse", "--short", "HEAD"],  # noqa: S607
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                ).strip()
+            except Exception:  # noqa: BLE001
+                _commit = ""
+        if _commit:
+            _version_str = f"{_pkg_version} ({_commit})"
+        else:
+            _image_tag = os.environ.get("UGBIO_IMAGE_TAG", "")
+            _version_str = f"{_pkg_version} [{_image_tag}]" if _image_tag and _image_tag != "unknown" else _pkg_version
+    except Exception:  # noqa: BLE001
+        _version_str = "unknown"
+
     inputs_info = {
         "Sample": mrd_report_inputs.output_basename or "N/A",
+        "ugbio-mrd version": _version_str,
         "Patient signature VCFs": _fmt_files(mrd_report_inputs.matched_signatures_vcf_files),
         "Control signature VCFs": _fmt_files(mrd_report_inputs.control_signatures_vcf_files),
         "Featuremap file": Path(mrd_report_inputs.featuremap_file).name if mrd_report_inputs.featuremap_file else "—",
@@ -238,7 +265,11 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         "null_median_reads": detection.null_median_reads,
         "null_max_reads": detection.null_max_reads,
         "n_synthetic_controls": detection.n_synthetic_controls,
-        "detection_threshold": detection.detection_threshold,
+        "detection_threshold": (
+            detection.detection_threshold / detection.corrected_coverage
+            if detection.detection_threshold is not None and detection.corrected_coverage > 0
+            else None
+        ),
         "personal_lod": detection.personal_lod,
         "signature_size": detection.signature_size,
         "mean_coverage": detection.mean_coverage,
@@ -272,7 +303,11 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         "null_median_reads": detection.null_median_reads,
         "null_max_reads": detection.null_max_reads,
         "n_synthetic_controls": detection.n_synthetic_controls,
-        "detection_threshold": detection.detection_threshold,
+        "detection_threshold": (
+            detection.detection_threshold / detection.corrected_coverage
+            if detection.detection_threshold is not None and detection.corrected_coverage > 0
+            else None
+        ),
         "personal_lod": detection.personal_lod,
         "signature_size": detection.signature_size,
         "mean_coverage": detection.mean_coverage,

@@ -1086,7 +1086,14 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3
             )  # draw above, centered
 
 
-def apply_multi_read_locus_filter(
+# Maximum per-locus read count included in the per-signature VAF estimate used as
+# Poisson λ.  Loci with more reads than this are assumed to contain real signal
+# (germline / mosaic variant) that would inflate the background rate estimate.
+# Capping at 6 keeps virtually all noise reads while excluding obvious outliers.
+_VAF_ESTIMATE_READ_CAP: int = 6
+
+
+def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
     df_features_filt: pd.DataFrame,
     df_tf: pd.DataFrame,
     df_signatures_filt: pd.DataFrame,
@@ -1096,12 +1103,18 @@ def apply_multi_read_locus_filter(
 
     For every ``(signature_type, signature)`` row in ``df_tf`` the function computes:
 
-    * λ = ``ctdna_vaf × mean_coverage``  (Jeffreys prior ``0.5 / (corrected_coverage + 1)``
-      when ``ctdna_vaf`` is zero)
-    * Bonferroni-corrected Poisson right-tail p-value per locus, using that signature's
-      own locus count as the family size.
-    * Loci whose corrected p-value falls below ``thresh_multi_read_pvalue`` are removed
-      from **all rows of that signature_type** (not just the flagging signature).
+    * λ estimated from loci with ≤ ``_VAF_ESTIMATE_READ_CAP`` reads — excluding
+      germline/mosaic outlier loci that would otherwise inflate the per-signature
+      background rate.  ``λ = (reads at background loci / corrected_coverage) × mean_coverage``.
+      Jeffreys prior is used when no background reads are present.
+    * Bonferroni-corrected Poisson right-tail p-value per locus, using **that
+      signature's own locus count** as the family size N — identical logic to the
+      QC check in ``run_detection_analysis``.  For a cohort control with 10 000
+      loci N=10 000; for a synthetic replicate with 30 000 loci N=30 000.  Using
+      the matched ``signature_size`` as a shared N would under-correct large
+      signatures and over-correct small ones.
+    * Loci whose corrected p-value falls below ``thresh_multi_read_pvalue`` and have
+      ≥ 2 supporting reads are removed from **all rows of that signature_type**.
 
     ``mean_coverage`` is derived from the matched signature rows in ``df_signatures_filt``
     and used as a common coverage proxy for all types, since all signatures evaluate the
@@ -1208,15 +1221,7 @@ def apply_multi_read_locus_filter(
 
     # --- Unified loop: one pass per (sig_type, sig_name) in df_tf ---
     for (sig_type, sig_name), sig_row in df_tf.iterrows():
-        vaf = float(sig_row["ctdna_vaf"])
-        if vaf <= 0:
-            corr_cov = float(sig_row.get("corrected_coverage", 1))
-            vaf = 0.5 / (corr_cov + 1)
-        lam = vaf * mean_coverage
-        if lam <= 0:
-            continue
-
-        # Per-locus read counts for this signature
+        # Per-locus read counts for this signature (needed for both λ and outlier test)
         sig_rows = df_features_filt_out[
             (df_features_filt_out["signature_type"] == sig_type)
             & (df_features_filt_out["signature"] == sig_name)
@@ -1225,12 +1230,30 @@ def apply_multi_read_locus_filter(
             continue
         per_locus_counts = sig_rows.groupby(level=["chrom", "pos"]).size()
 
+        # --- Estimate λ from background loci (≤ _VAF_ESTIMATE_READ_CAP reads) ---
+        # Using only low-read loci avoids germline/mosaic bias: outlier loci (10-50+
+        # reads) would inflate the per-signature VAF and make λ too large, masking the
+        # very outliers we want to detect.  At the cap of 6 virtually all background
+        # noise reads are captured while true signal loci are excluded.
+        background_counts = per_locus_counts[per_locus_counts <= _VAF_ESTIMATE_READ_CAP]
+        background_reads = int(background_counts.sum())
+        corr_cov = float(sig_row.get("corrected_coverage", 1))
+        if background_reads > 0 and corr_cov > 0:
+            vaf = background_reads / corr_cov
+        elif corr_cov > 0:
+            vaf = 0.5 / (corr_cov + 1)  # Jeffreys prior when no background reads
+        else:
+            continue
+        lam = vaf * mean_coverage
+        if lam <= 0:
+            continue
+
         n_loci = _n_sig(sig_type, sig_name, len(per_locus_counts))
         bonf_pvals = poisson.sf(per_locus_counts.to_numpy() - 1, lam) * n_loci
         # Never remove loci backed by only a single read: one read is indistinguishable
         # from background noise regardless of how small λ is (e.g. near-zero TF).
         outlier_loci = per_locus_counts.index[
-            (bonf_pvals < thresh_multi_read_pvalue) & (per_locus_counts.to_numpy() >= 2)
+            (bonf_pvals < thresh_multi_read_pvalue) & (per_locus_counts.to_numpy() >= 2)  # noqa: PLR2004
         ]
         cur_min_bonf = float(bonf_pvals.min()) if len(bonf_pvals) > 0 else 1.0
         if sig_type == "matched":
