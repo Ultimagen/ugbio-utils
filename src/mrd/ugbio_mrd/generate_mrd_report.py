@@ -49,6 +49,294 @@ class MrdReportInputs:
     lod_recall: float = DEFAULT_LOD_RECALL
     thresh_noise_lq_reads: float | None = DEFAULT_THRESH_NOISE_LQ_READS
     thresh_multi_read_pvalue: float | None = DEFAULT_THRESH_MULTI_READ_PVALUE
+    filter_funnel_json: str = None
+
+
+def _load_wdl_funnel(filter_funnel_json_path: str | None) -> tuple[list[dict], dict]:
+    """Load WDL-level signature funnel entries and step descriptions from JSON.
+
+    Returns
+    -------
+    tuple[list[dict], dict]
+        ``(signatures, descriptions)`` where ``descriptions`` maps a funnel step
+        name to its description string (empty when not provided by the WDL).
+    """
+    if not filter_funnel_json_path or not Path(filter_funnel_json_path).exists():
+        return [], {}
+    with open(filter_funnel_json_path) as f:
+        data = json.load(f)
+    return data.get("signatures", []), data.get("descriptions", {})
+
+
+# Fallback descriptions rendered as a second line under each WDL-level funnel step
+# when the funnel JSON does not carry a "descriptions" entry for that step (the WDL
+# populates these from bcftools_extra_args and the include/exclude/exact-alt region
+# basenames; these defaults reflect the standard MRDFeatureMap configuration).
+_WDL_STEP_DESCRIPTIONS = {
+    "All candidate signature variants (including filtered calls)": "unfiltered signature",
+    "After bcftools extra args": "\"-f PASS --type snps -m2 -M2 -i 'QUAL>10'\"",
+    "After include regions": "ug_hcr (UG High Confidence Region)",
+    "After exclude regions": "UG_MRD_blacklist_v0",
+    "After exact alt allele filter": "dbSNP, GNOMAD_AF_over_1e-3, PON_version1",
+}
+
+
+def _wdl_signature_filter_steps(sigs: list[dict]) -> list[dict]:
+    """Aggregate WDL signature filtering counts into funnel rows."""
+    funnel = []
+    if not sigs:
+        return funnel
+    totals = {
+        "input": sum(s.get("input", 0) for s in sigs),
+        "bcftools": sum(s.get("after_bcftools_extra_args", 0) for s in sigs),
+        "include": sum(s.get("after_include_regions", 0) for s in sigs),
+        "exclude": sum(s.get("after_exclude_regions", 0) for s in sigs),
+        "exact_alt": sum(s.get("after_exact_alt_allele_filter", s.get("after_exclude_regions", 0)) for s in sigs),
+    }
+    funnel.append({"step": "All candidate signature variants (including filtered calls)", "count": totals["input"]})
+    if totals["bcftools"] != totals["input"]:
+        funnel.append({"step": "After bcftools extra args", "count": totals["bcftools"]})
+    if totals["include"] != totals["bcftools"]:
+        funnel.append({"step": "After include regions", "count": totals["include"]})
+    if totals["exclude"] != totals["include"]:
+        funnel.append({"step": "After exclude regions", "count": totals["exclude"]})
+    if totals["exact_alt"] != totals["exclude"]:
+        funnel.append({"step": "After exact alt allele filter", "count": totals["exact_alt"]})
+    return funnel
+
+
+def _matched_subset(df: pd.DataFrame) -> pd.DataFrame:
+    """Return the matched-signature subset of a features/signatures dataframe (or df itself)."""
+    if "signature_type" in df.columns:
+        return df[df["signature_type"] == "matched"]
+    return df
+
+
+def _n_loci(df: pd.DataFrame) -> int:
+    """Count distinct signature loci (``chrom``/``pos``) in a per-read features dataframe."""
+    if df.empty:
+        return 0
+    return int(df.reset_index().groupby(["chrom", "pos"]).ngroups)
+
+
+def _reads_in_signature_loci(df_features_filt: pd.DataFrame, df_signatures_filt: pd.DataFrame) -> pd.DataFrame:
+    """
+    Restrict feature reads to loci present in the filtered signature set.
+
+    Mirrors the inner join in ``get_tf_from_filtered_data`` ("retain only loci that
+    are in the signature df"), so the count matches the detection's supporting-reads
+    denominator: reads at loci dropped by the signature filter are excluded.
+    """
+    locus_in_signature = (
+        df_signatures_filt.groupby(level=["chrom", "pos"]).size().astype(bool).rename("locus_in_signature")
+    )
+    return (
+        df_features_filt.join(locus_in_signature, how="inner")
+        .dropna(subset=["locus_in_signature"])
+        .query("locus_in_signature")
+        .drop(columns=["locus_in_signature"])
+    )
+
+
+def _compute_funnel_percentages(funnel: list[dict], base: float) -> None:
+    """
+    Fill ``pct_funnel``/``pct_pass`` on each funnel row in place.
+
+    ``pct_funnel`` is relative to ``base``; ``pct_pass`` is relative to the previous
+    row. The first row is the funnel baseline, so its percentages are ``None``.
+    """
+    for i, row in enumerate(funnel):
+        if i == 0:
+            row["pct_funnel"] = None
+            row["pct_pass"] = None
+            continue
+        row["pct_funnel"] = (row["count"] / base * 100) if base else 0.0
+        prev = funnel[i - 1]["count"]
+        row["pct_pass"] = (row["count"] / prev * 100) if prev > 0 else 0.0
+
+
+def _build_filter_funnel(
+    filter_funnel_json_path: str | None,
+    df_features: pd.DataFrame,
+    df_features_filt: pd.DataFrame,
+    df_signatures: pd.DataFrame,
+    df_signatures_filt: pd.DataFrame,
+    *,
+    read_filter_query: str,
+    signature_filter_query: str,
+    thresh_noise_lq_reads: float | None = None,
+    thresh_multi_read_pvalue: float | None = None,
+    locus_filter_descs: dict[str, str] | None = None,
+) -> list[dict]:
+    """
+    Build the signature filter funnel (variant / loci perspective).
+
+    Combines WDL-level signature filtering counts with Python-level read/signature
+    filter counts. The funnel percentage (``pct_funnel``) is measured relative to
+    the count after the ``bcftools extra args`` step (the second WDL step) when WDL
+    counts are available, otherwise relative to the first row.
+
+    Returns a list of dicts with keys: step, count, desc, pct_funnel, pct_pass.
+    ``pct_funnel``/``pct_pass`` are ``None`` for the first row (the funnel baseline).
+
+    The read-level portion is split into up to three steps: the read filter query,
+    the low-quality read filter (``thresh_noise_lq_reads``), and the multi-read
+    locus Poisson filter (``thresh_multi_read_pvalue``).
+    """
+    locus_filter_descs = locus_filter_descs or {}
+    sigs, wdl_step_descriptions = _load_wdl_funnel(filter_funnel_json_path)
+    funnel = _wdl_signature_filter_steps(sigs)
+
+    # Python-level: signature filters (loci) — applied before intersection
+    matched_sigs_filt = _matched_subset(df_signatures_filt)
+    funnel.append(
+        {
+            "step": "After signature filters (loci)",
+            "count": len(matched_sigs_filt),
+            "desc": signature_filter_query,
+        }
+    )
+
+    # Python-level read/locus filters — variant (loci) perspective. Every step is
+    # restricted to loci that survived the signature filter (the inner join in
+    # get_tf_from_filtered_data), so the funnel tracks the variants that actually feed
+    # detection and its tail converges on the signature loci with supporting reads.
+    #   1. intersection with featuremap
+    #   2. read filter query (filt/snvq/mapq)
+    #   3. low-quality read filter  -> noisy loci by LQ-read fraction (thresh_noise_lq_reads)
+    #   4. multi-read locus filter   -> Poisson outlier loci (thresh_multi_read_pvalue)
+    # df_features carries every read plus per-locus flags; df_features_filt is the final
+    # table after all applicable read/locus filters (including the multi-read filter).
+    noise_active = thresh_noise_lq_reads is not None and "locus_filter_noise" in df_features.columns
+    multi_read_active = thresh_multi_read_pvalue is not None
+
+    df_intersected = _reads_in_signature_loci(df_features, df_signatures_filt)
+    funnel.append(
+        {
+            "step": "Loci supported by cfDNA reads",
+            "count": _n_loci(_matched_subset(df_intersected)),
+            "desc": "Signature loci with at least one supporting read in the featuremap",
+        }
+    )
+
+    df_after_read_filter = _reads_in_signature_loci(df_features.query(read_filter_query), df_signatures_filt)
+    funnel.append(
+        {
+            "step": "After read filters",
+            "count": _n_loci(_matched_subset(df_after_read_filter)),
+            "desc": read_filter_query,
+        }
+    )
+    if noise_active:
+        df_after_noise = df_after_read_filter[~df_after_read_filter["locus_filter_noise"]]
+        funnel.append(
+            {
+                "step": "After low-quality read filter",
+                "count": _n_loci(_matched_subset(df_after_noise)),
+                "desc": locus_filter_descs.get("low_quality_read", ""),
+            }
+        )
+    if multi_read_active:
+        # df_features_filt has the multi-read locus filter already applied.
+        df_after_multi = _reads_in_signature_loci(df_features_filt, df_signatures_filt)
+        funnel.append(
+            {
+                "step": "Multi-read locus filter",
+                "count": _n_loci(_matched_subset(df_after_multi)),
+                "desc": locus_filter_descs.get("multi_read_locus", ""),
+            }
+        )
+
+    # Attach WDL-level step descriptions. Prefer those written into the funnel JSON
+    # by the WDL (from bcftools_extra_args and include/exclude/exact-alt region
+    # basenames); fall back to the standard defaults when absent.
+    for row in funnel:
+        desc = wdl_step_descriptions.get(row["step"]) or _WDL_STEP_DESCRIPTIONS.get(row["step"], "")
+        row.setdefault("desc", desc)
+
+    # Compute percentages. pct_funnel is relative to the "after bcftools extra args"
+    # count when WDL counts are present, otherwise the first row.
+    base = sum(s.get("after_bcftools_extra_args", 0) for s in sigs) if sigs else 0
+    if not base:
+        base = funnel[0]["count"] if funnel and funnel[0]["count"] > 0 else 0
+    _compute_funnel_percentages(funnel, base)
+
+    return funnel
+
+
+def _build_read_funnel(
+    df_features: pd.DataFrame,
+    df_features_filt: pd.DataFrame,
+    df_signatures_filt: pd.DataFrame,
+    *,
+    read_filter_query: str,
+    thresh_noise_lq_reads: float | None = None,
+    thresh_multi_read_pvalue: float | None = None,
+    locus_filter_descs: dict[str, str] | None = None,
+) -> list[dict]:
+    """
+    Build the read filter funnel (plasma read perspective).
+
+    Starts from the featuremap-signature intersection parquet (``df_features``, one
+    row per supporting read — the input to generate_report) and reports the total
+    number of reads remaining after each read/locus filter:
+      1. read filter query (filt/snvq/mapq)
+      2. low-quality read filter -> noisy loci by LQ-read fraction (thresh_noise_lq_reads)
+      3. multi-read locus filter -> Poisson outlier loci (thresh_multi_read_pvalue)
+
+    Like the signature funnel, this counts only matched-signature reads. Every step is
+    restricted to loci that survived the signature filter (the inner join in
+    get_tf_from_filtered_data), so the final step's count matches the detection's
+    supporting-reads total. ``df_features`` carries every read plus per-locus flags;
+    ``df_features_filt`` is the final table after all applicable read/locus filters
+    (including the multi-read filter). ``pct_funnel`` is relative to the intersection count.
+
+    Returns a list of dicts with keys: step, count, desc, pct_funnel, pct_pass.
+    """
+    locus_filter_descs = locus_filter_descs or {}
+    df_intersected = _reads_in_signature_loci(df_features, df_signatures_filt)
+    funnel = [
+        {
+            "step": "Featuremap-signature intersection",
+            "count": len(_matched_subset(df_intersected)),
+            "desc": "Matched-signature reads at filtered signature loci in the intersection parquet",
+        }
+    ]
+
+    noise_active = thresh_noise_lq_reads is not None and "locus_filter_noise" in df_features.columns
+    multi_read_active = thresh_multi_read_pvalue is not None
+
+    df_after_read_filter = _reads_in_signature_loci(df_features.query(read_filter_query), df_signatures_filt)
+    funnel.append(
+        {
+            "step": "After read filters",
+            "count": len(_matched_subset(df_after_read_filter)),
+            "desc": read_filter_query,
+        }
+    )
+    if noise_active:
+        df_after_noise = df_after_read_filter[~df_after_read_filter["locus_filter_noise"]]
+        funnel.append(
+            {
+                "step": "After low-quality read filter",
+                "count": len(_matched_subset(df_after_noise)),
+                "desc": locus_filter_descs.get("low_quality_read", ""),
+            }
+        )
+    if multi_read_active:
+        # df_features_filt has the multi-read locus filter already applied.
+        df_after_multi = _reads_in_signature_loci(df_features_filt, df_signatures_filt)
+        funnel.append(
+            {
+                "step": "Multi-read locus filter",
+                "count": len(_matched_subset(df_after_multi)),
+                "desc": locus_filter_descs.get("multi_read_locus", ""),
+            }
+        )
+
+    _compute_funnel_percentages(funnel, funnel[0]["count"])
+
+    return funnel
 
 
 def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:  # noqa: PLR0915, PLR0912, C901
@@ -140,10 +428,70 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         excluded_loci=excluded_loci,
     )
 
-    # 2. Run detection
-    # When the multi-read filter is active the outlier loci have already been removed,
-    # so the per-locus QC checks would trivially pass and add no information.
-    # Pass None so run_detection_analysis skips those checks entirely.
+    # Descriptions for the read-level locus filters, shared by the funnel table.
+    low_quality_read_filter_desc = ""
+    if thresh_noise_lq_reads is not None:
+        low_quality_read_filter_desc = f"lq_fraction > {thresh_noise_lq_reads}"
+    multi_read_locus_filter_desc = ""
+    if thresh_multi_read_pvalue is not None:
+        _dataset_keys = [
+            ("matched", "max_reads_per_locus"),
+            ("control", "max_reads_per_locus_control"),
+            ("db_control", "max_reads_per_locus_db_control"),
+        ]
+        _max_per_locus = ", ".join(f"{ds}={multi_read_info.get(key, 1)}" for ds, key in _dataset_keys)
+        multi_read_locus_filter_desc = (
+            f"Poisson outlier test; Bonferroni-corrected p < {thresh_multi_read_pvalue}; "
+            f"max reads/locus: {_max_per_locus}"
+        )
+
+    # 2. Build filter funnels — only meaningful with a matched signature.
+    #    - signature funnel (variant / loci perspective)
+    #    - read funnel (plasma read perspective, matched-signature reads)
+    # Without a matched signature both funnels are empty, so skip building and
+    # writing the funnel JSON entirely (the WDL declares the output optional).
+    matched_exists = bool(mrd_report_inputs.matched_signatures_vcf_files)
+    filter_funnel: list[dict] = []
+    read_funnel: list[dict] = []
+    if matched_exists:
+        _locus_filter_descs = {
+            "low_quality_read": low_quality_read_filter_desc,
+            "multi_read_locus": multi_read_locus_filter_desc,
+        }
+        filter_funnel = _build_filter_funnel(
+            mrd_report_inputs.filter_funnel_json,
+            df_features=df_features,
+            df_features_filt=df_features_filt,
+            df_signatures=df_signatures,
+            df_signatures_filt=df_signatures_filt,
+            read_filter_query=read_filter_query,
+            signature_filter_query=signature_filter_query,
+            thresh_noise_lq_reads=thresh_noise_lq_reads,
+            thresh_multi_read_pvalue=thresh_multi_read_pvalue,
+            locus_filter_descs=_locus_filter_descs,
+        )
+        read_funnel = _build_read_funnel(
+            df_features=df_features,
+            df_features_filt=df_features_filt,
+            df_signatures_filt=df_signatures_filt,
+            read_filter_query=read_filter_query,
+            thresh_noise_lq_reads=thresh_noise_lq_reads,
+            thresh_multi_read_pvalue=thresh_multi_read_pvalue,
+            locus_filter_descs=_locus_filter_descs,
+        )
+
+        # Save filter funnel JSON (both signature and read funnels)
+        funnel_fname = f"{mrd_report_inputs.output_basename}.filter_funnel.json"
+        filter_funnel_output_path = Path(mrd_report_inputs.output_dir) / funnel_fname
+        with open(filter_funnel_output_path, "w") as f:
+            json.dump({"signature_funnel": filter_funnel, "read_funnel": read_funnel}, f, indent=2)
+        logger.info(f"Filter funnel saved to {filter_funnel_output_path}")
+    else:
+        logger.info("No matched signature — skipping filter funnel output")
+
+    # 3. Run detection
+    # When the multi-read filter is active it already applied the per-locus check,
+    # so we pass None here to have run_detection_analysis skip those checks entirely.
     detection_per_locus = None if thresh_multi_read_pvalue is not None else df_supporting_reads_per_locus_filt
     detection = run_detection_analysis(
         df_tf=df_tf_filt,
@@ -154,7 +502,8 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         df_supporting_reads_per_locus=detection_per_locus,
     )
 
-    # 3. Build applied filters
+    # 5. Build applied filters (used by the QC report only; the analysis report shows
+    #    these inline in the filter funnel table).
     filter_descriptions = {
         "ug_hcr": "In UG High Confidence Region",
         "giab_hcr": "In GIAB (HG001-007) High Confidence Region",
@@ -164,21 +513,12 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     applied_filters = {k: v for k, v in filter_descriptions.items() if k in all_cols}
     applied_filters["norm_coverage"] = signature_filter_query
     applied_filters["Read filter"] = read_filter_query
-    if thresh_noise_lq_reads is not None:
-        applied_filters["Noisy loci"] = f"lq_fraction > {thresh_noise_lq_reads}"
-    if thresh_multi_read_pvalue is not None:
-        _dataset_keys = [
-            ("matched", "max_reads_per_locus"),
-            ("control", "max_reads_per_locus_control"),
-            ("db_control", "max_reads_per_locus_db_control"),
-        ]
-        _max_per_locus = ", ".join(f"{ds}={multi_read_info.get(key, 1)}" for ds, key in _dataset_keys)
-        applied_filters["Multi-read locus filter"] = (
-            f"Poisson outlier test; Bonferroni-corrected p < {thresh_multi_read_pvalue}; "
-            f"max reads/locus: {_max_per_locus}"
-        )
+    if low_quality_read_filter_desc:
+        applied_filters["Noisy loci"] = low_quality_read_filter_desc
+    if multi_read_locus_filter_desc:
+        applied_filters["Multi-read locus filter"] = multi_read_locus_filter_desc
 
-    # 4. SBS plot helper
+    # 6. SBS plot helper
     _sbs_colors = ["#1EBFF0", "#050708", "#E62725", "#CBCACB", "#A1C935", "#ECC6C5"]
 
     def plot_sbs_profile(df_sig, title="", ax=None, query=None):
@@ -210,7 +550,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         ax.spines[["top", "right"]].set_visible(False)
         return ax
 
-    # 5. Render HTML
+    # 7. Render HTML
     def _fmt_files(files):
         if not files:
             return "—"
@@ -266,10 +606,11 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         filt_ratio=filt_ratio,
         plot_sbs_fn=plot_sbs_profile,
         plot_af_fn=mrd.plot_signature_allele_fractions,
-        applied_filters=applied_filters,
         df_features=df_features,
         df_features_filt=df_features_filt,
         inputs_info=inputs_info,
+        filter_funnel=filter_funnel,
+        read_funnel=read_funnel,
     )
     results_html_path.write_text(html)
 
@@ -699,6 +1040,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=DEFAULT_LOD_RECALL,
         help=("Target recall used for personal LOD estimation. " f"Default: {DEFAULT_LOD_RECALL}."),
     )
+    parser.add_argument("--filter-funnel-json", type=str, default=None, help="Path to filter funnel JSON from WDL")
     args = parser.parse_args(argv[1:])
     if args.thresh_noise_lq_reads is not None and not (0 < args.thresh_noise_lq_reads <= 1):
         parser.error("--thresh-noise-lq-reads must be in the range (0, 1]; use 1.0 or pass without a value to disable")
@@ -736,6 +1078,7 @@ def main(argv: list[str] | None = None):
         lod_recall=args_in.lod_recall,
         thresh_noise_lq_reads=args_in.thresh_noise_lq_reads,
         thresh_multi_read_pvalue=args_in.thresh_multi_read_pvalue,
+        filter_funnel_json=args_in.filter_funnel_json,
     )
 
     results_html, qc_html = generate_mrd_report(mrd_report_inputs)

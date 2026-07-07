@@ -396,7 +396,7 @@ def render_sbs_vaf_combined(
     return sbs96_img, sbs6_vaf_img
 
 
-def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:  # noqa: C901, PLR0915
+def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:  # noqa: C901, PLR0915, PLR0912
     """Render SNVQ distribution histogram: matched (red) vs control (blue) with legend."""
     if "snvq" not in df_features_filt.columns:
         return ""
@@ -407,6 +407,10 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:  #
     matched = df_features_filt.query("signature_type == 'matched'")["snvq"].dropna()
     cohort = df_features_filt.query("signature_type == 'control'")["snvq"].dropna()
     db_ctrl = df_features_filt.query("signature_type == 'db_control'")["snvq"].dropna()
+
+    # Nothing to plot (e.g. no reads survive filtering in a no-matched-signature run).
+    if len(matched) == 0 and len(cohort) == 0 and len(db_ctrl) == 0:
+        return ""
 
     fig, ax = plt.subplots(figsize=(8, 3))
     fig.patch.set_facecolor("#f4f6f8")
@@ -819,6 +823,8 @@ def render_analysis_report(  # noqa: PLR0913
     df_features: pd.DataFrame | None = None,
     df_features_filt: pd.DataFrame | None = None,
     inputs_info: dict | None = None,
+    filter_funnel: list[dict] | None = None,
+    read_funnel: list[dict] | None = None,
 ) -> str:
     """
     Render the MRD analysis report as a self-contained HTML string.
@@ -926,6 +932,8 @@ def render_analysis_report(  # noqa: PLR0913
         "filt_ratio": filt_ratio,
         "applied_filters": applied_filters or {},
         "inputs_info": inputs_info or {},
+        "filter_funnel": filter_funnel or [],
+        "read_funnel": read_funnel or [],
     }
 
     template = _JINJA_ENV.get_template("mrd_analysis_report.html")
