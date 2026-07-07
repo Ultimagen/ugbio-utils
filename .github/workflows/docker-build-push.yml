@@ -222,3 +222,23 @@ jobs:
           for dest in $(echo "${{ env.DOCKER_DESTINATIONS }}" | sed 's/,/ /g'); do
             echo "- ${dest}" >> ${GITHUB_STEP_SUMMARY}
           done
+
+      - name: Check ECR scan results
+        id: ecr-scan
+        continue-on-error: true
+        run: |
+          python .github/utils/ecr_scan_results.py \
+            --repository "${{ inputs.docker-image }}" \
+            --tag "${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}" \
+            --output-dir . \
+            --github-output "$GITHUB_OUTPUT" \
+            --github-step-summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload scan findings artifact
+        if: steps.ecr-scan.outputs.scan_status == 'complete'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecr-scan-findings-${{ inputs.docker-image }}-${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
+          path: ${{ steps.ecr-scan.outputs.findings_file }}
+          retention-days: 90
