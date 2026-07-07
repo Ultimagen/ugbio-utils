@@ -137,7 +137,7 @@ def create_bam_record_from_alignment(
     header: pysam.AlignmentHeader,
     *,
     is_supplementary: bool = False,
-) -> pysam.AlignedSegment:
+) -> pysam.AlignedSegment | None:
     """Create a BAM record from alignment data.
 
     Parameters
@@ -168,6 +168,10 @@ def create_bam_record_from_alignment(
     pysam.AlignedSegment
         BAM record with alignment information
     """
+    # Skip records with no valid CIGAR (unmapped alignment component)
+    if not cigar or cigar == "*":
+        return None
+
     record = pysam.AlignedSegment(header)
     record.query_name = qname
     record.query_sequence = seq
@@ -175,6 +179,17 @@ def create_bam_record_from_alignment(
     record.reference_start = ref_start + begin
     record.cigarstring = cigar
     record.mapping_quality = 60
+
+    # Validate CIGAR covers full query length; add soft-clips if needed
+    cigar_qlen = record.infer_query_length()
+    seq_len = len(seq)
+    if cigar_qlen is not None and cigar_qlen != seq_len:
+        clipped = seq_len - cigar_qlen
+        if clipped > 0:
+            if is_supplementary:
+                record.cigarstring = f"{clipped}S{cigar}"
+            else:
+                record.cigarstring = f"{cigar}{clipped}S"
 
     # Set flags
     if is_supplementary:
@@ -224,7 +239,7 @@ def create_bam_records_from_simple_alignment(
     Returns
     -------
     list[pysam.AlignedSegment]
-        Single-element list containing the BAM record
+        Single-element list containing the BAM record, or empty if CIGAR is invalid
     """
     record = create_bam_record_from_alignment(
         qname=qname,
@@ -238,7 +253,7 @@ def create_bam_records_from_simple_alignment(
         header=header,
         is_supplementary=False,
     )
-    return [record]
+    return [record] if record is not None else []
 
 
 def create_bam_records_from_jump_alignment(  # noqa: PLR0913
@@ -290,7 +305,7 @@ def create_bam_records_from_jump_alignment(  # noqa: PLR0913
     Returns
     -------
     list[pysam.AlignedSegment]
-        Two-element list: [primary_record, supplementary_record]
+        List of valid BAM records (up to 2: primary and supplementary)
     """
     # Primary alignment (first component)
     primary = create_bam_record_from_alignment(
@@ -320,11 +335,19 @@ def create_bam_records_from_jump_alignment(  # noqa: PLR0913
         is_supplementary=True,
     )
 
-    # Set SA tag on primary to point to supplementary
-    sa_tag = f"{chrom},{ref2_start + begin2 + 1},{'+' if not supplementary.is_reverse else '-'},{cigar2},{60},{0};"
-    primary.set_tag("SA", sa_tag, value_type="Z")
+    records = []
+    if primary is not None:
+        if supplementary is not None:
+            sa_tag = (
+                f"{chrom},{ref2_start + begin2 + 1},"
+                f"{'+' if not supplementary.is_reverse else '-'},{cigar2},{60},{0};"
+            )
+            primary.set_tag("SA", sa_tag, value_type="Z")
+        records.append(primary)
+    if supplementary is not None:
+        records.append(supplementary)
 
-    return [primary, supplementary]
+    return records
 
 
 def count_nm_mismatches(read: pysam.AlignedSegment) -> int | None:
