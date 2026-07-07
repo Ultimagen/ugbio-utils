@@ -18,7 +18,7 @@ RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
 RUN git clone --branch ${PYPGX_BUNDLE_BRANCH} --depth 1 https://github.com/sbslee/pypgx-bundle /opt/pypgx-bundle
 
 # Install GATK
-ENV GATK_VERSION=4.5.0.0
+ENV GATK_VERSION=4.6.2.0
 RUN wget -q https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION}/gatk-${GATK_VERSION}.zip -O /tmp/gatk.zip && \
     unzip -q /tmp/gatk.zip -d /opt && \
     mv /opt/gatk-${GATK_VERSION} /opt/gatk && \

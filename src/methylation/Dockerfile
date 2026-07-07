@@ -44,7 +44,7 @@ RUN git clone https://github.com/Ultimagen/MethylDackel.git && \
 ENV PATH="/app/bin:$PATH"
 
 # Download and install gatk
-ARG GATK_VERSION=4.6.0.0
+ARG GATK_VERSION=4.6.2.0
 RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION}/gatk-${GATK_VERSION}.zip && \
     unzip gatk-${GATK_VERSION}.zip && \
     mv gatk-${GATK_VERSION} /opt/gatk && \

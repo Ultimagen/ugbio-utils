@@ -30,7 +30,7 @@ ARG BCFTOOLS_INSTALL_DIR=/opt/bcftools
 ARG BCFTOOLS_VERSION=1.20
 
 # Download and install gatk
-ARG GATK_VERSION=4.5.0.0
+ARG GATK_VERSION=4.6.2.0
 RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION}/gatk-${GATK_VERSION}.zip && \
     unzip gatk-${GATK_VERSION}.zip && \
     mv gatk-${GATK_VERSION} /opt/gatk && \

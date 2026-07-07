@@ -16,7 +16,7 @@ RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 FROM $BASE_IMAGE
 
 # Download Picard
-ARG PICARD_VERSION=3.3.0
+ARG PICARD_VERSION=3.4.0
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends --reinstall ca-certificates openjdk-17-jre-headless \
     && apt-get clean && rm -rf /var/lib/apt/lists/* && apt-get autoclean
 RUN mkdir -p /opt/picard && \
