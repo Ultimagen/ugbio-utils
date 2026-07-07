@@ -360,17 +360,17 @@ def _make_multi_read_test_data():
     locus filter tests.
 
     Loci:
-      (chr1, 100) — 5 HQ reads  → "hot" locus (should be filtered at low TF)
-      (chr1, 200) — 1 HQ read
-      (chr1, 300) — 1 HQ read
-    TF (matched_ctdna_vaf) = 0.0001
-    mean_coverage = 1000  → lambda = 0.1 per locus
-    signature_size = 3
-    P(X >= 5 | Poisson(0.1)) * 3 ≈ 1.9e-7 * 3 ≈ 5.7e-7  << threshold 0.01
-    P(X >= 1 | Poisson(0.1)) * 3 ≈ 0.095 * 3 ≈ 0.28      > threshold 0.01
+      (chr1, 100) — 10 HQ reads  → "hot" locus (> _VAF_ESTIMATE_READ_CAP=6,
+                                    excluded from background λ estimate)
+      (chr1, 200) — 1 HQ read    → background locus (≤ cap, contributes to λ)
+      (chr1, 300) — 1 HQ read    → background locus (≤ cap, contributes to λ)
+    background_reads = 2, corrected_coverage = 1000, mean_coverage = 1000
+    → vaf_estimate = 2/1000 = 0.002, λ = 2.0
+    P(X ≥ 10 | Poisson(2.0)) × 3 ≈ 1.1e-5  << threshold 0.01  → flagged
+    P(X ≥ 1  | Poisson(2.0)) × 3 ≈ 2.6      > threshold 0.01   → NOT flagged
     """
     records = []
-    for locus_pos, n_reads in [(100, 5), (200, 1), (300, 1)]:
+    for locus_pos, n_reads in [(100, 10), (200, 1), (300, 1)]:
         for i in range(n_reads):
             records.append(  # noqa: PERF401
                 {
@@ -383,7 +383,7 @@ def _make_multi_read_test_data():
     df_features_filt = pd.DataFrame(records).set_index(["chrom", "pos"])
 
     df_tf = pd.DataFrame(
-        [{"ctdna_vaf": 0.0001, "supporting_reads": 7, "corrected_coverage": 1000.0}],
+        [{"ctdna_vaf": 0.0001, "supporting_reads": 12, "corrected_coverage": 1000.0}],
         index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
     )
 
@@ -400,10 +400,10 @@ def test_apply_multi_read_locus_filter_removes_hot_locus():
     df_features_filt, df_tf, df_signatures_filt = _make_multi_read_test_data()
     df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf, df_signatures_filt, 0.01)
 
-    # Hot locus (chr1, 100) with 5 reads should be removed
+    # Hot locus (chr1, 100) with 10 reads should be removed
     assert info["n_filtered_loci"] == 1
-    assert info["n_filtered_reads"] == 5
-    assert len(df_out) == 2  # 7 total - 5 removed = 2
+    assert info["n_filtered_reads"] == 10
+    assert len(df_out) == 2  # 12 total - 10 removed = 2
 
     # Remaining rows must only be from clean loci
     remaining_positions = df_out.index.get_level_values("pos").tolist()
@@ -636,113 +636,63 @@ def test_apply_multi_read_locus_filter_never_removes_single_read_loci():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Boundary / sensitivity tests — how many reads trigger the filter at each TF
+# Sensitivity tests — cap-based background VAF estimation
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _min_reads_to_filter(matched_vaf: float, mean_coverage: float, sig_size: int, thresh: float) -> int:
-    """
-    Return the smallest k such that the Bonferroni-corrected Poisson p-value
-    P(X ≥ k | Poisson(matched_vaf × mean_coverage)) × sig_size < thresh.
-    This is the exact criterion used by apply_multi_read_locus_filter.
-    """
-    from scipy.stats import poisson
+def test_apply_multi_read_filter_cap_excludes_hot_locus_from_lambda():
+    """λ must be estimated from background loci (≤ cap reads) only.
 
-    lam = matched_vaf * mean_coverage
-    for k in range(1, 500):
-        if poisson.sf(k - 1, lam) * sig_size < thresh:
-            return k
-    raise ValueError(f"No filter threshold found for λ={lam}")
-
-
-def _make_threshold_test_fixtures(matched_vaf: float, mean_coverage: float, sig_size: int):
-    """
-    Build (df_features_filt, df_tf, df_signatures_filt) for a threshold test.
-    The locus at pos=100 is set up as a HOT locus (read count injected by the caller);
-    pos=200 and pos=300 each have a single read.
-    """
-    # df_features_filt is built by the caller – return only df_tf and df_signatures_filt here
-    df_tf = pd.DataFrame(
-        [
-            {
-                "ctdna_vaf": matched_vaf,
-                "supporting_reads": 1,
-                "corrected_coverage": float(mean_coverage),
-            }
-        ],
-        index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
-    )
-    # sig_size matched loci, each with mean_coverage coverage
-    df_signatures_filt = pd.DataFrame(
-        [
-            {"signature": "sig1", "signature_type": "matched", "coverage": float(mean_coverage)}
-            for _ in range(sig_size)
-        ]
-    )
-    return df_tf, df_signatures_filt
-
-
-@pytest.mark.parametrize(
-    "matched_vaf,mean_coverage,sig_size,thresh,expected_k_min",
-    [
-        # λ = matched_vaf × mean_coverage
-        # expected_k_min: minimum reads per locus that triggers the filter
-        (1e-5, 1000, 1000, 0.05, 2),  # λ = 0.01  — very low TF
-        (1e-4, 1000, 1000, 0.05, 4),  # λ = 0.10  — low TF
-        (5e-4, 1000, 1000, 0.05, 6),  # λ = 0.50  — intermediate
-        (1e-3, 1000, 1000, 0.05, 8),  # λ = 1.00  — medium TF
-        (5e-3, 1000, 1000, 0.05, 17),  # λ = 5.00  — high TF
-        (1e-2, 1000, 1000, 0.05, 25),  # λ = 10.0  — very high TF
-    ],
-)
-def test_apply_multi_read_filter_boundary_at_each_tf(matched_vaf, mean_coverage, sig_size, thresh, expected_k_min):
-    """
-    At each TF level verify that:
-    * A locus with exactly k_min - 1 reads is NOT filtered.
-    * A locus with exactly k_min reads IS filtered.
-
-    k_min is the minimum per-locus read count that makes the Bonferroni
-    Poisson p-value fall below *thresh*.  The test also prints k_min so the
-    caller can see the sensitivity at each TF.
+    Setup: 2 clean background loci (1 read each) + 1 hot locus (10 reads, > cap=6).
+      background_reads = 2, corrected_coverage = 1000, mean_coverage = 1000
+      → vaf_estimate = 2/1000 = 0.002, λ = 2.0
+    At λ = 2.0 and Bonferroni N = 3:
+      P(X ≥ 10 | Poisson(2.0)) × 3 ≈ 1.1e-5  → flagged
+      P(X ≥ 1  | Poisson(2.0)) × 3 ≈ 2.6     → NOT flagged (clean loci survive)
     """
     from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
 
-    lam = matched_vaf * mean_coverage
-    k_min = _min_reads_to_filter(matched_vaf, mean_coverage, sig_size, thresh)
-    assert k_min == expected_k_min, f"TF={matched_vaf}, λ={lam:.3f}: expected k_min={expected_k_min}, got {k_min}"
+    df_features_filt, df_tf, df_signatures_filt = _make_multi_read_test_data()
+    df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf, df_signatures_filt, 0.05)
 
-    df_tf, df_signatures_filt = _make_threshold_test_fixtures(matched_vaf, mean_coverage, sig_size)
+    assert info["n_filtered_loci"] == 1
+    remaining = df_out.index.get_level_values("pos").tolist()
+    assert 100 not in remaining
+    assert 200 in remaining and 300 in remaining
 
-    def _build_features(reads_at_hot_locus: int) -> pd.DataFrame:
-        rows = [
-            {"chrom": "chr1", "pos": 100, "signature": "sig1", "signature_type": "matched"}
-            for _ in range(reads_at_hot_locus)
-        ] + [
-            {"chrom": "chr1", "pos": 200, "signature": "sig1", "signature_type": "matched"},
-            {"chrom": "chr1", "pos": 300, "signature": "sig1", "signature_type": "matched"},
-        ]
+
+def test_apply_multi_read_filter_cap_boundary():
+    """The transition at cap+1 reads: loci with ≤ cap reads inflate λ; loci above cap are flagged.
+
+    Two scenarios with identical 2-read background loci (pos=200, pos=300):
+      Scenario A: hot locus has cap=6 reads → included in background → λ = 8.0 → NOT flagged.
+      Scenario B: hot locus has cap+1=7 reads → excluded from background → λ = 2.0 → flagged.
+    """
+    from ugbio_mrd.mrd_utils import _VAF_ESTIMATE_READ_CAP, apply_multi_read_locus_filter
+
+    def _build(hot_reads: int) -> pd.DataFrame:
+        rows = (
+            [{"chrom": "chr1", "pos": 100, "signature": "sig1", "signature_type": "matched"}] * hot_reads
+            + [{"chrom": "chr1", "pos": 200, "signature": "sig1", "signature_type": "matched"}]
+            + [{"chrom": "chr1", "pos": 300, "signature": "sig1", "signature_type": "matched"}]
+        )
         return pd.DataFrame(rows).set_index(["chrom", "pos"])
 
-    # ── one read below threshold: must NOT be filtered ──
-    if k_min > 1:
-        df_below = _build_features(k_min - 1)
-        df_out_below, info_below = apply_multi_read_locus_filter(df_below, df_tf, df_signatures_filt, thresh)
-        assert info_below["n_filtered_loci"] == 0, (
-            f"TF={matched_vaf}, λ={lam:.3f}: locus with {k_min - 1} reads should NOT be filtered "
-            f"(Bonferroni p={info_below['min_bonferroni_pval']:.4f} ≥ {thresh}), k_min={k_min}"
-        )
-        assert len(df_out_below) == len(df_below)
-
-    # ── exactly at threshold: must BE filtered ──
-    df_at = _build_features(k_min)
-    df_out_at, info_at = apply_multi_read_locus_filter(df_at, df_tf, df_signatures_filt, thresh)
-    assert info_at["n_filtered_loci"] == 1, (
-        f"TF={matched_vaf}, λ={lam:.3f}: locus with {k_min} reads SHOULD be filtered "
-        f"(Bonferroni p={info_at['min_bonferroni_pval']:.4f} < {thresh}), k_min={k_min}"
+    df_tf = pd.DataFrame(
+        [{"ctdna_vaf": 0.001, "supporting_reads": 10, "corrected_coverage": 1000.0}],
+        index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
     )
-    # Clean loci (single reads at pos 200, 300) must survive
-    remaining = df_out_at.reset_index()
-    assert set(remaining["pos"].unique()) == {
-        200,
-        300,
-    }, f"Only the hot locus (pos=100) should be removed; k_min={k_min}"
+    df_sig = pd.DataFrame(
+        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)]
+    )
+
+    # At-cap (6 reads) → included in background, λ inflated, NOT flagged
+    df_at_cap, info_at = apply_multi_read_locus_filter(_build(_VAF_ESTIMATE_READ_CAP), df_tf, df_sig, 0.05)
+    assert info_at["n_filtered_loci"] == 0, "Loci at the cap must not be flagged (they define background)"
+
+    # Above-cap (7 reads) → excluded from background, λ = 2.0, flagged
+    df_above_cap, info_above = apply_multi_read_locus_filter(
+        _build(_VAF_ESTIMATE_READ_CAP + 1), df_tf, df_sig, 0.05
+    )
+    assert info_above["n_filtered_loci"] == 1, "Loci above cap must be flagged"
+

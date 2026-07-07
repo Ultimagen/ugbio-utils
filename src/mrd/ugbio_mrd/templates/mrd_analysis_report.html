@@ -250,7 +250,7 @@
           <div class="stat">
             <span class="stat-label">Personal LOD</span>
             <span class="stat-value">{{ lod_str }}</span>
-            <span class="stat-sub">95% recall · 5% FPR</span>
+            <span class="stat-sub">{{ "%.0f"|format(detection.lod_recall * 100) }}% recall · {{ "%.0f"|format(detection.lod_fpr * 100) }}% FPR</span>
           </div>
           <div class="stat">
             <span class="stat-label">Supporting Reads</span>
@@ -318,19 +318,15 @@
     <div class="section">
       <div class="section-title">Patient vs. Controls</div>
       <div class="chart-container">
-        <img src="data:image/png;base64,{{ signal_noise_img }}" alt="Signal vs. Noise distribution">
+        <img src="data:image/png;base64,{{ signal_noise_img }}" alt="Patient vs. Controls" style="max-width:100%;">
       </div>
       <div class="chart-description">
-        <strong>Left axis:</strong> cfDNA reads supporting signature (log scale).
-        <strong>Right axis:</strong> ctDNA VAF (reads &divide; corrected coverage).<br>
-        <span style="color:#3a9ad9;">&#9679;</span> Blue dots: synthetic control read counts (db_control signatures sampled from a population panel).
-        Blue violin: fitted Binomial null Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }}).<br>
-        <span style="color:#9b59b6;">&#9670;</span> Purple diamonds: cohort controls &mdash; other patients&rsquo; signatures evaluated on <em>this</em> patient&rsquo;s
-        plasma. Because their signatures cover different loci at different depths, their raw read counts
-        are not comparable to the patient&rsquo;s; they are therefore plotted at their own ctDNA VAF (right axis).<br>
-        Orange dashed line: detection threshold (min reads for p&nbsp;&lt;&nbsp;{{ "%.0f"|format(detection.alpha * 100) }}%,
-        Binomial test). Green dash-dot line: LOD (95% recall at 5% FPR).
-        <span style="color:#c0392b;">&#9733;</span> Red star: patient signal.
+        <span style="color:#c0392b;">&#9733;</span> <strong>Patient:</strong> matched patient signature.<br>
+        <span style="color:#3a9ad9;">&#9679;</span> <strong>Synthetic control signatures:</strong> Signatures drawn from db_control.<br>
+        <strong>Blue violin:</strong> Fitted Binomial, according to synthetic control error-rates: Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }}).<br>
+        <span style="color:#e67e22;">&#9135;&#9135;</span> Detection threshold (min VAF for Binomial p&nbsp;&lt;&nbsp;{{ "%.0f"|format(detection.alpha * 100) }}%).<br>
+        <span style="color:#27ae60;">&#183;&ndash;&#183;</span> LOD (min VAF for {{ "%.0f"|format(detection.lod_recall * 100) }}% recall at {{ "%.0f"|format(detection.lod_fpr * 100) }}% FPR).<br>
+        <span style="color:#9b59b6;">&#9670;</span> Cohort control signatures.
       </div>
     </div>
 
