@@ -25,6 +25,10 @@ RUN wget -q https://github.com/broadinstitute/gatk/releases/download/${GATK_VERS
     ln -s /opt/gatk/gatk /usr/local/bin/gatk && \
     rm /tmp/gatk.zip
 
+# Patch GATK fat JAR: upgrade bundled netty and zookeeper to fix CVEs
+COPY docker/patch-gatk-jars.sh /tmp/patch-gatk-jars.sh
+RUN chmod +x /tmp/patch-gatk-jars.sh && /tmp/patch-gatk-jars.sh && rm /tmp/patch-gatk-jars.sh
+
 # Remove unnecessary packages and recreate python3 symlink
 RUN apt-get purge -y git wget unzip && \
     apt-get autoremove -y && \

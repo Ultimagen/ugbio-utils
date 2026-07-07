@@ -29,6 +29,10 @@ RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION
     ln -s /opt/gatk/gatk /usr/local/bin/gatk && \
     rm gatk-${GATK_VERSION}.zip
 
+# Patch GATK fat JAR: upgrade bundled netty and zookeeper to fix CVEs
+COPY docker/patch-gatk-jars.sh /tmp/patch-gatk-jars.sh
+RUN chmod +x /tmp/patch-gatk-jars.sh && /tmp/patch-gatk-jars.sh && rm /tmp/patch-gatk-jars.sh
+
 # Download and install bigWigToBedGraph
 RUN wget http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64.v385/bigWigToBedGraph -O /usr/local/bin/bigWigToBedGraph \
     && chmod +x /usr/local/bin/bigWigToBedGraph
