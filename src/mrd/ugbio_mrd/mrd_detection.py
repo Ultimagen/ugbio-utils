@@ -112,8 +112,8 @@ class DetectionResult:
     null_max_reads: int
     n_synthetic_controls: int
 
-    # Personal LOD (95% recall)
-    personal_lod: float | None  # TF at which recall >= 95%
+    # Personal LOD (recall and FPR controlled by lod_recall / lod_fpr)
+    personal_lod: float | None  # TF at which recall >= lod_recall (incremental, above p_err)
 
     # Null distribution (raw supporting read counts for each synthetic control)
     null_reads: np.ndarray  # shape (n_synthetic_controls,), dtype int
@@ -122,7 +122,7 @@ class DetectionResult:
     signature_size: int  # number of loci in filtered signature
     mean_coverage: float  # mean coverage at signature loci
     corrected_coverage: float  # total corrected coverage
-    detection_threshold: int  # minimum reads for p < alpha from fitted null
+    detection_threshold: int | None  # minimum reads for p < alpha from fitted null; None when no threshold exists
 
     # Binomial model fields
     noise_rate: float  # background error rate from db_control (p_err)
@@ -287,7 +287,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             signature_size=0,
             mean_coverage=0.0,
             corrected_coverage=0.0,
-            detection_threshold=0,
+            detection_threshold=None,
             noise_rate=0.0,
             n_effective=0,
             jeffreys_prior_applied=False,
@@ -491,11 +491,12 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         detected = False
         call = "MRD Not Detected"
 
-    # Detection threshold from Binomial model: smallest k s.t. Binom.sf(k-1, n_effective, p_err) < alpha
+    # Detection threshold from Binomial model: smallest k s.t. Binom.sf(k-1, n_effective, p_err) < alpha.
+    # Returns None when no integer threshold satisfies the criterion (e.g. noise too diffuse for alpha).
     if n_effective > 0 and p_err > 0:
-        detection_threshold = _binom_detection_threshold(n_effective, p_err, alpha) or 1
+        detection_threshold = _binom_detection_threshold(n_effective, p_err, alpha)
     else:
-        detection_threshold = 1
+        detection_threshold = None
 
     # Personal LOD: smallest TF where recall >= lod_recall, at FPR = lod_fpr.
     personal_lod = compute_personal_lod(
@@ -530,92 +531,55 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     )
 
 
-def plot_null_distribution(  # noqa: PLR0915, PLR0912, C901
+def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
     detection: "DetectionResult",
-    df_tf: pd.DataFrame,
+    df_tf: pd.DataFrame,  # kept for API compatibility; cohort controls shown in separate scatter  # noqa: ARG001
     ax=None,
 ):
     """
-    Vertical strip/violin plot: signal vs. noise for MRD detection.
+    Vertical strip/violin plot: patient vs. synthetic controls.
 
-    Y-axis (left):  cfDNA reads supporting signature (log scale).
-    Y-axis (right): cfDNA fraction = reads / corrected_coverage.
-    X-positions:    0=empirical synthetics, 0.55=fitted-null samples,
-                    1.4=cohort controls, 2.2=patient signal.
+    Left Y-axis (log): ctDNA VAF.
+    Right Y-axis (log): Signature supporting reads (= VAF × corrected_coverage).
 
-    For synthetic controls two side-by-side violins are drawn:
-    - Empirical (blue):  the actual supporting read counts.
-    - Fitted null (purple): samples from the fitted Poisson/NB distribution,
-      showing how well the parametric model matches the empirical data.
-
-    Detection threshold: minimum reads needed for Binomial p-value < alpha
-    (read from detection.alpha) drawn as a dashed line on the scatter plot.
-    LOD line uses DEFAULT_LOD_FPR (5%) regardless of detection alpha.
-
-    Parameters
-    ----------
-    detection : DetectionResult
-        Result from run_detection_analysis().
-    df_tf : pd.DataFrame
-        Tumor fraction dataframe (index: signature_type, signature).
-    ax : matplotlib.axes.Axes, optional
-        Axes to draw on. Creates a new figure if None.
+    * Synthetic controls: null_reads / corrected_coverage (VAF scale).
+    * Patient: matched_ctdna_vaf; legend includes read count.
+    * Cohort controls are shown in a separate scatter plot.
     """
     if ax is None:
-        _, ax = plt.subplots(figsize=(8, 6))
+        _, ax = plt.subplots(figsize=(8, 5))
 
     null = detection.null_reads
     obs = detection.matched_supporting_reads
     corr_cov = detection.corrected_coverage
+    _vaf_floor = 1e-7
 
-    # Floor: map 0 reads to 1e-7 fraction on the log scale.
-    # Computed from coverage so the fraction axis sits at 1e-7 for zero-read points.
-    _fraction_floor = 1e-7
-    _floor = max(_fraction_floor * corr_cov, 0.01) if corr_cov > 0 else 0.01
+    def _safe_vaf(v):
+        return max(float(v), _vaf_floor)
 
-    def _safe(v):
-        """Map 0 → _floor so log scale is well-defined."""
-        return max(float(v), _floor)
-
-    # --- Empirical synthetic controls: jittered scatter only ---
-    x_emp = 0.0
-    x_fit = 0.6
-    if len(null) > 0:
-        null_plot = np.array([_safe(v) for v in null])
+    # ── Synthetic controls ────────────────────────────────────────────────────
+    x_emp, x_fit = 0.0, 0.6
+    if len(null) > 0 and corr_cov > 0:
+        null_vafs = np.array([_safe_vaf(v / corr_cov) for v in null])
         rng = np.random.default_rng(42)
-        jitter = rng.uniform(-0.14, 0.14, size=len(null))
-        ax.scatter(
-            x_emp + jitter,
-            null_plot,
-            color="#3a9ad9",
-            s=30,
-            alpha=0.8,
-            zorder=4,
-            label=f"Synthetic controls (n={len(null)})",
-        )
+        ax.scatter(x_emp + rng.uniform(-0.14, 0.14, size=len(null)), null_vafs,
+                   color="#3a9ad9", s=30, alpha=0.8, zorder=4,
+                   label=f"Synthetic controls (n={len(null)})")
 
-        # --- Binomial null distribution: boxplot ---
         n_eff = getattr(detection, "n_effective", 0)
         p_err_val = getattr(detection, "noise_rate", 0.0)
-        n_samples = max(len(null) * 20, 500)
         rng2 = np.random.default_rng(7)
         if n_eff > 0:
-            fit_samples = binom.rvs(n_eff, p_err_val, size=n_samples, random_state=rng2)
+            fit_reads = binom.rvs(n_eff, p_err_val, size=max(len(null) * 20, 500), random_state=rng2)
             p_err_str = format_scientific(p_err_val) if p_err_val > 0 else "0"
-            fit_label = f"Binomial null (N={n_eff:,}, p_err={p_err_str})"
+            fit_label = f"Binomial null (p_err={p_err_str})"
+            fit_vafs = np.array([_safe_vaf(r / n_eff) for r in fit_reads])
         else:
-            # Fallback: Poisson from empirical null mean
             lam = float(np.mean(null)) if len(null) > 0 else 0.01
-            fit_samples = poisson.rvs(max(lam, 1e-9), size=n_samples, random_state=rng2)
+            fit_reads = poisson.rvs(max(lam, 1e-9), size=max(len(null) * 20, 500), random_state=rng2)
             fit_label = f"Poisson fallback (λ={lam:.2f})"
-        fit_plot = np.array([_safe(v) for v in fit_samples])
-        vp = ax.violinplot(
-            fit_plot,
-            positions=[x_fit],
-            widths=0.35,
-            showmedians=True,
-            showextrema=True,
-        )
+            fit_vafs = np.array([_safe_vaf(r / max(corr_cov, 1)) for r in fit_reads])
+        vp = ax.violinplot(fit_vafs, positions=[x_fit], widths=0.35, showmedians=True, showextrema=True)
         for body in vp["bodies"]:
             body.set_facecolor("#3a9ad9")
             body.set_edgecolor("#3a9ad9")
@@ -623,121 +587,160 @@ def plot_null_distribution(  # noqa: PLR0915, PLR0912, C901
         for part in ("cbars", "cmins", "cmaxes"):
             vp[part].set_color("#3a9ad9")
         vp["cmedians"].set_color("#1e6e9e")
-        # Invisible scatter for legend entry
         ax.scatter([], [], color="#3a9ad9", s=30, alpha=0.4, marker="s", label=fit_label)
 
-    # --- Cohort controls ---
-    # Plotted at their own ctDNA VAF scaled by the patient's corrected_coverage so that
-    # the right (VAF) axis gives the correct per-control value.  Raw supporting-read
-    # counts are intentionally NOT used: cohort-control signatures cover different loci
-    # at different depths from the patient signature, so their read counts are not
-    # comparable to the patient's on the same axis.
-    x_cohort = 1.5
-    try:
-        ctrl_vafs = df_tf.loc["control"]["ctdna_vaf"]
-        if isinstance(ctrl_vafs, int | float | np.integer | np.floating):
-            ctrl_vafs = pd.Series([ctrl_vafs])
-        rng3 = np.random.default_rng(99)
-        jitter_c = rng3.uniform(-0.14, 0.14, size=len(ctrl_vafs))
-        for i, vaf in enumerate(ctrl_vafs.values):
-            y = _safe(float(vaf) * corr_cov) if corr_cov > 0 else _safe(float(vaf))
-            ax.scatter(
-                [x_cohort + jitter_c[i]],
-                [y],
-                color="#9b59b6",
-                s=30,
-                marker="D",
-                zorder=5,
-                alpha=0.8,
-                label="Cohort controls" if i == 0 else "_nolegend_",
-            )
-    except KeyError:
-        logger.debug("Cohort control data not found in df_tf; plotting without cohort controls.")
-
-    # --- Patient signal ---
-    x_patient = 2.3
-    ax.scatter([x_patient], [_safe(obs)], color="#c0392b", s=160, marker="*", zorder=6, label=f"Patient ({obs} reads)")
-
-    # --- Detection threshold / LOD line ---
-    # n_th: smallest k s.t. P(X >= k | n_eff, p_err) < detection.alpha (via _binom_detection_threshold).
-    # LOD uses DEFAULT_LOD_FPR (5%) independently.
-    n_th_plot = None
+    # ── Compute threshold in VAF before plotting ──────────────────────────────
+    det_vaf = None
     lod_tf_plot = None
     n_eff_plot = getattr(detection, "n_effective", 0)
     p_err_plot = getattr(detection, "noise_rate", 0.0)
-    if n_eff_plot > 0:
-        _alpha_plot = getattr(detection, "alpha", DEFAULT_ALPHA)
-        n_th_plot = _binom_detection_threshold(n_eff_plot, p_err_plot, _alpha_plot)
-        if n_th_plot is not None:
-            _lod_fpr_plot = getattr(detection, "lod_fpr", DEFAULT_LOD_FPR)
-            _lod_recall_plot = getattr(detection, "lod_recall", 0.95)
-            lod_tf_plot = compute_personal_lod(
-                n=int(n_eff_plot),
-                p_err=p_err_plot,
-                target_recall=_lod_recall_plot,
-                fpr=_lod_fpr_plot,
-            )
-            # Detection threshold line: minimum reads to call a positive (alpha)
-            n_th_vaf = n_th_plot / n_eff_plot
-            ax.axhline(
-                _safe(n_th_plot),
-                color="#e67e22",
-                linewidth=1.8,
-                linestyle="--",
-                alpha=0.9,
-                zorder=4,
-                label=f"Detection threshold ({format_scientific(n_th_vaf)}) | α={_alpha_plot * 100:.0f}%",
-            )
-            if lod_tf_plot is not None:
-                lod_str = format_scientific(lod_tf_plot)
-                # LOD line: expected reads at the LOD TF (n_eff × (p_err + LOD_TF))
-                n_lod = float(n_eff_plot) * (p_err_plot + lod_tf_plot)
-                ax.axhline(
-                    _safe(n_lod),
-                    color="#27ae60",
-                    linewidth=1.8,
-                    linestyle="-.",
-                    alpha=0.9,
-                    zorder=4,
-                    label=f"LOD ({n_lod:.1f} reads) = {lod_str} | 95% recall",
-                )
+    _alpha_plot = getattr(detection, "alpha", DEFAULT_ALPHA)
+    if n_eff_plot > 0 and corr_cov > 0:
+        n_th = _binom_detection_threshold(n_eff_plot, p_err_plot, _alpha_plot)
+        if n_th is not None:
+            det_vaf = n_th / corr_cov
+        lod_tf_plot = compute_personal_lod(
+            n=int(n_eff_plot), p_err=p_err_plot,
+            target_recall=getattr(detection, "lod_recall", 0.95),
+            fpr=getattr(detection, "lod_fpr", DEFAULT_LOD_FPR),
+        )
 
-    # --- Log scale + y limits ---
+    # ── Patient signal ────────────────────────────────────────────────────────
+    x_pat = 1.5
+    pat_vaf = _safe_vaf(detection.matched_ctdna_vaf)
+    pat_vaf_str = format_scientific(detection.matched_ctdna_vaf) if detection.matched_ctdna_vaf > 0 else "0"
+    ax.scatter([x_pat], [pat_vaf], color="#c0392b", s=160, marker="*", zorder=6,
+               label=f"Patient ({obs} reads, {pat_vaf_str})")
+
+    # ── Threshold / LOD lines in VAF ─────────────────────────────────────────
+    if det_vaf is not None and n_eff_plot > 0:
+        n_th_reads = int(round(det_vaf * corr_cov))
+        _det_label = (
+            f"Detection threshold ({format_scientific(det_vaf)}, {n_th_reads} reads)"
+            f" | α={_alpha_plot * 100:.0f}%"
+        )
+        ax.axhline(_safe_vaf(det_vaf), color="#e67e22", linewidth=1.8, linestyle="--", alpha=0.9, zorder=4,
+                   label=_det_label)
+    if lod_tf_plot is not None and n_eff_plot > 0:
+        # LOD line at total VAF = p_err + lod_tf so it sits on the same scale as
+        # the patient star and synthetic controls (which also show total VAF).
+        lod_total_vaf = p_err_plot + lod_tf_plot
+        n_lod_reads = int(round(n_eff_plot * lod_total_vaf))
+        _lod_recall_plot = getattr(detection, "lod_recall", 0.95)
+        _lod_label = (
+            f"LOD = {format_scientific(lod_total_vaf)} ({n_lod_reads} reads)"
+            f" | {_lod_recall_plot * 100:.0f}% recall"
+        )
+        ax.axhline(_safe_vaf(lod_total_vaf), color="#27ae60", linewidth=1.8, linestyle="-.", alpha=0.9, zorder=4,
+                   label=_lod_label)
+
+    # ── Scale / labels ────────────────────────────────────────────────────────
     ax.set_yscale("log")
-    n_lod_top = float(n_eff_plot) * (p_err_plot + lod_tf_plot) if (lod_tf_plot and n_eff_plot) else 1
-    y_top = max(_safe(obs), float(null.max()) if len(null) > 0 else 1, n_th_plot if n_th_plot else 1, n_lod_top) * 6
-    ax.set_ylim(_floor * 0.6, y_top)
-
-    # --- Grid behind all data ---
+    y_vals = [pat_vaf] + (list(null / corr_cov) if len(null) > 0 and corr_cov > 0 else [])
+    if lod_tf_plot:
+        y_vals.append(lod_tf_plot)
+    ax.set_ylim(_vaf_floor * 0.5, max(y_vals) * 8)
     ax.set_axisbelow(True)
     ax.yaxis.grid(True, which="both", linestyle=":", linewidth=0.6, color="#dde1e7", alpha=0.9)  # noqa: FBT003
     ax.set_facecolor("#f4f6f8")
+    ax.set_ylabel("ctDNA VAF", fontsize=10)
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y, _: format_scientific(y) if y > 0 else "0"))
+    ax.set_xlim(-0.5, 2.3)
+    ax.set_xticks([0.3, x_pat])
+    ax.set_xticklabels(["Synthetic\ncontrols", "Patient"])
+    binom_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
+    ax.set_title(f"Patient vs. controls  (p={binom_str})", fontsize=11, fontweight="bold")
+    ax.legend(fontsize=7, framealpha=0.85, loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=2)
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(0.8)
 
-    # --- Primary Y-axis label ---
-    ax.set_ylabel("cfDNA reads supporting signature", fontsize=10)
-    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y, _: f"{int(round(y))}" if y >= 0.9 else "0"))  # noqa: PLR2004
-
-    # --- Secondary Y-axis: ctDNA VAF ---
+    # ── Right axis: supporting reads aligned to left VAF axis ─────────────────
     if corr_cov > 0:
         ax2 = ax.twinx()
+        y_min, y_max = ax.get_ylim()
         ax2.set_yscale("log")
-        ax2.set_ylim(_floor * 0.6 / corr_cov, y_top / corr_cov)
-        ax2.set_ylabel("ctDNA VAF", fontsize=10)
-        ax2.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y, _: format_scientific(y) if y > 0 else "0"))
-        # Move secondary y-axis label further out to avoid overlap with tick labels
-        ax2.yaxis.set_label_coords(1.18, 0.5)
+        ax2.set_ylim(y_min * corr_cov, y_max * corr_cov)
+        ax2.set_ylabel("Signature supporting reads", fontsize=10)
+        ax2.yaxis.set_major_formatter(
+            mticker.FuncFormatter(lambda y, _: f"{int(round(y))}" if y >= 0.5 else "")  # noqa: PLR2004
+        )
+        for spine in ax2.spines.values():
+            spine.set_visible(True)
+            spine.set_linewidth(0.8)
 
-    # --- X-axis labels ---
-    ax.set_xlim(-0.5, 3.0)
-    ax.set_xticks([0.3, 1.5, 2.3])
-    ax.set_xticklabels(["Synthetic\ncontrols", "Cohort\ncontrols", "Patient"])
 
-    # --- Title ---
-    binom_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
-    title = f"Patient vs. controls  (p={binom_str})"
-    ax.set_title(title, fontsize=11, fontweight="bold")
-    ax.legend(fontsize=7, framealpha=0.85, loc="upper left", bbox_to_anchor=(1.18, 1), borderaxespad=0)
-    ax.spines["top"].set_visible(False)
+def plot_cohort_scatter(
+    detection: "DetectionResult",
+    df_tf: pd.DataFrame,
+    ctrl_n_loci: "pd.Series",
+    ax=None,
+):
+    """
+    Scatter plot: cohort control signature size (x) vs ctDNA VAF (y).
+
+    Each cohort control is plotted as a purple diamond at its own (signature_size, ctdna_vaf).
+    The patient is shown as a red star at (patient_signature_size, patient_ctdna_vaf).
+
+    Parameters
+    ----------
+    detection : DetectionResult
+        Used for patient VAF, read count and signature size.
+    df_tf : pd.DataFrame
+        Tumor fraction table indexed by (signature_type, signature); must contain
+        a "control" level with columns ``ctdna_vaf`` and ``supporting_reads``.
+    ctrl_n_loci : pd.Series
+        Number of loci per cohort control signature (index = signature name).
+    ax : matplotlib Axes, optional
+        If None a new figure is created.
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(6, 4))
+
+    _vaf_floor = 1e-7
+
+    try:
+        ctrl_mask = df_tf.index.get_level_values(0) == "control"
+        if not ctrl_mask.any():
+            logger.debug("plot_cohort_scatter: no cohort controls in df_tf")
+            return
+        ctrl_tf = df_tf[ctrl_mask].droplevel(0)  # signature level only; always a DataFrame
+    except (KeyError, IndexError):
+        logger.debug("plot_cohort_scatter: no cohort controls in df_tf")
+        return
+
+    xs = np.array([int(ctrl_n_loci.get(name, 0)) for name in ctrl_tf.index])
+    ys_raw = ctrl_tf["ctdna_vaf"].to_numpy(dtype=float)
+    ys = np.array([max(float(v), _vaf_floor) for v in ys_raw])
+
+    ax.scatter(
+        xs, ys,
+        color="#9b59b6", s=60, marker="D", alpha=0.85, zorder=5,
+        label=f"Cohort controls (n={len(xs)})",
+    )
+
+    # Patient star
+    pat_vaf = max(float(detection.matched_ctdna_vaf), _vaf_floor)
+    pat_size = detection.signature_size
+    pat_vaf_str = format_scientific(detection.matched_ctdna_vaf) if detection.matched_ctdna_vaf > 0 else "0"
+    ax.scatter(
+        [pat_size], [pat_vaf],
+        color="#c0392b", s=180, marker="*", zorder=6,
+        label=f"Patient ({detection.matched_supporting_reads} reads, {pat_vaf_str})",
+    )
+
+    ax.set_yscale("log")
+    ax.set_xlabel("Signature size (loci)", fontsize=10)
+    ax.set_ylabel("ctDNA VAF", fontsize=10)
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y, _: format_scientific(y) if y > 0 else "0"))
+    ax.set_title("Cohort controls: signature size vs. ctDNA VAF", fontsize=11, fontweight="bold")
+    ax.set_axisbelow(True)
+    ax.yaxis.grid(True, which="both", linestyle=":", linewidth=0.6, color="#dde1e7", alpha=0.9)  # noqa: FBT003
+    ax.set_facecolor("#f4f6f8")
+    ax.legend(fontsize=8, framealpha=0.85, loc="upper center", bbox_to_anchor=(0.5, -0.15))
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_linewidth(0.8)
 
 
 _SUPERSCRIPT_MINUS = "\u207b"
