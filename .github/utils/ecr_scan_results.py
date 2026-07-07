@@ -19,10 +19,9 @@ import subprocess
 import time
 from pathlib import Path
 
-MAX_ATTEMPTS = 20
+MAX_ATTEMPTS = 12
 POLL_INTERVAL_SECONDS = 15
-TERMINAL_STATUSES = {"SCAN_ELIGIBILITY_EXPIRED", "UNSUPPORTED_IMAGE", "FAILED"}
-COMPLETE_STATUSES = {"COMPLETE", "ACTIVE"}
+INITIAL_DELAY_SECONDS = 30
 
 
 def aws_cli(args: list[str]) -> dict | None:
@@ -54,42 +53,29 @@ def get_image_digest(repository: str, tag: str) -> str | None:
     return details[0].get("imageDigest")
 
 
-def get_scan_status(repository: str, digest: str) -> str:
-    """Get the current scan status for an image."""
-    data = aws_cli(
-        [
-            "ecr",
-            "describe-images",
-            "--repository-name",
-            repository,
-            "--image-ids",
-            f"imageDigest={digest}",
-        ]
-    )
-    if not data:
-        return "UNKNOWN"
-    details = data.get("imageDetails", [])
-    if not details:
-        return "UNKNOWN"
-    scan_status = details[0].get("imageScanStatus", {})
-    return scan_status.get("status", "PENDING")
+def poll_inspector_findings(repository: str, digest: str) -> dict | None:
+    """Poll Inspector2 until findings appear or timeout. Returns findings data or None."""
+    print(f"Waiting {INITIAL_DELAY_SECONDS}s for Enhanced Scan to begin processing...")
+    time.sleep(INITIAL_DELAY_SECONDS)
 
-
-def wait_for_scan(repository: str, digest: str) -> str:
-    """Poll until scan completes or times out. Returns final status."""
-    print(f"Waiting for scan (max {MAX_ATTEMPTS * POLL_INTERVAL_SECONDS}s)...")
+    max_wait = MAX_ATTEMPTS * POLL_INTERVAL_SECONDS
+    print(f"Polling Inspector2 for findings (max {max_wait}s)...")
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        status = get_scan_status(repository, digest)
-        print(f"  Attempt {attempt}/{MAX_ATTEMPTS}: status = {status}")
+        findings_data = get_inspector_findings(repository, digest)
+        if findings_data is None:
+            print(f"  Attempt {attempt}/{MAX_ATTEMPTS}: Inspector2 API unavailable")
+            return None
 
-        if status in COMPLETE_STATUSES:
-            return status
-        if status in TERMINAL_STATUSES:
-            return status
+        count = len(findings_data.get("findings", []))
+        print(f"  Attempt {attempt}/{MAX_ATTEMPTS}: {count} findings")
+
+        if count > 0:
+            return findings_data
 
         time.sleep(POLL_INTERVAL_SECONDS)
 
-    return "TIMEOUT"
+    # Final attempt — return whatever we have (may be 0 findings = clean image)
+    return findings_data
 
 
 def get_inspector_findings(repository: str, digest: str) -> dict | None:
@@ -218,20 +204,8 @@ def main():
 
     print(f"Image digest: {digest}")
 
-    # Wait for scan
-    status = wait_for_scan(args.repository, digest)
-    if status in TERMINAL_STATUSES:
-        print(f"::warning::Scan status: {status}. Cannot retrieve findings.")
-        set_output("scan_status", status)
-        return
-    if status == "TIMEOUT":
-        print(f"::warning::ECR scan did not complete within {MAX_ATTEMPTS * POLL_INTERVAL_SECONDS}s.")
-        set_output("scan_status", "timeout")
-        return
-
-    # Retrieve findings
-    print("Retrieving Inspector2 findings...")
-    findings_data = get_inspector_findings(args.repository, digest)
+    # Poll Inspector2 for findings (Enhanced Scanning has no scan-status field)
+    findings_data = poll_inspector_findings(args.repository, digest)
     if findings_data is None:
         print("::warning::Could not retrieve Inspector2 findings (Enhanced Scanning may not be enabled).")
         set_output("scan_status", "inspector_unavailable")
