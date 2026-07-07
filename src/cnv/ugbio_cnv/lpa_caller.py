@@ -736,14 +736,14 @@ def _write_vcf(
         '##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">',
         '##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="Length of structural variant">',
         '##INFO=<ID=SVCLAIM,Number=1,Type=String,Description="Claims supported for the structural variant (D=depth)">',
-        '##INFO=<ID=CN,Number=.,Type=Float,Description="Per-haplotype copy number ratio vs reference">',
+        '##INFO=<ID=CN,Number=A,Type=Float,Description="Copy number of CNV / breakpoint">',
         '##INFO=<ID=EVENT,Number=1,Type=String,Description="Event name">',
         '##INFO=<ID=EVENTTYPE,Number=1,Type=String,Description="Event type">',
         '##INFO=<ID=TOTAL_CN,Number=1,Type=Float,Description="Total LPA KIV-2 unit copy number (diploid)">',
         '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
         '##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype quality">',
-        '##FORMAT=<ID=CN,Number=1,Type=Float,Description="Total LPA KIV-2 unit copy number (diploid)">',
-        '##FORMAT=<ID=REPCN,Number=1,Type=String,Description="Per-haplotype repeat unit copy number">',
+        '##FORMAT=<ID=CN,Number=1,Type=Float,Description="Estimated copy number">',
+        '##FORMAT=<ID=REPCN,Number=1,Type=String,Description="Number of repeat units spanned by the allele">',
         '##FORMAT=<ID=PS,Number=1,Type=Integer,Description="Phase set">',
     ]
     for c_name, c_len in contigs:
