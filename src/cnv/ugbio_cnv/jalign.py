@@ -174,6 +174,17 @@ def create_bam_record_from_alignment(
     record.reference_name = chrom
     record.reference_start = ref_start + begin
     record.cigarstring = cigar
+
+    cigar_qlen = record.infer_query_length()
+    seq_len = len(seq)
+    if cigar_qlen is not None and cigar_qlen != seq_len:
+        clipped = seq_len - cigar_qlen
+        if clipped > 0:
+            if is_supplementary:
+                record.cigarstring = f"{clipped}S{cigar}"
+            else:
+                record.cigarstring = f"{cigar}{clipped}S"
+
     record.mapping_quality = 60
 
     # Set flags

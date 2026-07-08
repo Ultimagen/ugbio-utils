@@ -204,6 +204,39 @@ class TestBAMRecordCreation:
         assert supplementary.is_supplementary
         assert supplementary.get_tag("RG") == "DUP"
 
+    def test_create_bam_record_pads_short_cigar_with_softclip(self, mock_bam_header):
+        """Test that CIGAR shorter than query gets padded with soft-clips."""
+        seq = "ACGTACGTACGT"  # 12 bases
+        # Primary: trailing soft-clip
+        primary = create_bam_record_from_alignment(
+            qname="read1",
+            seq=seq,
+            chrom="chr1",
+            ref_start=1000,
+            score=100,
+            begin=0,
+            cigar="8M",  # Only covers 8 of 12 bases
+            rgid="DEL",
+            header=mock_bam_header,
+            is_supplementary=False,
+        )
+        assert primary.cigarstring == "8M4S"
+
+        # Supplementary: leading soft-clip
+        supplementary = create_bam_record_from_alignment(
+            qname="read1",
+            seq=seq,
+            chrom="chr1",
+            ref_start=5000,
+            score=100,
+            begin=0,
+            cigar="8M",  # Only covers 8 of 12 bases
+            rgid="DUP",
+            header=mock_bam_header,
+            is_supplementary=True,
+        )
+        assert supplementary.cigarstring == "4S8M"
+
 
 class TestAlignmentScoring:
     """Test alignment scoring and selection functions."""
