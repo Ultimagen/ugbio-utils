@@ -113,11 +113,6 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
-# Skip parasail CIGAR trace to avoid bookworm parasail8 compatibility issues.
-# Scoring/classification is unaffected; only BAM CIGAR visualization is lost.
-# Remove once native bookworm parasail8 CIGARs are validated.
-ENV NO_CIGARS=1
-
 # Download para_jalign binary from private jalign repository
 ARG JALIGN_VERSION=1.4.2
 RUN --mount=type=secret,id=github_token \
