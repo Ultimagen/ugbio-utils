@@ -241,4 +241,4 @@ jobs:
         with:
           name: ecr-scan-findings-${{ inputs.docker-image }}-${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
           path: ${{ steps.ecr-scan.outputs.findings_file }}
-          retention-days: 90
+          retention-days: 30

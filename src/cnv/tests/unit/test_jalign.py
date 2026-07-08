@@ -237,6 +237,39 @@ class TestBAMRecordCreation:
         )
         assert supplementary.cigarstring == "4S8M"
 
+    def test_create_bam_record_trims_overlong_cigar_softclip(self, mock_bam_header):
+        """Test that CIGAR longer than query gets trailing/leading soft-clip trimmed."""
+        seq = "ACGTACGTACGT"  # 12 bases
+        # Primary: CIGAR sums to 13 (8M + 5S) — trim trailing S by 1
+        primary = create_bam_record_from_alignment(
+            qname="read1",
+            seq=seq,
+            chrom="chr1",
+            ref_start=1000,
+            score=100,
+            begin=0,
+            cigar="8M5S",  # 13 > 12
+            rgid="DEL",
+            header=mock_bam_header,
+            is_supplementary=False,
+        )
+        assert primary.cigarstring == "8M4S"
+
+        # Supplementary: CIGAR sums to 13 (5S + 8M) — trim leading S by 1
+        supplementary = create_bam_record_from_alignment(
+            qname="read1",
+            seq=seq,
+            chrom="chr1",
+            ref_start=5000,
+            score=100,
+            begin=0,
+            cigar="5S8M",  # 13 > 12
+            rgid="DUP",
+            header=mock_bam_header,
+            is_supplementary=True,
+        )
+        assert supplementary.cigarstring == "4S8M"
+
 
 class TestAlignmentScoring:
     """Test alignment scoring and selection functions."""
