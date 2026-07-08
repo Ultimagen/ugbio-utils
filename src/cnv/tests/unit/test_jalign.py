@@ -270,6 +270,24 @@ class TestBAMRecordCreation:
         )
         assert supplementary.cigarstring == "4S8M"
 
+    def test_create_bam_record_trims_exact_softclip_removes_it(self, mock_bam_header):
+        """Test that trimming soft-clip by its exact length removes it entirely."""
+        seq = "ACGTACGTAC"  # 10 bases
+        # CIGAR 10M3S: qlen=13, seq=10, trim=3, soft-clip=3 → exact match, remove S
+        record = create_bam_record_from_alignment(
+            qname="read1",
+            seq=seq,
+            chrom="chr1",
+            ref_start=1000,
+            score=100,
+            begin=0,
+            cigar="10M3S",
+            rgid="DEL",
+            header=mock_bam_header,
+            is_supplementary=False,
+        )
+        assert record.cigarstring == "10M"
+
     def test_create_bam_record_overlong_cigar_no_softclip_falls_back(self, mock_bam_header):
         """Test that overlong CIGAR without soft-clip falls back to full-length match."""
         seq = "ACGTACGTACGT"  # 12 bases

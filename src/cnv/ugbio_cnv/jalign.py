@@ -191,8 +191,10 @@ def create_bam_record_from_alignment(
             # otherwise replace the entire CIGAR with a full-length match
             trim = -diff
             idx = 0 if is_supplementary else -1
-            if tuples[idx][0] == CIGAR_SOFT_CLIP and tuples[idx][1] >= trim:
+            if tuples[idx][0] == CIGAR_SOFT_CLIP and tuples[idx][1] > trim:
                 tuples[idx] = (CIGAR_SOFT_CLIP, tuples[idx][1] - trim)
+            elif tuples[idx][0] == CIGAR_SOFT_CLIP and tuples[idx][1] == trim:
+                tuples.pop(idx)
             else:
                 tuples = [(0, seq_len)]  # fallback: full-length match
         record.cigartuples = tuples
