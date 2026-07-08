@@ -172,7 +172,7 @@ def create_bam_record_from_alignment(
     record.query_name = qname
     record.query_sequence = seq
     record.reference_name = chrom
-    record.reference_start = ref_start + begin
+    record.reference_start = max(0, ref_start + begin)
     record.cigarstring = cigar
 
     cigar_qlen = record.infer_query_length()
