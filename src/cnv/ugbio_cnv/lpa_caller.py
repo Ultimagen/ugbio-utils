@@ -23,8 +23,19 @@
 #         likelihood across all possible ALT copy-number values bounded by the
 #         total KIV-2 copy number.
 #
-#    Outputs <prefix>.targeted.json and <prefix>.targeted.vcf(.gz) containing
-#    the LPA results only.
+#    Outputs (all prefixed with ``<prefix>.targeted.``):
+#      * ``json`` — full call payload (copy numbers, per-variant details).
+#      * ``vcf.gz`` (+ ``.tbi``) — bgzipped, tabix-indexed VCF containing the
+#        KIV-2 symbolic CNV record and one row per reference repeat copy for
+#        each LPA small variant.
+#      * ``small_variants.vcf.gz`` (+ ``.tbi``) — same VCF with the symbolic
+#        CNV row filtered out (small variants only).
+#      * ``acnv.bed`` — aggregated CNV in the ``#gffTags`` 4-column BED format
+#        used by parascopy ``reformat_parascopy_bed`` (single row summarizing
+#        the total KIV-2 unit count).
+#      * ``pcnv.bed`` — paralog CNV in the same ``#gffTags`` format. Two
+#        overlapping rows (one per haplotype) when marker calling was phased,
+#        a single row otherwise.
 #
 
 from __future__ import annotations
@@ -723,6 +734,8 @@ def _write_vcf(
     n_ref_repeats: int,
     fasta: pyfaidx.Fasta,
     contigs: list[tuple[str, int]],
+    *,
+    small_variants_only: bool = False,
 ) -> None:
     ref_base = str(fasta[chrom][kiv2_start - 1 : kiv2_start]).upper() or "N"
     header = [
@@ -750,7 +763,9 @@ def _write_vcf(
         header.append(f"##contig=<ID={c_name},length={c_len}>")
     header.append(f"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t{sample_id}")
 
-    rows = [_format_dup_record(chrom, kiv2_start, kiv2_end, ref_base, sample_id, call, n_ref_repeats)]
+    rows = []
+    if not small_variants_only:
+        rows.append(_format_dup_record(chrom, kiv2_start, kiv2_end, ref_base, sample_id, call, n_ref_repeats))
     total_cn_int = max(1, int(round(call.kiv2_copy_number)))
     small_rows = []
     for v in call.variants:
@@ -765,9 +780,76 @@ def _write_vcf(
     if str(out_path).endswith(".gz"):
         with pysam.BGZFile(str(out_path), "w") as f:
             f.write(text.encode())
+        pysam.tabix_index(str(out_path), preset="vcf", force=True)
     else:
         with open(out_path, "w") as f:
             f.write(text)
+
+
+# ----------------------------------------------------------------------------
+# BED writers (parascopy #gffTags 4-column format, chrom/start/end/tags)
+#
+# Coordinates match the LPA caller's 1-based inclusive [kiv2_start, kiv2_end]
+# convention: BED start is (kiv2_start - 1) (0-based), BED end is kiv2_end
+# (BED end is exclusive but numerically equals the 1-based inclusive end).
+# ----------------------------------------------------------------------------
+
+
+def _write_acnv_bed(
+    out_path: Path,
+    sample_id: str,
+    call: LpaCall,
+    chrom: str,
+    kiv2_start: int,
+    kiv2_end: int,
+) -> None:
+    """Single aggregated row summarizing total KIV-2 unit copy number."""
+    total_units = int(round(call.kiv2_copy_number))
+    tags = [
+        "locus=LPA-KIV2",
+        f"sample={sample_id}",
+        "agCN_filter=PASS",
+        f"agCN={total_units}",
+        "agCN_qual=.",
+    ]
+    with out_path.open("w") as f:
+        f.write("#gffTags\n")
+        f.write(f"{chrom}\t{kiv2_start - 1}\t{kiv2_end}\t{';'.join(tags)}\n")
+
+
+def _write_pcnv_bed(
+    out_path: Path,
+    sample_id: str,
+    call: LpaCall,
+    chrom: str,
+    kiv2_start: int,
+    kiv2_end: int,
+) -> None:
+    """Per-haplotype rows. Two overlapping rows when phased, one otherwise."""
+    total_units = int(round(call.kiv2_copy_number))
+    main_region = f"{chrom}:{kiv2_start}-{kiv2_end}"
+    phased = call.ref_marker_allele_copy_number is not None and call.alt_marker_allele_copy_number is not None
+    with out_path.open("w") as f:
+        f.write("#gffTags\n")
+        if phased:
+            per_hap_units = (
+                int(round(call.ref_marker_allele_copy_number)),
+                int(round(call.alt_marker_allele_copy_number)),
+            )
+        else:
+            per_hap_units = (total_units,)
+        for units in per_hap_units:
+            tags = [
+                f"sample={sample_id}",
+                "cn_filter=PASS",
+                f"cn={units}",
+                "cn_qual=.",
+                "agcn_filter=PASS",
+                f"agcn={total_units}",
+                "agcn_qual=.",
+                f"main_region={main_region}",
+            ]
+            f.write(f"{chrom}\t{kiv2_start - 1}\t{kiv2_end}\t{';'.join(tags)}\n")
 
 
 # ----------------------------------------------------------------------------
@@ -813,7 +895,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument("--cram", required=True, help="Input CRAM or BAM file (indexed)")
     ap.add_argument("--reference", required=True, help="Reference FASTA (hg38)")
     ap.add_argument("--sample-id", required=True, help="Sample identifier emitted in JSON/VCF")
-    ap.add_argument("--output-prefix", required=True, help="Output prefix; writes <prefix>.targeted.{json,vcf.gz}")
+    ap.add_argument(
+        "--output-prefix",
+        required=True,
+        help=(
+            "Output prefix; writes <prefix>.targeted.{json, vcf.gz(+.tbi), "
+            "small_variants.vcf.gz(+.tbi), acnv.bed, pcnv.bed}"
+        ),
+    )
     ap.add_argument("--genome-build", default="hg38")
     ap.add_argument("--kiv2-chrom", default=DEFAULT_KIV2_CHROM)
     ap.add_argument("--kiv2-start", type=int, default=DEFAULT_KIV2_START)
@@ -839,7 +928,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     ap.add_argument(
         "--no-vcf",
         action="store_true",
-        help="Skip writing the VCF (JSON only).",
+        help="Skip writing the VCF outputs (JSON and BED still emitted).",
+    )
+    ap.add_argument(
+        "--no-bed",
+        action="store_true",
+        help="Skip writing the acnv/pcnv BED outputs.",
     )
     return ap.parse_args(argv)
 
@@ -937,6 +1031,28 @@ def run(argv: list[str]) -> None:
                     contigs,
                 )
                 logger.info("Wrote %s", vcf_path)
+                small_vcf_path = Path(str(out_prefix) + ".targeted.small_variants.vcf.gz")
+                _write_vcf(
+                    small_vcf_path,
+                    args.sample_id,
+                    result,
+                    args.kiv2_chrom,
+                    args.kiv2_start,
+                    args.kiv2_end,
+                    args.kiv2_repeat_count,
+                    fasta,
+                    contigs,
+                    small_variants_only=True,
+                )
+                logger.info("Wrote %s", small_vcf_path)
+
+            if not args.no_bed:
+                acnv_path = Path(str(out_prefix) + ".targeted.acnv.bed")
+                _write_acnv_bed(acnv_path, args.sample_id, result, args.kiv2_chrom, args.kiv2_start, args.kiv2_end)
+                logger.info("Wrote %s", acnv_path)
+                pcnv_path = Path(str(out_prefix) + ".targeted.pcnv.bed")
+                _write_pcnv_bed(pcnv_path, args.sample_id, result, args.kiv2_chrom, args.kiv2_start, args.kiv2_end)
+                logger.info("Wrote %s", pcnv_path)
         finally:
             fasta.close()
     finally:
