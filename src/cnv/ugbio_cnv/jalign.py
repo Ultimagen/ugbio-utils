@@ -186,16 +186,15 @@ def create_bam_record_from_alignment(
                 tuples.insert(0, (CIGAR_SOFT_CLIP, diff))
             else:
                 tuples.append((CIGAR_SOFT_CLIP, diff))
-        elif diff < 0:
-            # CIGAR too long — trim trailing/leading soft-clip
+        else:
+            # CIGAR too long — trim trailing/leading soft-clip if present,
+            # otherwise replace the entire CIGAR with a full-length match
             trim = -diff
             idx = 0 if is_supplementary else -1
-            if tuples[idx][0] == CIGAR_SOFT_CLIP:
-                existing = tuples[idx][1]
-                if existing > trim:
-                    tuples[idx] = (CIGAR_SOFT_CLIP, existing - trim)
-                else:
-                    tuples.pop(idx)
+            if tuples[idx][0] == CIGAR_SOFT_CLIP and tuples[idx][1] >= trim:
+                tuples[idx] = (CIGAR_SOFT_CLIP, tuples[idx][1] - trim)
+            else:
+                tuples = [(0, seq_len)]  # fallback: full-length match
         record.cigartuples = tuples
 
     record.mapping_quality = 60

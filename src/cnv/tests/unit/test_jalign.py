@@ -270,6 +270,24 @@ class TestBAMRecordCreation:
         )
         assert supplementary.cigarstring == "4S8M"
 
+    def test_create_bam_record_overlong_cigar_no_softclip_falls_back(self, mock_bam_header):
+        """Test that overlong CIGAR without soft-clip falls back to full-length match."""
+        seq = "ACGTACGTACGT"  # 12 bases
+        # CIGAR 13M > 12 bases, no soft-clip to trim — fallback to seq_len M
+        record = create_bam_record_from_alignment(
+            qname="read1",
+            seq=seq,
+            chrom="chr1",
+            ref_start=1000,
+            score=100,
+            begin=0,
+            cigar="13M",  # 13 > 12, no S to trim
+            rgid="DEL",
+            header=mock_bam_header,
+            is_supplementary=False,
+        )
+        assert record.cigarstring == "12M"
+
 
 class TestAlignmentScoring:
     """Test alignment scoring and selection functions."""
