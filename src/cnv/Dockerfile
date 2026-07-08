@@ -1,5 +1,6 @@
 # BASE_IMAGE is injected by build-workspace-docker.yml (defaults to DEFAULT_BASE_IMAGE)
-ARG BASE_IMAGE
+# Pin to bullseye base until CNV bookworm migration is complete (parasail compat)
+ARG BASE_IMAGE=ugbio_base:1.7.0
 ARG OUT_DIR=/tmp/ugbio
 FROM python:3.11-bullseye AS build
 
