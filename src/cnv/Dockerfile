@@ -1,8 +1,7 @@
 # BASE_IMAGE is injected by build-workspace-docker.yml (defaults to DEFAULT_BASE_IMAGE)
-# Pin to bullseye base until CNV bookworm migration is complete (parasail compat)
-ARG BASE_IMAGE=ugbio_base:1.7.0
+ARG BASE_IMAGE
 ARG OUT_DIR=/tmp/ugbio
-FROM python:3.11-bullseye AS build
+FROM python:3.11-bookworm AS build
 
 ARG OUT_DIR
 ARG MODULE_DIR=cnv
@@ -37,11 +36,10 @@ RUN apt-get update && \
     libpcre2-dev \
     tar \
     bzip2 \
-    libncurses5-dev \
-    libncursesw5-dev \
+    libncurses-dev \
     libopenblas-dev \
-    libstdc++-10-dev \
-    libparasail3 libparasail-dev \
+    libstdc++-12-dev \
+    libparasail8 libparasail-dev \
     libhdf5-dev \
     tzdata \
     && apt-get clean && \
@@ -59,11 +57,11 @@ RUN apt-get update && \
     software-properties-common && \
     gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' && \
     gpg --armor --export '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' | tee /etc/apt/trusted.gpg.d/cran_debian_key.asc && \
-    echo "deb https://cloud.r-project.org/bin/linux/debian bullseye-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
+    echo "deb https://cloud.r-project.org/bin/linux/debian bookworm-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-    r-base=4.5.1-1~bullseyecran.0 \
-    r-base-dev=4.5.1-1~bullseyecran.0 && \
+    r-base=4.5.3-1~bookwormcran.0 \
+    r-base-dev=4.5.3-1~bookwormcran.0 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -115,14 +113,19 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
+# Skip parasail CIGAR trace to avoid bookworm parasail8 compatibility issues.
+# Scoring/classification is unaffected; only BAM CIGAR visualization is lost.
+# Remove once native bookworm parasail8 CIGARs are validated.
+ENV NO_CIGARS=1
+
 # Download para_jalign binary from private jalign repository
-ARG JALIGN_VERSION=1.4.1
+ARG JALIGN_VERSION=1.4.2
 RUN --mount=type=secret,id=github_token \
     if [ ! -f /run/secrets/github_token ]; then \
         echo "ERROR: Authentication required to download dependencies" && exit 1; \
     fi && \
     GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
-    ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bullseye-x64" && \
+    ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bookworm-x64" && \
     echo "Looking for asset: ${ASSET_NAME}" && \
     curl -sL \
         -H "Accept: application/vnd.github+json" \
