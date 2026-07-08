@@ -172,33 +172,8 @@ def create_bam_record_from_alignment(
     record.query_name = qname
     record.query_sequence = seq
     record.reference_name = chrom
-    record.reference_start = max(0, ref_start + begin)
+    record.reference_start = ref_start + begin
     record.cigarstring = cigar
-
-    cigar_qlen = record.infer_query_length()
-    seq_len = len(seq)
-    if cigar_qlen is not None and cigar_qlen != seq_len:
-        diff = seq_len - cigar_qlen
-        tuples = list(record.cigartuples)
-        if diff > 0:
-            # CIGAR too short — append/prepend soft-clip
-            if is_supplementary:
-                tuples.insert(0, (CIGAR_SOFT_CLIP, diff))
-            else:
-                tuples.append((CIGAR_SOFT_CLIP, diff))
-        else:
-            # CIGAR too long — trim trailing/leading soft-clip if present,
-            # otherwise replace the entire CIGAR with a full-length match
-            trim = -diff
-            idx = 0 if is_supplementary else -1
-            if tuples[idx][0] == CIGAR_SOFT_CLIP and tuples[idx][1] > trim:
-                tuples[idx] = (CIGAR_SOFT_CLIP, tuples[idx][1] - trim)
-            elif tuples[idx][0] == CIGAR_SOFT_CLIP and tuples[idx][1] == trim:
-                tuples.pop(idx)
-            else:
-                tuples = [(0, seq_len)]  # fallback: full-length match
-        record.cigartuples = tuples
-
     record.mapping_quality = 60
 
     # Set flags
