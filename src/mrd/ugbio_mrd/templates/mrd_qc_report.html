@@ -510,8 +510,10 @@
       <div class="section-title">QC Analysis — Noisy Loci Filter Sensitivity</div>
       <div class="chart-description" style="margin-bottom:10px;">
         Impact of the noisy loci filter
-        (n_lq_reads &ge; {{ noise_filter_comparison.thresh_lq }})
-        on detection. Loci with at least {{ noise_filter_comparison.thresh_lq }}
+        (lq_fraction &gt; {{ noise_filter_comparison.thresh_lq }})
+        on detection. Loci where more than
+        {{ "%.0f"|format(noise_filter_comparison.thresh_lq * 100) }}%
+        of reads fail the read filter
         low-quality read(s) are excluded from the primary result.
       </div>
       <table style="width:100%; border-collapse:collapse; margin-bottom:16px; font-size:13px;">

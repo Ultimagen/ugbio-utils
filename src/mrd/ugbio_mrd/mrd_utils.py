@@ -622,7 +622,7 @@ def generate_synthetic_signatures(
     return synthetic_signatures
 
 
-def read_and_filter_features_parquet(
+def read_and_filter_features_parquet(  # noqa: C901
     features_file_parquet: str,
     read_filter_query: str,
     thresh_locus_filter_high_ratio_of_low_mapq_reads: float = 0.95,
@@ -630,7 +630,7 @@ def read_and_filter_features_parquet(
     thresh_locus_filter_many_alt_reads: int = 2,
     thresh_locus_filter_many_non_ref_alt_reads: int = 2,
     thresh_locus_filter_many_indels: int = 4,
-    thresh_noise_lq_reads: int | None = None,
+    thresh_noise_lq_reads: float | None = None,
 ):
     """
     Read featuremap parquet file and filter by query
@@ -644,11 +644,12 @@ def read_and_filter_features_parquet(
 
     Parameters (noise filter)
     -------------------------
-    thresh_noise_lq_reads: int or None
-        When set, enables the noisy loci filter. Loci with at least this many
-        low-quality (failing ``read_filter_query``) featuremap reads are flagged
-        as noisy and removed from ``df_features_filt``.  ``None`` (default)
-        disables the filter.
+    thresh_noise_lq_reads: float or None
+        When set, enables the noisy loci filter.  Loci where the fraction of
+        low-quality reads (failing ``read_filter_query``) exceeds this threshold
+        are flagged as noisy and removed from ``df_features_filt``.
+        Must be in the range (0, 1].  Use 1.0 (or ``None``) to disable;
+        a fraction of 1.0 can never be exceeded so no locus is removed.
 
     Returns
     -------
@@ -716,28 +717,45 @@ def read_and_filter_features_parquet(
     )
     df_features = df_features.assign(locus_filter=df_features.filter(regex="locus_filter_.*").all(axis=1))
 
-    # Noisy loci filter: flag loci with low-quality alt-supporting reads
-    # (indicating sequencing artifacts). A locus is noisy when its count of
-    # low-quality reads meets or exceeds thresh_noise_lq_reads.
+    # Noisy loci filter: flag loci where the fraction of low-quality reads
+    # (reads failing read_filter_query) exceeds thresh_noise_lq_reads.
+    # thresh=0.1 → filter any locus where >10% of reads are LQ.
+    # thresh=1.0 → condition can never be satisfied → effectively disabled.
     if thresh_noise_lq_reads is not None:
-        lq_counts = (
-            df_features.reset_index()
-            .query(f"not ({read_filter_query})")
-            .groupby(["chrom", "pos", "signature"])
-            .size()
-            .rename("n_lq_reads_per_locus")
-        )
-        df_features = (
-            df_features.reset_index()
-            .set_index(["chrom", "pos", "signature"])
-            .join(lq_counts, how="left")
-        ).reset_index(level="signature")
-        df_features = df_features.assign(
-            n_lq_reads_per_locus=df_features["n_lq_reads_per_locus"].fillna(0).astype(int),
-        )
-        df_features = df_features.assign(
-            locus_filter_noise=df_features["n_lq_reads_per_locus"] >= thresh_noise_lq_reads,
-        )
+        if thresh_noise_lq_reads <= 0:
+            raise ValueError(f"thresh_noise_lq_reads must be in (0, 1]; got {thresh_noise_lq_reads}")
+        if thresh_noise_lq_reads >= 1.0:
+            thresh_noise_lq_reads = None  # short-circuit: 1.0 can never be exceeded
+        else:
+            total_counts = (
+                df_features.reset_index()
+                .groupby(["chrom", "pos", "signature"])
+                .size()
+                .rename("n_total_reads_per_locus")
+            )
+            lq_counts = (
+                df_features.reset_index()
+                .query(f"not ({read_filter_query})")
+                .groupby(["chrom", "pos", "signature"])
+                .size()
+                .rename("n_lq_reads_per_locus")
+            )
+            df_features = (
+                df_features.reset_index()
+                .set_index(["chrom", "pos", "signature"])
+                .join(lq_counts, how="left")
+                .join(total_counts, how="left")
+            ).reset_index(level="signature")
+            df_features = df_features.assign(
+                n_lq_reads_per_locus=df_features["n_lq_reads_per_locus"].fillna(0).astype(int),
+                n_total_reads_per_locus=df_features["n_total_reads_per_locus"].fillna(0).astype(int),
+            )
+            df_features = df_features.assign(
+                locus_filter_noise=(
+                    df_features["n_lq_reads_per_locus"] / df_features["n_total_reads_per_locus"].clip(lower=1)
+                )
+                > thresh_noise_lq_reads,
+            )
 
     # kept for backwards compatibility - filtering ratio per locus
     filtering_ratio = (
@@ -1168,18 +1186,14 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
         matched_sig_df = df_signatures_filt
     signature_size = len(matched_sig_df)
     mean_coverage = (
-        float(matched_sig_df["coverage"].mean())
-        if "coverage" in matched_sig_df.columns and signature_size > 0
-        else 0.0
+        float(matched_sig_df["coverage"].mean()) if "coverage" in matched_sig_df.columns and signature_size > 0 else 0.0
     )
 
     # Validate matched entry and coverage before proceeding
     try:
         matched_data = df_tf.loc["matched"]
         matched_vaf = float(
-            matched_data["ctdna_vaf"].iloc[0]
-            if isinstance(matched_data, pd.DataFrame)
-            else matched_data["ctdna_vaf"]
+            matched_data["ctdna_vaf"].iloc[0] if isinstance(matched_data, pd.DataFrame) else matched_data["ctdna_vaf"]
         )
     except KeyError:
         logger.warning("apply_multi_read_locus_filter: no matched TF estimate found — skipping filter")
@@ -1223,8 +1237,7 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
     for (sig_type, sig_name), sig_row in df_tf.iterrows():
         # Per-locus read counts for this signature (needed for both λ and outlier test)
         sig_rows = df_features_filt_out[
-            (df_features_filt_out["signature_type"] == sig_type)
-            & (df_features_filt_out["signature"] == sig_name)
+            (df_features_filt_out["signature_type"] == sig_type) & (df_features_filt_out["signature"] == sig_name)
         ]
         if len(sig_rows) == 0:
             continue
@@ -1261,9 +1274,7 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
 
         if len(outlier_loci) == 0:
             if sig_type == "matched":
-                logger.debug(
-                    "apply_multi_read_locus_filter: no matched outlier loci (min Bonferroni p=%.4f)", min_bonf
-                )
+                logger.debug("apply_multi_read_locus_filter: no matched outlier loci (min Bonferroni p=%.4f)", min_bonf)
             continue
 
         # Remove ALL rows of this sig_type at the outlier loci
