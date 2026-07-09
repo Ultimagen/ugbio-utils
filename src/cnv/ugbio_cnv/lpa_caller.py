@@ -825,19 +825,21 @@ def _write_pcnv_bed(
     kiv2_start: int,
     kiv2_end: int,
 ) -> None:
-    """Per-haplotype rows. Two overlapping rows when phased, one otherwise."""
+    """Per-haplotype rows. Two overlapping rows when phased; no rows when unresolved."""
     total_units = int(round(call.kiv2_copy_number))
     main_region = f"{chrom}:{kiv2_start}-{kiv2_end}"
     phased = call.ref_marker_allele_copy_number is not None and call.alt_marker_allele_copy_number is not None
     with out_path.open("w") as f:
         f.write("#gffTags\n")
-        if phased:
-            per_hap_units = (
-                int(round(call.ref_marker_allele_copy_number)),
-                int(round(call.alt_marker_allele_copy_number)),
-            )
-        else:
-            per_hap_units = (total_units,)
+        if not phased:
+            # Unresolved phasing (e.g. hom-REF/ALT markers, marker disagreement,
+            # or no marker coverage): skip per-haplotype rows entirely rather
+            # than emit a single fallback row with cn == agcn.
+            return
+        per_hap_units = (
+            int(round(call.ref_marker_allele_copy_number)),
+            int(round(call.alt_marker_allele_copy_number)),
+        )
         for units in per_hap_units:
             tags = [
                 f"sample={sample_id}",
