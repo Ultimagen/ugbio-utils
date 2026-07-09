@@ -248,9 +248,9 @@ def test_read_and_filter_features_parquet_noise_filter(tmp_path):
     Verify the noisy loci filter flags/removes the correct loci.
 
     Scenario (read_filter_query = "filt>0 and snvq>60 and mapq>=60"):
-    - Locus A (pos=100): 1 HQ + 2 LQ reads  -> NOISY (n_lq=2>=1)
-    - Locus B (pos=200): 5 HQ + 1 LQ reads  -> NOISY (n_lq=1>=1; no exemption)
-    - Locus C (pos=300): 3 HQ + 0 LQ reads  -> CLEAN (n_lq=0<1)
+    - Locus A (pos=100): 1 HQ + 2 LQ reads  -> lq_fraction=2/3≈0.667 -> NOISY  (>0.1)
+    - Locus B (pos=200): 5 HQ + 1 LQ reads  -> lq_fraction=1/6≈0.167 -> NOISY  (>0.1)
+    - Locus C (pos=300): 3 HQ + 0 LQ reads  -> lq_fraction=0.0        -> CLEAN  (not >0.1)
     """
     from ugbio_mrd.mrd_utils import read_and_filter_features_parquet
 
@@ -292,17 +292,19 @@ def test_read_and_filter_features_parquet_noise_filter(tmp_path):
     df_features, df_features_filt, _ = read_and_filter_features_parquet(
         parquet_path,
         read_filter_query,
-        thresh_noise_lq_reads=1,
+        thresh_noise_lq_reads=0.1,
     )
 
     assert "locus_filter_noise" in df_features.columns
     assert "n_lq_reads_per_locus" in df_features.columns
+    assert "n_total_reads_per_locus" in df_features.columns
 
     pos_idx = df_features.index.get_level_values("pos")
 
     assert df_features.loc[pos_idx == 100, "locus_filter_noise"].all(), "Locus A should be noisy"
     assert (df_features.loc[pos_idx == 100, "n_lq_reads_per_locus"] == 2).all()
-    assert df_features.loc[pos_idx == 200, "locus_filter_noise"].all(), "Locus B should be noisy (no exemption)"
+    assert (df_features.loc[pos_idx == 100, "n_total_reads_per_locus"] == 3).all()
+    assert df_features.loc[pos_idx == 200, "locus_filter_noise"].all(), "Locus B should be noisy"
     assert not df_features.loc[pos_idx == 300, "locus_filter_noise"].any(), "Locus C should be clean"
 
     filt_pos = df_features_filt.index.get_level_values("pos")
@@ -682,17 +684,12 @@ def test_apply_multi_read_filter_cap_boundary():
         [{"ctdna_vaf": 0.001, "supporting_reads": 10, "corrected_coverage": 1000.0}],
         index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
     )
-    df_sig = pd.DataFrame(
-        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)]
-    )
+    df_sig = pd.DataFrame([{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)])
 
     # At-cap (6 reads) → included in background, λ inflated, NOT flagged
     df_at_cap, info_at = apply_multi_read_locus_filter(_build(_VAF_ESTIMATE_READ_CAP), df_tf, df_sig, 0.05)
     assert info_at["n_filtered_loci"] == 0, "Loci at the cap must not be flagged (they define background)"
 
     # Above-cap (7 reads) → excluded from background, λ = 2.0, flagged
-    df_above_cap, info_above = apply_multi_read_locus_filter(
-        _build(_VAF_ESTIMATE_READ_CAP + 1), df_tf, df_sig, 0.05
-    )
+    df_above_cap, info_above = apply_multi_read_locus_filter(_build(_VAF_ESTIMATE_READ_CAP + 1), df_tf, df_sig, 0.05)
     assert info_above["n_filtered_loci"] == 1, "Loci above cap must be flagged"
-

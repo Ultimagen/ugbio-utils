@@ -562,9 +562,15 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
     if len(null) > 0 and corr_cov > 0:
         null_vafs = np.array([_safe_vaf(v / corr_cov) for v in null])
         rng = np.random.default_rng(42)
-        ax.scatter(x_emp + rng.uniform(-0.14, 0.14, size=len(null)), null_vafs,
-                   color="#3a9ad9", s=30, alpha=0.8, zorder=4,
-                   label=f"Synthetic controls (n={len(null)})")
+        ax.scatter(
+            x_emp + rng.uniform(-0.14, 0.14, size=len(null)),
+            null_vafs,
+            color="#3a9ad9",
+            s=30,
+            alpha=0.8,
+            zorder=4,
+            label=f"Synthetic controls (n={len(null)})",
+        )
 
         n_eff = getattr(detection, "n_effective", 0)
         p_err_val = getattr(detection, "noise_rate", 0.0)
@@ -600,7 +606,8 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
         if n_th is not None:
             det_vaf = n_th / corr_cov
         lod_tf_plot = compute_personal_lod(
-            n=int(n_eff_plot), p_err=p_err_plot,
+            n=int(n_eff_plot),
+            p_err=p_err_plot,
             target_recall=getattr(detection, "lod_recall", 0.95),
             fpr=getattr(detection, "lod_fpr", DEFAULT_LOD_FPR),
         )
@@ -609,18 +616,19 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
     x_pat = 1.5
     pat_vaf = _safe_vaf(detection.matched_ctdna_vaf)
     pat_vaf_str = format_scientific(detection.matched_ctdna_vaf) if detection.matched_ctdna_vaf > 0 else "0"
-    ax.scatter([x_pat], [pat_vaf], color="#c0392b", s=160, marker="*", zorder=6,
-               label=f"Patient ({obs} reads, {pat_vaf_str})")
+    ax.scatter(
+        [x_pat], [pat_vaf], color="#c0392b", s=160, marker="*", zorder=6, label=f"Patient ({obs} reads, {pat_vaf_str})"
+    )
 
     # ── Threshold / LOD lines in VAF ─────────────────────────────────────────
     if det_vaf is not None and n_eff_plot > 0:
         n_th_reads = int(round(det_vaf * corr_cov))
         _det_label = (
-            f"Detection threshold ({format_scientific(det_vaf)}, {n_th_reads} reads)"
-            f" | α={_alpha_plot * 100:.0f}%"
+            f"Detection threshold ({format_scientific(det_vaf)}, {n_th_reads} reads)" f" | α={_alpha_plot * 100:.0f}%"
         )
-        ax.axhline(_safe_vaf(det_vaf), color="#e67e22", linewidth=1.8, linestyle="--", alpha=0.9, zorder=4,
-                   label=_det_label)
+        ax.axhline(
+            _safe_vaf(det_vaf), color="#e67e22", linewidth=1.8, linestyle="--", alpha=0.9, zorder=4, label=_det_label
+        )
     if lod_tf_plot is not None and n_eff_plot > 0:
         # LOD line at total VAF = p_err + lod_tf so it sits on the same scale as
         # the patient star and synthetic controls (which also show total VAF).
@@ -628,11 +636,17 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
         n_lod_reads = int(round(n_eff_plot * lod_total_vaf))
         _lod_recall_plot = getattr(detection, "lod_recall", 0.95)
         _lod_label = (
-            f"LOD = {format_scientific(lod_total_vaf)} ({n_lod_reads} reads)"
-            f" | {_lod_recall_plot * 100:.0f}% recall"
+            f"LOD = {format_scientific(lod_total_vaf)} ({n_lod_reads} reads)" f" | {_lod_recall_plot * 100:.0f}% recall"
         )
-        ax.axhline(_safe_vaf(lod_total_vaf), color="#27ae60", linewidth=1.8, linestyle="-.", alpha=0.9, zorder=4,
-                   label=_lod_label)
+        ax.axhline(
+            _safe_vaf(lod_total_vaf),
+            color="#27ae60",
+            linewidth=1.8,
+            linestyle="-.",
+            alpha=0.9,
+            zorder=4,
+            label=_lod_label,
+        )
 
     # ── Scale / labels ────────────────────────────────────────────────────────
     ax.set_yscale("log")
@@ -714,8 +728,13 @@ def plot_cohort_scatter(
     ys = np.array([max(float(v), _vaf_floor) for v in ys_raw])
 
     ax.scatter(
-        xs, ys,
-        color="#9b59b6", s=60, marker="D", alpha=0.85, zorder=5,
+        xs,
+        ys,
+        color="#9b59b6",
+        s=60,
+        marker="D",
+        alpha=0.85,
+        zorder=5,
         label=f"Cohort controls (n={len(xs)})",
     )
 
@@ -724,8 +743,12 @@ def plot_cohort_scatter(
     pat_size = detection.signature_size
     pat_vaf_str = format_scientific(detection.matched_ctdna_vaf) if detection.matched_ctdna_vaf > 0 else "0"
     ax.scatter(
-        [pat_size], [pat_vaf],
-        color="#c0392b", s=180, marker="*", zorder=6,
+        [pat_size],
+        [pat_vaf],
+        color="#c0392b",
+        s=180,
+        marker="*",
+        zorder=6,
         label=f"Patient ({detection.matched_supporting_reads} reads, {pat_vaf_str})",
     )
 
