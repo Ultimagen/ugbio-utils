@@ -22,7 +22,7 @@ BASE_PATH = Path(__file__).parent  # should be: src/mrd/ugbio_mrd
 # Default thresholds for optional locus filters.
 # Both filters are enabled by default when using the CLI.
 # Pass None explicitly via MrdReportInputs to disable programmatically.
-DEFAULT_THRESH_NOISE_LQ_READS: int = 2
+DEFAULT_THRESH_NOISE_LQ_READS: float = 0.1
 DEFAULT_THRESH_MULTI_READ_PVALUE: float = 0.05
 
 
@@ -45,11 +45,11 @@ class MrdReportInputs:
     alpha: float = DEFAULT_ALPHA
     lod_fpr: float = DEFAULT_LOD_FPR
     lod_recall: float = 0.95
-    thresh_noise_lq_reads: int | None = DEFAULT_THRESH_NOISE_LQ_READS
+    thresh_noise_lq_reads: float | None = DEFAULT_THRESH_NOISE_LQ_READS
     thresh_multi_read_pvalue: float | None = DEFAULT_THRESH_MULTI_READ_PVALUE
 
 
-def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:  # noqa: PLR0915, C901
+def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]:  # noqa: PLR0915, PLR0912, C901
     """
     Generate both the MRD analysis report (Jinja2 HTML) and the MRD QC report (Jinja2 HTML).
 
@@ -71,11 +71,17 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     )
     read_filter_query = mrd_report_inputs.read_filter_query or "filt>0 and snvq>60 and mapq>=60"
 
+    # Normalise optional filter thresholds: 1.0 (noise) and None are both "disabled".
+    # Centralise here so applied_filters and QC section both see the canonical value.
+    thresh_noise_lq_reads = mrd_report_inputs.thresh_noise_lq_reads
+    if thresh_noise_lq_reads is not None and thresh_noise_lq_reads >= 1.0:
+        thresh_noise_lq_reads = None
+
     # 1. Load data
     df_features, df_features_filt, filtering_ratio = mrd.read_and_filter_features_parquet(
         intersection_path,
         read_filter_query,
-        thresh_noise_lq_reads=mrd_report_inputs.thresh_noise_lq_reads,
+        thresh_noise_lq_reads=thresh_noise_lq_reads,
     )
     df_signatures, df_signatures_filt = mrd.read_and_filter_signatures_parquet(
         signatures_path, signature_filter_query, filtering_ratio
@@ -144,10 +150,8 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     applied_filters = {k: v for k, v in filter_descriptions.items() if k in all_cols}
     applied_filters["norm_coverage"] = signature_filter_query
     applied_filters["Read filter"] = read_filter_query
-    if mrd_report_inputs.thresh_noise_lq_reads is not None:
-        applied_filters["Noisy loci"] = (
-            f"n_lq_reads >= {mrd_report_inputs.thresh_noise_lq_reads}"
-        )
+    if thresh_noise_lq_reads is not None:
+        applied_filters["Noisy loci"] = f"lq_fraction > {thresh_noise_lq_reads}"
     if thresh_multi_read_pvalue is not None:
         _dataset_keys = [
             ("matched", "max_reads_per_locus"),
@@ -333,7 +337,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     # Secondary analysis 0 (noisy loci filter only): filtered reads without noisy loci filter
     detection_no_noise = None
     df_tf_no_noise = None
-    thresh_noise_lq_reads = mrd_report_inputs.thresh_noise_lq_reads
+    # thresh_noise_lq_reads already normalised (1.0→None) at the top of this function
     if thresh_noise_lq_reads is not None:
         # Reuse df_features (already has n_lq/n_hq columns); apply only read_filter_query
         df_features_filt_no_noise = df_features.query(read_filter_query)
@@ -504,6 +508,12 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
         if mrd_report_inputs.output_dir is not None
         else None
     )
+    # Remove stale parquets from previous runs so read_signature / read_intersection_dataframes
+    # don't crash on concat_to_existing_output_parquet=False.
+    for _fname in (signatures_dataframe_fname, intersection_dataframe_fname):
+        if _fname and os.path.isfile(_fname):
+            logger.info("Removing stale output parquet from previous run: %s", _fname)
+            os.remove(_fname)
 
     if matched_exists:
         signature_dataframe = mrd.read_signature(
@@ -615,25 +625,30 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--srsnv-metadata-json", type=str, default=None, help="Path to srsnv metadata json file")
     parser.add_argument(
         "--thresh-noise-lq-reads",
-        type=int,
+        type=float,
+        nargs="?",
+        const=None,
         default=DEFAULT_THRESH_NOISE_LQ_READS,
         help=(
-            "Noisy loci filter: remove loci with at least this many low-quality "
-            "(failing read-filter-query) featuremap reads. "
-            f"Must be a positive integer. Default: {DEFAULT_THRESH_NOISE_LQ_READS}. "
-            "Omit the flag (or pass no value) to disable."
+            "Noisy loci filter: remove loci where more than this fraction of reads "
+            "fail the read-filter-query. Must be in (0, 1]. "
+            f"Default: {DEFAULT_THRESH_NOISE_LQ_READS}. "
+            "Pass 1.0 or pass without a value to disable."
         ),
     )
     parser.add_argument(
         "--thresh-multi-read-pvalue",
         type=float,
+        nargs="?",
+        const=None,
         default=DEFAULT_THRESH_MULTI_READ_PVALUE,
         help=(
             "Multi-read locus filter: remove matched loci whose Bonferroni-corrected "
             "Poisson p-value (P(X >= k | Poisson(TF * mean_coverage)) * signature_size) "
             "falls below this threshold. Targets germline/mosaic variants with unexpectedly "
-            f"many supporting reads. Must be a positive float. Default: {DEFAULT_THRESH_MULTI_READ_PVALUE}. "
-            "Omit the flag (or pass no value) to disable."
+            f"many supporting reads. Must be ≥ 0. Default: {DEFAULT_THRESH_MULTI_READ_PVALUE}. "
+            "Pass 0.0 or omit a value to disable "
+            "(e.g. --thresh-multi-read-pvalue 0 or --thresh-multi-read-pvalue with no argument)."
         ),
     )
     parser.add_argument(
@@ -655,10 +670,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=("Target recall used for personal LOD estimation. " "Default: 0.95."),
     )
     args = parser.parse_args(argv[1:])
-    if args.thresh_noise_lq_reads is not None and args.thresh_noise_lq_reads <= 0:
-        parser.error("--thresh-noise-lq-reads must be a positive integer; omit the flag to disable the filter")
-    if args.thresh_multi_read_pvalue is not None and args.thresh_multi_read_pvalue <= 0:
-        parser.error("--thresh-multi-read-pvalue must be a positive float; omit the flag to disable the filter")
+    if args.thresh_noise_lq_reads is not None and not (0 < args.thresh_noise_lq_reads <= 1):
+        parser.error("--thresh-noise-lq-reads must be in the range (0, 1]; use 1.0 or pass without a value to disable")
+    # Convert 1.0 → None: threshold of 1.0 can never filter anything; skip the computation
+    if args.thresh_noise_lq_reads is not None and args.thresh_noise_lq_reads >= 1.0:
+        args.thresh_noise_lq_reads = None
+    if args.thresh_multi_read_pvalue is not None and args.thresh_multi_read_pvalue < 0:
+        parser.error("--thresh-multi-read-pvalue must be >= 0; use 0 or omit a value to disable")
+    # Convert 0.0 → None so the filter is skipped entirely rather than running to produce nothing
+    if args.thresh_multi_read_pvalue == 0.0:
+        args.thresh_multi_read_pvalue = None
     return args
 
 

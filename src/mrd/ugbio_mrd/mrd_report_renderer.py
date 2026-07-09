@@ -396,7 +396,7 @@ def render_sbs_vaf_combined(
     return sbs96_img, sbs6_vaf_img
 
 
-def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
+def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:  # noqa: C901, PLR0915
     """Render SNVQ distribution histogram: matched (red) vs control (blue) with legend."""
     if "snvq" not in df_features_filt.columns:
         return ""
@@ -411,7 +411,18 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
     fig, ax = plt.subplots(figsize=(8, 3))
     fig.patch.set_facecolor("#f4f6f8")
 
-    bins = np.arange(0, 101, 2)
+    all_snvq_pre = pd.concat(
+        [
+            df_features_filt.query(f"signature_type == '{t}'")["snvq"].dropna()
+            for t in ("matched", "control", "db_control")
+        ]
+    )
+    if len(all_snvq_pre) > 0:
+        b_min = max(0, int(all_snvq_pre.min()) - 1)
+        b_max = int(all_snvq_pre.max()) + 2
+        bins = np.arange(b_min, b_max, 1)
+    else:
+        bins = np.arange(0, 101, 1)
     for data, color, kde_color, label_prefix, kde_tag in [
         (db_ctrl, "#3498db", "#1a5276", "Synthetic controls", "db_ctrl"),
         (cohort, "#9b59b6", "#6c3483", "Cohort control", "cohort"),
@@ -473,7 +484,13 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:
     ax.set_ylabel("Density", fontsize=10)
     ax.set_title("cfDNA Intersection SNVQ Distribution", fontsize=11, fontweight="bold")
     ax.legend(fontsize=9, framealpha=0.85)
-    ax.set_xlim(0, 100)
+    all_snvq = pd.concat([s for s in [matched, cohort, db_ctrl] if len(s) > 0])
+    if len(all_snvq) > 0:
+        x_min = max(0, int(all_snvq.min()) - 5)
+        x_max = min(100, int(all_snvq.max()) + 5)
+    else:
+        x_min, x_max = 0, 100
+    ax.set_xlim(x_min, x_max)
     ax.set_axisbelow(True)
     ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")  # noqa: FBT003
     ax.set_facecolor("#f4f6f8")
@@ -761,10 +778,15 @@ def render_supporting_reads_histogram(
 
     if n_matched_zero > 0:
         ax.text(
-            0.97, 0.96,
+            0.97,
+            0.96,
             f"{n_matched_zero:,} matched loci have 0 reads (not shown)",
-            transform=ax.transAxes, ha="right", va="top",
-            fontsize=8, color="#7f8c8d", style="italic",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=8,
+            color="#7f8c8d",
+            style="italic",
         )
     ax.set_ylabel("Fraction of loci", fontsize=10)
     ax.set_title("Alt-Supporting Reads per Variant Locus", fontsize=11, fontweight="bold")
@@ -935,7 +957,7 @@ def render_qc_report(  # noqa: PLR0913, PLR0915, C901
     inputs_info: dict | None = None,
     detection_no_noise: DetectionResult | None = None,
     df_tf_no_noise: pd.DataFrame | None = None,
-    thresh_noise_lq_reads: int | None = None,
+    thresh_noise_lq_reads: float | None = None,
     detection_pre_multi_read: DetectionResult | None = None,
     df_tf_pre_multi_read: pd.DataFrame | None = None,
     thresh_multi_read_pvalue: float | None = None,
@@ -1084,14 +1106,10 @@ def render_qc_report(  # noqa: PLR0913, PLR0915, C901
     )
     _is_nonempty = not df_signatures_filt.empty
     _cohort_df2 = (
-        df_signatures_filt[df_signatures_filt["signature_type"] == "control"]
-        if _is_nonempty
-        else pd.DataFrame()
+        df_signatures_filt[df_signatures_filt["signature_type"] == "control"] if _is_nonempty else pd.DataFrame()
     )
     _db_ctrl_df2 = (
-        df_signatures_filt[df_signatures_filt["signature_type"] == "db_control"]
-        if _is_nonempty
-        else pd.DataFrame()
+        df_signatures_filt[df_signatures_filt["signature_type"] == "db_control"] if _is_nonempty else pd.DataFrame()
     )
     _cohort_size = _cohort_df2.groupby(level=["chrom", "pos"]).ngroups if len(_cohort_df2) > 0 else 0
     _db_ctrl_size = _db_ctrl_df2.groupby(level=["chrom", "pos"]).ngroups if len(_db_ctrl_df2) > 0 else 0

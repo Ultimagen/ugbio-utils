@@ -388,9 +388,7 @@ class TestMultiReadSupportQcCheck:
         n_synthetics = 30
         rng = np.random.default_rng(42)
         syn_reads = rng.integers(0, 2, size=n_synthetics)
-        index_matched = pd.MultiIndex.from_tuples(
-            [("matched", "patient_sig")], names=["signature_type", "signature"]
-        )
+        index_matched = pd.MultiIndex.from_tuples([("matched", "patient_sig")], names=["signature_type", "signature"])
         index_syn = pd.MultiIndex.from_tuples(
             [("db_control", f"syn{i}") for i in range(n_synthetics)],
             names=["signature_type", "signature"],
@@ -421,9 +419,9 @@ class TestMultiReadSupportQcCheck:
             df_supporting_reads_per_locus=per_locus,
         )
         qc = self._get_matched_qc(result)
-        assert qc.passed is True, (
-            f"Single-read loci must not be flagged as outliers at near-zero TF; got: {qc.value_str}"
-        )
+        assert (
+            qc.passed is True
+        ), f"Single-read loci must not be flagged as outliers at near-zero TF; got: {qc.value_str}"
         assert "0 outlier loci" in qc.value_str
 
     def test_germline_outlier_fails(self, base_df_tf, base_df_signatures_filt):
