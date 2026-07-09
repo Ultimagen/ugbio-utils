@@ -895,6 +895,14 @@ def _parse_norm_regions(text: str) -> list[tuple[str, int, int]]:
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="lpa_caller", description="LPA KIV-2 VNTR copy number and variant caller")
     ap.add_argument("--cram", required=True, help="Input CRAM or BAM file (indexed)")
+    ap.add_argument(
+        "--crai",
+        default=None,
+        help=(
+            "Path to the CRAM/BAM index. If omitted, htslib looks for an index next to --cram "
+            "(<cram>.crai/<cram>.bai). Use this to read from a read-only mount without staging."
+        ),
+    )
     ap.add_argument("--reference", required=True, help="Reference FASTA (hg38)")
     ap.add_argument("--sample-id", required=True, help="Sample identifier emitted in JSON/VCF")
     ap.add_argument(
@@ -950,7 +958,10 @@ def run(argv: list[str]) -> None:
     mode = "rc" if args.cram.lower().endswith(".cram") else "rb"
     # Open both handles inside try/finally so a pyfaidx failure does not leak
     # the BAM handle (and vice versa).
-    bam = pysam.AlignmentFile(args.cram, mode, reference_filename=args.reference)
+    open_kwargs = {"reference_filename": args.reference}
+    if args.crai is not None:
+        open_kwargs["index_filename"] = args.crai
+    bam = pysam.AlignmentFile(args.cram, mode, **open_kwargs)
     try:
         fasta = pyfaidx.Fasta(args.reference)
         try:
