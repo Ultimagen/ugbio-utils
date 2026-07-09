@@ -196,18 +196,22 @@ def create_bam_record_from_alignment(
         BAM record with alignment information
     """
     validated_cigar = _validate_cigar(cigar, len(seq))
+    is_unmapped = validated_cigar == "*"
 
     record = pysam.AlignedSegment(header)
     record.query_name = qname
     record.query_sequence = seq
-    record.reference_name = chrom
-    record.reference_start = ref_start + begin
-    record.cigarstring = validated_cigar
-    record.mapping_quality = 60
 
-    # Set flags
-    if is_supplementary:
-        record.flag = pysam.FSUPPLEMENTARY
+    if is_unmapped:
+        record.flag = pysam.FUNMAP
+        record.mapping_quality = 0
+    else:
+        record.reference_name = chrom
+        record.reference_start = ref_start + begin
+        record.cigarstring = validated_cigar
+        record.mapping_quality = 60
+        if is_supplementary:
+            record.flag = pysam.FSUPPLEMENTARY
 
     # Set tags
     record.set_tag("AS", score, value_type="i")
