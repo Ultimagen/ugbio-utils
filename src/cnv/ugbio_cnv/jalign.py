@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import os
 import random
-import re
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -26,32 +25,6 @@ from ugbio_core.logger import logger
 
 # CIGAR operation codes
 CIGAR_SOFT_CLIP = 4
-
-# CIGAR ops that consume query bases: M, I, S, =, X
-_QUERY_CONSUMING_OPS = set("MISX=")
-_CIGAR_RE = re.compile(r"(\d+)([MIDNSHP=X])")
-
-
-def _validate_cigar(cigar: str, query_length: int) -> str:
-    """Return cigar unchanged if it matches query_length, otherwise return '*'.
-
-    libparasail8 on bookworm can produce CIGARs whose query-consuming length
-    differs from the actual read length. pysam/htslib rejects such records when
-    reading the BAM back, so we fall back to '*' (unmapped) for invalid CIGARs.
-    """
-    if cigar == "*" or not cigar:
-        return "*"
-    try:
-        consumed = sum(int(length) for length, op in _CIGAR_RE.findall(cigar) if op in _QUERY_CONSUMING_OPS)
-        if consumed == query_length:
-            return cigar
-        logger.debug(
-            f"CIGAR query length mismatch: CIGAR consumes {consumed} bases, "
-            f"query has {query_length}. Falling back to '*'."
-        )
-        return "*"
-    except Exception:
-        return "*"
 
 
 @dataclass
@@ -195,23 +168,17 @@ def create_bam_record_from_alignment(
     pysam.AlignedSegment
         BAM record with alignment information
     """
-    validated_cigar = _validate_cigar(cigar, len(seq))
-    is_unmapped = validated_cigar == "*"
-
     record = pysam.AlignedSegment(header)
     record.query_name = qname
     record.query_sequence = seq
+    record.reference_name = chrom
+    record.reference_start = ref_start + begin
+    record.cigarstring = cigar
+    record.mapping_quality = 60
 
-    if is_unmapped:
-        record.flag = pysam.FUNMAP
-        record.mapping_quality = 0
-    else:
-        record.reference_name = chrom
-        record.reference_start = ref_start + begin
-        record.cigarstring = validated_cigar
-        record.mapping_quality = 60
-        if is_supplementary:
-            record.flag = pysam.FSUPPLEMENTARY
+    # Set flags
+    if is_supplementary:
+        record.flag = pysam.FSUPPLEMENTARY
 
     # Set tags
     record.set_tag("AS", score, value_type="i")

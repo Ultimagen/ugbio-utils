@@ -1,7 +1,8 @@
 # BASE_IMAGE is injected by build-workspace-docker.yml (defaults to DEFAULT_BASE_IMAGE)
-ARG BASE_IMAGE
+# Pinned to bullseye (1.7.0) — bookworm migration blocked by libparasail8 incompatibility (DATA-9903)
+ARG BASE_IMAGE=ugbio_base:1.7.0
 ARG OUT_DIR=/tmp/ugbio
-FROM python:3.11-bookworm AS build
+FROM python:3.11-bullseye AS build
 
 ARG OUT_DIR
 ARG MODULE_DIR=cnv
@@ -36,10 +37,11 @@ RUN apt-get update && \
     libpcre2-dev \
     tar \
     bzip2 \
-    libncurses-dev \
+    libncurses5-dev \
+    libncursesw5-dev \
     libopenblas-dev \
-    libstdc++-12-dev \
-    libparasail8 libparasail-dev \
+    libstdc++-10-dev \
+    libparasail3 libparasail-dev \
     libhdf5-dev \
     tzdata \
     && apt-get clean && \
@@ -57,11 +59,11 @@ RUN apt-get update && \
     software-properties-common && \
     gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' && \
     gpg --armor --export '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' | tee /etc/apt/trusted.gpg.d/cran_debian_key.asc && \
-    echo "deb https://cloud.r-project.org/bin/linux/debian bookworm-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
+    echo "deb https://cloud.r-project.org/bin/linux/debian bullseye-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-    r-base=4.5.3-1~bookwormcran.0 \
-    r-base-dev=4.5.3-1~bookwormcran.0 && \
+    r-base=4.5.1-1~bullseyecran.0 \
+    r-base-dev=4.5.1-1~bullseyecran.0 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -114,13 +116,13 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
 # Download para_jalign binary from private jalign repository
-ARG JALIGN_VERSION=1.4.1.1
+ARG JALIGN_VERSION=1.4.1
 RUN --mount=type=secret,id=github_token \
     if [ ! -f /run/secrets/github_token ]; then \
         echo "ERROR: Authentication required to download dependencies" && exit 1; \
     fi && \
     GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
-    ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bookworm-x64" && \
+    ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bullseye-x64" && \
     echo "Looking for asset: ${ASSET_NAME}" && \
     curl -sL \
         -H "Accept: application/vnd.github+json" \
