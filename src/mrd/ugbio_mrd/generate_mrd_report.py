@@ -24,6 +24,8 @@ BASE_PATH = Path(__file__).parent  # should be: src/mrd/ugbio_mrd
 # Pass None explicitly via MrdReportInputs to disable programmatically.
 DEFAULT_THRESH_NOISE_LQ_READS: float = 0.1
 DEFAULT_THRESH_MULTI_READ_PVALUE: float = 0.05
+DEFAULT_READ_FILTER_QUERY: str = "filt>0 and snvq>60 and mapq>=60"
+DEFAULT_LOD_RECALL: float = 0.95
 
 
 @dataclass
@@ -44,7 +46,7 @@ class MrdReportInputs:
     read_filter_query: str = None
     alpha: float = DEFAULT_ALPHA
     lod_fpr: float = DEFAULT_LOD_FPR
-    lod_recall: float = 0.95
+    lod_recall: float = DEFAULT_LOD_RECALL
     thresh_noise_lq_reads: float | None = DEFAULT_THRESH_NOISE_LQ_READS
     thresh_multi_read_pvalue: float | None = DEFAULT_THRESH_MULTI_READ_PVALUE
 
@@ -69,7 +71,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     signature_filter_query = (
         mrd_report_inputs.signature_filter_query or "(norm_coverage <= 2.5) and (norm_coverage >= 0.6)"
     )
-    read_filter_query = mrd_report_inputs.read_filter_query or "filt>0 and snvq>60 and mapq>=60"
+    read_filter_query = mrd_report_inputs.read_filter_query or DEFAULT_READ_FILTER_QUERY
 
     # Normalise optional filter thresholds: 1.0 (noise) and None are both "disabled".
     # Centralise here so applied_filters and QC section both see the canonical value.
@@ -348,6 +350,22 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             title="Filtered reads (no noisy loci filter)",
             denom_ratio=denom_ratio,
         )
+        # If the multi-read filter is also active, apply it here too so the QC comparison
+        # isolates only the noisy-loci filter's impact (both paths have multi-read applied).
+        if thresh_multi_read_pvalue is not None:
+            df_features_filt_no_noise, _ = mrd.apply_multi_read_locus_filter(
+                df_features_filt_no_noise,
+                df_tf_no_noise,
+                df_signatures_filt,
+                thresh_multi_read_pvalue,
+            )
+            df_tf_no_noise, _ = mrd.get_tf_from_filtered_data(
+                df_features_filt_no_noise,
+                df_signatures_filt,
+                plot_results=False,
+                title="Filtered reads (no noisy loci filter, with multi-read filter)",
+                denom_ratio=denom_ratio,
+            )
         detection_no_noise = run_detection_analysis(
             df_tf=df_tf_no_noise,
             df_signatures_filt=df_signatures_filt,
@@ -666,8 +684,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--lod-recall",
         type=float,
-        default=0.95,
-        help=("Target recall used for personal LOD estimation. " "Default: 0.95."),
+        default=DEFAULT_LOD_RECALL,
+        help=("Target recall used for personal LOD estimation. " f"Default: {DEFAULT_LOD_RECALL}."),
     )
     args = parser.parse_args(argv[1:])
     if args.thresh_noise_lq_reads is not None and not (0 < args.thresh_noise_lq_reads <= 1):
