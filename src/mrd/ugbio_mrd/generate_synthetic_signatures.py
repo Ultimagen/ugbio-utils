@@ -42,8 +42,9 @@ def __parse_args(argv: list[str]) -> argparse.Namespace:
         "-n",
         "--n_synthetic_signatures",
         type=int,
-        required=True,
-        help="""Number of synthetic signatures to generate""",
+        required=False,
+        default=20,
+        help="""Number of synthetic signatures to generate (default: 20)""",
     )
     parser.add_argument(
         "-r",

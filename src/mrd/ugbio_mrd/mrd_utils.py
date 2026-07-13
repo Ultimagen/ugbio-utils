@@ -14,6 +14,7 @@ import pandas as pd
 import pyBigWig as bw  # noqa: N813
 import pysam
 import seaborn as sns
+from scipy.stats import poisson
 from tqdm import tqdm
 from ugbio_core.dna_sequence_utils import revcomp
 from ugbio_core.logger import logger
@@ -621,7 +622,7 @@ def generate_synthetic_signatures(
     return synthetic_signatures
 
 
-def read_and_filter_features_parquet(
+def read_and_filter_features_parquet(  # noqa: C901
     features_file_parquet: str,
     read_filter_query: str,
     thresh_locus_filter_high_ratio_of_low_mapq_reads: float = 0.95,
@@ -629,6 +630,7 @@ def read_and_filter_features_parquet(
     thresh_locus_filter_many_alt_reads: int = 2,
     thresh_locus_filter_many_non_ref_alt_reads: int = 2,
     thresh_locus_filter_many_indels: int = 4,
+    thresh_noise_lq_reads: float | None = None,
 ):
     """
     Read featuremap parquet file and filter by query
@@ -640,12 +642,21 @@ def read_and_filter_features_parquet(
     read_filter_query: str
         query to filter the dataframe
 
+    Parameters (noise filter)
+    -------------------------
+    thresh_noise_lq_reads: float or None
+        When set, enables the noisy loci filter.  Loci where the fraction of
+        low-quality reads (failing ``read_filter_query``) exceeds this threshold
+        are flagged as noisy and removed from ``df_features_filt``.
+        Must be in the range (0, 1].  Use 1.0 (or ``None``) to disable;
+        a fraction of 1.0 can never be exceeded so no locus is removed.
+
     Returns
     -------
     df_features: pd.DataFrame
         original dataframe
     df_features_filt: pd.DataFrame
-        filtered dataframe
+        filtered dataframe, with noisy loci removed when noise filter is active
     filtering_ratio: pd.DataFrame
         A dataframe that includes the ratio of filtered to total reads per variant
     """
@@ -706,11 +717,53 @@ def read_and_filter_features_parquet(
     )
     df_features = df_features.assign(locus_filter=df_features.filter(regex="locus_filter_.*").all(axis=1))
 
+    # Noisy loci filter: flag loci where the fraction of low-quality reads
+    # (reads failing read_filter_query) exceeds thresh_noise_lq_reads.
+    # thresh=0.1 → filter any locus where >10% of reads are LQ.
+    # thresh=1.0 → condition can never be satisfied → effectively disabled.
+    if thresh_noise_lq_reads is not None:
+        if thresh_noise_lq_reads <= 0:
+            raise ValueError(f"thresh_noise_lq_reads must be in (0, 1]; got {thresh_noise_lq_reads}")
+        if thresh_noise_lq_reads >= 1.0:
+            thresh_noise_lq_reads = None  # short-circuit: 1.0 can never be exceeded
+        else:
+            total_counts = (
+                df_features.reset_index()
+                .groupby(["chrom", "pos", "signature"])
+                .size()
+                .rename("n_total_reads_per_locus")
+            )
+            lq_counts = (
+                df_features.reset_index()
+                .query(f"not ({read_filter_query})")
+                .groupby(["chrom", "pos", "signature"])
+                .size()
+                .rename("n_lq_reads_per_locus")
+            )
+            df_features = (
+                df_features.reset_index()
+                .set_index(["chrom", "pos", "signature"])
+                .join(lq_counts, how="left")
+                .join(total_counts, how="left")
+            ).reset_index(level="signature")
+            df_features = df_features.assign(
+                n_lq_reads_per_locus=df_features["n_lq_reads_per_locus"].fillna(0).astype(int),
+                n_total_reads_per_locus=df_features["n_total_reads_per_locus"].fillna(0).astype(int),
+            )
+            df_features = df_features.assign(
+                locus_filter_noise=(
+                    df_features["n_lq_reads_per_locus"] / df_features["n_total_reads_per_locus"].clip(lower=1)
+                )
+                > thresh_noise_lq_reads,
+            )
+
     # kept for backwards compatibility - filtering ratio per locus
     filtering_ratio = (
         df_features.query("signature_type=='matched'").groupby(level=["chrom", "pos"]).agg({"filtering_ratio": "first"})
     )
     df_features_filt = df_features.query(read_filter_query)
+    if thresh_noise_lq_reads is not None:
+        df_features_filt = df_features_filt[~df_features_filt["locus_filter_noise"]]
     return df_features, df_features_filt, filtering_ratio
 
 
@@ -744,15 +797,33 @@ def read_and_filter_signatures_parquet(
     )
     nunique.value_counts().rename("count").to_frame().join(nunique.value_counts(normalize=True).rename("norm"))
 
-    x = df_signatures.filter(regex="coverage").sum(axis=1)
-    norm_coverage = (x / x.median()).rename("norm_coverage").reset_index().drop_duplicates().set_index(["chrom", "pos"])
+    # Normalise coverage per-signature: each locus is divided by its signature's
+    # median depth. In production the coverage_bed is generated at the union of all
+    # signature loci (matched + control + db_control), so every position has a real
+    # depth value. Using per-signature medians avoids index misalignment when multiple
+    # signatures share the same (chrom, pos) index entries.
+    x = df_signatures["coverage"]
+
+    # Raise if a signature has >50% positions missing coverage — this usually means
+    # the coverage_bed was not generated at that signature's loci.
+    missing_frac = x.isna().groupby(df_signatures["signature"]).mean()
+    bad_sigs = missing_frac[missing_frac > 0.5]  # noqa: PLR2004
+    if not bad_sigs.empty:
+        details = ", ".join(f"{sig} ({frac * 100:.0f}%)" for sig, frac in bad_sigs.items())
+        raise ValueError(
+            f"The following signatures have >50% positions without coverage in the coverage_bed: {details}. "
+            "Ensure mosdepth was run at the union of all signature loci (matched + control + db_control)."
+        )
+
+    sig_median = x.groupby(df_signatures["signature"]).transform("median")
+    norm_coverage = (x / sig_median.replace(0, np.nan)).rename("norm_coverage")
     df_signatures = (
         df_signatures.join(nunique)
         .join(
             filtering_ratio,
             how="left",
         )
-        .join(norm_coverage, how="left")
+        .assign(norm_coverage=norm_coverage)
         .fillna({"filtering_ratio": 1})
     )
 
@@ -799,15 +870,20 @@ def plot_signature_mutation_types(df_signatures_in: pd.DataFrame, signature_filt
         plt.sca(ax)
         plt.bar(range(6), x, color=["b", "g", "r", "y", "m", "c"])
         for px, py in zip(range(6), x, strict=False):
-            plt.text(px, py + 0.01, f"{py:.1%}", ha="center", fontsize=16)
+            plt.text(px, py + 0.01, f"{py:.1%}", ha="center", fontsize=11)
         plt.ylim(0, ax.get_ylim()[1] + 0.03)
         plt.yticks([])
-        plt.xticks(range(6), x.index.values, fontsize=20, rotation=90)
-        plt.title(f"{column}, total={tot_mutations:,}", fontsize=28)
+        plt.xticks(range(6), x.index.values, fontsize=10, rotation=90)
+        plt.title(f"{column}, total={tot_mutations:,}", fontsize=12)
     plt.show()
 
 
-def plot_signature_allele_fractions(df_signatures_in: pd.DataFrame, signature_filter_query_in: pd.DataFrame):
+def plot_signature_allele_fractions(
+    df_signatures_in: pd.DataFrame,
+    signature_filter_query_in: str,
+    panel: str | None = None,
+    ax=None,
+):
     """
     Plot allele fraction histograms for a signature dataframe
 
@@ -815,22 +891,36 @@ def plot_signature_allele_fractions(df_signatures_in: pd.DataFrame, signature_fi
     ----------
     df_signatures_in: pd.DataFrame
         signature dataframe
-    signature_filter_query_in: pd.DataFrame
-        query to filter the dataframe
+    signature_filter_query_in: str
+        query string to filter the dataframe
+    panel: str or None
+        Which panel(s) to show. None shows both. "unfiltered" shows only the
+        unfiltered panel; "filtered" shows only the filtered panel.
+    ax: matplotlib.axes.Axes, optional
+        Axes to draw into. Only used when the result is a single panel
+        (i.e. panel is "filtered" or "unfiltered"). When provided, no new
+        figure is created and plt.show() is not called.
     """
-    bins = np.linspace(0, 1, 100)
-    fig, axs = plt.subplots(1, 2, figsize=(18, 4), sharey=True)
-    fig.suptitle(",".join(df_signatures_in["signature"].unique()), y=1.13)
-    for ax, column, df_plot in zip(
-        axs.flatten(),
-        [
-            "Unfiltered",
-            "Filtered",
-        ],
-        [
-            df_signatures_in,
-            df_signatures_in.query(signature_filter_query_in),
-        ],
+    all_panels = [
+        ("Unfiltered", df_signatures_in),
+        ("Filtered", df_signatures_in.query(signature_filter_query_in)),
+    ]
+    if panel == "unfiltered":
+        all_panels = all_panels[:1]
+    elif panel == "filtered":
+        all_panels = all_panels[1:]
+    n_panels = len(all_panels)
+    bins = np.linspace(0, 1, 21)  # 20 bins of width 5%
+    _external_ax = ax is not None and n_panels == 1
+    if _external_ax:
+        axs = [ax]
+    else:
+        fig, axs = plt.subplots(1, n_panels, figsize=(9 * n_panels, 4), sharey=n_panels > 1)
+        if n_panels == 1:
+            axs = [axs]
+    for ax, (column, df_plot) in zip(  # noqa: PLR1704
+        axs,
+        all_panels,
         strict=False,
     ):
         plt.sca(ax)
@@ -838,6 +928,8 @@ def plot_signature_allele_fractions(df_signatures_in: pd.DataFrame, signature_fi
         tot_mutations = df_plot.shape[0]
         h, bin_edges = np.histogram(x, bins=bins)
         bin_centers = (bin_edges[1:] + bin_edges[:-1]) / 2
+        ax.set_axisbelow(True)
+        ax.yaxis.grid(True, zorder=0, alpha=0.4, linewidth=0.7)  # noqa: FBT003
         plt.fill_between(
             bin_centers,
             -10,
@@ -848,8 +940,9 @@ def plot_signature_allele_fractions(df_signatures_in: pd.DataFrame, signature_fi
         plt.xlim(0, 1)
         plt.ylim(-1, ax.get_ylim()[1])
         plt.xlabel("AF")
-        plt.title(f"{column}, total={tot_mutations:,}", fontsize=28)
-    plt.show()
+        plt.title(f"{column}, total={tot_mutations:,}", fontsize=12)
+    if not _external_ax:
+        plt.show()
 
 
 def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3456):  # noqa: C901, PLR0912, PLR0915
@@ -890,7 +983,7 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3
 
     plt.figure(figsize=(8, 12))
     if title:
-        plt.title(title, y=1.02, fontsize=28)
+        plt.title(title, y=1.02, fontsize=12)
 
     if df_tf_matched.notna().any():
         x = 0.2 * np.ones(df_tf_matched.shape[0])
@@ -993,7 +1086,7 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3
                 ha="right",
                 va="center",
                 color="b",
-                fontsize=16,
+                fontsize=11,
             )  # draw above, centered
     for line in hbp2["medians"]:
         # get position data for median line
@@ -1007,8 +1100,228 @@ def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3
                 ha="right",
                 va="center",
                 color="g",
-                fontsize=16,
+                fontsize=11,
             )  # draw above, centered
+
+
+# Maximum per-locus read count included in the per-signature VAF estimate used as
+# Poisson λ.  Loci with more reads than this are assumed to contain real signal
+# (germline / mosaic variant) that would inflate the background rate estimate.
+# Capping at 6 keeps virtually all noise reads while excluding obvious outliers.
+_VAF_ESTIMATE_READ_CAP: int = 6
+
+
+def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
+    df_features_filt: pd.DataFrame,
+    df_tf: pd.DataFrame,
+    df_signatures_filt: pd.DataFrame,
+    thresh_multi_read_pvalue: float,
+) -> tuple[pd.DataFrame, dict]:
+    """Apply the Bonferroni-corrected Poisson outlier test uniformly across all signature types.
+
+    For every ``(signature_type, signature)`` row in ``df_tf`` the function computes:
+
+    * λ estimated from loci with ≤ ``_VAF_ESTIMATE_READ_CAP`` reads — excluding
+      germline/mosaic outlier loci that would otherwise inflate the per-signature
+      background rate.  ``λ = (reads at background loci / corrected_coverage) × mean_coverage``.
+      Jeffreys prior is used when no background reads are present.
+    * Bonferroni-corrected Poisson right-tail p-value per locus, using **that
+      signature's own locus count** as the family size N — identical logic to the
+      QC check in ``run_detection_analysis``.  For a cohort control with 10 000
+      loci N=10 000; for a synthetic replicate with 30 000 loci N=30 000.  Using
+      the matched ``signature_size`` as a shared N would under-correct large
+      signatures and over-correct small ones.
+    * Loci whose corrected p-value falls below ``thresh_multi_read_pvalue`` and have
+      ≥ 2 supporting reads are removed from **all rows of that signature_type**.
+
+    ``mean_coverage`` is derived from the matched signature rows in ``df_signatures_filt``
+    and used as a common coverage proxy for all types, since all signatures evaluate the
+    same patient loci.
+
+    Parameters
+    ----------
+    df_features_filt : pd.DataFrame
+        Per-read featuremap rows passing the read quality filter.  Index (chrom, pos);
+        must contain ``signature_type`` and ``signature`` columns.
+    df_tf : pd.DataFrame
+        Tumour-fraction table (index: (signature_type, signature)); must contain
+        ``ctdna_vaf``, ``supporting_reads``, and ``corrected_coverage`` columns.
+    df_signatures_filt : pd.DataFrame
+        Filtered signature dataframe with per-locus ``coverage`` column; used to
+        derive ``mean_coverage`` and per-signature Bonferroni N.
+    thresh_multi_read_pvalue : float
+        Bonferroni-corrected p-value threshold applied identically to all types.
+
+    Returns
+    -------
+    df_features_filt_out : pd.DataFrame
+        Copy of *df_features_filt* with outlier loci removed for each signature type.
+    filter_info : dict
+        Summary statistics: ``n_filtered_loci`` / ``n_filtered_reads`` (matched),
+        ``poisson_lambda``, ``min_bonferroni_pval``, ``max_reads_per_locus``,
+        ``n_filtered_control_loci`` / ``n_filtered_control_reads``,
+        ``n_filtered_db_control_loci`` / ``n_filtered_db_control_reads``,
+        ``poisson_lambda_ctrl`` (mean λ across all control/db_control signatures),
+        ``max_reads_per_locus_control``, ``max_reads_per_locus_db_control``.
+    """
+    filter_info: dict = {
+        "n_filtered_loci": 0,
+        "n_filtered_reads": 0,
+        "poisson_lambda": 0.0,
+        "min_bonferroni_pval": 1.0,
+        "max_reads_per_locus": 1,
+        "n_filtered_control_loci": 0,
+        "n_filtered_control_reads": 0,
+        "n_filtered_db_control_loci": 0,
+        "n_filtered_db_control_reads": 0,
+        "poisson_lambda_ctrl": 0.0,
+        "max_reads_per_locus_control": 1,
+        "max_reads_per_locus_db_control": 1,
+    }
+
+    # --- mean_coverage from the matched signature (coverage proxy for all types) ---
+    if "signature_type" in df_signatures_filt.columns:
+        matched_sig_df = df_signatures_filt[df_signatures_filt["signature_type"] == "matched"]
+    else:
+        matched_sig_df = df_signatures_filt
+    signature_size = len(matched_sig_df)
+    mean_coverage = (
+        float(matched_sig_df["coverage"].mean()) if "coverage" in matched_sig_df.columns and signature_size > 0 else 0.0
+    )
+
+    # Validate matched entry and coverage before proceeding
+    try:
+        matched_data = df_tf.loc["matched"]
+        matched_vaf = float(
+            matched_data["ctdna_vaf"].iloc[0] if isinstance(matched_data, pd.DataFrame) else matched_data["ctdna_vaf"]
+        )
+    except KeyError:
+        logger.warning("apply_multi_read_locus_filter: no matched TF estimate found — skipping filter")
+        return df_features_filt, filter_info
+
+    if matched_vaf <= 0:
+        logger.debug("apply_multi_read_locus_filter: matched_vaf <= 0 — skipping filter")
+        return df_features_filt, filter_info
+
+    if signature_size == 0 or mean_coverage <= 0:
+        logger.debug(
+            "apply_multi_read_locus_filter: signature_size=%d, mean_coverage=%.2f — skipping",
+            signature_size,
+            mean_coverage,
+        )
+        return df_features_filt, filter_info
+
+    filter_info["poisson_lambda"] = matched_vaf * mean_coverage
+
+    # --- Per-signature Bonferroni N from df_signatures_filt ---
+    if "signature_type" in df_signatures_filt.columns and "signature" in df_signatures_filt.columns:
+        _sig_sizes = df_signatures_filt.groupby(["signature_type", "signature"]).size()
+    elif "signature" in df_signatures_filt.columns:
+        _sig_sizes = df_signatures_filt.groupby("signature").size()
+    else:
+        _sig_sizes = pd.Series(dtype=int)
+
+    def _n_sig(sig_type: str, sig_name: str, fallback: int) -> int:
+        for key in [(sig_type, sig_name), sig_name]:
+            try:
+                return int(_sig_sizes.loc[key])
+            except (KeyError, TypeError):
+                pass
+        return fallback
+
+    df_features_filt_out = df_features_filt.copy()
+    ctrl_lambdas: list[float] = []
+    min_bonf = 1.0
+
+    # --- Unified loop: one pass per (sig_type, sig_name) in df_tf ---
+    for (sig_type, sig_name), sig_row in df_tf.iterrows():
+        # Per-locus read counts for this signature (needed for both λ and outlier test)
+        sig_rows = df_features_filt_out[
+            (df_features_filt_out["signature_type"] == sig_type) & (df_features_filt_out["signature"] == sig_name)
+        ]
+        if len(sig_rows) == 0:
+            continue
+        per_locus_counts = sig_rows.groupby(level=["chrom", "pos"]).size()
+
+        # --- Estimate λ from background loci (≤ _VAF_ESTIMATE_READ_CAP reads) ---
+        # Using only low-read loci avoids germline/mosaic bias: outlier loci (10-50+
+        # reads) would inflate the per-signature VAF and make λ too large, masking the
+        # very outliers we want to detect.  At the cap of 6 virtually all background
+        # noise reads are captured while true signal loci are excluded.
+        background_counts = per_locus_counts[per_locus_counts <= _VAF_ESTIMATE_READ_CAP]
+        background_reads = int(background_counts.sum())
+        corr_cov = float(sig_row.get("corrected_coverage", 1))
+        if background_reads > 0 and corr_cov > 0:
+            vaf = background_reads / corr_cov
+        elif corr_cov > 0:
+            vaf = 0.5 / (corr_cov + 1)  # Jeffreys prior when no background reads
+        else:
+            continue
+        lam = vaf * mean_coverage
+        if lam <= 0:
+            continue
+
+        n_loci = _n_sig(sig_type, sig_name, len(per_locus_counts))
+        bonf_pvals = poisson.sf(per_locus_counts.to_numpy() - 1, lam) * n_loci
+        # Never remove loci backed by only a single read: one read is indistinguishable
+        # from background noise regardless of how small λ is (e.g. near-zero TF).
+        outlier_loci = per_locus_counts.index[
+            (bonf_pvals < thresh_multi_read_pvalue) & (per_locus_counts.to_numpy() >= 2)  # noqa: PLR2004
+        ]
+        cur_min_bonf = float(bonf_pvals.min()) if len(bonf_pvals) > 0 else 1.0
+        if sig_type == "matched":
+            min_bonf = min(min_bonf, cur_min_bonf)
+
+        if len(outlier_loci) == 0:
+            if sig_type == "matched":
+                logger.debug("apply_multi_read_locus_filter: no matched outlier loci (min Bonferroni p=%.4f)", min_bonf)
+            continue
+
+        # Remove ALL rows of this sig_type at the outlier loci
+        is_type_row = df_features_filt_out["signature_type"] == sig_type
+        is_outlier_locus = df_features_filt_out.index.isin(outlier_loci)
+        n_before = len(df_features_filt_out)
+        df_features_filt_out = df_features_filt_out[~(is_type_row & is_outlier_locus)]
+        n_reads_removed = n_before - len(df_features_filt_out)
+        logger.info(
+            "apply_multi_read_locus_filter: removed %d %s/%s loci (%d reads); λ=%.4f, min Bonferroni p=%.4e",
+            len(outlier_loci),
+            sig_type,
+            sig_name,
+            n_reads_removed,
+            lam,
+            cur_min_bonf,
+        )
+
+        if sig_type == "matched":
+            filter_info["n_filtered_loci"] += len(outlier_loci)
+            filter_info["n_filtered_reads"] += n_reads_removed
+        elif sig_type == "control":
+            filter_info["n_filtered_control_loci"] += len(outlier_loci)
+            filter_info["n_filtered_control_reads"] += n_reads_removed
+            ctrl_lambdas.append(lam)
+        elif sig_type == "db_control":
+            filter_info["n_filtered_db_control_loci"] += len(outlier_loci)
+            filter_info["n_filtered_db_control_reads"] += n_reads_removed
+            ctrl_lambdas.append(lam)
+
+    filter_info["min_bonferroni_pval"] = min_bonf
+    if ctrl_lambdas:
+        filter_info["poisson_lambda_ctrl"] = float(np.mean(ctrl_lambdas))
+
+    # --- Post-filter max reads per locus (for report display) ---
+    for _sig_type, _key in [
+        ("matched", "max_reads_per_locus"),
+        ("control", "max_reads_per_locus_control"),
+        ("db_control", "max_reads_per_locus_db_control"),
+    ]:
+        _rows = df_features_filt_out[df_features_filt_out["signature_type"] == _sig_type]
+        if len(_rows) > 0:
+            _per_sig = _rows.reset_index().groupby(["chrom", "pos", "signature"]).size()
+            _per_locus = _per_sig.groupby(level=["chrom", "pos"]).max()
+            filter_info[_key] = int(_per_locus.max())
+
+    return df_features_filt_out, filter_info
 
 
 def get_tf_from_filtered_data(
@@ -1061,15 +1374,16 @@ def get_tf_from_filtered_data(
 def plot_vaf_matched_unmatched(
     df_supporting_reads_per_locus: pd.DataFrame,
     df_signatures: pd.DataFrame,
+    figsize: tuple[float, float] = (7, 6),
 ):
     """
     Plot histogram of allele frequencies of all, plasma-matched and unmatched variants
     """
-    fig, ax = plt.subplots(3, 1, figsize=(10, 8))
+    fig, ax = plt.subplots(3, 1, figsize=figsize)
     queries = {
         "all variants": df_supporting_reads_per_locus.index,
         "matched variants": df_supporting_reads_per_locus.query("signature_type == 'matched'").index,
-        "control vairants": df_supporting_reads_per_locus.query("signature_type != 'matched'").index,
+        "control variants": df_supporting_reads_per_locus.query("signature_type != 'matched'").index,
     }
 
     colors = ["blue", "red", "green"]
@@ -1142,7 +1456,7 @@ def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadat
         filtering_count_column = "rows"
     else:
         raise ValueError(
-            "Could not find filtering count column in metadata filters. " "Expected either 'funnel' or 'rows'."
+            "Could not find filtering count column in metadata filters. Expected either 'funnel' or 'rows'."
         )
 
     # Exclude annotation-based filters (e.g. EXCLUDE_TRAINING, PCAWG, INCLUDE_INFERENCE) from the

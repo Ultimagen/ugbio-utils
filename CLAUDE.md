@@ -135,10 +135,21 @@ docker run --rm -v .:/workdir <image> run_tests /workdir/src/core
 
 ### Linting & Formatting
 
+> **⚠️ IMPORTANT — ruff version mismatch**: CI uses **ruff v0.8.4** (pinned in `.pre-commit-config.yaml`). The local venv may have a newer version that silently passes rules CI enforces (e.g. `PD901`, `UP038`) or formats files differently. Always verify with the pinned version before pushing.
+
 ```bash
+# Run lint + format check using the EXACT CI version (ruff v0.8.4):
+uvx ruff@0.8.4 check .           # lint
+uvx ruff@0.8.4 format --check .  # format check (no changes)
+uvx ruff@0.8.4 format .          # apply formatting
+
+# Local venv ruff (may differ from CI — useful for fast feedback only):
+uv run ruff check src/<module>/
+uv run ruff format src/<module>/
+
 # Pre-commit runs automatically on git commit, or manually:
 uv run pre-commit install  # Install hooks
-uv run pre-commit run --all-files  # Run all checks
+uv run pre-commit run --all-files  # Requires AWS CodeArtifact credentials in CI; use uvx commands above locally
 
 # Ruff is configured via .ruff.toml (line length 120, Python 3.11 target)
 ```
@@ -467,14 +478,18 @@ docker run --rm -v .:/workdir <image> run_tests /workdir/src/<module>
 
 ### Pre-commit Hooks
 
-- Ruff linting + formatting
+- Ruff linting + formatting (**pinned at v0.8.4** in `.pre-commit-config.yaml`)
 - Trailing whitespace, end-of-file fixers
 - YAML/JSON validation
 - Large file checks (excludes test resources)
 
 ```bash
-uv run pre-commit install
-uv run pre-commit run --all-files
+# CORRECT: use the pinned CI version to avoid version-mismatch failures
+uvx ruff@0.8.4 check .           # lint (matches CI exactly)
+uvx ruff@0.8.4 format --check .  # verify formatting (matches CI exactly)
+uvx ruff@0.8.4 format .          # apply CI-compatible formatting
+
+# pre-commit run requires AWS CodeArtifact credentials; use uvx above in dev environments
 ```
 
 ## CI/CD Pipeline
@@ -634,8 +649,10 @@ uv run pytest src/core/tests/
 # OR with activated environment:
 pytest src/core/tests/
 
-# Lint
-uv run pre-commit run --all-files
+# Lint (use pinned CI version to avoid ruff version-mismatch failures)
+uvx ruff@0.8.4 check .           # lint
+uvx ruff@0.8.4 format --check .  # check formatting
+uvx ruff@0.8.4 format .          # apply formatting
 
 # Run pipeline (requires activated environment)
 python -m ugbio_filtering.train_models_pipeline --train_dfs file.h5 --test_dfs file2.h5 --output_file_prefix out

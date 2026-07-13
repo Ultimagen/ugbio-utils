@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ report_title }} — {{ basename }}</title>
+<style>
+  :root {
+    --ug-blue: #1a3a5c;
+    --ug-teal: #1abc9c;
+    --light-gray: #f4f6f8;
+    --border: #dde1e7;
+    --text: #2c3e50;
+    --muted: #7f8c8d;
+    --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--font);
+    background: #eceff1;
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .page {
+    max-width: 960px;
+    margin: 24px auto;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: var(--ug-blue);
+    color: #fff;
+    padding: 24px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .header-left h1 { font-size: 20px; font-weight: 600; letter-spacing: 0.3px; }
+  .header-left p  { font-size: 12px; color: rgba(255,255,255,0.65); margin-top: 3px; }
+  .header-right   { text-align: right; font-size: 12px; color: rgba(255,255,255,0.7); line-height: 1.8; }
+  .header-right strong { color: #fff; }
+  .logo { font-size: 22px; font-weight: 700; color: var(--ug-teal); margin-bottom: 4px; letter-spacing: 1px; }
+
+  /* ── Body ── */
+  .body { padding: 28px 32px; }
+
+  .section { margin-bottom: 28px; }
+  .section-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .subtitle {
+    margin: 0 0 18px;
+    padding: 10px 28px 8px;
+    background: var(--light-gray);
+    border-left: 4px solid var(--ug-teal);
+    font-size: 12px;
+    color: #5d6d7e;
+  }
+  .subtitle strong { color: var(--ug-blue); }
+
+  /* ── Detection banner ── */
+  .status-banner {
+    border-radius: 6px;
+    padding: 18px 24px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .status-banner.detected {
+    background: #fdedec;
+    border: 1.5px solid #e74c3c;
+    border-left: 5px solid #c0392b;
+  }
+  .status-banner.not-detected {
+    background: #eafaf1;
+    border: 1.5px solid #2ecc71;
+    border-left: 5px solid #1e8449;
+  }
+  .status-banner.indeterminate {
+    background: #fef9e7;
+    border: 1.5px solid #f1c40f;
+    border-left: 5px solid #b7950b;
+  }
+  .status-badge {
+    color: #fff;
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.8px;
+    padding: 6px 14px;
+    border-radius: 4px;
+    white-space: nowrap;
+    text-transform: uppercase;
+  }
+  .status-badge.detected { background: #c0392b; }
+  .status-badge.not-detected { background: #1e8449; }
+  .status-badge.indeterminate { background: #b7950b; }
+  .status-stats { display: flex; gap: 28px; flex-wrap: wrap; }
+  .stat { display: flex; flex-direction: column; }
+  .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; }
+  .stat-value { font-size: 18px; font-weight: 700; color: var(--text); }
+  .stat-sub   { font-size: 11px; color: var(--muted); }
+
+  /* ── Metrics grid ── */
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+  .metric-card {
+    background: var(--light-gray);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+  }
+  .metric-card .label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.7px; }
+  .metric-card .value { font-size: 20px; font-weight: 700; color: var(--ug-blue); margin: 4px 0 2px; }
+  .metric-card .sub   { font-size: 11px; color: var(--muted); }
+
+  /* ── Chart container ── */
+  .chart-container {
+    background: var(--light-gray);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 12px;
+    text-align: center;
+  }
+  .chart-container img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+  }
+  .chart-description {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+    text-align: left;
+    padding: 0 4px;
+  }
+  .chart-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #5d6d7e;
+    margin: 10px 0 4px;
+    padding: 3px 0;
+    border-bottom: 1px solid #eaeef2;
+  }
+
+  /* ── Footer ── */
+  .footer {
+    background: var(--light-gray);
+    border-top: 1px solid var(--border);
+    padding: 14px 32px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .note {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+    padding: 8px 12px;
+    background: #fef9e7;
+    border: 1px solid #f1c40f;
+    border-radius: 4px;
+  }
+
+  /* ── Applied filters table ── */
+  .filter-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .filter-table th {
+    text-align: left;
+    padding: 8px 10px;
+    background: var(--light-gray);
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--muted);
+  }
+  .filter-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .filter-table tr:last-child td { border-bottom: none; }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- ── HEADER ── -->
+  <div class="header">
+    <div class="header-left">
+      <img src="data:image/webp;base64,{{ logo_b64 }}" alt="Ultima Genomics" style="height:30px; margin-bottom:6px; display:block;">
+      <h1>{{ report_title }}</h1>
+      <p>Tumor-Informed Minimal Residual Disease Detection &middot; Whole Genome Sequencing</p>
+    </div>
+    <div class="header-right">
+      <strong>Sample</strong> {{ basename }}<br>
+      <strong>Report Date</strong> {{ report_date }}
+    </div>
+  </div>
+
+  <div class="body">
+
+    <!-- ── SUBTITLE ── -->
+    <div class="subtitle">
+      <strong>MRD QC Report</strong> &mdash; Quality control diagnostics:
+      impact of signature and read filters on ctDNA detection.
+    </div>
+
+    <!-- ── DETECTION RESULT ── -->
+    <div class="section">
+      <div class="section-title">Detection Result</div>
+      {% if detection.detected is true %}
+      <div class="status-banner detected">
+        <div class="status-badge detected">{{ detection.call }}</div>
+      {% elif detection.detected is false %}
+      <div class="status-banner not-detected">
+        <div class="status-badge not-detected">{{ detection.call }}</div>
+      {% else %}
+      <div class="status-banner indeterminate">
+        <div class="status-badge indeterminate">{{ detection.call }}</div>
+      {% endif %}
+        <div class="status-stats">
+          <div class="stat">
+            <span class="stat-label">ctDNA VAF</span>
+            <span class="stat-value">{{ vaf_str }}</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">p-value (Binomial)</span>
+            <span class="stat-value">{{ binom_p_str }}</span>
+            <span class="stat-sub">Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }})</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Personal LOD</span>
+            <span class="stat-value">{{ lod_str }}</span>
+            <span class="stat-sub">{{ "%.0f"|format(detection.lod_recall * 100) }}% recall · {{ "%.0f"|format(detection.lod_fpr * 100) }}% FPR</span>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Supporting Reads</span>
+            <span class="stat-value">{{ detection.matched_supporting_reads }}</span>
+          </div>
+        </div>
+      </div>
+      {% if detection.jeffreys_prior_applied %}
+      <div class="note">
+        &#8505; No background reads observed in synthetic controls — noise rate estimated via Jeffreys prior (p_err = {{ noise_rate_str }}).
+      </div>
+      {% endif %}
+      {% if detection.n_synthetic_controls < 20 %}
+      <div class="note">
+        &#9888; Only {{ detection.n_synthetic_controls }} synthetic controls — p-value reliability is reduced.
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- ── QC CHECKS ── -->
+    {% if detection.qc_checks %}
+    <div class="section">
+      <div class="section-title">QC Checks</div>
+      <div style="display:flex; flex-direction:column; gap:6px;">
+        {% for check in detection.qc_checks %}
+        <div style="display:flex; align-items:center; gap:10px; padding:8px 14px; background:{% if check.passed %}#eafaf1{% else %}#fff8e1{% endif %}; border-radius:6px; border-left:4px solid {% if check.passed %}#2ecc71{% else %}#f0ad4e{% endif %};">
+          <span style="font-size:17px; line-height:1;">{% if check.passed %}✅{% else %}⚠️{% endif %}</span>
+          <span style="font-weight:600; min-width:220px; font-size:13px;">{{ check.label }}</span>
+          <span style="font-family:monospace; font-size:13px;">{{ check.value_str }}</span>
+          <span style="color:#7f8c8d; font-size:11px; margin-left:6px;">threshold: {{ check.threshold_str }}</span>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- ── ASSAY METRICS ── -->
+    <div class="section">
+      <div class="section-title">Assay Metrics</div>
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="label">Signature Size</div>
+          <div class="value">{{ "{:,}".format(detection.signature_size) }}</div>
+          <div class="sub">filtered loci</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Mean Coverage</div>
+          <div class="value">{{ "%.1f"|format(detection.mean_coverage) }}&times;</div>
+          <div class="sub">at signature loci</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Corrected Coverage</div>
+          <div class="value">{{ "{:,.0f}".format(detection.corrected_coverage) }}</div>
+          <div class="sub">effective depth &times; loci</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Filtering Ratio</div>
+          <div class="value">{{ "%.2f"|format(filt_ratio) }}</div>
+          <div class="sub">read filter pass rate</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── SIGNAL VS. NOISE ── -->
+    <div class="section">
+      <div class="section-title">Patient vs. Controls</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ signal_noise_img }}" alt="Patient vs. Controls" style="max-width:100%;">
+      </div>
+      <div class="chart-description">
+        <strong>Left plot &mdash; Left axis:</strong> ctDNA VAF (log scale). <strong>Right axis:</strong> Signature supporting reads (= VAF &times; corrected coverage).<br>
+        <span style="color:#c0392b;">&#9733;</span> <strong>Patient:</strong> matched patient signature.<br>
+        <span style="color:#3a9ad9;">&#9679;</span> <strong>Synthetic control signatures:</strong> Signatures drawn from db_control.<br>
+        <strong>Blue violin:</strong> Fitted Binomial, according to synthetic control error-rates: Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }}).<br>
+        <span style="color:#e67e22;">&#9135;&#9135;</span> Detection threshold (min VAF for Binomial p&nbsp;&lt;&nbsp;{{ "%.0f"|format(detection.alpha * 100) }}%).<br>
+        <span style="color:#27ae60;">&#183;&ndash;&#183;</span> LOD (min VAF for {{ "%.0f"|format(detection.lod_recall * 100) }}% recall at {{ "%.0f"|format(detection.lod_fpr * 100) }}% FPR).<br>
+        <span style="color:#9b59b6;">&#9670;</span> Cohort control signatures.
+      </div>
+    </div>
+
+    <!-- ── SUBSTITUTION TYPES + VAF + SBS96 ── -->
+    {% if sbs6_vaf_plots or sbs96_plots %}
+    <div class="section">
+      <div class="section-title">Signature Profile &amp; VAF</div>
+      {% for img in sbs6_vaf_plots %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ img }}" alt="SBS profile and VAF distribution">
+      </div>
+      {% endfor %}
+      {% if sbs96_plots %}
+      {% for img in sbs96_plots %}
+      <div style="margin-bottom:8px;">
+        <img src="data:image/png;base64,{{ img }}" alt="SBS96 mutational profile" style="max-width:100%;">
+        <div class="chart-description" style="margin-top:6px;">
+          COSMIC-format SBS96 profile from all filtered signature variants.
+          96 trinucleotide channels grouped by substitution type, normalised to pyrimidine strand.
+        </div>
+      </div>
+      {% endfor %}
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- ── cfDNA INTERSECTION AF ── -->
+    {% if intersection_af_img %}
+    <div class="section">
+      <div class="section-title">cfDNA Intersection Allele Fraction</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ intersection_af_img }}" alt="cfDNA Intersection AF">
+        <div class="chart-description">
+          Allele-fraction distribution at signature loci with &ge;1 supporting cfDNA read.
+          Red: patient signature loci (signal). Blue: control signature loci (noise).
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- ── READ LENGTH HISTOGRAM ── -->
+    {% if read_length_img %}
+    <div class="section">
+      <div class="section-title">Read Length Distribution</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ read_length_img }}" alt="Read length distribution">
+        <div class="chart-description">
+          Read length distribution of cfDNA reads at signature loci (after read filter).
+          Red: patient signature loci. Blue: control signature loci.
+          Shorter fragment lengths are enriched in ctDNA due to nucleosomal positioning.
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- ── cfDNA INTERSECTION SNVQ ── -->
+    {% if intersection_snvq_img %}
+    <div class="section">
+      <div class="section-title">cfDNA Intersection SNVQ Distribution</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ intersection_snvq_img }}" alt="cfDNA Intersection SNVQ">
+        <div class="chart-description">
+          SNVQ score distribution of cfDNA reads at signature loci (after read filter).
+          Red: patient signature loci. Blue: control signature loci.
+          Higher SNVQ indicates higher confidence in the SNV call.
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- ── ALT-SUPPORTING READS HISTOGRAM ── -->
+    {% if supporting_reads_hist_img %}
+    <div class="section">
+      <div class="section-title">Alt-Supporting Reads per Variant Locus</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ supporting_reads_hist_img }}" alt="Alt-supporting reads histogram">
+        <div class="chart-description">
+          Distribution of alt-supporting cfDNA read counts per signature locus (after read filter).
+          Red: patient loci &mdash; signal. Blue: control loci &mdash; noise baseline.
+          Loci with zero supporting reads are not shown; their count is annotated in the plot.
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- ── APPLIED FILTERS ── -->
+    {% if applied_filters %}
+    <div class="section">
+      <div class="section-title">Applied Filters</div>
+      <table class="filter-table">
+        <tr><th>Filter</th><th>Description</th></tr>
+        {% for name, desc in applied_filters.items() %}
+        <tr><td><strong>{{ name }}</strong></td><td>{{ desc }}</td></tr>
+        {% endfor %}
+      </table>
+    </div>
+    {% endif %}
+
+    <!-- ── CONTROL SIGNATURE PROFILES ── -->
+    {% if control_profiles %}
+    <div class="section">
+      <div class="section-title">Control Signature Profiles</div>
+      {% for profile in control_profiles %}
+      <div class="chart-label">{{ profile.label }}</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ profile.img_b64 }}" alt="{{ profile.label }} SBS profile">
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- ── FRAGMENT LENGTH DISTRIBUTIONS ── -->
+    {% if fragment_length_img %}
+    <div class="section">
+      <div class="section-title">cfDNA Fragment Length Distributions</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ fragment_length_img }}" alt="Fragment length distributions">
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- ── QC ANALYSIS: UNFILTERED SIGNATURE ── -->
+    <div class="section">
+      <div class="section-title">QC Analysis — Unfiltered Signature</div>
+      <div class="chart-description" style="margin-bottom:10px;">
+        Filtered reads + unfiltered signatures: assesses the impact of signature QC filters.
+      </div>
+      {% if unfilt_sig_signal_noise_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_sig_signal_noise_img }}" alt="Signal vs Noise (unfiltered sig)">
+      </div>
+      {% endif %}
+      {% if unfilt_sig_sbs_vaf_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_sig_sbs_vaf_img }}" alt="SBS + VAF (unfiltered sig)">
+      </div>
+      {% endif %}
+      {% if unfilt_sig_intersection_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_sig_intersection_img }}" alt="Intersection AF (unfiltered sig)">
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- ── QC ANALYSIS: UNFILTERED READS ── -->
+    <div class="section">
+      <div class="section-title">QC Analysis — Unfiltered Reads</div>
+      <div class="chart-description" style="margin-bottom:10px;">
+        Unfiltered reads + filtered signatures: assesses the impact of read-level QC filters.
+      </div>
+      {% if unfilt_reads_signal_noise_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_reads_signal_noise_img }}" alt="Signal vs Noise (unfiltered reads)">
+      </div>
+      {% endif %}
+      {% if unfilt_reads_sbs_vaf_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_reads_sbs_vaf_img }}" alt="SBS + VAF (unfiltered reads)">
+      </div>
+      {% endif %}
+      {% if unfilt_reads_intersection_img %}
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ unfilt_reads_intersection_img }}" alt="Intersection AF (unfiltered reads)">
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- ── QC ANALYSIS: NOISY LOCI FILTER SENSITIVITY ── -->
+    {% if noise_filter_comparison %}
+    <div class="section">
+      <div class="section-title">QC Analysis — Noisy Loci Filter Sensitivity</div>
+      <div class="chart-description" style="margin-bottom:10px;">
+        Impact of the noisy loci filter
+        (lq_fraction &gt; {{ noise_filter_comparison.thresh_lq }})
+        on detection. Loci where more than
+        {{ "%.0f"|format(noise_filter_comparison.thresh_lq * 100) }}%
+        of reads fail the read filter
+        low-quality read(s) are excluded from the primary result.
+      </div>
+      <table style="width:100%; border-collapse:collapse; margin-bottom:16px; font-size:13px;">
+        <thead>
+          <tr style="background:var(--light-gray); text-align:left;">
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Analysis</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Call</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">p-value</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Supporting Reads</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">ctDNA VAF</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in [noise_filter_comparison.with_filter, noise_filter_comparison.without_filter] %}
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px 12px; font-weight:600;">{{ row.label }}</td>
+            <td style="padding:8px 12px;">
+              <span class="status-badge {{ row.call_class }}" style="font-size:11px; padding:3px 8px;">{{ row.call }}</span>
+            </td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.p_str }}</td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.supporting_reads }}</td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.vaf_str }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if noise_filter_comparison.no_noise_signal_img %}
+      <div class="chart-label">Signal vs Noise — Without noisy loci filter</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ noise_filter_comparison.no_noise_signal_img }}"
+             alt="Signal vs Noise (no noisy loci filter)">
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- ── QC ANALYSIS: MULTI-READ LOCUS FILTER SENSITIVITY ── -->
+    {% if multi_read_filter_comparison %}
+    <div class="section">
+      <div class="section-title">QC Analysis — Multi-Read Locus Filter Sensitivity</div>
+      <div class="chart-description" style="margin-bottom:10px;">
+        Impact of the multi-read locus filter (Poisson Bonferroni-corrected p &lt;
+        {{ multi_read_filter_comparison.thresh_pvalue }}) on detection.
+        Matched loci whose per-locus HQ supporting-read count is unexpectedly high
+        given the estimated tumour fraction (&lambda; = TF &times; mean coverage)
+        are removed as likely germline or artifact variants.
+      </div>
+      <table style="width:100%; border-collapse:collapse; margin-bottom:16px; font-size:13px;">
+        <thead>
+          <tr style="background:var(--light-gray); text-align:left;">
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Analysis</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Call</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">p-value</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">Supporting Reads</th>
+            <th style="padding:8px 12px; border-bottom:2px solid var(--border);">ctDNA VAF</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in [multi_read_filter_comparison.with_filter, multi_read_filter_comparison.without_filter] %}
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:8px 12px; font-weight:600;">{{ row.label }}</td>
+            <td style="padding:8px 12px;">
+              <span class="status-badge {{ row.call_class }}" style="font-size:11px; padding:3px 8px;">{{ row.call }}</span>
+            </td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.p_str }}</td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.supporting_reads }}</td>
+            <td style="padding:8px 12px; font-family:monospace;">{{ row.vaf_str }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% if multi_read_filter_comparison.pre_filter_signal_img %}
+      <div class="chart-label">Signal vs Noise — Without multi-read filter</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ multi_read_filter_comparison.pre_filter_signal_img }}"
+             alt="Signal vs Noise (no multi-read filter)">
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+  </div>
+
+  <!-- ── FOOTER ── -->
+  <div class="footer">
+    <span>Ultima Genomics &middot; MRD QC Pipeline</span>
+    <span>Generated {{ report_date }}</span>
+  </div>
+
+</div>
+
+</body>
+</html>
