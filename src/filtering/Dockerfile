@@ -7,13 +7,31 @@ ARG OUT_DIR
 ARG MODULE_DIR=filtering
 RUN mkdir -p $OUT_DIR
 
+# Install build dependencies for C extensions (pyBigWig, pysam, etc.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    zlib1g-dev \
+    libbz2-dev \
+    liblzma-dev \
+    libcurl4-gnutls-dev \
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment for pip install
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY ./src/ ./src/
 
 # build depended + module
-RUN python -m pip install build
+RUN pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 RUN python -m build --outdir $OUT_DIR --wheel ./src/comparison
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
+
+# Install wheels — C extensions compile here, not in runtime
+RUN pip install ${OUT_DIR}/*.whl
 
 ##################################################################
 FROM $BASE_IMAGE
@@ -53,12 +71,11 @@ RUN wget https://github.com/RealTimeGenomics/rtg-tools/releases/download/${RTG_V
     echo "RTG_TALKBACK=true  # Crash logs\nRTG_USAGE=false # Simple usage logging\n" >/opt/rtg/rtg.cfg && \
     ln -s /opt/rtg/rtg /usr/local/bin/rtg
 
-ARG OUT_DIR
-
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
-COPY --from=build ${OUT_DIR} ${OUT_DIR}
-RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
+# Copy pre-built virtual environment from build stage (no compilation in runtime)
+COPY --from=build /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 USER ugbio
 

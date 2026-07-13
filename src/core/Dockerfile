@@ -6,11 +6,30 @@ FROM python:3.11-bookworm AS build
 ARG OUT_DIR
 RUN mkdir -p $OUT_DIR
 
+# Install build dependencies for C extensions (pyBigWig, pysam, etc.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    zlib1g-dev \
+    libbz2-dev \
+    liblzma-dev \
+    libcurl4-gnutls-dev \
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment for pip install
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY ./src/ ./src/
 
 #build ugbio_core
-RUN python -m pip install build
+RUN pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/core
+
+# Install wheels with all extras — C extensions compile here, not in runtime
+RUN WHEEL_FILE=$(find ${OUT_DIR} -name "ugbio_core*.whl") && \
+    pip install "${WHEEL_FILE}[vcfbed,reports,ml]"
 
 # ##################################################################
 FROM $BASE_IMAGE
@@ -26,14 +45,11 @@ RUN mkdir -p /opt/picard && \
 RUN echo '#!/bin/sh\njava -jar /opt/picard/picard.jar "$@"' > /usr/local/bin/picard && \
     chmod +x /usr/local/bin/picard
 
-ARG OUT_DIR
-
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
-COPY --from=build ${OUT_DIR} ${OUT_DIR}
-RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
-    pip install "${WHEEL_FILE}[vcfbed,reports,ml]" && \
-    rm -rf ${OUT_DIR}
+# Copy pre-built virtual environment from build stage (no compilation in runtime)
+COPY --from=build /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 USER ugbio
 

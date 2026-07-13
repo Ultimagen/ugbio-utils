@@ -7,14 +7,32 @@ ARG OUT_DIR
 ARG MODULE_DIR=mrd
 RUN mkdir -p $OUT_DIR
 
+# Install build dependencies for C extensions (pyBigWig, pysam, etc.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    zlib1g-dev \
+    libbz2-dev \
+    liblzma-dev \
+    libcurl4-gnutls-dev \
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment for pip install
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY ./src/ ./src/
 
 #build all depended + module
-RUN python -m pip install build
+RUN pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 RUN python -m build --outdir $OUT_DIR --wheel ./src/ppmseq
 RUN python -m build --outdir $OUT_DIR --wheel ./src/featuremap
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
+
+# Install wheels — C extensions compile here, not in runtime
+RUN pip install ${OUT_DIR}/*.whl
 
 ##################################################################
 FROM ${BASE_IMAGE}
@@ -23,11 +41,6 @@ RUN apt-get update && apt-get upgrade -y && apt-get install --no-install-recomme
     openjdk-17-jre-headless `# for gatk` \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* && apt-get autoclean
-
-ARG PYTHON_VERSION=3.10
-ARG DEBIAN_FRONTEND=noninteractive
-ARG BCFTOOLS_INSTALL_DIR=/opt/bcftools
-ARG BCFTOOLS_VERSION=1.20
 
 # Download and install gatk
 ARG GATK_VERSION=4.6.2.0
@@ -41,12 +54,11 @@ RUN wget https://github.com/broadinstitute/gatk/releases/download/${GATK_VERSION
 COPY docker/patch-gatk-jars.sh /tmp/patch-gatk-jars.sh
 RUN chmod +x /tmp/patch-gatk-jars.sh && /tmp/patch-gatk-jars.sh && rm /tmp/patch-gatk-jars.sh
 
-ARG OUT_DIR
-
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
-COPY --from=build ${OUT_DIR} ${OUT_DIR}
-RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
+# Copy pre-built virtual environment from build stage (no compilation in runtime)
+COPY --from=build /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 USER ugbio
 

@@ -5,25 +5,29 @@ ARG OUT_DIR
 ARG MODULE_DIR=cloud_utils
 RUN mkdir -p $OUT_DIR
 
+# Create virtual environment for pip install
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY ./src/ ./src/
 
 # build module
-RUN python -m pip install build
+RUN pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
+
+# Install wheels in build stage
+RUN pip install ${OUT_DIR}/*.whl
+RUN pip install pytest
 
 ##################################################################
 FROM python:3.11-slim-bookworm
 
-ARG OUT_DIR
-
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
-COPY --from=build ${OUT_DIR} ${OUT_DIR}
-RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
+# Copy pre-built virtual environment from build stage
+COPY --from=build /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 USER ugbio
 
 WORKDIR /home/ugbio
-
-# for runnig CI (can be removed if pytest is installed as part of the venv)
-RUN pip install --user pytest

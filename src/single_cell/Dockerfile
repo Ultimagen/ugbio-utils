@@ -1,33 +1,38 @@
-
 FROM python:3.11-bookworm AS build
 
 ARG OUT_DIR=/tmp/ugbio
 ARG MODULE_DIR=single_cell
 RUN mkdir -p $OUT_DIR
 
+# Create virtual environment for pip install
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY ./src/ ./src/
 
 #build ugbio_core + module
-RUN python -m pip install build
+RUN pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/core
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
+
+# Install wheels in build stage
+RUN pip install ${OUT_DIR}/*.whl
 
 ##################################################################
 FROM python:3.11-slim-bookworm
 
-ARG OUT_DIR=/tmp/ugbio
 ARG USERNAME=app
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
 
-# Install apt-get dependencies
+# Install runtime-only dependencies
 RUN apt-get update && apt-get install --no-install-recommends -y \
     wget \
     libgomp1 \
     unzip \
-    procps `# for monitoring script memory usage` \
-    sysstat `# for monitoring script IO metrics` \
-    sudo `# install sudo` \
+    procps \
+    sysstat \
+    sudo \
     ; \
     apt-get autoclean && rm -rf /var/lib/apt/lists/*
 
@@ -37,10 +42,9 @@ RUN wget -O- https://github.com/alexdobin/STAR/archive/2.7.10a.tar.gz \
     && mv STAR-2.7.10a/bin/Linux_x86_64/STAR /usr/local/bin \
     && rm -rf STAR-2.7.10a
 
-# Install module and dependencies (like core)
-COPY --from=build $OUT_DIR $OUT_DIR
-
-RUN pip install ${OUT_DIR}/*.whl
+# Copy pre-built virtual environment from build stage
+COPY --from=build /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 # Include licenses
 COPY ["licenses/star LICENSE.txt", "."]

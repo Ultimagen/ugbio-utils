@@ -16,7 +16,7 @@ env:
   AWS_ACCOUNT: 337532070941
   # Base image used for building and testing workspace members.
   # If you update this version, also update DEFAULT_BASE_IMAGE in build-workspace-docker.yml.
-  UGBIO_BASE_IMAGE_NAME: ugbio_base:1.8.3
+  UGBIO_BASE_IMAGE_NAME: ugbio_base:1.8.4
   UGBIO_UTILS_REPO_PATH: ./ugbio-utils
   INSTALL_BIO_PATH: ./install-bio
   INSTALL_BIO_REF: main

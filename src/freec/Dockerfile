@@ -7,11 +7,30 @@ ARG OUT_DIR
 ARG MODULE_DIR=freec
 RUN mkdir -p $OUT_DIR
 
+# Install build dependencies for C extensions (pyBigWig, pysam, etc.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    zlib1g-dev \
+    libbz2-dev \
+    liblzma-dev \
+    libcurl4-gnutls-dev \
+    libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment for pip install
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY ./src/ ./src/
 
 # build module
-RUN python -m pip install build
+RUN pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/$MODULE_DIR
+
+# Install wheels — C extensions compile here, not in runtime
+RUN pip install ${OUT_DIR}/*.whl
+RUN pip install pytest
 
 ##################################################################
 FROM $BASE_IMAGE
@@ -44,16 +63,12 @@ RUN git clone --branch ${FREEC_BRANCH} https://github.com/Ultimagen/FREEC FREEC
 RUN cp FREEC/src/freec /freec
 RUN ln -s /freec /usr/bin/freec
 
-ARG OUT_DIR
-
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
-COPY --from=build ${OUT_DIR} ${OUT_DIR}
-RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
+# Copy pre-built virtual environment from build stage (no compilation in runtime)
+COPY --from=build /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 USER ugbio
 
 WORKDIR /home/ugbio
-
-# for runnig CI (can be removed if pytest is installed as part of the venv)
-RUN pip install --user pytest

@@ -1,11 +1,15 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS build
 
 ARG PYPGX_BRANCH=0.26.0
-ARG PYPGX_BUNDLE_BRANCH=0.26.0
 
-# Install dependencies and create venv
+# Install build dependencies
 RUN apt-get update && \
-    apt-get install --no-install-recommends -y default-jre-headless git build-essential wget unzip
+    apt-get install --no-install-recommends -y git build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment for pip install
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 # Install pypgx
 RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
@@ -13,6 +17,16 @@ RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
     git checkout ${PYPGX_BRANCH} && \
     pip install . && \
     rm -rf /opt/pypgx
+
+##################################################################
+FROM python:3.12-slim
+
+ARG PYPGX_BUNDLE_BRANCH=0.26.0
+
+RUN apt-get update && \
+    apt-get install --no-install-recommends -y default-jre-headless git wget unzip && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Clone the pypgx-bundle repository at the corresponding version
 RUN git clone --branch ${PYPGX_BUNDLE_BRANCH} --depth 1 https://github.com/sbslee/pypgx-bundle /opt/pypgx-bundle
@@ -29,11 +43,15 @@ RUN wget -q https://github.com/broadinstitute/gatk/releases/download/${GATK_VERS
 COPY docker/patch-gatk-jars.sh /tmp/patch-gatk-jars.sh
 RUN chmod +x /tmp/patch-gatk-jars.sh && /tmp/patch-gatk-jars.sh && rm /tmp/patch-gatk-jars.sh
 
-# Remove unnecessary packages and recreate python3 symlink
+# Remove unnecessary packages
 RUN apt-get purge -y git wget unzip && \
     apt-get autoremove -y && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# Copy pre-built virtual environment from build stage
+COPY --from=build /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 # Set environment variables for pypgx bundle
 ENV PYPGX_BUNDLE=/opt/pypgx-bundle
