@@ -10,7 +10,12 @@ ARG BEDTOOLS_VERSION=2.31.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
+    ca-certificates \
+    bzip2 \
+    xz-utils \
+    perl \
     automake \
+    autoconf \
     make \
     gcc \
     g++ \
