@@ -87,7 +87,7 @@ RUN chmod +x /tmp/patch-gatk-jars.sh && /tmp/patch-gatk-jars.sh && rm /tmp/patch
 COPY --from=build /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:/app/bin:$PATH"
 
-COPY --from=build /app/src/methylation/ugbio_methylation/resources/meth_hg38-chr20_Lambda_pUC19.interval_list /app/interval_list/meth_hg38-chr20_Lambda_pUC19.interval_list
+COPY --from=build /src/methylation/ugbio_methylation/resources/meth_hg38-chr20_Lambda_pUC19.interval_list /app/interval_list/meth_hg38-chr20_Lambda_pUC19.interval_list
 
 # Avoid matplotlib warnings
 RUN mkdir -p /app/matplotlib_config && \
