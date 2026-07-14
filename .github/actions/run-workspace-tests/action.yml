@@ -24,6 +24,9 @@ inputs:
   ugbio_base_image:
       description: "Fallback base image (image:tag) when the Dockerfile has no ARG BASE_IMAGE default."
       required: false
+  ugbio_base_build_image:
+      description: "Fallback build-stage image (image:tag) when the Dockerfile has no ARG BASE_BUILD_IMAGE default."
+      required: false
   github-token:
       description: "GitHub token for private repository access"
       required: false
@@ -42,7 +45,7 @@ runs:
       id: ecr-login
       uses: aws-actions/amazon-ecr-login@v1
 
-    - name: Extract BASE_IMAGE from Dockerfile
+    - name: Extract BASE_IMAGE and BASE_BUILD_IMAGE from Dockerfile
       id: extract-base-image
       shell: bash
       run: |
@@ -53,6 +56,12 @@ runs:
           BASE="${{ inputs.ugbio_base_image }}"
         fi
         echo "base_image=${BASE}" >> "${GITHUB_OUTPUT}"
+
+        BASE_BUILD=$(grep -oP '(?<=ARG BASE_BUILD_IMAGE=)\S+' ${{ inputs.docker-file }} || true)
+        if [ -z "$BASE_BUILD" ]; then
+          BASE_BUILD="${{ inputs.ugbio_base_build_image }}"
+        fi
+        echo "base_build_image=${BASE_BUILD}" >> "${GITHUB_OUTPUT}"
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v2
@@ -70,7 +79,9 @@ runs:
         cache-to: type=gha,mode=max
         secrets: |
           github_token=${{ inputs.github-token }}
-        build-args: BASE_IMAGE=${{ steps.ecr-login.outputs.registry }}/${{ steps.extract-base-image.outputs.base_image }}
+        build-args: |
+          BASE_IMAGE=${{ steps.ecr-login.outputs.registry }}/${{ steps.extract-base-image.outputs.base_image }}
+          BASE_BUILD_IMAGE=${{ steps.ecr-login.outputs.registry }}/${{ steps.extract-base-image.outputs.base_build_image }}
 
     - name: Run python tests (if exist) in the container
       working-directory: src/${{ inputs.workspace-folder }}

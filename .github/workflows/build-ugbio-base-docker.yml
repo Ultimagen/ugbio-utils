@@ -12,7 +12,7 @@ permissions:
   contents: read # Required for actions/checkout
 
 jobs:
-  build-docker:
+  build-runtime:
     uses: ./.github/workflows/build-workspace-docker.yml
     secrets: inherit
     with:
@@ -20,3 +20,14 @@ jobs:
       docker-file: ugbio_base/Dockerfile
       docker-image: ugbio_base
       docker-tag: ${{ inputs.image-tag }}
+
+  build-builder:
+    uses: ./.github/workflows/docker-build-push.yml
+    secrets: inherit
+    with:
+      git-repo: ${{ github.repository }}
+      git-ref: ${{ github.ref_name }}
+      docker-file: ugbio_base/Dockerfile
+      docker-image: ugbio_base_build
+      docker-tag: ${{ inputs.image-tag }}
+      docker-target: builder
