@@ -1,22 +1,12 @@
 # BASE_IMAGE is injected by build-workspace-docker.yml (defaults to DEFAULT_BASE_IMAGE)
 ARG BASE_IMAGE
+ARG BASE_BUILD_IMAGE
 ARG OUT_DIR=/tmp/ugbio
-FROM python:3.11-bookworm AS build
+FROM $BASE_BUILD_IMAGE AS build
 
 ARG OUT_DIR
 ARG MODULE_DIR=mrd
 RUN mkdir -p $OUT_DIR
-
-# Install build dependencies for C extensions (pyBigWig, pysam, etc.)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    zlib1g-dev \
-    libbz2-dev \
-    liblzma-dev \
-    libcurl4-gnutls-dev \
-    libc6-dev \
-    && rm -rf /var/lib/apt/lists/*
 
 # Create virtual environment for pip install
 RUN python -m venv /opt/venv

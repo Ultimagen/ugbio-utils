@@ -1,23 +1,13 @@
-FROM python:3.11-bookworm AS build
+ARG BASE_BUILD_IMAGE
+FROM $BASE_BUILD_IMAGE AS build
 
 ARG OUT_DIR=/tmp/ugbio
 ARG MODULE_DIR=methylation
 RUN mkdir -p $OUT_DIR
 
-# Install build dependencies for C extensions and tool compilation
+# Extra build deps for libBigWig/MethylDackel (beyond what BASE_BUILD_IMAGE provides)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    make \
-    zlib1g-dev \
-    libbz2-dev \
-    liblzma-dev \
-    libcurl4-gnutls-dev \
-    libc6-dev \
     libhts-dev \
-    git \
-    wget \
-    unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Create virtual environment for pip install
