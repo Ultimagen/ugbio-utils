@@ -11,6 +11,10 @@ RUN apt-get update && \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Pin pandas<2.0 — pypgx assigns float to int64 DataFrame columns via iloc,
+# which raises LossySetitemError in pandas 2.x
+RUN pip install "pandas<2.0"
+
 # Install pypgx
 RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
     cd /opt/pypgx && \
