@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS build
+FROM python:3.11-slim AS build
 
 ARG PYPGX_BRANCH=0.26.0
 
@@ -23,7 +23,7 @@ RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
     rm -rf /opt/pypgx
 
 ##################################################################
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 ARG PYPGX_BUNDLE_BRANCH=0.26.0
 
