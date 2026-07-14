@@ -57,7 +57,7 @@ runs:
         fi
         echo "base_image=${BASE}" >> "${GITHUB_OUTPUT}"
 
-        BASE_BUILD=$(grep -oP '(?<=ARG BASE_BUILD_IMAGE=)\S+' ${{ inputs.docker-file }} || true)
+        BASE_BUILD=$(grep -oP '(?<=ARG BASE_BUILD_IMAGE=)\S+:\S+' ${{ inputs.docker-file }} || true)
         if [ -z "$BASE_BUILD" ]; then
           BASE_BUILD="${{ inputs.ugbio_base_build_image }}"
         fi

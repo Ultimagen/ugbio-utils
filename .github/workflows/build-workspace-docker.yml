@@ -64,13 +64,13 @@ jobs:
       - name: Extract BASE_IMAGE and BASE_BUILD_IMAGE from Dockerfile
         id: extract-base-image
         run: |
-          BASE=$(grep -oP '(?<=ARG BASE_IMAGE=)\S+' ${{ inputs.docker-file }} || true)
+          BASE=$(grep -oP '(?<=ARG BASE_IMAGE=)\S+:\S+' ${{ inputs.docker-file }} || true)
           if [ -z "$BASE" ]; then
             BASE="${{ env.DEFAULT_BASE_IMAGE }}"
           fi
           echo "base_image=${BASE}" >> "${GITHUB_OUTPUT}"
 
-          BASE_BUILD=$(grep -oP '(?<=ARG BASE_BUILD_IMAGE=)\S+' ${{ inputs.docker-file }} || true)
+          BASE_BUILD=$(grep -oP '(?<=ARG BASE_BUILD_IMAGE=)\S+:\S+' ${{ inputs.docker-file }} || true)
           if [ -z "$BASE_BUILD" ]; then
             BASE_BUILD="${{ env.DEFAULT_BASE_BUILD_IMAGE }}"
           fi
