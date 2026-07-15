@@ -1,6 +1,6 @@
 FROM python:3.11-slim AS build
 
-ARG PYPGX_BRANCH=0.26.0
+ARG PYPGX_BRANCH=0.27.0
 
 # Install build dependencies
 RUN apt-get update && \
@@ -25,10 +25,10 @@ RUN git clone https://github.com/sbslee/pypgx /opt/pypgx && \
 ##################################################################
 FROM python:3.11-slim
 
-ARG PYPGX_BUNDLE_BRANCH=0.26.0
+ARG PYPGX_BUNDLE_BRANCH=0.27.0
 
 RUN apt-get update && \
-    apt-get install --no-install-recommends -y default-jre-headless git wget unzip && \
+    apt-get install --no-install-recommends -y default-jre-headless git wget unzip bcftools && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
