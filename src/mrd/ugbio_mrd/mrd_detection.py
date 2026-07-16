@@ -341,17 +341,30 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         p_err = 0.0
         raw_reads_zero = False
 
-    # Assay metrics from filtered matched signature
-    if "signature_type" not in df_signatures_filt.columns:
-        matched_sig_loci = df_signatures_filt
+    # Assay metrics from filtered matched signature.
+    # Use n_loci from df_tf when available (accounts for loci removed by noise/multi-read
+    # filters); fall back to df_signatures_filt count for backwards compatibility.
+    if "n_loci" in df_tf.columns:
+        try:
+            signature_size = int(df_tf.loc["matched", "n_loci"].iloc[0])
+        except (KeyError, IndexError):
+            signature_size = 0
+        try:
+            raw_coverage = float(df_tf.loc["matched", "coverage"].iloc[0])
+        except (KeyError, IndexError):
+            raw_coverage = 0.0
+        mean_coverage = raw_coverage / signature_size if signature_size > 0 else 0.0
     else:
-        matched_sig_loci = df_signatures_filt[df_signatures_filt["signature_type"] == "matched"]
-    signature_size = len(matched_sig_loci)
-    mean_coverage = (
-        float(matched_sig_loci["coverage"].mean())
-        if "coverage" in matched_sig_loci.columns and len(matched_sig_loci) > 0
-        else 0.0
-    )
+        if "signature_type" not in df_signatures_filt.columns:
+            matched_sig_loci = df_signatures_filt
+        else:
+            matched_sig_loci = df_signatures_filt[df_signatures_filt["signature_type"] == "matched"]
+        signature_size = len(matched_sig_loci)
+        mean_coverage = (
+            float(matched_sig_loci["coverage"].mean())
+            if "coverage" in matched_sig_loci.columns and len(matched_sig_loci) > 0
+            else 0.0
+        )
 
     # Binomial p-value: P(X >= observed | N, p_err) under null Binom(n_effective, p_err).
     # n_effective comes directly from df_tf corrected_coverage, which is the same denominator
