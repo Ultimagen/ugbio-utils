@@ -5,6 +5,7 @@ FROM ubuntu:24.04
 # autoconf and automake are required to build bundled htslib
 RUN apt update && apt install --no-install-recommends -y \
     git \
+    ca-certificates \
     make \
     build-essential \
     autoconf \
