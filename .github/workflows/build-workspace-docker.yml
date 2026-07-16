@@ -45,6 +45,8 @@ env:
   # Default base image used when the Dockerfile does not declare an ARG BASE_IMAGE default.
   # If you update this version, also update UGBIO_BASE_IMAGE_NAME in ci.yml.
   DEFAULT_BASE_IMAGE: ugbio_base:1.8.5
+  # Default builder-stage base image used when the Dockerfile does not declare an ARG BASE_BUILD_IMAGE default.
+  # If you update this version, also update UGBIO_BASE_BUILD_IMAGE_NAME in ci.yml.
   DEFAULT_BASE_BUILD_IMAGE: ugbio_base_build:1.8.5
 
 jobs:

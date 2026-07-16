@@ -17,6 +17,8 @@ env:
   # Base image used for building and testing workspace members.
   # If you update this version, also update DEFAULT_BASE_IMAGE in build-workspace-docker.yml.
   UGBIO_BASE_IMAGE_NAME: ugbio_base:1.8.5
+  # Builder-stage base image (compiler/dev-tools) used for building workspace members.
+  # If you update this version, also update DEFAULT_BASE_BUILD_IMAGE in build-workspace-docker.yml.
   UGBIO_BASE_BUILD_IMAGE_NAME: ugbio_base_build:1.8.5
   UGBIO_UTILS_REPO_PATH: ./ugbio-utils
   INSTALL_BIO_PATH: ./install-bio

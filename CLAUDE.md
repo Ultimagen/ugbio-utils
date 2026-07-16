@@ -499,6 +499,8 @@ uv run pre-commit run --all-files
 **Registry:**
 - Public: Docker Hub
 
+For writing or updating a module Dockerfile (including CVE remediation), use the `ugbio-docker-module` skill. **Revisit that skill whenever the Docker build structure changes** (e.g. base image pattern, multi-stage layout, CI scan steps) so it doesn't go stale like this section has before.
+
 ## Important Patterns & Conventions
 
 ### String Formatting
