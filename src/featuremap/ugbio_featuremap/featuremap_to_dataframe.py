@@ -1069,6 +1069,8 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
     read_filter_json_key: str | None = None,
     downsample_reads: int | None = None,
     downsample_seed: int | None = None,
+    max_fp_vaf: float | None = None,
+    max_fp_support_count: int | None = None,
 ) -> None:
     """
     Convert VCF to Parquet using region-based parallel processing.
@@ -1111,6 +1113,14 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
         is less than this value, all reads are returned.
     downsample_seed : int | None
         Random seed for downsampling (optional, for reproducibility)
+    max_fp_vaf : float | None
+        If set, override the ``low_vaf`` filter value in the loaded read-filters JSON
+        (the ``filters_full_output`` key). Has no effect if the JSON does not contain
+        a filter named ``low_vaf`` with field ``RAW_VAF``.
+    max_fp_support_count : int | None
+        If set, after writing the parquet file keep only rows where the estimated
+        alt-read count (``round(RAW_VAF * DP)``) is <= this value.  Intended for
+        false-positive training-set preparation only; do not use on TP sets.
     """
     log.info(f"Input: {vcf}")
     log.info(f"Output: {out}")
@@ -1208,6 +1218,15 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
             if isinstance(read_filters, dict) and KEY_FILTERS in read_filters:
                 log.info(f"Filter configuration contains {len(read_filters[KEY_FILTERS])} filter rules")
 
+        # Override low_vaf filter threshold when max_fp_vaf is explicitly supplied
+        if max_fp_vaf is not None and read_filters is not None:
+            filters_list = read_filters.get(KEY_FILTERS) if isinstance(read_filters, dict) else read_filters
+            if isinstance(filters_list, list):
+                for filt in filters_list:
+                    if filt.get(KEY_NAME) == "low_vaf" and filt.get(KEY_FIELD) == "RAW_VAF":
+                        filt[KEY_VALUE] = max_fp_vaf
+                        log.info(f"Overriding low_vaf filter threshold to {max_fp_vaf}")
+
         # Generate genomic regions (fixed windows via bedtools)
         regions = _generate_genomic_regions(
             vcf,
@@ -1280,6 +1299,17 @@ def vcf_to_parquet(  # noqa: PLR0915, C901, PLR0912, PLR0913
                 )
 
             _merge_parquet_files_lazy(part_files, out, downsample_reads, downsample_seed)
+
+        # Post-filter by alt-read count (FP training set only)
+        if max_fp_support_count is not None:
+            log.info(f"Applying max_fp_support_count <= {max_fp_support_count} filter (RAW_VAF * DP)")
+            df = pl.scan_parquet(out).filter(
+                (pl.col("RAW_VAF") * pl.col("DP")).round(0).cast(pl.Int64) <= max_fp_support_count
+            )
+            rows_before = pl.scan_parquet(out).select(pl.len()).collect().item()
+            df.collect().write_parquet(out)
+            rows_after = pl.scan_parquet(out).select(pl.len()).collect().item()
+            log.info(f"max_fp_support_count filter: {rows_before:,} -> {rows_after:,} rows retained")
 
         final_row_count = pl.scan_parquet(out).select(pl.len()).collect().item()
         log.info(f"Conversion completed: {out} ({final_row_count:,} rows)")
@@ -1698,6 +1728,26 @@ def main(argv: list[str] | None = None) -> None:
         help="Random seed for reproducible downsampling",
     )
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    parser.add_argument(
+        "--max-fp-vaf",
+        type=float,
+        default=None,
+        help=(
+            "Override the 'low_vaf' filter threshold in the read-filters JSON "
+            "(field RAW_VAF). Only affects the false-positive training set "
+            "(filters_full_output key). Default: use value from JSON."
+        ),
+    )
+    parser.add_argument(
+        "--max-fp-support-count",
+        type=int,
+        default=None,
+        help=(
+            "After conversion, retain only rows where the estimated alt-read count "
+            "(round(RAW_VAF * DP)) is <= this value. Intended for false-positive "
+            "training-set preparation; do not use on TP sets. Default: no limit."
+        ),
+    )
     args = parser.parse_args(argv)
 
     # Parse expand columns
@@ -1731,6 +1781,8 @@ def main(argv: list[str] | None = None) -> None:
         read_filter_json_key=args.read_filter_json_key,
         downsample_reads=args.downsample_reads,
         downsample_seed=args.downsample_seed,
+        max_fp_vaf=args.max_fp_vaf,
+        max_fp_support_count=args.max_fp_support_count,
     )
 
 
