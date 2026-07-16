@@ -1,6 +1,6 @@
 [project]
 name = "ugbio_t1k"
-version = "1.27.2-0"
+version = "1.28.0"
 description = "T1K - HLA and KIR genotyping"
 authors = [
     { name = "Ilya Soifer", email = "ilya.soifer@ultimagen.com" },
