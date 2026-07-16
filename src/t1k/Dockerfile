@@ -3,7 +3,7 @@ FROM ubuntu:24.04
 # Install dependencies
 # Note: libdeflate-dev, liblzma-dev, libbz2-dev are required by htslib for compression support
 # autoconf and automake are required to build bundled htslib
-RUN apt update && apt install -y \
+RUN apt update && apt install --no-install-recommends -y \
     git \
     make \
     build-essential \
@@ -17,7 +17,9 @@ RUN apt update && apt install -y \
     libcurl4-openssl-dev \
     libssl-dev \
     perl \
-    && apt clean
+    && apt clean \
+    && rm -rf /var/lib/apt/lists/*
+
 
 # Clone T1K (using v1.0.9, closest available release to validation version)
 RUN git clone https://github.com/mourisl/T1K.git /T1K \
@@ -36,9 +38,6 @@ RUN cd /T1K \
     && cd .. \
     && make htslib=1 LINKFLAGS="-lpthread -lz -ldeflate -llzma -lbz2 -lcurl -lssl -lcrypto" -j $(nproc)
 
-# After building T1K
-RUN cd /T1K \
-      && make htslib=1 LINKFLAGS="-lpthread -lz -ldeflate -llzma -lbz2 -lcurl -lssl -lcrypto" -j $(nproc)
 
 # Install htslib shared library
 RUN cp /T1K/htslib-1.15.1/libhts.so.3 /usr/local/lib/ \
