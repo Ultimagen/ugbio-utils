@@ -762,9 +762,12 @@ def read_and_filter_features_parquet(  # noqa: C901
         df_features.query("signature_type=='matched'").groupby(level=["chrom", "pos"]).agg({"filtering_ratio": "first"})
     )
     df_features_filt = df_features.query(read_filter_query)
+    noise_excluded_loci = None
     if thresh_noise_lq_reads is not None:
-        df_features_filt = df_features_filt[~df_features_filt["locus_filter_noise"]]
-    return df_features, df_features_filt, filtering_ratio
+        noise_mask = df_features_filt["locus_filter_noise"]
+        noise_excluded_loci = df_features_filt[noise_mask].index.unique()
+        df_features_filt = df_features_filt[~noise_mask]
+    return df_features, df_features_filt, filtering_ratio, noise_excluded_loci
 
 
 def read_and_filter_signatures_parquet(
@@ -1243,7 +1246,7 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
             continue
         per_locus_counts = sig_rows.groupby(level=["chrom", "pos"]).size()
 
-        # --- Estimate λ from background loci (≤ _VAF_ESTIMATE_READ_CAP reads) ---
+        # --- Estimate VAF from background loci (≤ _VAF_ESTIMATE_READ_CAP reads) ---
         # Using only low-read loci avoids germline/mosaic bias: outlier loci (10-50+
         # reads) would inflate the per-signature VAF and make λ too large, masking the
         # very outliers we want to detect.  At the cap of 6 virtually all background
@@ -1262,7 +1265,28 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
             continue
 
         n_loci = _n_sig(sig_type, sig_name, len(per_locus_counts))
-        bonf_pvals = poisson.sf(per_locus_counts.to_numpy() - 1, lam) * n_loci
+
+        # --- Per-locus lambda using local coverage ---
+        # Instead of a single λ = VAF × mean_coverage for all loci, use
+        # λ_i = VAF × coverage_i to account for local coverage variation.
+        # High-coverage loci naturally expect more reads and need a higher
+        # threshold before being flagged as outliers.
+        if "signature_type" in df_signatures_filt.columns:
+            sig_type_mask = df_signatures_filt["signature_type"] == sig_type
+        else:
+            sig_type_mask = pd.Series(data=True, index=df_signatures_filt.index)
+        sig_name_mask = df_signatures_filt["signature"] == sig_name
+        sig_loci_cov = df_signatures_filt.loc[sig_type_mask & sig_name_mask, "coverage"]
+        # Deduplicate: take mean coverage if multiple entries per locus
+        if sig_loci_cov.index.duplicated().any():
+            sig_loci_cov = sig_loci_cov.groupby(level=sig_loci_cov.index.names).mean()
+        # Align per-locus coverage to per_locus_counts index
+        per_locus_cov = sig_loci_cov.reindex(per_locus_counts.index)
+        # Fall back to mean_coverage for any loci missing coverage data
+        per_locus_cov = per_locus_cov.fillna(mean_coverage).to_numpy()
+        lam_per_locus = vaf * per_locus_cov
+
+        bonf_pvals = poisson.sf(per_locus_counts.to_numpy() - 1, lam_per_locus) * n_loci
         # Never remove loci backed by only a single read: one read is indistinguishable
         # from background noise regardless of how small λ is (e.g. near-zero TF).
         outlier_loci = per_locus_counts.index[
@@ -1331,19 +1355,34 @@ def get_tf_from_filtered_data(
     denom_ratio=None,
     *,
     plot_results=False,
+    excluded_loci: pd.Index | None = None,
 ):
     """
-    Calculate tumor fraction from filtered dataframes
+    Calculate tumor fraction from filtered dataframes.
+
+    Parameters
+    ----------
+    excluded_loci : pd.Index or None
+        (chrom, pos) MultiIndex of loci explicitly removed by upstream filters
+        (e.g. noisy-loci or multi-read).  Their coverage is subtracted from the
+        denominator so that VAF = reads / coverage remains consistent.
+        When None, all signature loci contribute to coverage (backwards-compatible).
     """
+    # Restrict signatures: exclude loci explicitly removed by upstream filters.
+    if excluded_loci is not None and len(excluded_loci) > 0:
+        df_signatures_active = df_signatures_in[~df_signatures_in.index.isin(excluded_loci)]
+    else:
+        df_signatures_active = df_signatures_in
+
     df_features_in_intersected = (
         df_features_in.join(
-            df_signatures_in.groupby(level=["chrom", "pos"]).size().astype(bool).rename("locus_in_signature"),
+            df_signatures_active.groupby(level=["chrom", "pos"]).size().astype(bool).rename("locus_in_signature"),
             how="inner",
         )
         .dropna(subset=["locus_in_signature"])
         .query("locus_in_signature")
         .drop(columns=["locus_in_signature"])
-    )  # retaun only loci that are in the signature df - they might have been filtered out
+    )  # retain only loci that are in the signature df - they might have been filtered out
     df_supporting_reads_per_locus = (
         df_features_in_intersected.reset_index()
         .groupby(["chrom", "pos", "signature", "signature_type"])
@@ -1355,11 +1394,13 @@ def get_tf_from_filtered_data(
         (df_supporting_reads_per_locus.groupby(["signature_type", "signature"]).sum()).fillna(0).astype(int)
     )
     # fill in coverage for signatures with zero supporting reads
-    wanted_index = df_signatures_in.groupby(["signature_type", "signature"])["id"].first().index
+    wanted_index = df_signatures_active.groupby(["signature_type", "signature"])["id"].first().index
     df_supporting_reads = df_supporting_reads.reindex(wanted_index, fill_value=0)
 
-    df_coverage = (df_signatures_in.groupby("signature").agg({"coverage": "sum"})).fillna(0).astype(int)
-    df_tf = df_supporting_reads.join(df_coverage).fillna(0)
+    df_coverage = (df_signatures_active.groupby("signature").agg({"coverage": "sum"})).fillna(0).astype(int)
+    df_n_loci = df_signatures_active.groupby("signature").size().rename("n_loci")
+    df_tf = df_supporting_reads.join(df_coverage).join(df_n_loci).fillna(0)
+    df_tf["n_loci"] = df_tf["n_loci"].astype(int)
     df_tf["corrected_coverage"] = df_tf["coverage"] * denom_ratio
     df_tf["corrected_coverage"] = np.ceil(df_tf["corrected_coverage"])
     df_tf = df_tf.assign(ctdna_vaf=df_tf["supporting_reads"] / df_tf["corrected_coverage"]).sort_index(ascending=False)

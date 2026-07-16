@@ -22,8 +22,8 @@ BASE_PATH = Path(__file__).parent  # should be: src/mrd/ugbio_mrd
 # Default thresholds for optional locus filters.
 # Both filters are enabled by default when using the CLI.
 # Pass None explicitly via MrdReportInputs to disable programmatically.
-DEFAULT_THRESH_NOISE_LQ_READS: float = 0.1
-DEFAULT_THRESH_MULTI_READ_PVALUE: float = 0.05
+DEFAULT_THRESH_NOISE_LQ_READS: float = 0.7
+DEFAULT_THRESH_MULTI_READ_PVALUE: float = 0.001
 DEFAULT_READ_FILTER_QUERY: str = "filt>0 and snvq>60 and mapq>=60"
 DEFAULT_LOD_RECALL: float = 0.95
 
@@ -80,7 +80,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         thresh_noise_lq_reads = None
 
     # 1. Load data
-    df_features, df_features_filt, filtering_ratio = mrd.read_and_filter_features_parquet(
+    df_features, df_features_filt, filtering_ratio, noise_excluded_loci = mrd.read_and_filter_features_parquet(
         intersection_path,
         read_filter_query,
         thresh_noise_lq_reads=thresh_noise_lq_reads,
@@ -91,6 +91,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     denom_ratio, filt_ratio, _ = mrd.calc_tumor_fraction_denominator_ratio(
         mrd_report_inputs.featuremap_file, mrd_report_inputs.srsnv_metadata_json, read_filter_query
     )
+    # Track all excluded loci (noise + multi-read) for coverage adjustment
+    excluded_loci = noise_excluded_loci
+
     # 1.5. Multi-read locus filter: remove matched loci with unexpectedly many HQ reads
     # (e.g. germline / mosaic variants). Calibrated to the TF estimate from the current
     # df_features_filt; the pre-filter detection is saved for QC comparison.
@@ -104,6 +107,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             plot_results=False,
             title="Filtered reads (before multi-read filter)",
             denom_ratio=denom_ratio,
+            excluded_loci=excluded_loci,
         )
         detection_pre_multi_read = run_detection_analysis(
             df_tf=df_tf_pre_multi_read,
@@ -113,12 +117,19 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             lod_recall=mrd_report_inputs.lod_recall,
             df_supporting_reads_per_locus=df_supporting_pre_multi,
         )
+        df_features_before_multi = df_features_filt
         df_features_filt, multi_read_info = mrd.apply_multi_read_locus_filter(
             df_features_filt,
             df_tf_pre_multi_read,
             df_signatures_filt,
             thresh_multi_read_pvalue,
         )
+        # Collect loci removed by multi-read filter
+        multi_read_excluded = df_features_before_multi.index.unique().difference(df_features_filt.index.unique())
+        if excluded_loci is not None and len(excluded_loci) > 0:
+            excluded_loci = excluded_loci.append(multi_read_excluded).unique()
+        else:
+            excluded_loci = multi_read_excluded
 
     df_tf_filt, df_supporting_reads_per_locus_filt = mrd.get_tf_from_filtered_data(
         df_features_filt,
@@ -126,6 +137,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         plot_results=False,
         title="Filtered reads and signatures",
         denom_ratio=denom_ratio,
+        excluded_loci=excluded_loci,
     )
 
     # 2. Run detection

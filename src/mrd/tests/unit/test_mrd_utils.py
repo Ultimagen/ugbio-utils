@@ -289,7 +289,7 @@ def test_read_and_filter_features_parquet_noise_filter(tmp_path):
     parquet_path = str(tmp_path / "test_features.parquet")
     df_features_raw.to_parquet(parquet_path, engine="fastparquet", index=False)
 
-    df_features, df_features_filt, _ = read_and_filter_features_parquet(
+    df_features, df_features_filt, _, noise_excluded = read_and_filter_features_parquet(
         parquet_path,
         read_filter_query,
         thresh_noise_lq_reads=0.1,
@@ -346,7 +346,10 @@ def test_read_and_filter_features_parquet_noise_filter_disabled(tmp_path):
     parquet_path = str(tmp_path / "test_features_disabled.parquet")
     df_features_raw.to_parquet(parquet_path, engine="fastparquet", index=False)
 
-    df_features, _, _ = read_and_filter_features_parquet(parquet_path, read_filter_query, thresh_noise_lq_reads=None)
+    df_features, _, _, noise_excluded = read_and_filter_features_parquet(
+        parquet_path, read_filter_query, thresh_noise_lq_reads=None
+    )
+    assert noise_excluded is None
     assert "locus_filter_noise" not in df_features.columns
     assert "n_lq_reads_per_locus" not in df_features.columns
 
