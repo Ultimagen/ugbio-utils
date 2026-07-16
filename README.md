@@ -160,23 +160,26 @@ Another option is to build the image locally using `docker build . -f <dockerfil
 
 ## Base Image Version
 
-The default base image (`ugbio_base`) version is intentionally duplicated in two workflow files:
+The default base images (`ugbio_base` for the runtime stage, `ugbio_base_build` for the builder stage) are intentionally duplicated in two workflow files, one pair per file:
 
 | File | Variable |
 |------|----------|
 | `.github/workflows/ci.yml` | `UGBIO_BASE_IMAGE_NAME` |
+| `.github/workflows/ci.yml` | `UGBIO_BASE_BUILD_IMAGE_NAME` |
 | `.github/workflows/build-workspace-docker.yml` | `DEFAULT_BASE_IMAGE` |
+| `.github/workflows/build-workspace-docker.yml` | `DEFAULT_BASE_BUILD_IMAGE` |
 
-When upgrading the base image, update **both** values in the same PR. Each file includes a comment pointing to the other.
+When upgrading the base image, update all four values in the same PR: the runtime pair (`UGBIO_BASE_IMAGE_NAME` / `DEFAULT_BASE_IMAGE`) and the builder pair (`UGBIO_BASE_BUILD_IMAGE_NAME` / `DEFAULT_BASE_BUILD_IMAGE`). Each file includes a comment pointing to the other.
 
 Members that require a custom base image (e.g. `deep_srsnv` which uses `ugbio_deep_srsnv_base`) declare it as an `ARG` default in their `Dockerfile`:
 
 ```dockerfile
 ARG BASE_IMAGE=ugbio_deep_srsnv_base:1.0.0
+ARG BASE_BUILD_IMAGE=ugbio_deep_srsnv_base_build:1.0.0
 FROM ${BASE_IMAGE}
 ```
 
-`build-workspace-docker.yml` reads this default at build time and prepends the ECR registry automatically. When no default is present, `DEFAULT_BASE_IMAGE` is used as the fallback.
+`build-workspace-docker.yml` reads these defaults at build time and prepends the ECR registry automatically. When no default is present, `DEFAULT_BASE_IMAGE` is used as the fallback for `BASE_IMAGE`, and `DEFAULT_BASE_BUILD_IMAGE` is used as the fallback for `BASE_BUILD_IMAGE`.
 
 ## Run Tests
 It is recommended to run tests in the relevant dev container. See the section above for more details on how to open the dev container. Once you are running inside the dev container, you can run tests using VSCode or with `uv run pytest <tests path>`.

@@ -44,7 +44,10 @@ env:
   AWS_ACCOUNT: 337532070941
   # Default base image used when the Dockerfile does not declare an ARG BASE_IMAGE default.
   # If you update this version, also update UGBIO_BASE_IMAGE_NAME in ci.yml.
-  DEFAULT_BASE_IMAGE: ugbio_base:1.7.0
+  DEFAULT_BASE_IMAGE: ugbio_base:1.8.5
+  # Default builder-stage base image used when the Dockerfile does not declare an ARG BASE_BUILD_IMAGE default.
+  # If you update this version, also update UGBIO_BASE_BUILD_IMAGE_NAME in ci.yml.
+  DEFAULT_BASE_BUILD_IMAGE: ugbio_base_build:1.8.5
 
 jobs:
   pre-build:
@@ -53,20 +56,27 @@ jobs:
       ecr-registry: ${{ steps.ecr-login.outputs.registry }}
       project-version: ${{ steps.extract-version.outputs.project_version }}
       base-image: ${{ steps.extract-base-image.outputs.base_image }}
+      base-build-image: ${{ steps.extract-base-image.outputs.base_build_image }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit-sha }}
           lfs: true
 
-      - name: Extract BASE_IMAGE from Dockerfile
+      - name: Extract BASE_IMAGE and BASE_BUILD_IMAGE from Dockerfile
         id: extract-base-image
         run: |
-          BASE=$(grep -oP '(?<=ARG BASE_IMAGE=)\S+' ${{ inputs.docker-file }} || true)
+          BASE=$(grep -oP '(?<=ARG BASE_IMAGE=)\S+:\S+' ${{ inputs.docker-file }} || true)
           if [ -z "$BASE" ]; then
             BASE="${{ env.DEFAULT_BASE_IMAGE }}"
           fi
           echo "base_image=${BASE}" >> "${GITHUB_OUTPUT}"
+
+          BASE_BUILD=$(grep -oP '(?<=ARG BASE_BUILD_IMAGE=)\S+:\S+' ${{ inputs.docker-file }} || true)
+          if [ -z "$BASE_BUILD" ]; then
+            BASE_BUILD="${{ env.DEFAULT_BASE_BUILD_IMAGE }}"
+          fi
+          echo "base_build_image=${BASE_BUILD}" >> "${GITHUB_OUTPUT}"
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -76,12 +86,11 @@ jobs:
       - name: Extract project version
         id: extract-version
         run: |
-          pip install toml
           cd ${{ inputs.workspace-folder }}
           if [ -f pyproject.toml ]; then
-            version=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+            version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
           elif [ -f Cargo.toml ]; then
-            version=$(python -c "import toml; print(toml.load('Cargo.toml')['package']['version'])")
+            version=$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['package']['version'])")
           else
             echo "No version file found!"
             exit 1
@@ -111,5 +120,7 @@ jobs:
          docker-tag: ${{ inputs.docker-tag }}
          docker-context: ${{ inputs.docker-context }}
          project-version: ${{ needs.pre-build.outputs.project-version }}
-         docker-build-args: BASE_IMAGE=${{ needs.pre-build.outputs.ecr-registry }}/${{ needs.pre-build.outputs.base-image }}
+         docker-build-args: |
+           BASE_IMAGE=${{ needs.pre-build.outputs.ecr-registry }}/${{ needs.pre-build.outputs.base-image }}
+           BASE_BUILD_IMAGE=${{ needs.pre-build.outputs.ecr-registry }}/${{ needs.pre-build.outputs.base-build-image }}
          runner: ${{ inputs.runner }}

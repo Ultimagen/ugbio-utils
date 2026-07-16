@@ -1,23 +1,32 @@
 # BASE_IMAGE is injected by build-workspace-docker.yml (defaults to DEFAULT_BASE_IMAGE)
 ARG BASE_IMAGE
+ARG BASE_BUILD_IMAGE
 ARG OUT_DIR=/tmp/ugbio
-FROM python:3.11-bullseye AS build
+FROM $BASE_BUILD_IMAGE AS build
 
 ARG OUT_DIR
 RUN mkdir -p $OUT_DIR
 
+# Create virtual environment for pip install
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY ./src/ ./src/
 
 #build ugbio_core
-RUN python -m pip install build
+RUN pip install build
 RUN python -m build --outdir $OUT_DIR --wheel ./src/core
+
+# Install wheels with all extras — C extensions compile here, not in runtime
+RUN WHEEL_FILE=$(find ${OUT_DIR} -name "ugbio_core*.whl") && \
+    pip install "${WHEEL_FILE}[vcfbed,reports,ml]"
 
 # ##################################################################
 FROM $BASE_IMAGE
 
 # Download Picard
-ARG PICARD_VERSION=3.3.0
-RUN apt-get update && apt-get install -y --no-install-recommends --reinstall ca-certificates openjdk-17-jre-headless \
+ARG PICARD_VERSION=3.4.0
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends --reinstall ca-certificates openjdk-17-jre-headless \
     && apt-get clean && rm -rf /var/lib/apt/lists/* && apt-get autoclean
 RUN mkdir -p /opt/picard && \
     wget -O /opt/picard/picard.jar https://github.com/broadinstitute/picard/releases/download/${PICARD_VERSION}/picard.jar && \
@@ -26,14 +35,11 @@ RUN mkdir -p /opt/picard && \
 RUN echo '#!/bin/sh\njava -jar /opt/picard/picard.jar "$@"' > /usr/local/bin/picard && \
     chmod +x /usr/local/bin/picard
 
-ARG OUT_DIR
-
 RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
-COPY --from=build ${OUT_DIR} ${OUT_DIR}
-RUN WHEEL_FILE=$(find ${OUT_DIR} -name "*.whl") && \
-    pip install "${WHEEL_FILE}[vcfbed,reports,ml]" && \
-    rm -rf ${OUT_DIR}
+# Copy pre-built virtual environment from build stage (no compilation in runtime)
+COPY --from=build /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 USER ugbio
 
