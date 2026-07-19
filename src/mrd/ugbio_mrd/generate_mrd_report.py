@@ -159,7 +159,6 @@ def _build_filter_funnel(
     filter_funnel_json_path: str | None,
     df_features: pd.DataFrame,
     df_features_filt: pd.DataFrame,
-    df_signatures: pd.DataFrame,
     df_signatures_filt: pd.DataFrame,
     *,
     read_filter_query: str,
@@ -207,10 +206,13 @@ def _build_filter_funnel(
     #   4. multi-read locus filter   -> Poisson outlier loci (thresh_multi_read_pvalue)
     # df_features carries every read plus per-locus flags; df_features_filt is the final
     # table after all applicable read/locus filters (including the multi-read filter).
+    # The locus join is restricted to the matched signature set (matched_sigs_filt) so
+    # the funnel stays a monotonic, matched-only view: matched reads at loci kept only by
+    # a control/db_control signature can never re-enter after the matched signature filter.
     noise_active = thresh_noise_lq_reads is not None and "locus_filter_noise" in df_features.columns
     multi_read_active = thresh_multi_read_pvalue is not None
 
-    df_intersected = _reads_in_signature_loci(df_features, df_signatures_filt)
+    df_intersected = _reads_in_signature_loci(df_features, matched_sigs_filt)
     funnel.append(
         {
             "step": "Loci supported by cfDNA reads",
@@ -219,7 +221,7 @@ def _build_filter_funnel(
         }
     )
 
-    df_after_read_filter = _reads_in_signature_loci(df_features.query(read_filter_query), df_signatures_filt)
+    df_after_read_filter = _reads_in_signature_loci(df_features.query(read_filter_query), matched_sigs_filt)
     funnel.append(
         {
             "step": "After read filters",
@@ -238,7 +240,7 @@ def _build_filter_funnel(
         )
     if multi_read_active:
         # df_features_filt has the multi-read locus filter already applied.
-        df_after_multi = _reads_in_signature_loci(df_features_filt, df_signatures_filt)
+        df_after_multi = _reads_in_signature_loci(df_features_filt, matched_sigs_filt)
         funnel.append(
             {
                 "step": "Multi-read locus filter",
@@ -294,7 +296,11 @@ def _build_read_funnel(
     Returns a list of dicts with keys: step, count, desc, pct_funnel, pct_pass.
     """
     locus_filter_descs = locus_filter_descs or {}
-    df_intersected = _reads_in_signature_loci(df_features, df_signatures_filt)
+    # Restrict the locus join to matched signatures so counts describe matched-signature
+    # reads only: a matched read at a locus kept solely by a control/db_control signature
+    # would otherwise re-enter after the matched signature filter (see _build_filter_funnel).
+    matched_sigs_filt = _matched_subset(df_signatures_filt)
+    df_intersected = _reads_in_signature_loci(df_features, matched_sigs_filt)
     funnel = [
         {
             "step": "Featuremap-signature intersection",
@@ -306,7 +312,7 @@ def _build_read_funnel(
     noise_active = thresh_noise_lq_reads is not None and "locus_filter_noise" in df_features.columns
     multi_read_active = thresh_multi_read_pvalue is not None
 
-    df_after_read_filter = _reads_in_signature_loci(df_features.query(read_filter_query), df_signatures_filt)
+    df_after_read_filter = _reads_in_signature_loci(df_features.query(read_filter_query), matched_sigs_filt)
     funnel.append(
         {
             "step": "After read filters",
@@ -325,7 +331,7 @@ def _build_read_funnel(
         )
     if multi_read_active:
         # df_features_filt has the multi-read locus filter already applied.
-        df_after_multi = _reads_in_signature_loci(df_features_filt, df_signatures_filt)
+        df_after_multi = _reads_in_signature_loci(df_features_filt, matched_sigs_filt)
         funnel.append(
             {
                 "step": "Multi-read locus filter",
@@ -462,7 +468,6 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             mrd_report_inputs.filter_funnel_json,
             df_features=df_features,
             df_features_filt=df_features_filt,
-            df_signatures=df_signatures,
             df_signatures_filt=df_signatures_filt,
             read_filter_query=read_filter_query,
             signature_filter_query=signature_filter_query,

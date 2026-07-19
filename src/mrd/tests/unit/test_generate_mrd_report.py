@@ -332,7 +332,6 @@ def test_build_filter_funnel_counts_loci_restricted_to_signature(_funnel_frames)
         None,
         df_features=df_features,
         df_features_filt=df_features_filt,
-        df_signatures=df_signatures_filt,
         df_signatures_filt=df_signatures_filt,
         read_filter_query=rfq,
         signature_filter_query="(norm_coverage <= 2.5) and (norm_coverage >= 0.6)",
@@ -369,3 +368,72 @@ def test_build_read_funnel_counts_reads_restricted_to_signature(_funnel_frames):
     # After low-quality: pos300's read dropped -> 3 reads remain
     assert counts["After low-quality read filter"] == 3
     assert "In filtered signature loci" not in counts
+
+
+@pytest.fixture
+def _funnel_frames_control_only_locus():
+    """Funnel frames where a matched read sits at a locus kept ONLY by a control signature.
+
+    pos 100/200 are matched loci in the filtered signature set. pos 900 is present in the
+    filtered signature set only as a *control* signature, yet a matched featuremap read
+    exists there. Restricting the locus join to the full signature set (matched + control)
+    would let that matched read re-enter after the matched signature filter, so the funnel
+    count would rise above the matched-signature baseline. The matched-only join must exclude it.
+    """
+    read_filter_query = "filt>0 and snvq>60 and mapq>=60"
+    rows = [
+        # chrom, pos, signature_type, filt, snvq, mapq, locus_filter_noise
+        ("chr1", 100, "matched", 1, 70, 60, False),
+        ("chr1", 200, "matched", 1, 70, 60, False),
+        ("chr1", 900, "matched", 1, 70, 60, False),  # matched read at a control-only locus
+    ]
+    df_features = pd.DataFrame(
+        rows,
+        columns=["chrom", "pos", "signature_type", "filt", "snvq", "mapq", "locus_filter_noise"],
+    ).set_index(["chrom", "pos"])
+    df_features_filt = df_features.query(read_filter_query)
+    # Filtered signature set: pos 100/200 matched, pos 900 control-only.
+    df_signatures_filt = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1", "chr1"],
+            "pos": [100, 200, 900],
+            "id": [1, 2, 9],
+            "signature_type": ["matched", "matched", "control"],
+        }
+    ).set_index(["chrom", "pos"])
+    return df_features, df_features_filt, df_signatures_filt, read_filter_query
+
+
+def test_filter_funnel_excludes_control_only_loci(_funnel_frames_control_only_locus):
+    """A matched read at a control-only signature locus must not re-enter the matched funnel."""
+    df_features, df_features_filt, df_signatures_filt, rfq = _funnel_frames_control_only_locus
+    funnel = _build_filter_funnel(
+        None,
+        df_features=df_features,
+        df_features_filt=df_features_filt,
+        df_signatures_filt=df_signatures_filt,
+        read_filter_query=rfq,
+        signature_filter_query="(norm_coverage <= 2.5) and (norm_coverage >= 0.6)",
+    )
+    counts = {row["step"]: row["count"] for row in funnel}
+    baseline = counts["After signature filters (loci)"]
+    # Only the two matched signature loci; the control-only locus 900 is excluded.
+    assert baseline == 2
+    # No downstream step may exceed the matched-signature baseline (funnel is monotonic).
+    assert counts["Loci supported by cfDNA reads"] == 2
+    assert counts["After read filters"] == 2
+
+
+def test_read_funnel_excludes_control_only_loci(_funnel_frames_control_only_locus):
+    """The read funnel must not count matched reads at control-only signature loci."""
+    df_features, df_features_filt, df_signatures_filt, rfq = _funnel_frames_control_only_locus
+    funnel = _build_read_funnel(
+        df_features=df_features,
+        df_features_filt=df_features_filt,
+        df_signatures_filt=df_signatures_filt,
+        read_filter_query=rfq,
+    )
+    counts = {row["step"]: row["count"] for row in funnel}
+    # 2 matched reads at matched loci; the read at control-only locus 900 is excluded.
+    assert counts["Featuremap-signature intersection"] == 2
+    assert counts["After read filters"] == 2
