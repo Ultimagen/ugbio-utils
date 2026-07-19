@@ -412,14 +412,43 @@
     </div>
     {% endif %}
 
-    <!-- ── APPLIED FILTERS ── -->
-    {% if applied_filters %}
+    <!-- ── SIGNATURE FILTER FUNNEL ── -->
+    {% if filter_funnel %}
     <div class="section">
-      <div class="section-title">Applied Filters</div>
+      <div class="section-title">Signature Filter Funnel</div>
       <table class="filter-table">
-        <tr><th>Filter</th><th>Description</th></tr>
-        {% for name, desc in applied_filters.items() %}
-        <tr><td><strong>{{ name }}</strong></td><td>{{ desc }}</td></tr>
+        <tr><th>Step</th><th>Count</th><th>% Funnel</th><th>% Pass</th></tr>
+        {% for row in filter_funnel %}
+        <tr>
+          <td>
+            <strong>{{ row.step }}</strong>
+            {% if row.desc %}<div style="font-weight:normal; font-size:0.85em; color:#666;">{{ row.desc }}</div>{% endif %}
+          </td>
+          <td style="text-align:right; font-family:monospace;">{{ "{:,}".format(row.count) }}</td>
+          <td style="text-align:right; font-family:monospace;">{{ "%.1f%%"|format(row.pct_funnel) if row.pct_funnel is not none else "" }}</td>
+          <td style="text-align:right; font-family:monospace;">{{ "%.1f%%"|format(row.pct_pass) if row.pct_pass is not none else "" }}</td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+    {% endif %}
+
+    <!-- ── READ FILTER FUNNEL ── -->
+    {% if read_funnel %}
+    <div class="section">
+      <div class="section-title">Read Filter Funnel</div>
+      <table class="filter-table">
+        <tr><th>Step</th><th>Count</th><th>% Funnel</th><th>% Pass</th></tr>
+        {% for row in read_funnel %}
+        <tr>
+          <td>
+            <strong>{{ row.step }}</strong>
+            {% if row.desc %}<div style="font-weight:normal; font-size:0.85em; color:#666;">{{ row.desc }}</div>{% endif %}
+          </td>
+          <td style="text-align:right; font-family:monospace;">{{ "{:,}".format(row.count) }}</td>
+          <td style="text-align:right; font-family:monospace;">{{ "%.1f%%"|format(row.pct_funnel) if row.pct_funnel is not none else "" }}</td>
+          <td style="text-align:right; font-family:monospace;">{{ "%.1f%%"|format(row.pct_pass) if row.pct_pass is not none else "" }}</td>
+        </tr>
         {% endfor %}
       </table>
     </div>
