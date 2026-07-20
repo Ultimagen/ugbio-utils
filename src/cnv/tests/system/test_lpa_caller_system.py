@@ -106,7 +106,7 @@ def test_run_end_to_end_on_kiv2_bam(hg01046_bam: Path, tmp_path: Path, monkeypat
     # is sufficient.
     stub_fasta = tmp_path / "chr6_stub.fa"
     stub_fasta.write_text(">chr6\nN\n")
-    pyfaidx.FastaFile(str(stub_fasta)).close()  # create .fai index
+    pyfaidx.Fasta(str(stub_fasta)).close()  # create .fai index
     # Feed the KIV-2 copy number directly and skip REF-base validation (both
     # require the full hg38 reference we deliberately don't ship here).
     monkeypatch.setattr(
