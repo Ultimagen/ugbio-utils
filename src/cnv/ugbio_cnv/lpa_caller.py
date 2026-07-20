@@ -963,7 +963,7 @@ def run(argv: list[str]) -> None:
         open_kwargs["index_filename"] = args.crai
     bam = pysam.AlignmentFile(args.cram, mode, **open_kwargs)
     try:
-        fasta = pyfaidx.Fasta(args.reference, rebuild=False)
+        fasta = pyfaidx.Fasta(args.reference, rebuild=False, build_index=False)
         try:
             markers = [_build_marker(spec) for spec in DEFAULT_MARKER_VARIANTS]
             small_variants = [_build_marker(spec) for spec in DEFAULT_SMALL_VARIANTS]
