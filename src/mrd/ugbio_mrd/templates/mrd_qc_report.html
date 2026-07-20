@@ -407,6 +407,21 @@
     </div>
     {% endif %}
 
+    <!-- ── LQ-READS FRACTION HISTOGRAM ── -->
+    {% if lq_fraction_hist_img %}
+    <div class="section">
+      <div class="section-title">LQ-Reads Fraction per Locus</div>
+      <div class="chart-container">
+        <img src="data:image/png;base64,{{ lq_fraction_hist_img }}" alt="LQ-reads fraction histogram">
+        <div class="chart-description">
+          Per-locus fraction of reads failing the read filter (LQ reads) for matched signature loci.
+          Blue: loci kept (LQ fraction &le; threshold). Red: loci excluded by the noisy-loci filter.
+          Dashed line: threshold{% if thresh_noise_lq_reads is not none %} ({{ thresh_noise_lq_reads }}){% endif %}.
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
     <!-- ── ALT-SUPPORTING READS HISTOGRAM ── -->
     {% if supporting_reads_hist_img %}
     <div class="section">

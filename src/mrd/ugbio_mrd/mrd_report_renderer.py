@@ -504,6 +504,91 @@ def render_intersection_snvq_combined(df_features_filt: pd.DataFrame) -> str:  #
     return _fig_to_base64(fig)
 
 
+def render_lq_fraction_histogram(  # noqa: PLR0911, PLR0912, C901
+    df_features: pd.DataFrame,
+    thresh_noise_lq_reads: float | None = None,
+) -> str:
+    """Render per-locus LQ-reads fraction histogram, all signature types on one density plot.
+
+    Solid: loci kept by the LQ filter. Same colour, very transparent: LQ-excluded loci.
+    A vertical dashed line marks the LQ threshold when provided.
+    """
+    if "n_lq_reads_per_locus" not in df_features.columns or "n_total_reads_per_locus" not in df_features.columns:
+        return ""
+
+    # Back-to-front draw order; colours match the other histograms.
+    _type_cfg = [
+        ("db_control", "#3498db", "Synthetic controls"),
+        ("control",    "#9b59b6", "Cohort control"),
+        ("matched",    "#c0392b", "Patient (matched)"),
+    ]
+    has_sig_type = "signature_type" in df_features.columns
+    bins = np.linspace(0, 1, 51)
+
+    fig, ax = plt.subplots(figsize=(8, 3))
+    fig.patch.set_facecolor("#f4f6f8")
+    ax.set_facecolor("#f4f6f8")
+
+    any_data = False
+    for sig_type, color, label_prefix in _type_cfg:
+        if has_sig_type:
+            df_t = df_features[df_features["signature_type"] == sig_type]
+        elif sig_type == "matched":
+            df_t = df_features
+        else:
+            continue
+        if df_t.empty:
+            continue
+
+        lq_per = (
+            df_t[["n_lq_reads_per_locus", "n_total_reads_per_locus"]].groupby(level=["chrom", "pos"]).first()
+        )
+        lq_frac = lq_per["n_lq_reads_per_locus"] / lq_per["n_total_reads_per_locus"].clip(lower=1)
+        # Exclude loci where all reads are LQ (fraction=1.0): these had no supporting reads
+        # after the read filter and were already absent from detection regardless.
+        lq_frac = lq_frac[lq_frac < 1.0]
+        if lq_frac.empty:
+            continue
+
+        any_data = True
+        if thresh_noise_lq_reads is not None:
+            kept = lq_frac[lq_frac <= thresh_noise_lq_reads]
+            excl = lq_frac[lq_frac > thresh_noise_lq_reads]
+            if len(kept) > 0:
+                ax.hist(kept, bins=bins, color=color, alpha=0.7, edgecolor="white", linewidth=0.4,
+                        weights=np.ones(len(kept)) / len(kept),
+                        label=f"{label_prefix} — kept (n={len(kept):,})")
+            if len(excl) > 0:
+                ax.hist(excl, bins=bins, color=color, alpha=0.2, edgecolor="none", linewidth=0,
+                        weights=np.ones(len(excl)) / len(excl),
+                        label=f"{label_prefix} — LQ-excluded (n={len(excl):,})")
+        else:
+            ax.hist(lq_frac, bins=bins, color=color, alpha=0.65, edgecolor="white", linewidth=0.4,
+                    weights=np.ones(len(lq_frac)) / len(lq_frac),
+                    label=f"{label_prefix} (n={len(lq_frac):,})")
+
+    if not any_data:
+        plt.close(fig)
+        return ""
+
+    if thresh_noise_lq_reads is not None:
+        ax.axvline(thresh_noise_lq_reads, color="#e67e22", linewidth=2.0, linestyle="--",
+                   label=f"LQ threshold = {thresh_noise_lq_reads}")
+    ax.set_xlabel("LQ-reads fraction per locus", fontsize=10)
+    ax.set_ylabel("Fraction of loci", fontsize=10)
+    ax.set_title("LQ-Reads Fraction per Locus", fontsize=11, fontweight="bold")
+    ax.legend(fontsize=8, framealpha=0.85)
+    ax.set_xlim(0, 1)
+    ax.set_axisbelow(True)
+    ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")  # noqa: FBT003
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    plt.tight_layout()
+    img = _fig_to_base64(fig)
+    plt.close(fig)
+    return img
+
+
 def render_read_length_histogram(df_features_filt: pd.DataFrame) -> str:
     """Render read length histogram: patient signature (red) vs controls (blue) with KDE lines."""
     # Column is lowercased by read_and_filter_features_parquet (X_LENGTH -> x_length).
@@ -699,11 +784,12 @@ def render_intersection_af_combined(
     return _fig_to_base64(fig)
 
 
-def render_supporting_reads_histogram(
+def render_supporting_reads_histogram(  # noqa: C901
     df_supporting_reads_per_locus: pd.DataFrame,
     signature_size: int,
     cohort_signature_size: int,
     db_control_signature_size: int,
+    df_supporting_pre_multi_read: pd.DataFrame | None = None,
 ) -> str:
     """
     Histogram of alt-supporting read counts per variant locus.
@@ -721,42 +807,52 @@ def render_supporting_reads_histogram(
     supporting-read count across all replicates for that locus.  The matched
     series is aggregated the same way for consistency (typically a no-op since
     there is one matched signature per patient).
+
+    When ``df_supporting_pre_multi_read`` is provided, matched loci that were
+    removed by the multi-read locus filter are shown with a light shade.
     """
 
-    def _max_per_locus(sig_type: str) -> pd.Series:
-        sub = df_supporting_reads_per_locus.query(f"signature_type == '{sig_type}'")
+    def _max_per_locus(df: pd.DataFrame, sig_type: str) -> pd.Series:
+        sub = df.query(f"signature_type == '{sig_type}'")
         if len(sub) == 0:
             return pd.Series(dtype=int)
         return sub.groupby(level=["chrom", "pos"])["supporting_reads"].max()
 
-    matched = _max_per_locus("matched")
-    cohort = _max_per_locus("control")
-    db_ctrl = _max_per_locus("db_control")
+    matched = _max_per_locus(df_supporting_reads_per_locus, "matched")
+    cohort = _max_per_locus(df_supporting_reads_per_locus, "control")
+    db_ctrl = _max_per_locus(df_supporting_reads_per_locus, "db_control")
 
-    if len(matched) == 0 and len(cohort) == 0 and len(db_ctrl) == 0:
+    # Multi-read excluded matched loci (pre-filter but not post-filter)
+    multi_excl = pd.Series(dtype=int)
+    if df_supporting_pre_multi_read is not None and not df_supporting_pre_multi_read.empty:
+        pre_matched = _max_per_locus(df_supporting_pre_multi_read, "matched")
+        if len(pre_matched) > 0:
+            multi_excl = pre_matched[~pre_matched.index.isin(matched.index)]
+
+    if len(matched) == 0 and len(cohort) == 0 and len(db_ctrl) == 0 and len(multi_excl) == 0:
         return ""
 
-    all_reads = pd.concat([s for s in [matched, cohort, db_ctrl] if len(s) > 0])
+    all_reads = pd.concat([s for s in [matched, cohort, db_ctrl, multi_excl] if len(s) > 0])
     x_cap = min(int(all_reads.max()) + 1, 20)
     bins = list(range(1, x_cap + 2))
     bar_positions = np.array(bins[:-1], dtype=float)
 
-    n_matched_with_reads = len(matched)
-    n_matched_zero = max(0, signature_size - n_matched_with_reads)
+    n_matched_zero = max(0, signature_size - len(matched) - len(multi_excl))
 
-    # Build list of active groups (back to front)
+    # Build list of active groups (back to front): db_ctrl, cohort, multi_excl, matched
     active_groups = []
     for data, sig_size, color, text_color, alpha, label_prefix in [
-        (db_ctrl, db_control_signature_size, "#3498db", "#1a5276", 0.55, "Synthetic controls"),
-        (cohort, cohort_signature_size, "#9b59b6", "#6c3483", 0.55, "Cohort control"),
-        (matched, signature_size, "#c0392b", "#7b241c", 0.6, "Patient signature"),
+        (db_ctrl,    db_control_signature_size, "#3498db", "#1a5276", 0.55, "Synthetic controls"),
+        (cohort,     cohort_signature_size,     "#9b59b6", "#6c3483", 0.55, "Cohort control"),
+        (multi_excl, signature_size,            "#f0a090", "#c0392b", 0.4,  "Patient multi-read filtered"),
+        (matched,    signature_size,            "#c0392b", "#7b241c", 0.6,  "Patient signature"),
     ]:
         if len(data) > 0:
             norm = sig_size if sig_size > 0 else len(data)
             active_groups.append((data, norm, color, text_color, alpha, label_prefix, len(data)))
 
     n_active = len(active_groups)
-    bar_width = 0.28 if n_active == 3 else (0.38 if n_active == 2 else 0.55)  # noqa: PLR2004
+    bar_width = {1: 0.55, 2: 0.38, 3: 0.28, 4: 0.22}.get(n_active, 0.20)
     offsets = np.linspace(-(n_active - 1) / 2 * bar_width, (n_active - 1) / 2 * bar_width, n_active)
 
     fig, ax = plt.subplots(figsize=(max(8, x_cap * 0.65), 3.5))
@@ -825,6 +921,9 @@ def render_analysis_report(  # noqa: PLR0913
     inputs_info: dict | None = None,
     filter_funnel: list[dict] | None = None,
     read_funnel: list[dict] | None = None,
+    thresh_noise_lq_reads: float | None = None,
+    multi_read_excluded_per_type: dict | None = None,  # noqa: ARG001 (kept for API compatibility)
+    df_supporting_pre_multi_read: pd.DataFrame | None = None,
 ) -> str:
     """
     Render the MRD analysis report as a self-contained HTML string.
@@ -896,7 +995,8 @@ def render_analysis_report(  # noqa: PLR0913
     cohort_signature_size = _cohort_df.groupby(level=["chrom", "pos"]).ngroups if len(_cohort_df) > 0 else 0
     db_control_signature_size = _db_ctrl_df.groupby(level=["chrom", "pos"]).ngroups if len(_db_ctrl_df) > 0 else 0
     supporting_reads_hist_img = render_supporting_reads_histogram(
-        df_supporting_reads_per_locus, detection.signature_size, cohort_signature_size, db_control_signature_size
+        df_supporting_reads_per_locus, detection.signature_size, cohort_signature_size, db_control_signature_size,
+        df_supporting_pre_multi_read=df_supporting_pre_multi_read,
     )
 
     # Read length histogram
@@ -904,6 +1004,13 @@ def render_analysis_report(  # noqa: PLR0913
 
     # SNVQ distribution
     intersection_snvq_img = render_intersection_snvq_combined(df_features_filt) if df_features_filt is not None else ""
+
+    # LQ-reads fraction histogram (per locus, by signature type)
+    lq_fraction_hist_img = (
+        render_lq_fraction_histogram(df_features, thresh_noise_lq_reads)
+        if df_features is not None
+        else ""
+    )
 
     # Format values for template
     binom_p_str = f"{detection.p_value:.3f}" if detection.p_value >= 0.001 else f"{detection.p_value:.2e}"  # noqa: PLR2004
@@ -926,6 +1033,8 @@ def render_analysis_report(  # noqa: PLR0913
         "supporting_reads_hist_img": supporting_reads_hist_img,
         "read_length_img": read_length_img,
         "intersection_snvq_img": intersection_snvq_img,
+        "lq_fraction_hist_img": lq_fraction_hist_img,
+        "thresh_noise_lq_reads": thresh_noise_lq_reads,
         "signature_filter_query": signature_filter_query,
         "read_filter_query": read_filter_query,
         "denom_ratio": denom_ratio,
@@ -969,6 +1078,8 @@ def render_qc_report(  # noqa: PLR0913, PLR0915, C901
     detection_pre_multi_read: DetectionResult | None = None,
     df_tf_pre_multi_read: pd.DataFrame | None = None,
     thresh_multi_read_pvalue: float | None = None,
+    multi_read_excluded_per_type: dict | None = None,  # noqa: ARG001 (kept for API compatibility)
+    df_supporting_pre_multi_read: pd.DataFrame | None = None,
 ) -> str:
     """
     Render the MRD QC report as a self-contained HTML string.
@@ -1122,12 +1233,22 @@ def render_qc_report(  # noqa: PLR0913, PLR0915, C901
     _cohort_size = _cohort_df2.groupby(level=["chrom", "pos"]).ngroups if len(_cohort_df2) > 0 else 0
     _db_ctrl_size = _db_ctrl_df2.groupby(level=["chrom", "pos"]).ngroups if len(_db_ctrl_df2) > 0 else 0
     supporting_reads_hist_img = (
-        render_supporting_reads_histogram(_df_splocus, detection.signature_size, _cohort_size, _db_ctrl_size)
+        render_supporting_reads_histogram(
+            _df_splocus, detection.signature_size, _cohort_size, _db_ctrl_size,
+            df_supporting_pre_multi_read=df_supporting_pre_multi_read,
+        )
         if not _df_splocus.empty
         else ""
     )
     read_length_img = render_read_length_histogram(df_features_filt) if df_features_filt is not None else ""
     intersection_snvq_img = render_intersection_snvq_combined(df_features_filt) if df_features_filt is not None else ""
+
+    # LQ-reads fraction histogram (per locus, by signature type)
+    lq_fraction_hist_img = (
+        render_lq_fraction_histogram(df_features, thresh_noise_lq_reads)
+        if df_features is not None
+        else ""
+    )
 
     # Cohort scatter (signature size vs VAF) — now combined in patient_controls_img
 
@@ -1190,6 +1311,8 @@ def render_qc_report(  # noqa: PLR0913, PLR0915, C901
         "supporting_reads_hist_img": supporting_reads_hist_img,
         "read_length_img": read_length_img,
         "intersection_snvq_img": intersection_snvq_img,
+        "lq_fraction_hist_img": lq_fraction_hist_img,
+        "thresh_noise_lq_reads": thresh_noise_lq_reads,
         "applied_filters": applied_filters or {},
         "inputs_info": inputs_info or {},
         "control_profiles": control_profiles,
