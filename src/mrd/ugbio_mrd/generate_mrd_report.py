@@ -393,7 +393,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     # df_features_filt; the pre-filter detection is saved for QC comparison.
     detection_pre_multi_read = None
     df_tf_pre_multi_read = None
+    df_supporting_pre_multi = None
     thresh_multi_read_pvalue = mrd_report_inputs.thresh_multi_read_pvalue
+    multi_read_excluded_per_type = None
     if thresh_multi_read_pvalue is not None:
         df_tf_pre_multi_read, df_supporting_pre_multi = mrd.get_tf_from_filtered_data(
             df_features_filt,
@@ -424,6 +426,15 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             excluded_loci = excluded_loci.append(multi_read_excluded).unique()
         else:
             excluded_loci = multi_read_excluded
+        # Per-type multi-read excluded loci (for the LQ-fraction histogram)
+        multi_read_excluded_per_type = {}
+        for _sig_type in ("matched", "control", "db_control"):
+            _before = df_features_before_multi
+            _before_idx = _before[_before["signature_type"] == _sig_type].index.unique()
+            _after_idx = df_features_filt[df_features_filt["signature_type"] == _sig_type].index.unique()
+            _excl = _before_idx.difference(_after_idx)
+            if len(_excl) > 0:
+                multi_read_excluded_per_type[_sig_type] = _excl
 
     df_tf_filt, df_supporting_reads_per_locus_filt = mrd.get_tf_from_filtered_data(
         df_features_filt,
@@ -616,6 +627,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         inputs_info=inputs_info,
         filter_funnel=filter_funnel,
         read_funnel=read_funnel,
+        thresh_noise_lq_reads=thresh_noise_lq_reads,
+        multi_read_excluded_per_type=multi_read_excluded_per_type,
+        df_supporting_pre_multi_read=df_supporting_pre_multi,
     )
     results_html_path.write_text(html)
 
@@ -811,6 +825,8 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         detection_pre_multi_read=detection_pre_multi_read,
         df_tf_pre_multi_read=df_tf_pre_multi_read,
         thresh_multi_read_pvalue=thresh_multi_read_pvalue,
+        multi_read_excluded_per_type=multi_read_excluded_per_type,
+        df_supporting_pre_multi_read=df_supporting_pre_multi,
     )
     qc_html_path.write_text(qc_html)
 
