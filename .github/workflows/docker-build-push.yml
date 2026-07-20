@@ -226,13 +226,11 @@ jobs:
       - name: Check ECR scan results
         id: ecr-scan
         continue-on-error: true
-        run: |
-          python .github/utils/ecr_scan_results.py \
-            --repository "${{ inputs.docker-image }}" \
-            --tag "${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}" \
-            --output-dir . \
-            --github-output "$GITHUB_OUTPUT" \
-            --github-step-summary "$GITHUB_STEP_SUMMARY"
+        uses: Ultimagen/ugbio-utils/.github/actions/ecr-scan@main
+        with:
+          repository: ${{ inputs.docker-image }}
+          tag: ${{ inputs.docker-tag || steps.set-tag.outputs.imageTag }}
+          output-dir: .
 
       - name: Upload scan findings artifact
         if: steps.ecr-scan.outputs.scan_status == 'complete'

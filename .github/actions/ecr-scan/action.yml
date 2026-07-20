@@ -1,0 +1,48 @@
+name: "ECR Enhanced Scan Results"
+description: "Retrieve ECR Inspector2 scan results and generate GitHub Actions summary"
+
+inputs:
+  repository:
+    description: "ECR repository name"
+    required: true
+  tag:
+    description: "Image tag"
+    required: true
+  output-dir:
+    description: "Directory to write findings JSON"
+    required: false
+    default: "."
+
+outputs:
+  scan_status:
+    description: "Scan status (complete, skipped, inspector_unavailable)"
+    value: ${{ steps.scan.outputs.scan_status }}
+  findings_file:
+    description: "Path to findings JSON file"
+    value: ${{ steps.scan.outputs.findings_file }}
+  critical_count:
+    description: "Number of CRITICAL vulnerabilities"
+    value: ${{ steps.scan.outputs.critical_count }}
+  high_count:
+    description: "Number of HIGH vulnerabilities"
+    value: ${{ steps.scan.outputs.high_count }}
+  medium_count:
+    description: "Number of MEDIUM vulnerabilities"
+    value: ${{ steps.scan.outputs.medium_count }}
+  total_count:
+    description: "Total vulnerability count"
+    value: ${{ steps.scan.outputs.total_count }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run ECR scan results script
+      id: scan
+      shell: bash
+      run: |
+        python3 ${{ github.action_path }}/ecr_scan_results.py \
+          --repository "${{ inputs.repository }}" \
+          --tag "${{ inputs.tag }}" \
+          --output-dir "${{ inputs.output-dir }}" \
+          --github-output "$GITHUB_OUTPUT" \
+          --github-step-summary "$GITHUB_STEP_SUMMARY"
