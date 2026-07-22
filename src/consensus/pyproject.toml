@@ -1,0 +1,34 @@
+[project]
+name = "ugbio_consensus"
+version = "1.27.0-0"
+requires-python = ">=3.11"
+description = "Ultima Genomics consensus (ReadFuserAlignSort) performance & duplex reports"
+authors = [
+    { name = "Gat Krieger", email = "gat.krieger@ultimagen.com" },
+]
+readme = "README.consensus.md"
+dependencies = [
+    "ugbio_core[vcfbed]",
+    "ugbio_cloud_utils",
+    "pysam>=0.22.0",
+    "boto3",
+]
+
+[project.license]
+text = "Apache-2.0"
+
+[project.scripts]
+run_tests = "pytest:main"
+consensus_report = "ugbio_consensus.consensus_report:main"
+
+[tool.uv.sources.ugbio_core]
+workspace = true
+
+[tool.uv.sources.ugbio_cloud_utils]
+workspace = true
+
+[build-system]
+requires = [
+    "setuptools>=61.0",
+]
+build-backend = "setuptools.build_meta"
