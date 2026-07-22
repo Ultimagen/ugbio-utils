@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import pyBigWig as bw  # noqa: N813
 import pysam
-import seaborn as sns
+import seaborn as sns  # noqa: F401 - kept for notebook backward-compat
 from scipy.stats import poisson
 from tqdm import tqdm
 from ugbio_core.dna_sequence_utils import revcomp
@@ -948,165 +948,6 @@ def plot_signature_allele_fractions(
         plt.show()
 
 
-def plot_tf(df_tf_in: pd.DataFrame, zero_tf_fill=1e-7, title=None, random_seed=3456):  # noqa: C901, PLR0912, PLR0915
-    """
-    Plot tumor fraction boxplot
-
-    Parameters
-    ----------
-    df_tf_in: pd.DataFrame
-        tumor fraction dataframe
-    zero_tf_fill: float, optional
-        fill zero values with this value, default 1e-7
-    title: str, optional
-        title of chioce, default None
-    random_seed: int, optional
-        random seed for plotting, default 3456
-    """
-    df_tf_in = df_tf_in.assign(ctdna_vaf=df_tf_in["ctdna_vaf"].clip(lower=zero_tf_fill))
-    any_nonzero_tf = (df_tf_in["ctdna_vaf"] > 0).any()
-    try:
-        df_tf_matched = df_tf_in.loc[("matched", slice(None)), "ctdna_vaf"]
-    except KeyError:
-        df_tf_matched = pd.DataFrame(
-            {"signature_type": [np.nan], "signature": [np.nan], "ctdna_vaf": [np.nan]}
-        ).set_index(["signature_type", "signature"])["ctdna_vaf"]
-    try:
-        df_tf_control = df_tf_in.loc[("control", slice(None)), "ctdna_vaf"]
-    except KeyError:
-        df_tf_control = pd.DataFrame(
-            {"signature_type": [np.nan], "signature": [np.nan], "ctdna_vaf": [np.nan]}
-        ).set_index(["signature_type", "signature"])["ctdna_vaf"]
-    try:
-        df_tf_db_control = df_tf_in.loc[("db_control", slice(None)), "ctdna_vaf"]
-    except KeyError:
-        df_tf_db_control = pd.DataFrame(
-            {"signature_type": [np.nan], "signature": [np.nan], "ctdna_vaf": [np.nan]}
-        ).set_index(["signature_type", "signature"])["ctdna_vaf"]
-
-    plt.figure(figsize=(8, 12))
-    if title:
-        plt.title(title, y=1.02, fontsize=12)
-
-    if df_tf_matched.notna().any():
-        x = 0.2 * np.ones(df_tf_matched.shape[0])
-        y = df_tf_matched.to_numpy()
-        labels = (
-            df_tf_matched.index.get_level_values("signature")
-            + df_tf_matched.apply(lambda x: f" (ctDNA VAF={x:.1e})").to_numpy()
-        )
-        hscat1 = plt.scatter(x, y, s=100, c="#D03020")
-        for i, label in enumerate(labels):
-            if not np.isnan(y[i]):
-                plt.text(
-                    x[i] + 0.015,
-                    y[i],
-                    label,
-                    ha="left",
-                    va="center",
-                    fontsize=10,
-                    alpha=0.3,
-                )
-    else:
-        hscat1 = None
-
-    hbp1 = plt.boxplot(
-        df_tf_control,
-        positions=[0],
-        showfliers=False,
-        patch_artist=True,
-        boxprops={"facecolor": "b"},
-        whiskerprops={"color": "b"},
-        capprops={"color": "b"},
-    )
-    hbp2 = plt.boxplot(
-        df_tf_db_control,
-        positions=[0],
-        showfliers=False,
-        patch_artist=True,
-        boxprops={"facecolor": "g"},
-        whiskerprops={"color": "g"},
-        capprops={"color": "g"},
-    )
-    rng = np.random.default_rng(random_seed)
-    x = 0.2 + rng.uniform(-0.1, 0.1, size=df_tf_control.shape[0])
-    y = df_tf_control.to_numpy()
-    labels = df_tf_control.index.get_level_values("signature")
-    hscat2 = plt.scatter(x, y, s=100, c="#3390DD")
-    for i, label in enumerate(labels):
-        if not np.isnan(y[i]):
-            plt.text(
-                x[i] + 0.015,
-                y[i],
-                label,
-                ha="left",
-                va="center",
-                fontsize=10,
-                alpha=0.3,
-            )
-    x = 0.2 + rng.uniform(-0.1, 0.1, size=df_tf_db_control.shape[0])
-    y = df_tf_db_control.to_numpy()
-    labels = df_tf_db_control.index.get_level_values("signature")
-    hscat3 = plt.scatter(x, y, s=100, c="g")
-    for i, label in enumerate(labels):
-        if not np.isnan(y[i]):
-            plt.text(
-                x[i] + 0.015,
-                y[i],
-                label,
-                ha="left",
-                va="center",
-                fontsize=10,
-                alpha=0.3,
-            )
-    if any_nonzero_tf:  # if all values are nan or 0, we cannot set log scale
-        plt.yscale("log")
-    else:
-        print("WARNING: Could not set plot to log scale")
-    plt.xticks([])
-    plt.xlim(-0.2, 0.5)
-    plt.ylabel("Measured ctDNA VAF")
-    plt.legend(
-        [hscat1, hscat2, hbp1["boxes"][0], hscat3, hbp2["boxes"][0]],
-        [
-            "Matched",
-            "Individual controls",
-            "Control distribution",
-            "db_controls",
-            "db_control distribution",
-        ],
-        bbox_to_anchor=[1.01, 1],
-    )
-    for line in hbp1["medians"]:
-        # get position data for median line
-        x, y = line.get_xydata()[0]  # top of median line
-        # overlay median value
-        if not np.isnan(x) and not np.isnan(y):
-            plt.text(
-                x,
-                y,
-                f"{y:.1e}" if y > zero_tf_fill else "0",
-                ha="right",
-                va="center",
-                color="b",
-                fontsize=11,
-            )  # draw above, centered
-    for line in hbp2["medians"]:
-        # get position data for median line
-        x, y = line.get_xydata()[0]  # top of median line
-        # overlay median value
-        if not np.isnan(x) and not np.isnan(y):
-            plt.text(
-                x,
-                y,
-                f"{y:.1e}" if y > zero_tf_fill else "0",
-                ha="right",
-                va="center",
-                color="g",
-                fontsize=11,
-            )  # draw above, centered
-
-
 # Maximum per-locus read count included in the per-signature VAF estimate used as
 # Poisson λ.  Loci with more reads than this are assumed to contain real signal
 # (germline / mosaic variant) that would inflate the background rate estimate.
@@ -1351,10 +1192,10 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
 def get_tf_from_filtered_data(
     df_features_in: pd.DataFrame,
     df_signatures_in: pd.DataFrame,
-    title=None,
+    title=None,  # noqa: ARG001 (kept for call-site compatibility)
     denom_ratio=None,
     *,
-    plot_results=False,
+    plot_results=False,  # noqa: ARG002 (deprecated — plotting moved to mrd_detection)
     excluded_loci: pd.Index | None = None,
 ):
     """
@@ -1405,43 +1246,7 @@ def get_tf_from_filtered_data(
     df_tf["corrected_coverage"] = np.ceil(df_tf["corrected_coverage"])
     df_tf = df_tf.assign(ctdna_vaf=df_tf["supporting_reads"] / df_tf["corrected_coverage"]).sort_index(ascending=False)
 
-    if plot_results:
-        plot_tf(df_tf, title=title)
-        plt.show()
-
     return (df_tf, df_supporting_reads_per_locus)
-
-
-def plot_vaf_matched_unmatched(
-    df_supporting_reads_per_locus: pd.DataFrame,
-    df_signatures: pd.DataFrame,
-    figsize: tuple[float, float] = (7, 6),
-):
-    """
-    Plot histogram of allele frequencies of all, plasma-matched and unmatched variants
-    """
-    fig, ax = plt.subplots(3, 1, figsize=figsize)
-    queries = {
-        "all variants": df_supporting_reads_per_locus.index,
-        "matched variants": df_supporting_reads_per_locus.query("signature_type == 'matched'").index,
-        "control variants": df_supporting_reads_per_locus.query("signature_type != 'matched'").index,
-    }
-
-    colors = ["blue", "red", "green"]
-
-    bins = np.linspace(0, 1, 50)
-    sns.set_style("whitegrid")
-    for i, (quary_name, index_flt) in enumerate(queries.items()):
-        sns.histplot(
-            data=df_signatures.loc[index_flt]["af"],
-            bins=bins,
-            color=colors[i],
-            ax=ax[i],
-        )
-        ax[i].set_title(quary_name)
-
-    plt.tight_layout()
-    plt.show()
 
 
 def calc_tumor_fraction_denominator_ratio(featuremap_df_file: str, srsnv_metadata_json: str, read_filter_query: str):
