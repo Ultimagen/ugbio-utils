@@ -762,12 +762,19 @@ def read_and_filter_features_parquet(  # noqa: C901
         df_features.query("signature_type=='matched'").groupby(level=["chrom", "pos"]).agg({"filtering_ratio": "first"})
     )
     df_features_filt = df_features.query(read_filter_query)
-    noise_excluded_loci = None
+    noise_excluded_per_sig: dict | None = None
     if thresh_noise_lq_reads is not None:
         noise_mask = df_features_filt["locus_filter_noise"]
-        noise_excluded_loci = df_features_filt[noise_mask].index.unique()
+        noisy_rows = df_features_filt[noise_mask]
+        # Track excluded loci per-signature so coverage is only corrected for the
+        # specific signature whose locus was flagged — not all signatures at that position.
+        if "signature" in noisy_rows.columns:
+            noise_excluded_per_sig = {
+                sig: noisy_rows[noisy_rows["signature"] == sig].index.unique()
+                for sig in noisy_rows["signature"].unique()
+            }
         df_features_filt = df_features_filt[~noise_mask]
-    return df_features, df_features_filt, filtering_ratio, noise_excluded_loci
+    return df_features, df_features_filt, filtering_ratio, noise_excluded_per_sig
 
 
 def read_and_filter_signatures_parquet(
@@ -1205,13 +1212,28 @@ def get_tf_from_filtered_data(
     ----------
     excluded_loci : pd.Index or None
         (chrom, pos) MultiIndex of loci explicitly removed by upstream filters
-        (e.g. noisy-loci or multi-read).  Their coverage is subtracted from the
-        denominator so that VAF = reads / coverage remains consistent.
+        (e.g. noisy-loci or multi-read).  A ``dict[str, pd.Index]`` keyed by
+        signature name applies the exclusion only to that signature's coverage,
+        avoiding over-correction of other signatures at the same position.
         When None, all signature loci contribute to coverage (backwards-compatible).
     """
-    # Restrict signatures: exclude loci explicitly removed by upstream filters.
+    # Restrict signatures: exclude loci removed by upstream filters.
     if excluded_loci is not None and len(excluded_loci) > 0:
-        df_signatures_active = df_signatures_in[~df_signatures_in.index.isin(excluded_loci)]
+        if isinstance(excluded_loci, dict) and "signature" in df_signatures_in.columns:
+            # Per-signature precision: subtract coverage only where that specific
+            # signature's locus was filtered (noise or multi-read), not all signatures.
+            keep = pd.Series(data=True, index=df_signatures_in.index, dtype=bool)  # noqa: FBT003
+            for sig_name, excl_idx in excluded_loci.items():
+                if len(excl_idx) > 0:
+                    is_this_sig = df_signatures_in["signature"] == sig_name
+                    is_excl_locus = pd.Series(
+                        df_signatures_in.index.isin(excl_idx), index=df_signatures_in.index
+                    )
+                    keep &= ~(is_this_sig & is_excl_locus)
+            df_signatures_active = df_signatures_in[keep]
+        else:
+            # Flat index fallback (backward compatibility)
+            df_signatures_active = df_signatures_in[~df_signatures_in.index.isin(excluded_loci)]
     else:
         df_signatures_active = df_signatures_in
 
