@@ -374,7 +374,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         thresh_noise_lq_reads = None
 
     # 1. Load data
-    df_features, df_features_filt, filtering_ratio, noise_excluded_loci = mrd.read_and_filter_features_parquet(
+    df_features, df_features_filt, filtering_ratio, excluded_per_sig = mrd.read_and_filter_features_parquet(
         intersection_path,
         read_filter_query,
         thresh_noise_lq_reads=thresh_noise_lq_reads,
@@ -385,8 +385,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     denom_ratio, filt_ratio, _ = mrd.calc_tumor_fraction_denominator_ratio(
         mrd_report_inputs.featuremap_file, mrd_report_inputs.srsnv_metadata_json, read_filter_query
     )
-    # Track all excluded loci (noise + multi-read) for coverage adjustment
-    excluded_loci = noise_excluded_loci
+    # Track excluded loci per-signature (noise + multi-read) for precise coverage correction.
+    # Using a dict[signature_name → (chrom,pos) index] avoids over-correcting coverage for
+    # other signatures at the same position when only one was filtered.
 
     # 1.5. Multi-read locus filter: remove matched loci with unexpectedly many HQ reads
     # (e.g. germline / mosaic variants). Calibrated to the TF estimate from the current
@@ -403,7 +404,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             plot_results=False,
             title="Filtered reads (before multi-read filter)",
             denom_ratio=denom_ratio,
-            excluded_loci=excluded_loci,
+            excluded_loci=excluded_per_sig,
         )
         detection_pre_multi_read = run_detection_analysis(
             df_tf=df_tf_pre_multi_read,
@@ -420,12 +421,18 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             df_signatures_filt,
             thresh_multi_read_pvalue,
         )
-        # Collect loci removed by multi-read filter
-        multi_read_excluded = df_features_before_multi.index.unique().difference(df_features_filt.index.unique())
-        if excluded_loci is not None and len(excluded_loci) > 0:
-            excluded_loci = excluded_loci.append(multi_read_excluded).unique()
-        else:
-            excluded_loci = multi_read_excluded
+        # Collect loci removed by multi-read filter, per-signature, for coverage correction.
+        for _sig_name in df_features_before_multi["signature"].unique():
+            _before_idx = df_features_before_multi[df_features_before_multi["signature"] == _sig_name].index.unique()
+            _after_idx = df_features_filt[df_features_filt["signature"] == _sig_name].index.unique()
+            _excl = _before_idx.difference(_after_idx)
+            if len(_excl) > 0:
+                if excluded_per_sig is None:
+                    excluded_per_sig = {}
+                if _sig_name in excluded_per_sig:
+                    excluded_per_sig[_sig_name] = excluded_per_sig[_sig_name].union(_excl)
+                else:
+                    excluded_per_sig[_sig_name] = _excl
         # Per-type multi-read excluded loci (for the LQ-fraction histogram)
         multi_read_excluded_per_type = {}
         for _sig_type in ("matched", "control", "db_control"):
@@ -442,7 +449,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
         plot_results=False,
         title="Filtered reads and signatures",
         denom_ratio=denom_ratio,
-        excluded_loci=excluded_loci,
+        excluded_loci=excluded_per_sig,
     )
 
     # Descriptions for the read-level locus filters, shared by the funnel table.
