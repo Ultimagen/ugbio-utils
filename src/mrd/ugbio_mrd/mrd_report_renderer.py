@@ -1321,7 +1321,7 @@ def render_qc_report(  # noqa: PLR0913, PLR0915, C901
         "noise_rate_str": noise_rate_str,
         "vaf_str": format_scientific(detection.matched_ctdna_vaf) if detection.matched_ctdna_vaf > 0 else "0",
         "lod_str": format_scientific(detection.personal_lod) if detection.personal_lod else "N/A",
-        "filt_ratio": filt_ratio,
+        "denom_ratio": denom_ratio,
         "signal_noise_img": patient_controls_img,
         "sbs96_plots": sbs96_plots,
         "sbs6_vaf_plots": sbs6_vaf_plots,

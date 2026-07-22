@@ -116,7 +116,8 @@ class DetectionResult:
     personal_lod: float | None  # TF at which recall >= lod_recall (incremental, above p_err)
 
     # Null distribution (raw supporting read counts for each synthetic control)
-    null_reads: np.ndarray  # shape (n_synthetic_controls,), dtype int
+    synthetic_signatures_supporting_reads: np.ndarray  # shape (n_synthetic_controls,), dtype int
+    synthetic_signatures_names: list  # signature names corresponding to synthetic_signatures_supporting_reads entries
 
     # Assay metrics
     signature_size: int  # number of loci in filtered signature
@@ -282,7 +283,8 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             null_median_reads=0.0,
             null_max_reads=0,
             n_synthetic_controls=0,
-            null_reads=np.array([], dtype=int),
+            synthetic_signatures_supporting_reads=np.array([], dtype=int),
+            synthetic_signatures_names=[],
             personal_lod=None,
             signature_size=0,
             mean_coverage=0.0,
@@ -305,14 +307,17 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     corrected_coverage = float(matched_row["corrected_coverage"])
 
     # Extract synthetic control (db_control) supporting reads + background error rate
+    syn_names: list[str] = []
     try:
         db_control_data = df_tf.loc["db_control"]
         if isinstance(db_control_data, pd.Series):
-            null_reads = np.array([int(db_control_data["supporting_reads"])])
+            syn_reads = np.array([int(db_control_data["supporting_reads"])])
+            syn_names = [str(db_control_data.name)]
             db_total_reads = float(db_control_data["supporting_reads"])
             db_total_cov = float(db_control_data["corrected_coverage"])
         else:
-            null_reads = db_control_data["supporting_reads"].to_numpy().astype(int)
+            syn_reads = db_control_data["supporting_reads"].to_numpy().astype(int)
+            syn_names = [str(s) for s in db_control_data.index.get_level_values("signature")]
             db_total_reads = float(db_control_data["supporting_reads"].sum())
             db_total_cov = float(db_control_data["corrected_coverage"].sum())
         # Noise rate estimation:
@@ -320,7 +325,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         # - When zero reads are observed, apply Jeffreys prior: p_err = 0.5 / (N + 1)
         #   to avoid a hard zero that would make the null Binomial degenerate.
         # If total corrected coverage is zero the null model has no depth; treat as
-        # missing controls (p_err=0.0 + null_reads kept empty) so the call is Indeterminate.
+        # missing controls (p_err=0.0 + syn_reads empty) so the call is Indeterminate.
         raw_reads_zero = db_total_reads == 0
         if db_total_cov > 0:
             if raw_reads_zero:
@@ -331,13 +336,14 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             logger.warning(
                 "db_control corrected_coverage is zero despite %d synthetic control(s) present — "
                 "null model depth invalid; setting call to Indeterminate.",
-                len(null_reads),
+                len(syn_reads),
             )
-            null_reads = np.array([])  # force Indeterminate path
+            syn_reads = np.array([])  # force Indeterminate path
+            syn_names = []
             p_err = 0.0
     except KeyError:
         logger.warning("No db_control (synthetic) signatures found in df_tf. Cannot compute p-value.")
-        null_reads = np.array([])
+        syn_reads = np.array([])
         p_err = 0.0
         raw_reads_zero = False
 
@@ -370,7 +376,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     # n_effective comes directly from df_tf corrected_coverage, which is the same denominator
     # used to compute ctdna_vaf — ensuring p-value, LOD, and VAF all share a single N.
     n_effective = int(corrected_coverage)
-    if len(null_reads) == 0 or n_effective == 0:
+    if len(syn_reads) == 0 or n_effective == 0:
         p_value = 1.0
     else:
         p_value = float(binom.sf(matched_reads - 1, n_effective, p_err))
@@ -391,9 +397,9 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         ),
         QcCheck(
             label="Synthetic controls",
-            value_str=str(len(null_reads)),
+            value_str=str(len(syn_reads)),
             threshold_str=f"≥ {MIN_SYNTHETIC_CONTROLS}",
-            passed=len(null_reads) >= MIN_SYNTHETIC_CONTROLS,  # noqa: PLR2004
+            passed=len(syn_reads) >= MIN_SYNTHETIC_CONTROLS,  # noqa: PLR2004
         ),
     ]
     if df_supporting_reads_per_locus is not None and signature_size > 0:
@@ -494,7 +500,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
                 logger.debug("Could not compute %s multi-read support QC check: %s", ctrl_type, exc)
 
     # Detection call
-    if len(null_reads) == 0 or n_effective == 0:
+    if len(syn_reads) == 0 or n_effective == 0:
         detected = None
         call = "Indeterminate"
     elif p_value <= alpha:
@@ -528,10 +534,11 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         p_value=p_value,
         matched_supporting_reads=matched_reads,
         matched_ctdna_vaf=matched_vaf,
-        null_median_reads=float(np.median(null_reads)) if len(null_reads) > 0 else 0.0,
-        null_max_reads=int(np.max(null_reads)) if len(null_reads) > 0 else 0,
-        n_synthetic_controls=len(null_reads),
-        null_reads=null_reads,
+        null_median_reads=float(np.median(syn_reads)) if len(syn_reads) > 0 else 0.0,
+        null_max_reads=int(np.max(syn_reads)) if len(syn_reads) > 0 else 0,
+        n_synthetic_controls=len(syn_reads),
+        synthetic_signatures_supporting_reads=syn_reads,
+        synthetic_signatures_names=syn_names,
         personal_lod=personal_lod,
         signature_size=signature_size,
         mean_coverage=mean_coverage,
@@ -558,14 +565,14 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
     Left Y-axis (log): ctDNA VAF.
     Right Y-axis (log): Signature supporting reads (= VAF × corrected_coverage).
 
-    * Synthetic controls: null_reads / corrected_coverage (VAF scale).
+    * Synthetic controls: synthetic_signatures_supporting_reads / corrected_coverage (VAF scale).
     * Patient: matched_ctdna_vaf; legend includes read count.
     * Cohort controls are shown in a separate scatter plot.
     """
     if ax is None:
         _, ax = plt.subplots(figsize=(8, 5))
 
-    null = detection.null_reads
+    null = detection.synthetic_signatures_supporting_reads  # array of per-signature supporting reads
     obs = detection.matched_supporting_reads
     corr_cov = detection.corrected_coverage
     _vaf_floor = 1e-7
