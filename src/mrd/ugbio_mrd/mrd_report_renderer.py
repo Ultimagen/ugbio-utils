@@ -326,16 +326,31 @@ def render_sbs_vaf_combined(
 ) -> tuple[str, str]:
     """Return (sbs96_img, sbs6_vaf_img) as two separate base64 PNG strings.
 
-    SBS96 is built from df_signatures directly (all filtered signature variants).
-    df_signatures carries left_motif / right_motif from the signature VCF INFO fields,
-    so trinucleotide context is available for every locus — not just those that happened
-    to have a cfDNA read in the intersection.
+    The featuremap intersection contains all reads (ref + alt) at signature locus
+    positions.  At typical sequencing depth (~30×), essentially every signature locus
+    has at least one read, so x_prev1/x_next1 are available for nearly all loci.
     """
     # ── SBS96 figure ──────────────────────────────────────────────────────────
     df_filt = df_signatures.query(signature_filter_query) if signature_filter_query else df_signatures
-    counts = _count_sbs96(df_filt)
     df_for_sbs6 = df_filt
     sbs6_query = signature_filter_query
+
+    # Use featuremap intersection (x_prev1/x_next1): one row per locus is sufficient
+    # since the flanking context is identical for all reads at the same genomic position.
+    counts = None
+    if df_features is not None and not df_features.empty:
+        _sig_name = (
+            df_signatures["signature"].iloc[0]
+            if "signature" in df_signatures.columns and len(df_signatures) > 0
+            else None
+        )
+        df_feat = (
+            df_features[df_features["signature"] == _sig_name]
+            if _sig_name and "signature" in df_features.columns
+            else df_features
+        )
+        df_feat_dedup = df_feat.groupby(level=["chrom", "pos"]).first().reset_index()
+        counts = _count_sbs96(df_feat_dedup)
 
     fig96, ax96 = plt.subplots(figsize=(14, 3.5))
     fig96.patch.set_facecolor("white")
@@ -366,7 +381,10 @@ def render_sbs_vaf_combined(
         ax96.set_xticklabels(tick_labels, fontsize=5.5, rotation=90)
         ax96.set_xlim(-0.5, 95.5)
         ax96.set_ylabel("Fraction", fontsize=9)
-        ax96.set_title(f"Mutational Profile (SBS96) — {total:,} signature variants", fontsize=10, fontweight="bold")
+        ax96.set_title(
+            f"Mutational Profile (SBS96) — {total:,} signature variants",
+            fontsize=10, fontweight="bold",
+        )
         ax96.spines[["top", "right"]].set_visible(False)
         ax96.yaxis.grid(True, linestyle=":", linewidth=0.5, alpha=0.6, zorder=0)  # noqa: FBT003
         ax96.set_axisbelow(True)
