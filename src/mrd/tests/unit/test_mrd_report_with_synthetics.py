@@ -44,7 +44,7 @@ def test_generate_report_with_synthetics(resources_dir, tmp_path_factory, n_cont
             str(resources_dir / "Pa_46_333_LuNgs_08.Pa_67_FFPE.control.intersection.parquet"),
         ]
         + parquet_files,
-        matched_signatures_vcf_files=[str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf.gz")],
+        matched_signature_vcf=str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf.gz"),
         control_signatures_vcf_files=[str(resources_dir / "Pa_67_FFPE.ann.chr20.filtered.vcf.gz")],
         db_control_signatures_vcf_files=vcf_files,
         coverage_bed=str(resources_dir / "Pa_46_333_LuNgs_08.regions.bed.gz"),

@@ -35,7 +35,7 @@ def mrd_report_inputs(output_path, resources_dir):
             str(resources_dir / "Pa_46_333_LuNgs_08.syn3_Pa_46_FreshFrozen.db_control.intersection.parquet"),
             str(resources_dir / "Pa_46_333_LuNgs_08.syn4_Pa_46_FreshFrozen.db_control.intersection.parquet"),
         ],
-        matched_signatures_vcf_files=[str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf.gz")],
+        matched_signature_vcf=str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf.gz"),
         control_signatures_vcf_files=[str(resources_dir / "Pa_67_FFPE.ann.chr20.filtered.vcf.gz")],
         db_control_signatures_vcf_files=[
             str(resources_dir / "syn0_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
@@ -202,7 +202,7 @@ def test_generate_mrd_report_with_noise_filter(output_path, resources_dir):
             str(resources_dir / "Pa_46_333_LuNgs_08.syn3_Pa_46_FreshFrozen.db_control.intersection.parquet"),
             str(resources_dir / "Pa_46_333_LuNgs_08.syn4_Pa_46_FreshFrozen.db_control.intersection.parquet"),
         ],
-        matched_signatures_vcf_files=[str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf.gz")],
+        matched_signature_vcf=str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf.gz"),
         control_signatures_vcf_files=[str(resources_dir / "Pa_67_FFPE.ann.chr20.filtered.vcf.gz")],
         db_control_signatures_vcf_files=[
             str(resources_dir / "syn0_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
@@ -254,7 +254,7 @@ def test_generate_mrd_report_with_multi_read_filter(output_path, resources_dir):
             str(resources_dir / "Pa_46_333_LuNgs_08.syn3_Pa_46_FreshFrozen.db_control.intersection.parquet"),
             str(resources_dir / "Pa_46_333_LuNgs_08.syn4_Pa_46_FreshFrozen.db_control.intersection.parquet"),
         ],
-        matched_signatures_vcf_files=[str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf.gz")],
+        matched_signature_vcf=str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf.gz"),
         control_signatures_vcf_files=[str(resources_dir / "Pa_67_FFPE.ann.chr20.filtered.vcf.gz")],
         db_control_signatures_vcf_files=[
             str(resources_dir / "syn0_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
