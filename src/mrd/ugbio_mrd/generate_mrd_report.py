@@ -33,7 +33,7 @@ class MrdReportInputs:
     """Inputs to generate a MRD report"""
 
     intersected_featuremaps_parquet: list[str]
-    matched_signatures_vcf_files: list[str]
+    matched_signature_vcf: str
     control_signatures_vcf_files: list[str]
     coverage_bed: str
     output_dir: str
@@ -474,7 +474,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     #    - read funnel (plasma read perspective, matched-signature reads)
     # Without a matched signature both funnels are empty, so skip building and
     # writing the funnel JSON entirely (the WDL declares the output optional).
-    matched_exists = bool(mrd_report_inputs.matched_signatures_vcf_files)
+    matched_exists = bool(mrd_report_inputs.matched_signature_vcf)
     filter_funnel: list[dict] = []
     read_funnel: list[dict] = []
     if matched_exists:
@@ -608,7 +608,9 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     inputs_info = {
         "Sample": mrd_report_inputs.output_basename or "N/A",
         "ugbio-mrd version": _version_str,
-        "Patient signature VCFs": _fmt_files(mrd_report_inputs.matched_signatures_vcf_files),
+        "Patient signature VCF": Path(mrd_report_inputs.matched_signature_vcf).name
+        if mrd_report_inputs.matched_signature_vcf
+        else "—",
         "Control signature VCFs": _fmt_files(mrd_report_inputs.control_signatures_vcf_files),
         "Featuremap file": Path(mrd_report_inputs.featuremap_file).name if mrd_report_inputs.featuremap_file else "—",
         "Coverage BED": Path(mrd_report_inputs.coverage_bed).name if mrd_report_inputs.coverage_bed else "—",
@@ -848,8 +850,8 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
     mrd_report_inputs contains the following fields:
         intersected_featuremaps_parquet: list[str]
             list of featuremaps intesected with various signatures
-        matched_signatures_vcf_files: list[str]
-            File name or a list of file names, signature vcf files of matched signature/s
+        matched_signature_vcf: str
+            File name of the matched signature vcf file
         control_signatures_vcf_files: list[str]
             File name or a list of file names, signature vcf files of control signature/s
         db_control_signatures_vcf_files: list[str]
@@ -877,8 +879,8 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
     """
     logger.info(f"Preparing data from MRD pipeline. {mrd_report_inputs=}")
     matched_exists = (
-        mrd_report_inputs.matched_signatures_vcf_files is not None
-        and len(mrd_report_inputs.matched_signatures_vcf_files) > 0
+        mrd_report_inputs.matched_signature_vcf is not None
+        and len(mrd_report_inputs.matched_signature_vcf) > 0
     )
     control_exists = (
         mrd_report_inputs.control_signatures_vcf_files is not None
@@ -919,7 +921,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
 
     if matched_exists:
         signature_dataframe = mrd.read_signature(
-            mrd_report_inputs.matched_signatures_vcf_files,
+            [mrd_report_inputs.matched_signature_vcf],
             coverage_bed=mrd_report_inputs.coverage_bed,
             output_parquet=signatures_dataframe_fname,
             tumor_sample=mrd_report_inputs.tumor_sample,
@@ -971,11 +973,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Input signature and featuemaps vcf files",
     )
     parser.add_argument(
-        "--matched-signatures-vcf",
-        nargs="+",
+        "--matched-signature-vcf",
         type=str,
         default=None,
-        help="Input signature vcf file/s (matched)",
+        help="Input signature vcf file (matched)",
     )
     parser.add_argument(
         "--control-signatures-vcf",
@@ -1093,7 +1094,7 @@ def main(argv: list[str] | None = None):
 
     mrd_report_inputs = MrdReportInputs(
         intersected_featuremaps_parquet=args_in.intersected_featuremaps,
-        matched_signatures_vcf_files=args_in.matched_signatures_vcf,
+        matched_signature_vcf=args_in.matched_signature_vcf,
         control_signatures_vcf_files=args_in.control_signatures_vcf,
         db_control_signatures_vcf_files=args_in.db_control_signatures_vcf,
         coverage_bed=args_in.coverage_bed,
