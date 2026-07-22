@@ -708,9 +708,12 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
     pd.DataFrame([detection_record]).to_hdf(output_h5_file, key="detection_result", mode="a")
 
     # Save null reads (synthetic control supporting read counts) as a Series
-    pd.Series(detection.null_reads, name="null_reads", dtype=int).to_frame().to_hdf(
-        output_h5_file, key="null_reads", mode="a"
-    )
+    pd.Series(
+        detection.synthetic_signatures_supporting_reads,
+        index=detection.synthetic_signatures_names if detection.synthetic_signatures_names else None,
+        name="supporting_reads",
+        dtype=int,
+    ).to_frame().to_hdf(output_h5_file, key="synthetic_signatures_supporting_reads", mode="a")
 
     # ── QC report: compute secondary analyses, render via Jinja2 ──
     logger.info(f"Generating MRD QC report (Jinja2). {qc_html_path=}")
