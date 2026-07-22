@@ -58,7 +58,7 @@ def test_generate_report_html(metrics_df, tmp_path):
     assert "Both-strands duplex" in content
     assert "On-target rate" in content
     assert "Consensus tool performance" in content
-    assert "rs:B:i" in content
+    assert "fs:i" in content and "rs:i" in content
 
 
 def test_consensus_table_absent_without_log(metrics_df):

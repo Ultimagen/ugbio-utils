@@ -1,29 +1,30 @@
 """
 Duplex / consensus family metrics from a ReadFuserAlignSort output CRAM.
 
-The consensus tool (``read_fuser``) writes, on each consensus read, an ``rs:B:i``
-tag holding two integers::
+The consensus tool (``read_fuser``) writes, on each consensus read, two scalar
+integer tags recording how many original reads on each strand were fused into it::
 
-    rs = [n_forward_strand_reads, n_reverse_strand_reads]
+    fs:i:<n_forward_strand_reads>
+    rs:i:<n_reverse_strand_reads>
 
-i.e. the number of original reads on the forward (+) and reverse (-) strand that
-were fused into that consensus read. This lets us classify every consensus read
-and measure family size *directly*, without re-grouping reads by their ``MI``
-(molecular identifier) tag:
+i.e. the number of original reads on the forward (+, ``fs``) and reverse (-,
+``rs``) strand. This lets us classify every consensus read and measure family
+size *directly*, without re-grouping reads by their ``MI`` (molecular identifier)
+tag:
 
-* **both-strands duplex** - both entries > 0 (the molecule was observed on both
+* **both-strands duplex** - both counts > 0 (the molecule was observed on both
   strands); family size = ``n_forward + n_reverse``.
-* **single-strand duplicate** - exactly one entry is 0; family size = the
-  non-zero entry.
-* **singleton / pass-through** - no ``rs`` tag (a read the consensus step passed
-  through unchanged); family size = 1.
+* **single-strand duplicate** - exactly one count is 0; family size = the
+  non-zero count.
+* **singleton / pass-through** - no ``fs``/``rs`` tags (a read the consensus step
+  passed through unchanged); family size = 1.
 
-``sum(rs)`` equals the length of the ``rn`` (fused read-name list) tag, so the
+``fs + rs`` equals the length of the ``rn`` (fused read-name list) tag, so the
 two encodings agree on family size.
 
 The historical MI-tag approach (grouping reads by ``MI`` and inspecting the set
 of strands) is kept in :func:`collect_family_metrics_from_mi_tags` for CRAMs
-produced without the ``rs`` tag.
+produced without any strand tags.
 """
 
 from __future__ import annotations
@@ -42,8 +43,11 @@ SINGLETON = "singleton"
 CATEGORIES = (DUPLEX, SINGLE_STRAND, SINGLETON)
 
 
-def parse_rs_tag(read: pysam.AlignedSegment) -> tuple[int, int] | None:
-    """Return ``(n_forward, n_reverse)`` from a consensus read's ``rs`` tag.
+def parse_strand_tags(read: pysam.AlignedSegment) -> tuple[int, int] | None:
+    """Return ``(n_forward, n_reverse)`` from a consensus read's strand tags.
+
+    read_fuser writes two scalar integer tags on each consensus read:
+    ``fs:i:<n_forward>`` and ``rs:i:<n_reverse>``.
 
     Parameters
     ----------
@@ -53,16 +57,15 @@ def parse_rs_tag(read: pysam.AlignedSegment) -> tuple[int, int] | None:
     Returns
     -------
     tuple[int, int] | None
-        ``(n_forward, n_reverse)`` if the read carries a well-formed 2-element
-        ``rs`` tag, otherwise ``None`` (no tag, or a malformed/scalar value).
+        ``(n_forward, n_reverse)`` if the read carries a well-formed ``fs`` tag,
+        otherwise ``None`` (no strand tags, or a malformed value).
     """
-    if not read.has_tag("rs"):
+    if not read.has_tag("fs"):
         return None
-    rs = read.get_tag("rs")
     try:
-        n_fwd, n_rev = int(rs[0]), int(rs[1])
-    except (TypeError, IndexError, ValueError):
-        # Rare scalar / malformed rs value - caller counts these as unclassified.
+        n_fwd = int(read.get_tag("fs"))
+        n_rev = int(read.get_tag("rs")) if read.has_tag("rs") else 0
+    except (TypeError, ValueError):
         return None
     return n_fwd, n_rev
 
@@ -157,21 +160,21 @@ def _iter_primary_reads_by_chrom(samfile, merged, max_reads):
 def _classify_read(read: pysam.AlignedSegment) -> tuple[str, int] | None:
     """Return ``(category, family_size)`` for a read, or ``None`` if unclassifiable.
 
-    ``None`` means the read carries an ``rs`` tag we could not parse (malformed /
-    scalar); a read with no ``rs`` tag is treated as a singleton.
+    ``None`` means the read carries strand tags we could not parse (malformed); a
+    read with no strand tags is treated as a singleton.
     """
-    rs = parse_rs_tag(read)
-    if rs is None:
-        if read.has_tag("rs"):
-            return None  # malformed/scalar rs
+    strands = parse_strand_tags(read)
+    if strands is None:
+        if read.has_tag("fs"):
+            return None  # malformed strand tags
         return SINGLETON, 1
-    n_fwd, n_rev = rs
+    n_fwd, n_rev = strands
     return classify_family(n_fwd, n_rev), max(n_fwd + n_rev, 1)
 
 
 def collect_family_metrics_from_rs_tags(
     cram_path: str,
-    intervals: list[tuple[str, int, int]],
+    intervals: list[tuple[str, int, int]] | None,
     reference: str,
     *,
     index_path: str | None = None,
@@ -179,8 +182,8 @@ def collect_family_metrics_from_rs_tags(
 ) -> dict:
     """Classify consensus reads and measure family size and coverage over ``intervals``.
 
-    For each primary read overlapping the (merged) intervals we read its ``rs``
-    tag, classify the family, record family size, and add its aligned span
+    For each primary read overlapping the (merged) intervals we read its strand
+    tags (``fs``/``rs``), classify the family, record family size, and add its aligned span
     (clipped to the interval) to that category's covered-base total. Family-size
     statistics count each read once, at the interval containing its start, so
     reads spanning an interval boundary are not double-counted.
@@ -189,10 +192,12 @@ def collect_family_metrics_from_rs_tags(
     ----------
     cram_path : str
         Path or ``s3://`` URI of the consensus CRAM.
-    intervals : list[tuple[str, int, int | None]]
+    intervals : list[tuple[str, int, int | None]] | None
         ``(chrom, start, end)`` regions to analyse (e.g. target-BED rows, or a
         whole chromosome). An ``end`` of ``None`` means "to the end of the
-        contig" and is resolved from the CRAM header.
+        contig" and is resolved from the CRAM header. Pass ``None`` to scan the
+        **whole CRAM** (every contig in the header, full length) with no region
+        limitation.
     reference : str
         Path to the reference FASTA (required to decode a CRAM).
     index_path : str | None, optional
@@ -206,7 +211,7 @@ def collect_family_metrics_from_rs_tags(
         Keys: ``per_category`` (DataFrame indexed by category with columns
         ``n_reads``, ``avg_family_size``, ``median_family_size``,
         ``covered_bases``, ``coverage``), ``total_interval_bp``,
-        ``n_reads_scanned``, ``n_unclassified`` (reads with a malformed ``rs``),
+        ``n_reads_scanned``, ``n_unclassified`` (reads with malformed strand tags),
         and ``family_sizes`` (dict category -> np.ndarray of sizes).
     """
     family_sizes: dict[str, list[int]] = {c: [] for c in CATEGORIES}
@@ -220,6 +225,9 @@ def collect_family_metrics_from_rs_tags(
         open_kwargs["index_filename"] = index_path
 
     with pysam.AlignmentFile(cram_path, "rc", **open_kwargs) as samfile:
+        # intervals=None -> scan the whole CRAM: every contig, full length.
+        if intervals is None:
+            intervals = [(name, 0, None) for name in samfile.references]
         # Resolve open-ended intervals ("to end of contig") from the header, then merge.
         resolved = [
             (chrom, start, samfile.get_reference_length(chrom) if end is None else end)
@@ -243,7 +251,7 @@ def collect_family_metrics_from_rs_tags(
 
             classified = _classify_read(read)
             if classified is None:
-                # Malformed/scalar rs - excluded from family stats.
+                # Malformed strand tags - excluded from family stats.
                 n_unclassified += 1
                 continue
             category, size = classified
@@ -283,7 +291,7 @@ def collect_family_metrics_from_mi_tags(
 ) -> dict:
     """Fallback: classify families by grouping reads on the ``MI`` tag.
 
-    Use only for consensus/duplicate-marked CRAMs that lack the ``rs`` tag. A
+    Use only for consensus/duplicate-marked CRAMs that lack the ``fs``/``rs`` strand tags. A
     family is *duplex* if its reads span both strands, *single_strand* if all
     reads share one strand, and *singleton* if it has a single read. This mirrors
     the historical MI-tag analysis; :func:`collect_family_metrics_from_rs_tags`

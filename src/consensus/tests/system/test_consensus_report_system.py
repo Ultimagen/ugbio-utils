@@ -3,8 +3,9 @@
 The fixtures are the ReadFuserAlignSort nightly regression output for the region
 ``chr1:13400000-13403000`` (sample ``502285-L11546-Z0236``), subset to a
 self-contained BAM so the CRAM's hg38 reference is not needed to decode it. The
-BAM keeps the consensus ``rs:B:i`` tags, so the duplex/family path is exercised
-for real; ``--duplex-chrom chr1`` scopes the scan to this region's chromosome.
+BAM keeps the consensus ``fs:i``/``rs:i`` strand tags, so the duplex/family path
+is exercised for real; ``--duplex-chrom all`` scans the whole input with no
+region limitation.
 """
 
 from pathlib import Path
@@ -32,7 +33,7 @@ def region_inputs(resources_dir):
 
 
 def test_consensus_report_on_chr1_region(region_inputs, tmp_path):
-    """Full CLI run: HTML + sidecar CSVs, with real duplex metrics from rs tags."""
+    """Full CLI run: HTML + sidecar CSVs, with real duplex metrics from fs/rs tags."""
     output = tmp_path / "report.html"
     metrics = consensus_report.run(
         [
@@ -52,8 +53,9 @@ def test_consensus_report_on_chr1_region(region_inputs, tmp_path):
             # BAM embeds its sequence, so no external reference is needed to decode it.
             "--reference",
             "/dev/null",
+            # Scan the whole input, no region limitation.
             "--duplex-chrom",
-            "chr1",
+            "all",
             "--output",
             str(output),
         ]
@@ -76,14 +78,17 @@ def test_consensus_report_on_chr1_region(region_inputs, tmp_path):
     row = metrics.iloc[0]
     assert row["sample"] == "Z0236_chr1_test"
 
-    # 531 rs-tagged consensus reads live in this region; classified into
-    # duplex / single-strand families, the rest passed through as singletons.
-    assert row["duplex_n_reads"] == 214
-    assert row["single_strand_n_reads"] == 317
-    assert row["duplex_avg_family_size"] == pytest.approx(2.1448598, rel=1e-4)
-    assert row["single_strand_avg_family_size"] == pytest.approx(2.0914826, rel=1e-4)
+    # --duplex-chrom all scans the whole CRAM, so all 533 merged consensus reads
+    # are classified: 215 both-strands duplex + 318 single-strand (the rest of the
+    # BAM passes through as singletons). This matches the whole-run dup_sets_merged
+    # total from the consensus log (533) below.
+    assert row["duplex_n_reads"] == 215
+    assert row["single_strand_n_reads"] == 318
+    assert row["duplex_n_reads"] + row["single_strand_n_reads"] == row["consensus_dup_sets_merged"]
+    assert row["duplex_avg_family_size"] == pytest.approx(2.1441860, rel=1e-4)
+    assert row["single_strand_avg_family_size"] == pytest.approx(2.1069182, rel=1e-4)
 
-    # Consensus stdout log parsed into the table.
+    # Consensus stdout log parsed into the table: whole-run dup-set totals.
     assert row["consensus_dup_sets_merged"] == 533
     assert row["consensus_unchanged_segments"] == 4791
 

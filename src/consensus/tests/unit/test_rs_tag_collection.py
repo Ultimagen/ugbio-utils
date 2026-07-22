@@ -1,4 +1,4 @@
-"""Build a tiny in-memory BAM with rs/MI tags and check family classification & coverage."""
+"""Build a tiny in-memory BAM with fs/rs/MI tags and check family classification & coverage."""
 
 import numpy as np
 import pysam
@@ -10,7 +10,11 @@ CHROM_LEN = 1000
 READ_LEN = 100
 
 
-def _make_read(header, name, pos, rs, *, reverse=False, mi=None):
+def _make_read(header, name, pos, strands, *, reverse=False, mi=None):
+    """Build a read with scalar ``fs:i``/``rs:i`` strand tags.
+
+    ``strands`` is ``(n_forward, n_reverse)`` or ``None`` (no strand tags).
+    """
     a = pysam.AlignedSegment(header)
     a.query_name = name
     a.query_sequence = "A" * READ_LEN
@@ -21,8 +25,10 @@ def _make_read(header, name, pos, rs, *, reverse=False, mi=None):
     a.cigartuples = [(0, READ_LEN)]  # 100M
     a.query_qualities = pysam.qualitystring_to_array("I" * READ_LEN)
     tags = []
-    if rs is not None:
-        tags.append(("rs", list(rs), "i"))  # array of ints -> rs:B:i
+    if strands is not None:
+        n_fwd, n_rev = strands
+        tags.append(("fs", n_fwd, "i"))  # scalar -> fs:i
+        tags.append(("rs", n_rev, "i"))  # scalar -> rs:i
     if mi is not None:
         tags.append(("MI", mi))
     a.set_tags(tags)

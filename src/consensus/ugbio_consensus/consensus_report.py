@@ -11,8 +11,8 @@ Per sample the report covers:
   local ``sorter_stats_csv`` (post-consensus).
 * **Duplex family metrics** - average MI-family size and covered depth for
   *both-strands duplex* families and for *single-strand duplicate* families,
-  measured directly from the consensus reads' ``rs:B:i`` tag
-  (``[n_forward, n_reverse]``) - see :mod:`ugbio_consensus.duplex_metrics`.
+  measured directly from the consensus reads' ``fs:i``/``rs:i`` strand tags
+  (forward / reverse read counts) - see :mod:`ugbio_consensus.duplex_metrics`.
 * **On-target metrics (optional)** - when a ``--targets`` BED is supplied
   (e.g. an exome capture BED), on-target rate and on-target mean coverage from
   the local coverage bedGraph; otherwise genome-wide coverage only.
@@ -72,12 +72,17 @@ DEFAULT_QC_METRICS = [
     "PCT_duplicates",
 ]
 
-# Chromosome scanned for the rs-tag duplex analysis. One whole chromosome gives a
+# Chromosome scanned for the strand-tag (fs/rs) duplex analysis. One whole chromosome gives a
 # stable, representative family-size / duplex estimate without reading the whole
 # (very large) CRAM. chr20 is a common QC-representative autosome; override with
 # --duplex-chrom (e.g. "20" for a b37 reference). When a targets BED is provided,
 # the scan is restricted to the parts of this chromosome inside the targets.
 DEFAULT_DUPLEX_CHROM = "chr20"
+
+# Sentinel value for --duplex-chrom meaning "scan the whole CRAM, no region limit"
+# (every contig, full length). Useful for small inputs where reading the whole
+# file is cheap and the report should count every consensus read.
+DUPLEX_CHROM_ALL = "all"
 
 _CATEGORY_LABEL = {
     duplex_metrics.DUPLEX: "Both-strands duplex",
@@ -223,7 +228,7 @@ def analyze_sample(  # noqa: PLR0913
     target_size : int | None, optional
         Merged target size in bp (required with ``targets_sorted_bed``).
     duplex_intervals : list[tuple[str, int, int | None]]
-        Regions to scan for the rs-tag duplex analysis (an ``end`` of ``None``
+        Regions to scan for the strand-tag (fs/rs) duplex analysis (an ``end`` of ``None``
         means "to the end of the contig"). Built by :func:`build_metrics_table`:
         the whole duplex chromosome, or its intersection with the targets BED.
     max_duplex_reads : int | None, optional
@@ -259,7 +264,7 @@ def analyze_sample(  # noqa: PLR0913
         record["on_target_rate"] = None
         record["target_mean_cvg"] = None
 
-    # --- Duplex / consensus family metrics from the rs:B:i tag ---
+    # --- Duplex / consensus family metrics from the fs/rs strand tags ---
     fam = duplex_metrics.collect_family_metrics_from_rs_tags(
         sample.cram,
         duplex_intervals,
@@ -306,9 +311,11 @@ def build_metrics_table(  # noqa: PLR0913
         Optional targets BED enabling on-target metrics. When given, the duplex
         scan is restricted to the parts of ``duplex_chrom`` inside the targets.
     duplex_chrom : str, optional
-        Chromosome scanned for the rs-tag duplex analysis (default
+        Chromosome scanned for the strand-tag (fs/rs) duplex analysis (default
         :data:`DEFAULT_DUPLEX_CHROM`). Without a targets BED the whole chromosome
-        is scanned; with one, only its targeted intervals.
+        is scanned; with one, only its targeted intervals. Pass
+        :data:`DUPLEX_CHROM_ALL` (``"all"``) to scan the whole CRAM (every contig,
+        no region limit).
     max_duplex_reads : int | None, optional
         Cap on reads scanned per sample for duplex metrics.
 
@@ -317,6 +324,7 @@ def build_metrics_table(  # noqa: PLR0913
     pd.DataFrame
         One row per sample, sorted by ``sample``.
     """
+    scan_all = duplex_chrom == DUPLEX_CHROM_ALL
     targets_sorted, target_size = (None, None)
     if targets_bed:
         targets_sorted, target_size = read_targets_bed(targets_bed, os.path.join(work_dir, "targets"))
@@ -326,6 +334,10 @@ def build_metrics_table(  # noqa: PLR0913
         if not duplex_intervals:
             logger.warning("No targets on %s; duplex scan will find no reads", duplex_chrom)
         logger.info("Duplex scan: %d targeted intervals on %s", len(duplex_intervals), duplex_chrom)
+    elif scan_all:
+        # Whole CRAM: every contig, no region limitation (intervals=None).
+        duplex_intervals = None
+        logger.info("Duplex scan: whole CRAM (all contigs)")
     else:
         # Whole chromosome (end=None -> resolved to contig length from the CRAM header).
         duplex_intervals = [(duplex_chrom, 0, None)]
@@ -407,7 +419,7 @@ def build_family_size_figure(df: pd.DataFrame) -> go.Figure:
             f"{duplex_metrics.DUPLEX}_avg_family_size": _CATEGORY_LABEL[duplex_metrics.DUPLEX],
             f"{duplex_metrics.SINGLE_STRAND}_avg_family_size": _CATEGORY_LABEL[duplex_metrics.SINGLE_STRAND],
         },
-        "Average MI-family size (from rs:B:i tag)",
+        "Average MI-family size (from fs/rs strand tags)",
         "Average family size (reads)",
     )
 
@@ -574,8 +586,8 @@ def _assemble_html(title: str, tables_html: list[str], figures: list[go.Figure])
         "padding: 20px; background:#ffffff; color:#000000;'>",
         f"<h1 style='font-size:34px;'>{title}</h1>",
         "<p style='color:#000000'>Consensus tool (ReadFuserAlignSort) performance and duplex metrics. "
-        "Family size and duplex classification are derived from the per-read <code>rs:B:i</code> tag "
-        "(<code>[n_forward, n_reverse]</code>).</p>",
+        "Family size and duplex classification are derived from the per-read <code>fs:i</code> / "
+        "<code>rs:i</code> strand tags (forward / reverse read counts).</p>",
     ]
     parts.extend(tables_html)
     for i, fig in enumerate(figures):
@@ -691,7 +703,8 @@ def parse_args(argv: list[str]) -> Namespace:
         default=DEFAULT_DUPLEX_CHROM,
         help=(
             f"Chromosome scanned for duplex/MI-family metrics (default {DEFAULT_DUPLEX_CHROM}; "
-            "e.g. '20' for b37). With --targets, restricted to its targeted intervals on this chromosome."
+            f"e.g. '20' for b37). Use '{DUPLEX_CHROM_ALL}' to scan the whole CRAM (all contigs, "
+            "no region limit). With --targets, restricted to its targeted intervals on this chromosome."
         ),
     )
     ap.add_argument("--max-duplex-reads", type=int, help="Cap reads scanned per sample for duplex metrics")

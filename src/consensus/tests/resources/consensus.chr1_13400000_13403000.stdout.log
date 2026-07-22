@@ -1,2 +1,2 @@
 done process_all_records
-stats=Stats { alt_prob_too_high: 0, hmer_too_long: 52, no_clear_hmer_choice: 9, not_same_contig: 0, other_error: 20, dup_sets_merged: 533, unchanged_segments: 4791 }
+stats=Stats { alt_prob_too_high: 0, hmer_too_long: 52, no_clear_hmer_choice: 9, not_same_contig: 0, other_error: 20, dup_sets_merged: 533, unchanged_segments: 4791, consensus_forward_reads: 559, consensus_reverse_reads: 572, duplex_consensus: 215, single_strand_consensus: 318 }
