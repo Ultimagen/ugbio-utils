@@ -511,13 +511,16 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     else:
         detection_threshold = None
 
-    # Personal LOD: smallest TF where recall >= lod_recall, at FPR = lod_fpr.
-    personal_lod = compute_personal_lod(
+    # Personal LOD: total VAF (p_err + incremental TF) at which recall >= lod_recall.
+    # Stored as total VAF so it sits on the same scale as matched_ctdna_vaf and the
+    # LOD line shown in the patient vs controls plot.
+    _lod_incremental = compute_personal_lod(
         n=n_effective,
         p_err=p_err,
         target_recall=lod_recall,
         fpr=lod_fpr,
     )
+    personal_lod = (p_err + _lod_incremental) if _lod_incremental is not None else None
 
     return DetectionResult(
         detected=detected,
@@ -610,7 +613,6 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
 
     # ── Compute threshold in VAF before plotting ──────────────────────────────
     det_vaf = None
-    lod_tf_plot = None
     n_eff_plot = getattr(detection, "n_effective", 0)
     p_err_plot = getattr(detection, "noise_rate", 0.0)
     _alpha_plot = getattr(detection, "alpha", DEFAULT_ALPHA)
@@ -618,12 +620,6 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
         n_th = _binom_detection_threshold(n_eff_plot, p_err_plot, _alpha_plot)
         if n_th is not None:
             det_vaf = n_th / corr_cov
-        lod_tf_plot = compute_personal_lod(
-            n=int(n_eff_plot),
-            p_err=p_err_plot,
-            target_recall=getattr(detection, "lod_recall", 0.95),
-            fpr=getattr(detection, "lod_fpr", DEFAULT_LOD_FPR),
-        )
 
     # ── Patient signal ────────────────────────────────────────────────────────
     x_pat = 1.5
@@ -642,10 +638,9 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
         ax.axhline(
             _safe_vaf(det_vaf), color="#e67e22", linewidth=1.8, linestyle="--", alpha=0.9, zorder=4, label=_det_label
         )
-    if lod_tf_plot is not None and n_eff_plot > 0:
-        # LOD line at total VAF = p_err + lod_tf so it sits on the same scale as
-        # the patient star and synthetic controls (which also show total VAF).
-        lod_total_vaf = p_err_plot + lod_tf_plot
+    if detection.personal_lod is not None and n_eff_plot > 0:
+        # personal_lod is already total VAF (p_err + incremental TF).
+        lod_total_vaf = detection.personal_lod
         n_lod_reads = int(round(n_eff_plot * lod_total_vaf))
         _lod_recall_plot = getattr(detection, "lod_recall", 0.95)
         _lod_label = (
@@ -664,8 +659,8 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
     # ── Scale / labels ────────────────────────────────────────────────────────
     ax.set_yscale("log")
     y_vals = [pat_vaf] + (list(null / corr_cov) if len(null) > 0 and corr_cov > 0 else [])
-    if lod_tf_plot:
-        y_vals.append(lod_tf_plot)
+    if detection.personal_lod:
+        y_vals.append(detection.personal_lod)
     ax.set_ylim(_vaf_floor * 0.5, max(y_vals) * 8)
     ax.set_axisbelow(True)
     ax.yaxis.grid(True, which="both", linestyle=":", linewidth=0.6, color="#dde1e7", alpha=0.9)  # noqa: FBT003

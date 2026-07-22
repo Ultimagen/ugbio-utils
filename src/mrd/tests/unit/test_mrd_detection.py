@@ -209,6 +209,49 @@ class TestComputePersonalLod:
         assert result.personal_lod is not None
         assert 1e-7 < result.personal_lod < 1e-3
 
+    def test_personal_lod_is_total_vaf_and_achieves_target_recall(
+        self, mock_df_tf_detected, mock_df_signatures_filt
+    ):
+        """personal_lod is total VAF (p_err + incremental) and achieves lod_recall at that TF.
+
+        Verifies:
+        1. personal_lod >= noise_rate  (total VAF includes the background floor)
+        2. Binomial recall at personal_lod equals or exceeds the target recall
+        3. personal_lod equals compute_personal_lod() (incremental) + noise_rate,
+           so the report and the plot LOD line are numerically identical.
+        """
+        lod_recall = 0.95
+        lod_fpr = 0.05
+        result = run_detection_analysis(
+            df_tf=mock_df_tf_detected,
+            df_signatures_filt=mock_df_signatures_filt,
+            lod_recall=lod_recall,
+            lod_fpr=lod_fpr,
+        )
+        assert result.personal_lod is not None
+        p_err = result.noise_rate
+        n = result.n_effective
+
+        # 1. personal_lod >= p_err (total VAF can never be below noise floor)
+        assert result.personal_lod >= p_err
+
+        # 2. At personal_lod, the Binomial recall must be >= lod_recall.
+        #    Re-derive detection threshold n_th at lod_fpr, then check recall.
+        k_range = np.arange(0, min(n + 1, 10000))
+        sf_vals = binom.sf(k_range - 1, n, p_err)
+        hits = np.where(sf_vals < lod_fpr)[0]
+        if len(hits) > 0:
+            n_th = int(hits[0])
+            recall_at_lod = float(binom.sf(n_th - 1, n, result.personal_lod))
+            assert recall_at_lod >= lod_recall - 1e-6, (
+                f"recall at personal_lod {recall_at_lod:.6f} < lod_recall {lod_recall}"
+            )
+
+        # 3. personal_lod == noise_rate + compute_personal_lod(incremental)
+        lod_incremental = compute_personal_lod(n=n, p_err=p_err, target_recall=lod_recall, fpr=lod_fpr)
+        assert lod_incremental is not None
+        assert abs(result.personal_lod - (p_err + lod_incremental)) < 1e-12
+
     def test_no_matched_signature(self, mock_df_signatures_filt):
         """Missing matched signature yields Indeterminate."""
         data = {
