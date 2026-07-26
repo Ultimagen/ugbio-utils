@@ -2651,7 +2651,7 @@ class SRSNVReport:
         col = stats_for_plot.columns[0]
         polys, lines = [], []
         for is_mixed, color in zip(
-            [~stats_for_plot[IS_MIXED], stats_for_plot[IS_MIXED]], [c_false, c_true], strict=False
+            [~stats_for_plot[IS_MIXED_START], stats_for_plot[IS_MIXED_START]], [c_false, c_true], strict=False
         ):
             qual_df = stats_for_plot.loc[is_mixed & stats_for_plot[LABEL] & (stats_for_plot["count"] > min_count), :]
             fb_kws["color"] = color
@@ -2682,7 +2682,7 @@ class SRSNVReport:
             q2 [float]: upper quantile for interquartile range
             bin_edges [list]: bin edges for discretization. If it is None, use discrete (integer) values
         """
-        required_cols = [col, LABEL, IS_MIXED, QUAL]
+        required_cols = [col, LABEL, IS_MIXED_START, QUAL]
 
         # If binning is needed, create binned column in a view/subset
         if bin_edges is not None:
@@ -2693,7 +2693,7 @@ class SRSNVReport:
             # Use a view of the original dataframe (no copy needed)
             subset = self.data_df[required_cols]
 
-        stats_for_plot = subset.groupby([col, LABEL, IS_MIXED], observed=True).agg(
+        stats_for_plot = subset.groupby([col, LABEL, IS_MIXED_START], observed=True).agg(
             median_qual=(QUAL, "median"),
             quantile1_qual=(QUAL, lambda x: x.quantile(q1)),
             quantile3_qual=(QUAL, lambda x: x.quantile(q2)),
@@ -2906,12 +2906,17 @@ class SRSNVReport:
         fig.tight_layout()
         self._save_plt(output_filename=output_filename, fig=fig)
 
-    def _plot_logit_histogram(self, plot_df, ax, alpha=0.4):
-        """Plot a single histogram of logit values, by: FP, TP mixed, TP non-mixed."""
+    def _plot_logit_histogram(self, plot_df, ax, alpha=0.4, mixed_col=IS_MIXED_START):
+        """Plot a single histogram of logit values, by: FP, TP mixed, TP non-mixed.
+
+        ``mixed_col`` selects which column defines a "mixed" read. It defaults to IS_MIXED_START
+        (start ppmSeq tag is MIXED) to match the report's simplified mixed definition; pass
+        IS_MIXED for the legacy both-ends definition.
+        """
         plot_df[""] = plot_df[LABEL].astype(str)
         plot_df.loc[~plot_df[LABEL], ""] = "FP"
-        plot_df.loc[plot_df[LABEL] & plot_df[IS_MIXED], ""] = "TP mixed"
-        plot_df.loc[plot_df[LABEL] & ~plot_df[IS_MIXED], ""] = "TP non-mixed"
+        plot_df.loc[plot_df[LABEL] & plot_df[mixed_col], ""] = "TP mixed"
+        plot_df.loc[plot_df[LABEL] & ~plot_df[mixed_col], ""] = "TP non-mixed"
         sns.histplot(
             data=plot_df,
             x=ML_LOGIT_TEST,
@@ -2933,19 +2938,29 @@ class SRSNVReport:
         # label_fontsize = 12
         # ticklabelsfontsize = 12
         logger.info("Plotting logit histogram")
-        fig, ax = plt.subplots(figsize=(12, 7))
 
-        plot_df = self.data_df[[ML_LOGIT_TEST, LABEL, IS_MIXED, FOLD_ID]].copy()
-        self._plot_logit_histogram(plot_df, ax)
+        plot_df_all = self.data_df[[ML_LOGIT_TEST, LABEL, IS_MIXED, IS_MIXED_START, FOLD_ID]].copy()
+
+        # Legacy histogram data (both-ends IS_MIXED) for backward-compatible h5 storage
+        fig_legacy, ax_legacy = plt.subplots(figsize=(12, 7))
+        self._plot_logit_histogram(plot_df_all.copy(), ax_legacy, mixed_col=IS_MIXED)
+        hist_data_df_legacy = self._get_histogram_data(ax_legacy, col_name="")
+        hist_data_df_legacy.to_hdf(self.output_h5_filename, key="logit_histogram", mode="a")
+        plt.close(fig_legacy)
+
+        # New histogram (IS_MIXED_START) for display and new h5 key
+        fig, ax = plt.subplots(figsize=(12, 7))
+        plot_df = plot_df_all.copy()
+        self._plot_logit_histogram(plot_df, ax, mixed_col=IS_MIXED_START)
         hist_data_df = self._get_histogram_data(ax, col_name="")
-        hist_data_df.to_hdf(self.output_h5_filename, key="logit_histogram", mode="a")
+        hist_data_df.to_hdf(self.output_h5_filename, key="logit_histogram_mixed_start", mode="a")
 
         if plot_by_fold:
             plt.close(fig)
             fig, ax = plt.subplots(figsize=(12, 7))
-            plot_dfs = [plot_df[plot_df[FOLD_ID] == k] for k in range(len(self.models))]
+            plot_dfs = [plot_df_all[plot_df_all[FOLD_ID] == k] for k in range(len(self.models))]
             for plot_df in plot_dfs:
-                self._plot_logit_histogram(plot_df, ax, alpha=0.15)
+                self._plot_logit_histogram(plot_df.copy(), ax, alpha=0.15, mixed_col=IS_MIXED_START)
 
         sns.move_legend(
             ax,
