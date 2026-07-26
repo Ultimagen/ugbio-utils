@@ -117,7 +117,7 @@ RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
 # Download para_jalign binary — either from a GitHub Actions run artifact or a release tag.
 # Provide exactly one of:
-#   JALIGN_RUN_ID   — GitHub Actions run ID (e.g. 25035501172); downloads the bullseye artifact zip
+#   JALIGN_RUN_ID   — GitHub Actions run ID (e.g. 25035501172); downloads the bullseye artifact zip, leave empty to use a release version of JALIGN
 #   JALIGN_VERSION  — release tag (e.g. 1.4.1); downloads the pre-built binary from that release
 ARG JALIGN_VERSION=1.4.1
 ARG JALIGN_RUN_ID=25035501172
