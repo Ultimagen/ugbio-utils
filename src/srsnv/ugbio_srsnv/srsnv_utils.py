@@ -1241,12 +1241,12 @@ def construct_trinuc_context_with_alt(
 ) -> pd.Series:
     """Construct trinuc_context_with_alt column from prev1, ref, next1, alt columns.
 
-    The "alt" base used is the read's actual substituted base. Featuremaps differ in where this
-    lives: in some (XGBoost SRSNV) the ``ALT`` column holds it directly; in others (DNN) the
-    ``ALT`` column equals ``REF`` for TP reads and the real substitution is in ``X_ALT``. To
-    support both, the effective alt is taken from ``x_alt`` wherever that is a valid base
-    (A/C/G/T), falling back to ``alt`` otherwise. If the ``x_alt`` column is absent, ``alt`` is
-    used as-is (unchanged legacy behavior).
+    The "alt" base used must be the read's actual substituted base (different from REF). The
+    ``ALT`` column normally holds it, and is used as-is (legacy behavior). However some DNN
+    featuremaps store ``ALT == REF`` for TP reads, with the real substitution in ``X_ALT``. To
+    support both conventions robustly, ``ALT`` is used wherever it already differs from ``REF``;
+    only where ``ALT == REF`` (and ``X_ALT`` is a valid base A/C/G/T that differs from ``REF``) is
+    ``X_ALT`` substituted in. When the ``x_alt`` column is absent, ``alt`` is used unchanged.
 
     Args:
         df: DataFrame containing the required columns
@@ -1266,11 +1266,13 @@ def construct_trinuc_context_with_alt(
     if missing_cols:
         raise ValueError(f"Missing required columns: {missing_cols}")
 
+    ref_series = df[ref].astype(str)
     alt_series = df[alt].astype(str)
-    # Prefer the per-read substituted base (X_ALT) where it is a valid base; else keep ALT.
+    # ALT is authoritative when it already differs from REF (the normal case). Only when ALT == REF
+    # (e.g. DNN featuremaps that carry the substitution in X_ALT) do we fall back to a valid X_ALT.
     if x_alt in df.columns:
         x_alt_series = df[x_alt].astype(str)
-        use_x_alt = x_alt_series.isin(VALID_BASES)
+        use_x_alt = (alt_series == ref_series) & x_alt_series.isin(VALID_BASES) & (x_alt_series != ref_series)
         alt_series = alt_series.where(~use_x_alt, x_alt_series)
 
     # Convert categorical columns to string to enable concatenation

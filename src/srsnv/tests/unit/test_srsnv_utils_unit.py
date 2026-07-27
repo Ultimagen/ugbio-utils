@@ -870,6 +870,24 @@ class TestConstructTrinucContextWithAlt:
         result = construct_trinuc_context_with_alt(frame)
         assert list(result) == ["ACGT", "TGCA"]
 
+    def test_keeps_alt_when_alt_differs_from_ref(self):
+        """Regression: when ALT already differs from REF, keep ALT even if X_ALT is a valid base.
+
+        Some report parquets carry the substitution in ALT (REF != ALT) and set X_ALT to the REF
+        base. Overriding with X_ALT there would wrongly produce a REF==alt context (maps to NaN).
+        """
+        frame = pd.DataFrame(
+            {
+                "X_PREV1": ["A", "T"],
+                "REF": ["C", "G"],
+                "X_NEXT1": ["G", "C"],
+                "ALT": ["T", "A"],  # real substitution already in ALT
+                "X_ALT": ["C", "G"],  # X_ALT == REF (must be ignored)
+            }
+        )
+        result = construct_trinuc_context_with_alt(frame)
+        assert list(result) == ["ACGT", "TGCA"]
+
 
 # ──────────────────────── get_trinuc_context_with_alt_fwd_vectorized ────
 
