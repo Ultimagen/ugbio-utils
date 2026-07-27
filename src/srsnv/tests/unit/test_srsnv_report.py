@@ -34,6 +34,7 @@ from ugbio_srsnv.srsnv_report import (
     compute_is_cycle_skip_column,
     prepare_report,
 )
+from ugbio_srsnv.srsnv_utils import ReportMode
 
 # ──────────────────────── _ModelWithTrainingResults ──────────────────────
 
@@ -495,10 +496,10 @@ class TestPrepareReport:
         with (
             patch("ugbio_srsnv.srsnv_report.SRSNVReport") as mock_report_cls,
             patch("ugbio_srsnv.srsnv_report.create_srsnv_report_html") as mock_html,
-            patch("ugbio_srsnv.srsnv_report.add_is_mixed_to_featuremap_df") as mock_mixed,
+            patch("ugbio_srsnv.srsnv_report.resolve_and_add_split_columns") as mock_mixed,
         ):
             # Mock add_is_mixed to return the same df
-            mock_mixed.side_effect = lambda df, *args, **kwargs: df
+            mock_mixed.side_effect = lambda df, *args, **kwargs: (df, ReportMode.MIXED)
             # Mock the report class
             mock_report_instance = MagicMock()
             mock_report_cls.return_value = mock_report_instance
@@ -568,9 +569,9 @@ class TestPrepareReport:
         with (
             patch("ugbio_srsnv.srsnv_report.SRSNVReport") as mock_report_cls,
             patch("ugbio_srsnv.srsnv_report.create_srsnv_report_html"),
-            patch("ugbio_srsnv.srsnv_report.add_is_mixed_to_featuremap_df") as mock_mixed,
+            patch("ugbio_srsnv.srsnv_report.resolve_and_add_split_columns") as mock_mixed,
         ):
-            mock_mixed.side_effect = lambda df, *args, **kwargs: df
+            mock_mixed.side_effect = lambda df, *args, **kwargs: (df, ReportMode.MIXED)
             mock_report_instance = MagicMock()
             mock_report_cls.return_value = mock_report_instance
 
@@ -621,9 +622,9 @@ class TestPrepareReport:
         with (
             patch("ugbio_srsnv.srsnv_report.SRSNVReport") as mock_report_cls,
             patch("ugbio_srsnv.srsnv_report.create_srsnv_report_html"),
-            patch("ugbio_srsnv.srsnv_report.add_is_mixed_to_featuremap_df") as mock_mixed,
+            patch("ugbio_srsnv.srsnv_report.resolve_and_add_split_columns") as mock_mixed,
         ):
-            mock_mixed.side_effect = lambda df, *args, **kwargs: df
+            mock_mixed.side_effect = lambda df, *args, **kwargs: (df, ReportMode.MIXED)
             mock_report_cls.return_value = MagicMock()
 
             # Test basename without trailing dot gets dot added

@@ -33,6 +33,8 @@ class FeatureMapFields(Enum):
     X_HMER_ALT = "X_HMER_ALT"
     ST = "st"
     ET = "et"
+    FS = "fs"  # forward-strand read count (consensus data)
+    RS = "rs"  # reverse-strand read count (consensus data)
     EDIST = "EDIST"
     HAMDIST = "HAMDIST"
     HAMDIST_FILT = "HAMDIST_FILT"

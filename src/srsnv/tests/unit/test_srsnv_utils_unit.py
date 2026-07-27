@@ -28,11 +28,28 @@ import pandas as pd
 import polars as pl
 import pytest
 from ugbio_srsnv.srsnv_utils import (
+    CONSENSUS_GROUP_DUPLEX,
+    CONSENSUS_GROUP_ONE_STRAND,
+    CONSENSUS_GROUP_SINGLE,
+    CONSENSUS_GROUPS,
+    FS,
+    IS_CONSENSUS,
+    IS_MIXED,
+    IS_MIXED_START,
+    MIXED_GROUP_NON,
+    MIXED_GROUP_POS,
+    NONE_GROUP_ALL,
+    READ_GROUP,
+    RS,
+    ReportMode,
     _aggregate_probabilities_from_folds,
     _compute_snvq_prefactor,
     _find_filter_rows,
     _probability_rescaling,
+    add_is_consensus_to_featuremap_df,
+    add_read_group_column,
     construct_trinuc_context_with_alt,
+    detect_report_mode,
     get_base_error_rate_from_filters,
     get_base_recall_from_filters,
     get_filter_ratio,
@@ -48,6 +65,7 @@ from ugbio_srsnv.srsnv_utils import (
     prob_to_phred,
     recalibrate_snvq,
     recalibrate_snvq_kde,
+    resolve_and_add_split_columns,
     safe_roc_auc,
     seq2key,
     set_featuremap_df_dtypes,
@@ -824,6 +842,34 @@ class TestConstructTrinucContextWithAlt:
         result = construct_trinuc_context_with_alt(frame)
         assert list(result) == ["ACGT", "TGCA"]
 
+    def test_prefers_x_alt_when_valid(self):
+        """When X_ALT holds a valid base (DNN convention: ALT == REF for TP), it is used as alt."""
+        frame = pd.DataFrame(
+            {
+                "X_PREV1": ["A", "T"],
+                "REF": ["C", "G"],
+                "X_NEXT1": ["G", "C"],
+                "ALT": ["C", "G"],  # ALT == REF (TP reads, no variant in ALT)
+                "X_ALT": ["T", "A"],  # real substituted base
+            }
+        )
+        result = construct_trinuc_context_with_alt(frame)
+        assert list(result) == ["ACGT", "TGCA"]
+
+    def test_falls_back_to_alt_when_x_alt_invalid(self):
+        """When X_ALT is not a valid base (e.g. NaN for FP reads), ALT is used."""
+        frame = pd.DataFrame(
+            {
+                "X_PREV1": ["A", "T"],
+                "REF": ["C", "G"],
+                "X_NEXT1": ["G", "C"],
+                "ALT": ["T", "A"],  # real substitution in ALT (FP reads)
+                "X_ALT": ["nan", ""],  # invalid -> fall back to ALT
+            }
+        )
+        result = construct_trinuc_context_with_alt(frame)
+        assert list(result) == ["ACGT", "TGCA"]
+
 
 # ──────────────────────── get_trinuc_context_with_alt_fwd_vectorized ────
 
@@ -1531,3 +1577,130 @@ class TestSafeRocAucAdditional:
         y_pred = [0.1, 0.4, 0.6, 0.9, 0.3, 0.7]
         result = safe_roc_auc(y_true, y_pred)
         assert 0.5 < result <= 1.0
+
+
+# ──────────────────────── report mode detection / split columns ──────────────────────
+
+
+class TestDetectReportMode:
+    """Test automatic report-mode detection from featuremap columns."""
+
+    def test_mixed_from_st_et(self):
+        """st/et present -> MIXED mode."""
+        data_df = pd.DataFrame({"st": ["MIXED", "PLUS"], "et": ["MIXED", "MINUS"]})
+        assert detect_report_mode(data_df) is ReportMode.MIXED
+
+    def test_mixed_from_v5_tags(self):
+        """as/ae/ts/te present (no st/et) -> MIXED mode."""
+        data_df = pd.DataFrame({"as": [1, 2], "ae": [1, 0], "ts": [0, 1], "te": [1, 1]})
+        assert detect_report_mode(data_df) is ReportMode.MIXED
+
+    def test_consensus_from_fs_rs(self):
+        """fs/rs present (no ppmSeq tags) -> CONSENSUS mode."""
+        data_df = pd.DataFrame({FS: [0, 1, 2], RS: [1, 1, 0]})
+        assert detect_report_mode(data_df) is ReportMode.CONSENSUS
+
+    def test_none_when_no_split_columns(self):
+        """Neither ppmSeq tags nor fs/rs -> NONE mode."""
+        data_df = pd.DataFrame({"MQUAL": [10.0, 20.0], "label": [True, False]})
+        assert detect_report_mode(data_df) is ReportMode.NONE
+
+    def test_ppmseq_tags_take_priority_over_fs_rs(self):
+        """If both st/et and fs/rs are present, ppmSeq tags win (MIXED)."""
+        data_df = pd.DataFrame(
+            {
+                "st": ["MIXED", "PLUS"],
+                "et": ["MIXED", "MINUS"],
+                FS: [1, 2],
+                RS: [1, 0],
+            }
+        )
+        assert detect_report_mode(data_df) is ReportMode.MIXED
+
+
+class TestAddIsConsensus:
+    """Test the fs>=1 & rs>=1 consensus derivation."""
+
+    def test_is_consensus_definition(self):
+        """A read is consensus iff it has >=1 forward and >=1 reverse read."""
+        data_df = pd.DataFrame({FS: [0, 1, 2, 0, 5], RS: [1, 1, 0, 0, 3]})
+        out = add_is_consensus_to_featuremap_df(data_df)
+        assert out[IS_CONSENSUS].tolist() == [False, True, False, False, True]
+        assert out[IS_CONSENSUS].dtype == bool
+
+
+class TestResolveAndAddSplitColumns:
+    """Test the mode-resolving split-column entry point used by the report."""
+
+    def test_consensus_adds_is_consensus(self):
+        data_df = pd.DataFrame({FS: [0, 1, 2, 3], RS: [1, 1, 0, 2]})
+        out, mode = resolve_and_add_split_columns(data_df)
+        assert mode is ReportMode.CONSENSUS
+        expected = ((data_df[FS] >= 1) & (data_df[RS] >= 1)).tolist()
+        assert out[IS_CONSENSUS].tolist() == expected
+
+    def test_none_sets_is_consensus_all_false(self):
+        data_df = pd.DataFrame({"MQUAL": [1.0, 2.0, 3.0]})
+        out, mode = resolve_and_add_split_columns(data_df)
+        assert mode is ReportMode.NONE
+        assert out[IS_CONSENSUS].tolist() == [False, False, False]
+
+    def test_mixed_adds_is_mixed_columns(self):
+        """MIXED mode delegates to add_is_mixed_to_featuremap_df, adding is_mixed columns."""
+        data_df = pd.DataFrame(
+            {
+                "st": ["MIXED", "MIXED", "PLUS", "MINUS"],
+                "et": ["MIXED", "PLUS", "PLUS", "MINUS"],
+            }
+        )
+        out, mode = resolve_and_add_split_columns(data_df, adapter_version="v1")
+        assert mode is ReportMode.MIXED
+        assert IS_MIXED in out.columns
+
+
+# ──────────────────────── read_group (N-group split) ──────────────────────
+
+
+class TestAddReadGroupColumn:
+    """Test the ordered read_group column for the N-group split."""
+
+    def test_consensus_three_groups_exhaustive_exclusive(self):
+        # fs+rs: (0,0)->single, (0,1)/(1,0)->single, one-strand (>=2, one side 0), duplex
+        data_df = pd.DataFrame(
+            {
+                FS: [0, 0, 1, 2, 0, 5, 3],
+                RS: [0, 1, 0, 0, 3, 3, 1],
+            }
+        )
+        out = add_read_group_column(data_df, ReportMode.CONSENSUS)
+        rg = out[READ_GROUP]
+        assert list(rg.cat.categories) == CONSENSUS_GROUPS
+        assert rg.cat.ordered
+        expected = [
+            CONSENSUS_GROUP_SINGLE,  # 0,0
+            CONSENSUS_GROUP_SINGLE,  # 0,1
+            CONSENSUS_GROUP_SINGLE,  # 1,0
+            CONSENSUS_GROUP_ONE_STRAND,  # 2,0
+            CONSENSUS_GROUP_ONE_STRAND,  # 0,3
+            CONSENSUS_GROUP_DUPLEX,  # 5,3
+            CONSENSUS_GROUP_DUPLEX,  # 3,1
+        ]
+        assert list(rg.astype(str)) == expected
+        # exhaustive: no NaN
+        assert not rg.isna().any()
+
+    def test_consensus_single_folds_in_zero_zero(self):
+        data_df = pd.DataFrame({FS: [0], RS: [0]})
+        out = add_read_group_column(data_df, ReportMode.CONSENSUS)
+        assert out[READ_GROUP].astype(str).iloc[0] == CONSENSUS_GROUP_SINGLE
+
+    def test_mixed_two_groups(self):
+        data_df = pd.DataFrame({IS_MIXED_START: [True, False, True]})
+        out = add_read_group_column(data_df, ReportMode.MIXED)
+        assert list(out[READ_GROUP].cat.categories) == [MIXED_GROUP_NON, MIXED_GROUP_POS]
+        assert list(out[READ_GROUP].astype(str)) == [MIXED_GROUP_POS, MIXED_GROUP_NON, MIXED_GROUP_POS]
+
+    def test_none_single_group(self):
+        data_df = pd.DataFrame({"MQUAL": [1.0, 2.0]})
+        out = add_read_group_column(data_df, ReportMode.NONE)
+        assert list(out[READ_GROUP].astype(str)) == [NONE_GROUP_ALL, NONE_GROUP_ALL]

@@ -4,6 +4,7 @@ import functools
 import json
 import os
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -36,17 +37,24 @@ from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions, PpmseqCategories
 from ugbio_srsnv.shap_plotting import SHAPPlotter
 from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
 from ugbio_srsnv.srsnv_utils import (
+    CONSENSUS_GROUPS,
     ET,
     ET_FILLNA,
+    IS_CONSENSUS,
     MAX_PHRED,
+    MIXED_GROUPS,
+    NONE_GROUP_ALL,
+    READ_GROUP,
     ST,
     ST_FILLNA,
-    add_is_mixed_to_featuremap_df,
+    ReportMode,
     construct_trinuc_context_with_alt,
+    detect_report_mode,
     get_base_recall_from_filters,
     phred_to_prob,
     prob_to_logit,
     prob_to_phred,
+    resolve_and_add_split_columns,
     safe_roc_auc,
     split_validation_training_preds,
 )
@@ -62,6 +70,105 @@ IS_MIXED = "is_mixed"
 IS_MIXED_START = "is_mixed_start"
 IS_MIXED_END = "is_mixed_end"
 FOLD_ID = "fold_id"
+
+
+@dataclass(frozen=True)
+class ReadSplit:
+    """Describes how the report splits reads into a positive/negative group.
+
+    The report supports several :class:`~ugbio_srsnv.srsnv_utils.ReportMode` values, each of
+    which splits the reads on a different boolean column and labels the two groups differently.
+    All split-dependent report methods consult a ``ReadSplit`` instead of hard-coding the
+    ppmSeq "mixed" columns/labels, so the same code produces correctly-labelled output for
+    every mode.
+
+    Attributes
+    ----------
+    mode : ReportMode
+        The detected report mode.
+    display_col : str
+        Boolean column driving the display (simplified) tables/plots and their `_mixed_start`
+        h5 keys. For MIXED this is ``is_mixed_start``; for CONSENSUS/NONE it is ``is_consensus``.
+    legacy_col : str
+        Boolean column driving the legacy (backward-compatible) h5 keys. For MIXED this is
+        ``is_mixed`` (both ends); for CONSENSUS/NONE it equals ``display_col`` (no start/end
+        distinction exists).
+    pos, neg : str
+        Capitalised labels for the positive / negative group of the *binary* split used by
+        MIXED (and NONE) mode (e.g. "Mixed"/"Non-mixed").
+    pos_lc, neg_lc : str
+        Lower-case variants of ``pos``/``neg`` used inside plot legends / column keys.
+    tag_axis : str
+        Axis/index label for the per-tag summary table ("ppmSeq tag" / "strand support").
+    groups : list[str]
+        Ordered display labels of the read groups this mode splits into. MIXED has 2
+        (``[neg, pos]``), CONSENSUS has 3 (single / one strand / duplex), NONE has 1.
+        Values match the categories written into the ``read_group`` column.
+    group_col : str
+        Name of the ordered-categorical column carrying the group label (``read_group``).
+
+    Notes
+    -----
+    MIXED mode carries a *dual* split — a legacy both-ends column (``is_mixed``) written to legacy
+    h5 keys and a display start column (``is_mixed_start``) written to ``*_mixed_start`` keys — which
+    a single ``read_group`` column cannot represent. Therefore MIXED (and NONE, for byte-identical
+    output) keep the original binary rendering via ``display_col``/``legacy_col``; only CONSENSUS
+    uses the N-group path driven by ``groups``/``group_col``.
+    """
+
+    mode: ReportMode
+    display_col: str
+    legacy_col: str
+    pos: str
+    neg: str
+    pos_lc: str
+    neg_lc: str
+    tag_axis: str
+    groups: list
+    group_col: str
+
+
+# Note: the split *columns* below keep the historical is_mixed* names for MIXED mode so that
+# all h5 keys and the deep-srsnv report path remain byte-for-byte backward compatible. Only the
+# display *labels* change per mode.
+MODE_SPLIT = {
+    ReportMode.MIXED: ReadSplit(
+        mode=ReportMode.MIXED,
+        display_col=IS_MIXED_START,
+        legacy_col=IS_MIXED,
+        pos="Mixed",
+        neg="Non-mixed",
+        pos_lc="mixed",
+        neg_lc="non-mixed",
+        tag_axis="ppmSeq tag",
+        groups=list(MIXED_GROUPS),
+        group_col=READ_GROUP,
+    ),
+    ReportMode.CONSENSUS: ReadSplit(
+        mode=ReportMode.CONSENSUS,
+        display_col=IS_CONSENSUS,
+        legacy_col=IS_CONSENSUS,
+        pos="Consensus",
+        neg="Non-consensus",
+        pos_lc="consensus",
+        neg_lc="non-consensus",
+        tag_axis="strand support",
+        groups=list(CONSENSUS_GROUPS),
+        group_col=READ_GROUP,
+    ),
+    ReportMode.NONE: ReadSplit(
+        mode=ReportMode.NONE,
+        display_col=IS_CONSENSUS,
+        legacy_col=IS_CONSENSUS,
+        pos="Mixed",
+        neg="Non-mixed",
+        pos_lc="mixed",
+        neg_lc="non-mixed",
+        tag_axis="ppmSeq tag",
+        groups=[NONE_GROUP_ALL],
+        group_col=READ_GROUP,
+    ),
+}
 EDIST = FeatureMapFields.EDIST.value
 SCORE = FeatureMapFields.BCSQ.value
 INDEX = FeatureMapFields.INDEX.value
@@ -76,7 +183,10 @@ edist_filter = f"{EDIST} <= 5"
 HQ_SNV_filter = f"{SCORE} >= 79"
 CSKP_SNV_filter = f"{SCORE} >= 100"
 read_end_filter = f"{INDEX} > 12 and {INDEX} < ({LENGTH} - 12)"
-mixed_read_filter = IS_MIXED  # TODO use adapter_version
+# LoD filters below reference IS_MIXED; in consensus mode the split column carries the
+# consensus flag, so these *_mixed_only filters become consensus-only. The LoD block in
+# create_report is currently disabled, so this has no live effect. TODO: use adapter_version.
+mixed_read_filter = IS_MIXED
 default_LoD_filters = {  # noqa: N816
     "no_filter": f"{SCORE} >= 0",
     "HQ_SNV": f"{HQ_SNV_filter} and {edist_filter}",
@@ -284,6 +394,7 @@ def create_srsnv_report_html(
     out_basename,
     srsnv_metadata_file,
     simple_pipeline=None,
+    split_mode: str = ReportMode.MIXED.value,
 ):
     if len(out_basename) > 0 and not out_basename.endswith("."):
         out_basename += "."
@@ -320,6 +431,7 @@ def create_srsnv_report_html(
         "qual_histogram": qual_histogram,
         "logit_histogram": logit_histogram,
         "calibration_fn_with_hist": calibration_fn_with_hist,
+        "split_mode": split_mode,
     }
 
     generate_report(
@@ -1549,15 +1661,23 @@ class SRSNVReport:
             logger.info(f"Adding {IS_FORWARD} column to data_df as negation of {REV}")
             self.data_df.loc[:, IS_FORWARD] = self.data_df[REV].astype(int) != 1
 
-        # Add is_mixed columns if they don't exist
-        if IS_MIXED not in self.data_df.columns:
-            logger.info(f"Adding {IS_MIXED}, {IS_MIXED_START} columns to data_df")
+        # Resolve the report split mode (mixed vs consensus vs none) and its labels.
+        # The mode may be provided by the caller (params["report_mode"], set by the CLI) or
+        # auto-detected from the columns present in the dataframe.
+        report_mode_param = self.params.get("report_mode")
+        self.report_mode = ReportMode(report_mode_param) if report_mode_param else detect_report_mode(self.data_df)
+        self.split = MODE_SPLIT[self.report_mode]
 
+        # Add the split column(s) if they don't exist yet (e.g. when SRSNVReport is constructed
+        # directly, without going through prepare_report which already adds them).
+        if self.split.display_col not in self.data_df.columns:
+            logger.info(f"Adding split column(s) for report mode {self.report_mode.value} to data_df")
             adapter_version = self.params.get("adapter_version", None)
             categorical_features = [f["name"] for f in self.srsnv_metadata["features"] if f.get("type") == "c"]
-            self.data_df = add_is_mixed_to_featuremap_df(
+            self.data_df, self.report_mode = resolve_and_add_split_columns(
                 self.data_df, adapter_version=adapter_version, categorical_features_names=categorical_features
             )
+            self.split = MODE_SPLIT[self.report_mode]
 
         # add logits to data_df
         self.data_df[ML_LOGIT_TEST] = prob_to_logit(
@@ -1570,6 +1690,28 @@ class SRSNVReport:
         _, preds_train = split_validation_training_preds(all_model_probs, fold_arr=self.data_df[FOLD_ID].to_numpy())
         self.data_df["ML_prob_train"] = preds_train
         self.data_df["ML_logit_train"] = prob_to_logit(preds_train, max_value=self.max_qual)
+
+    def _group_labels(self):
+        """Ordered list of read-group display labels for the current mode."""
+        return list(self.split.groups)
+
+    def _group_masks(self, data_df=None):
+        """Yield ``(label, boolean_mask)`` per read group, in order, for the given dataframe.
+
+        Masks come from the ordered ``read_group`` categorical. Used by the N-group (consensus)
+        report paths so every method splits reads the same way. Defaults to ``self.data_df``.
+        """
+        if data_df is None:
+            data_df = self.data_df
+        col = data_df[self.split.group_col]
+        for label in self.split.groups:
+            yield label, (col == label).to_numpy()
+
+    def _group_palette(self):
+        """A stable {label: color} mapping sized to the number of groups."""
+        labels = self.split.groups
+        colors = sns.color_palette(n_colors=len(labels))
+        return dict(zip(labels, colors, strict=False))
 
     def _save_plt(self, output_filename: str = None, fig=None, *, tight_layout=True, **kwargs):
         if output_filename is not None:
@@ -1738,7 +1880,9 @@ class SRSNVReport:
         return recall, fq
 
     @exception_handler
-    def plot_fq_recall(self, output_filename: str = None, *, only_calculate: bool = False, font_size: int = 24):
+    def plot_fq_recall(  # noqa: C901
+        self, output_filename: str = None, *, only_calculate: bool = False, font_size: int = 24
+    ):
         """Calculate precision and recall metrics for SRSNV quality thresholds.
 
         Parameters
@@ -1781,11 +1925,15 @@ class SRSNVReport:
             pr_df_legacy[f"FQ_{label}"] = fq
         pr_df_legacy.to_hdf(self.output_h5_filename, key="FQ_recall_LoD", mode="a")
 
-        # New conditions using IS_MIXED_START only
+        # New conditions: one curve per read group (consensus) or the binary positive group.
         conditions = {"all reads": None}
-        if IS_MIXED_START in self.data_df.columns:
-            if self.data_df[IS_MIXED_START].any():
-                conditions["mixed"] = self.data_df[IS_MIXED_START]
+        if self.split.mode is ReportMode.CONSENSUS:
+            for label, mask in self._group_masks():
+                if mask.any():
+                    conditions[label] = pd.Series(mask, index=self.data_df.index)
+        elif self.split.display_col in self.data_df.columns:
+            if self.data_df[self.split.display_col].any():
+                conditions[self.split.pos_lc] = self.data_df[self.split.display_col]
 
         if only_calculate:
             for label, condition in conditions.items():
@@ -1866,17 +2014,105 @@ class SRSNVReport:
             }
         return dataset_sizes
 
+    def _calc_run_info_table_by_group(self):
+        """Consensus/none: build run info + quality summary with one column per read group.
+
+        Writes the same 5 h5 keys as the binary path; legacy and display tables are identical
+        (no start/end distinction). Column/label order follows the ordered read groups.
+        """
+        version_info = {
+            ("Pipeline version", ""): (self.params.get("pipeline_version", None)),
+            ("Docker image", ""): self.params.get("docker_image", None),
+            ("Adapter version", ""): self.params.get("adapter_version", None),
+            ("Report created on", ""): datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        n_tp = self.data_df[LABEL].sum()
+        n_fp = (~self.data_df[LABEL]).sum()
+        general_info = {
+            ("Sample name", ""): self.base_name[:-1],
+            ("Median training read length", ""): np.median(self.data_df[LENGTH]),
+            ("Median training coverage", ""): np.median(self.data_df[READ_COUNT]),
+            ("Training set, % TP reads", ""): signif(self.data_df[LABEL].mean() * 100, 3),
+        }
+        for label, mask in self._group_masks():
+            tp_pct = (mask & self.data_df[LABEL].to_numpy()).sum() / n_tp if n_tp else np.nan
+            fp_pct = (mask & (~self.data_df[LABEL]).to_numpy()).sum() / n_fp if n_fp else np.nan
+            general_info[(f"{label} training reads", "% of TP")] = f"{signif(100 * tp_pct, 3)}%"
+            general_info[(f"{label} training reads", "% of FP")] = f"{signif(100 * fp_pct, 3)}%"
+
+        tp_df = self.data_df[self.data_df[LABEL]]
+        median_qual = tp_df[QUAL].median()
+        recall_at_0 = self._get_recall_at_snvq(snvq=0)
+        roc_auc_phred = prob_to_phred(
+            self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name="run info total"),
+            max_value=self.max_qual,
+        )
+        snvq_thresholds = [50, 60, 70]
+        # Per-group stats keyed by group label
+        grp_median, grp_recall0, grp_recall, grp_roc = {}, {}, {}, {}
+        for label, mask in self._group_masks():
+            cond = pd.Series(mask, index=self.data_df.index)
+            grp_median[label] = tp_df[cond.loc[tp_df.index]][QUAL].median()
+            grp_recall0[label] = self._get_recall_at_snvq(snvq=0, condition=cond)
+            grp_recall[label] = {s: self._get_recall_at_snvq(snvq=s, condition=cond) for s in snvq_thresholds}
+            sub = self.data_df[mask]
+            grp_roc[label] = prob_to_phred(
+                self._safe_roc_auc(sub[LABEL], sub[ML_PROB_1_TEST], name=f"run info {label}"), max_value=self.max_qual
+            )
+
+        performance_info = {("Median SNVQ", "All reads"): signif(median_qual, SIG_DIGITS)}
+        for label in self.split.groups:
+            performance_info[("Median SNVQ", label)] = signif(grp_median[label], SIG_DIGITS)
+        for snvq in snvq_thresholds:
+            performance_info[(f"Recall at SNVQ={snvq}", "All reads")] = signif(
+                self._get_recall_at_snvq(snvq=snvq) / recall_at_0, SIG_DIGITS
+            )
+            for label in self.split.groups:
+                denom = grp_recall0[label]
+                performance_info[(f"Recall at SNVQ={snvq}", label)] = signif(
+                    grp_recall[label][snvq] / denom if denom else np.nan, SIG_DIGITS
+                )
+        performance_info[("Pre-filter Recall", "All reads")] = signif(recall_at_0, SIG_DIGITS)
+        for label in self.split.groups:
+            performance_info[("Pre-filter Recall", label)] = signif(grp_recall0[label], SIG_DIGITS)
+        performance_info[("ROC AUC (Phred)", "All reads")] = signif(roc_auc_phred, SIG_DIGITS)
+        for label in self.split.groups:
+            performance_info[("ROC AUC (Phred)", label)] = signif(grp_roc[label], SIG_DIGITS)
+
+        training_info = {("Number of CV folds", ""): self.params["num_CV_folds"]}
+        dataset_sizes = self.get_dataset_sizes()
+        run_info_table = pd.Series({**general_info, **version_info}, name="")
+        run_quality_summary_table = pd.Series({**performance_info}, name="")
+        training_info_table = pd.Series({**training_info, **dataset_sizes}, name="")
+        # No legacy/both-ends distinction in consensus: write identical table to both keys.
+        run_info_table.to_hdf(self.output_h5_filename, key="run_info_table", mode="a")
+        run_info_table.to_hdf(self.output_h5_filename, key="run_info_table_mixed_start", mode="a")
+        run_quality_summary_table.to_hdf(self.output_h5_filename, key="run_quality_summary_table", mode="a")
+        run_quality_summary_table.to_hdf(self.output_h5_filename, key="run_quality_summary_table_mixed_start", mode="a")
+        training_info_table.to_hdf(self.output_h5_filename, key="training_info_table", mode="a")
+
     @exception_handler
     def calc_run_info_table(self):  # noqa: PLR0915
         """Calculate run_info_table, a table with general run information."""
         # Generate Run Info table
         logger.info("Generating Run Info table")
-        # Legacy mixed percent using IS_MIXED (both ends)
-        TP_mixed_percent_legacy = (self.data_df[IS_MIXED] & self.data_df[LABEL]).sum() / (self.data_df[LABEL].sum())  # noqa: N806
-        FP_mixed_percent_legacy = (self.data_df[IS_MIXED] & ~self.data_df[LABEL]).sum() / ((~self.data_df[LABEL]).sum())  # noqa: N806
-        # New mixed percent using IS_MIXED_START
-        TP_mixed_percent = (self.data_df[IS_MIXED_START] & self.data_df[LABEL]).sum() / (self.data_df[LABEL].sum())  # noqa: N806
-        FP_mixed_percent = (self.data_df[IS_MIXED_START] & ~self.data_df[LABEL]).sum() / ((~self.data_df[LABEL]).sum())  # noqa: N806
+        if self.split.mode is ReportMode.CONSENSUS:
+            self._calc_run_info_table_by_group()
+            return
+        # "positive-group" label for this mode (Mixed / Consensus). The report keeps two tables:
+        # a display table (mode's display_col) and a legacy backward-compatible one (legacy_col);
+        # in non-mixed modes both columns are identical.
+        pos = self.split.pos
+        display_col = self.split.display_col
+        legacy_col = self.split.legacy_col
+        n_tp = self.data_df[LABEL].sum()
+        n_fp = (~self.data_df[LABEL]).sum()
+        # Legacy positive-group percent using the legacy split column (IS_MIXED both ends for ppmSeq)
+        TP_mixed_percent_legacy = (self.data_df[legacy_col] & self.data_df[LABEL]).sum() / n_tp  # noqa: N806
+        FP_mixed_percent_legacy = (self.data_df[legacy_col] & ~self.data_df[LABEL]).sum() / n_fp  # noqa: N806
+        # New positive-group percent using the display split column
+        TP_mixed_percent = (self.data_df[display_col] & self.data_df[LABEL]).sum() / n_tp  # noqa: N806
+        FP_mixed_percent = (self.data_df[display_col] & ~self.data_df[LABEL]).sum() / n_fp  # noqa: N806
         general_info_base = {
             ("Sample name", ""): self.base_name[:-1],
             ("Median training read length", ""): np.median(self.data_df[LENGTH]),
@@ -1885,33 +2121,33 @@ class SRSNVReport:
         }
         general_info = {
             **general_info_base,
-            ("Mixed training reads", "% of TP"): f"{signif(100 * TP_mixed_percent, 3)}%",
-            ("Mixed training reads", "% of FP"): f"{signif(100 * FP_mixed_percent, 3)}%",
+            (f"{pos} training reads", "% of TP"): f"{signif(100 * TP_mixed_percent, 3)}%",
+            (f"{pos} training reads", "% of FP"): f"{signif(100 * FP_mixed_percent, 3)}%",
         }
         general_info_legacy = {
             **general_info_base,
-            ("Mixed training reads", "% of TP"): f"{signif(100 * TP_mixed_percent_legacy, 3)}%",
-            ("Mixed training reads", "% of FP"): f"{signif(100 * FP_mixed_percent_legacy, 3)}%",
+            (f"{pos} training reads", "% of TP"): f"{signif(100 * TP_mixed_percent_legacy, 3)}%",
+            (f"{pos} training reads", "% of FP"): f"{signif(100 * FP_mixed_percent_legacy, 3)}%",
         }
         # Performance info
-        mixed_start_df = self.data_df[self.data_df[IS_MIXED_START]]
-        mixed_both_df = self.data_df[self.data_df[IS_MIXED]]
+        mixed_start_df = self.data_df[self.data_df[display_col]]
+        mixed_both_df = self.data_df[self.data_df[legacy_col]]
         tp_df = self.data_df[self.data_df[LABEL]]
-        tp_mixed_start_df = tp_df[tp_df[IS_MIXED_START]]
-        tp_mixed_both_df = tp_df[tp_df[IS_MIXED]]
+        tp_mixed_start_df = tp_df[tp_df[display_col]]
+        tp_mixed_both_df = tp_df[tp_df[legacy_col]]
         median_qual = tp_df[QUAL].median()
         median_qual_mixed_start = tp_mixed_start_df[QUAL].median()
         median_qual_mixed_both = tp_mixed_both_df[QUAL].median()
         recall_at_0 = self._get_recall_at_snvq(snvq=0)
-        recall_at_0_mixed_start = self._get_recall_at_snvq(snvq=0, condition=self.data_df[IS_MIXED_START])
-        recall_at_0_mixed_both = self._get_recall_at_snvq(snvq=0, condition=self.data_df[IS_MIXED])
+        recall_at_0_mixed_start = self._get_recall_at_snvq(snvq=0, condition=self.data_df[display_col])
+        recall_at_0_mixed_both = self._get_recall_at_snvq(snvq=0, condition=self.data_df[legacy_col])
         snvq_thresholds = [50, 60, 70]
         recalls = {}
         for snvq in snvq_thresholds:
             recalls[snvq] = {
                 "all": self._get_recall_at_snvq(snvq=snvq),
-                "mixed_start": self._get_recall_at_snvq(snvq=snvq, condition=self.data_df[IS_MIXED_START]),
-                "mixed_both": self._get_recall_at_snvq(snvq=snvq, condition=self.data_df[IS_MIXED]),
+                "mixed_start": self._get_recall_at_snvq(snvq=snvq, condition=self.data_df[display_col]),
+                "mixed_both": self._get_recall_at_snvq(snvq=snvq, condition=self.data_df[legacy_col]),
             }
         roc_auc_phred = prob_to_phred(
             self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name="run info total"),
@@ -1929,42 +2165,43 @@ class SRSNVReport:
         # each metric having all its categories together before the next metric appears.
         performance_info = {
             ("Median SNVQ", "All reads"): signif(median_qual, SIG_DIGITS),
-            ("Median SNVQ", "Mixed"): signif(median_qual_mixed_start, SIG_DIGITS),
+            ("Median SNVQ", pos): signif(median_qual_mixed_start, SIG_DIGITS),
         }
         for snvq in snvq_thresholds:
             performance_info[(f"Recall at SNVQ={snvq}", "All reads")] = signif(
                 recalls[snvq]["all"] / recall_at_0, SIG_DIGITS
             )
-            performance_info[(f"Recall at SNVQ={snvq}", "Mixed")] = signif(
+            performance_info[(f"Recall at SNVQ={snvq}", pos)] = signif(
                 recalls[snvq]["mixed_start"] / recall_at_0_mixed_start, SIG_DIGITS
             )
         performance_info[("Pre-filter Recall", "All reads")] = signif(recall_at_0, SIG_DIGITS)
-        performance_info[("Pre-filter Recall", "Mixed")] = signif(recall_at_0_mixed_start, SIG_DIGITS)
+        performance_info[("Pre-filter Recall", pos)] = signif(recall_at_0_mixed_start, SIG_DIGITS)
         performance_info[("ROC AUC (Phred)", "All reads")] = signif(roc_auc_phred, SIG_DIGITS)
-        performance_info[("ROC AUC (Phred)", "Mixed")] = signif(roc_auc_phred_mixed_start, SIG_DIGITS)
+        performance_info[("ROC AUC (Phred)", pos)] = signif(roc_auc_phred_mixed_start, SIG_DIGITS)
 
-        # Legacy performance info with 3-way split for backward-compatible h5 storage
+        # Legacy performance info with 3-way split for backward-compatible h5 storage.
+        # In non-mixed modes the "start" and "both ends" sub-splits are identical.
         performance_info_legacy = {
             ("Median SNVQ", "All reads"): signif(median_qual, SIG_DIGITS),
-            ("Median SNVQ", "Mixed, start"): signif(median_qual_mixed_start, SIG_DIGITS),
-            ("Median SNVQ", "Mixed, both ends"): signif(median_qual_mixed_both, SIG_DIGITS),
+            ("Median SNVQ", f"{pos}, start"): signif(median_qual_mixed_start, SIG_DIGITS),
+            ("Median SNVQ", f"{pos}, both ends"): signif(median_qual_mixed_both, SIG_DIGITS),
         }
         for snvq in snvq_thresholds:
             performance_info_legacy[(f"Recall at SNVQ={snvq}", "All reads")] = signif(
                 recalls[snvq]["all"] / recall_at_0, SIG_DIGITS
             )
-            performance_info_legacy[(f"Recall at SNVQ={snvq}", "Mixed, start")] = signif(
+            performance_info_legacy[(f"Recall at SNVQ={snvq}", f"{pos}, start")] = signif(
                 recalls[snvq]["mixed_start"] / recall_at_0_mixed_start, SIG_DIGITS
             )
-            performance_info_legacy[(f"Recall at SNVQ={snvq}", "Mixed, both ends")] = signif(
+            performance_info_legacy[(f"Recall at SNVQ={snvq}", f"{pos}, both ends")] = signif(
                 recalls[snvq]["mixed_both"] / recall_at_0_mixed_both, SIG_DIGITS
             )
         performance_info_legacy[("Pre-filter Recall", "All reads")] = signif(recall_at_0, SIG_DIGITS)
-        performance_info_legacy[("Pre-filter Recall", "Mixed, start")] = signif(recall_at_0_mixed_start, SIG_DIGITS)
-        performance_info_legacy[("Pre-filter Recall", "Mixed, both ends")] = signif(recall_at_0_mixed_both, SIG_DIGITS)
+        performance_info_legacy[("Pre-filter Recall", f"{pos}, start")] = signif(recall_at_0_mixed_start, SIG_DIGITS)
+        performance_info_legacy[("Pre-filter Recall", f"{pos}, both ends")] = signif(recall_at_0_mixed_both, SIG_DIGITS)
         performance_info_legacy[("ROC AUC (Phred)", "All reads")] = signif(roc_auc_phred, SIG_DIGITS)
-        performance_info_legacy[("ROC AUC (Phred)", "Mixed, start")] = signif(roc_auc_phred_mixed_start, SIG_DIGITS)
-        performance_info_legacy[("ROC AUC (Phred)", "Mixed, both ends")] = signif(roc_auc_phred_mixed_both, SIG_DIGITS)
+        performance_info_legacy[("ROC AUC (Phred)", f"{pos}, start")] = signif(roc_auc_phred_mixed_start, SIG_DIGITS)
+        performance_info_legacy[("ROC AUC (Phred)", f"{pos}, both ends")] = signif(roc_auc_phred_mixed_both, SIG_DIGITS)
         # Info about versions
         version_info = {
             ("Pipeline version", ""): (self.params.get("pipeline_version", None)),
@@ -2109,152 +2346,111 @@ class SRSNVReport:
         num_cv_folds = self.params["num_CV_folds"]
         holdout_fold_cond = self.data_df[FOLD_ID].isna()
 
-        def _calc_roc_auc_dict(mix_condition, label_suffix=""):
-            auc_total = prob_to_phred(
-                self._safe_roc_auc(self.data_df[LABEL], self.data_df[ML_PROB_1_TEST], name=f"total{label_suffix}"),
-                max_value=self.max_qual,
-            )
-            auc_mixed = prob_to_phred(
-                self._safe_roc_auc(
-                    self.data_df.loc[mix_condition, LABEL],
-                    self.data_df.loc[mix_condition, ML_PROB_1_TEST],
-                    name=f"mixed{label_suffix}",
-                ),
-                max_value=self.max_qual,
-            )
-            auc_non_mixed = prob_to_phred(
-                self._safe_roc_auc(
-                    self.data_df.loc[~mix_condition, LABEL],
-                    self.data_df.loc[~mix_condition, ML_PROB_1_TEST],
-                    name=f"non-mixed{label_suffix}",
-                ),
-                max_value=self.max_qual,
-            )
-            auc_per_fold = []
-            auc_per_fold_mixed = []
-            auc_per_fold_non_mixed = []
-            auc_on_holdout = []
-            auc_on_holdout_mixed = []
-            auc_on_holdout_non_mixed = []
-            error_on_holdout = []
+        def _calc_roc_auc_dict(groups, label_suffix=""):  # noqa: C901
+            """Compute ROC-AUC stats for the whole set plus each group in ``groups``.
+
+            ``groups`` is an ordered list of ``(name, boolean_mask)``. The returned dict maps each
+            statistic to a list ``[total, *per_group]`` aligned with ``["Total", *group_names]``.
+            """
+            data_df = self.data_df
+
+            def _auc(mask, name):
+                sub = data_df.loc[mask]
+                return prob_to_phred(
+                    self._safe_roc_auc(sub[LABEL], sub[ML_PROB_1_TEST], name=name), max_value=self.max_qual
+                )
+
+            all_mask = np.ones(len(data_df), dtype=bool)
+            auc_total = _auc(all_mask, f"total{label_suffix}")
+            auc_per_group = [_auc(mask, f"{gname}{label_suffix}") for gname, mask in groups]
+
+            auc_per_fold_total = []
+            auc_per_fold_groups = [[] for _ in groups]
+            auc_on_holdout_total = []
+            auc_on_holdout_groups = [[] for _ in groups]
+            # Track which series (by name) already produced a NaN on holdout, to stop recomputing.
+            error_on_holdout = set()
             for k in range(num_cv_folds):
-                fold_cond = self.data_df[FOLD_ID] == k
-                mix_fold_cond = fold_cond & mix_condition
-                nonmix_fold_cond = fold_cond & ~mix_condition
-                auc_per_fold.append(
-                    prob_to_phred(
-                        self._safe_roc_auc(
-                            self.data_df.loc[fold_cond, LABEL],
-                            self.data_df.loc[fold_cond, ML_PROB_1_TEST],
-                            name=f"fold {k} total{label_suffix}",
-                        )
-                    )
-                )
-                auc_per_fold_mixed.append(
-                    prob_to_phred(
-                        self._safe_roc_auc(
-                            self.data_df.loc[mix_fold_cond, LABEL],
-                            self.data_df.loc[mix_fold_cond, ML_PROB_1_TEST],
-                            name=f"fold {k} mixed{label_suffix}",
-                        ),
-                        max_value=self.max_qual,
-                    )
-                )
-                auc_per_fold_non_mixed.append(
-                    prob_to_phred(
-                        self._safe_roc_auc(
-                            self.data_df.loc[nonmix_fold_cond, LABEL],
-                            self.data_df.loc[nonmix_fold_cond, ML_PROB_1_TEST],
-                            name=f"fold {k} non-mixed{label_suffix}",
-                        ),
-                        max_value=self.max_qual,
-                    )
-                )
+                fold_cond = (data_df[FOLD_ID] == k).to_numpy()
+                auc_per_fold_total.append(_auc(fold_cond, f"fold {k} total{label_suffix}"))
+                for gi, (gname, mask) in enumerate(groups):
+                    auc_per_fold_groups[gi].append(_auc(fold_cond & mask, f"fold {k} {gname}{label_suffix}"))
                 if holdout_fold_cond.sum() > holdout_fold_size_thresh:
+                    ho = holdout_fold_cond.to_numpy()
+                    preds_ho = data_df.loc[ho, f"prob_fold_{k}"]
                     if "total" not in error_on_holdout:
-                        preds = self.data_df.loc[holdout_fold_cond, f"prob_fold_{k}"]
-                        auc_on_holdout.append(
-                            prob_to_phred(
-                                self._safe_roc_auc(
-                                    self.data_df.loc[holdout_fold_cond, LABEL],
-                                    preds,
-                                    name=f"holdout total{label_suffix}",
-                                )
-                            )
+                        val = prob_to_phred(
+                            self._safe_roc_auc(data_df.loc[ho, LABEL], preds_ho, name=f"holdout total{label_suffix}")
                         )
-                        if np.isnan(auc_on_holdout[-1]):
-                            error_on_holdout.append("total")
+                        auc_on_holdout_total.append(val)
+                        if np.isnan(val):
+                            error_on_holdout.add("total")
                     else:
-                        auc_on_holdout.append(np.nan)
-                    mix_holdout_cond = holdout_fold_cond & mix_condition
-                    nonmix_holdout_cond = holdout_fold_cond & ~mix_condition
-                    if "mixed" not in error_on_holdout:
-                        preds = self.data_df.loc[mix_holdout_cond, f"prob_fold_{k}"]
-                        auc_on_holdout_mixed.append(
-                            prob_to_phred(
+                        auc_on_holdout_total.append(np.nan)
+                    for gi, (gname, mask) in enumerate(groups):
+                        if gname not in error_on_holdout:
+                            gho = ho & mask
+                            val = prob_to_phred(
                                 self._safe_roc_auc(
-                                    self.data_df.loc[mix_holdout_cond, LABEL],
-                                    preds,
-                                    name=f"holdout mixed{label_suffix}",
+                                    data_df.loc[gho, LABEL],
+                                    data_df.loc[gho, f"prob_fold_{k}"],
+                                    name=f"holdout {gname}{label_suffix}",
                                 ),
                                 max_value=self.max_qual,
                             )
-                        )
-                        if np.isnan(auc_on_holdout_mixed[-1]):
-                            error_on_holdout.append("mixed")
-                    else:
-                        auc_on_holdout_mixed.append(np.nan)
-                    if "nonmixed" not in error_on_holdout:
-                        preds = self.data_df.loc[nonmix_holdout_cond, f"prob_fold_{k}"]
-                        auc_on_holdout_non_mixed.append(
-                            prob_to_phred(
-                                self._safe_roc_auc(
-                                    self.data_df.loc[nonmix_holdout_cond, LABEL],
-                                    preds,
-                                    name=f"holdout non-mixed{label_suffix}",
-                                ),
-                                max_value=self.max_qual,
-                            )
-                        )
-                        if np.isnan(auc_on_holdout_non_mixed[-1]):
-                            error_on_holdout.append("nonmixed")
+                            auc_on_holdout_groups[gi].append(val)
+                            if np.isnan(val):
+                                error_on_holdout.add(gname)
+                        else:
+                            auc_on_holdout_groups[gi].append(np.nan)
 
             result = {
-                "ROC AUC": [auc_total, auc_mixed, auc_non_mixed],
+                "ROC AUC": [auc_total, *auc_per_group],
                 "ROC AUC per fold mean": [
-                    np.array(auc_per_fold).mean(),
-                    np.array(auc_per_fold_mixed).mean(),
-                    np.array(auc_per_fold_non_mixed).mean(),
+                    np.array(auc_per_fold_total).mean(),
+                    *[np.array(g).mean() for g in auc_per_fold_groups],
                 ],
                 "ROC AUC per fold std": [
-                    np.array(auc_per_fold).std(),
-                    np.array(auc_per_fold_mixed).std(),
-                    np.array(auc_per_fold_non_mixed).std(),
+                    np.array(auc_per_fold_total).std(),
+                    *[np.array(g).std() for g in auc_per_fold_groups],
                 ],
             }
             if holdout_fold_cond.sum() > holdout_fold_size_thresh:
                 result["ROC AUC on holdout mean"] = [
-                    np.array(auc_on_holdout).mean(),
-                    np.array(auc_on_holdout_mixed).mean(),
-                    np.array(auc_on_holdout_non_mixed).mean(),
+                    np.array(auc_on_holdout_total).mean(),
+                    *[np.array(g).mean() for g in auc_on_holdout_groups],
                 ]
                 result["ROC AUC on holdout std"] = [
-                    np.array(auc_on_holdout).std(),
-                    np.array(auc_on_holdout_mixed).std(),
-                    np.array(auc_on_holdout_non_mixed).std(),
+                    np.array(auc_on_holdout_total).std(),
+                    *[np.array(g).std() for g in auc_on_holdout_groups],
                 ]
             return result
 
-        # Legacy table using IS_MIXED (both ends) for backward compatibility
-        auc_table_dict_legacy = _calc_roc_auc_dict(self.data_df[IS_MIXED], label_suffix=" legacy")
-        pd.DataFrame(auc_table_dict_legacy, index=["Total", "Mixed only", "Non-mixed only"]).T.to_hdf(
-            self.output_h5_filename, key="roc_auc_table", mode="a"
-        )
-        # New table using IS_MIXED_START
-        auc_table_dict = _calc_roc_auc_dict(self.data_df[IS_MIXED_START])
-        pd.DataFrame(auc_table_dict, index=["Total", "Mixed only", "Non-mixed only"]).T.to_hdf(
-            self.output_h5_filename, key="roc_auc_table_mixed_start", mode="a"
-        )
+        if self.split.mode is ReportMode.CONSENSUS:
+            # N-group split: one row per read group, in the group order.
+            groups = list(self._group_masks())
+            auc_index = ["Total", *[f"{label} only" for label in self.split.groups]]
+            # Consensus has no legacy/both-ends distinction; write the same table to both keys.
+            auc_dict = _calc_roc_auc_dict(groups)
+            pd.DataFrame(auc_dict, index=auc_index).T.to_hdf(self.output_h5_filename, key="roc_auc_table", mode="a")
+            pd.DataFrame(auc_dict, index=auc_index).T.to_hdf(
+                self.output_h5_filename, key="roc_auc_table_mixed_start", mode="a"
+            )
+        else:
+            # MIXED / NONE binary split: keep the historical pos/neg row order and labels.
+            auc_index = ["Total", f"{self.split.pos} only", f"{self.split.neg} only"]
+            legacy_mask = self.data_df[self.split.legacy_col].to_numpy()
+            legacy_groups = [(self.split.pos, legacy_mask), (self.split.neg, ~legacy_mask)]
+            auc_table_dict_legacy = _calc_roc_auc_dict(legacy_groups, label_suffix=" legacy")
+            pd.DataFrame(auc_table_dict_legacy, index=auc_index).T.to_hdf(
+                self.output_h5_filename, key="roc_auc_table", mode="a"
+            )
+            display_mask = self.data_df[self.split.display_col].to_numpy()
+            display_groups = [(self.split.pos, display_mask), (self.split.neg, ~display_mask)]
+            auc_table_dict = _calc_roc_auc_dict(display_groups)
+            pd.DataFrame(auc_table_dict, index=auc_index).T.to_hdf(
+                self.output_h5_filename, key="roc_auc_table_mixed_start", mode="a"
+            )
 
     @exception_handler
     def calc_run_quality_table(
@@ -2273,6 +2469,55 @@ class SRSNVReport:
             qual_stat_ps = [0.05, 0.1, 0.25, 0.5, 0.75, 0.90, 0.95]
         if cols_for_stats is None:
             cols_for_stats = {QUAL: QUAL, ML_QUAL_1_TEST: "ML_qual", ML_LOGIT_TEST: "ML_logit"}
+        logger.info("Generating Run Quality table")
+
+        def _quality_table(conds_dict):
+            """Describe QUAL/ML_qual/ML_logit per condition and stack into a table (drop 'count')."""
+            stats = pd.concat(
+                [
+                    self.data_df.loc[cond, list(cols_for_stats.keys())]
+                    .describe(percentiles=qual_stat_ps)
+                    .rename(columns={stat_key: stat_name + key for stat_key, stat_name in cols_for_stats.items()})
+                    for key, cond in conds_dict.items()
+                ],
+                axis=1,
+            )
+            return pd.DataFrame(signif(stats.values, SIG_DIGITS), index=stats.index, columns=stats.columns).drop(
+                index="count"
+            )
+
+        base_conds = {
+            "": np.ones(self.data_df[LABEL].shape, dtype=bool),
+            "_TP": self.data_df[LABEL].to_numpy(),
+            "_FP": (~self.data_df[LABEL]).to_numpy(),
+        }
+
+        if self.split.mode is ReportMode.CONSENSUS:
+            # N-group split: one TP column per read group. The internal join keys use the group
+            # label directly (kept literal for col_order); display uses the same labels.
+            tp = self.data_df[LABEL].to_numpy()
+            conds = dict(base_conds)
+            for label, mask in self._group_masks():
+                conds[f"_TP_{label}"] = mask & tp
+            run_quality_table = _quality_table(conds)
+            display_columns = []
+            for qcol in (QUAL, "ML_qual"):
+                display_columns.append((qcol, "FP", ""))
+                display_columns.append((qcol, "TP", "overall"))
+                for label in self.split.groups:
+                    display_columns.append((qcol, "TP", label))
+            col_order = [
+                "_".join(cols) if cols[2] not in ["", "overall"] else "_".join(cols[:2]) for cols in display_columns
+            ]
+            run_quality_table_display = run_quality_table.loc[:, col_order].copy()
+            run_quality_table_display.columns = pd.MultiIndex.from_tuples(display_columns)
+            # Consensus has no legacy/both-ends distinction: same table to both keys.
+            run_quality_table.T.to_hdf(self.output_h5_filename, key="run_quality_table", mode="a")
+            run_quality_table.T.to_hdf(self.output_h5_filename, key="run_quality_table_mixed_start", mode="a")
+            run_quality_table_display.to_hdf(self.output_h5_filename, key="run_quality_table_display", mode="a")
+            return
+
+        # MIXED / NONE binary split — unchanged historical output.
         if display_columns is None:
             display_columns = [
                 (QUAL, "FP", ""),
@@ -2284,66 +2529,103 @@ class SRSNVReport:
                 ("ML_qual", "TP", "mixed"),
                 ("ML_qual", "TP", "non-mixed"),
             ]
-
-        logger.info("Generating Run Quality table")
-        # Legacy table using IS_MIXED (both ends) for backward-compatible h5 storage
+        # Note: the "_TP_mixed"/"_TP_non-mixed" keys below are internal join keys (matched by
+        # col_order); they stay literal regardless of mode. Only the displayed MultiIndex labels
+        # are swapped to the mode's split labels further down.
+        # Legacy table using the legacy split column (IS_MIXED both ends for ppmSeq)
         conds_dict_legacy = {
-            "": np.ones(self.data_df[LABEL].shape, dtype=bool),
-            "_TP": self.data_df[LABEL],
-            "_FP": ~self.data_df[LABEL],
-            "_TP_mixed": np.logical_and(self.data_df[IS_MIXED], self.data_df[LABEL]),
-            "_TP_non-mixed": np.logical_and(~self.data_df[IS_MIXED], self.data_df[LABEL]),
+            **base_conds,
+            "_TP_mixed": np.logical_and(self.data_df[self.split.legacy_col], self.data_df[LABEL]),
+            "_TP_non-mixed": np.logical_and(~self.data_df[self.split.legacy_col], self.data_df[LABEL]),
         }
-        qual_stats_legacy = pd.concat(
-            [
-                self.data_df.loc[cond, list(cols_for_stats.keys())]
-                .describe(percentiles=qual_stat_ps)
-                .rename(columns={stat_key: stat_name + key for stat_key, stat_name in cols_for_stats.items()})
-                for key, cond in conds_dict_legacy.items()
-            ],
-            axis=1,
-        )
-        run_quality_table_legacy = pd.DataFrame(
-            signif(qual_stats_legacy.values, SIG_DIGITS),
-            index=qual_stats_legacy.index,
-            columns=qual_stats_legacy.columns,
-        ).drop(index="count")
-        run_quality_table_legacy.T.to_hdf(self.output_h5_filename, key="run_quality_table", mode="a")
+        _quality_table(conds_dict_legacy).T.to_hdf(self.output_h5_filename, key="run_quality_table", mode="a")
 
-        # New table using IS_MIXED_START for display and new h5 key
+        # New table using the display split column for display and new h5 key
         conds_dict = {
-            "": np.ones(self.data_df[LABEL].shape, dtype=bool),
-            "_TP": self.data_df[LABEL],
-            "_FP": ~self.data_df[LABEL],
-            "_TP_mixed": np.logical_and(self.data_df[IS_MIXED_START], self.data_df[LABEL]),
-            "_TP_non-mixed": np.logical_and(~self.data_df[IS_MIXED_START], self.data_df[LABEL]),
+            **base_conds,
+            "_TP_mixed": np.logical_and(self.data_df[self.split.display_col], self.data_df[LABEL]),
+            "_TP_non-mixed": np.logical_and(~self.data_df[self.split.display_col], self.data_df[LABEL]),
         }
-        qual_stats_description = {
-            key: self.data_df.loc[cond, list(cols_for_stats.keys())]
-            .describe(percentiles=qual_stat_ps)
-            .rename(columns={stat_key: stat_name + key for stat_key, stat_name in cols_for_stats.items()})
-            for key, cond in conds_dict.items()
-        }
-
-        qual_stats_description = pd.concat(list(qual_stats_description.values()), axis=1)
-        run_quality_table = pd.DataFrame(
-            signif(qual_stats_description.values, SIG_DIGITS),
-            index=qual_stats_description.index,
-            columns=qual_stats_description.columns,
-        ).drop(index="count")
+        run_quality_table = _quality_table(conds_dict)
 
         col_order = [
             "_".join(cols) if cols[2] not in ["", "overall"] else "_".join(cols[:2]) for cols in display_columns
         ]
         run_quality_table_display = run_quality_table.loc[:, col_order].copy()
-        run_quality_table_display.columns = pd.MultiIndex.from_tuples(display_columns)
+        # Swap the literal "mixed"/"non-mixed" display labels for this mode's split labels
+        # (the join keys used for col_order above stay literal).
+        label_remap = {"mixed": self.split.pos_lc, "non-mixed": self.split.neg_lc}
+        display_columns_relabeled = [(a, b, label_remap.get(c, c)) for a, b, c in display_columns]
+        run_quality_table_display.columns = pd.MultiIndex.from_tuples(display_columns_relabeled)
         # Log in hdf5
         run_quality_table.T.to_hdf(self.output_h5_filename, key="run_quality_table_mixed_start", mode="a")
         run_quality_table_display.to_hdf(self.output_h5_filename, key="run_quality_table_display", mode="a")
 
+    def _render_summary_table_figure(self, summary_df: pd.DataFrame, output_filename: str = None):
+        """Render a 2-column (Median SNVQ, % of reads) summary table as a matplotlib figure."""
+        fig, ax = plt.subplots(figsize=(6, max(2, 0.6 * len(summary_df) + 1)))
+        ax.axis("off")
+        table = ax.table(
+            cellText=summary_df.values,
+            rowLabels=summary_df.index,
+            colLabels=summary_df.columns,
+            cellLoc="center",
+            rowLoc="center",
+            loc="center",
+        )
+        _disable_auto_fontsize = False
+        table.auto_set_font_size(_disable_auto_fontsize)
+        table.set_fontsize(12)
+        table.scale(1.2, 1.8)
+        # Style header row
+        for j in range(len(summary_df.columns)):
+            table[0, j].set_facecolor("#4472C4")
+            table[0, j].set_text_props(color="white", fontweight="bold")
+        # Style row labels
+        for i in range(len(summary_df)):
+            table[i + 1, -1].set_facecolor("#D9E2F3")
+        self._save_plt(output_filename, fig=fig)
+
+    def _quality_per_split_group(self, output_filename: str = None):
+        """Consensus/none mode: median SNVQ and % of reads per read group (N rows).
+
+        Mirrors the mixed-mode 1D table shape and h5 keys, but groups TP reads by the ordered
+        ``read_group`` column (e.g. single read / one strand / duplex) instead of the ppmSeq tag.
+        """
+        data_df_tp = self.data_df[self.data_df[LABEL]].copy()
+        total_count = len(data_df_tp)
+        # Group by the ordered read_group categorical; reindex to keep group order and include
+        # any empty groups as 0 rows.
+        grouped = data_df_tp.groupby(self.split.group_col, dropna=False, observed=False)[QUAL]
+        median_qual = grouped.median().reindex(self.split.groups)
+        pct_reads = (grouped.count().reindex(self.split.groups).fillna(0) / total_count) * 100
+        summary_df = pd.DataFrame({"Median SNVQ": median_qual, "% of reads": pct_reads})
+        summary_df.index = summary_df.index.astype(str)
+        summary_df.index.name = self.split.tag_axis
+        summary_df["Median SNVQ"] = summary_df["Median SNVQ"].apply(lambda x: signif(x, 3))
+        summary_df["% of reads"] = summary_df["% of reads"].apply(lambda x: signif(x, 2))
+
+        # New simplified table -> same key/PNG as the mixed-mode display table.
+        summary_df.to_hdf(self.output_h5_filename, key="ppmseq_category_quality_table_mixed_start", mode="a")
+        # Write the same summary to the legacy 2D keys so downstream keys_to_convert / h5->json
+        # conversion finds them (no start x end cross-tab exists in this mode).
+        summary_df["Median SNVQ"].to_hdf(self.output_h5_filename, key="ppmseq_category_quality_table", mode="a")
+        summary_df["% of reads"].to_hdf(self.output_h5_filename, key="ppmseq_category_quantity_table", mode="a")
+
+        self._render_summary_table_figure(summary_df, output_filename=output_filename)
+
     @exception_handler
     def quality_per_ppmseq_tags(self, output_filename: str = None):  # noqa: C901, PLR0915
-        """Generate table of median quality and data quantity per start ppmseq tag."""
+        """Generate table of median quality and data quantity per read-split group.
+
+        In MIXED mode this is the per-ppmSeq-tag table (start tag, and legacy start x end
+        cross-tab). In CONSENSUS/NONE mode there is no ppmSeq tag, so it falls back to a per
+        split-group (e.g. Consensus / Non-consensus) summary with the same shape and h5 keys.
+        """
+        if self.split.mode is not ReportMode.MIXED:
+            self._quality_per_split_group(output_filename=output_filename)
+            return
+
         data_df_tp = self.data_df[self.data_df[LABEL]].copy()
         # Determine start and end tag columns
         ppmseq_fillna_tags_in_data = ST_FILLNA in data_df_tp.columns and ET_FILLNA in data_df_tp.columns
@@ -2408,7 +2690,7 @@ class SRSNVReport:
             pct_reads = pct_reads.drop(index=PpmseqCategories.END_UNREACHED.value)
         summary_df = pd.DataFrame({"Median SNVQ": median_qual, "% of reads": pct_reads})
         summary_df.index = summary_df.index.astype(str)
-        summary_df.index.name = "ppmSeq tag"
+        summary_df.index.name = self.split.tag_axis
         summary_df["Median SNVQ"] = summary_df["Median SNVQ"].apply(lambda x: signif(x, 3))
         summary_df["% of reads"] = summary_df["% of reads"].apply(lambda x: signif(x, 2))
 
@@ -2416,28 +2698,7 @@ class SRSNVReport:
         summary_df.to_hdf(self.output_h5_filename, key="ppmseq_category_quality_table_mixed_start", mode="a")
 
         # Render as a table figure
-        fig, ax = plt.subplots(figsize=(6, max(2, 0.6 * len(summary_df) + 1)))
-        ax.axis("off")
-        table = ax.table(
-            cellText=summary_df.values,
-            rowLabels=summary_df.index,
-            colLabels=summary_df.columns,
-            cellLoc="center",
-            rowLoc="center",
-            loc="center",
-        )
-        _disable_auto_fontsize = False
-        table.auto_set_font_size(_disable_auto_fontsize)
-        table.set_fontsize(12)
-        table.scale(1.2, 1.8)
-        # Style header row
-        for j in range(len(summary_df.columns)):
-            table[0, j].set_facecolor("#4472C4")
-            table[0, j].set_text_props(color="white", fontweight="bold")
-        # Style row labels
-        for i in range(len(summary_df)):
-            table[i + 1, -1].set_facecolor("#D9E2F3")
-        self._save_plt(output_filename, fig=fig)
+        self._render_summary_table_figure(summary_df, output_filename=output_filename)
 
     @exception_handler
     def training_progress_plot(self, output_filename: str = None, ylims=None):
@@ -2622,6 +2883,17 @@ class SRSNVReport:
     ):
         logger.info("Calculating trinuc context statistics")
 
+        # In consensus (N-group) mode, split the quality panel by the ordered read_group column;
+        # otherwise keep the historical ppmSeq is_mixed split (byte-identical output).
+        if self.split.mode is ReportMode.CONSENSUS:
+            split_col = self.split.group_col
+            palette = self._group_palette()
+            # calc_trinuc_stats names group columns "mixed=<group value>"; match that prefix.
+            group_specs = [(f"mixed={label}", label, palette[label]) for label in self.split.groups]
+        else:
+            split_col = IS_MIXED
+            group_specs = None
+
         # Call the new plotting function
         fig, stats_df = calc_and_plot_trinuc_hist(
             self.data_df,
@@ -2637,23 +2909,35 @@ class SRSNVReport:
             motif_orientation=motif_orientation,
             q1=0.1,
             q2=0.9,
+            split_col=split_col,
+            group_specs=group_specs,
         )
         stats_df.to_hdf(self.output_h5_filename, key="trinuc_stats", mode="a")
 
         self._save_plt(output_filename=output_filename, fig=fig)
 
+    def _feature_group_series(self):
+        """Ordered list of (group_label, color) for the per-feature quality curves.
+
+        For MIXED (2 groups) preserve the historical order/colors: Non-mixed (red) then
+        Mixed (green). For N groups use the group palette in group order.
+        """
+        if self.split.mode is ReportMode.MIXED:
+            return [(self.split.neg, "tab:red"), (self.split.pos, "tab:green")]
+        palette = self._group_palette()
+        return [(label, palette[label]) for label in self.split.groups]
+
     def _plot_feature_qual_stats(
         self, stats_for_plot, ax, c_true="tab:green", c_false="tab:red", min_count=100, fb_kws=None, step_kws=None
     ):
-        """Generate a plot of quality median + 10-90 percentile range, for mixed and non-mixed reads."""
+        """Generate a plot of quality median + 10-90 percentile range, per read group."""
         fb_kws = fb_kws or {}
         step_kws = step_kws or {}
         col = stats_for_plot.columns[0]
         polys, lines = [], []
-        for is_mixed, color in zip(
-            [~stats_for_plot[IS_MIXED_START], stats_for_plot[IS_MIXED_START]], [c_false, c_true], strict=False
-        ):
-            qual_df = stats_for_plot.loc[is_mixed & stats_for_plot[LABEL] & (stats_for_plot["count"] > min_count), :]
+        for label, color in self._feature_group_series():
+            group_mask = stats_for_plot[self.split.group_col].astype(str) == str(label)
+            qual_df = stats_for_plot.loc[group_mask & stats_for_plot[LABEL] & (stats_for_plot["count"] > min_count), :]
             fb_kws["color"] = color
             step_kws["color"] = color
             if qual_df.shape[0] > 0:
@@ -2682,7 +2966,7 @@ class SRSNVReport:
             q2 [float]: upper quantile for interquartile range
             bin_edges [list]: bin edges for discretization. If it is None, use discrete (integer) values
         """
-        required_cols = [col, LABEL, IS_MIXED_START, QUAL]
+        required_cols = [col, LABEL, self.split.group_col, QUAL]
 
         # If binning is needed, create binned column in a view/subset
         if bin_edges is not None:
@@ -2693,7 +2977,7 @@ class SRSNVReport:
             # Use a view of the original dataframe (no copy needed)
             subset = self.data_df[required_cols]
 
-        stats_for_plot = subset.groupby([col, LABEL, IS_MIXED_START], observed=True).agg(
+        stats_for_plot = subset.groupby([col, LABEL, self.split.group_col], observed=True).agg(
             median_qual=(QUAL, "median"),
             quantile1_qual=(QUAL, lambda x: x.quantile(q1)),
             quantile3_qual=(QUAL, lambda x: x.quantile(q2)),
@@ -2779,17 +3063,24 @@ class SRSNVReport:
             ncol=1,
             frameon=False,
         )
-        # Next two lines are to display correctly the legend if there are no mixed reads
+        # Replace missing handles (e.g. an empty group) so the legend still renders.
         lines = [line if line is not None else empty_handle for line in lines]
         polys = [poly if poly is not None else empty_handle for poly in polys]
+        # One legend block per read group, in group order.
+        group_labels = [label for label, _ in self._feature_group_series()]
+        legend_handles = []
+        legend_texts = []
+        for gi, label in enumerate(group_labels):
+            legend_handles += [empty_handle, lines[gi], polys[gi]]
+            legend_texts += [label, "median", "10%-90% range"]
         fig.legend(
-            [empty_handle, lines[0], polys[0], empty_handle, lines[1], polys[1]],
-            ["Non-mixed", "median", "10%-90% range", "Mixed", "median", "10%-90% range"],
+            legend_handles,
+            legend_texts,
             fontsize=legend_fontsize,
             title_fontsize=legend_fontsize,
             loc="lower center",
             bbox_to_anchor=(0.7, -0.15),
-            ncol=2,
+            ncol=len(group_labels),
             frameon=False,
         )
         self._save_plt(output_filename=output_filename, fig=fig)
@@ -2809,8 +3100,10 @@ class SRSNVReport:
         return pd.DataFrame(hist_dict)
 
     @exception_handler
-    def plot_quality_histogram(self, *, plot_interpolating_function: bool = False, output_filename: str = None):
-        """Plot a histogram of qual values for TP reads, both mixed and non-mixed."""
+    def plot_quality_histogram(  # noqa: PLR0915
+        self, *, plot_interpolating_function: bool = False, output_filename: str = None
+    ):
+        """Plot a histogram of qual values for TP reads, split by the mode's read groups."""
         # label_fontsize = 12
         # ticklabelsfontsize = 12
         logger.info("Plotting SNVQ histogram")
@@ -2824,41 +3117,57 @@ class SRSNVReport:
             axes = [ax]
 
         plot_df = self.data_df[self.data_df[LABEL]].copy()
+        hue_col = self.split.tag_axis
 
-        # Legacy histogram with 3 categories for backward-compatible h5 storage
+        # Legacy histogram for backward-compatible h5 storage. In MIXED mode this is a 3-category
+        # split (non-mixed / mixed exactly one end / mixed both ends); other modes have no
+        # start/end distinction, so it collapses to the same 2-category split as the display plot.
         plot_df_legacy = plot_df.copy()
-        plot_df_legacy["ppmSeq tags"] = "non-mixed"
-        plot_df_legacy.loc[plot_df_legacy[IS_MIXED_START] ^ plot_df_legacy[IS_MIXED_END], "ppmSeq tags"] = (
-            "mixed, exactly one end"
-        )
-        plot_df_legacy.loc[plot_df_legacy[IS_MIXED_START] & plot_df_legacy[IS_MIXED_END], "ppmSeq tags"] = (
-            "mixed, both ends"
-        )
+        if self.split.mode is ReportMode.MIXED:
+            legacy_one_end = f"{self.split.pos_lc}, exactly one end"
+            legacy_both_ends = f"{self.split.pos_lc}, both ends"
+            plot_df_legacy[hue_col] = self.split.neg_lc
+            one_end_mask = plot_df_legacy[IS_MIXED_START] ^ plot_df_legacy[IS_MIXED_END]
+            both_ends_mask = plot_df_legacy[IS_MIXED_START] & plot_df_legacy[IS_MIXED_END]
+            plot_df_legacy.loc[one_end_mask, hue_col] = legacy_one_end
+            plot_df_legacy.loc[both_ends_mask, hue_col] = legacy_both_ends
+            legacy_hue_order = [self.split.neg_lc, legacy_one_end, legacy_both_ends]
+            legacy_palette = {self.split.neg_lc: "red", legacy_one_end: "blue", legacy_both_ends: "green"}
+            display_hue_order = [self.split.neg_lc, self.split.pos_lc]
+            display_palette = {self.split.neg_lc: "red", self.split.pos_lc: "blue"}
+            plot_df[hue_col] = self.split.neg_lc
+            plot_df.loc[plot_df[self.split.display_col], hue_col] = self.split.pos_lc
+        else:
+            # CONSENSUS / NONE: N groups from read_group; no legacy start/end distinction, so the
+            # legacy plot equals the display plot.
+            plot_df_legacy[hue_col] = plot_df_legacy[self.split.group_col].astype(str)
+            plot_df[hue_col] = plot_df[self.split.group_col].astype(str)
+            legacy_hue_order = display_hue_order = list(self.split.groups)
+            palette = self._group_palette()
+            legacy_palette = display_palette = {str(k): v for k, v in palette.items()}
         fig_legacy, ax_legacy = plt.subplots(figsize=(12, 7))
         g_legacy = sns.histplot(
             data=plot_df_legacy,
             x=QUAL,
-            hue="ppmSeq tags",
-            hue_order=["non-mixed", "mixed, exactly one end", "mixed, both ends"],
+            hue=hue_col,
+            hue_order=legacy_hue_order,
             element="step",
             stat="density",
             common_norm=False,
             linewidth=1,
             ax=ax_legacy,
-            palette={"non-mixed": "red", "mixed, exactly one end": "blue", "mixed, both ends": "green"},
+            palette=legacy_palette,
         )
         hist_data_df_legacy = self._get_histogram_data(g_legacy, col_name=IS_MIXED)
         hist_data_df_legacy.to_hdf(self.output_h5_filename, key="quality_histogram", mode="a")
         plt.close(fig_legacy)
 
-        # New histogram with 2 categories for display
-        plot_df["ppmSeq tags"] = "non-mixed"
-        plot_df.loc[plot_df[IS_MIXED_START], "ppmSeq tags"] = "mixed"
+        # New histogram (display groups)
         g = sns.histplot(
             data=plot_df,
             x=QUAL,
-            hue="ppmSeq tags",
-            hue_order=["non-mixed", "mixed"],
+            hue=hue_col,
+            hue_order=display_hue_order,
             element="step",
             stat="density",
             common_norm=False,
@@ -2866,7 +3175,7 @@ class SRSNVReport:
             kde_kws={"bw_adjust": 3},
             linewidth=1,
             ax=ax,
-            palette={"non-mixed": "red", "mixed": "blue"},
+            palette=display_palette,
         )
         sns.move_legend(
             ax,
@@ -2906,23 +3215,49 @@ class SRSNVReport:
         fig.tight_layout()
         self._save_plt(output_filename=output_filename, fig=fig)
 
-    def _plot_logit_histogram(self, plot_df, ax, alpha=0.4, mixed_col=IS_MIXED_START):
-        """Plot a single histogram of logit values, by: FP, TP mixed, TP non-mixed.
+    def _plot_logit_histogram(self, plot_df, ax, alpha=0.4, mixed_col=None):
+        """Plot a single histogram of logit values, by: FP, TP positive-group, TP negative-group.
 
-        ``mixed_col`` selects which column defines a "mixed" read. It defaults to IS_MIXED_START
-        (start ppmSeq tag is MIXED) to match the report's simplified mixed definition; pass
-        IS_MIXED for the legacy both-ends definition.
+        Binary (MIXED/NONE) path: ``mixed_col`` selects which column defines a positive-group
+        ("mixed") read. Defaults to the mode's display split column; pass the legacy split column
+        for the legacy both-ends definition in ppmSeq mode.
         """
+        if mixed_col is None:
+            mixed_col = self.split.display_col
+        tp_pos = f"TP {self.split.pos_lc}"
+        tp_neg = f"TP {self.split.neg_lc}"
         plot_df[""] = plot_df[LABEL].astype(str)
         plot_df.loc[~plot_df[LABEL], ""] = "FP"
-        plot_df.loc[plot_df[LABEL] & plot_df[mixed_col], ""] = "TP mixed"
-        plot_df.loc[plot_df[LABEL] & ~plot_df[mixed_col], ""] = "TP non-mixed"
+        plot_df.loc[plot_df[LABEL] & plot_df[mixed_col], ""] = tp_pos
+        plot_df.loc[plot_df[LABEL] & ~plot_df[mixed_col], ""] = tp_neg
         sns.histplot(
             data=plot_df,
             x=ML_LOGIT_TEST,
             hue="",
-            hue_order=["FP", "TP mixed", "TP non-mixed"],
-            palette={"FP": "tab:blue", "TP non-mixed": "red", "TP mixed": "green"},
+            hue_order=["FP", tp_pos, tp_neg],
+            palette={"FP": "tab:blue", tp_neg: "red", tp_pos: "green"},
+            element="step",
+            stat="density",
+            common_norm=False,
+            alpha=alpha,
+            ax=ax,
+        )
+
+    def _plot_logit_histogram_by_group(self, plot_df, ax, alpha=0.4):
+        """N-group logit histogram (consensus/none): FP + one TP series per read group."""
+        tp_labels = [f"TP {label}" for label in self.split.groups]
+        plot_df[""] = "FP"
+        grp = plot_df[self.split.group_col].astype(str)
+        for label in self.split.groups:
+            plot_df.loc[plot_df[LABEL] & (grp == label), ""] = f"TP {label}"
+        group_colors = list(sns.color_palette(n_colors=len(self.split.groups)))
+        palette = {"FP": "tab:blue", **dict(zip(tp_labels, group_colors, strict=False))}
+        sns.histplot(
+            data=plot_df,
+            x=ML_LOGIT_TEST,
+            hue="",
+            hue_order=["FP", *tp_labels],
+            palette=palette,
             element="step",
             stat="density",
             common_norm=False,
@@ -2932,26 +3267,39 @@ class SRSNVReport:
 
     @exception_handler
     def plot_logit_histograms(self, *, plot_by_fold: bool = True, output_filename: str = None):
-        """Plot a histogram of logit values, by: FP, TP mixed, TP non-mixed.
+        """Plot a histogram of logit values, by: FP, TP positive-group, TP negative-group.
         If plot_by_fold is True, overlay histograms for each fold.
         """
         # label_fontsize = 12
         # ticklabelsfontsize = 12
         logger.info("Plotting logit histogram")
 
-        plot_df_all = self.data_df[[ML_LOGIT_TEST, LABEL, IS_MIXED, IS_MIXED_START, FOLD_ID]].copy()
+        is_consensus_mode = self.split.mode is ReportMode.CONSENSUS
+        if is_consensus_mode:
+            plot_df_all = self.data_df[[ML_LOGIT_TEST, LABEL, self.split.group_col, FOLD_ID]].copy()
+        else:
+            split_cols = list(dict.fromkeys([self.split.display_col, self.split.legacy_col]))
+            plot_df_all = self.data_df[[ML_LOGIT_TEST, LABEL, *split_cols, FOLD_ID]].copy()
 
-        # Legacy histogram data (both-ends IS_MIXED) for backward-compatible h5 storage
+        def _plot_one(df, ax, alpha=0.4, *, use_display):
+            """use_display selects display vs legacy binary column (ignored in consensus mode)."""
+            if is_consensus_mode:
+                self._plot_logit_histogram_by_group(df, ax, alpha=alpha)
+            else:
+                col = self.split.display_col if use_display else self.split.legacy_col
+                self._plot_logit_histogram(df, ax, alpha=alpha, mixed_col=col)
+
+        # Legacy histogram data for backward-compatible h5 storage (consensus: same as display)
         fig_legacy, ax_legacy = plt.subplots(figsize=(12, 7))
-        self._plot_logit_histogram(plot_df_all.copy(), ax_legacy, mixed_col=IS_MIXED)
+        _plot_one(plot_df_all.copy(), ax_legacy, use_display=False)
         hist_data_df_legacy = self._get_histogram_data(ax_legacy, col_name="")
         hist_data_df_legacy.to_hdf(self.output_h5_filename, key="logit_histogram", mode="a")
         plt.close(fig_legacy)
 
-        # New histogram (IS_MIXED_START) for display and new h5 key
+        # New histogram (display groups) for display and new h5 key
         fig, ax = plt.subplots(figsize=(12, 7))
         plot_df = plot_df_all.copy()
-        self._plot_logit_histogram(plot_df, ax, mixed_col=IS_MIXED_START)
+        _plot_one(plot_df, ax, use_display=True)
         hist_data_df = self._get_histogram_data(ax, col_name="")
         hist_data_df.to_hdf(self.output_h5_filename, key="logit_histogram_mixed_start", mode="a")
 
@@ -2960,7 +3308,7 @@ class SRSNVReport:
             fig, ax = plt.subplots(figsize=(12, 7))
             plot_dfs = [plot_df_all[plot_df_all[FOLD_ID] == k] for k in range(len(self.models))]
             for plot_df in plot_dfs:
-                self._plot_logit_histogram(plot_df.copy(), ax, alpha=0.15, mixed_col=IS_MIXED_START)
+                _plot_one(plot_df.copy(), ax, alpha=0.15, use_display=True)
 
         sns.move_legend(
             ax,
