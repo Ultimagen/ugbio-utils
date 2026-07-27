@@ -58,9 +58,7 @@ PREV1 = "X_PREV1"
 REF = "REF"
 NEXT1 = "X_NEXT1"
 ALT = "ALT"
-X_ALT = "X_ALT"  # per-read substituted base (present in featuremaps where ALT == REF for TP reads)
 REV = "REV"
-VALID_BASES = ("A", "C", "G", "T")
 
 NUMERATOR = "numerator"
 DENOMINATOR = "denominator"
@@ -1231,22 +1229,13 @@ def get_filter_ratio(
 
 
 def construct_trinuc_context_with_alt(
-    df: pd.DataFrame,
-    *,
-    prev1: str = PREV1,
-    ref: str = REF,
-    next1: str = NEXT1,
-    alt: str = ALT,
-    x_alt: str = X_ALT,
+    df: pd.DataFrame, *, prev1: str = PREV1, ref: str = REF, next1: str = NEXT1, alt: str = ALT
 ) -> pd.Series:
     """Construct trinuc_context_with_alt column from prev1, ref, next1, alt columns.
 
-    The "alt" base used must be the read's actual substituted base (different from REF). The
-    ``ALT`` column normally holds it, and is used as-is (legacy behavior). However some DNN
-    featuremaps store ``ALT == REF`` for TP reads, with the real substitution in ``X_ALT``. To
-    support both conventions robustly, ``ALT`` is used wherever it already differs from ``REF``;
-    only where ``ALT == REF`` (and ``X_ALT`` is a valid base A/C/G/T that differs from ``REF``) is
-    ``X_ALT`` substituted in. When the ``x_alt`` column is absent, ``alt`` is used unchanged.
+    The ``ALT`` column holds the read's actual substituted base in the report featuremap
+    (produced by prepare_dnn_report for the DNN path, or directly for XGBoost), so it is used
+    as-is.
 
     Args:
         df: DataFrame containing the required columns
@@ -1254,7 +1243,6 @@ def construct_trinuc_context_with_alt(
         ref: Name of the reference nucleotide column, default 'REF'
         next1: Name of the next nucleotide column, default 'X_NEXT1'
         alt: Name of the alternate nucleotide column, default 'ALT'
-        x_alt: Name of the per-read substituted-base column, default 'X_ALT' (optional)
 
     Returns:
         pd.Series: The trinuc_context_with_alt column constructed by concatenating the four columns
@@ -1266,17 +1254,8 @@ def construct_trinuc_context_with_alt(
     if missing_cols:
         raise ValueError(f"Missing required columns: {missing_cols}")
 
-    ref_series = df[ref].astype(str)
-    alt_series = df[alt].astype(str)
-    # ALT is authoritative when it already differs from REF (the normal case). Only when ALT == REF
-    # (e.g. DNN featuremaps that carry the substitution in X_ALT) do we fall back to a valid X_ALT.
-    if x_alt in df.columns:
-        x_alt_series = df[x_alt].astype(str)
-        use_x_alt = (alt_series == ref_series) & x_alt_series.isin(VALID_BASES) & (x_alt_series != ref_series)
-        alt_series = alt_series.where(~use_x_alt, x_alt_series)
-
     # Convert categorical columns to string to enable concatenation
-    return df[prev1].astype(str) + df[ref].astype(str) + df[next1].astype(str) + alt_series
+    return df[prev1].astype(str) + df[ref].astype(str) + df[next1].astype(str) + df[alt].astype(str)
 
 
 def get_trinuc_context_with_alt_fwd_vectorized(tcwa, is_forward):

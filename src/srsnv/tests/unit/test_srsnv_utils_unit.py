@@ -842,47 +842,15 @@ class TestConstructTrinucContextWithAlt:
         result = construct_trinuc_context_with_alt(frame)
         assert list(result) == ["ACGT", "TGCA"]
 
-    def test_prefers_x_alt_when_valid(self):
-        """When X_ALT holds a valid base (DNN convention: ALT == REF for TP), it is used as alt."""
+    def test_ignores_x_alt_column(self):
+        """The report featuremap's ALT already holds the substitution; an X_ALT column is ignored."""
         frame = pd.DataFrame(
             {
                 "X_PREV1": ["A", "T"],
                 "REF": ["C", "G"],
                 "X_NEXT1": ["G", "C"],
-                "ALT": ["C", "G"],  # ALT == REF (TP reads, no variant in ALT)
-                "X_ALT": ["T", "A"],  # real substituted base
-            }
-        )
-        result = construct_trinuc_context_with_alt(frame)
-        assert list(result) == ["ACGT", "TGCA"]
-
-    def test_falls_back_to_alt_when_x_alt_invalid(self):
-        """When X_ALT is not a valid base (e.g. NaN for FP reads), ALT is used."""
-        frame = pd.DataFrame(
-            {
-                "X_PREV1": ["A", "T"],
-                "REF": ["C", "G"],
-                "X_NEXT1": ["G", "C"],
-                "ALT": ["T", "A"],  # real substitution in ALT (FP reads)
-                "X_ALT": ["nan", ""],  # invalid -> fall back to ALT
-            }
-        )
-        result = construct_trinuc_context_with_alt(frame)
-        assert list(result) == ["ACGT", "TGCA"]
-
-    def test_keeps_alt_when_alt_differs_from_ref(self):
-        """Regression: when ALT already differs from REF, keep ALT even if X_ALT is a valid base.
-
-        Some report parquets carry the substitution in ALT (REF != ALT) and set X_ALT to the REF
-        base. Overriding with X_ALT there would wrongly produce a REF==alt context (maps to NaN).
-        """
-        frame = pd.DataFrame(
-            {
-                "X_PREV1": ["A", "T"],
-                "REF": ["C", "G"],
-                "X_NEXT1": ["G", "C"],
-                "ALT": ["T", "A"],  # real substitution already in ALT
-                "X_ALT": ["C", "G"],  # X_ALT == REF (must be ignored)
+                "ALT": ["T", "A"],  # substitution in ALT (report convention)
+                "X_ALT": ["C", "G"],  # X_ALT == REF; must not affect the result
             }
         )
         result = construct_trinuc_context_with_alt(frame)
