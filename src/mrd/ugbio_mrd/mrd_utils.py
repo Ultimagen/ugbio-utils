@@ -304,7 +304,7 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
                     tumor_sample=tumor_sample,
                     x_columns_name_dict=x_columns_name_dict,
                     columns_to_drop=columns_to_drop,
-                    verbose=j == 0,  # only verbose in first iteration
+                    verbose=False,  # only verbose in first iteration
                 )
                 .assign(signature=_get_sample_name_from_file_name(file_name, split_position=0))
                 .reset_index()

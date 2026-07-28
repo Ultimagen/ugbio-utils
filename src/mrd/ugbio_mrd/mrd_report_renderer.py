@@ -569,16 +569,17 @@ def render_lq_fraction_histogram(  # noqa: PLR0911, PLR0912, C901
             continue
 
         any_data = True
+        n_total = len(lq_frac)
         if thresh_noise_lq_reads is not None:
             kept = lq_frac[lq_frac <= thresh_noise_lq_reads]
             excl = lq_frac[lq_frac > thresh_noise_lq_reads]
             if len(kept) > 0:
                 ax.hist(kept, bins=bins, color=color, alpha=0.7, edgecolor="white", linewidth=0.4,
-                        weights=np.ones(len(kept)) / len(kept),
+                        weights=np.ones(len(kept)) / n_total,
                         label=f"{label_prefix} — kept (n={len(kept):,})")
             if len(excl) > 0:
                 ax.hist(excl, bins=bins, color=color, alpha=0.2, edgecolor="none", linewidth=0,
-                        weights=np.ones(len(excl)) / len(excl),
+                        weights=np.ones(len(excl)) / n_total,
                         label=f"{label_prefix} — LQ-excluded (n={len(excl):,})")
         else:
             ax.hist(lq_frac, bins=bins, color=color, alpha=0.65, edgecolor="white", linewidth=0.4,
