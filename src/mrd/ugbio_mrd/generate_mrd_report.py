@@ -22,7 +22,7 @@ BASE_PATH = Path(__file__).parent  # should be: src/mrd/ugbio_mrd
 # Default thresholds for optional locus filters.
 # Both filters are enabled by default when using the CLI.
 # Pass None explicitly via MrdReportInputs to disable programmatically.
-DEFAULT_THRESH_NOISE_LQ_READS: float = 0.7
+DEFAULT_THRESH_NOISE_LQ_READS: float | None = None
 DEFAULT_THRESH_MULTI_READ_PVALUE: float = 0.001
 DEFAULT_READ_FILTER_QUERY: str = "filt>0 and snvq>60 and mapq>=60"
 DEFAULT_LOD_RECALL: float = 0.95
@@ -1083,8 +1083,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help=(
             "Noisy loci filter: remove loci where more than this fraction of reads "
             "fail the read-filter-query. Must be in (0, 1]. "
-            f"Default: {DEFAULT_THRESH_NOISE_LQ_READS}. "
-            "Pass 1.0 or pass without a value to disable."
+            f"Default: {DEFAULT_THRESH_NOISE_LQ_READS} (disabled). "
+            "Pass e.g. 0.7 to enable. "
         ),
     )
     parser.add_argument(
