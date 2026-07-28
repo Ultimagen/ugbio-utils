@@ -123,6 +123,17 @@ def region_annotation_encode(x):
     return encoding[tuple(sorted(x))]
 
 
+def coerce_to_numeric_df(df):
+    """Coerce all columns of a dataframe to numeric dtype (NaN on failure).
+
+    When an INFO field is absent from every variant in a chunk (e.g. cnvpytor-only fields on a
+    contig that has only cn.mops calls), get_vcf_df yields an all-NaN column with ``object``
+    dtype. A numeric ``SimpleImputer`` passes such object columns through untouched, leaving NaNs.
+    Coercing to numeric first turns them into a proper float all-NaN column the imputer can fill.
+    """
+    return df.apply(pd.to_numeric, errors="coerce")
+
+
 def get_needed_features(vtype: VcfType = VcfType.SINGLE_SAMPLE, custom_annotations: list | None = None) -> list:
     """Get the list of features that are needed for the model
 
@@ -207,6 +218,10 @@ def modify_features_based_on_vcf_type(  # noqa C901
         return pd.DataFrame(df.apply(lambda x: x[1] - x[0] - 1), index=df.index)
 
     default_filler = impute.SimpleImputer(strategy="constant", fill_value=0)
+    numeric_filler = make_pipeline(
+        preprocessing.FunctionTransformer(coerce_to_numeric_df),
+        default_filler,
+    )
     tuple_filter = preprocessing.FunctionTransformer(tuple_encode_df)
     ins_del_encode_filter = preprocessing.FunctionTransformer(ins_del_encode_df)
     tuple_encode_df_transformer = preprocessing.FunctionTransformer(tuple_encode_df)
@@ -295,18 +310,18 @@ def modify_features_based_on_vcf_type(  # noqa C901
     elif vtype == VcfType.CNV:
         transform_list = [
             ("svtype", svtype_encode_filter, "svtype"),
-            ("pytorq0", default_filler, ["pytorq0"]),
-            ("pytorp2", default_filler, ["pytorp2"]),
-            ("pytorrd", default_filler, ["pytorrd"]),
-            ("pytorp1", default_filler, ["pytorp1"]),
-            ("pytorp3", default_filler, ["pytorp3"]),
+            ("pytorq0", numeric_filler, ["pytorq0"]),
+            ("pytorp2", numeric_filler, ["pytorp2"]),
+            ("pytorrd", numeric_filler, ["pytorrd"]),
+            ("pytorp1", numeric_filler, ["pytorp1"]),
+            ("pytorp3", numeric_filler, ["pytorp3"]),
             ("gap_percentage", "passthrough", ["gap_percentage"]),
             ("cnv_dup_reads", "passthrough", ["cnv_dup_reads"]),
             ("cnv_del_reads", "passthrough", ["cnv_del_reads"]),
             ("cnv_dup_frac", "passthrough", ["cnv_dup_frac"]),
             ("cnv_del_frac", "passthrough", ["cnv_del_frac"]),
-            ("del_reads_median_insert_size", default_filler, ["del_reads_median_insert_size"]),
-            ("dup_reads_median_insert_size", default_filler, ["dup_reads_median_insert_size"]),
+            ("del_reads_median_insert_size", numeric_filler, ["del_reads_median_insert_size"]),
+            ("dup_reads_median_insert_size", numeric_filler, ["dup_reads_median_insert_size"]),
             ("jalign_dup_support", "passthrough", ["jalign_dup_support"]),
             ("jalign_del_support", "passthrough", ["jalign_del_support"]),
             ("jalign_dup_support_strong", "passthrough", ["jalign_dup_support_strong"]),
