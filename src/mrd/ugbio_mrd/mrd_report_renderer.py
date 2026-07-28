@@ -382,7 +382,7 @@ def render_sbs_vaf_combined(
         ax96.set_xlim(-0.5, 95.5)
         ax96.set_ylabel("Fraction", fontsize=9)
         ax96.set_title(
-            f"Mutational Profile (SBS96) — {total:,} signature variants",
+            f"Mutational Profile (SBS96) — {total:,} intersection loci with trinucleotide context",
             fontsize=10, fontweight="bold",
         )
         ax96.spines[["top", "right"]].set_visible(False)
