@@ -851,9 +851,21 @@ def render_supporting_reads_histogram(  # noqa: C901
         return ""
 
     all_reads = pd.concat([s for s in [matched, cohort, db_ctrl, multi_excl] if len(s) > 0])
-    x_cap = min(int(all_reads.max()) + 1, 20)
-    bins = list(range(1, x_cap + 2))
-    bar_positions = np.array(bins[:-1], dtype=float)
+    max_val = int(all_reads.max())
+    MAX_BINS = 20
+    if max_val <= MAX_BINS:
+        # one bin per integer value
+        bin_step = 1
+        x_cap = max_val
+        bins = list(range(1, x_cap + 2))
+        bin_labels = [str(b) for b in bins[:-1]]
+    else:
+        # group into at most MAX_BINS buckets; bucket width is ceil(max_val / MAX_BINS)
+        bin_step = -(-max_val // MAX_BINS)  # ceiling division
+        x_cap = bin_step * MAX_BINS
+        bins = list(range(1, x_cap + bin_step + 1, bin_step))
+        bin_labels = [f"{b}–{b + bin_step - 1}" if bin_step > 1 else str(b) for b in bins[:-1]]
+    bar_positions = np.array(bins[:-1], dtype=float) + (bin_step - 1) / 2
 
     n_matched_zero = max(0, signature_size - len(matched) - len(multi_excl))
 
@@ -870,17 +882,19 @@ def render_supporting_reads_histogram(  # noqa: C901
             active_groups.append((data, norm, color, text_color, alpha, label_prefix, len(data)))
 
     n_active = len(active_groups)
-    bar_width = {1: 0.55, 2: 0.38, 3: 0.28, 4: 0.22}.get(n_active, 0.20)
+    _base_width = {1: 0.55, 2: 0.38, 3: 0.28, 4: 0.22}.get(n_active, 0.20) * bin_step
+    bar_width = min(_base_width, bin_step * 0.9 / max(n_active, 1))
     offsets = np.linspace(-(n_active - 1) / 2 * bar_width, (n_active - 1) / 2 * bar_width, n_active)
 
-    fig, ax = plt.subplots(figsize=(max(8, x_cap * 0.65), 3.5))
+    n_bins = len(bins) - 1
+    fig, ax = plt.subplots(figsize=(max(10, n_bins * 0.65), 5.0))
     fig.patch.set_facecolor("#f4f6f8")
     ax.set_facecolor("#f4f6f8")
 
     for (data, norm, color, text_color, alpha, label_prefix, n_with_reads), offset in zip(
         active_groups, offsets, strict=False
     ):
-        counts, _ = np.histogram(data.clip(upper=x_cap), bins=bins)
+        counts, _ = np.histogram(data, bins=bins)
         fracs = counts / norm
         ax.bar(
             bar_positions + offset,
@@ -892,7 +906,7 @@ def render_supporting_reads_histogram(  # noqa: C901
         )
         for pos, cnt, frac in zip(bar_positions + offset, counts, fracs, strict=False):
             if cnt > 0:
-                ax.text(pos, frac, f"{cnt:,}", ha="center", va="bottom", fontsize=7, color=text_color)
+                ax.text(pos, frac, f"{cnt:,}", ha="center", va="bottom", fontsize=9, color=text_color)
 
     if n_matched_zero > 0:
         ax.text(
@@ -902,15 +916,15 @@ def render_supporting_reads_histogram(  # noqa: C901
             transform=ax.transAxes,
             ha="right",
             va="top",
-            fontsize=8,
+            fontsize=10,
             color="#7f8c8d",
             style="italic",
         )
-    ax.set_ylabel("Fraction of loci", fontsize=10)
-    ax.set_title("Alt-Supporting Reads per Variant Locus", fontsize=11, fontweight="bold")
-    ax.legend(fontsize=9, framealpha=0.85)
+    ax.set_ylabel("Fraction of loci", fontsize=12)
+    ax.set_title("Alt-Supporting Reads per Variant Locus", fontsize=13, fontweight="bold")
+    ax.legend(fontsize=11, framealpha=0.85)
     ax.set_xticks(bar_positions)
-    ax.set_xticklabels([str(b) for b in bins[:-1]])
+    ax.set_xticklabels(bin_labels, rotation=45 if bin_step > 1 else 0, ha="right" if bin_step > 1 else "center", fontsize=10)
     ax.set_axisbelow(True)
     ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")  # noqa: FBT003
     ax.spines[["top", "right"]].set_visible(False)

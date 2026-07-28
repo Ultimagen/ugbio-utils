@@ -234,7 +234,7 @@ def read_signature(  # noqa: C901, PLR0912, PLR0913, PLR0915 #TODO: refactor
     columns_to_drop: list = None,
     signature_type: str = None,
     *,
-    verbose: bool = True,
+    verbose: bool = False,
     raise_exception_on_sample_not_found: bool = False,
     return_dataframes: bool = False,
     concat_to_existing_output_parquet: bool = False,

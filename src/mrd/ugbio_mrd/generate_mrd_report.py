@@ -1024,8 +1024,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
     parser.add_argument("--signature-filter-query", type=str, default=None, help="Filter query for signatures")
     parser.add_argument("--read-filter-query", type=str, default=None, help="Filter query for reads")
-    parser.add_argument("--featuremap-file", type=str, default=None, help="Path to featuremap_df_file")
-    parser.add_argument("--srsnv-metadata-json", type=str, default=None, help="Path to srsnv metadata json file")
+    parser.add_argument("--featuremap-file", type=str, required=True, help="Path to featuremap_df_file")
+    parser.add_argument("--srsnv-metadata-json", type=str, required=True, help="Path to srsnv metadata json file")
     parser.add_argument(
         "--thresh-noise-lq-reads",
         type=float,
