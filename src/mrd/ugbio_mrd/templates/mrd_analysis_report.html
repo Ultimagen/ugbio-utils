@@ -453,7 +453,7 @@
     <div class="section">
       <div class="section-title">Read Filter Funnel</div>
       <table class="filter-table">
-        <tr><th>Step</th><th>Count</th><th>% Funnel</th><th>% Pass</th></tr>
+        <tr><th>Step</th><th>READS</th><th>% Funnel</th><th>% Pass</th><th>LOCI</th><th>% Funnel</th><th>% Pass</th></tr>
         {% for row in read_funnel %}
         <tr>
           <td>
@@ -463,6 +463,9 @@
           <td style="text-align:right; font-family:monospace;">{{ "{:,}".format(row.count) }}</td>
           <td style="text-align:right; font-family:monospace;">{{ "%.1f%%"|format(row.pct_funnel) if row.pct_funnel is not none else "" }}</td>
           <td style="text-align:right; font-family:monospace;">{{ "%.1f%%"|format(row.pct_pass) if row.pct_pass is not none else "" }}</td>
+          <td style="text-align:right; font-family:monospace;">{{ "{:,}".format(row.loci_count) if row.loci_count is not none else "" }}</td>
+          <td style="text-align:right; font-family:monospace;">{{ "%.1f%%"|format(row.pct_funnel_loci) if row.pct_funnel_loci is not none else "" }}</td>
+          <td style="text-align:right; font-family:monospace;">{{ "%.1f%%"|format(row.pct_pass_loci) if row.pct_pass_loci is not none else "" }}</td>
         </tr>
         {% endfor %}
       </table>

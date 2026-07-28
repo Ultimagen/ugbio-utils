@@ -200,9 +200,7 @@ def _build_filter_funnel(
         }
     )
 
-    # Pre-compute matched intersection data at each read/loci filter stage.
-    # These are restricted to matched-signature loci so the funnel stays a
-    # monotonic, matched-only view.
+    # Pre-compute matched intersection data at each loci filter stage.
     df_after_rf = _matched_subset(_reads_in_signature_loci(df_features.query(read_filter_query), matched_sigs_filt))
     df_final = _matched_subset(_reads_in_signature_loci(df_features_filt, matched_sigs_filt))
 
@@ -232,41 +230,18 @@ def _build_filter_funnel(
         mr_removed = len(mr_excl_idx)
         funnel.append(
             {
-                "step": "After multi-read locus filter",
+                "step": "After multi-read locus filter (final signature)",
                 "count": sig_size - lq_removed - mr_removed,
-                "desc": locus_filter_descs.get("multi_read_locus", "") + " — final signature",
+                "desc": locus_filter_descs.get("multi_read_locus", ""),
             }
         )
 
     # Mark the last loci-filter step as "final signature" when no LQ/multi-read
     # filter is active (the coverage filter itself is the final signature).
     if not noise_active and not multi_read_active:
-        funnel[-1]["desc"] = (funnel[-1].get("desc") or "") + " — final signature"
-
-    # ── Read-level funnel (from final-signature loci) ─────────────────────────
-    # "Loci supported by cfDNA reads" counts loci that have ≥1 raw intersection
-    # read AND survived the loci filters.  Excludes lq_excl_idx / mr_excl_idx.
-    all_excl = lq_excl_idx.union(mr_excl_idx)
-    df_raw_matched = _matched_subset(_reads_in_signature_loci(df_features, matched_sigs_filt))
-    if len(all_excl) > 0:
-        df_raw_final = df_raw_matched[~df_raw_matched.index.isin(all_excl)]
-    else:
-        df_raw_final = df_raw_matched
-    funnel.append(
-        {
-            "step": "Loci supported by cfDNA reads",
-            "count": _n_loci(df_raw_final),
-            "desc": "Final-signature loci with at least one supporting read in the featuremap",
-        }
-    )
-
-    funnel.append(
-        {
-            "step": "After read filters",
-            "count": _n_loci(df_final),
-            "desc": read_filter_query,
-        }
-    )
+        funnel[-1]["step"] = funnel[-1]["step"] + " (final signature)"
+    elif noise_active and not multi_read_active:
+        funnel[-1]["step"] = funnel[-1]["step"] + " (final signature)"
 
     # Attach WDL-level step descriptions. Prefer those written into the funnel JSON
     # by the WDL (from bcftools_extra_args and include/exclude/exact-alt region
@@ -291,76 +266,79 @@ def _build_read_funnel(
     df_signatures_filt: pd.DataFrame,
     *,
     read_filter_query: str,
-    thresh_noise_lq_reads: float | None = None,
-    thresh_multi_read_pvalue: float | None = None,
-    locus_filter_descs: dict[str, str] | None = None,
+    df_tf_filt: pd.DataFrame | None = None,
+    thresh_noise_lq_reads: float | None = None,  # noqa: ARG001 (kept for API compat)
+    thresh_multi_read_pvalue: float | None = None,  # noqa: ARG001
+    locus_filter_descs: dict[str, str] | None = None,  # noqa: ARG001
 ) -> list[dict]:
     """
-    Build the read filter funnel (plasma read perspective).
+    Build the read filter funnel (plasma read perspective, final-signature loci).
 
-    Starts from the featuremap-signature intersection parquet (``df_features``, one
-    row per supporting read — the input to generate_report) and reports the total
-    number of reads remaining after each read/locus filter:
-      1. read filter query (filt/snvq/mapq)
-      2. low-quality read filter -> noisy loci by LQ-read fraction (thresh_noise_lq_reads)
-      3. multi-read locus filter -> Poisson outlier loci (thresh_multi_read_pvalue)
+    Three steps, each with ``count`` (reads) and ``loci_count``:
+      0. Final signature — corrected coverage (estimated total reads), final sig size
+      1. In featuremap intersection — all raw reads at signature loci
+      2. After read filters — reads passing quality filter (matches detection.matched_supporting_reads)
 
-    Like the signature funnel, this counts only matched-signature reads. Every step is
-    restricted to loci that survived the signature filter (the inner join in
-    get_tf_from_filtered_data), so the final step's count matches the detection's
-    supporting-reads total. ``df_features`` carries every read plus per-locus flags;
-    ``df_features_filt`` is the final table after all applicable read/locus filters
-    (including the multi-read filter). ``pct_funnel`` is relative to the intersection count.
-
-    Returns a list of dicts with keys: step, count, desc, pct_funnel, pct_pass.
+    ``pct_funnel`` / ``pct_pass`` are relative to the corrected-coverage count (row 0).
     """
-    locus_filter_descs = locus_filter_descs or {}
-    # Restrict the locus join to matched signatures so counts describe matched-signature
-    # reads only: a matched read at a locus kept solely by a control/db_control signature
-    # would otherwise re-enter after the matched signature filter (see _build_filter_funnel).
     matched_sigs_filt = _matched_subset(df_signatures_filt)
-    df_intersected = _reads_in_signature_loci(df_features, matched_sigs_filt)
-    funnel = [
-        {
-            "step": "Featuremap-signature intersection",
-            "count": len(_matched_subset(df_intersected)),
-            "desc": "Matched-signature reads at filtered signature loci in the intersection parquet",
-        }
-    ]
 
-    noise_active = thresh_noise_lq_reads is not None and "locus_filter_noise" in df_features.columns
-    multi_read_active = thresh_multi_read_pvalue is not None
+    # Row 0: final signature — corrected coverage as estimated total reads
+    funnel: list[dict] = []
+    if df_tf_filt is not None:
+        try:
+            matched_tf = df_tf_filt.loc["matched"]
+            corr_cov = int(
+                matched_tf["corrected_coverage"].sum()
+                if isinstance(matched_tf, pd.DataFrame)
+                else matched_tf["corrected_coverage"]
+            )
+            n_loci_final = int(
+                matched_tf["n_loci"].sum()
+                if isinstance(matched_tf, pd.DataFrame)
+                else matched_tf["n_loci"]
+            )
+            funnel.append({
+                "step": "Reads covering signature",
+                "count": corr_cov,
+                "loci_count": n_loci_final,
+                "desc": "Estimated total cfDNA reads covering final-signature loci (corrected coverage)",
+            })
+        except (KeyError, Exception):
+            pass
 
-    df_after_read_filter = _reads_in_signature_loci(df_features.query(read_filter_query), matched_sigs_filt)
-    funnel.append(
-        {
-            "step": "After read filters",
-            "count": len(_matched_subset(df_after_read_filter)),
-            "desc": read_filter_query,
-        }
-    )
-    if noise_active:
-        df_after_noise = df_after_read_filter[~df_after_read_filter["locus_filter_noise"]]
-        funnel.append(
-            {
-                "step": "After low-quality read filter",
-                "count": len(_matched_subset(df_after_noise)),
-                "desc": locus_filter_descs.get("low_quality_read", ""),
-            }
-        )
-    if multi_read_active:
-        # df_features_filt has the multi-read locus filter already applied.
-        df_after_multi = _reads_in_signature_loci(df_features_filt, matched_sigs_filt)
-        funnel.append(
-            {
-                "step": "Multi-read locus filter",
-                "count": len(_matched_subset(df_after_multi)),
-                "desc": locus_filter_descs.get("multi_read_locus", ""),
-            }
-        )
+    # Row 1: all reads at signature loci in the intersection parquet (before read filter)
+    df_intersection = _matched_subset(_reads_in_signature_loci(df_features, matched_sigs_filt))
+    funnel.append({
+        "step": "All supporting reads",
+        "count": len(df_intersection),
+        "loci_count": _n_loci(df_intersection),
+        "desc": "All reads at signature loci in the intersection parquet (no quality filter)",
+    })
 
-    _compute_funnel_percentages(funnel, funnel[0]["count"])
+    # Row 2: reads passing quality filter at signature loci
+    # Joining df_features_filt with matched_sigs_filt gives the same count as
+    # detection.matched_supporting_reads (both restrict to loci in df_signatures_filt).
+    df_after_rf = _matched_subset(_reads_in_signature_loci(df_features_filt, matched_sigs_filt))
+    funnel.append({
+        "step": "After read filters",
+        "count": len(df_after_rf),
+        "loci_count": _n_loci(df_after_rf),
+        "desc": read_filter_query,
+    })
 
+    base = funnel[0]["count"] if funnel and funnel[0]["count"] > 0 else 0
+    _compute_funnel_percentages(funnel, base)
+    # Loci-based percentages
+    base_loci = funnel[0]["loci_count"] if funnel else 0
+    for i, row in enumerate(funnel):
+        if i == 0:
+            row["pct_funnel_loci"] = None
+            row["pct_pass_loci"] = None
+        else:
+            row["pct_funnel_loci"] = (row["loci_count"] / base_loci * 100) if base_loci else 0.0
+            prev_loci = funnel[i - 1]["loci_count"]
+            row["pct_pass_loci"] = (row["loci_count"] / prev_loci * 100) if prev_loci > 0 else 0.0
     return funnel
 
 
@@ -518,6 +496,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             df_features_filt=df_features_filt,
             df_signatures_filt=df_signatures_filt,
             read_filter_query=read_filter_query,
+            df_tf_filt=df_tf_filt,
             thresh_noise_lq_reads=thresh_noise_lq_reads,
             thresh_multi_read_pvalue=thresh_multi_read_pvalue,
             locus_filter_descs=_locus_filter_descs,
