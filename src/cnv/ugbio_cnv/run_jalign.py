@@ -246,6 +246,12 @@ def get_parser() -> argparse.ArgumentParser:
         help="Maximum reads to process per CNV (triggers subsampling)",
     )
     config_group.add_argument(
+        "--seed-size",
+        type=int,
+        default=0,
+        help="seed size (exact match) required on both sides of CNV to try jump alignment",
+    )
+    config_group.add_argument(
         "--max-score-fraction",
         type=float,
         default=0.9,
@@ -325,6 +331,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: PLR0915, C901, PLR0912
             gap_extend_score=args.gap_extend_score,
             jump_score=args.jump_score,
             min_mismatches=args.min_mismatches,
+            seed_size=args.seed_size,
             softclip_threshold=args.softclip_threshold,
             fetch_read_padding=args.fetch_read_padding,
             fetch_ref_padding=args.fetch_ref_padding,
