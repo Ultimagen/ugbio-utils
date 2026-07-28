@@ -289,9 +289,9 @@ def _build_read_funnel(
         try:
             matched_tf = df_tf_filt.loc["matched"]
             corr_cov = int(
-                matched_tf["corrected_coverage"].sum()
+                matched_tf["coverage"].sum()
                 if isinstance(matched_tf, pd.DataFrame)
-                else matched_tf["corrected_coverage"]
+                else matched_tf["coverage"]
             )
             n_loci_final = int(
                 matched_tf["n_loci"].sum()
@@ -302,7 +302,7 @@ def _build_read_funnel(
                 "step": "Reads covering signature",
                 "count": corr_cov,
                 "loci_count": n_loci_final,
-                "desc": "Estimated total cfDNA reads covering final-signature loci (corrected coverage)",
+                "desc": "Total reads covering final-signature loci (sum of depth from coverage BED)",
             })
         except (KeyError, Exception):
             pass
