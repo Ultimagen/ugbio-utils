@@ -1222,9 +1222,7 @@ def get_tf_from_filtered_data(
             for sig_name, excl_idx in excluded_loci.items():
                 if len(excl_idx) > 0:
                     is_this_sig = df_signatures_in["signature"] == sig_name
-                    is_excl_locus = pd.Series(
-                        df_signatures_in.index.isin(excl_idx), index=df_signatures_in.index
-                    )
+                    is_excl_locus = pd.Series(df_signatures_in.index.isin(excl_idx), index=df_signatures_in.index)
                     keep &= ~(is_this_sig & is_excl_locus)
             df_signatures_active = df_signatures_in[keep]
         else:

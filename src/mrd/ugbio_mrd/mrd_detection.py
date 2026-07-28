@@ -651,7 +651,8 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
         n_lod_reads = int(round(n_eff_plot * lod_total_vaf))
         _lod_recall_plot = getattr(detection, "lod_recall", 0.95)
         _lod_label = (
-            f"Personal LOD = {format_scientific(lod_total_vaf)} ({n_lod_reads} reads)" f" | {_lod_recall_plot * 100:.0f}% recall"
+            f"Personal LOD = {format_scientific(lod_total_vaf)} ({n_lod_reads} reads)"
+            f" | {_lod_recall_plot * 100:.0f}% recall"
         )
         ax.axhline(
             _safe_vaf(lod_total_vaf),

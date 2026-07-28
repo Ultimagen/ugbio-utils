@@ -209,9 +209,7 @@ class TestComputePersonalLod:
         assert result.personal_lod is not None
         assert 1e-7 < result.personal_lod < 1e-3
 
-    def test_personal_lod_is_total_vaf_and_achieves_target_recall(
-        self, mock_df_tf_detected, mock_df_signatures_filt
-    ):
+    def test_personal_lod_is_total_vaf_and_achieves_target_recall(self, mock_df_tf_detected, mock_df_signatures_filt):
         """personal_lod is total VAF (p_err + incremental) and achieves lod_recall at that TF.
 
         Verifies:
@@ -243,9 +241,9 @@ class TestComputePersonalLod:
         if len(hits) > 0:
             n_th = int(hits[0])
             recall_at_lod = float(binom.sf(n_th - 1, n, result.personal_lod))
-            assert recall_at_lod >= lod_recall - 1e-6, (
-                f"recall at personal_lod {recall_at_lod:.6f} < lod_recall {lod_recall}"
-            )
+            assert (
+                recall_at_lod >= lod_recall - 1e-6
+            ), f"recall at personal_lod {recall_at_lod:.6f} < lod_recall {lod_recall}"
 
         # 3. personal_lod == noise_rate + compute_personal_lod(incremental)
         lod_incremental = compute_personal_lod(n=n, p_err=p_err, target_recall=lod_recall, fpr=lod_fpr)

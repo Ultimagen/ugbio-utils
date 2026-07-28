@@ -383,7 +383,8 @@ def render_sbs_vaf_combined(
         ax96.set_ylabel("Fraction", fontsize=9)
         ax96.set_title(
             f"Mutational Profile (SBS96) — {total:,} intersection loci with trinucleotide context",
-            fontsize=10, fontweight="bold",
+            fontsize=10,
+            fontweight="bold",
         )
         ax96.spines[["top", "right"]].set_visible(False)
         ax96.yaxis.grid(True, linestyle=":", linewidth=0.5, alpha=0.6, zorder=0)  # noqa: FBT003
@@ -537,8 +538,8 @@ def render_lq_fraction_histogram(  # noqa: PLR0911, PLR0912, C901
     # Back-to-front draw order; colours match the other histograms.
     _type_cfg = [
         ("db_control", "#3498db", "Synthetic controls"),
-        ("control",    "#9b59b6", "Cohort control"),
-        ("matched",    "#c0392b", "Patient (matched)"),
+        ("control", "#9b59b6", "Cohort control"),
+        ("matched", "#c0392b", "Patient (matched)"),
     ]
     has_sig_type = "signature_type" in df_features.columns
     bins = np.linspace(0, 1, 51)
@@ -558,9 +559,7 @@ def render_lq_fraction_histogram(  # noqa: PLR0911, PLR0912, C901
         if df_t.empty:
             continue
 
-        lq_per = (
-            df_t[["n_lq_reads_per_locus", "n_total_reads_per_locus"]].groupby(level=["chrom", "pos"]).first()
-        )
+        lq_per = df_t[["n_lq_reads_per_locus", "n_total_reads_per_locus"]].groupby(level=["chrom", "pos"]).first()
         lq_frac = lq_per["n_lq_reads_per_locus"] / lq_per["n_total_reads_per_locus"].clip(lower=1)
         # Exclude loci where all reads are LQ (fraction=1.0): these had no supporting reads
         # after the read filter and were already absent from detection regardless.
@@ -574,25 +573,51 @@ def render_lq_fraction_histogram(  # noqa: PLR0911, PLR0912, C901
             kept = lq_frac[lq_frac <= thresh_noise_lq_reads]
             excl = lq_frac[lq_frac > thresh_noise_lq_reads]
             if len(kept) > 0:
-                ax.hist(kept, bins=bins, color=color, alpha=0.7, edgecolor="white", linewidth=0.4,
-                        weights=np.ones(len(kept)) / n_total,
-                        label=f"{label_prefix} — kept (n={len(kept):,})")
+                ax.hist(
+                    kept,
+                    bins=bins,
+                    color=color,
+                    alpha=0.7,
+                    edgecolor="white",
+                    linewidth=0.4,
+                    weights=np.ones(len(kept)) / n_total,
+                    label=f"{label_prefix} — kept (n={len(kept):,})",
+                )
             if len(excl) > 0:
-                ax.hist(excl, bins=bins, color=color, alpha=0.2, edgecolor="none", linewidth=0,
-                        weights=np.ones(len(excl)) / n_total,
-                        label=f"{label_prefix} — LQ-excluded (n={len(excl):,})")
+                ax.hist(
+                    excl,
+                    bins=bins,
+                    color=color,
+                    alpha=0.2,
+                    edgecolor="none",
+                    linewidth=0,
+                    weights=np.ones(len(excl)) / n_total,
+                    label=f"{label_prefix} — LQ-excluded (n={len(excl):,})",
+                )
         else:
-            ax.hist(lq_frac, bins=bins, color=color, alpha=0.65, edgecolor="white", linewidth=0.4,
-                    weights=np.ones(len(lq_frac)) / len(lq_frac),
-                    label=f"{label_prefix} (n={len(lq_frac):,})")
+            ax.hist(
+                lq_frac,
+                bins=bins,
+                color=color,
+                alpha=0.65,
+                edgecolor="white",
+                linewidth=0.4,
+                weights=np.ones(len(lq_frac)) / len(lq_frac),
+                label=f"{label_prefix} (n={len(lq_frac):,})",
+            )
 
     if not any_data:
         plt.close(fig)
         return ""
 
     if thresh_noise_lq_reads is not None:
-        ax.axvline(thresh_noise_lq_reads, color="#e67e22", linewidth=2.0, linestyle="--",
-                   label=f"LQ threshold = {thresh_noise_lq_reads}")
+        ax.axvline(
+            thresh_noise_lq_reads,
+            color="#e67e22",
+            linewidth=2.0,
+            linestyle="--",
+            label=f"LQ threshold = {thresh_noise_lq_reads}",
+        )
     ax.set_xlabel("LQ-reads fraction per locus", fontsize=10)
     ax.set_ylabel("Fraction of loci", fontsize=10)
     ax.set_title("LQ-Reads Fraction per Locus", fontsize=11, fontweight="bold")
@@ -803,7 +828,7 @@ def render_intersection_af_combined(
     return _fig_to_base64(fig)
 
 
-def render_supporting_reads_histogram(  # noqa: C901
+def render_supporting_reads_histogram(  # noqa: C901, PLR0912, PLR0915
     df_supporting_reads_per_locus: pd.DataFrame,
     signature_size: int,
     cohort_signature_size: int,
@@ -853,18 +878,18 @@ def render_supporting_reads_histogram(  # noqa: C901
 
     all_reads = pd.concat([s for s in [matched, cohort, db_ctrl, multi_excl] if len(s) > 0])
     max_val = int(all_reads.max())
-    MAX_TOTAL_BARS = 20     # total bars shown
-    ALWAYS_INDIVIDUAL = 2   # bins 1 and 2 are always their own bars
+    max_total_bars = 20  # total bars shown
+    always_individual = 2  # bins 1 and 2 are always their own bars
 
-    if max_val <= MAX_TOTAL_BARS:
+    if max_val <= max_total_bars:
         # all individual
         bin_edges = list(range(1, max_val + 2))
         bin_labels = [str(v) for v in range(1, max_val + 1)]
         group_step = 1
     else:
-        # 1 and 2 individual; group 3+ into (MAX_TOTAL_BARS - 2) buckets
-        n_grouped = MAX_TOTAL_BARS - ALWAYS_INDIVIDUAL
-        group_step = -(-( max_val - ALWAYS_INDIVIDUAL) // n_grouped)  # ceiling div
+        # 1 and 2 individual; group 3+ into (max_total_bars - 2) buckets
+        n_grouped = max_total_bars - always_individual
+        group_step = -(-(max_val - always_individual) // n_grouped)  # ceiling div
         bin_edges = [1, 2, 3]
         pos = 3
         while pos <= max_val:
@@ -886,10 +911,10 @@ def render_supporting_reads_histogram(  # noqa: C901
     # Build list of active groups (back to front): db_ctrl, cohort, multi_excl, matched
     active_groups = []
     for data, sig_size, color, text_color, alpha, label_prefix in [
-        (db_ctrl,    db_control_signature_size, "#3498db", "#1a5276", 0.55, "Synthetic controls"),
-        (cohort,     cohort_signature_size,     "#9b59b6", "#6c3483", 0.55, "Cohort control"),
-        (multi_excl, signature_size,            "#f0a090", "#c0392b", 0.4,  "Patient multi-read filtered"),
-        (matched,    signature_size,            "#c0392b", "#7b241c", 0.6,  "Patient signature"),
+        (db_ctrl, db_control_signature_size, "#3498db", "#1a5276", 0.55, "Synthetic controls"),
+        (cohort, cohort_signature_size, "#9b59b6", "#6c3483", 0.55, "Cohort control"),
+        (multi_excl, signature_size, "#f0a090", "#c0392b", 0.4, "Patient multi-read filtered"),
+        (matched, signature_size, "#c0392b", "#7b241c", 0.6, "Patient signature"),
     ]:
         if len(data) > 0:
             norm = sig_size if sig_size > 0 else len(data)
@@ -937,7 +962,12 @@ def render_supporting_reads_histogram(  # noqa: C901
     ax.set_title("Alt-Supporting Reads per Variant Locus", fontsize=13, fontweight="bold")
     ax.legend(fontsize=11, framealpha=0.85)
     ax.set_xticks(bar_positions)
-    ax.set_xticklabels(bin_labels, rotation=45 if bin_step > 1 else 0, ha="right" if bin_step > 1 else "center", fontsize=10)
+    ax.set_xticklabels(
+        bin_labels,
+        rotation=45 if bin_step > 1 else 0,
+        ha="right" if bin_step > 1 else "center",
+        fontsize=10,
+    )
     ax.set_xlim(bar_positions[0] - bar_width * 1.5, bar_positions[-1] + bar_width * 1.5)
     ax.set_axisbelow(True)
     ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")  # noqa: FBT003
@@ -1041,7 +1071,10 @@ def render_analysis_report(  # noqa: PLR0913
     cohort_signature_size = _cohort_df.groupby(level=["chrom", "pos"]).ngroups if len(_cohort_df) > 0 else 0
     db_control_signature_size = _db_ctrl_df.groupby(level=["chrom", "pos"]).ngroups if len(_db_ctrl_df) > 0 else 0
     supporting_reads_hist_img = render_supporting_reads_histogram(
-        df_supporting_reads_per_locus, detection.signature_size, cohort_signature_size, db_control_signature_size,
+        df_supporting_reads_per_locus,
+        detection.signature_size,
+        cohort_signature_size,
+        db_control_signature_size,
         df_supporting_pre_multi_read=df_supporting_pre_multi_read,
     )
 
@@ -1053,9 +1086,7 @@ def render_analysis_report(  # noqa: PLR0913
 
     # LQ-reads fraction histogram (per locus, by signature type)
     lq_fraction_hist_img = (
-        render_lq_fraction_histogram(df_features, thresh_noise_lq_reads)
-        if df_features is not None
-        else ""
+        render_lq_fraction_histogram(df_features, thresh_noise_lq_reads) if df_features is not None else ""
     )
 
     # Format values for template
@@ -1280,7 +1311,10 @@ def render_qc_report(  # noqa: PLR0913, PLR0915, C901
     _db_ctrl_size = _db_ctrl_df2.groupby(level=["chrom", "pos"]).ngroups if len(_db_ctrl_df2) > 0 else 0
     supporting_reads_hist_img = (
         render_supporting_reads_histogram(
-            _df_splocus, detection.signature_size, _cohort_size, _db_ctrl_size,
+            _df_splocus,
+            detection.signature_size,
+            _cohort_size,
+            _db_ctrl_size,
             df_supporting_pre_multi_read=df_supporting_pre_multi_read,
         )
         if not _df_splocus.empty
@@ -1291,9 +1325,7 @@ def render_qc_report(  # noqa: PLR0913, PLR0915, C901
 
     # LQ-reads fraction histogram (per locus, by signature type)
     lq_fraction_hist_img = (
-        render_lq_fraction_histogram(df_features, thresh_noise_lq_reads)
-        if df_features is not None
-        else ""
+        render_lq_fraction_histogram(df_features, thresh_noise_lq_reads) if df_features is not None else ""
     )
 
     # Cohort scatter (signature size vs VAF) — now combined in patient_controls_img

@@ -82,7 +82,7 @@ def _load_wdl_funnel(filter_funnel_json_path: str | None) -> tuple[list[dict], d
             "After exclude regions",
             "After exact alt allele filter",
         }
-        raw_sigs = [
+        raw_sigs = [  # noqa: F841
             {"input": s["count"], **{k: s["count"] for k in ("after_bcftools_extra_args",)}}
             if s.get("step") == "All candidate signature variants (including filtered calls)"
             else s
@@ -105,10 +105,12 @@ def _load_wdl_funnel(filter_funnel_json_path: str | None) -> tuple[list[dict], d
             if key:
                 merged[key] = merged.get(key, 0) + s.get("count", 0)
                 # Map JSON step name to new display name (without "After")
-                display = step.replace("After bcftools extra args", "bcftools extra args") \
-                              .replace("After include regions", "include regions") \
-                              .replace("After exclude regions", "exclude regions") \
-                              .replace("After exact alt allele filter", "exact alt allele filter")
+                display = (
+                    step.replace("After bcftools extra args", "bcftools extra args")
+                    .replace("After include regions", "include regions")
+                    .replace("After exclude regions", "exclude regions")
+                    .replace("After exact alt allele filter", "exact alt allele filter")
+                )
                 if s.get("desc"):
                     descriptions[display] = s["desc"]
         fake_sig = {k: merged.get(k, 0) for k in step_to_key.values()}
@@ -338,43 +340,45 @@ def _build_read_funnel(
         try:
             matched_tf = df_tf_filt.loc["matched"]
             corr_cov = int(
-                matched_tf["coverage"].sum()
-                if isinstance(matched_tf, pd.DataFrame)
-                else matched_tf["coverage"]
+                matched_tf["coverage"].sum() if isinstance(matched_tf, pd.DataFrame) else matched_tf["coverage"]
             )
             n_loci_final = int(
-                matched_tf["n_loci"].sum()
-                if isinstance(matched_tf, pd.DataFrame)
-                else matched_tf["n_loci"]
+                matched_tf["n_loci"].sum() if isinstance(matched_tf, pd.DataFrame) else matched_tf["n_loci"]
             )
-            funnel.append({
-                "step": "Reads covering signature",
-                "count": corr_cov,
-                "loci_count": n_loci_final,
-                "desc": "Total reads covering final-signature loci (sum of depth from coverage BED)",
-            })
-        except (KeyError, Exception):
-            pass
+            funnel.append(
+                {
+                    "step": "Reads covering signature",
+                    "count": corr_cov,
+                    "loci_count": n_loci_final,
+                    "desc": "Total reads covering final-signature loci (sum of depth from coverage BED)",
+                }
+            )
+        except (KeyError, Exception):  # noqa: BLE001
+            logger.debug("Could not extract coverage/n_loci from df_tf_filt for read funnel baseline")
 
     # Row 1: all reads at signature loci in the intersection parquet (before read filter)
     df_intersection = _matched_subset(_reads_in_signature_loci(df_features, matched_sigs_filt))
-    funnel.append({
-        "step": "Reads matching signature (contain variant)",
-        "count": len(df_intersection),
-        "loci_count": _n_loci(df_intersection),
-        "desc": "All reads at signature loci in the intersection parquet (no quality filter)",
-    })
+    funnel.append(
+        {
+            "step": "Reads matching signature (contain variant)",
+            "count": len(df_intersection),
+            "loci_count": _n_loci(df_intersection),
+            "desc": "All reads at signature loci in the intersection parquet (no quality filter)",
+        }
+    )
 
     # Row 2: reads passing quality filter at signature loci
     # Joining df_features_filt with matched_sigs_filt gives the same count as
     # detection.matched_supporting_reads (both restrict to loci in df_signatures_filt).
     df_after_rf = _matched_subset(_reads_in_signature_loci(df_features_filt, matched_sigs_filt))
-    funnel.append({
-        "step": "Read filters",
-        "count": len(df_after_rf),
-        "loci_count": _n_loci(df_after_rf),
-        "desc": read_filter_query,
-    })
+    funnel.append(
+        {
+            "step": "Read filters",
+            "count": len(df_after_rf),
+            "loci_count": _n_loci(df_after_rf),
+            "desc": read_filter_query,
+        }
+    )
 
     base = funnel[0]["count"] if funnel and funnel[0]["count"] > 0 else 0
     _compute_funnel_percentages(funnel, base)
@@ -927,8 +931,7 @@ def prepare_data_from_mrd_pipeline(mrd_report_inputs: MrdReportInputs, *, return
     """
     logger.info(f"Preparing data from MRD pipeline. {mrd_report_inputs=}")
     matched_exists = (
-        mrd_report_inputs.matched_signature_vcf is not None
-        and len(mrd_report_inputs.matched_signature_vcf) > 0
+        mrd_report_inputs.matched_signature_vcf is not None and len(mrd_report_inputs.matched_signature_vcf) > 0
     )
     control_exists = (
         mrd_report_inputs.control_signatures_vcf_files is not None
