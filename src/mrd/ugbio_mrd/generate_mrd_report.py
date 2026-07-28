@@ -104,8 +104,13 @@ def _load_wdl_funnel(filter_funnel_json_path: str | None) -> tuple[list[dict], d
             key = step_to_key.get(step)
             if key:
                 merged[key] = merged.get(key, 0) + s.get("count", 0)
+                # Map JSON step name to new display name (without "After")
+                display = step.replace("After bcftools extra args", "bcftools extra args") \
+                              .replace("After include regions", "include regions") \
+                              .replace("After exclude regions", "exclude regions") \
+                              .replace("After exact alt allele filter", "exact alt allele filter")
                 if s.get("desc"):
-                    descriptions[step] = s["desc"]
+                    descriptions[display] = s["desc"]
         fake_sig = {k: merged.get(k, 0) for k in step_to_key.values()}
         return [fake_sig] if any(fake_sig.values()) else [], descriptions
 
@@ -118,10 +123,10 @@ def _load_wdl_funnel(filter_funnel_json_path: str | None) -> tuple[list[dict], d
 # basenames; these defaults reflect the standard MRDFeatureMap configuration).
 _WDL_STEP_DESCRIPTIONS = {
     "All candidate signature variants (including filtered calls)": "unfiltered signature",
-    "After bcftools extra args": "\"-f PASS --type snps -m2 -M2 -i 'QUAL>10'\"",
-    "After include regions": "ug_hcr (UG High Confidence Region)",
-    "After exclude regions": "UG_MRD_blacklist_v0",
-    "After exact alt allele filter": "dbSNP, GNOMAD_AF_over_1e-3, PON_version1",
+    "bcftools extra args": "\"-f PASS --type snps -m2 -M2 -i 'QUAL>10'\"",
+    "include regions": "ug_hcr (UG High Confidence Region)",
+    "exclude regions": "UG_MRD_blacklist_v0",
+    "exact alt allele filter": "dbSNP, GNOMAD_AF_over_1e-3, PON_version1",
 }
 
 
@@ -139,13 +144,13 @@ def _wdl_signature_filter_steps(sigs: list[dict]) -> list[dict]:
     }
     funnel.append({"step": "All candidate signature variants (including filtered calls)", "count": totals["input"]})
     if totals["bcftools"] != totals["input"]:
-        funnel.append({"step": "After bcftools extra args", "count": totals["bcftools"]})
+        funnel.append({"step": "bcftools extra args", "count": totals["bcftools"]})
     if totals["include"] != totals["bcftools"]:
-        funnel.append({"step": "After include regions", "count": totals["include"]})
+        funnel.append({"step": "include regions", "count": totals["include"]})
     if totals["exclude"] != totals["include"]:
-        funnel.append({"step": "After exclude regions", "count": totals["exclude"]})
+        funnel.append({"step": "exclude regions", "count": totals["exclude"]})
     if totals["exact_alt"] != totals["exclude"]:
-        funnel.append({"step": "After exact alt allele filter", "count": totals["exact_alt"]})
+        funnel.append({"step": "exact alt allele filter", "count": totals["exact_alt"]})
     return funnel
 
 
