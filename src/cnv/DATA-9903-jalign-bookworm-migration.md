@@ -1,12 +1,16 @@
-# CNV Docker: Bookworm Migration — Blocked by libparasail8
+# CNV Docker: Bookworm Migration
 
 **Ticket:** DATA-9903
-**Status:** Reverted — CNV pinned to `ugbio_base:1.7.0` (bullseye)
-**Date:** 2026-07-12
+**Status:** Migrated — CNV now builds on bookworm (`ugbio_base`), using a statically-linked bookworm `para_jalign`
+**Date:** 2026-07-27 (migrated); 2026-07-12 (original block)
 
 ## Decision
 
-The CNV module remains on bullseye (`ugbio_base:1.7.0`) while all other modules migrate to bookworm (`ugbio_base:1.8.3`). The migration is blocked by incompatibilities between `para_jalign` and bookworm's `libparasail8`.
+The CNV module has been migrated to bookworm alongside the rest of the fleet. The blocker below (an `libparasail8` ABI mismatch with the bullseye-compiled `para_jalign`) was resolved by a **statically-linked bookworm `para_jalign` binary** — its only `NEEDED` shared libs are `libstdc++.so.6`, `libgcc_s.so.1`, `libc.so.6` (no dynamic `libparasail`), so the parasail soname change (3 → 8) no longer affects it.
+
+The binary comes from jalign GitHub Actions run **30259845869** (branch `add-bookworm-support`), artifact `jalign-debian-bookworm-x64-...`, and is fetched in the CNV Dockerfile via the Actions artifacts API. The same binary is also published as release asset `para_jalign-1.4.1.1-debian-bookworm-x64` (release `1.4.1.1`) as a non-expiring fallback.
+
+The section below documents the *original* investigation that blocked the first attempt; it is kept for history.
 
 ---
 

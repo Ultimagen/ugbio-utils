@@ -1,8 +1,8 @@
-# BASE_IMAGE is injected by build-workspace-docker.yml (defaults to DEFAULT_BASE_IMAGE)
-# Pinned to bullseye (1.7.0) — bookworm migration blocked by libparasail8 incompatibility (DATA-9903)
-ARG BASE_IMAGE=ugbio_base:1.7.0
+# BASE_IMAGE is injected by build-workspace-docker.yml (defaults to DEFAULT_BASE_IMAGE = bookworm-based ugbio_base)
+# Migrated to bookworm (DATA-9903): uses a statically-linked bookworm para_jalign binary (no libparasail ABI dependency)
+ARG BASE_IMAGE
 ARG OUT_DIR=/tmp/ugbio
-FROM python:3.11-bullseye AS build
+FROM python:3.11-bookworm AS build
 
 ARG OUT_DIR
 ARG MODULE_DIR=cnv
@@ -37,11 +37,11 @@ RUN apt-get update && \
     libpcre2-dev \
     tar \
     bzip2 \
-    libncurses5-dev \
-    libncursesw5-dev \
+    unzip \
+    libncurses-dev \
     libopenblas-dev \
-    libstdc++-10-dev \
-    libparasail3 libparasail-dev \
+    libstdc++-12-dev \
+    libparasail8 libparasail-dev \
     libhdf5-dev \
     tzdata \
     && apt-get clean && \
@@ -59,11 +59,11 @@ RUN apt-get update && \
     software-properties-common && \
     gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' && \
     gpg --armor --export '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' | tee /etc/apt/trusted.gpg.d/cran_debian_key.asc && \
-    echo "deb https://cloud.r-project.org/bin/linux/debian bullseye-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
+    echo "deb https://cloud.r-project.org/bin/linux/debian bookworm-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-    r-base=4.5.1-1~bullseyecran.0 \
-    r-base-dev=4.5.1-1~bullseyecran.0 && \
+    r-base=4.5.3-1~bookwormcran.0 \
+    r-base-dev=4.5.3-1~bookwormcran.0 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -115,38 +115,43 @@ RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
 # Install cn.mops packages from local
 RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 
-# Download para_jalign binary from private jalign repository
-ARG JALIGN_VERSION=1.4.1
+# Download the bookworm para_jalign binary from a jalign GitHub Actions artifact.
+# Source: Ultimagen/jalign run 30259845869 (branch add-bookworm-support), artifact below.
+# The binary statically links parasail, so it has no runtime libparasail ABI dependency (DATA-9903).
+# NOTE: Actions artifacts expire (~90 days). The same binary is also published as release asset
+#       para_jalign-1.4.1.1-debian-bookworm-x64 (release 1.4.1.1) for a permanent source.
+# The github_token secret must have actions:read scope (artifact download), not just contents:read.
+ARG JALIGN_RUN_ID=30343516696
+ARG JALIGN_ARTIFACT_NAME=jalign-debian-bookworm-x64-7132d3751cddeac3ea3dac817792f6ef1a60a9fa
 RUN --mount=type=secret,id=github_token \
     if [ ! -f /run/secrets/github_token ]; then \
         echo "ERROR: Authentication required to download dependencies" && exit 1; \
     fi && \
     GITHUB_TOKEN=$(cat /run/secrets/github_token) && \
-    ASSET_NAME="para_jalign-${JALIGN_VERSION}-debian-bullseye-x64" && \
-    echo "Looking for asset: ${ASSET_NAME}" && \
+    echo "Looking for artifact: ${JALIGN_ARTIFACT_NAME} in run ${JALIGN_RUN_ID}" && \
     curl -sL \
         -H "Accept: application/vnd.github+json" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        "https://api.github.com/repos/Ultimagen/jalign/releases/tags/${JALIGN_VERSION}" \
-        -o /tmp/release_data.json && \
-    ASSET_URL=$(cat /tmp/release_data.json | \
-        jq -r ".assets[] | select(.name == \"${ASSET_NAME}\") | .url" | head -1) && \
-    echo "Asset URL: ${ASSET_URL}" && \
-    if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" = "null" ]; then \
-        echo "ERROR: Could not find asset '${ASSET_NAME}' in release ${JALIGN_VERSION}" && \
-        echo "Available assets:" && \
-        cat /tmp/release_data.json | jq -r '.assets[].name' && \
+        "https://api.github.com/repos/Ultimagen/jalign/actions/runs/${JALIGN_RUN_ID}/artifacts?per_page=100" \
+        -o /tmp/artifacts.json && \
+    ARTIFACT_URL=$(jq -r ".artifacts[] | select(.name == \"${JALIGN_ARTIFACT_NAME}\") | .archive_download_url" /tmp/artifacts.json | head -1) && \
+    echo "Artifact URL: ${ARTIFACT_URL}" && \
+    if [ -z "$ARTIFACT_URL" ] || [ "$ARTIFACT_URL" = "null" ]; then \
+        echo "ERROR: Could not find artifact '${JALIGN_ARTIFACT_NAME}' in run ${JALIGN_RUN_ID}" && \
+        echo "Available artifacts:" && \
+        jq -r '.artifacts[].name' /tmp/artifacts.json && \
         exit 1; \
     fi && \
     curl -sLf \
-        -H "Accept: application/octet-stream" \
+        -H "Accept: application/vnd.github+json" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
-        "${ASSET_URL}" \
-        -o /opt/para_jalign && \
-    chmod +x /opt/para_jalign && \
-    rm /tmp/release_data.json
+        "${ARTIFACT_URL}" \
+        -o /tmp/jalign.zip && \
+    unzip -o /tmp/jalign.zip -d /tmp/jalign && \
+    install -m 0755 /tmp/jalign/para_jalign /opt/para_jalign && \
+    rm -rf /tmp/jalign.zip /tmp/jalign /tmp/artifacts.json
 
 ARG OUT_DIR
 
