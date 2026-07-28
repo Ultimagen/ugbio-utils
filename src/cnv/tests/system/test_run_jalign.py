@@ -290,6 +290,8 @@ class TestRunJalign:
                 "20",
                 "--threads",
                 "1",
+                "--seed-size",
+                "20",
                 "--tool-path",
                 tool_path,
             ]

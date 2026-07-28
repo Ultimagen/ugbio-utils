@@ -47,6 +47,8 @@ class JAlignConfig:
         Minimum number of mismatches required to accept a read
     softclip_threshold : int
         Minimum soft-clip length to consider substantial
+    seed_size : int
+        Seed size (exact match) required on both sides of CNV to try jump alignment
     fetch_read_padding : int
         Padding around breakpoint when fetching reads (bp)
     fetch_ref_padding : int
@@ -75,6 +77,8 @@ class JAlignConfig:
     gap_extend_score: int = -1
     jump_score: int = 0
     min_mismatches: int = 5
+    seed_size: int = 0
+
     softclip_threshold: int = 30
     fetch_read_padding: int = 500
     fetch_ref_padding: int = 0
@@ -399,7 +403,7 @@ def accept_read(read: pysam.AlignedSegment, min_mismatches: int) -> bool:
     return nm >= min_mismatches
 
 
-def run_alignment_tool(command: list[str], log_file: TextIO | None = None) -> int:
+def run_alignment_tool(command: list[str], log_file: TextIO | None = None, env: dict[str, str] | None = None) -> int:
     """Execute external alignment tool and capture output.
 
     Parameters
@@ -408,6 +412,9 @@ def run_alignment_tool(command: list[str], log_file: TextIO | None = None) -> in
         Command and arguments to execute
     log_file : file-like object, optional
         Log file for recording command execution
+    env : dict[str, str], optional
+        Environment variables for the subprocess. If None, the current process
+        environment is inherited.
 
     Returns
     -------
@@ -424,7 +431,7 @@ def run_alignment_tool(command: list[str], log_file: TextIO | None = None) -> in
         log_file.write(f"<<< {command}\n")
 
     try:
-        process = subprocess.run(command, capture_output=True, text=True, check=True)
+        process = subprocess.run(command, capture_output=True, text=True, check=True, env=env)
         return process.returncode
     except subprocess.CalledProcessError as e:
         error_msg = f"Alignment tool failed with return code {e.returncode}"
@@ -1071,8 +1078,11 @@ def process_cnv(
 
     # Run jump alignment tool
     try:
-        run_alignment_tool(alignment_cmd, log_file)
-
+        run_env = os.environ.copy()
+        run_env["SHOW_STATS"] = "1"
+        if config.seed_size > 0:
+            run_env["SEED_SIZE"] = str(config.seed_size)
+        run_alignment_tool(alignment_cmd, log_file, env=run_env)
         # Parse results from JSON file
         if log_file:
             log_file.write(f">>> alignments: {chrom}:{start}-{end}\n")
