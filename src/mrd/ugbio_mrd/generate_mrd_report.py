@@ -310,7 +310,7 @@ def _build_read_funnel(
     # Row 1: all reads at signature loci in the intersection parquet (before read filter)
     df_intersection = _matched_subset(_reads_in_signature_loci(df_features, matched_sigs_filt))
     funnel.append({
-        "step": "All supporting reads",
+        "step": "Reads matching signature (contain variant)",
         "count": len(df_intersection),
         "loci_count": _n_loci(df_intersection),
         "desc": "All reads at signature loci in the intersection parquet (no quality filter)",
