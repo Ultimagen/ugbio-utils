@@ -885,7 +885,6 @@ def render_supporting_reads_histogram(  # noqa: C901, PLR0912, PLR0915
         # all individual
         bin_edges = list(range(1, max_val + 2))
         bin_labels = [str(v) for v in range(1, max_val + 1)]
-        group_step = 1
     else:
         # 1 and 2 individual; group 3+ into (max_total_bars - 2) buckets
         n_grouped = max_total_bars - always_individual

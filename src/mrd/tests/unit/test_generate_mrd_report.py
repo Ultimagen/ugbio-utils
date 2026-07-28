@@ -51,6 +51,9 @@ def mrd_report_inputs(output_path, resources_dir):
         signature_filter_query="(norm_coverage <= 2.5) and (norm_coverage >= 0.6)",
         read_filter_query="filt>0 and snvq>60 and mapq>=60",
         srsnv_metadata_json=str(resources_dir / "Pa_46_333_LuNgs_08.srsnv_metadata.json"),
+        # Explicitly set to 0.7 so the expected H5 reference file (generated with this
+        # threshold) stays valid, and the noise-filter code path remains covered.
+        thresh_noise_lq_reads=0.7,
     )
 
 
@@ -338,12 +341,15 @@ def test_build_filter_funnel_counts_loci_restricted_to_signature(_funnel_frames)
         thresh_noise_lq_reads=0.1,
     )
     counts = {row["step"]: row["count"] for row in funnel}
-    # Intersection: matched loci in filtered signature = 100, 200, 300 (pos 400 excluded)
-    assert counts["Loci supported by cfDNA reads"] == 3
-    # After read filters: same three loci (all matched reads pass the query)
-    assert counts["After read filters"] == 3
-    # After low-quality: pos 300 dropped -> loci 100, 200
-    assert counts["After low-quality read filter"] == 2
+    # LQ filter removed pos300 → sig_size(3) - 1 = 2 loci remain
+    # (with no multi-read filter, LQ step is labelled "final signature")
+    assert counts["LQ-reads locus filter (final signature)"] == 2
+    # Coverage filter (before LQ) shows all 3 signature loci
+    assert counts["Coverage filter"] == 3
+    # The read-level steps are no longer in the signature funnel
+    assert "Loci supported by cfDNA reads" not in counts
+    assert "After read filters" not in counts
+    assert "After low-quality read filter" not in counts
     # The final signature-loci gate is folded into the steps and no longer a row
     assert "In filtered signature loci" not in counts
     # The reads-perspective intersection label must not leak into the loci funnel
@@ -363,10 +369,10 @@ def test_build_read_funnel_counts_reads_restricted_to_signature(_funnel_frames):
     )
     counts = {row["step"]: row["count"] for row in funnel}
     # Intersection: matched reads at filtered-signature loci = 2 (pos100) + 1 (pos200) + 1 (pos300) = 4
-    assert counts["Featuremap-signature intersection"] == 4
-    assert counts["After read filters"] == 4
-    # After low-quality: pos300's read dropped -> 3 reads remain
-    assert counts["After low-quality read filter"] == 3
+    assert counts["Reads matching signature (contain variant)"] == 4
+    # After read filters: df_features_filt already has lq_noise=True rows removed;
+    # pos300 read gone -> 2 (pos100) + 1 (pos200) = 3 reads remain
+    assert counts["Read filters"] == 3
     assert "In filtered signature loci" not in counts
 
 
@@ -416,12 +422,12 @@ def test_filter_funnel_excludes_control_only_loci(_funnel_frames_control_only_lo
         signature_filter_query="(norm_coverage <= 2.5) and (norm_coverage >= 0.6)",
     )
     counts = {row["step"]: row["count"] for row in funnel}
-    baseline = counts["After signature filters (loci)"]
+    baseline = counts["Coverage filter (final signature)"]
     # Only the two matched signature loci; the control-only locus 900 is excluded.
     assert baseline == 2
-    # No downstream step may exceed the matched-signature baseline (funnel is monotonic).
-    assert counts["Loci supported by cfDNA reads"] == 2
-    assert counts["After read filters"] == 2
+    # Read-level steps are no longer in the signature filter funnel
+    assert "Loci supported by cfDNA reads" not in counts
+    assert "After read filters" not in counts
 
 
 def test_read_funnel_excludes_control_only_loci(_funnel_frames_control_only_locus):
@@ -435,5 +441,5 @@ def test_read_funnel_excludes_control_only_loci(_funnel_frames_control_only_locu
     )
     counts = {row["step"]: row["count"] for row in funnel}
     # 2 matched reads at matched loci; the read at control-only locus 900 is excluded.
-    assert counts["Featuremap-signature intersection"] == 2
-    assert counts["After read filters"] == 2
+    assert counts["Reads matching signature (contain variant)"] == 2
+    assert counts["Read filters"] == 2

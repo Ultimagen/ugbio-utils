@@ -422,18 +422,29 @@ def test_apply_multi_read_locus_filter_removes_hot_locus():
 
 
 def test_apply_multi_read_locus_filter_no_outliers():
-    """When no loci exceed the Bonferroni threshold, df_features_filt must be unchanged."""
+    """When all loci have read counts consistent with lambda, nothing is filtered."""
     from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
 
-    df_features_filt, df_tf, df_signatures_filt = _make_multi_read_test_data()
-    # Use a very strict threshold so that even the hot locus is NOT filtered
-    df_out, info = apply_multi_read_locus_filter(
-        df_features_filt, df_tf, df_signatures_filt, thresh_multi_read_pvalue=1e-20
+    # Use a dataset with uniform low read counts — no hot locus.
+    # λ ≈ 3/1000 * 1000 = 3; P(X≥1 | Poi(3)) * 3 ≈ 2.86 > 0.01 → not filtered.
+    records = [
+        {"chrom": "chr1", "pos": 100, "signature": "sig1", "signature_type": "matched"},
+        {"chrom": "chr1", "pos": 200, "signature": "sig1", "signature_type": "matched"},
+        {"chrom": "chr1", "pos": 300, "signature": "sig1", "signature_type": "matched"},
+    ]
+    df_uniform = pd.DataFrame(records).set_index(["chrom", "pos"])
+    df_tf_uniform = pd.DataFrame(
+        [{"ctdna_vaf": 0.003, "supporting_reads": 3, "corrected_coverage": 1000.0}],
+        index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
     )
+    df_sigs_uniform = pd.DataFrame(
+        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)]
+    )
+    df_out, info = apply_multi_read_locus_filter(df_uniform, df_tf_uniform, df_sigs_uniform, 0.01)
 
     assert info["n_filtered_loci"] == 0
     assert info["n_filtered_reads"] == 0
-    assert len(df_out) == len(df_features_filt)
+    assert len(df_out) == len(df_uniform)
 
 
 def test_apply_multi_read_matched_filter_preserves_control_rows():
@@ -585,30 +596,61 @@ def test_apply_multi_read_locus_filter_removes_outlier_control_loci():
 
 
 def test_apply_multi_read_locus_filter_removes_outlier_db_control_loci():
-    """Synthetic (db_control) loci with unexpectedly many reads must be removed."""
+    """Synthetic (db_control) loci with unexpectedly many reads must be removed.
+
+    The no-cap lambda estimation requires the outlier locus to be clearly extreme
+    relative to the per-signature mean. Here syn0 has 1 background locus (1 read)
+    and 1 hot locus (200 reads): λ ≈ 201/1000*1000 = 201; but the hot locus alone
+    contributes ~99% of the read mass, so instead we design a scenario with many
+    background loci so the average is low and the outlier stands out.
+
+    syn0: 30 background loci with 1 read each + 1 hot locus with 1000 reads.
+    total_reads = 1030, corr_cov = 1_000_000, vaf = 1030/1e6 = 1.03e-3,
+    λ = 1.03e-3 * 1000 = 1.03
+    P(X ≥ 1000 | Poi(1.03)) * 31 ≈ 0 → locus is an outlier and gets removed.
+    """
     from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
 
-    df_features_filt, df_tf, df_signatures_filt = _make_ctrl_filter_test_data()
+    # Build syn0 with many background loci so the hot locus is extreme
+    n_background = 30
+    hot_reads = 1000
+    records = []
+    # Matched signature (3 loci, 1 read each)
+    for pos in [100, 200, 300]:
+        records.append({"chrom": "chr1", "pos": pos, "signature": "sig1", "signature_type": "matched"})
+    # syn0 db_control: background loci + hot locus
+    for i in range(n_background):
+        records.append({"chrom": f"chr{i + 2}", "pos": i, "signature": "syn0", "signature_type": "db_control"})
+    for _ in range(hot_reads):
+        records.append({"chrom": "chr1", "pos": 999, "signature": "syn0", "signature_type": "db_control"})
 
-    # Override df_tf: make syn0 have a very hot locus at pos 100 (many total reads)
-    # Use a single HOT db_control signature with 10 reads at one locus
-    records = list(df_features_filt.reset_index().to_dict("records"))
-    # Add 9 more db_control reads at pos 100 for syn0 (already has 1)
-    for _ in range(9):
-        records.append({"chrom": "chr1", "pos": 100, "signature": "syn0", "signature_type": "db_control"})
-    df_features_hot = pd.DataFrame(records).set_index(["chrom", "pos"])
+    df_features = pd.DataFrame(records).set_index(["chrom", "pos"])
 
-    df_out, info = apply_multi_read_locus_filter(df_features_hot, df_tf, df_signatures_filt, 0.01)
+    index = pd.MultiIndex.from_tuples(
+        [("matched", "sig1"), ("db_control", "syn0")],
+        names=["signature_type", "signature"],
+    )
+    df_tf = pd.DataFrame(
+        {
+            "ctdna_vaf": [1e-3, (n_background + hot_reads) / 1_000_000],
+            "supporting_reads": [3, n_background + hot_reads],
+            "corrected_coverage": [1000.0, 1_000_000.0],
+        },
+        index=index,
+    )
+    df_signatures_filt = pd.DataFrame(
+        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)]
+    )
+
+    df_out, info = apply_multi_read_locus_filter(df_features, df_tf, df_signatures_filt, 0.01)
 
     # Outlier db_control locus must be removed
     assert info["n_filtered_db_control_loci"] >= 1
     remaining = df_out.reset_index()
-    db_ctrl_hot = remaining[(remaining["pos"] == 100) & (remaining["signature_type"] == "db_control")]
+    db_ctrl_hot = remaining[(remaining["pos"] == 999) & (remaining["signature_type"] == "db_control")]
     assert len(db_ctrl_hot) == 0, "db_control reads at hot locus should be removed"
-
-    # Matched reads at same locus must be unaffected (different type)
-    matched_100 = remaining[(remaining["pos"] == 100) & (remaining["signature_type"] == "matched")]
-    assert len(matched_100) == 1
+    # Matched reads unaffected
+    assert info["n_filtered_loci"] == 0
 
 
 def test_apply_multi_read_locus_filter_never_removes_single_read_loci():

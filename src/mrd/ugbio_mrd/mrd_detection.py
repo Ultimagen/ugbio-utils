@@ -352,11 +352,13 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     # filters); fall back to df_signatures_filt count for backwards compatibility.
     if "n_loci" in df_tf.columns:
         try:
-            signature_size = int(df_tf.loc["matched", "n_loci"].iloc[0])
+            _n = df_tf.loc["matched", "n_loci"]
+            signature_size = int(_n.iloc[0] if hasattr(_n, "iloc") else _n)
         except (KeyError, IndexError):
             signature_size = 0
         try:
-            raw_coverage = float(df_tf.loc["matched", "coverage"].iloc[0])
+            _cov = df_tf.loc["matched", "coverage"]
+            raw_coverage = float(_cov.iloc[0] if hasattr(_cov, "iloc") else _cov)
         except (KeyError, IndexError):
             raw_coverage = 0.0
         mean_coverage = raw_coverage / signature_size if signature_size > 0 else 0.0

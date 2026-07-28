@@ -75,20 +75,6 @@ def _load_wdl_funnel(filter_funnel_json_path: str | None) -> tuple[list[dict], d
 
     # Report-output format (local / presentation use)
     if "signature_funnel" in data and "signatures" not in data:
-        _wdl_step_names = {
-            "All candidate signature variants (including filtered calls)",
-            "After bcftools extra args",
-            "After include regions",
-            "After exclude regions",
-            "After exact alt allele filter",
-        }
-        raw_sigs = [  # noqa: F841
-            {"input": s["count"], **{k: s["count"] for k in ("after_bcftools_extra_args",)}}
-            if s.get("step") == "All candidate signature variants (including filtered calls)"
-            else s
-            for s in data["signature_funnel"]
-            if s.get("step") in _wdl_step_names
-        ]
         # Re-encode as the raw-count format _wdl_signature_filter_steps expects
         step_to_key = {
             "All candidate signature variants (including filtered calls)": "input",
