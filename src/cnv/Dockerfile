@@ -121,8 +121,8 @@ RUN R CMD INSTALL --preclean --no-multiarch --with-keep.source /opt/cn.mops/
 # NOTE: Actions artifacts expire (~90 days). The same binary is also published as release asset
 #       para_jalign-1.4.1.1-debian-bookworm-x64 (release 1.4.1.1) for a permanent source.
 # The github_token secret must have actions:read scope (artifact download), not just contents:read.
-ARG JALIGN_RUN_ID=30259845869
-ARG JALIGN_ARTIFACT_NAME=jalign-debian-bookworm-x64-57e4ccddc244a76ba6208ac501699b9b089343a8
+ARG JALIGN_RUN_ID=30343516696
+ARG JALIGN_ARTIFACT_NAME=jalign-debian-bookworm-x64-7132d3751cddeac3ea3dac817792f6ef1a60a9fa
 RUN --mount=type=secret,id=github_token \
     if [ ! -f /run/secrets/github_token ]; then \
         echo "ERROR: Authentication required to download dependencies" && exit 1; \
