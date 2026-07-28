@@ -435,6 +435,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
                     excluded_per_sig[_sig_name] = _excl
         # Per-type multi-read excluded loci (for the LQ-fraction histogram)
         multi_read_excluded_per_type = {}
+
         for _sig_type in ("matched", "control", "db_control"):
             _before = df_features_before_multi
             _before_idx = _before[_before["signature_type"] == _sig_type].index.unique()

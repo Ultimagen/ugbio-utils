@@ -957,9 +957,6 @@ def plot_signature_allele_fractions(
 
 # Maximum per-locus read count included in the per-signature VAF estimate used as
 # Poisson λ.  Loci with more reads than this are assumed to contain real signal
-# (germline / mosaic variant) that would inflate the background rate estimate.
-# Capping at 6 keeps virtually all noise reads while excluding obvious outliers.
-_VAF_ESTIMATE_READ_CAP: int = 6
 
 
 def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
@@ -972,10 +969,11 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
 
     For every ``(signature_type, signature)`` row in ``df_tf`` the function computes:
 
-    * λ estimated from loci with ≤ ``_VAF_ESTIMATE_READ_CAP`` reads — excluding
-      germline/mosaic outlier loci that would otherwise inflate the per-signature
-      background rate.  ``λ = (reads at background loci / corrected_coverage) × mean_coverage``.
-      Jeffreys prior is used when no background reads are present.
+    * λ estimated from **all** loci: ``λ = (total reads / corrected_coverage) × mean_coverage``.
+      Jeffreys prior is used only when there are no reads at all.  Using all loci
+      avoids the breakdown at high coverage / high TF where most loci exceed any
+      reasonable low-read cap, leaving too few background observations for a
+      reliable estimate.
     * Bonferroni-corrected Poisson right-tail p-value per locus, using **that
       signature's own locus count** as the family size N — identical logic to the
       QC check in ``run_detection_analysis``.  For a cohort control with 10 000
@@ -1094,18 +1092,16 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
             continue
         per_locus_counts = sig_rows.groupby(level=["chrom", "pos"]).size()
 
-        # --- Estimate VAF from background loci (≤ _VAF_ESTIMATE_READ_CAP reads) ---
-        # Using only low-read loci avoids germline/mosaic bias: outlier loci (10-50+
-        # reads) would inflate the per-signature VAF and make λ too large, masking the
-        # very outliers we want to detect.  At the cap of 6 virtually all background
-        # noise reads are captured while true signal loci are excluded.
-        background_counts = per_locus_counts[per_locus_counts <= _VAF_ESTIMATE_READ_CAP]
-        background_reads = int(background_counts.sum())
+        # --- Estimate VAF from all loci ---
+        # Using all loci avoids the breakdown at high coverage / high TF where a
+        # low-read cap would leave too few background observations.  Germline /
+        # mosaic variants can slightly inflate the estimate; that is acceptable.
+        all_reads = int(per_locus_counts.sum())
         corr_cov = float(sig_row.get("corrected_coverage", 1))
-        if background_reads > 0 and corr_cov > 0:
-            vaf = background_reads / corr_cov
+        if all_reads > 0 and corr_cov > 0:
+            vaf = all_reads / corr_cov
         elif corr_cov > 0:
-            vaf = 0.5 / (corr_cov + 1)  # Jeffreys prior when no background reads
+            vaf = 0.5 / (corr_cov + 1)  # Jeffreys prior when no reads at all
         else:
             continue
         lam = vaf * mean_coverage

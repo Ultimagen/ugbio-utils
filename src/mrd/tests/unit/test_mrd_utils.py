@@ -365,17 +365,16 @@ def _make_multi_read_test_data():
     locus filter tests.
 
     Loci:
-      (chr1, 100) — 10 HQ reads  → "hot" locus (> _VAF_ESTIMATE_READ_CAP=6,
-                                    excluded from background λ estimate)
-      (chr1, 200) — 1 HQ read    → background locus (≤ cap, contributes to λ)
-      (chr1, 300) — 1 HQ read    → background locus (≤ cap, contributes to λ)
-    background_reads = 2, corrected_coverage = 1000, mean_coverage = 1000
-    → vaf_estimate = 2/1000 = 0.002, λ = 2.0
-    P(X ≥ 10 | Poisson(2.0)) × 3 ≈ 1.1e-5  << threshold 0.01  → flagged
-    P(X ≥ 1  | Poisson(2.0)) × 3 ≈ 2.6      > threshold 0.01   → NOT flagged
+      (chr1, 100) — 100 HQ reads  → "hot" locus (outlier)
+      (chr1, 200) — 1 HQ read    → background locus
+      (chr1, 300) — 1 HQ read    → background locus
+    all_reads = 102, corrected_coverage = 100_000, mean_coverage = 1_000
+    → vaf_estimate = 102/100_000 = 0.00102, λ = 1.02
+    P(X ≥ 100 | Poisson(1.02)) × 3 ≈ 0   → HOT locus flagged
+    P(X ≥ 1   | Poisson(1.02)) × 3 ≈ 1.9 > threshold 0.01 → NOT flagged
     """
     records = []
-    for locus_pos, n_reads in [(100, 10), (200, 1), (300, 1)]:
+    for locus_pos, n_reads in [(100, 100), (200, 1), (300, 1)]:
         for i in range(n_reads):
             records.append(  # noqa: PERF401
                 {
@@ -388,7 +387,7 @@ def _make_multi_read_test_data():
     df_features_filt = pd.DataFrame(records).set_index(["chrom", "pos"])
 
     df_tf = pd.DataFrame(
-        [{"ctdna_vaf": 0.0001, "supporting_reads": 12, "corrected_coverage": 1000.0}],
+        [{"ctdna_vaf": 0.0001, "supporting_reads": 102, "corrected_coverage": 100_000.0}],
         index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
     )
 
@@ -407,8 +406,8 @@ def test_apply_multi_read_locus_filter_removes_hot_locus():
 
     # Hot locus (chr1, 100) with 10 reads should be removed
     assert info["n_filtered_loci"] == 1
-    assert info["n_filtered_reads"] == 10
-    assert len(df_out) == 2  # 12 total - 10 removed = 2
+    assert info["n_filtered_reads"] == 100
+    assert len(df_out) == 2  # 102 total - 100 removed = 2
 
     # Remaining rows must only be from clean loci
     remaining_positions = df_out.index.get_level_values("pos").tolist()
@@ -641,19 +640,18 @@ def test_apply_multi_read_locus_filter_never_removes_single_read_loci():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Sensitivity tests — cap-based background VAF estimation
+# All-loci VAF estimation
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_apply_multi_read_filter_cap_excludes_hot_locus_from_lambda():
-    """λ must be estimated from background loci (≤ cap reads) only.
+def test_apply_multi_read_filter_all_loci_vaf_estimation():
+    """λ is estimated from all loci; a genuine outlier is still flagged.
 
-    Setup: 2 clean background loci (1 read each) + 1 hot locus (10 reads, > cap=6).
-      background_reads = 2, corrected_coverage = 1000, mean_coverage = 1000
-      → vaf_estimate = 2/1000 = 0.002, λ = 2.0
-    At λ = 2.0 and Bonferroni N = 3:
-      P(X ≥ 10 | Poisson(2.0)) × 3 ≈ 1.1e-5  → flagged
-      P(X ≥ 1  | Poisson(2.0)) × 3 ≈ 2.6     → NOT flagged (clean loci survive)
+    Setup: 2 background loci (1 read each) + 1 hot locus (100 reads).
+      all_reads = 102, corrected_coverage = 100_000, mean_coverage = 1_000
+      → vaf_estimate = 0.00102, λ = 1.02
+    P(X ≥ 100 | Poisson(1.02)) × 3 ≈ 0  → flagged
+    P(X ≥ 1   | Poisson(1.02)) × 3 ≈ 1.9 > 0.05 → NOT flagged
     """
     from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
 
@@ -664,35 +662,3 @@ def test_apply_multi_read_filter_cap_excludes_hot_locus_from_lambda():
     remaining = df_out.index.get_level_values("pos").tolist()
     assert 100 not in remaining
     assert 200 in remaining and 300 in remaining
-
-
-def test_apply_multi_read_filter_cap_boundary():
-    """The transition at cap+1 reads: loci with ≤ cap reads inflate λ; loci above cap are flagged.
-
-    Two scenarios with identical 2-read background loci (pos=200, pos=300):
-      Scenario A: hot locus has cap=6 reads → included in background → λ = 8.0 → NOT flagged.
-      Scenario B: hot locus has cap+1=7 reads → excluded from background → λ = 2.0 → flagged.
-    """
-    from ugbio_mrd.mrd_utils import _VAF_ESTIMATE_READ_CAP, apply_multi_read_locus_filter
-
-    def _build(hot_reads: int) -> pd.DataFrame:
-        rows = (
-            [{"chrom": "chr1", "pos": 100, "signature": "sig1", "signature_type": "matched"}] * hot_reads
-            + [{"chrom": "chr1", "pos": 200, "signature": "sig1", "signature_type": "matched"}]
-            + [{"chrom": "chr1", "pos": 300, "signature": "sig1", "signature_type": "matched"}]
-        )
-        return pd.DataFrame(rows).set_index(["chrom", "pos"])
-
-    df_tf = pd.DataFrame(
-        [{"ctdna_vaf": 0.001, "supporting_reads": 10, "corrected_coverage": 1000.0}],
-        index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
-    )
-    df_sig = pd.DataFrame([{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)])
-
-    # At-cap (6 reads) → included in background, λ inflated, NOT flagged
-    df_at_cap, info_at = apply_multi_read_locus_filter(_build(_VAF_ESTIMATE_READ_CAP), df_tf, df_sig, 0.05)
-    assert info_at["n_filtered_loci"] == 0, "Loci at the cap must not be flagged (they define background)"
-
-    # Above-cap (7 reads) → excluded from background, λ = 2.0, flagged
-    df_above_cap, info_above = apply_multi_read_locus_filter(_build(_VAF_ESTIMATE_READ_CAP + 1), df_tf, df_sig, 0.05)
-    assert info_above["n_filtered_loci"] == 1, "Loci above cap must be flagged"
