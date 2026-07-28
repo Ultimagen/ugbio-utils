@@ -55,6 +55,13 @@ class MrdReportInputs:
 def _load_wdl_funnel(filter_funnel_json_path: str | None) -> tuple[list[dict], dict]:
     """Load WDL-level signature funnel entries and step descriptions from JSON.
 
+    Handles two formats:
+    * WDL intermediate (``signatures`` key): per-signature raw counts produced by
+      the ``CollectFilterFunnel`` task — the canonical input when running in the WDL.
+    * Report output (``signature_funnel`` key): pre-aggregated funnel rows written by
+      a previous ``generate_mrd_report`` run.  Only the 5 WDL-level step names are
+      extracted so locally-recomputed Python steps are not duplicated.
+
     Returns
     -------
     tuple[list[dict], dict]
@@ -65,6 +72,43 @@ def _load_wdl_funnel(filter_funnel_json_path: str | None) -> tuple[list[dict], d
         return [], {}
     with open(filter_funnel_json_path) as f:
         data = json.load(f)
+
+    # Report-output format (local / presentation use)
+    if "signature_funnel" in data and "signatures" not in data:
+        _wdl_step_names = {
+            "All candidate signature variants (including filtered calls)",
+            "After bcftools extra args",
+            "After include regions",
+            "After exclude regions",
+            "After exact alt allele filter",
+        }
+        raw_sigs = [
+            {"input": s["count"], **{k: s["count"] for k in ("after_bcftools_extra_args",)}}
+            if s.get("step") == "All candidate signature variants (including filtered calls)"
+            else s
+            for s in data["signature_funnel"]
+            if s.get("step") in _wdl_step_names
+        ]
+        # Re-encode as the raw-count format _wdl_signature_filter_steps expects
+        step_to_key = {
+            "All candidate signature variants (including filtered calls)": "input",
+            "After bcftools extra args": "after_bcftools_extra_args",
+            "After include regions": "after_include_regions",
+            "After exclude regions": "after_exclude_regions",
+            "After exact alt allele filter": "after_exact_alt_allele_filter",
+        }
+        merged: dict = {}
+        descriptions: dict = {}
+        for s in data["signature_funnel"]:
+            step = s.get("step", "")
+            key = step_to_key.get(step)
+            if key:
+                merged[key] = merged.get(key, 0) + s.get("count", 0)
+                if s.get("desc"):
+                    descriptions[step] = s["desc"]
+        fake_sig = {k: merged.get(k, 0) for k in step_to_key.values()}
+        return [fake_sig] if any(fake_sig.values()) else [], descriptions
+
     return data.get("signatures", []), data.get("descriptions", {})
 
 
@@ -194,7 +238,7 @@ def _build_filter_funnel(
     # ── Loci-level funnel ──────────────────────────────────────────────────────
     funnel.append(
         {
-            "step": "After coverage filter",
+            "step": "Coverage filter",
             "count": sig_size,
             "desc": signature_filter_query,
         }
@@ -216,7 +260,7 @@ def _build_filter_funnel(
         lq_removed = len(lq_excl_idx)
         funnel.append(
             {
-                "step": "After LQ-reads locus filter",
+                "step": "LQ-reads locus filter",
                 "count": sig_size - lq_removed,
                 "desc": locus_filter_descs.get("low_quality_read", ""),
             }
@@ -230,7 +274,7 @@ def _build_filter_funnel(
         mr_removed = len(mr_excl_idx)
         funnel.append(
             {
-                "step": "After multi-read locus filter (final signature)",
+                "step": "Multi-read locus filter (final signature)",
                 "count": sig_size - lq_removed - mr_removed,
                 "desc": locus_filter_descs.get("multi_read_locus", ""),
             }
@@ -321,7 +365,7 @@ def _build_read_funnel(
     # detection.matched_supporting_reads (both restrict to loci in df_signatures_filt).
     df_after_rf = _matched_subset(_reads_in_signature_loci(df_features_filt, matched_sigs_filt))
     funnel.append({
-        "step": "After read filters",
+        "step": "Read filters",
         "count": len(df_after_rf),
         "loci_count": _n_loci(df_after_rf),
         "desc": read_filter_query,

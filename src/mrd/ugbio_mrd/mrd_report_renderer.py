@@ -853,20 +853,33 @@ def render_supporting_reads_histogram(  # noqa: C901
 
     all_reads = pd.concat([s for s in [matched, cohort, db_ctrl, multi_excl] if len(s) > 0])
     max_val = int(all_reads.max())
-    MAX_BINS = 20
-    if max_val <= MAX_BINS:
-        # one bin per integer value
-        bin_step = 1
-        x_cap = max_val
-        bins = list(range(1, x_cap + 2))
-        bin_labels = [str(b) for b in bins[:-1]]
+    MAX_TOTAL_BARS = 20     # total bars shown
+    ALWAYS_INDIVIDUAL = 2   # bins 1 and 2 are always their own bars
+
+    if max_val <= MAX_TOTAL_BARS:
+        # all individual
+        bin_edges = list(range(1, max_val + 2))
+        bin_labels = [str(v) for v in range(1, max_val + 1)]
+        group_step = 1
     else:
-        # group into at most MAX_BINS buckets; bucket width is ceil(max_val / MAX_BINS)
-        bin_step = -(-max_val // MAX_BINS)  # ceiling division
-        x_cap = bin_step * MAX_BINS
-        bins = list(range(1, x_cap + bin_step + 1, bin_step))
-        bin_labels = [f"{b}–{b + bin_step - 1}" if bin_step > 1 else str(b) for b in bins[:-1]]
-    bar_positions = np.array(bins[:-1], dtype=float) + (bin_step - 1) / 2
+        # 1 and 2 individual; group 3+ into (MAX_TOTAL_BARS - 2) buckets
+        n_grouped = MAX_TOTAL_BARS - ALWAYS_INDIVIDUAL
+        group_step = -(-( max_val - ALWAYS_INDIVIDUAL) // n_grouped)  # ceiling div
+        bin_edges = [1, 2, 3]
+        pos = 3
+        while pos <= max_val:
+            bin_edges.append(pos + group_step)
+            pos += group_step
+        bin_edges[-1] = max_val + 1
+        bin_labels = ["1", "2"]
+        pos = 3
+        while pos <= max_val:
+            end = min(pos + group_step - 1, max_val)
+            bin_labels.append(str(pos) if end == pos else f"{pos}–{end}")
+            pos += group_step
+
+    bar_positions = np.array(range(1, len(bin_labels) + 1), dtype=float)
+    bin_step = 1  # visual bar width is always 1 unit (bars are sequential positions)
 
     n_matched_zero = max(0, signature_size - len(matched) - len(multi_excl))
 
@@ -883,19 +896,18 @@ def render_supporting_reads_histogram(  # noqa: C901
             active_groups.append((data, norm, color, text_color, alpha, label_prefix, len(data)))
 
     n_active = len(active_groups)
-    _base_width = {1: 0.55, 2: 0.38, 3: 0.28, 4: 0.22}.get(n_active, 0.20) * bin_step
-    bar_width = min(_base_width, bin_step * 0.9 / max(n_active, 1))
+    bar_width = {1: 0.55, 2: 0.38, 3: 0.28, 4: 0.22}.get(n_active, 0.20)
     offsets = np.linspace(-(n_active - 1) / 2 * bar_width, (n_active - 1) / 2 * bar_width, n_active)
 
-    n_bins = len(bins) - 1
-    fig, ax = plt.subplots(figsize=(max(10, n_bins * 0.65), 5.0))
+    n_bars = len(bin_labels)
+    fig, ax = plt.subplots(figsize=(max(10, n_bars * 0.65), 5.0))
     fig.patch.set_facecolor("#f4f6f8")
     ax.set_facecolor("#f4f6f8")
 
     for (data, norm, color, text_color, alpha, label_prefix, n_with_reads), offset in zip(
         active_groups, offsets, strict=False
     ):
-        counts, _ = np.histogram(data, bins=bins)
+        counts, _ = np.histogram(data, bins=bin_edges)
         fracs = counts / norm
         ax.bar(
             bar_positions + offset,
@@ -926,6 +938,7 @@ def render_supporting_reads_histogram(  # noqa: C901
     ax.legend(fontsize=11, framealpha=0.85)
     ax.set_xticks(bar_positions)
     ax.set_xticklabels(bin_labels, rotation=45 if bin_step > 1 else 0, ha="right" if bin_step > 1 else "center", fontsize=10)
+    ax.set_xlim(bar_positions[0] - bar_width * 1.5, bar_positions[-1] + bar_width * 1.5)
     ax.set_axisbelow(True)
     ax.yaxis.grid(True, linestyle=":", linewidth=0.5, color="#dde1e7")  # noqa: FBT003
     ax.spines[["top", "right"]].set_visible(False)
