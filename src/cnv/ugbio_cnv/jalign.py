@@ -1079,9 +1079,8 @@ def process_cnv(
     # Run jump alignment tool
     try:
         run_env = os.environ.copy()
-        run_env["SHOW_STATS"] = "1"
         if config.seed_size > 0:
-            run_env["SEED_SIZE"] = str(config.seed_size)
+            run_env["MIN_SEED_SIZE"] = str(config.seed_size)
         run_alignment_tool(alignment_cmd, log_file, env=run_env)
         # Parse results from JSON file
         if log_file:
