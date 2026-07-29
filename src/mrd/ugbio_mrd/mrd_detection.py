@@ -113,7 +113,7 @@ class DetectionResult:
     n_synthetic_controls: int
 
     # Personal LOD (recall and FPR controlled by lod_recall / lod_fpr)
-    personal_lod: float | None  # TF at which recall >= lod_recall (incremental, above p_err)
+    sample_specific_lod: float | None  # TF at which recall >= lod_recall (incremental, above p_err)
 
     # Null distribution (raw supporting read counts for each synthetic control)
     synthetic_signatures_supporting_reads: np.ndarray  # shape (n_synthetic_controls,), dtype int
@@ -139,7 +139,7 @@ class DetectionResult:
     lod_recall: float = 0.95
 
 
-def compute_personal_lod(  # noqa: PLR0911
+def compute_sample_specific_lod(  # noqa: PLR0911
     n: int,
     p_err: float,
     target_recall: float = 0.95,
@@ -285,7 +285,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
             n_synthetic_controls=0,
             synthetic_signatures_supporting_reads=np.array([], dtype=int),
             synthetic_signatures_names=[],
-            personal_lod=None,
+            sample_specific_lod=None,
             signature_size=0,
             mean_coverage=0.0,
             corrected_coverage=0.0,
@@ -519,16 +519,16 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
     else:
         detection_threshold = None
 
-    # Personal LOD: total VAF (p_err + incremental TF) at which recall >= lod_recall.
+    # Sample-specific LOD: total VAF (p_err + incremental TF) at which recall >= lod_recall.
     # Stored as total VAF so it sits on the same scale as matched_ctdna_vaf and the
     # LOD line shown in the patient vs controls plot.
-    _lod_incremental = compute_personal_lod(
+    _lod_incremental = compute_sample_specific_lod(
         n=n_effective,
         p_err=p_err,
         target_recall=lod_recall,
         fpr=lod_fpr,
     )
-    personal_lod = (p_err + _lod_incremental) if _lod_incremental is not None else None
+    sample_specific_lod = (p_err + _lod_incremental) if _lod_incremental is not None else None
 
     return DetectionResult(
         detected=detected,
@@ -541,7 +541,7 @@ def run_detection_analysis(  # noqa: PLR0912, PLR0915, C901
         n_synthetic_controls=len(syn_reads),
         synthetic_signatures_supporting_reads=syn_reads,
         synthetic_signatures_names=syn_names,
-        personal_lod=personal_lod,
+        sample_specific_lod=sample_specific_lod,
         signature_size=signature_size,
         mean_coverage=mean_coverage,
         corrected_coverage=corrected_coverage,
@@ -647,13 +647,13 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
         ax.axhline(
             _safe_vaf(det_vaf), color="#e67e22", linewidth=1.8, linestyle="--", alpha=0.9, zorder=4, label=_det_label
         )
-    if detection.personal_lod is not None and n_eff_plot > 0:
-        # personal_lod is already total VAF (p_err + incremental TF).
-        lod_total_vaf = detection.personal_lod
+    if detection.sample_specific_lod is not None and n_eff_plot > 0:
+        # sample_specific_lod is already total VAF (p_err + incremental TF).
+        lod_total_vaf = detection.sample_specific_lod
         n_lod_reads = int(round(n_eff_plot * lod_total_vaf))
         _lod_recall_plot = getattr(detection, "lod_recall", 0.95)
         _lod_label = (
-            f"Personal LOD = {format_scientific(lod_total_vaf)} ({n_lod_reads} reads)"
+            f"Sample-specific LOD = {format_scientific(lod_total_vaf)} ({n_lod_reads} reads)"
             f" | {_lod_recall_plot * 100:.0f}% recall"
         )
         ax.axhline(
@@ -669,8 +669,8 @@ def plot_patient_vs_control_vaf(  # noqa: PLR0915, PLR0912, C901
     # ── Scale / labels ────────────────────────────────────────────────────────
     ax.set_yscale("log")
     y_vals = [pat_vaf] + (list(null / corr_cov) if len(null) > 0 and corr_cov > 0 else [])
-    if detection.personal_lod:
-        y_vals.append(detection.personal_lod)
+    if detection.sample_specific_lod:
+        y_vals.append(detection.sample_specific_lod)
     ax.set_ylim(_vaf_floor * 0.5, max(y_vals) * 8)
     ax.set_axisbelow(True)
     ax.yaxis.grid(True, which="both", linestyle=":", linewidth=0.6, color="#dde1e7", alpha=0.9)  # noqa: FBT003

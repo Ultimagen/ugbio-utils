@@ -331,7 +331,7 @@
         <span style="color:#3a9ad9;">&#9679;</span> <strong>Synthetic control signatures:</strong> Signatures drawn from db_control.<br>
         <strong>Blue violin:</strong> Fitted Binomial, according to synthetic control error-rates: Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }}).<br>
         <span style="color:#e67e22;">&#9135;&#9135;</span> Detection threshold (min VAF for Binomial p&nbsp;&lt;&nbsp;{{ "%.0f"|format(detection.alpha * 100) }}%).<br>
-        <span style="color:#27ae60;">&#183;&ndash;&#183;</span> <strong>Personal LOD</strong> = {{ lod_str }} &mdash; minimum VAF detectable at {{ "%.0f"|format(detection.lod_recall * 100) }}% recall / {{ "%.0f"|format(detection.lod_fpr * 100) }}% FPR for this patient&rsquo;s signature size and coverage.<br>
+        <span style="color:#27ae60;">&#183;&ndash;&#183;</span> <strong>Sample-specific LOD</strong> = {{ lod_str }} &mdash; minimum VAF detectable at {{ "%.0f"|format(detection.lod_recall * 100) }}% recall / {{ "%.0f"|format(detection.lod_fpr * 100) }}% FPR for this patient&rsquo;s signature size and coverage.<br>
         <span style="color:#9b59b6;">&#9670;</span> Cohort control signatures.
       </div>
     </div>

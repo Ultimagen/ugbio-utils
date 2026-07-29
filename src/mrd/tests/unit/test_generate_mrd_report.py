@@ -104,7 +104,7 @@ def test_generate_mrd_report_detection_output(output_path, mrd_report_inputs):
         "null_median_reads",
         "null_max_reads",
         "n_synthetic_controls",
-        "personal_lod",
+        "sample_specific_lod",
         "signature_size",
         "mean_coverage",
         "corrected_coverage",
@@ -146,7 +146,7 @@ def test_generate_mrd_report_html_contains_detection_banner(output_path, mrd_rep
 
     # Report should contain key metrics
     assert "p-value" in html_content.lower() or "p_value" in html_content.lower()
-    assert "Personal LOD" in html_content or "personal_lod" in html_content.lower()
+    assert "Sample-specific LOD" in html_content or "sample_specific_lod" in html_content.lower()
     assert "Supporting Reads" in html_content
 
     # Report should contain the assay metrics section

@@ -695,7 +695,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             if detection.detection_threshold is not None and detection.corrected_coverage > 0
             else None
         ),
-        "personal_lod": detection.personal_lod,
+        "sample_specific_lod": detection.sample_specific_lod,
         "signature_size": detection.signature_size,
         "mean_coverage": detection.mean_coverage,
         "corrected_coverage": detection.corrected_coverage,
@@ -733,7 +733,7 @@ def generate_mrd_report(mrd_report_inputs: MrdReportInputs) -> tuple[Path, Path]
             if detection.detection_threshold is not None and detection.corrected_coverage > 0
             else None
         ),
-        "personal_lod": detection.personal_lod,
+        "sample_specific_lod": detection.sample_specific_lod,
         "signature_size": detection.signature_size,
         "mean_coverage": detection.mean_coverage,
         "corrected_coverage": detection.corrected_coverage,

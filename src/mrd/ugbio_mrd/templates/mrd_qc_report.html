@@ -267,7 +267,7 @@
             <span class="stat-sub">Binom(N={{ detection.n_effective }}, p_err={{ noise_rate_str }})</span>
           </div>
           <div class="stat">
-            <span class="stat-label">Personal LOD</span>
+            <span class="stat-label">Sample-specific LOD</span>
             <span class="stat-value">{{ lod_str }}</span>
             <span class="stat-sub">{{ "%.0f"|format(detection.lod_recall * 100) }}% recall · {{ "%.0f"|format(detection.lod_fpr * 100) }}% FPR</span>
           </div>
