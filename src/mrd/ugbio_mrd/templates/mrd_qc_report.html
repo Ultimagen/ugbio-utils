@@ -164,6 +164,16 @@
   }
 
   /* ── Footer ── */
+  .disclaimer {
+    background: #fffbea;
+    border-top: 2px solid #f0ad4e;
+    padding: 10px 32px;
+    font-size: 11px;
+    color: #7a5c00;
+    text-align: center;
+    line-height: 1.6;
+  }
+
   .footer {
     background: var(--light-gray);
     border-top: 1px solid var(--border);
@@ -613,6 +623,13 @@
   </div>
 
   <!-- ── FOOTER ── -->
+  <div class="disclaimer">
+    <strong>For Research Use Only.</strong>
+    This report is intended solely for research purposes and has not been validated for clinical diagnostic use.
+    It does not constitute a clinically validated test and should not be used to guide clinical decisions without
+    independent clinical validation. Results may not be accurate for all sample types or conditions.
+  </div>
+
   <div class="footer">
     <span>Ultima Genomics &middot; MRD QC Pipeline</span>
     <span>Generated {{ report_date }}</span>
