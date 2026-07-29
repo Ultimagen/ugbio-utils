@@ -2,7 +2,17 @@
 # Pinned to bullseye (1.7.0) — bookworm migration blocked by libparasail8 incompatibility (DATA-9903)
 ARG BASE_IMAGE=ugbio_base:1.7.0
 ARG OUT_DIR=/tmp/ugbio
-FROM python:3.11-bullseye AS build
+
+############################
+# Pull known-good parasail from Debian Bullseye (2.4.3)
+FROM debian:bullseye AS parasail-bullseye
+RUN apt-get update && \
+  apt-get -y install --no-install-recommends \
+    libparasail-dev \
+  && \
+  rm -rf /var/lib/apt/lists/* && apt-get autoclean
+
+FROM python:3.11-bookworm AS build
 
 ARG OUT_DIR
 ARG MODULE_DIR=cnv
@@ -41,7 +51,6 @@ RUN apt-get update && \
     libncursesw5-dev \
     libopenblas-dev \
     libstdc++-10-dev \
-    libparasail3 libparasail-dev \
     libhdf5-dev \
     tzdata \
     && apt-get clean && \
@@ -154,6 +163,12 @@ RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
 COPY --from=build ${OUT_DIR} ${OUT_DIR}
 RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
+
+# Bring parasail headers/libs from Bullseye into Bookworm image
+COPY --from=parasail-bullseye /usr/include/parasail /usr/include/parasail
+COPY --from=parasail-bullseye /usr/include/parasail.h /usr/include/parasail.h
+COPY --from=parasail-bullseye /usr/lib/x86_64-linux-gnu/libparasail.so* /usr/lib/x86_64-linux-gnu/
+RUN ldconfig
 
 #download cnvpytor additional necessary files (described here: https://github.com/abyzovlab/CNVpytor?tab=readme-ov-file#install-using-pip)
 ENV PYTOR_DATA_DIR=/usr/share/cnvpytor_data
