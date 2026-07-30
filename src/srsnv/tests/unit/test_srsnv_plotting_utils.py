@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -575,7 +576,11 @@ def test_consensus_mode_auto_detected(consensus_resources, real_models_calc_run_
     with tempfile.TemporaryDirectory() as temp_output_dir:
         report = _make_consensus_report(df, metadata, temp_output_dir, real_models_calc_run_info)
         assert report.report_mode.value == "consensus"
-        assert report.split.groups == ["single read", "consensus, one strand", "consensus, duplex"]
+        assert list(report.scheme.display_variant.groups) == [
+            "single read",
+            "consensus, one strand",
+            "consensus, duplex",
+        ]
         assert "is_consensus" in report.data_df.columns
         assert "read_group" in report.data_df.columns
         # duplex group == the is_consensus boolean
@@ -592,9 +597,10 @@ def test_consensus_mode_roc_auc_table_keys_and_labels(consensus_resources, real_
         report.calc_roc_auc_table()
         h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
         with pd.HDFStore(h5_file, "r") as store:
+            # consensus writes the scheme-suffixed key + the bare base alias (for h5->json)
             assert "/roc_auc_table" in store.keys()
-            assert "/roc_auc_table_mixed_start" in store.keys()
-        table = pd.read_hdf(h5_file, key="roc_auc_table_mixed_start")
+            assert "/roc_auc_table_strand_support" in store.keys()
+        table = pd.read_hdf(h5_file, key="roc_auc_table_strand_support")
         # Index after .T stores the group labels
         labels = list(table.columns) + list(table.index)
         assert "single read only" in labels
@@ -615,7 +621,7 @@ def test_consensus_mode_run_quality_table_labels(consensus_resources, real_model
         h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
         with pd.HDFStore(h5_file, "r") as store:
             assert "/run_quality_table" in store.keys()
-            assert "/run_quality_table_mixed_start" in store.keys()
+            assert "/run_quality_table_strand_support" in store.keys()
             assert "/run_quality_table_display" in store.keys()
         display = pd.read_hdf(h5_file, key="run_quality_table_display")
         third_level = set(display.columns.get_level_values(2))
@@ -631,7 +637,7 @@ def test_consensus_mode_run_info_table_label(consensus_resources, real_models_ca
         report.plot_fq_recall(only_calculate=True)
         report.calc_run_info_table()
         h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
-        run_info = pd.read_hdf(h5_file, key="run_info_table_mixed_start")
+        run_info = pd.read_hdf(h5_file, key="run_info_table_strand_support")
         level0 = set(run_info.index.get_level_values(0))
         for label in CONSENSUS_GROUP_LABELS:
             assert f"{label} training reads" in level0
@@ -646,11 +652,11 @@ def test_consensus_mode_quality_per_tags_table(consensus_resources, real_models_
         report.quality_per_ppmseq_tags(output_filename=out_png)
         h5_file = os.path.join(temp_output_dir, "test_single_read_snv.applicationQC.h5")
         with pd.HDFStore(h5_file, "r") as store:
-            assert "/ppmseq_category_quality_table_mixed_start" in store.keys()
-            # legacy keys still written so downstream h5->json conversion doesn't KeyError
+            assert "/ppmseq_category_quality_table_strand_support" in store.keys()
+            # bare base keys still written so downstream h5->json conversion doesn't KeyError
             assert "/ppmseq_category_quality_table" in store.keys()
             assert "/ppmseq_category_quantity_table" in store.keys()
-        summary = pd.read_hdf(h5_file, key="ppmseq_category_quality_table_mixed_start")
+        summary = pd.read_hdf(h5_file, key="ppmseq_category_quality_table_strand_support")
         assert list(summary.index) == CONSENSUS_GROUP_LABELS
         assert os.path.exists(out_png + ".png")
 
@@ -667,9 +673,9 @@ def test_consensus_mode_histograms_run(consensus_resources, real_models_calc_run
             keys = store.keys()
         for k in (
             "/quality_histogram",
-            "/quality_histogram_mixed_start",
+            "/quality_histogram_strand_support",
             "/logit_histogram",
-            "/logit_histogram_mixed_start",
+            "/logit_histogram_strand_support",
         ):
             assert k in keys, f"missing {k}"
 
@@ -708,3 +714,66 @@ def test_none_mode_graceful(test_resources_calc_run_info, real_models_calc_run_i
         assert not report.data_df["is_consensus"].any()
         report.plot_fq_recall(only_calculate=True)
         report.calc_roc_auc_table()  # should not raise
+
+
+# The exact historical mixed (ppmSeq) h5 key surface produced by the full prepare_report path.
+# The recipe refactor MUST keep the ppmSeq report byte-identical, and the key set is the first
+# line of defense: any dropped / renamed / added key for mixed data breaks backward compatibility
+# (the notebook reads *_mixed_start; h5->json conversion reads the bare base keys).
+MIXED_EXPECTED_H5_KEYS = {
+    "/FQ_recall_LoD",
+    "/FQ_recall_LoD_mixed_start",
+    "/keys_to_convert",
+    "/logit_histogram",
+    "/logit_histogram_mixed_start",
+    "/mean_abs_SHAP_scores",
+    "/ppmseq_category_quality_table",
+    "/ppmseq_category_quality_table_mixed_start",
+    "/ppmseq_category_quantity_table",
+    "/quality_histogram",
+    "/quality_histogram_mixed_start",
+    "/roc_auc_table",
+    "/roc_auc_table_mixed_start",
+    "/run_info_table",
+    "/run_info_table_mixed_start",
+    "/run_quality_summary_table",
+    "/run_quality_summary_table_mixed_start",
+    "/run_quality_table",
+    "/run_quality_table_display",
+    "/run_quality_table_mixed_start",
+    "/training_info_table",
+    "/training_progress",
+    "/trinuc_stats",
+}
+
+
+def test_mixed_report_h5_key_surface_is_stable(resources_dir):
+    """Full ppmSeq report via prepare_report writes exactly the historical mixed h5 key set.
+
+    Locks the byte-identical contract at the key level (mixed keeps the base + *_mixed_start dual
+    keys; consensus/none use their own suffixes, tested separately)."""
+    featuremap_df = str(resources_dir / "402572-CL10377.featuremap_df.parquet")
+    srsnv_metadata = str(resources_dir / "402572-CL10377.srsnv_metadata.json")
+    with tempfile.TemporaryDirectory() as td:
+        # prepare_report resolves model paths relative to CWD basename fallback; copy models in.
+        for mf in resources_dir.glob("402572-CL10377.model_fold_*.json"):
+            shutil.copy(mf, td)
+        cwd = os.getcwd()
+        os.chdir(td)
+        try:
+            prepare_report(
+                featuremap_df=featuremap_df,
+                srsnv_metadata=srsnv_metadata,
+                report_path=td,
+                basename="bl",
+                random_seed=0,
+            )
+        finally:
+            os.chdir(cwd)
+        h5 = next(Path(td).glob("*single_read_snv.applicationQC.h5"))
+        with pd.HDFStore(str(h5), "r") as store:
+            keys = set(store.keys())
+        assert keys == MIXED_EXPECTED_H5_KEYS, (
+            f"mixed h5 key surface drifted:\n  missing={MIXED_EXPECTED_H5_KEYS - keys}\n"
+            f"  unexpected={keys - MIXED_EXPECTED_H5_KEYS}"
+        )

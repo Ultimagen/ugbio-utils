@@ -4,7 +4,6 @@ import functools
 import json
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -36,25 +35,27 @@ from ugbio_ppmseq.ppmSeq_utils import PpmseqAdapterVersions, PpmseqCategories
 
 from ugbio_srsnv.shap_plotting import SHAPPlotter
 from ugbio_srsnv.smoothing_utils import AdaptiveKDEPrecisionEstimator
+from ugbio_srsnv.split_scheme import (
+    h5_key as split_h5_key,
+)
+from ugbio_srsnv.split_scheme import (
+    resolve_scheme,
+    resolve_scheme_and_add_columns,
+)
 from ugbio_srsnv.srsnv_utils import (
-    CONSENSUS_GROUPS,
     ET,
     ET_FILLNA,
-    IS_CONSENSUS,
+    FS,
     MAX_PHRED,
-    MIXED_GROUPS,
-    NONE_GROUP_ALL,
     READ_GROUP,
+    RS,
     ST,
     ST_FILLNA,
-    ReportMode,
     construct_trinuc_context_with_alt,
-    detect_report_mode,
     get_base_recall_from_filters,
     phred_to_prob,
     prob_to_logit,
     prob_to_phred,
-    resolve_and_add_split_columns,
     safe_roc_auc,
     split_validation_training_preds,
 )
@@ -71,104 +72,6 @@ IS_MIXED_START = "is_mixed_start"
 IS_MIXED_END = "is_mixed_end"
 FOLD_ID = "fold_id"
 
-
-@dataclass(frozen=True)
-class ReadSplit:
-    """Describes how the report splits reads into a positive/negative group.
-
-    The report supports several :class:`~ugbio_srsnv.srsnv_utils.ReportMode` values, each of
-    which splits the reads on a different boolean column and labels the two groups differently.
-    All split-dependent report methods consult a ``ReadSplit`` instead of hard-coding the
-    ppmSeq "mixed" columns/labels, so the same code produces correctly-labelled output for
-    every mode.
-
-    Attributes
-    ----------
-    mode : ReportMode
-        The detected report mode.
-    display_col : str
-        Boolean column driving the display (simplified) tables/plots and their `_mixed_start`
-        h5 keys. For MIXED this is ``is_mixed_start``; for CONSENSUS/NONE it is ``is_consensus``.
-    legacy_col : str
-        Boolean column driving the legacy (backward-compatible) h5 keys. For MIXED this is
-        ``is_mixed`` (both ends); for CONSENSUS/NONE it equals ``display_col`` (no start/end
-        distinction exists).
-    pos, neg : str
-        Capitalised labels for the positive / negative group of the *binary* split used by
-        MIXED (and NONE) mode (e.g. "Mixed"/"Non-mixed").
-    pos_lc, neg_lc : str
-        Lower-case variants of ``pos``/``neg`` used inside plot legends / column keys.
-    tag_axis : str
-        Axis/index label for the per-tag summary table ("ppmSeq tag" / "strand support").
-    groups : list[str]
-        Ordered display labels of the read groups this mode splits into. MIXED has 2
-        (``[neg, pos]``), CONSENSUS has 3 (single / one strand / duplex), NONE has 1.
-        Values match the categories written into the ``read_group`` column.
-    group_col : str
-        Name of the ordered-categorical column carrying the group label (``read_group``).
-
-    Notes
-    -----
-    MIXED mode carries a *dual* split — a legacy both-ends column (``is_mixed``) written to legacy
-    h5 keys and a display start column (``is_mixed_start``) written to ``*_mixed_start`` keys — which
-    a single ``read_group`` column cannot represent. Therefore MIXED (and NONE, for byte-identical
-    output) keep the original binary rendering via ``display_col``/``legacy_col``; only CONSENSUS
-    uses the N-group path driven by ``groups``/``group_col``.
-    """
-
-    mode: ReportMode
-    display_col: str
-    legacy_col: str
-    pos: str
-    neg: str
-    pos_lc: str
-    neg_lc: str
-    tag_axis: str
-    groups: list
-    group_col: str
-
-
-# Note: the split *columns* below keep the historical is_mixed* names for MIXED mode so that
-# all h5 keys and the deep-srsnv report path remain byte-for-byte backward compatible. Only the
-# display *labels* change per mode.
-MODE_SPLIT = {
-    ReportMode.MIXED: ReadSplit(
-        mode=ReportMode.MIXED,
-        display_col=IS_MIXED_START,
-        legacy_col=IS_MIXED,
-        pos="Mixed",
-        neg="Non-mixed",
-        pos_lc="mixed",
-        neg_lc="non-mixed",
-        tag_axis="ppmSeq tag",
-        groups=list(MIXED_GROUPS),
-        group_col=READ_GROUP,
-    ),
-    ReportMode.CONSENSUS: ReadSplit(
-        mode=ReportMode.CONSENSUS,
-        display_col=IS_CONSENSUS,
-        legacy_col=IS_CONSENSUS,
-        pos="Consensus",
-        neg="Non-consensus",
-        pos_lc="consensus",
-        neg_lc="non-consensus",
-        tag_axis="strand support",
-        groups=list(CONSENSUS_GROUPS),
-        group_col=READ_GROUP,
-    ),
-    ReportMode.NONE: ReadSplit(
-        mode=ReportMode.NONE,
-        display_col=IS_CONSENSUS,
-        legacy_col=IS_CONSENSUS,
-        pos="Mixed",
-        neg="Non-mixed",
-        pos_lc="mixed",
-        neg_lc="non-mixed",
-        tag_axis="ppmSeq tag",
-        groups=[NONE_GROUP_ALL],
-        group_col=READ_GROUP,
-    ),
-}
 EDIST = FeatureMapFields.EDIST.value
 SCORE = FeatureMapFields.BCSQ.value
 INDEX = FeatureMapFields.INDEX.value
@@ -394,7 +297,8 @@ def create_srsnv_report_html(
     out_basename,
     srsnv_metadata_file,
     simple_pipeline=None,
-    split_mode: str = ReportMode.MIXED.value,
+    split_mode: str = "mixed",
+    display_suffix: str = "mixed_start",
 ):
     if len(out_basename) > 0 and not out_basename.endswith("."):
         out_basename += "."
@@ -432,6 +336,7 @@ def create_srsnv_report_html(
         "logit_histogram": logit_histogram,
         "calibration_fn_with_hist": calibration_fn_with_hist,
         "split_mode": split_mode,
+        "display_suffix": display_suffix,
     }
 
     generate_report(
@@ -1661,23 +1566,25 @@ class SRSNVReport:
             logger.info(f"Adding {IS_FORWARD} column to data_df as negation of {REV}")
             self.data_df.loc[:, IS_FORWARD] = self.data_df[REV].astype(int) != 1
 
-        # Resolve the report split mode (mixed vs consensus vs none) and its labels.
-        # The mode may be provided by the caller (params["report_mode"], set by the CLI) or
-        # auto-detected from the columns present in the dataframe.
+        # Resolve the read-split "recipe" (scheme). The scheme may be provided by the caller
+        # (params["report_mode"], set by the CLI) or auto-detected from the dataframe columns.
         report_mode_param = self.params.get("report_mode")
-        self.report_mode = ReportMode(report_mode_param) if report_mode_param else detect_report_mode(self.data_df)
-        self.split = MODE_SPLIT[self.report_mode]
+        if report_mode_param:
+            self.scheme = resolve_scheme(mode=report_mode_param)
+        else:
+            self.scheme = resolve_scheme(self.data_df)
+        self.report_mode = self.scheme.mode  # kept for metadata / backward compat
 
         # Add the split column(s) if they don't exist yet (e.g. when SRSNVReport is constructed
         # directly, without going through prepare_report which already adds them).
-        if self.split.display_col not in self.data_df.columns:
-            logger.info(f"Adding split column(s) for report mode {self.report_mode.value} to data_df")
+        if READ_GROUP not in self.data_df.columns:
+            logger.info(f"Adding split column(s) for split scheme {self.scheme.mode.value} to data_df")
             adapter_version = self.params.get("adapter_version", None)
             categorical_features = [f["name"] for f in self.srsnv_metadata["features"] if f.get("type") == "c"]
-            self.data_df, self.report_mode = resolve_and_add_split_columns(
+            self.data_df, self.scheme = resolve_scheme_and_add_columns(
                 self.data_df, adapter_version=adapter_version, categorical_features_names=categorical_features
             )
-            self.split = MODE_SPLIT[self.report_mode]
+            self.report_mode = self.scheme.mode
 
         # add logits to data_df
         self.data_df[ML_LOGIT_TEST] = prob_to_logit(
@@ -1691,27 +1598,74 @@ class SRSNVReport:
         self.data_df["ML_prob_train"] = preds_train
         self.data_df["ML_logit_train"] = prob_to_logit(preds_train, max_value=self.max_qual)
 
-    def _group_labels(self):
-        """Ordered list of read-group display labels for the current mode."""
-        return list(self.split.groups)
+    # ──────────────────────── split-scheme helpers ────────────────────────
+    # These give every figure/table method a uniform, scheme-agnostic interface: iterate
+    # `self.scheme.variants`, get group masks / colors / h5 keys from the variant. No method
+    # switches on the scheme.
 
-    def _group_masks(self, data_df=None):
-        """Yield ``(label, boolean_mask)`` per read group, in order, for the given dataframe.
+    @property
+    def _display_variant(self):
+        return self.scheme.display_variant
 
-        Masks come from the ordered ``read_group`` categorical. Used by the N-group (consensus)
-        report paths so every method splits reads the same way. Defaults to ``self.data_df``.
-        """
+    @property
+    def tag_axis(self):
+        return self.scheme.tag_axis
+
+    def _display_groups(self):
+        """Ordered list of the display variant's group labels."""
+        return list(self._display_variant.groups)
+
+    def _group_masks(self, variant=None, data_df=None):
+        """Yield ``(label, boolean_mask)`` per group, in order, for a variant (default: display)."""
+        if variant is None:
+            variant = self._display_variant
         if data_df is None:
             data_df = self.data_df
-        col = data_df[self.split.group_col]
-        for label in self.split.groups:
-            yield label, (col == label).to_numpy()
+        yield from variant.group_masks(data_df).items()
 
-    def _group_palette(self):
-        """A stable {label: color} mapping sized to the number of groups."""
-        labels = self.split.groups
-        colors = sns.color_palette(n_colors=len(labels))
-        return dict(zip(labels, colors, strict=False))
+    def _variant_palette(self, variant=None):
+        """Stable ``{label: color}`` for a variant: its declared colors, else a seaborn palette."""
+        if variant is None:
+            variant = self._display_variant
+        if variant.colors:
+            return dict(variant.colors)
+        colors = sns.color_palette(n_colors=len(variant.groups))
+        return dict(zip(variant.groups, colors, strict=False))
+
+    def _is_legacy_variant(self, variant):
+        """True for the legacy (base-key) variant of a multi-variant scheme (mixed's both-ends)."""
+        return len(self.scheme.variants) > 1 and variant is self.scheme.legacy_variant
+
+    def _has_dual_split(self):
+        """True when the scheme keeps a distinct legacy + display table (ppmSeq mixed only).
+
+        Single-grouping schemes (consensus/none) render one per-group table; the dual-split path
+        additionally emits the historical 3-way (start / both-ends) run-info & quality rows.
+        """
+        return len(self.scheme.variants) > 1
+
+    def _variant_roc_groups(self, variant):
+        """Ordered ``[(name, mask), ...]`` and the ROC-table index for a variant.
+
+        Binary variants (``pos`` set) keep the historical ``[pos, neg]`` order and
+        ``["Total", "{pos} only", "{neg} only"]`` index; N-group variants list one row per group.
+        """
+        masks = variant.group_masks(self.data_df)
+        if variant.pos is not None:
+            groups = [(variant.pos, masks[variant.pos]), (variant.neg, masks[variant.neg])]
+            index = ["Total", f"{variant.pos} only", f"{variant.neg} only"]
+        else:
+            groups = list(masks.items())
+            index = ["Total", *[f"{label} only" for label in variant.groups]]
+        return groups, index
+
+    def _write_variant_table(self, base, variant, obj):
+        """Write ``obj`` to the variant's h5 key, and also to the bare ``base`` key when the scheme
+        has no explicit legacy (``suffix==''``) variant (so keys_to_convert / json conversion works).
+        """
+        obj.to_hdf(self.output_h5_filename, key=split_h5_key(base, variant), mode="a")
+        if variant.is_display and all(v.suffix != "" for v in self.scheme.variants):
+            obj.to_hdf(self.output_h5_filename, key=base, mode="a")
 
     def _save_plt(self, output_filename: str = None, fig=None, *, tight_layout=True, **kwargs):
         if output_filename is not None:
@@ -1912,12 +1866,8 @@ class SRSNVReport:
         self.base_recall = base_recall
         self.base_fq = base_fq
 
-        # Legacy conditions using IS_MIXED (both ends) and IS_MIXED_START separately
-        conditions_legacy = {"all reads": None}
-        if IS_MIXED in self.data_df.columns and self.data_df[IS_MIXED].any():
-            conditions_legacy["mixed both ends"] = self.data_df[IS_MIXED]
-        if IS_MIXED_START in self.data_df.columns and self.data_df[IS_MIXED_START].any():
-            conditions_legacy["mixed start"] = self.data_df[IS_MIXED_START]
+        # Legacy variant conditions (mixed: the historical both-ends + start conditions).
+        conditions_legacy = self._fq_conditions(self.scheme.legacy_variant)
         pr_df_legacy = pr_df.copy()
         for label, condition in conditions_legacy.items():
             recall, fq = self._calc_threshold_based_fq_recall(pr_df_legacy["MQUAL"].to_numpy(), condition=condition)
@@ -1925,15 +1875,8 @@ class SRSNVReport:
             pr_df_legacy[f"FQ_{label}"] = fq
         pr_df_legacy.to_hdf(self.output_h5_filename, key="FQ_recall_LoD", mode="a")
 
-        # New conditions: one curve per read group (consensus) or the binary positive group.
-        conditions = {"all reads": None}
-        if self.split.mode is ReportMode.CONSENSUS:
-            for label, mask in self._group_masks():
-                if mask.any():
-                    conditions[label] = pd.Series(mask, index=self.data_df.index)
-        elif self.split.display_col in self.data_df.columns:
-            if self.data_df[self.split.display_col].any():
-                conditions[self.split.pos_lc] = self.data_df[self.split.display_col]
+        # Display variant conditions (one curve per read group, or the binary positive group).
+        conditions = self._fq_conditions(self._display_variant)
 
         if only_calculate:
             for label, condition in conditions.items():
@@ -1954,7 +1897,21 @@ class SRSNVReport:
             ax.grid(visible=True)
             self._save_plt(output_filename, fig)
         self.pr_df = pr_df
-        self.pr_df.to_hdf(self.output_h5_filename, key="FQ_recall_LoD_mixed_start", mode="a")
+        self.pr_df.to_hdf(self.output_h5_filename, key=split_h5_key("FQ_recall_LoD", self._display_variant), mode="a")
+
+    def _fq_conditions(self, variant):
+        """Ordered ``{label: mask|None}`` FQ-recall conditions for a variant.
+
+        Uses the variant's ``fq_conditions_fn`` when set (mixed's historical both-ends/start
+        conditions); otherwise ``{"all reads": None}`` plus one condition per non-empty group.
+        """
+        if variant.fq_conditions_fn is not None:
+            return variant.fq_conditions_fn(self.data_df)
+        conditions = {"all reads": None}
+        for label, mask in variant.group_masks(self.data_df).items():
+            if mask.any():
+                conditions[label] = pd.Series(mask, index=self.data_df.index)
+        return conditions
 
     def get_dataset_sizes(self):
         """Calculate dataset sizes for different folds and overall."""
@@ -2060,23 +2017,24 @@ class SRSNVReport:
                 self._safe_roc_auc(sub[LABEL], sub[ML_PROB_1_TEST], name=f"run info {label}"), max_value=self.max_qual
             )
 
+        groups = list(self._display_variant.groups)
         performance_info = {("Median SNVQ", "All reads"): signif(median_qual, SIG_DIGITS)}
-        for label in self.split.groups:
+        for label in groups:
             performance_info[("Median SNVQ", label)] = signif(grp_median[label], SIG_DIGITS)
         for snvq in snvq_thresholds:
             performance_info[(f"Recall at SNVQ={snvq}", "All reads")] = signif(
                 self._get_recall_at_snvq(snvq=snvq) / recall_at_0, SIG_DIGITS
             )
-            for label in self.split.groups:
+            for label in groups:
                 denom = grp_recall0[label]
                 performance_info[(f"Recall at SNVQ={snvq}", label)] = signif(
                     grp_recall[label][snvq] / denom if denom else np.nan, SIG_DIGITS
                 )
         performance_info[("Pre-filter Recall", "All reads")] = signif(recall_at_0, SIG_DIGITS)
-        for label in self.split.groups:
+        for label in groups:
             performance_info[("Pre-filter Recall", label)] = signif(grp_recall0[label], SIG_DIGITS)
         performance_info[("ROC AUC (Phred)", "All reads")] = signif(roc_auc_phred, SIG_DIGITS)
-        for label in self.split.groups:
+        for label in groups:
             performance_info[("ROC AUC (Phred)", label)] = signif(grp_roc[label], SIG_DIGITS)
 
         training_info = {("Number of CV folds", ""): self.params["num_CV_folds"]}
@@ -2084,11 +2042,10 @@ class SRSNVReport:
         run_info_table = pd.Series({**general_info, **version_info}, name="")
         run_quality_summary_table = pd.Series({**performance_info}, name="")
         training_info_table = pd.Series({**training_info, **dataset_sizes}, name="")
-        # No legacy/both-ends distinction in consensus: write identical table to both keys.
-        run_info_table.to_hdf(self.output_h5_filename, key="run_info_table", mode="a")
-        run_info_table.to_hdf(self.output_h5_filename, key="run_info_table_mixed_start", mode="a")
-        run_quality_summary_table.to_hdf(self.output_h5_filename, key="run_quality_summary_table", mode="a")
-        run_quality_summary_table.to_hdf(self.output_h5_filename, key="run_quality_summary_table_mixed_start", mode="a")
+        # Single display grouping: write to the display variant's suffixed key + bare base key.
+        variant = self._display_variant
+        self._write_variant_table("run_info_table", variant, run_info_table)
+        self._write_variant_table("run_quality_summary_table", variant, run_quality_summary_table)
         training_info_table.to_hdf(self.output_h5_filename, key="training_info_table", mode="a")
 
     @exception_handler
@@ -2096,15 +2053,14 @@ class SRSNVReport:
         """Calculate run_info_table, a table with general run information."""
         # Generate Run Info table
         logger.info("Generating Run Info table")
-        if self.split.mode is ReportMode.CONSENSUS:
+        # Schemes with a single display grouping use the per-group path; ppmSeq (mixed) keeps its
+        # dual legacy(both-ends)/display(start) tables with the historical 3-way performance rows.
+        if not self._has_dual_split():
             self._calc_run_info_table_by_group()
             return
-        # "positive-group" label for this mode (Mixed / Consensus). The report keeps two tables:
-        # a display table (mode's display_col) and a legacy backward-compatible one (legacy_col);
-        # in non-mixed modes both columns are identical.
-        pos = self.split.pos
-        display_col = self.split.display_col
-        legacy_col = self.split.legacy_col
+        pos = self._display_variant.pos
+        display_col = IS_MIXED_START
+        legacy_col = IS_MIXED
         n_tp = self.data_df[LABEL].sum()
         n_fp = (~self.data_df[LABEL]).sum()
         # Legacy positive-group percent using the legacy split column (IS_MIXED both ends for ppmSeq)
@@ -2426,31 +2382,13 @@ class SRSNVReport:
                 ]
             return result
 
-        if self.split.mode is ReportMode.CONSENSUS:
-            # N-group split: one row per read group, in the group order.
-            groups = list(self._group_masks())
-            auc_index = ["Total", *[f"{label} only" for label in self.split.groups]]
-            # Consensus has no legacy/both-ends distinction; write the same table to both keys.
-            auc_dict = _calc_roc_auc_dict(groups)
-            pd.DataFrame(auc_dict, index=auc_index).T.to_hdf(self.output_h5_filename, key="roc_auc_table", mode="a")
-            pd.DataFrame(auc_dict, index=auc_index).T.to_hdf(
-                self.output_h5_filename, key="roc_auc_table_mixed_start", mode="a"
-            )
-        else:
-            # MIXED / NONE binary split: keep the historical pos/neg row order and labels.
-            auc_index = ["Total", f"{self.split.pos} only", f"{self.split.neg} only"]
-            legacy_mask = self.data_df[self.split.legacy_col].to_numpy()
-            legacy_groups = [(self.split.pos, legacy_mask), (self.split.neg, ~legacy_mask)]
-            auc_table_dict_legacy = _calc_roc_auc_dict(legacy_groups, label_suffix=" legacy")
-            pd.DataFrame(auc_table_dict_legacy, index=auc_index).T.to_hdf(
-                self.output_h5_filename, key="roc_auc_table", mode="a"
-            )
-            display_mask = self.data_df[self.split.display_col].to_numpy()
-            display_groups = [(self.split.pos, display_mask), (self.split.neg, ~display_mask)]
-            auc_table_dict = _calc_roc_auc_dict(display_groups)
-            pd.DataFrame(auc_table_dict, index=auc_index).T.to_hdf(
-                self.output_h5_filename, key="roc_auc_table_mixed_start", mode="a"
-            )
+        # One table per variant. Binary variants (pos/neg set) keep the historical
+        # "{pos} only"/"{neg} only" row order; N-group variants list one row per group.
+        for variant in self.scheme.variants:
+            groups, auc_index = self._variant_roc_groups(variant)
+            label_suffix = " legacy" if self._is_legacy_variant(variant) else ""
+            auc_dict = _calc_roc_auc_dict(groups, label_suffix=label_suffix)
+            self._write_variant_table("roc_auc_table", variant, pd.DataFrame(auc_dict, index=auc_index).T)
 
     @exception_handler
     def calc_run_quality_table(
@@ -2492,9 +2430,11 @@ class SRSNVReport:
             "_FP": (~self.data_df[LABEL]).to_numpy(),
         }
 
-        if self.split.mode is ReportMode.CONSENSUS:
-            # N-group split: one TP column per read group. The internal join keys use the group
-            # label directly (kept literal for col_order); display uses the same labels.
+        if not self._has_dual_split():
+            # Single-grouping scheme (consensus / none): one TP column per read group. The internal
+            # join keys use the group label directly (kept literal for col_order); display uses the
+            # same labels.
+            display_variant = self._display_variant
             tp = self.data_df[LABEL].to_numpy()
             conds = dict(base_conds)
             for label, mask in self._group_masks():
@@ -2504,20 +2444,21 @@ class SRSNVReport:
             for qcol in (QUAL, "ML_qual"):
                 display_columns.append((qcol, "FP", ""))
                 display_columns.append((qcol, "TP", "overall"))
-                for label in self.split.groups:
+                for label in display_variant.groups:
                     display_columns.append((qcol, "TP", label))
             col_order = [
                 "_".join(cols) if cols[2] not in ["", "overall"] else "_".join(cols[:2]) for cols in display_columns
             ]
             run_quality_table_display = run_quality_table.loc[:, col_order].copy()
             run_quality_table_display.columns = pd.MultiIndex.from_tuples(display_columns)
-            # Consensus has no legacy/both-ends distinction: same table to both keys.
-            run_quality_table.T.to_hdf(self.output_h5_filename, key="run_quality_table", mode="a")
-            run_quality_table.T.to_hdf(self.output_h5_filename, key="run_quality_table_mixed_start", mode="a")
+            # No legacy/both-ends distinction: write the same table to the display key + bare base.
+            self._write_variant_table("run_quality_table", display_variant, run_quality_table.T)
             run_quality_table_display.to_hdf(self.output_h5_filename, key="run_quality_table_display", mode="a")
             return
 
-        # MIXED / NONE binary split — unchanged historical output.
+        # Dual-split scheme (ppmSeq mixed) — unchanged historical output.
+        legacy_variant = self.scheme.legacy_variant
+        display_variant = self._display_variant
         if display_columns is None:
             display_columns = [
                 (QUAL, "FP", ""),
@@ -2530,21 +2471,24 @@ class SRSNVReport:
                 ("ML_qual", "TP", "non-mixed"),
             ]
         # Note: the "_TP_mixed"/"_TP_non-mixed" keys below are internal join keys (matched by
-        # col_order); they stay literal regardless of mode. Only the displayed MultiIndex labels
-        # are swapped to the mode's split labels further down.
-        # Legacy table using the legacy split column (IS_MIXED both ends for ppmSeq)
+        # col_order); they stay literal regardless of scheme. Only the displayed MultiIndex labels
+        # are swapped to the variant's split labels further down.
+        label = self.data_df[LABEL].to_numpy()
+        legacy_masks = legacy_variant.group_masks(self.data_df)
+        display_masks = display_variant.group_masks(self.data_df)
+        # Legacy table using the legacy variant's positive group (IS_MIXED both ends for ppmSeq)
         conds_dict_legacy = {
             **base_conds,
-            "_TP_mixed": np.logical_and(self.data_df[self.split.legacy_col], self.data_df[LABEL]),
-            "_TP_non-mixed": np.logical_and(~self.data_df[self.split.legacy_col], self.data_df[LABEL]),
+            "_TP_mixed": legacy_masks[legacy_variant.pos] & label,
+            "_TP_non-mixed": legacy_masks[legacy_variant.neg] & label,
         }
         _quality_table(conds_dict_legacy).T.to_hdf(self.output_h5_filename, key="run_quality_table", mode="a")
 
-        # New table using the display split column for display and new h5 key
+        # New table using the display variant's positive group for display and new h5 key
         conds_dict = {
             **base_conds,
-            "_TP_mixed": np.logical_and(self.data_df[self.split.display_col], self.data_df[LABEL]),
-            "_TP_non-mixed": np.logical_and(~self.data_df[self.split.display_col], self.data_df[LABEL]),
+            "_TP_mixed": display_masks[display_variant.pos] & label,
+            "_TP_non-mixed": display_masks[display_variant.neg] & label,
         }
         run_quality_table = _quality_table(conds_dict)
 
@@ -2552,9 +2496,9 @@ class SRSNVReport:
             "_".join(cols) if cols[2] not in ["", "overall"] else "_".join(cols[:2]) for cols in display_columns
         ]
         run_quality_table_display = run_quality_table.loc[:, col_order].copy()
-        # Swap the literal "mixed"/"non-mixed" display labels for this mode's split labels
+        # Swap the literal "mixed"/"non-mixed" display labels for this variant's split labels
         # (the join keys used for col_order above stay literal).
-        label_remap = {"mixed": self.split.pos_lc, "non-mixed": self.split.neg_lc}
+        label_remap = {"mixed": display_variant.pos_lc, "non-mixed": display_variant.neg_lc}
         display_columns_relabeled = [(a, b, label_remap.get(c, c)) for a, b, c in display_columns]
         run_quality_table_display.columns = pd.MultiIndex.from_tuples(display_columns_relabeled)
         # Log in hdf5
@@ -2587,28 +2531,31 @@ class SRSNVReport:
         self._save_plt(output_filename, fig=fig)
 
     def _quality_per_split_group(self, output_filename: str = None):
-        """Consensus/none mode: median SNVQ and % of reads per read group (N rows).
+        """Generic per-read-group median SNVQ + % of reads table (used when a scheme has no
+        ppmSeq start x end cross-tab hook).
 
-        Mirrors the mixed-mode 1D table shape and h5 keys, but groups TP reads by the ordered
-        ``read_group`` column (e.g. single read / one strand / duplex) instead of the ppmSeq tag.
+        Groups TP reads by the ordered ``read_group`` categorical (e.g. single read / one strand /
+        duplex) and writes the summary to the display variant's suffixed key plus the bare
+        ``ppmseq_category_quality_table`` / ``ppmseq_category_quantity_table`` keys (so
+        keys_to_convert / h5->json conversion finds them).
         """
+        variant = self._display_variant
         data_df_tp = self.data_df[self.data_df[LABEL]].copy()
         total_count = len(data_df_tp)
         # Group by the ordered read_group categorical; reindex to keep group order and include
         # any empty groups as 0 rows.
-        grouped = data_df_tp.groupby(self.split.group_col, dropna=False, observed=False)[QUAL]
-        median_qual = grouped.median().reindex(self.split.groups)
-        pct_reads = (grouped.count().reindex(self.split.groups).fillna(0) / total_count) * 100
+        grouped = data_df_tp.groupby(READ_GROUP, dropna=False, observed=False)[QUAL]
+        median_qual = grouped.median().reindex(list(variant.groups))
+        pct_reads = (grouped.count().reindex(list(variant.groups)).fillna(0) / total_count) * 100
         summary_df = pd.DataFrame({"Median SNVQ": median_qual, "% of reads": pct_reads})
         summary_df.index = summary_df.index.astype(str)
-        summary_df.index.name = self.split.tag_axis
+        summary_df.index.name = self.tag_axis
         summary_df["Median SNVQ"] = summary_df["Median SNVQ"].apply(lambda x: signif(x, 3))
         summary_df["% of reads"] = summary_df["% of reads"].apply(lambda x: signif(x, 2))
 
-        # New simplified table -> same key/PNG as the mixed-mode display table.
-        summary_df.to_hdf(self.output_h5_filename, key="ppmseq_category_quality_table_mixed_start", mode="a")
-        # Write the same summary to the legacy 2D keys so downstream keys_to_convert / h5->json
-        # conversion finds them (no start x end cross-tab exists in this mode).
+        # Display table under the variant's suffixed key.
+        summary_df.to_hdf(self.output_h5_filename, key=split_h5_key("ppmseq_category_quality_table", variant), mode="a")
+        # Bare base keys so downstream keys_to_convert / h5->json conversion finds them.
         summary_df["Median SNVQ"].to_hdf(self.output_h5_filename, key="ppmseq_category_quality_table", mode="a")
         summary_df["% of reads"].to_hdf(self.output_h5_filename, key="ppmseq_category_quantity_table", mode="a")
 
@@ -2618,11 +2565,11 @@ class SRSNVReport:
     def quality_per_ppmseq_tags(self, output_filename: str = None):  # noqa: C901, PLR0915
         """Generate table of median quality and data quantity per read-split group.
 
-        In MIXED mode this is the per-ppmSeq-tag table (start tag, and legacy start x end
-        cross-tab). In CONSENSUS/NONE mode there is no ppmSeq tag, so it falls back to a per
-        split-group (e.g. Consensus / Non-consensus) summary with the same shape and h5 keys.
+        Schemes that provide a start x end ppmSeq cross-tab (``scheme.ppmseq_crosstab``) render the
+        legacy 2D tables plus the 1D start-tag display table. Other schemes fall back to a generic
+        per-read-group summary with the same h5 keys.
         """
-        if self.split.mode is not ReportMode.MIXED:
+        if not self.scheme.ppmseq_crosstab:
             self._quality_per_split_group(output_filename=output_filename)
             return
 
@@ -2690,7 +2637,7 @@ class SRSNVReport:
             pct_reads = pct_reads.drop(index=PpmseqCategories.END_UNREACHED.value)
         summary_df = pd.DataFrame({"Median SNVQ": median_qual, "% of reads": pct_reads})
         summary_df.index = summary_df.index.astype(str)
-        summary_df.index.name = self.split.tag_axis
+        summary_df.index.name = self.tag_axis
         summary_df["Median SNVQ"] = summary_df["Median SNVQ"].apply(lambda x: signif(x, 3))
         summary_df["% of reads"] = summary_df["% of reads"].apply(lambda x: signif(x, 2))
 
@@ -2883,16 +2830,18 @@ class SRSNVReport:
     ):
         logger.info("Calculating trinuc context statistics")
 
-        # In consensus (N-group) mode, split the quality panel by the ordered read_group column;
-        # otherwise keep the historical ppmSeq is_mixed split (byte-identical output).
-        if self.split.mode is ReportMode.CONSENSUS:
-            split_col = self.split.group_col
-            palette = self._group_palette()
+        # The display variant declares how to split the trinuc quality panel. Mixed uses the raw
+        # is_mixed bool (trinuc_split_col set, group_specs=None -> the plotter auto-detects, keeping
+        # trinuc_stats byte-identical). N-group schemes leave trinuc_split_col=None: we materialize
+        # the read_group column and pass explicit group_specs.
+        variant = self._display_variant
+        split_col = variant.trinuc_split_col
+        group_specs = variant.trinuc_group_specs
+        if split_col is None:
+            split_col = READ_GROUP
+            palette = self._variant_palette(variant)
             # calc_trinuc_stats names group columns "mixed=<group value>"; match that prefix.
-            group_specs = [(f"mixed={label}", label, palette[label]) for label in self.split.groups]
-        else:
-            split_col = IS_MIXED
-            group_specs = None
+            group_specs = [(f"mixed={label}", label, palette[label]) for label in variant.groups]
 
         # Call the new plotting function
         fig, stats_df = calc_and_plot_trinuc_hist(
@@ -2919,13 +2868,11 @@ class SRSNVReport:
     def _feature_group_series(self):
         """Ordered list of (group_label, color) for the per-feature quality curves.
 
-        For MIXED (2 groups) preserve the historical order/colors: Non-mixed (red) then
-        Mixed (green). For N groups use the group palette in group order.
+        Colors come from the display variant (mixed declares Non-mixed=tab:red, Mixed=tab:green;
+        N-group schemes fall back to a seaborn palette), in the variant's group order.
         """
-        if self.split.mode is ReportMode.MIXED:
-            return [(self.split.neg, "tab:red"), (self.split.pos, "tab:green")]
-        palette = self._group_palette()
-        return [(label, palette[label]) for label in self.split.groups]
+        palette = self._variant_palette()
+        return [(label, palette[label]) for label in self._display_variant.groups]
 
     def _plot_feature_qual_stats(
         self, stats_for_plot, ax, c_true="tab:green", c_false="tab:red", min_count=100, fb_kws=None, step_kws=None
@@ -2936,7 +2883,7 @@ class SRSNVReport:
         col = stats_for_plot.columns[0]
         polys, lines = [], []
         for label, color in self._feature_group_series():
-            group_mask = stats_for_plot[self.split.group_col].astype(str) == str(label)
+            group_mask = stats_for_plot[READ_GROUP].astype(str) == str(label)
             qual_df = stats_for_plot.loc[group_mask & stats_for_plot[LABEL] & (stats_for_plot["count"] > min_count), :]
             fb_kws["color"] = color
             step_kws["color"] = color
@@ -2966,7 +2913,7 @@ class SRSNVReport:
             q2 [float]: upper quantile for interquartile range
             bin_edges [list]: bin edges for discretization. If it is None, use discrete (integer) values
         """
-        required_cols = [col, LABEL, self.split.group_col, QUAL]
+        required_cols = [col, LABEL, READ_GROUP, QUAL]
 
         # If binning is needed, create binned column in a view/subset
         if bin_edges is not None:
@@ -2977,7 +2924,7 @@ class SRSNVReport:
             # Use a view of the original dataframe (no copy needed)
             subset = self.data_df[required_cols]
 
-        stats_for_plot = subset.groupby([col, LABEL, self.split.group_col], observed=True).agg(
+        stats_for_plot = subset.groupby([col, LABEL, READ_GROUP], observed=True).agg(
             median_qual=(QUAL, "median"),
             quantile1_qual=(QUAL, lambda x: x.quantile(q1)),
             quantile3_qual=(QUAL, lambda x: x.quantile(q2)),
@@ -3117,34 +3064,41 @@ class SRSNVReport:
             axes = [ax]
 
         plot_df = self.data_df[self.data_df[LABEL]].copy()
-        hue_col = self.split.tag_axis
+        hue_col = self.tag_axis
+        legacy_variant = self.scheme.legacy_variant
+        display_variant = self._display_variant
 
-        # Legacy histogram for backward-compatible h5 storage. In MIXED mode this is a 3-category
-        # split (non-mixed / mixed exactly one end / mixed both ends); other modes have no
-        # start/end distinction, so it collapses to the same 2-category split as the display plot.
+        # Legacy histogram for backward-compatible h5 storage. ppmSeq (mixed) uses a 3-category
+        # split (non-mixed / exactly one end / both ends); other schemes group by the legacy
+        # variant's read groups.
         plot_df_legacy = plot_df.copy()
-        if self.split.mode is ReportMode.MIXED:
-            legacy_one_end = f"{self.split.pos_lc}, exactly one end"
-            legacy_both_ends = f"{self.split.pos_lc}, both ends"
-            plot_df_legacy[hue_col] = self.split.neg_lc
+        neg_lc, pos_lc = display_variant.neg_lc, display_variant.pos_lc
+        if self.scheme.ppmseq_legacy_hist:
+            legacy_one_end = f"{pos_lc}, exactly one end"
+            legacy_both_ends = f"{pos_lc}, both ends"
+            plot_df_legacy[hue_col] = neg_lc
             one_end_mask = plot_df_legacy[IS_MIXED_START] ^ plot_df_legacy[IS_MIXED_END]
             both_ends_mask = plot_df_legacy[IS_MIXED_START] & plot_df_legacy[IS_MIXED_END]
             plot_df_legacy.loc[one_end_mask, hue_col] = legacy_one_end
             plot_df_legacy.loc[both_ends_mask, hue_col] = legacy_both_ends
-            legacy_hue_order = [self.split.neg_lc, legacy_one_end, legacy_both_ends]
-            legacy_palette = {self.split.neg_lc: "red", legacy_one_end: "blue", legacy_both_ends: "green"}
-            display_hue_order = [self.split.neg_lc, self.split.pos_lc]
-            display_palette = {self.split.neg_lc: "red", self.split.pos_lc: "blue"}
-            plot_df[hue_col] = self.split.neg_lc
-            plot_df.loc[plot_df[self.split.display_col], hue_col] = self.split.pos_lc
+            legacy_hue_order = [neg_lc, legacy_one_end, legacy_both_ends]
+            legacy_palette = {neg_lc: "red", legacy_one_end: "blue", legacy_both_ends: "green"}
+            display_hue_order = [neg_lc, pos_lc]
+            display_palette = {neg_lc: "red", pos_lc: "blue"}
+            # Map the display groups to their lowercase labels (these become the h5 column names,
+            # so they must stay the literal "non-mixed"/"mixed" strings for byte-identical output).
+            lc_map = {display_variant.neg: neg_lc, display_variant.pos: pos_lc}
+            plot_df[hue_col] = [lc_map[g] for g in display_variant.group_fn(plot_df)]
         else:
-            # CONSENSUS / NONE: N groups from read_group; no legacy start/end distinction, so the
-            # legacy plot equals the display plot.
-            plot_df_legacy[hue_col] = plot_df_legacy[self.split.group_col].astype(str)
-            plot_df[hue_col] = plot_df[self.split.group_col].astype(str)
-            legacy_hue_order = display_hue_order = list(self.split.groups)
-            palette = self._group_palette()
-            legacy_palette = display_palette = {str(k): v for k, v in palette.items()}
+            # N-group schemes: legacy plot equals the display plot (no start/end distinction).
+            plot_df_legacy[hue_col] = np.asarray(legacy_variant.group_fn(plot_df_legacy)).astype(str)
+            plot_df[hue_col] = np.asarray(display_variant.group_fn(plot_df)).astype(str)
+            legacy_hue_order = list(legacy_variant.groups)
+            display_hue_order = list(display_variant.groups)
+            legacy_palette = {str(k): v for k, v in self._variant_palette(legacy_variant).items()}
+            display_palette = {str(k): v for k, v in self._variant_palette(display_variant).items()}
+        legacy_col_name = legacy_variant.hist_col_name or self.tag_axis
+        display_col_name = display_variant.hist_col_name or self.tag_axis
         fig_legacy, ax_legacy = plt.subplots(figsize=(12, 7))
         g_legacy = sns.histplot(
             data=plot_df_legacy,
@@ -3158,7 +3112,7 @@ class SRSNVReport:
             ax=ax_legacy,
             palette=legacy_palette,
         )
-        hist_data_df_legacy = self._get_histogram_data(g_legacy, col_name=IS_MIXED)
+        hist_data_df_legacy = self._get_histogram_data(g_legacy, col_name=legacy_col_name)
         hist_data_df_legacy.to_hdf(self.output_h5_filename, key="quality_histogram", mode="a")
         plt.close(fig_legacy)
 
@@ -3184,8 +3138,8 @@ class SRSNVReport:
         ax.set_ylabel("Density")  # , fontsize=label_fontsize)
         ax.grid(visible=True)
         xlims = [0.99 * plot_df[QUAL].min(), plot_df[QUAL].max() * 1.01]
-        hist_data_df = self._get_histogram_data(g, col_name=IS_MIXED_START)
-        hist_data_df.to_hdf(self.output_h5_filename, key="quality_histogram_mixed_start", mode="a")
+        hist_data_df = self._get_histogram_data(g, col_name=display_col_name)
+        hist_data_df.to_hdf(self.output_h5_filename, key=split_h5_key("quality_histogram", display_variant), mode="a")
         if plot_interpolating_function:
             xs = np.arange(self.eps, np.floor(self.data_df[ML_QUAL_1_TEST].max()), 0.1)
             ax = axes[1]
@@ -3215,48 +3169,45 @@ class SRSNVReport:
         fig.tight_layout()
         self._save_plt(output_filename=output_filename, fig=fig)
 
-    def _plot_logit_histogram(self, plot_df, ax, alpha=0.4, mixed_col=None):
-        """Plot a single histogram of logit values, by: FP, TP positive-group, TP negative-group.
+    def _logit_extra_cols(self):
+        """Columns (besides read_group) that the active scheme's variant group_fns read, so the
+        logit-histogram slice includes them. Only columns present in data_df are returned.
 
-        Binary (MIXED/NONE) path: ``mixed_col`` selects which column defines a positive-group
-        ("mixed") read. Defaults to the mode's display split column; pass the legacy split column
-        for the legacy both-ends definition in ppmSeq mode.
+        Covers every scheme's raw group inputs (mixed: is_mixed/_start; consensus: fs/rs); a new
+        scheme should add its raw group columns here so its group_fn can run on the sliced frame."""
+        candidates = [IS_MIXED, IS_MIXED_START, FS, RS]
+        return [c for c in candidates if c in self.data_df.columns]
+
+    def _plot_logit_variant(self, plot_df, ax, variant, alpha=0.4):
+        """Plot one logit histogram for a variant: FP + one TP series per group.
+
+        Binary variants (``variant.pos`` set) reproduce the historical FP / TP {pos_lc} / TP {neg_lc}
+        series and palette (FP blue, neg red, pos green). N-group variants get one TP series per
+        group with a seaborn palette.
         """
-        if mixed_col is None:
-            mixed_col = self.split.display_col
-        tp_pos = f"TP {self.split.pos_lc}"
-        tp_neg = f"TP {self.split.neg_lc}"
-        plot_df[""] = plot_df[LABEL].astype(str)
-        plot_df.loc[~plot_df[LABEL], ""] = "FP"
-        plot_df.loc[plot_df[LABEL] & plot_df[mixed_col], ""] = tp_pos
-        plot_df.loc[plot_df[LABEL] & ~plot_df[mixed_col], ""] = tp_neg
+        grp = np.asarray(variant.group_fn(plot_df))
+        if variant.pos is not None:
+            tp_pos = f"TP {variant.pos_lc}"
+            tp_neg = f"TP {variant.neg_lc}"
+            plot_df[""] = plot_df[LABEL].astype(str)
+            plot_df.loc[~plot_df[LABEL], ""] = "FP"
+            plot_df.loc[plot_df[LABEL] & (grp == variant.pos), ""] = tp_pos
+            plot_df.loc[plot_df[LABEL] & (grp == variant.neg), ""] = tp_neg
+            hue_order = ["FP", tp_pos, tp_neg]
+            palette = {"FP": "tab:blue", tp_neg: "red", tp_pos: "green"}
+        else:
+            tp_labels = [f"TP {label}" for label in variant.groups]
+            plot_df[""] = "FP"
+            for label in variant.groups:
+                plot_df.loc[plot_df[LABEL] & (grp == label), ""] = f"TP {label}"
+            group_colors = list(sns.color_palette(n_colors=len(variant.groups)))
+            palette = {"FP": "tab:blue", **dict(zip(tp_labels, group_colors, strict=False))}
+            hue_order = ["FP", *tp_labels]
         sns.histplot(
             data=plot_df,
             x=ML_LOGIT_TEST,
             hue="",
-            hue_order=["FP", tp_pos, tp_neg],
-            palette={"FP": "tab:blue", tp_neg: "red", tp_pos: "green"},
-            element="step",
-            stat="density",
-            common_norm=False,
-            alpha=alpha,
-            ax=ax,
-        )
-
-    def _plot_logit_histogram_by_group(self, plot_df, ax, alpha=0.4):
-        """N-group logit histogram (consensus/none): FP + one TP series per read group."""
-        tp_labels = [f"TP {label}" for label in self.split.groups]
-        plot_df[""] = "FP"
-        grp = plot_df[self.split.group_col].astype(str)
-        for label in self.split.groups:
-            plot_df.loc[plot_df[LABEL] & (grp == label), ""] = f"TP {label}"
-        group_colors = list(sns.color_palette(n_colors=len(self.split.groups)))
-        palette = {"FP": "tab:blue", **dict(zip(tp_labels, group_colors, strict=False))}
-        sns.histplot(
-            data=plot_df,
-            x=ML_LOGIT_TEST,
-            hue="",
-            hue_order=["FP", *tp_labels],
+            hue_order=hue_order,
             palette=palette,
             element="step",
             stat="density",
@@ -3267,48 +3218,36 @@ class SRSNVReport:
 
     @exception_handler
     def plot_logit_histograms(self, *, plot_by_fold: bool = True, output_filename: str = None):
-        """Plot a histogram of logit values, by: FP, TP positive-group, TP negative-group.
+        """Plot a histogram of logit values, by: FP + one TP series per group.
         If plot_by_fold is True, overlay histograms for each fold.
         """
         # label_fontsize = 12
         # ticklabelsfontsize = 12
         logger.info("Plotting logit histogram")
 
-        is_consensus_mode = self.split.mode is ReportMode.CONSENSUS
-        if is_consensus_mode:
-            plot_df_all = self.data_df[[ML_LOGIT_TEST, LABEL, self.split.group_col, FOLD_ID]].copy()
-        else:
-            split_cols = list(dict.fromkeys([self.split.display_col, self.split.legacy_col]))
-            plot_df_all = self.data_df[[ML_LOGIT_TEST, LABEL, *split_cols, FOLD_ID]].copy()
+        plot_df_all = self.data_df[[ML_LOGIT_TEST, LABEL, READ_GROUP, FOLD_ID, *self._logit_extra_cols()]].copy()
+        legacy_variant = self.scheme.legacy_variant
+        display_variant = self._display_variant
 
-        def _plot_one(df, ax, alpha=0.4, *, use_display):
-            """use_display selects display vs legacy binary column (ignored in consensus mode)."""
-            if is_consensus_mode:
-                self._plot_logit_histogram_by_group(df, ax, alpha=alpha)
-            else:
-                col = self.split.display_col if use_display else self.split.legacy_col
-                self._plot_logit_histogram(df, ax, alpha=alpha, mixed_col=col)
-
-        # Legacy histogram data for backward-compatible h5 storage (consensus: same as display)
+        # Legacy histogram (legacy variant) for backward-compatible h5 storage.
         fig_legacy, ax_legacy = plt.subplots(figsize=(12, 7))
-        _plot_one(plot_df_all.copy(), ax_legacy, use_display=False)
+        self._plot_logit_variant(plot_df_all.copy(), ax_legacy, legacy_variant)
         hist_data_df_legacy = self._get_histogram_data(ax_legacy, col_name="")
         hist_data_df_legacy.to_hdf(self.output_h5_filename, key="logit_histogram", mode="a")
         plt.close(fig_legacy)
 
-        # New histogram (display groups) for display and new h5 key
+        # New histogram (display variant) for display and new h5 key
         fig, ax = plt.subplots(figsize=(12, 7))
-        plot_df = plot_df_all.copy()
-        _plot_one(plot_df, ax, use_display=True)
+        self._plot_logit_variant(plot_df_all.copy(), ax, display_variant)
         hist_data_df = self._get_histogram_data(ax, col_name="")
-        hist_data_df.to_hdf(self.output_h5_filename, key="logit_histogram_mixed_start", mode="a")
+        hist_data_df.to_hdf(self.output_h5_filename, key=split_h5_key("logit_histogram", display_variant), mode="a")
 
         if plot_by_fold:
             plt.close(fig)
             fig, ax = plt.subplots(figsize=(12, 7))
             plot_dfs = [plot_df_all[plot_df_all[FOLD_ID] == k] for k in range(len(self.models))]
             for plot_df in plot_dfs:
-                _plot_one(plot_df.copy(), ax, alpha=0.15, use_display=True)
+                self._plot_logit_variant(plot_df.copy(), ax, display_variant, alpha=0.15)
 
         sns.move_legend(
             ax,
