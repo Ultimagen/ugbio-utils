@@ -241,3 +241,466 @@ def test_calc_tumor_fraction_denominator_ratio_rows_metadata(tmpdir, resources_d
     assert np.isclose(filt_ratio, 0.7012110035188417)
     assert np.isclose(read_filter_non_filt, 0.658410138248848)
     assert np.isclose(denom_ratio, 0.461684433768454)
+
+
+def test_read_and_filter_features_parquet_noise_filter(tmp_path):
+    """
+    Verify the noisy loci filter flags/removes the correct loci.
+
+    Scenario (read_filter_query = "filt>0 and snvq>60 and mapq>=60"):
+    - Locus A (pos=100): 1 HQ + 2 LQ reads  -> lq_fraction=2/3≈0.667 -> NOISY  (>0.1)
+    - Locus B (pos=200): 5 HQ + 1 LQ reads  -> lq_fraction=1/6≈0.167 -> NOISY  (>0.1)
+    - Locus C (pos=300): 3 HQ + 0 LQ reads  -> lq_fraction=0.0        -> CLEAN  (not >0.1)
+    """
+    from ugbio_mrd.mrd_utils import read_and_filter_features_parquet
+
+    read_filter_query = "filt>0 and snvq>60 and mapq>=60"
+    loci = [(100, 1, 2), (200, 5, 1), (300, 3, 0)]
+    rows = []
+    counter = 0
+    for pos, n_hq, n_lq in loci:
+        for snvq in [80] * n_hq + [40] * n_lq:
+            rows.append(
+                {
+                    "chrom": "chr1",
+                    "pos": pos,
+                    "signature": "sig1",
+                    "signature_type": "matched",
+                    "ref": "A",
+                    "alt": "T",
+                    "filt": 1,
+                    "snvq": snvq,
+                    "mapq": 60,
+                    "ad_a": 100,
+                    "ad_c": 5,
+                    "ad_g": 3,
+                    "ad_t": 10,
+                    "dp": 118,
+                    "dp_filt": 100,
+                    "mi": None,
+                    "rn": f"read_{pos}_{counter}",
+                    "ad_del": 2,
+                    "ad_ins": 1,
+                }
+            )
+            counter += 1
+
+    df_features_raw = pd.DataFrame(rows)
+    parquet_path = str(tmp_path / "test_features.parquet")
+    df_features_raw.to_parquet(parquet_path, engine="fastparquet", index=False)
+
+    df_features, df_features_filt, _, noise_excluded = read_and_filter_features_parquet(
+        parquet_path,
+        read_filter_query,
+        thresh_noise_lq_reads=0.1,
+    )
+
+    assert "locus_filter_noise" in df_features.columns
+    assert "n_lq_reads_per_locus" in df_features.columns
+    assert "n_total_reads_per_locus" in df_features.columns
+
+    pos_idx = df_features.index.get_level_values("pos")
+
+    assert df_features.loc[pos_idx == 100, "locus_filter_noise"].all(), "Locus A should be noisy"
+    assert (df_features.loc[pos_idx == 100, "n_lq_reads_per_locus"] == 2).all()
+    assert (df_features.loc[pos_idx == 100, "n_total_reads_per_locus"] == 3).all()
+    assert df_features.loc[pos_idx == 200, "locus_filter_noise"].all(), "Locus B should be noisy"
+    assert not df_features.loc[pos_idx == 300, "locus_filter_noise"].any(), "Locus C should be clean"
+
+    filt_pos = df_features_filt.index.get_level_values("pos")
+    assert 100 not in filt_pos, "Locus A should be removed from df_features_filt"
+    assert 200 not in filt_pos, "Locus B should be removed from df_features_filt (noisy, no exemption)"
+    assert 300 in filt_pos, "Locus C HQ reads should remain"
+
+
+def test_read_and_filter_features_parquet_noise_filter_disabled(tmp_path):
+    """When thresh_noise_lq_reads=None the noise filter columns must not appear."""
+    from ugbio_mrd.mrd_utils import read_and_filter_features_parquet
+
+    read_filter_query = "filt>0 and snvq>60 and mapq>=60"
+    df_features_raw = pd.DataFrame(
+        [
+            {
+                "chrom": "chr1",
+                "pos": 100,
+                "signature": "sig1",
+                "signature_type": "matched",
+                "ref": "A",
+                "alt": "T",
+                "filt": 1,
+                "snvq": 40,
+                "mapq": 60,
+                "ad_a": 100,
+                "ad_c": 5,
+                "ad_g": 3,
+                "ad_t": 10,
+                "dp": 118,
+                "dp_filt": 100,
+                "mi": None,
+                "rn": "read_0",
+                "ad_del": 2,
+                "ad_ins": 1,
+            }
+        ]
+    )
+    parquet_path = str(tmp_path / "test_features_disabled.parquet")
+    df_features_raw.to_parquet(parquet_path, engine="fastparquet", index=False)
+
+    df_features, _, _, noise_excluded = read_and_filter_features_parquet(
+        parquet_path, read_filter_query, thresh_noise_lq_reads=None
+    )
+    assert noise_excluded is None
+    assert "locus_filter_noise" not in df_features.columns
+    assert "n_lq_reads_per_locus" not in df_features.columns
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# apply_multi_read_locus_filter
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _make_multi_read_test_data():
+    """
+    Build minimal df_features_filt, df_tf, df_signatures_filt for multi-read
+    locus filter tests.
+
+    Loci:
+      (chr1, 100) — 100 HQ reads  → "hot" locus (outlier)
+      (chr1, 200) — 1 HQ read    → background locus
+      (chr1, 300) — 1 HQ read    → background locus
+    all_reads = 102, corrected_coverage = 100_000, mean_coverage = 1_000
+    → vaf_estimate = 102/100_000 = 0.00102, λ = 1.02
+    P(X ≥ 100 | Poisson(1.02)) × 3 ≈ 0   → HOT locus flagged
+    P(X ≥ 1   | Poisson(1.02)) × 3 ≈ 1.9 > threshold 0.01 → NOT flagged
+    """
+    records = []
+    for locus_pos, n_reads in [(100, 100), (200, 1), (300, 1)]:
+        for i in range(n_reads):
+            records.append(  # noqa: PERF401
+                {
+                    "chrom": "chr1",
+                    "pos": locus_pos,
+                    "signature": "sig1",
+                    "signature_type": "matched",
+                }
+            )
+    df_features_filt = pd.DataFrame(records).set_index(["chrom", "pos"])
+
+    df_tf = pd.DataFrame(
+        [{"ctdna_vaf": 0.0001, "supporting_reads": 102, "corrected_coverage": 100_000.0}],
+        index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
+    )
+
+    df_signatures_filt = pd.DataFrame(
+        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)]
+    )
+    return df_features_filt, df_tf, df_signatures_filt
+
+
+def test_apply_multi_read_locus_filter_removes_hot_locus():
+    """Loci with unexpectedly many reads (Bonferroni Poisson p < threshold) must be removed."""
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    df_features_filt, df_tf, df_signatures_filt = _make_multi_read_test_data()
+    df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf, df_signatures_filt, 0.01)
+
+    # Hot locus (chr1, 100) with 10 reads should be removed
+    assert info["n_filtered_loci"] == 1
+    assert info["n_filtered_reads"] == 100
+    assert len(df_out) == 2  # 102 total - 100 removed = 2
+
+    # Remaining rows must only be from clean loci
+    remaining_positions = df_out.index.get_level_values("pos").tolist()
+    assert 100 not in remaining_positions
+    assert 200 in remaining_positions
+    assert 300 in remaining_positions
+
+    # Metadata
+    assert info["poisson_lambda"] > 0
+    assert info["min_bonferroni_pval"] < 0.01
+    assert info["max_reads_per_locus"] == 1  # post-filter max: hot locus removed, remaining have 1 read each
+
+
+def test_apply_multi_read_locus_filter_no_outliers():
+    """When all loci have read counts consistent with lambda, nothing is filtered."""
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    # Use a dataset with uniform low read counts — no hot locus.
+    # λ ≈ 3/1000 * 1000 = 3; P(X≥1 | Poi(3)) * 3 ≈ 2.86 > 0.01 → not filtered.
+    records = [
+        {"chrom": "chr1", "pos": 100, "signature": "sig1", "signature_type": "matched"},
+        {"chrom": "chr1", "pos": 200, "signature": "sig1", "signature_type": "matched"},
+        {"chrom": "chr1", "pos": 300, "signature": "sig1", "signature_type": "matched"},
+    ]
+    df_uniform = pd.DataFrame(records).set_index(["chrom", "pos"])
+    df_tf_uniform = pd.DataFrame(
+        [{"ctdna_vaf": 0.003, "supporting_reads": 3, "corrected_coverage": 1000.0}],
+        index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
+    )
+    df_sigs_uniform = pd.DataFrame(
+        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)]
+    )
+    df_out, info = apply_multi_read_locus_filter(df_uniform, df_tf_uniform, df_sigs_uniform, 0.01)
+
+    assert info["n_filtered_loci"] == 0
+    assert info["n_filtered_reads"] == 0
+    assert len(df_out) == len(df_uniform)
+
+
+def test_apply_multi_read_matched_filter_preserves_control_rows():
+    """Control-signature rows at the same locus must not be removed."""
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    df_features_filt, df_tf, df_signatures_filt = _make_multi_read_test_data()
+
+    # Add a control row at the hot locus
+    control_row = pd.DataFrame(
+        [{"chrom": "chr1", "pos": 100, "signature": "ctrl1", "signature_type": "control"}]
+    ).set_index(["chrom", "pos"])
+    df_features_with_ctrl = pd.concat([df_features_filt, control_row])
+
+    df_out, info = apply_multi_read_locus_filter(df_features_with_ctrl, df_tf, df_signatures_filt, 0.01)
+
+    # Matched reads at locus 100 must be removed, but the control row must survive
+    assert info["n_filtered_loci"] == 1
+    remaining = df_out.reset_index()
+    ctrl_rows = remaining[(remaining["pos"] == 100) & (remaining["signature_type"] == "control")]
+    assert len(ctrl_rows) == 1
+
+
+def test_apply_multi_read_locus_filter_zero_vaf():
+    """When matched_ctdna_vaf is 0, filter must be skipped gracefully."""
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    df_features_filt, df_tf, df_signatures_filt = _make_multi_read_test_data()
+    df_tf_zero = df_tf.copy()
+    df_tf_zero["ctdna_vaf"] = 0.0
+
+    df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf_zero, df_signatures_filt, 0.01)
+    assert info["n_filtered_loci"] == 0
+    assert len(df_out) == len(df_features_filt)
+
+
+def test_apply_multi_read_locus_filter_no_matched_key():
+    """When there is no 'matched' key in df_tf, filter must return original df unchanged."""
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    df_features_filt, _df_tf, df_signatures_filt = _make_multi_read_test_data()
+    df_tf_no_matched = pd.DataFrame(
+        [{"ctdna_vaf": 0.001}],
+        index=pd.MultiIndex.from_tuples([("control", "ctrl1")], names=["signature_type", "signature"]),
+    )
+
+    df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf_no_matched, df_signatures_filt, 0.01)
+    assert info["n_filtered_loci"] == 0
+    assert len(df_out) == len(df_features_filt)
+
+
+def test_apply_multi_read_locus_filter_skips_db_control_rows():
+    """Synthetic (db_control) rows at the same outlier locus must not be removed."""
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    df_features_filt, df_tf, df_signatures_filt = _make_multi_read_test_data()
+
+    # Add a db_control row at the hot locus (pos=100)
+    db_ctrl_row = pd.DataFrame(
+        [{"chrom": "chr1", "pos": 100, "signature": "syn0", "signature_type": "db_control"}]
+    ).set_index(["chrom", "pos"])
+    df_features_with_db_ctrl = pd.concat([df_features_filt, db_ctrl_row])
+
+    df_out, info = apply_multi_read_locus_filter(df_features_with_db_ctrl, df_tf, df_signatures_filt, 0.01)
+
+    # Matched reads at locus 100 must be removed
+    assert info["n_filtered_loci"] == 1
+    remaining = df_out.reset_index()
+    # db_control row at the hot locus must survive (only matched rows are filtered by matched-filter)
+    db_ctrl_rows = remaining[(remaining["pos"] == 100) & (remaining["signature_type"] == "db_control")]
+    assert len(db_ctrl_rows) == 1
+    # All matched reads at the hot locus must be gone
+    matched_hot = remaining[(remaining["pos"] == 100) & (remaining["signature_type"] == "matched")]
+    assert len(matched_hot) == 0
+
+
+def _make_ctrl_filter_test_data():
+    """
+    Build df_features_filt, df_tf, df_signatures_filt for control/db_control filter tests.
+
+    Signature loci: (chr1, 100), (chr1, 200), (chr1, 300) — all 1 matched read each.
+    matched TF (ctdna_vaf) = 1e-4, corrected_coverage = 1000.
+
+    Control data at same loci (1 cohort control sample + 2 synthetic controls):
+      - ctrl0 (cohort):  (chr1, 100) = 10 reads (HOT), (chr1, 200) = 1, (chr1, 300) = 1
+        corrected_coverage = 30_000 (large signature), ctdna_vaf ≈ 12/30000 = 4e-4
+        → λ_ctrl0 = 4e-4 × 1000 = 0.4  →  P(X≥10 | Poi(0.4)) × 3 ≈ tiny  → OUTLIER
+      - syn0 (db_ctrl):  (chr1, 100-300) = 1 read each.  ctdna_vaf = 3/3000 = 1e-3
+      - syn1 (db_ctrl):  (chr1, 100-200) = 1 read, (chr1, 300) = 0.  ctdna_vaf = 2/3000
+    """
+    matched_records = []
+    for pos in [100, 200, 300]:
+        matched_records.append({"chrom": "chr1", "pos": pos, "signature": "sig1", "signature_type": "matched"})
+    ctrl_records = []
+    # Cohort control: pos=100 is hot (10 reads), others have 1 read
+    for pos, n_reads in [(100, 10), (200, 1), (300, 1)]:
+        for _ in range(n_reads):
+            ctrl_records.append({"chrom": "chr1", "pos": pos, "signature": "ctrl0", "signature_type": "control"})
+    # Two synthetic controls: each 1 read at pos 100, 200 and 0 at 300
+    for syn_sig, reads_per_pos in [("syn0", {100: 1, 200: 1, 300: 1}), ("syn1", {100: 1, 200: 1, 300: 0})]:
+        for pos, n_reads in reads_per_pos.items():
+            for _ in range(n_reads):
+                ctrl_records.append({"chrom": "chr1", "pos": pos, "signature": syn_sig, "signature_type": "db_control"})
+
+    all_records = matched_records + ctrl_records
+    df_features_filt = pd.DataFrame(all_records).set_index(["chrom", "pos"])
+
+    # df_tf: matched + cohort control + 2 db_control entries.
+    # ctrl0 has corrected_coverage=30_000 (large signature) → very low ctdna_vaf → hot locus is a clear outlier.
+    index = pd.MultiIndex.from_tuples(
+        [("matched", "sig1"), ("control", "ctrl0"), ("db_control", "syn0"), ("db_control", "syn1")],
+        names=["signature_type", "signature"],
+    )
+    df_tf = pd.DataFrame(
+        {
+            "ctdna_vaf": [1e-4, 12 / 30_000, 3 / 3000, 2 / 3000],
+            "supporting_reads": [3, 12, 3, 2],
+            "corrected_coverage": [1000.0, 30_000.0, 1000.0, 1000.0],
+        },
+        index=index,
+    )
+
+    df_signatures_filt = pd.DataFrame(
+        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)]
+    )
+    return df_features_filt, df_tf, df_signatures_filt
+
+
+def test_apply_multi_read_locus_filter_removes_outlier_control_loci():
+    """Cohort control loci with unexpectedly many reads must be removed."""
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    df_features_filt, df_tf, df_signatures_filt = _make_ctrl_filter_test_data()
+    df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf, df_signatures_filt, 0.01)
+
+    # The hot cohort control locus (chr1, 100) should be removed
+    assert info["n_filtered_control_loci"] == 1
+    assert info["n_filtered_control_reads"] == 10
+
+    remaining = df_out.reset_index()
+    ctrl_hot = remaining[(remaining["pos"] == 100) & (remaining["signature_type"] == "control")]
+    assert len(ctrl_hot) == 0, "cohort control reads at hot locus should be removed"
+
+    ctrl_clean = remaining[(remaining["pos"] == 200) & (remaining["signature_type"] == "control")]
+    assert len(ctrl_clean) == 1, "cohort control reads at clean locus must remain"
+
+    # Matched reads must be unaffected
+    assert info["n_filtered_loci"] == 0
+
+
+def test_apply_multi_read_locus_filter_removes_outlier_db_control_loci():
+    """Synthetic (db_control) loci with unexpectedly many reads must be removed.
+
+    The no-cap lambda estimation requires the outlier locus to be clearly extreme
+    relative to the per-signature mean. Here syn0 has 1 background locus (1 read)
+    and 1 hot locus (200 reads): λ ≈ 201/1000*1000 = 201; but the hot locus alone
+    contributes ~99% of the read mass, so instead we design a scenario with many
+    background loci so the average is low and the outlier stands out.
+
+    syn0: 30 background loci with 1 read each + 1 hot locus with 1000 reads.
+    total_reads = 1030, corr_cov = 1_000_000, vaf = 1030/1e6 = 1.03e-3,
+    λ = 1.03e-3 * 1000 = 1.03
+    P(X ≥ 1000 | Poi(1.03)) * 31 ≈ 0 → locus is an outlier and gets removed.
+    """
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    # Build syn0 with many background loci so the hot locus is extreme
+    n_background = 30
+    hot_reads = 1000
+    records = []
+    # Matched signature (3 loci, 1 read each)
+    for pos in [100, 200, 300]:
+        records.append({"chrom": "chr1", "pos": pos, "signature": "sig1", "signature_type": "matched"})
+    # syn0 db_control: background loci + hot locus
+    for i in range(n_background):
+        records.append({"chrom": f"chr{i + 2}", "pos": i, "signature": "syn0", "signature_type": "db_control"})
+    for _ in range(hot_reads):
+        records.append({"chrom": "chr1", "pos": 999, "signature": "syn0", "signature_type": "db_control"})
+
+    df_features = pd.DataFrame(records).set_index(["chrom", "pos"])
+
+    index = pd.MultiIndex.from_tuples(
+        [("matched", "sig1"), ("db_control", "syn0")],
+        names=["signature_type", "signature"],
+    )
+    df_tf = pd.DataFrame(
+        {
+            "ctdna_vaf": [1e-3, (n_background + hot_reads) / 1_000_000],
+            "supporting_reads": [3, n_background + hot_reads],
+            "corrected_coverage": [1000.0, 1_000_000.0],
+        },
+        index=index,
+    )
+    df_signatures_filt = pd.DataFrame(
+        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)]
+    )
+
+    df_out, info = apply_multi_read_locus_filter(df_features, df_tf, df_signatures_filt, 0.01)
+
+    # Outlier db_control locus must be removed
+    assert info["n_filtered_db_control_loci"] >= 1
+    remaining = df_out.reset_index()
+    db_ctrl_hot = remaining[(remaining["pos"] == 999) & (remaining["signature_type"] == "db_control")]
+    assert len(db_ctrl_hot) == 0, "db_control reads at hot locus should be removed"
+    # Matched reads unaffected
+    assert info["n_filtered_loci"] == 0
+
+
+def test_apply_multi_read_locus_filter_never_removes_single_read_loci():
+    """Single-read loci must never be filtered regardless of how low the TF estimate is."""
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    # Use an extremely low TF so that the Bonferroni test would flag single reads
+    # without the guard (TF=1e-9 << the 5e-8 transition point).
+    tiny_vaf = 1e-9
+    records = [
+        {"chrom": "chr1", "pos": 100, "signature": "sig1", "signature_type": "matched"},
+        {"chrom": "chr1", "pos": 200, "signature": "sig1", "signature_type": "matched"},
+        {"chrom": "chr1", "pos": 300, "signature": "sig1", "signature_type": "matched"},
+    ]
+    df_features_filt = pd.DataFrame(records).set_index(["chrom", "pos"])
+
+    df_tf = pd.DataFrame(
+        [{"ctdna_vaf": tiny_vaf, "supporting_reads": 3, "corrected_coverage": 1000.0}],
+        index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
+    )
+    df_signatures_filt = pd.DataFrame(
+        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(1000)]
+    )
+
+    df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf, df_signatures_filt, 0.05)
+
+    assert info["n_filtered_loci"] == 0, "Single-read loci must never be removed"
+    assert len(df_out) == len(df_features_filt)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# All-loci VAF estimation
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_apply_multi_read_filter_all_loci_vaf_estimation():
+    """λ is estimated from all loci; a genuine outlier is still flagged.
+
+    Setup: 2 background loci (1 read each) + 1 hot locus (100 reads).
+      all_reads = 102, corrected_coverage = 100_000, mean_coverage = 1_000
+      → vaf_estimate = 0.00102, λ = 1.02
+    P(X ≥ 100 | Poisson(1.02)) × 3 ≈ 0  → flagged
+    P(X ≥ 1   | Poisson(1.02)) × 3 ≈ 1.9 > 0.05 → NOT flagged
+    """
+    from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
+
+    df_features_filt, df_tf, df_signatures_filt = _make_multi_read_test_data()
+    df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf, df_signatures_filt, 0.05)
+
+    assert info["n_filtered_loci"] == 1
+    remaining = df_out.index.get_level_values("pos").tolist()
+    assert 100 not in remaining
+    assert 200 in remaining and 300 in remaining

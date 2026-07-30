@@ -35,6 +35,14 @@ workspace = true
 [tool.setuptools.package-data]
 "*" = [
     "**/reports/*",
+    "**/templates/*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not slow'"
+markers = [
+    "slow: marks tests as slow (run with pytest -m slow)",
 ]
 
 [build-system]

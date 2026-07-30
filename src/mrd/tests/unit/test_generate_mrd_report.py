@@ -1,8 +1,16 @@
+import json
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
-from ugbio_mrd.generate_mrd_report import MrdReportInputs, generate_mrd_report
+from ugbio_mrd.generate_mrd_report import (
+    MrdReportInputs,
+    _build_filter_funnel,
+    _build_read_funnel,
+    generate_mrd_report,
+)
+from ugbio_mrd.mrd_report_renderer import render_read_length_histogram
 
 
 @pytest.fixture
@@ -15,8 +23,9 @@ def output_path(tmpdir):
     return Path(tmpdir)
 
 
-def test_generate_mrd_report(output_path, resources_dir):
-    mrd_report_inputs = MrdReportInputs(
+@pytest.fixture
+def mrd_report_inputs(output_path, resources_dir):
+    return MrdReportInputs(
         intersected_featuremaps_parquet=[
             str(resources_dir / "Pa_46_333_LuNgs_08.Pa_46_FreshFrozen.matched.intersection.parquet"),
             str(resources_dir / "Pa_46_333_LuNgs_08.Pa_67_FFPE.control.intersection.parquet"),
@@ -26,7 +35,7 @@ def test_generate_mrd_report(output_path, resources_dir):
             str(resources_dir / "Pa_46_333_LuNgs_08.syn3_Pa_46_FreshFrozen.db_control.intersection.parquet"),
             str(resources_dir / "Pa_46_333_LuNgs_08.syn4_Pa_46_FreshFrozen.db_control.intersection.parquet"),
         ],
-        matched_signatures_vcf_files=[str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf.gz")],
+        matched_signature_vcf=str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf.gz"),
         control_signatures_vcf_files=[str(resources_dir / "Pa_67_FFPE.ann.chr20.filtered.vcf.gz")],
         db_control_signatures_vcf_files=[
             str(resources_dir / "syn0_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
@@ -36,24 +45,28 @@ def test_generate_mrd_report(output_path, resources_dir):
             str(resources_dir / "syn4_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
         ],
         coverage_bed=str(resources_dir / "Pa_46_333_LuNgs_08.regions.bed.gz"),
-        # tumor_sample=args_in.tumor_sample,
         output_dir=output_path,
         output_basename="test_report",
         featuremap_file=str(resources_dir / "Pa_46_333_LuNgs_08.featuremap_df.10k.parquet"),
         signature_filter_query="(norm_coverage <= 2.5) and (norm_coverage >= 0.6)",
         read_filter_query="filt>0 and snvq>60 and mapq>=60",
         srsnv_metadata_json=str(resources_dir / "Pa_46_333_LuNgs_08.srsnv_metadata.json"),
+        # Explicitly set to 0.7 so the expected H5 reference file (generated with this
+        # threshold) stays valid, and the noise-filter code path remains covered.
+        thresh_noise_lq_reads=0.7,
     )
 
-    output_report_html = generate_mrd_report(mrd_report_inputs)
 
-    # assert report_html exists
-    assert output_report_html.exists()
+def test_generate_mrd_report(output_path, resources_dir, mrd_report_inputs):
+    results_html, qc_html = generate_mrd_report(mrd_report_inputs)
 
-    # assert report_html is not empty
-    assert output_report_html.stat().st_size > 0
+    # assert both report HTMLs exist and are non-empty
+    assert results_html.exists()
+    assert results_html.stat().st_size > 0
+    assert qc_html.exists()
+    assert qc_html.stat().st_size > 0
 
-    # test h5 output
+    # test h5 output — results report writes primary keys, QC report appends secondary keys
     h5_output = str(output_path / "test_report.ctdna_vaf.h5")
     h5_expected = str(resources_dir / "test_report.ctdna_vaf.expected_output.h5")
     with pd.HDFStore(h5_expected) as store:
@@ -67,3 +80,366 @@ def test_generate_mrd_report(output_path, resources_dir):
     # assert h5 output values are as expected
     for key in h5_keys:
         pd.testing.assert_frame_equal(pd.read_hdf(h5_output, key), pd.read_hdf(h5_expected, key))
+
+
+def test_generate_mrd_report_detection_output(output_path, mrd_report_inputs):
+    """Test that results report generates detection result JSON with expected fields."""
+    generate_mrd_report(mrd_report_inputs)
+
+    # Verify detection JSON was created
+    detection_json_path = output_path / "test_report.detection_result.json"
+    assert detection_json_path.exists(), "Detection result JSON not generated"
+
+    # Load and validate detection results
+    with open(detection_json_path) as f:
+        detection = json.load(f)
+
+    # Verify all expected fields are present
+    expected_fields = [
+        "call",
+        "detected",
+        "p_value",
+        "matched_supporting_reads",
+        "matched_ctdna_vaf",
+        "null_median_reads",
+        "null_max_reads",
+        "n_synthetic_controls",
+        "sample_specific_lod",
+        "signature_size",
+        "mean_coverage",
+        "corrected_coverage",
+        "alpha",
+    ]
+    for field in expected_fields:
+        assert field in detection, f"Missing field: {field}"
+
+    # Verify detection call is one of valid values
+    assert detection["call"] in ("MRD Detected", "MRD Not Detected", "Indeterminate")
+
+    # Verify p-value is in valid range [0, 1]
+    assert 0 <= detection["p_value"] <= 1.0
+
+    # Verify we used 5 synthetic controls from the test data
+    assert detection["n_synthetic_controls"] == 5
+
+    # Verify supporting reads is non-negative integer
+    assert detection["matched_supporting_reads"] >= 0
+    assert isinstance(detection["matched_supporting_reads"], int)
+
+    # Verify signature size > 0 (we have real data)
+    assert detection["signature_size"] > 0
+
+    # Verify mean coverage is reasonable
+    assert detection["mean_coverage"] > 0
+
+
+def test_generate_mrd_report_html_contains_detection_banner(output_path, mrd_report_inputs):
+    """Test that the results HTML report contains the detection result banner."""
+    results_html, _qc_html = generate_mrd_report(mrd_report_inputs)
+
+    html_content = results_html.read_text()
+
+    # Report should contain the detection call
+    assert any(
+        call in html_content for call in ("MRD Detected", "MRD Not Detected", "Indeterminate")
+    ), "Detection call not found in HTML report"
+
+    # Report should contain key metrics
+    assert "p-value" in html_content.lower() or "p_value" in html_content.lower()
+    assert "Sample-specific LOD" in html_content or "sample_specific_lod" in html_content.lower()
+    assert "Supporting Reads" in html_content
+
+    # Report should contain the assay metrics section
+    assert "Signature Size" in html_content
+    assert "Mean Coverage" in html_content
+
+
+class TestRenderReadLengthHistogram:
+    """Tests for render_read_length_histogram column-name normalisation."""
+
+    def _make_df(self, col_name: str) -> pd.DataFrame:
+        rng = np.random.default_rng(0)
+        n = 50
+        return pd.DataFrame(
+            {
+                col_name: rng.integers(100, 300, size=n),
+                "signature_type": (["matched"] * (n // 2)) + (["control"] * (n // 2)),
+            }
+        )
+
+    def test_lowercase_x_length_column(self):
+        """x_length (lowercased by read_and_filter_features_parquet) must produce a histogram."""
+        df_features = self._make_df("x_length")
+        result = render_read_length_histogram(df_features)
+        assert result != "", "Expected non-empty base64 image for x_length column"
+
+    def test_uppercase_x_length_column(self):
+        """X_LENGTH (original casing) must also produce a histogram."""
+        df_features = self._make_df("X_LENGTH")
+        result = render_read_length_histogram(df_features)
+        assert result != "", "Expected non-empty base64 image for X_LENGTH column"
+
+    def test_missing_length_column_returns_empty(self):
+        """DataFrame without any length column must return empty string."""
+        df_features = pd.DataFrame({"signature_type": ["matched", "control"]})
+        result = render_read_length_histogram(df_features)
+        assert result == ""
+
+
+def test_generate_mrd_report_with_noise_filter(output_path, resources_dir):
+    """
+    Verify generate_mrd_report works end-to-end with the noise locus filter enabled,
+    and that the no-noise secondary H5 key is present in the output.
+    """
+    import os
+
+    out_dir = str(output_path / "noise_test")
+    os.makedirs(out_dir, exist_ok=True)
+    noise_inputs = MrdReportInputs(
+        intersected_featuremaps_parquet=[
+            str(resources_dir / "Pa_46_333_LuNgs_08.Pa_46_FreshFrozen.matched.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.Pa_67_FFPE.control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn0_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn1_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn2_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn3_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn4_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+        ],
+        matched_signature_vcf=str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf.gz"),
+        control_signatures_vcf_files=[str(resources_dir / "Pa_67_FFPE.ann.chr20.filtered.vcf.gz")],
+        db_control_signatures_vcf_files=[
+            str(resources_dir / "syn0_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn1_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn2_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn3_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn4_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+        ],
+        coverage_bed=str(resources_dir / "Pa_46_333_LuNgs_08.regions.bed.gz"),
+        output_dir=out_dir,
+        output_basename="noise_test",
+        featuremap_file=str(resources_dir / "Pa_46_333_LuNgs_08.featuremap_df.10k.parquet"),
+        signature_filter_query="(norm_coverage <= 2.5) and (norm_coverage >= 0.6)",
+        read_filter_query="filt>0 and snvq>60 and mapq>=60",
+        srsnv_metadata_json=str(resources_dir / "Pa_46_333_LuNgs_08.srsnv_metadata.json"),
+        thresh_noise_lq_reads=0.5,  # fraction: filter loci where >50% of reads are LQ
+    )
+
+    results_html, qc_html = generate_mrd_report(noise_inputs)
+
+    assert results_html.exists() and results_html.stat().st_size > 0
+    assert qc_html.exists() and qc_html.stat().st_size > 0
+
+    h5_path = str(Path(out_dir) / "noise_test.ctdna_vaf.h5")
+    with pd.HDFStore(h5_path) as store:
+        h5_keys = store.keys()
+    assert "/df_ctdna_vaf_filt_signature_filt_no_noise_filter" in h5_keys
+
+    qc_content = qc_html.read_text()
+    assert "Noisy Loci Filter" in qc_content
+
+
+def test_generate_mrd_report_with_multi_read_filter(output_path, resources_dir):
+    """
+    Verify generate_mrd_report works end-to-end with the multi-read locus filter enabled,
+    and that the pre-filter secondary H5 key is present in the output.
+    """
+    import os
+
+    out_dir = str(output_path / "multi_read_test")
+    os.makedirs(out_dir, exist_ok=True)
+    multi_read_inputs = MrdReportInputs(
+        intersected_featuremaps_parquet=[
+            str(resources_dir / "Pa_46_333_LuNgs_08.Pa_46_FreshFrozen.matched.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.Pa_67_FFPE.control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn0_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn1_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn2_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn3_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+            str(resources_dir / "Pa_46_333_LuNgs_08.syn4_Pa_46_FreshFrozen.db_control.intersection.parquet"),
+        ],
+        matched_signature_vcf=str(resources_dir / "Pa_46_FreshFrozen.ann.chr20.filtered.vcf.gz"),
+        control_signatures_vcf_files=[str(resources_dir / "Pa_67_FFPE.ann.chr20.filtered.vcf.gz")],
+        db_control_signatures_vcf_files=[
+            str(resources_dir / "syn0_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn1_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn2_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn3_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+            str(resources_dir / "syn4_Pa_46_FreshFrozen.ann.chr20.filtered_pancan_pcawg_2020.chr20.filtered.vcf.gz"),
+        ],
+        coverage_bed=str(resources_dir / "Pa_46_333_LuNgs_08.regions.bed.gz"),
+        output_dir=out_dir,
+        output_basename="multi_read_test",
+        featuremap_file=str(resources_dir / "Pa_46_333_LuNgs_08.featuremap_df.10k.parquet"),
+        signature_filter_query="(norm_coverage <= 2.5) and (norm_coverage >= 0.6)",
+        read_filter_query="filt>0 and snvq>60 and mapq>=60",
+        srsnv_metadata_json=str(resources_dir / "Pa_46_333_LuNgs_08.srsnv_metadata.json"),
+        thresh_multi_read_pvalue=0.05,
+    )
+
+    results_html, qc_html = generate_mrd_report(multi_read_inputs)
+
+    assert results_html.exists() and results_html.stat().st_size > 0
+    assert qc_html.exists() and qc_html.stat().st_size > 0
+
+    # The pre-filter secondary H5 key must be present
+    h5_path = str(Path(out_dir) / "multi_read_test.ctdna_vaf.h5")
+    with pd.HDFStore(h5_path) as store:
+        h5_keys = store.keys()
+    assert "/df_ctdna_vaf_filt_signature_filt_no_multi_read_filter" in h5_keys
+
+    qc_content = qc_html.read_text()
+    assert "Multi-read" in qc_content or "multi-read" in qc_content.lower()
+
+
+@pytest.fixture
+def _funnel_frames():
+    """Small synthetic per-read features + filtered signatures for funnel-builder tests.
+
+    Layout (matched signature loci, chr1):
+      - pos 100: 2 reads, both pass all filters, locus in filtered signature
+      - pos 200: 1 read passes, locus in filtered signature
+      - pos 300: 1 read passes but locus dropped by the low-quality filter
+      - pos 400: 1 read passes all read filters but the locus was removed by the
+                 signature filter (NOT in df_signatures_filt) -> excluded from every step
+    A control-signature read at pos 500 is present to confirm matched-only counting.
+    """
+    read_filter_query = "filt>0 and snvq>60 and mapq>=60"
+    rows = [
+        # chrom, pos, signature_type, filt, snvq, mapq, locus_filter_noise
+        ("chr1", 100, "matched", 1, 70, 60, False),
+        ("chr1", 100, "matched", 1, 70, 60, False),
+        ("chr1", 200, "matched", 1, 70, 60, False),
+        ("chr1", 300, "matched", 1, 70, 60, True),  # dropped by low-quality filter
+        ("chr1", 400, "matched", 1, 70, 60, False),  # locus not in filtered signature
+        ("chr1", 500, "control", 1, 70, 60, False),  # control -> never counted
+    ]
+    df_features = pd.DataFrame(
+        rows,
+        columns=["chrom", "pos", "signature_type", "filt", "snvq", "mapq", "locus_filter_noise"],
+    ).set_index(["chrom", "pos"])
+    # df_features_filt = final table after read + low-quality filters (multi-read disabled here)
+    df_features_filt = df_features.query(read_filter_query)
+    df_features_filt = df_features_filt[~df_features_filt["locus_filter_noise"]]
+    # Filtered signature loci: 100, 200, 300 survive; 400 was filtered out.
+    df_signatures_filt = pd.DataFrame(
+        {"chrom": ["chr1", "chr1", "chr1"], "pos": [100, 200, 300], "id": [1, 2, 3]}
+    ).set_index(["chrom", "pos"])
+    return df_features, df_features_filt, df_signatures_filt, read_filter_query
+
+
+def test_build_filter_funnel_counts_loci_restricted_to_signature(_funnel_frames):
+    """Signature funnel counts distinct loci and restricts every read-level step to
+    filtered-signature loci; the old 'In filtered signature loci' step is gone."""
+    df_features, df_features_filt, df_signatures_filt, rfq = _funnel_frames
+    funnel = _build_filter_funnel(
+        None,
+        df_features=df_features,
+        df_features_filt=df_features_filt,
+        df_signatures_filt=df_signatures_filt,
+        read_filter_query=rfq,
+        signature_filter_query="(norm_coverage <= 2.5) and (norm_coverage >= 0.6)",
+        thresh_noise_lq_reads=0.1,
+    )
+    counts = {row["step"]: row["count"] for row in funnel}
+    # LQ filter removed pos300 → sig_size(3) - 1 = 2 loci remain
+    # (with no multi-read filter, LQ step is labelled "final signature")
+    assert counts["LQ-reads locus filter (final signature)"] == 2
+    # Coverage filter (before LQ) shows all 3 signature loci
+    assert counts["Coverage filter"] == 3
+    # The read-level steps are no longer in the signature funnel
+    assert "Loci supported by cfDNA reads" not in counts
+    assert "After read filters" not in counts
+    assert "After low-quality read filter" not in counts
+    # The final signature-loci gate is folded into the steps and no longer a row
+    assert "In filtered signature loci" not in counts
+    # The reads-perspective intersection label must not leak into the loci funnel
+    assert "Intersected with featuremap (reads)" not in counts
+
+
+def test_build_read_funnel_counts_reads_restricted_to_signature(_funnel_frames):
+    """Read funnel counts reads (not loci) and restricts every step to filtered-signature
+    loci so the tail matches the detection supporting-reads total."""
+    df_features, df_features_filt, df_signatures_filt, rfq = _funnel_frames
+    funnel = _build_read_funnel(
+        df_features=df_features,
+        df_features_filt=df_features_filt,
+        df_signatures_filt=df_signatures_filt,
+        read_filter_query=rfq,
+        thresh_noise_lq_reads=0.1,
+    )
+    counts = {row["step"]: row["count"] for row in funnel}
+    # Intersection: matched reads at filtered-signature loci = 2 (pos100) + 1 (pos200) + 1 (pos300) = 4
+    assert counts["Reads matching signature (contain variant)"] == 4
+    # After read filters: df_features_filt already has lq_noise=True rows removed;
+    # pos300 read gone -> 2 (pos100) + 1 (pos200) = 3 reads remain
+    assert counts["Read filters"] == 3
+    assert "In filtered signature loci" not in counts
+
+
+@pytest.fixture
+def _funnel_frames_control_only_locus():
+    """Funnel frames where a matched read sits at a locus kept ONLY by a control signature.
+
+    pos 100/200 are matched loci in the filtered signature set. pos 900 is present in the
+    filtered signature set only as a *control* signature, yet a matched featuremap read
+    exists there. Restricting the locus join to the full signature set (matched + control)
+    would let that matched read re-enter after the matched signature filter, so the funnel
+    count would rise above the matched-signature baseline. The matched-only join must exclude it.
+    """
+    read_filter_query = "filt>0 and snvq>60 and mapq>=60"
+    rows = [
+        # chrom, pos, signature_type, filt, snvq, mapq, locus_filter_noise
+        ("chr1", 100, "matched", 1, 70, 60, False),
+        ("chr1", 200, "matched", 1, 70, 60, False),
+        ("chr1", 900, "matched", 1, 70, 60, False),  # matched read at a control-only locus
+    ]
+    df_features = pd.DataFrame(
+        rows,
+        columns=["chrom", "pos", "signature_type", "filt", "snvq", "mapq", "locus_filter_noise"],
+    ).set_index(["chrom", "pos"])
+    df_features_filt = df_features.query(read_filter_query)
+    # Filtered signature set: pos 100/200 matched, pos 900 control-only.
+    df_signatures_filt = pd.DataFrame(
+        {
+            "chrom": ["chr1", "chr1", "chr1"],
+            "pos": [100, 200, 900],
+            "id": [1, 2, 9],
+            "signature_type": ["matched", "matched", "control"],
+        }
+    ).set_index(["chrom", "pos"])
+    return df_features, df_features_filt, df_signatures_filt, read_filter_query
+
+
+def test_filter_funnel_excludes_control_only_loci(_funnel_frames_control_only_locus):
+    """A matched read at a control-only signature locus must not re-enter the matched funnel."""
+    df_features, df_features_filt, df_signatures_filt, rfq = _funnel_frames_control_only_locus
+    funnel = _build_filter_funnel(
+        None,
+        df_features=df_features,
+        df_features_filt=df_features_filt,
+        df_signatures_filt=df_signatures_filt,
+        read_filter_query=rfq,
+        signature_filter_query="(norm_coverage <= 2.5) and (norm_coverage >= 0.6)",
+    )
+    counts = {row["step"]: row["count"] for row in funnel}
+    baseline = counts["Coverage filter (final signature)"]
+    # Only the two matched signature loci; the control-only locus 900 is excluded.
+    assert baseline == 2
+    # Read-level steps are no longer in the signature filter funnel
+    assert "Loci supported by cfDNA reads" not in counts
+    assert "After read filters" not in counts
+
+
+def test_read_funnel_excludes_control_only_loci(_funnel_frames_control_only_locus):
+    """The read funnel must not count matched reads at control-only signature loci."""
+    df_features, df_features_filt, df_signatures_filt, rfq = _funnel_frames_control_only_locus
+    funnel = _build_read_funnel(
+        df_features=df_features,
+        df_features_filt=df_features_filt,
+        df_signatures_filt=df_signatures_filt,
+        read_filter_query=rfq,
+    )
+    counts = {row["step"]: row["count"] for row in funnel}
+    # 2 matched reads at matched loci; the read at control-only locus 900 is excluded.
+    assert counts["Reads matching signature (contain variant)"] == 2
+    assert counts["Read filters"] == 2
