@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import pytest
 from ugbio_filtering.tprep_constants import VcfType
@@ -178,3 +179,50 @@ class TestTransformers:
         # Check that copynumber column exists and has the max value (3)
         assert "cipos__cipos" in result.columns
         assert result["cipos__cipos"].iloc[0] == 200
+
+    def test_cnv_transformer_fills_all_nan_object_columns(self):
+        # Regression test: on a contig that has only cn.mops calls, the cnvpytor-only pytor*
+        # fields (and the conditional insert-size fields) are absent from every variant, so
+        # get_vcf_df yields all-NaN object-dtype columns. A bare numeric SimpleImputer used to
+        # silently pass these through, leaving NaNs that broke apply_model validation. The
+        # numeric_filler must coerce them to numeric and fill with 0.
+        transformer = get_transformer(VcfType.CNV)
+        object_all_nan = pd.Series([np.nan, np.nan], dtype=object)
+        test_df = pd.DataFrame(
+            {
+                "svtype": ["DEL", "DUP"],
+                "region_annotations": [(), ()],
+                "pytorq0": object_all_nan.copy(),
+                "pytorp2": object_all_nan.copy(),
+                "pytorrd": object_all_nan.copy(),
+                "pytorp1": object_all_nan.copy(),
+                "pytorp3": object_all_nan.copy(),
+                "gap_percentage": [0.01, 0.02],
+                "cnv_dup_reads": [10, 20],
+                "cnv_del_reads": [5, 6],
+                "cnv_dup_frac": [0.6, 0.7],
+                "cnv_del_frac": [0.3, 0.4],
+                "del_reads_median_insert_size": object_all_nan.copy(),
+                "dup_reads_median_insert_size": object_all_nan.copy(),
+                "jalign_dup_support": [8, 9],
+                "jalign_del_support": [4, 5],
+                "jalign_dup_support_strong": [6, 7],
+                "jalign_del_support_strong": [3, 4],
+                "svlen": [(1000,), (2000,)],
+                "cn": [2, 3],
+                "copynumber": [3, 4],
+                "cnv_source": [("cn.mops",), ("cn.mops",)],
+                "cipos": [(-100, 100), (-50, 50)],
+            }
+        )
+        # sanity: these columns start as object dtype, as get_vcf_df would produce
+        assert test_df["pytorq0"].dtype == object
+        result = transformer.fit_transform(test_df)
+        assert result.isna().sum().sum() == 0
+        for col in [
+            "pytorq0__pytorq0",
+            "pytorp2__pytorp2",
+            "del_reads_median_insert_size__del_reads_median_insert_size",
+        ]:
+            assert col in result.columns
+            assert (result[col] == 0).all()
