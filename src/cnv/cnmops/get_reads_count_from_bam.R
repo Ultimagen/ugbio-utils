@@ -33,9 +33,13 @@ args <- parser$parse_args()
 
 # -refseq/-wl carry defaults, so detect whether the user explicitly passed them
 # by inspecting the raw command line (needed to enforce mutual exclusivity with --intervals).
+# Match both the space form ("-wl 1000") and the equals form ("--window_length=1000").
 raw_args <- commandArgs(trailingOnly = TRUE)
-refseq_given <- any(raw_args %in% c("-refseq", "--refSeqNames_string"))
-wl_given <- any(raw_args %in% c("-wl", "--window_length"))
+flag_given <- function(flags) {
+  any(raw_args %in% flags | grepl(paste0("^(", paste(flags, collapse = "|"), ")="), raw_args))
+}
+refseq_given <- flag_given(c("-refseq", "--refSeqNames_string"))
+wl_given <- flag_given(c("-wl", "--window_length"))
 
 if (!is.null(args$intervals)) {
   if (refseq_given || wl_given) {
@@ -49,9 +53,11 @@ if (!is.null(args$intervals)) {
                 ranges = IRanges(start = bed[[2]] + 1L, end = bed[[3]]))
   # getSegmentReadCountsFromBAM uses the same underlying counter (.countBamInGRanges,
   # default min.mapq = 1) as getReadCountsFromBAM, so counts match on identical windows.
+  # It parallelizes over BAM files, and this script always processes a single BAM, so a
+  # multi-worker cluster only adds startup/memory overhead -- force serial counting.
   bamDataRanges_RC <- getSegmentReadCountsFromBAM(args$input_bam_file, GR = gr,
                                                   sampleNames = basename(args$input_bam_file),
-                                                  parallel = args$parallel)
+                                                  parallel = 0)
 } else {
   refSeqNames <- unlist(strsplit(args$refSeqNames_string, ","))
   bamDataRanges_RC <- getReadCountsFromBAM(args$input_bam_file, refSeqNames=refSeqNames, WL=args$window_length ,parallel=args$parallel)

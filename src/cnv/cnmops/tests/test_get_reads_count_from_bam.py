@@ -11,13 +11,15 @@ EXPORT_SRC_FILE = "export_cohort_matrix_to_bed.R"
 
 
 def check_r_environment():
-    """Check if R and cn.mops are available."""
+    """Check if R and all R packages used by the scripts under test are available."""
+    r_packages = ["cn.mops", "GenomicRanges", "rtracklayer", "argparse", "rhdf5"]
+    load_pkgs = "; ".join(f"suppressPackageStartupMessages(library({pkg}))" for pkg in r_packages)
     try:
         result = subprocess.run(
-            ["Rscript", "-e", "suppressPackageStartupMessages(library(cn.mops))"],
+            ["Rscript", "-e", load_pkgs],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=30,
             check=False,
         )
         return result.returncode == 0
@@ -26,7 +28,7 @@ def check_r_environment():
 
 
 # Skip all tests if R environment is not available (tests run inside the ugbio_cnv docker image)
-pytestmark = pytest.mark.skipif(not check_r_environment(), reason="R with cn.mops package not available")
+pytestmark = pytest.mark.skipif(not check_r_environment(), reason="required R packages not available")
 
 
 @pytest.fixture
@@ -110,9 +112,13 @@ def test_get_reads_count_from_bam_intervals(tmpdir, resources_dir, script_path, 
     ]
     assert subprocess.check_call(cmd, cwd=tmpdir) == 0
 
-    # 3. Counts must match the -refseq/-wl expectation on the same (seqnames, start, end) windows.
-    #    The count column is the last one in each CSV (named after the BAM basename, "test.bam").
+    # 3. Every window in the BED must be counted -- no windows dropped between export and counting.
+    n_intervals = sum(1 for _ in open(intervals_bed))
     result_df = pd.read_csv(out_file)
+    assert len(result_df) == n_intervals, "interval-mode output has a different number of windows than the input BED"
+
+    # 4. Counts must match the -refseq/-wl expectation on the same (seqnames, start, end) windows.
+    #    The count column is the last one in each CSV (named after the BAM basename, "test.bam").
     expected_df = pd.read_csv(expected_out_file)
     keys = ["seqnames", "start", "end"]
     result_counts = result_df[[*keys, result_df.columns[-1]]].rename(columns={result_df.columns[-1]: "count_actual"})
@@ -124,8 +130,16 @@ def test_get_reads_count_from_bam_intervals(tmpdir, resources_dir, script_path, 
     assert np.allclose(merged["count_actual"], merged["count_expected"])
 
 
-def test_get_reads_count_from_bam_intervals_mutually_exclusive(tmpdir, resources_dir, script_path):
-    """--intervals combined with an explicit -refseq/-wl must error out."""
+@pytest.mark.parametrize(
+    "window_flag",
+    [
+        ["-wl", "1000"],  # space form
+        ["--window_length=1000"],  # equals form
+        ["--refSeqNames_string=chr1"],  # equals form of -refseq
+    ],
+)
+def test_get_reads_count_from_bam_intervals_mutually_exclusive(tmpdir, resources_dir, script_path, window_flag):
+    """--intervals combined with an explicit -refseq/-wl must error out (space and equals forms)."""
     in_bam_file = pjoin(resources_dir, "test.bam")
     intervals_bed = pjoin(resources_dir, "test.bam")  # any path; error triggers before it is read
     out_prefix = pjoin(tmpdir, "out_bad")
@@ -138,8 +152,7 @@ def test_get_reads_count_from_bam_intervals_mutually_exclusive(tmpdir, resources
         in_bam_file,
         "--intervals",
         intervals_bed,
-        "-wl",
-        "1000",
+        *window_flag,
         "-o",
         out_prefix,
     ]
