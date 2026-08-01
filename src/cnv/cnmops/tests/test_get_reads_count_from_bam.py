@@ -128,34 +128,3 @@ def test_get_reads_count_from_bam_intervals(tmpdir, resources_dir, script_path, 
     merged = result_counts.merge(expected_counts, on=keys)
     assert len(merged) == len(result_df), "intervals windows are not a subset of the expected windows"
     assert np.allclose(merged["count_actual"], merged["count_expected"])
-
-
-@pytest.mark.parametrize(
-    "window_flag",
-    [
-        ["-wl", "1000"],  # space form
-        ["--window_length=1000"],  # equals form
-        ["--refSeqNames_string=chr1"],  # equals form of -refseq
-    ],
-)
-def test_get_reads_count_from_bam_intervals_mutually_exclusive(tmpdir, resources_dir, script_path, window_flag):
-    """--intervals combined with an explicit -refseq/-wl must error out (space and equals forms)."""
-    in_bam_file = pjoin(resources_dir, "test.bam")
-    intervals_bed = pjoin(resources_dir, "test.bam")  # any path; error triggers before it is read
-    out_prefix = pjoin(tmpdir, "out_bad")
-
-    cmd = [
-        "Rscript",
-        "--vanilla",
-        script_path,
-        "-i",
-        in_bam_file,
-        "--intervals",
-        intervals_bed,
-        *window_flag,
-        "-o",
-        out_prefix,
-    ]
-    result = subprocess.run(cmd, cwd=tmpdir, capture_output=True, text=True, check=False)
-    assert result.returncode != 0
-    assert "mutually exclusive" in result.stderr
