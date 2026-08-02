@@ -1,6 +1,5 @@
 # BASE_IMAGE is injected by build-workspace-docker.yml (defaults to DEFAULT_BASE_IMAGE)
-# Pinned to bullseye (1.7.0) — bookworm migration blocked by libparasail8 incompatibility (DATA-9903)
-ARG BASE_IMAGE=ugbio_base:1.7.0
+ARG BASE_IMAGE
 ARG OUT_DIR=/tmp/ugbio
 
 ############################
