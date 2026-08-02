@@ -16,12 +16,8 @@ parser$add_argument("-wl", "--window_length",
                    help="window length (#bp) for which reads count is calculated for",
                    type="integer", default=1000)
 parser$add_argument("--intervals",
-                    help=paste("BED3 file of the cohort's genomic windows (as written by",
-                               "export_cohort_matrix_to_bed.R --intervals_only). Reads are counted",
-                               "over exactly these windows. Mutually exclusive with -refseq/-wl."))
-parser$add_argument("-p", "--parallel",
-                    help="number of parallel processes",
-                    type="integer", default=30)
+                    help=paste("BED3 file of the cohort's genomic windows. Reads are counted",
+                               "over these windows. Mutually exclusive with -refseq/-wl."))
 parser$add_argument("-o", "--base_file_name",
                     help="out base file name")
 parser$add_argument("--save_hdf", action='store_true',
@@ -53,14 +49,13 @@ if (!is.null(args$intervals)) {
                 ranges = IRanges(start = bed[[2]] + 1L, end = bed[[3]]))
   # getSegmentReadCountsFromBAM uses the same underlying counter (.countBamInGRanges,
   # default min.mapq = 1) as getReadCountsFromBAM, so counts match on identical windows.
-  # It parallelizes over BAM files, and this script always processes a single BAM, so a
-  # multi-worker cluster only adds startup/memory overhead -- force serial counting.
+  # cn.mops parallelizes over BAM files, and this script always processes a single BAM,
+  # so parallelism has no effect -- counting runs serially (cn.mops default parallel = 0).
   bamDataRanges_RC <- getSegmentReadCountsFromBAM(args$input_bam_file, GR = gr,
-                                                  sampleNames = basename(args$input_bam_file),
-                                                  parallel = 0)
+                                                  sampleNames = basename(args$input_bam_file))
 } else {
   refSeqNames <- unlist(strsplit(args$refSeqNames_string, ","))
-  bamDataRanges_RC <- getReadCountsFromBAM(args$input_bam_file, refSeqNames=refSeqNames, WL=args$window_length ,parallel=args$parallel)
+  bamDataRanges_RC <- getReadCountsFromBAM(args$input_bam_file, refSeqNames=refSeqNames, WL=args$window_length)
 }
 saveRDS(bamDataRanges_RC, file = paste(args$base_file_name,".ReadCounts.rds",sep = ""))
 
