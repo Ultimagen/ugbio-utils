@@ -33,16 +33,16 @@ from ugbio_srsnv.srsnv_utils import (
     CONSENSUS_GROUP_SINGLE,
     CONSENSUS_GROUPS,
     ET,
-    FS,
     IS_CONSENSUS,
     IS_MIXED,
     IS_MIXED_START,
     MIXED_GROUP_NON,
     MIXED_GROUP_POS,
     MIXED_GROUPS,
+    NF,
     NONE_GROUP_ALL,
+    NR,
     READ_GROUP,
-    RS,
     ST,
     TE,
     TS,
@@ -51,7 +51,7 @@ from ugbio_srsnv.srsnv_utils import (
     add_is_mixed_to_featuremap_df,
 )
 
-MIN_CONSENSUS_READS = 2  # fs + rs >= 2 to be more than a single read
+MIN_CONSENSUS_READS = 2  # nf + nr >= 2 to be more than a single read
 
 
 @dataclass(frozen=True)
@@ -193,12 +193,12 @@ def _mixed_legacy_groups(data_df: pd.DataFrame) -> pd.Categorical:
 
 def _consensus_groups(data_df: pd.DataFrame) -> pd.Categorical:
     """Strand-support split: single read / consensus one strand / consensus duplex."""
-    fs = data_df[FS]
-    rs = data_df[RS]
-    total = fs + rs
+    nf = data_df[NF]
+    nr = data_df[NR]
+    total = nf + nr
     g = pd.Series(CONSENSUS_GROUP_SINGLE, index=data_df.index, dtype=object)
-    g[(total >= MIN_CONSENSUS_READS) & ((fs == 0) ^ (rs == 0))] = CONSENSUS_GROUP_ONE_STRAND
-    g[(fs >= 1) & (rs >= 1)] = CONSENSUS_GROUP_DUPLEX
+    g[(total >= MIN_CONSENSUS_READS) & ((nf == 0) ^ (nr == 0))] = CONSENSUS_GROUP_ONE_STRAND
+    g[(nf >= 1) & (nr >= 1)] = CONSENSUS_GROUP_DUPLEX
     return _ordered(g, CONSENSUS_GROUPS)
 
 
@@ -289,7 +289,7 @@ MIXED_SCHEME = SplitScheme(
 
 CONSENSUS_SCHEME = SplitScheme(
     mode=ReportMode.CONSENSUS,
-    detect=lambda cols: FS in cols and RS in cols,
+    detect=lambda cols: NF in cols and NR in cols,
     add_columns=_consensus_add_columns,
     tag_axis="strand support",
     variants=(
@@ -319,7 +319,7 @@ NONE_SCHEME = SplitScheme(
     ),
 )
 
-# Ordered registry. Detection order preserves the historical priority: ppmSeq tags beat fs/rs.
+# Ordered registry. Detection order preserves the historical priority: ppmSeq tags beat nf/nr.
 # NONE is the explicit fallback and is not consulted via `detect`.
 SPLIT_SCHEMES: tuple[SplitScheme, ...] = (MIXED_SCHEME, CONSENSUS_SCHEME, NONE_SCHEME)
 _BY_MODE: dict[ReportMode, SplitScheme] = {s.mode: s for s in SPLIT_SCHEMES}

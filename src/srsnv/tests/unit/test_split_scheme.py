@@ -22,11 +22,11 @@ from ugbio_srsnv.split_scheme import (
     resolve_scheme_and_add_columns,
 )
 from ugbio_srsnv.srsnv_utils import (
-    FS,
     IS_CONSENSUS,
     IS_MIXED,
+    NF,
+    NR,
     READ_GROUP,
-    RS,
     ReportMode,
 )
 
@@ -42,16 +42,16 @@ class TestResolveScheme:
         data_df = pd.DataFrame({"as": [1, 2], "ae": [1, 0], "ts": [0, 1], "te": [1, 1]})
         assert resolve_scheme(data_df) is MIXED_SCHEME
 
-    def test_consensus_from_fs_rs(self):
-        data_df = pd.DataFrame({FS: [0, 1, 2], RS: [1, 1, 0]})
+    def test_consensus_from_nf_nr(self):
+        data_df = pd.DataFrame({NF: [0, 1, 2], NR: [1, 1, 0]})
         assert resolve_scheme(data_df) is CONSENSUS_SCHEME
 
     def test_none_when_no_split_columns(self):
         data_df = pd.DataFrame({"MQUAL": [10.0, 20.0], "label": [True, False]})
         assert resolve_scheme(data_df) is NONE_SCHEME
 
-    def test_ppmseq_tags_take_priority_over_fs_rs(self):
-        data_df = pd.DataFrame({"st": ["MIXED", "PLUS"], "et": ["MIXED", "MINUS"], FS: [1, 2], RS: [1, 0]})
+    def test_ppmseq_tags_take_priority_over_nf_nr(self):
+        data_df = pd.DataFrame({"st": ["MIXED", "PLUS"], "et": ["MIXED", "MINUS"], NF: [1, 2], NR: [1, 0]})
         assert resolve_scheme(data_df) is MIXED_SCHEME
 
     def test_resolve_by_mode_value(self):
@@ -95,8 +95,8 @@ class TestVariantsAndKeys:
 
 class TestGroupFunctions:
     def test_consensus_groups_definition(self):
-        # single: fs+rs<=1 ; one strand: >=2 total & exactly one of fs/rs == 0 ; duplex: fs>=1 & rs>=1
-        data_df = pd.DataFrame({FS: [0, 0, 3, 1, 2], RS: [0, 1, 0, 1, 3]})
+        # single: nf+nr<=1 ; one strand: >=2 total & exactly one of nf/nr == 0 ; duplex: nf>=1 & nr>=1
+        data_df = pd.DataFrame({NF: [0, 0, 3, 1, 2], NR: [0, 1, 0, 1, 3]})
         groups = np.asarray(CONSENSUS_SCHEME.display_variant.group_fn(data_df))
         assert list(groups) == [
             "single read",  # 0+0
@@ -107,7 +107,7 @@ class TestGroupFunctions:
         ]
 
     def test_consensus_groups_are_ordered_categorical(self):
-        data_df = pd.DataFrame({FS: [0, 1], RS: [0, 1]})
+        data_df = pd.DataFrame({NF: [0, 1], NR: [0, 1]})
         cat = CONSENSUS_SCHEME.display_variant.group_fn(data_df)
         assert isinstance(cat, pd.Categorical)
         assert cat.ordered
@@ -124,7 +124,7 @@ class TestGroupFunctions:
         assert list(legacy) == ["Non-mixed", "Non-mixed", "Mixed"]
 
     def test_group_masks_are_boolean_arrays(self):
-        data_df = pd.DataFrame({FS: [0, 1, 2], RS: [0, 1, 0]})
+        data_df = pd.DataFrame({NF: [0, 1, 2], NR: [0, 1, 0]})
         masks = CONSENSUS_SCHEME.display_variant.group_masks(data_df)
         assert set(masks) == {"single read", "consensus, one strand", "consensus, duplex"}
         for m in masks.values():
@@ -140,11 +140,11 @@ class TestGroupFunctions:
 
 class TestAddColumns:
     def test_consensus_adds_is_consensus_and_read_group(self):
-        data_df = pd.DataFrame({FS: [0, 1, 2, 3], RS: [1, 1, 0, 2]})
+        data_df = pd.DataFrame({NF: [0, 1, 2, 3], NR: [1, 1, 0, 2]})
         out, scheme = resolve_scheme_and_add_columns(data_df)
         assert scheme is CONSENSUS_SCHEME
         assert IS_CONSENSUS in out.columns
-        expected = ((data_df[FS] >= 1) & (data_df[RS] >= 1)).tolist()
+        expected = ((data_df[NF] >= 1) & (data_df[NR] >= 1)).tolist()
         assert out[IS_CONSENSUS].tolist() == expected
         # read_group is the display variant's grouping
         assert READ_GROUP in out.columns
@@ -201,7 +201,7 @@ class TestExtensibility:
             data_df = pd.DataFrame({marker: [0, 1, 2]})
             assert resolve_scheme(data_df) is dummy
             # and a scheme without the marker still resolves to a built-in
-            assert resolve_scheme(pd.DataFrame({FS: [1], RS: [1]})) is CONSENSUS_SCHEME
+            assert resolve_scheme(pd.DataFrame({NF: [1], NR: [1]})) is CONSENSUS_SCHEME
         finally:
             ss.SPLIT_SCHEMES = original
 

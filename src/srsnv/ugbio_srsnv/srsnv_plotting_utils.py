@@ -45,10 +45,10 @@ from ugbio_srsnv.split_scheme import (
 from ugbio_srsnv.srsnv_utils import (
     ET,
     ET_FILLNA,
-    FS,
     MAX_PHRED,
+    NF,
+    NR,
     READ_GROUP,
-    RS,
     ST,
     ST_FILLNA,
     construct_trinuc_context_with_alt,
@@ -3173,9 +3173,9 @@ class SRSNVReport:
         """Columns (besides read_group) that the active scheme's variant group_fns read, so the
         logit-histogram slice includes them. Only columns present in data_df are returned.
 
-        Covers every scheme's raw group inputs (mixed: is_mixed/_start; consensus: fs/rs); a new
+        Covers every scheme's raw group inputs (mixed: is_mixed/_start; consensus: nf/nr); a new
         scheme should add its raw group columns here so its group_fn can run on the sliced frame."""
-        candidates = [IS_MIXED, IS_MIXED_START, FS, RS]
+        candidates = [IS_MIXED, IS_MIXED_START, NF, NR]
         return [c for c in candidates if c in self.data_df.columns]
 
     def _plot_logit_variant(self, plot_df, ax, variant, alpha=0.4):

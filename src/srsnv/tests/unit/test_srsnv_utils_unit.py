@@ -32,15 +32,15 @@ from ugbio_srsnv.srsnv_utils import (
     CONSENSUS_GROUP_ONE_STRAND,
     CONSENSUS_GROUP_SINGLE,
     CONSENSUS_GROUPS,
-    FS,
     IS_CONSENSUS,
     IS_MIXED,
     IS_MIXED_START,
     MIXED_GROUP_NON,
     MIXED_GROUP_POS,
+    NF,
     NONE_GROUP_ALL,
+    NR,
     READ_GROUP,
-    RS,
     ReportMode,
     _aggregate_probabilities_from_folds,
     _compute_snvq_prefactor,
@@ -1581,35 +1581,35 @@ class TestDetectReportMode:
         data_df = pd.DataFrame({"as": [1, 2], "ae": [1, 0], "ts": [0, 1], "te": [1, 1]})
         assert detect_report_mode(data_df) is ReportMode.MIXED
 
-    def test_consensus_from_fs_rs(self):
-        """fs/rs present (no ppmSeq tags) -> CONSENSUS mode."""
-        data_df = pd.DataFrame({FS: [0, 1, 2], RS: [1, 1, 0]})
+    def test_consensus_from_nf_nr(self):
+        """nf/nr present (no ppmSeq tags) -> CONSENSUS mode."""
+        data_df = pd.DataFrame({NF: [0, 1, 2], NR: [1, 1, 0]})
         assert detect_report_mode(data_df) is ReportMode.CONSENSUS
 
     def test_none_when_no_split_columns(self):
-        """Neither ppmSeq tags nor fs/rs -> NONE mode."""
+        """Neither ppmSeq tags nor nf/nr -> NONE mode."""
         data_df = pd.DataFrame({"MQUAL": [10.0, 20.0], "label": [True, False]})
         assert detect_report_mode(data_df) is ReportMode.NONE
 
-    def test_ppmseq_tags_take_priority_over_fs_rs(self):
-        """If both st/et and fs/rs are present, ppmSeq tags win (MIXED)."""
+    def test_ppmseq_tags_take_priority_over_nf_nr(self):
+        """If both st/et and nf/nr are present, ppmSeq tags win (MIXED)."""
         data_df = pd.DataFrame(
             {
                 "st": ["MIXED", "PLUS"],
                 "et": ["MIXED", "MINUS"],
-                FS: [1, 2],
-                RS: [1, 0],
+                NF: [1, 2],
+                NR: [1, 0],
             }
         )
         assert detect_report_mode(data_df) is ReportMode.MIXED
 
 
 class TestAddIsConsensus:
-    """Test the fs>=1 & rs>=1 consensus derivation."""
+    """Test the nf>=1 & nr>=1 consensus derivation."""
 
     def test_is_consensus_definition(self):
         """A read is consensus iff it has >=1 forward and >=1 reverse read."""
-        data_df = pd.DataFrame({FS: [0, 1, 2, 0, 5], RS: [1, 1, 0, 0, 3]})
+        data_df = pd.DataFrame({NF: [0, 1, 2, 0, 5], NR: [1, 1, 0, 0, 3]})
         out = add_is_consensus_to_featuremap_df(data_df)
         assert out[IS_CONSENSUS].tolist() == [False, True, False, False, True]
         assert out[IS_CONSENSUS].dtype == bool
@@ -1619,10 +1619,10 @@ class TestResolveAndAddSplitColumns:
     """Test the mode-resolving split-column entry point used by the report."""
 
     def test_consensus_adds_is_consensus(self):
-        data_df = pd.DataFrame({FS: [0, 1, 2, 3], RS: [1, 1, 0, 2]})
+        data_df = pd.DataFrame({NF: [0, 1, 2, 3], NR: [1, 1, 0, 2]})
         out, mode = resolve_and_add_split_columns(data_df)
         assert mode is ReportMode.CONSENSUS
-        expected = ((data_df[FS] >= 1) & (data_df[RS] >= 1)).tolist()
+        expected = ((data_df[NF] >= 1) & (data_df[NR] >= 1)).tolist()
         assert out[IS_CONSENSUS].tolist() == expected
 
     def test_none_sets_is_consensus_all_false(self):
@@ -1651,11 +1651,11 @@ class TestAddReadGroupColumn:
     """Test the ordered read_group column for the N-group split."""
 
     def test_consensus_three_groups_exhaustive_exclusive(self):
-        # fs+rs: (0,0)->single, (0,1)/(1,0)->single, one-strand (>=2, one side 0), duplex
+        # nf+nr: (0,0)->single, (0,1)/(1,0)->single, one-strand (>=2, one side 0), duplex
         data_df = pd.DataFrame(
             {
-                FS: [0, 0, 1, 2, 0, 5, 3],
-                RS: [0, 1, 0, 0, 3, 3, 1],
+                NF: [0, 0, 1, 2, 0, 5, 3],
+                NR: [0, 1, 0, 0, 3, 3, 1],
             }
         )
         out = add_read_group_column(data_df, ReportMode.CONSENSUS)
@@ -1676,7 +1676,7 @@ class TestAddReadGroupColumn:
         assert not rg.isna().any()
 
     def test_consensus_single_folds_in_zero_zero(self):
-        data_df = pd.DataFrame({FS: [0], RS: [0]})
+        data_df = pd.DataFrame({NF: [0], NR: [0]})
         out = add_read_group_column(data_df, ReportMode.CONSENSUS)
         assert out[READ_GROUP].astype(str).iloc[0] == CONSENSUS_GROUP_SINGLE
 

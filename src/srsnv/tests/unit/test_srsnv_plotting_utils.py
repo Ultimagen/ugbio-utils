@@ -517,25 +517,25 @@ def test_plot_logit_histograms_writes_legacy_and_mixed_start_keys(
             ), "new logit_histogram_mixed_start key should be written for display"
 
 
-# ──────────────────────── consensus mode (fs/rs) tests ──────────────────────
+# ──────────────────────── consensus mode (nf/nr) tests ──────────────────────
 
 
 @pytest.fixture
 def consensus_resources(test_resources_calc_run_info):
     """Build a consensus-mode featuremap from the real ppmSeq resources.
 
-    Drops the ppmSeq st/et tags and adds fs/rs read counts so the report auto-detects
+    Drops the ppmSeq st/et tags and adds nf/nr read counts so the report auto-detects
     CONSENSUS mode. Returns (featuremap_df, metadata).
     """
     featuremap_df, metadata, _ = test_resources_calc_run_info
     consensus_df = featuremap_df.copy()
     consensus_df = consensus_df.drop(columns=[c for c in ("st", "et") if c in consensus_df.columns])
     rng = np.random.default_rng(7)
-    consensus_df["fs"] = rng.integers(0, 6, len(consensus_df))
-    consensus_df["rs"] = rng.integers(0, 6, len(consensus_df))
+    consensus_df["nf"] = rng.integers(0, 6, len(consensus_df))
+    consensus_df["nr"] = rng.integers(0, 6, len(consensus_df))
     # Ensure both consensus and non-consensus reads are present
-    consensus_df.loc[consensus_df.index[:50], ["fs", "rs"]] = 2
-    consensus_df.loc[consensus_df.index[50:100], "fs"] = 0
+    consensus_df.loc[consensus_df.index[:50], ["nf", "nr"]] = 2
+    consensus_df.loc[consensus_df.index[50:100], "nf"] = 0
     # Drop st/et from the metadata categorical features so params don't reference them
     metadata = json.loads(json.dumps(metadata))
     metadata["features"] = [f for f in metadata["features"] if f["name"] not in ("st", "et")]
@@ -584,7 +584,7 @@ def test_consensus_mode_auto_detected(consensus_resources, real_models_calc_run_
         assert "is_consensus" in report.data_df.columns
         assert "read_group" in report.data_df.columns
         # duplex group == the is_consensus boolean
-        expected = ((df["fs"] >= 1) & (df["rs"] >= 1)).to_numpy()
+        expected = ((df["nf"] >= 1) & (df["nr"] >= 1)).to_numpy()
         np.testing.assert_array_equal(report.data_df["is_consensus"].to_numpy(), expected)
         np.testing.assert_array_equal((report.data_df["read_group"] == "consensus, duplex").to_numpy(), expected)
 
@@ -681,7 +681,7 @@ def test_consensus_mode_histograms_run(consensus_resources, real_models_calc_run
 
 
 def test_none_mode_graceful(test_resources_calc_run_info, real_models_calc_run_info):
-    """With neither ppmSeq tags nor fs/rs, the report runs as a single group (NONE mode)."""
+    """With neither ppmSeq tags nor nf/nr, the report runs as a single group (NONE mode)."""
     featuremap_df, metadata, _ = test_resources_calc_run_info
     none_df = featuremap_df.copy().drop(columns=[c for c in ("st", "et") if c in featuremap_df.columns])
     metadata = json.loads(json.dumps(metadata))
