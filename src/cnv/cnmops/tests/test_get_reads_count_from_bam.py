@@ -6,17 +6,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from .conftest import check_r_environment
-
 SRC_FILE = "get_reads_count_from_bam.R"
 EXPORT_SRC_FILE = "export_cohort_matrix_to_bed.R"
-
-# The scripts under test load all of these R packages; skip if any is unavailable
-# (tests run inside the ugbio_cnv docker image where they are all present).
-REQUIRED_R_PACKAGES = ["cn.mops", "GenomicRanges", "rtracklayer", "argparse", "rhdf5"]
-pytestmark = pytest.mark.skipif(
-    not check_r_environment(REQUIRED_R_PACKAGES), reason="required R packages not available"
-)
 
 
 @pytest.fixture
