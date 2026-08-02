@@ -6,29 +6,17 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from .conftest import check_r_environment
+
 SRC_FILE = "get_reads_count_from_bam.R"
 EXPORT_SRC_FILE = "export_cohort_matrix_to_bed.R"
 
-
-def check_r_environment():
-    """Check if R and all R packages used by the scripts under test are available."""
-    r_packages = ["cn.mops", "GenomicRanges", "rtracklayer", "argparse", "rhdf5"]
-    load_pkgs = "; ".join(f"suppressPackageStartupMessages(library({pkg}))" for pkg in r_packages)
-    try:
-        result = subprocess.run(
-            ["Rscript", "-e", load_pkgs],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return False
-
-
-# Skip all tests if R environment is not available (tests run inside the ugbio_cnv docker image)
-pytestmark = pytest.mark.skipif(not check_r_environment(), reason="required R packages not available")
+# The scripts under test load all of these R packages; skip if any is unavailable
+# (tests run inside the ugbio_cnv docker image where they are all present).
+REQUIRED_R_PACKAGES = ["cn.mops", "GenomicRanges", "rtracklayer", "argparse", "rhdf5"]
+pytestmark = pytest.mark.skipif(
+    not check_r_environment(REQUIRED_R_PACKAGES), reason="required R packages not available"
+)
 
 
 @pytest.fixture
