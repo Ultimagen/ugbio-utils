@@ -1092,8 +1092,28 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
             continue
         per_locus_counts = sig_rows.groupby(level=["chrom", "pos"]).size()
 
-        # --- Estimate VAF from all loci ---
-        # Using all loci avoids the breakdown at high coverage / high TF where a
+        # --- Restrict to signature loci before VAF estimation ---
+        # Loci absent from df_signatures_filt are excluded from the TF calculation
+        # via the inner join in get_tf_from_filtered_data.  Including them in all_reads
+        # while their coverage is absent from corr_cov would bias the VAF upward.
+        if "signature_type" in df_signatures_filt.columns:
+            sig_type_mask = df_signatures_filt["signature_type"] == sig_type
+        else:
+            sig_type_mask = pd.Series(data=True, index=df_signatures_filt.index)
+        sig_name_mask = df_signatures_filt["signature"] == sig_name
+        sig_loci_cov = df_signatures_filt.loc[sig_type_mask & sig_name_mask, "coverage"]
+        # Deduplicate: take mean coverage if multiple entries per locus
+        if sig_loci_cov.index.duplicated().any():
+            sig_loci_cov = sig_loci_cov.groupby(level=sig_loci_cov.index.names).mean()
+        per_locus_cov = sig_loci_cov.reindex(per_locus_counts.index)
+        in_signature = per_locus_cov.notna()
+        per_locus_counts = per_locus_counts[in_signature]
+        per_locus_cov = per_locus_cov[in_signature].to_numpy()
+        if len(per_locus_counts) == 0:
+            continue
+
+        # --- Estimate VAF from signature loci ---
+        # Using all (retained) loci avoids the breakdown at high coverage / high TF where a
         # low-read cap would leave too few background observations.  Germline /
         # mosaic variants can slightly inflate the estimate; that is acceptable.
         all_reads = int(per_locus_counts.sum())
@@ -1111,23 +1131,9 @@ def apply_multi_read_locus_filter(  # noqa: C901, PLR0912, PLR0915
         n_loci = _n_sig(sig_type, sig_name, len(per_locus_counts))
 
         # --- Per-locus lambda using local coverage ---
-        # Instead of a single λ = VAF × mean_coverage for all loci, use
         # λ_i = VAF × coverage_i to account for local coverage variation.
         # High-coverage loci naturally expect more reads and need a higher
         # threshold before being flagged as outliers.
-        if "signature_type" in df_signatures_filt.columns:
-            sig_type_mask = df_signatures_filt["signature_type"] == sig_type
-        else:
-            sig_type_mask = pd.Series(data=True, index=df_signatures_filt.index)
-        sig_name_mask = df_signatures_filt["signature"] == sig_name
-        sig_loci_cov = df_signatures_filt.loc[sig_type_mask & sig_name_mask, "coverage"]
-        # Deduplicate: take mean coverage if multiple entries per locus
-        if sig_loci_cov.index.duplicated().any():
-            sig_loci_cov = sig_loci_cov.groupby(level=sig_loci_cov.index.names).mean()
-        # Align per-locus coverage to per_locus_counts index
-        per_locus_cov = sig_loci_cov.reindex(per_locus_counts.index)
-        # Fall back to mean_coverage for any loci missing coverage data
-        per_locus_cov = per_locus_cov.fillna(mean_coverage).to_numpy()
         lam_per_locus = vaf * per_locus_cov
 
         bonf_pvals = poisson.sf(per_locus_counts.to_numpy() - 1, lam_per_locus) * n_loci

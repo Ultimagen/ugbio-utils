@@ -392,8 +392,12 @@ def _make_multi_read_test_data():
     )
 
     df_signatures_filt = pd.DataFrame(
-        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)]
-    )
+        [
+            {"chrom": "chr1", "pos": 100, "signature": "sig1", "signature_type": "matched", "coverage": 1000.0},
+            {"chrom": "chr1", "pos": 200, "signature": "sig1", "signature_type": "matched", "coverage": 1000.0},
+            {"chrom": "chr1", "pos": 300, "signature": "sig1", "signature_type": "matched", "coverage": 1000.0},
+        ]
+    ).set_index(["chrom", "pos"])
     return df_features_filt, df_tf, df_signatures_filt
 
 
@@ -567,9 +571,16 @@ def _make_ctrl_filter_test_data():
         index=index,
     )
 
-    df_signatures_filt = pd.DataFrame(
-        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)]
-    )
+    sig_entries = []
+    for sig, sig_type, positions in [
+        ("sig1", "matched", [100, 200, 300]),
+        ("ctrl0", "control", [100, 200, 300]),
+        ("syn0", "db_control", [100, 200, 300]),
+        ("syn1", "db_control", [100, 200]),
+    ]:
+        for pos in positions:
+            sig_entries.append({"chrom": "chr1", "pos": pos, "signature": sig, "signature_type": sig_type, "coverage": 1000.0})
+    df_signatures_filt = pd.DataFrame(sig_entries).set_index(["chrom", "pos"])
     return df_features_filt, df_tf, df_signatures_filt
 
 
@@ -638,9 +649,11 @@ def test_apply_multi_read_locus_filter_removes_outlier_db_control_loci():
         },
         index=index,
     )
-    df_signatures_filt = pd.DataFrame(
-        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(3)]
-    )
+    sig_entries = [{"chrom": "chr1", "pos": p, "signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for p in [100, 200, 300]]
+    for i in range(n_background):
+        sig_entries.append({"chrom": f"chr{i + 2}", "pos": i, "signature": "syn0", "signature_type": "db_control", "coverage": 1000.0})
+    sig_entries.append({"chrom": "chr1", "pos": 999, "signature": "syn0", "signature_type": "db_control", "coverage": 1000.0})
+    df_signatures_filt = pd.DataFrame(sig_entries).set_index(["chrom", "pos"])
 
     df_out, info = apply_multi_read_locus_filter(df_features, df_tf, df_signatures_filt, 0.01)
 
@@ -657,9 +670,9 @@ def test_apply_multi_read_locus_filter_never_removes_single_read_loci():
     """Single-read loci must never be filtered regardless of how low the TF estimate is."""
     from ugbio_mrd.mrd_utils import apply_multi_read_locus_filter
 
-    # Use an extremely low TF so that the Bonferroni test would flag single reads
-    # without the guard (TF=1e-9 << the 5e-8 transition point).
-    tiny_vaf = 1e-9
+    # corrected_coverage=1e8 → vaf=3/1e8=3e-8 → lambda=3e-5.
+    # P(X>=1|Poi(3e-5))*1000 ≈ 0.03 < 0.05: single-read loci *would* be flagged
+    # without the >=2 guard — confirming the guard is what protects them.
     records = [
         {"chrom": "chr1", "pos": 100, "signature": "sig1", "signature_type": "matched"},
         {"chrom": "chr1", "pos": 200, "signature": "sig1", "signature_type": "matched"},
@@ -668,12 +681,13 @@ def test_apply_multi_read_locus_filter_never_removes_single_read_loci():
     df_features_filt = pd.DataFrame(records).set_index(["chrom", "pos"])
 
     df_tf = pd.DataFrame(
-        [{"ctdna_vaf": tiny_vaf, "supporting_reads": 3, "corrected_coverage": 1000.0}],
+        [{"ctdna_vaf": 3e-8, "supporting_reads": 3, "corrected_coverage": 1e8}],
         index=pd.MultiIndex.from_tuples([("matched", "sig1")], names=["signature_type", "signature"]),
     )
+    # 1000 signature loci → Bonferroni N=1000; features only cover 3 of them
     df_signatures_filt = pd.DataFrame(
-        [{"signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for _ in range(1000)]
-    )
+        [{"chrom": "chr1", "pos": i, "signature": "sig1", "signature_type": "matched", "coverage": 1000.0} for i in range(1000)]
+    ).set_index(["chrom", "pos"])
 
     df_out, info = apply_multi_read_locus_filter(df_features_filt, df_tf, df_signatures_filt, 0.05)
 
