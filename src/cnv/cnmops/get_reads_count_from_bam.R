@@ -42,11 +42,12 @@ if (!is.null(args$intervals)) {
     stop("--intervals is mutually exclusive with -refseq/-wl; provide only one.")
   }
   # BED is 0-based half-open; +1L on start recovers the 1-based windows that
-  # getReadCountsFromBAM would have produced for the same bins.
+  # getReadCountsFromBAM would have produced for the same bins (cf. convert_bedGraph_to_Granges.R).
   bed <- read.table(args$intervals, sep = "\t", header = FALSE,
+                    col.names = c("seqnames", "start", "end"),
                     colClasses = c("character", "integer", "integer"))
-  gr <- GRanges(seqnames = bed[[1]],
-                ranges = IRanges(start = bed[[2]] + 1L, end = bed[[3]]))
+  bed$start <- bed$start + 1L
+  gr <- makeGRangesFromDataFrame(bed, ignore.strand = TRUE)
   # getSegmentReadCountsFromBAM uses the same underlying counter (.countBamInGRanges,
   # default min.mapq = 1) as getReadCountsFromBAM, so counts match on identical windows.
   # cn.mops parallelizes over BAM files, and this script always processes a single BAM,
