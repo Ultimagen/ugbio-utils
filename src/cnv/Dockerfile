@@ -67,11 +67,11 @@ RUN apt-get update && \
     software-properties-common && \
     gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' && \
     gpg --armor --export '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' | tee /etc/apt/trusted.gpg.d/cran_debian_key.asc && \
-    echo "deb https://cloud.r-project.org/bin/linux/debian bullseye-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
+    echo "deb https://cloud.r-project.org/bin/linux/debian bookworm-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-    r-base=4.5.1-1~bullseyecran.0 \
-    r-base-dev=4.5.1-1~bullseyecran.0 && \
+    r-base=4.5.3-1~bookwormcran.0 \
+    r-base-dev=4.5.3-1~bookwormcran.0 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
