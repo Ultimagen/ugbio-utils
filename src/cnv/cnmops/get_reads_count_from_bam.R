@@ -37,10 +37,10 @@ flag_given <- function(flags) {
 refseq_given <- flag_given(c("-refseq", "--refSeqNames_string"))
 wl_given <- flag_given(c("-wl", "--window_length"))
 
+if (!is.null(args$intervals) && (refseq_given || wl_given)) {
+  stop("--intervals is mutually exclusive with -refseq/-wl; provide only one.")
+}
 if (!is.null(args$intervals)) {
-  if (refseq_given || wl_given) {
-    stop("--intervals is mutually exclusive with -refseq/-wl; provide only one.")
-  }
   # BED is 0-based half-open; +1L on start recovers the 1-based windows that
   # getReadCountsFromBAM would have produced for the same bins (cf. convert_bedGraph_to_Granges.R).
   bed <- read.table(args$intervals, sep = "\t", header = FALSE,
