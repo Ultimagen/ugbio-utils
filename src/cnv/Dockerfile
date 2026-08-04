@@ -1,8 +1,17 @@
 # BASE_IMAGE is injected by build-workspace-docker.yml (defaults to DEFAULT_BASE_IMAGE)
-# Pinned to bullseye (1.7.0) — bookworm migration blocked by libparasail8 incompatibility (DATA-9903)
-ARG BASE_IMAGE=ugbio_base:1.7.0
+ARG BASE_IMAGE
 ARG OUT_DIR=/tmp/ugbio
-FROM python:3.11-bullseye AS build
+
+############################
+# Pull known-good parasail from Debian Bullseye (2.4.3)
+FROM debian:bullseye AS parasail-bullseye
+RUN apt-get update && \
+  apt-get -y install --no-install-recommends \
+    libparasail-dev \
+  && \
+  rm -rf /var/lib/apt/lists/* && apt-get autoclean
+
+FROM python:3.11-bookworm AS build
 
 ARG OUT_DIR
 ARG MODULE_DIR=cnv
@@ -40,8 +49,7 @@ RUN apt-get update && \
     libncurses5-dev \
     libncursesw5-dev \
     libopenblas-dev \
-    libstdc++-10-dev \
-    libparasail3 libparasail-dev \
+    libstdc++-12-dev \
     libhdf5-dev \
     tzdata \
     && apt-get clean && \
@@ -59,11 +67,11 @@ RUN apt-get update && \
     software-properties-common && \
     gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-key '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' && \
     gpg --armor --export '95C0FAF38DB3CCAD0C080A7BDC78B2DDEABC47B7' | tee /etc/apt/trusted.gpg.d/cran_debian_key.asc && \
-    echo "deb https://cloud.r-project.org/bin/linux/debian bullseye-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
+    echo "deb https://cloud.r-project.org/bin/linux/debian bookworm-cran40/" | tee /etc/apt/sources.list.d/cran.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends \
-    r-base=4.5.1-1~bullseyecran.0 \
-    r-base-dev=4.5.1-1~bullseyecran.0 && \
+    r-base=4.5.3-1~bookwormcran.0 \
+    r-base-dev=4.5.3-1~bookwormcran.0 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -107,7 +115,7 @@ RUN apt-get update && \
 RUN R -e "install.packages(c('argparse', 'BiocManager', 'bitops', 'codetools', 'findpython', 'futile.logger', 'futile.options', 'lambda.r'), repos='https://cloud.r-project.org/', Ncpus=4)"
 
 # Install Bioconductor packages - using Ncpus for parallel compilation
-RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', 'Biobase', 'GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'rhdf5', 'rhdf5filters', 'Rhtslib', 'Rsamtools', 'rtracklayer'), ask=FALSE, update=FALSE, Ncpus=4)"
+RUN R -e "BiocManager::install(c('BiocGenerics', 'BiocParallel', 'Biostrings', 'Biobase', 'GenomeInfoDb', 'GenomicRanges', 'IRanges', 'S4Vectors', 'XVector', 'rhdf5', 'rhdf5filters', 'Rhtslib', 'Rsamtools', 'GenomicAlignments', 'BSgenome', 'VariantAnnotation'), ask=FALSE, Ncpus=4)"
 
 # Remove unnecessary files
 RUN rm -rf /tmp/* /var/tmp/* /usr/share/doc /usr/share/man /usr/share/info
@@ -154,6 +162,12 @@ RUN groupadd ugbio && useradd -m ugbio -g ugbio
 
 COPY --from=build ${OUT_DIR} ${OUT_DIR}
 RUN pip install ${OUT_DIR}/*.whl && rm -rf ${OUT_DIR}
+
+# Bring parasail headers/libs from Bullseye into Bookworm image
+COPY --from=parasail-bullseye /usr/include/parasail /usr/include/parasail
+COPY --from=parasail-bullseye /usr/include/parasail.h /usr/include/parasail.h
+COPY --from=parasail-bullseye /usr/lib/x86_64-linux-gnu/libparasail.so* /usr/lib/x86_64-linux-gnu/
+RUN ldconfig
 
 #download cnvpytor additional necessary files (described here: https://github.com/abyzovlab/CNVpytor?tab=readme-ov-file#install-using-pip)
 ENV PYTOR_DATA_DIR=/usr/share/cnvpytor_data
